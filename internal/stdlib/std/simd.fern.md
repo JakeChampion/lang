@@ -23,6 +23,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<lane permutations>>
 
 <<byte lanes>>
+<<integer lanes>>
 
 <<dependencies 2>>
 
@@ -1116,5 +1117,464 @@ pub function select_u8x16(a: u8x16, b: u8x16, mask: u8x16): u8x16 {
 // The top bit of lane `k` in bit `k`.
 pub function bitmask_u8x16(value: u8x16): i32 {
   return __u8x16_bitmask(value);
+}
+```
+
+## Integer lanes
+
+The other integer lane types are `i8x16`, `u16x8`, `i16x8`, `u32x4` and `i32x4`.
+A name gives the sign, the bits of a lane and the number of lanes: `i16x8` has 8 lanes of 16 bits with a sign.
+The operators `+` and `-` add and subtract the lanes, and each lane wraps. Lanes of 16 and 32 bits have the operator `*`.
+A type with a sign has the unary `-`.
+
+Fern has no scalar type of 8 bits with a sign, and none of 16 bits. The functions of `i8x16`, `u16x8` and `i16x8` take an `i32` for one lane and keep its low bits.
+
+A function of this section has the name of its function of `u8x16`, with the name of its type.
+A compare, a minimum and a maximum use the sign of a type that has one.
+A shift moves each lane by one count of bits. The count is modulo the bits of a lane. `shr` of a type with a sign keeps the sign.
+Lanes of 8 and 16 bits have the sum and the difference with a limit. The limits are the smallest and the largest number of a lane.
+
+`load` and `with` read and write 16 bytes of a `u8[]`. The low byte of a lane is first.
+
+```fern
+<<integer lanes>>=
+// Each lane of `value` moved up by `count` bits. The count is modulo 8.
+pub function shl_u8x16(value: u8x16, count: i32): u8x16 {
+  return __u8x16_shl(value, count);
+}
+
+// Each lane of `value` moved down by `count` bits. The count is modulo 8.
+pub function shr_u8x16(value: u8x16, count: i32): u8x16 {
+  return __u8x16_shr(value, count);
+}
+
+// Each lane has the low 8 bits of `x`.
+pub function splat_i8x16(x: i32): i8x16 {
+  return __i8x16_splat(x);
+}
+
+// The 16 bytes of `bytes` from `offset`, as 16 lanes.
+pub function load_i8x16(bytes: u8[], offset: i32): i8x16 {
+  return __i8x16_load(bytes, offset);
+}
+
+// `bytes` with the 16 bytes of `value` from `offset`.
+pub function with_i8x16(own bytes: u8[], offset: i32, value: i8x16): u8[] {
+  return __i8x16_with(bytes, offset, value);
+}
+
+// The sum of each pair of lanes, held to the limits of a lane.
+pub function add_sat_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_add_sat(a, b);
+}
+
+// The difference of each pair of lanes, held to the limits of a lane.
+pub function sub_sat_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_sub_sat(a, b);
+}
+
+// Each lane with no sign. The smallest number of a lane stays.
+pub function abs_i8x16(value: i8x16): i8x16 {
+  return __i8x16_abs(value);
+}
+
+// The smaller number of each pair of lanes.
+pub function min_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_min(a, b);
+}
+
+// The larger number of each pair of lanes.
+pub function max_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_max(a, b);
+}
+
+// A lane of ones where the lanes are equal, and a lane of zeros where they are not.
+pub function eq_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_eq(a, b);
+}
+
+// A lane of ones where the lanes are not equal, and a lane of zeros where they are.
+pub function ne_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_ne(a, b);
+}
+
+// A lane of ones where the lane of `a` is below the lane of `b`, and a lane of zeros where it is not.
+pub function lt_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_lt(a, b);
+}
+
+// The bits that `a` and `b` both have.
+pub function and_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_and(a, b);
+}
+
+// The bits that `a` or `b` has.
+pub function or_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_or(a, b);
+}
+
+// The bits that only one of `a` and `b` has.
+pub function xor_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_xor(a, b);
+}
+
+// The bits of `a` where `mask` has a one, and the bits of `b` where it has
+// a zero.
+pub function select_i8x16(a: i8x16, b: i8x16, mask: i8x16): i8x16 {
+  return __i8x16_select(a, b, mask);
+}
+
+// The top bit of lane `k` in bit `k`.
+pub function bitmask_i8x16(value: i8x16): i32 {
+  return __i8x16_bitmask(value);
+}
+
+// Each lane of `value` moved up by `count` bits. The count is modulo 8.
+pub function shl_i8x16(value: i8x16, count: i32): i8x16 {
+  return __i8x16_shl(value, count);
+}
+
+// Each lane of `value` moved down by `count` bits. The count is modulo 8. The sign stays.
+pub function shr_i8x16(value: i8x16, count: i32): i8x16 {
+  return __i8x16_shr(value, count);
+}
+
+// Each lane has the low 16 bits of `x`.
+pub function splat_u16x8(x: i32): u16x8 {
+  return __u16x8_splat(x);
+}
+
+// The 16 bytes of `bytes` from `offset`, as 8 lanes.
+pub function load_u16x8(bytes: u8[], offset: i32): u16x8 {
+  return __u16x8_load(bytes, offset);
+}
+
+// `bytes` with the 16 bytes of `value` from `offset`.
+pub function with_u16x8(own bytes: u8[], offset: i32, value: u16x8): u8[] {
+  return __u16x8_with(bytes, offset, value);
+}
+
+// The sum of each pair of lanes, held to the limits of a lane.
+pub function add_sat_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_add_sat(a, b);
+}
+
+// The difference of each pair of lanes, held to the limits of a lane.
+pub function sub_sat_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_sub_sat(a, b);
+}
+
+// The average of each pair of lanes, rounded up.
+pub function avg_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_avg(a, b);
+}
+
+// The smaller number of each pair of lanes.
+pub function min_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_min(a, b);
+}
+
+// The larger number of each pair of lanes.
+pub function max_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_max(a, b);
+}
+
+// A lane of ones where the lanes are equal, and a lane of zeros where they are not.
+pub function eq_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_eq(a, b);
+}
+
+// A lane of ones where the lanes are not equal, and a lane of zeros where they are.
+pub function ne_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_ne(a, b);
+}
+
+// A lane of ones where the lane of `a` is below the lane of `b`, and a lane of zeros where it is not.
+pub function lt_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_lt(a, b);
+}
+
+// The bits that `a` and `b` both have.
+pub function and_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_and(a, b);
+}
+
+// The bits that `a` or `b` has.
+pub function or_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_or(a, b);
+}
+
+// The bits that only one of `a` and `b` has.
+pub function xor_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_xor(a, b);
+}
+
+// The bits of `a` where `mask` has a one, and the bits of `b` where it has
+// a zero.
+pub function select_u16x8(a: u16x8, b: u16x8, mask: u16x8): u16x8 {
+  return __u16x8_select(a, b, mask);
+}
+
+// The top bit of lane `k` in bit `k`.
+pub function bitmask_u16x8(value: u16x8): i32 {
+  return __u16x8_bitmask(value);
+}
+
+// Each lane of `value` moved up by `count` bits. The count is modulo 16.
+pub function shl_u16x8(value: u16x8, count: i32): u16x8 {
+  return __u16x8_shl(value, count);
+}
+
+// Each lane of `value` moved down by `count` bits. The count is modulo 16.
+pub function shr_u16x8(value: u16x8, count: i32): u16x8 {
+  return __u16x8_shr(value, count);
+}
+
+// Each lane has the low 16 bits of `x`.
+pub function splat_i16x8(x: i32): i16x8 {
+  return __i16x8_splat(x);
+}
+
+// The 16 bytes of `bytes` from `offset`, as 8 lanes.
+pub function load_i16x8(bytes: u8[], offset: i32): i16x8 {
+  return __i16x8_load(bytes, offset);
+}
+
+// `bytes` with the 16 bytes of `value` from `offset`.
+pub function with_i16x8(own bytes: u8[], offset: i32, value: i16x8): u8[] {
+  return __i16x8_with(bytes, offset, value);
+}
+
+// The sum of each pair of lanes, held to the limits of a lane.
+pub function add_sat_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_add_sat(a, b);
+}
+
+// The difference of each pair of lanes, held to the limits of a lane.
+pub function sub_sat_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_sub_sat(a, b);
+}
+
+// Each lane with no sign. The smallest number of a lane stays.
+pub function abs_i16x8(value: i16x8): i16x8 {
+  return __i16x8_abs(value);
+}
+
+// The smaller number of each pair of lanes.
+pub function min_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_min(a, b);
+}
+
+// The larger number of each pair of lanes.
+pub function max_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_max(a, b);
+}
+
+// A lane of ones where the lanes are equal, and a lane of zeros where they are not.
+pub function eq_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_eq(a, b);
+}
+
+// A lane of ones where the lanes are not equal, and a lane of zeros where they are.
+pub function ne_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_ne(a, b);
+}
+
+// A lane of ones where the lane of `a` is below the lane of `b`, and a lane of zeros where it is not.
+pub function lt_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_lt(a, b);
+}
+
+// The bits that `a` and `b` both have.
+pub function and_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_and(a, b);
+}
+
+// The bits that `a` or `b` has.
+pub function or_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_or(a, b);
+}
+
+// The bits that only one of `a` and `b` has.
+pub function xor_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_xor(a, b);
+}
+
+// The bits of `a` where `mask` has a one, and the bits of `b` where it has
+// a zero.
+pub function select_i16x8(a: i16x8, b: i16x8, mask: i16x8): i16x8 {
+  return __i16x8_select(a, b, mask);
+}
+
+// The top bit of lane `k` in bit `k`.
+pub function bitmask_i16x8(value: i16x8): i32 {
+  return __i16x8_bitmask(value);
+}
+
+// Each lane of `value` moved up by `count` bits. The count is modulo 16.
+pub function shl_i16x8(value: i16x8, count: i32): i16x8 {
+  return __i16x8_shl(value, count);
+}
+
+// Each lane of `value` moved down by `count` bits. The count is modulo 16. The sign stays.
+pub function shr_i16x8(value: i16x8, count: i32): i16x8 {
+  return __i16x8_shr(value, count);
+}
+
+// Each lane has the number `x`.
+pub function splat_u32x4(x: u32): u32x4 {
+  return __u32x4_splat(x);
+}
+
+// The 16 bytes of `bytes` from `offset`, as 4 lanes.
+pub function load_u32x4(bytes: u8[], offset: i32): u32x4 {
+  return __u32x4_load(bytes, offset);
+}
+
+// `bytes` with the 16 bytes of `value` from `offset`.
+pub function with_u32x4(own bytes: u8[], offset: i32, value: u32x4): u8[] {
+  return __u32x4_with(bytes, offset, value);
+}
+
+// The smaller number of each pair of lanes.
+pub function min_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_min(a, b);
+}
+
+// The larger number of each pair of lanes.
+pub function max_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_max(a, b);
+}
+
+// A lane of ones where the lanes are equal, and a lane of zeros where they are not.
+pub function eq_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_eq(a, b);
+}
+
+// A lane of ones where the lanes are not equal, and a lane of zeros where they are.
+pub function ne_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_ne(a, b);
+}
+
+// A lane of ones where the lane of `a` is below the lane of `b`, and a lane of zeros where it is not.
+pub function lt_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_lt(a, b);
+}
+
+// The bits that `a` and `b` both have.
+pub function and_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_and(a, b);
+}
+
+// The bits that `a` or `b` has.
+pub function or_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_or(a, b);
+}
+
+// The bits that only one of `a` and `b` has.
+pub function xor_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_xor(a, b);
+}
+
+// The bits of `a` where `mask` has a one, and the bits of `b` where it has
+// a zero.
+pub function select_u32x4(a: u32x4, b: u32x4, mask: u32x4): u32x4 {
+  return __u32x4_select(a, b, mask);
+}
+
+// The top bit of lane `k` in bit `k`.
+pub function bitmask_u32x4(value: u32x4): i32 {
+  return __u32x4_bitmask(value);
+}
+
+// Each lane of `value` moved up by `count` bits. The count is modulo 32.
+pub function shl_u32x4(value: u32x4, count: i32): u32x4 {
+  return __u32x4_shl(value, count);
+}
+
+// Each lane of `value` moved down by `count` bits. The count is modulo 32.
+pub function shr_u32x4(value: u32x4, count: i32): u32x4 {
+  return __u32x4_shr(value, count);
+}
+
+// Each lane has the number `x`.
+pub function splat_i32x4(x: i32): i32x4 {
+  return __i32x4_splat(x);
+}
+
+// The 16 bytes of `bytes` from `offset`, as 4 lanes.
+pub function load_i32x4(bytes: u8[], offset: i32): i32x4 {
+  return __i32x4_load(bytes, offset);
+}
+
+// `bytes` with the 16 bytes of `value` from `offset`.
+pub function with_i32x4(own bytes: u8[], offset: i32, value: i32x4): u8[] {
+  return __i32x4_with(bytes, offset, value);
+}
+
+// Each lane with no sign. The smallest number of a lane stays.
+pub function abs_i32x4(value: i32x4): i32x4 {
+  return __i32x4_abs(value);
+}
+
+// The smaller number of each pair of lanes.
+pub function min_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_min(a, b);
+}
+
+// The larger number of each pair of lanes.
+pub function max_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_max(a, b);
+}
+
+// A lane of ones where the lanes are equal, and a lane of zeros where they are not.
+pub function eq_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_eq(a, b);
+}
+
+// A lane of ones where the lanes are not equal, and a lane of zeros where they are.
+pub function ne_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_ne(a, b);
+}
+
+// A lane of ones where the lane of `a` is below the lane of `b`, and a lane of zeros where it is not.
+pub function lt_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_lt(a, b);
+}
+
+// The bits that `a` and `b` both have.
+pub function and_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_and(a, b);
+}
+
+// The bits that `a` or `b` has.
+pub function or_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_or(a, b);
+}
+
+// The bits that only one of `a` and `b` has.
+pub function xor_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_xor(a, b);
+}
+
+// The bits of `a` where `mask` has a one, and the bits of `b` where it has
+// a zero.
+pub function select_i32x4(a: i32x4, b: i32x4, mask: i32x4): i32x4 {
+  return __i32x4_select(a, b, mask);
+}
+
+// The top bit of lane `k` in bit `k`.
+pub function bitmask_i32x4(value: i32x4): i32 {
+  return __i32x4_bitmask(value);
+}
+
+// Each lane of `value` moved up by `count` bits. The count is modulo 32.
+pub function shl_i32x4(value: i32x4, count: i32): i32x4 {
+  return __i32x4_shl(value, count);
+}
+
+// Each lane of `value` moved down by `count` bits. The count is modulo 32. The sign stays.
+pub function shr_i32x4(value: i32x4, count: i32): i32x4 {
+  return __i32x4_shr(value, count);
 }
 ```

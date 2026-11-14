@@ -655,6 +655,389 @@ function test_byte_lane_memory(): test.TestOutcome {
   return test.assert_eq(got, xs[8].to_string() + " 7 7 " + xs[25].to_string() + " " + xs[9].to_string() + " 40");
 }
 
+function zeros16(): u8[] {
+  let zeros: u8[] = [];
+  while (zeros.len() < 16) {
+    zeros = zeros.append(0 as u8);
+  }
+  return zeros;
+}
+
+// The number of lane `k` of the 16 bytes of `bytes` from `at`. The low byte
+// of a lane is first.
+function lane_number(bytes: u8[], at: i32, k: i32, width: i32, signed: boolean): i64 {
+  let size = width / 8;
+  let x = 0i64;
+  for b in 0..size {
+    x = x | bytes[at + k * size + b] as i64 << (8 * b) as i64;
+  }
+  return cut(x, width, signed);
+}
+
+// The low `width` bits of `x`, as the number of a lane.
+function cut(x: i64, width: i32, signed: boolean): i64 {
+  let ones = (1i64 << width as i64) - 1i64;
+  let low = x & ones;
+  if (signed && low >> (width - 1) as i64 != 0i64) {
+    return low - ones - 1i64;
+  }
+  return low;
+}
+
+// `x` held to the limits of a lane.
+function limited(x: i64, width: i32, signed: boolean): i64 {
+  let high = (1i64 << (if (signed) { width - 1 } else { width }) as i64) - 1i64;
+  let low = if (signed) { 0i64 - high - 1i64 } else { 0i64 };
+  if (x > high) {
+    return high;
+  }
+  return if (x < low) { low } else { x };
+}
+
+function ones_if(hold: boolean): i64 {
+  return if (hold) { -1i64 } else { 0i64 };
+}
+
+// One scalar form of a function of two lanes, for the lanes to agree with.
+// A shift has its count in `y`.
+function scalar_lane(verb: string, x: i64, y: i64, width: i32, signed: boolean): i64 {
+  let by = y & (width - 1) as i64;
+  let r = match (verb) {
+    "add" => x + y,
+    "sub" => x - y,
+    "mul" => x * y,
+    "min" => if (x < y) { x } else { y },
+    "max" => if (x < y) { y } else { x },
+    "eq" => ones_if(x == y),
+    "ne" => ones_if(x != y),
+    "lt" => ones_if(x < y),
+    "and" => x & y,
+    "or" => x | y,
+    "xor" => x ^ y,
+    "add_sat" => limited(x + y, width, signed),
+    "sub_sat" => limited(x - y, width, signed),
+    "avg" => (x + y + 1i64) / 2i64,
+    "shl" => x << by,
+    "shr" => x >> by,
+    "neg" => 0i64 - x,
+    _ => if (x < 0i64) { 0i64 - x } else { x },
+  };
+  return cut(r, width, signed);
+}
+
+// The lanes of `got` that are not `verb` of the lanes of `xs` and `ys`.
+function wrong_lanes(name: string, verb: string, got: u8[], xs: u8[], ys: u8[], at: i32, width: i32, signed: boolean): string[] {
+  let bad: string[] = [];
+  for k in 0..128 / width {
+    let want = scalar_lane(verb, lane_number(xs, at, k, width, signed), lane_number(ys, at, k, width, signed), width, signed);
+    if (lane_number(got, 0, k, width, signed) != want) {
+      bad = bad.append(name + " " + verb + " at " + (at + k).to_string());
+    }
+  }
+  return bad;
+}
+
+// The lanes of `got` that are not the shift of the lanes of `xs` by `count`.
+function wrong_shift(name: string, verb: string, got: u8[], xs: u8[], count: i32, width: i32, signed: boolean): string[] {
+  let bad: string[] = [];
+  for k in 0..128 / width {
+    if (lane_number(got, 0, k, width, signed) != scalar_lane(verb, lane_number(xs, 16, k, width, signed), count as i64, width, signed)) {
+      bad = bad.append(name + " " + verb + " by " + count.to_string() + " at " + k.to_string());
+    }
+  }
+  return bad;
+}
+
+function all_of(own out: string[], more: string[]): string[] {
+  for m in more {
+    out = out.append(m);
+  }
+  return out;
+}
+
+function shifts_u8x16(xs: u8[]): string[] {
+  let bad: string[] = [];
+  let a = simd.load_u8x16(xs, 16);
+  for count in [0, 1, 3, 7, 8, 10] {
+    bad = all_of(bad, wrong_shift("u8x16", "shl", byte_lanes(simd.shl_u8x16(a, count)), xs, count, 8, false));
+    bad = all_of(bad, wrong_shift("u8x16", "shr", byte_lanes(simd.shr_u8x16(a, count)), xs, count, 8, false));
+  }
+  return bad;
+}
+
+function lanes_i8x16(verb: string, a: i8x16, b: i8x16): i8x16 {
+  return match (verb) {
+    "add" => a + b,
+    "sub" => a - b,
+    "min" => simd.min_i8x16(a, b),
+    "max" => simd.max_i8x16(a, b),
+    "eq" => simd.eq_i8x16(a, b),
+    "ne" => simd.ne_i8x16(a, b),
+    "lt" => simd.lt_i8x16(a, b),
+    "and" => simd.and_i8x16(a, b),
+    "or" => simd.or_i8x16(a, b),
+    "add_sat" => simd.add_sat_i8x16(a, b),
+    "sub_sat" => simd.sub_sat_i8x16(a, b),
+    _ => simd.xor_i8x16(a, b),
+  };
+}
+
+function bytes_i8x16(v: i8x16): u8[] {
+  return simd.with_i8x16(zeros16(), 0, v);
+}
+
+function check_i8x16(xs: u8[], ys: u8[]): string[] {
+  let bad: string[] = [];
+  for verb in ["add", "sub", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "add_sat", "sub_sat"] {
+    for at in [0, 16, 32, 48] {
+      bad = all_of(bad, wrong_lanes("i8x16", verb, bytes_i8x16(lanes_i8x16(verb, simd.load_i8x16(xs, at), simd.load_i8x16(ys, at))), xs, ys, at, 8, true));
+    }
+  }
+  let a = simd.load_i8x16(xs, 16);
+  for count in [0, 1, 3, 7, 8, 10] {
+    bad = all_of(bad, wrong_shift("i8x16", "shl", bytes_i8x16(simd.shl_i8x16(a, count)), xs, count, 8, true));
+    bad = all_of(bad, wrong_shift("i8x16", "shr", bytes_i8x16(simd.shr_i8x16(a, count)), xs, count, 8, true));
+  }
+  for at in [0, 16, 32, 48] {
+    bad = all_of(bad, wrong_lanes("i8x16", "neg", bytes_i8x16(-simd.load_i8x16(xs, at)), xs, xs, at, 8, true));
+    bad = all_of(bad, wrong_lanes("i8x16", "abs", bytes_i8x16(simd.abs_i8x16(simd.load_i8x16(xs, at))), xs, xs, at, 8, true));
+  }
+  return bad;
+}
+
+// The mask of `1 < 3` in each lane, the mask of a select that takes each
+// lane of its first value, and one lane of that select.
+function values_i8x16(): string {
+  let a = simd.splat_i8x16(3);
+  let m = simd.lt_i8x16(simd.splat_i8x16(1), a);
+  let s = simd.select_i8x16(a, simd.splat_i8x16(9), m);
+  return simd.bitmask_i8x16(m).to_string() + " " + simd.bitmask_i8x16(simd.eq_i8x16(a, s)).to_string() + " " + (__i8x16_lane(s, 15) as i32).to_string();
+}
+
+function lanes_u16x8(verb: string, a: u16x8, b: u16x8): u16x8 {
+  return match (verb) {
+    "add" => a + b,
+    "sub" => a - b,
+    "mul" => a * b,
+    "min" => simd.min_u16x8(a, b),
+    "max" => simd.max_u16x8(a, b),
+    "eq" => simd.eq_u16x8(a, b),
+    "ne" => simd.ne_u16x8(a, b),
+    "lt" => simd.lt_u16x8(a, b),
+    "and" => simd.and_u16x8(a, b),
+    "or" => simd.or_u16x8(a, b),
+    "add_sat" => simd.add_sat_u16x8(a, b),
+    "sub_sat" => simd.sub_sat_u16x8(a, b),
+    "avg" => simd.avg_u16x8(a, b),
+    _ => simd.xor_u16x8(a, b),
+  };
+}
+
+function bytes_u16x8(v: u16x8): u8[] {
+  return simd.with_u16x8(zeros16(), 0, v);
+}
+
+function check_u16x8(xs: u8[], ys: u8[]): string[] {
+  let bad: string[] = [];
+  for verb in ["add", "sub", "mul", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "add_sat", "sub_sat", "avg"] {
+    for at in [0, 16, 32, 48] {
+      bad = all_of(bad, wrong_lanes("u16x8", verb, bytes_u16x8(lanes_u16x8(verb, simd.load_u16x8(xs, at), simd.load_u16x8(ys, at))), xs, ys, at, 16, false));
+    }
+  }
+  let a = simd.load_u16x8(xs, 16);
+  for count in [0, 1, 3, 15, 16, 18] {
+    bad = all_of(bad, wrong_shift("u16x8", "shl", bytes_u16x8(simd.shl_u16x8(a, count)), xs, count, 16, false));
+    bad = all_of(bad, wrong_shift("u16x8", "shr", bytes_u16x8(simd.shr_u16x8(a, count)), xs, count, 16, false));
+  }
+  return bad;
+}
+
+// The mask of `1 < 3` in each lane, the mask of a select that takes each
+// lane of its first value, and one lane of that select.
+function values_u16x8(): string {
+  let a = simd.splat_u16x8(3);
+  let m = simd.lt_u16x8(simd.splat_u16x8(1), a);
+  let s = simd.select_u16x8(a, simd.splat_u16x8(9), m);
+  return simd.bitmask_u16x8(m).to_string() + " " + simd.bitmask_u16x8(simd.eq_u16x8(a, s)).to_string() + " " + (__u16x8_lane(s, 7) as i32).to_string();
+}
+
+function lanes_i16x8(verb: string, a: i16x8, b: i16x8): i16x8 {
+  return match (verb) {
+    "add" => a + b,
+    "sub" => a - b,
+    "mul" => a * b,
+    "min" => simd.min_i16x8(a, b),
+    "max" => simd.max_i16x8(a, b),
+    "eq" => simd.eq_i16x8(a, b),
+    "ne" => simd.ne_i16x8(a, b),
+    "lt" => simd.lt_i16x8(a, b),
+    "and" => simd.and_i16x8(a, b),
+    "or" => simd.or_i16x8(a, b),
+    "add_sat" => simd.add_sat_i16x8(a, b),
+    "sub_sat" => simd.sub_sat_i16x8(a, b),
+    _ => simd.xor_i16x8(a, b),
+  };
+}
+
+function bytes_i16x8(v: i16x8): u8[] {
+  return simd.with_i16x8(zeros16(), 0, v);
+}
+
+function check_i16x8(xs: u8[], ys: u8[]): string[] {
+  let bad: string[] = [];
+  for verb in ["add", "sub", "mul", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "add_sat", "sub_sat"] {
+    for at in [0, 16, 32, 48] {
+      bad = all_of(bad, wrong_lanes("i16x8", verb, bytes_i16x8(lanes_i16x8(verb, simd.load_i16x8(xs, at), simd.load_i16x8(ys, at))), xs, ys, at, 16, true));
+    }
+  }
+  let a = simd.load_i16x8(xs, 16);
+  for count in [0, 1, 3, 15, 16, 18] {
+    bad = all_of(bad, wrong_shift("i16x8", "shl", bytes_i16x8(simd.shl_i16x8(a, count)), xs, count, 16, true));
+    bad = all_of(bad, wrong_shift("i16x8", "shr", bytes_i16x8(simd.shr_i16x8(a, count)), xs, count, 16, true));
+  }
+  for at in [0, 16, 32, 48] {
+    bad = all_of(bad, wrong_lanes("i16x8", "neg", bytes_i16x8(-simd.load_i16x8(xs, at)), xs, xs, at, 16, true));
+    bad = all_of(bad, wrong_lanes("i16x8", "abs", bytes_i16x8(simd.abs_i16x8(simd.load_i16x8(xs, at))), xs, xs, at, 16, true));
+  }
+  return bad;
+}
+
+// The mask of `1 < 3` in each lane, the mask of a select that takes each
+// lane of its first value, and one lane of that select.
+function values_i16x8(): string {
+  let a = simd.splat_i16x8(3);
+  let m = simd.lt_i16x8(simd.splat_i16x8(1), a);
+  let s = simd.select_i16x8(a, simd.splat_i16x8(9), m);
+  return simd.bitmask_i16x8(m).to_string() + " " + simd.bitmask_i16x8(simd.eq_i16x8(a, s)).to_string() + " " + (__i16x8_lane(s, 7) as i32).to_string();
+}
+
+function lanes_u32x4(verb: string, a: u32x4, b: u32x4): u32x4 {
+  return match (verb) {
+    "add" => a + b,
+    "sub" => a - b,
+    "mul" => a * b,
+    "min" => simd.min_u32x4(a, b),
+    "max" => simd.max_u32x4(a, b),
+    "eq" => simd.eq_u32x4(a, b),
+    "ne" => simd.ne_u32x4(a, b),
+    "lt" => simd.lt_u32x4(a, b),
+    "and" => simd.and_u32x4(a, b),
+    "or" => simd.or_u32x4(a, b),
+    _ => simd.xor_u32x4(a, b),
+  };
+}
+
+function bytes_u32x4(v: u32x4): u8[] {
+  return simd.with_u32x4(zeros16(), 0, v);
+}
+
+function check_u32x4(xs: u8[], ys: u8[]): string[] {
+  let bad: string[] = [];
+  for verb in ["add", "sub", "mul", "min", "max", "eq", "ne", "lt", "and", "or", "xor"] {
+    for at in [0, 16, 32, 48] {
+      bad = all_of(bad, wrong_lanes("u32x4", verb, bytes_u32x4(lanes_u32x4(verb, simd.load_u32x4(xs, at), simd.load_u32x4(ys, at))), xs, ys, at, 32, false));
+    }
+  }
+  let a = simd.load_u32x4(xs, 16);
+  for count in [0, 1, 3, 31, 32, 34] {
+    bad = all_of(bad, wrong_shift("u32x4", "shl", bytes_u32x4(simd.shl_u32x4(a, count)), xs, count, 32, false));
+    bad = all_of(bad, wrong_shift("u32x4", "shr", bytes_u32x4(simd.shr_u32x4(a, count)), xs, count, 32, false));
+  }
+  return bad;
+}
+
+// The mask of `1 < 3` in each lane, the mask of a select that takes each
+// lane of its first value, and one lane of that select.
+function values_u32x4(): string {
+  let a = simd.splat_u32x4(3 as u32);
+  let m = simd.lt_u32x4(simd.splat_u32x4(1 as u32), a);
+  let s = simd.select_u32x4(a, simd.splat_u32x4(9 as u32), m);
+  return simd.bitmask_u32x4(m).to_string() + " " + simd.bitmask_u32x4(simd.eq_u32x4(a, s)).to_string() + " " + (__u32x4_lane(s, 3) as i32).to_string();
+}
+
+function lanes_i32x4(verb: string, a: i32x4, b: i32x4): i32x4 {
+  return match (verb) {
+    "add" => a + b,
+    "sub" => a - b,
+    "mul" => a * b,
+    "min" => simd.min_i32x4(a, b),
+    "max" => simd.max_i32x4(a, b),
+    "eq" => simd.eq_i32x4(a, b),
+    "ne" => simd.ne_i32x4(a, b),
+    "lt" => simd.lt_i32x4(a, b),
+    "and" => simd.and_i32x4(a, b),
+    "or" => simd.or_i32x4(a, b),
+    _ => simd.xor_i32x4(a, b),
+  };
+}
+
+function bytes_i32x4(v: i32x4): u8[] {
+  return simd.with_i32x4(zeros16(), 0, v);
+}
+
+function check_i32x4(xs: u8[], ys: u8[]): string[] {
+  let bad: string[] = [];
+  for verb in ["add", "sub", "mul", "min", "max", "eq", "ne", "lt", "and", "or", "xor"] {
+    for at in [0, 16, 32, 48] {
+      bad = all_of(bad, wrong_lanes("i32x4", verb, bytes_i32x4(lanes_i32x4(verb, simd.load_i32x4(xs, at), simd.load_i32x4(ys, at))), xs, ys, at, 32, true));
+    }
+  }
+  let a = simd.load_i32x4(xs, 16);
+  for count in [0, 1, 3, 31, 32, 34] {
+    bad = all_of(bad, wrong_shift("i32x4", "shl", bytes_i32x4(simd.shl_i32x4(a, count)), xs, count, 32, true));
+    bad = all_of(bad, wrong_shift("i32x4", "shr", bytes_i32x4(simd.shr_i32x4(a, count)), xs, count, 32, true));
+  }
+  for at in [0, 16, 32, 48] {
+    bad = all_of(bad, wrong_lanes("i32x4", "neg", bytes_i32x4(-simd.load_i32x4(xs, at)), xs, xs, at, 32, true));
+    bad = all_of(bad, wrong_lanes("i32x4", "abs", bytes_i32x4(simd.abs_i32x4(simd.load_i32x4(xs, at))), xs, xs, at, 32, true));
+  }
+  return bad;
+}
+
+// The mask of `1 < 3` in each lane, the mask of a select that takes each
+// lane of its first value, and one lane of that select.
+function values_i32x4(): string {
+  let a = simd.splat_i32x4(3);
+  let m = simd.lt_i32x4(simd.splat_i32x4(1), a);
+  let s = simd.select_i32x4(a, simd.splat_i32x4(9), m);
+  return simd.bitmask_i32x4(m).to_string() + " " + simd.bitmask_i32x4(simd.eq_i32x4(a, s)).to_string() + " " + (__i32x4_lane(s, 3) as i32).to_string();
+}
+
+// Bytes that give each lane width equal pairs, the largest number and the
+// smallest number.
+function lane_inputs(): u8[][] {
+  let xs = ramp(64);
+  let ys: u8[] = [];
+  for i in 0..64 {
+    ys = ys.append(if (i < 8) { xs[i] } else { (i * 101 + 250) as u8 });
+  }
+  for i in 8..12 {
+    xs = xs.with(i, 255 as u8).with(i + 16, 255 as u8);
+  }
+  xs = xs.with(12, 0 as u8).with(13, 128 as u8).with(14, 0 as u8).with(15, 128 as u8);
+  xs = xs.with(28, 0 as u8).with(29, 0 as u8).with(30, 0 as u8).with(31, 128 as u8);
+  ys = ys.with(12, 255 as u8).with(13, 255 as u8).with(14, 1 as u8).with(15, 0 as u8);
+  return [xs, ys];
+}
+
+// Each operation on integer lanes agrees with its scalar form on each lane.
+function test_integer_lanes_against_the_scalar(): test.TestOutcome {
+  let inputs = lane_inputs();
+  let bad = shifts_u8x16(inputs[0]);
+  bad = all_of(bad, check_i8x16(inputs[0], inputs[1]));
+  bad = all_of(bad, check_u16x8(inputs[0], inputs[1]));
+  bad = all_of(bad, check_i16x8(inputs[0], inputs[1]));
+  bad = all_of(bad, check_u32x4(inputs[0], inputs[1]));
+  bad = all_of(bad, check_i32x4(inputs[0], inputs[1]));
+  return test.assert_eq(bad.join(", "), "");
+}
+
+// A mask picks the lanes of a select, and gives one bit for each lane.
+function test_integer_lane_masks(): test.TestOutcome {
+  let got = values_i8x16() + " | " + values_u16x8() + " | " + values_i16x8() + " | " + values_u32x4() + " | " + values_i32x4();
+  return test.assert_eq(got, "65535 65535 3 | 255 255 3 | 255 255 3 | 15 15 3 | 15 15 3");
+}
+
 function main(): i32 {
   let r = test.new("simd");
   r = r.it("kernel on f64", test_kernel_on_f64);
@@ -683,5 +1066,7 @@ function main(): i32 {
   r = r.it("byte lanes against the scalar", test_byte_lanes_against_the_scalar);
   r = r.it("byte lane masks", test_byte_lane_masks);
   r = r.it("byte lane memory", test_byte_lane_memory);
+  r = r.it("integer lanes against the scalar", test_integer_lanes_against_the_scalar);
+  r = r.it("integer lane masks", test_integer_lane_masks);
   return r.finish();
 }
