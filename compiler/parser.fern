@@ -2276,6 +2276,9 @@ function scan_written_type_args(p: Par): (string, i32, Par) {
     n += 1;
     if (p.peek_punct() == ",") {
       p = p.advance();
+      if (p.peek_punct() == "]") {
+        break;
+      }
       continue;
     }
     break;
