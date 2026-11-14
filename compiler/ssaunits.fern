@@ -1886,7 +1886,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
       owned = owned.with(i, true);
       let up: i32[] = [];
       let chain: i32[] = [];
-      if ((takes[i] >= 0 || payloads[i]) && ssasem.is_view(f.values[i])) {
+      if ((takes[i] >= 0 || payloads[i]) && ssasem.holds_view(f, f.values[i])) {
         up = a.parents[defs[i].args[0]];
         chain = a.dependencies[defs[i].args[0]];
       }
