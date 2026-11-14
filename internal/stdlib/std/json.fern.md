@@ -979,7 +979,6 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
         }
         i += 4;
         let cp1 = 65533;
-        let cp2 = -1;
         if (u >= 55296 && u <= 56319) {
           if (i + 6 > n
             || s[i] != 92
@@ -994,7 +993,7 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
             i += 4;
             if (low < 56320 || low > 57343) {
               cp1 = 65533;
-              cp2 = low;
+              i -= 6;
             } else {
               cp1 = 65536
                 + (u - 55296 << 10)
@@ -1011,14 +1010,6 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
         while (ci < cb.len()) {
           out = out.append(cb[ci] as u8);
           ci += 1;
-        }
-        if (cp2 >= 0) {
-          cb = __json_cp_bytes(cp2);
-          ci = 0;
-          while (ci < cb.len()) {
-            out = out.append(cb[ci] as u8);
-            ci += 1;
-          }
         }
       } else {
         let ch = -1;
@@ -2705,6 +2696,27 @@ pub function parse_with_depth(s: string, depth: i32): Result[JsonValue, JsonErro
     });
   }
   return Ok(v);
+}
+
+// parse_at reads one value of `s` that starts at the offset `start`, after
+// any white space. It gives the value and the offset just after the value,
+// and it does not read the text after the value. A stream of values reads
+// one value at a time so.
+pub function parse_at(s: string, start: i32): Result[(JsonValue, i32), JsonError] {
+  let at = cell_new(start);
+  let v = __json_p_value(s, at, 0);
+  let end = at.get();
+  if (end < 0) {
+    let off = -1 - end;
+    let (ln, cl) = __json_line_col(s, off);
+    return Err(JsonError {
+      message: __json_message(s, off),
+      offset: off,
+      line: ln,
+      col: cl,
+    });
+  }
+  return Ok((v, end));
 }
 ```
 
