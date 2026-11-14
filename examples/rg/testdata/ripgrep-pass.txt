@@ -101,7 +101,6 @@ feature/f948_exit_code_no_match
 feature/f1138_no_ignore_dot/1
 feature/f1138_no_ignore_dot/2
 feature/f1138_no_ignore_dot/3
-feature/f1207_auto_encoding
 feature/f1414_no_require_git/1
 feature/f1414_no_require_git/2
 feature/f1414_no_require_git/3
@@ -220,3 +219,6 @@ binary/before_match1_implicit_text
 binary/before_match2_implicit
 binary/before_match2_explicit
 binary/before_match2_implicit_text
+regression/r2480/5
+regression/r2480/6
+regression/r251

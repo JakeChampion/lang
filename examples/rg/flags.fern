@@ -638,7 +638,9 @@ function ignores_case(o: Options): boolean {
   return true;
 }
 
-// One pattern for std/regex from the -e patterns and the flags.
+// One pattern for std/regex from the -e patterns and the flags. As in
+// ripgrep, each pattern is a group, so that its flags and a comment of
+// `(?x)` end with it.
 pub function pattern(o: Options): string {
   let parts: string[] = [];
   for p in o.patterns {
@@ -648,10 +650,7 @@ pub function pattern(o: Options): string {
       parts = parts.append(p);
     }
   }
-  let body = parts[0];
-  if (parts.len() > 1) {
-    body = "(?:" + parts.join(")|(?:") + ")";
-  }
+  let body = "(?:" + parts.join(")|(?:") + ")";
   if (o.has(LINE)) {
     body = "^(?:" + body + ")$";
   } else if (o.has(WORD)) {

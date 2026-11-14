@@ -135,13 +135,15 @@ function test_pattern(): test.TestOutcome {
     pattern_of(["-e", "a", "-e", "b"]),
     pattern_of(["-w", "-e", "a", "-e", "b"]),
     pattern_of(["-iwF", "x.y"]),
+    pattern_of(["(?x) a # b"]),
   ];
   return test.assert_eq_array(got, [
-    "a.b",
-    "a\\.b\\(c\\)\\|\\[d\\]\\{2\\}\\^\\$\\*\\+\\?\\\\",
+    "(?:a.b)",
+    "(?:a\\.b\\(c\\)\\|\\[d\\]\\{2\\}\\^\\$\\*\\+\\?\\\\)",
     "(?:a)|(?:b)",
     "\\b{start-half}(?:(?:a)|(?:b))\\b{end-half}",
-    "(?i)\\b{start-half}(?:x\\.y)\\b{end-half}",
+    "(?i)\\b{start-half}(?:(?:x\\.y))\\b{end-half}",
+    "(?:(?x) a # b)",
   ]);
 }
 
@@ -390,7 +392,7 @@ function test_smart_case(): test.TestOutcome {
     pattern_of(["-S", "-i", "Foo"]),
     pattern_of(["-x", "a|b"]),
   ];
-  return test.assert_eq_array(got, ["(?i)foo", "Foo", "(?i)\\Wfoo", "(?:a)|(?:B)", "(?i)Foo", "^(?:a|b)$"]);
+  return test.assert_eq_array(got, ["(?i)(?:foo)", "(?:Foo)", "(?i)(?:\\Wfoo)", "(?:a)|(?:B)", "(?i)(?:Foo)", "^(?:(?:a|b))$"]);
 }
 
 // The answers of the rules of `text`, from the root `root`, for each path.

@@ -47,14 +47,14 @@ function parts_error(value: Result[string[], regex.TextError]): boolean {
 function check(): i32 {
     for text in ["é", "€", "𐀀"] {
         let bytes = text.bytes();
-        if (!text_error({ let __checked_regex_32: regex.Regex = match (regex.compile(".")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_32.replace(text, "X") })) { return 1; }
-        if (!text_error({ let __checked_regex_31: regex.Regex = match (regex.compile("^.")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_31.replace_all(text, "") })) { return 2; }
+        if (!text_error({ let __checked_regex_32: regex.Regex = match (regex.compile("(?-u).")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_32.replace(text, "X") })) { return 1; }
+        if (!text_error({ let __checked_regex_31: regex.Regex = match (regex.compile("(?-u)^.")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_31.replace_all(text, "") })) { return 2; }
         if (!text_error({ let __checked_regex_30: regex.Regex = match (regex.compile("")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_30.replace_all(text, "-") })) { return 3; }
         if (!text_is({ let __checked_regex_29: regex.Regex = match (regex.compile("")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_29.replace_all(text, "") }, text)) { return 4; }
-        if (!text_is({ let __checked_regex_28: regex.Regex = match (regex.compile(".")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_28.replace_all(text, "") }, "")) { return 5; }
-        let dots = { let __checked_regex_27: regex.Regex = match (regex.compile(".")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_27.find_all(text) };
+        if (!text_is({ let __checked_regex_28: regex.Regex = match (regex.compile("(?-u).")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_28.replace_all(text, "") }, "")) { return 5; }
+        let dots = { let __checked_regex_27: regex.Regex = match (regex.compile("(?-u).")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_27.find_all(text) };
         if (dots.len() != bytes.len()) { return 6; }
-        let captures = { let __checked_regex_26: regex.Regex = match (regex.compile("(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_26.captures_all(text) };
+        let captures = { let __checked_regex_26: regex.Regex = match (regex.compile("(?-u)(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_26.captures_all(text) };
         let h = buf_new(bytes.len());
         let i = 0;
         while (i < captures.len()) {
@@ -69,18 +69,18 @@ function check(): i32 {
         let rebuilt = buf_take_bytes(h);
         buf_free(h);
         if (!same_bytes(rebuilt, bytes)) { return 10; }
-        let Some(named) = { let __checked_regex_25: regex.Regex = match (regex.compile("(?<a>.)(?<b>.*)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_25.captures(text) } else { return 11; };
+        let Some(named) = { let __checked_regex_25: regex.Regex = match (regex.compile("(?-u)(?<a>.)(?<b>.*)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_25.captures(text) } else { return 11; };
         if (!capture_error(named.group_named("a")) || !capture_error(named.group_named("b"))) { return 11; }
         if (!same_bytes(named.group_named_bytes("a").unwrap_or([]), [bytes[0]])) { return 12; }
-        if (!text_is({ let __checked_regex_24: regex.Regex = match (regex.compile("(?<a>.)(?<b>.*)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_24.replace_groups(text, "${a}${b}") }, text)) { return 13; }
-        if (!text_is({ let __checked_regex_23: regex.Regex = match (regex.compile("(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_23.replace_all_groups(text, "$1") }, text)) { return 14; }
-        if (!text_error({ let __checked_regex_22: regex.Regex = match (regex.compile("(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_22.replace_all_groups(text, "$1-") })) { return 15; }
-        if (!same_bytes({ let __checked_regex_21: regex.Regex = match (regex.compile("(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_21.replace_groups_bytes(text, "$1") }, bytes)) { return 16; }
-        if (!same_bytes({ let __checked_regex_20: regex.Regex = match (regex.compile("(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_20.replace_all_groups_bytes(text, "$1") }, bytes)) { return 17; }
-        let split = { let __checked_regex_19: regex.Regex = match (regex.compile("^.")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_19.split_bytes(text) };
+        if (!text_is({ let __checked_regex_24: regex.Regex = match (regex.compile("(?-u)(?<a>.)(?<b>.*)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_24.replace_groups(text, "${a}${b}") }, text)) { return 13; }
+        if (!text_is({ let __checked_regex_23: regex.Regex = match (regex.compile("(?-u)(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_23.replace_all_groups(text, "$1") }, text)) { return 14; }
+        if (!text_error({ let __checked_regex_22: regex.Regex = match (regex.compile("(?-u)(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_22.replace_all_groups(text, "$1-") })) { return 15; }
+        if (!same_bytes({ let __checked_regex_21: regex.Regex = match (regex.compile("(?-u)(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_21.replace_groups_bytes(text, "$1") }, bytes)) { return 16; }
+        if (!same_bytes({ let __checked_regex_20: regex.Regex = match (regex.compile("(?-u)(.)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_20.replace_all_groups_bytes(text, "$1") }, bytes)) { return 17; }
+        let split = { let __checked_regex_19: regex.Regex = match (regex.compile("(?-u)^.")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_19.split_bytes(text) };
         if (split.len() != 2 || split[0].len() != 0 || split[1].len() != bytes.len() - 1) { return 18; }
-        if (!parts_error({ let __checked_regex_18: regex.Regex = match (regex.compile("^.")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_18.split(text) })) { return 19; }
-        let empty_parts = { let __checked_regex_17: regex.Regex = match (regex.compile(".")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_17.split(text) };
+        if (!parts_error({ let __checked_regex_18: regex.Regex = match (regex.compile("(?-u)^.")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_18.split(text) })) { return 19; }
+        let empty_parts = { let __checked_regex_17: regex.Regex = match (regex.compile("(?-u).")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_17.split(text) };
         match (empty_parts) {
             Ok(parts) => {
                 if (parts.len() != bytes.len() + 1) { return 20; }
@@ -92,9 +92,9 @@ function check(): i32 {
         for capture in empty {
             if (!capture_text(capture.group(1), "")) { return 23; }
         }
-        let raw = { let __checked_regex_15: regex.Regex = match (regex.compile(".")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_15.replace_bytes(text, "X") };
+        let raw = { let __checked_regex_15: regex.Regex = match (regex.compile("(?-u).")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_15.replace_bytes(text, "X") };
         if (raw.len() != bytes.len() || raw[0] != 88 as u8 || raw[1] != bytes[1]) { return 24; }
-        let all = { let __checked_regex_14: regex.Regex = match (regex.compile(".")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_14.replace_all_bytes(text, "X") };
+        let all = { let __checked_regex_14: regex.Regex = match (regex.compile("(?-u).")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_14.replace_all_bytes(text, "X") };
         if (all.len() != bytes.len()) { return 25; }
         for b in all { if (b != 88 as u8) { return 26; } }
     }

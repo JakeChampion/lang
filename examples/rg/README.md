@@ -176,10 +176,12 @@ order of the walk.
 
 ## Differences from ripgrep
 
-- **Bytes and ASCII.** `std/regex` reads bytes. `.` matches one byte, and
-  `\w`, `\d`, `\s`, `\b`, `-w` and `-i` know only ASCII. ripgrep uses
-  Unicode for each of these. `\p{...}`, inline flags other than `(?i)` at the
-  start, and lazy repetition are not in `std/regex`.
+- **Unicode tables.** `std/regex` uses the tables of Unicode 17.0.0 from
+  Go's `unicode` package, and ripgrep 14.1.0 uses Unicode 15.1. A script
+  takes its long name, as `\p{Greek}`, and not its short name, as
+  `\p{Grek}`. The properties of emoji are not in `std/regex`.
+  `\p{sc!=Greek}` is the complement of `\p{Greek}`, but ripgrep 14.1.0 reads
+  it as `\p{Greek}`.
 
 - **Pattern errors.** A pattern that does not compile gives exit status 2, as
   in ripgrep, but the message is that of `std/regex`.
@@ -225,10 +227,10 @@ order of the walk.
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
   `tests/*.rs`) with the port and with `/usr/bin/rg`. Each case makes its
   files in a new directory, and each run gets `--path-separator / -j1`.
-  `testdata/ripgrep-pass.txt` names the 219 of 306 cases that give the
+  `testdata/ripgrep-pass.txt` names the 221 of 306 cases that give the
   output of ripgrep. The test fails when a named case fails, and when a case
   that it does not name passes. Most of the other cases use options that
-  are not in this slice, or Unicode in a pattern. The licence is in
+  are not in this slice. The licence is in
   `licenses/ripgrep/`.
 
 ## Performance

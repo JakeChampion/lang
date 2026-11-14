@@ -1,0 +1,255 @@
+import "std/test";
+import "std/regex";
+import "std/string";
+import "std/utf8";
+
+// KELVIN SIGN and LATIN SMALL LETTER LONG S, which fold to `k` and `s`.
+function kelvin(): string {
+  return utf8.encode(8490 as char);
+}
+
+function long_s(): string {
+  return utf8.encode(383 as char);
+}
+
+// The matches of `pattern` in `text`, joined with "|", or "error" when the
+// pattern does not compile.
+function all(pattern: string, text: string): string {
+  let Ok(re) = regex.compile(pattern) else {
+    return "error";
+  };
+  let parts: string[] = [];
+  for m in re.find_all(text) {
+    parts = parts.append(slice_unchecked(text, m.start, m.end) + "");
+  }
+  return parts.join("|");
+}
+
+// The byte spans of the matches, as "start-end" joined with ",".
+function spans(pattern: string, text: string): string {
+  let Ok(re) = regex.compile(pattern) else {
+    return "error";
+  };
+  let parts: string[] = [];
+  for m in re.find_all(text) {
+    parts = parts.append(m.start.to_string() + "-" + m.end.to_string());
+  }
+  return parts.join(",");
+}
+
+// Whether `pattern` matches `text`, as "y" or "n".
+function yn(pattern: string, text: string): string {
+  let Ok(re) = regex.compile(pattern) else {
+    return "error";
+  };
+  return if (re.is_match(text)) { "y" } else { "n" };
+}
+
+function test_dot_is_a_character(): test.TestOutcome {
+  let got = [all(".", "aé€😀"), all("^.$", "é"), all("^.$", "ab"), all(".", "\n"), all("(?s).", "\n")];
+  return test.assert_eq(got.join(" / "), "a|é|€|😀 / é /  /  / \n");
+}
+
+function test_dot_skips_invalid_bytes(): test.TestOutcome {
+  let text = unsafe { string_from_bytes_unchecked([97u8, 255u8, 98u8, 195u8]) };
+  return test.assert_eq(spans(".", text), "0-1,2-3");
+}
+
+function test_word_class_is_unicode(): test.TestOutcome {
+  let got = [all("\\w+", "naïve café, Straße-Ωμέγα"), all("\\w", "-€ "), all("\\W+", "a-€b")];
+  return test.assert_eq(got.join(" / "), "naïve|café|Straße|Ωμέγα /  / -€");
+}
+
+function test_digit_and_space_are_unicode(): test.TestOutcome {
+  let got = [all("\\d+", "x٣٤y12"), all("\\d", "x"), all("\\s", "a\u{3000}b c"), all("\\s", "_"), all("\\S+", "a\u{00A0}b")];
+  return test.assert_eq(got.join(" / "), "٣٤|12 /  / \u{3000}|  /  / a|b");
+}
+
+function test_word_boundary_is_unicode(): test.TestOutcome {
+  let got = [yn("\\bcafé\\b", "un café."), yn("\\bcaf\\b", "café"), yn("\\bfoo", "éfoo"), yn("\\bfoo", "-foo"), yn("é\\B", "éa")];
+  return test.assert_eq(got.join(""), "ynnyy");
+}
+
+function test_word_boundary_after_long_ascii(): test.TestOutcome {
+  let pad = "x ".repeat(5000);
+  let got = [yn("\\bfoo\\b", pad + "éfoo"), yn("\\bfoo\\b", pad + "foo"), yn("\\bfoo\\b", pad + "fooñ"), all("\\b\\w+\\b", pad + "ñu")];
+  return test.assert_eq(got.join(" / "), "n / y / n / " + "x|".repeat(5000) + "ñu");
+}
+
+function test_case_folding_is_unicode(): test.TestOutcome {
+  let k = kelvin();
+  let got = [all("(?i)k", "K k " + k + " x"), all("(?i)" + k, "kK"), all("(?i)σ", "Σσς"), all("(?i)é", "ÉéE"), all("(?i)ß", "ẞßs")];
+  return test.assert_eq(got.join(" / "), "K|k|" + k + " / k|K / Σ|σ|ς / É|é / ẞ|ß");
+}
+
+function test_case_folding_of_classes(): test.TestOutcome {
+  let ks = kelvin() + long_s();
+  let got = [all("(?i)[a-z]+", "ABC" + ks), all("(?i)[à-ö]+", "ÀÉ×"), all("(?i)\\p{Ll}", "Ab"), all("(?i)[^k]", kelvin() + "x")];
+  return test.assert_eq(got.join(" / "), "ABC" + ks + " / ÀÉ / A|b / x");
+}
+
+function test_case_folded_prefix(): test.TestOutcome {
+  let got = [
+    yn("(?i)sherlock", "a SHERLOCK"), yn("(?i)sherlock", long_s() + "herlock"), yn("(?i)sherlock", "sherloc" + kelvin()),
+    yn("(?i)sherlock", "sherlocx"), yn("(?i)holmes", "HOLME" + long_s()),
+  ];
+  return test.assert_eq(got.join(""), "yyyny");
+}
+
+function test_property_classes(): test.TestOutcome {
+  let got = [all("\\p{Greek}+", "abc αβγ def"), all("\\P{Greek}+", "αxβ"), all("\\p{Lu}", "aBç"), all("\\pL+", "a1b"), all("\\p{sc=Cyrillic}+", "мир x"), all("\\p{Han}", "x漢")];
+  return test.assert_eq(got.join(" / "), "αβγ / x / B / a|b / мир / 漢");
+}
+
+function test_property_names(): test.TestOutcome {
+  let got = [all("\\p{Uppercase Letter}", "aB"), all("\\p{gc=lu}", "aB"), all("\\p{White_Space}", "a b"), all("\\p{sc!=Greek}", "αb"), all("\\p{NoSuchThing}", "a"), all("(?-u)\\p{L}", "a")];
+  return test.assert_eq(got.join(" / "), "B / B /   / b / error / error");
+}
+
+function test_class_operations(): test.TestOutcome {
+  let got = [all("[\\w&&\\p{Greek}]+", "aαβ1"), all("[a-z--aeiou]+", "hello"), all("[\\d~~[0-4]]+", "0597"), all("[[:alpha:]]+", "ab1é"), all("[[:^digit:]]", "1a")];
+  return test.assert_eq(got.join(" / "), "αβ / h|ll / 597 / ab / a");
+}
+
+function test_escapes(): test.TestOutcome {
+  let got = [all("\\x{3B1}", "aα"), all("\\u03B1", "α"), all("\\U0001F600", "😀"), all("\\x41", "A"), all("\\y", "y"), all("\\/\\:", "/:")];
+  return test.assert_eq(got.join(" / "), "α / α / 😀 / A / error / /:");
+}
+
+function test_inline_flags_as_toggles(): test.TestOutcome {
+  let got = [yn("a(?i)b", "aB"), yn("a(?i)b", "AB"), yn("(?i)a(?-i)b", "Ab"), yn("(?i)a(?-i)b", "AB"), yn("a(?i)b|c", "C")];
+  return test.assert_eq(got.join(""), "ynyny");
+}
+
+function test_inline_flags_as_groups(): test.TestOutcome {
+  let got = [yn("(?i:a)b", "Ab"), yn("(?i:a)b", "AB"), yn("(?is:A.)", "a\n"), yn("(?-s:a.)", "a\n"), yn("(?i)(?:x|(?-i:y))", "X"), yn("(?i)(?:x|(?-i:y))", "Y")];
+  return test.assert_eq(got.join(""), "ynynyn");
+}
+
+function test_multi_line_flag(): test.TestOutcome {
+  let got = [all("(?m)^\\w+", "ab\ncd"), all("^\\w+", "ab\ncd"), all("(?m)\\w+$", "ab\ncd"), all("\\w+$", "ab\ncd"), all("(?mR)^\\w+$", "ab\r\ncd\r\n")];
+  return test.assert_eq(got.join(" / "), "ab|cd / ab / ab|cd / cd / ab|cd");
+}
+
+function test_extended_flag(): test.TestOutcome {
+  let got = [yn("(?x) a b # c", "ab"), yn("(?x) a b # c", "a b"), yn("(?x)a\\ b", "a b"), yn("(?x)[a b]", " ")];
+  return test.assert_eq(got.join(""), "ynyn");
+}
+
+function test_bad_flags(): test.TestOutcome {
+  let got = [all("(?q)a", "a"), all("(?)a", "a"), all("(?i-)a", "a"), all("(?=a)", "a")];
+  return test.assert_eq(got.join(" "), "error error error error");
+}
+
+function test_lazy_repetition(): test.TestOutcome {
+  let got = [all("a+?", "aaa"), spans("a*?", "aa"), all("a{2,3}?", "aaaaa"), all("<.+?>", "<a><b>"), all("<.+>", "<a><b>"), all("a??b", "ab")];
+  return test.assert_eq(got.join(" / "), "a|a|a / 0-0,1-1,2-2 / aa|aa / <a>|<b> / <a><b> / ab");
+}
+
+function test_swap_greed_flag(): test.TestOutcome {
+  let got = [all("(?U)a+", "aaa"), all("(?U)a+?", "aaa"), all("(?U)\\w{1,2}", "abc")];
+  return test.assert_eq(got.join(" / "), "a|a|a / aaa / a|b|c");
+}
+
+function test_lazy_captures(): test.TestOutcome {
+  let Ok(re) = regex.compile("(\\w+?)(\\d*)$") else {
+    return test.fail("compile");
+  };
+  let Some(c) = re.captures("ab12") else {
+    return test.fail("no match");
+  };
+  let Ok(Some(word)) = c.group(1) else {
+    return test.fail("no group 1");
+  };
+  let Ok(Some(num)) = c.group(2) else {
+    return test.fail("no group 2");
+  };
+  return test.assert_eq(word + "," + num, "ab,12");
+}
+
+function test_bytes_flag(): test.TestOutcome {
+  let raw = unsafe { string_from_bytes_unchecked([97u8, 255u8, 98u8]) };
+  let got = [spans("(?-u).", "é"), spans("(?-u)\\w", "é"), spans("(?-u)\\xFF", raw), spans("(?-u:\\b)a", "éa"), spans("\\ba", "éa"), spans("(?-u)[^a]", "é")];
+  return test.assert_eq(got.join(" / "), "0-1,1-2 /  / 1-2 / 2-3 /  / 0-1,1-2");
+}
+
+function test_bytes_flag_scope(): test.TestOutcome {
+  let got = [spans("(?-u:.)é", "éé"), spans("(?-u)(?u:.)", "é"), spans("(?i-u)k", kelvin() + "K")];
+  return test.assert_eq(got.join(" / "), "1-4 / 0-2 / 3-4");
+}
+
+function test_unicode_captures(): test.TestOutcome {
+  let Ok(re) = regex.compile("(\\w+)@(?P<host>\\w+)") else {
+    return test.fail("compile");
+  };
+  let Some(c) = re.captures("mail: jürgen@straße!") else {
+    return test.fail("no match");
+  };
+  let Ok(Some(user)) = c.group(1) else {
+    return test.fail("no group 1");
+  };
+  let Ok(Some(host)) = c.group_named("host") else {
+    return test.fail("no host");
+  };
+  return test.assert_eq(user + " " + host, "jürgen straße");
+}
+
+// The leftmost-first match of `[ab]*a[ab]{17}` in a long text of `a` and
+// `b` ends 18 bytes after the last `a` that has 17 bytes after it. The text
+// makes more DFA states than a table holds, so the table starts again and
+// the Pike VM finishes the search.
+function test_dfa_table_limit(): test.TestOutcome {
+  let bytes = __alloc_u8(30000);
+  let x = 12345;
+  for i in 0..bytes.len() {
+    x = x * 1103515245 + 12345 & 2147483647;
+    bytes = bytes.with(i, if ((x >> 16 & 1) == 1) { 97u8 } else { 98u8 });
+  }
+  let text = unsafe { string_from_bytes_unchecked(bytes) };
+  let last = text.len() - 18;
+  while (text[last] != 97u8) {
+    last -= 1;
+  }
+  let Ok(re) = regex.compile("[ab]*a[ab]{17}") else {
+    return test.fail("compile");
+  };
+  let Some(m) = re.find(text) else {
+    return test.fail("no match");
+  };
+  let again = re.find(text);
+  let same = match (again) {
+    Some(n) => n.start == m.start && n.end == m.end,
+    None => false,
+  };
+  return test.assert_eq(m.start.to_string() + "-" + m.end.to_string() + " " + same.to_string(), "0-" + (last + 18).to_string() + " true");
+}
+
+function main(): i32 {
+  let r = test.new("std/regex syntax");
+  r = r.it("dot is a character", test_dot_is_a_character);
+  r = r.it("dot skips invalid bytes", test_dot_skips_invalid_bytes);
+  r = r.it("word class is Unicode", test_word_class_is_unicode);
+  r = r.it("digit and space are Unicode", test_digit_and_space_are_unicode);
+  r = r.it("word boundary is Unicode", test_word_boundary_is_unicode);
+  r = r.it("word boundary after long ASCII", test_word_boundary_after_long_ascii);
+  r = r.it("case folding is Unicode", test_case_folding_is_unicode);
+  r = r.it("case folding of classes", test_case_folding_of_classes);
+  r = r.it("case-folded prefix", test_case_folded_prefix);
+  r = r.it("property classes", test_property_classes);
+  r = r.it("property names", test_property_names);
+  r = r.it("class operations", test_class_operations);
+  r = r.it("escapes", test_escapes);
+  r = r.it("inline flags as toggles", test_inline_flags_as_toggles);
+  r = r.it("inline flags as groups", test_inline_flags_as_groups);
+  r = r.it("multi-line flag", test_multi_line_flag);
+  r = r.it("extended flag", test_extended_flag);
+  r = r.it("bad flags", test_bad_flags);
+  r = r.it("lazy repetition", test_lazy_repetition);
+  r = r.it("swap greed flag", test_swap_greed_flag);
+  r = r.it("lazy captures", test_lazy_captures);
+  r = r.it("bytes flag", test_bytes_flag);
+  r = r.it("bytes flag scope", test_bytes_flag_scope);
+  r = r.it("Unicode captures", test_unicode_captures);
+  r = r.it("DFA table limit", test_dfa_table_limit);
+  return r.finish();
+}
