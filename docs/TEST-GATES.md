@@ -149,6 +149,10 @@ do not reach it.
   and gets a comment.
 - **Main moved.** When main got only pin-file commits of `rebank-main`, the
   queue merges them in. For any other commit it tests the batch again.
+- **One suite for each batch.** A batch selects its lanes by its diff from
+  main, as a pull request does by its own diff. When main moves to the tested
+  commit, the run of main skips each lane that passed on the batch run at
+  that commit. `perf` still runs there, because it records the history.
 - **Perf.** The strict perf gate is advisory on a batch. Each pull request
   passed it alone, and `rebank-main` sets the rows that they move together.
 - **Removed.** A pull request that lost the label does not get it again at
