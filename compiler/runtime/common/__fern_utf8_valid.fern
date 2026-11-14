@@ -1,24 +1,7 @@
 function __fern_utf8_valid(buf: usize, n: i32): i32 {
   let high = (-9187201950435737472) as i64;
-  // Short ASCII text, such as a file name, needs one pass of word loads.
-  if (n < 32) {
-    let w = 0 as i64;
-    let j = 0;
-    if (n >= 8) {
-      w = __load_i64(buf + (n - 8) as usize);
-      while (j + 8 < n) {
-        w = w | __load_i64(buf + j as usize);
-        j += 8;
-      }
-    } else {
-      while (j < n) {
-        w = w | __raw_load8(buf, j) as i64;
-        j += 1;
-      }
-    }
-    if ((w & high) == 0 as i64) {
-      return 1;
-    }
+  if (n < 32 && __fern_utf8_ascii_short(buf, n) == 1) {
+    return 1;
   }
   let retry = 0;
   let vector = 1;
