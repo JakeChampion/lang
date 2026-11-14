@@ -1,3 +1,7 @@
+# 2026-11-14: perf/append-loop-concat (#15829), local scripts/cliff-bench runs. Main 8ce8fde7 measures
+# 43951216 bytes and 450081 crossings, and the branch 44408528 and 450419. The compiler's own append
+# loops are now range concats. checker.cliff_bytes moves to its measured value, +1.04%. Keep the 1%
+# tolerance.
 # 2026-11-13: PR #15739, local scripts/cliff-bench runs on x86_64. #15727 read the table of
 # handed-back parameters in the same call that lowers an argument, so the state had a second
 # reader and each call copied two arrays. It also copied the table for each update. Main 6b9870db,
@@ -178,7 +182,7 @@
 # This is an inherited main cost of the merges after 710af42c. The 1% tolerance is unchanged.
 # 2026-11-12 (#15474): a local scripts/cliff-bench run on main f2aa998b measures 44,566,616 copied bytes (was 45,149,488), 1.29% less. The win is the new ceiling. The tolerance is unchanged.
 # 2026-11-12 (#15471): `scripts/cliff-bench` measured 42,809,472 copied bytes when a union resolves through its members (was 44,566,616). The 1% tolerance is unchanged.
-x86_64/checker.cliff_bytes	43792160
+x86_64/checker.cliff_bytes	44408528
 # 2026-11-11: Bank checker.cliff_count 378075 -> 373796 after main reverts.
 # Exact CI 42958185608 / job 130320191632 measures source ca80bd07aba3.
 # That source tree equals main 38399ecf. The 1% tolerance stays unchanged.
