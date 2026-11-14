@@ -1324,6 +1324,8 @@ import "std/utf8" as utf8;
 
 	emitTable(&b, "_wb_ranges", wbTable)
 
+	stats.tableBytes += regexData(&b)
+
 	b.WriteString(`function _dig(c: i32): i32 {
     if (c <= 91) { return c - 48; }
     return c - 49;
