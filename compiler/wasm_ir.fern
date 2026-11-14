@@ -4990,6 +4990,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append(mmio_wat(o));
   } else if (o.kind_tag == ir.K_LOAD_I32 || o.kind_tag == ir.K_LOAD_PTR) {
     parts = parts.append("    i32.load\n");
+  } else if (o.kind_tag == ir.K_LOAD && o.width == 16) {
+    parts = parts.append("    i32.load16_u\n");
   } else if (o.kind_tag == ir.K_LOAD_I64) {
     parts = parts.append("    i64.load\n");
   } else if (o.kind_tag == ir.K_STORE_I32 || o.kind_tag == ir.K_STORE_PTR) {
