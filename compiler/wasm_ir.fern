@@ -5316,7 +5316,7 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): stri
   if (parser.is_float_type_name(fd.ret_type)) {
     return " (result f64)\n";
   }
-  if (fd.ret_type == "f64x2" || fd.ret_type == "f32x4" || fd.ret_type == "u8x16") {
+  if (parser.is_lanes_type_name(fd.ret_type)) {
     return " (result v128)\n";
   }
   if (irtables.erased_passthrough_safe(fd)) {

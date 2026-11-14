@@ -417,7 +417,12 @@ function renamed_list(ts: Type[], clone_of: (Type) => string): Type[] {
 
 pub function lanes_spelling(width: i32, kind: i32): string {
   if (kind != LANE_FLOAT) {
-    return if (kind == LANE_UNSIGNED && width == 8) { "u8x16" } else { "" };
+    for t in integer_lane_types() {
+      if (lanes_width(t) == width && lanes_kind(t) == kind) {
+        return t;
+      }
+    }
+    return "";
   }
   if (width == 64) {
     return "f64x2";
@@ -436,21 +441,40 @@ pub function lanes_named(t: string): Type {
 
 // The kind of an element of the lane type with the name `t`.
 pub function lanes_kind(t: string): i32 {
-  return if (t == "u8x16") { LANE_UNSIGNED } else { LANE_FLOAT };
+  if (t.starts_with("u")) {
+    return LANE_UNSIGNED;
+  }
+  return if (t.starts_with("i")) { LANE_SIGNED } else { LANE_FLOAT };
 }
 
-// The type of one element of a lane type.
+// The integer lane types of the portable tier.
+pub function integer_lane_types(): string[] {
+  return ["u8x16", "i8x16", "u16x8", "i16x8", "u32x4", "i32x4"];
+}
+
+// The type of one element of a lane type. An integer lane with no scalar
+// type of its width and sign has the element i32.
 pub function lane_elem(l: TypeLanes): Type {
   if (l.kind == LANE_FLOAT) {
     return TypeFloat { width: l.width, polymorphic: false };
   }
-  return TypeI32 { is_char: false, width: l.width, unsigned: l.kind == LANE_UNSIGNED, polymorphic: false };
+  if (l.kind == LANE_UNSIGNED && l.width != 16) {
+    return TypeI32 { is_char: false, width: l.width, unsigned: true, polymorphic: false };
+  }
+  return TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
 }
 
 // The lane type of a lane builtin, from the start of its name.
 pub function lane_builtin_lanes(name: string): TypeLanes {
-  let w = lane_builtin_width(name);
-  return TypeLanes { width: w, kind: if (w == 8) { LANE_UNSIGNED } else { LANE_FLOAT } };
+  return TypeLanes { width: lane_builtin_width(name), kind: lane_builtin_kind(name) };
+}
+
+// The kind of an element of the lane type of a lane builtin.
+pub function lane_builtin_kind(name: string): i32 {
+  if (name.starts_with("__u")) {
+    return LANE_UNSIGNED;
+  }
+  return if (name.starts_with("__i")) { LANE_SIGNED } else { LANE_FLOAT };
 }
 
 // vec_lanes is the lane type spelled `Vec[n, elem]`, or "" when the portable
@@ -497,8 +521,14 @@ pub function lanes_width(t: string): i32 {
   if (t == "f32x4") {
     return 32;
   }
-  if (t == "u8x16") {
+  if (t == "u8x16" || t == "i8x16") {
     return 8;
+  }
+  if (t == "u16x8" || t == "i16x8") {
+    return 16;
+  }
+  if (t == "u32x4" || t == "i32x4") {
+    return 32;
   }
   return 0;
 }
@@ -513,8 +543,13 @@ pub function lane_builtin_width(name: string): i32 {
   if (__mismatch(name, 0, "__f32x4_", 0, 8) == 8) {
     return 32;
   }
-  if (__mismatch(name, 0, "__u8x16_", 0, 8) == 8) {
-    return 8;
+  if (name[7] != b'_') {
+    return 0;
+  }
+  for t in integer_lane_types() {
+    if (__mismatch(name, 2, t, 0, 5) == 5) {
+      return lanes_width(t);
+    }
   }
   return 0;
 }
@@ -559,8 +594,12 @@ pub function lane_builtin_params(name: string): Type[] {
     }
     return out;
   }
-  if (v == "lane" || v == "lane_bits") {
+  if (v == "lane" || v == "lane_bits" || v == "shl" || v == "shr") {
     return [lt, i];
+  }
+  if (lanes.kind != LANE_FLOAT) {
+    // An integer lane type reads and writes 16 bytes.
+    arr = TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: false };
   }
   if (v == "load_bytes" || v == "with_bytes") {
     let bytes: Type = TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: false };
@@ -597,7 +636,7 @@ pub function lane_builtin_result(name: string): Type {
     "bitmask" => TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false },
     "lane" => lane_elem(lane_builtin_lanes(name)),
     "with_bytes" => TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: false },
-    "with" => TypeArray { elem: lane_elem(lane_builtin_lanes(name)), view: false },
+    "with" => lane_builtin_params(name)[0],
     _ => lane_builtin_lanes(name),
   };
 }

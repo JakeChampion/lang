@@ -41,6 +41,19 @@ func TestLanesRejected(t *testing.T) {
 		"byte array":         {`function f(): i32 { let xs: u8x16[] = []; return xs.len(); }`, "E085", "u8x16[] holds a lane value inside another type"},
 		"byte splat type":    {`function f(): u8x16 { return __u8x16_splat(1.5); }`, "E038", "expected u8, got f64"},
 		"byte load type":     {`function f(xs: i32[]): u8x16 { return __u8x16_load(xs, 0); }`, "E038", "expected u8[], got i32[]"},
+		"word index":         {`function f(v: i16x8): i32 { return __i16x8_lane(v, 8); }`, "E038", "the lane index is an integer literal from 0 to 7"},
+		"quad index":         {`function f(v: u32x4): u32 { return __u32x4_lane(v, 4); }`, "E038", "the lane index is an integer literal from 0 to 3"},
+		"signed byte times":  {`function f(v: i8x16): i8x16 { return v * v; }`, "E009", "operator \"*\" is not available for i8x16: lanes of 8 bits have no multiply"},
+		"word divide":        {`function f(v: u16x8): u16x8 { return v / v; }`, "E009", "operator \"/\" is not available for u16x8: integer lanes have no divide"},
+		"quad negative":      {`function f(v: u32x4): u32x4 { return -v; }`, "E009", "its lanes have no sign"},
+		"sign mixed":         {`function f(v: u16x8, w: i16x8): u16x8 { return v + w; }`, "E009", "got u16x8 and i16x8"},
+		"width mixed":        {`function f(v: i32x4, w: f32x4): i32x4 { return v + w; }`, "E009", "got i32x4 and f32x4"},
+		"quad saturate":      {`function f(v: i32x4): i32x4 { return __i32x4_add_sat(v, v); }`, "E001", "cannot find \"__i32x4_add_sat\""},
+		"signed average":     {`function f(v: i16x8): i16x8 { return __i16x8_avg(v, v); }`, "E001", "cannot find \"__i16x8_avg\""},
+		"unsigned abs":       {`function f(v: u8x16): u8x16 { return __u8x16_abs(v); }`, "E001", "cannot find \"__u8x16_abs\""},
+		"word load type":     {`function f(xs: i32[]): i16x8 { return __i16x8_load(xs, 0); }`, "E038", "expected u8[], got i32[]"},
+		"shift count type":   {`function f(v: u16x8): u16x8 { return __u16x8_shl(v, v); }`, "E038", "expected i32, got u16x8"},
+		"word field":         {`struct H { v: i16x8 } function f(): i32 { return 0; }`, "E085", "a field or payload of type i16x8"},
 	} {
 		err := checkSource(t, tc.src)
 		if err == nil || !hasCode(err, tc.code) {
@@ -73,6 +86,11 @@ func TestLanesAccepted(t *testing.T) {
 		"byte builtins":   `function f(a: u8x16): i32 { let m: u8x16 = __u8x16_lt(a, __u8x16_splat(7 as u8)); let b: u8x16 = __u8x16_select(__u8x16_min(a, a), __u8x16_max(a, a), m); return __u8x16_bitmask(__u8x16_and(__u8x16_or(b, m), __u8x16_xor(__u8x16_eq(b, a), __u8x16_ne(b, a)))) + (__u8x16_lane(__u8x16_avg(__u8x16_add_sat(a, b), __u8x16_sub_sat(a, b)), 15) as i32); }`,
 		"byte array":      `function f(xs: u8[]): u8[] { let v: u8x16 = __u8x16_load(xs, 0); return __u8x16_with(xs, 16, v); }`,
 		"byte call":       `function g(v: u8x16, k: u8): u8x16 { return v + __u8x16_splat(k); } function f(): u8 { return __u8x16_lane(g(__u8x16_splat(1 as u8), 2 as u8), 0); }`,
+		"byte shifts":     `function f(a: u8x16): u8x16 { return __u8x16_shr(__u8x16_shl(a, 3), 1); }`,
+		"signed bytes":    `function f(a: i8x16): i32 { return __i8x16_lane(__i8x16_abs(-a) + __i8x16_add_sat(a, __i8x16_splat(-3)), 15); }`,
+		"words":           `function f(a: u16x8, b: i16x8): i32 { let m: u16x8 = __u16x8_avg(a * a, __u16x8_sub_sat(a, __u16x8_splat(9))); return __u16x8_lane(m, 7) + __i16x8_bitmask(__i16x8_lt(-b * b, __i16x8_abs(b))); }`,
+		"quads":           `function f(a: u32x4, b: i32x4): u32 { let m: i32x4 = __i32x4_select(b * b, -b, __i32x4_eq(b, __i32x4_of(1, 2, 3, 4))); return __u32x4_lane(__u32x4_shr(a * a + __u32x4_splat(7 as u32), 2), 3) + (__i32x4_lane(__i32x4_shl(m, 1), 0) as u32); }`,
+		"word array":      `function f(xs: u8[]): u8[] { return __i32x4_with(__u16x8_with(xs, 0, __u16x8_load(xs, 1)), 2, __i32x4_load(xs, 3)); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%s: want accepted, got %v", name, err)

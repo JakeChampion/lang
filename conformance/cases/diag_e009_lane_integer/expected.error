@@ -1,3 +1,6 @@
-operator "*" is not available for u8x16: integer lanes have + and -
-operator "/" is not available for u8x16: integer lanes have + and -
+operator "*" is not available for u8x16: lanes of 8 bits have no multiply
+operator "/" is not available for u8x16: integer lanes have no divide
 operator "-" is not available for u8x16: its lanes have no sign
+operator "/" is not available for i16x8: integer lanes have no divide
+operator "*" is not available for i8x16: lanes of 8 bits have no multiply
+operator "-" is not available for u32x4: its lanes have no sign
