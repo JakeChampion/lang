@@ -425,7 +425,8 @@ whole group are the next steps.
 | 7e | Integer lanes: the shifts, the multiply, and code for lanes of 16 and 32 bits on each backend | done (#14731) |
 | 7g | Integer lanes: the types `i8x16`, `u16x8`, `i16x8`, `u32x4` and `i32x4` in both front ends, the shifts, the multiply and the signed operations | done (#14731) |
 | 7h | Integer lanes: `std/simd` functions for the types of slice 7g | done (#14731) |
-| 7f | Integer lanes: the byte kernels of the stdlib and of `std/android/draw` on `u8x16`, each with a measured comparison | after 7h (#14731) |
+| 7i | Integer lanes: the ops that widen and narrow, and the swizzle, from the IR to `std/simd` | done (#14731) |
+| 7f | Integer lanes: the byte kernels of the stdlib and of `std/android/draw` on `u8x16`, each with a measured comparison | next (#14731) |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
 
 ## 8. Integer lanes
@@ -563,8 +564,7 @@ The operator `/` is E009 for each integer lane type. The operator `*` is
 E009 for lanes of 8 bits, and the unary `-` is E009 for an unsigned type.
 A builtin that a type does not have, such as `__i32x4_add_sat`, is E001.
 
-The operations of #14731 that widen, narrow and shuffle are not in this
-slice. The IR has no op for them yet.
+The operations of #14731 that widen, narrow and shuffle are in slice 7i.
 
 The gates are the conformance cases `lanes_integer_ops`,
 `diag_e009_lane_integer` and `diag_e038_lane_index`.
@@ -575,3 +575,43 @@ such as `simd.add_sat_i16x8` and `simd.shr_u32x4`. `u8x16` gets
 of each operation, on numbers of 64 bits. It compares each lane of each
 type with that form. Its inputs have equal lanes, the largest number and
 the smallest number of each lane width.
+
+Slice 7i adds the ops that change the shape of integer lanes. The IR gets
+seven ops. The width of an op is the width of a lane of its first value.
+
+| IR op | Builtin | Meaning |
+| --- | --- | --- |
+| `viwidenlos`, `viwidenlou` | `__T_widen_lo(a)` | the first half of the lanes, each at two times the width |
+| `viwidenhis`, `viwidenhiu` | `__T_widen_hi(a)` | the last half of the lanes, each at two times the width |
+| `vinarrows` | `__T_narrow(a, b)` of a signed type | the lanes of `a` and then of `b` at half the width, each held to the limits of the signed narrow lane |
+| `vinarrowu` | `__T_narrow_u(a, b)` of a signed type | the same, with each lane held to the limits of the unsigned narrow lane |
+| `viswizzle` | `__u8x16_swizzle(a, i)` | byte `i[k]` of `a` in lane `k`, or 0 for an index above 15 |
+
+Lanes of 8 and 16 bits have the two widens. Lanes of 16 and 32 bits have
+the narrows. `__T_narrow` of an unsigned type has no IR op of its own. The
+lowering holds each lane to the largest number of the narrow lane with
+`viminu`, and that number has no sign bit, so `vinarrowu` gives the result.
+
+- **x86-64.** A widen is an unpack of the lanes with a second register.
+  That register is zero, or the sign of each lane from a compare with
+  zero. A narrow is one pack instruction. The swizzle is `vpshufb`, after
+  a saturating add of 0x70 to each index: `vpshufb` gives 0 only for an
+  index with its top bit. The assembler learns `vpunpcklbw`, `vpunpckhbw`,
+  `vpunpcklwd`, `vpunpckhwd`, `vpacksswb`, `vpackssdw` and `vpackusdw`.
+- **arm64.** A widen is `sshll` or `ushll` with a shift of 0, and the form
+  with `2` for the last half. A narrow is `sqxtn` and `sqxtn2`, or `sqxtun`
+  and `sqxtun2`. The swizzle is `tbl`. The assembler learns the four
+  narrow instructions.
+- **wasm.** Each op is one instruction: `extend_low`, `extend_high`,
+  `narrow` and `swizzle`.
+
+A shuffle by constants is a swizzle with indexes from `__u8x16_of`. A
+shuffle of two values is not in this slice.
+
+`std/simd` has a function for each builtin, such as `simd.widen_lo_u8x16`,
+`simd.narrow_u_i16x8` and `simd.swizzle_u8x16`.
+
+The gates are `TestSelfHostLaneIR` for the ops on each backend, the GNU as
+differentials for the new instructions, the conformance case
+`lanes_integer_shapes`, and two cases of the stdlib test that compare each
+lane with a scalar form.

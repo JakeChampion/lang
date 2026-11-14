@@ -2689,6 +2689,45 @@ function integer_lanes_negated(l: VLanes, magnitude: boolean): Value {
   return VLanes { width: l.width, kind: l.kind, bits: bits };
 }
 
+// Half of the lanes of `a` from lane `first`, at two times the width.
+function integer_lanes_widened(a: VLanes, first: i32): Value {
+  let bits: i64[] = [];
+  for i in 0..a.bits.len() / 2 {
+    bits = bits.append(lane_number(a, first + i) & lane_ones(a.width * 2));
+  }
+  return VLanes { width: a.width * 2, kind: a.kind, bits: bits };
+}
+
+// A builtin that changes the shape of integer lanes: a half of the lanes
+// at two times the width, two values at half the width with each lane held
+// to the limits of the narrow lane, or the lanes of a value at the indexes
+// of another value.
+function integer_lanes_shape(verb: string, ls: VLanes[]): Value {
+  if (ls.len() == 0) {
+    return v_err("__lanes_" + verb + ": expected lane values");
+  }
+  let a = ls[0];
+  let bits: i64[] = [];
+  if (verb == "swizzle") {
+    for i in 0..16 {
+      let at = ls[1].bits[i];
+      bits = bits.append(if (at < 16i64) { a.bits[at as i32] } else { 0i64 });
+    }
+    return VLanes { width: 8, kind: a.kind, bits: bits };
+  }
+  let count = a.bits.len();
+  if (verb == "widen_lo" || verb == "widen_hi") {
+    return integer_lanes_widened(a, if (verb == "widen_hi") { count / 2 } else { 0 });
+  }
+  let to = VLanes { width: a.width / 2, kind: if (verb == "narrow_u") { typeinfo.LANE_UNSIGNED } else { a.kind }, bits: [] };
+  for l in ls {
+    for i in 0..count {
+      bits = bits.append(lane_saturated(to, lane_number(l, i)) & lane_ones(to.width));
+    }
+  }
+  return VLanes { ...to, bits: bits };
+}
+
 function integer_lane_value(l: VLanes, i: i32): Value {
   if (l.kind == typeinfo.LANE_UNSIGNED && l.width == 8) {
     return v_byte(l.bits[i] as i32);
@@ -2699,6 +2738,39 @@ function integer_lane_value(l: VLanes, i: i32): Value {
   return v_int(lane_number(l, i) as i32);
 }
 
+// `load` or `with` of an integer lane type: 16 bytes of an array.
+function integer_lanes_memory(heap: interpheap.Heap, verb: string, width: i32, kind: i32, args: Value[]): Value {
+  if (verb == "with") {
+    return integer_lanes_with(heap, args);
+  }
+  let at = lane_window(8, args);
+  if (at < 0) {
+    return v_err("lane load out of bounds");
+  }
+  if let VArr(a) = args[0] {
+    return integer_lanes_load(width, kind, a, at);
+  }
+  return v_err("lane load: expected an array");
+}
+
+// A builtin of one integer lane value: `lane`, a shift, `abs` or `bitmask`.
+function integer_lanes_single(verb: string, l: VLanes, args: Value[]): Value {
+  if (verb == "lane") {
+    return integer_lane_value(l, vint_bits(args[1]));
+  }
+  if (verb == "shl" || verb == "shr") {
+    return integer_lanes_shift(l, verb, vint_bits(args[1]));
+  }
+  if (verb == "abs") {
+    return integer_lanes_negated(l, true);
+  }
+  let mask = 0;
+  for i in 0..l.bits.len() {
+    mask = mask | (l.bits[i] >> (l.width - 1) as i64) as i32 << i;
+  }
+  return v_int(mask);
+}
+
 function call_integer_lane_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let width = typeinfo.lane_builtin_width(name);
   let kind = typeinfo.lane_builtin_kind(name);
@@ -2706,39 +2778,19 @@ function call_integer_lane_builtin(heap: interpheap.Heap, name: string, args: Va
   if (verb == "splat" || verb == "of") {
     return integer_lanes_of(width, kind, args);
   }
-  if (verb == "load") {
-    let at = lane_window(8, args);
-    if (at < 0) {
-      return v_err("lane load out of bounds");
-    }
-    if let VArr(a) = args[0] {
-      return integer_lanes_load(width, kind, a, at);
-    }
-    return v_err("lane load: expected an array");
+  if (verb == "load" || verb == "with") {
+    return integer_lanes_memory(heap, verb, width, kind, args);
   }
-  if (verb == "with") {
-    return integer_lanes_with(heap, args);
+  if (util.has_str(["widen_lo", "widen_hi", "narrow", "narrow_u", "swizzle"], verb)) {
+    return integer_lanes_shape(verb, lane_args(args));
   }
-  let scalar_second = verb == "lane" || verb == "shl" || verb == "shr";
+  let scalar_second = util.has_str(["lane", "shl", "shr"], verb);
   let ls = lane_args(if (scalar_second) { [args[0]] } else { args });
   if (ls.len() == 0) {
     return v_err(name + ": expected lane values");
   }
-  if (verb == "lane") {
-    return integer_lane_value(ls[0], vint_bits(args[1]));
-  }
-  if (verb == "shl" || verb == "shr") {
-    return integer_lanes_shift(ls[0], verb, vint_bits(args[1]));
-  }
-  if (verb == "abs") {
-    return integer_lanes_negated(ls[0], true);
-  }
-  if (verb == "bitmask") {
-    let mask = 0;
-    for i in 0..ls[0].bits.len() {
-      mask = mask | (ls[0].bits[i] >> (width - 1) as i64) as i32 << i;
-    }
-    return v_int(mask);
+  if (scalar_second || verb == "abs" || verb == "bitmask") {
+    return integer_lanes_single(verb, ls[0], args);
   }
   if (verb == "select") {
     if let VLanes(kept) = integer_lanes_map(ls[0], ls[2], "and") {

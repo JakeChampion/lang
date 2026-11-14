@@ -586,6 +586,13 @@ is the number of slots it leaves.
 | `mont_mul` | 558 | 3 | 1 |
 | `scrypt_block_mix` | 559 | 5 | 1 |
 | `proc_wait_any` | 560 | 0 | 1 |
+| `viwidenlos` | 561 | 1 | 1 |
+| `viwidenlou` | 562 | 1 | 1 |
+| `viwidenhis` | 563 | 1 | 1 |
+| `viwidenhiu` | 564 | 1 | 1 |
+| `vinarrows` | 565 | 2 | 1 |
+| `vinarrowu` | 566 | 2 | 1 |
+| `viswizzle` | 567 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.
@@ -609,7 +616,11 @@ The width of an op is the width of a lane.
 The bitwise ops, `vselect`, `vload` and `vstore` do not read the lanes, so they are also the ops for integer lanes.
 `vimul` gives the low bits of each product. `vishl`, `vishrs` and `vishru` take the lanes and one `i32` count, and shift each lane by that count.
 A backend has code for lanes of 8, 16 and 32 bits.
-Each backend refuses the same ops by name: the saturating ops and `viavg` for lanes of 32 bits, and `vimul` and the shifts for lanes of 8 bits.
+Each backend refuses the same ops by name: the saturating ops and `viavg` for lanes of 32 bits, and `vimul` for lanes of 8 bits.
+`viwidenlos`, `viwidenlou`, `viwidenhis` and `viwidenhiu` take one value. They give the first or the last half of its lanes, each at two times the width, with the sign or with zeros.
+`vinarrows` and `vinarrowu` take two values. They give the lanes of the first and then of the second at half the width. Each lane is read with its sign and held to the limits of the signed or the unsigned narrow lane.
+`viswizzle` takes a value and indexes, both with lanes of 8 bits. Lane `k` of the result is the byte at index `k` of the indexes, or 0 for an index above 15.
+The width of these seven ops is the width of a lane of the first value. A widen has code for lanes of 8 and 16 bits, and a narrow for lanes of 16 and 32 bits.
 
 ## How this is kept true
 

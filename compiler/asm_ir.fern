@@ -8361,10 +8361,54 @@ function ssa_vint_unary(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
+// A lane and the lane above it make one wide lane. The lane above is zero,
+// or the sign of the lane: the compare 0 > a.
+function x86_lane_widen(b: string, w: i32, a: string, d: string): string {
+  let pair = (if (b == "viwidenlos" || b == "viwidenlou") { "vpunpckl" } else { "vpunpckh" }) + (if (w == 8) { "bw" } else { "wd" });
+  let sign = if (b == "viwidenlos" || b == "viwidenhis") { "    vpcmpgt" + ssa_vint_sfx(w) + " " + a + ", %xmm0, %xmm0\n" } else { "" };
+  return "    vpxor %xmm0, %xmm0, %xmm0\n" + sign + "    " + pair + " %xmm0, " + a + ", " + d + "\n";
+}
+
+// The ops that change the shape of integer lanes. `ins.imm` is the width
+// of a lane of the first value. %xmm0 is the scratch register.
+function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let id = ir.kind_id(b);
+  let w = ins.imm;
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (id < ir.K_VINARROWS) {
+    if (w != 8 && w != 16) {
+      ircore.unsupported_op_refuse(id, "x86-64");
+    }
+    return ssa_fput(reg_of, ins.result, d, s.write(x86_lane_widen(b, w, a, d)));
+  }
+  s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
+  let y = ssa_fsrc(reg_of, ins.args[1], "%xmm2");
+  if (b == "viswizzle") {
+    if (w != 8) {
+      ircore.unsupported_op_refuse(id, "x86-64");
+    }
+    // pshufb gives zero for an index with its top bit. The saturating add
+    // of 0x70 sets that bit for each index above 15, and keeps the low
+    // four bits of each other index.
+    s = s.write("    movl $0x70707070, %ecx\n    movd %ecx, %xmm0\n    vpbroadcastd %xmm0, %xmm0\n    vpaddusb %xmm0, " + y + ", %xmm0\n");
+    return ssa_fput(reg_of, ins.result, d, s.write("    vpshufb %xmm0, " + a + ", " + d + "\n"));
+  }
+  if (w != 16 && w != 32) {
+    ircore.unsupported_op_refuse(id, "x86-64");
+  }
+  let pack = (if (b == "vinarrows") { "vpackss" } else { "vpackus" }) + (if (w == 16) { "wb" } else { "dw" });
+  return ssa_fput(reg_of, ins.result, d, s.write("    " + pack + " " + y + ", " + a + ", " + d + "\n"));
+}
+
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
   if (ir.is_lane_int_kind(ir.kind_id(b))) {
     return ssa_vint(ins, b, reg_of, s);
+  }
+  if (ir.is_lane_shape_kind(ir.kind_id(b))) {
+    return ssa_vint_shape(ins, b, reg_of, s);
   }
   if (b == "vpermute") {
     return ssa_vpermute(ins, reg_of, s);

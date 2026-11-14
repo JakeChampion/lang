@@ -24,6 +24,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<byte lanes>>
 <<integer lanes>>
+<<lane shapes>>
 
 <<dependencies 2>>
 
@@ -1576,5 +1577,96 @@ pub function shl_i32x4(value: i32x4, count: i32): i32x4 {
 // Each lane of `value` moved down by `count` bits. The count is modulo 32. The sign stays.
 pub function shr_i32x4(value: i32x4, count: i32): i32x4 {
   return __i32x4_shr(value, count);
+}
+```
+
+## The shape of integer lanes
+
+A widen takes one half of the lanes and gives each lane two times the bits. `widen_lo` takes the first half and `widen_hi` takes the second half.
+A lane of a type with a sign keeps its sign.
+
+A narrow takes two values and gives each lane half of the bits. The lanes of the first value come first.
+A number that the narrow lane cannot hold becomes the nearest limit of that lane.
+`narrow_u` takes lanes with a sign and gives lanes with no sign, so a negative number becomes 0.
+
+A pixel kernel uses the two together: it widens bytes to lanes of 16 bits, does its arithmetic there, and narrows the result.
+
+`swizzle_u8x16` gives the bytes of a value at the indexes of another value. An index above 15 gives 0.
+
+```fern
+<<lane shapes>>=
+// The first 8 lanes of `value`, each as a lane of `u16x8`.
+pub function widen_lo_u8x16(value: u8x16): u16x8 {
+  return __u8x16_widen_lo(value);
+}
+
+// The last 8 lanes of `value`, each as a lane of `u16x8`.
+pub function widen_hi_u8x16(value: u8x16): u16x8 {
+  return __u8x16_widen_hi(value);
+}
+
+// The first 8 lanes of `value`, each as a lane of `i16x8`.
+pub function widen_lo_i8x16(value: i8x16): i16x8 {
+  return __i8x16_widen_lo(value);
+}
+
+// The last 8 lanes of `value`, each as a lane of `i16x8`.
+pub function widen_hi_i8x16(value: i8x16): i16x8 {
+  return __i8x16_widen_hi(value);
+}
+
+// The first 4 lanes of `value`, each as a lane of `u32x4`.
+pub function widen_lo_u16x8(value: u16x8): u32x4 {
+  return __u16x8_widen_lo(value);
+}
+
+// The last 4 lanes of `value`, each as a lane of `u32x4`.
+pub function widen_hi_u16x8(value: u16x8): u32x4 {
+  return __u16x8_widen_hi(value);
+}
+
+// The first 4 lanes of `value`, each as a lane of `i32x4`.
+pub function widen_lo_i16x8(value: i16x8): i32x4 {
+  return __i16x8_widen_lo(value);
+}
+
+// The last 4 lanes of `value`, each as a lane of `i32x4`.
+pub function widen_hi_i16x8(value: i16x8): i32x4 {
+  return __i16x8_widen_hi(value);
+}
+
+// The lanes of `a` and then of `b`, each held to the limits of a lane of `u8x16`.
+pub function narrow_u16x8(a: u16x8, b: u16x8): u8x16 {
+  return __u16x8_narrow(a, b);
+}
+
+// The lanes of `a` and then of `b`, each held to the limits of a lane of `i8x16`.
+pub function narrow_i16x8(a: i16x8, b: i16x8): i8x16 {
+  return __i16x8_narrow(a, b);
+}
+
+// The lanes of `a` and then of `b`, each held to the limits of a lane of `u16x8`.
+pub function narrow_u32x4(a: u32x4, b: u32x4): u16x8 {
+  return __u32x4_narrow(a, b);
+}
+
+// The lanes of `a` and then of `b`, each held to the limits of a lane of `i16x8`.
+pub function narrow_i32x4(a: i32x4, b: i32x4): i16x8 {
+  return __i32x4_narrow(a, b);
+}
+
+// The lanes of `a` and then of `b`, each held to the limits of a lane of `u8x16`.
+pub function narrow_u_i16x8(a: i16x8, b: i16x8): u8x16 {
+  return __i16x8_narrow_u(a, b);
+}
+
+// The lanes of `a` and then of `b`, each held to the limits of a lane of `u16x8`.
+pub function narrow_u_i32x4(a: i32x4, b: i32x4): u16x8 {
+  return __i32x4_narrow_u(a, b);
+}
+
+// Byte `indexes[k]` of `value` in lane `k`, or 0 for an index above 15.
+pub function swizzle_u8x16(value: u8x16, indexes: u8x16): u8x16 {
+  return __u8x16_swizzle(value, indexes);
 }
 ```

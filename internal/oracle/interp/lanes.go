@@ -537,6 +537,18 @@ func intLaneVerbs(like Lanes) []string {
 	if like.Signed {
 		verbs = append(verbs, "abs")
 	}
+	if like.Width <= 16 {
+		verbs = append(verbs, "widen_lo", "widen_hi")
+	}
+	if like.Width == 8 && !like.Signed {
+		verbs = append(verbs, "swizzle")
+	}
+	if like.Width >= 16 {
+		verbs = append(verbs, "narrow")
+		if like.Signed {
+			verbs = append(verbs, "narrow_u")
+		}
+	}
 	return verbs
 }
 
@@ -629,6 +641,53 @@ func (i *Interp) registerIntegerLanes(like Lanes) {
 			return nil, err
 		}
 		return mapIntLanes(ls[0], ls[0], func(_ Lanes, x, _ int64) int64 { return max(x, -x) }), nil
+	}
+	for _, verb := range []string{"widen_lo", "widen_hi"} {
+		name, first := p+verb, 0
+		if verb == "widen_hi" {
+			first = count / 2
+		}
+		builtins[verb] = func(args []Value) (Value, error) {
+			ls, err := intLaneArgs(name, like, args, 1)
+			if err != nil {
+				return nil, err
+			}
+			out := Lanes{Width: like.Width * 2, Int: true, Signed: like.Signed, Bits: make([]uint64, count/2)}
+			for k := range out.Bits {
+				out.Bits[k] = uint64(ls[0].number(first+k)) & out.ones()
+			}
+			return out, nil
+		}
+	}
+	for _, verb := range []string{"narrow", "narrow_u"} {
+		name := p + verb
+		to := Lanes{Width: like.Width / 2, Int: true, Signed: like.Signed && verb == "narrow"}
+		builtins[verb] = func(args []Value) (Value, error) {
+			ls, err := intLaneArgs(name, like, args, 2)
+			if err != nil {
+				return nil, err
+			}
+			// Each lane is held to the limits of the narrow lane.
+			out := to.like()
+			for k := range out.Bits {
+				out.Bits[k] = uint64(to.saturated(ls[k/count].number(k%count))) & out.ones()
+			}
+			return out, nil
+		}
+	}
+	builtins["swizzle"] = func(args []Value) (Value, error) {
+		ls, err := intLaneArgs(p+"swizzle", like, args, 2)
+		if err != nil {
+			return nil, err
+		}
+		// An index above 15 gives zero.
+		out := like.like()
+		for k, at := range ls[1].Bits {
+			if at < 16 {
+				out.Bits[k] = ls[0].Bits[at]
+			}
+		}
+		return out, nil
 	}
 	for _, verb := range []string{"shl", "shr"} {
 		name, left := p+verb, verb == "shl"

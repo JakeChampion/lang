@@ -2735,18 +2735,26 @@ function arm64_gas_vecgen_handles(mnem: string): boolean {
     || arm64_gas_family(mnem) == arm64_fam_vecext();
 }
 
+// The narrowing moves: the plain one, the signed saturating one, and the
+// one that saturates a signed lane to an unsigned lane.
+function arm64_gas_is_xtn(mnem: string): boolean {
+  return mnem == "xtn" || mnem == "xtn2" || mnem == "sqxtn" || mnem == "sqxtn2" || mnem == "sqxtun" || mnem == "sqxtun2";
+}
+
 function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
   if (arm64_gas_fcvt_nl(mnem) >= 0) {
     return arm64_gas_emit_fcvt_nl(a, mnem, ops);
   }
-  if (mnem == "xtn" || mnem == "xtn2") {
+  if (arm64_gas_is_xtn(mnem)) {
     if (ops.len() != 2) {
       return a;
     }
     let xc = arm64_gas_vreg_arrof(ops[0]);
+    // xtn and sqxtun have the opcode 18, and sqxtn has 20. sqxtun has the
+    // U bit.
     util.push_bytes(a.code, arm64_vec2misc(
       [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
-      18, arm64_gas_arr_size(xc), arm64_gas_arr_q(xc), false,
+      if (mnem.starts_with("sqxtn")) { 20 } else { 18 }, arm64_gas_arr_size(xc), arm64_gas_arr_q(xc), mnem.starts_with("sqxtun"),
     ));
     return a;
   }
@@ -4053,7 +4061,7 @@ function arm64_gas_bad_narrowwide(mnem: string, ops: string[]): string {
     return arm64_gas_bad_fcvt_nl(mnem, ops);
   }
   let kind = arm64_gas_shll_kind(mnem);
-  let is_xtn = mnem == "xtn" || mnem == "xtn2";
+  let is_xtn = arm64_gas_is_xtn(mnem);
   let is_shrn = mnem == "shrn" || mnem == "shrn2";
   if (kind < 0 && !is_xtn && !is_shrn && mnem != "ext" && mnem != "tbl" && mnem != "tbx") {
     return "-";
@@ -5639,6 +5647,9 @@ function arm64_gas_family_len5_s(mnem: string): i32 {
   if (c == b'm') {
     return arm64_gas_family_len5_s_sm(mnem);
   }
+  if (c == b'q' && mnem == "sqxtn") {
+    return arm64_fam_narrow();
+  }
   if (c == b's' && mnem == "sshll") {
     return arm64_fam_shll();
   }
@@ -5933,6 +5944,9 @@ function arm64_gas_family_len6_s(mnem: string): i32 {
   if (c == b'm') {
     return arm64_gas_family_len6_s_sm(mnem);
   }
+  if (c == b'q' && (mnem == "sqxtn2" || mnem == "sqxtun")) {
+    return arm64_fam_narrow();
+  }
   if (c == b's' && mnem == "sshll2") {
     return arm64_fam_shll();
   }
@@ -5999,6 +6013,7 @@ function arm64_gas_family_len7_s(mnem: string): i32 {
     "sha256h" => arm64_fam_vecext(),
     "sha1su0" => arm64_fam_vecext(),
     "sha1su1" => arm64_fam_vecext(),
+    "sqxtun2" => arm64_fam_narrow(),
     _ => -1,
   };
 }
