@@ -10950,8 +10950,6 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
 }
 
 function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
-  let prLitA = asmcore.shape_ref(s, "ProcessResult");
-  s = prLitA.state;
   s = s.write(".globl __fn___fern_subprocess\n");
   s = s.write(".type __fn___fern_subprocess, %function\n");
   s = s.write("__fn___fern_subprocess:\n" + rt_pac(s, "paciasp"));
@@ -11102,85 +11100,17 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr w0, [sp, #96]\n   mov x8, #57\n").svc(57);
   s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n").svc(57);
   s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n").svc(57);
-  s = s.write("    ldr x2, [x21, #8]\n");
-  s = s.write("    cbz x2, .Lsp_close_in\n");
-  s = s.write("    ldr w0, [sp, #100]\n");
-  s = s.write("    ldr x1, [x21]\n");
-  s = s.write("    mov x8, #64\n");
-  s = s.svc(64);
-  s = s.write(".Lsp_close_in:\n");
-  s = s.write("    ldr w0, [sp, #100]\n  mov x8, #57\n").svc(57);
-  s = s.write("    mov x0, #65536\n");
-  s = s.write("    bl __fern_alloc\n");
-  s = s.write("    mov x25, x0\n");
-  s = s.write("    mov x26, #0\n");
-  s = s.write(".Lsp_rdo:\n");
-  s = s.write("    mov x2, #65536\n");
-  s = s.write("    sub x2, x2, x26\n");
-  s = s.write("    cmp x2, #0\n");
-  s = s.write("    b.le .Lsp_rdo_d\n");
-  s = s.write("    ldr w0, [sp, #104]\n");
-  s = s.write("    add x1, x25, x26\n");
-  s = s.write("    mov x8, #63\n");
-  s = s.svc(63);
-  s = s.write("    cmp x0, #0\n");
-  s = s.write("    b.le .Lsp_rdo_d\n");
-  s = s.write("    add x26, x26, x0\n");
-  s = s.write("    b .Lsp_rdo\n");
-  s = s.write(".Lsp_rdo_d:\n");
-  s = s.write("    ldr w0, [sp, #104]\n  mov x8, #57\n").svc(57);
-  s = s.write("    mov x0, #65536\n");
-  s = s.write("    bl __fern_alloc\n");
-  s = s.write("    mov x27, x0\n");
-  s = s.write("    mov x28, #0\n");
-  s = s.write(".Lsp_rde:\n");
-  s = s.write("    mov x2, #65536\n");
-  s = s.write("    sub x2, x2, x28\n");
-  s = s.write("    cmp x2, #0\n");
-  s = s.write("    b.le .Lsp_rde_d\n");
-  s = s.write("    ldr w0, [sp, #112]\n");
-  s = s.write("    add x1, x27, x28\n");
-  s = s.write("    mov x8, #63\n");
-  s = s.svc(63);
-  s = s.write("    cmp x0, #0\n");
-  s = s.write("    b.le .Lsp_rde_d\n");
-  s = s.write("    add x28, x28, x0\n");
-  s = s.write("    b .Lsp_rde\n");
-  s = s.write(".Lsp_rde_d:\n");
-  s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n").svc(57);
-  s = s.write("    mov x0, x22\n");
-  s = s.write("    add x1, sp, #120\n");
-  s = s.write("    mov x2, #0\n");
-  s = s.write("    mov x3, #0\n");
-  s = s.write("    mov x8, #260\n");
-  s = s.svc(260);
-  s = s.write("    ldr w9, [sp, #120]\n");
-  s = s.write("    and w10, w9, #127\n");
-  s = s.write("    cbnz w10, .Lsp_signaled\n");
-  s = s.write("    lsr w9, w9, #8\n");
-  s = s.write("    and w9, w9, #255\n");
-  s = s.write("    b .Lsp_have_exit\n");
-  s = s.write(".Lsp_signaled:\n");
-  s = s.write("    and w9, w9, #127\n");
-  s = s.write("    add w9, w9, #128\n");
-  s = s.write(".Lsp_have_exit:\n");
-  s = s.write("    mov x22, x9\n");
-  s = s.write("    mov x0, x25\n");
-  s = s.write("    mov x1, x26\n");
-  s = s.write("    bl __fern_str_box\n");
-  s = s.write("    mov x25, x0\n");
-  s = s.write("    mov x0, x27\n");
-  s = s.write("    mov x1, x28\n");
-  s = s.write("    bl __fern_str_box\n");
-  s = s.write("    mov x27, x0\n");
-  s = s.write("    mov x0, #4\n");
-  s = s.write("    bl __fern_arr_box\n");
-  s = s.write("    adrp x9, " + prLitA.label + "\n");
-  s = s.write("    add x9, x9, :lo12:" + prLitA.label + "\n");
-  s = s.write("    str x9, [x0]\n");
-  s = s.write("    str x25, [x0, #8]\n");
-  s = s.write("    str x27, [x0, #16]\n");
-  s = s.write("    str x22, [x0, #24]\n");
+  s = s.write("    ldr w9, [sp, #100]\n");
+  s = s.write("    ldr w10, [sp, #104]\n");
+  s = s.write("    ldr w11, [sp, #112]\n");
+  s = s.write("    sub sp, sp, #80\n");
+  s = s.write("    str x22, [sp]\n");
+  s = s.write("    str x9, [sp, #16]\n");
+  s = s.write("    str x10, [sp, #32]\n");
+  s = s.write("    str x11, [sp, #48]\n");
+  s = s.write("    str x21, [sp, #64]\n");
+  s = s.write("    bl __fn___fern_sp_collect\n");
+  s = s.write("    add sp, sp, #80\n");
   s = s.write("    ldp x27, x28, [sp, #80]\n");
   s = s.write("    ldp x25, x26, [sp, #64]\n");
   s = s.write("    ldp x23, x24, [sp, #48]\n");
@@ -11254,9 +11184,9 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     if (s.has_need("subprocess")) {
       if (darwin) {
         s = emit_rt_subprocess(s);
-        s = emit_runtime("__fern_sp_exec_path __fern_sp_exec_failed", s);
+        s = emit_runtime("__fern_sp_collect __fern_sp_exec_path __fern_sp_exec_failed", s);
       } else {
-        s = emit_runtime("__fern_sp_drain __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
+        s = emit_runtime("__fern_sp_collect __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
       }
     }
     s = emit_rt_net(s, darwin);

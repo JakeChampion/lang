@@ -431,6 +431,21 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 }`,
 		127)
 
+	runCase("subprocess_large",
+		`function main(): i32 {
+  let big = "0123456789abcdef";
+  let i = 0;
+  while (i < 16) { big = big + big; i += 1; }
+  let a: ProcessResult = subprocess("cat", [], big);
+  if (a.exit_code != 0 || a.stdout != big) { return 91; }
+  let b: ProcessResult = subprocess("sh", ["-c", "head -c 1048576 /dev/zero 1>&2; cat"], big);
+  if (b.exit_code != 0 || b.stdout != big || b.stderr.len() != 1048576) { return 92; }
+  let c: ProcessResult = subprocess("head", ["-c", "5"], big);
+  if (c.exit_code != 0 || c.stdout != "01234") { return 93; }
+  return 42;
+}`,
+		42)
+
 	runCase("tcp_listen_close",
 		`function main(): i32 {
   let fd: Socket = tcp_listen(39517);

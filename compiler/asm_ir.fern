@@ -13928,7 +13928,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("subprocess")) {
     s = s.write("    .text\n");
-    s = emit_runtime("__fern_sp_drain __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
+    s = emit_runtime("__fern_sp_collect __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
   }
   if (s.any_need([
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",

@@ -1,0 +1,9 @@
+// A string of the `len` bytes of a `subprocess` output buffer.
+function __fern_sp_copy(buf: usize, len: i32): string {
+  if (len == 0) {
+    return "";
+  }
+  let b = __raw_alloc(len);
+  __memcpy(b, buf, len);
+  return __raw_string(b, len);
+}

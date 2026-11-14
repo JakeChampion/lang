@@ -4796,7 +4796,8 @@ function main(): i32 {
 }
 `},
 	{name: "proc-leaves-take-the-typed-path", atLeast: 1, want: "99|", nativeOnly: true, reports: []string{
-		"runtime __fern_subprocess: produced", "runtime __fern_sp_drain: produced",
+		"runtime __fern_subprocess: produced", "runtime __fern_sp_collect: produced",
+		"runtime __fern_sp_widen: produced", "runtime __fern_sp_copy: produced",
 		"runtime __fern_sp_exec_at: produced", "runtime __fern_proc_fork: produced",
 		"runtime __fern_proc_waitpid: produced", "runtime __fern_signal_mask: produced",
 		"runtime __fern_timer_fd: produced",
