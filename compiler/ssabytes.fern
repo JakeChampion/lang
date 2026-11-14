@@ -165,7 +165,7 @@ pub function lower_state_reads(own r: irtables.LowerState): irtables.LowerState 
 }
 
 // `width` is the element width the array lowering uses: 8 for bytes, 64 for
-// eight-byte slots, and 32 for pointer-width slots.
+// eight-byte slots, and ir.width_ptr() for pointer-width slots.
 pub function slice_name(width: i32): string {
   if (width == 8) {
     return "__sem_byte_view_slice";
@@ -375,7 +375,7 @@ pub function served_builtin(helper: string): string {
 }
 
 pub function state_helpers(): irtables.LowerState[] {
-  return [length(), data(), slice(8), slice(32), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd()];
+  return [length(), data(), slice(8), slice(ir.width_ptr()), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd()];
 }
 
 pub function helpers(): Result[irtables.Lowered, irtables.LowerState][] {

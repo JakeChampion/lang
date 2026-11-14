@@ -9342,7 +9342,9 @@ pub function arr_concat_helper(): string {
   let o = "";
   o += "  (func $__fern_arr_concat (param $width i32) (param $nb i32) (param $src i32) (param $a i32) (result i32)\n";
   o += "    (local $na i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
-  o += "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
+  o += "    (local.set $stride (i32.const 4))\n";
+  o += "    (if (i32.eq (local.get $width) (i32.const 8)) (then (local.set $stride (i32.const 1))))\n";
+  o += "    (if (i32.eq (local.get $width) (i32.const 64)) (then (local.set $stride (i32.const 8))))\n";
   o += "    (local.set $na (i32.load (local.get $a)))\n";
   o += "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
   o += "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";

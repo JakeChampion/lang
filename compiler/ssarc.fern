@@ -49,7 +49,7 @@ function elem_width(t: typeinfo.Type): i32 {
   if (ssasem.is_u8(t)) {
     return 8;
   }
-  return 32;
+  return ir.width_ptr();
 }
 
 // A view's elements belong to its source, but an untagged view is a box it
@@ -943,7 +943,7 @@ function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array:
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(4));
   r = emit(r, ir.op_load_local(5));
-  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(7));
   r = drop_value(r, 7, elem, 8, f);
   r = emit(r, ir.op_load_local(5));
@@ -955,7 +955,7 @@ function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array:
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(4));
   r = emit(r, ir.op_load_local(5));
-  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(3));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
@@ -977,7 +977,7 @@ function drop_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Typ
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(child));
   r = drop_value(r, child, elem, child + 1, f);
   r = emit(r, ir.op_load_local(index));
@@ -1011,7 +1011,7 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
       r = emit(r, ir.op_load_local(slot));
       if (env) {
         r = emit(r, ir.op_const_i32(i));
-        r = emit(r, ir.counted(ir.op_arr_get(32)));
+        r = emit(r, ir.counted(ir.op_arr_get(ir.width_ptr())));
       } else {
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
@@ -3863,7 +3863,7 @@ function field_get(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   let t = f.values[ins.result];
   if (semtypes.is_env(f.values[ins.args[0]])) {
     r = emit(r, ir.op_const_i32(ins.imm));
-    return emit(r, marked_load(ir.op_arr_get(32), t, f));
+    return emit(r, marked_load(ir.op_arr_get(ir.width_ptr()), t, f));
   }
   if (ssasem.is_wide(t)) {
     return emit(r, ir.op_struct_get_i64(ins.imm));
@@ -4489,7 +4489,7 @@ function drop_tail(own r: irtables.LowerState, slot: i32, from: i32, elem: typei
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(child));
   r = drop_value(r, child, elem, child + 1, f);
   r = emit(r, ir.op_load_local(index));
@@ -5277,7 +5277,7 @@ function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
     for capture in ins.args {
       r = emit(r, ir.op_load_local(capture));
     }
-    return emit(r, ir.op_arr_make(ins.args.len() + 1, 32));
+    return emit(r, ir.op_arr_make(ins.args.len() + 1, ir.width_ptr()));
   }
   for operand in ins.args {
     r = emit(r, ir.op_load_local(operand));
@@ -5299,7 +5299,7 @@ function call_value_op(argc: i32, sig: typeinfo.Type): ir.Op {
 function body_address(own r: irtables.LowerState, slot: i32): irtables.LowerState {
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_const_i32(0));
-  return emit(r, ir.op_arr_get_nc(32));
+  return emit(r, ir.op_arr_get_nc(ir.width_ptr()));
 }
 
 // The signature word of a runtime helper closure whose `nparams` parameters,
@@ -6520,7 +6520,7 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     return Lowered { found: true, r: emit(r, ir.op_alloc_uninit()) };
   }
   if (ins.str == "__alloc_i32") {
-    return Lowered { found: true, r: emit(r, ir.op_alloc_slots(32)) };
+    return Lowered { found: true, r: emit(r, ir.op_alloc_slots(ir.width_ptr())) };
   }
   if (ins.str == "__alloc_i64" || ins.str == "__alloc_f64") {
     return Lowered { found: true, r: emit(r, ir.op_alloc_slots(64)) };
