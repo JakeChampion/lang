@@ -10,6 +10,7 @@ import "std/android/ui/scene";
 import "std/png";
 import "std/test";
 import "std/worker";
+import "../matrix";
 import "./control";
 import "./plex";
 import "./ui";
@@ -455,6 +456,62 @@ function test_link_plays_an_item(): test.TestOutcome {
   return test.assert_eq(node(back, "play").is_some().to_string(), "true");
 }
 
+function find(ns: scene.Node[], act: string): Option[scene.Node] {
+  for n in ns {
+    if (n.tap.name == act) {
+      return Some(n);
+    }
+  }
+  return None;
+}
+
+function inside(n: scene.Node, box: scene.Node): boolean {
+  return n.x >= box.x && n.y >= box.y && n.x + n.w <= box.x + box.w && n.y + n.h <= box.y + box.h;
+}
+
+// The buttons of the detail screen and the words of the tabs on a window
+// `w` wide. Returns "" when each is in the window, or what is not.
+function layout_fault(w: i32, h: i32, one_row: boolean): string {
+  let it = plex.Item { ...plex.no_item(), key: "/library/metadata/1", kind: "movie", title: "Long", duration_ms: 7200000i64, offset_ms: 3723000i64 };
+  let ns = ui.nodes(ui.View { ...ui.empty_view(w, h), screen: ui.DETAIL, item: it });
+  let window = scene.node(0, 0, w, h, scene.Blank);
+  let Some(play) = find(ns, "play") else {
+    return "no play button";
+  };
+  let Some(mark) = find(ns, "watched") else {
+    return "no watched button";
+  };
+  if (!inside(play, window) || !inside(mark, window)) {
+    return "a button is outside the window";
+  }
+  if (play.y == mark.y != one_row) {
+    return "the buttons are on the wrong rows";
+  }
+  if (play.y == mark.y && play.x + play.w > mark.x) {
+    return "the buttons overlap";
+  }
+  let names = ui.tab_names();
+  for i in 0..names.len() {
+    let Some(tab) = find(ns, "tab:" + i.to_string()) else {
+      return "no tab " + names[i];
+    };
+    let words = ns.filter((n: scene.Node): boolean => n.say == names[i] && inside(n, tab));
+    if (words.len() != 1) {
+      return "the words of the tab " + names[i] + " are not in it";
+    }
+  }
+  return "";
+}
+
+function test_layout_fits_the_window(): test.TestOutcome {
+  return test.assert_eq(layout_fault(W, H, false) + "|" + layout_fault(1080, 2400, true), "|");
+}
+
+function test_dot_font_has_the_signs(): test.TestOutcome {
+  let got = [matrix.covers("+30 -10 < > | & # %"), matrix.covers("Amélie"), matrix.lit(43u8, 2, 3), matrix.lit(43u8, 0, 0)];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true false true false");
+}
+
 function main(): i32 {
   let r = test.new("plex control");
   r = r.it("a sign-in with a PIN reaches the home screen", test_sign_in_reaches_home);
@@ -465,5 +522,7 @@ function main(): i32 {
   r = r.it("the keyboard of the system searches through the text field", test_search_from_text_field);
   r = r.it("a sign-out goes back to the sign-in", test_back_and_sign_out);
   r = r.it("a link plays an item at once", test_link_plays_an_item);
+  r = r.it("the buttons and the tabs fit a narrow and a wide window", test_layout_fits_the_window);
+  r = r.it("the dot font draws the signs of the player", test_dot_font_has_the_signs);
   return r.finish();
 }
