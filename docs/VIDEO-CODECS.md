@@ -202,6 +202,11 @@ The 8 KiB SPS and 64 KiB PPS ceilings bound raw parameter payloads to 4,325,376 
 Separate byte, unit, packet, input-window, and operation limits remain active.
 Each step performs at most one source read and emits at most one event.
 
+PPS temporal identifiers can range from zero through six.
+The active PPS temporal identifier cannot exceed the picture's temporal identifier, including after cached PPS revalidation.
+VPS and SPS still require temporal identifier zero.
+These rules follow [ITU-T H.265](https://www.itu.int/rec/T-REC-H.265-202407-S/en), clauses 7.4.2.2 and 7.4.7.1.
+
 Packets preserve original prefix offsets and use canonical four-byte prefixes.
 IRAP identifies types 16 through 21. IDR identifies types 19 and 20 only, without a general random-access safety claim.
 Slice inspection copies at most eight unescaped bytes. The limits do not define an exact process-memory bound.
@@ -569,6 +574,7 @@ Synthetic headers establish syntax only. Four malformed controls require explici
 `scripts/check-video-hevc-pps-interop` compares 44 native and real WASI metadata fields with FFmpeg CBS.
 Eight lossless streams preserve all three source frames. Thirty-two synthetic parameter pairs cover tiles, quantizers, scaling, and range extensions.
 Synthetic pairs contain no coded pictures. Four malformed controls require explicit independent field and parse-failure diagnostics.
+Seven PPS header variants independently match CBS temporal identifiers and preserve all metadata fields.
 
 Twenty-four FFmpeg packets cover RGB24, ARGB32, alpha, keyframes, partial rows, and unchanged frames.
 
@@ -595,10 +601,13 @@ That comparison requires a C compiler, the FFmpeg development headers, and `pkg-
 Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
-`scripts/check-video-hevc-input-interop` compares twelve cases with 234 coded pictures from fresh x265 streams.
+`scripts/check-video-hevc-input-interop` compares thirteen cases with 252 coded pictures from fresh x265 streams.
 Native and real WASI output match FFprobe picture positions, canonical payloads, and all FFmpeg decoded planes.
 FFprobe versions can report the three-byte suffix of a four-byte start prefix as the packet position.
 The comparison resolves the complete prefix from source bytes and verifies every payload byte.
+
+A two-layer stream replaces PPS headers at temporal identifiers zero and one.
+CBS confirms those headers. All decoded planes also match the original stream before PPS replacement.
 
 For terminal EOS/EOB, FFprobe emits a separate control-only packet.
 The comparison joins only the exact empty EOS/EOB pair to the preceding picture and verifies every byte.
