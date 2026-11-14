@@ -1,0 +1,6 @@
+// age-plugin-tag: the age plugin for P-256 tag recipients (age1tag1...).
+import "./tagplugin";
+
+function main(): i32 {
+  return tagplugin.run(false);
+}

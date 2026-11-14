@@ -1,0 +1,7 @@
+// age-plugin-tagpq: the age plugin for ML-KEM-768 + P-256 tag recipients
+// (age1tagpq1...).
+import "./tagplugin";
+
+function main(): i32 {
+  return tagplugin.run(true);
+}
