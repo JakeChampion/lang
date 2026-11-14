@@ -1,5 +1,6 @@
 import "std/audio/opusfile";
 import "std/audio/pcm";
+import "std/audio/source";
 import "std/opus/multistream";
 import "std/test";
 import "opus_file_check";
@@ -148,6 +149,85 @@ function invalid_input(): test.TestOutcome {
   return test.pass();
 }
 
+function step_once(own cursor: opusfile.SeekCursor, view: boolean, part: [u8], from: i64, encoded: [u8]): Result[(opusfile.SeekCursor, opusfile.SeekEvent), pcm.AudioError] {
+  if (view) {
+    return cursor.step_view(part, from);
+  }
+  return cursor.step(encoded);
+}
+
+// A read that gives at most 997 bytes from `offset`.
+function short_reads(bytes: u8[]): (i64, i32) => Result[u8[], IoError] {
+  return (offset: i64, count: i32): Result[u8[], IoError] => {
+    let out: u8[] = [];
+    for i in offset as i32..(offset as i32 + count.min(997)).min(bytes.len()) {
+      out = out.append(bytes[i]);
+    }
+    return Ok(out);
+  };
+}
+
+// The samples from `position` of the first link to the end, step by step.
+// A cursor on a view has an index from a source, and reads only the bytes
+// that `want` gives, from a copy of them. A cursor on the whole file has
+// an index of the whole file, and reads the file.
+function played(encoded: u8[], position: i64, view: boolean): Result[f32[], string] {
+  let made = if (view) { opusfile.inspect_seek_with(encoded.len() as i64, short_reads(encoded), opusfile.default_seek_limits()) } else {
+    match (opusfile.inspect_seek(encoded, opusfile.default_seek_limits())) { Ok(v) => Ok(v), Err(e) => Err(source.ReadAudio(e)) }
+  };
+  let index = match (made) { Ok(v) => v, Err(e) => { return Err("index: " + e.message()); } };
+  let cursor = match (opusfile.seek_reader(index).seek(0, position)) { Ok(v) => v, Err(e) => { return Err("seek: " + e.message()); } };
+  let out: f32[] = [];
+  let steps = 0;
+  while (steps < 1000000) {
+    let (from, count) = cursor.want();
+    let part: u8[] = [];
+    for i in from as i32..from as i32 + count {
+      part = part.append(encoded[i]);
+    }
+    let (next, event) = match (step_once(cursor, view, part, from, encoded)) { Ok(v) => v, Err(e) => { return Err("step: " + e.message()); } };
+    cursor = next;
+    match (event) {
+      opusfile.SeekSamples(audio) => {
+        out = out.concat(audio.samples);
+      },
+      opusfile.SeekEnd => {
+        return Ok(out);
+      },
+      opusfile.SeekPending => {}
+    }
+    steps += 1;
+  }
+  return Err("no end");
+}
+
+// An index from a source has the packets of an index of the whole file,
+// and a cursor on views plays the samples of a cursor on the whole file.
+function sources(): test.TestOutcome {
+  let heard = 0;
+  for i in 0..opus_file_vectors.CASES.len() {
+    let Ok(ref) = opus_file_check.reference(opus_file_vectors.CASES[i]) else {
+      return test.fail("reference bytes");
+    };
+    let encoded = ref.bytes;
+    let (Ok(whole), Ok(index)) = (opusfile.inspect_seek(encoded, opusfile.default_seek_limits()), opusfile.inspect_seek_with(encoded.len() as i64, short_reads(encoded), opusfile.default_seek_limits())) else {
+      return test.fail("case " + i.to_string() + ": index");
+    };
+    if (index.positions != whole.positions || index.locations != whole.locations || index.tracks.len() != whole.tracks.len()) {
+      return test.fail("case " + i.to_string() + ": the source index differs");
+    }
+    for position in [0i64, whole.tracks[0].frames / 2i64] {
+      let expected = match (played(encoded, position, false)) { Ok(v) => v, Err(e) => { return test.fail("case " + i.to_string() + " whole " + e); } };
+      let got = match (played(encoded, position, true)) { Ok(v) => v, Err(e) => { return test.fail("case " + i.to_string() + " view " + e); } };
+      if (got != expected) {
+        return test.fail("case " + i.to_string() + ": the samples from a view differ at " + position.to_string());
+      }
+      heard += got.len();
+    }
+  }
+  return test.assert_true(heard > 10000);
+}
+
 function main(): i32 {
   let runner = test.new("Indexed Ogg Opus seeks against libopusfile PCM");
   runner = runner.it("repeated seeks, preroll, gain, sample boundaries, and chains", references);
@@ -157,5 +237,6 @@ function main(): i32 {
   runner = runner.it("packet count and raw output limits before PCM decode", packet_limits);
   runner = runner.it("invalid link and sample positions", positions);
   runner = runner.it("checksums, truncated pages, and changed input length", invalid_input);
+  runner = runner.it("an index from a source plays each packet from a view of its pages", sources);
   return runner.finish();
 }
