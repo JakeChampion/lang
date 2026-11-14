@@ -26840,6 +26840,9 @@ function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: 
 // The parser lowers a value match to `[match]`, to `[match, return zero]`,
 // or to `[let t = scrutinee, return inner()]` around one of those.
 function ow_match_block_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
+  if (body.len() == 3) {
+    return ow_nested_match_borrows(body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  }
   if (body.len() == 0 || body.len() > 2) {
     return true;
   }
@@ -26872,6 +26875,27 @@ function ow_match_block_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: st
   };
 }
 
+// A match with a nested pattern lowers to `[let r = zero, match, return r]`.
+// Its arms assign to `r`, and the sugar of the match keeps them as written.
+function ow_nested_match_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
+  let ast.StmtVar(v) = body[0] else {
+    return true;
+  };
+  let ast.StmtMatch(m) = body[1] else {
+    return true;
+  };
+  let ast.StmtReturn(r) = body[2] else {
+    return true;
+  };
+  let ast.ExprIdent(id) = r.value else {
+    return true;
+  };
+  if (id.name != v.name || m.sugar.len() == 0) {
+    return true;
+  }
+  return ow_value_match_borrows(m, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+}
+
 // A match on literals lowers to an if chain that keeps its arms in the sugar.
 function ow_value_lits_borrows(sugar: ast.MatchSugar, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
   if (sugar.origin.len() > 0 || sugar.lits.len() == 0 || sugar.tup.len() > 0 || sugar.strct.len() > 0 || sugar.arms.len() > 0) {
@@ -26892,11 +26916,10 @@ function ow_value_lits_borrows(sugar: ast.MatchSugar, ofuncs: OwnFuncs, borrowed
 
 // A value match borrows when an arm's value borrows.
 function ow_value_match_borrows(m: ast.StmtMatch, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
-  if (m.sugar.len() > 0) {
-    return true;
-  }
   let lends = ow_expr_borrows(m.scrutinee, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
-  for arm in m.arms {
+  // A nested pattern lowers its arms, and the sugar keeps them as written.
+  let arms = if (m.sugar.len() > 0) { m.sugar } else { m.arms };
+  for arm in arms {
     if (ow_value_binder_arm_borrows(arm.body, astwalk.pattern_binders(arm.pattern, []), lends, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
       return true;
     }
