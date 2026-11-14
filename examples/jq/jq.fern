@@ -424,7 +424,7 @@ function emit(v: json.JsonValue, o: Options, f: output.Format, own st: eval.St):
       if (o.ascii) {
         out = output.write_quoted(out, text, true);
       } else {
-        out = out + text;
+        out += text;
       }
       return finish_output(out, 2, o, s);
     }
@@ -433,7 +433,7 @@ function emit(v: json.JsonValue, o: Options, f: output.Format, own st: eval.St):
     kind = 1;
   }
   if (o.seq) {
-    out = out + "\x1e";
+    out += "\x1e";
   }
   out = output.write(out, v, f, 0);
   return finish_output(out, kind, o, s);
@@ -442,10 +442,10 @@ function emit(v: json.JsonValue, o: Options, f: output.Format, own st: eval.St):
 function finish_output(own out: string, kind: i32, o: Options, own s: eval.St): own eval.St {
   let buf = out;
   if (!o.join) {
-    buf = buf + "\n";
+    buf += "\n";
   }
   if (o.raw_output0) {
-    buf = buf + "\x00";
+    buf += "\x00";
   }
   if (o.unbuffered || buf.len() >= 65536) {
     let _ = stdout().write(buf);

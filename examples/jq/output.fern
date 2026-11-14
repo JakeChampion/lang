@@ -93,13 +93,13 @@ pub function write_quoted(own out: string, s: string, ascii: boolean): string {
   while (i < n) {
     let b = s[i];
     if (b >= 0x80 as u8 && ascii) {
-      buf = buf + slice_unchecked(s, run, i);
+      buf += slice_unchecked(s, run, i);
       let (cp, size) = decode(s, i);
       if (cp > 0xffff) {
         let c = cp - 0x10000;
         buf = buf + hex4(0xd800 | c >> 10 & 0x3ff) + hex4(0xdc00 | c & 0x3ff);
       } else {
-        buf = buf + hex4(cp);
+        buf += hex4(cp);
       }
       i += size;
       run = i;
@@ -147,12 +147,12 @@ function indent_to(own out: string, depth: i32, f: Format): string {
   let buf = out + "\n";
   if (f.tab) {
     for i in 0..depth {
-      buf = buf + "\t";
+      buf += "\t";
     }
     return buf;
   }
   for i in 0..depth * f.indent {
-    buf = buf + " ";
+    buf += " ";
   }
   return buf;
 }
@@ -176,7 +176,7 @@ pub function write(own out: string, v: json.JsonValue, f: Format, depth: i32): s
   let color = color_of(v, f);
   let buf = out + color;
   if (depth > MAX_DEPTH) {
-    buf = buf + "<skipped: too deep>";
+    buf += "<skipped: too deep>";
   } else {
     buf = write_term(buf, v, f, depth, color);
   }
@@ -212,7 +212,7 @@ function write_term(own out: string, v: json.JsonValue, f: Format, depth: i32, c
       let pretty = f.indent > 0 || f.tab;
       for i in 0..items.len() {
         if (i > 0) {
-          buf = buf + ",";
+          buf += ",";
         }
         if (pretty) {
           buf = indent_to(buf, depth + 1, f);
@@ -249,7 +249,7 @@ function write_object(own out: string, o: json.JsonObject, f: Format, depth: i32
   for n in 0..order.len() {
     let i = order[n];
     if (n > 0) {
-      buf = buf + ",";
+      buf += ",";
     }
     if (pretty) {
       buf = indent_to(buf, depth + 1, f);
@@ -261,9 +261,9 @@ function write_object(own out: string, o: json.JsonObject, f: Format, depth: i32
     if (colored) {
       buf = buf + RESET + color;
     }
-    buf = buf + (if (pretty) { ": " } else { ":" });
+    buf += if (pretty) { ": " } else { ":" };
     if (colored) {
-      buf = buf + RESET;
+      buf += RESET;
     }
     buf = write(buf, values[i], f, depth + 1) + color;
   }

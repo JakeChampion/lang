@@ -5479,27 +5479,30 @@ function branch_only_if(ops: ir.Op[], i: i32): string {
   return prefix + "    br_if " + util.i32_to_string(branch.i32_imm - 1) + "\n";
 }
 
-// The number of ops after the call at `i` that only give its result to a
-// return: 1 for the return itself, 1 for a local that block ends and a
-// return read next, or 0.
-function returned_through(ops: ir.Op[], i: i32): i32 {
+// Whether the op after the call at `i` only gives its result to a return:
+// the return itself, or a local that block ends and a return read next.
+function only_returned(ops: ir.Op[], i: i32): boolean {
   if (i + 1 >= ops.len()) {
-    return 0;
+    return false;
   }
   if (ops[i + 1].kind_tag == ir.K_RETURN) {
-    return 1;
+    return true;
   }
   if (ops[i + 1].kind_tag != ir.K_STORE_LOCAL) {
-    return 0;
+    return false;
   }
-  let j = i + 2;
-  while (j < ops.len() && ops[j].kind_tag == ir.K_END) {
-    j += 1;
+  let j = past_ends(ops, i + 2);
+  return j + 1 < ops.len() && ops[j].kind_tag == ir.K_LOAD_LOCAL && ops[j].i32_imm == ops[i + 1].i32_imm && ops[j + 1].kind_tag == ir.K_RETURN;
+}
+
+// The offset of the first op from `from` that is not the end of a block.
+function past_ends(ops: ir.Op[], from: i32): i32 {
+  for j in from..ops.len() {
+    if (ops[j].kind_tag != ir.K_END) {
+      return j;
+    }
   }
-  if (j + 1 < ops.len() && ops[j].kind_tag == ir.K_LOAD_LOCAL && ops[j].i32_imm == ops[i + 1].i32_imm && ops[j + 1].kind_tag == ir.K_RETURN) {
-    return 1;
-  }
-  return 0;
+  return ops.len();
 }
 
 // The tail call for the call at `i` when only a return of its result
@@ -5507,7 +5510,7 @@ function returned_through(ops: ir.Op[], i: i32): i32 {
 // return, and its callee can get a window of that frame, so it makes no tail
 // call. After a local, the ends and the return stay for the other paths.
 function tail_call_wat(ops: ir.Op[], i: i32, windows: i32): string {
-  if (windows > 0 || returned_through(ops, i) == 0) {
+  if (windows > 0 || !only_returned(ops, i)) {
     return "";
   }
   let o = ops[i];
@@ -5583,7 +5586,7 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
     let tail = tail_call_wat(f.ops, i, windows);
     if (tail.len() > 0) {
       parts = parts.append(tail);
-      i += 1 + returned_through(f.ops, i);
+      i += 2;
       continue;
     }
     let o = f.ops[i];
