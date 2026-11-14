@@ -356,6 +356,45 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	{"hpke", `import "std/crypto/hpke";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    b = b.with(i, ((i * 29 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function main(): i32 {
+  let seed: u8[] = filled(32, 3);
+  let randomness: u8[] = filled(64, 5);
+  let message: u8[] = filled(16, 9);
+  __ct_secret(seed);
+  __ct_secret(randomness);
+  __ct_secret(message);
+  let Ok(k) = hpke.mlkem768x25519_key(seed) else { return 1; };
+  let Ok(s) = hpke.setup_sender_derand(k.public_key, [], randomness) else { return 2; };
+  __ct_public(s.enc);
+  let (sealed, _) = s.context.seal([], message);
+  __ct_public(sealed);
+  let Ok(c) = hpke.setup_recipient(k, s.enc, []) else { return 3; };
+  let Ok(opened) = c.open([], sealed) else { return 4; };
+  let bad: u8[] = s.enc.with(0, s.enc[0] ^ 1);
+  let Ok(r) = hpke.setup_recipient(k, bad, []) else { return 5; };
+  match (r.open([], sealed)) {
+    Ok(_) => { return 6; },
+    Err(_) => {}
+  }
+  __ct_public(opened.0);
+  if (opened.0[15] != filled(16, 9)[15]) {
+    return 7;
+  }
+  return 0;
+}
+`, false},
 	{"tls_keyshare", `import "std/tls/keyshare";
 
 function filled(n: i32, seed: i32): u8[] {

@@ -15,6 +15,7 @@ import "./keys";
 import "./source";
 import "./text";
 import "./bcrypt";
+import "std/crypto/hpke";
 import "./ssh";
 import "./wordlist";
 import "std/string";
@@ -84,7 +85,7 @@ function test_bech32_round_trip(): test.TestOutcome {
     Ok(d) => d.hrp == "age" && hex.encode(d.data) == hex.encode(key),
     Err(_) => false,
   };
-  let secret = match (bech32.decode_secret(up.as_bytes())) {
+  let secret = match (bech32.decode_secret(up.as_bytes(), bech32.SECRET_PREFIX)) {
     Some(s) => hex.encode(s) == hex.encode(key),
     None => false,
   };
@@ -102,7 +103,7 @@ function secret_verdict(line: string): string {
     Ok(d) => hex.encode(d.data),
     Err(_) => "",
   };
-  return match (bech32.decode_secret(line.as_bytes())) {
+  return match (bech32.decode_secret(line.as_bytes(), bech32.SECRET_PREFIX)) {
     Some(k) => if (hex.encode(k) == plain) {
       "key"
     } else {
@@ -138,7 +139,7 @@ function test_secret_keys(): test.TestOutcome {
   ]);
 }
 
-function first_error(r: Result[keys.X25519Key[], string]): string {
+function first_error(r: Result[keys.Identity[], string]): string {
   return match (r) {
     Ok(ids) => "ok " + ids.len().to_string(),
     Err(why) => why,
@@ -155,17 +156,151 @@ function test_identity_files(): test.TestOutcome {
     first_error(keys.identities(("# x\n" + IDENTITY.to_ascii_lower()).bytes())),
     first_error(keys.identities((IDENTITY + " ").bytes())),
     first_error(keys.identities("AGE-PLUGIN-X-1QQ\n".bytes())),
+    first_error(keys.identities((PQ_IDENTITY + "\n" + IDENTITY).bytes())),
+    first_error(keys.identities(("# r\n" + GATE_RECIPIENT).bytes())),
+    first_error(keys.parse_identities(GATE_RECIPIENT.bytes())),
+    first_error(keys.identities("# a\n".bytes().concat([0xffu8, 10u8]))),
+    first_error(keys.identities(PQ_IDENTITY[0:PQ_IDENTITY.len() - 1].unwrap_or("").bytes())),
   ];
   return test.assert_eq_array(got, [
     "ok 1",
     "ok 2",
-    "no secret keys found",
-    "no secret keys found",
+    "no identities found",
+    "no identities found",
     "error at line 1: unknown identity type",
     "error at line 2: unknown identity type",
     "error at line 1: malformed secret key: invalid character data part: s[58]=32",
     "error at line 1: plugin identities are not supported by this port",
+    "ok 2",
+    "error at line 2: apparent recipient found in identities file",
+    "error at line 1: unknown identity type",
+    "identities file is not valid UTF-8",
+    "error at line 1: malformed secret key: invalid checksum",
   ]);
+}
+
+function x25519(id: keys.Identity): keys.X25519Key {
+  return match (id) {
+    keys.X25519Id(k) => k,
+    _ => keys.X25519Key { scalar: [], public: [] },
+  };
+}
+
+function hybrid(id: keys.Identity): hpke.HybridKey {
+  return match (id) {
+    keys.HybridId(k) => k,
+    _ => hpke.HybridKey { public_key: [], decapsulation_key: [], scalar: [] },
+  };
+}
+
+// The identity of the CCTV hybrid vector, its file key, and its stanza.
+const GATE_RECIPIENT: string = "age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef";
+
+const PQ_IDENTITY: string = "AGE-SECRET-KEY-PQ-1HZLGZUPT4ETPKDEV8HSGFDCYZ4E522W0A7PU2LHT8EH9W6YLNC3SW78XKG";
+
+const PQ_ENC: string = "NfLcgAbzvNgf0aRb4PANBvyDtIDDQKf84JhhFlnvT1NUAcbGNrArRZ/T+bc9l4xmK1DSl+PXk6nqqGBhaM1dUiT7X17TU1/b9haZZPzEalvZHFDMSevfiZshlnSgcpWh0qnpgTyboWTU+zbrH6YD2uhshbJoiuqh+PpXtDMstXx4CgxASrNVlfSl/caRTi24QjIXpCNwEE4FwHrmAwUqSHLUzGOHfiW/chOCTtDX591x41o6eZ4/Dt92VhoYKFcpiaWbRhbenZXUJxPS1C1sK84CVwkDH7LJjbYCnkxt3meul8kKWihZsStZYd/6bozqczOX7zN5PbaYD1XpYwMwedzWmPmQzxBybD8ZodcR7hF7WUxSmFVH7ExiYH3ZNbDAVcgGwlkTFmUmaTCbjGZTv8M+ejmvStQHgCtPi4GGRdJFr3HzvRzm6bvrdF/rdSPRFtRVM7D9o7ZAAquD1PByE0Y5YCR4/vmTlIlRwFXk4be+TsAI+Gotujou6nrigwnfqoGiNSvi/ZVvSKnDoZPIE5qwONCeeJB8CeRhqXEjvgtwc2zcWUBtjSJgNL+j887k2h0xlXpQqlmDDHsBOCP3/VoM+NZURqI+RoTudcwTl8TgmhGrQytnovuWFDvE9HgPAs67dPRC64/3RES3hF2C6/R1pQAnC7S2iSijJnyFlaDJWfcZvvNoamphDv63kUNb7b9V8E+xwqF8GkuXJnBFDo0PuJz8qWH7sDMEOhIInmanDiu6K/9jOCubYNdNcXrjQknlvk1kFdjZ2xYnC6QuqA5+qHMBpgrg301PX154X4KUcxA3PoFyYNexaBK3njks7PNxl7HyZIWjjDlz50WrQnEqBjl8RVVuneL3vgVyU45GSVWQVOH4K6aepWP0+p7WUD52rhdVH5HPZWQL3v8TjEz80Aeb87+1s1wgM+5skNX4LpOyuhRxQ/ChXsVZrVJ8SRsBlO4K+CJ271rHj8l8NEhRE2O/ZKHst8Be/6j5c9SUmRRqvI+6bcg0Bcq7Wi7d08vDQqjC2cOi112CGra5mazd/NCICC81oYkMmTxtM9ficfIhvt9nHaZSQh27tzJ3xRWOegwzDOaNjrtJ7yvCXbV9iQ6boiCl6wdmIn7k9sI30wIuHcVU1Cr+ENWhqVyRiAKktgvxegDnqvRB2n1aHKovp60Fs7YIDrclscRFikV45x0RNBdVtUkWD430vZgekkZdnwpeHxGV9TIe2FCNooQzUzx6v4ft0sZ5SYI490F2sYZu/sig4IB/KOzVfPXBX9dkftLgZTWtfP7GI9NjEitLn/lYTh2jfSKTYZSM+BQt16m2yg/4X7xftA2P3fSyU1zWineocz4DKyilWmVhPRjy9LrTPtQWVVNGrVfUsNYwWHJX6FwkF7JNbCqLEQueMjPhc9cnr66uF+Wt1IsuTj278MgyZqYlr7mkW91zyWJMSIXTKmqv5um9ypc3IJUmkvs67A91XA8vspARsUM4Jw";
+
+function pq_stanza(): format.Stanza {
+  let body = text.decode_string("jYPfilNAMjF0zGRYMYJqR/cTTzbiGxQMhG+8zZaitic".as_bytes()).unwrap_or([]);
+  return format.Stanza { kind: "mlkem768x25519", args: [PQ_ENC], body: body };
+}
+
+function show_hybrid(s: format.Stanza, k: hpke.HybridKey): string {
+  return match (format.unwrap_hybrid(s, k)) {
+    format.FileKey(key) => "key " + hex.encode(key),
+    format.Incorrect => "incorrect",
+    format.Invalid(why) => why,
+  };
+}
+
+// The hybrid key of the CCTV vector unwraps its stanza, and refuses the
+// changed stanzas with the messages of age.
+function test_hybrid_unwrap(): test.TestOutcome {
+  let Ok(ids) = keys.identities(PQ_IDENTITY.bytes()) else {
+    return test.fail("the identity does not parse");
+  };
+  let k = hybrid(ids[0]);
+  let st = pq_stanza();
+  let show = (s: format.Stanza) => show_hybrid(s, k);
+  let enc = text.decode_string(st.args[0].as_bytes()).unwrap_or([]);
+  let low = text.copy(enc[0:1088]).concat(__alloc_u8(32));
+  return test.assert_eq_array(
+    [
+      show(st),
+      show(format.Stanza { ...st, kind: "X25519" }),
+      show(format.Stanza { ...st, args: [] }),
+      show(format.Stanza { ...st, args: ["AA="] }),
+      show(format.Stanza { ...st, body: st.body.concat([0u8]) }),
+      show(format.Stanza { ...st, args: [text.b64_raw(enc[0:1119])] }),
+      show(format.Stanza { ...st, args: [text.b64_raw(low)] }),
+      show(format.Stanza { ...st, body: st.body.with(0, st.body[0] ^ 1u8) }),
+    ],
+    [
+      "key 59454c4c4f57205355424d4152494e45",
+      "incorrect",
+      "invalid mlkem768x25519 recipient block",
+      "failed to parse mlkem768x25519 recipient: illegal base64 data at input byte 2",
+      "encrypted value has unexpected length",
+      "invalid mlkem768x25519 recipient: invalid encapsulated key size",
+      "invalid mlkem768x25519 recipient: crypto/ecdh: bad X25519 remote ECDH input: low order point",
+      "incorrect",
+    ],
+  );
+}
+
+// A hybrid stanza wraps a file key to the public key of the identity, and
+// the identity unwraps it. The public key text is that of age-keygen -y.
+function test_hybrid_wrap(): test.TestOutcome {
+  let Ok(ids) = keys.identities(PQ_IDENTITY.bytes()) else {
+    return test.fail("the identity does not parse");
+  };
+  let k = hybrid(ids[0]);
+  let r = keys.identity_recipient(ids[0]);
+  let parsed = match (keys.parse_recipient(r)) {
+    Ok(keys.HybridTo(pk)) => hex.encode(pk) == hex.encode(k.public_key),
+    _ => false,
+  };
+  let st = match (format.wrap_hybrid(unhex(FILE_KEY), k.public_key, __alloc_u8(64).with(5, 7u8).with(40, 3u8))) {
+    Ok(st) => st,
+    Err(why) => {
+      return test.fail(why);
+    },
+  };
+  let back = match (format.unwrap_hybrid(st, k)) {
+    format.FileKey(key) => hex.encode(key),
+    _ => "no key",
+  };
+  return test.assert_eq_array([r.starts_with("age1pq1").to_string(), r.len().to_string(), parsed.to_string(), st.kind, back], ["true", "1959", "true", "mlkem768x25519", FILE_KEY]);
+}
+
+// age's ParseHybridRecipient and its refusals.
+function test_hybrid_recipients(): test.TestOutcome {
+  let Ok(ids) = keys.identities(PQ_IDENTITY.bytes()) else {
+    return test.fail("the identity does not parse");
+  };
+  let pk = hybrid(ids[0]).public_key;
+  let r = keys.hybrid_recipient_text(pk);
+  let bad_modulus = keys.hybrid_recipient_text(text.copy(pk).with(0, 0xffu8).with(1, pk[1] | 0x0fu8));
+  let short = keys.hybrid_recipient_text(pk[0:1215]);
+  let low_order = keys.hybrid_recipient_text(text.copy(pk[0:1184]).concat(__alloc_u8(32)));
+  return test.assert_eq_array(
+    [
+      recipient(r),
+      recipient(bad_modulus),
+      recipient(short),
+      recipient(low_order),
+      recipient(r[0:r.len() - 1].unwrap_or("").to_owned()),
+      recipient(bech32.encode("age1pz", pk)),
+    ],
+    [
+      "another recipient",
+      f"malformed recipient {text.quote(bad_modulus.as_bytes())}: invalid MLKEM768-X25519 public key",
+      f"malformed recipient {text.quote(short.as_bytes())}: invalid MLKEM768-X25519 public key",
+      "another recipient",
+      f"malformed recipient {text.quote(r[0:r.len() - 1].unwrap_or("").as_bytes())}: invalid checksum",
+      f"plugin recipient {text.quote(bech32.encode("age1pz", pk).as_bytes())}: plugins are not supported by this port",
+    ],
+  );
 }
 
 function recipient(arg: string): string {
@@ -193,7 +328,7 @@ function test_recipients(): test.TestOutcome {
     "unknown recipient type: \"\"",
     "malformed recipient \"age1\": separator '1' at invalid position: pos=3, len=4",
     f"malformed recipient \"{bech32.encode("age", __alloc_u8(31))}\": invalid X25519 public key",
-    "invalid recipient encoding \"age1foo1qqqqqqqqqqqqq\": invalid checksum",
+    "invalid recipient encoding: invalid checksum",
     f"malformed recipient \"{changed(r, 10, b'b')}\": invalid character data part: s[6]=98",
   ]);
 }
@@ -219,7 +354,7 @@ function test_vector(): test.TestOutcome {
   let Ok(ids) = keys.identities(IDENTITY.bytes()) else {
     return test.fail("the identity does not parse");
   };
-  let key = match (format.unwrap(h.stanzas[0], ids[0].scalar, ids[0].public)) {
+  let key = match (format.unwrap(h.stanzas[0], x25519(ids[0]).scalar, x25519(ids[0]).public)) {
     format.FileKey(k) => k,
     _ => {
       return test.fail("the stanza does not unwrap");
@@ -278,16 +413,23 @@ function test_header_refusals(): test.TestOutcome {
     parse_message(INTRO + STANZA + "A".repeat(64) + "\n" + MAC),
     parse_message(INTRO + STANZA + "A".repeat(64) + "\n\n" + MAC),
     parse_message(INTRO + "-> a\n\n-> b c\n\n" + MAC),
+    parse_message(IDENTITY + "\n"),
+    parse_message("x".repeat(30) + "\n"),
+    parse_message(INTRO + MAC),
+    parse_message(INTRO + "-> a" + " b".repeat(128) + "\n\n" + MAC),
+    parse_message(INTRO + "-> a" + " b".repeat(129) + "\n\n" + MAC),
+    parse_message(INTRO + STANZA + BODY + "--- \n"),
+    parse_message(INTRO + "-> a \n\n" + MAC),
   ];
   return test.assert_eq_array(got, [
-    "parsing age header: failed to read intro: EOF",
-    "parsing age header: failed to read intro: EOF",
+    "parsing age header: file is empty",
+    "parsing age header: unexpected EOF reading intro: \"age-encryption.org/v1\"",
     "parsing age header: unexpected intro: \"age-encryption.org/v2\\n\"",
     "parsing age header: failed to read header: EOF",
     "parsing age header: malformed closing line: \"--- abc def\\n\"",
     "parsing age header: malformed closing line: \"---x WyJp\\n\"",
     "parsing age header: malformed closing line \"--- AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ\\n\": <nil>",
-    "parsing age header: malformed closing line \"--- WyJp9F/9FOZh7gJdheq2WIJcwHgYc8NIVh3ddwhrcNg\\r\\n\": unexpected newline character",
+    "parsing age header: malformed closing line: \"--- WyJp9F/9FOZh7gJdheq2WIJcwHgYc8NIVh3ddwhrcNg\\r\\n\"",
     "failed to read header: EOF",
     "failed to parse header: malformed stanza: \"->  TEiF\\n\"",
     "failed to parse header: malformed stanza: \"->\\n\"",
@@ -297,9 +439,16 @@ function test_header_refusals(): test.TestOutcome {
     "failed to parse header: parsing age header: malformed body line \"hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLE\\r\\n\": unexpected newline character",
     "failed to parse header: parsing age header: malformed body line \"hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLF\\n\": illegal base64 data at input byte 42",
     "failed to parse header: parsing age header: malformed body line \"" + "A".repeat(68) + "\\n\": too long",
-    "failed to parse header: malformed body line \"" + MAC.trim_end_chars("\n") + "\\n\": stanza ended without a short line\nNote: this might be a file encrypted with an old beta version of age or rage. Use age v1.0.0-beta6 or rage to decrypt it.",
+    "failed to parse header: malformed body line \"" + MAC.trim_end_chars("\n") + "\\n\": stanza ended without a short line\nnote: this might be a file encrypted with an old beta version of age or rage; use age v1.0.0-beta6 or rage to decrypt it",
     "ok 1",
     "ok 2",
+    "parsing age header: unexpected intro, expected \"age-encryption.org/v1\\n\"",
+    "parsing age header: unexpected intro: \"xxxxxxxxxxxxxxxxxxxxxx\"",
+    "parsing age header: no recipient stanzas",
+    "ok 1",
+    "failed to parse header: malformed stanza: \"-> a" + " b".repeat(129) + "\\n\"",
+    "parsing age header: malformed closing line: \"--- \\n\"",
+    "failed to parse header: malformed stanza: \"-> a \\n\"",
   ]);
 }
 
@@ -307,7 +456,7 @@ function unwrapped(st: format.Stanza): string {
   let Ok(ids) = keys.identities(IDENTITY.bytes()) else {
     return "no identity";
   };
-  return match (format.unwrap(st, ids[0].scalar, ids[0].public)) {
+  return match (format.unwrap(st, x25519(ids[0]).scalar, x25519(ids[0]).public)) {
     format.FileKey(k) => "key " + hex.encode(k),
     format.Incorrect => "incorrect",
     format.Invalid(why) => why,
@@ -352,7 +501,7 @@ function test_marshal(): test.TestOutcome {
   };
   let eph = __alloc_u8(32).with(0, 9u8);
   let key = unhex(FILE_KEY);
-  let wrapped = match (format.wrap(key, ids[0].public, eph)) {
+  let wrapped = match (format.wrap(key, x25519(ids[0]).public, eph)) {
     Ok(st) => unwrapped(st),
     Err(why) => why,
   };
@@ -476,9 +625,9 @@ function test_armor(): test.TestOutcome {
     "EOF",
     "ok hello, world",
     "invalid armor: too much leading whitespace",
-    "invalid armor: illegal base64 data at input byte 10",
-    "invalid armor: illegal base64 data at input byte 8",
-    "invalid armor: empty line before the closing line",
+    "invalid armor: unexpected newline character",
+    "invalid armor: unexpected newline character",
+    "invalid armor: empty line in armored data",
   ]);
 }
 
@@ -609,7 +758,7 @@ function test_checks(): test.TestOutcome {
     "too many INPUT arguments: \"p\" \"-a\" | the input file must be specified after all flags | did you mean: |     age -r x -a p",
     "too many INPUT arguments: \"p\" \"-a\" | the input file must be specified after all flags",
     "-e/--encrypt can't be used with -d/--decrypt | ",
-    "-a/--armor can't be used with -d/--decrypt | note that armored files are detected automatically",
+    "-a/--armor can't be used with -d/--decrypt | note that armored files are detected automatically, try again without -a/--armor",
     "-r/--recipient can't be used with -d/--decrypt | did you mean to use -i/--identity to specify a private key?",
     "-i/--identity and -j can't be used in encryption mode unless symmetric encryption is explicitly selected with -e/--encrypt | did you forget to specify -d/--decrypt?",
     "missing recipients | did you forget to specify -r/--recipient, -R/--recipients-file or -p/--passphrase?",
@@ -707,8 +856,18 @@ function test_authorized_keys(): test.TestOutcome {
     authorized("ssh-ed25519 " + key[0:20].unwrap_or("")),
     authorized("ssh-ed25519"),
     authorized(""),
+    authorized("ssh-ed25519\t" + key),
   ];
-  return test.assert_eq_array(got, ["ed25519 6DvwTA", "ed25519 6DvwTA", "ed25519 6DvwTA", "ed25519 6DvwTA", "ssh: no key found", "ssh: no key found", "ssh: no key found"]);
+  return test.assert_eq_array(got, [
+    "ed25519 6DvwTA",
+    "ed25519 6DvwTA",
+    "ed25519 6DvwTA",
+    "ssh: no key found; last parsing error for ignored line: ssh: authorized keys key type mismatch: human-readable type \"ssh-rsa\", encoded type \"ssh-ed25519\"",
+    "ssh: no key found; last parsing error for ignored line: ssh: parse error in message type 0",
+    "ssh: no key found",
+    "ssh: no key found",
+    "ed25519 6DvwTA",
+  ]);
 }
 
 // The private key gives the recipient of its public key, and a file key
@@ -776,7 +935,7 @@ function test_bcrypt(): test.TestOutcome {
 // age.ParseIdentities, which age-keygen -y uses, parses each line as a key.
 function test_library_identities(): test.TestOutcome {
   let first = match (keys.parse_identities(("# c\n" + IDENTITY + "\n").bytes())) {
-    Ok(ks) => keys.recipient_text(ks[0].public),
+    Ok(ks) => keys.identity_recipient(ks[0]),
     Err(why) => why,
   };
   let second = match (keys.parse_identities("hello\n".bytes())) {
@@ -787,13 +946,13 @@ function test_library_identities(): test.TestOutcome {
     return test.fail("key_of");
   };
   let round = match (keys.parse_identities(keys.secret_text(k.scalar).bytes())) {
-    Ok(ks) => keys.recipient_text(ks[0].public) == keys.recipient_text(k.public),
+    Ok(ks) => keys.identity_recipient(ks[0]) == keys.recipient_text(k.public),
     Err(_) => false,
   };
   if (!round) {
     return test.fail("a new key does not parse back");
   }
-  return test.assert_eq_array([first, second], ["age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef", "error at line 1: malformed secret key: separator '1' at invalid position: pos=-1, len=5"]);
+  return test.assert_eq_array([first, second], ["age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef", "error at line 1: unknown identity type"]);
 }
 
 function main(): i32 {
@@ -803,6 +962,9 @@ function main(): i32 {
   r = r.it("the constant-time key decoder agrees with the plain decoder", test_secret_keys);
   r = r.it("identity files: comments, CRLF and each refusal", test_identity_files);
   r = r.it("recipient strings and their refusals", test_recipients);
+  r = r.it("hybrid recipient strings and their refusals", test_hybrid_recipients);
+  r = r.it("the CCTV hybrid stanza and each refusal of its unwrap", test_hybrid_unwrap);
+  r = r.it("a hybrid stanza wraps and unwraps a file key", test_hybrid_wrap);
   r = r.it("the CCTV x25519 vector: header, MAC, unwrap and payload", test_vector);
   r = r.it("each malformed header gets age's message", test_header_refusals);
   r = r.it("each malformed X25519 stanza gets age's message", test_stanza_refusals);

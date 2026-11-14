@@ -2115,7 +2115,7 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("poly1305")) {
     s = emit_rt_poly1305(s);
   }
-  return s;
+  return emit_rt_limb_kernels(s);
 }
 
 // ChaCha20 (RFC 8439) over buf[at:at + n] in place, eight blocks at a time in the 32-bit lanes of the ymm
@@ -2444,6 +2444,125 @@ function x86_poly_vcarry(): string {
     }
   }
   return o;
+}
+
+// One Montgomery product (CIOS) of a and b under the modulus in m: m[0] is n0 = -p^-1 mod 2^64 and m[1:] the n
+// limbs of p, little-endian. a and b have n limbs each (views or arrays). rax returns a new array of n limbs:
+// the CIOS sum a b R^-1 mod p, less p when that is not negative. rdi is a, rsi b and rdx m. In the loop, rdi
+// holds a, rsi b, r10 p, r11 the sum T, rcx n, r12 i, r13 j, r14 a_i, r15 q, rbx the carry of a_i b and r9
+// the carry of q p. The bit above the limbs of T is at -56(%rbp), and n0 at -64(%rbp). Only the counters
+// steer a branch.
+function x86_mont_mul(): string {
+  return "    .globl __fern_mont_mul\n    .type __fern_mont_mul, @function\n__fern_mont_mul:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $112, %rsp\n"
+    + "    movq %rbx, -72(%rbp)\n    movq %r12, -80(%rbp)\n    movq %r13, -88(%rbp)\n    movq %r14, -96(%rbp)\n    movq %r15, -104(%rbp)\n"
+    + x86_aes_view("%rdx", "%r10", "%rcx", ".Lmm_m") + x86_aes_view("%rsi", "%r9", "%r8", ".Lmm_b")
+    + x86_aes_view("%rdi", "%rdi", "%rax", ".Lmm_a")
+    + "    subq $1, %rcx\n    jle __fern_slice_abort\n    cmpq %rcx, %rax\n    jne __fern_slice_abort\n    cmpq %rcx, %r8\n    jne __fern_slice_abort\n"
+    + "    movq (%r10), %rax\n    movq %rax, -64(%rbp)\n    addq $8, %r10\n    movq %r9, %rsi\n"
+    + "    movq %rdi, -8(%rbp)\n    movq %rsi, -16(%rbp)\n    movq %r10, -24(%rbp)\n    movq %rcx, -32(%rbp)\n"
+    + "    movq %rcx, %rdi\n    call __fern_arr_box\n    movq %rax, -48(%rbp)\n"
+    + "    movq -8(%rbp), %rdi\n    movq -16(%rbp), %rsi\n    movq -24(%rbp), %r10\n    movq -32(%rbp), %rcx\n    leaq 8(%rax), %r11\n"
+    + "    xorl %eax, %eax\n    xorl %r13d, %r13d\n.Lmm_zero:\n    movq %rax, (%r11,%r13,8)\n    addq $1, %r13\n    cmpq %rcx, %r13\n    jb .Lmm_zero\n"
+    + "    movq $0, -56(%rbp)\n    xorl %r12d, %r12d\n"
+    + ".Lmm_outer:\n    movq (%rdi,%r12,8), %r14\n"
+    + "    movq %r14, %rdx\n    mulxq (%rsi), %rax, %rbx\n    addq (%r11), %rax\n    adcq $0, %rbx\n"
+    + "    movq %rax, %rdx\n    imulq -64(%rbp), %rdx\n    movq %rdx, %r15\n"
+    + "    mulxq (%r10), %r8, %r9\n    addq %r8, %rax\n    adcq $0, %r9\n"
+    + "    movl $1, %r13d\n    cmpq %rcx, %r13\n    jae .Lmm_last\n"
+    + ".Lmm_inner:\n    movq %r14, %rdx\n    mulxq (%rsi,%r13,8), %rax, %r8\n    addq (%r11,%r13,8), %rax\n    adcq $0, %r8\n"
+    + "    addq %rbx, %rax\n    adcq $0, %r8\n    movq %r8, %rbx\n"
+    + "    movq %r15, %rdx\n    mulxq (%r10,%r13,8), %r8, %rdx\n    addq %r8, %rax\n    adcq $0, %rdx\n"
+    + "    addq %r9, %rax\n    adcq $0, %rdx\n    movq %rdx, %r9\n    movq %rax, -8(%r11,%r13,8)\n"
+    + "    addq $1, %r13\n    cmpq %rcx, %r13\n    jb .Lmm_inner\n"
+    + ".Lmm_last:\n    movq -56(%rbp), %rax\n    xorl %r8d, %r8d\n    addq %rbx, %rax\n    adcq $0, %r8\n    addq %r9, %rax\n    adcq $0, %r8\n"
+    + "    movq %rax, -8(%r11,%rcx,8)\n    movq %r8, -56(%rbp)\n"
+    + "    addq $1, %r12\n    cmpq %rcx, %r12\n    jb .Lmm_outer\n"
+    // The borrow of T - p, then T - (p & mask), where the mask is all ones when the bit above T is set or T is
+    // at least p. In the first loop, lea and dec keep the carry flag. The second loop keeps the borrow in r8.
+    + "    xorl %r13d, %r13d\n    movq %rcx, %r12\n"
+    + ".Lmm_cmp:\n    movq (%r11,%r13,8), %rax\n    sbbq (%r10,%r13,8), %rax\n    leaq 1(%r13), %r13\n    decq %r12\n    jnz .Lmm_cmp\n"
+    + "    sbbq %rax, %rax\n    notq %rax\n    orq -56(%rbp), %rax\n    andq $1, %rax\n    negq %rax\n"
+    + "    xorl %r13d, %r13d\n    xorl %r8d, %r8d\n"
+    + ".Lmm_sub:\n    movq (%r10,%r13,8), %rdx\n    andq %rax, %rdx\n    movq (%r11,%r13,8), %rbx\n    addq $-1, %r8\n    sbbq %rdx, %rbx\n"
+    + "    sbbq %r8, %r8\n    negq %r8\n    movq %rbx, (%r11,%r13,8)\n    addq $1, %r13\n    cmpq %rcx, %r13\n    jb .Lmm_sub\n"
+    + "    movq -72(%rbp), %rbx\n    movq -80(%rbp), %r12\n    movq -88(%rbp), %r13\n    movq -96(%rbp), %r14\n    movq -104(%rbp), %r15\n"
+    + x86_aes_epilogue() + "    .size __fern_mont_mul, .-__fern_mont_mul\n";
+}
+
+// The scrypt BlockMix (RFC 7914) of b[from:from + 16r] ^ b[mix:mix + 16r] into b[to:to + 16r]. b is an i64
+// array, and each 64-byte block holds its words in the order 0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6,
+// 11. Thus each 16-byte row is a diagonal of the Salsa20 matrix. rdi is b, esi from, edx mix, ecx to and r8d
+// r. rax returns b, copied first if it has another holder. The blocks must lie in b, and the output block must
+// be apart from both inputs. In the loop, rsi and rdx step through the inputs, rdi and r9 are the even and odd
+// outputs, and xmm0 to xmm3 hold X. Only r steers a branch.
+function x86_scrypt_block_mix(): string {
+  let o: string = "    .globl __fern_scrypt_block_mix\n    .type __fern_scrypt_block_mix, @function\n__fern_scrypt_block_mix:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $48, %rsp\n    movq %rdi, -48(%rbp)\n"
+    + "    movslq %esi, %rsi\n    movslq %edx, %rdx\n    movslq %ecx, %rcx\n    movslq %r8d, %r8\n"
+    + "    testq %r8, %r8\n    jle __fern_slice_abort\n    movq %r8, %r9\n    shlq $4, %r9\n    movq (%rdi), %r10\n";
+  for reg in ["%rsi", "%rdx", "%rcx"] {
+    o = o + "    testq " + reg + ", " + reg + "\n    js __fern_slice_abort\n    leaq (" + reg + ",%r9), %rax\n    cmpq %r10, %rax\n    ja __fern_slice_abort\n";
+  }
+  for k in 0..2 {
+    let reg = if (k == 0) { "%rsi" } else { "%rdx" };
+    let tag = ".Lsm_apart" + util.i32_to_string(k);
+    o = o + "    movq %rcx, %rax\n    subq " + reg + ", %rax\n    jns " + tag + "\n    negq %rax\n" + tag + ":\n    cmpq %r9, %rax\n    jb __fern_slice_abort\n";
+  }
+  o = o + "    cmpl $1, -8(%rdi)\n    je .Lsm_own\n"
+    + "    movq %rsi, -8(%rbp)\n    movq %rdx, -16(%rbp)\n    movq %rcx, -24(%rbp)\n    movq %r8, -32(%rbp)\n    movq %rdi, -40(%rbp)\n"
+    + "    movq %r10, %rdi\n    call __fern_arr_box\n    movq %rax, -48(%rbp)\n"
+    + "    leaq 8(%rax), %rdi\n    movq -40(%rbp), %rsi\n    movq (%rsi), %rcx\n    addq $8, %rsi\n    shlq $3, %rcx\n    rep movsb\n"
+    + "    pushq -40(%rbp)\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n"
+    + "    movq -8(%rbp), %rsi\n    movq -16(%rbp), %rdx\n    movq -24(%rbp), %rcx\n    movq -32(%rbp), %r8\n"
+    + ".Lsm_own:\n    movq -48(%rbp), %rax\n    addq $8, %rax\n"
+    + "    leaq (%rax,%rsi,8), %rsi\n    leaq (%rax,%rdx,8), %rdx\n    leaq (%rax,%rcx,8), %rdi\n"
+    + "    movq %r8, %rcx\n    shlq $6, %rcx\n    leaq (%rdi,%rcx), %r9\n    leaq -64(%rsi,%rcx,2), %r10\n    leaq -64(%rdx,%rcx,2), %r11\n";
+  for k in 0..4 {
+    let off = util.i32_to_string(16 * k);
+    o = o + "    vmovdqu " + off + "(%r10), %xmm" + util.i32_to_string(k) + "\n    vpxor " + off + "(%r11), %xmm" + util.i32_to_string(k) + ", %xmm" + util.i32_to_string(k) + "\n";
+  }
+  return o + ".Lsm_loop:\n" + x86_salsa_block("%rdi") + x86_salsa_block("%r9") + "    decq %r8\n    jnz .Lsm_loop\n"
+    + x86_aes_epilogue() + "    .size __fern_scrypt_block_mix, .-__fern_scrypt_block_mix\n";
+}
+
+// X ^= the next 64-byte blocks at rsi and rdx, then X = Salsa20/8(X), written to `out`. All three step on.
+function x86_salsa_block(out: string): string {
+  let o = "";
+  for k in 0..4 {
+    let off = util.i32_to_string(16 * k);
+    let x = "%xmm" + util.i32_to_string(k);
+    o = o + "    vpxor " + off + "(%rsi), " + x + ", " + x + "\n    vpxor " + off + "(%rdx), " + x + ", " + x + "\n    vmovdqu " + x + ", %xmm" + util.i32_to_string(4 + k) + "\n";
+  }
+  for _ in 0..4 {
+    o = o + x86_salsa_step(0, 3, 1, 7) + x86_salsa_step(1, 0, 2, 9) + x86_salsa_step(2, 1, 3, 13) + x86_salsa_step(3, 2, 0, 18)
+      + "    pshufd $147, %xmm1, %xmm1\n    pshufd $78, %xmm2, %xmm2\n    pshufd $57, %xmm3, %xmm3\n"
+      + x86_salsa_step(0, 1, 3, 7) + x86_salsa_step(3, 0, 2, 9) + x86_salsa_step(2, 3, 1, 13) + x86_salsa_step(1, 2, 0, 18)
+      + "    pshufd $57, %xmm1, %xmm1\n    pshufd $78, %xmm2, %xmm2\n    pshufd $147, %xmm3, %xmm3\n";
+  }
+  for k in 0..4 {
+    let x = "%xmm" + util.i32_to_string(k);
+    o = o + "    vpaddd %xmm" + util.i32_to_string(4 + k) + ", " + x + ", " + x + "\n    vmovdqu " + x + ", " + util.i32_to_string(16 * k) + "(" + out + ")\n";
+  }
+  return o + "    addq $64, %rsi\n    addq $64, %rdx\n    addq $64, " + out + "\n";
+}
+
+// Row z ^= (row x + row y) rotated left by n, in each 32-bit lane.
+function x86_salsa_step(x: i32, y: i32, z: i32, n: i32): string {
+  let zr = "%xmm" + util.i32_to_string(z);
+  return "    vpaddd %xmm" + util.i32_to_string(y) + ", %xmm" + util.i32_to_string(x) + ", %xmm8\n    vpslld $" + util.i32_to_string(n) + ", %xmm8, %xmm9\n"
+    + "    vpsrld $" + util.i32_to_string(32 - n) + ", %xmm8, %xmm8\n    vpxor %xmm9, " + zr + ", " + zr + "\n    vpxor %xmm8, " + zr + ", " + zr + "\n";
+}
+
+// The kernels over arrays of 64-bit words.
+function emit_rt_limb_kernels(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("mont_mul")) {
+    s = s.write(x86_mont_mul());
+  }
+  if (s.has_need("scrypt")) {
+    s = s.write(x86_scrypt_block_mix());
+  }
+  return s;
 }
 
 function emit_rt_poly1305(s: asmcore.EmitState): asmcore.EmitState {

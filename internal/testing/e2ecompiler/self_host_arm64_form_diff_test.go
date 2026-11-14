@@ -204,6 +204,25 @@ func arm64FormCases() []string {
 	} {
 		add("%s", f)
 	}
+	// The forms of the Montgomery product kernel, __fern_mont_mul.
+	for _, f := range []string{
+		"ldr x4, [x8, x3, lsl #3]", "str x6, [x12, x16, lsl #3]", "str xzr, [x12, x3, lsl #3]", "umulh x5, x13, x5",
+		"adc x16, xzr, xzr", "adc x15, x16, xzr", "sbcs x5, x5, x6", "cset x5, hs", "neg x5, x5", "cmp xzr, xzr",
+		"subs x11, x11, #1", "stp x10, x11, [x29, #32]", "orr x5, x5, x15", "and x6, x6, x5",
+	} {
+		add("%s", f)
+	}
+	// The forms of the scrypt BlockMix kernel, __fern_scrypt_block_mix.
+	for _, f := range []string{
+		"ldp q0, q1, [x7]", "ldp q2, q3, [x7, #32]", "ldp q22, q23, [x2, #32]", "stp q0, q1, [x3]", "stp q2, q3, [x5, #32]",
+		"eor v1.16b, v1.16b, v17.16b", "eor v3.16b, v3.16b, v23.16b", "orr v4.16b, v0.16b, v0.16b", "add v16.4s, v0.4s, v3.4s",
+		"add v3.4s, v3.4s, v7.4s", "shl v17.4s, v16.4s, #7", "sri v17.4s, v16.4s, #25", "shl v17.4s, v16.4s, #18", "sri v17.4s, v16.4s, #14",
+		"ext v1.16b, v1.16b, v1.16b, #12", "ext v2.16b, v2.16b, v2.16b, #8", "ext v3.16b, v3.16b, v3.16b, #4",
+		"cneg x11, x11, mi", "subs x11, x3, x1", "add x1, x0, x1, lsl #3", "add x5, x3, x4, lsl #6", "lsl x6, x4, #7",
+		"ldur w11, [x0, #-8]", "ldr x5, [x1, x4, lsl #3]", "str x5, [x2, x4, lsl #3]", "sxtw x4, w4",
+	} {
+		add("%s", f)
+	}
 	// The forms of __fern_scan_set, the scan with a set that is not a constant.
 	for _, f := range []string{
 		"csel x10, x10, x3, le", "add x8, x2, #8", "ldrb w6, [x5, #3]", "ldrb w7, [x8, x6]", "ldrb w7, [x7, #8]",
