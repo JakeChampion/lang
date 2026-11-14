@@ -1033,7 +1033,7 @@ function pcre_escape(p: string): string {
     if (__memchr("\\.+*?()|[]{}^$#-", p[k] as i32, 0) >= 0) {
       out += "\\";
     }
-    out = out + slice_unchecked(p, k, k + 1);
+    out += slice_unchecked(p, k, k + 1);
   }
   return out;
 }

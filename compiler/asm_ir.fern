@@ -1660,13 +1660,14 @@ function x86_scan_masks(): string {
 function x86_scan_masks_probes(k: i32): string {
   let id = util.i32_to_string(k);
   let offs = ["%r9", "%rdi", "%rcx"];
+  let offs32 = ["%r9d", "%edi", "%ecx"];
   let r = ".Lsm_k" + id + ":\n    movzbl 9(%rdx), %r9d\n    movq %r9, %rdi\n";
   for j in 1..k {
     r = r + "    movzbl " + util.i32_to_string(9 + j) + "(%rdx), %r10d\n    cmpq %r10, %rdi\n    cmovbq %r10, %rdi\n";
   }
   r += "    leaq (%rax,%rcx), %rsi\n    leaq (%rax,%r8), %r10\n    subq %rdi, %r10\n    leaq -32(%r10), %r11\n";
   for j in 1..k {
-    r = r + "    movzbl " + util.i32_to_string(9 + j) + "(%rdx), " + x86_reg32(offs[j]) + "\n";
+    r = r + "    movzbl " + util.i32_to_string(9 + j) + "(%rdx), " + offs32[j] + "\n";
   }
   for j in 0..k {
     r = r + "    vbroadcasti128 " + util.i32_to_string(12 + 32 * j) + "(%rdx), %ymm" + util.i32_to_string(2 + 2 * j) + "\n";
@@ -1697,14 +1698,6 @@ function x86_scan_masks_probes(k: i32): string {
   r = r + "    testl %r8d, %r8d\n    jnz .Lsm_f" + id + "\n    addq $1, %rsi\n    jmp .Lsm_s" + id + "\n";
   r = r + ".Lsm_f" + id + ":\n    popq %rbx\n    subq %rax, %rsi\n    movq %rsi, %rcx\n    ret\n";
   return r + ".Lsm_end" + id + ":\n    popq %rbx\n    movq $-1, %rcx\n    ret\n";
-}
-
-function x86_reg32(r: string): string {
-  return match (r) {
-    "%rdi" => "%edi",
-    "%rcx" => "%ecx",
-    _ => "%r9d",
-  };
 }
 
 // __fern_scan_set scans with a set that is not a constant: rax holds the bytes,

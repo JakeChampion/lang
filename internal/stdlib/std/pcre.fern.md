@@ -496,8 +496,7 @@ function __pc_flags(cx: PCtx, at: i32, f0: i32): (i32, i32) {
   let pos = at;
   let on = true;
   if (pos < p.len() && p[pos] == 94u8) {
-    f = f & (F_U ^ F_U) | (f & F_U);
-    f = f & ~(F_I | F_M | F_N | F_S | F_X | F_XX);
+    f &= F_U;
     pos += 1;
   }
   while (pos < p.len()) {
@@ -531,7 +530,7 @@ function __pc_flags(cx: PCtx, at: i32, f0: i32): (i32, i32) {
     }
     f = if (on) { f | bit } else { f & ~bit };
     if (c == 120 && !on) {
-      f = f & ~F_XX;
+      f &= ~F_XX;
     }
     pos += 1;
   }

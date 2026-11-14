@@ -7642,11 +7642,9 @@ function call_scan_masks(args: Value[]): Value {
   for j in 0..probes {
     reach = if (m[1 + j] > reach) { m[1 + j] } else { reach };
   }
-  let at = vint_bits(args[1]);
-  if (at < 0) {
-    at = 0;
-  }
-  while (at + reach < text.len()) {
+  let from = vint_bits(args[1]);
+  let start = if (from < 0) { 0 } else { from };
+  for at in start..text.len() - reach {
     let acc = 255;
     for j in 0..probes {
       let c = text[at + m[1 + j]] as i32;
@@ -7655,7 +7653,6 @@ function call_scan_masks(args: Value[]): Value {
     if (acc != 0) {
       return v_int(at);
     }
-    at += 1;
   }
   return v_int(-1);
 }
