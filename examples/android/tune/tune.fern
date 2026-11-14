@@ -11,6 +11,9 @@ import "std/i32";
 import "std/i64";
 import "std/option";
 import "std/unicode";
+import "std/string";
+import "../look";
+import "../matrix";
 
 // A file of the library: its title, its artist, its album and its number
 // on the album, from its tags or from its path. `by` is the artist that
@@ -343,7 +346,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: true, fade_s: 0, gain: no_gain(), editing: -1, draft: draft_of(plain("", "", "", 0i64)), asking: -1, tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: false, fade_s: 0, gain: no_gain(), editing: -1, draft: draft_of(plain("", "", "", 0i64)), asking: -1, tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
@@ -353,7 +356,7 @@ pub function start(scan: string[]): Model {
 pub struct Prefs { look: i32, sort: i32, hidden: string[], off: i32[], level: i32, tint: boolean, fade: i32, tone: i32[] }
 
 pub function no_prefs(): Prefs {
-  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [], level: LEVEL_TRACK, tint: true, fade: 0, tone: [0, 0, 0, 0, 0] };
+  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [], level: LEVEL_TRACK, tint: false, fade: 0, tone: [0, 0, 0, 0, 0] };
 }
 
 pub function prefs(m: Model): Prefs {
@@ -367,7 +370,18 @@ pub function theme(m: Model, dark: boolean): ui.Theme {
   if let Some(seed) = tint_color(m) {
     return ui.seeded(seed, d);
   }
-  return ui.theme(d);
+  return plain_theme(d);
+}
+
+// The colors of a dot-matrix display, as those of the other Fern apps:
+// black or a light grey, with white or black text and buttons, and grey.
+// Only the dots of what is live are red: `look.red`.
+pub function plain_theme(dark: boolean): ui.Theme {
+  if (dark) {
+    return ui.Theme { background: look.bg(), surface: look.surface(), primary: look.ink(), on_primary: look.bg(), ink: look.ink(), muted: look.muted(), outline: look.outline(), track: draw.rgba(255, 255, 255, 46), pressed: draw.rgba(255, 255, 255, 31) };
+  }
+  let paper = draw.rgb(242, 242, 242);
+  return ui.Theme { background: paper, surface: draw.rgb(255, 255, 255), primary: draw.rgb(0, 0, 0), on_primary: paper, ink: draw.rgb(0, 0, 0), muted: draw.rgb(110, 110, 110), outline: draw.rgb(200, 200, 200), track: draw.rgba(0, 0, 0, 46), pressed: draw.rgba(0, 0, 0, 31) };
 }
 
 // The key color of the cover of the track that plays, when the player
@@ -1322,23 +1336,40 @@ function library(m: Model): ui.El[Msg] {
 
 // A picture for a track, from the letters of its title: rings in two
 // colors.
+// A cover for a name with no picture: a ring of round dots, and the first
+// letter of the name in dots. The grey shows on a dark and on a light
+// background.
 function art(name: string): (draw.Frame, i32, i32, i32, i32) => void {
-  let seed = 7;
-  for i in 0..name.len() {
-    seed = (seed * 31 + name[i] as i32) % 65521;
-  }
-  let a = draw.rgb(60 + seed % 120, 90 + seed / 7 % 120, 120 + seed / 49 % 120);
-  let b = draw.rgb(200 - seed % 90, 120 + seed / 11 % 100, 90 + seed / 5 % 80);
+  let letter = name.trim().take(1);
+  let grey = draw.rgb(128, 128, 128);
   return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
     let r = w.min(h) / 2;
-    let rings = 5;
-    for k in 0..rings {
-      let color = a;
-      if (k % 2 == 1) {
-        color = b;
-      }
-      f.disc(x + w / 2, y + h / 2, r * (rings - k) / rings, color);
+    let dot = (r / 14).max(1);
+    look.dotted_ring(f, x + w / 2, y + h / 2, r - dot, dot, 24, grey);
+    let pitch = (r / 6).max(1);
+    matrix.text(f, x + (w - matrix.width(letter, pitch)) / 2, y + (h - matrix.height(pitch)) / 2, letter, pitch, grey);
+  };
+}
+
+// The cover of the track that plays when it has no picture: a ring of 60
+// round dots like the dial of a watch, and the time of the track in dots.
+// The dots of the time that passed are `ink`, the dot of now is `live`,
+// and the others are `dim`.
+function dial(at_ms: i64, part: f64, ink: i32, dim: i32, live: i32): (draw.Frame, i32, i32, i32, i32) => void {
+  let now = ((part * 60.0) as i32).max(0).min(59);
+  let time = clock(at_ms);
+  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let r = w.min(h) / 2;
+    let dot = (r / 40).max(1);
+    let cx = x + w / 2;
+    let cy = y + h / 2;
+    for k in 0..60 {
+      let a: f64 = 6.283185307179586 * (k as f64) / 60.0;
+      let color = if (k == now) { live } else if (k < now) { ink } else { dim };
+      f.disc(cx + ((r - 2 * dot) as f64 * a.sin()) as i32, cy - ((r - 2 * dot) as f64 * a.cos()) as i32, if (k == now) { dot * 2 } else { dot }, color);
     }
+    let pitch = matrix.fit_pitch(time, r, (r / 12).max(1));
+    matrix.text(f, cx - matrix.width(time, pitch) / 2, cy - matrix.height(pitch) / 2, time, pitch, ink);
   };
 }
 
@@ -1466,22 +1497,36 @@ function tuner(m: Model): ui.El[Msg] {
 
 // The bars of the spectrum `bars` in the color `color`. The key changes
 // when a bar changes by a step of the 32 steps of its height.
-function spectrum(bars: f64[], color: i32): ui.El[Msg] {
+// The rows of dots of a bar of the spectrum.
+const LEVELS: i32 = 8;
+
+// The spectrum as columns of round dots, as on a dot-matrix display. A
+// column lights a dot for each eighth of its level, the top one in `live`.
+// With no levels yet, each dot is `dim`.
+function spectrum(bars: f64[], ink: i32, dim: i32, live: i32): ui.El[Msg] {
   let key = "bars";
   for b in bars {
-    key = key + "," + ((b * 32.0) as i32).to_string();
+    key = key + "," + lit_dots(b).to_string();
   }
   let paint = (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
-    let n = bars.len().max(1);
-    let gap = (w / n / 4).max(1);
-    for i in 0..bars.len() {
-      let x0 = x + w * i / n;
-      let x1 = x + w * (i + 1) / n - gap;
-      let tall = (h as f64 * bars[i].max(0.02)) as i32;
-      f.round_rect(x0, y + h - tall, (x1 - x0).max(1), tall, ((x1 - x0) / 2).min(tall / 2), color);
+    let n = if (bars.len() == 0) { BARS } else { bars.len() };
+    let step = (w / n).min(h / LEVELS).max(2);
+    let dot = (step * 2 / 5).max(1);
+    let left = x + (w - step * n) / 2;
+    for i in 0..n {
+      let lit = if (i < bars.len()) { lit_dots(bars[i]) } else { 0 };
+      for row in 0..LEVELS {
+        let color = if (row >= lit) { dim } else if (row == lit - 1) { live } else { ink };
+        f.disc(left + i * step + step / 2, y + h - row * step - step / 2, dot, color);
+      }
     }
   };
   return ui.canvas(key, paint).width(280.0).height(48.0);
+}
+
+// The dots that a bar at `level` lights, from 1 to LEVELS.
+function lit_dots(level: f64): i32 {
+  return ((level * (LEVELS as f64)).round() as i32).max(1).min(LEVELS);
 }
 
 // The bars `old` of the spectrum after the levels `now`: a bar goes up at
@@ -1619,7 +1664,8 @@ function now_playing(m: Model, s: ui.Screen): ui.El[Msg] {
   }
   // The cover or the lyrics take the height that the rest of the screen
   // leaves, so the spectrum under them does not cover the title.
-  let big: ui.El[Msg] = ui.canvas("art:" + name, art(name)).width(240.0).tall().square();
+  let theme = s.theme;
+  let big: ui.El[Msg] = ui.canvas("dial:" + clock(m.at_ms) + ":" + ((part(m) * 60.0) as i32).to_string(), dial(m.at_ms, part(m), theme.ink, theme.outline, look.red())).width(240.0).tall().square();
   if let Some(img) = m.art {
     big = ui.picture("art:" + format, img).width(280.0).tall().square().rounded(12.0);
   }
@@ -1633,7 +1679,7 @@ function now_playing(m: Model, s: ui.Screen): ui.El[Msg] {
   return ui.column(
     [
       ui.row(top).aligned(ui.CENTER),
-      ui.column([big, spectrum(m.bars, s.theme.primary)]).spaced(12.0).centered().grow(1.0),
+      ui.column([big, spectrum(m.bars, theme.ink, theme.outline, look.red())]).spaced(12.0).centered().grow(1.0),
       ui.row([ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0).wide(), ui.text_button(toggle_label("Favorite", favorite(m)), Favorite)]).spaced(8.0).aligned(ui.CENTER),
       ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
       ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
