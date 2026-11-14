@@ -1,6 +1,6 @@
 # Audio file tags
 
-This module reads what an audio file holds about itself: the title, the artist, the album, the genre, the track number, the lyrics, and the gains of the track and of its album. It also writes the texts and the numbers of the tags of an MP3 or a FLAC file.
+This module reads what an audio file holds about itself: the title, the artist, the album, the genre, the track number, the lyrics, and the gains of the track and of its album. It also writes the texts and the numbers of the tags of an MP3, a FLAC or an Ogg file.
 
 ## Model
 
@@ -89,7 +89,8 @@ function main(): i32 {
 ```fern
 <<module introduction>>=
 // This module reads the tags of an MP3, a FLAC, a WAV, an MP4 or an Ogg
-// file, and writes those of an MP3 or a FLAC file.
+// file, and writes those of an MP3, a FLAC or an Ogg file.
+import "std/audio/ogg";
 import "std/audio/wire";
 import "std/base64";
 import "std/result";
@@ -907,8 +908,9 @@ pub function ogg(input: [u8]): Tags {
 
 - An MP3 file gets an ID3v2 tag. A tag of the version 2.3 stays at 2.3, with its texts in UTF-16. A tag of the version 2.4 and a new tag have their texts in UTF-8. Each other frame of the tag stays: pictures, lyrics and gains.
 - A FLAC file gets a new Vorbis comment block in the place of the old one. Each other comment and each other block stay.
+- An Ogg file with Vorbis or Opus sound gets a new comment packet in the place of the old one. Each other comment stays. The header packets after the first one go on new pages. When their number of pages changes, each later page of the stream gets its new sequence number and checksum. The binary data after the comments of an Opus file stays when the first bit of its first byte is 1, as RFC 7845 asks.
 
-Other formats give None. An ID3v2 tag of the version 2.2 also gives None, and so does a tag with unsynchronisation or a footer. A FLAC file whose blocks go past its end also gives None.
+Other formats give None. An ID3v2 tag of the version 2.2 also gives None, and so does a tag with unsynchronisation or a footer. A FLAC file whose blocks go past its end also gives None. An Ogg file gives None when its first page holds more than its first packet. It also gives None when its headers share a page with the sound or with a different stream. Pages that go past the end give None too.
 
 ```fern
 <<writing>>=
@@ -1070,11 +1072,12 @@ function field_comments(t: Tags): string[] {
 }
 
 // The vendor and the comments of the Vorbis comment block from `from` to
-// `to`, but for those that `retagged` writes.
-function kept_comments(input: [u8], from: i32, to: i32): (u8[], string[]) {
+// `to`, but for those that `retagged` writes, and the end of the comments.
+// A block that goes past `to` gives -1 for the end.
+function kept_comments(input: [u8], from: i32, to: i32): (u8[], string[], i32) {
   let kept: string[] = [];
   let Some(vendor_end) = __comment_start(input, from, to) else {
-    return (bytes_of("Fern"), kept);
+    return (bytes_of("Fern"), kept, -1);
   };
   let vendor = appended([], input[from + 4:vendor_end]);
   let count = wire.le(input, vendor_end, 4) as i32;
@@ -1082,18 +1085,18 @@ function kept_comments(input: [u8], from: i32, to: i32): (u8[], string[]) {
   let written = written_names();
   for _ in 0..count {
     if (!__fits(at, 4, to)) {
-      return (vendor, kept);
+      return (vendor, kept, -1);
     }
     let n = wire.le(input, at, 4) as i32;
     if (!__fits(at + 4, n, to)) {
-      return (vendor, kept);
+      return (vendor, kept, -1);
     }
     if (!is_written(input, at + 4, at + 4 + n, written)) {
       kept = kept.append(utf8.from_bytes_lossy(input[at + 4:at + 4 + n]));
     }
     at += 4 + n;
   }
-  return (vendor, kept);
+  return (vendor, kept, at);
 }
 
 // The comment from `from` to `to` has a name of `written`.
@@ -1105,14 +1108,20 @@ function is_written(input: [u8], from: i32, to: i32, written: string[]): boolean
   return eq > from && eq < to && has(written, utf8_text(input, from, eq).to_upper());
 }
 
-// A Vorbis comment block of FLAC: its type 4, its size, its vendor and its
-// comments.
-function comment_block(vendor: [u8], comments: string[]): u8[] {
+// The vendor and the comments of a Vorbis comment block.
+function comment_list(vendor: [u8], comments: string[]): u8[] {
   let body = appended(wire.put_le([], vendor.len() as u64, 4), vendor);
   body = wire.put_le(body, comments.len() as u64, 4);
   for c in comments {
     body = appended(body, comment_bytes(c));
   }
+  return body;
+}
+
+// A Vorbis comment block of FLAC: its type 4, its size, its vendor and its
+// comments.
+function comment_block(vendor: [u8], comments: string[]): u8[] {
+  let body = comment_list(vendor, comments);
   return appended(appended([4u8], wire.put_be([], body.len() as u64, 3)), body);
 }
 
@@ -1132,7 +1141,7 @@ function flac_block(input: [u8], at: i32, t: Tags): (u8[], i32, boolean) {
   if ((head & 127) != 4) {
     return (appended([(head & 127) as u8], input[at + 1:next]), next, (head & 128) != 0);
   }
-  let (vendor, kept) = kept_comments(input, at + 4, next);
+  let (vendor, kept, _) = kept_comments(input, at + 4, next);
   let all = field_comments(t);
   for c in kept {
     all = all.append(c);
@@ -1186,11 +1195,130 @@ function retagged_flac(input: [u8], t: Tags): Option[u8[]] {
   return Some(appended(out, input[at:]));
 }
 
+// The end of the Ogg page at `at`, or -1 when it goes past the end.
+function page_end(input: [u8], at: i32): i32 {
+  if (!__fits(at, 27, input.len()) || !wire.tag(input, at, "OggS") || !__fits(at + 27, input[at + 26] as i32, input.len())) {
+    return -1;
+  }
+  let end = at + 27 + input[at + 26] as i32;
+  for i in 0..input[at + 26] as i32 {
+    end += input[at + 27 + i] as i32;
+  }
+  return if (end <= input.len()) { end } else { -1 };
+}
+
+// The comment packet `packet` of a Vorbis or an Opus stream with the
+// comments of `t`, or None when it is not a comment packet.
+function comment_packet(packet: [u8], t: Tags): Option[u8[]] {
+  let opus = wire.tag(packet, 0, "OpusTags");
+  if (!opus && (packet.len() < 7 || packet[0] != 3u8 || !wire.tag(packet, 1, "vorbis"))) {
+    return None;
+  }
+  let head = if (opus) { 8 } else { 7 };
+  let (vendor, kept, end) = kept_comments(packet, head, packet.len());
+  let all = field_comments(t);
+  for c in kept {
+    all = all.append(c);
+  }
+  let out = appended(appended([], packet[0:head]), comment_list(vendor, all));
+  if (!opus) {
+    return Some(out.append(1u8));
+  }
+  if (end >= 0 && end < packet.len() && (packet[end] & 1u8) == 1u8) {
+    return Some(appended(out, packet[end:]));
+  }
+  return Some(out);
+}
+
+// The header packets of the stream `serial` from the page at `at`, until
+// `count` of them end, the start of their last page and its end. The last
+// packet must end its page. Else the end is -1.
+function header_packets(input: [u8], at: i32, serial: u64, count: i32): (u8[][], i32, i32) {
+  let packets: u8[][] = [];
+  let partial: u8[] = [];
+  let last = at;
+  while (packets.len() < count) {
+    let end = page_end(input, at);
+    if (end < 0 || wire.le(input, at + 14, 4) != serial) {
+      return (packets, last, -1);
+    }
+    last = at;
+    let segments = input[at + 26] as i32;
+    let data = at + 27 + segments;
+    for i in 0..segments {
+      if (packets.len() == count) {
+        return (packets, last, -1);
+      }
+      let n = input[at + 27 + i] as i32;
+      partial = appended(partial, input[data:data + n]);
+      data += n;
+      if (n < 255) {
+        packets = packets.append(partial);
+        partial = [];
+      }
+    }
+    at = end;
+  }
+  return (packets, last, at);
+}
+
+// The pages from `at` with `shift` added to the sequence number of each
+// page of the stream `serial`, or None when a page goes past the end.
+function renumbered(input: [u8], at: i32, serial: u64, shift: i64): Option[u8[]] {
+  if (shift == 0i64) {
+    return Some(appended([], input[at:]));
+  }
+  let out: u8[] = [];
+  while (at < input.len()) {
+    let end = page_end(input, at);
+    if (end < 0) {
+      return None;
+    }
+    if (wire.le(input, at + 14, 4) == serial) {
+      out = appended(out, ogg.resealed(input[at:end], (wire.le(input, at + 18, 4) as i64 + shift) as u32));
+    } else {
+      out = appended(out, input[at:end]);
+    }
+    at = end;
+  }
+  return Some(out);
+}
+
+// The Ogg file with a new comment packet for the fields of `t`. The first
+// page holds the first packet only. A Vorbis stream has two more header
+// packets and an Opus stream one.
+function retagged_ogg(input: [u8], t: Tags): Option[u8[]] {
+  let first = page_end(input, 0);
+  if (first < 0 || input[26] != 1u8 || input[27] == 255u8 || input[27] < 8u8) {
+    return None;
+  }
+  let opus = wire.tag(input, 28, "OpusHead");
+  if (!opus && (input[28] != 1u8 || !wire.tag(input, 29, "vorbis"))) {
+    return None;
+  }
+  let serial = wire.le(input, 14, 4);
+  let (packets, last, at) = header_packets(input, first, serial, if (opus) { 1 } else { 2 });
+  if (at < 0) {
+    return None;
+  }
+  let Some(comment) = comment_packet(packets[0], t) else {
+    return None;
+  };
+  let (pages, next) = ogg.paged(packets.with(0, comment), serial as u32, 1u32, 0i64);
+  let Some(rest) = renumbered(input, at, serial, next as i64 - wire.le(input, last + 18, 4) as i64 - 1i64) else {
+    return None;
+  };
+  return Some(appended(appended(appended([], input[0:first]), pages), rest));
+}
+
 // The file `input` with the fields of `t` in its tags, or None for a
 // format or a tag that this module does not write.
 pub function retagged(input: [u8], t: Tags): Option[u8[]] {
   if (wire.tag(input, 0, "fLaC")) {
     return retagged_flac(input, t);
+  }
+  if (wire.tag(input, 0, "OggS")) {
+    return retagged_ogg(input, t);
   }
   return retagged_mp3(input, t);
 }

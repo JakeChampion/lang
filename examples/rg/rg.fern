@@ -1,8 +1,9 @@
 // rg — search files for a regular expression.
 //
-// A port of ripgrep (github.com/BurntSushi/ripgrep) with std/regex. It
-// searches the files on the command line, or the standard input. In a
-// directory, it searches each file that the ignore rules of ripgrep keep.
+// A port of ripgrep (github.com/BurntSushi/ripgrep) with std/regex, and
+// with -P with std/pcre. It searches the files on the command line, or the
+// standard input. In a directory, it searches each file that the ignore
+// rules of ripgrep keep.
 //
 //   $ rg PATTERN                # the matching lines under the current directory
 //   $ rg -n -C2 PATTERN FILE    # with line numbers and two lines of context
@@ -12,6 +13,7 @@
 import "core/cmp";
 import "std/encoding" as whatwg;
 import "std/io";
+import "std/pcre";
 import "std/process";
 import "std/regex";
 import "std/worker";
@@ -22,6 +24,7 @@ import "./help";
 import "./hyperlink";
 import "./ignore";
 import "./jsonl";
+import "./matcher";
 import "./search";
 import "./walk";
 
@@ -34,6 +37,11 @@ const NOTHING_SEARCHED: string = "No files were searched, which means ripgrep pr
 struct Ctx {
   p: search.Printer,
   pattern: string,
+  // With -P, or with --engine auto when std/regex refuses the pattern, the
+  // pattern and the options of PCRE2.
+  pcre: boolean,
+  pcre_pattern: string,
+  pcre_options: pcre.Options,
   implicit: boolean,
   mmap: boolean,
   binary: i32,
@@ -95,44 +103,107 @@ function byte_name(b: u8): string {
   return if (b == 13u8) { "\\r" } else { "\\n" };
 }
 
-// The port behaves as ripgrep built without PCRE2.
-const NO_PCRE2: string = "PCRE2 is not available in this build of ripgrep.";
+// The hint of ripgrep after an error of the default engine that PCRE2 can
+// handle.
+const PCRE2_HINT: string = "Consider enabling PCRE2 with the --pcre2 flag, which can handle backreferences\nand look-around.";
 
 // The message of an error of the default engine. With --engine auto,
 // ripgrep then tries PCRE2, and names both errors.
-function engine_error(o: flags.Options, text: string): string {
+function engine_error(o: flags.Options, text: string, pcre_error: string): string {
   if (o.engine != "auto") {
+    if (text.contains("backreferences") || text.contains("look-around")) {
+      return text + "\n\n" + PCRE2_HINT;
+    }
     return text;
   }
   let line = "~".repeat(79);
-  return "regex could not be compiled with either the default regex engine or with PCRE2.\n\ndefault regex engine error:\n" + line + "\n" + text + "\n" + line + "\n\nPCRE2 regex engine error:\n" + NO_PCRE2;
+  return "regex could not be compiled with either the default regex engine or with PCRE2.\n\ndefault regex engine error:\n" + line + "\n" + text + "\n" + line + "\n\nPCRE2 regex engine error:\n" + pcre_error;
 }
 
-function compiled(o: flags.Options, pattern: string, banned: u8[]): Option[regex.Regex] {
+// The matcher of the search, or None after an error. With --engine auto, a
+// pattern that std/regex refuses goes to PCRE2.
+function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matcher.Matcher)] {
   if (o.engine == "pcre2") {
-    eprint("rg: " + NO_PCRE2);
-    return None;
+    return match (pcre_matcher(ctx)) {
+      Ok(m) => Some((Ctx { ...ctx, pcre: true }, m)),
+      Err(e) => {
+        eprint("rg: " + e);
+        return None;
+      },
+    };
   }
+  let why = default_error(ctx, o, banned);
+  if (why == "") {
+    let Ok(re) = regex.compile(ctx.pattern) else {
+      return None;
+    };
+    return Some((ctx, matcher.of_regex(re)));
+  }
+  if (o.engine == "auto") {
+    match (pcre_matcher(ctx)) {
+      Ok(m) => {
+        return Some((Ctx { ...ctx, pcre: true }, m));
+      },
+      Err(e) => {
+        eprint("rg: " + engine_error(o, why, e));
+        return None;
+      }
+    }
+  }
+  eprint("rg: " + engine_error(o, why, ""));
+  return None;
+}
+
+// The error of the default engine, or "".
+function default_error(ctx: Ctx, o: flags.Options, banned: u8[]): string {
   if let Some(e) = regex.check(flags.joined(o), !o.has(flags.NO_UNICODE)) {
-    eprint("rg: " + engine_error(o, e.report()));
-    return None;
+    return e.report();
   }
-  match (regex.compile(pattern)) {
+  match (regex.compile(ctx.pattern)) {
     Ok(re) => {
       for b in banned {
         if (re.has_literal_byte(b)) {
-          eprint("rg: the literal \"" + byte_name(b) + "\" is not allowed in a regex\n\n" + MULTILINE_HINT);
-          return None;
+          return "the literal \"" + byte_name(b) + "\" is not allowed in a regex\n\n" + MULTILINE_HINT;
         }
       }
-      return Some(re);
+      return "";
     },
     Err(e) => {
-      eprint("rg: " + engine_error(o, "regex parse error: " + e.to_string()));
-      return None;
+      return "regex parse error: " + e.to_string();
     }
   }
-  return None;
+  return "";
+}
+
+// The matcher of PCRE2, or the message of PCRE2's error.
+function pcre_matcher(ctx: Ctx): Result[matcher.Matcher, string] {
+  let pc = match (pcre.compile(ctx.pcre_pattern, ctx.pcre_options)) {
+    Ok(p) => p,
+    Err(e) => {
+      return Err(e.to_string());
+    },
+  };
+  let Ok(none) = regex.compile(NOTHING) else {
+    return Err("internal error");
+  };
+  return Ok(matcher.of_pcre(pc, none));
+}
+
+// A pattern of std/regex that matches nothing.
+const NOTHING: string = "[^\\x00-\\x{10FFFF}]";
+
+// The matcher of a worker, as the parent compiled it.
+function worker_matcher(ctx: Ctx): Option[matcher.Matcher] {
+  if (ctx.pcre) {
+    return match (pcre_matcher(ctx)) {
+      Ok(m) => Some(m),
+      Err(_) => None,
+    };
+  }
+  return match (regex.compile(ctx.pattern)) {
+    Ok(re) => Some(matcher.of_regex(re)),
+    Err(_) => None,
+  };
 }
 
 function read_input(path: string): Result[u8[], IoError] {
@@ -199,7 +270,7 @@ function source(ctx: Ctx, it: walk.Item, cap: i32, buffered: boolean): search.So
 
 // Searches the files of `items` in order, and writes their output to `h`.
 // A message of the walk goes to the standard error at its place.
-function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): Part {
+function search_items(ctx: Ctx, re: matcher.Matcher, items: walk.Item[], h: usize): Part {
   let r = empty_part();
   let written = false;
   let cap = search.BUFFER;
@@ -232,15 +303,15 @@ function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): 
 // the time of the search, and the messages of its errors.
 struct Searched { out: Option[search.Outcome], nanos: i64, errors: string[] }
 
-// The bytes that the search of a file reads: the file, the output of the
-// preprocessor of --pre, or the file that -z decompresses. `prefix` and
-// `late` are the message of a program that failed after its output.
-// `piped` says that ripgrep reads the bytes from a program, not from a
-// map of the file.
-struct Haystack { bytes: u8[], prefix: string, late: string, piped: boolean }
+// The bytes that the search of a file reads, with no check of UTF-8: the
+// file, the output of the preprocessor of --pre, or the file that -z
+// decompresses. `prefix` and `late` are the message of a program that failed
+// after its output. `piped` says that ripgrep reads the bytes from a
+// program, not from a map of the file.
+struct Haystack { text: string, prefix: string, late: string, piped: boolean }
 
 // Searches the file of `it`, and writes its output to `h`.
-function search_file(ctx: Ctx, re: regex.Regex, it: walk.Item, cap: i32, h: usize, written: boolean): Searched {
+function search_file(ctx: Ctx, re: matcher.Matcher, it: walk.Item, cap: i32, h: usize, written: boolean): Searched {
   let name = display_name(ctx, it.path);
   let none: string[] = [];
   let hay = match (haystack(ctx, it.path, name)) {
@@ -254,10 +325,14 @@ function search_file(ctx: Ctx, re: regex.Regex, it: walk.Item, cap: i32, h: usiz
     return Searched { out: None, nanos: 0i64, errors: [name + ": " + hay.prefix + hay.late] };
   }
   let t0 = monotonic_ns();
-  let (text, decoded) = encoding.decode(hay.bytes, ctx.encoding, ctx.decoder);
+  let (text, decoded) = encoding.decode(hay.text, ctx.encoding, ctx.decoder);
   let out = search.search(linked(ctx, it.path), re, text, name, source(ctx, it, cap, decoded || hay.piped), h, written);
   let prefix = if (p.mode == flags.Files && out.matched) { "" } else { hay.prefix };
   let errors = if (hay.late == "") { none } else { [name + ": " + prefix + hay.late] };
+  let failure = re.take_error();
+  if (failure != "") {
+    errors = errors.append(name + ": " + failure);
+  }
   return Searched { out: Some(out), nanos: monotonic_ns() - t0, errors: errors };
 }
 
@@ -272,18 +347,28 @@ function haystack(ctx: Ctx, path: string, name: string): Result[Haystack, string
   if (path != "-" && ctx.pre != "" && preprocessed(ctx, name)) {
     return preprocess(ctx, path, name);
   }
+  let prog = if (ctx.search_zip && path != "-") { decompress.program(path) } else { "" };
+  if (prog == "" && ctx.mmap && path != "-") {
+    return match (unsafe { map_file_unchecked(path) }) {
+      Ok(text) => Ok(Haystack { text: text, prefix: "", late: "", piped: false }),
+      Err(e) => Err(ignore.os_error(e)),
+    };
+  }
   let bytes = match (read_input(path)) {
     Ok(b) => b,
     Err(e) => {
       return Err(ignore.os_error(e));
     },
   };
-  let prog = if (ctx.search_zip && path != "-") { decompress.program(path) } else { "" };
   if (prog == "") {
-    return Ok(Haystack { bytes: bytes, prefix: "", late: "", piped: false });
+    return Ok(Haystack { text: raw(bytes), prefix: "", late: "", piped: false });
   }
   let (out, why) = decompress.decompressed(prog, name, bytes);
-  return Ok(Haystack { bytes: out, prefix: "", late: if (why == "") { "" } else { stderr_text(why) }, piped: true });
+  return Ok(Haystack { text: raw(out), prefix: "", late: if (why == "") { "" } else { stderr_text(why) }, piped: true });
+}
+
+function raw(own bytes: u8[]): string {
+  return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
 // Whether --pre runs for the file: with no --pre-glob, or when the globs
@@ -306,7 +391,7 @@ function preprocess(ctx: Ctx, path: string, name: string): Result[Haystack, stri
     },
   };
   let late = if (out.status == 0) { "" } else { stderr_text(unsafe { string_from_bytes_unchecked(out.stderr) }) };
-  return Ok(Haystack { bytes: out.stdout, prefix: "preprocessor command failed: '" + cmd + "': ", late: late, piped: true });
+  return Ok(Haystack { text: raw(out.stdout), prefix: "preprocessor command failed: '" + cmd + "': ", late: late, piped: true });
 }
 
 // An argument in quotes, as Rust writes it for debug.
@@ -340,7 +425,7 @@ function note(ctx: Ctx, r: Part, text: string, error: boolean): Part {
 // The search of one run of files in a worker. The output comes back as
 // text, and the parent writes it.
 function search_part(ctx: Ctx, items: walk.Item[]): Part {
-  let Ok(re) = regex.compile(ctx.pattern) else {
+  let Some(re) = worker_matcher(ctx) else {
     return Part { ...empty_part(), failed: true };
   };
   let h = buf_new(FLUSH_BYTES);
@@ -351,7 +436,7 @@ function search_part(ctx: Ctx, items: walk.Item[]): Part {
 }
 
 // As search_items, but the output stays in the buffer.
-function search_buffered(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): Part {
+function search_buffered(ctx: Ctx, re: matcher.Matcher, items: walk.Item[], h: usize): Part {
   let r = empty_part();
   let written = false;
   let cap = search.BUFFER;
@@ -693,7 +778,9 @@ function context_of(o: flags.Options, paths: string[]): Ctx {
   let threads = threads_of(o, one_file);
   let pattern = if (o.searches()) { flags.pattern(o) } else { "" };
   return Ctx {
-    p: with_links(search.printer(o, isatty(1), term_color(), one_file), o), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
+    p: with_links(search.printer(o, isatty(1), term_color(), one_file), o), pattern: pattern, pcre: false,
+    pcre_pattern: if (o.searches()) { flags.pcre_pattern(o) } else { "" }, pcre_options: flags.pcre_options(o),
+    implicit: o.paths.len() == 0, mmap: maps(o, paths),
     binary: o.binary, threads: threads, quiet: o.has(flags.QUIET), messages: !o.has(flags.NO_MESSAGES),
     ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES), encoding: o.encoding, decoder: encoding.decoder(o.encoding),
     pre: o.pre, pre_globs: pre_globs(o), search_zip: o.has(flags.SEARCH_ZIP),
@@ -774,9 +861,10 @@ function run(o: flags.Options, t0: i64): i32 {
   if (!o.searches()) {
     return list_files(ctx, items, o);
   }
-  let Some(re) = compiled(o, ctx.pattern, banned(o)) else {
+  let Some((sctx, re)) = compiled(ctx, o, banned(o)) else {
     return 2;
   };
+  ctx = sctx;
   let r = if (ctx.threads > 1) { search_parallel(ctx, items, ctx.threads) } else { search_serial(ctx, re, items) };
   if (ctx.implicit && !r.searched) {
     r = note(ctx, r, NOTHING_SEARCHED, true);
@@ -803,7 +891,7 @@ function stats_text(t: Totals, total: i64): string {
   return out + jsonl.seconds(t.nanos) + " seconds spent searching\n" + jsonl.seconds(total) + " seconds\n";
 }
 
-function search_serial(ctx: Ctx, re: regex.Regex, items: walk.Item[]): Part {
+function search_serial(ctx: Ctx, re: matcher.Matcher, items: walk.Item[]): Part {
   let h = buf_new(FLUSH_BYTES);
   let r = search_items(ctx, re, items, h);
   if (!flush(h, true)) {
@@ -865,11 +953,15 @@ function special(mode: string): i32 {
     "help-long" => help.HELP_LONG,
     "version" => "ripgrep 14.1.0\n",
     "version-long" => version_long(),
-    _ => NO_PCRE2,
+    _ => PCRE2_VERSION,
   };
   print_raw(text.trim_end() + "\n");
-  return if (mode == "pcre2-version") { 1 } else { 0 };
+  return 0;
 }
+
+// The PCRE2 of the port is std/pcre, which follows PCRE2 10.42 and has no
+// JIT.
+const PCRE2_VERSION: string = "PCRE2 10.42 is available (JIT is unavailable)";
 
 function version_long(): string {
   let simd = if (target_arch() == "x86-64") {
@@ -879,7 +971,7 @@ function version_long(): string {
   } else {
     ""
   };
-  return "ripgrep 14.1.0\n\nfeatures:-simd-accel,-pcre2\n" + simd + "\n" + NO_PCRE2 + "\n";
+  return "ripgrep 14.1.0\n\nfeatures:-simd-accel,+pcre2\n" + simd + "\n" + PCRE2_VERSION + "\n";
 }
 
 // The output of --generate.

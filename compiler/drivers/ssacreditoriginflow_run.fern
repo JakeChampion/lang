@@ -14,7 +14,7 @@ function require(ok: boolean, id: i32): void {
 function expect(f: ssa.SFunc, producers: ssa.SFunc[], why: string, id: i32): void {
   let p = flow.caller(f, producers, "Parent");
   let ok = why == "";
-  if (p.proof.ok != ok || p.proof.function_name != f.name || ok && (p.words != 3 || p.proof.message != "proved caller allocation origin") || !ok && (p.words != 0 || p.proof.message != why)) {
+  if (p.proof.ok != ok || p.proof.function_name != f.name || ok && (p.words != 2 || p.proof.message != "proved caller allocation origin") || !ok && (p.words != 0 || p.proof.message != why)) {
     print(p.proof.function_name + ": " + p.proof.message);
     exit(id);
   }
@@ -231,6 +231,9 @@ function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
   expect(sparse_ids.hole(sparse_ids.rename(f), 2), [producer], "unavailable caller origin terminator", 60);
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, [producer], "invalid caller origin graph", 47);
   expect(ssa.SFunc { ...f, nparams: 2 }, [producer], "invalid caller origin graph", 48);
+  for arity in [0, 1, 4] {
+    expect(ssa.SFunc { ...f, nparams: arity }, [producer], "invalid caller origin graph", 61);
+  }
   expect(ssa.SFunc { ...f, takes_env: true }, [producer], "invalid caller origin graph", 49);
   phi_controls(f, producer);
   expect(f, [producer], "", 50);

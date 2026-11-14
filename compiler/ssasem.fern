@@ -5381,6 +5381,36 @@ pub function mapped_list(map: i32[], vs: i32[]): i32[] {
   return out;
 }
 
+// `g` with each record update that read a value of `repl` reading what
+// `repl` names. The pruning of a trivial phi rewrites the arguments only,
+// and a record update names its donor in its immediate.
+pub function rebased(g: ssa.SFunc, repl: i32[]): ssa.SFunc {
+  if (repl.len() == 0) {
+    return g;
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in g.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      let base = update_base(ins);
+      if (base >= 0) {
+        insts = insts.append(ssa.SInst { ...ins, imm: mapped(repl, base) + 1 });
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return ssa.SFunc { ...g, blocks: blocks };
+}
+
+// `g` with no trivial phi, and each record update that read one reading the
+// value that replaces it.
+pub function pruned_phis(g: ssa.SFunc): ssa.Formed {
+  let pruned = ssa.prune_trivial_phis(g);
+  return ssa.Formed { f: rebased(pruned.f, pruned.repl), repl: pruned.repl };
+}
+
 pub function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
   let base = update_base(ins);
   if (base >= 0) {

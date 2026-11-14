@@ -300,6 +300,8 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "clone_file", capability: "fs" },
     Gate { builtin: "create_symlink", capability: "fs" },
     Gate { builtin: "read_link", capability: "fs" },
+    // WASI has no map, and the file is read.
+    Gate { builtin: "map_file_unchecked", capability: "fs" },
     Gate { builtin: "read_link_bytes", capability: "fs" },
     Gate { builtin: "rename", capability: "fs" },
     Gate { builtin: "set_file_times", capability: "fs" },
@@ -377,6 +379,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__syscall6", capability: "syscall" },
     Gate { builtin: "__raw_alloc", capability: "rawmem" },
     Gate { builtin: "__raw_string", capability: "rawmem" },
+    Gate { builtin: "__raw_mapped_string", capability: "rawmem" },
     Gate { builtin: "__raw_arr_box", capability: "rawmem" },
     Gate { builtin: "__raw_scratch", capability: "rawmem" },
     Gate { builtin: "__raw_environ", capability: "rawmem" },
