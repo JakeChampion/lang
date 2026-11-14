@@ -116,7 +116,8 @@ function round(i: i32): i32 {
     s = s.emit(i + 1);
     return s.ops.len();
 }` + structKeyMain,
-			want: 51, allocs: 500, frees: 500,
+			// id takes its array as owned (#15822), so it returns the array with no copy.
+			want: 51, allocs: 400, frees: 400,
 		},
 	}
 }

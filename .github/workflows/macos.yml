@@ -499,7 +499,7 @@ jobs:
   # line to be deleted.
   #
   # That second direction is a warning rather than an error, which is where
-  # this parts from the complexity ratchet (self_host_lint_ratchet_test.go): TestPtxParity
+  # this parts from a gate that fails in both directions: TestPtxParity
   # failed on one round of the catalogue and passed on the next two, and an
   # error there would make one flaky utility hold the lane red whichever
   # way it landed. A name going quiet is good news either way, and the

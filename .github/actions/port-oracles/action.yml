@@ -3,7 +3,8 @@ description: >
   Install the reference programs that the differential tests of the ports
   compare with: ripgrep 14.1.0 for examples/rg and cmark 0.30.2 for
   examples/markdown from the Ubuntu 24.04 archive, and age 1.3.2 for
-  examples/age from the release archive of age. The step fails when apt
+  examples/age from the release archive of age: age, age-keygen,
+  age-inspect and the four plugins of the archive. The step fails when apt
   gives a different release, or when the age archive has a different
   SHA-256, because each test pins its release.
 runs:
@@ -55,9 +56,12 @@ runs:
         done
         echo "$sum  $work/$tarball" | sha256sum -c -
         tar -xzf "$work/$tarball" -C "$work"
-        sudo install -m 0755 "$work/age/age" "$work/age/age-keygen" /usr/local/bin/
+        tools="age age-keygen age-inspect age-plugin-batchpass age-plugin-pq age-plugin-tag age-plugin-tagpq"
+        for tool in $tools; do
+          sudo install -m 0755 "$work/age/$tool" /usr/local/bin/
+        done
         rm -rf "$work"
-        for tool in age age-keygen; do
+        for tool in $tools; do
           got="$("$tool" --version)"
           echo "$tool $got"
           if [ "$got" != "$VER" ]; then

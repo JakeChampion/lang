@@ -1046,7 +1046,7 @@ function main(): i32 {
     show("");
     show("2026/05/19");        // wrong separator
     show("2026-05-19T00");     // too long
-    show("2026-13-01");        // month out of range
+    show("2026-13-01");        // no such month
     show("abcd-05-19");        // non-digits
     show("2026-05-XX");
     show("2026-5-19");         // single-digit month

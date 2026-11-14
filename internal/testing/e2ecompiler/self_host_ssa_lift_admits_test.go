@@ -1,6 +1,12 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -8,7 +14,14 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/ssa_lift_admits_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ssa_lift_admits_run.fern", "ssa_lift_admits_run")
 
-	const want = "load pops=-1 pushes=1\n" +
+	// Each IR kind is registered, so the table of kind ids gives the count.
+	ids, err := os.ReadFile(filepath.Join("testdata", "ir-kind-ids.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered := len(strings.Split(strings.TrimSpace(string(ids)), "\n"))
+
+	want := "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
 		"admitted mmio_load pops=1 pushes=1\n" +
@@ -21,7 +34,7 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 		"admitted send_adopt pops=1 pushes=1\n" +
 		"admitted worker_unmap pops=3 pushes=1\n" +
 		"admitted send_root pops=1 pushes=1\n" +
-		"registered=516 declined=3\n"
+		fmt.Sprintf("registered=%d declined=3\n", registered)
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

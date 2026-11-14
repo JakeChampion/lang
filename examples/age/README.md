@@ -1,9 +1,10 @@
 # age
 
-A Fern port of [age](https://age-encryption.org) 1.3.2 and of its key
-generator, age-keygen. age encrypts files in the age v1 format. The port
-has these parts of age: X25519 keys, ML-KEM-768 + X25519 hybrid keys,
-passphrases, SSH keys, the binary format and the ASCII armor.
+A Fern port of [age](https://age-encryption.org) 1.3.2: age, age-keygen,
+age-inspect and the four plugins of the release archive of age. age
+encrypts files in the age v1 format. The port has all of the parts of age
+1.3.2: X25519 keys, ML-KEM-768 + X25519 hybrid keys, tag recipients,
+passphrases, SSH keys, plugins, the binary format and the ASCII armor.
 
 ```
 $ age -r age1... -o file.age file          # encrypt to a recipient
@@ -19,6 +20,10 @@ $ age -d file.age > file                   # decrypt with a passphrase
 $ age-keygen -o key.txt                    # make a key pair
 $ age-keygen -pq -o key.txt                # make a hybrid key pair
 $ age-keygen -y key.txt                    # write the recipient of key.txt
+$ age -r age1tag1... -o file.age file      # encrypt to a tag recipient
+$ age -d -j NAME file.age > file           # decrypt with the plugin age-plugin-NAME
+$ age -d -i plugin-key.txt file.age        # decrypt with an AGE-PLUGIN-... identity
+$ age-inspect file.age                     # show the header and the sizes of a file
 ```
 
 ## Build and run
@@ -26,6 +31,11 @@ $ age-keygen -y key.txt                    # write the recipient of key.txt
 ```
 $ fern -O -target x86-64-linux -o age examples/age/age.fern          # or arm64-linux
 $ fern -O -target x86-64-linux -o age-keygen examples/age/keygen.fern
+$ fern -O -target x86-64-linux -o age-inspect examples/age/inspect.fern
+$ fern -O -target x86-64-linux -o age-plugin-batchpass examples/age/plugin_batchpass.fern
+$ fern -O -target x86-64-linux -o age-plugin-pq examples/age/plugin_pq.fern
+$ fern -O -target x86-64-linux -o age-plugin-tag examples/age/plugin_tag.fern
+$ fern -O -target x86-64-linux -o age-plugin-tagpq examples/age/plugin_tagpq.fern
 ```
 
 The terminal code uses the termios flags of Linux, so the port runs on
@@ -40,16 +50,17 @@ Linux.
 | `-o PATH` | `--output PATH` | Write the result to PATH. `-` is the standard output. |
 | `-a` | `--armor` | Encrypt to the PEM-like ASCII armor. |
 | `-p` | `--passphrase` | Encrypt with a passphrase. |
-| `-r KEY` | `--recipient KEY` | Encrypt to KEY: an `age1...` or `age1pq1...` public key, or an SSH public key. Can be repeated. |
+| `-r KEY` | `--recipient KEY` | Encrypt to KEY: an `age1...`, `age1pq1...`, `age1tag1...` or `age1tagpq1...` public key, a plugin recipient, or an SSH public key. Can be repeated. |
 | `-R PATH` | `--recipients-file PATH` | Encrypt to the recipients in the file at PATH. Can be repeated. |
 | `-i PATH` | `--identity PATH` | Use the secret keys in the file at PATH. Can be repeated. |
+| `-j NAME` | | Use the plugin `age-plugin-NAME` with no identity data. Can be repeated. |
 
 The flags follow the rules of the Go `flag` package, as in age. The input
 file comes after the flags. With no input file, or with `-`, the port reads
 the standard input.
 
-An identity file holds `AGE-SECRET-KEY-1...` and `AGE-SECRET-KEY-PQ-1...`
-lines, or one SSH private key. Empty lines and lines that start with `#`
+An identity file holds `AGE-SECRET-KEY-1...`, `AGE-SECRET-KEY-PQ-1...` and
+`AGE-PLUGIN-...` lines, or one SSH private key. Empty lines and lines that start with `#`
 are comments. An age file that a passphrase encrypts can also be an
 identity file. Then the port asks for the passphrase when it needs the
 keys.
@@ -87,6 +98,65 @@ that mix with the message of age:
 age: error: incompatible recipients: can't mix post-quantum and classic recipients, or the file would be vulnerable to quantum computers
 ```
 
+### Tag recipients
+
+A tag recipient is the public key of a key on a hardware token. A plugin
+of the token decrypts. `age1tag1...` holds a compressed P-256 point, and
+its stanza `p256tag` uses HPKE (RFC 9180) with DHKEM(P-256, HKDF-SHA256).
+`age1tagpq1...` holds an ML-KEM-768 encapsulation key and a P-256 point,
+and its stanza `mlkem768p256tag` uses HPKE with the MLKEM768-P256 KEM of
+draft-ietf-hpke-pq.
+
+Each stanza starts with a tag of 4 bytes: HKDF-Extract over the
+encapsulated key and the hash of the recipient. A tag lets the plugin find
+its stanzas before it asks the user to touch the token.
+
+A hybrid tag recipient has the label `postquantum`, as a hybrid recipient
+does, so the two kinds do not mix with classic recipients.
+
+### Plugins
+
+A plugin is a program `age-plugin-NAME` on the `PATH`. The port starts it
+with pipes for its standard input and output, as age does, with the
+argument `--age-plugin=recipient-v1` or `--age-plugin=identity-v1`. The
+plugin runs in the temporary directory, and its standard error goes to
+`/dev/null` unless `AGEDEBUG=plugin` is set. The two sides exchange
+stanzas in the format of the header, in the state machines of the age
+plugin specification. The client side is in `plugin.fern`.
+
+- A recipient `age1NAME1...` and an identity `AGE-PLUGIN-NAME-1...` use
+  the plugin NAME. `-j NAME` uses it with no data. With `-e`, the
+  recipient of a plugin identity goes to the plugin as `add-identity`.
+
+- A plugin can ask the user through the terminal: `msg` shows a message,
+  `request-secret` and `request-public` ask for a value, and `confirm`
+  asks for a choice. After 5 seconds with no answer from the plugin, the
+  port writes `age: waiting on NAME plugin...`, as age does.
+
+- A plugin that is not on the `PATH` gets the message and the hints of
+  age.
+
+The release archive of age 1.3.2 has four plugins, and the port has each
+of them. `pluginserver.fern` is the plugin side of the protocol, which
+they use.
+
+- `age-plugin-batchpass` encrypts and decrypts with the passphrase in
+  `AGE_PASSPHRASE`, or in the file descriptor of `AGE_PASSPHRASE_FD`,
+  with no terminal.
+
+- `age-plugin-pq` encrypts to `age1pq1...` recipients and decrypts with
+  `AGE-PLUGIN-PQ-1...` identities, for a client that does not have the
+  hybrid keys. `age-plugin-pq -identity` converts the native identities.
+
+- `age-plugin-tag` and `age-plugin-tagpq` encrypt to the tag recipients.
+
+### age-inspect
+
+`age-inspect` reads the header of a file with no key. It writes the
+stanza types, whether the file is post-quantum, and the sizes of the
+header, the armor, the encryption overhead and the payload. With
+`--json`, it writes the same data in the JSON of age-inspect.
+
 ### Passphrases
 
 The port asks for a passphrase on the terminal, as age does: it opens
@@ -104,6 +174,11 @@ terminal. The scrypt work factor is 2^18. A file with a work factor of
 more than 2^22 gives `scrypt work factor too large`. `age -d` with no `-i` asks for a
 passphrase only for a file that has one scrypt stanza.
 
+When the standard input is a terminal, `age -d` reads it up to the line
+after the end of the armor. Then it asks for the passphrase on the same
+terminal. When the input and the output are both the terminal, the output
+waits for the end, so it does not mix with a prompt.
+
 ### SSH keys
 
 A recipient can be an `ssh-ed25519` or an `ssh-rsa` public key of 2048
@@ -117,8 +192,18 @@ An identity file can hold an SSH private key in these formats:
   `ssh-keygen` makes it. The port asks for the passphrase only when a
   stanza is for that key.
 
+- OpenSSH with the `aes256-cbc` cipher.
+
 - PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`) and PKCS#8
   (`-----BEGIN PRIVATE KEY-----`) with no passphrase, for RSA and Ed25519.
+
+- PKCS#1 with the `Proc-Type: 4,ENCRYPTED` header (the old format of
+  `ssh-keygen -m PEM`), as Go's `x509.DecryptPEMBlock` reads it:
+  `DES-CBC`, `DES-EDE3-CBC`, `AES-128-CBC`, `AES-192-CBC` and
+  `AES-256-CBC`. The public key comes from the `.pub` file beside it.
+
+An EC or a DSA private key gets the checks of Go's parsers. Then a valid
+key gets the message of age for a type that it does not use.
 
 ## Files
 
@@ -128,20 +213,28 @@ An identity file can hold an SSH private key in these formats:
 | `keygen.fern` | The `age-keygen` command. |
 | `cli.fern` | The flags of age and the checks that age makes before it reads the input. |
 | `goflag.fern` | Go's `flag` package, for both commands. |
+| `inspect.fern` | The `age-inspect` command. |
 | `keys.fern` | Recipients, recipients files and identity files. |
+| `tag.fern` | The tag recipients and their stanzas. |
+| `plugin.fern` | The plugin protocol: the encodings, the stanzas on the pipes and the client side. |
+| `pluginserver.fern` | The plugin side of the protocol, for the plugins of the port. |
+| `plugin_batchpass.fern`, `plugin_pq.fern`, `plugin_tag.fern`, `plugin_tagpq.fern`, `tagplugin.fern` | The plugins of the release archive of age. |
 | `bech32.fern` | Bech32, and a constant-time decoder for a secret key line. |
 | `format.fern` | The header, its MAC, the X25519, hybrid and scrypt stanzas and the STREAM chunks. |
 | `ssh.fern` | SSH keys: the wire format, `authorized_keys` lines, private key files, and the `ssh-ed25519` and `ssh-rsa` stanzas. |
-| `bcrypt.fern` | Blowfish, `bcrypt_pbkdf` and AES-256-CTR, for an OpenSSH key with a passphrase. |
+| `bcrypt.fern` | Blowfish, `bcrypt_pbkdf`, AES-256-CTR and AES-256-CBC, for an OpenSSH key with a passphrase. |
 | `tty.fern` | The terminal: prompts with no echo, and the messages for the user at the terminal. |
 | `wordlist.fern` | The BIP 39 word list, for the passphrases that age makes. |
 | `source.fern` | The input as Go's `bufio` and armor readers read it. |
 | `text.fern` | Go's `%q` quotation, Go's base64 decoders and Go's names for system errors. |
 | `age_test.fern` | The unit tests. |
 | `testdata/cctv` | The C2SP CCTV age test vectors (`licenses/age-cctv`). |
-| `testdata/ssh` | SSH test keys from Python's `cryptography` package. The passphrase of the encrypted keys is `ssh pass`. |
+| `testdata/ssh` | SSH test keys from Python's `cryptography` package. The passphrase of the encrypted keys is `ssh pass`. Go programs with x/crypto's `bcrypt_pbkdf` and `x509.EncryptPEMBlock` made `ed25519_cbc` and the `rsa2048_pem_*` keys. |
+| `testdata/plugin` | The test plugin of age's tests (`age-plugin-test`) and `age-plugin-tagtest`, in Fern. |
 
-The port uses `std/crypto/hpke` for the hybrid stanza, `std/crypto/scrypt`,
+The port uses `std/crypto/hpke` for the hybrid and tag stanzas, and
+`std/crypto/aes` and `std/crypto/des` for the encrypted PEM keys. It also
+uses `std/crypto/scrypt`,
 the RSA-OAEP of `std/crypto/rsa` and the Montgomery form of
 `std/crypto/ed25519`.
 
@@ -160,7 +253,7 @@ age 1.3.2:
 age adds a last line to each error, which tells the user to report the
 error to the age project. The port does not write that line. The usage
 text is the text of the port. `--version` prints `v1.3.2-fern`. The same
-rules apply to `age-keygen`.
+rules apply to `age-keygen`, `age-inspect` and the plugins.
 
 ### Differences from age 1.3.2
 
@@ -186,46 +279,25 @@ complete. Use `-o` for no partial plaintext.
 age 1.3.2 tries the other stanzas when `-i` names identities. The CCTV
 vector `scrypt_and_x25519` tests this.
 
-**SSH keys.** These keys give a message of the port, where age gives the
-message of Go's parser:
+**SSH keys.** Go's parsers of EC, DSA and PKCS#1 keys give the text of an
+`encoding/asn1` error for some malformed keys. The port gives
+`asn1: structure error` with no detail. The same holds for a malformed
+ECDSA, security-key or certificate public key: the port gives
+`unknown SSH recipient type` where age gives the message of Go's parser
+for that type. Go's edwards25519 accepts an Ed25519 public key with a y value that is
+not canonical, and the port refuses it.
 
-- A PEM private key with the `Proc-Type: 4,ENCRYPTED` header (the old
-  format of `ssh-keygen -m PEM`). age decrypts it after the passphrase.
-  The port encrypts to its `.pub` file, but it does not decrypt with it.
+After an encrypted PEM key decrypts with valid padding, a key that does
+not parse gives `x509: decryption password incorrect`. Go gives the
+message of its parser when the error is not a structure error.
 
-- An OpenSSH private key that uses the `aes256-cbc` cipher.
-
-- An EC or a DSA private key. age parses it, then it refuses its type. The
-  port refuses the type with no check of the key, so a malformed key gives
-  the message for its type.
-
-- An ECDSA, a security-key or a certificate public key. The port knows the
-  type but does not check the key. A malformed key of one of these types
-  gives `unknown SSH recipient type` where age gives the message of Go's
-  parser for that type.
-
-- An Ed25519 public key with a y value that is not canonical. Go's
-  edwards25519 accepts it, and the port refuses it.
-
-### Not in this port
-
-- Plugins (`-j`, `AGE-PLUGIN-...` and `age1name1...`). They give a message
-  that says so. The plugin protocol runs `age-plugin-NAME` with pipes, and
-  Fern has `proc_fork`, `proc_exec`, `pipe` and `dup_onto` for that. The
-  protocol has a state machine for each side, and a test needs a plugin.
-  This slice does not have that work. The release archive of age 1.3.2
-  also has the plugins `age-plugin-batchpass`, `age-plugin-pq`,
-  `age-plugin-tag` and `age-plugin-tagpq`. The port does not have them.
-
-- The tag recipients (`age1tag1...` and `age1tagpq1...`, the `p256tag` and
-  `mlkem768p256tag` stanzas). age encrypts to them, and a plugin on a
-  hardware token decrypts. They need HPKE with the P-256 KEM and the
-  MLKEM768-P256 KEM. The port gives a message that says so.
-
-- `age-inspect`, the command of age 1.3 that shows the header of a file.
-
-- age buffers an armored file that a user types at a terminal. The port
-  reads a terminal as it reads a file.
+**Plugins.** The `request-public` line editor has the keys of a simple
+line: the printable bytes, Backspace, Enter, Ctrl-C and Ctrl-D. x/term
+also has the arrow keys and the history. With `AGEDEBUG=plugin`, the port
+copies each stanza to the standard error as it marshals it, where age
+copies the bytes. `age-plugin-batchpass` opens `/dev/fd/N` for
+`AGE_PASSPHRASE_FD`, where Go reads the descriptor itself, so a regular
+file is read from its start.
 
 ## Security
 
@@ -284,13 +356,28 @@ The secret values go through the constant-time gate of the repository:
   ML-KEM-768 decapsulation has no branch on the ciphertext: a wrong
   ciphertext gives a random secret, and then the tag check fails.
 
+- The P-256 scalars of a tag stanza and the MLKEM768-P256 randomness are
+  secret. The check that a candidate scalar is below the order makes only
+  its verdict public. The points, the tags and the encapsulated keys are
+  public.
+
+- The key that the passphrase of an encrypted PEM key gives is secret. AES
+  and DES in `std/crypto/aes` and `std/crypto/des` have no table index
+  that depends on the key or the data. The decrypted key becomes public
+  for the checks of its padding and its DER, as in Go. The port marks the
+  key secret after them.
+
+- The data of a plugin identity goes to the plugin on a pipe, so it is
+  public. A file key from a plugin is secret.
+
 `TestSelfHostCtGateX86_64/examples/age` runs the port under memcheck, and
 `TestSelfHostCtGateArm64/examples/age` does the same on an arm64 host. They
 encrypt, decrypt, read the armor, try a key that does not match and read a
 malformed key, with X25519 keys and with hybrid keys. They decrypt a CCTV
 scrypt file with the right passphrase and with a wrong one. They encrypt
-and decrypt with Ed25519 and RSA SSH keys.
-A branch, an index or a write that depends on a secret byte fails the
+and decrypt with Ed25519 and RSA SSH keys. They decrypt with PEM keys that
+`DES-EDE3-CBC` and `AES-256-CBC` encrypt, and encrypt to both kinds of
+tag recipient. A branch, an index or a write that depends on a secret byte fails the
 test.
 
 ## Tests
@@ -374,6 +461,43 @@ test makes these checks:
   malformed keys and stanzas, a key that does not match, and keys of
   other types.
 
+- Plugins, with the plugins of the port on the `PATH`. Each tool
+  encrypts and the other decrypts: to the tag recipients of
+  `age-plugin-tagtest` and decryption with `-j tagtest`, to the test
+  plugin, to an `age-plugin-pq` identity, and with `age-plugin-batchpass`.
+  Then age runs the plugins of its release archive, and the port runs its
+  own plugins. For 51 command lines, the two give the same message and
+  exit code. The lines include plugins that are not on the `PATH`, plugin
+  names that are not valid, and labels that do not match. They also
+  include the errors of `age-plugin-batchpass`, and a test plugin that
+  breaks the protocol in 7 ways.
+
+- Plugin questions. On a pseudo-terminal, both tools ask the same
+  questions for the test plugin and show the same text.
+
+- Tag recipients. For 30 command lines, the two tools give the same
+  message: malformed `age1tag1...` and `age1tagpq1...` recipients, and
+  changed `p256tag` and `mlkem768p256tag` stanzas.
+
+- The plugin programs. For 28 command lines, each plugin of the port and
+  the plugin of the same name in the release archive give the same output,
+  message and exit code.
+
+- Terminal input. Each tool reads an armored file that the user types at
+  the terminal, then asks for the passphrase.
+
+- Encrypted SSH keys. Each tool decrypts with an OpenSSH key that uses
+  `aes256-cbc`, and with a PEM key in each cipher of
+  `x509.DecryptPEMBlock`. For 34 more command lines, the two tools give the
+  same message: wrong passphrases, malformed `DEK-Info` headers, and
+  malformed EC and DSA keys.
+
+`TestSelfHostExampleAgeInspect` runs the age-inspect port on x86-64 and
+arm64 against age-inspect 1.3.2. The inputs are the 147 CCTV vectors, the
+files that age encrypts and bad command lines. Each runs with and without
+`--json`, and some come from the standard input. Each tool gives the same
+output, message and exit code.
+
 `TestSelfHostExampleAgeKeygen` runs the age-keygen port on x86-64 and
 arm64 against age-keygen 1.3.2. Each key pair works with age, with and
 without `-pq`. The `# created:` line has the time zone of `TZ`. `-o` makes
@@ -420,6 +544,36 @@ at about 1.6 cycles for each byte.
 
 Two copies remain in the encrypt path of the port: the copy of `read` in the
 kernel, and the copy that adds the room for the tag to each chunk.
+
+### Tag recipients, plugins and age-inspect
+
+Each time is the best of 21 runs of the command, with the two tools in
+turn. Other jobs ran on the host at the same time. Each tool uses its own
+plugins: age with the plugins of its release archive and its
+`age-plugin-tagtest`, and the port with the plugins of the port. The file
+has 1 KiB.
+
+| Operation | age 1.3.2 | Fern port | Port / age |
+| --- | ---: | ---: | ---: |
+| Encrypt to a P-256 tag recipient | 6.7 ms | 2.0 ms | 0.29 |
+| Encrypt to a hybrid tag recipient | 7.8 ms | 4.9 ms | 0.62 |
+| Decrypt a P-256 tag file with `-j tagtest` | 7.8 ms | 2.3 ms | 0.29 |
+| Decrypt a hybrid tag file with `-j tagtest` | 8.0 ms | 3.7 ms | 0.47 |
+| Encrypt to an `age-plugin-pq` identity | 7.9 ms | 2.3 ms | 0.29 |
+| Decrypt with an `age-plugin-pq` identity | 9.5 ms | 2.0 ms | 0.21 |
+| `age-inspect` | 3.9 ms | 2.4 ms | 0.62 |
+
+The KEMs alone are slower than Go's. In a loop of 200 operations,
+filippo.io/hpke takes 91 us for a P-256 encapsulation and 101 us for a
+decapsulation. It takes 141 us and 138 us for MLKEM768-P256. `std/crypto/hpke`
+takes about 340 us and 300 us for P-256, and 500 us and 450 us for
+MLKEM768-P256. The variable-base scalar multiplication of
+`std/crypto/p256` takes 280 us of the P-256 time. Its field arithmetic
+computes each carry with the branch-free idiom, which the backends do not
+make into one `add`/`adc` chain (#15728).
+
+The commands are faster than age because a Go program takes more time to
+start.
 
 ### Passphrases and keys
 

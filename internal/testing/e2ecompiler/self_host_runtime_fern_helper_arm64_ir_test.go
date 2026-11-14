@@ -33,6 +33,9 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (xs[0:1].len() != 1) { return 7; }\n" +
 		"    let ys: i32[] = xs.with(0, 9);\n" +
 		"    if (xs[0] + ys[0] != 10) { return 27; }\n" +
+		"    let ws: i64[] = [1, 2];\n" +
+		"    let vs: i64[] = ws.with(0, 9);\n" +
+		"    if (ws[0] + vs[0] != (10 as i64)) { return 28; }\n" +
 		"    if (now_unix_ms() < (1577836800000 as i64)) { return 8; }\n" +
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
@@ -172,6 +175,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (xs[0:1].len() != 1) { return 6; }\n" +
 		"    let ys: i32[] = xs.with(0, 9);\n" +
 		"    if (xs[0] + ys[0] != 10) { return 27; }\n" +
+		"    let ws: i64[] = [1, 2];\n" +
+		"    let vs: i64[] = ws.with(0, 9);\n" +
+		"    if (ws[0] + vs[0] != (10 as i64)) { return 28; }\n" +
 		"    if (now_unix_ms() < (1577836800000 as i64)) { return 7; }\n" +
 		"    if (monotonic_ns() < (0 as i64)) { return 8; }\n" +
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +

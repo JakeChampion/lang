@@ -27,7 +27,7 @@ function main(): i32 {
   if (!marker.has_need("field_reclaim:Example") || marker.has_need("heap")) { return 7; }
   if (empty.needed.len() != 0) { return 8; }
   let packed: asmcore.EmitState = empty.need("arr_push_u8");
-  if (!packed.has_need("arr_push") || !packed.has_need("heap")) { return 10; }
+  if (packed.has_need("arr_push") || !packed.has_need("heap")) { return 10; }
   let array: asmcore.EmitState = empty.need_array_helper("__fern_bytes_owned");
   if (!array.has_need("bytes_owned") || !array.has_need("heap")) { return 11; }
   let i: i32 = 0;
