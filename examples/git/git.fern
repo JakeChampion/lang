@@ -319,8 +319,7 @@ function short_length(s: store.Store, flag: string): i32 {
   if (n < 4) {
     return 4;
   }
-  // git 2.43 gives 40 digits at most, with SHA-256 names also.
-  return n.min(40);
+  return n.min(2 * s.width);
 }
 
 function rev_parse(argv: string[]): i32 {

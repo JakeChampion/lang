@@ -1,0 +1,10 @@
+function __fern_sp_feed(in_w: i32, from: usize, most: i32): i32 {
+  let n = __syscall3(64, in_w as i64, from as i64, (if (most > 4096) { 4096 } else { most }) as i64) as i32;
+  if (n == -4 || n == -11) {
+    return 0;
+  }
+  if (n <= 0) {
+    return -1;
+  }
+  return n;
+}
