@@ -2463,6 +2463,7 @@ pub function (s: string) count_byte(b: u8): i32 {
   return __count_byte(s, b as i32);
 }
 
+// The result byte length must fit i32. An invalid length causes an allocation-size abort.
 pub function (s: string) replace_n(old: string, new: string, limit: i32): string {
   let n = s.len();
   let oLen = old.len();
@@ -2479,7 +2480,7 @@ pub function (s: string) replace_n(old: string, new: string, limit: i32): string
     return s;
   }
   let nLen = new.len();
-  let out_len = n + matches * (nLen - oLen);
+  let out_len = __alloc_len(n as i64 + matches as i64 * (nLen as i64 - oLen as i64));
   if (out_len == 0) {
     return "";
   }

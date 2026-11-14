@@ -1491,9 +1491,11 @@ func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]boo
 	return in
 }
 
-// spreadSource is the base of a struct literal `T { ...src, f: v }` whose
-// field values do not name src. The literal takes the rest of src, as an
-// alias does.
+// spreadSource is the base of a struct literal `T { ...src, f: v }`. The
+// literal takes the rest of src, as an alias does. A field value can read a
+// field of src that the literal replaces, as `i: src.i + 1` does, because
+// the literal does not take that field. The result is the last mention of
+// src in the literal: the literal takes src there.
 func spreadSource(e ast.Expr) (*ast.Ident, bool) {
 	sl, ok := e.(*ast.StructLit)
 	if !ok {
@@ -1503,12 +1505,66 @@ func spreadSource(e ast.Expr) (*ast.Ident, bool) {
 	if !ok {
 		return nil, false
 	}
+	replaced := map[string]bool{}
 	for _, f := range sl.Fields {
-		if StmtReferencesName(f.Value, src.Name) {
+		replaced[f.Name] = true
+	}
+	last := src
+	for _, f := range sl.Fields {
+		if !StmtReferencesName(f.Value, src.Name) {
+			continue
+		}
+		mention, ok := lastReplacedRead(f.Value, src.Name, replaced)
+		if !ok {
 			return nil, false
 		}
+		if identAfter(mention, last) {
+			last = mention
+		}
 	}
-	return src, true
+	return last, true
+}
+
+// lastReplacedRead is the last mention of name in e, when each mention reads
+// one of the replaced fields of it.
+func lastReplacedRead(e ast.Expr, name string, replaced map[string]bool) (*ast.Ident, bool) {
+	var last *ast.Ident
+	ok := true
+	ast.Walk(e, func(n ast.Node) bool {
+		if !ok {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Lambda:
+			if lambdaFreeNames(x)[name] {
+				ok = false
+			}
+			return false
+		case *ast.FieldAccess:
+			if id, isIdent := x.Target.(*ast.Ident); isIdent && id.Name == name {
+				if !replaced[x.Field] {
+					ok = false
+				} else if last == nil || identAfter(id, last) {
+					last = id
+				}
+				return false
+			}
+		case *ast.Ident:
+			if x.Name == name {
+				ok = false
+			}
+		case *ast.Assign:
+			if t, isIdent := x.Target.(*ast.Ident); isIdent && t.Name == name {
+				ok = false
+			}
+		}
+		return ok
+	})
+	return last, ok && last != nil
+}
+
+func identAfter(a, b *ast.Ident) bool {
+	return a.P.Line > b.P.Line || a.P.Line == b.P.Line && a.P.Col > b.P.Col
 }
 
 // loopedDecls names the locals that a declaration inside a loop binds.

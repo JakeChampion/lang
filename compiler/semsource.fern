@@ -7029,9 +7029,24 @@ function method_name_of(key: string): string {
 
 // The parameters that each declaration can hand back in its result. Bit `p`
 // of `masks[i]` is parameter `p` of the declaration `keys.names[i]`, and the
-// receiver is parameter 0. `method_masks` joins the declarations that have
-// one method name.
-pub struct Handers { keys: util.NameIndex, masks: i64[], stores: i64[], methods: util.NameIndex, method_masks: i64[], method_stores: i64[] }
+// receiver is parameter 0. `method_masks` joins the methods that have one
+// name. `statics` holds the keys of the functions of a type that have no
+// receiver, and `static_masks` joins them by name. `method_names` names each
+// method, and `closure_fields` each field of a function type.
+pub struct Handers {
+  keys: util.NameIndex,
+  masks: i64[],
+  stores: i64[],
+  methods: util.NameIndex,
+  method_masks: i64[],
+  method_stores: i64[],
+  statics: util.NameIndex,
+  static_names: util.NameIndex,
+  static_masks: i64[],
+  static_stores: i64[],
+  method_names: util.NameIndex,
+  closure_fields: util.NameIndex,
+}
 
 // Each parameter after the 62nd has the bit of the 62nd.
 function param_bit(at: i32): i64 {
@@ -7079,12 +7094,24 @@ function handers_with(own h: Handers, key: string, k: Kept): Handers {
   if (m.len() == 0) {
     return h;
   }
+  if (h.statics.has(key)) {
+    return statics_with(h, m, k);
+  }
   let mat = h.methods.find(m);
   if (mat < 0) {
     return Handers { ...h, methods: h.methods.added(m), method_masks: h.method_masks.append(k.handed), method_stores: h.method_stores.append(k.stored) };
   }
   h = Handers { ...h, method_masks: h.method_masks.with(mat, h.method_masks[mat] | k.handed) };
   return Handers { ...h, method_stores: h.method_stores.with(mat, h.method_stores[mat] | k.stored) };
+}
+
+function statics_with(own h: Handers, name: string, k: Kept): Handers {
+  let at = h.static_names.find(name);
+  if (at < 0) {
+    return Handers { ...h, static_names: h.static_names.added(name), static_masks: h.static_masks.append(k.handed), static_stores: h.static_stores.append(k.stored) };
+  }
+  h = Handers { ...h, static_masks: h.static_masks.with(at, h.static_masks[at] | k.handed) };
+  return Handers { ...h, static_stores: h.static_stores.with(at, h.static_stores[at] | k.stored) };
 }
 
 function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
@@ -7097,7 +7124,8 @@ function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
 // The names of a body that can hold a parameter, and the parameters that
 // each name can hold.
 // `sets` has one entry for each parameter, and then one for each local.
-struct Carried { params: string[], locals: string[], sets: i64[] }
+// `values` names each parameter and each local that the body binds.
+struct Carried { params: string[], locals: string[], sets: i64[], values: string[] }
 
 // The entry of `name` in `c.sets`, or -1.
 function (c: Carried) find(name: string): i32 {
@@ -7159,10 +7187,35 @@ function reach(e: ast.Expr, c: Carried, known: Handers): i64 {
 }
 
 // A call hands back the arguments in the positions that its callee hands
-// back. A call through a field can be a method, whose first argument is
-// parameter 1, or a function of a module, whose first argument is parameter 0.
+// back.
 function reach_call(call: ast.ExprCall, c: Carried, known: Handers): i64 {
-  return reach_positions(call, kept_params(call, known), c, known);
+  return reach_positions(call, kept_params(call, c, known), c, known);
+}
+
+// How a call through a field passes its arguments. A method gets its
+// object as parameter 0 and its first argument as parameter 1. A function
+// of a type, as `Finder.make(a)`, gets its first argument as parameter 0.
+// A name that the body does not bind can be a type that a key does not
+// show, so such a call takes both readings.
+const CALL_METHOD: i32 = 0;
+
+const CALL_STATIC: i32 = 1;
+
+const CALL_EITHER: i32 = 2;
+
+function field_call(fa: ast.ExprFieldAccess, c: Carried, known: Handers): i32 {
+  if let ast.ExprIdent(id) = fa.obj {
+    if (util.index_of_str(c.values, id.name) >= 0) {
+      return CALL_METHOD;
+    }
+    if (known.statics.has(id.name + "." + fa.field)) {
+      return CALL_STATIC;
+    }
+    if (known.static_names.has(fa.field)) {
+      return CALL_EITHER;
+    }
+  }
+  return CALL_METHOD;
 }
 
 // The parameters that the arguments in the positions `kept` can hold.
@@ -7172,19 +7225,31 @@ function reach_positions(call: ast.ExprCall, kept: i64, c: Carried, known: Hande
   }
   let out: i64 = 0;
   if let ast.ExprFieldAccess(fa) = call.callee {
+    let how = field_call(fa, c, known);
+    if (how == CALL_STATIC) {
+      return reach_args(call.args, kept, c, known);
+    }
     if ((kept & param_bit(0)) != 0) {
       out = reach(fa.obj, c, known);
     }
     for i in 0..call.args.len() {
-      if ((kept & (param_bit(i) | param_bit(i + 1))) != 0) {
+      let bits = if (how == CALL_EITHER) { param_bit(i) | param_bit(i + 1) } else { param_bit(i + 1) };
+      if ((kept & bits) != 0) {
         out = out | reach(call.args[i], c, known);
       }
     }
     return out;
   }
-  for i in 0..call.args.len() {
+  return reach_args(call.args, kept, c, known);
+}
+
+// The parameters that the arguments in the positions `kept` can hold, when
+// argument `i` is parameter `i`.
+function reach_args(args: ast.Expr[], kept: i64, c: Carried, known: Handers): i64 {
+  let out: i64 = 0;
+  for i in 0..args.len() {
     if ((kept & param_bit(i)) != 0) {
-      out = out | reach(call.args[i], c, known);
+      out = out | reach(args[i], c, known);
     }
   }
   return out;
@@ -7200,23 +7265,54 @@ function stores_argument(name: string): boolean {
   return name == "append" || name == "with" || name == "insert" || name == "set" || name == "cell_new";
 }
 
-function kept_params(c: ast.ExprCall, known: Handers): i64 {
-  if let ast.ExprIdent(id) = c.callee {
-    if (stores_argument(id.name)) {
+function kept_params(call: ast.ExprCall, c: Carried, known: Handers): i64 {
+  if let ast.ExprIdent(id) = call.callee {
+    if (stores_argument(id.name) || util.index_of_str(c.values, id.name) >= 0) {
       return every_param();
     }
     return known.mask(id.name);
   }
-  if let ast.ExprFieldAccess(fa) = c.callee {
+  if let ast.ExprFieldAccess(fa) = call.callee {
     if (stores_argument(fa.field)) {
       return every_param();
     }
-    let at = known.methods.find(fa.field);
+    return field_bits(fa, c, known, known.method_masks, known.static_masks, known.masks);
+  }
+  return 0;
+}
+
+// The bits of the function of a type that `fa` calls, from `keyed`.
+function static_bits(fa: ast.ExprFieldAccess, known: Handers, keyed: i64[]): i64 {
+  if let ast.ExprIdent(id) = fa.obj {
+    let at = known.keys.find(id.name + "." + fa.field);
     if (at >= 0) {
-      return known.method_masks[at];
+      return keyed[at];
     }
   }
   return 0;
+}
+
+// The bits of a call through a field, from the methods of its name, from
+// the function of the type that it names, or from both.
+// A call of a field of a function type can keep each of its arguments.
+function field_bits(fa: ast.ExprFieldAccess, c: Carried, known: Handers, methods: i64[], statics: i64[], keyed: i64[]): i64 {
+  let how = field_call(fa, c, known);
+  if (how == CALL_STATIC) {
+    return static_bits(fa, known, keyed);
+  }
+  if (known.closure_fields.has(fa.field) && !known.method_names.has(fa.field)) {
+    return every_param() ^ param_bit(0);
+  }
+  let out: i64 = 0;
+  let mat = known.methods.find(fa.field);
+  if (mat >= 0) {
+    out = methods[mat];
+  }
+  let sat = known.static_names.find(fa.field);
+  if (how == CALL_EITHER && sat >= 0) {
+    out = out | statics[sat];
+  }
+  return out;
 }
 
 struct Bound { name: string, value: ast.Expr }
@@ -7239,18 +7335,17 @@ function call_exprs(e: ast.Expr, own acc: ast.ExprCall[]): ast.ExprCall[] {
 }
 
 // The positions of the call whose arguments stay after the call: each
-// argument of a cell `set` and each capture of a closure, and the positions
-// that the callee stores.
-function stored_params(c: ast.ExprCall, known: Handers): i64 {
-  if let ast.ExprIdent(id) = c.callee {
-    if (id.name.starts_with("__mkclo$")) {
+// argument of a cell `set`, each capture of a closure and each argument of
+// a call of a closure, and the positions that the callee stores.
+function stored_params(call: ast.ExprCall, c: Carried, known: Handers): i64 {
+  if let ast.ExprIdent(id) = call.callee {
+    if (id.name.starts_with("__mkclo$") || util.index_of_str(c.values, id.name) >= 0) {
       return every_param();
     }
     return known.stored(id.name);
   }
-  if let ast.ExprFieldAccess(fa) = c.callee {
-    let at = known.methods.find(fa.field);
-    let stored: i64 = if (at >= 0) { known.method_stores[at] } else { 0 };
+  if let ast.ExprFieldAccess(fa) = call.callee {
+    let stored = field_bits(fa, c, known, known.method_stores, known.static_stores, known.stores);
     if (fa.field == "set") {
       return stored | every_param() ^ param_bit(0);
     }
@@ -7261,9 +7356,9 @@ function stored_params(c: ast.ExprCall, known: Handers): i64 {
 
 // The parts of a body that the analysis reads: the names of the parameters,
 // each binding, each returned value and each call.
-struct Body { key: string, names: string[], binds: Bound[], outs: ast.Expr[], calls: ast.ExprCall[] }
+struct FlowBody { key: string, names: string[], binds: Bound[], outs: ast.Expr[], calls: ast.ExprCall[], receiver: boolean }
 
-function body_of(fd: parser.FuncDecl): Body {
+function body_of(fd: parser.FuncDecl): FlowBody {
   let binds: Bound[] = [];
   let outs: ast.Expr[] = [];
   let calls: ast.ExprCall[] = [];
@@ -7272,26 +7367,30 @@ function body_of(fd: parser.FuncDecl): Body {
     outs = astwalk.fold_stmt_spine(st, outs, return_exprs);
     calls = astwalk.fold_stmt(st, calls, call_exprs);
   }
-  return Body { key: parser.decl_key(fd), names: decl_param_names(fd), binds: binds, outs: outs, calls: calls };
+  return FlowBody { key: parser.decl_key(fd), names: decl_param_names(fd), binds: binds, outs: outs, calls: calls, receiver: has_receiver(fd) };
 }
 
 // The parameters that a call of the body stores.
-function stores_params(b: Body, c: Carried, known: Handers): i64 {
+function stores_params(b: FlowBody, c: Carried, known: Handers): i64 {
   let out: i64 = 0;
   for call in b.calls {
-    out = out | reach_positions(call, stored_params(call, known), c, known);
+    out = out | reach_positions(call, stored_params(call, c, known), c, known);
   }
   return out;
 }
 
 // The parameters that the result of the body can hold, and the ones that
 // the body stores.
-function hands_back(body: Body, known: Handers): Kept {
+function hands_back(body: FlowBody, known: Handers): Kept {
   let sets: i64[] = [];
   for i in 0..body.names.len() {
     sets = sets.append(param_bit(i));
   }
-  let c = Carried { params: body.names, locals: [], sets: sets };
+  let values = body.names;
+  for b in body.binds {
+    values = values.append(b.name);
+  }
+  let c = Carried { params: body.names, locals: [], sets: sets, values: values };
   let grew = true;
   while (grew) {
     grew = false;
@@ -7310,13 +7409,40 @@ function hands_back(body: Body, known: Handers): Kept {
   return Kept { handed: reach_all(body.outs, c, known), stored: stores_params(body, c, known) };
 }
 
+// The names of the fields of a function type.
+function closure_fields(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for sd in mod.structs {
+    for f in sd.fields {
+      if (f.fn_ret.len() > 0 || f.fn_param_types.len() > 0) {
+        out = out.append(f.name);
+      }
+    }
+  }
+  return out;
+}
+
 function handers(mod: parser.Module): Handers {
-  let bodies: Body[] = [];
+  let bodies: FlowBody[] = [];
   for fd in mod.funcs {
     bodies = bodies.append(body_of(fd));
   }
   let none: string[] = [];
-  let found = Handers { keys: util.name_index(none), masks: [], stores: [], methods: util.name_index(none), method_masks: [], method_stores: [] };
+  let statics: string[] = [];
+  let methods: string[] = [];
+  for body in bodies {
+    let name = method_name_of(body.key);
+    if (body.receiver) {
+      methods = methods.append(name);
+    } else if (name.len() > 0) {
+      statics = statics.append(body.key);
+    }
+  }
+  let found = Handers {
+    keys: util.name_index(none), masks: [], stores: [], methods: util.name_index(none), method_masks: [], method_stores: [],
+    statics: util.name_index(statics), static_names: util.name_index(none), static_masks: [], static_stores: [],
+    method_names: util.name_index(methods), closure_fields: util.name_index(closure_fields(mod)),
+  };
   let changed = true;
   while (changed) {
     changed = false;
@@ -7490,6 +7616,7 @@ function os_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "proc_waitpid", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "proc_waitpid_nohang", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "proc_waitpid_status", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "proc_wait_any", params: [], modes: [], result: typeinfo.t_i64() },
     ssasem.Contract { name: "temp_dir", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.t_string()) },
     ssasem.Contract { name: "read_link", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.t_string()) },
     ssasem.Contract { name: "read_link_bytes", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
@@ -7648,6 +7775,7 @@ function dir_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "Dir.open_writer_with", params: [dir, typeinfo.t_string(), typeinfo.t_i32()], modes: [v, b, v], result: t_io_result(t_handle("Writer")) },
     ssasem.Contract { name: "Dir.entries", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_string(), view: false }) },
     ssasem.Contract { name: "Dir.entries_bytes", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, view: false }) },
+    ssasem.Contract { name: "Dir.entries_ino", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "DirEntry", args: [] }, view: false }) },
     ssasem.Contract { name: "Dir.stat", params: [dir, typeinfo.t_string()], modes: [v, b], result: stat },
     ssasem.Contract { name: "Dir.lstat", params: [dir, typeinfo.t_string()], modes: [v, b], result: stat },
     ssasem.Contract { name: "Dir.access", params: [dir, typeinfo.t_string(), typeinfo.t_i32()], modes: [v, b, v], result: done },

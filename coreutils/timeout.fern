@@ -161,8 +161,12 @@ function sig_alrm(): i32 {
   return signals.number("ALRM");
 }
 
-function fired(pid: i32): boolean {
-  return proc_waitpid_nohang(pid) == -10;
+// The raw status word of a proc_wait_any result, or its -errno.
+function wait_status(r: i64): i32 {
+  if (r < 0) {
+    return r as i32;
+  }
+  return (r & 65535) as i32;
 }
 
 function deliver(sig: i32, cmd: string, cpid: i32, foreground: boolean, verbose: boolean): void {
@@ -320,11 +324,12 @@ function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i
   }
   while (true) {
     w = take_signals(f, cfg, cmd, cpid, fwd, w);
-    let status = proc_waitpid_status(-1);
+    let r = proc_wait_any();
+    let status = wait_status(r);
     if (status == eintr()) {
       continue;
     }
-    if (w.tpid > 0 && fired(w.tpid)) {
+    if (w.tpid > 0 && r >> 32 == w.tpid as i64) {
       w = act(f, cfg, cmd, cpid, fwd, Watch { ...w, tpid: 0, timed_out: true }, w.timer_sig);
       continue;
     }

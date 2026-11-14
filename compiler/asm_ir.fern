@@ -3025,7 +3025,15 @@ function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.Emi
   return s;
 }
 
+// The shortest input that the AVX2 loop maps. A shorter one costs more in
+// the setup of the sixteen table lookups than the scalar loop does.
+function mapped_avx2_min(): i32 {
+  return 256;
+}
+
 function emit_buf_mapped_avx2(s: asmcore.EmitState, lm: string): asmcore.EmitState {
+  s = s.write("    cmpq $" + util.i32_to_string(mapped_avx2_min()) + ", %r13\n");
+  s = s.write("    jb " + lm + "_full\n");
   s = s.write("    leaq -32(%r13), %r8\n");
   s = s.write("    cmpq %r8, %rcx\n");
   s = s.write("    jg " + lm + "_full\n");
@@ -11443,8 +11451,12 @@ function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalb
 
 function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let name = ir.kind_name(o.kind_tag);
-  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm != 0) {
+  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm == 1) {
     name = "dir_entries_bytes";
+    s = s.need("dir_entries");
+  }
+  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm == 2) {
+    name = "dir_entries_ino";
     s = s.need("dir_entries");
   }
   let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"];
@@ -11535,15 +11547,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    pushq (%rax)\n");
   } else if (o.kind_tag == ir.K_WORKER_UNMAP) {
     s = emit_worker_unmap(s);
-  } else if (o.kind_tag == ir.K_PROC_WAITPID) {
-    s = s.write("    call __fn___fern_proc_waitpid\n    addq $8, %rsp\n    pushq %rax\n");
-    s = s.need("proc_waitpid");
-  } else if (o.kind_tag == ir.K_PROC_WAITPID_NOHANG) {
-    s = s.write("    call __fn___fern_proc_waitpid_nohang\n    addq $8, %rsp\n    pushq %rax\n");
-    s = s.need("proc_waitpid_nohang");
-  } else if (o.kind_tag == ir.K_PROC_WAITPID_STATUS) {
-    s = s.write("    call __fn___fern_proc_waitpid_status\n    addq $8, %rsp\n    pushq %rax\n");
-    s = s.need("proc_waitpid_status");
+  } else if (ir.is_proc_wait_op(o.kind_tag)) {
+    s = emit_proc_wait(s, ir.kind_name(o.kind_tag));
   } else if (o.kind_tag == ir.K_PROC_EXEC) {
     s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_proc_exec\n    addq $16, %rsp\n    pushq %rax\n");
@@ -12127,6 +12132,24 @@ function worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq " + off + "(%rax), %rcx\n    addq %rcx, " + lc_counters()[k] + "(%rip)\n");
   }
   return s.write("    popq %rcx\n" + done.name + ":\n");
+}
+
+// A wait builtin pops its pid argument after the call. proc_wait_any has none.
+function emit_proc_wait(s: asmcore.EmitState, name: string): asmcore.EmitState {
+  let pop = "    addq $8, %rsp\n";
+  if (name == "proc_wait_any") {
+    pop = "";
+  }
+  return s.write("    call __fn___fern_" + name + "\n" + pop + "    pushq %rax\n").need(name);
+}
+
+function emit_proc_wait_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  for name in ir.proc_wait_names() {
+    if (s.has_need(name)) {
+      s = emit_runtime("__fern_" + name, s.write("    .text\n"));
+    }
+  }
+  return s;
 }
 
 // Snapshot live child allocations before munmap. A successful munmap frees
@@ -13530,18 +13553,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_proc_fork", s);
   }
-  if (s.has_need("proc_waitpid")) {
-    s = s.write("    .text\n");
-    s = emit_runtime("__fern_proc_waitpid", s);
-  }
-  if (s.has_need("proc_waitpid_nohang")) {
-    s = s.write("    .text\n");
-    s = emit_runtime("__fern_proc_waitpid_nohang", s);
-  }
-  if (s.has_need("proc_waitpid_status")) {
-    s = s.write("    .text\n");
-    s = emit_runtime("__fern_proc_waitpid_status", s);
-  }
+  s = emit_proc_wait_runtime(s);
   if (s.has_need("worker_region")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_worker_region", s);
@@ -13570,7 +13582,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "writer_set_times", "statfs", "poll", "proc_waitpid",
-    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
+    "proc_waitpid_nohang", "proc_waitpid_status", "proc_wait_any", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8", "udp_sendmmsg", "udp_sendmmsg_u8", "udp_recvmmsg", "udp_recvmmsg_u8",
     "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",

@@ -1,8 +1,10 @@
 // The results of a run: where each response ends, the tally, and the
 // summary in the text layout or the JSON layout of oha.
 import "core/cmp";
+import "std/array";
 import "std/f64";
 import "std/http";
+import "std/i32";
 import "std/json";
 import "./histogram";
 
@@ -15,7 +17,14 @@ const PERCENTS: i64[] = [1000, 2500, 5000, 7500, 9000, 9500, 9900, 9990, 9999];
 
 const PERCENT_NAMES: string[] = ["p10", "p25", "p50", "p75", "p90", "p95", "p99", "p99.9", "p99.99"];
 
-pub struct Reply { status: i32, len: i32, keep_alive: boolean }
+// The bins of the response time histogram.
+const BINS: i32 = 11;
+
+// The interval of the samples of `rps`.
+pub const SLOT_NS: i64 = 10000000;
+
+// `body` is the length of the body after the transfer coding is removed.
+pub struct Reply { status: i32, len: i32, keep_alive: boolean, body: i64, location: string }
 
 pub enum Framed { Done(Reply), Partial, Bad(string) }
 
@@ -25,7 +34,8 @@ pub function frame(buf: u8[], method: string, eof: boolean): Framed {
   let limits = http.HttpLimits { ...http.limits(), body: 1 << 30 };
   match (http.parse_response_framed(buf, method, eof, limits)) {
     http.Complete(f) => {
-      return Done(Reply { status: f.response.status, len: f.len, keep_alive: f.keep_alive });
+      let location = f.response.headers.get("Location").unwrap_or("");
+      return Done(Reply { status: f.response.status, len: f.len, keep_alive: f.keep_alive, body: f.response.body_len() as i64, location: location });
     },
     http.Incomplete => {
       if (eof) {
@@ -49,7 +59,49 @@ pub function frame(buf: u8[], method: string, eof: boolean): Framed {
   return Partial;
 }
 
-pub struct Tally { latency: histogram.Histogram, statuses: i64[], errors: string[], error_counts: i64[] }
+// The count, the sum and the extremes of a set of times in nanoseconds.
+pub struct Stat { n: i64, sum: i64, min: i64, max: i64 }
+
+pub function stat(): Stat {
+  return Stat { n: 0, sum: 0, min: 0, max: 0 };
+}
+
+pub function (s: Stat) add(v: i64): Stat {
+  let min = if (s.n == 0 || v < s.min) { v } else { s.min };
+  let max = if (s.n == 0 || v > s.max) { v } else { s.max };
+  return Stat { n: s.n + 1, sum: s.sum + v, min: min, max: max };
+}
+
+pub function (s: Stat) merge(o: Stat): Stat {
+  if (o.n == 0) {
+    return s;
+  }
+  if (s.n == 0) {
+    return o;
+  }
+  let min = if (o.min < s.min) { o.min } else { s.min };
+  let max = if (o.max > s.max) { o.max } else { s.max };
+  return Stat { n: s.n + o.n, sum: s.sum + o.sum, min: min, max: max };
+}
+
+// A response that the tally counts. `first_byte` is the time from the start
+// of the request to the first byte of the response, and `dialup` the time to
+// open the connection, or -1 when the request used an open connection.
+// `ended` is the time from the start of the run to the end of the response.
+pub struct Response { status: i32, latency: i64, first_byte: i64, bytes: i64, dialup: i64, ended: i64 }
+
+// `slots` counts the responses that ended in each SLOT_NS from the start of
+// the run.
+pub struct Tally {
+  latency: histogram.Histogram,
+  first_byte: histogram.Histogram,
+  statuses: i64[],
+  errors: string[],
+  error_counts: i64[],
+  bytes: i64,
+  dialup: Stat,
+  slots: i64[],
+}
 
 pub function tally(): Tally {
   let statuses: i64[] = [];
@@ -58,20 +110,76 @@ pub function tally(): Tally {
   }
   let none: string[] = [];
   let counts: i64[] = [];
-  return Tally { latency: histogram.new(), statuses: statuses, errors: none, error_counts: counts };
+  let slots: i64[] = [];
+  return Tally { latency: histogram.new(), first_byte: histogram.new(), statuses: statuses, errors: none, error_counts: counts, bytes: 0, dialup: stat(), slots: slots };
 }
 
-pub function (t: Tally) response(status: i32, latency_ns: i64): Tally {
-  return Tally { ...t, latency: t.latency.record(latency_ns), statuses: t.statuses.with(status, t.statuses[status] + 1) };
+pub function (t: Tally) response(r: Response): Tally {
+  let dialup = if (r.dialup >= 0) { t.dialup.add(r.dialup) } else { t.dialup };
+  let slot = (r.ended / SLOT_NS) as i32;
+  let slots = t.slots;
+  while (slots.len() <= slot) {
+    slots = slots.append(0);
+  }
+  return Tally {
+    latency: t.latency.record(r.latency),
+    first_byte: t.first_byte.record(r.first_byte),
+    statuses: t.statuses.with(r.status, t.statuses[r.status] + 1),
+    errors: t.errors,
+    error_counts: t.error_counts,
+    bytes: t.bytes + r.bytes,
+    dialup: dialup,
+    slots: slots.with(slot, slots[slot] + 1),
+  };
 }
 
 pub function (t: Tally) error(message: string): Tally {
+  return t.errors_of(message, 1);
+}
+
+function (t: Tally) errors_of(message: string, n: i64): Tally {
   for i in 0..t.errors.len() {
     if (t.errors[i] == message) {
-      return Tally { ...t, error_counts: t.error_counts.with(i, t.error_counts[i] + 1) };
+      return Tally { ...t, error_counts: t.error_counts.with(i, t.error_counts[i] + n) };
     }
   }
-  return Tally { ...t, errors: t.errors.append(message), error_counts: t.error_counts.append(1) };
+  return Tally { ...t, errors: t.errors.append(message), error_counts: t.error_counts.append(n) };
+}
+
+// The tally of the requests of both `t` and `o`.
+pub function (t: Tally) merge(o: Tally): Tally {
+  let statuses = t.statuses;
+  for code in 0..statuses.len() {
+    if (o.statuses[code] != 0) {
+      statuses = statuses.with(code, statuses[code] + o.statuses[code]);
+    }
+  }
+  let slots = t.slots;
+  for i in 0..o.slots.len() {
+    if (i < slots.len()) {
+      slots = slots.with(i, slots[i] + o.slots[i]);
+    } else {
+      slots = slots.append(o.slots[i]);
+    }
+  }
+  let out = Tally {
+    latency: t.latency.merge(o.latency),
+    first_byte: t.first_byte.merge(o.first_byte),
+    statuses: statuses,
+    errors: t.errors,
+    error_counts: t.error_counts,
+    bytes: t.bytes + o.bytes,
+    dialup: t.dialup.merge(o.dialup),
+    slots: slots,
+  };
+  for i in 0..o.errors.len() {
+    out = out.errors_of(o.errors[i], o.error_counts[i]);
+  }
+  return out;
+}
+
+pub function (t: Tally) responses(): i64 {
+  return t.latency.total;
 }
 
 pub function (t: Tally) failed(): i64 {
@@ -91,18 +199,28 @@ function (t: Tally) aborted(): i64 {
   return 0;
 }
 
-// The unit of the slowest latency: the summary gives every time in it.
+// The unit of the times of the text summary: its name and its nanoseconds.
+// oha selects the largest unit that the slowest latency is more than.
 pub function unit(slowest_ns: i64): (string, f64) {
-  if (slowest_ns < 1000) {
-    return ("ns", 1.0);
+  let units: (string, i64)[] = [("h", 3600000000000), ("m", 60000000000), ("s", 1000000000), ("ms", 1000000), ("us", 1000)];
+  for u in units {
+    if (slowest_ns > u.1) {
+      return unit_named(u.0);
+    }
   }
-  if (slowest_ns < 1000000) {
-    return ("us", 1000.0);
-  }
-  if (slowest_ns < 1000000000) {
-    return ("ms", 1000000.0);
-  }
-  return ("secs", 1000000000.0);
+  return unit_named("ns");
+}
+
+// The unit of -u.
+pub function unit_named(name: string): (string, f64) {
+  return match (name) {
+    "h" => ("hr", 3600000000000.0),
+    "m" => ("min", 60000000000.0),
+    "s" => ("sec", 1000000000.0),
+    "ms" => ("ms", 1000000.0),
+    "us" => ("us", 1000.0),
+    _ => ("ns", 1.0),
+  };
 }
 
 function in_unit(ns: i64, u: (string, f64)): string {
@@ -118,18 +236,23 @@ function ranked(labels: string[], counts: i64[]): (i64, string)[] {
   return cmp.sort_by(rows, (a: (i64, string), b: (i64, string)): i32 => if (a.0 != b.0) { if (a.0 > b.0) { -1 } else { 1 } } else { a.1.cmp(b.1) });
 }
 
-// The summary of a run that took `elapsed_ns`.
-pub function (t: Tally) summary(elapsed_ns: i64): string {
-  let out = t.totals(elapsed_ns);
+// The summary of a run that took `elapsed_ns`. `unit_name` is the unit of
+// -u, or "" to select the unit from the slowest response.
+pub function (t: Tally) summary(elapsed_ns: i64, unit_name: string): string {
   let h = t.latency;
+  let u = if (unit_name.len() > 0) { unit_named(unit_name) } else { unit(h.max) };
+  let out = t.totals(elapsed_ns, u) + "\n" + t.sizes(elapsed_ns);
   if (h.total > 0) {
-    let u = unit(h.max);
+    out += "\nResponse time histogram:\n" + bars(h, u);
     out += "\nResponse time distribution:\n";
     for p in PERCENTS {
       let percent = (p as f64 / 100.0).to_string_prec(2);
       out += f"  {percent}% in " + in_unit(h.at(p), u) + "\n";
     }
   }
+  out += "\n\nDetails (average, fastest, slowest):\n";
+  out += "  DNS+dialup:\t" + triple(t.dialup, u) + "\n";
+  out += "  DNS-lookup:\t" + triple(t.lookup(), u) + "\n";
   out += "\nStatus code distribution:\n";
   for row in t.codes() {
     out += f"  [{row.1}] {row.0} responses\n";
@@ -139,6 +262,56 @@ pub function (t: Tally) summary(elapsed_ns: i64): string {
     for row in ranked(t.errors, t.error_counts) {
       out += f"  [{row.0}] {row.1}\n";
     }
+  }
+  return out;
+}
+
+// The tool looks up the name of the host once, before the run, so no
+// connection waits for a lookup.
+function (t: Tally) lookup(): Stat {
+  return Stat { n: t.dialup.n, sum: 0, min: 0, max: 0 };
+}
+
+function triple(s: Stat, u: (string, f64)): string {
+  if (s.n == 0) {
+    return f"NaN {u.0}, NaN {u.0}, NaN {u.0}";
+  }
+  return in_unit(s.sum / s.n, u) + ", " + in_unit(s.min, u) + ", " + in_unit(s.max, u);
+}
+
+// The response time histogram of oha: each bin, its count and a bar of up to
+// 32 squares.
+function bars(h: histogram.Histogram, u: (string, f64)): string {
+  let counts = h.bins(BINS);
+  let labels = bin_labels(h);
+  let most: i64 = 1;
+  let wide = 0;
+  for i in 0..BINS {
+    if (counts[i] > most) {
+      most = counts[i];
+    }
+    let whole = ((labels[i] / (u.1 / 1000000000.0)) as i64).to_string().len();
+    if (whole > wide) {
+      wide = whole;
+    }
+  }
+  let digits = most.to_string().len();
+  let out = "";
+  for i in 0..BINS {
+    let label = (labels[i] / (u.1 / 1000000000.0)).to_string_prec(3);
+    let count = counts[i].to_string();
+    out += "  " + " ".repeat(wide + 4 - label.len()) + label + f" {u.0} [{count}]" + " ".repeat(digits - count.len()) + " |" + "■".repeat((counts[i] * 32 / most) as i32) + "\n";
+  }
+  return out;
+}
+
+// The label of each bin in seconds, computed as oha computes it.
+function bin_labels(h: histogram.Histogram): f64[] {
+  let min = h.min as f64 / 1000000000.0;
+  let step = (h.max as f64 / 1000000000.0 - min) / ((BINS - 1) as f64);
+  let out: f64[] = [];
+  for i in 0..BINS {
+    out = out.append(min + step * (i as f64));
   }
   return out;
 }
@@ -157,9 +330,8 @@ function (t: Tally) codes(): (i64, string)[] {
 }
 
 // The first block of the summary.
-function (t: Tally) totals(elapsed_ns: i64): string {
+function (t: Tally) totals(elapsed_ns: i64, u: (string, f64)): string {
   let h = t.latency;
-  let u = unit(h.max);
   let out = "Summary:\n";
   out += "  Success rate:\t" + (t.success() * 100.0).to_string_prec(2) + "%\n";
   out += "  Total:\t" + in_unit(elapsed_ns, u) + "\n";
@@ -169,6 +341,39 @@ function (t: Tally) totals(elapsed_ns: i64): string {
     out += "  Average:\t" + in_unit(h.mean(), u) + "\n";
   }
   return out + "  Requests/sec:\t" + t.rps(elapsed_ns).to_string_prec(4) + "\n";
+}
+
+// The block of the sizes of the bodies.
+function (t: Tally) sizes(elapsed_ns: i64): string {
+  let out = "  Total data:\t" + size(t.bytes) + "\n";
+  if (t.responses() > 0) {
+    out += "  Size/request:\t" + size(t.bytes / t.responses()) + "\n";
+  } else {
+    out += "  Size/request:\tNaN\n";
+  }
+  return out + "  Size/sec:\t" + size((t.bytes as f64 / seconds_of(elapsed_ns)) as i64) + "\n";
+}
+
+// A number of bytes in the largest binary unit that it is at least one of.
+pub function size(n: i64): string {
+  if (n < 1024) {
+    return f"{n} B";
+  }
+  let v = n as f64 / 1024.0;
+  for name in ["KiB", "MiB", "GiB", "TiB"] {
+    if (v < 1024.0 || name == "TiB") {
+      return v.to_string_prec(2) + " " + name;
+    }
+    v /= 1024.0;
+  }
+  return f"{n} B";
+}
+
+function seconds_of(ns: i64): f64 {
+  if (ns <= 0) {
+    return 1.0e-9;
+  }
+  return ns as f64 / 1000000000.0;
 }
 
 // The responses divided by the requests that ended. A request aborted at the
@@ -190,8 +395,34 @@ function (t: Tally) rps(elapsed_ns: i64): f64 {
   return (t.latency.total + t.failed()) as f64 * 1000000000.0 / (elapsed_ns as f64);
 }
 
-// A number as serde_json writes an f64: an integral value has `.0`.
+// The responses for each second in each SLOT_NS of the run, sorted. The last
+// slot is left out when the run ends before it is full. A run shorter than
+// one slot has one sample over the whole run.
+pub function (t: Tally) rates(elapsed_ns: i64): f64[] {
+  let full = (elapsed_ns / SLOT_NS) as i32;
+  let out: f64[] = [];
+  if (full == 0) {
+    if (t.responses() > 0) {
+      out = out.append(t.responses() as f64 / seconds_of(elapsed_ns));
+    }
+    return out;
+  }
+  if (t.responses() == 0) {
+    return out;
+  }
+  for i in 0..full {
+    let n = if (i < t.slots.len()) { t.slots[i] } else { 0 };
+    out = out.append(n as f64 * 1000000000.0 / (SLOT_NS as f64));
+  }
+  return cmp.sort_by(out, (a: f64, b: f64): i32 => if (a < b) { -1 } else if (a > b) { 1 } else { 0 });
+}
+
+// A number as serde_json writes an f64: an integral value has `.0`, and a
+// value that is not finite is null.
 pub function number(x: f64): json.JsonValue {
+  if (!x.is_finite()) {
+    return json.JNull;
+  }
   let text = x.to_string();
   for c in text.bytes() {
     if (c == 46 as u8 || c == 101 as u8) {
@@ -201,13 +432,45 @@ pub function number(x: f64): json.JsonValue {
   return json.JNumber(text + ".0");
 }
 
+// A number as Rust writes an f64 with `to_string`: the shortest digits that
+// read back as `x`, with no exponent. oha writes the keys of its histograms
+// so.
+pub function plain(x: f64): string {
+  let text = x.to_string();
+  let Some(e) = text.index_of("e") else {
+    return text;
+  };
+  let negative = text.starts_with("-");
+  let mantissa = if (negative) { text.take(e).drop(1) } else { text.take(e) };
+  let exp = text.drop(e + 1);
+  let shift = match (i32.parse_i32(exp)) {
+    Ok(n) => n,
+    Err(_) => 0,
+  };
+  let dot = mantissa.index_of(".").unwrap_or(mantissa.len());
+  let digits = mantissa.take(dot) + mantissa.drop(dot + 1);
+  let point = dot + shift;
+  let out = "";
+  if (point <= 0) {
+    out = "0." + "0".repeat(-point) + digits;
+  } else if (point >= digits.len()) {
+    out = digits + "0".repeat(point - digits.len());
+  } else {
+    out = digits.take(point) + "." + digits.drop(point);
+  }
+  if (negative) {
+    return "-" + out;
+  }
+  return out;
+}
+
 function seconds(ns: i64): json.JsonValue {
   return number(ns as f64 / 1000000000.0);
 }
 
-// A latency in seconds, or null when there was no response.
-function (t: Tally) in_seconds(ns: i64): json.JsonValue {
-  if (t.latency.total == 0) {
+// A time in seconds, or null when `none` is true.
+function maybe_seconds(ns: i64, none: boolean): json.JsonValue {
+  if (none) {
     return json.JNull;
   }
   return seconds(ns);
@@ -230,17 +493,96 @@ function counts(rows: (i64, string)[]): json.JsonValue {
   return json.JObject(o);
 }
 
+// The histogram of oha as JSON: the label of each bin in seconds and its
+// count, in the order of the labels as text, as a BTreeMap of strings has
+// them.
+function histogram_json(h: histogram.Histogram): json.JsonValue {
+  let o = json.object();
+  if (h.total == 0) {
+    return json.JObject(o);
+  }
+  let labels = bin_labels(h);
+  let bins = h.bins(BINS);
+  let rows: (string, i64)[] = [];
+  for i in 0..BINS {
+    let key = plain(labels[i]);
+    let found = false;
+    for j in 0..rows.len() {
+      if (rows[j].0 == key) {
+        rows = rows.with(j, (key, rows[j].1 + bins[i]));
+        found = true;
+      }
+    }
+    if (!found) {
+      rows = rows.append((key, bins[i]));
+    }
+  }
+  rows = cmp.sort_by(rows, (a: (string, i64), b: (string, i64)): i32 => a.0.cmp(b.0));
+  for row in rows {
+    o = o.insert(row.0, json.JNumber(row.1.to_string()));
+  }
+  return json.JObject(o);
+}
+
+function percentiles_json(h: histogram.Histogram): json.JsonValue {
+  let o = json.object();
+  for i in 0..PERCENTS.len() {
+    o = o.insert(PERCENT_NAMES[i], maybe_seconds(h.at(PERCENTS[i]), h.total == 0));
+  }
+  return json.JObject(o);
+}
+
+function triple_json(s: Stat): json.JsonValue {
+  let none = s.n == 0;
+  let mean = if (none) { 0 } else { s.sum / s.n };
+  return json.JObject(json.from([("average", maybe_seconds(mean, none)), ("fastest", maybe_seconds(s.min, none)), ("slowest", maybe_seconds(s.max, none))]));
+}
+
+// The `rps` object of oha: the mean, the sample standard deviation and the
+// percentiles of the samples of `rates`.
+pub function rps_json(rates: f64[]): json.JsonValue {
+  let n = rates.len();
+  let mean = f64.NAN;
+  let deviation = f64.NAN;
+  if (n > 0) {
+    let sum = 0.0;
+    for x in rates {
+      sum += x;
+    }
+    mean = sum / (n as f64);
+    let squares = 0.0;
+    for x in rates {
+      squares += (x - mean) * (x - mean);
+    }
+    deviation = if (n > 1) { (squares / ((n - 1) as f64)).sqrt() } else { 0.0 };
+  }
+  let low = if (n > 0) { rates[0] } else { f64.NAN };
+  let high = if (n > 0) { rates[n - 1] } else { f64.NAN };
+  let p = json.object();
+  for i in 0..PERCENTS.len() {
+    let at = (PERCENTS[i] * (n as i64) / 10000) as i32;
+    let v = if (at < n) { rates[at] } else { f64.NAN };
+    p = p.insert(PERCENT_NAMES[i], number(v));
+  }
+  return json.JObject(json.from([("mean", number(mean)), ("stddev", number(deviation)), ("max", number(high)), ("min", number(low)), ("percentiles", json.JObject(p))]));
+}
+
 // The JSON summary of a run that took `elapsed_ns`, with the keys of
-// `oha --output-format json` for what the tool measures.
+// `oha --output-format json`.
 pub function (t: Tally) json(elapsed_ns: i64): string {
   let h = t.latency;
+  let none = h.total == 0;
+  let per_request = if (none) { json.JNull } else { json.JNumber((t.bytes / h.total).to_string()) };
   let summary = json.from([
     ("successRate", number(t.success())),
     ("total", seconds(elapsed_ns)),
-    ("slowest", t.in_seconds(h.max)),
-    ("fastest", t.in_seconds(h.min)),
-    ("average", t.in_seconds(h.mean())),
+    ("slowest", maybe_seconds(h.max, none)),
+    ("fastest", maybe_seconds(h.min, none)),
+    ("average", maybe_seconds(h.mean(), none)),
     ("requestsPerSec", number(t.rps(elapsed_ns))),
+    ("totalData", json.JNumber(t.bytes.to_string())),
+    ("sizePerRequest", per_request),
+    ("sizePerSec", number(t.bytes as f64 / seconds_of(elapsed_ns))),
   ]);
   let latency_ms = json.from([
     ("min", t.in_millis(h.min)),
@@ -251,14 +593,18 @@ pub function (t: Tally) json(elapsed_ns: i64): string {
     ("max", t.in_millis(h.max)),
   ]);
   let metrics = json.from([("success_rate", number(t.success())), ("requests_per_sec", number(t.rps(elapsed_ns))), ("latency_ms", json.JObject(latency_ms))]);
-  let percentiles = json.object();
-  for i in 0..PERCENTS.len() {
-    percentiles = percentiles.insert(PERCENT_NAMES[i], t.in_seconds(h.at(PERCENTS[i])));
-  }
+  let fb = t.first_byte;
+  let first_byte = Stat { n: fb.total, sum: fb.sum, min: fb.min, max: fb.max };
+  let details = json.from([("DNSDialup", triple_json(t.dialup)), ("DNSLookup", triple_json(t.lookup())), ("firstByte", triple_json(first_byte))]);
   let doc = json.from([
     ("summary", json.JObject(summary)),
     ("metrics", json.JObject(metrics)),
-    ("latencyPercentiles", json.JObject(percentiles)),
+    ("responseTimeHistogram", histogram_json(h)),
+    ("latencyPercentiles", percentiles_json(h)),
+    ("firstByteHistogram", histogram_json(fb)),
+    ("firstBytePercentiles", percentiles_json(fb)),
+    ("rps", rps_json(t.rates(elapsed_ns))),
+    ("details", json.JObject(details)),
     ("statusCodeDistribution", counts(t.codes())),
     ("errorDistribution", counts(ranked(t.errors, t.error_counts))),
   ]);
