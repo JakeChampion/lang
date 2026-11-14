@@ -44,18 +44,23 @@ function main(): i32 {
 }
 `
 
-// A box uses the word of an array length as its first word. A box of two
-// fields asks __fern_arr_box for two words, not three, and a box of one field
-// asks for one. The block of two fields has 40 bytes.
-func TestSelfHostBoxTakesNoSpareWord(t *testing.T) {
+// A box has a header of one word. A box of two fields has three words with
+// its shape, and asks __fern_rec_box for three. A box of one field asks for
+// two. __fern_rec_box asks __fern_arr_box for two words less, so the block
+// of two fields has 32 bytes.
+func TestSelfHostBoxHasAHeaderOfOneWord(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(boxWordsProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	asked := map[string][2]string{
-		"x86-64-linux": {"movq $2, %rdi\n    call __fern_arr_box", "movq $1, %rdi\n    call __fern_arr_box"},
-		"arm64-linux":  {"mov x0, #2\n    bl __fern_arr_box", "mov x0, #1\n    bl __fern_arr_box"},
+		"x86-64-linux": {"movq $3, %rdi\n    call __fern_rec_box", "movq $2, %rdi\n    call __fern_rec_box"},
+		"arm64-linux":  {"mov x0, #3\n    bl __fern_rec_box", "mov x0, #2\n    bl __fern_rec_box"},
+	}
+	routine := map[string]string{
+		"x86-64-linux": "__fern_rec_box:\n    cmpq $2, %rdi\n    jb .Lrecbox_unit\n    pushq %rdi\n    subq $2, %rdi\n    call __fern_arr_box\n",
+		"arm64-linux":  "    sub x0, x0, #2\n    bl __fern_arr_box\n",
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
@@ -64,6 +69,14 @@ func TestSelfHostBoxTakesNoSpareWord(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := string(asm)
+			if !strings.Contains(text, routine[target]) {
+				t.Fatalf("__fern_rec_box does not ask for two words less: no %q", routine[target])
+			}
+			// A store of 32 bits leaves the last bytes of a block from a
+			// free list in the half that marks a box.
+			if target == "arm64-linux" && (strings.Contains(text, "str w3, [x2, #8]") || !strings.Contains(text, "mov x3, #1\n    str x3, [x2, #8]")) {
+				t.Fatal("__fern_arr_box does not write all 64 bits of the count word")
+			}
 			if body := tailCallBody(t, text, "add"); !strings.Contains(body, asked[target][0]) {
 				t.Fatalf("add has no %q:\n%s", asked[target][0], body)
 			}

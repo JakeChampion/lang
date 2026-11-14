@@ -45,7 +45,7 @@ function actual(): void {
   require(bound.error == "" && p.error == "" && body.error == "", "same final output");
   require(p.register_entry == body.register_entry && p.ops.len() == bound.lines.len(), "actual positions");
   actual_operations(p, body);
-  require(!output.text.contains("\n__fern_arr_box:\n"), "dependency remains unproved");
+  require(!output.text.contains("\n__fern_rec_box:\n"), "dependency remains unproved");
 }
 
 function actual_store(op: isa.Op, stores: i32): void {
@@ -60,7 +60,7 @@ function actual_operations(p: isa.ArrayProgram, body: text.Body): void {
   for op in p.ops {
     require(op.kind > 0, "actual operation: " + body.lines[i]);
     if (op.kind == 25) {
-      require(op.symbol == "__fern_arr_box", "actual dependency name");
+      require(op.symbol == "__fern_rec_box", "actual dependency name");
       calls += 1;
     }
     if (op.kind == 4) {
@@ -121,15 +121,15 @@ function operands(): void {
   }
   let frame = sample("leaq -16(%rbp), %rsp");
   require(frame.kind == 15 && frame.base == 5 && frame.destination == 4 && frame.offset == -16 && frame.index == -1, "frame address");
-  let call = sample("call\t__fern_arr_box");
-  require(call.kind == 25 && call.symbol == "__fern_arr_box", "allocation call syntax");
+  let call = sample("call\t__fern_rec_box");
+  require(call.kind == 25 && call.symbol == "__fern_rec_box", "allocation call syntax");
 }
 
 function unsupported(): void {
-  for line in ["call __fern_alloc", "call __fern_capw", "call __fern_large_push", "call __fern_arr_box.r", "call *__fern_arr_box", "call __fern_arr_box+1", "call __fern_arr_box, %rax", "leaq .S0+8(%rip), %rax", "leaq .S0(%rip,%rcx), %rax", "leal .S0(%rip), %eax", "leaq .S0(%rip), %eax", "leaq 123(%rip), %rax", "leaq (%rip), %rax", "leaq .S0@GOTPCREL(%rip), %rax", "leaq .S0(%rip), %rax, %rcx", "unknown_instruction", "leave"] {
+  for line in ["call __fern_alloc", "call __fern_capw", "call __fern_large_push", "call __fern_rec_box.r", "call *__fern_rec_box", "call __fern_rec_box+1", "call __fern_rec_box, %rax", "leaq .S0+8(%rip), %rax", "leaq .S0(%rip,%rcx), %rax", "leal .S0(%rip), %eax", "leaq .S0(%rip), %eax", "leaq 123(%rip), %rax", "leaq (%rip), %rax", "leaq .S0@GOTPCREL(%rip), %rax", "leaq .S0(%rip), %rax, %rcx", "unknown_instruction", "leave"] {
     require(sample(line).kind == 0, "unknown retained: " + line);
   }
-  for line in ["call __fern_arr_box", "leaq .S0(%rip), %rax"] {
+  for line in ["call __fern_rec_box", "leaq .S0(%rip), %rax"] {
     let old = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
     require(old.error == "" && old.ops[0].kind == 0, "capacity policy isolated");
     let release = isa.array_program(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n" + line + "\nret\n__fn___fern_arr_dec.u:\n");
