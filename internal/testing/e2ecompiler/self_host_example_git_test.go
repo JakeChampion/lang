@@ -426,6 +426,18 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			check(idx)
 			compare("", "verify-pack", "-v", "nosuch.idx")
 
+			// Without the reverse index of git, the port sorts the offsets of the index.
+			revs, err := filepath.Glob(filepath.Join(top, ".git", "objects", "pack", "*.rev"))
+			if err != nil || len(revs) != 1 {
+				t.Fatalf("the fixture has %d reverse indexes, want 1", len(revs))
+			}
+			if err := os.Remove(revs[0]); err != nil {
+				t.Fatal(err)
+			}
+			compare("", "log", "--format=%h %p %s")
+			compare("", "ls-tree", "-r", "-l", "HEAD")
+			compare("", "cat-file", "-p", "HEAD~3:big.txt")
+
 			// With 16,384 packed objects or more, git gives 8 digits to a short name.
 			many := filepath.Join(t.TempDir(), "many")
 			if err := os.Mkdir(many, 0o755); err != nil {

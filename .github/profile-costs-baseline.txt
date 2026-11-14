@@ -1,3 +1,8 @@
+# 2026-11-14: a local scripts/profile-costs run on main fc3a07c7 with this change. std/deflate takes
+# the zeroed tables of inflate from one allocation, not from a loop of appends. Four deflate_decode
+# rows fall 1.0% to 6.5%. Each row moves to its measured value. Keep all tolerances. The run also
+# reports 18 rows of array_append, call_overhead, int_loop, map_string and http_hello that main
+# moved. This change does not move them, and they stay.
 # 2026-11-14: PR #15811, perf-x86_64 job 132328927242 on the merge with main 8ce8fde7. Seven rows
 # move: four diagnostic byte counts grow 1.0% to 1.2%, and arm64 http_hello.safe.emit and the two
 # x86-64 map_string .ir rows fall 1.1% to 1.7%. These are values of main. Each row moves to its
@@ -186,7 +191,7 @@ profile/arm64-linux/deflate_decode.hardened.bytes	63256
 profile/arm64-linux/deflate_decode.hardened.emit	14820
 profile/arm64-linux/deflate_decode.minimal.bytes	52312
 profile/arm64-linux/deflate_decode.minimal.emit	11928
-profile/arm64-linux/deflate_decode.safe.bytes	57592
+profile/arm64-linux/deflate_decode.safe.bytes	56792
 profile/arm64-linux/deflate_decode.safe.emit	13245
 profile/arm64-linux/enum_match.diagnostic.bytes	13568
 profile/arm64-linux/enum_match.diagnostic.emit	1700
@@ -270,14 +275,14 @@ profile/x86-64-linux/closure_call.minimal.ir	41148167
 profile/x86-64-linux/closure_call.safe.bytes	4848
 profile/x86-64-linux/closure_call.safe.emit	982
 profile/x86-64-linux/closure_call.safe.ir	41178167
-profile/x86-64-linux/deflate_decode.diagnostic.bytes	111144
+profile/x86-64-linux/deflate_decode.diagnostic.bytes	109880
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/deflate_decode.diagnostic.emit	12887
-profile/x86-64-linux/deflate_decode.diagnostic.ir	44509230
+profile/x86-64-linux/deflate_decode.diagnostic.ir	41625866
 profile/x86-64-linux/deflate_decode.hardened.bytes	54928
 profile/x86-64-linux/deflate_decode.hardened.emit	13112
 profile/x86-64-linux/deflate_decode.hardened.ir	33100152
-profile/x86-64-linux/deflate_decode.minimal.bytes	45920
+profile/x86-64-linux/deflate_decode.minimal.bytes	45456
 profile/x86-64-linux/deflate_decode.minimal.emit	11231
 profile/x86-64-linux/deflate_decode.minimal.ir	38769785
 profile/x86-64-linux/deflate_decode.safe.bytes	50448
