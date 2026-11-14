@@ -689,6 +689,7 @@ negative_literal_patterns                            0
 nested_arm_patterns                                  0
 nested_array_literals_take_the_wider_element_type    0
 nested_call_temp                                     0
+nested_lambdas_check_in_linear_time                  0
 nested_loops                                         0
 nested_option                                        0
 nested_owned_field_transfer                          0
