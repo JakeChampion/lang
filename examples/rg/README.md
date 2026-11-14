@@ -308,10 +308,9 @@ columns ran one after the other in one session.
 | `\w+` | lines | 409 | 394 | 765 | 464 | 123 | 319 |
 | | find | 7,336 | 7,140 | 13,727 | 7,841 | 1,497 | 3,249 |
 
-The counts are the same as those of ripgrep, but for `\w+` in `find` mode:
-47,078,742 against 45,612,443, because `std/regex` knows only ASCII word
-bytes. ripgrep has no `\p{Greek}` peer to compare, because `std/regex` has
-no Unicode classes.
+The counts of this table are the same as those of ripgrep, but for `\w+`
+in `find` mode: 47,078,742 against 45,612,443, because `std/regex` knew only
+ASCII word bytes. "Unicode" below gives the counts of ripgrep.
 
 Before this slice, `std/regex` ran its matcher at each byte of the text. The
 matcher walked the syntax tree and made a new array for each node at each
@@ -339,6 +338,71 @@ session, on a host that other jobs also used.
 
 Each output is the same as that of ripgrep, but `-co '\w+'`, for the
 reason above.
+
+### Unicode
+
+`std/regex` now matches characters, and `\w`, `\d`, `\s`, `\b` and `-i` are
+Unicode. Its DFAs are lazy: a search adds a state when it first needs it.
+`compile` fills each state of a small table at once, so that a search of a
+short text does not pay for the lazy DFA.
+
+The host had other jobs, so the tables below count instructions with
+callgrind, which gives the same count on each run. "Main" is the port
+before Unicode, with the same compiler.
+
+Each count is in millions, for the 10 MB at the start of `big.txt`. It is
+the count of the run less the count of a run on an empty file, so it
+leaves out the compile.
+
+| Pattern | Mode | Main | After |
+| --- | --- | ---: | ---: |
+| `Sherlock Holmes` | lines | 37.3 | 37.3 |
+| | find | 4.4 | 4.4 |
+| `(?i)sherlock holmes` | lines | 99.5 | 100.6 |
+| | find | 76.6 | 74.2 |
+| five names | lines | 74.2 | 74.2 |
+| | find | 47.0 | 46.9 |
+| `[a-zA-Z0-9_]+` | lines | 61.4 | 60.5 |
+| | find | 713.3 | 708.9 |
+| `\w+` | lines | 61.4 | 79.4 |
+| | find | 713.3 | 834.4 |
+
+| Command | Main | After |
+| --- | ---: | ---: |
+| `rg 'Sherlock Holmes'` | 9.9 | 10.1 |
+| `rg -c 'Sherlock Holmes'` | 8.9 | 9.0 |
+| `rg -i 'sherlock holmes'` | 86.9 | 84.3 |
+| `rg -ic 'sherlock holmes'` | 84.1 | 80.9 |
+| `rg 'Sherlock Holmes\|...'` (five names) | 60.0 | 61.3 |
+| `rg -c 'Sherlock Holmes\|...'` | 55.3 | 55.6 |
+| `rg -cw 'Holmes'` | 9.3 | 9.4 |
+| `rg -c '\w+'` | 120.5 | 144.0 |
+| `rg -co '[a-zA-Z0-9_]+'` | 1,423.7 | 1,470.2 |
+| `rg -co '\w+'` | 1,423.7 | 1,770.8 |
+| `rg -c '\p{Greek}+'` | error | 48.3 |
+
+Each output of "after" is the same as that of ripgrep. On main, `\w` was
+ASCII, `-co '\w+'` split words at each non-ASCII byte, and `\p{Greek}` was
+an error.
+
+The `\w+` rows stay above main. The class of Unicode has a program of 324
+instructions, and its tables have 75,604 and 98,536 words. They cost 33 ms
+to fill, and seconds in the interpreter, so `\w+` keeps the lazy DFA. Each
+call of the lazy DFA runs about 50 more instructions than a call with a
+full table. The ASCII class of main, `[a-zA-Z0-9_]+`, is not slower.
+
+These rows also stay above main:
+
+- The rows that write lines run about 2% more. The printer of the new
+  options has more fields and more arguments for each line.
+- `-co '[a-zA-Z0-9_]+'` runs 3% more. Of that, 22 million instructions
+  are a copy of each line that the count of its matches makes.
+- In the count loop, the code of the compiler adds 15 moves for each line
+  after the call of `jump` (#15814).
+
+The compile of `std/regex` costs more than on main for some patterns. A
+full table for the five names costs 1.1 million instructions, about
+0.4 ms.
 
 ### Why the port is slower on literals
 
