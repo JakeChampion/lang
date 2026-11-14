@@ -304,7 +304,7 @@ type gnuPackage struct {
 	env string
 }
 
-var gnuPackages = []gnuPackage{{"coreutils", "FERN_GNU_COREUTILS"}, {"diffutils", "FERN_GNU_DIFFUTILS"}, {"sed", "FERN_GNU_SED"}}
+var gnuPackages = []gnuPackage{{"coreutils", "FERN_GNU_COREUTILS"}, {"diffutils", "FERN_GNU_DIFFUTILS"}, {"sed", "FERN_GNU_SED"}, {"findutils", "FERN_GNU_FINDUTILS"}}
 
 // gnuPackageCandidates gives the directories to search for an oracle of the
 // package, with the directory of `probe` from PATH after those of the env.

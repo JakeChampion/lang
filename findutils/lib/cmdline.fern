@@ -1,0 +1,409 @@
+// The command lines of find's -exec family and of xargs: how many
+// arguments fit in one, how to run one, and how to ask before it runs.
+import "std/string";
+import "std/errno";
+import "../../coreutils/lib/gnu";
+
+// The size of the command buffer of GNU findutils: the bytes of the
+// arguments of a command, each with its terminating zero.
+pub const DEFAULT_SIZE: i64 = 131072i64;
+
+// The headroom that GNU findutils keeps below ARG_MAX for the environment
+// that the command can add.
+pub const HEADROOM: i64 = 2048i64;
+
+// One -exec, -execdir, -ok or -okdir: the words of the command. With `plus`
+// the files go in place of the last word, "{}".
+pub struct Spec { words: string[], plus: boolean, dir: boolean, ask: boolean, name: string }
+
+// The files that wait for one command of -exec ... +. `size` counts the
+// bytes of the whole command line.
+pub struct Batch { args: string[], size: i64, dir: string, limit: i64 }
+
+// How a command ended. `errno` is set when it could not start.
+pub struct Outcome { code: i32, signal: i32, errno: i32 }
+
+// The standard input of a command: the one of the program, none, /dev/null
+// or the terminal.
+pub const STDIN_KEEP: i32 = 0;
+
+pub const STDIN_CLOSE: i32 = 1;
+
+pub const STDIN_NULL: i32 = 2;
+
+pub const STDIN_TTY: i32 = 3;
+
+pub function spec_new(words: string[], plus: boolean, dir: boolean, ask: boolean, name: string): Spec {
+  return Spec { words: words, plus: plus, dir: dir, ask: ask, name: name };
+}
+
+pub function arg_size(s: string): i64 {
+  return s.len() as i64 + 1i64;
+}
+
+// The bytes of the words of `spec` before the files.
+function fixed_size(spec: Spec): i64 {
+  let n = 0i64;
+  let i = 0;
+  while (i < spec.words.len() - 1) {
+    n += arg_size(spec.words[i]);
+    i += 1;
+  }
+  return n;
+}
+
+pub function batch_new(spec: Spec): Batch {
+  let fixed = 0i64;
+  if (spec.plus) {
+    fixed = fixed_size(spec);
+  }
+  return Batch { args: [], size: fixed, dir: "", limit: buffer_size() };
+}
+
+pub function fits(b: Batch, arg: string): boolean {
+  return b.size + arg_size(arg) <= b.limit;
+}
+
+pub function batch_add(own b: Batch, arg: string, dir: string): Batch {
+  return Batch { ...b, args: b.args.append(arg), size: b.size + arg_size(arg), dir: dir };
+}
+
+pub function batch_argv(spec: Spec, b: Batch): string[] {
+  let argv: string[] = [];
+  let i = 0;
+  while (i < spec.words.len() - 1) {
+    argv = argv.append(spec.words[i]);
+    i += 1;
+  }
+  for a in b.args {
+    argv = argv.append(a);
+  }
+  return argv;
+}
+
+// The words of a command with each "{}" in them replaced by `arg`.
+pub function substitute(words: string[], arg: string): string[] {
+  let out: string[] = [];
+  for w in words {
+    out = out.append(replace_braces(w, arg));
+  }
+  return out;
+}
+
+pub function replace_braces(w: string, arg: string): string {
+  if (!w.contains("{}")) {
+    return w;
+  }
+  let h = buf_new(w.len() + arg.len());
+  let i = 0;
+  while (i < w.len()) {
+    if (i + 1 < w.len() && w[i] == b'{' && w[i + 1] == b'}') {
+      buf_push(h, arg);
+      i += 2;
+      continue;
+    }
+    buf_push_byte(h, w[i] as i32);
+    i += 1;
+  }
+  let b = buf_take_bytes(h);
+  buf_free(h);
+  let s = unsafe { string_from_bytes_unchecked(b) };
+  return s;
+}
+
+// The size of the argument area of the system: ARG_MAX, which Linux
+// derives from the limit of the stack.
+pub function arg_max(): i64 {
+  if (target_os() == "darwin") {
+    return 1048576i64;
+  }
+  match (read_file("/proc/self/limits")) {
+    Ok(text) => {
+      let stack = stack_limit(text);
+      if (stack > 0i64) {
+        let q = stack / 4i64;
+        if (q < 131072i64) {
+          return 131072i64;
+        }
+        return q;
+      }
+    },
+    Err(_) => {}
+  }
+  return 2097152i64;
+}
+
+// The soft limit of the stack in /proc/self/limits, or -1 when it has none.
+function stack_limit(text: string): i64 {
+  let at = 0;
+  match (text.index_of("Max stack size")) {
+    Some(k) => {
+      at = k + 14;
+    },
+    None => {
+      return -1i64;
+    }
+  }
+  while (at < text.len() && text[at] == b' ') {
+    at += 1;
+  }
+  let v = 0i64;
+  let seen = false;
+  while (at < text.len() && text[at] >= b'0' && text[at] <= b'9') {
+    v = v * 10i64 + (text[at] as i32 - 48) as i64;
+    seen = true;
+    at += 1;
+  }
+  if (!seen) {
+    return -1i64;
+  }
+  return v;
+}
+
+// The bytes of the environment, as the kernel counts them for exec.
+pub function env_size(): i64 {
+  let n = 0i64;
+  for e in environ() {
+    n += e.len() as i64 + 1i64;
+  }
+  return n;
+}
+
+// The largest command line POSIX allows here.
+pub function posix_limit(): i64 {
+  return arg_max() - HEADROOM - env_size();
+}
+
+// The largest command line that fits after the environment.
+pub function usable_limit(): i64 {
+  return posix_limit() - env_size();
+}
+
+// The size of the buffer that the command lines fill.
+pub function buffer_size(): i64 {
+  let u = usable_limit();
+  if (u < DEFAULT_SIZE) {
+    return u;
+  }
+  return DEFAULT_SIZE;
+}
+
+// -execdir refuses a PATH with a relative directory in it, since the
+// command would then come from the directory of the file.
+pub function check_path_for_execdir(name: string): void {
+  let path = "";
+  match (env("PATH")) {
+    Some(v) => {
+      path = v;
+    },
+    None => {
+      return;
+    }
+  }
+  let start = 0;
+  let i = 0;
+  while (i <= path.len()) {
+    if (i == path.len() || path[i] == b':') {
+      let part = slice_unchecked(path, start, i) + "";
+      if (part.len() == 0 || part == ".") {
+        gnu.error("The current directory is included in the PATH environment variable, which is insecure in combination with the " + name + " action of find.  Please remove the current directory from your $PATH (that is, remove \".\", doubled colons, or leading or trailing colons)");
+        exit(1);
+      }
+      if (part[0] != b'/') {
+        gnu.error("The relative path " + gnu.quote(part) + " is included in the PATH environment variable, which is insecure in combination with the " + name + " action of find.  Please remove that entry from $PATH");
+        exit(1);
+      }
+      start = i + 1;
+    }
+    i += 1;
+  }
+}
+
+// Reads one line from standard input, a byte at a time so that nothing
+// after it is taken from a command that reads the rest.
+pub function read_reply(): Option[string] {
+  let rd = stdin();
+  let h = buf_new(16);
+  let got = false;
+  loop {
+    match (rd.read_chunk_bytes(1)) {
+      Ok(b) => {
+        if (b.len() == 0) {
+          break;
+        }
+        got = true;
+        if (b[0] == 10u8) {
+          break;
+        }
+        buf_push_byte(h, b[0] as i32);
+      },
+      Err(_) => {
+        break;
+      }
+    }
+  }
+  let b = buf_take_bytes(h);
+  buf_free(h);
+  let s = unsafe { string_from_bytes_unchecked(b) };
+  if (!got) {
+    return None;
+  }
+  return Some(s);
+}
+
+pub function affirmative(reply: Option[string]): boolean {
+  match (reply) {
+    Some(s) => {
+      return s.len() > 0 && (s[0] == b'y' || s[0] == b'Y');
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// The prompt of -ok and -okdir, and its answer.
+pub function ask(argv: string[], arg: string): boolean {
+  let w = stderr();
+  w.write("< " + argv[0] + " ... " + arg + " > ? ");
+  return affirmative(read_reply());
+}
+
+// Runs a command and waits for it. `dir` is its directory, or "" for this
+// one. With `close_stdin` the command has no standard input, as for -ok.
+pub function run(argv: string[], dir: string, close_stdin: boolean): Outcome {
+  let mode = if (close_stdin) { STDIN_CLOSE } else { STDIN_KEEP };
+  let pid = start(argv, dir, mode, "");
+  if (pid.1 != 0) {
+    return Outcome { code: 1, signal: 0, errno: pid.1 };
+  }
+  return wait(pid.0);
+}
+
+// Starts a command. The result is its process, or the error that stopped
+// it from starting. `slot` names a variable and its value to set, as
+// "NAME=VALUE", or is "".
+pub function start(argv: string[], dir: string, stdin_mode: i32, slot: string): (i32, i32) {
+  let ep = match (pipe()) {
+    Ok(made) => made,
+    Err(e) => {
+      return (-1, errno.of(e));
+    },
+  };
+  let envp = environ();
+  if (slot.len() > 0) {
+    envp = with_var(envp, slot);
+  }
+  let pid = proc_fork();
+  if (pid == 0) {
+    child(argv, dir, stdin_mode, envp, ep.w);
+  }
+  if (pid < 0) {
+    return (-1, -pid);
+  }
+  ep.w.close();
+  let failed = read_errno(ep.r);
+  ep.r.close();
+  if (failed != 0) {
+    proc_waitpid_status(pid);
+    return (-1, failed);
+  }
+  return (pid, 0);
+}
+
+// xargs --open-tty in the child. When the terminal does not open, GNU
+// xargs reports it from the child and then fails an assertion there, so
+// the child dies of SIGABRT.
+function reopen_tty(): void {
+  match (open_reader("/dev/tty")) {
+    Ok(tty) => {
+      tty.dup_onto(0);
+    },
+    Err(e) => {
+      gnu.error(gnu.quote("/dev/tty") + ": " + gnu.io_error_text(e));
+      gnu.error("xargs.c:1605: wait_for_proc_all: Assertion `getpid () == parent' failed.");
+      signal_default(6);
+      signal_raise(6);
+      exit(134);
+    }
+  }
+}
+
+function with_var(envp: string[], slot: string): string[] {
+  let eq = 0;
+  while (eq < slot.len() && slot[eq] != b'=') {
+    eq += 1;
+  }
+  let prefix = slice_unchecked(slot, 0, eq + 1) + "";
+  let out: string[] = [];
+  for e in envp {
+    if (!e.starts_with(prefix)) {
+      out = out.append(e);
+    }
+  }
+  return out.append(slot);
+}
+
+function child(argv: string[], dir: string, stdin_mode: i32, envp: string[], ew: Writer): void {
+  if (stdin_mode == STDIN_CLOSE) {
+    let rd = stdin();
+    rd.close();
+  } else if (stdin_mode == STDIN_NULL) {
+    if let Ok(null) = open_reader("/dev/null") {
+      null.dup_onto(0);
+    }
+  } else if (stdin_mode == STDIN_TTY) {
+    reopen_tty();
+  }
+  if (dir.len() > 0) {
+    if let Err(e) = chdir(dir) {
+      ew.write(errno.of(e).to_string());
+      exit(1);
+    }
+  }
+  let rc = gnu.exec_command(argv[0], argv, envp);
+  ew.write(rc.to_string());
+  exit(1);
+}
+
+function read_errno(r: Reader): i32 {
+  let text = "";
+  loop {
+    match (r.read_chunk(64)) {
+      Ok(s) => {
+        if (s.len() == 0) {
+          break;
+        }
+        text = text + s;
+      },
+      Err(_) => {
+        break;
+      }
+    }
+  }
+  if (text.len() == 0) {
+    return 0;
+  }
+  let v = 0;
+  let i = 0;
+  while (i < text.len() && text[i] >= b'0' && text[i] <= b'9') {
+    v = v * 10 + (text[i] as i32 - 48);
+    i += 1;
+  }
+  return v;
+}
+
+// Waits for a process and says how it ended.
+pub function wait(pid: i32): Outcome {
+  let st = proc_waitpid_status(pid);
+  return outcome_of(st);
+}
+
+pub function outcome_of(st: i32): Outcome {
+  let sig = st & 127;
+  if (sig != 0) {
+    return Outcome { code: 128 + sig, signal: sig, errno: 0 };
+  }
+  return Outcome { code: st >> 8 & 255, signal: 0, errno: 0 };
+}

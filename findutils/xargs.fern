@@ -1,0 +1,1058 @@
+import "std/string";
+import "std/errno";
+import "../coreutils/lib/gnu";
+import "./lib/cmdline";
+
+const EXIT_USAGE: i32 = 1;
+
+// The exit statuses of GNU xargs.
+const EXIT_CHILD_FAILED: i32 = 123;
+
+const EXIT_CHILD_255: i32 = 124;
+
+const EXIT_CHILD_SIGNAL: i32 = 125;
+
+const EXIT_CANNOT_RUN: i32 = 126;
+
+const EXIT_NOT_FOUND: i32 = 127;
+
+const OPT_NULL: i32 = 1;
+
+const OPT_ARG_FILE: i32 = 2;
+
+const OPT_DELIM: i32 = 3;
+
+const OPT_EOF_E: i32 = 4;
+
+const OPT_EOF_E_LOWER: i32 = 5;
+
+const OPT_REPLACE_I: i32 = 6;
+
+const OPT_REPLACE_I_LOWER: i32 = 7;
+
+const OPT_LINES_L: i32 = 8;
+
+const OPT_LINES_L_LOWER: i32 = 9;
+
+const OPT_ARGS: i32 = 10;
+
+const OPT_TTY: i32 = 11;
+
+const OPT_INTERACTIVE: i32 = 12;
+
+const OPT_NO_EMPTY: i32 = 13;
+
+const OPT_CHARS: i32 = 14;
+
+const OPT_VERBOSE: i32 = 15;
+
+const OPT_SHOW_LIMITS: i32 = 16;
+
+const OPT_EXIT: i32 = 17;
+
+const OPT_PROCS: i32 = 18;
+
+const OPT_SLOT_VAR: i32 = 19;
+
+const INT_MAX: i64 = 2147483647i64;
+
+const CHUNK: i32 = 65536;
+
+// The kinds of a group limit, in the order GNU xargs names them in its
+// warnings.
+const LIMIT_NONE: i32 = 0;
+
+const LIMIT_LINES: i32 = 1;
+
+const LIMIT_ARGS: i32 = 2;
+
+const LIMIT_REPLACE: i32 = 3;
+
+function help_text(): string {
+  let p = gnu.prog();
+  let out = "Usage: " + p + " [OPTION]... COMMAND [INITIAL-ARGS]...\n";
+  out += "Run COMMAND with the INITIAL-ARGS and more arguments read from the input.\n";
+  out += "The default COMMAND is echo.\n";
+  out += "\n";
+  out += "  -0, --null                 items end with a null byte, and quotes are not special\n";
+  out += "  -a, --arg-file=FILE        read the arguments from FILE\n";
+  out += "  -d, --delimiter=CHARACTER  items end with CHARACTER, and quotes are not special\n";
+  out += "  -E END                     stop at the item END\n";
+  out += "  -e, --eof[=END]            the same as -E END; with no END, no item stops\n";
+  out += "  -I R                       the same as --replace=R\n";
+  out += "  -i, --replace[=R]          put each input line in place of R in INITIAL-ARGS;\n";
+  out += "                               the default R is {}\n";
+  out += "  -L, --max-lines=MAX-LINES  use at most MAX-LINES input lines that are not blank\n";
+  out += "                               for each command\n";
+  out += "  -l[MAX-LINES]              the same as -L, with a default of 1\n";
+  out += "  -n, --max-args=MAX-ARGS    use at most MAX-ARGS arguments for each command\n";
+  out += "  -o, --open-tty             give the command the terminal as its standard input\n";
+  out += "  -P, --max-procs=MAX-PROCS  run at most MAX-PROCS commands at a time\n";
+  out += "  -p, --interactive          ask before each command\n";
+  out += "      --process-slot-var=VAR set VAR in each command to its slot number\n";
+  out += "  -r, --no-run-if-empty      do not run COMMAND when there are no arguments\n";
+  out += "  -s, --max-chars=MAX-CHARS  give each command at most MAX-CHARS bytes\n";
+  out += "      --show-limits          show the limits of the command line\n";
+  out += "  -t, --verbose              write each command to standard error before it runs\n";
+  out += "  -x, --exit                 stop when a command line is too long\n";
+  out += "      --help                 display this help and exit\n";
+  out += "      --version              output version information and exit\n";
+  return out;
+}
+
+function options(): gnu.Opt[] {
+  return [
+    gnu.flag("0", "null", OPT_NULL),
+    gnu.valued("a", "arg-file", OPT_ARG_FILE),
+    gnu.valued("d", "delimiter", OPT_DELIM),
+    gnu.valued("E", "", OPT_EOF_E),
+    gnu.optional("e", "eof", OPT_EOF_E_LOWER),
+    gnu.valued("I", "", OPT_REPLACE_I),
+    gnu.optional("i", "replace", OPT_REPLACE_I_LOWER),
+    gnu.valued("L", "", OPT_LINES_L),
+    gnu.optional("l", "max-lines", OPT_LINES_L_LOWER),
+    gnu.valued("n", "max-args", OPT_ARGS),
+    gnu.flag("o", "open-tty", OPT_TTY),
+    gnu.flag("p", "interactive", OPT_INTERACTIVE),
+    gnu.flag("r", "no-run-if-empty", OPT_NO_EMPTY),
+    gnu.valued("s", "max-chars", OPT_CHARS),
+    gnu.flag("t", "verbose", OPT_VERBOSE),
+    gnu.flag("", "show-limits", OPT_SHOW_LIMITS),
+    gnu.flag("x", "exit", OPT_EXIT),
+    gnu.valued("P", "max-procs", OPT_PROCS),
+    gnu.valued("", "process-slot-var", OPT_SLOT_VAR),
+  ];
+}
+
+struct Opts {
+  null: boolean,
+  delim: i32,
+  arg_file: string,
+  has_arg_file: boolean,
+  eof: string,
+  has_eof: boolean,
+  replace: string,
+  has_replace: boolean,
+  max_lines: i64,
+  max_args: i64,
+  limit: i32,
+  max_chars: i64,
+  has_max_chars: boolean,
+  verbose: boolean,
+  interactive: boolean,
+  no_empty: boolean,
+  exit_size: boolean,
+  procs: i64,
+  slot_var: string,
+  has_slot_var: boolean,
+  open_tty: boolean,
+  show_limits: boolean,
+}
+
+function fail(msg: string, status: i32): void {
+  gnu.error(msg);
+  exit(status);
+}
+
+function usage_fail(msg: string): void {
+  gnu.error(msg);
+  gnu.try_help_in("findutils", EXIT_USAGE);
+}
+
+// A number as strtol reads it: blanks, a sign, then decimal digits to the
+// end. The second value says whether the text is a number.
+function parse_long(s: string): (i64, boolean) {
+  let i = 0;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i += 1;
+  }
+  let neg = false;
+  if (i < s.len() && (s[i] == b'+' || s[i] == b'-')) {
+    neg = s[i] == b'-';
+    i += 1;
+  }
+  let start = i;
+  let v = 0i64;
+  let big = false;
+  while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
+    if (v > 922337203685477580i64) {
+      big = true;
+    } else {
+      v = v * 10i64 + (s[i] as i32 - 48) as i64;
+    }
+    i += 1;
+  }
+  if (i == start || i != s.len()) {
+    return (0i64, false);
+  }
+  if (big) {
+    v = 9223372036854775807i64;
+  }
+  if (neg) {
+    v = 0i64 - v;
+  }
+  return (v, true);
+}
+
+// The value of a numeric option, at least `low`. `letter` names the option
+// in the messages.
+function count_value(text: string, letter: string, low: i64): i64 {
+  let (v, ok) = parse_long(text);
+  if (!ok) {
+    usage_fail("invalid number \"" + text + "\" for -" + letter + " option");
+  }
+  if (v < low) {
+    usage_fail("value " + text + " for -" + letter + " option should be >= " + low.to_string());
+  }
+  return v;
+}
+
+// The delimiter of -d: one byte, or an escape that names one.
+function delimiter_of(spec: string): i32 {
+  if (spec.len() == 1) {
+    return spec[0] as i32;
+  }
+  if (spec.len() < 2 || spec[0] != b'\\') {
+    fail("Invalid input delimiter specification " + spec + ": the delimiter must be either a single character or an escape sequence starting with \\.", EXIT_USAGE);
+  }
+  let c = spec[1] as i32;
+  let named = match (c) {
+    97 => 7,
+    98 => 8,
+    102 => 12,
+    110 => 10,
+    114 => 13,
+    116 => 9,
+    118 => 11,
+    92 => 92,
+    _ => -1,
+  };
+  if (named >= 0 && spec.len() == 2) {
+    return named;
+  }
+  if (c == 120) {
+    return escape_number(spec, 2, 16, 255);
+  }
+  if (c >= 48 && c <= 55) {
+    return escape_number(spec, 1, 8, 255);
+  }
+  fail("Invalid escape sequence " + spec + " in input delimiter specification.", EXIT_USAGE);
+  return 0;
+}
+
+function digit_value(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return 99;
+}
+
+function escape_number(spec: string, from: i32, base: i32, max: i32): i32 {
+  let v = 0;
+  let i = from;
+  while (i < spec.len()) {
+    let d = digit_value(spec[i] as i32);
+    if (d >= base) {
+      fail("Invalid escape sequence " + spec + " in input delimiter specification; trailing characters " + slice_unchecked(spec, i, spec.len()) + " not recognised.", EXIT_USAGE);
+    }
+    v = v * base + d;
+    if (v > max) {
+      fail("Invalid escape sequence " + spec + " in input delimiter specification; character values must not exceed " + (if (base == 16) { "ff" } else { "377" }) + ".", EXIT_USAGE);
+    }
+    i += 1;
+  }
+  return v;
+}
+
+// The group limit that the option sets, with GNU's warning when it ends
+// another one.
+function set_limit(own o: Opts, kind: i32, name: string): Opts {
+  if (o.limit != LIMIT_NONE && o.limit != kind) {
+    let prev = match (o.limit) {
+      LIMIT_LINES => "--max-lines",
+      LIMIT_ARGS => "--max-args",
+      _ => "--replace",
+    };
+    gnu.error("warning: options " + prev + " and " + name + " are mutually exclusive, ignoring previous " + prev + " value");
+  }
+  return Opts { ...o, limit: kind };
+}
+
+function apply_option(own o: Opts, m: gnu.OptMatch): Opts {
+  let id = m.id;
+  if (id == OPT_NULL) {
+    return Opts { ...o, null: true, delim: 0 };
+  }
+  if (id == OPT_ARG_FILE) {
+    return Opts { ...o, arg_file: m.value, has_arg_file: true };
+  }
+  if (id == OPT_DELIM) {
+    return Opts { ...o, delim: delimiter_of(m.value), null: false };
+  }
+  if (id == OPT_EOF_E) {
+    return Opts { ...o, eof: m.value, has_eof: m.value.len() > 0 };
+  }
+  if (id == OPT_EOF_E_LOWER) {
+    return Opts { ...o, eof: m.value, has_eof: m.has_value && m.value.len() > 0 };
+  }
+  if (id == OPT_REPLACE_I || id == OPT_REPLACE_I_LOWER) {
+    let r = if (id == OPT_REPLACE_I || m.has_value) { m.value } else { "{}" };
+    let o2 = set_limit(o, LIMIT_REPLACE, "--replace/-I/-i");
+    return Opts { ...o2, replace: r, has_replace: true, max_lines: 1i64, max_args: 0i64, exit_size: true };
+  }
+  return apply_option2(o, m);
+}
+
+function apply_option2(own o: Opts, m: gnu.OptMatch): Opts {
+  let id = m.id;
+  if (id == OPT_LINES_L || id == OPT_LINES_L_LOWER) {
+    let letter = if (id == OPT_LINES_L) { "L" } else { "l" };
+    let n = 1i64;
+    if (id == OPT_LINES_L || m.has_value) {
+      n = count_value(m.value, letter, 1i64);
+    }
+    let name = if (id == OPT_LINES_L) { "-L" } else { "--max-lines/-l" };
+    let o2 = set_limit(o, LIMIT_LINES, name);
+    return Opts { ...o2, max_lines: n, max_args: 0i64, has_replace: false };
+  }
+  if (id == OPT_ARGS) {
+    let n2 = count_value(m.value, "n", 1i64);
+    if (o.limit == LIMIT_REPLACE) {
+      return Opts { ...o, max_args: n2 };
+    }
+    let o3 = set_limit(o, LIMIT_ARGS, "--max-args/-n");
+    return Opts { ...o3, max_args: n2, max_lines: 0i64 };
+  }
+  if (id == OPT_CHARS) {
+    let (v, ok) = parse_long(m.value);
+    if (!ok) {
+      usage_fail("invalid number \"" + m.value + "\" for -s option");
+    }
+    let s = v;
+    if (s < 1i64) {
+      gnu.error("value " + m.value + " for -s option should be >= 1");
+      s = 1i64;
+    }
+    let top = cmdline.posix_limit();
+    if (s > top) {
+      gnu.error("value " + m.value + " for -s option should be <= " + top.to_string());
+      s = top;
+    }
+    return Opts { ...o, max_chars: s, has_max_chars: true };
+  }
+  if (id == OPT_PROCS) {
+    let p = count_value(m.value, "P", 0i64);
+    if (p > INT_MAX) {
+      usage_fail("value " + m.value + " for -P option should be <= 2147483647");
+    }
+    return Opts { ...o, procs: p };
+  }
+  if (id == OPT_SLOT_VAR) {
+    return Opts { ...o, slot_var: m.value, has_slot_var: true };
+  }
+  return Opts { ...o, verbose: o.verbose || id == OPT_VERBOSE, interactive: o.interactive || id == OPT_INTERACTIVE, no_empty: o.no_empty || id == OPT_NO_EMPTY, exit_size: o.exit_size || id == OPT_EXIT, open_tty: o.open_tty || id == OPT_TTY, show_limits: o.show_limits || id == OPT_SHOW_LIMITS };
+}
+
+// ---------------------------------------------------------------------------
+// The input
+
+// The reader of the arguments. `buf` holds what the last read gave from
+// `pos` on.
+struct Input { r: Reader, buf: u8[], pos: i32, eof: boolean, nul_warned: boolean }
+
+// One item of the input, and whether a line ends after it. `end` says that
+// the input has ended (an item may come with it).
+struct Item { text: string, has: boolean, line_end: boolean, end: boolean, error: string }
+
+function read_more(own inp: Input): Input {
+  if (inp.eof) {
+    return inp;
+  }
+  match (inp.r.read_chunk_bytes(CHUNK)) {
+    Ok(b) => {
+      if (b.len() == 0) {
+        return Input { ...inp, buf: [], pos: 0, eof: true };
+      }
+      return Input { ...inp, buf: b, pos: 0 };
+    },
+    Err(_) => {
+      return Input { ...inp, buf: [], pos: 0, eof: true };
+    }
+  }
+  return inp;
+}
+
+// The next byte of the input, or -1 at its end.
+function next_byte(own inp: Input): (i32, Input) {
+  if (inp.pos >= inp.buf.len()) {
+    inp = read_more(inp);
+    if (inp.pos >= inp.buf.len()) {
+      return (-1, inp);
+    }
+  }
+  let c = inp.buf[inp.pos] as i32;
+  return (c, Input { ...inp, pos: inp.pos + 1 });
+}
+
+function take(h: usize): string {
+  let b = buf_take_bytes(h);
+  return unsafe { string_from_bytes_unchecked(b) };
+}
+
+// An item of -0 or -d: the bytes up to the delimiter.
+function delimited_item(own inp: Input, delim: i32): (Item, Input) {
+  let h = buf_new(64);
+  let got = false;
+  loop {
+    let (c, i2) = next_byte(inp);
+    inp = i2;
+    if (c < 0) {
+      let text = take(h);
+      buf_free(h);
+      return (Item { text: text, has: got, line_end: got, end: true, error: "" }, inp);
+    }
+    got = true;
+    if (c == delim) {
+      let text2 = take(h);
+      buf_free(h);
+      return (Item { text: text2, has: true, line_end: true, end: false, error: "" }, inp);
+    }
+    buf_push_byte(h, c);
+  }
+  return (Item { text: "", has: false, line_end: false, end: true, error: "" }, inp);
+}
+
+function is_space(c: i32): boolean {
+  return c == 32 || c == 9;
+}
+
+// An item of the default input: words that blanks or a newline end, with
+// quotes and backslashes. A line that ends in a blank goes on to the next.
+function quoted_item(own inp: Input, eof: string, has_eof: boolean): (Item, Input) {
+  let h = buf_new(64);
+  let started = false;
+  let quote = 0;
+  let last_blank = false;
+  let cut = false;
+  loop {
+    let (c, i2) = next_byte(inp);
+    inp = i2;
+    if (c < 0) {
+      let text = take(h);
+      buf_free(h);
+      if (quote != 0) {
+        let which = if (quote == 39) { "single" } else { "double" };
+        return (Item { text: "", has: false, line_end: false, end: true, error: "unmatched " + which + " quote; by default quotes are special to xargs unless you use the -0 option" }, inp);
+      }
+      return (Item { text: text, has: started, line_end: started, end: true, error: "" }, inp);
+    }
+    if (c == 0) {
+      if (!inp.nul_warned) {
+        gnu.error("WARNING: a NUL character occurred in the input.  It cannot be passed through in the argument list.  Did you mean to use the --null option?");
+        inp = Input { ...inp, nul_warned: true };
+      }
+      started = true;
+      cut = true;
+      continue;
+    }
+    if (quote != 0) {
+      if (c == 10) {
+        let which2 = if (quote == 39) { "single" } else { "double" };
+        buf_free(h);
+        return (Item { text: "", has: false, line_end: false, end: true, error: "unmatched " + which2 + " quote; by default quotes are special to xargs unless you use the -0 option" }, inp);
+      }
+      if (c == quote) {
+        quote = 0;
+      } else {
+        if (!cut) {
+          buf_push_byte(h, c);
+        }
+      }
+      continue;
+    }
+    if (c == 10) {
+      if (!started) {
+        if (last_blank) {
+          continue;
+        }
+        buf_free(h);
+        return (Item { text: "", has: false, line_end: true, end: false, error: "" }, inp);
+      }
+      let text3 = take(h);
+      buf_free(h);
+      return finish_word(text3, true, eof, has_eof, inp);
+    }
+    if (is_space(c)) {
+      if (started) {
+        let text4 = take(h);
+        buf_free(h);
+        let (it, i3) = finish_word(text4, false, eof, has_eof, inp);
+        return (Item { ...it, line_end: false }, i3);
+      }
+      last_blank = true;
+      continue;
+    }
+    last_blank = false;
+    started = true;
+    if (c == 39 || c == 34) {
+      quote = c;
+      continue;
+    }
+    if (c == 92) {
+      let (d, i4) = next_byte(inp);
+      inp = i4;
+      if (d < 0) {
+        continue;
+      }
+      if (!cut) {
+        buf_push_byte(h, d);
+      }
+      continue;
+    }
+    if (!cut) {
+      buf_push_byte(h, c);
+    }
+  }
+  return (Item { text: "", has: false, line_end: false, end: true, error: "" }, inp);
+}
+
+// A word that a blank or a newline ended. The word of -E ends the input.
+function finish_word(text: string, newline: boolean, eof: string, has_eof: boolean, inp: Input): (Item, Input) {
+  if (has_eof && text == eof) {
+    return (Item { text: "", has: false, line_end: false, end: true, error: "" }, inp);
+  }
+  return (Item { text: text, has: true, line_end: newline, end: false, error: "" }, inp);
+}
+
+// A line of -I: the line without its leading blanks, with the quotes taken
+// out. Blanks inside it stay.
+function replace_line(own inp: Input, eof: string, has_eof: boolean): (Item, Input) {
+  let h = buf_new(64);
+  let started = false;
+  let quote = 0;
+  loop {
+    let (c, i2) = next_byte(inp);
+    inp = i2;
+    if (c < 0) {
+      let text = take(h);
+      buf_free(h);
+      if (quote != 0) {
+        let which = if (quote == 39) { "single" } else { "double" };
+        return (Item { text: "", has: false, line_end: false, end: true, error: "unmatched " + which + " quote; by default quotes are special to xargs unless you use the -0 option" }, inp);
+      }
+      if (has_eof && started && text == eof) {
+        return (Item { text: "", has: false, line_end: false, end: true, error: "" }, inp);
+      }
+      return (Item { text: text, has: started, line_end: started, end: true, error: "" }, inp);
+    }
+    if (c == 0) {
+      continue;
+    }
+    if (quote != 0) {
+      if (c == 10) {
+        let which2 = if (quote == 39) { "single" } else { "double" };
+        buf_free(h);
+        return (Item { text: "", has: false, line_end: false, end: true, error: "unmatched " + which2 + " quote; by default quotes are special to xargs unless you use the -0 option" }, inp);
+      }
+      if (c == quote) {
+        quote = 0;
+      } else {
+        buf_push_byte(h, c);
+      }
+      continue;
+    }
+    if (c == 10) {
+      if (!started) {
+        continue;
+      }
+      let text3 = take(h);
+      buf_free(h);
+      if (has_eof && text3 == eof) {
+        return (Item { text: "", has: false, line_end: false, end: true, error: "" }, inp);
+      }
+      return (Item { text: text3, has: true, line_end: true, end: false, error: "" }, inp);
+    }
+    if (!started && is_space(c)) {
+      continue;
+    }
+    started = true;
+    if (c == 39 || c == 34) {
+      quote = c;
+      continue;
+    }
+    if (c == 92) {
+      let (d, i4) = next_byte(inp);
+      inp = i4;
+      if (d >= 0) {
+        buf_push_byte(h, d);
+      }
+      continue;
+    }
+    buf_push_byte(h, c);
+  }
+  return (Item { text: "", has: false, line_end: false, end: true, error: "" }, inp);
+}
+
+function next_item(o: Opts, own inp: Input): (Item, Input) {
+  if (o.null || o.delim >= 0) {
+    return delimited_item(inp, o.delim);
+  }
+  if (o.has_replace) {
+    return replace_line(inp, o.eof, o.has_eof);
+  }
+  return quoted_item(inp, o.eof, o.has_eof);
+}
+
+// ---------------------------------------------------------------------------
+// The commands
+
+struct Child { pid: i32, slot: i32 }
+
+// The state of a run. `args` waits for the next command; `size` counts the
+// bytes of that command. `status` is the exit status so far.
+struct Run {
+  cmd: string[],
+  base: i64,
+  args: string[],
+  size: i64,
+  lines: i64,
+  limit: i64,
+  status: i32,
+  children: Child[],
+  ran: boolean,
+  tty: Option[Reader],
+}
+
+function quote_arg(a: string): string {
+  return gnu.quote_style(a, 1);
+}
+
+// The command line as -t and -p show it.
+function shown(argv: string[]): string {
+  let h = buf_new(64);
+  let i = 0;
+  while (i < argv.len()) {
+    if (i > 0) {
+      buf_push_byte(h, 32);
+    }
+    buf_push(h, quote_arg(argv[i]));
+    i += 1;
+  }
+  let s = take(h);
+  buf_free(h);
+  return s;
+}
+
+// The argv of a command of -I: each initial argument with the line in
+// place of the replace string.
+function replaced(cmd: string[], r: string, line: string): string[] {
+  let out: string[] = [];
+  for a in cmd {
+    out = out.append(replace_all(a, r, line));
+  }
+  return out;
+}
+
+function replace_all(a: string, r: string, line: string): string {
+  if (r.len() == 0 || !a.contains(r)) {
+    return a;
+  }
+  let h = buf_new(a.len() + line.len());
+  let i = 0;
+  while (i < a.len()) {
+    if (i + r.len() <= a.len() && match_at(a, i, r)) {
+      buf_push(h, line);
+      i += r.len();
+      continue;
+    }
+    buf_push_byte(h, a[i] as i32);
+    i += 1;
+  }
+  let s = take(h);
+  buf_free(h);
+  return s;
+}
+
+function match_at(a: string, at: i32, r: string): boolean {
+  let k = 0;
+  while (k < r.len()) {
+    if (a[at + k] != r[k]) {
+      return false;
+    }
+    k += 1;
+  }
+  return true;
+}
+
+// Asks before a command, on the terminal.
+function confirm(own run: Run, argv: string[]): (boolean, Run) {
+  let w = stderr();
+  w.write(shown(argv));
+  let tty = run.tty;
+  match (tty) {
+    Some(_) => {},
+    None => {
+      match (open_reader("/dev/tty")) {
+        Ok(t) => {
+          tty = Some(t);
+        },
+        Err(e) => {
+          fail("failed to open /dev/tty for reading: " + gnu.io_error_text(e), 1);
+        }
+      }
+    }
+  }
+  w.write(" ?...");
+  let yes = false;
+  if let Some(t) = tty {
+    yes = cmdline.affirmative(read_tty_line(t));
+  }
+  return (yes, Run { ...run, tty: tty });
+}
+
+function read_tty_line(t: Reader): Option[string] {
+  let h = buf_new(16);
+  let got = false;
+  loop {
+    match (t.read_chunk_bytes(1)) {
+      Ok(b) => {
+        if (b.len() == 0) {
+          break;
+        }
+        got = true;
+        if (b[0] == 10u8) {
+          break;
+        }
+        buf_push_byte(h, b[0] as i32);
+      },
+      Err(_) => {
+        break;
+      }
+    }
+  }
+  let s = take(h);
+  buf_free(h);
+  if (!got) {
+    return None;
+  }
+  return Some(s);
+}
+
+// What a command that ended means for the run. A status of 255 or a
+// signal ends xargs.
+function settle(o: Opts, own run: Run, res: cmdline.Outcome): Run {
+  if (res.signal != 0 || res.code == 255) {
+    report_end(run.cmd[0], res);
+    let st = if (res.signal != 0) { EXIT_CHILD_SIGNAL } else if (run.status == EXIT_CHILD_FAILED) { EXIT_CHILD_FAILED } else { EXIT_CHILD_255 };
+    let r2 = wait_all(o, run);
+    exit(st);
+    return r2;
+  }
+  if (res.code != 0) {
+    return Run { ...run, status: EXIT_CHILD_FAILED };
+  }
+  return run;
+}
+
+// The message of a command that ends xargs.
+function report_end(name: string, res: cmdline.Outcome): void {
+  if (res.signal != 0) {
+    gnu.error(name + ": terminated by signal " + res.signal.to_string());
+  } else if (res.code == 255) {
+    gnu.error(name + ": exited with status 255; aborting");
+  }
+}
+
+// Waits for one command, and frees its slot.
+function wait_one(o: Opts, own run: Run): Run {
+  let st = proc_waitpid_status(-1);
+  if (st < 0) {
+    return Run { ...run, children: [] };
+  }
+  let kept: Child[] = [];
+  let found = false;
+  for c in run.children {
+    if (!found && !process_alive(c.pid)) {
+      found = true;
+      continue;
+    }
+    kept = kept.append(c);
+  }
+  if (!found && kept.len() > 0) {
+    kept = kept.drop(1);
+  }
+  return settle(o, Run { ...run, children: kept }, cmdline.outcome_of(st));
+}
+
+// Waits for the commands that still run when xargs stops. Each one that
+// ends with 255 or a signal is reported too.
+function wait_all(o: Opts, own run: Run): Run {
+  while (run.children.len() > 0) {
+    let st = proc_waitpid_status(-1);
+    if (st < 0) {
+      return Run { ...run, children: [] };
+    }
+    report_end(run.cmd[0], cmdline.outcome_of(st));
+    run = Run { ...run, children: run.children.drop(1) };
+  }
+  return run;
+}
+
+function free_slot(run: Run): i32 {
+  let slot = 0;
+  loop {
+    let used = false;
+    for c in run.children {
+      if (c.slot == slot) {
+        used = true;
+      }
+    }
+    if (!used) {
+      return slot;
+    }
+    slot += 1;
+  }
+  return slot;
+}
+
+function stdin_mode(o: Opts): i32 {
+  if (o.open_tty) {
+    return cmdline.STDIN_TTY;
+  }
+  if (o.has_arg_file) {
+    return cmdline.STDIN_KEEP;
+  }
+  return cmdline.STDIN_NULL;
+}
+
+// Runs one command line, with -t and -p before it.
+function execute(o: Opts, own run0: Run, argv: string[]): Run {
+  let run = Run { ...run0, ran: true };
+  if (o.interactive) {
+    let (yes, r2) = confirm(run, argv);
+    run = r2;
+    if (!yes) {
+      return run;
+    }
+  } else if (o.verbose) {
+    let w = stderr();
+    w.write(shown(argv) + "\n");
+  }
+  if (o.procs != 1i64) {
+    while (o.procs > 0i64 && run.children.len() as i64 >= o.procs) {
+      run = wait_one(o, run);
+    }
+  }
+  let slot = free_slot(run);
+  let var = "";
+  if (o.has_slot_var) {
+    var = o.slot_var + "=" + slot.to_string();
+  }
+  let (pid, err) = cmdline.start(argv, "", stdin_mode(o), var);
+  if (err != 0) {
+    let r3 = wait_all(o, run);
+    let code = if (err == errno.ENOENT) { EXIT_NOT_FOUND } else { EXIT_CANNOT_RUN };
+    fail(argv[0] + ": " + gnu.exec_errno_text(err), code);
+    return r3;
+  }
+  run = Run { ...run, children: run.children.append(Child { pid: pid, slot: slot }) };
+  if (o.procs == 1i64) {
+    run = wait_one(o, run);
+  }
+  return run;
+}
+
+function flush_args(o: Opts, own run: Run): Run {
+  if (run.args.len() == 0) {
+    return run;
+  }
+  let argv = run.cmd;
+  for a in run.args {
+    argv = argv.append(a);
+  }
+  let r2 = execute(o, run, argv);
+  return Run { ...r2, args: [], size: r2.base, lines: 0i64 };
+}
+
+// Adds an item to the waiting command, and runs the command when the item
+// fills it.
+function add_item(o: Opts, own run0: Run, it: Item): Run {
+  let run = run0;
+  let need = cmdline.arg_size(it.text);
+  if (run.size + need > run.limit) {
+    if (run.args.len() == 0) {
+      let r3 = wait_all(o, run);
+      fail("argument line too long", 1);
+      return r3;
+    }
+    if (o.exit_size && (o.max_args > 0i64 || o.max_lines > 0i64)) {
+      let r4 = wait_all(o, run);
+      fail("argument list too long", 1);
+      return r4;
+    }
+    run = flush_args(o, run);
+  }
+  run = Run { ...run, args: run.args.append(it.text), size: run.size + need };
+  if (o.max_args > 0i64 && run.args.len() as i64 >= o.max_args) {
+    return flush_args(o, run);
+  }
+  if (o.max_lines > 0i64 && it.line_end) {
+    let lines = run.lines + 1i64;
+    run = Run { ...run, lines: lines };
+    if (lines >= o.max_lines) {
+      return flush_args(o, run);
+    }
+  }
+  return run;
+}
+
+function run_replace(o: Opts, own run: Run, line: string): Run {
+  if (o.replace.len() == 0) {
+    fail("command too long", 1);
+  }
+  let argv = replaced(run.cmd, o.replace, line);
+  let size = 0i64;
+  for a in argv {
+    size += cmdline.arg_size(a);
+  }
+  if (size > run.limit) {
+    let r2 = wait_all(o, run);
+    fail("argument list too long", 1);
+    return r2;
+  }
+  return execute(o, run, argv);
+}
+
+function show_limits(o: Opts): void {
+  let w = stderr();
+  let env = cmdline.env_size();
+  let out = "Your environment variables take up " + env.to_string() + " bytes\n";
+  out += "POSIX upper limit on argument length (this system): " + cmdline.posix_limit().to_string() + "\n";
+  out += "POSIX smallest allowable upper limit on argument length (all systems): 4096\n";
+  out += "Maximum length of command we could actually use: " + cmdline.usable_limit().to_string() + "\n";
+  out += "Size of command buffer we are actually using: " + o.max_chars.to_string() + "\n";
+  out += "Maximum parallelism (--max-procs must be no greater): 2147483647\n";
+  w.write(out);
+}
+
+function open_input(o: Opts): Reader {
+  if (!o.has_arg_file) {
+    return stdin();
+  }
+  match (open_reader(o.arg_file)) {
+    Ok(r) => {
+      return r;
+    },
+    Err(e) => {
+      fail("Cannot open input file " + gnu.quote(o.arg_file) + ": " + gnu.io_error_text(e), 1);
+    }
+  }
+  return stdin();
+}
+
+function opts_new(): Opts {
+  return Opts { null: false, delim: -1, arg_file: "", has_arg_file: false, eof: "", has_eof: false, replace: "", has_replace: false, max_lines: 0i64, max_args: 0i64, limit: LIMIT_NONE, max_chars: 0i64, has_max_chars: false, verbose: false, interactive: false, no_empty: false, exit_size: false, procs: 1i64, slot_var: "", has_slot_var: false, open_tty: false, show_limits: false };
+}
+
+function check_slot_var(o: Opts): void {
+  if (!o.has_slot_var) {
+    return;
+  }
+  if (o.slot_var.contains("=")) {
+    fail("option --process-slot-var may not be set to a value which includes `='", 1);
+  }
+  if (o.slot_var.len() == 0) {
+    fail("failed to unset environment variable : Invalid argument", 1);
+  }
+}
+
+function main(): i32 {
+  let argv = args();
+  let g = gnu.getopt_new(argv, options(), "xargs", help_text(), EXIT_USAGE).in_package("findutils").in_order();
+  let o = opts_new();
+  while (true) {
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    let Some(m) = r.0 else {
+      break;
+    };
+    o = apply_option(o, m);
+  }
+  if (!o.has_max_chars) {
+    o = Opts { ...o, max_chars: cmdline.buffer_size() };
+  }
+  if (o.has_eof && (o.null || o.delim >= 0)) {
+    gnu.error("warning: the -E option has no effect if -0 or -d is used.\n");
+    o = Opts { ...o, has_eof: false };
+  }
+  check_slot_var(o);
+  let cmd = g.operands();
+  if (cmd.len() == 0) {
+    cmd = ["echo"];
+  }
+  if (o.show_limits) {
+    show_limits(o);
+  }
+  let base = 0i64;
+  for a in cmd {
+    base += cmdline.arg_size(a);
+  }
+  if (base > o.max_chars) {
+    fail("cannot fit single argument within argument list size limit", 1);
+  }
+  if (target_os() == "wasi") {
+    fail("cannot run commands: this system has no processes", 1);
+  }
+  let inp = Input { r: open_input(o), buf: [], pos: 0, eof: false, nul_warned: false };
+  let run = Run { cmd: cmd, base: base, args: [], size: base, lines: 0i64, limit: o.max_chars, status: 0, children: [], ran: false, tty: None };
+  let error = "";
+  loop {
+    let (it, i2) = next_item(o, inp);
+    inp = i2;
+    if (it.error.len() > 0) {
+      error = it.error;
+      break;
+    }
+    if (it.has) {
+      if (o.has_replace) {
+        run = run_replace(o, run, it.text);
+      } else {
+        run = add_item(o, run, it);
+      }
+    }
+    if (it.end) {
+      break;
+    }
+  }
+  if (error.len() > 0) {
+    gnu.error(error);
+    run = wait_all_settled(o, flush_args(o, run));
+    if (run.status == EXIT_CHILD_FAILED) {
+      exit(EXIT_CHILD_FAILED);
+    }
+    exit(1);
+  }
+  if (!o.has_replace && (run.args.len() > 0 || !run.ran && !o.no_empty)) {
+    let argv2 = run.cmd;
+    for a in run.args {
+      argv2 = argv2.append(a);
+    }
+    run = execute(o, run, argv2);
+  }
+  run = wait_all_settled(o, run);
+  return run.status;
+}
+
+// Waits for every command that still runs, and judges each one.
+function wait_all_settled(o: Opts, own run: Run): Run {
+  while (run.children.len() > 0) {
+    run = wait_one(o, run);
+  }
+  return run;
+}

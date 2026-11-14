@@ -1,0 +1,3401 @@
+import "std/string";
+import "std/io_buffered";
+import "std/errno";
+import "std/tz";
+import "core/cmp";
+import "../coreutils/lib/gnu";
+import "../coreutils/lib/bre";
+import "../coreutils/lib/fnmatch";
+import "../coreutils/lib/pwdb";
+import "../coreutils/lib/mode";
+import "../coreutils/lib/timefmt";
+import "../coreutils/lib/datetime";
+import "../coreutils/lib/selinux";
+import "./lib/cmdline";
+
+// The kinds of a node of the expression. The operators come first.
+const N_AND: i32 = 1;
+
+const N_OR: i32 = 2;
+
+const N_NOT: i32 = 3;
+
+const N_COMMA: i32 = 4;
+
+const P_TRUE: i32 = 10;
+
+const P_FALSE: i32 = 11;
+
+// -name and -iname. The node names its glob.
+const P_NAME: i32 = 12;
+
+// -path, -wholename, -ipath and -iwholename.
+const P_PATH: i32 = 13;
+
+const P_LNAME: i32 = 14;
+
+const P_REGEX: i32 = 15;
+
+const P_TYPE: i32 = 16;
+
+const P_XTYPE: i32 = 17;
+
+const P_LINKS: i32 = 18;
+
+const P_INUM: i32 = 19;
+
+const P_UID: i32 = 20;
+
+const P_GID: i32 = 21;
+
+const P_NOUSER: i32 = 22;
+
+const P_NOGROUP: i32 = 23;
+
+const P_SIZE: i32 = 24;
+
+const P_EMPTY: i32 = 25;
+
+const P_PERM: i32 = 26;
+
+const P_ACCESS: i32 = 27;
+
+// -newer, -anewer, -cnewer and -newerXY: a time of the file after a fixed time.
+const P_NEWER: i32 = 28;
+
+// -atime, -mmin and the others: the age of a time of the file.
+const P_AGE: i32 = 29;
+
+const P_USED: i32 = 30;
+
+const P_FSTYPE: i32 = 31;
+
+const P_CONTEXT: i32 = 32;
+
+const P_SAMEFILE: i32 = 33;
+
+const A_PRINT: i32 = 40;
+
+const A_PRINT0: i32 = 41;
+
+const A_PRINTF: i32 = 42;
+
+const A_LS: i32 = 43;
+
+const A_PRUNE: i32 = 44;
+
+const A_QUIT: i32 = 45;
+
+const A_DELETE: i32 = 46;
+
+const A_EXEC: i32 = 47;
+
+// The kinds of a token of the expression.
+const T_PRED: i32 = 0;
+
+const T_NOT: i32 = 1;
+
+const T_AND: i32 = 2;
+
+const T_OR: i32 = 3;
+
+const T_COMMA: i32 = 4;
+
+const T_OPEN: i32 = 5;
+
+const T_CLOSE: i32 = 6;
+
+const CMP_LT: i32 = 0;
+
+const CMP_EQ: i32 = 1;
+
+const CMP_GT: i32 = 2;
+
+// How the walk treats symbolic links: -P, -H or -L.
+const FOLLOW_NEVER: i32 = 0;
+
+const FOLLOW_ARGS: i32 = 1;
+
+const FOLLOW_ALL: i32 = 2;
+
+// The four times of a file, in the letters of -newerXY.
+const TIME_A: i32 = 0;
+
+const TIME_B: i32 = 1;
+
+const TIME_C: i32 = 2;
+
+const TIME_M: i32 = 3;
+
+// The state of the stat of an entry.
+const ST_NONE: i32 = 0;
+
+const ST_OK: i32 = 1;
+
+const ST_FAILED: i32 = 2;
+
+// The regular expression syntaxes of -regextype.
+const RX_EMACS: i32 = 0;
+
+const RX_BASIC: i32 = 1;
+
+const RX_EXTENDED: i32 = 2;
+
+// The kinds of a glob, from the fastest test to the slowest.
+const G_LITERAL: i32 = 0;
+
+const G_SUFFIX: i32 = 1;
+
+const G_PREFIX: i32 = 2;
+
+const G_ANY: i32 = 3;
+
+const G_GENERAL: i32 = 4;
+
+const S_IFMT: u32 = 0o170000u32;
+
+const S_IFDIR: u32 = 0o040000u32;
+
+const S_IFREG: u32 = 0o100000u32;
+
+const S_IFLNK: u32 = 0o120000u32;
+
+const S_IFCHR: u32 = 0o020000u32;
+
+const S_IFBLK: u32 = 0o060000u32;
+
+const S_IFIFO: u32 = 0o010000u32;
+
+const S_IFSOCK: u32 = 0o140000u32;
+
+// The door of Solaris: no Linux file has it, but -type D names it.
+const S_IFDOOR: u32 = 0o150000u32;
+
+const DAY: i64 = 86400i64;
+
+// The directive of a piece that \c ends the format with.
+const STOP_DIR: i32 = -1;
+
+// gnulib's fts sorts the entries of a large directory by inode number on
+// most file systems, and reads at most this many entries at a time.
+const SORT_THRESHOLD: i32 = 10000;
+
+const READ_BATCH: i32 = 100000;
+
+function help_text(): string {
+  let p = gnu.prog();
+  let out = "Usage: " + p + " [-H] [-L] [-P] [-Olevel] [path...] [expression]\n";
+  out += "Search the directory trees that start at each PATH, and evaluate the\n";
+  out += "EXPRESSION for each file. The default PATH is the current directory.\n";
+  out += "The default EXPRESSION is -print.\n";
+  out += "\n";
+  out += "  -P   never follow symbolic links (the default)\n";
+  out += "  -H   follow symbolic links that are on the command line\n";
+  out += "  -L   follow all symbolic links\n";
+  out += "  -O   give an optimization level; this port evaluates in the given order\n";
+  out += "  -D   not in this port: find stops with an error\n";
+  out += "\n";
+  out += "Operators, from the highest precedence:\n";
+  out += "  ( EXPR )  ! EXPR  -not EXPR  EXPR -a EXPR  EXPR -and EXPR\n";
+  out += "  EXPR -o EXPR  EXPR -or EXPR  EXPR , EXPR\n";
+  out += "\n";
+  out += "Options:\n";
+  out += "  -daystart -follow -nowarn -regextype TYPE -warn -depth -files0-from FILE\n";
+  out += "  -maxdepth LEVELS -mindepth LEVELS -mount -noleaf -xdev\n";
+  out += "  -ignore_readdir_race -noignore_readdir_race\n";
+  out += "\n";
+  out += "Tests (N is +N for more than N, -N for less than N, or N):\n";
+  out += "  -amin N -anewer FILE -atime N -cmin N -cnewer FILE -context CONTEXT\n";
+  out += "  -ctime N -empty -false -fstype TYPE -gid N -group NAME -ilname PATTERN\n";
+  out += "  -iname PATTERN -inum N -iwholename PATTERN -iregex PATTERN -links N\n";
+  out += "  -lname PATTERN -mmin N -mtime N -name PATTERN -newer FILE -newerXY REF\n";
+  out += "  -nouser -nogroup -path PATTERN -perm [-/]MODE -regex PATTERN -readable\n";
+  out += "  -writable -executable -samefile FILE -size N[bcwkMG] -true\n";
+  out += "  -type [bcdpflsD] -uid N -used N -user NAME -xtype [bcdpfls]\n";
+  out += "\n";
+  out += "Actions:\n";
+  out += "  -delete -print -print0 -printf FORMAT -fprint FILE -fprint0 FILE\n";
+  out += "  -fprintf FILE FORMAT -ls -fls FILE -prune -quit\n";
+  out += "  -exec COMMAND ; -exec COMMAND {} + -ok COMMAND ;\n";
+  out += "  -execdir COMMAND ; -execdir COMMAND {} + -okdir COMMAND ;\n";
+  out += "\n";
+  out += "  --help     display this help and exit\n";
+  out += "  --version  output version information and exit\n";
+  return out;
+}
+
+// One node of the expression. `l` and `r` are the operands of an operator.
+// `a` and `b` hold small arguments: an index into one of the tables of the
+// program, a time letter, or a flag. `num` and `num2` hold a number, or a
+// time in seconds and nanoseconds.
+struct Node { kind: i32, l: i32, r: i32, cmp: i32, a: i32, b: i32, num: i64, num2: i64, s: string }
+
+// A compiled -name or -path pattern. `lit` is the fixed part for the fast
+// kinds. `fold` compares without case.
+struct Glob { kind: i32, lit: u8[], pat: string, fold: boolean }
+
+// One piece of a -printf format: text, or a directive with its flags.
+struct Piece { text: u8[], dir: i32, sub: i32, flags: string, width: i32, prec: i32 }
+
+struct Fmt { pieces: Piece[] }
+
+// An output file of -fprint, -fprint0, -fprintf or -fls. The index 0 is
+// standard output.
+struct OutSpec { name: string }
+
+struct Tok { kind: i32, node: i32, text: string }
+
+struct Opts {
+  follow: i32,
+  maxdepth: i32,
+  mindepth: i32,
+  depth_first: boolean,
+  xdev: boolean,
+  warn: boolean,
+  ignore_race: boolean,
+  regextype: i32,
+  now: i64,
+  now_nsec: i64,
+  daystart: boolean,
+  files0: string,
+  has_files0: boolean,
+  delete: boolean,
+  prune: boolean,
+  explicit_depth: boolean,
+}
+
+struct Prog {
+  o: Opts,
+  nodes: Node[],
+  root: i32,
+  globs: Glob[],
+  rxs: bre.Bre[],
+  fmts: Fmt[],
+  outs: OutSpec[],
+  execs: cmdline.Spec[],
+  zone: tz.Zone,
+  needs_names: boolean,
+}
+
+// One file of the walk. `base` is where the name starts in `path`, and
+// `top` is the starting point the walk came from.
+struct Ent {
+  path: string,
+  base: i32,
+  depth: i32,
+  dtype: u32,
+  st: FileStat,
+  have: i32,
+  lst: FileStat,
+  lhave: i32,
+  top: string,
+  is_top: boolean,
+}
+
+// The state of a run. `ok` is the value of the node that was evaluated last.
+struct Run {
+  e: Ent,
+  ok: boolean,
+  outs: Out[],
+  status: i32,
+  prune: boolean,
+  quit: boolean,
+  names: pwdb.Names,
+  mounts: MountEntry[],
+  have_mounts: boolean,
+  batches: cmdline.Batch[],
+  stdout_tty: boolean,
+  user_width: i32,
+  group_width: i32,
+}
+
+// The bytes of a buffer as text, kept as they are: a file name need not be
+// UTF-8. The buffer is freed.
+function take_text(h: usize): string {
+  let b = buf_take_bytes(h);
+  buf_free(h);
+  return unsafe { string_from_bytes_unchecked(b) };
+}
+
+function zero_stat(): FileStat {
+  return FileStat { is_file: false, is_dir: false, size: 0i64, mode: 0u32, nlink: 0u32, uid: 0u32, gid: 0u32, dev: 0i64, rdev: 0i64, ino: 0i64, blksize: 0i64, blocks: 0i64, atime: 0i64, atime_nsec: 0i64, mtime: 0i64, mtime_nsec: 0i64, ctime: 0i64, ctime_nsec: 0i64, btime: 0i64, btime_nsec: 0i64 };
+}
+
+function node(kind: i32): Node {
+  return Node { kind: kind, l: -1, r: -1, cmp: CMP_EQ, a: 0, b: 0, num: 0i64, num2: 0i64, s: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+
+function fail(msg: string): void {
+  gnu.error(msg);
+  exit(1);
+}
+
+function warn(msg: string): void {
+  gnu.error("warning: " + msg);
+}
+
+function q(s: string): string {
+  return gnu.quote(s);
+}
+
+// The text of an error, as GNU find writes it after a file name.
+function why(e: IoError): string {
+  return gnu.io_error_text(e);
+}
+
+function report(own r: Run, msg: string): Run {
+  flush_stdout(r.outs);
+  gnu.error(msg);
+  return Run { ...r, status: 1 };
+}
+
+// ---------------------------------------------------------------------------
+// Numbers
+
+function digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+// The value of the decimal digits of `s` from `lo` to `hi`, or -1 when one
+// is not a digit or the value passes `limit`.
+function decimal(s: string, lo: i32, hi: i32, limit: i64): i64 {
+  if (lo >= hi) {
+    return -1i64;
+  }
+  let v = 0i64;
+  let i = lo;
+  while (i < hi) {
+    let c = s[i] as i32;
+    if (!digit(c)) {
+      return -1i64;
+    }
+    v = v * 10i64 + (c - 48) as i64;
+    if (v > limit) {
+      return -2i64;
+    }
+    i += 1;
+  }
+  return v;
+}
+
+// A comparison prefix: + is more than, - is less than.
+function cmp_of(s: string): (i32, i32) {
+  if (s.len() > 0 && s[0] == b'+') {
+    return (CMP_GT, 1);
+  }
+  if (s.len() > 0 && s[0] == b'-') {
+    return (CMP_LT, 1);
+  }
+  return (CMP_EQ, 0);
+}
+
+function compare(cmp: i32, v: i64, n: i64): boolean {
+  if (cmp == CMP_GT) {
+    return v > n;
+  }
+  if (cmp == CMP_LT) {
+    return v < n;
+  }
+  return v == n;
+}
+
+// The leading blanks that strtod skips.
+function skip_space(s: string, at: i32): i32 {
+  let i = at;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i += 1;
+  }
+  return i;
+}
+
+// A number as strtod reads it: a sign, digits, a fraction and an exponent.
+// The result is (ok, value as seconds, nanoseconds of the fraction).
+function parse_real(s: string, at: i32): (boolean, f64) {
+  let i = skip_space(s, at);
+  let neg = false;
+  if (i < s.len() && (s[i] == b'+' || s[i] == b'-')) {
+    neg = s[i] == b'-';
+    i += 1;
+  }
+  let v = 0.0;
+  let seen = false;
+  while (i < s.len() && digit(s[i] as i32)) {
+    v = v * 10.0 + (s[i] as i32 - 48) as f64;
+    seen = true;
+    i += 1;
+  }
+  if (i < s.len() && s[i] == b'.') {
+    i += 1;
+    let scale = 0.1;
+    while (i < s.len() && digit(s[i] as i32)) {
+      v = v + (s[i] as i32 - 48) as f64 * scale;
+      scale = scale / 10.0;
+      seen = true;
+      i += 1;
+    }
+  }
+  if (!seen) {
+    return (false, 0.0);
+  }
+  if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
+    let j = i + 1;
+    let eneg = false;
+    if (j < s.len() && (s[j] == b'+' || s[j] == b'-')) {
+      eneg = s[j] == b'-';
+      j += 1;
+    }
+    if (j < s.len() && digit(s[j] as i32)) {
+      let ex = 0;
+      while (j < s.len() && digit(s[j] as i32)) {
+        if (ex < 10000) {
+          ex = ex * 10 + (s[j] as i32 - 48);
+        }
+        j += 1;
+      }
+      let k = 0;
+      while (k < ex) {
+        if (eneg) {
+          v = v / 10.0;
+        } else {
+          v = v * 10.0;
+        }
+        k += 1;
+      }
+      i = j;
+    }
+  }
+  if (i != s.len()) {
+    return (false, 0.0);
+  }
+  if (neg) {
+    v = 0.0 - v;
+  }
+  return (true, v);
+}
+
+// ---------------------------------------------------------------------------
+// Globs
+
+function lower(c: i32): i32 {
+  if (c >= 65 && c <= 90) {
+    return c + 32;
+  }
+  return c;
+}
+
+function lower_text(s: string): string {
+  let h = buf_new(s.len());
+  let i = 0;
+  while (i < s.len()) {
+    buf_push_byte(h, lower(s[i] as i32));
+    i += 1;
+  }
+  let t = take_text(h);
+  return t;
+}
+
+function special(c: i32): boolean {
+  return c == 42 || c == 63 || c == 91 || c == 92;
+}
+
+// Whether `s` from `lo` to `hi` has no glob character.
+function plain(s: string, lo: i32, hi: i32): boolean {
+  let i = lo;
+  while (i < hi) {
+    if (special(s[i] as i32)) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+function bytes_of(s: string, lo: i32, hi: i32): u8[] {
+  let out: u8[] = [];
+  let i = lo;
+  while (i < hi) {
+    out = out.append(s[i]);
+    i += 1;
+  }
+  return out;
+}
+
+function glob_new(pat0: string, fold: boolean): Glob {
+  let pat = if (fold) { lower_text(pat0) } else { pat0 };
+  let n = pat.len();
+  if (plain(pat, 0, n)) {
+    return Glob { kind: G_LITERAL, lit: pat.bytes(), pat: pat, fold: fold };
+  }
+  if (n >= 1 && pat[0] == b'*' && plain(pat, 1, n)) {
+    return Glob { kind: G_SUFFIX, lit: bytes_of(pat, 1, n), pat: pat, fold: fold };
+  }
+  if (n >= 1 && pat[n - 1] == b'*' && plain(pat, 0, n - 1)) {
+    return Glob { kind: G_PREFIX, lit: bytes_of(pat, 0, n - 1), pat: pat, fold: fold };
+  }
+  if (n >= 2 && pat[0] == b'*' && pat[n - 1] == b'*' && plain(pat, 1, n - 1)) {
+    return Glob { kind: G_ANY, lit: bytes_of(pat, 1, n - 1), pat: pat, fold: fold };
+  }
+  return Glob { kind: G_GENERAL, lit: [], pat: pat, fold: fold };
+}
+
+function byte_eq(a: i32, b: i32, fold: boolean): boolean {
+  if (fold) {
+    return lower(a) == lower(b);
+  }
+  return a == b;
+}
+
+// Whether `lit` is in `s` at `at`.
+function lit_at(s: string, at: i32, lit: u8[], fold: boolean): boolean {
+  if (at < 0 || at + lit.len() > s.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < lit.len()) {
+    if (!byte_eq(s[at + i] as i32, lit[i] as i32, fold)) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+function lit_in(s: string, lo: i32, hi: i32, lit: u8[], fold: boolean): boolean {
+  let last = hi - lit.len();
+  let i = lo;
+  while (i <= last) {
+    if (lit_at(s, i, lit, fold)) {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+// Whether the glob matches `s` from `lo` to the end.
+function glob_match(g: Glob, s: string, lo: i32): boolean {
+  let n = s.len() - lo;
+  let k = g.lit.len();
+  if (g.kind == G_LITERAL) {
+    return n == k && lit_at(s, lo, g.lit, g.fold);
+  }
+  if (g.kind == G_SUFFIX) {
+    return n >= k && lit_at(s, s.len() - k, g.lit, g.fold);
+  }
+  if (g.kind == G_PREFIX) {
+    return n >= k && lit_at(s, lo, g.lit, g.fold);
+  }
+  if (g.kind == G_ANY) {
+    return lit_in(s, lo, s.len(), g.lit, g.fold);
+  }
+  let text = slice_unchecked(s, lo, s.len()) + "";
+  if (g.fold) {
+    text = lower_text(text);
+  }
+  return fnmatch.fnmatch(g.pat, text);
+}
+
+// ---------------------------------------------------------------------------
+// Names of an entry
+
+// The name that -name tests: the last component, without the slashes
+// after it. A name of slashes only is "/".
+function name_span(path: string, base: i32): (i32, i32) {
+  let end = path.len();
+  while (end > 1 && path[end - 1] == b'/') {
+    end -= 1;
+  }
+  if (end <= base) {
+    let start = end;
+    while (start > 0 && path[start - 1] != b'/') {
+      start -= 1;
+    }
+    return (start, end);
+  }
+  return (base, end);
+}
+
+// GNU's base_name: the last component, with one of the slashes after it.
+function base_name(path: string): string {
+  let n = path.len();
+  let end = n;
+  while (end > 0 && path[end - 1] == b'/') {
+    end -= 1;
+  }
+  if (end == 0) {
+    if (n == 0) {
+      return "";
+    }
+    return "/";
+  }
+  let start = end;
+  while (start > 0 && path[start - 1] != b'/') {
+    start -= 1;
+  }
+  if (end < n) {
+    end += 1;
+  }
+  return slice_unchecked(path, start, end) + "";
+}
+
+// What precedes the last slash of the path, or "." when it has none.
+function dir_part(path: string): string {
+  let i = path.len() - 1;
+  while (i >= 0) {
+    if (path[i] == b'/') {
+      return slice_unchecked(path, 0, i) + "";
+    }
+    i -= 1;
+  }
+  return ".";
+}
+
+// The path below the starting point, for %P.
+function below_top(e: Ent): string {
+  if (e.is_top) {
+    return "";
+  }
+  let t = e.top.len();
+  if (e.path.len() > t && e.path[t] == b'/') {
+    return slice_unchecked(e.path, t + 1, e.path.len()) + "";
+  }
+  return slice_unchecked(e.path, t, e.path.len()) + "";
+}
+
+function join(dir: string, name: string): string {
+  if (dir.len() > 0 && dir[dir.len() - 1] == b'/') {
+    return dir + name;
+  }
+  return dir + "/" + name;
+}
+
+// ---------------------------------------------------------------------------
+// The stat of an entry
+
+function kind_of(st: FileStat): u32 {
+  return st.mode & S_IFMT;
+}
+
+// The stat that the walk uses for the entry: it follows a link with -L,
+// and with -H at the top. A link that does not resolve keeps the stat of
+// the link.
+function stat_entry(follow: boolean, path: string): (FileStat, i32, IoError) {
+  if (follow) {
+    match (stat(path)) {
+      Ok(st) => {
+        return (st, ST_OK, NotFound(""));
+      },
+      Err(e) => {
+        let n = errno.of(e);
+        if (n != errno.ENOENT && n != errno.ENOTDIR) {
+          return (zero_stat(), ST_FAILED, e);
+        }
+      }
+    }
+  }
+  match (lstat(path)) {
+    Ok(st) => {
+      return (st, ST_OK, NotFound(""));
+    },
+    Err(e) => {
+      return (zero_stat(), ST_FAILED, e);
+    }
+  }
+}
+
+function follows(p: Prog, e: Ent): boolean {
+  return p.o.follow == FOLLOW_ALL || p.o.follow == FOLLOW_ARGS && e.is_top;
+}
+
+// The entry with its stat filled in. A failure leaves `have` at ST_FAILED
+// and reports nothing: the walk reported it when it met the entry.
+function with_stat(p: Prog, own r: Run): Run {
+  if (r.e.have != ST_NONE) {
+    return r;
+  }
+  let e = r.e;
+  let got: (FileStat, i32, IoError) = stat_entry(follows(p, e), e.path);
+  if (got.1 == ST_FAILED) {
+    let n = errno.of(got.2);
+    r = report(r, q(e.path) + ": " + why(got.2));
+    if (n == errno.ENOENT) {
+      r = Run { ...r, status: r.status };
+    }
+  }
+  return Run { ...r, e: Ent { ...e, st: got.0, have: got.1 } };
+}
+
+// The stat of the entry itself, never through a link.
+function with_lstat(own r: Run): Run {
+  if (r.e.lhave != ST_NONE) {
+    return r;
+  }
+  let e = r.e;
+  match (lstat(e.path)) {
+    Ok(st) => {
+      return Run { ...r, e: Ent { ...e, lst: st, lhave: ST_OK } };
+    },
+    Err(_) => {
+      return Run { ...r, e: Ent { ...e, lhave: ST_FAILED } };
+    }
+  }
+}
+
+// The type of the entry, as the walk sees it, without a stat when readdir
+// gave it.
+function type_of(p: Prog, own r: Run): (u32, Run) {
+  if (r.e.have == ST_NONE && r.e.dtype != 0u32 && (r.e.dtype != S_IFLNK || !follows(p, r.e))) {
+    return (r.e.dtype, r);
+  }
+  r = with_stat(p, r);
+  if (r.e.have != ST_OK) {
+    return (0u32, r);
+  }
+  return (kind_of(r.e.st), r);
+}
+
+// ---------------------------------------------------------------------------
+// The parser
+
+struct Parser {
+  argv: string[],
+  i: i32,
+  o: Opts,
+  nodes: Node[],
+  toks: Tok[],
+  globs: Glob[],
+  rxs: bre.Bre[],
+  fmts: Fmt[],
+  outs: OutSpec[],
+  execs: cmdline.Spec[],
+  has_action: boolean,
+  first_test: string,
+  last_arg: string,
+  last_pred: string,
+  names: boolean,
+  writers: Out[],
+}
+
+function after_operand(ps: Parser): boolean {
+  let n = ps.toks.len();
+  return n > 0 && ends_operand(ps.toks[n - 1]);
+}
+
+// An implicit -a joins two operands that stand next to each other.
+function joined(own ps: Parser): Parser {
+  if (after_operand(ps)) {
+    return Parser { ...ps, toks: ps.toks.append(Tok { kind: T_AND, node: -1, text: "-a" }) };
+  }
+  return ps;
+}
+
+function add_node(own ps0: Parser, n: Node, text: string): Parser {
+  let ps = joined(ps0);
+  let idx = ps.nodes.len();
+  return Parser { ...ps, nodes: ps.nodes.append(n), toks: ps.toks.append(Tok { kind: T_PRED, node: idx, text: text }) };
+}
+
+// The argument of the predicate `name`, or the error of a missing one.
+function arg_of(own ps: Parser, name: string): (string, Parser) {
+  if (ps.i >= ps.argv.len()) {
+    fail("missing argument to `" + name + "'");
+  }
+  let a = ps.argv[ps.i];
+  return (a, Parser { ...ps, i: ps.i + 1, last_arg: a });
+}
+
+function note_test(own ps: Parser, name: string): Parser {
+  if (ps.first_test == "") {
+    return Parser { ...ps, first_test: name };
+  }
+  return ps;
+}
+
+// A global option after a test, as GNU warns of it.
+function global_option(own ps: Parser, name: string): Parser {
+  if (ps.o.warn && ps.first_test != "") {
+    warn("you have specified the global option " + name + " after the argument " + ps.first_test + ", but global options are not positional, i.e., " + name + " affects tests specified before it as well as those specified after it.  Please specify global options before other arguments.");
+  }
+  return add_node(ps, node(P_TRUE), name);
+}
+
+function depth_arg(own ps0: Parser, name: string): (i32, Parser) {
+  let (a, ps) = arg_of(ps0, name);
+  if (a.len() == 0 || !digit(a[0] as i32)) {
+    fail("Expected a positive decimal integer argument to " + name + ", but got " + q(a));
+  }
+  let v = decimal(a, 0, a.len(), 2147483647i64);
+  if (v == -2i64) {
+    fail(a + ": " + gnu.erange_text());
+  }
+  if (v < 0i64) {
+    fail("Expected a positive decimal integer argument to " + name + ", but got " + q(a));
+  }
+  return (v as i32, ps);
+}
+
+// A number of -links, -inum, -uid or -gid, with its comparison.
+function count_arg(own ps0: Parser, name: string): (i32, i64, Parser) {
+  if (ps0.i >= ps0.argv.len()) {
+    fail("invalid argument `" + name + "' to `" + name + "'");
+  }
+  let (a, ps) = arg_of(ps0, name);
+  let (cmp, skip) = cmp_of(a);
+  let v = decimal(a, skip, a.len(), 9223372036854775807i64 / 10i64);
+  if (v < 0i64) {
+    fail("invalid argument `" + a + "' to `" + name + "'");
+  }
+  return (cmp, v, ps);
+}
+
+function name_test(own ps0: Parser, name: string, fold: boolean): Parser {
+  let (pat, ps) = arg_of(ps0, name);
+  if (ps.o.warn && pat.contains("/")) {
+    let other = if (fold) { "-iwholename" } else { "-wholename" };
+    warn("'" + name + "' matches against basenames only, but the given pattern contains a directory separator ('/'), thus the expression will evaluate to false all the time.  Did you mean '" + other + "'?");
+  }
+  let g = ps.globs.len();
+  ps = Parser { ...ps, globs: ps.globs.append(glob_new(pat, fold)), names: true };
+  return add_node(ps, Node { ...node(P_NAME), a: g }, name);
+}
+
+function path_test(own ps0: Parser, name: string, fold: boolean, kind: i32): Parser {
+  let (pat, ps) = arg_of(ps0, name);
+  if (kind == P_PATH && ps.o.warn && pat.len() > 1 && pat[pat.len() - 1] == b'/') {
+    warn(name + " " + pat + " will not match anything because it ends with /.");
+  }
+  let g = ps.globs.len();
+  ps = Parser { ...ps, globs: ps.globs.append(glob_new(pat, fold)) };
+  return add_node(ps, Node { ...node(kind), a: g }, name);
+}
+
+function rx_syntax(kind: i32, fold: boolean): bre.Syntax {
+  let s = bre.posix_basic();
+  if (kind == RX_EMACS) {
+    s = bre.emacs_syntax();
+    s = bre.Syntax { ...s, newline_anchor: false };
+  } else if (kind == RX_EXTENDED) {
+    s = bre.Syntax { ...s, extended: true, no_empty_ranges: true };
+  } else {
+    s = bre.Syntax { ...s, no_empty_ranges: true };
+  }
+  return bre.Syntax { ...s, icase: fold };
+}
+
+function regex_test(own ps0: Parser, name: string, fold: boolean): Parser {
+  let (pat, ps) = arg_of(ps0, name);
+  let re = bre.bre_compile_syntax(pat, rx_syntax(ps.o.regextype, fold));
+  if (re.err != "") {
+    fail("failed to compile regular expression '" + pat + "': " + re.err);
+  }
+  let x = ps.rxs.len();
+  ps = Parser { ...ps, rxs: ps.rxs.append(re) };
+  return add_node(ps, Node { ...node(P_REGEX), a: x }, name);
+}
+
+function regextype_named(t: string): i32 {
+  return match (t) {
+    "findutils-default" | "emacs" => RX_EMACS,
+    "ed" | "grep" | "posix-basic" | "posix-minimal-basic" | "sed" => RX_BASIC,
+    "gnu-awk" | "posix-awk" | "awk" | "posix-egrep" | "egrep" | "posix-extended" => RX_EXTENDED,
+    _ => -1,
+  };
+}
+
+function regextype_option(own ps0: Parser): Parser {
+  let (t, ps) = arg_of(ps0, "-regextype");
+  let k = regextype_named(t);
+  if (k < 0) {
+    fail("Unknown regular expression type " + q(t) + "; valid types are 'findutils-default', 'ed', 'emacs', 'gnu-awk', 'grep', 'posix-awk', 'awk', 'posix-basic', 'posix-egrep', 'egrep', 'posix-extended', 'posix-minimal-basic', 'sed'.");
+  }
+  ps = Parser { ...ps, o: Opts { ...ps.o, regextype: k } };
+  return add_node(ps, node(P_TRUE), "-regextype");
+}
+
+// The type bit of a letter of -type, or 0.
+function type_bit(c: i32): u32 {
+  return match (c) {
+    98 => S_IFBLK,
+    99 => S_IFCHR,
+    100 => S_IFDIR,
+    112 => S_IFIFO,
+    102 => S_IFREG,
+    108 => S_IFLNK,
+    115 => S_IFSOCK,
+    68 => S_IFDOOR,
+    _ => 0u32,
+  };
+}
+
+// The set of types of -type or -xtype: one bit for each type, indexed by
+// the type bits shifted down.
+function type_test(own ps0: Parser, name: string, kind: i32): Parser {
+  let (a, ps) = arg_of(ps0, name);
+  if (a.len() == 0) {
+    fail("Arguments to " + name + " should contain at least one letter");
+  }
+  let set = 0i64;
+  let i = 0;
+  while (i < a.len()) {
+    let c = a[i] as i32;
+    let bit = type_bit(c);
+    if (bit == 0u32) {
+      fail("Unknown argument to " + name + ": " + slice_unchecked(a, i, i + 1));
+    }
+    if (c == 68) {
+      fail(name + " D is not supported because Solaris doors are not supported on the platform find was compiled on.");
+    }
+    let mask = 1i64 << (bit >> 12u32) as i64;
+    if ((set & mask) != 0i64) {
+      fail("Duplicate file type '" + slice_unchecked(a, i, i + 1) + "' in the argument list to " + name + ".");
+    }
+    set = set | mask;
+    i += 1;
+    if (i < a.len()) {
+      if (a[i] != b',') {
+        fail("Must separate multiple arguments to " + name + " using: ','");
+      }
+      i += 1;
+      if (i >= a.len()) {
+        fail("Last file type in list argument to " + name + " is missing, i.e., list is ending on: ','");
+      }
+    }
+  }
+  return add_node(ps, Node { ...node(kind), num: set }, name);
+}
+
+function size_test(own ps0: Parser): Parser {
+  let (a, ps) = arg_of(ps0, "-size");
+  if (a.len() == 0) {
+    fail("invalid null argument to -size");
+  }
+  let (cmp, skip) = cmp_of(a);
+  let end = a.len();
+  let unit = 512i64;
+  let last = a[end - 1] as i32;
+  if (!digit(last)) {
+    unit = match (last) {
+      98 => 512i64,
+      99 => 1i64,
+      119 => 2i64,
+      107 => 1024i64,
+      77 => 1048576i64,
+      71 => 1073741824i64,
+      _ => 0i64,
+    };
+    if (unit == 0i64) {
+      fail("invalid -size type `" + slice_unchecked(a, end - 1, end) + "'");
+    }
+    end -= 1;
+  }
+  let v = decimal(a, skip, end, 9223372036854775807i64 / 10i64);
+  if (v < 0i64) {
+    fail("Invalid argument `" + a + "' to -size");
+  }
+  return add_node(ps, Node { ...node(P_SIZE), cmp: cmp, num: v, num2: unit }, "-size");
+}
+
+function perm_test(own ps0: Parser): Parser {
+  let (a, ps) = arg_of(ps0, "-perm");
+  let how = 0;
+  let spec = a;
+  if (a.len() > 0 && (a[0] == b'-' || a[0] == b'/')) {
+    how = if (a[0] == b'-') { 1 } else { 2 };
+    spec = slice_unchecked(a, 1, a.len()) + "";
+  }
+  if (spec.len() > 1 && spec[0] == b'+' && digit(spec[1] as i32)) {
+    fail("invalid mode " + q(a));
+  }
+  let Some(ch) = mode.compile(spec) else {
+    fail("invalid mode " + q(a));
+    return ps;
+  };
+  if (spec.len() > 0 && digit(spec[0] as i32) && decimal(spec, 0, spec.len(), 99999999i64) >= 0i64 && octal_value(spec) > 4095) {
+    fail("invalid mode " + q(a));
+  }
+  let bits = ch.adjust(0, false, 0).mode;
+  if (how == 2 && bits == 0) {
+    warn("you have specified a mode pattern " + a + " (which is equivalent to /000). The meaning of -perm /000 has now been changed to be consistent with -perm -000; that is, while it used to match no files, it now matches all files.");
+  }
+  return add_node(ps, Node { ...node(P_PERM), a: how, num: bits as i64 }, "-perm");
+}
+
+function octal_value(s: string): i32 {
+  let v = 0;
+  let i = 0;
+  while (i < s.len()) {
+    let c = s[i] as i32;
+    if (c < 48 || c > 55) {
+      return 99999;
+    }
+    v = v * 8 + c - 48;
+    if (v > 99999) {
+      return v;
+    }
+    i += 1;
+  }
+  return v;
+}
+
+// The four times of a file by the letters of -newerXY.
+function time_letter(c: i32): i32 {
+  return match (c) {
+    97 => TIME_A,
+    66 => TIME_B,
+    99 => TIME_C,
+    109 => TIME_M,
+    _ => -1,
+  };
+}
+
+function time_of(st: FileStat, which: i32): (i64, i64) {
+  if (which == TIME_A) {
+    return (st.atime, st.atime_nsec);
+  }
+  if (which == TIME_C) {
+    return (st.ctime, st.ctime_nsec);
+  }
+  if (which == TIME_B) {
+    return (st.btime, st.btime_nsec);
+  }
+  return (st.mtime, st.mtime_nsec);
+}
+
+// The stat of a reference file of -newer, -samefile and the others.
+function ref_stat(ps: Parser, f: string): FileStat {
+  let got: (FileStat, i32, IoError) = stat_entry(ps.o.follow != FOLLOW_NEVER, f);
+  if (got.1 != ST_OK) {
+    fail(q(f) + ": " + why(got.2));
+  }
+  return got.0;
+}
+
+function newer_test(own ps0: Parser, name: string, which: i32): Parser {
+  let (f, ps) = arg_of(ps0, name);
+  let st = ref_stat(ps, f);
+  return add_node(ps, Node { ...node(P_NEWER), a: which, num: st.mtime, num2: st.mtime_nsec }, name);
+}
+
+function newer_xy(own ps0: Parser, name: string): Parser {
+  let x = time_letter(name[6] as i32);
+  let y = time_letter(name[7] as i32);
+  let literal = name[7] == b't';
+  if (x < 0 || y < 0 && !literal || x == TIME_B || y == TIME_B) {
+    if (x == TIME_B || y == TIME_B) {
+      gnu.error("This system does not provide a way to find the birth time of a file.");
+    }
+    fail("invalid predicate " + "`" + name + "'");
+  }
+  if (ps0.i >= ps0.argv.len()) {
+    fail("The '" + name + "' test needs an argument");
+  }
+  let (f, ps) = arg_of(ps0, name);
+  if (literal) {
+    let r = datetime.parse(f, ps.o.now, ps.o.now_nsec, 0i64);
+    if (!r.ok) {
+      fail("I cannot figure out how to interpret " + q(f) + " as a date or time");
+    }
+    return add_node(ps, Node { ...node(P_NEWER), a: x, num: r.sec, num2: r.nsec }, name);
+  }
+  let st = ref_stat(ps, f);
+  let (sec, nsec) = time_of(st, y);
+  return add_node(ps, Node { ...node(P_NEWER), a: x, num: sec, num2: nsec }, name);
+}
+
+// -atime and the others. The reference time and the window are fixed here:
+// see eval_age.
+function age_test(own ps0: Parser, name: string): Parser {
+  let (a, ps) = arg_of(ps0, name);
+  let which = time_letter(name[1] as i32);
+  let minutes = name.ends_with("min");
+  let unit = if (minutes) { 60i64 } else { DAY };
+  let (cmp, skip) = cmp_of(a);
+  let (ok, v) = parse_real(a, skip);
+  if (!ok) {
+    fail("invalid argument `" + a + "' to `" + name + "'");
+  }
+  let origin = day_start(ps.o);
+  if (minutes) {
+    origin += DAY;
+  } else if (cmp == CMP_LT) {
+    origin += DAY - 1i64;
+  }
+  let (sec, nsec) = shift_back(origin, ps.o.now_nsec, v * (unit as f64));
+  return add_node(ps, Node { ...node(P_AGE), a: which, cmp: cmp, num: sec, num2: nsec, b: unit as i32 }, name);
+}
+
+// The start of the day of the time tests: 24 hours before now, or the
+// start of today with -daystart.
+function day_start(o: Opts): i64 {
+  if (!o.daystart) {
+    return o.now - DAY;
+  }
+  let z = tz.local_zone();
+  let tm = timefmt.break_time(z, o.now);
+  return o.now - (tm.hour * 3600 + tm.min * 60 + tm.sec) as i64;
+}
+
+// `sec`.`nsec` minus `by` seconds, as GNU splits a real into seconds and
+// a fraction.
+function shift_back(sec: i64, nsec: i64, by: f64): (i64, i64) {
+  let whole = by as i64;
+  let frac = ((by - whole as f64) * 1000000000.0) as i64;
+  let s = sec - whole;
+  let n = nsec - frac;
+  if (n < 0i64) {
+    n += 1000000000i64;
+    s -= 1i64;
+  }
+  return (s, n);
+}
+
+// -used N: the time from the change of the status to the access, in days.
+// The node holds N days in seconds and nanoseconds.
+function used_test(own ps0: Parser): Parser {
+  let (a, ps) = arg_of(ps0, "-used");
+  let (cmp, skip) = cmp_of(a);
+  let (ok, v) = parse_real(a, skip);
+  if (!ok) {
+    fail("Invalid argument " + a + " to -used");
+  }
+  let (sec, nsec) = shift_back(0i64, 0i64, 0.0 - v * (DAY as f64));
+  return add_node(ps, Node { ...node(P_USED), cmp: cmp, num: sec, num2: nsec }, "-used");
+}
+
+function user_test(own ps0: Parser): Parser {
+  let (a, ps) = arg_of(ps0, "-user");
+  match (pwdb.user_by_name(a)) {
+    Some(u) => {
+      return add_node(ps, Node { ...node(P_UID), num: u.uid }, "-user");
+    },
+    None => {}
+  }
+  let v = decimal(a, 0, a.len(), 4294967295i64);
+  if (a.len() == 0 || v < 0i64) {
+    if (a.len() == 0) {
+      fail("The argument to -user should not be empty");
+    }
+    fail(q(a) + " is not the name of a known user");
+  }
+  return add_node(ps, Node { ...node(P_UID), num: v }, "-user");
+}
+
+function group_test(own ps0: Parser): Parser {
+  let (a, ps) = arg_of(ps0, "-group");
+  match (pwdb.group_by_name(a)) {
+    Some(g) => {
+      return add_node(ps, Node { ...node(P_GID), num: g.gid }, "-group");
+    },
+    None => {}
+  }
+  let v = decimal(a, 0, a.len(), 4294967295i64);
+  if (a.len() == 0 || v < 0i64) {
+    if (a.len() == 0) {
+      fail("argument to -group is empty, but should be a group name");
+    }
+    fail(q(a) + " is not the name of an existing group");
+  }
+  return add_node(ps, Node { ...node(P_GID), num: v }, "-group");
+}
+
+function samefile_test(own ps0: Parser): Parser {
+  let (f, ps) = arg_of(ps0, "-samefile");
+  let st = ref_stat(ps, f);
+  return add_node(ps, Node { ...node(P_SAMEFILE), num: st.dev, num2: st.ino }, "-samefile");
+}
+
+// An output file, opened now as GNU opens it. Two predicates that name the
+// same file share it.
+function out_file(own ps: Parser, f: string): (i32, Parser) {
+  let i = 1;
+  while (i < ps.outs.len()) {
+    if (ps.outs[i].name == f) {
+      return (i, ps);
+    }
+    i += 1;
+  }
+  let w = Out { ...ps.writers[0], err: cell_new(None) };
+  if (f == "/dev/stderr") {
+    w = Out { w: stderr(), h: buf_new(256), kind: OUT_STDERR, name: f, err: cell_new(None) };
+  } else if (f != "/dev/stdout") {
+    match (open_writer(f)) {
+      Ok(fw) => {
+        w = Out { w: fw, h: buf_new(FILE_BLOCK), kind: OUT_FILE, name: f, err: cell_new(None) };
+      },
+      Err(e) => {
+        fail(q(f) + ": " + why(e));
+      }
+    }
+  }
+  let k = ps.outs.len();
+  let spec = OutSpec { name: f };
+  return (k, Parser { ...ps, outs: ps.outs.append(spec), writers: ps.writers.append(w) });
+}
+
+function print_action(own ps0: Parser, name: string, kind: i32, to_file: boolean): Parser {
+  let ps = Parser { ...ps0, has_action: true };
+  let f = 0;
+  if (to_file) {
+    let (a, p2) = arg_of(ps, name);
+    let (k, p3) = out_file(p2, a);
+    ps = p3;
+    f = k;
+  }
+  return add_node(ps, Node { ...node(kind), b: f }, name);
+}
+
+function printf_action(own ps0: Parser, name: string, to_file: boolean): Parser {
+  let ps = Parser { ...ps0, has_action: true };
+  let f = 0;
+  if (to_file && ps.i + 1 == ps.argv.len()) {
+    fail("invalid argument `" + ps.argv[ps.i] + "' to `" + name + "'");
+  }
+  if (to_file) {
+    let (a, p2) = arg_of(ps, name);
+    let (k, p3) = out_file(p2, a);
+    ps = p3;
+    f = k;
+  }
+  let (fmt, p4) = arg_of(ps, name);
+  ps = p4;
+  let x = ps.fmts.len();
+  ps = Parser { ...ps, fmts: ps.fmts.append(compile_format(fmt)), names: true };
+  return add_node(ps, Node { ...node(A_PRINTF), a: x, b: f }, name);
+}
+
+function exec_action(own ps0: Parser, name: string): Parser {
+  let ps = Parser { ...ps0, has_action: true };
+  let dir = name == "-execdir" || name == "-okdir";
+  let ask = name == "-ok" || name == "-okdir";
+  let start = ps.i;
+  let j = start;
+  let plus = false;
+  while (j < ps.argv.len()) {
+    let a = ps.argv[j];
+    if (a == ";") {
+      break;
+    }
+    if (a == "+" && j > start && ps.argv[j - 1].contains("{}") && !ask) {
+      plus = true;
+      break;
+    }
+    j += 1;
+  }
+  if (j >= ps.argv.len()) {
+    fail("missing argument to `" + name + "'");
+  }
+  if (j == start) {
+    fail("invalid argument `" + ps.argv[j] + "' to `" + name + "'");
+  }
+  let words: string[] = [];
+  let k = start;
+  while (k < j) {
+    words = words.append(ps.argv[k]);
+    k += 1;
+  }
+  if (plus) {
+    let n = 0;
+    for w in words {
+      if (w.contains("{}")) {
+        n += 1;
+      }
+    }
+    if (n > 1) {
+      fail("Only one instance of {} is supported with " + name + " ... +");
+    }
+    let last = words[words.len() - 1];
+    if (last != "{}") {
+      fail("In '" + name + " ... {} +' the '{}' must appear by itself, but you specified " + q(last));
+    }
+  }
+  if (dir) {
+    cmdline.check_path_for_execdir(name);
+  }
+  let x = ps.execs.len();
+  let spec = cmdline.spec_new(words, plus, dir, ask, name);
+  ps = Parser { ...ps, execs: ps.execs.append(spec), i: j + 1, last_arg: ps.argv[j], names: true };
+  return add_node(ps, Node { ...node(A_EXEC), a: x }, name);
+}
+
+function context_test(own ps0: Parser): Parser {
+  let (a, ps) = arg_of(ps0, "-context");
+  if (!selinux.enabled()) {
+    fail("invalid predicate -context: SELinux is not enabled.");
+  }
+  return add_node(ps, Node { ...node(P_CONTEXT), s: a }, "-context");
+}
+
+function files0_option(own ps0: Parser): Parser {
+  let (a, ps) = arg_of(ps0, "-files0-from");
+  ps = Parser { ...ps, o: Opts { ...ps.o, files0: a, has_files0: true } };
+  return global_option(ps, "-files0-from");
+}
+
+function depth_option(own ps0: Parser, name: string, max: boolean): Parser {
+  let (v, ps) = depth_arg(ps0, name);
+  if (max) {
+    ps = Parser { ...ps, o: Opts { ...ps.o, maxdepth: v } };
+  } else {
+    ps = Parser { ...ps, o: Opts { ...ps.o, mindepth: v } };
+  }
+  return global_option(ps, name);
+}
+
+function simple_option(own ps0: Parser, name: string): Parser {
+  let ps = ps0;
+  let o = ps.o;
+  if (name == "-depth" || name == "-d") {
+    o = Opts { ...o, depth_first: true, explicit_depth: true };
+  } else if (name == "-xdev" || name == "-mount") {
+    o = Opts { ...o, xdev: true };
+  } else if (name == "-ignore_readdir_race") {
+    o = Opts { ...o, ignore_race: true };
+  } else if (name == "-noignore_readdir_race") {
+    o = Opts { ...o, ignore_race: false };
+  }
+  return global_option(Parser { ...ps, o: o }, name);
+}
+
+// A positional option: it acts on what comes after it and is not warned of.
+function positional_option(own ps: Parser, name: string): Parser {
+  let o = ps.o;
+  if (name == "-follow") {
+    o = Opts { ...o, follow: FOLLOW_ALL };
+  } else if (name == "-warn") {
+    o = Opts { ...o, warn: true };
+  } else if (name == "-nowarn") {
+    o = Opts { ...o, warn: false };
+  } else if (name == "-daystart") {
+    if (!o.daystart) {
+      o = Opts { ...o, daystart: true };
+    }
+    return Parser { ...ps, o: o };
+  }
+  return add_node(Parser { ...ps, o: o }, node(P_TRUE), name);
+}
+
+function count_test(own ps0: Parser, name: string, kind: i32): Parser {
+  let (cmp, v, ps) = count_arg(ps0, name);
+  return add_node(ps, Node { ...node(kind), cmp: cmp, num: v }, name);
+}
+
+function show_help(): void {
+  gnu.write_out(help_text());
+  exit(0);
+}
+
+function show_version(): void {
+  gnu.write_out("find (Fern findutils) " + gnu.version() + "\n");
+  exit(0);
+}
+
+// The predicates that only test the file.
+function parse_test(own ps: Parser, name: string): (boolean, Parser) {
+  if (name == "-name" || name == "-iname") {
+    return (true, name_test(ps, name, name == "-iname"));
+  }
+  if (name == "-path" || name == "-wholename" || name == "-ipath" || name == "-iwholename") {
+    return (true, path_test(ps, name, name[1] == b'i', P_PATH));
+  }
+  if (name == "-lname" || name == "-ilname") {
+    return (true, path_test(ps, name, name == "-ilname", P_LNAME));
+  }
+  if (name == "-regex" || name == "-iregex") {
+    return (true, regex_test(ps, name, name == "-iregex"));
+  }
+  if (name == "-type") {
+    return (true, type_test(ps, name, P_TYPE));
+  }
+  if (name == "-xtype") {
+    return (true, type_test(ps, name, P_XTYPE));
+  }
+  if (name == "-size") {
+    return (true, size_test(ps));
+  }
+  if (name == "-perm") {
+    return (true, perm_test(ps));
+  }
+  if (name == "-links") {
+    return (true, count_test(ps, name, P_LINKS));
+  }
+  if (name == "-inum") {
+    return (true, count_test(ps, name, P_INUM));
+  }
+  if (name == "-uid") {
+    return (true, count_test(ps, name, P_UID));
+  }
+  if (name == "-gid") {
+    return (true, count_test(ps, name, P_GID));
+  }
+  if (name == "-user") {
+    return (true, user_test(ps));
+  }
+  if (name == "-group") {
+    return (true, group_test(ps));
+  }
+  return parse_test2(ps, name);
+}
+
+function parse_test2(own ps: Parser, name: string): (boolean, Parser) {
+  if (name == "-amin" || name == "-atime" || name == "-cmin" || name == "-ctime" || name == "-mmin" || name == "-mtime") {
+    return (true, age_test(ps, name));
+  }
+  if (name == "-newer") {
+    return (true, newer_test(ps, name, TIME_M));
+  }
+  if (name == "-anewer") {
+    return (true, newer_test(ps, name, TIME_A));
+  }
+  if (name == "-cnewer") {
+    return (true, newer_test(ps, name, TIME_C));
+  }
+  if (name.len() == 8 && name.starts_with("-newer")) {
+    return (true, newer_xy(ps, name));
+  }
+  if (name == "-used") {
+    return (true, used_test(ps));
+  }
+  if (name == "-samefile") {
+    return (true, samefile_test(ps));
+  }
+  if (name == "-fstype") {
+    let (a, p2) = arg_of(ps, name);
+    return (true, add_node(p2, Node { ...node(P_FSTYPE), s: a }, name));
+  }
+  if (name == "-context") {
+    return (true, context_test(ps));
+  }
+  let simple = match (name) {
+    "-true" => P_TRUE,
+    "-false" => P_FALSE,
+    "-nouser" => P_NOUSER,
+    "-nogroup" => P_NOGROUP,
+    "-empty" => P_EMPTY,
+    "-readable" => P_ACCESS,
+    "-writable" => P_ACCESS,
+    "-executable" => P_ACCESS,
+    _ => -1,
+  };
+  if (simple < 0) {
+    return (false, ps);
+  }
+  let bit = match (name) {
+    "-readable" => 4,
+    "-writable" => 2,
+    _ => 1,
+  };
+  return (true, add_node(ps, Node { ...node(simple), a: bit }, name));
+}
+
+function parse_action(own ps: Parser, name: string): (boolean, Parser) {
+  if (name == "-print") {
+    return (true, print_action(ps, name, A_PRINT, false));
+  }
+  if (name == "-print0") {
+    return (true, print_action(ps, name, A_PRINT0, false));
+  }
+  if (name == "-fprint") {
+    return (true, print_action(ps, name, A_PRINT, true));
+  }
+  if (name == "-fprint0") {
+    return (true, print_action(ps, name, A_PRINT0, true));
+  }
+  if (name == "-ls") {
+    return (true, print_action(Parser { ...ps, names: true }, name, A_LS, false));
+  }
+  if (name == "-fls") {
+    return (true, print_action(Parser { ...ps, names: true }, name, A_LS, true));
+  }
+  if (name == "-printf") {
+    return (true, printf_action(ps, name, false));
+  }
+  if (name == "-fprintf") {
+    return (true, printf_action(ps, name, true));
+  }
+  if (name == "-exec" || name == "-execdir" || name == "-ok" || name == "-okdir") {
+    return (true, exec_action(ps, name));
+  }
+  if (name == "-prune") {
+    let o = Opts { ...ps.o, prune: true };
+    let p2 = add_node(Parser { ...ps, o: o }, node(A_PRUNE), name);
+    return (true, p2);
+  }
+  if (name == "-quit") {
+    return (true, add_node(Parser { ...ps, has_action: true }, node(A_QUIT), name));
+  }
+  if (name == "-delete") {
+    let o2 = Opts { ...ps.o, delete: true, depth_first: true };
+    let p3 = add_node(Parser { ...ps, has_action: true, o: o2 }, node(A_DELETE), name);
+    return (true, p3);
+  }
+  return (false, ps);
+}
+
+function parse_option(own ps: Parser, name: string): (boolean, Parser) {
+  if (name == "-maxdepth") {
+    return (true, depth_option(ps, name, true));
+  }
+  if (name == "-mindepth") {
+    return (true, depth_option(ps, name, false));
+  }
+  if (name == "-depth" || name == "-d" || name == "-xdev" || name == "-mount" || name == "-noleaf" || name == "-ignore_readdir_race" || name == "-noignore_readdir_race") {
+    return (true, simple_option(ps, name));
+  }
+  if (name == "-files0-from") {
+    return (true, files0_option(ps));
+  }
+  if (name == "-follow" || name == "-warn" || name == "-nowarn" || name == "-daystart") {
+    return (true, positional_option(ps, name));
+  }
+  if (name == "-regextype") {
+    return (true, regextype_option(ps));
+  }
+  if (name == "-help" || name == "--help") {
+    show_help();
+  }
+  if (name == "-version" || name == "--version") {
+    show_version();
+  }
+  return (false, ps);
+}
+
+function add_tok(own ps: Parser, kind: i32, text: string): Parser {
+  return Parser { ...ps, toks: ps.toks.append(Tok { kind: kind, node: -1, text: text }) };
+}
+
+function operator_kind(a: string): i32 {
+  return match (a) {
+    "!" | "-not" => T_NOT,
+    "-a" | "-and" => T_AND,
+    "-o" | "-or" => T_OR,
+    "," => T_COMMA,
+    "(" => T_OPEN,
+    ")" => T_CLOSE,
+    _ => -1,
+  };
+}
+
+// Whether a token ends an operand, so that an implicit -a goes after it.
+function ends_operand(t: Tok): boolean {
+  return t.kind == T_PRED || t.kind == T_CLOSE;
+}
+
+// A stray word in the expression. GNU adds a hint when the word names a
+// file, as an unquoted pattern that the shell expanded would.
+function stray(ps: Parser, a: string): void {
+  gnu.error("paths must precede expression: `" + a + "'");
+  if (ps.toks.len() > 0 && ps.last_pred != "") {
+    if let Ok(_) = lstat(a) {
+      gnu.error("possible unquoted pattern after predicate `" + ps.last_pred + "'?");
+    }
+  }
+  exit(1);
+}
+
+function parse_one(own ps0: Parser): Parser {
+  let a = ps0.argv[ps0.i] + "";
+  let ps = Parser { ...ps0, i: ps0.i + 1, last_arg: a };
+  let op = operator_kind(a);
+  if (op == T_OPEN || op == T_NOT) {
+    ps = joined(ps);
+  }
+  if (op >= 0) {
+    if ((op == T_AND || op == T_OR || op == T_COMMA) && !after_operand(ps)) {
+      fail("invalid expression; you have used a binary operator '" + a + "' with nothing before it.");
+    }
+    ps = note_test(ps, a);
+    return add_tok(ps, op, a);
+  }
+  if (a.len() < 2 || a[0] != b'-') {
+    stray(ps, a);
+  }
+  let r1: (boolean, Parser) = parse_option(ps, a);
+  if (r1.0) {
+    return Parser { ...r1.1, last_pred: a };
+  }
+  let r2: (boolean, Parser) = parse_test(note_test(r1.1, a), a);
+  if (r2.0) {
+    return Parser { ...r2.1, last_pred: a };
+  }
+  let r3: (boolean, Parser) = parse_action(r2.1, a);
+  if (r3.0) {
+    return Parser { ...r3.1, last_pred: a };
+  }
+  fail("unknown predicate `" + a + "'");
+  return r3.1;
+}
+
+// ---------------------------------------------------------------------------
+// The tree of the expression
+
+struct Tree { nodes: Node[], toks: Tok[], i: i32 }
+
+function prec_of(kind: i32): i32 {
+  return match (kind) {
+    T_COMMA => 1,
+    T_OR => 2,
+    T_AND => 3,
+    _ => 0,
+  };
+}
+
+function op_node(kind: i32): i32 {
+  return match (kind) {
+    T_COMMA => N_COMMA,
+    T_OR => N_OR,
+    _ => N_AND,
+  };
+}
+
+function is_operator(t: Tok): boolean {
+  return t.kind == T_NOT || t.kind == T_AND || t.kind == T_OR || t.kind == T_COMMA;
+}
+
+function new_node(own t: Tree, n: Node): (i32, Tree) {
+  let i = t.nodes.len();
+  return (i, Tree { ...t, nodes: t.nodes.append(n) });
+}
+
+function parse_unary(own t: Tree): (i32, Tree) {
+  if (t.i >= t.toks.len()) {
+    fail("invalid expression");
+  }
+  let tok = t.toks[t.i];
+  if (tok.kind == T_PRED) {
+    return (tok.node, Tree { ...t, i: t.i + 1 });
+  }
+  if (tok.kind == T_NOT) {
+    let (x, t2) = parse_unary(Tree { ...t, i: t.i + 1 });
+    return new_node(t2, Node { ...node(N_NOT), l: x });
+  }
+  if (tok.kind == T_OPEN) {
+    let t3 = Tree { ...t, i: t.i + 1 };
+    if (t3.i >= t3.toks.len()) {
+      fail("invalid expression; expected to find a ')' but didn't see one. Perhaps you need an extra predicate after '('");
+    }
+    if (t3.toks[t3.i].kind == T_CLOSE) {
+      fail("invalid expression; empty parentheses are not allowed.");
+    }
+    let (y, t4) = parse_binary(t3, 0);
+    if (t4.i >= t4.toks.len() || t4.toks[t4.i].kind != T_CLOSE) {
+      fail("invalid expression; I was expecting to find a ')' somewhere but did not see one.");
+    }
+    return (y, Tree { ...t4, i: t4.i + 1 });
+  }
+  if (tok.kind == T_CLOSE) {
+    if (t.i > 0 && is_operator(t.toks[t.i - 1])) {
+      fail("expected an expression between '" + t.toks[t.i - 1].text + "' and ')'");
+    }
+    fail("you have too many ')'");
+  }
+  fail("invalid expression; you have used a binary operator '" + tok.text + "' with nothing before it.");
+  return (-1, t);
+}
+
+function parse_binary(own t0: Tree, min: i32): (i32, Tree) {
+  let (lhs, t) = parse_unary(t0);
+  while (t.i < t.toks.len()) {
+    let tok = t.toks[t.i];
+    let p = prec_of(tok.kind);
+    if (p == 0 || p <= min) {
+      break;
+    }
+    let (rhs, t2) = parse_binary(Tree { ...t, i: t.i + 1 }, p);
+    let (n, t3) = new_node(t2, Node { ...node(op_node(tok.kind)), l: lhs, r: rhs });
+    lhs = n;
+    t = t3;
+  }
+  return (lhs, t);
+}
+
+// The root of the expression, with the -print that an expression without
+// an action gets.
+function build_tree(own ps: Parser): (i32, Node[]) {
+  let toks = ps.toks;
+  let n = toks.len();
+  if (n > 0 && toks[n - 1].kind == T_OPEN) {
+    fail("invalid expression; expected to find a ')' but didn't see one. Perhaps you need an extra predicate after '('");
+  }
+  if (!ps.has_action && n > 0 && is_operator(toks[n - 1])) {
+    fail("expected an expression after '" + ps.last_arg + "'");
+  }
+  let t = Tree { nodes: ps.nodes, toks: toks, i: 0 };
+  let root = -1;
+  if (n > 0) {
+    let (r, t2) = parse_binary(t, 0);
+    if (t2.i < n) {
+      fail("you have too many ')'");
+    }
+    root = r;
+    t = t2;
+  }
+  if (!ps.has_action) {
+    let (pr, t3) = new_node(t, node(A_PRINT));
+    t = t3;
+    if (root < 0) {
+      root = pr;
+    } else {
+      let (both, t4) = new_node(t, Node { ...node(N_AND), l: root, r: pr });
+      root = both;
+      t = t4;
+    }
+  }
+  return (root, t.nodes);
+}
+
+// ---------------------------------------------------------------------------
+// -printf formats
+
+function is_flag(c: i32): boolean {
+  return c == 45 || c == 43 || c == 32 || c == 35 || c == 48;
+}
+
+function time_dir(c: i32): boolean {
+  return c == 65 || c == 66 || c == 67 || c == 84;
+}
+
+function str_of_byte(c: i32): string {
+  let h = buf_new(1);
+  buf_push_byte(h, c);
+  let s = take_text(h);
+  return s;
+}
+
+function known_dir(c: i32): boolean {
+  return "abcdDfFgGhHiklmMnpPsStuUyYZ".contains(str_of_byte(c));
+}
+
+function escape_byte(c: i32): i32 {
+  return match (c) {
+    97 => 7,
+    98 => 8,
+    102 => 12,
+    110 => 10,
+    114 => 13,
+    116 => 9,
+    118 => 11,
+    92 => 92,
+    _ => -1,
+  };
+}
+
+function text_piece(t: u8[]): Piece {
+  return Piece { text: t, dir: 0, sub: 0, flags: "", width: -1, prec: -1 };
+}
+
+function append_range(own lit: u8[], f: string, lo: i32, hi: i32): u8[] {
+  let k = lo;
+  while (k < hi) {
+    lit = lit.append(f[k]);
+    k += 1;
+  }
+  return lit;
+}
+
+// An escape of a -printf format at `i`: the bytes it gives and where the
+// format goes on. A \c gives the piece that ends the output.
+function format_escape(f: string, i: i32, own lit: u8[]): (u8[], i32, boolean) {
+  let n = f.len();
+  if (i + 1 >= n) {
+    return (lit.append(92 as u8), i + 1, false);
+  }
+  let d = f[i + 1] as i32;
+  if (d >= 48 && d <= 55) {
+    let v = 0;
+    let j = i + 1;
+    while (j < n && j < i + 4 && f[j] as i32 >= 48 && f[j] as i32 <= 55) {
+      v = v * 8 + (f[j] as i32 - 48);
+      j += 1;
+    }
+    return (lit.append((v & 255) as u8), j, false);
+  }
+  if (d == 99) {
+    return (lit, i + 2, true);
+  }
+  let e = escape_byte(d);
+  if (e < 0) {
+    warn("unrecognized escape `\\" + str_of_byte(d) + "'");
+    return (lit.append(92 as u8).append(d as u8), i + 2, false);
+  }
+  return (lit.append(e as u8), i + 2, false);
+}
+
+// The pieces of a -printf format. A directive GNU does not know is text,
+// with a warning. \c ends the format.
+function compile_format(f: string): Fmt {
+  let pieces: Piece[] = [];
+  let lit: u8[] = [];
+  let i = 0;
+  let n = f.len();
+  while (i < n) {
+    let c = f[i] as i32;
+    if (c == 92) {
+      let (l2, next, stop) = format_escape(f, i, lit);
+      lit = l2;
+      i = next;
+      if (stop) {
+        pieces = pieces.append(text_piece(lit)).append(Piece { ...text_piece([]), dir: STOP_DIR });
+        lit = [];
+      }
+      continue;
+    }
+    if (c != 37) {
+      lit = lit.append(c as u8);
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    let flags = "";
+    while (j < n && is_flag(f[j] as i32)) {
+      flags = flags + str_of_byte(f[j] as i32);
+      j += 1;
+    }
+    let width = -1;
+    while (j < n && digit(f[j] as i32)) {
+      width = (if (width < 0) { 0 } else { width }) * 10 + (f[j] as i32 - 48);
+      j += 1;
+    }
+    let prec = -1;
+    if (j < n && f[j] == b'.') {
+      prec = 0;
+      j += 1;
+      while (j < n && digit(f[j] as i32)) {
+        prec = prec * 10 + (f[j] as i32 - 48);
+        j += 1;
+      }
+    }
+    if (j >= n) {
+      if (j == i + 1) {
+        fail("error: % at end of format string");
+      }
+      fail("error: the format directive `%\x00' is reserved for future use");
+    }
+    let d2 = f[j] as i32;
+    if (d2 == 37) {
+      lit = append_range(lit, f, i, j);
+      i = j + 1;
+      continue;
+    }
+    let stop = j + 1;
+    let ok = known_dir(d2);
+    if (time_dir(d2)) {
+      if (j + 1 >= n) {
+        warn("format directive `" + slice_unchecked(f, i, j + 1) + "' should be followed by another character");
+        lit = append_range(lit, f, i, j + 1);
+        i = j + 1;
+        continue;
+      }
+      stop = j + 2;
+      ok = true;
+    }
+    if (!ok) {
+      warn("unrecognized format directive `" + slice_unchecked(f, i, stop) + "'");
+      lit = append_range(lit, f, i, stop);
+      i = stop;
+      continue;
+    }
+    let sub = if (time_dir(d2)) { f[j + 1] as i32 } else { 0 };
+    pieces = pieces.append(text_piece(lit)).append(Piece { text: [], dir: d2, sub: sub, flags: flags, width: width, prec: prec });
+    lit = [];
+    i = stop;
+  }
+  pieces = pieces.append(text_piece(lit));
+  return Fmt { pieces: pieces };
+}
+
+function has_flag(p: Piece, c: string): boolean {
+  return p.flags.contains(c);
+}
+
+function repeat_byte(c: i32, n: i32): string {
+  let h = buf_new(if (n > 0) { n } else { 1 });
+  let i = 0;
+  while (i < n) {
+    buf_push_byte(h, c);
+    i += 1;
+  }
+  let s = take_text(h);
+  return s;
+}
+
+function spaces(n: i32): string {
+  return repeat_byte(32, n);
+}
+
+// A string under the width and the precision of a directive, as %s pads it.
+function pad_text(p: Piece, s0: string): string {
+  if (p.width < 0 && p.prec < 0) {
+    return s0;
+  }
+  let s = s0;
+  if (p.prec >= 0 && s.len() > p.prec) {
+    s = slice_unchecked(s, 0, p.prec) + "";
+  }
+  if (p.width > s.len()) {
+    if (has_flag(p, "-")) {
+      return s + spaces(p.width - s.len());
+    }
+    return spaces(p.width - s.len()) + s;
+  }
+  return s;
+}
+
+// The digits of a number under the rules of %d or %o: the sign, the
+// precision as a least count of digits, and the padding.
+function pad_number(p: Piece, digits0: string, neg: boolean, octal: boolean): string {
+  let digits = digits0;
+  if (p.prec >= 0 && digits.len() < p.prec) {
+    digits = repeat_byte(48, p.prec - digits.len()) + digits;
+  }
+  if (p.prec == 0 && digits == "0") {
+    digits = "";
+  }
+  if (octal && has_flag(p, "#") && (digits.len() == 0 || digits[0] != b'0')) {
+    digits = "0" + digits;
+  }
+  let sign = "";
+  if (neg) {
+    sign = "-";
+  } else if (!octal && has_flag(p, "+")) {
+    sign = "+";
+  } else if (!octal && has_flag(p, " ")) {
+    sign = " ";
+  }
+  let len = sign.len() + digits.len();
+  if (p.width > len) {
+    if (has_flag(p, "-")) {
+      return sign + digits + spaces(p.width - len);
+    }
+    if (has_flag(p, "0") && p.prec < 0) {
+      return sign + repeat_byte(48, p.width - len) + digits;
+    }
+    return spaces(p.width - len) + sign + digits;
+  }
+  return sign + digits;
+}
+
+function octal_text(v: i64): string {
+  if (v == 0i64) {
+    return "0";
+  }
+  let s = "";
+  let x = v;
+  while (x > 0i64) {
+    s = str_of_byte(48 + (x % 8i64) as i32) + s;
+    x = x / 8i64;
+  }
+  return s;
+}
+
+function strip_zeros(s: string): string {
+  let n = s.len();
+  while (n > 0 && s[n - 1] == b'0') {
+    n -= 1;
+  }
+  return slice_unchecked(s, 0, n) + "";
+}
+
+// The digits of `v` with `prec` significant digits, and the exponent of
+// the first one.
+function significant(v: f64, prec: i32): (string, i32) {
+  let ex = 0;
+  let m = v;
+  while (m >= 10.0) {
+    m = m / 10.0;
+    ex += 1;
+  }
+  while (m < 1.0) {
+    m = m * 10.0;
+    ex -= 1;
+  }
+  let k = 1;
+  while (k < prec) {
+    m = m * 10.0;
+    k += 1;
+  }
+  let digits = (m + 0.5) as i64;
+  let limit = 1i64;
+  k = 0;
+  while (k < prec) {
+    limit = limit * 10i64;
+    k += 1;
+  }
+  if (digits >= limit) {
+    digits = digits / 10i64;
+    ex += 1;
+  }
+  return (digits.to_string(), ex);
+}
+
+// %g of a real that is not negative.
+function g_text(v: f64, prec0: i32, alt: boolean): string {
+  let prec = if (prec0 < 0) { 6 } else if (prec0 == 0) { 1 } else { prec0 };
+  if (v == 0.0) {
+    if (alt) {
+      return "0." + repeat_byte(48, prec - 1);
+    }
+    return "0";
+  }
+  let (ds, ex) = significant(v, prec);
+  if (ex < -4 || ex >= prec) {
+    let rest = slice_unchecked(ds, 1, ds.len()) + "";
+    if (!alt) {
+      rest = strip_zeros(rest);
+    }
+    let ax = if (ex < 0) { 0 - ex } else { ex };
+    let es = if (ex < 0) { "e-" } else { "e+" };
+    es = es + (if (ax < 10) { "0" } else { "" }) + ax.to_string();
+    if (rest.len() > 0 || alt) {
+      return slice_unchecked(ds, 0, 1) + "." + rest + es;
+    }
+    return slice_unchecked(ds, 0, 1) + es;
+  }
+  let point = ex + 1;
+  let whole = "0";
+  let frac = "";
+  if (point <= 0) {
+    frac = repeat_byte(48, 0 - point) + ds;
+  } else {
+    whole = slice_unchecked(ds, 0, point) + "";
+    frac = slice_unchecked(ds, point, ds.len()) + "";
+  }
+  if (!alt) {
+    frac = strip_zeros(frac);
+  }
+  if (frac.len() > 0 || alt) {
+    return whole + "." + frac;
+  }
+  return whole;
+}
+
+function pad_real(p: Piece, v: f64): string {
+  let s = g_text(v, p.prec, has_flag(p, "#"));
+  let sign = "";
+  if (has_flag(p, "+")) {
+    sign = "+";
+  } else if (has_flag(p, " ")) {
+    sign = " ";
+  }
+  let len = sign.len() + s.len();
+  if (p.width > len) {
+    if (has_flag(p, "-")) {
+      return sign + s + spaces(p.width - len);
+    }
+    if (has_flag(p, "0")) {
+      return sign + repeat_byte(48, p.width - len) + s;
+    }
+    return spaces(p.width - len) + sign + s;
+  }
+  return sign + s;
+}
+
+// The ten digits that GNU find writes after the seconds of a time: the
+// nanoseconds, then a zero.
+function frac10(nsec: i64): string {
+  let s = nsec.to_string();
+  return repeat_byte(48, 9 - s.len()) + s + "0";
+}
+
+function ctime_text(p: Prog, sec: i64, nsec: i64): string {
+  let head = timefmt.strftime("%a %b %e %H:%M:%S", p.zone, sec, 0i64);
+  return head + "." + frac10(nsec) + timefmt.strftime(" %Y", p.zone, sec, 0i64);
+}
+
+// A time under a letter of %A, %C or %T. The letters are those of the C
+// library's strftime, which does not have the %q and %N of gnulib's.
+function time_text(p: Prog, sec: i64, nsec: i64, k: i32): string {
+  if (k == 64) {
+    return sec.to_string() + "." + frac10(nsec);
+  }
+  if (k == 43) {
+    return timefmt.strftime("%Y-%m-%d+%H:%M:%S", p.zone, sec, 0i64) + "." + frac10(nsec);
+  }
+  if (k == 83) {
+    return timefmt.strftime("%S", p.zone, sec, 0i64) + "." + frac10(nsec);
+  }
+  if (k == 84 || k == 88) {
+    return timefmt.strftime("%H:%M:%S", p.zone, sec, 0i64) + "." + frac10(nsec);
+  }
+  if (k == 113 || k == 78) {
+    return "%" + str_of_byte(k);
+  }
+  return timefmt.strftime("%" + str_of_byte(k), p.zone, sec, 0i64);
+}
+
+function type_letter(m: u32): string {
+  let k = m & S_IFMT;
+  return match (k) {
+    S_IFREG => "f",
+    S_IFDIR => "d",
+    S_IFLNK => "l",
+    S_IFCHR => "c",
+    S_IFBLK => "b",
+    S_IFIFO => "p",
+    S_IFSOCK => "s",
+    S_IFDOOR => "D",
+    _ => "U",
+  };
+}
+
+// %Y: the type of the file a link leads to, L for a loop and N for a
+// link that leads nowhere.
+function followed_letter(own r0: Run): (string, Run) {
+  let r = with_lstat(r0);
+  if (r.e.lhave != ST_OK) {
+    return ("?", r);
+  }
+  if ((r.e.lst.mode & S_IFMT) != S_IFLNK) {
+    return (type_letter(r.e.lst.mode), r);
+  }
+  match (stat(r.e.path)) {
+    Ok(st) => {
+      return (type_letter(st.mode), r);
+    },
+    Err(e) => {
+      let n = errno.of(e);
+      if (n == errno.ELOOP) {
+        return ("L", r);
+      }
+      if (n == errno.ENOENT) {
+        return ("N", r);
+      }
+    }
+  }
+  return ("?", r);
+}
+
+function link_target(path: string): string {
+  match (read_link_bytes(path)) {
+    Ok(b) => {
+      return unsafe { string_from_bytes_unchecked(b) };
+    },
+    Err(_) => {}
+  }
+  return "";
+}
+
+function user_name(own r: Run, uid: u32): (string, Run) {
+  let (name, names) = r.names.user(uid as i64);
+  return (name, Run { ...r, names: names });
+}
+
+function group_name(own r: Run, gid: u32): (string, Run) {
+  let (name, names) = r.names.group(gid as i64);
+  return (name, Run { ...r, names: names });
+}
+
+function fs_type(own r0: Run, dev: i64): (string, Run) {
+  let r = r0;
+  if (!r.have_mounts) {
+    let list: MountEntry[] = [];
+    if let Ok(ms) = mounts() {
+      list = ms;
+    }
+    r = Run { ...r, mounts: list, have_mounts: true };
+  }
+  for m in r.mounts {
+    if (m.dev == dev) {
+      return (m.fstype, r);
+    }
+  }
+  return ("unknown", r);
+}
+
+function sparseness(st: FileStat): f64 {
+  if (st.size == 0i64) {
+    return 1.0;
+  }
+  return (st.blocks * 512i64) as f64 / (st.size as f64);
+}
+
+function number_dir(st: FileStat, c: i32): string {
+  return match (c) {
+    98 => st.blocks.to_string(),
+    107 => ((st.blocks + 1i64) / 2i64).to_string(),
+    115 => st.size.to_string(),
+    105 => st.ino.to_string(),
+    110 => (st.nlink as i64).to_string(),
+    68 => st.dev.to_string(),
+    85 => (st.uid as i64).to_string(),
+    71 => (st.gid as i64).to_string(),
+    _ => "",
+  };
+}
+
+// The text of one directive that needs the stat of the file.
+function stat_dir(p: Prog, own r0: Run, d: Piece): (string, Run) {
+  let r = with_stat(p, r0);
+  let st = r.e.st;
+  let c = d.dir;
+  if (c == 117) {
+    let (u, r2) = user_name(r, st.uid);
+    return (pad_text(d, u), r2);
+  }
+  if (c == 103) {
+    let (g, r3) = group_name(r, st.gid);
+    return (pad_text(d, g), r3);
+  }
+  if (c == 109) {
+    return (pad_number(d, octal_text((st.mode & 4095u32) as i64), false, true), r);
+  }
+  if (c == 77) {
+    return (pad_text(d, mode_string(st.mode)), r);
+  }
+  if (c == 83) {
+    return (pad_real(d, sparseness(st)), r);
+  }
+  if (c == 70) {
+    let (t, r4) = fs_type(r, st.dev);
+    return (pad_text(d, t), r4);
+  }
+  if (c == 97 || c == 99 || c == 116) {
+    let which = if (c == 97) { TIME_A } else if (c == 99) { TIME_C } else { TIME_M };
+    let (sec, nsec) = time_of(st, which);
+    return (pad_text(d, ctime_text(p, sec, nsec)), r);
+  }
+  if (c == 66) {
+    return (pad_text(d, ""), r);
+  }
+  if (c == 65 || c == 67 || c == 84) {
+    let which2 = if (c == 65) { TIME_A } else if (c == 67) { TIME_C } else { TIME_M };
+    let (sec2, nsec2) = time_of(st, which2);
+    return (pad_text(d, time_text(p, sec2, nsec2, d.sub)), r);
+  }
+  return (pad_text(d, number_dir(st, c)), r);
+}
+
+function name_dir(p: Prog, own r: Run, d: Piece): (string, Run) {
+  let c = d.dir;
+  let e = r.e;
+  if (c == 121) {
+    let (t, r2) = type_of_entry(p, r);
+    return (pad_text(d, t), r2);
+  }
+  if (c == 89) {
+    let (t2, r3) = followed_letter(r);
+    return (pad_text(d, t2), r3);
+  }
+  if (c == 108) {
+    let r4 = with_lstat(r);
+    if (r4.e.lhave == ST_OK && (r4.e.lst.mode & S_IFMT) == S_IFLNK) {
+      return (pad_text(d, link_target(e.path)), r4);
+    }
+    return (pad_text(d, ""), r4);
+  }
+  if (c == 90) {
+    match (selinux.file_context(e.path, follows(p, e))) {
+      Ok(ctx) => {
+        return (pad_text(d, ctx), r);
+      },
+      Err(err) => {
+        let r5 = report(r, "getfilecon failed: " + q(e.path) + ": " + why(err));
+        return (pad_text(d, ""), r5);
+      }
+    }
+  }
+  return stat_dir(p, r, d);
+}
+
+function directive(p: Prog, own r: Run, d: Piece): (string, Run) {
+  let c = d.dir;
+  let e = r.e;
+  if (c == 112) {
+    return (pad_text(d, e.path), r);
+  }
+  if (c == 102) {
+    return (pad_text(d, base_name(e.path)), r);
+  }
+  if (c == 104) {
+    return (pad_text(d, dir_part(e.path)), r);
+  }
+  if (c == 80) {
+    return (pad_text(d, below_top(e)), r);
+  }
+  if (c == 72) {
+    return (pad_text(d, e.top), r);
+  }
+  if (c == 100) {
+    return (pad_number(d, e.depth.to_string(), false, false), r);
+  }
+  return name_dir(p, r, d);
+}
+
+// %y: the type of the entry as the walk sees it, through a link under -L.
+function type_of_entry(p: Prog, own r0: Run): (string, Run) {
+  let (t, r) = type_of(p, r0);
+  if (t == 0u32) {
+    return ("U", r);
+  }
+  return (type_letter(t), r);
+}
+
+function perm_char(bits: i32, mask: i32, c: i32): i32 {
+  if ((bits & mask) != 0) {
+    return c;
+  }
+  return 45;
+}
+
+function exec_char(x: i32, special: i32, letter: i32): i32 {
+  if (special != 0) {
+    if (x != 0) {
+      return letter;
+    }
+    return letter - 32;
+  }
+  if (x != 0) {
+    return 120;
+  }
+  return 45;
+}
+
+function mode_string(m: u32): string {
+  let h = buf_new(10);
+  let t = type_letter(m);
+  buf_push_byte(h, if (t == "f") { 45 } else if (t == "U") { 63 } else { t[0] as i32 });
+  let bits = m as i32;
+  buf_push_byte(h, perm_char(bits, 256, 114));
+  buf_push_byte(h, perm_char(bits, 128, 119));
+  buf_push_byte(h, exec_char(bits & 64, bits & 2048, 115));
+  buf_push_byte(h, perm_char(bits, 32, 114));
+  buf_push_byte(h, perm_char(bits, 16, 119));
+  buf_push_byte(h, exec_char(bits & 8, bits & 1024, 115));
+  buf_push_byte(h, perm_char(bits, 4, 114));
+  buf_push_byte(h, perm_char(bits, 2, 119));
+  buf_push_byte(h, exec_char(bits & 1, bits & 512, 116));
+  let s = take_text(h);
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// Output
+
+// An output of the run. Standard output keeps a large buffer, a file keeps
+// the buffer of stdio, and standard error has none. `err` keeps the first
+// error of a write.
+struct Out { w: Writer, h: usize, kind: i32, name: string, err: Cell[Option[IoError]] }
+
+const OUT_STDOUT: i32 = 0;
+
+const OUT_STDERR: i32 = 1;
+
+const OUT_FILE: i32 = 2;
+
+const STDOUT_CHUNK: i32 = 65536;
+
+const FILE_BLOCK: i32 = 4096;
+
+// Writes the first `n` bytes of the buffer of an output and keeps the rest.
+function write_out(o: Out, n: i32): void {
+  if (n == 0) {
+    return;
+  }
+  let bytes = buf_take_bytes(o.h);
+  if (n < bytes.len()) {
+    buf_push_bytes_range(o.h, bytes, n, bytes.len());
+  }
+  if let Some(_) = o.err.get() {
+    return;
+  }
+  let res = if (n < bytes.len()) { o.w.write_bytes(__bytes_range(bytes, 0, n)) } else { o.w.write_bytes(bytes) };
+  if let Err(e) = res {
+    o.err.set(Some(e));
+  }
+}
+
+function flush_stdout(outs: Out[]): void {
+  write_out(outs[0], buf_len(outs[0].h));
+}
+
+function settle(o: Out): void {
+  let n = buf_len(o.h);
+  if (o.kind == OUT_STDERR) {
+    write_out(o, n);
+  } else if (o.kind == OUT_STDOUT) {
+    if (n >= STDOUT_CHUNK) {
+      write_out(o, n);
+    }
+  } else if (n > FILE_BLOCK) {
+    write_out(o, n / FILE_BLOCK * FILE_BLOCK);
+  }
+}
+
+function emit(r: Run, dest: i32, s: string): void {
+  let o = r.outs[dest];
+  buf_push(o.h, s);
+  settle(o);
+}
+
+function emit_line(r: Run, dest: i32, s: string, end: i32): void {
+  let o = r.outs[dest];
+  buf_push(o.h, s);
+  buf_push_byte(o.h, end);
+  settle(o);
+}
+
+// The bytes of a name in -ls: C escapes for control bytes, and a backslash
+// before a space, a quote and a backslash.
+function ls_quote(s: string): string {
+  let h = buf_new(s.len() + 8);
+  let i = 0;
+  while (i < s.len()) {
+    let c = s[i] as i32;
+    if (c == 32 || c == 34 || c == 92) {
+      buf_push_byte(h, 92);
+      buf_push_byte(h, c);
+    } else if (c >= 33 && c < 127) {
+      buf_push_byte(h, c);
+    } else {
+      let letter = match (c) {
+        8 => 98,
+        9 => 116,
+        10 => 110,
+        12 => 102,
+        13 => 114,
+        _ => 0,
+      };
+      buf_push_byte(h, 92);
+      if (letter > 0) {
+        buf_push_byte(h, letter);
+      } else {
+        buf_push_byte(h, 48 + c / 64);
+        buf_push_byte(h, 48 + c / 8 % 8);
+        buf_push_byte(h, 48 + c % 8);
+      }
+    }
+    i += 1;
+  }
+  let t = take_text(h);
+  return t;
+}
+
+function left(s: string, w: i32): string {
+  if (s.len() >= w) {
+    return s;
+  }
+  return s + spaces(w - s.len());
+}
+
+function right(s: string, w: i32): string {
+  if (s.len() >= w) {
+    return s;
+  }
+  return spaces(w - s.len()) + s;
+}
+
+function dev_major(rdev: i64): i64 {
+  return rdev >> 8i64 & 4095i64 | rdev >> 32i64 & -4096i64;
+}
+
+function dev_minor(rdev: i64): i64 {
+  return rdev & 255i64 | rdev >> 12i64 & -256i64;
+}
+
+// The owner and the group of -ls. A name pads to the width of its column;
+// an id that has no name pads to 8. GNU widens the columns after an id, the
+// owner's to one more than the id, and the group's to the id.
+function ls_owner(own r0: Run, st: FileStat): (string, Run) {
+  let (u, r) = user_name(r0, st.uid);
+  let (g, r2) = group_name(r, st.gid);
+  let uw = r2.user_width;
+  let gw = r2.group_width;
+  let us = "";
+  if (u == (st.uid as i64).to_string() && pwdb.user_name(st.uid as i64).is_none()) {
+    us = left(u, 8) + " ";
+    let need = if (u.len() > 8) { u.len() + 1 } else { 9 };
+    if (need > uw) {
+      uw = need;
+    }
+  } else {
+    us = left(u, uw) + " ";
+  }
+  let gs = "";
+  if (g == (st.gid as i64).to_string() && pwdb.group_name(st.gid as i64).is_none()) {
+    gs = left(g, 8) + " ";
+    if (g.len() > gw) {
+      gw = g.len();
+    }
+  } else {
+    gs = left(g, gw) + " ";
+  }
+  return (us + gs, Run { ...r2, user_width: uw, group_width: gw });
+}
+
+function ls_line(p: Prog, own r0: Run): (string, Run) {
+  let r = with_stat(p, r0);
+  let st = r.e.st;
+  let (owner, r3) = ls_owner(r, st);
+  let kind = st.mode & S_IFMT;
+  let size = st.size.to_string();
+  if (kind == S_IFCHR || kind == S_IFBLK) {
+    size = right(dev_major(st.rdev).to_string(), 3) + ", " + right(dev_minor(st.rdev).to_string(), 3);
+  }
+  let k = (st.blocks * 512i64 + 1023i64) / 1024i64;
+  let recent = st.mtime >= p.o.now - 15778476i64 && st.mtime <= p.o.now;
+  let datefmt = if (recent) { "%b %e %H:%M" } else { "%b %e  %Y" };
+  let line = right(st.ino.to_string(), 9) + " " + right(k.to_string(), 6) + " " + mode_string(st.mode) + " " + right((st.nlink as i64).to_string(), 3) + " " + owner + right(size, 8) + " " + timefmt.strftime(datefmt, p.zone, st.mtime, 0i64) + " " + ls_quote(r3.e.path);
+  if (kind == S_IFLNK) {
+    line = line + " -> " + ls_quote(link_target(r3.e.path));
+  }
+  return (line + "\n", r3);
+}
+
+function run_format(p: Prog, own r0: Run, f: Fmt, dest: i32): Run {
+  let r = r0;
+  let h = r.outs[dest].h;
+  for piece in f.pieces {
+    if (piece.dir == 0) {
+      buf_push_bytes_range(h, piece.text, 0, piece.text.len());
+      continue;
+    }
+    if (piece.dir == STOP_DIR) {
+      break;
+    }
+    let (s, r2) = directive(p, r, piece);
+    r = r2;
+    buf_push(h, s);
+  }
+  settle(r.outs[dest]);
+  return r;
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation
+
+function set_ok(own r: Run, ok: boolean): Run {
+  return Run { ...r, ok: ok };
+}
+
+function eval(p: Prog, i: i32, own r: Run): Run {
+  let n = p.nodes[i];
+  let k = n.kind;
+  if (k == N_AND) {
+    let r1 = eval(p, n.l, r);
+    if (!r1.ok || r1.quit) {
+      return r1;
+    }
+    return eval(p, n.r, r1);
+  }
+  if (k == N_OR) {
+    let r2 = eval(p, n.l, r);
+    if (r2.ok || r2.quit) {
+      return r2;
+    }
+    return eval(p, n.r, r2);
+  }
+  if (k == N_NOT) {
+    let r3 = eval(p, n.l, r);
+    let flipped = !r3.ok;
+    return set_ok(r3, flipped);
+  }
+  if (k == N_COMMA) {
+    let r4 = eval(p, n.l, r);
+    if (r4.quit) {
+      return r4;
+    }
+    return eval(p, n.r, r4);
+  }
+  if (k >= A_PRINT) {
+    return eval_action(p, n, r);
+  }
+  return eval_test(p, n, r);
+}
+
+function eval_name(p: Prog, n: Node, own r: Run): Run {
+  let e = r.e;
+  if (n.kind == P_NAME) {
+    let (lo, hi) = name_span(e.path, e.base);
+    if (hi == e.path.len()) {
+      return set_ok(r, glob_match(p.globs[n.a], e.path, lo));
+    }
+    let name = slice_unchecked(e.path, lo, hi) + "";
+    return set_ok(r, glob_match(p.globs[n.a], name, 0));
+  }
+  if (n.kind == P_PATH) {
+    return set_ok(r, glob_match(p.globs[n.a], e.path, 0));
+  }
+  if (n.kind == P_REGEX) {
+    let m = p.rxs[n.a].exec(e.path);
+    return set_ok(r, m.matched && m.end == e.path.len());
+  }
+  let r2 = with_lstat(r);
+  if (r2.e.lhave != ST_OK || (r2.e.lst.mode & S_IFMT) != S_IFLNK) {
+    return set_ok(r2, false);
+  }
+  if (r2.e.have == ST_OK && (r2.e.st.mode & S_IFMT) != S_IFLNK && follows(p, r2.e)) {
+    return set_ok(r2, false);
+  }
+  return set_ok(r2, glob_match(p.globs[n.a], link_target(e.path), 0));
+}
+
+function type_in(set: i64, kind: u32): boolean {
+  if (kind == 0u32) {
+    return false;
+  }
+  return (set & 1i64 << (kind >> 12u32) as i64) != 0i64;
+}
+
+// -xtype: the type through a link when the walk does not follow it, and
+// the type of the link itself when it does.
+function eval_xtype(p: Prog, n: Node, own r: Run): Run {
+  if (follows(p, r.e)) {
+    let r1 = with_lstat(r);
+    if (r1.e.lhave != ST_OK) {
+      return set_ok(r1, false);
+    }
+    let hit = type_in(n.num, r1.e.lst.mode & S_IFMT);
+    return set_ok(r1, hit);
+  }
+  let (t, r2) = type_of(p, r);
+  if (t != S_IFLNK) {
+    return set_ok(r2, type_in(n.num, t));
+  }
+  match (stat(r2.e.path)) {
+    Ok(st) => {
+      return set_ok(r2, type_in(n.num, st.mode & S_IFMT));
+    },
+    Err(e) => {
+      if (errno.of(e) == errno.ELOOP) {
+        let msg = q(r2.e.path) + ": " + why(e);
+        let r3 = report(r2, msg);
+        return set_ok(r3, false);
+      }
+    }
+  }
+  return set_ok(r2, type_in(n.num, S_IFLNK));
+}
+
+function is_empty_dir(path: string): boolean {
+  match (read_dir_bytes(path)) {
+    Ok(names) => {
+      return names.len() == 0;
+    },
+    Err(_) => {}
+  }
+  return false;
+}
+
+function time_after(sec: i64, nsec: i64, rs: i64, rn: i64): boolean {
+  return sec > rs || sec == rs && nsec > rn;
+}
+
+function eval_age(n: Node, st: FileStat): boolean {
+  let (sec, nsec) = time_of(st, n.a);
+  if (n.cmp == CMP_LT) {
+    return time_after(sec, nsec, n.num, n.num2);
+  }
+  if (n.cmp == CMP_GT) {
+    return time_after(n.num, n.num2, sec, nsec);
+  }
+  return time_after(sec, nsec, n.num, n.num2) && !time_after(sec, nsec, n.num + n.b as i64, n.num2);
+}
+
+// A file accessed before its status changed was not used after it.
+function eval_used(n: Node, st: FileStat): boolean {
+  let sec = st.atime - st.ctime;
+  let nsec = st.atime_nsec - st.ctime_nsec;
+  if (nsec < 0i64) {
+    nsec += 1000000000i64;
+    sec -= 1i64;
+  }
+  if (sec < 0i64) {
+    return false;
+  }
+  if (n.cmp == CMP_LT) {
+    return time_after(n.num, n.num2, sec, nsec);
+  }
+  if (n.cmp == CMP_GT) {
+    return time_after(sec, nsec, n.num, n.num2);
+  }
+  return time_after(n.num, n.num2, sec, nsec) && !time_after(n.num - DAY, n.num2, sec, nsec);
+}
+
+function eval_perm(n: Node, m: u32): boolean {
+  let have = (m & 4095u32) as i64;
+  if (n.a == 0) {
+    return have == n.num;
+  }
+  if (n.a == 1) {
+    return (have & n.num) == n.num;
+  }
+  return n.num == 0i64 || (have & n.num) != 0i64;
+}
+
+function size_units(size: i64, unit: i64): i64 {
+  if (unit == 1i64) {
+    return size;
+  }
+  return (size + unit - 1i64) / unit;
+}
+
+function eval_stat_test(p: Prog, n: Node, own r0: Run): Run {
+  let r = with_stat(p, r0);
+  if (r.e.have != ST_OK) {
+    return set_ok(r, false);
+  }
+  let st = r.e.st;
+  let k = n.kind;
+  if (k == P_SIZE) {
+    return set_ok(r, compare(n.cmp, size_units(st.size, n.num2), n.num));
+  }
+  if (k == P_LINKS) {
+    return set_ok(r, compare(n.cmp, st.nlink as i64, n.num));
+  }
+  if (k == P_INUM) {
+    return set_ok(r, compare(n.cmp, st.ino, n.num));
+  }
+  if (k == P_UID) {
+    return set_ok(r, compare(n.cmp, st.uid as i64, n.num));
+  }
+  if (k == P_GID) {
+    return set_ok(r, compare(n.cmp, st.gid as i64, n.num));
+  }
+  if (k == P_PERM) {
+    return set_ok(r, eval_perm(n, st.mode));
+  }
+  if (k == P_NEWER) {
+    let (sec, nsec) = time_of(st, n.a);
+    return set_ok(r, time_after(sec, nsec, n.num, n.num2));
+  }
+  if (k == P_AGE) {
+    return set_ok(r, eval_age(n, st));
+  }
+  if (k == P_USED) {
+    return set_ok(r, eval_used(n, st));
+  }
+  if (k == P_SAMEFILE) {
+    return set_ok(r, st.dev == n.num && st.ino == n.num2);
+  }
+  if (k == P_EMPTY) {
+    let kind = st.mode & S_IFMT;
+    if (kind == S_IFDIR) {
+      let empty = is_empty_dir(r.e.path);
+      return set_ok(r, empty);
+    }
+    return set_ok(r, kind == S_IFREG && st.size == 0i64);
+  }
+  if (k == P_NOUSER) {
+    let (u, r2) = user_name(r, st.uid);
+    return set_ok(r2, u == (st.uid as i64).to_string() && pwdb.user_by_uid(st.uid as i64).is_none());
+  }
+  if (k == P_NOGROUP) {
+    let (g, r3) = group_name(r, st.gid);
+    return set_ok(r3, g == (st.gid as i64).to_string() && pwdb.group_name(st.gid as i64).is_none());
+  }
+  if (k == P_FSTYPE) {
+    let (t, r4) = fs_type(r, st.dev);
+    return set_ok(r4, t == n.s);
+  }
+  return set_ok(r, false);
+}
+
+function eval_test(p: Prog, n: Node, own r: Run): Run {
+  let k = n.kind;
+  if (k == P_NAME || k == P_PATH || k == P_REGEX || k == P_LNAME) {
+    return eval_name(p, n, r);
+  }
+  if (k == P_TYPE) {
+    let (t, r2) = type_of(p, r);
+    return set_ok(r2, type_in(n.num, t));
+  }
+  if (k == P_TRUE) {
+    return set_ok(r, true);
+  }
+  if (k == P_FALSE) {
+    return set_ok(r, false);
+  }
+  if (k == P_XTYPE) {
+    return eval_xtype(p, n, r);
+  }
+  if (k == P_ACCESS) {
+    if (target_os() == "wasi") {
+      return set_ok(r, false);
+    } else {
+      let ok = false;
+      if let Ok(_) = access(r.e.path, n.a) {
+        ok = true;
+      }
+      return set_ok(r, ok);
+    }
+  }
+  if (k == P_CONTEXT) {
+    let ok2 = false;
+    if let Ok(ctx) = selinux.file_context(r.e.path, follows(p, r.e)) {
+      ok2 = fnmatch.fnmatch(n.s, ctx);
+    }
+    return set_ok(r, ok2);
+  }
+  return eval_stat_test(p, n, r);
+}
+
+function eval_delete(own r: Run): Run {
+  let e = r.e;
+  if (e.path == "." || base_name(e.path) == ".") {
+    return set_ok(r, true);
+  }
+  let is_dir = e.dtype == S_IFDIR;
+  if (e.dtype == 0u32) {
+    let r1 = with_lstat(r);
+    is_dir = r1.e.lhave == ST_OK && (r1.e.lst.mode & S_IFMT) == S_IFDIR;
+    r = r1;
+  }
+  let res = if (is_dir) { remove_dir(e.path) } else { remove_file(e.path) };
+  match (res) {
+    Ok(_) => {
+      return set_ok(r, true);
+    },
+    Err(err) => {
+      let r2 = report(r, "cannot delete " + q(e.path) + ": " + why(err));
+      return set_ok(r2, false);
+    }
+  }
+  return set_ok(r, false);
+}
+
+function eval_action(p: Prog, n: Node, own r: Run): Run {
+  let k = n.kind;
+  if (k == A_PRINT) {
+    emit_line(r, out_dest(p, n.b), r.e.path, 10);
+    return set_ok(r, true);
+  }
+  if (k == A_PRINT0) {
+    emit_line(r, out_dest(p, n.b), r.e.path, 0);
+    return set_ok(r, true);
+  }
+  if (k == A_PRINTF) {
+    let r3 = run_format(p, r, p.fmts[n.a], out_dest(p, n.b));
+    return set_ok(r3, true);
+  }
+  if (k == A_LS) {
+    let (line, r4) = ls_line(p, r);
+    emit(r4, out_dest(p, n.b), line);
+    return set_ok(r4, true);
+  }
+  if (k == A_PRUNE) {
+    if (p.o.depth_first) {
+      return set_ok(r, true);
+    }
+    return Run { ...r, prune: true, ok: true };
+  }
+  if (k == A_QUIT) {
+    return Run { ...r, quit: true, ok: true };
+  }
+  if (k == A_DELETE) {
+    return eval_delete(r);
+  }
+  return eval_exec(p, n.a, r);
+}
+
+// The output of an index of the parser: 0 is standard output, and the
+// others follow it. /dev/stdout and /dev/stderr are the streams themselves.
+function out_dest(p: Prog, k: i32): i32 {
+  return k;
+}
+
+// ---------------------------------------------------------------------------
+// -exec and its kin
+
+function flush_out(own r: Run): Run {
+  flush_stdout(r.outs);
+  return r;
+}
+
+// The directory of -execdir, and the name of the file in it.
+function exec_dir(e: Ent): (string, string) {
+  let (lo, hi) = name_span(e.path, e.base);
+  let name = slice_unchecked(e.path, lo, hi) + "";
+  if (e.is_top) {
+    let b = base_name(e.path);
+    if (lo == 0) {
+      return (".", "./" + b);
+    }
+    let d = slice_unchecked(e.path, 0, lo) + "";
+    return (d, "./" + b);
+  }
+  return (slice_unchecked(e.path, 0, e.base) + "", "./" + name);
+}
+
+function exec_outcome(own r: Run, spec: cmdline.Spec, res: cmdline.Outcome): Run {
+  if (res.errno != 0) {
+    let keep = r.status;
+    let r1 = report(r, q(spec.words[0]) + ": " + gnu.exec_errno_text(res.errno));
+    return Run { ...r1, status: if (spec.plus) { 1 } else { keep } };
+  }
+  if (res.signal != 0) {
+    let keep2 = r.status;
+    let r2 = report(r, q(spec.words[0]) + " terminated by signal " + res.signal.to_string());
+    return Run { ...r2, status: if (spec.plus) { 1 } else { keep2 } };
+  }
+  if (res.code != 0 && spec.plus) {
+    return Run { ...r, status: 1 };
+  }
+  return r;
+}
+
+function eval_exec(p: Prog, x: i32, own r0: Run): Run {
+  let spec = p.execs[x];
+  let e = r0.e;
+  let dir = "";
+  let arg = e.path;
+  if (spec.dir) {
+    let (d, a) = exec_dir(e);
+    dir = d;
+    arg = a;
+  }
+  if (spec.plus) {
+    let r1 = add_to_batch(r0, x, spec, dir, arg);
+    return set_ok(r1, true);
+  }
+  let argv = cmdline.substitute(spec.words, arg);
+  let r = flush_out(r0);
+  if (spec.ask) {
+    if (!cmdline.ask(argv, arg)) {
+      return set_ok(r, false);
+    }
+  }
+  let res = cmdline.run(argv, dir, spec.ask);
+  let r2 = exec_outcome(r, spec, res);
+  return set_ok(r2, res.errno == 0 && res.signal == 0 && res.code == 0);
+}
+
+function add_to_batch(own r0: Run, x: i32, spec: cmdline.Spec, dir: string, arg: string): Run {
+  let r = r0;
+  let b = r.batches[x];
+  if (b.args.len() > 0 && (b.dir != dir || !cmdline.fits(b, arg))) {
+    r = run_batch(r, x, spec);
+    b = r.batches[x];
+  }
+  let nb = cmdline.batch_add(b, arg, dir);
+  let (_, kept) = r.batches.swap_at(x, nb);
+  return Run { ...r, batches: kept };
+}
+
+function run_batch(own r0: Run, x: i32, spec: cmdline.Spec): Run {
+  let b = r0.batches[x];
+  if (b.args.len() == 0) {
+    return r0;
+  }
+  let r = flush_out(r0);
+  let argv = cmdline.batch_argv(spec, b);
+  let res = cmdline.run(argv, b.dir, false);
+  let r2 = exec_outcome(r, spec, res);
+  let (_, kept) = r2.batches.swap_at(x, cmdline.batch_new(spec));
+  return Run { ...r2, batches: kept };
+}
+
+function run_batches(p: Prog, own r0: Run): Run {
+  let r = r0;
+  let x = 0;
+  while (x < p.execs.len()) {
+    if (p.execs[x].plus) {
+      r = run_batch(r, x, p.execs[x]);
+    }
+    x += 1;
+  }
+  return r;
+}
+
+// ---------------------------------------------------------------------------
+// The walk
+
+struct Anc { dev: i64, ino: i64, path: string }
+
+struct Walker { anc: Anc[], top_dev: i64 }
+
+function eval_entry(p: Prog, own r: Run, e: Ent): Run {
+  let r1 = Run { ...r, e: e, prune: false };
+  return eval(p, p.root, r1);
+}
+
+// The entries of a directory in the order of the walk. Names that are not
+// UTF-8 come from the byte listing, without their type.
+function list_dir(path: string): Result[DirEntry[], IoError] {
+  match (read_dir_ino(path)) {
+    Ok(es) => {
+      return Ok(es);
+    },
+    Err(e) => {
+      if (errno.of(e) != errno.EILSEQ) {
+        match (e) {
+          InvalidUtf8(_) => {},
+          _ => {
+            return Err(e);
+          }
+        }
+      }
+    }
+  }
+  let names = read_dir_bytes(path)?;
+  let out: DirEntry[] = [];
+  for b in names {
+    out = out.append(DirEntry { name: unsafe { string_from_bytes_unchecked(b) }, ino: 0i64, kind: 0u32 });
+  }
+  return Ok(out);
+}
+
+// gnulib's fts sorts each batch of more than SORT_THRESHOLD entries by inode
+// number, except on file systems where the order does not matter.
+function fts_order(path: string, es: DirEntry[]): DirEntry[] {
+  if (es.len() <= SORT_THRESHOLD) {
+    return es;
+  }
+  match (statfs(path)) {
+    Ok(fs) => {
+      let t = fs.fs_type;
+      if (t == 16914836i64 || t == 26985i64 || t == 4283649346i64) {
+        return es;
+      }
+    },
+    Err(_) => {}
+  }
+  let out: DirEntry[] = [];
+  let lo = 0;
+  while (lo < es.len()) {
+    let hi = lo + READ_BATCH;
+    if (hi > es.len()) {
+      hi = es.len();
+    }
+    let part = es.drop(lo).take(hi - lo);
+    if (part.len() > SORT_THRESHOLD) {
+      part = cmp.sort_by_key(part, (d: DirEntry): i64 => d.ino);
+    }
+    out = out.concat(part);
+    lo = hi;
+  }
+  return out;
+}
+
+function child_ent(parent: Ent, d: DirEntry): Ent {
+  let path = join(parent.path, d.name);
+  return Ent { path: path, base: path.len() - d.name.len(), depth: parent.depth + 1, dtype: d.kind, st: parent.st, have: ST_NONE, lst: parent.st, lhave: ST_NONE, top: parent.top, is_top: false };
+}
+
+// Whether the walk goes into the entry, and its stat for the check of
+// loops and of -xdev.
+function is_dir_entry(p: Prog, own r: Run): (boolean, Run) {
+  let (t, r2) = type_of(p, r);
+  return (t == S_IFDIR, r2);
+}
+
+function walk_children(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
+  let r = r0;
+  let listed = list_dir(dir.path);
+  let es: DirEntry[] = [];
+  match (listed) {
+    Ok(list) => {
+      es = fts_order(dir.path, list);
+    },
+    Err(e) => {
+      return report(r, q(dir.path) + ": " + why(e));
+    }
+  }
+  for d in es {
+    r = visit(p, r, w, child_ent(dir, d));
+    if (r.quit) {
+      return r;
+    }
+  }
+  return r;
+}
+
+function loop_of(w: Walker, st: FileStat): i32 {
+  let i = 0;
+  while (i < w.anc.len()) {
+    if (w.anc[i].dev == st.dev && w.anc[i].ino == st.ino) {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+// The stat of an entry under -L. A loop of links is an error, and the
+// entry is not evaluated.
+function follow_check(p: Prog, own r: Run, e: Ent): (boolean, Run) {
+  if (!follows(p, e) || e.have != ST_NONE) {
+    return (true, Run { ...r, e: e });
+  }
+  let got: (FileStat, i32, IoError) = stat_entry(true, e.path);
+  if (got.1 == ST_FAILED) {
+    return (false, report(r, q(e.path) + ": " + why(got.2)));
+  }
+  return (true, Run { ...r, e: Ent { ...e, st: got.0, have: ST_OK } });
+}
+
+function visit(p: Prog, own r0: Run, w: Walker, e0: Ent): Run {
+  let (fine, r) = follow_check(p, r0, e0);
+  if (!fine) {
+    return r;
+  }
+  let (is_dir, r1) = is_dir_entry(p, r);
+  r = r1;
+  let e = r.e;
+  let w2 = w;
+  if (is_dir) {
+    let r2 = with_stat(p, r);
+    r = r2;
+    e = r.e;
+    if (e.have == ST_OK) {
+      let at = loop_of(w, e.st);
+      if (at >= 0) {
+        return report(r, "File system loop detected; " + q(e.path) + " is part of the same file system loop as " + q(w.anc[at].path) + ".");
+      }
+      w2 = Walker { ...w, anc: w.anc.append(Anc { dev: e.st.dev, ino: e.st.ino, path: e.path }) };
+    }
+  }
+  let evaluated = e.depth >= p.o.mindepth;
+  let descend = is_dir && e.depth < p.o.maxdepth;
+  if (descend && p.o.xdev && e.have == ST_OK && e.st.dev != w.top_dev) {
+    descend = false;
+  }
+  if (!p.o.depth_first && evaluated) {
+    r = eval_entry(p, r, e);
+    if (r.quit) {
+      return r;
+    }
+    if (r.prune) {
+      descend = false;
+    }
+  }
+  if (descend) {
+    r = walk_children(p, r, w2, e);
+    if (r.quit) {
+      return r;
+    }
+  }
+  if (p.o.depth_first && evaluated) {
+    r = eval_entry(p, r, e);
+  }
+  return r;
+}
+
+function top_ent(path: string): Ent {
+  let base = path.len();
+  while (base > 0 && path[base - 1] == b'/') {
+    base -= 1;
+  }
+  while (base > 0 && path[base - 1] != b'/') {
+    base -= 1;
+  }
+  return Ent { path: path, base: base, depth: 0, dtype: 0u32, st: zero_stat(), have: ST_NONE, lst: zero_stat(), lhave: ST_NONE, top: path, is_top: true };
+}
+
+function walk_top(p: Prog, own r: Run, path: string): Run {
+  let e = top_ent(path);
+  let got: (FileStat, i32, IoError) = stat_entry(follows(p, e), path);
+  if (got.1 == ST_FAILED) {
+    return report(r, q(path) + ": " + why(got.2));
+  }
+  let e2 = Ent { ...e, st: got.0, have: ST_OK };
+  if ((got.0.mode & S_IFMT) != S_IFDIR && path.len() > 0 && path[path.len() - 1] == b'/') {
+    return report(r, q(path) + ": Not a directory");
+  }
+  let w = Walker { anc: [], top_dev: got.0.dev };
+  return visit(p, r, w, e2);
+}
+
+// ---------------------------------------------------------------------------
+// The command line
+
+function opts_new(): Opts {
+  let ms = now_unix_ms();
+  let ns = now_ns();
+  return Opts { follow: FOLLOW_NEVER, maxdepth: 2147483647, mindepth: 0, depth_first: false, xdev: false, warn: false, ignore_race: false, regextype: RX_EMACS, now: ns / 1000000000i64, now_nsec: ns % 1000000000i64, daystart: false, files0: "", has_files0: false, delete: false, prune: false, explicit_depth: false };
+}
+
+// The options before the paths: -H, -L, -P, -D and -O.
+function leading_options(argv: string[], own o: Opts): (i32, Opts) {
+  let i = 1;
+  while (i < argv.len()) {
+    let a = argv[i];
+    if (a == "-H") {
+      o = Opts { ...o, follow: FOLLOW_ARGS };
+    } else if (a == "-L") {
+      o = Opts { ...o, follow: FOLLOW_ALL };
+    } else if (a == "-P") {
+      o = Opts { ...o, follow: FOLLOW_NEVER };
+    } else if (a == "-D") {
+      if (i + 1 >= argv.len()) {
+        gnu.error("Missing argument after the -D option.");
+        gnu.try_help_in("findutils", 1);
+      }
+      fail("this port does not have the option '-D'");
+    } else if (a.len() >= 2 && a[0] == b'-' && a[1] == b'O') {
+      optimisation_level(a);
+    } else if (a == "--") {
+      return (i + 1, o);
+    } else {
+      return (i, o);
+    }
+    i += 1;
+  }
+  return (i, o);
+}
+
+// -O: GNU's levels go up to 65535. This port evaluates every level in the
+// order of the command line.
+function optimisation_level(a: string): void {
+  if (a.len() == 2) {
+    fail("The -O option must be immediately followed by a decimal integer");
+  }
+  if (!digit(a[2] as i32)) {
+    fail("Please specify a decimal number immediately after -O");
+  }
+  let end = 2;
+  while (end < a.len() && digit(a[end] as i32)) {
+    end += 1;
+  }
+  let text = slice_unchecked(a, 2, a.len()) + "";
+  if (end < a.len()) {
+    fail("Invalid optimisation level " + text);
+  }
+  if (decimal(a, 2, a.len(), 65535i64) < 0i64) {
+    fail("Optimisation level " + text + " is too high.  If you want to find files very quickly, consider using GNU locate.");
+  }
+}
+
+function starts_expression(a: string): boolean {
+  if (a.len() >= 2 && a[0] == b'-') {
+    return true;
+  }
+  return a == "(" || a == "!";
+}
+
+function read_files0(f: string): string[] {
+  let data: u8[] = [];
+  if (f == "-") {
+    let rd = stdin();
+    loop {
+      match (rd.read_chunk_bytes(65536)) {
+        Ok(chunk) => {
+          if (chunk.len() == 0) {
+            break;
+          }
+          data = data.concat(chunk);
+        },
+        Err(e) => {
+          fail("cannot read file names from standard input: " + why(e));
+        }
+      }
+    }
+  } else {
+    match (read_file_bytes(f)) {
+      Ok(b) => {
+        data = b;
+      },
+      Err(e) => {
+        fail("cannot open " + q(f) + " for reading: " + why(e));
+      }
+    }
+  }
+  let out: string[] = [];
+  let start = 0;
+  let i = 0;
+  while (i <= data.len()) {
+    if (i == data.len() || data[i] == 0u8) {
+      if (i > start) {
+        out = out.append(unsafe { string_from_bytes_range_unchecked(data, start, i) });
+      } else if (i < data.len()) {
+        fail("invalid zero-length file name");
+      }
+      start = i + 1;
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function open_outputs(outs: OutSpec[]): io_buffered.BufWriter[] {
+  let ws: io_buffered.BufWriter[] = [];
+  for o in outs {
+    ws = ws.append(io_buffered.buf_writer_new(stderr(), 1));
+  }
+  return ws;
+}
+
+function main(): i32 {
+  let argv = args();
+  let o = opts_new();
+  if (stdin().isatty()) {
+    o = Opts { ...o, warn: true };
+  }
+  let (first, o2) = leading_options(argv, o);
+  let i = first;
+  let paths: string[] = [];
+  while (i < argv.len() && !starts_expression(argv[i])) {
+    paths = paths.append(argv[i]);
+    i += 1;
+  }
+  let stdout_out = Out { w: stdout(), h: buf_new(STDOUT_CHUNK), kind: OUT_STDOUT, name: "standard output", err: cell_new(None) };
+  let ps = Parser { argv: argv, i: i, o: o2, nodes: [], toks: [], globs: [], rxs: [], fmts: [], outs: [OutSpec { name: "" }], execs: [], has_action: false, first_test: "", last_arg: "", last_pred: "", names: false, writers: [stdout_out] };
+  while (ps.i < ps.argv.len()) {
+    ps = parse_one(ps);
+  }
+  if (ps.o.delete && ps.o.prune && !ps.o.explicit_depth) {
+    fail("The -delete action automatically turns on -depth, but -prune does nothing when -depth is in effect.  If you want to carry on anyway, just explicitly use the -depth option.");
+  }
+  let opts = ps.o;
+  let globs = ps.globs;
+  let rxs = ps.rxs;
+  let fmts = ps.fmts;
+  let outs = ps.outs;
+  let execs = ps.execs;
+  let writers = ps.writers;
+  let needs_names = ps.names;
+  let (root, nodes) = build_tree(ps);
+  if (opts.has_files0) {
+    if (paths.len() > 0) {
+      gnu.error("extra operand " + q(paths[0]));
+      fail("file operands cannot be combined with -files0-from");
+    }
+    paths = read_files0(opts.files0);
+  } else if (paths.len() == 0) {
+    paths = ["."];
+  }
+  let p = Prog { o: opts, nodes: nodes, root: root, globs: globs, rxs: rxs, fmts: fmts, outs: outs, execs: execs, zone: tz.local_zone(), needs_names: needs_names };
+  let batches: cmdline.Batch[] = [];
+  for s in execs {
+    batches = batches.append(cmdline.batch_new(s));
+  }
+  let r = Run { e: top_ent("."), ok: false, outs: writers, status: 0, prune: false, quit: false, names: pwdb.names_new(needs_names, needs_names), mounts: [], have_mounts: false, batches: batches, stdout_tty: false, user_width: 8, group_width: 8 };
+  for path in paths {
+    r = walk_top(p, r, path);
+    if (r.quit) {
+      break;
+    }
+  }
+  r = run_batches(p, r);
+  return finish(r);
+}
+
+// Writes what the outputs still hold, and reports the outputs that failed.
+function finish(r: Run): i32 {
+  let status = r.status;
+  let k = 1;
+  while (k < r.outs.len()) {
+    let o = r.outs[k];
+    write_out(o, buf_len(o.h));
+    if (o.kind == OUT_FILE) {
+      if let Some(e) = o.err.get() {
+        gnu.error(q(o.name) + ": " + why(e));
+        status = 1;
+      }
+    }
+    k += 1;
+  }
+  let so = r.outs[0];
+  write_out(so, buf_len(so.h));
+  if let Some(e2) = so.err.get() {
+    gnu.error(q("standard output") + ": " + why(e2));
+    if (errno.of(e2) == errno.EBADF) {
+      gnu.error("write error: " + why(e2));
+    } else {
+      gnu.error("write error");
+    }
+    return 1;
+  }
+  return status;
+}
