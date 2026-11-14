@@ -1,5 +1,5 @@
 # 2026-11-13: PR #15784, perf-x86_64 job 132195198217 on the merge with main 38768eb2.
-# perceus_rbtree_ck .text +7.7% and .ir +29.1% (#15786); string_slice, tokenize and the two
+# perceus_rbtree_ck .text +7.7% and .ir +29.1% (089d854d keeps the trees of the benchmark); string_slice, tokenize and the two
 # utf8_ingest rows down. Main's compiler and #15784 emit the same code for each program of bench/ on
 # x86-64 and arm64, so these are values of main. Each row moves to its measured value. Keep all
 # tolerances.
