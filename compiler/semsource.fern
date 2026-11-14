@@ -8125,6 +8125,8 @@ function aes_gcm_contracts(): ssasem.Contract[] {
   let b = ssaunits.borrow_mode();
   let view: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true };
   let bytes: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
+  let limbs: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_i64(), view: true };
+  let slots: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false };
   return [
     ssasem.Contract { name: "__bytes_owned", params: [view], modes: [b], result: bytes },
     ssasem.Contract { name: "__bytes_range", params: [view, typeinfo.t_i32(), typeinfo.t_i32()], modes: [b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
@@ -8150,6 +8152,11 @@ function aes_gcm_contracts(): ssasem.Contract[] {
     },
     ssasem.Contract { name: "__chacha20_poly1305_seal_into", params: chacha20_poly1305_params(), modes: chacha20_poly1305_modes(), result: bytes },
     ssasem.Contract { name: "__chacha20_poly1305_open_into", params: chacha20_poly1305_params(), modes: chacha20_poly1305_modes(), result: bytes },
+    ssasem.Contract { name: "__mont_mul", params: [limbs, limbs, limbs], modes: [b, b, b], result: typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false } },
+    ssasem.Contract {
+      name: "__scrypt_block_mix", params: [slots, typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()],
+      modes: [ssaunits.counted_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: slots,
+    },
   ];
 }
 

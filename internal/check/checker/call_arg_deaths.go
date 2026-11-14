@@ -1249,8 +1249,35 @@ func freshInit(info *Info, init ast.Expr) bool {
 		return init.Tail != nil && freshScopedValue(info, init, init.Tail)
 	case *ast.TupleLit:
 		return freshScopedValue(info, nil, init)
+	case *ast.FieldAccess:
+		return tupleProjection(init) && freshInit(info, init.Target)
 	}
 	return false
+}
+
+// tupleProjection reports an element read `t.0`. A struct field cannot have
+// a numeric name.
+func tupleProjection(fa *ast.FieldAccess) bool {
+	if fa.Field == "" {
+		return false
+	}
+	for _, r := range fa.Field {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// projectionRoot is the value under a chain of element reads `v.1.0`.
+func projectionRoot(e ast.Expr) ast.Expr {
+	for {
+		fa, ok := e.(*ast.FieldAccess)
+		if !ok || !tupleProjection(fa) {
+			return e
+		}
+		e = fa.Target
+	}
 }
 
 // A compound block result can take unmodified local payloads from fresh values.

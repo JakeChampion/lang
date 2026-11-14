@@ -25,6 +25,7 @@ import "./wasm_ir";
 function v(k: string): ir.Op { return ir.op_lane(k, 64); }
 function v32(k: string): ir.Op { return ir.op_lane(k, 32); }
 function f(t: string): ir.Op { return ir.op_const_f64_text(t); }
+function f32_elem(): ir.Op { return ir.Op { ...ir.op_arr_get(32), unsigned: true }; }
 function a(): ir.Op[] { return [ir.op_load_local(0)]; }
 function b(): ir.Op[] { return [ir.op_load_local(1)]; }
 function c(): ir.Op[] { return [ir.op_load_local(2)]; }
@@ -290,18 +291,24 @@ function main(): i32 {
   m = m.append(ir.op_call_direct("side", 0)).append(ir.op_drop());
   m = check(m, [ir.op_load_local(7)], "4.5", 33);
   m = check(m, [ir.op_load_local(8)], "-10.0", 33);
-  // 35: vget and vset on xs = [1.0, 2.0, 3.0, 4.0, 5.0] in local 9, a group
-  // of f64 elements at each width.
+  // 35: vget and vset on xs = [1.0, 2.0, 3.0, 4.0, 5.0] in local 9, first a
+  // group of f64 elements, then of f32 elements that hold their 4-byte bits.
   m = m.append(f("1.0")).append(f("2.0")).append(f("3.0")).append(f("4.0")).append(f("5.0")).append(ir.op_arr_make(5, 64)).append(ir.op_store_local(9));
   m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(3), v("vget"), ir.op_lane_at("vextract", 64, 1)], "5.0", 35);
   m = m.append(ir.op_load_local(9)).append(ir.op_const_i32(1)).append(ir.op_load_local(0)).append(v("vset"));
   m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(2), ir.op_arr_get(64)], "-2.5", 35);
-  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(1), v32("vget"), ir.op_lane_at("vextract", 32, 1)], "-2.5", 35);
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(0), ir.op_arr_get(64)], "1.0", 35);
+  m = m.append(ir.op_load_local(9)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
+  for bits in [1065353216, 1073741824, 1077936128, 1082130432, 1084227584] {
+    m = m.append(ir.op_const_i32(bits));
+  }
+  m = m.append(ir.op_arr_make(5, 32)).append(ir.op_store_local(9));
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(1), v32("vget"), ir.op_lane_at("vextract", 32, 1)], "3.0", 35);
   m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(1), v32("vget"), ir.op_lane_at("vextract", 32, 3)], "5.0", 35);
   m = m.append(ir.op_load_local(9)).append(ir.op_const_i32(1)).append(ir.op_load_local(2)).append(v32("vset"));
-  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(4), ir.op_arr_get(64)], "-4.0", 35);
-  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(2), ir.op_arr_get(64)], "1.5", 35);
-  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(0), ir.op_arr_get(64)], "1.0", 35);
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(4), f32_elem(), ir.op_f32_from_bits()], "-4.0", 35);
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(2), f32_elem(), ir.op_f32_from_bits()], "1.5", 35);
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(0), f32_elem(), ir.op_f32_from_bits()], "1.0", 35);
   m = m.append(ir.op_load_local(9)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
   // 26..31: f32x4 on c = [1.5, 1.5, 1.5, -4.0].
   m = check(m, bin32("vadd", c(), 3), "-8.0", 26);

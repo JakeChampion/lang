@@ -1,70 +1,295 @@
-// A CommonMark command line: `md [FILE...]`. It reads the files one after
-// the other, or stdin when there is none, and writes their HTML to stdout a
-// part at a time. It replaces each byte sequence that is not UTF-8 with
-// U+FFFD, as cmark does.
+// A CommonMark command line with the options of cmark 0.30.2:
+// `md [OPTIONS] [FILE...]`. It reads the files one after the other, or stdin
+// when there is none, and writes the document in the format of `--to`. The
+// HTML goes to stdout a part at a time.
+import "core/error";
 import "std/io";
 import "std/io_buffered";
 import "./markdown";
+import "./render";
+
+const USAGE: string = "Usage:   md [FILE*]\n"
+  + "Options:\n"
+  + "  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n"
+  + "  --width WIDTH    Specify wrap width (default 0 = nowrap)\n"
+  + "  --sourcepos      Include source position attribute\n"
+  + "  --hardbreaks     Treat newlines as hard line breaks\n"
+  + "  --nobreaks       Render soft line breaks as spaces\n"
+  + "  --safe           Omit raw HTML and dangerous URLs\n"
+  + "  --unsafe         Render raw HTML and dangerous URLs\n"
+  + "  --smart          Use smart punctuation\n"
+  + "  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n"
+  + "  --help, -h       Print usage information\n"
+  + "  --version        Print version\n";
+
+const VERSION: string = "md - CommonMark converter\n"
+  + "The command line of cmark 0.30.2, ported to Fern\n";
+
+const FORMATS: string[] = ["html", "xml", "man", "commonmark", "latex"];
+
+// The command line after its options: the output format, the options, the
+// files and whether invalid UTF-8 follows the rule of cmark. A `done` command
+// line has nothing to read, and `code` is its exit status.
+struct Command { format: string, o: markdown.Options, files: string[], cmark_utf8: boolean, done: boolean, code: i32 }
+
+// Reads the arguments in order, as cmark does. `--version` and `--help`
+// stop at once. An unknown option prints the usage and fails.
+function command(argv: string[]): Command {
+  let c = Command { format: "html", o: markdown.options(), files: [], cmark_utf8: false, done: false, code: 0 };
+  let i = 1;
+  while (i < argv.len()) {
+    let (next, last) = argument(c, argv, i);
+    if (next.done) {
+      return next;
+    }
+    c = next;
+    i = last + 1;
+  }
+  return c;
+}
+
+// The command line with the argument at `i`, and the index of the last
+// argument that it uses.
+function argument(c: Command, argv: string[], i: i32): (Command, i32) {
+  let a = argv[i];
+  let takes_value = a == "--width" || a == "-t" || a == "--to";
+  if (takes_value && i + 1 < argv.len()) {
+    return (value(c, a, argv[i + 1]), i + 1);
+  }
+  if (a == "--width") {
+    return (fail("--width requires an argument\n"), i);
+  }
+  if (takes_value) {
+    return (fail("No argument provided for " + a + "\n"), i);
+  }
+  if (a.len() > 0 && a[0] == b'-') {
+    return (flag(c, a), i);
+  }
+  return (Command { ...c, files: c.files.append(a) }, i);
+}
+
+// The command line with the option `a` and its value `v`: a width, or a
+// format.
+function value(c: Command, a: string, v: string): Command {
+  if (a == "--width") {
+    let (width, rest) = c_strtol(v);
+    if (rest.len() > 0) {
+      return fail("failed parsing width '" + v + "' at '" + rest + "'\n");
+    }
+    return Command { ...c, o: markdown.Options { ...c.o, width: width } };
+  }
+  if (!FORMATS.contains(v)) {
+    return fail("Unknown format " + v + "\n");
+  }
+  return Command { ...c, format: v };
+}
+
+// The command line with the option `a`, which takes no argument. When `a`
+// is not an option, the usage goes to stdout and the command line fails.
+function flag(c: Command, a: string): Command {
+  if (a == "--version") {
+    write_out(VERSION);
+    return Command { ...c, done: true };
+  }
+  if (a == "--help" || a == "-h") {
+    write_out(USAGE);
+    return Command { ...c, done: true };
+  }
+  if (a == "--validate-utf8") {
+    return Command { ...c, cmark_utf8: true };
+  }
+  let (o, known) = option(c.o, a);
+  if (known) {
+    return Command { ...c, o: o };
+  }
+  write_out(USAGE);
+  return Command { ...c, done: true, code: 1 };
+}
+
+// The options with the option `a` of the renderer, and false when `a` is
+// not one. `--safe` is the default.
+function option(o: markdown.Options, a: string): (markdown.Options, boolean) {
+  if (a == "--sourcepos") {
+    return (markdown.Options { ...o, sourcepos: true }, true);
+  }
+  if (a == "--hardbreaks") {
+    return (markdown.Options { ...o, hardbreaks: true }, true);
+  }
+  if (a == "--nobreaks") {
+    return (markdown.Options { ...o, nobreaks: true }, true);
+  }
+  if (a == "--smart") {
+    return (markdown.Options { ...o, smart: true }, true);
+  }
+  if (a == "--unsafe") {
+    return (markdown.Options { ...o, unsafe_html: true }, true);
+  }
+  return (o, a == "--safe");
+}
+
+function fail(message: string): Command {
+  write_err(message);
+  return Command { format: "", o: markdown.options(), files: [], cmark_utf8: false, done: true, code: 1 };
+}
+
+// The number at the start of `s` and the rest of `s`, as C `strtol` reads
+// them in base 10: spaces, a sign and digits. With no digits, the rest is
+// all of `s`. A number out of the range of i64 is the nearest end of the
+// range. The result is the low 32 bits of the number, as C gives it to an
+// `int`.
+function c_strtol(s: string): (i32, string) {
+  let (start, negative) = c_sign(s);
+  let i = start;
+  let v = 0i64;
+  let over = false;
+  while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
+    let digit = (s[i] - b'0') as i64;
+    if (v > (9223372036854775807i64 - digit) / 10i64) {
+      over = true;
+    } else {
+      v = v * 10i64 + digit;
+    }
+    i += 1;
+  }
+  if (i == start) {
+    return (0, s);
+  }
+  if (over && negative) {
+    v = -9223372036854775807i64 - 1i64;
+  } else if (over) {
+    v = 9223372036854775807i64;
+  } else if (negative) {
+    v = -v;
+  }
+  return (v as i32, slice_unchecked(s, i, s.len()).to_owned());
+}
+
+// The index after the spaces and the sign at the start of `s`, and true for
+// a minus sign.
+function c_sign(s: string): (i32, boolean) {
+  let i = 0;
+  while (i < s.len() && (s[i] == b' ' || s[i] >= b'\t' && s[i] <= b'\r')) {
+    i += 1;
+  }
+  if (i < s.len() && (s[i] == b'+' || s[i] == b'-')) {
+    return (i + 1, s[i] == b'-');
+  }
+  return (i, false);
+}
 
 // The text of the files one after the other, or of stdin when there is no
 // file. The text of one file of valid UTF-8 is not copied.
-function read_text(files: string[]): Result[string, string] {
-  if (files.len() == 1) {
+function read_text(files: string[], cmark_rule: boolean): Result[string, string] {
+  if (files.len() == 1 && !cmark_rule) {
     if let Ok(text) = read_file(files[0]) {
       return Ok(text);
     }
   }
-  let all = buf_new(4096);
+  match (read_input(files)) {
+    Ok(b) => {
+      return Ok(markdown.text_of(b, cmark_rule));
+    },
+    Err(message) => {
+      return Err(message);
+    }
+  }
+}
+
+// The bytes of the files one after the other, or of stdin when there is no
+// file. As in cmark, a directory gives no bytes, and stdin gives no bytes
+// when it cannot be read.
+function read_input(files: string[]): Result[u8[], string] {
   if (files.len() == 0) {
     match (io.read_all_stdin_bytes()) {
       Ok(b) => {
-        buf_push_bytes_range(all, b, 0, b.len());
+        return Ok(b);
       },
-      Err(e) => {
-        buf_free(all);
-        return Err("could not read stdin: " + e.message());
+      Err(_) => {
+        return Ok([]);
       }
     }
   }
+  if (files.len() == 1) {
+    if let Ok(b) = read_file_bytes(files[0]) {
+      return Ok(b);
+    }
+  }
+  let all = buf_new(4096);
   for f in files {
     match (read_file_bytes(f)) {
       Ok(b) => {
         buf_push_bytes_range(all, b, 0, b.len());
       },
       Err(e) => {
-        buf_free(all);
-        return Err("could not open " + f + ": " + e.message());
+        let text = strerror(e);
+        if (text != "Is a directory") {
+          buf_free(all);
+          return Err("Error opening file " + f + ": " + text + "\n");
+        }
       }
     }
   }
-  let text = buf_take(all);
+  let bytes = buf_take_bytes(all);
   buf_free(all);
-  return Ok(text);
+  return Ok(bytes);
+}
+
+function write_out(s: string): void {
+  let _ = stdout().write(s);
+}
+
+function write_err(s: string): void {
+  let _ = stderr().write(s);
+}
+
+// The text of the C library for an error.
+function strerror(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "No such file or directory";
+    },
+    PermissionDenied(_) => {
+      return "Permission denied";
+    },
+    AlreadyExists(_) => {
+      return "File exists";
+    },
+    _ => {
+      return e.message();
+    }
+  }
+  return "";
 }
 
 function main(): i32 {
-  let argv = args();
-  let files: string[] = [];
-  for i in 1..argv.len() {
-    files = files.append(argv[i]);
+  let c = command(args());
+  if (c.done) {
+    return c.code;
   }
   let text = "";
-  match (read_text(files)) {
+  match (read_text(c.files, c.cmark_utf8)) {
     Ok(t) => {
       text = t;
     },
-    Err(e) => {
-      eprint("md: " + e);
+    Err(message) => {
+      write_err(message);
       return 1;
     }
   }
   let w = io_buffered.buf_writer_new(stdout(), 65536);
-  let done = match (markdown.write(w, text, 65536)) {
-    Ok(rest) => rest.flush(),
-    Err(e) => Err(e),
+  let done = if (c.format == "html") {
+    match (markdown.write(w, text, 65536, c.o)) {
+      Ok(rest) => rest.flush(),
+      Err(e) => Err(e),
+    }
+  } else {
+    match (render.write(w, text, c.format, c.o, 65536)) {
+      Ok(rest) => rest.flush(),
+      Err(e) => Err(e),
+    }
   };
   if let Err(e) = done {
-    eprint("md: could not write stdout: " + e.message());
+    write_err("md: could not write stdout: " + e.message() + "\n");
     return 1;
   }
   return 0;

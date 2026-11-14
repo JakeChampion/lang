@@ -122,7 +122,7 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > where the std/array body grew its result an element at a time.
 >
 > Two properties make one `i32[]`-typed body serve every element type. The copy
-> is a raw 8-byte SLOT copy, so a `string[]`'s box pointers ride through
+> is a raw copy at the element width the caller passes, so a `string[]`'s box pointers ride through
 > untouched; and it is deliberately SHALLOW — no element refcount traffic —
 > which is what the hand-asm did and what typing the parameter `i32[]` keeps
 > the RC insertion agreeing with.
@@ -396,8 +396,10 @@ symbol) wrapped the same way, or stays on the `.append()` path that `str_bytes`
 `x as usize` on a string or an array is an identity cast: it answers the
 value's own pointer and nothing more. What that pointer points at is the
 representation's business (#8799): an array is a box whose word 0 is the
-length, with the elements after it. A `u8[]` holds one byte for each element,
-and the other arrays hold one word for each element. So code that does
+length, with the elements after it. A `u8[]` holds one byte for each element.
+An `i32[]`, a `u32[]`, a `char[]` and an `f32[]` hold 4 bytes for each
+element. An `f32[]` element holds the bits of the value. The other arrays hold
+one word for each element. So code that does
 arithmetic on the cast and reads or writes through the result is layout code,
 tied to that representation.
 

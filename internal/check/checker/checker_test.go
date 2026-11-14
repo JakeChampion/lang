@@ -7577,6 +7577,58 @@ function (s: string) view(): str { return s; }
 	}
 }
 
+// strFieldDecls declares a record with a `string` field, a record that holds
+// it, and a view of the field that each caller lends its record to (#15796).
+const strFieldDecls = `struct T { text: string, n: i32 }
+struct Outer { inner: T, n: i32 }
+function mk(): T { return T { text: "a" + "b", n: 0 }; }
+function head(t: T, k: i32): str { return slice_unchecked(t.text, 0, k); }
+`
+
+func TestStrFieldViewAllowed(t *testing.T) {
+	for _, src := range []string{
+		`function f(t: T, k: i32): str { return slice_unchecked(t.text, 0, k); }`,
+		`function f(o: Outer, k: i32): str { return slice_unchecked(o.inner.text, 0, k); }`,
+		`function f(t: T, k: i32): str { let u = t; return slice_unchecked(u.text, 0, k); }`,
+		`function f(t: T, k: i32): str { let u = t; let w = u; return slice_unchecked(w.text, 0, k); }`,
+		`function f(t: T, k: i32): str { let s = t.text; return slice_unchecked(s, 0, k); }`,
+		`function f(s: string, k: i32): str { let u = s; return slice_unchecked(u, 0, k); }`,
+		`function f(s: string): str { let u = s; return u; }`,
+		`function f(t: T, k: i32): Option[str] { return Some(slice_unchecked(t.text, 0, k)); }`,
+		`function (t: T) f(k: i32): str { return slice_unchecked(t.text, 0, k); }`,
+		`function f(o: Outer, k: i32): str { return head(o.inner, k); }`,
+	} {
+		if err := checkSource(t, strFieldDecls+src); err != nil {
+			t.Errorf("%q: expected acceptance, got %v", src, err)
+		}
+	}
+}
+
+func TestStrFieldViewRejected(t *testing.T) {
+	for _, src := range []string{
+		`function f(k: i32): str { let t = T { text: "a" + "b", n: 1 }; return slice_unchecked(t.text, 0, k); }`,
+		`function f(k: i32): str { let u = mk(); let s = u.text; return slice_unchecked(s, 0, k); }`,
+		`function f(k: i32): str { return slice_unchecked(mk().text, 0, k); }`,
+		`function f(t: T, k: i32): str { let u = t; u = mk(); return slice_unchecked(u.text, 0, k); }`,
+		`function f(s: string, k: i32): str { let u = s; u = "a" + "b"; return slice_unchecked(u, 0, k); }`,
+		`function f(t: T, k: i32, c: boolean): str { if (c) { let u = t; return slice_unchecked(u.text, 0, k); } let u = mk(); return slice_unchecked(u.text, 0, k); }`,
+		`function f(k: i32): Option[str] { let t = mk(); return Some(slice_unchecked(t.text, 0, k)); }`,
+		`function f(k: i32): str { let t = mk(); return head(t, k); }`,
+		`function f(k: i32): str { return head(mk(), k); }`,
+		`function (t: T) tail(k: i32): str { return slice_unchecked(t.text, k, t.text.len()); } function f(k: i32): str { let t = mk(); return t.tail(k); }`,
+		`function text_of(t: T): string { return t.text; } function f(k: i32): str { let t = mk(); return slice_unchecked(text_of(t), 0, k); }`,
+	} {
+		err := checkSource(t, strFieldDecls+src)
+		if err == nil {
+			t.Errorf("%q: expected E065, got nil", src)
+			continue
+		}
+		if !hasCode(err, "E065") {
+			t.Errorf("%q: want diagnostic stamped E065, got %v", src, err)
+		}
+	}
+}
+
 func TestSliceCalleeEscapeRejected(t *testing.T) {
 	const decls = `function id_sl(x: [i32]): [i32] { return x; }
 function hop(x: [i32]): [i32] { return id_sl(x); }

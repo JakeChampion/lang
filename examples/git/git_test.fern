@@ -217,6 +217,51 @@ function tiny_pack(body: u8[]): u8[] {
   return data.concat(crypto.sha1(data));
 }
 
+// The bytes of a zlib stream of `body`.
+function zlib_of(body: u8[]): u8[] {
+  let sum = deflate.adler32(body);
+  let out: u8[] = [120, 156];
+  out = out.concat(deflate.deflate(body));
+  return out.append((sum >> 24) as u8).append((sum >> 16 & 255) as u8).append((sum >> 8 & 255) as u8).append((sum & 255) as u8);
+}
+
+// The kind and the size of a packed object, with no inflate of the object.
+function test_info(): test.TestOutcome {
+  // A blob of 6 bytes at 12, and a delta against it that makes 9 bytes:
+  // a copy of 6 bytes from 0, and an insert of 3 bytes.
+  let base = zlib_of("hello\n".bytes());
+  let delta: u8[] = [6, 9, 144, 6, 3, b'a', b'b', b'c'];
+  let data: u8[] = [b'P', b'A', b'C', b'K', 0, 0, 0, 2, 0, 0, 0, 2, 54];
+  data = data.concat(base);
+  let second = data.len();
+  data = data.append((96 + delta.len()) as u8).append((second - 12) as u8).concat(zlib_of(delta));
+  let whole = (at: i32): pack.Window => pack.Window { bytes: data, shift: 0 };
+  let none = (name: u8[]): i32 => -1;
+  let Ok((kind, size)) = pack.info_in(whole, none, 12) else {
+    return test.fail("no kind and size for a blob");
+  };
+  if (kind != "blob" || size != 6) {
+    return test.fail("the kind and the size of a blob: " + kind + " " + size.to_string());
+  }
+  let Ok((dkind, dsize)) = pack.info_in(whole, none, second) else {
+    return test.fail("no kind and size for a delta");
+  };
+  if (dkind != "blob" || dsize != 9) {
+    return test.fail("the kind and the size of a delta: " + dkind + " " + dsize.to_string());
+  }
+  let (made, _) = pack.object_cached(whole, none, second, pack.cache_new());
+  let Ok(o) = made else {
+    return test.fail("the delta is not applied");
+  };
+  if (o.body.len() != 9 || o.body[6] != b'a' || o.body[0] != b'h') {
+    return test.fail("the object of the delta");
+  }
+  if let Ok(_) = pack.info_in(whole, none, 11) {
+    return test.fail("an offset in the header is accepted");
+  }
+  return test.pass();
+}
+
 // The index that the port makes for a packfile.
 function test_index(): test.TestOutcome {
   let data = tiny_pack("hello\n".bytes());
@@ -277,5 +322,6 @@ function main(): i32 {
   r = r.it("the fields of a commit", test_commit_fields);
   r = r.it("the text of a commit", test_commit_text);
   r = r.it("the index of a packfile", test_index);
+  r = r.it("the kind and the size of a packed object", test_info);
   return r.finish();
 }

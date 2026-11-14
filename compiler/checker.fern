@@ -284,6 +284,22 @@ function byte_kernel_arity(name: string): i32 {
   return -1;
 }
 
+// The parameters of a kernel over arrays of 64-bit words, or none.
+function limb_kernel_params(name: string): typeinfo.Type[] {
+  if (name == "__mont_mul") {
+    return [t_view(typeinfo.t_i64()), t_view(typeinfo.t_i64()), t_view(typeinfo.t_i64())];
+  }
+  if (name == "__scrypt_block_mix") {
+    return [t_array(typeinfo.t_i64()), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()];
+  }
+  return [];
+}
+
+function is_limb_kernel_call(name: string, argc: i32): boolean {
+  let params = limb_kernel_params(name);
+  return params.len() > 0 && params.len() == argc;
+}
+
 // The parameters of a kernel that writes into the byte array it takes, or none.
 function byte_into_params(name: string): typeinfo.Type[] {
   let view = t_view(typeinfo.t_u8());
@@ -598,6 +614,9 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__bytes_owned" || argc == 3 && name == "__bytes_range" || argc == 5 && name == "__bytes_into") {
     return t_array(typeinfo.t_u8());
   }
+  if (is_limb_kernel_call(name, argc)) {
+    return t_array(typeinfo.t_i64());
+  }
   if (argc == byte_kernel_arity(name) || argc == byte_into_arity(name)) {
     return t_array(typeinfo.t_u8());
   }
@@ -837,6 +856,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (is_sha_hw_builtin(name)) {
     return ([], true);
+  }
+  let limbs = limb_kernel_params(name);
+  if (limbs.len() > 0) {
+    return (limbs, true);
   }
   let into = byte_into_params(name);
   if (into.len() > 0) {
@@ -12848,43 +12871,51 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
 
 struct LitSign { line: i32, col: i32, minuses: i32 }
 
-function lit_sign_chain(e: ast.Expr, minuses: i32, own acc: LitSign[]): LitSign[] {
-  match (e) {
-    ast.ExprUnary(u) => {
-      if (u.op == "-") {
-        return lit_sign_chain(u.operand, minuses + 1, acc);
-      }
-      if (u.op == "+") {
-        return lit_sign_chain(u.operand, minuses, acc);
-      }
-      return acc;
-    },
-    ast.ExprNumber(n) => {
-      if (minuses == 0) {
-        return acc;
-      }
-      return acc.append(LitSign { line: n.line, col: n.col, minuses: minuses });
-    },
-    _ => {
-      return acc;
+// The operand of the minus `e`.
+function minus_operand(e: ast.Expr): Option[ast.Expr] {
+  if let ast.ExprUnary(u) = e {
+    if (u.op == "-") {
+      return Some(u.operand);
     }
   }
+  return None;
+}
+
+function not_minus(e: ast.Expr): boolean {
+  return minus_operand(e).is_none();
+}
+
+// At the first minus of a chain of minuses, the number of minuses of the
+// literal at its end. The walk reads each chain one time, and goes on below
+// the end of the chain.
+function chain_signs(e: ast.Expr, own acc: LitSign[]): LitSign[] {
+  if (not_minus(e)) {
+    return acc;
+  }
+  let at = e;
+  let minuses = 0;
+  let going = true;
+  while (going) {
+    match (minus_operand(at)) {
+      Some(operand) => {
+        at = operand;
+        minuses += 1;
+      },
+      None => {
+        going = false;
+      }
+    }
+  }
+  if let ast.ExprNumber(n) = at {
+    return acc.append(LitSign { line: n.line, col: n.col, minuses: minuses });
+  }
+  return astwalk.fold_expr_pruned(at, acc, chain_signs, not_minus);
 }
 
 function lit_signs_stmts(stmts: ast.Stmt[]): LitSign[] {
-  function at_unary(n: ast.Expr, own acc: LitSign[]): LitSign[] {
-    match (n) {
-      ast.ExprUnary(_) => {
-        return lit_sign_chain(n, 0, acc);
-      },
-      _ => {
-        return acc;
-      }
-    }
-  }
   let signs: LitSign[] = [];
   for st in stmts {
-    signs = astwalk.fold_stmt(st, signs, at_unary);
+    signs = astwalk.fold_stmt_pruned(st, signs, chain_signs, not_minus);
   }
   return signs;
 }
@@ -18736,7 +18767,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
   "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_inline", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
   "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
-  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
   "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
   "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
   "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
@@ -20977,6 +21008,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ow_qualified_ctor(e, ctx)) {
         return true;
       }
+      if (ow_owned_projection(fa, ctx)) {
+        return true;
+      }
       let enclosing = ow_enclosing_field(fa);
       if let ast.ExprIdent(oid) = enclosing.obj {
         if (lu_has(ctx, lu_field_key(enclosing, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
@@ -21390,6 +21424,14 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
   return found && lu_only_fresh_assigns(fx, name, seen);
 }
 
+// An element read `v.1` of a fresh value no name holds, as a destructure binds it.
+function lu_fresh_projection(fx: LuFn, e: ast.Expr): boolean {
+  let ast.ExprFieldAccess(fa) = e else {
+    return false;
+  };
+  return util.is_all_digits(fa.field) && lu_fresh_value(fx, fa.obj);
+}
+
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprCall(c) = e {
     if (lu_checked_result_call(fx, c)) {
@@ -21410,6 +21452,9 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprTuple(_) = e {
     let empty: ast.Stmt[] = [];
     return lu_scoped_fresh(fx, empty, e);
+  }
+  if (lu_fresh_projection(fx, e)) {
+    return true;
   }
   if (lu_safe_constructor(fx, e)) {
     return true;
@@ -24089,6 +24134,36 @@ function ow_enclosing_field(fa: ast.ExprFieldAccess): ast.ExprFieldAccess {
     return ow_enclosing_field(parent);
   }
   return fa;
+}
+
+// The value under a chain of element reads `v.1.0`.
+function ow_projection_root(e: ast.Expr): ast.Expr {
+  if let ast.ExprFieldAccess(fa) = e {
+    if (util.is_all_digits(fa.field)) {
+      return ow_projection_root(fa.obj);
+    }
+  }
+  return e;
+}
+
+// An element of a value that no name holds, as `f(x).1`, is owned as that
+// value is.
+function ow_owned_projection(fa: ast.ExprFieldAccess, ctx: OwnCtx): boolean {
+  if (!util.is_all_digits(fa.field)) {
+    return false;
+  }
+  let root = ow_projection_root(fa.obj);
+  match (root) {
+    ast.ExprIdent(_) => {
+      return false;
+    },
+    ast.ExprFieldAccess(_) => {
+      return false;
+    },
+    _ => {
+      return ow_is_owned_expr(root, ctx);
+    }
+  }
 }
 
 function lu_field_key(fa: ast.ExprFieldAccess, q: ast.ExprIdent): string {
@@ -26967,6 +27042,9 @@ function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: 
 // The parser lowers a value match to `[match]`, to `[match, return zero]`,
 // or to `[let t = scrutinee, return inner()]` around one of those.
 function ow_match_block_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
+  if (body.len() == 3) {
+    return ow_nested_match_borrows(body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  }
   if (body.len() == 0 || body.len() > 2) {
     return true;
   }
@@ -26999,6 +27077,27 @@ function ow_match_block_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: st
   };
 }
 
+// A match with a nested pattern lowers to `[let r = zero, match, return r]`.
+// Its arms assign to `r`, and the sugar of the match keeps them as written.
+function ow_nested_match_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
+  let ast.StmtVar(v) = body[0] else {
+    return true;
+  };
+  let ast.StmtMatch(m) = body[1] else {
+    return true;
+  };
+  let ast.StmtReturn(r) = body[2] else {
+    return true;
+  };
+  let ast.ExprIdent(id) = r.value else {
+    return true;
+  };
+  if (id.name != v.name || m.sugar.len() == 0) {
+    return true;
+  }
+  return ow_value_match_borrows(m, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+}
+
 // A match on literals lowers to an if chain that keeps its arms in the sugar.
 function ow_value_lits_borrows(sugar: ast.MatchSugar, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
   if (sugar.origin.len() > 0 || sugar.lits.len() == 0 || sugar.tup.len() > 0 || sugar.strct.len() > 0 || sugar.arms.len() > 0) {
@@ -27019,11 +27118,10 @@ function ow_value_lits_borrows(sugar: ast.MatchSugar, ofuncs: OwnFuncs, borrowed
 
 // A value match borrows when an arm's value borrows.
 function ow_value_match_borrows(m: ast.StmtMatch, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
-  if (m.sugar.len() > 0) {
-    return true;
-  }
   let lends = ow_expr_borrows(m.scrutinee, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
-  for arm in m.arms {
+  // A nested pattern lowers its arms, and the sugar keeps them as written.
+  let arms = if (m.sugar.len() > 0) { m.sugar } else { m.arms };
+  for arm in arms {
     if (ow_value_binder_arm_borrows(arm.body, astwalk.pattern_binders(arm.pattern, []), lends, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
       return true;
     }
@@ -27433,7 +27531,7 @@ function ow_fresh_builtins(): string[] {
     "udp_bind", "udp_bind_with", "unix_connect", "unix_listen",
     "termios_get", "uname_field", "window_size",
     "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks",
-    "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into",
+    "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__mont_mul", "__scrypt_block_mix",
   ];
   return out;
 }
@@ -29310,6 +29408,78 @@ function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], varia
 
 pub struct E065Walk { diags: util.Diag[], viewed: string[], owns: boolean }
 
+// The parameters of a function, and the locals that name a parameter or a
+// field of one. Such a local is declared once and never assigned. The
+// parameter of `locals[i]` is `places[i]`.
+pub struct E065Params { names: string[], locals: string[], places: string[] }
+
+function e065_params(fd: parser.FuncDecl): E065Params {
+  let decls: ast.StmtVar[] = [];
+  let assigned: string[] = [];
+  for st in fd.body {
+    decls = astwalk.fold_stmt_spine(st, decls, e065_var_of);
+    assigned = astwalk.fold_stmt_spine(st, assigned, astwalk.assign_target_of);
+  }
+  let ps = E065Params { names: view_positions(fd), locals: [], places: [] };
+  for v in decls {
+    let root = e065_param_root(v.init, ps);
+    if (root.len() > 0 && !e065_ident_in(v.name, assigned) && !e065_ident_in(v.name, ps.names) && e065_declared_once(decls, v.name)) {
+      ps = E065Params { ...ps, locals: ps.locals.append(v.name), places: ps.places.append(root) };
+    }
+  }
+  return ps;
+}
+
+function e065_var_of(st: ast.Stmt, own acc: ast.StmtVar[]): ast.StmtVar[] {
+  if let ast.StmtVar(v) = st {
+    return acc.append(v);
+  }
+  return acc;
+}
+
+function e065_declared_once(decls: ast.StmtVar[], name: string): boolean {
+  let n = 0;
+  for v in decls {
+    if (v.name == name) {
+      n += 1;
+    }
+  }
+  return n == 1;
+}
+
+// The parameter that `e` names: the parameter itself, a field of it at any
+// depth, or a local of `ps.locals`. It is "" for any other value.
+function e065_param_root(e: ast.Expr, ps: E065Params): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return e065_param_of(id.name, ps);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return e065_param_root(fa.obj, ps);
+    },
+    _ => {}
+  }
+  return "";
+}
+
+function e065_param_of(name: string, ps: E065Params): string {
+  if (e065_ident_in(name, ps.names)) {
+    return name;
+  }
+  let at = util.index_of_str(ps.locals, name);
+  if (at >= 0) {
+    return ps.places[at];
+  }
+  return "";
+}
+
+function e065_root_names(root: string): string[] {
+  if (root.len() == 0) {
+    return [];
+  }
+  return [root];
+}
+
 function e065_ident_in(name: string, xs: string[]): boolean {
   for elem in xs {
     if (elem == name) {
@@ -29319,12 +29489,12 @@ function e065_ident_in(name: string, xs: string[]): boolean {
   return false;
 }
 
-function e065_return_roots(e: ast.Expr, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+function e065_return_roots(e: ast.Expr, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
   match (e) {
     ast.ExprIdent(id) => {
-      if (e065_ident_in(id.name, params)) {
-        let one: string[] = [];
-        return ViewRoots { local: false, params: one.append(id.name) };
+      let root = e065_param_root(e, ps);
+      if (root.len() > 0) {
+        return ViewRoots { local: false, params: [root] };
       }
       if (e065_ident_in(id.name, sbacked)) {
         let none: string[] = [];
@@ -29332,28 +29502,32 @@ function e065_return_roots(e: ast.Expr, params: string[], sbacked: string[], sum
       }
     },
     ast.ExprCall(c) => {
-      return e065_call_roots(c, params, sbacked, sums, vix, s);
+      return e065_call_roots(c, ps, sbacked, sums, vix, s);
     },
     _ => {}
   }
   return no_view_roots();
 }
 
-function e065_string_src_roots(e: ast.Expr, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+function e065_string_src_roots(e: ast.Expr, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
   let none: string[] = [];
   match (e) {
     ast.ExprString(_) => {
       return no_view_roots();
     },
     ast.ExprIdent(id) => {
-      if (e065_ident_in(id.name, params)) {
-        let one: string[] = [];
-        return ViewRoots { local: false, params: one.append(id.name) };
+      let root = e065_param_root(e, ps);
+      if (root.len() > 0) {
+        return ViewRoots { local: false, params: [root] };
       }
-      if (e065_ident_in(id.name, sbacked)) {
+      if (e065_ident_in(id.name, sbacked) || typeinfo.is_record(check_expr(e, s))) {
         return ViewRoots { local: true, params: none };
       }
       return no_view_roots();
+    },
+    ast.ExprFieldAccess(_) => {
+      let root = e065_param_root(e, ps);
+      return ViewRoots { local: root.len() == 0, params: e065_root_names(root) };
     },
     ast.ExprCall(c) => {
       let callee = view_callee(c, s);
@@ -29368,7 +29542,7 @@ function e065_string_src_roots(e: ast.Expr, params: string[], sbacked: string[],
       let i = 0;
       while (i < flags.len() && i < callee.args.len()) {
         if (flags[i]) {
-          out = merge_view_roots(out, e065_string_src_roots(callee.args[i], params, sbacked, sums, vix, s));
+          out = merge_view_roots(out, e065_string_src_roots(callee.args[i], ps, sbacked, sums, vix, s));
         }
         i += 1;
       }
@@ -29379,7 +29553,7 @@ function e065_string_src_roots(e: ast.Expr, params: string[], sbacked: string[],
   return ViewRoots { local: true, params: none };
 }
 
-function e065_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+function e065_call_roots(c: ast.ExprCall, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
   let direct = "";
   match (c.callee) {
     ast.ExprIdent(cid) => {
@@ -29388,7 +29562,7 @@ function e065_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], s
     _ => {}
   }
   if (direct == "slice_unchecked" && c.args.len() == 3) {
-    return e065_string_src_roots(c.args[0], params, sbacked, sums, vix, s);
+    return e065_string_src_roots(c.args[0], ps, sbacked, sums, vix, s);
   }
   let out = no_view_roots();
   let callee = view_callee(c, s);
@@ -29399,11 +29573,20 @@ function e065_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], s
   let i = 0;
   while (i < flags.len() && i < callee.args.len()) {
     if (flags[i]) {
-      out = merge_view_roots(out, e065_return_roots(callee.args[i], params, sbacked, sums, vix, s));
+      out = merge_view_roots(out, e065_arg_roots(callee.args[i], ps, sbacked, sums, vix, s));
     }
     i += 1;
   }
   return out;
+}
+
+// The storage that an argument lends to a `str` that the callee returns. A
+// record lends the storage of its fields.
+function e065_arg_roots(e: ast.Expr, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+  if (typeinfo.is_record(check_expr(e, s))) {
+    return e065_string_src_roots(e, ps, sbacked, sums, vix, s);
+  }
+  return e065_return_roots(e, ps, sbacked, sums, vix, s);
 }
 
 function e065_escape_diag(fname: string, line: i32, col: i32): util.Diag {
@@ -29411,32 +29594,32 @@ function e065_escape_diag(fname: string, line: i32, col: i32): util.Diag {
 }
 
 // The roots of every `str` view an aggregate of type `to` carries.
-function e065_agg_roots(e: ast.Expr, to: typeinfo.Type, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+function e065_agg_roots(e: ast.Expr, to: typeinfo.Type, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
   if (is_str_view(to)) {
-    return e065_return_roots(e, params, sbacked, sums, vix, s);
+    return e065_return_roots(e, ps, sbacked, sums, vix, s);
   }
   if (is_type_variable(to)) {
-    return param_roots_only(e065_return_roots(e, params, sbacked, sums, vix, s));
+    return param_roots_only(e065_return_roots(e, ps, sbacked, sums, vix, s));
   }
   if (!holds_view_aggregate(to, s)) {
     return no_view_roots();
   }
   if let ast.ExprIdent(id) = e {
-    return e065_return_roots(e, params, sbacked, sums, vix, s);
+    return e065_return_roots(e, ps, sbacked, sums, vix, s);
   }
   if let ast.ExprCall(c) = e {
     if (!is_view_ctor(e, to, s)) {
-      return e065_agg_call_roots(c, params, sbacked, sums, vix, s);
+      return e065_agg_call_roots(c, ps, sbacked, sums, vix, s);
     }
   }
   let out = no_view_roots();
   for p in view_parts(e, to, s) {
-    out = merge_view_roots(out, e065_agg_roots(p.value, p.to, params, sbacked, sums, vix, s));
+    out = merge_view_roots(out, e065_agg_roots(p.value, p.to, ps, sbacked, sums, vix, s));
   }
   return out;
 }
 
-function e065_agg_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+function e065_agg_call_roots(c: ast.ExprCall, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
   let out = no_view_roots();
   let callee = view_callee(c, s);
   let flags = view_sum_flags(sums, vix, callee.key);
@@ -29444,9 +29627,9 @@ function e065_agg_call_roots(c: ast.ExprCall, params: string[], sbacked: string[
     if (flags[i] && i < callee.args.len()) {
       let at = check_expr(callee.args[i], s);
       if (holds_view_aggregate(at, s)) {
-        out = merge_view_roots(out, e065_agg_roots(callee.args[i], at, params, sbacked, sums, vix, s));
+        out = merge_view_roots(out, e065_agg_roots(callee.args[i], at, ps, sbacked, sums, vix, s));
       } else {
-        out = merge_view_roots(out, e065_return_roots(callee.args[i], params, sbacked, sums, vix, s));
+        out = merge_view_roots(out, e065_arg_roots(callee.args[i], ps, sbacked, sums, vix, s));
       }
     }
   }
@@ -29461,9 +29644,9 @@ function e065_agg_diags(ret_is_view: boolean, roots: ViewRoots, fname: string, l
   return [];
 }
 
-function e065_agg_taint(v: ast.StmtVar, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): string[] {
+function e065_agg_taint(v: ast.StmtVar, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): string[] {
   let vty = bound_type(v, s);
-  if (holds_view_aggregate(vty, s) && e065_agg_roots(v.init, vty, params, sbacked, sums, vix, s).local) {
+  if (holds_view_aggregate(vty, s) && e065_agg_roots(v.init, vty, ps, sbacked, sums, vix, s).local) {
     return sbacked.append(v.name);
   }
   return sbacked;
@@ -29524,7 +29707,7 @@ function e065_with_arm_bindings(sbacked: string[], arms: ast.MatchArm[]): string
   return out;
 }
 
-function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope, ret_is_view: boolean): E065Walk {
+function e065_stmts(stmts: ast.Stmt[], fname: string, ps: E065Params, str_ret_names: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope, ret_is_view: boolean): E065Walk {
   let out: util.Diag[] = [];
   let viewed: string[] = [];
   let owns = false;
@@ -29535,12 +29718,12 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
         if (v.type_name == "str") {
           match (v.init) {
             ast.ExprIdent(id) => {
-              if (!e065_ident_in(id.name, params) && e065_ident_in(id.name, sbacked)) {
+              if (e065_param_of(id.name, ps) == "" && e065_ident_in(id.name, sbacked)) {
                 sbacked = sbacked.append(v.name);
               }
             },
             ast.ExprCall(sc) => {
-              if (e065_call_roots(sc, params, sbacked, sums, vix, cur).local) {
+              if (e065_call_roots(sc, ps, sbacked, sums, vix, cur).local) {
                 sbacked = sbacked.append(v.name);
               }
             },
@@ -29554,14 +29737,19 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
               sbacked = sbacked.append(v.name);
             },
             ast.ExprIdent(id) => {
-              if (e065_ident_in(id.name, sbacked)) {
+              if (e065_param_of(id.name, ps) == "" && e065_ident_in(id.name, sbacked) || is_owned_string(check_expr(v.init, cur))) {
+                sbacked = sbacked.append(v.name);
+              }
+            },
+            ast.ExprFieldAccess(_) => {
+              if (is_owned_string(check_expr(v.init, cur))) {
                 sbacked = sbacked.append(v.name);
               }
             },
             ast.ExprSlice(osl) => {
               match (osl.array) {
                 ast.ExprIdent(osid) => {
-                  if (!e065_ident_in(osid.name, params) && e065_ident_in(osid.name, sbacked)) {
+                  if (e065_param_of(osid.name, ps) == "" && e065_ident_in(osid.name, sbacked)) {
                     sbacked = sbacked.append(v.name);
                   }
                 },
@@ -29569,7 +29757,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
               }
             },
             ast.ExprCall(c) => {
-              if (e065_call_roots(c, params, sbacked, sums, vix, cur).local) {
+              if (e065_call_roots(c, ps, sbacked, sums, vix, cur).local) {
                 sbacked = sbacked.append(v.name);
               }
               let callee_name = "";
@@ -29594,43 +29782,43 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
             _ => {}
           }
         }
-        sbacked = e065_agg_taint(v, params, sbacked, sums, vix, cur);
+        sbacked = e065_agg_taint(v, ps, sbacked, sums, vix, cur);
       },
       ast.StmtReturn(r) => {
         if (!ret_is_view) {
-          let sroots = e065_string_src_roots(r.value, params, sbacked, sums, vix, cur);
+          let sroots = e065_string_src_roots(r.value, ps, sbacked, sums, vix, cur);
           viewed = merge_view_names(viewed, sroots.params);
           if (sroots.local) {
             owns = true;
           }
         }
-        let roots = e065_return_roots(r.value, params, sbacked, sums, vix, cur);
+        let roots = e065_return_roots(r.value, ps, sbacked, sums, vix, cur);
         viewed = merge_view_names(viewed, roots.params);
         if (ret_is_view && roots.local) {
           out = out.append(e065_escape_diag(fname, r.line, r.col));
         }
-        let aroots = e065_agg_roots(r.value, cur.ret_type, params, sbacked, sums, vix, cur);
+        let aroots = e065_agg_roots(r.value, cur.ret_type, ps, sbacked, sums, vix, cur);
         viewed = merge_view_names(viewed, aroots.params);
         out = util.append_diags(out, e065_agg_diags(ret_is_view, aroots, fname, r.line, r.col));
       },
       ast.StmtIf(f) => {
-        let wt = e065_stmts(f.then_body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
+        let wt = e065_stmts(f.then_body, fname, ps, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, wt.diags);
         viewed = merge_view_names(viewed, wt.viewed);
         owns = owns || wt.owns;
-        let we = e065_stmts(f.else_body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
+        let we = e065_stmts(f.else_body, fname, ps, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, we.diags);
         viewed = merge_view_names(viewed, we.viewed);
         owns = owns || we.owns;
       },
       ast.StmtWhile(w) => {
-        let ww = e065_stmts(w.body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
+        let ww = e065_stmts(w.body, fname, ps, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, ww.diags);
         viewed = merge_view_names(viewed, ww.viewed);
         owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
-        let wf = e065_stmts(fr.body, fname, params, str_ret_names, sbacked, sums, vix, for_body_scope(fr, cur), ret_is_view);
+        let wf = e065_stmts(fr.body, fname, ps, str_ret_names, sbacked, sums, vix, for_body_scope(fr, cur), ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
         owns = owns || wf.owns;
@@ -29638,11 +29826,11 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
       ast.StmtMatch(m) => {
         let arm_sb = sbacked;
         let msrc = e065_view_source_name(m.scrutinee);
-        if (msrc.len() > 0 && !e065_ident_in(msrc, params) && e065_ident_in(msrc, sbacked)) {
+        if (msrc.len() > 0 && e065_param_of(msrc, ps) == "" && e065_ident_in(msrc, sbacked)) {
           arm_sb = e065_with_arm_bindings(arm_sb, m.arms);
         }
         for arm in m.arms {
-          let wa = e065_stmts(arm.body, fname, params, str_ret_names, arm_sb, sums, vix, cur, ret_is_view);
+          let wa = e065_stmts(arm.body, fname, ps, str_ret_names, arm_sb, sums, vix, cur, ret_is_view);
           out = util.append_diags(out, wa.diags);
           viewed = merge_view_names(viewed, wa.viewed);
           owns = owns || wa.owns;
@@ -29650,7 +29838,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
       },
       ast.StmtDefer(d) => {
         let one: ast.Stmt[] = [d.action];
-        let wd = e065_stmts(one, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
+        let wd = e065_stmts(one, fname, ps, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, wd.diags);
         viewed = merge_view_names(viewed, wd.viewed);
         owns = owns || wd.owns;
@@ -29663,9 +29851,8 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
 }
 
 function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): E065Walk {
-  let params = view_positions(efn);
   let none: string[] = [];
-  return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, vix, s, efn.ret_type == "str");
+  return e065_stmts(efn.body, efn.name, e065_params(efn), str_ret_names, none, sums, vix, s, efn.ret_type == "str");
 }
 
 function e032_call_check(c: ast.ExprCall, cur: Scope): util.Diag[] {

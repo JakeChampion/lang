@@ -192,6 +192,8 @@ var Ungated = map[string]bool{
 	"__sha1x8_hw_blocks":          true,
 	"__chacha20_xor_into":         true,
 	"__poly1305_blocks":           true,
+	"__mont_mul":                  true,
+	"__scrypt_block_mix":          true,
 	"signal_ignore":               true,
 	"signal_default":              true,
 	"signal_catch":                true,

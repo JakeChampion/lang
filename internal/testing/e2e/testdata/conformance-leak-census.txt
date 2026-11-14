@@ -1,3 +1,4 @@
+# 2026-11-14: tuple_projection_of_a_fresh_call_is_owned has balanced allocations on x86-64.
 # 2026-11-13: owned_let_arm_result_in_loop has no allocations on x86-64.
 # 2026-11-14: owned_spread_reads_replaced_field has no allocations on x86-64.
 # 2026-11-14: owned_spread_borrows_its_source has balanced allocations on x86-64.
@@ -1412,6 +1413,7 @@ tuple_nested_tuple_pattern                           0
 tuple_payload_gives_loop_local_next_value            0
 tuple_payload_pattern                                0
 tuple_payload_pattern_expr                           0
+tuple_projection_of_a_fresh_call_is_owned            0
 tuple_return_union                                   0
 tuple_variant_payload_subpattern                     0
 two_i64_literals                                     0
