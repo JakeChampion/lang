@@ -8258,6 +8258,55 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// The first append to the shared empty array takes a box of 4 words, from the
+// free list of that size when it has one. Any other receiver goes to `frame`.
+function arr_push_empty(s: asmcore.EmitState, frame: string, fresh: string): asmcore.EmitState {
+  if (s.rc_free_debug || !profile_alloc_fast(s)) {
+    return s;
+  }
+  s = s.write("    ldr x2, [x0]\n");
+  s = s.write("    cbnz x2, " + frame + "\n");
+  s = s.write("    ldur x2, [x0, #-16]\n");
+  s = s.write("    cbnz x2, " + frame + "\n");
+  s = s.write("    adrp x2, __fern_freelist\n");
+  s = s.write("    add x2, x2, :lo12:__fern_freelist\n");
+  if (s.harden) {
+    s = s.write(rt_save_lr(s, "x0"));
+    s = s.write("    add x0, x2, #56\n");
+    s = s.write("    bl __fern_freelist_take\n");
+    s = s.write("    mov x3, x0\n");
+    s = s.write(rt_restore_lr(s, "x0"));
+    s = s.write("    cbz x3, " + fresh + "\n");
+  } else {
+    s = s.write("    ldr x3, [x2, #56]\n");
+    s = s.write("    cbz x3, " + fresh + "\n");
+    s = s.write("    ldr x4, [x3]\n");
+    s = s.write("    str x4, [x2, #56]\n");
+  }
+  s = s.write("    mov x2, #4\n");
+  s = s.write("    str x2, [x3]\n");
+  s = s.write("    mov w2, #1\n");
+  s = s.write("    str w2, [x3, #8]\n");
+  s = s.write("    mov x2, #1\n");
+  s = s.write("    str x2, [x3, #16]\n");
+  s = s.write("    str x1, [x3, #24]\n");
+  s = s.write("    add x0, x3, #16\n");
+  s = s.write("    ret\n");
+  s = s.write(fresh + ":\n");
+  s = s.write(rt_frame(s));
+  s = s.write("    mov x29, sp\n");
+  s = s.write("    str x1, [sp, #-16]!\n");
+  s = s.write("    mov x0, #4\n");
+  s = s.write("    bl __fern_arr_box\n");
+  s = s.write("    ldr x1, [sp], #16\n");
+  s = s.write("    mov x2, #1\n");
+  s = s.write("    str x2, [x0]\n");
+  s = s.write("    str x1, [x0, #8]\n");
+  s = s.write(rt_unframe(s));
+  s = s.write("    ret\n");
+  return s;
+}
+
 // Rounds the x0 elements of the array op `o` up to the words they take.
 function reserve_words(o: ir.Op): string {
   let shift = asmcore.elem_shift(o);
@@ -8315,6 +8364,7 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
   s = s.write("__fern_arr_push_" + sfx + ":\n");
   s = s.write(arr_push_fast_packed(l + "_slow", s.rc_free_debug, shift));
   s = s.write(l + "_slow:\n");
+  s = arr_push_empty(s, l + "_frame", l + "_fresh").write(l + "_frame:\n");
   s = s.write(rt_frame(s) + "    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n");
   s = s.write("    mov x19, x0\n    mov x20, x1\n    ldr x21, [x19]\n    ldur x22, [x19, #-16]\n");
   if (!s.rc_free_debug) {
@@ -8343,6 +8393,9 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
   s = s.write("__fern_arr_push_owned_" + sfx + ":\n");
   s = s.write(arr_push_fast_packed(own + "_slow", s.rc_free_debug, shift));
   s = s.write(own + "_slow:\n");
+  if (!s.rc_free_debug) {
+    s = s.write("    ldr x2, [x0]\n    cbnz x2, " + own + "_frame\n    ldur x2, [x0, #-16]\n    cbz x2, " + l + "_slow\n" + own + "_frame:\n");
+  }
   s = s.write(rt_frame(s) + "    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    mov x19, x0\n");
   if (s.rc_free_debug) {
     s = s.write("    bl __fern_arr_push_" + sfx + "\n");
@@ -11190,48 +11243,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("__fern_arr_push:\n");
     s = s.write(arr_push_fast(".Larr_push_slow", s.rc_free_debug));
     s = s.write(".Larr_push_slow:\n");
-    if (!s.rc_free_debug && profile_alloc_fast(s)) {
-      s = s.write("    ldr x2, [x0]\n");
-      s = s.write("    cbnz x2, .Larr_push_frame\n");
-      s = s.write("    ldur x2, [x0, #-16]\n");
-      s = s.write("    cbnz x2, .Larr_push_frame\n");
-      s = s.write("    adrp x2, __fern_freelist\n");
-      s = s.write("    add x2, x2, :lo12:__fern_freelist\n");
-      if (s.harden) {
-        s = s.write(rt_save_lr(s, "x0"));
-        s = s.write("    add x0, x2, #56\n");
-        s = s.write("    bl __fern_freelist_take\n");
-        s = s.write("    mov x3, x0\n");
-        s = s.write(rt_restore_lr(s, "x0"));
-        s = s.write("    cbz x3, .Larr_push_fresh\n");
-      } else {
-        s = s.write("    ldr x3, [x2, #56]\n");
-        s = s.write("    cbz x3, .Larr_push_fresh\n");
-        s = s.write("    ldr x4, [x3]\n");
-        s = s.write("    str x4, [x2, #56]\n");
-      }
-      s = s.write("    mov x2, #4\n");
-      s = s.write("    str x2, [x3]\n");
-      s = s.write("    mov w2, #1\n");
-      s = s.write("    str w2, [x3, #8]\n");
-      s = s.write("    mov x2, #1\n");
-      s = s.write("    str x2, [x3, #16]\n");
-      s = s.write("    str x1, [x3, #24]\n");
-      s = s.write("    add x0, x3, #16\n");
-      s = s.write("    ret\n");
-      s = s.write(".Larr_push_fresh:\n");
-      s = s.write(rt_frame(s));
-      s = s.write("    mov x29, sp\n");
-      s = s.write("    str x1, [sp, #-16]!\n");
-      s = s.write("    mov x0, #4\n");
-      s = s.write("    bl __fern_arr_box\n");
-      s = s.write("    ldr x1, [sp], #16\n");
-      s = s.write("    mov x2, #1\n");
-      s = s.write("    str x2, [x0]\n");
-      s = s.write("    str x1, [x0, #8]\n");
-      s = s.write(rt_unframe(s));
-      s = s.write("    ret\n");
-    }
+    s = arr_push_empty(s, ".Larr_push_frame", ".Larr_push_fresh");
     s = s.write(".Larr_push_frame:\n");
     s = s.write(rt_frame(s));
     s = s.write("    mov x29, sp\n");

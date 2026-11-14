@@ -3977,7 +3977,7 @@ function direct_need_deps(name: string): string[] {
     return dtrim;
   }
   if (name == "arr_push_u8" || name == "arr_push_u32") {
-    let du8: string[] = ["arr_push", "heap"];
+    let du8: string[] = ["heap"];
     return du8;
   }
   if (name == "buf") {

@@ -715,6 +715,50 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// The first append to the shared empty array takes a box of 4 words, from the
+// free list of that size when it has one. Any other receiver goes to `frame`.
+function arr_push_empty(s: asmcore.EmitState, frame: string, fresh: string): asmcore.EmitState {
+  if (s.rc_free_debug || hev_on(s)) {
+    return s;
+  }
+  s = s.write("    cmpq $0, (%rdi)\n");
+  s = s.write("    jne " + frame + "\n");
+  s = s.write("    cmpq $0, -16(%rdi)\n");
+  s = s.write("    jne " + frame + "\n");
+  if (!s.has_need("alloc_count")) {
+    s = s.write("    leaq __fern_freelist(%rip), %rcx\n");
+    if (s.harden) {
+      s = s.write("    pushq %rdi\n");
+      s = s.write("    leaq 56(%rcx), %rdi\n");
+      s = s.write("    call __fern_freelist_take\n");
+      s = s.write("    popq %rdi\n");
+      s = s.write("    testq %rax, %rax\n");
+      s = s.write("    jz " + fresh + "\n");
+    } else {
+      s = s.write("    movq 56(%rcx), %rax\n");
+      s = s.write("    testq %rax, %rax\n");
+      s = s.write("    jz " + fresh + "\n");
+      s = s.write("    movq (%rax), %rdx\n");
+      s = s.write("    movq %rdx, 56(%rcx)\n");
+    }
+    s = s.write("    movq $4, (%rax)\n");
+    s = s.write("    movq $1, 8(%rax)\n");
+    s = s.write("    movq $1, 16(%rax)\n");
+    s = s.write("    movq %rsi, 24(%rax)\n");
+    s = s.write("    addq $16, %rax\n");
+    s = s.write("    ret\n");
+    s = s.write(fresh + ":\n");
+  }
+  s = s.write("    pushq %rsi\n");
+  s = s.write("    movl $4, %edi\n");
+  s = s.write("    call __fern_arr_box\n");
+  s = s.write("    popq %rsi\n");
+  s = s.write("    movq $1, (%rax)\n");
+  s = s.write("    movq %rsi, 8(%rax)\n");
+  s = s.write("    ret\n");
+  return s;
+}
+
 // Rounds the %rdi elements of the array op `o` up to the words they take.
 function reserve_words(o: ir.Op): string {
   let shift = asmcore.elem_shift(o);
@@ -896,6 +940,7 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
   s = s.write("__fern_arr_push_" + sfx + ":\n");
   s = s.write(arr_push_fast_packed(l + "_slow", s.rc_free_debug, shift));
   s = s.write(l + "_slow:\n");
+  s = arr_push_empty(s, l + "_frame", l + "_fresh").write(l + "_frame:\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
   s = s.write("    movq %rdi, %r12\n    movq %rsi, %r13\n    movq (%r12), %r14\n    movq -16(%r12), %r15\n");
   if (!s.rc_free_debug) {
@@ -921,6 +966,9 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
   s = s.write("__fern_arr_push_owned_" + sfx + ":\n");
   s = s.write(arr_push_fast_packed(own + "_slow", s.rc_free_debug, shift));
   s = s.write(own + "_slow:\n");
+  if (!s.rc_free_debug) {
+    s = s.write("    cmpq $0, (%rdi)\n    jne " + own + "_frame\n    cmpq $0, -16(%rdi)\n    je " + l + "_slow\n" + own + "_frame:\n");
+  }
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n");
   if (s.rc_free_debug) {
     s = s.write("    call __fern_arr_push_" + sfx + "\n");
@@ -5110,43 +5158,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_arr_push:\n");
     s = s.write(arr_push_fast(".Larr_push_slow", s.rc_free_debug));
     s = s.write(".Larr_push_slow:\n");
-    if (!s.rc_free_debug && !hev_on(s)) {
-      s = s.write("    cmpq $0, (%rdi)\n");
-      s = s.write("    jne .Larr_push_frame\n");
-      s = s.write("    cmpq $0, -16(%rdi)\n");
-      s = s.write("    jne .Larr_push_frame\n");
-      if (!s.has_need("alloc_count")) {
-        s = s.write("    leaq __fern_freelist(%rip), %rcx\n");
-        if (s.harden) {
-          s = s.write("    pushq %rdi\n");
-          s = s.write("    leaq 56(%rcx), %rdi\n");
-          s = s.write("    call __fern_freelist_take\n");
-          s = s.write("    popq %rdi\n");
-          s = s.write("    testq %rax, %rax\n");
-          s = s.write("    jz .Larr_push_fresh\n");
-        } else {
-          s = s.write("    movq 56(%rcx), %rax\n");
-          s = s.write("    testq %rax, %rax\n");
-          s = s.write("    jz .Larr_push_fresh\n");
-          s = s.write("    movq (%rax), %rdx\n");
-          s = s.write("    movq %rdx, 56(%rcx)\n");
-        }
-        s = s.write("    movq $4, (%rax)\n");
-        s = s.write("    movq $1, 8(%rax)\n");
-        s = s.write("    movq $1, 16(%rax)\n");
-        s = s.write("    movq %rsi, 24(%rax)\n");
-        s = s.write("    addq $16, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Larr_push_fresh:\n");
-      }
-      s = s.write("    pushq %rsi\n");
-      s = s.write("    movl $4, %edi\n");
-      s = s.write("    call __fern_arr_box\n");
-      s = s.write("    popq %rsi\n");
-      s = s.write("    movq $1, (%rax)\n");
-      s = s.write("    movq %rsi, 8(%rax)\n");
-      s = s.write("    ret\n");
-    }
+    s = arr_push_empty(s, ".Larr_push_frame", ".Larr_push_fresh");
     s = s.write(".Larr_push_frame:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
