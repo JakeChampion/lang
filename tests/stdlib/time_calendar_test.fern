@@ -78,6 +78,15 @@ function test_format_iso_zero_pad(): test.TestOutcome {
   return test.assert_eq(time.date_of(2024, 3, 7).format_iso(), "2024-03-07");
 }
 
+// date_parse_iso refuses a date that the calendar does not have.
+function test_parse_iso_impossible_dates(): test.TestOutcome {
+  let got = "";
+  for s in ["2023-02-31", "2024-13-01", "0000-00-00", "2023-02-29", "2024-02-29"] {
+    got += if (time.date_parse_iso(s).is_ok()) { "y" } else { "n" };
+  }
+  return test.assert_eq(got, "nnnny");
+}
+
 function main(): i32 {
   let r = test.new("std/time calendar");
   r = r.it("is_leap_year", test_is_leap_year);
@@ -95,5 +104,6 @@ function main(): i32 {
   r = r.it("weekday", test_weekday);
   r = r.it("format_iso basic", test_format_iso_basic);
   r = r.it("format_iso zero-pad", test_format_iso_zero_pad);
+  r = r.it("date_parse_iso impossible dates", test_parse_iso_impossible_dates);
   return r.finish();
 }

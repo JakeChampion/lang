@@ -1,0 +1,178 @@
+import "std/video/av1/metadata";
+import "std/video/frame";
+import "std/test";
+import "std/hex";
+import "video_av1_metadata_values" as fields;
+
+function append(own bytes: u8[], input: [u8]): u8[] {
+  for byte in input {
+    bytes = bytes.append(byte);
+  }
+  return bytes;
+}
+
+function leb(value: i32, width: i32): u8[] {
+  let result: u8[] = [];
+  let remaining = value as u32;
+  for i in 0..width {
+    let byte = (remaining & 127u32) as u8;
+    remaining >>= 7u32;
+    result = result.append(byte | (if (i + 1 == width) { 0u8 } else { 128u8 }));
+  }
+  return result;
+}
+
+function packet(payload: [u8], extension: i32, width: i32): u8[] {
+  let bytes: u8[] = if (extension < 0) { [42u8] } else { [46u8, extension as u8] };
+  return append(append(bytes, leb(payload.len(), width)), payload);
+}
+
+function light(): u8[] {
+  return [1u8, 3, 232, 1, 144, 128];
+}
+
+function display(): u8[] {
+  return hex.decode("020001ffff0102030405060708090a0b0cffffffff8000000080").unwrap_or([]);
+}
+
+function light_fields(): test.TestOutcome {
+  for data in [[1u8, 0, 0, 0, 0, 128], light(), [1u8, 255, 255, 255, 255, 128]] {
+    let Ok(value) = metadata.inspect(packet(data, -1, 1), frame.default_limits()) else {
+      return test.fail("content-light syntax");
+    };
+    let expected = [1u32, data[1] as u32 << 8u32 | data[2] as u32, data[3] as u32 << 8u32 | data[4] as u32];
+    if (fields.values(value) != expected) {
+      return test.fail("unsigned content-light values");
+    }
+  }
+  return test.pass();
+}
+
+function display_fields(): test.TestOutcome {
+  let Ok(value) = metadata.inspect(packet(display(), -1, 1), frame.default_limits()) else {
+    return test.fail("mastering-display syntax");
+  };
+  if (fields.values(value) != [2u32, 1, 65535, 258, 772, 1286, 1800, 2314, 2828, 4294967295, 2147483648]) {
+    return test.fail("RGB and white order, unsigned luminance, or byte order");
+  }
+  return test.pass();
+}
+
+function nonminimal(): test.TestOutcome {
+  for payload in [light(), display()] {
+    let Ok(original) = metadata.inspect(packet(payload, -1, 1), frame.default_limits()) else {
+      return test.fail("original metadata");
+    };
+    for type_width in 1..9 {
+      let extended = append(leb(payload[0] as i32, type_width), payload[1:]);
+      for size_width in 1..9 {
+        let Ok(value) = metadata.inspect(packet(extended, -1, size_width), frame.default_limits()) else {
+          return test.fail("all eight type and size widths");
+        };
+        if (fields.values(value) != fields.values(original)) {
+          return test.fail("nonminimal LEB128 field identity");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for payload in [light(), display()] {
+    let bytes = packet(payload, -1, 1);
+    for cut in 0..bytes.len() {
+      if let Err(frame.Truncated) = metadata.inspect(bytes[:cut], frame.default_limits()) {} else {
+        return test.fail("every encoded prefix");
+      }
+    }
+    for cut in 0..payload.len() {
+      if let Err(frame.Truncated) = metadata.inspect(packet(payload[:cut], -1, 1), frame.default_limits()) {} else {
+        return test.fail("every declared field and trailing-bit prefix");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function type_errors(): test.TestOutcome {
+  for payload in [[0u8], [3u8], [4u8], [5u8], [31u8], [32u8], [255u8, 255, 255, 255, 15]] {
+    if let Err(frame.Unsupported) = metadata.inspect(packet(payload, -1, 1), frame.default_limits()) {} else {
+      return test.fail("other known, private, and reserved metadata types");
+    }
+  }
+  for payload in [[128u8, 128, 128, 128, 16], [128u8, 128, 128, 128, 128, 128, 128, 128]] {
+    if let Err(frame.Header) = metadata.inspect(packet(payload, -1, 1), frame.default_limits()) {} else {
+      return test.fail("32-bit metadata type and eight-byte termination");
+    }
+  }
+  return test.pass();
+}
+
+function extensions(): test.TestOutcome {
+  for payload in [light(), display()] {
+    for temporal in 0..8 {
+      for spatial in 0..4 {
+        if let Err(frame.Header) = metadata.inspect(packet(payload, temporal * 32 + spatial * 8, 1), frame.default_limits()) {} else {
+          return test.fail("global HDR metadata prohibits every extension ID");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function padding(): test.TestOutcome {
+  for payload in [light(), display()] {
+    let Ok(original) = metadata.inspect(packet(payload, -1, 1), frame.default_limits()) else {
+      return test.fail("original metadata");
+    };
+    let padded = append(append([], payload), [0u8, 0, 0]);
+    let Ok(value) = metadata.inspect(packet(padded, -1, 1), frame.default_limits()) else {
+      return test.fail("additional trailing zero bytes");
+    };
+    if (fields.values(value) != fields.values(original)) {
+      return test.fail("padding preserves all metadata");
+    }
+    for last in [0u8, 1, 64, 129, 255] {
+      let bad = payload.with(payload.len() - 1, last);
+      if let Err(frame.Header) = metadata.inspect(packet(bad, -1, 1), frame.default_limits()) {} else {
+        return test.fail("exact trailing-one bit and zero padding");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function boundaries(): test.TestOutcome {
+  let bytes = packet(light(), -1, 1);
+  let exact = frame.Limits { max_pixels: 0, max_packet_bytes: bytes.len() };
+  if let Ok(_) = metadata.inspect(bytes, exact) {} else {
+    return test.fail("exact packet budget");
+  }
+  for limits in [frame.Limits { ...exact, max_packet_bytes: bytes.len() - 1 }, frame.Limits { ...exact, max_pixels: -1 }] {
+    if let Err(frame.Limit) = metadata.inspect(bytes, limits) {} else {
+      return test.fail("packet limits before metadata access");
+    }
+  }
+  if let Err(frame.Header) = metadata.inspect(append(bytes, [122u8, 0]), frame.default_limits()) {} else {
+    return test.fail("exact single-OBU envelope");
+  }
+  if let Err(frame.Unsupported) = metadata.inspect([122u8, 0], frame.default_limits()) {} else {
+    return test.fail("metadata OBU type");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("native AV1 HDR metadata");
+  r = r.it("unsigned content-light fields", light_fields);
+  r = r.it("mastering-display fields retain their exact units", display_fields);
+  r = r.it("all metadata-type and payload-size widths", nonminimal);
+  r = r.it("every encoded and declared syntax prefix", prefixes);
+  r = r.it("other types and malformed metadata LEB128", type_errors);
+  r = r.it("global HDR metadata rejects all layer extensions", extensions);
+  r = r.it("exact trailing bits and zero padding", padding);
+  r = r.it("single metadata OBU and packet budgets", boundaries);
+  return r.finish();
+}

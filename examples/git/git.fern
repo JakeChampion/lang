@@ -6,7 +6,7 @@
 //   $ git cat-file (--batch | --batch-check)       # names on the standard input
 //   $ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
 //   $ git verify-pack [-v] FILE.idx...
-//   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
+//   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE [PATH...]
 //
 // The port reads loose objects and packfiles, and writes loose objects.
 import "std/array";
@@ -26,7 +26,7 @@ import "./refs";
 import "./rev";
 import "./store";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE [PATH...]\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -352,74 +352,170 @@ function rev_parse(argv: string[]): i32 {
 
 // ---- ls-tree ----
 
-struct LsOpts { recurse: boolean, trees: boolean, only_trees: boolean, long: boolean, names: boolean, full: boolean }
+// `paths` holds the paths after the tree, with no `/` at the end. `dirs`
+// tells for each one that it had a `/` at the end.
+struct LsOpts { recurse: boolean, trees: boolean, only_trees: boolean, long: boolean, names: boolean, full: boolean, paths: string[], dirs: boolean[] }
+
+// True when `path` and a `/` start the text `spec`.
+function below(spec: string, path: u8[]): boolean {
+  if (spec.len() <= path.len() || spec[path.len()] != b'/') {
+    return false;
+  }
+  for i in 0..path.len() {
+    if (spec[i] != path[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True when `path` is `spec` or is in the directory `spec`.
+function within(spec: string, path: u8[]): boolean {
+  if (path.len() < spec.len() || path.len() > spec.len() && path[spec.len()] != b'/') {
+    return false;
+  }
+  for i in 0..spec.len() {
+    if (spec[i] != path[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True when a path after the tree goes into the directory `path`.
+function ls_reaches(o: LsOpts, path: u8[]): boolean {
+  for i in 0..o.paths.len() {
+    if (below(o.paths[i], path) || o.dirs[i] && o.paths[i].len() == path.len() && within(o.paths[i], path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// True when the entry `path` is one that the paths after the tree ask for.
+// A path with a `/` at the end names a directory only.
+function ls_asked(o: LsOpts, path: u8[], is_tree: boolean): boolean {
+  if (o.paths.len() == 0) {
+    return true;
+  }
+  for i in 0..o.paths.len() {
+    let spec = o.paths[i];
+    // The current directory asks for each entry.
+    if (spec.len() == 0) {
+      return true;
+    }
+    if (is_tree && below(spec, path)) {
+      return true;
+    }
+    if (within(spec, path) && (is_tree || !o.dirs[i] || path.len() > spec.len())) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // The lines of a tree so far, and the store after the reads.
 struct Listing { store: store.Store, out: u8[], ok: boolean }
 
 // The size column of `ls-tree -l`: seven places, or `-` for an entry that
 // is not a blob.
-function size_column(l: Listing, e: objects.TreeEntry): (store.Store, string) {
+function size_column(st: store.Store, e: objects.TreeEntry): (store.Store, string) {
   if (objects.entry_kind(e.mode) != "blob") {
-    return (l.store, "       -");
+    return (st, "       -");
   }
-  let got = store.info(l.store, e.hash);
+  let got = store.info(st, e.hash);
   let size = if (got.why.len() == 0) { got.size.to_string() } else { "-" };
   return (got.store, " " + size.pad_start_str(7, " "));
 }
 
-// The lines that wait, with `line` added. A long text goes to the standard
-// output, so each addition copies a short text only.
-function ls_out(out: u8[], line: u8[]): u8[] {
-  let all = out.concat(line).append(b'\n');
-  if (all.len() < 4096) {
-    return all;
+// The lines that wait, with one more: `line`, a tab when `line` has text,
+// and the path. A long text goes to
+// the standard output, so the lines that wait stay short.
+function ls_out(own out: u8[], line: string, path: u8[]): u8[] {
+  for b in line.bytes() {
+    out = out.append(b);
   }
-  put(all);
+  if (line.len() > 0) {
+    out = out.append(b'\t');
+  }
+  for b in path {
+    out = out.append(b);
+  }
+  out = out.append(b'\n');
+  if (out.len() < 4096) {
+    return out;
+  }
+  put(out);
   return [];
 }
 
 // Adds the line of the entry `e`, whose path from the start is `path`.
-function ls_line(l: Listing, e: objects.TreeEntry, path: u8[], o: LsOpts): Listing {
+// A path that is not `plain` goes in quotes.
+function ls_line(own l: Listing, e: objects.TreeEntry, path: u8[], plain: boolean, o: LsOpts): Listing {
+  let out = l.out;
+  let st = l.store;
+  let ok = l.ok;
+  let shown = if (plain) { path } else { objects.quoted(path) };
   if (o.names) {
-    return Listing { ...l, out: ls_out(l.out, objects.quoted(path)) };
+    return Listing { store: st, out: ls_out(out, "", shown), ok: ok };
   }
   let head = objects.entry_head(e);
-  let st = l.store;
   if (o.long) {
-    let (after, column) = size_column(l, e);
+    let (after, column) = size_column(st, e);
     st = after;
     head += column;
   }
-  return Listing { store: st, out: ls_out(l.out, (head + "\t").bytes().concat(objects.quoted(path))), ok: l.ok };
+  return Listing { store: st, out: ls_out(out, head, shown), ok: ok };
 }
 
 // Adds the lines of the tree `hash`, whose path from the start is `prefix`.
-function ls_walk(l: Listing, hash: string, prefix: u8[], o: LsOpts): Listing {
+// `plain` tells that the prefix needs no quotes.
+function ls_walk(own l: Listing, hash: string, prefix: u8[], plain: boolean, o: LsOpts): Listing {
+  let out = l.out;
+  let ok = l.ok;
   let got = store.read(l.store, hash);
   let entries = match (got.object) {
     Ok(t) => if (t.kind == "tree") { objects.tree_entries(t.body) } else { Err("not a tree") },
     Err(why) => Err(why),
   };
   let Ok(list) = entries else {
-    return Listing { store: got.store, out: l.out, ok: false };
+    return Listing { store: got.store, out: out, ok: false };
   };
-  let now = Listing { store: got.store, out: l.out, ok: l.ok };
+  let now = Listing { store: got.store, out: out, ok: ok };
   for e in list {
     let path = prefix.concat(e.name);
+    let path_plain = plain && objects.plain_name(e.name);
     let is_tree = e.mode == "40000";
-    if (is_tree && (!o.recurse || o.trees || o.only_trees) || !is_tree && !o.only_trees) {
-      now = ls_line(now, e, path, o);
+    if (!ls_asked(o, path, is_tree)) {
+      continue;
     }
-    if (is_tree && o.recurse) {
-      now = ls_walk(now, e.hash, path.append(b'/'), o);
+    let into = is_tree && (o.recurse || ls_reaches(o, path));
+    if (is_tree && (!into || o.trees || o.only_trees && o.recurse) || !is_tree && !o.only_trees) {
+      now = ls_line(now, e, path, path_plain, o);
+    }
+    if (into) {
+      now = ls_walk(now, e.hash, path.append(b'/'), path_plain, o);
     }
   }
   return now;
 }
 
+// A path after the tree with no `./` at the start and no `/` at the end,
+// the fact that it had a `/` at the end, and the cause when the port does
+// not take it.
+function ls_path(text: string): (string, boolean, string) {
+  if (text.len() == 0) {
+    return ("", false, "empty string is not a valid pathspec. please use . instead if you meant to match all paths");
+  }
+  let parts = text.split("/").filter((p: string): boolean => p.len() > 0 && p != ".");
+  if (parts.contains("..") || text.starts_with("/") || text.starts_with(":")) {
+    return ("", false, "this port takes a path below the current directory only: " + text);
+  }
+  return (parts.join("/"), text.ends_with("/") || text.ends_with("/."), "");
+}
+
 function ls_tree(argv: string[]): i32 {
-  let o = LsOpts { recurse: false, trees: false, only_trees: false, long: false, names: false, full: false };
+  let o = LsOpts { recurse: false, trees: false, only_trees: false, long: false, names: false, full: false, paths: [], dirs: [] };
   let names: string[] = [];
   for x in argv {
     if (x == "-r") {
@@ -443,8 +539,12 @@ function ls_tree(argv: string[]): i32 {
   if (names.len() == 0) {
     return usage();
   }
-  if (names.len() > 1) {
-    return fatal("this port lists a whole tree: a path after the tree is not in it yet");
+  for i in 1..names.len() {
+    let (path, dir, why) = ls_path(names[i]);
+    if (why.len() > 0) {
+      return fatal(why);
+    }
+    o = LsOpts { ...o, paths: o.paths.append(path), dirs: o.dirs.append(dir) };
   }
   let (repo, status) = repo_or_fail();
   if (status != 0) {
@@ -475,11 +575,11 @@ function ls_tree(argv: string[]): i32 {
       if (o.trees || o.only_trees && o.recurse) {
         let up = parts.len() - 1 - i;
         let name = if (up == 0) { "./" } else { "../".repeat(up) };
-        from = ls_line(from, objects.TreeEntry { mode: "40000", name: [], hash: hash }, name.bytes(), o);
+        from = ls_line(from, objects.TreeEntry { mode: "40000", name: [], hash: hash }, name.bytes(), true, o);
       }
     }
   }
-  let listed = ls_walk(from, hash, [], o);
+  let listed = ls_walk(from, hash, [], true, o);
   put(listed.out);
   if (!listed.ok) {
     return fatal("unable to read a tree of " + names[0]);

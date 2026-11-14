@@ -56,6 +56,9 @@ func prCases(t *testing.T) []invocation {
 	fftail := prFile(t, dir, "fftail", seqLines(56)+"\f", mt)
 	nonl := prFile(t, dir, "nonl", "a\nb", mt)
 	nonl2 := prFile(t, dir, "nonl2", "1\n2\n3", mt)
+	eofFirst := prFile(t, dir, "eof-first", "a", mt)
+	eofLate := prFile(t, dir, "eof-late", "a\nb\nc", mt)
+	eofLong := prFile(t, dir, "eof-long", strings.Repeat("a", 65537), mt)
 	blank := prFile(t, dir, "blank", "a\n\nb\n", mt)
 	raw := filepath.Join(dir, rawByteNameFixture)
 	if rawByteNamesHeld(t) {
@@ -202,6 +205,21 @@ func prCases(t *testing.T) []invocation {
 		{name: "merge ragged numbered pages", args: []string{"-D", "X", "-m", "-l14", "-n:4", "-o3", s12, s3, empty}},
 		{name: "merge tab and control columns", args: []string{"-D", "X", "-m", "-l14", "-e4", "-i4", "-n:4", "-W31", tabbed, s10, ctrl}},
 		{name: "merge numbered range and form feeds", args: []string{"-D", "X", "-m", "-l14", "-n:3", "+2:3", s12, s3, ff}},
+		{name: "merge numbers an EOF in the first column", args: []string{"-m", "-t", "-n:3", "-s:", eofFirst, f}},
+		{name: "merge numbers an EOF before an empty operand", args: []string{"-m", "-t", "-n:3", "-s:", eofFirst, empty}},
+		{name: "merge numbers an EOF before two empty operands", args: []string{"-m", "-t", "-n\t3", "-s:", eofFirst, empty, empty}},
+		{name: "merge numbers an EOF with an offset", args: []string{"-m", "-t", "-n\t3", "-s:", "-o1", eofFirst, f}},
+		{name: "merge numbers an EOF with a large offset", args: []string{"-m", "-t", "-n\t3", "-s:", "-o8", eofFirst, f}},
+		{name: "merge numbers an EOF with double space", args: []string{"-m", "-t", "-n:3", "-s:", "-d", eofFirst, f}},
+		{name: "merge counts an EOF before later rows", args: []string{"-m", "-t", "-n:3", "-s:", nonl, s10}},
+		{name: "merge numbers an EOF across pages", args: []string{"-m", "-n:3", "-s:", "-l12", "-D", "X", nonl, s10}},
+		{name: "merge counts an EOF before a page range", args: []string{"-m", "-n:3", "-s:", "-l12", "-D", "X", "+2", nonl, s10}},
+		{name: "merge starts EOF numbers at eight", args: []string{"-m", "-t", "-n:3", "-s:", "-N8", eofFirst, f}},
+		{name: "merge EOF alone adds no extra number", args: []string{"-m", "-t", "-n:3", "-s:", eofFirst}},
+		{name: "merge EOF after other columns end", args: []string{"-m", "-t", "-n:3", "-s:", eofLate, eofFirst}},
+		{name: "merge omits the number tab before column two", args: []string{"-m", "-t", "-n\t3", "-s:", empty, f}},
+		{name: "merge keeps the number tab before column three", args: []string{"-m", "-t", "-n\t3", "-s:", empty, empty, f}},
+		{name: "merge numbers an EOF past a read block", args: []string{"-m", "-t", "-n:3", "-s:", eofLong, f}},
 		{name: "merge with a directory is fatal first", args: []string{"-t", "-m", d, f}},
 
 		{name: "number lines", args: []string{"-t", "-n", s10}},

@@ -73,7 +73,7 @@ func soleReleaseShape(t *testing.T, body, call string) {
 	if got := rcIsUniqueSites(body); got != 1 {
 		t.Errorf("depth: %d uniqueness tests, want 1", got)
 	}
-	if got := strings.Count(body, call+" __fn___fern_arr_dec.u"); got != 1 {
+	if got := strings.Count(body, call+" __fn___fern_box_dec.u"); got != 1 {
 		t.Errorf("depth: %d sole frees, want 1:\n%s", got, body)
 	}
 	if strings.Contains(body, "_rcdecd") {

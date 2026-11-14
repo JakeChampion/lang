@@ -63,7 +63,7 @@ function header(input: [u8], at: i32): Result[Header, frame.VideoError] {
   return Ok(Header { kind: kind, extension: true, temporal_id: (extra >> 5) as i32, spatial_id: (extra >> 3 & 3u8) as i32, next: at + 2 });
 }
 
-function size_field(input: [u8], at: i32): Result[(i32, u64), frame.VideoError] {
+pub(package) function leb128(input: [u8], at: i32): Result[(i32, u64), frame.VideoError] {
   let size = 0u64;
   for i in 0..8 {
     if (i >= input.len() - at) {
@@ -90,7 +90,7 @@ pub function next_obu(input: [u8], offset: i32, limits: frame.Limits): Result[Op
     return Ok(None);
   }
   let value = header(input, offset)?;
-  let (payload, size) = size_field(input, value.next)?;
+  let (payload, size) = leb128(input, value.next)?;
   if (size > (input.len() - payload) as u64) {
     return Err(frame.Truncated);
   }

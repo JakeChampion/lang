@@ -8704,6 +8704,19 @@ function inferred_modes_change(p: Produced): boolean {
   return false;
 }
 
+// A call to a builtin's name runs its kernel unless the module shadows the
+// name, so that name keeps its declared modes.
+function kernel_named(p: Produced, name: string, lowered: util.NameIndex): boolean {
+  return lowered.has(name) && !util.has_str(p.func.shadows, name);
+}
+
+function row_bits(p: Produced, escapes: boolean[], kernel: boolean): boolean[] {
+  if (kernel) {
+    return mode_bits(p, __alloc_bool(p.func.params.len()));
+  }
+  return mode_bits(p, escapes);
+}
+
 function infer_rows(all: Produced[], names: string[], pinned: string[]): ownership.Escapes[] {
   let taken = pinned;
   for k in 0..all.len() {
@@ -8712,14 +8725,17 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     }
   }
   let taken_ix = util.name_index(taken);
+  let lowered = lowered_names();
   let rows: ownership.Escapes[] = [];
   let analyses: ssasem.Analysis[] = [];
   let modes_change: boolean[] = [];
+  let kernel: boolean[] = [];
   let i = 0;
   while (i < all.len() && i < names.len()) {
     modes_change = modes_change.append(inferred_modes_change(all[i]));
+    kernel = kernel.append(kernel_named(all[i], names[i], lowered));
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !taken_ix.has(names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: mode_bits(all[i], []), lends: false, cycle: -1, quiet: [] });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: row_bits(all[i], [], kernel[i]), lends: false, cycle: -1, quiet: [] });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
@@ -8760,7 +8776,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     let at = own_row[i];
     if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
       let transfers = ownership.transfers(all[i].func, analyses[i], rows, ix, modes_change[i]);
-      let next = mode_bits(all[i], transfers.escapes);
+      let next = row_bits(all[i], transfers.escapes, kernel[i]);
       let lends = rows[at].lends || transfers.lends;
       if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
         rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });

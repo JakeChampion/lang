@@ -3,6 +3,8 @@
 import importlib.util
 import os
 from pathlib import Path
+import re
+import struct
 import subprocess
 import tempfile
 
@@ -19,6 +21,12 @@ wasm = binary.with_suffix('.wasm')
 for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
     subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
                     '-o', str(output), 'scripts/video-reference/av1.fern'], check=True)
+
+metadata_binary = ROOT / 'build/video/av1-metadata-reference'
+metadata_wasm = metadata_binary.with_suffix('.wasm')
+for output, architecture, flags in ((metadata_binary, target, ['-sanitize']), (metadata_wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/av1-metadata.fern'], check=True)
 
 
 def run(directory, name, packet, error=None):
@@ -51,6 +59,81 @@ def decode(path, decoder, pixel_format):
                                     '-pix_fmt', pixel_format, '-f', 'rawvideo', '-'])
 
 
+def leb(value, width=1):
+    result = bytearray()
+    for i in range(width):
+        result.append((value & 127) | (128 if i + 1 < width else 0))
+        value >>= 7
+    assert value == 0
+    return bytes(result)
+
+
+def metadata_obu(kind, values, type_width=1, size_width=1, padding=0, extension=False):
+    payload = leb(kind, type_width) + struct.pack('>2H' if kind == 1 else '>8H2I', *values) + b'\x80' + bytes(padding)
+    return bytes([0x2e, 0]) + leb(len(payload), size_width) + payload if extension else bytes([0x2a]) + leb(len(payload), size_width) + payload
+
+
+def metadata_fields(path):
+    result = subprocess.run(['ffmpeg', '-v', 'verbose', '-i', str(path), '-c:v', 'copy',
+                             '-bsf:v', 'trace_headers', '-f', 'null', '-'], capture_output=True, text=True)
+    assert result.returncode == 0 and 'Failed to read unit' not in result.stderr, result.stderr
+    fields = {}
+    for line in result.stderr.splitlines():
+        if '[trace_headers ' not in line:
+            continue
+        match = re.search(r'\]\s+\d+\s+(\S+)\s+.*?=\s*(\d+)\s*$', line)
+        if match:
+            fields[match[1]] = int(match[2])
+    kind = fields['metadata_type']
+    names = ['max_cll', 'max_fall'] if kind == 1 else [
+        name for i in range(3) for name in (f'primary_chromaticity_x[{i}]', f'primary_chromaticity_y[{i}]')]
+    if kind == 2:
+        names += ['white_point_chromaticity_x', 'white_point_chromaticity_y', 'luminance_max', 'luminance_min']
+    return [kind] + [fields[name] for name in names]
+
+
+def read_metadata(directory, name, packet, error=False):
+    path = directory / (name + '.metadata')
+    path.write_bytes(packet)
+    native = subprocess.run([str(metadata_binary), str(path)], text=True, capture_output=True)
+    wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(metadata_wasm), path.name],
+                          cwd=directory, text=True, capture_output=True)
+    assert native.returncode == (3 if error else 0), (name, native)
+    assert wasi.returncode == (1 if error else 0), (name, wasi)
+    assert 'live_bytes=0' in native.stderr and native.stdout == wasi.stdout, (name, native, wasi)
+    if error:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == 'invalid video header or packet'
+    return [int(value) for value in native.stdout.split()]
+
+
+def check_metadata(directory, stream):
+    original, pixel_format, packets, layouts = stream
+    base = packets[0][1]
+    sequence_end = next(offset + size for kind, offset, size, *_ in layouts[0] if kind == 1)
+    mixed = [1, 65535, 258, 772, 1286, 1800, 2314, 2828, 4294967295, 2147483648]
+    representative = [41943, 21627, 19661, 39322, 9830, 3932, 20495, 21561, 256000, 164]
+    cases = [(f'cll-{i}', 1, values, {}) for i, values in enumerate(([0, 0], [1000, 400], [65535, 65535]))]
+    cases += [(f'mdcv-{i}', 2, values, {}) for i, values in enumerate(([0] * 10, mixed, representative))]
+    cases += [('cll-widths', 1, [1000, 400], dict(type_width=8, size_width=8)),
+              ('mdcv-widths', 2, mixed, dict(type_width=8, size_width=8)),
+              ('cll-padding', 1, [1000, 400], dict(padding=3)),
+              ('mdcv-padding', 2, representative, dict(padding=3))]
+    reference = decode(original, 'libaom-av1', pixel_format)
+    assert decode(original, 'libdav1d', pixel_format) == reference
+    for name, kind, values, options in cases:
+        unit = metadata_obu(kind, values, **options)
+        modified = [(packets[0][0], base[:sequence_end] + unit + base[sequence_end:])] + packets[1:]
+        path = directory / (name + '.ivf')
+        path.write_bytes(fixtures.ivf(original.read_bytes(), modified))
+        expected = metadata_fields(path)
+        assert expected == [kind] + values, (name, expected)
+        assert read_metadata(directory, name, unit) == expected, name
+        assert decode(path, 'libaom-av1', pixel_format) == decode(path, 'libdav1d', pixel_format) == reference, name
+        print(name + ': all HDR fields match CBS and native/WASI; both decoders preserve all planes', flush=True)
+    for kind, values in ((1, [1000, 400]), (2, representative)):
+        read_metadata(directory, f'hdr-extension-{kind}', metadata_obu(kind, values, extension=True), error=True)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     vectors, streams = fixtures.generate(directory)
@@ -77,6 +160,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert decode(original, 'libdav1d', pixel_format) == reference
         assert decode(clean, 'libaom-av1', pixel_format) == decode(clean, 'libdav1d', pixel_format) == reference
         print(pixel_format + ': every 8/10/12-bit plane matches libaom and dav1d after padding removal', flush=True)
+    check_metadata(directory, streams[1])
     base = vectors[0][1]
     for name, suffix, diagnostic, error in [
             ('forbidden', bytes([0xfa, 0]), 'obu_forbidden_bit out of range', 'invalid video header or packet'),

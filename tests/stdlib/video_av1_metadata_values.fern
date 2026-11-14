@@ -1,0 +1,8 @@
+import "std/video/av1/metadata";
+
+pub function values(value: metadata.Metadata): u32[] {
+  return match (value) {
+    metadata.ContentLight(light) => [1u32, light.max_cll, light.max_fall],
+    metadata.MasteringDisplay(display) => [2u32, display.red.x, display.red.y, display.green.x, display.green.y, display.blue.x, display.blue.y, display.white.x, display.white.y, display.max_luminance, display.min_luminance],
+  };
+}

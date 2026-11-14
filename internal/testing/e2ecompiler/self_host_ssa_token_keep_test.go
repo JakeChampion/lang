@@ -124,7 +124,7 @@ func TestSelfHostSSATokenKeep(t *testing.T) {
 			}
 		})
 	}
-	size := map[string]string{"x86-64-linux": "cmpq %rdi, -16(%rax)", "arm64-linux": "ldur x30, [x0, #-16]"}
+	size := map[string]string{"x86-64-linux": "cmpl %esi, -4(%rax)", "arm64-linux": "ldur w30, [x0, #-4]"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			asm, err := os.ReadFile(cli.emit(t, src, target))
