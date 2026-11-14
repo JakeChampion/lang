@@ -96,7 +96,7 @@ function __dec_times(own limbs: u64[], f: u64): u64[] {
   }
   while (carry > 0u64) {
     limbs = limbs.append(carry % 1000000000u64);
-    carry = carry / 1000000000u64;
+    carry /= 1000000000u64;
   }
   return limbs;
 }
@@ -122,7 +122,7 @@ function __dec_digits(limbs: u64[]): u8[] {
   let lead = 1;
   let t = limbs[top];
   while (t >= 10u64) {
-    t = t / 10u64;
+    t /= 10u64;
     lead += 1;
   }
   let buf = __alloc_u8(lead + 9 * top);
@@ -132,7 +132,7 @@ function __dec_digits(limbs: u64[]): u8[] {
     let width = if (i == top) { lead } else { 9 };
     for d in 0..width {
       buf = buf.with(pos, 48u8 + (v % 10u64) as u8);
-      v = v / 10u64;
+      v /= 10u64;
       pos -= 1;
     }
   }
@@ -1421,11 +1421,11 @@ pub(package) function fixed(n: f64, prec: i32): string {
   let m = bits & 4503599627370495u64;
   let e = -1074;
   if (be > 0) {
-    m = m | 4503599627370496u64;
+    m |= 4503599627370496u64;
     e = be - 1075;
   }
   while (e < 0 && m % 2u64 == 0u64) {
-    m = m / 2u64;
+    m /= 2u64;
     e += 1;
   }
   // The digits of n * 10^k, where k is the count of fraction digits of n:
