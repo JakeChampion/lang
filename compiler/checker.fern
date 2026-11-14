@@ -21285,8 +21285,7 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
 }
 
 function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
-  let ty = fa.ty;
-  if (!lu_primitive_array_copy(ty) && (ty == "string" || ty == "str" || !typeinfo.is_primitive_type_name(ty))) {
+  if (!lu_copy_type(fa.ty)) {
     return f;
   }
   let enclosing = ow_enclosing_field(fa);
@@ -21294,6 +21293,11 @@ function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
     return LuFacts { ...f, copy_sels: f.copy_sels.append(lu_key(id.line, id.col)) };
   }
   return f;
+}
+
+// A field of this type is a copy: it cannot hold a handle.
+function lu_copy_type(ty: string): boolean {
+  return lu_primitive_array_copy(ty) || ty != "string" && ty != "str" && typeinfo.is_primitive_type_name(ty);
 }
 
 function lu_primitive_array_copy(ty: string): boolean {
@@ -22079,7 +22083,7 @@ function lu_owned_alias_in(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprIdent(src) = init {
     return lu_own_param(fx, src.name) && lu_is_last(fx, src);
   }
-  if let Some(src) = lu_spread_source(init) {
+  if let Some(src) = lu_spread_source(fx, init) {
     return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
   }
   return false;
@@ -22429,18 +22433,18 @@ function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprIdent(src) = init {
     return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
   }
-  if let Some(src) = lu_spread_source(init) {
+  if let Some(src) = lu_spread_source(fx, init) {
     return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
   }
   return false;
 }
 
 // The base of a struct literal `T { ...src, f: v }`. The literal takes the
-// rest of `src`, as an alias does. A field value can read a field of `src`
-// that the literal replaces, as `i: src.i + 1` does, because the literal
-// does not take that field. The result is the last mention of `src` in the
-// literal: the literal takes `src` there.
-function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
+// rest of `src`, as an alias does. A field value runs before the literal
+// takes `src`, so it can read `src`: it can use a field that the literal
+// replaces, and it can borrow or copy each other part of `src`. The result
+// is the last mention of `src` in the literal: the literal takes `src` there.
+function lu_spread_source(fx: LuFn, e: ast.Expr): Option[ast.ExprIdent] {
   let ast.ExprStructLit(sl) = e else {
     return None;
   };
@@ -22455,7 +22459,7 @@ function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
     let names = astwalk.fold_expr_nodes(v, [], lu_name_stmt, lu_name_expr, astwalk.descend_all);
     let mentions = util.count_str(names, src.name);
     if (mentions > 0) {
-      if (lu_replaced_reads(v, src.name, sl.field_names) != mentions) {
+      if (lu_source_reads(fx, v, src.name, sl.field_names) != mentions) {
         return None;
       }
       last = lu_later_mention(v, last);
@@ -22464,13 +22468,104 @@ function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
   return Some(last);
 }
 
-// The reads in `v` of the fields of `name` that are in `fields`.
-function lu_replaced_reads(v: ast.Expr, name: string, fields: string[]): i32 {
+// The mentions of `name` in `v` that read it before the literal takes it: a
+// read of a field in `fields`, a copy of a scalar field, or a part that goes
+// to a borrow position. A written lambda can run later, so a mention in one
+// is not such a read.
+function lu_source_reads(fx: LuFn, v: ast.Expr, name: string, fields: string[]): i32 {
+  return astwalk.fold_expr_pruned(v, LuSourceReads { fx: fx, name: name, fields: fields, reads: 0 }, lu_source_read_at, lu_runs_in_place).reads;
+}
+
+struct LuSourceReads { fx: LuFn, name: string, fields: string[], reads: i32 }
+
+function lu_source_read_at(n: ast.Expr, own r: LuSourceReads): LuSourceReads {
+  if let ast.ExprFieldAccess(fa) = n {
+    if (ow_ident_name(fa.obj) == r.name && (util.has_str(r.fields, fa.field) || lu_copy_type(fa.ty))) {
+      return LuSourceReads { ...r, reads: r.reads + 1 };
+    }
+  }
+  return LuSourceReads { ...r, reads: r.reads + lu_lent_reads(r.fx, n, r.name, r.fields) };
+}
+
+function lu_runs_in_place(e: ast.Expr): boolean {
+  return astwalk.not_lambda(e) || desugared_lambda(e);
+}
+
+// The parts of `name` that `e` lends: the arguments of a call that do not go
+// to own parameters, the operands of an operator, and the array of an index
+// read that is a copy.
+function lu_lent_reads(fx: LuFn, e: ast.Expr, name: string, fields: string[]): i32 {
+  match (e) {
+    ast.ExprCall(c) => {
+      return lu_lent_call_reads(fx, c, name, fields);
+    },
+    ast.ExprBinary(b) => {
+      return lu_lent_read(b.left, name, fields) + lu_lent_read(b.right, name, fields);
+    },
+    ast.ExprUnary(u) => {
+      if (util.has_str(["-", "!", "~"], u.op)) {
+        return lu_lent_read(u.operand, name, fields);
+      }
+    },
+    ast.ExprIndex(x) => {
+      if (lu_copy_type(x.ty)) {
+        return lu_lent_read(x.array, name, fields);
+      }
+    },
+    _ => {}
+  }
+  return 0;
+}
+
+// A method that a declaration with an own parameter names can take each
+// part. A callee value can take each argument. A call whose result can
+// borrow from an argument lends none of them.
+function lu_lent_call_reads(fx: LuFn, c: ast.ExprCall, name: string, fields: string[]): i32 {
+  if (lu_call_site_borrows(fx, c)) {
+    return 0;
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (fx.ofuncs.methods.has(fa.field)) {
+      return 0;
+    }
+    return lu_lent_read(fa.obj, name, fields) + lu_lent_args(c.args, [], name, fields);
+  }
+  let cname = ow_ident_name(c.callee);
+  if (cname.len() == 0 || util.has_str(fx.params, cname) || lu_decl_count(fx, cname) > 0) {
+    return 0;
+  }
+  return lu_lent_args(c.args, ow_func_flags(fx.ofuncs, cname), name, fields);
+}
+
+function lu_lent_args(args: ast.Expr[], flags: boolean[], name: string, fields: string[]): i32 {
   let reads = 0;
-  for f in fields {
-    reads += ow_count_field_reads(v, name, f);
+  for i in 0..args.len() {
+    if (i >= flags.len() || !flags[i]) {
+      reads += lu_lent_read(args[i], name, fields);
+    }
   }
   return reads;
+}
+
+// One when `e` is `name`, or a path into a field of `name` that is not in
+// `fields` and is not a copy. The tally counts the other paths. An index read
+// that is a copy counts for itself.
+function lu_lent_read(e: ast.Expr, name: string, fields: string[]): i32 {
+  if let ast.ExprIndex(x) = e {
+    if (!lu_copy_type(x.ty)) {
+      return lu_lent_read(x.array, name, fields);
+    }
+  }
+  if let ast.ExprFieldAccess(fa) = e {
+    let root = ow_enclosing_field(fa);
+    if (ow_ident_name(root.obj) == name && !util.has_str(fields, root.field) && !lu_copy_type(root.ty)) {
+      return 1;
+    }
+  }
+  if (ow_ident_name(e) == name) {
+    return 1;
+  }
+  return 0;
 }
 
 // The mention of `first.name` in `v` that comes last, or `first`.

@@ -291,10 +291,7 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 			if c.exprBorrows(x.Callee, b) {
 				return true
 			}
-			flags := c.callOwnFlags[x]
-			if id, ok := x.Callee.(*ast.Ident); ok && flags == nil {
-				flags = c.ownFuncs[id.Name]
-			}
+			flags := c.ownFlagsOf(x)
 			for i, arg := range x.Args {
 				if (i >= len(flags) || !flags[i] || c.resultCallbackParts[arg]) && c.resultPartBorrows(arg, b) {
 					return true
@@ -400,6 +397,15 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 		}
 	}
 	return c.signatureResultBorrows(id.Name)
+}
+
+// ownFlagsOf reports which arguments of x go to own parameters.
+func (c *checker) ownFlagsOf(x *ast.Call) []bool {
+	flags := c.callOwnFlags[x]
+	if id, ok := x.Callee.(*ast.Ident); ok && flags == nil {
+		flags = c.ownFuncs[id.Name]
+	}
+	return flags
 }
 
 // callSiteBorrows reports a plain call whose result can borrow: the callee's
