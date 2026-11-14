@@ -474,6 +474,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"video_ivf_input", langSrcAbs(t, "tests/stdlib/video_ivf_input_test.fern"), ""},
 		{"video_ivf_input_boundary", langSrcAbs(t, "tests/stdlib/video_ivf_input_boundary_test.fern"), ""},
 		{"android_player", langSrcAbs(t, "tests/stdlib/android_player_test.fern"), ""},
+		{"android_noisy", langSrcAbs(t, "tests/stdlib/android_noisy_test.fern"), ""},
 		{"android_video_policy", langSrcAbs(t, "tests/stdlib/android_video_policy_test.fern"), ""},
 		{"video_audio_clock", langSrcAbs(t, "tests/stdlib/video_audio_clock_test.fern"), ""},
 		{"android_video_source", langSrcAbs(t, "tests/stdlib/android_video_source_test.fern"), ""},
