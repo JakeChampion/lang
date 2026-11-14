@@ -1,8 +1,3 @@
-# 2026-11-13: PR #15790 at d656f7abdd, driver-sizes-x86_64 job 132236740614.
-# asm_ir_run measured 11614016 bytes (+5.3%) and fern.fern/stage2 17584944 (+5.2%).
-# The run on the first commit of the PR, which changed only the allocator text, measured
-# 11613376 and 17584320. The drift of main gives the growth. Each row moves to its measured
-# value. The 5% tolerance is unchanged.
 # 2026-11-12: after PR #15527, on main 6f8937ce with the self-rebind exception of the checker.
 # driver-sizes-x86_64 job 131410502724 reported checker_modload_run at 4.4 MB, over the tolerance.
 # A local run of TestSelfHostWarmStockDriver measured 4356448 bytes, 5.05% above its prior bank.
@@ -657,12 +652,16 @@
 # tolerance is unchanged.
 # 2026-11-13: runtime_run measured 17506224 bytes (+5.0%) by driver-sizes-x86_64
 # job 132133327747 on main 88a72e60. The 5% tolerance is unchanged.
-fern.fern/stage2 17584944
+# 2026-11-13: asm_ir_run measured 11612368 bytes (+5.3%) and fern.fern/stage2
+# 17583184 bytes (+5.2%) by driver-sizes-x86_64 job 132181685324 on ea8b1577,
+# main 38768eb2 with #15781. #15767 adds the fused ChaCha20-Poly1305 kernel to
+# each backend. The 5% tolerance is unchanged.
+fern.fern/stage2 17583184
 fern.fern 17504544
 drivers/runtime_run.fern 17506224
 drivers/asm_load_run.fern 13460128
 drivers/asm_modload_run.fern 11961344
-drivers/asm_ir_run.fern 11614016
+drivers/asm_ir_run.fern 11612368
 drivers/asm_run.fern 10091776
 drivers/wasm_ir_run.fern 9677328
 drivers/wasm_run.fern 9688304

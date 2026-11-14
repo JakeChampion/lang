@@ -1595,7 +1595,7 @@ pub function line_at(lines: Line[], at_ms: i64): i32 {
 function words(m: Model): ui.El[Msg] {
   let lines = m.lyrics;
   if (lines[lines.len() - 1].ms < 0i64) {
-    return ui.list("lyrics", lines.len(), 30.0, (row: i32): ui.El[Msg] => ui.text(lines[row].text).clamped(1)).height(280.0);
+    return ui.list("lyrics", lines.len(), 30.0, (row: i32): ui.El[Msg] => ui.text(lines[row].text).clamped(1)).tall();
   }
   let now = line_at(lines, m.at_ms);
   let shown: ui.El[Msg][] = [];
@@ -1606,7 +1606,7 @@ function words(m: Model): ui.El[Msg] {
       shown = shown.append(ui.text(lines[i].text).colored(ui.MUTED).clamped(1));
     }
   }
-  return ui.column(shown).spaced(10.0).aligned(ui.CENTER).justified(ui.CENTER).height(280.0);
+  return ui.column(shown).spaced(10.0).aligned(ui.CENTER).justified(ui.CENTER).tall();
 }
 
 function now_playing(m: Model, s: ui.Screen): ui.El[Msg] {
@@ -1616,26 +1616,28 @@ function now_playing(m: Model, s: ui.Screen): ui.El[Msg] {
     let t = m.tracks[m.current];
     format = t.artist + " · " + t.album;
   }
-  let big: ui.El[Msg] = ui.canvas("art:" + name, art(name)).width(240.0).height(240.0);
+  // The cover or the lyrics take the height that the rest of the screen
+  // leaves, so the spectrum under them does not cover the title.
+  let big: ui.El[Msg] = ui.canvas("art:" + name, art(name)).width(240.0).tall().square();
   if let Some(img) = m.art {
-    big = ui.picture("art:" + format, img).width(280.0).height(280.0).rounded(12.0);
+    big = ui.picture("art:" + format, img).width(280.0).tall().square().rounded(12.0);
   }
-  let last: ui.El[Msg][] = [ui.text_button(speed_label(m.speed), Speed), ui.text_button(pitch_label(m.pitch), Pitch), ui.text_button(sleep_label(m), Sleep)];
+  let top: ui.El[Msg][] = [ui.text_button("Library", Closed), ui.space()];
   if (m.lyrics.len() > 0) {
-    last = last.append(ui.text_button(toggle_label("Lyrics", m.sung), Lyrics));
+    top = top.append(ui.text_button(toggle_label("Lyrics", m.sung), Lyrics));
     if (m.sung) {
       big = words(m);
     }
   }
   return ui.column(
     [
-      ui.row([ui.text_button("Library", Closed)]),
+      ui.row(top).aligned(ui.CENTER),
       ui.column([big, spectrum(m.bars, s.theme.primary)]).spaced(12.0).centered().grow(1.0),
       ui.row([ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0).wide(), ui.text_button(toggle_label("Favorite", favorite(m)), Favorite)]).spaced(8.0).aligned(ui.CENTER),
       ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
       ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
       ui.row([ui.text_button(toggle_label("Shuffle", m.shuffle), Shuffled), ui.text_button(repeat_label(m.repeat), Repeated), ui.text_button("Queue", Lined(true))]).spaced(8.0).justified(ui.CENTER),
-      ui.row(last).spaced(8.0).justified(ui.CENTER),
+      ui.row([ui.text_button(speed_label(m.speed), Speed), ui.text_button(pitch_label(m.pitch), Pitch), ui.text_button(sleep_label(m), Sleep)]).spaced(8.0).justified(ui.CENTER),
     ],
   ).spaced(16.0).padding(16.0).aligned(ui.STRETCH);
 }

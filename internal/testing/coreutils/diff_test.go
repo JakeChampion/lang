@@ -135,7 +135,7 @@ func diffCases(t *testing.T) []invocation {
 	in := func(name, stdin string, args ...string) invocation {
 		return invocation{name: name, args: args, dir: dir, stdin: stdin}
 	}
-	return []invocation{
+	cases := []invocation{
 		c("normal change and append", "a", "b"),
 		c("normal reversed", "b", "a"),
 		c("identical files", "a", "a2"),
@@ -314,6 +314,8 @@ func diffCases(t *testing.T) []invocation {
 		{name: "full stdout", args: []string{"a", "b"}, dir: dir, stdout: stdoutFull},
 		{name: "full stdout when identical and reported", args: []string{"-s", "a", "a2"}, dir: dir, stdout: stdoutFull},
 	}
+	cases = append(cases, diffFormatCases(t)...)
+	return append(cases, diffOptionCases(t)...)
 }
 
 func TestDiffParity(t *testing.T) {

@@ -236,6 +236,7 @@ var coreBuiltins = map[string]bool{
 	"target_os":           true,
 	"target_arch":         true,
 	"__account_entry":     true,
+	"__alloc_len":         true,
 	"__ct_secret":         true,
 	"__ct_public":         true,
 	"__bytes_owned":       true,

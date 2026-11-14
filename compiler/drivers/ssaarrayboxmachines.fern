@@ -4,6 +4,9 @@ import "../ssadecrementtext" as text;
 import "../ssainlineuniqueisa" as registers;
 import "std/string";
 
+// The call of the miss path of a small box.
+const MISS: string = "call .Lalloc_fast_miss";
+
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("array-box machine controls failed: " + group);
@@ -66,12 +69,14 @@ function pops(body: string): void {
   altered(body, "testq %rax, %rax", "cmpq $0, %rax", true);
   altered(body, "addq %rax, %rdi", "addq %rdi, %rax\nmovq %rax, %rdi", false);
   altered(body, "addq %rax, %rdi", "leaq (%rax,%rdi), %rdi", false);
-  // .Lalloc_fast_miss takes the address of the list. __fern_alloc takes the
-  // size.
-  let size = "leaq __fern_freelist(%rip), %rax\nsubq %rax, %rdi\n";
-  altered(body, "call .Lalloc_fast_miss", size + "call .Lalloc_fast_miss", false);
-  altered(body, "call .Lalloc_fast_miss", size + "call __fern_alloc", true);
-  altered(body, "call .Lalloc_fast_miss", "movq $1, %rax\ncall .Lalloc_fast_miss", false);
+  // The miss path gives the allocator the address of the empty list, or
+  // the size after the list address comes off.
+  let list = "leaq __fern_freelist(%rip), %rax\n";
+  altered(body, MISS, list + "subq %rax, %rdi\n" + MISS, false);
+  altered(body, MISS, list + "subq %rax, %rdi\ncall __fern_alloc", true);
+  altered(body, MISS, list + "subq %rdi, %rax\ncall __fern_alloc", false);
+  altered(body, MISS, "subq %rax, %rdi\ncall __fern_alloc", false);
+  altered(body, MISS, "call __fern_alloc", false);
   for to in ["", "pushq (%rax)", "popq (%rdi)", "pushq (%rax)\npopq (%rax)", "pushq (%rdi)\npopq (%rdi)", "pushq 8(%rax)\npopq (%rdi)", "pushq (%rax)\npopq 8(%rdi)", "pushq (%rax)\npopq (%rdi)\npushq (%rax)\npopq (%rdi)", "movq (%rax), %rcx\nmovq %rcx, (%rdi)", "movq (%rax), %rdi"] {
     altered(body, "pushq (%rax)\npopq (%rdi)", to, false);
   }
@@ -100,15 +105,12 @@ function memory(body: string): void {
 }
 
 function calls_and_stack(body: string): void {
-  let miss = "call .Lalloc_fast_miss";
-  for to in ["", "call __fern_capw", "call __fern_alloc", miss + ".r", "call *.Lalloc_fast_miss", miss + "+1", miss + "\n" + miss] {
-    altered(body, miss, to, false);
+  for to in ["", "call __fern_capw", "call .Lalloc_fast_miss.r", "call *.Lalloc_fast_miss", "call .Lalloc_fast_miss+1", MISS + "\n" + MISS] {
+    altered(body, MISS, to, false);
   }
-  altered(body, miss, "call\t.Lalloc_fast_miss", true);
-  altered(body, miss, "movq %rdi, (%rsp)\n" + miss, false);
-  altered(body, miss, "movq (%rsp), %rdi\n" + miss, false);
-  // A box of two or three words does not reach the call for a large box.
-  altered(body, "call __fern_alloc", "", true);
+  altered(body, MISS, "call\t.Lalloc_fast_miss", true);
+  altered(body, MISS, "movq %rdi, (%rsp)\n" + MISS, false);
+  altered(body, MISS, "movq (%rsp), %rdi\n" + MISS, false);
   for to in ["", "pushq %rax", "pushq %rsp"] {
     altered(body, "pushq %rdi", to, false);
   }

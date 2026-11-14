@@ -149,7 +149,7 @@ pub function (s: string) repeat(n: i32): string {
   if (sl == 0) {
     return "";
   }
-  let total = sl as i64 * (n as i64);
+  let total = __alloc_len(sl as i64 * (n as i64)) as i64;
   let out = s;
   while (out.len() as i64 * (2 as i64) <= total) {
     out += out;
@@ -1698,15 +1698,9 @@ pub function (s: string) split(sep: string): string[] {
   return out.append(slice_unchecked(s, start, n) + "");
 }
 
+// Choose separator matches from right to left without overlap.
 pub function (s: string) rsplit(sep: string): string[] {
-  let fwd = s.split(sep);
-  let out: string[] = [];
-  let i = fwd.len() - 1;
-  while (i >= 0) {
-    out = out.append(fwd[i]);
-    i -= 1;
-  }
-  return out;
+  return s.rsplitn(sep, 2147483647);
 }
 
 pub function (s: string) splitn(sep: string, n: i32): string[] {
@@ -1742,6 +1736,19 @@ pub function (s: string) rsplitn(sep: string, n: i32): string[] {
   let out: string[] = [];
   if (n <= 0) {
     return out;
+  }
+  let sepLen = sep.len();
+  if (sepLen > 0) {
+    let end = s.len();
+    while (out.len() < n - 1) {
+      let hit = __str_rfind_from(s, end, sep, sepLen);
+      if (hit < 0) {
+        break;
+      }
+      out = out.append(slice_unchecked(s, hit + sepLen, end) + "");
+      end = hit;
+    }
+    return out.append(slice_unchecked(s, 0, end) + "");
   }
   let fwd = s.split(sep);
   let k = fwd.len();
@@ -2049,7 +2056,7 @@ function __fill_bytes(ch: string, count: i32): u8[] {
   if (clen > ch.len()) {
     clen = ch.len();
   }
-  let total = count * clen;
+  let total = __alloc_len(count as i64 * (clen as i64));
   let buf = __alloc_u8(total);
   let i = 0;
   while (i < total) {
@@ -2580,7 +2587,7 @@ pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
   }
   let sl = s.len();
   let pl = sep.len();
-  let total = sl * n + pl * (n - 1);
+  let total = __alloc_len(sl as i64 * (n as i64) + pl as i64 * ((n - 1) as i64));
   if (total == 0) {
     return "";
   }

@@ -252,13 +252,16 @@ function stack_step(s: State, op: isa.Op): State {
   return if (op.kind == 7) { write(advanced, op.destination, loaded(s, at, 64)) } else { store_at(advanced, cell(advanced, advanced.regs[op.base], op.offset, 64), 64, loaded(s, at, 64)) };
 }
 
-// The allocator takes a size at its entry. At .Lalloc_fast_miss it takes the
-// address of the list of that size, which the caller read as empty.
+// `__fern_alloc` takes the size in bytes. `.Lalloc_fast_miss`, its entry
+// after the read of the list, takes the address of the empty list of that
+// size.
 function allocation(s: State, capacity: i32, pc: i32, op: isa.Op): State {
-  let size = (capacity as i64 + 3) * 8;
-  let whole = op.symbol == "__fern_alloc" && equal(s.regs[7], number(size));
-  let miss = op.symbol == ".Lalloc_fast_miss" && equal(s.regs[7], token(9, size)) && equal(s.regs[0], number(0));
-  if (!whole && !miss || s.calls != 0 || !equal(s.regs[4], token(2, -8))) {
+  if (s.calls != 0 || !equal(s.regs[4], token(2, -8))) {
+    return State { ...s, ok: false };
+  }
+  let bytes = (capacity as i64 + 3) * 8;
+  let argument = if (op.symbol == ".Lalloc_fast_miss") { token(9, bytes) } else { number(bytes) };
+  if (op.symbol != "__fern_alloc" && op.symbol != ".Lalloc_fast_miss" || !equal(s.regs[7], argument)) {
     return State { ...s, ok: false };
   }
   let called = store_at(s, 0, 64, token(8, (pc + 1) as i64));

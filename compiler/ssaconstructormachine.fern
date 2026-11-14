@@ -338,37 +338,32 @@ function path(p: isa.ArrayProgram, capacity: i32, symbol: string, successor: i32
   return false;
 }
 
-// The position after the call that __fern_arr_box makes for a box with no
-// block on its list: the call to .Lalloc_fast_miss, or the one call to
-// __fern_alloc when the box has no such call.
+// The instruction after the call that allocates a small box. A runtime with
+// `.Lalloc_fast_miss` calls it when the list is empty, and calls
+// `__fern_alloc` only for a box that no list holds.
 function allocator_successor(output: string): i32 {
   let p = isa.array_box_program(output);
   if (p.error != "") {
     return -1;
   }
-  let miss = successors(p, ".Lalloc_fast_miss");
-  let whole = successors(p, "__fern_alloc");
-  if (miss.len() > 1 || whole.len() > 1 || miss.len() + whole.len() != successors(p, "").len()) {
-    return -1;
-  }
-  if (miss.len() == 1) {
-    return miss[0];
-  }
-  return if (whole.len() == 1) { whole[0] } else { -1 };
-}
-
-// The positions after the calls to symbol, or after each call when symbol is
-// empty.
-function successors(p: isa.Program, symbol: string): i32[] {
-  let out: i32[] = [];
+  let general = -1;
+  let fast = -1;
   let i = 0;
   for op in p.ops {
-    if (op.kind == 25 && (symbol == "" || op.symbol == symbol)) {
-      out = out.append(i + 1);
+    if (op.kind == 25) {
+      let fast_call = op.symbol == ".Lalloc_fast_miss";
+      if (fast_call && fast >= 0 || !fast_call && general >= 0) {
+        return -1;
+      }
+      if (fast_call) {
+        fast = i + 1;
+      } else {
+        general = i + 1;
+      }
     }
     i += 1;
   }
-  return out;
+  return if (fast >= 0) { fast } else { general };
 }
 
 pub function check(output: ssaprepare.Output, name: string): boolean {
