@@ -48,6 +48,7 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostStdDNS` | the DNS message reader of `std/dns`, and an encode and a second decode of each message it reads | `tests/fuzz/stdparse.fern dns` | the same, and a second decode that gives the same message |
 | `FuzzSelfHostStdProtobuf` | the protobuf reader of `std/protobuf`, and the reader again on each length-delimited field | `tests/fuzz/stdparse.fern protobuf` | the same |
 | `FuzzSelfHostStdJPEG` | the JPEG decoder of `std/jpeg` under a limit of 1048576 pixels, compared with Go's `image/jpeg` | `tests/fuzz/stdparse.fern jpeg` | the same, and the dimensions that Go reads when both accept the file |
+| `FuzzSelfHostStdELF` | the ELF64 reader of `std/elf`: the header, the program headers and the bytes of each segment | `tests/fuzz/stdparse.fern elf` | the same, and the summary that a second reader of the format rules gives, written in Go |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -204,11 +205,16 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdDNS` | 57088 | 2 | none |
 | `FuzzSelfHostStdProtobuf` | 53336 | 1 | none |
 | `FuzzSelfHostStdJPEG` | 10861 | 1 | three, fixed in this change |
+| `FuzzSelfHostStdELF` | 5382 in 180 s (2026-11-14) | 5 | none by the target. One by the review of the loader, fixed in the same change |
 
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
 
 ## Findings
+
+The review for the ELF target found one fault in `std/user_process`, the one program that loads an image through `std/elf`.
+A load segment with more bytes in the file than in memory passed the range check of the loader, which uses the memory size. The loader then mapped and wrote the pages of the file bytes beyond that range.
+`Segment.bytes` now refuses such a load segment, so the loader refuses the image. `tests/stdlib/elf_test.fern` has the case, and the target has three seeds for it.
 
 The JPEG target found three ways that a hostile file stopped the decoder with a bounds trap.
 Each is fixed in `std/jpeg`, and each has a test in `tests/stdlib/jpeg_test.fern` and a seed in `testdata/fuzz/FuzzSelfHostStdJPEG/`.
