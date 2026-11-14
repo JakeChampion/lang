@@ -6695,20 +6695,8 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__outer_mul_f64") {
     return Lowered { found: true, r: emit(r, ir.op_outer_mul_f64()) };
   }
-  if (ins.str == "__aes_expand_key") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_expand_key())) };
-  }
-  if (ins.str == "__aes_ctr32") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_ctr32())) };
-  }
-  if (ins.str == "__ghash") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_ghash())) };
-  }
-  if (ins.str == "__aes_gcm_seal_into") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_gcm_seal_into())) };
-  }
-  if (ins.str == "__aes_gcm_open_into") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_gcm_open_into())) };
+  if let Some(op) = ir.kernel_builtin_op(ins.str) {
+    return Lowered { found: true, r: emit(r, op) };
   }
   let sha = ir.sha_builtin_tag(ins.str);
   if (sha != 0) {
@@ -6721,12 +6709,6 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__crc32_cksum_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_name(), 2)) },
     "__crc32_ieee_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_ieee_name(), 2)) },
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
-    "__chacha20_xor_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_xor_into())) },
-    "__poly1305_blocks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_poly1305_blocks())) },
-    "__chacha20_poly1305_seal_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_poly1305_seal_into())) },
-    "__chacha20_poly1305_open_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_poly1305_open_into())) },
-    "__mont_mul" => Lowered { found: true, r: emit(r, ir.packed(ir.op_mont_mul())) },
-    "__scrypt_block_mix" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scrypt_block_mix())) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },

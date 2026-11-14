@@ -768,14 +768,15 @@ function limb_kernel_parts(needs: string[], own parts: string[]): string[] {
   return parts;
 }
 
-function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
+// Whether a kernel reads its arguments through the view functions of wasm_aes.
+function uses_crypto_views(needs: string[]): boolean {
+  return need(needs, "@uses_aes_gcm") || need(needs, "@uses_chacha20") || need(needs, "@uses_poly1305") || need(needs, "@uses_chacha20poly1305")
+    || need(needs, "@uses_mont_mul");
+}
+
+// The ChaCha20 and Poly1305 kernels, and the AEAD that uses both.
+function chacha_poly_parts(needs: string[], own parts: string[]): string[] {
   let aead = need(needs, "@uses_chacha20poly1305");
-  if (need(needs, "@uses_aes_gcm") || need(needs, "@uses_chacha20") || need(needs, "@uses_poly1305") || aead || need(needs, "@uses_mont_mul")) {
-    parts = parts.append(wasm_aes.view_funcs());
-  }
-  if (need(needs, "@uses_aes_gcm")) {
-    parts = parts.append(wasm_aes.funcs());
-  }
   if (need(needs, "@uses_chacha20") || aead) {
     parts = parts.append(wasm_chacha.funcs());
   }
@@ -785,6 +786,17 @@ function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
   if (aead) {
     parts = parts.append(wasm_poly.aead_funcs());
   }
+  return parts;
+}
+
+function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
+  if (uses_crypto_views(needs)) {
+    parts = parts.append(wasm_aes.view_funcs());
+  }
+  if (need(needs, "@uses_aes_gcm")) {
+    parts = parts.append(wasm_aes.funcs());
+  }
+  parts = chacha_poly_parts(needs, parts);
   parts = limb_kernel_parts(needs, parts);
   if (need(needs, "@uses_bswap")) {
     parts = parts.append(wasm_aes.bswap_funcs());

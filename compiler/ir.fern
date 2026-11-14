@@ -1844,6 +1844,29 @@ pub function op_scrypt_block_mix(): Op {
   return op0(K_SCRYPT_BLOCK_MIX);
 }
 
+// The builtins that each backend runs in a hand-written kernel. kernel_builtin_ops gives the op of each.
+const KERNEL_BUILTINS: string[] = [
+  "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__chacha20_xor_into", "__poly1305_blocks",
+  "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__mont_mul", "__scrypt_block_mix",
+];
+
+function kernel_builtin_ops(): Op[] {
+  return [
+    op_aes_expand_key(), op_aes_ctr32(), op_ghash(), op_aes_gcm_seal_into(), op_aes_gcm_open_into(), op_chacha20_xor_into(), op_poly1305_blocks(),
+    op_chacha20_poly1305_seal_into(), op_chacha20_poly1305_open_into(), op_mont_mul(), op_scrypt_block_mix(),
+  ];
+}
+
+// The packed op of a builtin in KERNEL_BUILTINS, or None.
+pub function kernel_builtin_op(name: string): Option[Op] {
+  for k in 0..KERNEL_BUILTINS.len() {
+    if (KERNEL_BUILTINS[k] == name) {
+      return Some(packed(kernel_builtin_ops()[k]));
+    }
+  }
+  return None;
+}
+
 // An op that a hand-written kernel of each backend runs over byte arrays.
 pub function is_byte_kernel_op(tag: i32): boolean {
   return is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == K_CHACHA20_XOR_INTO || tag == K_POLY1305_BLOCKS || is_chacha20_poly1305_op(tag) || tag == K_MONT_MUL || tag == K_SCRYPT_BLOCK_MIX;
