@@ -1,58 +1,35 @@
 // The encodings of -E in the rg port: the labels, and the decode of a file
 // to the UTF-8 text that the search reads.
 //
-// ripgrep 14.1.0 decodes with encoding_rs. The port knows UTF-8,
-// windows-1252 and UTF-16 of the Encoding Standard, and "none".
+// ripgrep 14.1.0 decodes with encoding_rs, and the port decodes with
+// std/encoding, which gives the same text.
+import "std/encoding" as whatwg;
 import "std/string";
-
-const UTF8_LABELS: string[] = ["unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "utf-8", "utf8", "x-unicode20utf8"];
-
-const LATIN_LABELS: string[] = [
-  "ansi_x3.4-1968", "ascii", "cp1252", "cp819", "csisolatin1", "ibm819", "iso-8859-1", "iso-ir-100", "iso8859-1",
-  "iso88591", "iso_8859-1", "iso_8859-1:1987", "l1", "latin1", "us-ascii", "windows-1252", "x-cp1252",
-];
-
-const UTF16LE_LABELS: string[] = ["csunicode", "iso-10646-ucs-2", "ucs-2", "unicode", "unicodefeff", "utf-16", "utf-16le"];
-
-const UTF16BE_LABELS: string[] = ["unicodefffe", "utf-16be"];
 
 const HEX: string = "0123456789ABCDEF";
 
-// The characters of the bytes 0x80 to 0x9F in windows-1252.
-const CP1252: i32[] = [
-  8364, 129, 8218, 402, 8222, 8230, 8224, 8225, 710, 8240, 352, 8249, 338, 141, 381, 143,
-  144, 8216, 8217, 8220, 8221, 8226, 8211, 8212, 732, 8482, 353, 8250, 339, 157, 382, 376,
-];
-
-// The name of the encoding of a label, or "" for a label that the port does
-// not know. The case and the white space around the label do not count.
+// The name of the encoding of a label, "none" for `none`, or "" for a
+// label that the port does not know. For a label of the standard, the case
+// and the white space around the label do not count.
 pub function label(text: string): string {
-  let l = text.trim().to_ascii_lower();
-  if (l == "none") {
+  if (text == "none") {
     return "none";
   }
-  if (has(UTF8_LABELS, l)) {
-    return "utf-8";
-  }
-  if (has(LATIN_LABELS, l)) {
-    return "windows-1252";
-  }
-  if (has(UTF16LE_LABELS, l)) {
-    return "utf-16le";
-  }
-  if (has(UTF16BE_LABELS, l)) {
-    return "utf-16be";
-  }
-  return "";
+  return whatwg.label(text);
 }
 
-// The text of a file with the encoding `name`, and whether it is decoded.
-// A byte order mark of UTF-8 or UTF-16 takes precedence over the encoding,
-// and the text does not keep it. "none" keeps the bytes, and "" decodes
-// only a file with a byte order mark. A decode makes each malformed
-// sequence U+FFFD, but the bytes after a byte order mark of UTF-8 stay as
-// they are.
-pub function decode(own bytes: u8[], name: string): (string, boolean) {
+// The decoder of the encoding `name`. The search of each file uses it.
+pub function decoder(name: string): whatwg.Decoder {
+  return whatwg.decoder(if (name == "" || name == "none") { "UTF-8" } else { name });
+}
+
+// The text of a file with the encoding of `d`, and whether it is decoded.
+// `name` is the name of the encoding, "none" or "". A byte order mark of
+// UTF-8 or UTF-16 takes precedence over the encoding, and the text does not
+// keep it. "none" keeps the bytes, and "" decodes only a file with a byte
+// order mark. A decode makes each malformed sequence U+FFFD, but the bytes
+// after a byte order mark of UTF-8 stay as they are.
+pub function decode(own bytes: u8[], name: string, d: whatwg.Decoder): (string, boolean) {
   if (name == "none") {
     return (raw(bytes), false);
   }
@@ -61,12 +38,15 @@ pub function decode(own bytes: u8[], name: string): (string, boolean) {
     return (slice_unchecked(raw(bytes), 3, n).to_owned(), true);
   }
   if (starts(bytes, [255u8, 254u8])) {
-    return (utf16(bytes, 2, false), true);
+    return (whatwg.decoder("UTF-16LE").decode(bytes.drop(2)), true);
   }
   if (starts(bytes, [254u8, 255u8])) {
-    return (utf16(bytes, 2, true), true);
+    return (whatwg.decoder("UTF-16BE").decode(bytes.drop(2)), true);
   }
-  return by_name(bytes, name);
+  if (name == "") {
+    return (raw(bytes), false);
+  }
+  return (d.decode(bytes), true);
 }
 
 function starts(bytes: u8[], mark: u8[]): boolean {
@@ -81,25 +61,6 @@ function starts(bytes: u8[], mark: u8[]): boolean {
   return true;
 }
 
-function by_name(own bytes: u8[], name: string): (string, boolean) {
-  return match (name) {
-    "utf-8" => (utf8_lossy(bytes, 0), true),
-    "windows-1252" => (latin(bytes), true),
-    "utf-16le" => (utf16(bytes, 0, false), true),
-    "utf-16be" => (utf16(bytes, 0, true), true),
-    _ => (raw(bytes), false),
-  };
-}
-
-function has(names: string[], name: string): boolean {
-  for n in names {
-    if (n == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function raw(own bytes: u8[]): string {
   return unsafe { string_from_bytes_unchecked(bytes) };
 }
@@ -108,47 +69,6 @@ function finish(h: usize): string {
   let out = buf_take(h);
   buf_free(h);
   return out;
-}
-
-// Appends the UTF-8 form of the code point `cp`.
-function push_cp(h: usize, cp: i32): void {
-  if (cp < 128) {
-    buf_push_byte(h, cp);
-  } else if (cp < 2048) {
-    buf_push_byte(h, 192 | cp >> 6);
-    buf_push_byte(h, 128 | cp & 63);
-  } else if (cp < 65536) {
-    buf_push_byte(h, 224 | cp >> 12);
-    buf_push_byte(h, 128 | cp >> 6 & 63);
-    buf_push_byte(h, 128 | cp & 63);
-  } else {
-    buf_push_byte(h, 240 | cp >> 18);
-    buf_push_byte(h, 128 | cp >> 12 & 63);
-    buf_push_byte(h, 128 | cp >> 6 & 63);
-    buf_push_byte(h, 128 | cp & 63);
-  }
-}
-
-// The bytes from `from` as UTF-8, with each maximal malformed sequence
-// made U+FFFD, as the Encoding Standard decodes it.
-function utf8_lossy(own bytes: u8[], from: i32): string {
-  let text = raw(bytes);
-  let h = buf_new(text.len());
-  let i = from;
-  let done = from;
-  while (i < text.len()) {
-    let len = utf8_valid_len(text, i);
-    if (len > 0) {
-      i += len;
-      continue;
-    }
-    buf_push_range(h, text, done, i);
-    push_cp(h, 65533);
-    i += utf8_bad_len(text, i);
-    done = i;
-  }
-  buf_push_range(h, text, done, text.len());
-  return finish(h);
 }
 
 // The range of the second byte after the lead byte `b`, as low and high,
@@ -186,20 +106,6 @@ function utf8_valid_len(bytes: string, i: i32): i32 {
   return n;
 }
 
-// The count of the bytes of the malformed sequence at `i`: the lead byte
-// and the bytes after it that could still continue it.
-function utf8_bad_len(bytes: string, i: i32): i32 {
-  let (lo, hi, n) = utf8_lead(bytes[i] as i32);
-  if (n == 0 || i + 1 >= bytes.len() || bytes[i + 1] as i32 < lo || bytes[i + 1] as i32 > hi) {
-    return 1;
-  }
-  let k = 2;
-  while (k < n && i + k < bytes.len() && bytes[i + k] >= 128u8 && bytes[i + k] <= 191u8) {
-    k += 1;
-  }
-  return k;
-}
-
 // The offset of the first byte of `text` that does not start a valid UTF-8
 // character, or -1.
 pub function invalid_at(text: string): i32 {
@@ -232,44 +138,4 @@ pub function escaped(text: string): string {
     }
   }
   return finish(h);
-}
-
-function latin(bytes: u8[]): string {
-  let h = buf_new(bytes.len() + bytes.len() / 8);
-  for b in bytes {
-    let c = b as i32;
-    push_cp(h, if (c >= 128 && c < 160) { CP1252[c - 128] } else { c });
-  }
-  return finish(h);
-}
-
-// The UTF-16 bytes from `from`, big-endian when `be`. A surrogate without
-// its other half and a last odd byte are U+FFFD.
-function utf16(bytes: u8[], from: i32, be: boolean): string {
-  let h = buf_new(bytes.len());
-  let i = from;
-  while (i + 1 < bytes.len()) {
-    let u = unit(bytes, i, be);
-    i += 2;
-    if (u >= 55296 && u <= 56319 && i + 1 < bytes.len()) {
-      let v = unit(bytes, i, be);
-      if (v >= 56320 && v <= 57343) {
-        push_cp(h, 65536 + (u - 55296 << 10) + (v - 56320));
-        i += 2;
-        continue;
-      }
-    }
-    push_cp(h, if (u >= 55296 && u <= 57343) { 65533 } else { u });
-  }
-  if (i < bytes.len()) {
-    push_cp(h, 65533);
-  }
-  return finish(h);
-}
-
-function unit(bytes: u8[], i: i32, be: boolean): i32 {
-  if (be) {
-    return bytes[i] as i32 << 8 | bytes[i + 1] as i32;
-  }
-  return bytes[i + 1] as i32 << 8 | bytes[i] as i32;
 }

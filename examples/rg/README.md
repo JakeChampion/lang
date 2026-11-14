@@ -32,11 +32,14 @@ searches the current directory, and it writes each name without the leading
 | `-F` | `--fixed-strings` | Each pattern is a literal. |
 | `-m N` | `--max-count N` | Stop the search of a file after N selected lines. |
 | `-f F` | `--file F` | The patterns of the lines of F, or of the standard input for `-`. |
+| | `--pre P`, `--no-pre` | Search the output of the program P for each file. P gets the path of the file as its argument, and the file on its standard input. `std/process` runs it. |
+| | `--pre-glob G` | Run the program of `--pre` only for the files that the globs keep, as with `-g`. |
+| `-z` | `--search-zip` | Decompress each file with the extension of gzip, bzip2, xz, lzma, lz4, brotli, zstd or compress, and search the result. |
 | `-a` | `--text` | Search binary files as text. |
 | | `--binary` | Search a binary file that the walk finds as a file on the command line. |
 | | `--mmap`, `--no-mmap` | Map the files into memory, or read them in buffers. This changes the rules for binary files. |
 | `-j N` | `--threads N` | The count of workers. |
-| `-E E` | `--encoding E`, `--no-encoding` | Decode the files from `utf-8`, `latin1` (windows-1252), `utf-16le` or `utf-16be`, or with `none` do not decode them. Each label of the Encoding Standard for these encodings is a name. By default, a file with a byte order mark of UTF-8 or UTF-16 is decoded. |
+| `-E E` | `--encoding E`, `--no-encoding` | Decode the files from an encoding of the Encoding Standard, with `std/encoding`: each label of the standard, such as `latin1`, `sjis`, `euc-jp`, `gbk` or `koi8-r`, names one. `none` does not decode, and `auto` is the default: a file with a byte order mark of UTF-8 or UTF-16 is decoded. |
 | | `--crlf` | A line ends with CRLF: `$` matches before `\r\n`, and the output writes `\r\n`. |
 | | `--null-data` | A line ends with NUL, and the search is of text. |
 | | `--stop-on-nonmatch` | Stop the search of a file at a line that is not selected after a selected line. |
@@ -69,6 +72,10 @@ searches the current directory, and it writes each name without the leading
 | `-0` | `--null` | A NUL byte after each file name. |
 | | `--path-separator S` | The byte that takes the place of `/` in a file name. |
 | | `--color never\|auto\|always\|ansi` | Color, with the default colors of ripgrep. `auto` writes color on a terminal with a TERM that is not `dumb`, and with no NO_COLOR. |
+| | `--colors SPEC` | The color of the file names, the line numbers, the columns or the matches: `TYPE:fg:COLOR`, `TYPE:bg:COLOR`, `TYPE:style:STYLE` or `TYPE:none`. A color is a name, a number from 0 to 255, or three numbers with commas. |
+| | `--hyperlink-format F`, `--hostname-bin P` | Each file name is a link of the format F, or of one of its aliases (`default`, `file`, `grep+`, `kitty`, `macvim`, `none`, `textmate`, `vscode`, `vscode-insiders`, `vscodium`). A link needs color. `{host}` is the output of P, or the host name of the system. |
+| | `--field-match-separator S`, `--field-context-separator S` | The text after each field of a selected line and of a context line, with escapes. |
+| | `--line-buffered`, `--block-buffered` | Accepted. The port writes its output in blocks of 64 KiB, and after each file on a terminal. |
 | `-p` | `--pretty` | Color, a heading and line numbers. |
 | | `--stats` | The counts and the times of the search, after the output. |
 | | `--json` | Each line as a JSON message of ripgrep, with a message at the start and at the end of each file, and a summary. |
@@ -92,7 +99,19 @@ searches the current directory, and it writes each name without the leading
 | | `--ignore-file F` | More ignore rules. |
 | | `--no-require-git` | Use `.gitignore` files also outside a git repository. |
 | `-u`, `-uu`, `-uuu` | `--unrestricted` | `--no-ignore`, then also `--hidden`, then also `--binary`. |
+| | `--one-file-system` | Do not go down into a directory on another file system than the root of the walk. |
 | | `--no-messages`, `--no-ignore-messages` | No error messages, or no messages about ignore files. |
+
+### Other modes
+
+| Option | Long form | Effect |
+| --- | --- | --- |
+| `-h` | `--help` | The short or the long help of ripgrep 14.1.0. |
+| `-V` | `--version` | The version, or with `--version` the features too. |
+| | `--pcre2-version` | The version of PCRE2 that `-P` follows. |
+| | `--generate K` | The man page, or the completions of `complete-bash`, `complete-zsh`, `complete-fish` or `complete-powershell`. |
+| | `--no-config` | Do not read the file that `RIPGREP_CONFIG_PATH` names. Else each line of that file that is not empty and does not start with `#` is an argument before those of the command line. |
+| | `--debug`, `--trace` | Accepted. The port does not write the messages of the logs. |
 
 Options and paths can come in any order. `--` ends the options. Short options
 can share one dash, and a value can follow its letter, as in `-nA1`.
@@ -129,7 +148,8 @@ numbers, as in ripgrep. Else it has no heading, and no line numbers without
 - The messages for an unknown flag, a missing value, an invalid count, an
   invalid choice, an invalid glob and an unknown type are those of ripgrep.
   When a walk with no path finds no file, the port writes the message of
-  ripgrep about filters.
+  ripgrep about filters. For a long flag that it does not know, it names the flags with
+  similar names, as ripgrep does.
 
 ### The ignore rules
 
@@ -194,14 +214,21 @@ order of the walk.
 ## Differences from ripgrep
 
 - **Unicode tables.** `std/regex` uses the tables of Unicode 17.0.0 from
-  Go's `unicode` package, and ripgrep 14.1.0 uses Unicode 15.1. A script
-  takes its long name, as `\p{Greek}`, and not its short name, as
-  `\p{Grek}`. The properties of emoji are not in `std/regex`.
-  `\p{sc!=Greek}` is the complement of `\p{Greek}`, but ripgrep 14.1.0 reads
-  it as `\p{Greek}`.
+  Go's `unicode` package, and ripgrep 14.1.0 uses Unicode 15.0 through
+  regex-syntax 0.8.2. A script takes its long name or its short name, as
+  `\p{Greek}` and `\p{Grek}`, and the properties of emoji are there. As in
+  ripgrep, `\p{sc!=Greek}` is `\p{Greek}`. Some properties are not in
+  `std/regex`, and a pattern with one of them gives an error of
+  `std/regex`. They are Script_Extensions, Age, Grapheme_Cluster_Break,
+  Word_Break and Sentence_Break. The binary properties that are not in Go's
+  tables are also not there, such as ID_Start, XID_Start and Bidi_Mirrored.
 
-- **Pattern errors.** A pattern that does not compile gives exit status 2, as
-  in ripgrep, but the message is that of `std/regex`.
+- **Pattern errors.** `regex.check` reports each error of regex-syntax
+  0.8.2 with its text and its span, and ripgrep's hint about PCRE2. A
+  pattern that regex-syntax accepts can go above a limit of `std/regex`:
+  a count of a repetition above 1000, groups nested more than 128 deep, or
+  a program of more than 100,000 instructions. Then the message is that of
+  `std/regex`.
 
 - **Context and the buffers.** With context lines, ripgrep keeps the lines
   of the context in its buffer when it reads more. The count of these lines
@@ -209,30 +236,44 @@ order of the walk.
   context lines. Thus, in a file with a NUL byte after the first 64 KiB,
   the buffer that holds it can start at a different offset.
 
-- **Encodings.** The port decodes UTF-8, windows-1252 and UTF-16. The
-  other encodings of `-E`, such as Shift_JIS and EUC-JP, give the error of
-  an unknown encoding.
-
 - **Times.** `--stats` and `--json` write times, and the times of two runs
   are not the same.
 
-- **Not in this slice.** `--pre` and `--pre-glob`, `--colors`,
-  `--hyperlink-format`, `-z`, `-P`, `--dfa-size-limit` and
-  `--regex-size-limit`.
+- **Logs.** `--debug` and `--trace` write no messages.
+
+- **Decompression.** ripgrep 14.1.0 runs the programs `gzip`, `bzip2`,
+  `xz`, `lz4`, `brotli`, `zstd` and `uncompress` for `-z`, and the port
+  decompresses with `std/deflate`, `std/bzip2`, `std/xz`, `std/lz4`,
+  `std/brotli`, `std/zstd` and `std/lzw`. When a program is not on the
+  host, ripgrep searches the compressed file, but the port decompresses
+  it. For data that is not valid, the port writes the messages of the
+  programs. For data that ends early, the count of the bytes before the
+  error can differ from that of the program.
+
+- **PCRE2.** The port does not have PCRE2. It behaves as ripgrep 14.1.0
+  that was built without the feature `pcre2`. `-P` and `--engine pcre2`
+  give the message `PCRE2 is not available in this build of ripgrep.`
+  `--engine auto` uses PCRE2 only after the default engine fails. And
+  `--version` and `--pcre2-version` say that PCRE2 is not there. Thus the
+  hint about PCRE2 after an error of backreferences or of look-around is
+  not there.
+
+- **Size limits.** `--dfa-size-limit` does not change the output of
+  ripgrep, and the port accepts it. `--regex-size-limit` is not a limit of
+  `std/regex`, and a pattern that ripgrep finds too large can compile.
 
 ## Tests
 
-- `rg_test.fern`: the options, the errors, the pattern, the context, the
-  separators, the counts, the color and the binary files. It also tests the
-  rules of an ignore file, the globs, the types and the precedence of the
-  ignore files. And it tests `-m`, `--heading`, `--null` and the buffers
-  for binary files. The other tests are of the columns and the offsets,
-  `-r`, `--trim`, `-M`, `--passthru`, `--stop-on-nonmatch`, `-U`, the line
-  terminators, the encodings and `--json`. `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and
-  wasm32-wasi with the leak census.
+- `rg_test.fern` tests the options, the errors, the pattern, the context,
+  the separators, the counts, the colors, the links and the binary files.
+  It tests the ignore rules, the globs and the types. It tests `-m`,
+  `--heading`, `--null`, `-r`, `--trim`, `-M`, `--passthru`, `-U`, the
+  line terminators, the encodings and `--json`.
+  `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and wasm32-wasi
+  with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 369 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 521 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
@@ -240,6 +281,16 @@ order of the walk.
   cases include each option, a missing file, the standard input and the
   errors. 90 cases walk two trees with each kind of ignore file, a link,
   hidden files and a binary file of 70 KiB.
+
+  The cases of `-z` search files
+  of gzip, bzip2, xz, lzma and compress, and files that are not valid. The
+  cases of `--pre` run scripts that pass, that fail and that write no
+  error.
+
+- `TestSelfHostExampleRgWithoutPcre2` compares the port with the output of
+  ripgrep 14.1.0 that was built without PCRE2: `-P`, `--engine pcre2`,
+  `--engine auto`, `--pcre2-version` and `--version`. `/usr/bin/rg` has
+  PCRE2, so the test holds the expected output.
 
   The test makes the times of `--stats` and `--json` the same before it
   compares them. 8 cases run with the standard output on a terminal, with
@@ -254,11 +305,10 @@ order of the walk.
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
   `tests/*.rs`) with the port and with `/usr/bin/rg`. Each case makes its
   files in a new directory, and each run gets `--path-separator / -j1`.
-  `testdata/ripgrep-pass.txt` names the 292 of 306 cases that give the
+  `testdata/ripgrep-pass.txt` names the 302 of 306 cases that give the
   output of ripgrep. The test fails when a named case fails, and when a case
-  that it does not name passes. Most of the other cases use options that
-  are not in this slice, and four compare the times of `--stats`. The
-  licence is in
+  that it does not name passes. The four other cases compare the times of
+  `--stats`. The licence is in
   `licenses/ripgrep/`.
 
 ## Performance
@@ -432,6 +482,38 @@ The line loop is not the cause. Without `-v`, the port goes from one
 candidate to the line of the next with `next_candidate`, and counts the
 lines that it skips with `__count_byte`. The lines without a candidate cost
 nothing more.
+
+### Literals inside a pattern
+
+A pattern such as `\w+ing` has no literal prefix, and each word byte can
+start a match. Thus each line was a candidate, and the port ran the DFA on
+each line. Now `std/regex` finds the longest run of literal bytes that each
+match holds, and `Regex.next_inner` finds the next copy of it. The line
+loop goes to the line of that copy, and skips the lines before it. The
+search for a literal prefix now starts from its least frequent byte, from
+a table of the frequency of each byte in text.
+
+The text is `corpus 50`: 52,428,815 bytes. Each command gets `-j1`. The
+time is the best of 5 runs, in milliseconds, with the output to a pipe.
+"Before" is the port without the two changes. The output of each command
+is the same in the three programs.
+
+| Command | ripgrep | Before | Port | Ratio |
+| --- | ---: | ---: | ---: | ---: |
+| `rg 'Sherlock Holmes'` | 24 | 32 | 32 | 1.3 |
+| `rg -c 'Sherlock Holmes'` | 14 | 41 | 38 | 2.6 |
+| `rg -i 'sherlock holmes'` | 26 | 110 | 120 | 4.6 |
+| `rg 'Sherlock Holmes\|...'` (five names) | 28 | 64 | 62 | 2.2 |
+| `rg -c '\w+'` | 140 | 107 | 109 | 0.8 |
+| `rg -c '\w+ing'` | 23 | 586 | 43 | 1.9 |
+| `rg -c '[a-z]+ Holmes'` | 20 | 265 | 42 | 2.1 |
+| `rg -cw Holmes` | 14 | 29 | 28 | 2.1 |
+| `rg -c xyzzy` | 12 | 35 | 35 | 3.0 |
+
+`rg -c xyzzy` finds no line, and its time is the read of the file and one
+scan. The causes above stay: the read copies the file, and the scans for
+a set of bytes and for a pair of bytes do not use SIMD kernels. A literal
+under `-i` is not an inner literal.
 
 ### A tree of files
 

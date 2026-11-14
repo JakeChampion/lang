@@ -999,6 +999,10 @@ func parseGCBData() (gcbs []gcbRun, extPict [][2]rune, version string) {
 				panic("unicodegen: malformed Extended_Pictographic line: " + line)
 			}
 			extPict = append(extPict, [2]rune{rune(mustHex(f[1])), rune(mustHex(f[2]))})
+		case "M":
+			if len(f) != 4 {
+				panic("unicodegen: malformed emoji property line: " + line)
+			}
 		default:
 			panic("unicodegen: unknown gcbdata record: " + line)
 		}

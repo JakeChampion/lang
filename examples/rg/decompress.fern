@@ -1,0 +1,151 @@
+// The decompression of -z in the rg port.
+//
+// ripgrep 14.1.0 runs gzip, bzip2, xz, lz4, brotli, zstd or uncompress on
+// a file with a name that ends with one of their extensions, and searches
+// the output. The port decompresses the file with the modules of the
+// standard library, and writes the messages of those programs for a file
+// that is not valid.
+import "std/brotli";
+import "std/bzip2";
+import "std/deflate";
+import "std/lz4";
+import "std/lzw";
+import "std/string";
+import "std/xz";
+import "std/zstd";
+
+// The extensions of the files that -z decompresses, and the program that
+// ripgrep runs for each.
+const EXTENSIONS: string[] = [".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".lz4", ".lzma", ".br", ".zst", ".zstd", ".Z"];
+
+const PROGRAMS: string[] = ["gzip", "gzip", "bzip2", "bzip2", "xz", "xz", "lz4", "lzma", "brotli", "zstd", "zstd", "gzip"];
+
+// The program for a file name, or "" for a file that -z does not
+// decompress.
+pub function program(name: string): string {
+  for k in 0..EXTENSIONS.len() {
+    if (name.ends_with(EXTENSIONS[k])) {
+      return PROGRAMS[k];
+    }
+  }
+  return "";
+}
+
+// The bytes that the program gives for the file, and its message, or ""
+// when it succeeds.
+pub function decompressed(prog: string, name: string, input: u8[]): (u8[], string) {
+  return match (prog) {
+    "gzip" => gunzip(name, input),
+    "bzip2" => bunzip(name, input),
+    "xz" => unxz(name, xz.decode_xz(input)),
+    "lzma" => unxz(name, xz.decode_lzma(input)),
+    _ => others(prog, name, input),
+  };
+}
+
+// The programs that this host does not have, with short messages.
+function others(prog: string, name: string, input: u8[]): (u8[], string) {
+  let none: u8[] = [];
+  if (prog == "lz4") {
+    let d = lz4.decode(input);
+    return (d.out, match (d.error) { Some(e) => "Error 44 : " + e.message(), None => "" });
+  }
+  if (prog == "brotli") {
+    return match (brotli.decompress(input, 2147483647)) {
+      Ok(out) => (out, ""),
+      Err(_) => (none, "corrupt input [" + name + "]"),
+    };
+  }
+  return match (zstd.decompress(input, 2147483647)) {
+    Ok(out) => (out, ""),
+    Err(e) => (none, "zstd: " + name + ": " + e.message()),
+  };
+}
+
+// gzip -d: gzip members, or the LZW data of compress.
+function gunzip(name: string, input: u8[]): (u8[], string) {
+  let head = "gzip: " + name + ": ";
+  if (input.len() >= 2 && input[0] == 31u8 && input[1] == 157u8) {
+    return uncompress(head, input);
+  }
+  if (input.len() == 0) {
+    return (input, head + "unexpected end of file");
+  }
+  let out: u8[] = [];
+  let at = 0;
+  while (at < input.len()) {
+    if (at > 0 && !gzip_magic(input, at)) {
+      return (out, head + "decompression OK, trailing garbage ignored");
+    }
+    let Ok(m) = deflate.gzip_member(input, at, 2147483647) else {
+      return member_error(out, input, at, head);
+    };
+    out = out.concat(m.out);
+    at += m.consumed;
+  }
+  return (out, "");
+}
+
+// Whether a gzip member can start at `at`.
+function gzip_magic(input: u8[], at: i32): boolean {
+  return input[at] == 31u8 && (at + 1 >= input.len() || input[at + 1] == 139u8);
+}
+
+// gzip -d for the LZW data of compress.
+function uncompress(head: string, input: u8[]): (u8[], string) {
+  let d = lzw.decode(input);
+  return (d.out, match (d.error) { Some(e) => head + e.message() + (if (e.message() == "corrupt input") { "." } else { "" }), None => "" });
+}
+
+// The output and the message of gzip for the member at `at` that is not
+// valid.
+function member_error(own out: u8[], input: u8[], at: i32, head: string): (u8[], string) {
+  return match (deflate.gzip_member(input, at, 2147483647)) {
+    Ok(_) => (out, ""),
+    Err(e) => (with_data(out, input, at, e), head + gzip_message(e)),
+  };
+}
+
+// The output with the data of a member whose trailer does not agree, as
+// gzip writes it before its message.
+function with_data(own out: u8[], input: u8[], at: i32, e: deflate.InflateError): u8[] {
+  let checked = match (e) {
+    deflate.BadChecksum | deflate.BadLength => true,
+    _ => false,
+  };
+  if (!checked) {
+    return out;
+  }
+  return match (deflate.gzip_member_data(input, at, 2147483647)) {
+    Ok(m) => out.concat(m.out),
+    Err(_) => out,
+  };
+}
+
+function gzip_message(e: deflate.InflateError): string {
+  return match (e) {
+    deflate.BadHeader(what) => if (what == "not gzip") { "not in gzip format" } else { "invalid compressed data--format violated" },
+    deflate.Truncated => "unexpected end of file",
+    deflate.BadChecksum => "invalid compressed data--crc error",
+    deflate.BadLength => "invalid compressed data--length error",
+    _ => "invalid compressed data--format violated",
+  };
+}
+
+const BZIP2_CORRUPT: string = "It is possible that the compressed file(s) have become corrupted.\nYou can use the -tvv option to test integrity of such files.\n\nYou can use the `bzip2recover' program to attempt to recover\ndata from undamaged sections of corrupted files.";
+
+// bzip2 -d, with the messages of bzip2 1.0.
+function bunzip(name: string, input: u8[]): (u8[], string) {
+  let d = bzip2.decode(input);
+  let tail = "\tInput file = " + name + ", output file = (stdout)\n\n" + BZIP2_CORRUPT;
+  return (d.out, match (d.error) {
+    Some(bzip2.NotBzip2) => "bzip2: " + name + " is not a bzip2 file.",
+    Some(bzip2.Truncated) => "bzip2: Compressed file ends unexpectedly;\n\tperhaps it is corrupted?  *Possible* reason follows.\nbzip2: Success\n" + tail,
+    Some(bzip2.Corrupt) => "bzip2: Data integrity error when decompressing.\n" + tail,
+    None => "",
+  });
+}
+
+function unxz(name: string, d: xz.Decoded): (u8[], string) {
+  return (d.out, match (d.error) { Some(e) => "xz: " + name + ": " + e.message(), None => "" });
+}
