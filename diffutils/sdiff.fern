@@ -1,0 +1,767 @@
+import "std/rand";
+import "../coreutils/lib/gnu";
+import "diff";
+
+const EXIT_TROUBLE: i32 = 2;
+
+const OPT_DIFF_PROGRAM: i32 = 1;
+
+const OPT_EXPAND_TABS: i32 = 2;
+
+const OPT_ALL_SPACE: i32 = 3;
+
+const OPT_BLANK_LINES: i32 = 4;
+
+const OPT_IGNORE_CASE: i32 = 5;
+
+const OPT_MATCHING_LINES: i32 = 6;
+
+const OPT_SPACE_CHANGE: i32 = 7;
+
+const OPT_TAB_EXPANSION: i32 = 8;
+
+const OPT_TRAILING_SPACE: i32 = 9;
+
+const OPT_LEFT_COLUMN: i32 = 10;
+
+const OPT_MINIMAL: i32 = 11;
+
+const OPT_OUTPUT: i32 = 12;
+
+const OPT_SPEED: i32 = 13;
+
+const OPT_STRIP_CR: i32 = 14;
+
+const OPT_SUPPRESS_COMMON: i32 = 15;
+
+const OPT_TABSIZE: i32 = 16;
+
+const OPT_TEXT: i32 = 17;
+
+const OPT_WIDTH: i32 = 18;
+
+// The longest line of the merge commands of diff, as GNU sdiff reads them.
+const COMMAND_MAX: i32 = 256;
+
+function help_text(): string {
+  let out = "Usage: " + gnu.prog() + " [OPTION]... FILE1 FILE2\n";
+  out += "Side-by-side merge of differences between FILE1 and FILE2.\n";
+  out += "\n";
+  out += "Mandatory arguments to long options are mandatory for short options too.\n";
+  out += "  -o, --output=FILE            operate interactively, sending output to FILE\n";
+  out += "\n";
+  out += "  -i, --ignore-case            consider upper- and lower-case to be the same\n";
+  out += "  -E, --ignore-tab-expansion   ignore changes due to tab expansion\n";
+  out += "  -Z, --ignore-trailing-space  ignore white space at line end\n";
+  out += "  -b, --ignore-space-change    ignore changes in the amount of white space\n";
+  out += "  -W, --ignore-all-space       ignore all white space\n";
+  out += "  -B, --ignore-blank-lines     ignore changes whose lines are all blank\n";
+  out += "  -I, --ignore-matching-lines=RE  ignore changes all whose lines match RE\n";
+  out += "      --strip-trailing-cr      strip trailing carriage return on input\n";
+  out += "  -a, --text                   treat all files as text\n";
+  out += "\n";
+  out += "  -w, --width=NUM              output at most NUM (default 130) print columns\n";
+  out += "  -l, --left-column            output only the left column of common lines\n";
+  out += "  -s, --suppress-common-lines  do not output common lines\n";
+  out += "\n";
+  out += "  -t, --expand-tabs            expand tabs to spaces in output\n";
+  out += "      --tabsize=NUM            tab stops at every NUM (default 8) print columns\n";
+  out += "\n";
+  out += "  -d, --minimal                try hard to find a smaller set of changes\n";
+  out += "  -H, --speed-large-files      assume large files, many scattered small changes\n";
+  out += "      --diff-program=PROGRAM   use PROGRAM to compare files\n";
+  out += "\n";
+  out += "      --help                   display this help and exit\n";
+  out += "  -v, --version                output version information and exit\n";
+  out += "\n";
+  out += "If a FILE is '-', read standard input.\n";
+  out += "Exit status is 0 if inputs are the same, 1 if different, 2 if trouble.\n";
+  return out;
+}
+
+// The options: the arguments that sdiff gives to diff, in their order, the
+// diff program, the output file of -o and -s.
+struct Cfg { diff_args: string[], program: string[], output: string[], suppress: boolean }
+
+// The options of GNU sdiff in the order of its table, which is the order of
+// the names in an ambiguity message.
+function options(): gnu.Opt[] {
+  return [
+    gnu.valued("", "diff-program", OPT_DIFF_PROGRAM), gnu.flag("t", "expand-tabs", OPT_EXPAND_TABS), gnu.flag("", "help", gnu.help_id()),
+    gnu.flag("W", "ignore-all-space", OPT_ALL_SPACE), gnu.flag("B", "ignore-blank-lines", OPT_BLANK_LINES), gnu.flag("i", "ignore-case", OPT_IGNORE_CASE),
+    gnu.valued("I", "ignore-matching-lines", OPT_MATCHING_LINES), gnu.flag("b", "ignore-space-change", OPT_SPACE_CHANGE), gnu.flag("E", "ignore-tab-expansion", OPT_TAB_EXPANSION),
+    gnu.flag("Z", "ignore-trailing-space", OPT_TRAILING_SPACE), gnu.flag("l", "left-column", OPT_LEFT_COLUMN), gnu.flag("d", "minimal", OPT_MINIMAL),
+    gnu.valued("o", "output", OPT_OUTPUT), gnu.flag("H", "speed-large-files", OPT_SPEED), gnu.flag("", "strip-trailing-cr", OPT_STRIP_CR),
+    gnu.flag("s", "suppress-common-lines", OPT_SUPPRESS_COMMON), gnu.valued("", "tabsize", OPT_TABSIZE), gnu.flag("a", "text", OPT_TEXT),
+    gnu.flag("v", "version", gnu.version_id()), gnu.valued("w", "width", OPT_WIDTH),
+  ];
+}
+
+// The arguments of diff for each option of sdiff that diff takes.
+function diff_option(m: gnu.OptMatch): string[] {
+  return match (m.id) {
+    OPT_EXPAND_TABS => ["-t"],
+    OPT_ALL_SPACE => ["-w"],
+    OPT_BLANK_LINES => ["-B"],
+    OPT_IGNORE_CASE => ["-i"],
+    OPT_MATCHING_LINES => ["-I", m.value],
+    OPT_SPACE_CHANGE => ["-b"],
+    OPT_TAB_EXPANSION => ["-E"],
+    OPT_TRAILING_SPACE => ["-Z"],
+    OPT_LEFT_COLUMN => ["--left-column"],
+    OPT_MINIMAL => ["-d"],
+    OPT_SPEED => ["-H"],
+    OPT_STRIP_CR => ["--strip-trailing-cr"],
+    OPT_TABSIZE => ["--tabsize", m.value],
+    OPT_TEXT => ["-a"],
+    _ => ["-W", m.value],
+  };
+}
+
+function usage_error(msg: string): void {
+  gnu.error(msg);
+  gnu.try_help_in("diffutils", EXIT_TROUBLE);
+}
+
+function parse(argv: string[]): (Cfg, string[]) {
+  let none: string[] = [];
+  let cfg = Cfg { diff_args: none, program: none, output: none, suppress: false };
+  let g = gnu.getopt_new(argv, options(), "sdiff", help_text(), EXIT_TROUBLE).in_package("diffutils");
+  while (true) {
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    let Some(m) = r.0 else {
+      break;
+    };
+    if (m.id == OPT_DIFF_PROGRAM) {
+      cfg = Cfg { ...cfg, program: [m.value] };
+    } else if (m.id == OPT_OUTPUT) {
+      cfg = Cfg { ...cfg, output: [m.value] };
+    } else if (m.id == OPT_SUPPRESS_COMMON) {
+      cfg = Cfg { ...cfg, suppress: true };
+    } else {
+      for a in diff_option(m) {
+        cfg = Cfg { ...cfg, diff_args: cfg.diff_args.append(a) };
+      }
+    }
+  }
+  let ops = g.operands();
+  if (ops.len() < 2) {
+    usage_error("missing operand after '" + argv[argv.len() - 1] + "'");
+  }
+  if (ops.len() > 2) {
+    usage_error("extra operand '" + ops[2] + "'");
+  }
+  return (cfg, ops);
+}
+
+function program(cfg: Cfg): string {
+  if (cfg.program.len() > 0) {
+    return cfg.program[0];
+  }
+  return "diff";
+}
+
+function diff_argv(cfg: Cfg, tail: string[]): string[] {
+  let argv: string[] = [program(cfg)];
+  for a in cfg.diff_args {
+    argv = argv.append(a);
+  }
+  for a in tail {
+    argv = argv.append(a);
+  }
+  return argv;
+}
+
+// Without -o, sdiff is diff -y. GNU sdiff runs the diff program in its
+// place; this port runs its own diff unless --diff-program names another.
+function side_by_side(cfg: Cfg, ops: string[]): i32 {
+  let tail: string[] = [];
+  if (cfg.suppress) {
+    tail = tail.append("--suppress-common-lines");
+  }
+  let argv = diff_argv(cfg, tail.append("-y").append("--").append(ops[0]).append(ops[1]));
+  if (cfg.program.len() == 0) {
+    set_args(argv);
+    return diff.run_diff(argv);
+  }
+  if (target_os() == "wasi") {
+    gnu.error(program(cfg) + ": " + gnu.exec_errno_text(38));
+    return EXIT_TROUBLE;
+  } else {
+    return exec_program(cfg, argv);
+  }
+}
+
+function exec_program(cfg: Cfg, argv: string[]): i32 {
+  let rc = gnu.exec_command(program(cfg), argv, environ());
+  gnu.error(program(cfg) + ": " + gnu.exec_errno_text(rc));
+  return EXIT_TROUBLE;
+}
+
+// The state of the merge: the buffer of standard output, the merged lines
+// and the file of -o, the commands that stdin gives, whether the common
+// lines show, and the temporary file of the editor.
+struct Merge { out: usize, merged: usize, file: Writer, input: Cell[u8[]], at: Cell[i32], eof: Cell[boolean], quiet: Cell[boolean], tmp: Cell[string] }
+
+// A file that the merge reads line by line.
+struct Lines { bytes: u8[], pos: Cell[i32] }
+
+function lines_of(bytes: u8[]): Lines {
+  return Lines { bytes: bytes, pos: cell_new(0) };
+}
+
+// The end of `n` lines from the position of a file, or of the file.
+function lines_end(f: Lines, n: i32): i32 {
+  let p = f.pos.get();
+  let k = n;
+  while (k > 0 && p < f.bytes.len()) {
+    let nl = __memchr_bytes(f.bytes, 10, p);
+    p = if (nl < 0) { f.bytes.len() } else { nl + 1 };
+    k -= 1;
+  }
+  return p;
+}
+
+// lf_copy: n lines of a file to a buffer.
+function lines_copy(f: Lines, n: i32, h: usize): void {
+  let end = lines_end(f, n);
+  buf_push_bytes_range(h, f.bytes, f.pos.get(), end);
+  f.pos.set(end);
+}
+
+function lines_skip(f: Lines, n: i32): void {
+  f.pos.set(lines_end(f, n));
+}
+
+function flush_out(m: Merge): void {
+  if (buf_len(m.out) == 0) {
+    return;
+  }
+  let bytes = buf_take_bytes(m.out);
+  if let Err(e) = stdout().write_bytes(bytes) {
+    die(m, "write failed: " + gnu.io_error_text(e));
+  }
+}
+
+function write_merged(m: Merge): void {
+  let bytes = buf_take_bytes(m.merged);
+  if (bytes.len() == 0) {
+    return;
+  }
+  if let Err(e) = m.file.write_bytes(bytes) {
+    flush_out(m);
+    remove_tmp(m);
+    gnu.error("write failed: " + gnu.io_error_text(e));
+    exit(EXIT_TROUBLE);
+  }
+}
+
+function remove_tmp(m: Merge): void {
+  if (m.tmp.get().len() > 0) {
+    match (remove_file(m.tmp.get())) {
+      Ok(_) => {},
+      Err(_) => {}
+    }
+    m.tmp.set("");
+  }
+}
+
+function die(m: Merge, msg: string): void {
+  flush_out(m);
+  write_merged(m);
+  remove_tmp(m);
+  gnu.error(msg);
+  exit(EXIT_TROUBLE);
+}
+
+// getchar on stdin, -1 at its end.
+function getc(m: Merge): i32 {
+  if (m.at.get() >= m.input.get().len()) {
+    if (m.eof.get()) {
+      return -1;
+    }
+    match (stdin().read_chunk_bytes(4096)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          m.eof.set(true);
+          return -1;
+        }
+        m.input.set(chunk);
+        m.at.set(0);
+      },
+      Err(e) => {
+        die(m, "read failed: " + gnu.io_error_text(e));
+      }
+    }
+  }
+  let c = m.input.get()[m.at.get()] as i32;
+  m.at.set(m.at.get() + 1);
+  return c;
+}
+
+function skip_white(m: Merge): i32 {
+  while (true) {
+    let c = getc(m);
+    if (c != 32 && (c < 9 || c > 13) || c == 10) {
+      return c;
+    }
+  }
+  return -1;
+}
+
+function flush_line(m: Merge): void {
+  while (true) {
+    let c = getc(m);
+    if (c == 10 || c < 0) {
+      return;
+    }
+  }
+}
+
+function give_help(m: Merge): void {
+  flush_out(m);
+  let h = "ed:\tEdit then use both versions, each decorated with a header.\n";
+  h += "eb:\tEdit then use both versions.\n";
+  h += "el or e1:\tEdit then use the left version.\n";
+  h += "er or e2:\tEdit then use the right version.\n";
+  h += "e:\tDiscard both versions then edit a new one.\n";
+  h += "l or 1:\tUse the left version.\n";
+  h += "r or 2:\tUse the right version.\n";
+  h += "s:\tSilently include common lines.\n";
+  h += "v:\tVerbosely include common lines.\n";
+  h += "q:\tQuit.\n";
+  stderr().write(h);
+}
+
+// One command of the user: its letter, and the letter after 'e'.
+function read_command(m: Merge): (i32, i32) {
+  while (true) {
+    buf_push_byte(m.out, 37);
+    flush_out(m);
+    let c0 = skip_white(m);
+    if (c0 == 49 || c0 == 50 || c0 == 108 || c0 == 114 || c0 == 115 || c0 == 118 || c0 == 113) {
+      if (skip_white(m) == 10) {
+        return (c0, 0);
+      }
+      give_help(m);
+      flush_line(m);
+    } else if (c0 == 101) {
+      let c1 = skip_white(m);
+      if (c1 == 10) {
+        return (c0, c1);
+      }
+      if (c1 == 49 || c1 == 50 || c1 == 98 || c1 == 100 || c1 == 108 || c1 == 114) {
+        if (skip_white(m) == 10) {
+          return (c0, c1);
+        }
+      }
+      give_help(m);
+      flush_line(m);
+    } else if (c0 < 0) {
+      return (113, 0);
+    } else {
+      if (c0 != 10) {
+        flush_line(m);
+      }
+      give_help(m);
+    }
+  }
+  return (113, 0);
+}
+
+// A block of changes: the files, their names and the line numbers and
+// counts of the block in each.
+struct Change { left: Lines, lname: string, lline: i32, llen: i32, right: Lines, rname: string, rline: i32, rlen: i32 }
+
+// edit: the commands of the user for one block of changes. It gives false
+// when the user quits.
+function edit(m: Merge, c: Change): boolean {
+  let out = m.merged;
+  while (true) {
+    let cmd = read_command(m);
+    let c0 = cmd.0;
+    if (c0 == 49 || c0 == 108) {
+      lines_copy(c.left, c.llen, out);
+      lines_skip(c.right, c.rlen);
+      return true;
+    }
+    if (c0 == 50 || c0 == 114) {
+      lines_copy(c.right, c.rlen, out);
+      lines_skip(c.left, c.llen);
+      return true;
+    }
+    if (c0 == 115) {
+      m.quiet.set(true);
+    } else if (c0 == 118) {
+      m.quiet.set(false);
+    } else if (c0 == 113) {
+      return false;
+    } else {
+      edit_with_editor(m, c, cmd.1);
+      return true;
+    }
+  }
+  return true;
+}
+
+function range_header(mark: string, name: string, line: i32, n: i32): string {
+  if (n == 1) {
+    return mark + " " + name + " " + line.to_string() + "\n";
+  }
+  return mark + " " + name + " " + line.to_string() + "," + (line + n - 1).to_string() + "\n";
+}
+
+// The 'e' commands: the chosen lines go to a temporary file, the editor of
+// EDITOR changes it, and the file goes to the output.
+function edit_with_editor(m: Merge, c: Change, how: i32): void {
+  let h = buf_new(4096);
+  if (how == 100 && c.llen > 0) {
+    buf_push(h, range_header("---", c.lname, c.lline, c.llen));
+  }
+  if (how == 100 || how == 49 || how == 98 || how == 108) {
+    lines_copy(c.left, c.llen, h);
+  } else {
+    lines_skip(c.left, c.llen);
+  }
+  if (how == 100 && c.rlen > 0) {
+    buf_push(h, range_header("+++", c.rname, c.rline, c.rlen));
+  }
+  if (how == 100 || how == 50 || how == 98 || how == 114) {
+    lines_copy(c.right, c.rlen, h);
+  } else {
+    lines_skip(c.right, c.rlen);
+  }
+  let text = buf_take_bytes(h);
+  buf_free(h);
+  let name = temp_file(m);
+  match (open_writer(name)) {
+    Ok(w) => {
+      w.write_bytes(text);
+      w.close();
+    },
+    Err(e) => {
+      die(m, gnu.quote(name) + ": " + gnu.io_error_text(e));
+    }
+  }
+  run_editor(m, name);
+  match (read_file_bytes(name)) {
+    Ok(b) => {
+      buf_push_bytes_range(m.merged, b, 0, b.len());
+    },
+    Err(e) => {
+      die(m, name + ": " + gnu.io_error_text(e));
+    }
+  }
+}
+
+// The temporary file of the editor: made once, in TMPDIR or /tmp.
+function temp_file(m: Merge): string {
+  if (m.tmp.get().len() > 0) {
+    return m.tmp.get();
+  }
+  let dir = match (env("TMPDIR")) {
+    Some(d) => d,
+    None => "/tmp",
+  };
+  if (dir.len() == 0) {
+    dir = "/tmp";
+  }
+  let letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  for _ in 0..100 {
+    let h = buf_new(dir.len() + 13);
+    buf_push(h, dir + "/sdiff");
+    for b in rand.bytes(6) {
+      buf_push_byte(h, letters[b as i32 % 62] as i32);
+    }
+    let name = buf_take(h);
+    buf_free(h);
+    match (open_exclusive(name)) {
+      Ok(w) => {
+        w.close();
+        m.tmp.set(name);
+        return name;
+      },
+      Err(e) => {
+        match (e) {
+          AlreadyExists(_) => {},
+          _ => {
+            die(m, "mkstemp: " + gnu.io_error_text(e));
+          }
+        }
+      }
+    }
+  }
+  die(m, "mkstemp: File exists");
+  return "";
+}
+
+function run_editor(m: Merge, name: string): void {
+  let editor = match (env("EDITOR")) {
+    Some(e) => e,
+    None => "ed",
+  };
+  flush_out(m);
+  if (target_os() == "wasi") {
+    die(m, "subsidiary program '" + editor + "' could not be invoked");
+  } else {
+    spawn_editor(m, editor, name);
+  }
+}
+
+function spawn_editor(m: Merge, editor: string, name: string): void {
+  let pid = proc_fork();
+  if (pid == 0) {
+    let rc = gnu.exec_command(editor, [editor, name], environ());
+    exit(if (rc == 2) { 127 } else { 126 });
+  }
+  if (pid < 0) {
+    die(m, "fork: " + gnu.exec_errno_text(-pid));
+  }
+  check_child(m, editor, proc_waitpid_status(pid), 0);
+}
+
+// check_child_status: a program that the merge runs must exit with a status
+// of `max_ok` or less.
+function check_child(m: Merge, prog: string, st: i32, max_ok: i32): void {
+  let code = st >> 8 & 255;
+  if ((st & 127) == 0 && code <= max_ok) {
+    return;
+  }
+  let what = "subsidiary program '" + prog + "' ";
+  if ((st & 127) != 0) {
+    die(m, what + "failed");
+  }
+  if (code == 126) {
+    die(m, what + "could not be invoked");
+  }
+  if (code == 127) {
+    die(m, what + "not found");
+  }
+  die(m, what + "failed (exit status " + code.to_string() + ")");
+}
+
+// The merge commands of diff --sdiff-merge-assist, and its wait status.
+// GNU sdiff runs diff as a child; this port runs its own diff in a child
+// process when it can, so an error of diff ends the child alone.
+function merge_commands(cfg: Cfg, argv: string[]): (u8[], i32) {
+  if (target_os() == "wasi") {
+    if (cfg.program.len() > 0) {
+      gnu.error("subsidiary program '" + program(cfg) + "' could not be invoked");
+      exit(EXIT_TROUBLE);
+    }
+    let r = diff.capture_diff(argv);
+    return (r.1, r.0 << 8);
+  } else {
+    return forked_commands(cfg, argv);
+  }
+}
+
+function forked_commands(cfg: Cfg, argv: string[]): (u8[], i32) {
+  let p = match (pipe()) {
+    Ok(p) => p,
+    Err(e) => {
+      gnu.error("pipe: " + gnu.io_error_text(e));
+      exit(EXIT_TROUBLE);
+      return (__alloc_u8(0), 0);
+    },
+  };
+  let pid = proc_fork();
+  if (pid == 0) {
+    p.w.dup_onto(1);
+    if (cfg.program.len() == 0) {
+      set_args(argv);
+      exit(diff.run_diff(argv));
+    }
+    let rc = gnu.exec_command(program(cfg), argv, environ());
+    exit(if (rc == 2) { 127 } else { 126 });
+  }
+  if (pid < 0) {
+    gnu.error("fork: " + gnu.exec_errno_text(-pid));
+    exit(EXIT_TROUBLE);
+  }
+  p.w.close();
+  let h = buf_new(65536);
+  while (true) {
+    match (p.r.read_chunk_bytes(65536)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        buf_push_bytes_range(h, chunk, 0, chunk.len());
+      },
+      Err(e) => {
+        gnu.error("read failed: " + gnu.io_error_text(e));
+        exit(EXIT_TROUBLE);
+      }
+    }
+  }
+  p.r.close();
+  let bytes = buf_take_bytes(h);
+  buf_free(h);
+  return (bytes, proc_waitpid_status(pid));
+}
+
+// A number of a merge command, and the index after it, or -1.
+function command_num(s: string, at: i32): (i32, i32) {
+  let i = at;
+  let neg = false;
+  while (i < s.len() && (s[i] == b' ' || s[i] >= 9 as u8 && s[i] <= 13 as u8)) {
+    i += 1;
+  }
+  if (i < s.len() && (s[i] == b'+' || s[i] == b'-')) {
+    neg = s[i] == b'-';
+    i += 1;
+  }
+  let start = i;
+  let v = 0;
+  while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
+    v = v * 10 + (s[i] - b'0') as i32;
+    i += 1;
+  }
+  if (i == start || neg && v != 0) {
+    return (0, -1);
+  }
+  return (v, i);
+}
+
+// interact: each merge command of diff. "i" gives common lines, "c" a block
+// of changes, and a line that starts with a space is a message. It gives
+// false when the user quits or a command is too long.
+function interact(m: Merge, cmds: u8[], left: Lines, lname: string, right: Lines, rname: string): boolean {
+  let out = m.merged;
+  let text = unsafe { string_from_bytes_unchecked(cmds) };
+  let at = 0;
+  let lline = 1;
+  let rline = 1;
+  let diff_lines = lines_of(cmds);
+  while (at < cmds.len()) {
+    let nl = __memchr_bytes(cmds, 10, at);
+    if (nl < 0 || nl - at >= COMMAND_MAX) {
+      return false;
+    }
+    let line = slice_unchecked(text, at, nl) + "";
+    at = nl + 1;
+    diff_lines.pos.set(at);
+    if (line.len() > 0 && line[0] == b' ') {
+      buf_push(m.out, slice_unchecked(line, 1, line.len()) + "\n");
+      continue;
+    }
+    let a = command_num(line, 1);
+    if (a.1 < 0 || a.1 >= line.len() || line[a.1] != b',') {
+      die(m, line);
+    }
+    let b = command_num(line, a.1 + 1);
+    if (b.1 != line.len()) {
+      die(m, line);
+    }
+    let lmax = if (a.0 > b.0) { a.0 } else { b.0 };
+    if (line[0] == b'i') {
+      if (m.quiet.get()) {
+        lines_skip(diff_lines, lmax);
+      } else {
+        lines_copy(diff_lines, lmax, m.out);
+      }
+      lines_copy(left, a.0, out);
+      lines_skip(right, b.0);
+    } else if (line[0] == b'c') {
+      lines_copy(diff_lines, lmax, m.out);
+      let c = Change { left: left, lname: lname, lline: lline, llen: a.0, right: right, rname: rname, rline: rline, rlen: b.0 };
+      if (!edit(m, c)) {
+        return false;
+      }
+    } else {
+      die(m, line);
+    }
+    at = diff_lines.pos.get();
+    lline += a.0;
+    rline += b.0;
+    if (buf_len(m.out) >= 65536) {
+      flush_out(m);
+    }
+    if (buf_len(out) >= 65536) {
+      write_merged(m);
+    }
+  }
+  return true;
+}
+
+function is_dir_name(name: string): boolean {
+  return match (stat(name)) {
+    Ok(st) => (st.mode & 61440 as u32) == 16384 as u32,
+    Err(_) => false,
+  };
+}
+
+// expand_name: a directory operand stands for the file in it with the base
+// name of the other operand.
+function expand_name(name: string, dir: boolean, other: string): string {
+  if (name == "-") {
+    gnu.error("cannot interactively merge standard input");
+    exit(EXIT_TROUBLE);
+  }
+  if (!dir) {
+    return name;
+  }
+  let base = gnu.base_name(other);
+  if (name.ends_with("/")) {
+    return name + base;
+  }
+  return name + "/" + base;
+}
+
+function read_input(name: string): u8[] {
+  return match (read_file_bytes(name)) {
+    Ok(b) => b,
+    Err(e) => {
+      gnu.error(name + ": " + gnu.io_error_text(e));
+      exit(EXIT_TROUBLE);
+    },
+  };
+}
+
+// -o: the interactive merge into the file of -o.
+function merge(cfg: Cfg, ops: string[]): i32 {
+  let leftdir = is_dir_name(ops[0]);
+  let rightdir = is_dir_name(ops[1]);
+  if (leftdir && rightdir) {
+    gnu.error("both files to be compared are directories");
+    return EXIT_TROUBLE;
+  }
+  let lname = expand_name(ops[0], leftdir, ops[1]);
+  let left = lines_of(read_input(lname));
+  let rname = expand_name(ops[1], rightdir, ops[0]);
+  let right = lines_of(read_input(rname));
+  let w = match (open_writer(cfg.output[0])) {
+    Ok(w) => w,
+    Err(e) => {
+      gnu.error(cfg.output[0] + ": " + gnu.io_error_text(e));
+      exit(EXIT_TROUBLE);
+    },
+  };
+  let r = merge_commands(cfg, diff_argv(cfg, ["--sdiff-merge-assist", "--", ops[0], ops[1]]));
+  let none: u8[] = [];
+  let m = Merge { out: buf_new(65536), merged: buf_new(65536), file: w, input: cell_new(none), at: cell_new(0), eof: cell_new(false), quiet: cell_new(cfg.suppress), tmp: cell_new("") };
+  let ok = interact(m, r.0, left, lname, right, rname);
+  flush_out(m);
+  write_merged(m);
+  w.close();
+  remove_tmp(m);
+  buf_free(m.out);
+  buf_free(m.merged);
+  if (!ok) {
+    return EXIT_TROUBLE;
+  }
+  check_child(m, program(cfg), r.1, 1);
+  return r.1 >> 8 & 255;
+}
+
+function main(): i32 {
+  let parsed = parse(args());
+  let cfg = parsed.0;
+  let ops = parsed.1;
+  if (cfg.output.len() == 0) {
+    return side_by_side(cfg, ops);
+  }
+  return merge(cfg, ops);
+}

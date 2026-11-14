@@ -734,6 +734,7 @@ func New() *Interp {
 	i.Builtins["__method_Map_get_or"] = &Builtin{Fn: builtinMapGetOr}
 	i.Builtins["__method_Map_keys"] = &Builtin{Fn: builtinMapKeys}
 	i.Builtins["__method_Map_values"] = &Builtin{Fn: builtinMapValues}
+	i.Builtins["__alloc_len"] = &Builtin{Fn: builtinAllocLength}
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", Number(0))}
 	i.Builtins["__alloc_u8_uninit"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8_uninit", Number(0))}
 	i.Builtins["__arr_set_len"] = &Builtin{Fn: builtinArrSetLen}
@@ -2799,6 +2800,20 @@ func builtinMapValues(_ *Interp, args []Value) (Value, error) {
 	out := newArray(len(m.vals))
 	copy(out.Elems(), m.vals)
 	return out, nil
+}
+
+func builtinAllocLength(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__alloc_len: expected 1 argument")
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("__alloc_len: expected an integer")
+	}
+	if n < 0 || n > 2147483647 {
+		return nil, &Abort{CauseAllocSize, fmt.Sprintf("length %d", int64(n))}
+	}
+	return n, nil
 }
 
 func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, error) {

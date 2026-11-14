@@ -223,6 +223,15 @@ func arm64FormCases() []string {
 	} {
 		add("%s", f)
 	}
+	// The forms of __fern_scan_set, the scan with a set that is not a constant.
+	for _, f := range []string{
+		"csel x10, x10, x3, le", "add x8, x2, #8", "ldrb w6, [x5, #3]", "ldrb w7, [x8, x6]", "ldrb w7, [x7, #8]",
+		"sub x9, x2, #88", "mov x11, sp", "mov sp, x11", "sub sp, sp, #352", "stp q0, q0, [x9, #320]",
+		"add x6, x9, x10", "strb w7, [x6, #96]", "ldr q22, [x10]", "ldr q1, [x9, #336]", "movi v5.16b, #64",
+		"movi v5.16b, #128", "cmtst v1.16b, v1.16b, v1.16b", "and v1.16b, v1.16b, v5.16b", "orr v21.16b, v21.16b, v1.16b",
+	} {
+		add("%s", f)
+	}
 	return out
 }
 

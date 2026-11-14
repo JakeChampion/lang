@@ -199,6 +199,7 @@ which ones.
 | `OWNERSHIP-INFERENCE-PLAN.md` | [record] | A plan to infer `own` in the Go compiler; slice 0 landed, superseded by the self-host's ownership inference. |
 | `OWNERSHIP-TYPES-PLAN.md` | [record] | A phased plan for a checked ownership axis and the `str` view type (#4297); the self-host and `str` slices landed. |
 | `PERCEUS-COMPARISON.md` | [record] | Fern against Koka and Lean on the standard Perceus workloads: wall time, peak memory, allocation counts (#11907). |
+| `PERCEUS-COMPARISON-2026-11-13.md` | [record] | The same comparison again on 2026-11-13, after #15610, on an x86-64 container. |
 | `RC-ARRAY-MOVE-SEMANTICS-PLAN.md` | [record] | Move semantics on threaded array parameters to fit the 2026-05 self-compile in memory; superseded. |
 | `RC-NATIVE-PASS-EXTRACTION.md` | [record] | Extracting the Go native Perceus RC into a pass before the self-host port (#4393); slices 1–4 landed, the native compiler since deleted. |
 | `RC-PERCEUS-PHASE-1E-PLAN.md` | [record] | Widening refcounting from arrays to structs, strings, enums and closures in the Go native compiler, since deleted. |

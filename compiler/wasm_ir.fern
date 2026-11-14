@@ -193,7 +193,8 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
     out = out.append("@allocates");
   }
   if (has_kind(kinds, "arr_get") || has_kind(kinds, "arr_set")
-    || has_kind(kinds, "vget") || has_kind(kinds, "vset")) {
+    || has_kind(kinds, "vget") || has_kind(kinds, "vset")
+    || module_calls_direct(cache, "__fern_alloc_size_abort")) {
     out = out.append("@abort_checks");
   }
   if (module_uses_arr_slice(cache)) {

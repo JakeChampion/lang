@@ -436,7 +436,7 @@ pub function core_builtins(): string[] {
     "__outer_mul_f64",
     "__inner_mul_add_f64",
     "exit", "isatty", "target_os", "target_arch",
-    "__account_entry",
+    "__account_entry", "__alloc_len",
     "__ct_secret", "__ct_public",
     "__bytes_owned", "__bytes_range", "__bytes_into",
     "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks",

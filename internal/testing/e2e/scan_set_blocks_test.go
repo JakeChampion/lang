@@ -62,7 +62,9 @@ function main(): i32 {
 
 const scanSetBlocksWant = "620532873 0 3 2\n"
 
-func TestScanSetBlocksOnlyForAConstantSet(t *testing.T) {
+// A constant set gets the block kernel at the call. A set that is not a
+// constant calls __fern_scan_set, which builds the same kernel's registers.
+func TestScanSetBlocksForEverySet(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, src string) string {
 		p := filepath.Join(dir, name)
@@ -73,7 +75,10 @@ func TestScanSetBlocksOnlyForAConstantSet(t *testing.T) {
 	}
 	constant := write("const.fern", scanSetBlocksSrc)
 	runtime := write("runtime.fern", "function main(): i32 { let set: u8[] = [0u8, 1u8]; set = set.append(1u8); return __scan_set(\"abc\", 0, set); }\n")
-	for _, tc := range []struct{ target, kernel string }{{"x86-64-linux", "vpshufb %ymm"}, {"arm64-linux", "tbl v"}} {
+	for _, tc := range []struct{ target, kernel, call string }{
+		{"x86-64-linux", "vpshufb %ymm", "call __fern_scan_set\n"},
+		{"arm64-linux", "tbl v", "bl __fern_scan_set\n"},
+	} {
 		for _, src := range []string{constant, runtime} {
 			asm := src + "." + tc.target + ".s"
 			if out, err := exec.Command(buildLangBinForInterp(t), "-target", tc.target, "-emit", "asm", "-o", asm, src).CombinedOutput(); err != nil {
@@ -83,9 +88,12 @@ func TestScanSetBlocksOnlyForAConstantSet(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := strings.Contains(string(text), tc.kernel)
-			if want := src == constant; got != want {
-				t.Errorf("%s %s: block kernel emitted = %v, want %v", tc.target, filepath.Base(src), got, want)
+			if !strings.Contains(string(text), tc.kernel) {
+				t.Errorf("%s %s: no block kernel %q", tc.target, filepath.Base(src), tc.kernel)
+			}
+			got := strings.Contains(string(text), tc.call)
+			if want := src == runtime; got != want {
+				t.Errorf("%s %s: calls __fern_scan_set = %v, want %v", tc.target, filepath.Base(src), got, want)
 			}
 		}
 	}
