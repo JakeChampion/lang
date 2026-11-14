@@ -417,7 +417,7 @@ function (p: Process) load_segment(s: elf.Segment, image: u8[]): Result[Process,
     return Err("the segment lies outside the user range");
   }
   let Ok(data) = s.bytes(image) else {
-    return Err("the segment lies outside the image");
+    return Err("the segment lies outside the image, or has more bytes in the file than in memory");
   };
   let file_end = start + data.len() as usize;
   let page = page_down(start);

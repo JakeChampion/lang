@@ -1,2 +1,4 @@
 argument 2 to "__f64x2_lane": the lane index is an integer literal from 0 to 1
 argument 2 to "__f32x4_lane": the lane index is an integer literal from 0 to 3
+argument 2 to "__i16x8_lane": the lane index is an integer literal from 0 to 7
+argument 2 to "__u32x4_lane": the lane index is an integer literal from 0 to 3

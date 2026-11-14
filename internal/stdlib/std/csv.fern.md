@@ -249,15 +249,18 @@ function __parse(s: string, single: boolean): Result[string[][], ParseError] {
 ## Document output
 
 `serialize` uses the same field rules as `join`. It inserts CRLF between records and does not add a final separator.
+A record of one empty field is written as a pair of quotes, so that `parse` gives it back at any place in the document.
 The parser accepts this output even when fields contain quotes or record separators.
 
 ```fern
 <<serialize>>=
-// serialize escapes the fields and separates records with CRLF.
+// serialize escapes the fields and separates records with CRLF. A record
+// of one empty field is a pair of quotes: an empty line is no record at the
+// end of a document.
 pub function serialize(rows: string[][]): string {
   let lines: string[] = [];
   for row in rows {
-    lines = lines.append(join(row));
+    lines = lines.append(if (row.len() == 1 && row[0] == "") { "\"\"" } else { join(row) });
   }
   return lines.join("\r\n");
 }

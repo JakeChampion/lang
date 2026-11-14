@@ -42,6 +42,9 @@ function lines(text: string): string[] {
   let out: string[] = [];
   for raw in text.split("\n") {
     let line = raw.trim();
+    if (line == util.ARM64_ARCH) {
+      continue;
+    }
     if (assignment(line)) {
       return [];
     }

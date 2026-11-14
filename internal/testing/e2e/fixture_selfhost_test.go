@@ -101,27 +101,35 @@ func TestFernFixturesSelfHostWasiHttp(t *testing.T) {
 }
 
 func TestFernFixturesSelfHostX86_64(t *testing.T) {
-	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", nil)
+	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", nil, nil)
 }
 
 func TestFernFixturesSelfHostX86_64Quarantine(t *testing.T) {
-	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", []string{"FERN_RC_FREE_DEBUG=1"})
+	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", nil, []string{"FERN_RC_FREE_DEBUG=1"})
+}
+
+// Under -harden a released block is zero, so a read of released storage
+// gives a wrong result where the release build reads the old bytes.
+func TestFernFixturesSelfHostX86_64Harden(t *testing.T) {
+	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", []string{"-harden"}, nil)
 }
 
 // x86-64-android is a static PIE over the Linux syscalls, so it runs where
 // an x86-64-linux binary runs.
 func TestFernFixturesSelfHostX86_64Android(t *testing.T) {
-	runSelfHostFixtureLegX86_64(t, "x86-64-android", "x86_64_android", nil)
+	runSelfHostFixtureLegX86_64(t, "x86-64-android", "x86_64_android", nil, nil)
 }
 
-func runSelfHostFixtureLegX86_64(t *testing.T, target, backend string, env []string) {
+// flags and env change the build. A leg that sets one of them changes when
+// the allocator gives a block out again.
+func runSelfHostFixtureLegX86_64(t *testing.T, target, backend string, flags, env []string) {
 	requireSelfHostFixtureLeg(t)
 	runner := e2eharness.X86_64Runner(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   backend,
 		knownFile: "selfhost-x86_64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			binPath, ok := compileSelfHostNative(t, fernBin, target, env, f, stdlibRoot, failf)
+			binPath, ok := compileSelfHostNative(t, fernBin, target, flags, env, f, stdlibRoot, failf)
 			if !ok {
 				return
 			}
@@ -130,7 +138,7 @@ func runSelfHostFixtureLegX86_64(t *testing.T, target, backend string, env []str
 				failf("the sanitizer reported a finding:\n%s", r.stderr)
 				return
 			}
-			if env != nil && f.reclaimObservable {
+			if (flags != nil || env != nil) && f.reclaimObservable {
 				exitOnly := *f
 				exitOnly.exact, exitOnly.contains = false, nil
 				f = &exitOnly
@@ -157,7 +165,7 @@ func runSelfHostFixtureLegArm64(t *testing.T, target, backend string) {
 		backend:   backend,
 		knownFile: "selfhost-" + strings.ReplaceAll(backend, "_", "-") + "-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			binPath, ok := compileSelfHostNative(t, fernBin, target, nil, f, stdlibRoot, failf)
+			binPath, ok := compileSelfHostNative(t, fernBin, target, nil, nil, f, stdlibRoot, failf)
 			if !ok {
 				return
 			}
@@ -175,7 +183,7 @@ func TestFernFixturesSelfHostArm64Darwin(t *testing.T) {
 		backend:   "arm64_darwin",
 		knownFile: "selfhost-arm64-darwin-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			binPath, ok := compileSelfHostNative(t, fernBin, e2eharness.TargetArm64Darwin, nil, f, stdlibRoot, failf)
+			binPath, ok := compileSelfHostNative(t, fernBin, e2eharness.TargetArm64Darwin, nil, nil, f, stdlibRoot, failf)
 			if !ok {
 				return
 			}
@@ -184,16 +192,17 @@ func TestFernFixturesSelfHostArm64Darwin(t *testing.T) {
 	})
 }
 
-func compileSelfHostNative(t *testing.T, fernBin, target string, env []string, f *fixtureSpec, stdlibRoot string, failf failFunc) (string, bool) {
+func compileSelfHostNative(t *testing.T, fernBin, target string, flags, env []string, f *fixtureSpec, stdlibRoot string, failf failFunc) (string, bool) {
 	t.Helper()
 	binPath := filepath.Join(t.TempDir(), "prog")
-	cmd := fixtureCompile(fernBin, "-target", target, "-o", binPath, f.mainPath, stdlibRoot)
+	args := append(append([]string{"-target", target}, flags...), "-o", binPath, f.mainPath, stdlibRoot)
+	cmd := fixtureCompile(fernBin, args...)
 	if env != nil {
 		cmd.Env = append(os.Environ(), env...)
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, target, nil, env, f.mainPath, stdlibRoot, out))
+		failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, target, flags, env, f.mainPath, stdlibRoot, out))
 		return "", false
 	}
 	if err := os.Chmod(binPath, 0o755); err != nil {

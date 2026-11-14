@@ -182,6 +182,7 @@ pub function (arr: i32[]) mode(): Option[i32] {
 
 ```fern
 <<4 pub function (arr: string[]) join(sep: string): string>>=
+// The result byte length must fit i32.
 pub function (arr: string[]) join(sep: string): string {
   let n = arr.len();
   if (n == 0) {
@@ -190,14 +191,14 @@ pub function (arr: string[]) join(sep: string): string {
   if (n == 1) {
     return arr[0];
   }
-  let total = 0;
+  let total = 0 as i64;
   let i = 0;
   while (i < n) {
-    total += arr[i].len();
+    total += arr[i].len() as i64;
     i += 1;
   }
-  total = total + sep.len() * (n - 1);
-  let b = buf_new(total);
+  total = total + sep.len() as i64 * ((n - 1) as i64);
+  let b = buf_new(__alloc_len(total));
   i = 0;
   while (i < n) {
     if (i > 0) {
@@ -346,6 +347,7 @@ pub function (arr: string[]) all_ends_with(suffix: string): boolean {
   return true;
 }
 
+// The result byte length must fit i32.
 pub function (arr: string[]) join_with_last(sep: string, last_sep: string): string {
   let n = arr.len();
   if (n == 0) {
@@ -354,17 +356,18 @@ pub function (arr: string[]) join_with_last(sep: string, last_sep: string): stri
   if (n == 1) {
     return arr[0];
   }
+  let total = 0 as i64;
+  let i = 0;
+  while (i < n) {
+    total += arr[i].len() as i64;
+    i += 1;
+  }
+  total = total + sep.len() as i64 * ((n - 2) as i64) + last_sep.len() as i64;
+  let size = __alloc_len(total);
   if (n == 2) {
     return arr[0] + last_sep + arr[1];
   }
-  let total = 0;
-  let i = 0;
-  while (i < n) {
-    total += arr[i].len();
-    i += 1;
-  }
-  total = total + sep.len() * (n - 2) + last_sep.len();
-  let buf = __alloc_u8(total);
+  let buf = __alloc_u8(size);
   let pos = 0;
   i = 0;
   while (i < n) {

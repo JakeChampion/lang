@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
@@ -93,7 +94,7 @@ var intrinsicFamilies = []intrinsicFamily{
 	}},
 	{"lane", func(m map[string]*sigShape) []string {
 		return matching(m, func(n string, _ *sigShape) bool {
-			return strings.HasPrefix(n, "__f64x2_") || strings.HasPrefix(n, "__f32x4_") || strings.HasPrefix(n, "__u8x16_")
+			return strings.HasPrefix(n, "__f64x2_") || strings.HasPrefix(n, "__f32x4_") || integerLaneBuiltin(n)
 		})
 	}},
 	{"byte scan", func(m map[string]*sigShape) []string {
@@ -430,4 +431,12 @@ func rawFloorTableNames(t *testing.T, src, header string) map[string]bool {
 		out[m[1]] = true
 	}
 	return out
+}
+
+func integerLaneBuiltin(name string) bool {
+	if len(name) < 8 {
+		return false
+	}
+	_, ok := ast.IntegerLanesNamed(name[2:7])
+	return ok && strings.HasPrefix(name, "__") && name[7] == '_'
 }

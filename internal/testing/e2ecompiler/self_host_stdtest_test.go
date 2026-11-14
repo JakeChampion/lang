@@ -87,6 +87,35 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 	})
 }
 
+// Each std/test program, built with -harden, must give the verdict it gives
+// in the release build: every test passes and the exit code is 0. Under
+// -harden a released block is zero, so a read of released storage that the
+// release build does not show gives a failed assertion or a hang here.
+func TestSelfHostStdTestHarden(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	cases := selfHostStdTestShard(t, append(selfHostStdTestCases(t, false), selfHostStdTestCases(t, true)...))
+	t.Run("cases", func(t *testing.T) {
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				bin := filepath.Join(t.TempDir(), tc.name)
+				build := runX86_64Bin(cli.runner, cli.bin, "-harden", "-target", "x86-64-linux", "-o", bin, tc.src, cli.stdlib)
+				build.Env = childEnv()
+				var log []byte
+				if err := e2eharness.WithBuildMemoryMB(1024, func() (err error) { log, err = build.CombinedOutput(); return }); err != nil {
+					t.Fatalf("self-host compile failed: %v\n%s", err, log)
+				}
+				run := runX86_64Bin(cli.runner, bin)
+				out, _ := stdTestOutput(run)
+				exit := run.ProcessState.ExitCode()
+				if wantFail := tc.name == "synthetic_fail"; (exit != 0) != wantFail {
+					t.Errorf("exit code %d under -harden\n%s", exit, out)
+				}
+			})
+		}
+	})
+}
+
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
@@ -474,6 +503,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"video_ivf_input", langSrcAbs(t, "tests/stdlib/video_ivf_input_test.fern"), ""},
 		{"video_ivf_input_boundary", langSrcAbs(t, "tests/stdlib/video_ivf_input_boundary_test.fern"), ""},
 		{"android_player", langSrcAbs(t, "tests/stdlib/android_player_test.fern"), ""},
+		{"android_noisy", langSrcAbs(t, "tests/stdlib/android_noisy_test.fern"), ""},
 		{"android_video_policy", langSrcAbs(t, "tests/stdlib/android_video_policy_test.fern"), ""},
 		{"video_audio_clock", langSrcAbs(t, "tests/stdlib/video_audio_clock_test.fern"), ""},
 		{"android_video_source", langSrcAbs(t, "tests/stdlib/android_video_source_test.fern"), ""},
@@ -636,6 +666,8 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"json_document", langSrcAbs(t, "tests/stdlib/json_document_test.fern"), ""},
 		{"regex", langSrcAbs(t, "tests/stdlib/regex_test.fern"), ""},
 		{"regex_syntax", langSrcAbs(t, "tests/stdlib/regex_syntax_test.fern"), ""},
+		{"encoding", langSrcAbs(t, "tests/stdlib/encoding_test.fern"), ""},
+		{"compress", langSrcAbs(t, "tests/stdlib/compress_test.fern"), ""},
 		{"array_combinators", langSrcAbs(t, "tests/stdlib/array_combinators_test.fern"), ""},
 		{"array_hof", langSrcAbs(t, "tests/stdlib/array_hof_test.fern"), ""},
 		{"array_accessors", langSrcAbs(t, "tests/stdlib/array_accessors_test.fern"), ""},
@@ -691,6 +723,8 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"digest_sm3", langSrcAbs(t, "tests/stdlib/digest_sm3_test.fern"), ""},
 		{"chacha20poly1305", langSrcAbs(t, "tests/stdlib/chacha20poly1305_test.fern"), ""},
 		{"aes_gcm", langSrcAbs(t, "tests/stdlib/aes_gcm_test.fern"), ""},
+		{"aes", langSrcAbs(t, "tests/stdlib/aes_test.fern"), ""},
+		{"des", langSrcAbs(t, "tests/stdlib/des_test.fern"), ""},
 		{"field25519", langSrcAbs(t, "tests/stdlib/field25519_test.fern"), ""},
 		{"x25519", langSrcAbs(t, "tests/stdlib/x25519_test.fern"), ""},
 		{"mlkem768", langSrcAbs(t, "tests/stdlib/mlkem768_test.fern"), ""},

@@ -202,6 +202,11 @@ The 8 KiB SPS and 64 KiB PPS ceilings bound raw parameter payloads to 4,325,376 
 Separate byte, unit, packet, input-window, and operation limits remain active.
 Each step performs at most one source read and emits at most one event.
 
+PPS temporal identifiers can range from zero through six.
+The active PPS temporal identifier cannot exceed the picture's temporal identifier, including after cached PPS revalidation.
+VPS and SPS still require temporal identifier zero.
+These rules follow [ITU-T H.265](https://www.itu.int/rec/T-REC-H.265-202407-S/en), clauses 7.4.2.2 and 7.4.7.1.
+
 Packets preserve original prefix offsets and use canonical four-byte prefixes.
 IRAP identifies types 16 through 21. IDR identifies types 19 and 20 only, without a general random-access safety claim.
 Slice inspection copies at most eight unescaped bytes. The limits do not define an exact process-memory bound.
@@ -293,10 +298,14 @@ They do not identify access units or supply timestamps. A muxer still needs pack
 
 It reads version-one AVC and HEVC configuration records for Android codec configuration data.
 AVC includes SPS, PPS, and optional SPS extensions.
+Their reference indicator must be nonzero under ITU-T H.264 (August 2024), clause 7.4.1.
 
 HEVC includes VPS, SPS, PPS, and prefix or suffix SEI arrays.
 The conversion preserves NAL payload bytes. It does not validate their coded syntax.
 Other HEVC configuration array types return `Unsupported`.
+
+VPS and SPS configuration headers require temporal identifier zero. PPS and SEI retain temporal identifiers zero through six.
+This header check follows ITU-T H.265 (July 2024), clause 7.4.2.2.
 
 ```fern
 import "std/video/frame";
@@ -466,9 +475,19 @@ The same ranges can select individual keyframes for header inspection without a 
 
 AV1 temporal units can require further packet handling for a particular platform decoder.
 `std/video/av1.next_obu` reads self-delimited low-overhead OBU ranges without a payload copy.
+It rejects extension headers on sequence headers, temporal delimiters, and tile lists under AV1 section 6.2.2.
 It checks header bits, extension identifiers, eight-byte size fields, and unsigned payload bounds within the packet budget.
 An absent size field or reserved OBU type returns `Unsupported`.
 Annex B framing, payload syntax, temporal-unit ordering, complete frame boundaries, and pixel decode remain outside this API.
+
+`std/video/av1/annex_b.next_temporal_unit` reads native Annex B temporal, frame, and OBU ranges.
+Nested lengths must fit their parent ranges. Explicit OBU sizes must agree with the enclosing OBU length.
+The first OBU must be a temporal delimiter in the first frame unit. Other delimiter positions return `Header`.
+The parser reuses the OBU header checks and accepts both size-field forms.
+
+The packet budget applies before access. Separate limits bound frame and OBU records per temporal unit.
+Returned ranges retain no input bytes or payload copies. The caller preserves the immutable source.
+Payload syntax, complete frame coverage, timestamps, and pixel decode remain outside this reader.
 
 `std/video/av1/sequence.inspect` reads one complete sequence-header OBU through the same framing reader.
 It reports maximum frame dimensions, precision, color fields, and sequence tool flags without a payload copy.
@@ -478,6 +497,15 @@ Fixed loops cover up to 32 operating points, timing fields, and trailing bits.
 These maximum dimensions do not supply each frame's coded or render dimensions.
 Operating-point relationships, profile/level conformance, reference state, and reconstructed pictures remain outside this metadata API.
 The native AV1 decode column remains unchanged.
+
+`std/video/av1/metadata.inspect` reads one complete content-light or mastering-display metadata OBU through the same bounded reader.
+It preserves unsigned light levels and RGB/white chromaticity values without input bytes or payload copies.
+Chromaticity retains 0.16 fixed-point form. Maximum and minimum luminance retain 24.8 and 18.14 fixed-point form, respectively.
+The luminance units are candelas per square meter.
+
+The reader checks field extents, exact trailing bits, zero padding, and the prohibition on layer extensions for both HDR types.
+Other metadata types return `Unsupported`. Packet limits apply before access.
+This API does not configure an Android display, apply tone mapping, decode pixels, or establish physical display behavior.
 
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC, HEVC, VP9, AV1, and QTRLE tracks.
@@ -559,6 +587,7 @@ Synthetic headers establish syntax only. Four malformed controls require explici
 `scripts/check-video-hevc-pps-interop` compares 44 native and real WASI metadata fields with FFmpeg CBS.
 Eight lossless streams preserve all three source frames. Thirty-two synthetic parameter pairs cover tiles, quantizers, scaling, and range extensions.
 Synthetic pairs contain no coded pictures. Four malformed controls require explicit independent field and parse-failure diagnostics.
+Seven PPS header variants independently match CBS temporal identifiers and preserve all metadata fields.
 
 Twenty-four FFmpeg packets cover RGB24, ARGB32, alpha, keyframes, partial rows, and unchanged frames.
 
@@ -567,8 +596,16 @@ Fern decodes each packet to the expected ARGB CRC.
 FFmpeg also decodes twenty-four Fern packets with exact equality to the original ARGB bytes.
 AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels in two additional streams.
 
-`scripts/check-video-annex-b-interop` creates five fresh AVC and HEVC streams, including 10-bit profiles.
+`scripts/check-video-annex-b-interop` creates six fresh AVC and HEVC streams, including 10-bit profiles and a long AVC stream.
 Native and WASI ranges match an independent parser. Converted streams retain identical decoded 8-bit or 10-bit YUV planes in FFmpeg.
+
+It also extracts fresh HEVC Main and Main 10 configuration records from FFmpeg MP4 output.
+Forty-eight native and WASI controls check their VPS, SPS, and PPS temporal headers against clause 7.4.2.2.
+CBS traces those headers separately from specification-based refusal decisions. Reconstructed configuration prefixes preserve every decoded plane.
+
+Four AVC configuration records add 32 native and WASI reference-header controls.
+SPS and PPS header fields match independent CBS traces. Native configuration prefixes retain all decoded planes.
+Synthetic unit controls also cover SPS extension headers and forbidden bits.
 
 `scripts/check-video-qtrle-mov-interop` compares five fresh MOV files with FFprobe and FFmpeg.
 Native and real WASI input preserve every packet field and decoded ARGB sample.
@@ -585,10 +622,13 @@ That comparison requires a C compiler, the FFmpeg development headers, and `pkg-
 Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
-`scripts/check-video-hevc-input-interop` compares twelve cases with 234 coded pictures from fresh x265 streams.
+`scripts/check-video-hevc-input-interop` compares thirteen cases with 252 coded pictures from fresh x265 streams.
 Native and real WASI output match FFprobe picture positions, canonical payloads, and all FFmpeg decoded planes.
 FFprobe versions can report the three-byte suffix of a four-byte start prefix as the packet position.
 The comparison resolves the complete prefix from source bytes and verifies every payload byte.
+
+A two-layer stream replaces PPS headers at temporal identifiers zero and one.
+CBS confirms those headers. All decoded planes also match the original stream before PPS replacement.
 
 For terminal EOS/EOB, FFprobe emits a separate control-only packet.
 The comparison joins only the exact empty EOS/EOB pair to the preceding picture and verifies every byte.

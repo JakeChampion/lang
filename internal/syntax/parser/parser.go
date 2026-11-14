@@ -2198,9 +2198,9 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "f32x4":
 		p.advance()
 		base = ast.LanesType{Width: 32, Spelling: t.Text}
-	case t.Kind == lexer.Keyword && t.Text == "u8x16":
+	case t.Kind == lexer.Keyword && integerLanes(t.Text):
 		p.advance()
-		base = ast.LanesType{Width: 8, Kind: ast.LaneUnsigned, Spelling: t.Text}
+		base, _ = ast.IntegerLanesNamed(t.Text)
 	case t.Kind == lexer.Keyword && t.Text == "boolean":
 		p.advance()
 		base = ast.BoolType{}
@@ -3448,9 +3448,14 @@ func isConstArgTok(t lexer.Token) bool {
 	return t.Kind == lexer.Number && t.Suffix() == ""
 }
 
+func integerLanes(s string) bool {
+	_, ok := ast.IntegerLanesNamed(s)
+	return ok
+}
+
 func isTypeKeyword(s string) bool {
 	switch s {
-	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "u8x16", "string", "boolean", "void":
+	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "u8x16", "i8x16", "u16x8", "i16x8", "u32x4", "i32x4", "string", "boolean", "void":
 		return true
 	}
 	return false
@@ -5395,6 +5400,11 @@ var keywordModuleQualifier = map[string]bool{
 	"f64x2":  true,
 	"f32x4":  true,
 	"u8x16":  true,
+	"i8x16":  true,
+	"u16x8":  true,
+	"i16x8":  true,
+	"u32x4":  true,
+	"i32x4":  true,
 	"usize":  true,
 }
 

@@ -78,15 +78,24 @@ function stores_after_receiver(kind: i32): boolean {
   return kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.cell_set();
 }
 
-function carry(own out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
+// A string changes in place only where it grows. A return, a container or a
+// store that keeps one retains it, so a keep marks no string (strings false).
+function carry(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, v: i32, strings: boolean): boolean[] {
   if (v < 0 || v >= out.len()) {
     return out;
   }
-  out = out.with(v, true);
+  out = mark(out, f, v, strings);
   for dep in a.dependencies[v] {
     if (dep >= 0 && dep < out.len()) {
-      out = out.with(dep, true);
+      out = mark(out, f, dep, strings);
     }
+  }
+  return out;
+}
+
+function mark(own out: boolean[], f: ssasem.Func, v: i32, strings: boolean): boolean[] {
+  if (strings || !ssasem.is_string(f.values[v])) {
+    return out.with(v, true);
   }
   return out;
 }
@@ -190,7 +199,7 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   for i in 0..ins.args.len() {
     let unchanged = ins.str == f.graph.name && unchanged_slot(fr, ins.args[i], i) || cycle && quiet_slot(rows, row, i);
     if (!unchanged && ssasem.counted(f, f.values[ins.args[i]]) && consumed_at(rows, row, i)) {
-      out = carry(out, a, ins.args[i]);
+      out = carry(out, f, a, ins.args[i], true);
     }
   }
   return out;
@@ -227,7 +236,7 @@ function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis
   let callee = f.values[ins.args[0]];
   for i in 1..ins.args.len() {
     if (ssasem.func_param_own(callee, i - 1) && ssasem.counted(f, f.values[ins.args[i]])) {
-      out = carry(out, a, ins.args[i]);
+      out = carry(out, f, a, ins.args[i], true);
     }
   }
   return out;
@@ -240,7 +249,7 @@ function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   }
   for i in 1..ins.args.len() {
     if (ins.args[i] != ins.result && ssasem.counted(f, f.values[ins.args[i]])) {
-      out = carry(out, a, ins.args[i]);
+      out = carry(out, f, a, ins.args[i], true);
     }
   }
   return out;
@@ -273,7 +282,7 @@ function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): bool
       for i in 0..n {
         let arg = ins.args[i];
         if (arg >= 0 && arg < out.len() && !out[arg] && ssasem.counted(f, f.values[arg])) {
-          out = carry(out, a, arg);
+          out = carry(out, f, a, arg, true);
           changed = true;
         }
       }
@@ -293,12 +302,12 @@ function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analy
     return indirect_carried(out, f, a, ins);
   }
   if (ssasem.update_base(ins) >= 0) {
-    out = carry(out, a, ssasem.update_base(ins));
+    out = carry(out, f, a, ssasem.update_base(ins), false);
   }
   if (builds_out(ins.kind_tag)) {
     for arg in ins.args {
       if (ssasem.counted(f, f.values[arg])) {
-        out = carry(out, a, arg);
+        out = carry(out, f, a, arg, false);
       }
     }
     return out;
@@ -306,7 +315,7 @@ function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analy
   if (stores_after_receiver(ins.kind_tag)) {
     for i in 1..ins.args.len() {
       if (ssasem.counted(f, f.values[ins.args[i]])) {
-        out = carry(out, a, ins.args[i]);
+        out = carry(out, f, a, ins.args[i], false);
       }
     }
   }
@@ -320,7 +329,7 @@ function lent_values(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins
   }
   for i in 0..ins.args.len() {
     if (ssasem.counted(f, f.values[ins.args[i]]) && !consumed_at(rows, at, i)) {
-      out = carry(out, a, ins.args[i]);
+      out = carry(out, f, a, ins.args[i], true);
     }
   }
   return out;
@@ -364,15 +373,21 @@ function lends_from(f: ssasem.Func, lent: boolean[]): boolean {
 function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
   let fr = Frame { me: find(rows, ix, f.graph.name), forwards: [] };
-  for b in f.graph.blocks {
-    for ins in b.insts {
+  for bi in 0..f.graph.blocks.len() {
+    let b = f.graph.blocks[bi];
+    for pos in 0..b.insts.len() {
+      let ins = b.insts[pos];
       if (fr.forwards.len() == 0 && ins.kind_tag == ssasem.call() && ins.str == f.graph.name) {
         fr = Frame { ...fr, forwards: forwarded(f) };
       }
       out = instruction_carried(out, f, a, ins, rows, ix, fr);
+      // At the last use of its left operand, a concatenation grows that buffer.
+      if (ssasem.string_append(f, ins) && !ssasem.used_after(a, bi, pos, ins.args[0])) {
+        out = out.with(ins.args[0], true);
+      }
     }
     if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
-      out = out.with(b.term.value, true);
+      out = mark(out, f, b.term.value, false);
     }
   }
   return continued(out, f, a);

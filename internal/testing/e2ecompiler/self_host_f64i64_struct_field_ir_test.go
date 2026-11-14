@@ -34,8 +34,8 @@ function main(): i32 { return use_v(); }`
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
-	if frees := bytes.Count(asm, []byte("call __fn___fern_arr_dec")); frees < 3 {
-		t.Errorf("found %d __fern_arr_dec calls, want >= 3 (fs + is + box): f64[]/i64[] struct fields did not deep-drop", frees)
+	if frees := bytes.Count(asm, []byte("call __fn___fern_box_dec")); frees < 3 {
+		t.Errorf("found %d __fern_box_dec calls, want >= 3 (fs + is + box): f64[]/i64[] struct fields did not deep-drop", frees)
 	}
 	progBin := buildBin(t, gcc, dir, "f64i64_field", string(asm))
 	var cmd *exec.Cmd

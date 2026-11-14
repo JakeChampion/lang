@@ -1,0 +1,93 @@
+import "std/test";
+import "std/hex";
+import "std/codec";
+import "std/crypto/des";
+
+// The DES example of FIPS 46-3 tutorials, and CBC vectors that Python's
+// cryptography package (OpenSSL) computes for DES and Triple DES.
+const KEY: string = "133457799bbcdff1";
+
+const KEY3: string = "0123456789abcdef23456789abcdef01456789abcdef0123";
+
+const IV: string = "1234567890abcdef";
+
+// "Now is the time for all " in CBC under KEY and under KEY3.
+const PLAINTEXT: string = "4e6f77206973207468652074696d6520666f7220616c6c20";
+
+const DES_CBC: string = "c363c8b3565c0e19a531404ecf092c12ca9543be7f2033c4";
+
+const TDES_CBC: string = "f3c0ff026c023089656fbb169def7edb30ba36075d6f0176";
+
+function b(s: string): u8[] {
+  return __codec_bytes(hex.decode(s));
+}
+
+function text_of(r: Result[u8[], des.DesError]): string {
+  return match (r) {
+    Ok(x) => hex.encode(x),
+    Err(e) => e.message(),
+  };
+}
+
+function test_block(): test.TestOutcome {
+  let Ok(c) = des.cipher(b(KEY)) else {
+    return test.fail("key");
+  };
+  let ct = c.encrypt_block(b("0123456789abcdef"));
+  return test.assert_eq_array([hex.encode(ct), hex.encode(c.decrypt_block(ct))], ["85e813540f0ab405", "0123456789abcdef"]);
+}
+
+function test_cbc(): test.TestOutcome {
+  let got = [
+    text_of(des.cbc_encrypt(b(KEY), b(IV), b(PLAINTEXT))),
+    text_of(des.cbc_decrypt(b(KEY), b(IV), b(DES_CBC))),
+    text_of(des.cbc_encrypt(b(KEY3), b(IV), b(PLAINTEXT))),
+    text_of(des.cbc_decrypt(b(KEY3), b(IV), b(TDES_CBC))),
+  ];
+  return test.assert_eq_array(got, [DES_CBC, PLAINTEXT, TDES_CBC, PLAINTEXT]);
+}
+
+// Triple DES with three equal keys is DES.
+function test_equal_keys(): test.TestOutcome {
+  let k = b(KEY);
+  let three = k.concat(k).concat(k);
+  return test.assert_eq(text_of(des.cbc_encrypt(three, b(IV), b(PLAINTEXT))), DES_CBC);
+}
+
+function test_refusals(): test.TestOutcome {
+  let got = [
+    text_of(des.cbc_decrypt(b(KEY)[0:7], b(IV), b(DES_CBC))),
+    text_of(des.cbc_decrypt(b(KEY3)[0:16], b(IV), b(DES_CBC))),
+    text_of(des.cbc_decrypt(b(KEY), b(IV)[0:4], b(DES_CBC))),
+    text_of(des.cbc_decrypt(b(KEY), b(IV), b(DES_CBC)[0:9])),
+  ];
+  return test.assert_eq_array(got, [
+    "des: the key is 7 bytes, want 8 or 24",
+    "des: the key is 16 bytes, want 8 or 24",
+    "des: the initialization vector is 4 bytes, want 8",
+    "des: the data is 9 bytes, not a multiple of 8",
+  ]);
+}
+
+function main(): i32 {
+  let r = test.new("std/crypto/des");
+  r = r.it("one DES block", test_block);
+  r = r.it("CBC with DES and Triple DES", test_cbc);
+  r = r.it("Triple DES with three equal keys", test_equal_keys);
+  r = r.it("lengths", test_refusals);
+  return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
+  return [];
+}

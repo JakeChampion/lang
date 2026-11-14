@@ -58,12 +58,12 @@ func TestSelfHostBoolMatchIRX86_64(t *testing.T) {
 				}
 				if variant.heap {
 					body := selfHostFnBody(t, asm, "probe")
-					for _, call := range []string{"call __fern_arr_box", "call __fn___fern_arr_dec"} {
+					for _, call := range []string{"call __fern_rec_box", "call __fn___fern_box_dec"} {
 						if !strings.Contains(body, call) {
 							t.Errorf("probe missing %s:\n%s", call, body)
 						}
 					}
-				} else if strings.Contains(selfHostFnBody(t, asm, "main"), "call __fern_arr_box") || strings.Contains(selfHostFnBody(t, asm, "main"), "call __fn___fern_arr_dec") {
+				} else if strings.Contains(selfHostFnBody(t, asm, "main"), "call __fern_rec_box") || strings.Contains(selfHostFnBody(t, asm, "main"), "call __fn___fern_box_dec") {
 					t.Errorf("constant Point must allocate and reclaim no heap storage:\n%s", asm)
 				}
 				progBin := buildBin(t, gcc, dir, tc.name, string(asm))

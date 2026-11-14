@@ -505,7 +505,7 @@ pub function check_native_record(output: string): boolean {
   if (p.error != "" || p.register_entry < 0 || p.unguarded_entry < 0) {
     return false;
   }
-  for n in [5, 6] {
+  for n in [3, 4] {
     let r = value.Interval { low: n, high: n };
     if (!path(p, r, false) || !path(p, r, true)) {
       return false;

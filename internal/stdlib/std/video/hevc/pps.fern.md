@@ -5,6 +5,11 @@ Each input includes its two-byte NAL header, without start codes, length prefixe
 The reader reuses the existing SPS parser and checks the matching sequence identifier.
 It retains no input bytes, tile map, or scaling coefficients.
 
+All seven nonzero `nuh_temporal_id_plus1` values are permitted for a PPS.
+An active PPS `TemporalId` cannot exceed the picture's `TemporalId`.
+Standalone parameter inspection does not apply this activation check.
+`std/video/hevc_input` applies it when a slice uses the PPS.
+
 The packet budget applies to each NAL before an unescaped copy.
 A separate 64 KiB ceiling bounds the PPS. The existing SPS ceiling remains 8 KiB.
 The coded-picture budget applies to the SPS dimensions before crop.
@@ -39,9 +44,6 @@ function parameter_bytes(input: [u8], limits: frame.Limits): Result[u8[], frame.
   }
   if ((input[0] >> 1u8 & 63u8) != 34u8 || (input[0] & 1u8) != 0u8 || input[1] >> 3u8 != 0u8) {
     return Err(frame.Unsupported);
-  }
-  if ((input[1] & 7u8) != 1u8) {
-    return Err(frame.Header);
   }
   return bits.rbsp_bytes(input[2:]);
 }

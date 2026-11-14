@@ -114,6 +114,29 @@ pub function decl_shape(d: parser.StructDecl): string {
   return variant_shape(d.enum_owner, d.name);
 }
 
+// The index of the first declaration with the shape `shape`, or -1. Each
+// unit of a program has the same table, so the index is the same in each.
+pub function shape_index(structs: StructTab, shape: string): i32 {
+  let i = stab_first(structs, shape);
+  while (i >= 0) {
+    if (decl_shape(structs.decls[i]) == shape) {
+      return i;
+    }
+    i = stab_next(structs, i, shape);
+  }
+  let at = util.index_of_sub(shape, "$");
+  while (at >= 0) {
+    let rest = slice_unchecked(shape, at + 1, shape.len()).to_owned();
+    let found = variant_decl_index(structs, rest, slice_unchecked(shape, 0, at).to_owned());
+    if (found >= 0) {
+      return found;
+    }
+    let more = util.index_of_sub(rest, "$");
+    at = if (more >= 0) { at + 1 + more } else { -1 };
+  }
+  return -1;
+}
+
 pub function variant_decl_index(structs: StructTab, name: string, owner: string): i32 {
   let vi = stab_first(structs, name);
   while (vi >= 0) {
@@ -975,20 +998,45 @@ pub function lane_builtin_op(verb: string): string {
   return "v" + verb;
 }
 
-// The IR op of a builtin of u8x16, or "" for a builtin with its own
-// lowering.
-pub function byte_lane_builtin_op(verb: string): string {
-  let verbs: string[] = ["splat", "bitmask", "min", "max", "eq", "ne", "lt", "add_sat", "sub_sat", "avg", "and", "or", "xor", "select"];
-  let ops: string[] = ["visplat", "vibitmask", "viminu", "vimaxu", "vieq", "vine", "viltu", "viaddu", "visubu", "viavg", "vand", "vor", "vxor", "vselect"];
+// The IR op of a builtin of an integer lane type, or "" for a builtin
+// with its own lowering.
+pub function integer_lane_builtin_op(verb: string, signed: boolean): string {
+  let verbs: string[] = ["splat", "bitmask", "min", "max", "eq", "ne", "lt", "add_sat", "sub_sat", "avg", "and", "or", "xor", "select", "shl", "shr", "abs"];
+  let unsigned: string[] = ["visplat", "vibitmask", "viminu", "vimaxu", "vieq", "vine", "viltu", "viaddu", "visubu", "viavg", "vand", "vor", "vxor", "vselect", "vishl", "vishru", ""];
+  let signeds: string[] = ["visplat", "vibitmask", "vimins", "vimaxs", "vieq", "vine", "vilts", "viadds", "visubs", "", "vand", "vor", "vxor", "vselect", "vishl", "vishrs", "viabs"];
   let i = util.index_of_str(verbs, verb);
   if (i < 0) {
     return "";
   }
-  return ops[i];
+  return if (signed) { signeds[i] } else { unsigned[i] };
 }
 
-// The IR op of + or - on integer lanes.
-pub function lane_int_operator(op: string): string {
+// The IR op of a builtin that changes the shape of integer lanes, or ""
+// for each other builtin.
+pub function lane_shape_builtin_op(verb: string, signed: boolean): string {
+  if (verb == "widen_lo") {
+    return if (signed) { "viwidenlos" } else { "viwidenlou" };
+  }
+  if (verb == "widen_hi") {
+    return if (signed) { "viwidenhis" } else { "viwidenhiu" };
+  }
+  if (verb == "narrow" && signed) {
+    return "vinarrows";
+  }
+  if (verb == "narrow_u") {
+    return "vinarrowu";
+  }
+  return if (verb == "swizzle") { "viswizzle" } else { "" };
+}
+
+// The IR op of an operator on integer lanes.
+pub function lane_int_operator(unary: boolean, op: string): string {
+  if (unary) {
+    return "vineg";
+  }
+  if (op == "*") {
+    return "vimul";
+  }
   return if (op == "+") { "viadd" } else { "visub" };
 }
 

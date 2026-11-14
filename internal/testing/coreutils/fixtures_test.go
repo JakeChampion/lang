@@ -1,6 +1,7 @@
 package coreutils
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -48,5 +49,25 @@ func seedFifo(t *testing.T, path string) {
 	t.Helper()
 	if err := syscall.Mkfifo(path, 0o644); err != nil {
 		t.Fatalf("mkfifo %s: %v", path, err)
+	}
+}
+
+// seedSocket makes a Unix socket at path. Darwin lets only root mknod a
+// socket, and a socket path has a short length limit, so the socket is bound
+// in a short directory and then moved to path.
+func seedSocket(t *testing.T, path string) {
+	t.Helper()
+	shortDir, err := os.MkdirTemp("", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(shortDir) })
+	ln, err := net.Listen("unix", filepath.Join(shortDir, "s"))
+	if err != nil {
+		t.Fatalf("unix socket: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	if err := os.Rename(filepath.Join(shortDir, "s"), path); err != nil {
+		t.Fatalf("move the socket to %s: %v", path, err)
 	}
 }

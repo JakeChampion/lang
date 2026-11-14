@@ -16,7 +16,7 @@ type cliffBytesCase struct {
 var cliffBytesCases = []cliffBytesCase{
 	{"clean_self_append", `function g(a: i32[], v: i32): i32[] { a = a.append(v); return a; }`, 1, 0, 0},
 
-	{"live_alias_append", `function g(b: i32[], v: i32): i32[] { let k: i32[] = b; let r: i32[] = b.append(v); if (k.len() + 1 != r.len()) { return k; } return r.append(v + 1); }`, 2, 4, 240},
+	{"live_alias_append", `function g(b: i32[], v: i32): i32[] { let k: i32[] = b; let r: i32[] = b.append(v); if (k.len() + 1 != r.len()) { return k; } return r.append(v + 1); }`, 2, 5, 136},
 }
 
 func (c cliffBytesCase) src(probe string) string {

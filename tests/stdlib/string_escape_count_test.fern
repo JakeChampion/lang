@@ -82,6 +82,11 @@ function test_starts_with_any_empty(): test.TestOutcome {
   return test.assert_false("hello".starts_with_any(empty));
 }
 
+// A NUL before a digit stays a NUL: an octal escape ends after three digits.
+function test_escape_c_nul(): test.TestOutcome {
+  return test.assert_eq("a\x001".escape_c(), "a\\0001");
+}
+
 function main(): i32 {
   let r = test.new("std/string escape + count");
   r = r.it("escape_html", test_escape_html);
@@ -103,5 +108,6 @@ function main(): i32 {
   r = r.it("starts_with_any", test_starts_with_any);
   r = r.it("ends_with_any", test_ends_with_any);
   r = r.it("starts_with_any empty", test_starts_with_any_empty);
+  r = r.it("escape_c NUL", test_escape_c_nul);
   return r.finish();
 }

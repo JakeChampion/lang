@@ -136,7 +136,7 @@ function main(): i32 { return grow([1, 2, 3]); }
 }
 function main(): i32 { return fill(3).len(); }
 `,
-		want: map[string][]string{"x86-64-linux": {`apush\d+o:\n\s+movq %rsi, 8\(%rdi,%rdx,8\)`}, "arm64-linux": {`apush\d+o:\n\s+add x2, x2, #1\n\s+str x1, \[x0, x2, lsl #3\]`}}},
+		want: map[string][]string{"x86-64-linux": {`apush\d+o:\n\s+movl %esi, 8\(%rdi,%rdx,4\)`}, "arm64-linux": {`apush\d+o:\n\s+add x3, x0, x2, lsl #2\n\s+str w1, \[x3, #8\]`}}},
 	{name: "unique_test_fused", fn: "bump", exit: 11, src: `
 struct Pt { x: i32, y: i32, tag: string }
 @noinline function bump(p: Pt): Pt { return Pt { ...p, x: p.x + 1 }; }

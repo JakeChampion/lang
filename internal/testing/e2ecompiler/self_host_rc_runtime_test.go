@@ -172,7 +172,7 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		t.Run("emits-exit-sweep/"+tc.name, func(t *testing.T) {
 			asm := cli.emit(t, "x86-64-linux", tc.src)
 			body := selfHostFnBody(t, []byte(asm), tc.body)
-			for _, call := range []string{"call __fern_arr_box", "call __fn___fern_arr_dec"} {
+			for _, call := range []string{"call __fern_arr_box", "call __fn___fern_box_dec"} {
 				if strings.Contains(body, call) != tc.heap {
 					t.Errorf("%s: expected %s presence=%v:\n%s", tc.name, call, tc.heap, body)
 				}
@@ -413,8 +413,8 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 		asm := cli.emit(t, "x86-64-linux",
 			"struct E { v: i32 } struct H { es: E[] } function id(xs: i32[]): i32[] { return xs; } @noinline function boxed(h: H): H[] { return [h]; } function main(): i32 { let h = boxed(H { es: [E { v: id([1])[0] }] })[0]; h = boxed(H { es: [E { v: id([2])[0] }] })[0]; return h.es[0].v; }")
 		body := asmFuncBody(t, asm, "__fn___sem_drop_H")
-		if n := strings.Count(body, "call __fn___fern_arr_dec"); n < 2 {
-			t.Errorf("expected H's drop to release each element and then the buffer (__fern_arr_dec at least twice), got %d:\n%s", n, body)
+		if n := strings.Count(body, "call __fn___fern_box_dec"); n < 2 {
+			t.Errorf("expected H's drop to release each element and then the buffer (__fern_box_dec at least twice), got %d:\n%s", n, body)
 		}
 		if rcIsUniqueSites(body) == 0 {
 			t.Errorf("expected the element-walk sole-owner gate in H's drop; not found:\n%s", body)

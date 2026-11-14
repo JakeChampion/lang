@@ -365,6 +365,11 @@ inside a codegen switch:
 | x86-64 | **x86-64-v3 plus AES-NI** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `rorx` (BMI2), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, and the **AVX2** 32-byte loops the byte kernels already emit. |
 | wasm | core wasm 2.0, fixed-width SIMD included | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. |
 
+The first line of each arm64 assembly file is `.arch armv8.2-a+crypto`.
+Thus GNU as and the LLVM assembler accept the output of `-emit asm` with no
+`-march` flag. The internal assembler accepts that line and refuses each other
+`.arch` line.
+
 **LZCNT / TZCNT have a failure mode POPCNT does not, and it is the reason to
 state the baseline rather than assume it.** Below the baseline, POPCNT is an
 invalid opcode and faults. LZCNT / TZCNT are the *same opcodes* as the 386-era
@@ -461,7 +466,8 @@ array. The x86-64 kernel uses `mulx` (BMI2) and `adc`. The arm64 kernel uses
 four products of 32-bit halves (`compiler/wasm_mont.fern`).
 
 Only the limb count steers a branch in the Montgomery kernels, so they do not
-leak a limb.
+leak a limb. `std/crypto/montgomery` uses the kernel for RSA, ECDSA and the
+TLS key share.
 
 The scrypt BlockMix runs in one kernel on each backend
 (`__scrypt_block_mix`). The kernel keeps the 16 words of each 64-byte block

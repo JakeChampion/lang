@@ -32,8 +32,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<2 pub function join(parts: string[]): string>>
 
-<<3 function seg_pop(xs: string[]): string[]>>
-
 <<4 pub function clean(p: string): string>>
 ```
 
@@ -143,22 +141,6 @@ pub function extension(p: string): string {
 }
 ```
 
-### `3 function seg_pop(xs: string[]): string[]`
-
-```fern
-<<3 function seg_pop(xs: string[]): string[]>>=
-function seg_pop(xs: string[]): string[] {
-  let out: string[] = [];
-  let last = xs.len() - 1;
-  let i = 0;
-  while (i < last) {
-    out = out.append(xs[i]);
-    i += 1;
-  }
-  return out;
-}
-```
-
 ### `4 pub function clean(p: string): string`
 
 ```fern
@@ -186,7 +168,7 @@ pub function clean(p: string): string {
       if (seg == ".") {} else if (seg == "..") {
         let slen = segs.len();
         if (slen > 0 && segs[slen - 1] != "..") {
-          segs = seg_pop(segs);
+          segs = segs.truncate(slen - 1);
         } else if (!rooted) {
           segs = segs.append("..");
         }

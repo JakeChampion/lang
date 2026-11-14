@@ -28,6 +28,25 @@ enum Pending { Reply(string), Close }
 
 func TestMustConsumeCleanShapes(t *testing.T) {
 	cases := []struct{ name, src string }{
+		{"consumed_in_a_loop_with_no_condition", ticketDecl + `function f(): i32 {
+    let t: Ticket = Ticket { id: 1 };
+    loop {
+        spend(t);
+        return 1;
+    }
+}`},
+		{"consumed_and_assigned_again_in_while_true", pendingDecl + `function next(n: i32): Pending { if (n > 2) { return Close; } return Reply("r"); }
+function f(): i32 {
+    let p: Pending = next(0);
+    let n = 0;
+    while (true) {
+        match (p) {
+            Close => { return n; },
+            Reply(_) => { n += 1; p = next(n); }
+        }
+    }
+    return 0;
+}`},
 		{"consumed_on_both_arms", ticketDecl + `function f(n: i32): void {
     let t: Ticket = Ticket { id: 1 };
     if (n > 0) { spend(t); } else { spend(t); }
@@ -112,6 +131,18 @@ func TestMustConsumeLeaks(t *testing.T) {
     let t: Ticket = Ticket { id: 1 };
     sink(t);
 }`, "is the result of a call and is not used"},
+		{"while_with_a_condition_can_run_no_times", ticketDecl + `function f(n: i32): void {
+    let t: Ticket = Ticket { id: 1 };
+    while (n > 0) { spend(t); return; }
+}`, scopeMsg},
+		{"break_before_the_consume_in_a_loop", ticketDecl + `function f(n: i32): void {
+    let t: Ticket = Ticket { id: 1 };
+    loop {
+        if (n > 0) { break; }
+        spend(t);
+        return;
+    }
+}`, scopeMsg},
 		{"one_arm_leaks", ticketDecl + `function f(n: i32): void {
     let t: Ticket = Ticket { id: 1 };
     if (n > 0) { spend(t); }

@@ -94,6 +94,41 @@ def compare(path, frames):
     print(f"{path.name}: {frames} native/WASI access units match FFprobe; all FFmpeg planes match", flush=True)
 
 
+def temporal_parameters(directory):
+    original = encode(directory, "temporal-layers", "main", "yuv420p",
+                      "bframes=3:b-pyramid=1:temporal-layers=2:aud=1")
+    if not any(unit[0] >> 1 & 63 < 32 and unit[1] & 7 > 1 for unit in units(original.read_bytes())):
+        # Older x265 versions use a boolean instead of a sublayer count.
+        original = encode(directory, "temporal-layers", "main", "yuv420p",
+                          "bframes=3:b-pyramid=1:temporal-layers=1:aud=1")
+    rebuilt, picture_temporals = [], set()
+    picture = None
+    for unit in units(original.read_bytes()):
+        kind = unit[0] >> 1 & 63
+        if kind == 34:
+            picture = unit
+        if kind < 32 and unit[2] & 0x80:
+            assert picture is not None
+            temporal = unit[1] & 7
+            picture_temporals.add(temporal - 1)
+            rebuilt.append(picture[:1] + bytes([(picture[1] & 0xf8) | temporal]) + picture[2:])
+        rebuilt.append(unit)
+    assert picture_temporals == {0, 1}, picture_temporals
+    path = directory / "temporal-pps-replacement.hevc"
+    path.write_bytes(b"".join(b"\0\0\0\1" + unit for unit in rebuilt))
+    compare(path, 18)
+    assert decoded(path) == decoded(original)
+    trace = subprocess.run(["ffmpeg", "-v", "verbose", "-i", str(path), "-map", "0:v:0",
+                            "-c", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"],
+                           capture_output=True, text=True, check=True)
+    assert "Failed to read unit" not in trace.stderr and "out of range" not in trace.stderr
+    headers = re.findall(r"nal_unit_type\s+[01]+\s+=\s+(\d+).*?"
+                         r"nuh_temporal_id_plus1\s+[01]+\s+=\s+(\d+)", trace.stderr, re.S)
+    pps_temporals = {int(temporal) - 1 for kind, temporal in headers if int(kind) == 34}
+    assert pps_temporals == picture_temporals, pps_temporals
+    print("PPS temporal layers 0/1: independent CBS headers and unchanged source planes agree", flush=True)
+
+
 def parameter_context(fixtures, oracle, mode):
     if mode == "syntax":
         return oracle.returncode == 0
@@ -154,3 +189,4 @@ with tempfile.TemporaryDirectory() as temporary:
     joined.write_bytes(paths[3].read_bytes() + paths[5].read_bytes())
     compare(joined, 36)
     parameter_reuse(directory)
+    temporal_parameters(directory)

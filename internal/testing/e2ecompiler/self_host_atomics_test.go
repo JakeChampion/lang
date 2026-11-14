@@ -141,10 +141,12 @@ func TestSelfHostAtomicsRefusals(t *testing.T) {
 // the old 5 and leaves 7, and cas gives the old 7 and leaves 9: 9 + 5 + 7.
 func TestSelfHostAtomicsHosted(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	if stderr, code := cli.exitOf(t, atomicsSrc, "x86-64-linux"); code != 21 {
-		t.Errorf("x86-64-linux: exit %d, want 21\n%s", code, stderr)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		if stderr, code := cli.exitOf(t, atomicsSrc, target); code != 21 {
+			t.Errorf("%s: exit %d, want 21\n%s", target, code, stderr)
+		}
 	}
-	// The compiler assembles and links the arm64 binary itself.
+	// The compiler also assembles and links the arm64 binary itself.
 	_, qemu := arm64Tooling(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")

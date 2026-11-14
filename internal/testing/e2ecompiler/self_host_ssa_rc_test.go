@@ -174,11 +174,13 @@ func physicalRCSource(setup, modes string) string {
 		source = strings.Replace(source, "let xs = produce();", "let xs = produce("+arguments+");", 1)
 		source = strings.Replace(source, "xs[0] != 7", "xs[0] != "+expected, 1)
 	} else if modes != "[]" {
-		parameter := "seed: i32[]"
+		// The source gives the contract of produce, and the fixture gives its
+		// body. A parameter that produce only reads stays borrowed.
+		parameter, body := "seed: i32[]", "return [seed[0]];"
 		if modes == "[3]" {
-			parameter = "own " + parameter
+			parameter, body = "own "+parameter, "return seed;"
 		}
-		source = strings.Replace(source, "function produce(): i32[] { return [7]; }", "function produce("+parameter+"): i32[] { return seed; }", 1)
+		source = strings.Replace(source, "function produce(): i32[] { return [7]; }", "function produce("+parameter+"): i32[] { "+body+" }", 1)
 		source = strings.Replace(source, "let j = 0; while", "let seed = [7]; let before = seed; let j = 0; while", 1)
 		source = strings.Replace(source, "let xs = produce();", "let xs = produce(seed);", 1)
 		source = strings.Replace(source, "churn[0] != 91", "churn[0] != 91 || before[0] != 7 || seed[0] != 7", 1)

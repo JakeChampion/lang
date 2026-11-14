@@ -69,8 +69,162 @@ function test_composite(): test.TestOutcome {
   return test.assert_eq(b.left.to_string() + " " + b.width.to_string(), "25 51");
 }
 
+// The offset of the table `tag` of the font `b`.
+function table_at(b: u8[], tag: string): i32 {
+  let count = b[4] as i32 << 8 | b[5] as i32;
+  for i in 0..count {
+    let r = 12 + 16 * i;
+    if (b[r] == tag[0] && b[r + 1] == tag[1] && b[r + 2] == tag[2] && b[r + 3] == tag[3]) {
+      return b[r + 10] as i32 << 8 | b[r + 11] as i32;
+    }
+  }
+  return -1;
+}
+
+// A feature list that gives a count of 65535 has records beyond the font.
+// The reader takes the records that the font has.
+function test_feature_list_beyond_the_font(): test.TestOutcome {
+  let data = image_vectors.font();
+  let gpos = table_at(data, "GPOS");
+  if (gpos < 0) {
+    return test.fail("the test font has no GPOS table");
+  }
+  let features = gpos + (data[gpos + 6] as i32 << 8 | data[gpos + 7] as i32);
+  data = data.with(features, 255 as u8).with(features + 1, 255 as u8);
+  let Some(f) = truetype.parse(data) else {
+    return test.fail("parse refused the font");
+  };
+  return test.assert_eq(f.kerning(f.glyph(65), f.glyph(86)), -120);
+}
+
+// A font with 1 unit to the em has a glyph of 6000 by 6000 pixels at 12
+// pixels per em. That is above the limit of a bitmap, so the bitmap is
+// empty. The glyph has its bitmap at a size inside the limit.
+function test_bitmap_above_the_limit(): test.TestOutcome {
+  let data = image_vectors.font();
+  let head = table_at(data, "head");
+  data = data.with(head + 18, 0 as u8).with(head + 19, 1 as u8);
+  let Some(f) = truetype.parse(data) else {
+    return test.fail("parse refused the font");
+  };
+  let a = f.glyph(65);
+  let huge = f.render(a, 12.0, 0.0);
+  let small = f.render(a, 0.01, 0.0);
+  return test.assert_eq(huge.coverage.len().to_string() + " " + huge.width.to_string() + " " + (small.width > 0 && small.coverage.len() == small.width * small.height).to_string(), "0 0 true");
+}
+
 function test_not_a_font(): test.TestOutcome {
   return test.assert_eq(truetype.parse([0 as u8, 1 as u8, 0 as u8]).is_none(), true);
+}
+
+function be16(own b: u8[], v: i32): u8[] {
+  return b.append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function cat(own b: u8[], x: [u8]): u8[] {
+  for v in x {
+    b = b.append(v);
+  }
+  return b;
+}
+
+function zeros(own b: u8[], n: i32): u8[] {
+  for i in 0..n {
+    b = b.append(0u8);
+  }
+  return b;
+}
+
+// A font of `glyphs` glyphs with the seven tables that parse needs, and a
+// GPOS table when `gpos` holds bytes.
+function hostile_font(upem: i32, glyphs: i32, loca: u8[], glyf: u8[], gpos: u8[]): u8[] {
+  let head = zeros(be16(zeros([], 18), upem), 34);
+  let hhea = be16(zeros([], 34), 1);
+  let maxp = be16(zeros([], 4), glyphs);
+  let cmap: u8[] = [0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 12u8, 0u8, 4u8, 0u8, 0u8];
+  let hmtx: u8[] = [0u8, 0u8, 0u8, 0u8];
+  let names = ["head", "hhea", "maxp", "cmap", "loca", "glyf", "hmtx", "GPOS"];
+  let bodies: u8[][] = [head, hhea, maxp, cmap, loca, glyf, hmtx, gpos];
+  let n = if (gpos.len() == 0) { 7 } else { 8 };
+  let out = zeros(be16([0u8, 1u8, 0u8, 0u8], n), 6);
+  let at = 12 + 16 * n;
+  for i in 0..n {
+    out = zeros(cat(out, names[i].as_bytes()), 4);
+    out = be16(be16(out, 0), at);
+    out = be16(be16(out, 0), bodies[i].len());
+    at += bodies[i].len();
+  }
+  for i in 0..n {
+    out = cat(out, bodies[i]);
+  }
+  return out;
+}
+
+// One glyph: a triangle with the corners (0,0), (side,0) and (0,side).
+function triangle(side: i32): u8[] {
+  let g = be16(be16(zeros(be16([], 1), 8), 2), 0);
+  g = cat(g, [1u8, 1u8, 1u8]);
+  g = be16(be16(be16(g, 0), side), 65536 - side);
+  return be16(be16(be16(g, 0), 0), side).append(0u8);
+}
+
+function size_of(data: u8[]): string {
+  if let Some(f) = truetype.parse(data) {
+    let b = f.render(0, 16.0, 0.0);
+    return b.width.to_string() + "x" + b.height.to_string();
+  }
+  return "not a font";
+}
+
+// The feature list of the GPOS table says that it has one feature, and the
+// file ends there.
+function test_feature_list_past_the_end(): test.TestOutcome {
+  let glyf = triangle(100);
+  let loca = be16(be16([], 0), glyf.len() / 2);
+  let gpos: u8[] = [0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 10u8, 0u8, 0u8, 0u8, 1u8];
+  return test.assert_eq(size_of(hostile_font(1000, 1, loca, glyf, gpos)), "3x3");
+}
+
+// A glyph of 32767 units in a font of 16 units to the em is 32768 pixels
+// wide and high at 16 pixels to the em.
+function test_bitmap_limit(): test.TestOutcome {
+  let glyf = triangle(32767);
+  let loca = be16(be16([], 0), glyf.len() / 2);
+  return test.assert_eq(size_of(hostile_font(16, 1, loca, glyf, [])), "0x0");
+}
+
+// Glyphs 0 to 7 are composite glyphs of 9 parts, and each part is the next
+// glyph. Glyph 8 is a triangle, which glyph 0 thus holds 9^8 times.
+function test_composite_fan_out(): test.TestOutcome {
+  let glyf: u8[] = [];
+  let loca: u8[] = [];
+  for g in 0..8 {
+    loca = be16(loca, glyf.len() / 2);
+    glyf = zeros(be16(glyf, 65535), 8);
+    for p in 0..9 {
+      let flags = if (p + 1 < 9) { 34 } else { 2 };
+      glyf = be16(be16(be16(glyf, flags), g + 1), 0);
+    }
+  }
+  loca = be16(loca, glyf.len() / 2);
+  glyf = cat(glyf, triangle(100));
+  loca = be16(loca, glyf.len() / 2);
+  return test.assert_eq(size_of(hostile_font(1000, 9, loca, glyf, [])), "3x3");
+}
+
+// The last points of the contours go 65535, 0, 65535, 0. Each contour would
+// hold each point of the glyph.
+function test_contour_ends_fall(): test.TestOutcome {
+  let g = zeros(be16([], 2001), 8);
+  for i in 0..2001 {
+    g = be16(g, if (i % 2 == 0) { 65535 } else { 0 });
+  }
+  g = be16(g, 0);
+  for i in 0..256 {
+    g = g.append(0x39u8).append(255u8);
+  }
+  let loca = be16(be16([], 0), g.len() / 2);
+  return test.assert_eq(size_of(hostile_font(1000, 1, loca, g, [])), "0x0");
 }
 
 function main(): i32 {
@@ -82,6 +236,12 @@ function main(): i32 {
   r = r.it("an edge half a pixel in", test_half_pixel_edge);
   r = r.it("a curve", test_curve);
   r = r.it("a composite glyph", test_composite);
+  r = r.it("a feature list beyond the font", test_feature_list_beyond_the_font);
+  r = r.it("a bitmap above the limit", test_bitmap_above_the_limit);
   r = r.it("not a font", test_not_a_font);
+  r = r.it("a feature list past the end of the file", test_feature_list_past_the_end);
+  r = r.it("a glyph box past the bitmap limit", test_bitmap_limit);
+  r = r.it("composite glyphs that fan out", test_composite_fan_out);
+  r = r.it("contour ends that fall", test_contour_ends_fall);
   return r.finish();
 }

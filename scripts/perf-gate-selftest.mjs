@@ -39,6 +39,7 @@ const GATE_VARS = [
   "FERN_CI_PERF_GATE_STRICT",
   "FERN_CI_PERF_GATE_MAX_DRIFT",
   "FERN_PERF_TOLERANCE_PERCENT",
+  "FERN_PERF_CORRECTED_OUT",
 ];
 
 function gateEnv(override) {
@@ -255,6 +256,18 @@ let cases = 0;
     if (saved === undefined) delete process.env.FERN_CI_PERF_GATE_MAX_DRIFT;
     else process.env.FERN_CI_PERF_GATE_MAX_DRIFT = saved;
   }
+  cases++;
+}
+
+// FERN_PERF_CORRECTED_OUT gets the rows that scripts/rebank reads: each moved
+// row with its tolerance, each new metric, and no row that stayed. A run with
+// no move writes an empty file.
+{
+  const out = path.join(dir, "corrected.txt");
+  check("m/a\t1000\nm/b\t1000 20\nm/c\t1000\n", "m/a\t1100\nm/b\t1500\nm/c\t1000\nm/new\t5\n", { FERN_PERF_CORRECTED_OUT: out });
+  assert.equal(fs.readFileSync(out, "utf8"), "m/a 1100\nm/b 1500 20\nm/new 5\n", "the corrected rows must be the moved and the new rows");
+  check("m/a\t1000\n", "m/a\t1000\n", { FERN_PERF_CORRECTED_OUT: out });
+  assert.equal(fs.readFileSync(out, "utf8"), "", "a run with no move must write an empty file");
   cases++;
 }
 

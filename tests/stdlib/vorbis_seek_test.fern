@@ -1,4 +1,6 @@
 import "std/audio/vorbisfile/seek";
+import "std/audio/source";
+import "std/audio/pcm";
 import "std/test";
 import "aac_kernel_check" as ref;
 import "vorbis_seek_check";
@@ -48,8 +50,98 @@ function references(): test.TestOutcome {
   return test.pass();
 }
 
+// The samples from `position` of the first link to the end, step by step.
+// A cursor on a view has an index from a source, and reads only the bytes
+// that `want` gives, from a copy of them. A cursor on the whole file has
+// an index of the whole file, and reads the file.
+function played(encoded: u8[], position: i64, view: boolean): Result[f32[], string] {
+  let made = if (view) { seek.inspect_with(encoded.len() as i64, short_reads(encoded), seek.default_limits()) } else {
+    match (seek.inspect(encoded, seek.default_limits())) { Ok(v) => Ok(v), Err(e) => Err(source.ReadAudio(e)) }
+  };
+  let index = match (made) { Ok(v) => v, Err(e) => { return Err("index: " + e.message()); } };
+  let cursor = match (seek.cursor(index).seek(0, position)) { Ok(v) => v, Err(e) => { return Err("seek: " + e.message()); } };
+  let out: f32[] = [];
+  let steps = 0;
+  while (steps < 1000000) {
+    let (from, count) = cursor.want();
+    let part: u8[] = [];
+    for i in from as i32..from as i32 + count {
+      part = part.append(encoded[i]);
+    }
+    let (next, event) = match (step_once(cursor, view, part, from, encoded)) { Ok(v) => v, Err(e) => { return Err("step: " + e.message()); } };
+    cursor = next;
+    match (event) {
+      seek.Samples(audio) => {
+        out = out.concat(audio.samples);
+      },
+      seek.Finished => {
+        return Ok(out);
+      },
+      seek.Pending => {}
+    }
+    steps += 1;
+  }
+  return Err("no end");
+}
+
+function step_once(own cursor: seek.Cursor, view: boolean, part: [u8], from: i64, encoded: [u8]): Result[(seek.Cursor, seek.ReadEvent), pcm.AudioError] {
+  if (view) {
+    return cursor.step_view(part, from);
+  }
+  return cursor.step(encoded);
+}
+
+// A read that gives at most 997 bytes from `offset`.
+function short_reads(bytes: u8[]): (i64, i32) => Result[u8[], IoError] {
+  return (offset: i64, count: i32): Result[u8[], IoError] => {
+    let out: u8[] = [];
+    for i in offset as i32..(offset as i32 + count.min(997)).min(bytes.len()) {
+      out = out.append(bytes[i]);
+    }
+    return Ok(out);
+  };
+}
+
+// `heard` counts the samples that the views give.
+function source_reference(name: string, encoded_text: string, heard: Cell[i32]): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(encoded_text) else {
+    return test.fail("fixture");
+  };
+  let whole = match (seek.inspect(encoded, seek.default_limits())) { Ok(v) => v, Err(e) => { return test.fail(name + " index: " + e.message()); } };
+  let index = match (seek.inspect_with(encoded.len() as i64, short_reads(encoded), seek.default_limits())) { Ok(v) => v, Err(e) => { return test.fail(name + " source index: " + e.message()); } };
+  if (index.packet_count() != whole.packet_count() || index.links().len() != whole.links().len()) {
+    return test.fail(name + ": the source index differs");
+  }
+  let middle = whole.links()[0].frames / 2i64;
+  for position in [0i64, middle] {
+    let expected = match (played(encoded, position, false)) { Ok(v) => v, Err(e) => { return test.fail(name + " whole " + e); } };
+    let got = match (played(encoded, position, true)) { Ok(v) => v, Err(e) => { return test.fail(name + " view " + e); } };
+    if (got != expected) {
+      return test.fail(name + ": the samples from a view differ at " + position.to_string());
+    }
+    heard.set(heard.get() + got.len());
+  }
+  return test.pass();
+}
+
+function sources(): test.TestOutcome {
+  let heard: Cell[i32] = cell_new(0);
+  for value in vorbis_file_vectors.vectors() {
+    if let test.Fail(message) = source_reference(value.name, value.encoded, heard) {
+      return test.fail(message);
+    }
+  }
+  for value in vorbis_seek_vectors.vectors() {
+    if let test.Fail(message) = source_reference(value.name, value.encoded, heard) {
+      return test.fail(message);
+    }
+  }
+  return test.assert_true(heard.get() > 100000);
+}
+
 function main(): i32 {
   let runner = test.new("Indexed Vorbis exact seeks against independent PCM");
   runner = runner.it("cold and repeated seeks across rates, layouts, block transitions, and chains", references);
+  runner = runner.it("an index from a source plays each packet from a view of its pages", sources);
   return runner.finish();
 }

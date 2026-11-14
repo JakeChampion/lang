@@ -5,7 +5,9 @@
 // unless -n.
 import "std/regex";
 import "std/string";
+import "./colors";
 import "./flags";
+import "./hyperlink";
 import "./jsonl";
 
 // How one file is written. `show_name` and `color` are already resolved.
@@ -52,6 +54,20 @@ pub struct Printer {
   // -U, and a match can hold the line terminator: the search is of the whole
   // text, and a match can cover more than one line.
   multiline: boolean,
+  // The escapes of the colors of the file names, the line numbers, the
+  // columns and the matches, and whether a match has a color.
+  path_color: string,
+  line_color: string,
+  column_color: string,
+  match_color: string,
+  match_colored: boolean,
+  // The format of the links, and the encoded path of the file that a link
+  // names, or "" for no links.
+  hyperlink: hyperlink.Format,
+  link: string,
+  // The separators after the fields of a selected line and a context line.
+  field_match: string,
+  field_context: string,
 }
 
 // What the search of one file counted: the matches, the selected lines,
@@ -83,12 +99,6 @@ pub const DETECT_QUIT: i32 = 2;
 // a mapped file that it examines for a NUL byte.
 pub const BUFFER: i32 = 65536;
 
-const PATH_COLOR: string = "\x1b[0m\x1b[35m";
-
-const LINE_COLOR: string = "\x1b[0m\x1b[32m";
-
-const MATCH_COLOR: string = "\x1b[0m\x1b[1m\x1b[31m";
-
 const RESET: string = "\x1b[0m";
 
 // The printer of the options. `one_file` is true when rg searches one file
@@ -104,6 +114,9 @@ pub function printer(o: flags.Options, tty: boolean, term_color: boolean, one_fi
     trim: o.has(flags.TRIM), max_columns: o.max_columns, preview: o.has(flags.PREVIEW), passthru: o.has(flags.PASSTHRU),
     stop_on_nonmatch: o.has(flags.STOP_ON_NONMATCH), term: if (o.eol == "\x00") { 0 } else { 10 }, eol: o.eol,
     json: o.has(flags.JSON), counts: o.has(flags.JSON) || o.has(flags.STATS), multiline: o.has(flags.MULTILINE),
+    path_color: o.colors.path.escape(), line_color: o.colors.line.escape(), column_color: o.colors.column.escape(),
+    match_color: o.colors.matched.escape(), match_colored: false, hyperlink: o.hyperlink, link: "",
+    field_match: o.field_match, field_context: o.field_context,
   };
   if (p.json) {
     return p;
@@ -117,13 +130,20 @@ pub function printer(o: flags.Options, tty: boolean, term_color: boolean, one_fi
 function with_fields(p: Printer, o: flags.Options, tty: boolean, term_color: boolean, one_file: boolean): Printer {
   let column = o.has(flags.COLUMN);
   let vimgrep = o.has(flags.VIMGREP);
+  let color = colored(o.color, tty && term_color);
   return Printer {
-    ...p, column: column, vimgrep: vimgrep, byte_offset: o.has(flags.BYTE_OFFSET),
-    color: o.color == "always" || o.color == "ansi" || o.color == "auto" && tty && term_color,
+    ...p, column: column, vimgrep: vimgrep, byte_offset: o.has(flags.BYTE_OFFSET), color: color,
+    match_colored: color && !o.colors.matched.is_none(),
     show_name: if (o.with_filename < 0) { !one_file } else { o.with_filename == 1 },
     heading: !vimgrep && (if (o.heading < 0) { tty } else { o.heading == 1 }),
     line_number: if (o.line_number < 0) { tty || column } else { o.line_number == 1 },
   };
+}
+
+// Whether the output has color for the choice of --color. `auto` gives
+// color on a terminal that takes it.
+function colored(choice: string, term: boolean): boolean {
+  return choice == "always" || choice == "ansi" || choice == "auto" && term;
 }
 
 // The lines of context of -A or -B, which take precedence over -C.
@@ -148,14 +168,30 @@ function display(p: Printer, name: string): string {
   return name.replace("/", p.separator);
 }
 
-pub function push_path(p: Printer, h: usize, name: string): void {
+function push_colored_path(p: Printer, h: usize, name: string): void {
   if (p.color) {
-    buf_push(h, PATH_COLOR);
+    buf_push(h, p.path_color);
     buf_push(h, display(p, name));
     buf_push(h, RESET);
   } else {
     buf_push(h, display(p, name));
   }
+}
+
+// Whether the file names of the output are links.
+function links(p: Printer): boolean {
+  return p.link != "" && p.color && !p.hyperlink.is_empty();
+}
+
+// A file name on its own, in a link to the file when the output has links.
+pub function push_path(p: Printer, h: usize, name: string): void {
+  if (!links(p)) {
+    push_colored_path(p, h, name);
+    return;
+  }
+  buf_push(h, hyperlink.open(p.hyperlink, p.link, 0, 0));
+  push_colored_path(p, h, name);
+  buf_push(h, hyperlink.CLOSE);
 }
 
 // A file name and the byte after it: the terminator, or `sep`.
@@ -164,25 +200,54 @@ function push_name_field(p: Printer, h: usize, name: string, sep: string): void 
   buf_push(h, if (p.terminator != "") { p.terminator } else { sep });
 }
 
-// The fields before the text of a line: the file name, the line number, the
-// column and the byte offset that the options ask for, each with `sep`
-// after it. A column of -1 has no field.
-function push_prefix(p: Printer, h: usize, name: string, ln: i32, col: i32, off: i32, sep: string): void {
-  if (p.show_name && !p.heading) {
-    push_name_field(p, h, name, sep);
-  }
-  if (p.line_number) {
-    push_field(p, h, LINE_COLOR, ln.to_string(), sep);
-  }
-  if (col >= 0) {
-    push_field(p, h, RESET, col.to_string(), sep);
-  }
-  if (p.byte_offset) {
-    push_field(p, h, RESET, off.to_string(), sep);
-  }
+// The separator after a field: that of a selected line for the kind ":",
+// and that of a context line for "-".
+function field_separator(p: Printer, kind: string): string {
+  return if (kind == ":") { p.field_match } else { p.field_context };
 }
 
-function push_field(p: Printer, h: usize, color: string, text: string, sep: string): void {
+// The fields before the text of a line: the file name, the line number, the
+// column and the byte offset that the options ask for, each with the
+// separator of the kind `sep` after it. A column of -1 has no field. The
+// fields before the last separator are in a link to the line when the
+// output has links: the link takes the column even when the output does
+// not show it.
+function push_prefix(p: Printer, h: usize, name: string, ln: i32, col: i32, off: i32, sep: string): void {
+  let linked = links(p) && p.show_name && (!p.heading || p.hyperlink.by_line());
+  if (linked) {
+    buf_push(h, hyperlink.open(p.hyperlink, p.link, if (p.line_number) { ln } else { 0 }, col));
+  }
+  let next = push_fields(p, h, name, ln, if (p.column) { col } else { -1 }, off, field_separator(p, sep));
+  if (linked) {
+    buf_push(h, hyperlink.CLOSE);
+  }
+  buf_push(h, next);
+}
+
+// Writes the fields of a prefix with `fs` between them, and gives the
+// separator after the last field.
+function push_fields(p: Printer, h: usize, name: string, ln: i32, col: i32, off: i32, fs: string): string {
+  let next = "";
+  if (p.show_name && !p.heading) {
+    push_colored_path(p, h, name);
+    next = if (p.terminator != "") { p.terminator } else { fs };
+  }
+  if (p.line_number) {
+    next = push_field(p, h, next, p.line_color, ln.to_string(), fs);
+  }
+  if (col >= 0) {
+    next = push_field(p, h, next, p.column_color, col.to_string(), fs);
+  }
+  if (p.byte_offset) {
+    next = push_field(p, h, next, p.column_color, off.to_string(), fs);
+  }
+  return next;
+}
+
+// Writes the separator before a field and the field, and gives the
+// separator after it.
+function push_field(p: Printer, h: usize, before: string, color: string, text: string, sep: string): string {
+  buf_push(h, before);
   if (p.color) {
     buf_push(h, color);
     buf_push(h, text);
@@ -190,7 +255,7 @@ function push_field(p: Printer, h: usize, color: string, text: string, sep: stri
   } else {
     buf_push(h, text);
   }
-  buf_push(h, sep);
+  return sep;
 }
 
 // The next match in `line` at or after `from`. As in ripgrep, an empty match
@@ -265,8 +330,8 @@ function first_column(re: regex.Regex, line: string): i32 {
   return m.start + 1;
 }
 
-function push_matched(h: usize, text: string): void {
-  buf_push(h, MATCH_COLOR);
+function push_matched(p: Printer, h: usize, text: string): void {
+  buf_push(h, p.match_color);
   buf_push(h, text);
   buf_push(h, RESET);
 }
@@ -279,14 +344,39 @@ struct Marked { text: string, spans: i32[] }
 // Whether the printer finds the matches of each line that it writes: for
 // color, for -r, and for a search of the whole text.
 function aware(p: Printer): boolean {
-  return p.color || p.replace != None || p.multiline;
+  return p.match_colored || p.replace != None || p.multiline;
+}
+
+// Whether ripgrep finds each match of a selected line, which gives the
+// column of the first match to a link.
+function granular(p: Printer): boolean {
+  return p.match_colored || p.column || p.replace != None || p.vimgrep || p.only_matching || p.counts;
+}
+
+// Whether a selected line needs the column of its first match: for
+// --column, and for a link.
+function needs_column(p: Printer): boolean {
+  return p.column || links(p) && granular(p);
+}
+
+// Whether the printer knows the matches of a line that it writes, which the
+// notes of -M count.
+function finds(p: Printer): boolean {
+  return aware(p) || granular(p);
 }
 
 function marked(p: Printer, re: regex.Regex, line: string): Marked {
-  let spans: i32[] = [];
-  if (!aware(p)) {
+  if (!finds(p)) {
+    let spans: i32[] = [];
     return Marked { text: line, spans: spans };
   }
+  return marked_spans(p, re, line);
+}
+
+// The text of a line and the spans of its matches, or with -r of their
+// replacements.
+function marked_spans(p: Printer, re: regex.Regex, line: string): Marked {
+  let spans: i32[] = [];
   let h = buf_new(line.len());
   let at = 0;
   let last = -1;
@@ -310,11 +400,12 @@ function marked(p: Printer, re: regex.Regex, line: string): Marked {
 }
 
 // Writes `m.text` from `from` to `to`, with each span that starts before
-// `to` in color. It gives the count of the spans that start at or after
-// `to`.
+// `to` in color. Adjacent spans share one run of color. It gives the count
+// of the spans that start at or after `to`.
 function push_marked(p: Printer, h: usize, m: Marked, from: i32, to: i32): i32 {
   let done = from;
   let beyond = 0;
+  let open = false;
   let k = 0;
   while (k < m.spans.len()) {
     let lo = m.spans[k];
@@ -322,12 +413,13 @@ function push_marked(p: Printer, h: usize, m: Marked, from: i32, to: i32): i32 {
     if (lo >= to) {
       beyond += 1;
     } else if (hi > done && hi > lo) {
-      let start = if (lo > done) { lo } else { done };
-      buf_push_range(h, m.text, done, start);
-      push_piece(p, h, slice_unchecked(m.text, start, hi).to_owned());
+      open = push_span(p, h, m.text, done, if (lo > done) { lo } else { done }, hi, open);
       done = hi;
     }
     k += 2;
+  }
+  if (open) {
+    buf_push(h, RESET);
   }
   if (done < to) {
     buf_push_range(h, m.text, done, to);
@@ -335,10 +427,28 @@ function push_marked(p: Printer, h: usize, m: Marked, from: i32, to: i32): i32 {
   return beyond;
 }
 
+// Writes the text from `done` to `start`, and the span from `start` to
+// `hi` in color. `open` says that the color of a match is on, and the
+// result says the same after the span.
+function push_span(p: Printer, h: usize, text: string, done: i32, start: i32, hi: i32, open: boolean): boolean {
+  let on = open;
+  if (start > done && on) {
+    buf_push(h, RESET);
+    on = false;
+  }
+  buf_push_range(h, text, done, start);
+  if (p.match_colored && !on) {
+    buf_push(h, p.match_color);
+    on = true;
+  }
+  buf_push_range(h, text, start, hi);
+  return on;
+}
+
 // A match or a replacement, in color when the output has color.
 function push_piece(p: Printer, h: usize, text: string): void {
-  if (p.color && text != "") {
-    push_matched(h, text);
+  if (p.match_colored && text != "") {
+    push_matched(p, h, text);
   } else {
     buf_push(h, text);
   }
@@ -374,22 +484,22 @@ function after_chars(text: string, from: i32, n: i32): i32 {
 // or with --max-columns-preview its first characters and a note. When the
 // printer finds the matches, a note counts them.
 function push_body(p: Printer, re: regex.Regex, h: usize, line: string, selected: boolean): void {
-  push_marked_line(p, h, marked(p, re, line), selected);
+  push_marked_line(p, h, marked(p, re, line), selected, finds(p));
 }
 
 // Writes a line with the spans to show in color, with --trim and -M.
-function push_marked_line(p: Printer, h: usize, m: Marked, selected: boolean): void {
+function push_marked_line(p: Printer, h: usize, m: Marked, selected: boolean, found: boolean): void {
   let from = if (p.trim) { trim_start(m.text) } else { 0 };
   if (p.max_columns <= 0 || m.text.len() - from <= p.max_columns) {
     push_marked(p, h, m, from, m.text.len());
     return;
   }
   if (!p.preview) {
-    buf_push(h, long_note(p, m, selected));
+    buf_push(h, long_note(m, selected, found));
     return;
   }
   let beyond = push_marked(p, h, m, from, after_chars(m.text, from, p.max_columns));
-  if (!aware(p)) {
+  if (!found) {
     buf_push(h, " [... omitted end of long line]");
   } else {
     buf_push(h, " [... " + beyond.to_string() + (if (beyond == 1) { " more match]" } else { " more matches]" }));
@@ -397,8 +507,8 @@ function push_marked_line(p: Printer, h: usize, m: Marked, selected: boolean): v
 }
 
 // The note that takes the place of a long line.
-function long_note(p: Printer, m: Marked, selected: boolean): string {
-  if (aware(p)) {
+function long_note(m: Marked, selected: boolean, found: boolean): string {
+  if (found) {
     return "[Omitted long line with " + (m.spans.len() / 2).to_string() + " matches]";
   }
   return if (selected) { "[Omitted long matching line]" } else { "[Omitted long context line]" };
@@ -452,7 +562,7 @@ function push_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan,
     push_vimgrep(p, re, h, name, start, line, ln, w.eol);
     return;
   }
-  let col = if (matching && p.column) { first_column(re, line) } else { -1 };
+  let col = if (matching && needs_column(p)) { first_column(re, line) } else { -1 };
   push_prefix(p, h, name, ln, col, start, sep);
   push_body(p, re, h, line, sep == ":");
   buf_push(h, w.eol);
@@ -469,7 +579,7 @@ function push_only(p: Printer, re: regex.Regex, h: usize, name: string, start: i
     let Some(m) = next_hit(p, re, line, at, last) else {
       return;
     };
-    let col = if (p.column) { m.start + shift + 1 } else { -1 };
+    let col = m.start + shift + 1;
     push_prefix(p, h, name, ln, col, start + m.start + shift, ":");
     push_only_text(p, h, m.text);
     buf_push(h, eol);
@@ -488,24 +598,25 @@ function push_only_text(p: Printer, h: usize, text: string): void {
     buf_push(h, "[Omitted long matching line]");
   } else {
     push_piece(p, h, slice_unchecked(piece, 0, after_chars(piece, 0, p.max_columns)).to_owned());
-    buf_push(h, if (aware(p)) { " [... 0 more matches]" } else { " [... omitted end of long line]" });
+    buf_push(h, " [... 0 more matches]");
   }
 }
 
 // --vimgrep: the whole line once for each match, with the column of the
 // match unless --no-column comes after it.
+// With -r, the line has each match replaced, and the column is that of the
+// replacement. Only the match of the row has color.
 function push_vimgrep(p: Printer, re: regex.Regex, h: usize, name: string, start: i32, line: string, ln: i32, eol: string): void {
-  let at = 0;
-  let last = -1;
-  while (true) {
-    let Some(m) = next_match(re, line, at, last) else {
-      return;
-    };
-    push_prefix(p, h, name, ln, if (p.column) { m.start + 1 } else { -1 }, start, ":");
-    push_body(p, re, h, line, true);
+  let m = marked_spans(p, re, line);
+  let k = 0;
+  while (k < m.spans.len()) {
+    push_prefix(p, h, name, ln, m.spans[k] + 1, start, ":");
+    let from = if (p.trim) { trim_start(m.text) } else { 0 };
+    let long = p.max_columns > 0 && m.text.len() - from > p.max_columns;
+    let spans = if (long && !p.preview || !p.match_colored) { m.spans } else { [m.spans[k], m.spans[k + 1]] };
+    push_marked_line(p, h, Marked { text: m.text, spans: spans }, true, true);
     buf_push(h, eol);
-    at = m.end;
-    last = m.end;
+    k += 2;
   }
 }
 
@@ -561,21 +672,34 @@ function begin(): Cursor {
   return Cursor { start: 0, ln: 0, cand: -1 };
 }
 
-function candidate(re: regex.Regex, text: string, c: Cursor): i32 {
+function candidate(re: regex.Regex, text: string, c: Cursor, term: i32): i32 {
   if (c.cand >= c.start) {
     return c.cand;
   }
-  let at = re.next_candidate(text, c.start);
+  let from = inner_line(re, text, c.start, term);
+  let at = if (from < 0) { -1 } else { re.next_candidate(text, from) };
   if (at < 0) {
     return text.len() + 1;
   }
   return at;
 }
 
+// The start of the next line at or after `from` that holds the bytes that
+// each match holds, or -1. A match is in one line, so the lines before it
+// hold no match.
+function inner_line(re: regex.Regex, text: string, from: i32, term: i32): i32 {
+  let at = re.next_inner(text, from);
+  if (at <= from) {
+    return at;
+  }
+  let start = __rmemchr(text, term, at - 1) + 1;
+  return if (start > from) { start } else { from };
+}
+
 // The cursor at the line of the next candidate before `end`. The lines
 // before it hold no match.
 function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32): Cursor {
-  let cand = candidate(re, text, c);
+  let cand = candidate(re, text, c, term);
   if (cand >= end) {
     let last = if (end > c.start) { end } else { c.start };
     return Cursor { start: last, ln: c.ln, cand: cand };
@@ -590,8 +714,8 @@ function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32): Cu
 
 // Whether the line from `c.start` to `end` is selected. The cursor keeps the
 // candidate that it found.
-function selected(re: regex.Regex, text: string, c: Cursor, end: i32, invert: boolean): (boolean, Cursor) {
-  let cand = candidate(re, text, c);
+function selected(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32, invert: boolean): (boolean, Cursor) {
+  let cand = candidate(re, text, c, term);
   let next = Cursor { ...c, cand: cand };
   if (cand > end) {
     return (invert, next);
@@ -767,7 +891,7 @@ function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Count
       }
     }
     let end = line_end(text, c.start, s.end, s.term);
-    let (yes, next) = selected(re, text, c, end, p.invert);
+    let (yes, next) = selected(re, text, c, end, s.term, p.invert);
     if (yes) {
       n = count_line(re, s, c.start, end, n, all, by_match);
     }
@@ -1051,7 +1175,7 @@ function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usi
     }
     let start = c.start;
     let end = line_end(s.text, start, s.end, s.term);
-    let (yes, next) = selected(re, s.text, c, end, p.invert);
+    let (yes, next) = selected(re, s.text, c, end, s.term, p.invert);
     c = advance(next, end);
     g = step_line(p, re, h, name, s, start, end, c.ln, yes, g);
     if (!yes && p.stop_on_nonmatch && g.count > 0) {
@@ -1224,7 +1348,7 @@ function push_block(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan
   } else if (p.vimgrep) {
     push_block_vimgrep(p, re, h, name, s, lo, ln, found);
   } else {
-    let col = if (p.column) { found[0] - lo + 1 } else { -1 };
+    let col = found[0] - lo + 1;
     push_block_text(p, h, name, s, lo, ln, col, block_text(p, re, s, lo, hi, found));
   }
 }
@@ -1255,7 +1379,7 @@ function shifted(spans: i32[], by: i32): i32[] {
 function block_text(p: Printer, re: regex.Regex, s: Scan, lo: i32, hi: i32, found: i32[]): Marked {
   let spans: i32[] = [];
   if (p.replace == None) {
-    return Marked { text: slice_unchecked(s.text, lo, hi).to_owned(), spans: if (p.color) { shifted(found, -lo) } else { spans } };
+    return Marked { text: slice_unchecked(s.text, lo, hi).to_owned(), spans: if (p.match_colored) { shifted(found, -lo) } else { spans } };
   }
   let b = buf_new(hi - lo);
   let at = lo;
@@ -1295,7 +1419,7 @@ function push_block_text(p0: Printer, h: usize, name: string, s: Scan, lo: i32, 
     let end = if (nl < 0) { m.text.len() } else { nl };
     let stop = cr_stop(p, m.text, start, end);
     push_prefix(p, h, name, n, col, lo + start, ":");
-    push_marked_line(p, h, Marked { text: slice_unchecked(m.text, start, stop).to_owned(), spans: clipped(m.spans, start, stop) }, true);
+    push_marked_line(p, h, Marked { text: slice_unchecked(m.text, start, stop).to_owned(), spans: clipped(m.spans, start, stop) }, true, finds(p));
     buf_push(h, if (nl < 0 || stop < end || aware(p)) { p.eol } else { term });
     start = end + 1;
     n += 1;
@@ -1311,7 +1435,7 @@ function push_block_only(p: Printer, re: regex.Regex, h: usize, name: string, s:
   while (k < m.spans.len()) {
     let at = m.spans[k];
     let n = ln + __count_byte(slice_unchecked(m.text, 0, at), p.term);
-    let col = if (p.column) { at + 1 } else { -1 };
+    let col = at + 1;
     let start = at;
     while (start < m.spans[k + 1] || start == at) {
       let nl = __memchr(m.text, p.term, start);
@@ -1335,7 +1459,7 @@ function push_block_vimgrep(p: Printer, re: regex.Regex, h: usize, name: string,
     let end = line_end(s.text, start, s.text.len(), s.term);
     let n = ln + lines_in(s, lo, start);
     let w = shown(p, s, start, end);
-    push_prefix(p, h, name, n, if (p.column) { found[k] - start + 1 } else { -1 }, start, ":");
+    push_prefix(p, h, name, n, found[k] - start + 1, start, ":");
     push_body(p, re, h, slice_unchecked(s.text, w.start, w.end), true);
     buf_push(h, w.eol);
     k += 2;

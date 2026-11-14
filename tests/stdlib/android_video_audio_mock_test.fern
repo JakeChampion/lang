@@ -50,7 +50,7 @@ function synchronize(own p: player.Player, source: audio.Stream, channels: i32, 
   if (channels == 0) {
     return p.synchronize_audio(source, start);
   }
-  return p.synchronize_music(audio.Music { ptr: source.ptr, rate: source.rate, channels: channels, ring: 0 as usize }, start);
+  return p.synchronize_music(audio.Music { ptr: source.ptr, rate: source.rate, channels: channels }, start);
 }
 
 function opened(): Result[player.Player, frame.VideoError] {

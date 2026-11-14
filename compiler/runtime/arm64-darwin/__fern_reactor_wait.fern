@@ -1,8 +1,11 @@
-// The kernel writes its 32-byte events into the array, and each one becomes
-// the (fd, ready) pair at its index. A pair is 8 bytes, so a pair never
-// overwrites an event that is not yet read.
+// The kernel writes its 32-byte events, and each one becomes the (fd, ready)
+// pair at its index. An array with room for at least 7 events takes them in
+// place: a pair is 8 bytes, so it never overwrites an event that is not yet
+// read. A smaller array takes them in the scratch after the timespec, which
+// holds 7, so a wait can still report one event for each pair of the array.
 function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 {
-  if (events.len() / 2 <= 0) {
+  let pairs = events.len() / 2;
+  if (pairs <= 0) {
     return -22;
   }
   let b = __raw_arr_ptr(events);
@@ -10,8 +13,8 @@ function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 {
   let kcap = events.len() / 8;
   let ts = __raw_scratch(48);
   let tmo = 0 as usize;
-  if (kcap < 1) {
-    kcap = 1;
+  if (kcap < 7) {
+    kcap = if (pairs < 7) { pairs } else { 7 };
     buf = ts + 16;
   }
   if (timeout_ms >= 0) {

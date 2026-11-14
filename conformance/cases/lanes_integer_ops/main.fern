@@ -1,0 +1,227 @@
+// The integer lane types are u8x16, i8x16, u16x8, i16x8, u32x4 and i32x4.
+// Each type has the operators + and -, which wrap. Lanes of 16 and 32 bits
+// have the operator *. A type with a sign has the unary - and `abs`. Lanes
+// of 8 and 16 bits have the arithmetic that saturates. Each type reads and
+// writes 16 bytes of a u8[], with the low byte of a lane first.
+
+function zeros(): u8[] {
+  let out: u8[] = [];
+  for i in 0..16 {
+    out = out.append(0 as u8);
+  }
+  return out;
+}
+
+function ramp(): u8[] {
+  let out: u8[] = [];
+  for i in 0..20 {
+    out = out.append((i * 29 + 131) as u8);
+  }
+  return out;
+}
+
+function text(xs: u8[]): string {
+  let out = "";
+  for x in xs {
+    out = out + " " + x.to_string();
+  }
+  return out;
+}
+
+function bytes_u8x16(v: u8x16): string {
+  return text(__u8x16_with(zeros(), 0, v));
+}
+
+function through_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_select(a, b, __u8x16_lt(a, b));
+}
+
+function run_u8x16(): void {
+  let a = __u8x16_of(1 as u8, 2 as u8, 3 as u8, 250 as u8, 255 as u8, 0 as u8, 7 as u8, 100 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8, 13 as u8, 14 as u8, 15 as u8, 16 as u8);
+  let b = __u8x16_of(5 as u8, 5 as u8, 5 as u8, 10 as u8, 1 as u8, 1 as u8, 255 as u8, 255 as u8, 2 as u8, 2 as u8, 2 as u8, 2 as u8, 3 as u8, 3 as u8, 3 as u8, 3 as u8);
+  print("u8x16 add" + bytes_u8x16(a + b));
+  print("u8x16 sub" + bytes_u8x16(a - b));
+  print("u8x16 add_sat" + bytes_u8x16(__u8x16_add_sat(a, b)));
+  print("u8x16 sub_sat" + bytes_u8x16(__u8x16_sub_sat(a, b)));
+  print("u8x16 avg" + bytes_u8x16(__u8x16_avg(a, b)));
+  print("u8x16 min" + bytes_u8x16(__u8x16_min(a, b)));
+  print("u8x16 max" + bytes_u8x16(__u8x16_max(a, b)));
+  print("u8x16 masks " + __u8x16_bitmask(a).to_string() + " " + __u8x16_bitmask(__u8x16_lt(a, b)).to_string() + " " + __u8x16_bitmask(__u8x16_eq(a, b)).to_string() + " " + __u8x16_bitmask(__u8x16_ne(a, b)).to_string());
+  print("u8x16 bits" + bytes_u8x16(__u8x16_xor(__u8x16_and(a, b), __u8x16_or(a, b))));
+  print("u8x16 select" + bytes_u8x16(through_u8x16(a, b)));
+  print("u8x16 shl" + bytes_u8x16(__u8x16_shl(a, 3)));
+  print("u8x16 shr" + bytes_u8x16(__u8x16_shr(a, 2)));
+  print("u8x16 shr count" + bytes_u8x16(__u8x16_shr(a, 10)));
+  let s = __u8x16_splat(255 as u8);
+  print("u8x16 lane " + __u8x16_lane(a, 0).to_string() + " " + __u8x16_lane(a, 15).to_string() + " " + __u8x16_lane(s, 15).to_string() + " " + __u8x16_lane(a + s, 1).to_string());
+  let xs = ramp();
+  print("u8x16 load" + bytes_u8x16(__u8x16_load(xs, 3) + a));
+  print("u8x16 with" + text(__u8x16_with(xs, 4, a)));
+}
+
+function bytes_i8x16(v: i8x16): string {
+  return text(__i8x16_with(zeros(), 0, v));
+}
+
+function through_i8x16(a: i8x16, b: i8x16): i8x16 {
+  return __i8x16_select(a, b, __i8x16_lt(a, b));
+}
+
+function run_i8x16(): void {
+  let a = __i8x16_of(1, -2, 3, -4, 127, -128, 7, -100, 9, -10, 11, -12, 13, -14, 15, -16);
+  let b = __i8x16_of(5, 5, -5, -5, 1, -1, 127, 127, 2, 2, -2, -2, 3, 3, -3, -3);
+  print("i8x16 add" + bytes_i8x16(a + b));
+  print("i8x16 sub" + bytes_i8x16(a - b));
+  print("i8x16 neg" + bytes_i8x16(-a));
+  print("i8x16 abs" + bytes_i8x16(__i8x16_abs(a)));
+  print("i8x16 add_sat" + bytes_i8x16(__i8x16_add_sat(a, b)));
+  print("i8x16 sub_sat" + bytes_i8x16(__i8x16_sub_sat(a, b)));
+  print("i8x16 min" + bytes_i8x16(__i8x16_min(a, b)));
+  print("i8x16 max" + bytes_i8x16(__i8x16_max(a, b)));
+  print("i8x16 masks " + __i8x16_bitmask(a).to_string() + " " + __i8x16_bitmask(__i8x16_lt(a, b)).to_string() + " " + __i8x16_bitmask(__i8x16_eq(a, b)).to_string() + " " + __i8x16_bitmask(__i8x16_ne(a, b)).to_string());
+  print("i8x16 bits" + bytes_i8x16(__i8x16_xor(__i8x16_and(a, b), __i8x16_or(a, b))));
+  print("i8x16 select" + bytes_i8x16(through_i8x16(a, b)));
+  print("i8x16 shl" + bytes_i8x16(__i8x16_shl(a, 3)));
+  print("i8x16 shr" + bytes_i8x16(__i8x16_shr(a, 2)));
+  print("i8x16 shr count" + bytes_i8x16(__i8x16_shr(a, 10)));
+  let s = __i8x16_splat(127);
+  print("i8x16 lane " + __i8x16_lane(a, 0).to_string() + " " + __i8x16_lane(a, 15).to_string() + " " + __i8x16_lane(s, 15).to_string() + " " + __i8x16_lane(a + s, 1).to_string());
+  let xs = ramp();
+  print("i8x16 load" + bytes_i8x16(__i8x16_load(xs, 3) + a));
+  print("i8x16 with" + text(__i8x16_with(xs, 4, a)));
+}
+
+function bytes_u16x8(v: u16x8): string {
+  return text(__u16x8_with(zeros(), 0, v));
+}
+
+function through_u16x8(a: u16x8, b: u16x8): u16x8 {
+  return __u16x8_select(a, b, __u16x8_lt(a, b));
+}
+
+function run_u16x8(): void {
+  let a = __u16x8_of(1, 2, 3, 65530, 65535, 0, 7, 100);
+  let b = __u16x8_of(5, 5, 5, 10, 1, 1, 65535, 65535);
+  print("u16x8 add" + bytes_u16x8(a + b));
+  print("u16x8 sub" + bytes_u16x8(a - b));
+  print("u16x8 mul" + bytes_u16x8(a * b));
+  print("u16x8 add_sat" + bytes_u16x8(__u16x8_add_sat(a, b)));
+  print("u16x8 sub_sat" + bytes_u16x8(__u16x8_sub_sat(a, b)));
+  print("u16x8 avg" + bytes_u16x8(__u16x8_avg(a, b)));
+  print("u16x8 min" + bytes_u16x8(__u16x8_min(a, b)));
+  print("u16x8 max" + bytes_u16x8(__u16x8_max(a, b)));
+  print("u16x8 masks " + __u16x8_bitmask(a).to_string() + " " + __u16x8_bitmask(__u16x8_lt(a, b)).to_string() + " " + __u16x8_bitmask(__u16x8_eq(a, b)).to_string() + " " + __u16x8_bitmask(__u16x8_ne(a, b)).to_string());
+  print("u16x8 bits" + bytes_u16x8(__u16x8_xor(__u16x8_and(a, b), __u16x8_or(a, b))));
+  print("u16x8 select" + bytes_u16x8(through_u16x8(a, b)));
+  print("u16x8 shl" + bytes_u16x8(__u16x8_shl(a, 3)));
+  print("u16x8 shr" + bytes_u16x8(__u16x8_shr(a, 2)));
+  print("u16x8 shr count" + bytes_u16x8(__u16x8_shr(a, 18)));
+  let s = __u16x8_splat(65535);
+  print("u16x8 lane " + __u16x8_lane(a, 0).to_string() + " " + __u16x8_lane(a, 7).to_string() + " " + __u16x8_lane(s, 7).to_string() + " " + __u16x8_lane(a + s, 1).to_string());
+  let xs = ramp();
+  print("u16x8 load" + bytes_u16x8(__u16x8_load(xs, 3) + a));
+  print("u16x8 with" + text(__u16x8_with(xs, 4, a)));
+}
+
+function bytes_i16x8(v: i16x8): string {
+  return text(__i16x8_with(zeros(), 0, v));
+}
+
+function through_i16x8(a: i16x8, b: i16x8): i16x8 {
+  return __i16x8_select(a, b, __i16x8_lt(a, b));
+}
+
+function run_i16x8(): void {
+  let a = __i16x8_of(1, -2, 3, -4, 32767, -32768, 7, -100);
+  let b = __i16x8_of(5, 5, -5, -5, 1, -1, 32767, 32767);
+  print("i16x8 add" + bytes_i16x8(a + b));
+  print("i16x8 sub" + bytes_i16x8(a - b));
+  print("i16x8 mul" + bytes_i16x8(a * b));
+  print("i16x8 neg" + bytes_i16x8(-a));
+  print("i16x8 abs" + bytes_i16x8(__i16x8_abs(a)));
+  print("i16x8 add_sat" + bytes_i16x8(__i16x8_add_sat(a, b)));
+  print("i16x8 sub_sat" + bytes_i16x8(__i16x8_sub_sat(a, b)));
+  print("i16x8 min" + bytes_i16x8(__i16x8_min(a, b)));
+  print("i16x8 max" + bytes_i16x8(__i16x8_max(a, b)));
+  print("i16x8 masks " + __i16x8_bitmask(a).to_string() + " " + __i16x8_bitmask(__i16x8_lt(a, b)).to_string() + " " + __i16x8_bitmask(__i16x8_eq(a, b)).to_string() + " " + __i16x8_bitmask(__i16x8_ne(a, b)).to_string());
+  print("i16x8 bits" + bytes_i16x8(__i16x8_xor(__i16x8_and(a, b), __i16x8_or(a, b))));
+  print("i16x8 select" + bytes_i16x8(through_i16x8(a, b)));
+  print("i16x8 shl" + bytes_i16x8(__i16x8_shl(a, 3)));
+  print("i16x8 shr" + bytes_i16x8(__i16x8_shr(a, 2)));
+  print("i16x8 shr count" + bytes_i16x8(__i16x8_shr(a, 18)));
+  let s = __i16x8_splat(32767);
+  print("i16x8 lane " + __i16x8_lane(a, 0).to_string() + " " + __i16x8_lane(a, 7).to_string() + " " + __i16x8_lane(s, 7).to_string() + " " + __i16x8_lane(a + s, 1).to_string());
+  let xs = ramp();
+  print("i16x8 load" + bytes_i16x8(__i16x8_load(xs, 3) + a));
+  print("i16x8 with" + text(__i16x8_with(xs, 4, a)));
+}
+
+function bytes_u32x4(v: u32x4): string {
+  return text(__u32x4_with(zeros(), 0, v));
+}
+
+function through_u32x4(a: u32x4, b: u32x4): u32x4 {
+  return __u32x4_select(a, b, __u32x4_lt(a, b));
+}
+
+function run_u32x4(): void {
+  let a = __u32x4_of(1 as u32, 2 as u32, 3 as u32, 4294967290 as u32);
+  let b = __u32x4_of(5 as u32, 5 as u32, 5 as u32, 10 as u32);
+  print("u32x4 add" + bytes_u32x4(a + b));
+  print("u32x4 sub" + bytes_u32x4(a - b));
+  print("u32x4 mul" + bytes_u32x4(a * b));
+  print("u32x4 min" + bytes_u32x4(__u32x4_min(a, b)));
+  print("u32x4 max" + bytes_u32x4(__u32x4_max(a, b)));
+  print("u32x4 masks " + __u32x4_bitmask(a).to_string() + " " + __u32x4_bitmask(__u32x4_lt(a, b)).to_string() + " " + __u32x4_bitmask(__u32x4_eq(a, b)).to_string() + " " + __u32x4_bitmask(__u32x4_ne(a, b)).to_string());
+  print("u32x4 bits" + bytes_u32x4(__u32x4_xor(__u32x4_and(a, b), __u32x4_or(a, b))));
+  print("u32x4 select" + bytes_u32x4(through_u32x4(a, b)));
+  print("u32x4 shl" + bytes_u32x4(__u32x4_shl(a, 3)));
+  print("u32x4 shr" + bytes_u32x4(__u32x4_shr(a, 2)));
+  print("u32x4 shr count" + bytes_u32x4(__u32x4_shr(a, 34)));
+  let s = __u32x4_splat(4294967295 as u32);
+  print("u32x4 lane " + __u32x4_lane(a, 0).to_string() + " " + __u32x4_lane(a, 3).to_string() + " " + __u32x4_lane(s, 3).to_string() + " " + __u32x4_lane(a + s, 1).to_string());
+  let xs = ramp();
+  print("u32x4 load" + bytes_u32x4(__u32x4_load(xs, 3) + a));
+  print("u32x4 with" + text(__u32x4_with(xs, 4, a)));
+}
+
+function bytes_i32x4(v: i32x4): string {
+  return text(__i32x4_with(zeros(), 0, v));
+}
+
+function through_i32x4(a: i32x4, b: i32x4): i32x4 {
+  return __i32x4_select(a, b, __i32x4_lt(a, b));
+}
+
+function run_i32x4(): void {
+  let a = __i32x4_of(1, -2, 3, -4);
+  let b = __i32x4_of(5, 5, -5, -5);
+  print("i32x4 add" + bytes_i32x4(a + b));
+  print("i32x4 sub" + bytes_i32x4(a - b));
+  print("i32x4 mul" + bytes_i32x4(a * b));
+  print("i32x4 neg" + bytes_i32x4(-a));
+  print("i32x4 abs" + bytes_i32x4(__i32x4_abs(a)));
+  print("i32x4 min" + bytes_i32x4(__i32x4_min(a, b)));
+  print("i32x4 max" + bytes_i32x4(__i32x4_max(a, b)));
+  print("i32x4 masks " + __i32x4_bitmask(a).to_string() + " " + __i32x4_bitmask(__i32x4_lt(a, b)).to_string() + " " + __i32x4_bitmask(__i32x4_eq(a, b)).to_string() + " " + __i32x4_bitmask(__i32x4_ne(a, b)).to_string());
+  print("i32x4 bits" + bytes_i32x4(__i32x4_xor(__i32x4_and(a, b), __i32x4_or(a, b))));
+  print("i32x4 select" + bytes_i32x4(through_i32x4(a, b)));
+  print("i32x4 shl" + bytes_i32x4(__i32x4_shl(a, 3)));
+  print("i32x4 shr" + bytes_i32x4(__i32x4_shr(a, 2)));
+  print("i32x4 shr count" + bytes_i32x4(__i32x4_shr(a, 34)));
+  let s = __i32x4_splat(2147483647);
+  print("i32x4 lane " + __i32x4_lane(a, 0).to_string() + " " + __i32x4_lane(a, 3).to_string() + " " + __i32x4_lane(s, 3).to_string() + " " + __i32x4_lane(a + s, 1).to_string());
+  let xs = ramp();
+  print("i32x4 load" + bytes_i32x4(__i32x4_load(xs, 3) + a));
+  print("i32x4 with" + text(__i32x4_with(xs, 4, a)));
+}
+
+function main(): i32 {
+  run_u8x16();
+  run_i8x16();
+  run_u16x8();
+  run_i16x8();
+  run_u32x4();
+  run_i32x4();
+  return 0;
+}

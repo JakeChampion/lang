@@ -1,17 +1,28 @@
-// The options, the names and the gzip framing of the pigz port.
+// The options, the names, the formats, the decoders and the deflate of the
+// pigz port. The expected deflate data comes from zlib 1.3 and pigz 2.8.
 import "std/test";
 import "std/hex" as hex;
 import "std/array";
+import "std/hash/crc32";
+import "std/deflate" as deflate;
 import "./gz";
+import "./zdeflate" as zd;
+import "./layout";
 
-function options(args: string[]): string {
-  match (gz.parse(args)) {
+// The options that a parse sets, in a short form.
+// One branch for each option that the tests read.
+// fern-lint: allow cyclomatic-complexity
+function describe(p: gz.Parsed): string {
+  match (p) {
     gz.Run(o) => {
       let flags = "";
-      if (o.decompress) {
+      if (o.decode == 1) {
         flags += "d";
       }
-      if (o.stdout) {
+      if (o.decode == 2) {
+        flags += "t";
+      }
+      if (o.pipeout) {
         flags += "c";
       }
       if (o.force) {
@@ -20,113 +31,211 @@ function options(args: string[]): string {
       if (o.keep) {
         flags += "k";
       }
-      if (o.test) {
-        flags += "t";
+      if (o.list) {
+        flags += "l";
       }
-      return flags + " " + o.level.to_string() + " p" + o.processes.to_string() + " [" + o.files.join(",") + "]";
+      if (o.recurse) {
+        flags += "r";
+      }
+      if (o.rsync) {
+        flags += "R";
+      }
+      if (!o.setdict) {
+        flags += "i";
+      }
+      if (o.sync) {
+        flags += "Y";
+      }
+      let comment = match (o.comment) {
+        Some(c) => " C=" + c,
+        None => "",
+      };
+      return flags + " " + o.level.to_string() + " s" + o.strategy.to_string() + " b" + (o.block / 1024).to_string() + " p" + o.procs.to_string() + " v" + o.verbosity.to_string() + " h" + o.headis.to_string() + " f" + o.form.to_string() + " " + o.sufx + comment + " [" + o.files.join(",") + "]";
     },
-    gz.Abort(why) => {
-      return "abort: " + why;
+    gz.Abort(why, verbosity) => {
+      return "abort(" + verbosity.to_string() + "): " + why;
+    },
+    gz.Stop(out, err) => {
+      return "stop " + out.len().to_string() + " " + err.len().to_string();
     }
   }
   return "";
 }
 
+function parsed(args: string[]): string {
+  return describe(gz.parse_args(gz.defaults(), args));
+}
+
 function test_parse(): test.TestOutcome {
   let got = [
-    options([]),
-    options(["-dc", "a.gz"]),
-    options(["a", "-9k", "b"]),
-    options(["--decompress", "--stdout", "--force", "--keep", "--test", "x"]),
-    options(["--fast", "--best", "-3"]),
-    options(["-", "--", "-c"]),
+    parsed([]),
+    parsed(["-dc", "a.gz"]),
+    parsed(["a", "-9k", "b"]),
+    parsed(["--decompress", "--stdout", "--force", "--keep", "--test", "x"]),
+    parsed(["--fast", "--best", "-3", "-0"]),
+    parsed(["-", "--", "-c", "-"]),
+    parsed(["-11", "-HUz"]),
+    parsed(["-K", "-l", "-r", "-R", "-i", "-Y", "-vv", "-q", "-v"]),
+    parsed(["-n", "-N", "-m", "-M", "-T"]),
+    parsed(["-S", ".x", "-C", "note", "-b", "64", "-p4"]),
+    parsed(["-td"]),
+    parsed(["-Nd"]),
   ];
   return test.assert_eq_array(got, [
-    " 6 p0 []",
-    "dc 6 p0 [a.gz]",
-    "k 9 p0 [a,b]",
-    "dcfkt 6 p0 [x]",
-    " 3 p0 []",
-    " 6 p0 [-,-c]",
+    " 6 s0 b128 p0 v1 h3 f0 .gz []",
+    "dc 6 s0 b128 p0 v1 h0 f0 .gz [a.gz]",
+    "k 9 s0 b128 p0 v1 h3 f0 .gz [a,b]",
+    "tcfk 6 s0 b128 p0 v1 h0 f0 .gz [x]",
+    " 0 s0 b128 p0 v1 h3 f0 .gz []",
+    " 6 s0 b128 p0 v1 h3 f0 .gz [,-c,-]",
+    " 11 s3 b128 p0 v1 h3 f1 .zz []",
+    "lrRiY 6 s0 b128 p0 v1 h3 f2 .zip []",
+    " 6 s0 b128 p0 v1 h5 f0 .gz []",
+    " 6 s0 b64 p4 v1 h3 f0 .x C=note []",
+    "d 6 s0 b128 p0 v1 h3 f0 .gz []",
+    "d 6 s0 b128 p0 v1 h3 f0 .gz []",
   ]);
 }
 
-function test_parse_processes(): test.TestOutcome {
-  let got = [options(["-p", "4", "a"]), options(["-p2"]), options(["-kp", "3", "a"]), options(["--processes", "8"])];
-  return test.assert_eq_array(got, [" 6 p4 [a]", " 6 p2 []", "k 6 p3 [a]", " 6 p8 []"]);
+function test_parse_refusals(): test.TestOutcome {
+  let got = [
+    parsed(["-x"]),
+    parsed(["-dx"]),
+    parsed(["--bogus"]),
+    parsed(["-10"]),
+    parsed(["-12"]),
+    parsed(["-p", "0"]),
+    parsed(["-p", "x"]),
+    parsed(["-c", "-p"]),
+    parsed(["-p", "-k"]),
+    parsed(["--processes=2"]),
+    parsed(["-p", "2147483648"]),
+    parsed(["-p", "4294967297"]),
+    parsed(["-b", "31"]),
+    parsed(["-b", "524289"]),
+    parsed(["-Sx"]),
+    parsed(["-Cx"]),
+    parsed(["-S", ""]),
+    parsed(["-Z"]),
+    parsed(["-a"]),
+    parsed(["-q", "-x"]),
+    parsed(["-V"]),
+    parsed(["-vV"]),
+    parsed(["-L"]),
+    parsed(["-h"]),
+    parsed(["-qh", "a"]),
+  ];
+  return test.assert_eq_array(got, [
+    "abort(1): invalid option: -x",
+    "abort(1): invalid option: -x",
+    "abort(1): invalid option: --bogus",
+    "abort(1): only levels 0..9 and 11 are allowed",
+    "abort(1): only levels 0..9 and 11 are allowed",
+    "abort(1): invalid number of processes: 0",
+    "abort(1): invalid numeric parameter: x",
+    "abort(1): missing parameter after -p",
+    "abort(1): missing parameter after -p",
+    "abort(1): invalid option: --processes=2",
+    "abort(1): invalid number of processes: 2147483648",
+    "abort(1): too many processes: 4294967297",
+    "abort(1): block size too small (must be >= 32K)",
+    "abort(1): block size too large: 524289",
+    "abort(1): invalid usage: -S must be followed by space",
+    "abort(1): invalid usage: -C must be followed by space",
+    "abort(1): suffix cannot be empty",
+    "abort(1): invalid option: LZW output not supported: -Z",
+    "abort(1): invalid option: no ascii conversion: -a",
+    "abort(0): invalid option: -x",
+    "stop 9 0",
+    "stop 18 0",
+    "stop 122 0",
+    "stop 0 2614",
+    " 6 s0 b128 p0 v0 h3 f0 .gz [a]",
+  ]);
 }
 
-function test_parse_refusals(): test.TestOutcome {
-  let got = [options(["-x"]), options(["-dx"]), options(["--bogus"]), options(["-0"]), options(["-10"]), options(["-11"]), options(["-p", "0"]), options(["-p", "x"]), options(["-c", "-p"]), options(["--processes=2"])];
+function test_environment(): test.TestOutcome {
+  let got = [
+    describe(gz.parse_env(gz.defaults(), "GZIP", "-9 -n")),
+    describe(gz.parse_env(gz.defaults(), "GZIP", "  -k\t-c")),
+    describe(gz.parse_env(gz.defaults(), "GZIP", "a")),
+    describe(gz.parse_env(gz.defaults(), "PIGZ", "-k  ")),
+    describe(gz.parse_env(gz.defaults(), "PIGZ", "-p")),
+    describe(gz.parse_env(gz.defaults(), "PIGZ", "-p 2")),
+    describe(gz.Run(gz.by_name(gz.defaults(), "unpigz"))),
+    describe(gz.Run(gz.by_name(gz.defaults(), "zcat"))),
+  ];
   return test.assert_eq_array(got, [
-    "abort: invalid option: -x",
-    "abort: invalid option: -x",
-    "abort: invalid option: --bogus",
-    "abort: only levels 1..9 are allowed",
-    "abort: only levels 1..9 are allowed",
-    "abort: only levels 1..9 are allowed",
-    "abort: invalid number of processes: 0",
-    "abort: invalid numeric parameter: x",
-    "abort: missing parameter after -p",
-    "abort: invalid option: --processes=2",
+    " 9 s0 b128 p0 v1 h0 f0 .gz []",
+    "ck 6 s0 b128 p0 v1 h3 f0 .gz []",
+    "abort(1): cannot provide files in GZIP environment variable",
+    "abort(1): cannot provide files in PIGZ environment variable",
+    "abort(1): missing parameter after -p",
+    " 6 s0 b128 p2 v1 h3 f0 .gz []",
+    "d 6 s0 b128 p0 v1 h0 f0 .gz []",
+    "dc 6 s0 b128 p0 v1 h0 f0 .gz []",
   ]);
 }
 
 function test_names(): test.TestOutcome {
   let got = [
-    gz.compressed_name("a"),
-    gz.decompressed_name("a.gz").unwrap_or("none"),
-    gz.decompressed_name("x.tgz").unwrap_or("none"),
-    gz.decompressed_name("a").unwrap_or("none"),
-    gz.decompressed_name(".gz").unwrap_or("none"),
-    gz.base_name("dir/sub/file"),
-    gz.base_name("file"),
+    gz.compressed_suffix("a.gz").to_string(),
+    gz.compressed_suffix("a.ZIP").to_string(),
+    gz.compressed_suffix("a_z").to_string(),
+    gz.compressed_suffix(".gz").to_string(),
+    gz.compressed_suffix("a.gzx").to_string(),
+    gz.decompressed_name("dir/a.gz", None, false),
+    gz.decompressed_name("x.tgz", None, false),
+    gz.decompressed_name("dir/a.gz", Some("up/name"), true),
+    gz.decompressed_name("dir/a.gz", Some("name"), false),
+    gz.justname("dir/sub/file"),
+    gz.justname("file"),
   ];
-  return test.assert_eq_array(got, ["a.gz", "a", "x.tar", "none", "none", "file", "file"]);
+  return test.assert_eq_array(got, ["3", "4", "2", "0", "0", "dir/a", "x.tar", "dir/name", "dir/a", "file", "file"]);
 }
 
-function test_header(): test.TestOutcome {
-  let named = gz.compress("hi\n".bytes(), 9, "a", 1700000000u32, 1);
-  let plain = gz.compress("hi\n".bytes(), 1, "", 0u32, 1);
-  return test.assert_eq(hex.encode(named[0:12]) + " " + hex.encode(plain[0:10]), "1f8b080800f1536502036100 1f8b0800000000000403");
+function test_headers(): test.TestOutcome {
+  let gzip = gz.gzip_header(Some("h.txt"), 1614834367i64, 6, Some("note"));
+  let zip = gz.zip_header("h.txt", 1614834367i64, 1382295748i64);
+  let zlibs = gz.zlib_header(1).concat(gz.zlib_header(3)).concat(gz.zlib_header(6)).concat(gz.zlib_header(9)).concat(gz.zlib_header(11));
+  return test.assert_eq_array([hex.encode(gzip), hex.encode(zip), hex.encode(zlibs), hex.encode(gz.zlib_trailer(3735928559u32))], [
+    "1f8b0818bf6a40600003682e747874006e6f746500",
+    "504b03042d0008000800c428645200000000ffffffffffffffff05001d00682e74787401001000000000000000000000000000000000005554050001bf6a4060",
+    "7801789c785e78da78da",
+    "deadbeef",
+  ]);
 }
 
-function round(data: u8[]): string {
-  match (gz.decompress(data)) {
-    Ok(out) => {
-      return "ok " + hex.encode(out);
-    },
-    Err(why) => {
-      return "error" + why;
+function test_zip_trailer(): test.TestOutcome {
+  let tail = gz.zip_trailer("h.txt", 1614834367i64, 1382295748i64, None, 190416896u32, 24i64, 11i64, 64i64);
+  return test.assert_eq(hex.encode(tail), "504b07080088590b0b000000000000001800000000000000504b01022dff2d0008000800c42864520088590b0b00000018000000050009000000000000000000000000000000682e7478745554050001bf6a4060504b050600000000010001003c000000630000000000");
+}
+
+function small(): u8[] {
+  let out: u8[] = [];
+  for i in 0..20 {
+    out = out.concat("the quick brown fox jumps over the lazy dog\n".bytes());
+  }
+  for k in 0..4 {
+    for b in 0..256 {
+      out = out.append(b as u8);
     }
   }
-  return "";
+  return out;
 }
 
-function test_members(): test.TestOutcome {
-  let one = gz.compress("hi\n".bytes(), 6, "a", 0u32, 1);
-  let two = one.concat(gz.compress("yo\n".bytes(), 1, "", 0u32, 1));
-  let garbage = one.concat("garbage\n".bytes());
-  let none: u8[] = [];
-  return test.assert_eq_array([round(one), round(two), round(garbage), round(none)], ["ok 68690a", "ok 68690a796f0a", "ok 68690a", "error unrecognized format"]);
+// One deflate stream over all of `data` with a single call, as zlib.
+function one_call(data: u8[], level: i32, strategy: i32): string {
+  let z = zd.input(zd.start(zd.new(), level, strategy), data, 0, data.len());
+  z = zd.deflate(zd.Z { ...z, avail: 1000000 }, zd.FINISH);
+  let (_, out) = zd.take(z);
+  return out.len().to_string() + " " + crc32.of(out).to_string();
 }
 
-function test_refusals(): test.TestOutcome {
-  let good = gz.compress("the quick brown fox jumps over the lazy dog\n".repeat(20).bytes(), 6, "", 0u32, 1);
-  let n = good.len();
-  let crc = good.with(n - 8, good[n - 8] ^ 1 as u8);
-  let length = good.with(n - 4, good[n - 4] ^ 1 as u8);
-  let short = array.slice(good, 0, n - 12);
-  let header = array.slice(good, 0, 10);
-  let magic = [31 as u8, 139 as u8].concat("junkjunk".bytes());
-  return test.assert_eq_array([round(crc), round(length), round(short), round(header), round(magic), round("hello".bytes())], [
-    "error: corrupted -- crc32 mismatch",
-    "error: corrupted -- length mismatch",
-    "error: corrupted -- incomplete deflate data",
-    "error unrecognized format",
-    "error unrecognized format",
-    "error unrecognized format",
-  ]);
+function test_zlib(): test.TestOutcome {
+  let data = small();
+  let got = [one_call(data, 0, 0), one_call(data, 1, 0), one_call(data, 4, 0), one_call(data, 6, 0), one_call(data, 9, 0), one_call(data, 6, 2), one_call(data, 6, 3)];
+  return test.assert_eq_array(got, ["1909 1749224895", "335 2570042756", "333 1343962562", "332 1443887543", "332 1443887543", "1735 2049622567", "1735 2049622567"]);
 }
 
 // More than three blocks of lines that repeat across the block boundaries.
@@ -140,26 +249,140 @@ function large(): u8[] {
   return out;
 }
 
-function test_parallel(): test.TestOutcome {
-  let input = large();
-  let one = gz.compress(input, 6, "", 0u32, 1);
-  let two = gz.compress(input, 6, "", 0u32, 2);
-  let four = gz.compress(input, 6, "", 0u32, 4);
-  let fast = gz.compress(input, 1, "", 0u32, 3);
-  let same = hex.encode(two) == hex.encode(four);
-  let back = round(two) == round(one) && round(fast) == round(one) && round(one).starts_with("ok ");
-  return test.assert_eq(same.to_string() + " " + back.to_string(), "true true");
+function settings(level: i32, strategy: i32, block: i32, rsync: boolean, setdict: boolean): layout.Settings {
+  return layout.Settings { level: level, strategy: strategy, block: block * 1024, rsync: rsync, setdict: setdict };
+}
+
+function summary(out: u8[]): string {
+  return out.len().to_string() + " " + crc32.of(out).to_string();
+}
+
+function test_layout(): test.TestOutcome {
+  let data = large();
+  let s6 = settings(6, 0, 128, false, true);
+  let rs = settings(6, 0, 128, true, true);
+  let ind = settings(6, 0, 128, false, false);
+  let fast = settings(1, 0, 128, false, true);
+  let b32 = settings(6, 0, 32, false, true);
+  let stored = settings(0, 0, 128, false, true);
+  let got = [
+    summary(layout.single(s6, data)),
+    summary(layout.parallel(s6, data, layout.jobs(s6, data), 3)),
+    summary(layout.parallel(fast, data, layout.jobs(fast, data), 2)),
+    summary(layout.single(rs, data)),
+    summary(layout.parallel(rs, data, layout.jobs(rs, data), 2)),
+    summary(layout.parallel(ind, data, layout.jobs(ind, data), 2)),
+    summary(layout.parallel(b32, data, layout.jobs(b32, data), 4)),
+    summary(layout.single(stored, data)),
+    summary(layout.parallel(stored, data, layout.jobs(stored, data), 2)),
+  ];
+  return test.assert_eq_array(got, [
+    "35426 323538",
+    "35426 323538",
+    "41741 3336764667",
+    "35426 323538",
+    "35426 323538",
+    "36137 2740998044",
+    "35531 4248590209",
+    "400065 617892518",
+    "400065 2281709652",
+  ]);
+}
+
+function decode(data: u8[]): string {
+  let h = gz.get_header(data, 0, true, 0, 0i64);
+  if (h.method < 0) {
+    return "refused " + gz.header_refusal(h.method, "f");
+  }
+  let d = if (h.method == 257) { gz.unlzw(data, h.next, "f") } else { gz.infchk(data, h, "f", gz.defaults(), 0i64) };
+  if (d.error.len() > 0) {
+    return "skipping: " + d.error;
+  }
+  return "ok " + h.form.to_string() + " " + d.members.len().to_string() + " " + hex.encode(d.out) + (if (d.warning.len() > 0) { " " + d.warning } else { "" });
+}
+
+function bytes_of(text: string): u8[] {
+  return hex.decode(text).unwrap_or([]);
+}
+
+function test_decode(): test.TestOutcome {
+  let gzip = bytes_of("1f8b0818bf6a40600003682e747874006e6f746500cb48cdc9c957c84027b9000088590b18000000");
+  let zlib = bytes_of("785ecb48cdc9c957c84027b90070be08bb");
+  let lzw = bytes_of("1f9d9068cab061f30644c081050f12342890a002");
+  let n = gzip.len();
+  let crc = gzip.with(n - 8, gzip[n - 8] ^ 1 as u8);
+  let length = gzip.with(n - 4, gzip[n - 4] ^ 1 as u8);
+  let adler = zlib.with(zlib.len() - 1, zlib[zlib.len() - 1] ^ 1 as u8);
+  let none: u8[] = [];
+  let got = [
+    decode(gzip),
+    decode(gzip.concat(gzip)),
+    decode(zlib),
+    decode(zlib.concat("x".bytes())),
+    decode(lzw),
+    decode(crc),
+    decode(length),
+    decode(adler),
+    decode(array.slice(gzip, 0, n - 4)),
+    decode(array.slice(gzip, 0, 30)),
+    decode(none),
+    decode("hello".bytes()),
+    decode(array.slice(gzip, 0, 15)),
+    decode(lzw.with(2, 112 as u8)),
+  ];
+  let text = "68656c6c6f2068656c6c6f2068656c6c6f2068656c6c6f0a";
+  return test.assert_eq_array(got, [
+    "ok 0 1 " + text,
+    "ok 0 2 " + text + text,
+    "ok 1 1 " + text,
+    "ok 1 1 " + text + " warning: f: trailing junk was ignored",
+    "ok -1 1 " + text,
+    "skipping: f: corrupted -- crc32 mismatch",
+    "skipping: f: corrupted -- length mismatch",
+    "skipping: f: corrupted -- adler32 mismatch",
+    "skipping: f: corrupted -- missing trailer",
+    "skipping: f: corrupted -- incomplete deflate data",
+    "refused f empty",
+    "refused f unrecognized format",
+    "refused f unrecognized format",
+    "skipping: f: unknown lzw flags set",
+  ]);
+}
+
+function test_list(): test.TestOutcome {
+  let o = gz.defaults();
+  let v = gz.Options { ...o, verbosity: 2 };
+  let first = gz.Listing { first: true, text: "" };
+  let a = gz.show_info(first, o, "dir/archive.tgz", None, 0i64, 0i64, 0, 8, 190416896u32, 43i64, 24i64, false, None);
+  let b = gz.show_info(first, v, "f.gz", Some("a-rather-long-name.txt"), 0i64, 0i64, 1, 8, 190416896u32, 1000i64, 0i64, false, Some("note"));
+  let c = gz.show_total(gz.Listing { first: false, text: "" }, o, 0u32, 10i64, 0i64);
+  return test.assert_eq_array([a.text, b.text, c.text], [
+    "compressed   original reduced  name\n        43         24?  unk    dir/archive.tar\n",
+    "method    check    timestamp    compressed   original reduced  name\nzlib 8  0b598800  ------ -----        1000          0?  unk    a-rather-long...\nnote\n",
+    "        10          0   -inf%  (total)\n",
+  ]);
+}
+
+function test_combine(): test.TestOutcome {
+  let a = "abc".repeat(100).bytes();
+  let b = "xyz".repeat(77).bytes();
+  let crc = gz.crc_combine(crc32.of(a), crc32.of(b), b.len() as i64, false);
+  let adler = gz.crc_combine(deflate.adler32(a), deflate.adler32(b), b.len() as i64, true);
+  return test.assert_eq_array([crc.to_string(), adler.to_string()], ["373007178", "2881871880"]);
 }
 
 function main(): i32 {
   let r = test.new("pigz");
   r = r.it("options and file names in any order", test_parse);
-  r = r.it("the count of processes", test_parse_processes);
-  r = r.it("an invalid option, level or count aborts", test_parse_refusals);
-  r = r.it("the blocks of the workers join into one stream", test_parallel);
+  r = r.it("each invalid option aborts with the message of pigz", test_parse_refusals);
+  r = r.it("the options of GZIP, PIGZ and the program name", test_environment);
   r = r.it("the names of the output files", test_names);
-  r = r.it("the header keeps the name, the time and the level", test_header);
-  r = r.it("each member decodes, and bytes after the last are ignored", test_members);
-  r = r.it("each corrupt stream gets the message of pigz", test_refusals);
+  r = r.it("the gzip, zip and zlib headers", test_headers);
+  r = r.it("the zip data descriptor and central directory", test_zip_trailer);
+  r = r.it("deflate gives the bytes of zlib 1.3 at each level", test_zlib);
+  r = r.it("the block layouts give the bytes of pigz", test_layout);
+  r = r.it("each format decodes, and corrupt data gets the message of pigz", test_decode);
+  r = r.it("the lines of a listing", test_list);
+  r = r.it("the checks of two runs combine", test_combine);
   return r.finish();
 }

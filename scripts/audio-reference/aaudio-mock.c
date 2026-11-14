@@ -51,6 +51,7 @@ void AAudioStreamBuilder_setPerformanceMode(void) { abort(); }
 void AAudioStreamBuilder_setUsage(void) { abort(); }
 void AAudioStreamBuilder_setContentType(void) { abort(); }
 void AAudioStreamBuilder_setInputPreset(void) { abort(); }
+void AAudioStreamBuilder_setDataCallback(void) { abort(); }
 void AAudioStreamBuilder_openStream(void) { abort(); }
 void AAudioStreamBuilder_delete(void) { abort(); }
 void AAudioStream_requestStart(void) { abort(); }
@@ -61,3 +62,4 @@ void AAudioStream_write(void) { abort(); }
 void AAudioStream_getSampleRate(void) { abort(); }
 void AAudioStream_getBufferCapacityInFrames(void) { abort(); }
 void AAudioStream_setBufferSizeInFrames(void) { abort(); }
+void AAudioStream_getBufferSizeInFrames(void) { abort(); }

@@ -42,8 +42,8 @@ pub function reread_before_spends(f: ssasem.Func, facts: ssadeps.Facts): Late {
 }
 
 function graph_of(g: ssa.SFunc, facts: ssadeps.Facts): Graph {
-  let defs = minus_ones(g.nvals);
-  let def_block = minus_ones(g.nvals);
+  let defs = util.minus_ones(g.nvals);
+  let def_block = util.minus_ones(g.nvals);
   let joined = __alloc_bool(g.nvals);
   for bi in 0..g.blocks.len() {
     let b = g.blocks[bi];
@@ -197,7 +197,7 @@ function term_reads(t: ssa.STerm, v: i32): boolean {
 // uses its call dominates.
 function applied(f: ssasem.Func, gr: Graph, cands: Cand[]): ssasem.Func {
   let values = f.values;
-  let fresh = minus_ones(f.graph.nvals);
+  let fresh = util.minus_ones(f.graph.nvals);
   let blocks = f.graph.blocks;
   for c in cands {
     let pre: ssa.SInst[] = [];
@@ -331,14 +331,6 @@ function without(cands: Cand[], i: i32): Cand[] {
     if (j != i) {
       out = out.append(cands[j]);
     }
-  }
-  return out;
-}
-
-function minus_ones(n: i32): i32[] {
-  let out = __alloc_i32(n);
-  for i in 0..n {
-    out = out.with(i, -1);
   }
   return out;
 }

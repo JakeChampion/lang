@@ -1,0 +1,1610 @@
+// Deflate as zlib 1.3 writes it, for the settings that pigz gives zlib: raw
+// deflate, a 32 KiB window, memLevel 8, each level from 0 to 9, and the
+// strategies of deflateParams. The output of pigz is the output of zlib, so
+// this port writes the same bytes as pigz.
+//
+// A stream is a Z. The caller sets the input with `input` and the room of
+// its output buffer in `avail`. Then it calls `deflate` with a flush mode,
+// as a caller of zlib does. Each byte that zlib writes is in `out` in
+// order, so the room only changes where zlib starts and stops a block.
+
+const WSIZE: i32 = 32768;
+
+const WMASK: i32 = 32767;
+
+const WINDOW_SIZE: i32 = 65536;
+
+const HASH_SIZE: i32 = 32768;
+
+const HASH_MASK: i32 = 32767;
+
+const MIN_MATCH: i32 = 3;
+
+const MAX_MATCH: i32 = 258;
+
+const MIN_LOOKAHEAD: i32 = 262;
+
+const MAX_DIST: i32 = 32506;
+
+const WIN_INIT: i32 = 258;
+
+const SYM_END: i32 = 16383;
+
+const PENDING_SIZE: i32 = 65536;
+
+const MAX_STORED: i32 = 65535;
+
+const TOO_FAR: i32 = 4096;
+
+const L_CODES: i32 = 286;
+
+const D_CODES: i32 = 30;
+
+const BL_CODES: i32 = 19;
+
+const HEAP_SIZE: i32 = 573;
+
+const END_BLOCK: i32 = 256;
+
+const MAX_BITS: i32 = 15;
+
+const MAX_BL_BITS: i32 = 7;
+
+const REP_3_6: i32 = 16;
+
+const REPZ_3_10: i32 = 17;
+
+const REPZ_11_138: i32 = 18;
+
+pub const NO_FLUSH: i32 = 0;
+
+pub const SYNC_FLUSH: i32 = 2;
+
+pub const FULL_FLUSH: i32 = 3;
+
+pub const FINISH: i32 = 4;
+
+pub const BLOCK: i32 = 5;
+
+pub const DEFAULT_STRATEGY: i32 = 0;
+
+pub const FILTERED: i32 = 1;
+
+pub const HUFFMAN_ONLY: i32 = 2;
+
+pub const RLE: i32 = 3;
+
+const NEED_MORE: i32 = 0;
+
+const BLOCK_DONE: i32 = 1;
+
+const FINISH_STARTED: i32 = 2;
+
+const FINISH_DONE: i32 = 3;
+
+// Why a run of the match loop stopped.
+const RUN_FILL: i32 = 0;
+
+const RUN_FLUSH: i32 = 1;
+
+const RUN_FLUSH_LITERAL: i32 = 2;
+
+const RUN_ONE: i32 = 3;
+
+// The fixed tables of trees.c.
+struct Tables {
+  length_code: i32[],
+  dist_code: i32[],
+  base_length: i32[],
+  base_dist: i32[],
+  lbits: i32[],
+  dbits: i32[],
+  blbits: i32[],
+  bl_order: i32[],
+  static_llen: i32[],
+  static_lcode: i32[],
+  static_dlen: i32[],
+  static_dcode: i32[],
+}
+
+pub struct Z {
+  level: i32,
+  strategy: i32,
+  good: i32,
+  lazy: i32,
+  nice: i32,
+  chain: i32,
+  window: u8[],
+  head: i32[],
+  prev: i32[],
+  strstart: i32,
+  block_start: i32,
+  lookahead: i32,
+  insert: i32,
+  ins_h: i32,
+  match_length: i32,
+  match_start: i32,
+  prev_length: i32,
+  prev_match: i32,
+  match_available: boolean,
+  high_water: i32,
+  matches: i32,
+  // One symbol for each entry: the distance shifted left by 8, and the
+  // length minus 3 or the literal in the low byte.
+  syms: i32[],
+  sym_next: i32,
+  lfreq: i32[],
+  dfreq: i32[],
+  // The bits that are not yet bytes of `out`.
+  bb: u64,
+  bn: i32,
+  // Each byte of the stream. The last `out.len() - delivered` bytes are
+  // still pending in zlib terms.
+  out: u8[],
+  delivered: i32,
+  // The room of the output buffer of the caller.
+  avail: i32,
+  last_flush: i32,
+  finished: boolean,
+  data: u8[],
+  in_pos: i32,
+  in_avail: i32,
+  t: Tables,
+}
+
+function filled(n: i32, v: i32): i32[] {
+  let out = __alloc_i32(n);
+  for i in 0..n {
+    out = out.with(i, v);
+  }
+  return out;
+}
+
+// It keeps the branches of tr_static_init() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function tables(): Tables {
+  let lbits = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  let dbits = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+  let blbits = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7];
+  let bl_order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+  let length_code = filled(256, 0);
+  let base_length = filled(29, 0);
+  let length = 0;
+  for code in 0..28 {
+    base_length = base_length.with(code, length);
+    for n in 0..1 << lbits[code] {
+      length_code = length_code.with(length, code);
+      length += 1;
+    }
+  }
+  length_code = length_code.with(length - 1, 28);
+  let dist_code = filled(512, 0);
+  let base_dist = filled(30, 0);
+  let dist = 0;
+  for code in 0..16 {
+    base_dist = base_dist.with(code, dist);
+    for n in 0..1 << dbits[code] {
+      dist_code = dist_code.with(dist, code);
+      dist += 1;
+    }
+  }
+  dist >>= 7;
+  for code in 16..D_CODES {
+    base_dist = base_dist.with(code, dist << 7);
+    for n in 0..1 << dbits[code] - 7 {
+      dist_code = dist_code.with(256 + dist, code);
+      dist += 1;
+    }
+  }
+  let llen = filled(288, 8);
+  for n in 144..256 {
+    llen = llen.with(n, 9);
+  }
+  for n in 256..280 {
+    llen = llen.with(n, 7);
+  }
+  let count = filled(MAX_BITS + 1, 0);
+  for l in llen {
+    count = count.with(l, count[l] + 1);
+  }
+  let dcode = filled(D_CODES, 0);
+  for n in 0..D_CODES {
+    dcode = dcode.with(n, reverse(n, 5));
+  }
+  return Tables {
+    length_code: length_code,
+    dist_code: dist_code,
+    base_length: base_length,
+    base_dist: base_dist,
+    lbits: lbits,
+    dbits: dbits,
+    blbits: blbits,
+    bl_order: bl_order,
+    static_llen: llen,
+    static_lcode: gen_codes(llen, L_CODES + 1, count),
+    static_dlen: filled(D_CODES, 5),
+    static_dcode: dcode,
+  };
+}
+
+function reverse(code: i32, len: i32): i32 {
+  let res = 0;
+  let c = code;
+  for i in 0..len {
+    res = res << 1 | c & 1;
+    c >>= 1;
+  }
+  return res;
+}
+
+// gen_codes: the bit-reversed canonical codes of the lengths in
+// lens[0..=max_code].
+function gen_codes(lens: i32[], max_code: i32, bl_count: i32[]): i32[] {
+  let next = filled(MAX_BITS + 1, 0);
+  let code = 0;
+  for bits in 1..=MAX_BITS {
+    code = code + bl_count[bits - 1] << 1;
+    next = next.with(bits, code);
+  }
+  let codes = filled(lens.len(), 0);
+  for n in 0..=max_code {
+    let len = lens[n];
+    if (len != 0) {
+      codes = codes.with(n, reverse(next[len], len));
+      next = next.with(len, next[len] + 1);
+    }
+  }
+  return codes;
+}
+
+// A stream as deflateInit2(level 6, -15, 8, strategy) leaves it. Call
+// `start` before the first deflate.
+pub function new(): Z {
+  return Z {
+    level: 6,
+    strategy: 0,
+    good: 8,
+    lazy: 16,
+    nice: 128,
+    chain: 128,
+    window: __alloc_u8(WINDOW_SIZE),
+    head: filled(HASH_SIZE, 0),
+    prev: filled(WSIZE, 0),
+    strstart: 0,
+    block_start: 0,
+    lookahead: 0,
+    insert: 0,
+    ins_h: 0,
+    match_length: 2,
+    match_start: 0,
+    prev_length: 2,
+    prev_match: 0,
+    match_available: false,
+    high_water: 0,
+    matches: 0,
+    syms: filled(SYM_END + 1, 0),
+    sym_next: 0,
+    lfreq: filled(HEAP_SIZE, 0),
+    dfreq: filled(2 * D_CODES + 1, 0),
+    bb: 0u64,
+    bn: 0,
+    out: [],
+    delivered: 0,
+    avail: 0,
+    last_flush: -2,
+    finished: false,
+    data: [],
+    in_pos: 0,
+    in_avail: 0,
+    t: tables(),
+  };
+}
+
+// The good, lazy, nice and chain values of configuration_table.
+function config(level: i32): (i32, i32, i32, i32) {
+  return match (level) {
+    1 => (4, 4, 8, 4),
+    2 => (4, 5, 16, 8),
+    3 => (4, 6, 32, 32),
+    4 => (4, 4, 16, 16),
+    5 => (8, 16, 32, 32),
+    6 => (8, 16, 128, 128),
+    7 => (8, 32, 128, 256),
+    8 => (32, 128, 258, 1024),
+    9 => (32, 258, 258, 4096),
+    _ => (0, 0, 0, 0),
+  };
+}
+
+// deflateReset, then deflateParams(level, strategy), as pigz does before
+// each run of input.
+pub function start(own z: Z, level: i32, strategy: i32): Z {
+  let (good, lazy, nice, chain) = config(level);
+  let none: u8[] = [];
+  return Z {
+    ...clear_hash(init_block(z)),
+    level: level,
+    strategy: strategy,
+    good: good,
+    lazy: lazy,
+    nice: nice,
+    chain: chain,
+    strstart: 0,
+    block_start: 0,
+    lookahead: 0,
+    insert: 0,
+    ins_h: 0,
+    match_length: 2,
+    prev_length: 2,
+    match_available: false,
+    bb: 0u64,
+    bn: 0,
+    out: none,
+    delivered: 0,
+    last_flush: -2,
+    finished: false,
+  };
+}
+
+function clear_hash(own z: Z): Z {
+  let head = z.head;
+  for i in 0..HASH_SIZE {
+    head = head.with(i, 0);
+  }
+  return Z { ...z, head: head };
+}
+
+function init_block(own z: Z): Z {
+  let lf = z.lfreq;
+  for n in 0..L_CODES {
+    lf = lf.with(n, 0);
+  }
+  lf = lf.with(END_BLOCK, 1);
+  let df = z.dfreq;
+  for n in 0..D_CODES {
+    df = df.with(n, 0);
+  }
+  return Z { ...z, lfreq: lf, dfreq: df, sym_next: 0, matches: 0 };
+}
+
+// The next input: data[from:from + len].
+pub function input(own z: Z, data: u8[], from: i32, len: i32): Z {
+  return Z { ...z, data: data, in_pos: from, in_avail: len };
+}
+
+// The bytes of the stream so far. The stream keeps counting the pending
+// bytes, so the caller can take them before zlib delivers them.
+pub function take(own z: Z): (Z, u8[]) {
+  let out = z.out;
+  let none: u8[] = [];
+  let taken = out.len();
+  return (Z { ...z, out: none, delivered: z.delivered - taken }, out);
+}
+
+// The bits after the last whole byte, as deflatePending gives them.
+pub function pending_bits(z: Z): i32 {
+  return z.bn;
+}
+
+// deflatePrime: `bits` bits of `value` into the stream.
+pub function prime(own z: Z, bits: i32, value: i32): Z {
+  return drain(put(z, value, bits));
+}
+
+function put(own z: Z, value: i32, bits: i32): Z {
+  let bb = z.bb | value as u64 << z.bn as u64;
+  let bn = z.bn + bits;
+  if (bn < 32) {
+    return Z { ...z, bb: bb, bn: bn };
+  }
+  let out = z.out;
+  out = out.append(bb as u8).append((bb >> 8u64) as u8).append((bb >> 16u64) as u8).append((bb >> 24u64) as u8);
+  return Z { ...z, bb: bb >> 32u64, bn: bn - 32, out: out };
+}
+
+// Each whole byte of the bit buffer into `out`, as bi_flush leaves it.
+function drain(own z: Z): Z {
+  let bb = z.bb;
+  let bn = z.bn;
+  let out = z.out;
+  while (bn >= 8) {
+    out = out.append(bb as u8);
+    bb >>= 8u64;
+    bn -= 8;
+  }
+  return Z { ...z, bb: bb, bn: bn, out: out };
+}
+
+// bi_windup: the last bits as a byte.
+function windup(own z: Z): Z {
+  let d = drain(z);
+  if (d.bn == 0) {
+    return d;
+  }
+  return Z { ...d, out: d.out.append(d.bb as u8), bb: 0u64, bn: 0 };
+}
+
+function put_short(own z: Z, v: i32): Z {
+  return Z { ...z, out: z.out.append((v & 255) as u8).append((v >> 8 & 255) as u8) };
+}
+
+// flush_pending: deliver what the room of the caller allows.
+function flush_pending(own z: Z): Z {
+  let d = drain(z);
+  let pending = d.out.len() - d.delivered;
+  let len = if (pending > d.avail) { d.avail } else { pending };
+  if (len == 0) {
+    return d;
+  }
+  return Z { ...d, delivered: d.delivered + len, avail: d.avail - len };
+}
+
+function pending(z: Z): i32 {
+  return z.out.len() - z.delivered;
+}
+
+function upd(h: i32, c: u8): i32 {
+  return (h << 5 ^ c as i32) & HASH_MASK;
+}
+
+function slide_hash(own z: Z): Z {
+  let head = z.head;
+  for n in 0..HASH_SIZE {
+    let m = head[n];
+    head = head.with(n, if (m >= WSIZE) { m - WSIZE } else { 0 });
+  }
+  let prev = z.prev;
+  for n in 0..WSIZE {
+    let m = prev[n];
+    prev = prev.with(n, if (m >= WSIZE) { m - WSIZE } else { 0 });
+  }
+  return Z { ...z, head: head, prev: prev };
+}
+
+// window[0:n] = window[WSIZE:WSIZE + n].
+function slide_window(own w: u8[], n: i32): u8[] {
+  let i = 0;
+  while (i < n) {
+    w = w.with(i, w[i + WSIZE]);
+    i += 1;
+  }
+  return w;
+}
+
+function copy_into(own w: u8[], at: i32, src: u8[], from: i32, n: i32): u8[] {
+  let i = 0;
+  while (i < n) {
+    w = w.with(at + i, src[from + i]);
+    i = i + 1;
+  }
+  return w;
+}
+
+function append_from(own out: u8[], src: u8[], from: i32, n: i32): u8[] {
+  let i = from;
+  let end = from + n;
+  while (i < end) {
+    out = out.append(src[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// read_buf into window[at:].
+function read_buf(own z: Z, at: i32, size: i32): (Z, i32) {
+  let len = if (z.in_avail > size) { size } else { z.in_avail };
+  if (len == 0) {
+    return (z, 0);
+  }
+  let w = copy_into(z.window, at, z.data, z.in_pos, len);
+  return (Z { ...z, window: w, in_pos: z.in_pos + len, in_avail: z.in_avail - len }, len);
+}
+
+function fill_window(own z: Z): Z {
+  loop {
+    let more = WINDOW_SIZE - z.lookahead - z.strstart;
+    if (z.strstart >= WSIZE + MAX_DIST) {
+      let old = z.window;
+      let w = slide_window(old, WSIZE - more);
+      let strstart = z.strstart - WSIZE;
+      let insert = if (z.insert > strstart) { strstart } else { z.insert };
+      z = slide_hash(Z { ...z, window: w, match_start: z.match_start - WSIZE, strstart: strstart, block_start: z.block_start - WSIZE, insert: insert });
+      more += WSIZE;
+    }
+    if (z.in_avail == 0) {
+      break;
+    }
+    let at = z.strstart + z.lookahead;
+    let (r, n) = read_buf(z, at, more);
+    z = Z { ...r, lookahead: r.lookahead + n };
+    if (z.lookahead + z.insert >= MIN_MATCH) {
+      z = insert_pending(z);
+    }
+    if (z.lookahead >= MIN_LOOKAHEAD || z.in_avail == 0) {
+      break;
+    }
+  }
+  return high_water(z);
+}
+
+// The strings that a flush left out of the hash, now that their bytes are
+// in the window.
+function insert_pending(own z: Z): Z {
+  let w = z.window;
+  let head = z.head;
+  let prev = z.prev;
+  let str = z.strstart - z.insert;
+  let insert = z.insert;
+  let h = upd(w[str] as i32, w[str + 1]);
+  while (insert > 0) {
+    h = upd(h, w[str + 2]);
+    prev = prev.with(str & WMASK, head[h]);
+    head = head.with(h, str);
+    str += 1;
+    insert -= 1;
+    if (z.lookahead + insert < MIN_MATCH) {
+      break;
+    }
+  }
+  return Z { ...z, window: w, head: head, prev: prev, ins_h: h, insert: insert };
+}
+
+function high_water(own z: Z): Z {
+  if (z.high_water >= WINDOW_SIZE) {
+    return z;
+  }
+  let curr = z.strstart + z.lookahead;
+  if (z.high_water < curr) {
+    let init = WINDOW_SIZE - curr;
+    if (init > WIN_INIT) {
+      init = WIN_INIT;
+    }
+    return Z { ...z, window: zeroed(z.window, curr, init), high_water: curr + init };
+  }
+  if (z.high_water < curr + WIN_INIT) {
+    let init = curr + WIN_INIT - z.high_water;
+    if (init > WINDOW_SIZE - z.high_water) {
+      init = WINDOW_SIZE - z.high_water;
+    }
+    return Z { ...z, window: zeroed(z.window, z.high_water, init), high_water: z.high_water + init };
+  }
+  return z;
+}
+
+function zeroed(own w: u8[], at: i32, n: i32): u8[] {
+  for i in at..at + n {
+    w = w.with(i, 0 as u8);
+  }
+  return w;
+}
+
+// deflateSetDictionary with no zlib or gzip wrapper.
+pub function set_dictionary(own z: Z, dict: u8[], from: i32, len: i32): Z {
+  let start = from;
+  let length = len;
+  if (length >= WSIZE) {
+    z = Z { ...clear_hash(z), strstart: 0, block_start: 0, insert: 0 };
+    start += length - WSIZE;
+    length = WSIZE;
+  }
+  let saved = z.data;
+  let pos = z.in_pos;
+  let avail = z.in_avail;
+  z = fill_window(Z { ...z, data: dict, in_pos: start, in_avail: length });
+  while (z.lookahead >= MIN_MATCH) {
+    let w = z.window;
+    let head = z.head;
+    let prev = z.prev;
+    let h = z.ins_h;
+    let str = z.strstart;
+    let n = z.lookahead - (MIN_MATCH - 1);
+    while (n > 0) {
+      h = upd(h, w[str + 2]);
+      prev = prev.with(str & WMASK, head[h]);
+      head = head.with(h, str);
+      str += 1;
+      n -= 1;
+    }
+    z = fill_window(Z { ...z, window: w, head: head, prev: prev, ins_h: h, strstart: str, lookahead: MIN_MATCH - 1 });
+  }
+  let strstart = z.strstart + z.lookahead;
+  return Z {
+    ...z,
+    strstart: strstart,
+    block_start: strstart,
+    insert: z.lookahead,
+    lookahead: 0,
+    match_length: 2,
+    prev_length: 2,
+    match_available: false,
+    data: saved,
+    in_pos: pos,
+    in_avail: avail,
+  };
+}
+
+function rank(f: i32): i32 {
+  if (f > 4) {
+    return f * 2 - 9;
+  }
+  return f * 2;
+}
+
+// deflate(strm, flush) for a raw stream.
+// It keeps the branches of deflate() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function deflate(own z: Z, flush: i32): Z {
+  let old_flush = z.last_flush;
+  z = Z { ...z, last_flush: flush };
+  if (pending(z) != 0) {
+    z = flush_pending(z);
+    if (z.avail == 0) {
+      return Z { ...z, last_flush: -1 };
+    }
+  } else if (z.in_avail == 0 && rank(flush) <= rank(old_flush) && flush != FINISH) {
+    return z;
+  }
+  if (z.finished && z.in_avail != 0) {
+    return z;
+  }
+  if (z.in_avail == 0 && z.lookahead == 0 && (flush == NO_FLUSH || z.finished)) {
+    return z;
+  }
+  let (r, bstate) = compress(z, flush);
+  z = r;
+  if (bstate == FINISH_STARTED || bstate == FINISH_DONE) {
+    z = Z { ...z, finished: true };
+  }
+  if (bstate == NEED_MORE || bstate == FINISH_STARTED) {
+    if (z.avail == 0) {
+      return Z { ...z, last_flush: -1 };
+    }
+    return z;
+  }
+  if (bstate == BLOCK_DONE) {
+    if (flush != BLOCK) {
+      z = stored_block(z, 0, 0, false);
+      if (flush == FULL_FLUSH) {
+        z = clear_hash(z);
+        if (z.lookahead == 0) {
+          z = Z { ...z, strstart: 0, block_start: 0, insert: 0 };
+        }
+      }
+    }
+    z = flush_pending(z);
+    if (z.avail == 0) {
+      return Z { ...z, last_flush: -1 };
+    }
+  }
+  return z;
+}
+
+function compress(own z: Z, flush: i32): (Z, i32) {
+  if (z.level == 0) {
+    return deflate_stored(z, flush);
+  }
+  if (z.strategy == HUFFMAN_ONLY) {
+    return deflate_huff(z, flush);
+  }
+  if (z.strategy == RLE) {
+    return deflate_rle(z, flush);
+  }
+  if (z.level <= 3) {
+    return deflate_lz(z, flush, true);
+  }
+  return deflate_lz(z, flush, false);
+}
+
+// _tr_stored_block of window[from:from + len] into the pending bytes.
+function stored_block(own z: Z, from: i32, len: i32, last: boolean): Z {
+  let h = windup(put(z, if (last) { 1 } else { 0 }, 3));
+  h = put_short(put_short(h, len), len ^ 65535);
+  if (len == 0) {
+    return h;
+  }
+  return Z { ...h, out: append_from(h.out, h.window, from, len) };
+}
+
+// FLUSH_BLOCK_ONLY.
+function flush_block(own z: Z, last: boolean): Z {
+  let from = z.block_start;
+  let len = z.strstart - from;
+  let f = tr_flush_block(z, from, len, last);
+  return flush_pending(Z { ...f, block_start: f.strstart });
+}
+
+// It keeps the branches of deflate_stored() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function deflate_stored(own z: Z, flush: i32): (Z, i32) {
+  let min_block = WSIZE;
+  let last = false;
+  let used = z.in_avail;
+  loop {
+    let len = MAX_STORED;
+    let have = z.bn + 42 >> 3;
+    if (z.avail < have) {
+      break;
+    }
+    have = z.avail - have;
+    let left = z.strstart - z.block_start;
+    if (len > left + z.in_avail) {
+      len = left + z.in_avail;
+    }
+    if (len > have) {
+      len = have;
+    }
+    if (len < min_block && (len == 0 && flush != FINISH || flush == NO_FLUSH || len != left + z.in_avail)) {
+      break;
+    }
+    last = flush == FINISH && len == left + z.in_avail;
+    z = put_short(put_short(windup(put(z, if (last) { 1 } else { 0 }, 3)), len), len ^ 65535);
+    z = flush_pending(z);
+    if (left > 0) {
+      if (left > len) {
+        left = len;
+      }
+      let o = z.out;
+      let out = append_from(o, z.window, z.block_start, left);
+      z = Z { ...z, out: out, delivered: z.delivered + left, avail: z.avail - left, block_start: z.block_start + left };
+      len -= left;
+    }
+    if (len > 0) {
+      let o = z.out;
+      let out = append_from(o, z.data, z.in_pos, len);
+      z = Z { ...z, out: out, delivered: z.delivered + len, avail: z.avail - len, in_pos: z.in_pos + len, in_avail: z.in_avail - len };
+    }
+    if (last) {
+      break;
+    }
+  }
+  used -= z.in_avail;
+  if (used > 0) {
+    if (used >= WSIZE) {
+      let w = copy_into(z.window, 0, z.data, z.in_pos - WSIZE, WSIZE);
+      z = Z { ...z, matches: 2, window: w, strstart: WSIZE, insert: WSIZE };
+    } else {
+      if (WINDOW_SIZE - z.strstart <= used) {
+        let strstart = z.strstart - WSIZE;
+        z = Z { ...z, strstart: strstart, window: slide_window(z.window, strstart), matches: more_slides(z.matches), insert: if (z.insert > strstart) { strstart } else { z.insert } };
+      }
+      let w = copy_into(z.window, z.strstart, z.data, z.in_pos - used, used);
+      z = Z { ...z, window: w, strstart: z.strstart + used, insert: z.insert + min(used, WSIZE - z.insert) };
+    }
+    z = Z { ...z, block_start: z.strstart };
+  }
+  if (z.high_water < z.strstart) {
+    z = Z { ...z, high_water: z.strstart };
+  }
+  if (last) {
+    return (z, FINISH_DONE);
+  }
+  if (flush != NO_FLUSH && flush != FINISH && z.in_avail == 0 && z.strstart == z.block_start) {
+    return (z, BLOCK_DONE);
+  }
+  let have = WINDOW_SIZE - z.strstart;
+  if (z.in_avail > have && z.block_start >= WSIZE) {
+    let strstart = z.strstart - WSIZE;
+    z = Z { ...z, block_start: z.block_start - WSIZE, strstart: strstart, window: slide_window(z.window, strstart), matches: more_slides(z.matches), insert: if (z.insert > strstart) { strstart } else { z.insert } };
+    have += WSIZE;
+  }
+  if (have > z.in_avail) {
+    have = z.in_avail;
+  }
+  if (have > 0) {
+    let at = z.strstart;
+    let (r, n) = read_buf(z, at, have);
+    z = Z { ...r, strstart: r.strstart + n, insert: r.insert + min(n, WSIZE - r.insert) };
+  }
+  if (z.high_water < z.strstart) {
+    z = Z { ...z, high_water: z.strstart };
+  }
+  let room = min(PENDING_SIZE - (z.bn + 42 >> 3), MAX_STORED);
+  let min_room = min(room, WSIZE);
+  let left = z.strstart - z.block_start;
+  if (left >= min_room || (left > 0 || flush == FINISH) && flush != NO_FLUSH && z.in_avail == 0 && left <= room) {
+    let len = min(left, room);
+    last = flush == FINISH && z.in_avail == 0 && len == left;
+    let from = z.block_start;
+    z = stored_block(z, from, len, last);
+    z = flush_pending(Z { ...z, block_start: z.block_start + len });
+  }
+  if (last) {
+    return (z, FINISH_STARTED);
+  }
+  return (z, NEED_MORE);
+}
+
+function more_slides(m: i32): i32 {
+  if (m < 2) {
+    return m + 1;
+  }
+  return m;
+}
+
+function min(a: i32, b: i32): i32 {
+  if (a > b) {
+    return b;
+  }
+  return a;
+}
+
+// The end of deflate_fast, deflate_slow, deflate_rle and deflate_huff.
+function finish_lz(own z: Z, flush: i32, insert: i32): (Z, i32) {
+  z = Z { ...z, insert: insert };
+  if (flush == FINISH) {
+    z = flush_block(z, true);
+    if (z.avail == 0) {
+      return (z, FINISH_STARTED);
+    }
+    return (z, FINISH_DONE);
+  }
+  if (z.sym_next > 0) {
+    z = flush_block(z, false);
+    if (z.avail == 0) {
+      return (z, NEED_MORE);
+    }
+  }
+  return (z, BLOCK_DONE);
+}
+
+// deflate_fast (`fast`) or deflate_slow.
+// It keeps the branches of deflate_fast() and deflate_slow() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function deflate_lz(own z: Z, flush: i32, fast: boolean): (Z, i32) {
+  loop {
+    if (z.lookahead < MIN_LOOKAHEAD) {
+      z = fill_window(z);
+      if (z.lookahead < MIN_LOOKAHEAD && flush == NO_FLUSH) {
+        return (z, NEED_MORE);
+      }
+      if (z.lookahead == 0) {
+        break;
+      }
+    }
+    let one = z.lookahead < MIN_LOOKAHEAD;
+    let (r, why) = if (fast) { fast_run(z, one) } else { slow_run(z, one) };
+    z = r;
+    if (why == RUN_FLUSH) {
+      z = flush_block(z, false);
+      if (z.avail == 0) {
+        return (z, NEED_MORE);
+      }
+    } else if (why == RUN_FLUSH_LITERAL) {
+      z = flush_block(z, false);
+      z = Z { ...z, strstart: z.strstart + 1, lookahead: z.lookahead - 1 };
+      if (z.avail == 0) {
+        return (z, NEED_MORE);
+      }
+    }
+  }
+  if (!fast && z.match_available) {
+    let c = z.window[z.strstart - 1] as i32;
+    z = Z { ...z, syms: z.syms.with(z.sym_next, c), sym_next: z.sym_next + 1, lfreq: z.lfreq.with(c, z.lfreq[c] + 1), match_available: false };
+  }
+  let insert = min(z.strstart, MIN_MATCH - 1);
+  return finish_lz(z, flush, insert);
+}
+
+// longest_match: the length of the best match at strstart and its start.
+// It keeps the branches of longest_match() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function longest(win: u8[], prev: i32[], strstart: i32, cur_match: i32, prev_length: i32, lookahead: i32, good: i32, nice_match: i32, max_chain: i32, match_start: i32): (i32, i32) {
+  let chain = max_chain;
+  let best = prev_length;
+  let nice = nice_match;
+  let start = match_start;
+  let cur = cur_match;
+  let limit = if (strstart > MAX_DIST) { strstart - MAX_DIST } else { 0 };
+  if (prev_length >= good) {
+    chain >>= 2;
+  }
+  if (nice > lookahead) {
+    nice = lookahead;
+  }
+  let end1 = win[strstart + best - 1];
+  let end0 = win[strstart + best];
+  let s0 = win[strstart];
+  let s1 = win[strstart + 1];
+  loop {
+    if (win[cur + best] == end0 && win[cur + best - 1] == end1 && win[cur] == s0 && win[cur + 1] == s1) {
+      let len = extend(win, cur, strstart);
+      if (len > best) {
+        start = cur;
+        best = len;
+        if (len >= nice) {
+          break;
+        }
+        end1 = win[strstart + best - 1];
+        end0 = win[strstart + best];
+      }
+    }
+    cur = prev[cur & WMASK];
+    if (cur <= limit) {
+      break;
+    }
+    chain -= 1;
+    if (chain == 0) {
+      break;
+    }
+  }
+  if (best <= lookahead) {
+    return (best, start);
+  }
+  return (lookahead, start);
+}
+
+// The length of the match of window[cur:] and window[strstart:] from
+// offset 3, eight bytes at a time. As in zlib, offset 2 is not compared:
+// the hash makes it equal.
+@inline
+function extend(win: u8[], cur: i32, strstart: i32): i32 {
+  let len = 3;
+  while (len + 8 <= MAX_MATCH) {
+    let x = le64(win, cur + len) ^ le64(win, strstart + len);
+    if (x != 0u64) {
+      return len + (__ctz64(x) >> 3) as i32;
+    }
+    len += 8;
+  }
+  while (len < MAX_MATCH && win[cur + len] == win[strstart + len]) {
+    len += 1;
+  }
+  return len;
+}
+
+@inline
+function le64(data: u8[], at: i32): u64 {
+  return data[at] as u64 | data[at + 1] as u64 << 8 | data[at + 2] as u64 << 16 | data[at + 3] as u64 << 24
+    | data[at + 4] as u64 << 32 | data[at + 5] as u64 << 40 | data[at + 6] as u64 << 48 | data[at + 7] as u64 << 56;
+}
+
+// The loop of deflate_slow, until the lookahead is short or a block is full.
+// With `one`, a single step.
+// It keeps the branches of deflate_slow() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function slow_run(own z: Z, one: boolean): (Z, i32) {
+  let win = z.window;
+  let head = z.head;
+  let prev = z.prev;
+  let syms = z.syms;
+  let lf = z.lfreq;
+  let df = z.dfreq;
+  let lcode = z.t.length_code;
+  let dcode = z.t.dist_code;
+  let strstart = z.strstart;
+  let lookahead = z.lookahead;
+  let h = z.ins_h;
+  let match_length = z.match_length;
+  let match_start = z.match_start;
+  let prev_length = z.prev_length;
+  let prev_match = z.prev_match;
+  let available = z.match_available;
+  let sym_next = z.sym_next;
+  let lazy = z.lazy;
+  let good = z.good;
+  let nice = z.nice;
+  let chain = z.chain;
+  let filtered = z.strategy == FILTERED;
+  let why = RUN_ONE;
+  loop {
+    if (!one && lookahead < MIN_LOOKAHEAD) {
+      why = RUN_FILL;
+      break;
+    }
+    let hash_head = 0;
+    if (lookahead >= MIN_MATCH) {
+      h = (h << 5 ^ win[strstart + 2] as i32) & HASH_MASK;
+      hash_head = head[h];
+      prev = prev.with(strstart & WMASK, hash_head);
+      head = head.with(h, strstart);
+    }
+    prev_length = match_length;
+    prev_match = match_start;
+    match_length = MIN_MATCH - 1;
+    if (hash_head != 0 && prev_length < lazy && strstart - hash_head <= MAX_DIST) {
+      let (len, at) = longest(win, prev, strstart, hash_head, prev_length, lookahead, good, nice, chain, match_start);
+      match_length = len;
+      match_start = at;
+      if (match_length <= 5 && (filtered || match_length == MIN_MATCH && strstart - match_start > TOO_FAR)) {
+        match_length = MIN_MATCH - 1;
+      }
+    }
+    if (prev_length >= MIN_MATCH && match_length <= prev_length) {
+      let max_insert = strstart + lookahead - MIN_MATCH;
+      let dist = strstart - 1 - prev_match;
+      let lc = prev_length - MIN_MATCH;
+      syms = syms.with(sym_next, dist << 8 | lc);
+      sym_next += 1;
+      let l = lcode[lc] + 257;
+      lf = lf.with(l, lf[l] + 1);
+      let d = dist - 1;
+      let dc = if (d < 256) { dcode[d] } else { dcode[256 + (d >> 7)] };
+      df = df.with(dc, df[dc] + 1);
+      lookahead -= prev_length - 1;
+      let n = prev_length - 2;
+      while (n > 0) {
+        strstart += 1;
+        if (strstart <= max_insert) {
+          h = (h << 5 ^ win[strstart + 2] as i32) & HASH_MASK;
+          prev = prev.with(strstart & WMASK, head[h]);
+          head = head.with(h, strstart);
+        }
+        n -= 1;
+      }
+      prev_length = 0;
+      available = false;
+      match_length = MIN_MATCH - 1;
+      strstart += 1;
+      if (sym_next == SYM_END) {
+        why = RUN_FLUSH;
+        break;
+      }
+    } else if (available) {
+      let c = win[strstart - 1] as i32;
+      syms = syms.with(sym_next, c);
+      sym_next += 1;
+      lf = lf.with(c, lf[c] + 1);
+      if (sym_next == SYM_END) {
+        why = RUN_FLUSH_LITERAL;
+        break;
+      }
+      strstart += 1;
+      lookahead -= 1;
+    } else {
+      available = true;
+      strstart += 1;
+      lookahead -= 1;
+    }
+    if (one) {
+      break;
+    }
+  }
+  return (Z {
+    ...z,
+    window: win,
+    head: head,
+    prev: prev,
+    syms: syms,
+    lfreq: lf,
+    dfreq: df,
+    strstart: strstart,
+    lookahead: lookahead,
+    ins_h: h,
+    match_length: match_length,
+    match_start: match_start,
+    prev_length: prev_length,
+    prev_match: prev_match,
+    match_available: available,
+    sym_next: sym_next,
+  }, why);
+}
+
+// The loop of deflate_fast.
+// It keeps the branches of deflate_fast() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function fast_run(own z: Z, one: boolean): (Z, i32) {
+  let win = z.window;
+  let head = z.head;
+  let prev = z.prev;
+  let syms = z.syms;
+  let lf = z.lfreq;
+  let df = z.dfreq;
+  let lcode = z.t.length_code;
+  let dcode = z.t.dist_code;
+  let strstart = z.strstart;
+  let lookahead = z.lookahead;
+  let h = z.ins_h;
+  let match_length = z.match_length;
+  let match_start = z.match_start;
+  let prev_length = z.prev_length;
+  let sym_next = z.sym_next;
+  let lazy = z.lazy;
+  let good = z.good;
+  let nice = z.nice;
+  let chain = z.chain;
+  let why = RUN_ONE;
+  loop {
+    if (!one && lookahead < MIN_LOOKAHEAD) {
+      why = RUN_FILL;
+      break;
+    }
+    let hash_head = 0;
+    if (lookahead >= MIN_MATCH) {
+      h = (h << 5 ^ win[strstart + 2] as i32) & HASH_MASK;
+      hash_head = head[h];
+      prev = prev.with(strstart & WMASK, hash_head);
+      head = head.with(h, strstart);
+    }
+    if (hash_head != 0 && strstart - hash_head <= MAX_DIST) {
+      let (len, at) = longest(win, prev, strstart, hash_head, prev_length, lookahead, good, nice, chain, match_start);
+      match_length = len;
+      match_start = at;
+    }
+    if (match_length >= MIN_MATCH) {
+      let dist = strstart - match_start;
+      let lc = match_length - MIN_MATCH;
+      syms = syms.with(sym_next, dist << 8 | lc);
+      sym_next += 1;
+      let l = lcode[lc] + 257;
+      lf = lf.with(l, lf[l] + 1);
+      let d = dist - 1;
+      let dc = if (d < 256) { dcode[d] } else { dcode[256 + (d >> 7)] };
+      df = df.with(dc, df[dc] + 1);
+      lookahead -= match_length;
+      if (match_length <= lazy && lookahead >= MIN_MATCH) {
+        match_length -= 1;
+        while (match_length > 0) {
+          strstart += 1;
+          h = (h << 5 ^ win[strstart + 2] as i32) & HASH_MASK;
+          prev = prev.with(strstart & WMASK, head[h]);
+          head = head.with(h, strstart);
+          match_length -= 1;
+        }
+        strstart += 1;
+      } else {
+        strstart += match_length;
+        match_length = 0;
+        h = upd(win[strstart] as i32, win[strstart + 1]);
+      }
+    } else {
+      let c = win[strstart] as i32;
+      syms = syms.with(sym_next, c);
+      sym_next += 1;
+      lf = lf.with(c, lf[c] + 1);
+      lookahead -= 1;
+      strstart += 1;
+    }
+    if (sym_next == SYM_END) {
+      why = RUN_FLUSH;
+      break;
+    }
+    if (one) {
+      break;
+    }
+  }
+  return (Z {
+    ...z,
+    window: win,
+    head: head,
+    prev: prev,
+    syms: syms,
+    lfreq: lf,
+    dfreq: df,
+    strstart: strstart,
+    lookahead: lookahead,
+    ins_h: h,
+    match_length: match_length,
+    match_start: match_start,
+    sym_next: sym_next,
+  }, why);
+}
+
+function tally_lit(own z: Z, c: i32): Z {
+  return Z { ...z, syms: z.syms.with(z.sym_next, c), sym_next: z.sym_next + 1, lfreq: z.lfreq.with(c, z.lfreq[c] + 1) };
+}
+
+function tally_dist(own z: Z, dist: i32, lc: i32): Z {
+  let l = z.t.length_code[lc] + 257;
+  let d = dist - 1;
+  let dc = if (d < 256) { z.t.dist_code[d] } else { z.t.dist_code[256 + (d >> 7)] };
+  return Z { ...z, syms: z.syms.with(z.sym_next, dist << 8 | lc), sym_next: z.sym_next + 1, lfreq: z.lfreq.with(l, z.lfreq[l] + 1), dfreq: z.dfreq.with(dc, z.dfreq[dc] + 1) };
+}
+
+// It keeps the branches of deflate_rle() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function deflate_rle(own z: Z, flush: i32): (Z, i32) {
+  loop {
+    if (z.lookahead <= MAX_MATCH) {
+      z = fill_window(z);
+      if (z.lookahead <= MAX_MATCH && flush == NO_FLUSH) {
+        return (z, NEED_MORE);
+      }
+      if (z.lookahead == 0) {
+        break;
+      }
+    }
+    let run = 0;
+    if (z.lookahead >= MIN_MATCH && z.strstart > 0) {
+      let w = z.window;
+      let at = z.strstart;
+      let c = w[at - 1];
+      if (c == w[at] && c == w[at + 1] && c == w[at + 2]) {
+        run = 3;
+        while (run < MAX_MATCH && w[at + run] == c) {
+          run += 1;
+        }
+        if (run > z.lookahead) {
+          run = z.lookahead;
+        }
+      }
+    }
+    if (run >= MIN_MATCH) {
+      z = tally_dist(z, 1, run - MIN_MATCH);
+      z = Z { ...z, lookahead: z.lookahead - run, strstart: z.strstart + run, match_length: 0 };
+    } else {
+      let c = z.window[z.strstart] as i32;
+      z = tally_lit(z, c);
+      z = Z { ...z, lookahead: z.lookahead - 1, strstart: z.strstart + 1, match_length: 0 };
+    }
+    if (z.sym_next == SYM_END) {
+      z = flush_block(z, false);
+      if (z.avail == 0) {
+        return (z, NEED_MORE);
+      }
+    }
+  }
+  return finish_lz(z, flush, 0);
+}
+
+function deflate_huff(own z: Z, flush: i32): (Z, i32) {
+  loop {
+    if (z.lookahead == 0) {
+      z = fill_window(z);
+      if (z.lookahead == 0) {
+        if (flush == NO_FLUSH) {
+          return (z, NEED_MORE);
+        }
+        break;
+      }
+    }
+    let c = z.window[z.strstart] as i32;
+    z = tally_lit(z, c);
+    z = Z { ...z, lookahead: z.lookahead - 1, strstart: z.strstart + 1, match_length: 0 };
+    if (z.sym_next == SYM_END) {
+      z = flush_block(z, false);
+      if (z.avail == 0) {
+        return (z, NEED_MORE);
+      }
+    }
+  }
+  return finish_lz(z, flush, 0);
+}
+
+// A Huffman tree as build_tree leaves it.
+struct Tree {
+  len: i32[],
+  code: i32[],
+  max_code: i32,
+  opt: i32,
+  stat: i32,
+}
+
+// build_tree and gen_bitlen. `freq` has room for the inner nodes. `slen`
+// is the static tree, or empty for the bit length tree.
+// It keeps the branches of build_tree() and gen_bitlen() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function build_tree(freq0: i32[], elems: i32, slen: i32[], extra: i32[], base: i32, max_length: i32): Tree {
+  let freq = freq0;
+  let len = filled(HEAP_SIZE, 0);
+  let dad = filled(HEAP_SIZE, 0);
+  let depth = filled(HEAP_SIZE, 0);
+  let heap = filled(HEAP_SIZE, 0);
+  let heap_len = 0;
+  let heap_max = HEAP_SIZE;
+  let max_code = -1;
+  let opt = 0;
+  let stat = 0;
+  let has_static = slen.len() > 0;
+  for n in 0..elems {
+    if (freq[n] != 0) {
+      heap_len += 1;
+      heap = heap.with(heap_len, n);
+      max_code = n;
+      depth = depth.with(n, 0);
+    } else {
+      len = len.with(n, 0);
+    }
+  }
+  while (heap_len < 2) {
+    let node = 0;
+    if (max_code < 2) {
+      max_code += 1;
+      node = max_code;
+    }
+    heap_len += 1;
+    heap = heap.with(heap_len, node);
+    freq = freq.with(node, 1);
+    depth = depth.with(node, 0);
+    opt -= 1;
+    if (has_static) {
+      stat -= slen[node];
+    }
+  }
+  let n = heap_len / 2;
+  while (n >= 1) {
+    heap = down_heap(heap, freq, depth, n, heap_len);
+    n -= 1;
+  }
+  let node = elems;
+  loop {
+    let least = heap[1];
+    heap = heap.with(1, heap[heap_len]);
+    heap_len -= 1;
+    heap = down_heap(heap, freq, depth, 1, heap_len);
+    let next = heap[1];
+    heap_max -= 1;
+    heap = heap.with(heap_max, least);
+    heap_max -= 1;
+    heap = heap.with(heap_max, next);
+    freq = freq.with(node, freq[least] + freq[next]);
+    let deeper = if (depth[least] >= depth[next]) { depth[least] } else { depth[next] };
+    depth = depth.with(node, deeper + 1 & 255);
+    dad = dad.with(least, node).with(next, node);
+    heap = heap.with(1, node);
+    node += 1;
+    heap = down_heap(heap, freq, depth, 1, heap_len);
+    if (heap_len < 2) {
+      break;
+    }
+  }
+  heap_max -= 1;
+  heap = heap.with(heap_max, heap[1]);
+  // gen_bitlen
+  let bl_count = filled(MAX_BITS + 1, 0);
+  len = len.with(heap[heap_max], 0);
+  let overflow = 0;
+  for h in heap_max + 1..HEAP_SIZE {
+    let m = heap[h];
+    let bits = len[dad[m]] + 1;
+    if (bits > max_length) {
+      bits = max_length;
+      overflow += 1;
+    }
+    len = len.with(m, bits);
+    if (m <= max_code) {
+      bl_count = bl_count.with(bits, bl_count[bits] + 1);
+      let xbits = if (m >= base) { extra[m - base] } else { 0 };
+      let f = freq[m];
+      opt += f * (bits + xbits);
+      if (has_static) {
+        stat += f * (slen[m] + xbits);
+      }
+    }
+  }
+  if (overflow > 0) {
+    while (overflow > 0) {
+      let bits = max_length - 1;
+      while (bl_count[bits] == 0) {
+        bits -= 1;
+      }
+      bl_count = bl_count.with(bits, bl_count[bits] - 1);
+      bl_count = bl_count.with(bits + 1, bl_count[bits + 1] + 2);
+      bl_count = bl_count.with(max_length, bl_count[max_length] - 1);
+      overflow -= 2;
+    }
+    let h = HEAP_SIZE;
+    let bits = max_length;
+    while (bits != 0) {
+      let k = bl_count[bits];
+      while (k != 0) {
+        h -= 1;
+        let m = heap[h];
+        if (m > max_code) {
+          continue;
+        }
+        if (len[m] != bits) {
+          opt += (bits - len[m]) * freq[m];
+          len = len.with(m, bits);
+        }
+        k -= 1;
+      }
+      bits -= 1;
+    }
+  }
+  return Tree { len: len, code: gen_codes(len, max_code, bl_count), max_code: max_code, opt: opt, stat: stat };
+}
+
+function smaller(freq: i32[], depth: i32[], n: i32, m: i32): boolean {
+  return freq[n] < freq[m] || freq[n] == freq[m] && depth[n] <= depth[m];
+}
+
+function down_heap(own heap: i32[], freq: i32[], depth: i32[], k0: i32, heap_len: i32): i32[] {
+  let k = k0;
+  let v = heap[k];
+  let j = k << 1;
+  while (j <= heap_len) {
+    if (j < heap_len && smaller(freq, depth, heap[j + 1], heap[j])) {
+      j += 1;
+    }
+    if (smaller(freq, depth, v, heap[j])) {
+      break;
+    }
+    heap = heap.with(k, heap[j]);
+    k = j;
+    j <<= 1;
+  }
+  return heap.with(k, v);
+}
+
+// scan_tree: the bit length frequencies for the lengths of a tree.
+// It keeps the branches of scan_tree() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function scan_tree(own bl: i32[], len: i32[], max_code: i32): i32[] {
+  let prevlen = -1;
+  let nextlen = len[0];
+  let count = 0;
+  let max_count = 7;
+  let min_count = 4;
+  if (nextlen == 0) {
+    max_count = 138;
+    min_count = 3;
+  }
+  for n in 0..=max_code {
+    let curlen = nextlen;
+    nextlen = if (n + 1 > max_code) { 65535 } else { len[n + 1] };
+    count += 1;
+    if (count < max_count && curlen == nextlen) {
+      continue;
+    } else if (count < min_count) {
+      bl = bl.with(curlen, bl[curlen] + count);
+    } else if (curlen != 0) {
+      if (curlen != prevlen) {
+        bl = bl.with(curlen, bl[curlen] + 1);
+      }
+      bl = bl.with(REP_3_6, bl[REP_3_6] + 1);
+    } else if (count <= 10) {
+      bl = bl.with(REPZ_3_10, bl[REPZ_3_10] + 1);
+    } else {
+      bl = bl.with(REPZ_11_138, bl[REPZ_11_138] + 1);
+    }
+    count = 0;
+    prevlen = curlen;
+    if (nextlen == 0) {
+      max_count = 138;
+      min_count = 3;
+    } else if (curlen == nextlen) {
+      max_count = 6;
+      min_count = 3;
+    } else {
+      max_count = 7;
+      min_count = 4;
+    }
+  }
+  return bl;
+}
+
+// It keeps the branches of send_tree() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function send_tree(own z: Z, len: i32[], max_code: i32, bl: Tree): Z {
+  let prevlen = -1;
+  let nextlen = len[0];
+  let count = 0;
+  let max_count = 7;
+  let min_count = 4;
+  if (nextlen == 0) {
+    max_count = 138;
+    min_count = 3;
+  }
+  for n in 0..=max_code {
+    let curlen = nextlen;
+    nextlen = if (n + 1 > max_code) { 65535 } else { len[n + 1] };
+    count += 1;
+    if (count < max_count && curlen == nextlen) {
+      continue;
+    } else if (count < min_count) {
+      while (count > 0) {
+        z = put(z, bl.code[curlen], bl.len[curlen]);
+        count -= 1;
+      }
+    } else if (curlen != 0) {
+      if (curlen != prevlen) {
+        z = put(z, bl.code[curlen], bl.len[curlen]);
+        count -= 1;
+      }
+      z = put(put(z, bl.code[REP_3_6], bl.len[REP_3_6]), count - 3, 2);
+    } else if (count <= 10) {
+      z = put(put(z, bl.code[REPZ_3_10], bl.len[REPZ_3_10]), count - 3, 3);
+    } else {
+      z = put(put(z, bl.code[REPZ_11_138], bl.len[REPZ_11_138]), count - 11, 7);
+    }
+    count = 0;
+    prevlen = curlen;
+    if (nextlen == 0) {
+      max_count = 138;
+      min_count = 3;
+    } else if (curlen == nextlen) {
+      max_count = 6;
+      min_count = 3;
+    } else {
+      max_count = 7;
+      min_count = 4;
+    }
+  }
+  return z;
+}
+
+// _tr_flush_block of window[from:from + stored_len]. A `from` below 0 is a
+// block whose bytes left the window.
+// It keeps the branches of _tr_flush_block() of zlib in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function tr_flush_block(own z: Z, from: i32, stored_len: i32, last: boolean): Z {
+  let t = z.t;
+  let lt = build_tree(z.lfreq, L_CODES, t.static_llen, t.lbits, 257, MAX_BITS);
+  let dt = build_tree(z.dfreq, D_CODES, t.static_dlen, t.dbits, 0, MAX_BITS);
+  let none: i32[] = [];
+  let blf = scan_tree(scan_tree(filled(2 * BL_CODES + 1, 0), lt.len, lt.max_code), dt.len, dt.max_code);
+  let bt = build_tree(blf, BL_CODES, none, t.blbits, 0, MAX_BL_BITS);
+  let max_blindex = BL_CODES - 1;
+  while (max_blindex >= 3 && bt.len[t.bl_order[max_blindex]] == 0) {
+    max_blindex -= 1;
+  }
+  let opt_len = lt.opt + dt.opt + bt.opt + 3 * (max_blindex + 1) + 5 + 5 + 4;
+  let static_len = lt.stat + dt.stat;
+  let opt_lenb = opt_len + 3 + 7 >> 3;
+  let static_lenb = static_len + 3 + 7 >> 3;
+  if (static_lenb <= opt_lenb) {
+    opt_lenb = static_lenb;
+  }
+  if (stored_len + 4 <= opt_lenb && from >= 0) {
+    z = stored_block(z, from, stored_len, last);
+  } else if (static_lenb == opt_lenb) {
+    z = put(z, 2 + (if (last) { 1 } else { 0 }), 3);
+    z = compress_block(z, t.static_lcode, t.static_llen, t.static_dcode, t.static_dlen);
+  } else {
+    z = put(z, 4 + (if (last) { 1 } else { 0 }), 3);
+    z = put(put(put(z, lt.max_code + 1 - 257, 5), dt.max_code, 5), max_blindex + 1 - 4, 4);
+    for rank in 0..max_blindex + 1 {
+      z = put(z, bt.len[t.bl_order[rank]], 3);
+    }
+    z = send_tree(send_tree(z, lt.len, lt.max_code, bt), dt.len, dt.max_code, bt);
+    z = compress_block(z, lt.code, lt.len, dt.code, dt.len);
+  }
+  z = init_block(z);
+  if (last) {
+    z = windup(z);
+  }
+  return z;
+}
+
+// compress_block: the symbols of the block with the given codes.
+function compress_block(own z: Z, lcodes: i32[], llens: i32[], dcodes: i32[], dlens: i32[]): Z {
+  let out = z.out;
+  let bb = z.bb;
+  let bn = z.bn;
+  let syms = z.syms;
+  let lcode = z.t.length_code;
+  let dcode = z.t.dist_code;
+  let lbits = z.t.lbits;
+  let dbits = z.t.dbits;
+  let base_length = z.t.base_length;
+  let base_dist = z.t.base_dist;
+  let n = z.sym_next;
+  for i in 0..n {
+    let s = syms[i];
+    let dist = s >> 8;
+    let lc = s & 255;
+    if (dist == 0) {
+      bb |= lcodes[lc] as u64 << bn as u64;
+      bn += llens[lc];
+    } else {
+      let code = lcode[lc];
+      bb |= lcodes[code + 257] as u64 << bn as u64;
+      bn += llens[code + 257];
+      let extra = lbits[code];
+      if (extra != 0) {
+        bb |= (lc - base_length[code]) as u64 << bn as u64;
+        bn += extra;
+      }
+      if (bn >= 32) {
+        out = out.append(bb as u8).append((bb >> 8u64) as u8).append((bb >> 16u64) as u8).append((bb >> 24u64) as u8);
+        bb >>= 32u64;
+        bn -= 32;
+      }
+      let d = dist - 1;
+      let dc = if (d < 256) { dcode[d] } else { dcode[256 + (d >> 7)] };
+      bb |= dcodes[dc] as u64 << bn as u64;
+      bn += dlens[dc];
+      let dx = dbits[dc];
+      if (dx != 0) {
+        bb |= (d - base_dist[dc]) as u64 << bn as u64;
+        bn += dx;
+      }
+    }
+    if (bn >= 32) {
+      out = out.append(bb as u8).append((bb >> 8u64) as u8).append((bb >> 16u64) as u8).append((bb >> 24u64) as u8);
+      bb >>= 32u64;
+      bn -= 32;
+    }
+  }
+  return put(Z { ...z, out: out, bb: bb, bn: bn }, lcodes[END_BLOCK], llens[END_BLOCK]);
+}

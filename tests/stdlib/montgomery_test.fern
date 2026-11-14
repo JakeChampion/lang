@@ -114,7 +114,7 @@ function test_modulus_of(): test.TestOutcome {
     let (hex_p, bytes, bits) = case;
     let a = mont.modulus(hex_p, bytes);
     let b = mont.modulus_of(__codec_bytes(hex.decode(hex_p.pad_start(2 * bytes, '0'))), bits);
-    let same = a.n0 == b.n0 && a.limbs == b.limbs && a.bytes == b.bytes;
+    let same = a.kernel[0] == b.kernel[0] && a.limbs == b.limbs && a.bytes == b.bytes;
     for i in 0..a.limbs {
       same = same && a.p[i] == b.p[i] && a.r2[i] == b.r2[i] && a.one[i] == b.one[i];
     }

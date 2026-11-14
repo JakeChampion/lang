@@ -56,6 +56,13 @@ func prCases(t *testing.T) []invocation {
 	fftail := prFile(t, dir, "fftail", seqLines(56)+"\f", mt)
 	nonl := prFile(t, dir, "nonl", "a\nb", mt)
 	nonl2 := prFile(t, dir, "nonl2", "1\n2\n3", mt)
+	eofFirst := prFile(t, dir, "eof-first", "a", mt)
+	eofLate := prFile(t, dir, "eof-late", "a\nb\nc", mt)
+	eofLong := prFile(t, dir, "eof-long", strings.Repeat("a", 65537), mt)
+	skipFF := prFile(t, dir, "skip-ff", "a\fb\nc", mt)
+	spanRows := prFile(t, dir, "span-rows", strings.Repeat("a\n", 32768)+"b\n", mt)
+	spanFF := prFile(t, dir, "span-ff", strings.Repeat("a\n", 32767)+"b\f\nc\n", mt)
+	spanControls := prFile(t, dir, "span-controls", "prefix\n\bA\n \bB\n\tC\nx\ry\n\x00\xff\n", mt)
 	blank := prFile(t, dir, "blank", "a\n\nb\n", mt)
 	raw := filepath.Join(dir, rawByteNameFixture)
 	if rawByteNamesHeld(t) {
@@ -202,6 +209,41 @@ func prCases(t *testing.T) []invocation {
 		{name: "merge ragged numbered pages", args: []string{"-D", "X", "-m", "-l14", "-n:4", "-o3", s12, s3, empty}},
 		{name: "merge tab and control columns", args: []string{"-D", "X", "-m", "-l14", "-e4", "-i4", "-n:4", "-W31", tabbed, s10, ctrl}},
 		{name: "merge numbered range and form feeds", args: []string{"-D", "X", "-m", "-l14", "-n:3", "+2:3", s12, s3, ff}},
+		{name: "merge numbers an EOF in the first column", args: []string{"-m", "-t", "-n:3", "-s:", eofFirst, f}},
+		{name: "merge numbers an EOF before an empty operand", args: []string{"-m", "-t", "-n:3", "-s:", eofFirst, empty}},
+		{name: "merge numbers an EOF before two empty operands", args: []string{"-m", "-t", "-n\t3", "-s:", eofFirst, empty, empty}},
+		{name: "merge numbers an EOF with an offset", args: []string{"-m", "-t", "-n\t3", "-s:", "-o1", eofFirst, f}},
+		{name: "merge numbers an EOF with a large offset", args: []string{"-m", "-t", "-n\t3", "-s:", "-o8", eofFirst, f}},
+		{name: "merge numbers an EOF with double space", args: []string{"-m", "-t", "-n:3", "-s:", "-d", eofFirst, f}},
+		{name: "merge counts an EOF before later rows", args: []string{"-m", "-t", "-n:3", "-s:", nonl, s10}},
+		{name: "merge numbers an EOF across pages", args: []string{"-m", "-n:3", "-s:", "-l12", "-D", "X", nonl, s10}},
+		{name: "merge counts an EOF before a page range", args: []string{"-m", "-n:3", "-s:", "-l12", "-D", "X", "+2", nonl, s10}},
+		{name: "merge starts EOF numbers at eight", args: []string{"-m", "-t", "-n:3", "-s:", "-N8", eofFirst, f}},
+		{name: "merge EOF alone adds no extra number", args: []string{"-m", "-t", "-n:3", "-s:", eofFirst}},
+		{name: "merge EOF after other columns end", args: []string{"-m", "-t", "-n:3", "-s:", eofLate, eofFirst}},
+		{name: "merge omits the number tab before column two", args: []string{"-m", "-t", "-n\t3", "-s:", empty, f}},
+		{name: "merge keeps the number tab before column three", args: []string{"-m", "-t", "-n\t3", "-s:", empty, empty, f}},
+		{name: "merge numbers an EOF past a read block", args: []string{"-m", "-t", "-n:3", "-s:", eofLong, f}},
+		{name: "merge counts a form feed before skipped pages", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+2", skipFF, s10}},
+		{name: "merge counts a form feed before headed pages", args: []string{"-m", "-n:3", "-s:", "-l12", "-D", "X", "+2:3", skipFF, s10}},
+		{name: "merge counts a form feed with number tabs", args: []string{"-m", "-t", "-n\t3", "-s:", "-l2", "+2", skipFF, s10}},
+		{name: "merge skips with an empty first operand", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+2", empty, s10}},
+		{name: "merge skips past the first EOF", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+3", eofFirst, s10}},
+		{name: "merge skips after a later first-column EOF", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+3", eofLate, s10}},
+		{name: "merge skips an initial form feed", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+2", ff1, s10}},
+		{name: "merge skips with an empty first column and form feeds", args: []string{"-m", "-t", "-n:3", "-s:", "-l3", "+2", empty, skipFF, s10}},
+		{name: "merge resets numbers after skipped form feeds", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "-N8", "+2", skipFF, s10}},
+		{name: "merge skips form feeds from repeated stdin", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+2", "-", "-"}, stdin: "a\fb\nc\nd\ne\nf\ng\nh\n"},
+		{name: "merge skips a terminated first operand", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+3", s3, s10}},
+		{name: "merge skips form feeds without numbers", args: []string{"-m", "-t", "-s:", "-l2", "+2", skipFF, s10}},
+		{name: "page records across a read block", args: []string{"-t", spanRows}},
+		{name: "columns across a read block", args: []string{"-t", "-4", spanRows}},
+		{name: "merge records across a read block", args: []string{"-m", "-t", spanRows, spanRows, other}},
+		{name: "merge numbers across a read block", args: []string{"-m", "-t", "-n:3", "-s:", spanRows, spanRows, other}},
+		{name: "form feed at a read boundary", args: []string{"-t", spanFF}},
+		{name: "merge form feeds at a read boundary", args: []string{"-m", "-t", spanFF, spanFF, other}},
+		{name: "controls after the first record", args: []string{"-t", "-n:3", spanControls}},
+		{name: "display controls after the first record", args: []string{"-t", "-v", spanControls}},
 		{name: "merge with a directory is fatal first", args: []string{"-t", "-m", d, f}},
 
 		{name: "number lines", args: []string{"-t", "-n", s10}},

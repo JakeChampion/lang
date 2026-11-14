@@ -48,8 +48,13 @@ pub struct Opts {
   recipient_files: string[],
   identities: string[],
   plugins: string[],
+  // The values of -i and -j in the order of the command line.
+  id_flags: IdFlag[],
   inputs: string[],
 }
+
+// A value of -i, or of -j when plugin is true.
+pub struct IdFlag { plugin: boolean, value: string }
 
 // The result of the flags: the options, a request for the usage, or Go's
 // message for a bad flag (exit 2).
@@ -79,8 +84,8 @@ function set_value(o: Opts, name: string, v: string): Opts {
     "o" | "output" => Opts { ...o, output: v },
     "r" | "recipient" => Opts { ...o, recipients: o.recipients.append(v) },
     "R" | "recipients-file" => Opts { ...o, recipient_files: o.recipient_files.append(v) },
-    "i" | "identity" => Opts { ...o, identities: o.identities.append(v) },
-    _ => Opts { ...o, plugins: o.plugins.append(v) },
+    "i" | "identity" => Opts { ...o, identities: o.identities.append(v), id_flags: o.id_flags.append(IdFlag { plugin: false, value: v }) },
+    _ => Opts { ...o, plugins: o.plugins.append(v), id_flags: o.id_flags.append(IdFlag { plugin: true, value: v }) },
   };
 }
 
@@ -91,7 +96,7 @@ pub function parse(args: string[]): Parsed {
     goflag.Help => Help,
     goflag.Bad(why) => Bad(why),
     goflag.Run(flags, rest) => {
-      let o = Opts { encrypt: false, decrypt: false, passphrase: false, armor: false, version: false, output: "", recipients: [], recipient_files: [], identities: [], plugins: [], inputs: rest };
+      let o = Opts { encrypt: false, decrypt: false, passphrase: false, armor: false, version: false, output: "", recipients: [], recipient_files: [], identities: [], plugins: [], id_flags: [], inputs: rest };
       for f in flags {
         o = match (f) {
           goflag.BoolFlag(name, v) => set_bool(o, name, v),

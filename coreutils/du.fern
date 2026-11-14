@@ -363,6 +363,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
   let gtime = 0 as i64;
   let gnsec = 0 as i64;
   let stack: Frame[] = [];
+  let track_all = names.len() > 1 || c.deref == deref_all();
 
   let oi = 0;
   while (oi < names.len()) {
@@ -479,7 +480,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       if (pending) {
         pending = false;
         let known = false;
-        if (!c.count_links) {
+        if (!c.count_links && (track_all || p_st.is_dir || p_st.nlink > 1 as u32)) {
           let key = (p_st.dev, p_st.ino);
           match (seen.get(key)) {
             Some(_) => {
@@ -578,7 +579,10 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       let nm = top.names[top.idx];
       stack = stack.with(sp - 1, Frame { ...top, idx: top.idx + 1 });
       let cpath = join_path(top.path, nm);
-      let cname = join_path(top.display, nm);
+      let cname = cpath;
+      if (top.display != top.path) {
+        cname = join_path(top.display, nm);
+      }
       if (excluded(c, cname)) {
         continue;
       }

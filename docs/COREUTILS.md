@@ -370,9 +370,7 @@ a measurement that never happened. A run below the floor is refused. Lower the
 floor only when the catalogue shrinks on purpose; raising it to clear a failure
 is the same mistake in a new place.
 
-A name on the list that PASSED is a `::warning::`, not an error. That is a
-deliberate deviation from the two-way complexity ratchet, where a
-number moving in either direction fails: `ptx` failed on one round and passed
+A name on the list that PASSED is a `::warning::`, not an error: `ptx` failed on one round and passed
 on two, so erroring in that direction would make the lane flaky on a utility
 nobody had changed. The warning is still the prompt to delete the line.
 
@@ -825,7 +823,9 @@ same directories in the same order. A case that deletes or writes files gets
 a fresh tree for each side, made by the same steps. The file system then
 gives the same order to both. Do not compare the inode numbers or the change
 times of these fresh trees. A case of `xargs -P` compares its output as a
-set of lines, because the commands run at the same time.
+set of lines, because the commands run at the same time. A case with a slow
+first command compares the lines in order, because the commands then end
+in a known order.
 
 Each case of find sets `unprivileged`. When the test runs as root, the
 harness gives the tree to the user nobody and runs both sides as nobody.

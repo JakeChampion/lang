@@ -1301,7 +1301,7 @@ function is_value_block_or_not_lambda(e: ast.Expr): boolean {
   return true;
 }
 
-pub function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
+function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
   return lam_assign_targets(stmts, acc);
 }
 
@@ -1316,12 +1316,15 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
   }
 }
 
-pub function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
+// Makes a cell of each binding that a closure of `st` writes, and of each
+// that it reads and `body`, the block of `st`, assigns.
+pub function cellify_captures(own env: Env, st: ast.Stmt, body: ast.Stmt[]): Env {
   let out = cellify_env(env, stmt_lambda_writes(st));
-  if (reassigned.len() == 0) {
+  let reads = lam_read_names(st);
+  if (reads.len() == 0) {
     return out;
   }
-  let reads = lam_read_names(st);
+  let reassigned = body_assign_names(body, []);
   let hit: string[] = [];
   for i in 0..reads.len() {
     if (util.index_of_str(reassigned, reads[i]) >= 0) {
@@ -2563,96 +2566,246 @@ function lane_arith(op: string, x: f64, y: f64): f64 {
   };
 }
 
-// The lanes of 8 bits fn(a, b), with each result cut to 8 bits.
-function byte_lanes_map(a: VLanes, b: VLanes, verb: string): Value {
-  let bits: i64[] = [];
-  for i in 0..16 {
-    bits = bits.append(byte_lane_op(verb, a.bits[i], b.bits[i]) & 255i64);
+function lane_ones(width: i32): i64 {
+  return (1i64 << width as i64) - 1i64;
+}
+
+// The number in an integer lane. A signed lane has its sign.
+function lane_number(l: VLanes, i: i32): i64 {
+  let x = l.bits[i];
+  if (l.kind == typeinfo.LANE_SIGNED && x >> (l.width - 1) as i64 != 0i64) {
+    return x - (1i64 << l.width as i64);
   }
-  return VLanes { width: 8, kind: typeinfo.LANE_UNSIGNED, bits: bits };
+  return x;
 }
 
-function byte_mask(hold: boolean): i64 {
-  return if (hold) { 255i64 } else { 0i64 };
+// The lanes fn(a, b) of two integer lane values, with each result cut to
+// the width of a lane.
+function integer_lanes_map(a: VLanes, b: VLanes, verb: string): Value {
+  let bits: i64[] = [];
+  for i in 0..a.bits.len() {
+    bits = bits.append(integer_lane_op(verb, a, lane_number(a, i), lane_number(b, i)) & lane_ones(a.width));
+  }
+  return VLanes { width: a.width, kind: a.kind, bits: bits };
 }
 
-function byte_lane_op(verb: string, x: i64, y: i64): i64 {
+function lane_mask(l: VLanes, hold: boolean): i64 {
+  return if (hold) { lane_ones(l.width) } else { 0i64 };
+}
+
+// `x` held to the range of a lane of `l`.
+function lane_saturated(l: VLanes, x: i64): i64 {
+  let high = if (l.kind == typeinfo.LANE_SIGNED) { lane_ones(l.width - 1) } else { lane_ones(l.width) };
+  let low = if (l.kind == typeinfo.LANE_SIGNED) { 0i64 - high - 1i64 } else { 0i64 };
+  if (x > high) {
+    return high;
+  }
+  return if (x < low) { low } else { x };
+}
+
+function integer_lane_op(verb: string, l: VLanes, x: i64, y: i64): i64 {
   return match (verb) {
     "+" => x + y,
     "-" => x - y,
+    "*" => x * y,
     "min" => if (x < y) { x } else { y },
     "max" => if (x < y) { y } else { x },
-    "eq" => byte_mask(x == y),
-    "ne" => byte_mask(x != y),
-    "lt" => byte_mask(x < y),
-    "add_sat" => if (x + y > 255i64) { 255i64 } else { x + y },
-    "sub_sat" => if (x < y) { 0i64 } else { x - y },
+    "eq" => lane_mask(l, x == y),
+    "ne" => lane_mask(l, x != y),
+    "lt" => lane_mask(l, x < y),
+    "add_sat" => lane_saturated(l, x + y),
+    "sub_sat" => lane_saturated(l, x - y),
     "avg" => x + y + 1i64 >> 1i64,
     "and" => x & y,
     "or" => x | y,
-    "andnot" => x & (255i64 ^ y),
+    "andnot" => x & (-1i64 ^ y),
     _ => x ^ y,
   };
 }
 
-// The lanes of 8 bits of the values `xs`. One value is a splat.
-function byte_lanes_of(xs: Value[]): Value {
+// The integer lane value of the numbers `xs`. One number is a splat.
+function integer_lanes_of(width: i32, kind: i32, xs: Value[]): Value {
   let bits: i64[] = [];
-  for i in 0..16 {
-    bits = bits.append(vint_as_i64(xs[i % xs.len()]) & 255i64);
+  for i in 0..128 / width {
+    bits = bits.append(vint_as_i64(xs[i % xs.len()]) & lane_ones(width));
   }
-  return VLanes { width: 8, kind: typeinfo.LANE_UNSIGNED, bits: bits };
+  return VLanes { width: width, kind: kind, bits: bits };
 }
 
-function call_byte_lane_builtin(heap: interpheap.Heap, verb: string, args: Value[]): Value {
-  if (verb == "splat" || verb == "of") {
-    return byte_lanes_of(args);
-  }
-  if (verb == "load") {
-    let at = lane_window(8, args);
-    if (at < 0) {
-      return v_err("lane load out of bounds");
+// The integer lane value of the 16 bytes of `a` from index `at`.
+function integer_lanes_load(width: i32, kind: i32, a: VArr, at: i32): Value {
+  let bits: i64[] = [];
+  let size = width / 8;
+  for i in 0..128 / width {
+    let x = 0i64;
+    for k in 0..size {
+      x = x | (vint_as_i64(arr_at(a, at + i * size + k)) & 255i64) << (8 * k) as i64;
     }
-    if let VArr(a) = args[0] {
-      let xs: Value[] = [];
-      while (xs.len() < 16) {
-        xs = xs.append(arr_at(a, at + xs.len()));
+    bits = bits.append(x);
+  }
+  return VLanes { width: width, kind: kind, bits: bits };
+}
+
+function integer_lanes_with(heap: interpheap.Heap, args: Value[]): Value {
+  let at = lane_window(8, args);
+  let ls = lane_args([args[2]]);
+  if (at < 0 || ls.len() != 1) {
+    return v_err("lane with out of bounds");
+  }
+  if let VArr(a) = args[0] {
+    let out = arr_els(a);
+    let size = ls[0].width / 8;
+    for i in 0..ls[0].bits.len() {
+      for k in 0..size {
+        out = out.with(at + i * size + k, v_byte((ls[0].bits[i] >> (8 * k) as i64) as i32));
       }
-      return byte_lanes_of(xs);
     }
-    return v_err("lane load: expected an array");
+    if (a.view) {
+      return v_view_of(heap, out, a.elem);
+    }
+    return v_arr_of(heap, out, a.elem);
   }
-  if (verb == "with") {
-    return lanes_with(heap, 8, args);
+  return v_err("lane with: expected an array");
+}
+
+// The lanes of `l` moved by `count` bits. The count is modulo the width.
+function integer_lanes_shift(l: VLanes, verb: string, count: i32): Value {
+  let by = (count & l.width - 1) as i64;
+  let bits: i64[] = [];
+  for i in 0..l.bits.len() {
+    let x = lane_number(l, i);
+    bits = bits.append((if (verb == "shl") { x << by } else { x >> by }) & lane_ones(l.width));
   }
-  let ls = lane_args(if (verb == "lane") { [args[0]] } else { args });
+  return VLanes { width: l.width, kind: l.kind, bits: bits };
+}
+
+// The lanes of `l` with the sign of each lane changed, or cleared for `abs`.
+function integer_lanes_negated(l: VLanes, magnitude: boolean): Value {
+  let bits: i64[] = [];
+  for i in 0..l.bits.len() {
+    let x = lane_number(l, i);
+    bits = bits.append((if (magnitude && x >= 0i64) { x } else { 0i64 - x }) & lane_ones(l.width));
+  }
+  return VLanes { width: l.width, kind: l.kind, bits: bits };
+}
+
+// Half of the lanes of `a` from lane `first`, at two times the width.
+function integer_lanes_widened(a: VLanes, first: i32): Value {
+  let bits: i64[] = [];
+  for i in 0..a.bits.len() / 2 {
+    bits = bits.append(lane_number(a, first + i) & lane_ones(a.width * 2));
+  }
+  return VLanes { width: a.width * 2, kind: a.kind, bits: bits };
+}
+
+// A builtin that changes the shape of integer lanes: a half of the lanes
+// at two times the width, two values at half the width with each lane held
+// to the limits of the narrow lane, or the lanes of a value at the indexes
+// of another value.
+function integer_lanes_shape(verb: string, ls: VLanes[]): Value {
   if (ls.len() == 0) {
-    return v_err("__u8x16_" + verb + ": expected lane values");
+    return v_err("__lanes_" + verb + ": expected lane values");
   }
-  if (verb == "lane") {
-    return v_byte(ls[0].bits[vint_bits(args[1])] as i32);
-  }
-  if (verb == "bitmask") {
-    let mask = 0;
+  let a = ls[0];
+  let bits: i64[] = [];
+  if (verb == "swizzle") {
     for i in 0..16 {
-      mask = mask | (ls[0].bits[i] >> 7i64) as i32 << i;
+      let at = ls[1].bits[i];
+      bits = bits.append(if (at < 16i64) { a.bits[at as i32] } else { 0i64 });
     }
-    return v_int(mask);
+    return VLanes { width: 8, kind: a.kind, bits: bits };
+  }
+  let count = a.bits.len();
+  if (verb == "widen_lo" || verb == "widen_hi") {
+    return integer_lanes_widened(a, if (verb == "widen_hi") { count / 2 } else { 0 });
+  }
+  let to = VLanes { width: a.width / 2, kind: if (verb == "narrow_u") { typeinfo.LANE_UNSIGNED } else { a.kind }, bits: [] };
+  for l in ls {
+    for i in 0..count {
+      bits = bits.append(lane_saturated(to, lane_number(l, i)) & lane_ones(to.width));
+    }
+  }
+  return VLanes { ...to, bits: bits };
+}
+
+function integer_lane_value(l: VLanes, i: i32): Value {
+  if (l.kind == typeinfo.LANE_UNSIGNED && l.width == 8) {
+    return v_byte(l.bits[i] as i32);
+  }
+  if (l.kind == typeinfo.LANE_UNSIGNED && l.width == 32) {
+    return v_uint(l.bits[i] as i32);
+  }
+  return v_int(lane_number(l, i) as i32);
+}
+
+// `load` or `with` of an integer lane type: 16 bytes of an array.
+function integer_lanes_memory(heap: interpheap.Heap, verb: string, width: i32, kind: i32, args: Value[]): Value {
+  if (verb == "with") {
+    return integer_lanes_with(heap, args);
+  }
+  let at = lane_window(8, args);
+  if (at < 0) {
+    return v_err("lane load out of bounds");
+  }
+  if let VArr(a) = args[0] {
+    return integer_lanes_load(width, kind, a, at);
+  }
+  return v_err("lane load: expected an array");
+}
+
+// A builtin of one integer lane value: `lane`, a shift, `abs` or `bitmask`.
+function integer_lanes_single(verb: string, l: VLanes, args: Value[]): Value {
+  if (verb == "lane") {
+    return integer_lane_value(l, vint_bits(args[1]));
+  }
+  if (verb == "shl" || verb == "shr") {
+    return integer_lanes_shift(l, verb, vint_bits(args[1]));
+  }
+  if (verb == "abs") {
+    return integer_lanes_negated(l, true);
+  }
+  let mask = 0;
+  for i in 0..l.bits.len() {
+    mask = mask | (l.bits[i] >> (l.width - 1) as i64) as i32 << i;
+  }
+  return v_int(mask);
+}
+
+function call_integer_lane_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  let width = typeinfo.lane_builtin_width(name);
+  let kind = typeinfo.lane_builtin_kind(name);
+  let verb = typeinfo.lane_builtin_verb(name);
+  if (verb == "splat" || verb == "of") {
+    return integer_lanes_of(width, kind, args);
+  }
+  if (verb == "load" || verb == "with") {
+    return integer_lanes_memory(heap, verb, width, kind, args);
+  }
+  if (util.has_str(["widen_lo", "widen_hi", "narrow", "narrow_u", "swizzle"], verb)) {
+    return integer_lanes_shape(verb, lane_args(args));
+  }
+  let scalar_second = util.has_str(["lane", "shl", "shr"], verb);
+  let ls = lane_args(if (scalar_second) { [args[0]] } else { args });
+  if (ls.len() == 0) {
+    return v_err(name + ": expected lane values");
+  }
+  if (scalar_second || verb == "abs" || verb == "bitmask") {
+    return integer_lanes_single(verb, ls[0], args);
   }
   if (verb == "select") {
-    if let VLanes(kept) = byte_lanes_map(ls[0], ls[2], "and") {
-      if let VLanes(rest) = byte_lanes_map(ls[1], ls[2], "andnot") {
-        return byte_lanes_map(kept, rest, "or");
+    if let VLanes(kept) = integer_lanes_map(ls[0], ls[2], "and") {
+      if let VLanes(rest) = integer_lanes_map(ls[1], ls[2], "andnot") {
+        return integer_lanes_map(kept, rest, "or");
       }
     }
   }
-  return byte_lanes_map(ls[0], ls[1], verb);
+  return integer_lanes_map(ls[0], ls[1], verb);
 }
 
 function lanes_binary(op: string, a: VLanes, rv: Value): Value {
   if let VLanes(b) = rv {
-    if (a.kind != typeinfo.LANE_FLOAT && (op == "+" || op == "-")) {
-      return byte_lanes_map(a, b, op);
+    if (a.kind != typeinfo.LANE_FLOAT && (op == "+" || op == "-" || op == "*")) {
+      return integer_lanes_map(a, b, op);
     }
     if (util.has_str(["+", "-", "*", "/"], op)) {
       let bits: i64[] = [];
@@ -2667,7 +2820,7 @@ function lanes_binary(op: string, a: VLanes, rv: Value): Value {
 
 function lane_value(l: VLanes, i: i32): Value {
   if (l.kind != typeinfo.LANE_FLOAT) {
-    return v_byte(l.bits[i] as i32);
+    return integer_lane_value(l, i);
   }
   if (l.width == 32) {
     return v_float32(lane_at(l, i));
@@ -2830,10 +2983,12 @@ function lanes_bytes(heap: interpheap.Heap, width: i32, args: Value[], store: bo
   return v_err("packed lane access requires bytes");
 }
 
+const CALL_LANE_BUILTIN_SET: string[] = ["reverse", "swap_halves", "zip_lo", "zip_hi"];
+
 function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args: Value[]): Value {
   let verb = typeinfo.lane_builtin_verb(name);
-  if (width == 8) {
-    return call_byte_lane_builtin(heap, verb, args);
+  if (typeinfo.lane_builtin_kind(name) != typeinfo.LANE_FLOAT) {
+    return call_integer_lane_builtin(heap, name, args);
   }
   if (verb == "lane_bits") {
     let lanes = lane_args([args[0]]);
@@ -2843,7 +2998,7 @@ function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args
     }
     return if (width == 32) { v_uint(lanes[0].bits[at] as i32) } else { v_uint64(lanes[0].bits[at]) };
   }
-  if (verb == "reverse" || verb == "swap_halves" || verb == "zip_lo" || verb == "zip_hi") {
+  if (util.has_str(CALL_LANE_BUILTIN_SET, verb)) {
     let lanes = lane_args(args);
     let count = 128 / width;
     let bits: i64[] = [];
@@ -4553,8 +4708,14 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   return eval_binary_arith(op, lv, rv);
 }
 
+const EVAL_BINARY_ARITH_SET: string[] = ["-", "*", "/", "%"];
+
+const EVAL_BINARY_ARITH_SET2: string[] = ["<", "<=", ">", ">="];
+
+const EVAL_BINARY_ARITH_SET3: string[] = ["&", "|", "^", "<<", ">>"];
+
 function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
-  if (op == "-" || op == "*" || op == "/" || op == "%") {
+  if (util.has_str(EVAL_BINARY_ARITH_SET, op)) {
     match (lv) {
       VInt(li) => {
         match (rv) {
@@ -4601,7 +4762,7 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       }
     }
   }
-  if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+  if (util.has_str(EVAL_BINARY_ARITH_SET2, op)) {
     match (lv) {
       VInt(li) => {
         match (rv) {
@@ -4671,7 +4832,7 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       }
     }
   }
-  if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") {
+  if (util.has_str(EVAL_BINARY_ARITH_SET3, op)) {
     match (lv) {
       VInt(li) => {
         match (rv) {
@@ -4767,6 +4928,9 @@ function eval_unary(op: string, ov: Value): Value {
         return v_float32(-f.v);
       },
       VLanes(l) => {
+        if (l.kind != typeinfo.LANE_FLOAT) {
+          return integer_lanes_negated(l, false);
+        }
         return lanes_map_bits(l, lane_sign(l.width), 0);
       },
       _ => {
@@ -7353,10 +7517,11 @@ function call_chacha20_poly1305_into(heap: interpheap.Heap, name: string, args: 
   return written_bytes(heap, args[2], buf.with(d + m, verdict));
 }
 
+const IS_BYTE_INTO_KERNEL_SET: string[] = ["__aes_gcm_seal_into", "__aes_gcm_open_into", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into"];
+
 // A kernel that writes into a byte array it takes. The interpreter runs it over a copy of the array.
 function is_byte_into_kernel(name: string): boolean {
-  return name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into" || name == "__chacha20_xor_into" || name == "__poly1305_blocks"
-    || name == "__chacha20_poly1305_seal_into" || name == "__chacha20_poly1305_open_into";
+  return util.has_str(IS_BYTE_INTO_KERNEL_SET, name);
 }
 
 function call_byte_into_kernel(heap: interpheap.Heap, name: string, args: Value[]): Value {
@@ -8057,14 +8222,20 @@ function call_buf_take_bytes(heap: interpheap.Heap, h: usize): Value {
   return byte_array_value(heap, buf_take_bytes(h));
 }
 
+const IS_RAW_MEM_BUILTIN_SET: string[] = ["__alloc", "__free", "__memcpy", "__memset", "__ptr_width"];
+
+const IS_RAW_MEM_BUILTIN_SET2: string[] = ["__load_u8", "__load_i32", "__load_i64", "__load_ptr"];
+
+const IS_RAW_MEM_BUILTIN_SET3: string[] = ["__store_u8", "__store_i32", "__store_i64", "__store_ptr"];
+
 function is_raw_mem_builtin(name: string): boolean {
-  if (name == "__alloc" || name == "__free" || name == "__memcpy" || name == "__memset" || name == "__ptr_width") {
+  if (util.has_str(IS_RAW_MEM_BUILTIN_SET, name)) {
     return true;
   }
-  if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr" || builtinsigs.device_intrinsic(name)) {
+  if (builtinsigs.device_intrinsic(name) || util.has_str(IS_RAW_MEM_BUILTIN_SET2, name)) {
     return true;
   }
-  return name == "__store_u8" || name == "__store_i32" || name == "__store_i64" || name == "__store_ptr";
+  return util.has_str(IS_RAW_MEM_BUILTIN_SET3, name);
 }
 
 // The interpreter is a compiled program, so the raw builtins act on its own
@@ -8244,6 +8415,10 @@ function raw_mem_effect(heap: interpheap.Heap, name: string, w: i64[]): Value {
   return v_void();
 }
 
+const CALL_BUF_BUILTIN_SET: string[] = ["buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded"];
+
+const CALL_BUF_BUILTIN_SET2: string[] = ["buf_push", "buf_push_byte", "buf_push_u64", "buf_push_decimal"];
+
 function call_buf_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "buf_new") {
     return call_buf_new(args);
@@ -8267,10 +8442,10 @@ function call_buf_builtin(heap: interpheap.Heap, name: string, args: Value[]): V
   if (name == "buf_decode_base32") {
     return call_buf_decode_base32(h, args);
   }
-  if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
+  if (util.has_str(CALL_BUF_BUILTIN_SET, name)) {
     return call_buf_push_table(name, h, args);
   }
-  if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_decimal") {
+  if (util.has_str(CALL_BUF_BUILTIN_SET2, name)) {
     return call_buf_append(name, h, args);
   }
   return call_buf_read(heap, name, h, args);
@@ -8312,6 +8487,12 @@ function checked_alloc_length(args: Value[]): Value {
   }
   return v_int(n as i32);
 }
+
+const CALL_FUNC_TARGS_SET: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
+
+const CALL_FUNC_TARGS_SET2: string[] = ["__clz32", "__ctz32", "__popcount32", "__clz64", "__ctz64", "__popcount64"];
+
+const CALL_FUNC_TARGS_SET3: string[] = ["getxattr", "lgetxattr", "setxattr", "lsetxattr", "getxattr_bytes", "lgetxattr_bytes", "setxattr_bytes", "lsetxattr_bytes"];
 
 function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   if (name == "print" || name == "write" || name == "eprint") {
@@ -8371,7 +8552,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "__alloc_len") {
     return checked_alloc_length(args);
   }
-  if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
+  if (util.has_str(CALL_FUNC_TARGS_SET, name)) {
     if (args.len() != 1) {
       return v_err(name + ": expected 1 arg (n)");
     }
@@ -8491,7 +8672,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
     return v_uint64(interp_mulhi(vint_as_i64(args[0]) as u64, vint_as_i64(args[1]) as u64) as i64);
   }
-  if (name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64" || name == "__ctz64" || name == "__popcount64") {
+  if (util.has_str(CALL_FUNC_TARGS_SET2, name)) {
     if (args.len() != 1) {
       return v_err(name + ": expected 1 arg");
     }
@@ -8508,8 +8689,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       _ => v_int(__popcount64(bits)),
     };
   }
-  if (name == "getxattr" || name == "lgetxattr" || name == "setxattr" || name == "lsetxattr"
-    || name == "getxattr_bytes" || name == "lgetxattr_bytes" || name == "setxattr_bytes" || name == "lsetxattr_bytes") {
+  if (util.has_str(CALL_FUNC_TARGS_SET3, name)) {
     if (target_arch() == "wasm32") {
       return v_variant("Err", [io_error_value(Unsupported)]);
     } else {
@@ -9135,9 +9315,8 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
     return step_stop(env, v_err("value expression has no terminal value"));
   }
   let cur = env;
-  let assigned = body_assign_names(body, []);
   for i in 0..body.len() - 1 {
-    cur = cellify_captures(cur, body[i], assigned);
+    cur = cellify_captures(cur, body[i], body);
     let step = eval_stmt(body[i], unsafe { share_unchecked(cur) });
     if (step.sig != 0) {
       return step;
@@ -9376,13 +9555,12 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
       for bk in 0..bind_names.len() {
         bodyEnv = bodyEnv.bind_decl(bind_names[bk], bind_values[bk], bind_types[bk]);
       }
-      let reassigned = body_assign_names(arm.body, []);
       for st in arm.body {
-        bodyEnv = cellify_captures(bodyEnv, st, reassigned);
+        bodyEnv = cellify_captures(bodyEnv, st, arm.body);
       }
       if (arm.has_guard) {
         let guard_stmt: ast.Stmt = ast.StmtExpr { value: arm.guard, line: arm.line, op: "" };
-        bodyEnv = cellify_captures(bodyEnv, guard_stmt, reassigned);
+        bodyEnv = cellify_captures(bodyEnv, guard_stmt, arm.body);
       }
       let pass = true;
       if (arm.has_guard) {
@@ -9780,9 +9958,8 @@ function flattened_env(e: Env): Env {
 
 function eval_block(body: ast.Stmt[], own env: Env): StepResult {
   let cur = env;
-  let reassigned = body_assign_names(body, []);
   for i in 0..body.len() {
-    cur = cellify_captures(cur, body[i], reassigned);
+    cur = cellify_captures(cur, body[i], body);
     let r = eval_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
@@ -9832,9 +10009,8 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
     return call_func(heap, "main", empty_args, funcs, all_aliases, all_variants);
   }
   let env = new_module_env(heap, funcs, all_aliases, all_variants);
-  let mreassigned = body_assign_names(mod.top_stmts, []);
   for j in 0..mod.top_stmts.len() {
-    env = cellify_captures(env, mod.top_stmts[j], mreassigned);
+    env = cellify_captures(env, mod.top_stmts[j], mod.top_stmts);
     let r = eval_stmt(mod.top_stmts[j], unsafe { share_unchecked(env) });
     env = r.env;
     if (r.sig != 0) {

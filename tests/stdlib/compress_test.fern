@@ -1,0 +1,92 @@
+import "std/test";
+import "std/bzip2";
+import "std/lz4";
+import "std/lzw";
+import "std/string";
+import "std/xz";
+
+const HELLO: string = "hello hello hello hello\n";
+
+const BZ2: u8[] = [
+  66u8, 90u8, 104u8, 57u8, 49u8, 65u8, 89u8, 38u8, 83u8, 89u8, 111u8, 79u8, 16u8, 243u8, 0u8, 0u8, 5u8, 209u8, 0u8, 0u8,
+  16u8, 64u8, 0u8, 2u8, 68u8, 160u8, 0u8, 48u8, 192u8, 2u8, 168u8, 52u8, 113u8, 13u8, 173u8, 135u8, 15u8, 23u8, 114u8, 69u8,
+  56u8, 80u8, 144u8, 111u8, 79u8, 16u8, 243u8,
+];
+
+const XZ: u8[] = [
+  253u8, 55u8, 122u8, 88u8, 90u8, 0u8, 0u8, 4u8, 230u8, 214u8, 180u8, 70u8, 2u8, 0u8, 33u8, 1u8, 22u8, 0u8, 0u8, 0u8,
+  116u8, 47u8, 229u8, 163u8, 224u8, 0u8, 23u8, 0u8, 12u8, 93u8, 0u8, 52u8, 25u8, 73u8, 238u8, 141u8, 233u8, 86u8, 10u8, 193u8,
+  33u8, 176u8, 0u8, 0u8, 108u8, 20u8, 237u8, 27u8, 59u8, 104u8, 187u8, 145u8, 0u8, 1u8, 40u8, 24u8, 215u8, 131u8, 183u8, 110u8,
+  31u8, 182u8, 243u8, 125u8, 1u8, 0u8, 0u8, 0u8, 0u8, 4u8, 89u8, 90u8,
+];
+
+const LZMA: u8[] = [
+  93u8, 0u8, 0u8, 128u8, 0u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 0u8, 52u8, 25u8, 73u8, 238u8, 141u8,
+  233u8, 86u8, 10u8, 193u8, 182u8, 32u8, 183u8, 255u8, 255u8, 186u8, 52u8, 0u8, 0u8,
+];
+
+const Z: u8[] = [31u8, 157u8, 144u8, 104u8, 202u8, 176u8, 97u8, 243u8, 6u8, 68u8, 192u8, 129u8, 5u8, 15u8, 18u8, 52u8, 40u8, 144u8, 160u8, 2u8];
+
+const LZ4: u8[] = [
+  4u8, 34u8, 77u8, 24u8, 124u8, 64u8, 24u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 12u8, 15u8, 0u8, 0u8, 0u8, 105u8, 104u8,
+  101u8, 108u8, 108u8, 111u8, 32u8, 6u8, 0u8, 80u8, 101u8, 108u8, 108u8, 111u8, 10u8, 177u8, 121u8, 121u8, 109u8, 0u8,
+  0u8, 0u8, 0u8, 226u8, 255u8, 3u8, 66u8,
+];
+
+function text(bytes: u8[]): string {
+  return unsafe { string_from_bytes_unchecked(bytes) };
+}
+
+// The first `n` bytes of `b`.
+function cut(b: u8[], n: i32): u8[] {
+  let out: u8[] = [];
+  for k in 0..n {
+    out = out.append(b[k]);
+  }
+  return out;
+}
+
+// `b` with the byte at `at` changed.
+function flipped(b: u8[], at: i32): u8[] {
+  return b.with(at, b[at] ^ 85u8);
+}
+
+function test_round_trips(): test.TestOutcome {
+  let got = [
+    text(bzip2.decompress(BZ2).unwrap_or([])), text(xz.decompress_xz(XZ).unwrap_or([])), text(xz.decompress_lzma(LZMA).unwrap_or([])),
+    text(lzw.decompress(Z).unwrap_or([])), text(lz4.decompress(LZ4).unwrap_or([])), text(bzip2.decompress(BZ2.concat(BZ2)).unwrap_or([])),
+    text(xz.decompress_xz(XZ.concat([0u8, 0u8, 0u8, 0u8]).concat(XZ)).unwrap_or([])),
+  ];
+  return test.assert_eq_array(got, [HELLO, HELLO, HELLO, HELLO, HELLO, HELLO + HELLO, HELLO + HELLO]);
+}
+
+function bz_error(input: u8[]): string {
+  let d = bzip2.decode(input);
+  return text(d.out) + "|" + match (d.error) { Some(e) => e.message(), None => "ok" };
+}
+
+function xz_error(d: xz.Decoded): string {
+  return text(d.out) + "|" + match (d.error) { Some(e) => e.message(), None => "ok" };
+}
+
+function test_errors(): test.TestOutcome {
+  let got = [
+    bz_error([66u8, 90u8, 105u8]), bz_error(cut(BZ2, 30)), bz_error(flipped(BZ2, 40)), bz_error(BZ2.concat([1u8, 2u8])),
+    xz_error(xz.decode_xz([1u8, 2u8, 3u8, 4u8, 5u8, 6u8])), xz_error(xz.decode_xz(cut(XZ, 40))), xz_error(xz.decode_xz(flipped(XZ, 56))),
+    xz_error(xz.decode_lzma(cut(LZMA, 20))), match (lzw.decompress([31u8, 157u8, 144u8, 200u8, 3u8])) { Ok(_) => "ok", Err(e) => e.message() },
+    match (lzw.decompress([31u8, 139u8, 8u8])) { Ok(_) => "ok", Err(e) => e.message() },
+    match (lz4.decompress(cut(LZ4, 30))) { Ok(_) => "ok", Err(e) => e.message() },
+  ];
+  return test.assert_eq_array(got, [
+    "|not a bzip2 file", "|compressed file ends unexpectedly", HELLO + "|data integrity error when decompressing", HELLO + "|ok",
+    "|File format not recognized", "|Unexpected end of input", HELLO + "|Compressed data is corrupt", "hel|Unexpected end of input",
+    "corrupt input", "not in compressed format", "unexpected end of input",
+  ]);
+}
+
+function main(): i32 {
+  let r = test.new("compress");
+  r = r.it("round trips", test_round_trips);
+  r = r.it("errors", test_errors);
+  return r.finish();
+}

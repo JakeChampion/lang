@@ -491,7 +491,7 @@ function constructor_decode(line: string): Op {
   }
   let name = slice_unchecked(line, 0, at).to_owned();
   let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
-  if (name == "call" && rest == "__fern_arr_box") {
+  if (name == "call" && (rest == "__fern_arr_box" || rest == "__fern_rec_box")) {
     return Op { ...empty(25), symbol: rest };
   }
   let args = operands(rest);

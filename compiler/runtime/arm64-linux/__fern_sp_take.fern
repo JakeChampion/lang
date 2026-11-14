@@ -1,0 +1,10 @@
+function __fern_sp_take(fd: i32, to: usize, room: i32): i32 {
+  let n = __syscall3(63, fd as i64, to as i64, room as i64) as i32;
+  if (n == -4 || n == -11) {
+    return 0;
+  }
+  if (n <= 0) {
+    return -1;
+  }
+  return n;
+}

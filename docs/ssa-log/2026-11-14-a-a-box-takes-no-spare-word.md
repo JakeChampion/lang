@@ -39,8 +39,12 @@ peak resident memory:
 | rbtree 4,200,000 | 877 | 874 | 598 | 1763 | 292 MB | 260 MB |
 | rbtree-ck 4,200,000 | 2399 | 2418 | 1865 | 2889 | 2074 MB | 1840 MB |
 | deriv 10 | 1524 | 1182 | 886 | 1160 | 858 MB | 712 MB |
-| cfold 20 | 287 | 241 | 88 | 231 | 212 MB | 196 MB |
+| cfold 20 | 287 | 241 | 222 | 231 | 212 MB | 196 MB |
 | nqueens 13 | 904 | 844 | 754 | 1166 | 188 MB | 156 MB |
+
+The Koka time of cfold is with no stack limit. At the default limit of 8 MB
+the Koka program stops with a segmentation fault after 83 to 93 ms. An
+earlier version of this table gave that time.
 
 Cachegrind at 420,000 inserts: the D1 misses of rbtree-ck go from 6,918,165
 to 6,252,933. Those of rbtree go from 1,421,807 to 1,324,771. The instruction

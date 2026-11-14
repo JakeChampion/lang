@@ -464,6 +464,14 @@ _start:
     xtn v23.8b, v9.8h
     xtn2 v23.16b, v9.8h
     xtn v23.2s, v9.2d
+    sqxtn v23.8b, v9.8h
+    sqxtn2 v23.16b, v9.8h
+    sqxtn v3.4h, v30.4s
+    sqxtn2 v3.8h, v30.4s
+    sqxtun v23.8b, v9.8h
+    sqxtun2 v23.16b, v9.8h
+    sqxtun v3.4h, v30.4s
+    sqxtun2 v3.8h, v30.4s
     shrn v23.8b, v9.8h, #3
     shrn2 v23.16b, v9.8h, #3
     sshll v23.8h, v9.8b, #3

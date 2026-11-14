@@ -1,5 +1,5 @@
-// The music ring of std/android/audio against a stand-in for libaaudio.so
-// (scripts/audio-reference/aaudio-music-mock.c). main gives 0, or the
+// The ring of a Buffered stream of std/android/audio against a stand-in for libaaudio.so
+// (scripts/audio-reference/aaudio-buffered-mock.c). main gives 0, or the
 // number of the first check that fails.
 import "std/android/audio";
 
@@ -14,6 +14,9 @@ function flushes(): i32;
 
 @import("libaaudio.so", "mock_closed")
 function closed(): i32;
+
+@import("libaaudio.so", "mock_buffer_size")
+function buffer_size(): i32;
 
 // The first `n` samples that the last pull gave.
 function pulled(n: i32): string {
@@ -37,19 +40,24 @@ function counted(n: i32, first: i32): i32[] {
 }
 
 pub function main(): i32 {
-  let m = audio.music(48000, 2);
+  let m = audio.buffered(48000, 2);
   if (m.ptr == 0 as usize || m.ring == 0 as usize || m.rate != 48000 || m.channels != 2) {
     return 1;
   }
+  // The ring holds the sound, so the device keeps a buffer of a twentieth
+  // of a second, not its whole capacity.
+  if (buffer_size() != 2400) {
+    return 12;
+  }
   // The device takes the samples on its own thread, in order.
-  if (m.write([1, 2, 3, 4, 5, 6, 7, 8]) != 8 || m.queued() != 4 + 96) {
+  if (m.write([1, 2, 3, 4, 5, 6, 7, 8]) != 8 || m.queued() != 4 + 2400) {
     return 2;
   }
   if (pull(2) != 0 || pulled(4) != "1,2,3,4") {
     return 3;
   }
   // The ring holds too few: silence follows the last samples.
-  if (pull(4) != 0 || pulled(8) != "5,6,7,8,0,0,0,0" || m.queued() != 96) {
+  if (pull(4) != 0 || pulled(8) != "5,6,7,8,0,0,0,0" || m.queued() != 2400) {
     return 4;
   }
   if (joined(m.recent(4)) != "5,6,7,8" || joined(m.recent(100)) != "1,2,3,4,5,6,7,8") {

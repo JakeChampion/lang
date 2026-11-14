@@ -42,11 +42,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ### `3 pub struct Modulus`
 
-`limbs` is the number of 64-bit limbs, and R is 2^(64 limbs). `n0` is -p^-1 mod 2^64. `r2` is R² mod p, and `one` is R mod p, the Montgomery form of 1.
+`limbs` is the number of 64-bit limbs, and R is 2^(64 limbs). `kernel` is n0 = -p^-1 mod 2^64 and then the limbs of p, as `__mont_mul` takes them. `r2` is R² mod p, and `one` is R mod p, the Montgomery form of 1.
 
 ```fern
 <<3 pub struct Modulus>>=
-pub struct Modulus { p: i64[], n0: i64, r2: i64[], one: i64[], limbs: i32, bytes: i32 }
+pub struct Modulus { p: i64[], kernel: i64[], r2: i64[], one: i64[], limbs: i32, bytes: i32 }
 ```
 
 ### `4 pub function modulus(hex: string, bytes: i32): Modulus`
@@ -89,7 +89,14 @@ pub function modulus_of(b: [u8], bits: i32): Modulus {
     x *= 2 as u64 - p0 * x;
     i += 1;
   }
-  let m = Modulus { p: p, n0: (0 as u64 - x) as i64, r2: [], one: [], limbs: limbs, bytes: bytes };
+  let n0 = (0 as u64 - x) as i64;
+  let kernel = __alloc_i64(limbs + 1).with(0, n0);
+  i = 0;
+  while (i < limbs) {
+    kernel = kernel.with(i + 1, p[i]);
+    i += 1;
+  }
+  let m = Modulus { p: p, kernel: kernel, r2: [], one: [], limbs: limbs, bytes: bytes };
   let r = __zeros(limbs).with((bits - 1) / 64, (1 as u64 << ((bits - 1) % 64) as u64) as i64);
   i = bits - 1;
   while (i < 64 * limbs) {
@@ -169,54 +176,12 @@ function __borrow(a: u64, b: u64, d: u64): u64 {
 
 ### `7 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[]`
 
-`mul` gives a b R^-1 mod p by coarsely integrated operand scanning (CIOS). Each step of the outer loop adds a_i b and then q p, and moves the sum down one limb. The value q makes the low limb zero. `top` holds the bit above the limbs. A sum below 2p leaves the loop, and one masked subtraction of p reduces it.
+`mul` gives a b R^-1 mod p. The compiler kernel `__mont_mul` computes it by coarsely integrated operand scanning (CIOS) in the general registers of each target, with no branch on a limb. For values below p, the result is below p.
 
 ```fern
 <<7 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[]>>=
 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[] {
-  let n = m.limbs;
-  let n0 = m.n0 as u64;
-  let t = __zeros(n);
-  let top = 0 as u64;
-  let i = 0;
-  while (i < n) {
-    let ai = a[i] as u64;
-    let b0 = b[0] as u64;
-    let x = ai * b0;
-    let t0 = t[0] as u64;
-    let s = t0 + x;
-    let c1 = __mulhi_u64(ai, b0) + __carry(t0, x, s);
-    let q = s * n0;
-    let p0 = m.p[0] as u64;
-    let y = q * p0;
-    let c2 = __mulhi_u64(q, p0) + __carry(s, y, s + y);
-    let j = 1;
-    while (j < n) {
-      let bj = b[j] as u64;
-      let pj = m.p[j] as u64;
-      let tj = t[j] as u64;
-      let xj = ai * bj;
-      let u = tj + xj;
-      let hx = __mulhi_u64(ai, bj) + __carry(tj, xj, u);
-      let v = u + c1;
-      hx += __carry(u, c1, v);
-      let yj = q * pj;
-      let w = v + yj;
-      let hy = __mulhi_u64(q, pj) + __carry(v, yj, w);
-      let z = w + c2;
-      hy += __carry(w, c2, z);
-      t = t.with(j - 1, z as i64);
-      c1 = hx;
-      c2 = hy;
-      j += 1;
-    }
-    let u = top + c1;
-    let v = u + c2;
-    t = t.with(n - 1, v as i64);
-    top = __carry(top, c1, u) + __carry(u, c2, v);
-    i += 1;
-  }
-  return __reduced(m, t, top);
+  return __mont_mul(a, b, m.kernel);
 }
 
 // t + top 2^(64 n) less p when that is not negative, else t.

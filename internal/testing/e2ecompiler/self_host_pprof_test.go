@@ -96,8 +96,8 @@ func TestSelfHostPprof(t *testing.T) {
 							t.Errorf("no allocating caller:\n%s", top)
 						}
 						objects, bytes := pprofSampleTotals(t, file)
-						if objects != 1024 || bytes != 40960 {
-							t.Errorf("objects=%d bytes=%d, want 1024/40960", objects, bytes)
+						if objects != 1024 || bytes != 32768 {
+							t.Errorf("objects=%d bytes=%d, want 1024/32768", objects, bytes)
 						}
 						if objTop := pprofOutput(t, file, "-top", "-sample_index=alloc_objects"); !strings.Contains(objTop, "1024") {
 							t.Errorf("object view:\n%s", objTop)
@@ -174,7 +174,7 @@ func TestSelfHostPprofReservoirWeights(t *testing.T) {
 	if objects < 530000-64 || objects > 530000+64 {
 		t.Errorf("scaled object estimate %d", objects)
 	}
-	if bytes < 530000*40-32768 || bytes > 530000*40+32768 {
+	if bytes < 530000*32-32768 || bytes > 530000*32+32768 {
 		t.Errorf("scaled byte estimate %d", bytes)
 	}
 }
@@ -208,8 +208,8 @@ func TestSelfHostPprofBinarySymbolization(t *testing.T) {
 		t.Fatalf("stdout %q stderr %q", stdout, stderr)
 	}
 	objects, allocationBytes := pprofSampleTotals(t, file)
-	if objects != 4096 || allocationBytes != 163840 {
-		t.Fatalf("objects=%d bytes=%d, want 4096/163840", objects, allocationBytes)
+	if objects != 4096 || allocationBytes != 131072 {
+		t.Fatalf("objects=%d bytes=%d, want 4096/131072", objects, allocationBytes)
 	}
 	top := pprofOutput(t, file, "-top", "-nodecount=100", bin)
 	if !strings.Contains(top, "allocate0") || !strings.Contains(top, "allocate63") {

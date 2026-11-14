@@ -151,7 +151,8 @@ PrimaryType = HandleType
 HandleType  = ( 'own' | 'borrow' ) IDENT [ '.' IDENT ] ;
 PrimitiveType
             = 'i32' | 'i64' | 'u8' | 'u32' | 'u64' | 'usize'
-            | 'f32' | 'f64' | 'f64x2' | 'f32x4' | 'u8x16' | 'boolean' | 'void' | 'string'
+            | 'f32' | 'f64' | 'f64x2' | 'f32x4' | 'boolean' | 'void' | 'string'
+            | 'u8x16' | 'i8x16' | 'u16x8' | 'i16x8' | 'u32x4' | 'i32x4'
             ;
 # `str`, `char`, `Self` are contextual type names, not keywords.
 NamedType   = IDENT [ '.' IDENT ] [ TypeArgs ] ;

@@ -42,8 +42,9 @@ func TestX86_64DeadAliasAppendNoCopy(t *testing.T) {
 		t.Errorf("x86-64 dead alias: __arr_push_shared_count() = %d, want 0 — "+
 			"a loop-body binding nothing reads again is still forcing a full buffer copy per append", got)
 	}
-	if _, got := compileAndRunX86_64FreeOn(t, liveAliasAppendSrc); got != 193 {
-		t.Errorf("x86-64 live alias: __arr_push_shared_count() = %d, want 193 — "+
+	// Of the 200 appends, the 6 into a full buffer grow it and are not counted.
+	if _, got := compileAndRunX86_64FreeOn(t, liveAliasAppendSrc); got != 194 {
+		t.Errorf("x86-64 live alias: __arr_push_shared_count() = %d, want 194 — "+
 			"the alias is read after the append, so every copy is mandatory", got)
 	}
 }

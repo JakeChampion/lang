@@ -70,6 +70,49 @@ function prefixes(): test.TestOutcome {
   return test.pass();
 }
 
+function forbidden_layer_extensions(): test.TestOutcome {
+  for kind in [1, 2, 8] {
+    for temporal in 0..8 {
+      for spatial in 0..4 {
+        let bytes: u8[] = [(kind * 8 + 6) as u8, (temporal * 32 + spatial * 8) as u8, 0];
+        if let Err(frame.Header) = av1.next_obu(bytes, 0, frame.default_limits()) {} else {
+          return test.fail("non-layer-specific OBU extension");
+        }
+      }
+    }
+    let bytes: u8[] = [(kind * 8 + 2) as u8, 0];
+    if let Ok(Some(_)) = av1.next_obu(bytes, 0, frame.default_limits()) {} else {
+      return test.fail("non-layer-specific OBU without extension");
+    }
+    let mixed: u8[] = [122, 0, (kind * 8 + 6) as u8, 0, 0];
+    if let Err(frame.Header) = av1.next_obu(mixed, 2, frame.default_limits()) {} else {
+      return test.fail("non-layer-specific extension after an earlier OBU");
+    }
+    let limited = frame.Limits { max_pixels: 0, max_packet_bytes: mixed.len() - 1 };
+    if let Err(frame.Limit) = av1.next_obu(mixed, 2, limited) {} else {
+      return test.fail("packet budget before extension validation");
+    }
+  }
+  return test.pass();
+}
+
+function permitted_layer_extensions(): test.TestOutcome {
+  for kind in [3, 4, 5, 6, 7, 15] {
+    for temporal in 0..8 {
+      for spatial in 0..4 {
+        let bytes: u8[] = [(kind * 8 + 6) as u8, (temporal * 32 + spatial * 8) as u8, 0];
+        let Ok(Some(unit)) = av1.next_obu(bytes, 0, frame.default_limits()) else {
+          return test.fail("layer-specific OBU extension");
+        };
+        if (unit.kind != kind || unit.temporal_id != temporal || unit.spatial_id != spatial) {
+          return test.fail("layer-specific OBU identity");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
 function extent(unit: av1.Unit, offset: i32, size: i32, end: i32): boolean {
   return unit.offset == offset && unit.size == size && unit.next_offset == end;
 }
@@ -170,6 +213,8 @@ function main(): i32 {
   let r = test.new("bounded AV1 low-overhead OBU ranges");
   r = r.it("fresh reference packets preserve every OBU range", ranges);
   r = r.it("all temporal and spatial extension IDs", extensions);
+  r = r.it("non-layer-specific OBU types reject extensions", forbidden_layer_extensions);
+  r = r.it("layer-specific OBU types preserve extension IDs", permitted_layer_extensions);
   r = r.it("every independently declared OBU prefix", prefixes);
   r = r.it("all eight size widths and nonminimal encodings", size_widths);
   r = r.it("header bits, types, and external lengths", header_errors);

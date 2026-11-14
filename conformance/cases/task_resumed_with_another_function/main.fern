@@ -23,7 +23,10 @@ function second(): i32 {
 
 function main(): i32 {
   let t = async.task_new((): i32 => first());
-  let st = async.task_start(t);
+  match (async.task_start(t)) {
+    Done(_) => {},
+    Suspended(_) => {}
+  }
   print("started");
   unsafe {
     let swapped = async.task_adopted(async.task_id(t), (): i32 => second());

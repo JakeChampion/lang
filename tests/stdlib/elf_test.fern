@@ -123,6 +123,35 @@ function test_bytes(): test.TestOutcome {
   }
 }
 
+// A load segment with eight bytes in the file and four in memory is
+// refused. A note of the same sizes is not a load segment, so its bytes
+// are read.
+function test_file_bytes_above_memory(): test.TestOutcome {
+  let b = header(183, 2, 2);
+  b = program_header(b, 1, 6, 176, 0x402000, 8, 4);
+  b = program_header(b, 4, 4, 176, 0, 8, 4);
+  for i in 0..8 {
+    b = b.append((i + 1) as u8);
+  }
+  let Ok(img) = elf.parse(b) else {
+    return test.fail("parse refused the image");
+  };
+  match (img.segments[0].bytes(b)) {
+    Ok(_) => {
+      return test.fail("a load segment with more file bytes than memory was read");
+    },
+    Err(e) => {
+      if (!e.message().contains("more bytes in the file than in memory")) {
+        return test.fail("the refusal is " + e.message());
+      }
+    }
+  }
+  let Ok(note) = img.segments[1].bytes(b) else {
+    return test.fail("the note bytes are refused");
+  };
+  return test.assert_eq(note.len(), 8);
+}
+
 function test_refusals(): test.TestOutcome {
   let bad_magic = image().with(1, 0x46u8);
   match (elf.parse(bad_magic)) {
@@ -188,6 +217,7 @@ function main(): i32 {
   r = r.it("parse reads the header", test_header);
   r = r.it("parse reads the program headers and loads picks the PT_LOAD ones", test_segments);
   r = r.it("bytes gives the file bytes of a segment and refuses one beyond the image", test_bytes);
+  r = r.it("bytes refuses a load segment with more file bytes than memory", test_file_bytes_above_memory);
   r = r.it("parse refuses what is not a little-endian ELF64 image", test_refusals);
   r = r.it("an image with no program headers parses", test_no_program_headers);
   return r.finish();

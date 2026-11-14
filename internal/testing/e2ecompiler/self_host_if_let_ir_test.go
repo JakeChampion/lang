@@ -70,12 +70,12 @@ func TestSelfHostIfLetIRX86_64(t *testing.T) {
 				}
 				if variant.heap {
 					body := selfHostFnBody(t, asm, "probe")
-					for _, call := range []string{"call __fern_arr_box", "call __fn___fern_arr_dec"} {
+					for _, call := range []string{"call __fern_rec_box", "call __fn___fern_box_dec"} {
 						if !strings.Contains(body, call) {
 							t.Errorf("probe missing %s:\n%s", call, body)
 						}
 					}
-				} else if got := strings.Contains(selfHostFnBody(t, asm, "main"), "call __fn___fern_arr_dec"); got != tc.staticReclaim {
+				} else if got := strings.Contains(selfHostFnBody(t, asm, "main"), "call __fn___fern_box_dec"); got != tc.staticReclaim {
 					t.Errorf("original reclaim call = %v, want %v:\n%s", got, tc.staticReclaim, asm)
 				}
 				progBin := buildBin(t, gcc, dir, tc.name, string(asm))

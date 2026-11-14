@@ -1,0 +1,51 @@
+import "std/test";
+import "std/process";
+import "std/string";
+
+function text(b: u8[]): string {
+  return unsafe { string_from_bytes_unchecked(b) };
+}
+
+// The output, the error and the status of a run, or the error of a start.
+function ran(program: string, args: string[], input: string): string {
+  return match (process.run(program, args, input)) {
+    Ok(out) => text(out.stdout) + "|" + text(out.stderr) + "|" + out.status.to_string(),
+    Err(NotFound(_)) => "not found",
+    Err(PermissionDenied(_)) => "denied",
+    Err(_) => "other",
+  };
+}
+
+function test_output_and_status(): test.TestOutcome {
+  let got = [
+    ran("sh", ["-c", "printf out; printf err >&2; exit 3"], ""),
+    ran("/bin/sh", ["-c", "kill -9 $$"], ""),
+    ran("sh", ["-c", "cat"], ""),
+    ran("no-such-program-of-the-test", [], ""),
+  ];
+  return test.assert_eq_array(got, ["out|err|3", "||137", "||0", "not found"]);
+}
+
+// The child reads the file on its standard input, and the parent reads a
+// large output and a large error without a deadlock.
+function test_input_and_large_output(): test.TestOutcome {
+  let Ok(dir) = temp_dir("fern-process") else {
+    return test.fail("no temporary directory");
+  };
+  let path = dir + "/input.txt";
+  let _ = write_file(path, "one\ntwo\n");
+  let small = ran("sh", ["-c", "cat; echo end"], path);
+  let big = match (process.run("sh", ["-c", "i=0; while [ $i -lt 20000 ]; do echo line $i; echo noise $i >&2; i=$((i+1)); done"], "")) {
+    Ok(out) => out.stdout.len().to_string() + " " + out.stderr.len().to_string(),
+    Err(_) => "error",
+  };
+  let _ = remove_dir_all(dir);
+  return test.assert_eq_array([small, big], ["one\ntwo\nend\n||0", "208890 228890"]);
+}
+
+function main(): i32 {
+  let r = test.new("process");
+  r = r.it("output and status", test_output_and_status);
+  r = r.it("input and large output", test_input_and_large_output);
+  return r.finish();
+}

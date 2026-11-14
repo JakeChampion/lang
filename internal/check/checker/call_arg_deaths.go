@@ -2271,11 +2271,17 @@ func jumpsOf(info *Info, st ast.Stmt) stmtJumps {
 	return out
 }
 
-// neverReturns reports a statement that calls a function which never
-// returns.
+// neverReturns reports a statement that calls exit or a function which
+// never returns.
 func neverReturns(info *Info, st ast.Stmt) bool {
 	es, ok := st.(*ast.ExprStmt)
-	return ok && info != nil && callNeverReturns(es.Expr, info.NoReturn, true)
+	if !ok || info == nil {
+		return false
+	}
+	if call, ok := es.Expr.(*ast.Call); ok && info.IntrinsicCalls[call].Kind == IntrinsicExit {
+		return true
+	}
+	return callNeverReturns(es.Expr, info.NoReturn, true)
 }
 
 // NoReturnFuncs names the plain functions whose body never returns: on every

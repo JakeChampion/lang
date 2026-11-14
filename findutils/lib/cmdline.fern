@@ -272,29 +272,25 @@ pub function ask(argv: string[], arg: string): boolean {
 
 // Runs a command and waits for it. `dir` is its directory, or "" for this
 // one. With `close_stdin` the command has no standard input, as for -ok.
-pub function run(argv: string[], dir: string, close_stdin: boolean): Outcome {
+// `envp` is the environment of the command.
+pub function run(argv: string[], dir: string, close_stdin: boolean, envp: string[]): Outcome {
   let mode = if (close_stdin) { STDIN_CLOSE } else { STDIN_KEEP };
-  let pid = start(argv, dir, mode, "");
+  let pid = start(argv, dir, mode, envp);
   if (pid.1 != 0) {
     return Outcome { code: 1, signal: 0, errno: pid.1 };
   }
   return wait(pid.0);
 }
 
-// Starts a command. The result is its process, or the error that stopped
-// it from starting. `slot` names a variable and its value to set, as
-// "NAME=VALUE", or is "".
-pub function start(argv: string[], dir: string, stdin_mode: i32, slot: string): (i32, i32) {
+// Starts a command with the environment `envp`. The result is its process,
+// or the error that stopped it from starting.
+pub function start(argv: string[], dir: string, stdin_mode: i32, envp: string[]): (i32, i32) {
   let ep = match (pipe()) {
     Ok(made) => made,
     Err(e) => {
       return (-1, errno.of(e));
     },
   };
-  let envp = environ();
-  if (slot.len() > 0) {
-    envp = with_var(envp, slot);
-  }
   let pid = proc_fork();
   if (pid == 0) {
     child(argv, dir, stdin_mode, envp, ep.w);
@@ -330,19 +326,16 @@ function reopen_tty(): void {
   }
 }
 
-function with_var(envp: string[], slot: string): string[] {
-  let eq = 0;
-  while (eq < slot.len() && slot[eq] != b'=') {
-    eq += 1;
-  }
-  let prefix = slice_unchecked(slot, 0, eq + 1) + "";
+// The environment `envp` without the variable `name`.
+pub function without_var(envp: string[], name: string): string[] {
+  let prefix = name + "=";
   let out: string[] = [];
   for e in envp {
     if (!e.starts_with(prefix)) {
       out = out.append(e);
     }
   }
-  return out.append(slot);
+  return out;
 }
 
 function child(argv: string[], dir: string, stdin_mode: i32, envp: string[], ew: Writer): void {

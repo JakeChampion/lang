@@ -35,11 +35,12 @@ The standard-library doctest test discovers all documents with test fences.
 
 ## Plain sources
 
-Four modules have generators that own the complete file. They retain plain Fern sources:
+Five modules have generators that own the complete file. They retain plain Fern sources:
 
 | Module | Generator |
 | --- | --- |
 | `std/brotli/dictionary` | `cmd/brotlidictgen` |
+| `std/encoding/indexes` | `cmd/encodinggen/gen.py` |
 | `std/publicsuffix` | `cmd/pslgen` |
 | `std/tls/mozilla` | `cmd/rootsgen` |
 | `std/unicode` | `cmd/unicodegen` |
@@ -68,6 +69,7 @@ They are outside the public library inventory below.
 | `std/bigint` | [Arbitrary-precision integers](../internal/stdlib/std/bigint.fern.md) |
 | `std/binary` | [Network-order integer fields](../internal/stdlib/std/binary.fern.md) |
 | `std/brotli` | [Brotli decompression](../internal/stdlib/std/brotli.fern.md) |
+| `std/bzip2` | [bzip2 streams](../internal/stdlib/std/bzip2.fern.md) |
 | `std/cli` | [Command-line specifications](../internal/stdlib/std/cli.fern.md) |
 | `std/clock` | [Wall and monotonic clocks](../internal/stdlib/std/clock.fern.md) |
 | `std/codec` | [Shared codec errors](../internal/stdlib/std/codec.fern.md) |
@@ -91,6 +93,7 @@ They are outside the public library inventory below.
 | `std/deflate` | [DEFLATE, zlib, and gzip](../internal/stdlib/std/deflate.fern.md) |
 | `std/dns` | [DNS messages and resolution](../internal/stdlib/std/dns.fern.md) |
 | `std/dotenv` | [Environment-file values](../internal/stdlib/std/dotenv.fern.md) |
+| `std/encoding` | [Text encodings of the Encoding Standard](../internal/stdlib/std/encoding.fern.md) |
 | `std/envflag` | [Boolean environment flags](../internal/stdlib/std/envflag.fern.md) |
 | `std/errno` | [Portable runtime error numbers](../internal/stdlib/std/errno.fern.md) |
 | `std/f32` | [Binary32 parsing](../internal/stdlib/std/f32.fern.md) |
@@ -135,6 +138,8 @@ They are outside the public library inventory below.
 | `std/jpeg` | [JPEG images](../internal/stdlib/std/jpeg.fern.md) |
 | `std/json` | [JSON trees and documents](../internal/stdlib/std/json.fern.md) |
 | `std/log` | [Structured log entries](../internal/stdlib/std/log.fern.md) |
+| `std/lz4` | [LZ4 frames](../internal/stdlib/std/lz4.fern.md) |
+| `std/lzw` | [The LZW data of Unix compress](../internal/stdlib/std/lzw.fern.md) |
 | `std/math` | [Ranges, numeric constants, and RGB values](../internal/stdlib/std/math.fern.md) |
 | `std/metrics` | [Prometheus metric values](../internal/stdlib/std/metrics.fern.md) |
 | `std/mitigations` | [Hardware mitigation report](../internal/stdlib/std/mitigations.fern.md) |
@@ -151,6 +156,7 @@ They are outside the public library inventory below.
 | `std/platform` | [Handler platform capabilities](../internal/stdlib/std/platform.fern.md) |
 | `std/pmap` | [Persistent hash maps](../internal/stdlib/std/pmap.fern.md) |
 | `std/png` | [RGB PNG output](../internal/stdlib/std/png.fern.md) |
+| `std/process` | [Child processes with pipes](../internal/stdlib/std/process.fern.md) |
 | `std/protobuf` | [Protocol Buffers wire fields](../internal/stdlib/std/protobuf.fern.md) |
 | `std/pset` | [Persistent hash sets](../internal/stdlib/std/pset.fern.md) |
 | `std/pvec` | [Persistent indexed vectors](../internal/stdlib/std/pvec.fern.md) |
@@ -210,4 +216,5 @@ They are outside the public library inventory below.
 | `std/wasm/module` | [WebAssembly module assembly](../internal/stdlib/std/wasm/module.fern.md) |
 | `std/wasm/numeric` | [WebAssembly numeric opcodes](../internal/stdlib/std/wasm/numeric.fern.md) |
 | `std/wasm/sections` | [WebAssembly section payloads](../internal/stdlib/std/wasm/sections.fern.md) |
+| `std/xz` | [xz and lzma files](../internal/stdlib/std/xz.fern.md) |
 | `std/zstd` | [Zstandard data without dictionaries](../internal/stdlib/std/zstd.fern.md) |
