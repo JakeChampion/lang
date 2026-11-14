@@ -6162,17 +6162,28 @@ function constant_bits(ins: SInst): i32 {
   return 64;
 }
 
+// The low bits of operand `k` that a store of a byte or a 4-byte element
+// writes, or 0. An append takes its element as operand 1.
+function stored_bits(ins: SInst, k: i32): i32 {
+  let mark = ins.str;
+  if (ins.kind_tag == RT_CALL && k == 1 && ins.str.starts_with("arr_push")) {
+    mark = if (ins.str.ends_with("_u8")) { "u8" } else if (ins.str.ends_with("_u32")) { "i32" } else { "" };
+  } else if (!(ins.kind_tag == ST_AT && k == 1 || ins.kind_tag == ARR_ST && k == 2)) {
+    return 0;
+  }
+  if (mark == "u8") {
+    return 8;
+  }
+  return if (mark == "i32" || mark == "u32") { 32 } else { 0 };
+}
+
 // The low result bits of arithmetic and logic depend only on the same
 // low operand bits. A constant right shift can bring higher bits down;
 // variable right shifts conservatively observe the whole source.
 function operand_bits(ins: SInst, k: i32, result: i32, f: SFunc, def_b: i32[], def_k: i32[]): i32 {
-  if (ins.kind_tag == ST_AT && k == 1) {
-    if (ins.str == "u8") {
-      return 8;
-    }
-    if (ins.str == "i32") {
-      return 32;
-    }
+  let stored = stored_bits(ins, k);
+  if (stored > 0) {
+    return stored;
   }
   if (ins.kind_tag == COPY || ins.kind_tag == PHI) {
     return result;
