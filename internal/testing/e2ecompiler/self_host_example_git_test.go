@@ -29,7 +29,7 @@ func (g gitTool) run(t *testing.T, dir, stdin string, args ...string) (string, s
 	cmd := g.cmd(args...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(stdin)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C", "GIT_COMMITTER_DATE=2026-01-02T03:04:05Z", "GIT_AUTHOR_DATE=2026-01-02T03:04:05Z")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	_ = cmd.Run()
@@ -360,7 +360,7 @@ func gitPackedFixture(t *testing.T, oracle gitTool, dir string, run gitRun) stri
 	must("checkout", "-q", "main")
 	must(append(id, "merge", "-q", "--no-ff", "-m", "merge", "side")...)
 	must(append(id, "tag", "-a", "v1", "-m", "tag one")...)
-	must("gc", "-q", "--aggressive", "--prune=now")
+	must("-c", "pack.threads=1", "gc", "-q", "--aggressive", "--prune=now")
 	return gitPackIndex(t, dir)
 }
 
