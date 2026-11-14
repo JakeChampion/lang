@@ -9,18 +9,17 @@ import (
 )
 
 var arrayConcatMethodIRCases = []struct {
-	name   string
-	src    string
-	kernel bool
+	name string
+	src  string
 }{
 	{"i32", `import "std/array";
-function main(): i32 { let a: i32[] = [1, 2, 3]; let b: i32[] = [4, 5]; let c: i32[] = a.concat(b); return c.len() * 10 + c[4]; }`, true},
+function main(): i32 { let a: i32[] = [1, 2, 3]; let b: i32[] = [4, 5]; let c: i32[] = a.concat(b); return c.len() * 10 + c[4]; }`},
 	{"string", `import "std/array";
-function main(): i32 { let a: string[] = ["ab", "c"]; let b: string[] = ["de", "f"]; let c: string[] = a.concat(b); return c.len(); }`, false},
+function main(): i32 { let a: string[] = ["ab", "c"]; let b: string[] = ["de", "f"]; let c: string[] = a.concat(b); return c.len(); }`},
 	{"literal-arg", `import "std/array";
-function main(): i32 { let a: i32[] = [7, 8]; let c: i32[] = a.concat([9]); return c.len() * 10 + c[2]; }`, true},
+function main(): i32 { let a: i32[] = [7, 8]; let c: i32[] = a.concat([9]); return c.len() * 10 + c[2]; }`},
 	{"chained", `import "std/array";
-function main(): i32 { let a: i32[] = [1]; let b: i32[] = [2, 3]; let c: i32[] = a.concat(b).concat(a); return c.len(); }`, true},
+function main(): i32 { let a: i32[] = [1]; let b: i32[] = [2, 3]; let c: i32[] = a.concat(b).concat(a); return c.len(); }`},
 }
 
 func TestSelfHostArrayConcatMethodIR(t *testing.T) {
@@ -59,11 +58,8 @@ func TestSelfHostArrayConcatMethodIR(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}
-			if tc.kernel && !strings.Contains(asm, "__fern_arr_concat") {
-				t.Errorf("%s: no call to __fern_arr_concat in asm (a scalar concat did not take the runtime join)", tc.name)
-			}
-			if !tc.kernel && !strings.Contains(asm, "__arrm_concat__") {
-				t.Errorf("%s: no monomorphised __arrm_concat__ clone in asm (method did not ride the IR array-method path)", tc.name)
+			if !strings.Contains(asm, "__fern_arr_concat") {
+				t.Errorf("%s: no call to __fern_arr_concat in asm (the concat did not take the runtime join)", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, "arrcat_"+tc.name+"_bin", asm)
 			var cmd *exec.Cmd

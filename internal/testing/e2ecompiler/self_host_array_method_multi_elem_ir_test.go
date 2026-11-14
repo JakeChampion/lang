@@ -44,7 +44,7 @@ function main(): i32 {
     let a: i32[] = xs.concat(ys);
     let b: string[] = ss.concat(ts);
     return a.len() * 10 + b.len();
-}`, []string{"__fern_arr_concat", "__arrm_concat__string"}},
+}`, []string{"__fern_arr_concat"}},
 
 	// The i32 clone is a reader leaf, spliced into main, so only the string one is emitted.
 	{"is_sorted-bounded", `import "std/array";

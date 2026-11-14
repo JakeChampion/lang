@@ -93,9 +93,14 @@ pub function is_runtime_helper_call(name: string, s: asmcore.EmitState): boolean
   return is_fern_helper(name) && asmcore.top_level_fn(name, s) < 0;
 }
 
-// A compiled Fern helper takes the arguments of its call in reverse order.
+// A compiled Fern helper that its callers enter with the arguments in
+// registers. It takes the arguments of its call in reverse order.
+pub function register_helper(name: string): boolean {
+  return rtbytecopy.is_helper(name) || name == "__fern_arr_concat";
+}
+
 pub function helper_arg_index(name: string, nargs: i32, a: i32): i32 {
-  if (rtbytecopy.is_helper(name)) {
+  if (register_helper(name)) {
     return nargs - 1 - a;
   }
   return a;

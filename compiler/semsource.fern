@@ -2459,7 +2459,7 @@ function concat_kernel(name: string, c: ast.ExprCall, s: State): boolean {
   }
   let t = checked(c.args[0], s);
   if let typeinfo.TypeArray(a) = t {
-    return !a.view && !ssasem.reference(a.elem) && semtypes.concrete(a.elem, false) && ssasem.same_elements(checked(c.args[1], s), t);
+    return !a.view && !ssasem.is_view(a.elem) && semtypes.concrete(a.elem, false) && ssasem.same_elements(checked(c.args[1], s), t);
   }
   return false;
 }
