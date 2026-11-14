@@ -147,7 +147,9 @@ whole file after such reads for half of the objects.
   by offset and then by name. Each object and each line of `verify-pack -v`
   are those of git. The last commit of the repository is a merge, and the
   operators give each parent. The port refuses a packfile with one changed
-  byte. The packfile is above 1 MiB, so the port reads it in parts and
-  then whole. The index and the reverse index of `index-pack` have the bytes of
-  git. The test also has a shallow clone, and a store of 16,400 objects
+  byte. The index and the reverse index of `index-pack` have the bytes of
+  git.
+
+  The packfile is above 1 MiB, so the port reads it in parts and then
+  whole. The test also has a shallow clone, and a store of 16,400 objects
   where a short name has 8 digits.
