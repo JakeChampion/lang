@@ -3467,8 +3467,6 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
   if (parser.builtin_enum_of(bare).len() > 0) {
     n = 1;
   }
-  let own = false;
-  let owns_two = false;
   let last: i32 = -1;
   let e = s.unions.bhead[util.hash_bucket(bare, 4093)];
   while (e >= 0) {
@@ -3476,18 +3474,9 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
     let u = s.unions.unions[o];
     if (s.unions.bnames[e] == bare && u.is_enum && o != last && enum_visible_from(u, s.fn_module)) {
       n += 1;
-      if (u.module == s.fn_module) {
-        owns_two = own;
-        own = true;
-      }
       last = o;
     }
     e = s.unions.bnext[e];
-  }
-  // The flattener gives a variant of an enum of this module the prefix of
-  // the module, so only the enums of this module can make it ambiguous.
-  if (bare != name && own) {
-    return owns_two;
   }
   return n >= 2;
 }
@@ -35090,6 +35079,41 @@ function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean)
   }
 }
 
+// qualify_value_body qualifies the body of a value block, as vb_ret_diags
+// reads it. Its last statement, or the last statement of each arm of a
+// last `if` or `match`, gives the value of the block, of the type `want`.
+// A `return` before it leaves the function, so it expects the type that
+// the function returns.
+function qualify_value_body(body: ast.Stmt[], s: Scope, want: typeinfo.Type, coll: util.NameIndex): ast.Stmt[] {
+  if (body.len() == 0) {
+    return body;
+  }
+  let out: ast.Stmt[] = [];
+  let cur = s;
+  for i in 0..body.len() - 1 {
+    let q = qualify_stmt(body[i], cur.with_block_ret(s.try_ret), coll);
+    out = out.append(q);
+    cur = bind_stmt(q, cur);
+  }
+  let none = t_unknown("no expected type");
+  let last = body[body.len() - 1];
+  if let ast.StmtIf(f) = last {
+    return out.append(ast.StmtIf { ...f, cond: qualify_expr(f.cond, none, cur, coll), then_body: qualify_value_body(f.then_body, cur, want, coll), else_body: qualify_value_body(f.else_body, cur, want, coll) });
+  }
+  if let ast.StmtMatch(m) = last {
+    let arms: ast.MatchArm[] = [];
+    let scrut = check_expr(m.scrutinee, cur);
+    for arm in m.arms {
+      arms = arms.append(ast.MatchArm { ...arm, body: qualify_value_body(arm.body, annotate_arm_scope(arm, cur, scrut), want, coll) });
+    }
+    return out.append(ast.StmtMatch { ...m, scrutinee: qualify_expr(m.scrutinee, none, cur, coll), arms: arms });
+  }
+  // A tail after a statement that leaves is the copy of that `return` that
+  // the parser adds, so it expects what the function returns.
+  let tail = if (mx_branch_yields(body)) { want } else { s.try_ret };
+  return out.append(qualify_stmt(last, cur.with_block_ret(tail), coll));
+}
+
 function dest_slot(slots: typeinfo.Type[], k: i32): typeinfo.Type {
   if (k < slots.len()) {
     return slots[k];
@@ -35140,10 +35164,8 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
   if (parser.is_value_block(c)) {
     if let ast.ExprLambda(lm) = c.callee {
       let bs = lambda_body_scope(lm, s);
-      if (!is_unknown(want)) {
-        bs = bs.with_block_ret(want);
-      }
-      return ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: qualify_stmts(lm.body, bs, coll) } };
+      let tail = if (is_unknown(want)) { bs.ret_type } else { want };
+      return ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: qualify_value_body(lm.body, bs, tail, coll) } };
     }
   }
   let callee = c.callee;
