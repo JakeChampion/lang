@@ -1,3 +1,8 @@
+# 2026-11-14: PR #15790 at ba957d1e, perf-x86_64 job 132249261077 and perf-aarch64 job 132249260970.
+# The colour step of the bump allocator and the request for huge pages add 20 to 60 bytes of
+# runtime text to each program and two or three instructions to each bump block. The other rows
+# are values of main: the PR does not change what the compiler emits for a function. 53 rows
+# move to their measured values. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 on the merge with main 629da263. Eleven emit rows
 # of perceus_cfold, perceus_rbtree, perceus_rbtree_ck, pmap_insert and pvec_with are 1.2% to 4.8%
 # below their pins. These are values of main: #15739 changes no code that these programs reach. Each
@@ -285,18 +290,18 @@
 # x86-64-linux/pmap_insert.emit 2942 to 2884, arm64-linux/pmap_insert.emit
 # 3249 to 3188, arm64-linux/pvec_with.emit 3211 to 3178.
 
-selfhost/arm64-linux/array_append.emit	1403
-selfhost/arm64-linux/array_index.emit	1401
-selfhost/arm64-linux/array_scale_f64.emit	1498
-selfhost/arm64-linux/array_with.emit	1216
-selfhost/arm64-linux/ascii_scan.emit	1700
-selfhost/arm64-linux/byte_copy_append.emit	1518
-selfhost/arm64-linux/byte_copy_with.emit	1469
+selfhost/arm64-linux/array_append.emit	1430
+selfhost/arm64-linux/array_index.emit	1429
+selfhost/arm64-linux/array_scale_f64.emit	1526
+selfhost/arm64-linux/array_with.emit	1240
+selfhost/arm64-linux/ascii_scan.emit	1727
+selfhost/arm64-linux/byte_copy_append.emit	1541
+selfhost/arm64-linux/byte_copy_with.emit	1494
 selfhost/arm64-linux/call_overhead.emit	442
-selfhost/arm64-linux/closure_call.emit	1198
-selfhost/arm64-linux/deflate_decode.emit	13478
-selfhost/arm64-linux/deflate_encode.emit	7910
-selfhost/arm64-linux/enum_match.emit	1161
+selfhost/arm64-linux/closure_call.emit	1226
+selfhost/arm64-linux/deflate_decode.emit	13259
+selfhost/arm64-linux/deflate_encode.emit	7757
+selfhost/arm64-linux/enum_match.emit	1190
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 # 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
 # Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
@@ -306,22 +311,22 @@ selfhost/arm64-linux/http_hello.emit	16619
 selfhost/arm64-linux/int_loop.emit	383
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
-selfhost/arm64-linux/map_string.emit	9472
+selfhost/arm64-linux/map_string.emit	9610
 selfhost/arm64-linux/ordmap_insert.emit	5816
 selfhost/arm64-linux/pmap_insert.emit	3220
 selfhost/arm64-linux/pvec_with.emit	3243
-selfhost/arm64-linux/record_update.emit	1216
-selfhost/arm64-linux/sort_inplace.emit	1725
+selfhost/arm64-linux/record_update.emit	1240
+selfhost/arm64-linux/sort_inplace.emit	1750
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-selfhost/arm64-linux/sort_ints.emit	2061
-selfhost/arm64-linux/sort_strings.emit	3488
-selfhost/arm64-linux/string_build.emit	2292
-selfhost/arm64-linux/string_count_byte.emit	1493
-selfhost/arm64-linux/string_find_byte.emit	1892
-selfhost/arm64-linux/string_rfind_byte.emit	2011
-selfhost/arm64-linux/string_scan.emit	2491
-selfhost/arm64-linux/string_slice.emit	1181
-selfhost/arm64-linux/struct_drop.emit	2598
+selfhost/arm64-linux/sort_ints.emit	2091
+selfhost/arm64-linux/sort_strings.emit	3558
+selfhost/arm64-linux/string_build.emit	2379
+selfhost/arm64-linux/string_count_byte.emit	1520
+selfhost/arm64-linux/string_find_byte.emit	1931
+selfhost/arm64-linux/string_rfind_byte.emit	2038
+selfhost/arm64-linux/string_scan.emit	2578
+selfhost/arm64-linux/string_slice.emit	1208
+selfhost/arm64-linux/struct_drop.emit	2685
 selfhost/arm64-linux/tokenize.emit	1437
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	8188
 selfhost/arm64-linux/utf8_ingest_validated.emit	8735
@@ -366,66 +371,66 @@ selfhost/wasm32-wasi/tokenize.emit	890
 selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9273
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/utf8_ingest_validated.emit at 10197 (was 9917). The tolerance is unchanged.
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	10197
-selfhost/x86-64-linux/array_append.emit	1190
-selfhost/x86-64-linux/array_index.emit	1191
-selfhost/x86-64-linux/array_scale_f64.emit	1306
-selfhost/x86-64-linux/array_with.emit	981
-selfhost/x86-64-linux/ascii_scan.emit	1391
-selfhost/x86-64-linux/byte_copy_append.emit	1283
-selfhost/x86-64-linux/byte_copy_with.emit	1240
+selfhost/x86-64-linux/array_append.emit	1206
+selfhost/x86-64-linux/array_index.emit	1209
+selfhost/x86-64-linux/array_scale_f64.emit	1334
+selfhost/x86-64-linux/array_with.emit	999
+selfhost/x86-64-linux/ascii_scan.emit	1415
+selfhost/x86-64-linux/byte_copy_append.emit	1301
+selfhost/x86-64-linux/byte_copy_with.emit	1261
 selfhost/x86-64-linux/call_overhead.emit	347
-selfhost/x86-64-linux/closure_call.emit	955
-selfhost/x86-64-linux/deflate_decode.emit	12645
-selfhost/x86-64-linux/deflate_encode.emit	7283
-selfhost/x86-64-linux/enum_match.emit	935
+selfhost/x86-64-linux/closure_call.emit	982
+selfhost/x86-64-linux/deflate_decode.emit	12499
+selfhost/x86-64-linux/deflate_encode.emit	7163
+selfhost/x86-64-linux/enum_match.emit	953
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/x86-64-linux/http_hello.emit	15691
 selfhost/x86-64-linux/int_loop.emit	292
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
-selfhost/x86-64-linux/map_string.emit	9311
+selfhost/x86-64-linux/map_string.emit	9437
 selfhost/x86-64-linux/ordmap_insert.emit	5432
 selfhost/x86-64-linux/pmap_insert.emit	2933
 selfhost/x86-64-linux/pvec_with.emit	2994
-selfhost/x86-64-linux/record_update.emit	981
-selfhost/x86-64-linux/sort_inplace.emit	1534
-selfhost/x86-64-linux/sort_ints.emit	1774
-selfhost/x86-64-linux/sort_strings.emit	3098
-selfhost/x86-64-linux/string_build.emit	1926
-selfhost/x86-64-linux/string_count_byte.emit	1321
-selfhost/x86-64-linux/string_find_byte.emit	1593
+selfhost/x86-64-linux/record_update.emit	999
+selfhost/x86-64-linux/sort_inplace.emit	1555
+selfhost/x86-64-linux/sort_ints.emit	1806
+selfhost/x86-64-linux/sort_strings.emit	3159
+selfhost/x86-64-linux/string_build.emit	2005
+selfhost/x86-64-linux/string_count_byte.emit	1339
+selfhost/x86-64-linux/string_find_byte.emit	1612
 # 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this size.
 # Bank the measured increase after main 5d6c692eb2. Keep the tolerance unchanged.
 selfhost/x86-64-linux/string_rfind_byte.emit	1758
-selfhost/x86-64-linux/string_scan.emit	2166
-selfhost/x86-64-linux/string_slice.emit	944
-selfhost/x86-64-linux/struct_drop.emit	2341
-selfhost/x86-64-linux/tokenize.emit	1237
+selfhost/x86-64-linux/string_scan.emit	2245
+selfhost/x86-64-linux/string_slice.emit	960
+selfhost/x86-64-linux/struct_drop.emit	2420
+selfhost/x86-64-linux/tokenize.emit	1211
 selfhost/x86-64-linux/utf8_ingest_unchecked.emit	7735
 selfhost/x86-64-linux/utf8_ingest_validated.emit	8318
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1938
-selfhost/arm64-linux/perceus_cfold.emit	2183
+selfhost/arm64-linux/perceus_cfold.emit	2205
 selfhost/wasm32-wasi/perceus_cfold.emit	1766
 selfhost/x86-64-linux/perceus_deriv.emit	2651
 selfhost/arm64-linux/perceus_deriv.emit	2937
 selfhost/wasm32-wasi/perceus_deriv.emit	2831
-selfhost/x86-64-linux/perceus_nqueens.emit	1548
-selfhost/arm64-linux/perceus_nqueens.emit	1797
+selfhost/x86-64-linux/perceus_nqueens.emit	1566
+selfhost/arm64-linux/perceus_nqueens.emit	1821
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
 selfhost/x86-64-linux/perceus_rbtree.emit	2600
 selfhost/arm64-linux/perceus_rbtree.emit	2842
 selfhost/wasm32-wasi/perceus_rbtree.emit	3688
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	2795
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3039
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4010
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	3027
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3288
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4277
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.
 # 2026-11-08: #14770. Pin the measured reduction from the corrected display roots.
 # No performance limit increases.
 selfhost/x86-64-linux/video_qtrle.emit 5234
-selfhost/arm64-linux/video_qtrle.emit 5600
+selfhost/arm64-linux/video_qtrle.emit 5538
 selfhost/wasm32-wasi/video_qtrle.emit 6036
 # 2026-11-09: QTRLE scalar run validation reduces emitted code on all three targets.
 # Measured with the same compiler as the parent control. Keep all tolerances.
