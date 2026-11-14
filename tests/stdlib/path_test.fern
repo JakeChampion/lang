@@ -140,6 +140,12 @@ function test_with_extension(): test.TestOutcome {
   return test.assert_eq(path.with_extension(".bashrc", "txt"), ".bashrc.txt");
 }
 
+// 80000 segments and 80000 `..` clean in linear time. Before, each `..`
+// copied the segments, and this took 12 seconds.
+function test_clean_many_parents(): test.TestOutcome {
+  return test.assert_eq(path.clean("a/".repeat(80000) + "../".repeat(80000) + "b"), "b");
+}
+
 function main(): i32 {
   let r = test.new("std/path");
   r = r.it("join", test_join);
@@ -170,5 +176,6 @@ function main(): i32 {
   r = r.it("is_absolute", test_is_absolute);
   r = r.it("stem", test_stem);
   r = r.it("with_extension", test_with_extension);
+  r = r.it("clean many parents", test_clean_many_parents);
   return r.finish();
 }

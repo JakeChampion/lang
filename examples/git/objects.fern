@@ -172,7 +172,8 @@ function octal3(b: u8): u8[] {
   return [b'\\', b'0' + (b >> 6), b'0' + (b >> 3 & 7), b'0' + (b & 7)];
 }
 
-function plain_name(name: u8[]): boolean {
+// True when git writes the path with no quotes.
+pub function plain_name(name: u8[]): boolean {
   for b in name {
     if (b < 32 || b >= 127 || b == b'"' || b == b'\\') {
       return false;
@@ -219,6 +220,17 @@ pub function entry_kind(mode: string): string {
 // of the object.
 pub struct TreeEntry { mode: string, name: u8[], hash: string }
 
+// The mode of an entry, which is the text of `body` from `from` to `to`.
+function mode_at(body: u8[], from: i32, to: i32): string {
+  if (to - from == 6 && starts_at(body, from, "100644")) {
+    return "100644";
+  }
+  if (to - from == 5 && starts_at(body, from, "40000")) {
+    return "40000";
+  }
+  return unsafe { string_from_bytes_unchecked(array.slice(body, from, to)) };
+}
+
 // The entries of the body of a tree.
 pub function tree_entries(body: u8[]): Result[TreeEntry[], string] {
   let out: TreeEntry[] = [];
@@ -235,8 +247,7 @@ pub function tree_entries(body: u8[]): Result[TreeEntry[], string] {
     if (space == i || end + 21 > body.len()) {
       return Err("too-short tree object");
     }
-    let mode = unsafe { string_from_bytes_unchecked(array.slice(body, i, space)) };
-    out = out.append(TreeEntry { mode: mode, name: array.slice(body, space + 1, end), hash: hex.encode(array.slice(body, end + 1, end + 21)) });
+    out = out.append(TreeEntry { mode: mode_at(body, i, space), name: array.slice(body, space + 1, end), hash: hex.encode(array.slice(body, end + 1, end + 21)) });
     i = end + 21;
   }
   return Ok(out);
@@ -245,8 +256,13 @@ pub function tree_entries(body: u8[]): Result[TreeEntry[], string] {
 // The mode with six digits, the kind and the name of the object, as each
 // line of a tree starts.
 pub function entry_head(e: TreeEntry): string {
-  let padded = "000000" + e.mode;
-  return part(padded, padded.len() - 6, padded.len()) + " " + entry_kind(e.mode) + " " + e.hash;
+  return match (e.mode) {
+    "100644" => "100644 blob ",
+    "100755" => "100755 blob ",
+    "40000" => "040000 tree ",
+    _ => "0".repeat(6 - e.mode.len().min(6)) + e.mode + " " + entry_kind(e.mode) + " ",
+  }
+    + e.hash;
 }
 
 // The lines of `cat-file -p` for the body of a tree: the mode with six

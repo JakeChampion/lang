@@ -729,7 +729,7 @@ function check_enums(): test.TestOutcome {
   if (rtEnum.enums[0].variant_names[1] != "Green") {
     return test.fail("rtEnum.enums[0].variant_names[1] != \"Green\"");
   }
-  let rgi = printer.variant_decl_index(rtEnum.structs, "Color", "Green");
+  let rgi = variant_decl_index(rtEnum.structs, "Color", "Green");
   if (rgi < 0) {
     return test.fail("rgi < 0");
   }
@@ -739,7 +739,7 @@ function check_enums(): test.TestOutcome {
   if (rtEnum.structs[rgi].fields[0].type_name != "i32") {
     return test.fail("rtEnum.structs[rgi].fields[0].type_name != \"i32\"");
   }
-  let rri = printer.variant_decl_index(rtEnum.structs, "Color", "Red");
+  let rri = variant_decl_index(rtEnum.structs, "Color", "Red");
   if (rri < 0) {
     return test.fail("rri < 0");
   }
@@ -776,7 +776,7 @@ function check_enums(): test.TestOutcome {
   if (rtEG.enums[0].type_params[0] != modEG.enums[0].type_params[0]) {
     return test.fail("rtEG.enums[0].type_params[0] != modEG.enums[0].type_params[0]");
   }
-  let fgi = printer.variant_decl_index(rtEG.structs, "Slot", "Full");
+  let fgi = variant_decl_index(rtEG.structs, "Slot", "Full");
   if (fgi < 0) {
     return test.fail("fgi < 0");
   }
@@ -789,7 +789,7 @@ function check_enums(): test.TestOutcome {
 
   let srcEM = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
   let rtEM = roundtrip_module(srcEM);
-  let tpi = printer.variant_decl_index(rtEM.structs, "Pair", "Two");
+  let tpi = variant_decl_index(rtEM.structs, "Pair", "Two");
   if (tpi < 0) {
     return test.fail("tpi < 0");
   }
@@ -805,7 +805,7 @@ function check_enums(): test.TestOutcome {
 
   let srcER = "enum Shape { Rect { w: i32, h: string }, Unit } function main(): i32 { return 0; }";
   let rtER = roundtrip_module(srcER);
-  let rcvi = printer.variant_decl_index(rtER.structs, "Shape", "Rect");
+  let rcvi = variant_decl_index(rtER.structs, "Shape", "Rect");
   if (rcvi < 0) {
     return test.fail("rcvi < 0");
   }
@@ -830,7 +830,7 @@ function check_enums(): test.TestOutcome {
   if (rtER.structs[rcvi].fields[1].type_name != "string") {
     return test.fail("rtER.structs[rcvi].fields[1].type_name != \"string\"");
   }
-  let uri = printer.variant_decl_index(rtER.structs, "Shape", "Unit");
+  let uri = variant_decl_index(rtER.structs, "Shape", "Unit");
   if (uri < 0) {
     return test.fail("uri < 0");
   }
@@ -1391,4 +1391,13 @@ function check_checked_casts(): test.TestOutcome {
     }
   }
   return test.pass();
+}
+
+function variant_decl_index(structs: parser.StructDecl[], owner: string, name: string): i32 {
+  for i in 0..structs.len() {
+    if (structs[i].enum_owner == owner && structs[i].name == name) {
+      return i;
+    }
+  }
+  return -1;
 }

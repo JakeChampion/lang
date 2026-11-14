@@ -359,60 +359,78 @@ struct Listing { store: store.Store, out: u8[], ok: boolean }
 
 // The size column of `ls-tree -l`: seven places, or `-` for an entry that
 // is not a blob.
-function size_column(l: Listing, e: objects.TreeEntry): (store.Store, string) {
+function size_column(st: store.Store, e: objects.TreeEntry): (store.Store, string) {
   if (objects.entry_kind(e.mode) != "blob") {
-    return (l.store, "       -");
+    return (st, "       -");
   }
-  let got = store.info(l.store, e.hash);
+  let got = store.info(st, e.hash);
   let size = if (got.why.len() == 0) { got.size.to_string() } else { "-" };
   return (got.store, " " + size.pad_start_str(7, " "));
 }
 
-// The lines that wait, with `line` added. A long text goes to the standard
-// output, so each addition copies a short text only.
-function ls_out(out: u8[], line: u8[]): u8[] {
-  let all = out.concat(line).append(b'\n');
-  if (all.len() < 4096) {
-    return all;
+// The lines that wait, with one more: `line`, a tab when `line` has text,
+// and the path. A long text goes to
+// the standard output, so the lines that wait stay short.
+function ls_out(own out: u8[], line: string, path: u8[]): u8[] {
+  for b in line.bytes() {
+    out = out.append(b);
   }
-  put(all);
+  if (line.len() > 0) {
+    out = out.append(b'\t');
+  }
+  for b in path {
+    out = out.append(b);
+  }
+  out = out.append(b'\n');
+  if (out.len() < 4096) {
+    return out;
+  }
+  put(out);
   return [];
 }
 
 // Adds the line of the entry `e`, whose path from the start is `path`.
-function ls_line(l: Listing, e: objects.TreeEntry, path: u8[], o: LsOpts): Listing {
+// A path that is not `plain` goes in quotes.
+function ls_line(own l: Listing, e: objects.TreeEntry, path: u8[], plain: boolean, o: LsOpts): Listing {
+  let out = l.out;
+  let st = l.store;
+  let ok = l.ok;
+  let shown = if (plain) { path } else { objects.quoted(path) };
   if (o.names) {
-    return Listing { ...l, out: ls_out(l.out, objects.quoted(path)) };
+    return Listing { store: st, out: ls_out(out, "", shown), ok: ok };
   }
   let head = objects.entry_head(e);
-  let st = l.store;
   if (o.long) {
-    let (after, column) = size_column(l, e);
+    let (after, column) = size_column(st, e);
     st = after;
     head += column;
   }
-  return Listing { store: st, out: ls_out(l.out, (head + "\t").bytes().concat(objects.quoted(path))), ok: l.ok };
+  return Listing { store: st, out: ls_out(out, head, shown), ok: ok };
 }
 
 // Adds the lines of the tree `hash`, whose path from the start is `prefix`.
-function ls_walk(l: Listing, hash: string, prefix: u8[], o: LsOpts): Listing {
+// `plain` tells that the prefix needs no quotes.
+function ls_walk(own l: Listing, hash: string, prefix: u8[], plain: boolean, o: LsOpts): Listing {
+  let out = l.out;
+  let ok = l.ok;
   let got = store.read(l.store, hash);
   let entries = match (got.object) {
     Ok(t) => if (t.kind == "tree") { objects.tree_entries(t.body) } else { Err("not a tree") },
     Err(why) => Err(why),
   };
   let Ok(list) = entries else {
-    return Listing { store: got.store, out: l.out, ok: false };
+    return Listing { store: got.store, out: out, ok: false };
   };
-  let now = Listing { store: got.store, out: l.out, ok: l.ok };
+  let now = Listing { store: got.store, out: out, ok: ok };
   for e in list {
     let path = prefix.concat(e.name);
+    let path_plain = plain && objects.plain_name(e.name);
     let is_tree = e.mode == "40000";
     if (is_tree && (!o.recurse || o.trees || o.only_trees) || !is_tree && !o.only_trees) {
-      now = ls_line(now, e, path, o);
+      now = ls_line(now, e, path, path_plain, o);
     }
     if (is_tree && o.recurse) {
-      now = ls_walk(now, e.hash, path.append(b'/'), o);
+      now = ls_walk(now, e.hash, path.append(b'/'), path_plain, o);
     }
   }
   return now;
@@ -475,11 +493,11 @@ function ls_tree(argv: string[]): i32 {
       if (o.trees || o.only_trees && o.recurse) {
         let up = parts.len() - 1 - i;
         let name = if (up == 0) { "./" } else { "../".repeat(up) };
-        from = ls_line(from, objects.TreeEntry { mode: "40000", name: [], hash: hash }, name.bytes(), o);
+        from = ls_line(from, objects.TreeEntry { mode: "40000", name: [], hash: hash }, name.bytes(), true, o);
       }
     }
   }
-  let listed = ls_walk(from, hash, [], o);
+  let listed = ls_walk(from, hash, [], true, o);
   put(listed.out);
   if (!listed.ok) {
     return fatal("unable to read a tree of " + names[0]);

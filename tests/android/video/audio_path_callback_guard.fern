@@ -1,0 +1,7 @@
+import "std/android/audio";
+
+function main(): i32 {
+  let stream = audio.buffered(48000, 2);
+  stream.close();
+  return 0;
+}

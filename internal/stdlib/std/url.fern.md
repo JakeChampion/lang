@@ -45,7 +45,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<9 pub function remove_dot_segments(path: string): string>>
 
-<<10 function __drop_last(segments: string[]): string[]>>
+<<10 function __drop_last(own segments: string[]): string[]>>
 
 <<11 pub function parse(s: string): Result[Url, UrlError]>>
 
@@ -482,18 +482,15 @@ pub function remove_dot_segments(path: string): string {
 }
 ```
 
-### `10 function __drop_last(segments: string[]): string[]`
+### `10 function __drop_last(own segments: string[]): string[]`
 
 ```fern
-<<10 function __drop_last(segments: string[]): string[]>>=
-function __drop_last(segments: string[]): string[] {
-  let out: string[] = [];
-  let i = 0;
-  while (i + 1 < segments.len()) {
-    out = out.append(segments[i]);
-    i += 1;
+<<10 function __drop_last(own segments: string[]): string[]>>=
+function __drop_last(own segments: string[]): string[] {
+  if (segments.len() == 0) {
+    return segments;
   }
-  return out;
+  return segments.truncate(segments.len() - 1);
 }
 
 function __joined_path(segments: string[], absolute: boolean): string {

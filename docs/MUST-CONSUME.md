@@ -63,7 +63,10 @@ it claims:
    walk as `checkSliceEscapes` / `blockDiverges` — if/match arms
    each checked, loops treated conservatively (a consuming use
    inside a loop body counts; the zero-iteration path is a
-   violation unless consumed after the loop too).
+   violation unless consumed after the loop too). A `loop`, and a
+   `while` with the condition `true`, run the body once or more, so
+   they have no such path: the walk reads their body as the next
+   statements.
 2. Field reads on the value are neutral (neither consume nor
    violate). A method call passes its receiver as the first argument,
    so it is a consuming use: the obligation moves to the method, which

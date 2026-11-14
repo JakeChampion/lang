@@ -1,0 +1,27 @@
+// A trailing comma in a list of type arguments does not remove the arguments.
+// Each call below needs its written type: inference alone gives i32, or
+// gives no type.
+function id[T](x: T): T {
+  return x;
+}
+
+function none_of[T](): T[] {
+  let xs: T[] = [];
+  return xs;
+}
+
+function first[A, B](a: A, b: B): A {
+  return a;
+}
+
+function main(): i32 {
+  let one = id[i64,](1);
+  let wide = one + 5000000000;
+  print(wide.to_string());
+  let bytes = none_of[u8,]().append(200u8);
+  print(bytes[0].to_string());
+  let two = first[i64, string,](2, "s",);
+  let big = two + 5000000000;
+  print(big.to_string());
+  return 0;
+}

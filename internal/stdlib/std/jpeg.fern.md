@@ -248,6 +248,7 @@ pub function decode_image_limit(data: [u8], max_pixels: i64): Result[Image, Deco
   }
   let d = Decoder { data: b, width: 0, height: 0, progressive: false, comps: [], quant: [[], [], [], []], dc_tables: [no_table(), no_table(), no_table(), no_table()], ac_tables: [no_table(), no_table(), no_table(), no_table()], restart: 0, hmax: 1, vmax: 1, mcux: 0, mcuy: 0, frame: false, max_pixels: max_pixels };
   let coef: i32[] = [];
+  let scanned = false;
   let at = next_marker(d.data, 2);
   while (at >= 0) {
     let marker = d.data[at + 1] as i32;
@@ -266,12 +267,15 @@ pub function decode_image_limit(data: [u8], max_pixels: i64): Result[Image, Deco
       if let Some(e) = scan_header_fault(d.data, seg, end) {
         return Err(e);
       }
+      if (!scanned) {
+        coef = zeros(total_blocks(d) * 64);
+        scanned = true;
+      }
       let (next, after) = scan(d, seg, coef);
       coef = next;
       at = next_marker(d.data, after);
       continue;
     }
-    let had_frame = d.frame;
     match (segment(d, marker, seg, end)) {
       Ok(next) => {
         d = next;
@@ -280,12 +284,15 @@ pub function decode_image_limit(data: [u8], max_pixels: i64): Result[Image, Deco
         return Err(e);
       }
     }
-    if (d.frame && !had_frame) {
-      coef = zeros(total_blocks(d) * 64);
-    }
     at = next_marker(d.data, end);
   }
-  return finish(d, coef);
+  if (!d.frame) {
+    return Err(Corrupt("no frame"));
+  }
+  if (!scanned) {
+    return Err(Corrupt("no scan"));
+  }
+  return Ok(pixels(d, coef));
 }
 
 function copy(data: [u8]): u8[] {
@@ -294,14 +301,6 @@ function copy(data: [u8]): u8[] {
     b = b.append(x);
   }
   return b;
-}
-
-// The image of the coefficients, or an error for a file with no frame.
-function finish(d: Decoder, coef: [i32]): Result[Image, DecodeError] {
-  if (!d.frame) {
-    return Err(Corrupt("no frame"));
-  }
-  return Ok(pixels(d, coef));
 }
 
 function starts_jpeg(b: [u8]): boolean {

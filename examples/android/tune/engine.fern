@@ -186,10 +186,21 @@ function aac_deck(index: mp4.Index, bytes: u8[], size: i32): Option[Deck] {
   return None;
 }
 
-// An M4A file with AAC sound that `source` reads. The index comes from the
-// boxes of the file alone, and the packets come from the window as they
-// play.
+// An M4A file that `source` reads. The index comes from the boxes of the
+// file alone, and the packets come from the window as they play.
 function open_m4a_source(head: u8[], size: i32, source: (i64, i32) => u8[]): Option[Deck] {
+  let (seek, read) = reader(source);
+  if let Ok(index) = mp4_file.inspect_with(size as i64, seek, read, mp4_file.default_limits()) {
+    return aac_deck(index, head, size);
+  }
+  let Ok(index) = mp4_file.inspect_alac_with(size as i64, seek, read, mp4_file.default_limits()) else {
+    return None;
+  };
+  return alac_deck(index, head, size);
+}
+
+// The seek and the read of the file that `source` reads.
+function reader(source: (i64, i32) => u8[]): ((i64) => Result[i64, IoError], (i32) => Result[u8[], IoError]) {
   let at: Cell[i64] = cell_new(0i64);
   let seek = (offset: i64): Result[i64, IoError] => {
     at.set(offset);
@@ -200,10 +211,7 @@ function open_m4a_source(head: u8[], size: i32, source: (i64, i32) => u8[]): Opt
     at.set(at.get() + bytes.len() as i64);
     return Ok(bytes);
   };
-  let Ok(index) = mp4_file.inspect_with(size as i64, seek, read, mp4_file.default_limits()) else {
-    return None;
-  };
-  return aac_deck(index, head, size);
+  return (seek, read);
 }
 
 // An M4A file with ALAC sound: its first track that is on.
@@ -211,6 +219,12 @@ function open_alac(bytes: u8[]): Option[Deck] {
   let Ok(index) = mp4_alac.inspect(bytes, mp4_alac.default_limits()) else {
     return None;
   };
+  return alac_deck(index, bytes, bytes.len());
+}
+
+// The deck of the first ALAC track that is on in `index`, for a file of
+// `size` bytes whose start is `bytes`.
+function alac_deck(index: mp4_alac.Index, bytes: u8[], size: i32): Option[Deck] {
   for i in 0..index.track_count() {
     let Ok(info) = index.information(i) else {
       return None;
@@ -220,7 +234,7 @@ function open_alac(bytes: u8[]): Option[Deck] {
         return None;
       };
       let total = info.packets as i64 * (info.frame_length as i64);
-      return Some(Deck { ...blank(ALAC, bytes), rate: info.format.sample_rate, channels: info.format.channels, total: total, codec: Lossless(Alac { stream: stream, frames: info.frame_length, bits: info.format.bits_per_sample }) });
+      return Some(Deck { ...blank(ALAC, bytes), size: size, rate: info.format.sample_rate, channels: info.format.channels, total: total, codec: Lossless(Alac { stream: stream, frames: info.frame_length, bits: info.format.bits_per_sample }) });
     }
   }
   return None;
@@ -229,16 +243,36 @@ function open_alac(bytes: u8[]): Option[Deck] {
 // The bytes of one file that an index of an Ogg file can have.
 const OGG_BYTES: i32 = 1073741824;
 
+function ogg_limits(): vorbis_seek.Limits {
+  return vorbis_seek.Limits { ...vorbis_seek.default_limits(), max_input_bytes: OGG_BYTES };
+}
+
 function open_vorbis(bytes: u8[]): Option[Deck] {
-  let Ok(index) = vorbis_seek.inspect(bytes, vorbis_seek.Limits { ...vorbis_seek.default_limits(), max_input_bytes: OGG_BYTES }) else {
+  let Ok(index) = vorbis_seek.inspect(bytes, ogg_limits()) else {
     return None;
   };
+  return vorbis_deck(index, bytes, bytes.len());
+}
+
+// An Ogg Vorbis file that `source` reads. The index needs one read through
+// the file, and the packets come from the window as they play.
+function open_vorbis_source(head: u8[], size: i32, source: (i64, i32) => u8[]): Option[Deck] {
+  let read = (at: i64, n: i32): Result[u8[], IoError] => Ok(source(at, n));
+  let Ok(index) = vorbis_seek.inspect_with(size as i64, read, ogg_limits()) else {
+    return None;
+  };
+  return vorbis_deck(index, head, size);
+}
+
+// The deck of the first link of `index`, for a file of `size` bytes whose
+// start is `bytes`.
+function vorbis_deck(own index: vorbis_seek.Index, bytes: u8[], size: i32): Option[Deck] {
   if (index.links().len() == 0) {
     return None;
   }
   let link = index.links()[0];
   let info = link.info.audio;
-  return Some(Deck { ...blank(VORBIS, bytes), rate: info.sample_rate, channels: info.channels, total: link.frames, codec: Vorbis(vorbis_seek.cursor(index)) });
+  return Some(Deck { ...blank(VORBIS, bytes), size: size, rate: info.sample_rate, channels: info.channels, total: link.frames, codec: Vorbis(vorbis_seek.cursor(index)) });
 }
 
 function open_opus(bytes: u8[]): Option[Deck] {
@@ -254,8 +288,12 @@ function open_opus(bytes: u8[]): Option[Deck] {
 
 // An Ogg file has Vorbis sound or Opus sound: its first packet starts at
 // the byte 28 with the name of its codec.
+function is_opus(head: [u8]): boolean {
+  return head.len() > 36 && head[28] == 79u8 && head[29] == 112u8 && head[30] == 117u8 && head[31] == 115u8;
+}
+
 function open_ogg(bytes: u8[]): Option[Deck] {
-  if (bytes.len() > 36 && bytes[28] == 79u8 && bytes[29] == 112u8 && bytes[30] == 117u8 && bytes[31] == 115u8) {
+  if (is_opus(bytes)) {
     return open_opus(bytes);
   }
   return open_vorbis(bytes);
@@ -284,8 +322,8 @@ function is_m4a(head: [u8]): boolean {
   return head.len() >= 12 && head[4] == b'f' && head[5] == b't' && head[6] == b'y' && head[7] == b'p';
 }
 
-// An M4A or an Ogg file: the player reads it whole, except an M4A file
-// with AAC sound.
+// An M4A or an Ogg file: the player reads an Opus file whole, and an M4A
+// or an Ogg Vorbis file whole when the source gives no index.
 function whole_file(head: [u8]): boolean {
   return is_m4a(head) || starts_with(head, "OggS");
 }
@@ -336,17 +374,16 @@ function streamed(head: u8[], n: i32, source: (i64, i32) => u8[]): Option[Deck] 
 }
 
 // A deck for a file of `size` bytes that `source` reads a part at a time,
-// at most `window` bytes at a time. A WAV, a FLAC, an MP3 file and an M4A
-// file with AAC sound play from a window of the file. An M4A file with
-// ALAC sound and an Ogg file are read whole. The bytes of the deck are the
-// start of the file when it opens.
+// at most `window` bytes at a time. A WAV, a FLAC, an MP3, an M4A and an
+// Ogg Vorbis file play from a window of the file. An Opus file is read
+// whole. The bytes of the deck are the start of the file when it opens.
 pub function open_file(size: i64, source: (i64, i32) => u8[], window: i32): Option[Deck] {
   if (size <= 0i64 || size > 2147483647i64 || window < 4096) {
     return None;
   }
   let n = size as i32;
   let head = source(0i64, HEAD.min(n));
-  let deck = if (is_m4a(head)) { checked(open_m4a_source(head, n, source)) } else { None };
+  let deck = if (is_m4a(head)) { checked(open_m4a_source(head, n, source)) } else if (starts_with(head, "OggS") && !is_opus(head)) { checked(open_vorbis_source(head, n, source)) } else { None };
   if (deck.is_none() && whole_file(head)) {
     return open(source(0i64, n));
   }
@@ -541,11 +578,19 @@ function pull_alac(own d: Deck): (Deck, i32[]) {
   if (n >= stream.information().packets) {
     return ended(rest);
   }
-  let Ok((next, samples)) = stream.decode_packet(rest.bytes, n, limits()) else {
+  let Ok(row) = stream.packet(n) else {
     return ended(rest);
   };
+  let w = windowed(rest, row.offset as i32, row.bytes);
+  let from = row.offset as i32 - w.base;
+  if (from + row.bytes > w.bytes.len()) {
+    return ended(w);
+  }
+  let Ok((next, samples)) = stream.decode_bytes(w.bytes[from:from + row.bytes], limits()) else {
+    return ended(w);
+  };
   let at = (n + 1) as i64 * (frames as i64);
-  return (Deck { ...rest, at: at, codec: Lossless(Alac { stream: next, frames: frames, bits: bits }) }, sixteen(samples, bits));
+  return (Deck { ...w, at: at, codec: Lossless(Alac { stream: next, frames: frames, bits: bits }) }, sixteen(samples, bits));
 }
 
 // The deck at the packet of an ALAC file that has `part` of the file. An
@@ -580,10 +625,7 @@ function pull_ogg(own d: Deck): (Deck, i32[]) {
   let (rest, codec) = parted(d);
   match (codec) {
     Vorbis(cursor) => {
-      let Ok((next, Some(audio))) = cursor.next(rest.bytes) else {
-        return ended(rest);
-      };
-      return (Deck { ...rest, at: audio.position + audio.frames as i64, codec: Vorbis(next) }, from_floats(audio.samples));
+      return pull_vorbis(rest, cursor);
     },
     Opus(cursor) => {
       let Ok((next, Some(audio))) = cursor.next(rest.bytes) else {
@@ -595,6 +637,33 @@ function pull_ogg(own d: Deck): (Deck, i32[]) {
       return ended(rest);
     }
   }
+}
+
+// The next packet of an Ogg Vorbis file. Each step reads the bytes that
+// the cursor wants through the window of the deck.
+function pull_vorbis(own rest: Deck, own cursor: vorbis_seek.Cursor): (Deck, i32[]) {
+  let d = rest;
+  let c = cursor;
+  for steps in 0..64 {
+    let (from, count) = c.want();
+    if (count > 0) {
+      d = windowed(d, from as i32, count);
+    }
+    let Ok((next, event)) = c.step_view(d.bytes, d.base as i64) else {
+      return ended(d);
+    };
+    c = next;
+    match (event) {
+      vorbis_seek.Samples(audio) => {
+        return (Deck { ...d, at: audio.position + audio.frames as i64, codec: Vorbis(c) }, from_floats(audio.samples));
+      },
+      vorbis_seek.Finished => {
+        return ended(d);
+      },
+      vorbis_seek.Pending => {}
+    }
+  }
+  return ended(d);
 }
 
 // The deck at `part` of an Ogg file. A deck that cannot go there is done.

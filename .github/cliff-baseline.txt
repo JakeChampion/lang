@@ -1,3 +1,7 @@
+# 2026-11-14: rebank-perf-baselines. The values are from perf-x86_64 job 132455587680 and
+# perf-aarch64 job 132455587896, on the merge of #15876 with main 8385afd8. checker.cliff_bytes
+# falls 8.7% and checker.cliff_count grows 6.0% on x86_64. These are values of main. Each row that
+# the two jobs name moves to its measured value. Keep all tolerances.
 # 2026-11-14: fix/spread-source-read (#14473), local scripts/cliff-bench runs on x86_64. Main
 # ecafc311 measures 44583304 bytes and 472770 crossings. The branch measures 44583480 and 473405.
 # The spread rule of both checkers adds 0.13% to the count. The rest of the move from the last pin
@@ -182,7 +186,7 @@
 # This is an inherited main cost of the merges after 710af42c. The 1% tolerance is unchanged.
 # 2026-11-12 (#15474): a local scripts/cliff-bench run on main f2aa998b measures 44,566,616 copied bytes (was 45,149,488), 1.29% less. The win is the new ceiling. The tolerance is unchanged.
 # 2026-11-12 (#15471): `scripts/cliff-bench` measured 42,809,472 copied bytes when a union resolves through its members (was 44,566,616). The 1% tolerance is unchanged.
-x86_64/checker.cliff_bytes	44583480
+x86_64/checker.cliff_bytes	40706264
 # 2026-11-11: Bank checker.cliff_count 378075 -> 373796 after main reverts.
 # Exact CI 42958185608 / job 130320191632 measures source ca80bd07aba3.
 # That source tree equals main 38399ecf. The 1% tolerance stays unchanged.
@@ -191,4 +195,4 @@ x86_64/checker.cliff_bytes	44583480
 # 2026-11-12 (#15474): the same run measures x86_64/checker.cliff_count at 461615 (was 461488). The tolerance is unchanged.
 # 2026-11-12 (#15471): the same run measured x86_64/checker.cliff_count at 438998 (was 461615). The tolerance is unchanged.
 # 2026-11-14: PR #15816, perf-x86_64 job 132335436743 on the merge with main 8ce8fde7. checker.cliff_count rises 1.07% with the spread rule of both checkers. It is pinned at its measured value.
-x86_64/checker.cliff_count	473405
+x86_64/checker.cliff_count	501927

@@ -528,7 +528,13 @@ pointer that flows through the program points past the header.
   (`__fern_arr_box`). A **record** is an array-shaped box whose first word is
   its `shape_addr` and the rest one word per field; a **tuple** has one word
   per element and no shape word; a declared **enum variant** is laid out as a
-  record, its shape word naming the variant. A **string** box is a data
+  record, its shape word naming the variant. On the native targets a
+  record, a variant or a tuple of two words or more has a header of one
+  word (`__fern_rec_box`): the count in the low half of `data-8` and its
+  number of words in the high half. An array has zero in that high half, and
+  `__fn___fern_box_dec` reads it to tell the two apart. A build with the
+  sanitizer, the quarantine, `-harden` or an allocation profile gives each
+  box the header of an array. A **string** box is a data
   pointer and a length, released through `__fern_str_free`; a fused string
   carries its bytes behind the same block, and a grown one (the
   self-append's fallback, `__fern_str_grow_fresh`) records the block's
