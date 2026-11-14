@@ -127,11 +127,11 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean] }
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean] }
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -189,8 +189,12 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       note(log.calls, "show");
       return true;
     },
-    draw_video: (window: usize, over: scene.Node[]): boolean => {
-      if (over.len() == 0) {
+    attach: (window: usize): boolean => log.gpu.get(),
+    detach: (): void => note(log.calls, "detach"),
+    present: (window: usize, nodes: scene.Node[], video: boolean): boolean => {
+      if (!video) {
+        note(log.calls, "present screen");
+      } else if (nodes.len() == 0) {
         note(log.calls, "draw video");
       } else {
         note(log.calls, "draw video with controls");
@@ -355,6 +359,7 @@ function frames(log: Log): i32 {
 
 function test_play_pause_and_stop(): test.TestOutcome {
   let log = new_log();
+  log.gpu.set(true);
   let f = frame();
   defer free_frame(f);
   let home = shown(log, f, "https://up.example:32400", "srv");
@@ -371,8 +376,9 @@ function test_play_pause_and_stop(): test.TestOutcome {
   if (!has_call(log, "seek 60000") || !has_call(log, "show") || !has_call(log, "start") || !has_url(log, "state=playing")) {
     return test.fail("no resume at the offset: " + log.calls.get().join(" | "));
   }
+  let asked = frames(log);
   let drawn = settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
-  if (draws(log) != 1 || frames(log) != 2) {
+  if (draws(log) != 1 || frames(log) <= asked) {
     return test.fail("a vsync of the video did not draw it and ask for the next frame: " + log.calls.get().join(" | "));
   }
   // A tap shows the controls over the video, which plays on.
@@ -482,6 +488,58 @@ function test_library_pages(): test.TestOutcome {
   }
   t = settle(at(t, log, 400i64, f, android.Touch(1, 270.0, -15000.0)), log, 400i64, f);
   return test.assert_eq(has_url(log, "X-Plex-Container-Start=60&").to_string(), "true");
+}
+
+// A quick swipe up the library lets the grid move on after the finger
+// leaves, slower and slower, until it stops. A touch stops it at once.
+function test_fling_moves_the_library(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let lib = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "tab:1"), log, 200i64, f, "section:0");
+  let t = at(lib, log, 300i64, f, android.Touch(0, 270.0, 900.0));
+  for i in 1..6 {
+    t = at(t, log, 300i64 + (i * 10) as i64, f, android.Touch(2, 270.0, 900.0 - (i * 40) as f32));
+  }
+  t = at(t, log, 360i64, f, android.Touch(1, 270.0, 700.0));
+  let left = t.scroll;
+  let a = at(t, log, 370i64, f, android.Vsync(1000000000i64));
+  let b = at(a, log, 400i64, f, android.Vsync(1100000000i64));
+  let at_b = b.scroll;
+  if (at_b <= left || !has_call(log, "frame")) {
+    return test.fail("the grid did not move on after the finger left: " + left.to_string() + " " + at_b.to_string());
+  }
+  let c = at(b, log, 500i64, f, android.Vsync(1200000000i64));
+  if (c.scroll <= at_b) {
+    return test.fail("the fling stopped too soon");
+  }
+  let held = at(c, log, 510i64, f, android.Touch(0, 270.0, 500.0));
+  let at_held = held.scroll;
+  let d = at(held, log, 520i64, f, android.Vsync(1300000000i64));
+  let at_d = d.scroll;
+  if (at_d != at_held) {
+    return test.fail("a touch did not stop the fling");
+  }
+  let e = at(at(d, log, 530i64, f, android.Touch(1, 270.0, 500.0)), log, 540i64, f, android.Vsync(9000000000i64));
+  return test.assert_eq(e.scroll.to_string(), at_d.to_string());
+}
+
+// With a GPU, the screen draws at the vsync after it changed, and not at
+// the event that changed it.
+function test_gpu_draws_at_the_vsync(): test.TestOutcome {
+  let log = new_log();
+  log.gpu.set(true);
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let before = count_calls(log, "present screen");
+  let sections = tap(home, log, 100i64, f, "tab:1");
+  if (count_calls(log, "present screen") != before || node(sections, "section:0").is_none()) {
+    return test.fail("the screen drew before the vsync");
+  }
+  let drawn = at(sections, log, 200i64, f, android.Vsync(1000000000i64));
+  let again = at(drawn, log, 210i64, f, android.Vsync(1016000000i64));
+  return test.assert_eq((count_calls(log, "present screen") - before).to_string(), "1");
 }
 
 function test_search_types_and_asks(): test.TestOutcome {
@@ -646,6 +704,8 @@ function main(): i32 {
   r = r.it("a transcode seeks in its stream and stays alive while paused", test_transcode_seeks_in_its_stream);
   r = r.it("a file with no sound plays again as a transcode", test_lost_sound_transcodes);
   r = r.it("a library loads its next page at its end", test_library_pages);
+  r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
+  r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);
   r = r.it("the keyboard of the system searches through the text field", test_search_from_text_field);
   r = r.it("a sign-out goes back to the sign-in", test_back_and_sign_out);
