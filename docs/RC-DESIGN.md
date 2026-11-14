@@ -525,16 +525,21 @@ pointer that flows through the program points past the header.
 
 - An **array** box has its capacity at `data-16`, its count at `data-8`, its
   length at `data+0` and element `i` at `data+(i+1)*8`
-  (`__fern_arr_box`). A **record** is an array-shaped box whose first word is
-  its `shape_addr` and the rest one word per field; a **tuple** has one word
-  per element and no shape word; a declared **enum variant** is laid out as a
-  record, its shape word naming the variant. On the native targets a
-  record, a variant or a tuple of two words or more has a header of one
-  word (`__fern_rec_box`): the count in the low half of `data-8` and its
-  number of words in the high half. An array has zero in that high half, and
-  `__fn___fern_box_dec` reads it to tell the two apart. A build with the
-  sanitizer, the quarantine, `-harden` or an allocation profile gives each
-  box the header of an array. A **string** box is a data
+  (`__fern_arr_box`).
+- On the native targets a **record**, a declared **enum variant** and a
+  **tuple** have a header of one word at `data-8` (`__fern_rec_box`): the
+  count in the low half and a tag in the high half. Field `i` is at
+  `data+i*8`. The low 16 bits of the tag are the number of words of the box.
+  The bits above them are zero for a tuple. For a record or a variant they
+  are one more than the index of its shape in the declarations of the
+  program (`asmcore.shape_tag`), so a `match` compares the tag with a
+  constant. An array has zero in that half, and `__fn___fern_box_dec` reads
+  it to tell a box from an array. A build with the sanitizer, the
+  quarantine, `-harden` or an allocation profile gives each box the header
+  of an array and keeps the tag in the same half. A program can have 32,766
+  shapes, and a record can have 65,535 fields. On wasm32 a record keeps its
+  shape in its first slot.
+- A **string** box is a data
   pointer and a length, released through `__fern_str_free`; a fused string
   carries its bytes behind the same block, and a grown one (the
   self-append's fallback, `__fern_str_grow_fresh`) records the block's

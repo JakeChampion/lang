@@ -65,10 +65,41 @@ func gitPort(t *testing.T, cli *selfHostCLI, target string) gitTool {
 	return gitTool{name: "fern git", cmd: func(args ...string) *exec.Cmd { return runArm64Bin(qemu, bin, args...) }}
 }
 
+// gitRun is one target of the port with one hash of a repository. digits is
+// the count of hexadecimal digits of a name with that hash.
+type gitRun struct {
+	target, format string
+	digits         int
+}
+
+func gitRuns() []gitRun {
+	var runs []gitRun
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		runs = append(runs, gitRun{target, "sha1", 40}, gitRun{target, "sha256", 64})
+	}
+	return runs
+}
+
+// gitInit makes an empty repository in dir whose names have the hash of
+// run. A git that cannot make such a repository fails the test.
+func gitInit(t *testing.T, oracle gitTool, dir string, run gitRun) {
+	t.Helper()
+	if _, stderr, code := oracle.run(t, dir, "", "init", "-q", "--object-format="+run.format, "-b", "main", "."); code != 0 {
+		t.Fatalf("git init --object-format=%s: exit %d\n%s", run.format, code, stderr)
+	}
+	out, _, _ := oracle.run(t, dir, "", "rev-parse", "--show-object-format")
+	if strings.TrimSpace(out) != run.format {
+		t.Fatalf("git made a repository with the hash %q, want %s", strings.TrimSpace(out), run.format)
+	}
+	if empty, _, _ := oracle.run(t, dir, "", "hash-object", "-t", "tree", "/dev/null"); len(strings.TrimSpace(empty)) != run.digits {
+		t.Fatalf("git gives the name %q in a %s repository, want %d digits", strings.TrimSpace(empty), run.format, run.digits)
+	}
+}
+
 // gitFixture makes a repository with one commit, a tree in a tree, a path
 // that git quotes, a branch, a light tag and a tag object. Each object is
 // loose. It gives the names of the commit, of its tree and of one blob.
-func gitFixture(t *testing.T, oracle gitTool, dir string) (commit, tree, blob string) {
+func gitFixture(t *testing.T, oracle gitTool, dir string, run gitRun) (commit, tree, blob string) {
 	t.Helper()
 	must := func(stdin string, args ...string) string {
 		t.Helper()
@@ -78,7 +109,7 @@ func gitFixture(t *testing.T, oracle gitTool, dir string) (commit, tree, blob st
 		}
 		return strings.TrimSpace(out)
 	}
-	must("", "init", "-q", "-b", "main", ".")
+	gitInit(t, oracle, dir, run)
 	for name, text := range map[string]string{"a.txt": "hello\n", "d/e/f.bin": "x", "sp ace.txt": "q", "t\tb": "u", "d/caf\xc3\xa9": "e"} {
 		path := filepath.Join(dir, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -100,16 +131,16 @@ func gitFixture(t *testing.T, oracle gitTool, dir string) (commit, tree, blob st
 // TestSelfHostExampleGitAgainstGit runs each command with git and with the
 // port in one repository, at the top and in a directory below it. The
 // standard output, the standard error output and the exit status are those
-// of git.
+// of git. The repository has SHA-1 names, and then SHA-256 names.
 func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 	oracle := gitOracle(t)
 	cli := buildSelfHostCLI(t)
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		t.Run(target, func(t *testing.T) {
-			port := gitPort(t, cli, target)
+	for _, run := range gitRuns() {
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			port := gitPort(t, cli, run.target)
 			top := t.TempDir()
-			commit, tree, blob := gitFixture(t, oracle, top)
-			zero := strings.Repeat("0", 40)
+			commit, tree, blob := gitFixture(t, oracle, top, run)
+			zero := strings.Repeat("0", run.digits)
 			cases := []struct {
 				stdin string
 				args  []string
@@ -126,6 +157,8 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 				{"", []string{"rev-parse", commit[:8]}},
 				{"", []string{"rev-parse", strings.ToUpper(commit)}},
 				{"", []string{"rev-parse", zero}},
+				{"", []string{"rev-parse", strings.Repeat("0", 104-run.digits)}},
+				{"", []string{"rev-parse", "--short=99", "HEAD"}},
 				{"", []string{"cat-file", "-t", "HEAD"}},
 				{"", []string{"cat-file", "-s", "HEAD"}},
 				{"", []string{"cat-file", "-p", "HEAD"}},
@@ -268,7 +301,7 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 // with chains of deltas: each commit changes one more line of a file of
 // 400 lines. The last commit is a merge of two parents. The packfile is
 // above 1 MiB. It gives the path of the index of the packfile.
-func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
+func gitPackedFixture(t *testing.T, oracle gitTool, dir string, run gitRun) string {
 	t.Helper()
 	must := func(args ...string) string {
 		t.Helper()
@@ -278,7 +311,7 @@ func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
 		}
 		return strings.TrimSpace(out)
 	}
-	must("init", "-q", "-b", "main", ".")
+	gitInit(t, oracle, dir, run)
 	id := []string{"-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}
 	// Bytes that zlib cannot make smaller put the packfile above 1 MiB. The
 	// port then reads one object at a time from the file, and it reads the
@@ -350,15 +383,16 @@ func gitPackIndex(t *testing.T, dir string) string {
 // TestSelfHostExampleGitPacked reads a repository whose objects are in a
 // packfile: with deltas by offset, and then with deltas by name. Each
 // command gives the output of git, and verify-pack -v gives each line of
-// git for the packfile. A packfile with one changed byte is refused.
+// git for the packfile. A packfile with one changed byte is refused. The
+// repository has SHA-1 names, and then SHA-256 names.
 func TestSelfHostExampleGitPacked(t *testing.T) {
 	oracle := gitOracle(t)
 	cli := buildSelfHostCLI(t)
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		t.Run(target, func(t *testing.T) {
-			port := gitPort(t, cli, target)
+	for _, run := range gitRuns() {
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			port := gitPort(t, cli, run.target)
 			top := t.TempDir()
-			idx := gitPackedFixture(t, oracle, top)
+			idx := gitPackedFixture(t, oracle, top, run)
 			compare := func(stdin string, args ...string) string {
 				t.Helper()
 				wantOut, wantErr, wantCode := oracle.run(t, top, stdin, args...)
@@ -378,7 +412,7 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				compare("", "verify-pack", "-v", strings.TrimSuffix(idx, ".idx")+".pack")
 				var names strings.Builder
 				for _, line := range strings.Split(listing, "\n") {
-					if f := strings.Fields(line); len(f) >= 5 && len(f[0]) == 40 {
+					if f := strings.Fields(line); len(f) >= 5 && len(f[0]) == run.digits {
 						names.WriteString(f[0] + "\n")
 						compare("", "cat-file", "-t", f[0])
 						compare("", "cat-file", "-p", f[0][:9])
@@ -414,6 +448,13 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 					dir := t.TempDir()
 					if err := os.WriteFile(filepath.Join(dir, "p.pack"), data, 0o644); err != nil {
 						t.Fatal(err)
+					}
+					// With no repository, index-pack has SHA-1 names.
+					if run.format != "sha1" {
+						if out, _, code := tool.run(t, dir, "", "index-pack", "p.pack"); code != 128 || out != "" {
+							t.Errorf("%s index-pack of a %s packfile with no repository: exit %d, stdout %q, want exit 128", tool.name, run.format, code, out)
+						}
+						gitInit(t, oracle, dir, run)
 					}
 					for _, args := range [][]string{{"index-pack", "p.pack"}, {"index-pack", "-o", "q.idx", "p.pack"}, {"index-pack", "-o", "q.other", "p.pack"}, {"index-pack", "nosuch.pack"}} {
 						out, stderr, code := tool.run(t, dir, "", args...)
@@ -474,7 +515,7 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			for _, step := range []struct {
 				stdin string
 				args  []string
-			}{{"", []string{"init", "-q", "-b", "main", "."}}, {stream.String(), []string{"fast-import", "--quiet"}}, {"", []string{"repack", "-q", "-a", "-d"}}} {
+			}{{"", []string{"init", "-q", "--object-format=" + run.format, "-b", "main", "."}}, {stream.String(), []string{"fast-import", "--quiet"}}, {"", []string{"repack", "-q", "-a", "-d"}}} {
 				if _, stderr, code := oracle.run(t, many, step.stdin, step.args...); code != 0 {
 					t.Fatalf("git %v: exit %d\n%s", step.args, code, stderr)
 				}

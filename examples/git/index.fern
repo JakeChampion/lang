@@ -1,6 +1,5 @@
 // The index of a packfile, made from the packfile.
 import "std/array";
-import "std/crypto";
 import "std/hex";
 import "std/hash/crc32";
 import "core/cmp";
@@ -17,18 +16,19 @@ function be32(out: u8[], n: i64): u8[] {
 }
 
 // The offset of each object of the packfile, and the place after the last.
-function offsets_of(data: u8[], count: i32): Result[i32[], string] {
+function offsets_of(w: pack.Window, count: i32): Result[i32[], string] {
   let offsets: i32[] = [];
+  let last = w.bytes.len() - w.width;
   let at = 12;
   for i in 0..count {
-    let end = pack.end_of(data, at);
-    if (end <= at || end > data.len() - 20) {
+    let end = pack.end_of(w, at);
+    if (end <= at || end > last) {
       return Err("pack has bad object at offset " + at.to_string());
     }
     offsets = offsets.append(at);
     at = end;
   }
-  if (at != data.len() - 20) {
+  if (at != last) {
     return Err("pack has junk at the end");
   }
   return Ok(offsets.append(at));
@@ -36,14 +36,14 @@ function offsets_of(data: u8[], count: i32): Result[i32[], string] {
 
 // The names of the objects from `first` to `end`, in order. An object whose
 // chain has a delta by name has the name "": it waits for the names.
-pub function names_part(data: u8[], offsets: i32[], first: i32, end: i32): string[] {
+pub function names_part(w: pack.Window, offsets: i32[], first: i32, end: i32): string[] {
   let names: string[] = [];
   let cache = pack.cache_new();
   for i in first..end {
-    let (found, kept) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: data, shift: 0 }, (base: u8[]): i32 => -1, offsets[i], cache);
+    let (found, kept) = pack.object_cached((at: i32): pack.Window => w, (base: u8[]): i32 => -1, offsets[i], cache);
     cache = kept;
     names = names.append(match (found) {
-      Ok(o) => objects.hash_of(o.kind, o.body),
+      Ok(o) => objects.hash_of(w.width, o.kind, o.body),
       Err(_) => "",
     });
   }
@@ -68,10 +68,10 @@ pub function parts_of(offsets: i32[], parts: i32): i32[] {
 // The name of each object in the order of the packfile. `first` gives the
 // names in parts, as `names_part` makes them. A delta by name can come
 // before its base, so the names that are left come in rounds.
-function names_of(data: u8[], offsets: i32[], first: (u8[], i32[]) => string[][]): Result[string[], string] {
+function names_of(w: pack.Window, offsets: i32[], first: (pack.Window, i32[]) => string[][]): Result[string[], string] {
   let count = offsets.len() - 1;
   let names: string[] = [];
-  for part in first(data, offsets) {
+  for part in first(w, offsets) {
     names = names.concat(part);
   }
   if (names.len() != count) {
@@ -96,10 +96,10 @@ function names_of(data: u8[], offsets: i32[], first: (u8[], i32[]) => string[][]
     let before = left;
     for i in 0..count {
       if (names[i].len() == 0) {
-        let (found, kept) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: data, shift: 0 }, (base: u8[]): i32 => known.get_or(hex.encode(base), -1), offsets[i], cache);
+        let (found, kept) = pack.object_cached((at: i32): pack.Window => w, (base: u8[]): i32 => known.get_or(hex.encode(base), -1), offsets[i], cache);
         cache = kept;
         if let Ok(o) = found {
-          let name = objects.hash_of(o.kind, o.body);
+          let name = objects.hash_of(w.width, o.kind, o.body);
           names = names.with(i, name);
           known = known.insert(name, offsets[i]);
           left -= 1;
@@ -113,15 +113,17 @@ function names_of(data: u8[], offsets: i32[], first: (u8[], i32[]) => string[][]
   return Ok(names);
 }
 
-// The index of the packfile `data`, with each name from this process.
-pub function build(data: u8[]): Result[Built, string] {
-  return build_with(data, (d: u8[], offsets: i32[]): string[][] => [names_part(d, offsets, 0, offsets.len() - 1)]);
+// The index of the packfile `w`, with each name from this process.
+pub function build(w: pack.Window): Result[Built, string] {
+  return build_with(w, (d: pack.Window, offsets: i32[]): string[][] => [names_part(d, offsets, 0, offsets.len() - 1)]);
 }
 
-// The index of the packfile `data`. `first` gives the names of the objects
+// The index of the packfile `w`. `first` gives the names of the objects
 // in parts that are in order and that cover the packfile: a caller with
 // workers gives each part to one worker.
-pub function build_with(data: u8[], first: (u8[], i32[]) => string[][]): Result[Built, string] {
+pub function build_with(w: pack.Window, first: (pack.Window, i32[]) => string[][]): Result[Built, string] {
+  let data = w.bytes;
+  let width = w.width;
   let n = data.len();
   if (n < 32 || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
     return Err("pack signature mismatch");
@@ -129,13 +131,13 @@ pub function build_with(data: u8[], first: (u8[], i32[]) => string[][]): Result[
   if (data[4] != 0 || data[5] != 0 || data[6] != 0 || data[7] != 2) {
     return Err("pack version " + data[7].to_string() + " unsupported");
   }
-  let sum = array.slice(data, n - 20, n);
-  if (hex.encode(crypto.sha1(array.slice(data, 0, n - 20))) != hex.encode(sum)) {
+  let sum = array.slice(data, n - width, n);
+  if (hex.encode(objects.digest(width, array.slice(data, 0, n - width))) != hex.encode(sum)) {
     return Err("pack is corrupted (SHA1 mismatch)");
   }
   let count = data[8] as i32 << 24 | data[9] as i32 << 16 | data[10] as i32 << 8 | data[11] as i32;
-  let offsets = offsets_of(data, count)?;
-  let names = names_of(data, offsets, first)?;
+  let offsets = offsets_of(w, count)?;
+  let names = names_of(w, offsets, first)?;
   let order: i32[] = [];
   for i in 0..count {
     order = order.append(i);
@@ -164,12 +166,13 @@ pub function build_with(data: u8[], first: (u8[], i32[]) => string[][]): Result[
     idx = be32(idx, total as i64);
   }
   idx = idx.concat(table).concat(crcs).concat(at).concat(sum);
-  idx = idx.concat(crypto.sha1(idx));
-  let rev: u8[] = [b'R', b'I', b'D', b'X', 0, 0, 0, 1, 0, 0, 0, 1];
+  idx = idx.concat(objects.digest(width, idx));
+  // The last number is the hash: 1 for SHA-1, and 2 for SHA-256.
+  let rev: u8[] = [b'R', b'I', b'D', b'X', 0, 0, 0, 1, 0, 0, 0, if (width == objects.SHA256) { 2 } else { 1 }];
   for i in 0..count {
     rev = be32(rev, place[i] as i64);
   }
   rev = rev.concat(sum);
-  rev = rev.concat(crypto.sha1(rev));
+  rev = rev.concat(objects.digest(width, rev));
   return Ok(Built { idx: idx, rev: rev, name: hex.encode(sum) });
 }

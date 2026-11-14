@@ -39,7 +39,7 @@ function emit(arm: boolean, scalar: boolean, single: boolean): ssaprepare.Emitte
 
 function check(rows: ssaprepare.Emitted[], name: string, architecture: string, ok: boolean): void {
   let p = abi.check_emitted_producer(rows, name, architecture);
-  if (p.proof.ok != ok || p.proof.function_name != name || ok && (p.words < 2 || p.words > 3)) {
+  if (p.proof.ok != ok || p.proof.function_name != name || ok && (p.words < 1 || p.words > 2)) {
     print(p.proof.function_name + ": " + p.proof.message);
     exit(53);
   }
@@ -117,7 +117,7 @@ pub function run(arm: boolean): void {
   let row = binding.rows[0];
   let scalar = bound.resolve(emit(arm, true, true), "parent", architecture).rows[0];
   check([scalar], "parent", architecture, true);
-  require(abi.check_emitted_producer([row], "parent", architecture).words == 3 && abi.check_emitted_producer([scalar], "parent", architecture).words == 2, 59);
+  require(abi.check_emitted_producer([row], "parent", architecture).words == 2 && abi.check_emitted_producer([scalar], "parent", architecture).words == 1, 59);
   require(row.body.selected.origin.producer == 0 && scalar.body.selected.origin.producer == 0, 58);
   let other = renamed(scalar, "Other.parent");
   check([other, row], "parent", architecture, true);

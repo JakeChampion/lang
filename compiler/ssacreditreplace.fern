@@ -11,7 +11,7 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name
   if (shape_name == "" || f.name == "" || f.name.starts_with("__fern_") || f.name == drop.name || f.name == release.name) {
     return refused(f, "invalid replacement identity");
   }
-  let summary = helper.release_body(release, drop, helper.FlatChild { offset: 8 });
+  let summary = helper.release_body(release, drop, helper.FlatChild { offset: 0 });
   if (!summary.ok) {
     return summary;
   }
@@ -66,7 +66,7 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name
       kind = 0;
     } else if (op.kind_tag == ssa.COPY && op.args.len() == 1 && op.imm == 0 && op.str == "") {
       kind = values[op.args[0]];
-    } else if (op.kind_tag == ssa.ARR_BOX && op.args.len() == 0 && op.imm == 1 && op.str == "box") {
+    } else if (op.kind_tag == ssa.ARR_BOX && op.args.len() == 0 && op.imm == 0 && op.str == "box") {
       if (allocated) {
         return refused(f, "extra parent allocation");
       }
@@ -74,11 +74,11 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name
       kind = 3;
     } else if (op.kind_tag == ssa.SHAPE_ADDR && op.args.len() == 0 && op.imm == 0 && op.str == shape_name) {
       kind = 4;
-    } else if (op.kind_tag == ssa.ST_AT && op.args.len() == 2 && op.str == "" && values[op.args[0]] == 3) {
+    } else if (op.kind_tag == ssa.ST_AT && op.args.len() == 2 && values[op.args[0]] == 3) {
       let source = values[op.args[1]];
-      if (op.imm == 0 && source == 4 && !shape_set) {
+      if (op.imm == ssa.tag_offset() && op.str == "u32" && source == 4 && !shape_set) {
         shape_set = true;
-      } else if (op.imm == 8 && source == 2 && !child_set && child_credit > 0) {
+      } else if (op.imm == 0 && op.str == "" && source == 2 && !child_set && child_credit > 0) {
         child_set = true;
         child_credit -= 1;
       } else {

@@ -24,7 +24,7 @@ function call(s: State, op: ssa.SInst, block: i32, site: incoming.Site): State {
   if (block != site.block || op.result != site.call) {
     return s;
   }
-  if (op.str != site.consumer || op.args[0] != site.argument || op.args[1] != site.incoming || site.parameter != 0 || site.words != 3) {
+  if (op.str != site.consumer || op.args[0] != site.argument || op.args[1] != site.incoming || site.parameter != 0 || site.words != 2) {
     return State { ...s, error: "continuation call site mismatch" };
   }
   return State { ...s, values: s.values.with(util.index_of_i32(s.ids, op.result), Value { kind: 1, scalar: 0 }), called: true };

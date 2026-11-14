@@ -6,7 +6,6 @@ import "../semlower";
 import "../ssaprepare";
 import "../ssacredittext" as binding;
 import "../ssadecrementtext" as text;
-import "./ssastaticshapes" as shapes;
 import "./ssaconstructorbounds" as constructors;
 import "./ssaconstructormachines" as machines;
 import "./ssaallocatorisas" as allocators;
@@ -53,7 +52,7 @@ function boundaries(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
 }
 
 function namespace(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
-  for suffix in [".set alias, __fn_parent\n", "alias = __fn_parent\n", ".intel_syntax noprefix\n", ".include \"other.s\"\n", ".text\n__fn_parent:\nret\n", ".data\n__fn_parent: .quad 0\n", ".data\n.S0: .quad 0\n", ".data\nunrelated: .quad 0\nunrelated: .quad 0\n"] {
+  for suffix in [".set alias, __fn_parent\n", "alias = __fn_parent\n", ".intel_syntax noprefix\n", ".include \"other.s\"\n", ".text\n__fn_parent:\nret\n", ".data\n__fn_parent: .quad 0\n", ".data\n.Lssa_parent_0: .quad 0\n", ".data\nunrelated: .quad 0\nunrelated: .quad 0\n"] {
     check(ssaprepare.Output { ...output, text: output.text + suffix }, false, "complete namespace: " + suffix);
   }
   check(ssaprepare.Output { ...output, bodies: output.bodies.append(row) }, false, "duplicate row");
@@ -65,7 +64,7 @@ function namespace(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
 }
 
 function correspondence(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
-  let from = "movq $3, %rdi";
+  let from = "movq $2, %rdi";
   let to = "unknown_instruction";
   check(ssaprepare.Output { ...output, text: change(output.text, from, to) }, false, "changed final instructions");
   let changed = ssaprepare.Emitted { ...row, assembly: change(row.assembly, from, to) };
@@ -81,7 +80,6 @@ function correspondence(output: ssaprepare.Output, row: ssaprepare.Emitted): voi
 pub function run(): void {
   let output = emit();
   check(output, true, "actual constructor with static shape pool");
-  shapes.run(output);
   constructors.run(output);
   machines.run();
   allocators.run();

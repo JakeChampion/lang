@@ -54,7 +54,7 @@ selfhost/arm64-linux/byte_copy_with.emit	1535
 selfhost/arm64-linux/call_overhead.emit	449
 selfhost/arm64-linux/closure_call.emit	1268
 selfhost/arm64-linux/deflate_decode.emit	14509
-selfhost/arm64-linux/deflate_encode.emit	7729
+selfhost/arm64-linux/deflate_encode.emit	7633
 selfhost/arm64-linux/enum_match.emit	1232
 selfhost/arm64-linux/http_hello.emit	16699
 selfhost/arm64-linux/int_loop.emit	391
@@ -78,8 +78,8 @@ selfhost/arm64-linux/struct_drop.emit	2899
 selfhost/arm64-linux/tokenize.emit	1490
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	8472
 selfhost/arm64-linux/utf8_ingest_validated.emit	9109
-selfhost/wasm32-wasi/array_append.emit	471
-selfhost/wasm32-wasi/array_index.emit	476
+selfhost/wasm32-wasi/array_append.emit	476
+selfhost/wasm32-wasi/array_index.emit	481
 selfhost/wasm32-wasi/array_scale_f64.emit	531
 selfhost/wasm32-wasi/array_with.emit	487
 selfhost/wasm32-wasi/ascii_scan.emit	1216
