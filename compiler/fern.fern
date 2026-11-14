@@ -1649,10 +1649,11 @@ function export_entries(merged: parser.Module, names: string[], arm64: boolean, 
   let out = "";
   for n in names {
     let f = merged.funcs[export_func_index(merged, n)];
+    let unshared = norc.marked(merged, f);
     if (arm64) {
-      out += export_entry_arm64(f, n, harden, true);
+      out += export_entry_arm64(f, n, harden, true, unshared);
     } else {
-      out += export_entry(f, n, harden, true);
+      out += export_entry(f, n, harden, true, unshared);
     }
   }
   return out;
@@ -1666,17 +1667,19 @@ pub function freestanding_exports(merged: parser.Module, names: string[], arm64:
   for n in names {
     let f = merged.funcs[export_func_index(merged, n)];
     if (arm64) {
-      out += "    .globl " + n + "\n    .type " + n + ", %function\n" + n + ":\n" + export_entry_arm64(f, n, false, false);
+      out += "    .globl " + n + "\n    .type " + n + ", %function\n" + n + ":\n" + export_entry_arm64(f, n, false, false, false);
     } else {
-      out += "    .globl " + n + "\n    .type " + n + ", @function\n" + n + ":\n" + export_entry(f, n, false, false);
+      out += "    .globl " + n + "\n    .type " + n + ", @function\n" + n + ":\n" + export_entry(f, n, false, false, false);
     }
   }
   return out;
 }
 
 // A locked entry takes the busy lock, because a shared object can be called
-// from more than one thread.
-function export_entry(f: parser.FuncDecl, name: string, harden: boolean, locked: boolean): string {
+// from more than one thread. The entry of a `@norc` function is `unshared`:
+// that function touches no heap, so the entry takes no lock and leaves the
+// state of the thread that holds the heap alone.
+function export_entry(f: parser.FuncDecl, name: string, harden: boolean, locked: boolean, unshared: boolean): string {
   let ints: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
   let srcs: string[] = [];
   let ni = 0;
@@ -1695,8 +1698,7 @@ function export_entry(f: parser.FuncDecl, name: string, harden: boolean, locked:
       stack += 8;
     }
   }
-  let out = "__fern_export_" + name + ":\n" + text_when(harden, "    endbr64\n") + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n" + text_when(locked, asm_ir.busy_take_x86()) + "    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n";
-  out += text_when(harden, "    cmpq $0, __fern_rng_state(%rip)\n    jne .Lfern_export_ready_" + name + "\n    call __fern_harden_start\n.Lfern_export_ready_" + name + ":\n");
+  let out = "__fern_export_" + name + ":\n" + text_when(harden, "    endbr64\n") + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n" + text_when(!unshared, entry_open_x86(name, harden, locked));
   let i = f.params.len() - 1;
   while (i >= 0) {
     out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
@@ -1708,7 +1710,14 @@ function export_entry(f: parser.FuncDecl, name: string, harden: boolean, locked:
   } else if (f.ret_type == "f32") {
     out += "    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n";
   }
-  return out + "    movq -8(%rbp), %rcx\n    movq %rcx, __fern_stack_top(%rip)\n" + text_when(locked, asm_ir.busy_give_x86()) + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+  return out + text_when(!unshared, "    movq -8(%rbp), %rcx\n    movq %rcx, __fern_stack_top(%rip)\n" + text_when(locked, asm_ir.busy_give_x86())) + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+}
+
+// The part of an x86-64 entry for a function that uses the heap: the turn
+// on the busy lock, the stack top of the thread, and the start of the
+// hardened runtime.
+function entry_open_x86(name: string, harden: boolean, locked: boolean): string {
+  return text_when(locked, asm_ir.busy_take_x86()) + "    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n" + text_when(harden, "    cmpq $0, __fern_rng_state(%rip)\n    jne .Lfern_export_ready_" + name + "\n    call __fern_harden_start\n.Lfern_export_ready_" + name + ":\n");
 }
 
 function export_arg(src: string, t: string): string {
@@ -1731,7 +1740,7 @@ function export_arg(src: string, t: string): string {
   return load;
 }
 
-function export_entry_arm64(f: parser.FuncDecl, name: string, harden: boolean, locked: boolean): string {
+function export_entry_arm64(f: parser.FuncDecl, name: string, harden: boolean, locked: boolean, unshared: boolean): string {
   let srcs: string[] = [];
   let ni = 0;
   let nf = 0;
@@ -1750,8 +1759,7 @@ function export_entry_arm64(f: parser.FuncDecl, name: string, harden: boolean, l
     }
   }
   let n = f.params.len();
-  let out = "__fern_export_" + name + ":\n" + text_when(harden, "    bti c\n    paciasp\n") + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n" + text_when(locked, asm_arm64_ir.busy_take_arm64()) + "    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n";
-  out += text_when(harden, "    adrp x16, __fern_rng_state\n    ldr x16, [x16, :lo12:__fern_rng_state]\n    cbnz x16, .Lfern_export_ready_" + name + "\n    bl __fern_harden_start\n.Lfern_export_ready_" + name + ":\n");
+  let out = "__fern_export_" + name + ":\n" + text_when(harden, "    bti c\n    paciasp\n") + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n" + entry_open_arm64(name, harden, locked, unshared);
   if (n > 0) {
     out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
   }
@@ -1764,7 +1772,18 @@ function export_entry_arm64(f: parser.FuncDecl, name: string, harden: boolean, l
   } else if (f.ret_type == "f32") {
     out += "    fmov d0, x0\n    fcvt s0, d0\n";
   }
-  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n" + text_when(locked, asm_arm64_ir.busy_give_arm64()) + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n" + text_when(harden, "    autiasp\n") + "    ret\n";
+  return out + text_when(!unshared, "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n" + text_when(locked, asm_arm64_ir.busy_give_arm64())) + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n" + text_when(harden, "    autiasp\n") + "    ret\n";
+}
+
+// The part of an arm64 entry for a function that uses the heap: the turn on
+// the busy lock, the stack top of the thread, and the start of the hardened
+// runtime. The entry of a `@norc` function keeps only the slot of the stack
+// top, so its frame has the same shape.
+function entry_open_arm64(name: string, harden: boolean, locked: boolean, unshared: boolean): string {
+  if (unshared) {
+    return "    sub sp, sp, #16\n";
+  }
+  return text_when(locked, asm_arm64_ir.busy_take_arm64()) + "    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n" + text_when(harden, "    adrp x16, __fern_rng_state\n    ldr x16, [x16, :lo12:__fern_rng_state]\n    cbnz x16, .Lfern_export_ready_" + name + "\n    bl __fern_harden_start\n.Lfern_export_ready_" + name + ":\n");
 }
 
 // `text` when `on`, else nothing.

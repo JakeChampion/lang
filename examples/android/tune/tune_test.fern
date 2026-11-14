@@ -4,6 +4,7 @@
 // writes. With TUNE_UI_PNG set to a directory, the test writes the screens
 // there as PNG files.
 import "core/cmp";
+import "std/array";
 import "std/android/draw";
 import "std/android/fonts";
 import "std/android/testkit";
@@ -162,7 +163,10 @@ function decoded(bytes: u8[], w: i32, h: i32): Option[draw.Image] {
   return Some(draw.Image { width: side, height: side, pixels: pixels });
 }
 
+// The device plays each sample at once, and keeps the last ones it played.
 function device(): player.Device {
+  let none: i32[] = [];
+  let heard: Cell[i32[]] = cell_new(none);
   return player.Device {
     grant: (): void => {},
     roots: ["music"],
@@ -191,12 +195,22 @@ function device(): player.Device {
     size: (path: string): i64 => read(path).len() as i64,
     part: (path: string, at: i64, n: i32): u8[] => library.parts_of(read(path))(at, n),
     read: (path: string): u8[] => read(path),
-    open: (rate: i32, channels: i32): tune.Sound => tune.Sound { ptr: 1 as usize, rate: rate, channels: channels },
+    open: (rate: i32, channels: i32): tune.Sound => tune.Sound { ptr: 1 as usize, rate: rate, channels: channels, ring: 0 as usize },
     start: (s: tune.Sound): void => {},
     pause: (s: tune.Sound): void => {},
     flush: (s: tune.Sound): void => {},
     close: (s: tune.Sound): void => {},
-    write: (s: tune.Sound, samples: [i32]): i32 => samples.len().min(s.rate * s.channels / 50),
+    write: (s: tune.Sound, samples: [i32]): i32 => {
+      let n = samples.len().min(s.rate * s.channels / 50);
+      let all = heard.get().concat(samples[0:n]);
+      heard.set(array.slice(all, (all.len() - 4096).max(0), all.len()));
+      return n;
+    },
+    queued: (s: tune.Sound): i32 => 0,
+    recent: (s: tune.Sound, n: i32): i32[] => {
+      let all = heard.get();
+      return array.slice(all, (all.len() - n).max(0), all.len());
+    },
   };
 }
 
@@ -891,7 +905,7 @@ function test_the_equalizer(): test.TestOutcome {
 // The equalizer follows the rate and the channels of the sound, and keeps
 // its values while its gains stay. Flat gains change no sample.
 function test_the_equalizer_of_the_sound(): test.TestOutcome {
-  let sound = tune.Sound { ptr: 1 as usize, rate: 44100, channels: 2 };
+  let sound = tune.Sound { ptr: 1 as usize, rate: 44100, channels: 2, ring: 0 as usize };
   let flat = player.tuned(eq.new(0, 1, []), sound, [0, 0, 0, 0, 0]);
   let samples: i32[] = [100, -100, 2000, -2000, 3000, 0, -500, 500];
   let (e, same) = player.equalized(flat, samples, 2);

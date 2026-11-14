@@ -35,7 +35,9 @@ import "./tune";
 // file, `part` gives at most a number of its bytes from an offset, and
 // `read` gives each byte of it, or no bytes. `open` gives a stream at
 // a rate with a number of channels. `write` gives the stream samples, and
-// tells how many it took.
+// tells how many it took. `queued` gives the frames that the stream holds
+// and the device did not play yet, and `recent` gives the last samples that
+// the device played.
 pub struct Device {
   grant: () => void,
   roots: string[],
@@ -70,6 +72,8 @@ pub struct Device {
   flush: (tune.Sound) => void,
   close: (tune.Sound) => void,
   write: (tune.Sound, [i32]) => i32,
+  queued: (tune.Sound) => i32,
+  recent: (tune.Sound, i32) => i32[],
 }
 
 // The samples that the player keeps ready, as a part of a second.
@@ -670,11 +674,13 @@ function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], 
   let (inc, out) = faded(fading_in(dev, m, left, fade_ms, incoming), ready, fresh, fade_part(left + each_ms, fade_ms), fade_part(left, fade_ms), m);
   let (filters, heard) = equalized(tuned(m.filters, sound, m.tone), out, fresh);
   ready = heard;
-  let bars = if (m.open) { tune.fallen(m.bars, spectrum.levels(ready, sound.channels, sound.rate, tune.BARS)) } else { m.bars };
   let wrote = dev.write(sound, ready);
   let kept = rest(ready, wrote);
+  // The bars and the time are those of the sound that plays now, which the
+  // stream holds a part of a second after the decoder gave it.
+  let bars = if (m.open) { tune.fallen(m.bars, spectrum.levels(dev.recent(sound, spectrum.SIZE * sound.channels), sound.channels, sound.rate, tune.BARS)) } else { m.bars };
   let each = (sound.rate * sound.channels).max(1) as i64;
-  let waiting = kept.len() as i64 * (m.speed as i64) * 10i64 / each;
+  let waiting = (kept.len() as i64 + dev.queued(sound) as i64 * (sound.channels as i64)) * (m.speed as i64) * 10i64 / each;
   let at = (d.deck.position_ms() - waiting).max(0i64);
   let length = d.deck.duration_ms();
   let ended = d.deck.done && kept.len() == 0;
