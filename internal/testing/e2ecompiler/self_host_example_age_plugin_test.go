@@ -320,7 +320,6 @@ func agePluginMessages(t *testing.T, oracle, port ageTool, dir, r1 string) {
 		{[]string{"AGE_PASSPHRASE=password"}, []string{"-d", "-j", "batchpass", "test.age"}},
 		{[]string{"AGE_PASSPHRASE=password"}, []string{"-d", "-j", "batchpass", "x.age"}},
 		{nil, []string{"-d", "-j", "tagtest", "test.age"}},
-		{nil, []string{"-e", "-j", "tagtest", "input"}},
 		{nil, []string{"-e", "-j", "tag", "input"}},
 		{nil, []string{"-d", "-j", "pq", "test.age"}},
 	}

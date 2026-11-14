@@ -123,6 +123,7 @@ pub function wrap(file_key: [u8], k: TagKey, randomness: [u8]): Result[format.St
     },
   };
   let (body, _) = sender.context.seal([], file_key);
+  __ct_public(sender.enc);
   __ct_public(body);
   let kind = if (k.hybrid) { "mlkem768p256tag" } else { "p256tag" };
   return Ok(format.Stanza { kind: kind, args: [text.b64_raw(tag_of(k, sender.enc)), text.b64_raw(sender.enc)], body: body });
