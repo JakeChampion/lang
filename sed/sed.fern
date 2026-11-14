@@ -1828,7 +1828,7 @@ function make_temp(r: Run, dir: string): (string, Writer) {
     let rnd = rand.bytes(6);
     let name = dir + "sed";
     for b in rnd {
-      name = name + slice_unchecked(letters, b as i32 % 62, b as i32 % 62 + 1);
+      name += slice_unchecked(letters, b as i32 % 62, b as i32 % 62 + 1);
     }
     last = name;
     match (open_exclusive(name)) {
@@ -1856,9 +1856,9 @@ function backup_name(target: string, suffix: string): string {
   let name = "";
   for k in 0..suffix.len() {
     if (suffix[k] == b'*') {
-      name = name + target;
+      name += target;
     } else {
-      name = name + slice_unchecked(suffix, k, k + 1);
+      name += slice_unchecked(suffix, k, k + 1);
     }
   }
   return name;

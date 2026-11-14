@@ -18,7 +18,7 @@ function span(pat: string, subj: string, ext: boolean, icase: boolean, multi: bo
   }
   let out = "";
   for g in 0..m.starts.len() {
-    out = out + f"{m.starts[g]},{m.ends[g]};";
+    out += f"{m.starts[g]},{m.ends[g]};";
   }
   return out;
 }
@@ -165,7 +165,7 @@ function groups_of(pat: string, subj: u8[], sed: boolean, ext: boolean): string 
   }
   let out = "";
   for g in 0..m.starts.len() {
-    out = out + f"{m.starts[g]},{m.ends[g]};";
+    out += f"{m.starts[g]},{m.ends[g]};";
   }
   return out;
 }
