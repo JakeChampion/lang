@@ -1,5 +1,8 @@
 function __fern_utf8_valid(buf: usize, n: i32): i32 {
   let high = (-9187201950435737472) as i64;
+  if (n < 32 && __fern_utf8_ascii_short(buf, n) == 1) {
+    return 1;
+  }
   let retry = 0;
   let vector = 1;
   let i = 0;

@@ -5674,6 +5674,9 @@ function dir_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (m == "Dir.entries_bytes") {
     return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_dir_entries())) };
   }
+  if (m == "Dir.entries_ino") {
+    return Lowered { found: true, r: emit(r, ir.entry_payload(ir.op_dir_entries())) };
+  }
   if (m == "Dir.entries") {
     return Lowered { found: true, r: emit(r, ir.op_dir_entries()) };
   }
