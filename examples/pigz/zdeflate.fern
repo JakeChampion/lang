@@ -3,10 +3,10 @@
 // strategies of deflateParams. The output of pigz is the output of zlib, so
 // this port writes the same bytes as pigz.
 //
-// A stream is a Z. The caller sets the input with `input`, sets `avail` to
-// the room of its output buffer, and calls `deflate` with a flush mode, as a
-// caller of zlib does. Each byte that zlib writes is in `out` in order, so
-// the room only changes where zlib starts and stops a block.
+// A stream is a Z. The caller sets the input with `input` and the room of
+// its output buffer in `avail`. Then it calls `deflate` with a flush mode,
+// as a caller of zlib does. Each byte that zlib writes is in `out` in
+// order, so the room only changes where zlib starts and stops a block.
 
 const WSIZE: i32 = 32768;
 
@@ -373,7 +373,7 @@ pub function input(own z: Z, data: u8[], from: i32, len: i32): Z {
 }
 
 // The bytes of the stream so far. The stream keeps counting the pending
-// bytes, so the caller can take them before zlib would deliver them.
+// bytes, so the caller can take them before zlib delivers them.
 pub function take(own z: Z): (Z, u8[]) {
   let out = z.out;
   let none: u8[] = [];
@@ -1513,8 +1513,8 @@ function send_tree(own z: Z, len: i32[], max_code: i32, bl: Tree): Z {
   return z;
 }
 
-// _tr_flush_block of window[from:from + stored_len]; from < 0 is a block
-// whose bytes left the window.
+// _tr_flush_block of window[from:from + stored_len]. A `from` below 0 is a
+// block whose bytes left the window.
 // It keeps the branches of _tr_flush_block() of zlib in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
 function tr_flush_block(own z: Z, from: i32, stored_len: i32, last: boolean): Z {

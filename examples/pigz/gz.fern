@@ -1,367 +1,1682 @@
-// The parts of pigz that do no I/O: the options, the names of the output
-// files, the gzip header, and the messages for a stream that does not decode.
+// The parts of pigz that do no I/O. These are the options, the names of
+// the output files, and the headers and trailers. They also include the
+// decoders of gzip, zlib, zip and compress (LZW) data, with the messages
+// of pigz 2.8.
 import "std/deflate" as deflate;
 import "std/hash/crc32";
 import "std/string";
-import "std/worker";
+import "std/array";
+import "std/tz";
+import "std/time";
+import "std/utf8";
+import "std/f64";
 
-// The input bytes that one worker compresses, as in pigz.
-const BLOCK: i32 = 131072;
+pub const VERSION: string = "pigz 2.8";
 
-// The bytes before a block that its worker can match against.
-const DICTIONARY: i32 = 32768;
+// The sliding dictionary of deflate.
+const DICT: i32 = 32768;
 
 pub struct Options {
-  decompress: boolean,
-  stdout: boolean,
-  force: boolean,
-  keep: boolean,
-  test: boolean,
   level: i32,
+  // zdeflate.DEFAULT_STRATEGY, HUFFMAN_ONLY (-H) or RLE (-U).
+  strategy: i32,
+  // The input bytes of one block (-b).
+  block: i32,
+  rsync: boolean,
+  // False for -i.
+  setdict: boolean,
   // 0 is one process for each CPU.
-  processes: i32,
+  procs: i32,
+  // 0 for -q, 1 by default, and one more for each -v.
+  verbosity: i32,
+  // Bits 0 and 1 store the name and the time. Bits 2 and 3 restore them.
+  // This is g.headis of pigz.
+  headis: i32,
+  pipeout: boolean,
+  sufx: string,
+  comment: Option[string],
+  alias: string,
+  // 0 compresses, 1 decompresses and 2 tests.
+  decode: i32,
+  list: boolean,
+  keep: boolean,
+  force: boolean,
+  sync: boolean,
+  recurse: boolean,
+  // 0 is gzip, 1 is zlib (-z) and 2 is zip (-K).
+  form: i32,
+  // The zopfli settings of -11: -I, -J, -O and -F.
+  iterations: i32,
+  maxsplits: i32,
+  blocksplitting: boolean,
+  splitlast: boolean,
   files: string[],
-  // The next argument is the value of -p.
-  pending: boolean,
-  // A `--` came, so each argument after it is a file.
-  ended: boolean,
+  // The option that waits for its parameter, as a 1-based index into
+  // "bpSIJAC", or 0.
+  get: i32,
 }
 
 pub enum Parsed {
   Run(Options),
-  Abort(string),
+  // The message, and the verbosity when the error came, which prints it
+  // only when above 0.
+  Abort(string, i32),
+  // An option that writes text and stops, with the text for the standard
+  // output and for the standard error.
+  Stop(string, string),
 }
 
-function defaults(): Options {
-  return Options { decompress: false, stdout: false, force: false, keep: false, test: false, level: 6, processes: 0, files: [], pending: false, ended: false };
+pub function defaults(): Options {
+  return Options {
+    level: 6,
+    strategy: 0,
+    block: 131072,
+    rsync: false,
+    setdict: true,
+    procs: 0,
+    verbosity: 1,
+    headis: 3,
+    pipeout: false,
+    sufx: ".gz",
+    comment: None,
+    alias: "-",
+    decode: 0,
+    list: false,
+    keep: false,
+    force: false,
+    sync: false,
+    recurse: false,
+    form: 0,
+    iterations: 15,
+    maxsplits: 15,
+    blocksplitting: true,
+    splitlast: false,
+    files: [],
+    get: 0,
+  };
 }
 
-// Options can come before and after the file names, as in pigz. `--` ends
-// the options, and `-` is the standard input.
-pub function parse(args: string[]): Parsed {
-  let o = defaults();
-  for arg in args {
-    match (argument(o, arg)) {
-      Run(next) => {
-        o = next;
-      },
-      Abort(why) => {
-        return Abort(why);
-      }
+pub function help_text(): string {
+  return [
+    "Usage: pigz [options] [files ...]",
+    "  will compress files in place, adding the suffix '.gz'. If no files are",
+    "  specified, stdin will be compressed to stdout. pigz does what gzip does,",
+    "  but spreads the work over multiple processors and cores when compressing.",
+    "",
+    "Options:",
+    "  -0 to -9, -11        Compression level (level 11, zopfli, is much slower)",
+    "  --fast, --best       Compression levels 1 and 9 respectively",
+    "  -A, --alias xxx      Use xxx as the name for any --zip entry from stdin",
+    "  -b, --blocksize mmm  Set compression block size to mmmK (default 128K)",
+    "  -c, --stdout         Write all processed output to stdout (won't delete)",
+    "  -C, --comment ccc    Put comment ccc in the gzip or zip header",
+    "  -d, --decompress     Decompress the compressed input",
+    "  -f, --force          Force overwrite, compress .gz, links, and to terminal",
+    "  -F  --first          Do iterations first, before block split for -11",
+    "  -h, --help           Display a help screen and quit",
+    "  -H, --huffman        Use only Huffman coding for compression",
+    "  -i, --independent    Compress blocks independently for damage recovery",
+    "  -I, --iterations n   Number of iterations for -11 optimization",
+    "  -J, --maxsplits n    Maximum number of split blocks for -11",
+    "  -k, --keep           Do not delete original file after processing",
+    "  -K, --zip            Compress to PKWare zip (.zip) single entry format",
+    "  -l, --list           List the contents of the compressed input",
+    "  -L, --license        Display the pigz license and quit",
+    "  -m, --no-time        Do not store or restore mod time",
+    "  -M, --time           Store or restore mod time",
+    "  -n, --no-name        Do not store or restore file name or mod time",
+    "  -N, --name           Store or restore file name and mod time",
+    "  -O  --oneblock       Do not split into smaller blocks for -11",
+    "  -p, --processes n    Allow up to n compression threads (default is the",
+    "                       number of online processors, or 8 if unknown)",
+    "  -q, --quiet          Print no messages, even on error",
+    "  -r, --recursive      Process the contents of all subdirectories",
+    "  -R, --rsyncable      Input-determined block locations for rsync",
+    "  -S, --suffix .sss    Use suffix .sss instead of .gz (for compression)",
+    "  -t, --test           Test the integrity of the compressed input",
+    "  -U, --rle            Use run-length encoding for compression",
+    "  -v, --verbose        Provide more verbose output",
+    "  -V  --version        Show the version of pigz",
+    "  -Y  --synchronous    Force output file write to permanent storage",
+    "  -z, --zlib           Compress to zlib (.zz) instead of gzip format",
+    "  --                   All arguments after \"--\" are treated as files",
+  ].join("\n") + "\n";
+}
+
+function license_text(): string {
+  return VERSION + "\nCopyright (C) 2007-2023 Mark Adler\nSubject to the terms of the zlib license.\nNo warranty is provided or implied.\n";
+}
+
+// The short option of each long option, as longopts of pigz.
+// A table with one arm for each long option of pigz.
+// fern-lint: allow cyclomatic-complexity
+function long_option(name: string): Option[string] {
+  return match (name) {
+    "LZW" | "lzw" | "bits" => Some("Z"),
+    "alias" => Some("A"),
+    "ascii" => Some("a"),
+    "best" => Some("9"),
+    "blocksize" => Some("b"),
+    "decompress" | "uncompress" => Some("d"),
+    "fast" => Some("1"),
+    "force" => Some("f"),
+    "comment" => Some("C"),
+    "first" => Some("F"),
+    "iterations" => Some("I"),
+    "maxsplits" => Some("J"),
+    "oneblock" => Some("O"),
+    "help" => Some("h"),
+    "independent" => Some("i"),
+    "keep" => Some("k"),
+    "license" => Some("L"),
+    "list" => Some("l"),
+    "name" => Some("N"),
+    "no-name" => Some("n"),
+    "no-time" => Some("m"),
+    "processes" => Some("p"),
+    "quiet" | "silent" => Some("q"),
+    "recursive" => Some("r"),
+    "rsyncable" => Some("R"),
+    "stdout" | "to-stdout" => Some("c"),
+    "suffix" => Some("S"),
+    "synchronous" => Some("Y"),
+    "test" => Some("t"),
+    "time" => Some("M"),
+    "verbose" => Some("v"),
+    "version" => Some("V"),
+    "zip" => Some("K"),
+    "zlib" => Some("z"),
+    "huffman" => Some("H"),
+    "rle" => Some("U"),
+    _ => None,
+  };
+}
+
+// The result of one argument: the options after it, and whether it was an
+// option or its parameter.
+enum Step {
+  Took(Options, boolean),
+  Failed(Parsed),
+}
+
+// option() of pigz for one argument. None is the end of the arguments, which
+// checks for a missing parameter.
+// It keeps the branches of option() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function option(o: Options, arg: Option[string]): Step {
+  let pending = o.get != 0;
+  let missing = match (arg) {
+    None => true,
+    Some(a) => a.starts_with("-"),
+  };
+  if (pending && missing) {
+    return Failed(Abort("missing parameter after -" + "bpSIJAC".drop(o.get - 1).take(1), o.verbosity));
+  }
+  let Some(text) = arg else {
+    return Took(o, true);
+  };
+  if (text.starts_with("-")) {
+    if (text == "-") {
+      return Took(o, false);
     }
-  }
-  if (o.pending) {
-    return Abort("missing parameter after -p");
-  }
-  return Run(o);
-}
-
-function argument(o: Options, arg: string): Parsed {
-  if (o.pending) {
-    return processes(o, arg);
-  }
-  if (o.ended || arg == "-" || !arg.starts_with("-")) {
-    return Run(Options { ...o, files: o.files.append(arg) });
-  }
-  if (arg == "--") {
-    return Run(Options { ...o, ended: true });
-  }
-  return option(o, arg);
-}
-
-// The value of -p: a count of processes from 1.
-function processes(o: Options, text: string): Parsed {
-  let bytes = text.bytes();
-  if (bytes.len() == 0 || bytes.len() > 9) {
-    return Abort("invalid numeric parameter: " + text);
-  }
-  for c in bytes {
-    if (!digit(c)) {
-      return Abort("invalid numeric parameter: " + text);
+    let letters = text.drop(1);
+    if (text.starts_with("--")) {
+      let Some(short) = long_option(text.drop(2)) else {
+        return Failed(Abort("invalid option: " + text, o.verbosity));
+      };
+      letters = short;
     }
+    return shorts(o, letters);
   }
-  let n = number(bytes, 0, bytes.len());
-  if (n < 1) {
-    return Abort("invalid number of processes: " + text);
+  if (pending) {
+    return parameter(o, text);
   }
-  return Run(Options { ...o, processes: n, pending: false });
+  return Took(o, false);
 }
 
-function option(o: Options, arg: string): Parsed {
-  if (!arg.starts_with("--")) {
-    return shorts(o, arg);
-  }
-  match (long(o, arg)) {
-    Some(next) => {
-      return Run(next);
-    },
-    None => {
-      return Abort("invalid option: " + arg);
-    }
-  }
-  return Abort("invalid option: " + arg);
-}
-
-function long(o: Options, arg: string): Option[Options] {
-  if (arg == "--fast") {
-    return Some(Options { ...o, level: 1 });
-  }
-  if (arg == "--best") {
-    return Some(Options { ...o, level: 9 });
-  }
-  if (arg == "--processes") {
-    return Some(Options { ...o, pending: true });
-  }
-  return long_flag(o, arg);
-}
-
-function long_flag(o: Options, arg: string): Option[Options] {
-  if (arg == "--stdout" || arg == "--to-stdout") {
-    return Some(Options { ...o, stdout: true });
-  }
-  if (arg == "--decompress" || arg == "--uncompress") {
-    return Some(Options { ...o, decompress: true });
-  }
-  if (arg == "--force") {
-    return Some(Options { ...o, force: true });
-  }
-  if (arg == "--keep") {
-    return Some(Options { ...o, keep: true });
-  }
-  if (arg == "--test") {
-    return Some(Options { ...o, test: true });
-  }
-  return None;
-}
-
-// A group of one-letter options, such as `-dc` or `-9k`. A run of digits is
-// one level.
-function shorts(o: Options, arg: string): Parsed {
-  let bytes = arg.bytes();
-  let i = 1;
+// A run of one-letter options after a dash. The rest of the run after an
+// option that takes a parameter is its parameter, except for -S and -C.
+// It keeps the branches of option() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function shorts(o: Options, letters: string): Step {
+  let bytes = letters.bytes();
+  let i = 0;
   while (i < bytes.len()) {
-    if (digit(bytes[i])) {
-      let end = i;
-      while (end < bytes.len() && digit(bytes[end])) {
-        end += 1;
+    if (o.get != 0) {
+      if (o.get == 3) {
+        return Failed(Abort("invalid usage: -S must be followed by space", o.verbosity));
       }
-      match (level(o, bytes, i, end)) {
-        Run(next) => {
-          o = next;
-        },
-        Abort(why) => {
-          return Abort(why);
+      if (o.get == 7) {
+        return Failed(Abort("invalid usage: -C must be followed by space", o.verbosity));
+      }
+      return parameter(o, letters.drop(i));
+    }
+    let c = bytes[i];
+    if (digit(c)) {
+      let level = (c - b'0') as i64;
+      while (i + 1 < bytes.len() && digit(bytes[i + 1])) {
+        i += 1;
+        level = level * 10 + (bytes[i] - b'0') as i64;
+        if (level > 2147483647i64) {
+          return Failed(Abort("only levels 0..9 and 11 are allowed", o.verbosity));
         }
       }
-      i = end;
+      if (level == 10i64 || level > 11i64) {
+        return Failed(Abort("only levels 0..9 and 11 are allowed", o.verbosity));
+      }
+      o = Options { ...o, level: level as i32 };
+      i += 1;
       continue;
     }
-    if (bytes[i] == 112 as u8) {
-      if (i + 1 == bytes.len()) {
-        return Run(Options { ...o, pending: true });
+    match (letter(o, c, letters.drop(i))) {
+      Took(next, _) => {
+        o = next;
+      },
+      Failed(p) => {
+        return Failed(p);
       }
-      return processes(o, arg.drop(i + 1));
     }
-    let Some(next) = letter(o, bytes[i]) else {
-      return Abort("invalid option: -" + arg.drop(i).take(1));
-    };
-    o = next;
     i += 1;
   }
-  return Run(o);
+  return Took(o, true);
 }
 
-// The level in bytes[from:end], a run of digits.
-function level(o: Options, bytes: u8[], from: i32, end: i32): Parsed {
-  if (end - from > 2) {
-    return Abort("only levels 1..9 are allowed");
-  }
-  let n = number(bytes, from, end);
-  if (n < 1 || n > 9) {
-    return Abort("only levels 1..9 are allowed");
-  }
-  return Run(Options { ...o, level: n });
+// One option letter `c`, which is the first byte of `rest`.
+// A table with one arm for each option letter of pigz.
+// fern-lint: allow cyclomatic-complexity
+function letter(o: Options, c: u8, rest: string): Step {
+  let bad = "-" + rest.take(1);
+  return match (c) {
+    b'A' => Took(Options { ...o, get: 6 }, true),
+    b'C' => Took(Options { ...o, get: 7 }, true),
+    b'F' => Took(Options { ...o, splitlast: true }, true),
+    b'H' => Took(Options { ...o, strategy: 2 }, true),
+    b'I' => Took(Options { ...o, get: 4 }, true),
+    b'J' => Took(Options { ...o, get: 5 }, true),
+    b'K' => Took(Options { ...o, form: 2, sufx: ".zip" }, true),
+    b'L' => Failed(Stop(license_text(), "")),
+    b'M' => Took(Options { ...o, headis: o.headis | 10 }, true),
+    b'N' => Took(Options { ...o, headis: 15 }, true),
+    b'O' => Took(Options { ...o, blocksplitting: false }, true),
+    b'R' => Took(Options { ...o, rsync: true }, true),
+    b'S' => Took(Options { ...o, get: 3 }, true),
+    b'V' => Failed(Stop(VERSION + "\n" + (if (o.verbosity > 1) { "zlib 1.3\n" } else { "" }), "")),
+    b'Y' => Took(Options { ...o, sync: true }, true),
+    b'Z' => Failed(Abort("invalid option: LZW output not supported: " + bad, o.verbosity)),
+    b'a' => Failed(Abort("invalid option: no ascii conversion: " + bad, o.verbosity)),
+    b'b' => Took(Options { ...o, get: 1 }, true),
+    b'c' => Took(Options { ...o, pipeout: true }, true),
+    b'd' => Took(Options { ...o, headis: if (o.decode == 0) { o.headis >> 2 } else { o.headis }, decode: 1 }, true),
+    b'f' => Took(Options { ...o, force: true }, true),
+    b'h' => if (o.verbosity == 0) { Took(o, true) } else { Failed(Stop("", help_text())) },
+    b'i' => Took(Options { ...o, setdict: false }, true),
+    b'k' => Took(Options { ...o, keep: true }, true),
+    b'l' => Took(Options { ...o, list: true }, true),
+    b'n' => Took(Options { ...o, headis: 0 }, true),
+    b'T' | b'm' => Took(Options { ...o, headis: o.headis & ~10 }, true),
+    b'p' => Took(Options { ...o, get: 2 }, true),
+    b'q' => Took(Options { ...o, verbosity: 0 }, true),
+    b'r' => Took(Options { ...o, recurse: true }, true),
+    b't' => Took(Options { ...o, decode: 2 }, true),
+    b'U' => Took(Options { ...o, strategy: 3 }, true),
+    b'v' => Took(Options { ...o, verbosity: o.verbosity + 1 }, true),
+    b'z' => Took(Options { ...o, form: 1, sufx: ".zz" }, true),
+    _ => Failed(Abort("invalid option: " + bad, o.verbosity)),
+  };
 }
 
 function digit(c: u8): boolean {
-  return c >= 48 as u8 && c <= 57 as u8;
+  return c >= b'0' && c <= b'9';
 }
 
-// The decimal value of bytes[from:end], which hold only digits.
-function number(bytes: u8[], from: i32, end: i32): i32 {
-  let n = 0;
-  for i in from..end {
-    n = n * 10 + (bytes[i] - 48 as u8) as i32;
+// num(): the decimal value of `text`, which holds only digits, in 64 bits.
+function num(text: string): Result[u64, string] {
+  if (text.len() == 0) {
+    return Err("internal error: empty parameter");
   }
-  return n;
+  let val = 0u64;
+  for c in text.bytes() {
+    let d = (c - b'0') as u64;
+    if (!digit(c) || val != 0u64 && (18446744073709551615u64 - d) / val < 10u64) {
+      return Err("invalid numeric parameter: " + text);
+    }
+    val = val * 10u64 + d;
+  }
+  return Ok(val);
 }
 
-function letter(o: Options, c: u8): Option[Options] {
-  if (c == 99 as u8) {
-    return Some(Options { ...o, stdout: true });
+// The parameter of -b, -p, -S, -I, -J, -A or -C.
+// It keeps the branches of option() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function parameter(o: Options, text: string): Step {
+  let next = Options { ...o, get: 0 };
+  if (o.get == 3) {
+    if (text.len() == 0) {
+      return Failed(Abort("suffix cannot be empty", o.verbosity));
+    }
+    return Took(Options { ...next, sufx: text }, true);
   }
-  if (c == 100 as u8) {
-    return Some(Options { ...o, decompress: true });
+  if (o.get == 6) {
+    return Took(Options { ...next, alias: text }, true);
   }
-  if (c == 102 as u8) {
-    return Some(Options { ...o, force: true });
+  if (o.get == 7) {
+    return Took(Options { ...next, comment: Some(text) }, true);
   }
-  if (c == 107 as u8) {
-    return Some(Options { ...o, keep: true });
+  let n = match (num(text)) {
+    Ok(v) => v,
+    Err(why) => {
+      return Failed(Abort(why, o.verbosity));
+    },
+  };
+  if (o.get == 1) {
+    let block = n << 10u64;
+    if (block < DICT as u64) {
+      return Failed(Abort("block size too small (must be >= 32K)", o.verbosity));
+    }
+    if (n != block >> 10u64 || block > 536870912u64) {
+      return Failed(Abort("block size too large: " + text, o.verbosity));
+    }
+    return Took(Options { ...next, block: block as i32 }, true);
   }
-  if (c == 116 as u8) {
-    return Some(Options { ...o, test: true });
+  if (o.get == 2) {
+    let procs = ((n & 4294967295u64) as u32) as i32;
+    if (procs < 1) {
+      return Failed(Abort("invalid number of processes: " + text, o.verbosity));
+    }
+    if (procs as u64 != n || procs > 1073741822) {
+      return Failed(Abort("too many processes: " + text, o.verbosity));
+    }
+    return Took(Options { ...next, procs: procs }, true);
   }
-  return None;
+  let value = ((n & 4294967295u64) as u32) as i32;
+  if (o.get == 4) {
+    return Took(Options { ...next, iterations: value }, true);
+  }
+  return Took(Options { ...next, maxsplits: value }, true);
 }
 
-// The name that a compression of `path` writes.
-pub function compressed_name(path: string): string {
-  return path + ".gz";
+// The words of an environment variable, split as pigz splits them: at each
+// space or tab, where a space or tab at the end can leave an empty word.
+function env_words(text: string): string[] {
+  let bytes = text.bytes();
+  let words: string[] = [];
+  let at = 0;
+  while (at < bytes.len()) {
+    while (at < bytes.len() && (bytes[at] == b' ' || bytes[at] == b'\t')) {
+      at += 1;
+    }
+    let end = at;
+    while (end < bytes.len() && bytes[end] != b' ' && bytes[end] != b'\t') {
+      end += 1;
+    }
+    words = words.append(text.drop(at).take(end - at));
+    at = if (end < bytes.len()) { end + 1 } else { end };
+  }
+  return words;
 }
 
-// The name that a decompression of `path` writes, or None for a name with no
-// suffix that pigz knows.
-pub function decompressed_name(path: string): Option[string] {
-  if (path.ends_with(".gz") && path.len() > 3) {
-    return Some(path.take(path.len() - 3));
+// The options in the environment variable `name`, which holds `text`.
+pub function parse_env(o: Options, name: string, text: string): Parsed {
+  for word in env_words(text) {
+    match (option(o, Some(word))) {
+      Took(next, true) => {
+        o = next;
+      },
+      Took(_, false) => {
+        return Abort("cannot provide files in " + name + " environment variable", o.verbosity);
+      },
+      Failed(p) => {
+        return p;
+      }
+    }
   }
-  if (path.ends_with(".tgz") && path.len() > 4) {
-    return Some(path.take(path.len() - 4) + ".tar");
+  match (option(o, None)) {
+    Failed(p) => {
+      return p;
+    },
+    Took(next, _) => {
+      return Run(next);
+    }
   }
-  return None;
+  return Run(o);
 }
 
-// The last component of `path`, which the header keeps as the original name.
-pub function base_name(path: string): string {
+// The arguments after the program name, as main() of pigz reads them: each
+// option first, then the files. `--` ends the options, and `-` before it is
+// the standard input, which `files` holds as "".
+// It keeps the branches of main() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function parse_args(o: Options, args: string[]): Parsed {
+  let ended = args.len();
+  for i in 0..args.len() {
+    if (args[i] == "--") {
+      ended = i;
+      break;
+    }
+  }
+  let files: string[] = [];
+  for i in 0..ended {
+    match (option(o, Some(args[i]))) {
+      Took(next, true) => {
+        o = next;
+      },
+      Took(next, false) => {
+        o = next;
+        files = files.append(if (args[i] == "-") { "" } else { args[i] });
+      },
+      Failed(p) => {
+        return p;
+      }
+    }
+  }
+  match (option(o, None)) {
+    Failed(p) => {
+      return p;
+    },
+    Took(next, _) => {
+      o = next;
+    }
+  }
+  for i in ended + 1..args.len() {
+    files = files.append(args[i]);
+  }
+  return Run(Options { ...o, files: files });
+}
+
+// The options as the name of the program sets them: unpigz and gunzip
+// decompress, and a name that ends in "cat" decompresses to the standard
+// output.
+pub function by_name(o: Options, prog: string): Options {
+  if (prog == "unpigz" || prog == "gunzip") {
+    o = decoding(o);
+  }
+  if (prog.len() > 2 && prog.ends_with("cat")) {
+    o = Options { ...decoding(o), pipeout: true };
+  }
+  return o;
+}
+
+function decoding(o: Options): Options {
+  if (o.decode == 0) {
+    return Options { ...o, headis: o.headis >> 2, decode: 1 };
+  }
+  return Options { ...o, decode: 1 };
+}
+
+// The suffixes that a decompression tries after a name that does not
+// exist, in the order of pigz.
+pub function suffixes(): string[] {
+  return [".z", "-z", "_z", ".Z", ".gz", "-gz", ".zz", "-zz", ".zip", ".ZIP", ".tgz"];
+}
+
+// compressed_suffix(): the length of the compressed suffix of `name`, or 0.
+pub function compressed_suffix(name: string): i32 {
+  let n = name.len();
+  for suffix in [".zip", ".ZIP", ".tgz", ".gz", "-gz", ".zz", "-zz", ".z", "-z", "_z", ".Z"] {
+    if (n > suffix.len() && name.ends_with(suffix)) {
+      return suffix.len();
+    }
+  }
+  return 0;
+}
+
+// justname(): the last component of `path`.
+pub function justname(path: string): string {
   let bytes = path.bytes();
   let at = bytes.len();
-  while (at > 0 && bytes[at - 1] != 47 as u8) {
+  while (at > 0 && bytes[at - 1] != b'/') {
     at -= 1;
   }
   return path.drop(at);
 }
 
-function put_le32(own out: u8[], v: u32): u8[] {
-  return out.append((v & 255u32) as u8).append((v >> 8 & 255u32) as u8).append((v >> 16 & 255u32) as u8).append((v >> 24) as u8);
+// The name that a decompression of `path` writes: the name in the header
+// for -N, else `path` without its compressed suffix, with .tar for .tgz.
+pub function decompressed_name(path: string, header_name: Option[string], restore_name: boolean): string {
+  let base = path.take(path.len() - compressed_suffix(path));
+  if (restore_name) {
+    if let Some(name) = header_name {
+      return path.take(path.len() - justname(path).len()) + justname(name);
+    }
+  }
+  if (path.drop(base.len()) == ".tgz") {
+    return base + ".tar";
+  }
+  return base;
 }
 
-// One gzip member, as pigz writes it: the original name and modification time
-// when the input is a file, the level in the extra flags, and the Unix OS byte.
-pub function compress(data: u8[], level: i32, name: string, mtime: u32, workers: i32): u8[] {
-  let flags = 0 as u8;
-  if (name.len() > 0) {
-    flags = 8 as u8;
-  }
-  let xfl = 0 as u8;
-  if (level <= 1) {
-    xfl = 4 as u8;
-  } else if (level >= 9) {
-    xfl = 2 as u8;
-  }
-  let out = put_le32([31 as u8, 139 as u8, 8 as u8, flags], mtime).append(xfl).append(3 as u8);
-  if (name.len() > 0) {
-    out = out.concat(name.bytes()).append(0 as u8);
-  }
-  out = out.concat(encoded(data, level, workers));
-  out = put_le32(out, crc32.of(data));
-  return put_le32(out, data.len() as u32);
+function put16(own out: u8[], v: i64): u8[] {
+  return out.append((v & 255i64) as u8).append((v >> 8 & 255i64) as u8);
 }
 
-// The deflate data of `data` in blocks. With more than one worker, each
-// block has the 32 KiB before it as its dictionary, as in pigz, so the
-// blocks join into one stream. Each worker compresses one run of
-// consecutive blocks, and the parent compresses the last run.
-function encoded(data: u8[], level: i32, workers: i32): u8[] {
-  if (workers <= 1 || data.len() <= BLOCK) {
-    return deflate.deflate_level(data, level);
+function put32(own out: u8[], v: i64): u8[] {
+  return put16(put16(out, v & 65535i64), v >> 16 & 65535i64);
+}
+
+function put64(own out: u8[], v: i64): u8[] {
+  return put32(put32(out, v & 4294967295i64), v >> 32 & 4294967295i64);
+}
+
+// The gzip header of pigz: the name, the time and the comment that the
+// options keep, the level in the extra flags, and the Unix OS byte.
+pub function gzip_header(name: Option[string], mtime: i64, level: i32, comment: Option[string]): u8[] {
+  let flags = 0;
+  if (name.is_some()) {
+    flags += 8;
   }
-  let count = (data.len() + BLOCK - 1) / BLOCK;
-  let per = (count + workers - 1) / workers;
-  let out: u8[] = [];
-  for part in runs(data, level, 0, count, per) {
-    out = out.concat(part);
+  if (comment.is_some()) {
+    flags += 16;
+  }
+  let xfl = if (level >= 9) { 2 } else if (level == 1) { 4 } else { 0 };
+  let out = put32([31 as u8, 139 as u8, 8 as u8, flags as u8], mtime).append(xfl as u8).append(3 as u8);
+  if let Some(n) = name {
+    out = out.concat(n.bytes()).append(0 as u8);
+  }
+  if let Some(c) = comment {
+    out = out.concat(c.bytes()).append(0 as u8);
   }
   return out;
 }
 
-// The blocks from `first` to the last, in runs of `per` blocks.
-function runs(data: u8[], level: i32, first: i32, count: i32, per: i32): u8[][] {
-  if (first + per >= count) {
-    return [run(data, level, first, count, count)];
-  }
-  let w = worker.spawn((): u8[] => run(data, level, first, first + per, count));
-  let rest = runs(data, level, first + per, count, per);
-  return [w.join()].concat(rest);
+pub function gzip_trailer(check: u32, ulen: i64): u8[] {
+  let none: u8[] = [];
+  return put32(put32(none, check as i64), ulen);
 }
 
-function run(data: u8[], level: i32, first: i32, end: i32, count: i32): u8[] {
+// The zlib header of pigz, with its clue of the level.
+pub function zlib_header(level: i32): u8[] {
+  let clue = if (level >= 9) { 3 } else if (level == 1) { 0 } else if (level >= 6) { 1 } else { 2 };
+  let head = 30720 + (clue << 6);
+  head += 31 - head % 31;
+  return [(head >> 8) as u8, (head & 255) as u8];
+}
+
+pub function zlib_trailer(check: u32): u8[] {
+  let c = check as i64;
+  return [(c >> 24 & 255i64) as u8, (c >> 16 & 255i64) as u8, (c >> 8 & 255i64) as u8, (c & 255i64) as u8];
+}
+
+// The local header of a zip entry, with a Zip64 extra field because the
+// lengths are not known yet, and the time. `dos` is time2dos(mtime).
+pub function zip_header(name: string, mtime: i64, dos: i64): u8[] {
+  let none: u8[] = [];
+  let out = put32(none, 67324752i64);
+  out = put16(put16(put16(out, 45i64), 8i64), 8i64);
+  out = put32(put32(put32(put32(out, dos), 0i64), 4294967295i64), 4294967295i64);
+  out = put16(put16(out, name.len() as i64), 29i64);
+  out = out.concat(name.bytes());
+  out = put64(put64(put16(put16(out, 1i64), 16i64), 0i64), 0i64);
+  out = put16(put16(out, 21589i64), 5i64).append(1 as u8);
+  return put32(out, mtime);
+}
+
+// The data descriptor, the central directory and its end, after a zip
+// entry of `clen` compressed bytes after a header of `head` bytes.
+// It keeps the branches of put_trailer() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function zip_trailer(name: string, mtime: i64, dos: i64, comment: Option[string], check: u32, ulen: i64, clen: i64, head: i64): u8[] {
+  let low32 = 4294967295i64;
+  let start: u8[] = [];
+  let desc = put64(put64(put32(put32(start, 134695760i64), check as i64), clen), ulen);
+  let zip64 = ulen >= low32 || clen >= low32;
+  let note = match (comment) {
+    Some(c) => c,
+    None => "",
+  };
+  let first: u8[] = [];
+  let cent = put32(first, 33639248i64).append(45 as u8).append(255 as u8);
+  cent = put16(put16(put16(cent, 45i64), 8i64), 8i64);
+  cent = put32(put32(put32(put32(cent, dos), check as i64), if (zip64) { low32 } else { clen }), if (zip64) { low32 } else { ulen });
+  cent = put16(put16(put16(cent, name.len() as i64), if (zip64) { 29i64 } else { 9i64 }), note.len() as i64);
+  cent = put32(put32(put16(put16(cent, 0i64), 0i64), 0i64), 0i64);
+  cent = cent.concat(name.bytes());
+  if (zip64) {
+    cent = put64(put64(put16(put16(cent, 1i64), 16i64), ulen), clen);
+  }
+  cent = put32(put16(put16(cent, 21589i64), 5i64).append(1 as u8), mtime);
+  cent = cent.concat(note.bytes());
+  let at = head + clen + desc.len() as i64;
+  let size = cent.len() as i64;
+  let far = at >= low32;
+  let end: u8[] = [];
+  if (far) {
+    end = put64(put32(put16(put16(put64(put32(end, 101075792i64), 44i64), 45i64), 45i64), 0i64), 0i64);
+    end = put64(put64(put64(put64(put32(end, 0i64), 1i64), 1i64), size), at);
+    end = put32(put64(put32(put32(end, 117853008i64), 0i64), at + size), 1i64);
+  }
+  end = put16(put16(put32(end, 101010256i64), 0i64), 0i64);
+  end = put16(put16(end, if (far) { 65535i64 } else { 1i64 }), if (far) { 65535i64 } else { 1i64 });
+  end = put16(put32(put32(end, if (far) { low32 } else { size }), if (far) { low32 } else { at }), 0i64);
+  return desc.concat(cent).concat(end);
+}
+
+// The local time of a Unix time: the year, the month from 1, the day, the
+// hour, the minute, the second and the day of the week from Sunday.
+pub struct Civil {
+  year: i64,
+  month: i64,
+  day: i64,
+  hour: i64,
+  minute: i64,
+  second: i64,
+  weekday: i64,
+}
+
+pub function local(t: i64): Civil {
+  let off = tz.local_zone().offset_at(time.timestamp_from_unix(t)) as i64;
+  return civil(t + off);
+}
+
+function floor_div(a: i64, b: i64): i64 {
+  let q = a / b;
+  if (a % b != 0i64 && a < 0i64 != b < 0i64) {
+    return q - 1i64;
+  }
+  return q;
+}
+
+function civil(s: i64): Civil {
+  let days = floor_div(s, 86400i64);
+  let rem = s - days * 86400i64;
+  let z = days + 719468i64;
+  let era = floor_div(z, 146097i64);
+  let doe = z - era * 146097i64;
+  let yoe = (doe - doe / 1460i64 + doe / 36524i64 - doe / 146096i64) / 365i64;
+  let doy = doe - (365i64 * yoe + yoe / 4i64 - yoe / 100i64);
+  let mp = (5i64 * doy + 2i64) / 153i64;
+  let day = doy - (153i64 * mp + 2i64) / 5i64 + 1i64;
+  let month = if (mp < 10i64) { mp + 3i64 } else { mp - 9i64 };
+  let year = yoe + era * 400i64 + (if (month <= 2i64) { 1i64 } else { 0i64 });
+  let weeks = floor_div(days + 4i64, 7i64);
+  return Civil { year: year, month: month, day: day, hour: rem / 3600i64, minute: rem / 60i64 % 60i64, second: rem % 60i64, weekday: days + 4i64 - weeks * 7i64 };
+}
+
+// The days from 1970-01-01 to a civil date.
+function days_from_civil(y0: i64, m: i64, d: i64): i64 {
+  let y = if (m <= 2i64) { y0 - 1i64 } else { y0 };
+  let era = floor_div(y, 400i64);
+  let yoe = y - era * 400i64;
+  let mp = if (m > 2i64) { m - 3i64 } else { m + 9i64 };
+  let doy = (153i64 * mp + 2i64) / 5i64 + d - 1i64;
+  let doe = yoe * 365i64 + yoe / 4i64 - yoe / 100i64 + doy;
+  return era * 146097i64 + doe - 719468i64;
+}
+
+// time2dos(): the MS-DOS date and time of `t` in local time, where 0 is
+// `now`.
+pub function time2dos(t: i64, now: i64): i64 {
+  let c = local(if (t == 0i64) { now } else { t });
+  let years = c.year - 1900i64;
+  if (years < 80i64 || years > 207i64) {
+    return 0i64;
+  }
+  return years - 80i64 << 25 | c.month << 21 | c.day << 16 | c.hour << 11 | c.minute << 5 | c.second + 1i64 >> 1;
+}
+
+// dos2time(): the Unix time of a local MS-DOS date and time, where 0 is
+// `now`.
+pub function dos2time(dos: i64, now: i64): i64 {
+  if (dos == 0i64) {
+    return now;
+  }
+  let y = (dos >> 25 & 127i64) + 1980i64;
+  let m = dos >> 21 & 15i64;
+  let d = dos >> 16 & 31i64;
+  let secs = days_from_civil(y, m, d) * 86400i64 + (dos >> 11 & 31i64) * 3600i64 + (dos >> 5 & 63i64) * 60i64 + (dos << 1 & 62i64);
+  let zone = tz.local_zone();
+  let guess = secs - zone.offset_at(time.timestamp_from_unix(secs)) as i64;
+  return secs - zone.offset_at(time.timestamp_from_unix(guess)) as i64;
+}
+
+// ctime() without its newline, as "Thu Nov 14 13:25:01 2026".
+pub function ctime(t: i64): string {
+  let c = local(t);
+  let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return days[c.weekday as i32] + " " + months[(c.month - 1i64) as i32] + " " + c.day.to_string().pad_start(2, ' ') + " " + two(c.hour) + ":" + two(c.minute) + ":" + two(c.second) + " " + c.year.to_string();
+}
+
+function two(v: i64): string {
+  return v.to_string().pad_start(2, '0');
+}
+
+// A header as get_header() of pigz reads it. A method of 8 is deflate, 256
+// is a zip method above 255, and 257 is compress (LZW). A negative method
+// is an error:
+//
+// - -1: no input.
+// - -2: not a known format.
+// - -3: a header that ends early.
+// - -4: a header with bad flags.
+// - -5: a zip central directory.
+// - -6: a gzip header with a bad CRC.
+pub struct Header {
+  method: i32,
+  // 0 is gzip, 1 is zlib, 2 is zip, 3 is zip with a data descriptor, and
+  // -1 is compress. A header that is not known keeps the form before it.
+  form: i32,
+  // The first byte of the compressed data.
+  next: i32,
+  stamp: i64,
+  name: Option[string],
+  comment: Option[string],
+  zip_crc: i64,
+  zip_clen: i64,
+  zip_ulen: i64,
+  zip64: boolean,
+}
+
+// The read position of GET: a read past the end gives 0 and sets eof.
+struct In {
+  at: i32,
+  eof: boolean,
+}
+
+function get1(data: u8[], r: In): (i64, In) {
+  if (r.at >= data.len()) {
+    return (0i64, In { ...r, eof: true });
+  }
+  return (data[r.at] as i64, In { ...r, at: r.at + 1 });
+}
+
+function get2(data: u8[], r: In): (i64, In) {
+  let (a, r1) = get1(data, r);
+  let (b, r2) = get1(data, r1);
+  return (a | b << 8, r2);
+}
+
+function get4(data: u8[], r: In): (i64, In) {
+  let (a, r1) = get2(data, r);
+  let (b, r2) = get2(data, r1);
+  return (a | b << 16, r2);
+}
+
+// SKIP: false when the input ends first.
+function skip(data: u8[], r: In, n: i64): (boolean, In) {
+  if (r.at as i64 + n > data.len() as i64) {
+    return (false, In { at: data.len(), eof: true });
+  }
+  return (true, In { ...r, at: r.at + n as i32 });
+}
+
+// tolong(): a 32-bit value as a signed number.
+function tolong(v: i64): i64 {
+  return (v & 2147483647i64) - (v & 2147483648i64);
+}
+
+function text_of(bytes: [u8]): string {
+  return utf8.from_bytes_lossy(bytes);
+}
+
+function no_header(form: i32, at: i32): Header {
+  return Header { method: -1, form: form, next: at, stamp: 0i64, name: None, comment: None, zip_crc: 0i64, zip_clen: 0i64, zip_ulen: 0i64, zip64: false };
+}
+
+// get_header() at data[at:]. `save` keeps the name, the comment and the
+// time. `form` is the form before it, and `now` is the time for a zip time
+// of 0.
+pub function get_header(data: u8[], at: i32, save: boolean, form: i32, now: i64): Header {
+  let h = no_header(form, at);
+  if (at >= data.len()) {
+    return h;
+  }
+  if (at + 1 >= data.len()) {
+    return Header { ...h, method: -2, next: at + 1 };
+  }
+  let magic = data[at] as i32 << 8 | data[at + 1] as i32;
+  if (magic % 31 == 0 && (magic & 36640) == 2048) {
+    return Header { ...h, method: 8, form: 1, next: at + 2 };
+  }
+  if (magic == 8093) {
+    return Header { ...h, method: 257, form: -1, next: at + 2 };
+  }
+  if (magic == 20555) {
+    return zip_header_of(data, at + 2, save, h, now);
+  }
+  if (magic != 8075) {
+    return Header { ...h, method: -2, next: at + 1 };
+  }
+  return gzip_header_of(data, at, save, h);
+}
+
+// It keeps the branches of get_header() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function zip_header_of(data: u8[], at: i32, save: boolean, h0: Header, now: i64): Header {
+  let h = h0;
+  let (sig, r) = get2(data, In { at: at, eof: false });
+  if (r.eof) {
+    return Header { ...h, method: -3, next: r.at };
+  }
+  if (sig == 513i64 || sig == 2054i64) {
+    return Header { ...h, method: -5, next: r.at };
+  }
+  if (sig != 1027i64) {
+    return Header { ...h, method: -4, next: r.at };
+  }
+  let (ok, r1) = skip(data, r, 2i64);
+  if (!ok) {
+    return Header { ...h, method: -3, next: r1.at };
+  }
+  let (flags, r2) = get2(data, r1);
+  if ((flags & 63472i64) != 0i64) {
+    return Header { ...h, method: -4, next: r2.at };
+  }
+  let (low, r3) = get1(data, r2);
+  let (high, r4) = get1(data, r3);
+  let method = if (high != 0i64 || (flags & 1i64) != 0i64) { 256 } else { low as i32 };
+  let (dos, r5) = get4(data, r4);
+  let (crc, r6) = get4(data, r5);
+  let (clen, r7) = get4(data, r6);
+  let (ulen, r8) = get4(data, r7);
+  let (fname, r9) = get2(data, r8);
+  let (extra, r10) = get2(data, r9);
+  h = Header { ...h, zip_crc: crc, zip_clen: clen, zip_ulen: ulen, zip64: false };
+  if (save) {
+    h = Header { ...h, stamp: dos2time(dos, now) };
+  }
+  let r11 = r10;
+  if (save) {
+    if (r10.eof || r10.at as i64 + fname > data.len() as i64) {
+      return Header { ...h, method: -3, next: data.len() };
+    }
+    h = Header { ...h, name: Some(text_of(data[r10.at:r10.at + fname as i32])) };
+    r11 = In { ...r10, at: r10.at + fname as i32 };
+  } else {
+    let (ok2, rs) = skip(data, r10, fname);
+    if (!ok2) {
+      return Header { ...h, method: -3, next: rs.at };
+    }
+    r11 = rs;
+  }
+  let (h2, r12) = read_extra(data, r11, extra, save, h);
+  let form = 2 + ((flags & 8i64) >> 3) as i32;
+  if (r12.eof) {
+    return Header { ...h2, method: -3, form: form, next: r12.at };
+  }
+  return Header { ...h2, method: method, form: form, next: r12.at };
+}
+
+// read_extra(): the Zip64 lengths and the Unix time in a zip extra field.
+// It keeps the branches of read_extra() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function read_extra(data: u8[], r0: In, len0: i64, save: boolean, h0: Header): (Header, In) {
+  let h = h0;
+  let r = r0;
+  let len = len0;
+  let low32 = 4294967295i64;
+  while (len >= 4i64) {
+    let (id, ra) = get2(data, r);
+    let (size0, rb) = get2(data, ra);
+    r = rb;
+    if (r.eof) {
+      return (h, r);
+    }
+    len -= 4i64;
+    let size = size0;
+    if (size > len) {
+      break;
+    }
+    len -= size;
+    if (id == 1i64) {
+      h = Header { ...h, zip64: true };
+      if (h.zip_ulen == low32 && size >= 8i64) {
+        let (v, rc) = get4(data, r);
+        let (_, rd) = skip(data, rc, 4i64);
+        h = Header { ...h, zip_ulen: v };
+        r = rd;
+        size -= 8i64;
+      }
+      if (h.zip_clen == low32 && size >= 8i64) {
+        let (v, rc) = get4(data, r);
+        let (_, rd) = skip(data, rc, 4i64);
+        h = Header { ...h, zip_clen: v };
+        r = rd;
+        size -= 8i64;
+      }
+    }
+    if (save) {
+      if ((id == 13i64 || id == 22613i64) && size >= 8i64) {
+        let (_, rc) = skip(data, r, 4i64);
+        let (v, rd) = get4(data, rc);
+        h = Header { ...h, stamp: tolong(v) };
+        r = rd;
+        size -= 8i64;
+      }
+      if (id == 21589i64 && size >= 5i64) {
+        size -= 1i64;
+        let (bits, rc) = get1(data, r);
+        r = rc;
+        if ((bits & 1i64) != 0i64) {
+          let (v, rd) = get4(data, r);
+          h = Header { ...h, stamp: tolong(v) };
+          r = rd;
+          size -= 4i64;
+        }
+      }
+    }
+    let (ok, re) = skip(data, r, size);
+    r = re;
+    if (!ok) {
+      return (h, r);
+    }
+  }
+  let (_, rf) = skip(data, r, len);
+  return (h, rf);
+}
+
+// It keeps the branches of get_header() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function gzip_header_of(data: u8[], at: i32, save: boolean, h0: Header): Header {
+  let h = h0;
+  let (method, r1) = get1(data, In { at: at + 2, eof: false });
+  let (flags, r2) = get1(data, r1);
+  if ((flags & 224i64) != 0i64) {
+    return Header { ...h, method: -4, next: r2.at };
+  }
+  let (stamp, r3) = get4(data, r2);
+  if (save) {
+    h = Header { ...h, stamp: tolong(stamp) };
+  }
+  let (ok, r4) = skip(data, r3, 2i64);
+  if (!ok) {
+    return Header { ...h, method: -3, next: r4.at };
+  }
+  let r = r4;
+  if ((flags & 4i64) != 0i64) {
+    let (n, r5) = get2(data, r);
+    let (ok2, r6) = skip(data, r5, n);
+    if (!ok2) {
+      return Header { ...h, method: -3, next: r6.at };
+    }
+    r = r6;
+  }
+  if ((flags & 8i64) != 0i64) {
+    let Some(end) = zero_at(data, r.at) else {
+      return Header { ...h, method: -3, next: data.len() };
+    };
+    if (save) {
+      h = Header { ...h, name: Some(text_of(data[r.at:end])) };
+    }
+    r = In { ...r, at: end + 1 };
+  }
+  if ((flags & 16i64) != 0i64) {
+    let Some(end) = zero_at(data, r.at) else {
+      return Header { ...h, method: -3, next: data.len() };
+    };
+    if (save) {
+      h = Header { ...h, comment: Some(text_of(data[r.at:end])) };
+    }
+    r = In { ...r, at: end + 1 };
+  }
+  if ((flags & 2i64) != 0i64) {
+    let crc = crc32.of(data[at:r.at]) as i64;
+    let (v, r7) = get2(data, r);
+    if (v != (crc & 65535i64)) {
+      return Header { ...h, method: -6, next: r7.at };
+    }
+    r = r7;
+  }
+  if (r.eof) {
+    return Header { ...h, method: -3, form: 0, next: r.at };
+  }
+  return Header { ...h, method: method as i32, form: 0, next: r.at };
+}
+
+function zero_at(data: u8[], from: i32): Option[i32] {
+  for i in from..data.len() {
+    if (data[i] == 0 as u8) {
+      return Some(i);
+    }
+  }
+  return None;
+}
+
+// The message that pigz prints for a header that get_header() refused,
+// after "skipping: ".
+pub function header_refusal(method: i32, path: string): string {
+  if (method == -6) {
+    return path + " corrupt: header crc error";
+  }
+  if (method == -1) {
+    return path + " empty";
+  }
+  if (method < 0) {
+    return path + " unrecognized format";
+  }
+  return path + " unknown compression method";
+}
+
+// One decompressed member, for a listing.
+pub struct Member {
+  form: i32,
+  check: u32,
+  clen: i64,
+  ulen: i64,
+}
+
+// What infchk() or unlzw() gives: the output and the members before any
+// error, and the messages.
+pub struct Decoded {
+  out: u8[],
+  members: Member[],
+  // The text after "skipping: " for corrupt data, or "".
+  error: string,
+  // The text after "pigz: " for a warning after the output, or "".
+  warning: string,
+  // True when a zip file holds more entries, which keeps the input.
+  keep: boolean,
+  // The comment of the first zip entry, from its central directory.
+  comment: Option[string],
+}
+
+function decoded(out: u8[], members: Member[]): Decoded {
+  return Decoded { out: out, members: members, error: "", warning: "", keep: false, comment: None };
+}
+
+function failed(why: string): Decoded {
+  let none: u8[] = [];
+  let members: Member[] = [];
+  return Decoded { ...decoded(none, members), error: why };
+}
+
+// The message of zlib for the inflate error of std/deflate.
+// A table with one arm for each inflate message.
+// fern-lint: allow cyclomatic-complexity
+function zlib_message(what: string): string {
+  return match (what) {
+    "a reserved block type" => "invalid block type",
+    "a stored block's length and its complement disagree" => "invalid stored block lengths",
+    "too many length or distance codes" => "too many length or distance symbols",
+    "an incomplete or over-subscribed code length code" => "invalid code lengths set",
+    "a repeat with no length before it" | "more code lengths than codes" => "invalid bit length repeat",
+    "no end-of-block code" => "invalid code -- missing end-of-block",
+    "an incomplete or over-subscribed literal/length code" => "invalid literal/lengths set",
+    "an incomplete or over-subscribed distance code" => "invalid distances set",
+    "a length code past 285" | "a bit pattern that is no literal/length code" => "invalid literal/length code",
+    "a distance code past 29" | "a bit pattern that is no distance code" => "invalid distance code",
+    "a distance before the start of the output" | "a distance before the available history" => "invalid distance too far back",
+    _ => what,
+  };
+}
+
+const SIG: i64 = 134695760;
+
+// infchk() for the deflate data after the header `first`: each gzip member,
+// or one zlib stream or zip entry, with its trailer.
+// It keeps the branches of infchk() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function infchk(data: u8[], first: Header, path: string, o: Options, now: i64): Decoded {
   let out: u8[] = [];
-  for i in first..end {
-    out = out.concat(block(data, level, i, count));
-  }
-  return out;
-}
-
-function block(data: u8[], level: i32, i: i32, count: i32): u8[] {
-  let from = i * BLOCK;
-  let end = from + BLOCK;
-  if (end > data.len()) {
-    end = data.len();
-  }
-  let start = from - DICTIONARY;
-  if (start < 0) {
-    start = 0;
-  }
-  return deflate.deflate_block(data[start:from], data[from:end], level, i == count - 1);
-}
-
-// The decompressed bytes of each gzip member of `data`, in order. Bytes after
-// the last member that do not start another member are ignored, as pigz does.
-// An error is the text that pigz prints after the file name.
-pub function decompress(data: [u8]): Result[u8[], string] {
-  if (data.len() < 2 || data[0] != 31 as u8 || data[1] != 139 as u8) {
-    return Err(" unrecognized format");
-  }
-  let out: u8[] = [];
-  let at = 0;
-  while (at + 1 < data.len() && data[at] == 31 as u8 && data[at + 1] == 139 as u8) {
-    match (deflate.gzip_member(data, at, 2147483647 - out.len())) {
-      Ok(member) => {
-        out = out.concat(member.out);
-        at += member.consumed;
+  let members: Member[] = [];
+  let h = first;
+  let pos = first.next;
+  let form = first.form;
+  let ret = 8;
+  let more = false;
+  let comment: Option[string] = None;
+  loop {
+    let piece: u8[] = [];
+    let clen = 0i64;
+    match (deflate.inflate_from(data, pos, 2147483647 - out.len())) {
+      Ok(got) => {
+        piece = got.out;
+        clen = got.consumed as i64;
+        pos += got.consumed;
       },
       Err(e) => {
-        return Err(refusal(e, data.len() - at));
+        return Decoded { ...decoded(out, members), error: path + ": corrupted -- " + inflate_refusal(e) };
       }
     }
+    let ulen = piece.len() as i64;
+    let check = if (form == 1) { deflate.adler32(piece) } else { crc32.of(piece) };
+    let t = if (form > 1) { zip_trailer_of(data, pos, h, check, clen, ulen, o.list && o.verbosity >= 2) } else { trailer_of(data, pos, form, check, ulen) };
+    if (t.error.len() > 0) {
+      return Decoded { ...decoded(out, members), error: path + ": " + t.error };
+    }
+    pos = t.pos;
+    more = t.more;
+    comment = t.comment;
+    out = out.concat(piece);
+    members = members.append(Member { form: form, check: check, clen: clen, ulen: ulen });
+    if (form != 0) {
+      break;
+    }
+    let next = get_header(data, pos, false, form, now);
+    ret = next.method;
+    form = next.form;
+    if (ret != 8) {
+      break;
+    }
+    h = Header { ...next, stamp: h.stamp, name: h.name, comment: h.comment };
+    pos = next.next;
   }
-  return Ok(out);
+  let d = Decoded { ...decoded(out, members), comment: comment };
+  if (form == 0 && ret == -2 && o.force && o.pipeout && o.decode != 2 && !o.list) {
+    return Decoded { ...d, out: d.out.concat(data[pos:data.len()]) };
+  }
+  if (more) {
+    return Decoded { ...d, warning: "warning: " + path + ": entries after the first were ignored", keep: true };
+  }
+  if (o.verbosity > 1 && form == 0 && ret != -1 || form == 1 && pos < data.len()) {
+    return Decoded { ...d, warning: "warning: " + path + ": trailing junk was ignored" };
+  }
+  return d;
 }
 
-function refusal(e: deflate.InflateError, left: i32): string {
-  match (e) {
-    deflate.BadHeader(_) => {
-      return " unrecognized format";
-    },
-    deflate.Truncated => {
-      if (left <= 10) {
-        return " unrecognized format";
-      }
-      return ": corrupted -- incomplete deflate data";
-    },
-    deflate.Malformed(what) => {
-      return ": corrupted -- invalid deflate data (" + what + ")";
-    },
-    deflate.BadChecksum => {
-      return ": corrupted -- crc32 mismatch";
-    },
-    deflate.BadLength => {
-      return ": corrupted -- length mismatch";
-    },
-    deflate.OutputLimit => {
-      return ": corrupted -- the output is longer than 2 GiB";
+// The trailer after a member: the position after it or the error, and for
+// zip, whether more entries follow and the comment of the entry.
+struct Trailer {
+  pos: i32,
+  error: string,
+  more: boolean,
+  comment: Option[string],
+}
+
+function trailer_error(why: string): Trailer {
+  return Trailer { pos: 0, error: why, more: false, comment: None };
+}
+
+// The trailer of a zip entry: the data descriptor for form 3, with or
+// without its signature, then the check of the lengths.
+// It keeps the branches of infchk() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function zip_trailer_of(data: u8[], at: i32, h: Header, check: u32, clen: i64, ulen: i64, find: boolean): Trailer {
+  let low32 = 4294967295i64;
+  let r = In { at: at, eof: false };
+  let zcrc = h.zip_crc;
+  let zclen = h.zip_clen;
+  let zulen = h.zip_ulen;
+  if (h.form == 3) {
+    let (a, r1) = get4(data, r);
+    let (b, r2) = get4(data, r1);
+    let (c, r3) = get4(data, r2);
+    r = r3;
+    zcrc = a;
+    zclen = b;
+    zulen = c;
+    let third = if (h.zip64) { clen >> 32 } else { ulen };
+    if (zcrc == SIG && (check as i64 != SIG || zclen == SIG && ((clen & low32) != SIG || zulen == SIG && third != SIG))) {
+      let (d, r4) = get4(data, r);
+      r = r4;
+      zcrc = zclen;
+      zclen = zulen;
+      zulen = d;
+    }
+    if (h.zip64) {
+      let (e, r5) = get4(data, r);
+      let (_, r6) = get4(data, r5);
+      r = r6;
+      zulen = e;
+    }
+    if (r.eof) {
+      return trailer_error("corrupted entry -- missing trailer");
     }
   }
-  return " unrecognized format";
+  if (zcrc != check as i64) {
+    return trailer_error("corrupted entry -- crc32 mismatch");
+  }
+  if (zclen != (clen & low32) || zulen != (ulen & low32)) {
+    return trailer_error("corrupted entry -- length mismatch");
+  }
+  let (more, comment) = more_zip_entries(data, r.at, check, find);
+  return Trailer { pos: r.at, error: "", more: more, comment: comment };
+}
+
+// The trailer of a zlib stream (form 1) or a gzip member.
+function trailer_of(data: u8[], at: i32, form: i32, check: u32, ulen: i64): Trailer {
+  let r = In { at: at, eof: false };
+  if (form == 1) {
+    let (a, r1) = get1(data, r);
+    let (b, r2) = get1(data, r1);
+    let (c, r3) = get1(data, r2);
+    let (d, r4) = get1(data, r3);
+    if (r4.eof) {
+      return trailer_error("corrupted -- missing trailer");
+    }
+    if ((a << 24 | b << 16 | c << 8 | d) != check as i64) {
+      return trailer_error("corrupted -- adler32 mismatch");
+    }
+    return Trailer { pos: r4.at, error: "", more: false, comment: None };
+  }
+  let (c, r1) = get4(data, r);
+  let (l, r2) = get4(data, r1);
+  if (r2.eof) {
+    return trailer_error("corrupted -- missing trailer");
+  }
+  if (c != check as i64) {
+    return trailer_error("corrupted -- crc32 mismatch");
+  }
+  if (l != (ulen & 4294967295i64)) {
+    return trailer_error("corrupted -- length mismatch");
+  }
+  return Trailer { pos: r2.at, error: "", more: false, comment: None };
+}
+
+function inflate_refusal(e: deflate.InflateError): string {
+  match (e) {
+    deflate.Malformed(what) => {
+      return "invalid deflate data (" + zlib_message(what) + ")";
+    },
+    deflate.OutputLimit => {
+      return "the output is longer than 2 GiB";
+    },
+    _ => {
+      return "incomplete deflate data";
+    }
+  }
+  return "incomplete deflate data";
+}
+
+// more_zip_entries() for a listing.
+pub function zip_comment(data: u8[], at: i32, check: u32, find: boolean): (boolean, Option[string]) {
+  return more_zip_entries(data, at, check, find);
+}
+
+// It keeps the branches of more_zip_entries() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+// more_zip_entries(): whether another local header follows the entry at
+// data[at:]. With `find`, also the comment of the first entry. That comes
+// from the central directory header with its CRC and offset 0.
+function more_zip_entries(data: u8[], at: i32, check: u32, find: boolean): (boolean, Option[string]) {
+  let (sig, r) = get4(data, In { at: at, eof: false });
+  let another = !r.eof && sig == 67324752i64;
+  if (!find) {
+    return (another, None);
+  }
+  let pos = if (sig == 33639248i64) { r.at - 4 } else { r.at };
+  loop {
+    let Some(found) = central_at(data, pos) else {
+      return (another, None);
+    };
+    let head = found + 4;
+    if (head + 42 > data.len()) {
+      return (another, None);
+    }
+    let crc = le32(data, head + 12);
+    let offset = le32(data, head + 38);
+    if (crc == check as i64 && offset == 0i64) {
+      let len = le16(data, head + 28);
+      if (len == 0) {
+        return (another, None);
+      }
+      let from = head + 42 + le16(data, head + 24) + le16(data, head + 26);
+      if (from + len > data.len()) {
+        return (another, None);
+      }
+      let bytes: u8[] = [];
+      for i in from..from + len {
+        bytes = bytes.append(if (data[i] == 0 as u8) { b' ' } else { data[i] });
+      }
+      return (another, Some(text_of(bytes)));
+    }
+    pos = head;
+  }
+  return (another, None);
+}
+
+function central_at(data: u8[], from: i32): Option[i32] {
+  let i = from;
+  while (i + 4 <= data.len()) {
+    if (data[i] == 80 as u8 && data[i + 1] == 75 as u8 && data[i + 2] == 1 as u8 && data[i + 3] == 2 as u8) {
+      return Some(i);
+    }
+    i += 1;
+  }
+  return None;
+}
+
+function le16(data: u8[], at: i32): i32 {
+  return data[at] as i32 | data[at + 1] as i32 << 8;
+}
+
+function le32(data: u8[], at: i32): i64 {
+  return le16(data, at) as i64 | le16(data, at + 2) as i64 << 16;
+}
+
+// unlzw(): the output of the compress data after the two magic bytes at
+// data[at:].
+// It keeps the branches of unlzw() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function unlzw(data: u8[], at: i32, path: string): Decoded {
+  let none: Member[] = [];
+  let out: u8[] = [];
+  let pos = at;
+  let end_of = data.len();
+  if (pos >= end_of) {
+    return failed(path + ": lzw premature end");
+  }
+  let flags = data[pos] as i32;
+  pos += 1;
+  if ((flags & 96) != 0) {
+    return failed(path + ": unknown lzw flags set");
+  }
+  let max = flags & 31;
+  if (max < 9 || max > 16) {
+    return failed(path + ": lzw bits out of range");
+  }
+  if (max == 9) {
+    max = 10;
+  }
+  let block = (flags & 128) != 0;
+  let mark = pos;
+  let bits = 9;
+  let mask = 511;
+  let end = if (block) { 256 } else { 255 };
+  if (pos >= end_of) {
+    return decoded(out, none);
+  }
+  let buf = data[pos] as i32;
+  pos += 1;
+  if (pos >= end_of) {
+    return failed(path + ": lzw premature end");
+  }
+  buf += data[pos] as i32 << 8;
+  pos += 1;
+  let prev = buf & mask;
+  let last = prev;
+  buf >>= bits;
+  let left = 16 - bits;
+  if (prev > 255) {
+    return failed(path + ": invalid lzw code");
+  }
+  out = out.append(last as u8);
+  let prefix = filled(65536, 0);
+  let suffix = __alloc_u8(65536);
+  let stack: u8[] = [];
+  loop {
+    if (end >= mask && bits < max) {
+      let rem = (pos - mark) % bits;
+      if (rem != 0) {
+        rem = bits - rem;
+        if (pos >= end_of) {
+          break;
+        }
+        if (rem > end_of - pos) {
+          return failed(path + ": lzw premature end");
+        }
+        pos += rem;
+      }
+      buf = 0;
+      left = 0;
+      mark = pos;
+      bits += 1;
+      mask = (mask << 1) + 1;
+    }
+    if (pos >= end_of) {
+      break;
+    }
+    buf += data[pos] as i32 << left;
+    pos += 1;
+    left += 8;
+    if (left < bits) {
+      if (pos >= end_of) {
+        return failed(path + ": lzw premature end");
+      }
+      buf += data[pos] as i32 << left;
+      pos += 1;
+      left += 8;
+    }
+    let code = buf & mask;
+    buf >>= bits;
+    left -= bits;
+    if (code == 256 && block) {
+      let rem = (pos - mark) % bits;
+      if (rem != 0) {
+        rem = bits - rem;
+        if (rem > end_of - pos) {
+          return failed(path + ": lzw premature end");
+        }
+        pos += rem;
+      }
+      buf = 0;
+      left = 0;
+      mark = pos;
+      bits = 9;
+      mask = 511;
+      end = 255;
+      continue;
+    }
+    let temp = code;
+    stack = stack.truncate(0);
+    if (code > end) {
+      if (code != end + 1 || prev > end) {
+        return failed(path + ": invalid lzw code");
+      }
+      stack = stack.append(last as u8);
+      code = prev;
+    }
+    while (code >= 256) {
+      stack = stack.append(suffix[code]);
+      code = prefix[code];
+    }
+    stack = stack.append(code as u8);
+    last = code;
+    if (end < mask) {
+      end += 1;
+      prefix = prefix.with(end, prev);
+      suffix = suffix.with(end, last as u8);
+    }
+    prev = temp;
+    let k = stack.len();
+    while (k > 0) {
+      k -= 1;
+      out = out.append(stack[k]);
+    }
+  }
+  return decoded(out, [Member { form: -1, check: 0u32, clen: (end_of - 3) as i64, ulen: out.len() as i64 }]);
+}
+
+function filled(n: i32, v: i32): i32[] {
+  let out = __alloc_i32(n);
+  for i in 0..n {
+    out = out.with(i, v);
+  }
+  return out;
+}
+
+// The lines of a listing. `first` prints the title line before them.
+pub struct Listing {
+  first: boolean,
+  text: string,
+}
+
+// One line of show_info(): `method` and `check` of the input, `clen` and
+// `len` its compressed and original lengths, and `cont` for a member after
+// the first. `name` is the name in the header, if any.
+// It keeps the branches of show_info() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function show_info(l: Listing, o: Options, path: string, name: Option[string], stamp: i64, now: i64, form: i32, method: i32, check: u32, clen: i64, len: i64, cont: boolean, comment: Option[string]): Listing {
+  let tag = tag_of(o, path, name, cont);
+  let lines = "";
+  let first = l.first;
+  if (first) {
+    if (o.verbosity > 1) {
+      lines += "method    check    timestamp    ";
+    }
+    if (o.verbosity > 0) {
+      lines += "compressed   original reduced  name\n";
+    }
+    first = false;
+  }
+  if (o.verbosity > 1) {
+    lines += method_column(o, form, method, check) + stamp_text(stamp, now, cont) + "  ";
+  }
+  if (o.verbosity > 0) {
+    let unknown = form == 3 && o.decode == 0 || method == 8 && clen > len + (len >> 10) + 12i64 || method == 257 && clen > len + (len >> 1) + 3i64;
+    let sizes = clen.to_string().pad_start(10, ' ') + " " + len.to_string().pad_start(10, ' ');
+    if (unknown) {
+      lines += sizes + "?  unk    " + tag + "\n";
+    } else {
+      lines += sizes + " " + percent(len, clen) + "  " + tag + "\n";
+    }
+  }
+  if (o.verbosity > 1) {
+    if let Some(c) = comment {
+      lines += c + "\n";
+    }
+  }
+  return Listing { first: first, text: l.text + lines };
+}
+
+// The name in a listing: the name in the header, or the name of the input
+// without its suffix, cut to 48 bytes, or to 16 with -v.
+function tag_of(o: Options, path: string, name: Option[string], cont: boolean): string {
+  let max = if (o.verbosity > 1) { 16 } else { 48 };
+  let tag = "<...>";
+  if (!cont) {
+    match (name) {
+      Some(n) => {
+        tag = n.take(max + 1);
+      },
+      None => {
+        let n = path.len() - compressed_suffix(path);
+        tag = path.take(if (n > max + 1) { max + 1 } else { n });
+        if (path.drop(n) == ".tgz" && n < max + 1) {
+          tag = (tag + ".tar").take(max + 1);
+        }
+      }
+    }
+  }
+  if (tag.len() > max) {
+    return tag.take(max - 3) + "...";
+  }
+  return tag;
+}
+
+// The time in a listing: the month, the day and the time, or the year for
+// another year than now.
+function stamp_text(stamp: i64, now: i64, cont: boolean): string {
+  if (stamp == 0i64 || cont) {
+    return "------ -----";
+  }
+  let text = ctime(stamp);
+  if (text.drop(20) != ctime(now).drop(20)) {
+    return text.drop(4).take(7) + text.drop(19).take(5);
+  }
+  return text.drop(4).take(12);
+}
+
+// The method and the check in a verbose listing.
+function method_column(o: Options, form: i32, method: i32, check: u32): string {
+  if (form == 3 && o.decode == 0) {
+    return "zip" + method.to_string().pad_start(3, ' ') + "  --------  ";
+  }
+  if (form > 1) {
+    return "zip" + method.to_string().pad_start(3, ' ') + "  " + check_hex(check) + "  ";
+  }
+  if (form == 1) {
+    return "zlib" + method.to_string().pad_start(2, ' ') + "  " + check_hex(check) + "  ";
+  }
+  if (method == 257) {
+    return "lzw     --------  ";
+  }
+  return "gzip" + method.to_string().pad_start(2, ' ') + "  " + check_hex(check) + "  ";
+}
+
+// The total line of a listing of more than one member.
+pub function show_total(l: Listing, o: Options, check: u32, clen: i64, len: i64): Listing {
+  let line = "";
+  if (o.verbosity > 1) {
+    line = "        " + check_hex(check) + "                ";
+  }
+  line += clen.to_string().pad_start(10, ' ') + " " + len.to_string().pad_start(10, ' ') + " " + percent(len, clen) + "  (total)\n";
+  return Listing { ...l, text: l.text + line };
+}
+
+function check_hex(check: u32): string {
+  let digits = "0123456789abcdef";
+  let text = "";
+  let v = check;
+  for i in 0..8 {
+    text = digits.drop((v & 15u32) as i32).take(1) + text;
+    v >>= 4u32;
+  }
+  return text;
+}
+
+// printf("%6.1f%%") of 100 * (len - clen) / len, with -inf% and -nan% when
+// len is 0, as glibc prints them.
+function percent(len: i64, clen: i64): string {
+  if (len == 0i64) {
+    if (clen == 0i64) {
+      return "  -nan%";
+    }
+    return "  -inf%";
+  }
+  let red = 100.0 * (len as f64 - clen as f64) / (len as f64);
+  return red.to_string_prec(1).pad_start(6, ' ') + "%";
+}
+
+pub function le32_of(data: u8[], at: i32): u32 {
+  return le32(data, at) as u32;
+}
+
+pub function be32(data: u8[], at: i32): u32 {
+  return data[at] as u32 << 24u32 | data[at + 1] as u32 << 16u32 | data[at + 2] as u32 << 8u32 | data[at + 3] as u32;
+}
+
+// multmodp(): a times b modulo the CRC-32 polynomial.
+function multmodp(a: u32, b0: u32): u32 {
+  let m = 2147483648u32;
+  let p = 0u32;
+  let b = b0;
+  loop {
+    if ((a & m) != 0u32) {
+      p ^= b;
+      if ((a & m - 1u32) == 0u32) {
+        break;
+      }
+    }
+    m >>= 1u32;
+    b = if ((b & 1u32) != 0u32) { b >> 1u32 ^ 3988292384u32 } else { b >> 1u32 };
+  }
+  return p;
+}
+
+// x2nmodp(): x to the power n times 2 to the power k, modulo the polynomial.
+function x2nmodp(n0: i64, k0: i32): u32 {
+  let table = [1073741824u32];
+  for i in 1..32 {
+    table = table.append(multmodp(table[i - 1], table[i - 1]));
+  }
+  let p = 2147483648u32;
+  let n = n0;
+  let k = k0;
+  while (n != 0i64) {
+    if ((n & 1i64) != 0i64) {
+      p = multmodp(table[k & 31], p);
+    }
+    n >>= 1;
+    k += 1;
+  }
+  return p;
+}
+
+// COMB of pigz: the check of two runs of data from the check of each, and
+// the length of the second. `adler` combines Adler-32, else CRC-32.
+pub function crc_combine(check1: u32, check2: u32, len2: i64, adler: boolean): u32 {
+  if (!adler) {
+    return multmodp(x2nmodp(len2, 3), check1) ^ check2;
+  }
+  let base = 65521i64;
+  let rem = len2 % base;
+  let a1 = check1 as i64;
+  let a2 = check2 as i64;
+  let sum1 = a1 & 65535i64;
+  let sum2 = rem * sum1 % base;
+  sum1 += (a2 & 65535i64) + base - 1i64;
+  sum2 += (a1 >> 16 & 65535i64) + (a2 >> 16 & 65535i64) + base - rem;
+  if (sum1 >= base) {
+    sum1 -= base;
+  }
+  if (sum1 >= base) {
+    sum1 -= base;
+  }
+  if (sum2 >= base << 1) {
+    sum2 -= base << 1;
+  }
+  if (sum2 >= base) {
+    sum2 -= base;
+  }
+  return (sum1 | sum2 << 16) as u32;
 }

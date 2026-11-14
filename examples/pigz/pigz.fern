@@ -1,230 +1,691 @@
-// pigz — compress and decompress gzip files.
+// pigz — compress and decompress gzip, zlib and zip files.
 //
-// A port of pigz (zlib.net/pigz). It compresses blocks of the input on all
-// CPUs, in std/worker workers.
+// A port of pigz 2.8 (zlib.net/pigz). It compresses blocks of the input on
+// all CPUs, in std/worker workers, and writes the same bytes as pigz.
 //
 //   $ pigz file              # writes file.gz and removes file
 //   $ pigz -d file.gz        # writes file and removes file.gz
 //   $ pigz -9 -k file        # the smallest output, and file stays
 //   $ pigz -c file > out.gz  # writes to the standard output
 //   $ pigz -t file.gz        # tests file.gz
-//   $ pigz -p 2 file         # compresses with two processes
+//   $ pigz -l file.gz        # lists file.gz
 //
 // With no file, pigz reads the standard input and writes the standard output.
 import "std/io";
 import "std/result";
+import "std/array";
+import "std/errno";
+import "std/hash/crc32";
+import "std/deflate" as deflate;
 import "./gz";
+import "./layout";
 
-// The workers of a compression: -p, or one for each CPU.
-function workers(o: gz.Options): i32 {
-  if (o.processes > 0) {
-    return o.processes;
+const S_IFMT: u32 = 61440u32;
+
+const S_IFREG: u32 = 32768u32;
+
+const S_IFIFO: u32 = 4096u32;
+
+const S_IFLNK: u32 = 40960u32;
+
+const S_IFDIR: u32 = 16384u32;
+
+// The state of a run of pigz: the options, the name of the program for the
+// messages, the exit code, the listing so far, and the time when it
+// started.
+struct Run {
+  o: gz.Options,
+  prog: string,
+  ret: i32,
+  listing: gz.Listing,
+  now: i64,
+}
+
+// An error that stops pigz: "abort:" with the message, and the exit code,
+// which is the error number.
+struct Fatal {
+  why: string,
+  code: i32,
+}
+
+function say(r: Run, text: string): void {
+  if (r.o.verbosity > 0) {
+    eprint(r.prog + ": " + text);
   }
-  let n = cpu_count() as i32;
+}
+
+// complain(): a message, and exit code 1.
+function complain(r: Run, text: string): Run {
+  say(r, text);
+  return Run { ...r, ret: 1 };
+}
+
+// The text of strerror() for an I/O error.
+function error_text(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "No such file or directory";
+    },
+    PermissionDenied(_) => {
+      return "Permission denied";
+    },
+    AlreadyExists(_) => {
+      return "File exists";
+    },
+    Interrupted => {
+      return "Interrupted system call";
+    },
+    Unsupported => {
+      return "Operation not supported";
+    },
+    Other(_, msg, _) => {
+      return msg;
+    },
+    _ => {
+      return e.message();
+    }
+  }
+  return e.message();
+}
+
+function fatal(what: string, name: string, e: IoError): Fatal {
+  return Fatal { why: what + " error on " + name + " (" + error_text(e) + ")", code: errno.of(e) };
+}
+
+// The processes of a compression: -p, or one for each CPU.
+function procs(o: gz.Options): i32 {
+  if (o.procs > 0) {
+    return o.procs;
+  }
+  let n = cpu_count();
   if (n < 1) {
-    return 1;
+    return 8;
   }
   return n;
 }
 
-function warn(text: string): void {
-  eprint("pigz: " + text);
+// The compressed form of `data`: the header, the deflate data in the block
+// layout of pigz, and the trailer.
+function compressed(r: Run, data: u8[], name: Option[string], mtime: i64): (Run, u8[]) {
+  let o = r.o;
+  let s = layout.Settings { level: o.level, strategy: o.strategy, block: o.block, rsync: o.rsync, setdict: o.setdict };
+  let head: u8[] = [];
+  if (o.form == 1) {
+    if (o.comment.is_some()) {
+      r = complain(r, "can't store comment in zlib format -- ignoring");
+    }
+    head = gz.zlib_header(o.level);
+  } else if (o.form == 2) {
+    head = gz.zip_header(zip_name(o, name), mtime, gz.time2dos(mtime, r.now));
+  } else {
+    head = gz.gzip_header(name, mtime, o.level, o.comment);
+  }
+  let n = procs(o);
+  let body = if (n > 1) { layout.parallel(s, data, layout.jobs(s, data), n) } else { layout.single(s, data) };
+  let ulen = data.len() as i64;
+  let clen = body.len() as i64;
+  let tail: u8[] = [];
+  if (o.form == 1) {
+    tail = gz.zlib_trailer(deflate.adler32(data));
+  } else if (o.form == 2) {
+    let zname = zip_name(o, name);
+    tail = gz.zip_trailer(zname, mtime, gz.time2dos(mtime, r.now), o.comment, crc32.of(data), ulen, clen, head.len() as i64);
+  } else {
+    tail = gz.gzip_trailer(crc32.of(data), ulen);
+  }
+  return (r, head.concat(body).concat(tail));
 }
 
-function write_out(bytes: u8[]): boolean {
+function zip_name(o: gz.Options, name: Option[string]): string {
+  match (name) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return o.alias;
+    }
+  }
+  return o.alias;
+}
+
+// The input and its name in the messages.
+struct Source {
+  path: string,
+  data: u8[],
+  // The status from lstat(), or None for the standard input.
+  st: Option[FileStat],
+  // The time to keep in the header, from the status before the read.
+  mtime: i64,
+}
+
+function write_stdout(bytes: u8[]): Result[void, Fatal] {
   match (stdout().write_bytes(bytes)) {
     Ok(_) => {
-      return true;
+      return Ok(());
     },
     Err(e) => {
-      warn("abort: write error on <stdout> (" + e.message() + ")");
-      return false;
+      return Err(fatal("write", "<stdout>", e));
     }
   }
+  return Ok(());
 }
 
-// The standard input to the standard output. The result is false after an
-// error.
-function stream(o: gz.Options): boolean {
+function print_listing(r: Run): Result[Run, Fatal] {
+  if (r.listing.text.len() > 0) {
+    write_stdout(r.listing.text.bytes())?;
+  }
+  return Ok(Run { ...r, listing: gz.Listing { ...r.listing, text: "" } });
+}
+
+// list_info(): one line for the input from its header and trailer.
+function list_info(r: Run, src: Source): Result[Run, Fatal] {
+  let data = src.data;
+  let h = gz.get_header(data, 0, true, 0, r.now);
+  if (h.method < 0) {
+    return Ok(complain(r, "skipping: " + list_refusal(h.method, src.path)));
+  }
+  let o = r.o;
+  if (h.form > 1) {
+    let (_, comment) = gz.zip_comment(data, h.next, 0u32, o.verbosity >= 2);
+    r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, h.method, h.zip_crc as u32, h.zip_clen, h.zip_ulen, false, comment) };
+    return print_listing(r);
+  }
+  let size = data.len();
+  if (h.form == 1) {
+    let check = if (size >= 4) { gz.be32(data, size - 4) } else { 0u32 };
+    r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, 1, h.method, check, (size - 6) as i64, 0i64, false, None) };
+    return print_listing(r);
+  }
+  if (h.method == 257) {
+    r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, 257, 0u32, (size - 3) as i64, 0i64, false, None) };
+    return print_listing(r);
+  }
+  let rest = size - h.next;
+  if (rest < 8 || rest - 8 < 2) {
+    return Ok(complain(r, "skipping: " + src.path + " not a valid gzip file"));
+  }
+  let check = gz.le32_of(data, size - 8);
+  let len = gz.le32_of(data, size - 4) as i64;
+  r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, h.method, check, (rest - 8) as i64, len, false, h.comment) };
+  return print_listing(r);
+}
+
+function list_refusal(method: i32, path: string): string {
+  if (method == -6) {
+    return path + " corrupt: header crc error";
+  }
+  if (method == -1) {
+    return path + " empty";
+  }
+  return path + " unrecognized format";
+}
+
+// The listing lines of a test with -l: one for each member, and a total
+// for more than one.
+function list_members(r: Run, src: Source, h: gz.Header, d: gz.Decoded, method: i32): Run {
+  if (!r.o.list) {
+    return r;
+  }
+  let l = r.listing;
+  let clen = 0i64;
+  let ulen = 0i64;
+  let total = 0u32;
+  for i in 0..d.members.len() {
+    let m = d.members[i];
+    let comment = if (m.form > 1) { d.comment } else { h.comment };
+    l = gz.show_info(l, r.o, src.path, h.name, h.stamp, r.now, m.form, method, m.check, m.clen, m.ulen, i > 0, comment);
+    clen += m.clen;
+    ulen += m.ulen;
+    total = gz.crc_combine(total, m.check, m.ulen, m.form == 1);
+  }
+  if (d.members.len() > 1 && d.error.len() == 0 && r.o.verbosity > 0) {
+    l = gz.show_total(l, r.o, total, clen, ulen);
+  }
+  return Run { ...r, listing: l };
+}
+
+// The input of `path` and its status, or None after the message that skips
+// it. Directories with -r return their entries.
+enum Opened {
+  Skip(Run),
+  Dir(Run, string),
+  File(Run, Source),
+}
+
+// The standard input, with the time of the file it is, if any.
+function open_stdin(r: Run): Result[Opened, Fatal] {
+  let mtime = 0i64;
+  if ((r.o.headis & 2) != 0) {
+    if let Ok(st) = stdin().stat() {
+      if (st.is_file) {
+        mtime = st.mtime;
+      }
+    }
+  }
   let Ok(data) = io.read_all_stdin_bytes() else {
-    warn("abort: read error on <stdin>");
-    return false;
+    return Err(Fatal { why: "read error on <stdin>", code: 5 });
   };
-  if (!o.decompress && !o.test) {
-    return write_out(gz.compress(data, o.level, "", 0u32, workers(o)));
+  let none: Option[FileStat] = None;
+  return Ok(File(r, Source { path: "<stdin>", data: data, st: none, mtime: mtime }));
+}
+
+// The name of the input and its lstat(). A decompression of a name that
+// does not exist tries the name with each compressed suffix.
+function looked_up(o: gz.Options, path: string): (string, Result[FileStat, IoError]) {
+  let looked = lstat(path);
+  if (!(looked.is_err() && (o.list || o.decode != 0) && is_missing(looked))) {
+    return (path, looked);
   }
-  match (gz.decompress(data)) {
-    Ok(out) => {
-      if (o.test) {
-        return true;
-      }
-      return write_out(out);
+  for sufx in gz.suffixes() {
+    let next = lstat(path + sufx);
+    if (next.is_ok()) {
+      return (path + sufx, next);
+    }
+    if (!is_missing(next)) {
+      return (path, next);
+    }
+  }
+  return (path, looked);
+}
+
+// The message that skips a file of the wrong kind, or "".
+function wrong_kind(o: gz.Options, inf: string, kind: u32): string {
+  if (kind != S_IFREG && kind != S_IFIFO && kind != S_IFLNK && kind != S_IFDIR) {
+    return "skipping: " + inf + " is a special file or device";
+  }
+  if (kind == S_IFLNK && !o.force && !o.pipeout) {
+    return "skipping: " + inf + " is a symbolic link";
+  }
+  if (kind == S_IFDIR && !o.recurse) {
+    return "skipping: " + inf + " is a directory";
+  }
+  return "";
+}
+
+// It keeps the branches of process() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function open_source(r: Run, path: string): Result[Opened, Fatal] {
+  if (path == "") {
+    return open_stdin(r);
+  }
+  let o = r.o;
+  let (inf, looked) = looked_up(o, path);
+  let Ok(st) = looked else {
+    return Ok(Skip(complain(r, "skipping: " + path + " does not exist")));
+  };
+  let kind = st.mode & S_IFMT;
+  let refusal = wrong_kind(o, inf, kind);
+  if (refusal.len() > 0) {
+    return Ok(Skip(complain(r, refusal)));
+  }
+  if (kind == S_IFDIR) {
+    return Ok(Dir(r, inf));
+  }
+  if (!(o.force || o.list || o.decode != 0) && inf.ends_with(o.sufx)) {
+    say(r, "skipping: " + inf + " ends with " + o.sufx);
+    return Ok(Skip(r));
+  }
+  if (o.decode == 1 && !o.pipeout && !o.list && gz.compressed_suffix(inf) == 0) {
+    return Ok(Skip(complain(r, "skipping: " + inf + " does not have compressed suffix")));
+  }
+  match (read_file_bytes(inf)) {
+    Ok(data) => {
+      let mtime = if ((o.headis & 2) != 0) { st.mtime } else { 0i64 };
+      return Ok(File(r, Source { path: inf, data: data, st: Some(st), mtime: mtime }));
     },
-    Err(why) => {
-      warn("skipping: <stdin>" + why);
+    Err(e) => {
+      return Err(fatal("read", inf, e));
+    }
+  }
+  return Ok(Skip(r));
+}
+
+function is_missing(looked: Result[FileStat, IoError]): boolean {
+  match (looked) {
+    Err(e) => {
+      return errno.of(e) == errno.ENOENT;
+    },
+    Ok(_) => {
       return false;
     }
   }
+  return false;
 }
 
-// The name of the output of `path`, or None when pigz skips the file. The
-// second value is false when the skip is an error.
-function output_name(o: gz.Options, path: string): (Option[string], boolean) {
-  if (o.decompress) {
-    match (gz.decompressed_name(path)) {
-      Some(name) => {
-        return (Some(name), true);
-      },
-      None => {
-        warn("skipping: " + path + " does not have compressed suffix");
-        return (None, false);
-      }
+// process(): one file, or the standard input for "".
+function process(r0: Run, path: string): Result[Run, Fatal] {
+  match (open_source(r0, path)?) {
+    Skip(next) => {
+      return Ok(next);
+    },
+    Dir(next, dir) => {
+      return recurse(next, dir);
+    },
+    File(r, src) => {
+      return convert(r, src);
     }
   }
-  if (path.ends_with(".gz")) {
-    warn("skipping: " + path + " ends with .gz");
-    return (None, true);
-  }
-  return (Some(gz.compressed_name(path)), true);
+  return Ok(r0);
 }
 
-// Where the output of a file goes. Skip(true) is a skip that is not an error.
-enum Target {
+// The input of process(): a listing, a test, or an output.
+// It keeps the branches of process() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function convert(r: Run, src: Source): Result[Run, Fatal] {
+  let o = r.o;
+  if (o.list && o.decode != 2) {
+    return list_info(r, src);
+  }
+  let h = gz.get_header(src.data, 0, true, 0, r.now);
+  if (o.decode != 0) {
+    let cat = (h.method == -1 || h.method == -2) && o.force && o.pipeout && o.decode != 2 && !o.list;
+    if (h.method != 8 && h.method != 257 && !cat) {
+      return Ok(complain(r, "skipping: " + gz.header_refusal(h.method, src.path)));
+    }
+    if (o.decode == 2) {
+      return tested(r, src, h);
+    }
+  }
+  return output(r, src, h);
+}
+
+// A test, with the listing of -l.
+function tested(r0: Run, src: Source, h: gz.Header): Result[Run, Fatal] {
+  let d = decoded(r0, src, h);
+  let r = print_listing(list_members(r0, src, h, d, h.method))?;
+  if (d.error.len() > 0) {
+    return Ok(complain(r, "skipping: " + d.error));
+  }
+  if (d.warning.len() > 0) {
+    r = complain(r, d.warning);
+  }
+  return Ok(Run { ...r, o: gz.Options { ...r.o, keep: r.o.keep || d.keep } });
+}
+
+// The decompressed form of the input.
+function decoded(r: Run, src: Source, h: gz.Header): gz.Decoded {
+  if (h.method == 8) {
+    return gz.infchk(src.data, h, src.path, r.o, r.now);
+  }
+  if (h.method == 257) {
+    return gz.unlzw(src.data, h.next, src.path);
+  }
+  let none: gz.Member[] = [];
+  return gz.Decoded { out: src.data, members: none, error: "", warning: "", keep: false, comment: None };
+}
+
+// Where the output goes.
+enum Dest {
   ToStdout,
   ToFile(string),
-  Skip(boolean),
+  Refused(Run),
 }
 
-// The status of `path`, or None after the message for a missing file or a
-// directory.
-function source(path: string): Option[FileStat] {
-  let Ok(st) = stat(path) else {
-    warn("skipping: " + path + " does not exist");
-    return None;
-  };
-  if (st.is_dir) {
-    warn("skipping: " + path + " is a directory");
-    return None;
-  }
-  return Some(st);
-}
-
-// A test writes nothing, so its target is the standard output.
-function destination(o: gz.Options, path: string): Target {
-  if (o.test) {
-    return ToStdout;
-  }
-  if (o.stdout) {
-    if (!o.decompress && !o.force && path.ends_with(".gz")) {
-      warn("skipping: " + path + " ends with .gz");
-      return Skip(true);
+function destination(r: Run, src: Source, h: gz.Header): Result[Dest, Fatal] {
+  let o = r.o;
+  if (src.st.is_none() || o.pipeout) {
+    if (o.decode == 0 && !o.force && isatty(1)) {
+      return Err(Fatal { why: "trying to write compressed data to a terminal (use -f to force)", code: 22 });
     }
-    return ToStdout;
+    return Ok(ToStdout);
   }
-  let (out, ok) = output_name(o, path);
-  let Some(name) = out else {
-    return Skip(ok);
-  };
-  if (!o.force && stat(name).is_ok()) {
-    warn("skipping: " + name + " exists");
-    return Skip(false);
+  let outf = if (o.decode != 0) { gz.decompressed_name(src.path, h.name, (o.headis & 1) != 0) } else { src.path + o.sufx };
+  if (lstat(outf).is_ok() && !o.force && !overwrite(r, outf)) {
+    return Ok(Refused(complain(r, "skipping: " + outf + " exists")));
   }
-  return ToFile(name);
+  return Ok(ToFile(outf));
 }
 
-// The compressed or decompressed bytes of `path`, or None after the message
-// for a stream that does not decode.
-function converted(o: gz.Options, path: string, data: u8[], st: FileStat): Option[u8[]] {
-  if (!o.decompress && !o.test) {
-    return Some(gz.compress(data, o.level, gz.base_name(path), st.mtime as u32, workers(o)));
+// The output bytes and the messages after them.
+struct Converted {
+  r: Run,
+  bytes: u8[],
+  failure: string,
+  warning: string,
+}
+
+function converted(r: Run, src: Source, h: gz.Header): Converted {
+  let o = r.o;
+  if (o.decode != 0) {
+    let d = decoded(r, src, h);
+    let keep = r.o.keep || d.keep;
+    return Converted { r: Run { ...r, o: gz.Options { ...r.o, keep: keep } }, bytes: d.out, failure: d.error, warning: d.warning };
   }
-  match (gz.decompress(data)) {
-    Ok(out) => {
-      return Some(out);
+  let name = if ((o.headis & 1) != 0 && src.st.is_some()) { Some(gz.justname(src.path)) } else { None };
+  let (next, packed) = compressed(r, src.data, name, src.mtime);
+  return Converted { r: next, bytes: packed, failure: "", warning: "" };
+}
+
+// The rest of process(): write the output to the standard output or to a
+// file, then keep the time and the mode, and remove the input.
+// It keeps the branches of process() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function output(r0: Run, src: Source, h: gz.Header): Result[Run, Fatal] {
+  if (r0.o.decode == 0 && r0.o.level == 11) {
+    return Err(Fatal { why: "level 11 (zopfli) is not available in this port", code: 22 });
+  }
+  let dest = destination(r0, src, h)?;
+  let outf = match (dest) {
+    Refused(r) => {
+      return Ok(r);
     },
-    Err(why) => {
-      warn("skipping: " + path + why);
-      return None;
+    ToFile(name) => name,
+    ToStdout => "<stdout>",
+  };
+  let verbose = r0.o.verbosity > 1;
+  if (verbose) {
+    let _ = stderr().write(src.path + " to " + outf + " ");
+  }
+  let c = converted(r0, src, h);
+  let r = c.r;
+  let to_stdout = src.st.is_none() || r0.o.pipeout;
+  if (to_stdout) {
+    write_stdout(c.bytes)?;
+  } else if (c.failure.len() == 0) {
+    write_file(outf, c.bytes, r.o.sync)?;
+  }
+  if (c.failure.len() > 0) {
+    if (verbose) {
+      let _ = stderr().write("\n");
+    }
+    return Ok(complain(r, "skipping: " + c.failure));
+  }
+  if (c.warning.len() > 0) {
+    r = complain(r, c.warning);
+  }
+  if (verbose) {
+    let _ = stderr().write("\n");
+  }
+  if (to_stdout) {
+    return Ok(r);
+  }
+  return finish(r, src, h, outf);
+}
+
+// The question of pigz when the output exists and the standard input is a
+// terminal: the first character of the answer that is not a blank must be
+// y or Y.
+function overwrite(r: Run, outf: string): boolean {
+  if (!isatty(0) || r.o.verbosity == 0) {
+    return false;
+  }
+  let _ = stderr().write(outf + " exists -- overwrite (y/n)? ");
+  let Ok(Some(line)) = io.read_line(stdin()) else {
+    return false;
+  };
+  let answer = line.trim_start();
+  return answer.starts_with("y") || answer.starts_with("Y");
+}
+
+function write_file(outf: string, bytes: u8[], sync: boolean): Result[void, Fatal] {
+  match (open_writer(outf)) {
+    Ok(w) => {
+      if let Err(e) = w.write_bytes(bytes) {
+        w.close();
+        let _ = remove_file(outf);
+        return Err(fatal("write", outf, e));
+      }
+      if (sync) {
+        if let Err(e) = w.fsync() {
+          w.close();
+          return Err(Fatal { why: "sync error on " + outf + " (" + error_text(e) + ")", code: errno.of(e) });
+        }
+      }
+      w.close();
+      return Ok(());
+    },
+    Err(e) => {
+      return Err(fatal("write", outf, e));
     }
   }
-  return None;
+  return Ok(());
 }
 
-// Writes `name` with the mode of `path`, then removes `path` unless -k.
-function replaced(o: gz.Options, path: string, name: string, result: u8[], st: FileStat): boolean {
-  if let Err(e) = write_file_bytes(name, result) {
-    warn("skipping: " + name + " could not be written (" + e.message() + ")");
-    return false;
+// The end of process() for an output file: copymeta(), then the removal of
+// the input, then the time of the header for -dN and -dM.
+function finish(r0: Run, src: Source, h: gz.Header, outf: string): Result[Run, Fatal] {
+  let r = r0;
+  let o = r.o;
+  copymeta(src.path, outf);
+  if (!o.keep) {
+    let links = match (src.st) {
+      Some(st) => st.nlink,
+      None => 1u32,
+    };
+    if (links > 1u32 && !o.force) {
+      r = complain(r, src.path + " has hard links -- not unlinking");
+    } else {
+      let _ = remove_file(src.path);
+    }
   }
-  if let Err(_) = chmod(name, (st.mode & 4095u32) as i32) {
-    warn(name + ": the mode of " + path + " could not be kept");
+  if (o.decode != 0 && (o.headis & 2) != 0 && h.stamp != 0i64) {
+    let _ = set_file_times(outf, h.stamp, 0i64, h.stamp, 0i64, 0);
   }
-  if (o.keep) {
-    return true;
-  }
-  if let Err(e) = remove_file(path) {
-    warn(path + " could not be removed (" + e.message() + ")");
-    return false;
-  }
-  return true;
+  return Ok(r);
 }
 
-// One file. The result is false after an error.
-function file(o: gz.Options, path: string): boolean {
-  if (path == "-") {
-    return stream(o);
-  }
-  let Some(st) = source(path) else {
-    return false;
+// copymeta(): the mode, the owner and the times of a regular file `from`,
+// on `to`, as well as the system allows.
+function copymeta(from: string, to: string): void {
+  let Ok(st) = stat(from) else {
+    return;
   };
-  let target = destination(o, path);
-  if let Skip(ok) = target {
-    return ok;
+  if ((st.mode & S_IFMT) != S_IFREG) {
+    return;
   }
-  let Ok(data) = read_file_bytes(path) else {
-    warn("skipping: " + path + " is not readable");
-    return false;
-  };
-  let Some(result) = converted(o, path, data, st) else {
-    return false;
-  };
-  if (o.test) {
-    return true;
-  }
-  if let ToFile(name) = target {
-    return replaced(o, path, name, result, st);
-  }
-  return write_out(result);
+  let _ = chmod(to, (st.mode & 4095u32) as i32);
+  let _ = chown_at(to, st.uid as i32, st.gid as i32, true);
+  let _ = set_file_times(to, st.atime, 0i64, st.mtime, 0i64, 0);
 }
 
+// The entries of a directory for -r, in the order of readdir().
+function recurse(r0: Run, dir: string): Result[Run, Fatal] {
+  let r = r0;
+  let Ok(names) = read_dir(dir) else {
+    return Ok(r);
+  };
+  let base = if (dir.len() > 0 && !dir.ends_with("/")) { dir + "/" } else { dir };
+  for name in names {
+    r = process(r, base + name)?;
+  }
+  return Ok(r);
+}
+
+function run_all(r0: Run): Result[Run, Fatal] {
+  let r = r0;
+  let o = r.o;
+  if (o.files.len() == 0) {
+    return process(r, "");
+  }
+  let done = 0;
+  for path in o.files {
+    if (done == 1 && r.o.pipeout && r.o.decode == 0 && !r.o.list && r.o.form > 1) {
+      r = complain(r, "warning: output will be concatenated zip files -- " + r.prog + " will not be able to extract");
+    }
+    r = process(r, path)?;
+    done += 1;
+  }
+  return Ok(r);
+}
+
+// The options of GZIP and then of PIGZ in the environment, then those of
+// the name of the program.
+function environment(o0: gz.Options, prog: string): gz.Parsed {
+  let o = o0;
+  for name in ["GZIP", "PIGZ"] {
+    if let Some(text) = env(name) {
+      let parsed = gz.parse_env(o, name, text);
+      let gz.Run(next) = parsed else {
+        return parsed;
+      };
+      o = next;
+    }
+  }
+  return gz.Run(gz.by_name(o, prog));
+}
+
+// What a parse that stops gives: the exit code after its message or text.
+function stopped(p: gz.Parsed, prog: string): i32 {
+  match (p) {
+    gz.Abort(why, verbosity) => {
+      if (verbosity > 0) {
+        eprint(prog + ": abort: " + why);
+      }
+      return 22;
+    },
+    gz.Stop(out, err) => {
+      if (out.len() > 0) {
+        let _ = stdout().write(out);
+      }
+      if (err.len() > 0) {
+        let _ = stderr().write(err);
+      }
+      return 0;
+    },
+    gz.Run(_) => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// It keeps the branches of main() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
 function main(): i32 {
   let argv = args();
+  let prog = if (argv.len() > 0) { gz.justname(argv[0]) } else { "" };
+  if (prog.len() == 0) {
+    prog = "pigz";
+  }
+  let o = gz.defaults();
+  let from_env = environment(o, prog);
+  let gz.Run(start) = from_env else {
+    return stopped(from_env, prog);
+  };
+  o = start;
+  if (argv.len() < 2 && isatty(if (o.decode != 0) { 0 } else { 1 }) && o.verbosity > 0) {
+    let _ = stderr().write(gz.help_text());
+    return 0;
+  }
   let rest: string[] = [];
   for i in 1..argv.len() {
     rest = rest.append(argv[i]);
   }
-  match (gz.parse(rest)) {
-    gz.Abort(why) => {
-      warn("abort: " + why);
-      return 22;
+  let parsed = gz.parse_args(o, rest);
+  let gz.Run(all) = parsed else {
+    return stopped(parsed, prog);
+  };
+  o = all;
+  let r = Run { o: o, prog: prog, ret: 0, listing: gz.Listing { first: true, text: "" }, now: now_unix_ms() / 1000i64 };
+  match (run_all(r)) {
+    Ok(done) => {
+      return done.ret;
     },
-    gz.Run(o) => {
-      if (o.files.len() == 0) {
-        if (stream(o)) {
-          return 0;
-        }
-        return 1;
+    Err(f) => {
+      if (f.code != 32 && o.verbosity > 0) {
+        eprint(prog + ": abort: " + f.why);
       }
-      let failed = false;
-      for path in o.files {
-        if (!file(o, path)) {
-          failed = true;
-        }
-      }
-      if (failed) {
-        return 1;
-      }
-      return 0;
+      return f.code;
     }
   }
   return 0;
