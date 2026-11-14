@@ -12,10 +12,13 @@ import "./bech32";
 import "./cli";
 import "./format";
 import "./keys";
+import "./plugin";
+import "./tag";
 import "./source";
 import "./text";
 import "./bcrypt";
 import "std/crypto/hpke";
+import "std/crypto/p256";
 import "./ssh";
 import "./wordlist";
 import "std/string";
@@ -170,7 +173,7 @@ function test_identity_files(): test.TestOutcome {
     "error at line 1: unknown identity type",
     "error at line 2: unknown identity type",
     "error at line 1: malformed secret key: invalid character data part: s[58]=32",
-    "error at line 1: plugin identities are not supported by this port",
+    "error at line 1: invalid identity encoding: separator '1' at invalid position: pos=13, len=16",
     "ok 2",
     "error at line 2: apparent recipient found in identities file",
     "error at line 1: unknown identity type",
@@ -210,6 +213,7 @@ function show_hybrid(s: format.Stanza, k: hpke.HybridKey): string {
     format.FileKey(key) => "key " + hex.encode(key),
     format.Incorrect => "incorrect",
     format.Invalid(why) => why,
+    format.Missing(why, name) => why + " (missing " + name + ")",
   };
 }
 
@@ -298,7 +302,7 @@ function test_hybrid_recipients(): test.TestOutcome {
       f"malformed recipient {text.quote(short.as_bytes())}: invalid MLKEM768-X25519 public key",
       "another recipient",
       f"malformed recipient {text.quote(r[0:r.len() - 1].unwrap_or("").as_bytes())}: invalid checksum",
-      f"plugin recipient {text.quote(bech32.encode("age1pz", pk).as_bytes())}: plugins are not supported by this port",
+      "another recipient",
     ],
   );
 }
@@ -460,6 +464,7 @@ function unwrapped(st: format.Stanza): string {
     format.FileKey(k) => "key " + hex.encode(k),
     format.Incorrect => "incorrect",
     format.Invalid(why) => why,
+    format.Missing(why, name) => why + " (missing " + name + ")",
   };
 }
 
@@ -780,6 +785,7 @@ function scrypt_outcome(u: format.Unwrapped): string {
     format.FileKey(k) => "key " + hex.encode(k),
     format.Incorrect => "incorrect",
     format.Invalid(why) => why,
+    format.Missing(why, name) => why + " (missing " + name + ")",
   };
 }
 
@@ -955,8 +961,126 @@ function test_library_identities(): test.TestOutcome {
   return test.assert_eq_array([first, second], ["age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef", "error at line 1: unknown identity type"]);
 }
 
+function parsed_name(r: Result[plugin.Decoded, string]): string {
+  return match (r) {
+    Ok(d) => d.name + " " + hex.encode(d.data),
+    Err(why) => why,
+  };
+}
+
+// Plugin recipients and identities, and their refusals, as age's plugin
+// package encodes and parses them.
+function test_plugin_encodings(): test.TestOutcome {
+  let got = [
+    plugin.encode_recipient("test", [0x78u8]),
+    plugin.encode_identity("test", [0x78u8]),
+    plugin.encode_identity("batchpass", []),
+    plugin.encode_identity("pwn/pwn", []),
+    parsed_name(plugin.parse_recipient("age1test10qdmzv9q")),
+    parsed_name(plugin.parse_identity("AGE-PLUGIN-TEST-10Q32NLXM")),
+    parsed_name(plugin.parse_recipient("age1pwn/pwn19gt89dfz")),
+    parsed_name(plugin.parse_identity("AGE-PLUGIN-PWN/PWN-19GYK4WLY")),
+    parsed_name(plugin.parse_identity("AGE-PLUGIN-TEST-10Q32NLXX")),
+    parsed_name(plugin.parse_identity(plugin.encode_identity("batchpass", []).to_ascii_lower())),
+  ];
+  return test.assert_eq_array(got, [
+    "age1test10qdmzv9q",
+    "AGE-PLUGIN-TEST-10Q32NLXM",
+    "AGE-PLUGIN-BATCHPASS-1JCS0Q9",
+    "",
+    "test 78",
+    "test 78",
+    "invalid plugin name: \"pwn/pwn\"",
+    "invalid plugin name: \"pwn/pwn\"",
+    "invalid identity encoding: invalid checksum",
+    "not a plugin identity: <nil>",
+  ]);
+}
+
+function atoi_text(s: string): string {
+  return match (plugin.go_atoi(s)) {
+    Some(n) => n.to_string(),
+    None => "invalid",
+  };
+}
+
+// The index of a stanza from a plugin, as Go's strconv.Atoi reads it.
+function test_plugin_index(): test.TestOutcome {
+  let got = [atoi_text("0"), atoi_text("+0"), atoi_text("-0"), atoi_text("007"), atoi_text("-12"), atoi_text(""), atoi_text("+"), atoi_text("1x"), atoi_text("99999999999999999999")];
+  return test.assert_eq_array(got, ["0", "0", "0", "7", "-12", "invalid", "invalid", "invalid", "invalid"]);
+}
+
+function tag_text(arg: string): string {
+  return match (tag.parse_recipient(arg)) {
+    Ok(k) => tag.recipient_text(k),
+    Err(why) => why,
+  };
+}
+
+// The recipients of age-plugin-tagtest parse and encode back, and a tag is
+// HKDF-Extract over enc and the hash of the recipient.
+function test_tag_recipients(): test.TestOutcome {
+  let classic = "age1tag1qwe0kafsjrar4txm6heqnhpfuggzr0gvznz7fvygxrlq90u5mq2pysxtw6h";
+  let Ok(k) = tag.parse_recipient(classic) else {
+    return test.fail("the tagtest recipient does not parse");
+  };
+  let enc = __alloc_u8(65).with(0, 4u8);
+  let got = [
+    tag_text(classic),
+    hex.encode(k.public),
+    hex.encode(tag.tag_of(k, enc)),
+    tag_text("age1tag1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqquu7wsq"),
+    tag_text(classic[0:classic.len() - 1].unwrap_or("")),
+  ];
+  return test.assert_eq_array(got, [
+    classic,
+    "04b2fb753090fa3aacdbd5f209dc29e21021bd0c14c5e4b08830fe02bf94d81412e179bcd60f215f3d8274dee3fe406a17c06b09c273433fbff7312a19810e6981",
+    hex.encode(crypto.hkdf_sha256_extract("age-encryption.org/p256tag".as_bytes(), enc.concat(crypto.sha256(p256.compress(k.public))[0:4]))[0:4]),
+    "malformed recipient \"age1tag1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqquu7wsq\": invalid tag recipient public key size 32",
+    "malformed recipient \"" + classic[0:classic.len() - 1].unwrap_or("") + "\": invalid recipient encoding: invalid checksum",
+  ]);
+}
+
+// A tag stanza wraps the file key so that HPKE with the key of the
+// recipient opens it.
+function test_tag_wrap(): test.TestOutcome {
+  let Ok(pk) = hpke.p256_derive_key_pair("age-plugin-tagtest".as_bytes()) else {
+    return test.fail("no key");
+  };
+  let k = tag.TagKey { hybrid: false, public: pk.public_key };
+  let file_key = __alloc_u8(16).with(0, 7u8);
+  let randomness = __alloc_u8(64).with(63, 1u8);
+  let Ok(st) = tag.wrap(file_key, k, randomness) else {
+    return test.fail("wrap refused");
+  };
+  let Ok(enc) = text.decode_string(st.args[1].as_bytes()) else {
+    return test.fail("enc");
+  };
+  let Ok(ss) = hpke.p256_decap(pk, enc) else {
+    return test.fail("decap");
+  };
+  let c = hpke.key_schedule(hpke.KEM_P256, ss, "age-encryption.org/p256tag".as_bytes());
+  let opened = match (c.open([], st.body)) {
+    Ok(o) => hex.encode(o.0),
+    Err(e) => e.message(),
+  };
+  return test.assert_eq_array([st.kind, st.args[0], opened], ["p256tag", text.b64_raw(tag.tag_of(k, enc)), hex.encode(file_key)]);
+}
+
+// Go's %q of a byte, and the prompt text of age with its control
+// characters replaced.
+function test_quote_rune(): test.TestOutcome {
+  let got = [text.quote_rune(51), text.quote_rune(39), text.quote_rune(92), text.quote_rune(27), text.quote_rune(10), text.quote_rune(0xe9), text.quote_rune(0x85), text.without_controls("a\x1bb\nc".as_bytes()), text.without_controls([0x61u8, 0xffu8])];
+  return test.assert_eq_array(got, ["'3'", "'\\''", "'\\\\'", "'\\x1b'", "'\\n'", "'é'", "'\\u0085'", "a�b�c", "a�"]);
+}
+
 function main(): i32 {
   let r = test.new("age");
+  r = r.it("plugin recipients and identities", test_plugin_encodings);
+  r = r.it("the index of a plugin stanza", test_plugin_index);
+  r = r.it("tag recipients", test_tag_recipients);
+  r = r.it("a tag stanza opens with HPKE", test_tag_wrap);
+  r = r.it("Go's %q of a byte, and prompts with control characters", test_quote_rune);
   r = r.it("bech32 decodes the BIP 173 vectors with age's messages", test_bech32_vectors);
   r = r.it("bech32 encodes and decodes keys in both cases", test_bech32_round_trip);
   r = r.it("the constant-time key decoder agrees with the plain decoder", test_secret_keys);

@@ -24,8 +24,10 @@ import "std/rand";
 import "./cli";
 import "./format";
 import "./keys";
+import "./plugin";
 import "./ssh";
 import "./source";
+import "./tag";
 import "./text";
 import "./tty";
 import "./wordlist";
@@ -201,18 +203,29 @@ function identity_file(name: string, stdin_used: boolean): Result[keys.Identity[
   return Err("");
 }
 
-function identities(o: cli.Opts, stdin_used: boolean): Result[keys.Identity[], cli.Fatal] {
-  if (o.plugins.len() > 0) {
-    return Err(cli.fatal("-j: plugins are not supported by this port"));
+// age's plugin.NewIdentityWithoutData, for -j NAME.
+function data_less(name: string): Result[keys.Identity, cli.Fatal] {
+  let encoding = plugin.encode_identity(name, []);
+  if (encoding.len() == 0) {
+    return Err(cli.fatal(f"initializing {q(name)}: invalid plugin name: {q(name)}"));
   }
+  return Ok(keys.PluginId(name.to_ascii_lower(), encoding));
+}
+
+// The identities of -i and -j, in the order of the command line.
+function identities(o: cli.Opts, stdin_used: boolean): Result[keys.Identity[], cli.Fatal] {
   let out: keys.Identity[] = [];
-  for name in o.identities {
-    match (identity_file(name, stdin_used)) {
+  for f in o.id_flags {
+    if (f.plugin) {
+      out = out.append(data_less(f.value)?);
+      continue;
+    }
+    match (identity_file(f.value, stdin_used)) {
       Ok(ids) => {
         out = out.concat(ids);
       },
       Err(why) => {
-        return Err(cli.fatal(f"reading {q(name)}: {why}"));
+        return Err(cli.fatal(f"reading {q(f.value)}: {why}"));
       }
     }
   }
@@ -238,6 +251,7 @@ function recipients_of(id: keys.Identity): Result[keys.Recipient[], string] {
       Err(why) => Err(why),
     },
     keys.Encrypted(name, b) => encrypted_recipients(name, b),
+    keys.PluginId(name, encoding) => Ok([keys.PluginTo(name, encoding, true)]),
   };
 }
 
@@ -308,10 +322,17 @@ function encryption_passphrase(): Result[u8[], cli.Fatal] {
   return Ok(pass);
 }
 
-// The recipients of the identity files, for -e -i.
+// The recipients of the identity files and plugins, for -e -i and -e -j.
 function identity_recipients(o: cli.Opts, stdin_used: boolean): Result[keys.Recipient[], cli.Fatal] {
   let out: keys.Recipient[] = [];
-  for name in o.identities {
+  for f in o.id_flags {
+    let name = f.value;
+    if (f.plugin) {
+      if let keys.PluginId(n, encoding) = data_less(name)? {
+        out = out.append(keys.PluginTo(n, encoding, true));
+      }
+      continue;
+    }
     let ids = match (identity_file(name, stdin_used)) {
       Ok(ids) => ids,
       Err(why) => {
@@ -337,9 +358,6 @@ function recipients(o: cli.Opts, stdin_used: boolean): Result[keys.Recipient[], 
     return Ok([keys.ScryptTo(encryption_passphrase()?)]);
   }
   let named = named_recipients(o, stdin_used)?;
-  if (o.plugins.len() > 0) {
-    return Err(cli.fatal("-j: plugins are not supported by this port"));
-  }
   return Ok(named.concat(identity_recipients(o, stdin_used)?));
 }
 
@@ -514,6 +532,10 @@ function sink_finish(own k: Sink): Option[string] {
     let head = if (k.started) { "" } else { source.ARMOR_HEADER + "\n" };
     let last = if (k.pending.len() > 0) { text.b64_padded(k.pending) + "\n" } else { "" };
     k = write_raw(Sink { ...k, started: true, pending: [] }, (head + last + source.ARMOR_FOOTER + "\n").as_bytes());
+  }
+  if (k.hold) {
+    let held = k.held;
+    k = write_raw(Sink { ...k, hold: false, held: [] }, held);
   }
   if (!to_file(k)) {
     return k.fail;
@@ -730,6 +752,9 @@ function decrypt_identity_file(name: string, b: u8[]): Result[u8[], string] {
     format.Invalid(why) => {
       return Err("failed to decrypt identity file: " + why);
     },
+    format.Missing(why, _) => {
+      return Err("failed to decrypt identity file: " + why);
+    },
   };
   let (t, keyed) = payload_key_of(s, h, file_key);
   let key = match (keyed) {
@@ -800,6 +825,9 @@ function unwrap_with(id: keys.Identity, h: format.Header): format.Unwrapped {
     keys.EncryptedSsh(name, b, public) => {
       return unwrap_encrypted_ssh(name, b, public, h);
     },
+    keys.PluginId(name, encoding) => {
+      return unwrap_plugin(name, encoding, h);
+    },
     _ => {}
   }
   for st in h.stanzas {
@@ -809,6 +837,24 @@ function unwrap_with(id: keys.Identity, h: format.Header): format.Unwrapped {
     }
   }
   return format.Incorrect;
+}
+
+// age's plugin Identity.Unwrap: the plugin gets all of the stanzas.
+function unwrap_plugin(name: string, encoding: string, h: format.Header): format.Unwrapped {
+  return match (plugin.unwrap(name, encoding, h.stanzas)) {
+    plugin.Key(k) => format.FileKey(k),
+    plugin.NoMatch => format.Incorrect,
+    plugin.Failed(f) => if (f.missing.len() > 0) {
+      format.Missing(f"{name} plugin: {f.msg}", f.missing)
+    } else {
+      format.Invalid(f"{name} plugin: {f.msg}")
+    },
+  };
+}
+
+// age's hints for a plugin that is not on the PATH.
+function missing_hints(name: string): string[] {
+  return [f"you might want to install the {q(name)} plugin", "visit https://age-encryption.org/awesome#plugins for a list of available plugins"];
 }
 
 // age's EncryptedSSHIdentity.Unwrap: a passphrase only when a stanza is for
@@ -863,6 +909,7 @@ function key_or_fatal(u: format.Unwrapped): Result[u8[], cli.Fatal] {
     format.FileKey(k) => Ok(k),
     format.Incorrect => Err(cli.fatal(NO_MATCH)),
     format.Invalid(why) => Err(cli.fatal(why)),
+    format.Missing(why, name) => Err(cli.Fatal { msg: why, hints: missing_hints(name) }),
   };
 }
 
@@ -955,32 +1002,66 @@ function decrypt(o: cli.Opts, own input: source.Raw, stdin_used: boolean): Optio
       return Some(cli.fatal(why));
     },
   };
-  let hold = holds_for_terminal(o);
-  let (out, failed) = decrypt_stream(t, Sink { ...sink_to(o.output, false), hold: hold }, key);
+  let (out, failed) = decrypt_stream(t, Sink { ...sink_to(o.output, false), hold: holds_for_terminal(o, stdin_used) }, key);
   if let Some(why) = failed {
     sink_abort(out);
     return Some(cli.fatal(why));
   }
-  return finish_decrypt(out);
-}
-
-// age holds a decryption to a terminal until the end, to check that it is
-// text.
-function holds_for_terminal(o: cli.Opts): boolean {
-  return o.output == "" && stdout().isatty();
-}
-
-// The end of a decryption. Output that the sink holds for a terminal goes
-// out only when it is text.
-function finish_decrypt(own out: Sink): Option[cli.Fatal] {
-  if (out.hold) {
-    if (!printable(out.held)) {
-      return Some(cli.Fatal { msg: "refusing to output binary to the terminal", hints: ["force anyway with \"-o -\""] });
-    }
-    let held = out.held;
-    out = write_raw(Sink { ...out, hold: false, held: [] }, held);
+  if (checks_text(o) && !printable(out.held)) {
+    return Some(cli.Fatal { msg: "refusing to output binary to the terminal", hints: ["force anyway with \"-o -\""] });
   }
   return sink_finish(out).map((why: string) => cli.fatal(why));
+}
+
+// age holds the output to a terminal until the end: a decryption, to check
+// that it is text, and any output when the input is the terminal too, so
+// that it does not mix with a prompt.
+function holds_for_terminal(o: cli.Opts, stdin_used: boolean): boolean {
+  if (o.output != "" && o.output != "-" || !stdout().isatty()) {
+    return false;
+  }
+  return o.decrypt && o.output == "" || stdin_used && stdin().isatty();
+}
+
+// age's check that a decryption to a terminal is text.
+function checks_text(o: cli.Opts): boolean {
+  return o.decrypt && o.output == "" && stdout().isatty();
+}
+
+// age's bufferTerminalInput: the input that a user types at the terminal, up
+// to the line after the end of the armor.
+function buffer_terminal(): Result[source.Raw, cli.Fatal] {
+  let end = (source.ARMOR_FOOTER + "\n").as_bytes();
+  let buf: u8[] = [];
+  while (!contains(buf, end)) {
+    match (stdin().read_chunk_bytes(512)) {
+      Ok(b) => {
+        if (b.len() == 0) {
+          break;
+        }
+        buf = buf.concat(b);
+      },
+      Err(e) => {
+        return Err(cli.fatal(f"failed to buffer terminal input: read {STDIN_NAME}: {text.errno_text(e)}"));
+      }
+    }
+  }
+  return Ok(source.raw_bytes(buf));
+}
+
+function contains(b: [u8], p: [u8]): boolean {
+  let i = 0;
+  while (i + p.len() <= b.len()) {
+    let j = 0;
+    while (j < p.len() && b[i + j] == p[j]) {
+      j += 1;
+    }
+    if (j == p.len()) {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
 }
 
 // A chunk of plaintext, and whether the input ended in it.
@@ -1037,8 +1118,56 @@ function encrypt_stream(own s: source.Src, own out: Sink, key: chacha20poly1305.
   return (out, None);
 }
 
-// The stanza that wraps the file key to one recipient.
-function wrap_to(file_key: [u8], r: keys.Recipient): Result[format.Stanza, string] {
+// The stanzas that wrap the file key to one recipient, and its labels,
+// sorted. age's wrapWithLabels.
+struct Wrapped { stanzas: format.Stanza[], labels: string[] }
+
+function wrapped_one(st: Result[format.Stanza, string], labels: string[]): Result[Wrapped, cli.Fatal] {
+  return match (st) {
+    Ok(s) => Ok(Wrapped { stanzas: [s], labels: labels }),
+    Err(why) => Err(cli.fatal(why)),
+  };
+}
+
+function sorted(labels: string[]): string[] {
+  let out = labels;
+  for i in 1..out.len() {
+    let j = i;
+    while (j > 0 && out[j - 1] > out[j]) {
+      let t = out[j];
+      out = out.with(j, out[j - 1]).with(j - 1, t);
+      j -= 1;
+    }
+  }
+  return out;
+}
+
+function wrap_to(file_key: [u8], r: keys.Recipient): Result[Wrapped, cli.Fatal] {
+  match (r) {
+    keys.TagTo(k) => {
+      return wrapped_one(tag.wrap_random(file_key, k), tag.labels(k));
+    },
+    keys.PluginTo(name, encoding, identity) => {
+      return match (plugin.wrap(name, encoding, identity, file_key)) {
+        Ok(w) => Ok(Wrapped { stanzas: w.stanzas, labels: sorted(w.labels.unwrap_or([])) }),
+        Err(f) => Err(cli.Fatal { msg: f"{name} plugin: {f.msg}", hints: if (f.missing.len() > 0) { missing_hints(f.missing) } else { [] } }),
+      };
+    },
+    keys.HybridTo(_) => {
+      return wrapped_one(wrap_native(file_key, r), ["postquantum"]);
+    },
+    keys.ScryptTo(_) => {
+      return wrapped_one(wrap_native(file_key, r), [hex.encode(rand.bytes(16))]);
+    },
+    _ => {
+      return wrapped_one(wrap_native(file_key, r), []);
+    }
+  }
+  return Err(cli.fatal(""));
+}
+
+// The stanza that wraps the file key to a recipient of age itself.
+function wrap_native(file_key: [u8], r: keys.Recipient): Result[format.Stanza, string] {
   match (r) {
     keys.X25519To(public) => {
       let ephemeral = rand.bytes(32);
@@ -1059,32 +1188,71 @@ function wrap_to(file_key: [u8], r: keys.Recipient): Result[format.Stanza, strin
     },
     keys.ScryptTo(pass) => {
       return format.wrap_scrypt(file_key, pass, rand.bytes(16), format.SCRYPT_WORK_FACTOR);
-    }
+    },
+    _ => {}
   }
   return Err("");
 }
 
-// age's "postquantum" label: the recipients of a file must all have it, or
-// none of them. The scrypt recipient is always alone, so its label does not
-// need a check here.
-function post_quantum(r: keys.Recipient): boolean {
-  return match (r) {
-    keys.HybridTo(_) => true,
-    _ => false,
-  };
+function same_labels(a: string[], b: string[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function has_label(labels: string[], label: string): boolean {
+  for l in labels {
+    if (l == label) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Go's %q of a []string.
+function quoted_list(labels: string[]): string {
+  let shown: string[] = [];
+  for l in labels {
+    shown = shown.append(q(l));
+  }
+  return "[" + shown.join(" ") + "]";
+}
+
+// age's incompatibleLabelsError.
+function incompatible(a: string[], b: string[]): string {
+  if (has_label(a, "postquantum") != has_label(b, "postquantum")) {
+    return "incompatible recipients: can't mix post-quantum and classic recipients, or the file would be vulnerable to quantum computers";
+  }
+  return f"incompatible recipients: {quoted_list(a)} and {quoted_list(b)} can't be mixed";
 }
 
 // The header for a fresh file key and the payload key. Only the file key's
-// stanzas and the MAC leave this function.
-function seal_header(rs: keys.Recipient[], nonce: [u8]): Result[(format.Header, chacha20poly1305.Key), string] {
+// stanzas and the MAC leave this function. age's encryptHdr: the labels of
+// each recipient must be the labels of the first one.
+function seal_header(rs: keys.Recipient[], nonce: [u8]): Result[(format.Header, chacha20poly1305.Key), cli.Fatal] {
   let file_key = rand.bytes(16);
   __ct_secret(file_key);
   let stanzas: format.Stanza[] = [];
+  let labels: string[] = [];
   for i in 0..rs.len() {
-    stanzas = stanzas.append(wrap_to(file_key, rs[i])?);
-    if (post_quantum(rs[i]) != post_quantum(rs[0])) {
-      return Err("incompatible recipients: can't mix post-quantum and classic recipients, or the file would be vulnerable to quantum computers");
+    let w = match (wrap_to(file_key, rs[i])) {
+      Ok(w) => w,
+      Err(f) => {
+        return Err(cli.Fatal { ...f, msg: f"failed to wrap key for recipient #{i}: {f.msg}" });
+      },
+    };
+    if (i == 0) {
+      labels = w.labels;
+    } else if (!same_labels(labels, w.labels)) {
+      return Err(cli.fatal(incompatible(labels, w.labels)));
     }
+    stanzas = stanzas.concat(w.stanzas);
   }
   let unsigned = format.Header { stanzas: stanzas, mac: [] };
   let mac = format.header_mac(file_key, unsigned);
@@ -1093,13 +1261,13 @@ function seal_header(rs: keys.Recipient[], nonce: [u8]): Result[(format.Header, 
   crypto.erase(file_key);
   return match (key) {
     Ok(k) => Ok((format.Header { ...unsigned, mac: mac }, k)),
-    Err(e) => Err(e.message()),
+    Err(e) => Err(cli.fatal(e.message())),
   };
 }
 
 // The header and the nonce, as age.Encrypt writes them.
-function start_output(o: cli.Opts, h: format.Header, nonce: [u8]): (Sink, Option[string]) {
-  let out = sink_write(sink_to(o.output, o.armor), format.marshal(h).as_bytes());
+function start_output(o: cli.Opts, h: format.Header, nonce: [u8], stdin_used: boolean): (Sink, Option[string]) {
+  let out = sink_write(Sink { ...sink_to(o.output, o.armor), hold: holds_for_terminal(o, stdin_used) }, format.marshal(h).as_bytes());
   if let Some(why) = out.fail {
     return (out, Some("failed to write header: " + why));
   }
@@ -1120,9 +1288,9 @@ function encrypt(o: cli.Opts, own input: source.Raw, stdin_used: boolean): Optio
   let nonce = rand.bytes(16);
   let (h, key) = match (seal_header(rs, nonce)) {
     Ok(hk) => hk,
-    Err(why) => { return Some(cli.fatal(why)); },
+    Err(f) => { return Some(f); },
   };
-  let (out, started) = start_output(o, h, nonce);
+  let (out, started) = start_output(o, h, nonce, stdin_used);
   if let Some(why) = started {
     sink_abort(out);
     return Some(cli.fatal(why));
@@ -1247,6 +1415,14 @@ function run(argv: string[], o: cli.Opts): i32 {
       return report(f);
     },
   };
+  if (o.decrypt && (name == "" || name == "-") && stdin().isatty()) {
+    input = match (buffer_terminal()) {
+      Ok(raw) => raw,
+      Err(f) => {
+        return report(f);
+      },
+    };
+  }
   if let Some(f) = same_file_refusal(o, name) {
     return report(f);
   }

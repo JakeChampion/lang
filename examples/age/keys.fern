@@ -3,7 +3,9 @@
 import "std/crypto/hpke";
 import "std/crypto/x25519";
 import "./bech32";
+import "./plugin";
 import "./ssh";
+import "./tag";
 import "./text";
 
 // An age secret key: the secret scalar and its public key.
@@ -21,6 +23,8 @@ pub enum Identity {
   // An SSH key that needs a passphrase: the name and the bytes of its file,
   // and its public key.
   EncryptedSsh(string, u8[], ssh.Public),
+  // A plugin identity: the name of the plugin and the AGE-PLUGIN-... text.
+  PluginId(string, string),
 }
 
 // A key that a file key is wrapped to.
@@ -30,6 +34,10 @@ pub enum Recipient {
   HybridTo(u8[]),
   ScryptTo(u8[]),
   SshTo(ssh.Recipient),
+  TagTo(tag.TagKey),
+  // A plugin recipient: the name of the plugin, the text of the recipient,
+  // and true for the recipient of a plugin identity.
+  PluginTo(string, string, boolean),
 }
 
 // The lines of a file as Go's bufio.ScanLines splits them: at each "\n",
@@ -83,21 +91,6 @@ function x25519_recipient(arg: string): Result[Recipient, string] {
   return Ok(X25519To(d.data));
 }
 
-const PLUGIN_NAME_BYTES: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-._";
-
-// age's validPluginName.
-function plugin_name(name: string): boolean {
-  if (name.len() == 0) {
-    return false;
-  }
-  for i in 0..name.len() {
-    if (PLUGIN_NAME_BYTES.index_of(name[i:i + 1].unwrap_or("")).is_none()) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // age's ParseHybridRecipient.
 function hybrid_recipient(arg: string): Result[Recipient, string] {
   let d = match (bech32.decode(arg.as_bytes())) {
@@ -115,26 +108,21 @@ function hybrid_recipient(arg: string): Result[Recipient, string] {
   return Ok(HybridTo(d.data));
 }
 
-// age's plugin.NewRecipient. The port has no plugins, so a valid plugin
-// recipient gives a message that says so.
+// age's plugin.NewRecipient.
 function plugin_recipient(arg: string): Result[Recipient, string] {
-  let d = match (bech32.decode(arg.as_bytes())) {
-    Ok(d) => d,
-    Err(why) => {
-      return Err(f"invalid recipient encoding: {why}");
-    },
+  return match (plugin.parse_recipient(arg)) {
+    Ok(d) => Ok(PluginTo(d.name, arg, false)),
+    Err(why) => Err(why),
   };
-  let name = d.hrp[4:d.hrp.len()].unwrap_or("").to_owned();
-  if (!plugin_name(name)) {
-    return Err(f"invalid plugin name: {q(name)}");
-  }
-  return Err(f"plugin recipient {q(arg)}: plugins are not supported by this port");
 }
 
 // A recipient that starts with "age1", by the order of age's checks.
 function age1_recipient(arg: string): Result[Recipient, string] {
   if (arg.starts_with("age1tag1") || arg.starts_with("age1tagpq1")) {
-    return Err(f"tag recipient {q(arg)}: tag recipients are not supported by this port");
+    return match (tag.parse_recipient(arg)) {
+      Ok(k) => Ok(TagTo(k)),
+      Err(why) => Err(why),
+    };
   }
   if (arg.starts_with("age1pq1")) {
     return hybrid_recipient(arg);
@@ -244,7 +232,7 @@ function key_line(line: [u8]): Result[Identity, string] {
 }
 
 // One AGE-SECRET-KEY-PQ-1 line of an identity file.
-function hybrid_line(line: [u8]): Result[Identity, string] {
+pub function hybrid_line(line: [u8]): Result[Identity, string] {
   let seed = secret_bytes(line, bech32.PQ_SECRET_PREFIX)?;
   return match (hpke.mlkem768x25519_key(seed)) {
     Ok(k) => Ok(HybridId(k)),
@@ -256,7 +244,12 @@ function hybrid_line(line: [u8]): Result[Identity, string] {
 // (cmd) has plugins.
 function identity_line(line: [u8], cmd: boolean): Result[Identity, string] {
   if (cmd && text.has_prefix(line, "AGE-PLUGIN-")) {
-    return Err("plugin identities are not supported by this port");
+    __ct_public(line);
+    let s = text.ascii(line);
+    return match (plugin.parse_identity(s)) {
+      Ok(d) => Ok(PluginId(d.name, s)),
+      Err(why) => Err(why),
+    };
   }
   if (text.has_prefix(line, bech32.SECRET_PREFIX)) {
     return key_line(line);
@@ -368,4 +361,43 @@ pub function identity_recipient(id: Identity): string {
     HybridId(k) => hybrid_recipient_text(k.public_key),
     _ => "",
   };
+}
+
+// The output file, made with mode 0600 as os.OpenFile makes it. It must not
+// be there.
+pub function create(path: string): Result[Writer, string] {
+  let w = match (open_exclusive(path)) {
+    Ok(w) => w,
+    Err(e) => {
+      return Err(f"failed to open output file {q(path)}: open {path}: {text.errno_text(e)}");
+    },
+  };
+  let mask = umask(63);
+  umask(mask);
+  if let Err(e) = chmod(path, 384 & ~mask) {
+    w.close();
+    return Err(f"failed to open output file {q(path)}: chmod {path}: {text.errno_text(e)}");
+  }
+  return Ok(w);
+}
+
+// All of the input, up to one byte more than the size limit, or the error
+// of a read.
+pub function read_all(r: Reader, name: string): Result[u8[], string] {
+  let limit = FILE_LIMIT + 1;
+  let out: u8[] = [];
+  while (out.len() < limit) {
+    match (r.read_chunk_bytes(limit - out.len())) {
+      Ok(b) => {
+        if (b.len() == 0) {
+          return Ok(out);
+        }
+        out = out.concat(b);
+      },
+      Err(e) => {
+        return Err(f"read {name}: {text.errno_text(e)}");
+      }
+    }
+  }
+  return Ok(out);
 }

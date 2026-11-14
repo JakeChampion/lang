@@ -156,6 +156,8 @@ func TestSelfHostExampleAgeCLI(t *testing.T) {
 			t.Run("passphrase", func(t *testing.T) { agePassphrase(t, oracle, port, dir, keygen, r1) })
 			t.Run("ssh", func(t *testing.T) { ageSSH(t, oracle, port, dir) })
 			t.Run("hybrid", func(t *testing.T) { ageHybrid(t, oracle, port, dir, keygen, r1) })
+			t.Run("plugins", func(t *testing.T) { agePlugins(t, oracle, port, cli, target, keygen) })
+			t.Run("terminal input", func(t *testing.T) { ageTerminalInput(t, oracle, port, dir) })
 		})
 	}
 }
