@@ -1281,8 +1281,21 @@ function ib_idents_stmts(stmts: ast.Stmt[], own acc: string[]): string[] {
   return a;
 }
 
+// The names that a closure of `st` reads. A value block runs where it is
+// made, so only the closures inside it can read a binding after a later write.
 function lam_read_names(st: ast.Stmt): string[] {
-  return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, astwalk.not_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, is_value_block_or_not_lambda);
+}
+
+function is_value_block_lambda(lm: ast.ExprLambda): boolean {
+  return lm.params.len() == 0 && parser.is_value_block_origin(lm.origin);
+}
+
+function is_value_block_or_not_lambda(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return is_value_block_lambda(lm);
+  }
+  return true;
 }
 
 pub function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
@@ -1340,6 +1353,9 @@ function lam_target_of(e: ast.Expr, own acc: string[]): string[] {
 function lam_read_of(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
     ast.ExprLambda(lm) => {
+      if (is_value_block_lambda(lm)) {
+        return acc;
+      }
       return ib_idents_stmts(lm.body, acc);
     },
     _ => {
