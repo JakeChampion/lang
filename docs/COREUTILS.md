@@ -4084,12 +4084,13 @@ SIGCONT after. The first signal sent, forwarded or timed, starts `-k`'s grace
 period. SIGALRM from outside is the deadline passing. When the command then
 dies of a forwarded signal, timeout dies of it too. `timeout.fern` catches the
 same set with `signal_catch_interrupting` before it forks, so an arrival ends
-its one blocking `proc_waitpid_status` with EINTR and is passed on at once,
+its one blocking `proc_wait_any` with EINTR and is passed on at once,
 and dies through `signal_raise`. `TestTimeoutForwardsSignals` signals both
 mid-run.
 
 The wait reads the raw status, so timeout asks WTERMSIG and WCOREDUMP as GNU
-does (#11765). A command that was not timed out and dies of a signal, whoever
+does (#11765). The wait also gives the pid, so timeout knows when the timer
+child ended without a second wait. A command that was not timed out and dies of a signal, whoever
 sent it, takes timeout with it; a command that dumped core is reported as
 "the monitored command dumped core". Before re-raising, timeout calls
 `disable_core_dumps` — `prctl(PR_SET_DUMPABLE, 0)` on Linux, a zero
