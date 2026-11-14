@@ -774,11 +774,12 @@ function finish_options(cfg: Cfg): Cfg {
 // The state of one run: the options, the output buffer, the time zone and the
 // palette when the output has colors. `context` is the color context of the
 // output. Under -l, `pager` holds the header of the comparison whose output
-// waits for 'pr', and `queue` the messages that wait for the end.
-struct Run { cfg: Cfg, out: usize, zone: tz.Zone, colors: boolean, palette: string[], context: Cell[i32], pager: Cell[string], paging: Cell[boolean], queue: usize }
+// waits for 'pr', and `queue` the messages that wait for the end. When
+// `capture` is set, the output stays in the buffer for diff3.
+struct Run { cfg: Cfg, out: usize, zone: tz.Zone, colors: boolean, palette: string[], context: Cell[i32], pager: Cell[string], paging: Cell[boolean], queue: usize, capture: boolean }
 
 function flush_out(run: Run): void {
-  if (buf_len(run.out) == 0 || run.paging.get()) {
+  if (buf_len(run.out) == 0 || run.paging.get() || run.capture) {
     return;
   }
   let bytes = buf_take_bytes(run.out);
@@ -3894,6 +3895,21 @@ function compare_operands(run: Run, ops: string[]): i32 {
 // The diff program: the options, then each comparison. sdiff runs it with
 // arguments of its own.
 pub function run_diff(argv: string[]): i32 {
+  return run_with(argv, false).0;
+}
+
+// The diff program as diff3 and sdiff run it: its exit status and its
+// output, which stays in memory. The diagnostics go to standard error with
+// the name in argv[0].
+pub function capture_diff(argv: string[]): (i32, u8[]) {
+  let saved = args();
+  set_args(argv);
+  let r = run_with(argv, true);
+  set_args(saved);
+  return r;
+}
+
+function run_with(argv: string[], capture: boolean): (i32, u8[]) {
   let parsed = parse(argv);
   let cfg = parsed.0;
   let ops = parsed.1;
@@ -3915,14 +3931,15 @@ pub function run_diff(argv: string[]): i32 {
     palette = parse_palette(cfg.palette);
     colors = palette.len() > 0;
   }
-  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone(), colors: colors, palette: palette, context: cell_new(C_RESET), pager: cell_new(""), paging: cell_new(false), queue: buf_new(256) };
+  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone(), colors: colors, palette: palette, context: cell_new(C_RESET), pager: cell_new(""), paging: cell_new(false), queue: buf_new(256), capture: capture };
   let status = compare_operands(run, ops);
   let queued = buf_take_bytes(run.queue);
   buf_push_bytes_range(run.out, queued, 0, queued.len());
   flush_out(run);
+  let kept = buf_take_bytes(run.out);
   buf_free(run.out);
   buf_free(run.queue);
-  return status;
+  return (status, kept);
 }
 
 function main(): i32 {

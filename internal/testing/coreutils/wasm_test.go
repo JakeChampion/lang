@@ -73,6 +73,10 @@ func TestWasmSmoke(t *testing.T) {
 		{util: "diff", args: []string{"-DX", "in.txt", "-"}, stdin: "x\nq\n", preopen: true},
 		{util: "diff", args: []string{"-l", "in.txt", "in2.txt"}, preopen: true, wasm: "diff: subsidiary program '/usr/bin/pr' could not be invoked\n"},
 		{util: "cmp", args: []string{"in.txt", "in2.txt"}, preopen: true},
+		{util: "diff3", args: []string{"in.txt", "in2.txt", "in3.txt"}, preopen: true},
+		{util: "diff3", args: []string{"-m", "in.txt", "in2.txt", "in3.txt"}, preopen: true},
+		{util: "diff3", args: []string{"--diff-program=diff", "in.txt", "in2.txt", "in3.txt"}, preopen: true, wasm: "diff3: subsidiary program 'diff' could not be invoked\n"},
+		{util: "diff3", args: []string{"in.txt", "in2.txt", "nosuch"}, preopen: true},
 	}
 	for _, c := range cases {
 		name := c.util + " " + strings.Join(c.args, " ")
