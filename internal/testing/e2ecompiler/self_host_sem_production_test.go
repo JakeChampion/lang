@@ -4830,9 +4830,10 @@ function main(): i32 {
     let qs: [P] = ps[0:2];
     let n: i32 = b.len() * 100 + b[0] * 10 + b[2];
     n = n + t[1].len() * 1000 + qs[1].name.len() * 10000;
-    let shared: i32[] = a;
-    let w: i32[] = shared.with(0, 9);
-    n = n + w[0] + a[0];
+    let wide: i64[] = [1, 2, 3];
+    let shared: i64[] = wide;
+    let w: i64[] = shared.with(0, 9);
+    n = n + (w[0] + wide[0]) as i32;
     return n % 256;
 }
 `},

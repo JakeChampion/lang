@@ -1,0 +1,291 @@
+// The hyperlinks of the rg port: the formats of --hyperlink-format, and the
+// links that ripgrep 14.1.0 writes around a file name.
+import "std/string";
+
+// The aliases of a format, in order of their names.
+const ALIASES: string[] = [
+  "default", "file://{host}{path}", "file", "file://{host}{path}", "grep+", "grep+://{path}:{line}",
+  "kitty", "file://{host}{path}#{line}", "macvim", "mvim://open?url=file://{path}&line={line}&column={column}",
+  "none", "", "textmate", "txmt://open?url=file://{path}&line={line}&column={column}",
+  "vscode", "vscode://file{path}:{line}:{column}", "vscode-insiders", "vscode-insiders://file{path}:{line}:{column}",
+  "vscodium", "vscodium://file{path}:{line}:{column}",
+];
+
+// A format: its parts, each a variable in braces or "=" and a text.
+// `host` is the host name and `wsl` the prefix of WSL that the variables of
+// the same names give.
+pub struct Format { parts: string[], host: string, wsl: string }
+
+pub function none(): Format {
+  return Format { parts: [], host: "", wsl: "" };
+}
+
+pub function (f: Format) is_empty(): boolean {
+  return f.parts.len() == 0;
+}
+
+// Whether the link of a line holds its line number.
+pub function (f: Format) by_line(): boolean {
+  for p in f.parts {
+    if (p == "{line}") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function alias(name: string): string {
+  let i = 0;
+  while (i < ALIASES.len()) {
+    if (ALIASES[i] == name) {
+      return ALIASES[i + 1];
+    }
+    i += 2;
+  }
+  return name;
+}
+
+function alias_names(): string {
+  let names: string[] = [];
+  let i = 0;
+  while (i < ALIASES.len()) {
+    names = names.append(ALIASES[i]);
+    i += 2;
+  }
+  return names.join(", ");
+}
+
+// The format of a value of --hyperlink-format, or the message of one that
+// is not valid.
+pub function parse(text: string): Result[Format, string] {
+  let input = alias(text);
+  let parts: string[] = [];
+  let lit = "";
+  let i = 0;
+  while (i < input.len()) {
+    let (piece, next) = piece_at(input, i)?;
+    if (piece.len() > 1) {
+      if (lit != "") {
+        parts = parts.append("=" + lit);
+        lit = "";
+      }
+      parts = parts.append(piece);
+    } else {
+      lit += piece;
+    }
+    i = next;
+  }
+  if (lit != "") {
+    parts = parts.append("=" + lit);
+  }
+  return checked(parts);
+}
+
+// The piece of a format at `i` and the offset after it: a byte of text, a
+// brace that `{{` or `}}` gives, or a variable in braces.
+function piece_at(input: string, i: i32): Result[(string, i32), string] {
+  let c = input[i];
+  let doubled = i + 1 < input.len() && input[i + 1] == c;
+  if (c == b'}') {
+    if (!doubled) {
+      return Err("unopened variable: found '}' without a corresponding '{' preceding it");
+    }
+    return Ok(("}", i + 2));
+  }
+  if (c != b'{') {
+    return Ok((slice_unchecked(input, i, i + 1).to_owned(), i + 1));
+  }
+  if (doubled) {
+    return Ok(("{", i + 2));
+  }
+  let close = __memchr(input, 125, i + 1);
+  if (close < 0) {
+    return Err("unclosed variable: found '{' without a corresponding '}' following it");
+  }
+  let name = slice_unchecked(input, i + 1, close).to_owned();
+  if (!has(["host", "wslprefix", "path", "line", "column"], name)) {
+    return Err(f"invalid hyperlink format variable: '{name}', choose from: path, line, column, host, wslprefix");
+  }
+  return Ok(("{" + name + "}", close + 1));
+}
+
+function has(parts: string[], v: string): boolean {
+  for p in parts {
+    if (p == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function checked(parts: string[]): Result[Format, string] {
+  let f = Format { parts: parts, host: "", wsl: "" };
+  if (parts.len() == 0) {
+    return Ok(f);
+  }
+  let vars = 0;
+  for p in parts {
+    if (is_var(p)) {
+      vars += 1;
+    }
+  }
+  if (vars == 0) {
+    return Err("at least a {path} variable is required in a hyperlink format, or otherwise use a valid alias: " + alias_names());
+  }
+  if (!has(parts, "{path}")) {
+    return Err("the {path} variable is required in a hyperlink format");
+  }
+  if (has(parts, "{column}") && !has(parts, "{line}")) {
+    return Err("the hyperlink format contains a {column} variable, but no {line} variable is present");
+  }
+  if (!valid_scheme(parts[0])) {
+    return Err("the hyperlink format must start with a valid URL scheme, i.e., [0-9A-Za-z+-.]+:");
+  }
+  return Ok(f);
+}
+
+function is_var(p: string): boolean {
+  return p[0] == b'{';
+}
+
+function valid_scheme(first: string): boolean {
+  if (is_var(first)) {
+    return false;
+  }
+  let colon = __memchr(first, 58, 1);
+  if (colon <= 1) {
+    return false;
+  }
+  for i in 1..colon {
+    if (!is_alnum(first[i]) && __memchr("+-.", first[i] as i32, 0) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function is_alnum(c: u8): boolean {
+  return c >= b'0' && c <= b'9' || c >= b'A' && c <= b'Z' || c >= b'a' && c <= b'z';
+}
+
+const HEX: string = "0123456789ABCDEF";
+
+// `path` with each byte that is not safe in a URL as %HH.
+pub function encode(path: string): string {
+  let out = "";
+  for i in 0..path.len() {
+    let c = path[i];
+    let safe = is_alnum(c) || c >= 128u8 || __memchr("/:-._~", c as i32, 0) >= 0;
+    if (safe) {
+      out += slice_unchecked(path, i, i + 1);
+    } else {
+      out += "%" + slice_unchecked(HEX, (c >> 4u8) as i32, (c >> 4u8) as i32 + 1) + slice_unchecked(HEX, (c & 15u8) as i32, (c & 15u8) as i32 + 1);
+    }
+  }
+  return out;
+}
+
+// The escape that opens a link to the encoded path `path` at line `ln` and
+// column `col`. A line or a column of 0 is 1 in the link.
+pub function open(f: Format, path: string, ln: i32, col: i32): string {
+  let url = "";
+  for p in f.parts {
+    url += match (p) {
+      "{host}" => f.host,
+      "{wslprefix}" => f.wsl,
+      "{path}" => path,
+      "{line}" => (if (ln > 0) { ln } else { 1 }).to_string(),
+      "{column}" => (if (col > 0) { col } else { 1 }).to_string(),
+      _ => slice_unchecked(p, 1, p.len()).to_owned(),
+    };
+  }
+  return "\x1b]8;;" + url + "\x1b\\";
+}
+
+pub const CLOSE: string = "\x1b]8;;\x1b\\";
+
+// The absolute path of `path` with no `.`, `..` or symbolic link in it, or
+// "" when a part of it does not exist.
+pub function canonical(path: string): string {
+  let abs = absolute(path);
+  if (abs == "") {
+    return "";
+  }
+  let pending = parts_of(abs);
+  let done: string[] = [];
+  let links = 0;
+  let at = 0;
+  while (at < pending.len()) {
+    let part = pending[at];
+    at += 1;
+    if (part == "..") {
+      if (done.len() > 0) {
+        done = done.take(done.len() - 1);
+      }
+      continue;
+    }
+    let candidate = "/" + done.append(part).join("/");
+    let Ok(st) = lstat(candidate) else {
+      return "";
+    };
+    if ((st.mode & 0o170000u32) != 0o120000u32) {
+      done = done.append(part);
+      continue;
+    }
+    links += 1;
+    let Ok(target) = read_link(candidate) else {
+      return "";
+    };
+    if (links > 40) {
+      return "";
+    }
+    if (target.starts_with("/")) {
+      done = [];
+    }
+    pending = parts_of(target).concat(pending.drop(at));
+    at = 0;
+  }
+  return "/" + done.join("/");
+}
+
+// The path from the root for `path`, or "" when the current directory is
+// not known.
+function absolute(path: string): string {
+  if (path.starts_with("/")) {
+    return path;
+  }
+  let Ok(cwd) = getcwd() else {
+    return "";
+  };
+  return cwd + "/" + path;
+}
+
+// The parts of a path without the empty parts and `.`.
+function parts_of(path: string): string[] {
+  let out: string[] = [];
+  for part in path.split("/") {
+    if (part != "" && part != ".") {
+      out = out.append(part);
+    }
+  }
+  return out;
+}
+
+// The format with the host name and the prefix of WSL. The host name is
+// the trimmed output of `bin` when it runs and exits with 0, else the name
+// of the system.
+pub function with_host(f: Format, bin: string): Format {
+  let host = hostname();
+  if (bin != "") {
+    let r = subprocess(bin, [], "");
+    let out = r.stdout.trim();
+    if (r.exit_code == 0 && out != "") {
+      host = out;
+    }
+  }
+  let wsl = match (env("WSL_DISTRO_NAME")) {
+    Some(d) => "wsl$/" + d,
+    None => "",
+  };
+  return Format { ...f, host: host, wsl: wsl };
+}

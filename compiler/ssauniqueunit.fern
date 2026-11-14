@@ -30,16 +30,6 @@ function pools_match(tail: string[], architecture: string): boolean {
   return true;
 }
 
-// The index of the .text line that starts the unit, or -1. An arm64 unit
-// has the .arch line of the baseline in front of it.
-function text_line(lines: string[], architecture: string): i32 {
-  let first = if (architecture == "arm64") { 1 } else { 0 };
-  if (lines.len() < first + 2 || lines[first] != ".text") {
-    return -1;
-  }
-  return if (first == 1 && lines[0] != ".arch armv8.2-a+crypto") { -1 } else { first };
-}
-
 function text_unit(output: string, architecture: string): Unit {
   let lines: string[] = [];
   let labels: string[] = [];
@@ -52,14 +42,18 @@ function text_unit(output: string, architecture: string): Unit {
       lines = lines.append(line);
     }
   }
-  let first = text_line(lines, architecture);
-  if (names.index(labels).duplicate >= 0 || first < 0) {
+  // An arm64 unit starts with the .arch line of the baseline.
+  let head = if (architecture == "arm64") { 1 } else { 0 };
+  if (names.index(labels).duplicate >= 0 || lines.len() < head + 2 || lines[head] != ".text") {
+    return Unit { lines: [], ok: false };
+  }
+  if (head == 1 && lines[0] != util.ARM64_ARCH) {
     return Unit { lines: [], ok: false };
   }
   let body: string[] = [];
   let tail: string[] = [];
   let in_pools = false;
-  for i in first + 1..lines.len() {
+  for i in head + 1..lines.len() {
     let line = lines[i];
     if (line == ".section .data") {
       in_pools = true;

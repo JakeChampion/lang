@@ -80,11 +80,36 @@ def configuration_units(record):
     return values
 
 
-def configuration_run(record, directory, valid):
+def avc_configuration_units(record):
+    at, values = 6, []
+    for kind in (7, 8, 13):
+        if kind == 7:
+            count = record[5] & 31
+        elif kind == 8:
+            count = record[at]
+            at += 1
+        elif at == len(record):
+            break
+        else:
+            assert len(record) - at >= 4
+            count = record[at + 3]
+            at += 4
+        for _ in range(count):
+            size = int.from_bytes(record[at:at + 2], "big")
+            at += 2
+            assert size >= 1 and at + size <= len(record)
+            values.append((kind, at, record[at:at + size]))
+            at += size
+    assert at == len(record)
+    return values
+
+
+def configuration_run(record, directory, valid, hevc=True):
     path = directory / "temporal-config.bin"
     path.write_bytes(record)
-    native = subprocess.run([str(binary), "--hevc-config", str(path)], capture_output=True, text=True)
-    wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), "--hevc-config", path.name],
+    flag = "--hevc-config" if hevc else "--avc-config"
+    native = subprocess.run([str(binary), flag, str(path)], capture_output=True, text=True)
+    wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), flag, path.name],
                           cwd=directory, capture_output=True, text=True)
     assert native.returncode == (0 if valid else 6), native
     assert wasi.returncode == (0 if valid else 1), wasi
@@ -92,12 +117,18 @@ def configuration_run(record, directory, valid):
     assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
     assert "fern-sanitizer:" not in native.stderr
     if valid:
-        values = configuration_units(record)
-        order = [unit for kind in (32, 33, 34) for actual, _, unit in values if actual == kind]
-        order += [unit for kind, _, unit in values if kind in (39, 40)]
-        expected = b"".join(b"\0\0\0\1" + unit for unit in order)
-        assert native.stdout.strip() == "C 4 " + expected.hex()
-        return bytes.fromhex(native.stdout.split()[2])
+        if hevc:
+            values = configuration_units(record)
+            order = [unit for kind in (32, 33, 34) for actual, _, unit in values if actual == kind]
+            order += [unit for kind, _, unit in values if kind in (39, 40)]
+            expected = b"".join(b"\0\0\0\1" + unit for unit in order)
+            assert native.stdout.strip() == "C 4 " + expected.hex()
+            return bytes.fromhex(native.stdout.split()[2])
+        values = avc_configuration_units(record)
+        sequence = b"".join(b"\0\0\0\1" + unit for kind in (7, 13) for actual, _, unit in values if actual == kind)
+        picture = b"".join(b"\0\0\0\1" + unit for kind, _, unit in values if kind == 8)
+        assert native.stdout.strip() == "A 4 " + sequence.hex() + " " + picture.hex()
+        return b"".join(bytes.fromhex(part) for part in native.stdout.split()[2:])
     else:
         assert "invalid video header or packet" in native.stderr and "invalid video header or packet" in wasi.stderr
 
@@ -142,6 +173,45 @@ def configuration_temporals(path, directory, pixel_format):
           f"CBS syntax accepted {syntax_accepted}, refused {syntax_refused}; decoded configuration-prefix planes match", flush=True)
 
 
+def configuration_references(path, directory, pixel_format):
+    mp4 = directory / "reference-config.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-c", "copy", "-tag:v", "avc1", str(mp4)], check=True)
+    data = mp4.read_bytes()
+    tag = data.index(b"avcC")
+    size = int.from_bytes(data[tag - 4:tag], "big")
+    record = data[tag + 4:tag - 4 + size]
+    values = avc_configuration_units(record)
+    assert {7, 8}.issubset({kind for kind, _, _ in values})
+    csd = configuration_run(record, directory, True, False)
+    restored = directory / "configuration-prefix.h264"
+    restored.write_bytes(csd + path.read_bytes())
+    assert decode(restored, pixel_format) == decode(path, pixel_format)
+    spec = importlib.util.spec_from_file_location("configuration_avc", ROOT / "scripts/gen-video-avc-syntax-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    trace = fixtures.build_trace("H264", "avc-config-reference-trace")
+    syntax_accepted = syntax_refused = 0
+    for kind in (7, 8):
+        offset = next(at for actual, at, _ in values if actual == kind)
+        for reference in range(4):
+            modified = bytearray(record)
+            modified[offset] = (modified[offset] & 0x9f) | reference << 5
+            configuration_run(modified, directory, reference != 0, False)
+            context = directory / "reference-parameters.bin"
+            context.write_bytes(b"".join(b"\0\0\0\1" + unit for _, _, unit in avc_configuration_units(modified)))
+            oracle = subprocess.run([str(trace), str(context)], capture_output=True, text=True)
+            headers = re.findall(r"nal_ref_idc\s+[01]+\s+=\s+(\d+).*?"
+                                 r"nal_unit_type\s+[01]+\s+=\s+(\d+)", oracle.stderr, re.S)
+            identifiers = [int(value) for value, actual in headers if int(actual) == kind]
+            assert identifiers and identifiers[0] == reference, oracle.stderr
+            if oracle.returncode == 0 and "Failed to read unit" not in oracle.stderr and "out of range" not in oracle.stderr:
+                syntax_accepted += 1
+            else:
+                syntax_refused += 1
+    print(f"{path.name}: 8 native/WASI AVC reference-header controls match H.264 7.4.1; "
+          f"CBS syntax accepted {syntax_accepted}, refused {syntax_refused}; configuration-prefix planes match", flush=True)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     cases = [
@@ -166,3 +236,5 @@ with tempfile.TemporaryDirectory() as temporary:
         check(path, directory, pixels, frames)
         if codec == "hevc":
             configuration_temporals(path, directory, pixels)
+        else:
+            configuration_references(path, directory, pixels)

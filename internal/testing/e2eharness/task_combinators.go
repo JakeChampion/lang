@@ -118,7 +118,7 @@ function main(): i32 {
   let o: async.Task[i32] = async.task_new(() => outer());
   match (async.task_start(o)) {
     Suspended(w) => {
-      let c: async.TaskStatus[i32] = async.task_resume(o, async.Wake.Cancelled);
+      async.task_cancel(o);
       print("outer cancelled");
     },
     Done(v) => {

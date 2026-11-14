@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -754,19 +755,19 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if strings.Contains(sealing, sealerDrop) {
 		t.Errorf("sealed_len calls %s: a record whose field only reaches a callee's view parameter, which the callee never counts, was inferred COUNTED", sealerDrop)
 	}
-	const arrDrop = "__fern_arr_dec"
+	arrDrop := regexp.MustCompile(`__fern_(arr|box)_dec`)
 	sink, ok := asmWholeFunc(string(asm), "decode_even")
 	if !ok {
 		t.Fatal("no __fn_decode_even in the emitted code")
 	}
-	if !strings.Contains(sink, arrDrop) {
+	if !arrDrop.MatchString(sink) {
 		t.Errorf("decode_even does not call %s: an array parameter given to a consuming sink on one branch was inferred BORROWED, so the sink copies it", arrDrop)
 	}
 	scan, ok := asmWholeFunc(string(asm), "byte_total")
 	if !ok {
 		t.Fatal("no __fn_byte_total in the emitted code")
 	}
-	if strings.Contains(scan, arrDrop) {
+	if arrDrop.MatchString(scan) {
 		t.Errorf("byte_total calls %s: an array parameter the body only reads was inferred COUNTED", arrDrop)
 	}
 	const cursorDrop = "__sem_release_Cursor"

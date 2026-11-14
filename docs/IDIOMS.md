@@ -332,9 +332,9 @@ compiler bug. Report it.
    constructs in `compiler/`, for example `?` and generic structs. A change
    that uses one of them moves the pin in the same commit, and the commit
    message says why.
-3. **The lint ratchet.** `self_host_lint_ratchet_test.go` holds the complexity
-   numbers for each tree. A change that moves them updates the table in the
-   same commit.
+3. **The lint ratchets.** `scripts/check-ratchets` compares the complexity and
+   the modern-form findings of a change with its base commit. The pre-push
+   hook runs it.
 4. **Gates.** The fixpoint cannot find a stable miscompile. A change to
    `compiler/` passes `internal/testing/e2ecompiler` first, then the fixpoint
    (`docs/TEST-GATES.md`).

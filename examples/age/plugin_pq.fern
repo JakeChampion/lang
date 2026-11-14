@@ -1,0 +1,211 @@
+// age-plugin-pq: the age plugin for the ML-KEM-768 + X25519 hybrid
+// recipients (age1pq1...) and identities, for a client of age that does not
+// have them. With -identity, it converts native hybrid identities to plugin
+// identities. A port of age's extra/age-plugin-pq.
+import "std/array";
+import "std/crypto/hpke";
+import "std/rand";
+import "./bech32";
+import "./format";
+import "./goflag";
+import "./keys";
+import "./plugin";
+import "./pluginserver";
+import "./text";
+
+const USAGE: string = "Usage:\n    age-plugin-pq -identity [-o OUTPUT] [INPUT]\n\nOptions:\n    -identity                 Convert one or more native post-quantum identities from\n                              INPUT or from standard input to plugin identities.\n    -o, --output OUTPUT       Write the result to the file at path OUTPUT instead of\n                              standard output.\n\nage-plugin-pq is an age plugin for post-quantum hybrid ML-KEM-768 + X25519\nrecipients and identities. These are supported natively by age v1.3.0 and later,\nbut this plugin can be placed in $PATH to add support to any version and\nimplementation of age that supports plugins.\n\nRecipients work out of the box, while identities need to be converted to plugin\nidentities with -identity. If OUTPUT already exists, it is not overwritten.";
+
+// A hybrid public key, or a hybrid identity.
+enum PqKey {
+  Public(u8[]),
+  Secret(hpke.HybridKey),
+}
+
+function q(s: string): string {
+  return text.quote(s.as_bytes());
+}
+
+// age's errorf of age-plugin-pq. The port does not write the line that
+// tells the user to report the error.
+function fail(msg: string): i32 {
+  eprint("age-plugin-pq: error: " + msg);
+  return 1;
+}
+
+function recipient(data: u8[]): Result[PqKey, string] {
+  return match (keys.parse_recipient(plugin.encode_recipient("pq", data))) {
+    Ok(keys.HybridTo(public)) => Ok(Public(public)),
+    Ok(_) => Err("not a hybrid recipient"),
+    Err(why) => Err(why),
+  };
+}
+
+function identity(data: u8[]): Result[PqKey, string] {
+  return match (keys.hybrid_line(bech32.encode("AGE-SECRET-KEY-PQ-", data).as_bytes())) {
+    Ok(keys.HybridId(k)) => Ok(Secret(k)),
+    Ok(_) => Err("not a hybrid identity"),
+    Err(why) => Err(why),
+  };
+}
+
+function identity_as_recipient(data: u8[]): Result[PqKey, string] {
+  return match (identity(data)) {
+    Ok(Secret(k)) => Ok(Public(k.public_key)),
+    Ok(other) => Ok(other),
+    Err(why) => Err(why),
+  };
+}
+
+function wrap(own s: pluginserver.Session, k: PqKey, file_key: u8[]): (pluginserver.Session, Result[pluginserver.Wrapped, string]) {
+  let public = match (k) {
+    Public(p) => p,
+    Secret(key) => key.public_key,
+  };
+  let randomness = rand.bytes(64);
+  __ct_secret(randomness);
+  return match (format.wrap_hybrid(file_key, public, randomness)) {
+    Ok(st) => (s, Ok(pluginserver.Wrapped { stanzas: [st], labels: ["postquantum"] })),
+    Err(why) => (s, Err(why)),
+  };
+}
+
+// age's HybridIdentity.Unwrap: the first stanza that the key opens.
+function unwrap(own s: pluginserver.Session, k: PqKey, stanzas: format.Stanza[]): (pluginserver.Session, format.Unwrapped) {
+  let Secret(key) = k else {
+    return (s, format.Incorrect);
+  };
+  for st in stanzas {
+    let got = format.unwrap_hybrid(st, key);
+    match (got) {
+      format.Incorrect => {},
+      _ => {
+        return (s, got);
+      }
+    }
+  }
+  return (s, format.Incorrect);
+}
+
+struct Opts { identity: boolean, output: string }
+
+function options(flags: goflag.Flag[]): Opts {
+  let o = Opts { identity: false, output: "" };
+  for f in flags {
+    o = match (f) {
+      goflag.BoolFlag(name, v) => if (name == "identity") { Opts { ...o, identity: v } } else { o },
+      goflag.ValueFlag(name, v) => if (name == "o" || name == "output") { Opts { ...o, output: v } } else { o },
+    };
+  }
+  return o;
+}
+
+// age-plugin-pq's convert: an AGE-PLUGIN-PQ-1... line for each hybrid
+// identity of the input.
+function convert(content: [u8]): Result[string, string] {
+  let ids = match (keys.parse_identities(content)) {
+    Ok(ids) => ids,
+    Err(why) => {
+      return Err("failed to parse identities: " + why);
+    },
+  };
+  let lines: u8[][] = [];
+  for (from, to) in keys.scan_lines(content) {
+    let line = content[from:to];
+    if (line.len() > 0 && line[0] != b'#') {
+      lines = lines.append(text.copy(line));
+    }
+  }
+  let out = "";
+  for i in 0..ids.len() {
+    let keys.HybridId(_) = ids[i] else {
+      return Err(f"identity #{i + 1} is not a post-quantum hybrid identity");
+    };
+    let seed = match (bech32.decode(lines[i])) {
+      Ok(d) => d.data,
+      Err(why) => {
+        return Err(f"failed to decode identity #{i + 1}: {why}");
+      },
+    };
+    out += plugin.encode_identity("pq", seed) + "\n";
+  }
+  return Ok(out);
+}
+
+// age-plugin-pq -identity.
+function identity_mode(o: Opts, rest: string[]): i32 {
+  if (rest.len() > 1) {
+    return fail("too many arguments");
+  }
+  let name = if (rest.len() == 1) { rest[0] } else { "" };
+  let input = if (name == "" || name == "-") {
+    stdin()
+  } else {
+    match (open_reader(name)) {
+      Ok(r) => r,
+      Err(e) => {
+        return fail(f"failed to open input file {q(name)}: open {name}: {text.errno_text(e)}");
+      },
+    }
+  };
+  let shown = if (name == "" || name == "-") { "/dev/stdin" } else { name };
+  let content = match (keys.read_all(input, shown)) {
+    Ok(b) => b,
+    Err(why) => {
+      return fail("failed to parse identities: failed to read identities file: " + why);
+    },
+  };
+  let converted = match (convert(content)) {
+    Ok(c) => c,
+    Err(why) => {
+      return fail(why);
+    },
+  };
+  let out = if (o.output.len() > 0) {
+    match (keys.create(o.output)) {
+      Ok(w) => w,
+      Err(why) => {
+        return fail(why);
+      },
+    }
+  } else {
+    stdout()
+  };
+  if let Ok(st) = out.stat() {
+    if (st.is_file && (st.mode & 4u32) != 0u32) {
+      eprint("age-plugin-pq: warning: writing secret key to a world-readable file");
+    }
+  }
+  if let Err(e) = out.write(converted) {
+    return fail(f"failed to write output: write {if (o.output.len() > 0) { o.output } else { "/dev/stdout" }}: {text.errno_text(e)}");
+  }
+  if (o.output.len() > 0) {
+    out.close();
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let argv = args();
+  let names = goflag.Names { bools: ["identity"], values: ["o", "output"] };
+  let rest = match (goflag.parse(goflag.Names { bools: names.bools.append("version"), values: names.values.append("age-plugin") }, array.slice(argv, 1, argv.len()))) {
+    goflag.Run(_, r) => r,
+    _ => [],
+  };
+  let flags = match (pluginserver.flags(names, USAGE, array.slice(argv, 1, argv.len()))) {
+    Ok(f) => f,
+    Err(code) => {
+      return code;
+    },
+  };
+  let (machine, version) = pluginserver.machine_of(flags);
+  if (version) {
+    print(pluginserver.VERSION);
+    return 0;
+  }
+  let o = options(flags);
+  if (o.identity) {
+    return identity_mode(o, rest);
+  }
+  let h = pluginserver.Handlers { name: "pq", recipient: Some(recipient), identity_as_recipient: Some(identity_as_recipient), identity: Some(identity), wrap: wrap, unwrap: unwrap };
+  return pluginserver.serve(h, machine);
+}

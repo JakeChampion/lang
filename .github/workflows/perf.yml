@@ -89,6 +89,7 @@ jobs:
       - name: Compare against the baseline
         env:
           FERN_CI_PERF_GATE_STRICT: "1"
+          FERN_PERF_CORRECTED_OUT: ${{ runner.temp }}/corrected/perf-baseline.txt
         run: scripts/ci-check-perf .github/perf-baseline.txt "${{ runner.temp }}/perf-report.txt"
 
       - name: Record the report in refs/notes/perf
@@ -161,6 +162,7 @@ jobs:
         if: ${{ !cancelled() && matrix.host == 'x86_64' }}
         env:
           FERN_PERF_GATE_LABEL: self-host append cliff
+          FERN_PERF_CORRECTED_OUT: ${{ runner.temp }}/corrected/cliff-baseline.txt
         run: scripts/ci-check-perf .github/cliff-baseline.txt "${{ runner.temp }}/cliff-report.txt"
 
       # What the SELF-HOST compiler EMITS, for all three targets from one build.
@@ -178,6 +180,7 @@ jobs:
         if: ${{ !cancelled() && matrix.host == 'x86_64' }}
         env:
           FERN_PERF_GATE_LABEL: self-host emitted size
+          FERN_PERF_CORRECTED_OUT: ${{ runner.temp }}/corrected/perf-baseline-selfhost.txt
         run: scripts/ci-check-perf .github/perf-baseline-selfhost.txt "${{ runner.temp }}/selfhost-size-report.txt"
 
       # What each SECURITY PROFILE costs: emitted size, image size and retired
@@ -193,6 +196,7 @@ jobs:
         if: ${{ !cancelled() && matrix.host == 'x86_64' }}
         env:
           FERN_PERF_GATE_LABEL: profile costs
+          FERN_PERF_CORRECTED_OUT: ${{ runner.temp }}/corrected/profile-costs-baseline.txt
         run: scripts/ci-check-perf .github/profile-costs-baseline.txt "${{ runner.temp }}/profile-costs-report.txt"
 
       # How much the SELF-HOST COMPILER ALLOCATES compiling one real module.
@@ -245,6 +249,7 @@ jobs:
         env:
           FERN_PERF_GATE_LABEL: self-host allocation
           FERN_CI_PERF_GATE_MAX_DRIFT: "10"
+          FERN_PERF_CORRECTED_OUT: ${{ runner.temp }}/corrected/alloc-baseline.txt
         run: scripts/ci-check-perf .github/alloc-baseline.txt "${{ runner.temp }}/alloc-report.txt"
 
       # One lane label per metric, unchanged: the note blocks are keyed by them.
@@ -269,6 +274,56 @@ jobs:
             ${{ runner.temp }}/profile-costs-report.txt
           if-no-files-found: warn
 
+      # The rows that the compare steps found off their pins, for the rebank
+      # job below. A file with no rows says that the lane measured its
+      # baseline and nothing moved.
+      - name: Upload the corrected rows
+        if: ${{ !cancelled() && github.event_name == 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-corrected-${{ matrix.host }}
+          path: ${{ runner.temp }}/corrected
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # ON MAIN, SET THE ROWS THAT MAIN MOVED (scripts/rebank-main). Each merge
+  # moves the rows a little. Before this job, the moves added up until the
+  # strict gate went red, and each open pull request then re-banked the same
+  # rows of main and conflicted with the others. Now main re-banks itself, and
+  # a pull request sets only the rows that it moves.
+  #
+  # A row moves at most 5%. A larger move stays red for a person. The push
+  # uses AUTO_REBASE_TOKEN where the repository has it, because a push with
+  # the default token starts no workflow and branch protection can refuse it.
+  # A refused push is a warning: the lane is then as red as it was.
+  rebank:
+    name: rebank-main
+    needs: [bench]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: rebank-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: perf-corrected-*
+          path: ${{ runner.temp }}/corrected
+      - name: Set the rows that main moved
+        env:
+          FERN_REBANK_MAX_DRIFT: "5"
+        run: |
+          if [ ! -d "${{ runner.temp }}/corrected" ]; then
+            echo "no perf job uploaded corrected rows"
+            exit 0
+          fi
+          scripts/rebank-main "$GITHUB_SHA" "${{ runner.temp }}/corrected"
 
   native-pair:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_baseline != '' }}
