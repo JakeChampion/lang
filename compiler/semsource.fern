@@ -7616,6 +7616,7 @@ function os_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "proc_waitpid", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "proc_waitpid_nohang", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "proc_waitpid_status", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "proc_wait_any", params: [], modes: [], result: typeinfo.t_i64() },
     ssasem.Contract { name: "temp_dir", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.t_string()) },
     ssasem.Contract { name: "read_link", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.t_string()) },
     ssasem.Contract { name: "read_link_bytes", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
