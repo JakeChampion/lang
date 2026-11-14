@@ -60,6 +60,15 @@ nothing about `i` (`AB-10`), and a scaled index that wraps negative fails
 its own `>= 0` guard (`AB-14`). `docs/security/ARITHMETIC-AUDIT.md`
 records the rules the proofs use.
 
+## Proofs from accesses (#15975)
+
+A write `a.with(i, v)` has no check when an access of the same index ran
+before it. That access is earlier in the same block, or in a block that
+dominates the write. Its array is `a`, or an array that a chain of `with`
+makes into `a`, because `with` does not change the length. Only a write uses
+this proof. `semhoist` can move a read above a write, but it does not move a
+write, and a read that it moves runs earlier.
+
 ## Allocation size (#8457)
 
 `fern: allocation size out of range`, exit 134. A byte count computed in
