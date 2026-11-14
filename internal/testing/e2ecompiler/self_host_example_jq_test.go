@@ -14,9 +14,17 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// jqSuiteCases is the number of cases of jq.test that are not `%%FAIL`
-// cases. Each of them must pass.
-const jqSuiteCases = 428
+// jqSuites holds each suite of jq 1.7 in examples/jq/tests, and its number
+// of cases that are not `%%FAIL` cases. Each case must pass.
+var jqSuites = []struct {
+	file  string
+	cases int
+}{
+	{"jq.test", 428},
+	{"onig.test", 40},
+	{"manonig.test", 17},
+	{"man.test", 224},
+}
 
 func TestSelfHostExampleJqUnit(t *testing.T) {
 	path, err := filepath.Abs("../../../examples/jq/jq_test.fern")
@@ -130,6 +138,7 @@ func jqSuiteExitOK(c jqCase, code int, stderr, ref, modules string) bool {
 		return code == 5
 	}
 	cmd := exec.Command(ref, "-L", modules, "-c", "--", c.program)
+	cmd.Env = jqSuiteEnv()
 	cmd.Stdin = strings.NewReader(c.input)
 	var refErr bytes.Buffer
 	cmd.Stderr = &refErr
@@ -137,8 +146,13 @@ func jqSuiteExitOK(c jqCase, code int, stderr, ref, modules string) bool {
 	return cmd.ProcessState.ExitCode() == code && refErr.String() == stderr
 }
 
-// TestSelfHostExampleJqSuite runs each case of jq.test as the harness of jq
-// does, with the modules of jq.test on the search path.
+// jqSuiteEnv is the environment of the harness of jq: man.test reads PAGER.
+func jqSuiteEnv() []string {
+	return append(os.Environ(), "PAGER=less")
+}
+
+// TestSelfHostExampleJqSuite runs each case of the suites of jq 1.7 as the
+// harness of jq does, with the modules of jq.test on the search path.
 func TestSelfHostExampleJqSuite(t *testing.T) {
 	bin := buildJq(t)
 	ref, _ := exec.LookPath("jq")
@@ -146,42 +160,56 @@ func TestSelfHostExampleJqSuite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	passed, total := 0, 0
-	for _, c := range jqCases(t, "../../../examples/jq/tests/jq.test") {
-		total++
-		cmd := exec.Command(bin, "-L", modules, "-c", "--", c.program)
-		cmd.Stdin = strings.NewReader(c.input)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		_ = cmd.Run()
-		var got, want []any
-		for _, l := range strings.Split(stdout.String(), "\n") {
-			if l == "" {
-				continue
+	for _, suite := range jqSuites {
+		t.Run(suite.file, func(t *testing.T) {
+			passed, total := 0, 0
+			for _, c := range jqCases(t, "../../../examples/jq/tests/"+suite.file) {
+				total++
+				if jqSuiteCase(t, bin, ref, modules, c) {
+					passed++
+				}
 			}
-			v, err := jqValue(l)
-			if err != nil {
-				t.Fatalf("line %d: %q gives the output %q, which is not JSON", c.line, c.program, l)
+			t.Logf("%s: %d of %d cases pass", suite.file, passed, total)
+			if total != suite.cases {
+				t.Errorf("%s has %d cases, not the %d of jqSuites", suite.file, total, suite.cases)
 			}
-			got = append(got, v)
-		}
-		for _, l := range c.expected {
-			v, err := jqValue(l)
-			if err != nil {
-				t.Fatalf("line %d: the expected output %q is not JSON", c.line, l)
-			}
-			want = append(want, v)
-		}
-		if !jqSuiteExitOK(c, cmd.ProcessState.ExitCode(), stderr.String(), ref, modules) || !reflect.DeepEqual(got, want) {
-			t.Errorf("line %d: %q on %s: exit %d, got %s, want %v\n%s", c.line, c.program, c.input, cmd.ProcessState.ExitCode(), stdout.String(), c.expected, stderr.String())
+		})
+	}
+}
+
+// jqSuiteCase runs one case, and gives whether it passes.
+func jqSuiteCase(t *testing.T, bin, ref, modules string, c jqCase) bool {
+	t.Helper()
+	cmd := exec.Command(bin, "-L", modules, "-c", "--", c.program)
+	cmd.Env = jqSuiteEnv()
+	cmd.Stdin = strings.NewReader(c.input)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	_ = cmd.Run()
+	var got, want []any
+	for _, l := range strings.Split(stdout.String(), "\n") {
+		if l == "" {
 			continue
 		}
-		passed++
+		v, err := jqValue(l)
+		if err != nil {
+			t.Errorf("line %d: %q gives the output %q, which is not JSON", c.line, c.program, l)
+			return false
+		}
+		got = append(got, v)
 	}
-	t.Logf("jq.test: %d of %d cases pass", passed, total)
-	if total != jqSuiteCases {
-		t.Errorf("jq.test has %d cases, not the %d of jqSuiteCases", total, jqSuiteCases)
+	for _, l := range c.expected {
+		v, err := jqValue(l)
+		if err != nil {
+			t.Fatalf("line %d: the expected output %q is not JSON", c.line, l)
+		}
+		want = append(want, v)
 	}
+	if !jqSuiteExitOK(c, cmd.ProcessState.ExitCode(), stderr.String(), ref, modules) || !reflect.DeepEqual(got, want) {
+		t.Errorf("line %d: %q on %s: exit %d, got %s, want %v\n%s", c.line, c.program, c.input, cmd.ProcessState.ExitCode(), stdout.String(), c.expected, stderr.String())
+		return false
+	}
+	return true
 }
 
 // The command line gives the stdout, the stderr and the exit status of jq 1.7.

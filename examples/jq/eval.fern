@@ -974,30 +974,12 @@ function paths_select(p: json.JsonValue, input: json.JsonValue, f: filter.Ast, e
   return run(f, v.values[0], e, (c: json.JsonValue, own s: St): own St => if (truthy(c)) { k(p, s) } else { s }, st);
 }
 
-// jq 1.7: `def _repeat: f | (., _repeat)`. A single output of `f` goes on in
-// a loop and not in a deeper call.
+// jq 1.7: `def _repeat: f, _repeat`, so `f` runs again on the same input
+// until a signal stops it.
 function repeat_to(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let s = k(v, st);
-  let cur = v;
+  let s = st;
   while (s.sig == OK) {
-    let saved = s.items;
-    s = collected(f, cur, e, s);
-    let nexts = s.items;
-    s = St { ...s, items: saved };
-    if (s.sig != OK) {
-      return s;
-    }
-    if (nexts.len() != 1) {
-      for n in nexts {
-        s = repeat_to(n, f, e, k, s);
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
-    }
-    cur = nexts[0];
-    s = k(cur, s);
+    s = run(f, v, e, k, s);
   }
   return s;
 }
@@ -1497,11 +1479,7 @@ function by(what: string, input: json.JsonValue, items: json.JsonValue[], ks: js
   if (what == "min" || what == "max") {
     return one(extreme_by(items, ks, what == "min"));
   }
-  let pairs: json.JsonValue[] = [];
-  for i in 0..items.len() {
-    pairs = pairs.append(json.JArray([ks[i], whole(i)]));
-  }
-  return one(json.JArray(grouped(what, items, sorted_values(pairs))));
+  return one(json.JArray(grouped(what, items, ks, sorted_indices(ks))));
 }
 
 function strftime_value(name: string, v: json.JsonValue, f: json.JsonValue): Outputs {
@@ -2950,34 +2928,11 @@ function of_type(name: string, v: json.JsonValue): Outputs {
   return ok([]);
 }
 
-// A stable merge sort in the order of jq.
+// The items in the order of jq, with equal items in their order.
 function sorted_values(items: json.JsonValue[]): json.JsonValue[] {
-  if (items.len() < 2) {
-    return items;
-  }
-  let half = items.len() / 2;
-  let left: json.JsonValue[] = [];
-  let right: json.JsonValue[] = [];
-  for i in 0..items.len() {
-    if (i < half) {
-      left = left.append(items[i]);
-    } else {
-      right = right.append(items[i]);
-    }
-  }
-  left = sorted_values(left);
-  right = sorted_values(right);
   let out: json.JsonValue[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < left.len() || j < right.len()) {
-    if (j == right.len() || i < left.len() && order(left[i], right[j]) <= 0) {
-      out = out.append(left[i]);
-      i += 1;
-    } else {
-      out = out.append(right[j]);
-      j += 1;
-    }
+  for p in sorted_indices(items) {
+    out = out.append(items[p]);
   }
   return out;
 }
@@ -3109,23 +3064,23 @@ function extreme_by(items: json.JsonValue[], ks: json.JsonValue[], least: boolea
   return items[best];
 }
 
-// `pairs` holds each key and the place of its item, in the order of the keys.
-function grouped(what: string, items: json.JsonValue[], pairs: json.JsonValue[]): json.JsonValue[] {
+// The items in the order `places` of their keys `ks`: each item for
+// `sort`, the first of each run of equal keys for `unique`, and an array of
+// each run for `group`.
+function grouped(what: string, items: json.JsonValue[], ks: json.JsonValue[], places: i32[]): json.JsonValue[] {
   let out: json.JsonValue[] = [];
   let group: json.JsonValue[] = [];
-  let last: json.JsonValue = json.JNull;
-  for p in pairs {
-    let item = items[place(p)];
-    let k = index(p, whole(0)).values[0];
-    let same = group.len() > 0 && order(last, k) == 0;
-    last = k;
+  let last = -1;
+  for p in places {
+    let item = items[p];
+    let same = last >= 0 && order(ks[last], ks[p]) == 0;
+    last = p;
     if (what == "sort") {
       out = out.append(item);
     } else if (what == "unique") {
       if (!same) {
         out = out.append(item);
       }
-      group = [item];
     } else if (same) {
       group = group.append(item);
     } else {
@@ -3141,11 +3096,48 @@ function grouped(what: string, items: json.JsonValue[], pairs: json.JsonValue[])
   return out;
 }
 
-function place(pair: json.JsonValue): i32 {
-  if let json.JNumber(t) = index(pair, whole(1)).values[0] {
-    return number.value(t) as i32;
+// The places of `ks` in the order of jq, with equal keys in their order: a
+// merge sort of the places, from runs of one up.
+function sorted_indices(ks: json.JsonValue[]): i32[] {
+  let n = ks.len();
+  let a: i32[] = [];
+  for i in 0..n {
+    a = a.append(i);
   }
-  return 0;
+  let b = a;
+  let width = 1;
+  while (width < n) {
+    let lo = 0;
+    while (lo < n) {
+      let mid = lo + width;
+      if (mid > n) {
+        mid = n;
+      }
+      let hi = mid + width;
+      if (hi > n) {
+        hi = n;
+      }
+      let i = lo;
+      let j = mid;
+      let at = lo;
+      while (at < hi) {
+        if (j >= hi || i < mid && order(ks[a[i]], ks[a[j]]) <= 0) {
+          b = b.with(at, a[i]);
+          i += 1;
+        } else {
+          b = b.with(at, a[j]);
+          j += 1;
+        }
+        at += 1;
+      }
+      lo = hi;
+    }
+    let swap = a;
+    a = b;
+    b = swap;
+    width *= 2;
+  }
+  return a;
 }
 
 function ascii_case(v: json.JsonValue, upper: boolean): Outputs {

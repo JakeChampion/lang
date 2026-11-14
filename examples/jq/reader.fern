@@ -20,13 +20,16 @@ pub struct Read { values: Value[], error: string }
 // jq allows this many open arrays, objects and keys.
 const MAX_DEPTH: i32 = 256;
 
+// An open array keeps its items on `vals` from the offset of its frame. An
+// open object keeps its keys on `keys` and its values on `vals`. So a value
+// goes into its container in place.
 enum Frame {
-  Items(json.JsonValue[]),
-  Fields(json.JsonObject),
+  Items(i32),
+  Fields(i32, i32),
   Key(string),
 }
 
-struct State { stack: Frame[], next: json.JsonValue[], out: Value[], line: i32, column: i32 }
+struct State { stack: Frame[], vals: json.JsonValue[], keys: string[], next: json.JsonValue[], out: Value[], line: i32, column: i32 }
 
 function is_space(b: u8): boolean {
   return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
@@ -52,7 +55,7 @@ pub function read(s: string): Read {
 // The values of `s`, which starts at the line `line` and the column
 // `column` of its input.
 pub function read_at(s: string, line: i32, column: i32): Read {
-  let st = State { stack: [], next: [], out: [], line: line, column: column };
+  let st = State { stack: [], vals: [], keys: [], next: [], out: [], line: line, column: column };
   let token = -1;
   let i = 0;
   while (i < s.len()) {
@@ -67,11 +70,11 @@ pub function read_at(s: string, line: i32, column: i32): Read {
     }
     // jq loses the value of a literal when the byte that ends the literal is
     // an error itself, as in `1,`.
-    let kept = st.out;
+    let kept = st.out.len();
     if (token >= 0) {
       let (after, bad) = st.literal(slice_unchecked(s, token, i).to_owned(), i);
       if (bad.len() > 0) {
-        return Read { values: st.out, error: bad + st.place(false) };
+        return Read { values: after.out, error: bad + after.place(false) };
       }
       st = after;
       token = -1;
@@ -79,7 +82,7 @@ pub function read_at(s: string, line: i32, column: i32): Read {
     if (is_structure(b)) {
       let (after, bad) = st.structure(b);
       if (bad.len() > 0) {
-        return Read { values: kept, error: bad + st.place(false) };
+        return Read { values: after.out.truncate(kept), error: bad + after.place(false) };
       }
       st = after.done(i + 1);
     } else if (b == b'"') {
@@ -114,7 +117,7 @@ pub function read_at(s: string, line: i32, column: i32): Read {
   if (token >= 0) {
     let (after, bad) = st.literal(slice_unchecked(s, token, s.len()).to_owned(), s.len());
     if (bad.len() > 0) {
-      return Read { values: st.out, error: bad + st.place(true) };
+      return Read { values: after.out, error: bad + after.place(true) };
     }
     st = after;
   }
@@ -125,7 +128,7 @@ pub function read_at(s: string, line: i32, column: i32): Read {
 }
 
 // The line and the column after the byte `b`.
-function (st: State) step(b: u8): State {
+function (own st: State) step(b: u8): State {
   if (b == b'\n') {
     return State { ...st, line: st.line + 1, column: 0 };
   }
@@ -133,14 +136,15 @@ function (st: State) step(b: u8): State {
 }
 
 // A value at the top level is complete. `end` is the offset after it.
-function (st: State) done(end: i32): State {
+function (own st: State) done(end: i32): State {
   if (st.stack.len() > 0 || st.next.len() == 0) {
     return st;
   }
-  return State { ...st, next: [], out: st.out.append(Value { value: st.next[0], end: end }) };
+  let v = st.next[0];
+  return State { ...st, next: [], out: st.out.append(Value { value: v, end: end }) };
 }
 
-function (st: State) value(v: json.JsonValue): (State, string) {
+function (own st: State) value(v: json.JsonValue): (State, string) {
   if (st.next.len() > 0) {
     return (st, "Expected separator between values");
   }
@@ -148,7 +152,7 @@ function (st: State) value(v: json.JsonValue): (State, string) {
 }
 
 // The literal `text` ends at the offset `end`.
-function (st: State) literal(text: string, end: i32): (State, string) {
+function (own st: State) literal(text: string, end: i32): (State, string) {
   let (v, bad) = literal_value(text);
   if (bad.len() > 0) {
     return (st, bad);
@@ -222,7 +226,7 @@ pub function c_string(s: string): string {
   return s;
 }
 
-function (st: State) structure(b: u8): (State, string) {
+function (own st: State) structure(b: u8): (State, string) {
   if (b == b'[' || b == b'{') {
     if (st.stack.len() >= MAX_DEPTH) {
       return (st, "Exceeds depth limit for parsing");
@@ -230,10 +234,8 @@ function (st: State) structure(b: u8): (State, string) {
     if (st.next.len() > 0) {
       return (st, "Expected separator between values");
     }
-    if (b == b'[') {
-      return (State { ...st, stack: st.stack.append(Items([])) }, "");
-    }
-    return (State { ...st, stack: st.stack.append(Fields(json.object())) }, "");
+    let frame = if (b == b'[') { Items(st.vals.len()) } else { Fields(st.vals.len(), st.keys.len()) };
+    return (State { ...st, stack: st.stack.append(frame) }, "");
   }
   if (b == b':') {
     return st.colon();
@@ -251,28 +253,19 @@ function (st: State) top(): Frame {
   return st.stack[st.stack.len() - 1];
 }
 
-function (st: State) pop(): State {
-  let rest: Frame[] = [];
-  for i in 0..st.stack.len() - 1 {
-    rest = rest.append(st.stack[i]);
-  }
-  return State { ...st, stack: rest };
+function (own st: State) pop(): State {
+  let n = st.stack.len() - 1;
+  return State { ...st, stack: st.stack.truncate(n) };
 }
 
-// The stack with `f` in the place of its top frame, and no pending value.
-function (st: State) replace(f: Frame): State {
-  let below = st.pop();
-  return State { ...below, stack: below.stack.append(f), next: [] };
-}
-
-function (st: State) colon(): (State, string) {
+function (own st: State) colon(): (State, string) {
   if (st.next.len() == 0) {
     return (st, "Expected string key before ':'");
   }
   if (st.stack.len() == 0) {
     return (st, "':' not as part of an object");
   }
-  let Fields(_) = st.top() else {
+  let Fields(_, _) = st.top() else {
     return (st, "':' not as part of an object");
   };
   let json.JString(k) = st.next[0] else {
@@ -283,80 +276,99 @@ function (st: State) colon(): (State, string) {
 
 // The pending value goes into the open array, or into the open object below
 // the key.
-function (st: State) store(): (State, string) {
+function (own st: State) store(): (State, string) {
+  let v = st.next[0];
   match (st.top()) {
-    Items(items) => {
-      return (st.replace(Items(items.append(st.next[0]))), "");
+    Items(_) => {
+      return (State { ...st, vals: st.vals.append(v), next: [] }, "");
     },
     Key(k) => {
-      let below = st.pop();
-      let Fields(o) = below.top() else {
+      if (st.stack.len() < 2) {
+        return (st, "Objects must consist of key:value pairs");
+      }
+      let Fields(_, _) = st.stack[st.stack.len() - 2] else {
         return (st, "Objects must consist of key:value pairs");
       };
-      let fields = o;
-      fields = fields.insert(k, st.next[0]);
-      return (below.replace(Fields(fields)), "");
+      let below = st.pop();
+      return (State { ...below, keys: below.keys.append(k), vals: below.vals.append(v), next: [] }, "");
     },
-    Fields(_) => {
+    Fields(_, _) => {
       return (st, "Objects must consist of key:value pairs");
     }
   }
 }
 
-function (st: State) comma(): (State, string) {
+function (own st: State) comma(): (State, string) {
   if (st.next.len() == 0 || st.stack.len() == 0) {
     return (st, "Expected value before ','");
   }
   return st.store();
 }
 
-function (st: State) close_array(): (State, string) {
+// The items of `vals` from `from`.
+function tail_of(vals: json.JsonValue[], from: i32): json.JsonValue[] {
+  let out: json.JsonValue[] = [];
+  for i in from..vals.len() {
+    out = out.append(vals[i]);
+  }
+  return out;
+}
+
+function keys_from(keys: string[], from: i32): string[] {
+  let out: string[] = [];
+  for i in from..keys.len() {
+    out = out.append(keys[i]);
+  }
+  return out;
+}
+
+function (own st: State) close_array(): (State, string) {
   if (st.stack.len() == 0) {
     return (st, "Unmatched ']'");
   }
-  let Items(items) = st.top() else {
+  let Items(start) = st.top() else {
     return (st, "Unmatched ']'");
   };
-  if (st.next.len() > 0) {
-    return st.pop().value_after(json.JArray(items.append(st.next[0])));
+  let s = st;
+  if (s.next.len() > 0) {
+    let v = s.next[0];
+    s = State { ...s, vals: s.vals.append(v), next: [] };
+  } else if (s.vals.len() > start) {
+    return (s, "Expected another array element");
   }
-  if (items.len() > 0) {
-    return (st, "Expected another array element");
-  }
-  return st.pop().value_after(json.JArray(items));
+  let items = tail_of(s.vals, start);
+  let below = s.pop();
+  return (State { ...below, vals: below.vals.truncate(start), next: [json.JArray(items)] }, "");
 }
 
-function (st: State) close_object(): (State, string) {
+function (own st: State) close_object(): (State, string) {
   if (st.stack.len() == 0) {
     return (st, "Unmatched '}'");
   }
   let filled = st;
-  if (st.next.len() > 0) {
-    let Key(_) = st.top() else {
-      return (st, "Objects must consist of key:value pairs");
+  if (filled.next.len() > 0) {
+    let Key(_) = filled.top() else {
+      return (filled, "Objects must consist of key:value pairs");
     };
-    let (stored, bad) = st.store();
+    let (stored, bad) = filled.store();
     if (bad.len() > 0) {
-      return (st, bad);
+      return (stored, bad);
     }
     filled = stored;
   } else {
-    let Fields(o) = st.top() else {
-      return (st, "Unmatched '}'");
+    let Fields(_, ks) = filled.top() else {
+      return (filled, "Unmatched '}'");
     };
-    if (o.len() > 0) {
-      return (st, "Expected another key-value pair");
+    if (filled.keys.len() > ks) {
+      return (filled, "Expected another key-value pair");
     }
   }
-  let Fields(o) = filled.top() else {
-    return (st, "Unmatched '}'");
+  let Fields(vs, ks) = filled.top() else {
+    return (filled, "Unmatched '}'");
   };
-  return filled.pop().value_after(json.JObject(o));
-}
-
-// `v` is the pending value, in the place of the one that it closed.
-function (st: State) value_after(v: json.JsonValue): (State, string) {
-  return (State { ...st, next: [v] }, "");
+  let o = json.object_of(keys_from(filled.keys, ks), tail_of(filled.vals, vs));
+  let below = filled.pop();
+  return (State { ...below, vals: below.vals.truncate(vs), keys: below.keys.truncate(ks), next: [json.JObject(o)] }, "");
 }
 
 // The text of a string from the bytes between its quotes.
