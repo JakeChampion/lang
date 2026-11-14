@@ -2601,7 +2601,7 @@ function __rx_template_ref(tmpl: string, i: i32, c: Captures): (i32, i32) {
     hi = __memchr(tmpl, 125, lo);
     end = hi + 1;
   } else {
-    while (hi < tmpl.len() && (__rx_is_word(tmpl[hi] as i32))) {
+    while (hi < tmpl.len() && __rx_is_word(tmpl[hi] as i32)) {
       hi += 1;
     }
     end = hi;
