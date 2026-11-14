@@ -82,6 +82,10 @@ struct Conn {
   unsent: u8[],
   tls: Option[client.Session],
   proxy_tls: Option[client.Session],
+  // With --proxy-http2, the tunnel to an https URL is stream `tunnel` of
+  // the HTTP/2 connection `proxy_h2` with the proxy.
+  proxy_h2: Option[h2.Conn],
+  tunnel: i32,
   tunneled: boolean,
   peer: options.Origin,
   pick: i32,
@@ -283,7 +287,7 @@ function nowhere(): options.Origin {
 function closed(): Conn {
   let none: u8[] = [];
   let no_streams: Stream[] = [];
-  return Conn { sock: None, phase: CLOSED, then: CLOSED, started: 0, sent: 0, first: 0, dialup: -1, opened: 0, buf: none, unsent: none, tls: None, proxy_tls: None, tunneled: false, peer: nowhere(), pick: 0, url: nowhere(), at: nowhere(), hops: 0, request: none, body: none, h2: None, q: None, open: false, streams: no_streams, parked: false };
+  return Conn { sock: None, phase: CLOSED, then: CLOSED, started: 0, sent: 0, first: 0, dialup: -1, opened: 0, buf: none, unsent: none, tls: None, proxy_tls: None, proxy_h2: None, tunnel: -1, tunneled: false, peer: nowhere(), pick: 0, url: nowhere(), at: nowhere(), hops: 0, request: none, body: none, h2: None, q: None, open: false, streams: no_streams, parked: false };
 }
 
 // The connections of a reactor when --worker-threads is not given. A reactor
@@ -979,8 +983,9 @@ function address(own r: Run, at: options.Origin, pick: i32): (Run, Result[net.So
   return (r, Err(key));
 }
 
-// The socket of a new connection to `at`: a Unix socket of --unix-socket
-// for a URL that is not https, or a TCP connection that starts.
+// The socket of a new connection to `at`: a Unix socket of --unix-socket or a
+// VSOCK socket of --vsock-addr for a URL that is not https, or a TCP
+// connection that starts.
 function open_socket(own r: Run, at: options.Origin, pick: i32): (Run, Result[Socket, string], boolean) {
   let o = r.job.o;
   if (o.unix_socket.len() > 0 && !at.tls) {
@@ -995,7 +1000,15 @@ function open_socket(own r: Run, at: options.Origin, pick: i32): (Run, Result[So
     }
   }
   if (o.vsock_cid >= 0 && !at.tls) {
-    return (r, Err("VSOCK is not supported yet"), false);
+    match (net.connect_vsock(o.vsock_cid as i32, o.vsock_port as i32)) {
+      Ok(sock) => {
+        let _ = net.set_nonblocking(sock, true);
+        return (r, Ok(sock), true);
+      },
+      Err(e) => {
+        return (r, Err(os_error(e)), false);
+      }
+    }
   }
   let (found, addr) = address(r, at, pick);
   r = found;
@@ -1038,7 +1051,7 @@ function connect(own r: Run, i: i32): Run {
   let c = r.conns[i];
   let check = earlier(r.check, now + r.job.o.connect_timeout.as_nanos());
   let none: Stream[] = [];
-  r = Run { ...r, check: check, by_fd: by_fd.with(fd, i), conns: r.conns.with(i, Conn { ...c, sock: Some(sock), phase: CONNECTING, opened: now, peer: at, pick: pick, tls: None, proxy_tls: None, tunneled: false, h2: None, streams: none }) };
+  r = Run { ...r, check: check, by_fd: by_fd.with(fd, i), conns: r.conns.with(i, Conn { ...c, sock: Some(sock), phase: CONNECTING, opened: now, peer: at, pick: pick, tls: None, proxy_tls: None, proxy_h2: None, tunnel: -1, tunneled: false, h2: None, streams: none }) };
   if (now_open) {
     r.drv.watch(fd, 1);
     return advance(r, i);
@@ -1123,16 +1136,27 @@ function opened(own r: Run, i: i32): Run {
 }
 
 // Sends the CONNECT of a tunnel to the host and port of the URL, after
-// --connect-to, with the fields of --proxy-header.
+// --connect-to, with the fields of --proxy-header. With --proxy-http2, the
+// CONNECT opens a stream of HTTP/2.
 function send_tunneled(own r: Run, i: i32): Run {
   let c = r.conns[i];
   let o = r.job.o;
   let place = o.address(c.peer, c.pick);
   let target = options.authority(options.Origin { ...c.peer, host: place.0, port: place.1, scheme: "" });
-  let request = f"CONNECT {target} HTTP/1.1\r\n" + fields.lines(o.proxy_headers) + "\r\n";
   let none: u8[] = [];
+  if (o.proxy_http == options.HTTP_2) {
+    let begun = h2.client(h2_config());
+    let extra = headers.new();
+    for f in o.proxy_headers {
+      extra = extra.append(f.name, f.value);
+    }
+    let (asked, stream) = begun.conn.connect(target, extra);
+    r = Run { ...r, conns: r.conns.with(i, Conn { ...c, buf: none, proxy_h2: Some(asked.conn), tunnel: stream }) };
+    return hop(r, i, begun.output.concat(asked.output), TUNNEL);
+  }
+  let request = f"CONNECT {target} HTTP/1.1\r\n" + fields.lines(o.proxy_headers) + "\r\n";
   r = Run { ...r, conns: r.conns.with(i, Conn { ...c, buf: none }) };
-  return wire(r, i, request.bytes(), TUNNEL);
+  return hop(r, i, request.bytes(), TUNNEL);
 }
 
 // Starts a TLS handshake with `host`: with the proxy when `proxy`, or with
@@ -1202,9 +1226,21 @@ function write_out(own r: Run, i: i32, out: u8[], then: i32): Run {
   return r;
 }
 
+// Sends `data` below the TLS session with the host: on the stream of the
+// tunnel of HTTP/2 when there is one, and then to the proxy.
+function wire(own r: Run, i: i32, data: u8[], then: i32): Run {
+  let c = r.conns[i];
+  let Some(tunnel) = c.proxy_h2 else {
+    return hop(r, i, data, then);
+  };
+  let step = tunnel.write(c.tunnel, data);
+  r = Run { ...r, conns: r.conns.with(i, Conn { ...c, proxy_h2: Some(step.conn) }) };
+  return hop(r, i, step.output, then);
+}
+
 // Sends `data` through the TLS session with an https proxy, when there is
 // one.
-function wire(own r: Run, i: i32, data: u8[], then: i32): Run {
+function hop(own r: Run, i: i32, data: u8[], then: i32): Run {
   let c = r.conns[i];
   let Some(session) = c.proxy_tls else {
     return send(r, i, data, then);
@@ -1322,10 +1358,14 @@ function proxy_shaken(own r: Run, i: i32, step: client.Step): Run {
   return advance(r, i);
 }
 
-// The bytes `data` below the TLS session with the host: the response to the
-// CONNECT of a tunnel, or the records of TLS, or the response itself.
+// The bytes `data` from the proxy, or from the host when there is no proxy:
+// the frames of a tunnel of HTTP/2, the response to the CONNECT of a tunnel,
+// or the records of TLS, or the response itself.
 function tunneled_in(own r: Run, i: i32, sock: Socket, data: u8[]): Run {
   let c = r.conns[i];
+  if (c.proxy_h2.is_some()) {
+    return tunnel_in(r, i, sock, data);
+  }
   if (c.phase == TUNNEL) {
     return tunnel_answer(r, i, data);
   }
@@ -1354,6 +1394,86 @@ function tunnel_answer(own r: Run, i: i32, data: u8[]): Run {
   let none: u8[] = [];
   r = Run { ...r, conns: r.conns.with(i, Conn { ...c, buf: none, tunneled: true, phase: CONNECTING }) };
   return advance(r, i);
+}
+
+// The frames of HTTP/2 from the proxy. A 2xx response to the CONNECT opens
+// the tunnel, and the bytes of its stream go to the TLS session with the
+// host.
+function tunnel_in(own r: Run, i: i32, sock: Socket, data: u8[]): Run {
+  let c = r.conns[i];
+  let Some(tunnel) = c.proxy_h2 else {
+    return r;
+  };
+  let step = tunnel.read(data);
+  let (inner, why, opened, ended) = tunnel_events(step.events, c.tunnel);
+  let next = step.conn;
+  let out = step.output;
+  if (inner.len() > 0) {
+    let credit = next.consumed(c.tunnel, inner.len());
+    next = credit.conn;
+    out = out.concat(credit.output);
+  }
+  r = Run { ...r, conns: r.conns.with(i, Conn { ...c, proxy_h2: Some(next) }) };
+  if (out.len() > 0) {
+    let then = phase_after(r.conns[i]);
+    r = hop(r, i, out, then);
+  }
+  if (r.conns[i].sock.is_none()) {
+    return r;
+  }
+  if (why.len() > 0) {
+    return lost(r, i, why);
+  }
+  if (opened) {
+    r = Run { ...r, conns: r.conns.with(i, Conn { ...r.conns[i], tunneled: true, phase: CONNECTING }) };
+    r = advance(r, i);
+  }
+  if (inner.len() > 0 && r.conns[i].sock.is_some()) {
+    r = decrypt(r, i, sock, inner);
+  }
+  if (ended && r.conns[i].sock.is_some()) {
+    return closed_by_peer(r, i);
+  }
+  return r;
+}
+
+// What the events of HTTP/2 from the proxy mean for the tunnel on stream
+// `id`: its bytes, the reason that it failed or "", and whether it opened
+// and whether it ended.
+function tunnel_events(events: h2.Event[], id: i32): (u8[], string, boolean, boolean) {
+  let inner: u8[] = [];
+  let why = "";
+  let opened = false;
+  let ended = false;
+  for e in events {
+    match (e) {
+      h2.Answered(s, resp) => {
+        if (s == id && resp.status >= 200 && resp.status < 300) {
+          opened = true;
+        } else if (s == id) {
+          why = f"the proxy answered CONNECT with status {resp.status}";
+        }
+      },
+      h2.StreamData(s, bytes) => {
+        if (s == id) {
+          inner = inner.concat(bytes);
+        }
+      },
+      h2.StreamEnd(s, _) => {
+        ended = ended || s == id;
+      },
+      h2.Reset(s, code) => {
+        if (s == id) {
+          why = f"the proxy reset the tunnel: {h2_reason(code)}";
+        }
+      },
+      h2.Closed(_, reason) => {
+        why = reason;
+      },
+      _ => {}
+    }
+  }
+  return (inner, why, opened, ended);
 }
 
 // The bytes of the response, below TLS.

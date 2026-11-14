@@ -32,6 +32,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // loadRun runs the tool with args and gives its standard output, its
@@ -166,6 +168,10 @@ func startProxyServer(t *testing.T) *proxyServer {
 				return
 			}
 			w.WriteHeader(http.StatusOK)
+			if r.ProtoMajor == 2 {
+				tunnelHTTP2(w, r, dst)
+				return
+			}
 			conn, buf, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				return
@@ -198,6 +204,31 @@ func startProxyServer(t *testing.T) *proxyServer {
 	p.Start()
 	t.Cleanup(p.Close)
 	return p
+}
+
+// tunnelHTTP2 carries the bytes of a CONNECT stream of HTTP/2 to dst and
+// back.
+func tunnelHTTP2(w http.ResponseWriter, r *http.Request, dst net.Conn) {
+	rc := http.NewResponseController(w)
+	_ = rc.Flush()
+	go func() {
+		_, _ = io.Copy(dst, r.Body)
+		_ = dst.(*net.TCPConn).CloseWrite()
+	}()
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := dst.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				break
+			}
+			_ = rc.Flush()
+		}
+		if err != nil {
+			break
+		}
+	}
+	_ = dst.Close()
 }
 
 // summaryOf runs the tool with args and reads its JSON summary.
@@ -303,6 +334,19 @@ func loadFeatureTests(t *testing.T, run loadRun) {
 		if ph2.responses() != 4 || p.protos[before] != "HTTP/2.0" || p.absolute[len(p.absolute)-1] != target.URL+"/h2" {
 			t.Errorf("--proxy-http2: %d responses, proxy %v %v", ph2.responses(), p.protos[before:], p.absolute)
 		}
+		for _, inner := range [][]string{nil, {"--http2"}} {
+			before, connects, served := len(p.protos), len(p.connects), len(secure.requests())
+			args := append([]string{"-n", "6", "-c", "2", "-x", p.URL, "--proxy-http2", "--proxy-header", "X-Proxy: h2", "--insecure"}, append(inner, secure.URL+"/t")...)
+			th2 := summaryOf(t, run, args...)
+			reqs := secure.requests()[served:]
+			want := "HTTP/1.1"
+			if inner != nil {
+				want = "HTTP/2.0"
+			}
+			if th2.responses() != 6 || len(p.connects) != connects+2 || p.connects[connects] != hostport || p.protos[before] != "HTTP/2.0" || p.headers[before].Get("X-Proxy") != "h2" || protosOf(reqs)[want] != 6 {
+				t.Errorf("--proxy-http2 %v for https: %d responses %v, CONNECT %v over %v, target %v", inner, th2.responses(), th2.ErrorDistribution, p.connects[connects:], p.protos[before:], protosOf(reqs))
+			}
+		}
 	})
 
 	t.Run("unix socket", func(t *testing.T) {
@@ -311,6 +355,25 @@ func loadFeatureTests(t *testing.T, run loadRun) {
 		reqs := s.requests()
 		if j.responses() != 10 || len(reqs) != 10 || reqs[0].host != "unix.test" || reqs[0].uri != "/u" {
 			t.Errorf("--unix-socket: %d responses, %d requests, first %+v", j.responses(), len(reqs), reqs)
+		}
+	})
+
+	t.Run("vsock", func(t *testing.T) {
+		// Context 2 is the host of a virtual machine, and nothing listens on
+		// the port: each connection fails with the errno of a Go reference.
+		errno, ok := e2eharness.VsockConnectErrno(2, 45391)
+		if !ok || errno == 0 {
+			t.Fatalf("the VSOCK reference gave errno %d, ok %v", errno, ok)
+		}
+		j := summaryOf(t, run, "-n", "2", "-c", "1", "--vsock-addr", "2:45391", "http://vsock.test/")
+		want := fmt.Sprintf("(os error %d)", errno)
+		if j.responses() != 0 || len(j.ErrorDistribution) != 1 {
+			t.Fatalf("--vsock-addr: %d responses, errors %v", j.responses(), j.ErrorDistribution)
+		}
+		for e, n := range j.ErrorDistribution {
+			if !strings.HasSuffix(e, want) || n != 2 {
+				t.Errorf("--vsock-addr: %q %d times, want 2 errors ending in %q", e, n, want)
+			}
 		}
 	})
 
@@ -590,26 +653,50 @@ func startH3Server(t *testing.T, bin string) (string, string) {
 	cert, keyFile := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 	_ = os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)
 	_ = os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pk}), 0o600)
-	l, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// The server takes the TCP and the UDP port of one number. Another
+	// process can hold the TCP port of a free UDP port, and then the server
+	// stops, so the start tries again with a new port.
+	for try := 0; try < 5; try++ {
+		l, err := net.ListenPacket("udp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := l.LocalAddr().(*net.UDPAddr).Port
+		_ = l.Close()
+		cmd := exec.Command(bin, fmt.Sprint(port), cert, keyFile)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		exited := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(exited) }()
+		if h3Ready(port, exited) {
+			t.Cleanup(func() { _ = cmd.Process.Kill(); <-exited })
+			return fmt.Sprintf("https://127.0.0.1:%d", port), cert
+		}
+		_ = cmd.Process.Kill()
+		<-exited
 	}
-	port := l.LocalAddr().(*net.UDPAddr).Port
-	_ = l.Close()
-	cmd := exec.Command(bin, fmt.Sprint(port), cert, keyFile)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	deadline := time.Now().Add(5 * time.Second)
+	t.Fatal("the HTTP/3 server did not start")
+	return "", ""
+}
+
+// h3Ready waits for the server on port to take a TCP connection. It gives
+// false when the server stops first, or after 30 seconds.
+func h3Ready(port int, exited chan struct{}) bool {
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
+		select {
+		case <-exited:
+			return false
+		default:
+		}
 		if c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err == nil {
 			_ = c.Close()
-			break
+			return true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return fmt.Sprintf("https://127.0.0.1:%d", port), cert
+	return false
 }
 
 // loadH3Tests runs the tool with --http-version 3 against a std/serve
@@ -1070,6 +1157,13 @@ func loadOhaTests(t *testing.T, run loadRun) {
 		}
 		if norm(ourDebug) != norm(ohaDebug) {
 			t.Errorf("--debug:\n got %s\nwant %s", ourDebug, ohaDebug)
+		}
+		vsock := []string{"-n", "2", "-c", "1", "--output-format", "json", "--vsock-addr", "2:45391", "http://vsock.test/"}
+		ohaVsock, _, ohaCode := runOha(t, oha, vsock...)
+		ourVsock, _, ourCode := run(t, vsock...)
+		osError := regexp.MustCompile(`\(os error \d+\)": \d+`)
+		if ourCode != ohaCode || osError.FindString(ourVsock) == "" || osError.FindString(ourVsock) != osError.FindString(ohaVsock) {
+			t.Errorf("--vsock-addr: exit %d and %s, oha exit %d and %s", ourCode, ourVsock, ohaCode, ohaVsock)
 		}
 	})
 }
