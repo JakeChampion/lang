@@ -476,44 +476,72 @@ pub function inspect_seek_with(size: i64, read: (i64, i32) => Result[u8[], IoErr
     return Err(source.ReadAudio(pcm.Limit));
   }
   let n = size as i32;
-  let state = audio_result(decoder(limits.file))?;
-  let index = seek_index(n, limits);
-  let chunk: u8[] = [];
-  let base = 0;
-  let at = 0;
-  while (true) {
-    if (at == chunk.len() && base + at < n) {
-      base += at;
-      chunk = match (read(base as i64, SEEK_CHUNK.min(n - base))) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
-      at = 0;
-      if (chunk.len() == 0) {
-        return Err(source.ReadAudio(pcm.Header));
-      }
-    }
-    let reads = match (state.queue) { None => true, _ => false };
-    let (next, used, event) = audio_result(index_step(state, chunk[at:]))?;
-    state = next;
-    at += used;
-    let finished = index_finished(event, used, base + at, n);
-    let waiting = reads && used == 0 && match (event) { IndexWait => true, _ => false };
-    index = audio_result(append_index(index, event, base + at))?;
-    if (finished) {
-      break;
-    }
-    if (waiting) {
-      // The page goes on past this chunk: read the rest of it with the next one.
-      let rest = array.slice(chunk, at, chunk.len());
-      base += at;
-      let more = match (read((base + rest.len()) as i64, SEEK_CHUNK.min(n - base - rest.len()))) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
-      if (more.len() == 0) {
-        return Err(source.ReadAudio(pcm.Header));
-      }
-      chunk = rest.concat(more);
-      at = 0;
-    }
+  let scan = Scan { state: audio_result(decoder(limits.file))?, index: seek_index(n, limits), chunk: Chunk { bytes: [], base: 0, at: 0 }, done: false };
+  while (!scan.done) {
+    scan = scan_step(scan, read, n)?;
   }
+  let Scan { state, index, chunk, done } = scan;
   audio_result(state.finish())?;
   return Ok(index);
+}
+
+// The state of `inspect_seek_with`: the decoder, the index so far, and the
+// bytes of the file that the decoder did not take yet.
+struct Scan { state: Decoder, index: SeekIndex, chunk: Chunk, done: boolean }
+
+// The scan after one step of the decoder on the bytes of the file.
+function scan_step(own s: Scan, read: (i64, i32) => Result[u8[], IoError], n: i32): Result[Scan, source.ReadError] {
+  let Scan { state, index, chunk, done } = s;
+  let c = refilled(chunk, read, n)?;
+  let reads = match (state.queue) { None => true, _ => false };
+  let (next, used, event) = audio_result(index_step(state, c.bytes[c.at:]))?;
+  let at = c.base + c.at + used;
+  let finished = index_finished(event, used, at, n);
+  let waiting = wants_bytes(reads, used, event);
+  let grown = audio_result(append_index(index, event, at))?;
+  let moved = Chunk { ...c, at: c.at + used };
+  if (waiting && !finished) {
+    moved = extended(moved, read, n)?;
+  }
+  return Ok(Scan { state: next, index: grown, chunk: moved, done: finished });
+}
+
+// Whether a step that read a page took no bytes and gave no event: the
+// page goes on past the bytes that the step had.
+function wants_bytes(reads: boolean, used: i32, event: IndexEvent): boolean {
+  return reads && used == 0 && match (event) { IndexWait => true, _ => false };
+}
+
+// The bytes of a file from the byte `base`, with the first `at` of them
+// taken.
+struct Chunk { bytes: u8[], base: i32, at: i32 }
+
+// The next bytes of the file when `c` has no more, and `c` itself when it
+// has some or the file ends.
+function refilled(own c: Chunk, read: (i64, i32) => Result[u8[], IoError], n: i32): Result[Chunk, source.ReadError] {
+  if (c.at < c.bytes.len() || c.base + c.at >= n) {
+    return Ok(c);
+  }
+  let base = c.base + c.at;
+  return Ok(Chunk { bytes: read_more(read, base, n)?, base: base, at: 0 });
+}
+
+// The bytes that `c` did not take, and the next bytes of the file after
+// them: a page goes on past the bytes of `c`.
+function extended(own c: Chunk, read: (i64, i32) => Result[u8[], IoError], n: i32): Result[Chunk, source.ReadError] {
+  let rest = array.slice(c.bytes, c.at, c.bytes.len());
+  let base = c.base + c.at;
+  let more = read_more(read, base + rest.len(), n)?;
+  return Ok(Chunk { bytes: rest.concat(more), base: base, at: 0 });
+}
+
+// At most SEEK_CHUNK bytes of the file from `at`, and at least one.
+function read_more(read: (i64, i32) => Result[u8[], IoError], at: i32, n: i32): Result[u8[], source.ReadError] {
+  let bytes = match (read(at as i64, SEEK_CHUNK.min(n - at))) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
+  if (bytes.len() == 0) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  return Ok(bytes);
 }
 
 // The bytes that `inspect_seek_with` asks for at a time.

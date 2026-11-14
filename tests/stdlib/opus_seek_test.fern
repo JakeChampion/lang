@@ -178,8 +178,7 @@ function played(encoded: u8[], position: i64, view: boolean): Result[f32[], stri
   let index = match (made) { Ok(v) => v, Err(e) => { return Err("index: " + e.message()); } };
   let cursor = match (opusfile.seek_reader(index).seek(0, position)) { Ok(v) => v, Err(e) => { return Err("seek: " + e.message()); } };
   let out: f32[] = [];
-  let steps = 0;
-  while (steps < 1000000) {
+  for steps in 0..1000000 {
     let (from, count) = cursor.want();
     let part: u8[] = [];
     for i in from as i32..from as i32 + count {
@@ -196,7 +195,6 @@ function played(encoded: u8[], position: i64, view: boolean): Result[f32[], stri
       },
       opusfile.SeekPending => {}
     }
-    steps += 1;
   }
   return Err("no end");
 }

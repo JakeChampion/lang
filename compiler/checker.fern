@@ -3467,7 +3467,8 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
   if (parser.builtin_enum_of(bare).len() > 0) {
     n = 1;
   }
-  let own = 0;
+  let own = false;
+  let owns_two = false;
   let last: i32 = -1;
   let e = s.unions.bhead[util.hash_bucket(bare, 4093)];
   while (e >= 0) {
@@ -3476,7 +3477,8 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
     if (s.unions.bnames[e] == bare && u.is_enum && o != last && enum_visible_from(u, s.fn_module)) {
       n += 1;
       if (u.module == s.fn_module) {
-        own += 1;
+        owns_two = own;
+        own = true;
       }
       last = o;
     }
@@ -3484,8 +3486,8 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
   }
   // The flattener gives a variant of an enum of this module the prefix of
   // the module, so only the enums of this module can make it ambiguous.
-  if (bare != name && own > 0) {
-    return own >= 2;
+  if (bare != name && own) {
+    return owns_two;
   }
   return n >= 2;
 }
