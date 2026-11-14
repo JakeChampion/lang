@@ -63,8 +63,7 @@ function all_true(n: i32): boolean[] {
 }
 
 function builds_out(kind: i32): boolean {
-  return constructs_container(kind) || kind == ssasem.cell_set()
-    || kind == ssasem.map_insert() || kind == ssasem.hole_fill();
+  return constructs_container(kind) || kind == ssasem.map_insert() || kind == ssasem.hole_fill();
 }
 
 function constructs_container(kind: i32): boolean {
@@ -73,8 +72,10 @@ function constructs_container(kind: i32): boolean {
     || kind == ssasem.cell_new() || kind == ssasem.dyn_box();
 }
 
+// The value after the receiver leaves the frame. A cell write keeps the
+// cell where it is.
 function stores_after_receiver(kind: i32): boolean {
-  return kind == ssasem.append() || kind == ssasem.with();
+  return kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.cell_set();
 }
 
 function carry(own out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {

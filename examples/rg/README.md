@@ -31,16 +31,30 @@ searches the current directory, and it writes each name without the leading
 | `-x` | `--line-regexp` | Match only a whole line. |
 | `-F` | `--fixed-strings` | Each pattern is a literal. |
 | `-m N` | `--max-count N` | Stop the search of a file after N selected lines. |
+| `-f F` | `--file F` | The patterns of the lines of F, or of the standard input for `-`. |
 | `-a` | `--text` | Search binary files as text. |
 | | `--binary` | Search a binary file that the walk finds as a file on the command line. |
 | | `--mmap`, `--no-mmap` | Map the files into memory, or read them in buffers. This changes the rules for binary files. |
 | `-j N` | `--threads N` | The count of workers. |
+| `-E E` | `--encoding E`, `--no-encoding` | Decode the files from `utf-8`, `latin1` (windows-1252), `utf-16le` or `utf-16be`, or with `none` do not decode them. Each label of the Encoding Standard for these encodings is a name. By default, a file with a byte order mark of UTF-8 or UTF-16 is decoded. |
+| | `--crlf` | A line ends with CRLF: `$` matches before `\r\n`, and the output writes `\r\n`. |
+| | `--null-data` | A line ends with NUL, and the search is of text. |
+| | `--stop-on-nonmatch` | Stop the search of a file at a line that is not selected after a selected line. |
+| | `--no-unicode` | The pattern has the semantics of bytes and ASCII, as `(?-u)`. |
+| `-U` | `--multiline`, `--multiline-dotall` | A match can hold line terminators, and the output writes each line of a match. `^` and `$` match at each line. With `--multiline-dotall`, `.` also matches a line terminator. |
 
 ### The output
 
 | Option | Long form | Effect |
 | --- | --- | --- |
 | `-n`, `-N` | `--line-number`, `--no-line-number` | Line numbers on or off. |
+| | `--column`, `--no-column` | The column of the first match, from 1. With `-o`, the column of each match. |
+| `-b` | `--byte-offset` | The byte offset of each line, or with `-o` of each match. |
+| | `--vimgrep` | Each match on a line of its own, with the file name, the line number, the column and the whole line. |
+| `-r R` | `--replace R` | Write each match as R, with `$1`, `$name`, `${name}` and `$$`. |
+| | `--trim` | Write no white space at the start of a line. |
+| `-M N` | `--max-columns N`, `--max-columns-preview` | A line longer than N bytes is a note, or the first N characters and a note. |
+| | `--passthru` | Write each line: the selected lines and the others as context. |
 | `-c` | `--count` | The count of selected lines, or with `-o` of matches. |
 | | `--count-matches` | The count of matches. |
 | | `--include-zero` | With `-c`, also the files with a count of 0. |
@@ -54,7 +68,10 @@ searches the current directory, and it writes each name without the leading
 | | `--heading`, `--no-heading` | The file name on a line of its own, before the lines of the file. |
 | `-0` | `--null` | A NUL byte after each file name. |
 | | `--path-separator S` | The byte that takes the place of `/` in a file name. |
-| | `--color never\|auto\|always\|ansi` | Color, with the default colors of ripgrep. |
+| | `--color never\|auto\|always\|ansi` | Color, with the default colors of ripgrep. `auto` writes color on a terminal with a TERM that is not `dumb`, and with no NO_COLOR. |
+| `-p` | `--pretty` | Color, a heading and line numbers. |
+| | `--stats` | The counts and the times of the search, after the output. |
+| | `--json` | Each line as a JSON message of ripgrep, with a message at the start and at the end of each file, and a summary. |
 
 ### The walk
 
@@ -80,9 +97,9 @@ searches the current directory, and it writes each name without the leading
 Options and paths can come in any order. `--` ends the options. Short options
 can share one dash, and a value can follow its letter, as in `-nA1`.
 
-The output is that of ripgrep when its standard output is not a terminal:
-no heading, and no line numbers without `-n`. These rules are the same as in
-ripgrep:
+When the standard output is a terminal, the output has a heading and line
+numbers, as in ripgrep. Else it has no heading, and no line numbers without
+`-n`. These rules are the same as in ripgrep:
 
 - A file name comes before each line when the search is of more than one
   file, or with `-H`. The standard input is `<stdin>`.
@@ -93,7 +110,7 @@ ripgrep:
   `--heading`, an empty line comes between files.
 
 - A last line without a line terminator gets one. A CRLF line keeps its CR.
-  A UTF-8 byte order mark at the start of a file is not searched.
+  A byte order mark at the start of a file is not searched.
 
 - With `-o`, an empty match is an empty line. An empty match that starts where
   the last match ends does not count.
@@ -176,10 +193,12 @@ order of the walk.
 
 ## Differences from ripgrep
 
-- **Bytes and ASCII.** `std/regex` reads bytes. `.` matches one byte, and
-  `\w`, `\d`, `\s`, `\b`, `-w` and `-i` know only ASCII. ripgrep uses
-  Unicode for each of these. `\p{...}`, inline flags other than `(?i)` at the
-  start, and lazy repetition are not in `std/regex`.
+- **Unicode tables.** `std/regex` uses the tables of Unicode 17.0.0 from
+  Go's `unicode` package, and ripgrep 14.1.0 uses Unicode 15.1. A script
+  takes its long name, as `\p{Greek}`, and not its short name, as
+  `\p{Grek}`. The properties of emoji are not in `std/regex`.
+  `\p{sc!=Greek}` is the complement of `\p{Greek}`, but ripgrep 14.1.0 reads
+  it as `\p{Greek}`.
 
 - **Pattern errors.** A pattern that does not compile gives exit status 2, as
   in ripgrep, but the message is that of `std/regex`.
@@ -190,13 +209,16 @@ order of the walk.
   context lines. Thus, in a file with a NUL byte after the first 64 KiB,
   the buffer that holds it can start at a different offset.
 
-- **Encodings.** ripgrep reads UTF-16 when a file starts with its byte order
-  mark. The port does not.
+- **Encodings.** The port decodes UTF-8, windows-1252 and UTF-16. The
+  other encodings of `-E`, such as Shift_JIS and EUC-JP, give the error of
+  an unknown encoding.
 
-- **Not in this slice.** `--json`, `-r`, `-U`, `-f`, `--column`, `-b`,
-  `--vimgrep`, `--stats`, `--crlf`, `--null-data`, `--passthru`, `-M`,
-  `--trim`, `--stop-on-nonmatch`, `-E`, `--pre` and `--colors`. The heading and the
-  line numbers on a terminal are also not in this slice.
+- **Times.** `--stats` and `--json` write times, and the times of two runs
+  are not the same.
+
+- **Not in this slice.** `--pre` and `--pre-glob`, `--colors`,
+  `--hyperlink-format`, `-z`, `-P`, `--dfa-size-limit` and
+  `--regex-size-limit`.
 
 ## Tests
 
@@ -204,17 +226,24 @@ order of the walk.
   separators, the counts, the color and the binary files. It also tests the
   rules of an ignore file, the globs, the types and the precedence of the
   ignore files. And it tests `-m`, `--heading`, `--null` and the buffers
-  for binary files. `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and
+  for binary files. The other tests are of the columns and the offsets,
+  `-r`, `--trim`, `-M`, `--passthru`, `--stop-on-nonmatch`, `-U`, the line
+  terminators, the encodings and `--json`. `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and
   wasm32-wasi with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 235 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 369 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
-  include CRLF lines, a line of 209,008 bytes, UTF-8 text and four binary
-  files. The cases include each option, a missing file, the standard input
-  and the errors. 90 cases walk two trees with each kind of ignore file, a
-  link, hidden files and a binary file of 70 KiB.
+  include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
+  windows-1252 and UTF-16 text, pattern files and four binary files. The
+  cases include each option, a missing file, the standard input and the
+  errors. 90 cases walk two trees with each kind of ignore file, a link,
+  hidden files and a binary file of 70 KiB.
+
+  The test makes the times of `--stats` and `--json` the same before it
+  compares them. 8 cases run with the standard output on a terminal, with
+  and without a TERM.
 
   The test fails when `/usr/bin/rg` is not ripgrep 14.1.0. A case with more
   than one file gives `-j1` or `--sort`. With more threads, ripgrep writes
@@ -225,10 +254,11 @@ order of the walk.
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
   `tests/*.rs`) with the port and with `/usr/bin/rg`. Each case makes its
   files in a new directory, and each run gets `--path-separator / -j1`.
-  `testdata/ripgrep-pass.txt` names the 219 of 306 cases that give the
+  `testdata/ripgrep-pass.txt` names the 292 of 306 cases that give the
   output of ripgrep. The test fails when a named case fails, and when a case
   that it does not name passes. Most of the other cases use options that
-  are not in this slice, or Unicode in a pattern. The licence is in
+  are not in this slice, and four compare the times of `--stats`. The
+  licence is in
   `licenses/ripgrep/`.
 
 ## Performance
@@ -278,10 +308,9 @@ columns ran one after the other in one session.
 | `\w+` | lines | 409 | 394 | 765 | 464 | 123 | 319 |
 | | find | 7,336 | 7,140 | 13,727 | 7,841 | 1,497 | 3,249 |
 
-The counts are the same as those of ripgrep, but for `\w+` in `find` mode:
-47,078,742 against 45,612,443, because `std/regex` knows only ASCII word
-bytes. ripgrep has no `\p{Greek}` peer to compare, because `std/regex` has
-no Unicode classes.
+The counts of this table are the same as those of ripgrep, but for `\w+`
+in `find` mode: 47,078,742 against 45,612,443, because `std/regex` knew only
+ASCII word bytes. "Unicode" below gives the counts of ripgrep.
 
 Before this slice, `std/regex` ran its matcher at each byte of the text. The
 matcher walked the syntax tree and made a new array for each node at each
@@ -309,6 +338,71 @@ session, on a host that other jobs also used.
 
 Each output is the same as that of ripgrep, but `-co '\w+'`, for the
 reason above.
+
+### Unicode
+
+`std/regex` now matches characters, and `\w`, `\d`, `\s`, `\b` and `-i` are
+Unicode. Its DFAs are lazy: a search adds a state when it first needs it.
+`compile` fills each state of a small table at once, so that a search of a
+short text does not pay for the lazy DFA.
+
+The host had other jobs, so the tables below count instructions with
+callgrind, which gives the same count on each run. "Main" is the port
+before Unicode, with the same compiler.
+
+Each count is in millions, for the 10 MB at the start of `big.txt`. It is
+the count of the run less the count of a run on an empty file, so it
+leaves out the compile.
+
+| Pattern | Mode | Main | After |
+| --- | --- | ---: | ---: |
+| `Sherlock Holmes` | lines | 37.3 | 37.3 |
+| | find | 4.4 | 4.4 |
+| `(?i)sherlock holmes` | lines | 99.5 | 100.6 |
+| | find | 76.6 | 74.2 |
+| five names | lines | 74.2 | 74.2 |
+| | find | 47.0 | 46.9 |
+| `[a-zA-Z0-9_]+` | lines | 61.4 | 60.5 |
+| | find | 713.3 | 708.9 |
+| `\w+` | lines | 61.4 | 79.4 |
+| | find | 713.3 | 834.4 |
+
+| Command | Main | After |
+| --- | ---: | ---: |
+| `rg 'Sherlock Holmes'` | 9.9 | 10.1 |
+| `rg -c 'Sherlock Holmes'` | 8.9 | 9.0 |
+| `rg -i 'sherlock holmes'` | 86.9 | 84.3 |
+| `rg -ic 'sherlock holmes'` | 84.1 | 80.9 |
+| `rg 'Sherlock Holmes\|...'` (five names) | 60.0 | 61.3 |
+| `rg -c 'Sherlock Holmes\|...'` | 55.3 | 55.6 |
+| `rg -cw 'Holmes'` | 9.3 | 9.4 |
+| `rg -c '\w+'` | 120.5 | 144.0 |
+| `rg -co '[a-zA-Z0-9_]+'` | 1,423.7 | 1,470.2 |
+| `rg -co '\w+'` | 1,423.7 | 1,770.8 |
+| `rg -c '\p{Greek}+'` | error | 48.3 |
+
+Each output of "after" is the same as that of ripgrep. On main, `\w` was
+ASCII, `-co '\w+'` split words at each non-ASCII byte, and `\p{Greek}` was
+an error.
+
+The `\w+` rows stay above main. The class of Unicode has a program of 324
+instructions, and its tables have 75,604 and 98,536 words. They cost 33 ms
+to fill, and seconds in the interpreter, so `\w+` keeps the lazy DFA. Each
+call of the lazy DFA runs about 50 more instructions than a call with a
+full table. The ASCII class of main, `[a-zA-Z0-9_]+`, is not slower.
+
+These rows also stay above main:
+
+- The rows that write lines run about 2% more. The printer of the new
+  options has more fields and more arguments for each line.
+- `-co '[a-zA-Z0-9_]+'` runs 3% more. Of that, 22 million instructions
+  are a copy of each line that the count of its matches makes.
+- In the count loop, the code of the compiler adds 15 moves for each line
+  after the call of `jump` (#15814).
+
+The compile of `std/regex` costs more than on main for some patterns. A
+full table for the five names costs 1.1 million instructions, about
+0.4 ms.
 
 ### Why the port is slower on literals
 

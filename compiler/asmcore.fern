@@ -3145,6 +3145,7 @@ function builtin_i32_names(): string[] {
     "proc_waitpid",
     "proc_waitpid_nohang",
     "proc_waitpid_status",
+    "proc_wait_any",
     "proc_exec",
     "proc_exec_as",
     "f64_bits", "f32_bits",
