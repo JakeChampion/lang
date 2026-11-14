@@ -928,8 +928,9 @@ function file_name_concat(dir: string, base: string): string {
   return head + rest;
 }
 
+// WASI gives no inode numbers, and a zero is not the identity of a file.
 function same_file(a: FileStat, b: FileStat): boolean {
-  return a.dev == b.dev && a.ino == b.ino;
+  return a.ino != 0i64 && a.dev == b.dev && a.ino == b.ino;
 }
 
 function same_attributes(a: FileStat, b: FileStat): boolean {
