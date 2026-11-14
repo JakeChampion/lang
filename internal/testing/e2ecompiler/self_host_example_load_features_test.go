@@ -446,6 +446,15 @@ func loadFeatureTests(t *testing.T, run loadRun) {
 		if _, stderr, code := run(t, "-n", "1", "--cert", keyFile, "--key", keyFile, srv.URL+"/"); code != 1 || !strings.Contains(stderr, "--cert") {
 			t.Errorf("a key as --cert: exit %d, %q", code, stderr)
 		}
+		subjects.Store("")
+		srv12 := httptest.NewUnstartedServer(srv.Config.Handler)
+		srv12.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, MaxVersion: tls.VersionTLS12}
+		srv12.StartTLS()
+		defer srv12.Close()
+		j12 := summaryOf(t, run, "-n", "4", "-c", "2", "--insecure", "--cert", certFile, "--key", keyFile, srv12.URL+"/")
+		if j12.responses() != 4 || subjects.Load() != "load client" {
+			t.Errorf("--cert and --key over TLS 1.2: %d responses, errors %v, subject %v", j12.responses(), j12.ErrorDistribution, subjects.Load())
+		}
 	})
 
 	t.Run("csv", func(t *testing.T) {

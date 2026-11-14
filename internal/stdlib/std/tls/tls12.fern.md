@@ -385,4 +385,48 @@ pub function handshake_message(kind: i32, body: [u8]): u8[] {
 pub function client_key_exchange(public: [u8]): u8[] {
   return handshake_message(message.CLIENT_KEY_EXCHANGE, [public.len() as u8].concat(__bytes_owned(public)));
 }
+
+// The signature schemes of a CertificateRequest: its certificate types, its
+// supported_signature_algorithms and its certificate authorities, as RFC
+// 5246 section 7.4.4 gives them.
+pub function request_schemes(raw: [u8]): Result[i32[], message.MsgError] {
+  let b = __body(raw, "certificate_request")?;
+  let types = if (b.len() > 0) { b[0] as i32 } else { 0 };
+  let at = 1 + types;
+  if (types == 0 || at + 2 > b.len()) {
+    return Err(message.DecodeError("certificate_types"));
+  }
+  let n = __u16(b, at);
+  if (n < 2 || n % 2 != 0 || at + 4 + n > b.len()) {
+    return Err(message.DecodeError("supported_signature_algorithms"));
+  }
+  if (at + 4 + n + __u16(b, at + 2 + n) != b.len()) {
+    return Err(message.DecodeError("certificate_authorities"));
+  }
+  let out: i32[] = [];
+  for k in 0..n / 2 {
+    out = out.append(__u16(b, at + 2 + 2 * k));
+  }
+  return Ok(out);
+}
+
+// A Certificate message with the DER certificates of `chain`, leaf first.
+pub function certificate(chain: u8[][]): u8[] {
+  let list: u8[] = [];
+  for d in chain {
+    list = list.concat(__u24_bytes(d.len())).concat(d);
+  }
+  return handshake_message(message.CERTIFICATE, __u24_bytes(list.len()).concat(list));
+}
+
+// A CertificateVerify message: the signature scheme and the signature over
+// the handshake messages before it.
+pub function certificate_verify(scheme: i32, signature: [u8]): u8[] {
+  let n = signature.len();
+  return handshake_message(message.CERTIFICATE_VERIFY, [(scheme >> 8) as u8, (scheme & 255) as u8, (n >> 8) as u8, (n & 255) as u8].concat(__bytes_owned(signature)));
+}
+
+function __u24_bytes(n: i32): u8[] {
+  return [(n >> 16) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
+}
 ```

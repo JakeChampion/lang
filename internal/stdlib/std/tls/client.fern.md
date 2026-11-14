@@ -6,7 +6,7 @@ This module provides TLS client sessions and connections.
 
 Client configuration supplies a server name, trust roots, ALPN protocols, and optional resumption or client identity. A session advances the TLS handshake and application records.
 
-The client offers TLS 1.3 and TLS 1.2. A server that does not speak TLS 1.3 can pick TLS 1.2 with an ECDHE suite (`std/tls/tls12`). The client checks the signature of its key exchange with `verify.signed12`. A TLS 1.2 session takes no tickets and sends no client certificate. It cannot be saved, offloaded to the kernel or rekeyed.
+The client offers TLS 1.3 and TLS 1.2. A server that does not speak TLS 1.3 can pick TLS 1.2 with an ECDHE suite (`std/tls/tls12`). The client checks the signature of its key exchange with `verify.signed12`. A TLS 1.2 session takes no tickets. It sends the client certificate of the configuration when the server asks for one. It cannot be saved, offloaded to the kernel or rekeyed.
 
 ## Contracts
 
