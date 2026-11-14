@@ -678,7 +678,7 @@ function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], 
   let kept = rest(ready, wrote);
   // The bars and the time are those of the sound that plays now, which the
   // stream holds a part of a second after the decoder gave it.
-  let bars = if (m.open) { tune.fallen(m.bars, spectrum.levels(dev.recent(sound, spectrum.SIZE * sound.channels), sound.channels, sound.rate, tune.BARS)) } else { m.bars };
+  let bars = if (m.settings && m.tuning) { tune.fallen(m.bars, spectrum.levels(dev.recent(sound, spectrum.SIZE * sound.channels), sound.channels, sound.rate, tune.BARS)) } else { m.bars };
   let each = (sound.rate * sound.channels).max(1) as i64;
   let waiting = (kept.len() as i64 + dev.queued(sound) as i64 * (sound.channels as i64)) * (m.speed as i64) * 10i64 / each;
   let at = (d.deck.position_ms() - waiting).max(0i64);
