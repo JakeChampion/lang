@@ -8761,6 +8761,7 @@ pub function builtin_function_names(): string[] {
     "exit", "args", "set_args", "env", "config_get", "subprocess",
     "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "proc_exec",
     "proc_waitpid_status",
+    "proc_wait_any",
     "proc_exec_as",
     "pipe",
     "chdir", "signal_mask", "signal_disposition",

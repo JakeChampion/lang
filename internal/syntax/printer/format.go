@@ -1121,7 +1121,8 @@ func isSingleLineStmt(s ast.Stmt) bool {
 
 // formatBranch writes an if branch whose brace opens on line open.
 func (f *formatter) formatBranch(e ast.Expr, open int) {
-	if be, ok := e.(*ast.BlockExpr); ok {
+	// An unsafe block is the value of the branch, not the braces of it.
+	if be, ok := e.(*ast.BlockExpr); ok && !be.Unsafe {
 		f.formatValueBody(be.P.Line, be.Stmts, be.Tail)
 		return
 	}
@@ -1138,7 +1139,7 @@ func (f *formatter) formatElseBranch(e ast.Expr, chained bool, open int) {
 }
 
 func (f *formatter) formatArmBody(e ast.Expr) {
-	if be, ok := e.(*ast.BlockExpr); ok {
+	if be, ok := e.(*ast.BlockExpr); ok && !be.Unsafe {
 		f.formatValueBody(be.P.Line, be.Stmts, be.Tail)
 		return
 	}
@@ -1419,7 +1420,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		} else {
 			f.b.WriteString("defer ")
 		}
-		if be, ok := x.Expr.(*ast.BlockExpr); ok {
+		if be, ok := x.Expr.(*ast.BlockExpr); ok && !be.Unsafe {
 			f.formatBody(be.Stmts, be.Tail, f.spansLines(be.Stmts))
 		} else {
 			f.formatExpr(x.Expr, precLowest)

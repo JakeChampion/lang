@@ -6,6 +6,11 @@
 # runtime text to each program and two or three instructions to each bump block. The other rows
 # are values of main: the PR does not change what the compiler emits for a function. 89 rows
 # move to their measured values. Keep all tolerances.
+# 2026-11-13: PR #15783, a local scripts/profile-costs run on a merge with main 38768eb2 (main run
+# 43503448872 reports the same rows on 5cf07b37). 66 rows move: 54 up and 12 down. 30 of them grow 48
+# or 96 bytes: #15771 aligns the text of each image to 64 bytes. The map_string rows grow 1.1% to 1.4%
+# and the deflate_decode rows fall 1.1% to 1.9% with the string and view changes of #15769. Each row
+# moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15684 jobs 131832783238 and 131832783245 tested merge df16f1f9 with main 5e4d66b7.
 # These rows use the reported measurements after the main compiler changes.
 # The media reference change does not alter the compiler or workloads. Tolerances stay unchanged.

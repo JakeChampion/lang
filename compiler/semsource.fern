@@ -7261,9 +7261,9 @@ function stored_params(c: ast.ExprCall, known: Handers): i64 {
 
 // The parts of a body that the analysis reads: the names of the parameters,
 // each binding, each returned value and each call.
-struct Body { key: string, names: string[], binds: Bound[], outs: ast.Expr[], calls: ast.ExprCall[] }
+struct FlowBody { key: string, names: string[], binds: Bound[], outs: ast.Expr[], calls: ast.ExprCall[] }
 
-function body_of(fd: parser.FuncDecl): Body {
+function body_of(fd: parser.FuncDecl): FlowBody {
   let binds: Bound[] = [];
   let outs: ast.Expr[] = [];
   let calls: ast.ExprCall[] = [];
@@ -7272,11 +7272,11 @@ function body_of(fd: parser.FuncDecl): Body {
     outs = astwalk.fold_stmt_spine(st, outs, return_exprs);
     calls = astwalk.fold_stmt(st, calls, call_exprs);
   }
-  return Body { key: parser.decl_key(fd), names: decl_param_names(fd), binds: binds, outs: outs, calls: calls };
+  return FlowBody { key: parser.decl_key(fd), names: decl_param_names(fd), binds: binds, outs: outs, calls: calls };
 }
 
 // The parameters that a call of the body stores.
-function stores_params(b: Body, c: Carried, known: Handers): i64 {
+function stores_params(b: FlowBody, c: Carried, known: Handers): i64 {
   let out: i64 = 0;
   for call in b.calls {
     out = out | reach_positions(call, stored_params(call, known), c, known);
@@ -7286,7 +7286,7 @@ function stores_params(b: Body, c: Carried, known: Handers): i64 {
 
 // The parameters that the result of the body can hold, and the ones that
 // the body stores.
-function hands_back(body: Body, known: Handers): Kept {
+function hands_back(body: FlowBody, known: Handers): Kept {
   let sets: i64[] = [];
   for i in 0..body.names.len() {
     sets = sets.append(param_bit(i));
@@ -7311,7 +7311,7 @@ function hands_back(body: Body, known: Handers): Kept {
 }
 
 function handers(mod: parser.Module): Handers {
-  let bodies: Body[] = [];
+  let bodies: FlowBody[] = [];
   for fd in mod.funcs {
     bodies = bodies.append(body_of(fd));
   }
@@ -7490,6 +7490,7 @@ function os_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "proc_waitpid", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "proc_waitpid_nohang", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "proc_waitpid_status", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "proc_wait_any", params: [], modes: [], result: typeinfo.t_i64() },
     ssasem.Contract { name: "temp_dir", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.t_string()) },
     ssasem.Contract { name: "read_link", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.t_string()) },
     ssasem.Contract { name: "read_link_bytes", params: [typeinfo.t_string()], modes: [b], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },

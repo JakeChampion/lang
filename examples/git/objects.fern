@@ -176,7 +176,7 @@ pub function quoted(name: u8[]): u8[] {
   return out.append(b'"');
 }
 
-function entry_kind(mode: string): string {
+pub function entry_kind(mode: string): string {
   if (mode == "40000") {
     return "tree";
   }
@@ -186,10 +186,13 @@ function entry_kind(mode: string): string {
   return "blob";
 }
 
-// The lines of `cat-file -p` for the body of a tree: the mode with six
-// digits, the kind, the name of the object, a tab, and the path.
-pub function tree_text(body: u8[]): Result[u8[], string] {
-  let out: u8[] = [];
+// One entry of a tree: the mode as the tree has it, the name, and the name
+// of the object.
+pub struct TreeEntry { mode: string, name: u8[], hash: string }
+
+// The entries of the body of a tree.
+pub function tree_entries(body: u8[]): Result[TreeEntry[], string] {
+  let out: TreeEntry[] = [];
   let i = 0;
   while (i < body.len()) {
     let space = i;
@@ -204,10 +207,48 @@ pub function tree_text(body: u8[]): Result[u8[], string] {
       return Err("too-short tree object");
     }
     let mode = unsafe { string_from_bytes_unchecked(array.slice(body, i, space)) };
-    let line = "000000" + mode;
-    line = part(line, line.len() - 6, line.len()) + " " + entry_kind(mode) + " " + hex.encode(array.slice(body, end + 1, end + 21)) + "\t";
-    out = out.concat(line.bytes()).concat(quoted(array.slice(body, space + 1, end))).append(b'\n');
+    out = out.append(TreeEntry { mode: mode, name: array.slice(body, space + 1, end), hash: hex.encode(array.slice(body, end + 1, end + 21)) });
     i = end + 21;
   }
   return Ok(out);
+}
+
+// The mode with six digits, the kind and the name of the object, as each
+// line of a tree starts.
+pub function entry_head(e: TreeEntry): string {
+  let padded = "000000" + e.mode;
+  return part(padded, padded.len() - 6, padded.len()) + " " + entry_kind(e.mode) + " " + e.hash;
+}
+
+// The lines of `cat-file -p` for the body of a tree: the mode with six
+// digits, the kind, the name of the object, a tab, and the path.
+pub function tree_text(body: u8[]): Result[u8[], string] {
+  let out: u8[] = [];
+  for e in tree_entries(body)? {
+    out = out.concat((entry_head(e) + "\t").bytes()).concat(quoted(e.name)).append(b'\n');
+  }
+  return Ok(out);
+}
+
+// ---- Commits and tags ----
+
+// The values of the header lines `key` of a commit or a tag: the lines
+// before the first empty line.
+pub function header_values(body: u8[], key: string): string[] {
+  let found: string[] = [];
+  let i = 0;
+  while (i < body.len() && body[i] != b'\n') {
+    let end = i;
+    while (end < body.len() && body[end] != b'\n') {
+      end += 1;
+    }
+    if (end - i > key.len() && body[i + key.len()] == b' ') {
+      let line = unsafe { string_from_bytes_unchecked(array.slice(body, i, end)) };
+      if (line.starts_with(key)) {
+        found = found.append(part(line, key.len() + 1, line.len()));
+      }
+    }
+    i = end + 1;
+  }
+  return found;
 }

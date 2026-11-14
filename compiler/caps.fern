@@ -107,6 +107,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "proc_waitpid", capability: "subprocess" },
     BuiltinCap { builtin: "proc_waitpid_nohang", capability: "subprocess" },
     BuiltinCap { builtin: "proc_waitpid_status", capability: "subprocess" },
+    BuiltinCap { builtin: "proc_wait_any", capability: "subprocess" },
     BuiltinCap { builtin: "__worker_region", capability: "subprocess" },
     BuiltinCap { builtin: "__worker_exit", capability: "subprocess" },
     BuiltinCap { builtin: "__worker_reap", capability: "subprocess" },
