@@ -15,21 +15,20 @@
 # `git push --no-verify` skips it.
 set -uo pipefail
 
-# A push that only deletes refs has nothing to lint. A new branch is
-# compared with origin/main.
+# A push that only deletes refs has nothing to lint. A branch is compared
+# with its merge base on origin/main, as CI compares it: after a merge of
+# main, the changes of main are not the changes of the branch.
 zero=0000000000000000000000000000000000000000
 deleting_only=yes
 ranges=()
-while read -r _local_ref local_sha _remote_ref remote_sha; do
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
   case "$local_sha" in
     "$zero") continue ;;
   esac
   deleting_only=no
   [ "$local_sha" = "$(git rev-parse HEAD)" ] || continue
-  if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
-    remote_sha=$(git merge-base "$local_sha" origin/main 2>/dev/null) || continue
-  fi
-  ranges+=("$remote_sha $local_sha")
+  base=$(git merge-base "$local_sha" origin/main 2>/dev/null) || continue
+  ranges+=("$base $local_sha")
 done
 [ "$deleting_only" = no ] || exit 0
 
