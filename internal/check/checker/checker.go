@@ -74,8 +74,11 @@ type Info struct {
 	CallBorrowsBeside func(*ast.Call, string) bool
 	// CallOwnFlags reports which arguments of a call go to own parameters.
 	CallOwnFlags func(*ast.Call) []bool
-	// NoReturn names the functions whose body never returns.
-	NoReturn        map[string]bool
+	// NoReturn names the calls that never return: the builtin exit, and each
+	// function whose body never returns.
+	NoReturn map[string]bool
+	// LocalCallees holds each direct call whose callee is a local.
+	LocalCallees    map[*ast.Call]bool
 	Structs         map[string]*ast.StructDecl
 	Enums           map[string]*ast.EnumDecl
 	Resources       map[string]*ast.ResourceDecl
@@ -6251,7 +6254,7 @@ func (c *checker) stmtLeaves(s ast.Stmt, noReturn map[string]bool) bool {
 	case *ast.Return, *ast.Break, *ast.Continue:
 		return true
 	case *ast.ExprStmt:
-		return c.callsExit(x.Expr) || noReturn != nil && callNeverReturns(x.Expr, noReturn, true)
+		return c.info.callNeverReturns(x.Expr, noReturn)
 	case *ast.Loop:
 		return !loopCanBreak(x.Body, x.Label)
 	case *ast.While:
@@ -6280,12 +6283,6 @@ func (c *checker) stmtLeaves(s ast.Stmt, noReturn map[string]bool) bool {
 	return false
 }
 
-// callsExit reports a call that resolved to the builtin exit, which never returns.
-func (c *checker) callsExit(e ast.Expr) bool {
-	call, ok := e.(*ast.Call)
-	return ok && c.info.IntrinsicCalls[call].Kind == IntrinsicExit
-}
-
 func (c *checker) funcBodyExits(b *ast.Block) bool {
 	if b == nil || len(b.Stmts) == 0 {
 		return false
@@ -6298,7 +6295,7 @@ func (c *checker) stmtExits(s ast.Stmt) bool {
 	case *ast.Return:
 		return true
 	case *ast.ExprStmt:
-		return c.callsExit(x.Expr)
+		return c.info.callNeverReturns(x.Expr, nil)
 	case *ast.Block:
 		return c.funcBodyExits(x)
 	case *ast.If:
@@ -12002,7 +11999,7 @@ func (c *checker) ownedExprDiverges(e ast.Expr) bool {
 		}
 		return true
 	}
-	return c.callsExit(e)
+	return c.info.callNeverReturns(e, nil)
 }
 
 func (c *checker) checkBlock(b *ast.Block, parent *scope) {
@@ -15962,6 +15959,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if id, direct := n.Callee.(*ast.Ident); direct {
 			if _, local := c.calleeBinding(id, s); !local {
 				intrinsic = c.intrinsicSigs[ft]
+			} else {
+				if c.info.LocalCallees == nil {
+					c.info.LocalCallees = map[*ast.Call]bool{}
+				}
+				c.info.LocalCallees[n] = true
 			}
 		}
 		methodSubResult := ft.Result

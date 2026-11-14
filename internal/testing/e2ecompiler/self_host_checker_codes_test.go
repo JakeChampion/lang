@@ -231,6 +231,24 @@ var tupleProjectionCases = []struct {
 	{"tuple-projection-nested-lent-call-result", tupleProjection(`function f(t: (i32, (boolean, R))): i32 { return eat(same(t).1.1); }`), []string{"E051"}},
 }
 
+const exitPrelude = "struct W { d: i32[], n: i32 }\nfunction eat(own w: W): i32 { return w.n + w.d.len(); }\n"
+
+// A call never returns only when it reaches the builtin exit or a function
+// that never returns. A local or a function of the module can take the name.
+var exitResolutionCases = []struct {
+	name string
+	src  string
+	want []string
+}{
+	{"own-move-into-module-exit", exitPrelude + "function exit(code: i32): i32 { return code; }\nfunction main(): i32 { let w: W = W { d: [1], n: 1 }; if (w.n > 5) { exit(eat(w)); } return w.n; }\n", []string{"E051"}},
+	{"own-move-into-helper-with-local-exit", exitPrelude + "function stop(code: i32): void { let exit = (k: i32): void => {}; exit(code); }\nfunction main(): i32 { let w: W = W { d: [1], n: 1 }; if (w.n > 5) { stop(eat(w)); } return w.n; }\n", []string{"E051"}},
+	{"own-move-into-local-hiding-no-return", exitPrelude + "function die(code: i32): void { exit(code); }\nfunction main(): i32 { let w: W = W { d: [1], n: 1 }; let die = (k: i32): void => {}; if (w.n > 5) { die(eat(w)); } return w.n; }\n", []string{"E051"}},
+	{"own-move-into-helper-with-builtin-exit", exitPrelude + "function stop(code: i32): void { exit(code); }\nfunction main(): i32 { let w: W = W { d: [1], n: 1 }; if (w.n > 5) { stop(eat(w)); } return w.n; }\n", nil},
+	{"missing-return-module-exit", "function exit(code: i32): void { print(\"x\"); }\nfunction f(): i32 { exit(4); }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+	{"let-else-module-exit", "enum Opt { Has(i32), Nil }\nfunction exit(code: i32): void { print(\"x\"); }\nfunction f(o: Opt): i32 { let Has(v) = o else { exit(1); }; return v; }\nfunction main(): i32 { return 0; }\n", []string{"E022"}},
+	{"todo-beside-module-exit", "function exit(code: i32): void { print(\"x\"); }\nfunction f(): i32 { todo; }\nfunction main(): i32 { return 0; }\n", nil},
+}
+
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 	const loopPayloadPrefix = `struct Box { data: u8[] }
@@ -2943,6 +2961,7 @@ function main(): i32 { return 0; }
 		}{"generic-builtin-method-name-" + name, "function " + fn + "(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}})
 	}
 	cases = append(cases, tupleProjectionCases...)
+	cases = append(cases, exitResolutionCases...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
@@ -3703,6 +3722,9 @@ function main(): i32 { return 0; }`},
 		{"e065-string-of-field-of-local", strFieldPrelude + "function text_of(t: T): string { return t.text; }\nfunction f(k: i32): str { let t = mk(); return slice_unchecked(text_of(t), 0, k); }\nfunction main(): i32 { return 0; }\n"},
 	}
 	for _, tc := range tupleProjectionCases {
+		progs = append(progs, struct{ name, src string }{tc.name, tc.src})
+	}
+	for _, tc := range exitResolutionCases {
 		progs = append(progs, struct{ name, src string }{tc.name, tc.src})
 	}
 
