@@ -72,8 +72,17 @@ pub struct File { name: string, text: string, loaded: boolean }
 // - `fast` says that `std/json` reads the text as jq does: the text is UTF-8
 //   and has no escape of a high surrogate.
 // - After a value that `std/json` cannot read, the reader of jq reads the
-//   rest of the file. Its values are in `pending`, and its error in `error`.
+//   rest of the file. Its values are in `pending`, and its error in `error`
+//   at the offset `error_at`. After the error, the source is `stopped`.
 // - `end` is the offset after the last value, for its line.
+// - In `--seq`, the source is `waiting` for a record separator at the start.
+//   After an error, or after a read with no input, the reader goes on at
+//   `resume`, and the source is `resumed`.
+// - jq reads the files as one text. A value or a raw line that goes on in
+//   the next file is the `carry`, from the offset `open` of `text`. The text
+//   of the next file starts with its `carried` bytes.
+// - `lines_before` and `column_before` give the place in all the input of
+//   the start of `text`, for the messages of the reader.
 pub struct Source {
   files: File[],
   at: i32,
@@ -85,12 +94,24 @@ pub struct Source {
   next_pending: i32,
   base: i32,
   error: string,
+  error_at: i32,
   raw: boolean,
   seq: boolean,
   end: i32,
   started: boolean,
   slurp: boolean,
   unreadable: boolean,
+  gave: boolean,
+  named_at_end: boolean,
+  carry: string,
+  open: i32,
+  stopped: boolean,
+  resume: i32,
+  resumed: boolean,
+  waiting: boolean,
+  carried: i32,
+  lines_before: i32,
+  column_before: i32,
 }
 
 // No input.
@@ -113,7 +134,7 @@ pub function source(names: string[], raw: boolean, seq: boolean): Source {
 }
 
 function of_files(files: File[], raw: boolean, seq: boolean): Source {
-  return Source { files: files, at: -1, text: "", pos: 0, fast: true, slow: false, pending: [], next_pending: 0, base: 0, error: "", raw: raw, seq: seq, end: 0, started: false, slurp: false, unreadable: false };
+  return Source { files: files, at: -1, text: "", pos: 0, fast: true, slow: false, pending: [], next_pending: 0, base: 0, error: "", error_at: 0, raw: raw, seq: seq, end: 0, started: false, slurp: false, unreadable: false, gave: false, named_at_end: false, carry: "", open: -1, stopped: false, resume: -1, resumed: false, waiting: seq, carried: 0, lines_before: 0, column_before: 0 };
 }
 
 // The text of the C library for an error of the system, as jq prints it.
@@ -155,16 +176,61 @@ function next_of(kind: i32, v: json.JsonValue, message: string): Next {
 }
 
 // The source at the start of the next file, or at its end when there is
-// none.
+// none. jq skips a byte order mark before the first byte of the input
+// only, and not in raw input.
 function (src: Source) next_file(): Source {
   let at = src.at + 1;
   if (at >= src.files.len()) {
-    return Source { ...src, at: at, text: "", pos: 0, slow: false, pending: [], error: "", end: 0 };
+    let named = at == src.files.len() && src.at >= 0 && (!src.gave || src.end < last_read_start(src.text, src.carried));
+    return Source { ...src, at: at, text: "", pos: 0, slow: false, pending: [], error: "", end: 0, named_at_end: named };
   }
+  let (lines, column) = src.place_at(src.text.len() - src.carry.len());
   let s = src.loaded(at);
-  let text = s.files[at].text;
-  let fast = utf8.is_valid(text) && !has_high_surrogate(text);
-  return Source { ...s, at: at, text: text, pos: bom_end(text), fast: fast, slow: false, pending: [], next_pending: 0, base: 0, error: "", end: 0, started: true };
+  let text = if (s.carry.len() == 0) { s.files[at].text } else { s.carry + s.files[at].text };
+  let carried = s.carry.len();
+  let fast = !s.seq && utf8.is_valid(text) && !has_high_surrogate(text);
+  let pos = if (!s.raw && lines == 1 && column == 0 && carried == 0) { bom_end(text) } else { 0 };
+  return Source { ...s, at: at, text: text, pos: pos, fast: fast, slow: false, pending: [], next_pending: 0, base: 0, error: "", end: 0, started: true, gave: false, carry: "", open: -1, carried: carried, lines_before: lines - 1, column_before: column };
+}
+
+// The source at the next file, with the text of this one from `i` before
+// the text of the next.
+function (src: Source) carrying(i: i32): Source {
+  return Source { ...src, carry: slice_unchecked(src.text, i, src.text.len()).to_owned(), pos: src.text.len() }.next_file();
+}
+
+// The line and the column in all the input of the offset `i` of `text`.
+function (src: Source) place_at(i: i32): (i32, i32) {
+  let line = src.lines_before + 1;
+  let column = src.column_before;
+  for k in 0..i {
+    if (src.text[k] == b'\n') {
+      line += 1;
+      column = 0;
+    } else {
+      column += 1;
+    }
+  }
+  return (line, column);
+}
+
+// The offset of the text of the read of jq that meets the end of `text`, or
+// its length when that read gets no text. jq reads a line, or 4095 bytes of
+// it, in each read, and the file starts at `from`.
+function last_read_start(text: string, from: i32): i32 {
+  let n = text.len();
+  if (n == from || text[n - 1] == b'\n') {
+    return n;
+  }
+  let line = n;
+  while (line > from && text[line - 1] != b'\n') {
+    line -= 1;
+  }
+  let size = n - line;
+  if (size % 4095 == 0) {
+    return n;
+  }
+  return line + size / 4095 * 4095;
 }
 
 // Whether `s` has a `\u` escape of a high surrogate.
@@ -236,18 +302,33 @@ pub function (src: Source) next(): (Source, Next) {
     return src.next_slurped();
   }
   let s = src;
+  if (s.stopped) {
+    return (s, next_of(END, json.JNull, ""));
+  }
   if (s.at < 0) {
     s = s.next_file();
+  } else if (s.at >= s.files.len()) {
+    s = Source { ...s, named_at_end: false };
   }
   while (s.at < s.files.len()) {
     if (s.slow) {
       if (s.next_pending < s.pending.len()) {
         let v = s.pending[s.next_pending];
-        return (Source { ...s, next_pending: s.next_pending + 1, end: s.base + v.end }, next_of(VALUE, v.value, ""));
+        return (Source { ...s, next_pending: s.next_pending + 1, end: s.base + v.end, gave: true }, next_of(VALUE, v.value, ""));
       }
       if (s.error.len() > 0) {
         let message = s.error;
-        return (Source { ...s, error: "", pos: s.text.len(), slow: false, at: s.files.len() }, next_of(FAILED, json.JNull, message));
+        if (s.resume >= 0) {
+          return (Source { ...s, error: "", pos: s.resume, slow: false, end: s.error_at, resumed: true }, next_of(FAILED, json.JNull, message));
+        }
+        return (Source { ...s, error: "", pos: s.text.len(), slow: false, stopped: true, end: s.error_at }, next_of(FAILED, json.JNull, message));
+      }
+      if (s.open >= 0) {
+        s = s.carrying(s.open);
+        continue;
+      }
+      if (s.resume >= 0) {
+        return (Source { ...s, pos: s.resume, slow: false, resume: -1, resumed: true }, next_of(END, json.JNull, ""));
       }
       s = s.next_file();
       continue;
@@ -257,10 +338,23 @@ pub function (src: Source) next(): (Source, Next) {
         s = s.next_file();
         continue;
       }
-      return s.raw_line();
+      let i = line_end(s.text, s.pos);
+      if (i == s.text.len() && s.at + 1 < s.files.len()) {
+        s = s.carrying(s.pos);
+        continue;
+      }
+      return s.raw_line(i);
+    }
+    if (s.waiting) {
+      let (after, failed) = s.resynced();
+      if (failed.kind != VALUE) {
+        return (after, failed);
+      }
+      s = after;
+      continue;
     }
     let i = s.pos;
-    while (i < s.text.len() && (is_space(s.text[i]) || s.seq && s.text[i] == 0x1e as u8)) {
+    while (i < s.text.len() && is_space(s.text[i])) {
       i += 1;
     }
     if (i >= s.text.len()) {
@@ -271,8 +365,12 @@ pub function (src: Source) next(): (Source, Next) {
     if (s.fast) {
       if let Ok(found) = json.parse_at(s.text, i) {
         let (v, end) = found;
+        if (is_scalar(v) && end == s.text.len() && s.at + 1 < s.files.len()) {
+          s = s.carrying(i);
+          continue;
+        }
         if (!is_scalar(v) || literal_ends(s.text, end)) {
-          return (Source { ...s, pos: end, end: end }, next_of(VALUE, literals(v), ""));
+          return (Source { ...s, pos: end, end: end, gave: true }, next_of(VALUE, literals(v), ""));
         }
       }
     }
@@ -356,33 +454,57 @@ function is_scalar(v: json.JsonValue): boolean {
 
 // The reader of jq reads the rest of the file from the offset `i`.
 function (src: Source) read_slowly(i: i32): Source {
-  let line = 1;
-  let column = 0;
-  for k in 0..i {
-    if (src.text[k] == b'\n') {
-      line += 1;
-      column = 0;
-    } else {
-      column += 1;
-    }
-  }
-  let r = reader.read_at(slice_unchecked(src.text, i, src.text.len()).to_owned(), line, column);
-  return Source { ...src, slow: true, pending: r.values, next_pending: 0, base: i, error: r.error };
+  let (line, column) = src.place_at(i);
+  let start = last_read_start(src.text, src.carried);
+  let last_read = if (src.at + 1 < src.files.len()) { -1 } else if (src.resumed && i > start) { src.text.len() - i + 1 } else if (start > i) { start - i } else { 0 };
+  let r = reader.read_at(slice_unchecked(src.text, i, src.text.len()).to_owned(), line, column, last_read, src.seq);
+  let open = if (r.open >= 0) { i + r.open } else { -1 };
+  let resume = if (r.resume >= 0) { i + r.resume } else { -1 };
+  return Source { ...src, slow: true, pending: r.values, next_pending: 0, base: i, error: r.error, error_at: i + r.at, open: open, resume: resume, resumed: false };
 }
 
-// The next line of the file as a string. jq gives the last line also when no
-// newline ends it.
-function (src: Source) raw_line(): (Source, Next) {
-  let i = src.pos;
-  while (i < src.text.len() && src.text[i] != b'\n') {
+// The source after the next record separator of `--seq`, with a `Next` of the
+// kind VALUE. At the end of the input with no separator, jq gives an error.
+function (src: Source) resynced(): (Source, Next) {
+  let j = src.pos;
+  while (j < src.text.len() && src.text[j] != reader.RS) {
+    j += 1;
+  }
+  if (j < src.text.len()) {
+    return (Source { ...src, pos: j + 1, waiting: false }, next_of(VALUE, json.JNull, ""));
+  }
+  if (src.at + 1 < src.files.len()) {
+    return (Source { ...src, pos: j }.next_file(), next_of(VALUE, json.JNull, ""));
+  }
+  let (line, column) = src.place_at(j);
+  let message = "Unfinished abandoned text at EOF at line " + line.to_string() + ", column " + column.to_string();
+  return (Source { ...src, pos: j, stopped: true, end: j }, next_of(FAILED, json.JNull, message));
+}
+
+// The offset of the newline that ends the line at `pos` of `s`, or the
+// length of `s` when no newline ends it.
+function line_end(s: string, pos: i32): i32 {
+  let i = pos;
+  while (i < s.len() && s[i] != b'\n') {
     i += 1;
   }
-  let line = slice_unchecked(src.text, src.pos, i).to_owned();
+  return i;
+}
+
+// The line of the file at `pos` as a string, which ends at `i`. jq gives the
+// last line also when no newline ends it. jq repairs the part of a line in
+// each file by itself.
+function (src: Source) raw_line(i: i32): (Source, Next) {
+  let cut = if (src.pos < src.carried) { src.carried } else { src.pos };
+  let line = reader.repaired(slice_unchecked(src.text, cut, i).to_owned());
+  if (cut > src.pos) {
+    line = reader.repaired(slice_unchecked(src.text, src.pos, cut).to_owned()) + line;
+  }
   let next = i;
   if (i < src.text.len()) {
     next = i + 1;
   }
-  return (Source { ...src, pos: next, end: next }, next_of(VALUE, json.JString(reader.repaired(line)), ""));
+  return (Source { ...src, pos: next, end: i, gave: true }, next_of(VALUE, json.JString(line), ""));
 }
 
 // The number of lines that jq has read in the file when it gives the last
@@ -394,7 +516,10 @@ pub function (src: Source) line(): i32 {
   if (src.at >= src.files.len()) {
     return lines_read(src.files[src.files.len() - 1].text, src.files[src.files.len() - 1].text.len());
   }
-  return lines_read(src.text, src.end);
+  if (src.carried == 0) {
+    return lines_read(src.text, src.end);
+  }
+  return lines_read(slice_unchecked(src.text, src.carried, src.text.len()).to_owned(), src.end - src.carried);
 }
 
 // The name of the file of the last value, or null for stdin.
@@ -403,16 +528,21 @@ pub function (src: Source) filename(): json.JsonValue {
   if (at >= src.files.len()) {
     at = src.files.len() - 1;
   }
-  if (at < 0 || src.files[at].name.len() == 0) {
+  if (at < 0) {
     return json.JNull;
+  }
+  if (src.files[at].name.len() == 0) {
+    return json.JString("<stdin>");
   }
   return json.JString(src.files[at].name);
 }
 
 // The place of the last value in an error message: "<stdin>:N", or the name
 // of the file and the line.
+// After the end of the input, jq names the last file until its next read,
+// when its last read gave no value.
 pub function (src: Source) location(): string {
-  if (src.at < 0) {
+  if (src.at < 0 || src.at >= src.files.len() && !src.named_at_end) {
     return "<unknown>";
   }
   let name = "<stdin>";

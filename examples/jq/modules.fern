@@ -3,8 +3,8 @@
 //
 // A module gives its own definitions to the program that imports it, as
 // `NAME::f` for an import and as `f` for an include. Its own imports stay
-// inside it. A path is absolute and clean, but a symbolic link in it is not
-// followed.
+// inside it. A path is clean, and absolute from `$PWD`, but a symbolic link
+// in it is not followed.
 import "std/io";
 import "std/json";
 import "std/path";
@@ -30,16 +30,18 @@ pub function default_search(): string[] {
   return ["~/.jq", "$ORIGIN/../lib/jq", "$ORIGIN/../lib"];
 }
 
-// `p` as an absolute path with no `.` and `..` parts.
+// `p` with no `.` and `..` parts, and absolute from `$PWD` when it is
+// relative. A WASI program has no current directory to ask for.
 pub function absolute(p: string): string {
   if (path.is_absolute(p)) {
     return path.clean(p);
   }
-  let cwd = match (getcwd()) {
-    Ok(d) => d,
-    Err(_) => ".",
-  };
-  return path.clean(cwd + "/" + p);
+  if let Some(cwd) = env("PWD") {
+    if (path.is_absolute(cwd)) {
+      return path.clean(cwd + "/" + p);
+    }
+  }
+  return path.clean(p);
 }
 
 // The directory part of `p`, as C `dirname` gives it.
@@ -194,7 +196,11 @@ struct Loading { modules: Module[], errors: string[], count: i32, library: strin
 
 // A compile error at the byte `at` of `text`: the message, the file and the
 // line, then the line itself up to the place of the error.
-pub function located(message: string, file: string, text: string, at: i32): string {
+pub function located(text_of_error: string, file: string, text: string, at: i32): string {
+  let message = text_of_error;
+  if (message.starts_with("syntax error")) {
+    message += filter.QUOTING;
+  }
   let line = 1;
   let start = 0;
   let stop = at;
@@ -326,17 +332,48 @@ function load_module(own l: Loading, file: string, text: string): (Loading, Modu
   if (parsed.error.len() > 0) {
     return (after.failing(located(parsed.error, file, text, parsed.at)), []);
   }
-  let free = filter.undefined_var(parsed.ast, vars.append("ENV").append("__loc__"));
-  if (free.len() > 0) {
-    return (after.failing(located("$" + free + " is not defined", file, text, var_at(text, free))), []);
+  let undefined = undefined_names(parsed, vars.append("ENV"), file, text);
+  if (undefined.len() > 0) {
+    return (Loading { ...after, errors: after.errors.concat(undefined), count: after.count + undefined.len() }, []);
   }
   return (after, [Module { path: file, defs: parsed.ast, names: parsed.defs, deps: deps }]);
 }
 
-// The offset of the first `$name` in `text`.
-function var_at(text: string, name: string): i32 {
+// The message of each function and each variable that `parsed` uses and
+// that is not defined, in the order of their places in `text`, as jq gives
+// them.
+function undefined_names(parsed: filter.Parsed, vars: string[], file: string, text: string): string[] {
+  let messages = parsed.undefined;
+  let ats = parsed.undefined_at;
+  let after = 0;
+  for name in filter.undefined_vars(parsed.ast, vars) {
+    let at = var_at(text, name, after);
+    after = at + 1;
+    messages = messages.append("$" + name + " is not defined");
+    ats = ats.append(at);
+  }
+  let out: string[] = [];
+  let used: boolean[] = [];
+  for i in 0..ats.len() {
+    used = used.append(false);
+  }
+  for n in 0..ats.len() {
+    let best = -1;
+    for i in 0..ats.len() {
+      if (!used[i] && (best < 0 || ats[i] < ats[best])) {
+        best = i;
+      }
+    }
+    used = used.with(best, true);
+    out = out.append(located(messages[best], file, text, ats[best]));
+  }
+  return out;
+}
+
+// The offset of the first `$name` in `text` from `from`.
+function var_at(text: string, name: string, from: i32): i32 {
   let want = "$" + name;
-  let i = 0;
+  let i = from;
   while (i + want.len() <= text.len()) {
     if (text[i] == b'$' && slice_unchecked(text, i, i + want.len()).to_owned() == want) {
       let after = i + want.len();
@@ -383,9 +420,9 @@ pub function compile(text: string, library: string[], names: string[], origin: s
   if (parsed.error.len() > 0) {
     return Compiled { modules: [], deps: [], ast: filter.Identity, errors: [located(parsed.error, "<top-level>", text, parsed.at)], count: 1, search: json.JArray(search_json) };
   }
-  let free = filter.undefined_var(parsed.ast, names.concat(vars));
-  if (free.len() > 0) {
-    return Compiled { modules: [], deps: [], ast: filter.Identity, errors: [located("$" + free + " is not defined", "<top-level>", text, var_at(text, free))], count: 1, search: json.JArray(search_json) };
+  let undefined = undefined_names(parsed, names.concat(vars), "<top-level>", text);
+  if (undefined.len() > 0) {
+    return Compiled { modules: [], deps: [], ast: filter.Identity, errors: undefined, count: undefined.len(), search: json.JArray(search_json) };
   }
   return Compiled { modules: after.modules, deps: deps, ast: parsed.ast, errors: [], count: 0, search: json.JArray(search_json) };
 }

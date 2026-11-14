@@ -29,7 +29,8 @@ pub struct Env { names: string[], values: json.JsonValue[], funcs: Func[] }
 // environment of the definition, or of the call for an argument. An argument
 // has no parameters and does not see itself. A function of a module keeps
 // its `own_name` for the calls to itself when an import gives it a new name.
-struct Func { name: string, own_name: string, params: string[], body: filter.Ast, scope: Env[], argument: boolean }
+// `single` tells that `single` holds for each call of the function.
+struct Func { name: string, own_name: string, params: string[], body: filter.Ast, scope: Env[], argument: boolean, single: boolean }
 
 // The signals of a run.
 pub const OK: i32 = 0;
@@ -263,6 +264,7 @@ pub function truthy(v: json.JsonValue): boolean {
   };
 }
 
+// fern-lint: allow cyclomatic-complexity
 pub function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   match (f) {
     filter.Identity => {
@@ -294,7 +296,7 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
       return unescaped(s);
     },
     filter.Pipe(a, b) => {
-      return run(a, input, e, (v: json.JsonValue, own s: St): own St => run(b, v, e, k, s), st);
+      return each_of(a, input, e, (v: json.JsonValue, own s: St): own St => run(b, v, e, k, s), st);
     },
     filter.Comma(a, b) => {
       let s = run(a, input, e, k, st);
@@ -309,14 +311,6 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
     filter.EmptyArray => {
       return k(json.JArray([]), st);
     },
-    _ => {
-      return run_more(f, input, e, k, st);
-    }
-  }
-}
-
-function run_more(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  match (f) {
     filter.Object(keys, values) => {
       return build_object(keys, values, 0, [], [], input, e, k, st);
     },
@@ -337,7 +331,7 @@ function run_more(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonVal
       return call(name, args, input, e, k, st);
     },
     filter.Def(name, params, body, rest) => {
-      return run(rest, input, e.define(Func { name: name, own_name: name, params: params, body: body, scope: [e], argument: false }), k, st);
+      return run(rest, input, e.define(defined(name, params, body, e)), k, st);
     },
     filter.Catch(body, handler) => {
       let s = run(body, input, e, escaping(k), st);
@@ -356,19 +350,14 @@ function run_more(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonVal
     filter.Interp(name, texts, parts) => {
       return interpolate(name, texts, parts, parts.len() - 1, texts[parts.len()], input, e, k, st);
     },
-    _ => {
-      return run_control(f, input, e, k, st);
-    }
-  }
-}
-
-function run_control(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  match (f) {
     filter.If(cond, yes, no) => {
+      if (single(cond, e)) {
+        return run_branch(cond, yes, no, input, e, k, st);
+      }
       return run(cond, input, e, (c: json.JsonValue, own s: St): own St => run(if (truthy(c)) { yes } else { no }, input, e, k, s), st);
     },
     filter.Bind(source, name, body) => {
-      return run(source, input, e, (v: json.JsonValue, own s: St): own St => run(body, input, e.with(name, v), k, s), st);
+      return each_of(source, input, e, (v: json.JsonValue, own s: St): own St => run(body, input, e.with(name, v), k, s), st);
     },
     filter.Reduce(source, name, init, update) => {
       return run(init, input, e, (first: json.JsonValue, own s: St): own St => reduce_from(source, name, update, first, input, e, k, s), st);
@@ -400,6 +389,132 @@ function run_control(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.Json
       return failed_with(st, "unknown filter");
     }
   }
+}
+
+// Whether each run of `f` in `e` gives one output at most, and does nothing
+// after that output. The outputs of such a filter can come first in an
+// array, and the order of the outputs, the errors and the effects is that
+// of jq. A call of a parameter can give more outputs.
+function single(f: filter.Ast, e: Env): boolean {
+  return match (f) {
+    filter.Identity => true,
+    filter.Literal(_) => true,
+    filter.Var(_) => true,
+    filter.EmptyArray => true,
+    filter.Format(_) => true,
+    filter.Break(_) => true,
+    filter.Collect(_) => true,
+    filter.Index(target, key) => single(target, e) && single(key, e),
+    filter.Slice(target, from, to) => single(target, e) && single(from, e) && single(to, e),
+    filter.Optional(a) => single(a, e),
+    filter.Try(a) => single(a, e),
+    filter.Negate(a) => single(a, e),
+    filter.Label(_, a) => single(a, e),
+    filter.Reduce(_, _, init, _) => single(init, e),
+    filter.Update(op, _, value) => op == "|=" || single(value, e),
+    filter.Object(keys, values) => all_single(keys, e) && all_single(values, e),
+    filter.Interp(_, _, parts) => all_single(parts, e),
+    filter.Call(name, args) => single_call(name, args, e),
+    filter.Def(name, params, body, rest) => single(rest, e.define(defined(name, params, body, e))),
+    _ => single_pair(f, e),
+  };
+}
+
+function single_pair(f: filter.Ast, e: Env): boolean {
+  return match (f) {
+    filter.Pipe(a, b) => single(a, e) && single(b, e),
+    filter.Arith(_, a, b) => single(a, e) && single(b, e),
+    filter.Compare(_, a, b) => single(a, e) && single(b, e),
+    filter.Alt(a, b) => single(a, e) && single(b, e),
+    filter.Catch(a, b) => single(a, e) && single(b, e),
+    filter.And(a, b) => single(a, e) && single(b, e),
+    filter.Or(a, b) => single(a, e) && single(b, e),
+    filter.Bind(source, _, body) => single(source, e) && single(body, e),
+    filter.If(cond, yes, no) => single(cond, e) && single(yes, e) && single(no, e),
+    _ => false,
+  };
+}
+
+function all_single(fs: filter.Ast[], e: Env): boolean {
+  for f in fs {
+    if (!single(f, e)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The built-in functions that can give more than one output.
+const GENERATORS: string[] = ["recurse", "paths", "inputs", "path", "range", "repeat", "limit", "while", "until"];
+
+// A call of a function of a `def` gives its outputs to `single` when the
+// function does and each `$` parameter takes one value. A built-in function
+// does when it is not a generator and each argument does.
+function single_call(name: string, args: filter.Ast[], e: Env): boolean {
+  let found = e.find(name, args.len());
+  if (found.len() == 0) {
+    return !GENERATORS.contains(name) && all_single(args, e);
+  }
+  let f = found[0];
+  if (!f.single) {
+    return false;
+  }
+  for i in 0..args.len() {
+    if (filter.param_name(f.params[i]) != f.params[i] && !single(args[i], e)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The function of `def name(params): body` in `e`. Its calls to itself count
+// as single while `single` checks its body, and its parameters do not.
+function defined(name: string, params: string[], body: filter.Ast, e: Env): Func {
+  let f = Func { name: name, own_name: name, params: params, body: body, scope: [e], argument: false, single: true };
+  let inner = e.define(f);
+  for p in params {
+    let x = filter.param_name(p);
+    inner = inner.define(Func { name: x, own_name: x, params: [], body: filter.Identity, scope: [e], argument: true, single: false });
+  }
+  return Func { ...f, single: single(body, inner) };
+}
+
+// The outputs of `f` to `k`. When `f` is single, its outputs come first in
+// an array, so that its frames are gone while `k` runs: a function that
+// calls itself then needs less stack for each call.
+function each_of(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  if (!single(f, e)) {
+    return run(f, input, e, k, st);
+  }
+  let saved = st.items;
+  let c = collected(f, input, e, st);
+  let vs = c.items;
+  let s = St { ...c, items: saved };
+  if (s.sig != OK) {
+    return s;
+  }
+  for v in vs {
+    s = k(v, s);
+    if (s.sig != OK) {
+      return s;
+    }
+  }
+  return s;
+}
+
+// The outputs of `if cond then yes else no end` when `cond` is single. The
+// branch needs no value of the condition, so the run of the branch is the
+// last call.
+function run_branch(cond: filter.Ast, yes: filter.Ast, no: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  let saved = st.items;
+  let c = collected(cond, input, e, st);
+  let taken = c.items.len() > 0 && truthy(c.items[0]);
+  let given = c.items.len() > 0;
+  let s = St { ...c, items: saved };
+  if (s.sig != OK || !given) {
+    return s;
+  }
+  return run(if (taken) { yes } else { no }, input, e, k, s);
 }
 
 // The state after the body of the label `id`: its own `break` ends it.
@@ -541,19 +656,56 @@ function build_object(keys: filter.Ast[], values: filter.Ast[], at: i32, names: 
   return run(keys[at], input, e, (kv: json.JsonValue, own s: St): own St => object_entry(keys, values, at, names, items, kv, input, e, k, s), st);
 }
 
+// The values of an entry come first in an array when they are single, as the
+// right side of an operator does.
 function object_entry(keys: filter.Ast[], values: filter.Ast[], at: i32, names: string[], items: json.JsonValue[], kv: json.JsonValue, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let json.JString(name) = kv else {
     return failed_with(st, "Cannot use " + type_name(kv) + " (" + shown(kv) + ") as object key");
   };
-  return run(values[at], input, e, (v: json.JsonValue, own s: St): own St => build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s), st);
+  if (!single(values[at], e)) {
+    return run(values[at], input, e, (v: json.JsonValue, own s: St): own St => build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s), st);
+  }
+  let saved = st.items;
+  let c = collected(values[at], input, e, st);
+  let vs = c.items;
+  let s = St { ...c, items: saved };
+  if (s.sig != OK) {
+    return s;
+  }
+  for v in vs {
+    s = build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s);
+    if (s.sig != OK) {
+      return s;
+    }
+  }
+  return s;
 }
 
-// jq takes each right value, and then each left value.
+// jq takes each right value, and then each left value. A single right value
+// comes first: then the frames of the right side are gone while the left
+// side runs, and a function that calls itself on each side, as `fib` does,
+// needs a stack in proportion to its depth only.
 function run_binary(op: string, a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   if let filter.Literal(r) = b {
     return run(a, input, e, (l: json.JsonValue, own s: St): own St => give(binary(op, l, r), k, s), st);
   }
-  return run(b, input, e, (r: json.JsonValue, own s: St): own St => run(a, input, e, (l: json.JsonValue, own s2: St): own St => give(binary(op, l, r), k, s2), s), st);
+  if (!single(b, e)) {
+    return run(b, input, e, (r: json.JsonValue, own s: St): own St => run(a, input, e, (l: json.JsonValue, own s2: St): own St => give(binary(op, l, r), k, s2), s), st);
+  }
+  let saved = st.items;
+  let c = collected(b, input, e, st);
+  let rights = c.items;
+  let s = St { ...c, items: saved };
+  if (s.sig != OK) {
+    return s;
+  }
+  for r in rights {
+    s = run(a, input, e, (l: json.JsonValue, own s1: St): own St => give(binary(op, l, r), k, s1), s);
+    if (s.sig != OK) {
+      return s;
+    }
+  }
+  return s;
 }
 
 // `a and b` is false for a false left value and takes each right value
@@ -664,7 +816,11 @@ function call0(name: string, input: json.JsonValue, e: Env, k: (json.JsonValue, 
       return k(input, st);
     },
     "stderr" => {
-      eprint_raw(output.compact(input));
+      if let json.JString(s) = input {
+        eprint_raw(s);
+      } else {
+        eprint_raw(output.compact(input));
+      }
       return k(input, st);
     },
     "input_line_number" => {
@@ -1655,7 +1811,7 @@ function paths_more(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =
       return paths_call(name, args, it, e, k, st);
     },
     filter.Def(name, params, body, rest) => {
-      return run_paths(rest, it, e.define(Func { name: name, own_name: name, params: params, body: body, scope: [e], argument: false }), k, st);
+      return run_paths(rest, it, e.define(defined(name, params, body, e)), k, st);
     },
     filter.Label(name, body) => {
       let id = st.labels;
@@ -1999,11 +2155,11 @@ function call_defined(f: Func, args: filter.Ast[], at: i32, input: json.JsonValu
     return run(f.body, input, scope, k, st);
   }
   let name = filter.param_name(f.params[at]);
-  let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true });
+  let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true, single: false });
   if (name == f.params[at]) {
     return call_defined(f, args, at + 1, input, e, bound, k, st);
   }
-  return run(args[at], input, e, (v: json.JsonValue, own s: St): own St => call_defined(f, args, at + 1, input, e, bound.with(name, v), k, s), st);
+  return each_of(args[at], input, e, (v: json.JsonValue, own s: St): own St => call_defined(f, args, at + 1, input, e, bound.with(name, v), k, s), st);
 }
 
 function paths_defined(f: Func, args: filter.Ast[], at: i32, it: PathItem, e: Env, scope: Env, k: (PathItem, own St) => own St, own st: St): own St {
@@ -2011,7 +2167,7 @@ function paths_defined(f: Func, args: filter.Ast[], at: i32, it: PathItem, e: En
     return run_paths(f.body, it, scope, k, st);
   }
   let name = filter.param_name(f.params[at]);
-  let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true });
+  let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true, single: false });
   if (name == f.params[at]) {
     return paths_defined(f, args, at + 1, it, e, bound, k, st);
   }
@@ -2156,7 +2312,7 @@ function define_all(e: Env, defs: filter.Ast): Env {
     let filter.Def(name, params, body, rest) = at else {
       return out;
     };
-    out = out.define(Func { name: name, own_name: name, params: params, body: body, scope: [out], argument: false });
+    out = out.define(defined(name, params, body, out));
     at = rest;
   }
   return out;

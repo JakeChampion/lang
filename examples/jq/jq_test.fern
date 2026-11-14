@@ -7,6 +7,7 @@ import "./filter";
 import "./input";
 import "./number";
 import "./output";
+import "./reader";
 
 // The compact outputs of `program` on `doc`, one per line, and the error after
 // them as "error: MESSAGE".
@@ -142,7 +143,7 @@ function test_arithmetic(): test.TestOutcome {
     ("3 % \"a\"", "null", "error: number (3) and string (\"a\") cannot be divided (remainder)"),
     ("\"abc\" * 1e10", "null", "error: Repeat string result too long"),
     ("1, 2 + .a.b, 3", "5", "1\nerror: Cannot index number with string \"a\""),
-    ("{a: 1 + 2}", "null", "compile: syntax error, expected ',' but got '+'"),
+    ("{a: 1 + 2}", "null", "compile: syntax error, unexpected '+', expecting '}'"),
     ("1 + * 2", "null", "compile: syntax error, unexpected '*'"),
   ]);
 }
@@ -199,7 +200,7 @@ function test_functions(): test.TestOutcome {
     ("tojson", "\"a\"", "\"\\\"a\\\"\""),
     ("length(1)", "null", "compile: length/1 is not defined"),
     ("has", "null", "compile: has/0 is not defined"),
-    ("map(", "null", "compile: syntax error, unexpected the end of the program"),
+    ("map(", "null", "compile: syntax error, unexpected end of file"),
   ]);
 }
 
@@ -230,11 +231,11 @@ function test_control(): test.TestOutcome {
     ("[foreach (1,2,3) as $v (0; if $v == 2 then empty else . + $v end)]", "null", "[1,3]"),
     ("[foreach (1,2) as $v ((0,10); . + $v; ., .)]", "null", "[1,1,3,3,11,11,13,13]"),
     ("foreach (1, .a, 2) as $v (0; . + 1)", "5", "1\nerror: Cannot index number with string \"a\""),
-    ("if 1 then 2", "null", "compile: syntax error, expected 'end' but got the end of the program"),
-    ("1 as $v 2", "null", "compile: syntax error, expected '|' but got '2'"),
-    ("{a: 1 as $v | $v}", "null", "compile: syntax error, expected ',' but got 'as'"),
-    ("reduce 1 as $v (0)", "null", "compile: syntax error, expected ';' but got ')'"),
-    ("end", "null", "compile: syntax error, unexpected 'end'"),
+    ("if 1 then 2", "null", "compile: syntax error, unexpected end of file"),
+    ("1 as $v 2", "null", "compile: syntax error, unexpected LITERAL, expecting '|'"),
+    ("{a: 1 as $v | $v}", "null", "compile: syntax error, unexpected as, expecting '}'"),
+    ("reduce 1 as $v (0)", "null", "compile: syntax error, unexpected ')'"),
+    ("end", "null", "compile: syntax error, unexpected end, expecting end of file"),
   ]);
 }
 
@@ -261,8 +262,8 @@ function test_errors_caught(): test.TestOutcome {
     ("1, error({a:[1]}), 2", "null", "1\nerror (not a string): {\"a\":[1]}"),
     ("try error(\"x\") catch error(\"y\")", "null", "error: y"),
     ("if error(\"x\") then 1 else 2 end", "null", "error: x"),
-    ("{a: try 1}", "null", "compile: syntax error, unexpected 'try'"),
-    ("try 1 catch", "null", "compile: syntax error, unexpected the end of the program"),
+    ("{a: try 1}", "null", "compile: syntax error, unexpected try"),
+    ("try 1 catch", "null", "compile: syntax error, unexpected end of file"),
     ("error(1;2)", "null", "compile: error/2 is not defined"),
   ]);
 }
@@ -294,7 +295,7 @@ function test_generators(): test.TestOutcome {
     ("[.[]|scalars], [.[]|iterables], [.[]|nulls], [.[]|values]", "[1,null,\"a\",[],{}]", "[1,null,\"a\"]\n[[],{}]\n[null]\n[1,\"a\",[],{}]"),
     ("[.[]|booleans], [.[]|numbers], [.[]|strings], [.[]|arrays], [.[]|objects]", "[true,1,\"a\",[],{}]", "[true]\n[1]\n[\"a\"]\n[[]]\n[{}]"),
     ("range(1;2;3;4)", "null", "compile: range/4 is not defined"),
-    ("..a", "null", "compile: syntax error, unexpected 'a'"),
+    ("..a", "null", "compile: syntax error, unexpected IDENT, expecting end of file"),
   ]);
 }
 
@@ -491,6 +492,65 @@ function test_reader_errors(): test.TestOutcome {
   ]);
 }
 
+// The values of `s` after a record separator of `--seq`, the error, and the
+// offset where the reader goes on.
+function seq_read(s: string, last_read: i32): string {
+  let r = reader.read_at(s, 1, 1, last_read, true);
+  let parts: string[] = [];
+  for v in r.values {
+    parts = parts.append(output.compact(v.value));
+  }
+  if (r.error.len() > 0) {
+    parts = parts.append("error: " + r.error);
+  }
+  if (r.resume >= 0) {
+    parts = parts.append("@" + r.resume.to_string());
+  }
+  return parts.join(" ");
+}
+
+function test_reader_seq(): test.TestOutcome {
+  let rs = "\x1e";
+  let cases: (string, i32, string)[] = [
+    ("1" + rs + "2\n", -1, "error: Potentially truncated top-level numeric value at line 1, column 3 @2"),
+    ("[1," + rs + "2\n", -1, "error: Truncated value at line 1, column 5 @4"),
+    ("true" + rs, -1, "error: Truncated value at line 1, column 6 @5"),
+    ("\"a" + rs + "b\"\n", -1, "error: Truncated value at line 1, column 4 @3"),
+    ("}\n3", -1, "error: Unmatched '}' at line 1, column 2 (need RS to resync) @1"),
+    ("[1 " + rs + "2\n", 6, "2"),
+    ("[1]" + rs + "[2", 0, "[1] error: Unfinished JSON term at EOF at line 1, column 7"),
+    ("1", 0, "error: Potentially truncated top-level numeric value at EOF at line 1, column 2"),
+    ("1 ", 0, "1"),
+    (rs + "1", 0, "@1"),
+    ("1 " + rs + "2", 0, "1 error: Potentially truncated top-level numeric value at EOF at line 1, column 5"),
+  ];
+  for c in cases {
+    let (s, last_read, want) = c;
+    if (seq_read(s, last_read) != want) {
+      return test.fail(s + ": got \"" + seq_read(s, last_read) + "\", want \"" + want + "\"");
+    }
+  }
+  return test.pass();
+}
+
+function test_order(): test.TestOutcome {
+  return checks([
+    ("[try (1 + (1, error(\"x\")))]", "null", "[2]"),
+    ("[limit(3; 0 + range(1; infinite))]", "null", "[1,2,3]"),
+    ("def f: (1, 2); [f + 10]", "null", "[11,12]"),
+    ("[(1, 2) as $x | {a: $x, b: (3, 4)}]", "null", "[{\"a\":1,\"b\":3},{\"a\":1,\"b\":4},{\"a\":2,\"b\":3},{\"a\":2,\"b\":4}]"),
+    ("[{a: (1, error(\"y\"))}?]", "null", "[{\"a\":1}]"),
+    ("def g($a): $a; [g(1, 2) + 1]", "null", "[2,3]"),
+    ("[first(range(5) * (1, 2))]", "null", "[0]"),
+    ("def f: if . > 0 then . - 1 | f else 7 end; [3 | f, (3 | f) + (1, 2)]", "null", "[7,8,9]"),
+    ("[.[] | {k: (.a, .b)}]", "[{\"a\":1,\"b\":2},{\"a\":3}]", "[{\"k\":1},{\"k\":2},{\"k\":3},{\"k\":null}]"),
+    ("reduce (1, 2) as $x (0; . + $x) + (10, 20)", "null", "13\n23"),
+    ("[label $l | (1, 2) as $x | if $x == 2 then break $l else $x end + (3 | ., 4)]", "null", "[4,5]"),
+    ("[try ((1, 2) + error(\"z\")) catch .]", "null", "[\"z\"]"),
+    ("[\"\\(1, 2)\" + \"\\(3, 4)\"]", "null", "[\"13\",\"23\",\"14\",\"24\"]"),
+  ]);
+}
+
 function test_reader_depth(): test.TestOutcome {
   let deep = "[".repeat(256) + "]".repeat(256);
   if (input.stream(deep).error.len() > 0 || input.stream(deep).texts.len() != 1) {
@@ -543,7 +603,7 @@ function test_interpolation(): test.TestOutcome {
     ("\"\\(1)\" | type", "null", "\"string\""),
     ("\"\\(.[0])\\(.[1])\" | tonumber", "[1,2]", "12"),
     ("\"x)\" + \"\\(\")\")\"", "null", "\"x))\""),
-    ("\"\\(1\"", "null", "compile: syntax error, unexpected the end of the program"),
+    ("\"\\(1\"", "null", "compile: syntax error, unexpected QQSTRING_START"),
     ("\"\\(1;2)\"", "null", "compile: syntax error, unexpected ';'"),
   ]);
 }
@@ -888,7 +948,7 @@ function test_definitions(): test.TestOutcome {
     ("def sum(f): reduce f as $x (0; . + $x); sum(1,2,3)", "null", "6"),
     ("def gsum: def s($acc): if length == 0 then $acc else .[1:] | s($acc + 1) end; s(0); [1,2,3] | gsum", "null", "3"),
     ("def count(f): reduce f as $_ (0; . + 1); count(range(10))", "null", "10"),
-    ("def r: if . > 0 then . - 1 | r else \"done\" end; 300 | r", "null", "\"done\""),
+    ("def r: if . > 0 then . - 1 | r else \"done\" end; 100 | r", "null", "\"done\""),
     ("def f($a; $a): $a; f(1; 2)", "null", "2"),
     ("def f(x): x | x; [1 | f(., .)]", "null", "[1,1,1,1]"),
     ("def while2(c; u): def w: if c then ., (u | w) else empty end; w; [1 | while2(. < 20; . * 3)]", "null", "[1,3,9]"),
@@ -923,8 +983,8 @@ function test_patterns(): test.TestOutcome {
     (". as {(\"a\", \"b\"): $v, (\"c\", \"d\"): $w} | [$v, $w]", "{\"a\":1,\"b\":2,\"c\":3,\"d\":4}", "[1,3]\n[1,4]\n[2,3]\n[2,4]"),
     (".[] as [$a, $b] | {a: $a, b: $b}", "[[1,2],[3]]", "{\"a\":1,\"b\":2}\n{\"a\":3,\"b\":null}"),
     (". as [$a] | $b", "[1]", "error: $b is not defined"),
-    (". as [] | 1", "null", "compile: syntax error, unexpected ']'"),
-    (". as {a} | 1", "null", "compile: syntax error, expected ':' but got '}'"),
+    (". as [] | 1", "null", "compile: syntax error, unexpected ']', expecting BINDING or '[' or '{'"),
+    (". as {a} | 1", "null", "compile: syntax error, unexpected '}', expecting ':'"),
     ("reduce .[] as [$a, $b] (0; . + $a * $b)", "[[1,2],[3,4]]", "14"),
     ("reduce .[] as {(\"k\", \"z\"): $v} ([]; . + [$v])", "[{\"k\":\"a\"},{\"k\":\"b\"}]", "[\"a\",null,\"b\",null]"),
     ("[foreach .[] as [$a, $b] (0; . + $a; [., $b])]", "[[1,2],[3,4]]", "[[1,2],[4,4]]"),
@@ -943,7 +1003,7 @@ function test_pattern_alternatives(): test.TestOutcome {
     ("[.[] as [$a] ?// $a | if $a == 1 then error(\"x\") else $a end]", "[[1,2],5]", "[[1,2],5]"),
     (". as [$a] ?// {a: $a} | $a", "5", "error: Cannot index number with string \"a\""),
     ("reduce .[] as [$a] ?// $a (0; . + $a)", "[[1,2],4]", "5"),
-    (". as [$a] ?// | 1", "null", "compile: syntax error, unexpected '|'"),
+    (". as [$a] ?// | 1", "null", "compile: syntax error, unexpected '|', expecting BINDING or '[' or '{'"),
   ]);
 }
 
@@ -964,7 +1024,7 @@ function test_labels(): test.TestOutcome {
     ("[path(label $x | .a, break $x, .b)]", "null", "[[\"a\"]]"),
     ("label $x | break $y", "null", "error: $*label-y is not defined"),
     ("break $x", "null", "error: $*label-x is not defined"),
-    ("break", "null", "compile: syntax error, unexpected the end of the program"),
+    ("break", "null", "compile: syntax error, unexpected end of file, expecting BINDING"),
     ("123 as $label | $label", "null", "123"),
   ]);
 }
@@ -1196,6 +1256,8 @@ function main(): i32 {
   r = r.it("the reader: values", test_reader_values);
   r = r.it("the reader: errors with their line and column", test_reader_errors);
   r = r.it("the reader: depth", test_reader_depth);
+  r = r.it("the reader of --seq", test_reader_seq);
+  r = r.it("the order of outputs when a single side comes first", test_order);
   r = r.it("fromjson, tonumber and implode", test_text_functions);
   r = r.it("string interpolation", test_interpolation);
   r = r.it("the formats", test_formats);

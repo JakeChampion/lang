@@ -14,8 +14,30 @@ import "./number";
 // One value, and the offset in the text just after it.
 pub struct Value { value: json.JsonValue, end: i32 }
 
-// The values before the first error, and the error with its place.
-pub struct Read { values: Value[], error: string }
+// The values before the first error, and the error with its place and its
+// offset `at`. `open` is the offset of the value that the text leaves open
+// when more input follows, or -1. In `--seq`, the reader goes on after an
+// error, or after a read with no input, from the offset `resume`. A `resume`
+// of -1 ends the input.
+pub struct Read { values: Value[], error: string, at: i32, open: i32, resume: i32 }
+
+function failed(values: Value[], error: string, at: i32): Read {
+  return Read { values: values, error: error, at: at, open: -1, resume: -1 };
+}
+
+function ended(values: Value[], open: i32): Read {
+  return Read { values: values, error: "", at: -1, open: open, resume: -1 };
+}
+
+// No input for this read of jq, which reads on after the byte `at` next time.
+function paused(values: Value[], at: i32): Read {
+  return Read { values: values, error: "", at: -1, open: -1, resume: at + 1 };
+}
+
+// An error of `--seq` at the byte `at`. jq reads on after that byte.
+function resumed(values: Value[], error: string, at: i32): Read {
+  return Read { values: values, error: error, at: at, open: -1, resume: at + 1 };
+}
 
 // jq allows this many open arrays, objects and keys.
 const MAX_DEPTH: i32 = 256;
@@ -49,17 +71,42 @@ function (st: State) place(at_end: boolean): string {
 
 // The values of `s`, which has no byte order mark.
 pub function read(s: string): Read {
-  return read_at(s, 1, 0);
+  return read_at(s, 1, 0, 0, false);
 }
 
 // The values of `s`, which starts at the line `line` and the column
-// `column` of its input.
-pub function read_at(s: string, line: i32, column: i32): Read {
+// `column` of its input. `last_read` is the offset in `s` of the last read
+// of jq, or -1 when more input follows `s`: then a value that `s` leaves
+// open is no error. With `seq`, the input is a sequence of texts of `--seq`,
+// and `s` starts after a record separator. When a separator in the last
+// read cuts no value, and jq gave no value in that read before it, jq gives
+// no input for that read, and reads on after the separator next time.
+// fern-lint: allow cyclomatic-complexity
+pub function read_at(s: string, line: i32, column: i32, last_read: i32, seq: boolean): Read {
+  let last = last_read >= 0;
   let st = State { stack: [], vals: [], keys: [], next: [], out: [], line: line, column: column };
   let token = -1;
+  let begun = 0;
+  let after_space = false;
   let i = 0;
   while (i < s.len()) {
     let b = s[i];
+    if (seq && b == RS) {
+      st = st.step(b);
+      if (!after_space && (st.stack.len() > 0 || token >= 0)) {
+        return truncated(st, s, token, i);
+      }
+      if (last && i >= last_read && !gave_since(st.out, last_read)) {
+        return paused(st.out, i);
+      }
+      st = st.reset();
+      i += 1;
+      continue;
+    }
+    if (st.stack.len() == 0 && token < 0 && !is_space(b)) {
+      begun = i;
+    }
+    after_space = is_space(b);
     st = st.step(b);
     if (!is_space(b) && !is_structure(b) && b != b'"') {
       if (token < 0) {
@@ -74,7 +121,7 @@ pub function read_at(s: string, line: i32, column: i32): Read {
     if (token >= 0) {
       let (after, bad) = st.literal(slice_unchecked(s, token, i).to_owned(), i);
       if (bad.len() > 0) {
-        return Read { values: after.out, error: bad + after.place(false) };
+        return stopped(after.out, bad + after.place(false), i, seq);
       }
       st = after;
       token = -1;
@@ -82,24 +129,44 @@ pub function read_at(s: string, line: i32, column: i32): Read {
     if (is_structure(b)) {
       let (after, bad) = st.structure(b);
       if (bad.len() > 0) {
-        return Read { values: after.out.truncate(kept), error: bad + after.place(false) };
+        return stopped(after.out.truncate(kept), bad + after.place(false), i, seq);
       }
       st = after.done(i + 1);
     } else if (b == b'"') {
       let end = i + 1;
       let closed = false;
-      while (end < s.len() && !closed) {
-        st = st.step(s[end]);
-        if (s[end] == b'"') {
+      let escaped = false;
+      let separator = -1;
+      while (end < s.len() && !closed && separator < 0) {
+        let c = s[end];
+        st = st.step(c);
+        if (seq && c == RS) {
+          separator = end;
+        } else if (escaped) {
+          escaped = false;
+        } else if (c == b'"') {
           closed = true;
-        } else if (s[end] == b'\\' && end + 1 < s.len()) {
-          end += 1;
-          st = st.step(s[end]);
+        } else if (c == b'\\') {
+          escaped = true;
         }
         end += 1;
       }
+      if (separator == i + 1 && st.stack.len() == 0) {
+        if (last && separator >= last_read && !gave_since(st.out, last_read)) {
+          return paused(st.out, separator);
+        }
+        st = st.reset();
+        i = end;
+        continue;
+      }
+      if (separator >= 0) {
+        return resumed(st.out, "Truncated value" + st.place(false), separator);
+      }
+      if (!closed && !last) {
+        return ended(st.out, begun);
+      }
       if (!closed) {
-        return Read { values: st.out, error: "Unfinished string" + st.place(true) };
+        return failed(st.out, "Unfinished string" + st.place(true), s.len());
       }
       let (text, bad) = unescape(slice_unchecked(s, i + 1, end - 1).to_owned());
       if (bad.len() == 0) {
@@ -108,23 +175,78 @@ pub function read_at(s: string, line: i32, column: i32): Read {
         bad = twice;
       }
       if (bad.len() > 0) {
-        return Read { values: st.out, error: bad + st.place(false) };
+        return stopped(st.out, bad + st.place(false), end - 1, seq);
       }
       i = end - 1;
     }
     i += 1;
   }
+  if (!last && (token >= 0 || st.stack.len() > 0)) {
+    return ended(st.out, begun);
+  }
   if (token >= 0) {
-    let (after, bad) = st.literal(slice_unchecked(s, token, s.len()).to_owned(), s.len());
+    let kept = st.out.len();
+    let text = slice_unchecked(s, token, s.len()).to_owned();
+    let (after, bad) = st.literal(text, s.len());
     if (bad.len() > 0) {
-      return Read { values: after.out, error: bad + after.place(true) };
+      return failed(after.out, bad + after.place(true), s.len());
+    }
+    if (seq && after.stack.len() == 0 && is_number_literal(text)) {
+      return failed(after.out.truncate(kept), "Potentially truncated top-level numeric value" + after.place(true), s.len());
     }
     st = after;
   }
   if (st.stack.len() > 0) {
-    return Read { values: st.out, error: "Unfinished JSON term" + st.place(true) };
+    return failed(st.out, "Unfinished JSON term" + st.place(true), s.len());
   }
-  return Read { values: st.out, error: "" };
+  return ended(st.out, -1);
+}
+
+// Whether jq gave one of `values` at the offset `at` or after it. jq gives a
+// value at the byte after it.
+function gave_since(values: Value[], at: i32): boolean {
+  return values.len() > 0 && values[values.len() - 1].end >= at;
+}
+
+// The record separator of `--seq`.
+pub const RS: u8 = 30u8;
+
+// The error at the byte `at`. With `seq`, jq says that it waits for a record
+// separator, but it reads on after the byte.
+function stopped(values: Value[], error: string, at: i32, seq: boolean): Read {
+  if (seq) {
+    return resumed(values, error + " (need RS to resync)", at);
+  }
+  return failed(values, error, at);
+}
+
+// The error of a record separator at `at` that cuts a value. A number at the
+// top level can be whole, and jq tells that.
+function truncated(own st: State, s: string, token: i32, at: i32): Read {
+  if (token < 0 || st.stack.len() > 0) {
+    return resumed(st.out, "Truncated value" + st.place(false), at);
+  }
+  let kept = st.out.len();
+  let text = slice_unchecked(s, token, at).to_owned();
+  let number = is_number_literal(text);
+  let (after, bad) = st.literal(text, at);
+  let message = if (number && bad.len() == 0) { "Potentially truncated top-level numeric value" } else { "Truncated value" };
+  return resumed(after.out.truncate(kept), message + after.place(false), at);
+}
+
+// The state after a record separator that cuts no value: jq drops an open
+// array or object.
+function (own st: State) reset(): State {
+  return State { ...st, stack: [], vals: [], keys: [], next: [] };
+}
+
+// Whether jq reads the literal `text` as a number: a literal that is not
+// `true`, `false` or one that starts with "nu".
+function is_number_literal(text: string): boolean {
+  if (text.len() == 0) {
+    return false;
+  }
+  return text[0] != b't' && text[0] != b'f' && !text.starts_with("nu");
 }
 
 // The line and the column after the byte `b`.
