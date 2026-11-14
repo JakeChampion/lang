@@ -7,7 +7,7 @@ import (
 )
 
 var importPattern = regexp.MustCompile(`(?m)^\s*(?:pub\s+)?(?:import|use)\s+"([^"]+)"`)
-var referencePattern = regexp.MustCompile(`(?:compiler|coreutils|diffutils|sed|examples|tests|bench|fern-image|internal|spec|conformance|scripts|site|web|editors|bootstrap|docs|\.github)/[A-Za-z0-9_./*?\[\]-]*`)
+var referencePattern = regexp.MustCompile(`(?:compiler|coreutils|diffutils|sed|findutils|examples|tests|bench|fern-image|internal|spec|conformance|scripts|site|web|editors|bootstrap|docs|\.github)/[A-Za-z0-9_./*?\[\]-]*`)
 
 func (g *Graph) references(value string, out map[string]bool) {
 	simple := value
@@ -33,7 +33,7 @@ func (g *Graph) references(value string, out map[string]bool) {
 	if _, ok := g.Config.Components[simple]; ok {
 		out[simple+"/**"] = true
 	}
-	for _, root := range []string{"compiler", "coreutils", "diffutils", "sed", "examples", "tests", "bench", "fern-image", "internal", "spec", "conformance", "scripts", "site", "web", "editors", "bootstrap", ".github"} {
+	for _, root := range []string{"compiler", "coreutils", "diffutils", "sed", "findutils", "examples", "tests", "bench", "fern-image", "internal", "spec", "conformance", "scripts", "site", "web", "editors", "bootstrap", ".github"} {
 		if simple == root {
 			out[root] = true
 			out[root+"/**"] = true

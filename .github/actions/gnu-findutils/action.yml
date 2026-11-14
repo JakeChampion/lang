@@ -1,0 +1,66 @@
+name: GNU findutils oracle
+description: >
+  The pinned GNU findutils that the corpus compares the findutils/ ports with
+  (docs/COREUTILS.md). The action builds it from source and caches it per
+  host. Then it sets FERN_GNU_FINDUTILS to its bin directory.
+
+  The pin is 4.9.0, the release that ubuntu-24.04 ships. A build from source
+  keeps macOS on the same release, because macOS has the BSD find and xargs.
+inputs:
+  host:
+    description: The runner, which keys the cache.
+    required: true
+  version:
+    description: The GNU findutils release to build.
+    required: false
+    default: "4.9.0"
+runs:
+  using: composite
+  steps:
+    - name: Cache the GNU findutils oracle
+      id: gnu-findutils
+      uses: actions/cache@v6
+      with:
+        path: ~/gnu-findutils
+        key: gnu-findutils-${{ inputs.version }}-${{ inputs.host }}
+    - name: Build the GNU findutils oracle
+      if: steps.gnu-findutils.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VER: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        work="$(mktemp -d)"
+        cd "$work"
+        curl -fsSLO "https://ftp.gnu.org/gnu/findutils/findutils-$VER.tar.xz"
+        tar xf "findutils-$VER.tar.xz"
+        cd "findutils-$VER"
+        ./configure --quiet --disable-nls --without-selinux --prefix="$HOME/gnu-findutils"
+        make -j"$(getconf _NPROCESSORS_ONLN)"
+        make install
+        rm -rf "$HOME/gnu-findutils/share" "$HOME/gnu-findutils/var"
+        cd /
+        rm -rf "$work"
+    # A cache that restored an empty directory must stop here, with one
+    # message that names the cause. The list comes from findutils/*.fern.
+    - name: Assert the oracle is GNU findutils, and point the corpus at it
+      shell: bash
+      env:
+        VER: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        bindir="$HOME/gnu-findutils/bin"
+        missing=""
+        for f in findutils/*.fern; do
+          util="$(basename "$f" .fern)"
+          line="$("$bindir/$util" --version 2>/dev/null | head -1 || true)"
+          case "$line" in
+            *"(GNU findutils) $VER") ;;
+            *) missing="$missing $util" ;;
+          esac
+        done
+        if [ -n "$missing" ]; then
+          echo "::error::no GNU findutils $VER oracle in $bindir for:$missing"
+          exit 1
+        fi
+        echo "FERN_GNU_FINDUTILS=$bindir" >> "$GITHUB_ENV"
