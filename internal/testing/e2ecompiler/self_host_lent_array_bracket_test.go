@@ -36,7 +36,7 @@ func TestSelfHostLentArrayBracket(t *testing.T) {
 	if err := os.WriteFile(src, []byte(lentArrayBracketProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bracket := []*regexp.Regexp{regexp.MustCompile(`__fern_arr_dec`), regexp.MustCompile(`__fern_rc_inc|_rcinc[0-9]+:`)}
+	bracket := []*regexp.Regexp{regexp.MustCompile(`__fern_(arr|box)_dec`), regexp.MustCompile(`__fern_rc_inc|_rcinc[0-9]+:`)}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		out := filepath.Join(dir, target+".s")
 		if combined, err := exec.Command(h.cli, "-O", "-target", target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {

@@ -10,7 +10,7 @@
 # compiler/ or the stdlib changed, so a construct that stage0 cannot compile
 # fails here. The hook also checks each program file that the push changes
 # alone (scripts/check-changed-programs), and compares the lint ratchets with
-# the commit that the push starts from (scripts/check-ratchets), for a push of
+# the main that the push is on (scripts/check-ratchets), for a push of
 # the checked-out branch. Keeps going after a failure and reports the set, like lint-all.
 # `git push --no-verify` skips it.
 set -uo pipefail
@@ -46,8 +46,11 @@ if [ "${#ranges[@]}" -gt 0 ]; then
     echo "pre-push ==> scripts/check-changed-programs $range"
     # shellcheck disable=SC2086
     if ! scripts/check-changed-programs $range; then echo "pre-push FAILED: check-changed-programs"; status=1; fi
-    echo "pre-push ==> scripts/check-ratchets ${range%% *}"
-    if ! scripts/check-ratchets "${range%% *}"; then echo "pre-push FAILED: check-ratchets"; status=1; fi
+    # A merge of main brings the findings of main, so compare with the main
+    # that the push is on, as the Lint lane does.
+    base=$(git merge-base "${range##* }" origin/main 2>/dev/null) || base=${range%% *}
+    echo "pre-push ==> scripts/check-ratchets $base"
+    if ! scripts/check-ratchets "$base"; then echo "pre-push FAILED: check-ratchets"; status=1; fi
   done
 fi
 if [ "$status" -ne 0 ]; then

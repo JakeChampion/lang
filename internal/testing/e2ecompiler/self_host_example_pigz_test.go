@@ -1,3 +1,5 @@
+// CI-DARK: FERN_PIGZ_ORACLE — This flag compares against a pigz 2.8 binary. CI compares against testdata/pigz-2.8.json.
+// CI-DARK: FERN_PIGZ_UPDATE — This flag regenerates the reference data.
 package e2ecompiler
 
 import (

@@ -32,7 +32,8 @@ func TestSelfHostExampleRgUnit(t *testing.T) {
 // below the fixtures where it runs. With noStdin, the standard input is
 // /dev/null. With anyOrder, the lines of the output can come in any order,
 // as they do from ripgrep with more than one thread. With pty, the standard
-// output is a terminal, and TERM is set when term is not "".
+// output is a terminal, and TERM is set when term is not "". Each entry of
+// env is NAME=VALUE, with DIR in VALUE for the directory of the fixtures.
 type rgCase struct {
 	args     []string
 	stdin    string
@@ -41,6 +42,7 @@ type rgCase struct {
 	anyOrder bool
 	pty      bool
 	term     string
+	env      []string
 }
 
 func rgArgs(line string) []string { return strings.Fields(line) }
@@ -58,37 +60,69 @@ func rgFixtures(t *testing.T, dir string) {
 	}
 	long := strings.Repeat("abcdefghij", 20000) + " needle " + strings.Repeat("xyz", 3000) + "\nshort needle\n"
 	files := map[string]string{
-		"a.txt":     "alpha beta\ngamma foo\nfoo bar foo\nnothing here\nFoo again\nlast foo",
-		"w.txt":     "foobar foo\nxfoo foo_x\n-foo- (foo)\nfoo\nfoofoo\n",
-		"upper.txt": "Foo\nFOO\nfoo\nfOo bar\nnone\n",
-		"crlf.txt":  "one\r\ntwo foo\r\nthree\r\n",
-		"crlf2.txt": "one\r\ntwo foo\r\nthree",
-		"nul.dat":   "one\x00two foo\x00three\x00",
-		"long.md":   "ééééé foo ééé\nab foo cd foo ef foo gh\n  gamma foo foo\n",
-		"pats.txt":  "foo\r\n\nbe+ta\n",
-		"bad.pat":   "fo\xffo\n",
-		"none.pat":  "",
-		"latin.txt": "caf\xe9 foo \x80\n",
-		"u16le.txt": "\xff\xfec\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n\x00b\x00a\x00r\x00\n\x00",
-		"u16be.txt": "\xfe\xff\x00c\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n",
-		"u16nb.txt": "c\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n\x00",
-		"bom8.txt":  "\xef\xbb\xbfcaf\xe9 foo \xe2\x82\n",
-		"ml.txt":    "one\nabc\ndefxxxabc\ndefxxx\nlast abc\nmid\nabc\ndef\n",
-		"hw.txt":    "hello\nworld\n",
-		"empty.txt": "",
-		"nonl.txt":  "foo",
-		"blank.txt": "\n\nfoo\n\n",
-		"uni.txt":   "café au lait\nnaïve foo\nψυχή καὶ σῶμα\nplain\n",
-		"many.txt":  many.String(),
-		"long.txt":  long,
-		"bin.dat":   "abc\x00def foo\nmore foo\n",
-		"bin2.dat":  "foo 1\nbar\nabc\x00def\nfoo 2\n",
-		"bin3.dat":  "abc\x00def\n",
-		"bin4.dat":  "a\x00foo\nzz\n",
-		"ab.txt":    "bbabb\nba\nfoobar xfoo\n",
+		"a.txt":       "alpha beta\ngamma foo\nfoo bar foo\nnothing here\nFoo again\nlast foo",
+		"w.txt":       "foobar foo\nxfoo foo_x\n-foo- (foo)\nfoo\nfoofoo\n",
+		"upper.txt":   "Foo\nFOO\nfoo\nfOo bar\nnone\n",
+		"crlf.txt":    "one\r\ntwo foo\r\nthree\r\n",
+		"crlf2.txt":   "one\r\ntwo foo\r\nthree",
+		"nul.dat":     "one\x00two foo\x00three\x00",
+		"long.md":     "ééééé foo ééé\nab foo cd foo ef foo gh\n  gamma foo foo\n",
+		"pats.txt":    "foo\r\n\nbe+ta\n",
+		"bad.pat":     "fo\xffo\n",
+		"none.pat":    "",
+		"latin.txt":   "caf\xe9 foo \x80\n",
+		"u16le.txt":   "\xff\xfec\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n\x00b\x00a\x00r\x00\n\x00",
+		"u16be.txt":   "\xfe\xff\x00c\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n",
+		"u16nb.txt":   "c\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n\x00",
+		"bom8.txt":    "\xef\xbb\xbfcaf\xe9 foo \xe2\x82\n",
+		"ml.txt":      "one\nabc\ndefxxxabc\ndefxxx\nlast abc\nmid\nabc\ndef\n",
+		"hw.txt":      "hello\nworld\n",
+		"empty.txt":   "",
+		"nonl.txt":    "foo",
+		"blank.txt":   "\n\nfoo\n\n",
+		"uni.txt":     "café au lait\nnaïve foo\nψυχή καὶ σῶμα\nplain\n",
+		"many.txt":    many.String(),
+		"long.txt":    long,
+		"bin.dat":     "abc\x00def foo\nmore foo\n",
+		"bin2.dat":    "foo 1\nbar\nabc\x00def\nfoo 2\n",
+		"bin3.dat":    "abc\x00def\n",
+		"bin4.dat":    "a\x00foo\nzz\n",
+		"ab.txt":      "bbabb\nba\nfoobar xfoo\n",
+		"sjis.txt":    "\x84Y\x84u\x84\x82\x84|\x84\x80\x84{ \x84V\x84\x80\x84|\x84}\x84\x83 \x82\xa0\x82\xa2\x82\xa4 foo\x0a\x94\xbc\x8ap\xb6\xc5 bar\x0a\x81\x0a",
+		"eucjp.txt":   "\xb4\xc1\xbb\xfa foo\x0a\xa4\xab\xa4\xca\x8f\xb0\xa1\x0a",
+		"euckr.txt":   "\xc7\xd1\xb1\xb9\xbe\xee foo\x0a",
+		"gbk.txt":     "\xd6\xd0\xce\xc4 foo\x81\x30\x81\x30\x0a",
+		"big5.txt":    "\xa4\xa4\xa4\xe5 foo\x88\x62\x0a",
+		"koi8.txt":    "\xf0\xd2\xc9\xd7\xc5\xd4 foo\x0a",
+		"iso2022.txt": "\x1b$BF|K\x5c\x1b(B foo\x1b(J\x5c\x0a",
+		"z/t.gz":      "\x1f\x8b\x08\x08\x59\x78\xf8\x6a\x00\x03\x66\x2e\x74\x78\x74\x00\x4b\xcb\xcf\x57\x48\x4a\x2c\xe2\x4a\x4a\xac\xe2\x4a\x03\xb2\x13\xd3\x13\x33\xf3\xb8\x00\x62\xef\x63\xd7\x16\x00\x00\x00",
+		"z/t.bz2":     "\x42\x5a\x68\x39\x31\x41\x59\x26\x53\x59\x1a\xa7\xf9\x1c\x00\x00\x06\x51\x80\x00\x10\x40\x00\x31\xa1\x90\x10\x20\x00\x21\x28\x4c\x8d\x94\x20\x1a\x69\xa1\x34\xcc\x5a\x57\xa3\x47\xd1\x9c\x3e\x2e\xe4\x8a\x70\xa1\x20\x35\x4f\xf2\x38",
+		"z/t.xz":      "\xfd\x37\x7a\x58\x5a\x00\x00\x04\xe6\xd6\xb4\x46\x02\x00\x21\x01\x16\x00\x00\x00\x74\x2f\xe5\xa3\x01\x00\x15\x66\x6f\x6f\x20\x62\x61\x72\x0a\x62\x61\x7a\x0a\x66\x6f\x6f\x20\x61\x67\x61\x69\x6e\x0a\x00\x00\x00\x5e\x1b\xb1\xee\xdd\xd5\x4e\xd5\x00\x01\x2e\x16\x56\x09\x55\xdf\x1f\xb6\xf3\x7d\x01\x00\x00\x00\x00\x04\x59\x5a",
+		"z/t.lzma":    "\x5d\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x33\x1b\xec\x40\x62\x31\x1f\xff\x69\xb1\xfe\x32\xd8\x28\xd6\x38\xaa\xb7\x76\xf4\x9a\x27\x05\xff\xfe\x12\x5c\x00",
+		"z/t.Z":       "\x1f\x9d\x90\x66\xde\xbc\x01\x21\x26\x8c\x1c\x05\x05\xf5\x28\x08\x38\x30\xcc\x99\x30\x69\xdc\x28\x00",
+		"z/trunc.xz":  "\xfd\x37\x7a\x58\x5a\x00\x00\x04\xe6\xd6\xb4\x46\x02\x00\x21\x01\x16\x00\x00\x00\x74\x2f\xe5\xa3\x01\x00\x15\x66\x6f\x6f",
+		"z/bad.gz":    "garbage",
+		"z/bad.bz2":   "garbage",
+		"z/bad.xz":    "garbage",
+		"z/plain.txt": "foo plain\n",
+		"rgconfig":    "# A comment\n\n  --colors=match:fg:green  \n-n\n--color=always\n",
+		"badconfig":   "--bogus\n",
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "z"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	for name, text := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scripts := map[string]string{
+		"pre.sh":   "#!/bin/sh\necho \"pre: $1\"\ncat\n",
+		"fail.sh":  "#!/bin/sh\necho foo one\necho oops >&2\nexit 1\n",
+		"quiet.sh": "#!/bin/sh\nexit 3\n",
+	}
+	for name, text := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -272,6 +306,7 @@ func rgCases(dir string) []rgCase {
 		rgCase{args: rgArgs("foo"), stdin: ""},
 	)
 	cases = append(cases, rgFlagCases()...)
+	cases = append(cases, rgLateCases()...)
 	return append(cases, rgWalkCases()...)
 }
 
@@ -328,6 +363,94 @@ func rgFlagCases() []rgCase {
 	)
 }
 
+// rgLateCases give --colors, the links, the field separators, the special
+// modes, the config file, the flags of the engine and the flags that
+// ripgrep suggests for a name that it does not know.
+func rgLateCases() []rgCase {
+	lines := []string{
+		"--color always --colors match:fg:blue -n foo a.txt",
+		"--color always --colors match:bg:0x10 --colors match:style:underline --colors match:style:intense -n foo a.txt",
+		"--color always --colors line:fg:1,2,3 --colors column:fg:yellow --column -n foo a.txt",
+		"--color always --colors path:none -j1 -H foo a.txt w.txt",
+		"--color always --colors match:none -n -o foo a.txt",
+		"--color always --colors match:none -M 5 foo long.md",
+		"--color always --colors MATCH:STYLE:NOBOLD --colors match:fg:+5 foo a.txt",
+		"--colors match:fg:purple foo a.txt", "--colors match:fg:300 foo a.txt", "--colors match:fg:1,2 foo a.txt",
+		"--colors bogus:fg:red foo a.txt", "--colors match:xx:red foo a.txt", "--colors match:fg foo a.txt",
+		"--colors match:style:x foo a.txt",
+		"--color always --hyperlink-format default -H foo a.txt",
+		"--color always --hyperlink-format vscode -j1 -n -H foo a.txt w.txt",
+		"--color always --hyperlink-format vscode -j1 --heading -n foo a.txt w.txt",
+		"--color always --hyperlink-format file -j1 --heading -n foo a.txt w.txt",
+		"--color always --hyperlink-format kitty -j1 -c foo a.txt w.txt",
+		"--color always --hyperlink-format kitty -j1 -l foo a.txt w.txt",
+		"--color always --hyperlink-format vscode --vimgrep foo a.txt",
+		"--color always --hyperlink-format vscode -o -b -H foo a.txt",
+		"--color always --hyperlink-format vscode -A1 -n -H foo a.txt",
+		"--color always --hyperlink-format grep+ -H -U foo\\nnothing a.txt",
+		"--color always --hyperlink-format vscode -n -H --colors match:none foo a.txt",
+		"--color always --hyperlink-format x:{{path}}{path} --null -H foo a.txt",
+		"--color always --hyperlink-format kitty --hostname-bin nosuchprogram -H foo a.txt",
+		"--color always --hyperlink-format kitty -H foo bin.dat",
+		"--hyperlink-format vscode -n -H foo a.txt",
+		"--hyperlink-format foo foo a.txt", "--hyperlink-format x://{line} foo a.txt", "--hyperlink-format {path} foo a.txt",
+		"--hyperlink-format x:{path}} foo a.txt", "--hyperlink-format x:{path foo a.txt", "--hyperlink-format x:{bad} foo a.txt",
+		"--hyperlink-format x://{path}{column} foo a.txt",
+		"--vimgrep -r X foo a.txt", "--color always --vimgrep -r X foo a.txt", "--vimgrep -M 8 --max-columns-preview foo a.txt",
+		"--color always --vimgrep -M 8 --max-columns-preview foo a.txt", "-o -M 2 --max-columns-preview foo a.txt",
+		"--column -M 3 foo a.txt", "--column -M 8 --max-columns-preview foo a.txt",
+		"--field-match-separator @@ --field-context-separator ## -n -C1 -H foo a.txt",
+		"--field-match-separator @@ -c -H foo a.txt", "--field-match-separator @@ --vimgrep foo a.txt",
+		"--field-match-separator @@ --heading -n -H foo a.txt", "--color always --field-match-separator @@ -n -H --column foo a.txt",
+		"--field-match-separator \\x41\\t -n foo a.txt", "--field-context-separator \\xff -n -C1 foo a.txt",
+		"-h", "--help", "-V", "-hV foo", "--help --bogus", "--generate man",
+		"--generate complete-bash", "--generate complete-zsh", "--generate complete-fish", "--generate complete-powershell",
+		"--generate bogus", "--generate man -c",
+		"--engine bogus foo a.txt", "--engine default foo a.txt", "--engine auto foo a.txt", "--dfa-size-limit 10 foo a.txt",
+		"--dfa-size-limit 1Q foo a.txt", "--regex-size-limit 99999999999999999999 foo a.txt", "--regex-size-limit 1 foo a.txt",
+		"--line-buffered foo a.txt", "--block-buffered foo a.txt", "--no-line-buffered --no-block-buffered foo a.txt",
+		"--debug-x foo a.txt", "--hiden foo a.txt", "--colr foo a.txt", "--pcre foo a.txt", "--no-vimgrep foo a.txt",
+		"--one-file-system foo a.txt", "--no-one-file-system foo a.txt", "--no-config foo a.txt",
+		"--auto-hybrid-regex --no-auto-hybrid-regex foo a.txt", "--no-pcre2-unicode \\w+ uni.txt", "--pcre2-unicode \\w+ uni.txt",
+		// The errors of a pattern, as regex-syntax writes them, and the names
+		// of the Unicode properties.
+		"* a.txt", "a{2,1} a.txt", "(?P<n>a)(?P<n>b) a.txt", "(?iii) a.txt", "\\p{Foo=bar} a.txt", "\\p{sc=Foo} a.txt",
+		"-w [z-a] a.txt", "--no-unicode \\p{L} a.txt", "( a.txt", "-i -e foo -e \\x{110000} a.txt",
+		"[a-\\w] a.txt", "a{1 a.txt", "\\b{foo} a.txt", "(?x)a{ 1 } a.txt", "[o--f] a.txt", "\\p{Grek}+ uni.txt",
+		"\\p{IsGreek}+ uni.txt", "\\p{sc!=Greek}+ uni.txt", "\\P{sc!=Greek}+ uni.txt", "\\p{Emoji} uni.txt", "\\p{wspace} uni.txt",
+		// The encodings of the Encoding Standard.
+		"-E sjis foo sjis.txt", "-E Shift_JIS -o \\p{Hiragana}+ sjis.txt", "-E windows-31j --passthru x sjis.txt",
+		"-E euc-jp --passthru x eucjp.txt", "-E euc-kr foo euckr.txt", "-E gbk --passthru x gbk.txt",
+		"-E gb18030 --passthru x gbk.txt", "-E big5 --passthru x big5.txt", "-E koi8-r -o \\w+ koi8.txt",
+		"-E iso-2022-jp --passthru x iso2022.txt", "-E csiso2022kr foo a.txt", "-E auto foo a.txt", "-E NONE foo a.txt",
+		"-E x-user-defined --passthru x latin.txt", "-E windows-1251 --passthru x latin.txt", "-E iso-8859-8-i --passthru x latin.txt",
+		// The preprocessor of --pre, and -z.
+		"--pre ./pre.sh foo a.txt", "--pre ./pre.sh -j1 pre a.txt w.txt", "--pre ./fail.sh foo a.txt", "--pre ./fail.sh -c foo a.txt",
+		"--pre ./fail.sh -l foo a.txt", "--pre ./fail.sh -l zzz a.txt", "--pre ./quiet.sh foo a.txt", "--pre nosuchprogram foo a.txt",
+		"--pre ./pre.sh --pre-glob *.md -j1 foo a.txt long.md", "--pre ./pre.sh --pre-glob !*.md -j1 pre a.txt long.md",
+		"--pre ./pre.sh foo nosuch.txt", "--pre ./pre.sh --no-pre pre a.txt", "--pre= pre a.txt", "--pre ./pre.sh -z pre a.txt",
+		"-z foo z/t.gz", "-z -c foo z/t.bz2", "-z -n foo z/t.xz", "-z foo z/t.lzma", "-z foo z/t.Z", "-z foo z/trunc.xz",
+		"-z foo z/bad.gz", "-z foo z/bad.bz2", "-z foo z/bad.xz", "-z -j1 --sort path foo z", "--search-zip -l foo z/t.gz",
+		"-z --no-search-zip foo z/t.xz", "-z foo a.txt",
+	}
+	var cases []rgCase
+	for _, l := range lines {
+		cases = append(cases, rgCase{args: rgArgs(l)})
+	}
+	config := func(line, file string) rgCase {
+		return rgCase{args: rgArgs(line), env: []string{"RIPGREP_CONFIG_PATH=DIR/" + file}}
+	}
+	return append(cases,
+		config("foo a.txt", "rgconfig"),
+		config("--no-config foo a.txt", "rgconfig"),
+		config("-N --colors match:fg:red foo a.txt", "rgconfig"),
+		config("foo a.txt", "badconfig"),
+		config("foo a.txt", "nosuchconfig"),
+		config("--no-messages foo a.txt", "nosuchconfig"),
+		config("-V", "badconfig"),
+	)
+}
+
 // rgTimes match the times of --stats and --json, which differ from run to
 // run.
 var rgTimes = regexp.MustCompile(`"elapsed(_total)?":\{[^}]*\}|(?m)^[0-9]+\.[0-9]+ seconds`)
@@ -354,6 +477,9 @@ func rgRun(t *testing.T, cmd *exec.Cmd, dir string, c rgCase) rgResult {
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + filepath.Join(dir, "home")}
 	if c.term != "" {
 		cmd.Env = append(cmd.Env, "TERM="+c.term)
+	}
+	for _, e := range c.env {
+		cmd.Env = append(cmd.Env, strings.ReplaceAll(e, "DIR", dir))
 	}
 	if !c.noStdin && !c.pty {
 		cmd.Stdin = strings.NewReader(c.stdin)
@@ -620,6 +746,42 @@ func TestSelfHostExampleRgAgainstRipgrep(t *testing.T) {
 				}
 			}
 			t.Logf("%d command lines give the output of ripgrep", len(cases))
+		})
+	}
+}
+
+// TestSelfHostExampleRgWithoutPcre2 checks that the port behaves as
+// ripgrep 14.1.0 built without PCRE2. The oracle has PCRE2, so the test
+// compares the port with the text of that build.
+func TestSelfHostExampleRgWithoutPcre2(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	rgFixtures(t, dir)
+	const noPcre2 = "PCRE2 is not available in this build of ripgrep."
+	divider := strings.Repeat("~", 79)
+	cases := []struct {
+		args string
+		want rgResult
+	}{
+		{"-P foo a.txt", rgResult{"", "rg: " + noPcre2 + "\n", 2}},
+		{"--engine pcre2 foo a.txt", rgResult{"", "rg: " + noPcre2 + "\n", 2}},
+		{"--pcre2-version", rgResult{noPcre2 + "\n", "", 1}},
+		{"--engine auto -c foo a.txt", rgResult{"3\n", "", 0}},
+		{"--engine auto a{2,1} a.txt", rgResult{"", "rg: regex could not be compiled with either the default regex engine or with PCRE2.\n\n" +
+			"default regex engine error:\n" + divider + "\nregex parse error:\n    (?:a{2,1})\n        ^^^^^\n" +
+			"error: invalid repetition count range, the start must be <= the end\n" + divider + "\n\nPCRE2 regex engine error:\n" + noPcre2 + "\n", 2}},
+		{"\\1 a.txt", rgResult{"", "rg: regex parse error:\n    (?:\\1)\n       ^^\nerror: backreferences are not supported\n", 2}},
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			port := rgPort(t, cli, target)
+			for _, c := range cases {
+				got := rgRun(t, port(rgArgs(c.args)...), dir, rgCase{args: rgArgs(c.args)})
+				if got != c.want {
+					t.Errorf("rg %s:\ngot  exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q",
+						c.args, got.code, got.stdout, got.stderr, c.want.code, c.want.stdout, c.want.stderr)
+				}
+			}
 		})
 	}
 }
