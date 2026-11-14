@@ -16,6 +16,8 @@ A frame of the app has these steps:
 2. `draw` puts a texture at a position, and `draw_part` puts a part of it on a rectangle. Each one has an alpha and a clip to a band of rows. `draw_part` also has a `Fade`, a ramp of the alpha between two rows. A part on a larger rectangle repeats its nearest texels, so a texture of one pixel fills a rectangle with one colour.
 3. `present` shows the frame. The display shows it at its next vsync. It gives `Lost` when the device lost the context, for example after a GPU reset. The textures are then gone: the app closes the canvas and opens a new one.
 
+`external` makes a texture that a producer of frames fills, such as a `SurfaceTexture` of Android that a media player draws into. `draw_external` draws its current frame on a rectangle, through the transform matrix of the producer. `fit` gives the rectangle of a frame in a box with its shape kept. A video then shows with bars at its sides or above and below it. A GPU with no `GL_OES_EGL_image_external` gives a texture with the id 0, and `draw_external` then draws nothing.
+
 `begin_layer` sends the draws that follow to a layer of the size of the window, and `end_layer` sends them to the window again. `draw_layer` then draws the layer with one alpha. A group of images that overlap fades as one image in this way, with no image showing through the images over it.
 
 Positions are in pixels, from the top left corner of the window. Each texture pixel goes on one window pixel, so an image at a whole pixel position keeps its sharp edges.
@@ -50,6 +52,7 @@ The root chunk keeps the order of the declarations.
 // This module draws on the window of a NativeActivity app with the GPU,
 // through EGL and OpenGL ES 2.
 import "std/android";
+import "core/cmp";
 import "std/android/draw";
 import "std/jni";
 ```
@@ -150,6 +153,9 @@ function gl_uniform1f(location: i32, v: f32): void;
 @import("libGLESv2.so", "glUniform2f")
 function gl_uniform2f(location: i32, a: f32, b: f32): void;
 
+@import("libGLESv2.so", "glUniformMatrix4fv")
+function gl_uniform_matrix4(location: i32, count: i32, transpose: i32, value: usize): void;
+
 @import("libGLESv2.so", "glUniform4f")
 function gl_uniform4f(location: i32, a: f32, b: f32, c: f32, d: f32): void;
 
@@ -233,6 +239,8 @@ function gl_finish(): void;
 
 One program draws each quad. The vertex shader puts the unit square on the rectangle `u_dst` of the window, and takes the texture coordinates from the rectangle `u_src`. The fragment shader multiplies the premultiplied texel by the alpha and by the ramp `u_fade`: the alpha goes from `u_fade.z` at row `u_fade.x` to `u_fade.w` at row `u_fade.y`. A row is the centre of a pixel less half a pixel, so the ramp starts on the first row. The texture coordinates need high precision, so the fragment shader asks for it where the GPU has it.
 
+A third program draws an external texture. The vertex shader turns the rows over. The transform matrix of a producer takes texture coordinates from the bottom left corner of the frame. The module compiles this program at the first `external`.
+
 A second program draws text. Each glyph is two triangles, with a position on the window and a position in the atlas at each corner. The fragment shader multiplies the premultiplied colour `u_color` by the coverage of the glyph in the atlas.
 
 ```fern
@@ -244,6 +252,10 @@ const FRAGMENT_SHADER: string = "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision hi
 const TEXT_VERTEX_SHADER: string = "attribute vec2 a_pos;\nattribute vec2 a_uv;\nuniform vec2 u_screen;\nvarying vec2 v_uv;\nvoid main() {\n  v_uv = a_uv;\n  gl_Position = vec4(a_pos.x / u_screen.x * 2.0 - 1.0, 1.0 - a_pos.y / u_screen.y * 2.0, 0.0, 1.0);\n}\n";
 
 const TEXT_FRAGMENT_SHADER: string = "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\nuniform sampler2D u_atlas;\nuniform vec4 u_color;\nvarying vec2 v_uv;\nvoid main() {\n  gl_FragColor = u_color * texture2D(u_atlas, v_uv).a;\n}\n";
+
+const VIDEO_VERTEX_SHADER: string = "attribute vec2 a_pos;\nuniform vec2 u_screen;\nuniform vec4 u_dst;\nuniform mat4 u_matrix;\nvarying vec2 v_uv;\nvoid main() {\n  vec2 p = u_dst.xy + a_pos * u_dst.zw;\n  v_uv = (u_matrix * vec4(a_pos.x, 1.0 - a_pos.y, 0.0, 1.0)).xy;\n  gl_Position = vec4(p.x / u_screen.x * 2.0 - 1.0, 1.0 - p.y / u_screen.y * 2.0, 0.0, 1.0);\n}\n";
+
+const VIDEO_FRAGMENT_SHADER: string = "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\nuniform samplerExternalOES u_tex;\nvarying vec2 v_uv;\nvoid main() {\n  gl_FragColor = texture2D(u_tex, v_uv);\n}\n";
 
 const GL_VERTEX_SHADER: i32 = 35633;
 
@@ -331,10 +343,14 @@ struct Places { screen: i32, dst: i32, src: i32, alpha: i32, fade: i32, tex: i32
 // The text program and the locations of its uniforms.
 struct TextPlaces { program: i32, screen: i32, color: i32, atlas: i32 }
 
+// The program of external textures and the locations of its uniforms. The
+// program is 0 until the first external texture.
+struct VideoPlaces { program: i32, screen: i32, dst: i32, matrix: i32, tex: i32 }
+
 // `pbuffer` is the surface of one pixel that keeps the context current.
 // `surface` is the surface that the canvas draws on: a window, an image, or
 // `pbuffer` when the canvas is detached. `window` is 0 off a window.
-pub struct Canvas { display: usize, config: usize, context: usize, pbuffer: usize, surface: usize, window: usize, program: i32, places: Places, text: TextPlaces, quad: usize, width: i32, height: i32, layer: Texture, framebuffer: i32, left: i32, right: i32 }
+pub struct Canvas { display: usize, config: usize, context: usize, pbuffer: usize, surface: usize, window: usize, program: i32, places: Places, text: TextPlaces, video: VideoPlaces, quad: usize, width: i32, height: i32, layer: Texture, framebuffer: i32, left: i32, right: i32 }
 
 // What `present` did: it showed the frame, the canvas has no window, or the
 // device lost the context.
@@ -586,7 +602,7 @@ function start(d: usize, config: usize, pbuffer: usize, ctx: usize): Option[Canv
     gl_enable(GL_BLEND);
     gl_blend_func(1, GL_ONE_MINUS_SRC_ALPHA);
     gl_enable(GL_SCISSOR_TEST);
-    let c = Canvas { display: d, config: config, context: ctx, pbuffer: pbuffer, surface: pbuffer, window: 0 as usize, program: p, places: places, text: text, quad: quad, width: 0, height: 0, layer: Texture { id: 0, width: 0, height: 0 }, framebuffer: 0, left: 0, right: 1 << 30 };
+    let c = Canvas { display: d, config: config, context: ctx, pbuffer: pbuffer, surface: pbuffer, window: 0 as usize, program: p, places: places, text: text, video: VideoPlaces { program: 0, screen: 0, dst: 0, matrix: 0, tex: 0 }, quad: quad, width: 0, height: 0, layer: Texture { id: 0, width: 0, height: 0 }, framebuffer: 0, left: 0, right: 1 << 30 };
     return Some(c.sized(1, 1));
   }
 }
@@ -755,6 +771,7 @@ pub function (c: Canvas) draw(t: Texture, x: i32, y: i32, alpha: f64, clip0: i32
 }
 
 // A rectangle of pixels.
+@derive(cmp.Eq)
 pub struct Part { x: i32, y: i32, w: i32, h: i32 }
 
 // Draws the part `from` of `t` on the rectangle `to` of the window, with the
@@ -766,6 +783,80 @@ pub function (c: Canvas) draw_part(t: Texture, from: Part, to: Part, alpha: f64,
   let tw = t.width as f32;
   let th = t.height as f32;
   c.quad_of(t.id, to, from.x as f32 / tw, from.y as f32 / th, (from.x + from.w) as f32 / tw, (from.y + from.h) as f32 / th, alpha, fade, clip0, clip1);
+}
+
+const GL_TEXTURE_EXTERNAL_OES: i32 = 36197;
+
+// A new external texture, and the canvas with the program that draws it.
+// The id of the texture is 0 when the GPU has no external textures.
+pub function (c: Canvas) external(): (Canvas, Texture) {
+  let on = c;
+  if (on.video.program == 0) {
+    let p = program(VIDEO_VERTEX_SHADER, VIDEO_FRAGMENT_SHADER, ["a_pos"]);
+    if (p == 0) {
+      return (c, Texture { id: 0, width: 0, height: 0 });
+    }
+    let places = VideoPlaces { program: p, screen: uniform(p, "u_screen"), dst: uniform(p, "u_dst"), matrix: uniform(p, "u_matrix"), tex: uniform(p, "u_tex") };
+    gl_use_program(p);
+    gl_uniform1i(places.tex, 0);
+    gl_use_program(c.program);
+    on = Canvas { ...c, video: places };
+  }
+  let id = 0;
+  unsafe {
+    let out: usize = __alloc(8);
+    gl_gen_textures(1, out);
+    id = __load_i32(out);
+    __free(out, 8);
+  }
+  gl_bind_texture(GL_TEXTURE_EXTERNAL_OES, id);
+  // LINEAR for both filters, and CLAMP_TO_EDGE for both axes.
+  gl_tex_parameter(GL_TEXTURE_EXTERNAL_OES, 10241, 9729);
+  gl_tex_parameter(GL_TEXTURE_EXTERNAL_OES, 10240, 9729);
+  gl_tex_parameter(GL_TEXTURE_EXTERNAL_OES, 10242, 33071);
+  gl_tex_parameter(GL_TEXTURE_EXTERNAL_OES, 10243, 33071);
+  gl_bind_texture(GL_TEXTURE_EXTERNAL_OES, 0);
+  return (on, Texture { id: id, width: 0, height: 0 });
+}
+
+// Draws the current frame of the external texture `t` on the rectangle
+// `to`. `matrix` is the 16 numbers of the transform of the producer, column
+// by column.
+pub function (c: Canvas) draw_external(t: Texture, matrix: f32[], to: Part): void {
+  if (t.id == 0 || c.video.program == 0 || matrix.len() != 16 || to.w <= 0 || to.h <= 0) {
+    return;
+  }
+  gl_scissor(0, 0, c.width, c.height);
+  gl_use_program(c.video.program);
+  gl_uniform2f(c.video.screen, c.width as f32, c.height as f32);
+  gl_uniform4f(c.video.dst, to.x as f32, to.y as f32, to.w as f32, to.h as f32);
+  unsafe {
+    let m: usize = __alloc(64);
+    for i in 0..16 {
+      __store_i32(m + (4 * i) as usize, f32_bits(matrix[i]));
+    }
+    gl_uniform_matrix4(c.video.matrix, 1, 0, m);
+    __free(m, 64);
+  }
+  gl_bind_texture(GL_TEXTURE_EXTERNAL_OES, t.id);
+  gl_draw_arrays(5, 0, 4);
+  gl_bind_texture(GL_TEXTURE_EXTERNAL_OES, 0);
+  gl_use_program(c.program);
+}
+
+// The largest rectangle with the shape of `width` by `height` in the middle
+// of `box`. It is `box` when the shape has no size.
+pub function fit(width: i32, height: i32, box: Part): Part {
+  if (width <= 0 || height <= 0) {
+    return box;
+  }
+  let w = box.w;
+  let h = (box.w as i64 * (height as i64) / (width as i64)) as i32;
+  if (h > box.h) {
+    h = box.h;
+    w = (box.h as i64 * (width as i64) / (height as i64)) as i32;
+  }
+  return Part { x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w: w, h: h };
 }
 
 // Draws into the layer until `end_layer`. The layer starts transparent.

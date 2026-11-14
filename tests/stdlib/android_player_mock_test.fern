@@ -28,6 +28,9 @@ function seek_time(): i64;
 @import("libandroid.so", "mock_player_seek_mode")
 function seek_mode(): i32;
 
+@import("libandroid.so", "mock_player_target_releases")
+function target_releases(): i32;
+
 @import("libandroid.so", "mock_player_window")
 function window(): usize;
 
@@ -180,6 +183,52 @@ function content_sources(ctx: usize): i32 {
   return 0;
 }
 
+// A target on a texture takes the video, gives the matrix and the time of
+// its frame, and releases both objects. A failed constructor leaks nothing.
+function targets(ctx: usize): i32 {
+  mode(0);
+  let Some(p) = player.new(ctx, CLASS) else {
+    return 401;
+  };
+  let Some(t) = player.target(ctx, 7) else {
+    return 402;
+  };
+  if (live() != 4 || !player.show_target(ctx, p, t)) {
+    return 403;
+  }
+  let Some(f) = player.next_frame(ctx, t) else {
+    return 404;
+  };
+  if (f.time_ns != 5000i64 || f.matrix.len() != 16 || f.matrix[3] != 1.5 as f32 || f.matrix[15] != 7.5 as f32) {
+    return 405;
+  }
+  player.close_target(ctx, t);
+  if (live() != 2 || target_releases() != 11) {
+    return 406;
+  }
+  for error in [27, 28] {
+    mode(error);
+    match (player.target(ctx, 7)) {
+      None => {},
+      _ => {
+        return 407;
+      }
+    }
+    if (live() != 2 || pending() != 0) {
+      return 408;
+    }
+  }
+  mode(0);
+  if (target_releases() != 21) {
+    return 409;
+  }
+  player.close(ctx, p);
+  if (live() != 0) {
+    return 410;
+  }
+  return 0;
+}
+
 function main(): i32 {
   let ctx = context();
   let result = creation(ctx);
@@ -190,5 +239,9 @@ function main(): i32 {
   if (result != 0) {
     return result;
   }
-  return content_sources(ctx);
+  result = content_sources(ctx);
+  if (result != 0) {
+    return result;
+  }
+  return targets(ctx);
 }
