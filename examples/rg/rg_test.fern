@@ -466,7 +466,7 @@ function test_line_terminators(): test.TestOutcome {
 
 // The decode of `bytes` with an encoding, shown as text and as a flag.
 function decoded(own bytes: u8[], name: string): string {
-  let (text, yes) = encoding.decode(bytes, name, encoding.decoder(name));
+  let (text, yes) = encoding.decode(unsafe { string_from_bytes_unchecked(bytes) }, name, encoding.decoder(name));
   return text + (if (yes) { "|d" } else { "|r" });
 }
 

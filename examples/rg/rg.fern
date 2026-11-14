@@ -232,12 +232,12 @@ function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): 
 // the time of the search, and the messages of its errors.
 struct Searched { out: Option[search.Outcome], nanos: i64, errors: string[] }
 
-// The bytes that the search of a file reads: the file, the output of the
-// preprocessor of --pre, or the file that -z decompresses. `prefix` and
-// `late` are the message of a program that failed after its output.
-// `piped` says that ripgrep reads the bytes from a program, not from a
-// map of the file.
-struct Haystack { bytes: u8[], prefix: string, late: string, piped: boolean }
+// The bytes that the search of a file reads, with no check of UTF-8: the
+// file, the output of the preprocessor of --pre, or the file that -z
+// decompresses. `prefix` and `late` are the message of a program that failed
+// after its output. `piped` says that ripgrep reads the bytes from a
+// program, not from a map of the file.
+struct Haystack { text: string, prefix: string, late: string, piped: boolean }
 
 // Searches the file of `it`, and writes its output to `h`.
 function search_file(ctx: Ctx, re: regex.Regex, it: walk.Item, cap: i32, h: usize, written: boolean): Searched {
@@ -254,7 +254,7 @@ function search_file(ctx: Ctx, re: regex.Regex, it: walk.Item, cap: i32, h: usiz
     return Searched { out: None, nanos: 0i64, errors: [name + ": " + hay.prefix + hay.late] };
   }
   let t0 = monotonic_ns();
-  let (text, decoded) = encoding.decode(hay.bytes, ctx.encoding, ctx.decoder);
+  let (text, decoded) = encoding.decode(hay.text, ctx.encoding, ctx.decoder);
   let out = search.search(linked(ctx, it.path), re, text, name, source(ctx, it, cap, decoded || hay.piped), h, written);
   let prefix = if (p.mode == flags.Files && out.matched) { "" } else { hay.prefix };
   let errors = if (hay.late == "") { none } else { [name + ": " + prefix + hay.late] };
@@ -272,18 +272,28 @@ function haystack(ctx: Ctx, path: string, name: string): Result[Haystack, string
   if (path != "-" && ctx.pre != "" && preprocessed(ctx, name)) {
     return preprocess(ctx, path, name);
   }
+  let prog = if (ctx.search_zip && path != "-") { decompress.program(path) } else { "" };
+  if (prog == "" && ctx.mmap && path != "-") {
+    return match (unsafe { map_file_unchecked(path) }) {
+      Ok(text) => Ok(Haystack { text: text, prefix: "", late: "", piped: false }),
+      Err(e) => Err(ignore.os_error(e)),
+    };
+  }
   let bytes = match (read_input(path)) {
     Ok(b) => b,
     Err(e) => {
       return Err(ignore.os_error(e));
     },
   };
-  let prog = if (ctx.search_zip && path != "-") { decompress.program(path) } else { "" };
   if (prog == "") {
-    return Ok(Haystack { bytes: bytes, prefix: "", late: "", piped: false });
+    return Ok(Haystack { text: raw(bytes), prefix: "", late: "", piped: false });
   }
   let (out, why) = decompress.decompressed(prog, name, bytes);
-  return Ok(Haystack { bytes: out, prefix: "", late: if (why == "") { "" } else { stderr_text(why) }, piped: true });
+  return Ok(Haystack { text: raw(out), prefix: "", late: if (why == "") { "" } else { stderr_text(why) }, piped: true });
+}
+
+function raw(own bytes: u8[]): string {
+  return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
 // Whether --pre runs for the file: with no --pre-glob, or when the globs
@@ -306,7 +316,7 @@ function preprocess(ctx: Ctx, path: string, name: string): Result[Haystack, stri
     },
   };
   let late = if (out.status == 0) { "" } else { stderr_text(unsafe { string_from_bytes_unchecked(out.stderr) }) };
-  return Ok(Haystack { bytes: out.stdout, prefix: "preprocessor command failed: '" + cmd + "': ", late: late, piped: true });
+  return Ok(Haystack { text: raw(out.stdout), prefix: "preprocessor command failed: '" + cmd + "': ", late: late, piped: true });
 }
 
 // An argument in quotes, as Rust writes it for debug.

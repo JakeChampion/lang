@@ -697,8 +697,9 @@ function inner_line(re: regex.Regex, text: string, from: i32, term: i32): i32 {
 }
 
 // The cursor at the line of the next candidate before `end`. The lines
-// before it hold no match.
-function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32): Cursor {
+// before it hold no match. Without `numbered`, the line number of the cursor
+// does not count the lines that it skips.
+function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32, numbered: boolean): Cursor {
   let cand = candidate(re, text, c, term);
   if (cand >= end) {
     let last = if (end > c.start) { end } else { c.start };
@@ -707,6 +708,9 @@ function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32): Cu
   let start = c.start;
   if (cand > start) {
     start = __rmemchr(text, term, cand - 1) + 1;
+  }
+  if (!numbered) {
+    return Cursor { start: start, ln: c.ln, cand: cand };
   }
   let skipped = __count_byte(slice_unchecked(text, c.start, start), term);
   return Cursor { start: start, ln: c.ln + skipped, cand: cand };
@@ -832,9 +836,18 @@ function after_line(text: string, at: i32): i32 {
   return __rmemchr(text, 10, at - 1) + 1;
 }
 
+// The offset of the first NUL byte, or -1. A mapped file is examined only in
+// its first buffer.
+function first_nul(text: string, mapped: boolean): i32 {
+  if (!mapped || text.len() <= BUFFER) {
+    return __memchr(text, 0, 0);
+  }
+  return __memchr(slice_unchecked(text, 0, BUFFER), 0, 0);
+}
+
 // The scan of a file read from `src`.
 function scan(text: string, src: Source, keep: i32, term: i32): Scan {
-  let nul = if (src.detect == DETECT_NONE) { -1 } else { __memchr(text, 0, 0) };
+  let nul = if (src.detect == DETECT_NONE) { -1 } else { first_nul(text, src.mapped) };
   let s = plain(text, term);
   let quit = src.detect == DETECT_QUIT;
   if (src.mapped) {
@@ -885,7 +898,7 @@ function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Count
   let c = begin();
   while (c.start < s.end) {
     if (jumps && n.lines < below) {
-      c = jump(re, text, c, s.end, s.term);
+      c = jump(re, text, c, s.end, s.term, false);
       if (c.start >= s.end) {
         break;
       }
@@ -1153,6 +1166,12 @@ function step_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan,
   return g;
 }
 
+// Whether the output needs the number of each line: for the numbers, for
+// the gaps between groups of context, or for the messages of --json.
+function numbered(p: Printer): boolean {
+  return p.line_number || p.before > 0 || p.after > 0 || p.json || p.vimgrep;
+}
+
 // Whether the search can skip the lines before the next candidate: it
 // writes no line that does not match, and --stop-on-nonmatch does not need
 // the line after a selected line.
@@ -1168,7 +1187,7 @@ function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usi
   let upto = s.text.len();
   while (c.start < s.end && !g.stopped) {
     if (skips(p, g.count, g.after_left)) {
-      c = jump(re, s.text, c, s.end, s.term);
+      c = jump(re, s.text, c, s.end, s.term, numbered(p));
       if (c.start >= s.end) {
         break;
       }
