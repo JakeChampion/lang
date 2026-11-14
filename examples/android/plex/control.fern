@@ -38,8 +38,14 @@ pub struct Device {
   fetch: (plex.Request[]) => worker.Worker[plex.Reply[]],
   decode: (u8[], i32, i32) => Option[draw.Image],
   play: (string) => boolean,
+  // Puts the video on the window, and false when it cannot.
   show_video: (usize) => boolean,
+  // Draws the newest frame of the video on the window, and false when the
+  // player draws on the window itself.
+  draw_video: (usize) => boolean,
   hide_video: () => void,
+  // Asks for a Vsync event at the next frame of the display.
+  request_frame: () => void,
   start: () => void,
   pause: () => void,
   seek: (i64) => void,
@@ -996,6 +1002,7 @@ function resume(own s: App): App {
   s.dev.keep_screen_on(true);
   if (video) {
     s.dev.immersive(true);
+    s.dev.request_frame();
   }
   let at = s.dev.mono_ms();
   return timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at }, dirty: true }, "playing");
@@ -1585,6 +1592,12 @@ function event(own s: App, e: android.Event): App {
         return App { ...pause_play(s), window: 0 as usize };
       }
       return App { ...s, window: 0 as usize };
+    },
+    android.Vsync(_) => {
+      if (s.play.video && s.window != 0 as usize && s.dev.draw_video(s.window)) {
+        s.dev.request_frame();
+      }
+      return s;
     },
     android.Touch(action, x, y) => {
       return touch(s, action, x, y);

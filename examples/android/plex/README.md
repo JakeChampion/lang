@@ -75,11 +75,16 @@ The posters come from the photo transcoder of the server at the size of
 their cards. `std/android/image` decodes them with the image decoder of
 Android, and `std/android/draw` copies them into the frame.
 
-`std/android/player` plays the stream with the media player of Android. A
-window has one producer of pixels at a time. So while the video plays, the
-player owns the window and the app does not draw. A pause takes the video off
-the window, and the app draws the controls. A play gives the window back to
-the player with `Window.release_cpu`.
+`std/android/player` plays the stream with the media player of Android. The
+player draws the video into a `SurfaceTexture` on an external texture of
+`std/android/gl`. At each vsync, the app draws the newest frame in the middle
+of the window with OpenGL ES 2. Black bars keep the shape of the video. A
+device with no OpenGL ES 2 or no external textures shows the video on the
+window, which stretches it.
+
+A window has one producer of pixels at a time. A play gives the window to
+OpenGL with `Window.release_cpu`. A pause takes the video and OpenGL off the
+window, and the app draws the controls with the CPU.
 
 ## Build
 

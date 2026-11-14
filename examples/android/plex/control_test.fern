@@ -187,7 +187,12 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       note(log.calls, "show");
       return true;
     },
+    draw_video: (window: usize): boolean => {
+      note(log.calls, "draw video");
+      return true;
+    },
     hide_video: (): void => note(log.calls, "hide"),
+    request_frame: (): void => note(log.calls, "frame"),
     start: (): void => note(log.calls, "start"),
     pause: (): void => note(log.calls, "pause"),
     seek: (ms: i64): void => note(log.calls, "seek " + ms.to_string()),
@@ -329,6 +334,18 @@ function test_saved_server_opens_home(): test.TestOutcome {
   return test.assert_eq((node(s, "hub:0:0").is_some() && node(s, "tab:3").is_some()).to_string(), "true");
 }
 
+function count_calls(log: Log, call: string): i32 {
+  return log.calls.get().filter((c: string): boolean => c == call).len();
+}
+
+function draws(log: Log): i32 {
+  return count_calls(log, "draw video");
+}
+
+function frames(log: Log): i32 {
+  return count_calls(log, "frame");
+}
+
 function test_play_pause_and_stop(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -347,12 +364,20 @@ function test_play_pause_and_stop(): test.TestOutcome {
   if (!has_call(log, "seek 60000") || !has_call(log, "show") || !has_call(log, "start") || !has_url(log, "state=playing")) {
     return test.fail("no resume at the offset: " + log.calls.get().join(" | "));
   }
-  let paused = tap(ready, log, 400i64, f, "overlay");
+  let drawn = settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
+  if (draws(log) != 1 || frames(log) != 2) {
+    return test.fail("a vsync of the video did not draw it and ask for the next frame: " + log.calls.get().join(" | "));
+  }
+  let paused = tap(drawn, log, 400i64, f, "overlay");
   save_png(f, "paused");
   if (!has_call(log, "pause") || !has_call(log, "hide") || !has_url(log, "state=paused") || node(paused, "toggle").is_none()) {
     return test.fail("no pause with the overlay");
   }
-  let back = tap(paused, log, 500i64, f, "back");
+  let still = settle(at(paused, log, 450i64, f, android.Vsync(0i64)), log, 450i64, f);
+  if (draws(log) != 1 || frames(log) != 2) {
+    return test.fail("a vsync drew the video while it was paused");
+  }
+  let back = tap(still, log, 500i64, f, "back");
   if (!has_call(log, "stop") || !has_url(log, "state=stopped") || node(back, "play").is_none()) {
     return test.fail("no stop and return");
   }
