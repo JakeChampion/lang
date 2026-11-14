@@ -186,4 +186,5 @@ x86_64/checker.cliff_bytes	43792160
 # 2026-11-12: the same job measured x86_64/checker.cliff_count at 461488 (was 379346). The tolerance is unchanged.
 # 2026-11-12 (#15474): the same run measures x86_64/checker.cliff_count at 461615 (was 461488). The tolerance is unchanged.
 # 2026-11-12 (#15471): the same run measured x86_64/checker.cliff_count at 438998 (was 461615). The tolerance is unchanged.
-x86_64/checker.cliff_count	447023
+# 2026-11-14: PR #15816, perf-x86_64 job 132335436743 on the merge with main 8ce8fde7. checker.cliff_count rises 1.07% with the spread rule of both checkers. It is pinned at its measured value.
+x86_64/checker.cliff_count	451793
