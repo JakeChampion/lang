@@ -66,7 +66,9 @@ it claims:
    violation unless consumed after the loop too). A `loop`, and a
    `while` with the condition `true`, run the body once or more, so
    they have no such path: the walk reads their body as the next
-   statements.
+   statements. An `if let` with an `else` is a match with two arms.
+   A `for` loop binds each element, and the walk checks that binding
+   over the body.
 2. Field reads on the value are neutral (neither consume nor
    violate). A method call passes its receiver as the first argument,
    so it is a consuming use: the obligation moves to the method, which

@@ -1,0 +1,14 @@
+// spec: MC-07
+// A for loop binds each element. A @must_consume element that the body
+// does not consume is rejected (E067).
+
+@must_consume
+struct Ticket { id: i32 }
+
+function main(): i32 {
+    let tickets: Ticket[] = [Ticket { id: 1 }, Ticket { id: 2 }];
+    for t in tickets {
+        print("skip");
+    }
+    return 0;
+}

@@ -51,6 +51,15 @@ function f(): i32 {
     let t: Ticket = Ticket { id: 1 };
     if (n > 0) { spend(t); } else { spend(t); }
 }`},
+		{"consumed_on_both_arms_of_an_if_let", ticketDecl + `function f(o: Option[i32]): void {
+    let t: Ticket = Ticket { id: 1 };
+    if let Some(n) = o { spend(t); } else { spend(t); }
+    let u: Ticket = Ticket { id: 2 };
+    if let None = o { spend(u); } else { spend(u); }
+}`},
+		{"for_binding_consumed", ticketDecl + `function f(ts: Ticket[]): void {
+    for t in ts { spend(t); }
+}`},
 		{"returned", ticketDecl + `function f(): Ticket {
     let t: Ticket = Ticket { id: 1 };
     return t;
@@ -152,6 +161,13 @@ func TestMustConsumeLeaks(t *testing.T) {
     if (n > 5) { return 1; }
     spend(t);
     return 0;
+}`, scopeMsg},
+		{"one_arm_of_an_if_let_leaks", ticketDecl + `function f(o: Option[i32]): void {
+    let t: Ticket = Ticket { id: 1 };
+    if let Some(n) = o { spend(t); }
+}`, scopeMsg},
+		{"for_binding_dropped", ticketDecl + `function f(ts: Ticket[]): void {
+    for t in ts { print("skip"); }
 }`, scopeMsg},
 		{"non_own_param_dropped", ticketDecl + `function f(t: Ticket): void {
     print("ignored");

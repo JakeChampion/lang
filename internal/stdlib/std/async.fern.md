@@ -972,6 +972,10 @@ function __task_woken[T](t: Task[T], step: i32, wake: Wake): Future[T] {
   }
   let st = task_resume(t, wake);
   if let Wake.Cancelled = wake {
+    match (st) {
+      Done(_) => {},
+      Suspended(_) => {}
+    }
     t.shared.set(TaskShared { ...t.shared.get(), phase: TASK_CANCELLED });
     return Future.Cancelled;
   }
