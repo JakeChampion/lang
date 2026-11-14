@@ -74,7 +74,7 @@ function create(own s: App, window: android.Window): App {
     return fail(s, "player construction");
   };
   s = App { ...s, media: Some(p), window: Some(window) };
-  if (player.open(s.ctx, p, "") || player.seek(s.ctx, p, -1i64)) {
+  if (player.open(s.ctx, p, "") || player.seek(s.ctx, p, -1i64, player.Exact)) {
     return fail(s, "invalid argument accepted");
   }
   if (!player.show(s.ctx, p, window)) {
@@ -142,7 +142,7 @@ function pause_done(own s: App, p: player.Player, pos: i64): App {
   if (pos > s.paused_ms + 40i64 || pos < s.paused_ms || player.playing(s.ctx, p)) {
     return fail(s, "position advanced during pause");
   }
-  if (!player.seek(s.ctx, p, 1500i64)) {
+  if (!player.seek(s.ctx, p, 1500i64, player.Exact)) {
     return fail(s, "seek request");
   }
   log.warn("playertest: pause stable");

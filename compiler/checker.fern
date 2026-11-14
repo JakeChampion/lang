@@ -9902,7 +9902,7 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
         }
       },
       ast.StmtMatch(m) => {
-        if (ordinary_match_origin(m.origin)) {
+        if (mc_reads_arms(m.origin)) {
           let all = m.arms.len() > 0;
           for arm in m.arms {
             let (ac, av, ad) = mc_seq(arm.body, 0, name, tname, structs, enums);
@@ -9923,6 +9923,12 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
     }
   }
   return (false, false, out);
+}
+
+// The arms of an if-let are the arms of the source. The statements after a
+// let-else continue its first arm, so the walk does not read its arms.
+function mc_reads_arms(origin: string): boolean {
+  return ordinary_match_origin(origin) || origin == "if_let";
 }
 
 function mc_check_binding(stmts: ast.Stmt[], from: i32, name: string, tname: string, bline: i32, bcol: i32, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
@@ -9987,7 +9993,9 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
         out = util.append_diags(out, mc_walk_body(w.body, cur, structs, enums));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, mc_walk_body(fr.body, for_body_scope(fr, cur), structs, enums));
+        let body = for_body_scope(fr, cur);
+        out = util.append_diags(out, mc_for_bindings(fr, body, structs, enums));
+        out = util.append_diags(out, mc_walk_body(fr.body, body, structs, enums));
       },
       ast.StmtMatch(m) => {
         let whole = check_expr(m.scrutinee, cur);
@@ -10001,6 +10009,19 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
       _ => {}
     }
     cur = bind_stmt(st, cur);
+  }
+  return out;
+}
+
+// A for loop binds each element over its body, as a let does.
+function mc_for_bindings(fr: ast.StmtFor, body: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
+  let out: util.Diag[] = [];
+  for raw in split_pattern_names(fr.var_name) {
+    let name = raw.trim();
+    let tn = mc_marked_type_name(typeinfo.spelling(body.lookup(name)), structs, enums);
+    if (tn.len() > 0) {
+      out = util.append_diags(out, mc_check_binding(fr.body, 0, name, tn, fr.line, fr.col, structs, enums));
+    }
   }
   return out;
 }

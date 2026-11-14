@@ -5,6 +5,9 @@ The regular codec list excludes codecs that require secure or tunneled operation
 Android 29 or later supplies hardware, software, vendor, and alias attributes.
 Earlier versions report `Unknown` and never infer hardware from a codec name.
 
+`decoder_types` lists each MIME type that a regular decoder takes, for audio and for video.
+A player can compare a stream with this list before it plays the stream as it is.
+
 Each result describes support for one exact request through `isFormatSupported`.
 The caller must provide the stream profile and level when those are known.
 A support report does not replace a successful configuration or a device test.
@@ -285,7 +288,7 @@ function push(env: usize): Result[void, frame.VideoError] {
   return Ok(());
 }
 
-function supports_type(env: usize, info: usize, mime: string): Result[boolean, frame.VideoError] {
+function supported_types(env: usize, info: usize): Result[string[], frame.VideoError] {
   let types = object(env, info, "getSupportedTypes", "()[Ljava/lang/String;", [])?;
   let count = jni.get_array_length(env, types);
   if (!healthy(env)) {
@@ -294,19 +297,24 @@ function supports_type(env: usize, info: usize, mime: string): Result[boolean, f
   if (count < 0 || count > 256) {
     return Err(frame.Limit);
   }
-  let matches = false;
+  let out: string[] = [];
   for i in 0..count {
     let item = jni.get_object_array_element(env, types, i);
     if (!healthy(env) || item == 0 as usize) {
       return Err(frame.Platform);
     }
-    matches = matches || jni.string_of(env, item) == mime;
+    out = out.append(jni.string_of(env, item));
     let _ = jni.delete_local_ref(env, item);
     if (!healthy(env)) {
       return Err(frame.Platform);
     }
   }
-  return Ok(matches);
+  return Ok(out);
+}
+
+function supports_type(env: usize, info: usize, mime: string): Result[boolean, frame.VideoError] {
+  let types = supported_types(env, info)?;
+  return Ok(types.contains(mime));
 }
 
 function codec_name(env: usize, info: usize): Result[string, frame.VideoError] {
@@ -419,6 +427,55 @@ function collect(env: usize, infos: usize, request: Request, api_level: i32, lim
         out = out.append(value);
       },
       None => {}
+    }
+  }
+  return Ok(out);
+}
+
+// The types of codec `info` when it is a decoder, else none.
+function decoder_types_of(env: usize, info: usize): Result[string[], frame.VideoError] {
+  if (read_boolean(env, info, "isEncoder")?) {
+    return Ok([]);
+  }
+  return supported_types(env, info);
+}
+
+// Each MIME type that a regular decoder of the device takes, once.
+pub function decoder_types(env: usize, limits: Limits): Result[string[], frame.VideoError] {
+  if (env == 0 as usize) {
+    return Err(frame.Header);
+  }
+  if (limits.max_codecs < 0) {
+    return Err(frame.Limit);
+  }
+  let pending = jni.exception_occurred(env);
+  if (pending != 0 as usize) {
+    let _ = jni.delete_local_ref(env, pending);
+    return Err(frame.Platform);
+  }
+  push(env)?;
+  defer pop(env);
+  let infos = codec_list(env)?;
+  let count = jni.get_array_length(env, infos);
+  if (!healthy(env)) {
+    return Err(frame.Platform);
+  }
+  if (count < 0 || count > limits.max_codecs) {
+    return Err(frame.Limit);
+  }
+  let out: string[] = [];
+  for i in 0..count {
+    let info = jni.get_object_array_element(env, infos, i);
+    if (!healthy(env) || info == 0 as usize) {
+      return Err(frame.Platform);
+    }
+    let got = decoder_types_of(env, info);
+    let _ = jni.delete_local_ref(env, info);
+    let types = got?;
+    for t in types {
+      if (!out.contains(t)) {
+        out = out.append(t);
+      }
     }
   }
   return Ok(out);

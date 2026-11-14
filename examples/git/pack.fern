@@ -5,9 +5,10 @@
 // object of the kind OFS_DELTA or REF_DELTA is a delta against a base object:
 // the stream holds copy and insert instructions.
 //
-// The index (version 2) has a fan-out table of 256 counts, the sorted names,
-// a CRC for each object, and the offset of each object in the packfile. A
-// name has 20 bytes with SHA-1 and 32 bytes with SHA-256.
+// The index has a fan-out table of 256 counts and the sorted names. Version
+// 1 puts a 4-byte offset before each name. Version 2 has a CRC and an
+// offset for each object after the names, and a table of 8-byte offsets
+// for the objects past 2 GiB.
 import "std/array";
 import "std/deflate";
 import "std/hex";
@@ -25,77 +26,118 @@ function be32(b: u8[], at: i32): i64 {
   return b[at] as i64 << 24 | b[at + 1] as i64 << 16 | b[at + 2] as i64 << 8 | b[at + 3] as i64;
 }
 
-// The bytes of an index, and the count of bytes of each name in it.
-pub struct Index { bytes: u8[], width: i32 }
+// The index of one packfile. `width` is the length of a name. `fanout` is the
+// place of the fan-out table, `names` is the place of the first name, and
+// `stride` is the distance between two names.
+pub struct Index { bytes: u8[], version: i32, width: i32, count: i32, fanout: i32, names: i32, stride: i32, offsets: i32, large: i32 }
 
-// True if the bytes are an index of version 2 with a complete table. After
-// the table, the file has 8 bytes for each offset that is too large for it.
-pub function index_ok(idx: Index): boolean {
-  let b = idx.bytes;
-  if (b.len() < 1032 + 2 * idx.width || b[0] != 255 || b[1] != b't' || b[2] != b'O' || b[3] != b'c' || be32(b, 4) != 2) {
-    return false;
+// The index in `bytes`, with names of `width` bytes, or the message of git
+// for a file that is not an index. `path` names the file in the message.
+pub function index_of(bytes: u8[], width: i32, path: string): Result[Index, string] {
+  let n = bytes.len();
+  if (n < 4 * 256 + 2 * width) {
+    return Err("index file " + path + " is too small");
   }
-  let n = count(idx);
-  let extra = b.len() as i64 - (1032 + n as i64 * ((idx.width + 8) as i64) + 2 * (idx.width as i64));
-  return n >= 0 && extra >= 0 && extra % 8 == 0 && extra / 8 <= n as i64;
+  let version = 1;
+  if (bytes[0] == 255 && bytes[1] == b't' && bytes[2] == b'O' && bytes[3] == b'c') {
+    let v = be32(bytes, 4);
+    if (v != 2) {
+      return Err("index file " + path + " is version " + v.to_string() + " and is not supported by this binary (try upgrading GIT to a newer version)");
+    }
+    version = 2;
+  }
+  let fan = if (version == 2) { 8 } else { 0 };
+  let last: i64 = 0;
+  for i in 0..256 {
+    let c = be32(bytes, fan + 4 * i);
+    if (c < last) {
+      return Err("non-monotonic index " + path);
+    }
+    last = c;
+  }
+  let count = last;
+  if (version == 1) {
+    if (n as i64 != 1024 + 2 * (width as i64) + count * ((width + 4) as i64)) {
+      return Err("wrong index v1 file size in " + path);
+    }
+    return Ok(Index { bytes: bytes, version: 1, width: width, count: count as i32, fanout: 0, names: 1028, stride: width + 4, offsets: 1024, large: 0 });
+  }
+  let least = 1032 + 2 * (width as i64) + count * ((width + 8) as i64);
+  let most = least + (if (count > 0) { (count - 1) * 8 } else { 0 });
+  if (n as i64 < least || n as i64 > most) {
+    return Err("wrong index v2 file size in " + path);
+  }
+  let c = count as i32;
+  return Ok(Index { bytes: bytes, version: 2, width: width, count: c, fanout: 8, names: 1032, stride: width, offsets: 1032 + c * (width + 4), large: 1032 + c * (width + 8) });
 }
 
-// The number of objects in the index.
-pub function count(idx: Index): i32 {
-  return be32(idx.bytes, 8 + 255 * 4) as i32;
+// The name of the object `i` of the index.
+pub function name_at(ix: Index, i: i32): u8[] {
+  let at = ix.names + i * ix.stride;
+  return array.slice(ix.bytes, at, at + ix.width);
 }
 
-// The name of the object `i` of the index, as bytes.
-function name_at(idx: Index, i: i32): u8[] {
-  return array.slice(idx.bytes, 1032 + i * idx.width, 1032 + (i + 1) * idx.width);
+pub function hex_name_at(ix: Index, i: i32): string {
+  return hex.encode(name_at(ix, i));
 }
 
-pub function hex_name_at(idx: Index, i: i32): string {
-  return hex.encode(name_at(idx, i));
-}
-
-// The offset in the packfile of the object `i`, or -1 when the offset does
-// not fit in 31 bits.
-pub function offset_at(idx: Index, i: i32): i32 {
-  let n = count(idx);
-  let v = be32(idx.bytes, 1032 + n * (idx.width + 4) + i * 4);
-  if (v >= 2147483648) {
+// The offset in the packfile of the object `i`, or -1 when the table of
+// large offsets does not hold it.
+pub function offset_at(ix: Index, i: i32): i64 {
+  if (ix.version == 1) {
+    return be32(ix.bytes, ix.offsets + i * ix.stride);
+  }
+  let v = be32(ix.bytes, ix.offsets + 4 * i);
+  if (v < 2147483648) {
+    return v;
+  }
+  let at = ix.large + ((v & 2147483647) * 8) as i32;
+  if (at < ix.large || at + 8 > ix.bytes.len() - 2 * ix.width) {
     return -1;
   }
-  return v as i32;
+  return be32(ix.bytes, at) << 32 | be32(ix.bytes, at + 4);
 }
 
-// The order of the name `i` of the table `idx` against `name`. Each name
-// of the table has the length of `name`.
-function compare(idx: u8[], i: i32, name: u8[]): i32 {
-  let width = name.len();
-  let at = 1032 + i * width;
-  for k in 0..width {
-    if (idx[at + k] != name[k]) {
-      return if (idx[at + k] < name[k]) { -1 } else { 1 };
+// The CRC of the bytes of the object `i`, in an index of version 2.
+pub function crc_at(ix: Index, i: i32): i64 {
+  return be32(ix.bytes, 1032 + ix.count * ix.width + 4 * i);
+}
+
+// The checksum of the packfile, at the end of the index.
+pub function pack_sum(ix: Index): u8[] {
+  let n = ix.bytes.len();
+  return array.slice(ix.bytes, n - 2 * ix.width, n - ix.width);
+}
+
+function compare(ix: Index, i: i32, name: u8[]): i32 {
+  let at = ix.names + i * ix.stride;
+  let b = ix.bytes;
+  for k in 0..ix.width {
+    if (b[at + k] != name[k]) {
+      return if (b[at + k] < name[k]) { -1 } else { 1 };
     }
   }
   return 0;
 }
 
 // The first and the end of the objects whose name starts with `byte`.
-function bucket(idx: u8[], byte: i32): (i32, i32) {
-  let lo = if (byte == 0) { 0 } else { be32(idx, 8 + (byte - 1) * 4) as i32 };
-  return (lo, be32(idx, 8 + byte * 4) as i32);
+function bucket(ix: Index, byte: i32): (i32, i32) {
+  let fan = ix.fanout;
+  let lo = if (byte == 0) { 0 } else { be32(ix.bytes, fan + (byte - 1) * 4) as i32 };
+  return (lo, be32(ix.bytes, fan + byte * 4) as i32);
 }
 
-// The place in the index of the object with the bytes `name`, or -1.
-pub function find(idx: Index, name: u8[]): i32 {
-  if (name.len() != idx.width) {
+// The place in the index of the object with the name `name`, or -1.
+pub function find(ix: Index, name: u8[]): i32 {
+  if (name.len() != ix.width) {
     return -1;
   }
-  let table = idx.bytes;
-  let (first, end) = bucket(table, name[0] as i32);
+  let (first, end) = bucket(ix, name[0] as i32);
   let lo = first;
   let hi = end;
   while (lo < hi) {
     let mid = lo + (hi - lo) / 2;
-    let c = compare(table, mid, name);
+    let c = compare(ix, mid, name);
     if (c == 0) {
       return mid;
     }
@@ -119,12 +161,11 @@ function digit(c: u8): i32 {
   return (c - b'0') as i32;
 }
 
-// The order of the name `i` of the index against the digits `short`: 0 if
-// the name starts with them.
-function compare_digits(idx: Index, i: i32, short: string): i32 {
-  let at = 1032 + i * idx.width;
+// The order of the name at `at` of `bytes` against the digits `short`: 0
+// if the name starts with them.
+pub function compare_digits(bytes: u8[], at: i32, short: string): i32 {
   for k in 0..short.len() {
-    let byte = idx.bytes[at + k / 2] as i32;
+    let byte = bytes[at + k / 2] as i32;
     let have = if (k % 2 == 0) { byte >> 4 } else { byte & 15 };
     let want = digit(short[k]);
     if (have != want) {
@@ -134,29 +175,40 @@ function compare_digits(idx: Index, i: i32, short: string): i32 {
   return 0;
 }
 
+// The first name of `byte` for digits of two or more.
+pub function first_byte(short: string): i32 {
+  return digit(short[0]) * 16 + digit(short[1]);
+}
+
 // The names in the index that start with the hexadecimal digits `short`, of
 // two digits or more: `limit` names at most.
-pub function with_prefix(idx: Index, short: string, limit: i32): string[] {
+pub function with_prefix(ix: Index, short: string, limit: i32): string[] {
   let found: string[] = [];
-  if (short.len() < 2 || short.len() > 2 * idx.width) {
+  if (short.len() < 2 || short.len() > 2 * ix.width) {
     return found;
   }
-  let (first, end) = bucket(idx.bytes, digit(short[0]) * 16 + digit(short[1]));
+  let (first, end) = bucket(ix, first_byte(short));
   let lo = first;
   let hi = end;
   while (lo < hi) {
     let mid = lo + (hi - lo) / 2;
-    if (compare_digits(idx, mid, short) < 0) {
+    if (compare_digits(ix.bytes, ix.names + mid * ix.stride, short) < 0) {
       lo = mid + 1;
     } else {
       hi = mid;
     }
   }
-  while (lo < end && found.len() < limit && compare_digits(idx, lo, short) == 0) {
-    found = found.append(hex_name_at(idx, lo));
+  while (lo < end && found.len() < limit && compare_digits(ix.bytes, ix.names + lo * ix.stride, short) == 0) {
+    found = found.append(hex_name_at(ix, lo));
     lo += 1;
   }
   return found;
+}
+
+// The offset of the object `name` in the packfile of the index, or -1.
+pub function offset_of(ix: Index, name: u8[]): i64 {
+  let i = find(ix, name);
+  return if (i < 0) { -1 } else { offset_at(ix, i) };
 }
 
 // ---- Objects of a packfile ----
@@ -164,29 +216,48 @@ pub function with_prefix(idx: Index, short: string, limit: i32): string[] {
 // One object as the packfile holds it: its kind, the size of its data, and
 // where the zlib stream starts. `base_offset` is the offset of the base of
 // an OFS_DELTA, and `base_name` is the name of the base of a REF_DELTA.
-pub struct Entry { kind: i32, size: i32, data_at: i32, base_offset: i32, base_name: u8[], ok: boolean }
+pub struct Entry { kind: i32, size: i32, data_at: i64, base_offset: i64, base_name: u8[], ok: boolean }
 
 function no_entry(): Entry {
   return Entry { kind: 0, size: 0, data_at: 0, base_offset: -1, base_name: [], ok: false };
 }
 
 // A part of a packfile: `bytes` starts at the offset `shift` of the file.
-// `width` is the count of bytes of a name in the packfile.
-pub struct Window { bytes: u8[], shift: i32, width: i32 }
+// `width` is the length of a name.
+pub struct Window { bytes: u8[], shift: i64, width: i32 }
 
-// The packfile `data` as one part.
+// The whole packfile `data`, with names of `width` bytes.
 pub function whole(data: u8[], width: i32): Window {
   return Window { bytes: data, shift: 0, width: width };
 }
 
+// The bytes of a packfile for the reads of its objects. `part` gives a part
+// that starts at an offset, of `most` bytes at most, or more: a part of the
+// whole object at the least when `most` is WHOLE. `base` gives the offset
+// of the base of a REF_DELTA from its name, or -1.
+pub struct Source { part: (i64, i32) => Window, base: (u8[]) => i64 }
+
+// A read of a whole object, of the start of one, and of its header.
+pub const WHOLE: i32 = 2147483647;
+
+pub const HEAD_BYTES: i32 = 4096;
+
+pub const LINK_BYTES: i32 = 64;
+
+// The source of the packfile `data` in memory.
+pub function memory(data: u8[], base: (u8[]) => i64, width: i32): Source {
+  return Source { part: (at: i64, most: i32): Window => whole(data, width), base: base };
+}
+
 // The header of the object at the offset `offset` of the file. `data_at`
 // and `base_offset` are offsets of the file also.
-pub function entry_in(w: Window, offset: i32): Entry {
+pub function entry_in(w: Window, offset: i64): Entry {
   let data = w.bytes;
-  if (offset < 12 || offset < w.shift || offset - w.shift >= data.len()) {
+  let width = w.width;
+  if (offset < 12 || offset < w.shift || offset - w.shift >= data.len() as i64) {
     return no_entry();
   }
-  let at = offset - w.shift;
+  let at = (offset - w.shift) as i32;
   let c = data[at] as i32;
   at += 1;
   let kind = c >> 4 & 7;
@@ -204,12 +275,12 @@ pub function entry_in(w: Window, offset: i32): Entry {
   if (size > 1073741824) {
     return no_entry();
   }
-  let e = Entry { kind: kind, size: size as i32, data_at: at + w.shift, base_offset: -1, base_name: [], ok: true };
+  let e = Entry { kind: kind, size: size as i32, data_at: at as i64 + w.shift, base_offset: -1, base_name: [], ok: true };
   if (kind == REF_DELTA) {
-    if (at + w.width > data.len()) {
+    if (at + width > data.len()) {
       return no_entry();
     }
-    return Entry { ...e, data_at: at + w.width + w.shift, base_name: array.slice(data, at, at + w.width) };
+    return Entry { ...e, data_at: (at + width) as i64 + w.shift, base_name: array.slice(data, at, at + width) };
   }
   if (kind != OFS_DELTA) {
     return e;
@@ -221,47 +292,45 @@ pub function entry_in(w: Window, offset: i32): Entry {
   at += 1;
   let back = (c & 127) as i64;
   while ((c & 128) != 0) {
-    if (at >= data.len() || back > 2147483647) {
+    if (at >= data.len() || back > 72057594037927935) {
       return no_entry();
     }
     c = data[at] as i32;
     at += 1;
     back = back + 1 << 7 | (c & 127) as i64;
   }
-  if (back <= 0 || back >= offset as i64) {
+  if (back <= 0 || back >= offset) {
     return no_entry();
   }
-  return Entry { ...e, data_at: at + w.shift, base_offset: offset - back as i32 };
+  return Entry { ...e, data_at: at as i64 + w.shift, base_offset: offset - back };
 }
 
 // The data of the entry: the inflated bytes of its zlib stream. The second
 // number is the place after the stream.
-function inflated_in(w: Window, e: Entry): Result[(u8[], i32), string] {
-  if (e.data_at - w.shift + 2 > w.bytes.len()) {
+pub function inflated_in(w: Window, e: Entry): Result[(u8[], i64), string] {
+  let from = e.data_at - w.shift;
+  if (from < 0 || from + 2 > w.bytes.len() as i64) {
     return Err("a packed object has no data");
   }
-  return match (deflate.inflate_from(w.bytes, e.data_at - w.shift + 2, e.size)) {
+  return match (deflate.inflate_from(w.bytes, from as i32 + 2, e.size)) {
     Ok(got) => {
       if (got.out.len() != e.size) {
         return Err("a packed object has a wrong size");
       }
-      Ok((got.out, e.data_at + 2 + got.consumed + 4))
+      Ok((got.out, e.data_at + 2 + got.consumed as i64 + 4))
     },
     Err(why) => Err("a packed object is corrupt: " + why.message()),
   };
 }
 
-// The place after the object at `offset`: after its zlib stream.
-pub function end_of(w: Window, offset: i32): i32 {
+// The place after the object at `offset` of `w`: after its zlib stream.
+pub function end_of(w: Window, offset: i64): i64 {
   let e = entry_in(w, offset);
   if (!e.ok) {
     return -1;
   }
   return match (inflated_in(w, e)) {
-    Ok(got) => {
-      let (_, end) = got;
-      end
-    },
+    Ok((_, end)) => end,
     Err(_) => -1,
   };
 }
@@ -356,21 +425,15 @@ pub function apply_delta(base: u8[], delta: u8[]): Result[u8[], string] {
   return Ok(out);
 }
 
-// The offset of the object `name` in the packfile of the index, or -1.
-pub function offset_of(idx: Index, name: u8[]): i32 {
-  let i = find(idx, name);
-  return if (i < 0) { -1 } else { offset_at(idx, i) };
-}
-
 // The offsets of the chain of the object at `offset`: the object, then its
-// base, to the object that is not a delta. `base` gives the offset of the
-// base of a REF_DELTA from its name, or -1. `part` gives a part of the
-// packfile that holds the whole object at an offset.
-pub function chain_in(part: (i32) => Window, base: (u8[]) => i32, offset: i32): Result[i32[], string] {
-  let chain: i32[] = [offset];
+// base, to the object that is not a delta.
+pub function chain_in(src: Source, offset: i64): Result[i64[], string] {
+  let part = src.part;
+  let base = src.base;
+  let chain: i64[] = [offset];
   let at = offset;
   while (chain.len() <= MAX_CHAIN) {
-    let e = entry_in(part(at), at);
+    let e = entry_in(part(at, LINK_BYTES), at);
     if (!e.ok) {
       return Err("a packed object has a bad header");
     }
@@ -391,7 +454,7 @@ pub function chain_in(part: (i32) => Window, base: (u8[]) => i32, offset: i32): 
 
 // The objects that were the base of a delta, by offset. A chain of deltas
 // starts from the nearest base that the cache holds.
-pub struct Cache { at: Map[i32, objects.Object], bytes: i64 }
+pub struct Cache { at: Map[i64, objects.Object], bytes: i64 }
 
 // The most bytes of bases that a cache holds before it starts again.
 const CACHE_BYTES: i64 = 100663296;
@@ -400,22 +463,22 @@ pub function cache_new(): Cache {
   return Cache { at: Map { }, bytes: 0 };
 }
 
-function cached(c: Cache, offset: i32, o: objects.Object): Cache {
+function cached(c: Cache, offset: i64, o: objects.Object): Cache {
   if (c.at.contains(offset)) {
     return c;
   }
   if (c.bytes + o.body.len() as i64 > CACHE_BYTES) {
-    let empty: Map[i32, objects.Object] = Map { };
+    let empty: Map[i64, objects.Object] = Map { };
     return Cache { at: empty.insert(offset, o), bytes: o.body.len() as i64 };
   }
   return Cache { at: c.at.insert(offset, o), bytes: c.bytes + o.body.len() as i64 };
 }
 
-// The object at `offset`, as `object_at` gives it, and the cache with the
-// bases of its chain. `part` gives a part of the packfile that holds the
-// whole object at an offset.
-pub function object_cached(part: (i32) => Window, base: (u8[]) => i32, offset: i32, c: Cache): (Result[objects.Object, string], Cache) {
-  let chain = match (chain_in(part, base, offset)) {
+// The object at `offset`, with each delta applied, and the cache with the
+// bases of its chain.
+pub function object_cached(src: Source, offset: i64, c: Cache): (Result[objects.Object, string], Cache) {
+  let part = src.part;
+  let chain = match (chain_in(src, offset)) {
     Ok(offsets) => offsets,
     Err(why) => {
       return (Err(why), c);
@@ -437,7 +500,7 @@ pub function object_cached(part: (i32) => Window, base: (u8[]) => i32, offset: i
   let now = match (start) {
     Some(o) => o,
     None => {
-      let w = part(chain[from]);
+      let w = part(chain[from], WHOLE);
       let first = entry_in(w, chain[from]);
       let name = kind_name(first.kind);
       if (name.len() == 0) {
@@ -455,7 +518,7 @@ pub function object_cached(part: (i32) => Window, base: (u8[]) => i32, offset: i
   let i = from - 1;
   while (i >= 0) {
     cache = cached(cache, chain[i + 1], now);
-    let w = part(chain[i]);
+    let w = part(chain[i], WHOLE);
     let delta = match (inflated_in(w, entry_in(w, chain[i]))) {
       Ok((bytes, _)) => bytes,
       Err(why) => {
@@ -481,10 +544,11 @@ const DELTA_HEAD: i32 = 20;
 // is the second number of the delta, so a short start of the stream gives it.
 function delta_size(w: Window, e: Entry): i64 {
   let from = e.data_at - w.shift + 2;
-  if (from < 0 || from >= w.bytes.len()) {
+  if (from < 0 || from >= w.bytes.len() as i64) {
     return -1;
   }
-  let Ok(reader) = deflate.inflate_reader(array.slice(w.bytes, from, w.bytes.len().min(from + 4096)), 32768) else {
+  let at = from as i32;
+  let Ok(reader) = deflate.inflate_reader(array.slice(w.bytes, at, w.bytes.len().min(at + 4096)), 32768) else {
     return -1;
   };
   let read = reader.read;
@@ -497,8 +561,9 @@ function delta_size(w: Window, e: Entry): i64 {
 }
 
 // The kind of the object that the chain of deltas from `e` starts at.
-// `link` gives the header of an object.
-function base_kind(link: (i32) => Window, base: (u8[]) => i32, e: Entry): Result[i32, string] {
+function base_kind(src: Source, e: Entry): Result[i32, string] {
+  let part = src.part;
+  let base = src.base;
   let steps = 0;
   while (e.kind == OFS_DELTA || e.kind == REF_DELTA) {
     if (steps >= MAX_CHAIN) {
@@ -508,7 +573,7 @@ function base_kind(link: (i32) => Window, base: (u8[]) => i32, e: Entry): Result
     if (at < 0) {
       return Err("the base " + hex.encode(e.base_name) + " of a delta is not in the packfile");
     }
-    e = entry_in(link(at), at);
+    e = entry_in(part(at, LINK_BYTES), at);
     if (!e.ok) {
       return Err("a packed object has a bad header");
     }
@@ -518,10 +583,11 @@ function base_kind(link: (i32) => Window, base: (u8[]) => i32, e: Entry): Result
 }
 
 // The kind and the size of the object at `offset`, with no inflate of a
-// whole object. `part` gives the start of the object at the least, and
-// `link` gives the header of an object.
-pub function info_in(part: (i32) => Window, link: (i32) => Window, base: (u8[]) => i32, offset: i32): Result[(string, i64), string] {
-  let w = part(offset);
+// whole object: the start of the object holds its header and the start of
+// its delta.
+pub function info_in(src: Source, offset: i64): Result[(string, i64), string] {
+  let part = src.part;
+  let w = part(offset, HEAD_BYTES);
   let e = entry_in(w, offset);
   if (!e.ok) {
     return Err("a packed object has a bad header");
@@ -531,35 +597,17 @@ pub function info_in(part: (i32) => Window, link: (i32) => Window, base: (u8[]) 
   if (e.kind == OFS_DELTA || e.kind == REF_DELTA) {
     size = delta_size(w, e);
     if (size < 0) {
-      let (delta, _) = inflated_in(w, e)?;
+      let whole = part(offset, WHOLE);
+      let (delta, _) = inflated_in(whole, entry_in(whole, offset))?;
       let (_, a) = delta_number(delta, 0);
-      let (whole, _) = delta_number(delta, a);
-      size = whole;
+      let (all, _) = delta_number(delta, a);
+      size = all;
     }
-    kind = base_kind(link, base, e)?;
+    kind = base_kind(src, e)?;
   }
   let name = kind_name(kind);
   if (name.len() == 0 || size < 0) {
     return Err("a packed object has an unknown kind");
   }
   return Ok((name, size));
-}
-
-// The object at `offset` of the packfile `w`, with each delta applied.
-pub function object_at(w: Window, base: (u8[]) => i32, offset: i32): Result[objects.Object, string] {
-  let chain = chain_in((at: i32): Window => w, base, offset)?;
-  let last = chain.len() - 1;
-  let first = entry_in(w, chain[last]);
-  let name = kind_name(first.kind);
-  if (name.len() == 0) {
-    return Err("a packed object has an unknown kind");
-  }
-  let (body, _) = inflated_in(w, first)?;
-  let i = last - 1;
-  while (i >= 0) {
-    let (delta, _) = inflated_in(w, entry_in(w, chain[i]))?;
-    body = apply_delta(body, delta)?;
-    i -= 1;
-  }
-  return Ok(objects.Object { kind: name, body: body });
 }
