@@ -1,11 +1,18 @@
-// load: an HTTP/1.1 load generator with the command line of oha. Each of
-// -c connections sends its next request when the previous response is
-// complete, or with -q when the timetable says that the request is due. A
-// connection stays open between requests.
+// load: an HTTP/1.1 load generator with the command line of oha. The run
+// has a reactor for each CPU, in std/worker workers. Each reactor drives its
+// part of the -c connections. A connection sends its next request when the
+// previous response is complete, or with -q when the timetable says that the
+// request is due. A connection stays open between requests. At the end, the
+// tallies of the reactors merge into one summary.
 import "std/async";
+import "std/clock";
 import "std/dns";
 import "std/net";
+import "std/rand";
 import "std/time";
+import "std/tls/client";
+import "std/tls/verify";
+import "std/worker";
 import "./options";
 import "./report";
 import "./schedule";
@@ -14,20 +21,55 @@ const CLOSED: i32 = 0;
 
 const CONNECTING: i32 = 1;
 
-const SENDING: i32 = 2;
+const HANDSHAKE: i32 = 2;
 
-const READING: i32 = 3;
+const SENDING: i32 = 3;
 
-const IDLE: i32 = 4;
+const READING: i32 = 4;
+
+const IDLE: i32 = 5;
 
 const READ_SIZE: i32 = 16384;
 
-struct Conn { sock: Option[Socket], phase: i32, started: i64, buf: u8[], unsent: u8[] }
+// `started` is where the latency starts, and `sent` where the request
+// started: they differ only with --latency-correction. `first` is the time
+// of the first byte of the response, or 0. `dialup` is the time to open the
+// connection, or -1 when the request found it open. `peer` is the host and
+// port of the open connection, and `at` the URL of the request, which a
+// redirect changes. After SENDING, the connection goes to phase `then`.
+struct Conn {
+  sock: Option[Socket],
+  phase: i32,
+  then: i32,
+  started: i64,
+  sent: i64,
+  first: i64,
+  dialup: i64,
+  opened: i64,
+  buf: u8[],
+  unsent: u8[],
+  tls: Option[client.Session],
+  peer: options.Origin,
+  at: options.Origin,
+  hops: i32,
+}
+
+// The part of a run that one reactor does: `connections` connections, and
+// `limit` requests on the timetable `plan`.
+struct Job {
+  o: options.Options,
+  addr: net.SocketAddr,
+  roots: verify.Roots,
+  start: i64,
+  deadline: i64,
+  limit: i64,
+  connections: i32,
+  plan: schedule.Schedule,
+}
 
 struct Run {
-  addr: net.SocketAddr,
+  job: Job,
   request: u8[],
-  method: string,
   limit: i64,
   deadline: i64,
   issued: i64,
@@ -39,7 +81,11 @@ struct Run {
   // first `parked_n` items.
   parked: i32[],
   parked_n: i32,
-  schedule: schedule.Schedule,
+  // The next time at which a request or a connect can time out, or 0.
+  check: i64,
+  // The addresses of the hosts that redirects named.
+  names: string[],
+  addrs: net.SocketAddr[],
   tally: report.Tally,
   drv: async.RealDriver,
 }
@@ -58,6 +104,10 @@ function main(): i32 {
       print(options.USAGE);
       return 0;
     },
+    options.Version => {
+      print(options.VERSION);
+      return 0;
+    },
     options.Refused(why) => {
       eprint(f"load: {why}");
       eprint(options.USAGE);
@@ -67,40 +117,118 @@ function main(): i32 {
   return 2;
 }
 
-function resolve(host: string, port: i32): Result[net.SocketAddr, string] {
+// The first address of `host` in the family of --ipv4 or --ipv6.
+function resolve(host: string, port: i32, family: i32): Result[net.SocketAddr, string] {
+  let ips: net.IpAddr[] = [];
   match (net.ip_parse(host)) {
     Ok(ip) => {
-      return Ok(net.socket_addr(ip, port));
+      ips = [ip];
     },
-    Err(_) => {}
-  }
-  match (dns.resolve(host)) {
-    Ok(ips) => {
-      if (ips.len() > 0) {
-        return Ok(net.socket_addr(ips[0], port));
+    Err(_) => {
+      match (dns.resolve(host)) {
+        Ok(found) => {
+          ips = found;
+        },
+        Err(e) => {
+          return Err(f"{host}: {e.message()}");
+        }
       }
-      return Err(f"{host} has no address");
-    },
-    Err(e) => {
-      return Err(f"{host}: {e.message()}");
+    }
+  }
+  for ip in ips {
+    if (family == 0 || ip.is_v4() == (family == 4)) {
+      return Ok(net.socket_addr(ip, port));
     }
   }
   return Err(f"{host} has no address");
 }
 
-function closed(): Conn {
-  let none: u8[] = [];
-  return Conn { sock: None, phase: CLOSED, started: 0, buf: none, unsent: none };
+// The roots that verify the certificate of an https server: the system
+// roots and the roots of --cacert.
+function trust(o: options.Options): Result[verify.Roots, string] {
+  let roots = verify.no_roots();
+  if (!o.tls || o.insecure) {
+    return Ok(roots);
+  }
+  if let Some(system) = verify.system_roots() {
+    roots = system;
+  }
+  if (o.cacert.len() > 0) {
+    match (verify.roots_from_file(o.cacert)) {
+      Ok(more) => {
+        roots = verify.Roots { certs: roots.certs.concat(more.certs), distrust_after: roots.distrust_after.concat(more.distrust_after) };
+      },
+      Err(e) => {
+        return Err(f"--cacert {o.cacert}: {e.message()}");
+      }
+    }
+  }
+  if (roots.certs.len() == 0) {
+    return Err("no root certificates: give --cacert or --insecure");
+  }
+  return Ok(roots);
 }
 
-function run(o: options.Options): i32 {
-  let addr = match (resolve(o.host, o.port)) {
-    Ok(a) => a,
-    Err(why) => {
-      eprint(f"load: {why}");
-      return 1;
+function closed(): Conn {
+  let none: u8[] = [];
+  let nowhere = options.Origin { tls: false, host: "", port: 0, target: "" };
+  return Conn { sock: None, phase: CLOSED, then: CLOSED, started: 0, sent: 0, first: 0, dialup: -1, opened: 0, buf: none, unsent: none, tls: None, peer: nowhere, at: nowhere, hops: 0 };
+}
+
+// The connections of a reactor when --worker-threads is not given. A reactor
+// with fewer connections wakes more often for less work.
+const CONNECTIONS_PER_REACTOR: i32 = 64;
+
+// The reactors of a run: --worker-threads, or one for each
+// CONNECTIONS_PER_REACTOR connections and not more than one for each CPU.
+// There are not more reactors than connections. An engine that runs a worker
+// at `spawn` gets one.
+function reactors(o: options.Options, connections: i32): i32 {
+  let n = o.threads;
+  if (n == 0) {
+    n = (connections + CONNECTIONS_PER_REACTOR - 1) / CONNECTIONS_PER_REACTOR;
+    let cpus = cpu_count() as i32;
+    if (n > cpus) {
+      n = cpus;
+    }
+  }
+  if (n < 1 || !worker.parallel()) {
+    n = 1;
+  }
+  if (n > connections) {
+    n = connections;
+  }
+  return n;
+}
+
+// The share of part `j` of `n` parts of `total`.
+function share(total: i64, j: i32, n: i32): i64 {
+  let extra: i64 = if (j as i64 < total % (n as i64)) { 1 } else { 0 };
+  return total / (n as i64) + extra;
+}
+
+// The options with the body of -D read from its file.
+function with_body(o: options.Options): Result[options.Options, string] {
+  if (o.body_file.len() == 0) {
+    return Ok(o);
+  }
+  match (read_file_bytes(o.body_file)) {
+    Ok(b) => {
+      return Ok(options.Options { ...o, body: b });
     },
-  };
+    Err(e) => {
+      return Err(f"-D {o.body_file}: {e.message()}");
+    }
+  }
+  return Ok(o);
+}
+
+// The job of the whole run. The run starts after the lookup of the host and
+// the load of the roots.
+function job_of(o: options.Options): Result[Job, string] {
+  let place = o.address(o.origin());
+  let addr = resolve(place.0, place.1, o.family)?;
+  let roots = trust(o)?;
   let start = monotonic_ns();
   let deadline: i64 = 0;
   let limit = o.requests;
@@ -108,42 +236,98 @@ function run(o: options.Options): i32 {
     deadline = start + d.as_nanos();
     limit = 9223372036854775807;
   }
-  let n = o.connections;
-  if (limit < n as i64) {
-    n = limit as i32;
+  let connections = o.connections;
+  if (limit < connections as i64) {
+    connections = limit as i32;
   }
-  let conns: Conn[] = [];
-  let ready: i32[] = [];
-  let parked: i32[] = [];
-  for i in 0..n {
-    conns = conns.append(closed());
-    ready = ready.append(i);
-    parked = parked.append(-1);
+  let plan = schedule.closed(start);
+  if let Some(q) = o.rate {
+    plan = schedule.fixed(start, q);
+  } else if let Some(d) = o.burst_delay {
+    plan = schedule.bursts(start, o.burst, d);
   }
-  let plan = match (o.rate) {
-    Some(q) => schedule.fixed(start, q),
-    None => schedule.closed(start),
+  return Ok(Job { o: o, addr: addr, roots: roots, start: start, deadline: deadline, limit: limit, connections: connections, plan: plan });
+}
+
+function run(given: options.Options): i32 {
+  let prepared = with_body(given);
+  let Ok(o) = prepared else {
+    eprint("load: " + prepared.err().unwrap_or(""));
+    return 1;
   };
-  let none: i32[] = [];
-  let r = drive(Run { addr: addr, request: options.request(o), method: o.method, limit: limit, deadline: deadline, issued: 0, busy: 0, conns: conns, by_fd: none, ready: ready, parked: parked, parked_n: 0, schedule: plan, tally: report.tally(), drv: async.real_driver() }, o.wait);
-  let elapsed = monotonic_ns() - start;
-  for i in 0..r.conns.len() {
-    r = shut(r, i);
+  let made = job_of(o);
+  let Ok(job) = made else {
+    eprint("load: " + made.err().unwrap_or(""));
+    return 1;
+  };
+  let tally = parts(job, 0, reactors(o, job.connections));
+  let elapsed = monotonic_ns() - job.start;
+  if (o.format == "quiet") {
+    return 0;
   }
-  if (o.json) {
-    print(r.tally.json(elapsed));
-  } else {
-    print(r.tally.summary(elapsed));
+  let text = if (o.format == "json") { tally.json(elapsed) } else { tally.summary(elapsed, o.unit) };
+  if (o.output.len() == 0) {
+    print(text);
+    return 0;
+  }
+  match (write_file(o.output, text + "\n")) {
+    Ok(_) => {},
+    Err(e) => {
+      eprint(f"load: -o {o.output}: {e.message()}");
+      return 1;
+    }
   }
   return 0;
 }
 
+// Runs parts `j` to `n - 1` of the run, each in a reactor, and merges their
+// tallies. This process runs the last part, and a worker runs each other.
+function parts(job: Job, j: i32, n: i32): report.Tally {
+  let part = Job {
+    ...job,
+    limit: if (job.deadline > 0) { job.limit } else { share(job.limit, j, n) },
+    connections: share(job.connections as i64, j, n) as i32,
+    plan: job.plan.part(j as i64, n as i64),
+  };
+  if (j == n - 1) {
+    return reactor(part);
+  }
+  let w = worker.spawn((): report.Tally => reactor(part));
+  let rest = parts(job, j + 1, n);
+  return w.join().merge(rest);
+}
+
+function reactor(job: Job): report.Tally {
+  let conns: Conn[] = [];
+  let ready: i32[] = [];
+  let parked: i32[] = [];
+  for i in 0..job.connections {
+    conns = conns.append(closed());
+    ready = ready.append(i);
+    parked = parked.append(-1);
+  }
+  let none: i32[] = [];
+  let names: string[] = [];
+  let addrs: net.SocketAddr[] = [];
+  let request = options.request(job.o, job.o.origin());
+  let r = drive(Run { job: job, request: request, limit: job.limit, deadline: job.deadline, issued: 0, busy: 0, conns: conns, by_fd: none, ready: ready, parked: parked, parked_n: 0, check: 0, names: names, addrs: addrs, tally: report.tally(), drv: async.real_driver() });
+  for i in 0..r.conns.len() {
+    r = shut(r, i);
+  }
+  return r.tally;
+}
+
 // Runs the requests until none is left in flight and none is left to send.
-function drive(own r: Run, wait: boolean): Run {
+function drive(own r: Run): Run {
+  let wait = r.job.o.wait;
   while (true) {
     r = start_ready(r);
-    if (r.deadline > 0 && monotonic_ns() >= r.deadline) {
+    let now = monotonic_ns();
+    if (r.deadline > 0 && now >= r.deadline) {
       r = stop(r, wait);
+    }
+    if (r.check > 0 && now >= r.check) {
+      r = start_ready(expire(r, now));
     }
     if (r.busy == 0 && (r.issued >= r.limit || r.parked_n == 0)) {
       return r;
@@ -154,24 +338,63 @@ function drive(own r: Run, wait: boolean): Run {
   return r;
 }
 
-// The wait of the reactor: to the end of -z, or to the next request of -q
-// when a connection waits for it.
+// The earlier of two times, where 0 is none.
+function earlier(a: i64, b: i64): i64 {
+  if (a == 0 || b != 0 && b < a) {
+    return b;
+  }
+  return a;
+}
+
+// The wait of the reactor: to the end of -z, to the next timeout, or to the
+// next request of -q when a connection waits for it.
 function timeout(r: Run): Option[Duration] {
   let now = monotonic_ns();
+  let until = earlier(r.deadline, r.check);
   let left: Option[Duration] = None;
-  if (r.deadline > 0) {
-    left = Some(time.duration_nanos(r.deadline - now));
+  if (until > 0) {
+    left = Some(time.duration_nanos(until - now));
   }
   if (r.parked_n == 0 || r.issued >= r.limit) {
     return left;
   }
-  let next = r.schedule.wait(r.issued, now);
+  let next = r.job.plan.wait(r.issued, now);
   if let Some(d) = left {
     if (d.as_nanos() < next.as_nanos()) {
       return left;
     }
   }
   return Some(next);
+}
+
+// Fails each request that is past -t, and each connect that is past
+// --connect-timeout, and finds the next time to look again.
+function expire(own r: Run, now: i64): Run {
+  let next: i64 = 0;
+  for i in 0..r.conns.len() {
+    let due = due_of(r.job.o, r.conns[i]);
+    if (due > 0 && now >= due) {
+      r = fail(r, i, "timeout");
+    } else {
+      next = earlier(next, due);
+    }
+  }
+  return Run { ...r, check: next };
+}
+
+// The time at which the request or the connect of `c` times out, or 0.
+function due_of(o: options.Options, c: Conn): i64 {
+  if (!busy(c.phase)) {
+    return 0;
+  }
+  let due: i64 = 0;
+  if let Some(t) = o.timeout {
+    due = c.sent + t.as_nanos();
+  }
+  if (c.phase == CONNECTING || c.phase == HANDSHAKE || c.phase == SENDING && c.then == HANDSHAKE) {
+    due = earlier(due, c.opened + o.connect_timeout.as_nanos());
+  }
+  return due;
 }
 
 // Starts a request on each connection in `ready`, on each that a failed
@@ -194,7 +417,7 @@ function start_ready(own r: Run): Run {
 
 function wake(own r: Run): Run {
   let now = monotonic_ns();
-  while (r.parked_n > 0 && r.issued < r.limit && r.schedule.starts(r.issued, now).is_some()) {
+  while (r.parked_n > 0 && r.issued < r.limit && r.job.plan.starts(r.issued, now).is_some()) {
     r = Run { ...r, parked_n: r.parked_n - 1, ready: r.ready.append(r.parked[r.parked_n - 1]) };
   }
   return r;
@@ -214,6 +437,10 @@ function dispatch(own r: Run, events: i32[]): Run {
   return r;
 }
 
+function busy(phase: i32): boolean {
+  return phase == CONNECTING || phase == HANDSHAKE || phase == SENDING || phase == READING;
+}
+
 // At the end of the -z time, no request starts. A request in flight is
 // aborted, or with -w it is complete when its response is.
 function stop(own r: Run, wait: boolean): Run {
@@ -222,30 +449,42 @@ function stop(own r: Run, wait: boolean): Run {
     return r;
   }
   for i in 0..r.conns.len() {
-    let phase = r.conns[i].phase;
-    if (phase == CONNECTING || phase == SENDING || phase == READING) {
+    if (busy(r.conns[i].phase)) {
       r = shut(Run { ...r, tally: r.tally.error(report.ABORTED), busy: r.busy - 1 }, i);
     }
   }
   return r;
 }
 
+function same_peer(a: options.Origin, b: options.Origin): boolean {
+  return a.tls == b.tls && a.port == b.port && a.host == b.host;
+}
+
 // Starts the next request on connection `i`, when one is left to send and
 // it is due. When it is not due, the connection waits in `parked`.
 function begin(own r: Run, i: i32): Run {
-  let c = r.conns[i];
   let now = monotonic_ns();
   if (r.issued >= r.limit || r.deadline > 0 && now >= r.deadline) {
     return idle(r, i);
   }
-  let Some(started) = r.schedule.starts(r.issued, now) else {
+  let Some(due) = r.job.plan.starts(r.issued, now) else {
     return idle(Run { ...r, parked: r.parked.with(r.parked_n, i), parked_n: r.parked_n + 1 }, i);
   };
+  let o = r.job.o;
+  let started = if (o.correct) { due } else { now };
+  if let Some(t) = o.timeout {
+    r = Run { ...r, check: earlier(r.check, now + t.as_nanos()) };
+  }
+  let base = o.origin();
+  if (r.conns[i].sock.is_some() && !same_peer(r.conns[i].peer, base)) {
+    r = shut(r, i);
+  }
+  let c = r.conns[i];
   let none: u8[] = [];
-  r = Run { ...r, issued: r.issued + 1, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, started: started, buf: none }) };
+  r = Run { ...r, issued: r.issued + 1, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, started: started, sent: now, first: 0, dialup: -1, buf: none, at: base, hops: 0 }) };
   if (c.sock.is_some()) {
     let request = r.request;
-    return send(r, i, request);
+    return seal(r, i, request);
   }
   return connect(r, i);
 }
@@ -258,8 +497,41 @@ function idle(own r: Run, i: i32): Run {
   return r;
 }
 
+// The address of the host and port of `at`.
+function address(own r: Run, at: options.Origin): (Run, Result[net.SocketAddr, string]) {
+  let o = r.job.o;
+  if (same_peer(at, o.origin())) {
+    let addr = r.job.addr;
+    return (r, Ok(addr));
+  }
+  let place = o.address(at);
+  let key = f"{place.0}:{place.1}";
+  for k in 0..r.names.len() {
+    if (r.names[k] == key) {
+      let addr = r.addrs[k];
+      return (r, Ok(addr));
+    }
+  }
+  match (resolve(place.0, place.1, o.family)) {
+    Ok(addr) => {
+      return (Run { ...r, names: r.names.append(key), addrs: r.addrs.append(addr) }, Ok(addr));
+    },
+    Err(why) => {
+      return (r, Err(why));
+    }
+  }
+  return (r, Err(key));
+}
+
+// Opens a connection to the host of the request of connection `i`.
 function connect(own r: Run, i: i32): Run {
-  match (net.connect_start(r.addr)) {
+  let at = r.conns[i].at;
+  let (found, addr) = address(r, at);
+  r = found;
+  let Ok(to) = addr else {
+    return fail(r, i, addr.err().unwrap_or("no address"));
+  };
+  match (net.connect_start(to)) {
     Ok(sock) => {
       let fd = sock.fd;
       r.drv.watch(fd, 2);
@@ -267,8 +539,10 @@ function connect(own r: Run, i: i32): Run {
       while (by_fd.len() <= fd) {
         by_fd = by_fd.append(-1);
       }
+      let now = monotonic_ns();
       let c = r.conns[i];
-      return Run { ...r, by_fd: by_fd.with(fd, i), conns: r.conns.with(i, Conn { ...c, sock: Some(sock), phase: CONNECTING }) };
+      let check = earlier(r.check, now + r.job.o.connect_timeout.as_nanos());
+      return Run { ...r, check: check, by_fd: by_fd.with(fd, i), conns: r.conns.with(i, Conn { ...c, sock: Some(sock), phase: CONNECTING, opened: now, peer: at, tls: None }) };
     },
     Err(e) => {
       return fail(r, i, e.message());
@@ -282,12 +556,17 @@ function step(own r: Run, i: i32): Run {
   let Some(sock) = c.sock else {
     return r;
   };
+  if (c.phase == READING) {
+    return read(r, i, sock);
+  }
+  if (c.phase == SENDING) {
+    return send(r, i, c.unsent, c.then);
+  }
   if (c.phase == CONNECTING) {
     match (net.connect_result(sock)) {
       Ok(_) => {
         r.drv.watch(sock.fd, 1);
-        let request = r.request;
-        return send(r, i, request);
+        return connected(r, i);
       },
       Err(net.InProgress) => {
         return r;
@@ -297,10 +576,7 @@ function step(own r: Run, i: i32): Run {
       }
     }
   }
-  if (c.phase == SENDING) {
-    return send(r, i, c.unsent);
-  }
-  if (c.phase == READING) {
+  if (c.phase == HANDSHAKE) {
     return read(r, i, sock);
   }
   // The server closed an idle connection, or sent bytes that no request
@@ -308,7 +584,53 @@ function step(own r: Run, i: i32): Run {
   return shut(r, i);
 }
 
-function send(own r: Run, i: i32, data: u8[]): Run {
+// The time to open the connection counts from the start of the request, as
+// in oha. It is not counted again for a redirect.
+function with_dialup(own r: Run, i: i32): Run {
+  let c = r.conns[i];
+  if (c.hops > 0) {
+    return r;
+  }
+  return Run { ...r, conns: r.conns.with(i, Conn { ...c, dialup: monotonic_ns() - c.sent }) };
+}
+
+// The TCP connection of connection `i` is open: start the TLS handshake, or
+// send the request.
+function connected(own r: Run, i: i32): Run {
+  let c = r.conns[i];
+  if (!c.peer.tls) {
+    r = with_dialup(r, i);
+    let request = request_of(r, c.at);
+    return send(r, i, request, READING);
+  }
+  let config = client.config(c.peer.host, r.job.roots).with_alpn(["http/1.1"]);
+  if (r.job.o.insecure) {
+    config = config.without_verification();
+  }
+  match (client.start(config, rand.bytes(client.entropy(config)), clock.now())) {
+    Ok(step) => {
+      r = Run { ...r, conns: r.conns.with(i, Conn { ...c, tls: Some(step.session) }) };
+      return send(r, i, step.output, HANDSHAKE);
+    },
+    Err(e) => {
+      return fail(r, i, e.message());
+    }
+  }
+  return r;
+}
+
+// The request bytes for `at`: the request of the run, or the request of a
+// redirect.
+function request_of(r: Run, at: options.Origin): u8[] {
+  if (at.target == r.job.o.target && same_peer(at, r.job.o.origin())) {
+    return r.request;
+  }
+  return options.request(r.job.o, at);
+}
+
+// Writes `data` and then goes to phase `then`. What the socket does not take
+// waits in `unsent` for the socket to be writable.
+function send(own r: Run, i: i32, data: u8[], then: i32): Run {
   let c = r.conns[i];
   let Some(sock) = c.sock else {
     return fail(r, i, "connection closed");
@@ -319,13 +641,13 @@ function send(own r: Run, i: i32, data: u8[]): Run {
         if (c.phase != SENDING) {
           r.drv.watch(sock.fd, 2);
         }
-        return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: SENDING, unsent: rest }) };
+        return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: SENDING, then: then, unsent: rest }) };
       }
       if (c.phase == SENDING) {
         r.drv.watch(sock.fd, 1);
       }
       let none: u8[] = [];
-      return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: READING, unsent: none }) };
+      return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: then, unsent: none }) };
     },
     Err(e) => {
       return fail(r, i, e.message());
@@ -339,7 +661,13 @@ function read(own r: Run, i: i32, sock: Socket): Run {
   match (net.read_up_to(sock, READ_SIZE)) {
     Ok(got) => {
       if (got.len() == 0) {
+        if (r.conns[i].phase == HANDSHAKE) {
+          return fail(r, i, "connection closed during the TLS handshake");
+        }
         return ended(r, i);
+      }
+      if (r.conns[i].tls.is_some()) {
+        return decrypt(r, i, sock, got);
       }
       return received(r, i, got);
     },
@@ -353,15 +681,96 @@ function read(own r: Run, i: i32, sock: Socket): Run {
   return r;
 }
 
+// Gives the TLS records of `got` to the session of connection `i`.
+function decrypt(own r: Run, i: i32, sock: Socket, got: u8[]): Run {
+  let c = r.conns[i];
+  let Some(session) = c.tls else {
+    return r;
+  };
+  match (session.read(got, clock.now())) {
+    Ok(step) => {
+      r = Run { ...r, conns: r.conns.with(i, Conn { ...c, tls: Some(step.session) }) };
+      if (c.phase == HANDSHAKE) {
+        return shaken(r, i, step);
+      }
+      if let Some(why) = answer(sock, step.output) {
+        return fail(r, i, why);
+      }
+      if (step.data.len() > 0) {
+        r = received(r, i, step.data);
+      }
+      if (step.closed && r.conns[i].phase == READING) {
+        return ended(r, i);
+      }
+      return r;
+    },
+    Err(f) => {
+      let _ = net.write_rest(sock, f.alert);
+      return fail(r, i, f.message());
+    }
+  }
+  return r;
+}
+
+// Writes the TLS records that a session gives back after the handshake, such
+// as a key update. It gives the error, or None.
+function answer(sock: Socket, records: u8[]): Option[string] {
+  if (records.len() == 0) {
+    return None;
+  }
+  match (net.write_rest(sock, records)) {
+    Ok(rest) => {
+      if (rest.len() > 0) {
+        return Some("the socket did not take a TLS record");
+      }
+    },
+    Err(e) => {
+      return Some(e.message());
+    }
+  }
+  return None;
+}
+
+// A step of the TLS handshake. When the handshake is complete, the request
+// follows the last handshake record.
+function shaken(own r: Run, i: i32, step: client.Step): Run {
+  let c = r.conns[i];
+  let Some(session) = c.tls else {
+    return r;
+  };
+  if (step.closed) {
+    return fail(r, i, "connection closed during the TLS handshake");
+  }
+  if (!session.connected()) {
+    if (step.output.len() == 0) {
+      return r;
+    }
+    return send(r, i, step.output, HANDSHAKE);
+  }
+  r = with_dialup(r, i);
+  match (session.write(request_of(r, c.at))) {
+    Ok(sealed) => {
+      r = Run { ...r, conns: r.conns.with(i, Conn { ...r.conns[i], tls: Some(sealed.session), buf: step.data }) };
+      return send(r, i, step.output.concat(sealed.output), READING);
+    },
+    Err(e) => {
+      return fail(r, i, e.message());
+    }
+  }
+  return r;
+}
+
 function received(own r: Run, i: i32, got: u8[]): Run {
   let c = r.conns[i];
   let buf = if (c.buf.len() == 0) { got } else { c.buf.concat(got) };
-  match (report.frame(buf, r.method, false)) {
+  let first = if (c.first == 0) { monotonic_ns() } else { c.first };
+  match (report.frame(buf, r.job.o.method, false)) {
     report.Done(reply) => {
-      return complete(r, i, reply.status, reply.keep_alive && reply.len == buf.len());
+      r = Run { ...r, conns: r.conns.with(i, Conn { ...c, first: first }) };
+      return complete(r, i, reply, reply.keep_alive && reply.len == buf.len());
     },
     report.Partial => {
-      return Run { ...r, conns: r.conns.with(i, Conn { ...c, buf: buf }) };
+      return Run { ...r, conns: r.conns.with(i, Conn { ...c, buf: buf, first: first }) };
     },
     report.Bad(why) => {
       return fail(r, i, why);
@@ -374,9 +783,9 @@ function received(own r: Run, i: i32, got: u8[]): Run {
 // incomplete.
 function ended(own r: Run, i: i32): Run {
   let buf = r.conns[i].buf;
-  match (report.frame(buf, r.method, true)) {
+  match (report.frame(buf, r.job.o.method, true)) {
     report.Done(reply) => {
-      return complete(r, i, reply.status, false);
+      return complete(r, i, reply, false);
     },
     report.Partial => {
       return fail(r, i, "connection closed");
@@ -389,14 +798,64 @@ function ended(own r: Run, i: i32): Run {
 }
 
 // Counts the response to the request of connection `i`, and starts the next
-// request on it, on the same connection when `keep` is true.
-function complete(own r: Run, i: i32, status: i32, keep: boolean): Run {
-  let latency = monotonic_ns() - r.conns[i].started;
-  r = Run { ...r, busy: r.busy - 1, tally: r.tally.response(status, latency) };
-  if (!keep) {
+// request on it, on the same connection when `keep` is true. With -r, a
+// response with a Location field sends the request again to that location.
+function complete(own r: Run, i: i32, reply: report.Reply, keep: boolean): Run {
+  let o = r.job.o;
+  if (o.redirects > 0 && reply.location.len() > 0) {
+    return redirect(r, i, reply.location, keep);
+  }
+  let now = monotonic_ns();
+  let c = r.conns[i];
+  let done = report.Response { status: reply.status, latency: now - c.started, first_byte: c.first - c.sent, bytes: reply.body, dialup: c.dialup, ended: now - r.job.start };
+  r = Run { ...r, busy: r.busy - 1, tally: r.tally.response(done) };
+  if (!keep || !o.keep_alive) {
     r = shut(r, i);
   }
   return begin(r, i);
+}
+
+// Sends the request of connection `i` again, to `location`. A location on
+// the open connection's host uses the connection when the response keeps it
+// open.
+function redirect(own r: Run, i: i32, location: string, keep: boolean): Run {
+  let c = r.conns[i];
+  if (c.hops >= r.job.o.redirects) {
+    return fail(r, i, "Redirection limit has reached");
+  }
+  let at = match (options.origin(location, c.at)) {
+    Ok(a) => a,
+    Err(why) => {
+      return fail(r, i, why);
+    },
+  };
+  let none: u8[] = [];
+  r = Run { ...r, conns: r.conns.with(i, Conn { ...c, at: at, hops: c.hops + 1, buf: none }) };
+  if (keep && r.job.o.keep_alive && same_peer(at, c.peer)) {
+    let request = request_of(r, at);
+    return seal(r, i, request);
+  }
+  r = shut(r, i);
+  return connect(r, i);
+}
+
+// Sends `request` on the open connection `i`, through its TLS session when
+// it has one.
+function seal(own r: Run, i: i32, request: u8[]): Run {
+  let c = r.conns[i];
+  let Some(session) = c.tls else {
+    return send(r, i, request, READING);
+  };
+  match (session.write(request)) {
+    Ok(sealed) => {
+      r = Run { ...r, conns: r.conns.with(i, Conn { ...c, tls: Some(sealed.session) }) };
+      return send(r, i, sealed.output, READING);
+    },
+    Err(e) => {
+      return fail(r, i, e.message());
+    }
+  }
+  return r;
 }
 
 // Counts the request of connection `i` as failed. The next request starts
@@ -407,10 +866,13 @@ function fail(own r: Run, i: i32, why: string): Run {
   return Run { ...r, ready: r.ready.append(i) };
 }
 
+// Closes connection `i`. A request in flight on it is not counted here.
 function shut(own r: Run, i: i32): Run {
-  let (c, conns) = r.conns.swap_at(i, closed());
+  let c = r.conns[i];
+  let reset = Conn { ...closed(), started: c.started, sent: c.sent, first: c.first, dialup: c.dialup, at: c.at, hops: c.hops };
+  let (old, conns) = r.conns.swap_at(i, reset);
   let d = Run { ...r, conns: conns };
-  if let Some(sock) = c.sock {
+  if let Some(sock) = old.sock {
     let by_fd = d.by_fd.with(sock.fd, -1);
     let _ = net.close(sock);
     return Run { ...d, by_fd: by_fd };
