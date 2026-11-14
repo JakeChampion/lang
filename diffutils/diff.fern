@@ -1718,14 +1718,14 @@ function lines_equal(cfg: Cfg, a: u8[], alo: i32, ahi0: i32, b: u8[], blo: i32, 
 // newline is in a class of its own unless -b or -w is given.
 //
 // The table is chained, as in GNU diff, with about three lines for each
-// bucket. A first pass puts a 31-bit hash of each line in its slot of `eq0`
-// or `eq1`. Thus the table loop that follows is short. A bucket entry and
-// a chain link hold a hash in bits 32 to 62, a bit that says more entries
-// follow, and a class. `keys` holds the first line of each class, which
-// later lines compare against: its hash, its file in bit 31 and its line.
+// bucket. A bucket entry and a chain link hold a 31-bit hash of a line in
+// bits 32 to 62, a bit that says more entries follow, and a class. `keys`
+// holds the first line of each class, which later lines compare against:
+// its hash, its file in bit 31 and its line.
 //
 // Before a table lookup, the loop compares a line with the class of the line
-// after the last match. Most lines of the second file follow the first.
+// after the last match. Most lines of the second file follow the first, and
+// such a line needs no hash.
 function classes(cfg: Cfg, texts: Text[], first: i32, lens: i32[]): Classes {
   let lines = lens[0] + lens[1];
   let bits = 9;
@@ -1743,27 +1743,17 @@ function classes(cfg: Cfg, texts: Text[], first: i32, lens: i32[]): Classes {
   for f in 0..2 {
     let buf = if (f == 0) { tx.buf0 } else { tx.buf1 };
     let starts = if (f == 0) { tx.starts0 } else { tx.starts1 };
-    for k in 0..lens[f] {
-      let lo = starts[first + k];
-      let hi = starts[first + k + 1] - 1;
-      let h = if (plain) { hash_plain(buf, lo, hi) } else { hash_canon(cfg, buf, lo, hi) };
-      let folded = (h ^ h >> 31 as u64) as i32 & 2147483647;
-      if (f == 0) {
-        eq0 = eq0.with(k, folded);
-      } else {
-        eq1 = eq1.with(k, folded);
-      }
-    }
-  }
-  for f in 0..2 {
     let guess = 0;
     for k in 0..lens[f] {
       let i = first + k;
-      let top = (if (f == 0) { eq0[k] } else { eq1[k] }) as i64;
       let c = 0;
-      if (guess > 0 && keys[guess] >> 32i64 == top && same_line(cfg, tx, keys[guess], f, i)) {
+      if (guess > 0 && same_line(cfg, tx, keys[guess], f, i)) {
         c = guess;
       } else {
+        let lo = starts[i];
+        let hi = starts[i + 1] - 1;
+        let h = if (plain) { hash_plain(buf, lo, hi) } else { hash_canon(cfg, buf, lo, hi) };
+        let top = (h * (0x9e3779b97f4a7c15 as u64) >> 33 as u64) as i64;
         let b = (top as u64 * (0x9e3779b97f4a7c15 as u64) >> (64 - bits) as u64) as i32;
         let e = buckets[b];
         while (e != 0i64) {
@@ -2422,7 +2412,12 @@ function diff_texts(cfg: Cfg, a: Text, b: Text): (Script, i32) {
   let first = ends.0;
   let len0 = ends.1;
   let len1 = ends.2;
-  let cls = classes(cfg, [a, b], first, [len0, len1]);
+  let ccfg = cfg;
+  if (cfg.white == WS_TAB && __memchr_bytes(a.buf, 9, 0) < 0 && __memchr_bytes(b.buf, 9, 0) < 0) {
+    // With no tab in either file, -E compares the lines as they are.
+    ccfg = Cfg { ...cfg, white: WS_NONE };
+  }
+  let cls = classes(ccfg, [a, b], first, [len0, len1]);
   let counts0 = __alloc_i32(cls.count);
   let counts1 = __alloc_i32(cls.count);
   for c in cls.eq0 {
@@ -2549,6 +2544,12 @@ function isprint(c: i32): boolean {
   return c >= 32 && c < 127;
 }
 
+// The flag of a line, then a space or under -T a tab.
+function put_flag(run: Run, flag: string): void {
+  buf_push(run.out, flag);
+  buf_push_byte(run.out, if (run.cfg.initial_tab) { 9 } else { 32 });
+}
+
 // output_1_line: the bytes lo..hi of a line. Under -t the tabs become
 // spaces, and a carriage return that does not end the line repeats `flag`.
 function put_text(run: Run, buf: u8[], lo: i32, hi: i32, flag: string): void {
@@ -2570,7 +2571,7 @@ function put_text(run: Run, buf: u8[], lo: i32, hi: i32, flag: string): void {
     } else if (c == 13) {
       buf_push_byte(run.out, c);
       if (flag.len() > 0 && k + 1 < hi && buf[k + 1] != b'\n') {
-        buf_push(run.out, flag);
+        put_flag(run, flag);
       }
       col = 0i64;
     } else if (c == 8) {
@@ -2605,15 +2606,14 @@ function flagged_line(run: Run, t: Text, i: i32, flag: string, color: i32): void
   set_color(run, color);
   let lo = t.starts[i];
   let hi = t.starts[i + 1] - 1;
-  let flag_sep = flag + (if (run.cfg.initial_tab) { "\t" } else { " " });
   if (run.cfg.suppress_blank && hi == lo) {
     if (flag != " ") {
       buf_push(run.out, flag);
     }
   } else {
-    buf_push(run.out, flag_sep);
+    put_flag(run, flag);
   }
-  put_text(run, t.buf, lo, hi, flag_sep);
+  put_text(run, t.buf, lo, hi, flag);
   end_line(run, t, i);
 }
 
@@ -3122,6 +3122,9 @@ function char_literal(f: string, at: i32): (i32, i32) {
 // A number as printf writes it for the conversion `conv` of d, o, x and X,
 // with the flags, width and precision of `spec`.
 function printf_number(spec: string, conv: i32, v: i64): string {
+  if (spec.len() == 0 && conv == 100) {
+    return v.to_string();
+  }
   let left = false;
   let zero = false;
   let i = 0;
@@ -3227,6 +3230,18 @@ function printf_spec(run: Run, f: string, at: i32, out: boolean, g: Groups, line
 
 // The lines from..to of a file, each in the line format `f`.
 function format_lines(run: Run, f: string, t: Text, from: i32, to: i32): void {
+  if (!run.cfg.expand_tabs && from < to && (f == "%L" || f == "%l\n")) {
+    if (f == "%L") {
+      buf_push_bytes_range(run.out, t.buf, t.starts[from], line_end(t, to - 1));
+    } else {
+      for line in from..to {
+        buf_push_bytes_range(run.out, t.buf, t.starts[line], t.starts[line + 1] - 1);
+        buf_push_byte(run.out, 10);
+      }
+    }
+    maybe_flush(run);
+    return;
+  }
   let none = Groups { from0: 0, to0: 0, from1: 0, to1: 0 };
   for line in from..to {
     let i = 0;
@@ -3431,8 +3446,25 @@ function half_line(run: Run, t: Text, i: i32, indent: i64, bound: i64): i64 {
   let out_pos = 0i64;
   let lo = t.starts[i];
   let hi = t.starts[i + 1] - 1;
-  for k in lo..hi {
+  let k = lo;
+  while (k < hi) {
     let c = buf_byte(t, k);
+    if (isprint(c)) {
+      let e = k + 1;
+      while (e < hi && isprint(buf_byte(t, e))) {
+        e += 1;
+      }
+      if (in_pos < bound) {
+        let room = bound - in_pos;
+        let n = if ((e - k) as i64 < room) { (e - k) as i64 } else { room };
+        buf_push_bytes_range(run.out, t.buf, k, k + n as i32);
+        out_pos = in_pos + n;
+      }
+      in_pos += (e - k) as i64;
+      k = e;
+      continue;
+    }
+    k += 1;
     if (c == 9) {
       let spaces = ts - in_pos % ts;
       if (in_pos == out_pos) {
@@ -3471,12 +3503,6 @@ function half_line(run: Run, t: Text, i: i32, indent: i64, bound: i64): i64 {
           }
         }
       }
-    } else if (isprint(c)) {
-      if (in_pos < bound) {
-        out_pos = in_pos + 1i64;
-        buf_push_byte(run.out, c);
-      }
-      in_pos += 1i64;
     } else if (c == 12 || c == 11) {
       if (in_pos < bound) {
         buf_push_byte(run.out, c);
