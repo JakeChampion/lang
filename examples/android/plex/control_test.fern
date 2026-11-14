@@ -195,6 +195,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     duration: (): i64 => 8880000i64,
     stop: (): void => note(log.calls, "stop"),
     random: (): i32 => 5,
+    decoders: ["video/avc", "audio/mp4a-latm"],
   };
 }
 

@@ -96,17 +96,28 @@ function test_stream_choice(): test.TestOutcome {
     return test.fail("no item");
   };
   let original = plex.qualities()[0];
-  // DTS audio is not one that Android decodes, so even Original transcodes.
-  let s = plex.stream_for(client(), base(), it, original, 60000i64, "s1");
-  if (!s.transcode || !s.url.contains("/video/:/transcode/universal/start.m3u8?") || !s.url.contains("offset=60") || !s.url.contains("session=s1")) {
+  let phone = ["video/avc", "audio/mp4a-latm", "audio/eac3"];
+  // The phone has no DTS decoder, so the server converts the sound and
+  // copies the video, with no limit of the bitrate.
+  let s = plex.stream_for(client(), base(), it, original, 60000i64, "s1", phone);
+  if (!s.transcode || !s.url.contains("/video/:/transcode/universal/start.m3u8?") || !s.url.contains("offset=60") || !s.url.contains("session=s1") || s.url.contains("maxVideoBitrate")) {
     return test.fail("transcode " + s.url);
   }
+  let eac3 = plex.Item { ...it, media: [plex.Media { ...it.media[0], audio: "eac3" }] };
+  if (!plex.direct_playable(eac3, phone) || plex.direct_playable(eac3, ["video/avc", "audio/mp4a-latm"]) || plex.direct_playable(eac3, [])) {
+    return test.fail("an E-AC-3 decoder decides direct play");
+  }
+  let hevc = plex.Item { ...it, media: [plex.Media { ...it.media[0], video: "hevc" }] };
+  let full = plex.stream_for(client(), base(), hevc, original, 0i64, "s3", phone);
+  if (!full.url.contains("maxVideoBitrate=8000")) {
+    return test.fail("no HEVC decoder, so the server converts the video too: " + full.url);
+  }
   let aac = plex.Item { ...it, media: [plex.Media { ...it.media[0], audio: "aac" }] };
-  let d = plex.stream_for(client(), base(), aac, original, 60000i64, "s1");
+  let d = plex.stream_for(client(), base(), aac, original, 60000i64, "s1", phone);
   if (d.transcode || d.offset_ms != 60000i64) {
     return test.fail("direct " + d.url);
   }
-  let low = plex.stream_for(client(), base(), aac, plex.qualities()[3], 0i64, "s2");
+  let low = plex.stream_for(client(), base(), aac, plex.qualities()[3], 0i64, "s2", phone);
   if (!low.url.contains("maxVideoBitrate=4000") || !low.url.contains("videoResolution=1280x720")) {
     return test.fail("720p " + low.url);
   }

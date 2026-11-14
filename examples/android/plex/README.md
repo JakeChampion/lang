@@ -28,14 +28,20 @@ Browsing:
 
 Playback:
 
-- Play resumes from the position on the server. The player plays the file
-  as it is when Android can decode it. Otherwise the server transcodes it
-  to HLS at the quality of the settings. The app reports the position every
-  10 seconds, and marks an item watched at its end. The next episode of a
-  season plays after the end of an episode.
+- Play resumes from the position on the server. A seek goes to the
+  nearest sync frame.
+- The app reports the position every 10 seconds, and marks an item watched
+  at its end. The next episode of a season plays after the end of an
+  episode.
 - A tap on the video pauses it and shows the controls: back 10 seconds,
   play, forward 30 seconds, and a bar to seek. Music plays with the controls
   on the screen.
+
+The app reads the list of the decoders of the phone from Android. The
+player plays the file as it is when the phone decodes its video and its
+sound. When the phone decodes only the video, the server copies the video
+and converts the sound. Otherwise the server transcodes the file to HLS at
+the quality of the settings.
 
 Search and settings:
 

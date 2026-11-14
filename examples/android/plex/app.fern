@@ -7,6 +7,7 @@ import "std/android/draw";
 import "std/android/image";
 import "std/android/keyboard";
 import "std/android/player";
+import "std/android/video/capabilities";
 import "std/fetch";
 import "std/log";
 import "std/rand";
@@ -104,6 +105,17 @@ function lock(window: usize): draw.Frame {
   return w.lock();
 }
 
+// The MIME types that the decoders of the phone take, or none when Android
+// does not tell them.
+function decoders(ctx: usize): string[] {
+  if let Ok(types) = capabilities.decoder_types(android.env(ctx), capabilities.default_limits()) {
+    log.info("plex: decoders " + types.join(" "));
+    return types;
+  }
+  log.warn("plex: no list of decoders");
+  return [];
+}
+
 // The device of the phone. `p` is the media player, or one with no object
 // when Android gave none, and then nothing plays.
 function device(ctx: usize, p: player.Player): control.Device {
@@ -133,6 +145,7 @@ function device(ctx: usize, p: player.Player): control.Device {
     duration: (): i64 => duration(ctx, p, has),
     stop: (): void => stop(ctx, p, has),
     random: (): i32 => rand.next_i32() & 2147483647,
+    decoders: decoders(ctx),
   };
 }
 
@@ -156,7 +169,7 @@ function pause(ctx: usize, p: player.Player, has: boolean): void {
 
 function seek(ctx: usize, p: player.Player, has: boolean, ms: i64): void {
   if (has) {
-    let ok = player.seek(ctx, p, ms);
+    let ok = player.seek(ctx, p, ms, player.Sync);
   }
 }
 
