@@ -606,6 +606,31 @@ function f(): i32 {
 }`)
 }
 
+func TestOwnGuardAllowsALocalMovedIntoExit(t *testing.T) {
+	wantOK(t, "local-moved-into-exit", `enum Extent { Empty, Wide(i32[]) }
+function eat(own sp: Extent): i32 { return 0; }
+function f(c: boolean): i32 {
+    let sp: Extent = Empty;
+    if (c) {
+        exit(eat(sp));                 // exit does not return → moved
+    }
+    return eat(sp);
+}`)
+}
+
+func TestOwnGuardRejectsALocalMovedIntoAShadowedExit(t *testing.T) {
+	wantE051(t, "local-moved-into-shadowed-exit", `enum Extent { Empty, Wide(i32[]) }
+function eat(own sp: Extent): i32 { return 0; }
+function f(c: boolean): i32 {
+    let sp: Extent = Empty;
+    let exit = (k: i32): void => {};
+    if (c) {
+        exit(eat(sp));                 // this exit returns, so sp is read again
+    }
+    return eat(sp);
+}`)
+}
+
 func TestOwnGuardAllowsAllOwnPtrParamCallResult(t *testing.T) {
 	wantOK(t, "all-own-ptr-param-result", ownConsumer+`
 function build(own ops: i32[], x: i32): i32[] { return ops.append(x); }

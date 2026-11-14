@@ -466,7 +466,8 @@ array. The x86-64 kernel uses `mulx` (BMI2) and `adc`. The arm64 kernel uses
 four products of 32-bit halves (`compiler/wasm_mont.fern`).
 
 Only the limb count steers a branch in the Montgomery kernels, so they do not
-leak a limb.
+leak a limb. `std/crypto/montgomery` uses the kernel for RSA, ECDSA and the
+TLS key share.
 
 The scrypt BlockMix runs in one kernel on each backend
 (`__scrypt_block_mix`). The kernel keeps the 16 words of each 64-byte block

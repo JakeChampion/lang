@@ -112,3 +112,39 @@ func runXargsSignal(t *testing.T, bin string, sig syscall.Signal, procs string, 
 		code:    cmd.ProcessState.ExitCode(),
 	}
 }
+
+// TestXargsInheritedChild runs xargs -P 1 from a shell that has a child of
+// its own. The shell starts the child and then becomes xargs, so the child of
+// the shell is a child of xargs that xargs did not start. GNU xargs waits on
+// when that child ends. It does not count it as one of its commands, so two
+// commands never run at once and xargs waits for each one.
+func TestXargsInheritedChild(t *testing.T) {
+	want := runXargsInherited(t, referenceBin(t, "xargs"))
+	got := runXargsInherited(t, fernBin(t, "xargs"))
+	if got != want {
+		t.Errorf("runs differ\n gnu: %+v\nfern: %+v", want, got)
+	}
+}
+
+func runXargsInherited(t *testing.T, bin string) xargsSignalRun {
+	t.Helper()
+	dir := t.TempDir()
+	script := `mkdir lock || echo two at once; sleep 0.5; rmdir lock; echo $0; exit 3`
+	argv := append([]string{"sh", "-c", `sleep 0.2 & exec "$@"`, "sh"}, crossArgv(bin, "-n", "1", "-P", "1", "sh", "-c", script)...)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = baseEnv()
+	cmd.Stdin = strings.NewReader("a b\n")
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if _, ok := err.(*exec.ExitError); !ok {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lock")); err == nil {
+		t.Errorf("%s: a command still ran after xargs ended", bin)
+	}
+	return xargsSignalRun{stdout: stdout.String(), stderr: stderr.String(), code: cmd.ProcessState.ExitCode()}
+}

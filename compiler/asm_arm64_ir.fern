@@ -6653,10 +6653,23 @@ function emit_start_main_call(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// x19 holds the base of the stack mapping. The stack below its top 4 MiB
+// asks for transparent huge pages, so a deep recursion takes one page fault
+// for each 2 MiB. A program that stays in the top 4 MiB keeps small pages.
+function stack_huge_pages(s: asmcore.EmitState): asmcore.EmitState {
+  let deep = (asmcore.stack_size() - asmcore.stack_guard() - 4194304) as i64;
+  s = s.write("    add x0, x19, #0x100, lsl #12\n");
+  s = s.write(mov_imm64("x1", deep));
+  return s.write("    mov x2, #14\n    mov x8, #233\n").svc(233);
+}
+
 function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
   s = s.write("    tbnz x0, #63, .Lfern_stack_map_failed\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n").svc(226).write("    cbnz x0, .Lfern_stack_guard_failed\n");
   s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n");
+  if (!darwin) {
+    s = stack_huge_pages(s);
+  }
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
   if (darwin) {
     s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n");
