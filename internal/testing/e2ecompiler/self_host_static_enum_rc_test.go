@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -108,17 +109,17 @@ func TestSelfHostStaticEnumHoldsNoCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	paint := certifierDumpOf(t, h, src, "paint")
-	if !strings.Contains(paint, "st_at 8 ") || strings.Contains(paint, "__fern_rc_inc v1\n") {
+	if !regexp.MustCompile(`(?m) = st_at v[0-9]+ v1$`).MatchString(paint) || strings.Contains(paint, "__fern_rc_inc v1\n") {
 		t.Errorf("paint must store its Color parameter with no retain:\n%s", paint)
 	}
-	if strings.Contains(paint, "ld_at 8 rc") {
+	if strings.Contains(paint, " = ld_at rc v0\n") {
 		t.Errorf("paint must not read the old Color field to release it:\n%s", paint)
 	}
-	if !strings.Contains(paint, "ld_at 16 rc v0") {
+	if !strings.Contains(paint, "ld_at 8 rc v0") || !strings.Contains(paint, "ld_at 24 rc v0") {
 		t.Errorf("paint must still count the Tree children it copies:\n%s", paint)
 	}
 	shade := certifierDumpOf(t, h, src, "shade")
-	if !strings.Contains(shade, "ld_at 8 v0") || strings.Contains(shade, "__fern_rc_inc") {
+	if !strings.Contains(shade, " = ld_at v0\n") || strings.Contains(shade, "__fern_rc_inc") {
 		t.Errorf("shade must read the Color field as a word, with no retain:\n%s", shade)
 	}
 	remark := certifierDumpOf(t, h, src, "remark")
