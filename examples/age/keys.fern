@@ -1,5 +1,6 @@
 // Recipients and identities: the strings and files that name the keys, with
-// the messages of age 1.1.1 for each malformed one.
+// the messages of age 1.3.2 for each malformed one.
+import "std/crypto/hpke";
 import "std/crypto/x25519";
 import "./bech32";
 import "./ssh";
@@ -11,6 +12,8 @@ pub struct X25519Key { scalar: u8[], public: u8[] }
 // A key that can unwrap a file key.
 pub enum Identity {
   X25519Id(X25519Key),
+  // An ML-KEM-768 + X25519 key: age's HybridIdentity.
+  HybridId(hpke.HybridKey),
   // An identity file that age encrypts with a passphrase: its name and the
   // age file, with no armor.
   Encrypted(string, u8[]),
@@ -23,6 +26,8 @@ pub enum Identity {
 // A key that a file key is wrapped to.
 pub enum Recipient {
   X25519To(u8[]),
+  // The public key of an ML-KEM-768 + X25519 key.
+  HybridTo(u8[]),
   ScryptTo(u8[]),
   SshTo(ssh.Recipient),
 }
@@ -78,15 +83,71 @@ function x25519_recipient(arg: string): Result[Recipient, string] {
   return Ok(X25519To(d.data));
 }
 
-pub function parse_recipient(arg: string): Result[Recipient, string] {
-  if (arg.starts_with("age1") && count_ones(arg) > 1) {
-    if let Err(why) = bech32.decode(arg.as_bytes()) {
-      return Err(f"invalid recipient encoding {q(arg)}: {why}");
-    }
-    return Err(f"plugin recipient {q(arg)}: plugins are not supported by this port");
+const PLUGIN_NAME_BYTES: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-._";
+
+// age's validPluginName.
+function plugin_name(name: string): boolean {
+  if (name.len() == 0) {
+    return false;
   }
+  for i in 0..name.len() {
+    if (PLUGIN_NAME_BYTES.index_of(name[i:i + 1].unwrap_or("")).is_none()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// age's ParseHybridRecipient.
+function hybrid_recipient(arg: string): Result[Recipient, string] {
+  let d = match (bech32.decode(arg.as_bytes())) {
+    Ok(d) => d,
+    Err(why) => {
+      return Err(f"malformed recipient {q(arg)}: {why}");
+    },
+  };
+  if (d.hrp != "age1pq") {
+    return Err(f"malformed recipient {q(arg)}: invalid type {q(d.hrp)}");
+  }
+  if let Err(_) = hpke.mlkem768x25519_check_public_key(d.data) {
+    return Err(f"malformed recipient {q(arg)}: invalid MLKEM768-X25519 public key");
+  }
+  return Ok(HybridTo(d.data));
+}
+
+// age's plugin.NewRecipient. The port has no plugins, so a valid plugin
+// recipient gives a message that says so.
+function plugin_recipient(arg: string): Result[Recipient, string] {
+  let d = match (bech32.decode(arg.as_bytes())) {
+    Ok(d) => d,
+    Err(why) => {
+      return Err(f"invalid recipient encoding: {why}");
+    },
+  };
+  let name = d.hrp[4:d.hrp.len()].unwrap_or("").to_owned();
+  if (!plugin_name(name)) {
+    return Err(f"invalid plugin name: {q(name)}");
+  }
+  return Err(f"plugin recipient {q(arg)}: plugins are not supported by this port");
+}
+
+// A recipient that starts with "age1", by the order of age's checks.
+function age1_recipient(arg: string): Result[Recipient, string] {
+  if (arg.starts_with("age1tag1") || arg.starts_with("age1tagpq1")) {
+    return Err(f"tag recipient {q(arg)}: tag recipients are not supported by this port");
+  }
+  if (arg.starts_with("age1pq1")) {
+    return hybrid_recipient(arg);
+  }
+  if (count_ones(arg) > 1) {
+    return plugin_recipient(arg);
+  }
+  return x25519_recipient(arg);
+}
+
+pub function parse_recipient(arg: string): Result[Recipient, string] {
   if (arg.starts_with("age1")) {
-    return x25519_recipient(arg);
+    return age1_recipient(arg);
   }
   if (arg.starts_with("ssh-")) {
     return match (ssh.parse_recipient(arg)) {
@@ -99,6 +160,28 @@ pub function parse_recipient(arg: string): Result[Recipient, string] {
 
 // The recipients of a recipients file, or the message after
 // "failed to parse recipient file NAME: ".
+// The recipient of line n of a recipients file: None for a line that age
+// skips with a warning.
+function recipient_line(line: [u8], n: i32, name: string): Result[Option[Recipient], string] {
+  if (!text.valid_utf8(line)) {
+    return Err(f"{q(name)}: recipients file is not valid UTF-8");
+  }
+  if (line.len() > 8192) {
+    return Err(f"{q(name)}: line {n} is too long");
+  }
+  if let Ok(k) = parse_recipient(text.ascii(line)) {
+    return Ok(Some(k));
+  }
+  if let Some(t) = ssh.unsupported_key(line) {
+    eprint(f"age: warning: recipients file {q(name)}: ignoring unsupported SSH key of type {q(t)} at line {n}");
+    return Ok(None);
+  }
+  if (text.has_prefix(line, "AGE-")) {
+    return Err(f"{q(name)}: error at line {n}: apparent identity found in recipients file");
+  }
+  return Err(f"{q(name)}: malformed recipient at line {n}");
+}
+
 pub function recipients_file(content: [u8], name: string): Result[Recipient[], string] {
   let out: Recipient[] = [];
   let lines = scan_lines(content);
@@ -108,21 +191,12 @@ pub function recipients_file(content: [u8], name: string): Result[Recipient[], s
     if (line.len() == 0 || line[0] == b'#') {
       continue;
     }
-    if (line.len() > 8192) {
-      return Err(f"{q(name)}: line {n + 1} is too long");
+    if let Some(k) = recipient_line(line, n + 1, name)? {
+      out = out.append(k);
     }
-    match (parse_recipient(text.ascii(line))) {
-      Ok(k) => {
-        out = out.append(k);
-      },
-      Err(_) => {
-        if let Some(t) = ssh.key_type(line) {
-          eprint(f"age: warning: recipients file {q(name)}: ignoring unsupported SSH key of type {q(t)} at line {n + 1}");
-          continue;
-        }
-        return Err(f"{q(name)}: malformed recipient at line {n + 1}");
-      }
-    }
+  }
+  if (content.len() > FILE_LIMIT) {
+    return Err(f"{q(name)}: recipients file is too long");
   }
   if (out.len() == 0) {
     return Err(f"{q(name)}: no recipients found");
@@ -133,28 +207,35 @@ pub function recipients_file(content: [u8], name: string): Result[Recipient[], s
 // The message for a key line that decode_secret refuses. The caller makes
 // the line public first.
 pub function secret_key_error(line: [u8]): string {
+  let (hrp, kind) = if (text.has_prefix(line, bech32.PQ_SECRET_PREFIX)) { ("AGE-SECRET-KEY-PQ-", "MLKEM768-X25519") } else { ("AGE-SECRET-KEY-", "X25519") };
   return match (bech32.decode(line)) {
     Err(why) => why,
-    Ok(d) => if (d.hrp != "AGE-SECRET-KEY-") {
+    Ok(d) => if (d.hrp != hrp) {
       f"unknown type {q(d.hrp)}"
     } else {
-      "invalid X25519 secret key"
+      f"invalid {kind} secret key"
     },
   };
 }
 
-// One key line of an identity file. The line starts with
-// bech32.SECRET_PREFIX. Its data part is marked secret here.
-function key_line(line: [u8]): Result[X25519Key, string] {
-  __ct_secret(line[bech32.SECRET_PREFIX.len():line.len()]);
-  let Some(scalar) = bech32.decode_secret(line) else {
+// The 32 bytes of the data part of a key line that starts with prefix. The
+// data part is marked secret here.
+function secret_bytes(line: [u8], prefix: string): Result[u8[], string] {
+  __ct_secret(line[prefix.len():line.len()]);
+  let Some(b) = bech32.decode_secret(line, prefix) else {
     __ct_public(line);
     return Err("malformed secret key: " + secret_key_error(line));
   };
+  return Ok(b);
+}
+
+// One AGE-SECRET-KEY-1 line of an identity file.
+function key_line(line: [u8]): Result[Identity, string] {
+  let scalar = secret_bytes(line, bech32.SECRET_PREFIX)?;
   match (x25519.public_key(scalar)) {
     Ok(public) => {
       __ct_public(public);
-      return Ok(X25519Key { scalar: scalar, public: public });
+      return Ok(X25519Id(X25519Key { scalar: scalar, public: public }));
     },
     Err(e) => {
       return Err(e.message());
@@ -162,24 +243,66 @@ function key_line(line: [u8]): Result[X25519Key, string] {
   }
 }
 
-// The key of one line of an identity file. age's CLI (cmd) knows the type of
-// a line by its prefix. age's library parses each line as a secret key.
-function identity_line(line: [u8], cmd: boolean): Result[X25519Key, string] {
+// One AGE-SECRET-KEY-PQ-1 line of an identity file.
+function hybrid_line(line: [u8]): Result[Identity, string] {
+  let seed = secret_bytes(line, bech32.PQ_SECRET_PREFIX)?;
+  return match (hpke.mlkem768x25519_key(seed)) {
+    Ok(k) => Ok(HybridId(k)),
+    Err(e) => Err(e.message()),
+  };
+}
+
+// The key of one line of an identity file, by its prefix. Only age's CLI
+// (cmd) has plugins.
+function identity_line(line: [u8], cmd: boolean): Result[Identity, string] {
   if (cmd && text.has_prefix(line, "AGE-PLUGIN-")) {
     return Err("plugin identities are not supported by this port");
   }
   if (text.has_prefix(line, bech32.SECRET_PREFIX)) {
     return key_line(line);
   }
-  if (cmd) {
-    return Err("unknown identity type");
+  if (text.has_prefix(line, bech32.PQ_SECRET_PREFIX)) {
+    return hybrid_line(line);
   }
-  __ct_public(line);
-  return Err("malformed secret key: " + secret_key_error(line));
+  return Err("unknown identity type");
 }
 
-function identity_lines(content: [u8], cmd: boolean): Result[X25519Key[], string] {
-  let ids: X25519Key[] = [];
+// True when b is valid UTF-8. A key line is ASCII, so the check looks at the
+// bytes only when one of them is not ASCII.
+function valid_utf8(b: [u8]): boolean {
+  let high = 0u8;
+  for c in b {
+    high |= c;
+  }
+  let verdict = __alloc_u8(1).with(0, high >> 7);
+  __ct_public(verdict);
+  if (verdict[0] == 0) {
+    return true;
+  }
+  __ct_public(b);
+  return text.valid_utf8(b);
+}
+
+// The largest identity file and recipients file that age reads.
+pub const FILE_LIMIT: i32 = 16777216;
+
+// The key of line n of an identity file, or the message for the file.
+function numbered_identity(line: [u8], n: i32, cmd: boolean): Result[Identity, string] {
+  if (!valid_utf8(line)) {
+    return Err("identities file is not valid UTF-8");
+  }
+  return match (identity_line(line, cmd)) {
+    Ok(id) => Ok(id),
+    Err(why) => if (cmd && text.has_prefix(line, "age1")) {
+      Err(f"error at line {n}: apparent recipient found in identities file")
+    } else {
+      Err(f"error at line {n}: {why}")
+    },
+  };
+}
+
+function identity_lines(content: [u8], cmd: boolean): Result[Identity[], string] {
+  let ids: Identity[] = [];
   let lines = scan_lines(content);
   for n in 0..lines.len() {
     let (from, to) = lines[n];
@@ -187,30 +310,26 @@ function identity_lines(content: [u8], cmd: boolean): Result[X25519Key[], string
     if (line.len() == 0 || line[0] == b'#') {
       continue;
     }
-    match (identity_line(line, cmd)) {
-      Ok(id) => {
-        ids = ids.append(id);
-      },
-      Err(why) => {
-        return Err(f"error at line {n + 1}: {why}");
-      }
-    }
+    ids = ids.append(numbered_identity(line, n + 1, cmd)?);
+  }
+  if (content.len() > FILE_LIMIT) {
+    return Err("identities file is too long");
   }
   if (ids.len() == 0) {
-    return Err("no secret keys found");
+    return Err("no identities found");
   }
   return Ok(ids);
 }
 
 // The keys of an identity file as age's CLI reads it, or the message after
-// "failed to read NAME: ".
-pub function identities(content: [u8]): Result[X25519Key[], string] {
+// "failed to read NAME: ". content holds up to FILE_LIMIT + 1 bytes.
+pub function identities(content: [u8]): Result[Identity[], string] {
   return identity_lines(content, true);
 }
 
 // The keys of an identity file as age's library (age.ParseIdentities) reads
 // it, for age-keygen -y.
-pub function parse_identities(content: [u8]): Result[X25519Key[], string] {
+pub function parse_identities(content: [u8]): Result[Identity[], string] {
   return identity_lines(content, false);
 }
 
@@ -227,7 +346,26 @@ pub function recipient_text(public: [u8]): string {
   return bech32.encode("age", public);
 }
 
+// The age1pq1... text of the public key of a hybrid key.
+pub function hybrid_recipient_text(public: [u8]): string {
+  return bech32.encode("age1pq", public);
+}
+
 // The AGE-SECRET-KEY-1... text of a secret key.
 pub function secret_text(scalar: [u8]): string {
   return bech32.encode("AGE-SECRET-KEY-", scalar).to_ascii_upper();
+}
+
+// The AGE-SECRET-KEY-PQ-1... text of the seed of a hybrid key.
+pub function hybrid_secret_text(seed: [u8]): string {
+  return bech32.encode("AGE-SECRET-KEY-PQ-", seed).to_ascii_upper();
+}
+
+// The recipient text of each key, as age-keygen -y writes it.
+pub function identity_recipient(id: Identity): string {
+  return match (id) {
+    X25519Id(k) => recipient_text(k.public),
+    HybridId(k) => hybrid_recipient_text(k.public_key),
+    _ => "",
+  };
 }

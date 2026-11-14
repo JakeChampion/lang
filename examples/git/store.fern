@@ -181,6 +181,41 @@ pub function read(s: Store, name: string): Found {
   return Found { store: s, object: objects.read_loose(s.objects, name) };
 }
 
+// The kind and the size of an object, and the store after the read. `why`
+// is the error, and it is empty for an object that the store has.
+pub struct Info { store: Store, kind: string, size: i64, why: string }
+
+// The kind and the size of the object `name`. A packed object is not
+// inflated for them.
+pub function info(s: Store, name: string): Info {
+  if let Ok(raw) = hex.decode(name) {
+    for i in 0..s.packs.len() {
+      let at = pack.find(s.packs[i].idx, raw);
+      if (at >= 0) {
+        s = ready(s, i);
+        let p = s.packs[i];
+        let offset = pack.offset_at(p.idx, at);
+        if (offset < 0) {
+          return Info { store: s, kind: "", size: 0, why: "the packfile of " + name + " is larger than this port reads" };
+        }
+        let idx = p.idx;
+        let data = p.data;
+        let file = p.file;
+        let order = p.order;
+        let part = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from) };
+        return match (pack.info_in(part, (base: u8[]): i32 => pack.offset_of(idx, base), offset)) {
+          Ok((kind, size)) => Info { store: s, kind: kind, size: size, why: "" },
+          Err(why) => Info { store: s, kind: "", size: 0, why: why },
+        };
+      }
+    }
+  }
+  return match (objects.read_loose(s.objects, name)) {
+    Ok(o) => Info { store: s, kind: o.kind, size: o.body.len() as i64, why: "" },
+    Err(why) => Info { store: s, kind: "", size: 0, why: why },
+  };
+}
+
 // The loose objects whose name starts with `short`.
 function loose_with_prefix(s: Store, short: string): string[] {
   let found: string[] = [];

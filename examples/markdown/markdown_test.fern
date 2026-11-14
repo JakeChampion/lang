@@ -7,12 +7,18 @@ import "./blocks";
 import "./inlines";
 import "./markdown";
 import "./refs";
+import "./render";
 import "./tags";
+
+// The options of `cmark --unsafe`.
+function unsafe_html(): markdown.Options {
+  return markdown.Options { ...markdown.options(), unsafe_html: true };
+}
 
 function checks(cases: (string, string)[]): test.TestOutcome {
   for c in cases {
     let (md, want) = c;
-    let got = markdown.to_html(md);
+    let got = markdown.to_html(md, unsafe_html());
     if (got != want) {
       return test.fail("\"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
     }
@@ -51,7 +57,7 @@ function shape(d: blocks.Doc, r0: i32): (string, i32) {
 function shapes(cases: (string, string)[]): test.TestOutcome {
   for c in cases {
     let (md, want) = c;
-    let (got, _) = shape(blocks.parse(md), 0);
+    let (got, _) = shape(blocks.parse(md, false), 0);
     if (got != want) {
       return test.fail("\"" + md + "\": got " + got + ", want " + want);
     }
@@ -242,7 +248,7 @@ function test_cmark_details(): test.TestOutcome {
 // A byte order mark at the start of the source is not text.
 function test_bom(): test.TestOutcome {
   let bom = (0xFEFF as char).to_string();
-  return test.assert_eq(markdown.to_html(bom + "# a\n" + bom), "<h1>a</h1>\n<p>" + bom + "</p>\n");
+  return test.assert_eq(markdown.to_html(bom + "# a\n" + bom, markdown.options()), "<h1>a</h1>\n<p>" + bom + "</p>\n");
 }
 
 function ref_is(d: blocks.Doc, label: string, dest: string, title: string): string {
@@ -260,7 +266,7 @@ function ref_is(d: blocks.Doc, label: string, dest: string, title: string): stri
 }
 
 function test_definitions(): test.TestOutcome {
-  let d = blocks.parse("[Foo  Bar]: /url 'the title'\n[ẞ]: <a b>\n[foo bar]: /other\n[t]:\n/u\n\"multi\nline\"\n> [q]: (x) (paren)\n[e]: <>\n[n]: /u \"no\" x\n[x]:\n");
+  let d = blocks.parse("[Foo  Bar]: /url 'the title'\n[ẞ]: <a b>\n[foo bar]: /other\n[t]:\n/u\n\"multi\nline\"\n> [q]: (x) (paren)\n[e]: <>\n[n]: /u \"no\" x\n[x]:\n", false);
   let errors = [
     ref_is(d, "foo bar", "/url", "'the title'"), ref_is(d, "ss", "a b", ""), ref_is(d, "t", "/u", "\"multi\nline\""), ref_is(d, "q", "(x)", "(paren)"), ref_is(d, "e", "", ""),
   ];
@@ -460,6 +466,92 @@ function test_line_breaks(): test.TestOutcome {
   ]);
 }
 
+// The HTML for the options `o` of each case.
+function checks_with(o: markdown.Options, cases: (string, string)[]): test.TestOutcome {
+  for c in cases {
+    let (md, want) = c;
+    let got = markdown.to_html(md, o);
+    if (got != want) {
+      return test.fail("\"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
+    }
+  }
+  return test.pass();
+}
+
+// Without --unsafe, cmark writes a comment for raw HTML, and a link to a
+// dangerous URL has an empty destination. The text of an image keeps raw
+// HTML as text.
+function test_safe(): test.TestOutcome {
+  return checks_with(markdown.options(), [
+    ("<div>\n*x*\n</div>\n\na <b>c</b> ![<i>](u) [l](javascript:alert(1)) [m](JaVaScRiPt&#58;x) [n](\\vbscript:x)\n", "<!-- raw HTML omitted -->\n<p>a <!-- raw HTML omitted -->c<!-- raw HTML omitted --> <img src=\"u\" alt=\"&lt;i&gt;\" /> <a href=\"\">l</a> <a href=\"\">m</a> <a href=\"%5Cvbscript:x\">n</a></p>\n"),
+    ("![i](data:image/png;base64,x) ![j](DATA:text/html,x) ![k](data:image/webp) ![w](data:image/svg+xml,x) <file:///etc/passwd> <vbscript:x> [ok](http://x)\n", "<p><img src=\"data:image/png;base64,x\" alt=\"i\" /> <img src=\"\" alt=\"j\" /> <img src=\"data:image/webp\" alt=\"k\" /> <img src=\"\" alt=\"w\" /> <a href=\"\">file:///etc/passwd</a> <a href=\"\">vbscript:x</a> <a href=\"http://x\">ok</a></p>\n"),
+  ]);
+}
+
+// Smart punctuation: quotes are delimiters, and runs of hyphens and three
+// periods are dashes and an ellipsis.
+function test_smart(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), smart: true };
+  return checks_with(o, [
+    ("\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" ''\n", "<p>“Hello,” she said. ‘It’s “quoted”’ – yes — no –– —– …\n‘a’ “b” (“c”) [“d”] <em>“e”</em> 5’6” ‘’</p>\n"),
+  ]);
+}
+
+function test_breaks(): test.TestOutcome {
+  let hard = checks_with(markdown.Options { ...markdown.options(), hardbreaks: true }, [
+    ("a\nb  \nc\n> d\n> e\n", "<p>a<br />\nb<br />\nc</p>\n<blockquote>\n<p>d<br />\ne</p>\n</blockquote>\n"),
+  ]);
+  if let Fail(_) = hard {
+    return hard;
+  }
+  return checks_with(markdown.Options { ...markdown.options(), nobreaks: true }, [
+    ("a\nb  \nc\n![x\ny](z)\n", "<p>a b<br />\nc <img src=\"z\" alt=\"x y\" /></p>\n"),
+  ]);
+}
+
+// The positions of cmark: a block ends at the end of the line before the
+// line that closes it, and a setext heading ends at the end of the line
+// after it.
+function test_sourcepos(): test.TestOutcome {
+  return checks_with(markdown.Options { ...markdown.options(), sourcepos: true }, [
+    ("# h\n\n> - a\n>\n>   b\n\n1. x\n\n```\nc\n```\n\n    i\n\n---\n\nSetext\n===\n\n<div>\n", "<h1 data-sourcepos=\"1:1-1:3\">h</h1>\n<blockquote data-sourcepos=\"3:1-5:5\">\n<ul data-sourcepos=\"3:3-5:5\">\n<li data-sourcepos=\"3:3-5:5\">\n<p data-sourcepos=\"3:5-3:5\">a</p>\n<p data-sourcepos=\"5:5-5:5\">b</p>\n</li>\n</ul>\n</blockquote>\n<ol data-sourcepos=\"7:1-8:0\">\n<li data-sourcepos=\"7:1-8:0\">x</li>\n</ol>\n<pre data-sourcepos=\"9:1-11:3\"><code>c\n</code></pre>\n<pre data-sourcepos=\"13:5-14:0\"><code>i\n</code></pre>\n<hr data-sourcepos=\"15:1-16:0\" />\n<h1 data-sourcepos=\"17:1-19:0\">Setext</h1>\n<!-- raw HTML omitted -->\n"),
+    ("Foo\n===\nbar\n### a ##  \n", "<h1 data-sourcepos=\"1:1-3:3\">Foo</h1>\n<p data-sourcepos=\"3:1-3:3\">bar</p>\n<h3 data-sourcepos=\"4:1-4:5\">a</h3>\n"),
+  ]);
+}
+
+// cmark replaces each invalid sequence of a line with one U+FFFD: a lead
+// byte and its valid continuation bytes, all the bytes left on the line
+// when the sequence is too short for them, or the whole sequence of an
+// overlong form, a surrogate or a code point above U+10FFFF.
+function test_utf8(): test.TestOutcome {
+  let b: u8[] = [0x61u8, 0xC0u8, 0xAFu8, 0x62u8, 0xEDu8, 0xA0u8, 0x80u8, 0x63u8, 0xF4u8, 0x90u8, 0x80u8, 0x80u8, 0x64u8, 0xE2u8, 0x41u8, 0x0Au8, 0xF0u8, 0x9Fu8, 0x98u8, 0x0Au8, 0xE2u8, 0x82u8, 0x20u8, 0x65u8, 0xFFu8, 0x0Au8];
+  let cmark = test.assert_eq(markdown.text_of(b, true), "a�b�c�d�\n�\n� e�\n");
+  if let Fail(_) = cmark {
+    return cmark;
+  }
+  return test.assert_eq(markdown.text_of(b, false), "a��b���c����d�A\n�\n� e�\n");
+}
+
+// The output of cmark in its other formats.
+function test_formats(): test.TestOutcome {
+  let o = markdown.options();
+  let cases = [
+    ("xml", markdown.Options { ...o, sourcepos: true }, "# *a* `b`\n\n- [c](d \"e\") <f@g.h>\n- ![i](j)\n\n3) k\n\n```x y\nz\n```\n\n<p>\n\nl  \nm\\\n&amp; <b>\n", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document sourcepos=\"1:1-16:9\" xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading sourcepos=\"1:1-1:9\" level=\"1\">\n    <emph sourcepos=\"1:3-1:5\">\n      <text sourcepos=\"1:4-1:4\" xml:space=\"preserve\">a</text>\n    </emph>\n    <text sourcepos=\"1:6-1:6\" xml:space=\"preserve\"> </text>\n    <code sourcepos=\"1:8-1:8\" xml:space=\"preserve\">b</code>\n  </heading>\n  <list sourcepos=\"3:1-5:0\" type=\"bullet\" tight=\"true\">\n    <item sourcepos=\"3:1-3:20\">\n      <paragraph sourcepos=\"3:3-3:20\">\n        <link sourcepos=\"3:3-3:12\" destination=\"d\" title=\"e\">\n          <text sourcepos=\"3:4-3:4\" xml:space=\"preserve\">c</text>\n        </link>\n        <text sourcepos=\"3:13-3:13\" xml:space=\"preserve\"> </text>\n        <link sourcepos=\"3:12-3:18\" destination=\"mailto:f@g.h\">\n          <text sourcepos=\"3:15-3:19\" xml:space=\"preserve\">f@g.h</text>\n        </link>\n      </paragraph>\n    </item>\n    <item sourcepos=\"4:1-5:0\">\n      <paragraph sourcepos=\"4:3-4:9\">\n        <image sourcepos=\"4:3-4:9\" destination=\"j\">\n          <text sourcepos=\"4:5-4:5\" xml:space=\"preserve\">i</text>\n        </image>\n      </paragraph>\n    </item>\n  </list>\n  <list sourcepos=\"6:1-7:0\" type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item sourcepos=\"6:1-7:0\">\n      <paragraph sourcepos=\"6:4-6:4\">\n        <text sourcepos=\"6:4-6:4\" xml:space=\"preserve\">k</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block sourcepos=\"8:1-10:3\" info=\"x y\" xml:space=\"preserve\">z\n</code_block>\n  <html_block sourcepos=\"12:1-12:3\" xml:space=\"preserve\">&lt;p&gt;\n</html_block>\n  <paragraph sourcepos=\"14:1-16:9\">\n    <text sourcepos=\"14:1-14:3\" xml:space=\"preserve\">l</text>\n    <linebreak />\n    <text sourcepos=\"15:1-15:1\" xml:space=\"preserve\">m</text>\n    <linebreak />\n    <text sourcepos=\"15:4-15:9\" xml:space=\"preserve\">&amp; </text>\n    <html_inline sourcepos=\"15:10-15:12\" xml:space=\"preserve\">&lt;b&gt;</html_inline>\n  </paragraph>\n</document>\n"),
+    ("commonmark", o, "# A\n\n> b *c* **d** _e_ `` ` ``\n\n- f\n\n  g\n- h\n\n1. i\n2. j\n\n<!-- -->\n\n    code\n\n[k](l \"m\") <http://n> ![o](p) \\* 1. 2) - + = #\n***\n", "# A\n\n> b *c* **d** *e* `` ` ``\n\n  - f\n    \n    g\n\n  - h\n\n<!-- end list -->\n\n1.  i\n2.  j\n\n<!-- -->\n\n``` \ncode\n```\n\n[k](l \"m\") <http://n> ![o](p) \\* 1. 2) - + = \\#\n\n-----\n"),
+    ("commonmark", markdown.Options { ...o, width: 20 }, "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3\n\n- iii jjj kkk lll mmm nnn ooo\n", "> aaa bbb ccc ddd\n> eee fff ggg\n> hhh 1 2 3\n\n  - iii jjj kkk lll\n    mmm nnn ooo\n"),
+    ("man", o, "# A\n\n## B\n\n.b 'c' \\ - *d* **e** `f`\n\n- g\n\n  h\n- i\n\n2. j\n\n> k\n\n    l\n\n---\n\n[m](n) ![o](p)\nq  \nr\n", ".SH\nA\n.SS\nB\n.PP\n\\&.b 'c' \\e \\- \\f[I]d\\f[] \\f[B]e\\f[] \\f[C]f\\f[]\n.IP \\[bu] 2\ng\n.RS\n.PP\nh\n.RE\n.IP \\[bu] 2\ni\n.IP \"2.\" 4\nj\n.RS\n.PP\nk\n.RE\n.IP\n.nf\n\\f[C]\nl\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nm (n) [IMAGE: o]\nq.PD 0\n.P\n.PD\nr\n"),
+    ("latex", markdown.Options { ...o, smart: true }, "# A\n###### B\n\n{}#%&$_-~^\\|<>[]\"' ... -- --- 'x' \"y\"\n\n3. a\n   4. b\n\n- c\n\n> d\n\n```\ne\n```\n\n[f](#g) [h](http://h) <i@j.k> [l](m) [](n) ![o](p)\n\n***\n", "\\section{A}\n\n{B}\n\n\\{\\}\\#\\%\\&\\$\\_-\\textasciitilde{}\\^{}\\textbar{}\\textless{}\\textgreater{}{[}{]}''' \\ldots{} -- --- `x' ``y''\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item a\n4. b\n\n\\end{enumerate}\n\n\\begin{itemize}\n\\item c\n\n\\end{itemize}\n\n\\begin{quote}\nd\n\n\\end{quote}\n\n\\begin{verbatim}\ne\n\\end{verbatim}\n\n\\protect\\hyperlink{g}{f} \\href{http://h}{h} \\href{mailto:i@j.k}\\nolinkurl{i@j.k} {l} {} \\protect\\includegraphics{p}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n"),
+  ];
+  for c in cases {
+    let (format, opt, md, want) = c;
+    let got = markdown.text_of(render.render(md, format, opt), false);
+    if (got != want) {
+      return test.fail(format + " \"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
+    }
+  }
+  return test.pass();
+}
+
 // Where spec 0.31.2 and cmark 0.30.2 do not agree, the port follows the
 // spec. cmark keeps one bottom for the openers of all `_` closers. It does
 // not count a symbol such as `£` as punctuation. It has the comments and
@@ -503,5 +595,11 @@ function main(): i32 {
   r = r.it("raw HTML", test_raw_html);
   r = r.it("hard and soft line breaks", test_line_breaks);
   r = r.it("spec 0.31.2 where cmark 0.30.2 differs", test_spec_over_cmark);
+  r = r.it("raw HTML and dangerous URLs without the unsafe option", test_safe);
+  r = r.it("smart punctuation", test_smart);
+  r = r.it("hard breaks and no breaks", test_breaks);
+  r = r.it("the source positions of blocks", test_sourcepos);
+  r = r.it("invalid UTF-8 as cmark replaces it", test_utf8);
+  r = r.it("XML, CommonMark, man and LaTeX", test_formats);
   return r.finish();
 }

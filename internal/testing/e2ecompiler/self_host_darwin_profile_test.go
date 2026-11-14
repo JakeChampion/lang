@@ -76,7 +76,7 @@ func TestSelfHostDarwinProfile(t *testing.T) {
 					t.Fatalf("wrong allocation profile:\n%s", stderr)
 				}
 				for _, row := range lines[1:] {
-					if !strings.HasPrefix(row, "_main;__fn_main;__fn_allocate;") || !strings.HasSuffix(row, " 2560") {
+					if !strings.HasPrefix(row, "_main;__fn_main;__fn_allocate;") || !strings.HasSuffix(row, " 2048") {
 						t.Errorf("wrong allocation stack: %s", row)
 					}
 				}

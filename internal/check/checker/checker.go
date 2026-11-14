@@ -1029,6 +1029,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, n := range []string{"__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into"} {
 		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
+	limbView := ast.SliceType{Elem: ast.NumberType{Width: 64, Signed: true}}
+	limbArr := ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}
+	c.info.FuncSigs["__mont_mul"] = &ast.FuncType{Params: []ast.Type{limbView, limbView, limbView}, Result: limbArr}
+	c.info.FuncSigs["__scrypt_block_mix"] = &ast.FuncType{Params: []ast.Type{limbArr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: limbArr}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
@@ -11049,6 +11053,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
+			// An element of a value that no name holds is owned as that value is.
+			switch root := projectionRoot(x).(type) {
+			case *ast.Ident, *ast.FieldAccess:
+			default:
+				if isOwnedExpr(root) {
+					return true
+				}
+			}
 			if id, ok := enclosingField(x).Target.(*ast.Ident); ok && !borrowedParam[id.Name] && atLastUse(e) {
 				return true
 			}
@@ -16546,6 +16558,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.settleNumeric(n.Right, common)
 				lt = c.postSettleType(n.Left, lt)
 				rt = c.postSettleType(n.Right, rt)
+			} else {
+				lt, rt = c.settleComparedArrayLiteral(n, lt, rt)
 			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
 				c.errfCode(n.P, "E041", "cannot compare %s with %s: both sides of %q must have the same type", lt, rt, n.Op)

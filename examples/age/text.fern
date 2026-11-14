@@ -3,6 +3,7 @@
 // errors of a system call.
 import "std/base64";
 import "std/option";
+import "std/result";
 import "std/utf8";
 
 const HEX: string = "0123456789abcdef";
@@ -19,6 +20,11 @@ pub function ascii(b: [u8]): string {
     return "";
   };
   return s;
+}
+
+// Go's utf8.Valid.
+pub function valid_utf8(b: [u8]): boolean {
+  return utf8.from_bytes(b).is_ok();
 }
 
 pub function has_prefix(b: [u8], p: string): boolean {
@@ -236,11 +242,8 @@ pub function b64_decode(s: [u8], pad: boolean): Result[u8[], i32] {
 
 // Go's base64.StdEncoding with no Strict(): nonzero bits after the last
 // byte are not an error.
-pub function b64_lax(s: [u8]): Option[u8[]] {
-  return match (b64_decode_with(s, true, false)) {
-    Ok(b) => Some(b),
-    Err(_) => None,
-  };
+pub function b64_lax(s: [u8]): Result[u8[], i32] {
+  return b64_decode_with(s, true, false);
 }
 
 // The bytes of a quantum after out. A strict decoder refuses bits after the

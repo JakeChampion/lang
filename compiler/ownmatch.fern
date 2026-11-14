@@ -51,7 +51,43 @@ function visit(st: ast.Stmt, count: i32): (ast.Stmt, i32, boolean) {
   return (st, count, false);
 }
 
+// A value match with a nested pattern is a block of three statements: a
+// local for the value, the match, and a return of the local. Its lowered
+// arms assign to the local. The arms as written end in their value, so the
+// block of the source form is the match alone.
+function value_block(e: ast.Expr): Option[ast.Expr] {
+  let ast.ExprCall(c) = e else {
+    return None;
+  };
+  let ast.ExprLambda(lm) = c.callee else {
+    return None;
+  };
+  if (!parser.is_value_block(c) || lm.body.len() != 3) {
+    return None;
+  }
+  let ast.StmtVar(v) = lm.body[0] else {
+    return None;
+  };
+  let ast.StmtMatch(m) = lm.body[1] else {
+    return None;
+  };
+  let ast.StmtReturn(r) = lm.body[2] else {
+    return None;
+  };
+  let ast.ExprIdent(id) = r.value else {
+    return None;
+  };
+  if (id.name != v.name || !parser.is_value_local_name(v.name) || m.sugar.len() == 0) {
+    return None;
+  }
+  let body: ast.Stmt[] = [match_source(m.scrutinee, m.sugar, m.line, m.col, m.origin)];
+  return Some(ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: body } });
+}
+
 function keep(e: ast.Expr, count: i32): (ast.Expr, i32, boolean) {
+  if let Some(block) = value_block(e) {
+    return (block, count, true);
+  }
   return (e, count, false);
 }
 

@@ -438,6 +438,10 @@ function packed_suffix(op: ir.Op): string {
   if (ir.is_packed(op)) {
     return "_u8";
   }
+  let t = op.kind_tag;
+  if (ir.is_compact(op) && (t == ir.K_ARR_PUSH || t == ir.K_ARR_PUSH_OWNED || t == ir.K_ALLOC_U8 || t == ir.K_ARR_SLICE)) {
+    return "_u32";
+  }
   return "";
 }
 
@@ -448,19 +452,27 @@ function counted_mark(op: ir.Op): string {
   return "";
 }
 
+// The element of an access: "u8" for a byte, "i32" or "u32" for 4 bytes that a
+// read extends with or without the sign, and "" for 8 bytes.
 function packed_mark(op: ir.Op): string {
   if (ir.is_packed(op)) {
     return "u8";
+  }
+  if (ir.is_compact(op) && op.unsigned) {
+    return "u32";
+  }
+  if (ir.is_compact(op)) {
+    return "i32";
   }
   return "";
 }
 
 function mark_packed(lv: LiftVals, op: ir.Op): LiftVals {
-  if (!lv.ok || !ir.is_packed(op)) {
+  if (!lv.ok || packed_mark(op) == "") {
     return lv;
   }
   let last = lv.insts.len() - 1;
-  return LiftVals { ...lv, insts: lv.insts.with(last, ssa.SInst { ...lv.insts[last], str: "u8" }) };
+  return LiftVals { ...lv, insts: lv.insts.with(last, ssa.SInst { ...lv.insts[last], str: packed_mark(op) }) };
 }
 
 function unique_push(k: string, op: ir.Op): i32 {
@@ -561,8 +573,8 @@ function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
   if (k == "arr_make" && op.i32_imm == 0) {
     return Some(lift_empty_arr(lv));
   }
-  if (k == "arr_make" && ir.is_packed(op)) {
-    return Some(lift_packed_make(op.i32_imm, lv));
+  if (k == "arr_make" && packed_mark(op) != "") {
+    return Some(lift_packed_make(op.i32_imm, op.width / 8, packed_mark(op), lv));
   }
   if (k == "arr_make") {
     return Some(lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv));
@@ -706,7 +718,7 @@ function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
 
-function lift_packed_make(n: i32, lv: LiftVals): LiftVals {
+function lift_packed_make(n: i32, size: i32, mark: string, lv: LiftVals): LiftVals {
   if (lv.stack.len() < n) {
     return LiftVals { ...lv, ok: false };
   }
@@ -722,12 +734,12 @@ function lift_packed_make(n: i32, lv: LiftVals): LiftVals {
   }
   let box = lv.nvals;
   let len = box + 1;
-  let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.ARR_BOX, result: box, args: [], imm: (n + 7) / 8, str: "" });
+  let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.ARR_BOX, result: box, args: [], imm: (n * size + 7) / 8, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: len, args: [], imm: n, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: len + 1, args: [box, len], imm: 0, str: "" });
   let nvals = len + 2;
   for i in 0..n {
-    insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, elems[i]], imm: 8 + i, str: "u8" });
+    insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, elems[i]], imm: 8 + i * size, str: mark });
     nvals += 1;
   }
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
