@@ -1917,17 +1917,19 @@ function ssa_cold_fixed(f: ssa.SFunc, r: irtables.Lowered, cold: i32[]): ssafixe
     }
     masks = masks.append(mask);
   }
-  return ssafixed.with_clobbers(ssafixed.table(0, ssa_nregs(), ssa_ret_word_masks(f, r)), 0, ssa_nregs(), masks);
+  return ssafixed.with_clobbers(ssafixed.table(0, ssa_nregs(), ssa_word_masks(f, r)), 0, ssa_nregs(), masks);
 }
 
 // A ret_word writes word n of the result to x(n+1) at once, so from there to
-// the end of its block no other value may live in that register.
-function ssa_ret_word_masks(f: ssa.SFunc, r: irtables.Lowered): i32[] {
+// the end of its block no other value may live in that register. A call_word
+// reads word n from x(n+1), which holds it from the call to that call_word.
+function ssa_word_masks(f: ssa.SFunc, r: irtables.Lowered): i32[] {
+  let words = ssa.result_word_masks(f, r.ops);
   let masks: i32[] = [];
   for blk in f.blocks {
     let held = 0;
     for ins in blk.insts {
-      masks = masks.append(held);
+      masks = masks.append(held | words[masks.len()] << 8);
       if (ins.kind_tag == ssa.FLAT_OP && r.ops[ins.imm].kind_tag == ir.K_RET_WORD) {
         held = held | ssa_ret_word_mask(r.ops[ins.imm].i32_imm);
       }
