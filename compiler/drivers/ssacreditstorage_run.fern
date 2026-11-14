@@ -53,7 +53,7 @@ function expect(p: helper.Proof, name: string, why: string): void {
 }
 
 function check(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): helper.Proof {
-  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  let fields = [reuse.ScalarField { root: 3, offset: 0 }, reuse.ScalarField { root: 4, offset: 0 }, reuse.ScalarField { root: 5, offset: 0 }];
   let p = reuse.check_invocations(body(sub, "handoff"), [body(sub, "parent")], f, body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [assertion]);
   let mapped = reuse.check_invocations(sparse.rename(body(sub, "handoff")), [sparse.rename(body(sub, "parent"))], sparse.rename(f), body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [assertion]);
   if (mapped.ok != p.ok || mapped.function_name != p.function_name || mapped.message != p.message) {
@@ -79,7 +79,7 @@ function extra_use(op: ssa.SInst, old: i32, mode: i32, id: i32): ssa.SInst {
   return match (mode) {
     4 => ssa.SInst { ...op, result: id },
     5 => ssa.SInst { kind_tag: 7, result: id, args: [old], imm: 0, str: "" },
-    6 => ssa.SInst { kind_tag: 40, result: id, args: [old], imm: 8, str: "" },
+    6 => ssa.SInst { kind_tag: 40, result: id, args: [old], imm: 0, str: "" },
     7 => ssa.SInst { kind_tag: 11, result: id, args: [old], imm: 0, str: "__fern_rc_is_unique" },
     _ => ssa.SInst { kind_tag: 11, result: id, args: [old], imm: 0, str: "__sem_release_Parent" },
   };
@@ -103,7 +103,7 @@ function call_edit(op: ssa.SInst, old: i32, mode: i32, count: i32): Edit {
 
 function store_edit(op: ssa.SInst, old: i32, fresh: i32, mode: i32): Edit {
   if (op.args[0] == fresh) {
-    if (mode == 10 && op.imm == 0 || mode == 11 && op.imm == 16) {
+    if (mode == 10 && op.imm == ssa.tag_offset() || mode == 11 && op.imm == 8) {
       return erased(op);
     }
   }
@@ -114,8 +114,8 @@ function instruction_edit(op: ssa.SInst, old: i32, fresh: i32, mode: i32, count:
   if (op.result == fresh && mode == 1) {
     return Edit { op: ssa.SInst { ...op, args: [1, op.args[1]] }, changed: true };
   }
-  if (op.kind_tag == 1 && op.imm == 3 && mode == 2) {
-    return Edit { op: ssa.SInst { ...op, imm: 2 }, changed: true };
+  if (op.kind_tag == 1 && op.imm == 2 && mode == 2) {
+    return Edit { op: ssa.SInst { ...op, imm: 3 }, changed: true };
   }
   if (mode == 12 && op.kind_tag == 46) {
     return Edit { op: ssa.SInst { ...op, str: "Parent" }, changed: true };
@@ -168,7 +168,7 @@ function controls(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): void {
     let p = check(sub, mutated(f, mode), assertion);
     expect(p, f.name, reasons[mode - 1]);
   }
-  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  let fields = [reuse.ScalarField { root: 3, offset: 0 }, reuse.ScalarField { root: 4, offset: 0 }, reuse.ScalarField { root: 5, offset: 0 }];
   expect(reuse.check_calls(f, body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Other", fields, [assertion]), "replace", "nonnull reuse donor unsupported");
   expect(check(sub, f, assertion), "replace", "proved checked-capacity consumer invocation");
 }
