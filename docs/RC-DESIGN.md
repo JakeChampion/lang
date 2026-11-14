@@ -172,12 +172,18 @@ module's produced graphs: every parameter starts consumed and is demoted when
 a round finds no escaping use, so a recursive traversal that rebuilds keeps
 its parameter counted and a quiet cycle (functions returning no reference)
 does not. A declared `own` stays counted whatever the analysis says, since
-the checker's affine discipline (E050) and call sites rely on it; a bare
-string or array parameter is deliberately not promoted (`owned_shape`): a
-byte kernel reads its argument and hands back an index. A row holds the
+the checker's affine discipline (E050) and call sites rely on it. A row holds the
 mode each parameter ends with (`mode_bits`), not the raw escape, so a caller
 handing a field to a parameter its callee can never count keeps its own
 parameter borrowed.
+
+The inference counts a record, a variant, an owned array or a map
+(`owned_shape`). When a callee gives such a parameter to a sink that consumes
+it, the caller hands over its last unit. The sink then updates or adopts the
+box and does not copy it. The callee releases the parameter on each other
+path. A string, a view, a cell, a handle and a closure environment stay
+borrowed. A concatenation lends its operands, so a counted string only adds a
+retain and a release.
 
 `semsource.with_inferred_modes` rewrites the modes of every produced body and
 every callee contract it carries from the same rows, so definition and call

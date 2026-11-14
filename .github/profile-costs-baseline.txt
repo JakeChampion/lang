@@ -341,3 +341,4 @@ profile/x86-64-linux/startup.minimal.ir	74
 profile/x86-64-linux/startup.safe.bytes	2048
 profile/x86-64-linux/startup.safe.emit	271
 profile/x86-64-linux/startup.safe.ir	74
+# 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7 measured 74 rows. Owned array parameters move the deflate_decode, http_hello and map_string.hardened.ir rows. The other rows are values of main, which #15788 records. Each row is pinned at its measured value.

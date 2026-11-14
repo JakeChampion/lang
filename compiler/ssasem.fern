@@ -785,22 +785,24 @@ pub function is_scalar(t: typeinfo.Type): boolean {
   return is_integer(t) || is_float(t) || is_bool(t) || is_char(t);
 }
 
-// owned_shape says ownership inference can count a parameter of type t:
-// a record or a variant, which a callee that keeps one consumes.
+// owned_shape says ownership inference can count a parameter of type t: a
+// record, a variant, an owned array or a map, which a callee that keeps one
+// consumes. A string stays borrowed. A concatenation lends its operands, so
+// a counted string parameter only adds a retain and a release.
 pub function owned_shape(t: typeinfo.Type): boolean {
+  return typeinfo.is_owned_array(t) || is_map(t) || box_shape(t);
+}
+
+// box_shape says t is a record or a variant that a frame can hold whole: not
+// a cell, a handle or a closure environment.
+pub function box_shape(t: typeinfo.Type): boolean {
   if (typeinfo.is_cell(t) || semtypes.is_handle(t) || semtypes.is_env(t)) {
-    return false;
-  }
-  if (is_map(t) || is_view(t)) {
     return false;
   }
   if let typeinfo.TypeUnion(_) = t {
     return true;
   }
-  if let typeinfo.TypeStruct(_) = t {
-    return true;
-  }
-  return false;
+  return typeinfo.is_record(t);
 }
 
 pub function can_hold(f: Func, outer: typeinfo.Type, inner: typeinfo.Type): boolean {

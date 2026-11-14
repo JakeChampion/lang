@@ -24,6 +24,10 @@
 # with main 8ce8fde7. perceus_rbtree_ck grows on both hosts (.ir +29.1% x86_64 and +31.5% aarch64,
 # .text +7.7%): 089d854d (#15780) makes the benchmark keep each checkpoint tree, so the workload now
 # copies a path after each kept tree. aarch64/http_hello.text falls 1.1%. These are values of main.
+# 2026-11-14: #15810 on main 38768eb2, a local perf-bench run on x86_64. Array and map
+# parameters are now inferred owned. Against main, this change moves four rows:
+# deflate_encode text -1.40%, ordmap_insert text -6.11%, utf8_ingest_unchecked ir -0.67%
+# and utf8_ingest_validated ir -0.28%. The other rows here are values of main.
 # Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 and perf-aarch64 job 132017370985 on the merge
 # with main 629da263. Twelve rows of perceus_cfold, perceus_deriv, perceus_rbtree, perceus_rbtree_ck,
@@ -383,7 +387,7 @@ x86_64/deflate_decode.ir	32267962
 x86_64/deflate_decode.text	12480
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/deflate_encode.text	7145
+x86_64/deflate_encode.text	7045
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -676,7 +680,7 @@ aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	34895281
 aarch64/deflate_decode.text	13241
 aarch64/deflate_encode.ir	43566583
-aarch64/deflate_encode.text	7735
+aarch64/deflate_encode.text	7648
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -697,8 +701,8 @@ aarch64/map_string.text	9588
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 # 2026-11-11 (#15258): perf-aarch64 job 130456686122 measured aarch64/map_string.ir at 49757676 (was 53247468). The tolerance is unchanged.
 aarch64/map_string.ir	49757676	2
-aarch64/ordmap_insert.text	5868
-aarch64/ordmap_insert.ir	88147332
+aarch64/ordmap_insert.text	5466
+aarch64/ordmap_insert.ir	87214511
 aarch64/pmap_insert.text	3214
 aarch64/pmap_insert.ir	58518189
 aarch64/pvec_with.text	3243
@@ -727,12 +731,12 @@ aarch64/string_slice.text	1188
 aarch64/string_slice.ir	25140119
 aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
-aarch64/tokenize.text	1426
+aarch64/tokenize.text	1444
 aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	8188
-aarch64/utf8_ingest_unchecked.ir	2624121
+aarch64/utf8_ingest_unchecked.ir	2602953
 aarch64/utf8_ingest_validated.text	8735
-aarch64/utf8_ingest_validated.ir	6137721
+aarch64/utf8_ingest_validated.ir	6116553
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	1938
@@ -793,3 +797,7 @@ aarch64/video_qtrle.ir 1559097809
 # struct_drop. The string .ir rows fall, string_build up to 9.7%. aarch64: perf-aarch64
 # job 132091435610 on #15742 merged with f29fcfdf. x86-64: local perf-bench and
 # callgrind on f29fcfdf. Tolerances are unchanged.
+# 2026-11-14 (#15822): perf-aarch64 job 132337113736 on the merge with main 8ce8fde7. Owned array and map parameters move
+# deflate_encode.text, http_hello.text, ordmap_insert.text and .ir, and the utf8_ingest rows. The perceus_rbtree_ck, string_slice
+# and tokenize rows are values of main. Each row is pinned at its measured value.
+# 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7 measured x86_64/utf8_ingest_unchecked.text, which owned array parameters move.
