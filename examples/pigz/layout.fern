@@ -396,52 +396,26 @@ function rsync_jobs(s: Settings, data: u8[]): Job[] {
   return out;
 }
 
-// The deflate data of the blocks k, k + w, k + 2w and so on of
-// data[start:], each with the 32 KiB before it as its dictionary. `more` is
-// true when more input follows data.
-function strided(s: Settings, data: u8[], start: i32, more: boolean, k: i32, w: i32, count: i32): u8[][] {
+// The deflate data of the jobs of parallel_compress in data[start:], one for
+// each block, each with the 32 KiB before it as its dictionary. data[:start]
+// is the input before them, and `more` is true when more input follows data.
+pub function blocks(s: Settings, data: u8[], start: i32, more: boolean): u8[] {
   let z = zd.new();
   let none: i32[] = [];
-  let out: u8[][] = [];
-  let j = k;
-  while (j < count) {
-    let from = start + j * s.block;
+  let out: u8[] = [];
+  let from = start;
+  loop {
     let len = if (data.len() - from < s.block) { data.len() - from } else { s.block };
     let last = from + len >= data.len();
     let (next, bytes) = job(z, s, data, from, len, none, more || !last);
     z = next;
-    out = out.append(bytes);
-    j += w;
+    out = out.concat(bytes);
+    from += len;
+    if (last) {
+      break;
+    }
   }
   return out;
-}
-
-// One round of parallel_compress: the deflate data of data[start:] in
-// whole blocks. data[:start] is the input before the round, and `more` is
-// true when more input follows it. Process k of `procs` compresses the
-// blocks k, k + procs and so on, so the processes get blocks from all of
-// the round. The output does not depend on `procs`.
-pub function round(s: Settings, data: u8[], start: i32, more: boolean, procs: i32): u8[] {
-  let count = (data.len() - start + s.block - 1) / s.block;
-  if (count < 1) {
-    count = 1;
-  }
-  let w = if (procs < count) { procs } else { count };
-  let parts = round_parts(s, data, start, more, 0, w, count);
-  let out: u8[] = [];
-  for j in 0..count {
-    out = out.concat(parts[j % w][j / w]);
-  }
-  return out;
-}
-
-function round_parts(s: Settings, data: u8[], start: i32, more: boolean, k: i32, w: i32, count: i32): u8[][][] {
-  if (k == w - 1) {
-    return [strided(s, data, start, more, k, w, count)];
-  }
-  let worker_part = worker.spawn((): u8[][] => strided(s, data, start, more, k, w, count));
-  let rest = round_parts(s, data, start, more, k + 1, w, count);
-  return [worker_part.join()].concat(rest);
 }
 
 // parallel_compress: the deflate data of the jobs, each compressed with the

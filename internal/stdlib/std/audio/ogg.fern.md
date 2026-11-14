@@ -14,6 +14,8 @@ Call `feed` again with the unconsumed input bytes.
 Call `finish` after the last input bytes to check for incomplete pages, packets, or streams.
 After an error, create a new decoder.
 
+`paged` and `resealed` write pages, for a tool that changes the header packets of a file.
+
 ```fern
 <<*>>=
 // Bounded, incremental Ogg pages and packet continuation for audio containers.
@@ -230,5 +232,89 @@ pub function (d: Decoder) finish(): Result[void, pcm.AudioError] {
     return Err(pcm.Truncated);
   }
   return Ok(());
+}
+```
+
+## Writing pages
+
+`paged` puts packets in new pages of one stream. The first packet starts a page, and the last packet ends a page. A page holds at most 255 segments, so a long packet continues on the next page. A page where a packet ends has the granule position that the caller gives, and each other page has -1.
+
+`resealed` gives a page a new sequence number and the checksum for it. A tool that adds pages to the headers of a stream gives each later page of that stream its new number.
+
+```fern
+<<*>>=
+function with_checksum(own page: u8[]): u8[] {
+  let crc = checksum(page);
+  for k in 0..4 {
+    page = page.with(22 + k, (crc >> (8 * k) as u32 & 255u32) as u8);
+  }
+  return page;
+}
+
+function new_page(serial: u32, sequence: u32, granule: i64, flags: i32, lacing: [u8], body: [u8]): u8[] {
+  let out: u8[] = [79u8, 103u8, 103u8, 83u8, 0u8, flags as u8];
+  out = wire.put_le(out, granule as u64, 8);
+  out = wire.put_le(out, serial as u64, 4);
+  out = wire.put_le(out, sequence as u64, 4);
+  out = wire.put_le(out, 0u64, 4);
+  out = out.append(lacing.len() as u8);
+  for b in lacing {
+    out = out.append(b);
+  }
+  for b in body {
+    out = out.append(b);
+  }
+  return with_checksum(out);
+}
+
+// The pages of the stream `serial` that hold `packets`, from the sequence
+// number `sequence`, and the sequence number after them. A page where a
+// packet ends has the granule position `granule`.
+pub function paged(packets: u8[][], serial: u32, sequence: u32, granule: i64): (u8[], u32) {
+  let lacing: u8[] = [];
+  let body: u8[] = [];
+  for p in packets {
+    for _ in 0..p.len() / 255 {
+      lacing = lacing.append(255u8);
+    }
+    lacing = lacing.append((p.len() % 255) as u8);
+    for b in p {
+      body = body.append(b);
+    }
+  }
+  let out: u8[] = [];
+  let at = 0;
+  let from = 0;
+  let flags = 0;
+  while (at < lacing.len()) {
+    let end = if (lacing.len() - at > 255) { at + 255 } else { lacing.len() };
+    let size = 0;
+    let ends = false;
+    for k in at..end {
+      size += lacing[k] as i32;
+      ends = ends || lacing[k] != 255u8;
+    }
+    let page = new_page(serial, sequence, if (ends) { granule } else { -1i64 }, flags, lacing[at:end], body[from:from + size]);
+    for b in page {
+      out = out.append(b);
+    }
+    flags = if (lacing[end - 1] == 255u8) { 1 } else { 0 };
+    sequence += 1u32;
+    from += size;
+    at = end;
+  }
+  return (out, sequence);
+}
+
+// The page `page` with the sequence number `sequence` and its checksum.
+pub function resealed(page: [u8], sequence: u32): u8[] {
+  let out: u8[] = [];
+  for b in page {
+    out = out.append(b);
+  }
+  for k in 0..4 {
+    out = out.with(18 + k, (sequence >> (8 * k) as u32 & 255u32) as u8);
+  }
+  return with_checksum(out);
 }
 ```

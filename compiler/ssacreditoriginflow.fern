@@ -27,7 +27,7 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
       return refused(f, "unproved caller allocation producer");
     }
   }
-  let checked = flow_graph.check(f, producers, 2);
+  let checked = flow_graph.check(f, producers, 3);
   if (checked.error != "") {
     return refused(f, checked.error);
   }

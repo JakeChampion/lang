@@ -152,6 +152,7 @@ They are outside the public library inventory below.
 | `std/ordmap` | [Persistent ordered maps](../internal/stdlib/std/ordmap.fern.md) |
 | `std/ordset` | [Persistent ordered sets](../internal/stdlib/std/ordset.fern.md) |
 | `std/path` | [POSIX path text](../internal/stdlib/std/path.fern.md) |
+| `std/pcre` | [Perl-compatible regular expressions](../internal/stdlib/std/pcre.fern.md) |
 | `std/peg` | [Parsing expression grammars](../internal/stdlib/std/peg.fern.md) |
 | `std/platform` | [Handler platform capabilities](../internal/stdlib/std/platform.fern.md) |
 | `std/pmap` | [Persistent hash maps](../internal/stdlib/std/pmap.fern.md) |

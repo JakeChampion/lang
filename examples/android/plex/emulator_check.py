@@ -34,7 +34,7 @@ import zlib
 
 PACKAGE = "dev.fern.plex"
 POSTER = (30, 170, 160)
-ACCENT = (229, 160, 13)
+PLAY = (215, 25, 33)
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+(Exception|Error)|fern: |worker: |F DEBUG")
 
 failures = []
@@ -249,7 +249,7 @@ def check_video(out, port):
         return fail("a tap did not pause the video")
     time.sleep(1.5)
     _, _, px = screen(out, "paused")
-    button = count_color(px, ACCENT)
+    button = count_color(px, PLAY)
     print(f"paused: {button} pixels of the play button", flush=True)
     if button < 500:
         fail(f"the paused screen shows {button} pixels of the play button")

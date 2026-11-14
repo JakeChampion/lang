@@ -1,130 +1,314 @@
-// The text that jq 1.7 writes for a value: compact for `-c`, and with an
-// indent of two spaces otherwise.
+// The text that jq 1.7 writes for a value. A writer appends the text to a
+// buffer, so a large value is written in one pass.
 import "std/json";
-import "./number";
 import "std/string";
+import "./number";
+
+// The options of the output.
+//
+// - `indent` is the number of spaces of each level. 0 writes the value on one
+//   line, and `tab` indents with one tab for each level.
+// - `sort` writes the keys of each object in order.
+// - `ascii` escapes each character outside ASCII.
+// - `colors` holds the escape sequences of jq for null, false, true, numbers,
+//   strings, arrays, objects and object keys. It is empty with no color.
+pub struct Format { indent: i32, tab: boolean, sort: boolean, ascii: boolean, colors: string[] }
+
+// jq writes a level deeper than this as a note.
+const MAX_DEPTH: i32 = 256;
+
+const RESET: string = "\x1b[0m";
+
+pub function compact_format(): Format {
+  return Format { indent: 0, tab: false, sort: false, ascii: false, colors: [] };
+}
+
+// The default colors of jq 1.7.1.
+pub function default_colors(): string[] {
+  return ["\x1b[0;90m", "\x1b[0;39m", "\x1b[0;39m", "\x1b[0;39m", "\x1b[0;32m", "\x1b[1;39m", "\x1b[1;39m", "\x1b[1;34m"];
+}
+
+// The colors of `JQ_COLORS` on the default colors, or [] when the text is not
+// valid.
+pub function colors_of(spec: string): string[] {
+  let out = default_colors();
+  let parts = spec.split(":");
+  if (spec.len() == 0) {
+    return out;
+  }
+  for i in 0..parts.len() {
+    if (i >= out.len()) {
+      break;
+    }
+    let p = parts[i];
+    if (p.len() > 12) {
+      return [];
+    }
+    for k in 0..p.len() {
+      if (!(p[k] >= b'0' && p[k] <= b'9' || p[k] == b';')) {
+        return [];
+      }
+    }
+    out = out.with(i, "\x1b[" + p + "m");
+  }
+  return out;
+}
 
 function hex(n: i32): string {
   return slice_unchecked("0123456789abcdef", n, n + 1).to_owned();
 }
 
-// A string in quotes. jq escapes the control characters and DEL, and writes
-// every other character as it is.
-pub function quoted(s: string): string {
-  let out = "\"";
-  let run = 0;
-  for i in 0..s.len() {
-    let b = s[i];
-    let esc = "";
-    if (b == b'"') {
-      esc = "\\\"";
-    } else if (b == b'\\') {
-      esc = "\\\\";
-    } else if (b == b'\n') {
-      esc = "\\n";
-    } else if (b == b'\t') {
-      esc = "\\t";
-    } else if (b == b'\r') {
-      esc = "\\r";
-    } else if (b == 8 as u8) {
-      esc = "\\b";
-    } else if (b == 12 as u8) {
-      esc = "\\f";
-    } else if (b < 32 as u8 || b == 127 as u8) {
-      esc = "\\u00" + hex((b / (16 as u8)) as i32) + hex((b % (16 as u8)) as i32);
-    }
-    if (esc.len() > 0) {
-      out += slice_unchecked(s, run, i).to_owned() + esc;
-      run = i + 1;
-    }
+function hex4(c: i32): string {
+  return "\\u" + hex(c >> 12 & 15) + hex(c >> 8 & 15) + hex(c >> 4 & 15) + hex(c & 15);
+}
+
+// The escape of the byte `b` of a string, or "" when the byte stays as it is.
+function escape_of(b: u8): string {
+  if (b == b'"') {
+    return "\\\"";
   }
-  return out + slice_unchecked(s, run, s.len()).to_owned() + "\"";
+  if (b == b'\\') {
+    return "\\\\";
+  }
+  if (b >= 32 as u8 && b != 127 as u8) {
+    return "";
+  }
+  return match (b) {
+    b'\n' => "\\n",
+    b'\t' => "\\t",
+    b'\r' => "\\r",
+    8u8 => "\\b",
+    12u8 => "\\f",
+    _ => hex4(b as i32),
+  };
+}
+
+// `s` in quotes, appended to `out`. jq escapes the control characters and
+// DEL, and with `ascii` each character outside ASCII.
+pub function write_quoted(own out: string, s: string, ascii: boolean): string {
+  let buf = out + "\"";
+  let run = 0;
+  let i = 0;
+  let n = s.len();
+  while (i < n) {
+    let b = s[i];
+    if (b >= 0x80 as u8 && ascii) {
+      buf += slice_unchecked(s, run, i);
+      let (cp, size) = decode(s, i);
+      if (cp > 0xffff) {
+        let c = cp - 0x10000;
+        buf = buf + hex4(0xd800 | c >> 10 & 0x3ff) + hex4(0xdc00 | c & 0x3ff);
+      } else {
+        buf += hex4(cp);
+      }
+      i += size;
+      run = i;
+      continue;
+    }
+    if (b >= 32 as u8 && b != b'"' && b != b'\\' && b != 127 as u8) {
+      i += 1;
+      continue;
+    }
+    buf = buf + slice_unchecked(s, run, i) + escape_of(b);
+    i += 1;
+    run = i;
+  }
+  return buf + slice_unchecked(s, run, n) + "\"";
+}
+
+// The code point of the UTF-8 sequence at `i` of `s`, and its size.
+function decode(s: string, i: i32): (i32, i32) {
+  let b = s[i] as i32;
+  if (b < 0xe0 && i + 1 < s.len()) {
+    return ((b & 0x1f) << 6 | s[i + 1] as i32 & 0x3f, 2);
+  }
+  if (b < 0xf0 && i + 2 < s.len()) {
+    return ((b & 0x0f) << 12 | (s[i + 1] as i32 & 0x3f) << 6 | s[i + 2] as i32 & 0x3f, 3);
+  }
+  if (i + 3 < s.len()) {
+    return ((b & 0x07) << 18 | (s[i + 1] as i32 & 0x3f) << 12 | (s[i + 2] as i32 & 0x3f) << 6 | s[i + 3] as i32 & 0x3f, 4);
+  }
+  return (0xfffd, 1);
+}
+
+pub function quoted(s: string): string {
+  return write_quoted("", s, false);
 }
 
 pub function compact(v: json.JsonValue): string {
+  return write("", v, compact_format(), 0);
+}
+
+pub function pretty(v: json.JsonValue, depth: i32): string {
+  return write("", v, Format { indent: 2, tab: false, sort: false, ascii: false, colors: [] }, depth);
+}
+
+function indent_to(own out: string, depth: i32, f: Format): string {
+  let buf = out + "\n";
+  if (f.tab) {
+    for i in 0..depth {
+      buf += "\t";
+    }
+    return buf;
+  }
+  for i in 0..depth * f.indent {
+    buf += " ";
+  }
+  return buf;
+}
+
+function color_of(v: json.JsonValue, f: Format): string {
+  if (f.colors.len() == 0) {
+    return "";
+  }
+  return match (v) {
+    json.JNull => f.colors[0],
+    json.JBool(b) => if (b) { f.colors[2] } else { f.colors[1] },
+    json.JNumber(_) => f.colors[3],
+    json.JString(_) => f.colors[4],
+    json.JArray(_) => f.colors[5],
+    json.JObject(_) => f.colors[6],
+  };
+}
+
+// The value at a depth of `depth`, appended to `out`.
+pub function write(own out: string, v: json.JsonValue, f: Format, depth: i32): string {
+  let color = color_of(v, f);
+  let buf = out + color;
+  if (depth > MAX_DEPTH) {
+    buf += "<skipped: too deep>";
+  } else {
+    buf = write_term(buf, v, f, depth, color);
+  }
+  if (color.len() > 0) {
+    return buf + RESET;
+  }
+  return buf;
+}
+
+function write_term(own out: string, v: json.JsonValue, f: Format, depth: i32, color: string): string {
   match (v) {
     json.JNull => {
-      return "null";
+      return out + "null";
     },
     json.JBool(b) => {
-      if (b) {
-        return "true";
-      }
-      return "false";
+      return out + (if (b) { "true" } else { "false" });
     },
     json.JNumber(t) => {
-      return number.written(t);
+      let text = number.written(t);
+      if (text == "null" && color.len() > 0) {
+        return write(out, json.JNull, f, depth);
+      }
+      return out + text;
     },
     json.JString(s) => {
-      return quoted(s);
+      return write_quoted(out, s, f.ascii);
     },
-    json.JArray(items) => {
-      let out = "[";
-      for i in 0..items.len() {
-        if (i > 0) {
-          out += ",";
-        }
-        out += compact(items[i]);
-      }
-      return out + "]";
-    },
-    json.JObject(o) => {
-      let out = "{";
-      let keys = o.keys();
-      for i in 0..keys.len() {
-        if (i > 0) {
-          out += ",";
-        }
-        out += quoted(keys[i]) + ":" + compact(o.get_or(keys[i], json.JNull));
-      }
-      return out + "}";
-    }
-  }
-}
-
-function spaces(n: i32): string {
-  let out = "";
-  for i in 0..n {
-    out += " ";
-  }
-  return out;
-}
-
-// The value at a depth of `depth` indents. An empty array or object stays on
-// its line.
-pub function pretty(v: json.JsonValue, depth: i32): string {
-  match (v) {
     json.JArray(items) => {
       if (items.len() == 0) {
-        return "[]";
+        return out + "[]";
       }
-      let inner = spaces(2 * (depth + 1));
-      let out = "[";
+      let buf = out + "[";
+      let pretty = f.indent > 0 || f.tab;
       for i in 0..items.len() {
         if (i > 0) {
-          out += ",";
+          buf += ",";
         }
-        out += "\n" + inner + pretty(items[i], depth + 1);
+        if (pretty) {
+          buf = indent_to(buf, depth + 1, f);
+        }
+        buf = write(buf, items[i], f, depth + 1) + color;
       }
-      return out + "\n" + spaces(2 * depth) + "]";
+      if (pretty) {
+        buf = indent_to(buf, depth, f);
+      }
+      return buf + color + "]";
     },
     json.JObject(o) => {
-      let keys = o.keys();
-      if (keys.len() == 0) {
-        return "{}";
-      }
-      let inner = spaces(2 * (depth + 1));
-      let out = "{";
-      for i in 0..keys.len() {
-        if (i > 0) {
-          out += ",";
-        }
-        out += "\n" + inner + quoted(keys[i]) + ": " + pretty(o.get_or(keys[i], json.JNull), depth + 1);
-      }
-      return out + "\n" + spaces(2 * depth) + "}";
-    },
-    _ => {
-      return compact(v);
+      return write_object(out, o, f, depth, color);
     }
   }
+}
+
+function write_object(own out: string, o: json.JsonObject, f: Format, depth: i32, color: string): string {
+  let names = o.keys();
+  if (names.len() == 0) {
+    return out + "{}";
+  }
+  let values = o.values();
+  let order: i32[] = [];
+  for i in 0..names.len() {
+    order = order.append(i);
+  }
+  if (f.sort) {
+    order = sorted_order(names);
+  }
+  let pretty = f.indent > 0 || f.tab;
+  let buf = out + "{";
+  let colored = color.len() > 0;
+  for n in 0..order.len() {
+    let i = order[n];
+    if (n > 0) {
+      buf += ",";
+    }
+    if (pretty) {
+      buf = indent_to(buf, depth + 1, f);
+    }
+    if (colored) {
+      buf = buf + RESET + f.colors[7];
+    }
+    buf = write_quoted(buf, names[i], f.ascii);
+    if (colored) {
+      buf = buf + RESET + color;
+    }
+    buf += if (pretty) { ": " } else { ":" };
+    if (colored) {
+      buf += RESET;
+    }
+    buf = write(buf, values[i], f, depth + 1) + color;
+  }
+  if (pretty) {
+    buf = indent_to(buf, depth, f);
+  }
+  return buf + color + "}";
+}
+
+// The places of `names` in the order of their bytes.
+pub function sorted_order(names: string[]): i32[] {
+  let order: i32[] = [];
+  for i in 0..names.len() {
+    order = order.append(i);
+  }
+  return merge_sort(order, names);
+}
+
+function merge_sort(order: i32[], names: string[]): i32[] {
+  if (order.len() < 2) {
+    return order;
+  }
+  let half = order.len() / 2;
+  let left: i32[] = [];
+  let right: i32[] = [];
+  for i in 0..order.len() {
+    if (i < half) {
+      left = left.append(order[i]);
+    } else {
+      right = right.append(order[i]);
+    }
+  }
+  left = merge_sort(left, names);
+  right = merge_sort(right, names);
+  let out: i32[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < left.len() || j < right.len()) {
+    if (j == right.len() || i < left.len() && names[left[i]] <= names[right[j]]) {
+      out = out.append(left[i]);
+      i += 1;
+    } else {
+      out = out.append(right[j]);
+      j += 1;
+    }
+  }
+  return out;
 }

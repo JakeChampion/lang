@@ -13,7 +13,7 @@ function require(ok: boolean, id: i32): void {
 function expect(f: ssa.SFunc, shape: string, refs: boolean[], why: string, id: i32): void {
   let p = origin.producer(f, shape, refs);
   let ok = why == "";
-  if (p.proof.ok != ok || p.proof.function_name != f.name || ok && (p.words != refs.len() + 1 || p.proof.message != "proved initialized allocation origin") || !ok && (p.words != 0 || p.proof.message != why)) {
+  if (p.proof.ok != ok || p.proof.function_name != f.name || ok && (p.words != refs.len() || p.proof.message != "proved initialized allocation origin") || !ok && (p.words != 0 || p.proof.message != why)) {
     print(p.proof.function_name + ": " + p.proof.message);
     exit(id);
   }
@@ -57,7 +57,7 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
         op = ssa.SInst { ...op, imm: 2147483647 };
       }
     }
-    if (op.kind_tag == 41 && op.imm == 8) {
+    if (op.kind_tag == 41 && op.imm == 0) {
       if (mode == 6) {
         op = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0 };
       }
@@ -90,8 +90,8 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
         op = ssa.SInst { ...op, imm: -2147483647 };
       }
     }
-    if (op.kind_tag == 41 && op.imm == 0 && mode == 15) {
-      op = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0 };
+    if (op.kind_tag == 41 && op.imm == ssa.tag_offset() && mode == 15) {
+      op = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0, str: "" };
     }
     if (op.kind_tag == ssa.CONST_INT && !used && mode == 16) {
       op = ssa.SInst { ...box, result: op.result };
