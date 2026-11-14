@@ -11044,6 +11044,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
+			// An element of a value that no name holds is owned as that value is.
+			switch root := projectionRoot(x).(type) {
+			case *ast.Ident, *ast.FieldAccess:
+			default:
+				if isOwnedExpr(root) {
+					return true
+				}
+			}
 			if id, ok := enclosingField(x).Target.(*ast.Ident); ok && !borrowedParam[id.Name] && atLastUse(e) {
 				return true
 			}
