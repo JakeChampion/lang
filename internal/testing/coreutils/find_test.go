@@ -787,8 +787,6 @@ var findSyntaxLines = []string{
 	`-used`,
 	`-newerat`,
 	`-delete -prune`,
-	`-delete -prune -depth`,
-	`-depth -delete -prune -name nosuch`,
 	`-files0-from`,
 	`-files0-from /dev/null`,
 	`-files0-from nosuch`,
@@ -833,6 +831,7 @@ var findStartLines = []string{
 	`sub/deep/er/est.c`,
 	`./sub/ -maxdepth 0 -printf '%f|%h|%P|%p\n'`,
 	`sub// -printf '[%h][%f][%d]\n'`,
+	`. .// ./// sub/// sub/.// -maxdepth 0 -printf '[%h][%f]\n'`,
 	`/ // -maxdepth 0 -printf '[%h][%f][%P][%H]\n'`,
 	`/ -maxdepth 0 -name /`,
 	`// -maxdepth 0 -name '/'`,
@@ -897,6 +896,8 @@ func findOkCases(dir string) []invocation {
 func findChangeCases() []invocation {
 	lines := []string{
 		`-name nosuch -delete`,
+		`-delete -prune -depth`,
+		`-depth -name nosuch -delete -prune`,
 		`-name '*.c' -delete`,
 		`full -delete`,
 		`-name full -delete`,

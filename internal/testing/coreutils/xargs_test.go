@@ -274,7 +274,7 @@ func xargsParallelCases() []invocation {
 		unordered(xc("a b\n", `-P 2 -n 1 echo`)),
 		unordered(xc("a\n", `-n 1 -P 0 echo`)),
 		unordered(xc("a b c\n", `-n 1 -P 3 sh -c 'echo $0'`)),
-		unordered(xc("a b c d\n", `-n 1 -P 2 --process-slot-var=S sh -c 'echo $S'`)),
+		unordered(xc("a b c\n", `-n 1 -P 2 --process-slot-var=S sh -c 'echo $0 $S; if [ $0 = a ]; then sleep 1; fi'`)),
 		unordered(xc("a b c d e f\n", `-n 1 -P 2 sh -c 'exit 1'`)),
 		unordered(xc("1 2 3 4 5 6 7 8 9 10\n", `-n 2 -P 4 echo`)),
 		xc("a b c\n", `-n 1 -P 2 sh -c 'exit 255'`),

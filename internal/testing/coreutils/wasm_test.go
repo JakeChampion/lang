@@ -65,6 +65,10 @@ func TestWasmSmoke(t *testing.T) {
 		{util: "sed", args: []string{"s/x/X/;$="}, stdin: "x\ny\n"},
 		{util: "sed", args: []string{"-n", "-E", "s/(y)/[\\1]/p", "in.txt"}, preopen: true},
 		{util: "sed", args: []string{"y/xy/XY/;l", "in.txt", "nosuch"}, preopen: true},
+		{util: "find", args: []string{".", "-name", "in*", "-printf", "%f %s %y %d\n"}, preopen: true},
+		{util: "find", args: []string{".", "-type", "f", "-size", "-1k", "-o", "-type", "d", "-print"}, preopen: true},
+		{util: "find", args: []string{"in.txt", "nosuch", "-print0"}, preopen: true},
+		{util: "find", args: []string{".", "-name"}},
 	}
 	for _, c := range cases {
 		name := c.util + " " + strings.Join(c.args, " ")

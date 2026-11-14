@@ -290,6 +290,8 @@ struct Ent {
   lhave: i32,
   top: string,
   is_top: boolean,
+  rel: boolean,
+  name: string,
 }
 
 // The state of a run. `ok` is the value of the node that was evaluated last.
@@ -307,6 +309,7 @@ struct Run {
   stdout_tty: boolean,
   user_width: i32,
   group_width: i32,
+  pd: Option[Dir],
 }
 
 // The bytes of a buffer as text, kept as they are: a file name need not be
@@ -641,9 +644,17 @@ function base_name(path: string): string {
   return slice_unchecked(path, start, end) + "";
 }
 
-// What precedes the last slash of the path, or "." when it has none.
+// What precedes the last slash of the path, or "." when it has none. The
+// trailing slashes go first, unless the name before them is one byte at the
+// start of the path.
 function dir_part(path: string): string {
   let i = path.len() - 1;
+  while (i > 0 && path[i] == b'/') {
+    i -= 1;
+  }
+  if (i <= 0) {
+    i = path.len() - 1;
+  }
   while (i >= 0) {
     if (path[i] == b'/') {
       return slice_unchecked(path, 0, i) + "";
@@ -682,28 +693,60 @@ function kind_of(st: FileStat): u32 {
 // The stat that the walk uses for the entry: it follows a link with -L,
 // and with -H at the top. A link that does not resolve keeps the stat of
 // the link.
-function stat_entry(follow: boolean, path: string): (FileStat, i32, IoError) {
+function stat_entry(follow: boolean, path: string): Result[FileStat, IoError] {
   if (follow) {
-    match (stat(path)) {
-      Ok(st) => {
-        return (st, ST_OK, NotFound(""));
-      },
-      Err(e) => {
-        let n = errno.of(e);
-        if (n != errno.ENOENT && n != errno.ENOTDIR) {
-          return (zero_stat(), ST_FAILED, e);
-        }
-      }
+    let got = stat(path);
+    if (!dangling(got)) {
+      return with_type(got);
     }
   }
-  match (lstat(path)) {
-    Ok(st) => {
-      return (st, ST_OK, NotFound(""));
-    },
-    Err(e) => {
-      return (zero_stat(), ST_FAILED, e);
+  return with_type(lstat(path));
+}
+
+// A WASI host gives no mode word, only whether the file is a directory or
+// a regular file. The type bits come from those.
+function with_type(got: Result[FileStat, IoError]): Result[FileStat, IoError] {
+  let Ok(st) = got else {
+    return got;
+  };
+  if ((st.mode & S_IFMT) != 0u32) {
+    return got;
+  }
+  if (st.is_dir) {
+    return Ok(FileStat { ...st, mode: st.mode | S_IFDIR });
+  }
+  if (st.is_file) {
+    return Ok(FileStat { ...st, mode: st.mode | S_IFREG });
+  }
+  return got;
+}
+
+// Whether a stat through a link failed because the link leads nowhere, so
+// that the stat of the link itself stands for it.
+function dangling(got: Result[FileStat, IoError]): boolean {
+  if let Err(e) = got {
+    let n = errno.of(e);
+    return n == errno.ENOENT || n == errno.ENOTDIR;
+  }
+  return false;
+}
+
+// stat_entry for an entry of the directory that the run holds open: the
+// stat goes by the name of the entry in it, as fstatat does.
+function stat_in(r: Run, e: Ent, follow: boolean): Result[FileStat, IoError] {
+  if (!e.rel) {
+    return stat_entry(follow, e.path);
+  }
+  let Some(d) = r.pd else {
+    return stat_entry(follow, e.path);
+  };
+  if (follow) {
+    let got = d.stat(e.name);
+    if (!dangling(got)) {
+      return got;
     }
   }
+  return d.lstat(e.name);
 }
 
 function follows(p: Prog, e: Ent): boolean {
@@ -717,15 +760,16 @@ function with_stat(p: Prog, own r: Run): Run {
     return r;
   }
   let e = r.e;
-  let got: (FileStat, i32, IoError) = stat_entry(follows(p, e), e.path);
-  if (got.1 == ST_FAILED) {
-    let n = errno.of(got.2);
-    r = report(r, q(e.path) + ": " + why(got.2));
-    if (n == errno.ENOENT) {
-      r = Run { ...r, status: r.status };
+  match (stat_in(r, e, follows(p, e))) {
+    Ok(st) => {
+      return Run { ...r, e: Ent { ...e, st: st, have: ST_OK } };
+    },
+    Err(err) => {
+      let r2 = report(r, q(e.path) + ": " + why(err));
+      return Run { ...r2, e: Ent { ...e, have: ST_FAILED } };
     }
   }
-  return Run { ...r, e: Ent { ...e, st: got.0, have: got.1 } };
+  return r;
 }
 
 // The stat of the entry itself, never through a link.
@@ -734,7 +778,10 @@ function with_lstat(own r: Run): Run {
     return r;
   }
   let e = r.e;
-  match (lstat(e.path)) {
+  if (e.have == ST_OK && (!follows_link(e) || (e.st.mode & S_IFMT) == S_IFLNK)) {
+    return Run { ...r, e: Ent { ...e, lst: e.st, lhave: ST_OK } };
+  }
+  match (stat_in(r, e, false)) {
     Ok(st) => {
       return Run { ...r, e: Ent { ...e, lst: st, lhave: ST_OK } };
     },
@@ -742,6 +789,13 @@ function with_lstat(own r: Run): Run {
       return Run { ...r, e: Ent { ...e, lhave: ST_FAILED } };
     }
   }
+  return r;
+}
+
+// Whether the stat of the entry may have gone through a link: only a link
+// can give two different stats.
+function follows_link(e: Ent): boolean {
+  return e.dtype == S_IFLNK || e.dtype == 0u32;
 }
 
 // The type of the entry, as the walk sees it, without a stat when readdir
@@ -1066,11 +1120,15 @@ function time_of(st: FileStat, which: i32): (i64, i64) {
 
 // The stat of a reference file of -newer, -samefile and the others.
 function ref_stat(ps: Parser, f: string): FileStat {
-  let got: (FileStat, i32, IoError) = stat_entry(ps.o.follow != FOLLOW_NEVER, f);
-  if (got.1 != ST_OK) {
-    fail(q(f) + ": " + why(got.2));
+  match (stat_entry(ps.o.follow != FOLLOW_NEVER, f)) {
+    Ok(st) => {
+      return st;
+    },
+    Err(e) => {
+      fail(q(f) + ": " + why(e));
+    }
   }
-  return got.0;
+  return zero_stat();
 }
 
 function newer_test(own ps0: Parser, name: string, which: i32): Parser {
@@ -1267,6 +1325,9 @@ function printf_action(own ps0: Parser, name: string, to_file: boolean): Parser 
 }
 
 function exec_action(own ps0: Parser, name: string): Parser {
+  if (target_os() == "wasi") {
+    fail("the action " + name + " cannot run here: this system has no processes");
+  }
   let ps = Parser { ...ps0, has_action: true };
   let dir = name == "-execdir" || name == "-okdir";
   let ask = name == "-ok" || name == "-okdir";
@@ -2187,12 +2248,23 @@ function group_name(own r: Run, gid: u32): (string, Run) {
   return (name, Run { ...r, names: names });
 }
 
+// The SELinux context of a file. WASI has no extended attributes.
+function file_context(path: string, follow: boolean): Result[string, IoError] {
+  if (target_os() == "wasi") {
+    return Err(Unsupported);
+  } else {
+    return selinux.file_context(path, follow);
+  }
+}
+
 function fs_type(own r0: Run, dev: i64): (string, Run) {
   let r = r0;
   if (!r.have_mounts) {
     let list: MountEntry[] = [];
-    if let Ok(ms) = mounts() {
-      list = ms;
+    if (target_os() != "wasi") {
+      if let Ok(ms) = mounts() {
+        list = ms;
+      }
     }
     r = Run { ...r, mounts: list, have_mounts: true };
   }
@@ -2286,7 +2358,7 @@ function name_dir(p: Prog, own r: Run, d: Piece): (string, Run) {
     return (pad_text(d, ""), r4);
   }
   if (c == 90) {
-    match (selinux.file_context(e.path, follows(p, e))) {
+    match (file_context(e.path, follows(p, e))) {
       Ok(ctx) => {
         return (pad_text(d, ctx), r);
       },
@@ -2823,7 +2895,7 @@ function eval_test(p: Prog, n: Node, own r: Run): Run {
   }
   if (k == P_CONTEXT) {
     let ok2 = false;
-    if let Ok(ctx) = selinux.file_context(r.e.path, follows(p, r.e)) {
+    if let Ok(ctx) = file_context(r.e.path, follows(p, r.e)) {
       ok2 = fnmatch.fnmatch(n.s, ctx);
     }
     return set_ok(r, ok2);
@@ -2936,6 +3008,14 @@ function exec_outcome(own r: Run, spec: cmdline.Spec, res: cmdline.Outcome): Run
 }
 
 function eval_exec(p: Prog, x: i32, own r0: Run): Run {
+  if (target_os() == "wasi") {
+    return set_ok(r0, false);
+  } else {
+    return eval_exec_here(p, x, r0);
+  }
+}
+
+function eval_exec_here(p: Prog, x: i32, own r0: Run): Run {
   let spec = p.execs[x];
   let e = r0.e;
   let dir = "";
@@ -2952,7 +3032,7 @@ function eval_exec(p: Prog, x: i32, own r0: Run): Run {
   let argv = cmdline.substitute(spec.words, arg);
   let r = flush_out(r0);
   if (spec.ask) {
-    if (!cmdline.ask(argv, arg)) {
+    if (!cmdline.ask(argv, e.path)) {
       return set_ok(r, false);
     }
   }
@@ -2987,6 +3067,14 @@ function run_batch(own r0: Run, x: i32, spec: cmdline.Spec): Run {
 }
 
 function run_batches(p: Prog, own r0: Run): Run {
+  if (target_os() == "wasi") {
+    return r0;
+  } else {
+    return run_batches_here(p, r0);
+  }
+}
+
+function run_batches_here(p: Prog, own r0: Run): Run {
   let r = r0;
   let x = 0;
   while (x < p.execs.len()) {
@@ -3068,9 +3156,18 @@ function fts_order(path: string, es: DirEntry[]): DirEntry[] {
   return out;
 }
 
-function child_ent(parent: Ent, d: DirEntry): Ent {
-  let path = join(parent.path, d.name);
-  return Ent { path: path, base: path.len() - d.name.len(), depth: parent.depth + 1, dtype: d.kind, st: parent.st, have: ST_NONE, lst: parent.st, lhave: ST_NONE, top: parent.top, is_top: false };
+// An entry of the directory `parent`. `prefix` is the path of the
+// directory with the slash that a name follows.
+function child_ent(parent: Ent, prefix: string, d: DirEntry, rel: boolean): Ent {
+  let path = prefix + d.name;
+  return Ent { path: path, base: prefix.len(), depth: parent.depth + 1, dtype: d.kind, st: parent.st, have: ST_NONE, lst: parent.st, lhave: ST_NONE, top: parent.top, is_top: false, rel: rel, name: d.name };
+}
+
+function dir_prefix(path: string): string {
+  if (path.len() > 0 && path[path.len() - 1] == b'/') {
+    return path;
+  }
+  return path + "/";
 }
 
 // Whether the walk goes into the entry, and its stat for the check of
@@ -3081,24 +3178,123 @@ function is_dir_entry(p: Prog, own r: Run): (boolean, Run) {
 }
 
 function walk_children(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
+  if (target_os() == "wasi") {
+    return walk_children_by_path(p, r0, w, dir);
+  } else {
+    return walk_children_in(p, r0, w, dir);
+  }
+}
+
+// The walk by paths, for WASI, which has no directory handles.
+function walk_children_by_path(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
   let r = r0;
-  let listed = list_dir(dir.path);
   let es: DirEntry[] = [];
-  match (listed) {
+  match (list_dir(dir.path)) {
     Ok(list) => {
-      es = fts_order(dir.path, list);
+      es = list;
     },
     Err(e) => {
       return report(r, q(dir.path) + ": " + why(e));
     }
   }
   for d in es {
-    r = visit(p, r, w, child_ent(dir, d));
+    r = visit(p, r, w, child_ent(dir, dir_prefix(dir.path), d, false));
     if (r.quit) {
       return r;
     }
   }
   return r;
+}
+
+// Opens a directory of the walk: by its name in the directory the run holds
+// open, as openat does, or by its path at the top and through a link. A link
+// whose type readdir did not give fails the open by name, and opens by path.
+function open_entry(r: Run, dir: Ent): Result[Dir, IoError] {
+  if (dir.rel && dir.dtype != S_IFLNK) {
+    if let Some(pd) = r.pd {
+      match (pd.open_dir(dir.name)) {
+        Ok(d) => {
+          return Ok(d);
+        },
+        Err(e) => {
+          let n = errno.of(e);
+          if (n != errno.ELOOP && n != errno.ENOTDIR) {
+            return Err(e);
+          }
+        }
+      }
+    }
+  }
+  return open_dir(dir.path);
+}
+
+// The entries of an open directory. Names that are not UTF-8 come from the
+// byte listing, without their type.
+function entries_of(d: Dir): Result[DirEntry[], IoError] {
+  match (d.entries_ino()) {
+    Ok(es) => {
+      return Ok(es);
+    },
+    Err(e) => {
+      if (errno.of(e) != errno.EILSEQ) {
+        match (e) {
+          InvalidUtf8(_) => {},
+          _ => {
+            return Err(e);
+          }
+        }
+      }
+    }
+  }
+  let names = d.entries_bytes()?;
+  let out: DirEntry[] = [];
+  for b in names {
+    out = out.append(DirEntry { name: unsafe { string_from_bytes_unchecked(b) }, ino: 0i64, kind: 0u32 });
+  }
+  return Ok(out);
+}
+
+function walk_children_in(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
+  let r = r0;
+  let opened = open_entry(r, dir);
+  let Ok(d) = opened else {
+    if let Err(e) = opened {
+      return report(r, q(dir.path) + ": " + why(e));
+    }
+    return r;
+  };
+  let es: DirEntry[] = [];
+  match (entries_of(d)) {
+    Ok(list) => {
+      es = fts_order(dir.path, list);
+    },
+    Err(e2) => {
+      d.close();
+      return report(r, q(dir.path) + ": " + why(e2));
+    }
+  }
+  let outer = r.pd;
+  r = Run { ...r, pd: Some(d) };
+  let prefix = dir_prefix(dir.path);
+  for de in es {
+    r = visit(p, r, w, child_ent(dir, prefix, de, true));
+    if (r.quit) {
+      break;
+    }
+  }
+  return close_level(r, outer);
+}
+
+// Closes the directory of a level of the walk, and goes back to the one
+// above it.
+function close_level(own r: Run, outer: Option[Dir]): Run {
+  match (r.pd) {
+    Some(d) => {
+      d.close();
+    },
+    None => {}
+  }
+  return Run { ...r, pd: outer };
 }
 
 function loop_of(w: Walker, st: FileStat): i32 {
@@ -3118,14 +3314,24 @@ function follow_check(p: Prog, own r: Run, e: Ent): (boolean, Run) {
   if (!follows(p, e) || e.have != ST_NONE) {
     return (true, Run { ...r, e: e });
   }
-  let got: (FileStat, i32, IoError) = stat_entry(true, e.path);
-  if (got.1 == ST_FAILED) {
-    return (false, report(r, q(e.path) + ": " + why(got.2)));
+  match (stat_in(r, e, true)) {
+    Ok(st) => {
+      return (true, Run { ...r, e: Ent { ...e, st: st, have: ST_OK } });
+    },
+    Err(err) => {
+      return (false, report(r, q(e.path) + ": " + why(err)));
+    }
   }
-  return (true, Run { ...r, e: Ent { ...e, st: got.0, have: ST_OK } });
+  return (false, r);
 }
 
 function visit(p: Prog, own r0: Run, w: Walker, e0: Ent): Run {
+  if (e0.dtype != 0u32 && e0.dtype != S_IFDIR && !follows(p, e0)) {
+    if (e0.depth < p.o.mindepth) {
+      return r0;
+    }
+    return eval_entry(p, r0, e0);
+  }
   let (fine, r) = follow_check(p, r0, e0);
   if (!fine) {
     return r;
@@ -3138,7 +3344,7 @@ function visit(p: Prog, own r0: Run, w: Walker, e0: Ent): Run {
     let r2 = with_stat(p, r);
     r = r2;
     e = r.e;
-    if (e.have == ST_OK) {
+    if (e.have == ST_OK && e.st.ino != 0i64) {
       let at = loop_of(w, e.st);
       if (at >= 0) {
         return report(r, "File system loop detected; " + q(e.path) + " is part of the same file system loop as " + q(w.anc[at].path) + ".");
@@ -3180,21 +3386,23 @@ function top_ent(path: string): Ent {
   while (base > 0 && path[base - 1] != b'/') {
     base -= 1;
   }
-  return Ent { path: path, base: base, depth: 0, dtype: 0u32, st: zero_stat(), have: ST_NONE, lst: zero_stat(), lhave: ST_NONE, top: path, is_top: true };
+  return Ent { path: path, base: base, depth: 0, dtype: 0u32, st: zero_stat(), have: ST_NONE, lst: zero_stat(), lhave: ST_NONE, top: path, is_top: true, rel: false, name: path };
 }
 
 function walk_top(p: Prog, own r: Run, path: string): Run {
   let e = top_ent(path);
-  let got: (FileStat, i32, IoError) = stat_entry(follows(p, e), path);
-  if (got.1 == ST_FAILED) {
-    return report(r, q(path) + ": " + why(got.2));
-  }
-  let e2 = Ent { ...e, st: got.0, have: ST_OK };
-  if ((got.0.mode & S_IFMT) != S_IFDIR && path.len() > 0 && path[path.len() - 1] == b'/') {
+  let got = stat_entry(follows(p, e), path);
+  let Ok(st) = got else {
+    if let Err(err) = got {
+      return report(r, q(path) + ": " + why(err));
+    }
+    return r;
+  };
+  if ((st.mode & S_IFMT) != S_IFDIR && path.len() > 0 && path[path.len() - 1] == b'/') {
     return report(r, q(path) + ": Not a directory");
   }
-  let w = Walker { anc: [], top_dev: got.0.dev };
-  return visit(p, r, w, e2);
+  let w = Walker { anc: [], top_dev: st.dev };
+  return visit(p, r, w, Ent { ...e, st: st, have: ST_OK });
 }
 
 // ---------------------------------------------------------------------------
@@ -3360,7 +3568,7 @@ function main(): i32 {
   for s in execs {
     batches = batches.append(cmdline.batch_new(s));
   }
-  let r = Run { e: top_ent("."), ok: false, outs: writers, status: 0, prune: false, quit: false, names: pwdb.names_new(needs_names, needs_names), mounts: [], have_mounts: false, batches: batches, stdout_tty: false, user_width: 8, group_width: 8 };
+  let r = Run { e: top_ent("."), ok: false, outs: writers, status: 0, prune: false, quit: false, names: pwdb.names_new(needs_names, needs_names), mounts: [], have_mounts: false, batches: batches, stdout_tty: false, user_width: 8, group_width: 8, pd: None };
   for path in paths {
     r = walk_top(p, r, path);
     if (r.quit) {
@@ -3384,10 +3592,14 @@ function finish(r: Run): i32 {
         status = 1;
       }
     }
+    if (o.kind != OUT_STDOUT) {
+      buf_free(o.h);
+    }
     k += 1;
   }
   let so = r.outs[0];
   write_out(so, buf_len(so.h));
+  buf_free(so.h);
   if let Some(e2) = so.err.get() {
     gnu.error(q("standard output") + ": " + why(e2));
     if (errno.of(e2) == errno.EBADF) {

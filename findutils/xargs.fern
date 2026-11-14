@@ -973,6 +973,15 @@ function check_slot_var(o: Opts): void {
 }
 
 function main(): i32 {
+  if (target_os() == "wasi") {
+    gnu.error("cannot run commands: this system has no processes");
+    return 1;
+  } else {
+    return run_xargs();
+  }
+}
+
+function run_xargs(): i32 {
   let argv = args();
   let g = gnu.getopt_new(argv, options(), "xargs", help_text(), EXIT_USAGE).in_package("findutils").in_order();
   let o = opts_new();
@@ -1005,9 +1014,6 @@ function main(): i32 {
   }
   if (base > o.max_chars) {
     fail("cannot fit single argument within argument list size limit", 1);
-  }
-  if (target_os() == "wasi") {
-    fail("cannot run commands: this system has no processes", 1);
   }
   let inp = Input { r: open_input(o), buf: [], pos: 0, eof: false, nul_warned: false };
   let run = Run { cmd: cmd, base: base, args: [], size: base, lines: 0i64, limit: o.max_chars, status: 0, children: [], ran: false, tty: None };
