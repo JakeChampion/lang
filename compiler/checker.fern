@@ -22429,8 +22429,11 @@ function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
   return false;
 }
 
-// The base of a struct literal `T { ...src, f: v }` whose field values do
-// not name `src`. The literal takes the rest of `src`, as an alias does.
+// The base of a struct literal `T { ...src, f: v }`. The literal takes the
+// rest of `src`, as an alias does. A field value can read a field of `src`
+// that the literal replaces, as `i: src.i + 1` does, because the literal
+// does not take that field. The result is the last mention of `src` in the
+// literal: the literal takes `src` there.
 function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
   let ast.ExprStructLit(sl) = e else {
     return None;
@@ -22441,12 +22444,41 @@ function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
   if (!sl.has_base) {
     return None;
   }
+  let last = src;
   for v in sl.field_values {
-    if (util.has_str(astwalk.fold_expr_nodes(v, [], lu_name_stmt, lu_name_expr, astwalk.descend_all), src.name)) {
-      return None;
+    let names = astwalk.fold_expr_nodes(v, [], lu_name_stmt, lu_name_expr, astwalk.descend_all);
+    let mentions = util.count_str(names, src.name);
+    if (mentions > 0) {
+      if (lu_replaced_reads(v, src.name, sl.field_names) != mentions) {
+        return None;
+      }
+      last = lu_later_mention(v, last);
     }
   }
-  return Some(src);
+  return Some(last);
+}
+
+// The reads in `v` of the fields of `name` that are in `fields`.
+function lu_replaced_reads(v: ast.Expr, name: string, fields: string[]): i32 {
+  let reads = 0;
+  for f in fields {
+    reads += ow_count_field_reads(v, name, f);
+  }
+  return reads;
+}
+
+// The mention of `first.name` in `v` that comes last, or `first`.
+function lu_later_mention(v: ast.Expr, own first: ast.ExprIdent): ast.ExprIdent {
+  return astwalk.fold_expr(v, first, lu_later_ident);
+}
+
+function lu_later_ident(n: ast.Expr, own acc: ast.ExprIdent): ast.ExprIdent {
+  if let ast.ExprIdent(id) = n {
+    if (id.name == acc.name && (id.line > acc.line || id.line == acc.line && id.col > acc.col)) {
+      return id;
+    }
+  }
+  return acc;
 }
 
 function lu_value_owned(fx: LuFn, target: string, e: ast.Expr, seen: string[]): boolean {
