@@ -8319,7 +8319,7 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
-  s = s.write("    and $" + util.i32_to_string(ins.imm - 1) + ", %ecx\n    movd %ecx, %xmm2\n");
+  s = s.write("    andl $" + util.i32_to_string(ins.imm - 1) + ", %ecx\n    movd %ecx, %xmm2\n");
   if (ins.imm == 8) {
     return ssa_fput(reg_of, ins.result, d, s.write(x86_byte_lane_shift(b, a, d)));
   }
