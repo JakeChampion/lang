@@ -13,6 +13,11 @@
 # move: 18 up and 7 down. perceus_rbtree_ck grows 6.7% to 7.7% with the kept trees of 089d854d
 # (#15780). The other rows are values of main after #15769 and #15771. Each row moves to its measured
 # value. Keep all tolerances.
+# 2026-11-14: #15810 on main 38768eb2, a local perf-bench-selfhost run. Array and map parameters
+# are now inferred owned. On the three targets, this change moves only five programs:
+# deflate_decode, deflate_encode, ordmap_insert and the two utf8_ingest programs.
+# They fall 0.1% to 6.4%. The other rows here are values of main.
+# Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 on the merge with main 629da263. Eleven emit rows
 # of perceus_cfold, perceus_rbtree, perceus_rbtree_ck, pmap_insert and pvec_with are 1.2% to 4.8%
 # below their pins. These are values of main: #15739 changes no code that these programs reach. Each
@@ -362,7 +367,7 @@ selfhost/wasm32-wasi/map_int.emit	13496
 selfhost/wasm32-wasi/map_probe_chain.emit	13521
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_string.emit at 14287 (was 14007). The tolerance is unchanged.
 selfhost/wasm32-wasi/map_string.emit	14287
-selfhost/wasm32-wasi/ordmap_insert.emit	6767
+selfhost/wasm32-wasi/ordmap_insert.emit	6518
 selfhost/wasm32-wasi/pmap_insert.emit	3296
 selfhost/wasm32-wasi/pvec_with.emit	2763
 selfhost/wasm32-wasi/record_update.emit	487
@@ -447,3 +452,4 @@ selfhost/wasm32-wasi/video_qtrle.emit 6036
 # 2026-11-09: PR #14917, CI job 129321185181. The byte-count kernel from
 # merged #14910 emits 1321 x86-64 lines on both parent 97af82fc and IVF head
 # cbed65e0. Pin the measured value without a tolerance change.
+# 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7. Owned array parameters move these rows. Each row is pinned at its measured value.

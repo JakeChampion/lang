@@ -6,6 +6,9 @@
 # compiled the checker.fern of main 8ce8fde75f. Main measures 47105118 allocations and frees, and the
 # change measures 47156744 (+0.11%). A call of a closure now keeps its arguments, and a method no
 # longer keeps its first argument for its receiver. Re-bank both x86 rows. Keep the 1% tolerance.
+# 2026-11-14: branch fix/owned-array-params (#15810) on main 38768eb2, local scripts/selfhost-alloc-bench
+# runs. Main measures 46974104 checker allocations and frees, and this change 46691972 (-0.60%): an
+# array or a map parameter is now inferred owned. Re-bank both x86 rows. Keep the 1% tolerance.
 # 2026-11-13: perf/string-adopts-bytes (#15723), on main 629da263. Two FERN_LEAKCHECK compilers
 # compiled the checker.fern of main 629da263. Main measures 47753949 allocations and frees, and the
 # change measures 47257115 (-1.04%): string_from_bytes_unchecked takes over a unique array.
