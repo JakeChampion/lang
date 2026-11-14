@@ -81,6 +81,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/int";
+import "std/array";
 import "std/dns";
 import "std/i32";
 import "std/net";
@@ -229,8 +230,7 @@ function __is_address(name: string): boolean {
 ```fern
 <<8 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure]>>=
 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure] {
-  let buf = __copy(s.held);
-  buf = __cat(buf, input);
+  let buf = s.held.concat(input);
   let session = Session { ...s, held: [] };
   let output: u8[] = [];
   let data: u8[] = [];
@@ -245,8 +245,8 @@ pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, t
     }
     let next = __record(session, buf[at:end], now)?;
     session = next.session;
-    output = __cat(output, next.output);
-    data = __cat(data, next.data);
+    output = output.concat(next.output);
+    data = data.concat(next.data);
     closed = next.closed;
     for t in next.tickets {
       tickets = tickets.append(t);
@@ -254,7 +254,7 @@ pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, t
     keys = keys.then(next.rekeyed);
     at = end;
   }
-  return Ok(Step { session: Session { ...session, held: __copy(buf[at:buf.len()]) }, output: output, data: data, closed: closed, tickets: tickets, rekeyed: keys });
+  return Ok(Step { session: Session { ...session, held: __bytes_owned(buf[at:buf.len()]) }, output: output, data: data, closed: closed, tickets: tickets, rekeyed: keys });
 }
 ```
 
@@ -339,7 +339,7 @@ pub function (s: Session) save(): Result[u8[], tls.TlsError] {
   let c = __handshake_ok(s.client.save())?;
   let n = c.len();
   let out = [(n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
-  return Ok(__cat(__cat(out, c), s.held));
+  return Ok(out.concat(c).concat(s.held));
 }
 
 pub function restore(saved: [u8]): Result[Session, tls.TlsError] {
@@ -352,7 +352,7 @@ pub function restore(saved: [u8]): Result[Session, tls.TlsError] {
   }
   match (handshake.client_restore(saved[4:4 + n])) {
     Ok(c) => {
-      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __copy(saved[4 + n:saved.len()]) });
+      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __bytes_owned(saved[4 + n:saved.len()]) });
     },
     Err(e) => {
       return Err(tls.HandshakeFailed(e));
@@ -421,9 +421,9 @@ function __judged(s: Session, first: handshake.ClientStep, now: time.Timestamp):
       _ => {
         let next = __answered(s, c, events[i], now)?;
         c = next.client;
-        output = __cat(output, next.output);
-        data = __cat(data, next.data);
-        events = __more(events, next.events);
+        output = output.concat(next.output);
+        data = data.concat(next.data);
+        events = events.concat(next.events);
       }
     }
     i += 1;
@@ -551,26 +551,6 @@ function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): 
     }
   }
   return Err(tls.SignatureInvalid);
-}
-
-function __cat(own a: u8[], b: [u8]): u8[] {
-  let i = 0;
-  while (i < b.len()) {
-    a = a.append(b[i]);
-    i += 1;
-  }
-  return a;
-}
-
-function __copy(b: [u8]): u8[] {
-  return __cat([], b);
-}
-
-function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event[] {
-  for e in b {
-    a = a.append(e);
-  }
-  return a;
 }
 ```
 
@@ -943,7 +923,7 @@ function __close_notify(c: Connection): Result[void, tls.TlsError] {
 function __send_fd(sock: Socket, data: [u8]): Result[void, tls.TlsError] {
   let at = 0;
   while (at < data.len()) {
-    let n = tcp_send_bytes(sock, __cat([], data[at:data.len()]));
+    let n = tcp_send_bytes(sock, __bytes_owned(data[at:data.len()]));
     if (n < 0) {
       return Err(tls.NetFailed(net.error_from_host(-n)));
     }
