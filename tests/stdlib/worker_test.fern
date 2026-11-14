@@ -172,8 +172,9 @@ const SPIN_RESULT: string = "922688";
 
 // A worker that runs apart from the program is still running at the first
 // poll. An engine that runs the body inline at `spawn` returns late from it,
-// and its worker is ready.
+// and its worker is ready. `parallel` says which of the two the engine does.
 function test_poll_gives_a_running_worker_back(): test.TestOutcome {
+  let parallel = worker.parallel();
   let start = monotonic_ns();
   let w = worker.spawn((): i32 => spin(SPIN_STEPS));
   let spawned = monotonic_ns();
@@ -183,9 +184,15 @@ function test_poll_gives_a_running_worker_back(): test.TestOutcome {
       if (spawned - start < 20000000i64 && polled - start < 40000000i64) {
         return test.fail("a worker that runs apart was ready at once");
       }
+      if (parallel && spawned - start > 200000000i64) {
+        return test.fail("parallel is true, and spawn ran the body before it returned");
+      }
       return test.assert_eq(v.to_string(), SPIN_RESULT);
     },
     worker.Running(again) => {
+      if (!parallel) {
+        return test.fail("parallel is false, and the worker ran beside its caller");
+      }
       return test.assert_eq(again.join().to_string(), SPIN_RESULT);
     }
   }

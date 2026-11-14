@@ -116,7 +116,7 @@ function round(i: i32): i32 {
     m = m.insert("k", n.to_string());
     return (q.get_or("k", "").len() + m.get_or("k", "").len() + i) % 91;
 }` + mapAliasGroupMain("100"),
-			want: 8, allocs: 600, frees: 600,
+			want: 8, allocs: 500, frees: 500,
 		},
 		{
 			name: "string_keys",
@@ -130,7 +130,7 @@ function round(i: i32): i32 {
     m = m.insert((n + 1).to_string(), (n + 1).to_string());
     return (q.len() + m.len() + m.get_or(n.to_string(), "").len() + i) % 91;
 }` + mapAliasGroupMain("100"),
-			want: 35, allocs: 1400, frees: 1400,
+			want: 35, allocs: 900, frees: 900,
 		},
 		{
 			name: "tuple_element",

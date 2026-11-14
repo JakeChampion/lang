@@ -1,0 +1,186 @@
+// A revision: a name, then the operators `^{KIND}`, `^N` and `~N`, and then
+// `:PATH`.
+import "std/string";
+import "./objects";
+import "./refs";
+import "./store";
+
+// The result of a revision. `hash` is "" when the revision names no object.
+// `message` is the message of git for that, when git has a special one.
+pub struct Rev { store: store.Store, hash: string, message: string }
+
+function none(s: store.Store): Rev {
+  return Rev { store: s, hash: "", message: "" };
+}
+
+// The object `hash` after tags, as an object of `kind`: a tag gives its
+// object, and a commit gives its tree. "" for `kind` stops at the first
+// object that is not a tag.
+function peeled(s: store.Store, hash: string, kind: string): Rev {
+  let at = hash;
+  for step in 0..64 {
+    let got = store.read(s, at);
+    s = got.store;
+    let Ok(o) = got.object else {
+      return none(s);
+    };
+    if (o.kind == kind || kind == "" && o.kind != "tag") {
+      return Rev { store: s, hash: at, message: "" };
+    }
+    let next = if (o.kind == "tag") { objects.header_values(o.body, "object") } else if (o.kind == "commit" && kind == "tree") { objects.header_values(o.body, "tree") } else { [] };
+    if (next.len() == 0) {
+      return none(s);
+    }
+    at = next[0];
+  }
+  return none(s);
+}
+
+// The parent `n` of the commit that `hash` peels to. Parent 0 is the commit.
+function parent(s: store.Store, hash: string, n: i32): Rev {
+  let c = peeled(s, hash, "commit");
+  if (c.hash.len() == 0 || n == 0) {
+    return c;
+  }
+  let got = store.read(c.store, c.hash);
+  let Ok(o) = got.object else {
+    return none(got.store);
+  };
+  let parents = store.parents(got.store, c.hash, o.body);
+  if (n > parents.len()) {
+    return none(got.store);
+  }
+  return Rev { store: got.store, hash: parents[n - 1], message: "" };
+}
+
+// The digits at `at`, or `otherwise` when there are none, and the place
+// after them.
+function number_at(text: string, at: i32, otherwise: i32): (i32, i32) {
+  let i = at;
+  let n = 0;
+  while (i < text.len() && text[i] >= b'0' && text[i] <= b'9' && n < 100000) {
+    n = n * 10 + (text[i] - b'0') as i32;
+    i += 1;
+  }
+  if (i == at) {
+    return (otherwise, at);
+  }
+  return (n, i);
+}
+
+// Applies the operators of `ops` to `hash`.
+function operated(s: store.Store, hash: string, ops: string): Rev {
+  let r = Rev { store: s, hash: hash, message: "" };
+  let i = 0;
+  while (i < ops.len() && r.hash.len() > 0) {
+    if (ops[i] == b'^' && i + 1 < ops.len() && ops[i + 1] == b'{') {
+      let close = i + 2;
+      while (close < ops.len() && ops[close] != b'}') {
+        close += 1;
+      }
+      let kind = objects.part(ops, i + 2, close);
+      if (close == ops.len() || kind != "" && !objects.is_kind(kind)) {
+        return none(r.store);
+      }
+      r = peeled(r.store, r.hash, kind);
+      i = close + 1;
+    } else if (ops[i] == b'^') {
+      let (n, next) = number_at(ops, i + 1, 1);
+      r = parent(r.store, r.hash, n);
+      i = next;
+    } else if (ops[i] == b'~') {
+      let (n, next) = number_at(ops, i + 1, 1);
+      for step in 0..n {
+        if (r.hash.len() > 0) {
+          r = parent(r.store, r.hash, 1);
+        }
+      }
+      if (n == 0) {
+        r = parent(r.store, r.hash, 0);
+      }
+      i = next;
+    } else {
+      return none(r.store);
+    }
+  }
+  return r;
+}
+
+// The hash of the entry `name` of the tree `hash`, or an empty hash.
+function entry_named(s: store.Store, hash: string, name: string): Rev {
+  let got = store.read(s, hash);
+  let entries = match (got.object) {
+    Ok(o) => if (o.kind == "tree") { objects.tree_entries(o.body) } else { Err("not a tree") },
+    Err(why) => Err(why),
+  };
+  let found = "";
+  if let Ok(list) = entries {
+    for e in list {
+      if (e.name.len() == name.len() && same_bytes(e.name, name)) {
+        found = e.hash;
+      }
+    }
+  }
+  return Rev { store: got.store, hash: found, message: "" };
+}
+
+// The entry `path` below the tree that `hash` peels to. An empty path is
+// the tree.
+pub function at_path(s: store.Store, hash: string, path: string): Rev {
+  let r = peeled(s, hash, "tree");
+  for part in path.split("/") {
+    if (part.len() > 0 && r.hash.len() > 0) {
+      r = entry_named(r.store, r.hash, part);
+    }
+  }
+  return r;
+}
+
+function same_bytes(name: u8[], text: string): boolean {
+  for i in 0..name.len() {
+    if (name[i] != text[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The place of the first `^` or `~` of `text`, or its length.
+function first_operator(text: string): i32 {
+  for i in 0..text.len() {
+    if (text[i] == b'^' || text[i] == b'~') {
+      return i;
+    }
+  }
+  return text.len();
+}
+
+function first_colon(text: string): i32 {
+  for i in 0..text.len() {
+    if (text[i] == b':') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The object that the revision `text` names.
+pub function parse(repo: refs.Repo, own s: store.Store, text: string): Rev {
+  let colon = first_colon(text);
+  let base = if (colon > 0) { objects.part(text, 0, colon) } else { text };
+  let cut = first_operator(base);
+  let hash = refs.resolve(repo, s, objects.part(base, 0, cut));
+  if (hash.len() == 0) {
+    return none(s);
+  }
+  let r = operated(s, hash, objects.part(base, cut, base.len()));
+  if (colon <= 0 || r.hash.len() == 0) {
+    return r;
+  }
+  let path = objects.part(text, colon + 1, text.len());
+  let found = at_path(r.store, r.hash, path);
+  if (found.hash.len() == 0) {
+    return Rev { ...found, message: "path '" + path + "' does not exist in '" + base + "'" };
+  }
+  return found;
+}
