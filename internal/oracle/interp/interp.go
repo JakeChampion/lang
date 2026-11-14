@@ -1545,6 +1545,7 @@ func New() *Interp {
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
 	i.Builtins["proc_waitpid_nohang"] = &Builtin{Fn: builtinProcWaitpidNohang}
 	i.Builtins["proc_waitpid_status"] = &Builtin{Fn: builtinProcWaitpidStatus}
+	i.Builtins["proc_wait_any"] = &Builtin{Fn: builtinProcWaitAny}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
 	i.Builtins["proc_exec_as"] = &Builtin{Fn: builtinProcExecAs}
 	i.Builtins["pipe"] = &Builtin{Fn: builtinPipe}
@@ -3164,6 +3165,13 @@ func builtinProcWaitpidStatus(_ *Interp, args []Value) (Value, error) {
 	}
 	if _, ok := args[0].(Number); !ok {
 		return nil, fmt.Errorf("proc_waitpid_status: expected number arg, got %T", args[0])
+	}
+	return Number(-10), nil
+}
+
+func builtinProcWaitAny(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("proc_wait_any: expected 0 args, got %d", len(args))
 	}
 	return Number(-10), nil
 }
