@@ -755,6 +755,7 @@ multi_hop_alias                                      0
 multiline_stdin                                      0
 must_consume_destructure_in_one_arm_moves            0
 must_consume_destructure_of_a_moved_payload          0
+must_consume_in_a_loop_that_always_runs              0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
 must_consume_method_receiver                         0
@@ -1425,6 +1426,7 @@ tuple_return_union                                   0
 tuple_variant_payload_subpattern                     0
 two_i64_literals                                     0
 two_nones_share_sentinel                             0
+type_args_trailing_comma                             0
 type_param_name_collision                            0
 typed_json_protobuf_errors                           0
 u32_large_to_f64_back                                0

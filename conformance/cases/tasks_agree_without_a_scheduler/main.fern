@@ -73,20 +73,17 @@ function top(n: i32): i32 {
 function held(): i32 {
   let t: async.Task[i32] = async.task_new(() => top(5));
   let st: async.TaskStatus[i32] = async.task_start(t);
-  let out: i32 = 0 - 1;
-  let going: boolean = true;
-  while (going) {
+  while (true) {
     match (st) {
       Done(v) => {
-        out = v;
-        going = false;
+        return v;
       },
       Suspended(w) => {
         st = async.task_resume(t, async.wait_any(w.set, w.until));
       }
     }
   }
-  return out;
+  return 0 - 1;
 }
 
 function main(): i32 {
