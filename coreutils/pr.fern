@@ -343,19 +343,28 @@ function src_fill(s: Src): Src {
   }
 }
 
-function finish_record(carry: usize, chunk: u8[], from: i32, to: i32): u8[] {
-  if (carry == 0 as usize && from == to) {
-    return [];
-  }
-  let h = carry;
-  if (h == 0 as usize) {
-    h = buf_new(to - from);
-  }
-  buf_push_bytes_range(h, chunk, from, to);
-  return take_bytes(h);
+struct Text { bytes: u8[], from: i32, to: i32 }
+
+function empty_text(): Text {
+  return Text { bytes: [], from: 0, to: 0 };
 }
 
-struct Record { src: Src, line: boolean, ff: boolean, text: u8[] }
+function own_text(bytes: u8[]): Text {
+  return Text { bytes: bytes, from: 0, to: bytes.len() };
+}
+
+function finish_record(carry: usize, chunk: u8[], from: i32, to: i32): Text {
+  if (carry == 0 as usize && from == to) {
+    return empty_text();
+  }
+  if (carry == 0 as usize) {
+    return Text { bytes: chunk, from: from, to: to };
+  }
+  buf_push_bytes_range(carry, chunk, from, to);
+  return own_text(take_bytes(carry));
+}
+
+struct Record { src: Src, line: boolean, ff: boolean, text: Text }
 
 function src_line(s0: Src): Record {
   let s = s0;
@@ -364,9 +373,9 @@ function src_line(s0: Src): Record {
     if (s.pos >= s.buf.len()) {
       if (s.eof) {
         if (carry != 0 as usize) {
-          return Record { src: s, line: true, ff: false, text: take_bytes(carry) };
+          return Record { src: s, line: true, ff: false, text: own_text(take_bytes(carry)) };
         }
-        return Record { src: s, line: false, ff: false, text: [] };
+        return Record { src: s, line: false, ff: false, text: empty_text() };
       }
       s = src_fill(s);
       continue;
@@ -401,9 +410,9 @@ function src_line(s0: Src): Record {
         s = Src { ...s, pos: s.pos + 1 };
       }
     }
-    return Record { src: s, line: !is_ff || text.len() > 0, ff: is_ff, text: text };
+    return Record { src: s, line: !is_ff || text.to > text.from, ff: is_ff, text: text };
   }
-  return Record { src: s, line: false, ff: false, text: [] };
+  return Record { src: s, line: false, ff: false, text: empty_text() };
 }
 
 function parse_int(s: string): (i64, boolean) {
@@ -691,7 +700,7 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64, separator: boolean): Line
   return l;
 }
 
-function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boolean): Line {
+function put_column(l0: Line, c: Cfg, i: i32, txt: Text, n: i64, numbered: boolean): Line {
   let cs = col_start(c, i);
   let l = l0;
   if (i == 0) {
@@ -725,11 +734,13 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
     }
     limit = text_start + avail;
   }
-  let k = 0;
-  while (k < txt.len()) {
+  let bytes = txt.bytes;
+  let end = txt.to;
+  let k = txt.from;
+  while (k < end) {
     let j = k;
-    while (j < txt.len()) {
-      let pb = txt[j] as i32;
+    while (j < end) {
+      let pb = bytes[j] as i32;
       if (pb < 33 || pb > 126 || pb == c.in_tab) {
         break;
       }
@@ -744,11 +755,11 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
         }
         j = k + width;
       }
-      l = l.put_range(txt, k, j, width, c);
+      l = l.put_range(bytes, k, j, width, c);
       k = j;
       continue;
     }
-    let b = txt[k] as i32;
+    let b = bytes[k] as i32;
     let span = tab_span(b, c);
     if (span > 0) {
       let local = l.pos - origin;
@@ -769,7 +780,7 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
     if (numbered && c.truncate && !c.merge) {
       start = origin;
     }
-    if (width < 0 && (l.pos <= start || k == 0)) {
+    if (width < 0 && (l.pos <= start || k == txt.from)) {
       k += 1;
       continue;
     }
@@ -786,7 +797,7 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
   return l;
 }
 
-function row_into(out: usize, c: Cfg, texts: u8[][], nums: i64[], numbered: boolean): void {
+function row_into(out: usize, c: Cfg, texts: Text[], nums: i64[], numbered: boolean): void {
   let l = line_on(out);
   if (c.num_prefix > 0 && nums.len() > 0) {
     l = l.to(c.offset, c);
@@ -836,9 +847,10 @@ function column_lengths(n: i32, c: Cfg): i32[] {
   return out;
 }
 
-function printable_ascii(bytes: u8[]): boolean {
-  let i = 0;
-  while (i < bytes.len()) {
+function printable_ascii(text: Text): boolean {
+  let bytes = text.bytes;
+  let i = text.from;
+  while (i < text.to) {
     if (bytes[i] < 32 as u8 || bytes[i] > 126 as u8) {
       return false;
     }
@@ -847,7 +859,19 @@ function printable_ascii(bytes: u8[]): boolean {
   return true;
 }
 
-function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64, last_terminated: boolean): i32 {
+function text_backspace(text: Text): boolean {
+  let bytes = text.bytes;
+  let i = text.from;
+  while (i < text.to) {
+    if (bytes[i] == 8 as u8) {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+function body_into(out: usize, c: Cfg, lines: Text[], first_no: i64, last_terminated: boolean): i32 {
   let count = 0;
   let n = lines.len();
   if (c.columns == 1 && !c.merge) {
@@ -856,8 +880,9 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64, last_termin
     let displayed = direct && (c.ctrl || c.nonprint);
     let i = 0;
     while (i < n) {
-      if (verbatim && __memchr_bytes(lines[i], 8, 0) < 0 || displayed && printable_ascii(lines[i])) {
-        append_bytes(out, lines[i]);
+      let text = lines[i];
+      if (verbatim && !text_backspace(text) || displayed && printable_ascii(text)) {
+        buf_push_bytes_range(out, text.bytes, text.from, text.to);
         buf_push_byte(out, 10);
       } else {
         put_column(line_on(out), c, 0, lines[i], wrap32(first_no + i as i64), c.numbering);
@@ -884,7 +909,7 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64, last_termin
   }
   let r = 0;
   while (r < rows) {
-    let texts: u8[][] = [];
+    let texts: Text[] = [];
     let nums: i64[] = [];
     let col = 0;
     while (col < c.columns) {
@@ -916,7 +941,7 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64, last_termin
   return count;
 }
 
-function merge_cell(l: Line, c: Cfg, col: i32, txt: u8[], number: i64, number_tab: boolean): Line {
+function merge_cell(l: Line, c: Cfg, col: i32, txt: Text, number: i64, number_tab: boolean): Line {
   if (col == 0 && !number_tab && c.num_sep == 9) {
     return l;
   }
@@ -930,7 +955,7 @@ function merge_eof_number(l: Line, c: Cfg, number: i64, count: i32): Line {
   return put_number(l, c, l.pos - c.offset, number, c.num_sep != 9 || count > 1);
 }
 
-function merge_row_into(out: usize, c: Cfg, rows: u8[][], from: i32, count: i32, number: i64, extra_number: boolean, number_tab: boolean): void {
+function merge_row_into(out: usize, c: Cfg, rows: Text[], from: i32, count: i32, number: i64, extra_number: boolean, number_tab: boolean): void {
   let l = line_on(out);
   if (c.num_prefix > 0 && count > 0) {
     l = l.to(c.offset, c);
@@ -945,7 +970,7 @@ function merge_row_into(out: usize, c: Cfg, rows: u8[][], from: i32, count: i32,
   buf_push_byte(out, 10);
 }
 
-function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], terminated: boolean[], extra_numbers: boolean[], number_tabs: boolean[], first_no: i64): i32 {
+function merge_body_into(out: usize, c: Cfg, rows: Text[], width: i32, row_widths: i32[], terminated: boolean[], extra_numbers: boolean[], number_tabs: boolean[], first_no: i64): i32 {
   let count = 0;
   let nrows = 0;
   if (width > 0) {
@@ -1083,7 +1108,7 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
     hdr_name = "";
   }
   while (page <= c.last_page) {
-    let lines: u8[][] = [];
+    let lines: Text[] = [];
     let last_terminated = true;
     let broke = false;
     let first = true;
@@ -1199,7 +1224,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
       }
       i += 1;
     }
-    let cells: u8[][] = [];
+    let cells: Text[] = [];
     let row_widths: i32[] = [];
     let terminated: boolean[] = [];
     let extra_numbers: boolean[] = [];
@@ -1217,7 +1242,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
       let any = false;
       let col = 0;
       while (col < width) {
-        let cell: u8[] = [];
+        let cell = empty_text();
         let present = false;
         if (!held[col] && !eofs[col]) {
           let k = slot[col];
@@ -1254,7 +1279,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
         }
         if (any) {
           while (row_width < col) {
-            cells = cells.append([]);
+            cells = cells.append(empty_text());
             row_width += 1;
           }
           cells = cells.append(cell);
@@ -1283,7 +1308,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
         }
       }
       while (row_width < width) {
-        cells = cells.append([]);
+        cells = cells.append(empty_text());
         row_width += 1;
       }
       filled += 1;

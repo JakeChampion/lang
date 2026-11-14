@@ -59,6 +59,9 @@ func prCases(t *testing.T) []invocation {
 	eofFirst := prFile(t, dir, "eof-first", "a", mt)
 	eofLate := prFile(t, dir, "eof-late", "a\nb\nc", mt)
 	eofLong := prFile(t, dir, "eof-long", strings.Repeat("a", 65537), mt)
+	spanRows := prFile(t, dir, "span-rows", strings.Repeat("a\n", 32768)+"b\n", mt)
+	spanFF := prFile(t, dir, "span-ff", strings.Repeat("a\n", 32767)+"b\f\nc\n", mt)
+	spanControls := prFile(t, dir, "span-controls", "prefix\n\bA\n \bB\n\tC\nx\ry\n\x00\xff\n", mt)
 	blank := prFile(t, dir, "blank", "a\n\nb\n", mt)
 	raw := filepath.Join(dir, rawByteNameFixture)
 	if rawByteNamesHeld(t) {
@@ -220,6 +223,14 @@ func prCases(t *testing.T) []invocation {
 		{name: "merge omits the number tab before column two", args: []string{"-m", "-t", "-n\t3", "-s:", empty, f}},
 		{name: "merge keeps the number tab before column three", args: []string{"-m", "-t", "-n\t3", "-s:", empty, empty, f}},
 		{name: "merge numbers an EOF past a read block", args: []string{"-m", "-t", "-n:3", "-s:", eofLong, f}},
+		{name: "page records across a read block", args: []string{"-t", spanRows}},
+		{name: "columns across a read block", args: []string{"-t", "-4", spanRows}},
+		{name: "merge records across a read block", args: []string{"-m", "-t", spanRows, spanRows, other}},
+		{name: "merge numbers across a read block", args: []string{"-m", "-t", "-n:3", "-s:", spanRows, spanRows, other}},
+		{name: "form feed at a read boundary", args: []string{"-t", spanFF}},
+		{name: "merge form feeds at a read boundary", args: []string{"-m", "-t", spanFF, spanFF, other}},
+		{name: "controls after the first record", args: []string{"-t", "-n:3", spanControls}},
+		{name: "display controls after the first record", args: []string{"-t", "-v", spanControls}},
 		{name: "merge with a directory is fatal first", args: []string{"-t", "-m", d, f}},
 
 		{name: "number lines", args: []string{"-t", "-n", s10}},
