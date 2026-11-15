@@ -11707,12 +11707,10 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
     ast.ExprArray(a) => {
       let els: ast.Expr[] = [];
       let cur = ins;
-      let i = 0;
-      while (i < a.elements.len()) {
-        let re = mono_expr(a.elements[i], env, funcs, cur);
+      for el in a.elements {
+        let re = mono_expr(el, env, funcs, cur);
         cur = re.rins;
         els = els.append(re.rexpr);
-        i += 1;
       }
       return RExpr { rexpr: ast.ExprArray { ...a, elements: els }, rins: cur };
     },
@@ -13717,6 +13715,26 @@ function erased_vars_bindable(params: ast.ParamDecl[], vars: string[]): boolean 
   return true;
 }
 
+// The limit of the levels of type arguments in an instance of a generic
+// function. A function that calls itself with a larger type has no last
+// instance. The checker reports E107 at the limit.
+pub const MAX_INSTANCE_DEPTH: i32 = 64;
+
+// The levels of `[` in the spelling of the type arguments of an instance.
+pub function type_args_depth(key: string): i32 {
+  let depth = 0;
+  let most = 0;
+  for i in 0..key.len() {
+    if (key[i] == b'[') {
+      depth += 1;
+      most = most.max(depth);
+    } else if (key[i] == b']') {
+      depth -= 1;
+    }
+  }
+  return most;
+}
+
 pub function monomorphize_all(mod: Module): Module {
   let candidates: string[] = [];
   for fd in mod.funcs {
@@ -13847,10 +13865,16 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
     let gi = bg_find(fns, nm);
     if (gi >= 0) {
       let cl = clone_bg(funcs[gi], ct, mod.impls, mod.trait_reqs, fns);
-      let cenv = env_from_params(cl.params);
-      let crb = mono_stmts(cl.body, cenv, instance_fns(fns, ct), ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
-      ins = crb.rins3;
-      rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: crb.rstmts });
+      if (type_args_depth(ct) > MAX_INSTANCE_DEPTH) {
+        // The body of this instance asks for a larger one. A body that
+        // does not return ends the chain.
+        rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: [s_while(e_bool(true), [])] });
+      } else {
+        let cenv = env_from_params(cl.params);
+        let crb = mono_stmts(cl.body, cenv, instance_fns(fns, ct), ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
+        ins = crb.rins3;
+        rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: crb.rstmts });
+      }
     }
     wi += 1;
   }
