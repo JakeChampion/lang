@@ -41,9 +41,21 @@ function test_exact(): test.TestOutcome {
     ("remainder(10, 3)", 10.0.remainder(3.0), 1.0),
     ("remainder(5.5, 1.25)", 5.5.remainder(1.25), 0.5),
     ("nextafter(1, 2)", 1.0.nextafter(2.0), 1.0000000000000002),
-    ("fma(0.1, 10, -1)", 0.1.fma(10.0, -1.0), 5.551115123125783e-17),
     ("fdim(1, 3)", 1.0.fdim(3.0), 0.0),
     ("fmax(1, nan)", 1.0.fmax(0.0 / 0.0), 1.0),
+  ]);
+}
+
+// Each fma rounds one time: a factor above 1e300, a product that overflows,
+// a product that underflows to a signed zero, and a tie in the subnormal range.
+function test_fma(): test.TestOutcome {
+  let negative_zero = -1.0 / (1.0 / 0.0);
+  return same([
+    ("fma(0.1, 10, -1)", 0.1.fma(10.0, -1.0), 5.551115123125783e-17),
+    ("fma(2e301, 1e-298, -2260)", 1.9876973655947357e301.fma(1.1371440900119022e-298, -2260.298312018281), -1.0000533561184335e-13),
+    ("fma(1.5e308, 2, -1.5e308)", 1.5e308.fma(2.0, -1.5e308), 1.5e308),
+    ("fma(-1e-200, 1e-200, 0)", (-1.0e-200).fma(1.0e-200, 0.0), negative_zero),
+    ("fma(1 + 2^-52, 2^-1023, 2^-1074)", 1.0000000000000002.fma(1.1125369292536007e-308, 5e-324), 1.1125369292536017e-308),
   ]);
 }
 
@@ -70,6 +82,7 @@ function main(): i32 {
   let r = test.new("f64 special functions");
   r = r.it("copysign takes the sign bit", test_copysign);
   r = r.it("the exact functions", test_exact);
+  r = r.it("fma rounds one time", test_fma);
   r = r.it("the special functions", test_special);
   return r.finish();
 }
