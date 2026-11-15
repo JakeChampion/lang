@@ -2874,6 +2874,10 @@ function lane_fn(verb: string, width: i32, xs: f64[]): f64 {
   if (verb == "sqrt" || verb == "floor" || verb == "round") {
     return f64_primitive("__" + verb + "_f64", xs[0]);
   }
+  // The f64 lanes round one time. The f32 lanes round two times.
+  if (verb == "mul_add" && width == 64) {
+    return xs[0].fma(xs[1], xs[2]);
+  }
   if (verb == "mul_add") {
     return lane_round(width, lane_round(width, xs[0] * xs[1]) + xs[2]);
   }
