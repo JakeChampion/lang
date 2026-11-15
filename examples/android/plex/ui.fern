@@ -51,10 +51,10 @@ pub function tab_screens(): i32[] {
 // with `choice` marked. `scrub_ms` is the time under a finger on the seek
 // bar, or -1, and `thumb` the preview thumbnail of that time, by
 // `thumb_key`.
-pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string }
+pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string }
 
 pub function no_player(): PlayerView {
-  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "" };
+  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "" };
 }
 
 pub struct View {
@@ -879,7 +879,7 @@ pub function thumb_size(m: Metrics): (i32, i32) {
 function player(m: Metrics, v: View): scene.Node[] {
   let p = v.player;
   if (!p.overlay) {
-    return util_append(util_append([mk(0, 0, m.w, m.h, scene.Blank, "overlay", "")], skip_button(m, p)), up_next_card(m, p));
+    return util_append(util_append(util_append([mk(0, 0, m.w, m.h, scene.Blank, "overlay", "")], skip_button(m, p)), up_next_card(m, p)), badge(m, p));
   }
   // Over the video, a dark veil keeps the controls readable, and a tap
   // outside them hides them. Over the art, such a tap plays.
@@ -952,7 +952,7 @@ function player(m: Metrics, v: View): scene.Node[] {
   out = out.append(dots(bar.x, bar.y + bar.h + 6 * m.u, at, sp, look.ink()));
   let total = plex.clock_text(p.duration_ms);
   out = out.append(dots(bar.x + bar.w - matrix.width(total, sp), bar.y + bar.h + 6 * m.u, total, sp, look.muted()));
-  out = util_append(util_append(out, skip_button(m, p)), up_next_card(m, p));
+  out = util_append(util_append(util_append(out, skip_button(m, p)), up_next_card(m, p)), badge(m, p));
   if (p.sounds.len() > 1 || p.subtitles.len() > 0) {
     out = util_append(out, button(m, m.w - 16 * m.u - button_width(m, "Tracks"), m.top + 12 * m.u, "Tracks", false, "tracks"));
   }
@@ -970,6 +970,21 @@ function skip_button(m: Metrics, p: PlayerView): scene.Node[] {
   }
   let bar = seek_bar(m);
   return button(m, m.w - 16 * m.u - button_width(m, p.skip), bar.y - button_height(m) - 64 * m.u, p.skip, true, "skip");
+}
+
+// The note of a gesture, such as "+10" or "VOLUME 7", in a dark panel at
+// the top third of the video. It takes no tap.
+function badge(m: Metrics, p: PlayerView): scene.Node[] {
+  if (p.badge.len() == 0) {
+    return [];
+  }
+  let sp = small_pitch(m);
+  let pad = 16 * m.u;
+  let w = matrix.width(p.badge, sp) + 2 * pad;
+  let h = matrix.height(sp) + 2 * pad;
+  let x = (m.w - w) / 2;
+  let y = m.h / 3 - h / 2;
+  return [fill(x, y, w, h, draw.rgba(0, 0, 0, 170), 12 * m.u), dots(x + pad, y + pad, p.badge, sp, look.ink())];
 }
 
 // The card of the next item at the bottom right: its title, the seconds

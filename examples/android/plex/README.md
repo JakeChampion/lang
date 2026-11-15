@@ -39,6 +39,14 @@ Playback:
 
 Music plays with the controls on the screen.
 
+Gestures on the video:
+
+- Two taps at the left of the video seek back 10 seconds, and two taps at
+  the right seek forward 10 seconds. Each tap after that seeks again.
+- A drag up or down the left half sets the brightness of the window. A drag
+  on the right half sets the volume. The brightness of the system comes
+  back when the video stops.
+
 In the credits of an episode, or 20 seconds before its end, a card shows
 the next episode of the season. It counts down from 10 seconds, and then
 the next episode plays. Play on the card starts it at once. Cancel hides

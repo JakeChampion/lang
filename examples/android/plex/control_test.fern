@@ -264,6 +264,10 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       note(log.calls, "track " + i.to_string());
       return true;
     },
+    brightness: (level: f32): void => note(log.calls, "light " + ((level * 1000.0f32) as i32).to_string()),
+    system_brightness: (): f32 => 0.5f32,
+    volume: (): (i32, i32) => (7, 15),
+    set_volume: (level: i32): void => note(log.calls, "volume " + level.to_string()),
     random: (): i32 => 5,
     decoders: log.decoders.get(),
   };
@@ -567,6 +571,92 @@ function test_drag_scrubs_with_thumbnails(): test.TestOutcome {
     _ => false,
   });
   return test.assert_eq(left.len().to_string(), "0");
+}
+
+// A video that plays on the GPU, with its first frame drawn.
+function video_drawn(log: Log, f: draw.Frame): control.App {
+  log.gpu.set(true);
+  let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  return settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
+}
+
+// A tap at (x, y) at time `now`, then ticks.
+function tap_at(own s: control.App, log: Log, now: i64, f: draw.Frame, x: f32, y: f32): control.App {
+  let t = at(s, log, now, f, android.Touch(0, x, y));
+  return settle(at(t, log, now + 30i64, f, android.Touch(1, x, y)), log, now + 30i64, f);
+}
+
+function says(s: control.App, text: string): boolean {
+  return s.nodes.filter((n: scene.Node): boolean => n.say == text).len() > 0;
+}
+
+// A second tap soon after the first at the left of the video seeks back 10
+// seconds, and at the right forward 10 seconds. The controls stay as they
+// were before the first tap. Two taps in the middle, or far apart, do not
+// seek.
+function test_double_tap_seeks(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let drawn = settle(video_drawn(log, f), log, 900i64, f);
+  if (node(drawn, "overlay").is_none()) {
+    return test.fail("the controls showed before the taps");
+  }
+  let y = (H / 2) as f32;
+  let seeks = count_seeks(log);
+  let back = tap_at(tap_at(drawn, log, 1000i64, f, (W / 5) as f32, y), log, 1200i64, f, (W / 5) as f32, y);
+  if (count_seeks(log) != seeks + 1 || !has_call(log, "seek 110000") || !says(back, "-10")) {
+    return test.fail("a double tap at the left did not seek back: " + log.calls.get().join(" | "));
+  }
+  if (node(back, "overlay").is_none() || node(back, "toggle").is_some()) {
+    return test.fail("the controls of the first tap stayed");
+  }
+  let ahead = tap_at(tap_at(back, log, 2000i64, f, (W * 4 / 5) as f32, y), log, 2200i64, f, (W * 4 / 5) as f32, y);
+  if (count_seeks(log) != seeks + 2 || !has_call(log, "seek 130000") || !says(ahead, "+10")) {
+    return test.fail("a double tap at the right did not seek forward: " + log.calls.get().join(" | "));
+  }
+  let gone = settle(ahead, log, 3100i64, f);
+  if (says(gone, "+10")) {
+    return test.fail("the badge stayed");
+  }
+  // Above the buttons, so that a second tap that is not a double tap hits
+  // no control.
+  let high = (H / 4) as f32;
+  let middle = tap_at(tap_at(gone, log, 4000i64, f, (W / 2) as f32, high), log, 4200i64, f, (W / 2) as f32, high);
+  let slow = tap_at(tap_at(middle, log, 9000i64, f, (W / 5) as f32, high), log, 9600i64, f, (W / 5) as f32, high);
+  return test.assert_eq((count_seeks(log) - seeks).to_string(), "2");
+}
+
+// A drag up the left half of the video makes the window brighter, and a
+// drag down the right half makes the sound quieter. Each shows its level,
+// and the brightness of the system comes back when the video stops.
+function test_drag_sets_light_and_volume(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let drawn = video_drawn(log, f);
+  let x = (W / 5) as f32;
+  let y0 = (H / 2) as f32;
+  let down = at(drawn, log, 1000i64, f, android.Touch(0, x, y0));
+  let up = at(down, log, 1050i64, f, android.Touch(2, x, y0 - (H * 3 / 10) as f32));
+  if (!has_call(log, "light 1000") || !says(up, "LIGHT 100%")) {
+    return test.fail("the drag did not set the brightness: " + log.calls.get().join(" | "));
+  }
+  let lifted = settle(at(up, log, 1100i64, f, android.Touch(1, x, y0 - (H * 3 / 10) as f32)), log, 1100i64, f);
+  if (has_call(log, "pause") || node(lifted, "toggle").is_some()) {
+    return test.fail("the drag counted as a tap");
+  }
+  let rx = (W * 4 / 5) as f32;
+  let press = at(lifted, log, 2000i64, f, android.Touch(0, rx, y0));
+  let lower = at(press, log, 2050i64, f, android.Touch(2, rx, y0 + (H / 5) as f32));
+  if (!has_call(log, "volume 2") || !says(lower, "VOLUME 2")) {
+    return test.fail("the drag did not set the volume: " + log.calls.get().join(" | "));
+  }
+  let done = settle(at(lower, log, 2100i64, f, android.Touch(1, rx, y0 + (H / 5) as f32)), log, 2100i64, f);
+  let shown = tap(done, log, 3000i64, f, "overlay");
+  let back = tap(shown, log, 3100i64, f, "back");
+  return test.assert_eq(has_call(log, "light -1000").to_string(), "true");
 }
 
 function count_seeks(log: Log): i32 {
@@ -921,6 +1011,8 @@ function main(): i32 {
   r = r.it("a file with no sound plays again as a transcode", test_lost_sound_transcodes);
   r = r.it("a drag on the seek bar scrubs with thumbnails", test_drag_scrubs_with_thumbnails);
   r = r.it("the sheet of tracks changes the sound and burns subtitles", test_tracks_sheet);
+  r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
+  r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
   r = r.it("the connections of a server race", test_connection_race);
   r = r.it("a skip button skips the intro", test_skip_intro);
   r = r.it("the card of the next episode counts down and plays it", test_up_next_plays);

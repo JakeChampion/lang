@@ -67,6 +67,13 @@ pub struct Device {
   select_track: (i32) => boolean,
   // True when the prepared player selected a sound track.
   has_audio: () => boolean,
+  // Sets the brightness of the window from 0.0 to 1.0, or that of the
+  // system for a negative level, and gives the brightness of the system.
+  brightness: (f32) => void,
+  system_brightness: () => f32,
+  // The volume of the music and its greatest value, and a new volume.
+  volume: () => (i32, i32),
+  set_volume: (i32) => void,
   random: () => i32,
   // The MIME types that the decoders of the phone take.
   decoders: string[],
@@ -138,6 +145,23 @@ struct Play {
   // user turned the next item off.
   up_next_at: i64,
   next_off: boolean,
+  // The time and the place of the last tap on the video, and whether the
+  // controls showed before it. A second tap at the side soon after seeks.
+  tap_at: i64,
+  tap_x: i32,
+  tap_overlay: boolean,
+  // A short note over the video, such as "+10", and when it goes.
+  badge: string,
+  badge_until: i64,
+  // The level that a vertical drag on the video sets: 0 none, 1 the
+  // brightness and 2 the volume. Its level at the start, the level that it
+  // set last, its greatest level, and the brightness that the app set in
+  // thousandths, or -1.
+  gesture: i32,
+  gesture_from: i32,
+  gesture_level: i32,
+  gesture_max: i32,
+  light: i32,
 }
 
 pub struct App {
@@ -231,7 +255,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, choice: plex.no_choice(), sheet: false, up_next_at: 0i64, next_off: false };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, choice: plex.no_choice(), sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1 };
 }
 
 function no_press(): Press {
@@ -1286,6 +1310,9 @@ function stop_play(own s: App, completed: boolean): App {
   s.dev.stop();
   s.dev.keep_screen_on(false);
   s.dev.immersive(false);
+  if (p.light >= 0) {
+    s.dev.brightness(-1.0f32);
+  }
   if (completed) {
     pos = p.duration;
   }
@@ -1378,6 +1405,9 @@ function player_event(own s: App, c: player.Change): App {
 // Keeps the position on the overlay and the server up to date. While the
 // player is paused, the app still reports, and keeps its transcode alive.
 function play_tick(own s: App, now: i64): App {
+  if (s.play.badge.len() > 0 && now >= s.play.badge_until) {
+    s = App { ...s, play: Play { ...s.play, badge: "" }, dirty: true };
+  }
   let p = s.play;
   if (!p.active || !p.prepared) {
     return s;
@@ -1555,7 +1585,54 @@ function scrub(own s: App, x: i32, done: boolean): App {
   return App { ...s, play: Play { ...p, scrub_ms: ms, scrub_seek_at: at, thumb_index: index, thumb: thumb, controls_until: now + CONTROLS_MS }, dirty: true };
 }
 
+// The side of the video at `x`: -1 for the left two fifths, 1 for the
+// right two fifths, and 0 for the middle.
+function tap_side(w: i32, x: i32): i32 {
+  if (x * 5 < w * 2) {
+    return -1;
+  }
+  if (x * 5 > w * 3) {
+    return 1;
+  }
+  return 0;
+}
+
+// How soon a second tap must come to seek, and how long a badge shows.
+const DOUBLE_TAP_MS: i64 = 300i64;
+
+const BADGE_MS: i64 = 800i64;
+
+// A second tap at the same side of the video soon after a tap on the video
+// seeks back or forward 10 seconds, whatever control the first tap showed
+// there. The controls stay as they were before the first tap. Each tap
+// after that seeks again.
+function double_tap(own s: App, x: i32): App {
+  let p = s.play;
+  let now = s.dev.mono_ms();
+  let side = tap_side(s.w, x);
+  if (side != 0 && now - p.tap_at <= DOUBLE_TAP_MS && side == tap_side(s.w, p.tap_x)) {
+    let note = "+10";
+    if (side < 0) {
+      note = "-10";
+    }
+    return seek_by(App { ...s, play: Play { ...p, tap_at: now, tap_x: x, overlay: p.tap_overlay, badge: note, badge_until: now + BADGE_MS }, dirty: true }, side as i64 * 10000i64);
+  }
+  return s;
+}
+
 function player_act(own s: App, act: string, n: scene.Node, x: i32): App {
+  if (s.play.drawn) {
+    // The first tap can show the controls under the second.
+    let before = s.play.tap_at;
+    let t = double_tap(s, x);
+    if (t.play.tap_at != before) {
+      return t;
+    }
+    if (act == "overlay" || act == "hide") {
+      t = App { ...t, play: Play { ...t.play, tap_at: t.dev.mono_ms(), tap_x: x, tap_overlay: t.play.overlay } };
+    }
+    s = t;
+  }
   let p = s.play;
   if (act == "overlay") {
     if (!p.drawn) {
@@ -1728,6 +1805,9 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
       }
     }
     s = App { ...s, press: Press { ...p, x: x, y: y, axis: axis } };
+    if (s.screen == ui.PLAYER) {
+      return player_drag(s, axis != 0 && abs_f(dy) >= abs_f(dx));
+    }
     if (axis == 1) {
       let i = row_index(p.group);
       let max = ui.hub_row_width(m, row_items(s, i)) - m.w;
@@ -1746,10 +1826,58 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   if (action == 1 && p.axis == 0 && !p.caught) {
     return tapped(t, x as i32, y as i32);
   }
+  if (t.screen == ui.PLAYER) {
+    return App { ...t, play: Play { ...t.play, gesture: 0 } };
+  }
   if (action == 1 && p.axis != 0) {
     return flung(t, p, m);
   }
   return t;
+}
+
+// A drag up or down on the video: on its left half it sets the brightness
+// of the window, and on its right half the volume. `vertical` is true when
+// the finger moved more up or down than across. Each change shows its level.
+function player_drag(own s: App, vertical: boolean): App {
+  let p = s.play;
+  let pr = s.press;
+  if (p.gesture == 0) {
+    let on = "";
+    if let Some(n) = scene.hit(s.nodes, pr.x0 as i32, pr.y0 as i32) {
+      on = n.tap.name;
+    }
+    if (!vertical || !p.video || !p.drawn || on != "overlay" && on != "hide") {
+      return s;
+    }
+    if (pr.x0 < (s.w / 2) as f32) {
+      let from = p.light;
+      if (from < 0) {
+        from = (s.dev.system_brightness() * 1000.0f32) as i32;
+      }
+      p = Play { ...p, gesture: 1, gesture_from: from, gesture_level: from, gesture_max: 1000 };
+    } else {
+      let (level, max) = s.dev.volume();
+      if (max <= 0) {
+        return s;
+      }
+      p = Play { ...p, gesture: 2, gesture_from: level, gesture_level: level, gesture_max: max };
+    }
+  }
+  let span = (s.h * 3 / 5).max(1) as f32;
+  let step = ((pr.y0 - pr.y) / span * (p.gesture_max as f32)) as i32;
+  let level = (p.gesture_from + step).max(0).min(p.gesture_max);
+  let now = s.dev.mono_ms();
+  if (p.gesture == 1) {
+    let lit = level.max(10);
+    if (lit != p.gesture_level || p.light < 0) {
+      s.dev.brightness(lit as f32 / 1000.0f32);
+    }
+    return App { ...s, play: Play { ...p, light: lit, gesture_level: lit, badge: "LIGHT " + (lit / 10).to_string() + "%", badge_until: now + BADGE_MS }, dirty: true };
+  }
+  if (level != p.gesture_level) {
+    s.dev.set_volume(level);
+  }
+  return App { ...s, play: Play { ...p, gesture_level: level, badge: "VOLUME " + level.to_string(), badge_until: now + BADGE_MS }, dirty: true };
 }
 
 // Starts a fling of the list that the finger moved, at the speed of the
@@ -1992,7 +2120,7 @@ pub function view(s: App): ui.View {
     hubs = s.results;
   }
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: skip_label(p), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: p.status };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: skip_label(p), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: p.status };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
@@ -2196,7 +2324,7 @@ function frame(own s: App, ns: i64): App {
   if (t.gpu && t.window != 0 as usize) {
     if (t.play.video) {
       let over: scene.Node[] = [];
-      if (t.play.overlay || skip_label(t.play).len() > 0 || t.play.up_next_at > 0i64) {
+      if (t.play.overlay || skip_label(t.play).len() > 0 || t.play.up_next_at > 0i64 || t.play.badge.len() > 0) {
         over = t.nodes;
       }
       if (t.dev.present(t.window, over, true)) {
