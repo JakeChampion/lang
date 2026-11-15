@@ -44,15 +44,35 @@ function (s: Input) find_byte(byte: i32, from: i32): i32 {
   }
 }
 
-function (s: Input) scan_set(from: i32, set: u8[]): i32 {
-  match (s) {
-    Text(t, _) => {
-      return __scan_set(t, from, set);
-    },
-    Bytes(b, _) => {
-      return __scan_set_bytes(b, from, set);
+// scan_first gives the first byte at or after `from` that can start a match,
+// or the length. The nibble masks of the set scan it with SIMD.
+function (s: Input) scan_first(from: i32, re: Bre): i32 {
+  if (re.masks.len() == 0) {
+    match (s) {
+      Text(t, _) => {
+        return __scan_set(t, from, re.first);
+      },
+      Bytes(b, _) => {
+        return __scan_set_bytes(b, from, re.first);
+      }
     }
   }
+  let at = -1;
+  let n = 0;
+  match (s) {
+    Text(t, _) => {
+      at = __scan_masks(t, from, re.masks);
+      n = t.len();
+    },
+    Bytes(b, _) => {
+      at = __scan_masks_bytes(b, from, re.masks);
+      n = b.len();
+    }
+  }
+  if (at < 0) {
+    return n;
+  }
+  return at;
 }
 
 function (s: Input) same_range(a: i32, b: i32, n: i32): boolean {
@@ -223,7 +243,7 @@ function assert_buf_end(): i32 {
   return 5;
 }
 
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean, icase: boolean, sparse: boolean, few_paths: boolean }
+pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean, icase: boolean, sparse: boolean, few_paths: boolean, masks: u8[] }
 
 // The syntax of a pattern. `extended` selects ERE. `gnu_ops` gives the GNU
 // operators: \+, \? and \| in BRE, and \w, \W, \s, \S, \b, \B, \<, \>, \`
@@ -1359,7 +1379,7 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   let cx_nl = syntax.newline_anchor && has_op(c.insts, op_bol());
   let cx_word = reads_word(c.insts);
   let bclass = byte_classes(c.insts, p.classes, cx_nl || syntax.newline_anchor && has_op(c.insts, op_eol()), cx_word);
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word, icase: syntax.icase, sparse: !fm.1 && count_set(fm.0) <= sparse_max(), few_paths: few_paths(p.nodes) };
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word, icase: syntax.icase, sparse: !fm.1 && count_set(fm.0) <= sparse_max(), few_paths: few_paths(p.nodes), masks: set_masks(fm.0) };
 }
 
 function failed_bre(err: string, syntax: Syntax): Bre {
@@ -1367,7 +1387,7 @@ function failed_bre(err: string, syntax: Syntax): Bre {
   let no_alts: u8[][] = [];
   let no_ints: i32[] = [];
   let no_insts: Inst[] = [];
-  return Bre { insts: no_insts, classes: no_bytes, ngroups: 0, nmarks: 0, backref: false, err: err, newline_anchor: syntax.newline_anchor, first: no_bytes, empty_ok: true, pre: no_bytes, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_ints, dfa: dfa_cache(), bclass: no_bytes, reps: no_ints, cx_lo: false, cx_nl: false, cx_word: false, icase: false, sparse: false, few_paths: false };
+  return Bre { insts: no_insts, classes: no_bytes, ngroups: 0, nmarks: 0, backref: false, err: err, newline_anchor: syntax.newline_anchor, first: no_bytes, empty_ok: true, pre: no_bytes, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_ints, dfa: dfa_cache(), bclass: no_bytes, reps: no_ints, cx_lo: false, cx_nl: false, cx_word: false, icase: false, sparse: false, few_paths: false, masks: no_bytes };
 }
 
 function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
@@ -2295,7 +2315,7 @@ function next_start(re: Bre, text: Input, pos: i32, hi: i32): i32 {
   }
   let i = pos;
   if (hi == text.len()) {
-    i = text.scan_set(pos, re.first);
+    i = text.scan_first(pos, re);
   } else {
     while (i < hi && re.first[text.at(i) as i32] as i32 == 0) {
       i += 1;
@@ -2396,6 +2416,54 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
   return dfa_run(re, text, from, lo, hi, true) >= 0;
 }
 
+// set_masks gives the masks of __scan_masks with one probe for a set of 256
+// bytes: the bytes of a high half that have the same low halves share a bit.
+// A set with more than eight such rows has no masks, and an empty one too.
+function set_masks(set: u8[]): u8[] {
+  let none: u8[] = [];
+  if (set.len() != 256) {
+    return none;
+  }
+  let rows: i32[] = [];
+  let bits: i32[] = [];
+  let low = __alloc_u8(16);
+  let high = __alloc_u8(16);
+  for h in 0..16 {
+    let row = 0;
+    for l in 0..16 {
+      if (set[h * 16 + l] as i32 != 0) {
+        row |= 1 << l;
+      }
+    }
+    if (row == 0) {
+      continue;
+    }
+    let k = 0;
+    while (k < rows.len() && rows[k] != row) {
+      k += 1;
+    }
+    if (k == rows.len()) {
+      if (k == 8) {
+        return none;
+      }
+      rows = rows.append(row);
+    }
+    high = high.with(h, (1 << k) as u8);
+  }
+  if (rows.len() == 0) {
+    return none;
+  }
+  for k in 0..rows.len() {
+    for l in 0..16 {
+      if ((rows[k] >> l & 1) != 0) {
+        low = low.with(l, (low[l] as i32 | 1 << k) as u8);
+      }
+    }
+  }
+  let out: u8[] = [1u8, 0u8, 0u8, 0u8];
+  return out.concat(low).concat(high);
+}
+
 // The most bytes that can start a match for sparse_search to scan for them.
 function sparse_max(): i32 {
   return 64;
@@ -2419,7 +2487,7 @@ function sparse_search(re: Bre, text: Input, from: i32, lo: i32, hi: i32): boole
   let tries = 0;
   let limit = (hi - from) / 16 + 4;
   while (i < hi) {
-    i = text.scan_set(i, re.first);
+    i = text.scan_first(i, re);
     if (i >= hi) {
       return false;
     }
