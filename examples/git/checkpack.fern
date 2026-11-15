@@ -96,9 +96,7 @@ function findings(name: string, found: fsck.Finding[], p: Policy): Report {
 
 function tree_tasks(body: u8[], width: i32): Task[] {
   let out: Task[] = [];
-  let Ok(entries) = objects.tree_entries(body, width) else {
-    return [];
-  };
+  let entries = fsck.tree_view(width, body).entries;
   for e in entries {
     let mode = mode_bits(e.mode);
     if ((mode & 61440) != 40960) {
@@ -213,10 +211,11 @@ function mode_kind(mode: string): string {
 
 function tree_links(s_in: Links, name: string, body: u8[], width: i32): Parsed {
   let s = s_in;
-  let entries = match (objects.tree_entries(body, width)) {
-    Ok(es) => es,
-    Err(_) => { return parsed(s, ["fatal: Not all child objects of " + name + " are reachable"]); },
-  };
+  let view = fsck.tree_view(width, body);
+  if (view.bad.len() > 0) {
+    return parsed(s, ["error: " + view.bad, "fatal: Not all child objects of " + name + " are reachable"]);
+  }
+  let entries = view.entries;
   for e in entries {
     let kind = mode_kind(e.mode);
     if (kind.len() > 0) {
@@ -246,6 +245,55 @@ function finish(s: Links, width: i32, local: (string) => Option[objects.Object])
   return [];
 }
 
+// Input objects precede local bases that complete a thin pack.
+function input_order(b: index.Built, ix: pack.Index, width: i32): i32[] {
+  let physical: i32[] = [];
+  let links: i32[] = [];
+  for i in 0..ix.count {
+    physical = physical.append(i);
+    links = links.append(-1);
+  }
+  physical = cmp.sort_by(physical, (a: i32, z: i32): i32 => pack.offset_at(ix, a).cmp(pack.offset_at(ix, z)));
+  let out: i32[] = [];
+  let queue: i64[] = [];
+  let heads: Map[i64, i32] = Map { };
+  let window = pack.whole(b.data, width);
+  for i in 0..b.input_count {
+    let n = physical[i];
+    let at = pack.offset_at(ix, n);
+    let e = pack.entry_in(window, at);
+    if (e.kind != pack.OFS_DELTA && e.kind != pack.REF_DELTA) {
+      out = out.append(n);
+      queue = queue.append(at);
+    }
+  }
+  for i in 0..b.input_count {
+    let n = physical[b.input_count - 1 - i];
+    let e = pack.entry_in(window, pack.offset_at(ix, n));
+    if (e.kind == pack.OFS_DELTA || e.kind == pack.REF_DELTA) {
+      let parent = if (e.kind == pack.OFS_DELTA) { e.base_offset } else { pack.offset_of(ix, e.base_name) };
+      links = links.with(n, heads.get_or(parent, -1));
+      heads = heads.insert(parent, n);
+    }
+  }
+  let at = 0;
+  let base = b.input_count;
+  while (at < queue.len() || base < physical.len()) {
+    if (at == queue.len()) {
+      queue = queue.append(pack.offset_at(ix, physical[base]));
+      base += 1;
+    }
+    let child = heads.get_or(queue[at], -1);
+    at += 1;
+    while (child >= 0) {
+      out = out.append(child);
+      queue = queue.append(pack.offset_at(ix, child));
+      child = links[child];
+    }
+  }
+  return out;
+}
+
 pub function validate(b: index.Built, width: i32, p: Policy, local: (string) => Option[objects.Object]): Report {
   if (!p.enabled) {
     return report(true, []);
@@ -254,11 +302,13 @@ pub function validate(b: index.Built, width: i32, p: Policy, local: (string) => 
     Ok(i) => i,
     Err(e) => { return report(false, ["fatal: " + e]); },
   };
-  let order: i32[] = [];
-  for i in 0..ix.count {
-    order = order.append(i);
+  if (b.input_count < 0 || b.input_count > ix.count) {
+    return report(false, ["fatal: invalid input object count"]);
   }
-  order = cmp.sort_by(order, (a: i32, z: i32): i32 => if (pack.offset_at(ix, a) < pack.offset_at(ix, z)) { -1 } else { 1 });
+  let order = input_order(b, ix, width);
+  if (order.len() != b.input_count) {
+    return report(false, ["fatal: unresolved input object order"]);
+  }
   let src = pack.memory(b.data, (n: u8[]): i64 => pack.offset_of(ix, n), width);
   let cache = pack.cache_new();
   let s = Links { types: Map { }, linked: Map { }, order: [], checked: Map { } };

@@ -3,8 +3,10 @@
 // them. Structured findings also let a packed-object caller choose the
 // severity of each message without parsing its printed text.
 import "std/array";
+import "std/hex";
 import "std/string";
 import "std/array";
+import "std/hex";
 import "./objects";
 
 pub struct Finding { id: string, text: string }
@@ -17,8 +19,10 @@ function fails(id: string, text: string): Finding {
 // that the object is sound.
 pub function check(a: i32, kind: string, body: u8[]): string[] {
   let out: string[] = [];
-  for f in inspect(a, kind, body, (id: string): i32 => 2) {
-    out = out.append(if (f.id.len() == 0) { f.text } else { "error: object fails fsck: " + f.id + ": " + f.text });
+  for f in inspect(a, kind, body, (id: string): i32 => if (id == "extraHeaderEntry") { 0 } else { 2 }) {
+    if (f.id != "extraHeaderEntry") {
+      out = out.append(if (f.id.len() == 0) { f.text } else { "error: object fails fsck: " + f.id + ": " + f.text });
+    }
   }
   return out;
 }
@@ -343,14 +347,41 @@ function check_tag(a: i32, body: u8[], level: (string) => i32): Finding[] {
       return out;
     }
   }
-  let (has_tagger, tagger_at) = skip(body, tag_end + 1, "tagger ");
+  at = tag_end + 1;
+  let (has_tagger, tagger_at) = skip(body, at, "tagger ");
   if (!has_tagger) {
-    return out.append(fails("missingTaggerEntry", "invalid format - expected 'tagger' line"));
+    out = out.append(fails("missingTaggerEntry", "invalid format - expected 'tagger' line"));
+    if (level("missingTaggerEntry") > 1) {
+      return out;
+    }
+  } else {
+    let (finding, next) = check_ident(body, tagger_at);
+    at = next;
+    if (finding.id.len() > 0) {
+      out = out.append(finding);
+      if (level(finding.id) > 1) {
+        return out;
+      }
+    }
   }
-  let (finding, _) = check_ident(body, tagger_at);
-  if (finding.id.len() > 0) {
-    out = out.append(finding);
+  let (gpg, start) = skip(body, at, "gpgsig ");
+  let (sha256, other) = skip(body, at, "gpgsig-sha256 ");
+  if (gpg || sha256) {
+    at = after_line(body, if (gpg) { start } else { other });
+    if (at > body.len()) {
+      return out.append(fails("badGpgsig", "invalid format - unexpected end after 'gpgsig' or 'gpgsig-sha256' line"));
+    }
+    while (at < body.len() && body[at] == b' ') {
+      at = after_line(body, at);
+      if (at > body.len()) {
+        return out.append(fails("badHeaderContinuation", "invalid format - unexpected end in 'gpgsig' or 'gpgsig-sha256' continuation line"));
+      }
+    }
   }
+  if (at < body.len() && body[at] != b'\n') {
+    out = out.append(fails("extraHeaderEntry", "invalid format - extra header(s) after 'tagger'"));
+  }
+
   return out;
 }
 
@@ -608,6 +639,28 @@ function entry_error(raw: i32, body: u8[], at: i32): string {
     return "empty filename in tree entry";
   }
   return "";
+}
+
+pub struct TreeView { entries: objects.TreeEntry[], bad: string }
+
+// The valid prefix remains available after a malformed tree entry.
+pub function tree_view(width: i32, body: u8[]): TreeView {
+  let out: objects.TreeEntry[] = [];
+  let at = 0;
+  while (at < body.len()) {
+    let bad = entry_error(width, body, at);
+    if (bad.len() > 0) {
+      return TreeView { entries: out, bad: bad };
+    }
+    let (_, path) = mode_at(body, at);
+    let end = path;
+    while (body[end] != 0) {
+      end += 1;
+    }
+    out = out.append(objects.TreeEntry { mode: objects.part_bytes(body, at, path - 1), name: array.slice(body, path, end), hash: hex.encode(array.slice(body, end + 1, end + 1 + width)) });
+    at = end + 1 + width;
+  }
+  return TreeView { entries: out, bad: "" };
 }
 
 function check_tree(a: i32, body: u8[]): Finding[] {

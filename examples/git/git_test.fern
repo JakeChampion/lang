@@ -777,6 +777,35 @@ function test_pack_validation(): test.TestOutcome {
     if (!checkpack.validate(gitlink, width, strict, no_local).ok) {
       return test.fail("strict requires submodule objects in the parent repository");
     }
+    let thin = unhex(if (width == objects.SHA1) { "5041434b0000000200000001f309fcd4989c0b35a94fc0ab7a3c52a38a4edcf9b41a789ce3ed63ac2f294a4d553049b230324d493633314a4e324b4db24c343033483535494ab34831b334b2b0484b4a4d35b13430e14a2c2dc9c82f527054b0497448ad48cc2dc849d54bcecfb5533034378002056d10c90514cdcd2c294925a0981fa29a2b37b5b838313d950b0062c029b9623034ffdbfaf7351ce9c45beebf91dc2da8b4bb" } else { "5041434b0000000200000001fb0a8852a07594e754ec4da1364f849d77a9937fb23dab9d0782f7a8930251ce282d789c7dca410ac230108561dc06bc43762e04c92493a603227a944c3251c1d0d24670e76d3ca715baf62dfec5e3db7e36ef3689e84e0a102358eb93771d15486030a3cf7deebd94486c7c60ef18909189c951ce01b3a4c55b50f1d96ec3a42ffa18cff28a757cc8210df5a42198757affab5ade7a6f4d56bcfbaf5595798e57515f6f0530407a965ddc4eebc785d72a4ec51ebe2ce30236886d7a9713a1a5e2ea3c168eb2fe" });
+    let old_body = "not a commit\n".bytes();
+    let old_name = objects.hash_of(width, "commit", old_body);
+    let old_object = (name: string): Option[objects.Object] => if (name == old_name) { Some(objects.Object { kind: "commit", body: old_body }) } else { None };
+    let raw = width;
+    let Ok(completed) = index.build_with(thin, index.options(width), (data: u8[], offsets: i64[]): string[][] => [index.names_part(data, offsets, 0, offsets.len() - 1, raw)], old_object) else {
+      return test.fail("the thin control pack");
+    };
+    if (completed.input_count != 1 || completed.data[11] != 2 || !checkpack.validate(completed, width, strict, old_object).ok) {
+      return test.fail("an old delta base receives new-object checks");
+    }
+    let blob = "hello\n".bytes();
+    let target = objects.hash_of(width, "blob", blob);
+    let tag = ("object " + target + "\ntype tree\ntag v1\ntagger " + ident + "\nmessage\n").bytes();
+    let tag_name = objects.hash_of(width, "tag", tag);
+    let Ok(bad_tag) = index.build(validation_pack(width, [3, 4], [blob, tag]), index.options(width)) else {
+      return test.fail("the tag control pack");
+    };
+    let refused_tag = checkpack.validate(bad_tag, width, p, no_local);
+    if (refused_tag.ok || refused_tag.lines != ["error: object " + target + " is a blob, not a tree", "error: bad tag pointer to " + target + " in " + tag_name, "fatal: invalid tag"]) {
+      return test.fail("a tag with a wrong target type");
+    }
+    let Ok(forward) = index.build(validation_pack(width, [4, 3], [tag, blob]), index.options(width)) else {
+      return test.fail("the forward tag control pack");
+    };
+    let refused_forward = checkpack.validate(forward, width, p, no_local);
+    if (refused_forward.ok || refused_forward.lines != ["error: object " + target + " is a tree, not a blob", "fatal: invalid blob object " + target]) {
+      return test.fail("a tag before its wrong target");
+    }
   }
   return test.pass();
 }
