@@ -6481,6 +6481,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
   }
   let wraps: i32[] = [];
   let wrap_arg: i32[] = [];
+  let params = util.minus_ones(f.nparams);
   for bi in 0..f.blocks.len() {
     let insts = f.blocks[bi].insts;
     for k in 0..insts.len() {
@@ -6490,6 +6491,10 @@ pub function drop_low_wraps(f: SFunc): Formed {
         def_b = def_b.with(r, bi);
         def_k = def_k.with(r, k);
         if (demand_propagates(ins)) {
+          prop = prop.with(r, true);
+        }
+        if (ins.kind_tag == PARAM && ins.imm >= 0 && ins.imm < f.nparams) {
+          params = params.with(ins.imm, r);
           prop = prop.with(r, true);
         }
         if (low_wrap(ins)) {
@@ -6504,7 +6509,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
   // operands depend on result demand need to enter the worklist.
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.result < 0 || ins.result >= f.nvals || !prop[ins.result]) {
+      if ((ins.result < 0 || ins.result >= f.nvals || !prop[ins.result]) && !self_call(f, ins)) {
         for ai in 0..ins.args.len() {
           let a = ins.args[ai];
           if (a >= 0 && a < f.nvals && prop[a]) {
@@ -6523,21 +6528,20 @@ pub function drop_low_wraps(f: SFunc): Formed {
       work = work.append(tv);
     }
   }
-  let wi = 0;
-  while (wi < work.len()) {
-    let v = work[wi];
-    wi += 1;
-    let ins = def_at(f, def_b, def_k, v);
-    for ai in 0..ins.args.len() {
-      let a = ins.args[ai];
-      if (a >= 0 && a < f.nvals && prop[a]) {
-        let bits = operand_bits(ins, ai, required[v], f, def_b, def_k);
-        if (bits > required[a]) {
-          required = required.with(a, bits);
-          work = work.append(a);
-        }
+  required = spread_demand(f, def_b, def_k, prop, required, work);
+  while (true) {
+    let wants = self_call_demand(f, params, required);
+    let fed: i32[] = [];
+    for a in 0..f.nvals {
+      if (prop[a] && wants[a] > required[a]) {
+        required = required.with(a, wants[a]);
+        fed = fed.append(a);
       }
     }
+    if (fed.len() == 0) {
+      break;
+    }
+    required = spread_demand(f, def_b, def_k, prop, required, fed);
   }
   let repl: i32[] = [];
   let dropped = false;
@@ -6584,6 +6588,54 @@ pub function drop_low_wraps(f: SFunc): Formed {
     nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: t });
   }
   return formed_by(SFunc { ...f, blocks: nblocks }, repl);
+}
+
+// The demand of each value once the demand of each value in `work` reaches
+// its operands.
+function spread_demand(f: SFunc, def_b: i32[], def_k: i32[], prop: boolean[], own required: i32[], own work: i32[]): i32[] {
+  let wi = 0;
+  while (wi < work.len()) {
+    let v = work[wi];
+    wi += 1;
+    let ins = def_at(f, def_b, def_k, v);
+    for ai in 0..ins.args.len() {
+      let a = ins.args[ai];
+      if (a >= 0 && a < f.nvals && prop[a]) {
+        let bits = operand_bits(ins, ai, required[v], f, def_b, def_k);
+        if (bits > required[a]) {
+          required = required.with(a, bits);
+          work = work.append(a);
+        }
+      }
+    }
+  }
+  return required;
+}
+
+// A call of the function itself reads only the bits of an argument that the
+// uses of its parameter read.
+function self_call(f: SFunc, ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.str == f.name && !f.takes_env && ins.args.len() == f.nparams;
+}
+
+// For each value, the largest demand of a parameter that a call of the
+// function itself gives it to.
+function self_call_demand(f: SFunc, params: i32[], required: i32[]): i32[] {
+  let out = __alloc_i32(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (!self_call(f, ins)) {
+        continue;
+      }
+      for k in 0..ins.args.len() {
+        let a = ins.args[k];
+        if (a >= 0 && a < f.nvals && params[k] >= 0 && required[params[k]] > out[a]) {
+          out = out.with(a, required[params[k]]);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function has_low_wrap(f: SFunc): boolean {
