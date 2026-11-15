@@ -1,10 +1,19 @@
 // `before` holds a register only for values whose interval reaches a marked
 // position at either end. `clobbers` holds one only for values live strictly
 // across a marked position, so the position's own operands and result may use it.
-pub struct Table { first: i32, before: i32[][], clobber_first: i32, clobbers: i32[][] }
+// `deny` has the bit of each register that no value can take.
+pub struct Table { first: i32, before: i32[][], clobber_first: i32, clobbers: i32[][], deny: i64 }
 
 pub function none(): Table {
-  return Table { first: 0, before: [], clobber_first: 0, clobbers: [] };
+  return Table { first: 0, before: [], clobber_first: 0, clobbers: [], deny: 0i64 };
+}
+
+pub function with_deny(t: Table, deny: i64): Table {
+  return Table { ...t, deny: deny };
+}
+
+pub function denied(t: Table, reg: i32): boolean {
+  return t.deny != 0i64 && reg < 63 && (t.deny >> reg as i64 & 1i64) != 0i64;
 }
 
 pub function table(first: i32, count: i32, masks: i32[]): Table {
@@ -16,7 +25,7 @@ pub function with_clobbers(t: Table, first: i32, count: i32, masks: i32[]): Tabl
 }
 
 pub function empty(t: Table): boolean {
-  return t.before.len() == 0 && t.clobbers.len() == 0;
+  return t.before.len() == 0 && t.clobbers.len() == 0 && t.deny == 0i64;
 }
 
 function rows(first: i32, count: i32, masks: i32[]): i32[][] {
@@ -75,6 +84,9 @@ function validate_rows(first: i32, rows: i32[][], nregs: i32, positions: i32): v
 }
 
 pub function allows(t: Table, reg: i32, lo: i32, hi: i32): boolean {
+  if (denied(t, reg)) {
+    return false;
+  }
   if (reg >= t.first && reg - t.first < t.before.len()) {
     let row = t.before[reg - t.first];
     if (row[hi + 1] != row[lo]) {

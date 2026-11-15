@@ -1696,13 +1696,17 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let free: i32[] = [];
   let r = nregs - 1;
   while (r >= 0) {
-    free = free.append(r);
+    if (!ssafixed.denied(fixed, r)) {
+      free = free.append(r);
+    }
     r -= 1;
   }
   let free_s: i32[] = [];
   r = nregs + nsaved - 1;
   while (r >= nregs) {
-    free_s = free_s.append(r);
+    if (!ssafixed.denied(fixed, r)) {
+      free_s = free_s.append(r);
+    }
     r -= 1;
   }
 
@@ -1722,13 +1726,17 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       free = [];
       r = sat - 1;
       while (r >= cbase) {
-        free = free.append(r);
+        if (!ssafixed.denied(fixed, r)) {
+          free = free.append(r);
+        }
         r -= 1;
       }
       free_s = [];
       r = sat + nfs - 1;
       while (r >= sat) {
-        free_s = free_s.append(r);
+        if (!ssafixed.denied(fixed, r)) {
+          free_s = free_s.append(r);
+        }
         r -= 1;
       }
     }

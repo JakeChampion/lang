@@ -119,6 +119,8 @@ pub struct EmitState {
   leak_check: boolean,
   backtrace: boolean,
   profile: i32,
+  // The bit of each register that the SSA allocator does not use.
+  ssa_deny: i64,
   cover: boolean,
   symbols: boolean,
   optimize: boolean,
@@ -667,6 +669,7 @@ pub function new_state(): EmitState {
     leak_check: false,
     backtrace: false,
     profile: rtprofile.mode(),
+    ssa_deny: ssa_deny_env(),
     cover: false,
     symbols: false,
     optimize: false,
@@ -687,6 +690,19 @@ pub function new_state(): EmitState {
     raw_syscall: "",
   };
   return with_switches(s, env_switches());
+}
+
+// FERN_SSA_DENY=<mask> keeps the SSA allocator off each register whose bit
+// is set. A test uses it to run a program with few registers, or with none.
+function ssa_deny_env(): i64 {
+  match (env("FERN_SSA_DENY")) {
+    Some(v) => {
+      return util.digits_to_i64(v);
+    },
+    None => {
+      return 0i64;
+    }
+  }
 }
 
 pub function sanitize_on(): boolean {
