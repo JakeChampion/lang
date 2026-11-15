@@ -93,6 +93,16 @@ jobs:
                   });
                   if (list.length >= 3000) why = "the diff is past the 3000-file listing cap";
                   else files = list;
+                } else if (context.eventName === "workflow_dispatch" && context.ref === "refs/heads/merge-queue/batch") {
+                  // A batch of the merge queue is main with pull requests
+                  // merged on it. Its diff from main is the union of their
+                  // diffs, so the lanes it reaches are the lanes they reach.
+                  const { data: cmp } = await github.rest.repos.compareCommitsWithBasehead({
+                    owner, repo, basehead: `main...${context.sha}`,
+                  });
+                  const n = (cmp.files || []).length;
+                  if (cmp.status !== "ahead" || n >= 300) why = `the batch runs every lane: compare with main is ${cmp.status} with ${n} file(s)`;
+                  else files = cmp.files;
                 } else {
                   why = `a ${context.eventName} runs every lane`;
                 }
@@ -211,6 +221,27 @@ jobs:
                 }
                 return { reason };
               };
+              // The merge queue moves main to the commit that its batch run
+              // tested (scripts/merge-queue). A lane whose every job passed
+              // on that run at this exact commit has nothing new to check on
+              // main. A lane that the batch did not run stays for the checks
+              // below.
+              const provenOnBatch = async () => {
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner, repo, workflow_id: "merge-queue-batch.yml", head_sha: context.sha, status: "completed", per_page: 5,
+                });
+                const run = data.workflow_runs[0];
+                if (!run) return null;
+                const display = await laneNames();
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                  owner, repo, run_id: run.id, filter: "latest", per_page: 50,
+                });
+                const passed = Object.keys(lanes).filter((l) => {
+                  const mine = display[l] ? jobs.filter((j) => j.name.startsWith("Validate / " + jobPrefix(l))) : [];
+                  return verdict(mine) === "passed";
+                });
+                return { pr: null, run: run.id, lanes: passed, waited: 0 };
+              };
               // A lane whose inputs have not changed since main last passed it
               // has nothing new to check on main. Its base is the newest main
               // run that ran it: passed there, the lane is filtered on the
@@ -269,12 +300,13 @@ jobs:
               let unchanged = [];
               if (context.eventName === "push" && files === null) {
                 try {
-                  proven = await provenOnIdenticalTree();
+                  proven = await provenOnBatch() || await provenOnIdenticalTree();
                 } catch (e) {
                   core.warning(`every lane runs: could not check the merged PR's run (${e.message})`);
                 }
               }
               if (proven && proven.reason) why = `a push runs every lane: ${proven.reason}`;
+              const provenBy = proven && proven.pr === null ? "the merge queue batch" : `#${proven && proven.pr}`;
               const provenOff = proven && proven.lanes ? proven.lanes.filter((l) => l in out && !alwaysOnMain.includes(l)) : [];
               for (const l of provenOff) out[l] = false;
               if (context.eventName === "push" && files === null) {
@@ -295,7 +327,7 @@ jobs:
                 ? (off.some((lane) => lane !== "test-affected") ? `${on.length} lane(s) run, ${off.length} skipped` : `every lane runs: ${why}`)
                 : `${paths.length} changed path(s): ${on.length} lane(s) run, ${off.length} skipped`);
               if (provenOff.length) {
-                core.info(`${provenOff.length} lane(s) skipped: they passed on #${proven.pr}'s run ${proven.run} at this exact tree` +
+                core.info(`${provenOff.length} lane(s) skipped: they passed on ${provenBy}'s run ${proven.run} at this exact tree` +
                   (proven.waited ? ` (waited ${proven.waited} min for it)` : ""));
                 // main-red.yml reads this annotation to close a red lane's issue
                 // that main itself will not re-run while PRs keep proving it.
@@ -309,7 +341,7 @@ jobs:
                 .addHeading("Lanes", 3)
                 .addRaw(files === null
                   ? (provenOff.length
-                    ? `The tree is identical to #${proven.pr}'s head, and ${provenOff.length} lane(s) passed on its run ${proven.run}` +
+                    ? `The tree is identical to the tree that ${provenBy} tested, and ${provenOff.length} lane(s) passed on its run ${proven.run}` +
                       (proven.waited ? ` (waited ${proven.waited} min for it)` : "") + `.\n`
                     : `${why}.\n`) + (unchanged.length
                     ? `${unchanged.length} lane(s) unchanged since main last passed them: ${unchanged.join(", ")}.\n`

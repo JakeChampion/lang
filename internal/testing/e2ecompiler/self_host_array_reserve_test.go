@@ -36,7 +36,7 @@ function main(): i32 {
     let block = ssa.SBlock { id: 0, preds: [], insts: ops,
       term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 } };
     let graph = ssa.SFunc { name: "reserve", nparams: 0, nvals: 2, entry: 0, takes_env: false, blocks: [block] };
-    let f = ssasem.Func { schema_checked: false, source_positions: sourcepos.no_source(),  graph: graph, values: [capacity, result], params: [], result: result,
+    let f = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  graph: graph, values: [capacity, result], params: [], result: result,
       records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [],
       shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] };
     let checked = ssasem.analyze(f);

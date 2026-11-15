@@ -39,6 +39,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "tcp_connect_with", capability: "net" },
     BuiltinCap { builtin: "unix_listen", capability: "net" },
     BuiltinCap { builtin: "unix_connect", capability: "net" },
+    BuiltinCap { builtin: "vsock_connect", capability: "net" },
     BuiltinCap { builtin: "tcp_recv_into", capability: "net" },
     BuiltinCap { builtin: "tcp_ktls", capability: "net" },
     BuiltinCap { builtin: "read_file", capability: "fs" },

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestPegModule(t *testing.T) {
@@ -122,7 +124,8 @@ func TestX86_64PegTapRunsNatively(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Fatalf("TAP binary exit = %d, want 0\n%s", code, tap)
 	}
-	for _, w := range []string{"# tests 19", "# pass 19", "# fail 0"} {
+	e2eharness.CheckTAPPlan(t, string(tap))
+	for _, w := range []string{"# fail 0"} {
 		if s := string(tap); !strings.Contains(s, w) {
 			t.Errorf("TAP output missing %q:\n%s", w, s)
 		}

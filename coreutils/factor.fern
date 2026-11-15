@@ -519,6 +519,41 @@ function rho_try_big(n: bigint.BigInt, c: bigint.BigInt): bigint.BigInt {
   let one = bigint.from_i64(1 as i64);
   let x = bigint.from_i64(2 as i64);
   let y = x;
+  let saved_x = x;
+  let saved_y = y;
+  let g = one;
+  let batch = 1;
+  while (g.cmp(one) == 0) {
+    saved_x = x;
+    saved_y = y;
+    let product = one;
+    let i = 0;
+    while (i < batch) {
+      x = bi_mod(bi_mulmod(x, x, n).add(c), n);
+      y = bi_mod(bi_mulmod(y, y, n).add(c), n);
+      y = bi_mod(bi_mulmod(y, y, n).add(c), n);
+      let diff = x.sub(y);
+      if (diff.is_negative()) {
+        diff = diff.negate();
+      }
+      product = bi_mulmod(product, diff, n);
+      i += 1;
+    }
+    g = bi_gcd(product, n);
+    if (batch < rho_batch()) {
+      batch += batch;
+    }
+  }
+  if (g.cmp(n) == 0) {
+    return rho_recover_big(n, c, saved_x, saved_y);
+  }
+  return g;
+}
+
+function rho_recover_big(n: bigint.BigInt, c: bigint.BigInt, start_x: bigint.BigInt, start_y: bigint.BigInt): bigint.BigInt {
+  let one = bigint.from_i64(1 as i64);
+  let x = start_x;
+  let y = start_y;
   let g = one;
   while (g.cmp(one) == 0) {
     x = bi_mod(bi_mulmod(x, x, n).add(c), n);
