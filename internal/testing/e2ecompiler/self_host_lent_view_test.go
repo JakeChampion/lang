@@ -51,7 +51,8 @@ function main(): i32 {
 
 // A lent slice's descriptor read by every kind of consumer a [u8] parameter
 // reaches: the decoded reads, a slice of it lent on, the byte-view helpers,
-// the bytes runtime, the string copy, the AES key schedule and the writer.
+// the byte scans and the expanding push, the bytes runtime, the string copy,
+// the AES key schedule and the writer.
 // On wasm each slice is a window in the caller's shadow-stack frame, so the
 // output must match the native targets and the loop must allocate nothing.
 const lentWindowProg = `import "std/i32";
@@ -83,6 +84,23 @@ import "std/i64";
 
 @noinline function differs(a: [u8], b: [u8]): i32 {
   return __mismatch_bytes(a, 0, b, 0, a.len());
+}
+
+// A set of the space alone, and the masks of one probe that takes 'F'.
+const SPACE: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8];
+
+@noinline function scans(d: [u8], set: u8[], f: u8[]): i32 {
+  return __memchr_bytes(d, 70, 0) * 1000000 + __rmemchr_bytes(d, 70, d.len()) * 10000 + __scan_set_bytes(d, 1, set) * 100 + __scan_masks_bytes(d, 0, f);
+}
+
+@noinline function pushed(d: [u8]): string {
+  let t = __alloc_u8(256 * 8);
+  t = t.with(32 * 8, 1u8).with(32 * 8 + 1, 95u8).with(70 * 8, 2u8).with(70 * 8 + 1, 60u8).with(70 * 8 + 2, 62u8);
+  let h = buf_new(16);
+  buf_push_bytes_expanded(h, d, t);
+  let out = buf_take(h);
+  buf_free(h);
+  return out;
 }
 
 @noinline function copied(d: [u8]): i32 {
@@ -118,6 +136,9 @@ function main(): i32 {
   print(shape(s[4:9]).to_string() + " " + handed(s[4:9]).to_string());
   print(checks(buf[2:40]).to_string() + " " + checks(s[1:12]).to_string());
   print(differs(buf[0:10], buf[26:36]).to_string() + " " + differs(buf[0:10], buf[1:11]).to_string() + " " + differs(s[4:9], buf[0:5]).to_string());
+  let f = __alloc_u8(68).with(0, 1u8).with(4 + 6, 1u8).with(20 + 4, 1u8);
+  print(scans(buf[3:40], SPACE, f).to_string() + " " + scans(s[2:19], SPACE, f).to_string() + " " + scans(s, __alloc_u8(0), f).to_string() + " " + scans(buf, SPACE, f).to_string());
+  print(pushed(buf[3:9]) + "|" + pushed(s[10:19]) + "|" + pushed(buf[0:0]));
   print(copied(buf[5:12]).to_string() + " " + copied(s[10:15]).to_string());
   print(text(buf[0:6]) + "|" + text(s[4:9]));
   print(expanded(buf[16:32]).to_string());
@@ -127,7 +148,7 @@ function main(): i32 {
   let before: i64 = __heap_alloc_count();
   let acc: i32 = 0;
   for i in 0..1000 {
-    acc = acc + handed(buf[i % 8:i % 8 + 20]) + checks(s[1:12]) + differs(buf[0:10], s[2:12]);
+    acc = acc + handed(buf[i % 8:i % 8 + 20]) + checks(s[1:12]) + differs(buf[0:10], s[2:12]) + scans(buf[i % 8:i % 8 + 20], SPACE, f) % 1000;
   }
   print((__heap_alloc_count() - before).to_string() + " " + acc.to_string());
   return 0;
@@ -138,11 +159,13 @@ const lentWindowOut = `6068073 423 6068355
 5113107 5113428
 2022080422 12064917
 10 0 0
+2283702 -1009901 -1008101 5576405
+<>|_|
 77170 61498
 ABCDEF|quick
 176041
 UVWXYZ fox
-0 2070134178
+0 2070135803
 `
 
 var lentViewLeak = regexp.MustCompile(`leakcheck: allocs=(\d+) frees=(\d+) live_bytes=0`)

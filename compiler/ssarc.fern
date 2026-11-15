@@ -2023,15 +2023,27 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
 
 struct Fresh { rows: irtables.LowerState[], types: HelperType[], seen: util.NameIndex }
 
-// A kernel helper comes in only when the function calls its builtin.
+// A kernel helper comes in only when the function calls its builtin with a
+// view that the array kernel in place cannot take.
 function view_helpers(f: ssasem.Func, done: util.NameIndex, own rows: irtables.LowerState[]): irtables.LowerState[] {
   for h in ssabytes.state_helpers() {
     let served = ssabytes.served_builtin(h.name);
-    if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0)) {
+    if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0 && wrapped_call(f, served))) {
       rows = rows.append(h);
     }
   }
   return rows;
+}
+
+function wrapped_call(f: ssasem.Func, name: string): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call() && ins.str == name && !(lent_views(f, ins) && dynamic_kernel_count(f, ins))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex, contracts: ssasem.Contracts): Fresh {
@@ -5711,7 +5723,7 @@ function lent_kernel_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.S
   let kernel = array_kernel(ins.str);
   if let Some(op) = kernel {
     if (lent_views(f, ins) && dynamic_kernel_count(f, ins)) {
-      return Lowered { found: true, r: emit(r, ir.packed(op)) };
+      return Lowered { found: true, r: emit(r, op) };
     }
   }
   return Lowered { found: false, r: r };
@@ -5727,11 +5739,16 @@ function dynamic_kernel_count(f: ssasem.Func, ins: ssa.SInst): boolean {
 
 function array_kernel(name: string): Option[ir.Op] {
   return match (name) {
-    "__mismatch_bytes" => Some(ir.op_mismatch_bytes()),
-    "__sum_bytes_array" => Some(ir.op_sum_bytes_array()),
-    "__bsd_sum_bytes" => Some(ir.op_bsd_sum_bytes()),
-    "__crc32_cksum_array" => Some(ir.op_crc32_cksum_array()),
-    "__crc32_ieee_array" => Some(ir.op_crc32_ieee_array()),
+    "__mismatch_bytes" => Some(ir.packed(ir.op_mismatch_bytes())),
+    "__sum_bytes_array" => Some(ir.packed(ir.op_sum_bytes_array())),
+    "__bsd_sum_bytes" => Some(ir.packed(ir.op_bsd_sum_bytes())),
+    "__crc32_cksum_array" => Some(ir.packed(ir.op_crc32_cksum_array())),
+    "__crc32_ieee_array" => Some(ir.packed(ir.op_crc32_ieee_array())),
+    "__memchr_bytes" => Some(ir.packed(ir.op_memchr_bytes())),
+    "__rmemchr_bytes" => Some(ir.packed(ir.op_rmemchr_bytes())),
+    "__scan_set_bytes" => Some(ir.packed(ir.op_scan_set_bytes())),
+    "__scan_masks_bytes" => Some(ir.packed(ir.op_scan_masks_bytes())),
+    "buf_push_bytes_expanded" => Some(ir.op_buf_push_bytes_expanded()),
     _ => None,
   };
 }
@@ -5810,10 +5827,10 @@ function call_ops(name: string): ir.Op[] {
       return [ir.op_call_direct(ssabytes.bsd_name(), 2)];
     },
     "__memchr_bytes" => {
-      return [ir.packed(ir.op_memchr_bytes())];
+      return [ir.op_call_direct(ssabytes.memchr_name(), 3)];
     },
     "__rmemchr_bytes" => {
-      return [ir.packed(ir.op_rmemchr_bytes())];
+      return [ir.op_call_direct(ssabytes.rmemchr_name(), 3)];
     },
     "string_from_bytes_unchecked" => {
       return [ir.packed(ir.op_str_from_bytes())];
@@ -6537,7 +6554,7 @@ function builder_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lower
     "buf_push_mapped" => Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) },
     "buf_push_bytes_filtered" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_filtered()) },
     "buf_push_filtered" => Lowered { found: true, r: emit(r, ir.op_buf_push_filtered()) },
-    "buf_push_bytes_expanded" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_expanded()) },
+    "buf_push_bytes_expanded" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.expanded_name(), 3)) },
     "buf_push_expanded" => Lowered { found: true, r: emit(r, ir.op_buf_push_expanded()) },
     "buf_push_byte" => Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) },
     "buf_push_u64" => Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) },
@@ -7104,8 +7121,8 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_masks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks())) },
-    "__scan_masks_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks_bytes())) },
-    "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
+    "__scan_masks_bytes" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.scan_masks_name(), 3)) },
+    "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.scan_set_name(), 3)) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },
     "__count_runs_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs_bytes())) },
     "__bsd_sum" => Lowered { found: true, r: emit(r, ir.op_bsd_sum()) },
