@@ -7,6 +7,7 @@ import "std/rand";
 import "./clock";
 import "./color";
 import "./config";
+import "./trail";
 
 pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
 
@@ -34,9 +35,16 @@ pub function actions(): Action[] {
 // screen, so the Home key and the Overview key do not leave it.
 pub enum Want { Save, Keywords, Immersive(boolean), Awake(boolean), Pin(boolean) }
 
-// The finger on the fluid. `x` and `y` go from 0 to 1 with y up, and `dx`
-// and `dy` are the sum of the moves that no frame took yet.
-pub struct Pointer { down: boolean, moved: boolean, x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
+// The finger on the fluid. `x` and `y` are the place that the last frame
+// gave it, from 0 to 1 with y up. `moved` tells that its path has a place
+// that no frame reached yet.
+pub struct Pointer { down: boolean, moved: boolean, x: f64, y: f64, color: config.Rgb }
+
+// A frame takes the place of the finger at this time before the frame
+// before it. Android gives the places of a frame with a time of about 5 ms
+// before the frame, so the path has a place after the time that a frame
+// asks for, and the frame never waits for a place.
+pub const LEAD_NS: i64 = 5000000i64;
 
 // A splat for the GPU: its place, its velocity and its colour.
 pub struct Splat { x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
@@ -81,8 +89,8 @@ const MAX_BURST: i32 = 24;
 const MAX_BURSTS: i32 = 8;
 
 // `still` tells that the system asks for no animation, and that the person
-// did not touch the fluid yet. `open` tells that the dialog shows. `touch`
-// is what the finger went down on, with the row of the dialog in `row`, and
+// did not touch the fluid yet. `open` tells that the dialog shows. `trail` is the path of the
+// finger on the fluid. `touch` is what the finger went down on, with the row of the dialog in `row`, and
 // `dragged` tells that it scrolls the dialog. `hold_ms` is the time that
 // the hold on the exit button started, or -1. `note` shows until `note_ms`.
 // `speed` is the text of the frame rate, which the dialog shows.
@@ -93,6 +101,7 @@ pub struct Model {
   rng: i64,
   layout: Layout,
   pointer: Pointer,
+  trail: trail.Trail,
   bursts: i32[],
   color_timer: f64,
   still: boolean,
@@ -126,7 +135,8 @@ pub function new(cfg: config.Config, still: boolean, seed: i64, now_ns: i64): Mo
     clock: clock.new(now_ns),
     rng: rng,
     layout: no_layout(),
-    pointer: Pointer { down: false, moved: false, x: 0.0, y: 0.0, dx: 0.0, dy: 0.0, color: first },
+    pointer: Pointer { down: false, moved: false, x: 0.0, y: 0.0, color: first },
+    trail: trail.start(trail.Sample { ns: now_ns, x: 0.0, y: 0.0 }),
     bursts: [],
     color_timer: 0.0,
     still: still,
@@ -323,34 +333,29 @@ pub function (m: Model) toggle_dialog(): Model {
   return m.opened(!m.open);
 }
 
-// A move of the same number of pixels pushes the same fluid on a window of
-// each shape. Android gives more than one move in the time of a frame, so
-// the moves add up until a frame takes them.
-function (m: Model) moved_to(x: f64, y: f64): Model {
-  let p = m.pointer;
-  let tx = x / (m.layout.width as f64);
-  let ty = 1.0 - y / (m.layout.height as f64);
-  let aspect = m.layout.width as f64 / (m.layout.height as f64);
-  let dx = tx - p.x;
-  let dy = ty - p.y;
-  if (aspect < 1.0) {
-    dx *= aspect;
+// The model with the place x and y of the finger at the time `ns` at the
+// end of its path on the fluid. x and y are in pixels of the window.
+function (m: Model) moved_to(x: f64, y: f64, ns: i64): Model {
+  let s = trail.Sample { ns: ns, x: x / (m.layout.width as f64), y: 1.0 - y / (m.layout.height as f64) };
+  return Model { ...m, trail: m.trail.add(s), pointer: Pointer { ...m.pointer, moved: true } };
+}
+
+// The model with a place that the finger had before the place of a move
+// event, at the time `ns`. Android collects the places of a finger between
+// two frames, and gives them with one event. Give each of them to the model
+// before the event, from the oldest.
+pub function (m: Model) traced(x: f64, y: f64, ns: i64): Model {
+  if (m.touch != ON_FLUID) {
+    return m;
   }
-  if (aspect > 1.0) {
-    dy /= aspect;
-  }
-  if (p.moved) {
-    dx += p.dx;
-    dy += p.dy;
-  }
-  return Model { ...m, pointer: Pointer { ...p, x: tx, y: ty, dx: dx, dy: dy, moved: p.moved || dx != 0.0 || dy != 0.0 } };
+  return m.moved_to(x, y, ns);
 }
 
 function (m: Model) pressed(x: f64, y: f64, now_ns: i64): Model {
   let (rng, c) = color.generate(m.rng);
   let tx = x / (m.layout.width as f64);
   let ty = 1.0 - y / (m.layout.height as f64);
-  let on = Model { ...m, rng: rng, touch: ON_FLUID, pointer: Pointer { down: true, moved: false, x: tx, y: ty, dx: 0.0, dy: 0.0, color: c } };
+  let on = Model { ...m, rng: rng, touch: ON_FLUID, trail: trail.start(trail.Sample { ns: now_ns, x: tx, y: ty }), pointer: Pointer { down: true, moved: false, x: tx, y: ty, color: c } };
   return on.moving(now_ns);
 }
 
@@ -396,9 +401,9 @@ function (m: Model) down(x: f64, y: f64, now_ns: i64): Model {
   return m.pressed(x, y, now_ns);
 }
 
-function (m: Model) move(x: f64, y: f64): Model {
+function (m: Model) move(x: f64, y: f64, now_ns: i64): Model {
   if (m.touch == ON_FLUID) {
-    return m.moved_to(x, y);
+    return m.moved_to(x, y, now_ns);
   }
   if (m.touch == ON_LIST) {
     let far = (y - m.touch_y).abs() > m.layout.slop as f64;
@@ -431,13 +436,14 @@ function (m: Model) up(x: f64, y: f64, now_ns: i64): Model {
 }
 
 // The model after a touch event of `android.Touch`: 0 is down, 1 is up, 2
-// is a move and 3 is a cancel. x and y are in pixels of the window.
+// is a move and 3 is a cancel. x and y are in pixels of the window, and
+// `now_ns` is the time of the event.
 pub function (m: Model) touched(action: i32, x: f64, y: f64, now_ns: i64): Model {
   if (action == 0) {
     return m.down(x, y, now_ns);
   }
   if (action == 2) {
-    return m.move(x, y);
+    return m.move(x, y, now_ns);
   }
   if (action == 1) {
     return m.up(x, y, now_ns);
@@ -547,10 +553,27 @@ pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
     bursts = bursts.truncate(bursts.len() - 1);
   }
   let splat: Option[Splat] = None;
-  let splatted = p.moved;
+  let splatted = false;
+  let path = out.trail;
   if (p.moved) {
-    splat = Some(Splat { x: p.x, y: p.y, dx: p.dx * out.cfg.splat_force, dy: p.dy * out.cfg.splat_force, color: p.color });
-    p = Pointer { ...p, moved: false, dx: 0.0, dy: 0.0 };
+    // A move of the same number of pixels pushes the same fluid on a window
+    // of each shape.
+    let to = path.at(out.clock.last_ns - LEAD_NS);
+    let aspect = out.layout.width as f64 / (out.layout.height as f64);
+    let dx = to.x - p.x;
+    let dy = to.y - p.y;
+    if (aspect < 1.0) {
+      dx *= aspect;
+    }
+    if (aspect > 1.0) {
+      dy /= aspect;
+    }
+    if (dx != 0.0 || dy != 0.0) {
+      splat = Some(Splat { x: to.x, y: to.y, dx: dx * out.cfg.splat_force, dy: dy * out.cfg.splat_force, color: p.color });
+      splatted = true;
+    }
+    p = Pointer { ...p, x: to.x, y: to.y, moved: to.ns < path.end_ns() };
+    path = path.since(to.ns);
   }
   let steps = 0;
   let step = 0.0;
@@ -559,6 +582,6 @@ pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
     steps = n;
     step = size;
   }
-  let draw = !out.cfg.paused || out.redraw || burst > 0 || splatted || out.hold_ms >= 0i64 || out.noting(now_ms);
-  return (Model { ...out, clock: ticked, rng: rng, pointer: p, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splat: splat, steps: steps, step: step, draw: draw });
+  let draw = !out.cfg.paused || out.redraw || burst > 0 || splatted || p.moved || out.hold_ms >= 0i64 || out.noting(now_ms);
+  return (Model { ...out, clock: ticked, rng: rng, pointer: p, trail: path, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splat: splat, steps: steps, step: step, draw: draw });
 }

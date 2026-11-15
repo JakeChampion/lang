@@ -66,6 +66,16 @@ chose stays.
 
 A paused fluid uses no power: the app draws a frame only after a change.
 
+## Touch
+
+Android gives the places of a finger at times that are not the times of
+the frames of the display. A frame can thus get no place, and the next
+frame two. So each frame asks the path of the finger for its place at a
+fixed time before the frame, between two places of the path. A finger with
+a constant speed pushes the fluid by the same amount in each frame.
+`trail.fern` has the path, and `std/android` gives the places and their
+times with `touch_samples`.
+
 ## Speed
 
 The fluid draws at most 2 pixels across one dp, as the page does, and the
@@ -140,7 +150,8 @@ to its log, and ignores it.
 | `app.fern` | The activity: the window, the GPU context, the events and the system calls |
 | `fluid.fern` | The behaviour: what a touch, a key and a frame do |
 | `config.fern` | The values of the simulation and the reader of the settings |
-| `clock.fern` | The fixed time step of the simulation |
+| `clock.fern` | The time step of each frame |
+| `trail.fern` | The path of the finger, and its place at one time |
 | `color.fern` | The colours of the dye |
 | `sim.fern` | The passes of the simulation and of the display |
 | `shaders.fern` | The GLSL source of each pass |

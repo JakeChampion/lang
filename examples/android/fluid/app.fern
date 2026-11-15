@@ -191,7 +191,7 @@ function on_event(own s: App, e: android.Event): App {
       return frame(s, ns);
     },
     android.Touch(action, x, y) => {
-      return App { ...s, model: s.model.touched(action, x as f64, y as f64, monotonic_ns()) };
+      return App { ...s, model: touched(s.model, android.touch_samples(s.ctx), action, x as f64, y as f64) };
     },
     android.Key(code, action) => {
       // The back key and the Escape key, when they go up.
@@ -220,6 +220,22 @@ function on_event(own s: App, e: android.Event): App {
       return s;
     }
   }
+}
+
+// The model after a touch event with the places `samples`. The last place
+// is the place of the event, and the places before it are the ones that
+// Android collected for a move since the event before it.
+function touched(m: fluid.Model, samples: android.TouchSample[], action: i32, x: f64, y: f64): fluid.Model {
+  if (samples.len() == 0) {
+    return m.touched(action, x, y, monotonic_ns());
+  }
+  let out = m;
+  if (action == 2) {
+    for i in 0..samples.len() - 1 {
+      out = out.traced(samples[i].x as f64, samples[i].y as f64, samples[i].ns);
+    }
+  }
+  return out.touched(action, x, y, samples[samples.len() - 1].ns);
 }
 
 // The model after a click of an accessibility service on the item `id`.
