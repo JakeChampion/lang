@@ -77,7 +77,7 @@ function check_dirs(): i32 {
   }
   let long = "";
   for _ in 0..979 {
-    long = long + "/";
+    long += "/";
   }
   if (locale.darwin_dirs(Some(long)).len() != 3 || locale.darwin_dirs(Some(long + "/")).len() != 0) {
     return 44;

@@ -222,7 +222,7 @@ function utf8_all(pat: string, subj: u8[], icase: boolean, gnulib: boolean): str
     let s = m.starts[0];
     let e = m.ends[0];
     if (s != e || s != last) {
-      out = out + f"{s},{e};";
+      out += f"{s},{e};";
     }
     last = e;
     from = if (e > s) { e } else { e + char_len(subj, e) };
