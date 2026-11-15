@@ -135,7 +135,7 @@ aarch64/call_overhead.text	434
 aarch64/call_overhead.ir	11250826
 aarch64/closure_call.text	1309
 aarch64/closure_call.ir	46002179
-aarch64/deflate_decode.ir	33507614
+aarch64/deflate_decode.ir	29829595
 aarch64/deflate_decode.text	15773
 aarch64/deflate_encode.ir	42496722
 aarch64/deflate_encode.text	7648
@@ -200,12 +200,12 @@ aarch64/perceus_cfold.ir	53727826
 aarch64/perceus_deriv.text	2991
 aarch64/perceus_deriv.ir	76299934
 aarch64/perceus_nqueens.text	1891
-aarch64/perceus_nqueens.ir	88680271
+aarch64/perceus_nqueens.ir	87641471
 aarch64/perceus_rbtree.text	2908
-aarch64/perceus_rbtree.ir	35121178
+aarch64/perceus_rbtree.ir	29565816
 aarch64/perceus_rbtree_ck.text	3330
-aarch64/perceus_rbtree_ck.ir	47688585
+aarch64/perceus_rbtree_ck.ir	42101863
 x86_64/video_qtrle.text 5297
 x86_64/video_qtrle.ir 1717224731
-aarch64/video_qtrle.text 5642
+aarch64/video_qtrle.text 5549
 aarch64/video_qtrle.ir 1559097809
