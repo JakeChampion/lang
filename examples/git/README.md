@@ -81,6 +81,11 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   and `log.excludeDecoration` select the refs of the decorations, with
   the default set of git.
 
+  The notes of `refs/notes/` follow the message, as git shows them by
+  default and with `--notes`, `--notes=REF`, `--no-notes`, `%N`,
+  `core.notesRef`, `notes.displayRef`, `GIT_NOTES_REF` and
+  `GIT_NOTES_DISPLAY_REF`.
+
   The mailmap of `.mailmap`, `mailmap.blob` and
   `mailmap.file` gives the names of the header lines, of `%aN` and of
   `--author`, as `log.mailmap` and `--use-mailmap` select. The changes of
@@ -211,8 +216,8 @@ the git of the machine. With git 2.43, four things are different:
 
 ## What it does not have yet
 
-- These options of `log`: `--notes`, the signatures (`--show-signature`,
-  `%G?`), `--remerge-diff`, and `-L`.
+- These options of `log`: the signatures (`--show-signature`, `%G?`),
+  `--remerge-diff`, and `-L`.
 
 - The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
   `color.grep`, and the rules of the `whitespace` attribute. The port
@@ -359,7 +364,8 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   columns of a format, the wrap of `%w()`, `--raw`, `--check` with
   each rule of `core.whitespace`, the diffs of merges, also in a random
   history of merges with conflicts, the diffs of words, the moved lines,
-  also of random edits, and the copies, also in a random history.
+  also of random edits, the copies, also in a random history, and the
+  notes.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

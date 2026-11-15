@@ -526,6 +526,53 @@ func gitCopyFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
 	commit("three")
 }
 
+// gitNotesCases are the forms of the notes for the repository of
+// gitNotesFixture.
+var gitNotesCases = []string{
+	"log", "log --oneline", "log --oneline --notes", "log --notes", "log --no-notes", "log --notes=other", "log --notes=other --notes",
+	"log --notes=notes/other", "log --notes=refs/notes/other", "log --notes=nosuch", "log --notes=* --oneline", "log --show-notes",
+	"log --format=%h%x20%N|", "log --format=%h%x20%N| --no-notes", "log --format=%h%x20%N| --notes=other", "log --format=%N",
+	"log --pretty=reference", "log --pretty=reference --notes", "log --pretty=raw", "log --pretty=fuller --notes=other", "log --graph",
+	"log --graph --oneline --notes", "log -p", "log --stat --notes", "log --no-notes --notes", "log --notes --no-notes", "log",
+	"log --notes=other", "log --oneline", "log",
+}
+
+// gitNotesFixture makes notes for gitNotesCases in the default ref and in
+// refs/notes/other: a note of two paragraphs and a note with no line end.
+func gitNotesFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
+	t.Helper()
+	when := 1700000000
+	run := func(args ...string) {
+		t.Helper()
+		when += 3600
+		cmd := oracle.cmd(args...)
+		cmd.Dir = dir
+		stamp := fmt.Sprintf("%d +0100", when)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C",
+			"GIT_AUTHOR_NAME=A", "GIT_AUTHOR_EMAIL=a@example.com", "GIT_COMMITTER_NAME=C", "GIT_COMMITTER_EMAIL=c@example.com",
+			"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main", "--object-format="+hash.format, ".")
+	for i := 1; i <= 4; i++ {
+		if err := os.WriteFile(filepath.Join(dir, "f"), []byte(fmt.Sprintf("%d\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", "f")
+		run("commit", "-q", "-m", fmt.Sprintf("c%d", i))
+	}
+	run("notes", "add", "-m", "first note", "HEAD~3")
+	run("notes", "add", "-m", "two lines", "-m", "second paragraph", "HEAD~1")
+	run("notes", "--ref=other", "add", "-m", "other note", "HEAD~1")
+	run("notes", "--ref=other", "add", "-m", "x", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "nn"), []byte("no newline"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("notes", "add", "-F", "nn", "HEAD")
+}
+
 // gitMergeCases are the diffs of merges for the repositories of
 // gitFormsFixture and gitMergeFixture.
 var gitMergeCases = []string{
@@ -797,6 +844,19 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 			gitMergeFixture(t, oracle, fixed, run)
 			for _, c := range gitMergeCases {
 				gitCompare(t, oracle, port, fixed, "", strings.Fields(c)...)
+			}
+			notesDir := t.TempDir()
+			gitNotesFixture(t, oracle, notesDir, run)
+			for _, c := range gitNotesCases {
+				gitCompare(t, oracle, port, notesDir, "", strings.Fields(c)...)
+			}
+			for _, setting := range [][]string{{"notes.displayRef", "refs/notes/*"}, {"core.notesRef", "refs/notes/other"}} {
+				if _, stderr, code := oracle.run(t, notesDir, "", "config", setting[0], setting[1]); code != 0 {
+					t.Fatalf("git config %v: %s", setting, stderr)
+				}
+				for _, c := range []string{"log", "log --notes=other", "log --oneline", "log --format=%N"} {
+					gitCompare(t, oracle, port, notesDir, "", strings.Fields(c)...)
+				}
 			}
 			copyDir := t.TempDir()
 			gitCopyFixture(t, oracle, copyDir, run)
