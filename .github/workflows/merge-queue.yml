@@ -62,4 +62,6 @@ jobs:
       - name: Form the next batch
         env:
           GH_TOKEN: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+          # The personal token can have no Actions permission.
+          MERGE_QUEUE_ACTIONS_TOKEN: ${{ github.token }}
         run: scripts/merge-queue form
