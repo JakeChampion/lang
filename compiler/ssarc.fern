@@ -933,6 +933,9 @@ function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t:
       r = emit(r, ir.op_store_local(5));
       if (i == tail) {
         r = drop_tail_array(r, t, v.fields[i].ty, f);
+      } else if (semtypes.equal(v.fields[i].ty, t)) {
+        // A call of the release helper here makes two calls for each level, and the return predictor holds few levels.
+        r = drop_value_inline(r, 5, t, 6, f);
       } else {
         r = drop_value(r, 5, v.fields[i].ty, 6, f);
       }
