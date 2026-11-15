@@ -1,0 +1,100 @@
+// A `?` that leaves a function runs each `defer` and each `errdefer` that is
+// armed, in the scope of the block that it leaves. The interpreter of the
+// compiler ran none of them.
+import "std/option";
+
+function step(n: i32): Result[i32, string] {
+  if (n == 1) {
+    return Err("bad");
+  }
+  return Ok(n);
+}
+
+function run(n: i32): Result[i32, string] {
+  defer print("fn-defer");
+  errdefer print("fn-errdefer");
+  let v: i32 = step(n)?;
+  return Ok(v);
+}
+
+function nested(n: i32): Result[i32, string] {
+  defer print("outer");
+  let total = 0;
+  for i in 0..3 {
+    defer print(f"iter {i}");
+    if (i == 2) {
+      errdefer print("inner-err");
+      total += step(n)?;
+    }
+    total += i;
+  }
+  return Ok(total);
+}
+
+function late(n: i32): Result[i32, string] {
+  let a = step(n)?;
+  defer print("never armed");
+  return Ok(a);
+}
+
+function opt(o: Option[i32]): Option[i32] {
+  defer print("opt-defer");
+  let v = o?;
+  return Some(v + 1);
+}
+
+function in_value(n: i32): Result[i32, string] {
+  defer print("value-defer");
+  let v: i32 = if (n > 0) { step(n)? + 1 } else { 0 };
+  return Ok(v);
+}
+
+function in_cond(n: i32): Result[i32, string] {
+  errdefer print("cond-errdefer");
+  if (step(n)? > 3) {
+    return Ok(1);
+  }
+  return Ok(step(n)? + 10);
+}
+
+function in_lambda(n: i32): Result[i32, string] {
+  defer print("outer-defer");
+  let inner = (k: i32): Result[i32, string] => {
+    defer print("lambda-defer");
+    let v = step(k)?;
+    return Ok(v * 2);
+  };
+  let r = inner(n);
+  print("after lambda");
+  return r;
+}
+
+function show(r: Result[i32, string]): void {
+  match (r) {
+    Ok(v) => {
+      print(f"ok {v}");
+    },
+    Err(e) => {
+      print("err " + e);
+    }
+  }
+}
+
+function main(): i32 {
+  show(run(1));
+  show(run(5));
+  show(nested(1));
+  show(nested(4));
+  show(late(1));
+  show(late(2));
+  print(opt(None).is_none().to_string());
+  print(opt(Some(1)).is_some().to_string());
+  show(in_value(1));
+  show(in_value(2));
+  show(in_cond(1));
+  show(in_cond(2));
+  show(in_cond(5));
+  show(in_lambda(1));
+  show(in_lambda(3));
+  return 0;
+}

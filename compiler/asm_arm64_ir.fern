@@ -11107,83 +11107,17 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr w0, [sp, #96]\n   mov x8, #57\n").svc(57);
   s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n").svc(57);
   s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n").svc(57);
-  s = s.write("    ldr x2, [x21, #8]\n");
-  s = s.write("    cbz x2, .Lsp_close_in\n");
-  s = s.write("    ldr w0, [sp, #100]\n");
-  s = s.write("    ldr x1, [x21]\n");
-  s = s.write("    mov x8, #64\n");
-  s = s.svc(64);
-  s = s.write(".Lsp_close_in:\n");
-  s = s.write("    ldr w0, [sp, #100]\n  mov x8, #57\n").svc(57);
-  s = s.write("    mov x0, #65536\n");
-  s = s.write("    bl __fern_alloc\n");
-  s = s.write("    mov x25, x0\n");
-  s = s.write("    mov x26, #0\n");
-  s = s.write(".Lsp_rdo:\n");
-  s = s.write("    mov x2, #65536\n");
-  s = s.write("    sub x2, x2, x26\n");
-  s = s.write("    cmp x2, #0\n");
-  s = s.write("    b.le .Lsp_rdo_d\n");
-  s = s.write("    ldr w0, [sp, #104]\n");
-  s = s.write("    add x1, x25, x26\n");
-  s = s.write("    mov x8, #63\n");
-  s = s.svc(63);
-  s = s.write("    cmp x0, #0\n");
-  s = s.write("    b.le .Lsp_rdo_d\n");
-  s = s.write("    add x26, x26, x0\n");
-  s = s.write("    b .Lsp_rdo\n");
-  s = s.write(".Lsp_rdo_d:\n");
-  s = s.write("    ldr w0, [sp, #104]\n  mov x8, #57\n").svc(57);
-  s = s.write("    mov x0, #65536\n");
-  s = s.write("    bl __fern_alloc\n");
-  s = s.write("    mov x27, x0\n");
-  s = s.write("    mov x28, #0\n");
-  s = s.write(".Lsp_rde:\n");
-  s = s.write("    mov x2, #65536\n");
-  s = s.write("    sub x2, x2, x28\n");
-  s = s.write("    cmp x2, #0\n");
-  s = s.write("    b.le .Lsp_rde_d\n");
-  s = s.write("    ldr w0, [sp, #112]\n");
-  s = s.write("    add x1, x27, x28\n");
-  s = s.write("    mov x8, #63\n");
-  s = s.svc(63);
-  s = s.write("    cmp x0, #0\n");
-  s = s.write("    b.le .Lsp_rde_d\n");
-  s = s.write("    add x28, x28, x0\n");
-  s = s.write("    b .Lsp_rde\n");
-  s = s.write(".Lsp_rde_d:\n");
-  s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n").svc(57);
-  s = s.write("    mov x0, x22\n");
-  s = s.write("    add x1, sp, #120\n");
-  s = s.write("    mov x2, #0\n");
-  s = s.write("    mov x3, #0\n");
-  s = s.write("    mov x8, #260\n");
-  s = s.svc(260);
-  s = s.write("    ldr w9, [sp, #120]\n");
-  s = s.write("    and w10, w9, #127\n");
-  s = s.write("    cbnz w10, .Lsp_signaled\n");
-  s = s.write("    lsr w9, w9, #8\n");
-  s = s.write("    and w9, w9, #255\n");
-  s = s.write("    b .Lsp_have_exit\n");
-  s = s.write(".Lsp_signaled:\n");
-  s = s.write("    and w9, w9, #127\n");
-  s = s.write("    add w9, w9, #128\n");
-  s = s.write(".Lsp_have_exit:\n");
-  s = s.write("    mov x22, x9\n");
-  s = s.write("    mov x0, x25\n");
-  s = s.write("    mov x1, x26\n");
-  s = s.write("    bl __fern_str_box\n");
-  s = s.write("    mov x25, x0\n");
-  s = s.write("    mov x0, x27\n");
-  s = s.write("    mov x1, x28\n");
-  s = s.write("    bl __fern_str_box\n");
-  s = s.write("    mov x27, x0\n");
-  s = s.write("    mov x0, #3\n");
-  s = s.write("    bl __fern_rec_box\n");
-  s = s.write(mov_tag("w9", asmcore.shape_tag(s, "ProcessResult")) + "    stur w9, [x0, #-4]\n");
-  s = s.write("    str x25, [x0]\n");
-  s = s.write("    str x27, [x0, #8]\n");
-  s = s.write("    str x22, [x0, #16]\n");
+  s = s.write("    ldr w9, [sp, #100]\n");
+  s = s.write("    ldr w10, [sp, #104]\n");
+  s = s.write("    ldr w11, [sp, #112]\n");
+  s = s.write("    sub sp, sp, #80\n");
+  s = s.write("    str x22, [sp]\n");
+  s = s.write("    str x9, [sp, #16]\n");
+  s = s.write("    str x10, [sp, #32]\n");
+  s = s.write("    str x11, [sp, #48]\n");
+  s = s.write("    str x21, [sp, #64]\n");
+  s = s.write("    bl __fn___fern_sp_collect\n");
+  s = s.write("    add sp, sp, #80\n");
   s = s.write("    ldp x27, x28, [sp, #80]\n");
   s = s.write("    ldp x25, x26, [sp, #64]\n");
   s = s.write("    ldp x23, x24, [sp, #48]\n");
@@ -11257,7 +11191,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     if (s.has_need("subprocess")) {
       if (darwin) {
         s = emit_rt_subprocess(s);
-        s = emit_runtime("__fern_sp_exec_path __fern_sp_exec_failed", s);
+        s = emit_runtime("__fern_sp_collect __fern_sp_exec_path __fern_sp_exec_failed", s);
       } else {
         s = emit_runtime("__fern_sp_wait __fern_sp_feed __fern_sp_take __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
       }
@@ -13437,30 +13371,52 @@ function compact_boxes(s: asmcore.EmitState): boolean {
   return !rtprofile.allocation(s.profile) && !s.harden && !s.rc_free_debug;
 }
 
+// The box routines take and give a small block themselves when the
+// allocator counts nothing.
+function direct_boxes(s: asmcore.EmitState): boolean {
+  return compact_boxes(s) && profile_alloc_fast(s);
+}
+
+// The text that puts the tag of a shape in the 32-bit register `reg`.
+function mov_tag(reg: string, tag: i64): string {
+  return "    movz " + reg + ", #" + util.i64_to_string(tag % 65536i64) + "\n    movk " + reg + ", #" + util.i64_to_string(tag / 65536i64) + ", lsl #16\n";
+}
+
 // __fern_rec_box makes the block of a record, a variant or a tuple. x0 holds
 // the number of words of the box. The block has a header of one word: the
 // reference count in its low half and the number of words in its high half.
 // An array keeps its header of two words, with zero in that high half. Each
 // routine that makes an array thus writes all 64 bits of the count word.
 //
-// The routine takes the block from __fern_arr_box, which gives a block of
-// the capacity plus three words, and writes the short header one word below
-// the first word of the box. A box of one word keeps the block of an array.
-// So does each box of a build that profiles, quarantines or hardens each
-// allocation.
+// A box of 1 to 255 words has a block of n + 1 words. The routine takes the
+// head of the free list of that block, or moves the bump pointer when the
+// list is empty. x1 to x3 change. A bump that crosses a 64 KiB line or the
+// end of the heap, and a heap that is not mapped, ask __fern_alloc for the
+// block. Each other box takes the block from __fern_arr_box, which gives a
+// block of the capacity plus three words. The routine then writes the short
+// header one word below the first word of the box. Each box of a build that
+// profiles, quarantines, hardens or counts each allocation takes that path,
+// and a box of one word then keeps the block of an array.
 //
 // __fn___fern_box_dec releases a block that can be such a box. A unique box
-// gets the header of an array of the same block: the capacity in the header
-// word and a count of 1 in its first word. The array release then takes it.
-// That release also takes each other block, and a box that is shared,
-// because it then changes only the count.
-// The text that puts the tag of a shape in the 32-bit register `reg`.
-function mov_tag(reg: string, tag: i64): string {
-  return "    movz " + reg + ", #" + util.i64_to_string(tag % 65536i64) + "\n    movk " + reg + ", #" + util.i64_to_string(tag / 65536i64) + ", lsl #16\n";
-}
-
+// of 1 to 255 words goes on the free list of its block. Each other unique
+// box gets the header of an array of the same block: the capacity in the
+// header word and a count of 1 in its first word. The array release then
+// takes it. That release also takes each other block, and a box that is
+// shared, because it then changes only the count.
 function emit_box_routines(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_rec_box:\n");
+  if (direct_boxes(s)) {
+    s = s.write("    sub x1, x0, #1\n    cmp x1, #254\n    b.hi .Lrecbox_far\n    adrp x2, __fern_freelist\n    add x2, x2, :lo12:__fern_freelist\n    add x2, x2, x0, lsl #3\n    add x2, x2, #8\n");
+    s = s.write("    ldr x1, [x2]\n    cbz x1, .Lrecbox_bump\n    ldr x3, [x1]\n    str x3, [x2]\n");
+    s = s.write(".Lrecbox_hdr:\n    lsl x3, x0, #32\n    orr x3, x3, #1\n    str x3, [x1]\n    add x0, x1, #8\n    ret\n");
+    // An unmapped heap has a pointer and an end of zero, so the end test sends it on.
+    s = s.write(".Lrecbox_bump:\n    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    ldr x1, [x2]\n    add x3, x1, x0, lsl #3\n    add x3, x3, #8\n");
+    s = s.write("    str x4, [sp, #-16]!\n    adrp x4, __fern_heap_end\n    add x4, x4, :lo12:__fern_heap_end\n    ldr x4, [x4]\n    cmp x3, x4\n    b.hi .Lrecbox_slow\n");
+    s = s.write("    eor x4, x3, x1\n    lsr x4, x4, #16\n    cbnz x4, .Lrecbox_slow\n    ldr x4, [sp], #16\n    str x3, [x2]\n    b .Lrecbox_hdr\n");
+    s = s.write(".Lrecbox_slow:\n    ldr x4, [sp], #16\n" + rt_frame_of(s, 32) + "    str x0, [sp, #16]\n    lsl x0, x0, #3\n    add x0, x0, #8\n    bl __fern_alloc\n");
+    s = s.write("    mov x1, x0\n    ldr x0, [sp, #16]\n" + rt_unframe_of(s, 32) + "    b .Lrecbox_hdr\n.Lrecbox_far:\n");
+  }
   if (compact_boxes(s)) {
     s = s.write("    cmp x0, #16, lsl #12\n    b.hs .Lrecbox_wide\n");
     s = s.write(rt_frame_of(s, 32) + "    str x0, [sp, #16]\n    subs x0, x0, #2\n    csel x0, x0, xzr, hs\n    bl __fern_arr_box\n");
@@ -13473,6 +13429,11 @@ function emit_box_routines(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_box_dec.u:\n");
   if (compact_boxes(s)) {
     s = s.write("    ldurh w1, [x0, #-4]\n    cbz w1, .Lboxdec_array\n    ldur w2, [x0, #-8]\n    cmp w2, #1\n    b.ne .Lboxdec_array\n");
+    if (direct_boxes(s)) {
+      // A box of n words, 1 to 255, goes on the free list of a block of n + 1 words.
+      s = s.write("    sub x2, x1, #1\n    cmp x2, #254\n    b.hi .Lboxdec_far\n    sub x2, x0, #8\n    adrp x3, __fern_freelist\n    add x3, x3, :lo12:__fern_freelist\n    add x3, x3, x1, lsl #3\n");
+      s = s.write("    ldr x9, [x3, #8]\n    str x9, [x2]\n    str x2, [x3, #8]\n    ret\n.Lboxdec_far:\n");
+    }
     s = s.write("    subs x1, x1, #2\n    csel x1, x1, xzr, hs\n    stur x1, [x0, #-8]\n    mov x2, #1\n    str x2, [x0]\n    add x0, x0, #8\n");
   }
   return s.write(".Lboxdec_array:\n    b __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");

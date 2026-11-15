@@ -1,0 +1,9 @@
+// `|` separates the patterns of an arm. It is not a part of the pattern of a
+// payload, and the parser does not skip it.
+function g(o: Option[i32]): i32 {
+  return match (o) { Some(1 | 2) => 10, _ => 0 };
+}
+
+function main(): i32 {
+  return g(Some(1));
+}
