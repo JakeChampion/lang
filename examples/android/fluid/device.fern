@@ -1,0 +1,125 @@
+// What the app asks of Android through JNI: the animation setting of the
+// system, the pin of the app to the screen, and a picture in the gallery.
+import "std/android";
+import "std/f64";
+import "std/jni";
+
+// True when the last JNI call threw. It clears the exception.
+function threw(e: usize): boolean {
+  if (jni.exception_occurred(e) == 0 as usize) {
+    return false;
+  }
+  jni.exception_clear(e);
+  return true;
+}
+
+function drop_all(e: usize, refs: usize[]): void {
+  for r in refs {
+    if (r != 0 as usize) {
+      let dropped: usize = jni.delete_local_ref(e, r);
+    }
+  }
+}
+
+function call_static(e: usize, class: usize, name: string, sig: string, args: usize[]): usize {
+  let values: usize = jni.jvalues(args);
+  let out: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, name, sig), values);
+  jni.free_buffer(values);
+  return out;
+}
+
+// The person turned the animations of the system off, with "Remove
+// animations" or with an animator scale of 0.
+pub function still(ctx: usize): boolean {
+  let e = android.env(ctx);
+  let resolver = jni.call_object(e, android.activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
+  if (threw(e) || resolver == 0 as usize) {
+    return false;
+  }
+  let class = jni.find_class(e, "android/provider/Settings$Global");
+  let name = jni.new_string(e, "animator_duration_scale");
+  let value = call_static(e, class, "getString", "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;", [resolver, name]);
+  let text = "";
+  if (!threw(e)) {
+    text = jni.string_of(e, value);
+  }
+  drop_all(e, [value, name, class, resolver]);
+  if let Ok(scale) = f64.parse_f64(text) {
+    return scale == 0.0;
+  }
+  return false;
+}
+
+// Pins the app to the screen, or takes the pin off. Android asks the
+// person before it pins an app. While the app is pinned, the Home key and
+// the Overview key do not leave it.
+pub function pin(ctx: usize, on: boolean): void {
+  let e = android.env(ctx);
+  let name = "stopLockTask";
+  if (on) {
+    name = "startLockTask";
+  }
+  let done = jni.call_void(e, android.activity_object(ctx), name, "()V", []);
+}
+
+// The bytes of one part of a write to a stream.
+const PART: i32 = 1048576;
+
+// Writes the parts of `bytes` to the stream `out`, and closes it.
+function written(e: usize, out: usize, bytes: [u8]): boolean {
+  let chunk = jni.new_byte_array(e, bytes.len().min(PART).max(1));
+  let ok = !threw(e) && chunk != 0 as usize;
+  let at = 0;
+  while (ok && at < bytes.len()) {
+    let size = (bytes.len() - at).min(PART);
+    jni.set_byte_array_region(e, chunk, 0, bytes[at:at + size]);
+    ok = jni.call_void(e, out, "write", "([BII)V", [chunk, 0 as usize, size as usize]);
+    at += size;
+  }
+  let closed: boolean = jni.call_void(e, out, "close", "()V", []);
+  drop_all(e, [chunk]);
+  return ok && closed;
+}
+
+function put(e: usize, values: usize, key: string, value: string): void {
+  let k = jni.new_string(e, key);
+  let v = jni.new_string(e, value);
+  let done = jni.call_void(e, values, "put", "(Ljava/lang/String;Ljava/lang/String;)V", [k, v]);
+  drop_all(e, [v, k]);
+}
+
+// The folder of the pictures of the app in the gallery.
+pub const FOLDER: string = "Pictures/Fluid";
+
+// Puts the PNG file `bytes` in the gallery of the phone, with the name
+// `name`, through the MediaStore. The app needs no permission for a file
+// that it adds. It is false when Android does not take the file.
+pub function save_png(ctx: usize, name: string, bytes: [u8]): boolean {
+  let e = android.env(ctx);
+  let resolver = jni.call_object(e, android.activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
+  if (threw(e) || resolver == 0 as usize) {
+    return false;
+  }
+  let values_class = jni.find_class(e, "android/content/ContentValues");
+  let none: usize = jni.jvalue_alloc(0);
+  let values = jni.new_object_a(e, values_class, jni.get_method_id(e, values_class, "<init>", "()V"), none);
+  jni.free_buffer(none);
+  let media = jni.find_class(e, "android/provider/MediaStore$Images$Media");
+  if (threw(e) || values == 0 as usize || media == 0 as usize) {
+    drop_all(e, [media, values, values_class, resolver]);
+    return false;
+  }
+  put(e, values, "_display_name", name);
+  put(e, values, "mime_type", "image/png");
+  put(e, values, "relative_path", FOLDER);
+  let base = jni.get_static_object_field(e, media, jni.get_static_field_id(e, media, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;"));
+  let uri = jni.call_object(e, resolver, "insert", "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;", [base, values]);
+  let ok = !threw(e) && uri != 0 as usize;
+  if (ok) {
+    let out = jni.call_object(e, resolver, "openOutputStream", "(Landroid/net/Uri;)Ljava/io/OutputStream;", [uri]);
+    ok = !threw(e) && out != 0 as usize && written(e, out, bytes);
+    drop_all(e, [out]);
+  }
+  drop_all(e, [uri, base, media, values, values_class, resolver]);
+  return ok;
+}

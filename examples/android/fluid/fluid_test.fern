@@ -1,0 +1,389 @@
+// Checks the rules of the app on the host: the settings, the clock of the
+// simulation, the colours, and what a touch, a key and a frame do.
+import "std/f64";
+import "std/test";
+import "./clock";
+import "./color";
+import "./config";
+import "./fluid";
+
+function set(c: config.Config, key: string, raw: string): config.Config {
+  return config.set(c, key, raw).unwrap_or(c);
+}
+
+function message(key: string, raw: string): string {
+  match (config.set(config.defaults(), key, raw)) {
+    Ok(_) => {
+      return "";
+    },
+    Err(m) => {
+      return m;
+    }
+  }
+}
+
+function test_settings_read_numbers_and_booleans(): test.TestOutcome {
+  let c = set(set(set(config.defaults(), "curl", "12.5"), "sim_resolution", "64"), "bloom", "false");
+  return test.assert_true(c.curl == 12.5 && c.sim_resolution == 64 && !c.bloom && c.sunrays);
+}
+
+function test_settings_accept_other_forms_of_a_name(): test.TestOutcome {
+  let c = set(set(config.defaults(), "SIM-RESOLUTION", "32"), " Dye_Resolution ", "256");
+  return test.assert_true(c.sim_resolution == 32 && c.dye_resolution == 256);
+}
+
+function test_settings_read_the_words_of_a_boolean(): test.TestOutcome {
+  let c = config.defaults();
+  let off = set(set(set(set(c, "bloom", "0"), "sunrays", "no"), "shading", "OFF"), "colorful", "False");
+  let on = set(set(set(set(off, "bloom", "1"), "sunrays", "yes"), "shading", "on"), "colorful", " true ");
+  return test.assert_true(!off.bloom && !off.sunrays && !off.shading && !off.colorful && on.bloom && on.sunrays && on.shading && on.colorful);
+}
+
+function test_settings_keep_numbers_in_their_range(): test.TestOutcome {
+  let c = set(set(set(set(config.defaults(), "pressure_iterations", "5000"), "dye_resolution", "1"), "pressure", "7"), "sim_resolution", "99.6");
+  return test.assert_true(c.pressure_iterations == 60 && c.dye_resolution == 64 && c.pressure == 1.0 && c.sim_resolution == 100);
+}
+
+function test_dithering_resolution_is_a_power_of_two(): test.TestOutcome {
+  let a = set(config.defaults(), "dithering_resolution", "100");
+  let b = set(config.defaults(), "dithering_resolution", "3");
+  let c = set(config.defaults(), "dithering_resolution", "4096");
+  return test.assert_true(a.dithering_resolution == 128 && b.dithering_resolution == 8 && c.dithering_resolution == 512);
+}
+
+function colour(raw: string): string {
+  let c = set(config.defaults(), "back_color", raw).back_color;
+  return ((c.r * 255.0).round() as i32).to_string() + "," + ((c.g * 255.0).round() as i32).to_string() + "," + ((c.b * 255.0).round() as i32).to_string();
+}
+
+function test_settings_read_colours(): test.TestOutcome {
+  return test.assert_eq(colour("#102030") + " " + colour("ff8000") + " " + colour("#f80") + " " + colour("10, 20,30") + " " + colour("300,0,0") + " " + colour("#12345"), "16,32,48 255,128,0 255,136,0 10,20,30 0,0,0 0,0,0");
+}
+
+function test_settings_report_what_they_cannot_read(): test.TestOutcome {
+  return test.assert_eq(message("nope", "1") + " " + message("curl", "fast") + " " + message("bloom", "maybe") + " " + message("back_color", "red"), "Unknown setting \"nope\" ignored. Could not read \"curl=fast\" as number; ignored. Could not read \"bloom=maybe\" as boolean; ignored. Could not read \"back_color=red\" as color; ignored.");
+}
+
+function test_each_setting_has_a_reader(): test.TestOutcome {
+  let ok = config.keys().len() == 25;
+  for key in config.keys() {
+    ok = ok && !message(key, "x!").starts_with("Unknown");
+  }
+  return test.assert_true(ok);
+}
+
+function test_resolution_is_on_the_short_side(): test.TestOutcome {
+  let (w, h) = config.resolution(1920, 1080, 128);
+  let (tw, th) = config.resolution(1080, 1920, 128);
+  let (sw, sh) = config.resolution(500, 500, 64);
+  return test.assert_true(w == 228 && h == 128 && tw == 128 && th == 228 && sw == 64 && sh == 64);
+}
+
+// The steps of one second of frames at `hz` frames in a second.
+function steps_in_a_second(hz: i32): i32 {
+  let c = clock.new(0i64);
+  let total = 0;
+  for i in 1..hz + 1 {
+    let (ticked, dt) = c.frame(i as i64 * 1000000000i64 / (hz as i64));
+    let (next, n) = ticked.advance(dt);
+    c = next;
+    total += n;
+  }
+  return total;
+}
+
+function test_clock_has_the_same_rate_on_each_display(): test.TestOutcome {
+  let at_30 = steps_in_a_second(30);
+  let at_60 = steps_in_a_second(60);
+  let at_120 = steps_in_a_second(120);
+  return test.assert_true((at_30 - 60).abs() <= 1 && (at_60 - 60).abs() <= 1 && (at_120 - 60).abs() <= 1);
+}
+
+function test_clock_limits_a_long_frame(): test.TestOutcome {
+  let c = clock.new(1000000000i64);
+  let (after, long) = c.frame(9000000000i64);
+  let (back, negative) = after.frame(0i64);
+  let (dropped, steps) = after.advance(long);
+  return test.assert_true(long == clock.MAX_FRAME_TIME && negative == 0.0 && steps == clock.MAX_SUBSTEPS && dropped.backlog == 0.0);
+}
+
+function test_clock_keeps_a_part_of_a_step(): test.TestOutcome {
+  let c = clock.new(0i64);
+  let (a, none) = c.advance(0.010);
+  let (b, one) = a.advance(0.010);
+  let (d, cleared) = b.clear().advance(0.010);
+  return test.assert_true(none == 0 && one == 1 && cleared == 0 && b.backlog > 0.003 && b.reset(5i64).backlog == 0.0);
+}
+
+function test_colours_go_around_the_wheel(): test.TestOutcome {
+  let red = color.hsv(0.0, 1.0, 1.0);
+  let green = color.hsv(1.0 / 3.0, 1.0, 1.0);
+  let grey = color.hsv(0.5, 0.0, 0.5);
+  let (rng, c) = color.generate(1i64);
+  let most = c.r.max(c.g).max(c.b);
+  return test.assert_true(red.r == 1.0 && red.g == 0.0 && red.b == 0.0 && green.g == 1.0 && green.r < 0.001 && grey.r == 0.5 && grey.g == 0.5 && grey.b == 0.5 && (most - 0.15).abs() < 0.000001);
+}
+
+// A window of 1000 by 2000 pixels: the button in its top right corner, the
+// exit button around it, and a dialog with a list of 600 pixels for 8 rows
+// of 100 pixels.
+function layout(): fluid.Layout {
+  let rows: fluid.Rect[] = [];
+  for i in 0..8 {
+    rows = rows.append(fluid.Rect { x: 0, y: i * 100, w: 800, h: 90 });
+  }
+  return fluid.Layout {
+    width: 1000,
+    height: 2000,
+    button: fluid.Rect { x: 880, y: 20, w: 100, h: 100 },
+    exit: fluid.Rect { x: 860, y: 20, w: 120, h: 120 },
+    panel: fluid.Rect { x: 50, y: 500, w: 900, h: 800 },
+    close: fluid.Rect { x: 850, y: 520, w: 80, h: 80 },
+    list: fluid.Rect { x: 100, y: 650, w: 800, h: 600 },
+    rows: rows,
+    content: 790,
+    slop: 20,
+  };
+}
+
+const SECOND: i64 = 1000000000i64;
+
+// The time of a frame that is a little longer than a step of the clock.
+const TICK: i64 = 17000000i64;
+
+function started(still: boolean): fluid.Model {
+  return fluid.new(config.defaults(), still, 9i64, 0i64).laid_out(layout());
+}
+
+function tap(m: fluid.Model, x: f64, y: f64, ns: i64): fluid.Model {
+  return m.touched(0, x, y, ns).touched(1, x, y, ns);
+}
+
+function test_app_starts_with_a_burst(): test.TestOutcome {
+  let m = started(false);
+  let (after, fr) = m.frame(TICK);
+  let (later, second) = after.frame(2i64 * TICK);
+  return test.assert_true(!m.cfg.paused && fr.burst >= 5 && fr.burst <= 24 && fr.steps == 1 && fr.draw && second.burst == 0 && second.draw && later.animating(40i64));
+}
+
+function test_no_animation_starts_still_until_a_touch(): test.TestOutcome {
+  let m = started(true);
+  let (after, fr) = m.frame(SECOND);
+  let (idle, quiet) = after.frame(2i64 * SECOND);
+  let touched = idle.touched(0, 500.0, 1000.0, 3i64 * SECOND);
+  let (moving, next) = touched.frame(3i64 * SECOND + TICK);
+  return test.assert_true(m.cfg.paused && m.still && fr.burst == 0 && fr.steps == 0 && fr.draw && !quiet.draw && !idle.animating(2000i64) && !touched.cfg.paused && !touched.still && next.steps == 1);
+}
+
+function test_a_pause_of_the_person_stays_after_a_touch(): test.TestOutcome {
+  let m = started(true).act(fluid.Pause, SECOND).act(fluid.Pause, SECOND);
+  let touched = m.touched(0, 500.0, 1000.0, 2i64 * SECOND);
+  return test.assert_true(m.cfg.paused && !m.still && touched.cfg.paused);
+}
+
+function test_a_drag_gives_one_splat_for_each_frame(): test.TestOutcome {
+  let m = started(false).touched(0, 500.0, 1000.0, 0i64);
+  let (down, none) = m.frame(SECOND / 60i64);
+  let dragged = down.touched(2, 600.0, 1000.0, 0i64).touched(2, 600.0, 800.0, 0i64);
+  let (after, fr) = dragged.frame(2i64 * SECOND / 60i64);
+  let (idle, quiet) = after.frame(3i64 * SECOND / 60i64);
+  let Some(sp) = fr.splat else {
+    return test.fail("the frame after a drag has no splat");
+  };
+  // The last move is 200 pixels up, a tenth of the height. The splat is at
+  // the finger, with y up. A move across counts for less on a tall window.
+  let across = started(false).touched(0, 500.0, 1000.0, 0i64).touched(2, 600.0, 1000.0, 0i64);
+  let (ignored, wide) = across.frame(SECOND / 60i64);
+  let Some(side) = wide.splat else {
+    return test.fail("the frame after a move across has no splat");
+  };
+  return test.assert_true(none.splat.is_none() && sp.x == 0.6 && sp.y == 0.6 && sp.dx == 0.0 && (sp.dy - 600.0).abs() < 0.001 && quiet.splat.is_none() && (side.dx - 300.0).abs() < 0.001 && side.dy == 0.0);
+}
+
+function test_the_button_opens_the_dialog_and_gives_no_splat(): test.TestOutcome {
+  let m = started(false).touched(0, 900.0, 60.0, 0i64).touched(2, 910.0, 70.0, 0i64);
+  let pressed = m.pressed_button();
+  let open = m.touched(1, 910.0, 70.0, 0i64);
+  let (after, fr) = open.frame(SECOND / 60i64);
+  let slid = started(false).touched(0, 900.0, 60.0, 0i64).touched(1, 500.0, 600.0, 0i64);
+  return test.assert_true(pressed && open.open && fr.splat.is_none() && !slid.open);
+}
+
+function test_the_dialog_closes(): test.TestOutcome {
+  let open = started(false).toggle_dialog();
+  let by_close = tap(open, 880.0, 550.0, 0i64);
+  let by_backdrop = tap(open, 500.0, 100.0, 0i64);
+  let in_panel = tap(open, 500.0, 520.0, 0i64);
+  let (by_back, quits) = open.back();
+  let (closed, quits_closed) = by_back.back();
+  return test.assert_true(open.open && !by_close.open && !by_backdrop.open && in_panel.open && !by_back.open && !quits && quits_closed && !open.typed(63, 0i64).open);
+}
+
+function test_a_touch_on_the_dialog_does_not_reach_the_fluid(): test.TestOutcome {
+  let open = started(false).toggle_dialog();
+  let dragged = open.touched(0, 500.0, 100.0, 0i64).touched(2, 600.0, 300.0, 0i64);
+  let (after, fr) = dragged.frame(SECOND / 60i64);
+  return test.assert_true(fr.splat.is_none());
+}
+
+function test_rows_do_their_actions(): test.TestOutcome {
+  let open = started(false).toggle_dialog();
+  let paused = tap(open, 500.0, 700.0, SECOND);
+  let no_bloom = tap(open, 500.0, 1200.0, SECOND);
+  let down = open.touched(0, 500.0, 700.0, SECOND);
+  let slid_off = down.touched(1, 500.0, 900.0, SECOND);
+  let wants = no_bloom.wants.len();
+  return test.assert_true(paused.cfg.paused && paused.open && !no_bloom.cfg.bloom && wants == 1 && no_bloom.done().wants.len() == 0 && down.pressed_row() == 0 && !slid_off.cfg.paused && no_bloom.is_on(fluid.Sunrays) && !no_bloom.is_on(fluid.Bloom));
+}
+
+function test_a_drag_scrolls_the_list_and_does_no_action(): test.TestOutcome {
+  let open = started(false).toggle_dialog();
+  let dragged = open.touched(0, 500.0, 1200.0, 0i64).touched(2, 500.0, 1190.0, 0i64);
+  let near = dragged.scroll;
+  let far = dragged.touched(2, 500.0, 1100.0, 0i64);
+  let up = far.touched(1, 500.0, 1100.0, 0i64);
+  let end = up.touched(0, 500.0, 1200.0, 0i64).touched(2, 500.0, 200.0, 0i64).touched(1, 500.0, 200.0, 0i64);
+  let back = end.touched(0, 500.0, 700.0, 0i64).touched(2, 500.0, 1900.0, 0i64).touched(1, 500.0, 1900.0, 0i64);
+  // After the scroll, the row under the finger is the one that moved there.
+  let third = tap(up, 500.0, 760.0, SECOND);
+  return test.assert_true(near == 0 && far.scroll == 100 && far.pressed_row() == -1 && up.cfg.bloom && !up.cfg.paused && end.scroll == 190 && back.scroll == 0 && third.wants.len() == 1 && !third.cfg.paused);
+}
+
+function wanted(m: fluid.Model): string {
+  let out = "";
+  for w in m.wants {
+    match (w) {
+      fluid.Want.Save => {
+        out += "save ";
+      },
+      fluid.Keywords => {
+        out += "keywords ";
+      },
+      fluid.Immersive(on) => {
+        out += "immersive:" + on.to_string() + " ";
+      },
+      fluid.Awake(on) => {
+        out += "awake:" + on.to_string() + " ";
+      },
+      fluid.Pin(on) => {
+        out += "pin:" + on.to_string() + " ";
+      }
+    }
+  }
+  return out;
+}
+
+function test_kid_mode_takes_the_controls_away(): test.TestOutcome {
+  let open = started(false).toggle_dialog();
+  let kid = tap(open, 500.0, 1000.0, SECOND);
+  let wants = wanted(kid);
+  let on = kid.done();
+  let tapped = tap(on, 900.0, 60.0, 2i64 * SECOND);
+  let (after_back, quits) = on.back();
+  let asked = on.typed(63, 0i64);
+  return test.assert_true(kid.kid && !kid.open && wants == "awake:true immersive:true pin:true " && on.note_at(1500i64) == fluid.KID_NOTE && on.note_at(6000i64) == "" && tapped.kid && !tapped.open && after_back.kid && !quits && !asked.open);
+}
+
+function test_a_hold_of_three_seconds_leaves_kid_mode(): test.TestOutcome {
+  let on = started(false).act(fluid.Kid, 0i64).done();
+  let down = on.touched(0, 900.0, 60.0, SECOND);
+  let (early, a) = down.frame(SECOND + 2900000000i64);
+  let part = early.held(3900i64);
+  // The finger can move off the button and the hold goes on.
+  let moved = early.touched(2, 500.0, 500.0, SECOND + 2950000000i64);
+  let (late, b) = moved.frame(4i64 * SECOND + 1000000i64);
+  let let_go = down.touched(1, 900.0, 60.0, 2i64 * SECOND);
+  let (short, c) = let_go.frame(5i64 * SECOND);
+  return test.assert_true(early.kid && a.draw && (part - 0.9666).abs() < 0.001 && b.splat.is_none() && !late.kid && wanted(late) == "pin:false awake:false immersive:false " && short.kid && short.held(5000i64) == 0.0);
+}
+
+function test_a_touch_in_kid_mode_pushes_the_fluid(): test.TestOutcome {
+  let on = started(false).act(fluid.Kid, 0i64).done();
+  let dragged = on.touched(0, 500.0, 1000.0, 0i64).touched(2, 500.0, 900.0, 0i64);
+  let (after, fr) = dragged.frame(SECOND / 60i64);
+  return test.assert_true(fr.splat.is_some() && after.kid);
+}
+
+function test_a_keyboard_and_a_service_leave_kid_mode_at_once(): test.TestOutcome {
+  let on = started(false).act(fluid.Kid, 0i64).done();
+  let full = started(false).act(fluid.Full, 0i64).done().act(fluid.Kid, 0i64).done();
+  return test.assert_true(!on.typed(107, 0i64).kid && !on.leave_by_service().kid && wanted(full.typed(75, 0i64)) == "pin:false awake:false immersive:true " && !started(false).leave_by_service().kid);
+}
+
+function test_keys_do_the_actions(): test.TestOutcome {
+  let m = started(false);
+  let (drained, first) = m.frame(SECOND / 60i64);
+  let spaced = drained.typed(32, SECOND);
+  let (after, fr) = spaced.frame(SECOND + SECOND / 60i64);
+  return test.assert_true(m.typed(112, 0i64).cfg.paused && m.typed(80, 0i64).cfg.paused && !m.typed(98, 0i64).cfg.bloom && !m.typed(82, 0i64).cfg.sunrays && !m.typed(99, 0i64).cfg.colorful && m.typed(102, 0i64).full && wanted(m.typed(115, 0i64)) == "save " && m.typed(63, 0i64).open && m.typed(107, 0i64).kid && fr.burst >= 5 && m.typed(120, 0i64).wants.len() == 0);
+}
+
+function test_the_colour_of_the_finger_changes_with_the_time(): test.TestOutcome {
+  let m = started(false).touched(0, 500.0, 1000.0, 0i64);
+  let first = m.pointer.color;
+  // The colour changes after a tenth of a second at the default speed.
+  let (a, f1) = m.frame(50000000i64);
+  let same = a.pointer.color;
+  let (b, f2) = a.frame(120000000i64);
+  let next = b.pointer.color;
+  let fixed = fluid.Model { ...m, cfg: config.Config { ...m.cfg, colorful: false } };
+  let (c, f3) = fixed.frame(SECOND);
+  let equal = same.r == first.r && same.g == first.g && same.b == first.b;
+  let changed = next.r != first.r || next.g != first.g || next.b != first.b;
+  return test.assert_true(equal && changed && c.pointer.color.r == first.r && c.pointer.color.g == first.g);
+}
+
+function test_a_paused_app_draws_only_what_changes(): test.TestOutcome {
+  let m = started(false).act(fluid.Pause, 0i64);
+  let (a, first) = m.frame(SECOND);
+  let (b, second) = a.frame(2i64 * SECOND);
+  let toggled = b.act(fluid.Bloom, 2i64 * SECOND).done();
+  let (c, third) = toggled.frame(3i64 * SECOND);
+  let noted = c.noted("Saved.", 3000i64, 1000i64);
+  let (d, with_note) = noted.frame(3500000000i64);
+  let (e, note_gone) = d.frame(4050000000i64);
+  let (g, later) = e.frame(5i64 * SECOND);
+  return test.assert_true(first.draw && first.steps == 0 && !second.draw && !b.animating(2000i64) && third.draw && with_note.draw && d.animating(3600i64) && note_gone.draw && !later.draw && !g.animating(5000i64));
+}
+
+function test_the_time_away_is_not_time_of_the_fluid(): test.TestOutcome {
+  let m = started(false);
+  let (a, first) = m.frame(TICK);
+  let (b, after) = a.woke(100i64 * SECOND).frame(100i64 * SECOND + TICK);
+  return test.assert_true(after.steps == 1);
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/fluid");
+  r = r.it("settings read numbers and booleans", test_settings_read_numbers_and_booleans);
+  r = r.it("settings accept upper case and dashes in a name", test_settings_accept_other_forms_of_a_name);
+  r = r.it("settings read the words of a boolean", test_settings_read_the_words_of_a_boolean);
+  r = r.it("settings round integers and keep numbers in their range", test_settings_keep_numbers_in_their_range);
+  r = r.it("the dithering resolution is a power of two", test_dithering_resolution_is_a_power_of_two);
+  r = r.it("settings read colours as hex or as three channels", test_settings_read_colours);
+  r = r.it("settings report a name or a value that they cannot read", test_settings_report_what_they_cannot_read);
+  r = r.it("each setting name has a reader", test_each_setting_has_a_reader);
+  r = r.it("a texture has its resolution on the short side of the window", test_resolution_is_on_the_short_side);
+  r = r.it("the clock has the same rate on each display", test_clock_has_the_same_rate_on_each_display);
+  r = r.it("the clock limits a long frame and drops the time that it cannot use", test_clock_limits_a_long_frame);
+  r = r.it("the clock keeps a part of a step for the next frame", test_clock_keeps_a_part_of_a_step);
+  r = r.it("colours go around the wheel, and a dye colour is dim", test_colours_go_around_the_wheel);
+  r = r.it("the app starts with a burst", test_app_starts_with_a_burst);
+  r = r.it("with no animations, the app starts still until a touch", test_no_animation_starts_still_until_a_touch);
+  r = r.it("a pause that the person chose stays after a touch", test_a_pause_of_the_person_stays_after_a_touch);
+  r = r.it("a drag gives one splat for each frame", test_a_drag_gives_one_splat_for_each_frame);
+  r = r.it("the button opens the dialog and gives no splat", test_the_button_opens_the_dialog_and_gives_no_splat);
+  r = r.it("the close button, the backdrop and the back key close the dialog", test_the_dialog_closes);
+  r = r.it("a touch on the dialog does not reach the fluid", test_a_touch_on_the_dialog_does_not_reach_the_fluid);
+  r = r.it("a tap on a row does its action", test_rows_do_their_actions);
+  r = r.it("a drag scrolls the list and does no action", test_a_drag_scrolls_the_list_and_does_no_action);
+  r = r.it("kid mode takes the controls away and pins the app", test_kid_mode_takes_the_controls_away);
+  r = r.it("a hold of three seconds on the corner leaves kid mode", test_a_hold_of_three_seconds_leaves_kid_mode);
+  r = r.it("a touch in kid mode pushes the fluid", test_a_touch_in_kid_mode_pushes_the_fluid);
+  r = r.it("a keyboard and an accessibility service leave kid mode at once", test_a_keyboard_and_a_service_leave_kid_mode_at_once);
+  r = r.it("the keys do the actions", test_keys_do_the_actions);
+  r = r.it("the colour of the finger changes with the time", test_the_colour_of_the_finger_changes_with_the_time);
+  r = r.it("a paused app draws only what changes", test_a_paused_app_draws_only_what_changes);
+  r = r.it("the time that the app does not show is not time of the fluid", test_the_time_away_is_not_time_of_the_fluid);
+  return r.finish();
+}
