@@ -2345,6 +2345,7 @@ function flag_groups(): FlagGroup[] {
       sub_flag("-apk-debuggable", "", ["-apk"], "with -apk: mark the app debuggable (android:debuggable), so adb run-as can read its files; do not ship such an APK"),
       sub_flag("-apk-key", "FILE", ["-apk"], "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       sub_flag("-apk-home", "", ["-apk"], "with -apk: make the app a home screen: Android offers it as the home app, keeps one task of it, and shows the wallpaper behind it"),
+      sub_flag("-apk-tv", "", ["-apk"], "with -apk: put the app on the launcher of Android TV too; it then needs no touch screen"),
       sub_flag("-apk-widget", "ITEMS", ["-apk"], "with -apk: the comma-separated items of the row of the app widget of the home screen, each text:NAME:LABEL or button:NAME:LABEL; the app has one @jni class that extends android.appwidget.AppWidgetProvider"),
       sub_flag("-apk-run", "", ["-apk"], "with -apk: install the APK with adb on the device that adb sees, start it, and show the log lines of its process until it stops; the APK holds the library of the ABI of that device only"),
       sub_flag("-apk-asset", "FILES", ["-apk"], "with -apk: the comma-separated files to put under assets/ in the APK, each with its own file name, for AAssetManager"),
@@ -6102,15 +6103,15 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label, icon and key
 // file of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: string, widget: string, run: boolean }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, assets: string, widget: string, run: boolean }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-asset", "-apk-widget", "-apk-run"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-asset", "-apk-widget", "-apk-run"], name);
 }
 
 // The -apk flags that take no value.
 function apk_switch(name: string): boolean {
-  return util.has_str(["-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-run"], name);
+  return util.has_str(["-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-run"], name);
 }
 
 function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
@@ -6128,6 +6129,7 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
     "-apk-cleartext" => ApkOpts { ...o, cleartext: true },
     "-apk-debuggable" => ApkOpts { ...o, debuggable: true },
     "-apk-home" => ApkOpts { ...o, home: true },
+    "-apk-tv" => ApkOpts { ...o, tv: true },
     "-apk-asset" => ApkOpts { ...o, assets: f.value },
     "-apk-widget" => ApkOpts { ...o, widget: f.value },
     "-apk-run" => ApkOpts { ...o, run: true },
@@ -6321,7 +6323,7 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   for name in dex.subclasses_of(classes, apk.LISTENER_ACTION) {
     services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION });
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, assets: [], widget: apk.no_widget() };
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, tv: o.tv, assets: [], widget: apk.no_widget() };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
@@ -6496,6 +6498,7 @@ function apk_with_manifest(o: ApkOpts, entry_path: string): (ApkOpts, string) {
     cleartext: o.cleartext || fern_toml.android(m, "cleartext") == "true",
     debuggable: o.debuggable || fern_toml.android(m, "debuggable") == "true",
     home: o.home || fern_toml.android(m, "home") == "true",
+    tv: o.tv || fern_toml.android(m, "tv") == "true",
     assets: assets,
     widget: or_text(o.widget, fern_toml.android(m, "widget")),
   }, "");
@@ -6971,7 +6974,7 @@ function parse_cli_flags(av: string[], embedded_root: string): CliFlags {
     sanitize_flag: false,
     shared: false,
     export_list: "",
-    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, assets: "", widget: "", run: false },
+    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, tv: false, assets: "", widget: "", run: false },
     harden: false,
     heap_limit_text: "",
     cpu_limit_text: "",

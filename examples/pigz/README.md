@@ -124,36 +124,36 @@ with zlib 1.3, 2026-11-15. The runs of pigz and of the port alternate, and
 each row has the fastest of three runs, in seconds. CPU is user and system
 time. For each compression row, the port wrote the same bytes as pigz.
 
-Other work kept the load average of the machine at 11 to 16 during the
+Other work kept the load average of the machine at 4 to 6 during the
 runs. So neither program got the four CPUs. Compare the CPU times.
 
 | Run | pigz wall | pigz CPU | port wall | port CPU |
 | --- | --: | --: | --: | --: |
-| `-1 -p 1` | 1.42 | 1.17 | 1.72 | 1.34 |
-| `-1 -p 4` | 1.39 | 1.24 | 2.98 | 1.90 |
-| `-6 -p 1` | 4.10 | 3.75 | 5.07 | 4.05 |
-| `-6 -p 4` | 2.56 | 3.78 | 4.83 | 4.76 |
-| `-9 -p 1` | 7.61 | 7.19 | 8.75 | 7.48 |
-| `-9 -p 4` | 3.61 | 7.27 | 8.38 | 8.18 |
-| `-d -p 1` | 0.39 | 0.38 | 0.31 | 0.30 |
-| `-d -p 4` | 0.44 | 0.42 | 0.44 | 0.33 |
+| `-1 -p 1` | 1.19 | 1.18 | 1.25 | 1.24 |
+| `-1 -p 4` | 0.80 | 1.26 | 1.35 | 1.71 |
+| `-6 -p 1` | 3.77 | 3.76 | 4.20 | 4.10 |
+| `-6 -p 4` | 1.45 | 4.20 | 1.90 | 4.93 |
+| `-9 -p 1` | 7.72 | 7.67 | 8.02 | 7.90 |
+| `-9 -p 4` | 3.87 | 8.16 | 4.91 | 8.86 |
+| `-d -p 1` | 0.47 | 0.45 | 0.37 | 0.37 |
+| `-d -p 4` | 0.44 | 0.54 | 0.51 | 0.49 |
 
-The port decompresses faster than pigz. In CPU time, it compresses 1.04
-to 1.15 times slower with one process, and 1.13 to 1.53 times slower with
-four. With four processes, each worker copies its input and its output,
-and it starts with an empty heap. With one process, the port uses 1.6 MB
-of memory, and pigz uses 2.5 MB.
+The port decompresses in less CPU time than pigz. In CPU time, it
+compresses 1.03 to 1.09 times slower with one process, and 1.09 to 1.36
+times slower with four. With four processes, each worker copies its input
+and its output, and it starts with an empty heap. When it compresses with
+one process, the port uses 1.5 MB of memory, and pigz uses 2.6 MB.
 
 The hash tables `head` and `prev` are `u16[]`, as in zlib, so they use
 128 KB and not 256 KB. In the same runs, the port with `i32[]` tables used
-4.70 s of CPU at `-6 -p 1` and 8.97 s at `-9 -p 1`. So the 2-byte tables
-take 14% and 17% less CPU time there.
+4.70 s of CPU at `-6 -p 1` and 9.45 s at `-9 -p 1`. So the 2-byte tables
+take 13% and 16% less CPU time there.
 
-The compiler makes two kinds of loop into calls to its kernels (#15974):
-the copy of the input into the window, and the slide of the window. The
-kernels have no 2-byte form, so the clear of `head` stays a loop. The slide
-of `head` and `prev` runs a copy of its loop with no checks (#15975). The
-runs of the table are older than these two changes.
+The compiler makes three loops into calls to its kernels (#15974): the
+copy of the input into the window, the slide of the window, and the clear
+of `head`. The slide of `head` and `prev` subtracts a distance from each
+element, so it is not a fill or a move. It runs a copy of its loop with no
+checks (#15975).
 
 Most of the time of a compression is in `longest`, the port of
 `longest_match`. Its loop waits for the loads of the window and of the hash

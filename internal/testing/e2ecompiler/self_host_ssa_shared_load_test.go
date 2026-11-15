@@ -10,11 +10,13 @@ import (
 
 var ssaUniqueTest = regexp.MustCompile(`call __fern_rc_is_unique (v\d+)\n`)
 
+var ssaFormBlockName = regexp.MustCompile(`\n  (b\d+):\n`)
+
 // ins of bench/perceus/rbtree.fern matches a node above its uniqueness test.
-// A unique node keeps its value where it is, so only the side that copies a
-// shared node reads the value (ssatokenkeep.shared_loads). Each load of the
-// value, the word at offset 32, is in a block that takes a count on the
-// children of the node, which only the copy of a shared node does.
+// The colour, the key and the value of a node share one word. Each arm of ins
+// tests the colour, so a unique node keeps that word where it is: the
+// unique side of a test does not read the word. Only the side that copies a
+// shared node stores the word in the copy.
 func TestSelfHostSSASharedArmLoadsTheKeptWord(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src, err := filepath.Abs("../../../bench/perceus/fern/run_rbtree.fern")
@@ -42,17 +44,47 @@ func TestSelfHostSSASharedArmLoadsTheKeptWord(t *testing.T) {
 	if tests[node] < 3 {
 		t.Fatalf("ins has no node with three uniqueness tests:\n%s", form)
 	}
-	load := "= ld_at 24 " + node + "\n"
-	loads := 0
-	for _, block := range ssaFormBlock.Split(form, -1) {
-		n := strings.Count(block, load)
-		if n > 0 && !strings.Contains(block, "call __fern_rc_inc") {
-			t.Fatalf("a block that does not copy the node loads its value:\n%s", block)
-		}
-		loads += n
+	var loads []string
+	for _, m := range regexp.MustCompile(`(v\d+) = ld_at `+node+`\n`).FindAllStringSubmatch(form, -1) {
+		loads = append(loads, m[1])
 	}
-	if loads == 0 {
-		t.Fatalf("ins has no load of the value of %s:\n%s", node, form)
+	if loads == nil {
+		t.Fatalf("ins has no load of the shared word of %s:\n%s", node, form)
+	}
+	words := strings.Join(loads, "|")
+	word := regexp.MustCompile(`\b(` + words + `)\b`)
+	blocks := map[string]string{}
+	heads := ssaFormBlockName.FindAllStringSubmatchIndex(form, -1)
+	for i, h := range heads {
+		end := len(form)
+		if i+1 < len(heads) {
+			end = heads[i+1][0]
+		}
+		blocks[form[h[2]:h[3]]] = form[h[1]:end]
+	}
+	unique := regexp.MustCompile(`(v\d+) = call __fern_rc_is_unique ` + node + `\n\s*brif (v\d+) (b\d+) `)
+	arms := 0
+	for _, m := range unique.FindAllStringSubmatch(form, -1) {
+		if m[1] != m[2] {
+			continue
+		}
+		arms++
+		if word.MatchString(blocks[m[3]]) {
+			t.Fatalf("the unique side %s of a test of %s reads its shared word (%s):\n%s", m[3], node, words, blocks[m[3]])
+		}
+	}
+	if arms < 3 {
+		t.Fatalf("ins has %d unique sides of a test of %s, want 3 or more:\n%s", arms, node, form)
+	}
+	store := regexp.MustCompile(`= st_at v\d+ (` + words + `)\n`)
+	stored := false
+	for _, block := range blocks {
+		if store.MatchString(block) && strings.Contains(block, "call __fern_rc_inc") {
+			stored = true
+		}
+	}
+	if !stored {
+		t.Fatalf("no block that copies %s stores its shared word (%s):\n%s", node, words, form)
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		for _, env := range []string{"FERN_LEAKCHECK=1", "FERN_SANITIZE=1"} {

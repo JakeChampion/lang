@@ -556,7 +556,7 @@ func androidValue(key, val string) (string, error) {
 	switch key {
 	case "package", "label", "icon", "key":
 		return parseString(val)
-	case "home", "compress", "cleartext", "debuggable":
+	case "home", "tv", "compress", "cleartext", "debuggable":
 		if val == "true" || val == "false" {
 			return val, nil
 		}
@@ -573,5 +573,5 @@ func androidValue(key, val string) (string, error) {
 		}
 		return val, nil
 	}
-	return "", fmt.Errorf("unknown key (supported: package, label, icon, key, min_sdk, home, compress, cleartext, debuggable, permissions, assets, widget)")
+	return "", fmt.Errorf("unknown key (supported: package, label, icon, key, min_sdk, home, tv, compress, cleartext, debuggable, permissions, assets, widget)")
 }
