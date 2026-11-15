@@ -10,7 +10,11 @@ A look-ahead, a look-behind and an atomic group run as a search of their own. Wh
 
 A call of a group, such as `(?1)`, keeps its choices, as in PCRE2 10.30 and later: a later failure can go back into the call. The call has a frame that holds the captures at the call, and they come back at its end. A call of the whole pattern, `(?R)`, and a call that ends with `(*ACCEPT)`, drop their choices, as PCRE2 does. A call of a group in the same group at the same offset gives the error of PCRE2.
 
-The verbs (*COMMIT), (*PRUNE), (*SKIP), (*SKIP:NAME), (*THEN) and (*MARK:NAME) put an entry on the stack. When the search backtracks onto the entry, the verb acts, and the stack carries its effect back. Each entry then acts as the frame of PCRE2 at the same point acts: a branch can catch (*THEN), a call can end the effect of a verb in it, and a look-around has the rules of PCRE2 for each verb. (*COMMIT) ends the search, (*PRUNE) moves to the next start, and (*SKIP) moves the next start to its offset. A callout, such as `(?C1)`, matches the empty string, because no callout function is set.
+The verbs (*COMMIT), (*PRUNE), (*SKIP), (*SKIP:NAME), (*THEN) and (*MARK:NAME) put an entry on the stack. When the search backtracks onto the entry, the verb acts, and the stack carries its effect back. Each entry then acts as the frame of PCRE2 at the same point acts. A branch can catch (*THEN), and a call can end the effect of a verb in it. A look-around has the rules of PCRE2 for each verb.
+
+(*COMMIT) ends the search, (*PRUNE) moves to the next start, and (*SKIP) moves the next start to its offset. A callout, such as `(?C1)`, matches the empty string, because no callout function is set.
+
+A pattern with no call, no verb and no (*ACCEPT) is plain. A plain pattern runs in a smaller loop with no frames and no modes of verbs. This loop also moves to each next start itself, so a search makes one call to it. A look-around or an atomic group of a plain pattern runs in the same loop.
 
 The options at the start of a pattern, such as (*UTF), (*UCP), (*CRLF), (*NO_START_OPT) and (*LIMIT_MATCH=n), are those of PCRE2 10.42. (*NO_AUTO_POSSESS), (*NO_DOTSTAR_ANCHOR) and (*NO_JIT) change no match of this engine.
 
@@ -155,6 +159,7 @@ pub struct Pcre {
   crlf_lit: boolean,
   alts: i32[],
   verbs: boolean,
+  plain: boolean,
 }
 
 // The number of the groups, without group 0.
@@ -2658,11 +2663,22 @@ function __pc_build(cx: PCtx, root: PNode, s: PStart): Result[Pcre, CompileError
     minlen: if (s.no_start || cx.accept.get() || !__pc_takes_char(root)) { 0 } else { __pc_min_len(cx, root) },
     word: __pc_set_of(cx, if (s.ucp) { __pc_property_ranges("Xwd") } else { [48, 57, 65, 90, 95, 95, 97, 122] }, false, false),
     limit: s.limit, depth_limit: s.depth, heap_limit: s.heap, notempty: s.notempty, has_then: cx.has_then, crlf_lit: cx.crlf_lit.get(),
-    alts: g.alts, verbs: __pc_has_op(g.code, OP_VERB),
+    alts: g.alts, verbs: __pc_has_op(g.code, OP_VERB), plain: __pc_plain(g.code),
   });
 }
 
 // Whether the program has an instruction of `op`.
+// Whether the program has no call, no verb, no branch of (*THEN) and no
+// (*ACCEPT), so that __pc_plain_run can run it.
+function __pc_plain(code: i32[]): boolean {
+  for op in [OP_CALL, OP_VERB, OP_BRANCH, OP_ACCEPT] {
+    if (__pc_has_op(code, op)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function __pc_has_op(code: i32[], op: i32): boolean {
   let k = 0;
   while (k < code.len()) {
@@ -3549,6 +3565,9 @@ const R_THEN: i32 = 7;
 
 const R_ERROR: i32 = 8;
 
+// Inside a run: the end of a call that drops its choices.
+const R_LEAVE: i32 = 9;
+
 // The entries of the stack that are not choices: the old value of a slot,
 // a call and a return with the frame before them, a branch, a look-ahead
 // that matched, and a verb.
@@ -3608,29 +3627,33 @@ pub function (re: Pcre) captures_at(text: string, start: i32): Result[Option[i32
     }
   }
   let origin = at;
-  let run = PRun { re: re, text: text, start: origin, steps: cell_new(0) };
+  if (re.limit < 2) {
+    return Err(MatchLimit);
+  }
+  at = __pc_attempt(re, text, at);
+  if (at < 0) {
+    return Ok(None);
+  }
+  let run = PRun { re: re, text: text, start: origin, steps: cell_new(2) };
+  if (re.plain) {
+    let (rc, _, out) = __pc_plain_run(run, 0, at, __pc_slots(re.nslots), -1, 0, true);
+    if (rc == R_MATCH) {
+      return Ok(Some(out.take(2 * (re.ngroups + 1))));
+    }
+    if (rc == R_ERROR) {
+      return Err(__pc_match_error(-run.steps.get()));
+    }
+    return Ok(None);
+  }
   let none: i32[] = [];
-  let frames = if (re.verbs) { [0, 0, 0, 0, 0, -1] } else { none };
-  let base = frames.len();
-  while (at <= n) {
-    if (re.first.len() > 0) {
-      at = __scan_set(text, at, re.first);
-      if (at >= n) {
-        return Ok(None);
-      }
-    }
-    if (n - at < re.minlen) {
-      return Ok(None);
-    }
+  let base = if (re.verbs) { VS_WORDS } else { 0 };
+  let ignore = 0;
+  while (at >= 0) {
     run.steps.set(2);
-    if (re.verbs) {
-      frames = frames.with(VS_SKIPS, 0);
-    }
-    if (re.limit < 2) {
-      return Err(MatchLimit);
-    }
-    let (rc, end, out, fs) = __pc_run(run, 0, at, __pc_slots(re.nslots), -1, frames, -1, base, 0, -1);
-    frames = fs;
+    // A pattern with verbs has a new verb state for each attempt. Only the
+    // count of (*SKIP:NAME) to ignore goes on to the next attempt.
+    let state = if (re.verbs) { [0, ignore, 0, 0, 0, -1] } else { none };
+    let (rc, end, out, fs) = __pc_run(run, 0, at, __pc_slots(re.nslots), -1, state, -1, base, 0, -1);
     if (rc == R_ERROR) {
       return Err(__pc_match_error(-run.steps.get()));
     }
@@ -3645,24 +3668,200 @@ pub function (re: Pcre) captures_at(text: string, start: i32): Result[Option[i32
     }
     let next = at;
     if (rc == R_SKIP_ARG) {
-      frames = frames.with(VS_IGNORE, frames[VS_SKIPS]);
-    } else if (rc == R_SKIP && frames[VS_POS] > at) {
-      next = frames[VS_POS];
+      ignore = fs[VS_SKIPS];
+    } else if (rc == R_SKIP && fs[VS_POS] > at) {
+      next = fs[VS_POS];
     } else {
-      if (re.verbs) {
-        frames = frames.with(VS_IGNORE, 0);
-      }
+      ignore = 0;
       next = __pc_next_start(re, text, at);
     }
-    if (re.anchored || next > n) {
-      return Ok(None);
-    }
-    if (next > origin && next < n && text[next - 1] == 13u8 && text[next] == 10u8 && !re.crlf_lit && (re.nl == NL_ANYCRLF || re.nl == NL_ANY || re.nl == NL_CRLF)) {
-      next += 1;
-    }
-    at = next;
+    at = __pc_moved(re, text, next, origin);
   }
   return Ok(None);
+}
+
+// The offset of an attempt of a search at or after `at`, or -1: the first
+// byte of a match, with room for the shortest match.
+function __pc_attempt(re: Pcre, text: string, at: i32): i32 {
+  let n = text.len();
+  let next = at;
+  if (re.first.len() > 0 && next <= n) {
+    next = __scan_set(text, next, re.first);
+    if (next >= n) {
+      return -1;
+    }
+  }
+  if (next > n || n - next < re.minlen) {
+    return -1;
+  }
+  return next;
+}
+
+// The offset of the attempt after a failed attempt at `at`, or -1.
+function __pc_after(re: Pcre, text: string, at: i32, origin: i32): i32 {
+  return __pc_moved(re, text, __pc_next_start(re, text, at), origin);
+}
+
+// Whether a newline can be CRLF and the pattern has no CR or LF of its
+// own.
+function __pc_crlf_skips(re: Pcre): boolean {
+  return !re.crlf_lit && (re.nl == NL_ANYCRLF || re.nl == NL_ANY || re.nl == NL_CRLF);
+}
+
+// The offset of an attempt that the search moves to at `next`, or -1. An
+// anchored pattern has no second attempt. As in PCRE2, an attempt does not
+// start between a CR and an LF when a newline can be CRLF and the pattern
+// has no CR or LF of its own.
+function __pc_moved(re: Pcre, text: string, next0: i32, origin: i32): i32 {
+  let n = text.len();
+  let next = next0;
+  if (re.anchored || next > n) {
+    return -1;
+  }
+  if (next > origin && next < n && text[next - 1] == 13u8 && text[next] == 10u8 && __pc_crlf_skips(re)) {
+    next += 1;
+  }
+  return __pc_attempt(re, text, next);
+}
+
+// The run of a plain pattern from `pc0` at `pos0`: the steps of __pc_run
+// for the opcodes that a plain pattern has, with no frames of calls and no
+// modes of verbs. The stack holds only choices and undos. `target` and
+// `depth` are those of __pc_run. With `search`, a failed attempt goes on at
+// the next start, so the search makes no call for each attempt. The undos
+// of a failed attempt give the slots back their first values. The result is
+// the kind of the end, the offset at the end and the slots.
+// One branch for each opcode, in one loop, so that a step calls no function.
+// fern-lint: allow cyclomatic-complexity
+function __pc_plain_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, depth: i32, search: boolean): (i32, i32, i32[]) {
+  let re = r.re;
+  let code = re.code;
+  let text = r.text;
+  let slots = slots0;
+  let st: i32[] = [];
+  let sp = 0;
+  let pc = pc0;
+  let pos = pos0;
+  let at = pos0;
+  let regs = 2 * (re.ngroups + 1);
+  let bounded = re.depth_limit >= 0 || re.heap_limit >= 0;
+  let none: i32[] = [];
+  while (true) {
+    let op = code[3 * pc];
+    let a = code[3 * pc + 1];
+    let ok = true;
+    if (op == OP_CHAR) {
+      let (c, n) = __pc_char_at(re, text, pos);
+      ok = c == a;
+      pos += n;
+      pc += 1;
+    } else if (op == OP_SET) {
+      let (c, n) = __pc_char_at(re, text, pos);
+      ok = c >= 0 && __pc_in_set(re.sets[a], c);
+      pos += n;
+      pc += 1;
+    } else if (op == OP_ANY) {
+      let (c, n) = __pc_char_at(re, text, pos);
+      ok = c >= 0 && (a == 1 || (if (re.nl == NL_LF) { c != 10 } else { __pc_nl_at(re, text, pos) == 0 }));
+      pos += n;
+      pc += 1;
+    } else if (op == OP_SPLIT) {
+      st = __pc_push(st, sp, code[3 * pc + 2], pos, -1);
+      sp += 3;
+      let n = r.steps.get() + 1;
+      r.steps.set(n);
+      if ((n > re.limit || bounded) && !__pc_limits(r, sp, n)) {
+        return (R_ERROR, pos, slots);
+      }
+      pc = a;
+    } else if (op == OP_JMP) {
+      pc = a;
+    } else if (op == OP_SAVE || op == OP_MARK) {
+      let slot = if (op == OP_SAVE) { a } else { regs + a };
+      st = __pc_push(st, sp, E_UNDO, slot, slots[slot]);
+      sp += 3;
+      slots = slots.with(slot, pos);
+      pc += 1;
+    } else if (op == OP_CHECK) {
+      pc = if (slots[regs + a] == pos) { code[3 * pc + 2] } else { pc + 1 };
+    } else if (op == OP_ASSERT) {
+      ok = __pc_assert(r, a, pos);
+      pc += 1;
+    } else if (op == OP_BACK) {
+      let end = __pc_back(r, slots, a, code[3 * pc + 2] == 1, pos);
+      ok = end >= 0;
+      pos = end;
+      pc += 1;
+    } else if (op == OP_SUB) {
+      let kind = re.subs[3 * a];
+      let (res, spos, sslots) = __pc_plain_item(r, a, pos, slots, depth);
+      if (res == R_ERROR) {
+        return (R_ERROR, pos, slots);
+      }
+      if (res == 1 || kind > COND) {
+        for k in 0..slots.len() {
+          if (sslots[k] != slots[k]) {
+            st = __pc_push(st, sp, E_UNDO, k, slots[k]);
+            sp += 3;
+          }
+        }
+        slots = sslots;
+        pos = spos;
+        pc = if (res == 0) { code[3 * pc + 2] } else { re.subs[3 * a + 2] };
+      } else {
+        ok = false;
+      }
+    } else if (op == OP_KEEP) {
+      st = __pc_push(st, sp, E_UNDO, 0, slots[0]);
+      sp += 3;
+      slots = slots.with(0, pos);
+      pc += 1;
+    } else if (op == OP_COND) {
+      pc = if (__pc_holds(none, -1, slots, a)) { pc + 1 } else { code[3 * pc + 2] };
+    } else if (op == OP_BACKUP) {
+      pos = __pc_back_chars(re, text, pos, a);
+      ok = pos >= 0;
+      pc += 1;
+    } else if (op == OP_RESTORE) {
+      pos = slots[regs + a];
+      pc += 1;
+    } else if (op == OP_AT_REG) {
+      ok = pos == slots[regs + a];
+      pc += 1;
+    } else if (op == OP_MATCH) {
+      if (__pc_empty_ok(r, slots, pos)) {
+        return (R_MATCH, pos, slots);
+      }
+      ok = false;
+    } else if (op == OP_END && (target < 0 || pos == target)) {
+      return (R_MATCH, pos, slots);
+    } else {
+      ok = false;
+    }
+    if (!ok) {
+      let back = false;
+      while (sp > 0) {
+        sp -= 3;
+        if (st[sp] >= 0) {
+          pc = st[sp];
+          pos = st[sp + 1];
+          back = true;
+          break;
+        }
+        slots = slots.with(st[sp + 1], st[sp + 2]);
+      }
+      if (!back) {
+        at = if (search) { __pc_after(re, text, at, r.start) } else { -1 };
+        if (at < 0) {
+          return (R_NOMATCH, pos, slots);
+        }
+        r.steps.set(2);
+        pc = 0;
+        pos = at;
+      }
+    }
+  }
+  return (R_NOMATCH, pos, slots);
 }
 
 function __pc_match_error(code: i32): MatchError {
@@ -3790,12 +3989,14 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
   let pc = pc0;
   let pos = pos0;
   let regs = 2 * (re.ngroups + 1);
-  let mode = R_NOMATCH;
+  let bounded = re.depth_limit >= 0 || re.heap_limit >= 0;
   while (true) {
     let op = code[3 * pc];
     let a = code[3 * pc + 1];
     let ok = true;
-    let leave = false;
+    // A step that fails sets the mode of the backtrack. A backtrack takes a
+    // choice only in R_NOMATCH, so each step starts in it.
+    let mode = R_NOMATCH;
     if (op == OP_CHAR) {
       let (c, n) = __pc_char_at(re, text, pos);
       ok = c == a;
@@ -3816,7 +4017,7 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
       sp += 3;
       let n = r.steps.get() + 1;
       r.steps.set(n);
-      if ((n > re.limit || re.depth_limit >= 0 || re.heap_limit >= 0) && !__pc_limits(r, sp, n)) {
+      if ((n > re.limit || bounded) && !__pc_limits(r, sp, n)) {
         return (R_ERROR, pos, slots, frames);
       }
       pc = a;
@@ -3851,7 +4052,8 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
       if (res == R_ACCEPT) {
         pos = spos;
         slots = slots.with(0, sslots[0]);
-        leave = true;
+        mode = R_LEAVE;
+        ok = false;
       } else if (res >= R_COMMIT) {
         mode = res;
         ok = false;
@@ -3896,7 +4098,8 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
       pc = frames[fr + 1];
       fr = frames[fr + 2];
     } else if (op == OP_RET_ATOMIC) {
-      leave = true;
+      mode = R_LEAVE;
+      ok = false;
     } else if (op == OP_VERB) {
       let (next, top, f) = __pc_verb_passed(st, sp, frames, a, pc, pos);
       st = next;
@@ -3927,7 +4130,8 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
         return (R_ACCEPT, pos, slots, frames);
       }
       if (fr >= 0) {
-        leave = true;
+        mode = R_LEAVE;
+        ok = false;
       } else if (__pc_empty_ok(r, slots, pos)) {
         return (R_ACCEPT, pos, slots, frames);
       } else {
@@ -3944,7 +4148,10 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
       }
       ok = false;
     }
-    if (leave) {
+    if (ok) {
+      continue;
+    }
+    if (mode == R_LEAVE) {
       // The end of a call that drops its choices: (*ACCEPT), or the end of
       // a call of the whole pattern. The captures come back, but for \K.
       let s0 = slots[0];
@@ -3958,7 +4165,7 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
         sp += 3;
         slots = slots.with(0, s0);
       }
-    } else if (!ok) {
+    } else {
       while (sp > 0 && st[sp - 3] == E_UNDO) {
         sp -= 3;
         slots = slots.with(st[sp + 1], st[sp + 2]);
@@ -3981,7 +4188,6 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
         frames = u.frames;
         fr = u.fr;
         ftop = u.ftop;
-        mode = u.mode;
         pc = u.pc;
         pos = u.pos;
       }
@@ -4145,6 +4351,30 @@ function __pc_push(own st: i32[], sp: i32, a: i32, b: i32, c: i32): i32[] {
     return st.with(sp, a).with(sp + 1, b).with(sp + 2, c);
   }
   return st.append(a).append(b).append(c);
+}
+
+// The item `id` of its own in a plain pattern, as __pc_sub gives it: 1 when
+// it matches or its condition is true, 0 when not, or R_ERROR, then the
+// offset after it and the slots. A plain pattern has no verb and no
+// (*ACCEPT), so a run ends only in a match, no match or an error.
+function __pc_plain_item(r: PRun, id: i32, pos: i32, slots: i32[], depth: i32): (i32, i32, i32[]) {
+  let kind = r.re.subs[3 * id];
+  if (depth >= 1000) {
+    r.steps.set(-ERR_DEPTH);
+    return (R_ERROR, pos, slots);
+  }
+  let look = if (kind > COND) { kind - COND } else { kind };
+  let behind = look == LOOK_BEHIND || look == LOOK_NOT_BEHIND;
+  let (rc, end, out) = __pc_plain_run(r, r.re.subs[3 * id + 1], pos, slots, if (behind) { pos } else { -1 }, depth + 1, false);
+  if (rc == R_ERROR) {
+    return (R_ERROR, pos, slots);
+  }
+  if (kind == ATOMIC) {
+    return if (rc == R_MATCH) { (1, end, out) } else { (0, pos, slots) };
+  }
+  let positive = look == LOOK_AHEAD || look == LOOK_BEHIND;
+  let matched = rc == R_MATCH;
+  return (if (matched == positive) { 1 } else { 0 }, pos, if (matched && (positive || kind > COND)) { out } else { slots });
 }
 
 // A search of its own: an atomic group, a look-around, or the look-around
