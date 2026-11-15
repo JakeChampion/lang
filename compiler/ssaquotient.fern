@@ -143,7 +143,8 @@ function shared_divisors(f: ssasem.Func): Divisors {
       let ok = known[ins.result];
       if (ins.kind_tag == ssasem.cast() && ins.args.len() == 1 && known[ins.args[0]]) {
         c = value[ins.args[0]];
-        ok = c >= 0i64 && c <= 2147483647i64 && (!ssasem.is_u8(f.values[ins.result]) || c <= 255i64);
+        let t = f.values[ins.result];
+        ok = c >= 0i64 && c <= 2147483647i64 && (!ssasem.is_u8(t) || c <= 255i64) && (!ssasem.is_u16(t) || c <= 65535i64) && (!ssasem.is_i16(t) || c <= 32767i64);
         out = Divisors { ...out, constant: out.constant.with(ins.result, true) };
       }
       if (ins.kind_tag == ssa.BINARY && ins.str == "%" && ins.args.len() == 2 && !out.constant[ins.args[1]]) {

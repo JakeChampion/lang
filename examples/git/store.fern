@@ -8,13 +8,12 @@ import "./objects";
 import "./pack";
 
 // One packfile and its index `ix`. `data` is the packfile, which the store
-// reads when it needs an object of it. Until `loaded`, a read takes only
-// the bytes of one object from the file: `order` holds the offsets of the
-// objects in their order, and `reads` counts those reads.
-pub struct Packed { path: string, ix: pack.Index, data: u8[], loaded: boolean, cache: pack.Cache, order: i64[], reads: i32, file: Reader[], size: i64 }
-
-// A packfile of this size or less is read whole.
-const SMALL_PACK: i64 = 1048576;
+// maps when it needs an object of it. A packfile larger than LARGE_PACK is
+// not mapped: a read takes only the bytes of one object from the file,
+// and `order` holds the offsets of the objects in their order. Each copy
+// of a store shares the cache of the bases of the deltas: an update of a
+// cache that two stores hold would copy it.
+pub struct Packed { path: string, ix: pack.Index, data: string, loaded: boolean, cache: Cell[pack.Cache], order: i64[], reads: i32, file: Reader[], size: i64 }
 
 // A packfile larger than this is never read whole.
 const LARGE_PACK: i64 = 1073741824;
@@ -25,7 +24,39 @@ const LARGE_PACK: i64 = 1073741824;
 // last object, which is where the next search starts.
 // `multi` holds the multi-pack index when the store has one, and `multi_packs`
 // gives the place in `packs` of each packfile that it names, or -1.
-pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32, multi: midx.Midx[], multi_packs: i32[] }
+// `trees` holds the trees that the store read last, with their entries.
+pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32, multi: midx.Midx[], multi_packs: i32[], trees: Cell[Trees] }
+
+// The last trees that a diff read: a walk of the history compares the tree
+// of each commit with the tree of its parent, which the next commit of
+// the walk compares again.
+pub struct Trees { names: string[], lists: objects.RawTree[] }
+
+const TREES_KEPT: i32 = 16;
+
+// The entries of the tree `name` when the store read it last, or none.
+pub function tree_seen(s: Store, name: string): Option[objects.RawTree] {
+  let t = s.trees.get();
+  for i in 0..t.names.len() {
+    if (t.names[i] == name) {
+      return Some(t.lists[i]);
+    }
+  }
+  return None;
+}
+
+// Keeps the entries of the tree `name`.
+pub function keep_tree(s: Store, name: string, list: objects.RawTree): void {
+  let t = s.trees.get();
+  s.trees.set(Trees { names: [], lists: [] });
+  let names = t.names;
+  let lists = t.lists;
+  if (names.len() >= TREES_KEPT) {
+    names = array.slice(names, 1, names.len());
+    lists = array.slice(lists, 1, lists.len());
+  }
+  s.trees.set(Trees { names: names.append(name), lists: lists.append(list) });
+}
 
 // The result of a read: the object, and the store with the packfile that
 // the read loaded.
@@ -42,7 +73,7 @@ pub function open(dir: string, a: i32, multi: boolean): Store {
   let names = match (read_dir(dir + "/pack")) {
     Ok(ns) => ns,
     Err(_) => {
-      return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [] };
+      return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }) };
     },
   };
   for n in names {
@@ -50,12 +81,12 @@ pub function open(dir: string, a: i32, multi: boolean): Store {
       let path = dir + "/pack/" + objects.part(n, 0, n.len() - 4) + ".pack";
       if let Ok(bytes) = read_file_bytes(dir + "/pack/" + n) {
         if let Ok(ix) = pack.index_of(bytes, a, path) {
-          packs = packs.append(Packed { path: path, ix: ix, data: [], loaded: false, cache: pack.cache_new(), order: [], reads: 0, file: [], size: 0 });
+          packs = packs.append(Packed { path: path, ix: ix, data: "", loaded: false, cache: cell_new(pack.cache_new()), order: [], reads: 0, file: [], size: 0 });
         }
       }
     }
   }
-  let s = Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [] };
+  let s = Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }) };
   if (!multi) {
     return s;
   }
@@ -113,9 +144,9 @@ function loaded(s: Store, i: i32): Store {
   if (s.packs[i].loaded) {
     return s;
   }
-  let data = match (read_file_bytes(s.packs[i].path)) {
-    Ok(bytes) => bytes,
-    Err(_) => [],
+  let data = match (unsafe { map_file_unchecked(s.packs[i].path) }) {
+    Ok(text) => text,
+    Err(_) => "",
   };
   return Store { ...s, packs: s.packs.with(i, Packed { ...s.packs[i], data: data, loaded: true }) };
 }
@@ -159,11 +190,8 @@ function ready(s: Store, i: i32): Store {
     return s;
   }
   if (p.order.len() > 0) {
-    // After reads of one object for half of its objects, the whole file
-    // is less work than more reads.
-    return if (p.reads * 2 >= p.order.len() && p.size <= LARGE_PACK) { loaded(s, i) } else { s };
+    return s;
   }
-  let offsets = offsets_in_order(p);
   let file: Reader[] = [];
   let size: i64 = 0;
   if let Ok(r) = open_reader(p.path) {
@@ -172,13 +200,13 @@ function ready(s: Store, i: i32): Store {
     }
     file = [r];
   }
-  if (size <= SMALL_PACK) {
+  if (size <= LARGE_PACK) {
     for r in file {
       r.close();
     }
     return loaded(s, i);
   }
-  return Store { ...s, packs: s.packs.with(i, Packed { ...p, order: offsets, file: file, size: size }) };
+  return Store { ...s, packs: s.packs.with(i, Packed { ...p, order: offsets_in_order(p), file: file, size: size }) };
 }
 
 // The bytes of the object at the offset `from` of the open packfile, `most`
@@ -188,7 +216,7 @@ function ready(s: Store, i: i32): Store {
 function read_at(file: Reader[], from: i64, want: i32, width: i32): pack.Window {
   let bytes: u8[] = [];
   if (file.len() == 0) {
-    return pack.Window { bytes: bytes, shift: from, width: width };
+    return pack.Window { bytes: "", shift: from, width: width };
   }
   let r = file[0];
   if let Ok(_) = r.seek(from, 0) {
@@ -206,7 +234,7 @@ function read_at(file: Reader[], from: i64, want: i32, width: i32): pack.Window 
       }
     }
   }
-  return pack.Window { bytes: bytes, shift: from, width: width };
+  return pack.Window { bytes: pack.text_of(bytes), shift: from, width: width };
 }
 
 // The bytes of the object at the offset `from` of the open packfile, `most`
@@ -279,7 +307,7 @@ function source_of(p: Packed): pack.Source {
 // The packfile that has the object `name` ready for a read, its place in
 // the store, and the offset of the object, or -1 for each.
 function packed_at(s: Store, name: string): (Store, i32, i64) {
-  let Ok(raw) = hex.decode(name) else {
+  let Some(raw) = objects.raw_name(name) else {
     return (s, -1, -1);
   };
   let (i, offset) = located(s, raw);
@@ -300,8 +328,13 @@ pub function read(s: Store, name: string): Found {
   if (offset < 0) {
     return Found { store: now, object: Err("the index of the packfile of " + name + " has a bad offset") };
   }
-  let (object, cache) = pack.object_cached(source_of(p), offset, p.cache);
-  return Found { store: Store { ...now, packs: now.packs.with(i, Packed { ...p, cache: cache, reads: p.reads + 1 }) }, object: object };
+  // The cell gives the cache away during the read, so that the read
+  // holds the only reference to it.
+  let cache = p.cache.get();
+  p.cache.set(pack.cache_new());
+  let (object, kept) = pack.object_cached(source_of(p), offset, cache);
+  p.cache.set(kept);
+  return Found { store: Store { ...now, packs: now.packs.with(i, Packed { ...p, reads: p.reads + 1 }) }, object: object };
 }
 
 // The kind and the size of an object, and the store after the read. `why`

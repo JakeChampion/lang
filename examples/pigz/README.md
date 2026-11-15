@@ -124,34 +124,36 @@ with zlib 1.3, 2026-11-15. The runs of pigz and of the port alternate, and
 each row has the fastest of three runs, in seconds. CPU is user and system
 time. For each compression row, the port wrote the same bytes as pigz.
 
-Other work kept the load average of the machine at 9 to 11 during the
+Other work kept the load average of the machine at 11 to 16 during the
 runs. So neither program got the four CPUs. Compare the CPU times.
 
 | Run | pigz wall | pigz CPU | port wall | port CPU |
 | --- | --: | --: | --: | --: |
-| `-1 -p 1` | 1.44 | 1.19 | 1.38 | 1.16 |
-| `-1 -p 4` | 0.97 | 1.25 | 2.45 | 1.72 |
-| `-6 -p 1` | 3.76 | 3.70 | 4.87 | 4.33 |
-| `-6 -p 4` | 4.16 | 3.79 | 6.97 | 4.97 |
-| `-9 -p 1` | 9.82 | 7.60 | 14.10 | 9.43 |
-| `-9 -p 4` | 4.57 | 7.75 | 6.86 | 10.08 |
-| `-d -p 1` | 0.40 | 0.39 | 0.32 | 0.31 |
-| `-d -p 4` | 0.54 | 0.43 | 0.39 | 0.32 |
+| `-1 -p 1` | 1.42 | 1.17 | 1.72 | 1.34 |
+| `-1 -p 4` | 1.39 | 1.24 | 2.98 | 1.90 |
+| `-6 -p 1` | 4.10 | 3.75 | 5.07 | 4.05 |
+| `-6 -p 4` | 2.56 | 3.78 | 4.83 | 4.76 |
+| `-9 -p 1` | 7.61 | 7.19 | 8.75 | 7.48 |
+| `-9 -p 4` | 3.61 | 7.27 | 8.38 | 8.18 |
+| `-d -p 1` | 0.39 | 0.38 | 0.31 | 0.30 |
+| `-d -p 4` | 0.44 | 0.42 | 0.44 | 0.33 |
 
-The port decompresses faster than pigz. With one process, it compresses
-at level 1 in the CPU time of pigz: 0.97 to 1.01 times in the best runs of
-two series. At levels 6 and 9, it takes 1.17 and 1.24 times the CPU time of
-pigz.
+The port decompresses faster than pigz. In CPU time, it compresses 1.04
+to 1.15 times slower with one process, and 1.13 to 1.53 times slower with
+four. With four processes, each worker copies its input and its output,
+and it starts with an empty heap. With one process, the port uses 1.6 MB
+of memory, and pigz uses 2.5 MB.
 
-With four processes, the port takes 1.3 to 1.4 times the CPU time of pigz.
-Each worker copies its input and its output, and it starts with
-an empty heap. With one process, the port uses 1.5 MB of memory, and pigz
-uses 2.6 MB.
+The hash tables `head` and `prev` are `u16[]`, as in zlib, so they use
+128 KB and not 256 KB. In the same runs, the port with `i32[]` tables used
+4.70 s of CPU at `-6 -p 1` and 8.97 s at `-9 -p 1`. So the 2-byte tables
+take 14% and 17% less CPU time there.
 
-The compiler makes three kinds of loop into calls to its kernels (#15974):
-the copy of the input into the window, the slide of the window, and the
-clears of the tables. The slide of `head` and `prev` runs a copy of its loop
-with no checks (#15975).
+The compiler makes two kinds of loop into calls to its kernels (#15974):
+the copy of the input into the window, and the slide of the window. The
+kernels have no 2-byte form, so the clear of `head` stays a loop. The slide
+of `head` and `prev` runs a copy of its loop with no checks (#15975). The
+runs of the table are older than these two changes.
 
 Most of the time of a compression is in `longest`, the port of
 `longest_match`. Its loop waits for the loads of the window and of the hash
@@ -163,17 +165,6 @@ took the same time. With all of its values in registers, it took 1.5% less
 time. Two-byte compares, as zlib makes them, took 7% less time, and the port
 now makes them. A check and a two-byte read in five instructions, as #15976
 gives them, took the same time.
-
-The hash tables `head` and `prev` are `i32[]`, because Fern has no 16-bit
-integer type (#15977). zlib keeps them in 16 bits, so its tables use half of
-the memory. The effect of this cause is measured with cachegrind at
-`-6 -p 1` on 10 MB of this file:
-
-- The port has 33.6M misses of the D1 cache of 48 KB, and pigz has 24.3M.
-  17.5M of the misses of the port are the reads of `prev` in `longest`.
-- A copy of the port that keeps the tables as pairs of bytes in a `u8[]`
-  has 25.2M misses. It was faster than the port, although it executes 650M
-  more instructions.
 
 This cause is not measured: `longest` takes ten arguments, and some of them
 go on the stack. The values of the loop of `deflate_slow` that live across
@@ -192,9 +183,8 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
 
 ## What remains
 
-- Speed: compression at levels 6 and 9, and with more than one process,
-  is not yet as fast as pigz (see the table). The causes that "Speed" gives
-  are not fixed.
+- Speed: compression is not yet as fast as pigz (see the table). The
+  causes that "Speed" gives are not fixed.
 
 - Level 11 (zopfli). `-11` aborts with exit code 22 and the message
   `level 11 (zopfli) is not available in this port`.

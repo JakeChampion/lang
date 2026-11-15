@@ -1,0 +1,29 @@
+// spec: IS-08
+// spec: IS-09
+// The saturating operators clamp to the 16-bit range, and the checked
+// operators give None when the result leaves it.
+
+function u(n: u16): u16 { return n; }
+function s(n: i16): i16 { return n; }
+
+function su(v: Option[u16]): string {
+  return match (v) {
+    Some(n) => n.to_string(),
+    None => "none",
+  };
+}
+
+function ss(v: Option[i16]): string {
+  return match (v) {
+    Some(n) => n.to_string(),
+    None => "none",
+  };
+}
+
+function main(): i32 {
+  print(f"{u(65000) +| 1000} {u(5) -| 6} {u(300) *| 300} {u(1) <<| 16} {u(0x4000) <<| 1}");
+  print(f"{s(32000) +| 1000} {s(-32000) -| 1000} {s(-200) *| 200} {s(-1) <<| 15} {s(1) <<| 15}");
+  print(f"{su(u(65535) +? 1)} {su(u(3) -? 4)} {su(u(256) *? 256)} {su(u(255) *? 257)} {su(u(1) <<? 16)} {su(u(1) <<? 15)}");
+  print(f"{ss(s(32767) +? 1)} {ss(s(-32768) /? -1)} {ss(s(-128) *? 256)} {ss(s(-128) *? 255)} {ss(s(7) %? 0)} {ss(s(-9) >>? 1)}");
+  return 0;
+}

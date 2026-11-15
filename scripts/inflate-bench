@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# inflate-bench — std/deflate's zlib decoder against zlib and libdeflate.
+#
+# Usage: inflate-bench [REV]
+#
+#   REV  the commit whose git objects and files make the corpora
+#        (default: HEAD).
+#
+# Before it measures, it runs a differential against zlib: 3000 random and
+# damaged raw DEFLATE streams (scripts/inflate-bench.d/differ.py). A
+# disagreement stops the run.
+#
+# Environment:
+#
+#   FERN_INFLATE_CACHE  where the corpora and the programs are kept.
+#                       Default: ~/.cache/fern-inflate-bench.
+#   FERN_INFLATE_SEED   the seed of the differential. Default: 1.
+#
+# WHAT IS MEASURED. Two corpora of zlib streams at level 6, git's default:
+# 10000 git objects of 100 B to 4 KiB, which is the load of the git port,
+# and one stream of 65 MB. std/deflate's `zlib_decode`, built by bin/fern
+# with -O for the host, decodes each stream into a new buffer with the
+# known length as the limit. The C program does the same with the system
+# zlib, and with libdeflate when the host has it. Each decoder must give
+# the same count of bytes.
+#
+# Two numbers for each decoder and corpus: the instructions that callgrind
+# counts for one round, less those of a run with no round, so the read of
+# the file is out; and the best wall time of seven alternating runs of one
+# round, less the best of the runs with no round. This RECORDS: nothing
+# compares the numbers with a baseline.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+REV="${1:-HEAD}"
+CACHE="${FERN_INFLATE_CACHE:-$HOME/.cache/fern-inflate-bench}"
+D=scripts/inflate-bench.d
+mkdir -p "$CACHE"
+
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) TARGET=x86-64-linux ;;
+  Linux-aarch64) TARGET=arm64-linux ;;
+  *) echo "inflate-bench: unsupported host $(uname -s) $(uname -m)" >&2; exit 2 ;;
+esac
+
+make bin/fern >&2
+python3 "$D/corpus.py" "$PWD" "$REV" "$CACHE"
+bin/fern -target "$TARGET" -O -o "$CACHE/fbench" "$D/fbench.fern"
+bin/fern -target "$TARGET" -O -o "$CACHE/differ" "$D/differ.fern"
+python3 "$D/differ.py" "$CACHE/differ" "$CACHE" "${FERN_INFLATE_SEED:-1}" 3000
+modes="zinit zreset"
+if cc -O2 -DWITH_LIBDEFLATE -o "$CACHE/cbench" "$D/cbench.c" -lz -ldeflate 2>/dev/null; then
+  modes="$modes ldeflate"
+elif ls /usr/lib/*/libdeflate.so.0 >/dev/null 2>&1 \
+  && cc -O2 -DWITH_LIBDEFLATE -o "$CACHE/cbench" "$D/cbench.c" -lz "$(ls /usr/lib/*/libdeflate.so.0 | head -1)"; then
+  modes="$modes ldeflate"
+else
+  cc -O2 -o "$CACHE/cbench" "$D/cbench.c" -lz
+fi
+
+instructions() {
+  local one zero
+  one=$(valgrind --tool=callgrind --callgrind-out-file=/dev/null "$@" 1 2>&1 >/dev/null | sed -n 's/.*Collected : //p')
+  zero=$(valgrind --tool=callgrind --callgrind-out-file=/dev/null "$@" 0 2>&1 >/dev/null | sed -n 's/.*Collected : //p')
+  echo $((one - zero))
+}
+
+wall() {
+  python3 - "$@" <<'EOF'
+import subprocess, sys, time
+best = [1e9, 1e9]
+for _ in range(7):
+    for k, r in enumerate(('0', '1')):
+        t = time.perf_counter()
+        subprocess.run(sys.argv[1:] + [r], stdout=subprocess.DEVNULL, check=True)
+        best[k] = min(best[k], time.perf_counter() - t)
+print('%.1f' % ((best[1] - best[0]) * 1000))
+EOF
+}
+
+echo "inflate-bench: $TARGET, commit $(git rev-parse --short HEAD), corpora of $(git rev-parse --short "$REV"), zlib $(python3 -c 'import zlib; print(zlib.ZLIB_RUNTIME_VERSION)')"
+printf '%-10s %-8s %15s %10s\n' corpus decoder instructions ms
+for corpus in small large; do
+  want=$("$CACHE/fbench" "$CACHE/$corpus.bin" 1)
+  printf '%-10s %-8s %15s %10s\n' "$corpus" fern "$(instructions "$CACHE/fbench" "$CACHE/$corpus.bin")" "$(wall "$CACHE/fbench" "$CACHE/$corpus.bin")"
+  for mode in $modes; do
+    if [ "$("$CACHE/cbench" "$mode" "$CACHE/$corpus.bin" 1)" != "$want" ]; then
+      echo "inflate-bench: $mode decodes a different count of bytes from $corpus.bin" >&2
+      exit 1
+    fi
+    printf '%-10s %-8s %15s %10s\n' "$corpus" "$mode" "$(instructions "$CACHE/cbench" "$mode" "$CACHE/$corpus.bin")" "$(wall "$CACHE/cbench" "$mode" "$CACHE/$corpus.bin")"
+  done
+done

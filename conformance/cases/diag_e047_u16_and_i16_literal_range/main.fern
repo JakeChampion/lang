@@ -1,0 +1,11 @@
+// A literal must fit the 16-bit type that it takes: 0..65535 for a u16 and
+// -32768..32767 for an i16.
+function main(): i32 {
+  let top: u16 = 65535;
+  let least: i16 = -32768;
+  let over: u16 = 65536;
+  let negative: u16 = -1u16;
+  let past: i16 = 32768;
+  let below: i16 = -32769;
+  return top as i32 + least as i32 + over as i32 + negative as i32 + past as i32 + below as i32;
+}

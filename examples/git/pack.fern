@@ -223,12 +223,18 @@ function no_entry(): Entry {
 }
 
 // A part of a packfile: `bytes` starts at the offset `shift` of the file.
-// `width` is the length of a name.
-pub struct Window { bytes: u8[], shift: i64, width: i32 }
+// `width` is the length of a name. The bytes are a string, so that a
+// mapped file is a part with no copy.
+pub struct Window { bytes: string, shift: i64, width: i32 }
 
 // The whole packfile `data`, with names of `width` bytes.
-pub function whole(data: u8[], width: i32): Window {
+pub function whole(data: string, width: i32): Window {
   return Window { bytes: data, shift: 0, width: width };
+}
+
+// The bytes `data` as the text of a part.
+pub function text_of(data: u8[]): string {
+  return unsafe { string_from_bytes_unchecked(data) };
 }
 
 // The bytes of a packfile for the reads of its objects. `part` gives a part
@@ -245,7 +251,7 @@ pub const HEAD_BYTES: i32 = 4096;
 pub const LINK_BYTES: i32 = 64;
 
 // The source of the packfile `data` in memory.
-pub function memory(data: u8[], base: (u8[]) => i64, width: i32): Source {
+pub function memory(data: string, base: (u8[]) => i64, width: i32): Source {
   return Source { part: (at: i64, most: i32): Window => whole(data, width), base: base };
 }
 
@@ -280,7 +286,7 @@ pub function entry_in(w: Window, offset: i64): Entry {
     if (at + width > data.len()) {
       return no_entry();
     }
-    return Entry { ...e, data_at: (at + width) as i64 + w.shift, base_name: array.slice(data, at, at + width) };
+    return Entry { ...e, data_at: (at + width) as i64 + w.shift, base_name: objects.part(data, at, at + width).bytes() };
   }
   if (kind != OFS_DELTA) {
     return e;
@@ -312,7 +318,7 @@ pub function inflated_in(w: Window, e: Entry): Result[(u8[], i64), string] {
   if (from < 0 || from + 2 > w.bytes.len() as i64) {
     return Err("a packed object has no data");
   }
-  return match (deflate.inflate_from(w.bytes, from as i32 + 2, e.size)) {
+  return match (deflate.inflate_from(w.bytes.as_bytes(), from as i32 + 2, e.size)) {
     Ok(got) => {
       if (got.out.len() != e.size) {
         return Err("a packed object has a wrong size");
@@ -548,16 +554,22 @@ function delta_size(w: Window, e: Entry): i64 {
     return -1;
   }
   let at = from as i32;
-  let Ok(reader) = deflate.inflate_reader(array.slice(w.bytes, at, w.bytes.len().min(at + 4096)), 32768) else {
-    return -1;
-  };
-  let read = reader.read;
-  let Ok(chunk) = read(DELTA_HEAD.min(e.size.max(1)), (): boolean => false) else {
-    return -1;
-  };
-  let (_, a) = delta_number(chunk.bytes, 0);
-  let (size, _) = delta_number(chunk.bytes, a);
-  return size;
+  // The start of the stream is enough for most deltas, and a stream with
+  // a large table of codes takes more of it.
+  for take in [512, 4096] {
+    if let Ok(reader) = deflate.inflate_reader(objects.part(w.bytes, at, w.bytes.len().min(at + take)).bytes(), 32768) {
+      let read = reader.read;
+      let want = DELTA_HEAD.min(e.size.max(1));
+      if let Ok(chunk) = read(want, (): boolean => false) {
+        if (chunk.bytes.len() >= want || at + take >= w.bytes.len()) {
+          let (_, a) = delta_number(chunk.bytes, 0);
+          let (size, _) = delta_number(chunk.bytes, a);
+          return size;
+        }
+      }
+    }
+  }
+  return -1;
 }
 
 // The kind of the object that the chain of deltas from `e` starts at.

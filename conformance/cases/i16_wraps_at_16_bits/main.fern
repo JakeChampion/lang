@@ -1,0 +1,21 @@
+// spec: IS-01
+// spec: IS-03
+// spec: IS-06
+// spec: IS-07
+// An i16 holds -32768..32767. Each operator wraps at 16 bits, a right shift
+// keeps the sign, and the least i16 over -1 is the least i16.
+
+function id(n: i16): i16 { return n; }
+
+function main(): i32 {
+  let max = id(32767);
+  let least = id(-32768);
+  print(f"{max + 1} {least - 1} {id(300) * 300} {id(0x4000) << 1}");
+  print(f"{least >> 15} {least >> 1} {id(-7) >> 1} {id(-1) << 15}");
+  print(f"{-least} {-max} {~id(0)} {~least} {least & id(0x7fff)} {id(-1) ^ max}");
+  print(f"{least / id(-1)} {least % id(-1)} {id(-7) / 2} {id(-7) % 2} {id(5) / 0} {id(5) % 0}");
+  let n = id(32000);
+  n += 1000;
+  print(f"{n} {n < id(0)} {least < max}");
+  return 0;
+}

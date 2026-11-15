@@ -28,6 +28,8 @@ func IntLitOutOfRange(lit *NumberLit, negated bool, t NumberType) string {
 	if t.IsSigned() {
 		var limit uint64
 		switch t.NormalWidth() {
+		case 16:
+			limit = 1<<15 - 1
 		case 32:
 			limit = 1<<31 - 1
 		case 64:
@@ -50,6 +52,8 @@ func IntLitOutOfRange(lit *NumberLit, negated bool, t NumberType) string {
 	switch t.NormalWidth() {
 	case 8:
 		max = 1<<8 - 1
+	case 16:
+		max = 1<<16 - 1
 	case 32:
 		max = 1<<32 - 1
 	default:

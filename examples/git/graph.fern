@@ -1,5 +1,5 @@
 // The graph of `git log --graph`: the lines that go before the text of
-// each commit (graph.c of git, without colors).
+// each commit (graph.c of git).
 //
 // Each column of the graph holds the commit that a line of the history
 // waits for. A commit takes its column, and its parents take new columns.
@@ -8,6 +8,7 @@
 // commit, the line after a merge, and the lines that move the columns
 // together again.
 import "std/array";
+import "./color";
 
 const PADDING: i32 = 0;
 
@@ -25,11 +26,30 @@ const PRE_ROOT: i32 = 6;
 
 // The state of the graph. `parents` holds the parents of the commit that
 // the graph shows. `mapping` holds, for each place of a line, the column
-// that goes through it, or -1.
-pub struct Graph { commit: string, parents: string[], width: i32, expansion_row: i32, state: i32, prev_state: i32, commit_index: i32, prev_commit_index: i32, merge_layout: i32, edges_added: i32, prev_edges_added: i32, columns: string[], new_columns: string[], merge_parents: boolean[], new_merge_parents: boolean[], commit_in_columns: boolean, visual_root: boolean, root_depth: i32, root_cascade: boolean, mapping: i32[], old_mapping: i32[], mapping_size: i32, mark: string }
+// that goes through it, or -1. `colors` and `new_colors` hold the color
+// of each column, and `color` is the color that a new column takes. The
+// count of the colors means no color.
+pub struct Graph { commit: string, parents: string[], width: i32, expansion_row: i32, state: i32, prev_state: i32, commit_index: i32, prev_commit_index: i32, merge_layout: i32, edges_added: i32, prev_edges_added: i32, columns: string[], new_columns: string[], colors: i32[], new_colors: i32[], color: i32, colored: boolean, merge_parents: boolean[], new_merge_parents: boolean[], commit_in_columns: boolean, visual_root: boolean, root_depth: i32, root_cascade: boolean, mapping: i32[], old_mapping: i32[], mapping_size: i32, mark: string }
 
-pub function graph_new(): Graph {
-  return Graph { commit: "", parents: [], width: 0, expansion_row: 0, state: PADDING, prev_state: PADDING, commit_index: 0, prev_commit_index: 0, merge_layout: 0, edges_added: 0, prev_edges_added: 0, columns: [], new_columns: [], merge_parents: [], new_merge_parents: [], commit_in_columns: false, visual_root: false, root_depth: 0, root_cascade: false, mapping: [], old_mapping: [], mapping_size: 0, mark: "*" };
+pub function graph_new(colored: boolean): Graph {
+  return Graph { commit: "", parents: [], width: 0, expansion_row: 0, state: PADDING, prev_state: PADDING, commit_index: 0, prev_commit_index: 0, merge_layout: 0, edges_added: 0, prev_edges_added: 0, columns: [], new_columns: [], colors: [], new_colors: [], color: color.column_count() - 1, colored: colored, merge_parents: [], new_merge_parents: [], commit_in_columns: false, visual_root: false, root_depth: 0, root_cascade: false, mapping: [], old_mapping: [], mapping_size: 0, mark: "*" };
+}
+
+// The character `ch` of a column with the color `c`.
+function paint(c: i32, ch: string): string {
+  let code = color.column(c);
+  return if (code.len() > 0) { code + ch + color.RESET } else { ch };
+}
+
+// The color that a new column for `commit` takes: that of its column in
+// the last line, or the current color (`graph_find_commit_color`).
+function commit_color(g: Graph, commit: string): i32 {
+  for i in 0..g.columns.len() {
+    if (g.columns[i] == commit) {
+      return g.colors[i];
+    }
+  }
+  return if (g.colored) { g.color } else { color.column_count() };
 }
 
 function update_state(g: Graph, s: i32): Graph {
@@ -67,7 +87,7 @@ function insert_into_new_columns(g_in: Graph, commit: string, idx: i32): Graph {
   let i = find_new_column(g, commit);
   if (i < 0) {
     i = g.new_columns.len();
-    g = Graph { ...g, new_columns: g.new_columns.append(commit), new_merge_parents: g.new_merge_parents.append(false) };
+    g = Graph { ...g, new_columns: g.new_columns.append(commit), new_colors: g.new_colors.append(commit_color(g, commit)), new_merge_parents: g.new_merge_parents.append(false) };
   }
   let mapping_idx = 0;
   if (num_parents(g) > 1 && idx > -1 && g.merge_layout == -1) {
@@ -89,7 +109,7 @@ function insert_into_new_columns(g_in: Graph, commit: string, idx: i32): Graph {
 }
 
 function update_columns(g_in: Graph): Graph {
-  let g = Graph { ...g_in, columns: g_in.new_columns, new_columns: [], merge_parents: g_in.new_merge_parents, new_merge_parents: [], commit_in_columns: true };
+  let g = Graph { ...g_in, columns: g_in.new_columns, new_columns: [], colors: g_in.new_colors, new_colors: [], merge_parents: g_in.new_merge_parents, new_merge_parents: [], commit_in_columns: true };
   let max_new = g.columns.len() + num_parents(g);
   let size = 2 * max_new;
   g = Graph { ...g, mapping_size: size, mapping: __alloc_i32(size).map((v: i32): i32 => -1), width: 0, prev_edges_added: g.edges_added, edges_added: 0 };
@@ -111,6 +131,10 @@ function update_columns(g_in: Graph): Graph {
       seen_this = true;
       g = Graph { ...g, commit_index: i, merge_layout: -1 };
       for p in g.parents {
+        // A merge, or the start of a new column, takes the next color.
+        if (num_parents(g) > 1 || i == n) {
+          g = Graph { ...g, color: (g.color + 1) % color.column_count() };
+        }
         g = insert_into_new_columns(g, p, i);
       }
       if (num_parents(g) == 0) {
@@ -170,14 +194,32 @@ function mapping_correct(g: Graph): boolean {
   return true;
 }
 
+// The count of the characters of `line` that are not in a color.
+function visible_len(line: string): i32 {
+  let n = 0;
+  let i = 0;
+  while (i < line.len()) {
+    if (line[i] == 0x1b) {
+      while (i < line.len() && line[i] != b'm') {
+        i += 1;
+      }
+    } else {
+      n += 1;
+    }
+    i += 1;
+  }
+  return n;
+}
+
 function pad(g: Graph, line: string): string {
-  return if (line.len() < g.width) { line + " ".repeat(g.width - line.len()) } else { line };
+  let n = visible_len(line);
+  return if (n < g.width) { line + " ".repeat(g.width - n) } else { line };
 }
 
 function padding_columns(g: Graph): string {
   let out = "";
-  for c in g.new_columns {
-    out += "| ";
+  for c in g.new_colors {
+    out += paint(c, "|") + " ";
   }
   return out;
 }
@@ -188,15 +230,16 @@ function pre_commit_line(g_in: Graph): (Graph, string) {
   let seen_this = false;
   for i in 0..g.columns.len() {
     let col = g.columns[i];
+    let c = g.colors[i];
     if (col == g.commit) {
       seen_this = true;
-      out += "|" + " ".repeat(g.expansion_row);
+      out += paint(c, "|") + " ".repeat(g.expansion_row);
     } else if (seen_this && g.expansion_row == 0) {
-      out += if (g.prev_state == POST_MERGE && g.prev_commit_index < i) { "\\" } else { "|" };
+      out += paint(c, if (g.prev_state == POST_MERGE && g.prev_commit_index < i) { "\\" } else { "|" });
     } else if (seen_this && g.expansion_row > 0) {
-      out += "\\";
+      out += paint(c, "\\");
     } else {
-      out += "|";
+      out += paint(c, "|");
     }
     out += " ";
   }
@@ -211,7 +254,8 @@ function octopus(g: Graph): string {
   let out = "";
   let dashed = dashed_parents(g);
   for i in 0..dashed {
-    out += "-" + (if (i == dashed - 1) { "." } else { "-" });
+    let c = g.new_colors[mapping_at(g.mapping, (g.commit_index + i + 2) * 2)];
+    out += paint(c, "-") + paint(c, if (i == dashed - 1) { "." } else { "-" });
   }
   return out;
 }
@@ -244,13 +288,13 @@ function commit_line(g_in: Graph): (Graph, string) {
         out += octopus(g);
       }
     } else if (seen_this && g.edges_added > 1) {
-      out += "\\";
+      out += paint(g.colors[i], "\\");
     } else if (seen_this && g.edges_added == 1) {
-      out += if (g.prev_state == POST_MERGE && g.prev_edges_added > 0 && g.prev_commit_index < i) { "\\" } else { "|" };
+      out += paint(g.colors[i], if (g.prev_state == POST_MERGE && g.prev_edges_added > 0 && g.prev_commit_index < i) { "\\" } else { "|" });
     } else if (g.prev_state == COLLAPSING && mapping_at(g.old_mapping, 2 * i + 1) == i && mapping_at(g.mapping, 2 * i) < i) {
-      out += "/";
+      out += paint(g.colors[i], "/");
     } else {
-      out += "|";
+      out += paint(g.colors[i], "|");
     }
     out += " ";
     i += 1;
@@ -270,7 +314,7 @@ function post_merge_line(g_in: Graph): (Graph, string) {
   let merge_chars = ["/", "|", "\\"];
   let out = "";
   let seen_this = false;
-  let parent_col = false;
+  let parent_col = -1;
   let first_parent = if (g.parents.len() > 0) { g.parents[0] } else { "" };
   let n = g.columns.len();
   let i = 0;
@@ -288,7 +332,7 @@ function post_merge_line(g_in: Graph): (Graph, string) {
       let idx = g.merge_layout;
       seen_this = true;
       for j in 0..num_parents(g) {
-        out += merge_chars[idx];
+        out += paint(g.new_colors[find_new_column(g, g.parents[j])], merge_chars[idx]);
         if (idx == 2) {
           if (g.edges_added > 0 || j < num_parents(g) - 1) {
             out += " ";
@@ -301,16 +345,16 @@ function post_merge_line(g_in: Graph): (Graph, string) {
         out += " ";
       }
     } else if (seen_this) {
-      out += if (g.edges_added > 0) { "\\" } else { "|" };
+      out += paint(g.colors[i], if (g.edges_added > 0) { "\\" } else { "|" });
       out += " ";
     } else {
-      out += "|";
+      out += paint(g.colors[i], "|");
       if (g.merge_layout != 0 || i != g.commit_index - 1) {
-        out += if (parent_col) { "_" } else { " " };
+        out += if (parent_col >= 0) { paint(parent_col, "_") } else { " " };
       }
     }
-    if (col == first_parent) {
-      parent_col = true;
+    if (col == first_parent && i < n) {
+      parent_col = g.colors[i];
     }
     i += 1;
   }
@@ -366,18 +410,18 @@ function collapsing_line(g_in: Graph): (Graph, string) {
     if (target < 0) {
       out += " ";
     } else if (target * 2 == i) {
-      out += "|";
+      out += paint(g.new_colors[target], "|");
     } else if (target == horizontal_edge_target && i != horizontal_edge - 1) {
       if (i != target * 2 + 3) {
         m = m.with(i, -1);
       }
       used_horizontal = true;
-      out += "_";
+      out += paint(g.new_colors[target], "_");
     } else {
       if (used_horizontal && i < horizontal_edge) {
         m = m.with(i, -1);
       }
-      out += "/";
+      out += paint(g.new_colors[target], "/");
     }
   }
   g = Graph { ...g, mapping: m, old_mapping: new_old, mapping_size: size };
@@ -406,8 +450,8 @@ pub function next_line(g_in: Graph): (Graph, string, boolean) {
     g = g1;
     line = l;
   } else if (g.state == PRE_ROOT) {
-    for c in g.columns {
-      line += (if (c == g.commit) { " \\" } else { "|" }) + " ";
+    for i in 0..g.columns.len() {
+      line += (if (g.columns[i] == g.commit) { " " + paint(g.colors[i], "\\") } else { paint(g.colors[i], "|") }) + " ";
     }
     g = update_state(g, COMMIT);
   } else if (g.state == COMMIT) {
@@ -434,8 +478,9 @@ pub function padding_line(g: Graph): (Graph, string) {
     return (g1, line);
   }
   let out = "";
-  for c in g.columns {
-    out += "|";
+  for i in 0..g.columns.len() {
+    let c = g.columns[i];
+    out += paint(g.colors[i], "|");
     if (c == g.commit && num_parents(g) > 2) {
       out += " ".repeat((num_parents(g) - 2) * 2);
     } else {

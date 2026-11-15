@@ -382,8 +382,9 @@ pub function entry_payload(o: Op): Op {
   return Op { ...o, i32_imm: 2 };
 }
 
-// The width of an array op is the width of its element: 8 for a byte, 32 for a
-// 4-byte integer, 64 for an 8-byte scalar, and width_ptr() for a pointer-width slot.
+// The width of an array op is the width of its element: 8 for a byte, 16 for a
+// 2-byte integer, 32 for a 4-byte integer, 64 for an 8-byte scalar, and
+// width_ptr() for a pointer-width slot.
 pub function packed(o: Op): Op {
   return Op { ...o, width: 8 };
 }
@@ -398,6 +399,37 @@ pub function compact(o: Op): Op {
 
 pub function is_compact(o: Op): boolean {
   return o.width == 32;
+}
+
+// The log2 of the elements that one word holds for the array op `o`: 3 for
+// bytes, 2 and 1 for 2-byte and 4-byte integers, and 0 for words.
+pub function elem_shift(o: Op): i32 {
+  if (is_packed(o)) {
+    return 3;
+  }
+  if (is_half(o)) {
+    return 2;
+  }
+  return if (is_compact(o)) { 1 } else { 0 };
+}
+
+// The suffix of the runtime names of an array of 2^shift elements to a word.
+pub function shift_suffix(shift: i32): string {
+  if (shift == 3) {
+    return "_u8";
+  }
+  if (shift == 2) {
+    return "_u16";
+  }
+  return if (shift == 1) { "_u32" } else { "" };
+}
+
+pub function half(o: Op): Op {
+  return Op { ...o, width: 16 };
+}
+
+pub function is_half(o: Op): boolean {
+  return o.width == 16;
 }
 
 pub function op_str_from_bytes(): Op {
@@ -2189,11 +2221,15 @@ pub function const_struct_is_bytes(packed: string): boolean {
 }
 
 pub function const_struct_is_array(packed: string): boolean {
-  return const_struct_type(packed) == "&arr" || const_struct_is_wide_array(packed) || const_struct_is_bytes(packed) || const_struct_is_compact_array(packed);
+  return const_struct_type(packed) == "&arr" || const_struct_is_wide_array(packed) || const_struct_is_bytes(packed) || const_struct_is_compact_array(packed) || const_struct_is_half_array(packed);
 }
 
 pub function const_struct_is_compact_array(packed: string): boolean {
   return const_struct_type(packed) == "&arr32";
+}
+
+pub function const_struct_is_half_array(packed: string): boolean {
+  return const_struct_type(packed) == "&arr16";
 }
 
 pub function const_struct_is_wide_array(packed: string): boolean {
@@ -4544,6 +4580,12 @@ function fold_width_op(o: Op, v: i32): Option[i32] {
   }
   if (o.str == "u8") {
     return Some(v & 255);
+  }
+  if (o.str == "u16") {
+    return Some(v & 65535);
+  }
+  if (o.str == "i16") {
+    return Some((v & 65535 ^ 32768) - 32768);
   }
   if (o.str == "u32" && v >= 0) {
     return Some(v);

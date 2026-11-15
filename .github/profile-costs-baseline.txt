@@ -32,7 +32,7 @@ profile/arm64-linux/closure_call.minimal.bytes	5896
 profile/arm64-linux/closure_call.minimal.emit	1227
 profile/arm64-linux/closure_call.safe.bytes	6200
 profile/arm64-linux/closure_call.safe.emit	1309
-profile/arm64-linux/deflate_decode.diagnostic.bytes	124008
+profile/arm64-linux/deflate_decode.diagnostic.bytes	140704
 profile/arm64-linux/deflate_decode.diagnostic.emit	15098
 profile/arm64-linux/deflate_decode.hardened.bytes	67800
 profile/arm64-linux/deflate_decode.hardened.emit	16071
@@ -116,11 +116,11 @@ profile/x86-64-linux/closure_call.minimal.ir	41148167
 profile/x86-64-linux/closure_call.safe.bytes	5152
 profile/x86-64-linux/closure_call.safe.emit	1065
 profile/x86-64-linux/closure_call.safe.ir	41178167
-profile/x86-64-linux/deflate_decode.diagnostic.bytes	115280
+profile/x86-64-linux/deflate_decode.diagnostic.bytes	129136
 profile/x86-64-linux/deflate_decode.diagnostic.emit	14256
 profile/x86-64-linux/deflate_decode.diagnostic.ir	39645249
 profile/x86-64-linux/deflate_decode.hardened.bytes	59200
-profile/x86-64-linux/deflate_decode.hardened.emit	14109
+profile/x86-64-linux/deflate_decode.hardened.emit	14424
 profile/x86-64-linux/deflate_decode.hardened.ir	32590499
 profile/x86-64-linux/deflate_decode.minimal.bytes	51136
 profile/x86-64-linux/deflate_decode.minimal.emit	12720

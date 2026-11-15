@@ -1,0 +1,26 @@
+// spec: IS-01
+// spec: IS-02
+// spec: IS-03
+// spec: IS-04
+// spec: IS-05
+// A u16 holds 0..65535. Each operator wraps at 16 bits. An operand that a
+// function returns keeps the value out of the constant folder.
+
+function id(n: u16): u16 { return n; }
+
+function main(): i32 {
+  let max = id(65535);
+  print(f"{max + 1} {id(0) - 1} {id(300) * 300} {id(0x8001) << 1}");
+  print(f"{max >> 15} {id(0x8000) >> 3} {id(1) << 17} {id(7) >> 33}");
+  print(f"{-id(1)} {~id(0)} {~max} {max & 0xff} {max ^ id(0x0f0f)} {id(0x1234) | 1}");
+  print(f"{max / 7} {max % 7} {id(9) / 0} {id(9) % 0}");
+  let n = id(65000);
+  n += 1000;
+  print(f"{n} {n < id(500)} {max > n} {max == 65535}");
+  let k: u16 = 0;
+  for _ in 0..70000 {
+    k += 1;
+  }
+  print(f"{k}");
+  return 0;
+}

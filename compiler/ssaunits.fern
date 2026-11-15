@@ -1491,7 +1491,7 @@ function constant_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Ty
 }
 
 function cast_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
-  if (!ssasem.is_u8(t) && !ssasem.is_i32(t) && !ssasem.is_u32(t)) {
+  if (!ssasem.is_u8(t) && !ssasem.is_u16(t) && !ssasem.is_i16(t) && !ssasem.is_i32(t) && !ssasem.is_u32(t)) {
     return "";
   }
   let src = ssa.copy_source(defs, v);
@@ -1656,6 +1656,12 @@ function narrow_integer_word(t: typeinfo.Type, bits: i64): string {
   if (ssasem.is_u8(t)) {
     return util.i32_to_string((bits as u8) as i32);
   }
+  if (ssasem.is_u16(t)) {
+    return util.i64_to_string(bits & 65535i64);
+  }
+  if (ssasem.is_i16(t)) {
+    return util.i64_to_string((bits & 65535i64 ^ 32768i64) - 32768i64);
+  }
   if (ssasem.is_u32(t)) {
     return util.i64_to_string((bits as u32) as i64);
   }
@@ -1669,7 +1675,7 @@ function narrow_scalar(t: typeinfo.Type): boolean {
   if let typeinfo.TypeBool(_) = t {
     return true;
   }
-  return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_u8(t) || ssasem.is_char(t);
+  return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_u8(t) || ssasem.is_u16(t) || ssasem.is_i16(t) || ssasem.is_char(t);
 }
 
 function lent_view(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
@@ -3454,7 +3460,7 @@ function fresh_array(ins: ssa.SInst, consts: string[], fresh: FreshRows): boolea
     return ins.args.len() == 0 || consts[ins.result] == "";
   }
   if (ins.kind_tag == ssasem.call()) {
-    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_f64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || ins.str == "__alloc_u8_uninit" || ssasem.fresh_result_builtin(ins.str) || fresh_through(fresh, ins.str) == -1;
+    return ins.str == "__alloc_i32" || ins.str == "__alloc_u16" || ins.str == "__alloc_i16" || ins.str == "__alloc_i64" || ins.str == "__alloc_f64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || ins.str == "__alloc_u8_uninit" || ssasem.fresh_result_builtin(ins.str) || fresh_through(fresh, ins.str) == -1;
   }
   return ins.kind_tag == ssasem.array_reserve() || ins.kind_tag == ssasem.array_zero();
 }

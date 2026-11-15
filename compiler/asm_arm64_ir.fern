@@ -2277,7 +2277,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || ssa.is_unary_load(what)) {
     return true;
   }
-  if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
+  if (what == "int_cast:u8" || what == "int_cast:u16" || what == "int_cast:i16" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
   return what.starts_with("rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
@@ -2349,6 +2349,12 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   if (what == "int_cast:u8") {
     return "    and " + d + ", " + d + ", #255\n";
   }
+  if (what == "int_cast:u16") {
+    return "    uxth " + w + ", " + w + "\n";
+  }
+  if (what == "int_cast:i16") {
+    return "    sxth " + d + ", " + w + "\n";
+  }
   if (what == "int_cast:i32") {
     return "    sxtw " + d + ", " + w + "\n";
   }
@@ -2381,6 +2387,12 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   }
   if (what == "int_cast:u8") {
     return "    and " + d + ", " + src + ", #255\n";
+  }
+  if (what == "int_cast:u16") {
+    return "    uxth " + w + ", " + ws + "\n";
+  }
+  if (what == "int_cast:i16") {
+    return "    sxth " + d + ", " + ws + "\n";
   }
   if (what.starts_with("rotr:")) {
     let n = util.i32_to_string(ssa.rotr_count(what));
@@ -3445,6 +3457,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == ssa.ST_AT && (ins.str == "i32" || ins.str == "u32")) {
     return ssa_ldst(s, false, ssa_wreg(b), a, ins.imm);
   }
+  if (k == ssa.ST_AT && ssa_elem_bytes(ins.str) == 2) {
+    return ssa_half(s, "strh", ssa_wreg(b), a, ins.imm);
+  }
   if (k == ssa.ST_AT && ins.str == "u8") {
     if (ins.imm <= 4095) {
       return ssa_strb(s, ssa_wreg(b), a, ins.imm);
@@ -3500,24 +3515,30 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     s = s.write("    add x5, " + a + ", " + b + ", lsl #2\n");
     return ssa_ldst(s, false, ssa_wreg(c), "x5", 8);
   }
+  if (ssa_elem_bytes(ins.str) == 2) {
+    s = s.write("    add x5, " + a + ", " + b + ", lsl #1\n");
+    return ssa_half(s, "strh", ssa_wreg(c), "x5", 8);
+  }
   s = ssa_addsub_imm(s, false, "x5", b, 1);
   return ssa_ldst_reg(s, false, c, a, "x5");
 }
 
-// The bytes of an element that an access marks "u8", "i32" or "u32"; any other
-// mark is a word.
+// The bytes of an element that an access marks; a word has no mark.
 function ssa_elem_bytes(mark: string): i32 {
-  if (mark == "u8") {
-    return 1;
-  }
-  return if (mark == "i32" || mark == "u32") { 4 } else { 8 };
+  let bits = ssa.mark_bits(mark);
+  return if (bits == 0) { 8 } else { bits / 8 };
 }
 
-// A read of element `b` of the array at `a` into `d`, which "i32" extends with the sign.
+// A read of element `b` of the array at `a` into `d`, which an "i16" or an
+// "i32" extends with the sign.
 function ssa_elem_read(s: asmcore.EmitState, mark: string, d: string, a: string, b: string): asmcore.EmitState {
   if (mark == "u8") {
     s = ssa_addsub_rr(s, false, "x5", a, b);
     return ssa_ldrb(s, ssa_wreg(d), "x5", 8);
+  }
+  if (ssa_elem_bytes(mark) == 2) {
+    s = s.write("    add x5, " + a + ", " + b + ", lsl #1\n");
+    return ssa_load16(s, mark == "i16", d, "x5", 8);
   }
   if (ssa_elem_bytes(mark) == 4) {
     s = s.write("    add x5, " + a + ", " + b + ", lsl #2\n");
@@ -3536,6 +3557,9 @@ function ssa_elem_read_at(s: asmcore.EmitState, mark: string, d: string, a: stri
   if (bytes == 1) {
     return ssa_ldrb(s, ssa_wreg(d), a, 8 + c);
   }
+  if (bytes == 2) {
+    return ssa_load16(s, mark == "i16", d, a, 8 + 2 * c);
+  }
   if (bytes == 4) {
     return ssa_load32(s, mark == "i32", d, a, 8 + 4 * c);
   }
@@ -3546,6 +3570,9 @@ function ssa_elem_write_at(s: asmcore.EmitState, mark: string, v: string, a: str
   let bytes = ssa_elem_bytes(mark);
   if (bytes == 1) {
     return ssa_strb(s, ssa_wreg(v), a, 8 + c);
+  }
+  if (bytes == 2) {
+    return ssa_half(s, "strh", ssa_wreg(v), a, 8 + 2 * c);
   }
   if (bytes == 4) {
     return ssa_ldst(s, false, ssa_wreg(v), a, 8 + 4 * c);
@@ -3582,6 +3609,27 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
   let v = ssa_src(reg_of, ins.args[2], "x6");
   s = ssa_load(reg_of, ins.args[2], v, s);
   return ssa_elem_write_at(s, ins.str, v, a, c);
+}
+
+// A 2-byte load into the 64-bit `d`, which `signed` extends with the sign.
+function ssa_load16(s: asmcore.EmitState, signed: boolean, d: string, base: string, off: i32): asmcore.EmitState {
+  if (signed) {
+    return ssa_half(s, "ldrsh", d, base, off);
+  }
+  return ssa_half(s, "ldrh", ssa_wreg(d), base, off);
+}
+
+// A halfword access `op` of `reg` at `base` + `off`.
+function ssa_half(s: asmcore.EmitState, op: string, reg: string, base: string, off: i32): asmcore.EmitState {
+  if (off >= 0 && off % 2 == 0 && off / 2 <= 4095) {
+    return s.write("    " + op + " " + reg + ", [" + base + ", #" + util.i32_to_string(off) + "]\n");
+  }
+  let scratch = if (reg == "x17" || reg == "w17" || base == "x17") { "x16" } else { "x17" };
+  s = s.write("    movz " + scratch + ", #" + util.i32_to_string(off & 65535) + "\n");
+  if (off >> 16 != 0) {
+    s = s.write("    movk " + scratch + ", #" + util.i32_to_string(off >> 16 & 65535) + ", lsl #16\n");
+  }
+  return s.write("    " + op + " " + reg + ", [" + base + ", " + scratch + "]\n");
 }
 
 // A 4-byte load into the 64-bit `d`, which `signed` extends with the sign.
@@ -3696,6 +3744,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
     "str_cmp" => s.need("str_cmp"),
     "arr_slice" => s.need("arr_slice"),
     "arr_slice_u8" => s.need("arr_slice_u8"),
+    "arr_slice_u16" => s.need("arr_slice_u16"),
     "arr_slice_u32" => s.need("arr_slice_u32"),
     "str_from_bytes_u8" => s.need("str_from_bytes_u8"),
     "str_from_bytes_range_u8" => s.need("str_from_bytes_range_u8"),
@@ -3997,9 +4046,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   } else if (ins.str == "alloc_uninit_u8" || ins.str == "alloc_uninit") {
     s = s.need("alloc_bytes_uninit");
     sym = "__fern_alloc_bytes_uninit";
-  } else if (ins.str == "alloc_u8_u32") {
-    s = s.need("alloc_u32");
-    sym = "__fern_alloc_u32";
+  } else if (ins.str == "alloc_u8_u16" || ins.str == "alloc_u8_u32") {
+    let w = slice_unchecked(ins.str, 9, ins.str.len()).to_owned();
+    s = s.need("alloc_" + w);
+    sym = "__fern_alloc_" + w;
   } else if (asmcore.packed_shift(ins.str) > 0 && ins.str.starts_with("arr_push")) {
     s = s.need(ins.str.replace("owned_", ""));
     sym = "__fern_" + ins.str;
@@ -4098,6 +4148,9 @@ function arr_push_inline_packed(sym: string, l: string, unique: boolean, shift: 
   if (shift == 3) {
     s = ssa_addsub_rr(s, false, "x3", "x0", "x2");
     s = ssa_strb(s, "w1", "x3", 8);
+  } else if (shift == 2) {
+    s = s.write("    add x3, x0, x2, lsl #1\n");
+    s = ssa_half(s, "strh", "w1", "x3", 8);
   } else {
     s = s.write("    add x3, x0, x2, lsl #2\n");
     s = ssa_ldst(s, false, "w1", "x3", 8);
@@ -4186,7 +4239,7 @@ function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boole
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false, load_bits: 0, load_at: 0, load_right: false });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
 }
 
 function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
@@ -8405,7 +8458,7 @@ function arr_push_empty(s: asmcore.EmitState, nonempty: string, frame: string, f
 
 // Rounds the x0 elements of the array op `o` up to the words they take.
 function reserve_words(o: ir.Op): string {
-  let shift = asmcore.elem_shift(o);
+  let shift = ir.elem_shift(o);
   if (shift == 0) {
     return "";
   }
@@ -8430,16 +8483,23 @@ function emit_alloc_packed(s: asmcore.EmitState, sfx: string, shift: i32): asmco
   return s.write(l + "_empty:\n    adrp x0, " + empty + "\n    add x0, x0, :lo12:" + empty + "\n    ret\n");
 }
 
-// The appends and allocations of the arrays that pack bytes or 4-byte integers.
+// The appends and allocations of the arrays that pack bytes, 2-byte or
+// 4-byte integers.
 function emit_packed_arrays(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_push_u8")) {
     s = emit_arr_push_packed(s, "u8", 3, ".Lapou");
+  }
+  if (s.has_need("arr_push_u16")) {
+    s = emit_arr_push_packed(s, "u16", 2, ".Lapoh");
   }
   if (s.has_need("arr_push_u32")) {
     s = emit_arr_push_packed(s, "u32", 1, ".Lapow");
   }
   if (s.has_need("alloc_bytes") || s.has_need("alloc_bytes_uninit")) {
     s = emit_alloc_bytes(s);
+  }
+  if (s.has_need("alloc_u16")) {
+    s = emit_alloc_packed(s, "u16", 2);
   }
   if (s.has_need("alloc_u32")) {
     s = emit_alloc_packed(s, "u32", 1);
@@ -8528,6 +8588,9 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
 function packed_store(v: string, t: string, b: string, i: string, shift: i32): string {
   if (shift == 3) {
     return "    add " + t + ", " + b + ", " + i + "\n    strb " + v + ", [" + t + ", #8]\n";
+  }
+  if (shift == 2) {
+    return "    add " + t + ", " + b + ", " + i + ", lsl #1\n    strh " + v + ", [" + t + ", #8]\n";
   }
   return "    add " + t + ", " + b + ", " + i + ", lsl #2\n    str " + v + ", [" + t + ", #8]\n";
 }
@@ -11458,8 +11521,9 @@ function emit_rt_collections_and_proc_part_3(s: asmcore.EmitState, darwin: boole
 }
 
 function emit_rt_collections_and_proc_part_4(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  if (s.has_need("arr_slice_u32")) {
-    s = emit_runtime("__fern_arr_slice_u32", s);
+  let slices = asmcore.packed_slice_roots(s);
+  if (slices != "") {
+    s = emit_runtime(slices, s);
   }
   if (s.has_need("arr_slice_u8")) {
     s = emit_runtime("__fern_arr_slice_u8", s);

@@ -98,6 +98,42 @@ pub function is_hex(s: string, least: i32): boolean {
   return true;
 }
 
+// The bytes of the hexadecimal name `name`, or none when it is not one.
+pub function raw_name(name: string): Option[u8[]] {
+  if (name.len() % 2 != 0) {
+    return None;
+  }
+  let out = __alloc_u8(name.len() / 2);
+  for i in 0..out.len() {
+    let hi = hex_value(name[2 * i]);
+    let lo = hex_value(name[2 * i + 1]);
+    if (hi < 0 || lo < 0) {
+      return None;
+    }
+    out = out.with(i, (hi * 16 + lo) as u8);
+  }
+  return Some(out);
+}
+
+function hex_value(c: u8): i32 {
+  if (c >= b'0' && c <= b'9') {
+    return (c - b'0') as i32;
+  }
+  if (c >= b'a' && c <= b'f') {
+    return (c - b'a') as i32 + 10;
+  }
+  if (c >= b'A' && c <= b'F') {
+    return (c - b'A') as i32 + 10;
+  }
+  return -1;
+}
+
+// The white space of git: `isspace` of its `sane_ctype`. A vertical tab
+// and a form feed are not white space.
+pub function is_space(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
+}
+
 pub function part(s: string, from: i32, to: i32): string {
   return slice_unchecked(s, from, to).to_owned();
 }
@@ -308,6 +344,81 @@ function mode_at(body: u8[], from: i32, to: i32): string {
 }
 
 // The entries of the body of a tree whose names have `width` bytes.
+// The entries of a tree as the places of their parts in the content
+// `body`: entry `k` has its mode from `at[k]` to `name[k] - 1`, its name
+// from `name[k]` to `hash[k] - 1`, and its name of `width` bytes at
+// `hash[k]`. A tree that is not sound has no entries.
+pub struct RawTree { body: u8[], at: i32[], name: i32[], hash: i32[], width: i32 }
+
+pub function raw_tree(body: u8[], width: i32): RawTree {
+  let at: i32[] = [];
+  let names: i32[] = [];
+  let hashes: i32[] = [];
+  let i = 0;
+  while (i < body.len()) {
+    let space = __memchr_bytes(body, 32, i);
+    if (space < 0) {
+      return RawTree { body: body, at: [], name: [], hash: [], width: width };
+    }
+    let end = __memchr_bytes(body, 0, space + 1);
+    if (space == i || end < 0 || end + 1 + width > body.len()) {
+      return RawTree { body: body, at: [], name: [], hash: [], width: width };
+    }
+    at = at.append(i);
+    names = names.append(space + 1);
+    hashes = hashes.append(end + 1);
+    i = end + 1 + width;
+  }
+  return RawTree { body: body, at: at, name: names, hash: hashes, width: width };
+}
+
+pub function (t: RawTree) count(): i32 {
+  return t.at.len();
+}
+
+// True if the entry `k` is a tree: its mode is `40000`.
+pub function (t: RawTree) is_tree(k: i32): boolean {
+  let a = t.at[k];
+  return t.name[k] - a == 6 && t.body[a] == b'4' && t.body[a + 1] == b'0' && t.body[a + 2] == b'0' && t.body[a + 3] == b'0' && t.body[a + 4] == b'0';
+}
+
+pub function (t: RawTree) mode(k: i32): string {
+  return mode_at(t.body, t.at[k], t.name[k] - 1);
+}
+
+pub function (t: RawTree) entry_name(k: i32): u8[] {
+  return array.slice(t.body, t.name[k], t.hash[k] - 1);
+}
+
+pub function (t: RawTree) hash_hex(k: i32): string {
+  return hex.encode(array.slice(t.body, t.hash[k], t.hash[k] + t.width));
+}
+
+// True if the entries `i` of `a` and `j` of `b` have the same mode and
+// the same object.
+pub function same_entry(a: RawTree, i: i32, b: RawTree, j: i32): boolean {
+  let n = a.width;
+  let pa = a.hash[i];
+  let pb = b.hash[j];
+  for k in 0..n {
+    if (a.body[pa + k] != b.body[pb + k]) {
+      return false;
+    }
+  }
+  let ma = a.at[i];
+  let mb = b.at[j];
+  let len = a.name[i] - ma;
+  if (b.name[j] - mb != len) {
+    return false;
+  }
+  for k in 0..len {
+    if (a.body[ma + k] != b.body[mb + k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 pub function tree_entries(body: u8[], width: i32): Result[TreeEntry[], string] {
   let step = width + 1;
   let out: TreeEntry[] = [];
