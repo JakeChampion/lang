@@ -90,6 +90,11 @@ func (s *featureServer) handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/missing" {
 		w.WriteHeader(http.StatusNotFound)
 	}
+	if r.URL.Path == "/late" {
+		w.WriteHeader(http.StatusOK)
+		_ = http.NewResponseController(w).Flush()
+		time.Sleep(150 * time.Millisecond)
+	}
 	_, _ = w.Write([]byte("hello\n"))
 }
 
@@ -303,6 +308,34 @@ func loadFeatureTests(t *testing.T, run loadRun) {
 		reqs := s.requests()
 		if j.responses() != 4 || protosOf(reqs)["HTTP/1.0"] != 4 || s.conns.Load() != 4 {
 			t.Errorf("--http-version 1.0: %d responses, server %v on %d connections", j.responses(), protosOf(reqs), s.conns.Load())
+		}
+	})
+
+	// As in oha, the first byte is the first data of the body, not the head
+	// of the response, on HTTP/1 and on HTTP/2.
+	t.Run("first byte", func(t *testing.T) {
+		s := startFeatureServer(t, false)
+		for _, args := range [][]string{{"-n", "2", "-c", "1"}, {"-n", "2", "-c", "1", "--http2"}} {
+			j := summaryOf(t, run, append(args, s.URL+"/late")...)
+			fb := j.Details.FirstByte
+			if j.responses() != 2 || fb.Fastest == nil || *fb.Fastest < 0.15 {
+				t.Errorf("%v: %d responses, first byte %v, want at least 0.15 s", args, j.responses(), fb.Fastest)
+			}
+		}
+	})
+
+	// As in oha, each new connection has the time to the address of its
+	// host, from the cache of the lookup before the run, or from a lookup
+	// of its own with --no-pre-lookup.
+	t.Run("dns lookup", func(t *testing.T) {
+		s := startFeatureServer(t, false)
+		local := strings.Replace(s.URL, "127.0.0.1", "localhost", 1)
+		for _, args := range [][]string{{"-n", "4", "-c", "2"}, {"-n", "4", "-c", "2", "--no-pre-lookup"}} {
+			j := summaryOf(t, run, append(args, local+"/")...)
+			l, d := j.Details.DNSLookup, j.Details.DNSDialup
+			if j.responses() != 4 || l.Fastest == nil || d.Slowest == nil || *l.Fastest <= 0 || *l.Slowest > *d.Slowest {
+				t.Errorf("%v: %d responses, DNS lookup %v to %v, dialup to %v", args, j.responses(), l.Fastest, l.Slowest, d.Slowest)
+			}
 		}
 	})
 

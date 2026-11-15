@@ -51,7 +51,7 @@ Response time distribution:
 
 Details (average, fastest, slowest):
   DNS+dialup:	0.0617 ms, 0.0192 ms, 0.2404 ms
-  DNS-lookup:	0.0000 ms, 0.0000 ms, 0.0000 ms
+  DNS-lookup:	0.0031 ms, 0.0016 ms, 0.0062 ms
 
 Status code distribution:
   [200] 2000 responses
@@ -81,7 +81,7 @@ $ load -n 100 -x http://127.0.0.1:3128 --proxy-http2 https://example.test/
 | `-q RATE` | Send RATE requests each second, across all connections and all reactors, for example `1000` or `0.5`. `0` is no rate. See [The rate of -q](#the-rate-of--q). |
 | `--latency-correction` | With `-q` or a burst, start the latency of a request at the time that it is due. |
 | `--burst-delay DURATION`, `--burst-rate COUNT` | Send COUNT requests at the start of each DURATION. Give the two options together, and not with `-q`. |
-| `--worker-threads COUNT` | Use COUNT reactors. The default is one for each 64 connections, and not more than one for each CPU. See [Reactors](#reactors). |
+| `--worker-threads COUNT` | Use COUNT reactors. The default is one for each CPU. See [Reactors](#reactors). |
 | `--rand-regex-url` | The URL is a regular expression. Each request goes to a URL that the expression generates. See [Generated URLs](#generated-urls). |
 | `--max-repeat COUNT` | The largest count of extra repeats of `*`, `+` and `{n,}` in `--rand-regex-url`. The default is 4. |
 | `--urls-from-file` | The operand is a file with one URL on each line. Each request goes to a line that the tool selects at random. |
@@ -122,7 +122,7 @@ $ load -n 100 -x http://127.0.0.1:3128 --proxy-http2 https://example.test/
 | `--db-url FILE` | Write each response to the SQLite database FILE. See [Outputs](#outputs). |
 | `--debug` | Send one request, write the request and the response, and stop. |
 | `--no-tui`, `--fps COUNT`, `--no-color` | Do not show the live display, show it COUNT times each second (the default is 16), or show it with no colors. See [The live display](#the-live-display). |
-| `--no-pre-lookup` | Accepted, as in oha. The tool always looks up the names once, before the run. |
+| `--no-pre-lookup` | Do not look up the hosts before the run. The first connection to a host looks it up, and the later connections of its reactor take the address from the cache. |
 | `-V`, `--version` | Write the version and stop. |
 
 The URL is the only operand. An option value can follow its option, as in
@@ -171,8 +171,10 @@ The last blocks give the connections and the results:
 
 - **DNS+dialup** gives the time from the start of a request to an open
   connection, for each request that opened a connection. For `https`, it
-  includes the TLS handshake. **DNS-lookup** is always zero: the tool looks
-  up the name once, before the run, and no connection waits for a lookup.
+  includes the TLS handshake. **DNS-lookup** gives the time from the start
+  of a request to the address of the host, for the same requests. Without
+  `--no-pre-lookup`, the tool looks up the hosts before the run, and a
+  connection takes the address from the cache.
 - **Status code distribution** gives the count of each status code.
 - **Error distribution** gives the count of each error. It is only there when
   a request failed.
@@ -216,7 +218,7 @@ the previous request is complete.
 ## Reactors
 
 The tool runs `--worker-threads` reactors. Without the option, it runs one
-reactor for each 64 connections, and not more than one for each CPU. Each
+reactor for each CPU, as oha runs a worker thread for each core. Each
 reactor is a `std/worker` worker, which is a process on Linux and macOS. The
 tool runs the last reactor itself. A reactor has its own connections and its
 own event loop, and it shares nothing with the other reactors while it runs.
@@ -240,10 +242,8 @@ reactor (`worker.parallel()`).
 
 oha divides the work of all connections between its threads while it runs.
 The reactors cannot do that, because each reactor has its own connections. A
-reactor with few connections wakes for each few responses. On a host that
-also runs the server, these wakes take CPU time from the server.
-Thus the default gives each reactor at least 64 connections. See
-[Measurement](#measurement).
+reactor with few connections wakes for each few responses, so more reactors
+use more CPU time for each request. See [Measurement](#measurement).
 
 ## HTTPS
 
@@ -354,9 +354,9 @@ time of the run, and `q` or Ctrl-C stops the run. When the run ends, the
 tool restores the terminal and writes the summary. The summary on a terminal
 has the colors of oha, except with `--no-color`.
 
-The live display has the cells and the colors that oha 1.16.0 draws for the
-same size of terminal, except the count of open files, which is a count of
-the process. A unit test compares two frames at 24 rows and 80 columns with
+For a terminal of the same size, the live display has the cells and the
+colors that oha 1.16.0 draws. Only the count of open files can differ,
+because it is a count of the process. A unit test compares two frames at 24 rows and 80 columns with
 frames that oha drew.
 
 The live display needs the responses as they come, so a run with the live
@@ -377,7 +377,7 @@ response to measure it.
 | `responseTimeHistogram` | The 11 bins of the text summary: the highest value of each bin in seconds, and its count |
 | `latencyPercentiles` | `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99`, `p99.9` and `p99.99` |
 | `firstByteHistogram`, `firstBytePercentiles` | The same, for the time from the start of a request to the first byte of its response |
-| `rps` | `mean`, `stddev`, `max`, `min` and `percentiles` of the requests for each second in each 10 ms of the run |
+| `rps` | `mean`, `stddev`, `max`, `min` and `percentiles` of the requests for each second in each group of responses that end within 10 ms of the first response of the group |
 | `details` | `DNSDialup`, `DNSLookup` and `firstByte`, each with `average`, `fastest` and `slowest` |
 | `statusCodeDistribution` | The count of each status code, for example `{"200": 1000}` |
 | `errorDistribution` | The count of each error message |
@@ -392,34 +392,17 @@ The tool and oha give the same exit codes and the same keys in each output.
 Their requests have the same bytes, except for the user agent and the
 boundary of a form. These differences remain.
 
-The histograms and the samples are approximate:
-
-- A percentile is the highest value of its histogram bucket, with three
-  significant digits. oha gives the exact value. The rank of a percentile is
-  the rank of oha: floor(p / 100 × N) + 1 of N responses.
-
-- A histogram bin counts each latency at the lowest value of its histogram
-  bucket. A latency less than 0.1% above a bin edge can go in the next bin.
-
-- oha measures the first byte at the first data of the body. The tool
-  measures it at the first byte of the response, so a response with no body
-  also has a first byte. For HTTP/2 and HTTP/3, the first byte is the time of
-  the read that completes the head of the response.
-
-- `rps` has a sample for each full 10 ms of the run. oha makes a sample for
-  each group of responses that end within 10 ms of the first of the group.
-
-These differences are in what the tool does:
-
 - A request that is due waits only for the connections of its reactor. oha
-  has one queue for all connections.
+  has one queue for all connections. A reactor is a process, and
+  `std/worker` has no queue that processes share while they run.
 
-- `--worker-threads` has a default of one reactor for each 64 connections,
-  and not more than one for each CPU. oha uses a thread for each core.
+- A reactor keeps its own cache of addresses. With `--no-pre-lookup`, the
+  first connection to a host in each reactor looks it up. oha has one cache
+  for all its threads. With a proxy, the tool looks up only the proxy.
 
-- DNS-lookup is zero: the tool looks up the names once, before the run, and
-  `--no-pre-lookup` does not change that. With a proxy, the tool looks up only
-  the proxy.
+- The tool adds the values of an average in the order of the responses. oha
+  adds them in the order of its results. With more than one reactor, the
+  two orders can differ, so the last digits of an average can differ.
 
 - The live display forces one reactor. oha draws it from all its worker
   threads.
@@ -463,13 +446,20 @@ chunk. A response with no length is complete when the server closes the
 connection. When a response does not keep
 the connection open, the next request opens a new connection.
 
-The latency histogram has the log-linear buckets of HdrHistogram. Each value
-below 2,048 ns has its bucket. Above that value, each power of two has 1,024
-buckets, so a percentile has three significant digits. The histogram uses
-311 KiB for latencies to 39 hours. A percentile is the highest value of its
-bucket. It is not more than the slowest response or less than the fastest.
+As oha keeps each result, the tally keeps three values of each response:
+the latency, the time to the first byte and the end. These use 24 bytes for
+each response.
 
-Two histograms merge when the tool adds their counts, so the merged tally of
+A percentile p of N latencies is the latency at index
+floor(p / 100 × N) in order, computed in `f64` as oha computes it. The tool
+does not sort all latencies to find it. It counts the latencies in buckets
+of three significant digits. Then it sorts only the latencies in the bucket
+of each percentile.
+
+The bins of the histogram and the `rps` samples come from the same values,
+with the arithmetic of oha in seconds.
+
+Two tallies merge when the tool joins their values, so the merged tally of
 the reactors is exact.
 
 ## Measurement
@@ -502,10 +492,17 @@ for each request than oha on each target.
 
 The requests/sec of a run depend on the load of the host more than on the
 tool. In a later set of three alternating runs against the http server, the
-tool gave 128,746 requests/sec and oha 95,518. For https at `-c 50`, the
-default of one reactor is a limit: in four alternating runs, oha gave 60,497
-requests/sec, the tool 53,002 with one reactor and 64,818 with
-`--worker-threads 3`. For h2, one reactor gave 37,219 and oha 34,889.
+tool gave 128,746 requests/sec and oha 95,518. For https at `-c 50`, one
+reactor is a limit: in four alternating runs, oha gave 60,497 requests/sec,
+the tool 53,002 with one reactor and 64,818 with `--worker-threads 3`. For
+h2, one reactor gave 37,219 and oha 34,889.
+
+The rows of the tool used one reactor, which was the default for these
+connection counts on that date. The default is now one reactor for each CPU,
+as in oha. On 2026-11-15, two runs against the http server at `-c 50` for 4
+seconds compared the two. One reactor gave 122,010 and 125,152
+requests/sec, at 5.2 and 5.5 µs of CPU time for each request. Four reactors
+gave 122,087 and 121,616 requests/sec, at 8.1 and 7.9 µs.
 
 The host was a 4-core x86-64 container (Intel Xeon at 2.1 GHz, Linux 6.18) on
 2026-11-14. Other jobs ran on the host, with a load average of 5 to 17, and
@@ -534,8 +531,9 @@ the runs vary by up to 40%.
 - `TestSelfHostExampleLoadUnit` runs `load_test.fern` on x86-64, arm64 and
   wasm32-wasi, with a balanced leak census. It tests the options, the URL of a
   redirect, the request, the AWS signature, the bodies and the timetable of
-  `-q` and of bursts. It also tests the histogram, the response ends, the
-  merge of tallies, the `rps` samples and the outputs.
+  `-q` and of bursts. It also tests the percentiles and the bins of oha, the
+  response ends and the merge of tallies. Then it tests the `rps` samples,
+  the outputs and the live display.
 - `TestSelfHostExampleLoadHTTP` runs the command on x86-64 and arm64 against a
   Go `net/http` server that counts its requests and connections. It checks
   that the count of the server is the count of the tool with `-n`, `-z` and
@@ -560,6 +558,9 @@ the runs vary by up to 40%.
   signatures, CSV, `--db-url` (read back with Python `sqlite3`),
   `--stats-success-breakdown` and `--debug`
 - the live display in a pseudo-terminal
+- the first byte of a body that comes after its head, on HTTP/1.1 and
+  HTTP/2, and the DNS lookup of each connection, with and without
+  `--no-pre-lookup`
 - each JSON key, `-t`, `-r`, `--connect-to`, bursts, `-o`, `-u`,
   `--output-format quiet`, `-V` and `--ipv6`
 

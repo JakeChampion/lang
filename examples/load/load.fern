@@ -25,6 +25,7 @@ import "std/worker";
 import "./body";
 import "./debug";
 import "./fields";
+import "./histogram";
 import "./options";
 import "./report";
 import "./schedule";
@@ -65,7 +66,8 @@ struct Stream { id: i64, started: i64, sent: i64, first: i64, url: options.Origi
 // `started` is where the latency starts, and `sent` where the request
 // started: they differ only with --latency-correction. `first` is the time
 // of the first byte of the response, or 0. `dialup` is the time to open the
-// connection, or -1 when the request found it open. `peer` is the URL that
+// connection and `lookup` the time to the address of its host, each -1 when
+// the request found it open. `peer` is the URL that
 // the connection goes to, `pick` its entry of --connect-to, `url` the URL
 // of the request, and `at` the URL of this hop of its redirects. `request`
 // and `body` are the bytes of the request, which wait in `request` for the
@@ -78,6 +80,7 @@ struct Conn {
   sent: i64,
   first: i64,
   dialup: i64,
+  lookup: i64,
   opened: i64,
   buf: u8[],
   unsent: u8[],
@@ -288,25 +291,16 @@ function nowhere(): options.Origin {
 function closed(): Conn {
   let none: u8[] = [];
   let no_streams: Stream[] = [];
-  return Conn { sock: None, phase: CLOSED, then: CLOSED, started: 0, sent: 0, first: 0, dialup: -1, opened: 0, buf: none, unsent: none, tls: None, proxy_tls: None, proxy_h2: None, tunnel: -1, tunneled: false, peer: nowhere(), pick: 0, url: nowhere(), at: nowhere(), hops: 0, request: none, body: none, h2: None, q: None, open: false, streams: no_streams, parked: false };
+  return Conn { sock: None, phase: CLOSED, then: CLOSED, started: 0, sent: 0, first: 0, dialup: -1, lookup: -1, opened: 0, buf: none, unsent: none, tls: None, proxy_tls: None, proxy_h2: None, tunnel: -1, tunneled: false, peer: nowhere(), pick: 0, url: nowhere(), at: nowhere(), hops: 0, request: none, body: none, h2: None, q: None, open: false, streams: no_streams, parked: false };
 }
 
-// The connections of a reactor when --worker-threads is not given. A reactor
-// with fewer connections wakes more often for less work.
-const CONNECTIONS_PER_REACTOR: i32 = 64;
-
-// The reactors of a run: --worker-threads, or one for each
-// CONNECTIONS_PER_REACTOR connections and not more than one for each CPU.
-// There are not more reactors than connections. An engine that runs a worker
-// at `spawn` gets one.
+// The reactors of a run: --worker-threads, or one for each CPU, as oha has
+// a worker thread for each core. There are not more reactors than
+// connections. An engine that runs a worker at `spawn` gets one.
 function reactors(o: options.Options, connections: i32): i32 {
   let n = o.threads;
   if (n == 0) {
-    n = (connections + CONNECTIONS_PER_REACTOR - 1) / CONNECTIONS_PER_REACTOR;
-    let cpus = cpu_count() as i32;
-    if (n > cpus) {
-      n = cpus;
-    }
+    n = cpu_count() as i32;
   }
   if (n < 1 || !worker.parallel()) {
     n = 1;
@@ -372,7 +366,7 @@ function place_of(o: options.Options, at: options.Origin, pick: i32): (string, i
 function lookups(o: options.Options): Result[(string[], net.SocketAddr[]), string] {
   let names: string[] = [];
   let addrs: net.SocketAddr[] = [];
-  if (o.unix_socket.len() > 0 && !o.tls || o.vsock_cid >= 0 && !o.tls) {
+  if (!o.pre_lookup || o.unix_socket.len() > 0 && !o.tls || o.vsock_cid >= 0 && !o.tls) {
     return Ok((names, addrs));
   }
   let at = o.origin();
@@ -505,8 +499,8 @@ function rows_of(t: report.Tally, run: i64): sqlite.Row[] {
   for i in 0..n {
     let at = i * report.RECORD;
     let r = t.records;
-    let due = if (r[at + 1] >= 0) { Some(report.secs_f64(r[at + 1])) } else { None };
-    out = out.append(sqlite.Row { url: t.urls[i], start: report.secs_f64(r[at]), due: due, end: report.secs_f64(r[at + 2]), duration: report.secs_f64(r[at + 3]), status: r[at + 7], len: r[at + 6], run: run });
+    let due = if (r[at + 1] >= 0) { Some(histogram.secs_f64(r[at + 1])) } else { None };
+    out = out.append(sqlite.Row { url: t.urls[i], start: histogram.secs_f64(r[at]), due: due, end: histogram.secs_f64(r[at + 2]), duration: histogram.secs_f64(r[at + 3]), status: r[at + 7], len: r[at + 6], run: run });
   }
   return out;
 }
@@ -898,7 +892,7 @@ function begin(own r: Run, i: i32): Run {
   r = made;
   let c = r.conns[i];
   let none: u8[] = [];
-  r = Run { ...r, conns: r.conns.with(i, Conn { ...c, started: started, sent: now, first: 0, dialup: -1, buf: none, url: at, at: at, hops: 0, request: line, body: chosen }) };
+  r = Run { ...r, conns: r.conns.with(i, Conn { ...c, started: started, sent: now, first: 0, dialup: -1, lookup: -1, buf: none, url: at, at: at, hops: 0, request: line, body: chosen }) };
   if (c.sock.is_some()) {
     return seal(r, i, line, READING);
   }
@@ -991,44 +985,47 @@ function address(own r: Run, at: options.Origin, pick: i32): (Run, Result[net.So
 // The socket of a new connection to `at`: a Unix socket of --unix-socket or a
 // VSOCK socket of --vsock-addr for a URL that is not https, or a TCP
 // connection that starts.
-function open_socket(own r: Run, at: options.Origin, pick: i32): (Run, Result[Socket, string], boolean) {
+function open_socket(own r: Run, at: options.Origin, pick: i32): (Run, Result[Socket, string], boolean, i64) {
   let o = r.job.o;
   if (o.unix_socket.len() > 0 && !at.tls) {
+    let looked = monotonic_ns();
     match (net.connect_unix(o.unix_socket)) {
       Ok(sock) => {
         let _ = net.set_nonblocking(sock, true);
-        return (r, Ok(sock), true);
+        return (r, Ok(sock), true, looked);
       },
       Err(e) => {
-        return (r, Err(os_error(e)), false);
+        return (r, Err(os_error(e)), false, looked);
       }
     }
   }
   if (o.vsock_cid >= 0 && !at.tls) {
+    let looked = monotonic_ns();
     match (net.connect_vsock(o.vsock_cid as i32, o.vsock_port as i32)) {
       Ok(sock) => {
         let _ = net.set_nonblocking(sock, true);
-        return (r, Ok(sock), true);
+        return (r, Ok(sock), true, looked);
       },
       Err(e) => {
-        return (r, Err(os_error(e)), false);
+        return (r, Err(os_error(e)), false, looked);
       }
     }
   }
   let (found, addr) = address(r, at, pick);
   r = found;
+  let looked = monotonic_ns();
   let Ok(to) = addr else {
-    return (r, Err(addr.err().unwrap_or("no address")), false);
+    return (r, Err(addr.err().unwrap_or("no address")), false, looked);
   };
   match (net.connect_start(to)) {
     Ok(sock) => {
-      return (r, Ok(sock), false);
+      return (r, Ok(sock), false, looked);
     },
     Err(e) => {
-      return (r, Err(os_error(e)), false);
+      return (r, Err(os_error(e)), false, looked);
     }
   }
-  return (r, Err("no socket"), false);
+  return (r, Err("no socket"), false, looked);
 }
 
 // Opens a connection to the host of the request of connection `i`.
@@ -1041,8 +1038,8 @@ function connect(own r: Run, i: i32): Run {
     r = Run { ...r, rng: next };
     pick = k;
   }
-  let (opened, sock_of, now_open) = open_socket(r, at, pick);
-  r = opened;
+  let (opened, sock_of, now_open, looked) = open_socket(r, at, pick);
+  r = with_lookup(opened, i, looked);
   let Ok(sock) = sock_of else {
     return lost(r, i, sock_of.err().unwrap_or("no socket"));
   };
@@ -1097,6 +1094,17 @@ function step(own r: Run, i: i32): Run {
     return shut(r, i);
   }
   return read(r, i, sock);
+}
+
+// The time to the address of the host counts from the start of the request,
+// as the DNS lookup of oha does. With the lookup before the run, the address
+// comes from the cache. It is not counted again for a redirect.
+function with_lookup(own r: Run, i: i32, looked: i64): Run {
+  let c = r.conns[i];
+  if (c.hops > 0) {
+    return r;
+  }
+  return Run { ...r, conns: r.conns.with(i, Conn { ...c, lookup: looked - c.sent }) };
 }
 
 // The time to open the connection counts from the start of the request, as
@@ -1619,13 +1627,21 @@ function received(own r: Run, i: i32, got: u8[]): Run {
       return complete(r, i, reply, reply.keep_alive && reply.len == buf.len());
     },
     report.Partial => {
-      return Run { ...r, conns: r.conns.with(i, Conn { ...c, buf: buf, first: first }) };
+      let seen = if (c.first == 0 && !has_body_data(buf)) { 0 } else { first };
+      return Run { ...r, conns: r.conns.with(i, Conn { ...c, buf: buf, first: seen }) };
     },
     report.Bad(why) => {
       return fail(r, i, why);
     }
   }
   return r;
+}
+
+// The response in `buf` has a byte after its head: the first data of its
+// body, where oha takes the first byte.
+function has_body_data(buf: u8[]): boolean {
+  let end = report.head_end(buf);
+  return end > 0 && buf.len() > end;
 }
 
 // The server closed the connection: the response ends here, or it is
@@ -1647,13 +1663,13 @@ function ended(own r: Run, i: i32): Run {
 }
 
 // The record of a response that the tally counts.
-function response_of(r: Run, status: i32, started: i64, sent: i64, first: i64, bytes: i64, dialup: i64, url: options.Origin): report.Response {
+function response_of(r: Run, status: i32, started: i64, sent: i64, first: i64, bytes: i64, c: Conn, url: options.Origin): report.Response {
   let now = monotonic_ns();
   let o = r.job.o;
   let first_byte = if (bytes > 0 && first > 0) { first - sent } else { -1 };
   let due = if (o.correct && r.job.plan.timed()) { started - r.job.start } else { -1 };
   let text = if (o.db_url.len() > 0) { uri_of(r, url) } else { "" };
-  return report.Response { status: status, latency: now - started, first_byte: first_byte, bytes: bytes, dialup: dialup, sent: sent - r.job.start, due: due, ended: now - r.job.start, url: text };
+  return report.Response { status: status, latency: now - started, first_byte: first_byte, bytes: bytes, dialup: c.dialup, lookup: c.lookup, sent: sent - r.job.start, due: due, ended: now - r.job.start, url: text };
 }
 
 // Counts `done` in the tally, and in the live display.
@@ -1673,7 +1689,7 @@ function complete(own r: Run, i: i32, reply: report.Reply, keep: boolean): Run {
     return redirect(r, i, reply.location, keep);
   }
   let c = r.conns[i];
-  let done = response_of(r, reply.status, c.started, c.sent, c.first, reply.body, c.dialup, c.url);
+  let done = response_of(r, reply.status, c.started, c.sent, c.first, reply.body, c, c.url);
   r = counted(Run { ...r, busy: r.busy - 1 }, done);
   if (!keep || !o.keep_alive) {
     r = shut(r, i);
@@ -1726,7 +1742,7 @@ function fail(own r: Run, i: i32, why: string): Run {
 function shut(own r: Run, i: i32): Run {
   let c = r.conns[i];
   let none: Stream[] = [];
-  let reset = Conn { ...closed(), started: c.started, sent: c.sent, first: c.first, dialup: c.dialup, url: c.url, at: c.at, hops: c.hops, request: c.request, body: c.body, parked: c.parked, streams: none };
+  let reset = Conn { ...closed(), started: c.started, sent: c.sent, first: c.first, dialup: c.dialup, lookup: c.lookup, url: c.url, at: c.at, hops: c.hops, request: c.request, body: c.body, parked: c.parked, streams: none };
   let (old, conns) = r.conns.swap_at(i, reset);
   let d = Run { ...r, conns: conns };
   if let Some(sock) = old.sock {
@@ -1752,7 +1768,7 @@ function begin_h2(own r: Run, i: i32): Run {
     return r;
   }
   let at = r.job.o.origin();
-  r = Run { ...r, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, sent: now, at: at, url: at, hops: 0, dialup: -1 }) };
+  r = Run { ...r, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, sent: now, at: at, url: at, hops: 0, dialup: -1, lookup: -1 }) };
   return connect(r, i);
 }
 
@@ -1860,6 +1876,19 @@ function outgoing_for(r: Run, i: i32, at: options.Origin, chosen: u8[]): http.Ou
   return http.Outgoing { ...http.outgoing(o.method, scheme, authority, at.target), headers: hm, body: chosen };
 }
 
+// The streams with the first byte of their body at `now` when `received`
+// gives the first bytes of the body of a stream, as oha takes the first
+// byte at the first data of the body.
+function first_data(streams: Stream[], received: (i64) => i32, now: i64): Stream[] {
+  let out = streams;
+  for k in 0..streams.len() {
+    if (streams[k].first == 0 && received(streams[k].id) > 0) {
+      out = out.with(k, Stream { ...streams[k], first: now });
+    }
+  }
+  return out;
+}
+
 // The bytes of the connection `i` of HTTP/2: the frames go to its state, its
 // output goes back to the server, and each response that ends is counted.
 function h2_in(own r: Run, i: i32, data: u8[]): Run {
@@ -1869,12 +1898,7 @@ function h2_in(own r: Run, i: i32, data: u8[]): Run {
   };
   let step = conn.read(data);
   let now = monotonic_ns();
-  let streams = c.streams;
-  for k in 0..streams.len() {
-    if (streams[k].first == 0 && step.conn.received(streams[k].id as i32) > 0) {
-      streams = streams.with(k, Stream { ...streams[k], first: now });
-    }
-  }
+  let streams = first_data(c.streams, (id: i64): i32 => step.conn.received(id as i32), now);
   r = Run { ...r, conns: r.conns.with(i, Conn { ...c, h2: Some(step.conn), streams: streams }) };
   if (step.output.len() > 0) {
     r = seal(r, i, step.output, H2);
@@ -1959,7 +1983,7 @@ function stream_done(own r: Run, i: i32, id: i64, resp: HttpResponse, now: i64, 
   if (r.job.o.debug) {
     r = Run { ...r, seen: Some(Seen { status: resp.status, http: http, fields: fields_of(resp.headers), body: resp.body_bytes() }) };
   }
-  let done = response_of(r, resp.status, s.started, s.sent, first, bytes, c.dialup, s.url);
+  let done = response_of(r, resp.status, s.started, s.sent, first, bytes, c, s.url);
   r = counted(Run { ...r, busy: r.busy - 1 }, done);
   return Run { ...r, conns: r.conns.with(i, Conn { ...c, streams: without(c.streams, k) }) };
 }
@@ -2045,7 +2069,7 @@ function begin_h3(own r: Run, i: i32): Run {
     return r;
   }
   let at = r.job.o.origin();
-  r = Run { ...r, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, sent: now, at: at, url: at, hops: 0, dialup: -1 }) };
+  r = Run { ...r, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, sent: now, at: at, url: at, hops: 0, dialup: -1, lookup: -1 }) };
   return open_h3(r, i);
 }
 
@@ -2054,7 +2078,7 @@ function begin_h3(own r: Run, i: i32): Run {
 function open_h3(own r: Run, i: i32): Run {
   let at = r.conns[i].at;
   let (found, addr) = address(r, at, 0);
-  r = found;
+  r = with_lookup(found, i, monotonic_ns());
   let Ok(to) = addr else {
     return lost(r, i, addr.err().unwrap_or("no address"));
   };
@@ -2149,6 +2173,7 @@ function h3_pump(own r: Run, i: i32): Run {
     r = Run { ...r, busy: r.busy - 1, conns: r.conns.with(i, Conn { ...r.conns[i], open: true, phase: H3 }) };
   }
   let now = monotonic_ns();
+  r = Run { ...r, conns: r.conns.with(i, Conn { ...r.conns[i], streams: first_data(r.conns[i].streams, (id: i64): i32 => cur.received(id), now) }) };
   for e in events {
     r = h3_event(r, i, e, now);
     if (r.conns[i].sock.is_none()) {
