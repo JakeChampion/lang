@@ -350,6 +350,31 @@ function test_get(): test.TestOutcome {
   }
 }
 
+// A client sees the body of a response grow before the response event: the
+// count of its bytes is between 0 and the whole body for a round, and 0
+// after the event.
+function test_received(): test.TestOutcome {
+  let Ok(e0) = begin() else {
+    return test.fail("no connection");
+  };
+  let e = settled(e0, 12);
+  let Ok(e1) = asked(Ends { ...e, log: "" }, get("/big")) else {
+    return test.fail("no request");
+  };
+  let resp = HttpResponse { ...text(200, ""), body: BodyBytes(big(30000)) };
+  let cur = answered(settled(e1, 6), 0, resp);
+  let partial = false;
+  let i = 0;
+  while (i < 300 && !cur.log.contains("client response")) {
+    let (next, moved) = round(cur);
+    cur = if (moved) { next } else { ticked(next) };
+    let n = cur.client.received(0);
+    partial = partial || n > 0 && n < 30000 && !cur.log.contains("client response");
+    i += 1;
+  }
+  return test.assert_eq(f"{partial} {cur.log.contains("client response 0 200")} {cur.client.received(0)}", "true true 0");
+}
+
 function big(n: i32): u8[] {
   let out = __alloc_u8(n);
   let i = 0;
@@ -617,6 +642,7 @@ function test_blocked_backpressure(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
+  r = r.it("a client counts the body of a response as it arrives", test_received);
   r = r.it("a request target reaches the handler in its normal form", test_target_normalised);
   r = r.it("0-RTT takes a GET and answers a POST 425 Too Early", test_zero_rtt);
   r = r.it("a response without a date is sent with the connection's", test_date);

@@ -1,0 +1,33 @@
+// The one read of a field of a for-each binding of an owned array gives a
+// fresh local, so the local can go to an own receiver or parameter.
+struct Handle { fd: i32, name: string }
+function (own h: Handle) close(): i32 { return h.fd + h.name.len(); }
+function take(own h: Handle): i32 { return h.fd * 10; }
+struct Pair { k: string, h: Handle }
+function by_receiver(own ps: Pair[]): i32 {
+  let t = 0;
+  for p in ps {
+    let h = p.h;
+    t += h.close() + p.k.len();
+  }
+  return t;
+}
+function by_argument(own ps: Pair[]): i32 {
+  let t = 0;
+  for p in ps {
+    let h = p.h;
+    t += take(h);
+  }
+  return t;
+}
+function pairs(n: i32): Pair[] {
+  let out: Pair[] = [];
+  for i in 0..n {
+    out = out.append(Pair { k: "k" + i.to_string(), h: Handle { fd: i, name: "n" + (i * 100).to_string() } });
+  }
+  return out;
+}
+function main(): i32 {
+  print(by_receiver(pairs(4)).to_string() + " " + by_argument(pairs(4)).to_string());
+  return 0;
+}

@@ -489,11 +489,15 @@ function test_program_closes_final_state(): test.TestOutcome {
   if (closed.get() != -1) {
     return test.fail("a live program closed its state");
   }
-  s = sim.event(s, android.Destroy);
-  if (closed.get() != 1) {
-    return test.fail("Destroy did not close the final state");
+  s = sim.event(sim.kept(s, true), android.Destroy);
+  if (closed.get() != -1) {
+    return test.fail("a Destroy that the loop runs on after closed the state");
   }
-  return test.assert_eq(s.shell.app.count, 11);
+  s = sim.event(sim.kept(s, false), android.Destroy);
+  if (closed.get() != 2) {
+    return test.fail("the Destroy that ends the loop did not close the final state");
+  }
+  return test.assert_eq(s.shell.app.count, 12);
 }
 
 function test_program_taps(): test.TestOutcome {
@@ -502,6 +506,14 @@ function test_program_taps(): test.TestOutcome {
   s = sim.tap(sim.tap(sim.tap(s, "V"), "V"), "missing");
   let got = (first > 0).to_string() + " " + s.shell.app.count.to_string() + " " + sim.shows(s, "AA").to_string() + " " + sim.texts(s).len().to_string();
   return test.assert_eq(got, "true 2 true 2");
+}
+
+// `says` finds a text that shows, and an element that only an
+// accessibility service reads.
+function test_program_says(): test.TestOutcome {
+  let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
+  let got = [sim.says(s, "reset"), sim.shows(s, "reset"), sim.says(s, "V"), sim.says(s, "missing")];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true false true false");
 }
 
 function test_program_long_press_and_toggle(): test.TestOutcome {
@@ -1122,6 +1134,7 @@ function main(): i32 {
   r = r.it("an area shows the lines at the caret", test_an_area_shows_the_lines_at_the_caret);
   r = r.it("a slider has a track and a thumb", test_slider_layout);
   r = r.it("a finger moves a slider and scrolls no list", test_a_finger_moves_a_slider);
+  r = r.it("says finds an element by what it says", test_program_says);
   r = r.it("the effects run after each message", test_effects_run_after_each_message);
   r = r.it("the meter shows the cost of a frame", test_the_meter_shows_the_cost_of_a_frame);
   r = r.it("events between two ticks do not move the next tick", test_events_do_not_move_a_tick);

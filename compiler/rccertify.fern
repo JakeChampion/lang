@@ -64,7 +64,7 @@ function view_abi(name: string): Abi {
   if (name == "__sem_view_len" || name == "__sem_view_data") {
     return abi([borrow_mode()], false);
   }
-  if (name == "__sem_byte_view_slice" || name == "__sem_view_slice" || name == "__sem_view_slice_32" || name == "__sem_view_slice_wide") {
+  if (name == "__sem_byte_view_slice" || name == "__sem_view_slice" || name == "__sem_view_slice_16" || name == "__sem_view_slice_32" || name == "__sem_view_slice_wide") {
     return abi([borrow_mode(), value_mode(), value_mode()], true);
   }
   if (name == "__sem_view_release") {
@@ -430,49 +430,108 @@ function no_unique(): Unique {
   return Unique { root: -1, also: [] };
 }
 
-function unique_word(w: Walk, v: i32, depth: i32): Unique {
+function unique_word(w: Walk, v: i32, path: i32[]): Unique {
   let root = w.root[v];
   let ins = def_of(w.f, w.defs, root);
   if (is_call(ins, "__fern_rc_is_unique") && ins.args.len() == 1) {
     return Unique { root: w.root[ins.args[0]], also: [] };
   }
-  if (ins.kind_tag != ssa.PHI || depth >= 8) {
+  if (ins.kind_tag != ssa.PHI || util.index_of_i32(path, root) >= 0) {
     return no_unique();
   }
-  let out = no_unique();
-  for i in 0..ins.args.len() {
-    let a = ins.args[i];
-    if (a < 0) {
-      return no_unique();
-    }
-    if (!zero_at(w, a) && w.root[a] != root) {
-      out = unique_input(w, root, i, a, depth, out);
-      if (out.root < 0) {
-        return no_unique();
-      }
-    }
+  let t = input_tests(w, ins, path.append(root));
+  if (!t.ok) {
+    return no_unique();
   }
-  return out;
+  let box = shared_box(t.each);
+  if (box == -1) {
+    return joined_unique(w, ins, t.each);
+  }
+  if (box < 0) {
+    return no_unique();
+  }
+  return Unique { root: box, also: aliases(w, root, t.each, box) };
 }
 
-function unique_input(w: Walk, phi: i32, i: i32, a: i32, depth: i32, out: Unique): Unique {
-  let u = unique_word(w, a, depth + 1);
-  if (u.root < 0 || out.root >= 0 && u.root != out.root) {
-    return no_unique();
+function aliases(w: Walk, phi: i32, each: Unique[], box: i32): i32[] {
+  let also: i32[] = [];
+  for i in 0..each.len() {
+    if (each[i].root >= 0) {
+      for x in each[i].also {
+        also = also.append(x);
+      }
+      also = beside(w, phi, i, box, also);
+    }
   }
-  let also = out.also;
-  for x in u.also {
-    also = also.append(x);
+  return also;
+}
+
+struct Tests { ok: boolean, each: Unique[] }
+
+// What each input of a join tests. A zero and the join itself test nothing.
+function input_tests(w: Walk, phi: ssa.SInst, path: i32[]): Tests {
+  let each: Unique[] = [];
+  for a in phi.args {
+    let u = no_unique();
+    if (a < 0) {
+      return Tests { ok: false, each: [] };
+    }
+    if (!zero_at(w, a) && w.root[a] != w.root[phi.result]) {
+      u = unique_word(w, a, path);
+      if (u.root < 0) {
+        return Tests { ok: false, each: [] };
+      }
+    }
+    each = each.append(u);
   }
-  also = beside(w, phi, i, u.root, also);
-  return Unique { root: u.root, also: also };
+  return Tests { ok: true, each: each };
+}
+
+// The box that every input tests: -1 where two inputs test different boxes, -2 where no input tests one.
+function shared_box(each: Unique[]): i32 {
+  let box = -2;
+  for u in each {
+    if (u.root >= 0 && box >= 0 && u.root != box) {
+      return -1;
+    }
+    if (u.root >= 0) {
+      box = u.root;
+    }
+  }
+  return box;
+}
+
+// A word that tests a different box on each edge tests the value that joins those boxes.
+function joined_unique(w: Walk, phi: ssa.SInst, each: Unique[]): Unique {
+  for q in w.f.blocks[w.defs.block[w.root[phi.result]]].insts {
+    if (q.kind_tag == ssa.PHI && q.result >= 0 && q.result != phi.result && joins(w, each, q)) {
+      return Unique { root: w.root[q.result], also: [] };
+    }
+  }
+  return no_unique();
+}
+
+function joins(w: Walk, each: Unique[], q: ssa.SInst): boolean {
+  if (q.args.len() != each.len()) {
+    return false;
+  }
+  for i in 0..each.len() {
+    let u = each[i];
+    if (u.root >= 0 && (q.args[i] < 0 || u.root != w.root[q.args[i]] && util.index_of_i32(u.also, w.root[q.args[i]]) < 0)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function beside(w: Walk, phi: i32, i: i32, box: i32, also: i32[]): i32[] {
   let out = also;
   for q in w.f.blocks[w.defs.block[phi]].insts {
-    if (q.kind_tag == ssa.PHI && q.result >= 0 && q.result != phi && i < q.args.len() && q.args[i] >= 0 && w.root[q.args[i]] == box && util.index_of_i32(out, q.result) < 0) {
-      out = out.append(q.result);
+    if (q.kind_tag == ssa.PHI && q.result >= 0 && q.result != phi && i < q.args.len() && q.args[i] >= 0 && util.index_of_i32(out, q.result) < 0) {
+      let from = w.root[q.args[i]];
+      if (from == box || util.index_of_i32(also, from) >= 0) {
+        out = out.append(q.result);
+      }
     }
   }
   return out;
@@ -560,7 +619,8 @@ function cond_of(w: Walk, regions: i32[][], cond: i32, with_tokens: boolean): Co
   if (t.word < 0) {
     return no_cond();
   }
-  let u = unique_word(w, t.word, 0);
+  let none: i32[] = [];
+  let u = unique_word(w, t.word, none);
   if (u.root >= 0) {
     return Cond { root: u.root, on_true: t.on_true, also: u.also };
   }
@@ -600,7 +660,7 @@ function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolea
       if (c.on_true) {
         arm = w.at[t.t];
       }
-      if (c.root >= 0 && arm >= 0 && w.f.blocks[arm].preds.len() == 1) {
+      if (c.root >= 0 && arm >= 0 && (w.f.blocks[arm].preds.len() == 1 || each_edge_tests(w, rg.roots, arm, c.root, with_tokens))) {
         rg = open_region(rg, dom, reach, arm, c.root, w.f.blocks[bi].id);
         for other in c.also {
           rg = open_region(rg, dom, reach, arm, other, w.f.blocks[bi].id);
@@ -609,6 +669,30 @@ function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolea
     }
   }
   return rg;
+}
+
+// Each edge into the block leaves a branch whose taken arm proves the box
+// unique, so each path into the block proves it.
+function each_edge_tests(w: Walk, regions: i32[][], arm: i32, root: i32, with_tokens: boolean): boolean {
+  for pid in w.f.blocks[arm].preds {
+    let pb = w.at[pid];
+    if (pb < 0) {
+      return false;
+    }
+    let t = w.f.blocks[pb].term;
+    if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
+      return false;
+    }
+    let c = cond_of(w, regions, t.cond, with_tokens);
+    let taken = w.at[t.f];
+    if (c.on_true) {
+      taken = w.at[t.t];
+    }
+    if (taken != arm || c.root != root && util.index_of_i32(c.also, root) < 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function unique_regions(w: Walk, dom: ssadeps.Dom, reach: boolean[]): Regions {

@@ -1,0 +1,137 @@
+import "std/test";
+import "std/array";
+import "std/linediff";
+
+// The hunks of `a` and `b`, as `git diff` prints them after its header.
+function hunks(a: string, b: string, o: linediff.Options, context: i32): string {
+  let ab = a.bytes();
+  let bb = b.bytes();
+  if (context == 0) {
+    let t = linediff.common_tail(ab, bb);
+    ab = array.slice(ab, 0, ab.len() - t);
+    bb = array.slice(bb, 0, bb.len() - t);
+  }
+  let la = linediff.lines_of(ab);
+  let lb = linediff.lines_of(bb);
+  let out = buf_new(256);
+  linediff.unified(out, la, lb, linediff.diff(la, lb, o), linediff.Emit { context: context, interhunk: 0, funcnames: true });
+  return buf_take(out);
+}
+
+function myers(): linediff.Options {
+  return linediff.defaults();
+}
+
+function test_lines(): test.TestOutcome {
+  let l = linediff.lines_of("one\ntwo\nlast".bytes());
+  if (l.count() != 3) {
+    return test.fail("three lines");
+  }
+  if (linediff.lines_of("".bytes()).count() != 0) {
+    return test.fail("no lines");
+  }
+  return test.assert_eq(l.starts[2], 8);
+}
+
+function test_script(): test.TestOutcome {
+  let s = linediff.diff(linediff.lines_of("a\nb\nc\n".bytes()), linediff.lines_of("a\nc\nd\n".bytes()), myers());
+  if (s.len() != 2) {
+    return test.fail("two changes");
+  }
+  if (s[0].i1 != 1 || s[0].del != 1 || s[0].ins != 0) {
+    return test.fail("b is deleted");
+  }
+  return test.assert_eq(s[1].i2, 2);
+}
+
+// The function line goes in the header, and the context is cut at the
+// ends of the texts.
+function test_function_line(): test.TestOutcome {
+  let a = "int f(void)\n{\n\tint a;\n\tint b;\n\tint c;\n\tint d;\n\treturn 0;\n}\n";
+  let b = "int f(void)\n{\n\tint a;\n\tint b;\n\tint c;\n\tint e;\n\treturn 0;\n}\n";
+  let got = hunks(a, b, myers(), 3);
+  if (got != "@@ -3,6 +3,6 @@ int f(void)\n \tint a;\n \tint b;\n \tint c;\n-\tint d;\n+\tint e;\n \treturn 0;\n }\n") {
+    return test.fail("context 3: " + got);
+  }
+  return test.assert_eq(hunks(a, b, myers(), 0), "@@ -6 +6 @@ int f(void)\n-\tint d;\n+\tint e;\n");
+}
+
+// A vertical tab and a form feed at the end of the function line stay:
+// they are not white space for git.
+function test_function_line_space(): test.TestOutcome {
+  let got = hunks("f()\x0b\x0c\n a\n b\n c\n d\n e\n", "f()\x0b\x0c\n a\n b\n c\n d\n E\n", myers(), 1);
+  return test.assert_eq(got, "@@ -5,2 +5,2 @@ f()\x0b\x0c\n  d\n- e\n+ E\n");
+}
+
+function test_no_newline(): test.TestOutcome {
+  return test.assert_eq(hunks("one\ntwo", "one\ntwo\nthree", myers(), 3), "@@ -1,2 +1,3 @@\n one\n-two\n\\ No newline at end of file\n+two\n+three\n\\ No newline at end of file\n");
+}
+
+function test_two_hunks(): test.TestOutcome {
+  return test.assert_eq(hunks("a\nb\nc\nd\ne\nf\ng\nh\n", "a\ne\nf\ng\nb\nc\nd\nh\n", myers(), 1), "@@ -1,5 +1,2 @@\n a\n-b\n-c\n-d\n e\n@@ -7,2 +4,5 @@ f\n g\n+b\n+c\n+d\n h\n");
+}
+
+function test_indent_heuristic(): test.TestOutcome {
+  let a = "d\nd\nb() {\nc\n\tx;\nd\na() {\nc\nb() {\n";
+  let b = "d\nd\nb() {\n\ty;\n\nb() {\nc\n\tx;\nd\na() {\nc\nb() {\n";
+  if (hunks(a, b, myers(), 3) != "@@ -1,5 +1,8 @@\n d\n d\n+b() {\n+\ty;\n+\n b() {\n c\n \tx;\n") {
+    return test.fail("with the heuristic");
+  }
+  let plain = linediff.Options { ...myers(), indent_heuristic: false };
+  return test.assert_eq(hunks(a, b, plain, 3), "@@ -1,6 +1,9 @@\n d\n d\n b() {\n+\ty;\n+\n+b() {\n c\n \tx;\n d\n");
+}
+
+function test_patience(): test.TestOutcome {
+  let a = "\n\ty;\nd\n}\na() {\nd\nb() {\n";
+  let b = "\n\ty;\nd\nd\nc\n\n\tx;\n}\na() {\n}\n\na() {\nb() {\n";
+  if (hunks(a, b, myers(), 3) != "@@ -1,7 +1,13 @@\n \n \ty;\n d\n+d\n+c\n+\n+\tx;\n }\n a() {\n-d\n+}\n+\n+a() {\n b() {\n") {
+    return test.fail("myers");
+  }
+  let p = linediff.Options { ...myers(), algorithm: linediff.PATIENCE };
+  return test.assert_eq(hunks(a, b, p, 3), "@@ -1,7 +1,13 @@\n \n \ty;\n d\n-}\n-a() {\n d\n+c\n+\n+\tx;\n+}\n+a() {\n+}\n+\n+a() {\n b() {\n");
+}
+
+function test_histogram(): test.TestOutcome {
+  let a = "}\nb() {\n}\nd\nd\nd\n";
+  let b = "}\nb() {\n}\na() {\nd\nb() {\nd\nd\n";
+  if (hunks(a, b, myers(), 3) != "@@ -1,6 +1,8 @@\n }\n b() {\n }\n+a() {\n d\n+b() {\n d\n d\n") {
+    return test.fail("myers");
+  }
+  let h = linediff.Options { ...myers(), algorithm: linediff.HISTOGRAM };
+  return test.assert_eq(hunks(a, b, h, 3), "@@ -1,6 +1,8 @@\n }\n b() {\n }\n-d\n+a() {\n+d\n+b() {\n d\n d\n");
+}
+
+// The search of GNU diff marks the same lines, with the flags of both
+// sides in one array.
+function test_gnu_search(): test.TestOutcome {
+  let x: i32[] = [0, 1, 2];
+  let y: i32[] = [0, 2, 3];
+  let flags = linediff.compareseq(__alloc_u8(10), x, [0, 1, 2], y, [0, 1, 2], 1, 6, false, linediff.gnu_search(3, 3, false, false));
+  if (flags[2] != 1 as u8 || flags[1] != 0 as u8 || flags[3] != 0 as u8) {
+    return test.fail("the second line of x is deleted");
+  }
+  return test.assert_eq(flags[8] as i32, 1);
+}
+
+function test_common_tail(): test.TestOutcome {
+  let tail = "line\n".repeat(600);
+  let a = ("one\n" + tail).bytes();
+  let b = ("two\n" + tail).bytes();
+  return test.assert_eq(linediff.common_tail(a, b), 2045);
+}
+
+function main(): i32 {
+  let r = test.new("std/linediff");
+  r = r.it("lines", test_lines);
+  r = r.it("script", test_script);
+  r = r.it("function line", test_function_line);
+  r = r.it("function line with a form feed", test_function_line_space);
+  r = r.it("no newline", test_no_newline);
+  r = r.it("two hunks", test_two_hunks);
+  r = r.it("indent heuristic", test_indent_heuristic);
+  r = r.it("patience", test_patience);
+  r = r.it("histogram", test_histogram);
+  r = r.it("gnu search", test_gnu_search);
+  r = r.it("common tail", test_common_tail);
+  return r.finish();
+}

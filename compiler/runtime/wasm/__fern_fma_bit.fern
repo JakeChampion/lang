@@ -1,0 +1,4 @@
+// __fern_fma_bit gives 1 for true and 0 for false.
+function __fern_fma_bit(c: boolean): u64 {
+  return if (c) { 1 as u64 } else { 0 as u64 };
+}

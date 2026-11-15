@@ -73,6 +73,9 @@ function int_label(t: typeinfo.TypeI32): string {
     if (t.width == 8) {
       return "u8";
     }
+    if (t.width == 16) {
+      return "u16";
+    }
     if (t.width == typeinfo.width_ptr()) {
       return "usize";
     }
@@ -80,6 +83,9 @@ function int_label(t: typeinfo.TypeI32): string {
   }
   if (t.width == 64) {
     return "i64";
+  }
+  if (t.width == 16) {
+    return "i16";
   }
   return "i32";
 }
@@ -530,12 +536,12 @@ function is_lane_builtin(name: string): boolean {
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
-    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with", "__u8x16_shl", "__u8x16_shr", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_widen_lo", "__u8x16_widen_hi", "__u8x16_swizzle",
-    "__i8x16_splat", "__i8x16_of", "__i8x16_lane", "__i8x16_bitmask", "__i8x16_min", "__i8x16_max", "__i8x16_eq", "__i8x16_ne", "__i8x16_lt", "__i8x16_and", "__i8x16_or", "__i8x16_xor", "__i8x16_select", "__i8x16_load", "__i8x16_with", "__i8x16_shl", "__i8x16_shr", "__i8x16_add_sat", "__i8x16_sub_sat", "__i8x16_abs", "__i8x16_widen_lo", "__i8x16_widen_hi",
-    "__u16x8_splat", "__u16x8_of", "__u16x8_lane", "__u16x8_bitmask", "__u16x8_min", "__u16x8_max", "__u16x8_eq", "__u16x8_ne", "__u16x8_lt", "__u16x8_and", "__u16x8_or", "__u16x8_xor", "__u16x8_select", "__u16x8_load", "__u16x8_with", "__u16x8_shl", "__u16x8_shr", "__u16x8_add_sat", "__u16x8_sub_sat", "__u16x8_avg", "__u16x8_widen_lo", "__u16x8_widen_hi", "__u16x8_narrow",
-    "__i16x8_splat", "__i16x8_of", "__i16x8_lane", "__i16x8_bitmask", "__i16x8_min", "__i16x8_max", "__i16x8_eq", "__i16x8_ne", "__i16x8_lt", "__i16x8_and", "__i16x8_or", "__i16x8_xor", "__i16x8_select", "__i16x8_load", "__i16x8_with", "__i16x8_shl", "__i16x8_shr", "__i16x8_add_sat", "__i16x8_sub_sat", "__i16x8_abs", "__i16x8_widen_lo", "__i16x8_widen_hi", "__i16x8_narrow", "__i16x8_narrow_u",
-    "__u32x4_splat", "__u32x4_of", "__u32x4_lane", "__u32x4_bitmask", "__u32x4_min", "__u32x4_max", "__u32x4_eq", "__u32x4_ne", "__u32x4_lt", "__u32x4_and", "__u32x4_or", "__u32x4_xor", "__u32x4_select", "__u32x4_load", "__u32x4_with", "__u32x4_shl", "__u32x4_shr", "__u32x4_narrow",
-    "__i32x4_splat", "__i32x4_of", "__i32x4_lane", "__i32x4_bitmask", "__i32x4_min", "__i32x4_max", "__i32x4_eq", "__i32x4_ne", "__i32x4_lt", "__i32x4_and", "__i32x4_or", "__i32x4_xor", "__i32x4_select", "__i32x4_load", "__i32x4_with", "__i32x4_shl", "__i32x4_shr", "__i32x4_abs", "__i32x4_narrow", "__i32x4_narrow_u",
+    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_load_view", "__u8x16_with", "__u8x16_shl", "__u8x16_shr", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_widen_lo", "__u8x16_widen_hi", "__u8x16_swizzle",
+    "__i8x16_splat", "__i8x16_of", "__i8x16_lane", "__i8x16_bitmask", "__i8x16_min", "__i8x16_max", "__i8x16_eq", "__i8x16_ne", "__i8x16_lt", "__i8x16_and", "__i8x16_or", "__i8x16_xor", "__i8x16_select", "__i8x16_load", "__i8x16_load_view", "__i8x16_with", "__i8x16_shl", "__i8x16_shr", "__i8x16_add_sat", "__i8x16_sub_sat", "__i8x16_abs", "__i8x16_widen_lo", "__i8x16_widen_hi",
+    "__u16x8_splat", "__u16x8_of", "__u16x8_lane", "__u16x8_bitmask", "__u16x8_min", "__u16x8_max", "__u16x8_eq", "__u16x8_ne", "__u16x8_lt", "__u16x8_and", "__u16x8_or", "__u16x8_xor", "__u16x8_select", "__u16x8_load", "__u16x8_load_view", "__u16x8_with", "__u16x8_shl", "__u16x8_shr", "__u16x8_add_sat", "__u16x8_sub_sat", "__u16x8_avg", "__u16x8_widen_lo", "__u16x8_widen_hi", "__u16x8_narrow",
+    "__i16x8_splat", "__i16x8_of", "__i16x8_lane", "__i16x8_bitmask", "__i16x8_min", "__i16x8_max", "__i16x8_eq", "__i16x8_ne", "__i16x8_lt", "__i16x8_and", "__i16x8_or", "__i16x8_xor", "__i16x8_select", "__i16x8_load", "__i16x8_load_view", "__i16x8_with", "__i16x8_shl", "__i16x8_shr", "__i16x8_add_sat", "__i16x8_sub_sat", "__i16x8_abs", "__i16x8_widen_lo", "__i16x8_widen_hi", "__i16x8_narrow", "__i16x8_narrow_u",
+    "__u32x4_splat", "__u32x4_of", "__u32x4_lane", "__u32x4_bitmask", "__u32x4_min", "__u32x4_max", "__u32x4_eq", "__u32x4_ne", "__u32x4_lt", "__u32x4_and", "__u32x4_or", "__u32x4_xor", "__u32x4_select", "__u32x4_load", "__u32x4_load_view", "__u32x4_with", "__u32x4_shl", "__u32x4_shr", "__u32x4_narrow",
+    "__i32x4_splat", "__i32x4_of", "__i32x4_lane", "__i32x4_bitmask", "__i32x4_min", "__i32x4_max", "__i32x4_eq", "__i32x4_ne", "__i32x4_lt", "__i32x4_and", "__i32x4_or", "__i32x4_xor", "__i32x4_select", "__i32x4_load", "__i32x4_load_view", "__i32x4_with", "__i32x4_shl", "__i32x4_shr", "__i32x4_abs", "__i32x4_narrow", "__i32x4_narrow_u",
   ];
   return typeinfo.lane_builtin_width(name) > 0 && util.has_str(names, name);
 }
@@ -562,12 +568,16 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (at >= 0 && raw_floor_allowed(t, name) && t.raw[at].params.len() == argc) {
     return t.raw[at].result;
   }
-  if (argc == 1 && is_f64_primitive(name)) {
+  if (argc == 1 && is_f64_primitive(name) || argc == 3 && name == "__fma_f64") {
     return typeinfo.t_f64();
   }
   if (is_lane_builtin(name) && argc == typeinfo.lane_builtin_params(name).len()) {
     return typeinfo.lane_builtin_result(name);
   }
+  return intrinsic_result_part_1(name, argc, t);
+}
+
+function intrinsic_result_part_1(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && is_bit_count(name)) {
     return typeinfo.t_i32();
   }
@@ -580,12 +590,26 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && (name == "__alloc_u8" || name == "__alloc_u8_uninit")) {
     return typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
   }
+  return intrinsic_result_part_2(name, argc, t);
+}
+
+function intrinsic_result_part_2(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc_i32") {
     return typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false };
+  }
+  if (argc == 1 && name == "__alloc_u16") {
+    return typeinfo.TypeArray { elem: typeinfo.t_u16(), view: false };
+  }
+  if (argc == 1 && name == "__alloc_i16") {
+    return typeinfo.TypeArray { elem: typeinfo.t_i16(), view: false };
   }
   if (argc == 1 && name == "__alloc_i64") {
     return typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false };
   }
+  return intrinsic_result_part_3(name, argc, t);
+}
+
+function intrinsic_result_part_3(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc_f64") {
     return typeinfo.TypeArray { elem: typeinfo.TypeFloat { width: 64, polymorphic: false }, view: false };
   }
@@ -598,6 +622,10 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 2 && name == "__fern_box_free") {
     return typeinfo.t_usize();
   }
+  return intrinsic_result_part_4(name, argc, t);
+}
+
+function intrinsic_result_part_4(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc_len") {
     return typeinfo.t_i32();
   }
@@ -610,12 +638,20 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 0 && name == "__heap_bump_bytes") {
     return typeinfo.t_i64();
   }
+  return intrinsic_result_part_5(name, argc, t);
+}
+
+function intrinsic_result_part_5(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 0 && name == "__heap_alloc_count") {
     return typeinfo.t_i64();
   }
   if (argc == 1 && (name == "__ct_secret" || name == "__ct_public")) {
     return typeinfo.t_void();
   }
+  return intrinsic_result_part_6(name, argc, t);
+}
+
+function intrinsic_result_part_6(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__bytes_owned" || argc == 3 && name == "__bytes_range" || argc == 5 && name == "__bytes_into") {
     return t_array(typeinfo.t_u8());
   }
@@ -625,6 +661,10 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == byte_kernel_arity(name) || argc == byte_into_arity(name)) {
     return t_array(typeinfo.t_u8());
   }
+  return intrinsic_result_part_7(name, argc, t);
+}
+
+function intrinsic_result_part_7(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 0 && is_sha_hw_builtin(name)) {
     return typeinfo.t_bool();
   }
@@ -677,6 +717,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_wait") {
     return t_array(typeinfo.t_i32());
   }
+  return intrinsic_result_task_part_1(name, argc);
+}
+
+function intrinsic_result_task_part_1(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_timeout") {
     return typeinfo.t_i32();
   }
@@ -689,6 +733,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_set_cancelled") {
     return typeinfo.t_void();
   }
+  return intrinsic_result_task_part_2(name, argc);
+}
+
+function intrinsic_result_task_part_2(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && util.has_str(["__task_fd_gen", "__task_gen", "__task_inline"], name)) {
     return typeinfo.t_i32();
   }
@@ -701,6 +749,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__heap_release_to") {
     return typeinfo.t_void();
   }
+  return intrinsic_result_task_part_3(name, argc);
+}
+
+function intrinsic_result_task_part_3(name: string, argc: i32): typeinfo.Type {
   if (is_worker_builtin(name) && argc == worker_params(name).len()) {
     return worker_result(name);
   }
@@ -713,6 +765,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 0 && name == "__arr_push_shared_bytes") {
     return typeinfo.t_i64();
   }
+  return intrinsic_result_task_part_4(name, argc);
+}
+
+function intrinsic_result_task_part_4(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__rc_inc") {
     return typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
   }
@@ -725,6 +781,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 3 && name == "__alloc_reuse") {
     return typeinfo.t_usize();
   }
+  return intrinsic_result_task_part_5(name, argc);
+}
+
+function intrinsic_result_task_part_5(name: string, argc: i32): typeinfo.Type {
   if (argc == 3 && name == "__memcpy") {
     return typeinfo.t_void();
   }
@@ -737,6 +797,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__account_entry") {
     return typeinfo.t_usize();
   }
+  return intrinsic_result_task_part_6(name, argc);
+}
+
+function intrinsic_result_task_part_6(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__load_i32") {
     return typeinfo.t_i32();
   }
@@ -759,6 +823,10 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (builtinsigs.device_intrinsic(name)) {
     return device_sig(name).result;
   }
+  return intrinsic_result_memory_part_1(name, argc);
+}
+
+function intrinsic_result_memory_part_1(name: string, argc: i32): typeinfo.Type {
   if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes" || name == "__mismatch_bytes_str")) {
     return typeinfo.t_i32();
   }
@@ -768,6 +836,10 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && (name == "__scale_f64" || name == "__outer_mul_f64")) {
     return t_array(typeinfo.t_f64());
   }
+  return intrinsic_result_memory_part_2(name, argc);
+}
+
+function intrinsic_result_memory_part_2(name: string, argc: i32): typeinfo.Type {
   if (argc == 6 && name == "__inner_mul_add_f64") {
     return t_array(typeinfo.t_f64());
   }
@@ -780,6 +852,10 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__sum_bytes_array") {
     return typeinfo.t_i32();
   }
+  return intrinsic_result_memory_part_3(name, argc);
+}
+
+function intrinsic_result_memory_part_3(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && (name == "__fern_rc_inc" || name == "__fern_str_dec")) {
     return typeinfo.t_usize();
   }
@@ -811,6 +887,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (is_f64_primitive(name)) {
     return ([typeinfo.t_f64()], true);
   }
+  if (name == "__fma_f64") {
+    return ([typeinfo.t_f64(), typeinfo.t_f64(), typeinfo.t_f64()], true);
+  }
   if (is_lane_builtin(name)) {
     return (typeinfo.lane_builtin_params(name), true);
   }
@@ -834,7 +913,7 @@ function intrinsic_params_part_1(name: string, t: SigTable): (typeinfo.Type[], b
 }
 
 function intrinsic_params_part_2(name: string, t: SigTable): (typeinfo.Type[], boolean) {
-  if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
+  if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_u16" || name == "__alloc_i16" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
     return ([typeinfo.t_i32()], true);
   }
   if (name == "__free") {
@@ -3941,13 +4020,13 @@ function scalar_integer_module(lb: string): string {
   if (lb == "u8") {
     return "std/u8";
   }
-  if (lb == "u32" || lb == "u16") {
+  if (lb == "u32") {
     return "std/u32";
   }
   if (lb == "i64") {
     return "std/i64";
   }
-  if (lb == "char") {
+  if (lb == "char" || lb == "u16" || lb == "i16") {
     return "";
   }
   return "std/i32";
@@ -4963,7 +5042,7 @@ function is_scalar_display_builtin(name: string): boolean {
 pub function builtin_method_sig(recv_name: string, name: string): typeinfo.Type {
   let builtin_name = "__method_" + recv_name + "_" + name;
   if (name == "to_string" && recv_name != "boolean") {
-    builtin_name = "__primitive_" + recv_name + "_to_string";
+    builtin_name = "__primitive_" + typeinfo.display_owner(recv_name) + "_to_string";
   }
   if let typeinfo.TypeFunc(bm) = builtin_sig(builtin_name) {
     let params: typeinfo.Type[] = [];
@@ -6424,6 +6503,12 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   if (n.suffix == "u8") {
     return typeinfo.t_u8();
   }
+  if (n.suffix == "u16") {
+    return typeinfo.t_u16();
+  }
+  if (n.suffix == "i16") {
+    return typeinfo.t_i16();
+  }
   if (n.suffix == "usize") {
     return typeinfo.t_usize();
   }
@@ -7668,8 +7753,18 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "i64") {
     return typeinfo.t_i64();
   }
+  return type_from_ref_names_part_1(r, tn, name);
+}
+
+function type_from_ref_names_part_1(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (name == "u8") {
     return typeinfo.t_u8();
+  }
+  if (name == "u16") {
+    return typeinfo.t_u16();
+  }
+  if (name == "i16") {
+    return typeinfo.t_i16();
   }
   if (name == "u32") {
     return typeinfo.t_u32();
@@ -7689,6 +7784,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "str") {
     return typeinfo.t_str();
   }
+  return type_from_ref_names_part_2(r, tn, name);
+}
+
+function type_from_ref_names_part_2(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (name == "f32") {
     return typeinfo.t_f32();
   }
@@ -7710,6 +7809,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "fn") {
     return t_func_opaque(t_unknown("fn result (the coarse tag records none)"));
   }
+  return type_from_ref_names_part_3(r, tn, name);
+}
+
+function type_from_ref_names_part_3(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (r.is_tuple) {
     if (r.args.len() >= 2) {
       let elems: typeinfo.Type[] = [];
@@ -7736,6 +7839,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     }
     return t_union_g(r.base, uargs);
   }
+  return type_from_ref_names_part_4(r, tn, name);
+}
+
+function type_from_ref_names_part_4(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (r.args.len() > 0) {
     if (tn.structs.has(r.base)) {
       let gargs: typeinfo.Type[] = [];
@@ -7758,6 +7865,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (tn.unions.has(name)) {
     return t_union(name);
   }
+  return type_from_ref_names_part_5(r, tn, name);
+}
+
+function type_from_ref_names_part_5(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (parser.is_reserved_struct_name(name) && name != "Map" && name != "Cell") {
     return t_struct(name);
   }
@@ -12830,11 +12941,11 @@ function magnitude_is_zero(text: string, start: i32): boolean {
 }
 
 function main_result_ty(ty: string): boolean {
-  return ty == "void" || ty == "boolean" || ty == "i32" || ty == "i64" || is_unsigned_int_ty(ty);
+  return ty == "void" || ty == "boolean" || ty == "i16" || ty == "i32" || ty == "i64" || is_unsigned_int_ty(ty);
 }
 
 function is_unsigned_int_ty(ty: string): boolean {
-  return ty == "u8" || ty == "u32" || ty == "u64" || ty == "usize";
+  return ty == "u8" || ty == "u16" || ty == "u32" || ty == "u64" || ty == "usize";
 }
 
 function int_ty_max_dec(ty: string, negated: boolean): string {
@@ -12850,8 +12961,17 @@ function int_ty_max_dec(ty: string, negated: boolean): string {
     }
     return "9223372036854775807";
   }
+  if (ty == "i16") {
+    if (negated) {
+      return "32768";
+    }
+    return "32767";
+  }
   if (ty == "u8") {
     return "255";
+  }
+  if (ty == "u16") {
+    return "65535";
   }
   if (ty == "u32") {
     return "4294967295";
@@ -12875,8 +12995,17 @@ function int_ty_max_hex(ty: string, negated: boolean): string {
     }
     return "7fffffffffffffff";
   }
+  if (ty == "i16") {
+    if (negated) {
+      return "8000";
+    }
+    return "7fff";
+  }
   if (ty == "u8") {
     return "ff";
+  }
+  if (ty == "u16") {
+    return "ffff";
   }
   if (ty == "u32") {
     return "ffffffff";
@@ -18538,7 +18667,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   if (rt.len() == 0) {
     return true;
   }
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char" || typeinfo.lanes_width(rt) > 0) {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u16" || rt == "i16" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char" || typeinfo.lanes_width(rt) > 0) {
     return true;
   }
   for ch in rt {
@@ -18933,13 +19062,13 @@ const REGISTERED_INTRINSICS: string[] = [
   "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
   "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_gen", "__task_inline", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
   "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
-  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
+  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u16", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
   "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
   "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
   "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
   "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
   "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
-  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__alloc_len", "__heap_alloc_count", "__heap_bump_bytes",
+  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__fma_f64", "__free", "__alloc_len", "__heap_alloc_count", "__heap_bump_bytes",
   "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
   "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas", "__secondary_entry",
   "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
@@ -18951,12 +19080,12 @@ const REGISTERED_INTRINSICS: string[] = [
   "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
   "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
-  "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with", "__u8x16_shl", "__u8x16_shr", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_widen_lo", "__u8x16_widen_hi", "__u8x16_swizzle",
-  "__i8x16_splat", "__i8x16_of", "__i8x16_lane", "__i8x16_bitmask", "__i8x16_min", "__i8x16_max", "__i8x16_eq", "__i8x16_ne", "__i8x16_lt", "__i8x16_and", "__i8x16_or", "__i8x16_xor", "__i8x16_select", "__i8x16_load", "__i8x16_with", "__i8x16_shl", "__i8x16_shr", "__i8x16_add_sat", "__i8x16_sub_sat", "__i8x16_abs", "__i8x16_widen_lo", "__i8x16_widen_hi",
-  "__u16x8_splat", "__u16x8_of", "__u16x8_lane", "__u16x8_bitmask", "__u16x8_min", "__u16x8_max", "__u16x8_eq", "__u16x8_ne", "__u16x8_lt", "__u16x8_and", "__u16x8_or", "__u16x8_xor", "__u16x8_select", "__u16x8_load", "__u16x8_with", "__u16x8_shl", "__u16x8_shr", "__u16x8_add_sat", "__u16x8_sub_sat", "__u16x8_avg", "__u16x8_widen_lo", "__u16x8_widen_hi", "__u16x8_narrow",
-  "__i16x8_splat", "__i16x8_of", "__i16x8_lane", "__i16x8_bitmask", "__i16x8_min", "__i16x8_max", "__i16x8_eq", "__i16x8_ne", "__i16x8_lt", "__i16x8_and", "__i16x8_or", "__i16x8_xor", "__i16x8_select", "__i16x8_load", "__i16x8_with", "__i16x8_shl", "__i16x8_shr", "__i16x8_add_sat", "__i16x8_sub_sat", "__i16x8_abs", "__i16x8_widen_lo", "__i16x8_widen_hi", "__i16x8_narrow", "__i16x8_narrow_u",
-  "__u32x4_splat", "__u32x4_of", "__u32x4_lane", "__u32x4_bitmask", "__u32x4_min", "__u32x4_max", "__u32x4_eq", "__u32x4_ne", "__u32x4_lt", "__u32x4_and", "__u32x4_or", "__u32x4_xor", "__u32x4_select", "__u32x4_load", "__u32x4_with", "__u32x4_shl", "__u32x4_shr", "__u32x4_narrow",
-  "__i32x4_splat", "__i32x4_of", "__i32x4_lane", "__i32x4_bitmask", "__i32x4_min", "__i32x4_max", "__i32x4_eq", "__i32x4_ne", "__i32x4_lt", "__i32x4_and", "__i32x4_or", "__i32x4_xor", "__i32x4_select", "__i32x4_load", "__i32x4_with", "__i32x4_shl", "__i32x4_shr", "__i32x4_abs", "__i32x4_narrow", "__i32x4_narrow_u",
+  "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_load_view", "__u8x16_with", "__u8x16_shl", "__u8x16_shr", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_widen_lo", "__u8x16_widen_hi", "__u8x16_swizzle",
+  "__i8x16_splat", "__i8x16_of", "__i8x16_lane", "__i8x16_bitmask", "__i8x16_min", "__i8x16_max", "__i8x16_eq", "__i8x16_ne", "__i8x16_lt", "__i8x16_and", "__i8x16_or", "__i8x16_xor", "__i8x16_select", "__i8x16_load", "__i8x16_load_view", "__i8x16_with", "__i8x16_shl", "__i8x16_shr", "__i8x16_add_sat", "__i8x16_sub_sat", "__i8x16_abs", "__i8x16_widen_lo", "__i8x16_widen_hi",
+  "__u16x8_splat", "__u16x8_of", "__u16x8_lane", "__u16x8_bitmask", "__u16x8_min", "__u16x8_max", "__u16x8_eq", "__u16x8_ne", "__u16x8_lt", "__u16x8_and", "__u16x8_or", "__u16x8_xor", "__u16x8_select", "__u16x8_load", "__u16x8_load_view", "__u16x8_with", "__u16x8_shl", "__u16x8_shr", "__u16x8_add_sat", "__u16x8_sub_sat", "__u16x8_avg", "__u16x8_widen_lo", "__u16x8_widen_hi", "__u16x8_narrow",
+  "__i16x8_splat", "__i16x8_of", "__i16x8_lane", "__i16x8_bitmask", "__i16x8_min", "__i16x8_max", "__i16x8_eq", "__i16x8_ne", "__i16x8_lt", "__i16x8_and", "__i16x8_or", "__i16x8_xor", "__i16x8_select", "__i16x8_load", "__i16x8_load_view", "__i16x8_with", "__i16x8_shl", "__i16x8_shr", "__i16x8_add_sat", "__i16x8_sub_sat", "__i16x8_abs", "__i16x8_widen_lo", "__i16x8_widen_hi", "__i16x8_narrow", "__i16x8_narrow_u",
+  "__u32x4_splat", "__u32x4_of", "__u32x4_lane", "__u32x4_bitmask", "__u32x4_min", "__u32x4_max", "__u32x4_eq", "__u32x4_ne", "__u32x4_lt", "__u32x4_and", "__u32x4_or", "__u32x4_xor", "__u32x4_select", "__u32x4_load", "__u32x4_load_view", "__u32x4_with", "__u32x4_shl", "__u32x4_shr", "__u32x4_narrow",
+  "__i32x4_splat", "__i32x4_of", "__i32x4_lane", "__i32x4_bitmask", "__i32x4_min", "__i32x4_max", "__i32x4_eq", "__i32x4_ne", "__i32x4_lt", "__i32x4_and", "__i32x4_or", "__i32x4_xor", "__i32x4_select", "__i32x4_load", "__i32x4_load_view", "__i32x4_with", "__i32x4_shl", "__i32x4_shr", "__i32x4_abs", "__i32x4_narrow", "__i32x4_narrow_u",
 ];
 
 function qualified_trait(module: string, name: string): string {
@@ -20653,7 +20782,7 @@ function ow_is_owned(ctx: OwnCtx, name: string): boolean {
 }
 
 function ow_ownable_type(type_name: string): boolean {
-  let scalars: string[] = ["boolean", "i32", "i64", "u8", "u32", "u64", "f64", "f32", "char", "usize", "void"];
+  let scalars: string[] = ["boolean", "i32", "i64", "u8", "u16", "i16", "u32", "u64", "f64", "f32", "char", "usize", "void"];
   return !util.has_str(scalars, type_name);
 }
 
@@ -21247,8 +21376,11 @@ struct LuRebind { source: ast.ExprCall, value: ast.ExprIdent, target: string }
 struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
 // updates holds, for the base of each update literal `S { ...q, f: v }`, one
-// entry per field the literal replaces.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], copy_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
+// entry per field the literal replaces. value_sels holds the reads of a
+// nested field of a primitive type or of an array of one: an array can reach
+// a borrowed parameter as a view, so such a read is not always a copy.
+// scalar_sels holds the reads of a field of a scalar type, which are copies.
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: string[], scalar_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -21256,7 +21388,9 @@ struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params
 
 // A match or an if outside every loop, with the occurrences in each arm. One
 // run takes one arm, so an occurrence in one arm is not after one in another.
-struct LuFork { arms: LuOcc[][] }
+// The arms of an if or a match outside every loop, with whether each arm
+// ends in a return.
+struct LuFork { arms: LuOcc[][], exits: boolean[] }
 
 // A frame is one block on the path from the function body to a statement:
 // the block, the index of the statement on the path, and the loop statement
@@ -21463,10 +21597,10 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
     ast.ExprFieldAccess(fa) => {
       match (fa.obj) {
         ast.ExprIdent(oid) => {
-          return LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) };
+          return lu_scalar_selection(fa, LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) });
         },
         _ => {
-          return lu_copy_selection(fa, f);
+          return lu_scalar_selection(fa, lu_value_selection(fa, f));
         }
       }
     },
@@ -21489,13 +21623,26 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
   }
 }
 
-function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
+function lu_value_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   if (!lu_copy_type(fa.ty)) {
     return f;
   }
   let enclosing = ow_enclosing_field(fa);
   if let ast.ExprIdent(id) = enclosing.obj {
-    return LuFacts { ...f, copy_sels: f.copy_sels.append(lu_key(id.line, id.col)) };
+    return LuFacts { ...f, value_sels: f.value_sels.append(lu_key(id.line, id.col)) };
+  }
+  return f;
+}
+
+// A read of a field of a scalar type, such as i32 or boolean: a copy that
+// keeps nothing of its holder, not even a view.
+function lu_scalar_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
+  if (fa.ty == "string" || fa.ty == "str" || !typeinfo.is_primitive_type_name(fa.ty)) {
+    return f;
+  }
+  let enclosing = ow_enclosing_field(fa);
+  if let ast.ExprIdent(id) = enclosing.obj {
+    return LuFacts { ...f, scalar_sels: f.scalar_sels.append(lu_key(id.line, id.col)) };
   }
   return f;
 }
@@ -21741,6 +21888,12 @@ function lu_safe_constructor(fx: LuFn, e: ast.Expr): boolean {
   return false;
 }
 
+// A variant with a payload. Its construction holds what its arguments hold,
+// and the caller has shown that no argument lends.
+function lu_variant_constructor(fx: LuFn, name: string): boolean {
+  return (name == "Some" || name == "Ok" || name == "Err" || fx.ofuncs.ctors.has(name)) && !fx.ofuncs.funcs.has(name);
+}
+
 function lu_compound_call_fresh(fx: LuFn, call: ast.ExprCall): boolean {
   if (lu_checked_result_call(fx, call)) {
     return true;
@@ -21763,7 +21916,7 @@ function lu_compound_call_fresh(fx: LuFn, call: ast.ExprCall): boolean {
     }
     let row = fx.lenders.names.find(id.name);
     if (row < 0) {
-      return fx.builtins.has(id.name);
+      return fx.builtins.has(id.name) || lu_variant_constructor(fx, id.name);
     }
     return lu_compound_inputs_fresh(fx, fx.lenders.rows[row], call.args);
   }
@@ -22627,24 +22780,30 @@ function lu_unpack_expr_in(fx: LuFn, init: ast.Expr, seen: string[]): boolean {
     if (h.len() == 0 || !(lu_fresh_init_in(fx, h, seen) && lu_decl_count(fx, h) == 1) && !lu_own_param(fx, h)) {
       return false;
     }
-    let reads = 0;
-    let selections = 0;
-    for sel in fx.facts.sels {
-      if (sel.obj == h) {
-        selections += 1;
-        if (sel.field == fa.field) {
-          reads += 1;
-        }
-      }
-    }
-    for up in fx.facts.updates {
-      if (up.obj == h && up.field == fa.field) {
-        selections += 1;
-      }
-    }
-    return reads == 1 && selections == lu_occ_count(fx, h);
+    return lu_sole_field_read(fx, h, fa.field);
   }
   return false;
+}
+
+// One read of `h.field`, and each mention of h selects a field or is the
+// base of a literal that replaces that field.
+function lu_sole_field_read(fx: LuFn, h: string, field: string): boolean {
+  let reads = 0;
+  let selections = 0;
+  for sel in fx.facts.sels {
+    if (sel.obj == h) {
+      selections += 1;
+      if (sel.field == field) {
+        reads += 1;
+      }
+    }
+  }
+  for up in fx.facts.updates {
+    if (up.obj == h && up.field == field) {
+      selections += 1;
+    }
+  }
+  return reads == 1 && selections == lu_occ_count(fx, h);
 }
 
 function lu_rename_source(fx: LuFn, name: string): string {
@@ -22953,15 +23112,17 @@ function lu_forks(stmts: ast.Stmt[], own acc: LuFork[]): LuFork[] {
   for st in stmts {
     match (st) {
       ast.StmtIf(f) => {
-        acc = acc.append(LuFork { arms: [lu_arm_occ(f.then_body), lu_arm_occ(f.else_body)] });
+        acc = acc.append(LuFork { arms: [lu_arm_occ(f.then_body), lu_arm_occ(f.else_body)], exits: [lu_ends_in_return(f.then_body), lu_ends_in_return(f.else_body)] });
         acc = lu_forks(f.else_body, lu_forks(f.then_body, acc));
       },
       ast.StmtMatch(m) => {
         let arms: LuOcc[][] = [];
+        let exits: boolean[] = [];
         for arm in m.arms {
           arms = arms.append(lu_arm_occ(arm.body));
+          exits = exits.append(lu_ends_in_return(arm.body));
         }
-        acc = acc.append(LuFork { arms: arms });
+        acc = acc.append(LuFork { arms: arms, exits: exits });
         for arm in m.arms {
           acc = lu_forks(arm.body, acc);
         }
@@ -22972,6 +23133,16 @@ function lu_forks(stmts: ast.Stmt[], own acc: LuFork[]): LuFork[] {
   return acc;
 }
 
+function lu_ends_in_return(body: ast.Stmt[]): boolean {
+  if (body.len() == 0) {
+    return false;
+  }
+  if let ast.StmtReturn(_) = body[body.len() - 1] {
+    return true;
+  }
+  return false;
+}
+
 function lu_arm_occ(body: ast.Stmt[]): LuOcc[] {
   let f = lu_empty_facts();
   for st in body {
@@ -22980,13 +23151,15 @@ function lu_arm_occ(body: ast.Stmt[]): LuOcc[] {
   return f.occ;
 }
 
-// Whether `id` and `o` are in two arms of one fork.
+// Whether no run reads `o` after `id`, for an `o` after `id`: the two are
+// in two arms of one fork, or `id` is in an arm that ends in a return and
+// `o` is outside that arm.
 function lu_apart(forks: LuFork[], id: ast.ExprIdent, o: LuOcc): boolean {
   for fork in forks {
     let a = lu_arm_at(fork, id.line, id.col);
     if (a >= 0) {
       let b = lu_arm_at(fork, o.line, o.col);
-      if (b >= 0 && b != a) {
+      if (b >= 0 && b != a || b < 0 && fork.exits[a]) {
         return true;
       }
     }
@@ -23084,7 +23257,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], copy_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ
@@ -24037,13 +24210,15 @@ function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, 
   if (util.has_str(fx.facts.escaping, name)) {
     return false;
   }
-  if (lu_rebind_site(site, name) || lu_returns_after_reads(site, call, aid)) {
+  if (lu_rebind_site(site, name) || lu_returns_after_reads(fx, site, call, aid)) {
     return true;
   }
-  if (!once && !lu_reads_before(call, aid)) {
+  if (!once && !lu_reads_before(fx, call, aid)) {
     return false;
   }
-  if (has_outer && astwalk.count_ident_expr(outer, name) > 1) {
+  // An enclosing call can mention the name elsewhere only in reads of a
+  // field that holds no handle, before the call.
+  if (has_outer && astwalk.count_ident_expr(outer, name) > 1 && !lu_outer_reads_before(fx, outer, call, name)) {
     return false;
   }
   return !lu_live_after(fx, site, call, aid);
@@ -24081,10 +24256,11 @@ function lu_owned_field_payload(fx: LuFn, name: string): boolean {
   return found;
 }
 
-// The other mentions of `aid` in the call are reads of one of its fields, in
-// arguments before it. The ownership walk decides whether each read gives a
-// copy: its key carries "~".
-function lu_reads_before(call: ast.Expr, aid: ast.ExprIdent): boolean {
+// The other mentions of `aid` in the call are reads of its fields, in parts
+// before it: one part that is a field read, or parts whose every mention is
+// a read of a field that holds no handle. The ownership walk decides whether
+// a field read of another type gives a copy: its key carries "~".
+function lu_reads_before(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent): boolean {
   let ast.ExprCall(c) = call else {
     return false;
   };
@@ -24097,13 +24273,41 @@ function lu_reads_before(call: ast.Expr, aid: ast.ExprIdent): boolean {
     }
     let n = astwalk.count_ident_expr(a, aid.name);
     if (n > 0) {
-      if (n != 1 || !lu_reads_field_of(a, aid.name)) {
+      if (lu_copy_reads(fx, a, aid.name, I32_MAX, 0) != n && (n != 1 || !lu_reads_field_of(a, aid.name))) {
         return false;
       }
-      before += 1;
+      before += n;
     }
   }
   return false;
+}
+
+const I32_MAX: i32 = 2147483647;
+
+struct LuCopyReads { keys: string[], name: string, line: i32, col: i32, n: i32 }
+
+// The mentions of `name` in `e`, before line `line` and column `col`, that
+// read a field of a scalar type. Such a read is a copy, and it ends before
+// anything after it runs.
+function lu_copy_reads(fx: LuFn, e: ast.Expr, name: string, line: i32, col: i32): i32 {
+  return astwalk.fold_expr_pruned(e, LuCopyReads { keys: fx.facts.scalar_sels, name: name, line: line, col: col, n: 0 }, lu_count_copy_read, lu_not_closure).n;
+}
+
+function lu_count_copy_read(e: ast.Expr, own r: LuCopyReads): LuCopyReads {
+  if let ast.ExprIdent(id) = e {
+    if (id.name == r.name && (id.line < r.line || id.line == r.line && id.col < r.col) && util.has_str(r.keys, lu_key(id.line, id.col))) {
+      return LuCopyReads { ...r, n: r.n + 1 };
+    }
+  }
+  return r;
+}
+
+function lu_outer_reads_before(fx: LuFn, outer: ast.Expr, call: ast.Expr, name: string): boolean {
+  let ast.ExprCall(c) = call else {
+    return false;
+  };
+  let extra = astwalk.count_ident_expr(outer, name) - astwalk.count_ident_expr(call, name);
+  return extra > 0 && lu_copy_reads(fx, outer, name, c.line, c.col) == extra;
 }
 
 function lu_reads_field_of(e: ast.Expr, name: string): boolean {
@@ -24117,16 +24321,18 @@ function lu_reads_field_of(e: ast.Expr, name: string): boolean {
 
 // A return of the call, which mentions the name only in it, and there only
 // in field reads before the argument.
-function lu_returns_after_reads(site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
+function lu_returns_after_reads(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
   if let ast.StmtReturn(r) = site.stmts[site.idx] {
-    return (!site.in_iife || r.line > 0) && astwalk.count_ident_expr(r.value, aid.name) == astwalk.count_ident_expr(call, aid.name) && lu_reads_before(call, aid);
+    return (!site.in_iife || r.line > 0) && astwalk.count_ident_expr(r.value, aid.name) == astwalk.count_ident_expr(call, aid.name) && lu_reads_before(fx, call, aid);
   }
   return false;
 }
 
-// "~" when the call mentions the name more than once.
-function lu_copy_tag(call: ast.Expr, name: string): string {
-  if (astwalk.count_ident_expr(call, name) > 1) {
+// "~" when the call mentions the name more than once, other than in reads
+// of fields that hold no handle.
+function lu_copy_tag(fx: LuFn, call: ast.Expr, name: string): string {
+  let n = astwalk.count_ident_expr(call, name);
+  if (n > 1 && lu_copy_reads(fx, call, name, I32_MAX, 0) != n - 1) {
     return "~";
   }
   return "";
@@ -24135,7 +24341,7 @@ function lu_copy_tag(call: ast.Expr, name: string): string {
 // A local that is not admitted can be a read out of a borrowed structure.
 // Its key carries "^", and only a type that cannot hold a handle moves.
 function lu_loose_tag(fx: LuFn, site: LuSite, name: string): string {
-  if (lu_admitted(fx, name) || lu_elem_fresh(fx, site, name)) {
+  if (lu_admitted(fx, name) || lu_elem_fresh(fx, site, name) || lu_unpacked_elem(fx, site, name)) {
     return "";
   }
   return "^";
@@ -24151,7 +24357,7 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   }
   let fresh_local = lu_is_local(fx, q.name) && lu_decl_count(fx, q.name) == 1 && (lu_fresh_init(fx, q.name) || lu_unpack_init(fx, q.name) || lu_owned_alias(fx, q.name));
   let bound = !util.has_str(fx.params, q.name) && lu_decl_count(fx, q.name) == 0 && util.has_str(site.binders, q.name);
-  if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name)) {
+  if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name) && !lu_unpacked_elem(fx, site, q.name)) {
     return false;
   }
   if (astwalk.count_ident_expr(call, q.name) - lu_other_field_reads(call, q.name, fa.field) != 1) {
@@ -24278,6 +24484,31 @@ function lu_scrutinee_owned(fx: LuFn, e: ast.Expr): boolean {
     return lu_own_param(fx, id.name) && lu_decl_count(fx, id.name) == 0;
   }
   return lu_iter_owned(fx, e);
+}
+
+// A field that a destructure takes from a fresh for-each binding at its
+// last use, or the one read of a field of that binding, declared once in
+// the loop body: it is fresh on each round.
+function lu_unpacked_elem(fx: LuFn, site: LuSite, name: string): boolean {
+  if (lu_decl_count(fx, name) != 1 || !lu_only_fresh_assigns(fx, name, [])) {
+    return false;
+  }
+  for u in fx.facts.unpacked {
+    if (u.name == name) {
+      let ast.ExprIdent(src) = u.init else {
+        return false;
+      };
+      return lu_elem_fresh(fx, site, src.name) && lu_is_last(fx, src) && !util.has_str(fx.facts.captured, src.name);
+    }
+  }
+  let Some(init) = lu_init_of(fx, name) else {
+    return false;
+  };
+  if let ast.ExprFieldAccess(fa) = init {
+    let h = ow_ident_name(fa.obj);
+    return h.len() > 0 && lu_elem_fresh(fx, site, h) && !util.has_str(fx.facts.captured, h) && lu_sole_field_read(fx, h, fa.field);
+  }
+  return false;
 }
 
 function lu_elem_fresh(fx: LuFn, site: LuSite, name: string): boolean {
@@ -24479,7 +24710,7 @@ function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolea
       if (selected.len() == 0) {
         return false;
       }
-      if (selected == field && !util.has_str(fx.facts.copy_sels, lu_key(o.line, o.col))) {
+      if (selected == field && !util.has_str(fx.facts.value_sels, lu_key(o.line, o.col))) {
         reads += 1;
       }
     }
@@ -24640,7 +24871,7 @@ function lu_own_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolea
   match (a) {
     ast.ExprIdent(aid) => {
       if (lu_dies(fx, e, aid, outer, has_outer, site)) {
-        acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(e, aid.name));
+        acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(fx, e, aid.name));
       }
     },
     ast.ExprFieldAccess(fa) => {
@@ -24668,13 +24899,15 @@ function lu_call_parts(args: ast.Expr[]): ast.Expr[] {
   return out;
 }
 
+// The parts of a literal in the order they run: its field values, and then
+// its base, which the literal takes after them.
 function lu_arg_parts(a: ast.Expr, own out: ast.Expr[]): ast.Expr[] {
   if let ast.ExprStructLit(sl) = a {
-    if (sl.has_base) {
-      out = lu_arg_parts(sl.base, out);
-    }
     for fv in sl.field_values {
       out = lu_arg_parts(fv, out);
+    }
+    if (sl.has_base) {
+      out = lu_arg_parts(sl.base, out);
     }
     return out;
   }
@@ -27896,7 +28129,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "clock_set", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u16", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority", "share_unchecked",
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",
@@ -28233,7 +28466,7 @@ function e049_is_ref(tn: string): boolean {
   if (tn.len() == 0) {
     return false;
   }
-  if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u32" || tn == "u64" || tn == "usize" || tn == "boolean" || tn == "f64" || tn == "f32" || tn == "char") {
+  if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u16" || tn == "i16" || tn == "u32" || tn == "u64" || tn == "usize" || tn == "boolean" || tn == "f64" || tn == "f32" || tn == "char") {
     return false;
   }
   return true;
@@ -30628,7 +30861,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
 }
 
 function e021_derive_scalar(fty: string): boolean {
-  return fty == "i32" || fty == "i64" || fty == "u8" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string";
+  return fty == "i32" || fty == "i64" || fty == "u8" || fty == "u16" || fty == "i16" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string";
 }
 
 function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
@@ -31176,7 +31409,7 @@ function e060_set_of_name(dyns: string[], name: string): string {
 }
 
 function e060_is_primitive_name(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "str" || t == "usize" || t == "char";
+  return t == "i32" || t == "i64" || t == "u8" || t == "u16" || t == "i16" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "str" || t == "usize" || t == "char";
 }
 
 function e060_e062_stmts(stmts: ast.Stmt[], dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
@@ -33502,20 +33735,22 @@ function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   return parser.settle_int_tree(e, tag);
 }
 
-function settle_at(e: ast.Expr, t: typeinfo.Type): ast.Expr {
+// A literal takes the type that its place declares. The field literals of a
+// generic struct literal take the field types of the declared instance.
+function settle_at(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Expr {
   if (is_integer(t) && int_literal_tree(e)) {
     return settle_int_tree(e, type_to_irtag(t));
   }
-  return e;
+  return settle_struct_lit_wide(e, t, s);
 }
 
-function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[]): ast.Expr[] {
+function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[], s: Scope): ast.Expr[] {
   if (params.len() != args.len()) {
     return args;
   }
   let out: ast.Expr[] = [];
   for i in 0..args.len() {
-    out = out.append(settle_at(args[i], params[i]));
+    out = out.append(settle_at(args[i], params[i], s));
   }
   return out;
 }
@@ -33693,7 +33928,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
-      nargs = settle_args_at_params(nargs, call_param_types(c, s));
+      nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct = check_expr(e, s);
@@ -34171,7 +34406,7 @@ function annotate_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): ast.Stmt {
     init = annotate_expr(v.init, s);
   }
   if (v.type_name.len() > 0) {
-    init = settle_at(init, t);
+    init = settle_at(init, t, s);
   }
   let callable = decltypes.fn_param_from_type(v.name, t);
   if (callable.type_name == "fn") {
@@ -34189,7 +34424,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return annotate_var(v, s, after.lookup(v.name));
     },
     ast.StmtReturn(r) => {
-      return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type), line: r.line, col: r.col };
+      return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type, s), line: r.line, col: r.col };
     },
     ast.StmtExpr(x) => {
       return ast.StmtExpr { ...x, value: annotate_expr(x.value, s) };
@@ -34201,7 +34436,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtAssign(a) => {
-      return ast.StmtAssign { ...a, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target)) };
+      return ast.StmtAssign { ...a, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target), s) };
     },
     ast.StmtMatch(m) => {
       return annotate_match_stmt(m, s);
@@ -34702,7 +34937,7 @@ function vb_local_tag(t: typeinfo.Type): string {
   }
   let tag = type_to_irtag(t);
   if (tag == "string" || tag == "boolean" || tag == "f64" || tag == "f32" || tag == "char"
-    || tag == "i32" || tag == "i64" || tag == "u32" || tag == "u64" || tag == "u8") {
+    || tag == "i32" || tag == "i64" || tag == "u32" || tag == "u64" || tag == "u8" || tag == "u16" || tag == "i16") {
     return tag;
   }
   return "";
@@ -38073,7 +38308,7 @@ function agreed_tags(keys: string[], tags: string[]): (string[], string[]) {
 }
 
 function lit_suffix_spelled(tag: string): boolean {
-  return tag == "i64" || tag == "u64" || tag == "u32" || tag == "u8";
+  return tag == "i64" || tag == "u64" || tag == "u32" || tag == "u8" || tag == "u16" || tag == "i16";
 }
 
 function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, boolean) {

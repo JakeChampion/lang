@@ -7,7 +7,9 @@ It installs the APK, which fern -apk wrote, and starts its NativeActivity
 with a background colour and no bloom as settings. The app draws its own
 pixels, so the check reads the log lines of the app and the colours of the
 screen. It requires that the GPU runs the simulation, the background
-colour of the settings on a still screen, dye after a swipe, the dialog
+colour of the settings on a still screen, dye after a swipe, the places of
+the touches with their times on the clock of the frames, an event of two
+fingers, the dialog
 after a tap on the button, a pause from a tap on its first row, a still
 screen while the fluid is paused, the bloom from the B key, a picture in
 the gallery from the S key, and the back key that closes the dialog and
@@ -85,6 +87,49 @@ def main(apk, out):
         fail(f"a swipe put no dye on the screen: the background covers {dyed:.3f} after {part:.3f}")
     if still.group(1) == "true" and not wait_for(r"fluid: paused false"):
         fail("a swipe did not start the fluid, which was still")
+
+    # Three slow swipes give the app the places of a finger for 5 seconds.
+    # The app then writes what the touches were: the count of the events and
+    # of their places, and how old a place was when the app read it.
+    for _ in range(3):
+        adb("shell", "input", "swipe", str(width // 4), str(height // 3), str(3 * width // 4), str(2 * height // 3), "1500")
+    touch = wait_for(r"fluid: touch (\d+) events, (\d+) places, read (-?\d+) to (-?\d+) us after their time, (\d+) frames with an old place", 20)
+    if not touch:
+        fail("the app wrote no line about its touches")
+    else:
+        print("touches: " + touch.group(0), flush=True)
+        events, places, soonest, latest = (int(touch.group(k)) for k in (1, 2, 3, 4))
+        if places < events or events < 10:
+            fail(f"the app read {events} touch events with {places} places")
+        # The time of a place is on the clock of the frames: the app reads a
+        # place after its time, and less than half a second after it.
+        if soonest < 0 or latest > 500000:
+            fail(f"the app read a place {soonest} to {latest} us after its time")
+    pace = re.findall(r"fluid: (\d+ fps, longest \d+ ms.*)", logcat())
+    if pace:
+        print("pace: " + pace[-1], flush=True)
+
+    # Two fingers that move at the same time. `input` has one finger only,
+    # so a script of monkey gives the two. The app then writes the largest
+    # count of the fingers of one event.
+    script = f"{out}/two-fingers.txt"
+    with open(script, "w") as f:
+        f.write("type= raw events\ncount= 1\nspeed= 1.0\nstart data >>\n")
+        for _ in range(8):
+            f.write(
+                f"PinchZoom({width // 4},{height // 3},{width // 4},{2 * height // 3},"
+                f"{3 * width // 4},{2 * height // 3},{3 * width // 4},{height // 3},40)\n"
+            )
+            f.write("UserWait(700)\n")
+    adb("push", script, "/data/local/tmp/two-fingers.txt")
+    adb("shell", "monkey", "-f", "/data/local/tmp/two-fingers.txt", "1", check=False)
+    both = wait_for(r"fluid: touch \d+ events, .* ([2-9]) fingers at most", 20)
+    if not both:
+        fail("the app read no event of two fingers")
+    else:
+        print("two fingers: " + both.group(0), flush=True)
+    # The script ends with one finger down. A tap starts a new touch.
+    adb("shell", "input", "tap", str(width // 2), str(height // 2))
 
     # The places of the button and of the first row come again with the
     # insets of the system bars, so the last line has them.

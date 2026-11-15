@@ -1,11 +1,33 @@
-// The icons of Tune and the record of the screen of the track. Each one is
-// the paint of a canvas, drawn with discs, rings and filled rows. The
-// icons fill the middle of their box, at the size of its shorter side.
+# Android icons
+
+This module draws the icons of a media app or of a list, for a canvas of `std/android/ui`. Each function gives the paint of a canvas: `ui.canvas(key, icons.play(color))`. An app needs no image files for its buttons, and the icons take each color of a theme.
+
+## Model
+
+An icon fills the middle of the box of its canvas, at the size of the shorter side of the box. So a canvas of 48 by 48 dp shows an icon of about 24 dp, with room around it for a finger.
+
+The icons are drawn with the discs, the rings, the rounded rectangles and the filled rows of `std/android/draw`. A line is a row of discs, so its ends are round. A triangle is filled row by row.
+
+- `play`, `pause` and `skip` are the buttons of the sound. `skip` points back, to the track before, or forward, to the next one.
+- `shuffle` is two lines that cross, with the heads of arrows. `repeat` is a loop of two arrows, with a 1 in it for the repeat of one track.
+- `heart` is filled for a favorite, or is an edge on the background `bg`.
+- `dots` is three dots in a row, or in a column for the menu of a row.
+- `timer`, `lyrics`, `queue`, `gear` and `search` are the tools of a player. `queue` and `gear` take the background `bg` for their holes.
+- `chevron` is the head of an arrow, down or to the left.
+
+A button of icons has no text, so give each canvas a text that an accessibility service reads: `.described("Play")`. The simulator of `std/android/ui/sim` finds the button by that text.
+
+## Contracts
+
+The paint draws only in its box. A color is a color of `std/android/draw`, not a role of a theme.
+
+## Module assembly
+
+```fern
+<<*>>=
+// This module draws the icons of a media app.
 import "std/android/draw";
 import "std/i32";
-import "std/option";
-import "std/unicode";
-import "../matrix";
 
 // A line from x0, y0 to x1, y1, of the width `t`, with round ends.
 function stroke(f: draw.Frame, x0: i32, y0: i32, x1: i32, y1: i32, t: i32, color: i32): void {
@@ -108,8 +130,9 @@ pub function repeat(color: i32, one: boolean): (draw.Frame, i32, i32, i32, i32) 
     stroke(f, l, b, l + a, b - a, lw, color);
     stroke(f, l, b, l + a, b + a, lw, color);
     if (one) {
-      let pitch = (s / 14).max(1);
-      matrix.text(f, l + (s - matrix.width("1", pitch)) / 2, mid - matrix.height(pitch) / 2, "1", pitch, color);
+      let h = s / 4;
+      stroke(f, l + s / 2, mid - h / 2, l + s / 2, mid + h / 2, lw, color);
+      stroke(f, l + s / 2, mid - h / 2, l + s / 2 - h / 3, mid - h / 4, lw, color);
     }
   };
 }
@@ -238,60 +261,4 @@ pub function chevron(color: i32, left: boolean): (draw.Frame, i32, i32, i32, i32
     }
   };
 }
-
-// The picture `img` in the disc of radius r around cx and cy, on the color
-// `bg` around it. With no picture, the disc is `tile` with the letter of
-// `name` in dots.
-function round_picture(f: draw.Frame, cx: i32, cy: i32, r: i32, img: Option[draw.Image], name: string, tile: i32, ink: i32, bg: i32): void {
-  if let Some(pic) = img {
-    let (sw, sh) = draw.cover_size(pic.width, pic.height, 2 * r, 2 * r);
-    f.image(cx - r, cy - r, 2 * r, 2 * r, pic.scaled(sw, sh));
-    f.clip_corners(cx - r, cy - r, 2 * r, 2 * r, r, bg);
-    return;
-  }
-  f.disc(cx, cy, r, tile);
-  let letter = name.trim().take(1).to_upper();
-  let pitch = (r / 7).max(1);
-  matrix.text(f, cx - matrix.width(letter, pitch) / 2, cy - matrix.height(pitch) / 2, letter, pitch, ink);
-}
-
-// The cover of an album in a round box on `bg`, as the bar of the track
-// that plays shows it.
-pub function round_cover(img: Option[draw.Image], name: string, tile: i32, ink: i32, bg: i32): (draw.Frame, i32, i32, i32, i32) => void {
-  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
-    let r = w.min(h) / 2;
-    f.disc(x + w / 2, y + h / 2, r, bg);
-    round_picture(f, x + w / 2, y + h / 2, r, img, name, tile, ink, bg);
-  };
-}
-
-// The cover of an album with no picture: a tile with rounded corners and
-// the first letter of the name in dots.
-pub function tile(name: string, color: i32, ink: i32): (draw.Frame, i32, i32, i32, i32) => void {
-  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
-    let s = w.min(h);
-    let l = x + (w - s) / 2;
-    let t = y + (h - s) / 2;
-    f.round_rect(l, t, s, s, s / 8, color);
-    let letter = name.trim().take(1).to_upper();
-    let pitch = (s / 16).max(1);
-    matrix.text(f, l + (s - matrix.width(letter, pitch)) / 2, t + (s - matrix.height(pitch)) / 2, letter, pitch, ink);
-  };
-}
-
-// A record: a dark disc with grooves, the cover of the album as its label,
-// and the hole in the middle.
-pub function record(img: Option[draw.Image], disc: i32, groove: i32, label: i32, hole: i32): (draw.Frame, i32, i32, i32, i32) => void {
-  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
-    let r = w.min(h) / 2;
-    let cx = x + w / 2;
-    let cy = y + h / 2;
-    f.disc(cx, cy, r, disc);
-    for k in [92, 84, 76, 68, 60] {
-      f.ring(cx, cy, r * k / 100, (r / 160).max(1), groove);
-    }
-    round_picture(f, cx, cy, r / 2, img, "", label, label, disc);
-    f.disc(cx, cy, (r / 22).max(3), hole);
-    f.disc(cx, cy, (r / 44).max(1), disc);
-  };
-}
+```

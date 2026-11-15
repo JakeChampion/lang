@@ -7,6 +7,89 @@ function text(b: u8[]): string {
   return unsafe { string_from_bytes_unchecked(b) };
 }
 
+// The decoders read 16 characters in one step. Each length from 0 to 110
+// has each number of steps from 0 to 6 and each length of the rest, and
+// each length of input from 0 to 60 goes through the encoder and back. A
+// byte outside the alphabet, or a pad, at each place of 72 characters stops
+// the decoder at that place.
+function test_decode_each_length(): test.TestOutcome {
+  let all: u8[] = [];
+  for k in 0..200 {
+    all = all.append((k * 167 + 13) as u8);
+  }
+  let std = base64.encode(all);
+  let url = base64.encode_url(all);
+  let bad: string[] = [];
+  for n in 0..111 {
+    for which in 0..2 {
+      let r = if (which == 0) { base64.decode(__b64_take(std, n)) } else { base64.decode_url(__b64_take(url, n)) };
+      match (r) {
+        Ok(got) => {
+          if (got.len() != n * 6 / 8 || text(got) != text(__b64_head(all, got.len()))) {
+            bad = bad.append("length " + n.to_string());
+          }
+        },
+        Err(e) => {
+          if (n % 4 == 0 || e.offset != n && e.offset != n - 1) {
+            bad = bad.append("length " + n.to_string());
+          }
+        }
+      }
+    }
+  }
+  for m in 0..61 {
+    let part: [u8] = all[0:m];
+    if (__b64_bytes(base64.decode(base64.encode(part))) != text(__b64_head(all, m))) {
+      bad = bad.append("round trip " + m.to_string());
+    }
+    if (__b64_bytes(base64.decode_url(base64.encode_url(part))) != text(__b64_head(all, m))) {
+      bad = bad.append("url round trip " + m.to_string());
+    }
+  }
+  for at in 0..72 {
+    for c in [61, 64, 91, 96, 123, 58, 0, 255] {
+      let b = __alloc_u8(72);
+      for k in 0..72 {
+        b = b.with(k, std[k]);
+      }
+      match (base64.decode(text(b.with(at, c as u8)))) {
+        Ok(_) => {
+          bad = bad.append("byte " + c.to_string() + " at " + at.to_string());
+        },
+        Err(e) => {
+          if (e.offset != at && c != 61) {
+            bad = bad.append("byte " + c.to_string() + " at " + at.to_string());
+          }
+        }
+      }
+    }
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
+function __b64_take(s: string, n: i32): string {
+  return slice_unchecked(s, 0, n).to_owned();
+}
+
+function __b64_head(all: u8[], n: i32): u8[] {
+  let out = __alloc_u8(n);
+  for k in 0..n {
+    out = out.with(k, all[k]);
+  }
+  return out;
+}
+
+function __b64_bytes(r: Result[u8[], codec.DecodeError]): string {
+  match (r) {
+    Ok(b) => {
+      return text(b);
+    },
+    Err(e) => {
+      return "error " + e.offset.to_string();
+    }
+  }
+}
+
 function test_encode_no_pad(): test.TestOutcome {
   return test.assert_eq(base64.encode("Man".bytes()), "TWFu");
 }
@@ -17,6 +100,62 @@ function test_encode_one_pad(): test.TestOutcome {
 
 function test_encode_two_pad(): test.TestOutcome {
   return test.assert_eq(base64.encode("M".bytes()), "TQ==");
+}
+
+// The characters of `bs`, one group of 3 bytes at a time.
+function scalar_base64(bs: [u8]): string {
+  let digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out: u8[] = [];
+  let i = 0;
+  while (i < bs.len()) {
+    let b0 = bs[i] as i32;
+    let b1 = 0;
+    let b2 = 0;
+    if (i + 1 < bs.len()) {
+      b1 = bs[i + 1] as i32;
+    }
+    if (i + 2 < bs.len()) {
+      b2 = bs[i + 2] as i32;
+    }
+    out = out.append(digits[b0 >> 2]);
+    out = out.append(digits[(b0 & 3) << 4 | b1 >> 4]);
+    if (i + 1 < bs.len()) {
+      out = out.append(digits[(b1 & 15) << 2 | b2 >> 6]);
+    } else {
+      out = out.append(61 as u8);
+    }
+    if (i + 2 < bs.len()) {
+      out = out.append(digits[b2 & 63]);
+    } else {
+      out = out.append(61 as u8);
+    }
+    i += 3;
+  }
+  return text(out);
+}
+
+// The encoder takes 12 bytes in one step while 16 bytes are left. Each
+// length from 0 to 80 has each number of steps from 0 to 6 and each length
+// of the rest. The views start at each of 3 offsets, and the 768 bytes have
+// each digit in each of its 4 places.
+function test_encode_each_length(): test.TestOutcome {
+  let all: u8[] = [];
+  for k in 0..768 {
+    all = all.append((k * 167 + 13 + k / 256 * 7) as u8);
+  }
+  let bad: string[] = [];
+  for from in 0..3 {
+    for n in 0..81 {
+      let part: [u8] = all[from * 61:from * 61 + n];
+      if (base64.encode(part) != scalar_base64(part)) {
+        bad = bad.append(from.to_string() + " " + n.to_string());
+      }
+    }
+  }
+  if (base64.encode(all) != scalar_base64(all)) {
+    bad = bad.append("each byte value");
+  }
+  return test.assert_eq(bad.join(", "), "");
 }
 
 function test_encode_longer(): test.TestOutcome {
@@ -142,6 +281,7 @@ function main(): i32 {
   r = r.it("encode (two pad)", test_encode_two_pad);
   r = r.it("encode (longer)", test_encode_longer);
   r = r.it("encode (empty)", test_encode_empty);
+  r = r.it("encode each length", test_encode_each_length);
   r = r.it("decode (no pad)", test_decode_no_pad);
   r = r.it("decode (one pad)", test_decode_one_pad);
   r = r.it("decode (two pad)", test_decode_two_pad);
@@ -154,6 +294,7 @@ function main(): i32 {
   r = r.it("url roundtrip", test_url_roundtrip);
   r = r.it("url decode_checked valid", test_url_decode_checked_valid);
   r = r.it("url decode_checked rejects", test_url_decode_checked_rejects);
+  r = r.it("decode each length", test_decode_each_length);
   return r.finish();
 }
 

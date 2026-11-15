@@ -17,7 +17,11 @@ merge-queue-batch.yml there, which runs the full suite. `land success` moves
 main to that same commit, so main only gets a tree that the suite passed.
 GitHub then shows each pull request of the batch as merged.
 
-One batch is in flight at a time: the branch is the lock.
+One batch is in flight at a time: the branch is the lock. A lock with no
+run of merge-queue-batch.yml that is still going is stale: its dispatch
+failed, or `land` did not end. `form` deletes a stale lock, and its pull
+requests join the next batch. A lock that is younger than STALE_SECONDS and
+has no run yet is live, because GitHub can show a dispatched run late.
 
 A RED BATCH IS SPLIT. `land failure` on a batch of more than one pull request
 puts its two halves in the retry list, and `form` tests a group of that list
@@ -39,12 +43,16 @@ STATE is one JSON blob at refs/merge-queue/state:
 {"retry": [[numbers], ...], "removed": {"number": "head sha"}}.
 
 The script talks to GitHub through the `gh` command (MERGE_QUEUE_GH names a
-replacement, which the tests use) and to the repository through git.
+replacement, which the tests use) and to the repository through git. The
+calls to the Actions API use MERGE_QUEUE_ACTIONS_TOKEN when it is set: a
+personal access token that can push workflow files may have no Actions
+permission, and the token of the workflow has it.
 """
 import json
 import os
 import subprocess
 import sys
+import time
 
 LABEL = "merge-queue"
 HOLD = "merge-queue-hold"
@@ -57,11 +65,12 @@ PIN_PREFIXES = (".github/alloc-baseline.txt", ".github/cliff-baseline.txt", ".gi
 REMOTE = os.environ.get("MERGE_QUEUE_REMOTE", "origin")
 GH = os.environ.get("MERGE_QUEUE_GH", "gh")
 MAX = int(os.environ.get("MERGE_QUEUE_BATCH", "10"))
+STALE_SECONDS = int(os.environ.get("MERGE_QUEUE_STALE_SECONDS", "900"))
 SIGNATURE = "\n\n---\n_Posted by the merge queue (`scripts/merge-queue`)._"
 
 
-def run(*args, check=True, stdin=None):
-    r = subprocess.run(args, input=stdin, capture_output=True, text=True)
+def run(*args, check=True, stdin=None, env=None):
+    r = subprocess.run(args, input=stdin, capture_output=True, text=True, env=env)
     if check and r.returncode != 0:
         sys.stderr.write(f"merge-queue: {' '.join(args)}\n{r.stdout}{r.stderr}")
         raise SystemExit(1)
@@ -74,6 +83,13 @@ def git(*args, check=True, stdin=None):
 
 def gh(*args, check=True):
     return run(GH, *args, check=check)
+
+
+def gh_actions(*args, check=True):
+    """A call to the Actions API, with the token that has that permission."""
+    token = os.environ.get("MERGE_QUEUE_ACTIONS_TOKEN")
+    env = {**os.environ, "GH_TOKEN": token} if token else None
+    return run(GH, *args, check=check, env=env)
 
 
 def note(text):
@@ -94,8 +110,30 @@ def save_state(state):
     git("push", "-q", "-f", REMOTE, f"{blob}:{STATE_REF}")
 
 
-def batch_exists():
-    return git("ls-remote", "--exit-code", "--heads", REMOTE, BATCH, check=False).returncode == 0
+def batch_head():
+    """The commit of the lock branch, or "" when there is no batch."""
+    r = git("ls-remote", "--exit-code", "--heads", REMOTE, BATCH, check=False)
+    return r.stdout.split()[0] if r.returncode == 0 else ""
+
+
+def batch_is_live(head):
+    """True while a run of the batch `head` is going, or can still start."""
+    r = gh_actions("run", "list", "--workflow", WORKFLOW_BATCH, "--branch", BATCH, "--limit", "20",
+                   "--json", "headSha,status", check=False)
+    if r.returncode != 0:
+        note("cannot read the runs of the batch: the lock stays")
+        return True
+    runs = [x for x in json.loads(r.stdout or "[]") if x.get("headSha") == head]
+    if runs:
+        return any(x.get("status") != "completed" for x in runs)
+    git("fetch", "-q", REMOTE, BATCH)
+    made = int(git("log", "-1", "--format=%ct", "FETCH_HEAD").stdout.strip())
+    return time.time() - made < STALE_SECONDS
+
+
+def release(why):
+    note(f"the lock is stale ({why}): it goes")
+    git("push", "-q", REMOTE, f":refs/heads/{BATCH}", check=False)
 
 
 def open_prs():
@@ -148,9 +186,12 @@ def form():
        "--color", "0E8A16", check=False)
     gh("label", "create", HOLD, "--description", "Keep this pull request out of the merge queue",
        "--color", "FBCA04", check=False)
-    if batch_exists():
-        note("a batch is in flight")
-        return 0
+    head = batch_head()
+    if head:
+        if batch_is_live(head):
+            note("a batch is in flight")
+            return 0
+        release(f"no run of {WORKFLOW_BATCH} is going for {head[:8]}")
     state = load_state()
     prs = open_prs()
     numbers = {str(p["number"]) for p in prs}
@@ -208,8 +249,14 @@ def form():
     if git("push", "-q", REMOTE, f"HEAD:refs/heads/{BATCH}", check=False).returncode != 0:
         note("the push of the batch was refused. A change to a workflow file needs a token with the workflow scope.")
         return 1
+    r = gh_actions("workflow", "run", WORKFLOW_BATCH, "--ref", BATCH, check=False)
+    if r.returncode != 0:
+        # With no run, the branch would hold the lock until a person
+        # deletes it, and nothing would test a batch.
+        git("push", "-q", REMOTE, f":refs/heads/{BATCH}", check=False)
+        sys.stderr.write(f"merge-queue: the dispatch of {WORKFLOW_BATCH} failed, so the batch goes\n{r.stdout}{r.stderr}")
+        return 1
     save_state(state)
-    gh("workflow", "run", WORKFLOW_BATCH, "--ref", BATCH)
     note(f"batch {merged} is in flight")
     return 0
 
@@ -270,7 +317,7 @@ def land(result):
         state["retry"].insert(0, numbers)
     save_state(state)
     git("push", "-q", REMOTE, f":refs/heads/{BATCH}", check=False)
-    gh("workflow", "run", WORKFLOW_FORM, "--ref", "main", check=False)
+    gh_actions("workflow", "run", WORKFLOW_FORM, "--ref", "main", check=False)
     return 0
 
 

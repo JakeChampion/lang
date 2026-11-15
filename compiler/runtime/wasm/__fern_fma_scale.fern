@@ -1,0 +1,15 @@
+// __fern_fma_scale gives r times 2^n, where |r| is in [2^62, 2^63]. Only the
+// last product rounds, because r times 2^-969 stays in the normal range.
+function __fern_fma_scale(r: f64, n: i32): f64 {
+  if (n > 1023) {
+    return r * f64_from_bits(9214364837600034816) * f64_from_bits(9214364837600034816);
+  }
+  if (n >= -1022) {
+    return r * f64_from_bits((n + 1023) as i64 << 52);
+  }
+  let k = n + 969;
+  if (k < -1022) {
+    k = -1022;
+  }
+  return r * f64_from_bits(243194379878006784) * f64_from_bits((k + 1023) as i64 << 52);
+}

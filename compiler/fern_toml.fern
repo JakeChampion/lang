@@ -248,9 +248,9 @@ function with_lint(m: Manifest, section: string, key: string, val: string): Mani
 }
 
 // The keys of [android], each the name of an -apk flag with no prefix.
-const ANDROID_TEXT: string[] = ["package", "label", "icon", "key"];
+const ANDROID_TEXT: string[] = ["package", "label", "icon", "banner", "key"];
 
-const ANDROID_SWITCHES: string[] = ["home", "compress", "cleartext", "debuggable"];
+const ANDROID_SWITCHES: string[] = ["home", "tv", "compress", "cleartext", "debuggable"];
 
 const ANDROID_LISTS: string[] = ["permissions", "assets", "widget"];
 
@@ -284,7 +284,7 @@ function android_value(key: string, val: string): Result[string, string] {
     }
     return Err("expected an API level, got " + docsummary.quote(val));
   }
-  return Err("unknown key (supported: package, label, icon, key, min_sdk, home, compress, cleartext, debuggable, permissions, assets, widget)");
+  return Err("unknown key (supported: " + util.append_all(util.append_all(ANDROID_TEXT.append("min_sdk"), ANDROID_SWITCHES), ANDROID_LISTS).join(", ") + ")");
 }
 
 // The value of `key` in [android], or "".

@@ -49,7 +49,7 @@ const ogImage = `${siteUrl.replace(/\/$/, "")}/og.png`;
 // up, under "Other", so a new stdlib module is never invisible — it just
 // wants a home.
 const STDLIB_GROUPS = [
-  ["Text", ["ansi", "encoding", "encoding_indexes", "format", "glob", "pcre", "peg", "regex", "strdist", "string",
+  ["Text", ["ansi", "encoding", "encoding_indexes", "format", "glob", "linediff", "pcre", "peg", "regex", "strdist", "string",
     "table", "textwrap", "unicode", "utf8"]],
   ["Data & encoding", ["base32", "base64", "binary", "brotli", "brotli_dictionary", "brotli_encoder", "bzip2", "codec", "crypto", "crypto_aead", "crypto_aes", "crypto_aes_gcm", "crypto_chacha20poly1305", "crypto_des",
     "crypto_ecdsa", "crypto_ed25519", "crypto_field25519", "crypto_hpke", "crypto_mlkem768", "crypto_montgomery", "crypto_p256", "crypto_rsa", "crypto_scrypt", "crypto_sha2", "crypto_x25519", "csv", "deflate", "fdt", "hash", "hash_bsd_sum", "hash_cksum", "hash_crc32", "hash_sysv_sum", "hex", "jpeg", "json", "lz4", "lzw", "png", "protobuf", "pvh", "semver", "truetype", "url", "uuid", "xz", "zip", "zstd"]],
@@ -68,7 +68,7 @@ const STDLIB_GROUPS = [
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
-  ["Interop", ["android", "android_access", "android_audio", "android_draw", "android_focus", "android_font", "android_fonts", "android_gl", "android_image", "android_keyboard", "android_media", "android_motion", "android_noisy", "android_p2p", "android_player", "android_property", "android_service", "android_session", "android_shortcuts", "android_testkit", "android_text", "android_trace", "android_ui", "android_ui_app", "android_ui_painter", "android_ui_scene", "android_ui_sim", "android_widget", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "classfile", "ffi", "jni", "jni_bind"]],
+  ["Interop", ["android", "android_access", "android_audio", "android_draw", "android_focus", "android_font", "android_fonts", "android_gl", "android_icons", "android_image", "android_keyboard", "android_media", "android_motion", "android_noisy", "android_p2p", "android_player", "android_property", "android_service", "android_session", "android_shortcuts", "android_testkit", "android_text", "android_trace", "android_ui", "android_ui_app", "android_ui_painter", "android_ui_scene", "android_ui_sim", "android_widget", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "classfile", "ffi", "jni", "jni_bind"]],
 ];
 
 // Reads what `fern -doc` actually emitted rather than trusting the table

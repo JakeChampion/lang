@@ -30,6 +30,15 @@
   },
   {
    "args": [
+    "--version"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "cmark 0.31.2 - CommonMark converter\n(C) 2014-2016 John MacFarlane\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
     "--bogus"
    ],
    "stdin": "stdin *text*\n<b>x</b>\n",
@@ -408,9 +417,7 @@
     "bad.md"
    ],
    "stdin": "stdin *text*\n<b>x</b>\n",
-   "stdout": {
-    "base64": "LlBQCmHvv71iIO+/vSDvv70g77+9IO+/vSDvv70gb2sK77+9Cip477+9Cv4K"
-   },
+   "stdout": ".PP\na�b � � � � � ok\n�\n*x�\n￾\n",
    "stderr": "",
    "exit": 0
   },
@@ -422,9 +429,7 @@
     "bad.md"
    ],
    "stdin": "stdin *text*\n<b>x</b>\n",
-   "stdout": {
-    "base64": "Ye+/vWIg77+9IO+/vSDvv70g77+9IO+/vSBvawrvv70KKnjvv70K/go="
-   },
+   "stdout": "a�b � � � � � ok\n�\n*x�\n￾\n",
    "stderr": "",
    "exit": 0
   },
@@ -436,9 +441,7 @@
     "bad.md"
    ],
    "stdin": "stdin *text*\n<b>x</b>\n",
-   "stdout": {
-    "base64": "Ye+/vWIg77+9IO+/vSDvv70g77+9IO+/vSBvawrvv70KXCp477+9Cv4K"
-   },
+   "stdout": "a�b � � � � � ok\n�\n\\*x�\n￾\n",
    "stderr": "",
    "exit": 0
   },
@@ -823,7 +826,7 @@
     "latex"
    ],
    "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
-   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}{\\nolinkurl{a@b.c}}\n\n{ref} {x} 1. 2) + = \\# !\n",
    "stderr": "",
    "exit": 0
   },
@@ -834,7 +837,7 @@
     "--unsafe"
    ],
    "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
-   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}{\\nolinkurl{a@b.c}}\n\n{ref} {x} 1. 2) + = \\# !\n",
    "stderr": "",
    "exit": 0
   },
@@ -845,7 +848,7 @@
     "--smart"
    ],
    "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
-   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote ``with'' `quotes'\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -- dash --- and \\ldots{}\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote ``with'' `quotes'\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -- dash --- and \\ldots{}\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}{\\nolinkurl{a@b.c}}\n\n{ref} {x} 1. 2) + = \\# !\n",
    "stderr": "",
    "exit": 0
   },
@@ -856,7 +859,7 @@
     "--hardbreaks"
    ],
    "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
-   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\\\\\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\\\\\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\\\\\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\\\\\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}{\\nolinkurl{a@b.c}}\n\n{ref} {x} 1. 2) + = \\# !\n",
    "stderr": "",
    "exit": 0
   },
@@ -867,7 +870,7 @@
     "--nobreaks"
    ],
    "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
-   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{} and a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft break \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{} and a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft break \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}{\\nolinkurl{a@b.c}}\n\n{ref} {x} 1. 2) + = \\# !\n",
    "stderr": "",
    "exit": 0
   },
@@ -878,7 +881,7 @@
     "--sourcepos"
    ],
    "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
-   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}{\\nolinkurl{a@b.c}}\n\n{ref} {x} 1. 2) + = \\# !\n",
    "stderr": "",
    "exit": 0
   },
@@ -891,7 +894,7 @@
     "--unsafe"
    ],
    "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
-   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote ``with'' `quotes'\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -- dash --- and \\ldots{}\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote ``with'' `quotes'\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -- dash --- and \\ldots{}\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}{\\nolinkurl{a@b.c}}\n\n{ref} {x} 1. 2) + = \\# !\n",
    "stderr": "",
    "exit": 0
   },
@@ -903,7 +906,7 @@
     "30"
    ],
    "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
-   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext\n\\texttt{code}}\n\n\\begin{quote}\nquote\n\\textquotedbl{}with\\textquotedbl{}\n\\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and\n\\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft break\n\\protect\\includegraphics{/i.png}\ntag \\& ©\n\\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext\n\\texttt{code}}\n\n\\begin{quote}\nquote\n\\textquotedbl{}with\\textquotedbl{}\n\\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and\n\\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft break\n\\protect\\includegraphics{/i.png}\ntag \\& ©\n\\href{mailto:a@b.c}{\\nolinkurl{a@b.c}}\n\n{ref} {x} 1. 2) + = \\# !\n",
    "stderr": "",
    "exit": 0
   },

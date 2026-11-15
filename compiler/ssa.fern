@@ -114,7 +114,7 @@ pub const FLAT_OP: i32 = 59;
 
 pub const DYN_DISPATCH: i32 = 60;
 
-pub const LANE3: i32 = 61;
+pub const TERNARY: i32 = 61;
 
 pub const LANE_STORE: i32 = 62;
 
@@ -154,7 +154,7 @@ pub function plain_str(ins: SInst): string {
 }
 
 pub function plain_imm(ins: SInst): i32 {
-  if (ins.kind_tag == CALL && ins.imm >= 1 && ins.imm <= 3) {
+  if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7)) {
     return 0;
   }
   return ins.imm;
@@ -282,7 +282,7 @@ const KIND_NAMES: string[] = [
   "sym_addr",  // 58
   "flat_op",  // 59
   "dyn_dispatch",  // 60
-  "lane3",  // 61
+  "ternary",  // 61
   "lane_store",  // 62
 ];
 
@@ -554,21 +554,47 @@ pub const COLD_BRANCH: i32 = 2;
 
 pub const COLD_INLINE: i32 = 3;
 
-pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
+// A call of a routine that changes only the registers that `light_call`
+// names. A value that lives across it keeps any other register, and the
+// call saves nothing.
+pub const COLD_LIGHT: i32 = 4;
+
+// `light` says the box routines of the build change only the result and
+// their arguments.
+pub function cold_positions(f: SFunc, size: boolean, back: boolean, light: boolean): i32[] {
   let cold = cold_blocks(f);
   let out: i32[] = [];
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
     for k in 0..blk.insts.len() {
-      out = out.append(cold_kind(blk, k, cold[bi], size, back));
+      out = out.append(cold_kind(blk, k, cold[bi], size, back, light));
     }
     out = out.append(COLD_NONE);
   }
   return out;
 }
 
-function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean): i32 {
+// The block of a record, a variant or a tuple, and the allocation for a null
+// token, which goes to the same routine.
+pub function light_call(ins: SInst): boolean {
+  return ins.kind_tag == ARR_BOX && ins.str == "box" || fresh_alloc_call(ins);
+}
+
+// A release that the emitters test inline: the count of a shared box goes
+// down by one, and only a unique box calls the routine. The helper release
+// of a record or a variant has the mark 7 (`ir.box_release`).
+pub function inline_release(ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && ins.imm != 5 || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
+}
+
+function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean, light: boolean): i32 {
   let ins = blk.insts[k];
+  if (light && light_call(ins)) {
+    return COLD_LIGHT;
+  }
+  if (!size && inline_release(ins)) {
+    return COLD_BRANCH;
+  }
   if (cold_call(ins) || back && back_copy_call(ins)) {
     return COLD_SLOW;
   }
@@ -1229,7 +1255,7 @@ pub function lane_op(op: string): boolean {
 
 pub function lane_inst(ins: SInst): boolean {
   let k = ins.kind_tag;
-  return (k == BINARY || k == UNARY || k == LANE3 || k == LANE_STORE) && lane_op(ins.str);
+  return (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && lane_op(ins.str);
 }
 
 pub function lane_param(f: SFunc, p: i32): boolean {
@@ -1276,7 +1302,7 @@ function lane_results(f: SFunc): boolean[] {
   for blk in f.blocks {
     for ins in blk.insts {
       let k = ins.kind_tag;
-      let maybe = k == PARAM || k == CALL && ins.imm == 6 || (k == BINARY || k == UNARY || k == LANE3 || k == LANE_STORE) && ins.str.len() > 1 && ins.str[0] == b'v';
+      let maybe = k == PARAM || k == CALL && ins.imm == 6 || (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && ins.str.len() > 1 && ins.str[0] == b'v';
       if (maybe && ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
         if (lanes.len() == 0) {
           lanes = __alloc_bool(f.nvals);
@@ -1424,11 +1450,23 @@ function float_def(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str.starts_with("i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
   }
-  return false;
+  return k == TERNARY && ins.str == "ffma";
 }
 
 function float_load(ins: SInst): boolean {
-  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && ins.str != "u8" && ins.str != "i32" && ins.str != "u32";
+  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && mark_bits(ins.str) == 0;
+}
+
+// The bits of an array element that an access marks: "u8" for a byte, "u16"
+// and "i16" for 2 bytes, "u32" and "i32" for 4 bytes, or 0 for a word.
+pub function mark_bits(mark: string): i32 {
+  if (mark == "u8") {
+    return 8;
+  }
+  if (mark == "u16" || mark == "i16") {
+    return 16;
+  }
+  return if (mark == "u32" || mark == "i32") { 32 } else { 0 };
 }
 
 function float_use(ins: SInst): boolean {
@@ -1439,7 +1477,7 @@ function float_use(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits" || ins.str == "vsplat";
   }
-  return false;
+  return k == TERNARY && ins.str == "ffma";
 }
 
 pub function float_arith(op: string): boolean {
@@ -1675,7 +1713,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let hard = hard_spans(f, cum, cold, lo, hi, weight, crossing);
   let sole = sole_readers(f);
 
-  let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [] };
+  let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [], nparams: f.nparams };
   let phi_side: boolean[] = [];
   let reg_of = __alloc_i32(f.nvals);
   let shared_with = __alloc_i32(f.nvals);
@@ -1696,13 +1734,17 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let free: i32[] = [];
   let r = nregs - 1;
   while (r >= 0) {
-    free = free.append(r);
+    if (!ssafixed.denied(fixed, r)) {
+      free = free.append(r);
+    }
     r -= 1;
   }
   let free_s: i32[] = [];
   r = nregs + nsaved - 1;
   while (r >= nregs) {
-    free_s = free_s.append(r);
+    if (!ssafixed.denied(fixed, r)) {
+      free_s = free_s.append(r);
+    }
     r -= 1;
   }
 
@@ -1722,13 +1764,17 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       free = [];
       r = sat - 1;
       while (r >= cbase) {
-        free = free.append(r);
+        if (!ssafixed.denied(fixed, r)) {
+          free = free.append(r);
+        }
         r -= 1;
       }
       free_s = [];
       r = sat + nfs - 1;
       while (r >= sat) {
-        free_s = free_s.append(r);
+        if (!ssafixed.denied(fixed, r)) {
+          free_s = free_s.append(r);
+        }
         r -= 1;
       }
     }
@@ -1942,11 +1988,59 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   if (nfs > 0) {
     reg_of = lanes_off_saved(f, reg_of, nregs + nsaved + nf);
   }
+  reg_of = spilled_phi_cycles(f, reg_of);
   let shape = SlotShape { at: at, blk_start: blk_start, def_blk: def_blk, def_pos: def_pos, def_a: def_a, def_b: def_b };
   if (sites.start.len() == 0 && spilled_mates(reg_of, def_pos, mates.hint)) {
     sites = read_sites(f, at, blk_start);
   }
   return Alloc { reg_of: assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites), def_pos: def_pos, lo: lo, hi: hi, cold: cold };
+}
+
+// A phi in a register whose only reads are phis in memory, one of which is
+// also its own operand, goes to memory too. A loop that keeps a value in a
+// slot then moves it only where it changes, not on each edge of the loop.
+pub function spilled_phi_cycles(f: SFunc, reg_of: i32[]): i32[] {
+  let other = __alloc_bool(f.nvals);
+  let users: i32[][] = [];
+  for v in 0..f.nvals {
+    users = users.append([]);
+  }
+  for b in f.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals) {
+          if (ins.kind_tag == PHI && ins.result >= 0) {
+            users = users.with(a, users[a].append(ins.result));
+          } else {
+            other = other.with(a, true);
+          }
+        }
+      }
+    }
+    let t = term_operand(b.term);
+    if (t >= 0 && t < f.nvals) {
+      other = other.with(t, true);
+    }
+  }
+  let out = reg_of;
+  for b in f.blocks {
+    for ins in b.insts {
+      let v = ins.result;
+      if (ins.kind_tag == PHI && v >= 0 && v < f.nvals && reg_of[v] >= 0 && !other[v] && users[v].len() > 0 && memory_phis(users[v], reg_of) && util.index_of_i32(ins.args, users[v][0]) >= 0) {
+        out = out.with(v, -1);
+      }
+    }
+  }
+  return out;
+}
+
+function memory_phis(phis: i32[], reg_of: i32[]): boolean {
+  for h in phis {
+    if (reg_of[h] != -1) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32): i32[] {
@@ -2545,7 +2639,7 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
   return out;
 }
 
-struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ_a: i32[], succ_b: i32[], phi_end: i32[] }
+struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ_a: i32[], succ_b: i32[], phi_end: i32[], nparams: i32 }
 
 function cached_read_sites(f: SFunc, own sites: ReadSites, at: i32[], blk_start: i32[]): ReadSites {
   if (sites.start.len() == 0) {
@@ -2645,7 +2739,7 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
     }
     pass += 1;
   }
-  return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end };
+  return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end, nparams: f.nparams };
 }
 
 // reads are the operands of v's definition: the emitter can write v before it
@@ -2752,7 +2846,12 @@ function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i3
   return 2;
 }
 
+// The entry of a function writes each parameter at one time, so two
+// parameters are live at the definition of each other.
 function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
+  if (r < sites.nparams && a < sites.nparams) {
+    return true;
+  }
   let near = live_near(sites, r, a, def_blk, def_pos);
   if (near != 2) {
     return near == 1;
@@ -5285,20 +5384,25 @@ function sink_round(f: SFunc): Sunk {
     moved = moved.append([]);
   }
   let blocks = f.blocks;
+  let splits: Split[] = [];
   let changed = false;
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
     let kept: SInst[] = [];
     let tail = pure_tail(blk);
+    let fl = Flow { at: at, idom: idom, entries: entries, term: blk.term };
     for k in 0..blk.insts.len() {
-      let to = -1;
-      if (k >= tail) {
-        to = sink_target(blk.insts[k], bi, Flow { at: at, idom: idom, entries: entries, term: blk.term }, readers);
+      let ins = blk.insts[k];
+      let sk = sink_of(ins, bi, k >= tail, fl, readers);
+      if (sk.other >= 0) {
+        let copy = f.nvals + splits.len();
+        splits = splits.append(Split { from: ins.result, to: copy, side: sk.other });
+        moved = moved.with(sk.other, moved[sk.other].append(SInst { ...ins, result: copy }));
       }
-      if (to < 0) {
-        kept = kept.append(blk.insts[k]);
+      if (sk.to < 0) {
+        kept = kept.append(ins);
       } else {
-        moved = moved.with(to, moved[to].append(blk.insts[k]));
+        moved = moved.with(sk.to, moved[sk.to].append(ins));
         changed = true;
       }
     }
@@ -5312,7 +5416,95 @@ function sink_round(f: SFunc): Sunk {
       blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: after_phis(blocks[bi].insts, moved[bi]) });
     }
   }
-  return Sunk { f: SFunc { ...f, blocks: blocks }, changed: true };
+  return Sunk { f: SFunc { ...f, nvals: f.nvals + splits.len(), blocks: renamed_sides(blocks, idom, splits) }, changed: true };
+}
+
+// A load that both sides of a branch read gets a copy on side `side`, and
+// the blocks that run after that side read the copy `to`.
+struct Split { from: i32, to: i32, side: i32 }
+
+// Where an instruction goes: successor `to` takes it, and successor `other`
+// takes a copy. Each is -1 for none.
+struct Sink { to: i32, other: i32 }
+
+function sink_of(ins: SInst, bi: i32, in_tail: boolean, fl: Flow, readers: Readers): Sink {
+  if (!in_tail) {
+    return Sink { to: -1, other: -1 };
+  }
+  let to = sink_target(ins, bi, fl, readers);
+  if (to >= 0) {
+    return Sink { to: to, other: -1 };
+  }
+  let other = split_target(ins, bi, fl, readers);
+  if (other < 0) {
+    return Sink { to: -1, other: -1 };
+  }
+  return Sink { to: distinct_successor_position(fl.at, fl.term, 0), other: other };
+}
+
+// The second successor, when the load of `ins` can go to each side of the
+// branch as one copy, or -1. A side that reads the value in its first block
+// gains nothing, so one side must read it later.
+function split_target(ins: SInst, bi: i32, fl: Flow, readers: Readers): i32 {
+  if (ins.kind_tag != LD_AT || fl.term.kind_tag != TERM_BRIF || readers.pinned[ins.result]) {
+    return -1;
+  }
+  let read = readers.blocks[ins.result];
+  let s0 = distinct_successor_position(fl.at, fl.term, 0);
+  let s1 = distinct_successor_position(fl.at, fl.term, 1);
+  if (!single_entry_sides(fl, bi, s0, s1) || util.index_of_i32(read, bi) >= 0) {
+    return -1;
+  }
+  if (util.index_of_i32(read, s0) >= 0 && util.index_of_i32(read, s1) >= 0) {
+    return -1;
+  }
+  return if (each_after_a_side(fl.idom, s0, s1, read)) { s1 } else { -1 };
+}
+
+function single_entry_sides(fl: Flow, bi: i32, s0: i32, s1: i32): boolean {
+  return s0 >= 0 && s1 >= 0 && s0 != bi && s1 != bi && fl.entries[s0] == 1 && fl.entries[s1] == 1;
+}
+
+function each_after_a_side(idom: i32[], s0: i32, s1: i32, read: i32[]): boolean {
+  for b in read {
+    if (!dominates(idom, s0, b) && !dominates(idom, s1, b)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function renamed_sides(own blocks: SBlock[], idom: i32[], splits: Split[]): SBlock[] {
+  for sp in splits {
+    for bi in 0..blocks.len() {
+      if (dominates(idom, sp.side, bi)) {
+        blocks = blocks.with(bi, block_reading(blocks[bi], sp.from, sp.to));
+      }
+    }
+  }
+  return blocks;
+}
+
+// The block with each read of value `from` turned into a read of `to`.
+function block_reading(blk: SBlock, from: i32, to: i32): SBlock {
+  let insts: SInst[] = [];
+  for ins in blk.insts {
+    let args = ins.args;
+    for a in 0..args.len() {
+      if (args[a] == from) {
+        args = args.with(a, to);
+      }
+    }
+    insts = insts.append(SInst { ...ins, args: args });
+  }
+  let term = blk.term;
+  if (term.cond == from) {
+    term = STerm { ...term, cond: to };
+  }
+  if (term.value == from) {
+    term = STerm { ...term, value: to };
+  }
+  return SBlock { ...blk, insts: insts, term: term };
 }
 
 struct Flow { at: i32[], idom: i32[], entries: i32[], term: STerm }
@@ -5637,7 +5829,7 @@ function lane_constant_fact(ins: SInst): i32 {
 }
 
 function lane_identity(ins: SInst, facts: i32[]): SInst {
-  if (ins.kind_tag == LANE3 && ins.str == "vselect" && ins.args.len() == 3) {
+  if (ins.kind_tag == TERNARY && ins.str == "vselect" && ins.args.len() == 3) {
     if (facts[ins.args[1]] == 1) {
       return SInst { ...ins, kind_tag: BINARY, str: "vand", args: [ins.args[0], ins.args[2]] };
     }
@@ -5664,7 +5856,7 @@ pub function fold_lane_identities(f: SFunc): SFunc {
       has_two = has_two || fact == 2;
       has_zero = has_zero || fact == 1;
       has_multiply = has_multiply || ins.kind_tag == BINARY && (ins.str == "vmul" || ins.str == "fmul");
-      has_select = has_select || ins.kind_tag == LANE3 && ins.str == "vselect";
+      has_select = has_select || ins.kind_tag == TERNARY && ins.str == "vselect";
     }
   }
   if (!(has_two && has_multiply || has_zero && has_select)) {
@@ -6087,7 +6279,7 @@ function drops(f: SFunc, facts: i32[], ins: SInst): boolean {
 function has_extension(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == UNARY && ins.str == "int_cast:u8") {
+      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == UNARY && (ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16")) {
         return true;
       }
     }
@@ -6269,7 +6461,10 @@ function unary_facts(ins: SInst, held: i32): i32 {
   if (ins.str == "int_cast:u8" || ins.str.starts_with("ctz:") || ins.str.starts_with("clz:") || ins.str.starts_with("popcount:")) {
     return EXT_BYTE;
   }
-  return 0;
+  if (ins.str == "int_cast:u16") {
+    return EXT_I32 | EXT_U32;
+  }
+  return if (ins.str == "int_cast:i16") { EXT_I32 } else { 0 };
 }
 
 // What a load or a byte mask leaves in its register, or 0.
@@ -6293,7 +6488,10 @@ function elem_facts(ins: SInst): i32 {
   if (ins.kind_tag == STR_AT || ins.str == "u8") {
     return EXT_BYTE;
   }
-  if (ins.str == "i32") {
+  if (ins.str == "u16") {
+    return EXT_I32 | EXT_U32;
+  }
+  if (ins.str == "i32" || ins.str == "i16") {
     return EXT_I32;
   }
   return if (ins.str == "u32") { EXT_U32 } else { 0 };
@@ -6331,6 +6529,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
   }
   let wraps: i32[] = [];
   let wrap_arg: i32[] = [];
+  let params = util.minus_ones(f.nparams);
   for bi in 0..f.blocks.len() {
     let insts = f.blocks[bi].insts;
     for k in 0..insts.len() {
@@ -6340,6 +6539,10 @@ pub function drop_low_wraps(f: SFunc): Formed {
         def_b = def_b.with(r, bi);
         def_k = def_k.with(r, k);
         if (demand_propagates(ins)) {
+          prop = prop.with(r, true);
+        }
+        if (ins.kind_tag == PARAM && ins.imm >= 0 && ins.imm < f.nparams) {
+          params = params.with(ins.imm, r);
           prop = prop.with(r, true);
         }
         if (low_wrap(ins)) {
@@ -6354,7 +6557,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
   // operands depend on result demand need to enter the worklist.
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.result < 0 || ins.result >= f.nvals || !prop[ins.result]) {
+      if ((ins.result < 0 || ins.result >= f.nvals || !prop[ins.result]) && !self_call(f, ins)) {
         for ai in 0..ins.args.len() {
           let a = ins.args[ai];
           if (a >= 0 && a < f.nvals && prop[a]) {
@@ -6373,21 +6576,20 @@ pub function drop_low_wraps(f: SFunc): Formed {
       work = work.append(tv);
     }
   }
-  let wi = 0;
-  while (wi < work.len()) {
-    let v = work[wi];
-    wi += 1;
-    let ins = def_at(f, def_b, def_k, v);
-    for ai in 0..ins.args.len() {
-      let a = ins.args[ai];
-      if (a >= 0 && a < f.nvals && prop[a]) {
-        let bits = operand_bits(ins, ai, required[v], f, def_b, def_k);
-        if (bits > required[a]) {
-          required = required.with(a, bits);
-          work = work.append(a);
-        }
+  required = spread_demand(f, def_b, def_k, prop, required, work);
+  while (true) {
+    let wants = self_call_demand(f, params, required);
+    let fed: i32[] = [];
+    for a in 0..f.nvals {
+      if (prop[a] && wants[a] > required[a]) {
+        required = required.with(a, wants[a]);
+        fed = fed.append(a);
       }
     }
+    if (fed.len() == 0) {
+      break;
+    }
+    required = spread_demand(f, def_b, def_k, prop, required, fed);
   }
   let repl: i32[] = [];
   let dropped = false;
@@ -6434,6 +6636,54 @@ pub function drop_low_wraps(f: SFunc): Formed {
     nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: t });
   }
   return formed_by(SFunc { ...f, blocks: nblocks }, repl);
+}
+
+// The demand of each value once the demand of each value in `work` reaches
+// its operands.
+function spread_demand(f: SFunc, def_b: i32[], def_k: i32[], prop: boolean[], own required: i32[], own work: i32[]): i32[] {
+  let wi = 0;
+  while (wi < work.len()) {
+    let v = work[wi];
+    wi += 1;
+    let ins = def_at(f, def_b, def_k, v);
+    for ai in 0..ins.args.len() {
+      let a = ins.args[ai];
+      if (a >= 0 && a < f.nvals && prop[a]) {
+        let bits = operand_bits(ins, ai, required[v], f, def_b, def_k);
+        if (bits > required[a]) {
+          required = required.with(a, bits);
+          work = work.append(a);
+        }
+      }
+    }
+  }
+  return required;
+}
+
+// A call of the function itself reads only the bits of an argument that the
+// uses of its parameter read.
+function self_call(f: SFunc, ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.str == f.name && !f.takes_env && ins.args.len() == f.nparams;
+}
+
+// For each value, the largest demand of a parameter that a call of the
+// function itself gives it to.
+function self_call_demand(f: SFunc, params: i32[], required: i32[]): i32[] {
+  let out = __alloc_i32(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (!self_call(f, ins)) {
+        continue;
+      }
+      for k in 0..ins.args.len() {
+        let a = ins.args[k];
+        if (a >= 0 && a < f.nvals && params[k] >= 0 && required[params[k]] > out[a]) {
+          out = out.with(a, required[params[k]]);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function has_low_wrap(f: SFunc): boolean {
@@ -6570,7 +6820,7 @@ function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
 }
 
 function low_wrap(ins: SInst): boolean {
-  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8");
+  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16");
 }
 
 function low_half_binary(op: string): boolean {
@@ -6608,6 +6858,9 @@ function low_wrap_bits(ins: SInst): i32 {
   if (ins.str == "int_cast:u8") {
     return 8;
   }
+  if (ins.str == "int_cast:u16" || ins.str == "int_cast:i16") {
+    return 16;
+  }
   return 32;
 }
 
@@ -6636,19 +6889,16 @@ function constant_bits(ins: SInst): i32 {
   return 64;
 }
 
-// The low bits of operand `k` that a store of a byte or a 4-byte element
-// writes, or 0. An append takes its element as operand 1.
+// The low bits of operand `k` that a store of a packed element writes, or 0.
+// An append takes its element as operand 1.
 function stored_bits(ins: SInst, k: i32): i32 {
   let mark = ins.str;
   if (ins.kind_tag == RT_CALL && k == 1 && ins.str.starts_with("arr_push")) {
-    mark = if (ins.str.ends_with("_u8")) { "u8" } else if (ins.str.ends_with("_u32")) { "i32" } else { "" };
+    mark = if (ins.str.ends_with("_u8")) { "u8" } else if (ins.str.ends_with("_u16")) { "u16" } else if (ins.str.ends_with("_u32")) { "i32" } else { "" };
   } else if (!(ins.kind_tag == ST_AT && k == 1 || ins.kind_tag == ARR_ST && k == 2)) {
     return 0;
   }
-  if (mark == "u8") {
-    return 8;
-  }
-  return if (mark == "i32" || mark == "u32") { 32 } else { 0 };
+  return mark_bits(mark);
 }
 
 // The low result bits of arithmetic and logic depend only on the same
@@ -7279,7 +7529,7 @@ function inst_has_effect(k: i32): boolean {
   if (k < PRINT) {
     return k == PARAM || k == CALL || k == CALL_INDIRECT || k == ALLOC || k == STORE_ELEM || k == CONCAT;
   }
-  return k != SELECT && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != LANE3;
+  return k != SELECT && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY;
 }
 
 function prune_roots(f: SFunc): i32[] {

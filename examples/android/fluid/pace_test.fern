@@ -1,0 +1,177 @@
+// Checks the pace of the frames on the host: the slower pace after late
+// frames, the faster pace again after calm seconds, and the refresh with no
+// frame for a queue that has one frame more than it needs.
+import "std/test";
+import "./pace";
+
+const SECOND: i64 = 1000000000i64;
+
+// What a run of the app loop gave: the pace, the count of the frames, the
+// last text of the frame rate, and the time that the app is free again.
+struct Run { p: pace.Pace, frames: i32, text: string, free_ns: i64 }
+
+// The app loop for `seconds` on a display of `hz` refreshes in a second.
+// The app needs `cost_ns` for a frame, and it is free at `r.free_ns`. The
+// display gives the app the first refresh after the time that the app
+// asked for one, and the app reads it when it is free.
+function ran(r: Run, hz: i32, seconds: i32, cost_ns: i64): Run {
+  let p = r.p;
+  let period = SECOND / (hz as i64);
+  let frames = 0;
+  let text = r.text;
+  let free = r.free_ns;
+  let k = free / period + 1i64;
+  let end = k + (hz * seconds) as i64;
+  while (k < end) {
+    let ns = k * period;
+    let start = ns;
+    if (free > ns) {
+      start = free;
+    }
+    let (next, due) = p.vsync(ns);
+    p = next;
+    free = start;
+    if (due) {
+      let (after, said) = p.drew(ns, start);
+      p = after;
+      frames += 1;
+      free = start + cost_ns;
+      if (said.len() > 0) {
+        text = said;
+      }
+    }
+    k = start / period + 1i64;
+  }
+  return Run { p: p, frames: frames, text: text, free_ns: free };
+}
+
+function fresh(): Run {
+  return Run { p: pace.new(), frames: 0, text: "", free_ns: 0i64 };
+}
+
+function test_a_frame_for_each_refresh(): test.TestOutcome {
+  let a = ran(fresh(), 60, 3, 1000000i64);
+  let b = ran(fresh(), 90, 3, 1000000i64);
+  let c = ran(fresh(), 120, 3, 1000000i64);
+  return test.assert_eq(a.frames.to_string() + " " + a.text + " / " + b.frames.to_string() + " " + b.text + " / " + c.frames.to_string() + " " + c.text, "180 60 fps, longest 16 ms / 270 90 fps, longest 11 ms / 360 120 fps, longest 8 ms");
+}
+
+function test_late_frames_make_the_pace_slower(): test.TestOutcome {
+  // A frame costs 18 ms on a display of 60 Hz, a little more than one
+  // refresh. The app starts each frame later than the one before it, and
+  // then one refresh has no frame. After 2 seconds, the pace takes 2
+  // refreshes for a frame, and then no frame is late.
+  let slow = ran(fresh(), 60, 6, 18000000i64);
+  // A frame costs 6 ms at 120 Hz, which one refresh has room for.
+  let fast = ran(fresh(), 120, 6, 6000000i64);
+  // A frame costs 12 ms at 120 Hz, which two refreshes have room for.
+  let half = ran(fresh(), 120, 6, 12000000i64);
+  return test.assert_eq(slow.p.every().to_string() + " " + slow.text + " / " + fast.p.every().to_string() + " " + fast.text + " / " + half.p.every().to_string() + " " + half.text, "2 30 fps, longest 33 ms, 1 of 2 / 1 120 fps, longest 8 ms / 2 60 fps, longest 16 ms, 1 of 2");
+}
+
+function test_the_pace_tries_the_faster_pace_again(): test.TestOutcome {
+  // The app is slow for 3 seconds, and then it is fast. The pace has a
+  // frame for each second refresh after 2 seconds. After 10 calm seconds,
+  // it has a frame for each refresh again.
+  let slow = ran(fresh(), 60, 3, 18000000i64);
+  let calm = ran(slow, 60, 8, 2000000i64);
+  let back = ran(calm, 60, 6, 2000000i64);
+  // The app stays slow: the try fails in its first second, and the next
+  // one comes after two times as long.
+  let still = ran(slow, 60, 14, 18000000i64);
+  return test.assert_eq(slow.p.every().to_string() + " " + calm.p.every().to_string() + " " + back.p.every().to_string() + " " + back.p.wait.to_string() + " / " + still.p.every().to_string() + " " + still.p.wait.to_string() + " " + still.p.tried.to_string(), "2 2 1 10 / 2 20 false");
+}
+
+function test_a_few_late_frames_change_nothing(): test.TestOutcome {
+  let p = pace.new();
+  let period = SECOND / 60i64;
+  let ns = 0i64;
+  // One frame in 10 is one refresh late.
+  for k in 0..600 {
+    ns += period;
+    let (next, due) = p.vsync(ns);
+    p = next;
+    if (due && k % 10 != 3) {
+      let (after, said) = p.drew(ns, ns);
+      p = after;
+    }
+  }
+  return test.assert_true(p.every() == 1 && p.slower == 0);
+}
+
+function test_a_pause_is_not_a_late_frame(): test.TestOutcome {
+  let r = ran(fresh(), 60, 2, 1000000i64);
+  let (after, due) = r.p.vsync(r.p.vsync_ns + 30i64 * SECOND);
+  let (drew, said) = after.drew(after.vsync_ns, after.vsync_ns);
+  return test.assert_true(due && said == "" && drew.late == 0 && drew.every() == 1 && drew.period_ns == r.p.period_ns);
+}
+
+// The pace after `frames` frames of a display of 60 Hz. The display shows
+// each frame `refreshes` refreshes after the frame, and one refresh less
+// for each refresh that the pace left with no frame, down to `least`.
+function shown(start: pace.Pace, frames: i32, refreshes: i32, least: i32): pace.Pace {
+  let p = start;
+  let period = SECOND / 60i64;
+  let ns = p.vsync_ns;
+  let n = 0;
+  let queue = refreshes;
+  let skips = p.skips;
+  while (n < frames) {
+    ns += period;
+    let (next, due) = p.vsync(ns);
+    p = next;
+    if (p.skips > skips) {
+      skips = p.skips;
+      if (queue > least) {
+        queue -= 1;
+      }
+    }
+    if (due) {
+      let (after, said) = p.drew(ns, ns);
+      p = after.told_shown(ns, ns + queue as i64 * period + 300000i64);
+      n += 1;
+    }
+  }
+  return p;
+}
+
+function test_the_pace_gives_the_time_to_the_display(): test.TestOutcome {
+  let none = pace.new().ahead_ns();
+  let p = shown(pace.new(), 30, 2, 2);
+  // Two refreshes of 16.67 ms and 0.3 ms.
+  return test.assert_true(none == 33000000i64 && (p.ahead_ns() - 33633332i64).abs() < 1000i64 && p.skips == 0);
+}
+
+function test_one_refresh_with_no_frame_empties_the_queue(): test.TestOutcome {
+  // The queue has one frame more than it needs from the start: each frame
+  // shows after 3 refreshes. The pace leaves one refresh with no frame
+  // after 60 frames, and then each frame shows after 2 refreshes.
+  let stuffed = shown(pace.new(), 200, 3, 2);
+  // The queue is good, and then it has one frame more after a late frame.
+  let good = shown(pace.new(), 200, 2, 2);
+  let again = shown(pace.Pace { ...good, skips: good.skips }, 30, 2, 2);
+  let later = shown(good, 100, 3, 2);
+  return test.assert_true(stuffed.skips == 1 && (stuffed.ahead_ns() - 33633332i64).abs() < 1000i64 && good.skips == 1 && again.skips == 1 && later.skips == 2 && (later.ahead_ns() - 33633332i64).abs() < 1000i64);
+}
+
+function test_frames_that_need_more_time_get_one_refresh_with_no_frame(): test.TestOutcome {
+  // Each frame shows after 2 refreshes, and then each frame needs 3: a
+  // refresh with no frame changes nothing, so the pace leaves one, and no
+  // more.
+  let good = shown(pace.new(), 200, 2, 2);
+  let slow = shown(good, 400, 3, 3);
+  return test.assert_true(good.skips == 1 && slow.skips == 2 && (slow.ahead_ns() - 50300000i64).abs() < 1000i64);
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/fluid pace");
+  r = r.it("a display of 60, 90 or 120 Hz has a frame for each refresh", test_a_frame_for_each_refresh);
+  r = r.it("late frames make the pace slower, until no frame is late", test_late_frames_make_the_pace_slower);
+  r = r.it("after calm seconds the pace tries the faster pace again", test_the_pace_tries_the_faster_pace_again);
+  r = r.it("a few late frames change nothing", test_a_few_late_frames_change_nothing);
+  r = r.it("a pause is not a late frame", test_a_pause_is_not_a_late_frame);
+  r = r.it("the pace gives the time from a frame to the display", test_the_pace_gives_the_time_to_the_display);
+  r = r.it("one refresh with no frame takes a frame out of the queue", test_one_refresh_with_no_frame_empties_the_queue);
+  r = r.it("frames that need more time get one refresh with no frame, and no more", test_frames_that_need_more_time_get_one_refresh_with_no_frame);
+  return r.finish();
+}

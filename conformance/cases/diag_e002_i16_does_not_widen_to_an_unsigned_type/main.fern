@@ -1,0 +1,13 @@
+// An i16 can hold a negative value, so it does not widen to an unsigned type
+// with no cast, nor to u16, which has the same width.
+function to_u32(n: i16): u32 {
+  return n;
+}
+
+function to_u16(n: i16): u16 {
+  return n;
+}
+
+function main(): i32 {
+  return 0;
+}

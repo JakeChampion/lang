@@ -528,6 +528,8 @@ func TestNumericLiteralSuffixes(t *testing.T) {
 		{"42i64", Number, "42", "i64"},
 		{"7u8", Number, "7", "u8"},
 		{"0u32", Number, "0", "u32"},
+		{"65535u16", Number, "65535", "u16"},
+		{"9i16", Number, "9", "i16"},
 		{"1.5", Float, "1.5", ""},
 		{"1.5f64", Float, "1.5", "f64"},
 		{"42f32", Float, "42", "f32"},

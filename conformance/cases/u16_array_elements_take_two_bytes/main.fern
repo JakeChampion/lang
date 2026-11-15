@@ -1,0 +1,39 @@
+// A u16[] holds 2 bytes for each element on every target, and a read extends
+// the element with zeros. This case runs each array operation on one: a
+// literal, a constant, append, with, the zeroed allocation, a slice, a view,
+// concatenation, truncation and iteration. Element 3 of a 4-element slice
+// sits in the second word of the box, so a wrong stride reads the wrong word.
+import "std/array";
+
+const TABLE: u16[] = [0, 1, 32768, 65535, 4660];
+
+function sum(xs: [u16]): u64 {
+  let s: u64 = 0;
+  for x in xs {
+    s += x;
+  }
+  return s;
+}
+
+function main(): i32 {
+  print(f"{TABLE.len()} {TABLE[2]} {TABLE[3]} {TABLE[4]} {sum(TABLE)}");
+  let xs: u16[] = [65535, 1, 2, 40000];
+  xs = xs.append(7);
+  xs = xs.with(1, 65534);
+  print(f"{xs.len()} {xs[0]} {xs[1]} {xs[3]} {xs[4]} {sum(xs)}");
+  let zs = __alloc_u16(9);
+  zs = zs.with(8, 4321);
+  print(f"{zs.len()} {zs[0]} {zs[7]} {zs[8]}");
+  let part = xs[1:5];
+  print(f"{part.len()} {part[0]} {part[3]} {sum(part)} {sum(xs[2:4])}");
+  let both = xs.concat(part);
+  print(f"{both.len()} {both[4]} {both[5]} {both[8]} {sum(both)}");
+  let short = both.truncate(3);
+  print(f"{short.len()} {short[2]}");
+  let grow: u16[] = [];
+  for i in 0..5000 {
+    grow = grow.append((i * 37) as u16);
+  }
+  print(f"{grow.len()} {grow[0]} {grow[1771]} {grow[1772]} {grow[4999]} {sum(grow)}");
+  return 0;
+}

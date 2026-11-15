@@ -1,11 +1,14 @@
 // Checks the rules of the app on the host: the settings, the clock of the
 // simulation, the colours, and what a touch, a key and a frame do.
 import "std/f64";
+import "std/rand";
 import "std/test";
 import "./clock";
 import "./color";
 import "./config";
+import "./fingers";
 import "./fluid";
+import "./trail";
 
 function set(c: config.Config, key: string, raw: string): config.Config {
   return config.set(c, key, raw).unwrap_or(c);
@@ -65,7 +68,7 @@ function test_settings_report_what_they_cannot_read(): test.TestOutcome {
 }
 
 function test_each_setting_has_a_reader(): test.TestOutcome {
-  let ok = config.keys().len() == 26;
+  let ok = config.keys().len() == 27;
   for key in config.keys() {
     ok = ok && !message(key, "x!").starts_with("Unknown");
   }
@@ -186,23 +189,279 @@ function test_a_pause_of_the_person_stays_after_a_touch(): test.TestOutcome {
   return test.assert_true(m.cfg.paused && !m.still && touched.cfg.paused);
 }
 
-function test_a_drag_gives_one_splat_for_each_frame(): test.TestOutcome {
-  let m = started(false).touched(0, 500.0, 1000.0, 0i64);
-  let (down, none) = m.frame(SECOND / 60i64);
-  let dragged = down.touched(2, 600.0, 1000.0, 0i64).touched(2, 600.0, 800.0, 0i64);
-  let (after, fr) = dragged.frame(2i64 * SECOND / 60i64);
-  let (idle, quiet) = after.frame(3i64 * SECOND / 60i64);
-  let Some(sp) = fr.splat else {
-    return test.fail("the frame after a drag has no splat");
-  };
-  // The last move is 200 pixels up, a tenth of the height. The splat is at
-  // the finger, with y up. A move across counts for less on a tall window.
-  let across = started(false).touched(0, 500.0, 1000.0, 0i64).touched(2, 600.0, 1000.0, 0i64);
-  let (ignored, wide) = across.frame(SECOND / 60i64);
-  let Some(side) = wide.splat else {
-    return test.fail("the frame after a move across has no splat");
-  };
-  return test.assert_true(none.splat.is_none() && sp.x == 0.6 && sp.y == 0.6 && sp.dx == 0.0 && (sp.dy - 600.0).abs() < 0.001 && quiet.splat.is_none() && (side.dx - 300.0).abs() < 0.001 && side.dy == 0.0);
+const MS: i64 = 1000000i64;
+
+// The app with no estimate of the place of the finger at the time of the
+// display: the dye goes to the place that the frame took.
+function exact(): fluid.Model {
+  return fluid.new(set(config.defaults(), "touch_prediction", "0"), false, 9i64, 0i64).laid_out(layout());
+}
+
+function test_a_frame_takes_the_place_of_the_finger_at_its_time(): test.TestOutcome {
+  // The finger goes down at 1 second, and it goes up the window at 10
+  // pixels in each millisecond. A frame takes the place of the finger 7 ms
+  // before the frame: the lag of 6 ms, and the margin of 1 ms.
+  let m = exact().touched(0, 500.0, 1000.0, SECOND);
+  let (down, none) = m.frame(SECOND + 4i64 * MS);
+  let (a, first) = down.touched(2, 500.0, 920.0, SECOND + 8i64 * MS).frame(SECOND + 10i64 * MS);
+  let (b, second) = a.touched(2, 500.0, 840.0, SECOND + 16i64 * MS).touched(2, 500.0, 800.0, SECOND + 20i64 * MS).frame(SECOND + 26i64 * MS);
+  // The finger does not move. The frame after that takes the end of the
+  // path, and the frame after it has no move.
+  let (c, third) = b.frame(SECOND + 43i64 * MS);
+  let (d, fourth) = c.frame(SECOND + 60i64 * MS);
+  if (first.splats.len() != 1 || second.splats.len() != 1 || third.splats.len() != 1) {
+    return test.fail("a frame after a move does not have one splat");
+  }
+  // 30 pixels of the 2000 of the height, then 160 pixels to the place at
+  // 19 ms, then the last 10 pixels. The splat is at the finger, with y up.
+  let start = (first.splats[0].dy - 90.0).abs() < 0.001 && (first.splats[0].y - 0.515).abs() < 0.000001 && first.splats[0].dx == 0.0;
+  let most = (second.splats[0].dy - 480.0).abs() < 0.001 && (second.splats[0].y - 0.595).abs() < 0.000001 && b.fingers.pending();
+  let end = (third.splats[0].dy - 30.0).abs() < 0.001 && (third.splats[0].y - 0.6).abs() < 0.000001 && !c.fingers.pending();
+  return test.assert_true(none.splats.len() == 0 && start && most && end && fourth.splats.len() == 0);
+}
+
+function test_a_finger_that_goes_up_gives_the_rest_of_its_path(): test.TestOutcome {
+  let m = started(false).touched(0, 500.0, 1000.0, SECOND).touched(2, 600.0, 1000.0, SECOND + 10i64 * MS).touched(1, 600.0, 1000.0, SECOND + 12i64 * MS);
+  let (a, first) = m.frame(SECOND + 13i64 * MS);
+  let (b, second) = a.frame(SECOND + 30i64 * MS);
+  if (first.splats.len() != 1) {
+    return test.fail("the frame after the finger went up does not have one splat");
+  }
+  let sp = first.splats[0];
+  // 100 pixels are a tenth of the width, and the window is half as wide as
+  // it is high, so a move across counts for half.
+  return test.assert_true((sp.dx - 300.0).abs() < 0.001 && sp.dy == 0.0 && sp.x == 0.6 && second.splats.len() == 0 && a.fingers.all.len() == 0);
+}
+
+function test_the_dye_goes_where_the_finger_is_at_the_time_of_the_display(): test.TestOutcome {
+  // The finger goes up the window at 1000 pixels in a second, with a place
+  // each 4 ms. The display shows a frame 33 ms after the frame starts.
+  let m = started(false).with_ahead(33i64 * MS).touched(0, 500.0, 1800.0, SECOND);
+  let plain = exact().with_ahead(33i64 * MS).touched(0, 500.0, 1800.0, SECOND);
+  for i in 1..13 {
+    let at = SECOND + i as i64 * 4i64 * MS;
+    m = m.touched(2, 500.0, 1800.0 - 4.0 * (i as f64), at);
+    plain = plain.touched(2, 500.0, 1800.0 - 4.0 * (i as f64), at);
+  }
+  let (a, ahead) = m.frame(SECOND + 50i64 * MS);
+  let (b, behind) = plain.frame(SECOND + 50i64 * MS);
+  if (ahead.splats.len() != 1 || behind.splats.len() != 1) {
+    return test.fail("the frame after a move does not have one splat");
+  }
+  // At 83 ms the finger is 83 pixels up from 1800 of the 2000. The frame
+  // took the place of the finger at 43 ms. The push is the same.
+  let there = (ahead.splats[0].y - (1.0 - 1717.0 / 2000.0)).abs() < 0.0001;
+  let taken = (behind.splats[0].y - (1.0 - 1757.0 / 2000.0)).abs() < 0.0001;
+  return test.assert_true(there && taken && ahead.splats[0].dy == behind.splats[0].dy);
+}
+
+// The pointer `id` at one place, as Android gives it.
+function contact(id: i32, x: f64, y: f64, ns: i64): fluid.Contact {
+  return fluid.Contact { id: id, tool: 1, places: [trail.Sample { ns: ns, x: x, y: y }] };
+}
+
+function test_two_fingers_push_the_fluid_at_the_same_time(): test.TestOutcome {
+  // The actions of Android: 0 is the first finger down, 5 is one more
+  // finger down, 2 is a move, 6 is a finger up while one stays, and 1 is
+  // the last finger up. Android gives each finger with each event.
+  let one = exact().touch_event(0, 0, [contact(4, 200.0, 1000.0, SECOND)]);
+  let two = one.touch_event(5, 1, [contact(4, 200.0, 1000.0, SECOND + 8i64 * MS), contact(7, 800.0, 400.0, SECOND + 8i64 * MS)]);
+  let moved = two.touch_event(2, 0, [contact(4, 200.0, 900.0, SECOND + 16i64 * MS), contact(7, 700.0, 400.0, SECOND + 16i64 * MS)]);
+  let (a, both) = moved.frame(SECOND + 24i64 * MS);
+  if (both.splats.len() != 2) {
+    return test.fail("a frame after two fingers moved has " + both.splats.len().to_string() + " splats");
+  }
+  let up = both.splats[0];
+  let left = both.splats[1];
+  let places = (up.x - 0.2).abs() < 0.000001 && (up.y - 0.55).abs() < 0.000001 && (left.x - 0.7).abs() < 0.000001 && (left.y - 0.8).abs() < 0.000001;
+  let pushes = up.dx == 0.0 && (up.dy - 300.0).abs() < 0.001 && (left.dx + 300.0).abs() < 0.001 && left.dy == 0.0;
+  let colours = up.color.r != left.color.r || up.color.g != left.color.g || up.color.b != left.color.b;
+  // The first finger goes up, and the other one moves on.
+  let lifted = a.touch_event(6, 0, [contact(4, 200.0, 900.0, SECOND + 30i64 * MS), contact(7, 700.0, 400.0, SECOND + 30i64 * MS)]);
+  let on = lifted.touch_event(2, 0, [contact(7, 700.0, 300.0, SECOND + 34i64 * MS)]);
+  let (b, alone) = on.frame(SECOND + 41i64 * MS);
+  let end = b.touch_event(1, 0, [contact(7, 700.0, 300.0, SECOND + 45i64 * MS)]);
+  let (c, last) = end.frame(SECOND + 58i64 * MS);
+  // The frame after the last finger went up takes the rest of its path.
+  let rest = alone.splats.len() == 1 && (alone.splats[0].x - 0.7).abs() < 0.000001 && alone.splats[0].dy > 0.0 && alone.splats[0].color.r == left.color.r;
+  let flushed = last.splats.len() == 1 && (alone.splats[0].dy + last.splats[0].dy - 300.0).abs() < 0.001;
+  return test.assert_true(places && pushes && colours && two.fingers.all.len() == 2 && rest && b.fingers.all.len() == 1 && flushed && c.fingers.all.len() == 0);
+}
+
+function test_an_event_gives_each_place_of_each_finger(): test.TestOutcome {
+  // Android collects the places of a finger and gives them with one event.
+  let down = exact().touch_event(0, 0, [contact(0, 500.0, 1000.0, SECOND)]);
+  let path = fluid.Contact { id: 0, tool: 1, places: [trail.Sample { ns: SECOND + 4i64 * MS, x: 500.0, y: 960.0 }, trail.Sample { ns: SECOND + 8i64 * MS, x: 500.0, y: 920.0 }, trail.Sample { ns: SECOND + 12i64 * MS, x: 500.0, y: 880.0 }] };
+  let (a, fr) = down.touch_event(2, 0, [path]).frame(SECOND + 13i64 * MS);
+  if (fr.splats.len() != 1) {
+    return test.fail("the frame after a move does not have one splat");
+  }
+  // The frame takes the place at 6 ms, between two places of the event.
+  return test.assert_true((fr.splats[0].y - 0.53).abs() < 0.000001 && a.fingers.pending());
+}
+
+function test_a_finger_pushes_the_fluid_while_another_is_on_the_button(): test.TestOutcome {
+  let on_button = exact().touch_event(0, 0, [contact(0, 900.0, 60.0, SECOND)]);
+  let two = on_button.touch_event(5, 1, [contact(0, 900.0, 60.0, SECOND + 8i64 * MS), contact(1, 500.0, 1000.0, SECOND + 8i64 * MS)]);
+  let moved = two.touch_event(2, 0, [contact(0, 900.0, 60.0, SECOND + 16i64 * MS), contact(1, 500.0, 900.0, SECOND + 16i64 * MS)]);
+  let (a, fr) = moved.frame(SECOND + 24i64 * MS);
+  // A third finger on the button does nothing: one finger at a time is on
+  // a control.
+  let three = a.touch_event(5, 2, [contact(0, 900.0, 60.0, SECOND + 30i64 * MS), contact(1, 500.0, 900.0, SECOND + 30i64 * MS), contact(2, 500.0, 500.0, SECOND + 30i64 * MS)]);
+  let open = a.touch_event(6, 0, [contact(0, 900.0, 60.0, SECOND + 30i64 * MS), contact(1, 500.0, 900.0, SECOND + 30i64 * MS)]);
+  // No finger reaches the fluid below the dialog.
+  let below = open.touch_event(5, 1, [contact(1, 500.0, 900.0, SECOND + 40i64 * MS), contact(3, 500.0, 100.0, SECOND + 40i64 * MS)]);
+  return test.assert_true(on_button.pressed_button() && on_button.fingers.all.len() == 0 && two.fingers.all.len() == 1 && fr.splats.len() == 1 && three.fingers.all.len() == 2 && open.open && !below.fingers.has(3));
+}
+
+function test_a_cancel_takes_each_finger_off(): test.TestOutcome {
+  let two = exact().touch_event(0, 0, [contact(0, 200.0, 1000.0, SECOND)]).touch_event(5, 1, [contact(0, 200.0, 1000.0, SECOND + 8i64 * MS), contact(1, 800.0, 400.0, SECOND + 8i64 * MS)]);
+  let moved = two.touch_event(2, 0, [contact(0, 200.0, 900.0, SECOND + 16i64 * MS), contact(1, 700.0, 400.0, SECOND + 16i64 * MS)]);
+  let (a, fr) = moved.touch_event(3, 0, []).frame(SECOND + 24i64 * MS);
+  let pressed = exact().touch_event(0, 0, [contact(0, 900.0, 60.0, SECOND)]).touch_event(3, 0, []);
+  // The fluid keeps the moves that the fingers made before the cancel.
+  return test.assert_true(fr.splats.len() == 2 && a.fingers.all.len() == 0 && !pressed.pressed_button() && !pressed.open);
+}
+
+function test_a_new_touch_takes_the_fingers_of_the_touch_before_it_off(): test.TestOutcome {
+  // Android did not tell that the two fingers went up.
+  let two = exact().touch_event(0, 0, [contact(0, 200.0, 1000.0, SECOND)]).touch_event(5, 1, [contact(0, 200.0, 1000.0, SECOND + 8i64 * MS), contact(1, 800.0, 400.0, SECOND + 8i64 * MS)]);
+  let (a, first) = two.touch_event(0, 0, [contact(0, 500.0, 500.0, 2i64 * SECOND)]).frame(2i64 * SECOND + 8i64 * MS);
+  return test.assert_true(two.fingers.all.len() == 2 && a.fingers.all.len() == 1 && a.fingers.all[0].x == 0.5 && first.splats.len() == 0);
+}
+
+// A mouse with no button down at one place, as Android gives it.
+function mouse(x: f64, y: f64, ns: i64): fluid.Contact[] {
+  return [fluid.Contact { id: 0, tool: fluid.MOUSE, places: [trail.Sample { ns: ns, x: x, y: y }] }];
+}
+
+function test_a_mouse_that_moves_pushes_the_fluid(): test.TestOutcome {
+  // The action 9 is a mouse that comes on the window, 7 is a mouse that
+  // moves with no button down, and 10 is a mouse that goes off the window.
+  let came = exact().touch_event(9, 0, mouse(500.0, 1000.0, SECOND));
+  let (a, first) = came.frame(SECOND + 8i64 * MS);
+  let moved = a.touch_event(7, 0, mouse(500.0, 900.0, SECOND + 10i64 * MS));
+  let (b, second) = moved.frame(SECOND + 24i64 * MS);
+  let gone = b.touch_event(10, 0, mouse(500.0, 900.0, SECOND + 30i64 * MS));
+  // The button of the mouse goes down: the mouse is then a finger.
+  let down = b.touch_event(0, 0, mouse(500.0, 900.0, SECOND + 30i64 * MS));
+  let on_button = b.touch_event(7, 0, mouse(900.0, 60.0, SECOND + 30i64 * MS));
+  let below = exact().toggle_dialog().touch_event(7, 0, mouse(500.0, 100.0, SECOND)).touch_event(7, 0, mouse(500.0, 200.0, SECOND + 8i64 * MS));
+  let still = started(true).touch_event(7, 0, mouse(500.0, 1000.0, SECOND)).touch_event(7, 0, mouse(500.0, 900.0, SECOND + 8i64 * MS));
+  let pen = exact().touch_event(7, 0, [fluid.Contact { id: 0, tool: 2, places: [trail.Sample { ns: SECOND, x: 500.0, y: 1000.0 }] }]);
+  let pushed = first.splats.len() == 0 && second.splats.len() == 1 && (second.splats[0].dy - 300.0).abs() < 0.001;
+  return test.assert_true(pushed && came.fingers.has(fingers.HOVER) && gone.fingers.all.len() == 0 && down.fingers.has(0) && !down.fingers.has(fingers.HOVER) && on_button.fingers.all.len() == 0 && below.fingers.all.len() == 0 && still.fingers.all.len() == 0 && still.cfg.paused && pen.fingers.all.len() == 0);
+}
+
+// What Android does with the places of a finger. BATCHED gives one event
+// for each frame of the display, with a time of 5 ms before the frame, and
+// the event comes before the frame or after it. RAW gives each place of a
+// touch screen of 240 Hz, 1 to 3 ms after its time.
+const BATCHED: i32 = 0;
+
+const RAW: i32 = 1;
+
+// The push of each frame of a drag up at 1200 pixels in a second for half
+// a second, on a display of `hz` frames in a second, and the sum of the
+// pushes after the finger went up. The pushes are in the units of a splat.
+function drag(hz: i32, how: i32, seed: i64): (f64[], f64) {
+  let period = SECOND / (hz as i64);
+  let start = SECOND;
+  let end = start + SECOND / 2i64;
+  let rng = rand.rng_seed(seed);
+  let m = started(false).touched(0, 500.0, 1800.0, start);
+  let pushes: f64[] = [];
+  let sum = 0.0;
+  let sent = start;
+  let late = false;
+  let lifted = false;
+  let k = start / period + 1i64;
+  while (k * period < end + SECOND / 5i64) {
+    let now = k * period;
+    // The places that come before this frame.
+    if (how == BATCHED) {
+      let (r1, coin) = rand.rng_below(rng, 2);
+      rng = r1;
+      let before = coin == 0;
+      // The event of the frame before this one, when it came after that
+      // frame, and then the event of this frame, when it comes before it.
+      let from = k;
+      if (late) {
+        from = k - 1i64;
+      }
+      let to = k - 1i64;
+      if (before) {
+        to = k;
+      }
+      late = !before;
+      let j = from;
+      while (j <= to) {
+        let at = j * period - 5i64 * MS;
+        if (at > start && at <= end) {
+          m = m.touched(2, 500.0, 1800.0 - 1200.0 * ((at - start) as f64 / 1.0e9), at);
+        }
+        j += 1i64;
+      }
+    } else {
+      let step = SECOND / 240i64;
+      while (sent + step <= end) {
+        let (r2, lag) = rand.rng_between(rng, 1, 4);
+        if (sent + step + lag as i64 * MS > now) {
+          break;
+        }
+        rng = r2;
+        sent += step;
+        m = m.pointer_moved(0, 500.0, 1800.0 - 1200.0 * ((sent - start) as f64 / 1.0e9), sent);
+      }
+    }
+    if (now > end + 30i64 * MS && !lifted) {
+      m = m.touched(2, 500.0, 1200.0, end).touched(1, 500.0, 1200.0, end);
+      lifted = true;
+    }
+    let (next, fr) = m.frame(now);
+    m = next;
+    let push = 0.0;
+    for sp in fr.splats {
+      push += sp.dy;
+    }
+    pushes = pushes.append(push);
+    sum += push;
+    k += 1i64;
+  }
+  return (pushes, sum);
+}
+
+// The largest difference between two pushes of the middle of a drag, as a
+// part of the push of one frame at a constant speed.
+function unevenness(pushes: f64[], hz: i32): f64 {
+  let want = 1200.0 / (hz as f64) / 2000.0 * 6000.0;
+  let low = pushes[8];
+  let high = pushes[8];
+  for i in 8..pushes.len() * 2 / 3 - 8 {
+    low = low.min(pushes[i]);
+    high = high.max(pushes[i]);
+  }
+  return (high - want).abs().max((low - want).abs()) / want;
+}
+
+function test_a_steady_drag_pushes_the_same_in_each_frame(): test.TestOutcome {
+  let worst = 0.0;
+  let lost = 0.0;
+  for hz in [60, 90, 120] {
+    for how in [BATCHED, RAW] {
+      for seed in [1i64, 2i64, 3i64, 4i64, 5i64] {
+        let (pushes, sum) = drag(hz, how, seed);
+        worst = worst.max(unevenness(pushes, hz));
+        // The whole drag is 600 pixels of the 2000 of the height.
+        lost = lost.max((sum - 600.0 / 2000.0 * 6000.0).abs());
+      }
+    }
+  }
+  // The times are whole nanoseconds, which gives a few parts in a million.
+  if (worst > 0.0001) {
+    return test.fail("a frame of a steady drag differs from the others by the part " + worst.to_string());
+  }
+  return test.assert_true(lost < 0.001);
 }
 
 function test_the_button_opens_the_dialog_and_gives_no_splat(): test.TestOutcome {
@@ -211,7 +470,7 @@ function test_the_button_opens_the_dialog_and_gives_no_splat(): test.TestOutcome
   let open = m.touched(1, 910.0, 70.0, 0i64);
   let (after, fr) = open.frame(SECOND / 60i64);
   let slid = started(false).touched(0, 900.0, 60.0, 0i64).touched(1, 500.0, 600.0, 0i64);
-  return test.assert_true(pressed && open.open && fr.splat.is_none() && !slid.open);
+  return test.assert_true(pressed && open.open && fr.splats.len() == 0 && !slid.open);
 }
 
 function test_the_dialog_closes(): test.TestOutcome {
@@ -228,7 +487,7 @@ function test_a_touch_on_the_dialog_does_not_reach_the_fluid(): test.TestOutcome
   let open = started(false).toggle_dialog();
   let dragged = open.touched(0, 500.0, 100.0, 0i64).touched(2, 600.0, 300.0, 0i64);
   let (after, fr) = dragged.frame(SECOND / 60i64);
-  return test.assert_true(fr.splat.is_none());
+  return test.assert_true(fr.splats.len() == 0);
 }
 
 function test_rows_do_their_actions(): test.TestOutcome {
@@ -299,14 +558,14 @@ function test_a_hold_of_three_seconds_leaves_kid_mode(): test.TestOutcome {
   let (late, b) = moved.frame(4i64 * SECOND + 1000000i64);
   let let_go = down.touched(1, 900.0, 60.0, 2i64 * SECOND);
   let (short, c) = let_go.frame(5i64 * SECOND);
-  return test.assert_true(early.kid && a.draw && (part - 0.9666).abs() < 0.001 && b.splat.is_none() && !late.kid && wanted(late) == "pin:false awake:false immersive:false " && short.kid && short.held(5000i64) == 0.0);
+  return test.assert_true(early.kid && a.draw && (part - 0.9666).abs() < 0.001 && b.splats.len() == 0 && !late.kid && wanted(late) == "pin:false awake:false immersive:false " && short.kid && short.held(5000i64) == 0.0);
 }
 
 function test_a_touch_in_kid_mode_pushes_the_fluid(): test.TestOutcome {
   let on = started(false).act(fluid.Kid, 0i64).done();
   let dragged = on.touched(0, 500.0, 1000.0, 0i64).touched(2, 500.0, 900.0, 0i64);
   let (after, fr) = dragged.frame(SECOND / 60i64);
-  return test.assert_true(fr.splat.is_some() && after.kid);
+  return test.assert_true(fr.splats.len() > 0 && after.kid);
 }
 
 function test_a_keyboard_and_a_service_leave_kid_mode_at_once(): test.TestOutcome {
@@ -325,17 +584,17 @@ function test_keys_do_the_actions(): test.TestOutcome {
 
 function test_the_colour_of_the_finger_changes_with_the_time(): test.TestOutcome {
   let m = started(false).touched(0, 500.0, 1000.0, 0i64);
-  let first = m.pointer.color;
+  let first = m.fingers.all[0].color;
   // The colour changes after a tenth of a second at the default speed.
   let (a, f1) = m.frame(50000000i64);
-  let same = a.pointer.color;
+  let same = a.fingers.all[0].color;
   let (b, f2) = a.frame(120000000i64);
-  let next = b.pointer.color;
+  let next = b.fingers.all[0].color;
   let fixed = fluid.Model { ...m, cfg: config.Config { ...m.cfg, colorful: false } };
   let (c, f3) = fixed.frame(SECOND);
   let equal = same.r == first.r && same.g == first.g && same.b == first.b;
   let changed = next.r != first.r || next.g != first.g || next.b != first.b;
-  return test.assert_true(equal && changed && c.pointer.color.r == first.r && c.pointer.color.g == first.g);
+  return test.assert_true(equal && changed && c.fingers.all[0].color.r == first.r && c.fingers.all[0].color.g == first.g);
 }
 
 function test_a_paused_app_draws_only_what_changes(): test.TestOutcome {
@@ -376,7 +635,16 @@ function main(): i32 {
   r = r.it("the app starts with a burst", test_app_starts_with_a_burst);
   r = r.it("with no animations, the app starts still until a touch", test_no_animation_starts_still_until_a_touch);
   r = r.it("a pause that the person chose stays after a touch", test_a_pause_of_the_person_stays_after_a_touch);
-  r = r.it("a drag gives one splat for each frame", test_a_drag_gives_one_splat_for_each_frame);
+  r = r.it("a frame takes the place of the finger at a time before it, by the age of the newest place", test_a_frame_takes_the_place_of_the_finger_at_its_time);
+  r = r.it("a finger that goes up gives the rest of its path, and a move across counts for half", test_a_finger_that_goes_up_gives_the_rest_of_its_path);
+  r = r.it("a steady drag pushes the same amount in each frame, at each display rate and event timing", test_a_steady_drag_pushes_the_same_in_each_frame);
+  r = r.it("the dye goes where the finger is at the time of the display", test_the_dye_goes_where_the_finger_is_at_the_time_of_the_display);
+  r = r.it("two fingers push the fluid at the same time", test_two_fingers_push_the_fluid_at_the_same_time);
+  r = r.it("an event gives each place of each finger", test_an_event_gives_each_place_of_each_finger);
+  r = r.it("a finger pushes the fluid while another is on the button", test_a_finger_pushes_the_fluid_while_another_is_on_the_button);
+  r = r.it("a cancel takes each finger off", test_a_cancel_takes_each_finger_off);
+  r = r.it("a new touch takes the fingers of the touch before it off", test_a_new_touch_takes_the_fingers_of_the_touch_before_it_off);
+  r = r.it("a mouse that moves pushes the fluid", test_a_mouse_that_moves_pushes_the_fluid);
   r = r.it("the button opens the dialog and gives no splat", test_the_button_opens_the_dialog_and_gives_no_splat);
   r = r.it("the close button, the backdrop and the back key close the dialog", test_the_dialog_closes);
   r = r.it("a touch on the dialog does not reach the fluid", test_a_touch_on_the_dialog_does_not_reach_the_fluid);

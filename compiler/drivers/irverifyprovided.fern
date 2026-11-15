@@ -1,6 +1,7 @@
 import "std/string";
 import "../ir";
 import "../irverify";
+import "../rtbytecopy";
 import "../util";
 
 pub function provided_names(): string[] {
@@ -60,7 +61,7 @@ pub function provided_names(): string[] {
     "__fern_bytes_append_range",
     "__fern_bytes_write_range",
     "__fern_bytes_append_back",
-  ];
+  ].concat(rtbytecopy.kernel_names());
 }
 
 pub function is_generated_helper(name: string): boolean {

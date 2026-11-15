@@ -32,7 +32,12 @@ type IdentOrder struct {
 
 // forkArm is one arm of a match or an if outside every loop. One run takes
 // one arm, so an identifier in one arm is not after one in another arm.
-type forkArm struct{ fork, arm int }
+// exit is true when the arm ends in a return: an identifier outside the arm
+// is not after one in it.
+type forkArm struct {
+	fork, arm int
+	exit      bool
+}
 
 // IdentOrderOf numbers the identifiers of body in source order. The else arm
 // of a let-else is the last arm of its match, but the source writes it first.
@@ -78,8 +83,8 @@ func IdentOrderOf(body ast.Node) IdentOrder {
 // markForks records the arms of the forks that hold each identifier of st.
 // A loop body can take each arm in turn, so it records no fork inside a loop.
 func (o IdentOrder) markForks(st ast.Stmt, path []forkArm, forks *int) {
-	in := func(fork, arm int) []forkArm {
-		return append(slices.Clone(path), forkArm{fork, arm})
+	in := func(fork, arm int, body ast.Stmt) []forkArm {
+		return append(slices.Clone(path), forkArm{fork, arm, endsInReturn(body)})
 	}
 	switch x := st.(type) {
 	case *ast.Block:
@@ -92,10 +97,10 @@ func (o IdentOrder) markForks(st ast.Stmt, path []forkArm, forks *int) {
 		*forks++
 		o.markIdents(x.Cond, path)
 		if x.Then != nil {
-			o.markForks(x.Then, in(fork, 0), forks)
+			o.markForks(x.Then, in(fork, 0, x.Then), forks)
 		}
 		if x.Else != nil {
-			o.markForks(x.Else, in(fork, 1), forks)
+			o.markForks(x.Else, in(fork, 1, x.Else), forks)
 		}
 		return
 	case *ast.Match:
@@ -104,10 +109,10 @@ func (o IdentOrder) markForks(st ast.Stmt, path []forkArm, forks *int) {
 		o.markIdents(x.Tag, path)
 		for i, a := range x.Arms {
 			if a.Guard != nil {
-				o.markIdents(a.Guard, in(fork, i))
+				o.markIdents(a.Guard, in(fork, i, nil))
 			}
 			if a.Body != nil {
-				o.markForks(a.Body, in(fork, i), forks)
+				o.markForks(a.Body, in(fork, i, a.Body), forks)
 			}
 		}
 		return
@@ -139,13 +144,34 @@ func (o IdentOrder) IsLast(id *ast.Ident) bool {
 	return true
 }
 
+// forksApart reports whether no run reaches b after a, for a b after a: the
+// two are in two arms of one fork, or a is in an arm that ends in a return
+// and b is outside that arm.
 func forksApart(a, b []forkArm) bool {
 	for _, x := range a {
+		inFork := false
 		for _, y := range b {
-			if x.fork == y.fork && x.arm != y.arm {
-				return true
+			if x.fork == y.fork {
+				inFork = true
+				if x.arm != y.arm {
+					return true
+				}
 			}
 		}
+		if x.exit && !inFork {
+			return true
+		}
+	}
+	return false
+}
+
+// endsInReturn reports whether the arm body st ends in a return statement.
+func endsInReturn(st ast.Stmt) bool {
+	switch x := st.(type) {
+	case *ast.Return:
+		return true
+	case *ast.Block:
+		return x != nil && len(x.Stmts) > 0 && endsInReturn(x.Stmts[len(x.Stmts)-1])
 	}
 	return false
 }
@@ -279,6 +305,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool, scalar map[ast.Expr]bool) ArgDeaths {
 	body := fn.Body
 	bf := newBodyFrames(body)
+	bf.scalar = scalar
 	out := map[*ast.Call]map[string]bool{}
 	occurrences := map[string]int{}
 	ast.Walk(body, func(n ast.Node) bool {
@@ -959,6 +986,29 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if v != nil && iterOwned[forEachElementOf(v)] && !borrowedAssigns[v] && !loopRepeats(body, c, v) && lastInBinding(bf, c, aid, order) {
 				moves[aid] = true
 			}
+			// The one read of a field of such an element into a local moves
+			// at the last read of the local.
+			if fa, isField := initOf(v).(*ast.FieldAccess); isField && !assignedNames[aid.Name] && !loopRepeats(body, c, v) && lastInBinding(bf, c, aid, order) {
+				if h, isID := fa.Target.(*ast.Ident); isID && !escaping[h.Name] && !lambdaCaptured[h.Name] {
+					ev := bindingVar(bf, v, h.Name)
+					if ev != nil && iterOwned[forEachElementOf(ev)] && !borrowedAssigns[ev] && unpack(v.Init) {
+						moves[aid] = true
+					}
+				}
+			}
+			// A field that a destructure takes from such an element at the
+			// element's last read moves at its own last read.
+			d := bindingDestructure(bf, c, aid.Name)
+			if d != nil && !assignedNames[aid.Name] && !loopRepeats(body, c, d) && lastInBinding(bf, c, aid, order) {
+				src, isID := d.Init.(*ast.Ident)
+				ev := (*ast.Var)(nil)
+				if isID && !escaping[src.Name] && !lambdaCaptured[src.Name] {
+					ev = bindingVar(bf, d, src.Name)
+				}
+				if ev != nil && d.AtName == "" && !destructureNests(d, aid.Name) && iterOwned[forEachElementOf(ev)] && !borrowedAssigns[ev] && lastInBinding(bf, d, src, order) {
+					moves[aid] = true
+				}
+			}
 		}
 		return true
 	})
@@ -986,11 +1036,12 @@ func argParts(c *ast.Call) []ast.Expr {
 			out = append(out, e)
 			return
 		}
-		if sl.Base != nil {
-			add(sl.Base)
-		}
+		// The field values run before the literal takes its base.
 		for _, f := range sl.Fields {
 			add(f.Value)
+		}
+		if sl.Base != nil {
+			add(sl.Base)
 		}
 	}
 	for _, a := range c.Args {
@@ -1703,6 +1754,25 @@ func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]
 // copiedArgs names direct scalar field reads before an argument that is name
 // alone. A scalar-returning call can consume name through an aggregate, so
 // its result type alone does not make it a copy of a field.
+// markScalarReads marks each read of a scalar field of `name` in e: a copy
+// that holds nothing of `name`.
+func markScalarReads(out map[ast.Expr]bool, e ast.Expr, name string, scalar map[ast.Expr]bool) {
+	ast.Walk(e, func(m ast.Node) bool {
+		if _, ok := m.(*ast.Lambda); ok {
+			return false
+		}
+		fa, isField := m.(*ast.FieldAccess)
+		if !isField || !scalar[fa] {
+			return true
+		}
+		if target, ok := fa.Target.(*ast.Ident); ok && target.Name == name {
+			out[fa] = true
+			return false
+		}
+		return true
+	})
+}
+
 func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.Expr]bool {
 	out := map[ast.Expr]bool{}
 	if len(scalar) == 0 {
@@ -1717,13 +1787,7 @@ func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.E
 		for k, a := range parts {
 			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
 				for _, before := range parts[:k] {
-					fa, isField := before.(*ast.FieldAccess)
-					if !isField || !scalar[before] {
-						continue
-					}
-					if target, ok := fa.Target.(*ast.Ident); ok && target.Name == name {
-						out[before] = true
-					}
+					markScalarReads(out, before, name, scalar)
 				}
 			}
 		}
@@ -1867,10 +1931,18 @@ func (b *bodyFrames) heldByEnclosingCall(c *ast.Call, name string) bool {
 	names, ok := b.held[c]
 	if !ok {
 		names = map[string]bool{}
+		first := c.P
 		for _, p := range b.enclosing[c] {
 			ast.Walk(p, func(m ast.Node) bool {
 				if mc, ok := m.(*ast.Call); ok && mc == c {
 					return false
+				}
+				// A read of a scalar field before the call is a copy that
+				// ends before the call runs.
+				if fa, ok := m.(*ast.FieldAccess); ok && b.scalar[fa] && posBefore(fa.P, first) {
+					if _, named := fa.Target.(*ast.Ident); named {
+						return false
+					}
 				}
 				if id, ok := m.(*ast.Ident); ok {
 					names[id.Name] = true
@@ -2136,6 +2208,12 @@ type bodyFrames struct {
 	assigns   map[string][]*ast.Assign
 	enclosing map[*ast.Call][]*ast.Call // the outermost calls that hold each call
 	held      map[*ast.Call]map[string]bool
+	scalar    map[ast.Expr]bool // the expressions of a type that holds no handle
+}
+
+// posBefore reports whether a comes before b in the source.
+func posBefore(a, b ast.Position) bool {
+	return a.Line < b.Line || a.Line == b.Line && a.Col < b.Col
 }
 
 func newBodyFrames(body *ast.Block) *bodyFrames {
@@ -2926,6 +3004,42 @@ func bindingVar(bf *bodyFrames, c ast.Node, name string) *ast.Var {
 		}
 	}
 	return nil
+}
+
+// initOf is the initializer of v, or nil when there is no binding.
+func initOf(v *ast.Var) ast.Expr {
+	if v == nil {
+		return nil
+	}
+	return v.Init
+}
+
+// bindingDestructure is the destructure that binds name for c, or nil when
+// a let or nothing binds it.
+func bindingDestructure(bf *bodyFrames, c ast.Node, name string) *ast.Destructure {
+	frames := bf.of(c)
+	l := bindingLevel(frames, name)
+	if l < 0 {
+		return nil
+	}
+	f := frames[l]
+	for j := f.idx - 1; j >= 0; j-- {
+		if bindsName(f.stmts[j], name) {
+			d, _ := f.stmts[j].(*ast.Destructure)
+			return d
+		}
+	}
+	return nil
+}
+
+// destructureNests reports whether name comes from a nested pattern of d.
+func destructureNests(d *ast.Destructure, name string) bool {
+	for i, nm := range d.Names {
+		if nm == name {
+			return i < len(d.Nested) && d.Nested[i] != nil
+		}
+	}
+	return false
 }
 
 // bindsName reports whether the statement itself declares name, not a

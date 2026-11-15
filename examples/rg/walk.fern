@@ -2,10 +2,12 @@
 // for the paths of a command line, in its order with one thread.
 import "core/cmp";
 import "./ignore";
+import "./logs";
 
 // One item of a walk: a file to search, or a message. An error message
 // makes the exit status 2.
-pub struct Item { path: string, explicit: boolean, message: string, error: boolean }
+// A log line of --debug is a message with `log`, which rg writes as it is.
+pub struct Item { path: string, explicit: boolean, message: string, error: boolean, log: boolean }
 
 // The settings of a walk. `threads` decides the form of an error message.
 // `stdout_ino` and `stdout_dev` name the file that the standard output
@@ -23,6 +25,8 @@ pub struct Walk {
   // --one-file-system, and the device of the root of the walk.
   same_fs: boolean,
   root_dev: i64,
+  // The level of the logs of --debug and --trace.
+  log: i32,
 }
 
 // The kinds of DirEntry.kind: the file type bits of st_mode, or 0 when
@@ -36,11 +40,74 @@ const DT_REG: u32 = 0o100000u32;
 const DT_LNK: u32 = 0o120000u32;
 
 function file(path: string, explicit: boolean): Item {
-  return Item { path: path, explicit: explicit, message: "", error: false };
+  return Item { path: path, explicit: explicit, message: "", error: false, log: false };
+}
+
+// A log line of the walk.
+function logged(module: string, file: string, line: i32, text: string): Item {
+  return Item { path: "", explicit: false, message: f"rg: DEBUG|{module}|{file}:{line}: {text}", error: false, log: true };
+}
+
+// The log of the decision of the walk for an entry: an entry that a rule
+// ignores or keeps.
+function decision_log(w: Walk, stack: ignore.Stack, path: string, is_dir: boolean, own items: Item[]): Item[] {
+  if (w.log == 0) {
+    return items;
+  }
+  let (v, text) = ignore.reason(stack, w.cfg, path, is_dir);
+  if (text == "") {
+    return items;
+  }
+  let file = logs.source("ignore-0.4.22", "walk.rs");
+  if (v == ignore.IGNORE) {
+    return items.append(logged("ignore::walk", file, 1799, "ignoring " + path + ": " + text));
+  }
+  return items.append(logged("ignore::walk", file, 1802, "whitelisting " + path + ": " + text));
+}
+
+// The log of an entry that is not a file or a directory, such as a link,
+// with its metadata as Rust writes it with {:?}.
+function filtered_log(path: string): Item {
+  let Ok(st) = lstat(path) else {
+    return message("", false);
+  };
+  let mode = (st.mode as i64).to_string();
+  let kind = ((st.mode & 0o170000u32) as i64).to_string();
+  let times = "modified: Ok(" + system_time(st.mtime, st.mtime_nsec) + "), accessed: Ok(" + system_time(st.atime, st.atime_nsec) + "), created: Ok(" + system_time(st.btime, st.btime_nsec) + ")";
+  let text = "ignoring " + path + ": failed to pass haystack filter: file type: Some(FileType(FileType { mode: " + kind + " })), metadata: Ok(Metadata { file_type: FileType(FileType { mode: " + mode + " }), is_dir: false, is_file: false, permissions: Permissions(FilePermissions { mode: " + mode + " }), " + times + ", .. })";
+  return logged("rg::haystack", "crates/core/haystack.rs", 70, text);
+}
+
+// Whether `path` is a directory or a link to one, which ripgrep does not
+// log.
+function points_to_dir(path: string): boolean {
+  return match (stat(path)) {
+    Ok(st) => st.is_dir,
+    Err(_) => false,
+  };
+}
+
+function system_time(sec: i64, nsec: i64): string {
+  return "SystemTime { tv_sec: " + sec.to_string() + ", tv_nsec: " + nsec.to_string() + " }";
+}
+
+// The logs of the glob sets of the ignore files of a level, in the order
+// that the ignore crate reads them.
+function level_logs(w: Walk, l: ignore.Level, own items: Item[]): Item[] {
+  if (w.log == 0) {
+    return items;
+  }
+  for m in [l.custom, l.dot, l.git, l.exclude] {
+    let text = m.glob_log();
+    if (text != "") {
+      items = items.append(logged("globset", logs.source("globset-0.4.14", "lib.rs"), 453, text));
+    }
+  }
+  return items;
 }
 
 function message(text: string, error: boolean): Item {
-  return Item { path: "", explicit: false, message: text, error: error };
+  return Item { path: "", explicit: false, message: text, error: error, log: false };
 }
 
 // The message for a path that the walk cannot read. With one thread,
@@ -139,16 +206,35 @@ function entry(w: Walk, dir: string, e: DirEntry, stack: ignore.Stack, depth: i3
     },
   };
   let is_dir = kind == DT_DIR;
+  items = decision_log(w, stack, path, is_dir, items);
   if (ignore.verdict(stack, w.cfg, path, is_dir) == ignore.IGNORE) {
+    if (is_dir && w.log > 0) {
+      // ripgrep reads the ignore files of a directory that it skips.
+      let (skipped, why) = ignore.level(w.cfg, path, false);
+      items = level_logs(w, skipped, items);
+    }
     return items;
   }
   if (is_dir) {
     return descend(w, path, stack, depth + 1, items);
   }
-  if (kind == DT_REG && !is_stdout(w, path, e.ino) && !too_big(w, path)) {
-    return items.append(file(path, false));
+  if (kind != DT_REG && w.log > 0 && !points_to_dir(path)) {
+    return items.append(filtered_log(path));
   }
-  return items;
+  if (kind != DT_REG || is_stdout(w, path, e.ino)) {
+    return items;
+  }
+  if (too_big(w, path)) {
+    if (w.log > 0) {
+      let size = match (stat(path)) {
+        Ok(st) => st.size,
+        Err(_) => 0i64,
+      };
+      items = items.append(logged("ignore::walk", logs.source("ignore-0.4.22", "walk.rs"), 1786, f"ignoring {path}: {size} bytes"));
+    }
+    return items;
+  }
+  return items.append(file(path, false));
 }
 
 // Adds the items of a directory below the root, which --one-file-system
@@ -170,6 +256,7 @@ function on_device(path: string, dev: i64): boolean {
 // Adds the items of the directory `dir`, whose entries are at `depth`.
 function directory(w: Walk, dir: string, parent: ignore.Stack, depth: i32, own items: Item[]): Item[] {
   let (l, why) = ignore.level(w.cfg, dir, false);
+  items = level_logs(w, l, items);
   if (why != "") {
     items = items.append(message(why, false));
   }
@@ -203,6 +290,9 @@ pub function walk(w: Walk, roots: string[]): Item[] {
           continue;
         }
         let (stack, why) = ignore.parents(w.cfg, root);
+        for l in stack.levels {
+          items = level_logs(w, l, items);
+        }
         if (why != "") {
           items = items.append(message(why, true));
         }

@@ -10,9 +10,9 @@ Each function then does what a person does. `tap` and `hold` find an element by 
 
 After each event, the simulator draws a frame, as the display does at the next vsync. So the layout that the test reads is the layout that the person sees.
 
-`themed` sets the dark theme, and `scaled` sets the font size of the system.
+`themed` sets the dark theme, and `scaled` sets the font size of the system. `kept` keeps the loop alive after a Destroy event, as `android.keep_alive` does, so a test can check what the program closes.
 
-`texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `finished` tells whether the program closed the app, and `keyboard` gives the text that the keyboard of the system shows. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
+`texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `says` also finds an element by what an accessibility service reads for it, such as a button of icons. `finished` tells whether the program closed the app, and `keyboard` gives the text that the keyboard of the system shows. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
 
 The simulator keeps the clock. A touch, a frame and a wait each take the time that they take on a phone: a frame is 16 ms.
 
@@ -76,6 +76,7 @@ function said(items: android.AccessItem[]): string {
 // A device with a window of w by h pixels at the time `now` in ms.
 function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, now: i64): ui.Device {
   return ui.Device {
+    stays: (): boolean => testkit.read_text(dir + "/kept") == "true",
     size: (window: usize): (i32, i32) => (w, h),
     density: (): f64 => d,
     dark: (): boolean => dark,
@@ -107,6 +108,13 @@ pub function start[S, M](own state: S, own p: ui.Program[S, M], fonts: text.Font
 // default font size.
 pub function scaled[S, M](own s: Sim[S, M], font: f64): Sim[S, M] {
   return event(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: font, now: s.now }, android.WindowResized(android.Window { ptr: 1 as usize }));
+}
+
+// The simulator with the loop kept alive after a Destroy, as
+// `android.keep_alive` keeps it, or not.
+pub function kept[S, M](own s: Sim[S, M], on: boolean): Sim[S, M] {
+  let ok = write_file(s.dir + "/kept", on.to_string());
+  return s;
 }
 
 // The simulator in the dark theme, or in the light theme.
@@ -385,6 +393,12 @@ pub function texts[S, M](s: Sim[S, M]): string[] {
 // The screen shows the text `t`.
 pub function shows[S, M](s: Sim[S, M], t: string): boolean {
   return texts(s).contains(t);
+}
+
+// The screen shows the text `label`, or an element says it, as a button
+// of icons does for an accessibility service.
+pub function says[S, M](s: Sim[S, M], label: string): boolean {
+  return place_of(s, label, 0).is_some();
 }
 
 // The program closed the app.

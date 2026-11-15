@@ -25,10 +25,11 @@ function q(s: string): string {
   return text.quote(s.as_bytes());
 }
 
-// age's errorf of age-plugin-pq. The port does not write the line that
-// tells the user to report the error.
+// age's errorf of age-plugin-pq: the error, and the line that tells the user
+// where to report it.
 function fail(msg: string): i32 {
   eprint("age-plugin-pq: error: " + msg);
+  eprint("age-plugin-pq: report unexpected or unhelpful errors at https://filippo.io/age/report");
   return 1;
 }
 

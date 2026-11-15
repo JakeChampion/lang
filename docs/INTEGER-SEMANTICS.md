@@ -2,7 +2,7 @@
 
 Status: [policy] decided integer semantics.
 
-Fern's integer types (`u8`, `i32`/`u32`, `i64`/`u64`, and the
+Fern's integer types (`u8`, `i16`/`u16`, `i32`/`u32`, `i64`/`u64`, and the
 target-width `usize`) have **fully portable, never-trapping**
 semantics: every integer operation produces the same result on every
 backend (`interp`, `arm64`, `arm64-darwin`, `x86_64`, `wasm`) for the
@@ -17,7 +17,8 @@ the float edges are under-specified, the integer edges are pinned.
 
 An implicit numeric conversion must preserve every source value.
 The fixed integer conversions are `i32` to `i64`, `u8` to
-`u32`/`u64`/`i32`/`i64`, and `u32` to `u64`/`i64`.
+`u16`/`i16`/`u32`/`u64`/`i32`/`i64`, `u16` to `u32`/`u64`/`i32`/`i64`, `i16`
+to `i32`/`i64`, and `u32` to `u64`/`i64`.
 The float conversion is `f32` to `f64`.
 Other conversions require an explicit `as` cast.
 
@@ -35,6 +36,10 @@ For example, an `i32` addition still wraps at 32 bits before its result converts
 Stored arrays and other containers retain their element types.
 A new array literal can convert each element before storage.
 
+A cast converts in the same way.
+A literal expression computes as `i32`, or as `i64` when one of its literals does not fit `i32`.
+Thus `(65536 * 65536) as u64` is 0, and `(300 + 1) as u8` is 45.
+
 ## Wrapping arithmetic
 
 `+`, `-`, `*`, and `<<` **wrap** (two's-complement modular arithmetic)
@@ -43,7 +48,8 @@ so on an unsigned type it wraps too.
 
 ```
 255u8 + 1   == 0          // wraps at 8 bits
-2147483647 + 1 == -2147483648   // i32
+65535u16 + 1 == 0         // wraps at 16 bits
+32767i16 + 1 == -32768    // i16
 100000 * 100000 == 1410065408   // i32, mod 2^32
 -(5 as u32) == 4294967291 // u32, mod 2^32
 ```
@@ -424,3 +430,13 @@ the whole integer matrix (every width × signedness × operator,
 including the division edges above) and asserts the interpreter and
 every codegen backend agree. `TestNumericProperty_Regressions` pins
 the specific edge programs; `FuzzNumericProperty` is the deeper search.
+
+`TestSelfHostIntegerEdgeMatrix` (`internal/testing/e2ecompiler`) is the
+deterministic half. For each integer type it takes the numbers at the two
+ends of the type, the numbers next to them, and the shift counts at and next
+to the width. It applies each operator to each pair: the wrapping
+operators, the saturating operators, the checked operators, `as` and `as?`.
+The compiler's interpreter, x86-64, arm64 and wasm must print the same
+results. Each result is computed two times, from operands that the compiler
+cannot see and from operands that it can fold, and the two must be equal.
+The lines of `usize` are compared only between the targets of 64 bits.

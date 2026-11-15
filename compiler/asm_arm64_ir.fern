@@ -1907,7 +1907,7 @@ const COLD_CLOBBERS: i32 = 1 | 1 << 8 | 1 << 9 | 1 << 10 | 1 << 12;
 
 const COLD_SLOTS: i32 = 8;
 
-function ssa_cold_fixed(f: ssa.SFunc, r: irtables.Lowered, cold: i32[]): ssafixed.Table {
+function ssa_cold_fixed(f: ssa.SFunc, r: irtables.Lowered, cold: i32[], deny: i64): ssafixed.Table {
   let masks: i32[] = [];
   for kind in cold {
     let mask = 0;
@@ -1916,7 +1916,7 @@ function ssa_cold_fixed(f: ssa.SFunc, r: irtables.Lowered, cold: i32[]): ssafixe
     }
     masks = masks.append(mask);
   }
-  return ssafixed.with_clobbers(ssafixed.table(0, ssa_nregs(), ssa_word_masks(f, r)), 0, ssa_nregs(), masks);
+  return ssafixed.with_deny(ssafixed.with_clobbers(ssafixed.table(0, ssa_nregs(), ssa_word_masks(f, r)), 0, ssa_nregs(), masks), deny);
 }
 
 // A ret_word writes word n of the result to x(n+1) at once, so from there to
@@ -2107,7 +2107,7 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
 }
 
 function ssa_imm_right(): string[] {
-  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "div_s", "div_u", "rem_s", "rem_u"];
+  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "div_s", "div_u", "rem_s", "rem_u", "vishl", "vishru", "vishrs"];
 }
 
 function ssa_imm_left(): string[] {
@@ -2277,7 +2277,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || ssa.is_unary_load(what)) {
     return true;
   }
-  if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
+  if (what == "int_cast:u8" || what == "int_cast:u16" || what == "int_cast:i16" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
   return what.starts_with("rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
@@ -2290,6 +2290,9 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   }
   if (k == ssa.UNARY) {
     return ssa_unary_known(ins.str);
+  }
+  if (k == ssa.TERNARY) {
+    return ins.str == "ffma";
   }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
@@ -2349,6 +2352,12 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   if (what == "int_cast:u8") {
     return "    and " + d + ", " + d + ", #255\n";
   }
+  if (what == "int_cast:u16") {
+    return "    uxth " + w + ", " + w + "\n";
+  }
+  if (what == "int_cast:i16") {
+    return "    sxth " + d + ", " + w + "\n";
+  }
   if (what == "int_cast:i32") {
     return "    sxtw " + d + ", " + w + "\n";
   }
@@ -2381,6 +2390,12 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   }
   if (what == "int_cast:u8") {
     return "    and " + d + ", " + src + ", #255\n";
+  }
+  if (what == "int_cast:u16") {
+    return "    uxth " + w + ", " + ws + "\n";
+  }
+  if (what == "int_cast:i16") {
+    return "    sxth " + d + ", " + ws + "\n";
   }
   if (what.starts_with("rotr:")) {
     let n = util.i32_to_string(ssa.rotr_count(what));
@@ -2510,14 +2525,14 @@ function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pu
 
 // The ops on integer lanes. `ins.imm` is the width of a lane: 8, 16 or 32
 // bits. An op that a width does not have is a refusal that names the op.
-function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let id = ir.kind_id(b);
   let w = ins.imm;
   if (w != 8 && w != 16 && w != 32) {
     ircore.unsupported_op_refuse(id, "arm64");
   }
   if (id >= ir.K_VISHL) {
-    return ssa_vint_shift(ins, b, reg_of, s);
+    return ssa_vint_shift(ins, b, reg_of, imm, s);
   }
   if (id < ir.K_VINEG || id == ir.K_VIMUL) {
     return ssa_vint_bin(ins, b, reg_of, s);
@@ -2614,12 +2629,26 @@ function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitS
 
 // A shift of each lane by one count. The count is modulo the lane width.
 // A shift to the right is a shift to the left by the negative count.
-function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let w = ins.imm;
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
-  s = ssa_load(reg_of, ins.args[1], "x16", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "d1");
   let d = ssa_fdst(reg_of, ins.result);
+  if (imm.is_imm[ins.args[1]]) {
+    // A count that the compiler knows is in the instruction. A shift to
+    // the right by 0 has no encoding, and it is a copy.
+    let count = imm.value[ins.args[1]] as i32 & w - 1;
+    let mnem = if (b == "vishl") { "shl " } else if (b == "vishrs") { "sshr " } else { "ushr " };
+    if (count == 0) {
+      if (a != d) {
+        s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(a) + "\n");
+      }
+    } else {
+      s = s.write("    " + mnem + ssa_viarr(d, w) + ", " + ssa_viarr(a, w) + ", #" + util.i32_to_string(count) + "\n");
+    }
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
+  s = ssa_load(reg_of, ins.args[1], "x16", s);
   s = s.write("    and w16, w16, #" + util.i32_to_string(w - 1) + "\n");
   if (b != "vishl") {
     s = s.write("    neg w16, w16\n");
@@ -2677,10 +2706,10 @@ function ssa_vi_half(d: string, w: i32): string {
   return "v" + slice_unchecked(d, 1, d.len()) + arr;
 }
 
-function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
   if (ir.is_lane_int_kind(ir.kind_id(b))) {
-    return ssa_vint(ins, b, reg_of, s);
+    return ssa_vint(ins, b, reg_of, imm, s);
   }
   if (ir.is_lane_shape_kind(ir.kind_id(b))) {
     return ssa_vint_shape(ins, b, reg_of, s);
@@ -2895,9 +2924,9 @@ function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {
   return ssa.lane_inst(ins) || ins.kind_tag == ssa.COPY && ins.result < fr.lanes.len() && fr.lanes[ins.result];
 }
 
-function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   if (ssa.lane_inst(ins)) {
-    return ssa_lane_inst(ins, reg_of, s);
+    return ssa_lane_inst(ins, reg_of, imm, s);
   }
   return ssa_vcopy(ins, reg_of, s);
 }
@@ -2912,6 +2941,9 @@ function ssa_vcopy(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
+// fmla and bsl read their destination as the addend or the mask c. A
+// destination that holds a or b and not c takes c last: bif and bit keep the
+// select in place, and fmla goes through the scratch d0.
 function ssa_vternary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   s = ssa_fread(reg_of, ins.args[1], "d2", s);
@@ -2919,14 +2951,26 @@ function ssa_vternary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   let a = ssa_fsrc(reg_of, ins.args[0], "d1");
   let b = ssa_fsrc(reg_of, ins.args[1], "d2");
   let c = ssa_fsrc(reg_of, ins.args[2], "d3");
+  let home = ssa_fhome(reg_of, ins.result);
   let d = ssa_fdst(reg_of, ins.result);
+  let fma = ssa.lane_base(ins.str) == "vfma";
+  if (c != d && (d == a || d == b)) {
+    if (!fma) {
+      let form = if (d == a) { "    bif " + ssa_vbytes(d) + ", " + ssa_vbytes(b) } else { "    bit " + ssa_vbytes(d) + ", " + ssa_vbytes(a) };
+      return s.write(form + ", " + ssa_vbytes(c) + "\n");
+    }
+    d = "d0";
+  }
   if (c != d) {
     s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(c) + "\n");
   }
-  if (ssa.lane_base(ins.str) == "vfma") {
+  if (fma) {
     s = s.write("    fmla " + ssa_varr(d, ins.imm) + ", " + ssa_varr(a, ins.imm) + ", " + ssa_varr(b, ins.imm) + "\n");
   } else {
     s = s.write("    bsl " + ssa_vbytes(d) + ", " + ssa_vbytes(a) + ", " + ssa_vbytes(b) + "\n");
+  }
+  if (d == "d0" && home != "") {
+    return s.write("    mov " + ssa_vbytes(home) + ", v0.16b\n");
   }
   return ssa_fput(reg_of, ins.result, d, s);
 }
@@ -3023,6 +3067,15 @@ function ssa_fmath_op(what: string): string {
     "fabs" => "fabs",
     _ => "",
   };
+}
+
+function ssa_ffma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  s = ssa_fread(reg_of, ins.args[1], "d2", s);
+  s = ssa_fread(reg_of, ins.args[2], "d3", s);
+  let d = ssa_fdst(reg_of, ins.result);
+  s = s.write("    fmadd " + d + ", " + ssa_fsrc(reg_of, ins.args[0], "d1") + ", " + ssa_fsrc(reg_of, ins.args[1], "d2") + ", " + ssa_fsrc(reg_of, ins.args[2], "d3") + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
 }
 
 function ssa_funary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -3246,12 +3299,18 @@ function ssa_back_copy(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSav
 
 // An instruction whose caller registers are saved around its call.
 function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, around: i32, own s: asmcore.EmitState): asmcore.EmitState {
-  if (around != 0 && asmcore.ssa_inline_rc_dec(blk.insts[ii], s)) {
+  if (around != 0 && (asmcore.ssa_inline_rc_dec(blk.insts[ii], s) || ssa_box_release(blk.insts[ii], s))) {
     return ssa_rc_dec(blk.insts[ii], reg_of, lp, around, fr.cold_base, asmcore.ssa_x0_forget(s));
   }
   s = ssa_cold_save(s, around, fr.cold_base, false);
   s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
   return ssa_cold_save(s, around, fr.cold_base, true);
+}
+
+// The helper release of a record or a variant, which `ssa_rc_dec` tests
+// inline at a position where the call saves the caller registers.
+function ssa_box_release(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+  return ssa.inline_release(ins) && ins.imm == 7 && !s.rc_free_debug && !s.size;
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -3281,7 +3340,8 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base
   s = ssa_bcond(s, CC_GT, dec);
   s = ssa_tbz(s, true, "w5", 31, kept);
   s = ssa_cold_save(s, around, base, false);
-  s = ssa_helper_entry(ins, reg_of, ".u", s);
+  // A helper release has no entry past its tests, so it takes them again.
+  s = ssa_helper_entry(ins, reg_of, if (ins.imm == 7) { ".r" } else { ".u" }, s);
   s = ssa_cold_save(s, around, base, true);
   s = ssa_b(s, done);
   s = s.lab_def(dec);
@@ -3445,6 +3505,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == ssa.ST_AT && (ins.str == "i32" || ins.str == "u32")) {
     return ssa_ldst(s, false, ssa_wreg(b), a, ins.imm);
   }
+  if (k == ssa.ST_AT && ssa_elem_bytes(ins.str) == 2) {
+    return ssa_half(s, "strh", ssa_wreg(b), a, ins.imm);
+  }
   if (k == ssa.ST_AT && ins.str == "u8") {
     if (ins.imm <= 4095) {
       return ssa_strb(s, ssa_wreg(b), a, ins.imm);
@@ -3500,24 +3563,30 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     s = s.write("    add x5, " + a + ", " + b + ", lsl #2\n");
     return ssa_ldst(s, false, ssa_wreg(c), "x5", 8);
   }
+  if (ssa_elem_bytes(ins.str) == 2) {
+    s = s.write("    add x5, " + a + ", " + b + ", lsl #1\n");
+    return ssa_half(s, "strh", ssa_wreg(c), "x5", 8);
+  }
   s = ssa_addsub_imm(s, false, "x5", b, 1);
   return ssa_ldst_reg(s, false, c, a, "x5");
 }
 
-// The bytes of an element that an access marks "u8", "i32" or "u32"; any other
-// mark is a word.
+// The bytes of an element that an access marks; a word has no mark.
 function ssa_elem_bytes(mark: string): i32 {
-  if (mark == "u8") {
-    return 1;
-  }
-  return if (mark == "i32" || mark == "u32") { 4 } else { 8 };
+  let bits = ssa.mark_bits(mark);
+  return if (bits == 0) { 8 } else { bits / 8 };
 }
 
-// A read of element `b` of the array at `a` into `d`, which "i32" extends with the sign.
+// A read of element `b` of the array at `a` into `d`, which an "i16" or an
+// "i32" extends with the sign.
 function ssa_elem_read(s: asmcore.EmitState, mark: string, d: string, a: string, b: string): asmcore.EmitState {
   if (mark == "u8") {
     s = ssa_addsub_rr(s, false, "x5", a, b);
     return ssa_ldrb(s, ssa_wreg(d), "x5", 8);
+  }
+  if (ssa_elem_bytes(mark) == 2) {
+    s = s.write("    add x5, " + a + ", " + b + ", lsl #1\n");
+    return ssa_load16(s, mark == "i16", d, "x5", 8);
   }
   if (ssa_elem_bytes(mark) == 4) {
     s = s.write("    add x5, " + a + ", " + b + ", lsl #2\n");
@@ -3536,6 +3605,9 @@ function ssa_elem_read_at(s: asmcore.EmitState, mark: string, d: string, a: stri
   if (bytes == 1) {
     return ssa_ldrb(s, ssa_wreg(d), a, 8 + c);
   }
+  if (bytes == 2) {
+    return ssa_load16(s, mark == "i16", d, a, 8 + 2 * c);
+  }
   if (bytes == 4) {
     return ssa_load32(s, mark == "i32", d, a, 8 + 4 * c);
   }
@@ -3546,6 +3618,9 @@ function ssa_elem_write_at(s: asmcore.EmitState, mark: string, v: string, a: str
   let bytes = ssa_elem_bytes(mark);
   if (bytes == 1) {
     return ssa_strb(s, ssa_wreg(v), a, 8 + c);
+  }
+  if (bytes == 2) {
+    return ssa_half(s, "strh", ssa_wreg(v), a, 8 + 2 * c);
   }
   if (bytes == 4) {
     return ssa_ldst(s, false, ssa_wreg(v), a, 8 + 4 * c);
@@ -3582,6 +3657,27 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
   let v = ssa_src(reg_of, ins.args[2], "x6");
   s = ssa_load(reg_of, ins.args[2], v, s);
   return ssa_elem_write_at(s, ins.str, v, a, c);
+}
+
+// A 2-byte load into the 64-bit `d`, which `signed` extends with the sign.
+function ssa_load16(s: asmcore.EmitState, signed: boolean, d: string, base: string, off: i32): asmcore.EmitState {
+  if (signed) {
+    return ssa_half(s, "ldrsh", d, base, off);
+  }
+  return ssa_half(s, "ldrh", ssa_wreg(d), base, off);
+}
+
+// A halfword access `op` of `reg` at `base` + `off`.
+function ssa_half(s: asmcore.EmitState, op: string, reg: string, base: string, off: i32): asmcore.EmitState {
+  if (off >= 0 && off % 2 == 0 && off / 2 <= 4095) {
+    return s.write("    " + op + " " + reg + ", [" + base + ", #" + util.i32_to_string(off) + "]\n");
+  }
+  let scratch = if (reg == "x17" || reg == "w17" || base == "x17") { "x16" } else { "x17" };
+  s = s.write("    movz " + scratch + ", #" + util.i32_to_string(off & 65535) + "\n");
+  if (off >> 16 != 0) {
+    s = s.write("    movk " + scratch + ", #" + util.i32_to_string(off >> 16 & 65535) + ", lsl #16\n");
+  }
+  return s.write("    " + op + " " + reg + ", [" + base + ", " + scratch + "]\n");
 }
 
 // A 4-byte load into the 64-bit `d`, which `signed` extends with the sign.
@@ -3696,6 +3792,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
     "str_cmp" => s.need("str_cmp"),
     "arr_slice" => s.need("arr_slice"),
     "arr_slice_u8" => s.need("arr_slice_u8"),
+    "arr_slice_u16" => s.need("arr_slice_u16"),
     "arr_slice_u32" => s.need("arr_slice_u32"),
     "str_from_bytes_u8" => s.need("str_from_bytes_u8"),
     "str_from_bytes_range_u8" => s.need("str_from_bytes_range_u8"),
@@ -3997,9 +4094,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   } else if (ins.str == "alloc_uninit_u8" || ins.str == "alloc_uninit") {
     s = s.need("alloc_bytes_uninit");
     sym = "__fern_alloc_bytes_uninit";
-  } else if (ins.str == "alloc_u8_u32") {
-    s = s.need("alloc_u32");
-    sym = "__fern_alloc_u32";
+  } else if (ins.str == "alloc_u8_u16" || ins.str == "alloc_u8_u32") {
+    let w = slice_unchecked(ins.str, 9, ins.str.len()).to_owned();
+    s = s.need("alloc_" + w);
+    sym = "__fern_alloc_" + w;
   } else if (asmcore.packed_shift(ins.str) > 0 && ins.str.starts_with("arr_push")) {
     s = s.need(ins.str.replace("owned_", ""));
     sym = "__fern_" + ins.str;
@@ -4098,6 +4196,9 @@ function arr_push_inline_packed(sym: string, l: string, unique: boolean, shift: 
   if (shift == 3) {
     s = ssa_addsub_rr(s, false, "x3", "x0", "x2");
     s = ssa_strb(s, "w1", "x3", 8);
+  } else if (shift == 2) {
+    s = s.write("    add x3, x0, x2, lsl #1\n");
+    s = ssa_half(s, "strh", "w1", "x3", 8);
   } else {
     s = s.write("    add x3, x0, x2, lsl #2\n");
     s = ssa_ldst(s, false, "w1", "x3", 8);
@@ -4168,7 +4269,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 
 struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean }
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, narrow: boolean }
 
 // What deciding a fusion reads: the use counts and the immediates. The
 // allocator decides with it before a frame exists.
@@ -4179,14 +4280,14 @@ function ssa_fuse_view(fr: SsaFrame): FuseView {
 }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, narrow: false };
 }
 
 function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boolean): ssaprepare.Fusion[] {
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: fu.narrow });
 }
 
 function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
@@ -4202,7 +4303,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let n = 1;
   let inverted = false;
   if (last.kind_tag == ssa.UNARY && last.str == "!") {
-    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false };
+    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, narrow: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -4217,18 +4318,23 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa.unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
+    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4, narrow: false };
   }
   if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
   }
   if (ssa.float_cmp(cmp.str)) {
-    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false };
   }
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+    return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false });
   }
-  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+  return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false });
+}
+
+function ssa_narrow_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
+  let c = asmcore.narrow_compare(fv.uses, fv.imm, blk, cmp, fu.tag, asmcore.FusedCompare { n: fu.n, a: fu.a, b: fu.b, narrow: false });
+  return SsaFuse { ...fu, n: c.n, a: c.a, b: c.b, narrow: c.narrow };
 }
 
 function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
@@ -4294,9 +4400,9 @@ function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
 
 function ssa_cmp_flags(fv: FuseView, cmp: ssa.SInst): SsaFuse {
   if (!ssa.float_cmp(cmp.str) && fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false };
   }
-  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false };
 }
 
 function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
@@ -4562,7 +4668,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return asmcore.ssa_line_loc(ins, s);
   }
   if (ssa_lane_arm_at(ins, fr)) {
-    return ssa_lane_arm(ins, reg_of, s);
+    return ssa_lane_arm(ins, reg_of, fr.imm, s);
   }
   if ((k == ssa.CONST_INT || k == ssa.CONST_I64) && fr.imm.is_imm[ins.result]) {
     return s;
@@ -4572,6 +4678,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   }
   if (k == ssa.UNARY && ssa_funary_direct(ins.str)) {
     return ssa_funary(ins, reg_of, s);
+  }
+  if (k == ssa.TERNARY) {
+    return ssa_ffma(ins, reg_of, s);
   }
   if (k == ssa.UNARY && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) {
     let rd = ssa_fhome(reg_of, ins.result);
@@ -4900,6 +5009,9 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   s = ssa_read(reg_of, fu.a, "x4", s);
   let bx = ssa_rhs_scratch(reg_of, fu.b, s);
   s = ssa_read_rhs(fr, reg_of, fu.b, bx, s);
+  if (fu.narrow) {
+    return s.write("    cmp " + ssa_wreg(ssa_src(reg_of, fu.a, "x4")) + ", " + ssa_rhs32(ssa_rhs(fr, reg_of, fu.b, bx)) + "\n");
+  }
   if (s.records()) {
     let w = ssa_addsub_word(true, "", ssa_src(reg_of, fu.a, "x4"), fr, reg_of, fu.b, bx);
     if (w >= 0) {
@@ -4944,14 +5056,14 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   if (ssa.has_phis(f, fr.blk_pos, h.term.t) || ssa.has_phis(f, fr.blk_pos, h.term.f)) {
     return false;
   }
-  let n = 0;
-  for ins in h.insts {
-    let imm = (ins.kind_tag == ssa.CONST_INT || ins.kind_tag == ssa.CONST_I64) && fr.imm.is_imm[ins.result];
-    if (ins.kind_tag != ssa.PHI && !imm) {
-      n += 1;
+  let tail = h.insts.len() - ssa_fuse(ssa_fuse_view(fr), h).n;
+  for k in 0..tail {
+    let ins = h.insts[k];
+    if (ins.kind_tag != ssa.PHI && !(asmcore.immediate_inst(ins) && fr.imm.is_imm[ins.result])) {
+      return false;
     }
   }
-  return n == ssa_fuse(ssa_fuse_view(fr), h).n;
+  return true;
 }
 
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
@@ -5150,9 +5262,9 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let f = formed.f;
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f) };
   let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
-  let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
+  let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
-  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds), call_kinds, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
+  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
   let reg_of = alloc.reg_of;
   let lp = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
@@ -8405,7 +8517,7 @@ function arr_push_empty(s: asmcore.EmitState, nonempty: string, frame: string, f
 
 // Rounds the x0 elements of the array op `o` up to the words they take.
 function reserve_words(o: ir.Op): string {
-  let shift = asmcore.elem_shift(o);
+  let shift = ir.elem_shift(o);
   if (shift == 0) {
     return "";
   }
@@ -8430,16 +8542,23 @@ function emit_alloc_packed(s: asmcore.EmitState, sfx: string, shift: i32): asmco
   return s.write(l + "_empty:\n    adrp x0, " + empty + "\n    add x0, x0, :lo12:" + empty + "\n    ret\n");
 }
 
-// The appends and allocations of the arrays that pack bytes or 4-byte integers.
+// The appends and allocations of the arrays that pack bytes, 2-byte or
+// 4-byte integers.
 function emit_packed_arrays(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_push_u8")) {
     s = emit_arr_push_packed(s, "u8", 3, ".Lapou");
+  }
+  if (s.has_need("arr_push_u16")) {
+    s = emit_arr_push_packed(s, "u16", 2, ".Lapoh");
   }
   if (s.has_need("arr_push_u32")) {
     s = emit_arr_push_packed(s, "u32", 1, ".Lapow");
   }
   if (s.has_need("alloc_bytes") || s.has_need("alloc_bytes_uninit")) {
     s = emit_alloc_bytes(s);
+  }
+  if (s.has_need("alloc_u16")) {
+    s = emit_alloc_packed(s, "u16", 2);
   }
   if (s.has_need("alloc_u32")) {
     s = emit_alloc_packed(s, "u32", 1);
@@ -8528,6 +8647,9 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
 function packed_store(v: string, t: string, b: string, i: string, shift: i32): string {
   if (shift == 3) {
     return "    add " + t + ", " + b + ", " + i + "\n    strb " + v + ", [" + t + ", #8]\n";
+  }
+  if (shift == 2) {
+    return "    add " + t + ", " + b + ", " + i + ", lsl #1\n    strh " + v + ", [" + t + ", #8]\n";
   }
   return "    add " + t + ", " + b + ", " + i + ", lsl #2\n    str " + v + ", [" + t + ", #8]\n";
 }
@@ -10645,6 +10767,8 @@ function alloc_take(s: asmcore.EmitState, cls: string): asmcore.EmitState {
   s = s.write("    cbz x2, .Lalloc_nofl\n");
   s = s.write("    ldr x0, [x2]\n");
   s = s.write("    str x0, [x1, " + cls + ", lsl #3]\n");
+  // The first word of a raw block held the address of the next free block.
+  s = s.write("    str xzr, [x2]\n");
   return s.write("    mov x0, x2\n");
 }
 
@@ -11458,8 +11582,9 @@ function emit_rt_collections_and_proc_part_3(s: asmcore.EmitState, darwin: boole
 }
 
 function emit_rt_collections_and_proc_part_4(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  if (s.has_need("arr_slice_u32")) {
-    s = emit_runtime("__fern_arr_slice_u32", s);
+  let slices = asmcore.packed_slice_roots(s);
+  if (slices != "") {
+    s = emit_runtime(slices, s);
   }
   if (s.has_need("arr_slice_u8")) {
     s = emit_runtime("__fern_arr_slice_u8", s);

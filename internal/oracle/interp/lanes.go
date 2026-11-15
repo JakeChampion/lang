@@ -3,6 +3,7 @@ package interp
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -152,7 +153,7 @@ func laneWindow(name string, arr Value, idx Value, lanes int) (Array, int, error
 	}
 	i := int(n)
 	if i < 0 || i+lanes > len(a.Elems()) {
-		return Array{}, 0, fmt.Errorf("%s: lanes %d to %d are out of bounds for length %d", name, i, i+lanes-1, len(a.Elems()))
+		return Array{}, 0, indexAbort(CauseArrOOB, strconv.Itoa(i), len(a.Elems()))
 	}
 	return a, i, nil
 }
@@ -276,7 +277,11 @@ func (i *Interp) registerLaneBuiltins() {
 			if err != nil {
 				return nil, err
 			}
+			// The f64 lanes round one time. The f32 lanes round two times.
 			return mapLanes(ls, func(xs []float64) float64 {
+				if width == 64 {
+					return math.FMA(xs[0], xs[1], xs[2])
+				}
 				return round(width, round(width, xs[0]*xs[1])+xs[2])
 			}), nil
 		}}
@@ -527,7 +532,7 @@ var intLaneBinary = map[string]func(l Lanes, x, y int64) int64{
 // intLaneVerbs are the verbs of the builtins of the integer lane type of
 // `like`.
 func intLaneVerbs(like Lanes) []string {
-	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "with", "shl", "shr"}
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "load_view", "with", "shl", "shr"}
 	if like.Width <= 16 {
 		verbs = append(verbs, "add_sat", "sub_sat")
 		if !like.Signed {
@@ -728,6 +733,8 @@ func (i *Interp) registerIntegerLanes(like Lanes) {
 		}
 		return out, nil
 	}
+	// An array holds the bytes of a view also.
+	builtins["load_view"] = builtins["load"]
 	builtins["with"] = func(args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("%swith: expected 3 args, got %d", p, len(args))

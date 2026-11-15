@@ -1,0 +1,45 @@
+// a[at:at + n] = v for elements of 2^shift bytes, with the low bytes of v.
+function __fern_arr_fill(own a: i32[], at: i32, n: i32, v: i64, shift: i32): i32[] {
+  if (n <= 0) {
+    return a;
+  }
+  if (at as u32 > a.len() as u32 || n > a.len() - at) {
+    __fern_oob_abort();
+  }
+  let out = __fern_arr_sole(a, shift);
+  let p = __raw_arr_ptr(out) + 8 + (at as usize << shift as usize);
+  let end = p + (n as usize << shift as usize);
+  if (v == 0i64 || shift == 0) {
+    let byte = v as i32;
+    while (p < end) {
+      let k = end - p;
+      if (k > 1073741824) {
+        k = 1073741824;
+      }
+      __memset(p, byte, k as i32);
+      p += k;
+    }
+  } else if (shift == 1) {
+    let w = (v & 65535i64) * 281479271743489i64;
+    while (end - p >= 8) {
+      __store_i64(p, w);
+      p += 8;
+    }
+    while (p < end) {
+      __store_u8(p, v as i32);
+      __store_u8(p + 1, (v >> 8i64) as i32);
+      p += 2;
+    }
+  } else if (shift == 2) {
+    while (p < end) {
+      __store_i32(p, v as i32);
+      p += 4;
+    }
+  } else {
+    while (p < end) {
+      __store_i64(p, v);
+      p += 8;
+    }
+  }
+  return out;
+}

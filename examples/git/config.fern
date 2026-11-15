@@ -38,6 +38,17 @@ pub function (c: Config) get(name: string): Option[string] {
   return found;
 }
 
+// Each value of the name `name`, in the order of the file.
+pub function (c: Config) all(name: string): string[] {
+  let out: string[] = [];
+  for e in c.entries {
+    if (e.name == name) {
+      out = out.append(e.value);
+    }
+  }
+  return out;
+}
+
 // The value of `name` as a boolean, or `otherwise` when it is not set.
 pub function (c: Config) flag(name: string, otherwise: boolean): boolean {
   let Some(v) = c.get(name) else {

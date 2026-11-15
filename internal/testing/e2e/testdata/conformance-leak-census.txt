@@ -17,8 +17,10 @@ a_binding_arm_can_follow_a_literal_arm               0
 a_branch_that_returns_gives_its_if_expression_no_type 0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_closure_in_a_generic_function_captures_a_function_of_its_type_parameter 0
+a_cast_of_a_literal_expression_computes_at_its_own_type 0
 a_const_in_a_tuple_or_payload_pattern_matches_its_value 0
 a_deep_type_argument_that_does_not_grow_is_accepted  0
+a_drop_frees_a_node_that_both_fields_hold            0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0
 a_float_literal_array_takes_the_width_of_its_first_use 0
 a_function_named_like_a_safe_intrinsic_shadows_it    0
@@ -28,6 +30,7 @@ a_generic_call_takes_its_type_arguments_from_its_first_use 0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
+a_generic_struct_literal_takes_the_float_field_of_its_declared_type 0
 a_handler_fans_out_on_its_scheduler                  2
 a_literal_handed_to_reactor_wait_is_fresh            0
 a_literal_local_takes_the_type_of_an_index_read      0
@@ -359,6 +362,7 @@ explicit_type_argument_names_union_or_option         0
 f32_array_element                                    0
 f32_array_param                                      0
 f64_elements                                         0
+f64_fma                                              0
 f64_if_expr                                          0
 f64_sqrt                                             0
 f64_tryop_widen                                      0
@@ -470,6 +474,10 @@ handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
 handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
+handle_foreach_destructured_field_own                0
+handle_foreach_field_local_own                       0
+handle_let_literal_in_returning_arm                  0
+handle_literal_reads_scalar_field_of_base            0
 handle_nested_fields_close_from_owned_root           0
 handle_payload_closes_from_local_match               0
 handle_payload_closes_in_loop_from_unpack            0
@@ -490,6 +498,8 @@ hotp_digits_out_of_range_stops                       1
 http_content_type                                    0
 http_cookies                                         0
 hyperbolic_boundaries                                0
+i16_array_elements_extend_the_sign                   0
+i16_wraps_at_16_bits                                 0
 i32_methods                                          0
 i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0
@@ -546,6 +556,7 @@ int_div_rem_by_zero                                  0
 int_extend_signedness                                0
 int_min_arithmetic                                   0
 int_saturating_ops                                   0
+int_saturating_product_of_wide_operands              0
 int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
@@ -577,6 +588,7 @@ lambda_tuple_return                                  0
 lanes_array_memory                                   0
 lanes_calls                                          0
 lanes_f32x4_ops                                      0
+lanes_f64x2_fma                                      0
 lanes_f64x2_ops                                      0
 lanes_generic_instances                              0
 lanes_integer_ops                                    0
@@ -584,6 +596,7 @@ lanes_integer_shapes                                 0
 lanes_map_fusion                                     0
 lanes_methods                                        0
 lanes_receivers                                      0
+lanes_select_in_place                                0
 lanes_spill_pressure                                 0
 lanes_through_calls                                  0
 lanes_u8x16_ops                                      0
@@ -741,6 +754,8 @@ oob_index_wrapped                                    0
 oob_index_wrapped_guard                              0
 # The program stops through exit(134), which does not unwind. The copy that `.with` makes before its bounds check is live.
 oob_index_write                                      1
+oob_lane_load_past_length                            0
+oob_lane_store_past_length                           1
 oob_loop_guard_past_length                           0
 oob_slice_negative_start                             0
 oob_slice_range                                      0
@@ -1244,6 +1259,7 @@ slice_unchecked_oob                                  0
 slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
+socket_close_wakes_a_parked_task                     4
 socket_copy_refused_after_close                      0
 socket_from_fd                                       0
 socket_handle_keeps_its_close_count                  0
@@ -1380,6 +1396,11 @@ two_nones_share_sentinel                             0
 type_args_trailing_comma                             0
 type_param_name_collision                            0
 typed_json_protobuf_errors                           0
+u16_and_i16_checked_and_saturating_ops               0
+u16_and_i16_narrow_with_as                           0
+u16_and_i16_widen_without_a_cast                     0
+u16_array_elements_take_two_bytes                    0
+u16_wraps_at_16_bits                                 0
 u32_large_to_f64_back                                0
 u32_literal_suffix_width                             0
 u32_literal_unsigned_ops                             0
@@ -1432,6 +1453,7 @@ variant_payload_expected_type                        0
 variant_payload_from_array_field                     0
 vec_generic_impls                                    0
 vec_lane_kernels                                     0
+view_beside_its_array_in_a_call                      0
 view_of_branch_value                                 0
 view_param_returned_after_loop                       0
 views_in_aggregates_stay_local                       0

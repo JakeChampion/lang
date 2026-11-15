@@ -201,6 +201,18 @@ ui.canvas("dial|" + m.angle.to_string(), (f: draw.Frame, x: i32, y: i32, w: i32,
 The key names the pixels. The module keeps the picture of each key on
 the GPU, and calls your function again only for a new key.
 
+## Icons
+
+`std/android/icons` draws the icons of a media app for a canvas: `play`,
+`pause`, `skip`, `shuffle`, `repeat`, `heart`, `dots`, `timer`,
+`lyrics`, `queue`, `gear`, `search` and `chevron`. An icon fills the
+middle of its box in the color that you give. A button of icons has no
+text, so give it the text that TalkBack reads:
+
+```fern
+ui.canvas("play", icons.play(theme.ink)).width(48.0).height(48.0).on_tap(Toggle).described("Play")
+```
+
 ## Dialogs
 
 A dialog is an element over the screen. `.modal()` keeps the touches off

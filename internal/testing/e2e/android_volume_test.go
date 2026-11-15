@@ -70,6 +70,13 @@ int main(int argc, char **argv) {
 
 func androidJNIMockCheck(t *testing.T, src, exports, check string) {
 	t.Helper()
+	androidMockCheck(t, src, exports, check, "")
+}
+
+// androidMockCheck is androidJNIMockCheck with the C source `defined` for
+// the libandroid.so functions that the probe calls on this Linux host.
+func androidMockCheck(t *testing.T, src, exports, check, defined string) {
+	t.Helper()
 	host := e2eharness.HostSelfHostTarget()
 	if runtime.GOOS != "linux" || host == "" {
 		t.Skip("the shared library requires a native Linux target")
@@ -98,7 +105,7 @@ func androidJNIMockCheck(t *testing.T, src, exports, check string) {
 		t.Fatalf("C harness: %v\n%s", err, out)
 	}
 	// The JNI probe must not call an Android C function on this Linux host.
-	stub := e2eharness.LibandroidStub(t, "", src)
+	stub := e2eharness.LibandroidStub(t, defined, src)
 	stubPath := filepath.Join(dir, "android.c")
 	if err := os.WriteFile(stubPath, []byte(stub), 0o644); err != nil {
 		t.Fatal(err)

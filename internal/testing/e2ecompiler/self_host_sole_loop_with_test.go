@@ -267,9 +267,9 @@ function alias(n: i32): i32 {
 function main(): i32 {
     return alias(5);
 }`},
-	// total returns a scalar, so it keeps no reference to the array it
-	// borrows (#15929). keep returns the array, so its caller can hold it.
-	{"lent-to-call", "lent", true, `@noinline
+	// A callee that borrows an array can keep a reference to it, so neither
+	// lent nor the caller of keep proves its array sole after the call.
+	{"lent-to-call", "lent", false, `@noinline
 function total(xs: i32[]): i32 {
     let t: i32 = 0;
     for x in xs { t = t + x; }
@@ -377,7 +377,7 @@ function via(n: i32): i32 {
     let c: i32[] = same(a);
     let i: i32 = 0;
     while (i < n) {
-        c = c.with(i, 5);
+        c = c.with(i, i + 5);
         i = i + 1;
     }
     return b[0] * 10 + c[0];

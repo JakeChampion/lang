@@ -104,7 +104,7 @@ func (a ageTool) runPTY(t *testing.T, dir string, streams ptyStreams, prompt *re
 	_ = cmd.Wait()
 	timer.Stop()
 	<-done
-	msg := strings.ReplaceAll(stderr.String(), ageReport, "")
+	msg := stderr.String()
 	if a.bin != "" {
 		msg = strings.ReplaceAll(msg, a.bin, "age")
 	}
@@ -152,7 +152,7 @@ func (a ageTool) runDetached(t *testing.T, dir string, stdin []byte, args ...str
 	if cmd.ProcessState == nil {
 		t.Fatalf("%s did not start: %s", a.name, &stderr)
 	}
-	msg := strings.ReplaceAll(stderr.String(), ageReport, "")
+	msg := stderr.String()
 	if a.bin != "" {
 		msg = strings.ReplaceAll(msg, a.bin, "age")
 	}

@@ -17,6 +17,8 @@ import (
 var hostGLLibs = [][2]string{
 	{"libEGL.so", "libEGL.so.1"},
 	{"libGLESv2.so", "libGLESv2.so.2"},
+	// Mesa has the OpenGL ES 3 functions in the same file.
+	{"libGLESv3.so", "libGLESv2.so.2"},
 	{"libc.so", "libc.so.6"},
 }
 

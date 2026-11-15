@@ -1,0 +1,617 @@
+import "./ssa";
+import "./ssasem";
+import "./semscalarreturn";
+import "./sourcepos";
+import "./typeinfo";
+import "./util";
+
+// A counted loop `for i in lo..hi` can access `a[i + c]`. When the compiler
+// cannot compare `hi` with the length of `a`, each access has a check. One
+// test before the loop selects a copy of the loop whose accesses have no
+// checks: all of them are in range when `lo + c >= 0` and `hi + c <= a.len()`
+// hold for each access. Otherwise the loop runs with its checks, so a loop
+// that leaves the array aborts at the same access (#15975).
+
+pub struct Versioned { f: ssasem.Func, loops: i32 }
+
+// A loop that another loop holds is versioned as part of its outer loop.
+const MAX_LOOPS: i32 = 8;
+
+// The copy doubles the code of the loop, so a large loop keeps one version.
+const MAX_INSTS: i32 = 160;
+
+const MAX_BLOCKS: i32 = 32;
+
+// The definition and the block of each value, and the position of each block.
+struct Index { defs: ssa.SInst[], homes: i32[], at: i32[] }
+
+struct Shape { ok: boolean, head: i32, entry: i32, exit: i32, counter: i32, lo: i32, hi: i32, blocks: i32[] }
+
+// An access the test covers: the array whose length the test reads, and the
+// offset of its index from the counter, or -1 for the counter itself.
+struct Site { result: i32, array: i32, offset: i32 }
+
+// Only the blocks of `f` are headers: the loop with the checks keeps them,
+// and the copy has none to remove.
+pub function version(f: ssasem.Func): Versioned {
+  let out = f;
+  let done: i32[] = [];
+  let ix = index_of(out);
+  for b in f.graph.blocks {
+    if (done.len() == MAX_LOOPS) {
+      break;
+    }
+    let s = shape(out, ix, ix.at[b.id]);
+    let sites: Site[] = [];
+    if (s.ok) {
+      sites = covered(out, ix, s);
+    }
+    if (sites.len() > 0) {
+      out = versioned(out, ix, s, sites);
+      done = done.append(b.id);
+      ix = index_of(out);
+    }
+  }
+  return Versioned { f: out, loops: done.len() };
+}
+
+function no_shape(): Shape {
+  return Shape { ok: false, head: -1, entry: -1, exit: -1, counter: -1, lo: -1, hi: -1, blocks: [] };
+}
+
+function index_of(f: ssasem.Func): Index {
+  let homes = util.minus_ones(f.graph.nvals);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.result < homes.len()) {
+        homes = homes.with(ins.result, b.id);
+      }
+    }
+  }
+  return Index { defs: ssa.inst_defs(f.graph), homes: homes, at: ssa.block_positions(f.graph) };
+}
+
+// The header at position `hp` tests `i < hi` and leaves the loop to a block
+// that only it enters. The body is the blocks it reaches before it comes
+// back, with no other way out and no way in.
+function shape(f: ssasem.Func, ix: Index, hp: i32): Shape {
+  let g = f.graph;
+  let h = g.blocks[hp];
+  if (h.term.kind_tag != ssa.TERM_BRIF || h.preds.len() != 2 || h.term.t == h.term.f) {
+    return no_shape();
+  }
+  let d = ix.defs;
+  let cmp = d[h.term.cond];
+  if (cmp.kind_tag != ssa.BINARY || cmp.str != "<" || cmp.args.len() != 2 || d[cmp.args[0]].kind_tag != ssa.PHI) {
+    return no_shape();
+  }
+  let at = ix.at;
+  let body = reached(g, at, h.term.t, h.id);
+  if (body.len() == 0 || util.index_of_i32(body, h.term.f) >= 0) {
+    return no_shape();
+  }
+  let x = g.blocks[at[h.term.f]];
+  if (x.preds.len() != 1 || !closed(g, at, body, h.id)) {
+    return no_shape();
+  }
+  let back = -1;
+  for k in 0..h.preds.len() {
+    if (util.index_of_i32(body, h.preds[k]) >= 0) {
+      back = k;
+    }
+  }
+  if (back < 0 || util.index_of_i32(body, h.preds[1 - back]) >= 0) {
+    return no_shape();
+  }
+  let i = d[cmp.args[0]];
+  if (i.args.len() != 2 || !ssasem.is_i32(f.values[i.result]) || !home_in(ix, i.result, [h.id])) {
+    return no_shape();
+  }
+  let inc = d[i.args[back]];
+  if (inc.kind_tag != ssa.BINARY || inc.str != "+" || inc.args.len() != 2 || inc.args[0] != i.result || !const_of(d, inc.args[1], 1)) {
+    return no_shape();
+  }
+  let all = body.append(h.id);
+  let lo = i.args[1 - back];
+  if (home_in(ix, lo, all) || home_in(ix, cmp.args[1], all) || size(g, at, all) > MAX_INSTS || !captures_inside(g, ix, all)) {
+    return no_shape();
+  }
+  return Shape { ok: true, head: h.id, entry: h.preds[1 - back], exit: x.id, counter: i.result, lo: lo, hi: cmp.args[1], blocks: in_order(g, all) };
+}
+
+// The ids in the order of their blocks, so the copy keeps the layout of the loop.
+function in_order(g: ssa.SFunc, ids: i32[]): i32[] {
+  let out: i32[] = [];
+  for b in g.blocks {
+    if (util.index_of_i32(ids, b.id) >= 0) {
+      out = out.append(b.id);
+    }
+  }
+  return out;
+}
+
+// The ids of the blocks that `start` reaches without passing `head`.
+function reached(g: ssa.SFunc, at: i32[], start: i32, head: i32): i32[] {
+  let seen: i32[] = [];
+  let todo: i32[] = [start];
+  while (todo.len() > 0) {
+    let id = todo[todo.len() - 1];
+    todo = util.drop_last_i32(todo);
+    if (id == head || util.index_of_i32(seen, id) >= 0) {
+      continue;
+    }
+    if (seen.len() == MAX_BLOCKS) {
+      return [];
+    }
+    seen = seen.append(id);
+    let b = g.blocks[at[id]];
+    if (b.term.kind_tag == ssa.TERM_RET || b.term.kind_tag == ssa.TERM_UNREACHABLE) {
+      return [];
+    }
+    for t in ssa.term_targets(b.term) {
+      todo = todo.append(t);
+    }
+  }
+  return seen;
+}
+
+// Each block of the body is entered only from the header or the body.
+function closed(g: ssa.SFunc, at: i32[], body: i32[], head: i32): boolean {
+  for id in body {
+    for p in g.blocks[at[id]].preds {
+      if (p != head && util.index_of_i32(body, p) < 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A call that returns more than one word names, in its immediate, the first
+// of the values that take the other words. Those values follow the call, so
+// the copy gives them new values in the same order.
+function capture_range(ins: ssa.SInst): (i32, i32) {
+  if (ins.kind_tag != ssasem.call() || ins.imm == 0) {
+    return (-1, 0);
+  }
+  if (ins.imm > 0) {
+    let count = ssasem.pair_capture_count(ins.imm) + ssasem.pair_capture_lanes(ssasem.pair_capture_wide(ins.imm));
+    return (ssasem.pair_capture_base(ins.imm), count);
+  }
+  return (semscalarreturn.capture_base(ins.imm), semscalarreturn.capture_count(ins.imm));
+}
+
+function captures_inside(g: ssa.SFunc, ix: Index, ids: i32[]): boolean {
+  for id in ids {
+    for ins in g.blocks[ix.at[id]].insts {
+      let (base, count) = capture_range(ins);
+      for k in 0..count {
+        if (!home_in(ix, base + k, ids)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+function cloned(ins: ssa.SInst, vmap: i32[]): ssa.SInst {
+  let c = ssa.SInst { ...ins, result: mapped(vmap, ins.result), args: mapped_all(vmap, ins.args) };
+  let base = ssasem.update_base(ins);
+  if (base >= 0) {
+    return ssa.SInst { ...c, imm: mapped(vmap, base) + 1 };
+  }
+  let (first, count) = capture_range(ins);
+  if (count > 0 && ins.imm > 0) {
+    return ssa.SInst { ...c, imm: ssasem.pair_capture_imm(mapped(vmap, first), ssasem.pair_capture_count(ins.imm), ssasem.pair_capture_wide(ins.imm)) };
+  }
+  if (count > 0) {
+    return ssa.SInst { ...c, imm: semscalarreturn.capture_imm(mapped(vmap, first), count) };
+  }
+  return c;
+}
+
+function size(g: ssa.SFunc, at: i32[], ids: i32[]): i32 {
+  let n = 0;
+  for id in ids {
+    n += g.blocks[at[id]].insts.len();
+  }
+  return n;
+}
+
+// A parameter has no block.
+function home_in(ix: Index, v: i32, ids: i32[]): boolean {
+  return v >= 0 && v < ix.homes.len() && ix.homes[v] >= 0 && util.index_of_i32(ids, ix.homes[v]) >= 0;
+}
+
+function const_of(d: ssa.SInst[], v: i32, n: i32): boolean {
+  let c = d[ssa.copy_root(d, v)];
+  return c.kind_tag == ssa.CONST_INT && c.imm == n && c.str == "";
+}
+
+function int_const(d: ssa.SInst[], v: i32): boolean {
+  let c = d[ssa.copy_root(d, v)];
+  return c.kind_tag == ssa.CONST_INT && c.str == "";
+}
+
+// The checked accesses of the loop that one test before it can cover.
+function covered(f: ssasem.Func, ix: Index, s: Shape): Site[] {
+  let d = ix.defs;
+  let g = f.graph;
+  let at = ix.at;
+  let out: Site[] = [];
+  for id in s.blocks {
+    for ins in g.blocks[at[id]].insts {
+      if (checked_access(ins)) {
+        let offset = index_offset(f, ix, s, ins.args[1]);
+        let array = fixed_length(f, ix, s, ins.args[0]);
+        if (offset >= -1 && array >= 0) {
+          out = out.append(Site { result: ins.result, array: array, offset: offset });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function checked_access(ins: ssa.SInst): boolean {
+  if (ins.imm != 0) {
+    return false;
+  }
+  return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && ins.str == "" || ins.kind_tag == ssasem.with() && ins.args.len() == 3;
+}
+
+// -1 when the index is the counter, the offset `c` of `i + c`, or -2. An
+// offset is a value from before the loop or an i32 constant.
+function index_offset(f: ssasem.Func, ix: Index, s: Shape, v: i32): i32 {
+  let d = ix.defs;
+  let x = ssa.copy_root(d, v);
+  if (x == s.counter) {
+    return -1;
+  }
+  let a = d[x];
+  if (a.kind_tag != ssa.BINARY || a.str != "+" || a.args.len() != 2 || !ssasem.is_i32(f.values[x])) {
+    return -2;
+  }
+  for k in 0..2 {
+    let c = a.args[1 - k];
+    if (ssa.copy_root(d, a.args[k]) == s.counter && ssasem.is_i32(f.values[c]) && (int_const(d, c) || !home_in(ix, c, s.blocks))) {
+      return c;
+    }
+  }
+  return -2;
+}
+
+// The value before the loop whose length the array has at each pass, or -1:
+// an array from before the loop that the loop does not hand on, or a header
+// phi that the loop changes only with `with`.
+function fixed_length(f: ssasem.Func, ix: Index, s: Shape, v: i32): i32 {
+  let d = ix.defs;
+  let r = root(d, v);
+  if (!plain_array(f.values[r])) {
+    return -1;
+  }
+  if (!home_in(ix, r, s.blocks)) {
+    return if (handed_on(f, ix, s, r)) { -1 } else { r };
+  }
+  let p = d[r];
+  if (p.kind_tag != ssa.PHI || p.args.len() != 2 || !home_in(ix, r, [s.head])) {
+    return -1;
+  }
+  let h = f.graph.blocks[ix.at[s.head]];
+  let entry = util.index_of_i32(h.preds, s.entry);
+  if (entry < 0 || root(d, p.args[1 - entry]) != r || home_in(ix, p.args[entry], s.blocks)) {
+    return -1;
+  }
+  return p.args[entry];
+}
+
+// An array that is not a view, whose length the test can read.
+function plain_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view;
+  }
+  return false;
+}
+
+function root(d: ssa.SInst[], v: i32): i32 {
+  let r = ssa.copy_root(d, v);
+  for steps in 0..64 {
+    let w = d[r];
+    if (w.kind_tag != ssasem.with() || w.args.len() != 3) {
+      return r;
+    }
+    r = ssa.copy_root(d, w.args[0]);
+  }
+  return r;
+}
+
+// A call or an update in the loop that takes the array can change its length.
+function handed_on(f: ssasem.Func, ix: Index, s: Shape, a: i32): boolean {
+  for id in s.blocks {
+    for ins in f.graph.blocks[ix.at[id]].insts {
+      let k = ins.kind_tag;
+      if ((k == ssasem.call() || k == ssasem.with() || k == ssasem.append() || k == ssasem.truncate()) && util.index_of_i32(ins.args, a) >= 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+struct Built { insts: ssa.SInst[], values: typeinfo.Type[], next: i32 }
+
+function add(own b: Built, kind: i32, args: i32[], imm: i32, text: string, t: typeinfo.Type): Built {
+  let ins = ssa.SInst { kind_tag: kind, result: b.next, args: args, imm: imm, str: text };
+  return Built { insts: b.insts.append(ins), values: b.values.append(t), next: b.next + 1 };
+}
+
+function last(b: Built): i32 {
+  return b.next - 1;
+}
+
+function wide(own b: Built, v: i32, d: ssa.SInst[]): Built {
+  let c = d[ssa.copy_root(d, v)];
+  if (c.kind_tag == ssa.CONST_INT && c.str == "") {
+    return add(b, ssa.CONST_INT, [], 0, util.i32_to_string(c.imm), typeinfo.t_i64());
+  }
+  return add(b, ssasem.cast(), [v], 0, "", typeinfo.t_i64());
+}
+
+// The test that selects the loop with the checks: the OR of `lo + c` and
+// `len - hi - c` of the accesses is negative. The sums are in 64 bits, so none of them overflows.
+function guard(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): Built {
+  let d = ix.defs;
+  let b = Built { insts: [], values: [], next: f.values.len() };
+  b = wide(b, s.lo, d);
+  let lo = last(b);
+  b = wide(b, s.hi, d);
+  let hi = last(b);
+  let acc = -1;
+  for site in sites {
+    let c = -1;
+    if (site.offset >= 0) {
+      b = wide(b, site.offset, d);
+      c = last(b);
+    }
+    b = add(b, ssasem.length(), [site.array], 0, "", typeinfo.t_i32());
+    let n = last(b);
+    b = add(b, ssasem.cast(), [n], 0, "", typeinfo.t_i64());
+    let len = last(b);
+    let first = lo;
+    if (c >= 0) {
+      b = add(b, ssa.BINARY, [lo, c], 0, "+", typeinfo.t_i64());
+      first = last(b);
+    }
+    b = add(b, ssa.BINARY, [len, hi], 0, "-", typeinfo.t_i64());
+    let room = last(b);
+    if (c >= 0) {
+      b = add(b, ssa.BINARY, [room, c], 0, "-", typeinfo.t_i64());
+      room = last(b);
+    }
+    b = add(b, ssa.BINARY, [first, room], 0, "|", typeinfo.t_i64());
+    let both = last(b);
+    if (acc >= 0) {
+      b = add(b, ssa.BINARY, [acc, both], 0, "|", typeinfo.t_i64());
+    }
+    acc = last(b);
+  }
+  b = add(b, ssa.CONST_INT, [], 0, "0", typeinfo.t_i64());
+  let zero = last(b);
+  return add(b, ssa.BINARY, [acc, zero], 0, "<", typeinfo.t_bool());
+}
+
+function mapped(map: i32[], v: i32): i32 {
+  if (v >= 0 && v < map.len() && map[v] >= 0) {
+    return map[v];
+  }
+  return v;
+}
+
+function mapped_all(map: i32[], vs: i32[]): i32[] {
+  let out: i32[] = [];
+  for v in vs {
+    out = out.append(mapped(map, v));
+  }
+  return out;
+}
+
+function mapped_term(t: ssa.STerm, values: i32[], blocks: i32[]): ssa.STerm {
+  return ssa.STerm { ...t, cond: mapped(values, t.cond), value: mapped(values, t.value), target: mapped(blocks, t.target), t: mapped(blocks, t.t), f: mapped(blocks, t.f) };
+}
+
+function top_id(g: ssa.SFunc): i32 {
+  let top = 0;
+  for b in g.blocks {
+    if (b.id > top) {
+      top = b.id;
+    }
+  }
+  return top;
+}
+
+// The test block and the preheader of the loop with the checks go before its
+// header. The preheader of the copy, the copy and its exit block go after the
+// last block of the function. Each version leaves through its own block, so
+// no edge from a branch reaches a block with phis.
+function versioned(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): ssasem.Func {
+  let g = f.graph;
+  let test = guard(f, ix, s, sites);
+  let values = util.append_all(f.values, test.values);
+  let gid = top_id(g) + 1;
+  let slow_in = gid + 1;
+  let fast_in = gid + 2;
+  let slow_out = gid + 3;
+  let fast_out = gid + 4;
+  let bmap = util.minus_ones(gid + 5);
+  for k in 0..s.blocks.len() {
+    bmap = bmap.with(s.blocks[k], gid + 5 + k);
+  }
+  let vmap = util.minus_ones(values.len());
+  let source = f.source_positions;
+  let at = ix.at;
+  for id in s.blocks {
+    for ins in g.blocks[at[id]].insts {
+      let (base, count) = capture_range(ins);
+      for k in 0..count {
+        vmap = vmap.with(base + k, values.len());
+        source = copied_value(source, base + k, values.len());
+        values = values.append(f.values[base + k]);
+      }
+    }
+  }
+  for id in s.blocks {
+    for ins in g.blocks[at[id]].insts {
+      if (ins.result >= 0 && vmap[ins.result] < 0) {
+        vmap = vmap.with(ins.result, values.len());
+        source = copied_value(source, ins.result, values.len());
+        values = values.append(f.values[ins.result]);
+      }
+    }
+  }
+  let fast: i32[] = [];
+  for site in sites {
+    fast = fast.append(vmap[site.result]);
+  }
+  let copies: ssa.SBlock[] = [ssa.SBlock { id: fast_in, insts: [], term: ssa.t_br(bmap[s.head]), preds: [gid] }];
+  for id in s.blocks {
+    let b = g.blocks[at[id]];
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      let c = cloned(ins, vmap);
+      if (util.index_of_i32(fast, c.result) >= 0) {
+        c = ssa.SInst { ...c, imm: 1 };
+      }
+      insts = insts.append(c);
+    }
+    let preds = mapped_all(bmap, b.preds);
+    let term = mapped_term(b.term, vmap, bmap);
+    if (id == s.head) {
+      preds = preds.with(util.index_of_i32(b.preds, s.entry), fast_in);
+      term = retarget(term, s.exit, fast_out);
+    }
+    copies = copies.append(ssa.SBlock { id: bmap[id], insts: insts, term: term, preds: preds });
+    source = sourcepos.continued(source, id, bmap[id]);
+  }
+  copies = copies.append(ssa.SBlock { id: fast_out, insts: [], term: ssa.t_br(s.exit), preds: [bmap[s.head]] });
+  for id in [gid, slow_in, fast_in, slow_out, fast_out] {
+    source = sourcepos.continued(source, s.head, id);
+  }
+  let joined = live_out(f, s, vmap, values);
+  values = joined.values;
+  let gate = ssa.SBlock { id: gid, insts: test.insts, term: ssa.t_brif(last(test), slow_in, fast_in), preds: [s.entry] };
+  let blocks: ssa.SBlock[] = [];
+  for old in g.blocks {
+    let b = old;
+    if (b.id == s.head) {
+      blocks = blocks.append(gate).append(ssa.SBlock { id: slow_in, insts: [], term: ssa.t_br(s.head), preds: [gid] });
+      b = ssa.SBlock { ...b, preds: b.preds.with(util.index_of_i32(b.preds, s.entry), slow_in), term: retarget(b.term, s.exit, slow_out) };
+    } else if (b.id == s.entry) {
+      b = ssa.SBlock { ...b, term: retarget(b.term, s.head, gid) };
+    } else if (b.id == s.exit) {
+      blocks = blocks.append(ssa.SBlock { id: slow_out, insts: [], term: ssa.t_br(s.exit), preds: [s.head] });
+      b = ssa.SBlock { ...b, insts: util.append_all(joined.phis, extended_phis(b.insts, vmap)), preds: [slow_out, fast_out] };
+    }
+    if (util.index_of_i32(s.blocks, b.id) < 0 && b.id != s.exit) {
+      b = renamed_uses(b, joined.renamed);
+    } else if (b.id == s.exit) {
+      b = renamed_after_phis(b, joined.renamed, joined.phis.len());
+    }
+    blocks = blocks.append(b);
+  }
+  blocks = util.append_all(blocks, copies);
+  source = sourcepos.pad_values(source, values.len());
+  return ssasem.Func { ...f, values: values, source_positions: source, graph: ssa.SFunc { ...g, nvals: values.len(), blocks: blocks } };
+}
+
+function copied_value(source: sourcepos.SourceInfo, from: i32, to: i32): sourcepos.SourceInfo {
+  if (source.entry.line == 0) {
+    return source;
+  }
+  let rows = source.values;
+  while (rows.len() <= to) {
+    rows = rows.append(sourcepos.SourcePos { line: 0, col: "0" });
+  }
+  return sourcepos.SourceInfo { ...source, values: rows.with(to, sourcepos.at(source.values, from)) };
+}
+
+function retarget(t: ssa.STerm, from: i32, to: i32): ssa.STerm {
+  let out = t;
+  if (out.kind_tag == ssa.TERM_BR && out.target == from) {
+    out = ssa.STerm { ...out, target: to };
+  }
+  if (out.kind_tag == ssa.TERM_BRIF && out.t == from) {
+    out = ssa.STerm { ...out, t: to };
+  }
+  if (out.kind_tag == ssa.TERM_BRIF && out.f == from) {
+    out = ssa.STerm { ...out, f: to };
+  }
+  return out;
+}
+
+// The exit block had only the header as a predecessor, so each of its phis
+// has one operand, and the copy adds its own.
+function extended_phis(insts: ssa.SInst[], vmap: i32[]): ssa.SInst[] {
+  let out: ssa.SInst[] = [];
+  for ins in insts {
+    if (ins.kind_tag == ssa.PHI && ins.args.len() == 1) {
+      out = out.append(ssa.SInst { ...ins, args: [ins.args[0], mapped(vmap, ins.args[0])] });
+    } else {
+      out = out.append(ins);
+    }
+  }
+  return out;
+}
+
+struct Joined { phis: ssa.SInst[], values: typeinfo.Type[], renamed: i32[] }
+
+// When a block after the loop reads a value of the loop, the exit block gets
+// a phi of the two versions of the value. The later reads take the phi.
+function live_out(f: ssasem.Func, s: Shape, vmap: i32[], own values: typeinfo.Type[]): Joined {
+  let g = f.graph;
+  let renamed = util.minus_ones(values.len());
+  let phis: ssa.SInst[] = [];
+  for b in g.blocks {
+    if (util.index_of_i32(s.blocks, b.id) >= 0) {
+      continue;
+    }
+    let uses: i32[] = [];
+    for ins in b.insts {
+      if (!(b.id == s.exit && ins.kind_tag == ssa.PHI && ins.args.len() == 1)) {
+        uses = util.append_all(uses, ins.args);
+      }
+    }
+    uses = util.append_all(uses, [b.term.cond, b.term.value]);
+    for v in uses {
+      if (v >= 0 && v < vmap.len() && vmap[v] >= 0 && renamed[v] < 0) {
+        let m = values.len();
+        values = values.append(f.values[v]);
+        renamed = renamed.with(v, m);
+        phis = phis.append(ssa.SInst { kind_tag: ssa.PHI, result: m, args: [v, vmap[v]], imm: 0, str: "" });
+      }
+    }
+  }
+  return Joined { phis: phis, values: values, renamed: renamed };
+}
+
+function renamed_uses(b: ssa.SBlock, renamed: i32[]): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    insts = insts.append(ssa.SInst { ...ins, args: mapped_all(renamed, ins.args) });
+  }
+  return ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, cond: mapped(renamed, b.term.cond), value: mapped(renamed, b.term.value) } };
+}
+
+// The phis at the start of the exit block read the two versions themselves.
+function renamed_after_phis(b: ssa.SBlock, renamed: i32[], skip: i32): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  for k in 0..b.insts.len() {
+    let ins = b.insts[k];
+    if (k < skip || ins.kind_tag == ssa.PHI && ins.args.len() == 2) {
+      insts = insts.append(ins);
+    } else {
+      insts = insts.append(ssa.SInst { ...ins, args: mapped_all(renamed, ins.args) });
+    }
+  }
+  return ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, cond: mapped(renamed, b.term.cond), value: mapped(renamed, b.term.value) } };
+}

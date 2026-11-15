@@ -9,7 +9,7 @@ import (
 
 func TestSelfHostInflateReader(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	for _, fixture := range []string{"deflate_reader_test.fern", "deflate_test.fern"} {
+	for _, fixture := range []string{"deflate_reader_test.fern", "deflate_test.fern", "deflate_zlib_test.fern"} {
 		t.Run(fixture, func(t *testing.T) {
 			path := filepath.Join(e2eharness.RepoPath(), "tests", "stdlib", fixture)
 			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {

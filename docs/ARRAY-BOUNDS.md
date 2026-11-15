@@ -60,6 +60,35 @@ nothing about `i` (`AB-10`), and a scaled index that wraps negative fails
 its own `>= 0` guard (`AB-14`). `docs/security/ARITHMETIC-AUDIT.md`
 records the rules the proofs use.
 
+## Lane loads and stores
+
+A lane load or store of `std/simd` is an access of 16 bytes from its index.
+The 16 bytes must be in the array or view: the index is not negative, and the
+index plus 16 is not more than the length. A load that is not in range aborts
+with the cause line of an index (`AB-15`), and so does a store (`AB-16`). The
+natives, wasm and the two interpreters agree.
+
+## Proofs from accesses and loop versions (#15975)
+
+A write `a.with(i, v)` has no check when an access of the same index ran
+before it. That access is earlier in the same block, or in a block that
+dominates the write. Its array is `a`, or an array that a chain of `with`
+makes into `a`, because `with` does not change the length. Only a write uses
+this proof. `semhoist` can move a read above a write, but it does not move a
+write, and a read that it moves runs earlier.
+
+`compiler/semversion.fern` makes two versions of a counted loop. The header
+of the loop tests `i < hi`, each pass adds 1 to `i`, and the loop leaves only
+from its header. A checked access `a[i + c]` in the loop is a candidate when
+the length of `a` cannot change in the loop. Before the loop, one test
+computes `lo + c` and `a.len() - hi - c` in 64 bits for each candidate.
+
+When the OR of these values is not negative, the copy of the loop runs, and
+its candidates have no checks. Otherwise the loop with the checks runs, so a
+loop that leaves the array aborts at the same access. The copy doubles the
+code of the loop. Thus a loop of more than 160 instructions keeps one version,
+and so does each loop of a `-size` build.
+
 ## Allocation size (#8457)
 
 `fern: allocation size out of range`, exit 134. A byte count computed in

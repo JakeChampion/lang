@@ -1300,6 +1300,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__round_f64"] = f64ToF64Builtin
 	c.info.FuncSigs["__trunc_f64"] = f64ToF64Builtin
 	c.info.FuncSigs["__abs_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__fma_f64"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 64}, ast.FloatType{Width: 64}, ast.FloatType{Width: 64}},
+		Result: ast.FloatType{Width: 64},
+	}
 	c.registerLaneBuiltins()
 	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 64}},
@@ -2403,6 +2407,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__alloc_i32"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}},
+	}
+	c.info.FuncSigs["__alloc_u16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 16, Signed: false}},
+	}
+	c.info.FuncSigs["__alloc_i16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 16, Signed: true}},
 	}
 	c.info.FuncSigs["__alloc_i64"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
@@ -5946,6 +5958,10 @@ func builtinScalarMethod(typeName, name string) (string, bool) {
 		switch typeName {
 		case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "string":
 			return "__primitive_" + typeName + "_to_string", true
+		case "u16":
+			return "__primitive_u32_to_string", true
+		case "i16":
+			return "__primitive_i32_to_string", true
 		}
 	}
 	return "", false
@@ -6956,11 +6972,7 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 		if unsigned {
 			overflow = zero
 		} else {
-			maxLit := int64(2147483647)
-			if t.NormalWidth() == 64 {
-				maxLit = 9223372036854775807
-			}
-			minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1))
+			minExpr := bin("-", bin("-", num(0), num(signedMax(t))), num(1))
 			overflow = bin("||", zero,
 				bin("&&", bin("==", id(lN), minExpr), bin("==", id(rN), negOne)))
 		}
@@ -6980,11 +6992,7 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 			bin("<", bin("^", id(lN), id(rN)), num(0)),
 			bin("<", bin("^", id(sN), id(lN)), num(0)))
 	default:
-		maxLit := int64(2147483647)
-		if t.NormalWidth() == 64 {
-			maxLit = 9223372036854775807
-		}
-		minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1))
+		minExpr := bin("-", bin("-", num(0), num(signedMax(t))), num(1))
 		overflow = bin("&&", bin("!=", id(lN), num(0)),
 			bin("||",
 				bin("!=", bin("/", id(sN), id(lN)), id(rN)),
@@ -7003,6 +7011,11 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 		return nil
 	}
 	return block
+}
+
+// signedMax is the greatest value of the signed integer type t.
+func signedMax(t ast.NumberType) int64 {
+	return int64(1)<<(t.NormalWidth()-1) - 1
 }
 
 func (c *checker) buildCheckedCast(n *ast.DowncastExpr, src, dst ast.NumberType, s *scope) ast.Expr {
@@ -9497,6 +9510,13 @@ func (s *scope) set(name string, t ast.Type) {
 		s.order = append(s.order, name)
 	}
 	s.names[name] = t
+}
+
+// boundLocally reports whether a parameter or a local binds name, so that
+// a call of name calls that value and not the builtin of the same name.
+func (c *checker) boundLocally(name string, s *scope) bool {
+	_, ok := s.lookup(name)
+	return ok
 }
 
 func (s *scope) lookup(name string) (ast.Type, bool) {
@@ -12138,6 +12158,10 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 // checkBlockExprAt checks a block whose value is expected to be of the union
 // type want; a nil want expects nothing of it.
 func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Type) ast.Type {
+	if n.Unsafe {
+		c.unsafeDepth++
+		defer func() { c.unsafeDepth-- }()
+	}
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
@@ -15162,9 +15186,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
-		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
-			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
-			!isBareNumericLiteral(n.Inner) {
+		} else if _, tgtNum := n.Target.(ast.NumberType); tgtNum && !isBareNumericLiteral(n.Inner) {
+			// A literal expression computes at its own type, and the cast converts the result.
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
@@ -15562,7 +15585,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		var writtenTypeArgs []ast.Type
 		recvTypeArgs := false
 		c.retagIndexAsTypeArgs(n, s)
-		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 {
+		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 && !c.boundLocally(id.Name, s) {
 			switch id.Name {
 			case "print", "write", "eprint":
 				at := c.checkExpr(n.Args[0], s)
@@ -16965,10 +16988,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return paramSig(n.Params, n.ReturnType, n.ReturnOwn)
 	case *ast.BlockExpr:
-		if n.Unsafe {
-			c.unsafeDepth++
-			defer func() { c.unsafeDepth-- }()
-		}
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:
 		want := c.expectedType
@@ -17496,7 +17515,7 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
+	case "i32", "i64", "u8", "u16", "i16", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
 		return true
 	}
 	return false
@@ -18938,7 +18957,7 @@ func (c *checker) registerLaneBuiltins() {
 // integerLaneVerbs are the verbs of the builtins of an integer lane type,
 // in the order of the self-hosted checker.
 func integerLaneVerbs(lt ast.LanesType) []string {
-	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "with", "shl", "shr"}
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "load_view", "with", "shl", "shr"}
 	if lt.Width <= 16 {
 		verbs = append(verbs, "add_sat", "sub_sat")
 		if lt.Kind == ast.LaneUnsigned {
@@ -18973,16 +18992,17 @@ func (c *checker) registerIntegerLaneBuiltins() {
 			of[i] = e
 		}
 		sigs := map[string]*ast.FuncType{
-			"splat":   {Params: []ast.Type{e}, Result: lt},
-			"of":      {Params: of, Result: lt},
-			"lane":    {Params: []ast.Type{lt, i32}, Result: e},
-			"bitmask": {Params: []ast.Type{lt}, Result: i32},
-			"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
-			"load":    {Params: []ast.Type{bytes, i32}, Result: lt},
-			"with":    {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
-			"shl":     {Params: []ast.Type{lt, i32}, Result: lt},
-			"shr":     {Params: []ast.Type{lt, i32}, Result: lt},
-			"abs":     {Params: []ast.Type{lt}, Result: lt},
+			"splat":     {Params: []ast.Type{e}, Result: lt},
+			"of":        {Params: of, Result: lt},
+			"lane":      {Params: []ast.Type{lt, i32}, Result: e},
+			"bitmask":   {Params: []ast.Type{lt}, Result: i32},
+			"select":    {Params: []ast.Type{lt, lt, lt}, Result: lt},
+			"load":      {Params: []ast.Type{bytes, i32}, Result: lt},
+			"load_view": {Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, i32}, Result: lt},
+			"with":      {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
+			"shl":       {Params: []ast.Type{lt, i32}, Result: lt},
+			"shr":       {Params: []ast.Type{lt, i32}, Result: lt},
+			"abs":       {Params: []ast.Type{lt}, Result: lt},
 		}
 		wide := ast.LanesType{Width: lt.Width * 2, Kind: lt.Kind}
 		sigs["widen_lo"] = &ast.FuncType{Params: []ast.Type{lt}, Result: wide}

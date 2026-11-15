@@ -115,6 +115,36 @@ function check_flags(): i32 {
   return 0;
 }
 
+function icase(pat: string, subj: string, utf8: boolean): string {
+  let re = bre.bre_compile_syntax(pat, bre.Syntax { ...bre.sed_syntax(false, true, false, false), utf8: utf8 });
+  if (re.err.len() > 0) {
+    return "error " + re.err;
+  }
+  let m = re.search_groups_bytes(subj.bytes(), 0, subj.len());
+  if (!m.matched) {
+    return "none";
+  }
+  return f"{m.starts[0]},{m.ends[0]};";
+}
+
+// Under icase the regex compares upper cases, an escaped byte keeps its
+// case, and the dfa of GNU sed rejects a text first.
+function check_icase(): i32 {
+  if (icase("\\q", "qQ", false) != "none" || icase("\\Q", "qQ", false) != "0,1;" || icase("[Z-a]", "x", false) != "error Invalid range end") {
+    return 51;
+  }
+  if (icase("[a-C]", "abC", false) != "none" || icase("[^a-C]", "Ab!", false) != "2,3;" || icase("[A-c]", "xb", false) != "1,2;") {
+    return 52;
+  }
+  if (icase("т", "ᲄ т", true) != "0,3;" || icase("т", "ᲄ", true) != "none" || icase("\\q", "qQ", true) != "none") {
+    return 53;
+  }
+  if (icase("\\(.\\)\\1", "xıI", true) != "1,4;" || icase("[ſ-x]", "Sx", true) != "0,1;") {
+    return 54;
+  }
+  return 0;
+}
+
 function check_search_from(): i32 {
   let re = bre.bre_compile_syntax("^a\\|\\<b", bre.sed_syntax(false, false, false, false));
   let text = "aab b".bytes();
@@ -234,6 +264,10 @@ function main(): i32 {
     return r;
   }
   r = check_flags();
+  if (r != 0) {
+    return r;
+  }
+  r = check_icase();
   if (r != 0) {
     return r;
   }

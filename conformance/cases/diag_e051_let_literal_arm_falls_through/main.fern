@@ -1,0 +1,6 @@
+// The arm does not end in a return, so the read after the if can follow it.
+import "std/worker";
+struct Out { k: i32, w: Option[worker.Worker[i32]] }
+function bump(own o: Out, d: i32): Out { return Out { ...o, k: o.k + d }; }
+function bad(own o: Out, x: i32): Out { if (x > 0) { let t = Out { ...o, k: 1 }; let r = bump(t, 1); } return o; }
+function main(): i32 { return 0; }

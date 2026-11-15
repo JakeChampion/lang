@@ -10,6 +10,8 @@ The DEFLATE decoder interprets bit fields, Huffman codes, and history references
 
 Output limits bound decompressed data. `Inflated` retains both the output and the consumed input count. Error values distinguish malformed data from incomplete data and output limits.
 
+`zlib_compress` writes the bytes that zlib writes, at each level of zlib from 0 to 9. It is for a program that must write the same bytes as a program that uses zlib. At level 0, the blocks of zlib depend on the space for output that each call to `deflate` of zlib gets: `zlib_compress_in` takes that space, and `zlib_compress` gives all the output space in one call, as `compress2` of zlib does.
+
 The encoder has compression levels 1 to 9, as gzip has. `deflate_level` and `gzip_level` take the level. Level 1 is `deflate_fast`, and level 6 is `deflate` and `gzip`. A higher level visits more candidates at each position and gives smaller output.
 
 ## Module assembly
@@ -83,6 +85,10 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<33 function __fast_tokens(input: [u8], start: i32): i32[]>>
 
 <<34 resumable output>>
+
+<<35 the encoder of zlib>>
+
+<<36 streaming inflate>>
 ```
 
 ### `dependencies 1`
@@ -189,6 +195,9 @@ goes down to `n` at the end.
 ```fern
 <<6 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError]>>=
 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
+  if (from < 0) {
+    return Err(Malformed("an offset below zero"));
+  }
   let out = history;
   let n = history.len();
   if (n == 0) {
@@ -1212,6 +1221,9 @@ pub function gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated,
 }
 
 function __gzip_header(input: [u8], from: i32): Result[i32, InflateError] {
+  if (from < 0) {
+    return Err(BadHeader("an offset below zero"));
+  }
   if (from + 2 > input.len()) {
     return Err(Truncated);
   }
@@ -2536,5 +2548,1062 @@ function __read_copy_byte(own cursor: __ReadCursor): __ReadCursor {
     return __ReadCursor { ...cursor, phase: ReadCodes };
   }
   return cursor;
+}
+```
+
+### The encoder of zlib
+
+`zlib_compress` follows `deflate.c` and `trees.c` of zlib 1.2 and 1.3 with a window of 32 KiB, a memory level of 8 and the default strategy. Each step and each choice is that of zlib: the hash chains, the lazy matches of the levels 4 to 9, the blocks of 16383 symbols, the Huffman trees with the order of the heap of zlib, and the choice of a stored, a static or a dynamic block. The bytes after the end of the input do not change the output of zlib, so the matches stop at the end of the input.
+
+Level 0 follows `deflate_stored` of zlib 1.2.12 and later, and the calls of `deflate` with `Z_FINISH` that a program makes until the stream ends. Each call has the same space for output. The space changes where each stored block ends, because zlib writes a block directly to the output only when the block fits in that space.
+
+```fern
+<<35 the encoder of zlib>>=
+// The zlib stream of `input` at a level of 0 to 9, with the bytes that
+// zlib 1.2 and 1.3 write with a window of 32 KiB, a memory level of 8 and
+// the default strategy (deflate.c and trees.c of zlib). A level below 0 is
+// level 6, as in zlib.
+pub function zlib_compress(input: [u8], level: i32): u8[] {
+  return zlib_compress_in(input, level, 2147483647);
+}
+
+// The zlib stream of `input` that zlib writes when each call to `deflate`
+// has `room` bytes for output. Only level 0 uses `room`.
+pub function zlib_compress_in(input: [u8], level_in: i32, room: i32): u8[] {
+  if (level_in == 0) {
+    return __zstored_stream(input, cmp.max(room, 1));
+  }
+  let level = if (level_in < 0) { 6 } else { cmp.min(level_in, 9) };
+  let flags = if (level < 2) { 0 } else if (level < 6) { 1 } else if (level == 6) { 2 } else { 3 };
+  let header = 8 + (7 << 4) << 8 | flags << 6;
+  header += 31 - header % 31;
+  let out = buf_new(input.len() / 2 + 64);
+  buf_push_byte(out, header >> 8);
+  buf_push_byte(out, header & 255);
+  let w = __zdeflate(input, level, __ZBits { out: out, acc: 0, n: 0 });
+  let a = adler32(input);
+  buf_push_byte(w.out, (a >> 24) as i32);
+  buf_push_byte(w.out, (a >> 16 & 255u32) as i32);
+  buf_push_byte(w.out, (a >> 8 & 255u32) as i32);
+  buf_push_byte(w.out, (a & 255u32) as i32);
+  let bytes = buf_take_bytes(w.out);
+  buf_free(w.out);
+  return bytes;
+}
+
+// The state of level 0: the positions of `deflate_stored` in the input,
+// the bytes that wait for space (`pending` from `pend_at`), and the space
+// of the call. The window holds the input from `wbase`.
+struct __ZS { input: [u8], nin: i32, wbase: i32, strstart: i32, block_start: i32, pend: u8[], pend_at: i32, room: i32, out: usize }
+
+const __ZS_WINDOW: i32 = 65536;
+
+// The stream of level 0: the calls to `deflate` with `Z_FINISH`, each with
+// `room` bytes of space, until the end of the stream.
+function __zstored_stream(input: [u8], room: i32): u8[] {
+  let empty: u8[] = [];
+  let s = __ZS { input: input, nin: 0, wbase: 0, strstart: 0, block_start: 0, pend: empty, pend_at: 0, room: 0, out: buf_new(input.len() + input.len() / 4096 * 5 + 64) };
+  let status = 0;
+  let trailer = false;
+  while (true) {
+    s = __zs_flush(__ZS { ...s, room: room });
+    if (s.room == 0) {
+      continue;
+    }
+    if (status == 0) {
+      status = 1;
+      s = __zs_flush(__zs_pend(s, [120u8, 1u8]));
+      if (s.pend.len() > s.pend_at) {
+        continue;
+      }
+    }
+    if (status == 1) {
+      let (t, state) = __zs_deflate(s);
+      s = t;
+      status = if (state > 0) { 2 } else { 1 };
+      if (state < 2) {
+        continue;
+      }
+    }
+    if (trailer) {
+      break;
+    }
+    trailer = true;
+    let a = adler32(input);
+    s = __zs_flush(__zs_pend(s, [(a >> 24) as u8, (a >> 16 & 255u32) as u8, (a >> 8 & 255u32) as u8, (a & 255u32) as u8]));
+    if (s.pend.len() == s.pend_at) {
+      break;
+    }
+  }
+  let bytes = buf_take_bytes(s.out);
+  buf_free(s.out);
+  return bytes;
+}
+
+// `bytes` at the end of the pending bytes.
+function __zs_pend(s: __ZS, bytes: u8[]): __ZS {
+  return __ZS { ...s, pend: s.pend.concat(bytes) };
+}
+
+// The pending bytes that fit in the space: `flush_pending` of zlib.
+function __zs_flush(s: __ZS): __ZS {
+  let n = cmp.min(s.pend.len() - s.pend_at, s.room);
+  for i in s.pend_at..s.pend_at + n {
+    buf_push_byte(s.out, s.pend[i] as i32);
+  }
+  if (s.pend_at + n == s.pend.len()) {
+    let empty: u8[] = [];
+    return __ZS { ...s, pend: empty, pend_at: 0, room: s.room - n };
+  }
+  return __ZS { ...s, pend_at: s.pend_at + n, room: s.room - n };
+}
+
+// The header of a stored block of `len` bytes, the last one if `last`.
+function __zs_header(len: i32, last: boolean): u8[] {
+  let first: u8 = if (last) { 1 } else { 0 };
+  return [first, (len & 255) as u8, (len >> 8 & 255) as u8, (~len & 255) as u8, (~len >> 8 & 255) as u8];
+}
+
+// The input bytes from `from` to `to` at the end of the output.
+function __zs_copy(s: __ZS, from: i32, to: i32): __ZS {
+  for i in from..to {
+    buf_push_byte(s.out, s.input[i] as i32);
+  }
+  return __ZS { ...s, room: s.room - (to - from) };
+}
+
+// One call of `deflate_stored` with `Z_FINISH`: 0 is `need_more`, 1 is
+// `finish_started` and 2 is `finish_done`.
+function __zs_deflate(s_in: __ZS): (__ZS, i32) {
+  let (s, last) = __zs_direct(s_in);
+  if (last) {
+    return (s, 2);
+  }
+  let avail = s.input.len() - s.nin;
+  let have = __ZS_WINDOW - s.strstart;
+  if (avail > have && s.block_start >= __Z_WSIZE) {
+    s = __ZS { ...s, block_start: s.block_start - __Z_WSIZE, strstart: s.strstart - __Z_WSIZE, wbase: s.wbase + __Z_WSIZE };
+    have += __Z_WSIZE;
+  }
+  have = cmp.min(have, avail);
+  s = __ZS { ...s, nin: s.nin + have, strstart: s.strstart + have };
+  avail -= have;
+  let left = s.strstart - s.block_start;
+  if (left < __Z_WSIZE && (avail != 0 || left > 65531)) {
+    return (s, 0);
+  }
+  let len = cmp.min(left, 65531);
+  let done = avail == 0 && len == left;
+  let start = s.wbase + s.block_start;
+  s = __zs_pend(s, __zs_header(len, done));
+  s = __ZS { ...s, pend: s.pend.concat(s.input[start:start + len]), block_start: s.block_start + len };
+  return (__zs_flush(s), if (done) { 1 } else { 0 });
+}
+
+// The stored blocks that `deflate_stored` writes directly to the output,
+// and the window after them. True if the last block is written.
+function __zs_direct(s_in: __ZS): (__ZS, boolean) {
+  let s = s_in;
+  let first = s.nin;
+  let last = false;
+  while (!last && s.room >= 5) {
+    let left = s.strstart - s.block_start;
+    let rest = left + (s.input.len() - s.nin);
+    let len = cmp.min(cmp.min(65535, rest), s.room - 5);
+    if (len < __Z_WSIZE && len != rest) {
+      break;
+    }
+    last = len == rest;
+    s = __zs_flush(__zs_pend(s, __zs_header(len, last)));
+    let from_window = cmp.min(left, len);
+    s = __zs_copy(s, s.wbase + s.block_start, s.wbase + s.block_start + from_window);
+    s = __ZS { ...s, block_start: s.block_start + from_window };
+    s = __zs_copy(s, s.nin, s.nin + len - from_window);
+    s = __ZS { ...s, nin: s.nin + len - from_window };
+  }
+  let used = s.nin - first;
+  if (used >= __Z_WSIZE) {
+    s = __ZS { ...s, wbase: s.nin - __Z_WSIZE, strstart: __Z_WSIZE, block_start: __Z_WSIZE };
+  } else if (used > 0) {
+    if (__ZS_WINDOW - s.strstart <= used) {
+      s = __ZS { ...s, strstart: s.strstart - __Z_WSIZE, wbase: s.wbase + __Z_WSIZE };
+    }
+    s = __ZS { ...s, strstart: s.strstart + used, block_start: s.strstart + used };
+  }
+  return (s, last);
+}
+
+// The bits that the encoder writes: a builder and the bits not yet in a
+// byte, the first bit lowest.
+struct __ZBits { out: usize, acc: i64, n: i32 }
+
+function __zput(w: __ZBits, value: i32, bits: i32): __ZBits {
+  let acc = w.acc | (value as i64 & (1 as i64 << bits) - 1) << w.n;
+  let n = w.n + bits;
+  while (n >= 8) {
+    buf_push_byte(w.out, (acc & 255) as i32);
+    acc >>= 8;
+    n -= 8;
+  }
+  return __ZBits { out: w.out, acc: acc, n: n };
+}
+
+// The bits up to the next byte: `bi_windup` of zlib.
+function __zalign(w: __ZBits): __ZBits {
+  if (w.n > 0) {
+    buf_push_byte(w.out, (w.acc & 255) as i32);
+  }
+  return __ZBits { out: w.out, acc: 0, n: 0 };
+}
+
+// The settings of a level: `configuration_table` of zlib.
+struct __ZLevel { good: i32, lazy: i32, nice: i32, chain: i32, slow: boolean }
+
+function __zlevel(level: i32): __ZLevel {
+  let goods = [4, 4, 4, 4, 8, 8, 8, 32, 32];
+  let lazies = [4, 5, 6, 4, 16, 16, 32, 128, 258];
+  let nices = [8, 16, 32, 16, 32, 128, 128, 258, 258];
+  let chains = [4, 8, 32, 16, 32, 128, 256, 1024, 4096];
+  let k = level - 1;
+  return __ZLevel { good: goods[k], lazy: lazies[k], nice: nices[k], chain: chains[k], slow: level >= 4 };
+}
+
+// The state of the encoder. Positions are in the window of zlib: the byte
+// at window position `p` is the input byte `offset + p`, and a position of
+// 0 in `head` and `prev` is no position, as in zlib.
+struct __Z { input: [u8], cfg: __ZLevel, offset: i32, strstart: i32, lookahead: i32, avail: i32, block_start: i32, match_start: i32, match_length: i32, prev_length: i32, prev_match: i32, match_available: boolean, head: i32[], prev: i32[], dists: i32[], lcs: i32[], w: __ZBits }
+
+const __Z_WSIZE: i32 = 32768;
+
+const __Z_MAX_DIST: i32 = 32506;
+
+const __Z_MIN_LOOKAHEAD: i32 = 262;
+
+// The window after `fill_window` of zlib: the move of the upper half of
+// the window down when the position is high, with the slide of the hash
+// chains, and the input that fits.
+function __zfill(z_in: __Z): __Z {
+  let z = z_in;
+  while (true) {
+    let more = 2 * __Z_WSIZE - z.lookahead - z.strstart;
+    if (z.strstart >= __Z_WSIZE + __Z_MAX_DIST) {
+      z = __Z { ...z, offset: z.offset + __Z_WSIZE, strstart: z.strstart - __Z_WSIZE, match_start: z.match_start - __Z_WSIZE, block_start: z.block_start - __Z_WSIZE, head: __zslide(z.head), prev: __zslide(z.prev) };
+      more += __Z_WSIZE;
+    }
+    if (z.avail == 0) {
+      return z;
+    }
+    let n = cmp.min(more, z.avail);
+    z = __Z { ...z, lookahead: z.lookahead + n, avail: z.avail - n };
+    if (z.lookahead >= __Z_MIN_LOOKAHEAD || z.avail == 0) {
+      return z;
+    }
+  }
+  return z;
+}
+
+function __zslide(own t: i32[]): i32[] {
+  let i = 0;
+  while (i < t.len()) {
+    let m = t[i];
+    t = t.with(i, if (m >= __Z_WSIZE) { m - __Z_WSIZE } else { 0 });
+    i += 1;
+  }
+  return t;
+}
+
+function __zbyte(z: __Z, p: i32): i32 {
+  return z.input[z.offset + p] as i32;
+}
+
+// Puts the string at `p` in the hash chains and gives the last position
+// with its hash: INSERT_STRING of zlib.
+function __zinsert(z: __Z, p: i32): (__Z, i32) {
+  let h = (__zbyte(z, p) << 10 ^ __zbyte(z, p + 1) << 5 ^ __zbyte(z, p + 2)) & 32767;
+  let last = z.head[h];
+  return (__Z { ...z, prev: z.prev.with(p & 32767, last), head: z.head.with(h, p) }, last);
+}
+
+// The length of the common start of the strings at `a` and `b`, at most
+// `limit`.
+function __zcommon(z: __Z, a: i32, b: i32, limit: i32): i32 {
+  return __mismatch_bytes(z.input, z.offset + a, z.input, z.offset + b, limit);
+}
+
+// The longest match at the position before `cur`: `longest_match` of
+// zlib. It gives the length and sets `match_start`. The bytes after the
+// input do not change the result, so the length stops at the input.
+function __zlongest(z: __Z, cur_in: i32): (__Z, i32) {
+  let cur = cur_in;
+  let chain = if (z.prev_length >= z.cfg.good) { z.cfg.chain >> 2 } else { z.cfg.chain };
+  let best = z.prev_length;
+  let start = z.match_start;
+  let nice = cmp.min(z.cfg.nice, z.lookahead);
+  let limit = if (z.strstart > __Z_MAX_DIST) { z.strstart - __Z_MAX_DIST } else { 0 };
+  let max = cmp.min(258, z.lookahead);
+  while (true) {
+    let len = __zcommon(z, cur, z.strstart, max);
+    if (len > best) {
+      start = cur;
+      best = len;
+      if (len >= nice) {
+        break;
+      }
+    }
+    cur = z.prev[cur & 32767];
+    chain -= 1;
+    if (cur <= limit || chain == 0) {
+      break;
+    }
+  }
+  return (__Z { ...z, match_start: start }, cmp.min(best, z.lookahead));
+}
+
+// The input as one stream of blocks: `deflate_fast` for the levels 1 to 3
+// and `deflate_slow` for the others.
+function __zdeflate(input: [u8], level: i32, w: __ZBits): __ZBits {
+  let none: i32[] = [];
+  let z = __Z { input: input, cfg: __zlevel(level), offset: 0, strstart: 0, lookahead: 0, avail: input.len(), block_start: 0, match_start: 0, match_length: 2, prev_length: 2, prev_match: 0, match_available: false, head: __alloc_i32(32768), prev: __alloc_i32(32768), dists: none, lcs: none, w: w };
+  z = if (z.cfg.slow) { __zslow(z) } else { __zfast(z) };
+  return __zalign(__zflush(z, true).w);
+}
+
+// A literal or a match, and the block that a full buffer of symbols ends:
+// `_tr_tally` of zlib, whose buffer holds 16383 symbols.
+function __ztally(z: __Z, dist: i32, lc: i32): (__Z, boolean) {
+  let t = __Z { ...z, dists: z.dists.append(dist), lcs: z.lcs.append(lc) };
+  return (t, t.dists.len() == 16383);
+}
+
+// `deflate_fast` of zlib.
+// fern-lint: allow cyclomatic-complexity
+function __zfast(z_in: __Z): __Z {
+  let z = z_in;
+  while (true) {
+    if (z.lookahead < __Z_MIN_LOOKAHEAD) {
+      z = __zfill(z);
+      if (z.lookahead == 0) {
+        return z;
+      }
+    }
+    let head = 0;
+    if (z.lookahead >= 3) {
+      let (z1, h) = __zinsert(z, z.strstart);
+      z = z1;
+      head = h;
+    }
+    if (head != 0 && z.strstart - head <= __Z_MAX_DIST) {
+      let (z2, len) = __zlongest(z, head);
+      z = __Z { ...z2, match_length: len };
+    }
+    let flush = false;
+    if (z.match_length >= 3) {
+      let (z3, f) = __ztally(z, z.strstart - z.match_start, z.match_length - 3);
+      z = __Z { ...z3, lookahead: z3.lookahead - z3.match_length };
+      flush = f;
+      if (z.match_length <= z.cfg.lazy && z.lookahead >= 3) {
+        let left = z.match_length - 1;
+        while (left > 0) {
+          z = __Z { ...z, strstart: z.strstart + 1 };
+          let (z4, _) = __zinsert(z, z.strstart);
+          z = z4;
+          left -= 1;
+        }
+        z = __Z { ...z, strstart: z.strstart + 1, match_length: 0 };
+      } else {
+        z = __Z { ...z, strstart: z.strstart + z.match_length, match_length: 0 };
+      }
+    } else {
+      let (z5, f) = __ztally(z, 0, __zbyte(z, z.strstart));
+      z = __Z { ...z5, lookahead: z5.lookahead - 1, strstart: z5.strstart + 1 };
+      flush = f;
+    }
+    if (flush) {
+      z = __zflush(z, false);
+    }
+  }
+  return z;
+}
+
+// `deflate_slow` of zlib: a match waits one position for a longer one.
+// fern-lint: allow cyclomatic-complexity
+function __zslow(z_in: __Z): __Z {
+  let z = z_in;
+  while (true) {
+    if (z.lookahead < __Z_MIN_LOOKAHEAD) {
+      z = __zfill(z);
+      if (z.lookahead == 0) {
+        break;
+      }
+    }
+    let head = 0;
+    if (z.lookahead >= 3) {
+      let (z1, h) = __zinsert(z, z.strstart);
+      z = z1;
+      head = h;
+    }
+    z = __Z { ...z, prev_length: z.match_length, prev_match: z.match_start, match_length: 2 };
+    if (head != 0 && z.prev_length < z.cfg.lazy && z.strstart - head <= __Z_MAX_DIST) {
+      let (z2, len) = __zlongest(z, head);
+      z = __Z { ...z2, match_length: len };
+      if (len == 3 && z.strstart - z.match_start > 4096) {
+        z = __Z { ...z, match_length: 2 };
+      }
+    }
+    if (z.prev_length >= 3 && z.match_length <= z.prev_length) {
+      let max_insert = z.strstart + z.lookahead - 3;
+      let (z3, flush) = __ztally(z, z.strstart - 1 - z.prev_match, z.prev_length - 3);
+      z = __Z { ...z3, lookahead: z3.lookahead - (z3.prev_length - 1) };
+      let left = z.prev_length - 2;
+      while (left > 0) {
+        z = __Z { ...z, strstart: z.strstart + 1 };
+        if (z.strstart <= max_insert) {
+          let (z4, _) = __zinsert(z, z.strstart);
+          z = z4;
+        }
+        left -= 1;
+      }
+      z = __Z { ...z, match_available: false, match_length: 2, strstart: z.strstart + 1 };
+      if (flush) {
+        z = __zflush(z, false);
+      }
+    } else if (z.match_available) {
+      let (z5, flush) = __ztally(z, 0, __zbyte(z, z.strstart - 1));
+      z = z5;
+      if (flush) {
+        z = __zflush(z, false);
+      }
+      z = __Z { ...z, strstart: z.strstart + 1, lookahead: z.lookahead - 1 };
+    } else {
+      z = __Z { ...z, match_available: true, strstart: z.strstart + 1, lookahead: z.lookahead - 1 };
+    }
+  }
+  if (z.match_available) {
+    let (z6, _) = __ztally(z, 0, __zbyte(z, z.strstart - 1));
+    z = __Z { ...z6, match_available: false };
+  }
+  return z;
+}
+
+// ---- The blocks (trees.c of zlib) ----
+
+const __Z_EXTRA_LBITS: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+
+const __Z_EXTRA_DBITS: i32[] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+
+const __Z_EXTRA_BLBITS: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7];
+
+const __Z_BL_ORDER: i32[] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+
+// The first match length of each length code (`base_length`).
+function __zbase_length(code: i32): i32 {
+  if (code == 28) {
+    return 0;
+  }
+  let base = 0;
+  for c in 0..code {
+    base += 1 << __Z_EXTRA_LBITS[c];
+  }
+  return base;
+}
+
+// The length code of a match length less 3 (`_length_code`).
+function __zlength_code(lc: i32): i32 {
+  if (lc == 255) {
+    return 28;
+  }
+  let code = 0;
+  let base = 0;
+  while (base + (1 << __Z_EXTRA_LBITS[code]) <= lc) {
+    base += 1 << __Z_EXTRA_LBITS[code];
+    code += 1;
+  }
+  return code;
+}
+
+// The first distance less 1 of each distance code (`base_dist`).
+function __zbase_dist(code: i32): i32 {
+  let base = 0;
+  for c in 0..code {
+    base += 1 << __Z_EXTRA_DBITS[c];
+  }
+  return base;
+}
+
+// The distance code of a distance less 1 (`d_code`).
+function __zdist_code(dist: i32): i32 {
+  let code = 0;
+  while (code < 29 && __zbase_dist(code + 1) <= dist) {
+    code += 1;
+  }
+  return code;
+}
+
+// A Huffman tree of zlib: the frequency, the parent and the length of each
+// node, the code of each leaf, and the largest code in use.
+struct __ZTree { freq: i32[], dad: i32[], len: i32[], code: i32[], max_code: i32 }
+
+// The heap of `build_tree`, with the depth of each node.
+struct __ZHeap { heap: i32[], depth: i32[], n: i32, max: i32 }
+
+function __zsmaller(t: __ZTree, h: __ZHeap, a: i32, b: i32): boolean {
+  return t.freq[a] < t.freq[b] || t.freq[a] == t.freq[b] && h.depth[a] <= h.depth[b];
+}
+
+// `pqdownheap` of zlib.
+function __zdown(t: __ZTree, h_in: __ZHeap, k_in: i32): __ZHeap {
+  let h = h_in;
+  let k = k_in;
+  let v = h.heap[k];
+  let j = k << 1;
+  while (j <= h.n) {
+    if (j < h.n && __zsmaller(t, h, h.heap[j + 1], h.heap[j])) {
+      j += 1;
+    }
+    if (__zsmaller(t, h, v, h.heap[j])) {
+      break;
+    }
+    h = __ZHeap { ...h, heap: h.heap.with(k, h.heap[j]) };
+    k = j;
+    j <<= 1;
+  }
+  return __ZHeap { ...h, heap: h.heap.with(k, v) };
+}
+
+// The costs that a tree adds to a block: the bits of the block with this
+// tree and with the static tree.
+struct __ZCost { opt: i64, stat: i64 }
+
+// The tree of the frequencies `freq` of `elems` codes, its lengths at most
+// `max_length`, and the costs: `build_tree`, `gen_bitlen` and `gen_codes`
+// of zlib. `stat` holds the lengths of the static tree, or none.
+function __zbuild(freq_in: i32[], elems: i32, stat: i32[], extra: i32[], base: i32, max_length: i32): (__ZTree, __ZCost) {
+  let size = 2 * elems + 1;
+  let t = __ZTree { freq: __zgrow(freq_in, size), dad: __alloc_i32(size), len: __alloc_i32(size), code: __alloc_i32(size), max_code: -1 };
+  let h = __ZHeap { heap: __alloc_i32(2 * 286 + 1), depth: __alloc_i32(size), n: 0, max: 2 * 286 + 1 };
+  let cost = __ZCost { opt: 0, stat: 0 };
+  for n in 0..elems {
+    if (t.freq[n] != 0) {
+      h = __ZHeap { ...h, n: h.n + 1 };
+      h = __ZHeap { ...h, heap: h.heap.with(h.n, n) };
+      t = __ZTree { ...t, max_code: n };
+    }
+  }
+  while (h.n < 2) {
+    let node = if (t.max_code < 2) { t.max_code + 1 } else { 0 };
+    if (t.max_code < 2) {
+      t = __ZTree { ...t, max_code: t.max_code + 1 };
+    }
+    h = __ZHeap { ...h, n: h.n + 1 };
+    h = __ZHeap { ...h, heap: h.heap.with(h.n, node) };
+    t = __ZTree { ...t, freq: t.freq.with(node, 1) };
+    cost = __ZCost { opt: cost.opt - 1, stat: cost.stat - (if (stat.len() > 0) { stat[node] as i64 } else { 0 }) };
+  }
+  let k = h.n / 2;
+  while (k >= 1) {
+    h = __zdown(t, h, k);
+    k -= 1;
+  }
+  let (t2, h2) = __zcombine(t, h, elems);
+  return __zbitlen(t2, h2, cost, stat, extra, base, max_length);
+}
+
+function __zgrow(freq: i32[], size: i32): i32[] {
+  let out = __alloc_i32(size);
+  for i in 0..freq.len() {
+    out = out.with(i, freq[i]);
+  }
+  return out;
+}
+
+// The tree made from the heap: the two least frequent nodes become the
+// children of a new node, until one node is left.
+function __zcombine(t_in: __ZTree, h_in: __ZHeap, elems: i32): (__ZTree, __ZHeap) {
+  let t = t_in;
+  let h = h_in;
+  let node = elems;
+  while (true) {
+    let n = h.heap[1];
+    h = __ZHeap { ...h, heap: h.heap.with(1, h.heap[h.n]), n: h.n - 1 };
+    h = __zdown(t, h, 1);
+    let m = h.heap[1];
+    h = __ZHeap { ...h, max: h.max - 2 };
+    h = __ZHeap { ...h, heap: h.heap.with(h.max + 1, n).with(h.max, m) };
+    t = __ZTree { ...t, freq: t.freq.with(node, t.freq[n] + t.freq[m]), dad: t.dad.with(n, node).with(m, node) };
+    h = __ZHeap { ...h, depth: h.depth.with(node, cmp.max(h.depth[n], h.depth[m]) + 1), heap: h.heap.with(1, node) };
+    node += 1;
+    h = __zdown(t, h, 1);
+    if (h.n < 2) {
+      break;
+    }
+  }
+  h = __ZHeap { ...h, max: h.max - 1 };
+  return (t, __ZHeap { ...h, heap: h.heap.with(h.max, h.heap[1]) });
+}
+
+// The lengths of the codes of the tree, at most `max_length`, the costs,
+// and the codes: `gen_bitlen` and `gen_codes` of zlib.
+// fern-lint: allow cyclomatic-complexity
+function __zbitlen(t_in: __ZTree, h: __ZHeap, cost_in: __ZCost, stat: i32[], extra: i32[], base: i32, max_length: i32): (__ZTree, __ZCost) {
+  let t = t_in;
+  let cost = cost_in;
+  let counts = __alloc_i32(16);
+  let overflow = 0;
+  t = __ZTree { ...t, len: t.len.with(h.heap[h.max], 0) };
+  let top = 2 * 286 + 1;
+  for k in h.max + 1..top {
+    let n = h.heap[k];
+    let bits = t.len[t.dad[n]] + 1;
+    if (bits > max_length) {
+      bits = max_length;
+      overflow += 1;
+    }
+    t = __ZTree { ...t, len: t.len.with(n, bits) };
+    if (n <= t.max_code) {
+      counts = counts.with(bits, counts[bits] + 1);
+      let xbits = if (n >= base) { extra[n - base] } else { 0 };
+      let f = t.freq[n] as i64;
+      cost = __ZCost { opt: cost.opt + f * ((bits + xbits) as i64), stat: cost.stat + (if (stat.len() > 0) { f * ((stat[n] + xbits) as i64) } else { 0 }) };
+    }
+  }
+  if (overflow > 0) {
+    while (overflow > 0) {
+      let bits = max_length - 1;
+      while (counts[bits] == 0) {
+        bits -= 1;
+      }
+      counts = counts.with(bits, counts[bits] - 1).with(bits + 1, counts[bits + 1] + 2);
+      counts = counts.with(max_length, counts[max_length] - 1);
+      overflow -= 2;
+    }
+    let k = top;
+    let bits = max_length;
+    while (bits != 0) {
+      let left = counts[bits];
+      while (left != 0) {
+        k -= 1;
+        let m = h.heap[k];
+        if (m <= t.max_code) {
+          if (t.len[m] != bits) {
+            cost = __ZCost { ...cost, opt: cost.opt + (bits - t.len[m]) as i64 * (t.freq[m] as i64) };
+            t = __ZTree { ...t, len: t.len.with(m, bits) };
+          }
+          left -= 1;
+        }
+      }
+      bits -= 1;
+    }
+  }
+  return (__ZTree { ...t, code: __zcodes(t.len, t.max_code, counts) }, cost);
+}
+
+// The codes of the lengths `len`, with the bits reversed: `gen_codes`.
+function __zcodes(len: i32[], max_code: i32, counts: i32[]): i32[] {
+  let next = __alloc_i32(16);
+  let code = 0;
+  for bits in 1..16 {
+    code = code + counts[bits - 1] << 1;
+    next = next.with(bits, code);
+  }
+  let out = __alloc_i32(len.len());
+  for n in 0..max_code + 1 {
+    let l = len[n];
+    if (l != 0) {
+      out = out.with(n, __zreverse(next[l], l));
+      next = next.with(l, next[l] + 1);
+    }
+  }
+  return out;
+}
+
+function __zreverse(code_in: i32, len: i32): i32 {
+  let code = code_in;
+  let res = 0;
+  for k in 0..len {
+    res = res << 1 | code & 1;
+    code >>= 1;
+  }
+  return res;
+}
+
+// The lengths of the static trees.
+function __zstatic_llen(): i32[] {
+  let out = __alloc_i32(288);
+  for n in 0..288 {
+    out = out.with(n, if (n < 144) { 8 } else if (n < 256) { 9 } else if (n < 280) { 7 } else { 8 });
+  }
+  return out;
+}
+
+function __zstatic_codes(len: i32[]): i32[] {
+  let counts = __alloc_i32(16);
+  for l in len {
+    counts = counts.with(l, counts[l] + 1);
+  }
+  return __zcodes(len, len.len() - 1, counts);
+}
+
+// The frequencies of the symbols of a block, with the end of the block.
+function __zfreqs(z: __Z): (i32[], i32[]) {
+  let lf = __alloc_i32(286);
+  let df = __alloc_i32(30);
+  for i in 0..z.dists.len() {
+    if (z.dists[i] == 0) {
+      lf = lf.with(z.lcs[i], lf[z.lcs[i]] + 1);
+    } else {
+      let lcode = __zlength_code(z.lcs[i]) + 257;
+      lf = lf.with(lcode, lf[lcode] + 1);
+      let dcode = __zdist_code(z.dists[i] - 1);
+      df = df.with(dcode, df[dcode] + 1);
+    }
+  }
+  return (lf.with(256, 1), df);
+}
+
+// The frequencies of the codes of the lengths of a tree, as the run
+// lengths of `send_tree` give them: `scan_tree` of zlib.
+function __zscan(own bl: i32[], len: i32[], max_code: i32): i32[] {
+  let runs = __zruns(len, max_code);
+  for r in runs {
+    let code = r >> 16;
+    bl = bl.with(code, bl[code] + __zrun_count(r));
+  }
+  return bl;
+}
+
+// The codes of the lengths `len` up to `max_code`, in runs: each item is a
+// code of the tree of the lengths (0 to 18) and, in its low 16 bits, how
+// many times it goes, or the count of a repeat less its base (in the bits
+// 8 and up of the low part) for the codes 16 to 18 (`send_tree` of zlib).
+function __zruns(len: i32[], max_code: i32): i32[] {
+  let out: i32[] = [];
+  let prevlen = -1;
+  let nextlen = len[0];
+  let count = 0;
+  let (max_count, min_count) = __zrun_limits(-1, nextlen);
+  for n in 0..max_code + 1 {
+    let curlen = nextlen;
+    nextlen = if (n + 1 <= max_code) { len[n + 1] } else { 65535 };
+    count += 1;
+    if (count < max_count && curlen == nextlen) {
+      continue;
+    }
+    out = __zrun_items(out, curlen, prevlen, count, min_count);
+    count = 0;
+    prevlen = curlen;
+    let (mx, mn) = __zrun_limits(curlen, nextlen);
+    max_count = mx;
+    min_count = mn;
+  }
+  return out;
+}
+
+// The longest run and the shortest repeat after the length `curlen` when
+// the next length is `nextlen`.
+function __zrun_limits(curlen: i32, nextlen: i32): (i32, i32) {
+  if (nextlen == 0) {
+    return (138, 3);
+  }
+  if (curlen == nextlen) {
+    return (6, 3);
+  }
+  return (7, 4);
+}
+
+// The items of one run of `count` lengths `curlen` after the length
+// `prevlen`.
+function __zrun_items(own out: i32[], curlen: i32, prevlen: i32, count_in: i32, min_count: i32): i32[] {
+  let count = count_in;
+  if (count < min_count) {
+    return out.append(curlen << 16 | count);
+  }
+  if (curlen != 0) {
+    if (curlen != prevlen) {
+      out = out.append(curlen << 16 | 1);
+      count -= 1;
+    }
+    return out.append(16 << 16 | 1 | count - 3 << 8);
+  }
+  if (count <= 10) {
+    return out.append(17 << 16 | 1 | count - 3 << 8);
+  }
+  return out.append(18 << 16 | 1 | count - 11 << 8);
+}
+
+// The count of the code of a run: its low byte.
+function __zrun_count(r: i32): i32 {
+  return r & 255;
+}
+
+// Writes the runs of the lengths of a tree with the codes `bt`.
+function __zsend_runs(w_in: __ZBits, runs: i32[], bt: __ZTree): __ZBits {
+  let w = w_in;
+  for r in runs {
+    let code = r >> 16;
+    let extra = r >> 8 & 255;
+    let times = __zrun_count(r);
+    for k in 0..times {
+      w = __zput(w, bt.code[code], bt.len[code]);
+    }
+    if (code == 16) {
+      w = __zput(w, extra, 2);
+    } else if (code == 17) {
+      w = __zput(w, extra, 3);
+    } else if (code == 18) {
+      w = __zput(w, extra, 7);
+    }
+  }
+  return w;
+}
+
+// Writes the symbols of the block with the codes of the trees `lt` and
+// `dt`, and the end of the block: `compress_block` of zlib.
+function __zcompress(w_in: __ZBits, z: __Z, lcode: i32[], llen: i32[], dcode: i32[], dlen: i32[]): __ZBits {
+  let w = w_in;
+  for i in 0..z.dists.len() {
+    let lc = z.lcs[i];
+    if (z.dists[i] == 0) {
+      w = __zput(w, lcode[lc], llen[lc]);
+      continue;
+    }
+    let code = __zlength_code(lc);
+    w = __zput(w, lcode[code + 257], llen[code + 257]);
+    if (__Z_EXTRA_LBITS[code] != 0) {
+      w = __zput(w, lc - __zbase_length(code), __Z_EXTRA_LBITS[code]);
+    }
+    let dist = z.dists[i] - 1;
+    let dc = __zdist_code(dist);
+    w = __zput(w, dcode[dc], dlen[dc]);
+    if (__Z_EXTRA_DBITS[dc] != 0) {
+      w = __zput(w, dist - __zbase_dist(dc), __Z_EXTRA_DBITS[dc]);
+    }
+  }
+  return __zput(w, lcode[256], llen[256]);
+}
+
+// Writes the block of the symbols since `block_start`, as a stored block, a
+// block with the static trees or a block with its own trees, whichever is
+// the smallest: `_tr_flush_block` of zlib.
+function __zflush(z: __Z, last: boolean): __Z {
+  let (lf, df) = __zfreqs(z);
+  let slen = __zstatic_llen();
+  let dstat = __alloc_i32(30).map((v: i32): i32 => 5);
+  let (lt, lcost) = __zbuild(lf, 286, slen, __Z_EXTRA_LBITS, 257, 15);
+  let (dt, dcost) = __zbuild(df, 30, dstat, __Z_EXTRA_DBITS, 0, 15);
+  let bl = __zscan(__zscan(__alloc_i32(19), lt.len, lt.max_code), dt.len, dt.max_code);
+  let none_stat: i32[] = [];
+  let (bt, bcost) = __zbuild(bl, 19, none_stat, __Z_EXTRA_BLBITS, 0, 7);
+  let max_blindex = 18;
+  while (max_blindex >= 3 && bt.len[__Z_BL_ORDER[max_blindex]] == 0) {
+    max_blindex -= 1;
+  }
+  let opt = lcost.opt + dcost.opt + bcost.opt + 3 * (max_blindex as i64 + 1) + 14;
+  let stat = lcost.stat + dcost.stat;
+  let opt_lenb = opt + 3 + 7 >> 3;
+  let static_lenb = stat + 3 + 7 >> 3;
+  if (static_lenb <= opt_lenb) {
+    opt_lenb = static_lenb;
+  }
+  let w = z.w;
+  let lastbit = if (last) { 1 } else { 0 };
+  if ((z.strstart - z.block_start) as i64 + 4 <= opt_lenb && z.block_start >= 0) {
+    w = __zstored(w, z, lastbit);
+  } else if (static_lenb == opt_lenb) {
+    w = __zstatic_block(w, z, lastbit, slen, dstat);
+  } else {
+    w = __zput(__zput(__zput(__zput(w, 4 + lastbit, 3), lt.max_code + 1 - 257, 5), dt.max_code, 5), max_blindex + 1 - 4, 4);
+    for rank in 0..max_blindex + 1 {
+      w = __zput(w, bt.len[__Z_BL_ORDER[rank]], 3);
+    }
+    w = __zsend_runs(w, __zruns(lt.len, lt.max_code), bt);
+    w = __zsend_runs(w, __zruns(dt.len, dt.max_code), bt);
+    w = __zcompress(w, z, lt.code, lt.len, dt.code, dt.len);
+  }
+  let none: i32[] = [];
+  return __Z { ...z, w: w, block_start: z.strstart, dists: none, lcs: none };
+}
+
+// A stored block of the bytes since `block_start`: `_tr_stored_block`.
+function __zstored(w_in: __ZBits, z: __Z, lastbit: i32): __ZBits {
+  let stored_len = z.strstart - z.block_start;
+  let w = __zalign(__zput(w_in, lastbit, 3));
+  buf_push_byte(w.out, stored_len & 255);
+  buf_push_byte(w.out, stored_len >> 8 & 255);
+  buf_push_byte(w.out, ~stored_len & 255);
+  buf_push_byte(w.out, ~stored_len >> 8 & 255);
+  for i in z.offset + z.block_start..z.offset + z.strstart {
+    buf_push_byte(w.out, z.input[i] as i32);
+  }
+  return w;
+}
+
+// A block with the static trees.
+function __zstatic_block(w_in: __ZBits, z: __Z, lastbit: i32, slen: i32[], dstat: i32[]): __ZBits {
+  let w = __zput(w_in, 2 + lastbit, 3);
+  let dc = __alloc_i32(30);
+  for k in 0..30 {
+    dc = dc.with(k, __zreverse(k, 5));
+  }
+  return __zcompress(w, z, __zstatic_codes(slen), slen, dc, dstat);
+}
+```
+
+### Streaming inflate
+
+An `InflateStream` decodes a deflate stream from input that comes in parts. Memory stays bounded: the stream keeps 32768 bytes of history and one output buffer. Each call of `inflate_part` decodes from `input[from:]`. It returns at most about 32 KiB of new output, the count of input bytes that it used, and an error or the end of the stream.
+
+When `last` is false, more input can follow `input`. The part then stops before the input ends, at a point where it can continue. The next call gives the input again from `from + used`, with more bytes after it. When `last` is true, the input ends at `input.len()`, and an end of the input inside the stream is `Truncated`.
+
+A call can return with input that it did not use, because its output is full. Then `done` is false and `error` is None, and the caller calls again with the input that is left. When the data does not decode, `out` holds the output before the error. That output does not include the output of the symbol that has the error.
+
+When `done` is true, the stream ends at byte `from + used`, after the padding bits of its last byte.
+
+```fern
+<<36 streaming inflate>>=
+// The output of one part before it returns.
+const PART_OUT: i32 = 32768;
+
+// The input that a block header and its code lengths can take.
+const HEADER_NEED: i32 = 1024;
+
+const P_HEADER: i32 = 0;
+
+const P_STORED: i32 = 1;
+
+const P_CODES: i32 = 2;
+
+const P_DONE: i32 = 3;
+
+pub struct InflateStream {
+  // The history in buf[0:n].
+  buf: u8[],
+  n: i32,
+  bitbuf: i32,
+  bitcnt: i32,
+  phase: i32,
+  final_block: boolean,
+  // The bytes left in a stored block.
+  remaining: i32,
+  literal: i32[],
+  distance: i32[],
+}
+
+pub struct InflatePart {
+  stream: InflateStream,
+  out: u8[],
+  used: i32,
+  done: boolean,
+  error: Option[InflateError],
+}
+
+pub function inflate_stream(): InflateStream {
+  return InflateStream { buf: __alloc_u8(32768 + PART_OUT + SLACK), n: 0, bitbuf: 0, bitcnt: 0, phase: P_HEADER, final_block: false, remaining: 0, literal: [], distance: [] };
+}
+
+// fern-lint: allow cyclomatic-complexity
+pub function inflate_part(own st: InflateStream, input: [u8], from: i32, last: boolean): InflatePart {
+  if (from < 0) {
+    return InflatePart { stream: st, out: [], used: 0, done: false, error: Some(Malformed("an offset below zero")) };
+  }
+  let InflateStream { buf, n, bitbuf, bitcnt, phase, final_block, remaining, literal, distance } = st;
+  let keep = cmp.min(n, 32768);
+  if (n > keep) {
+    let history = __bytes_into(__alloc_u8(keep), 0, buf, n - keep, keep);
+    buf = __bytes_into(buf, 0, history, 0, keep);
+  }
+  // The fast loop stops at `room`. With a limit 300 bytes past it, no match
+  // reaches the limit.
+  let room = buf.len() - SLACK;
+  let limit = room + 300;
+  let s = __State { pos: from, bitbuf: bitbuf, bitcnt: bitcnt, out: buf, n: keep, max_out: limit, last: 0, failed: false, error: Truncated, lengths: [], counts: [] };
+  let lit = literal;
+  let dist = distance;
+  while (phase != P_DONE && !s.failed && s.n < room) {
+    if (phase == P_HEADER) {
+      if (!last && input.len() - s.pos < HEADER_NEED) {
+        break;
+      }
+      s = __bits(s, input, 1);
+      final_block = s.last == 1;
+      s = __bits(s, input, 2);
+      let kind = s.last;
+      if (kind == 0) {
+        s = __State { ...s, bitbuf: 0, bitcnt: 0 };
+        if (s.pos + 4 > input.len()) {
+          s = __fail(s, Truncated);
+          break;
+        }
+        let len = input[s.pos] as i32 | input[s.pos + 1] as i32 << 8;
+        let nlen = input[s.pos + 2] as i32 | input[s.pos + 3] as i32 << 8;
+        if (len != (nlen ^ 65535)) {
+          s = __fail(s, Malformed("a stored block's length and its complement disagree"));
+          break;
+        }
+        s = __State { ...s, pos: s.pos + 4 };
+        remaining = len;
+        phase = P_STORED;
+      } else if (kind == 1) {
+        lit = FIXED_LIT_TABLE;
+        dist = FIXED_DIST_TABLE;
+        phase = P_CODES;
+      } else if (kind == 2) {
+        let t = __dynamic_tables(s, input);
+        s = t.state;
+        lit = t.literal;
+        dist = t.distance;
+        phase = P_CODES;
+      } else {
+        s = __fail(s, Malformed("a reserved block type"));
+      }
+    } else if (phase == P_STORED) {
+      let take = cmp.min(cmp.min(remaining, input.len() - s.pos), room - s.n);
+      let out = s.out;
+      let at = s.n;
+      s = __State { ...s, out: [] };
+      out = __bytes_into(out, at, input, s.pos, take);
+      s = __State { ...s, out: out, n: at + take, pos: s.pos + take };
+      remaining -= take;
+      if (remaining == 0) {
+        phase = if (final_block) { P_DONE } else { P_HEADER };
+      } else if (s.n < room) {
+        if (last) {
+          s = __fail(s, Truncated);
+        }
+        break;
+      }
+    } else {
+      let out = s.out;
+      s = __State { ...s, out: [] };
+      let f = __fast(out, s.n, input, s.pos, s.bitbuf as u64, s.bitcnt, s.max_out, lit, dist);
+      let back = f.bitcnt >> 3;
+      let cnt = f.bitcnt & 7;
+      s = __State { ...s, out: f.out, n: f.n, pos: f.pos - back, bitbuf: __low(f.bitbuf, cnt) as i32, bitcnt: cnt };
+      if (f.status == F_END) {
+        phase = if (final_block) { P_DONE } else { P_HEADER };
+      } else if (f.status != F_ROOM) {
+        match (__status_error(f.status)) {
+          Some(err) => {
+            s = __fail(s, err);
+          },
+          None => {}
+        }
+      } else if (f.n <= room && f.pos > input.len() - 8) {
+        if (!last) {
+          break;
+        }
+        s = __codes(__State { ...s, max_out: 2147483647 - SLACK }, input, lit, dist);
+        s = __State { ...s, max_out: limit };
+        if (!s.failed) {
+          phase = if (final_block) { P_DONE } else { P_HEADER };
+        }
+      } else {
+        break;
+      }
+    }
+  }
+  let out = __bytes_into(__alloc_u8(s.n - keep), 0, s.out, keep, s.n - keep);
+  let error: Option[InflateError] = if (s.failed) { Some(s.error) } else { None };
+  let next = InflateStream { buf: s.out, n: s.n, bitbuf: s.bitbuf, bitcnt: s.bitcnt, phase: phase, final_block: final_block, remaining: remaining, literal: lit, distance: dist };
+  return InflatePart { stream: next, out: out, used: s.pos - from, done: phase == P_DONE && !s.failed, error: error };
 }
 ```

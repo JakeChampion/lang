@@ -293,9 +293,9 @@ pub function button_frame(mt: Metrics, pressed: boolean): draw.Frame {
   return f;
 }
 
-// The picture of the dialog with no rows: its box, its title and its close
-// button. It has the size of the panel of `l`.
-pub function panel_frame(fs: text.Fonts, mt: Metrics, l: fluid.Layout): draw.Frame {
+// The picture of the dialog with no rows: its box, its title, the frame rate
+// `speed` and its close button. It has the size of the panel of `l`.
+pub function panel_frame(fs: text.Fonts, mt: Metrics, l: fluid.Layout, speed: string): draw.Frame {
   let p = l.panel;
   let f = clear_frame(p.w, p.h);
   boxed(f, 0, 0, p.w, p.h, mt.dp(16.0), mt.dp(1.0).max(1), surface(), border());
@@ -303,6 +303,8 @@ pub function panel_frame(fs: text.Fonts, mt: Metrics, l: fluid.Layout): draw.Fra
   let c = l.close;
   let base = c.y - p.y + (c.h - text.line(fs, BOLD, px)) / 2 + text.ascent(fs, BOLD, px);
   let cache = text.text(text.new_cache(), f, fs, BOLD, px, 0, l.list.x - p.x, base, TITLE, ink());
+  let spx = mt.sp(12.0);
+  cache = text.text(cache, f, fs, REGULAR, spx, 0, c.x - p.x - mt.dp(8.0) - text.width(fs, REGULAR, spx, speed), base, speed, muted());
   let cx = (c.x - p.x) as f64 + c.w as f64 / 2.0;
   let cy = (c.y - p.y) as f64 + c.h as f64 / 2.0;
   let arm = mt.scale * 6.0;

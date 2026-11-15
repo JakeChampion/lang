@@ -21,6 +21,7 @@ import "./util";
 import "./rtbytecopy";
 import "./semunique";
 import "./sembytecopy";
+import "./semversion";
 import "./byteconst";
 import "./seminline";
 import "./semspecial";
@@ -98,10 +99,14 @@ struct State {
   finalized: string[],
   // The values that this body read from a shared word.
   word_reads: WordRead[],
+  tested: Tested[],
 }
 
 // Value `id` is the bits at `shift` of `word`, a shared word of a variant.
 struct WordRead { id: i32, word: i32, shift: i32, bits: i32 }
+
+// Value `id` is variant `member` while the arm that tested it is open.
+struct Tested { id: i32, member: string }
 
 struct Value { s: State, id: i32 }
 
@@ -693,6 +698,12 @@ function literal_type(suffix: string): typeinfo.Type {
   if (suffix == "u8") {
     return typeinfo.t_u8();
   }
+  if (suffix == "u16") {
+    return typeinfo.t_u16();
+  }
+  if (suffix == "i16") {
+    return typeinfo.t_i16();
+  }
   if (suffix == "char") {
     return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true, polymorphic: false };
   }
@@ -1115,7 +1126,7 @@ function index_operand(v: Value): Value {
     return refused(s, "array projection contract");
   }
   let narrowed = define(s, ssasem.cast(), [v.id], 0, "", typeinfo.t_i32());
-  if (ssasem.is_u8(source)) {
+  if (ssasem.is_u8(source) || ssasem.is_u16(source) || ssasem.is_i16(source)) {
     return narrowed;
   }
   let back = define(narrowed.s, ssasem.cast(), [narrowed.id], 0, "", source);
@@ -2005,8 +2016,23 @@ function unary_op(s: State, op: string, operand: i32, ty: typeinfo.Type, literal
     if let Some(v) = negated_wide(s, operand, ty, literal) {
       return v;
     }
+    if let Some(v) = negated_half(s, operand, ty, literal) {
+      return v;
+    }
   }
   return define(s, ssa.UNARY, [operand], 0, op, ty);
+}
+
+// The negation of an i16 literal, which is the literal 32768 for the least i16.
+function negated_half(s: State, operand: i32, ty: typeinfo.Type, literal: boolean): Option[Value] {
+  if (!ssasem.is_i16(ty) || s.cur.insts.len() == 0) {
+    return None;
+  }
+  let ins = s.cur.insts[s.cur.insts.len() - 1];
+  if (ins.result != operand || ins.kind_tag != ssa.CONST_INT || ins.str != "" || ins.args.len() != 0 || ins.imm < 0 || ins.imm > 32768) {
+    return None;
+  }
+  return Some(folded(s, 0 - ins.imm, ty, [operand], literal));
 }
 
 function negated_wide(s: State, operand: i32, ty: typeinfo.Type, literal: boolean): Option[Value] {
@@ -2295,8 +2321,9 @@ function cast_ascribes(u: ast.ExprUnary, ty: typeinfo.Type): boolean {
   if (ssasem.cast_ascribes(ty)) {
     return true;
   }
+  // constfold makes `300 + 1` the literal 301, which the cast then wraps.
   if let ast.ExprNumber(n) = u.operand {
-    return !n.is_float && n.suffix == "" && ssasem.is_integer(ty) && !ssasem.is_usize(ty);
+    return !n.is_float && n.suffix == "" && ssasem.is_integer(ty) && !ssasem.is_usize(ty) && ssasem.narrow_holds(ty, util.lit_to_i64(n.text));
   }
   return false;
 }
@@ -2730,7 +2757,7 @@ function primitive_contract(c: ast.ExprCall, fa: ast.ExprFieldAccess, owner: str
     }
   }
   if (at < 0 && fa.field == "to_string" && c.args.len() == 0) {
-    at = ssasem.find_contract(contracts, "__primitive_" + owner + "_to_string");
+    at = ssasem.find_contract(contracts, "__primitive_" + typeinfo.display_owner(owner) + "_to_string");
   }
   return at;
 }
@@ -2767,6 +2794,11 @@ function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s
   }
   if (typeinfo.is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
+  }
+  if (contract.name.starts_with("__primitive_") && typeinfo.display_owner(owner) != owner) {
+    let shown = widen(Value { s: s, id: recv }, contract.params[0]);
+    s = shown.s;
+    recv = shown.id;
   }
   return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), ssasem.unbound());
 }
@@ -3882,7 +3914,7 @@ function exiting(name: string, v: Value): Value {
 
 function lane_memory_call(name: string, c: ast.ExprCall): boolean {
   let verb = typeinfo.lane_builtin_verb(name);
-  return (verb == "load" || verb == "load_bytes") && c.args.len() == 2 || (verb == "with" || verb == "with_bytes") && c.args.len() == 3;
+  return (verb == "load" || verb == "load_bytes" || verb == "load_view") && c.args.len() == 2 || (verb == "with" || verb == "with_bytes") && c.args.len() == 3;
 }
 
 function lane_memory(name: string, c: ast.ExprCall, s: State): Value {
@@ -3891,17 +3923,19 @@ function lane_memory(name: string, c: ast.ExprCall, s: State): Value {
   if (!xs.s.ok) {
     return xs;
   }
-  if (!semtypes.equal(xs.s.values[xs.id], arr)) {
+  let verb = typeinfo.lane_builtin_verb(name);
+  // An array of bytes is a view of bytes also.
+  let viewed = verb == "load_view" && ssasem.is_byte_array(xs.s.values[xs.id]);
+  if (!semtypes.equal(xs.s.values[xs.id], arr) && !viewed) {
     return refused(xs.s, "lane array type");
   }
   let at = expr(c.args[1], xs.s, typeinfo.t_i32());
   if (!at.s.ok || !is_i32(at.s.values[at.id])) {
     return refused(at.s, "lane index type");
   }
-  let verb = typeinfo.lane_builtin_verb(name);
   // An integer lane type reads and writes 16 bytes of the array.
   let marker = if (verb == "load_bytes" || verb == "with_bytes" || typeinfo.lane_builtin_kind(name) != typeinfo.LANE_FLOAT) { "lane_bytes" } else { "" };
-  if (verb == "load" || verb == "load_bytes") {
+  if (verb == "load" || verb == "load_bytes" || verb == "load_view") {
     return define(at.s, ssasem.array_get(), [xs.id, at.id], 0, marker, typeinfo.lane_builtin_result(name));
   }
   let lt = typeinfo.lane_builtin_params(name)[2];
@@ -4827,14 +4861,14 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
   let test = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, typeinfo.t_bool());
   s = terminate(test.s, ssa.t_brif(test.id, id, next));
   let opened = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
-  opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
+  opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]), tested: s.tested.append(Tested { id: scrut, member: pv.type_name }) };
   let gate = guard_gate(a, opened, next);
   if (!gate.s.ok) {
     return gathered(gate.s, g);
   }
   let from = gate.from;
   let done = arm_body(a.body, gate.s, join, count, scope, ty);
-  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(pred, from)) };
+  done = Arm { ...done, s: open(State { ...done.s, vals: entry, tested: s.tested }, next, next_preds(pred, from)) };
   return collect(g, done);
 }
 
@@ -4843,8 +4877,9 @@ function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Pay
   let id = s.next_block;
   s = terminate(State { ...s, next_block: id + 1 }, ssa.t_br(id));
   let opened = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
-  opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
-  return collect(g, arm_body(a.body, opened, join, count, scope, ty));
+  opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]), tested: s.tested.append(Tested { id: scrut, member: pv.type_name }) };
+  let done = arm_body(a.body, opened, join, count, scope, ty);
+  return collect(g, Arm { ...done, s: State { ...done.s, tested: s.tested } });
 }
 
 function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arms {
@@ -6021,7 +6056,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts.list), loops: [], contracts: contracts, calls: [],
     template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
     name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: parser.try_cleanup(fd.body), replaying: false, armed: 0, escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
-    narrowings: [], debug_lines: layout.debug_lines, dbg_vals: [], dbg_names: [], packs: layout.packs, finalized: layout.finalized, word_reads: [],
+    narrowings: [], debug_lines: layout.debug_lines, dbg_vals: [], dbg_names: [], packs: layout.packs, finalized: layout.finalized, word_reads: [], tested: [],
   };
 }
 
@@ -6751,7 +6786,7 @@ function variant_built(s: State, ids: i32[], types: typeinfo.Type[], name: strin
 }
 
 function packed_word(s: State, ids: i32[], types: typeinfo.Type[], p: Packing): Value {
-  let kept = kept_bits(s, ids, p);
+  let kept = chosen_bits(kept_bits(s, ids, types, p, false), kept_bits(s, ids, types, p, true));
   let acc = Value { s: s, id: -1 };
   if (kept.word >= 0 && kept.all) {
     return Value { s: s, id: kept.word };
@@ -6790,18 +6825,28 @@ function field_mask(bits: i32): i64 {
 }
 
 // The fields that the constructor takes from one shared word at the place
-// that they have in the new word. `mask` has each bit of the word but the
-// bits of the other narrow fields, so it is a small constant when those are
-// bytes.
+// that they have in the new word. With `tested`, a constant field is in that
+// set when an open arm tested the word for that constant (`tested_place`).
+// `mask` has each bit of the word but the bits of the other narrow fields, so
+// it is a small constant when those are bytes.
 struct KeptBits { word: i32, mask: i64, fields: boolean[], all: boolean }
 
-function kept_bits(s: State, ids: i32[], p: Packing): KeptBits {
+// A tested constant takes the place of a constant only when the constructor
+// masks a word in any case, or when it keeps all of the word.
+function chosen_bits(plain: KeptBits, tested: KeptBits): KeptBits {
+  return if (tested.word >= 0 && (tested.all || plain.word >= 0)) { tested } else { plain };
+}
+
+function kept_bits(s: State, ids: i32[], types: typeinfo.Type[], p: Packing, tested: boolean): KeptBits {
   let out = KeptBits { word: -1, mask: 0i64, fields: __alloc_bool(ids.len()), all: true };
   for i in 0..ids.len() {
     if (p.bits[i] == 0) {
       continue;
     }
     let from = same_place(s, ids[i], p.shift[i], p.bits[i], out.word);
+    if (from < 0 && tested) {
+      from = tested_place(s, ids[i], types[i], p.shift[i], p.bits[i], out.word);
+    }
     if (from < 0) {
       out = KeptBits { ...out, all: false, mask: out.mask | field_mask(p.bits[i]) << p.shift[i] as i64 };
     } else {
@@ -6818,6 +6863,24 @@ function same_place(s: State, id: i32, shift: i32, bits: i32, want: i32): i32 {
   for r in s.word_reads {
     if (r.id == id && r.shift == shift && r.bits == bits && (want < 0 || same_word(s, r.word, want))) {
       return if (want < 0) { r.word } else { want };
+    }
+  }
+  return -1;
+}
+
+// The shared word that has the constant `id` at these bits, because an open
+// arm tested the value that the word has there for the same variant.
+function tested_place(s: State, id: i32, ty: typeinfo.Type, shift: i32, bits: i32, want: i32): i32 {
+  let Some(value) = constant_field(s, id, ty) else {
+    return -1;
+  };
+  let variants = union_variants(s, typeinfo.union_name(ty));
+  for t in s.tested {
+    if (semtypes.equal(s.values[t.id], ty) && util.index_of_str(variants, t.member) as i64 == value) {
+      let from = same_place(s, t.id, shift, bits, want);
+      if (from >= 0) {
+        return from;
+      }
     }
   }
   return -1;
@@ -8291,12 +8354,12 @@ function lane_contracts(): ssasem.Contract[] {
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
-    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with", "__u8x16_shl", "__u8x16_shr", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_widen_lo", "__u8x16_widen_hi", "__u8x16_swizzle",
-    "__i8x16_splat", "__i8x16_of", "__i8x16_lane", "__i8x16_bitmask", "__i8x16_min", "__i8x16_max", "__i8x16_eq", "__i8x16_ne", "__i8x16_lt", "__i8x16_and", "__i8x16_or", "__i8x16_xor", "__i8x16_select", "__i8x16_load", "__i8x16_with", "__i8x16_shl", "__i8x16_shr", "__i8x16_add_sat", "__i8x16_sub_sat", "__i8x16_abs", "__i8x16_widen_lo", "__i8x16_widen_hi",
-    "__u16x8_splat", "__u16x8_of", "__u16x8_lane", "__u16x8_bitmask", "__u16x8_min", "__u16x8_max", "__u16x8_eq", "__u16x8_ne", "__u16x8_lt", "__u16x8_and", "__u16x8_or", "__u16x8_xor", "__u16x8_select", "__u16x8_load", "__u16x8_with", "__u16x8_shl", "__u16x8_shr", "__u16x8_add_sat", "__u16x8_sub_sat", "__u16x8_avg", "__u16x8_widen_lo", "__u16x8_widen_hi", "__u16x8_narrow",
-    "__i16x8_splat", "__i16x8_of", "__i16x8_lane", "__i16x8_bitmask", "__i16x8_min", "__i16x8_max", "__i16x8_eq", "__i16x8_ne", "__i16x8_lt", "__i16x8_and", "__i16x8_or", "__i16x8_xor", "__i16x8_select", "__i16x8_load", "__i16x8_with", "__i16x8_shl", "__i16x8_shr", "__i16x8_add_sat", "__i16x8_sub_sat", "__i16x8_abs", "__i16x8_widen_lo", "__i16x8_widen_hi", "__i16x8_narrow", "__i16x8_narrow_u",
-    "__u32x4_splat", "__u32x4_of", "__u32x4_lane", "__u32x4_bitmask", "__u32x4_min", "__u32x4_max", "__u32x4_eq", "__u32x4_ne", "__u32x4_lt", "__u32x4_and", "__u32x4_or", "__u32x4_xor", "__u32x4_select", "__u32x4_load", "__u32x4_with", "__u32x4_shl", "__u32x4_shr", "__u32x4_narrow",
-    "__i32x4_splat", "__i32x4_of", "__i32x4_lane", "__i32x4_bitmask", "__i32x4_min", "__i32x4_max", "__i32x4_eq", "__i32x4_ne", "__i32x4_lt", "__i32x4_and", "__i32x4_or", "__i32x4_xor", "__i32x4_select", "__i32x4_load", "__i32x4_with", "__i32x4_shl", "__i32x4_shr", "__i32x4_abs", "__i32x4_narrow", "__i32x4_narrow_u",
+    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_load_view", "__u8x16_with", "__u8x16_shl", "__u8x16_shr", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_widen_lo", "__u8x16_widen_hi", "__u8x16_swizzle",
+    "__i8x16_splat", "__i8x16_of", "__i8x16_lane", "__i8x16_bitmask", "__i8x16_min", "__i8x16_max", "__i8x16_eq", "__i8x16_ne", "__i8x16_lt", "__i8x16_and", "__i8x16_or", "__i8x16_xor", "__i8x16_select", "__i8x16_load", "__i8x16_load_view", "__i8x16_with", "__i8x16_shl", "__i8x16_shr", "__i8x16_add_sat", "__i8x16_sub_sat", "__i8x16_abs", "__i8x16_widen_lo", "__i8x16_widen_hi",
+    "__u16x8_splat", "__u16x8_of", "__u16x8_lane", "__u16x8_bitmask", "__u16x8_min", "__u16x8_max", "__u16x8_eq", "__u16x8_ne", "__u16x8_lt", "__u16x8_and", "__u16x8_or", "__u16x8_xor", "__u16x8_select", "__u16x8_load", "__u16x8_load_view", "__u16x8_with", "__u16x8_shl", "__u16x8_shr", "__u16x8_add_sat", "__u16x8_sub_sat", "__u16x8_avg", "__u16x8_widen_lo", "__u16x8_widen_hi", "__u16x8_narrow",
+    "__i16x8_splat", "__i16x8_of", "__i16x8_lane", "__i16x8_bitmask", "__i16x8_min", "__i16x8_max", "__i16x8_eq", "__i16x8_ne", "__i16x8_lt", "__i16x8_and", "__i16x8_or", "__i16x8_xor", "__i16x8_select", "__i16x8_load", "__i16x8_load_view", "__i16x8_with", "__i16x8_shl", "__i16x8_shr", "__i16x8_add_sat", "__i16x8_sub_sat", "__i16x8_abs", "__i16x8_widen_lo", "__i16x8_widen_hi", "__i16x8_narrow", "__i16x8_narrow_u",
+    "__u32x4_splat", "__u32x4_of", "__u32x4_lane", "__u32x4_bitmask", "__u32x4_min", "__u32x4_max", "__u32x4_eq", "__u32x4_ne", "__u32x4_lt", "__u32x4_and", "__u32x4_or", "__u32x4_xor", "__u32x4_select", "__u32x4_load", "__u32x4_load_view", "__u32x4_with", "__u32x4_shl", "__u32x4_shr", "__u32x4_narrow",
+    "__i32x4_splat", "__i32x4_of", "__i32x4_lane", "__i32x4_bitmask", "__i32x4_min", "__i32x4_max", "__i32x4_eq", "__i32x4_ne", "__i32x4_lt", "__i32x4_and", "__i32x4_or", "__i32x4_xor", "__i32x4_select", "__i32x4_load", "__i32x4_load_view", "__i32x4_with", "__i32x4_shl", "__i32x4_shr", "__i32x4_abs", "__i32x4_narrow", "__i32x4_narrow_u",
   ];
   let out: ssasem.Contract[] = [];
   for n in names {
@@ -8314,7 +8377,7 @@ function lane_param_mode(name: string, at: i32): i32 {
   if (at == 0 && (typeinfo.lane_builtin_verb(name) == "with" || typeinfo.lane_builtin_verb(name) == "with_bytes")) {
     return ssaunits.counted_mode();
   }
-  if (at == 0 && (typeinfo.lane_builtin_verb(name) == "load" || typeinfo.lane_builtin_verb(name) == "load_bytes")) {
+  if (at == 0 && util.has_str(["load", "load_bytes", "load_view"], typeinfo.lane_builtin_verb(name))) {
     return ssaunits.borrow_mode();
   }
   return ssaunits.value_mode();
@@ -8402,7 +8465,8 @@ function float_primitive_contracts(): ssasem.Contract[] {
   for n in names {
     out = out.append(ssasem.Contract { name: n, params: [typeinfo.t_f64()], modes: value, result: typeinfo.t_f64() });
   }
-  return out;
+  let v = ssaunits.value_mode();
+  return out.append(ssasem.Contract { name: "__fma_f64", params: [typeinfo.t_f64(), typeinfo.t_f64(), typeinfo.t_f64()], modes: [v, v, v], result: typeinfo.t_f64() });
 }
 
 function bit_count_contracts(): ssasem.Contract[] {
@@ -8428,6 +8492,8 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__alloc_u8", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false } },
     ssasem.Contract { name: "__alloc_u8_uninit", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false } },
     ssasem.Contract { name: "__alloc_i32", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false } },
+    ssasem.Contract { name: "__alloc_u16", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_u16(), view: false } },
+    ssasem.Contract { name: "__alloc_i16", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_i16(), view: false } },
     ssasem.Contract { name: "__alloc_i64", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false } },
     ssasem.Contract { name: "__alloc_f64", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_f64(), view: false } },
     ssasem.Contract { name: "__alloc_bool", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.TypeArray { elem: typeinfo.t_bool(), view: false } },
@@ -9429,7 +9495,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let inlined = inline_leaves(sp.all, names, mod, opts, sp.roots);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
-    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins);
+    all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size);
   }
   if (opts.shape_slot) {
     all = with_shape_slots(all);
@@ -9548,6 +9614,26 @@ function unique_loops(all: Produced[]): Produced[] {
       let h = semunique.hoisted(p.func, p.modes);
       if (h.changed && optbisect.allowed_by(sw, "unique-loops", p.func.graph.name)) {
         p = Produced { ...p, func: h.func, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
+// A build for size keeps one version of each loop.
+function version_loops(all: Produced[], size: boolean): Produced[] {
+  if (size) {
+    return all;
+  }
+  let sw = optbisect.switches();
+  let out: Produced[] = [];
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template && !p.bodyless && optbisect.allowed_by(sw, "version", p.func.graph.name)) {
+      let v = semversion.version(p.func);
+      if (v.loops > 0) {
+        p = Produced { ...p, func: v.f, analysis: None };
       }
     }
     out = out.append(p);

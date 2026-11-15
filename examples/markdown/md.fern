@@ -1,4 +1,4 @@
-// A CommonMark command line with the options of cmark 0.30.2:
+// A CommonMark command line with the options of cmark 0.31.2:
 // `md [OPTIONS] [FILE...]`. It reads the files one after the other, or stdin
 // when there is none, and writes the document in the format of `--to`. The
 // HTML goes to stdout a part at a time.
@@ -8,7 +8,8 @@ import "std/io_buffered";
 import "./markdown";
 import "./render";
 
-const USAGE: string = "Usage:   md [FILE*]\n"
+// cmark writes its own name, not the name of the program file.
+const USAGE: string = "Usage:   cmark [FILE*]\n"
   + "Options:\n"
   + "  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n"
   + "  --width WIDTH    Specify wrap width (default 0 = nowrap)\n"
@@ -22,8 +23,8 @@ const USAGE: string = "Usage:   md [FILE*]\n"
   + "  --help, -h       Print usage information\n"
   + "  --version        Print version\n";
 
-const VERSION: string = "md - CommonMark converter\n"
-  + "The command line of cmark 0.30.2, ported to Fern\n";
+const VERSION: string = "cmark 0.31.2 - CommonMark converter\n"
+  + "(C) 2014-2016 John MacFarlane\n";
 
 const FORMATS: string[] = ["html", "xml", "man", "commonmark", "latex"];
 

@@ -1491,7 +1491,7 @@ function constant_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Ty
 }
 
 function cast_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
-  if (!ssasem.is_u8(t) && !ssasem.is_i32(t) && !ssasem.is_u32(t)) {
+  if (!ssasem.is_u8(t) && !ssasem.is_u16(t) && !ssasem.is_i16(t) && !ssasem.is_i32(t) && !ssasem.is_u32(t)) {
     return "";
   }
   let src = ssa.copy_source(defs, v);
@@ -1656,6 +1656,12 @@ function narrow_integer_word(t: typeinfo.Type, bits: i64): string {
   if (ssasem.is_u8(t)) {
     return util.i32_to_string((bits as u8) as i32);
   }
+  if (ssasem.is_u16(t)) {
+    return util.i64_to_string(bits & 65535i64);
+  }
+  if (ssasem.is_i16(t)) {
+    return util.i64_to_string((bits & 65535i64 ^ 32768i64) - 32768i64);
+  }
   if (ssasem.is_u32(t)) {
     return util.i64_to_string((bits as u32) as i64);
   }
@@ -1669,7 +1675,7 @@ function narrow_scalar(t: typeinfo.Type): boolean {
   if let typeinfo.TypeBool(_) = t {
     return true;
   }
-  return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_u8(t) || ssasem.is_char(t);
+  return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_u8(t) || ssasem.is_u16(t) || ssasem.is_i16(t) || ssasem.is_char(t);
 }
 
 function lent_view(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
@@ -2139,9 +2145,9 @@ function live_past(a: ssasem.Analysis, fl: ssalive.Flow, v: i32, bi: i32, pos: i
   return ssalive.live_out_has(fl, bi, v) || ssasem.read_after(a.uses, bi, pos, v);
 }
 
-// lends_view_of says an argument of the call is a view anchored on w,
-// lent beside the record w was read from.
-function lends_view_of(f: ssasem.Func, a: ssasem.Analysis, args: i32[], w: i32): boolean {
+// lends_view_of says an argument of the call is a view anchored on w. The
+// view reads the storage of w for the length of the call.
+pub function lends_view_of(f: ssasem.Func, a: ssasem.Analysis, args: i32[], w: i32): boolean {
   let k = a.anchored.start[w];
   while (k < a.anchored.start[w + 1]) {
     let x = a.anchored.at[k];
@@ -2985,7 +2991,7 @@ function grown_params(f: ssasem.Func, p: Plan, grows: GrowTable, ins: ssa.SInst)
   let modes = ssasem.callee_modes(f, ins);
   for i in 0..ins.args.len() {
     let v = ins.args[i];
-    if (i < modes.len() && modes[i] == borrow_mode() && occurrences(ins.args, v) == 1 && handed_array(f, p, v) && grows_buffer(grows, ins.str, i)) {
+    if (i < modes.len() && modes[i] == borrow_mode() && occurrences(ins.args, v) == 1 && handed_array(f, p, v) && grows_buffer(grows, ins.str, i) && !lends_view_of(f, p.unit_analysis, ins.args, v)) {
       out = out.append(v);
     }
   }
@@ -3454,7 +3460,7 @@ function fresh_array(ins: ssa.SInst, consts: string[], fresh: FreshRows): boolea
     return ins.args.len() == 0 || consts[ins.result] == "";
   }
   if (ins.kind_tag == ssasem.call()) {
-    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_f64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || ins.str == "__alloc_u8_uninit" || ssasem.fresh_result_builtin(ins.str) || fresh_through(fresh, ins.str) == -1;
+    return ssasem.sized_alloc(ins.str) || ssasem.fresh_result_builtin(ins.str) || fresh_through(fresh, ins.str) == -1;
   }
   return ins.kind_tag == ssasem.array_reserve() || ins.kind_tag == ssasem.array_zero();
 }

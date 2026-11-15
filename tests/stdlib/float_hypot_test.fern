@@ -21,6 +21,25 @@ function test_hypot_one_axis(): test.TestOutcome {
   return test.assert_eq_f64_near(8.0.hypot(0.0), 8.0, 0.0001);
 }
 
+// hypot is the algorithm of glibc. The pairs go through each scale of it:
+// huge, tiny, far apart and common.
+function test_hypot_glibc(): test.TestOutcome {
+  let xs = [3.0, 1e300, 1e-300, 5e-324, 1.0, 2.0, 1e154, 6e-139];
+  let ys = [4.0, 1e300, 3e-300, 5e-324, 1e-17, 3.0, 1e154, 7e-139];
+  let want = [5.0, 1.4142135623730952e300, 3.16227766016838e-300, 5e-324, 1.0, 3.605551275463989, 1.414213562373095e154, 9.219544457292888e-139];
+  for i in 0..xs.len() {
+    if (xs[i].hypot(ys[i]) != want[i]) {
+      return test.fail("hypot " + xs[i].to_string() + " " + ys[i].to_string() + " is " + xs[i].hypot(ys[i]).to_string());
+    }
+  }
+  let nan = 0.0 / 0.0;
+  let inf = 1.0 / 0.0;
+  if (nan.hypot(-inf) != inf || nan.hypot(1.0) == nan.hypot(1.0)) {
+    return test.fail("hypot of an infinity or NaN");
+  }
+  return test.pass();
+}
+
 function test_fract_positive(): test.TestOutcome {
   return test.assert_eq_f64_near(3.75.fract(), 0.75, 0.0001);
 }
@@ -56,6 +75,7 @@ function main(): i32 {
   r = r.it("hypot 0,0", test_hypot_zero);
   r = r.it("hypot negative", test_hypot_negative);
   r = r.it("hypot one axis", test_hypot_one_axis);
+  r = r.it("hypot gives the results of glibc", test_hypot_glibc);
   r = r.it("fract positive", test_fract_positive);
   r = r.it("fract negative", test_fract_negative);
   r = r.it("fract integer", test_fract_integer);

@@ -107,6 +107,30 @@ function c_motion_x(event: usize, pointer: usize): f32;
 @import("libandroid.so", "AMotionEvent_getY")
 function c_motion_y(event: usize, pointer: usize): f32;
 
+@import("libandroid.so", "AMotionEvent_getEventTime")
+function c_motion_time(event: usize): i64;
+
+@import("libandroid.so", "AMotionEvent_getHistorySize")
+function c_motion_history_size(event: usize): usize;
+
+@import("libandroid.so", "AMotionEvent_getHistoricalEventTime")
+function c_motion_historical_time(event: usize, at: usize): i64;
+
+@import("libandroid.so", "AMotionEvent_getHistoricalX")
+function c_motion_historical_x(event: usize, pointer: usize, at: usize): f32;
+
+@import("libandroid.so", "AMotionEvent_getHistoricalY")
+function c_motion_historical_y(event: usize, pointer: usize, at: usize): f32;
+
+@import("libandroid.so", "AMotionEvent_getPointerCount")
+function c_motion_pointer_count(event: usize): usize;
+
+@import("libandroid.so", "AMotionEvent_getPointerId")
+function c_motion_pointer_id(event: usize, pointer: usize): i32;
+
+@import("libandroid.so", "AMotionEvent_getToolType")
+function c_motion_tool_type(event: usize, pointer: usize): i32;
+
 @import("libandroid.so", "AKeyEvent_getKeyCode")
 function c_key_code(event: usize): i32;
 
@@ -206,7 +230,7 @@ function c_mutex_unlock(mutex: usize): i32;
 
 ### `events`
 
-`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. The headset hook and the media keys (79, 85 to 90, 126 and 127) come as `Key` events too, and then the system gives them to the media session that plays.
+`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel, and the place of the first pointer. When more than one finger is on the screen, the action 5 tells that one more finger went down, and the action 6 tells that a finger went up while others stay. `touch_pointers` gives each pointer of the event, and `touch_index` gives the pointer of an action 5 or 6. Android can give one `Touch` event for more than one place of a finger that moves: it collects the places between two frames of the display. `touch_pointers` gives each place with its time, for an app that draws a path or needs the speed of a finger. `unbatched_touch` asks Android for each place at once. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. The headset hook and the media keys (79, 85 to 90, 126 and 127) come as `Key` events too, and then the system gives them to the media session that plays.
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. A hardware keyboard types through these events.
 
@@ -214,7 +238,7 @@ function c_mutex_unlock(mutex: usize): i32;
 
 `Text` has the whole text of the field of `std/android/keyboard` after the keyboard of the system changed it. `TextAction` has the code of the action key of that keyboard, such as `ACTION_GO`.
 
-`Vsync` comes at the vsync after a call to `request_frame`, with the time of the frame on the monotonic clock in nanoseconds. Draw the frame of an animation for that time. The step of each `Vsync` is a section named `frame` in the system trace, through `std/android/trace`.
+`Vsync` comes at the vsync after a call to `request_frame`, with the time of the frame on the monotonic clock in nanoseconds. Draw the frame of an animation for that time. A step can call `request_frame` at each time: a call between a vsync and its `Vsync` event asks for the frame after it. Before the step of a `Vsync`, the loop gives the input events that wait, so the frame has the newest places of the fingers. A display with more than one rate can stay at its low rate, and `prefer_fast_display` asks for the mode with the most frames in a second. The step of each `Vsync` is a section named `frame` in the system trace, through `std/android/trace`.
 
 `ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it.
 
@@ -341,9 +365,9 @@ function message_event(kind: i32, arg: usize): Event {
 
 ### `the UI thread`
 
-The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, and the Choreographer of the loop thread. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
+The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, the Choreographer of the loop thread, and the motion event of the `Touch` step that runs. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
 
-Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it.
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it. `brightness` goes to the UI thread in the same way, because it changes the attributes of the window.
 
 `NativeActivity` and `Callbacks` have the fields of `ANativeActivity` and `ANativeActivityCallbacks` in `android/native_activity.h`, in their order. `@derive(ffi.CLayout)` gives each field its C offset.
 
@@ -351,7 +375,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32 }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -551,7 +575,7 @@ function ui_env(activity: usize): usize {
 function new_context(activity: usize): usize {
   unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0 }.c_store(ctx);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize }.c_store(ctx);
     let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
     if (ok != 0) {
       __free(ctx, Context.c_size() as i32);
@@ -801,12 +825,14 @@ function on_vsync_entry(): usize;
 function on_vsync(nanos: i64, data: usize): void {
   unsafe {
     Context.c_store_vsync_ns(data, nanos);
-    Context.c_store_frame(data, FRAME_ARRIVED);
+    Context.c_store_frame(data, Context.c_load_frame(data) & ~FRAME_REQUESTED | FRAME_ARRIVED);
   }
 }
 
 // Asks for a Vsync event at the next vsync. A second call before that
-// frame asks for no other. Call it on the loop thread.
+// vsync asks for no other. A call between a vsync and its Vsync event asks
+// for the vsync after it, and the event still comes. Call it on the loop
+// thread.
 pub function request_frame(ctx: usize): void {
   unsafe {
     if ((Context.c_load_frame(ctx) & FRAME_REQUESTED) != 0) {
@@ -820,7 +846,9 @@ pub function request_frame(ctx: usize): void {
     if (choreographer == 0 as usize) {
       return;
     }
-    Context.c_store_frame(ctx, FRAME_REQUESTED);
+    // A vsync that came stays: its Vsync event is not lost when a step asks
+    // for the next frame before the loop gives that event.
+    Context.c_store_frame(ctx, Context.c_load_frame(ctx) | FRAME_REQUESTED);
     c_post_frame(choreographer, on_vsync_entry(), ctx);
   }
 }
@@ -831,7 +859,7 @@ function frame_event(ctx: usize): Option[Event] {
     if ((Context.c_load_frame(ctx) & FRAME_ARRIVED) == 0) {
       return None;
     }
-    Context.c_store_frame(ctx, 0);
+    Context.c_store_frame(ctx, Context.c_load_frame(ctx) & ~FRAME_ARRIVED);
     return Some(Vsync(Context.c_load_vsync_ns(ctx)));
   }
 }
@@ -849,7 +877,8 @@ function kept_flag(ctx: usize): boolean {
 
 // The app keeps the loop alive, and the loop is the live one of the process.
 // A loop of an older activity that a new activity replaced does not stay.
-function kept(ctx: usize): boolean {
+// During a Destroy event, it tells that the loop runs on after it.
+pub function kept(ctx: usize): boolean {
   unsafe {
     return Context.c_load_kept(ctx) != 0 && live_loop(env(ctx)) == ctx;
   }
@@ -881,15 +910,19 @@ function ended_alone(lp: Loop): Loop {
 }
 
 // The state after the frame callback, which can run in the same poll as
-// another source.
-function framed[S](ctx: usize, own state: S, step: (own S, Event) => S): S {
-  let Some(e) = frame_event(ctx) else {
+// another source. The input events that are ready go to the app before the
+// frame, so the frame has the newest place of each finger.
+function framed[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
+  // The event is taken first: a step of an input event can ask for the
+  // next frame, which sets the frame flags again.
+  let Some(e) = frame_event(lp.ctx) else {
     return state;
   };
+  state = input(lp, state, step);
   trace.begin("frame");
-  let out = step(state, e);
+  state = step(state, e);
   trace.end();
-  return out;
+  return state;
 }
 
 // The loop after the Destroy message, and the reply to it. The loop ends,
@@ -948,7 +981,7 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
     }
     // The UI thread frees the context after the Destroy reply.
     if (!lp.done) {
-      state = framed(ctx, state, step);
+      state = framed(lp, state, step);
       lp = ended_alone(lp);
     }
   }
@@ -960,6 +993,55 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
   }
   detach(vm);
   return state;
+}
+
+// A place of a pointer, and its time on the monotonic clock in nanoseconds.
+pub struct TouchSample { ns: i64, x: f32, y: f32 }
+
+// A finger, a pen or a mouse of a `Touch` event. `id` is the number that
+// the pointer keeps from the time it goes down to the time it goes up.
+// `tool` is 1 for a finger, 2 for a pen, 3 for a mouse and 4 for an eraser.
+// `samples` has the places of the pointer from the oldest: the places that
+// Android collected since the event before it, and then the place of the
+// event.
+pub struct TouchPointer { id: i32, tool: i32, samples: TouchSample[] }
+
+// The pointers of the `Touch` event of the step that runs now. It is empty
+// outside the step of a `Touch` event. Call it on the loop thread.
+pub function touch_pointers(ctx: usize): TouchPointer[] {
+  let out: TouchPointer[] = [];
+  unsafe {
+    let ev: usize = Context.c_load_motion(ctx);
+    if (ev == 0 as usize) {
+      return out;
+    }
+    let count = c_motion_pointer_count(ev) as i32;
+    let history = c_motion_history_size(ev) as i32;
+    for p in 0..count {
+      let at = p as usize;
+      let samples: TouchSample[] = [];
+      for i in 0..history {
+        samples = samples.append(TouchSample { ns: c_motion_historical_time(ev, i as usize), x: c_motion_historical_x(ev, at, i as usize), y: c_motion_historical_y(ev, at, i as usize) });
+      }
+      samples = samples.append(TouchSample { ns: c_motion_time(ev), x: c_motion_x(ev, at), y: c_motion_y(ev, at) });
+      out = out.append(TouchPointer { id: c_motion_pointer_id(ev, at), tool: c_motion_tool_type(ev, at), samples: samples });
+    }
+  }
+  return out;
+}
+
+// The index in `touch_pointers` of the pointer that the `Touch` event of
+// the step that runs now is about: the pointer that went down for the
+// action 5, or that went up for the action 6. It is 0 for each other
+// action, and outside the step of a `Touch` event.
+pub function touch_index(ctx: usize): i32 {
+  unsafe {
+    let ev: usize = Context.c_load_motion(ctx);
+    if (ev == 0 as usize) {
+      return 0;
+    }
+    return c_motion_action(ev) >> 8 & 255;
+  }
 }
 
 // Reads one message from the UI thread, handles it, and replies.
@@ -1021,7 +1103,9 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
           let x: f32 = c_motion_x(ev, 0 as usize);
           let y: f32 = c_motion_y(ev, 0 as usize);
           hover(lp.ctx, action, x as i32, y as i32);
+          Context.c_store_motion(lp.ctx, ev);
           state = step(state, Touch(action, x, y));
+          Context.c_store_motion(lp.ctx, 0 as usize);
           handled = 1;
         } else if (kind == 1) {
           let code: i32 = c_key_code(ev);
@@ -1194,8 +1278,21 @@ pub function data_dir(ctx: usize): string {
 // to a backup or to a new device, or "" when there is none. Keep keys here.
 // Call it on the loop thread.
 pub function no_backup_dir(ctx: usize): string {
+  return context_dir(ctx, "getNoBackupFilesDir");
+}
+
+// The directory for files that the app can make again, such as images from
+// the network, or "". Android deletes files in it when storage runs low,
+// and does not back it up.
+pub function cache_dir(ctx: usize): string {
+  return context_dir(ctx, "getCacheDir");
+}
+
+// The absolute path of the directory that the Context method `method`
+// gives, or "" when it throws or gives none.
+function context_dir(ctx: usize, method: string): string {
   let e: usize = env(ctx);
-  let dir: usize = jni.call_object(e, activity_object(ctx), "getNoBackupFilesDir", "()Ljava/io/File;", []);
+  let dir: usize = jni.call_object(e, activity_object(ctx), method, "()Ljava/io/File;", []);
   if (jni.exception_occurred(e) != 0 as usize || dir == 0 as usize) {
     let cleared: usize = jni.exception_clear(e);
     return "";
@@ -1247,17 +1344,7 @@ pub function finish(ctx: usize): void {
 
 // The directory of the private files of the Application Context.
 function files_dir(ctx: usize): string {
-  let e: usize = env(ctx);
-  let dir: usize = jni.call_object(e, activity_object(ctx), "getFilesDir", "()Ljava/io/File;", []);
-  if (jni.exception_occurred(e) != 0 as usize || dir == 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
-    return "";
-  }
-  let path: usize = jni.call_object(e, dir, "getAbsolutePath", "()Ljava/lang/String;", []);
-  let text = jni.string_of(e, path);
-  let a: usize = jni.delete_local_ref(e, path);
-  let b: usize = jni.delete_local_ref(e, dir);
-  return text;
+  return context_dir(ctx, "getFilesDir");
 }
 
 // Keeps the screen on while the window shows, or stops that.
@@ -1289,6 +1376,90 @@ pub function immersive(ctx: usize, on: boolean): void {
   ui_request(ctx, UiRequest { op: SYSTEM_BARS, a: 0, b: 0, data: 0 as usize });
 }
 
+// Android collects the places of a finger that moves, and gives them to
+// the app at the next frame of the display. With `on`, Android gives each
+// place to the app at once, so a frame has places that are not one frame
+// old. Android 11 and later do this. On Android 10, the call does nothing.
+pub function unbatched_touch(ctx: usize, on: boolean): void {
+  let a = 0;
+  if (on) {
+    a = 1;
+  }
+  ui_request(ctx, UiRequest { op: TOUCH_AT_ONCE, a: a, b: 0, data: 0 as usize });
+}
+
+// InputDevice.SOURCE_CLASS_POINTER: touch screens, pens and mice.
+const SOURCE_CLASS_POINTER: i32 = 2;
+
+// Does the request of `unbatched_touch` on the UI thread.
+function touch_at_once(ctx: usize, on: boolean): void {
+  unsafe {
+    if (Context.c_load_sdk(ctx) < 30) {
+      return;
+    }
+    let activity: usize = Context.c_load_activity(ctx);
+    let e: usize = NativeActivity.c_load_env(activity);
+    let window: usize = jni.call_object(e, NativeActivity.c_load_clazz(activity), "getWindow", "()Landroid/view/Window;", []);
+    let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
+    let source = 0;
+    if (on) {
+      source = SOURCE_CLASS_POINTER;
+    }
+    let asked = jni.call_void(e, decor, "requestUnbufferedDispatch", "(I)V", [source as usize]);
+    let a: usize = jni.delete_local_ref(e, decor);
+    let b: usize = jni.delete_local_ref(e, window);
+  }
+}
+
+// Asks Android for the mode of the display with the most refreshes in a
+// second, at the size that the display has now, while the window shows.
+// Without it, a display with more than one rate can stay at its low rate.
+pub function prefer_fast_display(ctx: usize): void {
+  ui_request(ctx, UiRequest { op: FAST_DISPLAY, a: 0, b: 0, data: 0 as usize });
+}
+
+// Does the request of `prefer_fast_display` on the UI thread.
+function fast_display(activity: usize): void {
+  unsafe {
+    let e: usize = NativeActivity.c_load_env(activity);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
+    let manager: usize = jni.call_object(e, obj, "getWindowManager", "()Landroid/view/WindowManager;", []);
+    let display: usize = jni.call_object(e, manager, "getDefaultDisplay", "()Landroid/view/Display;", []);
+    let now: usize = jni.call_object(e, display, "getMode", "()Landroid/view/Display$Mode;", []);
+    let modes: usize = jni.call_object(e, display, "getSupportedModes", "()[Landroid/view/Display$Mode;", []);
+    let class: usize = jni.get_object_class(e, now);
+    let width_of: usize = jni.get_method_id(e, class, "getPhysicalWidth", "()I");
+    let height_of: usize = jni.get_method_id(e, class, "getPhysicalHeight", "()I");
+    let rate_of: usize = jni.get_method_id(e, class, "getRefreshRate", "()F");
+    let id_of: usize = jni.get_method_id(e, class, "getModeId", "()I");
+    let none: usize = jni.jvalue_alloc(0);
+    let width: i32 = jni.call_int_method_a(e, now, width_of, none);
+    let height: i32 = jni.call_int_method_a(e, now, height_of, none);
+    let best: i32 = jni.call_int_method_a(e, now, id_of, none);
+    let rate: f32 = jni.call_float_method_a(e, now, rate_of, none);
+    for i in 0..jni.get_array_length(e, modes) {
+      let mode: usize = jni.get_object_array_element(e, modes, i);
+      if (jni.call_int_method_a(e, mode, width_of, none) == width && jni.call_int_method_a(e, mode, height_of, none) == height) {
+        let r: f32 = jni.call_float_method_a(e, mode, rate_of, none);
+        if (r > rate + 0.5 as f32) {
+          rate = r;
+          best = jni.call_int_method_a(e, mode, id_of, none);
+        }
+      }
+      let dropped: usize = jni.delete_local_ref(e, mode);
+    }
+    jni.free_buffer(none);
+    let attrs: usize = jni.call_object(e, window, "getAttributes", "()Landroid/view/WindowManager$LayoutParams;", []);
+    let attrs_class: usize = jni.get_object_class(e, attrs);
+    let set: usize = jni.set_int_field(e, attrs, jni.get_field_id(e, attrs_class, "preferredDisplayModeId", "I"), best as usize);
+    let applied = jni.call_void(e, window, "setAttributes", "(Landroid/view/WindowManager$LayoutParams;)V", [attrs]);
+    for r in [attrs_class, attrs, class, modes, now, display, manager, window] {
+      let dropped: usize = jni.delete_local_ref(e, r);
+    }
+  }
+}
+
 // The audio stream that the volume keys change while the window shows, as
 // an android.media.AudioManager stream: 3 music, 4 alarm and 5 notification.
 pub function volume_stream(ctx: usize, stream: i32): void {
@@ -1299,6 +1470,88 @@ pub function volume_stream(ctx: usize, stream: i32): void {
   let ignored: usize = jni.call_void_method_a(e, obj, jni.get_method_id(e, class, "setVolumeControlStream", "(I)V"), args);
   jni.free_buffer(args);
   let deleted: usize = jni.delete_local_ref(e, class);
+}
+
+// Sets the brightness of the window while it shows, from 0.0 to 1.0. A
+// negative level gives the window the brightness of the system again.
+pub function brightness(ctx: usize, level: f32): void {
+  let permille = -1;
+  if (level >= 0.0) {
+    permille = ((level * 1000.0) as i32).min(1000);
+  }
+  ui_request(ctx, UiRequest { op: BRIGHTNESS, a: permille, b: 0, data: 0 as usize });
+}
+
+// The brightness of the screen that the user set for the system, from 0.0
+// to 1.0: Settings.System.SCREEN_BRIGHTNESS over 255. Call it on the loop
+// thread.
+pub function system_brightness(ctx: usize): f32 {
+  let e: usize = env(ctx);
+  let cr: usize = jni.call_object(e, activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
+  if (cr == 0 as usize) {
+    let none: usize = jni.exception_clear(e);
+    return 0.5f32;
+  }
+  let class: usize = jni.find_class(e, "android/provider/Settings$System");
+  let name: usize = jni.new_string(e, "screen_brightness");
+  let args: usize = jni.jvalues([cr, name, 128 as usize]);
+  let got: i32 = jni.call_static_int_method_a(e, class, jni.get_static_method_id(e, class, "getInt", "(Landroid/content/ContentResolver;Ljava/lang/String;I)I"), args);
+  jni.free_buffer(args);
+  let a: usize = jni.delete_local_ref(e, name);
+  let b: usize = jni.delete_local_ref(e, class);
+  let c: usize = jni.delete_local_ref(e, cr);
+  let cleared: usize = jni.exception_clear(e);
+  return got.max(0).min(255) as f32 / 255.0f32;
+}
+
+// The volume of the music stream, and its greatest value. Call it on the
+// loop thread.
+pub function volume(ctx: usize): (i32, i32) {
+  let e: usize = env(ctx);
+  let am: usize = audio_manager(e, activity_object(ctx));
+  if (am == 0 as usize) {
+    return (0, 0);
+  }
+  let level = call_int(e, am, "getStreamVolume", "(I)I", [STREAM_MUSIC as usize]);
+  let max = call_int(e, am, "getStreamMaxVolume", "(I)I", [STREAM_MUSIC as usize]);
+  let a: usize = jni.delete_local_ref(e, am);
+  return (level, max);
+}
+
+// Sets the volume of the music stream, from 0 to the greatest value that
+// `volume` gives. The system shows no volume panel. Call it on the loop
+// thread.
+pub function set_volume(ctx: usize, level: i32): void {
+  let e: usize = env(ctx);
+  let am: usize = audio_manager(e, activity_object(ctx));
+  if (am == 0 as usize) {
+    return;
+  }
+  let set = jni.call_void(e, am, "setStreamVolume", "(III)V", [STREAM_MUSIC as usize, level.max(0) as usize, 0 as usize]);
+  let a: usize = jni.delete_local_ref(e, am);
+  let cleared: usize = jni.exception_clear(e);
+}
+
+// AudioManager.STREAM_MUSIC.
+const STREAM_MUSIC: i32 = 3;
+
+// The AudioManager of the activity `obj` as a local reference, or 0.
+function audio_manager(e: usize, obj: usize): usize {
+  let service: usize = jni.new_string(e, "audio");
+  let am: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [service]);
+  let a: usize = jni.delete_local_ref(e, service);
+  let cleared: usize = jni.exception_clear(e);
+  return am;
+}
+
+function call_int(e: usize, obj: usize, name: string, sig: string, values: usize[]): i32 {
+  let class: usize = jni.get_object_class(e, obj);
+  let args: usize = jni.jvalues(values);
+  let got: i32 = jni.call_int_method_a(e, obj, jni.get_method_id(e, class, name, sig), args);
+  jni.free_buffer(args);
+  let a: usize = jni.delete_local_ref(e, class);
+  let cleared: usize = jni.exception_clear(e);
+  return got;
 }
 
 // The offset of the local time of the device from UTC, in milliseconds, at
@@ -1458,6 +1711,15 @@ const FIELD_HIDE: i32 = 3;
 // The request of `immersive`: apply the bar visibility now.
 const SYSTEM_BARS: i32 = 7;
 
+// The request of `unbatched_touch`: `a` is 1 for on.
+const TOUCH_AT_ONCE: i32 = 8;
+
+// The request of `prefer_fast_display`.
+const FAST_DISPLAY: i32 = 9;
+
+// The request of `brightness`: `a` is the level in thousandths, or -1.
+const BRIGHTNESS: i32 = 10;
+
 // InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
 pub const INPUT_TEXT: i32 = 1;
 
@@ -1570,11 +1832,58 @@ function do_request(ctx: usize, r: UiRequest): boolean {
     }
     return false;
   }
+  if (r.op == TOUCH_AT_ONCE) {
+    touch_at_once(ctx, r.a != 0);
+    return false;
+  }
+  if (r.op == FAST_DISPLAY) {
+    unsafe {
+      fast_display(Context.c_load_activity(ctx));
+    }
+    return false;
+  }
+  if (r.op == BRIGHTNESS) {
+    apply_brightness(ctx, r.a);
+    return false;
+  }
   if (r.op > FIELD_HIDE) {
     return access_request(ctx, r);
   }
   field_request(ctx, r);
   return false;
+}
+
+// Sets WindowManager.LayoutParams.screenBrightness to `permille` / 1000, or
+// to BRIGHTNESS_OVERRIDE_NONE (-1) for a negative `permille`.
+function apply_brightness(ctx: usize, permille: i32): void {
+  let level = -1.0f32;
+  if (permille >= 0) {
+    level = permille as f32 / 1000.0f32;
+  }
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let e: usize = NativeActivity.c_load_env(activity);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
+    let lp = 0 as usize;
+    if (window != 0 as usize) {
+      lp = jni.call_object(e, window, "getAttributes", "()Landroid/view/WindowManager$LayoutParams;", []);
+    }
+    if (lp != 0 as usize) {
+      let class: usize = jni.get_object_class(e, lp);
+      let field: usize = jni.get_field_id(e, class, "screenBrightness", "F");
+      if (field != 0 as usize) {
+        jni.set_float_field(e, lp, field, level);
+        let applied = jni.call_void(e, window, "setAttributes", "(Landroid/view/WindowManager$LayoutParams;)V", [lp]);
+      }
+      let d: usize = jni.delete_local_ref(e, class);
+      let f: usize = jni.delete_local_ref(e, lp);
+    }
+    if (window != 0 as usize) {
+      let g: usize = jni.delete_local_ref(e, window);
+    }
+    let cleared: usize = jni.exception_clear(e);
+  }
 }
 
 function field_request(ctx: usize, r: UiRequest): void {

@@ -377,6 +377,13 @@ pub function is_unique_check(name: string): boolean {
   return name.starts_with("__sem_unique$");
 }
 
+// A builtin that allocates an array of a length it is given.
+pub function sized_alloc(name: string): boolean {
+  return util.has_str(SIZED_ALLOCS, name);
+}
+
+const SIZED_ALLOCS: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_u16", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
+
 pub function fresh_result_builtin(name: string): boolean {
   return is_unique_check(name) || util.has_str(FRESH_RESULT_BUILTINS, name);
 }
@@ -424,7 +431,7 @@ pub function raw_array_args(name: string): i32[] {
 pub function scalar_primitive(name: string): boolean {
   return name == "__mulhi_u64" || name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64"
     || name == "__ctz64" || name == "__popcount64" || name == "__sqrt_f64" || name == "__floor_f64" || name == "__ceil_f64"
-    || name == "__round_f64" || name == "__trunc_f64" || name == "__abs_f64";
+    || name == "__round_f64" || name == "__trunc_f64" || name == "__abs_f64" || name == "__fma_f64";
 }
 
 pub function variant_new(): i32 {
@@ -651,6 +658,20 @@ pub function is_u8(t: typeinfo.Type): boolean {
   return false;
 }
 
+pub function is_u16(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return i.width == 16 && i.unsigned;
+  }
+  return false;
+}
+
+pub function is_i16(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return i.width == 16 && !i.unsigned;
+  }
+  return false;
+}
+
 pub function is_u32(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.width == 32 && i.unsigned && !i.is_char;
@@ -686,7 +707,7 @@ pub function is_usize(t: typeinfo.Type): boolean {
 }
 
 pub function is_unsigned_int(t: typeinfo.Type): boolean {
-  return is_u8(t) || is_u32(t) || is_u64(t) || is_usize(t);
+  return is_u8(t) || is_u16(t) || is_u32(t) || is_u64(t) || is_usize(t);
 }
 
 pub function is_f64(t: typeinfo.Type): boolean {
@@ -708,7 +729,7 @@ pub function is_float(t: typeinfo.Type): boolean {
 }
 
 pub function is_integer(t: typeinfo.Type): boolean {
-  return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
+  return is_i32(t) || is_u8(t) || is_u16(t) || is_i16(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
 }
 
 pub function reference(t: typeinfo.Type): boolean {
@@ -1258,10 +1279,15 @@ function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
   if (ins.str != "" && (!is_usize(result) || ins.imm != 0)) {
     return "narrow constant carries text";
   }
-  if (is_u8(result) && (ins.imm < 0 || ins.imm > 255)) {
+  if (!narrow_holds(result, ins.imm as i64)) {
     return "integer constant range";
   }
   return "";
+}
+
+// Whether a type of fewer than 32 bits holds v. A wider type holds each i32.
+pub function narrow_holds(t: typeinfo.Type, v: i64): boolean {
+  return !(is_u8(t) && (v < 0 || v > 255) || is_u16(t) && (v < 0 || v > 65535) || is_i16(t) && (v < -32768 || v > 32767));
 }
 
 function float_constant_error(ins: ssa.SInst): string {
@@ -2654,6 +2680,12 @@ function leaf_key(t: typeinfo.Type): string {
   if (is_u8(t)) {
     return "u8";
   }
+  if (is_u16(t)) {
+    return "u16";
+  }
+  if (is_i16(t)) {
+    return "i16";
+  }
   if (is_u32(t)) {
     return "u32";
   }
@@ -2899,7 +2931,7 @@ function lanes_result(op: string, t: typeinfo.Type): typeinfo.Type {
 }
 
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
-  if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand) || typeinfo.is_lanes(operand))) {
+  if (op == "-" && (is_i16(operand) || is_i32(operand) || is_i64(operand) || is_float(operand) || typeinfo.is_lanes(operand))) {
     return operand;
   }
   if (op == "!" && is_bool(operand)) {
@@ -5484,6 +5516,13 @@ pub function record_fields(t: typeinfo.Type, f: Func): semrecords.Field[] {
 pub function is_byte_view(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return a.view && is_u8(a.elem);
+  }
+  return false;
+}
+
+pub function is_byte_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view && is_u8(a.elem);
   }
   return false;
 }

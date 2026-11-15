@@ -175,6 +175,12 @@ function actual_mutations(output: string): void {
   mutation(output, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rax, __fern_heap_ptr(%rip)", false);
   mutation(output, "cmpq __fern_heap_end(%rip), %rdi", "cmpl __fern_heap_end(%rip), %edi", false);
   mutation(output, "pushq (%rax)", "pushq (%rax)\n\tpushq (%rsp)\n\tpopq (%rsp)", true);
+  // The fast path clears the link in the first word of its block.
+  let clear = "popq (%rdi)\n    movq $0, (%rax)";
+  mutation(output, clear, "popq (%rdi)", true);
+  mutation(output, clear, "popq (%rdi)\n    movq $1, (%rax)", false);
+  mutation(output, clear, "popq (%rdi)\n    movq $0, 8(%rax)", false);
+  mutation(output, clear, clear + "\n    movq $0, (%rax)", false);
 }
 
 pub function run(output: string): void {

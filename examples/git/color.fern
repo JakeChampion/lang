@@ -1,0 +1,307 @@
+// The colors of the output: the escape sequences of git (color.h and
+// color.c), and the parse of a color that a format names.
+import "std/array";
+import "std/string";
+
+pub const RESET: string = "\x1b[m";
+
+pub const BOLD: string = "\x1b[1m";
+
+pub const RED: string = "\x1b[31m";
+
+pub const GREEN: string = "\x1b[32m";
+
+pub const YELLOW: string = "\x1b[33m";
+
+pub const BLUE: string = "\x1b[34m";
+
+pub const CYAN: string = "\x1b[36m";
+
+pub const BG_RED: string = "\x1b[41m";
+
+// The colors of the moved lines of `--color-moved`.
+pub const OLD_MOVED: string = "\x1b[1;35m";
+
+pub const OLD_MOVED_ALT: string = "\x1b[1;34m";
+
+pub const NEW_MOVED: string = "\x1b[1;36m";
+
+pub const NEW_MOVED_ALT: string = "\x1b[1;33m";
+
+pub const MOVED_DIM: string = "\x1b[2m";
+
+pub const MOVED_ALT_DIM: string = "\x1b[2;3m";
+
+// The colors of the columns of the graph, in the sequence that git uses.
+const COLUMNS: string[] = ["\x1b[31m", "\x1b[32m", "\x1b[33m", "\x1b[34m", "\x1b[35m", "\x1b[36m", "\x1b[1;31m", "\x1b[1;32m", "\x1b[1;33m", "\x1b[1;34m", "\x1b[1;35m", "\x1b[1;36m"];
+
+pub function column_count(): i32 {
+  return COLUMNS.len();
+}
+
+// The escape sequence of the column color `i`, or none when `i` is the
+// count of the colors.
+pub function column(i: i32): string {
+  return if (i >= 0 && i < COLUMNS.len()) { COLUMNS[i] } else { "" };
+}
+
+// The kinds of a decoration, and their colors (`decoration_colors` of
+// git).
+pub const DECORATION_NONE: i32 = 0;
+
+pub const DECORATION_LOCAL: i32 = 1;
+
+pub const DECORATION_REMOTE: i32 = 2;
+
+pub const DECORATION_TAG: i32 = 3;
+
+pub const DECORATION_STASH: i32 = 4;
+
+pub const DECORATION_HEAD: i32 = 5;
+
+pub const DECORATION_GRAFTED: i32 = 6;
+
+pub function decoration(kind: i32): string {
+  return match (kind) {
+    1 => "\x1b[1;32m",
+    2 => "\x1b[1;31m",
+    3 => "\x1b[1;33m",
+    4 => "\x1b[1;35m",
+    5 => "\x1b[1;36m",
+    6 => "\x1b[1;34m",
+    _ => RESET,
+  };
+}
+
+// The value of one color word, as `parse_color` of git reads it: the
+// code for the foreground, with `background` the code for the
+// background. Normal is an empty code. An unknown word gives none.
+function color_word(word: string, background: boolean): Option[string] {
+  let names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+  let base = if (background) { 40 } else { 30 };
+  if (word == "normal") {
+    return Some("");
+  }
+  if (word == "default") {
+    return Some((base + 9).to_string());
+  }
+  for i in 0..names.len() {
+    if (word == names[i]) {
+      return Some((base + i).to_string());
+    }
+    if (word == "bright" + names[i]) {
+      return Some((base + 60 + i).to_string());
+    }
+  }
+  if (word.len() == 7 && word[0] == b'#') {
+    let parts: string[] = [];
+    for k in 0..3 {
+      let hi = hex(word[1 + 2 * k]);
+      let lo = hex(word[2 + 2 * k]);
+      if (hi < 0 || lo < 0) {
+        return None;
+      }
+      parts = parts.append((hi * 16 + lo).to_string());
+    }
+    return Some((base + 8).to_string() + ";2;" + parts.join(";"));
+  }
+  if let Some(n) = number(word) {
+    if (n < -1) {
+      return None;
+    }
+    if (n < 0) {
+      return Some("");
+    }
+    if (n < 8) {
+      return Some((base + n).to_string());
+    }
+    if (n < 16) {
+      return Some((base + 60 + n - 8).to_string());
+    }
+    if (n < 256) {
+      return Some((base + 8).to_string() + ";5;" + n.to_string());
+    }
+  }
+  return None;
+}
+
+function hex(b: u8): i32 {
+  return if (b >= b'0' && b <= b'9') { (b - b'0') as i32 } else if (b >= b'a' && b <= b'f') { (b - b'a') as i32 + 10 } else if (b >= b'A' && b <= b'F') { (b - b'A') as i32 + 10 } else { -1 };
+}
+
+function number(word: string): Option[i32] {
+  if (word.len() == 0 || word.len() > 9) {
+    return None;
+  }
+  let negative = word[0] == b'-';
+  let at = if (negative) { 1 } else { 0 };
+  if (at == word.len()) {
+    return None;
+  }
+  let n = 0;
+  while (at < word.len()) {
+    if (word[at] < b'0' || word[at] > b'9') {
+      return None;
+    }
+    n = n * 10 + (word[at] - b'0') as i32;
+    at += 1;
+  }
+  return Some(if (negative) { -n } else { n });
+}
+
+// The attribute that `word` names: its code, or its code plus 100 for the
+// negative form, or -1.
+function attribute(word: string): i32 {
+  let names = ["bold", "dim", "italic", "ul", "blink", "reverse", "strike"];
+  let codes = [1, 2, 3, 4, 5, 7, 9];
+  let negatives = [22, 22, 23, 24, 25, 27, 29];
+  let name = word;
+  let negative = false;
+  if (name.starts_with("no-")) {
+    name = slice_unchecked(name, 3, name.len()).to_owned();
+    negative = true;
+  } else if (name.starts_with("no")) {
+    name = slice_unchecked(name, 2, name.len()).to_owned();
+    negative = true;
+  }
+  for i in 0..names.len() {
+    if (name == names[i]) {
+      return if (negative) { negatives[i] } else { codes[i] };
+    }
+  }
+  return -1;
+}
+
+// The escape sequence of the color `spec`, such as `bold blue` or
+// `#ff0000 ul`: `color_parse_mem` of git. A spec that is not a color
+// gives none.
+pub function parse(spec: string): Option[string] {
+  let words: string[] = [];
+  for w in spec.to_ascii_lower().split(" ") {
+    if (w.len() > 0) {
+      words = words.append(w);
+    }
+  }
+  if (words.len() == 1 && words[0] == "reset") {
+    return Some(RESET);
+  }
+  let attrs: boolean[] = __alloc_i32(32).map((v: i32): boolean => false);
+  let fg = "";
+  let bg = "";
+  let colors = 0;
+  for w in words {
+    if let Some(code) = color_word(w, colors == 1) {
+      if (colors == 0) {
+        fg = code;
+      } else if (colors == 1) {
+        bg = code;
+      } else {
+        return None;
+      }
+      colors += 1;
+      continue;
+    }
+    let a = attribute(w);
+    if (a < 0) {
+      return None;
+    }
+    attrs = attrs.with(a, true);
+  }
+  let parts: string[] = [];
+  for i in 0..attrs.len() {
+    if (attrs[i]) {
+      parts = parts.append(i.to_string());
+    }
+  }
+  if (fg.len() > 0) {
+    parts = parts.append(fg);
+  }
+  if (bg.len() > 0) {
+    parts = parts.append(bg);
+  }
+  return if (parts.len() == 0) { Some("") } else { Some("\x1b[" + parts.join(";") + "m") };
+}
+
+// ---- The colors of the slots of `color.diff.SLOT` and `color.decorate.SLOT` ----
+
+// The slots of `color.diff.SLOT` (`color_diff_slots` of git), then those
+// of `color.decorate.SLOT` (`color_decorate_slots`), in order.
+pub const CONTEXT: i32 = 0;
+
+pub const META: i32 = 1;
+
+pub const FRAG: i32 = 2;
+
+pub const OLD: i32 = 3;
+
+pub const NEW: i32 = 4;
+
+pub const COMMIT: i32 = 5;
+
+pub const WHITESPACE: i32 = 6;
+
+pub const FUNC: i32 = 7;
+
+pub const OLD_MOVED_SLOT: i32 = 8;
+
+pub const OLD_MOVED_ALT_SLOT: i32 = 9;
+
+pub const OLD_MOVED_DIM_SLOT: i32 = 10;
+
+pub const OLD_MOVED_ALT_DIM_SLOT: i32 = 11;
+
+pub const NEW_MOVED_SLOT: i32 = 12;
+
+pub const NEW_MOVED_ALT_SLOT: i32 = 13;
+
+pub const NEW_MOVED_DIM_SLOT: i32 = 14;
+
+pub const NEW_MOVED_ALT_DIM_SLOT: i32 = 15;
+
+// The first slot of the decorations: the slot of a decoration of the kind
+// K is DECORATE + K - 1.
+pub const DECORATE: i32 = 22;
+
+const DIFF_SLOTS: string[] = ["context", "meta", "frag", "old", "new", "commit", "whitespace", "func", "oldmoved", "oldmovedalternative", "oldmoveddimmed", "oldmovedalternativedimmed", "newmoved", "newmovedalternative", "newmoveddimmed", "newmovedalternativedimmed", "contextdimmed", "olddimmed", "newdimmed", "contextbold", "oldbold", "newbold"];
+
+const DECORATE_SLOTS: string[] = ["branch", "remotebranch", "tag", "stash", "head", "grafted"];
+
+const DEFAULTS: string[] = ["", BOLD, CYAN, RED, GREEN, YELLOW, BG_RED, "", OLD_MOVED, OLD_MOVED_ALT, MOVED_DIM, MOVED_ALT_DIM, NEW_MOVED, NEW_MOVED_ALT, MOVED_DIM, MOVED_ALT_DIM, "\x1b[2m", "\x1b[2;31m", "\x1b[2;32m", BOLD, "\x1b[1;31m", "\x1b[1;32m", "\x1b[1;32m", "\x1b[1;31m", "\x1b[1;33m", "\x1b[1;35m", "\x1b[1;36m", "\x1b[1;34m"];
+
+// The color of each slot.
+pub struct Palette { slots: string[] }
+
+pub function palette_default(): Palette {
+  return Palette { slots: DEFAULTS };
+}
+
+pub function (p: Palette) get(slot: i32): string {
+  return p.slots[slot];
+}
+
+// The palette with the colors of the keys `names` of the configuration,
+// in their order, with their values. A value that is not a color leaves
+// the color of its slot.
+pub function palette_of(names: string[], values: string[]): Palette {
+  let slots = DEFAULTS;
+  for k in 0..names.len() {
+    let name = names[k];
+    let slot = -1;
+    for i in 0..DIFF_SLOTS.len() {
+      if (name == "color.diff." + DIFF_SLOTS[i] || name == "diff.color." + DIFF_SLOTS[i] || i == CONTEXT && (name == "color.diff.plain" || name == "diff.color.plain")) {
+        slot = i;
+      }
+    }
+    for i in 0..DECORATE_SLOTS.len() {
+      if (name == "color.decorate." + DECORATE_SLOTS[i]) {
+        slot = DECORATE + i;
+      }
+    }
+    if (slot >= 0) {
+      if let Some(code) = parse(values[k]) {
+        slots = slots.with(slot, code);
+      }
+    }
+  }
+  return Palette { slots: slots };
+}

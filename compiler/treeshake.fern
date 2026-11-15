@@ -2,6 +2,7 @@ import "./ast";
 import "./astwalk";
 import "./lexer";
 import "./parser";
+import "./typeinfo";
 import "./util";
 import "std/string";
 
@@ -600,6 +601,9 @@ function ts_kept_keys(fd: parser.FuncDecl): string[] {
   if (fd.receiver_type.len() == 0 && fd.name.starts_with("__primitive_") && fd.name.ends_with("_to_string")) {
     let owner = slice_unchecked(fd.name, 12, fd.name.len() - 10).to_owned();
     keys = keys.append(ts_arity_root("to_string", 0)).append(ts_qualified_root(owner, ts_arity_root("to_string", 0)));
+    for shown in typeinfo.displayed_by(owner) {
+      keys = keys.append(ts_qualified_root(shown, ts_arity_root("to_string", 0)));
+    }
   }
   return util.append_all(util.append_all(keys, ts_interposed_keys(fd)), ts_recv_keys(fd));
 }

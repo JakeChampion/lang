@@ -444,7 +444,7 @@ func TestSelfHostLaneIR(t *testing.T) {
 				t.Fatalf("emit: %v", err)
 			}
 			if target == "x86-64-linux" {
-				for _, want := range []string{"vfmadd213pd", "cmppd $1,", "roundpd $1,", "movupd", "vpaddusb", "vpminsb", "pmovmskb", "pinsrb $12,", "vpmullw", "vpmulld", "vpsraw", "vpsrld", "packsswb", "pinsrw $5,"} {
+				for _, want := range []string{"vfmadd231pd", "cmppd $1,", "roundpd $1,", "movupd", "vpaddusb", "vpminsb", "pmovmskb", "pinsrb $12,", "vpmullw", "vpmulld", "vpsraw", "vpsrld", "packsswb", "pinsrw $5,"} {
 					if !strings.Contains(string(output), want) {
 						t.Errorf("x86-64 text lacks %q", want)
 					}

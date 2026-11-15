@@ -29,7 +29,9 @@ func (g gitTool) run(t *testing.T, dir, stdin string, args ...string) (string, s
 	cmd := g.cmd(args...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(stdin)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C", "GIT_TEST_DATE_NOW=1800000000", "GIT_COMMITTER_DATE=2026-01-02T03:04:05Z", "GIT_AUTHOR_DATE=2026-01-02T03:04:05Z")
+	// A tool may give more variables, which come after these.
+	extra := cmd.Env
+	cmd.Env = append(append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C", "GIT_TEST_DATE_NOW=1800000000", "GIT_COMMITTER_DATE=2026-01-02T03:04:05Z", "GIT_AUTHOR_DATE=2026-01-02T03:04:05Z"), extra...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	_ = cmd.Run()
@@ -96,8 +98,6 @@ func gitInit(t *testing.T, oracle gitTool, dir string, run gitRun) {
 	}
 }
 
-// gitFixture makes a repository with one commit, a tree in a tree, a path
-// that git quotes, a branch, a light tag and a tag object. Each object is
 // gitFixture makes a repository with one commit, a tree in a tree, a path
 // that git quotes, a branch, a light tag and a tag object. Each object is
 // loose, and its name is of the hash of run. It gives the names of the

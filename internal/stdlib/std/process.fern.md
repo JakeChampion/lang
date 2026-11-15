@@ -77,13 +77,13 @@ function __proc_error(errno: i32, path: string): IoError {
 
 ### The run
 
-The child moves the file to its standard input and the pipes to its standard output and its standard error, and then runs the program. When `exec` fails, the child writes the error number to the pipe of the status, and it exits with 127. A successful `exec` closes that pipe, so the parent reads no byte from it.
+The child moves the file to its standard input and the pipes to its standard output and its standard error, and then runs the program. The first argument of the program is `program` as the caller gives it, not the path that the search finds, and the program gets the environment of the caller. When `exec` fails, the child writes the error number to the pipe of the status, and it exits with 127. A successful `exec` closes that pipe, so the parent reads no byte from it.
 
 ```fern
 <<the run>>=
 // run runs `program` with the arguments `args`, and gives its output and
 // its exit status. The standard input of the child is the file `input`, or
-// /dev/null when `input` is "".
+// /dev/null when `input` is "". The argument 0 of the child is `program`.
 pub function run(program: string, args: string[], input: string): Result[Output, IoError] {
   let path = __proc_find(program)?;
   let source = open_reader(if (input == "") { "/dev/null" } else { input })?;
@@ -92,7 +92,7 @@ pub function run(program: string, args: string[], input: string): Result[Output,
   let status = pipe()?;
   let pid = proc_fork();
   if (pid == 0) {
-    __proc_child(path, args, source, out, err, status);
+    __proc_child(path, [program].concat(args), source, out, err, status);
   }
   let _ = source.close();
   let _ = out.w.close();
@@ -112,11 +112,11 @@ pub function run(program: string, args: string[], input: string): Result[Output,
 
 // The child: it moves its streams, and runs the program. It does not
 // return.
-function __proc_child(path: string, args: string[], source: Reader, out: Pipe, err: Pipe, status: Pipe): void {
+function __proc_child(path: string, argv: string[], source: Reader, out: Pipe, err: Pipe, status: Pipe): void {
   let _ = source.dup_onto(0);
   let _ = out.w.dup_onto(1);
   let _ = err.w.dup_onto(2);
-  let rc = -proc_exec(path, args);
+  let rc = -proc_exec_as(path, argv, environ());
   let _ = status.w.write_bytes([(rc & 255) as u8, (rc >> 8 & 255) as u8, (rc >> 16 & 255) as u8, (rc >> 24 & 255) as u8]);
   exit(127);
 }
