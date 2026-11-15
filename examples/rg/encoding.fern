@@ -24,32 +24,32 @@ pub function decoder(name: string): whatwg.Decoder {
 }
 
 // The text of a file with the encoding of `d`, and whether it is decoded.
-// `name` is the name of the encoding, "none" or "". A byte order mark of
-// UTF-8 or UTF-16 takes precedence over the encoding, and the text does not
-// keep it. "none" keeps the bytes, and "" decodes only a file with a byte
-// order mark. A decode makes each malformed sequence U+FFFD, but the bytes
-// after a byte order mark of UTF-8 stay as they are.
-pub function decode(own bytes: u8[], name: string, d: whatwg.Decoder): (string, boolean) {
+// `bytes` holds the bytes of the file with no check of UTF-8. `name` is the
+// name of the encoding, "none" or "". A byte order mark of UTF-8 or UTF-16
+// takes precedence over the encoding, and the text does not keep it. "none"
+// keeps the bytes, and "" decodes only a file with a byte order mark. A
+// decode makes each malformed sequence U+FFFD, but the bytes after a byte
+// order mark of UTF-8 stay as they are.
+pub function decode(bytes: string, name: string, d: whatwg.Decoder): (string, boolean) {
   if (name == "none") {
-    return (raw(bytes), false);
+    return (bytes, false);
   }
   if (starts(bytes, [239u8, 187u8, 191u8])) {
-    let n = bytes.len();
-    return (slice_unchecked(raw(bytes), 3, n).to_owned(), true);
+    return (slice_unchecked(bytes, 3, bytes.len()).to_owned(), true);
   }
   if (starts(bytes, [255u8, 254u8])) {
-    return (whatwg.decoder("UTF-16LE").decode(bytes.drop(2)), true);
+    return (whatwg.decoder("UTF-16LE").decode(bytes.bytes().drop(2)), true);
   }
   if (starts(bytes, [254u8, 255u8])) {
-    return (whatwg.decoder("UTF-16BE").decode(bytes.drop(2)), true);
+    return (whatwg.decoder("UTF-16BE").decode(bytes.bytes().drop(2)), true);
   }
   if (name == "") {
-    return (raw(bytes), false);
+    return (bytes, false);
   }
-  return (d.decode(bytes), true);
+  return (d.decode(bytes.bytes()), true);
 }
 
-function starts(bytes: u8[], mark: u8[]): boolean {
+function starts(bytes: string, mark: u8[]): boolean {
   if (bytes.len() < mark.len()) {
     return false;
   }
@@ -59,10 +59,6 @@ function starts(bytes: u8[], mark: u8[]): boolean {
     }
   }
   return true;
-}
-
-function raw(own bytes: u8[]): string {
-  return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
 function finish(h: usize): string {

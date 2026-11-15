@@ -363,7 +363,7 @@ inside a codegen switch:
 | ------- | -------- | ------------ |
 | arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, the carry-less multiply `pmull` / `pmull2` in its `.1q` form, the AES rounds `aese` / `aesmc`, and the SHA-256 instructions `sha256h` / `sha256h2` / `sha256su0` / `sha256su1` (the SHA-512 ones, FEAT_SHA512, are not in the baseline). This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
 | x86-64 | **x86-64-v3 plus AES-NI** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `rorx` (BMI2), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, and the **AVX2** 32-byte loops the byte kernels already emit. |
-| wasm | core wasm 2.0, fixed-width SIMD included | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. |
+| wasm | core wasm 2.0, fixed-width SIMD included, plus the tail calls of wasm 3.0 | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. `return_call` and `return_call_indirect` let a call in tail position end its frame. wasmtime enables tail calls by default, as do Chrome 112, Firefox 121 and Safari 18.2. |
 
 The first line of each arm64 assembly file is `.arch armv8.2-a+crypto`.
 Thus GNU as and the LLVM assembler accept the output of `-emit asm` with no
@@ -687,6 +687,13 @@ The constructions of one function can put the recursive result in different
 payloads, as a tree insert does for its left and its right child. The loop
 then carries the payload index of the open hole
 (`internal/testing/e2ecompiler/self_host_sem_trmc_test.go`, `put`).
+
+On wasm, a call whose result the function returns with no change is a
+`return_call` or a `return_call_indirect` of the tail-call proposal. The
+result can go to the return through a local and the ends of blocks. A
+function with a shadow frame makes no tail call, because its callee can get
+a window of that frame
+(`internal/testing/e2ecompiler/self_host_wasm_tail_call_test.go`).
 
 ### Pointer-width handling on arm64-darwin's high heap — how it works
 

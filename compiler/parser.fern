@@ -8813,6 +8813,8 @@ pub function builtin_function_names(): string[] {
     "sysctl",
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "read_link_bytes", "umask", "rename",
     "clone_file",
+    // the bytes of a file, mapped where the target can map it
+    "map_file_unchecked",
     "rename_noreplace", "rename_exchange",
     "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes",
     "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes",

@@ -652,6 +652,7 @@ func New() *Interp {
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
 	i.Builtins["environ"] = &Builtin{Fn: builtinEnviron}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
+	i.Builtins["map_file_unchecked"] = &Builtin{Fn: builtinMapFileUnchecked}
 	i.Builtins["read_file_bytes"] = &Builtin{Fn: builtinReadFileBytes}
 	i.Builtins["write_file"] = &Builtin{Fn: builtinWriteFile}
 	i.Builtins["write_file_bytes"] = &Builtin{Fn: builtinWriteFileBytes}
@@ -1348,6 +1349,16 @@ func New() *Interp {
 			return nil, fmt.Errorf("__scan_set: expected a string, got %T", args[0])
 		}
 		return scanSet("__scan_set", []byte(string(s)), args[1], args[2])
+	}}
+	i.Builtins["__scan_masks"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_masks: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__scan_masks: expected a string, got %T", args[0])
+		}
+		return scanMasks([]byte(string(s)), args[1], args[2])
 	}}
 	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
@@ -2968,6 +2979,23 @@ func builtinReadFile(_ *Interp, args []Value) (Value, error) {
 	if !utf8.Valid(data) {
 		return resultErr(&Enum{EnumName: "IoError", VariantName: "InvalidUtf8", Index: 3,
 			Payloads: []Value{path}}), nil
+	}
+	return resultOk(String(string(data))), nil
+}
+
+// builtinMapFileUnchecked reads the file: the interpreter has no map, and the
+// bytes are the same.
+func builtinMapFileUnchecked(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("map_file_unchecked: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("map_file_unchecked: expected string arg, got %T", args[0])
+	}
+	data, err := os.ReadFile(string(path))
+	if err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
 	}
 	return resultOk(String(string(data))), nil
 }
@@ -8350,6 +8378,51 @@ func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
 		}
 	}
 	return Number(len(b)), nil
+}
+
+// scanMasks is __scan_masks: the first offset at or after the start where each
+// probe of the masks accepts its byte, or -1. Masks byte 0 is the count of
+// probes, 1 to 3, and bytes 1 to 3 are their offsets. Probe j has its table for
+// the low half of a byte at 4+32j and for the high half 16 bytes after it.
+func scanMasks(b []byte, fromArg, masksArg Value) (Value, error) {
+	fn, ok := fromArg.(Number)
+	if !ok {
+		return nil, fmt.Errorf("__scan_masks: expected an integer start, got %T", fromArg)
+	}
+	arr, ok := masksArg.(Array)
+	if !ok {
+		return nil, fmt.Errorf("__scan_masks: expected a u8[] of masks, got %T", masksArg)
+	}
+	m := make([]byte, len(arr.Elems()))
+	for k, e := range arr.Elems() {
+		n, ok := e.(Number)
+		if !ok {
+			return nil, fmt.Errorf("__scan_masks: mask %d is %T, not a byte", k, e)
+		}
+		m[k] = byte(int64(n))
+	}
+	if len(m) < 4 {
+		return Number(-1), nil
+	}
+	probes := int(m[0])
+	if probes < 1 || probes > 3 || len(m) < 4+32*probes {
+		return Number(-1), nil
+	}
+	reach := 0
+	for j := 0; j < probes; j++ {
+		reach = max(reach, int(m[1+j]))
+	}
+	for at := max(int(int64(fn)), 0); at+reach < len(b); at++ {
+		acc := byte(255)
+		for j := 0; j < probes; j++ {
+			c := b[at+int(m[1+j])]
+			acc &= m[4+32*j+int(c&15)] & m[4+32*j+16+int(c>>4)]
+		}
+		if acc != 0 {
+			return Number(at), nil
+		}
+	}
+	return Number(-1), nil
 }
 
 func StrHash(s []byte, seed int32) uint32 {

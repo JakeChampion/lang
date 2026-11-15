@@ -47,9 +47,6 @@ pub enum Ast {
   Break(string),
 }
 
-// The text that marks a part of the language that this port does not have yet.
-pub const NOT_YET: string = "is not in this port yet";
-
 // ---- Lexer ----
 
 pub enum Tok {
@@ -67,7 +64,7 @@ pub enum Tok {
   TEnd,
 }
 
-struct Lexed { toks: Tok[], error: string }
+struct Lexed { toks: Tok[], offs: i32[], error: string }
 
 function is_ident_start(b: u8): boolean {
   return b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b == b'_';
@@ -235,7 +232,7 @@ function scan_string(s: string, i: i32): Scanned {
     if (e == b'(') {
       let close = interp_end(s, j);
       if (close < 0) {
-        return Scanned { value: "", end: j, error: "syntax error, unexpected the end of the program", texts: [], sources: [] };
+        return Scanned { value: "", end: j, error: "syntax error, unexpected QQSTRING_START", texts: [], sources: [] };
       }
       texts = texts.append(out);
       sources = sources.append(text(s, j, close));
@@ -301,16 +298,19 @@ function line_of(s: string, at: i32): i32 {
   return line;
 }
 
-// The value of `$__loc__` on `line`.
-function location(line: i32): Ast {
-  let o = json.object().insert("file", json.JString("<top-level>"));
+// The value of `$__loc__` on `line` of `file`.
+function location(file: string, line: i32): Ast {
+  let o = json.object().insert("file", json.JString(file));
   return Literal(json.JObject(o.insert("line", json.JNumber(line.to_string()))));
 }
 
 pub function lex(s: string): Lexed {
   let toks: Tok[] = [];
+  let offs: i32[] = [];
+  let opens: string[] = [];
   let i = 0;
   while (i < s.len()) {
+    let start = i;
     let b = s[i];
     if (b == b' ' || b == b'\t' || b == b'\n' || b == b'\r') {
       i += 1;
@@ -350,7 +350,7 @@ pub function lex(s: string): Lexed {
     } else if (b == b'"') {
       let sc = scan_string(s, i);
       if (sc.error.len() > 0) {
-        return Lexed { toks: toks, error: sc.error };
+        return Lexed { toks: toks, offs: offs, error: sc.error };
       }
       if (sc.sources.len() > 0) {
         toks = toks.append(TInterp(sc.texts.append(sc.value), sc.sources));
@@ -368,20 +368,43 @@ pub function lex(s: string): Lexed {
         toks = toks.append(TPunct(two));
         i += two.len();
       } else {
-        toks = toks.append(TPunct(text(s, i, i + 1)));
+        let c = text(s, i, i + 1);
+        if (c == "(" || c == "[" || c == "{") {
+          opens = opens.append(c);
+        } else if (c == ")" || c == "]" || c == "}") {
+          let want = if (c == ")") { "(" } else if (c == "]") { "[" } else { "{" };
+          if (opens.len() == 0 || opens[opens.len() - 1] != want) {
+            c = "INVALID_CHARACTER";
+          } else {
+            opens = opens.truncate(opens.len() - 1);
+          }
+        }
+        toks = toks.append(TPunct(c));
         i += 1;
       }
     }
+    while (offs.len() < toks.len()) {
+      offs = offs.append(start);
+    }
   }
-  return Lexed { toks: toks.append(TEnd), error: "" };
+  // jq places the end of the program at the start of its last token.
+  let end = if (offs.len() > 0) { offs[offs.len() - 1] } else { 0 };
+  return Lexed { toks: toks.append(TEnd), offs: offs.append(end), error: "" };
 }
 
 // ---- Parser ----
 
-pub struct Parsed { ast: Ast, error: string }
+// The filter of a program, or its error and the offset of the error. `defs`
+// holds the functions that the program defines at its top level, as
+// "name/arguments".
+pub struct Parsed { ast: Ast, error: string, at: i32, defs: string[], undefined: string[], undefined_at: i32[] }
 
-// `defs` holds each function that a `def` gave, as "name/arguments".
-struct P { toks: Tok[], at: i32, error: string, defs: string[] }
+// `defs` holds each function that a `def` gave, as "name/arguments". A
+// library has definitions and no program after them. `file` names the
+// program in `$__loc__`.
+// `undefined` holds the message of each call of a function that is not
+// defined, and `undefined_at` its offset. jq reports each of them.
+struct P { toks: Tok[], offs: i32[], at: i32, error: string, err_at: i32, defs: string[], library: boolean, file: string, check: boolean, undefined: string[], undefined_at: i32[] }
 
 function (p: P) peek(): Tok {
   return p.toks[p.at];
@@ -395,7 +418,11 @@ function (p: P) fail(message: string): P {
   if (p.error.len() > 0) {
     return p;
   }
-  return P { ...p, error: message };
+  let at = 0;
+  if (p.at < p.offs.len()) {
+    at = p.offs[p.at];
+  }
+  return P { ...p, error: message, err_at: at };
 }
 
 function (p: P) is_punct(s: string): boolean {
@@ -416,43 +443,67 @@ function (p: P) expect(s: string): P {
   if (p.is_punct(s)) {
     return p.advance();
   }
-  if let TPunct(x) = p.peek() {
-    if (punct_message(x).contains(NOT_YET)) {
-      return p.fail(punct_message(x));
-    }
+  return p.fail(unexpected(p.peek()));
+}
+
+// `s` at `p`, or the error of bison that names the one token it expects.
+function (p: P) expecting(s: string): P {
+  if (p.is_punct(s)) {
+    return p.advance();
   }
-  return p.fail("syntax error, expected '" + s + "' but got " + describe(p.peek()));
+  return p.fail(unexpected(p.peek()) + ", expecting '" + s + "'");
 }
 
 function (p: P) expect_word(s: string): P {
   if (p.is_ident(s)) {
     return p.advance();
   }
-  return p.fail("syntax error, expected '" + s + "' but got " + describe(p.peek()));
+  return p.fail(unexpected(p.peek()));
 }
 
+// The name of a token in a message of the parser of jq, which bison makes.
 function describe(t: Tok): string {
   return match (t) {
     TDot => "'.'",
-    TField(f) => "'." + f + "'",
-    TIdent(x) => "'" + x + "'",
-    TVar(v) => "'$" + v + "'",
-    TNumber(n) => "'" + n + "'",
-    TString(_) => "a string",
-    TInterp(_, _) => "a string",
-    TFormat(f) => "'@" + f + "'",
-    TPunct(x) => "'" + x + "'",
-    TLoc(_) => "'$__loc__'",
-    TEnd => "the end of the program",
+    TField(_) => "FIELD",
+    TIdent(x) => if (KEYWORDS.contains(x)) { x } else { "IDENT" },
+    TVar(_) => "BINDING",
+    TNumber(_) => "LITERAL",
+    TString(_) => "QQSTRING_START",
+    TInterp(_, _) => "QQSTRING_START",
+    TFormat(_) => "FORMAT",
+    TPunct(x) => if (x.len() == 1) { "'" + x + "'" } else { x },
+    TLoc(_) => "\"$__loc__\"",
+    TEnd => "end of file",
   };
 }
 
+// The words that jq reads as keywords.
+const KEYWORDS: string[] = ["def", "if", "then", "elif", "else", "end", "as", "reduce", "foreach", "try", "catch", "label", "import", "include", "module", "and", "or", "break", "__loc__"];
+
+// The end of a syntax error after a whole program.
+const END_EXPECTED: string = ", expecting end of file";
+
+// The note that jq adds to each syntax error.
+pub const QUOTING: string = " (Unix shell quoting issues?)";
+
+// The filter of `program`, after the functions that the port has as jq
+// text. A unit test reads a program so.
 pub function parse(program: string): Parsed {
-  let parsed = parse_in(program, []);
+  let parsed = parse_in(program, [], "<top-level>", false, 0);
   if (parsed.error.len() > 0) {
     return parsed;
   }
-  return Parsed { ast: defined_before(parse_in(PRELUDE, []).ast, parsed.ast), error: "" };
+  if (parsed.undefined.len() > 0) {
+    return Parsed { ...parsed, error: parsed.undefined[0], at: parsed.undefined_at[0] };
+  }
+  return Parsed { ...parsed, ast: defined_before(prelude(), parsed.ast) };
+}
+
+// The definitions of the functions that the port has as jq text, before
+// the filter `.`.
+pub function prelude(): Ast {
+  return parse_in(PRELUDE, [], "<builtin>", false, 0).ast;
 }
 
 // The functions that the port has as jq text, as jq has them.
@@ -469,6 +520,52 @@ const PRELUDE: string = "def abs: if . < 0 then - . else . end;"
   + "def fromdateiso8601: strptime(\"%Y-%m-%dT%H:%M:%SZ\") | mktime;"
   + "def todate: todateiso8601;"
   + "def fromdate: fromdateiso8601;"
+  + "def combinations: if length == 0 then [] else .[0][] as $x | (.[1:] | combinations) as $y | [$x] + $y end;"
+  + "def combinations(n): . as $dot | [range(n) | $dot] | combinations;"
+  + "def truncate_stream(stream): . as $n | null | stream | . as $input"
+  + "  | if (.[0] | length) > $n then setpath([0]; $input[0][$n:]) else empty end;"
+  + "def fromstream(i): {x: null, e: false} as $init"
+  + "  | foreach i as $i ($init;"
+  + "      if .e then $init else . end"
+  + "      | if $i | length == 2"
+  + "        then setpath([\"e\"]; $i[0] | length == 0) | setpath([\"x\"] + $i[0]; $i[1])"
+  + "        else setpath([\"e\"]; $i[0] | length == 1) end;"
+  + "      if .e then .x else empty end);"
+  + "def tostream: path(def r: (.[]? | r), .; r) as $p | getpath($p) | reduce path(.[]?) as $q ([$p, .]; [$p + $q]);"
+  + "def match(re; mode): _match_impl(re; mode; false) | .[];"
+  + "def match($val): ($val | type) as $vt | if $vt == \"string\" then match($val; null)"
+  + "  elif $vt == \"array\" and ($val | length) > 1 then match($val[0]; $val[1])"
+  + "  elif $vt == \"array\" and ($val | length) > 0 then match($val[0]; null)"
+  + "  else error($vt + \" not a string or array\") end;"
+  + "def test(re; mode): _match_impl(re; mode; true);"
+  + "def test($val): ($val | type) as $vt | if $vt == \"string\" then test($val; null)"
+  + "  elif $vt == \"array\" and ($val | length) > 1 then test($val[0]; $val[1])"
+  + "  elif $vt == \"array\" and ($val | length) > 0 then test($val[0]; null)"
+  + "  else error($vt + \" not a string or array\") end;"
+  + "def capture(re; mods): match(re; mods) | reduce (.captures | .[] | select(.name != null) | {(.name): .string}) as $pair ({}; . + $pair);"
+  + "def capture($val): ($val | type) as $vt | if $vt == \"string\" then capture($val; null)"
+  + "  elif $vt == \"array\" and ($val | length) > 1 then capture($val[0]; $val[1])"
+  + "  elif $vt == \"array\" and ($val | length) > 0 then capture($val[0]; null)"
+  + "  else error($vt + \" not a string or array\") end;"
+  + "def scan($re; $flags): match($re; \"g\" + $flags) | if (.captures | length > 0) then [.captures | .[] | .string] else .string end;"
+  + "def scan($re): scan($re; null);"
+  + "def _nwise($n): def n: if length <= $n then . else .[0:$n], (.[$n:] | n) end; n;"
+  + "def _nwise(a; $n): a | _nwise($n);"
+  + "def splits($re; flags): . as $s | [match($re; \"g\" + flags) | (.offset, .offset + .length)]"
+  + "  | [0] + . + [$s | length] | _nwise(2) | $s[.[0]:.[1]];"
+  + "def splits($re): splits($re; null);"
+  + "def split($re; flags): [splits($re; flags)];"
+  + "def sub($re; s; $flags): . as $in"
+  + "  | (reduce match($re; $flags) as $edit ({result: [], previous: 0};"
+  + "      $in[.previous: ($edit | .offset)] as $gap"
+  + "      | [reduce ($edit | .captures | .[] | select(.name != null) | {(.name): .string}) as $pair ({}; . + $pair) | s] as $inserts"
+  + "      | reduce range(0; $inserts | length) as $ix (.; .result[$ix] += $gap + $inserts[$ix])"
+  + "      | .previous = ($edit | .offset + .length))"
+  + "    | .result[] + $in[.previous:])"
+  + "  // $in;"
+  + "def sub($re; s): sub($re; s; \"\");"
+  + "def gsub($re; s; flags): sub($re; s; flags + \"g\");"
+  + "def gsub($re; s): sub($re; s; \"g\");"
   + "def IN(s): any(s == .; .);"
   + "def IN(src; s): any(src == s; .);"
   + "def bsearch($target):"
@@ -487,6 +584,39 @@ const PRELUDE: string = "def abs: if . < 0 then - . else . end;"
   + "  end;"
   + ".";
 
+// The library `program` from the token `skip`, read with no check of the
+// functions that it calls. `modulemeta` reads a module so, as jq does.
+pub function parse_unchecked(program: string, file: string, skip: i32): Parsed {
+  let lx = lex(program);
+  if (lx.error.len() > 0) {
+    return Parsed { ast: Identity, error: lx.error, at: 0, defs: [], undefined: [], undefined_at: [] };
+  }
+  let p = P { toks: lx.toks, offs: lx.offs, at: skip, error: "", err_at: 0, defs: [], library: true, file: file, check: false, undefined: [], undefined_at: [] };
+  if let TEnd = p.peek() {
+    return Parsed { ast: Identity, error: "", at: 0, defs: [], undefined: [], undefined_at: [] };
+  }
+  let (ast, q) = parse_pipe(p);
+  if (q.error.len() > 0) {
+    return Parsed { ast: Identity, error: q.error, at: q.err_at, defs: [], undefined: [], undefined_at: [] };
+  }
+  return Parsed { ast: ast, error: "", at: 0, defs: top_defs(ast), undefined: q.undefined, undefined_at: q.undefined_at };
+}
+
+// The functions that the definitions at the start of `f` give, as
+// "name/arguments".
+function top_defs(f: Ast): string[] {
+  let out: string[] = [];
+  let at = f;
+  while (true) {
+    let Def(name, params, _, rest) = at else {
+      return out;
+    };
+    out = out.append(name + "/" + params.len().to_string());
+    at = rest;
+  }
+  return out;
+}
+
 // `program` after each definition of `defs`.
 function defined_before(defs: Ast, program: Ast): Ast {
   if let Def(name, params, body, rest) = defs {
@@ -495,37 +625,43 @@ function defined_before(defs: Ast, program: Ast): Ast {
   return program;
 }
 
-// The filter of `program`, which can call the functions of `defs`.
-function parse_in(program: string, defs: string[]): Parsed {
+// The filter of `program` from the token `skip`, which can call the
+// functions of `defs`. A library gives its definitions before `.`.
+pub function parse_in(program: string, defs: string[], file: string, library: boolean, skip: i32): Parsed {
   let lx = lex(program);
   if (lx.error.len() > 0) {
-    return Parsed { ast: Identity, error: lx.error };
+    return Parsed { ast: Identity, error: lx.error, at: 0, defs: [], undefined: [], undefined_at: [] };
   }
-  let p = P { toks: lx.toks, at: 0, error: "", defs: defs };
+  let p = P { toks: lx.toks, offs: lx.offs, at: skip, error: "", err_at: 0, defs: defs, library: library, file: file, check: true, undefined: [], undefined_at: [] };
+  if (library) {
+    if let TEnd = p.peek() {
+      return Parsed { ast: Identity, error: "", at: 0, defs: [], undefined: [], undefined_at: [] };
+    }
+    if (!p.is_ident("def")) {
+      let q = p.fail("library should only have function definitions, not a main expression");
+      return Parsed { ast: Identity, error: q.error, at: q.err_at, defs: [], undefined: [], undefined_at: [] };
+    }
+  }
   let (ast, q) = parse_pipe(p);
   if (q.error.len() == 0) {
     if let TEnd = q.peek() {
-      return Parsed { ast: ast, error: "" };
+      return Parsed { ast: ast, error: "", at: 0, defs: top_defs(ast), undefined: q.undefined, undefined_at: q.undefined_at };
     }
-    q = q.fail(unexpected(q.peek()));
+    q = q.fail(unexpected(q.peek()) + END_EXPECTED);
+  } else if (q.err_at == p.offs[skip] && q.error == unexpected(p.peek())) {
+    // An empty program is `.`, so bison reads a keyword at the start as a
+    // token after a whole program.
+    if let TIdent(x) = p.peek() {
+      if (KEYWORDS.contains(x)) {
+        q = P { ...q, error: q.error + END_EXPECTED };
+      }
+    }
   }
-  return Parsed { ast: Identity, error: q.error };
+  return Parsed { ast: Identity, error: q.error, at: q.err_at, defs: [], undefined: [], undefined_at: [] };
 }
 
 function unexpected(t: Tok): string {
-  return match (t) {
-    TPunct(x) => punct_message(x),
-    TIdent(x) => keyword_message(x),
-    _ => "syntax error, unexpected " + describe(t),
-  };
-}
-
-function punct_message(x: string): string {
-  return "syntax error, unexpected '" + x + "'";
-}
-
-function keyword_message(x: string): string {
-  return "syntax error, unexpected '" + x + "'";
+  return "syntax error, unexpected " + describe(t);
 }
 
 function parse_pipe(p: P): (Ast, P) {
@@ -624,7 +760,7 @@ function parse_compare(p: P): (Ast, P) {
   }
   let (right, r) = parse_add(q.advance());
   if (compare_op(r).len() > 0) {
-    return (left, r.fail("syntax error, unexpected '" + compare_op(r) + "'"));
+    return (left, r.fail(unexpected(r.peek())));
   }
   return (Compare(op, left, right), r);
 }
@@ -670,7 +806,7 @@ function parse_unary(p: P): (Ast, P) {
   if (q.error.len() == 0 && q.is_ident("as")) {
     let held = "*" + q.at.to_string();
     let (alts, r) = parse_binding(q, held);
-    let (body, t) = parse_pipe(r.expect("|"));
+    let (body, t) = parse_pipe(r.expecting("|"));
     return (bound(source, held, alts, body), t);
   }
   return (source, q);
@@ -732,7 +868,7 @@ function parse_pattern(p: P, source: Ast, found: Binding[]): (Binding[], P) {
   if (p.is_punct("{")) {
     return parse_object_pattern(p.advance(), Var(held), all);
   }
-  return (found, p.fail(unexpected(p.peek())));
+  return (found, p.fail(unexpected(p.peek()) + ", expecting BINDING or '[' or '{'"));
 }
 
 function parse_array_pattern(p: P, held: Ast, found: Binding[]): (Binding[], P) {
@@ -745,7 +881,10 @@ function parse_array_pattern(p: P, held: Ast, found: Binding[]): (Binding[], P) 
     if (r.is_punct("]")) {
       return (all, r.advance());
     }
-    q = r.expect(",");
+    if (!r.is_punct(",")) {
+      return (all, r.fail(unexpected(r.peek()) + ", expecting ',' or ']'"));
+    }
+    q = r.advance();
     i += 1;
   }
   return (all, q);
@@ -793,7 +932,7 @@ function parse_pattern_entry(p: P, held: Ast, found: Binding[]): (Binding[], P) 
   if (q.error.len() > 0) {
     return (found, q);
   }
-  return parse_pattern(q.expect(":"), Index(held, key), found);
+  return parse_pattern(q.expecting(":"), Index(held, key), found);
 }
 
 function parse_pattern_key(p: P): (Ast, P) {
@@ -945,7 +1084,7 @@ function parse_postfix(p: P): (Ast, P) {
           t = u;
           q = w;
         } else {
-          return (t, r.fail("syntax error, unexpected " + describe(r.peek())));
+          return (t, r.fail(unexpected(r.peek())));
         }
         after_step = true;
       },
@@ -1025,7 +1164,7 @@ function parse_primary(p: P): (Ast, P) {
       return (Var(v), p.advance());
     },
     TLoc(line) => {
-      return (location(line), p.advance());
+      return (location(p.file, line), p.advance());
     },
     TIdent(x) => {
       return parse_word(x, p);
@@ -1034,7 +1173,7 @@ function parse_primary(p: P): (Ast, P) {
       return parse_group(x, p);
     },
     TEnd => {
-      return (Identity, p.fail("syntax error, unexpected the end of the program"));
+      return (Identity, p.fail(unexpected(TEnd)));
     }
   }
 }
@@ -1056,16 +1195,16 @@ function parse_string(format: string, p: P): (Ast, P) {
     TInterp(texts, sources) => {
       let parts: Ast[] = [];
       for source in sources {
-        let inner = parse_in(source, p.defs);
+        let inner = parse_in(source, p.defs, p.file, false, 0);
         if (inner.error.len() > 0) {
-          return (Identity, p.fail(inner.error));
+          return (Identity, p.fail(inner.error.replace(END_EXPECTED, "")));
         }
         parts = parts.append(inner.ast);
       }
       return (Interp(format, texts, parts), p.advance());
     },
     _ => {
-      return (Identity, p.fail("syntax error, unexpected " + describe(p.peek())));
+      return (Identity, p.fail(unexpected(p.peek())));
     }
   }
 }
@@ -1096,7 +1235,7 @@ function parse_word(x: string, p: P): (Ast, P) {
     return parse_fold(x == "foreach", p.advance());
   }
   if (x == "then" || x == "elif" || x == "else" || x == "end" || x == "as" || x == "and" || x == "or" || x == "catch" || x == "try") {
-    return (Identity, p.fail(keyword_message(x)));
+    return (Identity, p.fail(unexpected(TIdent(x))));
   }
   if (x == "def") {
     return parse_def(p.advance());
@@ -1106,12 +1245,12 @@ function parse_word(x: string, p: P): (Ast, P) {
   }
   if (x == "break") {
     let TVar(name) = p.advance().peek() else {
-      return (Identity, p.advance().fail(unexpected(p.advance().peek())));
+      return (Identity, p.advance().fail(unexpected(p.advance().peek()) + ", expecting BINDING"));
     };
     return (Break(name), p.advance().advance());
   }
-  if (x == "import" || x == "include") {
-    return (Identity, p.fail("'" + x + "' " + NOT_YET));
+  if (x == "import" || x == "include" || x == "module") {
+    return (Identity, p.fail(unexpected(TIdent(x))));
   }
   return parse_call(x, p.advance());
 }
@@ -1173,43 +1312,42 @@ function parse_fold(each: boolean, p: P): (Ast, P) {
   return (Foreach(values, name, init, update, Identity), u.expect(")"));
 }
 
-// Each function that the port has, as "name/arguments".
+// Each function of jq 1.7, as "name/arguments", in the order of `builtins`.
 pub function functions(): string[] {
   return [
-    "add/0", "all/0", "all/1", "all/2", "any/0", "any/1", "any/2", "arrays/0", "ascii_downcase/0",
-    "ascii_upcase/0", "booleans/0", "ceil/0", "contains/1", "del/1", "delpaths/1", "empty/0", "endswith/1",
-    "error/0", "error/1", "exp10/0", "exp2/0", "explode/0", "fabs/0", "first/0", "first/1", "flatten/0",
-    "flatten/1", "floor/0", "from_entries/0", "fromjson/0", "getpath/1", "group_by/1", "has/1", "implode/0",
-    "in/1", "index/1", "indices/1", "infinite/0", "inside/1", "isempty/1", "isinfinite/0", "isnan/0",
-    "isnormal/0", "iterables/0", "join/1", "keys/0", "keys_unsorted/0", "last/0", "last/1", "length/0",
-    "limit/2", "log/0", "log10/0", "log2/0", "ltrimstr/1", "map/1", "map_values/1", "max/0", "max_by/1",
-    "min/0", "min_by/1", "nan/0", "not/0", "nth/1", "nth/2", "nulls/0", "numbers/0", "objects/0", "path/1",
-    "paths/0", "paths/1", "pow/2", "range/1", "range/2", "range/3", "recurse/0", "recurse/1", "recurse/2",
-    "reverse/0", "rindex/1", "round/0", "rtrimstr/1", "scalars/0", "select/1", "setpath/2", "sort/0",
-    "sort_by/1", "split/1", "sqrt/0", "startswith/1", "strings/0", "to_entries/0", "tojson/0", "tonumber/0",
-    "tostring/0", "trunc/0", "type/0", "unique/0", "unique_by/1", "until/2", "utf8bytelength/0", "values/0",
-    "walk/1", "while/2", "with_entries/1", "debug/0", "debug/1", "abs/0", "transpose/0", "pick/1",
-    "bsearch/1", "IN/1", "IN/2", "INDEX/1", "INDEX/2", "JOIN/2", "JOIN/3", "JOIN/4", "sin/0", "cos/0", "tan/0", "asin/0",
-    "acos/0", "atan/0", "atan2/2", "sinh/0", "cosh/0", "tanh/0", "cbrt/0", "log1p/0", "expm1/0", "builtins/0", "now/0",
-    "gmtime/0", "localtime/0", "mktime/0", "strftime/1", "strflocaltime/1", "strptime/1", "todate/0", "fromdate/0",
-    "todateiso8601/0", "fromdateiso8601/0",
+    "input_line_number/0", "input_filename/0", "now/0", "localtime/0", "gmtime/0", "mktime/0", "strflocaltime/1",
+    "strftime/1", "strptime/1", "stderr/0", "debug/0", "input/0", "modulemeta/0", "get_jq_origin/0",
+    "get_prog_origin/0", "get_search_list/0", "halt_error/1", "halt/0", "env/0", "format/1", "error/0", "max/0",
+    "min/0", "sort/0", "nan/0", "infinite/0", "isnormal/0", "isnan/0", "isinfinite/0", "type/0",
+    "utf8bytelength/0", "length/0", "contains/1", "has/1", "delpaths/1", "getpath/1", "setpath/2", "implode/0",
+    "explode/0", "split/1", "rtrimstr/1", "ltrimstr/1", "endswith/1", "startswith/1", "keys_unsorted/0", "keys/0",
+    "tostring/0", "tonumber/0", "fromjson/0", "tojson/0", "lgamma_r/0", "modf/0", "frexp/0", "ldexp/2", "trunc/0",
+    "significand/0", "scalbln/2", "scalb/2", "round/0", "rint/0", "nexttoward/2", "nextafter/2", "nearbyint/0",
+    "logb/0", "log1p/0", "lgamma/0", "gamma/0", "fmod/2", "fmin/2", "fmax/2", "fma/3", "fdim/2", "fabs/0",
+    "expm1/0", "exp10/0", "erfc/0", "erf/0", "drem/2", "copysign/2", "ceil/0", "yn/2", "jn/2", "y1/0", "y0/0",
+    "tgamma/0", "tanh/0", "tan/0", "sqrt/0", "sinh/0", "sin/0", "remainder/2", "pow/2", "log2/0", "log10/0",
+    "log/0", "j1/0", "j0/0", "hypot/2", "floor/0", "exp2/0", "exp/0", "cosh/0", "cos/0", "cbrt/0", "atanh/0",
+    "atan2/2", "atan/0", "asinh/0", "asin/0", "acosh/0", "acos/0", "empty/0", "not/0", "path/1", "range/2",
+    "halt_error/0", "error/1", "map/1", "select/1", "sort_by/1", "group_by/1", "unique/0", "unique_by/1",
+    "max_by/1", "min_by/1", "add/0", "del/1", "abs/0", "map_values/1", "recurse/1", "recurse/2", "recurse/0",
+    "to_entries/0", "from_entries/0", "with_entries/1", "reverse/0", "indices/1", "index/1", "rindex/1", "paths/0",
+    "paths/1", "isfinite/0", "arrays/0", "objects/0", "iterables/0", "booleans/0", "numbers/0", "normals/0",
+    "finites/0", "strings/0", "nulls/0", "values/0", "scalars/0", "join/1", "flatten/1", "flatten/0", "range/1",
+    "fromdateiso8601/0", "todateiso8601/0", "fromdate/0", "todate/0", "match/2", "match/1", "test/2", "test/1",
+    "capture/2", "capture/1", "scan/2", "scan/1", "splits/2", "splits/1", "split/2", "sub/3", "sub/2", "gsub/3",
+    "gsub/2", "while/2", "until/2", "limit/2", "range/3", "first/1", "isempty/1", "all/2", "any/2", "all/1",
+    "any/1", "all/0", "any/0", "last/1", "nth/2", "first/0", "last/0", "nth/1", "combinations/0", "combinations/1",
+    "transpose/0", "in/1", "inside/1", "repeat/1", "inputs/0", "ascii_downcase/0", "ascii_upcase/0",
+    "truncate_stream/1", "fromstream/1", "tostream/0", "bsearch/1", "walk/1", "pick/1", "debug/1", "INDEX/2",
+    "INDEX/1", "JOIN/2", "JOIN/3", "JOIN/4", "IN/1", "IN/2", "pow10/0", "builtins/0",
   ];
-}
-
-function has_name(name: string): boolean {
-  for f in functions() {
-    if (f.starts_with(name + "/")) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // `name(params): body; rest` after a `def`. The body can call the function
 // itself and its parameters, and the rest can call the function.
 function parse_def(p: P): (Ast, P) {
   let TIdent(name) = p.peek() else {
-    return (Identity, p.fail("syntax error, unexpected " + describe(p.peek())));
+    return (Identity, p.fail(unexpected(p.peek())));
   };
   let q = p.advance();
   let params: string[] = [];
@@ -1224,7 +1362,7 @@ function parse_def(p: P): (Ast, P) {
           params = params.append("$" + x);
         },
         _ => {
-          return (Identity, q.fail("syntax error, unexpected " + describe(q.peek())));
+          return (Identity, q.fail(unexpected(q.peek())));
         }
       }
       q = q.advance();
@@ -1248,20 +1386,16 @@ function parse_def(p: P): (Ast, P) {
     return (Identity, t);
   }
   if let TEnd = t.peek() {
+    if (t.library) {
+      return (Def(name, params, body, Identity), P { ...t, defs: outer });
+    }
     return (Identity, t.fail("Top-level program not given (try \".\")"));
+  }
+  if (t.library && !t.is_ident("def")) {
+    return (Identity, t.fail("library should only have function definitions, not a main expression"));
   }
   let (rest, u) = parse_pipe(t);
   return (Def(name, params, body, rest), P { ...u, defs: outer });
-}
-
-// Whether a `def` in scope has this name, with any number of parameters.
-function (p: P) defines(name: string): boolean {
-  for d in p.defs {
-    if (d.starts_with(name + "/")) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // The name of a parameter with no `$`.
@@ -1290,11 +1424,9 @@ function parse_call(name: string, p: P): (Ast, P) {
     }
   }
   let called = name + "/" + args.len().to_string();
-  if (q.error.len() == 0 && !functions().contains(called) && !p.defs.contains(called)) {
-    if (has_name(name) || p.defines(name)) {
-      return (Identity, p.fail(called + " is not defined"));
-    }
-    return (Identity, p.fail("the function " + called + " " + NOT_YET));
+  if (q.error.len() == 0 && p.check && !functions().contains(called) && !p.defs.contains(called) && called != "_match_impl/3") {
+    let at = if (p.at - 1 < p.offs.len()) { p.offs[p.at - 1] } else { 0 };
+    return (Call(name, args), P { ...q, undefined: q.undefined.append(called + " is not defined"), undefined_at: q.undefined_at.append(at) });
   }
   return (Call(name, args), q);
 }
@@ -1348,6 +1480,9 @@ function parse_object(p: P): (Ast, P) {
     if (q.is_punct("}")) {
       return (Object(keys, values), q.advance());
     }
+    if (q.error.len() == 0 && !q.is_punct(",")) {
+      return (Object(keys, values), q.fail(unexpected(q.peek()) + ", expecting '}'"));
+    }
     q = q.expect(",");
   }
   return (Object(keys, values), q);
@@ -1376,7 +1511,7 @@ function parse_object_key(p: P): (Ast, Ast, P) {
       return (Literal(json.JString(v)), Var(v), p.advance());
     },
     TLoc(line) => {
-      return (Literal(json.JString("__loc__")), location(line), p.advance());
+      return (Literal(json.JString("__loc__")), location(p.file, line), p.advance());
     },
     TNumber(n) => {
       return (Identity, Identity, p.fail("Cannot use number (" + n + ") as object key"));
@@ -1406,68 +1541,203 @@ function parse_object_value(p: P): (Ast, P) {
 
 // The first variable of `f` that is not one of `names`, or "".
 pub function undefined_var(f: Ast, names: string[]): string {
+  let all = undefined_vars(f, names);
+  if (all.len() == 0) {
+    return "";
+  }
+  return all[0];
+}
+
+// Each variable of `f` that is not one of `names`, in the order of `f`.
+pub function undefined_vars(f: Ast, names: string[]): string[] {
   return match (f) {
-    Var(v) => if (names.contains(v)) { "" } else { v },
-    Index(a, b) => first_undefined([a, b], names),
-    Slice(a, b, c) => first_undefined([a, b, c], names),
-    Iterate(a) => undefined_var(a, names),
-    Optional(a) => undefined_var(a, names),
-    Try(a) => undefined_var(a, names),
-    Pipe(a, b) => first_undefined([a, b], names),
-    Comma(a, b) => first_undefined([a, b], names),
-    Collect(a) => undefined_var(a, names),
-    Object(keys, values) => first_undefined(keys.concat(values), names),
-    Compare(_, a, b) => first_undefined([a, b], names),
-    Arith(_, a, b) => first_undefined([a, b], names),
-    Alt(a, b) => first_undefined([a, b], names),
-    Call(_, args) => first_undefined(args, names),
-    Catch(a, b) => first_undefined([a, b], names),
-    Interp(_, _, parts) => first_undefined(parts, names),
-    Update(_, a, b) => first_undefined([a, b], names),
+    Var(v) => if (names.contains(v)) { [] } else { [v] },
+    Index(a, b) => all_undefined([a, b], names),
+    Slice(a, b, c) => all_undefined([a, b, c], names),
+    Iterate(a) => undefined_vars(a, names),
+    Optional(a) => undefined_vars(a, names),
+    Try(a) => undefined_vars(a, names),
+    Pipe(a, b) => all_undefined([a, b], names),
+    Comma(a, b) => all_undefined([a, b], names),
+    Collect(a) => undefined_vars(a, names),
+    Object(keys, values) => all_undefined(keys.concat(values), names),
+    Compare(_, a, b) => all_undefined([a, b], names),
+    Arith(_, a, b) => all_undefined([a, b], names),
+    Alt(a, b) => all_undefined([a, b], names),
+    Call(_, args) => all_undefined(args, names),
+    Catch(a, b) => all_undefined([a, b], names),
+    Interp(_, _, parts) => all_undefined(parts, names),
+    Update(_, a, b) => all_undefined([a, b], names),
     Def(_, params, body, rest) => undefined_in_def(params, body, rest, names),
-    If(a, b, c) => first_undefined([a, b, c], names),
-    Bind(source, name, body) => first_scoped([source], [body], name, names),
-    Reduce(source, name, init, update) => first_scoped([source, init], [update], name, names),
-    Foreach(source, name, init, update, extract) => first_scoped([source, init], [update, extract], name, names),
-    And(a, b) => first_undefined([a, b], names),
-    Or(a, b) => first_undefined([a, b], names),
-    Negate(a) => undefined_var(a, names),
-    Label(name, body) => undefined_var(body, names.append(label_var(name))),
-    Break(name) => if (names.contains(label_var(name))) { "" } else { label_var(name) },
-    _ => "",
+    If(a, b, c) => all_undefined([a, b, c], names),
+    Bind(source, name, body) => all_scoped([source], [body], name, names),
+    Reduce(source, name, init, update) => all_scoped([source, init], [update], name, names),
+    Foreach(source, name, init, update, extract) => all_scoped([source, init], [update, extract], name, names),
+    And(a, b) => all_undefined([a, b], names),
+    Or(a, b) => all_undefined([a, b], names),
+    Negate(a) => undefined_vars(a, names),
+    Label(name, body) => undefined_vars(body, names.append(label_var(name))),
+    Break(name) => if (names.contains(label_var(name))) { [] } else { [label_var(name)] },
+    _ => [],
   };
 }
 
-function first_undefined(fs: Ast[], names: string[]): string {
+function all_undefined(fs: Ast[], names: string[]): string[] {
+  let out: string[] = [];
   for f in fs {
-    let v = undefined_var(f, names);
-    if (v.len() > 0) {
-      return v;
-    }
+    out = out.concat(undefined_vars(f, names));
   }
-  return "";
+  return out;
 }
 
 // `outer` sees `names`, and `inner` sees `name` also.
-function first_scoped(outer: Ast[], inner: Ast[], name: string, names: string[]): string {
-  let v = first_undefined(outer, names);
-  if (v.len() > 0) {
-    return v;
-  }
-  return first_undefined(inner, names.append(name));
+function all_scoped(outer: Ast[], inner: Ast[], name: string, names: string[]): string[] {
+  return all_undefined(outer, names).concat(all_undefined(inner, names.append(name)));
 }
 
 // The variables of a `def`: the body sees each `$` parameter also.
-function undefined_in_def(params: string[], body: Ast, rest: Ast, names: string[]): string {
+function undefined_in_def(params: string[], body: Ast, rest: Ast, names: string[]): string[] {
   let inner = names;
   for x in params {
     if (x.starts_with("$")) {
       inner = inner.append(param_name(x));
     }
   }
-  let v = undefined_var(body, inner);
-  if (v.len() > 0) {
-    return v;
+  return undefined_vars(body, inner).concat(undefined_vars(rest, names));
+}
+
+// ---- Modules ----
+
+// A directive at the start of a program or a module: `import PATH as NAME`,
+// `import PATH as $NAME` for data, or `include PATH`, with optional
+// metadata.
+pub struct Directive { include: boolean, path: string, alias: string, is_data: boolean, meta: json.JsonValue }
+
+// The metadata of `module`, the directives, and the token after them.
+pub struct Directives { meta: json.JsonValue, deps: Directive[], next: i32, error: string, at: i32 }
+
+pub function directives(program: string): Directives {
+  let lx = lex(program);
+  if (lx.error.len() > 0) {
+    return Directives { meta: json.JNull, deps: [], next: 0, error: lx.error, at: 0 };
   }
-  return undefined_var(rest, names);
+  let p = P { toks: lx.toks, offs: lx.offs, at: 0, error: "", err_at: 0, defs: [], library: false, file: "", check: true, undefined: [], undefined_at: [] };
+  let meta: json.JsonValue = json.JNull;
+  if (p.is_ident("module")) {
+    let (m, q) = parse_metadata(p.advance());
+    meta = m;
+    p = q.expect(";");
+  }
+  let deps: Directive[] = [];
+  while (p.error.len() == 0 && (p.is_ident("import") || p.is_ident("include"))) {
+    let (d, q) = parse_directive(p);
+    deps = deps.append(d);
+    p = q;
+  }
+  return Directives { meta: meta, deps: deps, next: p.at, error: p.error, at: p.err_at };
+}
+
+// `PATH as NAME [META];` after `import`, or `PATH [META];` after `include`.
+function parse_directive(p: P): (Directive, P) {
+  let include = p.is_ident("include");
+  let d = Directive { include: include, path: "", alias: "", is_data: false, meta: json.JNull };
+  let q = p.advance();
+  match (q.peek()) {
+    TString(s) => {
+      d = Directive { ...d, path: s };
+      q = q.advance();
+    },
+    TInterp(_, _) => {
+      return (d, q.fail("Import path must be constant"));
+    },
+    _ => {
+      return (d, q.fail(unexpected(q.peek())));
+    }
+  }
+  if (!include) {
+    q = q.expect_word("as");
+    match (q.peek()) {
+      TIdent(name) => {
+        d = Directive { ...d, alias: name };
+      },
+      TVar(name) => {
+        d = Directive { ...d, alias: name, is_data: true };
+      },
+      _ => {
+        return (d, q.fail(unexpected(q.peek())));
+      }
+    }
+    q = q.advance();
+  }
+  if (q.error.len() == 0 && !q.is_punct(";")) {
+    let (m, r) = parse_metadata(q);
+    d = Directive { ...d, meta: m };
+    q = r;
+  }
+  return (d, q.expect(";"));
+}
+
+// A metadata expression, which must be a constant object.
+function parse_metadata(p: P): (json.JsonValue, P) {
+  let (e, q) = parse_pipe(p);
+  if (q.error.len() > 0) {
+    return (json.JNull, q);
+  }
+  let (v, constant) = const_of(e);
+  if (!constant) {
+    return (json.JNull, P { ...q, at: p.at }.fail("Module metadata must be constant"));
+  }
+  let json.JObject(_) = v else {
+    return (json.JNull, P { ...q, at: p.at }.fail("Module metadata must be an object"));
+  };
+  return (v, q);
+}
+
+// The value of a constant filter, and whether it is constant.
+function const_of(e: Ast): (json.JsonValue, boolean) {
+  match (e) {
+    Literal(v) => {
+      return (v, true);
+    },
+    EmptyArray => {
+      return (json.JArray([]), true);
+    },
+    Collect(inner) => {
+      let items: json.JsonValue[] = [];
+      for part in commas(inner) {
+        let (v, constant) = const_of(part);
+        if (!constant) {
+          return (json.JNull, false);
+        }
+        items = items.append(v);
+      }
+      return (json.JArray(items), true);
+    },
+    Object(keys, values) => {
+      let o = json.object();
+      for i in 0..keys.len() {
+        let (k, kc) = const_of(keys[i]);
+        let (v, vc) = const_of(values[i]);
+        let json.JString(name) = k else {
+          return (json.JNull, false);
+        };
+        if (!kc || !vc) {
+          return (json.JNull, false);
+        }
+        o = o.insert(name, v);
+      }
+      return (json.JObject(o), true);
+    },
+    _ => {
+      return (json.JNull, false);
+    }
+  }
+}
+
+// The parts of `a, b, c`.
+function commas(e: Ast): Ast[] {
+  if let Comma(a, b) = e {
+    return commas(a).concat(commas(b));
+  }
+  return [e];
 }

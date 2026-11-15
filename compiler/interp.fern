@@ -2189,6 +2189,18 @@ function string_result_value(r: Result[string, IoError]): Value {
   }
 }
 
+// The bytes as a string with no UTF-8 check, as map_file_unchecked gives them.
+function unchecked_result_value(r: Result[u8[], IoError]): Value {
+  match (r) {
+    Ok(b) => {
+      return ok_value(v_string(unsafe { string_from_bytes_unchecked(b) }));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
 function bytes_result_value(heap: interpheap.Heap, r: Result[u8[], IoError]): Value {
   match (r) {
     Ok(b) => {
@@ -2466,7 +2478,7 @@ function is_raw_floor(name: string): boolean {
     || util.has_str(["__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32", "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64"], name)
     || util.has_str(["__c_call3", "__c_call3_f32", "__c_call3_f64", "__c_call4", "__c_call4_f32", "__c_call4_f64"], name)
     || util.has_str(["__c_call5", "__c_call5_f32", "__c_call5_f64", "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv"], name)
-    || util.has_str(["__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
+    || util.has_str(["__raw_alloc", "__raw_string", "__raw_mapped_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
 }
 
 function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value[]): Value {
@@ -3387,6 +3399,7 @@ function call_host_fs_read(heap: interpheap.Heap, name: string, path: string): V
     "read_file" => string_result_value(read_file(path)),
     "read_file_bytes" => bytes_result_value(heap, read_file_bytes(path)),
     "read_link" => string_result_value(read_link(path)),
+    "map_file_unchecked" => unchecked_result_value(read_file_bytes(path)),
     "read_link_bytes" => bytes_result_value(heap, read_link_bytes(path)),
     "temp_dir" => string_result_value(temp_dir(path)),
     "stat" => stat_result_value(stat(path)),
@@ -7623,6 +7636,45 @@ function call_crc32_array(name: string, args: Value[]): Value {
   return v_err(name + ": second arg must be an array");
 }
 
+// __scan_masks: the first offset at or after `from` where each probe of the
+// masks accepts its byte, or -1. Masks that are too short find nothing.
+// The checks of the arguments, and the loop of the kernel.
+// fern-lint: allow cyclomatic-complexity
+function call_scan_masks(args: Value[]): Value {
+  if (args.len() != 3 || !is_string_arg(args[0]) || !is_i32_arg(args[1])) {
+    return v_err("__scan_masks: expected 3 args (s, from, masks)");
+  }
+  let VArr(arr) = args[2] else {
+    return v_err("__scan_masks: masks must be a u8[]");
+  };
+  let m: i32[] = [];
+  for k in 0..arr_len(arr) {
+    m = m.append(vint_bits(arr_at(arr, k)) & 255);
+  }
+  let text = vstr_of(args[0]);
+  let probes = if (m.len() < 4) { 0 } else { m[0] };
+  if (probes < 1 || probes > 3 || m.len() < 4 + 32 * probes) {
+    return v_int(-1);
+  }
+  let reach = 0;
+  for j in 0..probes {
+    reach = if (m[1 + j] > reach) { m[1 + j] } else { reach };
+  }
+  let from = vint_bits(args[1]);
+  let start = if (from < 0) { 0 } else { from };
+  for at in start..text.len() - reach {
+    let acc = 255;
+    for j in 0..probes {
+      let c = text[at + m[1 + j]] as i32;
+      acc = acc & m[4 + 32 * j + (c & 15)] & m[4 + 32 * j + 16 + (c >> 4)];
+    }
+    if (acc != 0) {
+      return v_int(at);
+    }
+  }
+  return v_int(-1);
+}
+
 function call_scale_f64(heap: interpheap.Heap, args: Value[]): Value {
   if (args.len() != 2) {
     return v_err("__scale_f64: expected 2 args (xs, k)");
@@ -8799,6 +8851,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
         return v_err("__scan_set: set must be a u8[]");
       }
     }
+  }
+  if (name == "__scan_masks") {
+    return call_scan_masks(args);
   }
   if (name == "__bsd_sum") {
     if (args.len() != 2) {
