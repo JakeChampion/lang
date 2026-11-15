@@ -202,3 +202,7 @@ x86_64/utf8_ingest_validated.text	9101
 x86_64/utf8_ingest_validated.ir	5108478
 x86_64/video_qtrle.text	5706
 x86_64/video_qtrle.ir	1544512934
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	41686952
+x86_64/checker.cliff_count	521200
