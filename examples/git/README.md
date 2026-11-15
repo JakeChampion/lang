@@ -203,12 +203,14 @@ worktree gives the git directory.
 
 The standard output, the messages and the exit status are those of git
 2.56.1. That is the git of the CI runners. The tests compare the port with
-the git of the machine. With git 2.43, four things are different:
+the git of the machine. With git 2.43, five things are different:
 
 - the indent of the roots in `--graph`
 - the order of the options in the message for `--graph` with `--reverse`
 - the check of the kind in `hash-object --literally`
-- the usage of `index-pack`.
+- the usage of `index-pack`
+- `rev-parse --short=N` with N above 40 in a repository with SHA-256
+  names. git 2.56.1 gives N digits, and git 2.43 stops at 40.
 
 ## Files
 
@@ -256,8 +258,6 @@ the git of the machine. With git 2.43, four things are different:
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.
 
-- `rev-parse --short=N` with N above 40 in a repository with SHA-256
-  names. The port gives the full name, and git 2.43 stops at 40 digits.
 
 
 
