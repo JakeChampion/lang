@@ -213,6 +213,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     set_field: (q: string): void => note(log.calls, "field set [" + q + "]"),
     hide_field: (): void => note(log.calls, "field hide"),
     fetch: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch(log, rs),
+    fetch_images: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch(log, rs),
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => fake_image(w, h),
     play: (uri: string): boolean => {
       note(log.calls, "play " + uri);
@@ -589,6 +590,14 @@ function count_plays(log: Log): i32 {
   return log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len();
 }
 
+// The first connection that answered wins, unless a better one still
+// waits and the wait is not over. A failed connection does not hold up a
+// worse one that answered.
+function test_connection_race(): test.TestOutcome {
+  let got = [control.winner([0, 1], false), control.winner([0, 1], true), control.winner([2, 1], false), control.winner([1, 0], false), control.winner([2, 2], false), control.winner([0, 0], true)];
+  return test.assert_eq(got.map((k: i32): string => k.to_string()).join(" "), "-1 1 1 0 -1 -1");
+}
+
 function test_library_pages(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -826,6 +835,7 @@ function main(): i32 {
   r = r.it("a file with no sound plays again as a transcode", test_lost_sound_transcodes);
   r = r.it("a drag on the seek bar scrubs with thumbnails", test_drag_scrubs_with_thumbnails);
   r = r.it("the sheet of tracks changes the sound and burns subtitles", test_tracks_sheet);
+  r = r.it("the connections of a server race", test_connection_race);
   r = r.it("a library loads its next page at its end", test_library_pages);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);

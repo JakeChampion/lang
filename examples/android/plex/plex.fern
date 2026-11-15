@@ -960,6 +960,28 @@ function audio_codec(it: Item, choice: Choice): string {
   return it.media[0].audio;
 }
 
+// The address `u` with no X-Plex-Token in its query.
+function without_token(u: string): string {
+  let parts = u.split("?");
+  if (parts.len() < 2) {
+    return u;
+  }
+  let kept: string[] = [];
+  for pair in parts[1].split("&") {
+    if (!pair.starts_with("X-Plex-Token=")) {
+      kept = kept.append(pair);
+    }
+  }
+  return parts[0] + "?" + kept.join("&");
+}
+
+// The name of the file that keeps the image at `u` on the phone. It comes
+// from the address with no token, so a new token keeps the files.
+pub function cache_name(u: string): string {
+  let plain = without_token(u);
+  return (plain.hash_fnv32() as i64).to_string() + "-" + plain.len().to_string() + ".img";
+}
+
 // The preview thumbnails of the part `id`, a BIF file.
 pub function bif_request(c: Client, b: Base, id: string): Request {
   return get(c.with_token(b.token), b.uri + "/library/parts/" + id + "/indexes/sd");
