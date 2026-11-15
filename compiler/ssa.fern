@@ -1687,7 +1687,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let hard = hard_spans(f, cum, cold, lo, hi, weight, crossing);
   let sole = sole_readers(f);
 
-  let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [] };
+  let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [], nparams: f.nparams };
   let phi_side: boolean[] = [];
   let reg_of = __alloc_i32(f.nvals);
   let shared_with = __alloc_i32(f.nvals);
@@ -2565,7 +2565,7 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
   return out;
 }
 
-struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ_a: i32[], succ_b: i32[], phi_end: i32[] }
+struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ_a: i32[], succ_b: i32[], phi_end: i32[], nparams: i32 }
 
 function cached_read_sites(f: SFunc, own sites: ReadSites, at: i32[], blk_start: i32[]): ReadSites {
   if (sites.start.len() == 0) {
@@ -2665,7 +2665,7 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
     }
     pass += 1;
   }
-  return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end };
+  return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end, nparams: f.nparams };
 }
 
 // reads are the operands of v's definition: the emitter can write v before it
@@ -2772,7 +2772,12 @@ function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i3
   return 2;
 }
 
+// The entry of a function writes each parameter at one time, so two
+// parameters are live at the definition of each other.
 function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
+  if (r < sites.nparams && a < sites.nparams) {
+    return true;
+  }
   let near = live_near(sites, r, a, def_blk, def_pos);
   if (near != 2) {
     return near == 1;
