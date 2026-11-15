@@ -2976,16 +2976,44 @@ function sizes_of(funcs: ssasem.Func[]): i32[] {
   return out;
 }
 
+// The steps of a field of a shared word, and a constant that only such a
+// step reads, do not count: the read of the field counts once.
 function count_insts(g: ssa.SFunc): i32 {
+  let read = read_outside_steps(g);
   let n = 0;
   for b in g.blocks {
     for ins in b.insts {
-      if (!line_mark(ins.kind_tag)) {
+      let step_constant = ins.kind_tag == ssa.CONST_INT && ins.result >= 0 && ins.result < read.len() && !read[ins.result];
+      if (!line_mark(ins.kind_tag) && !ssasem.is_field_step(ins) && !step_constant) {
         n += 1;
       }
     }
   }
   return n;
+}
+
+// The values that an instruction other than a field step reads, or a
+// terminator.
+function read_outside_steps(g: ssa.SFunc): boolean[] {
+  let read = __alloc_bool(g.nvals);
+  for b in g.blocks {
+    for ins in b.insts {
+      if (!ssasem.is_field_step(ins)) {
+        read = marked_all(read, ins.args);
+      }
+    }
+    read = marked_all(read, [b.term.cond, b.term.value]);
+  }
+  return read;
+}
+
+function marked_all(own read: boolean[], values: i32[]): boolean[] {
+  for v in values {
+    if (v >= 0 && v < read.len()) {
+      read = read.with(v, true);
+    }
+  }
+  return read;
 }
 
 function drop_unread(f: ssasem.Func): Rewrite {

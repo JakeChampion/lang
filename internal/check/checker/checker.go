@@ -778,6 +778,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	prog.Unions = nil
 
+	c.reportExpandingTypes(prog)
+
 	for _, ed := range prog.Enums {
 		if _, dup := c.info.Enums[ed.Name]; dup {
 			c.report(ed.SourceModule, ed.P, "E006", fmt.Sprintf("enum %q redeclared", ed.Name))
@@ -1271,6 +1273,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
 		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
 		"__task_fd_gen":        {Params: []ast.Type{i32T}, Result: i32T},
+		"__task_gen":           {Params: []ast.Type{i32T}, Result: i32T},
 		"__task_inline":        {Params: []ast.Type{i32T}, Result: i32T},
 		"__task_cancelled":     {Params: []ast.Type{}, Result: i32T},
 	} {
@@ -9597,6 +9600,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
 	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
 	"__task_fd_gen":    true,
+	"__task_gen":       true,
 	"__task_inline":    true,
 	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,
 	"__task_park_until": true, "__task_until": true,
@@ -17756,17 +17760,9 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				ml.ValueType = hn.Args[1]
 			}
 		} else if sl, ok := e.(*ast.StructLit); ok && len(hn.Args) > 0 && !sl.TypeArgsWritten {
-			if sd, ok := c.info.Structs[sl.TypeName]; ok && len(sd.TypeParams) == len(hn.Args) {
-				sub := map[string]ast.Type{}
-				for i, tp := range sd.TypeParams {
-					sub[tp] = hn.Args[i]
-				}
-				fieldT := map[string]ast.Type{}
-				for _, f := range sd.Fields {
-					fieldT[f.Name] = substituteType(f.Type, sub)
-				}
+			if fieldT := c.instanceFieldTypes(sl, hn); fieldT != nil {
 				for _, f := range sl.Fields {
-					if expected, present := fieldT[f.Name]; present && expected != nil {
+					if expected := fieldT[f.Name]; expected != nil {
 						c.settleNumeric(f.Value, expected)
 					}
 				}
@@ -18109,6 +18105,24 @@ func f64Floats(t ast.Type) ast.Type {
 	return t
 }
 
+// instanceFieldTypes is the type of each field of the struct literal sl in
+// the instance st of its generic struct. It is nil when st is not one.
+func (c *checker) instanceFieldTypes(sl *ast.StructLit, st ast.StructType) map[string]ast.Type {
+	sd, ok := c.info.Structs[sl.TypeName]
+	if !ok || len(st.Args) == 0 || len(sd.TypeParams) != len(st.Args) {
+		return nil
+	}
+	sub := map[string]ast.Type{}
+	for i, tp := range sd.TypeParams {
+		sub[tp] = st.Args[i]
+	}
+	fieldT := map[string]ast.Type{}
+	for _, f := range sd.Fields {
+		fieldT[f.Name] = substituteType(f.Type, sub)
+	}
+	return fieldT
+}
+
 func (c *checker) promoteIntLiterals(e ast.Expr, t ast.Type) {
 	if !holdsUntypedFloat(t) {
 		return
@@ -18141,6 +18155,15 @@ func (c *checker) promoteIntLiterals(e ast.Expr, t ast.Type) {
 		if tt, ok := t.(ast.TupleType); ok && len(tt.Elems) == len(x.Elems) {
 			for i, el := range x.Elems {
 				c.promoteIntLiterals(el, tt.Elems[i])
+			}
+		}
+	case *ast.StructLit:
+		if st, ok := t.(ast.StructType); ok && !x.TypeArgsWritten {
+			fieldT := c.instanceFieldTypes(x, st)
+			for _, f := range x.Fields {
+				if expected := fieldT[f.Name]; expected != nil {
+					c.promoteIntLiterals(f.Value, expected)
+				}
 			}
 		}
 	case *ast.IfExpr:

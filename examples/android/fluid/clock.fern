@@ -1,0 +1,55 @@
+// The time of the simulation. The simulation takes steps of one fixed size,
+// so it goes at the same rate on each display. It makes no Android call, so
+// the host tests it.
+import "std/f64";
+
+// The size of a step in seconds: one step for each frame at 60 Hz.
+pub const FIXED_TIMESTEP: f64 = 0.016666666666666666;
+
+// The most steps of one frame. After a stall, the clock drops the time that
+// these steps do not use.
+pub const MAX_SUBSTEPS: i32 = 4;
+
+// The longest frame in seconds. A longer time means that the app did not
+// draw, and the fluid must not jump.
+pub const MAX_FRAME_TIME: f64 = 0.1;
+
+// `last_ns` is the time of the last frame, and `backlog` is the seconds that
+// no step used yet.
+pub struct Clock { last_ns: i64, backlog: f64 }
+
+pub function new(now_ns: i64): Clock {
+  return Clock { last_ns: now_ns, backlog: 0.0 };
+}
+
+// The clock at the frame of `now_ns`, and the seconds since the frame
+// before it, from 0 to MAX_FRAME_TIME.
+pub function (c: Clock) frame(now_ns: i64): (Clock, f64) {
+  let dt = ((now_ns - c.last_ns) as f64 / 1.0e9).clamp(0.0, MAX_FRAME_TIME);
+  return (Clock { ...c, last_ns: now_ns }, dt);
+}
+
+// The clock with no backlog, from `now_ns`.
+pub function (c: Clock) reset(now_ns: i64): Clock {
+  return Clock { last_ns: now_ns, backlog: 0.0 };
+}
+
+// The clock with no backlog, for a paused simulation.
+pub function (c: Clock) clear(): Clock {
+  return Clock { ...c, backlog: 0.0 };
+}
+
+// The clock after `frame_time` more seconds, and the number of steps to
+// take for them.
+pub function (c: Clock) advance(frame_time: f64): (Clock, i32) {
+  let backlog = c.backlog + frame_time;
+  let steps = 0;
+  while (backlog >= FIXED_TIMESTEP && steps < MAX_SUBSTEPS) {
+    backlog -= FIXED_TIMESTEP;
+    steps += 1;
+  }
+  if (steps == MAX_SUBSTEPS) {
+    backlog = 0.0;
+  }
+  return (Clock { ...c, backlog: backlog }, steps);
+}

@@ -9414,14 +9414,24 @@ function ssa_release_entry(entry: ssaprepare.ReleaseEntry, lp: string, s: asmcor
   return s.lab_def(bn.lab);
 }
 
+// A load of a word, of a tag, of a byte, or of 32 bits with the sign.
+function ssa_load_at(ins: ssa.SInst, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str == "u8") {
+    return s.write("    movzbl " + ssa_mem(a, ins.imm, false) + ", " + ssa_r32(d) + "\n");
+  }
+  if (ins.str == "i32") {
+    return s.write("    movslq " + ssa_mem(a, ins.imm, false) + ", " + d + "\n");
+  }
+  return ssa_mov_rm(s, if (ins.str == "u32") { 32 } else { 64 }, true, d, a, ins.imm);
+}
+
 function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let k = ins.kind_tag;
   let a = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_load(reg_of, ins.args[0], a, s);
   let d = ssa_dst(reg_of, ins.result);
   if (k == ssa.LD_AT) {
-    s = ssa_mov_rm(s, if (ins.str == "u32") { 32 } else { 64 }, true, d, a, ins.imm);
-    return ssa_store(reg_of, ins.result, d, s);
+    return ssa_store(reg_of, ins.result, d, ssa_load_at(ins, a, d, s));
   }
   if (k >= ssa.ARR_AT && imm.is_imm[ins.args[1]]) {
     return ssa_mem_at(ins, reg_of, imm.value[ins.args[1]] as i32, a, d, s);
@@ -10449,6 +10459,9 @@ function ssa_load_fuse(fv: FuseView, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
 // The operand size of the compare that reads `ld` from memory, or 0 when one
 // instruction cannot give the flags of the compare of 64 bits.
 function ssa_load_compare_bits(fv: FuseView, ld: ssa.SInst, fu: SsaFuse): i32 {
+  if (ld.str == "u8" || ld.str == "i32") {
+    return ssa_narrow_compare_bits(fv, ld, fu);
+  }
   let wide = ld.str != "u32";
   if (ld.result == fu.b) {
     return ssa_bits_if(wide && !fv.imm.is_imm[fu.a], 64);
@@ -10467,6 +10480,20 @@ function ssa_load_compare_bits(fv: FuseView, ld: ssa.SInst, fu: SsaFuse): i32 {
     return ssa_bits_if(v >= -2147483648i64, 64);
   }
   return ssa_bits_if((fu.tag == ir.K_EQ || fu.tag == ir.K_NE) && v >= 0i64, 32);
+}
+
+// A byte or a signed half that the left operand loads, against an immediate
+// that the narrow compare gives the same answer for.
+function ssa_narrow_compare_bits(fv: FuseView, ld: ssa.SInst, fu: SsaFuse): i32 {
+  let equality = fu.tag == ir.K_EQ || fu.tag == ir.K_NE;
+  if (ld.result != fu.a || !equality || !fv.imm.is_imm[fu.b] || ssa.imm_sym(fv.imm, fu.b) != "") {
+    return 0;
+  }
+  let v = fv.imm.value[fu.b];
+  if (ld.str == "u8") {
+    return ssa_bits_if(v >= 0i64 && v <= 127i64, 8);
+  }
+  return ssa_bits_if(v >= -2147483648i64 && v <= 2147483647i64, 32);
 }
 
 function ssa_bits_if(ok: boolean, bits: i32): i32 {
@@ -11272,6 +11299,9 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
 function ssa_load_compare(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_read(reg_of, fu.a, "%r11", s);
   let a = ssa_src(reg_of, fu.a, "%r11");
+  if (!fu.load_right && fr.imm.is_imm[fu.b] && fu.load_bits == 8) {
+    return s.write("    cmpb $" + util.i64_to_string(fr.imm.value[fu.b]) + ", " + ssa_mem(a, fu.load_at, false) + "\n");
+  }
   if (!fu.load_right && fr.imm.is_imm[fu.b]) {
     return ssa_alu_im(s, 7, fu.load_bits, fr.imm.value[fu.b] as i32, a, fu.load_at);
   }

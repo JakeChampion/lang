@@ -689,7 +689,7 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_set_cancelled") {
     return typeinfo.t_void();
   }
-  if (argc == 1 && (name == "__task_fd_gen" || name == "__task_inline")) {
+  if (argc == 1 && util.has_str(["__task_fd_gen", "__task_gen", "__task_inline"], name)) {
     return typeinfo.t_i32();
   }
   if (argc == 0 && name == "__task_cancelled") {
@@ -907,7 +907,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__task_set_ready") {
     return ([typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
-  if (util.has_str(["__task_set_cancelled", "__task_fd_gen", "__task_inline"], name)) {
+  if (util.has_str(["__task_set_cancelled", "__task_fd_gen", "__task_gen", "__task_inline"], name)) {
     return ([typeinfo.t_i32()], true);
   }
   if (name == "__task_cancelled") {
@@ -6114,11 +6114,16 @@ function widened_field_type(sig: StructSig, j: i32, largs: typeinfo.Type[], s: S
 }
 
 function reads_i64(t: typeinfo.Type): boolean {
-  if (type_to_irtag(t) == "i64") {
+  return reads_scalar(t, false);
+}
+
+// reads_scalar is true when t holds an i64, or a float when float is set.
+function reads_scalar(t: typeinfo.Type, float: boolean): boolean {
+  if (float && is_float(t) || !float && type_to_irtag(t) == "i64") {
     return true;
   }
   if let typeinfo.TypeArray(at) = t {
-    return reads_i64(at.elem);
+    return reads_scalar(at.elem, float);
   }
   let parts: typeinfo.Type[] = [];
   if let typeinfo.TypeStruct(st) = t {
@@ -6128,7 +6133,7 @@ function reads_i64(t: typeinfo.Type): boolean {
     parts = tt.elements;
   }
   for p in parts {
-    if (reads_i64(p)) {
+    if (reads_scalar(p, float)) {
       return true;
     }
   }
@@ -10366,7 +10371,7 @@ pub function unsafe_intrinsics(): string[] {
     "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv",
     "__task_new", "__task_free", "__task_enter", "__task_leave",
     "__task_park", "__task_park_until", "__task_wait", "__task_set_ready", "__task_set_cancelled",
-    "__task_fd_gen", "__task_inline",
+    "__task_fd_gen", "__task_gen", "__task_inline",
     "__task_cancelled", "__task_timeout", "__task_until", "__task_cur",
     "__syscall3", "__syscall4", "__syscall5", "__syscall6",
     "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
@@ -11218,7 +11223,7 @@ function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], u
 }
 
 function mx_branch_yields(body: ast.Stmt[]): boolean {
-  if (body.len() == 0) {
+  if (body.len() == 0 || parser.is_missing_tail(body[body.len() - 1])) {
     return false;
   }
   let leading: ast.Stmt[] = [];
@@ -11595,7 +11600,7 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
         out = util.append_diags(out, mx_stmts(one, cur, unions, enums));
       },
       ast.StmtUnknown(u) => {
-        if (u.kind == "value branch has no trailing expression") {
+        if (parser.is_missing_tail(st) && !block_diverges(stmts, s)) {
           out = out.append(dg_at("E061", parser.BLOCK_VALUE_REQUIRED_MESSAGE, u.line, u.col));
         }
       },
@@ -11861,6 +11866,9 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean, no
     },
     ast.StmtMatch(m) => {
       return match_leaves(m, jumps, bound, noret);
+    },
+    ast.StmtUnknown(_) => {
+      return parser.is_missing_tail(last) && block_leaves(parser.without_last(stmts), jumps, exit_bound, noret);
     },
     _ => {
       return false;
@@ -18823,7 +18831,7 @@ function is_registered_intrinsic(name: string): boolean {
 
 const REGISTERED_INTRINSICS: string[] = [
   "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-  "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_inline", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
+  "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_gen", "__task_inline", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
   "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
   "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
   "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
@@ -21717,12 +21725,12 @@ function lu_arm_yields_fresh(fx: LuFn, arm: ast.MatchArm): boolean {
   if (n == 0) {
     return false;
   }
+  if (n > 1 && ow_block_diverges([arm.body[n - 2]], fx.noret)) {
+    return true;
+  }
   let ast.StmtReturn(r) = arm.body[n - 1] else {
     return false;
   };
-  if (n > 1 && parser.branch_stmts_diverge([arm.body[n - 2]])) {
-    return true;
-  }
   if let ast.ExprIdent(id) = r.value {
     if (util.has_str(astwalk.pattern_binders(arm.pattern, []), id.name) || lu_stmts_declare(arm.body, id.name)) {
       return lu_arm_payload_fresh(fx, arm.body, id.name);
@@ -23585,6 +23593,51 @@ function builtin_no_return(exit_declared: boolean): string[] {
   return names;
 }
 
+function declares_exit(mod: parser.Module): boolean {
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() == 0 && fn.name == "exit") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The calls of a function that reach the builtin exit, by their position.
+pub struct ExitCalls { keys: util.NameIndex }
+
+function call_key(c: ast.ExprCall): string {
+  return util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col);
+}
+
+// mod holds fd. The resolved body of fd tells which calls name a local.
+pub function builtin_exit_calls(mod: parser.Module, fd: parser.FuncDecl): ExitCalls {
+  let noret = util.name_index(builtin_no_return(declares_exit(mod)));
+  function exit_call(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprCall(c) = e {
+      if (lu_call_never_returns(e, noret, false)) {
+        return acc.append(call_key(c));
+      }
+    }
+    return acc;
+  }
+  let keys: string[] = [];
+  for st in lexical.resolve_func(fd).func.body {
+    keys = astwalk.fold_stmt(st, keys, exit_call);
+  }
+  return ExitCalls { keys: util.name_index(keys) };
+}
+
+// A call of fd that reaches the builtin exit. A desugar's call names the
+// builtin and has no position of its own.
+pub function (x: ExitCalls) has(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(id) = c.callee {
+      return id.name == "exit" && (id.builtin || x.keys.has(call_key(c)));
+    }
+  }
+  return false;
+}
+
 function (s: Scope) no_return_builtins(): util.NameIndex {
   let i = s.sig_at("exit");
   return util.name_index(builtin_no_return(i >= 0 && s.sigs.sigs[i].receiver.len() == 0));
@@ -23594,11 +23647,7 @@ function (s: Scope) no_return_builtins(): util.NameIndex {
 // function whose body never returns. Such a body ends on every path in a call
 // to one of these names, or in a loop that never breaks.
 function lu_no_return_funcs(mod: parser.Module): util.NameIndex {
-  let declared = false;
-  for fn in mod.funcs {
-    declared = declared || fn.receiver_name.len() == 0 && fn.name == "exit";
-  }
-  let out = builtin_no_return(declared);
+  let out = builtin_no_return(declares_exit(mod));
   let changed = true;
   while (changed) {
     changed = false;
@@ -31025,10 +31074,6 @@ function thin_map_import_diags(ds: util.Diag[]): util.Diag[] {
 
 struct Inst { name: string, cts: string[], depth: i32 }
 
-function max_inst_depth(): i32 {
-  return 64;
-}
-
 function spellable(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeUnknown(_) => {
@@ -31262,8 +31307,133 @@ function inst_stmt(st: ast.Stmt, cur: Scope, gens: parser.FuncDecl[], depth: i32
   return out;
 }
 
-function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDecl[] {
+// One edge of the graph of type parameters. A member of the generic type
+// `owner` names a generic type, and the argument that it gives to the
+// parameter `to` holds the parameter `from`. The edge grows when the
+// argument is larger than the parameter alone.
+struct ParamEdge { from: string, to: string, grows: boolean, owner: string, member: string, param: string }
+
+function param_node(decl: string, index: i32): string {
+  return decl + "#" + util.i32_to_string(index);
+}
+
+function member_edges(edges: ParamEdge[], owner: string, oparams: string[], member: string, ty: string, gnames: string[], gparams: string[][]): ParamEdge[] {
+  let out = edges;
+  let start = -1;
+  for i in 0..ty.len() {
+    if (parser.ident_byte(ty[i] as i32)) {
+      if (start < 0) {
+        start = i;
+      }
+      continue;
+    }
+    let from = start;
+    start = -1;
+    if (ty[i] != b'[' || from < 0) {
+      continue;
+    }
+    let gi = util.index_of_str(gnames, slice_unchecked(ty, from, i).to_owned());
+    let close = parser.matching_bracket(ty, i);
+    if (gi < 0 || close <= i + 1) {
+      continue;
+    }
+    let args = parser.split_top_commas(slice_unchecked(ty, i + 1, close).to_owned());
+    for j in 0..args.len().min(gparams[gi].len()) {
+      for pi in 0..oparams.len() {
+        if (parser.type_mentions_var(args[j], oparams[pi])) {
+          out = out.append(ParamEdge { from: param_node(owner, pi), to: param_node(gnames[gi], j), grows: args[j] != oparams[pi], owner: owner, member: member, param: oparams[pi] });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function param_reaches(edges: ParamEdge[], from: string, to: string): boolean {
+  let seen: string[] = [from];
+  for round in 0..edges.len() {
+    let before = seen.len();
+    for e in edges {
+      if (util.has_str(seen, e.from) && !util.has_str(seen, e.to)) {
+        seen = seen.append(e.to);
+      }
+    }
+    if (seen.len() == before) {
+      break;
+    }
+  }
+  return util.has_str(seen, to);
+}
+
+// An E107 for each generic struct or enum that has no last instance: a
+// member gives one of its type parameters a larger type, and that type comes
+// back to the same parameter.
+function expanding_type_diags(mod: parser.Module): util.Diag[] {
+  let gnames: string[] = [];
+  let gparams: string[][] = [];
+  for sd in mod.structs {
+    if (sd.type_params.len() > 0) {
+      gnames = gnames.append(sd.name);
+      gparams = gparams.append(sd.type_params);
+    }
+  }
+  for ed in mod.enums {
+    if (ed.type_params.len() > 0) {
+      gnames = gnames.append(ed.name);
+      gparams = gparams.append(ed.type_params);
+    }
+  }
+  let edges: ParamEdge[] = [];
+  for sd in mod.structs {
+    let owner = sd.name;
+    if (sd.enum_owner.len() > 0) {
+      owner = sd.enum_owner;
+    }
+    let gi = util.index_of_str(gnames, owner);
+    if (gi >= 0) {
+      for field in sd.fields {
+        let member = field.name;
+        if (sd.enum_owner.len() > 0) {
+          member = sd.name;
+        }
+        edges = member_edges(edges, owner, gparams[gi], member, field.type_name + " " + field.fn_ret + " " + field.fn_param_types, gnames, gparams);
+      }
+    }
+  }
+  let out: util.Diag[] = [];
+  let reported: string[] = [];
+  for e in edges {
+    if (e.grows && !util.has_str(reported, e.owner) && param_reaches(edges, e.to, e.from)) {
+      reported = reported.append(e.owner);
+      out = out.append(expanding_type_diag(mod, e));
+    }
+  }
+  return out;
+}
+
+function expanding_type_diag(mod: parser.Module, e: ParamEdge): util.Diag {
+  let tail = " gives the type parameter \"" + e.param + "\" a larger type each time";
+  for ed in mod.enums {
+    if (ed.name == e.owner) {
+      return dg_at("E107", "generic enum \"" + e.owner + "\" has no last instance: variant \"" + e.member + "\"" + tail, ed.line, ed.col);
+    }
+  }
+  for sd in mod.structs {
+    if (sd.name == e.owner) {
+      return dg_at("E107", "generic struct \"" + e.owner + "\" has no last instance: field \"" + e.member + "\"" + tail, sd.line, sd.col);
+    }
+  }
+  return dg_at("E107", "generic type \"" + e.owner + "\" has no last instance", 0, 0);
+}
+
+// The instances of the generic functions that the module calls, and an E107
+// for each generic function whose chain of instances reaches the limit.
+struct Clones { funcs: parser.FuncDecl[], diags: util.Diag[] }
+
+function instantiated_clones(mod: parser.Module, env: ModuleEnv): Clones {
   let clones: parser.FuncDecl[] = [];
+  let deep: string[] = [];
+  let diags: util.Diag[] = [];
   let gens: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     if (fd.receiver_name.len() == 0 && fd.all_type_params.len() > 0) {
@@ -31271,7 +31441,7 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
     }
   }
   if (gens.len() == 0) {
-    return clones;
+    return Clones { funcs: clones, diags: diags };
   }
   let msc = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   let mf = parser.mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
@@ -31297,17 +31467,27 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
       spelled += ct;
     }
     let key = inst.name + "__" + parser.sanitize_key(spelled);
-    if (inst.depth >= max_inst_depth() || util.has_str(keys, key)) {
+    if (util.has_str(keys, key)) {
+      continue;
+    }
+    let g = gens[template_index(gens, inst.name)];
+    if (parser.type_args_depth(spelled) >= parser.MAX_INSTANCE_DEPTH) {
+      if (!util.has_str(deep, inst.name)) {
+        deep = deep.append(inst.name);
+        diags = diags.append(dg_at("E107", "generic function \"" + inst.name + "\" has an instance with " + util.i32_to_string(parser.MAX_INSTANCE_DEPTH) + " levels of type arguments: a call in its body gives it a larger type each time", g.line, g.col));
+      }
+      continue;
+    }
+    if (inst.depth >= parser.MAX_INSTANCE_DEPTH) {
       continue;
     }
     keys = keys.append(key);
-    let g = gens[template_index(gens, inst.name)];
     let routed = parser.FuncDecl { ...g, body: parser.route_bound_calls(g, inst.cts, env.trait_reqs, mf) };
     let cl = parser.instantiate_func(routed, key, g.all_type_params, inst.cts, mod.impls);
     clones = clones.append(cl);
     pending = body_insts(cl, env, msc, gens, inst.depth + 1, pending);
   }
-  return clones;
+  return Clones { funcs: clones, diags: diags };
 }
 
 function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
@@ -31420,7 +31600,11 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
   if (mt.diags.len() > 0) {
     return mt;
   }
-  let clones = instantiated_clones(mod, env);
+  let made = instantiated_clones(mod, env);
+  if (made.diags.len() > 0) {
+    return ModuleTypes { ...mt, all_well_typed: false, diags: made.diags };
+  }
+  let clones = made.funcs;
   if (clones.len() == 0) {
     return mt;
   }
@@ -31775,6 +31959,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let decl_diags: util.Diag[] = [];
   if (focus_names.len() == 0) {
     decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
+    decl_diags = util.append_diags(decl_diags, expanding_type_diags(mod));
   }
   let leading = util.append_diags(fda_diags, decl_diags);
   leading = util.append_diags(leading, signature_diags);
@@ -31986,10 +32171,11 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
   if (body.len() == 0) {
     return t_unknown("empty value block");
   }
-  if let ast.StmtUnknown(u) = body[body.len() - 1] {
-    if (u.kind == "value branch has no trailing expression") {
-      return t_unknown("missing block value");
+  if (parser.is_missing_tail(body[body.len() - 1])) {
+    if (block_diverges(body, s)) {
+      return typeinfo.TypeNever { tag: 0 };
     }
+    return t_unknown("missing block value");
   }
   if (parser.branch_exits_early(body)) {
     return typeinfo.TypeNever { tag: 0 };
@@ -32016,7 +32202,8 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
 
 pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
   let none: ast.Expr = ast.ExprUnknown { kind: parser.BARE_RETURN, line: 0, col: 0 };
-  for st in reachable_stmts(body) {
+  // The statements after one that ends the path do not run.
+  for st in body {
     match (st) {
       ast.StmtReturn(r) => {
         if (!parser.bare_return(r.value)) {
@@ -32056,21 +32243,13 @@ pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
       },
       _ => {}
     }
+    let leaves = block_diverges([st], scope);
     scope = bind_stmt(st, scope);
-  }
-  return (none, scope);
-}
-
-// The statements up to the first one that diverges. The rest do not run.
-function reachable_stmts(body: ast.Stmt[]): ast.Stmt[] {
-  let out: ast.Stmt[] = [];
-  for st in body {
-    out = out.append(st);
-    if (parser.branch_stmts_diverge([st])) {
-      return out;
+    if (leaves) {
+      return (none, scope);
     }
   }
-  return out;
+  return (none, scope);
 }
 
 pub function arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {
@@ -33144,7 +33323,7 @@ function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
       if (typeinfo.is_tuple(at.elem)) {
         settled = settle_float_literals(settled, at.elem);
       }
-      if (reads_i64(at.elem)) {
+      if (reads_i64(at.elem) || reads_scalar(at.elem, true)) {
         settled = settle_struct_lit_wide(settle_wide_literals(settled, at.elem), at.elem, s);
       }
       els = els.append(settled);
@@ -33182,6 +33361,13 @@ function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Ex
         if (fi >= 0 && fi < sig.field_type_names.len()) {
           let ft = type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[fi]), sig.type_params, ts.args, s.type_names());
           v = settle_struct_lit_wide(settle_wide_literals(v, ft), ft, s);
+          if (is_float(ft) && int_literal_tree(v)) {
+            let width = "f64";
+            if (settled_number(ft)) {
+              width = typeinfo.spelling(ft);
+            }
+            v = lit_float_read(v, parser.parse_type_ref(width));
+          }
         }
         nv = nv.append(v);
       }
@@ -38017,9 +38203,9 @@ function scalar_numeric_join(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type 
 }
 
 function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
-  return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(e, t, first, s)
+  return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_yields(e, t, first, s, true)
     && (type_eq(t, first) || literal_gives_way(first_lit, t))
-    || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
+    || struct_lit_yields(first_expr, first, t, s, true) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
 }
 
 // literal_array_takes is true when the array literal e holds only integer literals, and each one takes the innermost element type of to.

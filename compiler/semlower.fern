@@ -433,7 +433,7 @@ function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Pla
 function produced_rows(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): Inference {
   let built = semsource.with_analyses(semsource.build_module_with(mod, opts));
   util.arr_push_cliff_report("sem:built", 0);
-  let records = util.append_all(instance_records(built), laid_decls(structs, built));
+  let records = util.append_all(util.append_all(instance_records(built), laid_decls(structs, built)), packed_decls(structs, built));
   if (records.len() > 0) {
     structs = irtables.struct_tab(irtables.replaced_decls(structs.decls, records));
   }
@@ -481,6 +481,31 @@ function laid_decls(structs: irtables.StructTab, built: semsource.Built): parser
     let at = irtables.decl_index_of(structs, ssasem.type_key(rec.ty));
     if (at >= 0) {
       out = out.append(parser.StructDecl { ...structs.decls[at], fields: fields });
+    }
+  }
+  return out;
+}
+
+// The declarations of the variants whose narrow fields share one word, to
+// stand in for the module's own at the same index.
+function packed_decls(structs: irtables.StructTab, built: semsource.Built): parser.StructDecl[] {
+  let out: parser.StructDecl[] = [];
+  let seen = util.name_index([]);
+  for p in util.append_all(built.decls, built.instances) {
+    for e in p.func.enums {
+      for v in e.variants {
+        let shape = irtables.variant_shape(ssasem.type_key(e.ty), v.name);
+        let at = irtables.shape_index(structs, shape);
+        if (e.layout != semrecords.layout_variant() || !semsource.shares_word(v) || seen.has(shape) || at < 0) {
+          continue;
+        }
+        seen = seen.added(shape);
+        let fields: parser.StructFieldDecl[] = [];
+        for fl in v.fields {
+          fields = fields.append(parser.bare_field(fl.name, field_spelling(fl.ty)));
+        }
+        out = out.append(parser.StructDecl { ...structs.decls[at], fields: fields });
+      }
     }
   }
   return out;
@@ -899,12 +924,12 @@ pub function view_escape_diags(mod: parser.Module): util.Diag[] {
 }
 
 pub function build_opts(debug_lines: boolean, size: boolean, whole: boolean, array_report: i32): semsource.BuildOpts {
-  return semsource.BuildOpts { debug_lines: debug_lines, size: size, whole: whole, array_report: array_report, stack_phi_joins: false, shape_slot: false, passes: semsource.env_passes() };
+  return semsource.BuildOpts { debug_lines: debug_lines, size: size, whole: whole, array_report: array_report, stack_phi_joins: false, shape_slot: false, pack_fields: true, passes: semsource.env_passes() };
 }
 
 pub function target_substitution(typed: parser.Module, target: string, opts: semsource.BuildOpts): ircore.Sub {
   if (is_wasm(target)) {
-    return substitution_of(wasm_gated(typed), semsource.BuildOpts { ...opts, debug_lines: false, stack_phi_joins: true, shape_slot: true });
+    return substitution_of(wasm_gated(typed), semsource.BuildOpts { ...opts, debug_lines: false, stack_phi_joins: true, shape_slot: true, pack_fields: false });
   }
   let lifted = ircore.lift_lambdas_typed(typed);
   return ircore.Sub { ...substitution_of(gated_module(lifted), opts), lifted: lifted, has_lifted: true };

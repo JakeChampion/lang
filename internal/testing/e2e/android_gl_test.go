@@ -65,9 +65,10 @@ func runGLCheck(t *testing.T, src, want string) {
 // an alpha ramp, a band of rows, and a layer at half alpha, and reads back
 // the pixels that OpenGL ES 2 drew. The texture stays when the canvas moves
 // to a new surface. Glyphs draw from two pages of an atlas. An external
-// texture draws in the rectangle that fit gives, with bars beside it.
+// texture draws in the rectangle that fit gives, with bars beside it. The
+// canvas draws again after OpenGL ES calls of the app and resume.
 func TestAndroidGLCanvas(t *testing.T) {
-	runGLCheck(t, "tests/android/gl/check.fern", "111111111")
+	runGLCheck(t, "tests/android/gl/check.fern", "1111111111")
 }
 
 // The GPU painter of Paper draws home, the app list sliding in over home,

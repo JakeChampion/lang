@@ -84,9 +84,66 @@ function test_errors(): test.TestOutcome {
   ]);
 }
 
+function report(out: u8[], error: string): string {
+  return text(out) + "|" + error;
+}
+
+// Each decoder gives the bytes up to its limit, and refuses the byte after.
+function test_limits(): test.TestOutcome {
+  let over = "the output is larger than the limit";
+  let got: string[] = [];
+  for limit in [5, 23, 24] {
+    let b = bzip2.decode_with_limit(BZ2, limit);
+    let x = xz.decode_xz_with_limit(XZ, limit);
+    let a = xz.decode_lzma_with_limit(LZMA, limit);
+    let z = lzw.decode_with_limit(Z, limit);
+    let f = lz4.decode_with_limit(LZ4, limit);
+    got = got.append(report(b.out, match (b.error) { Some(e) => e.message(), None => "ok" }));
+    got = got.append(xz_error(x));
+    got = got.append(xz_error(a));
+    got = got.append(report(z.out, match (z.error) { Some(e) => e.message(), None => "ok" }));
+    got = got.append(report(f.out, match (f.error) { Some(e) => e.message(), None => "ok" }));
+  }
+  let most = "hello hello hello hello";
+  let memory = "Memory usage limit reached";
+  let want = [
+    "hello|" + over, "hello|" + memory, "hello|" + memory, "hello|" + over, "hello|" + over,
+    most + "|" + over, most + "|" + memory, most + "|" + memory, most + "|" + over, most + "|" + over,
+    HELLO + "|ok", HELLO + "|ok", HELLO + "|ok", HELLO + "|ok", HELLO + "|ok",
+  ];
+  if (bzip2.decompress_with_limit(BZ2, 23).is_ok() || lz4.decompress_with_limit(LZ4, 23).is_ok() || lzw.decompress_with_limit(Z, 23).is_ok()) {
+    return test.fail("decompress_with_limit gives bytes above the limit");
+  }
+  if (xz.decompress_xz_with_limit(XZ, 23).is_ok() || xz.decompress_lzma_with_limit(LZMA, 23).is_ok()) {
+    return test.fail("the xz decompress_with_limit gives bytes above the limit");
+  }
+  return test.assert_eq_array(got, want);
+}
+
+// Streams whose counts are not valid. Each one stopped the program, or gave
+// a part of the bytes as the whole.
+function test_hostile_counts(): test.TestOutcome {
+  // The block names six tables, and its first selector names a seventh.
+  let selector = BZ2.with(25, 224u8).with(27, 63u8).with(28, 224u8);
+  // The block of the frame gives its size as 2 GiB less one.
+  let sized = [4u8, 34u8, 77u8, 24u8, 96u8, 64u8, 130u8, 255u8, 255u8, 255u8, 127u8, 36u8, 97u8, 98u8, 2u8, 0u8];
+  let stored = sized.with(10, 255u8);
+  // The header gives the size as 4 GiB and three bytes.
+  let wide = LZMA.with(5, 3u8).with(6, 0u8).with(7, 0u8).with(8, 0u8).with(9, 1u8).with(10, 0u8).with(11, 0u8).with(12, 0u8);
+  let got = [
+    bz_error(selector),
+    match (lz4.decompress(sized)) { Ok(_) => "ok", Err(e) => e.message() },
+    match (lz4.decompress(stored)) { Ok(_) => "ok", Err(e) => e.message() },
+    xz_error(xz.decode_lzma(wide)),
+  ];
+  return test.assert_eq_array(got, ["|data integrity error when decompressing", "unexpected end of input", "unexpected end of input", HELLO + "|ok"]);
+}
+
 function main(): i32 {
   let r = test.new("compress");
   r = r.it("round trips", test_round_trips);
   r = r.it("errors", test_errors);
+  r = r.it("each decoder refuses output above a limit", test_limits);
+  r = r.it("counts that are not valid are refused", test_hostile_counts);
   return r.finish();
 }

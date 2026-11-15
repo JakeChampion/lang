@@ -1,0 +1,720 @@
+// The simulation and the passes that show it, in OpenGL ES on the context of
+// a canvas of std/android/gl. A `Fluid` owns each program and each texture.
+// Each function leaves its own OpenGL ES state, so the app calls `resume` on
+// the canvas before the canvas draws again.
+import "std/f64";
+import "std/rand";
+import "./color";
+import "./config";
+import "./gles";
+import "./shaders";
+
+// A texture and the framebuffer that draws into it. The window is the
+// target with the framebuffer 0 and no texture.
+pub struct Target { texture: i32, fbo: i32, width: i32, height: i32 }
+
+// Two targets for a pass that reads the last state and writes the next one.
+pub struct Pair { read: Target, write: Target }
+
+function (p: Pair) swap(): Pair {
+  return Pair { read: p.write, write: p.read };
+}
+
+// The internal format and the pixel format of a float texture.
+struct Format { inner: i32, format: i32 }
+
+// The formats that the GPU can draw into, for four, two and one channel.
+struct Formats { rgba: Format, rg: Format, r: Format }
+
+// A program and the location of each uniform of `uniform_names`, or -1 for
+// a uniform that the program does not use.
+struct Program { id: i32, at: i32[] }
+
+const TEXEL_SIZE: i32 = 0;
+
+const TEXTURE: i32 = 1;
+
+const VALUE: i32 = 2;
+
+const COLOR: i32 = 3;
+
+const BLOOM: i32 = 4;
+
+const SUNRAYS: i32 = 5;
+
+const DITHERING: i32 = 6;
+
+const DITHER_SCALE: i32 = 7;
+
+const CURVE: i32 = 8;
+
+const THRESHOLD: i32 = 9;
+
+const INTENSITY: i32 = 10;
+
+const WEIGHT: i32 = 11;
+
+const TARGET: i32 = 12;
+
+const ASPECT_RATIO: i32 = 13;
+
+const POINT: i32 = 14;
+
+const RADIUS: i32 = 15;
+
+const VELOCITY: i32 = 16;
+
+const SOURCE: i32 = 17;
+
+const DT: i32 = 18;
+
+const DISSIPATION: i32 = 19;
+
+const CURL_TEXTURE: i32 = 20;
+
+const CURL: i32 = 21;
+
+const PRESSURE: i32 = 22;
+
+const DIVERGENCE: i32 = 23;
+
+// The name of each uniform, in the order of the constants above.
+function uniform_names(): string[] {
+  return ["texelSize", "uTexture", "value", "color", "uBloom", "uSunrays", "uDithering", "ditherScale", "curve", "threshold", "intensity", "weight", "uTarget", "aspectRatio", "point", "radius", "uVelocity", "uSource", "dt", "dissipation", "uCurl", "curl", "uPressure", "uDivergence"];
+}
+
+struct Programs {
+  blur: Program,
+  copy: Program,
+  clear: Program,
+  color: Program,
+  bloom_prefilter: Program,
+  bloom_blur: Program,
+  bloom_final: Program,
+  sunrays_mask: Program,
+  sunrays: Program,
+  splat: Program,
+  advection: Program,
+  divergence: Program,
+  curl: Program,
+  vorticity: Program,
+  pressure: Program,
+  gradient_subtract: Program,
+}
+
+struct Targets {
+  dye: Pair,
+  velocity: Pair,
+  divergence: Target,
+  curl: Target,
+  pressure: Pair,
+  bloom: Target,
+  blooms: Target[],
+  sunrays: Target,
+  sunrays_temp: Target,
+}
+
+// `width` and `height` are the size of the window in pixels. `displays` has
+// the display program of each set of keywords, with the id 0 for a set that
+// no frame used yet, and `display` is the index of the set in use.
+pub struct Fluid {
+  quad: usize,
+  formats: Formats,
+  base_vertex: i32,
+  programs: Programs,
+  displays: Program[],
+  display: i32,
+  dither: Target,
+  width: i32,
+  height: i32,
+  targets: Targets,
+}
+
+function no_target(): Target {
+  return Target { texture: 0, fbo: 0, width: 0, height: 0 };
+}
+
+function no_pair(): Pair {
+  return Pair { read: no_target(), write: no_target() };
+}
+
+function free_target(t: Target): void {
+  gles.delete_framebuffer(t.fbo);
+  gles.delete_texture(t.texture);
+}
+
+function free_pair(p: Pair): void {
+  free_target(p.read);
+  free_target(p.write);
+}
+
+// The program of the two shaders, or None when one of them does not
+// compile.
+function program_of(vertex: i32, fragment_source: string): Option[Program] {
+  let fragment = gles.shader(gles.FRAGMENT_SHADER, fragment_source);
+  let id = gles.program(vertex, fragment, "aPosition");
+  if (fragment != 0) {
+    gles.delete_shader(fragment);
+  }
+  if (id == 0) {
+    return None;
+  }
+  let at: i32[] = [];
+  for name in uniform_names() {
+    at = at.append(gles.location(id, name));
+  }
+  return Some(Program { id: id, at: at });
+}
+
+function no_program(): Program {
+  return Program { id: 0, at: [] };
+}
+
+// The program of `source`, and `ok` when each program so far compiled.
+function built(vertex: i32, source: string, ok: boolean): (Program, boolean) {
+  if let Some(p) = program_of(vertex, source) {
+    return (p, ok);
+  }
+  return (no_program(), false);
+}
+
+function programs(base: i32, blur_vertex: i32): Option[Programs] {
+  let (blur, a) = built(blur_vertex, shaders.blur(), true);
+  let (copy, b) = built(base, shaders.copy(), a);
+  let (clear, c) = built(base, shaders.clear(), b);
+  let (color, d) = built(base, shaders.color(), c);
+  let (bloom_prefilter, e) = built(base, shaders.bloom_prefilter(), d);
+  let (bloom_blur, f) = built(base, shaders.bloom_blur(), e);
+  let (bloom_final, g) = built(base, shaders.bloom_final(), f);
+  let (sunrays_mask, h) = built(base, shaders.sunrays_mask(), g);
+  let (sunrays, i) = built(base, shaders.sunrays(), h);
+  let (splat, j) = built(base, shaders.splat(), i);
+  let (advection, k) = built(base, shaders.advection(), j);
+  let (divergence, l) = built(base, shaders.divergence(), k);
+  let (curl, m) = built(base, shaders.curl(), l);
+  let (vorticity, n) = built(base, shaders.vorticity(), m);
+  let (pressure, o) = built(base, shaders.pressure(), n);
+  let (gradient_subtract, ok) = built(base, shaders.gradient_subtract(), o);
+  let all = Programs {
+    blur: blur,
+    copy: copy,
+    clear: clear,
+    color: color,
+    bloom_prefilter: bloom_prefilter,
+    bloom_blur: bloom_blur,
+    bloom_final: bloom_final,
+    sunrays_mask: sunrays_mask,
+    sunrays: sunrays,
+    splat: splat,
+    advection: advection,
+    divergence: divergence,
+    curl: curl,
+    vorticity: vorticity,
+    pressure: pressure,
+    gradient_subtract: gradient_subtract,
+  };
+  if (!ok) {
+    free_programs(all);
+    return None;
+  }
+  return Some(all);
+}
+
+function (p: Programs) list(): Program[] {
+  return [p.blur, p.copy, p.clear, p.color, p.bloom_prefilter, p.bloom_blur, p.bloom_final, p.sunrays_mask, p.sunrays, p.splat, p.advection, p.divergence, p.curl, p.vorticity, p.pressure, p.gradient_subtract];
+}
+
+function free_programs(p: Programs): void {
+  for one in p.list() {
+    if (one.id != 0) {
+      gles.delete_program(one.id);
+    }
+  }
+}
+
+// A new target of `width` by `height`, cleared, and whether the GPU can
+// draw into its format.
+function target(width: i32, height: i32, inner: i32, format: i32, kind: i32, filter: i32): (Target, boolean) {
+  let texture = gles.texture(width, height, inner, format, kind, filter, gles.CLAMP_TO_EDGE, 0 as usize);
+  let (fbo, complete) = gles.framebuffer(texture);
+  if (complete) {
+    gles.viewport(0, 0, width, height);
+    gles.clear(gles.COLOR_BUFFER_BIT);
+  }
+  return (Target { texture: texture, fbo: fbo, width: width, height: height }, complete);
+}
+
+// A half-float target in the format `f`.
+function float_target(width: i32, height: i32, f: Format, filter: i32): Target {
+  let (t, complete) = target(width, height, f.inner, f.format, gles.HALF_FLOAT, filter);
+  return t;
+}
+
+function float_pair(width: i32, height: i32, f: Format, filter: i32): Pair {
+  return Pair { read: float_target(width, height, f, filter), write: float_target(width, height, f, filter) };
+}
+
+// The GPU can draw into a half-float texture of the format.
+function renders(inner: i32, format: i32): boolean {
+  let (t, complete) = target(4, 4, inner, format, gles.HALF_FLOAT, gles.NEAREST);
+  free_target(t);
+  return complete;
+}
+
+// The formats of the targets, or None when the GPU cannot draw into a
+// half-float texture of four channels. A format of fewer channels that the
+// GPU cannot draw into takes the next wider one.
+function formats(): Option[Formats] {
+  if (!renders(gles.RGBA16F, gles.RGBA)) {
+    return None;
+  }
+  let rgba = Format { inner: gles.RGBA16F, format: gles.RGBA };
+  let rg = rgba;
+  if (renders(gles.RG16F, gles.RG)) {
+    rg = Format { inner: gles.RG16F, format: gles.RG };
+  }
+  let r = rg;
+  if (renders(gles.R16F, gles.RED)) {
+    r = Format { inner: gles.R16F, format: gles.RED };
+  }
+  return Some(Formats { rgba: rgba, rg: rg, r: r });
+}
+
+// The texture that the display pass takes its dither from: grey noise of
+// `size` by `size` that repeats. The bloom has soft slopes, and the noise
+// hides the bands that 8 bits for each channel show there.
+function noise(size: i32, rng: i64): Target {
+  let (next, grey) = rand.rng_bytes(rng, size * size);
+  let id = 0;
+  unsafe {
+    let n = size * size * 4;
+    let buf: usize = __alloc(n);
+    for i in 0..size * size {
+      let v = grey[i] as i32;
+      __store_i32(buf + (i * 4) as usize, -16777216 | v << 16 | v << 8 | v);
+    }
+    id = gles.texture(size, size, gles.RGBA, gles.RGBA, gles.UNSIGNED_BYTE, gles.NEAREST, gles.REPEAT, buf);
+    __free(buf, n);
+  }
+  return Target { texture: id, fbo: 0, width: size, height: size };
+}
+
+// The state of OpenGL ES for the passes: the square at attribute 0, no
+// scissor test, and the clear colour of a new target.
+function (f: Fluid) begin(): void {
+  gles.disable(gles.SCISSOR_TEST);
+  gles.vertex_attrib_pointer(0, 2, gles.FLOAT, 0, 0, f.quad);
+  gles.enable_vertex_attrib_array(0);
+  gles.clear_color(0.0 as f32, 0.0 as f32, 0.0 as f32, 1.0 as f32);
+}
+
+// A fluid for a window of `width` by `height`, or None when the GPU cannot
+// run it: it has no half-float texture to draw into, or a shader does not
+// compile. `rng` gives the noise of the dither.
+pub function open(cfg: config.Config, width: i32, height: i32, rng: i64): Option[Fluid] {
+  let Some(fs) = formats() else {
+    return None;
+  };
+  let base = gles.shader(gles.VERTEX_SHADER, shaders.base_vertex());
+  let blur_vertex = gles.shader(gles.VERTEX_SHADER, shaders.blur_vertex());
+  let ps = programs(base, blur_vertex);
+  if (blur_vertex != 0) {
+    gles.delete_shader(blur_vertex);
+  }
+  let Some(all) = ps else {
+    if (base != 0) {
+      gles.delete_shader(base);
+    }
+    return None;
+  };
+  let displays: Program[] = [];
+  for i in 0..8 {
+    displays = displays.append(no_program());
+  }
+  let empty = Targets { dye: no_pair(), velocity: no_pair(), divergence: no_target(), curl: no_target(), pressure: no_pair(), bloom: no_target(), blooms: [], sunrays: no_target(), sunrays_temp: no_target() };
+  let f = Fluid { quad: gles.quad(), formats: fs, base_vertex: base, programs: all, displays: displays, display: 0, dither: noise(cfg.dithering_resolution, rng), width: 0, height: 0, targets: empty };
+  return Some(f.with_keywords(cfg).resized(cfg, width, height));
+}
+
+// Frees each program and each texture of the fluid.
+pub function close(f: Fluid): void {
+  free_targets(f.targets);
+  free_pair(f.targets.dye);
+  free_pair(f.targets.velocity);
+  gles.delete_texture(f.dither.texture);
+  free_programs(f.programs);
+  for d in f.displays {
+    if (d.id != 0) {
+      gles.delete_program(d.id);
+    }
+  }
+  gles.delete_shader(f.base_vertex);
+  gles.free_quad(f.quad);
+}
+
+// Frees the targets that a new size does not keep.
+function free_targets(t: Targets): void {
+  free_target(t.divergence);
+  free_target(t.curl);
+  free_pair(t.pressure);
+  free_target(t.bloom);
+  for b in t.blooms {
+    free_target(b);
+  }
+  free_target(t.sunrays);
+  free_target(t.sunrays_temp);
+}
+
+// The window as a target.
+pub function (f: Fluid) window(): Target {
+  return Target { texture: 0, fbo: 0, width: f.width, height: f.height };
+}
+
+// Draws the square into `t` with the program in use.
+function blit(t: Target): void {
+  gles.viewport(0, 0, t.width, t.height);
+  gles.bind_framebuffer(gles.FRAMEBUFFER, t.fbo);
+  gles.draw_arrays(gles.TRIANGLE_STRIP, 0, 4);
+}
+
+// Binds the texture of `t` to the texture unit `unit`, and gives the unit.
+function attach(t: Target, unit: i32): i32 {
+  gles.active_texture(gles.TEXTURE0 + unit);
+  gles.bind_texture(gles.TEXTURE_2D, t.texture);
+  return unit;
+}
+
+function texel(p: Program, t: Target): void {
+  gles.uniform2f(p.at[TEXEL_SIZE], (1.0 / (t.width as f64)) as f32, (1.0 / (t.height as f64)) as f32);
+}
+
+// The pair at `width` by `height`. A pair of another size gives its state
+// to the new textures, so a new window size does not clear the fluid.
+function (f: Fluid) pair_sized(p: Pair, width: i32, height: i32, format: Format, filter: i32): Pair {
+  if (p.read.texture == 0) {
+    return float_pair(width, height, format, filter);
+  }
+  if (p.read.width == width && p.read.height == height) {
+    return p;
+  }
+  let read = float_target(width, height, format, filter);
+  gles.use_program(f.programs.copy.id);
+  gles.uniform1i(f.programs.copy.at[TEXTURE], attach(p.read, 0));
+  blit(read);
+  free_pair(p);
+  return Pair { read: read, write: float_target(width, height, format, filter) };
+}
+
+// The fluid for a window of `width` by `height`. The dye and the velocity
+// keep their state.
+pub function (f: Fluid) resized(cfg: config.Config, width: i32, height: i32): Fluid {
+  f.begin();
+  gles.disable(gles.BLEND);
+  let (sim_w, sim_h) = config.resolution(width, height, cfg.sim_resolution);
+  let (dye_w, dye_h) = config.resolution(width, height, cfg.dye_resolution);
+  let (bloom_w, bloom_h) = config.resolution(width, height, cfg.bloom_resolution);
+  let (rays_w, rays_h) = config.resolution(width, height, cfg.sunrays_resolution);
+  let fs = f.formats;
+  free_targets(f.targets);
+  let dye = f.pair_sized(f.targets.dye, dye_w, dye_h, fs.rgba, gles.LINEAR);
+  let velocity = f.pair_sized(f.targets.velocity, sim_w, sim_h, fs.rg, gles.LINEAR);
+  let blooms: Target[] = [];
+  for i in 0..cfg.bloom_iterations {
+    let w = bloom_w >> i + 1;
+    let h = bloom_h >> i + 1;
+    if (w < 2 || h < 2) {
+      break;
+    }
+    blooms = blooms.append(float_target(w, h, fs.rgba, gles.LINEAR));
+  }
+  let targets = Targets {
+    dye: dye,
+    velocity: velocity,
+    divergence: float_target(sim_w, sim_h, fs.r, gles.NEAREST),
+    curl: float_target(sim_w, sim_h, fs.r, gles.NEAREST),
+    pressure: float_pair(sim_w, sim_h, fs.r, gles.NEAREST),
+    bloom: float_target(bloom_w, bloom_h, fs.rgba, gles.LINEAR),
+    blooms: blooms,
+    sunrays: float_target(rays_w, rays_h, fs.r, gles.LINEAR),
+    sunrays_temp: float_target(rays_w, rays_h, fs.r, gles.LINEAR),
+  };
+  return Fluid { ...f, width: width, height: height, targets: targets };
+}
+
+// The fluid with the display program for the shading, the bloom and the sun
+// rays of `cfg`. It compiles the program of a set of keywords at the first
+// use of the set.
+pub function (f: Fluid) with_keywords(cfg: config.Config): Fluid {
+  let index = 0;
+  let defines = "";
+  if (cfg.shading) {
+    index += 1;
+    defines += "#define SHADING\n";
+  }
+  if (cfg.bloom) {
+    index += 2;
+    defines += "#define BLOOM\n";
+  }
+  if (cfg.sunrays) {
+    index += 4;
+    defines += "#define SUNRAYS\n";
+  }
+  if (f.displays[index].id != 0) {
+    return Fluid { ...f, display: index };
+  }
+  let Some(p) = program_of(f.base_vertex, defines + shaders.display()) else {
+    return f;
+  };
+  let displays: Program[] = [];
+  for i in 0..f.displays.len() {
+    if (i == index) {
+      displays = displays.append(p);
+    } else {
+      displays = displays.append(f.displays[i]);
+    }
+  }
+  return Fluid { ...f, displays: displays, display: index };
+}
+
+// The fluid after a step of `dt` seconds.
+pub function (f: Fluid) step(cfg: config.Config, dt: f64): Fluid {
+  f.begin();
+  gles.disable(gles.BLEND);
+  let ps = f.programs;
+  let t = f.targets;
+  let velocity = t.velocity;
+  let pressure = t.pressure;
+  let step = dt as f32;
+
+  gles.use_program(ps.curl.id);
+  texel(ps.curl, velocity.read);
+  gles.uniform1i(ps.curl.at[VELOCITY], attach(velocity.read, 0));
+  blit(t.curl);
+
+  gles.use_program(ps.vorticity.id);
+  texel(ps.vorticity, velocity.read);
+  gles.uniform1i(ps.vorticity.at[VELOCITY], attach(velocity.read, 0));
+  gles.uniform1i(ps.vorticity.at[CURL_TEXTURE], attach(t.curl, 1));
+  gles.uniform1f(ps.vorticity.at[CURL], cfg.curl as f32);
+  gles.uniform1f(ps.vorticity.at[DT], step);
+  blit(velocity.write);
+  velocity = velocity.swap();
+
+  gles.use_program(ps.divergence.id);
+  texel(ps.divergence, velocity.read);
+  gles.uniform1i(ps.divergence.at[VELOCITY], attach(velocity.read, 0));
+  blit(t.divergence);
+
+  gles.use_program(ps.clear.id);
+  gles.uniform1i(ps.clear.at[TEXTURE], attach(pressure.read, 0));
+  gles.uniform1f(ps.clear.at[VALUE], cfg.pressure as f32);
+  blit(pressure.write);
+  pressure = pressure.swap();
+
+  gles.use_program(ps.pressure.id);
+  texel(ps.pressure, velocity.read);
+  gles.uniform1i(ps.pressure.at[DIVERGENCE], attach(t.divergence, 0));
+  for i in 0..cfg.pressure_iterations {
+    gles.uniform1i(ps.pressure.at[PRESSURE], attach(pressure.read, 1));
+    blit(pressure.write);
+    pressure = pressure.swap();
+  }
+
+  gles.use_program(ps.gradient_subtract.id);
+  texel(ps.gradient_subtract, velocity.read);
+  gles.uniform1i(ps.gradient_subtract.at[PRESSURE], attach(pressure.read, 0));
+  gles.uniform1i(ps.gradient_subtract.at[VELOCITY], attach(velocity.read, 1));
+  blit(velocity.write);
+  velocity = velocity.swap();
+
+  gles.use_program(ps.advection.id);
+  texel(ps.advection, velocity.read);
+  let unit = attach(velocity.read, 0);
+  gles.uniform1i(ps.advection.at[VELOCITY], unit);
+  gles.uniform1i(ps.advection.at[SOURCE], unit);
+  gles.uniform1f(ps.advection.at[DT], step);
+  gles.uniform1f(ps.advection.at[DISSIPATION], cfg.velocity_dissipation as f32);
+  blit(velocity.write);
+  velocity = velocity.swap();
+
+  gles.uniform1i(ps.advection.at[VELOCITY], attach(velocity.read, 0));
+  gles.uniform1i(ps.advection.at[SOURCE], attach(t.dye.read, 1));
+  gles.uniform1f(ps.advection.at[DISSIPATION], cfg.density_dissipation as f32);
+  blit(t.dye.write);
+
+  return Fluid { ...f, targets: Targets { ...t, dye: t.dye.swap(), velocity: velocity, pressure: pressure } };
+}
+
+// Draws the fluid into `to`: the bloom and the sun rays of `cfg`, the
+// background colour, and the dye over it.
+pub function (f: Fluid) render(cfg: config.Config, to: Target): void {
+  f.begin();
+  let t = f.targets;
+  if (cfg.bloom) {
+    f.bloom(cfg, t.dye.read, t.bloom);
+  }
+  if (cfg.sunrays) {
+    f.sunrays(cfg, t.dye.read, t.dye.write, t.sunrays);
+    f.blur(t.sunrays, t.sunrays_temp);
+  }
+  gles.blend_func(gles.ONE, gles.ONE_MINUS_SRC_ALPHA);
+  gles.enable(gles.BLEND);
+
+  let back = f.programs.color;
+  gles.use_program(back.id);
+  gles.uniform4f(back.at[COLOR], cfg.back_color.r as f32, cfg.back_color.g as f32, cfg.back_color.b as f32, 1.0 as f32);
+  blit(to);
+
+  let d = f.displays[f.display];
+  gles.use_program(d.id);
+  if (cfg.shading) {
+    texel(d, to);
+  }
+  gles.uniform1i(d.at[TEXTURE], attach(t.dye.read, 0));
+  if (cfg.bloom) {
+    gles.uniform1i(d.at[BLOOM], attach(t.bloom, 1));
+    gles.uniform1i(d.at[DITHERING], attach(f.dither, 2));
+    gles.uniform2f(d.at[DITHER_SCALE], (to.width as f64 / (f.dither.width as f64)) as f32, (to.height as f64 / (f.dither.height as f64)) as f32);
+  }
+  if (cfg.sunrays) {
+    gles.uniform1i(d.at[SUNRAYS], attach(t.sunrays, 3));
+  }
+  blit(to);
+}
+
+// Draws the bloom of `source` into `to`: the bright part of the dye, made
+// smaller and larger again through the targets of `blooms`.
+function (f: Fluid) bloom(cfg: config.Config, source: Target, to: Target): void {
+  let chain = f.targets.blooms;
+  if (chain.len() < 2) {
+    return;
+  }
+  let ps = f.programs;
+  let last = to;
+  gles.disable(gles.BLEND);
+  gles.use_program(ps.bloom_prefilter.id);
+  let knee = cfg.bloom_threshold * cfg.bloom_soft_knee + 0.0001;
+  gles.uniform3f(ps.bloom_prefilter.at[CURVE], (cfg.bloom_threshold - knee) as f32, (knee * 2.0) as f32, (0.25 / knee) as f32);
+  gles.uniform1f(ps.bloom_prefilter.at[THRESHOLD], cfg.bloom_threshold as f32);
+  gles.uniform1i(ps.bloom_prefilter.at[TEXTURE], attach(source, 0));
+  blit(last);
+
+  gles.use_program(ps.bloom_blur.id);
+  for dest in chain {
+    texel(ps.bloom_blur, last);
+    gles.uniform1i(ps.bloom_blur.at[TEXTURE], attach(last, 0));
+    blit(dest);
+    last = dest;
+  }
+
+  gles.blend_func(gles.ONE, gles.ONE);
+  gles.enable(gles.BLEND);
+  let i = chain.len() - 2;
+  while (i >= 0) {
+    let base = chain[i];
+    texel(ps.bloom_blur, last);
+    gles.uniform1i(ps.bloom_blur.at[TEXTURE], attach(last, 0));
+    blit(base);
+    last = base;
+    i -= 1;
+  }
+
+  gles.disable(gles.BLEND);
+  gles.use_program(ps.bloom_final.id);
+  texel(ps.bloom_final, last);
+  gles.uniform1i(ps.bloom_final.at[TEXTURE], attach(last, 0));
+  gles.uniform1f(ps.bloom_final.at[INTENSITY], cfg.bloom_intensity as f32);
+  blit(to);
+}
+
+// Draws the sun rays of `source` into `to`. `mask` takes the mask of the
+// dye between the two passes.
+function (f: Fluid) sunrays(cfg: config.Config, source: Target, mask: Target, to: Target): void {
+  let ps = f.programs;
+  gles.disable(gles.BLEND);
+  gles.use_program(ps.sunrays_mask.id);
+  gles.uniform1i(ps.sunrays_mask.at[TEXTURE], attach(source, 0));
+  blit(mask);
+
+  gles.use_program(ps.sunrays.id);
+  gles.uniform1f(ps.sunrays.at[WEIGHT], cfg.sunrays_weight as f32);
+  gles.uniform1i(ps.sunrays.at[TEXTURE], attach(mask, 0));
+  blit(to);
+}
+
+// Blurs `t` across and then down, through `temp`.
+function (f: Fluid) blur(t: Target, temp: Target): void {
+  let p = f.programs.blur;
+  gles.use_program(p.id);
+  gles.uniform2f(p.at[TEXEL_SIZE], (1.0 / (t.width as f64)) as f32, 0.0 as f32);
+  gles.uniform1i(p.at[TEXTURE], attach(t, 0));
+  blit(temp);
+  gles.uniform2f(p.at[TEXEL_SIZE], 0.0 as f32, (1.0 / (t.height as f64)) as f32);
+  gles.uniform1i(p.at[TEXTURE], attach(temp, 0));
+  blit(t);
+}
+
+// The fluid with a splat at x and y, each from 0 to 1 with y up: the
+// velocity dx and dy, and dye of the colour `c`.
+pub function (f: Fluid) splat(cfg: config.Config, x: f64, y: f64, dx: f64, dy: f64, c: config.Rgb): Fluid {
+  f.begin();
+  gles.disable(gles.BLEND);
+  let p = f.programs.splat;
+  let t = f.targets;
+  let aspect = f.width as f64 / (f.height as f64);
+  let radius = cfg.splat_radius / 100.0;
+  if (aspect > 1.0) {
+    radius *= aspect;
+  }
+  gles.use_program(p.id);
+  gles.uniform1i(p.at[TARGET], attach(t.velocity.read, 0));
+  gles.uniform1f(p.at[ASPECT_RATIO], aspect as f32);
+  gles.uniform2f(p.at[POINT], x as f32, y as f32);
+  gles.uniform3f(p.at[COLOR], dx as f32, dy as f32, 0.0 as f32);
+  gles.uniform1f(p.at[RADIUS], radius as f32);
+  blit(t.velocity.write);
+
+  gles.uniform1i(p.at[TARGET], attach(t.dye.read, 0));
+  gles.uniform3f(p.at[COLOR], c.r as f32, c.g as f32, c.b as f32);
+  blit(t.dye.write);
+  return Fluid { ...f, targets: Targets { ...t, velocity: t.velocity.swap(), dye: t.dye.swap() } };
+}
+
+// The fluid with `amount` bright splats at random places, and the next
+// state of the generator `rng`.
+pub function (f: Fluid) burst(cfg: config.Config, amount: i32, rng: i64): (Fluid, i64) {
+  let out = f;
+  let state = rng;
+  for i in 0..amount {
+    let (s1, c) = color.generate(state);
+    let (s2, x) = color.unit(s1);
+    let (s3, y) = color.unit(s2);
+    let (s4, dx) = color.unit(s3);
+    let (s5, dy) = color.unit(s4);
+    state = s5;
+    out = out.splat(cfg, x, y, 1000.0 * (dx - 0.5), 1000.0 * (dy - 0.5), config.Rgb { r: c.r * 10.0, g: c.g * 10.0, b: c.b * 10.0 });
+  }
+  return (out, state);
+}
+
+// A picture of `width` by `height`: 4 bytes for each pixel, red first, with
+// the top row first.
+pub struct Picture { width: i32, height: i32, pixels: u8[] }
+
+// A picture of the fluid at the capture resolution of `cfg`, so its size
+// does not come from the size of the window.
+pub function (f: Fluid) capture(cfg: config.Config): Picture {
+  f.begin();
+  let (w, h) = config.resolution(f.width, f.height, cfg.capture_resolution);
+  let (to, complete) = target(w, h, gles.RGBA8, gles.RGBA, gles.UNSIGNED_BYTE, gles.NEAREST);
+  if (!complete) {
+    free_target(to);
+    return Picture { width: 0, height: 0, pixels: [] };
+  }
+  f.render(cfg, to);
+  gles.bind_framebuffer(gles.FRAMEBUFFER, to.fbo);
+  let pixels = gles.read_rgba(w, h);
+  gles.bind_framebuffer(gles.FRAMEBUFFER, 0);
+  free_target(to);
+  return Picture { width: w, height: h, pixels: pixels };
+}

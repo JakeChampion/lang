@@ -1,0 +1,483 @@
+// The controls over the fluid: the button that opens the dialog, the
+// dialog, the exit button of kid mode and the note. This module gives the
+// place of each one on a window, and draws each one on a frame in memory.
+// It makes no Android call, so the host tests it.
+import "std/android";
+import "std/android/draw";
+import "std/android/text";
+import "std/f64";
+import "./fluid";
+
+// A window of `width` by `height` pixels. The system bars cover `top`
+// pixels at its top and `bottom` pixels at its bottom. `scale` is the
+// pixels of one dp, and `font` is the pixels of one sp.
+pub struct Metrics { width: i32, height: i32, top: i32, bottom: i32, scale: f64, font: f64 }
+
+// The faces of the fonts of `Look`.
+const REGULAR: i32 = 0;
+
+const BOLD: i32 = 1;
+
+// The weights of the fonts that the controls use, in the order of the
+// faces.
+pub function weights(): i32[] {
+  return [400, 600];
+}
+
+function surface(): i32 {
+  return draw.rgba(12, 16, 20, 240);
+}
+
+function border(): i32 {
+  return draw.rgba(255, 255, 255, 36);
+}
+
+function ink(): i32 {
+  return draw.rgb(230, 237, 242);
+}
+
+function muted(): i32 {
+  return draw.rgb(154, 167, 176);
+}
+
+function accent(): i32 {
+  return draw.rgb(74, 217, 255);
+}
+
+function row(): i32 {
+  return draw.rgba(255, 255, 255, 8);
+}
+
+function row_pressed(): i32 {
+  return draw.rgba(255, 255, 255, 28);
+}
+
+function row_on(): i32 {
+  return draw.rgba(74, 217, 255, 36);
+}
+
+pub const TITLE: string = "Controls";
+
+pub const INTRO: string = "Drag across the screen to push coloured dye through the fluid.";
+
+// The name of the row of `a`. The row of the pause tells what it does next.
+pub function name(m: fluid.Model, a: fluid.Action): string {
+  match (a) {
+    fluid.Pause => {
+      if (m.cfg.paused) {
+        return "Resume";
+      }
+      return "Pause";
+    },
+    fluid.Burst => {
+      return "Add a splat burst";
+    },
+    fluid.Save => {
+      return "Save this frame";
+    },
+    fluid.Kid => {
+      return "Kid mode";
+    },
+    fluid.Full => {
+      return "Full screen";
+    },
+    fluid.Bloom => {
+      return "Bloom";
+    },
+    fluid.Sunrays => {
+      return "Sun rays";
+    },
+    fluid.Colorful => {
+      return "Colour cycling";
+    }
+  }
+}
+
+pub function describe(a: fluid.Action): string {
+  match (a) {
+    fluid.Pause => {
+      return "Freeze the fluid where it is, or set it moving again.";
+    },
+    fluid.Burst => {
+      return "Throw in a handful of random coloured splashes.";
+    },
+    fluid.Save => {
+      return "Save what is on screen right now to your pictures.";
+    },
+    fluid.Kid => {
+      return "Just the fluid: no controls, the app pinned, and the screen stays awake. Hold the corner button for 3 seconds to come back.";
+    },
+    fluid.Full => {
+      return "Fill the whole display with the animation, with no system bars.";
+    },
+    fluid.Bloom => {
+      return "A soft glow around the brightest dye.";
+    },
+    fluid.Sunrays => {
+      return "Light rays streaming out from the dye.";
+    },
+    fluid.Colorful => {
+      return "Let the dye colour drift over time instead of holding still.";
+    }
+  }
+}
+
+// The row is a switch, which is on or off.
+pub function is_toggle(a: fluid.Action): boolean {
+  match (a) {
+    fluid.Full => {
+      return true;
+    },
+    fluid.Bloom => {
+      return true;
+    },
+    fluid.Sunrays => {
+      return true;
+    },
+    fluid.Colorful => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function (mt: Metrics) dp(n: f64): i32 {
+  return (n * mt.scale).round() as i32;
+}
+
+function (mt: Metrics) sp(n: f64): i32 {
+  return (n * mt.font).round() as i32;
+}
+
+// The sizes of the parts of a row, in pixels.
+struct RowSizes { pad_x: i32, pad_y: i32, name_px: i32, desc_px: i32, gap: i32, state_w: i32, text_w: i32 }
+
+function row_sizes(mt: Metrics, list_w: i32): RowSizes {
+  let pad_x = mt.dp(12.0);
+  let state_w = mt.dp(44.0);
+  return RowSizes { pad_x: pad_x, pad_y: mt.dp(10.0), name_px: mt.sp(15.0), desc_px: mt.sp(13.0), gap: mt.dp(2.0), state_w: state_w, text_w: list_w - 2 * pad_x - state_w - mt.dp(8.0) };
+}
+
+function row_height(fs: text.Fonts, mt: Metrics, s: RowSizes, a: fluid.Action): i32 {
+  let lines = text.wrap(fs, REGULAR, s.desc_px, describe(a), s.text_w).len();
+  let h = 2 * s.pad_y + text.line(fs, BOLD, s.name_px) + s.gap + lines * text.line(fs, REGULAR, s.desc_px);
+  return h.max(mt.dp(52.0));
+}
+
+function intro_px(mt: Metrics): i32 {
+  return mt.sp(15.0);
+}
+
+// The place of each control on the window of `mt`.
+pub function layout(fs: text.Fonts, mt: Metrics): fluid.Layout {
+  let edge = mt.dp(16.0);
+  let button = mt.dp(44.0);
+  let exit = mt.dp(56.0);
+  let top = mt.top + mt.dp(8.0);
+  let pad = mt.dp(20.0);
+  let panel_w = mt.dp(480.0).min(mt.width - 2 * edge);
+  let list_w = panel_w - 2 * pad;
+  let header = mt.dp(34.0);
+  let s = row_sizes(mt, list_w);
+  let intro = text.wrap(fs, REGULAR, intro_px(mt), INTRO, list_w).len() * text.line(fs, REGULAR, intro_px(mt));
+  let y = intro + mt.dp(16.0);
+  let rows: fluid.Rect[] = [];
+  for a in fluid.actions() {
+    let h = row_height(fs, mt, s, a);
+    rows = rows.append(fluid.Rect { x: 0, y: y, w: list_w, h: h });
+    y += h + mt.dp(8.0);
+  }
+  let content = y - mt.dp(8.0);
+  let room = mt.height - mt.top - mt.bottom - 2 * edge;
+  let above = pad + header + mt.dp(8.0);
+  let list_h = content.min(room - above - pad).max(0);
+  let panel_h = above + list_h + pad;
+  let panel = fluid.Rect { x: (mt.width - panel_w) / 2, y: mt.top + edge + (room - panel_h) / 2, w: panel_w, h: panel_h };
+  return fluid.Layout {
+    width: mt.width,
+    height: mt.height,
+    button: fluid.Rect { x: mt.width - edge - button, y: top, w: button, h: button },
+    exit: fluid.Rect { x: mt.width - edge - exit, y: top, w: exit, h: exit },
+    panel: panel,
+    close: fluid.Rect { x: panel.x + panel_w - pad - header, y: panel.y + pad, w: header, h: header },
+    list: fluid.Rect { x: panel.x + pad, y: panel.y + above, w: list_w, h: list_h },
+    rows: rows,
+    content: content,
+    slop: mt.dp(8.0),
+  };
+}
+
+// A frame of w by h with each pixel transparent.
+function clear_frame(w: i32, h: i32): draw.Frame {
+  let f = draw.offscreen(w, h);
+  f.store(0, 0, w, h, 0);
+  return f;
+}
+
+// A line of round dots from x0 and y0 to x1 and y1, `r` pixels thick.
+function stroke(f: draw.Frame, x0: f64, y0: f64, x1: f64, y1: f64, r: i32, color: i32): void {
+  let n = (x1 - x0).abs().max((y1 - y0).abs()).ceil() as i32;
+  for i in 0..n + 1 {
+    let t = i as f64 / (n.max(1) as f64);
+    f.disc((x0 + (x1 - x0) * t).round() as i32, (y0 + (y1 - y0) * t).round() as i32, r, color);
+  }
+}
+
+// The part of the pixel at x and y, from 0 to 1, that the box of w by h
+// with round corners of radius r covers. The box is at 0 and 0.
+function box_cover(x: i32, y: i32, w: f64, h: f64, r: f64): f64 {
+  let qx = (x as f64 + 0.5 - w / 2.0).abs() - (w / 2.0 - r);
+  let qy = (y as f64 + 0.5 - h / 2.0).abs() - (h / 2.0 - r);
+  if (qx <= 0.0 && qy <= 0.0) {
+    return (0.5 - qx.max(qy) + r).clamp01();
+  }
+  let ox = qx.max(0.0);
+  let oy = qy.max(0.0);
+  return (0.5 - ((ox * ox + oy * oy).sqrt() - r)).clamp01();
+}
+
+// One channel of the premultiplied pixel of `fill` on the part `inner` of
+// a pixel and `edge` on the part `ring` of it.
+function channel(fill: i32, edge: i32, shift: i32, inner: f64, ring: f64): i32 {
+  let fa = (fill >> 24 & 255) as f64 / 255.0;
+  let ea = (edge >> 24 & 255) as f64 / 255.0;
+  let fv = 255.0;
+  let ev = 255.0;
+  if (shift < 24) {
+    fv = (fill >> shift & 255) as f64;
+    ev = (edge >> shift & 255) as f64;
+  }
+  return ((fv * fa * inner + ev * ea * ring).round() as i32).min(255) << shift;
+}
+
+// A box with round corners of radius r at x and y, in `fill`, with an edge
+// of t pixels in `edge`. It writes its pixels with no blend, so it goes on
+// a part of a frame that is transparent.
+function boxed(f: draw.Frame, x: i32, y: i32, w: i32, h: i32, r: i32, t: i32, fill: i32, edge: i32): void {
+  for row in 0..h {
+    for col in 0..w {
+      let outer = box_cover(col, row, w as f64, h as f64, r as f64);
+      if (outer > 0.0) {
+        let inner = box_cover(col - t, row - t, (w - 2 * t) as f64, (h - 2 * t) as f64, (r - t) as f64);
+        if (col < t || row < t || col >= w - t || row >= h - t) {
+          inner = 0.0;
+        }
+        let ring = outer - inner.min(outer);
+        f.store(x + col, y + row, 1, 1, channel(fill, edge, 24, inner, ring) | channel(fill, edge, 16, inner, ring) | channel(fill, edge, 8, inner, ring) | channel(fill, edge, 0, inner, ring));
+      }
+    }
+  }
+}
+
+// The picture of the button that opens the dialog: two sliders.
+pub function button_frame(mt: Metrics, pressed: boolean): draw.Frame {
+  let size = mt.dp(44.0);
+  let f = clear_frame(size, size);
+  let fill = surface();
+  if (pressed) {
+    fill = draw.rgba(40, 52, 64, 245);
+  }
+  boxed(f, 0, 0, size, size, mt.dp(12.0), mt.dp(1.0).max(1), fill, border());
+  // The icon is 24 units wide, in the middle of the button, at 22 dp.
+  let u = mt.scale * 22.0 / 24.0;
+  let o = (size as f64 - 24.0 * u) / 2.0;
+  let r = (u.round() as i32).max(1);
+  stroke(f, o + 4.0 * u, o + 8.0 * u, o + 14.0 * u, o + 8.0 * u, r, ink());
+  stroke(f, o + 18.0 * u, o + 8.0 * u, o + 20.0 * u, o + 8.0 * u, r, ink());
+  stroke(f, o + 4.0 * u, o + 16.0 * u, o + 6.0 * u, o + 16.0 * u, r, ink());
+  stroke(f, o + 10.0 * u, o + 16.0 * u, o + 20.0 * u, o + 16.0 * u, r, ink());
+  f.disc((o + 16.0 * u).round() as i32, (o + 8.0 * u).round() as i32, (2.4 * u).round() as i32, ink());
+  f.disc((o + 8.0 * u).round() as i32, (o + 16.0 * u).round() as i32, (2.4 * u).round() as i32, ink());
+  return f;
+}
+
+// The picture of the dialog with no rows: its box, its title and its close
+// button. It has the size of the panel of `l`.
+pub function panel_frame(fs: text.Fonts, mt: Metrics, l: fluid.Layout): draw.Frame {
+  let p = l.panel;
+  let f = clear_frame(p.w, p.h);
+  boxed(f, 0, 0, p.w, p.h, mt.dp(16.0), mt.dp(1.0).max(1), surface(), border());
+  let px = mt.sp(18.0);
+  let c = l.close;
+  let base = c.y - p.y + (c.h - text.line(fs, BOLD, px)) / 2 + text.ascent(fs, BOLD, px);
+  let cache = text.text(text.new_cache(), f, fs, BOLD, px, 0, l.list.x - p.x, base, TITLE, ink());
+  let cx = (c.x - p.x) as f64 + c.w as f64 / 2.0;
+  let cy = (c.y - p.y) as f64 + c.h as f64 / 2.0;
+  let arm = mt.scale * 6.0;
+  let r = (mt.scale.round() as i32).max(1);
+  stroke(f, cx - arm, cy - arm, cx + arm, cy + arm, r, muted());
+  stroke(f, cx + arm, cy - arm, cx - arm, cy + arm, r, muted());
+  return f;
+}
+
+// The picture of what scrolls in the dialog: the first lines and each row.
+// It is as wide as the list of `l`, and `l.content` pixels high. A row
+// that is on has the accent colour, and the row `pressed` is lighter.
+pub function list_frame(fs: text.Fonts, mt: Metrics, l: fluid.Layout, m: fluid.Model, pressed: i32): draw.Frame {
+  let f = clear_frame(l.list.w, l.content);
+  let cache = text.new_cache();
+  let ipx = intro_px(mt);
+  let y = text.ascent(fs, REGULAR, ipx);
+  for line in text.wrap(fs, REGULAR, ipx, INTRO, l.list.w) {
+    cache = text.text(cache, f, fs, REGULAR, ipx, 0, 0, y, line, muted());
+    y += text.line(fs, REGULAR, ipx);
+  }
+  let s = row_sizes(mt, l.list.w);
+  let all = fluid.actions();
+  for i in 0..all.len() {
+    let a = all[i];
+    let r = l.rows[i];
+    let on = is_toggle(a) && m.is_on(a);
+    let fill = row();
+    let edge = border();
+    if (on) {
+      fill = row_on();
+      edge = accent();
+    }
+    if (i == pressed) {
+      fill = row_pressed();
+    }
+    boxed(f, r.x, r.y, r.w, r.h, mt.dp(10.0), mt.dp(1.0).max(1), fill, edge);
+    let lines = text.wrap(fs, REGULAR, s.desc_px, describe(a), s.text_w);
+    let name_h = text.line(fs, BOLD, s.name_px);
+    let desc_h = text.line(fs, REGULAR, s.desc_px);
+    let block = name_h + s.gap + lines.len() * desc_h;
+    let ty = r.y + (r.h - block) / 2;
+    cache = text.text(cache, f, fs, BOLD, s.name_px, 0, r.x + s.pad_x, ty + text.ascent(fs, BOLD, s.name_px), name(m, a), ink());
+    ty += name_h + s.gap;
+    for line in lines {
+      cache = text.text(cache, f, fs, REGULAR, s.desc_px, 0, r.x + s.pad_x, ty + text.ascent(fs, REGULAR, s.desc_px), line, muted());
+      ty += desc_h;
+    }
+    if (is_toggle(a)) {
+      let word = "Off";
+      let ink = muted();
+      if (on) {
+        word = "On";
+        ink = accent();
+      }
+      let wx = r.x + r.w - s.pad_x - text.width(fs, BOLD, s.desc_px, word);
+      cache = text.text(cache, f, fs, BOLD, s.desc_px, 0, wx, r.y + (r.h - desc_h) / 2 + text.ascent(fs, BOLD, s.desc_px), word, ink);
+    }
+  }
+  return f;
+}
+
+// The picture of the exit button of kid mode: a ring, a dot in its middle,
+// and the part `part` of the ring in the accent colour, from the top and to
+// the right. `part` is the part of the hold that is done, from 0 to 1.
+pub function exit_frame(mt: Metrics, part: f64): draw.Frame {
+  let size = mt.dp(56.0);
+  let f = clear_frame(size, size);
+  let c = size / 2;
+  let r = mt.dp(18.0);
+  f.ring(c, c, r + mt.dp(1.0), mt.dp(2.0).max(1), draw.with_alpha(ink(), 90));
+  f.disc(c, c, mt.dp(3.0), ink());
+  if (part <= 0.0) {
+    return f;
+  }
+  let outer = r as f64 + mt.scale * 1.5;
+  let inner = r as f64 - mt.scale * 1.5;
+  let mid = size as f64 / 2.0;
+  for y in 0..size {
+    for x in 0..size {
+      let dx = x as f64 + 0.5 - mid;
+      let dy = y as f64 + 0.5 - mid;
+      let d = (dx * dx + dy * dy).sqrt();
+      let band = (outer - d + 0.5).clamp01() - (inner - d + 0.5).clamp01();
+      if (band > 0.0) {
+        // The turn from the top, to the right, from 0 to 1.
+        let turn = dx.atan2(0.0 - dy) / 6.283185307179586;
+        if (turn < 0.0) {
+          turn += 1.0;
+        }
+        if (turn <= part) {
+          f.cover(x, y, accent(), (band * 255.0) as i32);
+        }
+      }
+    }
+  }
+  return f;
+}
+
+// The picture of a note: `note` in a box, as wide as the text needs.
+pub function note_frame(fs: text.Fonts, mt: Metrics, note: string): draw.Frame {
+  let px = mt.sp(13.0);
+  let pad_x = mt.dp(14.0);
+  let pad_y = mt.dp(10.0);
+  let room = mt.dp(448.0).min(mt.width - mt.dp(32.0)) - 2 * pad_x;
+  let lines = text.wrap(fs, REGULAR, px, note, room);
+  let wide = 0;
+  for line in lines {
+    wide = wide.max(text.width(fs, REGULAR, px, line));
+  }
+  let line_h = text.line(fs, REGULAR, px);
+  let w = wide + 2 * pad_x;
+  let h = lines.len() * line_h + 2 * pad_y;
+  let f = clear_frame(w, h);
+  boxed(f, 0, 0, w, h, mt.dp(10.0), mt.dp(1.0).max(1), surface(), border());
+  let cache = text.new_cache();
+  let y = pad_y + text.ascent(fs, REGULAR, px);
+  for line in lines {
+    cache = text.text(cache, f, fs, REGULAR, px, 0, (w - text.width(fs, REGULAR, px, line)) / 2, y, line, muted());
+    y += line_h;
+  }
+  return f;
+}
+
+// The id of the item of the fluid in the tree of the accessibility service,
+// the ids of the buttons, and the id of the first row of the dialog.
+pub const ITEM_FLUID: i32 = 0;
+
+pub const ITEM_BUTTON: i32 = 1;
+
+pub const ITEM_EXIT: i32 = 2;
+
+pub const ITEM_CLOSE: i32 = 3;
+
+pub const ITEM_ROW: i32 = 10;
+
+// What an accessibility service, such as TalkBack, reads on the screen of
+// `m` at `now_ms`, and the items that take a click.
+pub function items(m: fluid.Model, now_ms: i64): android.AccessItem[] {
+  let l = m.layout;
+  if (m.kid) {
+    let e = l.exit;
+    let out = [android.AccessItem { id: ITEM_EXIT, x: e.x, y: e.y, w: e.w, h: e.h, text: "Leave kid mode", actions: android.ACCESS_CLICK }];
+    let note = m.note_at(now_ms);
+    if (note.len() > 0) {
+      out = out.append(android.AccessItem { id: ITEM_FLUID, x: 0, y: l.height / 2, w: l.width, h: l.height / 2, text: note, actions: 0 });
+    }
+    return out;
+  }
+  if (!m.open) {
+    let b = l.button;
+    return [
+      android.AccessItem { id: ITEM_FLUID, x: 0, y: b.y + b.h, w: l.width, h: l.height - b.y - b.h, text: "An animated fluid simulation that swirls coloured dye where a finger drags.", actions: 0 },
+      android.AccessItem { id: ITEM_BUTTON, x: b.x, y: b.y, w: b.w, h: b.h, text: "Controls", actions: android.ACCESS_CLICK },
+    ];
+  }
+  let c = l.close;
+  let out = [android.AccessItem { id: ITEM_CLOSE, x: c.x, y: c.y, w: c.w, h: c.h, text: "Close controls", actions: android.ACCESS_CLICK }];
+  let all = fluid.actions();
+  for i in 0..all.len() {
+    let a = all[i];
+    let r = l.rows[i];
+    let top = (l.list.y + r.y - m.scroll).max(l.list.y);
+    let bottom = (l.list.y + r.y - m.scroll + r.h).min(l.list.y + l.list.h);
+    if (bottom > top) {
+      let say = name(m, a) + ". " + describe(a);
+      if (is_toggle(a)) {
+        if (m.is_on(a)) {
+          say = name(m, a) + ", on. " + describe(a);
+        } else {
+          say = name(m, a) + ", off. " + describe(a);
+        }
+      }
+      out = out.append(android.AccessItem { id: ITEM_ROW + i, x: l.list.x, y: top, w: r.w, h: bottom - top, text: say, actions: android.ACCESS_CLICK });
+    }
+  }
+  return out;
+}

@@ -8,7 +8,7 @@ A file is one or more frames. A frame of LZ4 starts with the magic number 0x184D
 
 ## Contracts
 
-`decode` gives the bytes before the first error, and the error. `decompress` gives the bytes, or the error. The module does not check the checksums of the frames.
+`decode` gives the bytes before the first error, and the error. `decompress` gives the bytes, or the error. `decode_with_limit` and `decompress_with_limit` refuse output above a limit of bytes: a caller that reads data from a stranger gives one. The module does not check the checksums of the frames.
 
 ## Executable example
 
@@ -46,8 +46,9 @@ import "core/cmp";
 import "core/error";
 
 // The errors of LZ4 data: an unknown magic number, a descriptor that is not
-// valid, a block that is not valid, or data that ends early.
-pub enum Lz4Error { NotLz4, BadFrame, BadBlock, Truncated }
+// valid, a block that is not valid, data that ends early, or output above
+// the limit of the caller.
+pub enum Lz4Error { NotLz4, BadFrame, BadBlock, Truncated, OutputLimit }
 
 pub function (e: Lz4Error) message(): string {
   return match (e) {
@@ -55,6 +56,7 @@ pub function (e: Lz4Error) message(): string {
     BadFrame => "frame descriptor is not valid",
     BadBlock => "corrupted block detected",
     Truncated => "unexpected end of input",
+    OutputLimit => "the output is larger than the limit",
   };
 }
 
@@ -76,7 +78,13 @@ pub struct Decoded { out: u8[], error: Option[Lz4Error] }
 <<frames>>=
 // decompress gives the bytes of LZ4 frames, or the error.
 pub function decompress(input: [u8]): Result[u8[], Lz4Error] {
-  let d = decode(input);
+  return decompress_with_limit(input, 2147483647);
+}
+
+// decompress_with_limit gives the bytes of LZ4 frames, or the error. It
+// refuses output above `limit` bytes.
+pub function decompress_with_limit(input: [u8], limit: i32): Result[u8[], Lz4Error] {
+  let d = decode_with_limit(input, limit);
   return match (d.error) {
     Some(e) => Err(e),
     None => Ok(d.out),
@@ -90,6 +98,12 @@ function __lz4_le(b: [u8], at: i32): i64 {
 // decode gives the bytes of the frames of `input` before the first error,
 // and the error.
 pub function decode(input: [u8]): Decoded {
+  return decode_with_limit(input, 2147483647);
+}
+
+// decode_with_limit gives the bytes that `decode` gives, up to `limit`
+// bytes. Output above the limit is the error `OutputLimit`.
+pub function decode_with_limit(input: [u8], limit: i32): Decoded {
   let out: u8[] = [];
   let at = 0;
   while (at < input.len()) {
@@ -98,15 +112,18 @@ pub function decode(input: [u8]): Decoded {
     }
     let magic = __lz4_le(input, at);
     let r = if (magic == 407708164i64) {
-      __lz4_frame(input, at + 4, out)
+      __lz4_frame(input, at + 4, out, limit)
     } else if (magic == 407642370i64) {
-      __lz4_legacy(input, at + 4, out)
+      __lz4_legacy(input, at + 4, out, limit)
     } else if ((magic & 4294967280i64) == 407710288i64) {
       __lz4_skip(input, at + 4, out)
     } else {
       __Lz4Run { out: out, at: -1, error: if (at == 0) { NotLz4 } else { BadFrame } }
     };
     out = r.out;
+    if (out.len() > limit) {
+      return Decoded { out: out.truncate(limit), error: Some(OutputLimit) };
+    }
     if (r.at < 0) {
       return Decoded { out: out, error: Some(r.error) };
     }
@@ -134,7 +151,7 @@ function __lz4_skip(input: [u8], at: i32, own out: u8[]): __Lz4Run {
 }
 
 // A frame from its descriptor at `at`.
-function __lz4_frame(input: [u8], at: i32, own out: u8[]): __Lz4Run {
+function __lz4_frame(input: [u8], at: i32, own out: u8[], limit: i32): __Lz4Run {
   if (at + 3 > input.len()) {
     return __Lz4Run { out: out, at: -1, error: Truncated };
   }
@@ -151,7 +168,7 @@ function __lz4_frame(input: [u8], at: i32, own out: u8[]): __Lz4Run {
     if (size == 0i64) {
       break;
     }
-    let r = __lz4_data(input, pos + 4, size, out);
+    let r = __lz4_data(input, pos + 4, size, out, limit);
     out = r.out;
     if (r.at < 0) {
       return r;
@@ -164,17 +181,17 @@ function __lz4_frame(input: [u8], at: i32, own out: u8[]): __Lz4Run {
 
 // The data of a block of `size` at `at`: stored when the high bit of the
 // size is set, else compressed.
-function __lz4_data(input: [u8], at: i32, size: i64, own out: u8[]): __Lz4Run {
+function __lz4_data(input: [u8], at: i32, size: i64, own out: u8[], limit: i32): __Lz4Run {
   let n = (size & 2147483647i64) as i32;
-  if (at + n > input.len()) {
+  if (n > input.len() - at) {
     return __Lz4Run { out: out, at: -1, error: Truncated };
   }
-  return if (size >= 2147483648i64) { __lz4_stored(input, at, n, out) } else { __lz4_block(input, at, at + n, out) };
+  return if (size >= 2147483648i64) { __lz4_stored(input, at, n, out) } else { __lz4_block(input, at, at + n, out, limit) };
 }
 
 // A legacy frame from its first block at `at`: blocks of compressed data,
 // each after its size, up to the next magic number or the end.
-function __lz4_legacy(input: [u8], at: i32, own out: u8[]): __Lz4Run {
+function __lz4_legacy(input: [u8], at: i32, own out: u8[], limit: i32): __Lz4Run {
   let pos = at;
   while (pos + 4 <= input.len()) {
     let size = __lz4_le(input, pos);
@@ -184,7 +201,7 @@ function __lz4_legacy(input: [u8], at: i32, own out: u8[]): __Lz4Run {
     if (pos as i64 + 4i64 + size > input.len() as i64) {
       return __Lz4Run { out: out, at: -1, error: Truncated };
     }
-    let r = __lz4_block(input, pos + 4, pos + 4 + size as i32, out);
+    let r = __lz4_block(input, pos + 4, pos + 4 + size as i32, out, limit);
     out = r.out;
     if (r.at < 0) {
       return r;
@@ -208,13 +225,14 @@ A sequence of a block is a token, the literals, and a copy. The high four bits o
 
 ```fern
 <<blocks>>=
-// The compressed block from `at` to `end`.
-function __lz4_block(input: [u8], at: i32, end: i32, own out: u8[]): __Lz4Run {
+// The compressed block from `at` to `end`. It stops after the output is
+// above `limit`.
+function __lz4_block(input: [u8], at: i32, end: i32, own out: u8[], limit: i32): __Lz4Run {
   let pos = at;
-  while (pos < end) {
+  while (pos < end && out.len() <= limit) {
     let token = input[pos] as i32;
     let (lits, p) = __lz4_count(input, pos + 1, end, token >> 4);
-    if (p < 0 || p + lits > end) {
+    if (p < 0 || lits > end - p) {
       return __Lz4Run { out: out, at: -1, error: BadBlock };
     }
     for k in 0..lits {
@@ -224,7 +242,7 @@ function __lz4_block(input: [u8], at: i32, end: i32, own out: u8[]): __Lz4Run {
     if (pos == end) {
       break;
     }
-    let r = __lz4_copy(input, pos, end, token, out);
+    let r = __lz4_copy(input, pos, end, token, out, limit);
     out = r.out;
     if (r.at < 0) {
       return r;
@@ -235,7 +253,7 @@ function __lz4_block(input: [u8], at: i32, end: i32, own out: u8[]): __Lz4Run {
 }
 
 // The copy of a sequence from its distance at `pos`.
-function __lz4_copy(input: [u8], pos: i32, end: i32, token: i32, own out: u8[]): __Lz4Run {
+function __lz4_copy(input: [u8], pos: i32, end: i32, token: i32, own out: u8[], limit: i32): __Lz4Run {
   if (pos + 2 > end) {
     return __Lz4Run { out: out, at: -1, error: BadBlock };
   }
@@ -245,8 +263,10 @@ function __lz4_copy(input: [u8], pos: i32, end: i32, token: i32, own out: u8[]):
     return __Lz4Run { out: out, at: -1, error: BadBlock };
   }
   let from = out.len() - dist;
-  for k in 0..len + 4 {
+  let k = 0;
+  while (k < len + 4 && out.len() <= limit) {
     out = out.append(out[from + k]);
+    k += 1;
   }
   return __Lz4Run { out: out, at: q, error: BadBlock };
 }
@@ -267,6 +287,9 @@ function __lz4_count(input: [u8], at: i32, end: i32, n: i32): (i32, i32) {
     let b = input[pos] as i32;
     count += b;
     pos += 1;
+    if (count < 0) {
+      return (0, -1);
+    }
     if (b != 255) {
       return (count, pos);
     }

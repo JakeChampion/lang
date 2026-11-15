@@ -3,9 +3,11 @@ import "./astwalk";
 import "./parser";
 import "./util";
 import "./asmcore";
+import "./checker";
 import "./rtmodule";
 
-struct Ctx { files: string[], entry: string }
+// exits: the calls of the function being covered that end the process.
+struct Ctx { files: string[], entry: string, exits: checker.ExitCalls }
 
 struct Tab { keys: string[], head: i32[], next: i32[] }
 
@@ -13,10 +15,9 @@ pub function instrument(mod: parser.Module, files: string[], entry: string): par
   let m = asmcore.synth_script_main(mod);
   let ret = main_ret(m);
   let wrap = ret == "i32" || ret == "" || ret == "void";
-  let ctx = Ctx { files: files, entry: entry };
   let marked: parser.FuncDecl[] = [];
   for f in m.funcs {
-    let body = cover_stmts(f.body, ctx, true);
+    let body = cover_stmts(f.body, Ctx { files: files, entry: entry, exits: checker.builtin_exit_calls(m, f) }, true);
     if (wrap && f.name == "main" && f.receiver_type == "") {
       marked = marked.append(parser.FuncDecl { ...f, name: "__fern_cov_main", body: body });
     } else {
@@ -174,7 +175,7 @@ function cover_stmts(stmts: ast.Stmt[], c: Ctx, exprs: boolean): ast.Stmt[] {
       out = out.append(hit_stmt(line_key(c, line)));
       last = line;
     }
-    if (is_exit(st)) {
+    if (is_exit(st, c)) {
       out = out.append(report_stmt());
     }
     out = out.append(cover_stmt(st, c, exprs));
@@ -214,9 +215,9 @@ function transfers(st: ast.Stmt): boolean {
   }
 }
 
-function is_exit(st: ast.Stmt): boolean {
+function is_exit(st: ast.Stmt, c: Ctx): boolean {
   if let ast.StmtExpr(x) = st {
-    return parser.calls_exit(x.value, false);
+    return c.exits.has(x.value);
   }
   return false;
 }

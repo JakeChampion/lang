@@ -73,7 +73,7 @@ function report_diags(diags: util.Diag[], files: string[]): boolean {
 }
 
 function check(merged: parser.Module, files: string[], target: string, target_given: boolean): i32 {
-  if (report_diags(asmcore.parse_errors_before_check(merged), files)) {
+  if (report_diags(asmcore.parse_errors(merged), files)) {
     return 1;
   }
   let diags = checker.check_module(merged).diags;

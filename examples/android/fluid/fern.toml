@@ -1,0 +1,11 @@
+# The settings of `fern -apk` for Fluid. Build it with
+#   fern -apk fluid.apk examples/android/fluid/app.fern
+[package]
+name = "fluid"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.fluid"
+label = "Fluid"
+icon = "icon.png"
+min_sdk = 29

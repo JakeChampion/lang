@@ -1,0 +1,18 @@
+struct W[T] { v: T }
+
+function g[T](x: T, n: i32): i32 {
+  if (n == 0) {
+    return 0;
+  }
+  return g(x, n - 1) + 1;
+}
+
+function h[T](x: T): W[W[W[T]]] {
+  return W[W[W[T]]] { v: W[W[T]] { v: W[T] { v: x } } };
+}
+
+function main(): i32 {
+  let w = h(h(1));
+  print(g(w, 3));
+  return 0;
+}
