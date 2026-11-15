@@ -189,6 +189,9 @@ goes down to `n` at the end.
 ```fern
 <<6 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError]>>=
 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
+  if (from < 0) {
+    return Err(Malformed("an offset below zero"));
+  }
   let out = history;
   let n = history.len();
   if (n == 0) {
@@ -1212,6 +1215,9 @@ pub function gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated,
 }
 
 function __gzip_header(input: [u8], from: i32): Result[i32, InflateError] {
+  if (from < 0) {
+    return Err(BadHeader("an offset below zero"));
+  }
   if (from + 2 > input.len()) {
     return Err(Truncated);
   }

@@ -213,7 +213,7 @@ pub function no_sound(): Sound {
 // player holds of the device before Android destroys the activity, or
 // keep the playlists for the next start, or write a playlist as an M3U
 // file, or keep the settings.
-pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs, KeepPlace, WriteTags(i32), ToBack }
+pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), KeepLists, WriteList(string), KeepPrefs, KeepPlace, WriteTags(i32), ToBack }
 
 // `fresh` tells that the player did not look for its files yet: it looks
 // at its first Beat, after the screen shows.
@@ -260,8 +260,7 @@ pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, Li
 // is the picture of the track that plays, at the size of its screen.
 // `lyrics` has the lines of the lyrics of that track, and `sung` tells
 // that the screen of the track shows them. `more` tells that the screen
-// of the track shows the speed and the pitch. `gone` tells that the
-// player gave back what it holds of Android.
+// of the track shows the speed and the pitch.
 // `have` has the path of each track. While the player goes through its
 // directories, `walking` is true, `seen` has each path that it found and
 // `listed` has each directory that it read. `dirty` tells that the library
@@ -335,7 +334,6 @@ pub struct Model {
   lyrics: Line[],
   sung: boolean,
   more: boolean,
-  gone: boolean,
   have: Map[string, boolean],
   seen: Map[string, boolean],
   listed: Map[string, boolean],
@@ -351,7 +349,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: false, fade_s: 0, gain: no_gain(), editing: -1, draft: draft_of(plain("", "", "", 0i64)), asking: -1, tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, more: false, gone: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: false, fade_s: 0, gain: no_gain(), editing: -1, draft: draft_of(plain("", "", "", 0i64)), asking: -1, tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, more: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
@@ -2317,12 +2315,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return shifted(m, from, to);
     },
     Closing => {
-      // A track that plays goes on with no window, and the app closes when
-      // it stops.
-      if (m.playing) {
-        return Model { ...m, wants: m.wants.append(KeepPlace) };
-      }
-      return Model { ...m, wants: m.wants.append(KeepPlace).append(Quit) };
+      return Model { ...m, wants: m.wants.append(KeepPlace) };
     },
     Restore(p) => {
       return restored(m, p);

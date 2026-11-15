@@ -1903,6 +1903,9 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
   return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
 }
 
+// The mark of a call that `ssa.inline_release` reads.
+const BOX_RELEASE: i32 = 7;
+
 function call_mark(op: ir.Op): i32 {
   if (op.i64_imm == 4 && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")) {
     return 4;
@@ -1921,6 +1924,9 @@ function call_mark(op: ir.Op): i32 {
   }
   if (ir.is_lane_call(op)) {
     return 6;
+  }
+  if (ir.is_box_release(op)) {
+    return BOX_RELEASE;
   }
   return 0;
 }

@@ -211,7 +211,7 @@ function __format_apply_spec(s: string, spec: string): string {
   if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
     val = "+" + val;
   }
-  let vlen = val.len();
+  let vlen = val.codepoint_count();
   if (vlen >= width) {
     return val;
   }

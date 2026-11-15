@@ -811,7 +811,8 @@ function drop_children(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, 
 
 function drop_value(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
   if (outlined_release(t, f)) {
-    return helper(r, slot, release_helper_name(t));
+    r = helper(r, slot, release_helper_name(t));
+    return if (ssasem.box_shape(t) && ssasem.counted(f, t)) { mark_release(r, ir.box_release) } else { r };
   }
   return drop_value_inline(r, slot, t, scratch, f);
 }
@@ -909,12 +910,48 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   return false;
 }
 
+// The count of the next node is read before the other fields drop, so the
+// read of its header does not wait for them.
+function chain_link(own r: irtables.LowerState, tail: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(1));
+  r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
+  r = emit(r, ir.op_store_local(3));
+  r = emit(r, ir.op_load_local(3));
+  r = emit(r, aligned_unique());
+  return emit(r, ir.op_store_local(4));
+}
+
+function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let tail = self_tail_field(v, t);
+  let linked = tail >= 0 && semtypes.equal(v.fields[tail].ty, t);
+  if (linked) {
+    r = chain_link(r, tail);
+  }
+  for i in 0..v.fields.len() {
+    if (ssasem.counted(f, v.fields[i].ty) && !(linked && i == tail)) {
+      r = emit(r, ir.op_load_local(1));
+      r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
+      r = emit(r, ir.op_store_local(5));
+      if (i == tail) {
+        r = drop_tail_array(r, t, v.fields[i].ty, f);
+      } else if (semtypes.equal(v.fields[i].ty, t)) {
+        // A call of the release helper here makes two calls for each level, and the return predictor holds few levels.
+        r = drop_value_inline(r, 5, t, 6, f);
+      } else {
+        r = drop_value(r, 5, v.fields[i].ty, 6, f);
+      }
+    }
+  }
+  return r;
+}
+
 function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
   let node = 1;
   let first = 2;
   let next = 3;
-  r = reserve(r, 5);
+  let unique = 4;
+  r = reserve(r, 6);
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_store_local(node));
   r = emit(r, ir.op_const_i32(1));
@@ -923,31 +960,18 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_loop(0));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(next));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(unique));
   let open = 0;
   for v in e.variants {
     if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f)) {
       continue;
     }
-    let tail = self_tail_field(v, t);
     r = else_if_open(r, open);
     r = emit(r, ir.op_load_local(node));
     r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
     r = emit(r, ir.op_if(0));
-    for i in 0..v.fields.len() {
-      if (ssasem.counted(f, v.fields[i].ty)) {
-        r = emit(r, ir.op_load_local(node));
-        r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
-        if (i == tail && !semtypes.equal(v.fields[i].ty, t)) {
-          r = emit(r, ir.op_store_local(4));
-          r = drop_tail_array(r, t, v.fields[i].ty, f);
-        } else if (i == tail) {
-          r = emit(r, ir.op_store_local(next));
-        } else {
-          r = emit(r, ir.op_store_local(4));
-          r = drop_value(r, 4, v.fields[i].ty, 5, f);
-        }
-      }
-    }
+    r = drop_chain_fields(r, v, t, f);
     open += 1;
   }
   r = close_ifs(r, open);
@@ -963,8 +987,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
   r = emit(r, ir.op_brif(1));
-  r = emit(r, ir.op_load_local(next));
-  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_load_local(unique));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
   r = release(r, next, t, f);
@@ -978,46 +1001,49 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
 }
 
 function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  r = reserve(r, 8);
-  r = emit(r, ir.op_load_local(4));
+  r = reserve(r, 9);
+  r = emit(r, ir.op_load_local(5));
   r = emit(r, aligned_unique());
   r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_load_local(4));
+  r = emit(r, ir.op_load_local(5));
   r = emit(r, ir.op_arr_len());
-  r = emit(r, ir.op_store_local(6));
-  r = emit(r, ir.op_load_local(6));
+  r = emit(r, ir.op_store_local(7));
+  r = emit(r, ir.op_load_local(7));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("gt_s", 0, false));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(5));
+  r = emit(r, ir.op_store_local(6));
   r = emit(r, ir.op_block(0));
   r = emit(r, ir.op_loop(0));
-  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.op_const_i32(1));
   r = emit(r, ir.op_bin("add", 0, false));
-  r = emit(r, ir.op_load_local(6));
+  r = emit(r, ir.op_load_local(7));
   r = emit(r, ir.op_bin("ge_s", 0, false));
   r = emit(r, ir.op_brif(1));
-  r = emit(r, ir.op_load_local(4));
   r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
-  r = emit(r, ir.op_store_local(7));
-  r = drop_value(r, 7, elem, 8, f);
-  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_store_local(8));
+  r = drop_value(r, 8, elem, 9, f);
+  r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.op_const_i32(1));
   r = emit(r, ir.op_bin("add", 0, false));
-  r = emit(r, ir.op_store_local(5));
+  r = emit(r, ir.op_store_local(6));
   r = emit(r, ir.op_br(0));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
-  r = emit(r, ir.op_load_local(4));
   r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(3));
+  r = emit(r, ir.op_load_local(3));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_store_local(4));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
-  return release(r, 4, array, f);
+  return release(r, 5, array, f);
 }
 
 function drop_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
@@ -6550,6 +6576,36 @@ function unsigned_narrow_site(own r: irtables.LowerState, ins: ssa.SInst, w: i32
   return emit(r, ir.op_lane("vinarrowu", w));
 }
 
+// The 16 bytes of an `of` whose arguments are all constants, as four words
+// of 32 bits. The first argument is the low lane. The result is empty when
+// an argument is not a constant. A value of four words takes at most four
+// steps to make, where a value of 16 lanes takes 16.
+function constant_lane_words(f: ssasem.Func, ins: ssa.SInst, w: i32): i32[] {
+  let per = 32 / w;
+  let words: i32[] = [];
+  let word = 0i64;
+  for k in 0..ins.args.len() {
+    let d = defining(f, ins.args[k]);
+    if (d.kind_tag != ssa.CONST_INT) {
+      return [];
+    }
+    // A constant of type u32 has its text and no number.
+    let lane = d.imm as i64;
+    if (ssasem.is_u32(f.values[ins.args[k]])) {
+      lane = util.lit_to_i64(d.str);
+    }
+    word = word | (lane & (1i64 << w as i64) - 1i64) << (k % per * w) as i64;
+    if (k % per == per - 1) {
+      if (word >= 2147483648i64) {
+        word -= 4294967296i64;
+      }
+      words = words.append(word as i32);
+      word = 0i64;
+    }
+  }
+  return words;
+}
+
 // A builtin of an integer lane type. Its arguments are on the stack.
 function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, verb: string): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
@@ -6561,6 +6617,18 @@ function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.
   if (verb == "of") {
     for a in ins.args {
       r = emit(r, ir.op_drop());
+    }
+    let words = constant_lane_words(f, ins, w);
+    if (words.len() == 4) {
+      r = emit(r, ir.op_const_i32(words[0]));
+      r = emit(r, ir.op_lane("visplat", 32));
+      for k in 1..4 {
+        if (words[k] != words[0]) {
+          r = emit(r, ir.op_const_i32(words[k]));
+          r = emit(r, ir.op_lane_at("vireplace", 32, k));
+        }
+      }
+      return r;
     }
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_lane("visplat", w));

@@ -18,6 +18,28 @@ class VideoScreenTests(unittest.TestCase):
         self.assertLess(old, 12)
         self.assertGreaterEqual(check.video_colors(width, height, pixels), 12)
 
+    def pattern(self, filters):
+        width, height = 320, 640
+        pixels = subprocess.run([
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+            "testsrc=size=320x240:rate=25", "-vf", filters,
+            "-frames:v", "1", "-pix_fmt", "rgba", "-f", "rawvideo", "-",
+        ], check=True, capture_output=True, timeout=30).stdout
+        self.assertEqual(len(pixels), width * height * 4)
+        return check.frame_fault(width, height, pixels)
+
+    def test_letterboxed_upright_pattern_passes(self):
+        self.assertEqual(self.pattern("pad=320:640:0:200:black"), "")
+
+    def test_upside_down_pattern_fails(self):
+        self.assertIn("upside down", self.pattern("vflip,pad=320:640:0:200:black"))
+
+    def test_stretched_pattern_fails(self):
+        self.assertIn("not 4:3", self.pattern("scale=320:640"))
+
+    def test_black_screen_fails(self):
+        self.assertEqual(check.frame_fault(320, 640, bytes((0, 0, 0, 255)) * 320 * 640), "the screen is black")
+
     def test_blank_solid_and_poster_screens_fail(self):
         width, height = 320, 640
         for color in ((0, 0, 0, 255), (255, 255, 255, 255), (*check.POSTER, 255)):
