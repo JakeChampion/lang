@@ -1,0 +1,21 @@
+// spec: AB-16
+// A lane store writes 16 bytes. The store at the last index that holds 16
+// bytes writes them, and the store at a negative index aborts.
+
+import "std/i32";
+import "std/simd";
+
+@noinline
+function stored(at: i32): i32 {
+    let src: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    let o: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let p: u8[] = simd.with_u8x16(o, at, simd.load_u8x16(src, 0));
+    return (p[0] as i32) * 10000 + (p[2] as i32) * 100 + (p[17] as i32);
+}
+
+function main(): i32 {
+    print(stored(0).to_string());
+    print(stored(2).to_string());
+    print(stored(0 - 1).to_string());
+    return 0;
+}

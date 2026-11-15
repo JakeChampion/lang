@@ -2153,6 +2153,65 @@ function work(o: Option[Pack]): i32 {
 }`)
 }
 
+func TestOwnGuardFieldReadOfAnOwnedForEachElement(t *testing.T) {
+	wantOK(t, "field-in-a-local", payloadPrelude+`
+function work(own ps: Pack[]): i32 {
+    let n: i32 = 0;
+    for p in ps {
+        let f = p.file;
+        n = n + f.close();
+    }
+    return n;
+}`)
+	wantOK(t, "another-field-read-later", payloadPrelude+`
+function work(own ps: Pack[]): i32 {
+    let n: i32 = 0;
+    for p in ps {
+        let f = p.file;
+        n = n + f.close() + p.path.len();
+    }
+    return n;
+}`)
+	wantE051(t, "borrowed-array", payloadPrelude+`
+function work(ps: Pack[]): i32 {
+    let n: i32 = 0;
+    for p in ps {
+        let f = p.file;
+        n = n + f.close();
+    }
+    return n;
+}`)
+	wantE051(t, "field-read-two-times", payloadPrelude+`
+function work(own ps: Pack[]): i32 {
+    let n: i32 = 0;
+    for p in ps {
+        let f = p.file;
+        n = n + f.close() + p.file.fd;
+    }
+    return n;
+}`)
+	wantE051(t, "local-read-after-its-close", payloadPrelude+`
+function work(own ps: Pack[]): i32 {
+    let n: i32 = 0;
+    for p in ps {
+        let f = p.file;
+        n = n + f.close() + f.fd;
+    }
+    return n;
+}`)
+	wantE051(t, "closed-in-an-inner-loop", payloadPrelude+`
+function work(own ps: Pack[]): i32 {
+    let n: i32 = 0;
+    for p in ps {
+        let f = p.file;
+        for i in [1, 2] {
+            n = n + i + f.close();
+        }
+    }
+    return n;
+}`)
+}
+
 func TestOwnGuardForEachOverAnOwnedArray(t *testing.T) {
 	wantOK(t, "fresh-local-array-at-its-last-use", payloadPrelude+`
 function work(): i32 {

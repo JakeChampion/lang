@@ -11,6 +11,8 @@ import (
 // Node has a colour, a key of 32 bits and a boolean, and Mixed has a byte, a
 // boolean, a colour and a u32. The program reads each field, changes one of
 // them, joins the fields of two boxes, and keeps a box that it also changes.
+// bump and late write a colour in an arm that tested the colour of the node:
+// the colour of the arm, another colour, and a colour after the inner match.
 const packedFieldsProg = `enum Color { Red, Black }
 
 enum Tree { Leaf, Node(Color, Tree, i32, boolean, Tree) }
@@ -73,6 +75,40 @@ enum Wide { Plain(i64), Mixed(u8, i64, boolean, u32, Color) }
   }
 }
 
+@noinline function bump(t: Tree): Tree {
+  match (t) {
+    Node(Red(), l, k, v, r) => {
+      return Node(Red, l, k + 1, v, r);
+    },
+    Node(Black(), l, k, v, r) => {
+      return Node(Red, l, k, v, r);
+    },
+    Leaf => {
+      return t;
+    },
+  }
+}
+
+@noinline function late(t: Tree): Tree {
+  match (t) {
+    Node(c, l, k, v, r) => {
+      let m = 0;
+      match (c) {
+        Red => {
+          m = 1;
+        },
+        Black => {
+          m = 2;
+        },
+      }
+      return Node(Red, l, k + m, v, r);
+    },
+    Leaf => {
+      return t;
+    },
+  }
+}
+
 @noinline function mixed(a: u8, b: i64, c: boolean, d: u32, e: Color): Wide {
   return Mixed(a, b, c, d, e);
 }
@@ -120,6 +156,17 @@ function main(): i32 {
   let constant = Node(Black, Leaf, 12, true, Leaf);
   if (code(constant) != 262) {
     return 9;
+  }
+  if (code(bump(mk(Red, 7, true))) != 158 || code(bump(mk(Black, 7, false))) != 107) {
+    return 10;
+  }
+  if (code(late(mk(Black, 7, true))) != 159 || code(late(mk(Red, 7, false))) != 108) {
+    return 11;
+  }
+  let held = mk(Black, 3, true);
+  let red = bump(held);
+  if (code(held) != 253 || code(red) != 153) {
+    return 12;
   }
   return 0;
 }

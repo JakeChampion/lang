@@ -2473,6 +2473,11 @@ function list_escape(b: i32): string {
   };
 }
 
+// A C char is unsigned on arm64 Linux and Android, and signed on the other targets.
+function char_is_signed(): boolean {
+  return target_arch() != "arm64" || target_os() == "darwin";
+}
+
 function octal3(b: i32): string {
   let d = "01234567";
   return slice_unchecked(d, b / 64, b / 64 + 1) + slice_unchecked(d, b / 8 % 8, b / 8 % 8 + 1) + slice_unchecked(d, b % 8, b % 8 + 1);
@@ -2769,8 +2774,8 @@ const REPL_UPPER_FIRST: i32 = 4;
 const REPL_LOWER_FIRST: i32 = 8;
 
 // debug_char writes a byte as --debug does: a printable byte as it is, a
-// control byte as an escape, and another byte as the octal number of the
-// signed char that holds it.
+// control byte as an escape, and another byte as the octal number of the C
+// char that holds it.
 function debug_char(h: usize, b: i32): void {
   if (b >= 32 && b < 127 && b != 92) {
     buf_push_byte(h, b);
@@ -2792,7 +2797,7 @@ function debug_char(h: usize, b: i32): void {
     return;
   }
   buf_push_byte(h, 111);
-  if (b >= 128) {
+  if (b >= 128 && char_is_signed()) {
     buf_push(h, "37777777" + octal3(b + 256));
   } else {
     buf_push(h, octal3(b));

@@ -684,11 +684,39 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
+  # The bounds guard sweep (docs/security/BOUNDS-AUDIT.md) with 400 new seeds
+  # each night. Each pull request runs 32 fixed seeds of it.
+  bounds-guard-sweep:
+    if: github.repository == 'JakeChampion/lang'
+    name: nightly-bounds-guard-sweep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: aarch64 cross toolchain + qemu
+        uses: ./.github/actions/apt-cross-toolchain
+      - name: go test (400 seeds from ${{ github.run_number }} x 400)
+        env:
+          FERN_BOUNDS_SWEEP: "400"
+          FERN_BOUNDS_SWEEP_BASE: "${{ github.run_number }}"
+        run: |
+          FERN_BOUNDS_SWEEP_BASE=$(( FERN_BOUNDS_SWEEP_BASE * 400 ))
+          export FERN_BOUNDS_SWEEP_BASE
+          gotestsum --format pkgname-and-test-fails -- -timeout=43m \
+            -run '^TestSelfHostBoundsGuardSweep$' ./internal/testing/e2ecompiler/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
   # A nightly nobody looks at is a nightly that does not exist. Failures
   # land on one long-lived issue rather than a fresh one per night, so a
   # week of the same break is a thread and not eight duplicates.
   report:
-    needs: [window, differential, differential-selfhost, differential-selfhost-sanitize, differential-selfhost-arm64, differential-selfhost-wasm, differential-selfhost-sanitize-arm64, differential-selfhost-sanitize-wasm, fuzz, fuzz-selfhost-coverage, fernsmith-mutant]
+    needs: [window, differential, differential-selfhost, differential-selfhost-sanitize, differential-selfhost-arm64, differential-selfhost-wasm, differential-selfhost-sanitize-arm64, differential-selfhost-sanitize-wasm, fuzz, fuzz-selfhost-coverage, fernsmith-mutant, bounds-guard-sweep]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     steps:

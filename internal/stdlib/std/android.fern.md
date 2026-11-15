@@ -367,7 +367,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, the Choreographer of the loop thread, and the motion event of the `Touch` step that runs. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
 
-Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it.
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it. `brightness` goes to the UI thread in the same way, because it changes the attributes of the window.
 
 `NativeActivity` and `Callbacks` have the fields of `ANativeActivity` and `ANativeActivityCallbacks` in `android/native_activity.h`, in their order. `@derive(ffi.CLayout)` gives each field its C offset.
 
@@ -1472,6 +1472,88 @@ pub function volume_stream(ctx: usize, stream: i32): void {
   let deleted: usize = jni.delete_local_ref(e, class);
 }
 
+// Sets the brightness of the window while it shows, from 0.0 to 1.0. A
+// negative level gives the window the brightness of the system again.
+pub function brightness(ctx: usize, level: f32): void {
+  let permille = -1;
+  if (level >= 0.0) {
+    permille = ((level * 1000.0) as i32).min(1000);
+  }
+  ui_request(ctx, UiRequest { op: BRIGHTNESS, a: permille, b: 0, data: 0 as usize });
+}
+
+// The brightness of the screen that the user set for the system, from 0.0
+// to 1.0: Settings.System.SCREEN_BRIGHTNESS over 255. Call it on the loop
+// thread.
+pub function system_brightness(ctx: usize): f32 {
+  let e: usize = env(ctx);
+  let cr: usize = jni.call_object(e, activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
+  if (cr == 0 as usize) {
+    let none: usize = jni.exception_clear(e);
+    return 0.5f32;
+  }
+  let class: usize = jni.find_class(e, "android/provider/Settings$System");
+  let name: usize = jni.new_string(e, "screen_brightness");
+  let args: usize = jni.jvalues([cr, name, 128 as usize]);
+  let got: i32 = jni.call_static_int_method_a(e, class, jni.get_static_method_id(e, class, "getInt", "(Landroid/content/ContentResolver;Ljava/lang/String;I)I"), args);
+  jni.free_buffer(args);
+  let a: usize = jni.delete_local_ref(e, name);
+  let b: usize = jni.delete_local_ref(e, class);
+  let c: usize = jni.delete_local_ref(e, cr);
+  let cleared: usize = jni.exception_clear(e);
+  return got.max(0).min(255) as f32 / 255.0f32;
+}
+
+// The volume of the music stream, and its greatest value. Call it on the
+// loop thread.
+pub function volume(ctx: usize): (i32, i32) {
+  let e: usize = env(ctx);
+  let am: usize = audio_manager(e, activity_object(ctx));
+  if (am == 0 as usize) {
+    return (0, 0);
+  }
+  let level = call_int(e, am, "getStreamVolume", "(I)I", [STREAM_MUSIC as usize]);
+  let max = call_int(e, am, "getStreamMaxVolume", "(I)I", [STREAM_MUSIC as usize]);
+  let a: usize = jni.delete_local_ref(e, am);
+  return (level, max);
+}
+
+// Sets the volume of the music stream, from 0 to the greatest value that
+// `volume` gives. The system shows no volume panel. Call it on the loop
+// thread.
+pub function set_volume(ctx: usize, level: i32): void {
+  let e: usize = env(ctx);
+  let am: usize = audio_manager(e, activity_object(ctx));
+  if (am == 0 as usize) {
+    return;
+  }
+  let set = jni.call_void(e, am, "setStreamVolume", "(III)V", [STREAM_MUSIC as usize, level.max(0) as usize, 0 as usize]);
+  let a: usize = jni.delete_local_ref(e, am);
+  let cleared: usize = jni.exception_clear(e);
+}
+
+// AudioManager.STREAM_MUSIC.
+const STREAM_MUSIC: i32 = 3;
+
+// The AudioManager of the activity `obj` as a local reference, or 0.
+function audio_manager(e: usize, obj: usize): usize {
+  let service: usize = jni.new_string(e, "audio");
+  let am: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [service]);
+  let a: usize = jni.delete_local_ref(e, service);
+  let cleared: usize = jni.exception_clear(e);
+  return am;
+}
+
+function call_int(e: usize, obj: usize, name: string, sig: string, values: usize[]): i32 {
+  let class: usize = jni.get_object_class(e, obj);
+  let args: usize = jni.jvalues(values);
+  let got: i32 = jni.call_int_method_a(e, obj, jni.get_method_id(e, class, name, sig), args);
+  jni.free_buffer(args);
+  let a: usize = jni.delete_local_ref(e, class);
+  let cleared: usize = jni.exception_clear(e);
+  return got;
+}
+
 // The offset of the local time of the device from UTC, in milliseconds, at
 // `unix_ms`. It comes from java.util.TimeZone, so it follows the time zone
 // and the zone data of the device. Call it on the loop thread.
@@ -1635,6 +1717,9 @@ const TOUCH_AT_ONCE: i32 = 8;
 // The request of `prefer_fast_display`.
 const FAST_DISPLAY: i32 = 9;
 
+// The request of `brightness`: `a` is the level in thousandths, or -1.
+const BRIGHTNESS: i32 = 10;
+
 // InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
 pub const INPUT_TEXT: i32 = 1;
 
@@ -1757,11 +1842,56 @@ function do_request(ctx: usize, r: UiRequest): boolean {
     }
     return false;
   }
+  if (r.op == BRIGHTNESS) {
+    apply_brightness(ctx, r.a);
+    return false;
+  }
   if (r.op > FIELD_HIDE) {
     return access_request(ctx, r);
   }
   field_request(ctx, r);
   return false;
+}
+
+// Sets WindowManager.LayoutParams.screenBrightness to `permille` / 1000, or
+// to BRIGHTNESS_OVERRIDE_NONE (-1) for a negative `permille`. JNI has no call
+// of SetFloatField here, so the float goes through Field.setFloat.
+function apply_brightness(ctx: usize, permille: i32): void {
+  let level = -1.0f32;
+  if (permille >= 0) {
+    level = permille as f32 / 1000.0f32;
+  }
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let e: usize = NativeActivity.c_load_env(activity);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
+    let lp = 0 as usize;
+    if (window != 0 as usize) {
+      lp = jni.call_object(e, window, "getAttributes", "()Landroid/view/WindowManager$LayoutParams;", []);
+    }
+    if (lp != 0 as usize) {
+      let class: usize = jni.get_object_class(e, lp);
+      let name: usize = jni.new_string(e, "screenBrightness");
+      let field: usize = jni.call_object(e, class, "getField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;", [name]);
+      if (field != 0 as usize) {
+        let fclass: usize = jni.get_object_class(e, field);
+        let args: usize = jni.jvalue_set_f32(jni.jvalues([lp, 0 as usize]), 1, level);
+        let set: usize = jni.call_void_method_a(e, field, jni.get_method_id(e, fclass, "setFloat", "(Ljava/lang/Object;F)V"), args);
+        jni.free_buffer(args);
+        let applied = jni.call_void(e, window, "setAttributes", "(Landroid/view/WindowManager$LayoutParams;)V", [lp]);
+        let a: usize = jni.delete_local_ref(e, fclass);
+        let b: usize = jni.delete_local_ref(e, field);
+      }
+      let c: usize = jni.delete_local_ref(e, name);
+      let d: usize = jni.delete_local_ref(e, class);
+      let f: usize = jni.delete_local_ref(e, lp);
+    }
+    if (window != 0 as usize) {
+      let g: usize = jni.delete_local_ref(e, window);
+    }
+    let cleared: usize = jni.exception_clear(e);
+  }
 }
 
 function field_request(ctx: usize, r: UiRequest): void {

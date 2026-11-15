@@ -959,6 +959,16 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if v != nil && iterOwned[forEachElementOf(v)] && !borrowedAssigns[v] && !loopRepeats(body, c, v) && lastInBinding(bf, c, aid, order) {
 				moves[aid] = true
 			}
+			// The one read of a field of such an element into a local moves
+			// at the last read of the local.
+			if fa, isField := initOf(v).(*ast.FieldAccess); isField && !assignedNames[aid.Name] && !loopRepeats(body, c, v) && lastInBinding(bf, c, aid, order) {
+				if h, isID := fa.Target.(*ast.Ident); isID && !escaping[h.Name] && !lambdaCaptured[h.Name] {
+					ev := bindingVar(bf, v, h.Name)
+					if ev != nil && iterOwned[forEachElementOf(ev)] && !borrowedAssigns[ev] && unpack(v.Init) {
+						moves[aid] = true
+					}
+				}
+			}
 			// A field that a destructure takes from such an element at the
 			// element's last read moves at its own last read.
 			d := bindingDestructure(bf, c, aid.Name)
@@ -2939,6 +2949,14 @@ func bindingVar(bf *bodyFrames, c ast.Node, name string) *ast.Var {
 		}
 	}
 	return nil
+}
+
+// initOf is the initializer of v, or nil when there is no binding.
+func initOf(v *ast.Var) ast.Expr {
+	if v == nil {
+		return nil
+	}
+	return v.Init
 }
 
 // bindingDestructure is the destructure that binds name for c, or nil when

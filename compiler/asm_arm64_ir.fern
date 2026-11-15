@@ -3272,12 +3272,18 @@ function ssa_back_copy(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSav
 
 // An instruction whose caller registers are saved around its call.
 function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, around: i32, own s: asmcore.EmitState): asmcore.EmitState {
-  if (around != 0 && asmcore.ssa_inline_rc_dec(blk.insts[ii], s)) {
+  if (around != 0 && (asmcore.ssa_inline_rc_dec(blk.insts[ii], s) || ssa_box_release(blk.insts[ii], s))) {
     return ssa_rc_dec(blk.insts[ii], reg_of, lp, around, fr.cold_base, asmcore.ssa_x0_forget(s));
   }
   s = ssa_cold_save(s, around, fr.cold_base, false);
   s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
   return ssa_cold_save(s, around, fr.cold_base, true);
+}
+
+// The helper release of a record or a variant, which `ssa_rc_dec` tests
+// inline at a position where the call saves the caller registers.
+function ssa_box_release(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+  return ssa.inline_release(ins) && ins.imm == 7 && !s.rc_free_debug && !s.size;
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -3307,7 +3313,8 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base
   s = ssa_bcond(s, CC_GT, dec);
   s = ssa_tbz(s, true, "w5", 31, kept);
   s = ssa_cold_save(s, around, base, false);
-  s = ssa_helper_entry(ins, reg_of, ".u", s);
+  // A helper release has no entry past its tests, so it takes them again.
+  s = ssa_helper_entry(ins, reg_of, if (ins.imm == 7) { ".r" } else { ".u" }, s);
   s = ssa_cold_save(s, around, base, true);
   s = ssa_b(s, done);
   s = s.lab_def(dec);
@@ -5217,7 +5224,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let f = formed.f;
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f) };
   let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
-  let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
+  let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
   let reg_of = alloc.reg_of;

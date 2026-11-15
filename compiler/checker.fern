@@ -21867,6 +21867,12 @@ function lu_safe_constructor(fx: LuFn, e: ast.Expr): boolean {
   return false;
 }
 
+// A variant with a payload. Its construction holds what its arguments hold,
+// and the caller has shown that no argument lends.
+function lu_variant_constructor(fx: LuFn, name: string): boolean {
+  return (name == "Some" || name == "Ok" || name == "Err" || fx.ofuncs.ctors.has(name)) && !fx.ofuncs.funcs.has(name);
+}
+
 function lu_compound_call_fresh(fx: LuFn, call: ast.ExprCall): boolean {
   if (lu_checked_result_call(fx, call)) {
     return true;
@@ -21889,7 +21895,7 @@ function lu_compound_call_fresh(fx: LuFn, call: ast.ExprCall): boolean {
     }
     let row = fx.lenders.names.find(id.name);
     if (row < 0) {
-      return fx.builtins.has(id.name);
+      return fx.builtins.has(id.name) || lu_variant_constructor(fx, id.name);
     }
     return lu_compound_inputs_fresh(fx, fx.lenders.rows[row], call.args);
   }
@@ -22753,24 +22759,30 @@ function lu_unpack_expr_in(fx: LuFn, init: ast.Expr, seen: string[]): boolean {
     if (h.len() == 0 || !(lu_fresh_init_in(fx, h, seen) && lu_decl_count(fx, h) == 1) && !lu_own_param(fx, h)) {
       return false;
     }
-    let reads = 0;
-    let selections = 0;
-    for sel in fx.facts.sels {
-      if (sel.obj == h) {
-        selections += 1;
-        if (sel.field == fa.field) {
-          reads += 1;
-        }
-      }
-    }
-    for up in fx.facts.updates {
-      if (up.obj == h && up.field == fa.field) {
-        selections += 1;
-      }
-    }
-    return reads == 1 && selections == lu_occ_count(fx, h);
+    return lu_sole_field_read(fx, h, fa.field);
   }
   return false;
+}
+
+// One read of `h.field`, and each mention of h selects a field or is the
+// base of a literal that replaces that field.
+function lu_sole_field_read(fx: LuFn, h: string, field: string): boolean {
+  let reads = 0;
+  let selections = 0;
+  for sel in fx.facts.sels {
+    if (sel.obj == h) {
+      selections += 1;
+      if (sel.field == field) {
+        reads += 1;
+      }
+    }
+  }
+  for up in fx.facts.updates {
+    if (up.obj == h && up.field == field) {
+      selections += 1;
+    }
+  }
+  return reads == 1 && selections == lu_occ_count(fx, h);
 }
 
 function lu_rename_source(fx: LuFn, name: string): string {
@@ -24407,7 +24419,8 @@ function lu_scrutinee_owned(fx: LuFn, e: ast.Expr): boolean {
 }
 
 // A field that a destructure takes from a fresh for-each binding at its
-// last use, declared once in the loop body: it is fresh on each round.
+// last use, or the one read of a field of that binding, declared once in
+// the loop body: it is fresh on each round.
 function lu_unpacked_elem(fx: LuFn, site: LuSite, name: string): boolean {
   if (lu_decl_count(fx, name) != 1 || !lu_only_fresh_assigns(fx, name, [])) {
     return false;
@@ -24419,6 +24432,13 @@ function lu_unpacked_elem(fx: LuFn, site: LuSite, name: string): boolean {
       };
       return lu_elem_fresh(fx, site, src.name) && lu_is_last(fx, src) && !util.has_str(fx.facts.captured, src.name);
     }
+  }
+  let Some(init) = lu_init_of(fx, name) else {
+    return false;
+  };
+  if let ast.ExprFieldAccess(fa) = init {
+    let h = ow_ident_name(fa.obj);
+    return h.len() > 0 && lu_elem_fresh(fx, site, h) && !util.has_str(fx.facts.captured, h) && lu_sole_field_read(fx, h, fa.field);
   }
   return false;
 }

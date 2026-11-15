@@ -445,7 +445,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     } else if (op.str == drop && op.imm == 0) {
       out = drop_children(out, v);
       kind = 0;
-    } else if (op.str == release && op.imm == 0) {
+    } else if (op.str == release && ssa.plain_imm(op) == 0) {
       out = parent(out, v);
       out = equal(out, out.state.path, v.identity, 1, "only old-parent release admitted");
       let slot = 0;

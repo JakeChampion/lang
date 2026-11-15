@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**157 of 160** claims are pinned by a conformance case. The remaining
+**159 of 162** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -94,6 +94,8 @@ of them.
 | `AB-12` | `docs/ARRAY-BOUNDS.md` | A slice end that wrapping arithmetic makes negative aborts | `oob_slice_wrapped_end` |
 | `AB-13` | `docs/ARRAY-BOUNDS.md` | A write at the largest `i32` index aborts like a read | `oob_write_wrapped_index` |
 | `AB-14` | `docs/ARRAY-BOUNDS.md` | A scaled index that wraps negative fails its own guard, so the read is skipped | `index_wrapped_product_rejected` |
+| `AB-15` | `docs/ARRAY-BOUNDS.md` | A lane load whose 16 bytes pass the end of the array aborts | `oob_lane_load_past_length` |
+| `AB-16` | `docs/ARRAY-BOUNDS.md` | A lane store whose 16 bytes are not in the array aborts | `oob_lane_store_past_length` |
 | `IS-01` | `docs/INTEGER-SEMANTICS.md` | `+ - * <<` wrap at the operand's width | `int_wrap` |
 | `IS-02` | `docs/INTEGER-SEMANTICS.md` | Shift counts are masked (`& 31` / `& 63`) | `int_shift_count_masked` |
 | `IS-03` | `docs/INTEGER-SEMANTICS.md` | `>>` is arithmetic for signed operands, logical for unsigned | `int_shift_count_masked` |

@@ -38,6 +38,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function encode(bs: [u8]): string>>
 
+<<lanes>>
+
 <<5 function __b64_std_to_url(s: string): string>>
 
 <<6 pub function encode_url(input: [u8]): string>>
@@ -115,6 +117,13 @@ pub function encode(bs: [u8]): string {
   let b0 = 0;
   let b1 = 0;
   let b2 = 0;
+  if (n >= 16) {
+    // __b64_lanes takes 12 bytes in each step while 16 bytes are left.
+    let steps = (n - 4) / 12;
+    buf = __b64_lanes(bs, buf);
+    i = steps * 12;
+    j = steps * 16;
+  }
   while (i + 3 <= n) {
     b0 = bs[i] as i32;
     b1 = bs[i + 1] as i32;
@@ -144,6 +153,54 @@ pub function encode(bs: [u8]): string {
   unsafe {
     return string_from_bytes_unchecked(buf);
   }
+}
+```
+
+### `lanes`
+
+One step reads 16 bytes, encodes the first 12 and writes 16 characters.
+Each group of 4 lanes takes the 3 bytes of one group two times: `first` has
+`b0 b0 b1 b2` and `second` has `0 b1 b2 0`, so each digit is one shift and
+one mask of a lane. An index of 255 gives a lane of 0.
+
+The character of a digit is the digit and an offset. A digit from 26 to 51
+adds 71, a digit from 52 to 61 subtracts 4, 62 and 63 give `+` and `/`, and
+a digit below 26 adds 65. The lanes wrap, so the offset 252 subtracts 4.
+
+```fern
+<<lanes>>=
+function __b64_lanes(bs: [u8], own buf: u8[]): u8[] {
+  let first = __u8x16_of(0 as u8, 0 as u8, 1 as u8, 2 as u8, 3 as u8, 3 as u8, 4 as u8, 5 as u8, 6 as u8, 6 as u8, 7 as u8, 8 as u8, 9 as u8, 9 as u8, 10 as u8, 11 as u8);
+  let second = __u8x16_of(255 as u8, 1 as u8, 2 as u8, 255 as u8, 255 as u8, 4 as u8, 5 as u8, 255 as u8, 255 as u8, 7 as u8, 8 as u8, 255 as u8, 255 as u8, 10 as u8, 11 as u8, 255 as u8);
+  let offsets = __u8x16_of(71 as u8, 252 as u8, 252 as u8, 252 as u8, 252 as u8, 252 as u8, 252 as u8, 252 as u8, 252 as u8, 252 as u8, 252 as u8, 237 as u8, 240 as u8, 65 as u8, 0 as u8, 0 as u8);
+  let m0 = __u8x16_of(63 as u8, 0 as u8, 0 as u8, 0 as u8, 63 as u8, 0 as u8, 0 as u8, 0 as u8, 63 as u8, 0 as u8, 0 as u8, 0 as u8, 63 as u8, 0 as u8, 0 as u8, 0 as u8);
+  let m1 = __u8x16_of(0 as u8, 3 as u8, 0 as u8, 0 as u8, 0 as u8, 3 as u8, 0 as u8, 0 as u8, 0 as u8, 3 as u8, 0 as u8, 0 as u8, 0 as u8, 3 as u8, 0 as u8, 0 as u8);
+  let m2 = __u8x16_of(0 as u8, 0 as u8, 15 as u8, 0 as u8, 0 as u8, 0 as u8, 15 as u8, 0 as u8, 0 as u8, 0 as u8, 15 as u8, 0 as u8, 0 as u8, 0 as u8, 15 as u8, 0 as u8);
+  let m3 = __u8x16_of(0 as u8, 0 as u8, 0 as u8, 63 as u8, 0 as u8, 0 as u8, 0 as u8, 63 as u8, 0 as u8, 0 as u8, 0 as u8, 63 as u8, 0 as u8, 0 as u8, 0 as u8, 63 as u8);
+  let m4 = __u8x16_of(0 as u8, 15 as u8, 0 as u8, 0 as u8, 0 as u8, 15 as u8, 0 as u8, 0 as u8, 0 as u8, 15 as u8, 0 as u8, 0 as u8, 0 as u8, 15 as u8, 0 as u8, 0 as u8);
+  let m5 = __u8x16_of(0 as u8, 0 as u8, 3 as u8, 0 as u8, 0 as u8, 0 as u8, 3 as u8, 0 as u8, 0 as u8, 0 as u8, 3 as u8, 0 as u8, 0 as u8, 0 as u8, 3 as u8, 0 as u8);
+  let k51 = __u8x16_splat(51 as u8);
+  let k26 = __u8x16_splat(26 as u8);
+  let k13 = __u8x16_splat(13 as u8);
+  let i = 0;
+  let j = 0;
+  while (i + 16 <= bs.len()) {
+    let v = __u8x16_load_view(bs, i);
+    let a = __u8x16_swizzle(v, first);
+    let b = __u8x16_swizzle(v, second);
+    let digits = __u8x16_and(__u8x16_shr(a, 2), m0);
+    digits = __u8x16_or(digits, __u8x16_shl(__u8x16_and(a, m1), 4));
+    digits = __u8x16_or(digits, __u8x16_shl(__u8x16_and(a, m2), 2));
+    digits = __u8x16_or(digits, __u8x16_and(a, m3));
+    digits = __u8x16_or(digits, __u8x16_and(__u8x16_shr(b, 4), m4));
+    digits = __u8x16_or(digits, __u8x16_and(__u8x16_shr(b, 6), m5));
+    let high = __u8x16_sub_sat(digits, k51);
+    let low = __u8x16_and(__u8x16_lt(digits, k26), k13);
+    buf = __u8x16_with(buf, j, digits + __u8x16_swizzle(offsets, __u8x16_or(high, low)));
+    i += 12;
+    j += 16;
+  }
+  return buf;
 }
 ```
 
