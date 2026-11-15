@@ -381,7 +381,9 @@ pub function parse_sections(body: string): Section[] {
 }
 
 // The file of a version of an item. `key` is its address on the server.
-pub struct Part { key: string, container: string, size: i64 }
+// A file of a version of an item. `indexes` is "sd" when the server holds
+// preview thumbnails of it.
+pub struct Part { id: string, key: string, container: string, size: i64, indexes: string }
 
 pub struct Media { container: string, video: string, audio: string, resolution: string, bitrate: i32, width: i32, height: i32, parts: Part[] }
 
@@ -434,7 +436,7 @@ function media_of(d: json.Document, n: i32): Media[] {
   for m in elements(d, n, "Media") {
     let parts: Part[] = [];
     for p in elements(d, m, "Part") {
-      parts = parts.append(Part { key: str(d, p, "key"), container: str(d, p, "container"), size: int(d, p, "size") });
+      parts = parts.append(Part { id: int(d, p, "id").to_string(), key: str(d, p, "key"), container: str(d, p, "container"), size: int(d, p, "size"), indexes: str(d, p, "indexes") });
     }
     out = out.append(Media { container: str(d, m, "container"), video: str(d, m, "videoCodec"), audio: str(d, m, "audioCodec"), resolution: str(d, m, "videoResolution"), bitrate: int(d, m, "bitrate") as i32, width: int(d, m, "width") as i32, height: int(d, m, "height") as i32, parts: parts });
   }
@@ -846,6 +848,96 @@ pub function transcode_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: 
     chosen = qualities()[2];
   }
   return Stream { url: hls_url(c, b, it, chosen, session), transcode: true, offset_ms: offset_ms };
+}
+
+// The preview thumbnails of the part `id`, a BIF file.
+pub function bif_request(c: Client, b: Base, id: string): Request {
+  return get(c.with_token(b.token), b.uri + "/library/parts/" + id + "/indexes/sd");
+}
+
+// The part of the first version of an item that has preview thumbnails,
+// or None.
+pub function thumbnail_part(it: Item): Option[Part] {
+  if (it.media.len() == 0 || it.media[0].parts.len() == 0 || it.media[0].parts[0].indexes != "sd") {
+    return None;
+  }
+  return Some(it.media[0].parts[0]);
+}
+
+// The preview thumbnails of a BIF file: the time of each frame in
+// milliseconds, and where its JPEG starts and ends in `data`.
+pub struct Bif { times_ms: i64[], starts: i32[], ends: i32[], data: u8[] }
+
+function u32_le(b: u8[], at: i32): i64 {
+  return b[at] as i64 | b[at + 1] as i64 << 8i64 | b[at + 2] as i64 << 16i64 | b[at + 3] as i64 << 24i64;
+}
+
+const BIF_MAGIC: u8[] = [137u8, 66u8, 73u8, 70u8, 13u8, 10u8, 26u8, 10u8];
+
+// The frames of a BIF file, or None when `b` is not one. The header holds
+// the count of frames at byte 12 and the milliseconds of one unit of time
+// at byte 16, where 0 means 1000. The index at byte 64 holds a time and an
+// offset for each frame, and an end entry after the last.
+pub function parse_bif(b: u8[]): Option[Bif] {
+  if (b.len() < 64) {
+    return None;
+  }
+  for i in 0..8 {
+    if (b[i] != BIF_MAGIC[i]) {
+      return None;
+    }
+  }
+  let count = u32_le(b, 12);
+  let unit = u32_le(b, 16);
+  if (unit == 0i64) {
+    unit = 1000i64;
+  }
+  if (count < 0i64 || 64i64 + (count + 1i64) * 8i64 > b.len() as i64) {
+    return None;
+  }
+  let n = count as i32;
+  let times: i64[] = [];
+  let starts: i32[] = [];
+  let ends: i32[] = [];
+  for i in 0..n {
+    let at = 64 + i * 8;
+    let start = u32_le(b, at + 4);
+    let end = u32_le(b, at + 12);
+    if (start < 0i64 || end < start || end > b.len() as i64) {
+      return None;
+    }
+    times = times.append(u32_le(b, at) * unit);
+    starts = starts.append(start as i32);
+    ends = ends.append(end as i32);
+  }
+  return Some(Bif { times_ms: times, starts: starts, ends: ends, data: b });
+}
+
+// The frame for `ms`: the last one at or before it, or -1 when there is
+// none.
+pub function bif_frame(f: Bif, ms: i64): i32 {
+  let lo = 0;
+  let hi = f.times_ms.len() - 1;
+  let found = -1;
+  while (lo <= hi) {
+    let mid = (lo + hi) / 2;
+    if (f.times_ms[mid] <= ms) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found;
+}
+
+// The JPEG bytes of frame `i`.
+pub function bif_jpeg(f: Bif, i: i32): u8[] {
+  let out: u8[] = [];
+  for k in f.starts[i]..f.ends[i] {
+    out = out.append(f.data[k]);
+  }
+  return out;
 }
 
 // The next episode after `key` in `episodes`, or None at the end.

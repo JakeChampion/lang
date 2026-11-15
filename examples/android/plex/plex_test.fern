@@ -189,6 +189,68 @@ function test_next_episode(): test.TestOutcome {
   return test.assert_eq(next + " " + last, "2 none");
 }
 
+function le32(v: i64): u8[] {
+  return [(v & 255i64) as u8, (v >> 8i64 & 255i64) as u8, (v >> 16i64 & 255i64) as u8, (v >> 24i64 & 255i64) as u8];
+}
+
+// A BIF file of three frames, 10 units of 1000 ms apart, holding "AAA",
+// "BB" and "C".
+function bif_bytes(): u8[] {
+  let out: u8[] = [137u8, 66u8, 73u8, 70u8, 13u8, 10u8, 26u8, 10u8];
+  for part in [le32(0i64), le32(3i64), le32(0i64)] {
+    for x in part {
+      out = out.append(x);
+    }
+  }
+  while (out.len() < 64) {
+    out = out.append(0u8);
+  }
+  let data = 64 + 4 * 8;
+  let entries: i64[] = [0i64, data as i64, 10i64, (data + 3) as i64, 20i64, (data + 5) as i64, 4294967295i64, (data + 6) as i64];
+  for v in entries {
+    for x in le32(v) {
+      out = out.append(x);
+    }
+  }
+  for c in "AAABBC".as_bytes() {
+    out = out.append(c);
+  }
+  return out;
+}
+
+function test_bif(): test.TestOutcome {
+  let Some(f) = plex.parse_bif(bif_bytes()) else {
+    return test.fail("no BIF");
+  };
+  if (f.times_ms != [0i64, 10000i64, 20000i64]) {
+    return test.fail("times");
+  }
+  let frames = [plex.bif_frame(f, -1i64), plex.bif_frame(f, 0i64), plex.bif_frame(f, 15000i64), plex.bif_frame(f, 99000i64)];
+  if (frames != [-1, 0, 1, 2]) {
+    return test.fail("frames");
+  }
+  let bad = bif_bytes().with(0, 0u8);
+  let short = bif_bytes().take(70);
+  if (plex.parse_bif(bad).is_some() || plex.parse_bif(short).is_some()) {
+    return test.fail("a file that is no BIF parsed");
+  }
+  return test.assert_eq(plex.bif_jpeg(f, 1).len().to_string() + " " + plex.bif_jpeg(f, 2)[0].to_string(), "2 67");
+}
+
+function test_thumbnail_part(): test.TestOutcome {
+  let Some(it) = plex.parse_item(MOVIE) else {
+    return test.fail("no item");
+  };
+  if (plex.thumbnail_part(it).is_some()) {
+    return test.fail("a part with no indexes has thumbnails");
+  }
+  let marked = plex.Item { ...it, media: [plex.Media { ...it.media[0], parts: [plex.Part { ...it.media[0].parts[0], indexes: "sd" }] }] };
+  let Some(part) = plex.thumbnail_part(marked) else {
+    return test.fail("no part with thumbnails");
+  };
+  return test.assert_eq(part.id + " " + plex.bif_request(client(), base(), part.id).url, "11 https://10-0-0-5.abc.plex.direct:32400/library/parts/11/indexes/sd");
+}
+
 function main(): i32 {
   let r = test.new("plex");
   r = r.it("each request names the client", test_headers_name_the_client);
@@ -203,5 +265,7 @@ function main(): i32 {
   r = r.it("times and durations", test_text);
   r = r.it("the addresses of images, timelines and searches", test_urls);
   r = r.it("the next episode", test_next_episode);
+  r = r.it("the preview thumbnails of a BIF file", test_bif);
+  r = r.it("a part with preview thumbnails", test_thumbnail_part);
   return r.finish();
 }

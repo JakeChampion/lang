@@ -118,6 +118,14 @@ struct Play {
   retried: boolean,
   status: string,
   queue: plex.Item[],
+  // The preview thumbnails of the item, while the finger drags the seek bar
+  // the time under it, or -1, the time of the last seek of the drag, and
+  // the thumbnail that shows.
+  bif: Option[plex.Bif],
+  scrub_ms: i64,
+  scrub_seek_at: i64,
+  thumb_index: i32,
+  thumb: Option[draw.Image],
 }
 
 pub struct App {
@@ -204,7 +212,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [] };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None };
 }
 
 function no_press(): Press {
@@ -333,6 +341,7 @@ enum Want {
   Meta(string),
   Children(string),
   Leaves(string),
+  Bif(string),
   Search(string),
   Scrobble(string, boolean),
   Timeline(string, string, i64, i64, string),
@@ -371,6 +380,9 @@ function request_of(c: plex.Client, b: plex.Base, w: Want): plex.Request {
     },
     Children(key) => {
       return plex.children(c, b, key);
+    },
+    Bif(id) => {
+      return plex.bif_request(c, b, id);
     },
     Leaves(key) => {
       return plex.Request { ...plex.children(c, b, key), url: b.uri + "/library/metadata/" + key + "/allLeaves" };
@@ -628,6 +640,9 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   }
   if (verb == "resources") {
     return got_servers(t, r);
+  }
+  if (verb == "bif") {
+    return got_bif(t, rest, r);
   }
   if (verb == "identity") {
     return got_identity(t, num(rest), r);
@@ -981,6 +996,9 @@ function start_play(own s: App, it: plex.Item, queue: plex.Item[]): App {
   let stream = plex.stream_for(s.client, s.base, it, q, it.offset_ms, session, s.dev.decoders);
   let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms };
   let t = App { ...push(s), screen: ui.PLAYER, play: p, dirty: true };
+  if let Some(part) = plex.thumbnail_part(it) {
+    t = ask(t, "bif:" + part.id, Bif(part.id));
+  }
   log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
   if (!t.dev.play(stream.url)) {
     return App { ...t, play: Play { ...t.play, status: "The player refused the stream" } };
@@ -1219,7 +1237,7 @@ function play_tick(own s: App, now: i64): App {
     return t;
   }
   let t = s;
-  if (p.video && p.overlay && now >= p.controls_until) {
+  if (p.video && p.overlay && now >= p.controls_until && t.press.group != "seek") {
     t = App { ...t, play: Play { ...t.play, overlay: false }, dirty: true };
   }
   if (now - p.updated_at >= 500i64) {
@@ -1234,6 +1252,68 @@ function play_tick(own s: App, now: i64): App {
 
 // How long the controls show over the video after a tap.
 const CONTROLS_MS: i64 = 4000i64;
+
+// The preview thumbnails of the part `id`, when the item that plays has
+// that part. A server with no thumbnails answers 404, and then the drag
+// shows only the time.
+function got_bif(own t: App, id: string, r: plex.Reply): App {
+  let Some(part) = plex.thumbnail_part(t.play.item) else {
+    return t;
+  };
+  if (!t.play.active || part.id != id || !r.ok()) {
+    return t;
+  }
+  return App { ...t, play: Play { ...t.play, bif: plex.parse_bif(r.body) } };
+}
+
+// The seek bar among the nodes.
+function seek_bar_of(ns: scene.Node[]): Option[scene.Node] {
+  for n in ns {
+    if (n.group == "seek") {
+      return Some(n);
+    }
+  }
+  return None;
+}
+
+// How long the player waits between two seeks while the finger drags.
+const SCRUB_SEEK_MS: i64 = 200i64;
+
+// The finger on the seek bar at `x`: the time under it shows with its
+// thumbnail, and the player seeks there at most every SCRUB_SEEK_MS. When
+// the finger leaves, the player seeks there at once.
+function scrub(own s: App, x: i32, done: boolean): App {
+  let p = s.play;
+  let Some(n) = seek_bar_of(s.nodes) else {
+    return s;
+  };
+  if (p.duration <= 0i64 || n.w <= 0) {
+    return s;
+  }
+  let along = clamp(x - n.x, 0, n.w);
+  let ms = p.duration * (along as i64) / (n.w as i64);
+  if (done) {
+    return seek_to(App { ...s, play: Play { ...p, scrub_ms: -1i64, thumb_index: -1, thumb: None } }, ms);
+  }
+  let now = s.dev.mono_ms();
+  let at = p.scrub_seek_at;
+  if (now - at >= SCRUB_SEEK_MS) {
+    s.dev.seek(ms);
+    at = now;
+  }
+  let index = p.thumb_index;
+  let thumb = p.thumb;
+  if let Some(f) = p.bif {
+    let i = plex.bif_frame(f, ms);
+    if (i >= 0 && i != index) {
+      let m = ui.metrics(s.w, s.h, s.top, s.bottom);
+      let (tw, th) = ui.thumb_size(m);
+      index = i;
+      thumb = s.dev.decode(plex.bif_jpeg(f, i), tw, th);
+    }
+  }
+  return App { ...s, play: Play { ...p, scrub_ms: ms, scrub_seek_at: at, thumb_index: index, thumb: thumb, controls_until: now + CONTROLS_MS }, dirty: true };
+}
 
 function player_act(own s: App, act: string, n: scene.Node, x: i32): App {
   let p = s.play;
@@ -1271,10 +1351,6 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
   }
   if (act == "ffw") {
     return seek_by(s, 30000i64);
-  }
-  if (act == "seek" && p.duration > 0i64 && n.w > 0) {
-    let f = (x - n.x) as i64 * 1000i64 / (n.w as i64);
-    return seek_to(s, p.duration * f / 1000i64);
   }
   if (act == "back") {
     return stop_play(s, false);
@@ -1360,7 +1436,17 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
     let xs = [motion.Sample { t: t_ns, y: x as f64 }];
     let ys = [motion.Sample { t: t_ns, y: y as f64 }];
     let caught = s.fling.group.len() > 0;
-    return App { ...s, fling: no_fling(), press: Press { active: true, x0: x, y0: y, x: x, y: y, axis: 0, group: group, scroll0: s.scroll, row0: row_offset(s.rows, row_index(group)), xs: xs, ys: ys, caught: caught } };
+    let pressed = Press { active: true, x0: x, y0: y, x: x, y: y, axis: 0, group: group, scroll0: s.scroll, row0: row_offset(s.rows, row_index(group)), xs: xs, ys: ys, caught: caught };
+    if (group == "seek" && s.screen == ui.PLAYER) {
+      return scrub(App { ...s, fling: no_fling(), press: pressed }, x as i32, false);
+    }
+    return App { ...s, fling: no_fling(), press: pressed };
+  }
+  if (p.active && p.group == "seek") {
+    if (action == 2) {
+      return scrub(s, x as i32, false);
+    }
+    return scrub(App { ...s, press: no_press() }, x as i32, action == 1);
   }
   if (!p.active) {
     return s;
@@ -1641,7 +1727,7 @@ pub function view(s: App): ui.View {
     hubs = s.results;
   }
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, art: art_of(p.item), audio: audio(p), status: p.status };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: p.status };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
