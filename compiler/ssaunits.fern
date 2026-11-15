@@ -2145,9 +2145,9 @@ function live_past(a: ssasem.Analysis, fl: ssalive.Flow, v: i32, bi: i32, pos: i
   return ssalive.live_out_has(fl, bi, v) || ssasem.read_after(a.uses, bi, pos, v);
 }
 
-// lends_view_of says an argument of the call is a view anchored on w,
-// lent beside the record w was read from.
-function lends_view_of(f: ssasem.Func, a: ssasem.Analysis, args: i32[], w: i32): boolean {
+// lends_view_of says an argument of the call is a view anchored on w. The
+// view reads the storage of w for the length of the call.
+pub function lends_view_of(f: ssasem.Func, a: ssasem.Analysis, args: i32[], w: i32): boolean {
   let k = a.anchored.start[w];
   while (k < a.anchored.start[w + 1]) {
     let x = a.anchored.at[k];
@@ -2991,7 +2991,7 @@ function grown_params(f: ssasem.Func, p: Plan, grows: GrowTable, ins: ssa.SInst)
   let modes = ssasem.callee_modes(f, ins);
   for i in 0..ins.args.len() {
     let v = ins.args[i];
-    if (i < modes.len() && modes[i] == borrow_mode() && occurrences(ins.args, v) == 1 && handed_array(f, p, v) && grows_buffer(grows, ins.str, i)) {
+    if (i < modes.len() && modes[i] == borrow_mode() && occurrences(ins.args, v) == 1 && handed_array(f, p, v) && grows_buffer(grows, ins.str, i) && !lends_view_of(f, p.unit_analysis, ins.args, v)) {
       out = out.append(v);
     }
   }
