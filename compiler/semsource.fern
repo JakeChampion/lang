@@ -6806,8 +6806,7 @@ function with_finalizers(all: Produced[], rows: ssasem.Finalizer[]): Produced[] 
 function finalized_types(funcs: parser.FuncDecl[]): ssasem.Finalizer[] {
   let out: ssasem.Finalizer[] = [];
   for fd in funcs {
-    let provider = fd.impl_trait == "Drop" || fd.impl_trait == "" && util.index_of_str(fd.dyn_traits, "Drop") >= 0;
-    if (provider && parser.derive_simple_name(fd.name) == "drop" && fd.receiver_type != "" && !generic_decl(fd)) {
+    if (parser.drop_provider(fd) && !generic_decl(fd)) {
       out = out.append(ssasem.Finalizer { receiver: fd.receiver_type, symbol: parser.decl_key(fd), writes: true });
     }
   }
@@ -6981,7 +6980,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   }
   let graph = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
   f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
-  f = ssasem.tail_recursion(f, name);
+  f = ssasem.tail_recursion(ssasem.boxed_enum_dyns(f), name);
   f = ssabounds.word_loads(ssabounds.grouped_reads(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
   f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: util.append_all(s.requests, closed.requests), bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };

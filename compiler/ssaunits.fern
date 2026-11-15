@@ -1045,7 +1045,7 @@ function placeable(f: ssasem.Func, raw: boolean[], out: string[], ins: ssa.SInst
   if (!built.ok || built.fields.len() != ins.args.len() || raw_literal(raw, ins) || out[ins.result] != "") {
     return Construction { ...built, ok: false };
   }
-  if (ssasem.has_finalizer(f, f.values[ins.result])) {
+  if (ssasem.has_finalizer(f, f.values[ins.result]) || ssasem.immediate_enum(f, f.values[ins.result])) {
     return Construction { ...built, ok: false };
   }
   return built;
@@ -1071,6 +1071,9 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
     }
     if (w == "") {
       w = option_word(f, defs, ins.args[j]);
+    }
+    if (w == "") {
+      w = enum_word(f, defs, ins.args[j]);
     }
     if (w == "") {
       let at = placed_box(f, defs, raw, ins.args[j]);
@@ -1114,6 +1117,17 @@ function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
     return "";
   }
   return ir.const_option_ref(semrecords.find_variant(f.enums[e], d.str));
+}
+
+function enum_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
+  if (v < 0) {
+    return "";
+  }
+  let d = ssa.copy_source(defs, v);
+  if (d.kind_tag != ssasem.variant_new() || d.result < 0 || !ssasem.immediate_enum(f, f.values[d.result])) {
+    return "";
+  }
+  return util.i32_to_string(semrecords.find_variant(f.enums[semrecords.find_enum(f.enums, f.values[d.result])], d.str));
 }
 
 function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): i32 {

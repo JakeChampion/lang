@@ -12836,9 +12836,15 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
       s = s.write("    jmp " + denext + "\n");
       s = s.write(dehit + ":\n");
       let dek = dargc - 1;
-      while (dek >= 0) {
+      while (dek > 0) {
         s = s.write("    pushq " + dyn_arg_operand(args[dek]) + "\n");
         dek -= 1;
+      }
+      s = s.write("    movq " + dyn_arg_operand(args[0]) + ", %rax\n");
+      if (irtables.enum_immediate(s.struct_decls, s.funcs, ddbn)) {
+        s = s.write("    pushq (%rax)\n");
+      } else {
+        s = s.write("    pushq %rax\n");
       }
       s = s.write("    call __fn_" + asmcore.sanitize_label(ddbn + "." + dfd.name) + "\n");
       s = s.write("    addq $" + util.i32_to_string(dargc * 8) + ", %rsp\n");

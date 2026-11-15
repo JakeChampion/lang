@@ -211,7 +211,7 @@ halves (`docs/rc-log/2026-09-21-owned-by-default-alone-is-a-regression.md`).
 
 A value has a unit only when its type is counted (`ssasem.counted`). An enum
 whose variants hold no field is not counted, because each of its values is
-the address of a static object. The plan, the physical lowering and the
+the index of its variant and not an address. The plan, the physical lowering and the
 certifier use the same predicate. A parameter of such a type keeps its
 declared mode, and the certifier reads it as a word (`physicalbody.abis`).
 

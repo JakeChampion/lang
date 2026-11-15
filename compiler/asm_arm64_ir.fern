@@ -6425,6 +6425,9 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
       let dek = dargc - 1;
       while (dek >= 0) {
         s = dyn_arg_load(s, "x0", args[dek]);
+        if (dek == 0 && irtables.enum_immediate(s.struct_decls, s.funcs, ddbn)) {
+          s = s.write("    ldr x0, [x0]\n");
+        }
         s = s.write("    str x0, [sp, #-16]!\n");
         dek -= 1;
       }
