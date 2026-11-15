@@ -1,0 +1,15 @@
+// An array of integer literals takes the element type of the array that it
+// is compared with.
+import "core/cmp";
+
+function keys(): i64[][] {
+  return [[1577287697, 1225892902], [7]];
+}
+
+function main(): void {
+  let k = keys();
+  print(k[0] == [1577287697, 1225892902]);
+  print(k[1] != [7]);
+  print([7] == k[1]);
+  print(k.len() == 2 || k[0] != [1, 2]);
+}

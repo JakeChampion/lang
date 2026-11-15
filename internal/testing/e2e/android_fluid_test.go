@@ -27,6 +27,12 @@ func TestAndroidFluidFingers(t *testing.T) {
 	runAppSuite(t, fluidApp, "fingers_test.fern")
 }
 
+// report_test.fern checks the text of what the app measured, which the
+// dialog and the log show.
+func TestAndroidFluidReport(t *testing.T) {
+	runAppSuite(t, fluidApp, "report_test.fern")
+}
+
 // pace_test.fern checks the pace of the frames: a frame for each refresh of
 // a display of 60 or 90 Hz, a frame for each second refresh at 120 Hz, and
 // a slower pace when many frames are late.
@@ -48,6 +54,13 @@ func TestAndroidFluidOverlay(t *testing.T) {
 // many pixels for each dp shows the fluid from a smaller picture.
 func TestAndroidFluidGPU(t *testing.T) {
 	runGLCheck(t, "examples/android/fluid/gpu_test.fern", "111111111")
+}
+
+// work_check.fern measures the work of the GPU in one second of the app
+// and of the web page, on Mesa's OpenGL ES. The app does no more work than
+// the page at 60 Hz, and less at 90 and 120 Hz.
+func TestAndroidFluidGPUWork(t *testing.T) {
+	runGLCheck(t, "examples/android/fluid/work_check.fern", "1111")
 }
 
 // fern -apk builds the app from its fern.toml: a library for each ABI, the

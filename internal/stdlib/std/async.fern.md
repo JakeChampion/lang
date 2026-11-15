@@ -94,9 +94,10 @@ pub enum Future[T] {
   Cancelled,
 }
 
-// `set` holds (fd, interest) pairs. `until` is an instant on the clock of
-// whatever waits for the set. An interest from `counted` also holds the
-// close count of its descriptor number.
+// `set` holds (fd, interest) pairs. A pair whose fd is `HOLE` waits for
+// nothing. `until` is an instant on the clock of whatever waits for the set.
+// An interest from `counted` also holds the close count of its descriptor
+// number.
 pub struct Wait { set: i32[], until: Option[Instant] }
 
 // `Woke` holds the index of the pair that became ready.
@@ -191,6 +192,39 @@ pub function interest_bits(interest: i32): i32 {
 
 // The bit of an interest that holds a close count in its bits from 8 up.
 pub const COUNTED: i32 = 128;
+
+// The descriptor of a hole: a pair of a wait set that waits for nothing and
+// never wakes. A combinator keeps the slots of a finished input as holes.
+pub const HOLE: i32 = -1;
+
+// The pairs of `set` that are not holes, and the index in `set` of each.
+pub struct Compact { set: i32[], at: i32[] }
+
+pub function compact(set: i32[]): Compact {
+  let kept: i32[] = [];
+  let at: i32[] = [];
+  let i = 0;
+  while (i + 1 < set.len()) {
+    if (set[i] >= 0) {
+      kept = kept.append(set[i]).append(set[i + 1]);
+      at = at.append(i / 2);
+    }
+    i += 2;
+  }
+  return Compact { set: kept, at: at };
+}
+
+// Whether `set` has a hole.
+pub function has_hole(set: i32[]): boolean {
+  let i = 0;
+  while (i + 1 < set.len()) {
+    if (set[i] < 0) {
+      return true;
+    }
+    i += 2;
+  }
+  return false;
+}
 
 // `interest` with the close count of the descriptor number `fd` as it is
 // now. A wait on the pair then ends when the number closes, also when a new
@@ -485,125 +519,151 @@ impl Driver for RealDriver {
 ### `14 future combinators`
 
 A combinator builds a new future from its inputs and waits for nothing
-itself. The union of the pending inputs' waits is the combined future's wait:
-every (fd, interest) pair of each input, in input order, and the soonest of
-their deadlines. A wake goes to the input that owns the pair, and a timeout
-goes to each input whose deadline is that soonest one. So a combinator never
-reads a clock, and the code that waits on its future supplies the time.
+itself. The wait of the combined future holds the pairs of each input, in
+input order, and the soonest deadline of the pending inputs. The slots of
+each input are at fixed positions. A slot that an input does not use is a
+hole: a pair whose fd is `HOLE`.
+
+A wake goes to the input that owns the pair, and a timeout goes to each input
+whose deadline is that soonest one. So a combinator never reads a clock, and
+the code that waits on its future supplies the time.
 
 A combinator keeps its inputs in a balanced tree. Each node holds the number
-of pairs and the soonest deadline of the pending inputs below it. A wake thus
+of slots and the soonest deadline of the pending inputs below it. A wake thus
 reaches its input in a number of steps that grows as the logarithm of the
-input count, and a wake builds new nodes only on that path.
+input count. A wake builds new nodes only on that path.
+
+The wake writes the slots of that input in one copy of the set, so the other
+pair indices do not change. An input whose new wait has more pairs than its
+slots makes the set again. `wait_any` removes the holes before it waits.
 
 ```fern
 <<14 future combinators>>=
 // Ready with every value, in input order, when all of `fs` are ready.
 // Cancelled when one of them ends cancelled: the others are cancelled with it.
 pub function gather[T](own fs: Future[T][]): Future[T[]] {
-  return __gather(__tree(fs, 0, fs.len()));
+  return __gather(__flat(__tree(fs, 0, fs.len())));
 }
 
-function __gather[T](t: __Tree[T]): Future[T[]] {
-  let s = __sum(t);
+function __gather[T](fl: __Flat[T]): Future[T[]] {
+  let s = __sum(fl.tree);
   if (s.count > s.pending + s.ready) {
-    let dropped = __cancel_all(t);
+    let dropped = __cancel_all(fl.tree);
     return Future.Cancelled;
   }
   if (s.pending > 0) {
-    return Pending(__union(t, None), (wake: Wake): Future[T[]] => __gather_woken(t, wake));
+    return Pending(__union(fl, None), (wake: Wake): Future[T[]] => __gather_woken(fl, wake));
   }
   let none: T[] = [];
-  return Ready(__values_into(t, none));
+  return Ready(__values_into(fl.tree, none));
 }
 
-function __gather_woken[T](t: __Tree[T], wake: Wake): Future[T[]] {
+function __gather_woken[T](fl: __Flat[T], wake: Wake): Future[T[]] {
   if let Wake.Cancelled = wake {
-    let dropped = __cancel_all(t);
+    let dropped = __cancel_all(fl.tree);
     return Future.Cancelled;
   }
-  return __gather(__step(t, wake));
+  return __gather(__step(fl, wake));
 }
 
 // Ready with the index and value of the first of `fs` to be ready; a tie goes
 // to the lower index. The others are cancelled. Cancelled when every one of
 // them ends cancelled, and so when `fs` is empty.
 pub function race[T](own fs: Future[T][]): Future[(i32, T)] {
-  return __race(__tree(fs, 0, fs.len()));
+  return __race(__flat(__tree(fs, 0, fs.len())));
 }
 
-function __race[T](t: __Tree[T]): Future[(i32, T)] {
-  if let Some(won) = __first_ready(t, 0) {
-    let dropped = __cancel_all(t);
+function __race[T](fl: __Flat[T]): Future[(i32, T)] {
+  if let Some(won) = __first_ready(fl.tree, 0) {
+    let dropped = __cancel_all(fl.tree);
     return Ready(won);
   }
-  if (__sum(t).pending == 0) {
+  if (__sum(fl.tree).pending == 0) {
     return Future.Cancelled;
   }
-  return Pending(__union(t, None), (wake: Wake): Future[(i32, T)] => __race_woken(t, wake));
+  return Pending(__union(fl, None), (wake: Wake): Future[(i32, T)] => __race_woken(fl, wake));
 }
 
-function __race_woken[T](t: __Tree[T], wake: Wake): Future[(i32, T)] {
+function __race_woken[T](fl: __Flat[T], wake: Wake): Future[(i32, T)] {
   if let Wake.Cancelled = wake {
-    let dropped = __cancel_all(t);
+    let dropped = __cancel_all(fl.tree);
     return Future.Cancelled;
   }
-  return __race(__step(t, wake));
+  return __race(__step(fl, wake));
 }
 
 // Ready with `Some(value)` for each of `fs` that is ready by `until`, and None
 // for each that is cancelled or still pending then. The pending ones are
 // cancelled at `until`. A deadline equal to an input's own deadline wins.
 pub function with_deadline[T](until: Instant, own fs: Future[T][]): Future[Option[T][]] {
-  return __deadline(until, __tree(fs, 0, fs.len()));
+  return __deadline(until, __flat(__tree(fs, 0, fs.len())));
 }
 
-function __deadline[T](until: Instant, t: __Tree[T]): Future[Option[T][]] {
-  if (__sum(t).pending == 0) {
-    return Ready(__slots(t));
+function __deadline[T](until: Instant, fl: __Flat[T]): Future[Option[T][]] {
+  if (__sum(fl.tree).pending == 0) {
+    return Ready(__slots(fl.tree));
   }
-  return Pending(__union(t, Some(until)), (wake: Wake): Future[Option[T][]] => __deadline_woken(until, t, wake));
+  return Pending(__union(fl, Some(until)), (wake: Wake): Future[Option[T][]] => __deadline_woken(until, fl, wake));
 }
 
-function __deadline_woken[T](until: Instant, t: __Tree[T], wake: Wake): Future[Option[T][]] {
+function __deadline_woken[T](until: Instant, fl: __Flat[T], wake: Wake): Future[Option[T][]] {
   if let Wake.Cancelled = wake {
-    let dropped = __cancel_all(t);
+    let dropped = __cancel_all(fl.tree);
     return Future.Cancelled;
   }
   if let TimedOut = wake {
     let passed = true;
-    if let Some(due) = __sum(t).until {
+    if let Some(due) = __sum(fl.tree).until {
       passed = until.cmp(due) <= 0;
     }
     if (passed) {
-      let slots = __slots(t);
-      let dropped = __cancel_all(t);
+      let slots = __slots(fl.tree);
+      let dropped = __cancel_all(fl.tree);
       return Ready(slots);
     }
   }
-  return __deadline(until, __step(t, wake));
+  return __deadline(until, __step(fl, wake));
 }
 
 // The inputs of a combinator, in input order. A wake reaches its input in a
-// number of steps that grows as the logarithm of the input count.
+// number of steps that grows as the logarithm of the input count. A leaf
+// holds the number of pair slots that it has in the wait set.
 enum __Tree[T] {
   Hollow,
-  Leaf(Future[T]),
+  Leaf(i32, Future[T]),
   Fork(__Sum, __Tree[T], __Tree[T]),
 }
 
-// `pairs` and `until` count the pending inputs only.
-struct __Sum { count: i32, pairs: i32, pending: i32, ready: i32, until: Option[Instant] }
+// `span` counts the pair slots of each input. `until` counts the pending
+// inputs only.
+struct __Sum { count: i32, span: i32, pending: i32, ready: i32, until: Option[Instant] }
+
+// The inputs and their wait set. The pairs of each input have fixed slots, in
+// input order, and a wake writes only the slots of the input that it reaches.
+// A slot that an input does not use is a hole.
+struct __Flat[T] { tree: __Tree[T], set: i32[] }
 
 function __tree[T](fs: Future[T][], lo: i32, hi: i32): __Tree[T] {
   if (hi <= lo) {
     return __Tree.Hollow;
   }
   if (hi - lo == 1) {
-    return Leaf(fs[lo]);
+    return Leaf(__pairs_of(fs[lo]), fs[lo]);
   }
   let mid = lo + (hi - lo) / 2;
   return __join(__tree(fs, lo, mid), __tree(fs, mid, hi));
+}
+
+function __pairs_of[T](f: Future[T]): i32 {
+  if let Pending(w, k) = f {
+    return w.set.len() / 2;
+  }
+  return 0;
+}
+
+function __flat[T](t: __Tree[T]): __Flat[T] {
+  let none: i32[] = [];
+  return __Flat { tree: t, set: __slots_of(t, none) };
 }
 
 function __join[T](l: __Tree[T], r: __Tree[T]): __Tree[T] {
@@ -611,7 +671,7 @@ function __join[T](l: __Tree[T], r: __Tree[T]): __Tree[T] {
   let b = __sum(r);
   let s = __Sum {
     count: a.count + b.count,
-    pairs: a.pairs + b.pairs,
+    span: a.span + b.span,
     pending: a.pending + b.pending,
     ready: a.ready + b.ready,
     until: __sooner(a.until, b.until),
@@ -624,21 +684,21 @@ function __sum[T](t: __Tree[T]): __Sum {
     Fork(s, l, r) => {
       return s;
     },
-    Leaf(f) => {
+    Leaf(span, f) => {
       match (f) {
         Ready(v) => {
-          return __Sum { count: 1, pairs: 0, pending: 0, ready: 1, until: None };
+          return __Sum { count: 1, span: span, pending: 0, ready: 1, until: None };
         },
         Pending(w, k) => {
-          return __Sum { count: 1, pairs: w.set.len() / 2, pending: 1, ready: 0, until: w.until };
+          return __Sum { count: 1, span: span, pending: 1, ready: 0, until: w.until };
         },
         Cancelled => {}
       }
-      return __Sum { count: 1, pairs: 0, pending: 0, ready: 0, until: None };
+      return __Sum { count: 1, span: span, pending: 0, ready: 0, until: None };
     },
     Hollow => {}
   }
-  return __Sum { count: 0, pairs: 0, pending: 0, ready: 0, until: None };
+  return __Sum { count: 0, span: 0, pending: 0, ready: 0, until: None };
 }
 
 function __values_into[T](t: __Tree[T], out: T[]): T[] {
@@ -646,7 +706,7 @@ function __values_into[T](t: __Tree[T], out: T[]): T[] {
     Fork(s, l, r) => {
       return __values_into(r, __values_into(l, out));
     },
-    Leaf(f) => {
+    Leaf(span, f) => {
       if let Ready(v) = f {
         return out.append(v);
       }
@@ -666,7 +726,7 @@ function __slots_into[T](t: __Tree[T], out: Option[T][]): Option[T][] {
     Fork(s, l, r) => {
       return __slots_into(r, __slots_into(l, out));
     },
-    Leaf(f) => {
+    Leaf(span, f) => {
       if let Ready(v) = f {
         return out.append(Some(v));
       }
@@ -689,7 +749,7 @@ function __first_ready[T](t: __Tree[T], base: i32): Option[(i32, T)] {
       }
       return __first_ready(r, base + left.count);
     },
-    Leaf(f) => {
+    Leaf(span, f) => {
       if let Ready(v) = f {
         return Some((base, v));
       }
@@ -710,7 +770,7 @@ function __cancel_all[T](t: __Tree[T]): i32 {
       let before = __cancel_all(l);
       return before + __cancel_all(r);
     },
-    Leaf(f) => {
+    Leaf(span, f) => {
       if let Pending(w, k) = f {
         // The future of a continuation that is resumed with Cancelled holds
         // nothing, so it ends here.
@@ -745,65 +805,86 @@ function __is_due(at: Option[Instant], due: Instant): boolean {
   return false;
 }
 
-function __union[T](t: __Tree[T], until: Option[Instant]): Wait {
-  let none: i32[] = [];
-  return Wait { set: __pairs_into(t, none), until: __sooner(until, __sum(t).until) };
+function __union[T](fl: __Flat[T], until: Option[Instant]): Wait {
+  return Wait { set: fl.set, until: __sooner(until, __sum(fl.tree).until) };
 }
 
-function __pairs_into[T](t: __Tree[T], own set: i32[]): i32[] {
+// The slots of each input of `t` in order: its pairs, and a hole for each
+// slot that they do not use.
+function __slots_of[T](t: __Tree[T], own set: i32[]): i32[] {
   match (t) {
     Fork(s, l, r) => {
-      if (s.pairs == 0) {
+      if (s.span == 0) {
         return set;
       }
-      return __pairs_into(r, __pairs_into(l, set));
+      return __slots_of(r, __slots_of(l, set));
     },
-    Leaf(f) => {
+    Leaf(span, f) => {
+      let out = set;
+      let used = 0;
       if let Pending(w, k) = f {
-        let out = set;
         for x in w.set {
           out = out.append(x);
         }
-        return out;
+        used = w.set.len() / 2;
       }
+      for i in used..span {
+        out = out.append(HOLE).append(0);
+      }
+      return out;
     },
     Hollow => {}
   }
   return set;
 }
 
-// Hands `wake`, a wake of `__union(t, …)`, to the inputs it concerns.
-function __step[T](t: __Tree[T], wake: Wake): __Tree[T] {
+// Hands `wake`, a wake of `__union(fl, …)`, to the inputs it concerns.
+function __step[T](fl: __Flat[T], wake: Wake): __Flat[T] {
   match (wake) {
     Woke(at) => {
-      if (at >= 0 && at < __sum(t).pairs) {
-        return __woke(t, at);
+      if (at >= 0 && at < __sum(fl.tree).span) {
+        return __stepped(__woke(fl.tree, at, 0, __set_copy(fl.set)));
       }
     },
     TimedOut => {
-      if let Some(due) = __sum(t).until {
-        return __timed(t, due);
+      if let Some(due) = __sum(fl.tree).until {
+        return __stepped(__timed(fl.tree, due, 0, __set_copy(fl.set)));
       }
     },
     Cancelled => {
-      let dropped = __cancel_all(t);
+      let dropped = __cancel_all(fl.tree);
     }
   }
-  return t;
+  return fl;
 }
 
-function __woke[T](t: __Tree[T], at: i32): __Tree[T] {
+// The state after a step. An input whose new wait has more pairs than its
+// slots gets more slots, and the set is made again.
+struct __Stepped[T] { tree: __Tree[T], set: i32[], grew: boolean }
+
+// The continuation of a combinator keeps its state, so a step writes a copy
+// of the set. The copy is one block copy.
+function __set_copy(set: i32[]): i32[] {
+  let out: i32[] = [];
+  return out.concat(set);
+}
+
+function __stepped[T](st: __Stepped[T]): __Flat[T] {
+  if (st.grew) {
+    return __flat(__respan(st.tree));
+  }
+  return __Flat { tree: st.tree, set: st.set };
+}
+
+function __respan[T](t: __Tree[T]): __Tree[T] {
   match (t) {
     Fork(s, l, r) => {
-      let left = __sum(l).pairs;
-      if (at < left) {
-        return __join(__woke(l, at), r);
-      }
-      return __join(l, __woke(r, at - left));
+      return __join(__respan(l), __respan(r));
     },
-    Leaf(f) => {
-      if let Pending(w, k) = f {
-        return Leaf(k(Woke(at)));
+    Leaf(span, f) => {
+      let used = __pairs_of(f);
+      if (used > span) {
+        return Leaf(used, f);
       }
     },
     Hollow => {}
@@ -811,25 +892,69 @@ function __woke[T](t: __Tree[T], at: i32): __Tree[T] {
   return t;
 }
 
-// Each input whose deadline is `due`, the soonest one, gets the timeout.
-function __timed[T](t: __Tree[T], due: Instant): __Tree[T] {
+// The leaf of the pair at slot `at` of `t` takes the wake. `base` is the first
+// slot of `t` in `set`.
+function __woke[T](t: __Tree[T], at: i32, base: i32, own set: i32[]): __Stepped[T] {
   match (t) {
     Fork(s, l, r) => {
-      if (!__is_due(s.until, due)) {
-        return t;
+      let left = __sum(l).span;
+      if (at < left) {
+        let st = __woke(l, at, base, set);
+        return __Stepped { tree: __join(st.tree, r), set: st.set, grew: st.grew };
       }
-      return __join(__timed(l, due), __timed(r, due));
+      let st = __woke(r, at - left, base + left, set);
+      return __Stepped { tree: __join(l, st.tree), set: st.set, grew: st.grew };
     },
-    Leaf(f) => {
+    Leaf(span, f) => {
       if let Pending(w, k) = f {
-        if (__is_due(w.until, due)) {
-          return Leaf(k(TimedOut));
+        if (at < w.set.len() / 2) {
+          return __placed(span, k(Woke(at)), base, set);
         }
       }
     },
     Hollow => {}
   }
-  return t;
+  return __Stepped { tree: t, set: set, grew: false };
+}
+
+// Each input whose deadline is `due`, the soonest one, gets the timeout.
+function __timed[T](t: __Tree[T], due: Instant, base: i32, own set: i32[]): __Stepped[T] {
+  match (t) {
+    Fork(s, l, r) => {
+      if (!__is_due(s.until, due)) {
+        return __Stepped { tree: t, set: set, grew: false };
+      }
+      let a = __timed(l, due, base, set);
+      let b = __timed(r, due, base + __sum(l).span, a.set);
+      return __Stepped { tree: __join(a.tree, b.tree), set: b.set, grew: a.grew || b.grew };
+    },
+    Leaf(span, f) => {
+      if let Pending(w, k) = f {
+        if (__is_due(w.until, due)) {
+          return __placed(span, k(TimedOut), base, set);
+        }
+      }
+    },
+    Hollow => {}
+  }
+  return __Stepped { tree: t, set: set, grew: false };
+}
+
+// A leaf with the future `f`, whose pairs go to the `span` slots from `base`.
+function __placed[T](span: i32, f: Future[T], base: i32, own set: i32[]): __Stepped[T] {
+  let used = __pairs_of(f);
+  if (used > span) {
+    return __Stepped { tree: Leaf(span, f), set: set, grew: true };
+  }
+  if let Pending(w, k) = f {
+    for i in 0..w.set.len() {
+      set = set.with(base * 2 + i, w.set[i]);
+    }
+  }
+  for i in used..span {
+    set = set.with((base + i) * 2, HOLE).with((base + i) * 2 + 1, 0);
+  }
+  return __Stepped { tree: Leaf(span, f), set: set, grew: false };
 }
 ```
 
@@ -1270,6 +1395,10 @@ pub function block_on[T](own f: Future[T]): Option[T] {
 // monotonic clock does, and nothing answers Cancelled. On a kernel target the
 // pairs name IRQ lines, and the machine's wait is the idle loop of chunk 32.
 pub function wait_any(set: i32[], until: Option[Instant]): Wake {
+  if (has_hole(set)) {
+    let c = compact(set);
+    return __uncompacted(c.at, wait_any(c.set, until));
+  }
   if (in_task()) {
     return __park(set, until);
   }
@@ -1278,6 +1407,23 @@ pub function wait_any(set: i32[], until: Option[Instant]): Wake {
   } else {
     return __host_wait_any(set, until);
   }
+}
+
+// The wake of a wait on a compacted set, with the pair index that `at` gives
+// in the set before compaction.
+function __uncompacted(at: i32[], wake: Wake): Wake {
+  match (wake) {
+    Woke(i) => {
+      return Woke(at[i]);
+    },
+    TimedOut => {
+      return TimedOut;
+    },
+    Cancelled => {
+      return Wake.Cancelled;
+    }
+  }
+  return TimedOut;
 }
 
 function __host_wait_any(set: i32[], until: Option[Instant]): Wake {
@@ -1311,6 +1457,10 @@ function __host_timeout_ms(until: Option[Instant], left: i64): i32 {
 }
 
 function __park(set: i32[], until: Option[Instant]): Wake {
+  if (has_hole(set)) {
+    let c = compact(set);
+    return __uncompacted(c.at, __park(c.set, until));
+  }
   unsafe {
     if (__task_cur() == 0) {
       return Wake.Cancelled;

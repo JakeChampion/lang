@@ -1584,6 +1584,22 @@ function operand_types(types: checker.OperatorTypes, at: i32): checker.OperatorT
   return untyped();
 }
 
+// An array of integer literals compared with an array takes its element type.
+function int_array_literal(e: ast.Expr): boolean {
+  if let ast.ExprArray(al) = e {
+    if (al.elem_ty.len() > 0 || al.elements.len() == 0) {
+      return false;
+    }
+    for el in al.elements {
+      if (!ast.int_literal_tree(el) && !int_array_literal(el)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 function typed_binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type, types: checker.OperatorTypes): Value {
   if (b.op == "&&" || b.op == "||") {
     return logical(b, s, types);
@@ -1604,7 +1620,14 @@ function typed_binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typein
       return arithmetic(b, lit.id, right_id, lit.s);
     }
   }
-  let produced = address_widen(operand(b.left, s, want, types.operands[0]), want);
+  let left_want = want;
+  if ((b.op == "==" || b.op == "!=") && int_array_literal(b.left)) {
+    let r = settled_in(types.operands[1].whole, s);
+    if let typeinfo.TypeArray(_) = r {
+      left_want = r;
+    }
+  }
+  let produced = address_widen(operand(b.left, s, left_want, types.operands[0]), left_want);
   s = produced.s;
   if (!s.ok) {
     return produced;

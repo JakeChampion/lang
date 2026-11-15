@@ -6,7 +6,7 @@ import "std/array";
 import "std/hash/crc32";
 import "std/deflate" as deflate;
 import "./gz";
-import "./zdeflate" as zd;
+import "std/deflate/zlib" as zd;
 import "./layout";
 import "./zopfli";
 

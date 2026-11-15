@@ -1,13 +1,12 @@
 import "std/test";
 import "std/deflate" as deflate;
+import "std/deflate/zlib" as zd;
 import "std/hash/crc32";
 import "std/hex" as hex;
 
-// The streams of zlib_compress for an input of 78000 bytes are those of
-// zlib 1.3 at the levels 1, 4, 6 and 9. The input has matches across the
-// window, slides the window, and has more symbols than one block holds.
-// The checksum and the length of each stream come from zlib.
-function test_zlib_compress_large(): test.TestOutcome {
+// An input of 78000 bytes. It has matches across the window, slides the
+// window, and has more symbols than one block holds.
+function big_input(): u8[] {
   let big: u8[] = [];
   for i in 0..70000 {
     big = big.append(((i as i64 * (i as i64) * 7 + (i / 13) as i64) % 251) as u8);
@@ -15,10 +14,18 @@ function test_zlib_compress_large(): test.TestOutcome {
   for k in 0..400 {
     big = big.concat("the end of the text ".bytes());
   }
-  let levels = [1, 4, 6, 9];
-  let sizes = [4144, 3895, 3893, 3893];
-  let sums: u32[] = [3194363883u32, 3424483598u32, 3676517670u32, 2839550783u32];
-  for k in 0..4 {
+  return big;
+}
+
+// The streams of zlib_compress for an input of 78000 bytes are those of
+// zlib 1.3 at each level from 1 to 9. The checksum and the length of each
+// stream come from zlib.
+function test_zlib_compress_large(): test.TestOutcome {
+  let big = big_input();
+  let levels = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  let sizes = [4144, 4144, 4144, 3895, 3893, 3893, 3893, 3893, 3893];
+  let sums: u32[] = [3194363883u32, 2462813959u32, 2462813959u32, 3424483598u32, 3342601976u32, 3676517670u32, 2839550783u32, 2839550783u32, 2839550783u32];
+  for k in 0..9 {
     let z = deflate.zlib_compress(big, levels[k]);
     if (z.len() != sizes[k] || crc32.new().update(z).finish() != sums[k]) {
       return test.fail("zlib_compress of a large input at level " + levels[k].to_string());
@@ -47,16 +54,65 @@ function test_zlib_compress_bytes(): test.TestOutcome {
 }
 
 // At level 0 the stored blocks of zlib depend on the space for output of
+// each call to deflate. For this input, each space up to 32774 bytes gives
+// one stream, each space from 32775 to 65541 bytes gives a different
+// stream, and each larger space gives the stream of zlib_compress. The
+// checksum of the streams of these spaces, one after the other, and their
+// length come from zlib.
+function test_zlib_compress_rooms(): test.TestOutcome {
+  let big = big_input();
+  let rooms: i32[] = [];
+  for r in 1..41 {
+    rooms = rooms.append(r);
+  }
+  for r in 32766..32791 {
+    rooms = rooms.append(r);
+  }
+  for r in 65530..65546 {
+    rooms = rooms.append(r);
+  }
+  rooms = rooms.append(70000).append(78015).append(78016).append(78017).append(2147483647);
+  let sum = crc32.new();
+  let total = 0;
+  for r in rooms {
+    let z = deflate.zlib_compress_in(big, 0, r);
+    sum = sum.update(z);
+    total += z.len();
+  }
+  if (sum.finish() != 2204823324u32 || total != 6709376) {
+    return test.fail("the stored streams of " + rooms.len().to_string() + " spaces are not those of zlib");
+  }
+  return test.pass();
+}
+
+// The engine writes the zlib stream of an input after a dictionary: its
+// header has the Adler-32 of the dictionary. The streams come from zlib 1.3
+// (deflateSetDictionary).
+function test_zlib_dictionary(): test.TestOutcome {
+  let dict = "the dictionary of the end of the text ".bytes();
+  let data = "the end of the text, the end of the text, and the dictionary.".bytes();
+  let levels = [1, 6, 9];
+  let want = ["783f10fd0da0c322a6835d3011a813a41a61a61e008c421557", "78bb10fd0da0c322a6835d301128508262a61e008c421557", "78f910fd0da0c322a6835d301128508262a61e008c421557"];
+  for k in 0..3 {
+    let z = zd.set_dictionary(zd.start(zd.zlib(zd.new()), levels[k], zd.DEFAULT_STRATEGY), dict, 0, dict.len());
+    z = zd.input(z, data, 0, data.len());
+    while (!zd.done(z)) {
+      z = zd.deflate(zd.Z { ...z, avail: 7 }, zd.FINISH);
+    }
+    let (_, out) = zd.take(z);
+    let got = hex.encode(out);
+    if (got != want[k]) {
+      return test.fail("the stream after a dictionary at level " + levels[k].to_string() + ": " + got);
+    }
+  }
+  return test.pass();
+}
+
+// At level 0 the stored blocks of zlib depend on the space for output of
 // each call to deflate: blocks of 4091 bytes with 4096 bytes of space, and
 // blocks of 65535 bytes when all the output fits.
 function test_zlib_compress_stored(): test.TestOutcome {
-  let big: u8[] = [];
-  for i in 0..70000 {
-    big = big.append(((i as i64 * (i as i64) * 7 + (i / 13) as i64) % 251) as u8);
-  }
-  for k in 0..400 {
-    big = big.concat("the end of the text ".bytes());
-  }
+  let big = big_input();
   let streams = [deflate.zlib_compress_in(big, 0, 4096), deflate.zlib_compress_in(big, 0, 100), deflate.zlib_compress(big, 0)];
   let sums: u32[] = [2017006377u32, 2017006377u32, 218202111u32];
   for k in 0..3 {
@@ -75,5 +131,7 @@ function main(): i32 {
   r = r.it("zlib_compress writes the bytes of zlib for each byte value", test_zlib_compress_bytes);
   r = r.it("zlib_compress writes the bytes of zlib for a large input", test_zlib_compress_large);
   r = r.it("zlib_compress_in writes the stored blocks of zlib", test_zlib_compress_stored);
+  r = r.it("zlib_compress_in writes the stored blocks of zlib for each space", test_zlib_compress_rooms);
+  r = r.it("a zlib stream after a dictionary is that of zlib", test_zlib_dictionary);
   return r.finish();
 }

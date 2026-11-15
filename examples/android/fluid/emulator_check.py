@@ -108,6 +108,12 @@ def main(apk, out):
     pace = re.findall(r"fluid: (\d+ fps, longest \d+ ms.*)", logcat())
     if pace:
         print("pace: " + pace[-1], flush=True)
+    # The details that the dialog shows, as the log has them.
+    details = re.findall(r"fluid: detail (.*)", logcat())
+    if len(details) < 5:
+        fail("the app wrote no details of what it measured")
+    for line in details[-5:]:
+        print("detail: " + line.strip(), flush=True)
 
     # Two fingers that move at the same time. `input` has one finger only,
     # so a script of monkey gives the two. The app then writes the largest

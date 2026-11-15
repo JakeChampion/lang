@@ -17,7 +17,7 @@ func TestAndroidKeysMatchCompiler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string][]string{"ANDROID_TEXT": androidText, "ANDROID_SWITCHES": androidSwitches, "ANDROID_LISTS": androidLists} {
+	for name, want := range map[string][]string{"ANDROID_TEXT": androidText, "ANDROID_SWITCHES": androidSwitches, "ANDROID_LISTS": androidLists, "ANDROID_NUMBERS": androidNumbers} {
 		m := regexp.MustCompile(`const ` + name + `: string\[\] = \[([^\]]*)\];`).FindSubmatch(raw)
 		if m == nil {
 			t.Fatalf("compiler/fern_toml.fern has no %s", name)
@@ -31,7 +31,7 @@ func TestAndroidKeysMatchCompiler(t *testing.T) {
 		}
 	}
 	_, err = androidValue("colour", `"red"`)
-	if err == nil || !strings.Contains(err.Error(), "package, label, icon, banner, key, min_sdk, home, tv, compress, cleartext, debuggable, permissions, assets, widget") {
+	if err == nil || !strings.Contains(err.Error(), "package, label, icon, banner, key, version_name, min_sdk, version_code, home, tv, compress, cleartext, debuggable, permissions, assets, widget") {
 		t.Errorf("the refusal of an unknown key does not list the keys: %v", err)
 	}
 }

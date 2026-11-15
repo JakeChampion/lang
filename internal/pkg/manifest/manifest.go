@@ -555,9 +555,10 @@ func validDepName(s string) bool {
 // ANDROID_TEXT, ANDROID_SWITCHES and ANDROID_LISTS of compiler/fern_toml.fern
 // list them. TestAndroidKeysMatchCompiler holds the two in step.
 var (
-	androidText     = []string{"package", "label", "icon", "banner", "key"}
+	androidText     = []string{"package", "label", "icon", "banner", "key", "version_name"}
 	androidSwitches = []string{"home", "tv", "compress", "cleartext", "debuggable"}
 	androidLists    = []string{"permissions", "assets", "widget"}
+	androidNumbers  = []string{"min_sdk", "version_code"}
 )
 
 // androidValue checks the value of the [android] key `key`, which names an
@@ -577,12 +578,12 @@ func androidValue(key, val string) (string, error) {
 			return "", err
 		}
 		return strings.Join(items, ","), nil
-	case key == "min_sdk":
+	case slices.Contains(androidNumbers, key):
 		if _, err := parseScalar(val); err != nil || strings.HasPrefix(val, "\"") {
-			return "", fmt.Errorf("expected an API level, got %q", val)
+			return "", fmt.Errorf("expected a whole number, got %q", val)
 		}
 		return val, nil
 	}
-	keys := slices.Concat(androidText, []string{"min_sdk"}, androidSwitches, androidLists)
+	keys := slices.Concat(androidText, androidNumbers, androidSwitches, androidLists)
 	return "", fmt.Errorf("unknown key (supported: %s)", strings.Join(keys, ", "))
 }

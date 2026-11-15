@@ -1,0 +1,52 @@
+// Checks the text of what the app measured on the host: the lines of the
+// dialog and of the log for each case of the touch events, of the times of
+// the display, and of the priority of the loop.
+import "std/array";
+import "std/test";
+import "./pace";
+import "./report";
+
+const MS: i64 = 1000000i64;
+
+function second(times: i32): pace.Second {
+  return pace.Second { fps: 118i64, longest_ns: 18200000i64, every: 1, shown_ns: 24960000i64, period_ns: 8333333i64, done_ns: 7040000i64, times: times };
+}
+
+function facts(times: i32, touch: report.Touch, priority: boolean): report.Facts {
+  return report.Facts { second: second(times), touch: touch, work: 3149000000i64, priority: priority };
+}
+
+function test_the_details_tell_what_the_app_measured(): test.TestOutcome {
+  let touch = report.no_touch().read(1, 1, 400000i64).read(1, 2, 3100000i64).read(1, 2, 900000i64);
+  let lines = report.details(facts(pace.TIMES_TOLD, touch, true));
+  return test.assert_eq(lines.join(" | "), "Display: 118 fps at 120 Hz, longest 18.2 ms | Shown 25.0 ms after the frame starts | Touch: each place at once, read 0.4 ms to 3.1 ms after | GPU: 3.1 G texels and pixels a second, done 7.0 ms after the refresh | Loop: the priority of a thread that draws");
+}
+
+function test_the_details_tell_when_the_phone_holds_the_places_back(): test.TestOutcome {
+  let touch = report.no_touch().read(4, 1, 12000000i64).read(5, 1, 9000000i64);
+  let lines = report.details(facts(pace.TIMES_TOLD, touch, true));
+  return test.assert_eq(lines[2], "Touch: 5 places in each event, read 9.0 ms to 12.0 ms after");
+}
+
+function test_the_details_tell_what_the_phone_does_not_tell(): test.TestOutcome {
+  let none = report.details(facts(pace.TIMES_NONE, report.no_touch(), false));
+  let unknown = report.details(facts(pace.TIMES_UNKNOWN, report.no_touch(), true));
+  let slow = report.details(report.Facts { ...facts(pace.TIMES_TOLD, report.no_touch(), true), second: pace.Second { ...second(pace.TIMES_TOLD), every: 2, done_ns: 0i64 } });
+  return test.assert_eq(none[1] + " | " + none[2] + " | " + none[4] + " | " + unknown[1] + " | " + slow[0] + " | " + slow[3], "Shown: the phone does not tell when | Touch: none since the last line | Loop: normal priority, the phone refused more | Shown: no time from the phone yet | Display: 118 fps at 120 Hz, 1 frame in 2 refreshes, longest 18.2 ms | GPU: 3.1 G texels and pixels a second");
+}
+
+function test_the_log_has_the_frame_rate_and_the_touches(): test.TestOutcome {
+  let touch = report.no_touch().read(1, 1, 400000i64).read(1, 2, 3100000i64).starved_frame();
+  let quiet = report.log_lines(facts(pace.TIMES_TOLD, report.no_touch(), true));
+  let busy = report.log_lines(facts(pace.TIMES_TOLD, touch, true));
+  return test.assert_eq(quiet.join(" | ") + " / " + busy[1] + " / " + report.header(second(pace.TIMES_TOLD)), "118 fps, longest 18 ms, shown after 24 ms / touch 2 events, 2 places, read 400 to 3100 us after their time, 1 frames with an old place, 2 fingers at most / 118 fps");
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/fluid report");
+  r = r.it("the details tell what the app measured", test_the_details_tell_what_the_app_measured);
+  r = r.it("the details tell when the phone holds the places back", test_the_details_tell_when_the_phone_holds_the_places_back);
+  r = r.it("the details tell what the phone does not tell", test_the_details_tell_what_the_phone_does_not_tell);
+  r = r.it("the log has the frame rate and the touches", test_the_log_has_the_frame_rate_and_the_touches);
+  return r.finish();
+}
