@@ -1,7 +1,7 @@
 // The commit graph of git (`objects/info/commit-graph`, or the chain of
 // `objects/info/commit-graphs/`): the parents, the tree, the date and the
 // generation number of each commit, and its changed-path Bloom filter
-// (commit-graph.c and bloom.c of git 2.43).
+// (commit-graph.c and bloom.c of git).
 //
 // A file is `CGPH`, a version, the hash, the count of chunks, the count of
 // base files, and a table of the chunks. OIDF and OIDL are a fan-out table
@@ -325,7 +325,7 @@ function key_of(g: Graph, path: u8[]): i64[] {
 // The keys of the path `item` of a pathspec and of each directory above
 // it, as `prepare_to_use_bloom_filter` makes them, or none when the
 // filters cannot tell: no filters, an empty path, or a path with a byte
-// above 127, which git 2.43 hashes as a signed byte.
+// above 127, which the filters of version 1 hash as a signed byte.
 pub function keys(g: Graph, item: string): i64[][] {
   let path = if (item.ends_with("/")) { objects.part(item, 0, item.len() - 1) } else { item };
   if (g.hashes == 0 || path.len() == 0) {

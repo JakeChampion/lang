@@ -54,6 +54,8 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   and `--full-history` keeps each side of a merge. The order is that of
   the dates, or that of `--topo-order`, `--date-order`,
   `--author-date-order` and `--reverse`. `--graph` draws the graph of git.
+  When more commits come after a root commit, the graph indents the root,
+  as git 2.56.1 does.
 
   `--simplify-merges` and `--simplify-by-decoration` simplify the
   history as git does, and `--ancestry-path` keeps the commits on a path
@@ -149,7 +151,13 @@ current directory or of a directory above it. A `.git` file of a linked
 worktree gives the git directory.
 
 The standard output, the messages and the exit status are those of git
-2.43.
+2.56.1. That is the git of the CI runners. The tests compare the port with
+the git of the machine. With git 2.43, four things are different:
+
+- the indent of the roots in `--graph`
+- the order of the options in the message for `--graph` with `--reverse`
+- the check of the kind in `hash-object --literally`
+- the usage of `index-pack`.
 
 ## Files
 
@@ -199,6 +207,13 @@ The standard output, the messages and the exit status are those of git
 - `rev-parse --short=N` with N above 40 in a repository with SHA-256
   names. The port gives the full name, and git 2.43 stops at 40 digits.
 
+- `index-pack -v`, `--verify`, `--strict` and `--fsck-objects`. The port
+  prints the usage of git for them.
+
+- The changed-path Bloom filters of version 2
+  (`commitGraph.changedPathsVersion`). The port walks a path without
+  them, and it uses the filters of version 1 only.
+
 - `--fix-thin` with a thin pack. The port adds the bases with the deflate
   of `std/deflate`, so the packfile, its name and its index do not have
   the bytes that git writes.
@@ -213,21 +228,21 @@ Fern: 292,676 objects, 24,135 commits, and a packfile of 430 MB. The port is bui
 
 | Command | git | The port |
 |---|---|---|
-| `cat-file --batch` (all objects) | 164.7 s | 165.6 s |
-| `cat-file --batch-check` (all objects) | 0.69 s | 1.15 s |
-| `log` | 0.52 s | 0.66 s |
-| `log --oneline` | 0.43 s | 0.51 s |
-| `log --oneline -- examples/pigz` | 0.35 s | 0.38 s |
-| `log --graph --oneline` | 0.48 s | 0.62 s |
-| `log --name-status -200` | 0.028 s | 0.042 s |
-| `log --oneline --author=Claude --grep=fix` | 0.50 s | 0.93 s |
-| `log --oneline HEAD~500..HEAD` | 0.030 s | 0.044 s |
-| `log --oneline --topo-order` | 0.48 s | 0.54 s |
-| `log -p -200` | 0.57 s | 0.71 s |
+| `cat-file --batch` (all objects) | 164.5 s | 168.5 s |
+| `cat-file --batch-check` (all objects) | 0.68 s | 1.15 s |
+| `log` | 0.52 s | 0.65 s |
+| `log --oneline` | 0.44 s | 0.49 s |
+| `log --oneline -- examples/pigz` | 0.33 s | 0.37 s |
+| `log --graph --oneline` | 0.47 s | 0.59 s |
+| `log --name-status -200` | 0.026 s | 0.041 s |
+| `log --oneline --author=Claude --grep=fix` | 0.51 s | 0.90 s |
+| `log --oneline HEAD~500..HEAD` | 0.028 s | 0.043 s |
+| `log --oneline --topo-order` | 0.47 s | 0.55 s |
+| `log -p -200` | 0.57 s | 0.70 s |
 | `log --stat -200` | 0.55 s | 0.67 s |
-| `rev-parse HEAD~100 HEAD^{tree} HEAD:README.md` | 0.004 s | 0.006 s |
-| `ls-tree -r HEAD` | 0.021 s | 0.026 s |
-| `ls-tree -r -l HEAD` | 0.063 s | 0.091 s |
+| `rev-parse HEAD~100 HEAD^{tree} HEAD:README.md` | 0.003 s | 0.005 s |
+| `ls-tree -r HEAD` | 0.021 s | 0.029 s |
+| `ls-tree -r -l HEAD` | 0.061 s | 0.086 s |
 | `index-pack` (430 MB) | 72.0 s | 51.2 s |
 | `verify-pack -v` (430 MB) | 72.5 s | 45.7 s |
 
@@ -236,10 +251,10 @@ With a commit graph that has Bloom filters
 
 | Command | git | The port |
 |---|---|---|
-| `log --oneline -- examples/pigz` | 0.020 s | 0.046 s |
-| `log --graph --oneline` | 0.56 s | 0.63 s |
-| `log --oneline --topo-order` | 0.43 s | 0.57 s |
-| `log --oneline --author=Claude --grep=fix` | 0.54 s | 0.57 s |
+| `log --oneline -- examples/pigz` | 0.017 s | 0.038 s |
+| `log --graph --oneline` | 0.46 s | 0.70 s |
+| `log --oneline --topo-order` | 0.44 s | 0.58 s |
+| `log --oneline --author=Claude --grep=fix` | 0.53 s | 0.61 s |
 
 git has a thread for each CPU in `index-pack` and `verify-pack`. The
 port has a worker for each CPU in `index-pack`, and one thread in
