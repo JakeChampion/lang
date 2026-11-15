@@ -61,7 +61,7 @@ const ciYml = ci.join("\n");
 // a main push reads about the pull request it merged: the pushed tree, the
 // associated PRs with their head trees, and each head's successful runs and
 // their jobs. `proofThrows` makes the first of those calls fail.
-async function decide({ event = "pull_request", files = [], throwOn = false, lanes = table, proof = null, proofThrows = false, waitMinutes = 30 } = {}) {
+async function decide({ event = "pull_request", ref = "refs/heads/main", files = [], throwOn = false, lanes = table, proof = null, proofThrows = false, waitMinutes = 30 } = {}) {
   process.env.LANES = typeof lanes === "string" ? lanes : JSON.stringify(lanes);
   process.env.CI_PLANNER = binary;
   // A poll is a millisecond here; `proof.poll` is the status each successive
@@ -80,6 +80,7 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
   };
   const context = {
     eventName: event,
+    ref,
     sha: "c".repeat(40),
     repo: { owner: "o", repo: "r" },
     payload: event === "pull_request"
@@ -107,6 +108,7 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
       },
       actions: {
         listWorkflowRuns: async ({ workflow_id, head_sha }) => {
+          if (workflow_id === "merge-queue-batch.yml") return { data: { workflow_runs: p.batchRuns || [] } };
           if (workflow_id === "ci-main.yml") {
             if (p.mainThrows) throw new Error("runs api down");
             return { data: { workflow_runs: p.mainRuns || [] } };
@@ -221,6 +223,35 @@ check("identical tree: every passed lane skips, perf runs",
 check("identical tree: the proven lanes are annotated by display name for main-red.yml",
   r.notices.filter((n) => n.title === "Lanes proven by the merged pull request").map((n) => JSON.parse(n.message)),
   [{ pr: 7, run: 99, lanes: laneKeys.filter((l) => l !== "perf").map((l) => display[l]) }]);
+// The merge queue moves main to the commit that its batch run tested. Main
+// skips each lane that passed there, and runs a lane that the batch did not
+// run. A batch job has the name of a main job: "Validate / " and the lane.
+const batchJobs = (keys) => jobsFor(keys).map((j) => ({ ...j, name: `Validate / ${j.name}` }));
+const batchProof = (keys) => ({ tree: "t", prs: [], runs: {}, batchRuns: [{ id: 55 }], jobs: { 55: batchJobs(keys) } });
+r = await decide({ event: "push", proof: batchProof(laneKeys) });
+check("batch at this commit: every passed lane skips, perf runs", trimmedTo(r), ["perf"]);
+check("batch at this commit: the proven lanes are annotated with no pull request",
+  r.notices.filter((n) => n.title === "Lanes proven by the merged pull request").map((n) => JSON.parse(n.message)),
+  [{ pr: null, run: 55, lanes: laneKeys.filter((l) => l !== "perf").map((l) => display[l]) }]);
+r = await decide({ event: "push", proof: batchProof(laneKeys.filter((l) => l !== "test-units")) });
+check("batch at this commit: a lane that the batch did not run runs on main", trimmedTo(r).sort(), ["perf", "test-units"]);
+r = await decide({ event: "push", proof: { ...batchProof(laneKeys), jobs: { 55: batchJobs(laneKeys).map((j) => j.name.includes(display["test-units"]) ? { ...j, conclusion: "failure" } : j) } } });
+check("batch at this commit: a lane that failed there runs on main", trimmedTo(r).sort(), ["perf", "test-units"]);
+
+// A batch of the merge queue selects its lanes by its diff from main, as a
+// pull request does by its own diff.
+const batchRef = "refs/heads/merge-queue/batch";
+const batchCompare = (files, status = "ahead") => ({ tree: "t", prs: [], runs: {}, jobs: {}, compare: { [`main...${"c".repeat(40)}`]: { status, files: files.map((filename) => ({ filename })) } } });
+r = await decide({ event: "workflow_dispatch", ref: batchRef, proof: batchCompare(["docs/x.md"]) });
+const docsOnly = await decide({ files: ["docs/x.md"] });
+check("batch: a docs-only batch selects what a docs-only pull request selects", [r.lanes, r.selection.full], [docsOnly.lanes, false]);
+r = await decide({ event: "workflow_dispatch", ref: batchRef, proof: batchCompare(["compiler/checker.fern"]) });
+check("batch: a compiler change reaches the self-host lane", r.lanes["test-e2e-selfhost"], true);
+r = await decide({ event: "workflow_dispatch", ref: batchRef, proof: batchCompare(["docs/x.md"], "diverged") });
+check("batch: a compare that is not ahead runs every lane", all(r), true);
+r = await decide({ event: "workflow_dispatch", proof: batchCompare(["docs/x.md"]) });
+check("a dispatch on another branch runs every lane", all(r), true);
+
 r = await decide({ event: "push", proof: proofOf({ headTree: "other" }) });
 check("different tree: every lane runs, and says why",
   [all(r), r.infos.some((m) => m.includes("the pushed tree differs from the head of #7"))], [true, true]);

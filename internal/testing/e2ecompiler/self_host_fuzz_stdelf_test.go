@@ -84,6 +84,27 @@ func elfSeeds(testing.TB) [][]byte {
 		b[at] = v
 		seeds = append(seeds, b)
 	}
+	// The layout: an entry at each edge of the file bytes, in a segment that is
+	// not executable and in the zero tail, and segments that share one byte,
+	// that touch, that wrap, and that have no memory.
+	data := elfProgramHeader(1, 6, 0, 0x400078, 16, 32)
+	seeds = append(seeds,
+		elfHeaderImage(2, 62, 0x400000, 64, 56, 1, load),
+		elfHeaderImage(2, 62, 0x400077, 64, 56, 1, load),
+		elfHeaderImage(2, 62, 0x400078, 64, 56, 1, load),
+		elfHeaderImage(2, 62, 0x3fffff, 64, 56, 1, load),
+		elfHeaderImage(2, 62, 0x400078, 64, 56, 2, load, data),
+		elfHeaderImage(2, 62, 0x400088, 64, 56, 1, elfProgramHeader(1, 5, 0, 0x400078, 16, 32)),
+		elfHeaderImage(2, 62, 0x400000, 64, 56, 2, load, elfProgramHeader(1, 6, 0, 0x400077, 16, 32)),
+		elfHeaderImage(2, 62, 0x400000, 64, 56, 2, elfProgramHeader(1, 6, 0, 0x400077, 16, 32), load),
+		elfHeaderImage(2, 62, 0x400000, 64, 56, 2, load, load),
+		elfHeaderImage(2, 62, 0x400000, 64, 56, 2, load, elfProgramHeader(1, 6, 0, 0x3ffff0, 16, 16)),
+		elfHeaderImage(2, 62, 0x400000, 64, 56, 2, load, elfProgramHeader(1, 6, 0, 0x400010, 0, 0)),
+		elfHeaderImage(2, 62, 0x400000, 64, 56, 2, load, elfProgramHeader(4, 4, 0, 0x400010, 16, 16)),
+		elfHeaderImage(2, 62, max-7, 64, 56, 1, elfProgramHeader(1, 5, 0, max-7, 8, 8)),
+		elfHeaderImage(2, 62, max-7, 64, 56, 1, elfProgramHeader(1, 5, 0, max-7, 7, 7)),
+		elfHeaderImage(2, 62, 0x400000, 64, 56, 2, load, elfProgramHeader(1, 6, 0, 16, 0, max)),
+	)
 	seeds = append(seeds, elfHeaderImage(2, 62, 0, 64, 56, 1, load)[:63])
 	return seeds
 }
@@ -136,8 +157,44 @@ func elfSummaryInGo(in []byte) string {
 		}
 		fmt.Fprintf(&b, " %d:%d:%d", kind, fileSize, sum)
 	}
-	fmt.Fprintf(&b, " loads %d", loads)
+	fmt.Fprintf(&b, " loads %d layout %s", loads, elfLayoutInGo(in, phoff, count))
 	return b.String()
+}
+
+// elfLayoutInGo is the offset of the first fault that stops a loader, or "ok".
+// A load segment with memory must not wrap the address space or share a byte
+// with an earlier one, and the entry must be in the file bytes of an
+// executable one.
+func elfLayoutInGo(in []byte, phoff, count uint64) string {
+	le := binary.LittleEndian
+	type span struct {
+		start, size, fileSize uint64
+		exec                  bool
+	}
+	var spans []span
+	for k := uint64(0); k < count; k++ {
+		h := in[phoff+k*56:]
+		s := span{le.Uint64(h[16:]), le.Uint64(h[40:]), le.Uint64(h[32:]), le.Uint32(h[4:])&1 != 0}
+		if le.Uint32(h) != 1 || s.size == 0 {
+			continue
+		}
+		if s.start+s.size < s.start {
+			return fmt.Sprint(int32(phoff + k*56))
+		}
+		for _, e := range spans {
+			if s.start < e.start+e.size && e.start < s.start+s.size {
+				return fmt.Sprint(int32(phoff + k*56))
+			}
+		}
+		spans = append(spans, s)
+	}
+	entry := le.Uint64(in[24:])
+	for _, s := range spans {
+		if s.exec && entry >= s.start && entry-s.start < s.fileSize {
+			return "ok"
+		}
+	}
+	return "24"
 }
 
 func elfAgreesWithGo(r readerRun) string {

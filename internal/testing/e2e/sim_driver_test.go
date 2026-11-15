@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestRunnerSimDriverExamplePasses(t *testing.T) {
@@ -15,7 +17,8 @@ func TestRunnerSimDriverExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/sim driver", "# pass 10", "# fail 0", "1..10"} {
+	e2eharness.CheckTAPPlan(t, out)
+	for _, w := range []string{"# Suite: std/sim driver", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
