@@ -6842,7 +6842,6 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   }
   let rt = lambda_ret_type(lm, s);
   let body_scope = lambda_body_scope(lm, s);
-  check_block(lm.body, body_scope);
   if (lm.ret_type.len() == 0 && is_unknown(rt)) {
     let (returned, at) = first_returned(lm.body, body_scope);
     if (!parser.bare_return(returned)) {

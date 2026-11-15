@@ -1,0 +1,10 @@
+// The type of a lambda with no written result is the type of what it returns.
+// The checker finds that type with one visit of the body, so 60 lambdas, each
+// the result of the one before it, check at once. Two visits for each lambda
+// are 2^60 visits.
+function main(): i32 {
+  let f = (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => (a: i32) => a + 1;
+  let g = f(1);
+  print("ok");
+  return 0;
+}
