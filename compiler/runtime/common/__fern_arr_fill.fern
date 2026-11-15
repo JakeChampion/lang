@@ -19,6 +19,17 @@ function __fern_arr_fill(own a: i32[], at: i32, n: i32, v: i64, shift: i32): i32
       __memset(p, byte, k as i32);
       p += k;
     }
+  } else if (shift == 1) {
+    let w = (v & 65535i64) * 281479271743489i64;
+    while (end - p >= 8) {
+      __store_i64(p, w);
+      p += 8;
+    }
+    while (p < end) {
+      __store_u8(p, v as i32);
+      __store_u8(p + 1, (v >> 8i64) as i32);
+      p += 2;
+    }
   } else if (shift == 2) {
     while (p < end) {
       __store_i32(p, v as i32);
