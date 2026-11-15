@@ -1,0 +1,381 @@
+import "std/array";
+import "std/string";
+import "std/hex";
+import "std/result";
+import "core/cmp";
+import "core/map";
+import "./fsck";
+import "./checkblob";
+import "./index";
+import "./objects";
+import "./pack";
+
+const MESSAGE_IDS: string = "nulinheader unterminatedheader badheadercontinuation baddate baddateoverflow bademail badgpgsig badheadtarget badname badobjectsha1 badpackedrefentry badpackedrefheader badparentsha1 badreferentname badrefcontent badreffiletype badrefname badrefoid badtimezone badtree badtreesha1 badtype duplicateentries gitattributesblob gitattributeslarge gitattributeslinelength gitattributesmissing gitmodulesblob gitmoduleslarge gitmodulesmissing gitmodulesname gitmodulespath gitmodulessymlink gitmodulesupdate gitmodulesurl missingauthor missingcommitter missingemail missingnamebeforeemail missingobject missingspacebeforedate missingspacebeforeemail missingtag missingtagentry missingtree missingtype missingtypeentry multipleauthors packedrefentrynotterminated packedrefunsorted treenotsorted unknowntype zeropaddeddate badreftabletablename emptyname fullpathname hasdot hasdotdot hasdotgit largepathname nullsha1 nulincommit zeropaddedfilemode badfilemode badtagname emptypackedrefsfile gitattributessymlink gitignoresymlink gitmodulesparse mailmapsymlink missingtaggerentry refmissingnewline symlinkref symreftargetisnotaref trailingrefcontent extraheaderentry";
+
+const INFO_IDS: string = "badfilemode badtagname emptypackedrefsfile gitattributessymlink gitignoresymlink gitmodulesparse mailmapsymlink missingtaggerentry refmissingnewline symlinkref symreftargetisnotaref trailingrefcontent";
+
+pub struct Policy { enabled: boolean, strict: boolean, levels: Map[string, i32] }
+
+pub function policy(): Policy {
+  return Policy { enabled: false, strict: false, levels: Map { } };
+}
+
+pub function level(p: Policy, id: string): i32 {
+  let key = id.to_ascii_lower();
+  if let Some(n) = p.levels.get(key) {
+    return n;
+  }
+  return if (key == "extraheaderentry") { 0 } else if (INFO_IDS.split(" ").contains(key)) { 1 } else { 2 };
+}
+
+pub function configure(p_in: Policy, text: string): Result[Policy, string] {
+  let p = p_in;
+  let at = 0;
+  while (at < text.len()) {
+    let end = at;
+    while (end < text.len() && text[end] != b' ' && text[end] != b',' && text[end] != b'|') {
+      end += 1;
+    }
+    if (end > at) {
+      let word = objects.part(text, at, end);
+      let equal = 0;
+      while (equal < word.len() && word[equal] != b'=' && word[equal] != b':') {
+        equal += 1;
+      }
+      let id = objects.part(word, 0, equal).to_ascii_lower();
+      if (equal == word.len()) {
+        return Err("Missing '=': '" + id + "'");
+      }
+      if (!MESSAGE_IDS.split(" ").contains(id)) {
+        return Err("Unhandled message id: " + id);
+      }
+      let kind = objects.part(word, equal + 1, word.len());
+      let n = match (kind) {
+        "ignore" => 0,
+        "warn" => 1,
+        "error" => 2,
+        _ => -1,
+      };
+      if (n < 0) {
+        return Err("Unknown fsck message type: '" + kind + "'");
+      }
+      if ((id == "nulinheader" || id == "unterminatedheader") && n != 2) {
+        return Err("Cannot demote " + id + " to " + kind);
+      }
+      p = Policy { ...p, levels: p.levels.insert(id, n) };
+    }
+    at = end + 1;
+  }
+  return Ok(p);
+}
+
+pub struct Task { name: string, kind: string }
+
+pub struct Report { ok: boolean, lines: string[], delayed: Task[] }
+
+function report(ok: boolean, lines: string[]): Report {
+  return Report { ok: ok, lines: lines, delayed: [] };
+}
+
+function findings(name: string, found: fsck.Finding[], p: Policy): Report {
+  let lines: string[] = [];
+  let ok = true;
+  for f in found {
+    if (f.id.len() == 0) {
+      lines = lines.append(f.text);
+    } else {
+      let n = level(p, f.id);
+      if (n > 0) {
+        lines = lines.append((if (n == 1) { "warning: " } else { "error: " }) + "object " + name + ": " + f.id + ": " + f.text);
+        ok = ok && n < 2;
+      }
+    }
+  }
+  return report(ok, lines);
+}
+
+function tree_tasks(body: u8[], width: i32): Task[] {
+  let out: Task[] = [];
+  let Ok(entries) = objects.tree_entries(body, width) else {
+    return [];
+  };
+  for e in entries {
+    let mode = mode_bits(e.mode);
+    if ((mode & 61440) != 40960) {
+      for kind in ["gitmodules", "gitattributes"] {
+        if (fsck.special_name(e.name, kind)) {
+          out = out.append(Task { name: e.hash, kind: kind });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+struct Links { types: Map[string, string], linked: Map[string, boolean], order: string[], checked: Map[string, boolean] }
+
+function claim(s: Links, name: string, kind: string, linked: boolean): (Links, string) {
+  let old = s.types.get_or(name, "");
+  if (old.len() > 0 && old != kind) {
+    return (s, "error: object " + name + " is a " + old + ", not a " + kind);
+  }
+  let add = linked && !s.linked.contains(name);
+  return (Links { ...s, types: s.types.insert(name, kind), linked: if (add) { s.linked.insert(name, true) } else { s.linked }, order: if (add) { s.order.append(name) } else { s.order } }, "");
+}
+
+function named_line(body: u8[], at: i32, key: string, width: i32): string {
+  let end = at + key.len() + 2 * width;
+  if (end >= body.len() || body[end] != b'\n' || objects.part_bytes(body, at, at + key.len()) != key) {
+    return "";
+  }
+  let name = objects.part_bytes(body, at + key.len(), end);
+  return if (objects.is_name(width, name)) { name.to_ascii_lower() } else { "" };
+}
+
+struct Parsed { links: Links, lines: string[], ok: boolean }
+
+function parsed(s: Links, lines: string[]): Parsed {
+  return Parsed { links: s, lines: lines, ok: lines.len() == 0 };
+}
+
+function parse_commit(s_in: Links, name: string, body: u8[], width: i32, strict: boolean): Parsed {
+  let tree = named_line(body, 0, "tree ", width);
+  if (body.len() <= 2 * width + 6 || !objects.part_bytes(body, 0, body.len().min(5)).starts_with("tree ") || body.len() > 2 * width + 5 && body[2 * width + 5] != b'\n') {
+    return parsed(s_in, ["error: bogus commit object " + name]);
+  }
+  if (tree.len() == 0) {
+    return parsed(s_in, ["error: bad tree pointer in commit " + name]);
+  }
+  let (s, bad) = claim(s_in, tree, "tree", strict);
+  if (bad.len() > 0) {
+    return parsed(s, [bad, "error: bad tree pointer " + tree + " in commit " + name]);
+  }
+  let at = 2 * width + 6;
+  while (at + 2 * width + 7 < body.len() && objects.part_bytes(body, at, at + 7) == "parent ") {
+    let parent = named_line(body, at, "parent ", width);
+    if (parent.len() == 0 || at + 2 * width + 8 >= body.len()) {
+      return parsed(s, ["error: bad parents in commit " + name]);
+    }
+    let (after, message) = claim(s, parent, "commit", strict);
+    s = after;
+    if (message.len() > 0) {
+      return parsed(s, [message, "error: bad parent " + parent + " in commit " + name]);
+    }
+    at += 2 * width + 8;
+  }
+  return parsed(s, []);
+}
+
+function parse_tag(s_in: Links, name: string, body: u8[], width: i32, strict: boolean): Parsed {
+  let target = named_line(body, 0, "object ", width);
+  let at = 2 * width + 8;
+  if (body.len() < 2 * width + 24 || target.len() == 0 || objects.part_bytes(body, at, at + 5) != "type ") {
+    return Parsed { links: s_in, lines: [], ok: false };
+  }
+  at += 5;
+  let end = at;
+  while (end < body.len() && body[end] != b'\n') {
+    end += 1;
+  }
+  if (end == body.len() || end - at >= 20) {
+    return Parsed { links: s_in, lines: [], ok: false };
+  }
+  let kind = objects.part_bytes(body, at, end);
+  if (!objects.is_kind(kind)) {
+    return parsed(s_in, ["error: unknown tag type '" + kind + "' in " + name]);
+  }
+  let (s, bad) = claim(s_in, target, kind, strict);
+  if (bad.len() > 0) {
+    return parsed(s, [bad, "error: bad tag pointer to " + target + " in " + name]);
+  }
+  if (end + 5 >= body.len() || objects.part_bytes(body, end + 1, end + 5) != "tag " || !objects.part_bytes(body, end + 5, body.len()).contains("\n")) {
+    return Parsed { links: s, lines: [], ok: false };
+  }
+  return parsed(s, []);
+}
+
+function mode_bits(mode: string): i32 {
+  let n = 0;
+  for b in mode.bytes() {
+    n = n * 8 + (b - b'0') as i32;
+  }
+  return n;
+}
+
+function mode_kind(mode: string): string {
+  return match (mode_bits(mode) & 61440) {
+    16384 => "tree",
+    32768 => "blob",
+    40960 => "blob",
+    _ => "",
+  };
+}
+
+function tree_links(s_in: Links, name: string, body: u8[], width: i32): Parsed {
+  let s = s_in;
+  let entries = match (objects.tree_entries(body, width)) {
+    Ok(es) => es,
+    Err(_) => { return parsed(s, ["fatal: Not all child objects of " + name + " are reachable"]); },
+  };
+  for e in entries {
+    let kind = mode_kind(e.mode);
+    if (kind.len() > 0) {
+      let (after, bad) = claim(s, e.hash, kind, true);
+      s = after;
+      if (bad.len() > 0) {
+        return parsed(s, [bad, "fatal: Not all child objects of " + name + " are reachable"]);
+      }
+    }
+  }
+  return parsed(s, []);
+}
+
+function finish(s: Links, width: i32, local: (string) => Option[objects.Object]): string[] {
+  let empty_tree = objects.hash_of(width, "tree", []);
+  for name in s.order {
+    if (!s.checked.contains(name) && !(name == empty_tree && s.types.get_or(name, "") == "tree")) {
+      let Some(o) = local(name) else {
+        return ["fatal: did not receive expected object " + name];
+      };
+      let want = s.types.get_or(name, "");
+      if (o.kind != want) {
+        return ["fatal: object " + name + ": expected type " + want + ", found " + o.kind];
+      }
+    }
+  }
+  return [];
+}
+
+pub function validate(b: index.Built, width: i32, p: Policy, local: (string) => Option[objects.Object]): Report {
+  if (!p.enabled) {
+    return report(true, []);
+  }
+  let ix = match (pack.index_of(b.idx, width, "")) {
+    Ok(i) => i,
+    Err(e) => { return report(false, ["fatal: " + e]); },
+  };
+  let order: i32[] = [];
+  for i in 0..ix.count {
+    order = order.append(i);
+  }
+  order = cmp.sort_by(order, (a: i32, z: i32): i32 => if (pack.offset_at(ix, a) < pack.offset_at(ix, z)) { -1 } else { 1 });
+  let src = pack.memory(b.data, (n: u8[]): i64 => pack.offset_of(ix, n), width);
+  let cache = pack.cache_new();
+  let s = Links { types: Map { }, linked: Map { }, order: [], checked: Map { } };
+  let lines: string[] = [];
+  let tasks: Task[] = [];
+  let scheduled: Map[string, boolean] = Map { };
+  let done: Map[string, boolean] = Map { };
+  for i in order {
+    let name = pack.hex_name_at(ix, i);
+    let (got, after) = pack.object_cached(src, pack.offset_at(ix, i), cache);
+    cache = after;
+    let o = match (got) {
+      Ok(value) => value,
+      Err(e) => { return report(false, lines.append("fatal: " + e)); },
+    };
+    let (claimed, bad) = claim(s, name, o.kind, false);
+    s = claimed;
+    if (bad.len() > 0) {
+      return report(false, lines.append(bad).append(if (o.kind == "blob") { "fatal: invalid blob object " + name } else { "fatal: invalid " + o.kind }));
+    }
+    let found = if (o.kind == "commit") { parse_commit(s, name, o.body, width, p.strict) } else if (o.kind == "tag") { parse_tag(s, name, o.body, width, p.strict) } else { parsed(s, []) };
+    s = found.links;
+    if (!found.ok) {
+      return report(false, lines.concat(found.lines).append("fatal: invalid " + o.kind));
+    }
+    if (o.kind == "tree") {
+      for task in tree_tasks(o.body, width) {
+        let key = task.kind + ":" + task.name;
+        if (!scheduled.contains(key)) {
+          tasks = tasks.append(task);
+          scheduled = scheduled.insert(key, true);
+        }
+      }
+    }
+    let messages = fsck.inspect(width, o.kind, o.body, (id: string): i32 => level(p, id));
+    if (o.kind == "blob") {
+      for task in tasks {
+        let key = task.kind + ":" + task.name;
+        if (task.name == name && !done.contains(key)) {
+          messages = messages.concat(checkblob.inspect(task.kind, o.body));
+          done = done.insert(key, true);
+        }
+      }
+    }
+    let checked = findings(name, messages, p);
+    lines = lines.concat(checked.lines);
+    if (!checked.ok) {
+      return report(false, lines.append("fatal: fsck error in packed object"));
+    }
+    if (p.strict && o.kind == "tree") {
+      let next = tree_links(s, name, o.body, width);
+      s = next.links;
+      if (!next.ok) {
+        return report(false, lines.concat(next.lines));
+      }
+    }
+    s = Links { ...s, checked: s.checked.insert(name, true) };
+  }
+  let missing = if (p.strict) { finish(s, width, local) } else { [] };
+  let delayed: Task[] = [];
+  for task in tasks {
+    if (!done.contains(task.kind + ":" + task.name)) {
+      delayed = delayed.append(task);
+    }
+  }
+  return Report { ok: missing.len() == 0, lines: lines.concat(missing), delayed: delayed };
+}
+
+pub struct Queued { ok: boolean, lines: string[], missing_modules: string[] }
+
+// Git installs the index before it checks blobs that precede their trees.
+pub function queued(b: index.Built, width: i32, p: Policy, tasks: Task[], local: (string) => Option[objects.Object], in_repo: boolean, own_visible: boolean): Queued {
+  if (!in_repo && tasks.len() > 0) {
+    return Queued { ok: false, lines: ["fatal: cannot perform queued object checks outside of a repository"], missing_modules: [] };
+  }
+  let Ok(ix) = pack.index_of(b.idx, width, "") else {
+    return Queued { ok: false, lines: ["fatal: invalid pack index"], missing_modules: [] };
+  };
+  let src = pack.memory(b.data, (n: u8[]): i64 => pack.offset_of(ix, n), width);
+  let cache = pack.cache_new();
+  let lines: string[] = [];
+  let missing: string[] = [];
+  let ok = true;
+  for kind in ["gitmodules", "gitattributes"] {
+    for task in tasks {
+      if (task.kind != kind) {
+        continue;
+      }
+      let object: Option[objects.Object] = None;
+      let raw = match (hex.decode(task.name)) { Ok(n) => n, Err(_) => [] };
+      let at = pack.offset_of(ix, raw);
+      if (at >= 0 && own_visible) {
+        let (got, after) = pack.object_cached(src, at, cache);
+        cache = after;
+        if let Ok(o) = got {
+          object = Some(o);
+        }
+      } else {
+        object = local(task.name);
+      }
+      let found: fsck.Finding[] = [];
+      if let Some(o) = object {
+        found = if (o.kind == "blob") { checkblob.inspect(kind, o.body) } else { [fsck.Finding { id: kind + "Blob", text: "non-blob found at ." + kind }] };
+      } else if (kind == "gitmodules") {
+        if (level(p, "gitmodulesMissing") > 0) {
+          missing = missing.append(task.name);
+        }
+      } else {
+        found = [fsck.Finding { id: "gitattributesMissing", text: "unable to read .gitattributes blob" }];
+      }
+      let checked = findings(task.name, found, p);
+      lines = lines.concat(checked.lines);
+      ok = ok && checked.ok;
+    }
+  }
+  if (!ok) {
+    lines = lines.append("fatal: fsck error in pack objects");
+  }
+  return Queued { ok: ok, lines: lines, missing_modules: missing };
+}

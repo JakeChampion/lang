@@ -1,0 +1,361 @@
+import "std/array";
+import "std/string";
+import "./config";
+import "./fsck";
+import "./objects";
+
+function space(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\r';
+}
+
+function alpha(b: u8): boolean {
+  return b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z';
+}
+
+function key_byte(b: u8): boolean {
+  return alpha(b) || b >= b'0' && b <= b'9' || b == b'-';
+}
+
+// Config.parse supplies the values. This scan refuses malformed syntax.
+function config_prefix(text: string): i32 {
+  let good = 0;
+  let at = 0;
+  let section = false;
+  while (at < text.len()) {
+    while (at < text.len() && (space(text[at]) || text[at] == b'\n')) {
+      at += 1;
+    }
+    if (at == text.len()) {
+      break;
+    }
+    if (text[at] == b'#' || text[at] == b';') {
+      while (at < text.len() && text[at] != b'\n') {
+        at += 1;
+      }
+      continue;
+    }
+    if (text[at] == b'[') {
+      at += 1;
+      let start = at;
+      while (at < text.len() && (key_byte(text[at]) || text[at] == b'.')) {
+        at += 1;
+      }
+      if (at == start) {
+        return good;
+      }
+      while (at < text.len() && space(text[at])) {
+        at += 1;
+      }
+      if (at < text.len() && text[at] == b'"') {
+        at += 1;
+        while (at < text.len() && text[at] != b'"') {
+          if (text[at] == b'\n' || text[at] == 0) {
+            return good;
+          }
+          if (text[at] == b'\\') {
+            at += 1;
+          }
+          at += 1;
+        }
+        if (at == text.len()) {
+          return good;
+        }
+        at += 1;
+        while (at < text.len() && space(text[at])) {
+          at += 1;
+        }
+      }
+      if (at == text.len() || text[at] != b']') {
+        return good;
+      }
+      at += 1;
+      section = true;
+      good = at;
+      continue;
+    }
+    if (!section || !alpha(text[at])) {
+      return good;
+    }
+    while (at < text.len() && key_byte(text[at])) {
+      at += 1;
+    }
+    while (at < text.len() && space(text[at])) {
+      at += 1;
+    }
+    if (at == text.len() || text[at] == b'\n' || text[at] == b'#' || text[at] == b';') {
+      good = at;
+      continue;
+    }
+    if (text[at] != b'=') {
+      return good;
+    }
+    at += 1;
+    let quote = false;
+    while (at < text.len() && text[at] != b'\n') {
+      let b = text[at];
+      if (b == 0) {
+        return good;
+      }
+      if (b == b'"') {
+        quote = !quote;
+      }
+      if (!quote && (b == b'#' || b == b';')) {
+        while (at < text.len() && text[at] != b'\n') {
+          at += 1;
+        }
+        break;
+      }
+      if (b == b'\\') {
+        at += 1;
+        if (at == text.len()) {
+          return good;
+        }
+        let next = text[at];
+        if (next != b'n' && next != b't' && next != b'b' && next != b'\\' && next != b'"' && next != b'\n') {
+          return good;
+        }
+      }
+      at += 1;
+    }
+    if (quote) {
+      return good;
+    }
+    good = at;
+  }
+  return text.len();
+}
+
+function hex_digit(b: u8): i32 {
+  if (b >= b'0' && b <= b'9') {
+    return (b - b'0') as i32;
+  }
+  if (b >= b'a' && b <= b'f') {
+    return (b - b'a') as i32 + 10;
+  }
+  if (b >= b'A' && b <= b'F') {
+    return (b - b'A') as i32 + 10;
+  }
+  return -1;
+}
+
+function decoded_newline(text: string): boolean {
+  let i = 0;
+  while (i < text.len()) {
+    let b = text[i] as i32;
+    if (b == 37 && i + 2 < text.len() && hex_digit(text[i + 1]) >= 0 && hex_digit(text[i + 2]) >= 0) {
+      b = hex_digit(text[i + 1]) * 16 + hex_digit(text[i + 2]);
+      i += 2;
+    }
+    if (b == 0) {
+      return false;
+    }
+    if (b == 10) {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+function invalid_escapes(text: string): boolean {
+  let i = 0;
+  while (i < text.len()) {
+    if (text[i] == b'%') {
+      if (i + 2 >= text.len() || hex_digit(text[i + 1]) < 0 || hex_digit(text[i + 2]) < 0) {
+        return true;
+      }
+      i += 2;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+function dot_segment(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.len()) {
+    if (text[i] == b'.') {
+      out += ".";
+    } else if (i + 2 < text.len() && text[i] == b'%' && hex_digit(text[i + 1]) == 2 && hex_digit(text[i + 2]) == 14) {
+      out += ".";
+      i += 2;
+    } else {
+      return "other";
+    }
+    i += 1;
+  }
+  return out;
+}
+
+// These are the validity conditions of Git's URL normalization.
+function bad_curl_url(text: string): boolean {
+  let scheme_end = 0;
+  while (scheme_end < text.len() && (key_byte(text[scheme_end]) || text[scheme_end] == b'+' || text[scheme_end] == b'.')) {
+    scheme_end += 1;
+  }
+  if (scheme_end == 0 || !alpha(text[0]) || !objects.part(text, scheme_end, text.len()).starts_with("://") || invalid_escapes(text)) {
+    return true;
+  }
+  let scheme = objects.part(text, 0, scheme_end).to_ascii_lower();
+  let host = scheme_end + 3;
+  let end = host;
+  while (end < text.len() && text[end] != b'/' && text[end] != b'?' && text[end] != b'#') {
+    end += 1;
+  }
+  let at = host;
+  while (at < end && text[at] != b'@') {
+    at += 1;
+  }
+  if (at < end) {
+    host = at + 1;
+  }
+  if ((host == end || text[host] == b':') && scheme != "file") {
+    return true;
+  }
+  let colon = end - 1;
+  while (colon > host && text[colon] != b':' && text[colon] != b']') {
+    colon -= 1;
+  }
+  if (colon < host || text[colon] != b':') {
+    colon = end;
+  }
+  for i in host..colon {
+    let b = text[i];
+    if (!key_byte(b) && b != b'.' && b != b'_' && b != b'[' && b != b']' && b != b':') {
+      return true;
+    }
+  }
+  if (colon < end) {
+    if (host == colon && colon + 1 < end) {
+      return true;
+    }
+    let port = 0;
+    for i in colon + 1..end {
+      if (text[i] < b'0' || text[i] > b'9') {
+        return true;
+      }
+      port = port * 10 + (text[i] - b'0') as i32;
+      if (port > 65535) {
+        return true;
+      }
+    }
+    if (colon + 1 < end && port == 0) {
+      return true;
+    }
+  }
+  let path_end = end;
+  while (path_end < text.len() && text[path_end] != b'?' && text[path_end] != b'#') {
+    path_end += 1;
+  }
+  let path = objects.part(text, end, path_end);
+  if (path.starts_with("/")) {
+    path = objects.part(path, 1, path.len());
+  }
+  let depth = 0;
+  for segment in path.split("/") {
+    let dots = dot_segment(segment);
+    if (dots == "..") {
+      if (depth == 0) {
+        return true;
+      }
+      depth -= 1;
+    } else if (dots != ".") {
+      depth += 1;
+    }
+  }
+  return decoded_newline(text);
+}
+
+function bad_url(url: string): boolean {
+  if (url.starts_with("-")) {
+    return true;
+  }
+  if (url.starts_with("./") || url.starts_with("../") || url.starts_with("git://")) {
+    if (decoded_newline(url)) {
+      return true;
+    }
+    let at = 0;
+    let parent = false;
+    while (at < url.len()) {
+      let rest = objects.part(url, at, url.len());
+      if (rest.starts_with("../")) {
+        at += 3;
+        parent = true;
+      } else if (rest.starts_with("./")) {
+        at += 2;
+      } else {
+        break;
+      }
+    }
+    return parent && at < url.len() && (url[at] == b':' || url[at] == b'/');
+  }
+  for scheme in ["http", "https", "ftp", "ftps"] {
+    if (url.starts_with(scheme + "::")) {
+      return bad_curl_url(objects.part(url, scheme.len() + 2, url.len()));
+    }
+    if (url.starts_with(scheme + "://")) {
+      return bad_curl_url(url);
+    }
+  }
+  return false;
+}
+
+pub function inspect(kind: string, body: u8[]): fsck.Finding[] {
+  let out: fsck.Finding[] = [];
+  if (kind == "gitattributes") {
+    if (body.len() > 100 * 1024 * 1024) {
+      return [fsck.Finding { id: "gitattributesLarge", text: ".gitattributes too large to parse" }];
+    }
+    let start = 0;
+    for i in 0..body.len() + 1 {
+      if (i == body.len() || body[i] == 0 || body[i] == b'\n') {
+        if (i - start >= 2048) {
+          return [fsck.Finding { id: "gitattributesLineLength", text: ".gitattributes has too long lines to parse" }];
+        }
+        if (i < body.len() && body[i] == 0) {
+          break;
+        }
+        start = i + 1;
+      }
+    }
+    return [];
+  }
+  let text = unsafe { string_from_bytes_unchecked(body) };
+  let end = config_prefix(text);
+  let c = config.parse(objects.part(text, 0, end));
+  for e in c.entries {
+    if (!e.name.starts_with("submodule.")) {
+      continue;
+    }
+    let end = e.name.len() - 1;
+    while (end >= 0 && e.name[end] != b'.') {
+      end -= 1;
+    }
+    if (end < 10) {
+      continue;
+    }
+    let name = objects.part(e.name, 10, end);
+    let key = objects.part(e.name, end + 1, e.name.len());
+    let bad_name = name.len() == 0;
+    for part in name.replace("\\", "/").split("/") {
+      bad_name = bad_name || part == "..";
+    }
+    if (bad_name) {
+      out = out.append(fsck.Finding { id: "gitmodulesName", text: "disallowed submodule name: " + name });
+    }
+    if (key == "url" && bad_url(e.value)) {
+      out = out.append(fsck.Finding { id: "gitmodulesUrl", text: "disallowed submodule url: " + e.value });
+    }
+    if (key == "path" && e.value.starts_with("-")) {
+      out = out.append(fsck.Finding { id: "gitmodulesPath", text: "disallowed submodule path: " + e.value });
+    }
+    if (key == "update" && e.value.starts_with("!")) {
+      out = out.append(fsck.Finding { id: "gitmodulesUpdate", text: "disallowed submodule update setting: " + e.value });
+    }
+  }
+  if (end != text.len()) {
+    out = out.append(fsck.Finding { id: "gitmodulesParse", text: "could not parse gitmodules blob" });
+  }
+  return out;
+}
