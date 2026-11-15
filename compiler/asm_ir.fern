@@ -7040,6 +7040,10 @@ function ssa_result_word_regs(words: i32): i32 {
 // rdx. A value live across a cold call stays off them; the others are saved.
 const COLD_CLOBBERS: i32 = 1 | 1 << 1 | 1 << 2 | 1 << 6 | 1 << 7;
 
+// __fern_rec_box and __fn___fern_alloc_reuse.f change rax, and their
+// argument moves write rsi and rdi.
+const LIGHT_CLOBBERS: i32 = 1 | 1 << 1 | 1 << 2;
+
 const COLD_SLOTS: i32 = 4;
 
 function ssa_cold_clobbers(cold: i32[]): i32[] {
@@ -7047,6 +7051,8 @@ function ssa_cold_clobbers(cold: i32[]): i32[] {
   for kind in cold {
     if (kind == ssa.COLD_SLOW || kind == ssa.COLD_BRANCH) {
       masks = masks.append(COLD_CLOBBERS);
+    } else if (kind == ssa.COLD_LIGHT) {
+      masks = masks.append(LIGHT_CLOBBERS);
     } else {
       masks = masks.append(0);
     }
@@ -7182,7 +7188,7 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, ops: ir.Op[], s: asmcore.Emit
   let homeless = ssa_homeless(f, imm);
   let prefs = ssa_arg_prefs(f, s);
   let floats = ssa.float_values(f, [], false);
-  let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
+  let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), direct_boxes(s));
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
   let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   let audited = ssa_can_borrow_r11(f, imm, floats);
@@ -9361,12 +9367,18 @@ function ssa_alloc_inline(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFram
 
 // An instruction whose caller registers are saved around its call.
 function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, saves: SlowSaves, own s: asmcore.EmitState): asmcore.EmitState {
-  if (saves.mask != 0 && asmcore.ssa_inline_rc_dec(blk.insts[ii], s)) {
+  if (saves.mask != 0 && (asmcore.ssa_inline_rc_dec(blk.insts[ii], s) || ssa_box_release(blk.insts[ii], s))) {
     return ssa_rc_dec(blk.insts[ii], reg_of, lp, saves, asmcore.ssa_x0_forget(s));
   }
   s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
   s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
   return ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
+}
+
+// The helper release of a record or a variant, which `ssa_rc_dec` tests
+// inline at a position where the call saves the caller registers.
+function ssa_box_release(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+  return ssa.inline_release(ins) && ins.imm == 7 && !s.rc_free_debug && !s.size;
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
@@ -9393,7 +9405,8 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves,
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, -8), J_JG, dec);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, -8), J_JS, kept);
   s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
-  s = ssa_helper_entry(ins, reg_of, ".u", s);
+  // A helper release has no entry past its tests, so it takes them again.
+  s = ssa_helper_entry(ins, reg_of, if (ins.imm == 7) { ".r" } else { ".u" }, s);
   s = ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
   s = ssa_branch(s, J_JMP, done).lab_def(dec);
   s = ssa_alu_im(s, 5, 32, 1, p, -8).lab_def(kept);

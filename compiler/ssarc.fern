@@ -811,7 +811,8 @@ function drop_children(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, 
 
 function drop_value(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
   if (outlined_release(t, f)) {
-    return helper(r, slot, release_helper_name(t));
+    r = helper(r, slot, release_helper_name(t));
+    return if (ssasem.box_shape(t) && ssasem.counted(f, t)) { mark_release(r, ir.box_release) } else { r };
   }
   return drop_value_inline(r, slot, t, scratch, f);
 }

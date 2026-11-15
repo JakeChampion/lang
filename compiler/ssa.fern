@@ -154,7 +154,7 @@ pub function plain_str(ins: SInst): string {
 }
 
 pub function plain_imm(ins: SInst): i32 {
-  if (ins.kind_tag == CALL && ins.imm >= 1 && ins.imm <= 3) {
+  if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7)) {
     return 0;
   }
   return ins.imm;
@@ -554,21 +554,47 @@ pub const COLD_BRANCH: i32 = 2;
 
 pub const COLD_INLINE: i32 = 3;
 
-pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
+// A call of a routine that changes only the registers that `light_call`
+// names. A value that lives across it keeps any other register, and the
+// call saves nothing.
+pub const COLD_LIGHT: i32 = 4;
+
+// `light` says the box routines of the build change only the result and
+// their arguments.
+pub function cold_positions(f: SFunc, size: boolean, back: boolean, light: boolean): i32[] {
   let cold = cold_blocks(f);
   let out: i32[] = [];
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
     for k in 0..blk.insts.len() {
-      out = out.append(cold_kind(blk, k, cold[bi], size, back));
+      out = out.append(cold_kind(blk, k, cold[bi], size, back, light));
     }
     out = out.append(COLD_NONE);
   }
   return out;
 }
 
-function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean): i32 {
+// The block of a record, a variant or a tuple, and the allocation for a null
+// token, which goes to the same routine.
+pub function light_call(ins: SInst): boolean {
+  return ins.kind_tag == ARR_BOX && ins.str == "box" || fresh_alloc_call(ins);
+}
+
+// A release that the emitters test inline: the count of a shared box goes
+// down by one, and only a unique box calls the routine. The helper release
+// of a record or a variant has the mark 7 (`ir.box_release`).
+pub function inline_release(ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && ins.imm != 5 || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
+}
+
+function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean, light: boolean): i32 {
   let ins = blk.insts[k];
+  if (light && light_call(ins)) {
+    return COLD_LIGHT;
+  }
+  if (!size && inline_release(ins)) {
+    return COLD_BRANCH;
+  }
   if (cold_call(ins) || back && back_copy_call(ins)) {
     return COLD_SLOW;
   }
