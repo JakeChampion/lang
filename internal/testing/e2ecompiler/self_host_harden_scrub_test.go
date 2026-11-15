@@ -14,7 +14,8 @@ import (
 // "small" is a 48-byte array (a 72-byte block) and "large" a 600000-byte
 // array, which goes to the large free lists. "link" frees two raw blocks of
 // one class and reads the first word of the block it takes back, which held
-// the free list link. "rewind" writes a raw block, rewinds the bump past it
+// the free list link. Each build clears that word, so "link" reads 0
+// in both. "rewind" writes a raw block, rewinds the bump past it
 // with __heap_release_to, and reads the block that the bump hands out again.
 const scrubSrc = `function secret(n: i32): u8[] {
   let b: u8[] = __alloc_u8(n);
@@ -128,8 +129,10 @@ func TestSelfHostHardenScrubsReleasedBlocks(t *testing.T) {
 			for _, c := range []struct {
 				mode string
 				want int
-			}{{"small", 48}, {"large", 600000}, {"link", 1}, {"rewind", 64}} {
-				if got := run(release, c.mode); got < c.want {
+			}{{"small", 48}, {"large", 600000}, {"link", 0}, {"rewind", 64}} {
+				if got := run(release, c.mode); c.want == 0 && got != 0 {
+					t.Errorf("%s: the release build read %d, want 0", c.mode, got)
+				} else if got < c.want {
 					t.Errorf("%s: the release build read %d, want at least %d; the probe no longer observes the released block", c.mode, got, c.want)
 				}
 				if got := run(hardened, c.mode); got != 0 {

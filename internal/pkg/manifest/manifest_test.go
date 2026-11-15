@@ -380,6 +380,7 @@ label = "Paper"
 icon = "icon.png"
 min_sdk = 26
 home = true
+tv = false
 permissions = ["INTERNET", "ACCESS_COARSE_LOCATION"]
 assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf"]
 widget = ["text:title:Paper", "button:next:Next"]
@@ -393,6 +394,7 @@ widget = ["text:title:Paper", "button:next:Next"]
 		"icon":        "icon.png",
 		"min_sdk":     "26",
 		"home":        "true",
+		"tv":          "false",
 		"permissions": "INTERNET,ACCESS_COARSE_LOCATION",
 		"assets":      "assets/wallpaper.jpg,assets/Roboto-Regular.ttf",
 		"widget":      "text:title:Paper,button:next:Next",
@@ -407,7 +409,8 @@ widget = ["text:title:Paper", "button:next:Next"]
 func TestParseAndroidRefusals(t *testing.T) {
 	for _, tc := range []struct{ line, want string }{
 		{`home = "yes"`, "[android] home: expected true or false"},
-		{`min_sdk = "26"`, "[android] min_sdk: expected an API level"},
+		{`tv = 1`, "[android] tv: expected true or false"},
+		{`min_sdk = "26"`, "[android] min_sdk: expected a whole number"},
 		{`assets = "a.png"`, "[android] assets: expected an array"},
 		{`colour = "red"`, "[android] colour: unknown key"},
 	} {

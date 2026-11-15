@@ -72,6 +72,20 @@ function counted_down(test: string): ssa.SFunc {
   return ssa.SFunc { name: "counted_down", nparams: 1, nvals: 7, blocks: [b0, b1, b2, b3], entry: 0, takes_env: false };
 }
 
+// The low byte of the first parameter is the result. The function calls
+// `callee` with the first parameter plus one, wrapped to 32 bits. With
+// `wide`, the function also returns the first parameter.
+function stepped(callee: string, wide: boolean): ssa.SFunc {
+  let insts: ssa.SInst[] = [
+    inst(6, 0, [], ""), ssa.SInst { ...inst(6, 1, [], ""), imm: 1 }, konst(2, 255), inst(9, 3, [0, 2], "and"),
+    konst(4, 1), inst(9, 5, [0, 4], "add"), inst(10, 6, [5], "int_cast:i32"),
+  ];
+  let b0 = ssa.SBlock { id: 0, insts: insts, term: branch(1, 1, 2), preds: [] };
+  let b1 = ssa.SBlock { id: 1, insts: [], term: ret(if (wide) { 0 } else { 3 }), preds: [0] };
+  let b2 = ssa.SBlock { id: 2, insts: [inst(11, 7, [6, 1], callee)], term: ret(7), preds: [0] };
+  return ssa.SFunc { name: "stepped", nparams: 2, nvals: 8, blocks: [b0, b1, b2], entry: 0, takes_env: false };
+}
+
 // A count taken on a constant null, one given back on it, one given back on
 // a parameter, and one on the null whose result is read.
 function counted_nulls(): ssa.SFunc {
@@ -129,6 +143,12 @@ function main(): i32 {
   failures = check(down.repl.len() > 5 && down.repl[5] == 4, "the wrap of a decrement below a greater-than test goes", failures);
   let under = ssa.drop_low_wraps(counted_down("lt_s"));
   failures = check(under.repl.len() == 0 || under.repl[5] == 5, "the wrap of a decrement below a less-than test stays", failures);
+  let own_step = ssa.drop_low_wraps(stepped("stepped", false));
+  failures = check(own_step.repl.len() > 6 && own_step.repl[6] == 5, "a call of the function itself reads the low byte of its argument, so the wrap goes", failures);
+  let other_step = ssa.drop_low_wraps(stepped("other", false));
+  failures = check(other_step.repl.len() == 0 || other_step.repl[6] == 6, "a call of another function reads each bit of its argument", failures);
+  let wide_step = ssa.drop_low_wraps(stepped("stepped", true));
+  failures = check(wide_step.repl.len() == 0 || wide_step.repl[6] == 6, "a parameter that the function returns needs each bit of the argument", failures);
   let w = ssa.block_loop_weights(counted());
   failures = check(w[0] == 1 && w[1] == 8 && w[2] == 8 && w[3] == 1, "a loop weighs 8", failures);
   let f = counted();

@@ -257,6 +257,11 @@ function print_full_info(o: Out, ruid: i64, rgid: i64, euid: i64, egid: i64, all
 
 pub struct Mode { user: boolean, group: boolean, groups: boolean, context: boolean, name: boolean, real: boolean, zero: boolean }
 
+// The output after the message of an operand that names no user.
+function failed(own o: Out, msg: string): Out {
+  return Out { w: gnu.error_out(o.w, msg), ok: false };
+}
+
 function print_one(o: Out, m: Mode, ruid: i64, rgid: i64, euid: i64, egid: i64, all: i64[], context: string, term: string, extra: boolean): Out {
   let acc = o;
   if (m.user) {
@@ -393,14 +398,15 @@ pub function main(): i32 {
           if (why.len() > 0) {
             msg = msg + ": " + why;
           }
-          o = Out { w: gnu.error_out(o.w, msg), ok: false };
+          o = failed(o, msg);
         }
       }
       i += 1;
     }
   }
+  let ok = o.ok;
   gnu.finish(o.w);
-  if (o.ok) {
+  if (ok) {
     return 0;
   }
   return 1;

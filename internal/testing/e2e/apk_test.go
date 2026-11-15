@@ -407,6 +407,69 @@ func TestApkIcon(t *testing.T) {
 	}
 }
 
+// -apk-banner puts the banner of the launcher of Android TV beside the icon:
+// a second drawable entry and android:banner on the application. Without an
+// icon, the banner is the first drawable.
+func TestApkBanner(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, w, h int) (string, []byte) {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.Set(x, y, color.RGBA{215, 25, 33, 255})
+			}
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path, buf.Bytes()
+	}
+	icon, _ := write("icon.png", 48, 48)
+	banner, bannerPNG := write("banner.png", 320, 180)
+	for _, tc := range []struct {
+		name    string
+		flags   []string
+		entries string
+		id      string
+	}{
+		{"with an icon", []string{"-apk-icon", icon, "-apk-banner", banner}, "AndroidManifest.xml resources.arsc res/drawable/icon.png res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010001"},
+		{"alone", []string{"-apk-banner", banner}, "AndroidManifest.xml resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, raw := buildApk(t, dir, tc.flags...)
+			zr := zipOf(t, raw)
+			var names []string
+			for _, f := range zr.File {
+				names = append(names, f.Name)
+			}
+			if got := strings.Join(names, " "); got != tc.entries {
+				t.Errorf("entries = %s", got)
+			}
+			if got := readZipEntry(t, zr, "res/drawable/banner.png"); !bytes.Equal(got, bannerPNG) {
+				t.Error("the banner in the APK is not the PNG of -apk-banner")
+			}
+			verifyApkV2(t, raw)
+			aapt, err := exec.LookPath("aapt")
+			if err != nil {
+				t.Skip("aapt is not on PATH, so the manifest tree and the resource table are not parsed")
+			}
+			o, err := exec.Command(aapt, "dump", "xmltree", path, "AndroidManifest.xml").CombinedOutput()
+			if err != nil || !strings.Contains(string(o), "A: android:banner(0x010103f2)=@"+tc.id) {
+				t.Errorf("aapt dump xmltree: %v\n%s", err, o)
+			}
+			o, err = exec.Command(aapt, "dump", "resources", path).CombinedOutput()
+			if err != nil || !strings.Contains(string(o), "resource "+tc.id+" dev.fern.app:drawable/banner") {
+				t.Errorf("aapt dump resources: %v\n%s", err, o)
+			}
+		})
+	}
+}
+
 func readZipEntry(t *testing.T, zr *zip.Reader, name string) []byte {
 	t.Helper()
 	f, err := zr.Open(name)
@@ -741,6 +804,47 @@ func TestApkHome(t *testing.T) {
 		"A: android:windowSoftInputMode(0x0101022b)=(type 0x11)0x10",
 		"A: android:resumeWhilePausing(0x010104b2)=(type 0x12)0xffffffff",
 		`A: android:name(0x01010003)="android.intent.category.HOME"`,
+	} {
+		if !strings.Contains(tree, want) {
+			t.Errorf("the manifest has no %s:\n%s", want, tree)
+		}
+	}
+}
+
+// -apk-tv puts the app on the launcher of Android TV: the leanback launcher
+// category beside the launcher category, and the leanback and touch screen
+// features, neither of them required. An APK without it has none of them.
+func TestApkTv(t *testing.T) {
+	dir := t.TempDir()
+	_, plain := buildApk(t, dir)
+	man := readZipEntry(t, zipOf(t, plain), "AndroidManifest.xml")
+	for _, s := range []string{"android.intent.category.LEANBACK_LAUNCHER", "android.software.leanback", "uses-feature"} {
+		if bytes.Contains(man, utf16le(s)) {
+			t.Errorf("an APK with no -apk-tv has the string %q", s)
+		}
+	}
+	path, raw := buildApk(t, dir, "-apk-tv")
+	man = readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
+	for _, s := range []string{"android.intent.category.LEANBACK_LAUNCHER", "android.intent.category.LAUNCHER", "android.software.leanback", "android.hardware.touchscreen"} {
+		if !bytes.Contains(man, utf16le(s)) {
+			t.Errorf("the manifest has no string %q", s)
+		}
+	}
+	verifyApkV2(t, raw)
+	aapt, err := exec.LookPath("aapt")
+	if err != nil {
+		t.Skip("aapt is not on PATH, so the manifest tree is not checked")
+	}
+	o, err := exec.Command(aapt, "dump", "xmltree", path, "AndroidManifest.xml").CombinedOutput()
+	if err != nil {
+		t.Fatalf("aapt dump xmltree: %v\n%s", err, o)
+	}
+	tree := string(o)
+	for _, want := range []string{
+		`A: android:name(0x01010003)="android.software.leanback"`,
+		`A: android:name(0x01010003)="android.hardware.touchscreen"`,
+		"A: android:required(0x0101028e)=(type 0x12)0x0",
+		`A: android:name(0x01010003)="android.intent.category.LEANBACK_LAUNCHER"`,
 	} {
 		if !strings.Contains(tree, want) {
 			t.Errorf("the manifest has no %s:\n%s", want, tree)

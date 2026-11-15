@@ -568,7 +568,7 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (at >= 0 && raw_floor_allowed(t, name) && t.raw[at].params.len() == argc) {
     return t.raw[at].result;
   }
-  if (argc == 1 && is_f64_primitive(name)) {
+  if (argc == 1 && is_f64_primitive(name) || argc == 3 && name == "__fma_f64") {
     return typeinfo.t_f64();
   }
   if (is_lane_builtin(name) && argc == typeinfo.lane_builtin_params(name).len()) {
@@ -886,6 +886,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (is_f64_primitive(name)) {
     return ([typeinfo.t_f64()], true);
+  }
+  if (name == "__fma_f64") {
+    return ([typeinfo.t_f64(), typeinfo.t_f64(), typeinfo.t_f64()], true);
   }
   if (is_lane_builtin(name)) {
     return (typeinfo.lane_builtin_params(name), true);
@@ -19065,7 +19068,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
   "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
   "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
-  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__alloc_len", "__heap_alloc_count", "__heap_bump_bytes",
+  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__fma_f64", "__free", "__alloc_len", "__heap_alloc_count", "__heap_bump_bytes",
   "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
   "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas", "__secondary_entry",
   "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
@@ -21373,8 +21376,11 @@ struct LuRebind { source: ast.ExprCall, value: ast.ExprIdent, target: string }
 struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
 // updates holds, for the base of each update literal `S { ...q, f: v }`, one
-// entry per field the literal replaces.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], copy_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
+// entry per field the literal replaces. value_sels holds the reads of a
+// nested field of a primitive type or of an array of one: an array can reach
+// a borrowed parameter as a view, so such a read is not always a copy.
+// scalar_sels holds the reads of a field of a scalar type, which are copies.
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: string[], scalar_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -21382,7 +21388,9 @@ struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params
 
 // A match or an if outside every loop, with the occurrences in each arm. One
 // run takes one arm, so an occurrence in one arm is not after one in another.
-struct LuFork { arms: LuOcc[][] }
+// The arms of an if or a match outside every loop, with whether each arm
+// ends in a return.
+struct LuFork { arms: LuOcc[][], exits: boolean[] }
 
 // A frame is one block on the path from the function body to a statement:
 // the block, the index of the statement on the path, and the loop statement
@@ -21589,10 +21597,10 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
     ast.ExprFieldAccess(fa) => {
       match (fa.obj) {
         ast.ExprIdent(oid) => {
-          return LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) };
+          return lu_scalar_selection(fa, LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) });
         },
         _ => {
-          return lu_copy_selection(fa, f);
+          return lu_scalar_selection(fa, lu_value_selection(fa, f));
         }
       }
     },
@@ -21615,13 +21623,26 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
   }
 }
 
-function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
+function lu_value_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   if (!lu_copy_type(fa.ty)) {
     return f;
   }
   let enclosing = ow_enclosing_field(fa);
   if let ast.ExprIdent(id) = enclosing.obj {
-    return LuFacts { ...f, copy_sels: f.copy_sels.append(lu_key(id.line, id.col)) };
+    return LuFacts { ...f, value_sels: f.value_sels.append(lu_key(id.line, id.col)) };
+  }
+  return f;
+}
+
+// A read of a field of a scalar type, such as i32 or boolean: a copy that
+// keeps nothing of its holder, not even a view.
+function lu_scalar_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
+  if (fa.ty == "string" || fa.ty == "str" || !typeinfo.is_primitive_type_name(fa.ty)) {
+    return f;
+  }
+  let enclosing = ow_enclosing_field(fa);
+  if let ast.ExprIdent(id) = enclosing.obj {
+    return LuFacts { ...f, scalar_sels: f.scalar_sels.append(lu_key(id.line, id.col)) };
   }
   return f;
 }
@@ -21867,6 +21888,12 @@ function lu_safe_constructor(fx: LuFn, e: ast.Expr): boolean {
   return false;
 }
 
+// A variant with a payload. Its construction holds what its arguments hold,
+// and the caller has shown that no argument lends.
+function lu_variant_constructor(fx: LuFn, name: string): boolean {
+  return (name == "Some" || name == "Ok" || name == "Err" || fx.ofuncs.ctors.has(name)) && !fx.ofuncs.funcs.has(name);
+}
+
 function lu_compound_call_fresh(fx: LuFn, call: ast.ExprCall): boolean {
   if (lu_checked_result_call(fx, call)) {
     return true;
@@ -21889,7 +21916,7 @@ function lu_compound_call_fresh(fx: LuFn, call: ast.ExprCall): boolean {
     }
     let row = fx.lenders.names.find(id.name);
     if (row < 0) {
-      return fx.builtins.has(id.name);
+      return fx.builtins.has(id.name) || lu_variant_constructor(fx, id.name);
     }
     return lu_compound_inputs_fresh(fx, fx.lenders.rows[row], call.args);
   }
@@ -22753,24 +22780,30 @@ function lu_unpack_expr_in(fx: LuFn, init: ast.Expr, seen: string[]): boolean {
     if (h.len() == 0 || !(lu_fresh_init_in(fx, h, seen) && lu_decl_count(fx, h) == 1) && !lu_own_param(fx, h)) {
       return false;
     }
-    let reads = 0;
-    let selections = 0;
-    for sel in fx.facts.sels {
-      if (sel.obj == h) {
-        selections += 1;
-        if (sel.field == fa.field) {
-          reads += 1;
-        }
-      }
-    }
-    for up in fx.facts.updates {
-      if (up.obj == h && up.field == fa.field) {
-        selections += 1;
-      }
-    }
-    return reads == 1 && selections == lu_occ_count(fx, h);
+    return lu_sole_field_read(fx, h, fa.field);
   }
   return false;
+}
+
+// One read of `h.field`, and each mention of h selects a field or is the
+// base of a literal that replaces that field.
+function lu_sole_field_read(fx: LuFn, h: string, field: string): boolean {
+  let reads = 0;
+  let selections = 0;
+  for sel in fx.facts.sels {
+    if (sel.obj == h) {
+      selections += 1;
+      if (sel.field == field) {
+        reads += 1;
+      }
+    }
+  }
+  for up in fx.facts.updates {
+    if (up.obj == h && up.field == field) {
+      selections += 1;
+    }
+  }
+  return reads == 1 && selections == lu_occ_count(fx, h);
 }
 
 function lu_rename_source(fx: LuFn, name: string): string {
@@ -23079,15 +23112,17 @@ function lu_forks(stmts: ast.Stmt[], own acc: LuFork[]): LuFork[] {
   for st in stmts {
     match (st) {
       ast.StmtIf(f) => {
-        acc = acc.append(LuFork { arms: [lu_arm_occ(f.then_body), lu_arm_occ(f.else_body)] });
+        acc = acc.append(LuFork { arms: [lu_arm_occ(f.then_body), lu_arm_occ(f.else_body)], exits: [lu_ends_in_return(f.then_body), lu_ends_in_return(f.else_body)] });
         acc = lu_forks(f.else_body, lu_forks(f.then_body, acc));
       },
       ast.StmtMatch(m) => {
         let arms: LuOcc[][] = [];
+        let exits: boolean[] = [];
         for arm in m.arms {
           arms = arms.append(lu_arm_occ(arm.body));
+          exits = exits.append(lu_ends_in_return(arm.body));
         }
-        acc = acc.append(LuFork { arms: arms });
+        acc = acc.append(LuFork { arms: arms, exits: exits });
         for arm in m.arms {
           acc = lu_forks(arm.body, acc);
         }
@@ -23098,6 +23133,16 @@ function lu_forks(stmts: ast.Stmt[], own acc: LuFork[]): LuFork[] {
   return acc;
 }
 
+function lu_ends_in_return(body: ast.Stmt[]): boolean {
+  if (body.len() == 0) {
+    return false;
+  }
+  if let ast.StmtReturn(_) = body[body.len() - 1] {
+    return true;
+  }
+  return false;
+}
+
 function lu_arm_occ(body: ast.Stmt[]): LuOcc[] {
   let f = lu_empty_facts();
   for st in body {
@@ -23106,13 +23151,15 @@ function lu_arm_occ(body: ast.Stmt[]): LuOcc[] {
   return f.occ;
 }
 
-// Whether `id` and `o` are in two arms of one fork.
+// Whether no run reads `o` after `id`, for an `o` after `id`: the two are
+// in two arms of one fork, or `id` is in an arm that ends in a return and
+// `o` is outside that arm.
 function lu_apart(forks: LuFork[], id: ast.ExprIdent, o: LuOcc): boolean {
   for fork in forks {
     let a = lu_arm_at(fork, id.line, id.col);
     if (a >= 0) {
       let b = lu_arm_at(fork, o.line, o.col);
-      if (b >= 0 && b != a) {
+      if (b >= 0 && b != a || b < 0 && fork.exits[a]) {
         return true;
       }
     }
@@ -23210,7 +23257,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], copy_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ
@@ -24163,13 +24210,15 @@ function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, 
   if (util.has_str(fx.facts.escaping, name)) {
     return false;
   }
-  if (lu_rebind_site(site, name) || lu_returns_after_reads(site, call, aid)) {
+  if (lu_rebind_site(site, name) || lu_returns_after_reads(fx, site, call, aid)) {
     return true;
   }
-  if (!once && !lu_reads_before(call, aid)) {
+  if (!once && !lu_reads_before(fx, call, aid)) {
     return false;
   }
-  if (has_outer && astwalk.count_ident_expr(outer, name) > 1) {
+  // An enclosing call can mention the name elsewhere only in reads of a
+  // field that holds no handle, before the call.
+  if (has_outer && astwalk.count_ident_expr(outer, name) > 1 && !lu_outer_reads_before(fx, outer, call, name)) {
     return false;
   }
   return !lu_live_after(fx, site, call, aid);
@@ -24207,10 +24256,11 @@ function lu_owned_field_payload(fx: LuFn, name: string): boolean {
   return found;
 }
 
-// The other mentions of `aid` in the call are reads of one of its fields, in
-// arguments before it. The ownership walk decides whether each read gives a
-// copy: its key carries "~".
-function lu_reads_before(call: ast.Expr, aid: ast.ExprIdent): boolean {
+// The other mentions of `aid` in the call are reads of its fields, in parts
+// before it: one part that is a field read, or parts whose every mention is
+// a read of a field that holds no handle. The ownership walk decides whether
+// a field read of another type gives a copy: its key carries "~".
+function lu_reads_before(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent): boolean {
   let ast.ExprCall(c) = call else {
     return false;
   };
@@ -24223,13 +24273,41 @@ function lu_reads_before(call: ast.Expr, aid: ast.ExprIdent): boolean {
     }
     let n = astwalk.count_ident_expr(a, aid.name);
     if (n > 0) {
-      if (n != 1 || !lu_reads_field_of(a, aid.name)) {
+      if (lu_copy_reads(fx, a, aid.name, I32_MAX, 0) != n && (n != 1 || !lu_reads_field_of(a, aid.name))) {
         return false;
       }
-      before += 1;
+      before += n;
     }
   }
   return false;
+}
+
+const I32_MAX: i32 = 2147483647;
+
+struct LuCopyReads { keys: string[], name: string, line: i32, col: i32, n: i32 }
+
+// The mentions of `name` in `e`, before line `line` and column `col`, that
+// read a field of a scalar type. Such a read is a copy, and it ends before
+// anything after it runs.
+function lu_copy_reads(fx: LuFn, e: ast.Expr, name: string, line: i32, col: i32): i32 {
+  return astwalk.fold_expr_pruned(e, LuCopyReads { keys: fx.facts.scalar_sels, name: name, line: line, col: col, n: 0 }, lu_count_copy_read, lu_not_closure).n;
+}
+
+function lu_count_copy_read(e: ast.Expr, own r: LuCopyReads): LuCopyReads {
+  if let ast.ExprIdent(id) = e {
+    if (id.name == r.name && (id.line < r.line || id.line == r.line && id.col < r.col) && util.has_str(r.keys, lu_key(id.line, id.col))) {
+      return LuCopyReads { ...r, n: r.n + 1 };
+    }
+  }
+  return r;
+}
+
+function lu_outer_reads_before(fx: LuFn, outer: ast.Expr, call: ast.Expr, name: string): boolean {
+  let ast.ExprCall(c) = call else {
+    return false;
+  };
+  let extra = astwalk.count_ident_expr(outer, name) - astwalk.count_ident_expr(call, name);
+  return extra > 0 && lu_copy_reads(fx, outer, name, c.line, c.col) == extra;
 }
 
 function lu_reads_field_of(e: ast.Expr, name: string): boolean {
@@ -24243,16 +24321,18 @@ function lu_reads_field_of(e: ast.Expr, name: string): boolean {
 
 // A return of the call, which mentions the name only in it, and there only
 // in field reads before the argument.
-function lu_returns_after_reads(site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
+function lu_returns_after_reads(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
   if let ast.StmtReturn(r) = site.stmts[site.idx] {
-    return (!site.in_iife || r.line > 0) && astwalk.count_ident_expr(r.value, aid.name) == astwalk.count_ident_expr(call, aid.name) && lu_reads_before(call, aid);
+    return (!site.in_iife || r.line > 0) && astwalk.count_ident_expr(r.value, aid.name) == astwalk.count_ident_expr(call, aid.name) && lu_reads_before(fx, call, aid);
   }
   return false;
 }
 
-// "~" when the call mentions the name more than once.
-function lu_copy_tag(call: ast.Expr, name: string): string {
-  if (astwalk.count_ident_expr(call, name) > 1) {
+// "~" when the call mentions the name more than once, other than in reads
+// of fields that hold no handle.
+function lu_copy_tag(fx: LuFn, call: ast.Expr, name: string): string {
+  let n = astwalk.count_ident_expr(call, name);
+  if (n > 1 && lu_copy_reads(fx, call, name, I32_MAX, 0) != n - 1) {
     return "~";
   }
   return "";
@@ -24407,7 +24487,8 @@ function lu_scrutinee_owned(fx: LuFn, e: ast.Expr): boolean {
 }
 
 // A field that a destructure takes from a fresh for-each binding at its
-// last use, declared once in the loop body: it is fresh on each round.
+// last use, or the one read of a field of that binding, declared once in
+// the loop body: it is fresh on each round.
 function lu_unpacked_elem(fx: LuFn, site: LuSite, name: string): boolean {
   if (lu_decl_count(fx, name) != 1 || !lu_only_fresh_assigns(fx, name, [])) {
     return false;
@@ -24419,6 +24500,13 @@ function lu_unpacked_elem(fx: LuFn, site: LuSite, name: string): boolean {
       };
       return lu_elem_fresh(fx, site, src.name) && lu_is_last(fx, src) && !util.has_str(fx.facts.captured, src.name);
     }
+  }
+  let Some(init) = lu_init_of(fx, name) else {
+    return false;
+  };
+  if let ast.ExprFieldAccess(fa) = init {
+    let h = ow_ident_name(fa.obj);
+    return h.len() > 0 && lu_elem_fresh(fx, site, h) && !util.has_str(fx.facts.captured, h) && lu_sole_field_read(fx, h, fa.field);
   }
   return false;
 }
@@ -24622,7 +24710,7 @@ function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolea
       if (selected.len() == 0) {
         return false;
       }
-      if (selected == field && !util.has_str(fx.facts.copy_sels, lu_key(o.line, o.col))) {
+      if (selected == field && !util.has_str(fx.facts.value_sels, lu_key(o.line, o.col))) {
         reads += 1;
       }
     }
@@ -24783,7 +24871,7 @@ function lu_own_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolea
   match (a) {
     ast.ExprIdent(aid) => {
       if (lu_dies(fx, e, aid, outer, has_outer, site)) {
-        acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(e, aid.name));
+        acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(fx, e, aid.name));
       }
     },
     ast.ExprFieldAccess(fa) => {
@@ -24811,13 +24899,15 @@ function lu_call_parts(args: ast.Expr[]): ast.Expr[] {
   return out;
 }
 
+// The parts of a literal in the order they run: its field values, and then
+// its base, which the literal takes after them.
 function lu_arg_parts(a: ast.Expr, own out: ast.Expr[]): ast.Expr[] {
   if let ast.ExprStructLit(sl) = a {
-    if (sl.has_base) {
-      out = lu_arg_parts(sl.base, out);
-    }
     for fv in sl.field_values {
       out = lu_arg_parts(fv, out);
+    }
+    if (sl.has_base) {
+      out = lu_arg_parts(sl.base, out);
     }
     return out;
   }
@@ -33645,20 +33735,22 @@ function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   return parser.settle_int_tree(e, tag);
 }
 
-function settle_at(e: ast.Expr, t: typeinfo.Type): ast.Expr {
+// A literal takes the type that its place declares. The field literals of a
+// generic struct literal take the field types of the declared instance.
+function settle_at(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Expr {
   if (is_integer(t) && int_literal_tree(e)) {
     return settle_int_tree(e, type_to_irtag(t));
   }
-  return e;
+  return settle_struct_lit_wide(e, t, s);
 }
 
-function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[]): ast.Expr[] {
+function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[], s: Scope): ast.Expr[] {
   if (params.len() != args.len()) {
     return args;
   }
   let out: ast.Expr[] = [];
   for i in 0..args.len() {
-    out = out.append(settle_at(args[i], params[i]));
+    out = out.append(settle_at(args[i], params[i], s));
   }
   return out;
 }
@@ -33836,7 +33928,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
-      nargs = settle_args_at_params(nargs, call_param_types(c, s));
+      nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct = check_expr(e, s);
@@ -34314,7 +34406,7 @@ function annotate_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): ast.Stmt {
     init = annotate_expr(v.init, s);
   }
   if (v.type_name.len() > 0) {
-    init = settle_at(init, t);
+    init = settle_at(init, t, s);
   }
   let callable = decltypes.fn_param_from_type(v.name, t);
   if (callable.type_name == "fn") {
@@ -34332,7 +34424,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return annotate_var(v, s, after.lookup(v.name));
     },
     ast.StmtReturn(r) => {
-      return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type), line: r.line, col: r.col };
+      return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type, s), line: r.line, col: r.col };
     },
     ast.StmtExpr(x) => {
       return ast.StmtExpr { ...x, value: annotate_expr(x.value, s) };
@@ -34344,7 +34436,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtAssign(a) => {
-      return ast.StmtAssign { ...a, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target)) };
+      return ast.StmtAssign { ...a, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target), s) };
     },
     ast.StmtMatch(m) => {
       return annotate_match_stmt(m, s);

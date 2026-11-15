@@ -8,7 +8,6 @@
 import "std/json";
 import "std/string";
 import "std/utf8";
-import "./filter";
 import "./number";
 
 // One value, and the offset in the text just after it.
@@ -538,33 +537,33 @@ function escape(raw: string, i: i32): (string, i32, string) {
   if (i + 5 > raw.len()) {
     return ("", 0, "Invalid \\uXXXX escape");
   }
-  let cp = filter.hex4(raw, i + 1);
+  let cp = hex4(raw, i + 1);
   if (cp < 0) {
     return ("", 0, "Invalid characters in \\uXXXX escape");
   }
   if (cp < 0xd800 || cp > 0xdbff) {
-    return (filter.codepoint_text(cp), 5, "");
+    return (codepoint_text(cp), 5, "");
   }
   // A high surrogate needs the escape of a low surrogate after it.
   let low = -1;
   if (i + 6 < raw.len() && raw[i + 5] == b'\\' && raw[i + 6] == b'u') {
-    low = filter.hex4(raw, i + 7);
+    low = hex4(raw, i + 7);
   }
   if (low < 0xdc00 || low > 0xdfff) {
     return ("", 0, "Invalid \\uXXXX\\uXXXX surrogate pair escape");
   }
-  return (filter.codepoint_text(0x10000 + (cp - 0xd800 << 10) + (low - 0xdc00)), 11, "");
+  return (codepoint_text(0x10000 + (cp - 0xd800 << 10) + (low - 0xdc00)), 11, "");
 }
 
 function simple_escape(b: u8): string {
   if (b == b'"' || b == b'\\' || b == b'/') {
-    return filter.codepoint_text(b as i32);
+    return codepoint_text(b as i32);
   }
   if (b == b'b') {
-    return filter.codepoint_text(8);
+    return codepoint_text(8);
   }
   if (b == b'f') {
-    return filter.codepoint_text(12);
+    return codepoint_text(12);
   }
   if (b == b'n') {
     return "\n";
@@ -588,7 +587,7 @@ pub function repaired(s: string): string {
       i += size;
       continue;
     }
-    out += filter.codepoint_text(0xfffd);
+    out += codepoint_text(0xfffd);
     i += bad_size(s, i);
   }
   return out;
@@ -611,4 +610,39 @@ function bad_size(s: string, i: i32): i32 {
     size += 1;
   }
   return size;
+}
+
+function hex_digit(b: u8): i32 {
+  if (b >= b'0' && b <= b'9') {
+    return (b - b'0') as i32;
+  }
+  if (b >= b'a' && b <= b'f') {
+    return (b - b'a') as i32 + 10;
+  }
+  if (b >= b'A' && b <= b'F') {
+    return (b - b'A') as i32 + 10;
+  }
+  return -1;
+}
+
+pub function hex4(s: string, i: i32): i32 {
+  if (i + 4 > s.len()) {
+    return -1;
+  }
+  let v = 0;
+  for k in i..i + 4 {
+    let d = hex_digit(s[k]);
+    if (d < 0) {
+      return -1;
+    }
+    v = v * 16 + d;
+  }
+  return v;
+}
+
+pub function codepoint_text(cp: i32): string {
+  if let Some(ch) = utf8.char_from_i32(cp) {
+    return utf8.encode(ch);
+  }
+  return "�";
 }

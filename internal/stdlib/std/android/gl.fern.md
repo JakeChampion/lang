@@ -6,6 +6,8 @@ This module draws on the window of a NativeActivity app of `std/android` with th
 
 `open_context` makes an OpenGL ES 2 context, with a surface of one pixel that keeps it current. `attach` then puts the canvas on a window, and `detach` takes it off again. The context, the program and the textures stay through `detach`, so an app keeps its images while its window is away.
 
+`next_frame` and `frame_times` tell what became of a frame after `present`: when the GPU completed it, when the system took it to show, and when the display showed it. An app that animates finds from these times how long its frames take, and how late a frame shows. They use the `EGL_ANDROID_get_frame_timestamps` extension, which each Android version from 8 has. On a system with no such extension, `next_frame` gives -1.
+
 `open` makes a context and attaches it to a window in one call. `attach_offscreen` puts the canvas on an image in GPU memory, `open_offscreen` does both steps, and `read` copies the pixels of the canvas into a frame.
 
 A `Texture` holds the pixels of an offscreen frame of `std/android/draw`. Those pixels are premultiplied: each channel holds its value times the alpha, as `draw` makes them on a frame that starts transparent.
@@ -106,6 +108,12 @@ function egl_terminate(display: usize): i32;
 
 @import("libEGL.so", "eglGetError")
 function egl_error(): i32;
+
+@import("libEGL.so", "eglSurfaceAttrib")
+function egl_surface_attrib(display: usize, surface: usize, attribute: i32, value: i32): i32;
+
+@import("libEGL.so", "eglGetProcAddress")
+function egl_proc(name: usize): usize;
 
 @import("libandroid.so", "ANativeWindow_setBuffersGeometry")
 function c_window_set_geometry(window: usize, width: i32, height: i32, format: i32): i32;
@@ -355,7 +363,7 @@ struct VideoPlaces { program: i32, screen: i32, dst: i32, matrix: i32, tex: i32 
 // `pbuffer` is the surface of one pixel that keeps the context current.
 // `surface` is the surface that the canvas draws on: a window, an image, or
 // `pbuffer` when the canvas is detached. `window` is 0 off a window.
-pub struct Canvas { display: usize, config: usize, context: usize, pbuffer: usize, surface: usize, window: usize, program: i32, places: Places, text: TextPlaces, video: VideoPlaces, quad: usize, width: i32, height: i32, layer: Texture, framebuffer: i32, left: i32, right: i32 }
+pub struct Canvas { display: usize, config: usize, context: usize, pbuffer: usize, surface: usize, window: usize, program: i32, places: Places, text: TextPlaces, video: VideoPlaces, quad: usize, width: i32, height: i32, layer: Texture, framebuffer: i32, left: i32, right: i32, frame_id: usize, frame_times: usize }
 
 // What `present` did: it showed the frame, the canvas has no window, or the
 // device lost the context.
@@ -467,6 +475,9 @@ pub function (c: Canvas) attach(w: android.Window): Canvas {
   let on = off.bind(surface, w.width(), w.height());
   if (on.attached()) {
     let interval = egl_swap_interval(on.display, 1);
+    if (on.frame_times != 0 as usize) {
+      let timed = egl_surface_attrib(on.display, on.surface, EGL_TIMESTAMPS_ANDROID, 1);
+    }
     return Canvas { ...on, window: w.ptr };
   }
   return on;
@@ -619,7 +630,7 @@ function start(d: usize, config: usize, pbuffer: usize, ctx: usize): Option[Canv
     gl_enable(GL_BLEND);
     gl_blend_func(1, GL_ONE_MINUS_SRC_ALPHA);
     gl_enable(GL_SCISSOR_TEST);
-    let c = Canvas { display: d, config: config, context: ctx, pbuffer: pbuffer, surface: pbuffer, window: 0 as usize, program: p, places: places, text: text, video: VideoPlaces { program: 0, screen: 0, dst: 0, matrix: 0, tex: 0 }, quad: quad, width: 0, height: 0, layer: Texture { id: 0, width: 0, height: 0 }, framebuffer: 0, left: 0, right: 1 << 30 };
+    let c = Canvas { display: d, config: config, context: ctx, pbuffer: pbuffer, surface: pbuffer, window: 0 as usize, program: p, places: places, text: text, video: VideoPlaces { program: 0, screen: 0, dst: 0, matrix: 0, tex: 0 }, quad: quad, width: 0, height: 0, layer: Texture { id: 0, width: 0, height: 0 }, framebuffer: 0, left: 0, right: 1 << 30, frame_id: proc("eglGetNextFrameIdANDROID"), frame_times: proc("eglGetFrameTimestampsANDROID") };
     return Some(c.sized(1, 1));
   }
 }
@@ -699,6 +710,88 @@ pub function (c: Canvas) present(): Shown {
     return Lost;
   }
   return NoWindow;
+}
+
+// The address of the EGL function `name`, or 0 when the system has none.
+function proc(name: string): usize {
+  let s = jni.cstr(name);
+  let at = egl_proc(s);
+  jni.free_buffer(s);
+  return at;
+}
+
+const EGL_TIMESTAMPS_ANDROID: i32 = 12336;
+
+const EGL_RENDERING_COMPLETE_TIME_ANDROID: i32 = 12341;
+
+const EGL_COMPOSITION_LATCH_TIME_ANDROID: i32 = 12342;
+
+const EGL_DISPLAY_PRESENT_TIME_ANDROID: i32 = 12346;
+
+// The number of the frame that the next `present` shows, for `frame_times`.
+// It is -1 when the canvas is not on a window, or the system does not tell
+// the times of frames.
+pub function (c: Canvas) next_frame(): i64 {
+  if (c.window == 0 as usize || c.frame_id == 0 as usize) {
+    return -1i64;
+  }
+  unsafe {
+    let out: usize = __alloc(8);
+    __store_i64(out, -1i64);
+    let ok = __c_call3(c.frame_id, c.display, c.surface, out);
+    let id = __load_i64(out);
+    __free(out, 8);
+    if (ok == 0 as usize) {
+      return -1i64;
+    }
+    return id;
+  }
+}
+
+// What became of a frame, each as a time on the monotonic clock in
+// nanoseconds: the GPU completed the frame at `done_ns`, the system took it
+// to show at `taken_ns`, and the display showed it at `shown_ns`. A time is
+// 0 while the system does not know it yet, and -1 when the system does not
+// tell it.
+pub struct FrameTimes { done_ns: i64, taken_ns: i64, shown_ns: i64 }
+
+// A time that EGL gave. EGL_TIMESTAMP_PENDING_ANDROID is -2, and
+// EGL_TIMESTAMP_INVALID_ANDROID is -1.
+function told(ns: i64): i64 {
+  if (ns == -2i64) {
+    return 0i64;
+  }
+  if (ns < 0i64) {
+    return -1i64;
+  }
+  return ns;
+}
+
+// The times of the frame with the number `frame` of `next_frame`. Android
+// knows the times of a frame some frames after the frame, and keeps them
+// for some more frames.
+pub function (c: Canvas) frame_times(frame: i64): FrameTimes {
+  if (frame < 0i64 || c.window == 0 as usize || c.frame_times == 0 as usize) {
+    return FrameTimes { done_ns: -1i64, taken_ns: -1i64, shown_ns: -1i64 };
+  }
+  unsafe {
+    let names: usize = __alloc(12);
+    let out: usize = __alloc(24);
+    __store_i32(names, EGL_RENDERING_COMPLETE_TIME_ANDROID);
+    __store_i32(names + 4 as usize, EGL_COMPOSITION_LATCH_TIME_ANDROID);
+    __store_i32(names + 8 as usize, EGL_DISPLAY_PRESENT_TIME_ANDROID);
+    __store_i64(out, -1i64);
+    __store_i64(out + 8 as usize, -1i64);
+    __store_i64(out + 16 as usize, -1i64);
+    let ok = __c_call6(c.frame_times, c.display, c.surface, frame as usize, 3 as usize, names, out);
+    let times = FrameTimes { done_ns: told(__load_i64(out)), taken_ns: told(__load_i64(out + 8 as usize)), shown_ns: told(__load_i64(out + 16 as usize)) };
+    __free(names, 12);
+    __free(out, 24);
+    if (ok == 0 as usize) {
+      return FrameTimes { done_ns: -1i64, taken_ns: -1i64, shown_ns: -1i64 };
+    }
+    return times;
+  }
 }
 
 // Frees the layer, the program memory, the surfaces and the context. Free

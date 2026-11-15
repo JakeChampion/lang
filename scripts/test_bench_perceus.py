@@ -1,4 +1,5 @@
 """Failure records must survive both ordinary timeouts and an unreapable child."""
+import collections
 import importlib.util
 import json
 from pathlib import Path
@@ -76,6 +77,40 @@ class MeasurementTests(unittest.TestCase):
             self.assertNotIn("peak_rss_bytes", record)
             self.assertNotIn("wall_ns", record)
             self.assertEqual(record["pid"], 123)
+
+
+class LanguageTests(unittest.TestCase):
+    def test_each_language_builds_its_own_source(self):
+        root, out = Path("/r"), Path("/o")
+        tools = {name: Path("/t") / name for name in ("fern", "koka", "lean", "roc")}
+        want = {"fern": "/r/bench/perceus/fern/run_rbtree_ck.fern", "koka": "/r/bench/perceus/koka/rbtree-ck.kk",
+                "lean": "/r/bench/perceus/lean/rbtree-ck.lean", "roc": "/r/bench/perceus/roc/rbtree-ck.roc"}
+        for language, source in want.items():
+            with self.subTest(language=language):
+                commands = bench.build_commands(language, "rbtree-ck", tools, root, out, "x86-64-linux")
+                self.assertIn(source, commands[0])
+                self.assertIn(f"/o/{language}-rbtree-ck", commands[-1])
+        roc = bench.build_commands("roc", "nqueens", tools, root, out, "x86-64-linux")
+        self.assertEqual(roc, [["/t/roc", "build", "--optimize", "--output", "/o/roc-nqueens", "/r/bench/perceus/roc/nqueens.roc"]])
+
+    def test_turns_balance_positions_and_neighbours(self):
+        for languages, rows in ((("fern", "koka", "lean", "roc"), 4), (("fern", "koka", "lean"), 6)):
+            with self.subTest(languages=languages):
+                orders = [bench.turn_order(languages, repeat) for repeat in range(rows)]
+                self.assertEqual(orders[0], bench.turn_order(languages, rows))
+                for order in orders:
+                    self.assertEqual(sorted(order), sorted(languages))
+                for position in range(len(languages)):
+                    self.assertEqual(sorted(order[position] for order in orders), sorted(languages * (rows // len(languages))))
+                pairs = collections.Counter((order[i], order[i + 1]) for order in orders for i in range(len(order) - 1))
+                self.assertEqual(len(pairs), len(languages) * (len(languages) - 1))
+                self.assertEqual(len(set(pairs.values())), 1)
+
+    def test_every_workload_has_a_roc_twin(self):
+        roc = Path(__file__).resolve().parent.parent / "bench/perceus/roc"
+        for name in bench.NAMES:
+            with self.subTest(name=name):
+                self.assertTrue((roc / f"{name}.roc").is_file())
 
 
 if __name__ == "__main__":

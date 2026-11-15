@@ -462,13 +462,16 @@ function cleared_slot(own r: irtables.LowerState, f: ssasem.Func, get: ssa.SInst
 
 struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[], gated_records: i32[], gated_fields: i32[] }
 
-function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[]): Held {
+// A borrowed array at its last use goes to the callee with no bracket, so a
+// callee that grows it can write in place. A view of it in another argument
+// reads that storage during the call, so the array is not at its last use.
+function bracketed(f: ssasem.Func, a: ssasem.Analysis, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[]): Held {
   let out = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
   if (ins.kind_tag == ssasem.call_value()) {
-    return dispatch_bracketed(f, step, ins, grows, links, ssaunits.indirect_callee(), 1);
+    return dispatch_bracketed(f, a, step, ins, grows, links, ssaunits.indirect_callee(), 1);
   }
   if (dyn_call(ins)) {
-    return dispatch_bracketed(f, step, ins, grows, links, ins.str, 0);
+    return dispatch_bracketed(f, a, step, ins, grows, links, ins.str, 0);
   }
   if (ins.kind_tag != ssasem.call()) {
     return out;
@@ -477,7 +480,7 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
   let i = 0;
   while (i < ins.args.len() && i < modes.len()) {
     let v = ins.args[i];
-    let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1;
+    let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !ssaunits.lends_view_of(f, a, ins.args, v);
     if (modes[i] == ssaunits.borrow_mode() && !last) {
       let handed = i < step.hand_roots.len() && step.hand_roots[i] >= 0;
       if (bracketable(f.values[v]) && !handed && ssaunits.grows_buffer(grows, ins.str, i) && util.index_of_i32(out.arrays, v) < 0) {
@@ -501,13 +504,13 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
   return out;
 }
 
-function dispatch_bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[], name: string, first: i32): Held {
+function dispatch_bracketed(f: ssasem.Func, a: ssasem.Analysis, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[], name: string, first: i32): Held {
   let out = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
   let modes = dispatch_modes(f, ins, first);
   for i in first..ins.args.len() {
     let v = ins.args[i];
     let linked = v < links.len() && links[v] >= 0;
-    let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !linked;
+    let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !linked && !ssaunits.lends_view_of(f, a, ins.args, v);
     if (i < modes.len() && modes[i] == ssaunits.borrow_mode() && !last && whole_bracketable(f.values[v]) && ssaunits.grows_buffer(grows, name, i)
       && util.index_of_i32(out.arrays, v) < 0) {
       out = Held { ...out, arrays: out.arrays.append(v) };
@@ -804,14 +807,41 @@ function drop_children(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, 
     r = drop_tuple_fields(r, slot, tup, scratch, f);
   }
   if (named(t) != "") {
+    let leaves = childless_shapes(t, f);
+    for shape in leaves {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.op_variant_is(shape));
+      r = emit(r, ir.op_if(0));
+      r = emit(r, ir.op_else());
+    }
     r = helper(r, slot, drop_helper_name(t));
+    for shape in leaves {
+      r = emit(r, ir.op_end());
+    }
   }
   return r;
 }
 
+// The shapes of the boxes of `t` whose fields hold no count. The drop helper
+// has nothing to do for such a box, so the drop does not call it. A variant
+// with no field is a static box that a uniqueness test refuses.
+function childless_shapes(t: typeinfo.Type, f: ssasem.Func): string[] {
+  let out: string[] = [];
+  if (typeinfo.union_name(t) == "" || enum_layout(f, t) != semrecords.layout_variant() || ssasem.has_finalizer(f, t)) {
+    return out;
+  }
+  for v in variants_of(t, f) {
+    if (semrecords.inhabited(v) && v.fields.len() > 0 && !fields_have_children(v.fields, f)) {
+      out = out.append(member_shape(f, t, v.name));
+    }
+  }
+  return if (out.len() <= 2) { out } else { [] };
+}
+
 function drop_value(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
   if (outlined_release(t, f)) {
-    return helper(r, slot, release_helper_name(t));
+    r = helper(r, slot, release_helper_name(t));
+    return if (ssasem.box_shape(t) && ssasem.counted(f, t)) { mark_release(r, ir.box_release) } else { r };
   }
   return drop_value_inline(r, slot, t, scratch, f);
 }
@@ -896,9 +926,11 @@ function self_tail_field(v: semrecords.Variant, t: typeinfo.Type): i32 {
   return at;
 }
 
+// The loop of the chain drop does not call the finalizer of each next node,
+// so an enum with a `drop` takes the drop of each field.
 function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
-  if (e.layout == semrecords.layout_option()) {
+  if (e.layout == semrecords.layout_option() || ssasem.has_finalizer(f, t)) {
     return false;
   }
   for v in e.variants {
@@ -986,6 +1018,15 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
   r = emit(r, ir.op_brif(1));
+  // Another field can hold the next node too, and its drop can lower the count
+  // to one after the first test. A node that was shared is tested again.
+  r = emit(r, ir.op_load_local(unique));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_load_local(next));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_store_local(unique));
+  r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(unique));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
@@ -6698,6 +6739,12 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
     ins = ssa.SInst { ...ins, args: inputs };
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
+  if (verb == "mul_add" && w == 64) {
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    return emit(r, ir.op_lane("vfma", w));
+  }
+  // The f32 lanes round two times: no engine has a fused f32 form yet.
   if (verb == "mul_add") {
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_lane("vmul", w));
@@ -7161,7 +7208,7 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   for ins in b.insts {
     if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
       let step = at(p, idx, b.id, pos, -1);
-      let held = bracketed(f, step, ins, grows, links);
+      let held = bracketed(f, p.unit_analysis, step, ins, grows, links);
       let defer0 = ssaunits.deferred_retain(f, p, step, ins);
       r = begin_keeps(r, keeps, slots, first, pos);
       let kb = construction_keep(keeps, pos);

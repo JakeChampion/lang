@@ -210,9 +210,24 @@ pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32,
   }
 }
 
-// The graph with each branch on a comparison of two constants sent to the
-// side it takes, so the certifier walks no edge the program cannot take.
+// The graph with each branch on a comparison of two constants, or of a value
+// with itself, sent to the side it takes, so the certifier walks no edge the
+// program cannot take. A phi that a decided branch leaves with one input can
+// make the two operands of a later comparison one value.
 function decided(f: ssa.SFunc): ssa.SFunc {
+  let next = decided_once(f);
+  for _ in 0..f.blocks.len() {
+    if (!next.changed) {
+      break;
+    }
+    next = decided_once(next.f);
+  }
+  return next.f;
+}
+
+struct Decided { f: ssa.SFunc, changed: boolean }
+
+function decided_once(f: ssa.SFunc): Decided {
   let defs = ssa.inst_defs(f);
   let blocks: ssa.SBlock[] = [];
   let changed = false;
@@ -226,7 +241,7 @@ function decided(f: ssa.SFunc): ssa.SFunc {
     }
   }
   if (!changed) {
-    return f;
+    return Decided { f: f, changed: false };
   }
   let folded = ssa.SFunc { ...f, blocks: blocks };
   // A block no branch reaches now drops out, with its inputs to the phis it fed.
@@ -238,10 +253,11 @@ function decided(f: ssa.SFunc): ssa.SFunc {
     }
   }
   let out = ssa.SFunc { ...folded, blocks: kept };
-  return ssa.prune_trivial_phis(ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) }).f;
+  return Decided { f: ssa.prune_trivial_phis(ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) }).f, changed: true };
 }
 
-// The block a branch takes when its condition compares two constants, or -1.
+// The block a branch takes when its condition compares two constants or one
+// value with itself, or -1.
 function branch_taken(defs: ssa.SInst[], t: ssa.STerm): i32 {
   if (t.kind_tag != ssa.TERM_BRIF || t.cond < 0 || t.cond >= defs.len()) {
     return -1;
@@ -252,10 +268,13 @@ function branch_taken(defs: ssa.SInst[], t: ssa.STerm): i32 {
   }
   let a = defs[c.args[0]];
   let b = defs[c.args[1]];
-  if (a.kind_tag != ssa.CONST_INT || b.kind_tag != ssa.CONST_INT || a.str != "" || b.str != "") {
-    return -1;
+  let same = c.args[0] == c.args[1];
+  if (!same) {
+    if (a.kind_tag != ssa.CONST_INT || b.kind_tag != ssa.CONST_INT || a.str != "" || b.str != "") {
+      return -1;
+    }
+    same = a.imm == b.imm;
   }
-  let same = a.imm == b.imm;
   if (same == (c.str == "eq")) {
     return t.t;
   }

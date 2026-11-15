@@ -8106,7 +8106,8 @@ function id[T](x: T): T { return x; }
 			})
 		})
 	}
-	t.Run("literal-only call still settles from the cast", func(t *testing.T) {
+	// A literal expression computes at its own type before the cast, as in the compiler.
+	t.Run("literal-only call computes at its own type", func(t *testing.T) {
 		prog, err := parser.Parse(decls + `function main(): i32 { let t: i64 = id(7) as i64; return t as i32; }`)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
@@ -8117,8 +8118,8 @@ function id[T](x: T): T { return x; }
 		ast.WalkProgram(prog, func(n ast.Node) bool {
 			if c, ok := n.(*ast.Call); ok {
 				if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "id" && len(c.TypeArgs) == 1 {
-					if nt, ok := c.TypeArgs[0].(ast.NumberType); !ok || nt.NormalWidth() != 64 {
-						t.Errorf("id instantiated at %v, want i64", c.TypeArgs[0])
+					if nt, ok := c.TypeArgs[0].(ast.NumberType); !ok || nt.NormalWidth() != 32 {
+						t.Errorf("id instantiated at %v, want i32", c.TypeArgs[0])
 					}
 				}
 			}

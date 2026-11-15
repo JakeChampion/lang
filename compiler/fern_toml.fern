@@ -248,11 +248,13 @@ function with_lint(m: Manifest, section: string, key: string, val: string): Mani
 }
 
 // The keys of [android], each the name of an -apk flag with no prefix.
-const ANDROID_TEXT: string[] = ["package", "label", "icon", "key", "version_name"];
+const ANDROID_TEXT: string[] = ["package", "label", "icon", "banner", "key", "version_name"];
 
-const ANDROID_SWITCHES: string[] = ["home", "compress", "cleartext", "debuggable"];
+const ANDROID_SWITCHES: string[] = ["home", "tv", "compress", "cleartext", "debuggable"];
 
 const ANDROID_LISTS: string[] = ["permissions", "assets", "widget"];
+
+const ANDROID_NUMBERS: string[] = ["min_sdk", "version_code"];
 
 function with_android(m: Manifest, key: string, val: string): Manifest {
   match (android_value(key, val)) {
@@ -278,19 +280,13 @@ function android_value(key: string, val: string): Result[string, string] {
   if (util.has_str(ANDROID_LISTS, key)) {
     return match (parse_str_array(val)) { Ok(items) => Ok(items.join(",")), Err(message) => Err(message) };
   }
-  if (key == "min_sdk") {
+  if (util.has_str(ANDROID_NUMBERS, key)) {
     if (val.len() > 0 && is_integer_text(val)) {
       return Ok(val);
     }
-    return Err("expected an API level, got " + docsummary.quote(val));
+    return Err("expected a whole number, got " + docsummary.quote(val));
   }
-  if (key == "version_code") {
-    if (val.len() > 0 && is_integer_text(val)) {
-      return Ok(val);
-    }
-    return Err("expected a version number, got " + docsummary.quote(val));
-  }
-  return Err("unknown key (supported: package, label, icon, key, version_name, min_sdk, version_code, home, compress, cleartext, debuggable, permissions, assets, widget)");
+  return Err("unknown key (supported: " + util.append_all(util.append_all(util.append_all(ANDROID_TEXT, ANDROID_NUMBERS), ANDROID_SWITCHES), ANDROID_LISTS).join(", ") + ")");
 }
 
 // The value of `key` in [android], or "".

@@ -99,10 +99,14 @@ struct State {
   finalized: string[],
   // The values that this body read from a shared word.
   word_reads: WordRead[],
+  tested: Tested[],
 }
 
 // Value `id` is the bits at `shift` of `word`, a shared word of a variant.
 struct WordRead { id: i32, word: i32, shift: i32, bits: i32 }
+
+// Value `id` is variant `member` while the arm that tested it is open.
+struct Tested { id: i32, member: string }
 
 struct Value { s: State, id: i32 }
 
@@ -2317,8 +2321,9 @@ function cast_ascribes(u: ast.ExprUnary, ty: typeinfo.Type): boolean {
   if (ssasem.cast_ascribes(ty)) {
     return true;
   }
+  // constfold makes `300 + 1` the literal 301, which the cast then wraps.
   if let ast.ExprNumber(n) = u.operand {
-    return !n.is_float && n.suffix == "" && ssasem.is_integer(ty) && !ssasem.is_usize(ty);
+    return !n.is_float && n.suffix == "" && ssasem.is_integer(ty) && !ssasem.is_usize(ty) && ssasem.narrow_holds(ty, util.lit_to_i64(n.text));
   }
   return false;
 }
@@ -4856,14 +4861,14 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
   let test = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, typeinfo.t_bool());
   s = terminate(test.s, ssa.t_brif(test.id, id, next));
   let opened = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
-  opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
+  opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]), tested: s.tested.append(Tested { id: scrut, member: pv.type_name }) };
   let gate = guard_gate(a, opened, next);
   if (!gate.s.ok) {
     return gathered(gate.s, g);
   }
   let from = gate.from;
   let done = arm_body(a.body, gate.s, join, count, scope, ty);
-  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(pred, from)) };
+  done = Arm { ...done, s: open(State { ...done.s, vals: entry, tested: s.tested }, next, next_preds(pred, from)) };
   return collect(g, done);
 }
 
@@ -4872,8 +4877,9 @@ function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Pay
   let id = s.next_block;
   s = terminate(State { ...s, next_block: id + 1 }, ssa.t_br(id));
   let opened = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
-  opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
-  return collect(g, arm_body(a.body, opened, join, count, scope, ty));
+  opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]), tested: s.tested.append(Tested { id: scrut, member: pv.type_name }) };
+  let done = arm_body(a.body, opened, join, count, scope, ty);
+  return collect(g, Arm { ...done, s: State { ...done.s, tested: s.tested } });
 }
 
 function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arms {
@@ -6050,7 +6056,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts.list), loops: [], contracts: contracts, calls: [],
     template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
     name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: parser.try_cleanup(fd.body), replaying: false, armed: 0, escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
-    narrowings: [], debug_lines: layout.debug_lines, dbg_vals: [], dbg_names: [], packs: layout.packs, finalized: layout.finalized, word_reads: [],
+    narrowings: [], debug_lines: layout.debug_lines, dbg_vals: [], dbg_names: [], packs: layout.packs, finalized: layout.finalized, word_reads: [], tested: [],
   };
 }
 
@@ -6780,7 +6786,7 @@ function variant_built(s: State, ids: i32[], types: typeinfo.Type[], name: strin
 }
 
 function packed_word(s: State, ids: i32[], types: typeinfo.Type[], p: Packing): Value {
-  let kept = kept_bits(s, ids, p);
+  let kept = chosen_bits(kept_bits(s, ids, types, p, false), kept_bits(s, ids, types, p, true));
   let acc = Value { s: s, id: -1 };
   if (kept.word >= 0 && kept.all) {
     return Value { s: s, id: kept.word };
@@ -6819,18 +6825,28 @@ function field_mask(bits: i32): i64 {
 }
 
 // The fields that the constructor takes from one shared word at the place
-// that they have in the new word. `mask` has each bit of the word but the
-// bits of the other narrow fields, so it is a small constant when those are
-// bytes.
+// that they have in the new word. With `tested`, a constant field is in that
+// set when an open arm tested the word for that constant (`tested_place`).
+// `mask` has each bit of the word but the bits of the other narrow fields, so
+// it is a small constant when those are bytes.
 struct KeptBits { word: i32, mask: i64, fields: boolean[], all: boolean }
 
-function kept_bits(s: State, ids: i32[], p: Packing): KeptBits {
+// A tested constant takes the place of a constant only when the constructor
+// masks a word in any case, or when it keeps all of the word.
+function chosen_bits(plain: KeptBits, tested: KeptBits): KeptBits {
+  return if (tested.word >= 0 && (tested.all || plain.word >= 0)) { tested } else { plain };
+}
+
+function kept_bits(s: State, ids: i32[], types: typeinfo.Type[], p: Packing, tested: boolean): KeptBits {
   let out = KeptBits { word: -1, mask: 0i64, fields: __alloc_bool(ids.len()), all: true };
   for i in 0..ids.len() {
     if (p.bits[i] == 0) {
       continue;
     }
     let from = same_place(s, ids[i], p.shift[i], p.bits[i], out.word);
+    if (from < 0 && tested) {
+      from = tested_place(s, ids[i], types[i], p.shift[i], p.bits[i], out.word);
+    }
     if (from < 0) {
       out = KeptBits { ...out, all: false, mask: out.mask | field_mask(p.bits[i]) << p.shift[i] as i64 };
     } else {
@@ -6847,6 +6863,24 @@ function same_place(s: State, id: i32, shift: i32, bits: i32, want: i32): i32 {
   for r in s.word_reads {
     if (r.id == id && r.shift == shift && r.bits == bits && (want < 0 || same_word(s, r.word, want))) {
       return if (want < 0) { r.word } else { want };
+    }
+  }
+  return -1;
+}
+
+// The shared word that has the constant `id` at these bits, because an open
+// arm tested the value that the word has there for the same variant.
+function tested_place(s: State, id: i32, ty: typeinfo.Type, shift: i32, bits: i32, want: i32): i32 {
+  let Some(value) = constant_field(s, id, ty) else {
+    return -1;
+  };
+  let variants = union_variants(s, typeinfo.union_name(ty));
+  for t in s.tested {
+    if (semtypes.equal(s.values[t.id], ty) && util.index_of_str(variants, t.member) as i64 == value) {
+      let from = same_place(s, t.id, shift, bits, want);
+      if (from >= 0) {
+        return from;
+      }
     }
   }
   return -1;
@@ -8431,7 +8465,8 @@ function float_primitive_contracts(): ssasem.Contract[] {
   for n in names {
     out = out.append(ssasem.Contract { name: n, params: [typeinfo.t_f64()], modes: value, result: typeinfo.t_f64() });
   }
-  return out;
+  let v = ssaunits.value_mode();
+  return out.append(ssasem.Contract { name: "__fma_f64", params: [typeinfo.t_f64(), typeinfo.t_f64(), typeinfo.t_f64()], modes: [v, v, v], result: typeinfo.t_f64() });
 }
 
 function bit_count_contracts(): ssasem.Contract[] {

@@ -241,6 +241,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (has_kind(kinds, "mulhi_s")) {
     out = out.append("@uses_mulhi_s");
   }
+  if (has_kind(kinds, "ffma") || has_kind(kinds, "vfma")) {
+    out = out.append("@uses_fma");
+  }
   if (module_uses_random(cache)) {
     out = out.append("@uses_random");
   }
@@ -4745,6 +4748,9 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
     }
     return pre + "    " + sh + ".replace_lane " + util.i32_to_string(o.i32_imm) + "\n";
   }
+  if (k == "vfma" && o.width == 64) {
+    return emit_wasm_lane_fma(cx.base + 5);
+  }
   if (k == "vfma") {
     return "    local.set " + vtmp + "\n    " + sh + ".mul\n    local.get " + vtmp + "\n    " + sh + ".add\n";
   }
@@ -4797,6 +4803,23 @@ function wasm_lane_verb(k: string, sh: string): string {
     return v;
   }
   return sh + "." + v;
+}
+
+// wasm has no fused multiply-add, so each f64 lane calls the runtime form. The
+// three operands go to the v128 scratch locals first.
+function emit_wasm_lane_fma(first: i32): string {
+  let out = "";
+  for k in 0..3 {
+    out = out + "    local.set " + util.i32_to_string(first + 2 - k) + "\n";
+  }
+  for lane in 0..2 {
+    for k in 0..3 {
+      out = out + "    local.get " + util.i32_to_string(first + k) + "\n    f64x2.extract_lane " + util.i32_to_string(lane) + "\n";
+    }
+    out += "    call $__fern_fma_f64\n";
+    out += if (lane == 0) { "    f64x2.splat\n" } else { "    f64x2.replace_lane 1\n" };
+  }
+  return out;
 }
 
 function emit_wasm_lane_round(width: i32, sh: string, vtmp: string): string {
@@ -5255,6 +5278,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_mulhi_u64\n");
   } else if (o.kind_tag == ir.K_MULHI_S) {
     parts = parts.append("    call $__fern_mulhi_s64\n");
+  } else if (o.kind_tag == ir.K_FFMA) {
+    parts = parts.append("    call $__fern_fma_f64\n");
   } else if (o.kind_tag >= ir.K_DIR_OPEN && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     parts = parts.append("    unreachable\n");
   } else {
@@ -5643,7 +5668,7 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
   let lanes = has_lane_op(f.ops);
   let nloc = nbody + 5;
   if (lanes) {
-    nloc += 2;
+    nloc += 3;
   }
   parts = parts.append("    (local");
   for l in 0..nloc {
@@ -10068,6 +10093,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   }
   if (need(needs, "@uses_mulhi_s")) {
     roots += " __fern_mulhi_s64 __fern_mulhi_u64";
+  }
+  if (need(needs, "@uses_fma")) {
+    roots += " __fern_fma_f64";
   }
   if (need(needs, "@uses_count_byte_bytes")) {
     roots += " __fern_count_byte_bytes";

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -550,33 +551,39 @@ func validDepName(s string) bool {
 	return true
 }
 
+// The keys of [android], each the name of an -apk flag with no prefix, as
+// ANDROID_TEXT, ANDROID_SWITCHES and ANDROID_LISTS of compiler/fern_toml.fern
+// list them. TestAndroidKeysMatchCompiler holds the two in step.
+var (
+	androidText     = []string{"package", "label", "icon", "banner", "key", "version_name"}
+	androidSwitches = []string{"home", "tv", "compress", "cleartext", "debuggable"}
+	androidLists    = []string{"permissions", "assets", "widget"}
+	androidNumbers  = []string{"min_sdk", "version_code"}
+)
+
 // androidValue checks the value of the [android] key `key`, which names an
 // -apk flag with no prefix, and gives it as compiler/fern_toml.fern stores it.
 func androidValue(key, val string) (string, error) {
-	switch key {
-	case "package", "label", "icon", "key", "version_name":
+	switch {
+	case slices.Contains(androidText, key):
 		return parseString(val)
-	case "home", "compress", "cleartext", "debuggable":
+	case slices.Contains(androidSwitches, key):
 		if val == "true" || val == "false" {
 			return val, nil
 		}
 		return "", fmt.Errorf("expected true or false, got %q", val)
-	case "permissions", "assets", "widget":
+	case slices.Contains(androidLists, key):
 		items, err := parseStringArray(val)
 		if err != nil {
 			return "", err
 		}
 		return strings.Join(items, ","), nil
-	case "min_sdk":
+	case slices.Contains(androidNumbers, key):
 		if _, err := parseScalar(val); err != nil || strings.HasPrefix(val, "\"") {
-			return "", fmt.Errorf("expected an API level, got %q", val)
-		}
-		return val, nil
-	case "version_code":
-		if _, err := parseScalar(val); err != nil || strings.HasPrefix(val, "\"") {
-			return "", fmt.Errorf("expected a version number, got %q", val)
+			return "", fmt.Errorf("expected a whole number, got %q", val)
 		}
 		return val, nil
 	}
-	return "", fmt.Errorf("unknown key (supported: package, label, icon, key, version_name, min_sdk, version_code, home, compress, cleartext, debuggable, permissions, assets, widget)")
+	keys := slices.Concat(androidText, androidNumbers, androidSwitches, androidLists)
+	return "", fmt.Errorf("unknown key (supported: %s)", strings.Join(keys, ", "))
 }

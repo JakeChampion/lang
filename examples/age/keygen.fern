@@ -15,30 +15,55 @@ import "./goflag";
 import "./keys";
 import "./text";
 
+// The usage text of age-keygen 1.3.2.
 const USAGE: string[] = [
   "Usage:",
   "    age-keygen [-pq] [-o OUTPUT]",
   "    age-keygen -y [-o OUTPUT] [INPUT]",
   "",
   "Options:",
-  "    -pq                       Make an ML-KEM-768 + X25519 hybrid key pair.",
+  "    -pq                       Generate a post-quantum hybrid ML-KEM-768 + X25519 key pair.",
+  "                              (This might become the default in the future.)",
   "    -o, --output OUTPUT       Write the result to the file at path OUTPUT.",
-  "    -y                        Write the recipients of an identity file.",
+  "    -y                        Convert an identity file to a recipients file.",
   "",
-  "age-keygen makes a new X25519 key pair, or with -pq a new ML-KEM-768 +",
-  "X25519 hybrid key pair. It writes the key pair to the standard output or to",
-  "OUTPUT. When the output is not a terminal, it also writes the public key to",
-  "the standard error. age-keygen does not write over an OUTPUT that is there.",
+  "age-keygen generates a new native X25519 or, with the -pq flag, post-quantum",
+  "hybrid ML-KEM-768 + X25519 key pair, and outputs it to standard output or to",
+  "the OUTPUT file.",
   "",
-  "With -y, age-keygen reads an identity file from INPUT or from the standard",
-  "input. It writes the recipient of each key, one for each line, to OUTPUT or",
-  "to the standard output.",
+  "When generating a key, if the output is not going to a terminal, the public key",
+  "is printed to standard error. If OUTPUT already exists, it is not overwritten.",
+  "",
+  "In -y mode, age-keygen reads an identity file from INPUT or from standard",
+  "input and writes the corresponding recipient(s) to OUTPUT or to standard",
+  "output, one per line, with no comments.",
+  "",
+  "Examples:",
+  "",
+  "    $ age-keygen",
+  "    # created: 2021-01-02T15:30:45+01:00",
+  "    # public key: age1lvyvwawkr0mcnnnncaghunadrqkmuf9e6507x9y920xxpp866cnql7dp2z",
+  "    AGE-SECRET-KEY-1N9JEPW6DWJ0ZQUDX63F5A03GX8QUW7PXDE39N8UYF82VZ9PC8UFS3M7XA9",
+  "",
+  "    $ age-keygen -pq",
+  "    # created: 2025-11-17T12:15:17+01:00",
+  "    # public key: age1pq1pd[... 1950 more characters ...]",
+  "    AGE-SECRET-KEY-PQ-1XXC4XS9DXHZ6TREKQTT3XECY8VNNU7GJ83C3Y49D0GZ3ZUME4JWS6QC3EF",
+  "",
+  "    $ age-keygen -o key.txt",
+  "    Public key: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p",
+  "",
+  "    $ age-keygen -y key.txt",
+  "    age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p",
 ];
 
 const NAMES: goflag.Names = goflag.Names { bools: ["version", "pq", "y"], values: ["o", "output"] };
 
+// age-keygen's errorf: the error, and the line that tells the user where to
+// report it.
 function fail(msg: string): i32 {
   eprint("age-keygen: error: " + msg);
+  eprint("age-keygen: report unexpected or unhelpful errors at https://filippo.io/age/report");
   return 1;
 }
 
@@ -210,7 +235,7 @@ function work(o: Opts, inputs: string[]): Option[string] {
 
 function run(o: Opts, inputs: string[]): i32 {
   if (o.version) {
-    print("v1.3.2-fern");
+    print("v1.3.2");
     return 0;
   }
   if (inputs.len() != 0 && !o.convert || inputs.len() > 1 && o.convert) {

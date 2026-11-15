@@ -2503,6 +2503,9 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
   if (name == "__map_hash_seed") {
     return v_int(__map_hash_seed());
   }
+  if (name == "__fma_f64") {
+    return call_fma_f64(args);
+  }
   if (util.has_str(["__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64", "__abs_f64"], name)) {
     if (args.len() != 1 || !is_float_like(args[0])) {
       return v_err(name + ": expected 1 float arg");
@@ -2672,9 +2675,12 @@ function integer_lanes_load(width: i32, kind: i32, a: VArr, at: i32): Value {
 
 function integer_lanes_with(heap: interpheap.Heap, args: Value[]): Value {
   let at = lane_window(8, args);
+  if (at < 0) {
+    return lane_abort(args);
+  }
   let ls = lane_args([args[2]]);
-  if (at < 0 || ls.len() != 1) {
-    return v_err("lane with out of bounds");
+  if (ls.len() != 1) {
+    return v_err("lane with: expected a lane value");
   }
   if let VArr(a) = args[0] {
     let out = arr_els(a);
@@ -2769,7 +2775,7 @@ function integer_lanes_memory(heap: interpheap.Heap, verb: string, width: i32, k
   }
   let at = lane_window(8, args);
   if (at < 0) {
-    return v_err("lane load out of bounds");
+    return lane_abort(args);
   }
   if let VArr(a) = args[0] {
     return integer_lanes_load(width, kind, a, at);
@@ -2868,6 +2874,10 @@ function lane_fn(verb: string, width: i32, xs: f64[]): f64 {
   if (verb == "sqrt" || verb == "floor" || verb == "round") {
     return f64_primitive("__" + verb + "_f64", xs[0]);
   }
+  // The f64 lanes round one time. The f32 lanes round two times.
+  if (verb == "mul_add" && width == 64) {
+    return xs[0].fma(xs[1], xs[2]);
+  }
   if (verb == "mul_add") {
     return lane_round(width, lane_round(width, xs[0] * xs[1]) + xs[2]);
   }
@@ -2932,17 +2942,25 @@ function lanes_of(width: i32, args: Value[]): Value {
 function lane_window(width: i32, args: Value[]): i32 {
   if let VArr(a) = args[0] {
     let at = vint_as_i64(args[1]) as i32;
-    if (at >= 0 && at + 128 / width <= arr_len(a)) {
+    if (at >= 0 && at <= arr_len(a) - 128 / width) {
       return at;
     }
   }
   return -1;
 }
 
+// The abort of a lane access whose window is not in its array.
+function lane_abort(args: Value[]): Value {
+  if let VArr(a) = args[0] {
+    return index_abort(aborts.arr_oob(), util.i64_to_string(vint_as_i64(args[1])), arr_len(a));
+  }
+  return v_err("lane access: expected an array");
+}
+
 function lanes_load(width: i32, args: Value[]): Value {
   let at = lane_window(width, args);
   if (at < 0) {
-    return v_err("lane load out of bounds");
+    return lane_abort(args);
   }
   if let VArr(a) = args[0] {
     let xs: Value[] = [];
@@ -2956,9 +2974,12 @@ function lanes_load(width: i32, args: Value[]): Value {
 
 function lanes_with(heap: interpheap.Heap, width: i32, args: Value[]): Value {
   let at = lane_window(width, args);
+  if (at < 0) {
+    return lane_abort(args);
+  }
   let ls = lane_args([args[2]]);
-  if (at < 0 || ls.len() != 1) {
-    return v_err("lane with out of bounds");
+  if (ls.len() != 1) {
+    return v_err("lane with: expected a lane value");
   }
   if let VArr(a) = args[0] {
     let out = arr_els(a);
@@ -2979,7 +3000,7 @@ function lanes_bytes(heap: interpheap.Heap, width: i32, args: Value[], store: bo
   if let VArr(a) = args[0] {
     let at = vint_as_i64(args[1]);
     if (at < 0 || at > arr_len(a) as i64 - 16i64) {
-      return v_err("packed lane access out of bounds");
+      return lane_abort(args);
     }
     let bytes = width / 8;
     if (store) {
@@ -3129,6 +3150,13 @@ function call_lane_op(verb: string, width: i32, args: Value[]): Value {
     return lanes_select(ls);
   }
   return lanes_apply(verb, ls);
+}
+
+function call_fma_f64(args: Value[]): Value {
+  if (args.len() != 3 || !is_float_like(args[0]) || !is_float_like(args[1]) || !is_float_like(args[2])) {
+    return v_err("__fma_f64: expected 3 float args");
+  }
+  return v_float(vfloat_as_f64(args[0]).fma(vfloat_as_f64(args[1]), vfloat_as_f64(args[2])));
 }
 
 function f64_primitive(name: string, x: f64): f64 {

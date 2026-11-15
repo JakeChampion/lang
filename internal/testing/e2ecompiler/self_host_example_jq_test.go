@@ -232,6 +232,8 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-s", "-c", "."}, "1 2"},
 		{[]string{"-n", "-c", "--arg", "x", "1", "[$x, $x]"}, ""},
 		{[]string{"-cn", "[1e1000, 1.000, 0.10, -(1.000)]"}, ""},
+		{[]string{"-c", "[.[0] == .[1], .[0] == (.[1]|.+0), (map(.+0)|unique), (.+[1+0]|sort), .[2]+0]"}, "[1.0000000000000001, 1, 836325471441701108668]"},
+		{[]string{"-c", "., map(. == infinite)"}, "[1e1000000000, 0e-2000000000, 25e-1147483647, 1e999999999]"},
 		{[]string{"-c", ".a"}, "5"},
 		{[]string{"-c", ".a"}, "{\"a\":1}\n5\n{\"a\":2}"},
 		{[]string{"-c", ".[] | .x?"}, "[1,{\"x\":2}]"},
@@ -323,6 +325,20 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"--seq", "-c", "."}, "\u001e}\n3\u001e4\n\u001e\"a\u001eb\"\n"},
 		{[]string{"--seq", "-c", "."}, "\u001enul\n[1]x 5"},
 		{[]string{"--seq", "-c", "-n", "[try input catch ., try input catch .]"}, "\u001e\u001e1"},
+		{[]string{"-n", "\"\\ \""}, ""},
+		{[]string{"-n", "{\"a\\qb\": 1}"}, ""},
+		{[]string{"-n", "\"\\(1)\\u12\""}, ""},
+		{[]string{"-n", "include \"\\ \"; 0"}, ""},
+		{[]string{"-n", "{(0):1}"}, ""},
+		{[]string{"-n", "{(1+1):1}"}, ""},
+		{[]string{"-n", "{([1,2,3,4,5,6,7,8]):1}"}, ""},
+		{[]string{"-n", ". as {(null):$a} | $a"}, ""},
+		{[]string{"-n", "-c", "{(\"a\"+\"b\"):1}"}, ""},
+		{[]string{"--run-tests"}, "1\n1\n1\n\n.[\nnull\n\n%%FAIL\n.[\njq: error: x\n\n%%FAIL IGNORE MSG\n.[\nx\n\n%%FAIL\n.\nx\n\n.\n1 2\n\n.\n1\nbad\n1\n\n.[]\n[1,2,3]\n1\n2\n\n.[]\n[1]\n1\n2\n3\n\n"},
+		{[]string{"--run-tests"}, "1,error(\"x\")\nnull\n1\n2\n\nrepeat(1)\nnull\n1\n1\n\n[.,1]|debug|stderr|length\nnull\n2\n\nget_search_list, get_prog_origin\nnull\n[]\n\n\"x\"|halt_error\nnull\n\n"},
+		{[]string{"--run-tests", "--skip", "2", "--take", "1"}, "1\nnull\n1\n\n2\nnull\n2\n\n3\nnull\n3\n\n4\nnull\n4\n"},
+		{[]string{"--run-tests", "--skip", "9"}, "1\nnull\n1\n"},
+		{[]string{"--run-tests", "no-such-file"}, ""},
 	}
 	modules, err := filepath.Abs("../../../examples/jq/tests/modules")
 	if err != nil {
@@ -333,6 +349,17 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 			args  []string
 			input string
 		}{[]string{"-n", "-c", "-L", modules, program}, ""})
+	}
+	// jq --run-tests on its own test files.
+	for _, suite := range jqSuites {
+		file, err := filepath.Abs("../../../examples/jq/tests/" + suite.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases = append(cases, struct {
+			args  []string
+			input string
+		}{[]string{"-L", modules, "--run-tests", file}, ""})
 	}
 	run := func(path, dir string, args []string, input string) (string, string, int) {
 		cmd := exec.Command(path, args...)
@@ -375,6 +402,7 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-c", "error(\"e\")"}, []string{"1\n2\n3\n4", ""}},
 		{[]string{"--seq", "-c", "."}, []string{"\x1e1", "2\n\x1e3\n"}},
 	}
+	jqSymlinks(t, compare)
 	for _, c := range fileCases {
 		dir := t.TempDir()
 		args := append([]string{}, c.args...)
@@ -385,6 +413,48 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 			}
 			args = append(args, name)
 		}
+		compare(args, "", dir)
+	}
+}
+
+// jqSymlinks checks that a module path and a -L directory follow symbolic
+// links as C realpath does: a module that a link names imports its own
+// modules from the directory of the file that the link names.
+func jqSymlinks(t *testing.T, compare func(args []string, input, dir string)) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"real/lib/m.jq":    "def f: \"real-m\";\n",
+		"elsewhere/m2.jq":  "import \"n\" as n {search: \".\"};\ndef g: n::h;\n",
+		"elsewhere/n.jq":   "def h: \"elsewhere-n\";\n",
+		"lib2/n.jq":        "def h: \"lib2-n\";\n",
+		"elsewhere/bad.jq": "def f: 1;\n.\n",
+		"real/prog.jq":     "import \"m2\" as m {search: \"./lib2\"};\nm::g, get_prog_origin\n",
+	}
+	for name, text := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range map[string]string{"link": "real", "lib2/m2.jq": "../elsewhere/m2.jq", "lib2/bad.jq": "../elsewhere/bad.jq", "real/lib2": "../lib2"} {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{"-L", "link/lib", "-n", "-c", "import \"m\" as m; m::f"},
+		{"-L", "link/lib", "-n", "-c", "get_search_list"},
+		{"-L", "./link//lib/../lib", "-n", "-c", "get_search_list"},
+		{"-L", "nonexist", "-n", "-c", "get_search_list"},
+		{"-L", "lib2", "-n", "-c", "import \"m2\" as m; m::g"},
+		{"-L", "lib2", "-n", "-c", "import \"bad\" as m; 1"},
+		{"-L", "lib2", "-n", "-c", "\"m2\" | modulemeta"},
+		{"-n", "-c", "-f", "link/prog.jq"},
+		{"-n", "-c", "get_prog_origin"},
+	} {
 		compare(args, "", dir)
 	}
 }

@@ -57,7 +57,7 @@ func TestAndroidPlexApk(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "plex.apk")
 	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.plex", "-apk-label", "Fern for Plex",
-		"-apk-min-sdk", "30", "-apk-permission", "INTERNET", "-apk-cleartext",
+		"-apk-min-sdk", "30", "-apk-permission", "INTERNET,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK,POST_NOTIFICATIONS,WAKE_LOCK", "-apk-cleartext",
 		e2eharness.RepoPath(plexApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = e2eharness.ChildEnv()
 	if o, err := cmd.CombinedOutput(); err != nil {
@@ -75,11 +75,21 @@ func TestAndroidPlexApk(t *testing.T) {
 	for _, f := range zr.File {
 		names = append(names, f.Name)
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	// fern.toml of the app gives the banner of the launcher of Android TV.
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
+	banner, err := os.ReadFile(e2eharness.RepoPath(plexApp, "banner.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(readZipEntry(t, zr, "res/drawable/banner.png"), banner) {
+		t.Error("the banner in the APK is not banner.png of the app")
+	}
 	want := []string{"ANativeActivity_onCreate", "Java_dev_fern_plex_Media_onPrepared", "Java_dev_fern_plex_Media_onCompletion",
-		"Java_dev_fern_plex_Media_onError", "Java_dev_fern_plex_Media_onInfo", "Java_dev_fern_plex_Media_onSeekComplete"}
+		"Java_dev_fern_plex_Media_onError", "Java_dev_fern_plex_Media_onInfo", "Java_dev_fern_plex_Media_onSeekComplete",
+		"Java_dev_fern_plex_Controls_onPlay", "Java_dev_fern_plex_Controls_onPause", "Java_dev_fern_plex_Controls_onSeekTo",
+		"Java_dev_fern_plex_Playing_onStartCommand"}
 	for _, name := range []string{"lib/arm64-v8a/libapp.so", "lib/x86_64/libapp.so"} {
 		f, err := elf.NewFile(bytes.NewReader(readZipEntry(t, zr, name)))
 		if err != nil {

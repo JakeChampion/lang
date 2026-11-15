@@ -24,7 +24,7 @@ import "./util";
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries. `home`
 // makes the activity a home screen, and `assets` go under assets/.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: Asset[], widget: Widget }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, assets: Asset[], widget: Widget }
 
 // The app widget of the home screen: the Java class of its provider, which
 // extends android.appwidget.AppWidgetProvider, and the items of its row. An
@@ -137,8 +137,15 @@ function prefixed(b: [u8]): u8[] {
 // finds the attributes of an element by a search in the order of their IDs,
 // so each element lists its attributes in that order too.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16843276, 16843291, 16843292, 16843307, 16843376, 16843954, 16844010, 16844012, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16843276, 16843291, 16843292, 16843307, 16843376, 16843406, 16843762, 16843954, 16844010, 16844012, 16844185];
 }
+
+// The features and the launcher category of an app for Android TV.
+const LEANBACK: string = "android.software.leanback";
+
+const TOUCHSCREEN: string = "android.hardware.touchscreen";
+
+const LEANBACK_LAUNCHER: string = "android.intent.category.LEANBACK_LAUNCHER";
 
 const S_THEME: i32 = 0;
 
@@ -182,23 +189,27 @@ const S_SOFT_INPUT: i32 = 19;
 
 const S_TARGET_SDK: i32 = 20;
 
-const S_RESUME_WHILE_PAUSING: i32 = 21;
+const S_REQUIRED: i32 = 21;
 
-const S_EXTRACT_NATIVE_LIBS: i32 = 22;
+const S_BANNER: i32 = 22;
 
-const S_CLEARTEXT: i32 = 23;
+const S_RESUME_WHILE_PAUSING: i32 = 23;
 
-const S_FOREGROUND_TYPE: i32 = 24;
+const S_EXTRACT_NATIVE_LIBS: i32 = 24;
 
-const S_PREFIX: i32 = 25;
+const S_CLEARTEXT: i32 = 25;
 
-const S_URI: i32 = 26;
+const S_FOREGROUND_TYPE: i32 = 26;
 
-const S_PACKAGE: i32 = 27;
+const S_PREFIX: i32 = 27;
+
+const S_URI: i32 = 28;
+
+const S_PACKAGE: i32 = 29;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
+    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "required", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -215,6 +226,9 @@ function pool_strings(app: App): string[] {
   }
   if (app.home) {
     out = out.append("android.intent.category.HOME").append("android.intent.category.DEFAULT").append("");
+  }
+  if (app.tv) {
+    out = out.append("uses-feature").append(LEANBACK).append(TOUCHSCREEN).append(LEANBACK_LAUNCHER);
   }
   if (app.widget.provider.len() > 0) {
     out = out.append("receiver").append(app.widget.provider).append(WIDGET_UPDATE).append(WIDGET_META);
@@ -388,7 +402,9 @@ function end(out: u8[], line: i32, name: i32): u8[] {
 
 // The binary AndroidManifest.xml of `app`: one NativeActivity that loads
 // lib<app.lib>.so, with the launcher intent filter. A home screen also has
-// the home categories, so Android offers it as the home app.
+// the home categories, so Android offers it as the home app. An app for a
+// TV also has the launcher category of Android TV, and needs no touch
+// screen.
 pub function manifest(app: App): u8[] {
   let s = pool_strings(app);
   let body = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
@@ -399,6 +415,13 @@ pub function manifest(app: App): u8[] {
   let uses = at(s, "uses-permission");
   for p in app.permissions {
     body = end(start(body, 2, uses, [attr_str(S_NAME, at(s, p))]), 2, uses);
+  }
+  if (app.tv) {
+    // An app for a TV runs on a phone too, so neither feature is required.
+    let feature = at(s, "uses-feature");
+    for f in [LEANBACK, TOUCHSCREEN] {
+      body = end(start(body, 2, feature, [attr_str(S_NAME, at(s, f)), attr_int(S_REQUIRED, 18, 0)]), 2, feature);
+    }
   }
   let has_code = 0;
   if (app.dex.len() > 0) {
@@ -423,6 +446,9 @@ pub function manifest(app: App): u8[] {
   app_attrs = app_attrs.append(attr_int(S_HAS_CODE, 18, has_code));
   if (app.debuggable) {
     app_attrs = app_attrs.append(attr_int(S_DEBUGGABLE, 18, -1));
+  }
+  if (app.banner.len() > 0) {
+    app_attrs = app_attrs.append(attr_int(S_BANNER, 1, banner_id(app)));
   }
   app_attrs = app_attrs.append(attr_int(S_EXTRACT_NATIVE_LIBS, 18, extract));
   if (app.cleartext) {
@@ -449,6 +475,9 @@ pub function manifest(app: App): u8[] {
   body = start(body, 6, at(s, "intent-filter"), []);
   body = end(start(body, 7, at(s, "action"), [attr_str(S_NAME, at(s, "android.intent.action.MAIN"))]), 7, at(s, "action"));
   body = category(body, 8, s, "android.intent.category.LAUNCHER");
+  if (app.tv) {
+    body = category(body, 8, s, LEANBACK_LAUNCHER);
+  }
   if (app.home) {
     body = category(category(body, 8, s, "android.intent.category.HOME"), 8, s, "android.intent.category.DEFAULT");
   }
@@ -465,14 +494,40 @@ pub function manifest(app: App): u8[] {
   return util.append_bytes(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
 }
 
-// The resource table of the icon: one package 0x7f with one type,
-// "drawable", and one entry, "icon", in the default configuration. Its value
-// is the path of the PNG in the archive, so the ID of the icon is
-// 0x7f010000.
+// The resource table of the images: one package 0x7f with one type,
+// "drawable", with the entries "icon" and "banner" in the default
+// configuration, in that order, each when the app has it. The value of each
+// is the path of its PNG in the archive. So the ID of the icon is
+// 0x7f010000, and the banner, the image of the app on the launcher of
+// Android TV, comes after it.
 
 const ICON_PATH: string = "res/drawable/icon.png";
 
+const BANNER_PATH: string = "res/drawable/banner.png";
+
 const ICON_ID: i32 = 2130771968;
+
+function banner_id(app: App): i32 {
+  if (app.icon.len() > 0) {
+    return ICON_ID + 1;
+  }
+  return ICON_ID;
+}
+
+// The entries of the drawable type, and the paths of their PNG files.
+function drawables(app: App): (Res[], string[]) {
+  let entries: Res[] = [];
+  let paths: string[] = [];
+  if (app.icon.len() > 0) {
+    entries = entries.append(Res { key: "icon", kind: 3, data: paths.len() });
+    paths = paths.append(ICON_PATH);
+  }
+  if (app.banner.len() > 0) {
+    entries = entries.append(Res { key: "banner", kind: 3, data: paths.len() });
+    paths = paths.append(BANNER_PATH);
+  }
+  return (entries, paths);
+}
 
 // A chunk: its type, the size of its header, and the header and body.
 function chunk(kind: i32, header: [u8], body: [u8]): u8[] {
@@ -527,18 +582,20 @@ const WIDGET_LAYOUT_PATH: string = "res/layout/widget.xml";
 
 const WIDGET_INFO_PATH: string = "res/xml/widget.xml";
 
-// The resource table: one package 0x7f. The type 1 has the icon. With a
-// widget, the type 2 has its layout, the type 3 has its provider file, and
-// the type 4 has the IDs of its items. A type with no entry has no chunk.
+// The resource table: one package 0x7f. The type 1 has the icon and the
+// banner. With a widget, the type 2 has its layout, the type 3 has its
+// provider file, and the type 4 has the IDs of its items. A type with no
+// entry has no chunk.
 function resource_table(app: App): u8[] {
-  let paths: string[] = [];
+  let (images, paths) = drawables(app);
   let kinds = ["drawable"];
   let keys: string[] = [];
   let body: u8[] = [];
-  if (app.icon.len() > 0) {
-    body = type_chunks(1, [Res { key: "icon", kind: 3, data: 0 }], 0);
-    paths = [ICON_PATH];
-    keys = ["icon"];
+  if (images.len() > 0) {
+    body = type_chunks(1, images, 0);
+    for r in images {
+      keys = keys.append(r.key);
+    }
   }
   if (app.widget.provider.len() > 0) {
     kinds = ["drawable", "layout", "xml", "id"];
@@ -922,11 +979,14 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   if (app.dex.len() > 0) {
     entries = entries.append(Entry { name: "classes.dex", data: app.dex, deflated: false });
   }
-  if (app.icon.len() > 0 || app.widget.provider.len() > 0) {
+  if (app.icon.len() > 0 || app.banner.len() > 0 || app.widget.provider.len() > 0) {
     entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app), deflated: false });
   }
   if (app.icon.len() > 0) {
     entries = entries.append(Entry { name: ICON_PATH, data: app.icon, deflated: false });
+  }
+  if (app.banner.len() > 0) {
+    entries = entries.append(Entry { name: BANNER_PATH, data: app.banner, deflated: false });
   }
   if (app.widget.provider.len() > 0) {
     entries = entries.append(Entry { name: WIDGET_LAYOUT_PATH, data: widget_layout(app.widget), deflated: false }).append(Entry { name: WIDGET_INFO_PATH, data: widget_info(), deflated: false });

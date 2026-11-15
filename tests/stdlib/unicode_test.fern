@@ -86,6 +86,9 @@ function test_eq_ignore_case(): test.TestOutcome {
   if ("HELLO".case_fold() != "hello") {
     return test.fail("case_fold ascii");
   }
+  if ("İ".case_fold() != "i̇") {
+    return test.fail("case_fold İ");
+  }
   return test.pass();
 }
 

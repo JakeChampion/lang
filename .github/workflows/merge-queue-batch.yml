@@ -69,6 +69,8 @@ jobs:
       - name: Land the batch
         env:
           GH_TOKEN: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+          # The personal token can have no Actions permission.
+          MERGE_QUEUE_ACTIONS_TOKEN: ${{ github.token }}
           MERGE_QUEUE_FAILURE_REPORT: ${{ runner.temp }}/failure.md
           MERGE_QUEUE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RESULT: ${{ needs.validate.result }}

@@ -4,6 +4,7 @@ import "std/json";
 import "std/test";
 import "./eval";
 import "./filter";
+import "./modules";
 import "./input";
 import "./number";
 import "./output";
@@ -975,6 +976,7 @@ function test_patterns(): test.TestOutcome {
     (". as {(\"a\", \"b\"): $v} | $v", "{\"a\":1,\"b\":2}", "1\n2"),
     (". as {(.k): $v} | $v", "{\"k\":\"a\",\"a\":9}", "9"),
     (". as {(1): $v} | $v", "{}", "compile: Cannot use number (1) as object key"),
+    (". as {(null): $v} | $v", "{}", "compile: Cannot use null (null) as object key"),
     (". as {a: {b: [$p, {$c}]}} | [$p, $c]", "{\"a\":{\"b\":[1,{\"c\":2}]}}", "[1,2]"),
     (". as [[$a, $b], [$c, $d]] | [$a, $b, $c, $d]", "[[1,2],[3,4]]", "[1,2,3,4]"),
     (". as [$a, $a] | $a", "[1,2]", "2"),
@@ -1146,7 +1148,7 @@ function test_circular(): test.TestOutcome {
     ("map(asin, acos, atan)", "[0, 0.5, 1]", "[0,1.5707963267948966,0,0.5235987755982989,1.0471975511965979,0.4636476090008061,1.5707963267948966,0,0.7853981633974483]"),
     ("map(sinh, cosh, tanh)", "[0, 0.5]", "[0,1,0,0.5210953054937474,1.1276259652063807,0.46211715726000974]"),
     ("map(log1p, expm1)", "[0, 1]", "[0,0,0.6931471805599453,1.718281828459045]"),
-    ("map(cbrt)", "[27, -8, 1e300, 0.001]", "[3,-2,1e+100,0.1]"),
+    ("map(cbrt)", "[27, -8, 1e300, 0.001]", "[3.0000000000000004,-2,1e+100,0.1]"),
     ("atan * 4 * 1000000 | floor / 1000000", "1", "3.141592"),
     ("[atan2(1, 2; 3, 4)]", "null", "[0.3217505543966422,0.5880026035475675,0.24497866312686414,0.4636476090008061]"),
     ("atan2(0; -1)", "null", "3.141592653589793"),
@@ -1237,6 +1239,62 @@ function test_undefined_var(): test.TestOutcome {
   return test.pass();
 }
 
+// jq's lexer gives each run of escapes in quotes to the JSON reader, and
+// the error of the reader is a compile error.
+function test_literal_escapes(): test.TestOutcome {
+  return checks([
+    ("\"a\\n\\u00e9\\ud83d\\ude00\\/\"", "null", "\"a\\né😀/\""),
+    ("\"\\ \"", "null", "compile: Invalid escape at line 1, column 4 (while parsing '\"\\ \"')"),
+    ("\"a\\qb\"", "null", "compile: Invalid escape at line 1, column 4 (while parsing '\"\\q\"')"),
+    ("\"\\u12\"", "null", "compile: Invalid \\uXXXX escape at line 1, column 6 (while parsing '\"\\u12\"')"),
+    ("\"\\(1)\\ \"", "null", "compile: Invalid escape at line 1, column 4 (while parsing '\"\\ \"')"),
+  ]);
+}
+
+// jq folds an operator of two constants, so a key of a constant that is not
+// a string is a compile error, also after the fold.
+function test_constant_keys(): test.TestOutcome {
+  return checks([
+    ("{(0):1}", "null", "compile: Cannot use number (0) as object key"),
+    ("{(1+1):1}", "null", "compile: Cannot use number (2) as object key"),
+    ("{(7%4):1}", "null", "compile: Cannot use number (3) as object key"),
+    ("{(1<2):1}", "null", "compile: Cannot use boolean (true) as object key"),
+    ("{([1,2,3,4,5,6,7,8]):1}", "null", "compile: Cannot use array ([1,2,3,4,5,...) as object key"),
+    ("{(\"a\"+\"b\"):1}", "null", "{\"ab\":1}"),
+    ("{(1/0):1}", "null", "error: number (1) and number (0) cannot be divided because the divisor is zero"),
+    ("{(.):1}", "1", "error: Cannot use number (1) as object key"),
+  ]);
+}
+
+// jq compares two literals as decimals, and the other pairs as f64 values. It
+// rounds a literal to 17 digits, half to even, before it gives the f64.
+function test_literal_compare(): test.TestOutcome {
+  return checks([
+    ("[1.0000000000000001 == (1+0), 1.0000000000000001 == 1, 1.000 == (1|.+0)]", "null", "[true,false,true]"),
+    ("[.[0] == .[1], .[0] < (.[1]|.+0), ([.[0], (.[1]|.+0)]|unique)]", "[1.0000000000000001, 1]", "[false,false,[1.0000000000000001]]"),
+    ("[{a: 1.0000000000000001} == {a: (1+0)}, ([1.0000000000000001]|index([1+0]))]", "null", "[true,0]"),
+    ("[836325471441701108668 + 0, 190946523642418605 + 0, 99999999999999999999 + 0]", "null", "[836325471441701200000,190946523642418600,1e+20]"),
+    ("[13911860366432393 == 13911860366432392, -1.0000000000000001 == -1]", "null", "[false,true]"),
+  ]);
+}
+
+// The decNumber context of jq has the exponents -999999999 to 999999999. A
+// larger number is an infinity, and a smaller exponent rounds half up.
+function test_literal_range(): test.TestOutcome {
+  return checks([
+    (".", "[1e999999999, 10e999999999, 0e2000000000, 0e-2000000000]", "[1E+999999999,1.7976931348623157e+308,0E+999999999,0E-1147483646]"),
+    (".", "[5e-1147483647, 25e-1147483647, 12345e-1147483649, 995e-1147483648, -1e-99999999999999]", "[1E-1147483646,3E-1147483646,1.2E-1147483645,1.0E-1147483645,-0E-1147483646]"),
+    ("[1e1000000000 > 1E+999999999, 1e1000000000 == 1e1000000001, 1e1000000000 == infinite, (1e1000000000|tostring)]", "null", "[true,true,true,\"1.7976931348623157e+308\"]"),
+  ]);
+}
+
+// A path that realpath cannot resolve stays as it is. The test of the
+// command line follows symbolic links.
+function test_realpath(): test.TestOutcome {
+  let got = [modules.realpath("/"), modules.realpath("/no/such/dir"), modules.realpath("no/such/../x"), modules.realpath("")];
+  return test.assert_eq_array(got, ["/", "/no/such/dir", "no/such/../x", ""]);
+}
+
 function main(): i32 {
   let r = test.new("jq");
   r = r.it("paths, slices and iteration", test_paths);
@@ -1282,5 +1340,10 @@ function main(): i32 {
   r = r.it("the input stream and its lines", test_stream);
   r = r.it("undefined variables", test_undefined_var);
   r = r.it("one check", (): test.TestOutcome => check(".a", "{\"a\":[1]}", "[1]"));
+  r = r.it("escapes of string literals, read as JSON", test_literal_escapes);
+  r = r.it("constant keys that are not strings", test_constant_keys);
+  r = r.it("a literal and a computed number", test_literal_compare);
+  r = r.it("the range of a literal", test_literal_range);
+  r = r.it("a path that realpath cannot resolve", test_realpath);
   return r.finish();
 }

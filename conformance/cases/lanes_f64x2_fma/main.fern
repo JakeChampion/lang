@@ -1,0 +1,145 @@
+import "std/i32";
+import "std/i64";
+import "std/u64";
+import "std/f64";
+
+// __f64x2_mul_add(a, b, c) rounds a * b + c one time in each lane, as
+// __fma_f64 does. In each named case, the plain a * b + c differs from the
+// fused result in one lane at least. The last line packs the random cases of
+// conformance/cases/f64_fma two to a vector, so its hash is the hash of that
+// case.
+
+function bits(x: f64): string {
+  if (x != x) {
+    return "nan";
+  }
+  return f64_bits(x).to_string();
+}
+
+function lane_text(r: f64, a: f64, b: f64, c: f64): string {
+  let fused = __fma_f64(a, b, c);
+  let tag = if (bits(r) == bits(fused)) { "fused" } else { "scalar " + bits(fused) };
+  return bits(r) + " " + bits(a * b + c) + " " + tag;
+}
+
+function show(name: string, a: f64x2, b: f64x2, c: f64x2): void {
+  let r = __f64x2_mul_add(a, b, c);
+  let first = lane_text(__f64x2_lane(r, 0), __f64x2_lane(a, 0), __f64x2_lane(b, 0), __f64x2_lane(c, 0));
+  let second = lane_text(__f64x2_lane(r, 1), __f64x2_lane(a, 1), __f64x2_lane(b, 1), __f64x2_lane(c, 1));
+  print(name + " " + first + " | " + second);
+}
+
+function same(v: f64x2, lo: f64, hi: f64): string {
+  if (bits(__f64x2_lane(v, 0)) == bits(lo) && bits(__f64x2_lane(v, 1)) == bits(hi)) {
+    return "same";
+  }
+  return "differs";
+}
+
+// Each sum is held in a register across the loop: in the first factor, in
+// the second factor, and in the addend. The scalar chains give the bits each
+// lane must have.
+function chains(x: f64x2): void {
+  let a = __f64x2_splat(1.0);
+  let b = __f64x2_splat(1.0);
+  let c = __f64x2_splat(1.0);
+  let x0 = __f64x2_lane(x, 0);
+  let x1 = __f64x2_lane(x, 1);
+  let a0 = 1.0;
+  let a1 = 1.0;
+  let b0 = 1.0;
+  let b1 = 1.0;
+  let c0 = 1.0;
+  let c1 = 1.0;
+  let i = 0;
+  while (i < 20) {
+    a = __f64x2_mul_add(a, x, __f64x2_splat(0.1));
+    b = __f64x2_mul_add(x, b, __f64x2_splat(0.3));
+    c = __f64x2_mul_add(x, __f64x2_splat(0.7), c);
+    a0 = __fma_f64(a0, x0, 0.1);
+    a1 = __fma_f64(a1, x1, 0.1);
+    b0 = __fma_f64(x0, b0, 0.3);
+    b1 = __fma_f64(x1, b1, 0.3);
+    c0 = __fma_f64(x0, 0.7, c0);
+    c1 = __fma_f64(x1, 0.7, c1);
+    i += 1;
+  }
+  print("chains " + same(a, a0, a1) + " " + same(b, b0, b1) + " " + same(c, c0, c1));
+  print("chain bits " + bits(a0) + " " + bits(a1) + " " + bits(b1) + " " + bits(c1));
+}
+
+// A step of xorshift64, so that each backend draws the same cases.
+function step(s: u64): u64 {
+  let x = s ^ s << 13 as u64;
+  x = x ^ x >> 7 as u64;
+  return x ^ x << 17 as u64;
+}
+
+// The sign and the significand of r with the exponent field e, held in [0, 2047].
+function with_exp(r: u64, e: i64): f64 {
+  let field: i64 = if (e < 0) { 0 } else if (e > 2047) { 2047 } else { e };
+  let keep = 1 as u64 << 63 as u64 | 4503599627370495 as u64;
+  return f64_from_bits((r & keep) as i64 | field << 52);
+}
+
+function canon(x: f64): u64 {
+  return if (x != x) { 9221120237041090560 as u64 } else { f64_bits(x) as u64 };
+}
+
+struct Case {
+  s: u64,
+  x: f64,
+  y: f64,
+  z: f64,
+}
+
+// The next case of conformance/cases/f64_fma.
+function draw(s: u64): Case {
+  let r1 = step(s);
+  let r2 = step(r1);
+  let r3 = step(r2);
+  let ex = (r1 >> 52 as u64 & 2047 as u64) as i64;
+  if ((r1 & 15 as u64) == 0 as u64) {
+    ex = 0;
+  }
+  let ey = (r2 >> 53 as u64 & 1023 as u64) as i64 + 512;
+  let x = with_exp(r1, ex);
+  let y = with_exp(r2, ey);
+  let z = with_exp(r3, ex + ey - 1151 + (r3 >> 56 as u64) as i64);
+  if ((r3 & 3 as u64) == 0 as u64) {
+    z = f64_from_bits(f64_bits(-(x * y)) ^ (r3 >> 2 as u64 & 7 as u64) as i64);
+  }
+  return Case { s: r3, x: x, y: y, z: z };
+}
+
+function random_cases(n: i32): void {
+  let s = 88172645463325252 as u64;
+  let h = 1469598103934665603 as u64;
+  let differ = 0;
+  let i = 0;
+  while (i < n) {
+    let p = draw(s);
+    let q = draw(p.s);
+    s = q.s;
+    let r = __f64x2_mul_add(__f64x2_of(p.x, q.x), __f64x2_of(p.y, q.y), __f64x2_of(p.z, q.z));
+    let lo = __f64x2_lane(r, 0);
+    let hi = __f64x2_lane(r, 1);
+    if (canon(lo) != canon(__fma_f64(p.x, p.y, p.z)) || canon(hi) != canon(__fma_f64(q.x, q.y, q.z))) {
+      differ += 1;
+    }
+    h = (h ^ canon(lo)) * (1099511628211 as u64);
+    h = (h ^ canon(hi)) * (1099511628211 as u64);
+    i += 2;
+  }
+  print("random " + n.to_string() + " " + h.to_string() + " scalar differs " + differ.to_string());
+}
+
+function main(): i32 {
+  show("tenth", __f64x2_of(0.1, 0.3333333333333333), __f64x2_of(10.0, 3.0), __f64x2_splat(-1.0));
+  show("square", __f64x2_of(2.0, 1.0000000000000002), __f64x2_of(3.0, 1.0000000000000004), __f64x2_of(1.0, -1.0));
+  show("range", __f64x2_of(134217729.0, 1.5e308), __f64x2_of(134217727.0, 2.0), __f64x2_of(-18014398509481984.0, -1.5e308));
+  show("zero", __f64x2_of(-1.0e-200, 1.0e308), __f64x2_of(1.0e-200, 10.0), __f64x2_of(0.0, -1.0 / 0.0));
+  chains(__f64x2_of(1.0000001, 0.9999999));
+  random_cases(4096);
+  return 0;
+}

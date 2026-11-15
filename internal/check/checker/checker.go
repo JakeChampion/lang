@@ -1300,6 +1300,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__round_f64"] = f64ToF64Builtin
 	c.info.FuncSigs["__trunc_f64"] = f64ToF64Builtin
 	c.info.FuncSigs["__abs_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__fma_f64"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 64}, ast.FloatType{Width: 64}, ast.FloatType{Width: 64}},
+		Result: ast.FloatType{Width: 64},
+	}
 	c.registerLaneBuiltins()
 	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 64}},
@@ -9508,6 +9512,13 @@ func (s *scope) set(name string, t ast.Type) {
 	s.names[name] = t
 }
 
+// boundLocally reports whether a parameter or a local binds name, so that
+// a call of name calls that value and not the builtin of the same name.
+func (c *checker) boundLocally(name string, s *scope) bool {
+	_, ok := s.lookup(name)
+	return ok
+}
+
 func (s *scope) lookup(name string) (ast.Type, bool) {
 	for cur := s; cur != nil; cur = cur.parent {
 		if t, ok := cur.names[name]; ok {
@@ -15175,9 +15186,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
-		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
-			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
-			!isBareNumericLiteral(n.Inner) {
+		} else if _, tgtNum := n.Target.(ast.NumberType); tgtNum && !isBareNumericLiteral(n.Inner) {
+			// A literal expression computes at its own type, and the cast converts the result.
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
@@ -15575,7 +15585,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		var writtenTypeArgs []ast.Type
 		recvTypeArgs := false
 		c.retagIndexAsTypeArgs(n, s)
-		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 {
+		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 && !c.boundLocally(id.Name, s) {
 			switch id.Name {
 			case "print", "write", "eprint":
 				at := c.checkExpr(n.Args[0], s)

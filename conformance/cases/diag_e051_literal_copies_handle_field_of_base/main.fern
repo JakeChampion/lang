@@ -1,0 +1,6 @@
+// The field value reads a field that holds a handle, so the base keeps it too.
+import "std/worker";
+struct Out { k: i32, a: Option[worker.Worker[i32]], b: Option[worker.Worker[i32]] }
+function bump(own o: Out, d: i32): Out { return Out { ...o, k: o.k + d }; }
+function bad(own o: Out): Out { let t = Out { ...o, k: 0 }; return bump(Out { ...t, b: t.a }, 1); }
+function main(): i32 { return 0; }

@@ -24,6 +24,17 @@ balancing helpers retain their upstream inline attributes and Nat keys. All
 workload keys are nonnegative; Fern/Koka ordinary-tree keys are int32, and
 checkpoint keys use Fern i64 and Koka arbitrary-precision Int.
 
+`roc/` translates the Koka inputs to Roc. The harness builds them only when
+`--roc` names a `roc` executable, with `roc build --optimize`. The sources use
+the `basic-cli` 0.20.0 platform, and the build downloads it on first use. They
+were checked with the Roc nightly of commit `ea210f57` (2025-10-28).
+
+Each program keeps the Koka data types, recursion and rewrite order. The ordinary
+tree has `I32` keys, as Fern and Koka do. The checkpoint tree, the derivative
+and constant folding use `I64`. Constant folding and the derivative use the
+wrapping `add_wrap` and `mul_wrap`, as Fern does, because the checked Roc
+operators stop the program on an overflow.
+
 The pinned source has no Lean n-queens or constant-fold implementation.
 Those two files directly translate the Koka algorithms. N-queens materializes
 the same breadth-wise lists of partial solutions, without a bitset solver.
@@ -48,7 +59,10 @@ unchanged.
 compile commands, executable hashes, raw output and per-run measurements.
 Koka uses `-O2`; Lean emits C and links with `leanc -O3`; Fern uses its primary
 compiler's normal native output. A verified warm-up process for each case and
-language precedes repeated timing. Execution order rotates between repeats.
+language precedes repeated timing. The order of the languages in a repeat is
+a row of a balanced Latin square. Thus each language runs directly after each
+other language equally often. Use a multiple of the number of rows as the count
+of repeats: four rows for four languages, six for three.
 Wall time, CPU time and peak RSS cover startup, output and teardown. Fern
 allocations come from a separate binary compiled with `FERN_LEAKCHECK=1`, with
 balanced frees and zero live bytes required. Instrumented runs are excluded
