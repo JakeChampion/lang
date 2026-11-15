@@ -1,0 +1,7 @@
+pick first 3 5
+pick second 1 5
+pick4 first -1 -2 3 4
+pick4 second 1 2 3 4
+crowd first 15 5
+crowd second 14 18
+crowd sum 817 1189

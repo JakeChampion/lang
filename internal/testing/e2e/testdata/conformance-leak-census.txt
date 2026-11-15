@@ -593,6 +593,7 @@ lanes_integer_shapes                                 0
 lanes_map_fusion                                     0
 lanes_methods                                        0
 lanes_receivers                                      0
+lanes_select_in_place                                0
 lanes_spill_pressure                                 0
 lanes_through_calls                                  0
 lanes_u8x16_ops                                      0

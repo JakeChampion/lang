@@ -367,6 +367,17 @@ func vexFormCases() []string {
 		"vfmadd213ps %xmm9, %xmm10, %xmm11",
 		"vfmadd213ps (%r9), %xmm1, %xmm0",
 		"vfmadd213ps %ymm12, %ymm11, %ymm10",
+		"vfmadd213sd %xmm2, %xmm1, %xmm0",
+		"vfmadd213sd %xmm15, %xmm3, %xmm8",
+		"vfmadd213sd -24(%rbp), %xmm12, %xmm13",
+		"vfmadd231pd %xmm2, %xmm1, %xmm0",
+		"vfmadd231pd %xmm9, %xmm10, %xmm11",
+		"vfmadd231pd 16(%r8,%rdx,8), %xmm12, %xmm13",
+		"vfmadd231pd %ymm3, %ymm4, %ymm5",
+		"vfmadd231ps %xmm2, %xmm1, %xmm0",
+		"vfmadd231ps %xmm15, %xmm3, %xmm8",
+		"vfmadd231ps (%r9), %xmm1, %xmm0",
+		"vfmadd231ps %ymm12, %ymm11, %ymm10",
 	}
 }
 

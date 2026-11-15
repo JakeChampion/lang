@@ -8752,7 +8752,7 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     return ssa_vreplace(ins, reg_of, s);
   }
   if (b == "vfma") {
-    return ssa_vfma(ins, reg_of, s);
+    return ssa_fma(ins, reg_of, ssa_lane_sfx(ins.imm), s);
   }
   if (b == "vselect") {
     return ssa_vselect(ins, reg_of, s);
@@ -8994,32 +8994,14 @@ function ssa_vround(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-function ssa_vfma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
-  s = ssa_fread(reg_of, ins.args[2], "%xmm2", s);
-  let a = ssa_fhome(reg_of, ins.args[0]);
-  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
-  if (a == "") {
-    s = ssa_load(reg_of, ins.args[0], d, s);
-  } else if (a != d) {
-    s = s.write("    movapd " + a + ", " + d + "\n");
-  }
-  s = s.write("    vfmadd213" + ssa_lane_sfx(ins.imm) + " " + ssa_fsrc(reg_of, ins.args[2], "%xmm2") + ", " + ssa_fsrc(reg_of, ins.args[1], "%xmm1") + ", " + d + "\n");
-  return ssa_fput(reg_of, ins.result, d, s);
-}
-
 function ssa_vselect(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let sfx = ssa_lane_sfx(ins.imm);
   s = ssa_fread(reg_of, ins.args[2], "%xmm1", s);
   s = ssa_fread(reg_of, ins.args[0], "%xmm2", s);
   let m = ssa_fsrc(reg_of, ins.args[2], "%xmm1");
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm2");
-  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
-  let b = ssa_fhome(reg_of, ins.args[1]);
-  if (b == "") {
-    s = ssa_load(reg_of, ins.args[1], d, s);
-    b = d;
-  }
+  s = ssa_fread(reg_of, ins.args[1], "%xmm0", s);
+  let b = ssa_fsrc(reg_of, ins.args[1], "%xmm0");
   if (a != "%xmm2") {
     s = s.write("    movapd " + a + ", %xmm2\n");
   }
@@ -9133,28 +9115,28 @@ function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-// vfmadd231sd adds the product to its destination, so the destination takes
-// the addend first. A destination that holds a factor uses the scratch.
-function ssa_ffma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// a * b + c for the suffix sfx: sd, pd or ps. vfmadd213 multiplies its
+// destination by a factor, and vfmadd231 adds the product to it. Thus a
+// destination that holds a factor uses vfmadd213, and each other destination
+// takes the addend first.
+function ssa_fma(ins: ssa.SInst, reg_of: i32[], sfx: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
   s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let b = ssa_fsrc(reg_of, ins.args[1], "%xmm2");
   let c = ssa_fhome(reg_of, ins.args[2]);
-  let home = ssa_fhome(reg_of, ins.result);
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
   if (c != d && (d == a || d == b)) {
-    d = "%xmm0";
+    s = ssa_fread(reg_of, ins.args[2], "%xmm0", s);
+    let other = if (d == a) { b } else { a };
+    return s.write("    vfmadd213" + sfx + " " + ssa_fsrc(reg_of, ins.args[2], "%xmm0") + ", " + other + ", " + d + "\n");
   }
   if (c == "") {
     s = ssa_load(reg_of, ins.args[2], d, s);
   } else if (c != d) {
     s = ssa_mov_rr(s, d, c);
   }
-  s = s.write("    vfmadd231sd " + b + ", " + a + ", " + d + "\n");
-  if (d == "%xmm0" && home != "") {
-    return ssa_mov_rr(s, home, d);
-  }
+  s = s.write("    vfmadd231" + sfx + " " + b + ", " + a + ", " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
@@ -11100,7 +11082,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     return ssa_fmath(ins, reg_of, s);
   }
   if (k == ssa.TERNARY) {
-    return ssa_ffma(ins, reg_of, s);
+    return ssa_fma(ins, reg_of, "sd", s);
   }
   let d = ssa_dst(reg_of, ins.result);
   if (k == ssa.CONST_INT) {

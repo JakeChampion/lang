@@ -57,7 +57,7 @@ func TestSelfHostFmaF64Emission(t *testing.T) {
 	cases := []struct {
 		target, start, end, fused, separate string
 	}{
-		{e2eharness.TargetX86_64Linux, "__fn_poly:", ".cfi_endproc", "vfmadd231sd", "mulsd"},
+		{e2eharness.TargetX86_64Linux, "__fn_poly:", ".cfi_endproc", "vfmadd", "mulsd"},
 		{e2eharness.TargetArm64Linux, "__fn_poly:", ".cfi_endproc", "fmadd d", "fmul"},
 		{e2eharness.TargetWasm32Wasi, "(func $poly ", "(func ", "call $__fern_fma_f64", "f64.mul"},
 	}

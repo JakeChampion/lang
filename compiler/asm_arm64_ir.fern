@@ -2941,6 +2941,9 @@ function ssa_vcopy(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
+// fmla and bsl read their destination as the addend or the mask c. A
+// destination that holds a or b and not c takes c last: bif and bit keep the
+// select in place, and fmla goes through the scratch d0.
 function ssa_vternary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   s = ssa_fread(reg_of, ins.args[1], "d2", s);
@@ -2948,14 +2951,26 @@ function ssa_vternary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   let a = ssa_fsrc(reg_of, ins.args[0], "d1");
   let b = ssa_fsrc(reg_of, ins.args[1], "d2");
   let c = ssa_fsrc(reg_of, ins.args[2], "d3");
+  let home = ssa_fhome(reg_of, ins.result);
   let d = ssa_fdst(reg_of, ins.result);
+  let fma = ssa.lane_base(ins.str) == "vfma";
+  if (c != d && (d == a || d == b)) {
+    if (!fma) {
+      let form = if (d == a) { "    bif " + ssa_vbytes(d) + ", " + ssa_vbytes(b) } else { "    bit " + ssa_vbytes(d) + ", " + ssa_vbytes(a) };
+      return s.write(form + ", " + ssa_vbytes(c) + "\n");
+    }
+    d = "d0";
+  }
   if (c != d) {
     s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(c) + "\n");
   }
-  if (ssa.lane_base(ins.str) == "vfma") {
+  if (fma) {
     s = s.write("    fmla " + ssa_varr(d, ins.imm) + ", " + ssa_varr(a, ins.imm) + ", " + ssa_varr(b, ins.imm) + "\n");
   } else {
     s = s.write("    bsl " + ssa_vbytes(d) + ", " + ssa_vbytes(a) + ", " + ssa_vbytes(b) + "\n");
+  }
+  if (d == "d0" && home != "") {
+    return s.write("    mov " + ssa_vbytes(home) + ", v0.16b\n");
   }
   return ssa_fput(reg_of, ins.result, d, s);
 }
