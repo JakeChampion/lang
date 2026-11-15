@@ -7,6 +7,7 @@ import "./color";
 import "./objects";
 import "./store";
 import "./treediff";
+import "./width";
 import "../../coreutils/lib/bre";
 
 // The forms of the output and their options. `stat_width` is -1 for the
@@ -581,23 +582,6 @@ function pad_left(text: string, width: i32): string {
   return spaces((width - text.len()) as i64) + text;
 }
 
-// The width of the terminal: `COLUMNS`, or 80.
-function term_columns(): i32 {
-  if let Some(text) = env("COLUMNS") {
-    let n = 0;
-    let ok = text.len() > 0;
-    let i = 0;
-    while (i < text.len() && text[i] >= b'0' && text[i] <= b'9') {
-      n = n * 10 + (text[i] - b'0') as i32;
-      i += 1;
-    }
-    if (ok && i > 0 && n > 0) {
-      return n;
-    }
-  }
-  return 80;
-}
-
 // The summary line: ` N files changed, N insertions(+), N deletions(-)`.
 function summary_line(files: i32, adds: i64, dels: i64): string {
   if (files == 0) {
@@ -645,7 +629,7 @@ function show_stats(stats: Stat[], o: Opts, prefix_width: i32): string {
     }
   }
   number_width = number_width.max(decimal_width(max_change));
-  let width = if (o.stat_width == -1) { term_columns() - prefix_width } else if (o.stat_width == 0) { 80 } else { o.stat_width };
+  let width = if (o.stat_width == -1) { width.term_columns() - prefix_width } else if (o.stat_width == 0) { 80 } else { o.stat_width };
   if (width < 16 + 6 + number_width) {
     width = 16 + 6 + number_width;
   }

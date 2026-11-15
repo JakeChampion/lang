@@ -71,7 +71,10 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `%gs`, `%gn`, `%ge`, `%gN` and `%gE`.
 
   The formats are `--oneline`, `--pretty=` with each named format and
-  `format:`, and `--format=`, with the placeholders of git. `--date=` has
+  `format:`, and `--format=`, with the placeholders of git. `%<(N)`,
+  `%>(N)`, `%><(N)` and `%>>(N)`, with `|` and with `trunc`, `ltrunc`
+  and `mtrunc`, set the columns of the next placeholder. `%w()` wraps
+  the text. `--date=` has
   each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,
   `--name-only` and `--name-status` add to the text. `--decorate=full`,
   `--decorate-refs=`, `--decorate-refs-exclude=`, `--clear-decorations`
@@ -197,9 +200,6 @@ the git of the machine. With git 2.43, four things are different:
 - The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
   `color.grep`, and the rules of `core.whitespace` and of the
   `whitespace` attribute. The port uses the default colors and rules.
-
-- The placeholders of a format that change the columns of the next
-  placeholders: `%<(N)`, `%>(N)`, `%><(N)` and `%w()`.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.
@@ -336,6 +336,9 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   sides of a range, the boundary, the simplifications, the reflog walk,
   the pickaxe and `--follow`. `TestSelfHostExampleGitColor` runs the
   forms of `log` with colors.
+
+- `TestSelfHostExampleGitForms` runs the placeholders that change the
+  columns of a format, and the wrap of `%w()`.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

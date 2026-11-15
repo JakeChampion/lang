@@ -252,7 +252,7 @@ function shorts(name: string): string {
 }
 
 function context_of(c: log.Commit): log.Context {
-  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false };
+  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false, graph_width: 0 };
 }
 
 // The subject, the body, the built-in forms and the placeholders of a
@@ -285,6 +285,44 @@ function test_commit_text(): test.TestOutcome {
   }
   if (log.formatted(c, ctx, "%B") != c.message || log.formatted(c, ctx, "") != "" || log.formatted(c, ctx, "a\n%-d") != "a" || log.formatted(c, ctx, "a%+s") != "a\nfirst line second line" || log.formatted(c, ctx, "a% d.") != "a.") {
     return test.fail("the raw message and the magic of placeholders");
+  }
+  return test.pass();
+}
+
+// The placeholders that change the columns of the next placeholder, and
+// the wrap of `%w()`, with the outputs of git 2.56.1.
+function test_format_columns(): test.TestOutcome {
+  let c = log.commit_of("abc", COMMIT.bytes());
+  let ctx = context_of(c);
+  let cases: string[][] = [
+    ["%<(8)%an|", "A B     |"],
+    ["%>(8)%an|", "     A B|"],
+    ["%><(8)%an|", "  A B   |"],
+    ["%<(12,trunc)%s|", "first line..|"],
+    ["%<(12,ltrunc)%s|", "..econd line|"],
+    ["%<(12,mtrunc)%s|", "first.. line|"],
+    ["%<(1,trunc)%s|", "..|"],
+    ["%h%<|(6)%an|", "abA B |"],
+    ["%h  %>>(5)%an|", "ab    A B|"],
+    ["%h      %>>(2)%an|", "ab     A B|"],
+    ["%<(0)%an|", "%<(0)A B|"],
+    ["%<(6,bad)x%an|", "%<(6,bad)xA B   |"],
+    ["%<(4)%Z|", "    %Z|"],
+    ["%-<(4)%an", "A B "],
+    ["%w(10,1,3)%s", " first\n   line\n   second\n   line"],
+    ["%w(0,2,4)%b", "  body\twith a tab\n    \n    last\n"],
+    ["%+w(4)%s", "%+w(4)first line second line"],
+    ["%w(-1)%s", "%w(-1)first line second line"],
+    ["a%n%-", "a"],
+  ];
+  for k in cases {
+    let got = log.formatted(c, ctx, k[0]);
+    if (got != k[1]) {
+      return test.fail("the format " + k[0] + ": " + got);
+    }
+  }
+  if (width.text_width("\x1b[31m中x\x1b[m".bytes()) != 3 || width.text_width([255, 65]) != 2) {
+    return test.fail("the columns of a text");
   }
   return test.pass();
 }
@@ -929,6 +967,7 @@ function main(): i32 {
   r = r.it("the checks of hash-object", test_fsck);
   r = r.it("a configuration file", test_config);
   r = r.it("the tabs of a message", test_tabs);
+  r = r.it("the columns of the placeholders of a format", test_format_columns);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);
   r = r.it("the specs of colors", test_colors);

@@ -251,6 +251,129 @@ func TestSelfHostExampleGitDiff(t *testing.T) {
 	}
 }
 
+// gitFormCases are the forms of log for the repository of gitFormsFixture.
+// Each case is split at spaces, and `\s` in a case is a space.
+var gitFormCases = []string{
+	// The placeholders that change the columns of the next placeholder.
+	"log --format=%<(10)%h|%s", "log --format=%<(5)%s|", "log --format=%>(30)%s|", "log --format=%><(30)%s|",
+	"log --format=%<(20,trunc)%s|", "log --format=%<(20,ltrunc)%s|", "log --format=%<(20,mtrunc)%s|", "log --format=%>(21,mtrunc)%s|",
+	"log --format=%<(1,trunc)%s|", "log --format=%<(2,trunc)%s|", "log --format=%<(3,mtrunc)%s|", "log --format=%<|(40)%h%s",
+	"log --format=%h%<|(40)%s|", "log --format=%h%>|(40)%s|", "log --format=%h%>|(-10)%s|", "log --format=%h%<|(-100)%s|",
+	"log --format=%h%<(-5)%s|", "log --format=%h%<(0)%s|", "log --format=%h%<()%s|", "log --format=%h%<(x)%s|",
+	"log --format=%h%<(5x)%s|", "log --format=%h%<(10,foo)%s|", "log --format=%h%<(10,)%s|", "log --format=%h%<(10%s|",
+	"log --format=%h%>>(10)%s|", "log --format=%h%>>(30)%s|", "log --format=%h\\s\\s\\s\\s%>>(30)%s|",
+	"log --format=%h%Cred\\s\\s%Creset%>>(30)%s|", "log --format=%<(10)%Cred%h%Creset|", "log --format=%<(10)%C(auto)%h%Creset|",
+	"log --color --format=%<(10)%C(auto)%h%d|", "log --color --format=%<(15,trunc)%C(auto)%d|", "log --format=%<(10)%%|",
+	"log --format=%<(10)%Z|", "log --format=%<(10)x%s|", "log --format=%-<(10)%s|", "log --format=%+<(10)%s|",
+	"log --format=%<(10)%+s|", "log --format=%<(10)%-b|", "log --format=%<(10)%<(20)%s|", "log --format=%<(30,trunc)%b|",
+	"log --format=%<(30,ltrunc)%b|", "log --format=%<(31,mtrunc)%b|", "log --format=%>(80,ltrunc)%b|",
+	"log --color --format=%C(red)aaaa\\s\\s%C(reset)%>>(10)%h|", "log --format=%h\\s%>>|(30)%s|", "log --format=%<(5)%x00|",
+	"log --format=%<(12)%ad|%<(12)%ar|", "log --format=%<(10)%Cred%%h", "log --format=%<(10)", "log --format=%<(+10)%s|",
+	"log --graph --format=%<|(30)%h%s", "log --graph --format=%h%<|(30)%s|", "log --graph --oneline --format=%h%>|(40)%s|",
+	"log --format=%<(10,trunc)%an%<(10,trunc)%ae|", "log --format=%>(8)%ad --date=short",
+	// The wrap of %w().
+	"log --format=%w(30)%s%n%b", "log --format=%w(30,2,4)%B", "log --format=%w(20,3)%s", "log --format=%w(0,4,8)%B",
+	"log --format=%w()%B", "log --format=%w(,2)%B", "log --format=%w(30)%s%w(40,1,1)%b%w()%s", "log --format=%w(30)%s%w(30)%b",
+	"log --format=%w(-1)%s", "log --format=%w(30,-1)%s", "log --format=%w(16385)%s", "log --format=%w(16384)%s",
+	"log --format=%w(10x)%s", "log --format=%+w(10)%s", "log --format=%\\sw(10)%s", "log --format=%w(10%s", "log --format=%w(5)%x09%s",
+	"log --format=%w(12)ab%x0acd%x0a%x0aef%x0a-gh%s", "log --format=%w(8)%x00%s", "log --format=%w(20)%b", "log --format=%w(21,1,2)%b",
+	"log --color --format=%w(15)%C(red)%s%Creset", "log --format=%w(\\s10\\s,\\s2)%s", "log --format=%w(25,0,4)%s%n%w(25,2,2)%b",
+	"log --format=%n%-", "log --format=a%n%-Zb", "log --format=a%n%+", "log --format=%", "log --format=x%",
+}
+
+// gitFormsFixture makes a repository for gitFormCases: long messages with
+// wide characters, changes of words, errors of white space, a moved block,
+// a copy, and a merge with a change of its own.
+func gitFormsFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
+	t.Helper()
+	when := 1700000000
+	run := func(args ...string) {
+		t.Helper()
+		cmd := oracle.cmd(args...)
+		cmd.Dir = dir
+		stamp := fmt.Sprintf("%d +0100", when)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C",
+			"GIT_AUTHOR_NAME=A", "GIT_AUTHOR_EMAIL=a@example.com", "GIT_COMMITTER_NAME=C", "GIT_COMMITTER_EMAIL=c@example.com",
+			"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		if out, err := cmd.CombinedOutput(); err != nil && args[0] != "merge" {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(msg ...string) {
+		t.Helper()
+		when += 3600
+		run("add", "-A")
+		args := []string{"commit", "-q"}
+		for _, m := range msg {
+			args = append(args, "-m", m)
+		}
+		run(args...)
+	}
+	seq := func(from, to int) string {
+		var b strings.Builder
+		for i := from; i <= to; i++ {
+			if i == 20 && to == 35 {
+				b.WriteString("twenty\n")
+				continue
+			}
+			fmt.Fprintf(&b, "%d\n", i)
+		}
+		return b.String()
+	}
+	run("init", "-q", "-b", "main", "--object-format="+hash.format, ".")
+	write("code.c", "int main(void)\n{\n\treturn 0;\n}\n")
+	write("words.txt", "one two three\nfour five six\nseven eight nine\n")
+	write("num.txt", seq(1, 30))
+	write("greek.txt", "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\niota\nkappa\nlambda\nmu\n")
+	commit("first: a subject that is long enough to need a wrap at forty columns and more",
+		"The body has two paragraphs. Each one is long enough to wrap at a width of thirty columns or so.",
+		"Second paragraph: cafe caf\xc3\xa9 and wide \xe4\xb8\xad\xe6\x96\x87 text.")
+	write("code.c", "int main(void)\n{\n\tint x = 1;  \n        return x;\n \treturn 0;\n}\n\n\n")
+	write("words.txt", "one 2 three\nfour five six seven\neight nine\n")
+	commit("second: white space errors and word changes")
+	write("greek.txt", "alpha\nbeta\nzeta\neta\ntheta\niota\nkappa\ngamma\ndelta\nepsilon\nlambda\nmu\n")
+	write("numcopy.txt", seq(1, 30))
+	commit("third: move a block and copy a file")
+	run("checkout", "-q", "-b", "side", "HEAD~1")
+	write("words.txt", "one two three\nfour 5 six\nseven eight nine\nten\n")
+	write("side.txt", "side\n")
+	commit("side: change words")
+	run("checkout", "-q", "main")
+	when += 3600
+	run("merge", "-q", "--no-ff", "--no-commit", "side")
+	write("words.txt", "one 2 three\nfour 5 six seven\neight nine\nten\n")
+	commit("merge side")
+	write("num.txt", seq(1, 35))
+	commit("fourth: num", "Short body.")
+}
+
+// TestSelfHostExampleGitForms runs each case of gitFormCases with git and
+// with the port.
+func TestSelfHostExampleGitForms(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
+	for _, run := range gitRuns() {
+		port := gitPort(t, cli, run.target)
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			dir := t.TempDir()
+			gitFormsFixture(t, oracle, dir, run)
+			for _, c := range gitFormCases {
+				args := strings.Fields(c)
+				for i := range args {
+					args[i] = strings.ReplaceAll(args[i], "\\s", " ")
+				}
+				gitCompare(t, oracle, port, dir, "", args...)
+			}
+		})
+	}
+}
+
 // gitCompareEnv runs one command with git and with the port in dir, with
 // more variables in the environment.
 func gitCompareEnv(t *testing.T, oracle, port gitTool, dir string, env []string, args ...string) {

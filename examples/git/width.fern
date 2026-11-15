@@ -1,6 +1,7 @@
 // The width of a character on a terminal, as git counts it (utf8.c and
 // unicode-width.h of git 2.43): 0 for a character that joins the one
 // before it, 2 for a wide character, and -1 for a control character.
+import "std/array";
 
 // The pairs of the first and the last code point of the ranges with no
 // width, and of the ranges with a width of 2, in order.
@@ -201,4 +202,230 @@ pub function width_of(b: u8[], from: i32, to: i32): i32 {
     at += n;
   }
   return width;
+}
+
+// ---- The columns of a text (utf8.c of git) ----
+
+// The width of the terminal: `COLUMNS`, or 80 (`term_columns` of git
+// without a terminal).
+pub function term_columns(): i32 {
+  if let Some(text) = env("COLUMNS") {
+    let n = 0;
+    let i = 0;
+    while (i < text.len() && text[i] >= b'0' && text[i] <= b'9') {
+      n = n * 10 + (text[i] - b'0') as i32;
+      i += 1;
+    }
+    if (i > 0 && n > 0) {
+      return n;
+    }
+  }
+  return 80;
+}
+
+// The length of the color sequence `ESC [ ... m` at `at`, or 0:
+// `display_mode_esc_sequence_len` of git.
+pub function esc_len(b: u8[], at: i32): i32 {
+  if (at + 1 >= b.len() || b[at] != 27 || b[at + 1] != b'[') {
+    return 0;
+  }
+  let p = at + 2;
+  while (p < b.len() && (b[p] >= b'0' && b[p] <= b'9' || b[p] == b';')) {
+    p += 1;
+  }
+  if (p >= b.len() || b[p] != b'm') {
+    return 0;
+  }
+  return p + 1 - at;
+}
+
+// The columns of `b` without its color sequences, or the count of its
+// bytes when they are not sound UTF-8: `utf8_strnwidth` of git.
+pub function text_width(b: u8[]): i32 {
+  let w = 0;
+  let at = 0;
+  while (at < b.len()) {
+    let skip = esc_len(b, at);
+    while (skip > 0) {
+      at += skip;
+      skip = esc_len(b, at);
+    }
+    if (at >= b.len()) {
+      break;
+    }
+    let (c, n) = char_at(b, at, b.len());
+    if (n == 0) {
+      return b.len();
+    }
+    let g = wcwidth(c);
+    if (g > 0) {
+      w += g;
+    }
+    at += n;
+  }
+  return w;
+}
+
+// The text `b` with `subst` in place of the characters that start in the
+// columns from `pos` to `pos + width`, with the color sequences kept, or
+// `b` when it is not sound UTF-8: `strbuf_utf8_replace` of git.
+pub function replaced(b: u8[], pos: i32, width: i32, subst: string): u8[] {
+  let out = buf_new(b.len() + subst.len());
+  let pending = true;
+  let w = 0;
+  let at = 0;
+  while (at < b.len()) {
+    let skip = esc_len(b, at);
+    while (skip > 0) {
+      buf_push_bytes_range(out, b, at, at + skip);
+      at += skip;
+      skip = esc_len(b, at);
+    }
+    if (at >= b.len()) {
+      break;
+    }
+    let (c, n) = char_at(b, at, b.len());
+    if (n == 0) {
+      let _ = buf_take_bytes(out);
+      return b;
+    }
+    let g = wcwidth(c).max(0);
+    if (g > 0 && w >= pos && w < pos + width) {
+      if (pending) {
+        buf_push(out, subst);
+        pending = false;
+      }
+    } else {
+      buf_push_bytes_range(out, b, at, at + n);
+    }
+    w += g;
+    at += n;
+  }
+  return buf_take_bytes(out);
+}
+
+function is_alnum(b: u8): boolean {
+  return b >= b'0' && b <= b'9' || b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z';
+}
+
+function is_space(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
+}
+
+// Each line of `b` after `indent1` spaces for the first line and `indent2`
+// for the others: `strbuf_add_indented_text` of git.
+function indented(out: usize, b: u8[], indent1: i32, indent2: i32): void {
+  let indent = indent1.max(0);
+  let at = 0;
+  while (at < b.len()) {
+    let nl = __memchr_bytes(b, 10, at);
+    let eol = if (nl < 0) { b.len() } else { nl + 1 };
+    buf_push(out, " ".repeat(indent));
+    buf_push_bytes_range(out, b, at, eol);
+    at = eol;
+    indent = indent2;
+  }
+}
+
+// The byte at `i` of `b`, or 0 after its end, as a C string reads it.
+function byte_at(b: u8[], i: i32): u8 {
+  return if (i < b.len()) { b[i] } else { 0 as u8 };
+}
+
+// The state of `wrapped` in the text: the next byte, the start of the
+// line, the last space or -1, the indent and the columns of the line.
+struct Wrap { text: i32, bol: i32, space: i32, indent: i32, w: i32 }
+
+// The state after a line end: the next line starts after the last space.
+function wrap_line(out: usize, b: u8[], s: Wrap, indent2: i32): Wrap {
+  buf_push(out, "\n");
+  let next = s.space + (if (is_space(byte_at(b, s.space))) { 1 } else { 0 });
+  return Wrap { text: next, bol: next, space: -1, indent: indent2, w: indent2 };
+}
+
+// The text `b` in lines of `width` columns or fewer, the first line after
+// `indent1` spaces and the others after `indent2`: `strbuf_add_wrapped_text`
+// of git. A width of 0 or less only indents the lines. A text that is not
+// sound UTF-8 takes one column for each byte. The text stops at a NUL, as
+// the C string of git does.
+pub function wrapped(b_in: u8[], indent1: i32, indent2: i32, width: i32): u8[] {
+  let nul = __memchr_bytes(b_in, 0, 0);
+  let b = if (nul < 0) { b_in } else { array.slice(b_in, 0, nul) };
+  let out = buf_new(b.len() + 64);
+  if (width <= 0) {
+    indented(out, b, indent1, indent2);
+    return buf_take_bytes(out);
+  }
+  if (wrap_into(out, b, indent1, indent2, width, true)) {
+    return buf_take_bytes(out);
+  }
+  let _ = buf_take_bytes(out);
+  let again = buf_new(b.len() + 64);
+  let _ = wrap_into(again, b, indent1, indent2, width, false);
+  return buf_take_bytes(again);
+}
+
+// The loop of `wrapped`. It gives false when it finds bytes that are not
+// sound UTF-8 with `utf8`, and the caller then starts again without it.
+function wrap_into(out: usize, b: u8[], indent1: i32, indent2: i32, width: i32, utf8: boolean): boolean {
+  let s = Wrap { text: 0, bol: 0, space: -1, indent: indent1, w: indent1 };
+  if (indent1 < 0) {
+    s = Wrap { ...s, w: -indent1, space: 0 };
+  }
+  while (true) {
+    let skip = esc_len(b, s.text);
+    while (skip > 0) {
+      s = Wrap { ...s, text: s.text + skip };
+      skip = esc_len(b, s.text);
+    }
+    let c = byte_at(b, s.text);
+    if (c != 0 && !is_space(c)) {
+      if (!utf8) {
+        s = Wrap { ...s, w: s.w + 1, text: s.text + 1 };
+        continue;
+      }
+      let (ch, n) = char_at(b, s.text, b.len());
+      if (n == 0) {
+        return false;
+      }
+      s = Wrap { ...s, w: s.w + wcwidth(ch), text: s.text + n };
+      continue;
+    }
+    if (s.w > width && s.space >= 0) {
+      s = wrap_line(out, b, s, indent2);
+      continue;
+    }
+    let start = s.bol;
+    if (c == 0 && s.text == start) {
+      return true;
+    }
+    if (s.space >= 0) {
+      start = s.space;
+    } else {
+      buf_push(out, " ".repeat(s.indent.max(0)));
+    }
+    buf_push_bytes_range(out, b, start, s.text);
+    if (c == 0) {
+      return true;
+    }
+    s = Wrap { ...s, space: s.text };
+    if (c == b'\t') {
+      s = Wrap { ...s, w: s.w | 7 };
+    } else if (c == b'\n') {
+      s = Wrap { ...s, space: s.space + 1 };
+      let after = byte_at(b, s.space);
+      if (after == b'\n') {
+        buf_push(out, "\n");
+        s = wrap_line(out, b, s, indent2);
+        continue;
+      }
+      if (!is_alnum(after)) {
+        s = wrap_line(out, b, s, indent2);
+        continue;
+      }
+      buf_push(out, " ");
+    }
+    s = Wrap { ...s, w: s.w + 1, text: s.text + 1 };
+  }
+  return true;
 }

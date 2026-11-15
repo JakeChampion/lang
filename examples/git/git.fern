@@ -2246,7 +2246,7 @@ function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Ma
   w = w2;
   let st = w.g.store;
   let side = if ((f & revwalk.BOUNDARY) != 0) { "-" } else if ((f & revwalk.UNINTERESTING) != 0) { "^" } else if ((f & revwalk.PATCHSAME) != 0) { "=" } else if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
-  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color };
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, graph_width: if (o.graph) { sh.graph.width } else { 0 } };
   // With the pickaxe and with --follow, a commit with no changes is not
   // shown, but the graph still takes it.
   if (o.pick.kind != 0 || o.follow) {
