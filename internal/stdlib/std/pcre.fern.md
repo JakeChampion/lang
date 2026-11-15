@@ -8,11 +8,17 @@ This module matches the regular expressions of PCRE2 10.42 with a backtracking e
 
 A look-ahead, a look-behind and an atomic group run as a search of their own. When that search succeeds, its choices are gone, as in PCRE2. A possessive repetition is an atomic group.
 
+A call of a group, such as `(?1)`, keeps its choices, as in PCRE2 10.30 and later: a later failure can go back into the call. The call has a frame that holds the captures at the call, and they come back at its end. A call of the whole pattern, `(?R)`, and a call that ends with `(*ACCEPT)`, drop their choices, as PCRE2 does. A call of a group in the same group at the same offset gives the error of PCRE2.
+
+The verbs (*COMMIT), (*PRUNE), (*SKIP), (*SKIP:NAME), (*THEN) and (*MARK:NAME) put an entry on the stack. When the search backtracks onto the entry, the verb acts, and the stack carries its effect back. Each entry then acts as the frame of PCRE2 at the same point acts: a branch can catch (*THEN), a call can end the effect of a verb in it, and a look-around has the rules of PCRE2 for each verb. (*COMMIT) ends the search, (*PRUNE) moves to the next start, and (*SKIP) moves the next start to its offset. A callout, such as `(?C1)`, matches the empty string, because no callout function is set.
+
+The options at the start of a pattern, such as (*UTF), (*UCP), (*CRLF), (*NO_START_OPT) and (*LIMIT_MATCH=n), are those of PCRE2 10.42. (*NO_AUTO_POSSESS), (*NO_DOTSTAR_ANCHOR) and (*NO_JIT) change no match of this engine.
+
 With `utf`, the pattern and the text are UTF-8, and each item matches a character. A byte that does not start a valid character matches no item, as with `PCRE2_MATCH_INVALID_UTF`. `\d`, `\s`, `\w`, `\b` and the POSIX classes then use the properties of Unicode, as with `PCRE2_UCP`. Without `utf`, each item matches a byte, and the classes are those of ASCII.
 
 ## Contracts
 
-A pattern that PCRE2 refuses gives a `CompileError` with the text and the offset of PCRE2's error. A search that takes more choices than the match limit gives `MatchLimit`, as PCRE2 does. The default limit is ten million, as in PCRE2. Its text is that of PCRE2.
+A pattern that PCRE2 refuses gives a `CompileError` with the text and the offset of PCRE2's error. An attempt at a start that takes more choices than the match limit gives `MatchLimit`, as PCRE2 does. The default limit is ten million, as in PCRE2. A limit of the depth or of the heap in the pattern counts the entries of the stack. A search does not try a start where the rest of the text is shorter than the least length of a match, as PCRE2 does. Each error has the text of PCRE2.
 
 Both error types implement `core/error.Error` and `core/cmp.Display`.
 Their `message()` methods return the same text as `to_string()`.
@@ -85,11 +91,18 @@ impl error.Error for CompileError {}
 
 impl cmp.Display for CompileError {}
 
-// The error of a search that takes too many steps.
-pub enum MatchError { MatchLimit }
+// The error of a search: too many steps, a call of a group in the same
+// group at the same offset, or the depth or heap limit of the pattern.
+pub enum MatchError { MatchLimit, RecurseLoop, DepthLimit, HeapLimit }
 
 pub function (e: MatchError) to_string(): string {
-  return "PCRE2: error matching: match limit exceeded";
+  let text = match (e) {
+    MatchLimit => "match limit exceeded",
+    RecurseLoop => "nested recursion at the same subject position",
+    DepthLimit => "matching depth limit exceeded",
+    HeapLimit => "heap limit exceeded",
+  };
+  return "PCRE2: error matching: " + text;
 }
 
 pub function (e: MatchError) message(): string {
@@ -112,6 +125,11 @@ pub function version(): string {
 // counts the words of a state: two for each group, then one for each loop
 // that can match an empty string. `first` marks each byte that can start a
 // match, or is empty. A match holds the byte `req`, unless it is -1.
+// `alts` holds two words for each branch of an alternation that (*THEN) can
+// end: the offset in the pattern where the branch ends, and the group of
+// the call whose body it is, or -2. `nl` is the newline convention.
+// `notempty` is 1 for (*NOTEMPTY) and 2 for (*NOTEMPTY_ATSTART). A limit
+// of the pattern on the depth or the heap is -1 when it has none.
 pub struct Pcre {
   code: i32[],
   subs: i32[],
@@ -122,12 +140,21 @@ pub struct Pcre {
   name_groups: i32[],
   nslots: i32,
   utf: boolean,
-  crlf: boolean,
+  fold: boolean,
+  nl: i32,
   anchored: boolean,
   first: u8[],
   req: i32,
+  minlen: i32,
   word: PSet,
   limit: i32,
+  depth_limit: i32,
+  heap_limit: i32,
+  notempty: i32,
+  has_then: boolean,
+  crlf_lit: boolean,
+  alts: i32[],
+  verbs: boolean,
 }
 
 // The number of the groups, without group 0.
@@ -159,7 +186,7 @@ enum PNode {
   NSet(i32),
   NAny(boolean),
   NSeq(PNode[]),
-  NAlt(PNode[]),
+  NAlt(PAltData),
   NGroup(PGroupData),
   NRep(PRepData),
   NAtomic(PAtomicData),
@@ -169,12 +196,28 @@ enum PNode {
   NKeep,
   NCond(PCondData),
   NCall(PCallData),
-  NAccept,
+  NAccept(PAcceptData),
   NFail,
+  NVerb(PVerbData),
+  NBackup(i32),
   NEmpty,
 }
 
 struct PGroupData { idx: i32, node: PNode }
+
+// The branches of an alternation, and the offset where each one ends: its
+// `|`, or the end of the group. The ends are empty when the parser did not
+// read the alternation from the pattern.
+struct PAltData { items: PNode[], ends: i32[] }
+
+// (*ACCEPT): the groups that it closes, innermost first, and whether it is
+// in an assertion, where it ends only the assertion.
+struct PAcceptData { closes: i32[], in_look: boolean }
+
+// A verb that acts when the search backtracks onto it: V_COMMIT, V_PRUNE,
+// V_SKIP, V_SKIP_ARG, V_THEN or V_MARK. `name` indexes the names of the
+// marks. `at` is the offset of the verb in the pattern.
+struct PVerbData { kind: i32, name: i32, at: i32 }
 
 // A repetition: `kind` is 0 for greedy, 1 for lazy and 2 for possessive. A
 // `max` of -1 has no limit.
@@ -196,12 +239,18 @@ struct PBackData { group: i32, name: string, caseless: boolean, at: i32 }
 // or by name. `at` is the offset for an error.
 struct PCallData { group: i32, name: string, at: i32 }
 
-struct PCondData { group: i32, name: string, look: Option[PLookData], yes: PNode, no: PNode, at: i32 }
+// `many` is the offset of a third branch, which is an error, or -1.
+struct PCondData { group: i32, name: string, look: Option[PLookData], yes: PNode, no: PNode, at: i32, many: i32 }
 
 // The conditions (?(R)...) and (?(DEFINE)...).
 const COND_RECURSE: i32 = -2;
 
 const COND_DEFINE: i32 = -3;
+
+// The condition (?(R&name)...), and (?(Rn)...) as COND_RECURSE_N - n.
+const COND_RECURSE_NAME: i32 = -99;
+
+const COND_RECURSE_N: i32 = -100;
 
 const LOOK_AHEAD: i32 = 1;
 
@@ -211,7 +260,41 @@ const LOOK_BEHIND: i32 = 3;
 
 const LOOK_NOT_BEHIND: i32 = 4;
 
+// The look-arounds of (*napla:...) and (*naplb:...), which keep their
+// choices.
+const LOOK_AHEAD_NA: i32 = 5;
+
+const LOOK_BEHIND_NA: i32 = 6;
+
 const ATOMIC: i32 = 0;
+
+// A look-around that is the condition of a group: its kind plus COND.
+const COND: i32 = 8;
+
+const V_COMMIT: i32 = 1;
+
+const V_PRUNE: i32 = 2;
+
+const V_SKIP: i32 = 3;
+
+const V_SKIP_ARG: i32 = 4;
+
+const V_THEN: i32 = 5;
+
+const V_MARK: i32 = 6;
+
+// The newline conventions.
+const NL_LF: i32 = 0;
+
+const NL_ANYCRLF: i32 = 1;
+
+const NL_CR: i32 = 2;
+
+const NL_CRLF: i32 = 3;
+
+const NL_ANY: i32 = 4;
+
+const NL_NUL: i32 = 5;
 
 // The assertions.
 const A_BOL: i32 = 1;
@@ -260,9 +343,17 @@ The parser reads the pattern from left to right, as PCRE2 does, and it reports t
 
 ```fern
 <<parser>>=
+// `ucp` gives the classes of Unicode, and `fold` the case folding of
+// Unicode. `open` holds two words for each capture group that the parser is
+// in: its number and the depth of the look-arounds at its start. `marks`
+// holds the names of the verbs. `crlf_lit` records a literal CR or LF.
 struct PCtx {
   p: string,
   utf: boolean,
+  ucp: boolean,
+  fold: boolean,
+  bsr_crlf: boolean,
+  has_then: boolean,
   err: Cell[Option[CompileError]],
   groups: Cell[i32],
   names: Cell[string[]],
@@ -271,6 +362,11 @@ struct PCtx {
   total: i32,
   bodies: Cell[PGroupData[]],
   glen: Cell[i32[]],
+  open: Cell[i32[]],
+  looks: Cell[i32],
+  marks: Cell[string[]],
+  crlf_lit: Cell[boolean],
+  accept: Cell[boolean],
 }
 
 struct PParse { node: PNode, pos: i32, f: i32 }
@@ -322,6 +418,8 @@ function __pc_message(code: i32): string {
     144 => "subpattern name must start with a non-digit",
     146 => "malformed \\P or \\p sequence",
     147 => "unknown property after \\P or \\p",
+    138 => "number after (?C is greater than 255",
+    139 => "closing parenthesis for (?C expected",
     148 => "subpattern name is too long (maximum 32 code units)",
     150 => "invalid range in character class",
     155 => "missing opening brace after \\o",
@@ -330,13 +428,18 @@ function __pc_message(code: i32): string {
     161 => "subpattern number is too big",
     162 => "subpattern name expected",
     164 => "non-octal character in \\o{} (closing brace missing?)",
+    166 => "(*MARK) must have an argument",
     167 => "non-hex character in \\x{} (closing brace missing?)",
     168 => "\\c must be followed by a printable ASCII character",
     169 => "\\k is not followed by a braced, angle-bracketed, or quoted name",
     171 => "\\N is not supported in a class",
     173 => "disallowed Unicode code point (>= 0xd800 && <= 0xdfff)",
+    176 => "name is too long in (*MARK), (*PRUNE), (*SKIP), or (*THEN)",
     178 => "digits missing in \\x{} or \\o{} or \\N{U+}",
+    181 => "missing terminating delimiter for callout with string argument",
+    182 => "unrecognized string delimiter follows (?C",
     194 => "invalid hyphen in option setting",
+    195 => "(*alpha_assertion) not recognized",
     193 => "\\N{U+dddd} is supported only in Unicode (UTF) mode",
     199 => "\\K is not allowed in lookarounds (but see PCRE2_EXTRA_ALLOW_LOOKAROUND_BSK)",
     _ => "internal error",
@@ -344,16 +447,22 @@ function __pc_message(code: i32): string {
 }
 
 pub function compile(pattern: string, o: Options): Result[Pcre, CompileError] {
+  let s = __pc_start_options(pattern, o);
+  if (s.err >= 0) {
+    return Err(CompileError { offset: s.err, code: 160, message: __pc_message(160) });
+  }
   let none: string[] = [];
   let gs: i32[] = [];
   let ss: PSet[] = [];
   let bodies: PGroupData[] = [];
   let cx = PCtx {
-    p: pattern, utf: o.utf, err: cell_new(None), groups: cell_new(0), names: cell_new(none), name_groups: cell_new(gs),
-    sets: cell_new(ss), total: __pc_count_groups(pattern), bodies: cell_new(bodies), glen: cell_new(gs),
+    p: pattern, utf: s.utf, ucp: s.ucp, fold: s.utf || s.ucp, bsr_crlf: s.bsr_crlf, has_then: __pc_has(pattern, "(*THEN"), err: cell_new(None),
+    groups: cell_new(0), names: cell_new(none), name_groups: cell_new(gs), sets: cell_new(ss), total: __pc_count_groups(pattern),
+    bodies: cell_new(bodies), glen: cell_new(gs), open: cell_new(gs), looks: cell_new(0), marks: cell_new(none), crlf_lit: cell_new(false),
+    accept: cell_new(false),
   };
   let f = (if (o.caseless) { F_I } else { 0 }) | (if (o.multiline) { F_M } else { 0 }) | (if (o.dotall) { F_S } else { 0 }) | (if (o.extended) { F_X } else { 0 });
-  let r = __pc_alt(cx, 0, f, 0);
+  let r = __pc_alt(cx, s.at, f, 0);
   if (!__pc_failed(cx) && r.pos < pattern.len()) {
     __pc_fail(cx, r.pos, 122);
   }
@@ -364,7 +473,114 @@ pub function compile(pattern: string, o: Options): Result[Pcre, CompileError] {
   if let Some(e) = cx.err.get() {
     return Err(e);
   }
-  return __pc_build(cx, r.node, o);
+  return __pc_build(cx, r.node, s);
+}
+
+// The options at the start of a pattern, such as (*UTF) and
+// (*LIMIT_MATCH=n), with those of `Options`. `at` is the offset after them.
+// `err` is the offset of a malformed limit, or -1. A limit is -1 when the
+// pattern does not set it.
+struct PStart {
+  at: i32,
+  err: i32,
+  utf: boolean,
+  ucp: boolean,
+  nl: i32,
+  bsr_crlf: boolean,
+  notempty: i32,
+  no_start: boolean,
+  limit: i32,
+  depth: i32,
+  heap: i32,
+}
+
+// The names of the options in the order that PCRE2 tries them. A name
+// that ends in "=" takes a number.
+const START_NAMES: string[] = [
+  "UTF8)", "UTF)", "UCP)", "NOTEMPTY)", "NOTEMPTY_ATSTART)", "NO_AUTO_POSSESS)", "NO_DOTSTAR_ANCHOR)", "NO_JIT)", "NO_START_OPT)",
+  "LIMIT_HEAP=", "LIMIT_MATCH=", "LIMIT_DEPTH=", "LIMIT_RECURSION=", "CR)", "LF)", "CRLF)", "ANY)", "NUL)", "ANYCRLF)", "BSR_ANYCRLF)",
+  "BSR_UNICODE)",
+];
+
+// One arm for each option.
+// fern-lint: allow cyclomatic-complexity
+function __pc_start_options(p: string, o: Options): PStart {
+  let nl = if (o.crlf) { NL_ANYCRLF } else { NL_LF };
+  let s = PStart {
+    at: 0, err: -1, utf: o.utf, ucp: o.utf, nl: nl, bsr_crlf: false, notempty: 0, no_start: false, limit: o.match_limit, depth: -1,
+    heap: -1,
+  };
+  while (s.at + 1 < p.len() && p[s.at] == 40u8 && p[s.at + 1] == 42u8) {
+    let k = 0;
+    while (k < START_NAMES.len() && !__pc_at(p, s.at + 2, START_NAMES[k])) {
+      k += 1;
+    }
+    if (k == START_NAMES.len()) {
+      return s;
+    }
+    let at = s.at + 2 + START_NAMES[k].len();
+    let n = 0;
+    if (k >= 9 && k <= 12) {
+      if (at >= p.len() || p[at] < 48u8 || p[at] > 57u8) {
+        return PStart { ...s, err: at };
+      }
+      let big = 0i64;
+      while (at < p.len() && p[at] >= 48u8 && p[at] <= 57u8 && big <= 429496728i64) {
+        big = big * 10i64 + (p[at] as i64 - 48i64);
+        at += 1;
+      }
+      if (at >= p.len() || p[at] != 41u8) {
+        return PStart { ...s, err: at + 1 };
+      }
+      at += 1;
+      n = if (big > 2147483647i64) { 2147483647 } else { big as i32 };
+    }
+    s = match (k) {
+      0 | 1 => PStart { ...s, at: at, utf: true },
+      2 => PStart { ...s, at: at, ucp: true },
+      3 => PStart { ...s, at: at, notempty: 1 },
+      4 => PStart { ...s, at: at, notempty: if (s.notempty == 1) { 1 } else { 2 } },
+      8 => PStart { ...s, at: at, no_start: true },
+      9 => PStart { ...s, at: at, heap: n },
+      10 => PStart { ...s, at: at, limit: if (n < s.limit) { n } else { s.limit } },
+      11 | 12 => PStart { ...s, at: at, depth: n },
+      13 => PStart { ...s, at: at, nl: NL_CR },
+      14 => PStart { ...s, at: at, nl: NL_LF },
+      15 => PStart { ...s, at: at, nl: NL_CRLF },
+      16 => PStart { ...s, at: at, nl: NL_ANY },
+      17 => PStart { ...s, at: at, nl: NL_NUL },
+      18 => PStart { ...s, at: at, nl: NL_ANYCRLF },
+      19 => PStart { ...s, at: at, bsr_crlf: true },
+      20 => PStart { ...s, at: at, bsr_crlf: false },
+      _ => PStart { ...s, at: at },
+    };
+  }
+  return s;
+}
+
+// Whether `word` is in `p` at `at`.
+function __pc_at(p: string, at: i32, word: string): boolean {
+  if (at + word.len() > p.len()) {
+    return false;
+  }
+  for k in 0..word.len() {
+    if (p[at + k] != word[k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Whether `word` is in `p`.
+function __pc_has(p: string, word: string): boolean {
+  let at = __memchr(p, word[0] as i32, 0);
+  while (at >= 0) {
+    if (__pc_at(p, at, word)) {
+      return true;
+    }
+    at = __memchr(p, word[0] as i32, at + 1);
+  }
+  return false;
 }
 
 // The count of the capture groups of the pattern, for the rule that reads
@@ -403,19 +619,21 @@ function __pc_alt(cx: PCtx, at: i32, f0: i32, depth: i32): PParse {
     return PParse { node: NEmpty, pos: cx.p.len(), f: f0 };
   }
   let branches: PNode[] = [];
+  let ends: i32[] = [];
   let pos = at;
   let f = f0;
   while (true) {
     let s = __pc_seq(cx, pos, f, depth);
     branches = branches.append(s.node);
     pos = s.pos;
+    ends = ends.append(pos);
     f = s.f;
     if (__pc_failed(cx) || pos >= cx.p.len() || cx.p[pos] != 124u8) {
       break;
     }
     pos += 1;
   }
-  let node = if (branches.len() == 1) { branches[0] } else { NAlt(branches) };
+  let node = if (branches.len() == 1) { branches[0] } else { NAlt(PAltData { items: branches, ends: ends }) };
   return PParse { node: node, pos: pos, f: f };
 }
 
@@ -568,14 +786,23 @@ function __pc_flags(cx: PCtx, at: i32, f0: i32): (i32, i32) {
 
 // The node of a literal character under the options `f`.
 function __pc_char_node(cx: PCtx, cp: i32, f: i32): PNode {
+  __pc_note_crlf(cx, cp);
   if ((f & F_I) == 0 || !__pc_has_case(cx, cp)) {
     return NChar(cp);
   }
   return NSet(__pc_add_set(cx, __pc_set_of(cx, [cp, cp], false, true)));
 }
 
+// Records a literal CR or LF, after which a search does not skip from a CR
+// to its LF.
+function __pc_note_crlf(cx: PCtx, cp: i32): void {
+  if (cp == 10 || cp == 13) {
+    cx.crlf_lit.set(true);
+  }
+}
+
 function __pc_has_case(cx: PCtx, cp: i32): boolean {
-  if (cp < 128 || !cx.utf) {
+  if (cp < 128 || !cx.fold) {
     return cp < 128 && ((cp | 32) >= 97 && (cp | 32) <= 122);
   }
   return unicode.simple_fold(cp as char) as i32 != cp;
@@ -750,11 +977,14 @@ function __pc_zero_width(x: PNode): boolean {
   };
 }
 
+// Of the verbs, only (*ACCEPT) takes a quantifier.
 function __pc_repeatable(x: PNode): boolean {
   return match (x) {
     NAssert(k) => false,
     NKeep => false,
     NEmpty => false,
+    NFail => false,
+    NVerb(_) => false,
     _ => true,
   };
 }
@@ -784,7 +1014,7 @@ function __pc_skip_space(p: string, at: i32): i32 {
 function __pc_group(cx: PCtx, at: i32, f: i32, depth: i32): PParse {
   let p = cx.p;
   if (at + 1 < p.len() && p[at + 1] == 42u8) {
-    return __pc_verb(cx, at, f);
+    return __pc_verb(cx, at, f, depth);
   }
   if (at + 1 >= p.len() || p[at + 1] != 63u8) {
     if ((f & F_N) != 0) {
@@ -833,6 +1063,9 @@ function __pc_group(cx: PCtx, at: i32, f: i32, depth: i32): PParse {
     let b = __pc_body(cx, fl.1 + 1, fl.0, depth, -1);
     return PParse { ...b, f: f };
   }
+  if (c == 67) {
+    return __pc_callout(cx, at, f);
+  }
   __pc_fail(cx, at + 2, 111);
   return PParse { node: NEmpty, pos: p.len(), f: f };
 }
@@ -869,28 +1102,192 @@ function __pc_call(cx: PCtx, at: i32, f: i32): PParse {
     return no;
   }
   let group = if (c == 43) { cx.groups.get() + n } else if (c == 45) { cx.groups.get() - n + 1 } else { n };
-  return PParse { node: NCall(PCallData { group: if (group <= 0 && n > 0) { -2 } else { group }, name: "", at: end }), pos: end + 1, f: f };
+  if (group <= 0 && n > 0) {
+    __pc_fail(cx, end, 115);
+    return no;
+  }
+  return PParse { node: NCall(PCallData { group: group, name: "", at: end }), pos: end + 1, f: f };
 }
 
-// A verb such as (*FAIL) at `at`.
-function __pc_verb(cx: PCtx, at: i32, f: i32): PParse {
+// A verb such as (*COMMIT) or (*MARK:NAME), or an assertion such as
+// (*pla:...), at `at`, which holds `(`. A verb with a name is the verb
+// alone, but for (*MARK) and (*SKIP), because no search reads the name.
+// Each branch reads one form of the syntax of PCRE2, in the order that PCRE2 checks them.
+// fern-lint: allow cyclomatic-complexity
+function __pc_verb(cx: PCtx, at: i32, f: i32, depth: i32): PParse {
   let p = cx.p;
-  let close = __memchr(p, 41, at);
-  let name = if (close < 0) { "" } else { slice_unchecked(p, at + 2, close) + "" };
-  if (name == "FAIL" || name == "F") {
-    return PParse { node: NFail, pos: close + 1, f: f };
+  let no = PParse { node: NEmpty, pos: p.len(), f: f };
+  if (at + 2 >= p.len() || p[at + 2] == 41u8) {
+    __pc_fail(cx, at + 1, 109);
+    return no;
   }
-  if (name == "ACCEPT") {
-    return PParse { node: NAccept, pos: close + 1, f: f };
+  let i = at + 2;
+  while (i < p.len() && __pc_name_byte(p[i] as i32)) {
+    i += 1;
   }
-  __pc_fail(cx, if (close < 0) { p.len() } else { close }, 160);
-  return PParse { node: NEmpty, pos: p.len(), f: f };
+  if (i - at - 2 > 32) {
+    __pc_fail(cx, i, 148);
+    return no;
+  }
+  let name = slice_unchecked(p, at + 2, i) + "";
+  if (p[at + 2] >= 97u8 && p[at + 2] <= 122u8) {
+    return __pc_alpha(cx, at, name, i, f, depth);
+  }
+  let kind = match (name) {
+    "" | "MARK" => V_MARK,
+    "COMMIT" => V_COMMIT,
+    "PRUNE" => V_PRUNE,
+    "SKIP" => V_SKIP,
+    "THEN" => V_THEN,
+    "ACCEPT" => 7,
+    "F" | "FAIL" => 8,
+    _ => 0,
+  };
+  if (i >= p.len() || p[i] != 58u8 && p[i] != 41u8 || kind == 0) {
+    __pc_fail(cx, i, 160);
+    return no;
+  }
+  let pos = i;
+  if (p[pos] == 58u8 && pos + 1 < p.len() && p[pos + 1] == 41u8) {
+    pos += 1;
+  }
+  if (kind == V_MARK && p[pos] != 58u8) {
+    __pc_fail(cx, pos, 166);
+    return no;
+  }
+  let mark = -1;
+  if (p[pos] == 58u8) {
+    let close = __memchr(p, 41, pos + 1);
+    if (close < 0) {
+      __pc_fail(cx, p.len(), 160);
+      return no;
+    }
+    if (close - pos - 1 > 255) {
+      __pc_fail(cx, close, 176);
+      return no;
+    }
+    mark = __pc_mark_name(cx, slice_unchecked(p, pos + 1, close) + "");
+    pos = close;
+  }
+  let vkind = if (kind == V_SKIP && mark >= 0) { V_SKIP_ARG } else { kind };
+  let node = match (kind) {
+    7 => __pc_accept(cx),
+    8 => NFail,
+    _ => NVerb(PVerbData { kind: vkind, name: if (vkind == V_MARK || vkind == V_SKIP_ARG) { mark } else { -1 }, at: at }),
+  };
+  return PParse { node: node, pos: pos + 1, f: f };
+}
+
+// The number of the name of a mark, the same for the same name.
+function __pc_mark_name(cx: PCtx, name: string): i32 {
+  let ms = cx.marks.get();
+  for k in 0..ms.len() {
+    if (ms[k] == name) {
+      return k;
+    }
+  }
+  cx.marks.set(ms.append(name));
+  return ms.len();
+}
+
+// (*ACCEPT), which closes each capture group that it is in, up to the
+// look-around that it is in.
+function __pc_accept(cx: PCtx): PNode {
+  cx.accept.set(true);
+  let open = cx.open.get();
+  let closes: i32[] = [];
+  let k = open.len() - 2;
+  while (k >= 0 && open[k + 1] >= cx.looks.get()) {
+    closes = closes.append(open[k]);
+    k -= 2;
+  }
+  return NAccept(PAcceptData { closes: closes, in_look: cx.looks.get() > 0 });
+}
+
+// An assertion such as (*pla:...) at `at`, whose name ends at `i`. The
+// script runs, such as (*sr:...), need the Script_Extensions property, and
+// give the error of a name that is not known.
+function __pc_alpha(cx: PCtx, at: i32, name: string, i: i32, f: i32, depth: i32): PParse {
+  let kind = match (name) {
+    "pla" | "positive_lookahead" => LOOK_AHEAD,
+    "nla" | "negative_lookahead" => LOOK_NOT_AHEAD,
+    "plb" | "positive_lookbehind" => LOOK_BEHIND,
+    "nlb" | "negative_lookbehind" => LOOK_NOT_BEHIND,
+    "napla" | "non_atomic_positive_lookahead" => LOOK_AHEAD_NA,
+    "naplb" | "non_atomic_positive_lookbehind" => LOOK_BEHIND_NA,
+    "atomic" => ATOMIC,
+    _ => -1,
+  };
+  if (i >= cx.p.len() || cx.p[i] != 58u8 || kind < 0) {
+    __pc_fail(cx, i, 195);
+    return PParse { node: NEmpty, pos: cx.p.len(), f: f };
+  }
+  if (kind == ATOMIC) {
+    let b = __pc_body(cx, i + 1, f, depth, -1);
+    return PParse { ...b, node: NAtomic(PAtomicData { node: b.node }) };
+  }
+  return __pc_look(cx, at, i + 1, f, depth, kind);
+}
+
+// A callout such as (?C1) or (?C"text") at `at`, which holds `(`. With no
+// callout function, as in ripgrep, a callout matches the empty string.
+// Each branch reads one form of the syntax of PCRE2, in the order that PCRE2 checks them.
+// fern-lint: allow cyclomatic-complexity
+function __pc_callout(cx: PCtx, at: i32, f: i32): PParse {
+  let p = cx.p;
+  let no = PParse { node: NEmpty, pos: p.len(), f: f };
+  let i = at + 3;
+  if (i >= p.len()) {
+    __pc_fail(cx, i, 114);
+    return no;
+  }
+  let c = p[i] as i32;
+  if (c >= 48 && c <= 57) {
+    let n = 0;
+    while (i < p.len() && p[i] >= 48u8 && p[i] <= 57u8) {
+      n = n * 10 + (p[i] as i32 - 48);
+      i += 1;
+      if (n > 255) {
+        __pc_fail(cx, i, 138);
+        return no;
+      }
+    }
+  } else if (__memchr("`'\"^%#${", c, 0) >= 0) {
+    let stop = if (c == 123) { 125 } else { c };
+    let j = i + 1;
+    while (true) {
+      let k = __memchr(p, stop, j);
+      if (k < 0) {
+        __pc_fail(cx, i, 181);
+        return no;
+      }
+      if (k + 1 < p.len() && p[k + 1] as i32 == stop) {
+        j = k + 2;
+        continue;
+      }
+      i = k + 1;
+      break;
+    }
+  } else if (c != 41) {
+    __pc_fail(cx, i, 182);
+    return no;
+  }
+  if (i >= p.len() || p[i] != 41u8) {
+    __pc_fail(cx, i, 139);
+    return no;
+  }
+  return PParse { node: NEmpty, pos: i + 1, f: f };
 }
 
 // The body of a group from `at` and its `)`. A group number of -1 does not
 // capture.
 function __pc_body(cx: PCtx, at: i32, f: i32, depth: i32, idx: i32): PParse {
+  let open = cx.open.get();
+  if (idx > 0) {
+    cx.open.set(open.append(idx).append(cx.looks.get()));
+  }
   let r = __pc_alt(cx, at, f, depth + 1);
+  cx.open.set(open);
   if (__pc_failed(cx)) {
     return r;
   }
@@ -910,6 +1307,7 @@ function __pc_reset(cx: PCtx, at: i32, f0: i32, depth: i32): PParse {
   let base = cx.groups.get();
   let top = base;
   let branches: PNode[] = [];
+  let ends: i32[] = [];
   let pos = at;
   let f = f0;
   while (true) {
@@ -918,6 +1316,7 @@ function __pc_reset(cx: PCtx, at: i32, f0: i32, depth: i32): PParse {
     branches = branches.append(s.node);
     top = if (cx.groups.get() > top) { cx.groups.get() } else { top };
     pos = s.pos;
+    ends = ends.append(pos);
     f = s.f;
     if (__pc_failed(cx) || pos >= cx.p.len() || cx.p[pos] != 124u8) {
       break;
@@ -928,13 +1327,15 @@ function __pc_reset(cx: PCtx, at: i32, f0: i32, depth: i32): PParse {
   if (!__pc_failed(cx) && pos >= cx.p.len()) {
     __pc_fail(cx, pos, 114);
   }
-  let node = if (branches.len() == 1) { branches[0] } else { NAlt(branches) };
+  let node = if (branches.len() == 1) { branches[0] } else { NAlt(PAltData { items: branches, ends: ends }) };
   return PParse { node: NGroup(PGroupData { idx: -1, node: node }), pos: pos + 1, f: f0 };
 }
 
 // A look-around whose group starts at `at`, with its body at `body`.
 function __pc_look(cx: PCtx, at: i32, body: i32, f: i32, depth: i32, kind: i32): PParse {
+  cx.looks.set(cx.looks.get() + 1);
   let b = __pc_body(cx, body, f, depth, -1);
+  cx.looks.set(cx.looks.get() - 1);
   let NGroup(g) = b.node else {
     return b;
   };
@@ -1031,25 +1432,38 @@ function __pc_cond(cx: PCtx, at: i32, f: i32, depth: i32): PParse {
   let name = "";
   let look: Option[PLookData] = None;
   let pos = at;
-  if (at < p.len() && p[at] == 63u8) {
-    let l = __pc_group(cx, at - 1, f, depth);
+  let lat = at;
+  if (at + 1 < p.len() && p[at] == 63u8 && p[at + 1] == 67u8) {
+    let c = __pc_callout(cx, at - 1, f);
+    if (__pc_failed(cx)) {
+      return c;
+    }
+    if (c.pos + 1 >= p.len() || p[c.pos] != 40u8 || p[c.pos + 1] != 63u8) {
+      __pc_fail(cx, c.pos, 128);
+      return PParse { node: NEmpty, pos: p.len(), f: f };
+    }
+    lat = c.pos + 1;
+  }
+  if (lat < p.len() && p[lat] == 63u8) {
+    let l = __pc_group(cx, lat - 1, f, depth);
     if (__pc_failed(cx)) {
       return l;
     }
     let NLook(ld) = l.node else {
-      __pc_fail(cx, at + 1, 128);
+      __pc_fail(cx, lat + 1, 128);
       return PParse { node: NEmpty, pos: p.len(), f: f };
     };
     look = Some(ld);
     pos = l.pos;
   } else {
-    let (g, nm, end) = __pc_cond_ref(cx, at);
+    let (g, nm, end, ref_at) = __pc_cond_ref(cx, at);
     if (end < 0) {
       return PParse { node: NEmpty, pos: p.len(), f: f };
     }
     group = g;
     name = nm;
     pos = end;
+    at = ref_at;
   }
   let r = __pc_alt(cx, pos, f, depth + 1);
   if (__pc_failed(cx)) {
@@ -1061,57 +1475,70 @@ function __pc_cond(cx: PCtx, at: i32, f: i32, depth: i32): PParse {
   }
   let yes = r.node;
   let no = NEmpty;
-  if let NAlt(bs) = r.node {
-    if (bs.len() > 2) {
-      __pc_fail(cx, r.pos, 127);
-      return r;
-    }
-    yes = bs[0];
-    no = bs[1];
+  let many = -1;
+  if let NAlt(a) = r.node {
+    many = if (a.items.len() > 2) { r.pos } else { -1 };
+    yes = a.items[0];
+    no = a.items[1];
   }
-  return PParse { node: NCond(PCondData { group: group, name: name, look: look, yes: yes, no: no, at: at }), pos: r.pos + 1, f: f };
+  return PParse { node: NCond(PCondData { group: group, name: name, look: look, yes: yes, no: no, at: at, many: many }), pos: r.pos + 1, f: f };
 }
 
-// The reference of a condition at `at`: a number, <name>, 'name' or a bare
-// name, and the offset after its `)`.
+// The reference of a condition at `at`: a number, <name>, 'name', R, Rn,
+// R&name or a bare name. The result is the group or a COND_ value, the
+// name, the offset after its `)`, and the offset of an error of the
+// reference.
 // Each branch reads one form of the syntax of PCRE2, in the order that PCRE2 checks them.
 // fern-lint: allow cyclomatic-complexity
-function __pc_cond_ref(cx: PCtx, at: i32): (i32, string, i32) {
+function __pc_cond_ref(cx: PCtx, at: i32): (i32, string, i32, i32) {
   let p = cx.p;
   if (at < p.len() && (p[at] == 60u8 || p[at] == 39u8)) {
     let (name, end) = __pc_name(cx, at + 1, if (p[at] == 60u8) { 62 } else { 39 });
     if (end < 0) {
-      return (-1, "", -1);
+      return (-1, "", -1, 0);
     }
     if (end + 1 >= p.len() || p[end + 1] != 41u8) {
       __pc_fail(cx, end + 1, 124);
-      return (-1, "", -1);
+      return (-1, "", -1, 0);
     }
-    return (-1, name, end + 2);
+    return (-1, name, end + 2, at + 1);
   }
   if (at + 1 < p.len() && p[at] == 82u8 && p[at + 1] == 41u8) {
-    return (COND_RECURSE, "", at + 2);
+    return (COND_RECURSE, "", at + 2, at);
+  }
+  if (at + 1 < p.len() && p[at] == 82u8 && p[at + 1] == 38u8) {
+    let (name, end) = __pc_name(cx, at + 2, 41);
+    if (end < 0) {
+      return (-1, "", -1, 0);
+    }
+    return (COND_RECURSE_NAME, name, end + 1, at + 2);
+  }
+  if (at + 1 < p.len() && p[at] == 82u8 && p[at + 1] >= 48u8 && p[at + 1] <= 57u8) {
+    let (n, i, big) = __pc_number(p, at + 1);
+    if (i < p.len() && p[i] == 41u8) {
+      return (COND_RECURSE_N - n, "", i + 1, at);
+    }
   }
   if (at + 6 < p.len() && slice_unchecked(p, at, at + 7) == "DEFINE)") {
-    return (COND_DEFINE, "", at + 7);
+    return (COND_DEFINE, "", at + 7, at);
   }
   let (n, i, big) = __pc_number(p, at);
   if (i > at) {
     if (i >= p.len() || p[i] != 41u8) {
       __pc_fail(cx, i, 124);
-      return (-1, "", -1);
+      return (-1, "", -1, 0);
     }
-    if (n == 0 || n > cx.total) {
+    if (n == 0) {
       __pc_fail(cx, at - 1, 115);
-      return (-1, "", -1);
+      return (-1, "", -1, 0);
     }
-    return (n, "", i + 1);
+    return (n, "", i + 1, at - 1);
   }
   let (name, end) = __pc_name(cx, at, 41);
   if (end < 0) {
-    return (-1, "", -1);
+    return (-1, "", -1, 0);
   }
-  return (-1, name, end + 1);
+  return (-1, name, end + 1, at);
 }
 ```
 
@@ -1265,7 +1692,11 @@ function __pc_g_call(cx: PCtx, at: i32, f: i32): PParse {
     }
     let c = if (sign == 1) { p[j] as i32 } else { 0 };
     let group = if (c == 43) { cx.groups.get() + n } else if (c == 45) { cx.groups.get() - n + 1 } else { n };
-    return PParse { node: NCall(PCallData { group: if (group <= 0 && n > 0) { -2 } else { group }, name: "", at: end }), pos: end + 1, f: f };
+    if (group <= 0 && n > 0) {
+      __pc_fail(cx, end, 115);
+      return no;
+    }
+    return PParse { node: NCall(PCallData { group: group, name: "", at: end }), pos: end + 1, f: f };
   }
   let (name, nend) = __pc_name(cx, j, stop);
   if (nend < 0) {
@@ -1274,10 +1705,13 @@ function __pc_g_call(cx: PCtx, at: i32, f: i32): PParse {
   return PParse { node: NCall(PCallData { group: -1, name: name, at: j }), pos: nend + 1, f: f };
 }
 
-// \R: a newline sequence, \r\n first.
+// \R: a newline sequence, \r\n first. After (*BSR_ANYCRLF), only CR and
+// LF are newlines.
 function __pc_newline_seq(cx: PCtx): PNode {
-  let vs = __pc_add_set(cx, __pc_set_of(cx, [10, 13, 133, 133, 8232, 8233], false, false));
-  return NAtomic(PAtomicData { node: NAlt([NSeq([NChar(13), NChar(10)]), NSet(vs)]) });
+  let rs = if (cx.bsr_crlf) { [10, 10, 13, 13] } else { [10, 13, 133, 133, 8232, 8233] };
+  let vs = __pc_add_set(cx, __pc_set_of(cx, rs, false, false));
+  let none: i32[] = [];
+  return NAtomic(PAtomicData { node: NAlt(PAltData { items: [NSeq([NChar(13), NChar(10)]), NSet(vs)], ends: none }) });
 }
 
 // \X: a character that is not a mark, and the marks after it.
@@ -1536,9 +1970,9 @@ function __pc_prop(name: string): i32[] {
 function __pc_class_set(cx: PCtx, name: string, caseless: boolean): PSet {
   let neg = name == "D" || name == "S" || name == "W" || name == "H" || name == "V";
   let base = match (name) {
-    "d" | "D" => if (cx.utf) { __pc_prop("Nd") } else { [48, 57] },
-    "s" | "S" => if (cx.utf) { __pc_property_ranges("Xsp") } else { [9, 13, 32, 32] },
-    "w" | "W" => if (cx.utf) { __pc_property_ranges("Xwd") } else { [48, 57, 65, 90, 95, 95, 97, 122] },
+    "d" | "D" => if (cx.ucp) { __pc_prop("Nd") } else { [48, 57] },
+    "s" | "S" => if (cx.ucp) { __pc_property_ranges("Xsp") } else { [9, 13, 32, 32] },
+    "w" | "W" => if (cx.ucp) { __pc_property_ranges("Xwd") } else { [48, 57, 65, 90, 95, 95, 97, 122] },
     "h" | "H" => [9, 9, 32, 32, 160, 160, 5760, 5760, 6158, 6158, 8192, 8202, 8239, 8239, 8287, 8287, 12288, 12288],
     _ => [10, 13, 133, 133, 8232, 8233],
   };
@@ -1591,6 +2025,7 @@ function __pc_class(cx: PCtx, at: i32, f: i32): PParse {
       let k = i + 2;
       while (k < close) {
         let (cp, n) = __pc_pat_char(cx, k);
+        __pc_note_crlf(cx, cp);
         ranges = ranges.append(cp).append(cp);
         k += n;
       }
@@ -1628,10 +2063,13 @@ function __pc_class(cx: PCtx, at: i32, f: i32): PParse {
         __pc_fail(cx, i + 1, 108);
         return PParse { node: NEmpty, pos: p.len(), f: f };
       }
+      __pc_note_crlf(cx, lo.cp);
+      __pc_note_crlf(cx, hi.cp);
       ranges = ranges.append(lo.cp).append(hi.cp);
       i = hi.end;
       continue;
     }
+    __pc_note_crlf(cx, lo.cp);
     ranges = ranges.append(lo.cp).append(lo.cp);
   }
   let rs = if (ci) { __pc_fold_ranges(__pc_normal(ranges)) } else { __pc_normal(ranges) };
@@ -1712,7 +2150,7 @@ function __pc_posix(cx: PCtx, at: i32): PItem {
 // One arm for each name.
 // fern-lint: allow cyclomatic-complexity
 function __pc_posix_ranges(cx: PCtx, name: string): i32[] {
-  if (cx.utf) {
+  if (cx.ucp) {
     let u = match (name) {
       "alpha" => "L",
       "lower" => "Ll",
@@ -1802,7 +2240,7 @@ function __pc_fold_ranges(rs: i32[]): i32[] {
 // The set of the ranges `rs`, with `neg` for the complement. With `fold`,
 // the ranges also get the other cases of their characters.
 function __pc_set_of(cx: PCtx, rs0: i32[], neg: boolean, fold: boolean): PSet {
-  let rs = if (fold) { if (cx.utf) { __pc_fold_ranges(rs0) } else { __pc_ascii_fold(rs0) } } else { __pc_normal(rs0) };
+  let rs = if (fold) { if (cx.fold) { __pc_fold_ranges(rs0) } else { __pc_ascii_fold(rs0) } } else { __pc_normal(rs0) };
   let bits: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
   let high: i32[] = [];
   for k in 0..rs.len() / 2 {
@@ -1889,7 +2327,7 @@ function __pc_add_set(cx: PCtx, s: PSet): i32 {
 
 ### Compiler
 
-The check after the parse finds the errors that need the whole pattern: a reference to a group that does not exist, and a look-behind that has no fixed length. The compiler then writes the program.
+The check after the parse finds the errors that need the whole pattern: a reference to a group that does not exist, a look-behind that has no fixed length, and a condition with more than two branches. The compiler then writes the program, and finds the bytes that can start a match and the least length of a match.
 
 ```fern
 <<compiler>>=
@@ -1902,8 +2340,8 @@ function __pc_check(cx: PCtx, x: PNode, in_look: boolean): void {
         __pc_check(cx, y, in_look);
       }
     },
-    NAlt(items) => {
-      for y in items {
+    NAlt(a) => {
+      for y in a.items {
         __pc_check(cx, y, in_look);
       }
     },
@@ -1918,7 +2356,7 @@ function __pc_check(cx: PCtx, x: PNode, in_look: boolean): void {
     },
     NLook(l) => {
       __pc_check(cx, l.node, true);
-      if (l.kind == LOOK_BEHIND || l.kind == LOOK_NOT_BEHIND) {
+      if (__pc_is_behind(l.kind)) {
         __pc_check_behind(cx, l);
       }
     },
@@ -1928,14 +2366,17 @@ function __pc_check(cx: PCtx, x: PNode, in_look: boolean): void {
       }
     },
     NCond(c) => {
-      if (c.look.is_none() && c.group != COND_RECURSE && c.group != COND_DEFINE && __pc_ref_group(cx, c.group, c.name) < 0) {
-        __pc_fail(cx, c.at - 1, 115);
+      if (c.look.is_none() && __pc_cond_group(cx, c) == -1) {
+        __pc_fail(cx, c.at, 115);
       }
       if let Some(l) = c.look {
         __pc_check(cx, NLook(l), in_look);
       }
       __pc_check(cx, c.yes, in_look);
       __pc_check(cx, c.no, in_look);
+      if (c.many >= 0) {
+        __pc_fail(cx, c.many, 127);
+      }
     },
     NKeep => {
       if (in_look) {
@@ -1949,6 +2390,32 @@ function __pc_check(cx: PCtx, x: PNode, in_look: boolean): void {
     },
     _ => {}
   }
+}
+
+function __pc_is_behind(kind: i32): boolean {
+  return kind == LOOK_BEHIND || kind == LOOK_NOT_BEHIND || kind == LOOK_BEHIND_NA;
+}
+
+// The branches of an alternation, or the node as one branch.
+function __pc_branches(x: PNode): PNode[] {
+  return match (x) {
+    NAlt(a) => a.items,
+    _ => [x],
+  };
+}
+
+// The operand of OP_COND for a condition that is not a look-around, or -1
+// when its group does not exist.
+function __pc_cond_group(cx: PCtx, c: PCondData): i32 {
+  if (c.group == COND_RECURSE || c.group == COND_DEFINE) {
+    return c.group;
+  }
+  if (c.group <= COND_RECURSE_N) {
+    let n = COND_RECURSE_N - c.group;
+    return if (n >= 1 && n <= cx.groups.get()) { c.group } else { -1 };
+  }
+  let n = __pc_ref_group(cx, if (c.group == COND_RECURSE_NAME) { -1 } else { c.group }, c.name);
+  return if (n < 0) { -1 } else if (c.group == COND_RECURSE_NAME) { COND_RECURSE_N - n } else { n };
 }
 
 // The number of the group of a reference, or -1.
@@ -1967,11 +2434,7 @@ function __pc_ref_group(cx: PCtx, group: i32, name: string): i32 {
 
 // Each alternative of a look-behind has a fixed length.
 function __pc_check_behind(cx: PCtx, l: PLookData): void {
-  let branches = match (l.node) {
-    NAlt(items) => items,
-    _ => [l.node],
-  };
-  for b in branches {
+  for b in __pc_branches(l.node) {
     if (__pc_length(cx, b) < 0) {
       __pc_fail(cx, l.at, 125);
       return;
@@ -2016,9 +2479,9 @@ function __pc_length(cx: PCtx, x: PNode): i32 {
       }
       return n;
     },
-    NAlt(items) => {
-      let n = __pc_length(cx, items[0]);
-      for y in items {
+    NAlt(a) => {
+      let n = __pc_length(cx, a.items[0]);
+      for y in a.items {
         if (__pc_length(cx, y) != n) {
           return -1;
         }
@@ -2091,9 +2554,34 @@ const OP_CALL: i32 = 16;
 
 const OP_ACCEPT: i32 = 17;
 
+// The end of the body of a called group: the captures come back, and the
+// choices of the body stay.
+const OP_RET: i32 = 18;
+
+// The end of a call of the whole pattern, which drops the choices of the
+// call, as PCRE2 does.
+const OP_RET_ATOMIC: i32 = 19;
+
+const OP_VERB: i32 = 20;
+
+// A branch of an alternation that (*THEN) can end. Its choice holds the
+// next branch.
+const OP_BRANCH: i32 = 21;
+
+// The start of a branch of a look-behind: back by a count of characters.
+const OP_BACKUP: i32 = 22;
+
+// The end of the body of a non-atomic look-around: back to the offset in a
+// loop register.
+const OP_RESTORE: i32 = 23;
+
+// The end of the body of a non-atomic look-behind: the offset must be the
+// one in a loop register.
+const OP_AT_REG: i32 = 24;
+
 // The program under construction: the instructions, the searches of their
-// own, the next free loop register, and the context.
-struct PGen { code: i32[], subs: i32[], regs: i32, cx: PCtx, nl: boolean }
+// own, the next free loop register, the rows of `alts`, and the context.
+struct PGen { code: i32[], subs: i32[], regs: i32, alts: i32[], cx: PCtx }
 
 function __pc_emit(own g: PGen, op: i32, a: i32, b: i32): PGen {
   return PGen { ...g, code: g.code.append(op).append(a).append(b) };
@@ -2107,9 +2595,9 @@ function __pc_patch(own g: PGen, at: i32, slot: i32, v: i32): PGen {
   return PGen { ...g, code: g.code.with(3 * at + slot, v) };
 }
 
-function __pc_build(cx: PCtx, root: PNode, o: Options): Result[Pcre, CompileError] {
+function __pc_build(cx: PCtx, root: PNode, s: PStart): Result[Pcre, CompileError] {
   let empty: i32[] = [];
-  let g = PGen { code: empty, subs: empty, regs: 0, cx: cx, nl: o.crlf };
+  let g = PGen { code: empty, subs: empty, regs: 0, alts: empty, cx: cx };
   g = __pc_emit(g, OP_SAVE, 0, 0);
   g = __pc_gen(g, root);
   g = __pc_emit(__pc_emit(g, OP_SAVE, 1, 0), OP_MATCH, 0, 0);
@@ -2124,21 +2612,40 @@ function __pc_build(cx: PCtx, root: PNode, o: Options): Result[Pcre, CompileErro
     }
     let body = if (n == 0) { root } else { __pc_body_of(cx, n) };
     calls = calls.with(n, __pc_here(g));
-    g = __pc_gen(g, body);
-    g = __pc_emit(g, OP_END, 0, 0);
+    g = match (body) {
+      NAlt(a) => __pc_gen_alt(g, a, n),
+      _ => __pc_gen(g, body),
+    };
+    g = __pc_emit(g, if (n == 0) { OP_RET_ATOMIC } else { OP_RET }, 0, 0);
     todo = __pc_called(cx, body, todo);
   }
   if (g.code.len() > 3000000) {
     return Err(CompileError { offset: cx.p.len(), code: 120, message: __pc_message(120) });
   }
   let ngroups = cx.groups.get();
-  let first = if (__pc_nullable(root)) { [] } else { __pc_first(cx, root) };
+  let none: u8[] = [];
+  let first = if (s.no_start) { none } else { __pc_start_bytes(cx, root) };
   return Ok(Pcre {
     code: g.code, subs: g.subs, calls: calls, sets: cx.sets.get(), ngroups: ngroups, names: cx.names.get(), name_groups: cx.name_groups.get(),
-    nslots: 2 * (ngroups + 1) + g.regs, utf: o.utf, crlf: o.crlf, anchored: __pc_anchored(root), first: first, req: __pc_req(root),
-    word: __pc_set_of(cx, if (o.utf) { __pc_property_ranges("Xwd") } else { [48, 57, 65, 90, 95, 95, 97, 122] }, false, false),
-    limit: o.match_limit,
+    nslots: 2 * (ngroups + 1) + g.regs, utf: s.utf, fold: s.utf || s.ucp, nl: s.nl, anchored: __pc_anchored(root), first: first,
+    req: if (s.no_start || cx.accept.get()) { -1 } else { __pc_req(root) },
+    minlen: if (s.no_start || cx.accept.get() || !__pc_takes_char(root)) { 0 } else { __pc_min_len(cx, root) },
+    word: __pc_set_of(cx, if (s.ucp) { __pc_property_ranges("Xwd") } else { [48, 57, 65, 90, 95, 95, 97, 122] }, false, false),
+    limit: s.limit, depth_limit: s.depth, heap_limit: s.heap, notempty: s.notempty, has_then: cx.has_then, crlf_lit: cx.crlf_lit.get(),
+    alts: g.alts, verbs: __pc_has_op(g.code, OP_VERB),
   });
+}
+
+// Whether the program has an instruction of `op`.
+function __pc_has_op(code: i32[], op: i32): boolean {
+  let k = 0;
+  while (k < code.len()) {
+    if (code[k] == op) {
+      return true;
+    }
+    k += 3;
+  }
+  return false;
 }
 
 function __pc_minus_ones(n: i32): i32[] {
@@ -2173,9 +2680,9 @@ function __pc_called(cx: PCtx, x: PNode, out: i32[]): i32[] {
       }
       return o;
     },
-    NAlt(items) => {
+    NAlt(a) => {
       let o = out;
-      for y in items {
+      for y in a.items {
         o = __pc_called(cx, y, o);
       }
       return o;
@@ -2225,8 +2732,8 @@ function __pc_gen(own g: PGen, x: PNode): PGen {
       }
       return g;
     },
-    NAlt(items) => {
-      return __pc_gen_alt(g, items);
+    NAlt(a) => {
+      return __pc_gen_alt(g, a, -2);
     },
     NGroup(d) => {
       if (d.idx < 0) {
@@ -2240,7 +2747,7 @@ function __pc_gen(own g: PGen, x: PNode): PGen {
       return __pc_gen_rep(g, r);
     },
     NAtomic(a) => {
-      return __pc_gen_sub(g, ATOMIC, a.node, 0);
+      return __pc_gen_sub(g, ATOMIC, a.node);
     },
     NLook(l) => {
       return __pc_gen_look(g, l);
@@ -2265,8 +2772,17 @@ function __pc_gen(own g: PGen, x: PNode): PGen {
     NFail => {
       return __pc_emit(g, OP_FAIL, 0, 0);
     },
-    NAccept => {
-      return __pc_emit(g, OP_ACCEPT, 0, 0);
+    NAccept(a) => {
+      for k in a.closes {
+        g = __pc_emit(g, OP_SAVE, 2 * k + 1, 0);
+      }
+      return __pc_emit(g, OP_ACCEPT, if (a.in_look) { 1 } else { 0 }, 0);
+    },
+    NVerb(v) => {
+      return __pc_emit(g, OP_VERB, v.kind, if (v.kind == V_THEN) { v.at } else { v.name });
+    },
+    NBackup(n) => {
+      return __pc_emit(g, OP_BACKUP, n, 0);
     },
     NEmpty => {
       return g;
@@ -2275,7 +2791,35 @@ function __pc_gen(own g: PGen, x: PNode): PGen {
   return g;
 }
 
-function __pc_gen_alt(own g: PGen, items: PNode[]): PGen {
+// An alternation: a choice before each branch but the last. When the
+// pattern has (*THEN), each branch starts with OP_BRANCH, whose choice
+// holds the next branch, so that (*THEN) can find the branch that it is
+// in. `rec` is the group of the call whose body this is, or -2.
+function __pc_gen_alt(own g: PGen, a: PAltData, rec: i32): PGen {
+  let items = a.items;
+  if (g.cx.has_then && a.ends.len() == items.len()) {
+    let starts: i32[] = [];
+    let ends: i32[] = [];
+    for k in 0..items.len() {
+      starts = starts.append(__pc_here(g));
+      let row = g.alts.len() / 2;
+      g = PGen { ...g, alts: g.alts.append(a.ends[k]).append(rec) };
+      g = __pc_emit(g, OP_BRANCH, -1, row);
+      g = __pc_gen(g, items[k]);
+      if (k + 1 < items.len()) {
+        ends = ends.append(__pc_here(g));
+        g = __pc_emit(g, OP_JMP, 0, 0);
+      }
+    }
+    for k in 0..starts.len() - 1 {
+      g = __pc_patch(g, starts[k], 1, starts[k + 1]);
+    }
+    let out = __pc_here(g);
+    for j in ends {
+      g = __pc_patch(g, j, 1, out);
+    }
+    return g;
+  }
   let jumps: i32[] = [];
   for k in 0..items.len() {
     if (k + 1 < items.len()) {
@@ -2304,7 +2848,7 @@ function __pc_gen_alt(own g: PGen, items: PNode[]): PGen {
 // fern-lint: allow cyclomatic-complexity
 function __pc_gen_rep(own g: PGen, r: PRepData): PGen {
   if (r.kind == 2) {
-    return __pc_gen_sub(g, ATOMIC, NRep(PRepData { ...r, kind: 0 }), 0);
+    return __pc_gen_sub(g, ATOMIC, NRep(PRepData { ...r, kind: 0 }));
   }
   let lazy = r.kind == 1;
   for k in 0..r.min {
@@ -2346,59 +2890,71 @@ function __pc_gen_rep(own g: PGen, r: PRepData): PGen {
 }
 
 // A search of its own: the instruction, its body and an OP_END. Its row of
-// `subs` holds the kind, the start of the body, the next instruction and
-// the length of a look-behind.
-function __pc_gen_sub(own g: PGen, kind: i32, body: PNode, len: i32): PGen {
-  let id = g.subs.len() / 4;
+// `subs` holds the kind, the start of the body and the next instruction.
+function __pc_gen_sub(own g: PGen, kind: i32, body: PNode): PGen {
+  let id = g.subs.len() / 3;
   let at = __pc_here(g);
   g = __pc_emit(g, OP_SUB, id, 0);
-  let subs = g.subs.append(kind).append(at + 1).append(0).append(len);
+  let subs = g.subs.append(kind).append(at + 1).append(0);
   g = PGen { ...g, subs: subs };
   g = __pc_gen(g, body);
   g = __pc_emit(g, OP_END, 0, 0);
   let next = __pc_here(g);
-  let done = g.subs.with(4 * id + 2, next);
+  let done = g.subs.with(3 * id + 2, next);
   return PGen { ...g, subs: done };
 }
 
-// A look-behind is one search for each length of its alternatives.
+// A look-around. A non-atomic one keeps its choices: a loop register holds
+// the offset at its start.
 function __pc_gen_look(own g: PGen, l: PLookData): PGen {
-  if (l.kind == LOOK_AHEAD || l.kind == LOOK_NOT_AHEAD) {
-    return __pc_gen_sub(g, l.kind, l.node, 0);
+  if (l.kind != LOOK_AHEAD_NA && l.kind != LOOK_BEHIND_NA) {
+    let body = __pc_look_body(g.cx, l);
+    return __pc_gen_sub(g, l.kind, body);
   }
-  let branches = match (l.node) {
-    NAlt(items) => items,
-    _ => [l.node],
-  };
-  if (l.kind == LOOK_NOT_BEHIND) {
-    for b in branches {
-      let len = __pc_length(g.cx, b);
-      g = __pc_gen_sub(g, LOOK_NOT_BEHIND, b, len);
-    }
-    return g;
+  let behind = l.kind == LOOK_BEHIND_NA;
+  let reg = g.regs;
+  g = PGen { ...g, regs: reg + 1 };
+  g = __pc_emit(g, OP_MARK, reg, 0);
+  let body = __pc_look_body(g.cx, PLookData { ...l, kind: if (behind) { LOOK_BEHIND } else { LOOK_AHEAD } });
+  g = __pc_gen(g, body);
+  if (behind) {
+    g = __pc_emit(g, OP_AT_REG, reg, 0);
   }
-  if (branches.len() == 1) {
-    let len = __pc_length(g.cx, l.node);
-    return __pc_gen_sub(g, LOOK_BEHIND, l.node, len);
-  }
-  let as_alt: PNode[] = [];
-  for b in branches {
-    as_alt = as_alt.append(NLook(PLookData { kind: LOOK_BEHIND, node: b, at: l.at }));
-  }
-  return __pc_gen_alt(g, as_alt);
+  return __pc_emit(g, OP_RESTORE, reg, 0);
 }
 
-// A conditional group: OP_COND tests a group, and else jumps to the second
-// branch. A condition of a look-around is a search of its own before the
-// first branch.
-function __pc_gen_cond(own g: PGen, c: PCondData): PGen {
-  if let Some(l) = c.look {
-    let yes_no = NAlt([NSeq([NLook(l), c.yes]), NSeq([NLook(PLookData { kind: __pc_not(l.kind), node: l.node, at: l.at }), c.no])]);
-    return __pc_gen(g, yes_no);
+// The body of a look-around. Each branch of a look-behind first moves back
+// by its length.
+function __pc_look_body(cx: PCtx, l: PLookData): PNode {
+  if (!__pc_is_behind(l.kind)) {
+    return l.node;
   }
+  let items: PNode[] = [];
+  for b in __pc_branches(l.node) {
+    items = items.append(NSeq([NBackup(__pc_length(cx, b)), b]));
+  }
+  if (items.len() == 1) {
+    return items[0];
+  }
+  let ends = match (l.node) {
+    NAlt(a) => a.ends,
+    _ => [],
+  };
+  return NAlt(PAltData { items: items, ends: ends });
+}
+
+// A conditional group: OP_COND tests a group, or a search of its own tests
+// a look-around. Each one jumps to the second branch when the condition is
+// false.
+function __pc_gen_cond(own g: PGen, c: PCondData): PGen {
   let at = __pc_here(g);
-  let group = if (c.group == COND_RECURSE || c.group == COND_DEFINE) { c.group } else { __pc_ref_group(g.cx, c.group, c.name) };
-  g = __pc_emit(g, OP_COND, group, 0);
+  if let Some(l) = c.look {
+    let body = __pc_look_body(g.cx, l);
+    g = __pc_gen_sub(g, COND + l.kind, body);
+  } else {
+    let group = __pc_cond_group(g.cx, c);
+    g = __pc_emit(g, OP_COND, group, 0);
+  }
   g = __pc_gen(g, c.yes);
   let jump = __pc_here(g);
   g = __pc_emit(g, OP_JMP, 0, 0);
@@ -2407,15 +2963,6 @@ function __pc_gen_cond(own g: PGen, c: PCondData): PGen {
   g = __pc_gen(g, c.no);
   let end = __pc_here(g);
   return __pc_patch(g, jump, 1, end);
-}
-
-function __pc_not(kind: i32): i32 {
-  return match (kind) {
-    1 => 2,
-    2 => 1,
-    3 => 4,
-    _ => 3,
-  };
 }
 
 // One arm for each kind of node.
@@ -2439,8 +2986,8 @@ function __pc_nullable(x: PNode): boolean {
       }
       return true;
     },
-    NAlt(items) => {
-      for y in items {
+    NAlt(a) => {
+      for y in a.items {
         if (__pc_nullable(y)) {
           return true;
         }
@@ -2485,8 +3032,8 @@ function __pc_anchored(x: PNode): boolean {
     NSeq(items) => {
       return items.len() > 0 && __pc_anchored(items[0]);
     },
-    NAlt(items) => {
-      for y in items {
+    NAlt(a) => {
+      for y in a.items {
         if (!__pc_anchored(y)) {
           return false;
         }
@@ -2547,9 +3094,9 @@ function __pc_first_into(cx: PCtx, x: PNode, m: u8[]): u8[] {
       }
       return out;
     },
-    NAlt(items) => {
+    NAlt(a) => {
       let out = m;
-      for y in items {
+      for y in a.items {
         out = __pc_first_into(cx, y, out);
       }
       return out;
@@ -2572,6 +3119,9 @@ function __pc_first_into(cx: PCtx, x: PNode, m: u8[]): u8[] {
     NKeep => {
       return m;
     },
+    NEmpty => {
+      return m;
+    },
     _ => {
       return none;
     }
@@ -2592,6 +3142,8 @@ function __pc_lead_byte(c: i32, utf: boolean): i32 {
   return 240 | c >> 18;
 }
 
+// The marks of the first bytes of the characters of `s`. With UTF-8, a
+// character above U+007F marks its lead byte.
 function __pc_set_firsts(cx: PCtx, s: PSet, m: u8[]): u8[] {
   let out = m;
   let top = if (cx.utf) { 128 } else { 256 };
@@ -2600,12 +3152,285 @@ function __pc_set_firsts(cx: PCtx, s: PSet, m: u8[]): u8[] {
       out = out.with(c, 1u8);
     }
   }
-  if (cx.utf) {
+  if (!cx.utf) {
+    return out;
+  }
+  if (s.neg) {
     for c in 194..245 {
       out = out.with(c, 1u8);
     }
+    return out;
+  }
+  for c in 128..256 {
+    if ((s.bits[c >> 5] >> (c & 31) & 1) != 0) {
+      out = out.with(192 | c >> 6, 1u8);
+    }
+  }
+  for k in 0..s.ranges.len() / 2 {
+    for b in __pc_lead_byte(s.ranges[2 * k], true)..__pc_lead_byte(s.ranges[2 * k + 1], true) + 1 {
+      out = out.with(b, 1u8);
+    }
   }
   return out;
+}
+
+// Whether each match of `x` takes a character, as the compiler of PCRE2
+// sees it: a call and a back reference take none. PCRE2 has no least
+// length for a pattern that can match an empty string.
+// One arm for each kind of node.
+// fern-lint: allow cyclomatic-complexity
+function __pc_takes_char(x: PNode): boolean {
+  match (x) {
+    NChar(_) => {
+      return true;
+    },
+    NSet(_) => {
+      return true;
+    },
+    NAny(_) => {
+      return true;
+    },
+    NSeq(items) => {
+      for y in items {
+        if (__pc_takes_char(y)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    NAlt(a) => {
+      for y in a.items {
+        if (!__pc_takes_char(y)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    NGroup(g) => {
+      return __pc_takes_char(g.node);
+    },
+    NAtomic(a) => {
+      return __pc_takes_char(a.node);
+    },
+    NRep(r) => {
+      return r.min > 0 && __pc_takes_char(r.node);
+    },
+    NCond(c) => {
+      return c.group != COND_DEFINE && __pc_takes_char(c.yes) && __pc_takes_char(c.no);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// The least count of characters of a match, as PCRE2 finds it.
+function __pc_min_len(cx: PCtx, root: PNode): i32 {
+  return __pc_min_branches(cx, __pc_branches(root), [0]);
+}
+
+// The least length of the branches of a group. A branch that calls a group
+// that `open` holds does not lower it, but for the first branch.
+function __pc_min_branches(cx: PCtx, items: PNode[], open: i32[]): i32 {
+  let length = -1;
+  for y in items {
+    let (n, rec) = __pc_min_item(cx, y, open);
+    if (length < 0 || !rec && n < length) {
+      length = n;
+    }
+    if (length == 0) {
+      return 0;
+    }
+  }
+  return length;
+}
+
+// The least length of an item, and whether it calls a group that `open`
+// holds, which counts 0.
+// One arm for each kind of node.
+// fern-lint: allow cyclomatic-complexity
+function __pc_min_item(cx: PCtx, x: PNode, open: i32[]): (i32, boolean) {
+  match (x) {
+    NChar(_) => {
+      return (1, false);
+    },
+    NSet(_) => {
+      return (1, false);
+    },
+    NAny(_) => {
+      return (1, false);
+    },
+    NSeq(items) => {
+      let n = 0;
+      let rec = false;
+      for y in items {
+        let (k, r) = __pc_min_item(cx, y, open);
+        n = if (n + k > 65535) { 65535 } else { n + k };
+        rec = rec || r;
+      }
+      return (n, rec);
+    },
+    NAlt(a) => {
+      return (__pc_min_branches(cx, a.items, open), false);
+    },
+    NGroup(g) => {
+      return (__pc_min_branches(cx, __pc_branches(g.node), if (g.idx > 0) { open.append(g.idx) } else { open }), false);
+    },
+    NAtomic(a) => {
+      return (__pc_min_branches(cx, __pc_branches(a.node), open), false);
+    },
+    NRep(r) => {
+      let (k, rec) = __pc_min_item(cx, r.node, open);
+      return (if (r.min > 0 && k > 65535 / r.min) { 65535 } else { r.min * k }, rec);
+    },
+    NBack(b) => {
+      return __pc_min_group(cx, __pc_ref_group(cx, b.group, b.name), open);
+    },
+    NCall(c) => {
+      return __pc_min_group(cx, if (c.group == 0) { 0 } else { __pc_ref_group(cx, c.group, c.name) }, open);
+    },
+    NCond(c) => {
+      if (c.group == COND_DEFINE) {
+        return (0, false);
+      }
+      return (__pc_min_branches(cx, [c.yes, c.no], open), false);
+    },
+    _ => {
+      return (0, false);
+    }
+  }
+  return (0, false);
+}
+
+function __pc_min_group(cx: PCtx, n: i32, open: i32[]): (i32, boolean) {
+  if (n < 0) {
+    return (0, false);
+  }
+  if (open.contains(n)) {
+    return (0, true);
+  }
+  return (__pc_min_branches(cx, __pc_branches(__pc_body_of(cx, n)), open.append(n)), false);
+}
+
+// The bytes that can start a match, as 256 marks, or [] for each byte.
+// When an item such as a verb hides the first bytes, PCRE2 still uses the
+// first character of the pattern, if each match starts with it.
+function __pc_start_bytes(cx: PCtx, root: PNode): u8[] {
+  let none: u8[] = [];
+  if (__pc_nullable(root)) {
+    return none;
+  }
+  let marks = __pc_first(cx, root);
+  if (marks.len() > 0) {
+    return marks;
+  }
+  let c = __pc_first_cu(cx, root);
+  if (c < 0) {
+    return none;
+  }
+  if ((c & FC_CASELESS) != 0) {
+    let lower = c & 255;
+    return __pc_zero_marks().with(lower, 1u8).with(lower - 32, 1u8);
+  }
+  return __pc_zero_marks().with(__pc_lead_byte(c, cx.utf), 1u8);
+}
+
+// The first character of each match, as PCRE2 finds it: FC_UNSET when no
+// item gives one yet, FC_NONE when there is none, or the character. An
+// ASCII letter with its other case has FC_CASELESS.
+const FC_UNSET: i32 = -1;
+
+const FC_NONE: i32 = -2;
+
+const FC_CASELESS: i32 = 16777216;
+
+// One arm for each kind of node.
+// fern-lint: allow cyclomatic-complexity
+function __pc_first_cu(cx: PCtx, x: PNode): i32 {
+  match (x) {
+    NChar(c) => {
+      return c;
+    },
+    NSet(s) => {
+      return __pc_set_cu(cx, cx.sets.get()[s]);
+    },
+    NSeq(items) => {
+      for y in items {
+        let r = __pc_first_cu(cx, y);
+        if (r != FC_UNSET) {
+          return r;
+        }
+      }
+      return FC_UNSET;
+    },
+    NAlt(a) => {
+      let r = __pc_first_cu(cx, a.items[0]);
+      for y in a.items {
+        if (__pc_first_cu(cx, y) != r) {
+          return FC_NONE;
+        }
+      }
+      return r;
+    },
+    NGroup(g) => {
+      return __pc_first_cu(cx, g.node);
+    },
+    NAtomic(a) => {
+      return __pc_first_cu(cx, a.node);
+    },
+    NRep(r) => {
+      let c = __pc_first_cu(cx, r.node);
+      return if (r.min > 0 || c == FC_UNSET) { c } else { FC_NONE };
+    },
+    NLook(_) => {
+      return FC_UNSET;
+    },
+    NAssert(k) => {
+      return if (k == A_MBOL) { FC_NONE } else { FC_UNSET };
+    },
+    NKeep => {
+      return FC_UNSET;
+    },
+    NVerb(_) => {
+      return FC_UNSET;
+    },
+    NFail => {
+      return FC_UNSET;
+    },
+    NEmpty => {
+      return FC_UNSET;
+    },
+    _ => {
+      return FC_NONE;
+    }
+  }
+  return FC_NONE;
+}
+
+// The one character of a set, or an ASCII letter and its other case, or
+// FC_NONE. With the classes of Unicode, K and S have a third case.
+function __pc_set_cu(cx: PCtx, s: PSet): i32 {
+  if (s.neg || s.ranges.len() > 0) {
+    return FC_NONE;
+  }
+  let found: i32[] = [];
+  for c in 0..256 {
+    if ((s.bits[c >> 5] >> (c & 31) & 1) != 0) {
+      found = found.append(c);
+      if (found.len() > 2) {
+        return FC_NONE;
+      }
+    }
+  }
+  if (found.len() == 1) {
+    return found[0];
+  }
+  let lower = if (found.len() == 2) { found[1] } else { 0 };
+  if (found.len() == 2 && found[0] == lower - 32 && lower >= 97 && lower <= 122 && !(cx.fold && (lower == 107 || lower == 115))) {
+    return lower | FC_CASELESS;
+  }
+  return FC_NONE;
 }
 
 // A byte that each match holds: the last literal byte of the top level of
@@ -2645,13 +3470,73 @@ function __pc_req(x: PNode): i32 {
 
 ### Matcher
 
-`__pc_run` runs the program from an instruction at an offset. Its stack holds three words for each entry. A choice holds the instruction and the offset to go back to. An entry of a group or of a loop register holds the old value to put back. The count of the choices is the count of the match limit, and the searches of their own add their choices to it.
+`__pc_run` runs the program from an instruction at an offset. Its stack holds three words for each entry. A choice holds the instruction and the offset to go back to. An entry of a group or of a loop register holds the old value to put back. Other entries record a call, the end of a call, a branch that (*THEN) can end, a look-ahead that matched, and a verb. The count of the choices is the count of the match limit, and the searches of their own add their choices to it.
 
 ```fern
 <<matcher>>=
-// The state of a search: the text, the start of the attempt for \G, and
-// the count of the steps.
-struct PRun { re: Pcre, text: string, start: i32, steps: Cell[i32], depth: i32 }
+// The state of a search: the text, the start of the search for \G, and
+// the count of the steps of the attempt, or minus the error.
+struct PRun { re: Pcre, text: string, start: i32, steps: Cell[i32] }
+
+// For a pattern with verbs, the first VS_WORDS words of the frames hold
+// what a verb passes back: the count of the (*SKIP:NAME) verbs that the
+// attempt passed and of those that it ignores, the offset of (*SKIP), the
+// name of (*SKIP:NAME), the offset of (*THEN) in the pattern, and the group
+// of the call that the verb was in, or -1.
+const VS_WORDS: i32 = 6;
+
+const VS_SKIPS: i32 = 0;
+
+const VS_IGNORE: i32 = 1;
+
+const VS_POS: i32 = 2;
+
+const VS_NAME: i32 = 3;
+
+const VS_THEN: i32 = 4;
+
+const VS_REC: i32 = 5;
+
+// The results of a run. A verb gives its kind plus 2.
+const R_NOMATCH: i32 = 0;
+
+const R_MATCH: i32 = 1;
+
+const R_ACCEPT: i32 = 2;
+
+const R_COMMIT: i32 = 3;
+
+const R_SKIP: i32 = 5;
+
+const R_SKIP_ARG: i32 = 6;
+
+const R_THEN: i32 = 7;
+
+const R_ERROR: i32 = 8;
+
+// The entries of the stack that are not choices: the old value of a slot,
+// a call and a return with the frame before them, a branch, a look-ahead
+// that matched, and a verb.
+const E_UNDO: i32 = -1;
+
+const E_CALL: i32 = -2;
+
+const E_RET: i32 = -3;
+
+const E_BRANCH: i32 = -4;
+
+const E_LOOK: i32 = -5;
+
+const E_VERB: i32 = -6;
+
+// The errors of a run.
+const ERR_LIMIT: i32 = 1;
+
+const ERR_LOOP: i32 = 2;
+
+const ERR_DEPTH: i32 = 3;
+
+const ERR_HEAP: i32 = 4;
 
 // The first match at or after `start`, or an error after too many steps.
 pub function (re: Pcre) find_at(text: string, start: i32): Result[Option[Match], MatchError] {
@@ -2670,12 +3555,16 @@ pub function (re: Pcre) is_match(text: string): Result[boolean, MatchError] {
 // The start and the end of each group of the first match at or after
 // `start`, group 0 first, or None. A group that did not match has -1.
 // The tests of the start of a match come before each attempt, as in PCRE2.
+// Each attempt has the match limit, and a verb can move the next attempt
+// or stop the search.
 // fern-lint: allow cyclomatic-complexity
 pub function (re: Pcre) captures_at(text: string, start: i32): Result[Option[i32[]], MatchError] {
-  let steps = cell_new(0);
   let n = text.len();
   if (re.req >= 0 && __memchr(text, re.req, if (start < 0) { 0 } else { start }) < 0) {
     return Ok(None);
+  }
+  if (re.heap_limit >= 0 && re.heap_limit as i64 * 1024i64 < __pc_frame_size(re) as i64) {
+    return Err(HeapLimit);
   }
   let at = if (start < 0) { 0 } else { start };
   if (re.utf) {
@@ -2684,6 +3573,10 @@ pub function (re: Pcre) captures_at(text: string, start: i32): Result[Option[i32
     }
   }
   let origin = at;
+  let run = PRun { re: re, text: text, start: origin, steps: cell_new(0) };
+  let none: i32[] = [];
+  let frames = if (re.verbs) { [0, 0, 0, 0, 0, -1] } else { none };
+  let base = frames.len();
   while (at <= n) {
     if (re.first.len() > 0) {
       at = __scan_set(text, at, re.first);
@@ -2691,21 +3584,64 @@ pub function (re: Pcre) captures_at(text: string, start: i32): Result[Option[i32
         return Ok(None);
       }
     }
-    let run = PRun { re: re, text: text, start: origin, steps: steps, depth: 0 };
-    let slots = __pc_slots(re.nslots);
-    let (ok, end, out) = __pc_run(run, 0, at, slots, -1);
-    if (steps.get() > re.limit) {
-      return Err(MatchLimit);
-    }
-    if (ok) {
-      return Ok(Some(out.take(2 * (re.ngroups + 1))));
-    }
-    if (re.anchored || at >= n) {
+    if (n - at < re.minlen) {
       return Ok(None);
     }
-    at = __pc_next_start(re, text, at);
+    run.steps.set(2);
+    if (re.verbs) {
+      frames = frames.with(VS_SKIPS, 0);
+    }
+    if (re.limit < 2) {
+      return Err(MatchLimit);
+    }
+    let (rc, end, out, fs) = __pc_run(run, 0, at, __pc_slots(re.nslots), -1, frames, -1, base, 0, -1);
+    frames = fs;
+    if (rc == R_ERROR) {
+      return Err(__pc_match_error(-run.steps.get()));
+    }
+    if (rc == R_MATCH) {
+      return Ok(Some(out.take(2 * (re.ngroups + 1))));
+    }
+    if (rc == R_ACCEPT) {
+      return Ok(Some(out.take(2 * (re.ngroups + 1)).with(1, end)));
+    }
+    if (rc == R_COMMIT) {
+      return Ok(None);
+    }
+    let next = at;
+    if (rc == R_SKIP_ARG) {
+      frames = frames.with(VS_IGNORE, frames[VS_SKIPS]);
+    } else if (rc == R_SKIP && frames[VS_POS] > at) {
+      next = frames[VS_POS];
+    } else {
+      if (re.verbs) {
+        frames = frames.with(VS_IGNORE, 0);
+      }
+      next = __pc_next_start(re, text, at);
+    }
+    if (re.anchored || next > n) {
+      return Ok(None);
+    }
+    if (next > origin && next < n && text[next - 1] == 13u8 && text[next] == 10u8 && !re.crlf_lit && (re.nl == NL_ANYCRLF || re.nl == NL_ANY || re.nl == NL_CRLF)) {
+      next += 1;
+    }
+    at = next;
   }
   return Ok(None);
+}
+
+function __pc_match_error(code: i32): MatchError {
+  return match (code) {
+    2 => RecurseLoop,
+    3 => DepthLimit,
+    4 => HeapLimit,
+    _ => MatchLimit,
+  };
+}
+
+// The bytes of a frame of PCRE2 10.42 on a 64-bit host, for the heap limit.
+function __pc_frame_size(re: Pcre): i32 {
+  return 128 + 16 * re.ngroups;
 }
 
 function __pc_slots(n: i32): i32[] {
@@ -2728,56 +3664,137 @@ function __pc_next_start(re: Pcre, text: string, at: i32): i32 {
   return i;
 }
 
+// A step that adds a choice: false, with the error, when the attempt goes
+// above the match limit, or above the depth or the heap limit of the
+// pattern. The count of the entries of the stack is the depth.
+function __pc_step(r: PRun, sp: i32): boolean {
+  let n = r.steps.get() + 1;
+  r.steps.set(n);
+  return __pc_limits(r, sp, n);
+}
+
+// Whether `n` steps and a stack of `sp` words are within the limits, or
+// false with the error.
+function __pc_limits(r: PRun, sp: i32, n: i32): boolean {
+  let re = r.re;
+  let err = if (n > re.limit) {
+    ERR_LIMIT
+  } else if (re.depth_limit >= 0 && sp / 3 >= re.depth_limit) {
+    ERR_DEPTH
+  } else if (re.heap_limit >= 0 && (sp / 3 + 1) as i64 * (__pc_frame_size(re) as i64) > re.heap_limit as i64 * 1024i64) {
+    ERR_HEAP
+  } else {
+    0
+  };
+  if (err > 0) {
+    r.steps.set(-err);
+  }
+  return err == 0;
+}
+
+// Whether a match that ends at `pos` can be empty, under (*NOTEMPTY) and
+// (*NOTEMPTY_ATSTART).
+function __pc_empty_ok(r: PRun, slots: i32[], pos: i32): boolean {
+  return r.re.notempty == 0 || pos != slots[0] || r.re.notempty == 2 && slots[0] != r.start;
+}
+
+// Writes `v` at `at` of `a`, which is at most one word longer after it.
+function __pc_put(own a: i32[], at: i32, v: i32): i32[] {
+  if (at < a.len()) {
+    return a.with(at, v);
+  }
+  return a.append(v);
+}
+
+// A frame of a call at `at` of `frames`: the group, the instruction after
+// the call, the frame of the caller, the offset of the call, the height of
+// the stack before the call, and the slots at the call.
+function __pc_frame(own frames: i32[], at: i32, group: i32, ret: i32, parent: i32, pos: i32, sp: i32, slots: i32[]): i32[] {
+  frames = __pc_put(frames, at, group);
+  frames = __pc_put(frames, at + 1, ret);
+  frames = __pc_put(frames, at + 2, parent);
+  frames = __pc_put(frames, at + 3, pos);
+  frames = __pc_put(frames, at + 4, sp);
+  for k in 0..slots.len() {
+    frames = __pc_put(frames, at + 5 + k, slots[k]);
+  }
+  return frames;
+}
+
+// The slots that the frame at `fr` holds.
+function __pc_frame_slots(frames: i32[], fr: i32, n: i32): i32[] {
+  let out: i32[] = [];
+  for k in 0..n {
+    out = out.append(frames[fr + 5 + k]);
+  }
+  return out;
+}
+
 // Runs the program from `pc0` at `pos0`. A look-behind gives `target`, the
-// offset where its body must end. The result is whether it matched, the
-// offset at the end, and the slots of the match.
+// offset where its body must end. `frames` holds the frames of the calls,
+// `fr` is the frame of the current call or -1, and `ftop` the end of the
+// frames in use. `depth` counts the searches of their own around this one,
+// and `base` is the frame of the call when this search started. The result
+// is the kind of the end of the run, the offset
+// at the end, the slots, and the frames. A choice holds the instruction
+// and the offset to go back to. A verb that the search backtracks onto
+// sets `mode`, and the stack then carries its effect back: each entry acts
+// as PCRE2 acts for the verb at the same point.
 // One branch for each opcode, in one loop, so that a step calls no function.
 // fern-lint: allow cyclomatic-complexity
-function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32): (boolean, i32, i32[]) {
-  let code = r.re.code;
+function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, frames0: i32[], fr0: i32, ftop0: i32, depth: i32, base: i32): (i32, i32, i32[], i32[]) {
+  let re = r.re;
+  let code = re.code;
   let text = r.text;
   let slots = slots0;
+  let frames = frames0;
+  let fr = fr0;
+  let ftop = ftop0;
   let st: i32[] = [];
   let sp = 0;
   let pc = pc0;
   let pos = pos0;
+  let regs = 2 * (re.ngroups + 1);
+  let mode = R_NOMATCH;
   while (true) {
     let op = code[3 * pc];
     let a = code[3 * pc + 1];
     let ok = true;
+    let leave = false;
     if (op == OP_CHAR) {
-      let (c, n) = __pc_char_at(r.re, text, pos);
+      let (c, n) = __pc_char_at(re, text, pos);
       ok = c == a;
       pos += n;
       pc += 1;
     } else if (op == OP_SET) {
-      let (c, n) = __pc_char_at(r.re, text, pos);
-      ok = c >= 0 && __pc_in_set(r.re.sets[a], c);
+      let (c, n) = __pc_char_at(re, text, pos);
+      ok = c >= 0 && __pc_in_set(re.sets[a], c);
       pos += n;
       pc += 1;
     } else if (op == OP_ANY) {
-      let (c, n) = __pc_char_at(r.re, text, pos);
-      ok = c >= 0 && (a == 1 || !__pc_is_nl(r.re, c));
+      let (c, n) = __pc_char_at(re, text, pos);
+      ok = c >= 0 && (a == 1 || (if (re.nl == NL_LF) { c != 10 } else { __pc_nl_at(re, text, pos) == 0 }));
       pos += n;
       pc += 1;
     } else if (op == OP_SPLIT) {
       st = __pc_push(st, sp, code[3 * pc + 2], pos, -1);
       sp += 3;
-      r.steps.set(r.steps.get() + 1);
-      if (r.steps.get() > r.re.limit) {
-        return (false, pos, slots);
+      let n = r.steps.get() + 1;
+      r.steps.set(n);
+      if ((n > re.limit || re.depth_limit >= 0 || re.heap_limit >= 0) && !__pc_limits(r, sp, n)) {
+        return (R_ERROR, pos, slots, frames);
       }
       pc = a;
     } else if (op == OP_JMP) {
       pc = a;
     } else if (op == OP_SAVE || op == OP_MARK) {
-      let slot = if (op == OP_SAVE) { a } else { 2 * (r.re.ngroups + 1) + a };
-      st = __pc_push(st, sp, -1, slot, slots[slot]);
+      let slot = if (op == OP_SAVE) { a } else { regs + a };
+      st = __pc_push(st, sp, E_UNDO, slot, slots[slot]);
       sp += 3;
       slots = slots.with(slot, pos);
       pc += 1;
     } else if (op == OP_CHECK) {
-      pc = if (slots[2 * (r.re.ngroups + 1) + a] == pos) { code[3 * pc + 2] } else { pc + 1 };
+      pc = if (slots[regs + a] == pos) { code[3 * pc + 2] } else { pc + 1 };
     } else if (op == OP_ASSERT) {
       ok = __pc_assert(r, a, pos);
       pc += 1;
@@ -2787,77 +3804,207 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32): (bo
       pos = end;
       pc += 1;
     } else if (op == OP_SUB) {
-      let (sok, spos, sslots) = __pc_sub(r, a, pos, slots);
-      if (r.steps.get() > r.re.limit) {
-        return (false, pos, slots);
+      let kind = re.subs[3 * a];
+      let (res, spos, sslots, sframes) = __pc_sub(r, a, pos, slots, frames, fr, ftop, depth);
+      frames = sframes;
+      if (res == R_ERROR) {
+        return (R_ERROR, pos, slots, frames);
       }
-      ok = sok;
-      if (sok) {
+      if (res == R_ACCEPT && (fr < 0 || fr == base)) {
+        return (R_ACCEPT, spos, sslots, frames);
+      }
+      if (res == R_ACCEPT) {
+        pos = spos;
+        slots = slots.with(0, sslots[0]);
+        leave = true;
+      } else if (res >= R_COMMIT) {
+        mode = res;
+        ok = false;
+      } else if (res == 1 || kind > COND) {
         for k in 0..slots.len() {
           if (sslots[k] != slots[k]) {
-            st = __pc_push(st, sp, -1, k, slots[k]);
+            st = __pc_push(st, sp, E_UNDO, k, slots[k]);
             sp += 3;
           }
         }
         slots = sslots;
         pos = spos;
+        if (res == 1 && re.has_then && (kind == LOOK_AHEAD || kind == LOOK_BEHIND)) {
+          st = __pc_push(st, sp, E_LOOK, 0, 0);
+          sp += 3;
+        }
+        pc = if (res == 0) { code[3 * pc + 2] } else { re.subs[3 * a + 2] };
+      } else {
+        ok = false;
       }
-      pc = r.re.subs[4 * a + 2];
     } else if (op == OP_KEEP) {
-      st = __pc_push(st, sp, -1, 0, slots[0]);
+      st = __pc_push(st, sp, E_UNDO, 0, slots[0]);
       sp += 3;
       slots = slots.with(0, pos);
       pc += 1;
     } else if (op == OP_COND) {
-      let yes = if (a == COND_RECURSE) { r.depth > 0 } else { a >= 0 && slots[2 * a + 1] >= 0 };
+      let yes = if (a == COND_RECURSE) { fr >= 0 } else if (a <= COND_RECURSE_N) { fr >= 0 && frames[fr] == COND_RECURSE_N - a } else { a >= 0 && slots[2 * a + 1] >= 0 };
       pc = if (yes) { pc + 1 } else { code[3 * pc + 2] };
     } else if (op == OP_CALL) {
-      if (r.depth >= 250) {
-        r.steps.set(r.re.limit + 1);
-        return (false, pos, slots);
+      if (!__pc_step(r, sp)) {
+        return (R_ERROR, pos, slots, frames);
       }
-      let (cok, cpos, cslots) = __pc_run(PRun { ...r, depth: r.depth + 1 }, r.re.calls[a], pos, slots, -1);
-      if (r.steps.get() > r.re.limit) {
-        return (false, pos, slots);
+      let f = fr;
+      while (f >= 0 && frames[f] != a) {
+        f = frames[f + 2];
       }
-      ok = cok;
-      if (cok) {
-        pos = cpos;
+      if (f >= 0 && frames[f + 3] == pos) {
+        r.steps.set(-ERR_LOOP);
+        return (R_ERROR, pos, slots, frames);
       }
+      frames = __pc_frame(frames, ftop, a, pc + 1, fr, pos, sp, slots);
+      st = __pc_push(st, sp, E_CALL, fr, ftop);
+      sp += 3;
+      fr = ftop;
+      ftop += 5 + re.nslots;
+      pc = re.calls[a];
+    } else if (op == OP_RET) {
+      for k in 2..re.nslots {
+        let old = frames[fr + 5 + k];
+        if (slots[k] != old) {
+          st = __pc_push(st, sp, E_UNDO, k, slots[k]);
+          sp += 3;
+          slots = slots.with(k, old);
+        }
+      }
+      st = __pc_push(st, sp, E_RET, fr, 0);
+      sp += 3;
+      pc = frames[fr + 1];
+      fr = frames[fr + 2];
+    } else if (op == OP_RET_ATOMIC) {
+      leave = true;
+    } else if (op == OP_VERB) {
+      if (a == V_SKIP_ARG) {
+        frames = frames.with(VS_SKIPS, frames[VS_SKIPS] + 1);
+      }
+      if (a != V_SKIP_ARG || frames[VS_SKIPS] > frames[VS_IGNORE]) {
+        st = __pc_push(st, sp, E_VERB, pc, pos);
+        sp += 3;
+      }
+      pc += 1;
+    } else if (op == OP_BRANCH) {
+      st = __pc_push(st, sp, E_BRANCH, pc, pos);
+      sp += 3;
+      if (a >= 0 && !__pc_step(r, sp)) {
+        return (R_ERROR, pos, slots, frames);
+      }
+      pc += 1;
+    } else if (op == OP_BACKUP) {
+      pos = __pc_back_chars(re, text, pos, a);
+      ok = pos >= 0;
+      pc += 1;
+    } else if (op == OP_RESTORE) {
+      pos = slots[regs + a];
+      pc += 1;
+    } else if (op == OP_AT_REG) {
+      ok = pos == slots[regs + a];
       pc += 1;
     } else if (op == OP_FAIL) {
       ok = false;
     } else if (op == OP_ACCEPT) {
-      for k in 0..r.re.ngroups + 1 {
-        if (slots[2 * k] >= 0 && slots[2 * k + 1] < 0) {
-          slots = slots.with(2 * k + 1, pos);
-        }
+      if (a == 1 || fr >= 0 && fr == base) {
+        return (R_ACCEPT, pos, slots, frames);
       }
-      return (true, pos, slots);
+      if (fr >= 0) {
+        leave = true;
+      } else if (__pc_empty_ok(r, slots, pos)) {
+        return (R_ACCEPT, pos, slots, frames);
+      } else {
+        ok = false;
+      }
+    } else if (op == OP_MATCH) {
+      if (__pc_empty_ok(r, slots, pos)) {
+        return (R_MATCH, pos, slots, frames);
+      }
+      ok = false;
     } else {
       if (target < 0 || pos == target) {
-        return (true, pos, slots);
+        return (R_MATCH, pos, slots, frames);
       }
       ok = false;
     }
-    if (!ok) {
+    if (leave) {
+      // The end of a call that drops its choices: (*ACCEPT), or the end of
+      // a call of the whole pattern. The captures come back, but for \K.
+      let s0 = slots[0];
+      slots = __pc_frame_slots(frames, fr, re.nslots);
+      sp = frames[fr + 4];
+      pc = frames[fr + 1];
+      ftop = fr;
+      fr = frames[fr + 2];
+      if (slots[0] != s0) {
+        st = __pc_push(st, sp, E_UNDO, 0, slots[0]);
+        sp += 3;
+        slots = slots.with(0, s0);
+      }
+    } else if (!ok) {
       let back = false;
       while (sp > 0) {
         sp -= 3;
-        if (st[sp] >= 0) {
-          pc = st[sp];
-          pos = st[sp + 1];
-          back = true;
-          break;
+        let e = st[sp];
+        if (e >= 0) {
+          if (mode == R_NOMATCH) {
+            pc = e;
+            pos = st[sp + 1];
+            back = true;
+            break;
+          }
+        } else if (e == E_UNDO) {
+          slots = slots.with(st[sp + 1], st[sp + 2]);
+        } else if (e == E_CALL) {
+          let group = frames[st[sp + 2]];
+          fr = st[sp + 1];
+          ftop = st[sp + 2];
+          if (mode != R_NOMATCH && frames[VS_REC] == group) {
+            mode = R_NOMATCH;
+          }
+        } else if (e == E_RET) {
+          fr = st[sp + 1];
+        } else if (e == E_BRANCH) {
+          let next = code[3 * st[sp + 1] + 1];
+          let row = code[3 * st[sp + 1] + 2];
+          let rec = re.alts[2 * row + 1];
+          if (mode == R_THEN && frames[VS_THEN] < re.alts[2 * row] && (rec == -2 || rec == frames[VS_REC])) {
+            mode = R_NOMATCH;
+          }
+          if (mode == R_NOMATCH && next >= 0) {
+            pc = next;
+            pos = st[sp + 2];
+            back = true;
+            break;
+          }
+        } else if (e == E_LOOK) {
+          if (mode == R_THEN) {
+            mode = R_NOMATCH;
+          }
+        } else {
+          let vpc = st[sp + 1];
+          let kind = code[3 * vpc + 1];
+          if (mode == R_NOMATCH && kind != V_MARK) {
+            mode = kind + 2;
+            frames = frames.with(VS_REC, if (fr >= 0) { frames[fr] } else { -1 }).with(VS_POS, st[sp + 2]);
+            if (kind == V_SKIP_ARG) {
+              frames = frames.with(VS_NAME, code[3 * vpc + 2]);
+            } else if (kind == V_THEN) {
+              frames = frames.with(VS_THEN, code[3 * vpc + 2]);
+            }
+          } else if (mode == R_SKIP_ARG && kind == V_MARK && code[3 * vpc + 2] == frames[VS_NAME]) {
+            mode = R_SKIP;
+            frames = frames.with(VS_POS, st[sp + 2]);
+          }
         }
-        slots = slots.with(st[sp + 1], st[sp + 2]);
       }
       if (!back) {
-        return (false, pos, slots);
+        return (mode, pos, slots, frames);
       }
     }
   }
-  return (false, pos, slots);
+  return (R_NOMATCH, pos, slots, frames);
 }
 
 function __pc_push(own st: i32[], sp: i32, a: i32, b: i32, c: i32): i32[] {
@@ -2867,32 +4014,40 @@ function __pc_push(own st: i32[], sp: i32, a: i32, b: i32, c: i32): i32[] {
   return st.append(a).append(b).append(c);
 }
 
-// A search of its own: an atomic group or a look-around. It gives whether
-// the item matches, the offset after it, and the slots.
-function __pc_sub(r: PRun, id: i32, pos: i32, slots: i32[]): (boolean, i32, i32[]) {
-  let subs = r.re.subs;
-  let kind = subs[4 * id];
-  let body = subs[4 * id + 1];
-  if (kind == ATOMIC || kind == LOOK_AHEAD) {
-    let (ok, end, out) = __pc_run(r, body, pos, slots, -1);
-    return (ok, if (kind == ATOMIC) { end } else { pos }, if (ok) { out } else { slots });
+// A search of its own: an atomic group, a look-around, or the look-around
+// of a condition. The result is 1 when the item matches or the condition is
+// true, 0 when not, R_ACCEPT or R_ERROR, or a verb whose effect goes on in
+// the search outside. Then come the offset after the item, the slots and
+// the frames. The captures of a condition stay when its look-around
+// matches, as in PCRE2, also for a negative one.
+// One branch for each kind of search and each result, as in PCRE2.
+// fern-lint: allow cyclomatic-complexity
+function __pc_sub(r: PRun, id: i32, pos: i32, slots: i32[], frames: i32[], fr: i32, ftop: i32, depth: i32): (i32, i32, i32[], i32[]) {
+  let kind = r.re.subs[3 * id];
+  if (depth >= 1000) {
+    r.steps.set(-ERR_DEPTH);
+    return (R_ERROR, pos, slots, frames);
   }
-  if (kind == LOOK_NOT_AHEAD) {
-    let (ok, end, out) = __pc_run(r, body, pos, slots, -1);
-    return (!ok, pos, slots);
+  let look = if (kind > COND) { kind - COND } else { kind };
+  let target = if (look == LOOK_BEHIND || look == LOOK_NOT_BEHIND) { pos } else { -1 };
+  let (rc, end, out, fs) = __pc_run(r, r.re.subs[3 * id + 1], pos, slots, target, frames, fr, ftop, depth + 1, fr);
+  if (rc == R_ERROR) {
+    return (R_ERROR, pos, slots, fs);
   }
-  let from = __pc_back_chars(r.re, r.text, pos, subs[4 * id + 3]);
-  let ok = false;
-  let out = slots;
-  if (from >= 0) {
-    let (bok, end, bout) = __pc_run(r, body, from, slots, pos);
-    ok = bok;
-    out = bout;
+  if (kind == ATOMIC) {
+    return match (rc) {
+      0 => (0, pos, slots, fs),
+      1 => (1, end, out, fs),
+      _ => (rc, end, out, fs),
+    };
   }
-  if (kind == LOOK_NOT_BEHIND) {
-    return (!ok, pos, slots);
+  let positive = look == LOOK_AHEAD || look == LOOK_BEHIND;
+  if (rc == R_SKIP_ARG || positive && kind < COND && rc >= R_COMMIT && rc != R_THEN) {
+    return (rc, pos, slots, fs);
   }
-  return (ok, pos, if (ok) { out } else { slots });
+  let matched = rc == R_MATCH || rc == R_ACCEPT;
+  let keep = matched && (positive || kind > COND);
+  return (if (matched == positive) { 1 } else { 0 }, pos, if (keep) { out } else { slots }, fs);
 }
 
 // The offset `n` characters before `pos`, or -1.
@@ -2982,8 +4137,57 @@ function __pc_in_set(s: PSet, c: i32): boolean {
   return s.neg;
 }
 
-function __pc_is_nl(re: Pcre, c: i32): boolean {
-  return c == 10 || re.crlf && c == 13;
+// The length of the newline that starts at `pos`, or 0.
+// One branch for each newline convention.
+// fern-lint: allow cyclomatic-complexity
+function __pc_nl_at(re: Pcre, text: string, pos: i32): i32 {
+  if (pos >= text.len()) {
+    return 0;
+  }
+  let c = text[pos] as i32;
+  let nl = re.nl;
+  if (nl == NL_LF || nl == NL_CR || nl == NL_NUL) {
+    return if (c == (if (nl == NL_LF) { 10 } else if (nl == NL_CR) { 13 } else { 0 })) { 1 } else { 0 };
+  }
+  if (c == 13 && pos + 1 < text.len() && text[pos + 1] == 10u8) {
+    return 2;
+  }
+  if (nl == NL_CRLF) {
+    return 0;
+  }
+  if (c == 10 || c == 13 || nl == NL_ANY && (c == 11 || c == 12)) {
+    return 1;
+  }
+  if (nl == NL_ANYCRLF || c < 128) {
+    return 0;
+  }
+  let (cp, n) = __pc_char_at(re, text, pos);
+  return if (cp == 133 || cp == 8232 || cp == 8233) { n } else { 0 };
+}
+
+// Whether a newline ends at `pos`.
+// One branch for each newline convention.
+// fern-lint: allow cyclomatic-complexity
+function __pc_nl_before(re: Pcre, text: string, pos: i32): boolean {
+  if (pos <= 0) {
+    return false;
+  }
+  let c = text[pos - 1] as i32;
+  let nl = re.nl;
+  if (nl == NL_LF || nl == NL_CR || nl == NL_NUL) {
+    return c == (if (nl == NL_LF) { 10 } else if (nl == NL_CR) { 13 } else { 0 });
+  }
+  if (nl == NL_CRLF) {
+    return c == 10 && pos >= 2 && text[pos - 2] == 13u8;
+  }
+  if (c == 10 || c == 13 || nl == NL_ANY && (c == 11 || c == 12)) {
+    return true;
+  }
+  if (nl == NL_ANYCRLF || c < 128 && re.utf) {
+    return false;
+  }
+  let b = __pc_char_before(re, text, pos);
+  return b == 133 || b == 8232 || b == 8233;
 }
 
 function __pc_is_word(re: Pcre, c: i32): boolean {
@@ -3002,16 +4206,16 @@ function __pc_assert(r: PRun, kind: i32, pos: i32): boolean {
     return pos == 0;
   }
   if (kind == A_MBOL) {
-    return pos == 0 || pos < n && __pc_is_nl(r.re, text[pos - 1] as i32) && !(r.re.crlf && text[pos - 1] == 13u8 && text[pos] == 10u8);
+    return pos == 0 || pos < n && (if (r.re.nl == NL_LF) { text[pos - 1] == 10u8 } else { __pc_nl_before(r.re, text, pos) });
   }
   if (kind == A_END) {
     return pos == n;
   }
   if (kind == A_EOL || kind == A_END_NL) {
-    return pos == n || pos == n - 1 && __pc_is_nl(r.re, text[pos] as i32) || r.re.crlf && pos == n - 2 && text[pos] == 13u8 && text[pos + 1] == 10u8;
+    return pos == n || pos + __pc_nl_at(r.re, text, pos) == n && pos < n;
   }
   if (kind == A_MEOL) {
-    return pos == n || __pc_is_nl(r.re, text[pos] as i32);
+    return pos == n || (if (r.re.nl == NL_LF) { text[pos] == 10u8 } else { __pc_nl_at(r.re, text, pos) > 0 });
   }
   if (kind == A_G) {
     return pos == r.start;
@@ -3059,7 +4263,7 @@ function __pc_same_fold(re: Pcre, a: i32, b: i32): boolean {
   if (a == b) {
     return true;
   }
-  if (a < 128 || !re.utf) {
+  if (a < 128 || !re.fold) {
     return a < 128 && b < 128 && (a | 32) == (b | 32) && (a | 32) >= 97 && (a | 32) <= 122;
   }
   let c = unicode.simple_fold(a as char) as i32;
