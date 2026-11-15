@@ -33,6 +33,7 @@ func TestLosslessWideningContexts(t *testing.T) {
 	}
 	for _, pair := range []struct{ from, to string }{
 		{"i32", "i64"}, {"u8", "u32"}, {"u8", "u64"}, {"u8", "i32"}, {"u8", "i64"}, {"u32", "u64"}, {"u32", "i64"}, {"f32", "f64"},
+		{"u8", "u16"}, {"u8", "i16"}, {"u16", "i32"}, {"u16", "u32"}, {"u16", "i64"}, {"u16", "u64"}, {"i16", "i32"}, {"i16", "i64"},
 	} {
 		t.Run(pair.from+"_to_"+pair.to, func(t *testing.T) {
 			source := "function f(n: " + pair.from + "): " + pair.to + " { return n; }"
@@ -48,6 +49,14 @@ func TestLosslessWideningRejectsRepresentationChanges(t *testing.T) {
 		`function f(n: i64): i32 { return n; }`,
 		`function f(n: i32): u32 { return n; }`,
 		`function f(n: u32): i32 { return n; }`,
+		`function f(n: i16): u32 { return n; }`,
+		`function f(n: i16): u64 { return n; }`,
+		`function f(n: i16): u16 { return n; }`,
+		`function f(n: u16): i16 { return n; }`,
+		`function f(n: i32): u16 { return n; }`,
+		`function f(n: i32): i16 { return n; }`,
+		`function f(n: u16): u8 { return n; }`,
+		`function f(xs: u16[]): u32[] { return xs; }`,
 		`function f(n: u64): i64 { return n; }`,
 		`function f(n: f64): f32 { return n; }`,
 		`function f(xs: i32[]): i64[] { return xs; }`,

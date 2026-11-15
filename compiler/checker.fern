@@ -73,6 +73,9 @@ function int_label(t: typeinfo.TypeI32): string {
     if (t.width == 8) {
       return "u8";
     }
+    if (t.width == 16) {
+      return "u16";
+    }
     if (t.width == typeinfo.width_ptr()) {
       return "usize";
     }
@@ -80,6 +83,9 @@ function int_label(t: typeinfo.TypeI32): string {
   }
   if (t.width == 64) {
     return "i64";
+  }
+  if (t.width == 16) {
+    return "i16";
   }
   return "i32";
 }
@@ -3893,13 +3899,13 @@ function scalar_integer_module(lb: string): string {
   if (lb == "u8") {
     return "std/u8";
   }
-  if (lb == "u32" || lb == "u16") {
+  if (lb == "u32") {
     return "std/u32";
   }
   if (lb == "i64") {
     return "std/i64";
   }
-  if (lb == "char") {
+  if (lb == "char" || lb == "u16" || lb == "i16") {
     return "";
   }
   return "std/i32";
@@ -4915,7 +4921,7 @@ function is_scalar_display_builtin(name: string): boolean {
 pub function builtin_method_sig(recv_name: string, name: string): typeinfo.Type {
   let builtin_name = "__method_" + recv_name + "_" + name;
   if (name == "to_string" && recv_name != "boolean") {
-    builtin_name = "__primitive_" + recv_name + "_to_string";
+    builtin_name = "__primitive_" + typeinfo.display_owner(recv_name) + "_to_string";
   }
   if let typeinfo.TypeFunc(bm) = builtin_sig(builtin_name) {
     let params: typeinfo.Type[] = [];
@@ -6336,6 +6342,12 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   if (n.suffix == "u8") {
     return typeinfo.t_u8();
   }
+  if (n.suffix == "u16") {
+    return typeinfo.t_u16();
+  }
+  if (n.suffix == "i16") {
+    return typeinfo.t_i16();
+  }
   if (n.suffix == "usize") {
     return typeinfo.t_usize();
   }
@@ -7579,6 +7591,12 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   }
   if (name == "u8") {
     return typeinfo.t_u8();
+  }
+  if (name == "u16") {
+    return typeinfo.t_u16();
+  }
+  if (name == "i16") {
+    return typeinfo.t_i16();
   }
   if (name == "u32") {
     return typeinfo.t_u32();
@@ -12739,11 +12757,11 @@ function magnitude_is_zero(text: string, start: i32): boolean {
 }
 
 function main_result_ty(ty: string): boolean {
-  return ty == "void" || ty == "boolean" || ty == "i32" || ty == "i64" || is_unsigned_int_ty(ty);
+  return ty == "void" || ty == "boolean" || ty == "i16" || ty == "i32" || ty == "i64" || is_unsigned_int_ty(ty);
 }
 
 function is_unsigned_int_ty(ty: string): boolean {
-  return ty == "u8" || ty == "u32" || ty == "u64" || ty == "usize";
+  return ty == "u8" || ty == "u16" || ty == "u32" || ty == "u64" || ty == "usize";
 }
 
 function int_ty_max_dec(ty: string, negated: boolean): string {
@@ -12759,8 +12777,17 @@ function int_ty_max_dec(ty: string, negated: boolean): string {
     }
     return "9223372036854775807";
   }
+  if (ty == "i16") {
+    if (negated) {
+      return "32768";
+    }
+    return "32767";
+  }
   if (ty == "u8") {
     return "255";
+  }
+  if (ty == "u16") {
+    return "65535";
   }
   if (ty == "u32") {
     return "4294967295";
@@ -12784,8 +12811,17 @@ function int_ty_max_hex(ty: string, negated: boolean): string {
     }
     return "7fffffffffffffff";
   }
+  if (ty == "i16") {
+    if (negated) {
+      return "8000";
+    }
+    return "7fff";
+  }
   if (ty == "u8") {
     return "ff";
+  }
+  if (ty == "u16") {
+    return "ffff";
   }
   if (ty == "u32") {
     return "ffffffff";
@@ -18433,7 +18469,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   if (rt.len() == 0) {
     return true;
   }
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char" || typeinfo.lanes_width(rt) > 0) {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u16" || rt == "i16" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char" || typeinfo.lanes_width(rt) > 0) {
     return true;
   }
   for ch in rt {
@@ -20548,7 +20584,7 @@ function ow_is_owned(ctx: OwnCtx, name: string): boolean {
 }
 
 function ow_ownable_type(type_name: string): boolean {
-  let scalars: string[] = ["boolean", "i32", "i64", "u8", "u32", "u64", "f64", "f32", "char", "usize", "void"];
+  let scalars: string[] = ["boolean", "i32", "i64", "u8", "u16", "i16", "u32", "u64", "f64", "f32", "char", "usize", "void"];
   return !util.has_str(scalars, type_name);
 }
 
@@ -28002,7 +28038,7 @@ function e049_is_ref(tn: string): boolean {
   if (tn.len() == 0) {
     return false;
   }
-  if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u32" || tn == "u64" || tn == "usize" || tn == "boolean" || tn == "f64" || tn == "f32" || tn == "char") {
+  if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u16" || tn == "i16" || tn == "u32" || tn == "u64" || tn == "usize" || tn == "boolean" || tn == "f64" || tn == "f32" || tn == "char") {
     return false;
   }
   return true;
@@ -30360,7 +30396,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
 }
 
 function e021_derive_scalar(fty: string): boolean {
-  return fty == "i32" || fty == "i64" || fty == "u8" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string";
+  return fty == "i32" || fty == "i64" || fty == "u8" || fty == "u16" || fty == "i16" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string";
 }
 
 function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
@@ -30908,7 +30944,7 @@ function e060_set_of_name(dyns: string[], name: string): string {
 }
 
 function e060_is_primitive_name(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "str" || t == "usize" || t == "char";
+  return t == "i32" || t == "i64" || t == "u8" || t == "u16" || t == "i16" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "str" || t == "usize" || t == "char";
 }
 
 function e060_e062_stmts(stmts: ast.Stmt[], dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
@@ -34307,7 +34343,7 @@ function vb_local_tag(t: typeinfo.Type): string {
   }
   let tag = type_to_irtag(t);
   if (tag == "string" || tag == "boolean" || tag == "f64" || tag == "f32" || tag == "char"
-    || tag == "i32" || tag == "i64" || tag == "u32" || tag == "u64" || tag == "u8") {
+    || tag == "i32" || tag == "i64" || tag == "u32" || tag == "u64" || tag == "u8" || tag == "u16" || tag == "i16") {
     return tag;
   }
   return "";
@@ -37678,7 +37714,7 @@ function agreed_tags(keys: string[], tags: string[]): (string[], string[]) {
 }
 
 function lit_suffix_spelled(tag: string): boolean {
-  return tag == "i64" || tag == "u64" || tag == "u32" || tag == "u8";
+  return tag == "i64" || tag == "u64" || tag == "u32" || tag == "u8" || tag == "u16" || tag == "i16";
 }
 
 function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, boolean) {

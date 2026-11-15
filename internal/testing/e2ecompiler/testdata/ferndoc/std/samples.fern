@@ -1,0 +1,24 @@
+// Audio samples of 16 bits.
+
+// The largest sample.
+pub const PEAK: i16 = 32767;
+
+// A block of samples and the position of its first sample.
+pub struct Block { start: u16, samples: i16[] }
+
+// The sample at `at`, or 0 past the end.
+pub function sample(b: Block, at: u16): i16 {
+  if (at as i32 >= b.samples.len()) {
+    return 0;
+  }
+  return b.samples[at];
+}
+
+// The peaks of `xs` as unsigned levels.
+pub function levels(xs: [i16]): u16[] {
+  let out: u16[] = [];
+  for x in xs {
+    out = out.append(if (x < 0) { (0 - x) as u16 } else { x as u16 });
+  }
+  return out;
+}

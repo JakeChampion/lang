@@ -1,0 +1,21 @@
+// A conversion that can lose a value needs `as`: an i32 or a u32 to a 16-bit
+// type, and a u16 to an i16 or a u8.
+function from_i32(n: i32): u16 {
+  return n;
+}
+
+function from_u32(n: u32): i16 {
+  return n;
+}
+
+function to_signed(n: u16): i16 {
+  return n;
+}
+
+function to_byte(n: u16): u8 {
+  return n;
+}
+
+function main(): i32 {
+  return 0;
+}

@@ -558,6 +558,8 @@ func printType(t ast.Type) string {
 			switch x.NormalWidth() {
 			case 8:
 				return "u8"
+			case 16:
+				return "u16"
 			case 32:
 				return "u32"
 			case 64:
@@ -566,6 +568,9 @@ func printType(t ast.Type) string {
 		}
 		if x.NormalWidth() == 64 {
 			return "i64"
+		}
+		if x.NormalWidth() == 16 {
+			return "i16"
 		}
 		return "i32"
 	case ast.BoolType:
