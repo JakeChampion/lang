@@ -20,6 +20,7 @@ import "std/deflate" as deflate;
 import "std/worker";
 import "./gz";
 import "./layout";
+import "./zopfli";
 
 const S_IFMT: u32 = 61440u32;
 
@@ -134,7 +135,8 @@ function readn(rd: Reader, n: i32, path: string): Result[u8[], Fatal] {
 }
 
 function settings(o: gz.Options): layout.Settings {
-  return layout.Settings { level: o.level, strategy: o.strategy, block: o.block, rsync: o.rsync, setdict: o.setdict };
+  let zopts = zopfli.Options { iterations: o.iterations, blocksplitting: o.blocksplitting, maxblocks: o.maxsplits };
+  return layout.Settings { level: o.level, strategy: o.strategy, block: o.block, rsync: o.rsync, setdict: o.setdict, zopts: zopts };
 }
 
 // The check of the input so far: CRC-32, or Adler-32 for zlib.
@@ -214,6 +216,13 @@ struct Written {
   clen: i64,
 }
 
+// The compressed length that single_compress counts for a block. pigz 2.8
+// does not count the output of zopfli there, so the zip entry of -11 -p 1
+// has a compressed length of zero.
+function single_clen(s: layout.Settings, bytes: u8[]): i64 {
+  return if (s.level > 9) { 0i64 } else { bytes.len() as i64 };
+}
+
 // single_compress: one deflate stream, a block at a time.
 function single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, Fatal] {
   let c = c0;
@@ -227,7 +236,7 @@ function single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf
     st = after;
     c = check_of(c, cur);
     put(w, bytes, outf)?;
-    clen += bytes.len() as i64;
+    clen += single_clen(s, bytes);
     if (!more) {
       break;
     }
@@ -425,7 +434,8 @@ function compressed(r0: Run, data: u8[], name: Option[string], mtime: i64): (Run
   let n = procs(o);
   let body = if (n > 1) { layout.parallel(s, data, layout.jobs(s, data), n) } else { layout.single(s, data) };
   let c = check_of(new_check(o.form == 1), data);
-  let tail = trailer(r, name, mtime, c, body.len() as i64, head.len() as i64);
+  let clen = if (n > 1) { body.len() as i64 } else { single_clen(s, body) };
+  let tail = trailer(r, name, mtime, c, clen, head.len() as i64);
   return (r, head.concat(body).concat(tail));
 }
 
@@ -780,9 +790,6 @@ function converted(r: Run, src: Source, h: gz.Header): Converted {
 function output(r0: Run, own input: Source, h: gz.Header): Result[Run, Fatal] {
   let Source { path, data, reader, st, mtime } = input;
   let src = Source { path: path, data: data, reader: None, st: st, mtime: mtime };
-  if (r0.o.decode == 0 && r0.o.level == 11) {
-    return Err(Fatal { why: "level 11 (zopfli) is not available in this port", code: 22 });
-  }
   let dest = destination(r0, src, h)?;
   let outf = match (dest) {
     Refused(r) => {

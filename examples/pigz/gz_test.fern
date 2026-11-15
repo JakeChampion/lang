@@ -8,6 +8,7 @@ import "std/deflate" as deflate;
 import "./gz";
 import "./zdeflate" as zd;
 import "./layout";
+import "./zopfli";
 
 // The options that a parse sets, in a short form.
 // One branch for each option that the tests read.
@@ -250,7 +251,8 @@ function large(): u8[] {
 }
 
 function settings(level: i32, strategy: i32, block: i32, rsync: boolean, setdict: boolean): layout.Settings {
-  return layout.Settings { level: level, strategy: strategy, block: block * 1024, rsync: rsync, setdict: setdict };
+  let zopts = zopfli.Options { iterations: 15, blocksplitting: true, maxblocks: 15 };
+  return layout.Settings { level: level, strategy: strategy, block: block * 1024, rsync: rsync, setdict: setdict, zopts: zopts };
 }
 
 function summary(out: u8[]): string {
@@ -286,6 +288,58 @@ function test_layout(): test.TestOutcome {
     "35531 4248590209",
     "400065 617892518",
     "400065 2281709652",
+  ]);
+}
+
+// Lines, a run of zeros that takes the shortcut of long repetitions, and
+// bytes that do not repeat.
+function zopfli_input(): u8[] {
+  let out: u8[] = [];
+  let i = 0;
+  while (out.len() < 30000) {
+    out = out.concat(("line " + (i * 7 % 301).to_string() + " of the zopfli input\n").bytes());
+    i += 1;
+  }
+  out = out.concat(__alloc_u8(1500));
+  for j in 0..3000 {
+    out = out.append((j * j * 31 + j * 7 & 255) as u8);
+  }
+  return out;
+}
+
+function zopfli_summary(o: zopfli.Options, data: u8[], instart: i32, final: boolean): string {
+  let (out, bits) = zopfli.deflate_part(o, data, instart, data.len(), final);
+  return summary(out) + " " + bits.to_string();
+}
+
+// The bytes of the zopfli of pigz 2.8 (ZopfliDeflatePart), and of pigz -11
+// -b 32 for the layouts.
+function test_zopfli(): test.TestOutcome {
+  let data = zopfli_input();
+  let hello = "hello hello hello world, hello world! abcabcabcabcabc\n".bytes();
+  let o = zopfli.Options { iterations: 15, blocksplitting: true, maxblocks: 15 };
+  let few = zopfli.Options { iterations: 5, blocksplitting: true, maxblocks: 3 };
+  let (small, bits) = zopfli.deflate_part(o, hello, 0, hello.len(), true);
+  let z = settings(11, 0, 32, false, true);
+  let zr = settings(11, 0, 32, true, true);
+  let zi = settings(11, 0, 32, false, false);
+  let got = [
+    hex.encode(small) + " " + bits.to_string(),
+    zopfli_summary(o, data, 0, true),
+    zopfli_summary(few, data, 5000, false),
+    summary(layout.single(z, data)),
+    summary(layout.parallel(z, data, layout.jobs(z, data), 2)),
+    summary(layout.single(zr, data)),
+    summary(layout.parallel(zi, data, layout.jobs(zi, data), 2)),
+  ];
+  return test.assert_eq_array(got, [
+    "cb48cdc9c9574026cbf38b72527490398a0a8949c9c8880b00 4",
+    "591 1126062777 1",
+    "440 108079516 1",
+    "598 1935722934",
+    "598 1935722934",
+    "598 1935722934",
+    "862 1805951450",
   ]);
 }
 
@@ -381,6 +435,7 @@ function main(): i32 {
   r = r.it("the zip data descriptor and central directory", test_zip_trailer);
   r = r.it("deflate gives the bytes of zlib 1.3 at each level", test_zlib);
   r = r.it("the block layouts give the bytes of pigz", test_layout);
+  r = r.it("zopfli and level 11 give the bytes of pigz", test_zopfli);
   r = r.it("each format decodes, and corrupt data gets the message of pigz", test_decode);
   r = r.it("the lines of a listing", test_list);
   r = r.it("the checks of two runs combine", test_combine);

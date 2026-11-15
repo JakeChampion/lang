@@ -8,7 +8,8 @@ are those of pigz 2.8.
 ```
 $ pigz file              # writes file.gz and removes file
 $ pigz -d file.gz        # writes file and removes file.gz
-$ pigz -9 -k file        # the smallest output, and file stays
+$ pigz -9 -k file        # the smallest output of zlib, and file stays
+$ pigz -11 -k file       # the smaller output of zopfli, and much slower
 $ pigz -c file > out.gz  # writes to the standard output
 $ pigz -t file.gz        # tests file.gz
 $ pigz -l file.gz        # lists file.gz
@@ -29,7 +30,7 @@ decompresses to the standard output.
 
 | Option | Long form | Effect |
 | --- | --- | --- |
-| `-0` to `-9` | `--fast`, `--best` | The compression level. The default is 6. |
+| `-0` to `-9`, `-11` | `--fast`, `--best` | The compression level. The default is 6. Level 11 uses zopfli. |
 | `-A xxx` | `--alias xxx` | The name of a zip entry from the standard input. |
 | `-b mmm` | `--blocksize mmm` | The block size in KiB, from 32. The default is 128. |
 | `-c` | `--stdout`, `--to-stdout` | Write to the standard output and keep the input. |
@@ -58,7 +59,10 @@ decompresses to the standard output.
 | `-V` | `--version` | Show the version and stop. |
 | `-Y` | `--synchronous` | Write the output file to the disk before the next file. |
 | `-z` | `--zlib` | Write zlib (`.zz`). |
-| `-I n`, `-J n`, `-O`, `-F` | `--iterations`, `--maxsplits`, `--oneblock`, `--first` | The settings of level 11. The port reads them and does nothing with them. |
+| `-I n` | `--iterations n` | The count of optimization passes of level 11. The default is 15. |
+| `-J n` | `--maxsplits n` | The maximum count of blocks of level 11 in one part. The default is 15. |
+| `-O` | `--oneblock` | Do not split level 11 parts into smaller blocks. |
+| `-F` | `--first` | pigz 2.8 reads this option and its zopfli does nothing with it. The port does the same. |
 
 The port reads the options as pigz does. First it reads the options in the
 `GZIP` and `PIGZ` environment variables, then each option on the command
@@ -103,6 +107,18 @@ two parts:
   pigz. Each block but the last ends on a byte boundary, with empty stored
   or static blocks as pigz writes them.
 
+- `zopfli.fern` is a port of the zopfli of pigz 2.8 (`zopfli/src/zopfli`):
+  `ZopfliDeflatePart` with dynamic blocks, which is what level 11 calls. It
+  keeps the order of each calculation of zopfli. The costs of the optimal
+  parse are `float` in zopfli, so the port rounds each one to `f32`. The
+  cost model uses `log`, and `std/f64` gives the bits of the `log` of glibc
+  2.39. For level 11, each block has the 32 KiB before it as its window,
+  as in pigz. The layout ends each block as pigz does.
+
+- With one process, pigz 2.8 does not count the output of zopfli in the
+  compressed length. So the zip entry of `-11 -K -p 1` has a compressed
+  length of zero, and the port writes the same bytes.
+
 The output does not depend on the count of processes above 1. As in
 pigz, the compression is a queue of jobs. A job is about 1 MiB of whole
 blocks, and a `std/worker` worker compresses it. Up to n jobs run at a
@@ -144,6 +160,11 @@ four. With four processes, each worker copies its input and its output,
 and it starts with an empty heap. With one process, the port uses 1.6 MB
 of memory, and pigz uses 2.5 MB.
 
+Level 11 is slower. The input was the first 300,000 bytes of the `fern`
+binary, with `-11 -p 1`. pigz used 1.04 s of CPU time, and the port used
+1.61 s. Most of
+that time is in the search for matches of zopfli.
+
 The hash tables `head` and `prev` are `u16[]`, as in zlib, so they use
 128 KB and not 256 KB. In the same runs, the port with `i32[]` tables used
 4.70 s of CPU at `-6 -p 1` and 8.97 s at `-9 -p 1`. So the 2-byte tables
@@ -184,18 +205,8 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
 ## What remains
 
 - Speed: compression is not yet as fast as pigz (see the table). The
-  causes that "Speed" gives are not fixed.
-
-- Level 11 (zopfli). `-11` aborts with exit code 22 and the message
-  `level 11 (zopfli) is not available in this port`.
-
-  The cost model of zopfli uses `log`, so the bytes of pigz need the
-  results of the `log` of glibc. We compared the two on the integers from
-  1 to 2^20. The `log` of `std/f64` and the `log` of glibc 2.39 give 40
-  different results there, each one unit in the last place apart. Neither
-  one is correctly rounded at all 40. glibc itself gives a different result
-  at one of them with FMA and without FMA. So a port gives the bytes of
-  pigz only with the `log` of glibc, as the machine selects it.
+  causes that "Speed" gives are not fixed. Level 11 is about 1.5 times
+  slower than pigz.
 
 - The port reads all of the input before it decompresses, tests or lists,
   and before a compression with `-R`. pigz reads these in parts.
@@ -211,12 +222,13 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
 
 - `gz_test.fern`: the options, the environment variables, the names, the
   headers and trailers, the decoders and their messages, the list lines,
-  and the check combination. It also checks the deflate of `zdeflate` and
-  the block layouts against bytes from zlib 1.3 and pigz 2.8.
+  and the check combination. It also checks the output of `zdeflate`,
+  `zopfli` and the block layouts. The bytes that it expects come from zlib
+  1.3, from the zopfli of pigz 2.8, and from pigz 2.8.
   `TestSelfHostExamplePigzUnit` runs it on x86-64, arm64 and wasm32-wasi
   with the leak census.
 
-- `TestSelfHostExamplePigzCLI` runs 125 cases of the CLI on x86-64 and
+- `TestSelfHostExamplePigzCLI` runs 130 cases of the CLI on x86-64 and
   arm64. Each case runs in a new directory. The test compares what each
   run gives with `testdata/pigz-2.8.json`, which holds what pigz 2.8 gave:
   the exit code, the messages, the standard output and each file.

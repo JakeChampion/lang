@@ -279,6 +279,31 @@
     "stderr": "pigz: abort: only levels 0..9 and 11 are allowed\n",
     "digest": "2d9a5c09e5bb977d5dc3ff8b"
   },
+  "level 11": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "5991fc1ed223e0c4bda54176"
+  },
+  "level 11 independent rsyncable": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "63ab88cf67871bdd1e9a8b12"
+  },
+  "level 11 one process": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "1d5219de5efc7daf476c1b04"
+  },
+  "level 11 settings": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "4de2ca24f4450a86e08ef85d"
+  },
+  "level 11 zip": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "68816173a4e7ded0a6ef74db"
+  },
   "level 9 one process": {
     "exit": 0,
     "stderr": "",

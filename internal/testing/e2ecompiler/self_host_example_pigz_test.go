@@ -186,6 +186,11 @@ var pigzCases = []pigzCase{
 	pc("fast", "--fast", "-k", "mid"),
 	pc("dash", "-k", "-", "mid"),
 	pc("zopfli settings", "-I", "3", "-J", "3", "-F", "-O", "-k", "mid"),
+	pc("level 11", "-11", "-k", "mid"),
+	pc("level 11 one process", "-11", "-k", "-p", "1", "-b", "32", "mid"),
+	pc("level 11 settings", "-11", "-I", "3", "-J", "2", "-O", "-k", "-p", "2", "-b", "32", "mid"),
+	pc("level 11 zip", "-11", "-K", "-k", "-p", "1", "hi"),
+	pc("level 11 independent rsyncable", "-11", "-i", "-R", "-k", "-p", "2", "-b", "32", "mid"),
 	pc("recursive decompress", "-dr", "subgz"),
 	pc("recursive list", "-lr", "subgz"),
 	pc("recursive test", "-tr", "subgz"),
@@ -480,12 +485,6 @@ func TestSelfHostExamplePigzCLI(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Run("level 11", func(t *testing.T) {
-				got := pigzRun(t, port, files, pc("level 11", "-11", "-k", "hi"))
-				if got.Exit != 22 || got.Stderr != "pigz: abort: level 11 (zopfli) is not available in this port\n" {
-					t.Errorf("pigz -11: exit %d, stderr %q", got.Exit, got.Stderr)
-				}
-			})
 		})
 	}
 }
