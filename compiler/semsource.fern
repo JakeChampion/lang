@@ -6785,7 +6785,7 @@ function variant_built(s: State, ids: i32[], types: typeinfo.Type[], name: strin
 }
 
 function packed_word(s: State, ids: i32[], types: typeinfo.Type[], p: Packing): Value {
-  let kept = kept_bits(s, ids, types, p);
+  let kept = chosen_bits(kept_bits(s, ids, types, p, false), kept_bits(s, ids, types, p, true));
   let acc = Value { s: s, id: -1 };
   if (kept.word >= 0 && kept.all) {
     return Value { s: s, id: kept.word };
@@ -6824,19 +6824,26 @@ function field_mask(bits: i32): i64 {
 }
 
 // The fields that the constructor takes from one shared word at the place
-// that they have in the new word. `mask` has each bit of the word but the
-// bits of the other narrow fields, so it is a small constant when those are
-// bytes.
+// that they have in the new word. With `tested`, a constant field is in that
+// set when an open arm tested the word for that constant (`tested_place`).
+// `mask` has each bit of the word but the bits of the other narrow fields, so
+// it is a small constant when those are bytes.
 struct KeptBits { word: i32, mask: i64, fields: boolean[], all: boolean }
 
-function kept_bits(s: State, ids: i32[], types: typeinfo.Type[], p: Packing): KeptBits {
+// A tested constant takes the place of a constant only when the constructor
+// masks a word in any case, or when it keeps all of the word.
+function chosen_bits(plain: KeptBits, tested: KeptBits): KeptBits {
+  return if (tested.word >= 0 && (tested.all || plain.word >= 0)) { tested } else { plain };
+}
+
+function kept_bits(s: State, ids: i32[], types: typeinfo.Type[], p: Packing, tested: boolean): KeptBits {
   let out = KeptBits { word: -1, mask: 0i64, fields: __alloc_bool(ids.len()), all: true };
   for i in 0..ids.len() {
     if (p.bits[i] == 0) {
       continue;
     }
     let from = same_place(s, ids[i], p.shift[i], p.bits[i], out.word);
-    if (from < 0) {
+    if (from < 0 && tested) {
       from = tested_place(s, ids[i], types[i], p.shift[i], p.bits[i], out.word);
     }
     if (from < 0) {
