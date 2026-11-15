@@ -99,7 +99,7 @@ var intrinsicFamilies = []intrinsicFamily{
 	}},
 	{"byte scan", func(m map[string]*sigShape) []string {
 		return matching(m, func(n string, _ *sigShape) bool {
-			for _, s := range []string{"__sum_bytes", "__ascii_run", "__count_byte", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__memchr_bytes", "__rmemchr_bytes", "__scan_set_bytes", "__count_runs_bytes", "__rmemchr", "__mismatch"} {
+			for _, s := range []string{"__sum_bytes", "__ascii_run", "__count_byte", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__memchr_bytes", "__rmemchr_bytes", "__scan_set_bytes", "__scan_masks_bytes", "__count_runs_bytes", "__rmemchr", "__mismatch"} {
 				if n == s {
 					return true
 				}
@@ -368,7 +368,7 @@ func TestSelfHostIntrinsicNamesAreInternal(t *testing.T) {
 	quoted := regexp.MustCompile(`"([^"]*)"`)
 	names := map[string]bool{}
 	for _, fn := range []string{"intrinsic_result", "intrinsic_params", "is_f64_primitive", "is_bit_count", "byte_kernel_arity", "is_sha_hw_builtin"} {
-		body := regexp.MustCompile(`(?s)\n(?:pub )?function ` + fn + `\(.*?\n\}`).FindString(src)
+		body := strings.Join(regexp.MustCompile(`(?s)\n(?:pub )?function `+fn+`(?:_part_\d+)?\(.*?\n\}`).FindAllString(src, -1), "")
 		if body == "" {
 			t.Fatalf("checker.fern has no function %s — point this test at what replaced it", fn)
 		}

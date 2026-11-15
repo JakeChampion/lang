@@ -58,3 +58,83 @@ function step(own p0: P): i32 {
 		wantE051(t, c.name, step(c.value))
 	}
 }
+
+const litFieldPrefix = `struct H { w: Writer, alt: Writer, n: i32, name: string }
+struct K { h: H, n: i32 }
+function take(own h: H): i32 { return h.n; }
+function takek(own k: K): i32 { return k.n; }
+`
+
+// A literal local can go to an own parameter only when each field value that
+// it sets is owned or holds no handle. A spread base does not change this.
+func TestLiteralLocalFieldValuesOwned(t *testing.T) {
+	spread := func(params, value string) string {
+		return litFieldPrefix + `function f(own u: H, ` + params + `): i32 {
+  let v = H { ...u, ` + value + ` };
+  return take(v);
+}`
+	}
+	for _, c := range []struct{ name, params, value string }{
+		{"fresh handle", `b: H`, `alt: stdout()`},
+		{"own parameter handle", `own w: Writer`, `alt: w`},
+		{"scalar", `b: H`, `n: b.n`},
+		{"counted string copy", `b: H`, `name: b.name`},
+		{"string built from a borrow", `b: H`, `name: b.name + "!"`},
+	} {
+		wantOK(t, "spread "+c.name, spread(c.params, c.value))
+	}
+	for _, c := range []struct{ name, params, value string }{
+		{"borrowed handle field", `b: H`, `alt: b.w`},
+		{"borrowed handle parameter", `w: Writer`, `alt: w`},
+	} {
+		wantE051(t, "spread "+c.name, spread(c.params, c.value))
+	}
+	wantOK(t, "spread local at its last use", litFieldPrefix+`function f(own u: H, own w: Writer): i32 {
+  let x = w;
+  let v = H { ...u, alt: x };
+  return take(v);
+}`)
+	wantE051(t, "spread own handle read later", litFieldPrefix+`function f(own u: H, own w: Writer): i32 {
+  let v = H { ...u, alt: w };
+  w.write_str("x");
+  return take(v);
+}`)
+	wantE051(t, "spread borrowed struct holding a handle", litFieldPrefix+`function f(own u: K, b: H): i32 {
+  let v = K { ...u, h: b };
+  return takek(v);
+}`)
+	wantE051(t, "spread nested literal holding a borrow", litFieldPrefix+`function f(own u: K, b: H): i32 {
+  let v = K { ...u, h: H { w: b.w, alt: stdout(), n: 0, name: "" } };
+  return takek(v);
+}`)
+	wantE051(t, "spread self-update storing a borrow", litFieldPrefix+`function f(own u: H, b: H): i32 {
+  let v = H { ...u, n: 1 };
+  v = H { ...v, alt: b.alt };
+  return take(v);
+}`)
+
+	plain := func(params, value string) string {
+		return litFieldPrefix + `function f(` + params + `): i32 {
+  let v = H { ` + value + `, n: 0, name: "" };
+  return take(v);
+}`
+	}
+	wantOK(t, "plain own parameters", plain(`own x: Writer, own y: Writer`, `w: x, alt: y`))
+	wantOK(t, "plain fresh handles", plain(`b: H`, `w: stdout(), alt: stdout()`))
+	wantOK(t, "plain own parameter and local", litFieldPrefix+`function f(own x: Writer, own y: Writer): i32 {
+  let z = y;
+  let v = H { w: x, alt: z, n: 0, name: "" };
+  return take(v);
+}`)
+	wantE051(t, "plain borrowed handle fields", plain(`b: H`, `w: b.w, alt: b.alt`))
+	wantE051(t, "plain borrowed handle parameter", plain(`w: Writer, own x: Writer`, `w: w, alt: x`))
+	wantE051(t, "plain reassigned from a borrow", litFieldPrefix+`function f(own x: Writer, own y: Writer, b: H): i32 {
+  let v = H { w: x, alt: y, n: 0, name: "" };
+  v = H { w: b.w, alt: b.alt, n: 0, name: "" };
+  return take(v);
+}`)
+	wantE051(t, "plain nested literal holding a borrow", litFieldPrefix+`function f(b: H): i32 {
+  let v = K { h: H { w: b.w, alt: b.alt, n: 0, name: "" }, n: 1 };
+  return takek(v);
+}`)
+}

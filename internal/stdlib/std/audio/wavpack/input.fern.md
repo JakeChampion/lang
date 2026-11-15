@@ -171,11 +171,11 @@ function accepted(own state: Input, value: block.Block, own samples: i32[]): Res
   let result = match (decoder.push(view[:count], value)) { Ok(result) => result, Err(e) => { return Err(error(e)); } };
   match (result) {
     wavpack.GroupPending(next) => {
-      let state = Input { control: Control { ...control, stage: Probe, cursor: value.end }, buffer: buffer, builder: Some(next), plan: None, scratch: scratch, tags: tags };
+      let probe = Control { ...control, stage: Probe, cursor: value.end };
       if (value.frames == 0) {
-        return metadata(state, value.end, samples);
+        return metadata(Input { control: probe, buffer: buffer, builder: Some(next), plan: None, scratch: scratch, tags: tags }, value.end, samples);
       }
-      return pending(state, samples);
+      return pending(Input { control: probe, buffer: buffer, builder: Some(next), plan: None, scratch: scratch, tags: tags }, samples);
     },
     wavpack.GroupReady(index) => {
       let stage = match (control.info) { None => BeginTrack, Some(_) => Decode };

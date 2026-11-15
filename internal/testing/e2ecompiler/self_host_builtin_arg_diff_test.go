@@ -118,7 +118,7 @@ func nativeBuiltinSigs(t *testing.T) map[string]*ast.FuncType {
 func selfHostParameterisedBuiltins(t *testing.T) []string {
 	t.Helper()
 	body := selfHostFileSection(t, "checker.fern",
-		`(?s)function intrinsic_params\(.*?\n\}`)
+		`(?s)function intrinsic_params\(.*function intrinsic_params_part_\d+\(.*?\n\}`)
 	seen := map[string]bool{}
 	rows := selfHostFileSection(t, "builtinsigs.fern", `(?s)function builtin_sigs\(\): string\[\] \{.*?\n\}`)
 	for _, m := range sigRowNameRE.FindAllStringSubmatch(rows, -1) {

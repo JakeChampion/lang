@@ -1,0 +1,83 @@
+// A generic function returns the call of a second one, and the type argument
+// comes from the result type alone. The interpreter of the compiler did not
+// find it when the result holds an array of the type parameter.
+trait Mk {
+  function mk(n: i32): Self;
+}
+
+struct A { v: i32 }
+
+impl Mk for A {
+  function mk(n: i32): A {
+    return A { v: n };
+  }
+}
+
+impl Mk for i32 {
+  function mk(n: i32): i32 {
+    return n * 10;
+  }
+}
+
+impl[T: Mk] Mk for Option[T] {
+  function mk(n: i32): Option[T] {
+    if (n == 0) {
+      return None;
+    }
+    return Some(T.mk(n));
+  }
+}
+
+function inner[T: Mk](n: i32, d: i32): Result[T, string] {
+  return Ok(T.mk(n + d));
+}
+
+function outer[T: Mk](n: i32): Result[T, string] {
+  return inner(n, 1);
+}
+
+function inners[T: Mk](n: i32, d: i32): Result[T[], string] {
+  return Ok([T.mk(n + d)]);
+}
+
+function outers[T: Mk](n: i32): Result[T[], string] {
+  return inners(n, 1);
+}
+
+function main(): i32 {
+  let Ok(a) = outer[A](1) else {
+    return 1;
+  };
+  print(a.v.to_string());
+  let Ok(o) = outer[Option[i32]](2) else {
+    return 2;
+  };
+  match (o) {
+    Some(v) => {
+      print(v.to_string());
+    },
+    None => {
+      print("none");
+    }
+  }
+  let Ok(oo) = outer[Option[Option[i32]]](3) else {
+    return 3;
+  };
+  match (oo) {
+    Some(Some(v)) => {
+      print(v.to_string());
+    },
+    _ => {
+      print("other");
+    }
+  }
+  let Ok(xs) = outers[A](4) else {
+    return 4;
+  };
+  print(xs[0].v.to_string());
+  let Ok(ys) = outers[Option[i32]](5) else {
+    return 5;
+  };
+  print(ys.len().to_string());
+  return 0;
+}

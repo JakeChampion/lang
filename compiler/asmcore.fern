@@ -247,7 +247,7 @@ pub function seccomp_allowlist(s: EmitState): i32[] {
 pub struct ArgRule { nr: i32, arg: i32, values: i32[], mask: i32 }
 
 // The rules of one architecture. The mapping calls take no executable
-// protection. A socket is AF_UNIX, AF_INET or AF_INET6. A prctl is one of
+// protection. A socket is AF_UNIX, AF_INET, AF_INET6 or AF_VSOCK. A prctl is one of
 // PR_SET_PDEATHSIG, PR_SET_DUMPABLE, PR_GET_TAGGED_ADDR_CTRL and
 // PR_PAC_GET_ENABLED_KEYS. An ioctl is one of the eight terminal and
 // reflink requests. A setsockopt level is SOL_IP, SOL_SOCKET, SOL_TCP,
@@ -267,7 +267,7 @@ pub function arg_rules(target: string): ArgRule[] {
       ArgRule { nr: 29, arg: 1, values: ioctls, mask: 0 },
       ArgRule { nr: 56, arg: 2, values: [], mask: 2145525822 },
       ArgRule { nr: 167, arg: 0, values: [1, 4, 56, 61], mask: 0 },
-      ArgRule { nr: 198, arg: 0, values: [1, 2, 10], mask: 0 },
+      ArgRule { nr: 198, arg: 0, values: [1, 2, 10, 40], mask: 0 },
       ArgRule { nr: 208, arg: 1, values: [0, 1, 6, 17, 41, 282], mask: 0 },
       ArgRule { nr: 208, arg: 2, values: sockopts, mask: 0 },
       ArgRule { nr: 220, arg: 0, values: [17], mask: 0 },
@@ -280,7 +280,7 @@ pub function arg_rules(target: string): ArgRule[] {
     ArgRule { nr: 9, arg: 2, values: [], mask: 4 },
     ArgRule { nr: 10, arg: 2, values: [], mask: 4 },
     ArgRule { nr: 16, arg: 1, values: ioctls, mask: 0 },
-    ArgRule { nr: 41, arg: 0, values: [1, 2, 10], mask: 0 },
+    ArgRule { nr: 41, arg: 0, values: [1, 2, 10, 40], mask: 0 },
     ArgRule { nr: 54, arg: 1, values: [0, 1, 6, 17, 41, 282], mask: 0 },
     ArgRule { nr: 54, arg: 2, values: sockopts, mask: 0 },
     ArgRule { nr: 56, arg: 0, values: [17], mask: 0 },
@@ -3242,7 +3242,7 @@ function builtin_i32_names(): string[] {
     "__memchr",
     "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes",
     "__ascii_run",
-    "__scan_set", "__scan_set_bytes", "__scan_masks",
+    "__scan_set", "__scan_set_bytes", "__scan_masks", "__scan_masks_bytes",
     "__count_runs", "__count_runs_bytes",
     "__bsd_sum",
     "__str_hash",
