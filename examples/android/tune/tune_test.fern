@@ -5,6 +5,7 @@
 // there as PNG files.
 import "core/cmp";
 import "std/array";
+import "std/android";
 import "std/android/draw";
 import "std/android/fonts";
 import "std/android/testkit";
@@ -491,24 +492,17 @@ function held(s: sim.Sim[player.Player, tune.Msg]): string {
   return (m.sound.ptr != 0 as usize).to_string() + " " + (m.awake.wake != 0 as usize).to_string() + " " + s.shell.app.deck.is_some().to_string();
 }
 
-// When Android destroys the activity, a track that plays goes on: the
-// player keeps the device. A player that does not play gives the device
-// back, and so does `closed` at the end of a loop with no window.
+// When Android destroys the activity, a track that plays keeps the loop
+// alive, and the player keeps the device. The Destroy that ends the loop
+// gives the device back, also when no track played.
 function test_the_player_gives_the_device_back(): test.TestOutcome {
   let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
   let before = held(s);
-  let t = sim.after(sim.send(s, tune.Closing), 100i64);
+  let t = sim.after(sim.event(sim.kept(s, true), android.Destroy), 100i64);
   let on = held(t) + " " + t.shell.app.model.current.to_string() + " " + t.shell.app.model.playing.to_string();
-  let u = sim.after(sim.send(sim.send(t, tune.Play(false)), tune.Closing), 100i64);
-  let after = held(u);
-  let w = sim.after(sim.tap(started(), "Slow Water"), 100i64);
-  let ended = player.closed(device(), tune.Model { ...w.shell.app.model });
-  let freed = (ended.sound.ptr == 0 as usize && ended.awake.wake == 0 as usize).to_string();
-  // A player that played no track gives back what it holds of Android too,
-  // one time.
-  let fresh = player.closed(device(), tune.start(paths()));
-  let again = player.closed(device(), tune.Model { ...fresh });
-  return test.assert_eq([before, on, after, freed, fresh.gone.to_string() + " " + again.gone.to_string()].join(" | "), "true true true | true true true 2 true | false false false | true | true true");
+  let u = sim.event(sim.kept(sim.send(t, tune.Play(false)), false), android.Destroy);
+  let fresh = sim.event(started(), android.Destroy);
+  return test.assert_eq([before, on, held(u), held(fresh)].join(" | "), "true true true | true true true 2 true | false false false | false false false");
 }
 
 // The player starts with the library that it saved. A track whose file is
@@ -967,7 +961,7 @@ function test_the_spectrum(): test.TestOutcome {
 function wants_of(m: tune.Model): string {
   let out: string[] = [];
   for w in m.wants {
-    out = out.append(match (w) { tune.KeepPlace => "place", tune.Quit => "quit", tune.Hold => "hold", tune.Load(i) => "load " + i.to_string(), tune.Seek(_) => "seek", _ => "other" });
+    out = out.append(match (w) { tune.KeepPlace => "place", tune.Hold => "hold", tune.Load(i) => "load " + i.to_string(), tune.Seek(_) => "seek", _ => "other" });
   }
   return out.join(",");
 }
@@ -993,7 +987,7 @@ function test_the_player_keeps_its_place(): test.TestOutcome {
   let plays = sim.send(back, tune.Play(true)).shell.app.model.playing;
   let missing = tune.update(tune.Model { ...started().shell.app.model, wants: [] }, tune.Restore(tune.Place { ...kept, paths: ["/nowhere.mp3"], spot: 0 })).current;
   let lost = tune.update(tune.Model { ...started().shell.app.model, wants: [] }, tune.Restore(tune.Place { ...kept, paths: ["/nowhere.mp3", track], spot: 0, at_ms: 9000i64 }));
-  return test.assert_eq([stops, away, closes, same.to_string(), at, plays.to_string(), missing.to_string(), (lost.tracks[lost.current].path == track).to_string() + " " + lost.at_ms.to_string()].join(" | "), "hold,place | place | place place,quit | true | true false | true | -1 | true 0");
+  return test.assert_eq([stops, away, closes, same.to_string(), at, plays.to_string(), missing.to_string(), (lost.tracks[lost.current].path == track).to_string() + " " + lost.at_ms.to_string()].join(" | "), "hold,place | place | place place | true | true false | true | -1 | true 0");
 }
 
 // "Edit tags" of the details of a song shows its tags. Save writes them to
