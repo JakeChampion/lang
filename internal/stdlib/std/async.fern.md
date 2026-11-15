@@ -1083,7 +1083,9 @@ wait costs no closure and no handle.
 
 ```fern
 <<21 pub struct Call[A, B, T]>>=
-pub struct Call[A, B, T] { id: i32, f: (A, B) => T, a: A, b: B }
+// `gen` is the generation of the task record when the call parked. The
+// runtime changes the generation when the record is released.
+pub struct Call[A, B, T] { id: i32, gen: i32, f: (A, B) => T, a: A, b: B }
 
 @must_consume
 pub enum CallStatus[A, B, T] { Returned(T), Parked(Call[A, B, T], Wait) }
@@ -1102,14 +1104,21 @@ pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): CallStatus[A, B, T
         return Returned(v);
       },
       Suspended(w) => {
-        return Parked(Call { id: id, f: f, a: a, b: b }, w);
+        return Parked(Call { id: id, gen: __task_gen(id), f: f, a: a, b: b }, w);
       }
     }
-    return Parked(Call { id: id, f: f, a: a, b: b }, Wait { set: [], until: None });
+    return Parked(Call { id: id, gen: __task_gen(id), f: f, a: a, b: b }, Wait { set: [], until: None });
   }
 }
 
 pub function call_resume[A, B, T](c: Call[A, B, T], wake: Wake): TaskStatus[T] {
+  // Stops the program for a call that ended: its record is released, or
+  // holds a different task. There is no message, as for __task_expect.
+  unsafe {
+    if (__task_gen(c.id) != c.gen) {
+      exit(134);
+    }
+  }
   __task_wake(c.id, wake);
   return __settled(c.id, run_task_call(c.id, c.f, c.a, c.b, 2));
 }
