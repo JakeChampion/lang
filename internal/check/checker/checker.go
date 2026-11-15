@@ -2390,6 +2390,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}},
 	}
+	c.info.FuncSigs["__alloc_u16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 16, Signed: false}},
+	}
+	c.info.FuncSigs["__alloc_i16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 16, Signed: true}},
+	}
 	c.info.FuncSigs["__alloc_i64"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},

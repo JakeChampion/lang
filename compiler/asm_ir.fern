@@ -847,7 +847,7 @@ function arr_push_empty(s: asmcore.EmitState, nonempty: string, frame: string, f
 
 // Rounds the %rdi elements of the array op `o` up to the words they take.
 function reserve_words(o: ir.Op): string {
-  let shift = asmcore.elem_shift(o);
+  let shift = ir.elem_shift(o);
   if (shift == 0) {
     return "";
   }
@@ -869,16 +869,23 @@ function emit_alloc_packed(s: asmcore.EmitState, sfx: string, shift: i32): asmco
   return s.write(empty + ":\n    leaq .Lfern_empty_" + sfx + "(%rip), %rax\n    ret\n");
 }
 
-// The appends and allocations of the arrays that pack bytes or 4-byte integers.
+// The appends and allocations of the arrays that pack bytes, 2-byte or
+// 4-byte integers.
 function emit_packed_arrays(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_push_u8")) {
     s = emit_arr_push_packed(s, "u8", 3, ".Lapou");
+  }
+  if (s.has_need("arr_push_u16")) {
+    s = emit_arr_push_packed(s, "u16", 2, ".Lapoh");
   }
   if (s.has_need("arr_push_u32")) {
     s = emit_arr_push_packed(s, "u32", 1, ".Lapow");
   }
   if (s.has_need("alloc_bytes") || s.has_need("alloc_bytes_uninit")) {
     s = emit_alloc_bytes(s);
+  }
+  if (s.has_need("alloc_u16")) {
+    s = emit_alloc_packed(s, "u16", 2);
   }
   if (s.has_need("alloc_u32")) {
     s = emit_alloc_packed(s, "u32", 1);
@@ -1092,6 +1099,9 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
 function packed_store(v: string, b: string, i: string, shift: i32): string {
   if (shift == 3) {
     return "    movb " + ssa_r8(v) + ", 8(" + b + "," + i + ")\n";
+  }
+  if (shift == 2) {
+    return "    movw " + ssa_r16(v) + ", 8(" + b + "," + i + ",2)\n";
   }
   return "    movl " + ssa_r32(v) + ", 8(" + b + "," + i + ",4)\n";
 }
@@ -6906,7 +6916,7 @@ function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
 
 function ssa_integer_unary(what: string): boolean {
   return what == "!" || what == "int_extend" || what == "int_wrap"
-    || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32"
+    || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16"
     || what.starts_with("rotr:");
 }
 
@@ -7558,6 +7568,9 @@ function ssa_mov_text(size: i32): string {
   if (size == 8) {
     return "movb";
   }
+  if (size == 16) {
+    return "movw";
+  }
   if (size == 32) {
     return "movl";
   }
@@ -7805,6 +7818,9 @@ function ssa_alu_rm_at(s: asmcore.EmitState, ext: i32, size: i32, load: boolean,
 function ssa_wreg(size: i32, reg: string): string {
   if (size == 32) {
     return ssa_r32(reg);
+  }
+  if (size == 16) {
+    return ssa_r16(reg);
   }
   if (size == 8) {
     return ssa_r8(reg);
@@ -8087,6 +8103,15 @@ function ssa_r32(r: string): string {
   };
 }
 
+// The 16-bit name of `r`: %ax for %rax, %r8w for %r8.
+function ssa_r16(r: string): string {
+  let d = ssa_r32(r);
+  if (d.ends_with("d")) {
+    return slice_unchecked(d, 0, d.len() - 1) + "w";
+  }
+  return "%" + slice_unchecked(d, 2, d.len());
+}
+
 function ssa_r8(r: string): string {
   return match (r) {
     "%rbx" => "%bl",
@@ -8117,7 +8142,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || ssa.is_unary_load(what)) {
     return true;
   }
-  if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
+  if (what == "int_cast:u8" || what == "int_cast:u16" || what == "int_cast:i16" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
   return what.starts_with("rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
@@ -8191,6 +8216,12 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   if (what == "int_cast:u8") {
     return "    andq $255, " + d + "\n";
   }
+  if (what == "int_cast:u16") {
+    return "    movzwl " + ssa_r16(d) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "int_cast:i16") {
+    return "    movswq " + ssa_r16(d) + ", " + d + "\n";
+  }
   if (what == "int_cast:i32") {
     return "    movslq " + ssa_r32(d) + ", " + d + "\n";
   }
@@ -8222,6 +8253,12 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   }
   if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
     return "    movslq " + ssa_r32(src) + ", " + d + "\n";
+  }
+  if (what == "int_cast:u16") {
+    return "    movzwl " + ssa_r16(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "int_cast:i16") {
+    return "    movswq " + ssa_r16(src) + ", " + d + "\n";
   }
   if (what == "u32_wrap" || what == "int_cast:u32" || what == "int_extend" || what == "int_wrap") {
     return "    movl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
@@ -9449,35 +9486,48 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   return ssa_mov_rmi(s, bits, false, c, a, b, bits / 8, 8);
 }
 
-// The bits of an element that an access marks "u8", "i32" or "u32"; any other
-// mark is a word.
+// The bits of an element that an access marks; a word has no mark.
 function ssa_elem_bits(mark: string): i32 {
-  if (mark == "u8") {
-    return 8;
-  }
-  return if (mark == "i32" || mark == "u32") { 32 } else { 64 };
+  let bits = ssa.mark_bits(mark);
+  return if (bits == 0) { 64 } else { bits };
 }
 
-// A read of element `b` of the array at `a` into `d`, which "i32" extends with the sign.
+// The load that extends an element narrower than a word into `d`, or "".
+function ssa_elem_extend(mark: string, mem: string, d: string): string {
+  if (mark == "u8") {
+    return "    movzbl " + mem + ", " + ssa_r32(d) + "\n";
+  }
+  if (mark == "u16") {
+    return "    movzwl " + mem + ", " + ssa_r32(d) + "\n";
+  }
+  if (mark == "i16") {
+    return "    movswq " + mem + ", " + d + "\n";
+  }
+  if (mark == "i32") {
+    return "    movslq " + mem + ", " + d + "\n";
+  }
+  return "";
+}
+
+// A read of element `b` of the array at `a` into `d`.
 function ssa_elem_read(s: asmcore.EmitState, mark: string, d: string, a: string, b: string): asmcore.EmitState {
   if (mark == "u8") {
     return ssa_movzb_mi(s, 0, d, a, b, 8);
   }
-  if (mark == "i32") {
-    return s.write("    movslq " + ssa_mem_i(a, b, 4, 8) + ", " + d + "\n");
-  }
   let bits = ssa_elem_bits(mark);
+  let ext = ssa_elem_extend(mark, ssa_mem_i(a, b, bits / 8, 8), d);
+  if (ext != "") {
+    return s.write(ext);
+  }
   return ssa_mov_rmi(s, bits, true, d, a, b, bits / 8, 8);
 }
 
 function ssa_elem_read_at(s: asmcore.EmitState, mark: string, d: string, a: string, c: i32): asmcore.EmitState {
   let bits = ssa_elem_bits(mark);
   let off = 8 + bits / 8 * c;
-  if (mark == "u8") {
-    return s.write("    movzbl " + util.i32_to_string(off) + "(" + a + "), " + ssa_r32(d) + "\n");
-  }
-  if (mark == "i32") {
-    return s.write("    movslq " + util.i32_to_string(off) + "(" + a + "), " + d + "\n");
+  let ext = ssa_elem_extend(mark, util.i32_to_string(off) + "(" + a + ")", d);
+  if (ext != "") {
+    return s.write(ext);
   }
   return ssa_mov_rm(s, bits, true, d, a, off);
 }
@@ -9608,7 +9658,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   if (op == "arr_slice") {
     return s.need("arr_slice");
   }
-  if (op == "arr_slice_u8" || op == "arr_slice_u32") {
+  if (op == "arr_slice_u8" || op == "arr_slice_u16" || op == "arr_slice_u32") {
     return s.need(op);
   }
   if (op == "str_from_bytes_u8") {
@@ -10154,9 +10204,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   } else if (ins.str == "alloc_uninit_u8" || ins.str == "alloc_uninit") {
     s = s.need("alloc_bytes_uninit");
     sym = "__fern_alloc_bytes_uninit";
-  } else if (ins.str == "alloc_u8_u32") {
-    s = s.need("alloc_u32");
-    sym = "__fern_alloc_u32";
+  } else if (ins.str == "alloc_u8_u16" || ins.str == "alloc_u8_u32") {
+    let w = slice_unchecked(ins.str, 9, ins.str.len()).to_owned();
+    s = s.need("alloc_" + w);
+    sym = "__fern_alloc_" + w;
   } else if (asmcore.packed_shift(ins.str) > 0 && ins.str.starts_with("arr_push")) {
     s = s.need(ins.str.replace("owned_", ""));
     sym = "__fern_" + ins.str;
@@ -14002,8 +14053,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_str_bytes_u8", s);
   }
-  if (s.has_need("arr_slice_u32")) {
-    s = emit_runtime("__fern_arr_slice_u32", s);
+  let slices = asmcore.packed_slice_roots(s);
+  if (slices != "") {
+    s = emit_runtime(slices, s);
   }
   if (s.has_need("arr_slice_u8")) {
     s = s.write("    .text\n");

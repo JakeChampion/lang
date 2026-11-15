@@ -1428,7 +1428,19 @@ function float_def(ins: SInst): boolean {
 }
 
 function float_load(ins: SInst): boolean {
-  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && ins.str != "u8" && ins.str != "i32" && ins.str != "u32";
+  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && mark_bits(ins.str) == 0;
+}
+
+// The bits of an array element that an access marks: "u8" for a byte, "u16"
+// and "i16" for 2 bytes, "u32" and "i32" for 4 bytes, or 0 for a word.
+pub function mark_bits(mark: string): i32 {
+  if (mark == "u8") {
+    return 8;
+  }
+  if (mark == "u16" || mark == "i16") {
+    return 16;
+  }
+  return if (mark == "u32" || mark == "i32") { 32 } else { 0 };
 }
 
 function float_use(ins: SInst): boolean {
@@ -5854,7 +5866,7 @@ function drops(f: SFunc, facts: i32[], ins: SInst): boolean {
 function has_extension(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == UNARY && ins.str == "int_cast:u8") {
+      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == UNARY && (ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16")) {
         return true;
       }
     }
@@ -6036,7 +6048,10 @@ function unary_facts(ins: SInst, held: i32): i32 {
   if (ins.str == "int_cast:u8" || ins.str.starts_with("ctz:") || ins.str.starts_with("clz:") || ins.str.starts_with("popcount:")) {
     return EXT_BYTE;
   }
-  return 0;
+  if (ins.str == "int_cast:u16") {
+    return EXT_I32 | EXT_U32;
+  }
+  return if (ins.str == "int_cast:i16") { EXT_I32 } else { 0 };
 }
 
 // What a load or a byte mask leaves in its register, or 0.
@@ -6057,7 +6072,10 @@ function elem_facts(ins: SInst): i32 {
   if (ins.kind_tag == STR_AT || ins.str == "u8") {
     return EXT_BYTE;
   }
-  if (ins.str == "i32") {
+  if (ins.str == "u16") {
+    return EXT_I32 | EXT_U32;
+  }
+  if (ins.str == "i32" || ins.str == "i16") {
     return EXT_I32;
   }
   return if (ins.str == "u32") { EXT_U32 } else { 0 };
@@ -6334,7 +6352,7 @@ function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
 }
 
 function low_wrap(ins: SInst): boolean {
-  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8");
+  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16");
 }
 
 function low_half_binary(op: string): boolean {
@@ -6372,6 +6390,9 @@ function low_wrap_bits(ins: SInst): i32 {
   if (ins.str == "int_cast:u8") {
     return 8;
   }
+  if (ins.str == "int_cast:u16" || ins.str == "int_cast:i16") {
+    return 16;
+  }
   return 32;
 }
 
@@ -6400,19 +6421,16 @@ function constant_bits(ins: SInst): i32 {
   return 64;
 }
 
-// The low bits of operand `k` that a store of a byte or a 4-byte element
-// writes, or 0. An append takes its element as operand 1.
+// The low bits of operand `k` that a store of a packed element writes, or 0.
+// An append takes its element as operand 1.
 function stored_bits(ins: SInst, k: i32): i32 {
   let mark = ins.str;
   if (ins.kind_tag == RT_CALL && k == 1 && ins.str.starts_with("arr_push")) {
-    mark = if (ins.str.ends_with("_u8")) { "u8" } else if (ins.str.ends_with("_u32")) { "i32" } else { "" };
+    mark = if (ins.str.ends_with("_u8")) { "u8" } else if (ins.str.ends_with("_u16")) { "u16" } else if (ins.str.ends_with("_u32")) { "i32" } else { "" };
   } else if (!(ins.kind_tag == ST_AT && k == 1 || ins.kind_tag == ARR_ST && k == 2)) {
     return 0;
   }
-  if (mark == "u8") {
-    return 8;
-  }
-  return if (mark == "i32" || mark == "u32") { 32 } else { 0 };
+  return mark_bits(mark);
 }
 
 // The low result bits of arithmetic and logic depend only on the same

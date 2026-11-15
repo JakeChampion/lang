@@ -397,6 +397,7 @@ symbol) wrapped the same way, or stays on the `.append()` path that `str_bytes`
 value's own pointer and nothing more. What that pointer points at is the
 representation's business (#8799): an array is a box whose word 0 is the
 length, with the elements after it. A `u8[]` holds one byte for each element.
+A `u16[]` and an `i16[]` hold 2 bytes for each element.
 An `i32[]`, a `u32[]`, a `char[]` and an `f32[]` hold 4 bytes for each
 element. An `f32[]` element holds the bits of the value. The other arrays hold
 one word for each element. So code that does

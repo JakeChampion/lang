@@ -1,0 +1,17 @@
+// A conversion to u16 or i16 needs `as`. An integer keeps its low 16 bits.
+// A float truncates to 32 bits first, as for a u8, and then keeps 16.
+
+function i32_of(n: i32): i32 { return n; }
+function i64_of(n: i64): i64 { return n; }
+function f64_of(n: f64): f64 { return n; }
+
+function main(): i32 {
+  print(f"{i32_of(70000) as u16} {i32_of(40000) as i16} {i32_of(-1) as u16} {i32_of(-40000) as i16}");
+  print(f"{i64_of(4294901761) as u16} {i64_of(4294934528) as i16} {(4294967295u32 as u16) as i16}");
+  let neg: i16 = i32_of(-1) as i16;
+  let pos: u16 = i32_of(65535) as u16;
+  print(f"{neg as u16} {pos as i16} {neg as u32} {pos as u8} {neg as i64}");
+  print(f"{f64_of(70000.7) as u16} {f64_of(-3.9) as i16} {f64_of(40000.0) as i16}");
+  print(f"{(pos as f64) / 2.0} {(neg as f32) * 2.0}");
+  return 0;
+}

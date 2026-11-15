@@ -742,6 +742,8 @@ func New() *Interp {
 	i.Builtins["__arr_set_len"] = &Builtin{Fn: builtinArrSetLen}
 	registerRawMemory(i)
 	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}
+	i.Builtins["__alloc_u16"] = &Builtin{Fn: builtinAllocFilled("__alloc_u16", Number(0))}
+	i.Builtins["__alloc_i16"] = &Builtin{Fn: builtinAllocFilled("__alloc_i16", Number(0))}
 	i.Builtins["__alloc_i64"] = &Builtin{Fn: builtinAllocFilled("__alloc_i64", Number(0))}
 	i.Builtins["__alloc_f64"] = &Builtin{Fn: builtinAllocFilled("__alloc_f64", Float{V: 0, Width: 64})}
 	i.Builtins["__alloc_bool"] = &Builtin{Fn: builtinAllocFilled("__alloc_bool", Bool(false))}

@@ -125,6 +125,17 @@ pub function display_owner(name: string): string {
   return name;
 }
 
+// The types that display_owner shows with the `to_string` of `owner`.
+pub function displayed_by(owner: string): string[] {
+  let out: string[] = [];
+  for t in ["u16", "i16"] {
+    if (display_owner(t) == owner) {
+      out = out.append(t);
+    }
+  }
+  return out;
+}
+
 pub function t_u16(): Type {
   return TypeI32 { width: 16, unsigned: true, is_char: false, polymorphic: false };
 }

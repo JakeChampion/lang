@@ -8646,7 +8646,7 @@ function checked_alloc_length(args: Value[]): Value {
   return v_int(n as i32);
 }
 
-const CALL_FUNC_TARGS_SET: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
+const CALL_FUNC_TARGS_SET: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_u16", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
 
 const CALL_FUNC_TARGS_SET2: string[] = ["__clz32", "__ctz32", "__popcount32", "__clz64", "__ctz64", "__popcount64"];
 

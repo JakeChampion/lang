@@ -9,7 +9,7 @@ sidebar:
 
 | Category   | Members                                              |
 | ---------- | ---------------------------------------------------- |
-| Integers   | `i32` `i64` `u8` `u32` `u64` `usize`                  |
+| Integers   | `i16` `i32` `i64` `u8` `u16` `u32` `u64` `usize`      |
 | Floats     | `f32` `f64`                                          |
 | Text       | `string` (owned UTF-8), `str` (a borrowed string slice), `char` (a Unicode scalar value) |
 | Other      | `boolean` `void` (its value is `()`)                 |
@@ -20,8 +20,9 @@ sidebar:
 `usize` is target-aware: 4 bytes on wasm32, 8 on arm64 and x86-64.
 Use it for "size of a thing in memory" semantics.
 
-There is no `i8`, `i16`, `u16` or `isize`: `i32` and `u32` cover that
-ground, and `u8` is the byte type.
+There is no `i8` or `isize`: `i32` covers that ground, and `u8` is the byte
+type. A `u16[]` and an `i16[]` hold 2 bytes for each element, so a table of
+16-bit values takes half the memory of an `i32[]`.
 
 ## Integer arithmetic
 
@@ -291,7 +292,9 @@ Numeric conversions are implicit when they preserve every source value:
 | Source | Destinations |
 | ------ | ------------ |
 | `i32` | `i64` |
-| `u8` | `u32`, `u64`, `i32`, `i64` |
+| `u8` | `u16`, `i16`, `u32`, `u64`, `i32`, `i64` |
+| `u16` | `u32`, `u64`, `i32`, `i64` |
+| `i16` | `i32`, `i64` |
 | `u32` | `u64`, `i64` |
 | `f32` | `f64` |
 

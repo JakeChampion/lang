@@ -651,6 +651,20 @@ pub function is_u8(t: typeinfo.Type): boolean {
   return false;
 }
 
+pub function is_u16(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return i.width == 16 && i.unsigned;
+  }
+  return false;
+}
+
+pub function is_i16(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return i.width == 16 && !i.unsigned;
+  }
+  return false;
+}
+
 pub function is_u32(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.width == 32 && i.unsigned && !i.is_char;
@@ -686,7 +700,7 @@ pub function is_usize(t: typeinfo.Type): boolean {
 }
 
 pub function is_unsigned_int(t: typeinfo.Type): boolean {
-  return is_u8(t) || is_u32(t) || is_u64(t) || is_usize(t);
+  return is_u8(t) || is_u16(t) || is_u32(t) || is_u64(t) || is_usize(t);
 }
 
 pub function is_f64(t: typeinfo.Type): boolean {
@@ -708,7 +722,7 @@ pub function is_float(t: typeinfo.Type): boolean {
 }
 
 pub function is_integer(t: typeinfo.Type): boolean {
-  return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
+  return is_i32(t) || is_u8(t) || is_u16(t) || is_i16(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
 }
 
 pub function reference(t: typeinfo.Type): boolean {
@@ -1258,7 +1272,7 @@ function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
   if (ins.str != "" && (!is_usize(result) || ins.imm != 0)) {
     return "narrow constant carries text";
   }
-  if (is_u8(result) && (ins.imm < 0 || ins.imm > 255)) {
+  if (is_u8(result) && (ins.imm < 0 || ins.imm > 255) || is_u16(result) && (ins.imm < 0 || ins.imm > 65535) || is_i16(result) && (ins.imm < -32768 || ins.imm > 32767)) {
     return "integer constant range";
   }
   return "";
@@ -2646,6 +2660,12 @@ function leaf_key(t: typeinfo.Type): string {
   if (is_u8(t)) {
     return "u8";
   }
+  if (is_u16(t)) {
+    return "u16";
+  }
+  if (is_i16(t)) {
+    return "i16";
+  }
   if (is_u32(t)) {
     return "u32";
   }
@@ -2891,7 +2911,7 @@ function lanes_result(op: string, t: typeinfo.Type): typeinfo.Type {
 }
 
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
-  if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand) || typeinfo.is_lanes(operand))) {
+  if (op == "-" && (is_i16(operand) || is_i32(operand) || is_i64(operand) || is_float(operand) || typeinfo.is_lanes(operand))) {
     return operand;
   }
   if (op == "!" && is_bool(operand)) {

@@ -273,8 +273,8 @@ Append updates the actual length only after initializing the next element.
 
 The typed `array_reserve` operation requires an owned scalar array and an i32
 capacity. Physical lowering keeps the layout in each backend: packed bytes,
-4-byte integers or word slots on native targets, and the appropriate element
-stride on Wasm.
+2-byte or 4-byte integers or word slots on native targets, and the appropriate
+element stride on Wasm.
 Negative capacities and Wasm byte-size overflow abort before allocation.
 Ownership planning accounts for the output array through its loop phi.
 

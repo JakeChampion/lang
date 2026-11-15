@@ -1,9 +1,7 @@
 function __fern_arr_concat(pa: usize, src: usize, nb: i32, width: i32): i32[] {
   let size = 8;
-  if (width == 8) {
-    size = 1;
-  } else if (width == 32) {
-    size = 4;
+  if (width == 8 || width == 16 || width == 32) {
+    size = width / 8;
   }
   let per = 8 / size;
   let na = __load_i32(pa);
