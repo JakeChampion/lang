@@ -423,7 +423,7 @@ function painted(t_in: Text, o: Opts, body: string, a: u8[], b: u8[]): Text {
       out = line0(o.pal.get(color.CONTEXT), " ", rest);
     } else {
       pre += 1;
-      out = line0("", "", line);
+      out = line0(o.pal.get(color.CONTEXT), "", line);
     }
     let (t1, k) = call(t);
     t = push(t1, k, out, true);
