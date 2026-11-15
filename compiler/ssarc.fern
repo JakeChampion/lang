@@ -804,9 +804,35 @@ function drop_children(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, 
     r = drop_tuple_fields(r, slot, tup, scratch, f);
   }
   if (named(t) != "") {
+    let leaves = childless_shapes(t, f);
+    for shape in leaves {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.op_variant_is(shape));
+      r = emit(r, ir.op_if(0));
+      r = emit(r, ir.op_else());
+    }
     r = helper(r, slot, drop_helper_name(t));
+    for shape in leaves {
+      r = emit(r, ir.op_end());
+    }
   }
   return r;
+}
+
+// The shapes of the boxes of `t` whose fields hold no count. The drop helper
+// has nothing to do for such a box, so the drop does not call it. A variant
+// with no field is a static box that a uniqueness test refuses.
+function childless_shapes(t: typeinfo.Type, f: ssasem.Func): string[] {
+  let out: string[] = [];
+  if (typeinfo.union_name(t) == "" || enum_layout(f, t) != semrecords.layout_variant() || ssasem.has_finalizer(f, t)) {
+    return out;
+  }
+  for v in variants_of(t, f) {
+    if (semrecords.inhabited(v) && v.fields.len() > 0 && !fields_have_children(v.fields, f)) {
+      out = out.append(member_shape(f, t, v.name));
+    }
+  }
+  return if (out.len() <= 2) { out } else { [] };
 }
 
 function drop_value(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
@@ -897,9 +923,11 @@ function self_tail_field(v: semrecords.Variant, t: typeinfo.Type): i32 {
   return at;
 }
 
+// The loop of the chain drop does not call the finalizer of each next node,
+// so an enum with a `drop` takes the drop of each field.
 function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
-  if (e.layout == semrecords.layout_option()) {
+  if (e.layout == semrecords.layout_option() || ssasem.has_finalizer(f, t)) {
     return false;
   }
   for v in e.variants {
