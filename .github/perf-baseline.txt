@@ -103,7 +103,7 @@ x86_64/struct_drop.ir	199020504
 x86_64/tokenize.text	1294
 x86_64/tokenize.ir	31710112
 x86_64/utf8_ingest_unchecked.text	8363
-x86_64/utf8_ingest_unchecked.ir	2113479
+x86_64/utf8_ingest_unchecked.ir	2138278
 x86_64/utf8_ingest_validated.text	9061
 x86_64/utf8_ingest_validated.ir	5122278
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
