@@ -7013,7 +7013,7 @@ function ssa_read_fixed_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   return 7;
 }
 
-function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean, cold: i32[], words: i32[]): ssafixed.Table {
+function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean, cold: i32[], words: i32[], deny: i64): ssafixed.Table {
   let masks: i32[] = [];
   for b in f.blocks {
     for ins in b.insts {
@@ -7028,7 +7028,7 @@ function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, ex
     }
     masks = masks.append(7);
   }
-  return ssafixed.with_clobbers(ssafixed.table(6, 3, masks), 0, ssa_nregs(), ssa_cold_clobbers(cold));
+  return ssafixed.with_deny(ssafixed.with_clobbers(ssafixed.table(6, 3, masks), 0, ssa_nregs(), ssa_cold_clobbers(cold)), deny);
 }
 
 // Result word n is in rdx, rcx or r11: bit 1, 0 or 2 of the table from rcx.
@@ -7184,15 +7184,15 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, ops: ir.Op[], s: asmcore.Emit
   let floats = ssa.float_values(f, [], false);
   let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
-  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }

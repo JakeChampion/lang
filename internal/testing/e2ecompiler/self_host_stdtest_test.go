@@ -92,6 +92,19 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // -harden a released block is zero, so a read of released storage that the
 // release build does not show gives a failed assertion or a hang here.
 func TestSelfHostStdTestHarden(t *testing.T) {
+	stdTestVerdictUnder(t, "under -harden", []string{"-harden"}, nil)
+}
+
+// Each std/test program must give the same verdict when the allocator has
+// one integer register, rcx. Each other integer value is then in a frame
+// slot, and each read of one goes through a scratch register. An emitter
+// that reads an operand to a scratch register that holds a different
+// operand gives a crash or a failed assertion here.
+func TestSelfHostStdTestFewRegisters(t *testing.T) {
+	stdTestVerdictUnder(t, "with FERN_SSA_DENY=16319", nil, []string{"FERN_SSA_DENY=16319"})
+}
+
+func stdTestVerdictUnder(t *testing.T, what string, flags, env []string) {
 	cli := buildSelfHostCLI(t)
 	cases := selfHostStdTestShard(t, append(selfHostStdTestCases(t, false), selfHostStdTestCases(t, true)...))
 	t.Run("cases", func(t *testing.T) {
@@ -99,8 +112,9 @@ func TestSelfHostStdTestHarden(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				bin := filepath.Join(t.TempDir(), tc.name)
-				build := runX86_64Bin(cli.runner, cli.bin, "-harden", "-target", "x86-64-linux", "-o", bin, tc.src, cli.stdlib)
-				build.Env = childEnv()
+				args := append(append([]string{}, flags...), "-target", "x86-64-linux", "-o", bin, tc.src, cli.stdlib)
+				build := runX86_64Bin(cli.runner, cli.bin, args...)
+				build.Env = append(childEnv(), env...)
 				var log []byte
 				if err := e2eharness.WithBuildMemoryMB(1024, func() (err error) { log, err = build.CombinedOutput(); return }); err != nil {
 					t.Fatalf("self-host compile failed: %v\n%s", err, log)
@@ -109,7 +123,7 @@ func TestSelfHostStdTestHarden(t *testing.T) {
 				out, _ := stdTestOutput(run)
 				exit := run.ProcessState.ExitCode()
 				if wantFail := tc.name == "synthetic_fail"; (exit != 0) != wantFail {
-					t.Errorf("exit code %d under -harden\n%s", exit, out)
+					t.Errorf("exit code %d %s\n%s", exit, what, out)
 				}
 			})
 		}

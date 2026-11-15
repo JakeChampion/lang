@@ -126,7 +126,25 @@ times and its op and slot counts. `FERN_SSA_ALLOC=<function>` prints that
 function's register form, each block with its position and whether it is
 cold, each call with its cold kind, and each value's interval, spill weight
 and home (`ssa.print_alloc`). Nothing about the emitted program changes
-with it. `-backend ssa` names the register path explicitly and is
+with it.
+
+`FERN_SSA_DENY=<mask>` keeps the allocator off each register whose bit is
+set, on x86-64 and on arm64. The bit of a register is its allocator index.
+On x86-64 the integer registers have the indexes 0 to 13:
+
+- 0 to 5: `rax`, `rsi`, `rdi`, `r8`, `r9`, `r10`.
+- 6 to 8: `rcx`, `rdx`, `r11`.
+- 9 to 13: the saved registers.
+
+The float registers have the indexes 14 to 26. A denied register is still a
+scratch register, and it still carries an argument or a result.
+
+The mask changes the emitted program and not its behaviour. A test runs one
+program with different masks and compares the results. The mask 16383 puts
+each integer value in a frame slot, and 16319 leaves `rcx` as the only
+integer register. An emitter that reads an operand to a scratch register
+that holds a different operand shows as a different result
+(`docs/ssa-log/2026-11-15-e-a-compare-from-memory-keeps-its-base.md`). `-backend ssa` names the register path explicitly and is
 byte-identical to omitting the flag; `-backend flat` is refused on the native
 ISAs and names wasm's one emitter.
 
