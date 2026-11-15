@@ -138,7 +138,7 @@ var interpSlowStdTests = map[string]bool{
 	"wavpack_input": true, "wavpack_input_boundary": true, "wavpack_file": true, "wavpack_file_boundary": true,
 	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
 	"vorbis": true, "vorbis_kernel": true, "vorbis_boundary": true,
-	"vorbis_file": true, "vorbis_input": true, "vorbis_seek": true,
+	"vorbis_file": true, "vorbis_input": true, "vorbis_seek": true, "vorbis_seek_view": true,
 	// Seek boundaries take 65 seconds. Exact seek smoke stays in the interpreter gate.
 	"vorbis_seek_boundary": true,
 	// Full MP4 corpora exceed a minute. Independent M4A smoke stays here.
@@ -453,6 +453,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"alac_boundary", langSrcAbs(t, "tests/stdlib/alac_boundary_test.fern"), ""},
 		{"alac_smoke", langSrcAbs(t, "tests/stdlib/alac_smoke_test.fern"), ""},
 		{"vorbis_seek", langSrcAbs(t, "tests/stdlib/vorbis_seek_test.fern"), ""},
+		{"vorbis_seek_view", langSrcAbs(t, "tests/stdlib/vorbis_seek_view_test.fern"), ""},
 		{"vorbis_seek_boundary", langSrcAbs(t, "tests/stdlib/vorbis_seek_boundary_test.fern"), ""},
 		{"vorbis_seek_smoke", langSrcAbs(t, "tests/stdlib/vorbis_seek_smoke_test.fern"), ""},
 		{"vorbis_file", langSrcAbs(t, "tests/stdlib/vorbis_file_test.fern"), ""},

@@ -119,12 +119,12 @@ function hash_args(argv: string[]): HashArgs {
   return a;
 }
 
-// Prints the name of the object with `body`, and writes it choice `-w` is set.
-// Without `--literally`, the kind is one of the four, and a commit, a tree
-// or a tag has the form that fsck checks.
+// Prints the name of the object with `body`, and writes it when `-w` is set.
+// The kind is one of the four. Without `--literally`, a commit, a tree or
+// a tag has the form that fsck checks.
 function hash_one(a: HashArgs, repo: refs.Repo[], body: u8[]): i32 {
   let algo = if (repo.len() > 0) { repo[0].width } else { objects.SHA1 };
-  if (!a.literally && !objects.is_kind(a.kind)) {
+  if (!objects.is_kind(a.kind)) {
     return fatal("invalid object type \"" + a.kind + "\"");
   }
   if (!a.literally) {
@@ -435,7 +435,7 @@ function committish(r: refs.Repo, p: RevParse, name: string): (RevParse, string,
   return (RevParse { ...p, store: named.store }, named.hash, named.died.len() > 0);
 }
 
-// `A..B`, `A...B`, `..B` and `A..`: true choice `arg` is such a range of
+// `A..B`, `A...B`, `..B` and `A..`: true when `arg` is such a range of
 // two revisions, which it prints.
 function try_range(r: refs.Repo, p_in: RevParse, arg: string): (RevParse, boolean) {
   let p = p_in;
@@ -478,7 +478,7 @@ function try_range(r: refs.Repo, p_in: RevParse, arg: string): (RevParse, boolea
   return (p, true);
 }
 
-// `A^@`, `A^!` and `A^-N`: true choice `arg` is such a revision, which it
+// `A^@`, `A^!` and `A^-N`: true when `arg` is such a revision, which it
 // prints.
 function try_parents(r: refs.Repo, p_in: RevParse, arg: string): (RevParse, boolean) {
   let p = p_in;
@@ -658,7 +658,7 @@ function size_column(st: store.Store, e: objects.TreeEntry): (store.Store, strin
   return (got.store, " " + size.pad_start_str(7, " "));
 }
 
-// The lines that wait, with one more: `line`, a tab choice `line` has text,
+// The lines that wait, with one more: `line`, a tab when `line` has text,
 // and the path, and the end of the line. A long text goes to the standard
 // output, so the lines that wait stay short.
 function ls_out(own out: u8[], line: string, path: u8[], end: u8): u8[] {
@@ -774,7 +774,7 @@ function ls_line(own l: Listing, e: objects.TreeEntry, path: u8[], o: LsOpts): L
 }
 
 // True if one of `items` is the path `path`, or is below the directory
-// `path` choice the entry is a tree: `match_entry` of git.
+// `path` when the entry is a tree: `match_entry` of git.
 function item_matches(items: string[], path: u8[], is_tree: boolean): boolean {
   for item in items {
     if (item.len() >= path.len() && prefix_bytes(item, path)) {
@@ -820,7 +820,7 @@ function prefix_of(bytes: u8[], text: string): boolean {
   return true;
 }
 
-// True if the listing goes into the tree `path`: with `-r`, or choice an
+// True if the listing goes into the tree `path`: with `-r`, or when an
 // item is below it: `show_recursive` of git.
 function goes_into(o: LsOpts, path: u8[]): boolean {
   if (o.recurse) {
@@ -986,7 +986,7 @@ function ls_tree(argv: string[]): i32 {
 
 // ---- log ----
 
-// The count in `text`, or -1 choice it is not a count.
+// The count in `text`, or -1 when it is not a count.
 function log_number(text: string): i32 {
   let n = 0;
   for i in 0..text.len() {
@@ -1074,7 +1074,7 @@ function stat_value(d: patch.Opts, v: string): patch.Opts {
 }
 
 // Reads the option of the diff at `i`, and gives the count of arguments
-// that it takes, or 0 choice it is not an option of the diff.
+// that it takes, or 0 when it is not an option of the diff.
 function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
   let x = argv[i];
   let d = o.patch;
@@ -1205,7 +1205,7 @@ function color_bool(c: config.Config, name: string, v: string): i32 {
   return if (c.flag(name, false)) { 2 } else { 0 };
 }
 
-// True choice the output has colors: auto gives colors to a terminal.
+// True when the output has colors: auto gives colors to a terminal.
 function wants_color(choice: i32): boolean {
   if (choice != 2) {
     return choice == 1;
@@ -1272,7 +1272,7 @@ function diff_algorithm(a: linediff.Options, name: string): linediff.Options {
 }
 
 // Reads the option at `i`, and gives the count of arguments that it takes,
-// or 0 choice it is not an option of log.
+// or 0 when it is not an option of log.
 function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (LogOpts, GrepArgs, i32) {
   let o = o_in;
   let g = g_in;
@@ -1492,8 +1492,8 @@ function pattern_matches(pattern: string, name: string): boolean {
 // `--clear-decorations` turns off the default set.
 struct DecorationFilter { include: string[], exclude: string[], config_exclude: string[], clear: boolean }
 
-// True choice the filter shows the ref `name`: `ref_filter_match` of git,
-// with the default set of git 2.43 choice no pattern is given.
+// True when the filter shows the ref `name`: `ref_filter_match` of git,
+// with the default set of git 2.43 when no pattern is given.
 function decorates(f: DecorationFilter, name: string): boolean {
   for p in f.exclude {
     if (pattern_matches(p, name)) {
@@ -1542,7 +1542,7 @@ function decoration_kind(name: string): i32 {
 }
 
 // The decorations of each commit: the refs that name it, as `git log`
-// shows them, with `HEAD -> BRANCH` choice HEAD names a branch of the
+// shows them, with `HEAD -> BRANCH` when HEAD names a branch of the
 // commit. `full` keeps the whole names of the refs.
 function decorations_of(r: refs.Repo, s: store.Store, full: boolean, f: DecorationFilter): (store.Store, Map[string, log.Decoration[]]) {
   let by: Map[string, log.Decoration[]] = Map { };
@@ -1701,11 +1701,7 @@ function log_items(r: refs.Repo, args: string[]): Result[string[], string] {
   return Ok(items);
 }
 
-// Adds the commits that `name` gives to the walk: a range, the shorthands
-// for parents, an excluded commit, or one commit. The second value is
-// false choice `name` is no revision, and the third is the message of git
-// choice it stops.
-// The commit that `text` names, or "", and the message of git choice it
+// The commit that `text` names, or "", and the message of git when it
 // stops.
 function log_commit(r: refs.Repo, w: revwalk.Walk, text: string): (revwalk.Walk, string, string) {
   let named = rev.parse_with(r, w.g.store, text, rev.COMMITTISH);
@@ -1718,6 +1714,10 @@ function log_commit(r: refs.Repo, w: revwalk.Walk, text: string): (revwalk.Walk,
   return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: c.store } }, c.hash, "");
 }
 
+// Adds the commits that `name` gives to the walk: a range, the shorthands
+// for parents, an excluded commit, or one commit. The second value is
+// false when `name` is no revision, and the third is the message of git
+// when it stops.
 function log_rev(r: refs.Repo, w_in: revwalk.Walk, name: string, excluded: boolean, dashdash: boolean): (revwalk.Walk, boolean, string) {
   let w = w_in;
   if (w.opts.reflog_walk) {
@@ -1869,7 +1869,7 @@ function ref_option(x: string): string {
 // The state of the output of log: the graph, and whether a commit is shown
 // and its text had no line end at its end.
 // `follow` is the path that `--follow` follows now.
-// `hidden` is true choice the last commit gave no text.
+// `hidden` is true when the last commit gave no text.
 struct Shown { graph: graph.Graph, any: boolean, missing: boolean, follow: string, hidden: boolean }
 
 // The padding of the graph before a line, or "" with no graph.
@@ -2008,6 +2008,25 @@ function graph_parents(w_in: revwalk.Walk, h: string, first_parent: boolean): (r
   return (w, out);
 }
 
+// A commit of the log, with its parents in the graph when the log has a
+// graph.
+struct LogItem { hash: string, parents: string[] }
+
+function log_item(w: revwalk.Walk, h: string, o: LogOpts): (revwalk.Walk, LogItem) {
+  if (!o.graph || h.len() == 0) {
+    return (w, LogItem { hash: h, parents: [] });
+  }
+  let (after, parents) = graph_parents(w, h, o.walk.first_parent);
+  return (after, LogItem { hash: h, parents: parents });
+}
+
+// The next commit of the walk. Its parents come before a lookahead marks
+// later commits as shown.
+function log_next(w_in: revwalk.Walk, o: LogOpts): (revwalk.Walk, LogItem) {
+  let (w, h) = revwalk.next(w_in);
+  return log_item(w, h, o);
+}
+
 // The mark of a commit before its name, from its flags `f`:
 // `get_revision_mark` of git.
 function revision_mark(o: LogOpts, f: i32): string {
@@ -2139,7 +2158,8 @@ function reflog_walk(r: refs.Repo, w_in: revwalk.Walk, o: LogOpts, names: string
     let n = (l.entries.len() - 1 - l.at).to_string();
     let inside = if (o.date_explicit) { date.show(e.time, e.zone, o.dates) } else { n };
     let line = log.ReflogLine { selector: l.name + "@{" + inside + "}", short: short_ref(l.name) + "@{" + inside + "}", message: e.message, who: e.who };
-    let (w2, text, after) = log_show(w, e.new, o, decorations, least, sh, [line]);
+    let (w3, item) = log_item(w, e.new, o);
+    let (w2, text, after) = log_show(w3, item, o, decorations, least, sh, [line], []);
     w = w2;
     sh = after;
     if (after.hidden) {
@@ -2155,8 +2175,10 @@ function reflog_walk(r: refs.Repo, w_in: revwalk.Walk, o: LogOpts, names: string
   return 0;
 }
 
-// The text of the commit `h`, with the graph.
-function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[string, log.Decoration[]], least: i32, sh_in: Shown, reflog: log.ReflogLine[]): (revwalk.Walk, string, Shown) {
+// The text of a commit, with the graph. `following` holds the commits
+// that the log shows next, as far as the lookahead goes.
+function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Map[string, log.Decoration[]], least: i32, sh_in: Shown, reflog: log.ReflogLine[], following: LogItem[]): (revwalk.Walk, string, Shown) {
+  let h = item.hash;
   let w = w_in;
   let sh = Shown { ...sh_in, hidden: false };
   let (g, n) = walk.node(w.g, h);
@@ -2169,10 +2191,10 @@ function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[st
   let f = revwalk.flag(w, h);
   let mark = revision_mark(o, f);
   if (o.graph) {
-    let (w1, ips) = graph_parents(w, h, o.walk.first_parent);
-    w = w1;
+    let next = if (following.len() > 0) { following[0].hash } else { "" };
+    let next_root = following.len() > 1 && following[0].parents.len() == 0;
     let g2 = graph.Graph { ...sh.graph, mark: if ((f & revwalk.BOUNDARY) != 0) { "o" } else { mark } };
-    sh = Shown { ...sh, graph: graph.update(g2, h, ips) };
+    sh = Shown { ...sh, graph: graph.update(g2, h, item.parents, next, next_root) };
   }
   let (w2, ps) = revwalk.parents(w, h);
   w = w2;
@@ -2236,7 +2258,7 @@ function read_mailmap(r: refs.Repo, s: store.Store): mailmap.Mailmap {
   return m;
 }
 
-// The commit graph of the repository, or none choice the configuration
+// The commit graph of the repository, or none when the configuration
 // turns it off or the history of the store is not that of its objects:
 // a shallow clone, grafts, or replace refs (`commit_graph_compatible`).
 function commit_graph(r: refs.Repo, s: store.Store): commitgraph.Graph {
@@ -2459,7 +2481,7 @@ function log_command(argv: string[]): i32 {
     return fatal("Failed to traverse parents of commit " + w.failed);
   }
   if (o.reverse && o.graph) {
-    return fatal("options '--reverse' and '--graph' cannot be used together");
+    return fatal("options '--graph' and '--reverse' cannot be used together");
   }
   let needs_shorts = o.abbrev_commit || o.form != "raw" && o.form != "oneline";
   if (needs_shorts) {
@@ -2482,26 +2504,33 @@ function log_command(argv: string[]): i32 {
   let candidates: string[] = [];
   let boundary: string[] = [];
   let at_boundary = false;
+  // The commits after the current one, with their parents in the graph,
+  // for the visual roots of the graph.
+  let following: LogItem[] = [];
   while (true) {
-    let h = "";
+    let item = LogItem { hash: "", parents: [] };
     if (at_boundary) {
       if (boundary.len() == 0) {
         break;
       }
-      h = boundary[0];
+      let (w0, b0) = log_item(w, boundary[0], o);
+      w = revwalk.with_flag(w0, b0.hash, revwalk.SHOWN);
+      item = b0;
       boundary = array.slice(boundary, 1, boundary.len());
-      w = revwalk.with_flag(w, h, revwalk.SHOWN);
     } else {
-      if (o.limit < 0 || count < o.limit) {
-        let (w1, next) = revwalk.next(w);
+      if (following.len() > 0) {
+        item = following[0];
+        following = array.slice(following, 1, following.len());
+      } else if (o.limit < 0 || count < o.limit) {
+        let (w1, next) = log_next(w, o);
         w = w1;
         if (w.failed.len() > 0) {
           put(buf);
           return fatal("Failed to traverse parents of commit " + w.failed);
         }
-        h = next;
+        item = next;
       }
-      if (h.len() == 0) {
+      if (item.hash.len() == 0) {
         if (!o.walk.boundary) {
           break;
         }
@@ -2525,7 +2554,7 @@ function log_command(argv: string[]): i32 {
       }
       count += 1;
       if (o.walk.boundary) {
-        let (w5, ps) = revwalk.parents(w, h);
+        let (w5, ps) = revwalk.parents(w, item.hash);
         w = w5;
         for p in ps {
           if ((revwalk.flag(w, p) & (revwalk.CHILD_SHOWN | revwalk.SHOWN)) == 0) {
@@ -2535,11 +2564,25 @@ function log_command(argv: string[]): i32 {
         }
       }
     }
+    let h = item.hash;
     if (o.reverse) {
       shown = shown.append(h);
       continue;
     }
-    let (w2, text, after) = log_show(w, h, o, decorations, least, sh, []);
+    let room = if (at_boundary) { 0 } else if (o.limit < 0) { 2 } else { (o.limit - count).min(2) };
+    while (o.graph && following.len() < room) {
+      let (w1, next) = log_next(w, o);
+      w = w1;
+      if (w.failed.len() > 0) {
+        put(buf);
+        return fatal("Failed to traverse parents of commit " + w.failed);
+      }
+      if (next.hash.len() == 0) {
+        break;
+      }
+      following = following.append(next);
+    }
+    let (w2, text, after) = log_show(w, item, o, decorations, least, sh, [], following);
     w = w2;
     sh = after;
     // A commit that gives no text does not count for `-n`.
@@ -2553,7 +2596,7 @@ function log_command(argv: string[]): i32 {
     }
   }
   for h in shown.reverse() {
-    let (w3, text, after) = log_show(w, h, o, decorations, least, sh, []);
+    let (w3, text, after) = log_show(w, LogItem { hash: h, parents: [] }, o, decorations, least, sh, [], []);
     w = w3;
     sh = after;
     buf = buf.concat(text.bytes());
@@ -2596,7 +2639,7 @@ const INDEX_PACK_USAGE: string = "usage: git index-pack [-v] [-o <index-file>] [
 struct PackArgs { stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, format: string, bad: string }
 
 // The number at the start of `text` in base 10, or in the base that the C
-// function `strtoul` gives for base 0 choice `c` is true: 0x for 16 and 0
+// function `strtoul` gives for base 0 when `c` is true: 0x for 16 and 0
 // for 8. The second value is the place after the digits.
 function number_of(text: string, c: boolean): (i64, i32) {
   let base: i64 = 10;
@@ -2711,7 +2754,7 @@ function index_names_of(a: PackArgs): Result[(string, string), string] {
 }
 
 // Writes the `.keep` file of the packfile, and gives what `--stdin` reports:
-// "keep" choice it wrote the file, or "pack".
+// "keep" when it wrote the file, or "pack".
 function kept(a: PackArgs, stem: string): Result[string, string] {
   if (!a.keeps) {
     return Ok("pack");

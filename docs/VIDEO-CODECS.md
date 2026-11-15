@@ -183,6 +183,11 @@ The cache retains at most 16 MiB of PPS payloads, without an exact process-memor
 Slice inspection copies at most 64 unescaped bytes, without a complete slice-payload copy.
 Returned packets contain canonical four-byte Annex B prefixes and an IDR flag, without assigned timestamps.
 
+AVC sequence-end and stream-end NAL units have empty payloads and follow a coded picture.
+Both markers remain in that picture's access unit. Sequence end requires IDR in the next access unit, through intervening prefix metadata.
+Stream end permits no subsequent NAL unit in the same reader. A separate bitstream requires a new reader.
+These checks follow H.264 clauses 7.3.2.5, 7.3.2.6, 7.4.1.2.2, and 7.4.1.2.3.
+
 The supported path requires matching parameter sets before each slice.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
