@@ -343,16 +343,35 @@ function test_zopfli(): test.TestOutcome {
   ]);
 }
 
+// The output of the decoder for `data`, as it gives it to its sink, and the
+// error or the members after it.
 function decode(data: u8[]): string {
   let h = gz.get_header(data, 0, true, 0, 0i64);
   if (h.method < 0) {
     return "refused " + gz.header_refusal(h.method, "f");
   }
-  let d = if (h.method == 257) { gz.unlzw(data, h.next, "f") } else { gz.infchk(data, h, "f", gz.defaults(), 0i64) };
-  if (d.error.len() > 0) {
-    return "skipping: " + d.error;
+  let empty: u8[] = [];
+  let got = cell_new(empty);
+  let out = (b: u8[]): Result[void, gz.Fail] => collect(got, b);
+  let feed = gz.memory_feed(data);
+  let r = if (h.method == 257) { gz.unlzw(gz.Feed { ...feed, at: h.next }, "f", out) } else { gz.infchk(feed, h, "f", gz.defaults(), 0i64, out) };
+  match (r) {
+    Ok(d) => {
+      if (d.error.len() > 0) {
+        return "skipping: " + d.error + " after " + hex.encode(got.get());
+      }
+      return "ok " + h.form.to_string() + " " + d.members.len().to_string() + " " + hex.encode(got.get()) + (if (d.warning.len() > 0) { " " + d.warning } else { "" });
+    },
+    Err(e) => {
+      return "abort: " + e.why;
+    }
   }
-  return "ok " + h.form.to_string() + " " + d.members.len().to_string() + " " + hex.encode(d.out) + (if (d.warning.len() > 0) { " " + d.warning } else { "" });
+  return "";
+}
+
+function collect(got: Cell[u8[]], b: u8[]): Result[void, gz.Fail] {
+  got.set(got.get().concat(b));
+  return Ok(());
 }
 
 function bytes_of(text: string): u8[] {
@@ -391,15 +410,15 @@ function test_decode(): test.TestOutcome {
     "ok 1 1 " + text,
     "ok 1 1 " + text + " warning: f: trailing junk was ignored",
     "ok -1 1 " + text,
-    "skipping: f: corrupted -- crc32 mismatch",
-    "skipping: f: corrupted -- length mismatch",
-    "skipping: f: corrupted -- adler32 mismatch",
-    "skipping: f: corrupted -- missing trailer",
-    "skipping: f: corrupted -- incomplete deflate data",
+    "skipping: f: corrupted -- crc32 mismatch after " + text,
+    "skipping: f: corrupted -- length mismatch after " + text,
+    "skipping: f: corrupted -- adler32 mismatch after " + text,
+    "skipping: f: corrupted -- missing trailer after " + text,
+    "skipping: f: corrupted -- incomplete deflate data after 68656c6c6f2068",
     "refused f empty",
     "refused f unrecognized format",
     "refused f unrecognized format",
-    "skipping: f: unknown lzw flags set",
+    "skipping: f: unknown lzw flags set after ",
   ]);
 }
 

@@ -86,6 +86,28 @@ A decompression of a name that does not exist tries the name with each
 compressed suffix of pigz (`.gz`, `.zz`, `.zip`, `.Z`, `.tgz` and the
 others).
 
+Each mode reads its input in parts and writes its output in parts, so the
+memory does not grow with the input.
+
+- Decompression, `-t` and `-l` read the input in parts of 256 KiB. The
+  deflate stream of `std/deflate` (`inflate_part`) keeps a window of
+  32 KiB, and it gives the output in parts of at most 1 MiB.
+- `-l` without `-t` reads the input to its end, for its length and its
+  last bytes.
+
+Two cases keep more:
+
+- `-R` reads the input in blocks, as pigz does. The port keeps the input
+  from the start of the current block, because the block ends at a hit of
+  the hash. Level 11 also keeps the 32 KiB before the block.
+- With `-lv`, the port keeps all of a zip file in memory, for the comment
+  of its central directory.
+
+When data does not decode, the standard output has the output before the
+error, as in pigz. For deflate data, that is the output of each symbol
+before the error. For compress data, it is each full buffer of 32 KiB. A
+file that does not decode is removed.
+
 ## The same bytes as pigz
 
 pigz writes what zlib 1.3 writes, in its own block layout. So the port has
@@ -128,9 +150,8 @@ The parent reads the input and writes the output of each job in
 order. After it writes the output of a job, it starts the next job. So the
 other jobs do not wait for the slowest one.
 
-`-R` reads all of its input
-first, because its blocks end where the hash of the input says. On macOS
-and on wasm32-wasi, `std/worker` runs the workers inline (#15584).
+On macOS and on wasm32-wasi, `std/worker` runs the workers inline
+(#15584).
 
 ## Speed
 
@@ -154,7 +175,15 @@ runs. So neither program got the four CPUs. Compare the CPU times.
 | `-d -p 1` | 0.39 | 0.38 | 0.31 | 0.30 |
 | `-d -p 4` | 0.44 | 0.42 | 0.44 | 0.33 |
 
-The port decompresses faster than pigz. In CPU time, it compresses 1.04
+The port decompresses faster than pigz.
+
+The decompression now reads and writes in parts. A later run used a corpus
+of 114 MB of the same kind, with `-d -p 1` and a load average near 2.
+There, pigz used 0.50 s of CPU time and 2.2 MB of memory. The port used
+0.23 s and 10 MB. The port that read all of its input used 0.26 s and
+150 MB.
+
+In CPU time, it compresses 1.04
 to 1.15 times slower with one process, and 1.13 to 1.53 times slower with
 four. With four processes, each worker copies its input and its output,
 and it starts with an empty heap. With one process, the port uses 1.6 MB
@@ -208,15 +237,8 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
   causes that "Speed" gives are not fixed. Level 11 is about 1.5 times
   slower than pigz.
 
-- The port reads all of the input before it decompresses, tests or lists,
-  and before a compression with `-R`. pigz reads these in parts.
-
-- When data does not decode, pigz writes the output that it decoded before
-  the error to the standard output. The port writes the members that it
-  decoded before the error.
-
-- Decompression of more than 2 GiB of output, which the arrays of Fern
-  cannot hold.
+- With `-lv`, the port keeps all of a zip file in memory, for the comment
+  of its central directory.
 
 ## Tests
 

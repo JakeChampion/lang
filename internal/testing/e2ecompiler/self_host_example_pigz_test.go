@@ -139,6 +139,15 @@ var pigzCases = []pigzCase{
 	pc("cat plain", "-dcf", "plain.gz"),
 	pc("cat junk", "-dcf", "junk.gz"),
 	pc("cat empty", "-dcf", "empty.gz"),
+	pc("stdout truncated", "-dc", "trunc.gz"),
+	pc("stdout truncated verbose", "-dcv", "trunc.gz"),
+	pc("stdout bad data", "-dc", "bad.gz"),
+	pc("stdout crc", "-dc", "crc.gz"),
+	pc("stdout lzw short", "-dc", "half.Z"),
+	pc("stdout lzw long short", "-dc", "longhalf.Z"),
+	pc("stdout lzw long", "-dc", "long.Z"),
+	pc("stdout zlib adler", "-dc", "ad.zz"),
+	pc("decompress truncated file", "-dk", "trunc.gz"),
 	pc("test truncated", "-t", "trunc.gz"),
 	pc("test crc", "-t", "crc.gz"),
 	pc("test length", "-t", "len.gz"),
@@ -270,7 +279,7 @@ func pigzInputs(t *testing.T, port func(dir string, args ...string) []byte) pigz
 	files["len.gz"] = flip(g, -4)
 	files["ad.zz"] = flip(files["z.zz"], -1)
 	files["bad.gz"] = flip(g, 30)
-	for _, name := range []string{"lines.Z", "lines9.Z"} {
+	for _, name := range []string{"lines.Z", "lines9.Z", "long.Z"} {
 		data, err := os.ReadFile(filepath.Join("../../../examples/pigz/testdata", name))
 		if err != nil {
 			t.Fatal(err)
@@ -280,6 +289,7 @@ func pigzInputs(t *testing.T, port func(dir string, args ...string) []byte) pigz
 	files["flags.Z"] = append([]byte{}, files["lines.Z"]...)
 	files["flags.Z"][2] = 0x70
 	files["half.Z"] = files["lines.Z"][:len(files["lines.Z"])/2]
+	files["longhalf.Z"] = files["long.Z"][:len(files["long.Z"])/2]
 	files["zd.zip"] = pigzZip(t, corpus[:50000], zip.Deflate)
 	files["zs.zip"] = pigzZip(t, []byte("stored\n"), zip.Store)
 	files["subgz/x.gz"] = files["x.gz"]

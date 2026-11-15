@@ -154,7 +154,7 @@ function zopfli_job(s: Settings, data: u8[], from: i32, len: i32, lens: i32[], m
     let n = if (part < lens.len()) { lens[part] } else { left };
     part += 1;
     left -= n;
-    out = out.concat(zopfli.block(s.zopts, data, window(start, pos), pos, n, left > 0 || more, s.setdict));
+    out = out.concat(zopfli.block(s.zopts, data, window(start as i64, pos as i64) as i32, pos, n, left > 0 || more, s.setdict));
     pos += n;
     if (left == 0) {
       break;
@@ -165,8 +165,8 @@ function zopfli_job(s: Settings, data: u8[], from: i32, len: i32, lens: i32[], m
 
 // The start of the 32 KiB window before `pos` that does not go before
 // `start`.
-function window(start: i32, pos: i32): i32 {
-  return if (pos - start > DICT) { pos - DICT } else { start };
+function window(start: i64, pos: i64): i64 {
+  return if (pos - start > DICT as i64) { pos - DICT as i64 } else { start };
 }
 
 // The rsyncable hash: a hit is where the 12-bit hash of the bytes so far is
@@ -244,26 +244,91 @@ pub function single(s: Settings, data: u8[]): u8[] {
   return out;
 }
 
-// single_compress with -R: a block ends after the last hash hit in it.
+// Input that a compression reads when it needs it: buf holds the input from
+// byte `base`. `read` gives up to n more bytes, and none at the end of the
+// input.
+pub struct Lazy {
+  buf: u8[],
+  base: i64,
+  ended: boolean,
+  read: (i32) => u8[],
+}
+
+pub function lazy_memory(data: u8[]): Lazy {
+  return Lazy { buf: data, base: 0i64, ended: true, read: (n: i32): u8[] => [] };
+}
+
+pub function lazy_reader(read: (i32) => u8[]): Lazy {
+  return Lazy { buf: [], base: 0i64, ended: false, read: read };
+}
+
+// The position after the last byte that `l` holds.
+function lazy_end(l: Lazy): i64 {
+  return l.base + l.buf.len() as i64;
+}
+
+// The input with up to `n` bytes after `at`: n bytes, or fewer at the end
+// of the input. It gives the count.
+function take(own l: Lazy, at: i64, n: i32): (Lazy, i32) {
+  while (!l.ended && lazy_end(l) < at + n as i64) {
+    let chunk = l.read((at + n as i64 - lazy_end(l)) as i32);
+    if (chunk.len() == 0) {
+      l = Lazy { ...l, ended: true };
+    } else {
+      l = Lazy { ...l, buf: l.buf.concat(chunk) };
+    }
+  }
+  let have = lazy_end(l) - at;
+  return (l, if (have < n as i64) { have as i32 } else { n });
+}
+
+// The input without the bytes before `at`.
+function forget(own l: Lazy, at: i64): Lazy {
+  let drop = (at - l.base) as i32;
+  if (drop <= 0) {
+    return l;
+  }
+  let rest = __bytes_into(__alloc_u8(l.buf.len() - drop), 0, l.buf, drop, l.buf.len() - drop);
+  return Lazy { ...l, buf: rest, base: at };
+}
+
+// single_compress with -R over all of `data`.
+function single_rsync(s: Settings, data: u8[]): u8[] {
+  let out: u8[] = [];
+  let all = cell_new(out);
+  single_rsync_to(s, lazy_memory(data), (b: u8[]): boolean => appended(all, b));
+  return all.get();
+}
+
+function appended(all: Cell[u8[]], b: u8[]): boolean {
+  all.set(all.get().concat(b));
+  return true;
+}
+
+// single_compress with -R: a block ends after the last hash hit in it. It
+// reads the input in blocks, as pigz does, and gives each block of output
+// to `write` until `write` gives false.
 // It keeps the branches of single_compress() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-function single_rsync(s: Settings, data: u8[]): u8[] {
+pub function single_rsync_to(s: Settings, own input: Lazy, write: (u8[]) => boolean): void {
   let z = zd.start(zd.new(), s.level, s.strategy);
-  let total = data.len();
   let block = s.block;
-  let out: u8[] = [];
-  let pos = 0;
+  let (l0, first) = take(input, 0i64, block);
+  let l = l0;
+  let pos = 0i64;
   let got = 0;
-  let more = if (total < block) { total } else { block };
-  let read = more;
+  let more = first;
+  let read = more as i64;
   let have = 0;
-  let reset = 0;
+  let reset = 0i64;
   let hash = RSYNCHIT;
   loop {
     if (got == 0) {
       got = more;
-      more = if (total - read < block) { total - read } else { block };
-      read += more;
+      let (l1, n) = take(l, read, block);
+      l = l1;
+      more = n;
+      read += more as i64;
     }
     let left = 0;
     if (s.rsync && got > 0) {
@@ -278,13 +343,15 @@ function single_rsync(s: Settings, data: u8[]): u8[] {
           got += left;
           more -= left;
           if (more == 0) {
-            more = if (total - read < block) { total - read } else { block };
-            read += more;
+            let (l1, n) = take(l, read, block);
+            l = l1;
+            more = n;
+            read += more as i64;
           }
         }
         left -= 1;
-        hash = (hash << 1 ^ data[scan] as i32) & RSYNCMASK;
-        scan += 1;
+        hash = (hash << 1 ^ l.buf[(scan - l.base) as i32] as i32) & RSYNCMASK;
+        scan += 1i64;
         if (hash == RSYNCHIT) {
           break;
         }
@@ -303,32 +370,33 @@ function single_rsync(s: Settings, data: u8[]): u8[] {
       z = zd.start(z, s.level, s.strategy);
       reset = pos;
     }
+    let at = (pos - l.base) as i32;
+    let bytes: u8[] = [];
     if (s.level > 9) {
-      out = out.concat(zopfli.block(s.zopts, data, window(reset, pos), pos, got, more > 0 || left > 0, s.setdict));
-      pos += got;
-      got = left;
-      if (more == 0 && got == 0) {
-        break;
-      }
-      continue;
-    }
-    z = zd.input(z, data, pos, got);
-    pos += got;
-    if (more > 0 || left > 0) {
-      let (b, _) = boundary(z, block, s.setdict, true);
-      z = b;
+      let from = window(reset, pos);
+      bytes = zopfli.block(s.zopts, l.buf, (from - l.base) as i32, at, got, more > 0 || left > 0, s.setdict);
     } else {
-      z = written(z, block, zd.FINISH);
+      z = zd.input(z, l.buf, at, got);
+      if (more > 0 || left > 0) {
+        let (b, _) = boundary(z, block, s.setdict, true);
+        z = b;
+      } else {
+        z = written(z, block, zd.FINISH);
+      }
+      let (r, out) = zd.take(z);
+      z = r;
+      bytes = out;
     }
-    let (r, bytes) = zd.take(z);
-    z = r;
-    out = out.concat(bytes);
+    pos += got as i64;
     got = left;
+    if (!write(bytes)) {
+      return;
+    }
+    l = forget(l, if (s.level > 9) { window(reset, pos) } else { pos });
     if (more == 0 && got == 0) {
       break;
     }
   }
-  return out;
 }
 
 // DEFLATE_WRITE: deflate with a fresh output buffer of `size` bytes until
@@ -373,83 +441,131 @@ pub function jobs(s: Settings, data: u8[]): Job[] {
   return rsync_jobs(s, data);
 }
 
-// The jobs of -R: each job ends after the last hash hit in the next block.
-// It keeps the branches of parallel_compress() of pigz in their order, to check against it.
-// fern-lint: allow cyclomatic-complexity
+// The jobs of -R over all of `data`.
 function rsync_jobs(s: Settings, data: u8[]): Job[] {
-  let total = data.len();
   let out: Job[] = [];
-  let frontier = if (total < s.block) { total } else { s.block };
-  let ns = 0;
-  let ne = frontier;
-  let hs = -1;
-  let he = -1;
-  let scan = 0;
-  let hash = RSYNCHIT;
-  let left = 0;
+  let (g0, l0) = rsync_start(s, lazy_memory(data));
+  let g = g0;
+  let l = l0;
   loop {
-    let cs = ns;
-    let ce = ne;
-    if (hs >= 0) {
-      ns = hs;
-      ne = he;
-      hs = -1;
-    } else {
-      ns = frontier;
-      ne = if (total - frontier < s.block) { total } else { frontier + s.block };
-      frontier = ne;
-    }
-    let lens: i32[] = [];
-    if (ce > cs) {
-      if (left == 0) {
-        let last = cs;
-        while (scan < ce) {
-          hash = (hash << 1 ^ data[scan] as i32) & RSYNCMASK;
-          scan += 1;
-          if (hash == RSYNCHIT) {
-            lens = lens.append(scan - last);
-            last = scan;
-          }
-        }
-        left = scan - last;
-        scan = ns;
-      }
-      let last = ns;
-      let room = s.block - (ce - cs);
-      if (room > ne - ns) {
-        room = ne - ns;
-      }
-      let end = ns + room;
-      while (scan < end) {
-        hash = (hash << 1 ^ data[scan] as i32) & RSYNCMASK;
-        scan += 1;
-        if (hash == RSYNCHIT) {
-          lens = lens.append(scan - last + left);
-          left = 0;
-          last = scan;
-        }
-      }
-      let n = (if (lens.len() == 0) { scan } else { last }) - ns;
-      if (n > 0) {
-        ce += n;
-        ns += n;
-        left = 0;
-      } else if (lens.len() > 0 && left > 0 && ne > ns) {
-        hs = ns;
-        he = ne;
-        ns = ce - left;
-        ne = ce;
-        ce -= left;
-      } else {
-        left = 0;
-      }
-    }
-    out = out.append(Job { from: cs, len: ce - cs, lens: lens });
-    if (ne <= ns) {
+    let (g1, l1, j) = rsync_next(s, g, l);
+    g = g1;
+    l = l1;
+    out = out.append(Job { from: j.from as i32, len: j.len, lens: j.lens });
+    if (j.last) {
       break;
     }
   }
   return out;
+}
+
+// The state of the jobs of -R between two jobs: the current block cs..ce,
+// the next block ns..ne, a block hs..he that waits, and the hash.
+pub struct RsyncJobs {
+  frontier: i64,
+  ns: i64,
+  ne: i64,
+  hs: i64,
+  he: i64,
+  scan: i64,
+  hash: i32,
+  left: i64,
+}
+
+// A job of -R: `len` bytes from `from` in the input, in parts of `lens`
+// bytes and a last part with the rest. `last` is true for the last job.
+pub struct RsyncJob {
+  from: i64,
+  len: i32,
+  lens: i32[],
+  last: boolean,
+}
+
+pub function rsync_start(s: Settings, own input: Lazy): (RsyncJobs, Lazy) {
+  let (l, n) = take(input, 0i64, s.block);
+  return (RsyncJobs { frontier: n as i64, ns: 0i64, ne: n as i64, hs: -1i64, he: -1i64, scan: 0i64, hash: RSYNCHIT, left: 0i64 }, l);
+}
+
+// The next job of -R: each job ends after the last hash hit in the next
+// block. It reads one block past the job.
+// It keeps the branches of parallel_compress() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function rsync_next(s: Settings, own g: RsyncJobs, own input: Lazy): (RsyncJobs, Lazy, RsyncJob) {
+  let l = input;
+  let RsyncJobs { frontier, ns, ne, hs, he, scan, hash, left } = g;
+  let block = s.block as i64;
+  let cs = ns;
+  let ce = ne;
+  if (hs >= 0i64) {
+    ns = hs;
+    ne = he;
+    hs = -1i64;
+  } else {
+    let (l1, n) = take(l, frontier, s.block);
+    l = l1;
+    ns = frontier;
+    ne = frontier + n as i64;
+    frontier = ne;
+  }
+  let lens: i32[] = [];
+  if (ce > cs) {
+    if (left == 0i64) {
+      let last = cs;
+      while (scan < ce) {
+        hash = (hash << 1 ^ l.buf[(scan - l.base) as i32] as i32) & RSYNCMASK;
+        scan += 1i64;
+        if (hash == RSYNCHIT) {
+          lens = lens.append((scan - last) as i32);
+          last = scan;
+        }
+      }
+      left = scan - last;
+      scan = ns;
+    }
+    let last = ns;
+    let room = block - (ce - cs);
+    if (room > ne - ns) {
+      room = ne - ns;
+    }
+    let end = ns + room;
+    while (scan < end) {
+      hash = (hash << 1 ^ l.buf[(scan - l.base) as i32] as i32) & RSYNCMASK;
+      scan += 1i64;
+      if (hash == RSYNCHIT) {
+        lens = lens.append((scan - last + left) as i32);
+        left = 0i64;
+        last = scan;
+      }
+    }
+    let n = (if (lens.len() == 0) { scan } else { last }) - ns;
+    if (n > 0i64) {
+      ce += n;
+      ns += n;
+      left = 0i64;
+    } else if (lens.len() > 0 && left > 0i64 && ne > ns) {
+      hs = ns;
+      he = ne;
+      ns = ce - left;
+      ne = ce;
+      ce -= left;
+    } else {
+      left = 0i64;
+    }
+  }
+  let next = RsyncJobs { frontier: frontier, ns: ns, ne: ne, hs: hs, he: he, scan: scan, hash: hash, left: left };
+  return (next, l, RsyncJob { from: cs, len: (ce - cs) as i32, lens: lens, last: ne <= ns });
+}
+
+// The input without the bytes before `at`, for the caller of rsync_next.
+pub function lazy_forget(own l: Lazy, at: i64): Lazy {
+  return forget(l, at);
+}
+
+// The bytes of `l` from `from` to `to`.
+pub function lazy_bytes(l: Lazy, from: i64, to: i64): u8[] {
+  let at = (from - l.base) as i32;
+  let n = (to - from) as i32;
+  return __bytes_into(__alloc_u8(n), 0, l.buf, at, n);
 }
 
 // The deflate data of the jobs of parallel_compress in data[start:], one for
@@ -503,11 +619,21 @@ function runs(s: Settings, data: u8[], all: Job[], first: i32, per: i32): u8[][]
 }
 
 function run_jobs(s: Settings, data: u8[], all: Job[], first: i32, end: i32): u8[] {
+  let some: Job[] = [];
+  for i in first..end {
+    some = some.append(all[i]);
+  }
+  return run_group(s, data, some, end < all.len());
+}
+
+// The deflate data of consecutive jobs. `more` is true when a job follows
+// the last of them.
+pub function run_group(s: Settings, data: u8[], all: Job[], more: boolean): u8[] {
   let z = zd.new();
   let out: u8[] = [];
-  for i in first..end {
+  for i in 0..all.len() {
     let j = all[i];
-    let (next, bytes) = job(z, s, data, j.from, j.len, j.lens, i < all.len() - 1);
+    let (next, bytes) = job(z, s, data, j.from, j.len, j.lens, more || i < all.len() - 1);
     z = next;
     out = out.concat(bytes);
   }
