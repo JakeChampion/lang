@@ -114,12 +114,13 @@ file that does not decode is removed.
 pigz writes what zlib 1.3 writes, in its own block layout. So the port has
 two parts:
 
-- `zdeflate.fern` is a port of the parts of zlib 1.3 deflate that pigz
-  uses: raw deflate, a window of 32 KiB, memLevel 8, the levels 0 to 9,
-  and two strategies, Huffman-only (`-H`) and RLE (`-U`). It keeps the
-  window, the hash chains, the symbol buffer and the tree builder of zlib.
-  It also keeps the room of the output buffer, because the stored blocks
-  and the flushes of zlib use it.
+- `std/deflate/zlib` is a port of zlib 1.3 deflate in the standard
+  library. pigz uses raw deflate, a window of 32 KiB, memLevel 8, the
+  levels 0 to 9, and two strategies, Huffman-only (`-H`) and RLE (`-U`).
+  The module keeps the window, the hash chains, the symbol buffer and the
+  tree builder of zlib. It also keeps the room of the output buffer,
+  because the stored blocks and the flushes of zlib use it.
+  `zlib_compress` of `std/deflate` uses the same module.
 
 - `layout.fern` is the block layout of pigz. One process (`-p 1`) writes one
   deflate stream, as `single_compress` does. More processes write the jobs
@@ -245,9 +246,10 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
 
 - `gz_test.fern`: the options, the environment variables, the names, the
   headers and trailers, the decoders and their messages, the list lines,
-  and the check combination. It also checks the output of `zdeflate`,
-  `zopfli` and the block layouts. The bytes that it expects come from zlib
-  1.3, from the zopfli of pigz 2.8, and from pigz 2.8.
+  and the check combination. It also checks the output of
+  `std/deflate/zlib`, `zopfli` and the block layouts. The bytes that it
+  expects come from zlib 1.3, from the zopfli of pigz 2.8, and from pigz
+  2.8.
   `TestSelfHostExamplePigzUnit` runs it on x86-64, arm64 and wasm32-wasi
   with the leak census.
 

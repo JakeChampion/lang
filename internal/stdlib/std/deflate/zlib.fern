@@ -1,7 +1,6 @@
-// Deflate as zlib 1.3 writes it, for the settings that pigz gives zlib: raw
-// deflate, a 32 KiB window, memLevel 8, each level from 0 to 9, and the
-// strategies of deflateParams. The output of pigz is the output of zlib, so
-// this port writes the same bytes as pigz.
+// Deflate as zlib 1.3 writes it: a 32 KiB window, memLevel 8, each level
+// from 0 to 9, and the strategies of deflateParams. A stream is raw deflate,
+// or a zlib stream after `zlib`. std/deflate and the pigz port use it.
 //
 // A stream is a Z. The caller sets the input with `input` and the room of
 // its output buffer in `avail`. Then it calls `deflate` with a flush mode,
@@ -56,6 +55,8 @@ const REPZ_3_10: i32 = 17;
 
 const REPZ_11_138: i32 = 18;
 
+// The flush modes of `deflate`: Z_NO_FLUSH, Z_SYNC_FLUSH, Z_FULL_FLUSH,
+// Z_FINISH and Z_BLOCK of zlib.
 pub const NO_FLUSH: i32 = 0;
 
 pub const SYNC_FLUSH: i32 = 2;
@@ -66,6 +67,8 @@ pub const FINISH: i32 = 4;
 
 pub const BLOCK: i32 = 5;
 
+// The strategies of `start`: Z_DEFAULT_STRATEGY, Z_FILTERED,
+// Z_HUFFMAN_ONLY and Z_RLE of zlib.
 pub const DEFAULT_STRATEGY: i32 = 0;
 
 pub const FILTERED: i32 = 1;
@@ -107,6 +110,7 @@ struct Tables {
   static_dcode: i32[],
 }
 
+// The state of one stream: the deflate_state and the output buffer of zlib.
 pub struct Z {
   level: i32,
   strategy: i32,
@@ -151,6 +155,13 @@ pub struct Z {
   data: u8[],
   in_pos: i32,
   in_avail: i32,
+  // 1 for a zlib stream, -1 when its trailer is written, and 0 for raw
+  // deflate (the wrap field of zlib).
+  wrap: i32,
+  // True when the zlib header is written.
+  begun: boolean,
+  // The Adler-32 of the input of a zlib stream.
+  adler: u32,
   t: Tables,
 }
 
@@ -298,6 +309,9 @@ pub function new(): Z {
     data: [],
     in_pos: 0,
     in_avail: 0,
+    wrap: 0,
+    begun: false,
+    adler: 1u32,
     t: tables(),
   };
 }
@@ -323,6 +337,7 @@ function config(level: i32): (i32, i32, i32, i32) {
 pub function start(own z: Z, level: i32, strategy: i32): Z {
   let (good, lazy, nice, chain) = config(level);
   let none: u8[] = [];
+  let wrap = if (z.wrap < 0) { 1 } else { z.wrap };
   return Z {
     ...clear_hash(init_block(z)),
     level: level,
@@ -345,7 +360,22 @@ pub function start(own z: Z, level: i32, strategy: i32): Z {
     delivered: 0,
     last_flush: -2,
     finished: false,
+    wrap: wrap,
+    begun: false,
+    adler: 1u32,
   };
+}
+
+// deflateInit2 with windowBits 15 in place of -15: the stream has the
+// header and the trailer of zlib. Call it before `start`.
+pub function zlib(own z: Z): Z {
+  return Z { ...z, wrap: 1 };
+}
+
+// True when the stream has ended and all of its bytes are delivered: the
+// Z_STREAM_END of zlib.
+pub function done(z: Z): boolean {
+  return z.finished && z.wrap <= 0 && pending(z) == 0;
 }
 
 function clear_hash(own z: Z): Z {
@@ -492,14 +522,23 @@ function append_from(own out: u8[], src: u8[], from: i32, n: i32): u8[] {
   return out;
 }
 
+// The Adler-32 after the next `len` bytes of input, for a zlib stream.
+function checked(z: Z, len: i32): u32 {
+  if (z.wrap != 1) {
+    return z.adler;
+  }
+  return adler32_update(z.adler, z.data[z.in_pos:z.in_pos + len]);
+}
+
 // read_buf into window[at:].
 function read_buf(own z: Z, at: i32, size: i32): (Z, i32) {
   let len = if (z.in_avail > size) { size } else { z.in_avail };
   if (len == 0) {
     return (z, 0);
   }
+  let adler = checked(z, len);
   let w = copy_into(z.window, at, z.data, z.in_pos, len);
-  return (Z { ...z, window: w, in_pos: z.in_pos + len, in_avail: z.in_avail - len }, len);
+  return (Z { ...z, window: w, adler: adler, in_pos: z.in_pos + len, in_avail: z.in_avail - len }, len);
 }
 
 function fill_window(own z: Z): Z {
@@ -580,8 +619,12 @@ function zeroed(own w: u8[], at: i32, n: i32): u8[] {
   return w;
 }
 
-// deflateSetDictionary with no zlib or gzip wrapper.
+// deflateSetDictionary. A zlib stream takes its dictionary before the
+// first call of `deflate`, and its header then has the Adler-32 of it.
 pub function set_dictionary(own z: Z, dict: u8[], from: i32, len: i32): Z {
+  if (z.wrap == 1) {
+    z = Z { ...z, adler: adler32_update(z.adler, dict[from:from + len]) };
+  }
   let start = from;
   let length = len;
   if (length >= WSIZE) {
@@ -592,7 +635,8 @@ pub function set_dictionary(own z: Z, dict: u8[], from: i32, len: i32): Z {
   let saved = z.data;
   let pos = z.in_pos;
   let avail = z.in_avail;
-  z = fill_window(Z { ...z, data: dict, in_pos: start, in_avail: length });
+  let wrap = z.wrap;
+  z = fill_window(Z { ...z, data: dict, in_pos: start, in_avail: length, wrap: 0 });
   while (z.lookahead >= MIN_MATCH) {
     let w = z.window;
     let head = z.head;
@@ -622,6 +666,7 @@ pub function set_dictionary(own z: Z, dict: u8[], from: i32, len: i32): Z {
     data: saved,
     in_pos: pos,
     in_avail: avail,
+    wrap: wrap,
   };
 }
 
@@ -632,7 +677,7 @@ function rank(f: i32): i32 {
   return f * 2;
 }
 
-// deflate(strm, flush) for a raw stream.
+// deflate(strm, flush).
 // It keeps the branches of deflate() of zlib in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
 pub function deflate(own z: Z, flush: i32): Z {
@@ -649,8 +694,14 @@ pub function deflate(own z: Z, flush: i32): Z {
   if (z.finished && z.in_avail != 0) {
     return z;
   }
+  if (z.wrap != 0 && !z.begun) {
+    z = flush_pending(header(z));
+    if (pending(z) != 0) {
+      return Z { ...z, last_flush: -1 };
+    }
+  }
   if (z.in_avail == 0 && z.lookahead == 0 && (flush == NO_FLUSH || z.finished)) {
-    return z;
+    return trailer(z, flush);
   }
   let (r, bstate) = compress(z, flush);
   z = r;
@@ -678,7 +729,35 @@ pub function deflate(own z: Z, flush: i32): Z {
       return Z { ...z, last_flush: -1 };
     }
   }
-  return z;
+  return trailer(z, flush);
+}
+
+// The zlib header: the method, the window and the level flags of zlib.
+function header(own z: Z): Z {
+  let flags = if (z.strategy >= HUFFMAN_ONLY || z.level < 2) { 0 } else if (z.level < 6) { 1 } else if (z.level == 6) { 2 } else { 3 };
+  let h = 8 + (7 << 4) << 8 | flags << 6;
+  if (z.strstart != 0) {
+    h |= 32;
+  }
+  h += 31 - h % 31;
+  let out = z.out.append((h >> 8) as u8).append((h & 255) as u8);
+  if (z.strstart != 0) {
+    out = put_be32(out, z.adler);
+  }
+  return Z { ...z, out: out, begun: true, adler: 1u32 };
+}
+
+function put_be32(own out: u8[], a: u32): u8[] {
+  return out.append((a >> 24u32) as u8).append((a >> 16u32) as u8).append((a >> 8u32) as u8).append(a as u8);
+}
+
+// The zlib trailer after the last block: the Adler-32 of the input, the
+// first byte highest.
+function trailer(own z: Z, flush: i32): Z {
+  if (flush != FINISH || z.wrap <= 0) {
+    return z;
+  }
+  return flush_pending(Z { ...z, out: put_be32(z.out, z.adler), wrap: -1 });
 }
 
 function compress(own z: Z, flush: i32): (Z, i32) {
@@ -751,9 +830,10 @@ function deflate_stored(own z: Z, flush: i32): (Z, i32) {
       len -= left;
     }
     if (len > 0) {
+      let adler = checked(z, len);
       let o = z.out;
       let out = append_from(o, z.data, z.in_pos, len);
-      z = Z { ...z, out: out, delivered: z.delivered + len, avail: z.avail - len, in_pos: z.in_pos + len, in_avail: z.in_avail - len };
+      z = Z { ...z, out: out, adler: adler, delivered: z.delivered + len, avail: z.avail - len, in_pos: z.in_pos + len, in_avail: z.in_avail - len };
     }
     if (last) {
       break;
@@ -950,6 +1030,82 @@ function extend(win: u8[], cur: i32, strstart: i32): i32 {
     len += 1;
   }
   return len;
+}
+
+// The Adler-32 of `bs` after the bytes whose Adler-32 is `adler` (1 for no
+// bytes). The sums take their modulus once for each 5552 bytes, zlib's NMAX:
+// the most bytes after which b cannot pass 2^32. A word of eight bytes holds
+// four lanes of 16 bits for the even bytes and four for the odd bytes. Each
+// lane counts at most eight words before the lanes are added up, so no lane
+// passes 16 bits. In a chunk of `len` bytes, b gets `len` times the a before
+// the chunk, eight times the bytes before each word, and 8 - k times byte k
+// of each word.
+pub function adler32_update(adler: u32, bs: [u8]): u32 {
+  let a = (adler & 65535u32) as u64;
+  let b = (adler >> 16u32) as u64;
+  let n = bs.len();
+  let last = n - 16;
+  let i = 0;
+  while (i <= last) {
+    let stop = i + min(n - i >> 4, 347) * 16;
+    let len = (stop - i) as u64;
+    let sum = 0u64;
+    let before = 0u64;
+    let weighted = 0u64;
+    while (i < stop) {
+      let run = min(stop, i + 64);
+      let even = 0u64;
+      let odd = 0u64;
+      let r = 0u64;
+      let words = 0u64;
+      while (i <= last) {
+        let w = le64_view(bs, i);
+        let v = le64_view(bs, i + 8);
+        r += even + odd;
+        even += w & BYTE_LANES;
+        odd += w >> 8 & BYTE_LANES;
+        r += even + odd;
+        even += v & BYTE_LANES;
+        odd += v >> 8 & BYTE_LANES;
+        i += 16;
+        words += 2u64;
+        if (i >= run) {
+          break;
+        }
+      }
+      before += words * sum + (r * LANE_SUM >> 48);
+      sum += (even + odd) * LANE_SUM >> 48;
+      weighted += (even * EVEN_WEIGHTS >> 48) + (odd * ODD_WEIGHTS >> 48);
+    }
+    b = (b + len * a + 8u64 * before + weighted) % 65521u64;
+    a = (a + sum) % 65521u64;
+  }
+  while (i < n) {
+    a += bs[i] as u64;
+    b += a;
+    i += 1;
+  }
+  a %= 65521u64;
+  b %= 65521u64;
+  return (b << 16 | a) as u32;
+}
+
+// The low byte of each 16-bit lane.
+const BYTE_LANES: u64 = 71777214294589695u64;
+
+// A product with it adds the four lanes in the top lane.
+const LANE_SUM: u64 = 281479271743489u64;
+
+// Products with these put 8, 6, 4 and 2 times the even lanes, and 7, 5, 3
+// and 1 times the odd lanes, in the top lane.
+const EVEN_WEIGHTS: u64 = 2251825583751170u64;
+
+const ODD_WEIGHTS: u64 = 1970346312007681u64;
+
+@inline
+function le64_view(data: [u8], at: i32): u64 {
+  return data[at] as u64 | data[at + 1] as u64 << 8 | data[at + 2] as u64 << 16 | data[at + 3] as u64 << 24
+    | data[at + 4] as u64 << 32 | data[at + 5] as u64 << 40 | data[at + 6] as u64 << 48 | data[at + 7] as u64 << 56;
 }
 
 @inline
