@@ -1208,16 +1208,7 @@ function __pc_accept(cx: PCtx): PNode {
 // script runs, such as (*sr:...), need the Script_Extensions property, and
 // give the error of a name that is not known.
 function __pc_alpha(cx: PCtx, at: i32, name: string, i: i32, f: i32, depth: i32): PParse {
-  let kind = match (name) {
-    "pla" | "positive_lookahead" => LOOK_AHEAD,
-    "nla" | "negative_lookahead" => LOOK_NOT_AHEAD,
-    "plb" | "positive_lookbehind" => LOOK_BEHIND,
-    "nlb" | "negative_lookbehind" => LOOK_NOT_BEHIND,
-    "napla" | "non_atomic_positive_lookahead" => LOOK_AHEAD_NA,
-    "naplb" | "non_atomic_positive_lookbehind" => LOOK_BEHIND_NA,
-    "atomic" => ATOMIC,
-    _ => -1,
-  };
+  let kind = __pc_alpha_kind(name);
   if (i >= cx.p.len() || cx.p[i] != 58u8 || kind < 0) {
     __pc_fail(cx, i, 195);
     return PParse { node: NEmpty, pos: cx.p.len(), f: f };
@@ -1227,6 +1218,22 @@ function __pc_alpha(cx: PCtx, at: i32, name: string, i: i32, f: i32, depth: i32)
     return PParse { ...b, node: NAtomic(PAtomicData { node: b.node }) };
   }
   return __pc_look(cx, at, i + 1, f, depth, kind);
+}
+
+// The kind of the group of an alphabetic assertion name, or -1.
+// One arm for each name of PCRE2.
+// fern-lint: allow cyclomatic-complexity
+function __pc_alpha_kind(name: string): i32 {
+  return match (name) {
+    "pla" | "positive_lookahead" => LOOK_AHEAD,
+    "nla" | "negative_lookahead" => LOOK_NOT_AHEAD,
+    "plb" | "positive_lookbehind" => LOOK_BEHIND,
+    "nlb" | "negative_lookbehind" => LOOK_NOT_BEHIND,
+    "napla" | "non_atomic_positive_lookahead" => LOOK_AHEAD_NA,
+    "naplb" | "non_atomic_positive_lookbehind" => LOOK_BEHIND_NA,
+    "atomic" => ATOMIC,
+    _ => -1,
+  };
 }
 
 // A callout such as (?C1) or (?C"text") at `at`, which holds `(`. With no
@@ -1426,23 +1433,33 @@ function __pc_python(cx: PCtx, at: i32, f: i32, depth: i32): PParse {
 }
 
 // A conditional group, after `(?(`.
+// The offset of a condition after a callout at `at`, as in (?(?C1)(?=a)b),
+// or `at` with no callout. It is -1 after an error.
+function __pc_cond_callout(cx: PCtx, at: i32, f: i32): i32 {
+  let p = cx.p;
+  if (at + 1 >= p.len() || p[at] != 63u8 || p[at + 1] != 67u8) {
+    return at;
+  }
+  let c = __pc_callout(cx, at - 1, f);
+  if (__pc_failed(cx)) {
+    return -1;
+  }
+  if (c.pos + 1 >= p.len() || p[c.pos] != 40u8 || p[c.pos + 1] != 63u8) {
+    __pc_fail(cx, c.pos, 128);
+    return -1;
+  }
+  return c.pos + 1;
+}
+
 function __pc_cond(cx: PCtx, at: i32, f: i32, depth: i32): PParse {
   let p = cx.p;
   let group = -1;
   let name = "";
   let look: Option[PLookData] = None;
   let pos = at;
-  let lat = at;
-  if (at + 1 < p.len() && p[at] == 63u8 && p[at + 1] == 67u8) {
-    let c = __pc_callout(cx, at - 1, f);
-    if (__pc_failed(cx)) {
-      return c;
-    }
-    if (c.pos + 1 >= p.len() || p[c.pos] != 40u8 || p[c.pos + 1] != 63u8) {
-      __pc_fail(cx, c.pos, 128);
-      return PParse { node: NEmpty, pos: p.len(), f: f };
-    }
-    lat = c.pos + 1;
+  let lat = __pc_cond_callout(cx, at, f);
+  if (lat < 0) {
+    return PParse { node: NEmpty, pos: p.len(), f: f };
   }
   if (lat < p.len() && p[lat] == 63u8) {
     let l = __pc_group(cx, lat - 1, f, depth);
@@ -2595,12 +2612,10 @@ function __pc_patch(own g: PGen, at: i32, slot: i32, v: i32): PGen {
   return PGen { ...g, code: g.code.with(3 * at + slot, v) };
 }
 
-function __pc_build(cx: PCtx, root: PNode, s: PStart): Result[Pcre, CompileError] {
-  let empty: i32[] = [];
-  let g = PGen { code: empty, subs: empty, regs: 0, alts: empty, cx: cx };
-  g = __pc_emit(g, OP_SAVE, 0, 0);
-  g = __pc_gen(g, root);
-  g = __pc_emit(__pc_emit(g, OP_SAVE, 1, 0), OP_MATCH, 0, 0);
+// The code of each group that the pattern calls, after the code of the
+// pattern, and the start of the code of each group, or -1. Group 0 is the
+// whole pattern.
+function __pc_gen_calls(own g: PGen, cx: PCtx, root: PNode): (PGen, i32[]) {
   let calls = __pc_minus_ones(cx.groups.get() + 1);
   let todo = __pc_called(cx, root, []);
   let k = 0;
@@ -2619,6 +2634,17 @@ function __pc_build(cx: PCtx, root: PNode, s: PStart): Result[Pcre, CompileError
     g = __pc_emit(g, if (n == 0) { OP_RET_ATOMIC } else { OP_RET }, 0, 0);
     todo = __pc_called(cx, body, todo);
   }
+  return (g, calls);
+}
+
+function __pc_build(cx: PCtx, root: PNode, s: PStart): Result[Pcre, CompileError] {
+  let empty: i32[] = [];
+  let g = PGen { code: empty, subs: empty, regs: 0, alts: empty, cx: cx };
+  g = __pc_emit(g, OP_SAVE, 0, 0);
+  g = __pc_gen(g, root);
+  g = __pc_emit(__pc_emit(g, OP_SAVE, 1, 0), OP_MATCH, 0, 0);
+  let (called, calls) = __pc_gen_calls(g, cx, root);
+  g = called;
   if (g.code.len() > 3000000) {
     return Err(CompileError { offset: cx.p.len(), code: 120, message: __pc_message(120) });
   }
@@ -3414,23 +3440,32 @@ function __pc_set_cu(cx: PCtx, s: PSet): i32 {
   if (s.neg || s.ranges.len() > 0) {
     return FC_NONE;
   }
-  let found: i32[] = [];
-  for c in 0..256 {
-    if ((s.bits[c >> 5] >> (c & 31) & 1) != 0) {
-      found = found.append(c);
-      if (found.len() > 2) {
-        return FC_NONE;
-      }
-    }
-  }
+  let found = __pc_set_members(s, 3);
   if (found.len() == 1) {
     return found[0];
   }
-  let lower = if (found.len() == 2) { found[1] } else { 0 };
-  if (found.len() == 2 && found[0] == lower - 32 && lower >= 97 && lower <= 122 && !(cx.fold && (lower == 107 || lower == 115))) {
-    return lower | FC_CASELESS;
+  if (found.len() == 2 && __pc_case_pair(cx, found[0], found[1])) {
+    return found[1] | FC_CASELESS;
   }
   return FC_NONE;
+}
+
+// The first `most` bytes of the set `s`.
+function __pc_set_members(s: PSet, most: i32): i32[] {
+  let found: i32[] = [];
+  for c in 0..256 {
+    if ((s.bits[c >> 5] >> (c & 31) & 1) != 0 && found.len() < most) {
+      found = found.append(c);
+    }
+  }
+  return found;
+}
+
+// Whether `upper` and `lower` are the two cases of an ASCII letter that is
+// the first code unit of PCRE2 without its case. With Unicode case folding,
+// k and s have other cases too.
+function __pc_case_pair(cx: PCtx, upper: i32, lower: i32): boolean {
+  return upper == lower - 32 && lower >= 97 && lower <= 122 && !(cx.fold && (lower == 107 || lower == 115));
 }
 
 // A byte that each match holds: the last literal byte of the top level of
@@ -3821,18 +3856,11 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
         mode = res;
         ok = false;
       } else if (res == 1 || kind > COND) {
-        for k in 0..slots.len() {
-          if (sslots[k] != slots[k]) {
-            st = __pc_push(st, sp, E_UNDO, k, slots[k]);
-            sp += 3;
-          }
-        }
+        let (next, top) = __pc_took(st, sp, slots, sslots, res == 1 && re.has_then && (kind == LOOK_AHEAD || kind == LOOK_BEHIND));
+        st = next;
+        sp = top;
         slots = sslots;
         pos = spos;
-        if (res == 1 && re.has_then && (kind == LOOK_AHEAD || kind == LOOK_BEHIND)) {
-          st = __pc_push(st, sp, E_LOOK, 0, 0);
-          sp += 3;
-        }
         pc = if (res == 0) { code[3 * pc + 2] } else { re.subs[3 * a + 2] };
       } else {
         ok = false;
@@ -3843,17 +3871,12 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
       slots = slots.with(0, pos);
       pc += 1;
     } else if (op == OP_COND) {
-      let yes = if (a == COND_RECURSE) { fr >= 0 } else if (a <= COND_RECURSE_N) { fr >= 0 && frames[fr] == COND_RECURSE_N - a } else { a >= 0 && slots[2 * a + 1] >= 0 };
-      pc = if (yes) { pc + 1 } else { code[3 * pc + 2] };
+      pc = if (__pc_holds(frames, fr, slots, a)) { pc + 1 } else { code[3 * pc + 2] };
     } else if (op == OP_CALL) {
       if (!__pc_step(r, sp)) {
         return (R_ERROR, pos, slots, frames);
       }
-      let f = fr;
-      while (f >= 0 && frames[f] != a) {
-        f = frames[f + 2];
-      }
-      if (f >= 0 && frames[f + 3] == pos) {
+      if (__pc_loops(frames, fr, a, pos)) {
         r.steps.set(-ERR_LOOP);
         return (R_ERROR, pos, slots, frames);
       }
@@ -3864,14 +3887,10 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
       ftop += 5 + re.nslots;
       pc = re.calls[a];
     } else if (op == OP_RET) {
-      for k in 2..re.nslots {
-        let old = frames[fr + 5 + k];
-        if (slots[k] != old) {
-          st = __pc_push(st, sp, E_UNDO, k, slots[k]);
-          sp += 3;
-          slots = slots.with(k, old);
-        }
-      }
+      let (next, top, kept) = __pc_returned(st, sp, slots, frames, fr, re.nslots);
+      st = next;
+      sp = top;
+      slots = kept;
       st = __pc_push(st, sp, E_RET, fr, 0);
       sp += 3;
       pc = frames[fr + 1];
@@ -3879,13 +3898,10 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
     } else if (op == OP_RET_ATOMIC) {
       leave = true;
     } else if (op == OP_VERB) {
-      if (a == V_SKIP_ARG) {
-        frames = frames.with(VS_SKIPS, frames[VS_SKIPS] + 1);
-      }
-      if (a != V_SKIP_ARG || frames[VS_SKIPS] > frames[VS_IGNORE]) {
-        st = __pc_push(st, sp, E_VERB, pc, pos);
-        sp += 3;
-      }
+      let (next, top, f) = __pc_verb_passed(st, sp, frames, a, pc, pos);
+      st = next;
+      sp = top;
+      frames = f;
       pc += 1;
     } else if (op == OP_BRANCH) {
       st = __pc_push(st, sp, E_BRANCH, pc, pos);
@@ -3943,68 +3959,185 @@ function __pc_run(r: PRun, pc0: i32, pos0: i32, slots0: i32[], target: i32, fram
         slots = slots.with(0, s0);
       }
     } else if (!ok) {
-      let back = false;
-      while (sp > 0) {
+      while (sp > 0 && st[sp - 3] == E_UNDO) {
         sp -= 3;
-        let e = st[sp];
-        if (e >= 0) {
-          if (mode == R_NOMATCH) {
-            pc = e;
-            pos = st[sp + 1];
-            back = true;
-            break;
-          }
-        } else if (e == E_UNDO) {
-          slots = slots.with(st[sp + 1], st[sp + 2]);
-        } else if (e == E_CALL) {
-          let group = frames[st[sp + 2]];
-          fr = st[sp + 1];
-          ftop = st[sp + 2];
-          if (mode != R_NOMATCH && frames[VS_REC] == group) {
-            mode = R_NOMATCH;
-          }
-        } else if (e == E_RET) {
-          fr = st[sp + 1];
-        } else if (e == E_BRANCH) {
-          let next = code[3 * st[sp + 1] + 1];
-          let row = code[3 * st[sp + 1] + 2];
-          let rec = re.alts[2 * row + 1];
-          if (mode == R_THEN && frames[VS_THEN] < re.alts[2 * row] && (rec == -2 || rec == frames[VS_REC])) {
-            mode = R_NOMATCH;
-          }
-          if (mode == R_NOMATCH && next >= 0) {
-            pc = next;
-            pos = st[sp + 2];
-            back = true;
-            break;
-          }
-        } else if (e == E_LOOK) {
-          if (mode == R_THEN) {
-            mode = R_NOMATCH;
-          }
-        } else {
-          let vpc = st[sp + 1];
-          let kind = code[3 * vpc + 1];
-          if (mode == R_NOMATCH && kind != V_MARK) {
-            mode = kind + 2;
-            frames = frames.with(VS_REC, if (fr >= 0) { frames[fr] } else { -1 }).with(VS_POS, st[sp + 2]);
-            if (kind == V_SKIP_ARG) {
-              frames = frames.with(VS_NAME, code[3 * vpc + 2]);
-            } else if (kind == V_THEN) {
-              frames = frames.with(VS_THEN, code[3 * vpc + 2]);
-            }
-          } else if (mode == R_SKIP_ARG && kind == V_MARK && code[3 * vpc + 2] == frames[VS_NAME]) {
-            mode = R_SKIP;
-            frames = frames.with(VS_POS, st[sp + 2]);
-          }
-        }
+        slots = slots.with(st[sp + 1], st[sp + 2]);
       }
-      if (!back) {
+      if (sp == 0) {
         return (mode, pos, slots, frames);
+      }
+      if (mode == R_NOMATCH && st[sp - 3] >= 0) {
+        sp -= 3;
+        pc = st[sp];
+        pos = st[sp + 1];
+      } else {
+        let u = __pc_unwind(re, PBack { st: st, sp: sp, slots: slots, frames: frames, fr: fr, ftop: ftop, mode: mode, pc: pc, pos: pos, back: false });
+        if (!u.back) {
+          return (u.mode, pos, u.slots, u.frames);
+        }
+        st = u.st;
+        sp = u.sp;
+        slots = u.slots;
+        frames = u.frames;
+        fr = u.fr;
+        ftop = u.ftop;
+        mode = u.mode;
+        pc = u.pc;
+        pos = u.pos;
       }
     }
   }
   return (R_NOMATCH, pos, slots, frames);
+}
+
+// Whether the condition `a` of a conditional group holds: a call, a call of
+// a group, or a group that has matched.
+function __pc_holds(frames: i32[], fr: i32, slots: i32[], a: i32): boolean {
+  if (a == COND_RECURSE) {
+    return fr >= 0;
+  }
+  if (a <= COND_RECURSE_N) {
+    return fr >= 0 && frames[fr] == COND_RECURSE_N - a;
+  }
+  return a >= 0 && slots[2 * a + 1] >= 0;
+}
+
+// The stack and the verb state after the run passes the verb `kind` at
+// `pc`. A (*SKIP:NAME) that the rerun of the search ignores leaves no entry.
+function __pc_verb_passed(own st: i32[], sp: i32, own frames: i32[], kind: i32, pc: i32, pos: i32): (i32[], i32, i32[]) {
+  if (kind == V_SKIP_ARG) {
+    frames = frames.with(VS_SKIPS, frames[VS_SKIPS] + 1);
+  }
+  if (kind != V_SKIP_ARG || frames[VS_SKIPS] > frames[VS_IGNORE]) {
+    return (__pc_push(st, sp, E_VERB, pc, pos), sp + 3, frames);
+  }
+  return (st, sp, frames);
+}
+
+// The state of a run that goes back through its stack to a choice. `back`
+// says that it found one.
+struct PBack { st: i32[], sp: i32, slots: i32[], frames: i32[], fr: i32, ftop: i32, mode: i32, pc: i32, pos: i32, back: boolean }
+
+// Goes back through the stack to the next choice that the mode of `b`
+// takes. Each entry on the way undoes its step, and a verb or a branch
+// changes the mode as PCRE2 does.
+// One branch for each kind of entry of the stack.
+// fern-lint: allow cyclomatic-complexity
+function __pc_unwind(re: Pcre, own b: PBack): PBack {
+  let code = re.code;
+  let st = b.st;
+  let sp = b.sp;
+  let slots = b.slots;
+  let frames = b.frames;
+  let fr = b.fr;
+  let ftop = b.ftop;
+  let mode = b.mode;
+  while (sp > 0) {
+    sp -= 3;
+    let e = st[sp];
+    if (e >= 0) {
+      if (mode == R_NOMATCH) {
+        return PBack { st: st, sp: sp, slots: slots, frames: frames, fr: fr, ftop: ftop, mode: mode, pc: e, pos: st[sp + 1], back: true };
+      }
+    } else if (e == E_UNDO) {
+      slots = slots.with(st[sp + 1], st[sp + 2]);
+    } else if (e == E_CALL) {
+      let group = frames[st[sp + 2]];
+      fr = st[sp + 1];
+      ftop = st[sp + 2];
+      if (mode != R_NOMATCH && frames[VS_REC] == group) {
+        mode = R_NOMATCH;
+      }
+    } else if (e == E_RET) {
+      fr = st[sp + 1];
+    } else if (e == E_BRANCH) {
+      let next = code[3 * st[sp + 1] + 1];
+      mode = __pc_branch_mode(re, frames, mode, code[3 * st[sp + 1] + 2]);
+      if (mode == R_NOMATCH && next >= 0) {
+        return PBack { st: st, sp: sp, slots: slots, frames: frames, fr: fr, ftop: ftop, mode: mode, pc: next, pos: st[sp + 2], back: true };
+      }
+    } else if (e == E_LOOK) {
+      if (mode == R_THEN) {
+        mode = R_NOMATCH;
+      }
+    } else {
+      let (m, f) = __pc_verb_mode(code, frames, fr, mode, st[sp + 1], st[sp + 2]);
+      mode = m;
+      frames = f;
+    }
+  }
+  return PBack { st: st, sp: sp, slots: slots, frames: frames, fr: fr, ftop: ftop, mode: mode, pc: b.pc, pos: b.pos, back: false };
+}
+
+// The mode after the run goes back onto the alternatives of row `row`: a
+// (*THEN) of one of their branches ends at them.
+function __pc_branch_mode(re: Pcre, frames: i32[], mode: i32, row: i32): i32 {
+  let rec = re.alts[2 * row + 1];
+  if (mode == R_THEN && frames[VS_THEN] < re.alts[2 * row] && (rec == -2 || rec == frames[VS_REC])) {
+    return R_NOMATCH;
+  }
+  return mode;
+}
+
+// The mode and the verb state after the run goes back onto the verb at
+// `vpc`, which it passed at `at`. A (*MARK) ends a (*SKIP:NAME) with its
+// name.
+function __pc_verb_mode(code: i32[], own frames: i32[], fr: i32, mode: i32, vpc: i32, at: i32): (i32, i32[]) {
+  let kind = code[3 * vpc + 1];
+  if (mode == R_NOMATCH && kind != V_MARK) {
+    frames = frames.with(VS_REC, if (fr >= 0) { frames[fr] } else { -1 }).with(VS_POS, at);
+    if (kind == V_SKIP_ARG) {
+      frames = frames.with(VS_NAME, code[3 * vpc + 2]);
+    } else if (kind == V_THEN) {
+      frames = frames.with(VS_THEN, code[3 * vpc + 2]);
+    }
+    return (kind + 2, frames);
+  }
+  if (mode == R_SKIP_ARG && kind == V_MARK && code[3 * vpc + 2] == frames[VS_NAME]) {
+    return (R_SKIP, frames.with(VS_POS, at));
+  }
+  return (mode, frames);
+}
+
+// The stack after an item of its own matched with the slots `after`: an
+// undo for each slot that changed, and with `look` an entry that ends a
+// (*THEN) at the look-around.
+function __pc_took(own st: i32[], sp: i32, slots: i32[], after: i32[], look: boolean): (i32[], i32) {
+  for k in 0..slots.len() {
+    if (after[k] != slots[k]) {
+      st = __pc_push(st, sp, E_UNDO, k, slots[k]);
+      sp += 3;
+    }
+  }
+  if (look) {
+    st = __pc_push(st, sp, E_LOOK, 0, 0);
+    sp += 3;
+  }
+  return (st, sp);
+}
+
+// Whether a call of `group` at `pos` is in a call of the same group at the
+// same offset, which PCRE2 refuses as a loop.
+function __pc_loops(frames: i32[], fr: i32, group: i32, pos: i32): boolean {
+  let f = fr;
+  while (f >= 0 && frames[f] != group) {
+    f = frames[f + 2];
+  }
+  return f >= 0 && frames[f + 3] == pos;
+}
+
+// The stack and the slots at the end of the call of frame `fr`: the
+// captures of the call go back to those at the call, each with an undo.
+function __pc_returned(own st: i32[], sp: i32, own slots: i32[], frames: i32[], fr: i32, n: i32): (i32[], i32, i32[]) {
+  for k in 2..n {
+    let old = frames[fr + 5 + k];
+    if (slots[k] != old) {
+      st = __pc_push(st, sp, E_UNDO, k, slots[k]);
+      sp += 3;
+      slots = slots.with(k, old);
+    }
+  }
+  return (st, sp, slots);
 }
 
 function __pc_push(own st: i32[], sp: i32, a: i32, b: i32, c: i32): i32[] {
