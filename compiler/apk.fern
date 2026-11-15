@@ -92,6 +92,9 @@ pub struct Lib { abi: string, image: u8[] }
 // The default lowest API level: APK Signature Scheme v2 needs Android 7.0.
 pub const MIN_SDK: i32 = 24;
 
+// The largest android:versionCode that Google Play takes.
+pub const MAX_VERSION_CODE: i64 = 2100000000i64;
+
 pub const TARGET_SDK: i32 = 34;
 
 // Byte encodings, little-endian.

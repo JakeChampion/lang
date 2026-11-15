@@ -819,7 +819,7 @@ func TestApkManifest(t *testing.T) {
 	write("app.fern", string(src))
 	write("face.fern", string(face))
 	write("data.txt", "fern")
-	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nassets = [\"data.txt\"]\n")
+	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nassets = [\"data.txt\"]\nversion_code = 7\nversion_name = \"2.1\"\n")
 	build := func(extra ...string) ([]byte, error) {
 		out := filepath.Join(dir, "app.apk")
 		args := append([]string{"-apk", out}, extra...)
@@ -846,11 +846,40 @@ func TestApkManifest(t *testing.T) {
 	if got := string(readZipEntry(t, zr, "assets/data.txt")); got != "fern" {
 		t.Errorf("assets/data.txt = %q, want the file next to fern.toml", got)
 	}
+	if got := versionCode(man); got != 7 || !bytes.Contains(man, utf16le("2.1")) {
+		t.Errorf("version_code and version_name of fern.toml: versionCode %d, want 7 and the name 2.1", got)
+	}
+	raw, err = build("-apk-version-code", "9", "-apk-version-name", "3.0")
+	if err != nil {
+		t.Fatalf("fern -apk -apk-version-code: %v\n%s", err, raw)
+	}
+	man = readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
+	if got := versionCode(man); got != 9 || !bytes.Contains(man, utf16le("3.0")) || bytes.Contains(man, utf16le("2.1")) {
+		t.Errorf("the version flags did not take priority over fern.toml: versionCode %d", got)
+	}
+	for _, bad := range []string{"0", "5K"} {
+		o, err := build("-apk-version-code", bad)
+		if err == nil || !strings.Contains(string(o), "-apk-version-code takes a whole number") {
+			t.Errorf("-apk-version-code %s: err = %v, output:\n%s", bad, err, o)
+		}
+	}
 	write("fern.toml", "[package]\nname = \"native\"\n\n[android]\nhome = \"yes\"\n")
 	o, err := build()
 	if err == nil || !strings.Contains(string(o), "error[E088]: [android] home: expected true or false") {
 		t.Errorf("a bad [android] table: err = %v, output:\n%s", err, o)
 	}
+}
+
+// versionCode is the android:versionCode of a binary manifest of fern -apk:
+// the value of the attribute whose name is entry 17 of the string pool, or
+// -1.
+func versionCode(man []byte) int {
+	head := []byte{17, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 8, 0, 0, 0x10}
+	i := bytes.Index(man, head)
+	if i < 0 || i+len(head)+4 > len(man) {
+		return -1
+	}
+	return int(binary.LittleEndian.Uint32(man[i+len(head):]))
 }
 
 // fakeAdb records each call in $FAKE_ADB_LOG and answers as a device with

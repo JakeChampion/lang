@@ -554,7 +554,7 @@ func validDepName(s string) bool {
 // -apk flag with no prefix, and gives it as compiler/fern_toml.fern stores it.
 func androidValue(key, val string) (string, error) {
 	switch key {
-	case "package", "label", "icon", "key":
+	case "package", "label", "icon", "key", "version_name":
 		return parseString(val)
 	case "home", "compress", "cleartext", "debuggable":
 		if val == "true" || val == "false" {
@@ -572,6 +572,11 @@ func androidValue(key, val string) (string, error) {
 			return "", fmt.Errorf("expected an API level, got %q", val)
 		}
 		return val, nil
+	case "version_code":
+		if _, err := parseScalar(val); err != nil || strings.HasPrefix(val, "\"") {
+			return "", fmt.Errorf("expected a version number, got %q", val)
+		}
+		return val, nil
 	}
-	return "", fmt.Errorf("unknown key (supported: package, label, icon, key, min_sdk, home, compress, cleartext, debuggable, permissions, assets, widget)")
+	return "", fmt.Errorf("unknown key (supported: package, label, icon, key, version_name, min_sdk, version_code, home, compress, cleartext, debuggable, permissions, assets, widget)")
 }
