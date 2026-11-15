@@ -19,8 +19,8 @@ import signal
 import subprocess
 import time
 
-NAMES = ("rbtree", "rbtree-ck", "deriv", "nqueens", "cfold", "binarytrees")
-MAXIMUM = dict(zip(NAMES, (4200000, 4200000, 10, 13, 20, 21)))
+NAMES = ("rbtree", "rbtree-ck", "deriv", "nqueens", "cfold", "binarytrees", "msort", "qsort", "treemap", "pmap")
+MAXIMUM = dict(zip(NAMES, (4200000, 4200000, 10, 13, 20, 21, 1000000, 1000000, 20, 1000000)))
 
 
 def sha(path):
@@ -62,9 +62,56 @@ def binarytrees(n):
     return "\n".join(lines) + "\n"
 
 
+def generated(n, seed):
+    """The values x' = (1103515245 x + 12345) mod 2^31 after `seed`."""
+    out = []
+    x = seed
+    for _ in range(n):
+        x = (1103515245 * x + 12345) % 2147483648
+        out.append(x)
+    return out
+
+
+def sorted_digest(n):
+    """The count and the position-weighted sum of the sorted list of msort and qsort."""
+    values = sorted(x % 1000000 for x in generated(n, 42))
+    return f"{len(values)} {sum((i + 1) * v for i, v in enumerate(values))}\n"
+
+
+def treemap(n, rounds=20):
+    """The sum of the items of make(1, n) after `rounds` bumps.
+
+    The sum for make(i, d) is a_d i + b_d, with a_0 = 1, b_0 = 0,
+    a_d = 1 + 4 a_(d-1) and b_d = 2 b_(d-1) - a_(d-1). Each bump adds one to
+    each of the 2^(n+1) - 1 nodes.
+    """
+    a, b = 1, 0
+    for _ in range(n):
+        a, b = 1 + 4 * a, 2 * b - a
+    return f"{a + b + rounds * ((1 << (n + 1)) - 1)}\n"
+
+
+def pmap(n):
+    """The hits and the sums of the lookups of pmap, from a dictionary."""
+    key = lambda x: (x % 1024, x // 1024)
+    m = {key(x): i for i, x in enumerate(generated(n, 42))}
+
+    def look(seed):
+        found = [m[key(x)] for x in generated(n, seed) if key(x) in m]
+        return f"{len(found)} {sum(found)}"
+
+    return f"{look(42)} {look(7)}\n"
+
+
 def expected(name, n, root):
     if name == "binarytrees":
         return binarytrees(n)
+    if name in ("msort", "qsort"):
+        return sorted_digest(n)
+    if name == "treemap":
+        return treemap(n)
+    if name == "pmap":
+        return pmap(n)
     if name == "rbtree":
         return f"{(n + 9) // 10}\n"
     if name == "rbtree-ck":

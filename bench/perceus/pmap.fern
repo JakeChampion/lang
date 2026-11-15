@@ -1,0 +1,119 @@
+// A persistent red-black map whose key is two words, compared in order.
+pub struct Key { hi: i64, lo: i64 }
+
+pub enum Color { Red, Black }
+
+pub enum Map {
+  Node(Color, Map, Key, i64, Map),
+  Leaf,
+}
+
+function compare(a: Key, b: Key): i32 {
+  if (a.hi != b.hi) {
+    return if (a.hi < b.hi) { -1 } else { 1 };
+  }
+  if (a.lo != b.lo) {
+    return if (a.lo < b.lo) { -1 } else { 1 };
+  }
+  return 0;
+}
+
+function is_red(t: Map): boolean {
+  return match (t) { Node(Red(), _, _, _, _) => true, _ => false };
+}
+
+function balance_left(l: Map, k: Key, v: i64, r: Map): Map {
+  match (l) {
+    Node(_, Node(Red(), lx, kx, vx, rx), ky, vy, ry) => {
+      return Node(Red, Node(Black, lx, kx, vx, rx), ky, vy, Node(Black, ry, k, v, r));
+    },
+    Node(_, ly, ky, vy, Node(Red(), lx, kx, vx, rx)) => {
+      return Node(Red, Node(Black, ly, ky, vy, lx), kx, vx, Node(Black, rx, k, v, r));
+    },
+    Node(_, lx, kx, vx, rx) => {
+      return Node(Black, Node(Red, lx, kx, vx, rx), k, v, r);
+    },
+    Leaf => {
+      return Leaf;
+    }
+  }
+}
+
+function balance_right(l: Map, k: Key, v: i64, r: Map): Map {
+  match (r) {
+    Node(_, Node(Red(), lx, kx, vx, rx), ky, vy, ry) => {
+      return Node(Red, Node(Black, l, k, v, lx), kx, vx, Node(Black, rx, ky, vy, ry));
+    },
+    Node(_, lx, kx, vx, Node(Red(), ly, ky, vy, ry)) => {
+      return Node(Red, Node(Black, l, k, v, lx), kx, vx, Node(Black, ly, ky, vy, ry));
+    },
+    Node(_, lx, kx, vx, rx) => {
+      return Node(Black, l, k, v, Node(Red, lx, kx, vx, rx));
+    },
+    Leaf => {
+      return Leaf;
+    }
+  }
+}
+
+function ins(t: Map, k: Key, v: i64): Map {
+  match (t) {
+    Node(Red(), l, kx, vx, r) => {
+      let c = compare(k, kx);
+      if (c < 0) {
+        return Node(Red, ins(l, k, v), kx, vx, r);
+      }
+      if (c > 0) {
+        return Node(Red, l, kx, vx, ins(r, k, v));
+      }
+      return Node(Red, l, k, v, r);
+    },
+    Node(Black(), l, kx, vx, r) => {
+      let c = compare(k, kx);
+      if (c < 0) {
+        if (is_red(l)) {
+          return balance_left(ins(l, k, v), kx, vx, r);
+        }
+        return Node(Black, ins(l, k, v), kx, vx, r);
+      }
+      if (c > 0) {
+        if (is_red(r)) {
+          return balance_right(l, kx, vx, ins(r, k, v));
+        }
+        return Node(Black, l, kx, vx, ins(r, k, v));
+      }
+      return Node(Black, l, k, v, r);
+    },
+    Leaf => {
+      return Node(Red, Leaf, k, v, Leaf);
+    }
+  }
+}
+
+function set_black(t: Map): Map {
+  return match (t) { Node(_, l, k, v, r) => Node(Black, l, k, v, r), _ => t };
+}
+
+pub function insert(t: Map, k: Key, v: i64): Map {
+  return set_black(ins(t, k, v));
+}
+
+// The value at `k`, or -1.
+pub function find(t: Map, k: Key): i64 {
+  return match (t) {
+    Node(_, l, kx, vx, r) => {
+      let c = compare(k, kx);
+      if (c < 0) { find(l, k) } else if (c > 0) { find(r, k) } else { vx }
+    },
+    Leaf => -1i64,
+  };
+}
+
+// The key of the generator value x' = (1103515245 x + 12345) mod 2^31.
+pub function key_of(x: i64): Key {
+  return Key { hi: x % 1024i64, lo: x / 1024i64 };
+}
+
+pub function next(x: i64): i64 {
+  return (1103515245i64 * x + 12345i64) % 2147483648i64;
+}

@@ -117,6 +117,11 @@ class LanguageTests(unittest.TestCase):
         ]) + "\n")
         self.assertTrue(bench.binarytrees(0).startswith("stretch tree of depth 7 check: -1\n"))
 
+    def test_list_tree_and_map_oracles(self):
+        self.assertEqual(bench.sorted_digest(10), "10 35930340\n")
+        self.assertEqual(bench.treemap(10), "741014\n")
+        self.assertEqual(bench.pmap(1000), "1000 499500 0 0\n")
+
     def test_every_workload_has_a_roc_twin(self):
         roc = Path(__file__).resolve().parent.parent / "bench/perceus/roc"
         for name in bench.NAMES:
