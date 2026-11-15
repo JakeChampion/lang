@@ -631,6 +631,36 @@ function f(c: boolean): i32 {
 }`)
 }
 
+func TestOwnGuardRejectsALocalMovedIntoAHelperThatCallsALocalExit(t *testing.T) {
+	wantE051(t, "local-moved-into-helper-with-local-exit", `enum Extent { Empty, Wide(i32[]) }
+function eat(own sp: Extent): i32 { return 0; }
+function stop(code: i32): void {
+    let exit = (k: i32): void => {};
+    exit(code);                        // returns, so stop returns
+}
+function f(c: boolean): i32 {
+    let sp: Extent = Empty;
+    if (c) {
+        stop(eat(sp));
+    }
+    return eat(sp);
+}`)
+}
+
+func TestOwnGuardRejectsALocalMovedIntoALocalThatHidesANoReturnFunction(t *testing.T) {
+	wantE051(t, "local-moved-into-local-die", `enum Extent { Empty, Wide(i32[]) }
+function eat(own sp: Extent): i32 { return 0; }
+function die(code: i32): void { exit(code); }
+function f(c: boolean): i32 {
+    let sp: Extent = Empty;
+    let die = (k: i32): void => {};
+    if (c) {
+        die(eat(sp));                  // the local die returns
+    }
+    return eat(sp);
+}`)
+}
+
 func TestOwnGuardAllowsAllOwnPtrParamCallResult(t *testing.T) {
 	wantOK(t, "all-own-ptr-param-result", ownConsumer+`
 function build(own ops: i32[], x: i32): i32[] { return ops.append(x); }

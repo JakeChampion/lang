@@ -4181,7 +4181,7 @@ function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boole
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false, load_bits: 0, load_at: 0, load_right: false });
 }
 
 function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
@@ -5144,7 +5144,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let formed = prepared.formed;
   let f = formed.f;
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f) };
-  let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
+  let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds), call_kinds, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
@@ -5623,7 +5623,7 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("tcp_socket_ctl");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_tcp_socket_ctl\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_TCP_LISTEN_WITH || o.kind_tag >= ir.K_UDP_BIND && o.kind_tag <= ir.K_TCP_RECV_INTO || o.kind_tag == ir.K_TCP_SENDFILE || o.kind_tag == ir.K_TCP_SEND_BYTES || o.kind_tag == ir.K_UDP_SENDTO_BYTES || o.kind_tag == ir.K_TCP_SEND_BUF || o.kind_tag >= ir.K_RING_NEW && o.kind_tag <= ir.K_RING_SEND_ZC || o.kind_tag == ir.K_UDP_BIND_WITH || o.kind_tag == ir.K_TCP_ADDR_INTO || o.kind_tag == ir.K_TCP_ACCEPT_WITH || o.kind_tag == ir.K_UDP_SENDMMSG || o.kind_tag == ir.K_UDP_RECVMMSG) {
+  } else if (ir.is_socket_call(o.kind_tag)) {
     let udp_name = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
     let udp_argc = ir.op_pops(o);
     let udp_regs: string[] = ["x0", "x1", "x2", "x3"];
@@ -6425,6 +6425,9 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
       let dek = dargc - 1;
       while (dek >= 0) {
         s = dyn_arg_load(s, "x0", args[dek]);
+        if (dek == 0 && irtables.enum_immediate(s.struct_decls, s.funcs, ddbn)) {
+          s = s.write("    ldr x0, [x0]\n");
+        }
         s = s.write("    str x0, [sp, #-16]!\n");
         dek -= 1;
       }
@@ -7529,7 +7532,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "proc_waitpid_nohang", "proc_waitpid_status", "proc_wait_any", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8", "udp_sendmmsg", "udp_sendmmsg_u8", "udp_recvmmsg", "udp_recvmmsg_u8",
-    "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
+    "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "vsock_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
     "tcp_listen_with_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8", "tcp_addr_into_u8",
     "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe",
     "rlimit_nofile", "signal_ignore", "signal_default", "signal_catch", "signal_mask",
@@ -11941,6 +11944,9 @@ function emit_rt_collections_and_proc_part_12(s: asmcore.EmitState, darwin: bool
   }
   if (s.has_need("unix_connect")) {
     s = emit_runtime("__fern_unix_connect", s);
+  }
+  if (s.has_need("vsock_connect")) {
+    s = emit_runtime("__fern_vsock_connect", s);
   }
   if (s.has_need("reactor_new")) {
     s = emit_runtime("__fern_reactor_new", s);

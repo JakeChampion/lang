@@ -365,7 +365,7 @@ function zeros(n: i32): u8[] {
 
 ### `load`
 
-`load` checks that the image is a static executable of this ISA, and that each segment lies below the start stack and outside the kernel mapping. Two segments can share a page: the page then gets the access of both.
+`load` checks that the image is a static executable of this ISA, and that each segment lies below the start stack and outside the kernel mapping. It refuses an image whose load segments share memory, or whose entry is not in an executable segment (`layout_fault` of `std/elf`). Two segments can share a page: the page then gets the access of both.
 
 The code of an executable page must reach instruction fetch. On arm64, `sync_code` thus calls `__cache_sync_code` for each line of the page, at the smallest line size that `CTR_EL0` reports. On x86-64, instruction fetch sees each store.
 
@@ -381,6 +381,12 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
   };
   if (img.kind != 2 as u32 || img.machine != machine()) {
     return Err("the image is not a static " + target_arch() + " executable");
+  }
+  match (img.layout_fault()) {
+    Some(e) => {
+      return Err("the image does not load: " + e.reason);
+    },
+    None => {}
   }
   let Some(frame) = f.alloc() else {
     return Err("no frame for the trap frame");

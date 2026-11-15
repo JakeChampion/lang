@@ -1,0 +1,510 @@
+// The live display of oha, which a run shows on a terminal unless --no-tui:
+// the progress, the requests of the last time scale, the status codes, the
+// errors, the requests in each time scale of the past, and a histogram of
+// the latencies. The keys `+` and `-` change the time scale, `a` selects it
+// from the time of the run, and `q` or Ctrl-C stops the run.
+import "std/array";
+import "std/f64";
+import "std/i32";
+import "std/string";
+import "std/utf8";
+import "./report";
+
+// The time scales of the display: their nanoseconds, their names, and the
+// labels of the bars.
+const SCALE_NS: i64[] = [1, 1000, 1000000, 1000000000, 10000000000, 60000000000, 600000000000, 3600000000000];
+
+const SCALE_NAMES: string[] = ["ns", "us", "ms", "sec", "10 sec", "min", "10 min", "hr"];
+
+const MILLISECOND: i32 = 2;
+
+// The bars of the chart of the requests in the past.
+const BARS: i32 = 32;
+
+// The termios flags of the raw mode of crossterm.
+const ICRNL: i64 = 256;
+
+const IXON: i64 = 1024;
+
+const OPOST: i64 = 1;
+
+const ISIG: i64 = 1;
+
+const ICANON: i64 = 2;
+
+const ECHO: i64 = 8;
+
+const IEXTEN: i64 = 32768;
+
+// The state of the display. `ends`, `latencies` and `bytes` hold the end,
+// the latency and the body length of each response in the order of its end.
+// `slots` counts the responses that ended in each millisecond of the run.
+// `scale` is the time scale that a key selected, or -1 for the one of the
+// time of the run.
+pub struct Live {
+  start: i64,
+  total: i64,
+  duration: i64,
+  ends: i64[],
+  latencies: i64[],
+  bytes: i64[],
+  slots: i64[],
+  scale: i32,
+  next_frame: i64,
+  frame_ns: i64,
+  color: boolean,
+  saved: i64[],
+  quit: boolean,
+}
+
+// Starts the display: the terminal goes to raw mode and to its alternate
+// screen, as ratatui does. `total` is -n, or `duration` the time of -z.
+pub function start(start_ns: i64, total: i64, duration: i64, fps: i32, color: boolean): Live {
+  let saved: i64[] = [];
+  if let Ok(t) = termios_get(0) {
+    saved = t;
+    let raw = t.with(0, t[0] & ~(ICRNL | IXON)).with(1, t[1] & ~OPOST).with(3, t[3] & ~(ECHO | ICANON | ISIG | IEXTEN));
+    let _ = termios_set(0, 0, raw);
+  }
+  let _ = stdout().write("\x1b[?1049h\x1b[?25l");
+  let none: i64[] = [];
+  let frame = if (fps > 0) { 1000000000 / (fps as i64) } else { 1000000000 };
+  return Live { start: start_ns, total: total, duration: duration, ends: none, latencies: none, bytes: none, slots: none, scale: -1, next_frame: start_ns, frame_ns: frame, color: color, saved: saved, quit: false };
+}
+
+// Ends the display, and gives the terminal its mode and its screen back.
+pub function (l: Live) stop(): void {
+  let _ = stdout().write("\x1b[?25h\x1b[?1049l");
+  if (l.saved.len() > 0) {
+    let _ = termios_set(0, 0, l.saved);
+  }
+}
+
+// The display with the response `r`.
+pub function (l: Live) response(r: report.Response): Live {
+  let slot = (r.ended / 1000000) as i32;
+  let slots = l.slots;
+  while (slots.len() <= slot) {
+    slots = slots.append(0);
+  }
+  return Live { ...l, ends: l.ends.append(r.ended), latencies: l.latencies.append(r.latency), bytes: l.bytes.append(r.bytes), slots: slots.with(slot, slots[slot] + 1) };
+}
+
+// The display after the keys `keys`.
+pub function (l: Live) keys(keys: u8[], now: i64): Live {
+  let out = l;
+  for k in keys {
+    let current = out.scale_at(now);
+    if (k == 113 as u8 || k == 3 as u8) {
+      out = Live { ...out, quit: true };
+    } else if (k == 43 as u8) {
+      out = Live { ...out, scale: if (current - 1 < MILLISECOND) { MILLISECOND } else { current - 1 } };
+    } else if (k == 45 as u8) {
+      out = Live { ...out, scale: if (current + 1 >= SCALE_NS.len()) { current } else { current + 1 } };
+    } else if (k == 97 as u8) {
+      out = Live { ...out, scale: if (out.scale < 0) { current } else { -1 } };
+    }
+  }
+  return out;
+}
+
+// The time scale at `now`: the one of a key, or the largest that the time of
+// the run is more than, and not less than a millisecond.
+function (l: Live) scale_at(now: i64): i32 {
+  if (l.scale >= 0) {
+    return l.scale;
+  }
+  let elapsed = now - l.start;
+  for k in 0..SCALE_NS.len() {
+    let at = SCALE_NS.len() - 1 - k;
+    if (elapsed > SCALE_NS[at]) {
+      return if (at < MILLISECOND) { MILLISECOND } else { at };
+    }
+  }
+  return MILLISECOND;
+}
+
+// The text of a frame of the display at `now`, for a terminal of `rows` and
+// `cols`, with the status codes `codes` and the errors `errors`, each as
+// (count, label) with the largest count first.
+pub function (l: Live) frame(now: i64, rows: i32, cols: i32, codes: (i64, string)[], errors: (i64, string)[]): string {
+  let scale = l.scale_at(now);
+  let bin = SCALE_NS[scale];
+  let name = SCALE_NAMES[scale];
+  let lines: string[] = [];
+  lines = lines.concat(box("Progress", [l.gauge(now, cols - 2)], cols, "36"));
+  let recent = l.since(now - bin);
+  let stats = l.stats(recent);
+  let left = cols / 2;
+  let right = cols - left;
+  let status_rows: string[] = [];
+  for c in codes {
+    status_rows = status_rows.append(f"[{c.1}] {c.0} responses");
+  }
+  lines = lines.concat(side(box("Stats for last " + name, stats, left, ""), box("Status code distribution", fill(status_rows, 6), right, "")));
+  let error_rows: string[] = [];
+  for e in errors {
+    error_rows = error_rows.append(f"[{e.0}] {e.1}");
+  }
+  lines = lines.concat(box("Error distribution", error_rows, cols, ""));
+  let height = rows - lines.len();
+  if (height < 3) {
+    height = 3;
+  }
+  let auto = if (l.scale < 0) { " (auto)" } else { "" };
+  let chart = l.requests_chart(now, scale, left - 2, height - 2);
+  let histo = l.histogram(recent, right - 2, height - 2);
+  lines = lines.concat(side(box("Requests / past " + name + auto + ". press -/+/a to change", chart, left, "32"), box("Response time histogram", histo, right, "33")));
+  let out = "";
+  for k in 0..lines.len() {
+    if (k >= rows) {
+      break;
+    }
+    out += f"\x1b[{k + 1};1H" + lines[k] + "\x1b[K";
+  }
+  if (!l.color) {
+    out = strip_color(out);
+  }
+  return out + "\x1b[J";
+}
+
+// The index of the first response that ended after `from`.
+function (l: Live) since(from: i64): i32 {
+  let lo = 0;
+  let hi = l.ends.len();
+  while (lo < hi) {
+    let mid = (lo + hi) / 2;
+    if (l.ends[mid] + l.start > from) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return lo;
+}
+
+// The bar of the progress, `width` wide, with its label in the middle.
+function (l: Live) gauge(now: i64, width: i32): string {
+  let elapsed = now - l.start;
+  let ratio = 0.0;
+  let label = "";
+  if (l.duration > 0) {
+    ratio = elapsed as f64 / (l.duration as f64);
+    label = humantime(elapsed / 1000000000 * 1000000000) + " / " + humantime(l.duration);
+  } else {
+    ratio = if (l.total > 0) { l.ends.len() as f64 / (l.total as f64) } else { 1.0 };
+    label = f"{l.ends.len()} / {l.total}";
+  }
+  if (ratio > 1.0) {
+    ratio = 1.0;
+  }
+  let filled = (ratio * (width as f64)) as i32;
+  let at = (width - label.len()) / 2;
+  let out = "";
+  for k in 0..width {
+    if (k >= at && k < at + label.len()) {
+      out += label.drop(k - at).take(1);
+    } else if (k < filled) {
+      out += "█";
+    } else {
+      out += " ";
+    }
+  }
+  return out;
+}
+
+// A duration as humantime writes it, such as `1m 30s`.
+function humantime(ns: i64): string {
+  let s = ns / 1000000000;
+  if (s == 0) {
+    return "0s";
+  }
+  let parts: string[] = [];
+  let units: (i64, string)[] = [(86400, "day"), (3600, "h"), (60, "m"), (1, "s")];
+  let rest = s;
+  for u in units {
+    if (rest >= u.0) {
+      let n = rest / u.0;
+      rest %= u.0;
+      let unit = if (u.1 == "day" && n > 1) { "days" } else { u.1 };
+      parts = parts.append(f"{n}{unit}");
+    }
+  }
+  return parts.join(" ");
+}
+
+// The lines of the stats of the responses from index `from`.
+function (l: Live) stats(from: i32): string[] {
+  let n = l.ends.len() - from;
+  let slowest = 0.0 - f64.INFINITY;
+  let fastest = f64.INFINITY;
+  let sum = 0.0;
+  let data: i64 = 0;
+  for k in from..l.ends.len() {
+    let s = l.latencies[k] as f64 / 1000000000.0;
+    if (s > slowest) {
+      slowest = s;
+    }
+    if (s < fastest) {
+      fastest = s;
+    }
+    sum += s;
+    data += l.bytes[k];
+  }
+  let average = if (n > 0) { sum / (n as f64) } else { f64.NAN };
+  let files = match (read_dir("/dev/fd")) {
+    Ok(names) => names.len().to_string(),
+    Err(_) => "Error",
+  };
+  return [
+    f"Requests : {n}",
+    "\x1b[33mSlowest: " + fixed(slowest) + " secs\x1b[0m",
+    "\x1b[32mFastest: " + fixed(fastest) + " secs\x1b[0m",
+    "\x1b[36mAverage: " + fixed(average) + " secs\x1b[0m",
+    "Data: " + report.size(data),
+    f"Number of open files: {files} / {rlimit_nofile()}",
+  ];
+}
+
+function fixed(x: f64): string {
+  if (x.is_nan()) {
+    return "NaN";
+  }
+  if (!x.is_finite()) {
+    return if (x > 0.0) { "inf" } else { "-inf" };
+  }
+  return x.to_string_prec(4);
+}
+
+// The chart of the requests that ended in each time scale of the past, the
+// newest at the left, as bars `height` high in `width` columns.
+function (l: Live) requests_chart(now: i64, scale: i32, width: i32, height: i32): string[] {
+  let bin = SCALE_NS[scale];
+  let elapsed = now - l.start;
+  let short = elapsed % bin;
+  let counts: i64[] = [];
+  for _ in 0..BARS {
+    counts = counts.append(0);
+  }
+  let k = l.ends.len() - 1;
+  while (k >= 0) {
+    let past = now - (l.ends[k] + l.start);
+    let i = if (past <= short) { 0 } else { 1 + ((past - short) / bin) as i32 };
+    if (i >= BARS) {
+      break;
+    }
+    counts = counts.with(i, counts[i] + 1);
+    k -= 1;
+  }
+  let labels: string[] = [];
+  let wide = 0;
+  for i in 0..BARS {
+    let label = bar_label(i, scale);
+    labels = labels.append(label);
+    wide = max(wide, max(label.len(), counts[i].to_string().len()));
+  }
+  return bars(counts, labels, wide + 2, width, height);
+}
+
+function bar_label(x: i32, scale: i32): string {
+  return match (scale) {
+    0 => f"{x}ns",
+    1 => f"{x}us",
+    2 => f"{x}ms",
+    3 => f"{x}s",
+    4 => f"{10 * x}s",
+    5 => f"{x}m",
+    6 => f"{10 * x}m",
+    _ => f"{x}h",
+  };
+}
+
+// The histogram of the latencies of the responses from index `from`, as
+// oha draws it: bars 7 wide, as many as fit, with the highest latency of
+// each bin in seconds.
+function (l: Live) histogram(from: i32, width: i32, height: i32): string[] {
+  let bins = width / 8;
+  if (bins < 2) {
+    bins = 2;
+  }
+  let lo = 0;
+  let hi = 0;
+  for k in from..l.ends.len() {
+    let v = l.latencies[k];
+    if (k == from || v < lo) {
+      lo = v;
+    }
+    if (k == from || v > hi) {
+      hi = v;
+    }
+  }
+  let counts: i64[] = [];
+  for _ in 0..bins {
+    counts = counts.append(0);
+  }
+  let step = (hi - lo) as f64 / ((bins - 1) as f64);
+  for k in from..l.ends.len() {
+    let at = if (step > 0.0) { ((l.latencies[k] - lo) as f64 / step).ceil() as i32 } else { 0 };
+    let i = if (at >= bins) { bins - 1 } else { at };
+    counts = counts.with(i, counts[i] + 1);
+  }
+  let labels: string[] = [];
+  for i in 0..bins {
+    let label = if (l.ends.len() == from) { "NaN" } else { ((lo as f64 + step * (i as f64)) / 1000000000.0).to_string_prec(4) };
+    labels = labels.append(label);
+  }
+  return bars(counts, labels, 7, width, height);
+}
+
+// Vertical bars of `counts`, each `bar` columns wide with a space after
+// it, as many as fit in `width`: the bars, then a row of the counts, then
+// a row of the labels.
+function bars(counts: i64[], labels: string[], bar: i32, width: i32, height: i32): string[] {
+  let n = (width + 1) / (bar + 1);
+  if (n > counts.len()) {
+    n = counts.len();
+  }
+  let most: i64 = 1;
+  for i in 0..n {
+    most = if (counts[i] > most) { counts[i] } else { most };
+  }
+  let tall = height - 2;
+  let eighths = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+  let out: string[] = [];
+  for row in 0..tall {
+    let line = "";
+    let below = (tall - 1 - row) as i64 * 8;
+    for i in 0..n {
+      let fill = counts[i] * (tall as i64) * 8 / most - below;
+      line += (if (fill <= 0) { " ".repeat(bar) } else if (fill >= 8) { "█".repeat(bar) } else { eighths[fill as i32 - 1].repeat(bar) }) + " ";
+    }
+    out = out.append(line);
+  }
+  let values = "";
+  let names = "";
+  for i in 0..n {
+    values += centered(counts[i].to_string(), bar) + " ";
+    names += centered(labels[i], bar) + " ";
+  }
+  return out.append(values).append(names);
+}
+
+function centered(s: string, width: i32): string {
+  if (s.len() >= width) {
+    return s.take(width);
+  }
+  let left = (width - s.len()) / 2;
+  return " ".repeat(left) + s + " ".repeat(width - s.len() - left);
+}
+
+function max(a: i32, b: i32): i32 {
+  return if (a > b) { a } else { b };
+}
+
+function fill(rows: string[], n: i32): string[] {
+  let out = rows;
+  while (out.len() < n) {
+    out = out.append("");
+  }
+  return out;
+}
+
+// A box with borders, its title in the top border and `rows` in it, `width`
+// wide, in the color `color` of SGR.
+function box(title: string, rows: string[], width: i32, color: string): string[] {
+  let inner = width - 2;
+  let on = if (color.len() > 0) { "\x1b[" + color + "m" } else { "" };
+  let off = if (color.len() > 0) { "\x1b[0m" } else { "" };
+  let top = "┌" + clip(title, inner);
+  top += "─".repeat(inner - visible(clip(title, inner)));
+  let out: string[] = [on + top + "┐" + off];
+  for r in rows {
+    let text = clip(r, inner);
+    out = out.append(on + "│" + off + text + " ".repeat(inner - visible(text)) + on + "│" + off);
+  }
+  return out.append(on + "└" + "─".repeat(inner) + "┘" + off);
+}
+
+// The two boxes `a` and `b` side by side, with the rows of the shorter one
+// as blank rows.
+function side(a: string[], b: string[]): string[] {
+  let out: string[] = [];
+  let n = max(a.len(), b.len());
+  for k in 0..n {
+    out = out.append((if (k < a.len()) { a[k] } else { "" }) + (if (k < b.len()) { b[k] } else { "" }));
+  }
+  return out;
+}
+
+// The count of the characters of `s` that a terminal shows: not the bytes
+// after the first of a character of UTF-8, and not an escape of SGR.
+function visible(s: string): i32 {
+  let n = 0;
+  let k = 0;
+  let b = s.bytes();
+  while (k < b.len()) {
+    if (b[k] == 27 as u8) {
+      while (k < b.len() && b[k] != 109 as u8) {
+        k += 1;
+      }
+      k += 1;
+      continue;
+    }
+    if (b[k] < 128 as u8 || b[k] >= 192 as u8) {
+      n += 1;
+    }
+    k += 1;
+  }
+  return n;
+}
+
+// `s` with no more than `width` visible characters.
+function clip(s: string, width: i32): string {
+  if (visible(s) <= width) {
+    return s;
+  }
+  let out: u8[] = [];
+  let n = 0;
+  let b = s.bytes();
+  let k = 0;
+  while (k < b.len()) {
+    if (b[k] == 27 as u8) {
+      while (k < b.len() && b[k] != 109 as u8) {
+        out = out.append(b[k]);
+        k += 1;
+      }
+    } else if (b[k] < 128 as u8 || b[k] >= 192 as u8) {
+      if (n == width) {
+        break;
+      }
+      n += 1;
+    }
+    if (k < b.len()) {
+      out = out.append(b[k]);
+    }
+    k += 1;
+  }
+  return utf8.from_bytes_lossy(out);
+}
+
+// `s` without the escapes of SGR.
+function strip_color(s: string): string {
+  let b = s.bytes();
+  let out: u8[] = [];
+  let k = 0;
+  while (k < b.len()) {
+    if (b[k] == 27 as u8 && k + 1 < b.len() && b[k + 1] == 91 as u8) {
+      let j = k + 2;
+      while (j < b.len() && (b[j] >= 48 as u8 && b[j] <= 57 as u8 || b[j] == 59 as u8)) {
+        j += 1;
+      }
+      if (j < b.len() && b[j] == 109 as u8) {
+        k = j + 1;
+        continue;
+      }
+    }
+    out = out.append(b[k]);
+    k += 1;
+  }
+  return utf8.from_bytes_lossy(out);
+}

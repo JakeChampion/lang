@@ -3766,7 +3766,7 @@ function kernel_argument(v: Value, want: typeinfo.Type): Value {
 
 // The kernels in the list return the descriptor number of a new socket.
 function kernel_result(result: Value, name: string): Value {
-  if (util.has_str(["tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_accept_with", "tcp_connect_with", "udp_bind", "udp_bind_with", "unix_listen", "unix_connect"], name)) {
+  if (util.has_str(["tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_accept_with", "tcp_connect_with", "udp_bind", "udp_bind_with", "unix_listen", "unix_connect", "vsock_connect"], name)) {
     return socket_of(result);
   }
   return result;
@@ -5702,7 +5702,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg
     out = out.append(renumber_block(b, map, ids));
   }
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  let f = ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
+  let f = ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: kept, params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false, shape_slot: false };
   if (has_lines) {
     f = ssasem.Func { ...f, source_positions: renumber_source(blocks, map, ids, kept.len()) };
   }
@@ -5978,7 +5978,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false, shape_slot: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
@@ -6790,8 +6790,7 @@ function with_finalizers(all: Produced[], rows: ssasem.Finalizer[]): Produced[] 
 function finalized_types(funcs: parser.FuncDecl[]): ssasem.Finalizer[] {
   let out: ssasem.Finalizer[] = [];
   for fd in funcs {
-    let provider = fd.impl_trait == "Drop" || fd.impl_trait == "" && util.index_of_str(fd.dyn_traits, "Drop") >= 0;
-    if (provider && parser.derive_simple_name(fd.name) == "drop" && fd.receiver_type != "" && !generic_decl(fd)) {
+    if (parser.drop_provider(fd) && !generic_decl(fd)) {
       out = out.append(ssasem.Finalizer { receiver: fd.receiver_type, symbol: parser.decl_key(fd), writes: true });
     }
   }
@@ -6965,7 +6964,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   }
   let graph = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
   f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
-  f = ssasem.tail_recursion(f, name);
+  f = ssasem.tail_recursion(ssasem.boxed_enum_dyns(f), name);
   f = ssabounds.word_loads(ssabounds.grouped_reads(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
   f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: util.append_all(s.requests, closed.requests), bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
@@ -7696,6 +7695,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "tcp_connect_with", params: [bytes, typeinfo.t_i32(), typeinfo.t_bool()], modes: [b, v, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "unix_listen", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "unix_connect", params: [typeinfo.t_string()], modes: [b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "vsock_connect", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "reactor_new", params: [], modes: [], result: typeinfo.t_i32() },
     ssasem.Contract { name: "reactor_ctl", params: [typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "reactor_wait", params: [typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false }, typeinfo.t_i32()], modes: [v, b, v], result: typeinfo.t_i32() },
@@ -8632,7 +8632,7 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
   for m in c.modes {
     bits = bits.append(m == ssaunits.counted_mode());
   }
-  return ownership.Escapes { name: c.name, bits: bits, lends: may_hold_view(c.result) && !ssasem.fresh_result_builtin(c.name) && !rtbytecopy.is_helper(c.name), cycle: -1, quiet: [] };
+  return ownership.Escapes { name: c.name, bits: bits, lends: may_hold_view(c.result) && !ssasem.fresh_result_builtin(c.name) && !rtbytecopy.is_helper(c.name), cycle: -1, quiet: [], eager: [] };
 }
 
 // The types of builtins.fern that hold no view and no function.
@@ -8754,7 +8754,11 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
   let comp = ownership.cycles(succ);
   let out_rows: ownership.Escapes[] = [];
   for k in 0..rows.len() {
-    out_rows = out_rows.append(ownership.Escapes { ...rows[k], cycle: comp[k], quiet: slots[k] });
+    let eager: boolean[] = [];
+    if (comp[k] >= 0) {
+      eager = slots[k];
+    }
+    out_rows = out_rows.append(ownership.Escapes { ...rows[k], cycle: comp[k], quiet: slots[k], eager: eager });
   }
   return out_rows;
 }
@@ -8808,7 +8812,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     modes_change = modes_change.append(inferred_modes_change(all[i]));
     kernel = kernel.append(kernel_named(all[i], names[i], lowered));
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !taken_ix.has(names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: row_bits(all[i], [], kernel[i]), lends: false, cycle: -1, quiet: [] });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: row_bits(all[i], [], kernel[i]), lends: false, cycle: -1, quiet: [], eager: [] });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
@@ -8847,22 +8851,65 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     wi += 1;
     queued = queued.with(i, false);
     let at = own_row[i];
+    let lazy = without_kept_alive(rows, ix, all[i], analyses[i]);
+    rows = lazy.rows;
+    let again = lazy.again;
     if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
       let transfers = ownership.transfers(all[i].func, analyses[i], rows, ix, modes_change[i]);
       let next = row_bits(all[i], transfers.escapes, kernel[i]);
       let lends = rows[at].lends || transfers.lends;
       if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
         rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
-        for j in readers[at] {
-          if (!queued[j]) {
-            work = work.append(j);
-            queued = queued.with(j, true);
-          }
-        }
+        again = again.append(at);
       }
+    }
+    for row in again {
+      let next = with_queued(Worklist { work: work, queued: queued }, util.append_all(readers[row], row_owners(own_row, row)));
+      work = next.work;
+      queued = next.queued;
     }
   }
   return rows;
+}
+
+struct Worklist { work: i32[], queued: boolean[] }
+
+function with_queued(own q: Worklist, more: i32[]): Worklist {
+  for j in more {
+    if (!q.queued[j]) {
+      q = Worklist { work: q.work.append(j), queued: q.queued.with(j, true) };
+    }
+  }
+  return q;
+}
+
+struct Lazy { rows: ownership.Escapes[], again: i32[] }
+
+// Clears each eager slot that a call of `p` gives a value that lives on.
+// `again` has the rows that changed.
+function without_kept_alive(own rows: ownership.Escapes[], ix: ownership.Index, p: Produced, a: ssasem.Analysis): Lazy {
+  let again: i32[] = [];
+  if (!p.ok) {
+    return Lazy { rows: rows, again: again };
+  }
+  for slot in ownership.kept_alive(p.func, a, rows, ix) {
+    if (ownership.eager_slot(rows, slot.row, slot.at)) {
+      rows = rows.with(slot.row, ownership.Escapes { ...rows[slot.row], eager: rows[slot.row].eager.with(slot.at, false) });
+      again = again.append(slot.row);
+    }
+  }
+  return Lazy { rows: rows, again: again };
+}
+
+// The functions that have this row.
+function row_owners(own_row: i32[], row: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..own_row.len() {
+    if (own_row[i] == row) {
+      out = out.append(i);
+    }
+  }
+  return out;
 }
 
 function row_readers(all: Produced[], own_row: i32[], rows: ownership.Escapes[], ix: ownership.Index): i32[][] {
@@ -8918,10 +8965,11 @@ pub function env_passes(): PassSwitches {
   return PassSwitches { reach: !envflag.on("FERN_NO_SEM_REACH"), inline: inline, scale_kernel: !envflag.on("FERN_NO_SCALE_KERNEL"), product_kernel: !envflag.on("FERN_NO_PRODUCT_KERNEL"), fusion: !envflag.on("FERN_NO_ARRAY_FUSION") };
 }
 
-pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32, stack_phi_joins: boolean, passes: PassSwitches }
+// shape_slot says a record of the target keeps its shape in a slot of its box.
+pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32, stack_phi_joins: boolean, shape_slot: boolean, passes: PassSwitches }
 
 pub function plain_build(): BuildOpts {
-  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off(), stack_phi_joins: false, passes: env_passes() };
+  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off(), stack_phi_joins: false, shape_slot: false, passes: env_passes() };
 }
 
 pub function build_module(mod: parser.Module): Built {
@@ -8995,6 +9043,9 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
     all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins);
+  }
+  if (opts.shape_slot) {
+    all = with_shape_slots(all);
   }
   decls = [];
   instances = [];
@@ -9130,6 +9181,14 @@ function byte_copy_loops(all: Produced[]): Produced[] {
       }
     }
     out = out.append(p);
+  }
+  return out;
+}
+
+function with_shape_slots(all: Produced[]): Produced[] {
+  let out: Produced[] = [];
+  for p in all {
+    out = out.append(Produced { ...p, func: ssasem.Func { ...p.func, shape_slot: true } });
   }
   return out;
 }

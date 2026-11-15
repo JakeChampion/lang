@@ -248,6 +248,48 @@ function test_certificate_chain(): test.TestOutcome {
   return test.pass();
 }
 
+function test_client_certificate_messages(): test.TestOutcome {
+  let built = tls12.certificate([bytes("aabb"), bytes("ccddee")]);
+  if (hex.encode(built) != "0b00000e00000b000002aabb000003ccddee") {
+    return test.fail(f"certificate {hex.encode(built)}");
+  }
+  match (tls12.certificate_chain(built)) {
+    Ok(chain) => {
+      if (chain.len() != 2 || hex.encode(chain[1]) != "ccddee") {
+        return test.fail("chain");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  let verify = tls12.certificate_verify(1027, bytes("0102"));
+  return test.assert_eq(hex.encode(verify), "0f00000604030002" + "0102");
+}
+
+function test_request_schemes(): test.TestOutcome {
+  match (tls12.request_schemes(tls12.handshake_message(13, bytes("024001" + "0004" + "04030804" + "0000")))) {
+    Ok(schemes) => {
+      if (schemes.len() != 2 || schemes[0] != 1027 || schemes[1] != 2052) {
+        return test.fail("schemes");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  if let Ok(_) = tls12.request_schemes(tls12.handshake_message(13, bytes("0140" + "0003" + "040308" + "0000"))) {
+    return test.fail("took an odd supported_signature_algorithms");
+  }
+  if let Ok(_) = tls12.request_schemes(tls12.handshake_message(13, bytes("0140" + "0002" + "0403" + "0004"))) {
+    return test.fail("took short certificate_authorities");
+  }
+  if let Ok(_) = tls12.request_schemes(tls12.handshake_message(13, bytes("00" + "0002" + "0403" + "0000"))) {
+    return test.fail("took no certificate_types");
+  }
+  return test.pass();
+}
+
 function started(tls12_offered: boolean): handshake.ClientStep {
   let cfg = handshake.ClientConfig { ...handshake.client_config("example.com"), tls12: tls12_offered };
   match (handshake.client_start(cfg, counting(handshake.client_entropy(cfg)))) {
@@ -326,6 +368,8 @@ function main(): i32 {
   r = r.it("downgrade sentinel", test_downgraded);
   r = r.it("ServerKeyExchange", test_key_exchange);
   r = r.it("Certificate", test_certificate_chain);
+  r = r.it("the Certificate and CertificateVerify of a client", test_client_certificate_messages);
+  r = r.it("the schemes of a CertificateRequest", test_request_schemes);
   r = r.it("the client hello offers TLS 1.2", test_hello_offers_tls12);
   r = r.it("a TLS 1.2 ServerHello", test_server_hello12);
   return r.finish();

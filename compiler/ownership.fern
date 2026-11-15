@@ -3,7 +3,9 @@ import "./ssasem";
 import "./typeinfo";
 import "./util";
 
-pub struct Escapes { name: string, bits: boolean[], lends: boolean, cycle: i32, quiet: boolean[] }
+// eager marks a quiet slot of a cycle that consumes its argument all the same:
+// each call gives it a value that the caller owns and does not use again.
+pub struct Escapes { name: string, bits: boolean[], lends: boolean, cycle: i32, quiet: boolean[], eager: boolean[] }
 
 pub struct Index { head: i32[], next: i32[] }
 
@@ -105,7 +107,98 @@ function same_cycle(rows: Escapes[], caller: i32, callee: i32): boolean {
 }
 
 function quiet_slot(rows: Escapes[], row: i32, slot: i32): boolean {
-  return slot >= 0 && slot < rows[row].quiet.len() && rows[row].quiet[slot];
+  return slot >= 0 && slot < rows[row].quiet.len() && rows[row].quiet[slot] && !eager_slot(rows, row, slot);
+}
+
+pub function eager_slot(rows: Escapes[], row: i32, slot: i32): boolean {
+  return row >= 0 && slot >= 0 && slot < rows[row].eager.len() && rows[row].eager[slot];
+}
+
+pub struct Slot { row: i32, at: i32 }
+
+// The eager slots that a call of `f` gives a value that lives on, or a value
+// that `f` does not own.
+pub function kept_alive(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): Slot[] {
+  let out: Slot[] = [];
+  let sc = Scope { rows: rows, ix: ix, me: find(rows, ix, f.graph.name), defs: ssa.inst_defs(f.graph) };
+  for bi in 0..f.graph.blocks.len() {
+    let b = f.graph.blocks[bi];
+    for pos in 0..b.insts.len() {
+      let ins = b.insts[pos];
+      if (ins.kind_tag == ssasem.call() && !ssasem.is_dyn_call(ins.str)) {
+        out = call_kept(out, f, a, sc, Site { block: bi, pos: pos, ins: ins });
+      }
+      let row = find(rows, ix, ins.str);
+      if (slot_phi(ins) && eager_slot(rows, row, ins.imm) && !phi_owned(f, sc, ins, a.ok)) {
+        out = out.append(Slot { row: row, at: ins.imm });
+      }
+    }
+  }
+  return out;
+}
+
+struct Site { block: i32, pos: i32, ins: ssa.SInst }
+
+function call_kept(own out: Slot[], f: ssasem.Func, a: ssasem.Analysis, sc: Scope, site: Site): Slot[] {
+  let row = find(sc.rows, sc.ix, site.ins.str);
+  for i in 0..site.ins.args.len() {
+    let arg = site.ins.args[i];
+    let dies = a.ok && !ssasem.used_after(a, site.block, site.pos, arg) && owned_root(f, sc, arg, []);
+    if (eager_slot(sc.rows, row, i) && !dies) {
+      out = out.append(Slot { row: row, at: i });
+    }
+  }
+  return out;
+}
+
+function phi_owned(f: ssasem.Func, sc: Scope, ins: ssa.SInst, ok: boolean): boolean {
+  for i in 1..ins.args.len() {
+    if (ins.args[i] != ins.result && !(ok && owned_root(f, sc, ins.args[i], []))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+struct Scope { rows: Escapes[], ix: Index, me: i32, defs: ssa.SInst[] }
+
+// The frame owns the value: it is a part of a parameter that the frame
+// consumes, the result of a call, a new box, or a phi of such values.
+function owned_root(f: ssasem.Func, sc: Scope, v: i32, seen: i32[]): boolean {
+  if (v >= 0 && v < f.params.len()) {
+    return sc.me >= 0 && consumed_at(sc.rows, sc.me, v);
+  }
+  let d = ssa.copy_source(sc.defs, v);
+  if (slot_phi(d)) {
+    return consumed_at(sc.rows, find(sc.rows, sc.ix, d.str), d.imm);
+  }
+  if (seen.len() >= 16) {
+    return false;
+  }
+  if (d.kind_tag == ssa.PHI) {
+    return phi_args_owned(f, sc, d, seen.append(d.result));
+  }
+  if (makes_unit(d.kind_tag)) {
+    return d.result >= 0;
+  }
+  return reads_part(d.kind_tag) && d.args.len() > 0 && owned_root(f, sc, d.args[0], seen.append(v));
+}
+
+function makes_unit(k: i32): boolean {
+  return k == ssasem.call() || k == ssasem.variant_new() || k == ssasem.record_new() || k == ssasem.tuple_new();
+}
+
+function reads_part(k: i32): boolean {
+  return k == ssasem.variant_get() || k == ssasem.record_get() || k == ssasem.tuple_get() || k == ssasem.variant_as();
+}
+
+function phi_args_owned(f: ssasem.Func, sc: Scope, d: ssa.SInst, seen: i32[]): boolean {
+  for arg in d.args {
+    if (util.index_of_i32(seen, arg) < 0 && !owned_root(f, sc, arg, seen)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 pub function cycles(succ: i32[][]): i32[] {
