@@ -32,8 +32,9 @@ function main(): i32 {
 }
 `
 
-// On x86-64 a lane shift by a constant has its count in the instruction.
-// Lanes of 8 bits take the shift of 16 bits and one mask of constant bytes.
+// A lane shift by a constant has its count in the instruction, on x86-64
+// and on arm64. On x86-64, lanes of 8 bits take the shift of 16 bits and
+// one mask of constant bytes.
 func TestSelfHostLaneShiftByConstant(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -62,6 +63,24 @@ func TestSelfHostLaneShiftByConstant(t *testing.T) {
 	// The count of var is in a register, so its mask is a shift of ones.
 	if body := tailCallBody(t, text, "var"); !strings.Contains(body, "vpcmpeqb") {
 		t.Errorf("var has no mask from a shift of ones:\n%s", body)
+	}
+	// On arm64 each shift by a constant is one instruction.
+	arm, err := os.ReadFile(cli.emit(t, src, "arm64-linux"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"shr2": "ushr v",
+		"shl4": "shl v",
+		"sar3": "sshr v",
+		"w5":   "shl v",
+		"q7":   "sshr v",
+		"var":  "ushl v",
+	} {
+		body := tailCallBody(t, string(arm), name)
+		if !strings.Contains(body, want) || name != "var" && strings.Contains(body, "dup ") {
+			t.Errorf("arm64 %s has no %q, or it takes its count from a register:\n%s", name, want, body)
+		}
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		if stderr, code := cli.exitOf(t, laneShiftByConstantProg, target); code != 0 {

@@ -2107,7 +2107,7 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
 }
 
 function ssa_imm_right(): string[] {
-  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "div_s", "div_u", "rem_s", "rem_u"];
+  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "div_s", "div_u", "rem_s", "rem_u", "vishl", "vishru", "vishrs"];
 }
 
 function ssa_imm_left(): string[] {
@@ -2522,14 +2522,14 @@ function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pu
 
 // The ops on integer lanes. `ins.imm` is the width of a lane: 8, 16 or 32
 // bits. An op that a width does not have is a refusal that names the op.
-function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let id = ir.kind_id(b);
   let w = ins.imm;
   if (w != 8 && w != 16 && w != 32) {
     ircore.unsupported_op_refuse(id, "arm64");
   }
   if (id >= ir.K_VISHL) {
-    return ssa_vint_shift(ins, b, reg_of, s);
+    return ssa_vint_shift(ins, b, reg_of, imm, s);
   }
   if (id < ir.K_VINEG || id == ir.K_VIMUL) {
     return ssa_vint_bin(ins, b, reg_of, s);
@@ -2626,12 +2626,26 @@ function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitS
 
 // A shift of each lane by one count. The count is modulo the lane width.
 // A shift to the right is a shift to the left by the negative count.
-function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let w = ins.imm;
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
-  s = ssa_load(reg_of, ins.args[1], "x16", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "d1");
   let d = ssa_fdst(reg_of, ins.result);
+  if (imm.is_imm[ins.args[1]]) {
+    // A count that the compiler knows is in the instruction. A shift to
+    // the right by 0 has no encoding, and it is a copy.
+    let count = imm.value[ins.args[1]] as i32 & w - 1;
+    let mnem = if (b == "vishl") { "shl " } else if (b == "vishrs") { "sshr " } else { "ushr " };
+    if (count == 0) {
+      if (a != d) {
+        s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(a) + "\n");
+      }
+    } else {
+      s = s.write("    " + mnem + ssa_viarr(d, w) + ", " + ssa_viarr(a, w) + ", #" + util.i32_to_string(count) + "\n");
+    }
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
+  s = ssa_load(reg_of, ins.args[1], "x16", s);
   s = s.write("    and w16, w16, #" + util.i32_to_string(w - 1) + "\n");
   if (b != "vishl") {
     s = s.write("    neg w16, w16\n");
@@ -2689,10 +2703,10 @@ function ssa_vi_half(d: string, w: i32): string {
   return "v" + slice_unchecked(d, 1, d.len()) + arr;
 }
 
-function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
   if (ir.is_lane_int_kind(ir.kind_id(b))) {
-    return ssa_vint(ins, b, reg_of, s);
+    return ssa_vint(ins, b, reg_of, imm, s);
   }
   if (ir.is_lane_shape_kind(ir.kind_id(b))) {
     return ssa_vint_shape(ins, b, reg_of, s);
@@ -2907,9 +2921,9 @@ function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {
   return ssa.lane_inst(ins) || ins.kind_tag == ssa.COPY && ins.result < fr.lanes.len() && fr.lanes[ins.result];
 }
 
-function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   if (ssa.lane_inst(ins)) {
-    return ssa_lane_inst(ins, reg_of, s);
+    return ssa_lane_inst(ins, reg_of, imm, s);
   }
   return ssa_vcopy(ins, reg_of, s);
 }
@@ -4615,7 +4629,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return asmcore.ssa_line_loc(ins, s);
   }
   if (ssa_lane_arm_at(ins, fr)) {
-    return ssa_lane_arm(ins, reg_of, s);
+    return ssa_lane_arm(ins, reg_of, fr.imm, s);
   }
   if ((k == ssa.CONST_INT || k == ssa.CONST_I64) && fr.imm.is_imm[ins.result]) {
     return s;
