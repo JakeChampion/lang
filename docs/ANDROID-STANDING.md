@@ -1,5 +1,7 @@
 # Where Fern stands for Android apps
 
+Status: [research] a comparison of November 2026, and the order of the fixes.
+
 This document compares Fern with the other stacks for Android apps, as of
 November 2026. The other stacks are Kotlin and Jetpack Compose, Java and
 Views, Flutter, React Native, Kotlin Multiplatform and .NET MAUI. The
@@ -24,17 +26,21 @@ Fern is strong where the others are weak:
 - **No toolchain to install.** `fern -apk OUT app.fern` writes a signed
   APK with no Android SDK, no Gradle and no JDK. `fern -apk-run` installs
   it on the phone that adb sees, starts it and shows its log.
-- **Small apps.** The counter example is 1.05 MB with two ABIs. The
-  stopwatch is 589 KB, or 131 KB with `-apk-compress`.
+
+- **Small apps.** The counter example is 1.05 MB with two ABIs, and the
+  native example is 372 KB. The DEX file is at most 3.8 KB, because the
+  APK holds no Java or Kotlin runtime.
   - A minimal Compose app after R8 is about 2 MB to download.
   - A Flutter app is several MB for each ABI.
   - A React Native app is about 16 MB.
+
 - **Tests with no phone.** `std/android/ui/sim` runs the whole app on the
   computer.
   - It sends taps, typing, drags and the back key.
   - It sets the time, the theme and the font size.
   - It reads the screen texts and what TalkBack reads.
   - Kotlin needs Robolectric or an emulator for the same.
+
 - **Native media.** Fern has AAudio, MediaCodec, a media session, audio
   focus and decoders written in Fern. The Tune example plays MP3, FLAC,
   M4A, Ogg Vorbis and Opus with no codec of the system.
@@ -64,7 +70,30 @@ Play today:
    foreground service, no push, and no scheduled background work.
 
 6. **Developer tools.** There is no hot reload, no preview, no documented
-   debugger workflow on a phone, and each build compiles both ABIs again.
+   debugger workflow on a phone, and each build compiles both ABIs again
+   on one thread.
+
+## Measurements
+
+The examples were built with `fern -apk` on a container with four cores.
+Each APK holds the code for arm64-v8a and x86_64, stored and not
+compressed.
+
+| App | Lines of source | APK | Build |
+|---|---|---|---|
+| native | 181 | 372 KB | 1.4 s |
+| counter | 61 | 1.05 MB | 4.0 s |
+| todo | 125 | 1.12 MB | 4.2 s |
+| stopwatch | 1,848 | 985 KB | 2.4 s |
+| walkie | 6,517 | 3.84 MB | 13 s |
+| tune | 5,792 | 5.70 MB | 20 s |
+| plex | 4,920 | 7.15 MB | 25 s |
+
+- The build of a large app uses about 600 MB of memory.
+- Deflate makes the native code about three times smaller. With
+  `-apk-compress`, plex is about 2.3 MB for the two ABIs.
+- The 42 UI tests of Tune run on the computer in about 70 s, which is
+  1.7 s for each test. This is slow for tests with no device.
 
 ## Comparison
 
