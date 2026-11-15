@@ -21,13 +21,15 @@ const POST_MERGE: i32 = 4;
 
 const COLLAPSING: i32 = 5;
 
+const PRE_ROOT: i32 = 6;
+
 // The state of the graph. `parents` holds the parents of the commit that
 // the graph shows. `mapping` holds, for each place of a line, the column
 // that goes through it, or -1.
-pub struct Graph { commit: string, parents: string[], width: i32, expansion_row: i32, state: i32, prev_state: i32, commit_index: i32, prev_commit_index: i32, merge_layout: i32, edges_added: i32, prev_edges_added: i32, columns: string[], new_columns: string[], mapping: i32[], old_mapping: i32[], mapping_size: i32, mark: string }
+pub struct Graph { commit: string, parents: string[], width: i32, expansion_row: i32, state: i32, prev_state: i32, commit_index: i32, prev_commit_index: i32, merge_layout: i32, edges_added: i32, prev_edges_added: i32, columns: string[], new_columns: string[], merge_parents: boolean[], new_merge_parents: boolean[], commit_in_columns: boolean, visual_root: boolean, root_depth: i32, root_cascade: boolean, mapping: i32[], old_mapping: i32[], mapping_size: i32, mark: string }
 
 pub function graph_new(): Graph {
-  return Graph { commit: "", parents: [], width: 0, expansion_row: 0, state: PADDING, prev_state: PADDING, commit_index: 0, prev_commit_index: 0, merge_layout: 0, edges_added: 0, prev_edges_added: 0, columns: [], new_columns: [], mapping: [], old_mapping: [], mapping_size: 0, mark: "*" };
+  return Graph { commit: "", parents: [], width: 0, expansion_row: 0, state: PADDING, prev_state: PADDING, commit_index: 0, prev_commit_index: 0, merge_layout: 0, edges_added: 0, prev_edges_added: 0, columns: [], new_columns: [], merge_parents: [], new_merge_parents: [], commit_in_columns: false, visual_root: false, root_depth: 0, root_cascade: false, mapping: [], old_mapping: [], mapping_size: 0, mark: "*" };
 }
 
 function update_state(g: Graph, s: i32): Graph {
@@ -61,10 +63,11 @@ function mapping_at(m: i32[], at: i32): i32 {
 
 function insert_into_new_columns(g_in: Graph, commit: string, idx: i32): Graph {
   let g = g_in;
+  let initial_layout = g.merge_layout;
   let i = find_new_column(g, commit);
   if (i < 0) {
     i = g.new_columns.len();
-    g = Graph { ...g, new_columns: g.new_columns.append(commit) };
+    g = Graph { ...g, new_columns: g.new_columns.append(commit), new_merge_parents: g.new_merge_parents.append(false) };
   }
   let mapping_idx = 0;
   if (num_parents(g) > 1 && idx > -1 && g.merge_layout == -1) {
@@ -81,11 +84,12 @@ function insert_into_new_columns(g_in: Graph, commit: string, idx: i32): Graph {
     mapping_idx = g.width;
     g = Graph { ...g, width: g.width + 2 };
   }
-  return Graph { ...g, mapping: set_mapping(g.mapping, mapping_idx, i) };
+  let merge_parents = if (num_parents(g) > 1 && initial_layout >= 0 && idx >= 0) { g.new_merge_parents.with(i, true) } else { g.new_merge_parents };
+  return Graph { ...g, mapping: set_mapping(g.mapping, mapping_idx, i), new_merge_parents: merge_parents };
 }
 
 function update_columns(g_in: Graph): Graph {
-  let g = Graph { ...g_in, columns: g_in.new_columns, new_columns: [] };
+  let g = Graph { ...g_in, columns: g_in.new_columns, new_columns: [], merge_parents: g_in.new_merge_parents, new_merge_parents: [], commit_in_columns: true };
   let max_new = g.columns.len() + num_parents(g);
   let size = 2 * max_new;
   g = Graph { ...g, mapping_size: size, mapping: __alloc_i32(size).map((v: i32): i32 => -1), width: 0, prev_edges_added: g.edges_added, edges_added: 0 };
@@ -98,6 +102,7 @@ function update_columns(g_in: Graph): Graph {
       if (seen_this) {
         break;
       }
+      g = Graph { ...g, commit_in_columns: false };
       col = g.commit;
     } else {
       col = g.columns[i];
@@ -113,6 +118,9 @@ function update_columns(g_in: Graph): Graph {
       }
     } else {
       g = insert_into_new_columns(g, col, -1);
+      if (g.merge_parents[i]) {
+        g = Graph { ...g, new_merge_parents: g.new_merge_parents.with(find_new_column(g, col), true) };
+      }
     }
     i += 1;
   }
@@ -137,11 +145,18 @@ function needs_pre_commit_line(g: Graph): boolean {
 
 // The graph for the next commit `commit`, whose parents in the graph are
 // `parents`: `graph_update` of git.
-pub function update(g_in: Graph, commit: string, parents: string[]): Graph {
+pub function update(g_in: Graph, commit: string, parents: string[], next: string, next_root: boolean): Graph {
   let g = Graph { ...g_in, commit: commit, parents: parents, prev_commit_index: g_in.commit_index };
   g = update_columns(g);
+  let root = parents.len() == 0 && !(g.commit_in_columns && g.merge_parents[g.commit_index]) && next.len() > 0 && (find_new_column(g, next) < 0 || g.root_depth > 0);
+  if (root) {
+    let cascade = if (g.root_depth == 0 && next_root) { true } else if (!next_root && g.root_depth > 0 && g.root_depth % 4 == 0) { false } else { g.root_cascade };
+    g = Graph { ...g, visual_root: true, root_depth: g.root_depth + 1, root_cascade: cascade };
+  } else {
+    g = Graph { ...g, visual_root: false, root_depth: 0, root_cascade: false };
+  }
   g = Graph { ...g, expansion_row: 0 };
-  let s = if (g.state != PADDING) { SKIP } else if (needs_pre_commit_line(g)) { PRE_COMMIT } else { COMMIT };
+  let s = if (g.state != PADDING) { SKIP } else if (g.commit_in_columns && root && g.columns.len() > 0 && !g.root_cascade) { PRE_ROOT } else if (needs_pre_commit_line(g)) { PRE_COMMIT } else { COMMIT };
   return Graph { ...g, state: s };
 }
 
@@ -219,6 +234,11 @@ function commit_line(g_in: Graph): (Graph, string) {
     }
     if (col == g.commit) {
       seen_this = true;
+      if (g.visual_root) {
+        let spaces = (g.root_depth - (if (g.root_cascade) { 1 } else { 0 })) % 4 * 2;
+        out += " ".repeat(spaces);
+        g = Graph { ...g, width: g.width + spaces };
+      }
       out += g.mark;
       if (num_parents(g) > 2) {
         out += octopus(g);
@@ -385,6 +405,11 @@ pub function next_line(g_in: Graph): (Graph, string, boolean) {
     let (g1, l) = pre_commit_line(g);
     g = g1;
     line = l;
+  } else if (g.state == PRE_ROOT) {
+    for c in g.columns {
+      line += (if (c == g.commit) { " \\" } else { "|" }) + " ";
+    }
+    g = update_state(g, COMMIT);
   } else if (g.state == COMMIT) {
     let (g1, l) = commit_line(g);
     g = g1;

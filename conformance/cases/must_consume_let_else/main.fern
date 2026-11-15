@@ -1,0 +1,26 @@
+// spec: MC-08
+// The statements after a `let ... else` continue its first arm, so a value
+// that they consume, and that the else arm consumes, is consumed.
+
+import "std/i32";
+
+@must_consume
+struct Ticket { id: i32 }
+
+function redeem(own t: Ticket): i32 {
+    return t.id;
+}
+
+function seat_of(seat: Option[i32], id: i32): i32 {
+    let t: Ticket = Ticket { id: id };
+    let Some(n) = seat else {
+        return -redeem(t);
+    };
+    return redeem(t) + n;
+}
+
+function main(): i32 {
+    print(seat_of(Some(4), 7).to_string());
+    print(seat_of(None, 2).to_string());
+    return 0;
+}
