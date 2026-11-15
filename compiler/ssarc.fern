@@ -909,12 +909,45 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   return false;
 }
 
+// The count of the next node is read before the other fields drop, so the
+// read of its header does not wait for them.
+function chain_link(own r: irtables.LowerState, tail: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(1));
+  r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
+  r = emit(r, ir.op_store_local(3));
+  r = emit(r, ir.op_load_local(3));
+  r = emit(r, aligned_unique());
+  return emit(r, ir.op_store_local(4));
+}
+
+function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let tail = self_tail_field(v, t);
+  let linked = tail >= 0 && semtypes.equal(v.fields[tail].ty, t);
+  if (linked) {
+    r = chain_link(r, tail);
+  }
+  for i in 0..v.fields.len() {
+    if (ssasem.counted(f, v.fields[i].ty) && !(linked && i == tail)) {
+      r = emit(r, ir.op_load_local(1));
+      r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
+      r = emit(r, ir.op_store_local(5));
+      if (i == tail) {
+        r = drop_tail_array(r, t, v.fields[i].ty, f);
+      } else {
+        r = drop_value(r, 5, v.fields[i].ty, 6, f);
+      }
+    }
+  }
+  return r;
+}
+
 function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
   let node = 1;
   let first = 2;
   let next = 3;
-  r = reserve(r, 5);
+  let unique = 4;
+  r = reserve(r, 6);
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_store_local(node));
   r = emit(r, ir.op_const_i32(1));
@@ -923,31 +956,18 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_loop(0));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(next));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(unique));
   let open = 0;
   for v in e.variants {
     if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f)) {
       continue;
     }
-    let tail = self_tail_field(v, t);
     r = else_if_open(r, open);
     r = emit(r, ir.op_load_local(node));
     r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
     r = emit(r, ir.op_if(0));
-    for i in 0..v.fields.len() {
-      if (ssasem.counted(f, v.fields[i].ty)) {
-        r = emit(r, ir.op_load_local(node));
-        r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
-        if (i == tail && !semtypes.equal(v.fields[i].ty, t)) {
-          r = emit(r, ir.op_store_local(4));
-          r = drop_tail_array(r, t, v.fields[i].ty, f);
-        } else if (i == tail) {
-          r = emit(r, ir.op_store_local(next));
-        } else {
-          r = emit(r, ir.op_store_local(4));
-          r = drop_value(r, 4, v.fields[i].ty, 5, f);
-        }
-      }
-    }
+    r = drop_chain_fields(r, v, t, f);
     open += 1;
   }
   r = close_ifs(r, open);
@@ -963,8 +983,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
   r = emit(r, ir.op_brif(1));
-  r = emit(r, ir.op_load_local(next));
-  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_load_local(unique));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
   r = release(r, next, t, f);
@@ -978,46 +997,49 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
 }
 
 function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  r = reserve(r, 8);
-  r = emit(r, ir.op_load_local(4));
+  r = reserve(r, 9);
+  r = emit(r, ir.op_load_local(5));
   r = emit(r, aligned_unique());
   r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_load_local(4));
+  r = emit(r, ir.op_load_local(5));
   r = emit(r, ir.op_arr_len());
-  r = emit(r, ir.op_store_local(6));
-  r = emit(r, ir.op_load_local(6));
+  r = emit(r, ir.op_store_local(7));
+  r = emit(r, ir.op_load_local(7));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("gt_s", 0, false));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(5));
+  r = emit(r, ir.op_store_local(6));
   r = emit(r, ir.op_block(0));
   r = emit(r, ir.op_loop(0));
-  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.op_const_i32(1));
   r = emit(r, ir.op_bin("add", 0, false));
-  r = emit(r, ir.op_load_local(6));
+  r = emit(r, ir.op_load_local(7));
   r = emit(r, ir.op_bin("ge_s", 0, false));
   r = emit(r, ir.op_brif(1));
-  r = emit(r, ir.op_load_local(4));
   r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
-  r = emit(r, ir.op_store_local(7));
-  r = drop_value(r, 7, elem, 8, f);
-  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_store_local(8));
+  r = drop_value(r, 8, elem, 9, f);
+  r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.op_const_i32(1));
   r = emit(r, ir.op_bin("add", 0, false));
-  r = emit(r, ir.op_store_local(5));
+  r = emit(r, ir.op_store_local(6));
   r = emit(r, ir.op_br(0));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
-  r = emit(r, ir.op_load_local(4));
   r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(3));
+  r = emit(r, ir.op_load_local(3));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_store_local(4));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
-  return release(r, 4, array, f);
+  return release(r, 5, array, f);
 }
 
 function drop_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
