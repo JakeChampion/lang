@@ -11218,7 +11218,7 @@ function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], u
 }
 
 function mx_branch_yields(body: ast.Stmt[]): boolean {
-  if (body.len() == 0) {
+  if (body.len() == 0 || parser.is_missing_tail(body[body.len() - 1])) {
     return false;
   }
   let leading: ast.Stmt[] = [];
@@ -11595,7 +11595,7 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
         out = util.append_diags(out, mx_stmts(one, cur, unions, enums));
       },
       ast.StmtUnknown(u) => {
-        if (u.kind == "value branch has no trailing expression") {
+        if (parser.is_missing_tail(st) && !block_diverges(stmts, s)) {
           out = out.append(dg_at("E061", parser.BLOCK_VALUE_REQUIRED_MESSAGE, u.line, u.col));
         }
       },
@@ -11861,6 +11861,9 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean, no
     },
     ast.StmtMatch(m) => {
       return match_leaves(m, jumps, bound, noret);
+    },
+    ast.StmtUnknown(_) => {
+      return parser.is_missing_tail(last) && block_leaves(parser.without_last(stmts), jumps, exit_bound, noret);
     },
     _ => {
       return false;
@@ -21717,12 +21720,12 @@ function lu_arm_yields_fresh(fx: LuFn, arm: ast.MatchArm): boolean {
   if (n == 0) {
     return false;
   }
+  if (n > 1 && ow_block_diverges([arm.body[n - 2]], fx.noret)) {
+    return true;
+  }
   let ast.StmtReturn(r) = arm.body[n - 1] else {
     return false;
   };
-  if (n > 1 && parser.branch_stmts_diverge([arm.body[n - 2]])) {
-    return true;
-  }
   if let ast.ExprIdent(id) = r.value {
     if (util.has_str(astwalk.pattern_binders(arm.pattern, []), id.name) || lu_stmts_declare(arm.body, id.name)) {
       return lu_arm_payload_fresh(fx, arm.body, id.name);
@@ -23585,6 +23588,51 @@ function builtin_no_return(exit_declared: boolean): string[] {
   return names;
 }
 
+function declares_exit(mod: parser.Module): boolean {
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() == 0 && fn.name == "exit") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The calls of a function that reach the builtin exit, by their position.
+pub struct ExitCalls { keys: util.NameIndex }
+
+function call_key(c: ast.ExprCall): string {
+  return util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col);
+}
+
+// mod holds fd. The resolved body of fd tells which calls name a local.
+pub function builtin_exit_calls(mod: parser.Module, fd: parser.FuncDecl): ExitCalls {
+  let noret = util.name_index(builtin_no_return(declares_exit(mod)));
+  function exit_call(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprCall(c) = e {
+      if (lu_call_never_returns(e, noret, false)) {
+        return acc.append(call_key(c));
+      }
+    }
+    return acc;
+  }
+  let keys: string[] = [];
+  for st in lexical.resolve_func(fd).func.body {
+    keys = astwalk.fold_stmt(st, keys, exit_call);
+  }
+  return ExitCalls { keys: util.name_index(keys) };
+}
+
+// A call of fd that reaches the builtin exit. A desugar's call names the
+// builtin and has no position of its own.
+pub function (x: ExitCalls) has(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(id) = c.callee {
+      return id.name == "exit" && (id.builtin || x.keys.has(call_key(c)));
+    }
+  }
+  return false;
+}
+
 function (s: Scope) no_return_builtins(): util.NameIndex {
   let i = s.sig_at("exit");
   return util.name_index(builtin_no_return(i >= 0 && s.sigs.sigs[i].receiver.len() == 0));
@@ -23594,11 +23642,7 @@ function (s: Scope) no_return_builtins(): util.NameIndex {
 // function whose body never returns. Such a body ends on every path in a call
 // to one of these names, or in a loop that never breaks.
 function lu_no_return_funcs(mod: parser.Module): util.NameIndex {
-  let declared = false;
-  for fn in mod.funcs {
-    declared = declared || fn.receiver_name.len() == 0 && fn.name == "exit";
-  }
-  let out = builtin_no_return(declared);
+  let out = builtin_no_return(declares_exit(mod));
   let changed = true;
   while (changed) {
     changed = false;
@@ -31986,10 +32030,11 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
   if (body.len() == 0) {
     return t_unknown("empty value block");
   }
-  if let ast.StmtUnknown(u) = body[body.len() - 1] {
-    if (u.kind == "value branch has no trailing expression") {
-      return t_unknown("missing block value");
+  if (parser.is_missing_tail(body[body.len() - 1])) {
+    if (block_diverges(body, s)) {
+      return typeinfo.TypeNever { tag: 0 };
     }
+    return t_unknown("missing block value");
   }
   if (parser.branch_exits_early(body)) {
     return typeinfo.TypeNever { tag: 0 };
@@ -32016,7 +32061,8 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
 
 pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
   let none: ast.Expr = ast.ExprUnknown { kind: parser.BARE_RETURN, line: 0, col: 0 };
-  for st in reachable_stmts(body) {
+  // The statements after one that ends the path do not run.
+  for st in body {
     match (st) {
       ast.StmtReturn(r) => {
         if (!parser.bare_return(r.value)) {
@@ -32056,21 +32102,13 @@ pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
       },
       _ => {}
     }
+    let leaves = block_diverges([st], scope);
     scope = bind_stmt(st, scope);
-  }
-  return (none, scope);
-}
-
-// The statements up to the first one that diverges. The rest do not run.
-function reachable_stmts(body: ast.Stmt[]): ast.Stmt[] {
-  let out: ast.Stmt[] = [];
-  for st in body {
-    out = out.append(st);
-    if (parser.branch_stmts_diverge([st])) {
-      return out;
+    if (leaves) {
+      return (none, scope);
     }
   }
-  return out;
+  return (none, scope);
 }
 
 pub function arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {

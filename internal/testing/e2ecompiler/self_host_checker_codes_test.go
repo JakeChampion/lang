@@ -247,6 +247,12 @@ var exitResolutionCases = []struct {
 	{"missing-return-module-exit", "function exit(code: i32): void { print(\"x\"); }\nfunction f(): i32 { exit(4); }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 	{"let-else-module-exit", "enum Opt { Has(i32), Nil }\nfunction exit(code: i32): void { print(\"x\"); }\nfunction f(o: Opt): i32 { let Has(v) = o else { exit(1); }; return v; }\nfunction main(): i32 { return 0; }\n", []string{"E022"}},
 	{"todo-beside-module-exit", "function exit(code: i32): void { print(\"x\"); }\nfunction f(): i32 { todo; }\nfunction main(): i32 { return 0; }\n", nil},
+	{"value-branch-module-exit", "function exit(c: i32): void {}\nfunction main(): i32 { let c = true; let x: i32 = if (c) { exit(1); } else { 5 }; return x; }\n", []string{"E061"}},
+	{"value-branch-local-exit", "function main(): i32 { let exit = (k: i32): void => {}; let x: i32 = if (true) { 1 } else { exit(2); }; return x; }\n", []string{"E061"}},
+	{"match-arm-param-exit", "enum Opt { Has(i32), Nil }\nfunction f(o: Opt, exit: (i32) => void): i32 { return match (o) { Has(v) => v, Nil => { exit(3); } }; }\nfunction main(): i32 { return 0; }\n", []string{"E061"}},
+	{"value-branch-builtin-exit", "function main(): i32 { let c = true; let x: i32 = if (c) { 5 } else { exit(1); }; return x; }\n", nil},
+	{"value-branch-nested-builtin-exit", "function f(n: i32): i32 { let v: i32 = if (n >= 0) { n } else { if (n < -10) { exit(2); } else { exit(3); } }; return v; }\nfunction main(): i32 { return f(1); }\n", nil},
+	{"value-branch-nested-module-exit", "function exit(c: i32): void {}\nfunction f(n: i32): i32 { let v: i32 = if (n >= 0) { n } else { if (n < -10) { exit(2); } else { return 3; } }; return v; }\nfunction main(): i32 { return f(1); }\n", []string{"E061"}},
 }
 
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {

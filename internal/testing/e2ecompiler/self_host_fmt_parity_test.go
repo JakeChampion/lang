@@ -245,6 +245,24 @@ function stub(): i32 {
 }
 function main(): i32 { return returns(Opt.Has(1)) + exits(Opt.Has(2)) + branch(true); }
 `},
+	{"block-value-ends-in-exit", `function block(c: boolean): i32 {
+  let w: i32 = { eprint("b"); exit(4); };
+  return w;
+}
+function main(): i32 { return block(false); }
+`},
+	{"value-tail-after-module-exit", `enum Opt { Has(i32), Nil }
+function exit(c: i32): void {}
+function block(c: boolean): i32 {
+  let w: i32 = { eprint("b"); exit(4); 7 };
+  return w;
+}
+function arm(o: Opt): i32 {
+  let v: i32 = match (o) { Has(x) => x, Nil => { exit(6); 3 } };
+  return v;
+}
+function main(): i32 { return block(true) + arm(Opt.Has(2)); }
+`},
 	{"nested-whole-struct-pattern", `struct P { x: i32 }
 enum H { S(P) }
 function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }
