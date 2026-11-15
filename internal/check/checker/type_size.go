@@ -7,20 +7,60 @@ import "github.com/jakechampion/lang/internal/syntax/ast"
 // level.
 const maxTypeNodes = 4096
 
-// boundedType is t, or nil with an E106 when e is a call or a tuple and t has
-// more types than the limit. A nil type stops the growth, and the values that
-// hold e get no diagnostic for it.
+// maxTypeDepth is the limit of the levels of nesting in a written type, and in
+// the type of a call, of a tuple or of an array literal. The work on a type
+// grows faster than its depth.
+const maxTypeDepth = 64
+
+// boundedType is t, or nil with an E106 when e is a call, a tuple or an array
+// literal and t is over a limit. A nil type stops the growth. A value that
+// holds e is over the limit too, and gets no diagnostic for it.
 func (c *checker) boundedType(e ast.Expr, t ast.Type) ast.Type {
-	switch e.(type) {
-	case *ast.Call, *ast.TupleLit:
+	var operands []ast.Expr
+	switch x := e.(type) {
+	case *ast.Call:
+		operands = x.Args
+	case *ast.TupleLit:
+		operands = x.Elems
+	case *ast.ArrayLit:
+		operands = x.Elems
 	default:
 		return t
 	}
-	if typeNodes(t, maxTypeNodes) <= maxTypeNodes {
+	for _, operand := range operands {
+		if c.overLimit[operand] {
+			c.overLimit[e] = true
+			return nil
+		}
+	}
+	switch {
+	case typeDepth(t, maxTypeDepth) > maxTypeDepth:
+		c.errfCode(e.Pos(), "E106", "type nests deeper than %d levels", maxTypeDepth)
+	case typeNodes(t, maxTypeNodes) > maxTypeNodes:
+		c.errfCode(e.Pos(), "E106", "type has more than %d parts", maxTypeNodes)
+	default:
 		return t
 	}
-	c.errfCode(e.Pos(), "E106", "type has more than %d parts", maxTypeNodes)
+	if c.overLimit == nil {
+		c.overLimit = map[ast.Expr]bool{}
+	}
+	c.overLimit[e] = true
 	return nil
+}
+
+// typeDepth is the levels of nesting in t: `i32` has one and `Option[i32][]`
+// has three. The count stops above limit.
+func typeDepth(t ast.Type, limit int) int {
+	if limit <= 0 {
+		return 1
+	}
+	most := 0
+	for _, child := range typeChildren(t) {
+		if d := typeDepth(child, limit-1); d > most {
+			most = d
+		}
+	}
+	return most + 1
 }
 
 // typeNodes is the number of types in t, t included. The count stops above
