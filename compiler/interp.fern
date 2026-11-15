@@ -4117,6 +4117,10 @@ function sat_exact(op: string, a: i64, b: i64): i64 {
     }
     return a << b;
   }
+  // The product of two numbers of type u32 can be above the range of i64.
+  if (a > 0 && b > 0 && a > 9223372036854775807 / b) {
+    return 9223372036854775807;
+  }
   return a * b;
 }
 
