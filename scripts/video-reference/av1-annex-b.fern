@@ -1,24 +1,23 @@
 // Emit AV1 Annex B ranges and payloads for independent checks.
 import "std/video/av1/annex_b";
+import "std/video/av1/annex_b/input";
+import "std/audio/source";
 import "std/hex";
+import "std/i32";
 
-function emit(bytes: [u8], unit: annex_b.TemporalUnit): void {
-  print("T " + unit.offset.to_string() + " " + unit.size.to_string() + " " + unit.next_offset.to_string());
+function emit(bytes: [u8], unit: annex_b.TemporalUnit, base: i64): void {
+  print("T " + (base + unit.offset as i64).to_string() + " " + unit.size.to_string() + " " + (base + unit.next_offset as i64).to_string());
   for frame in unit.frames {
-    print("F " + frame.offset.to_string() + " " + frame.size.to_string());
+    print("F " + (base + frame.offset as i64).to_string() + " " + frame.size.to_string());
     for obu in frame.units {
-      print("U " + obu.kind.to_string() + " " + obu.offset.to_string() + " " + obu.size.to_string() + " " + obu.temporal_id.to_string() + " " + obu.spatial_id.to_string() + " " + (if (obu.extension) { "1" } else { "0" }));
+      print("U " + obu.kind.to_string() + " " + (base + obu.offset as i64).to_string() + " " + obu.size.to_string() + " " + obu.temporal_id.to_string() + " " + obu.spatial_id.to_string() + " " + (if (obu.extension) { "1" } else { "0" }));
       print(hex.encode(bytes[obu.offset:obu.next_offset]));
     }
   }
 }
 
-function main(): i32 {
-  let argv = args();
-  if (argv.len() != 2) {
-    return 1;
-  }
-  let Ok(bytes) = read_file_bytes(argv[1]) else {
+function packets(path: string): i32 {
+  let Ok(bytes) = read_file_bytes(path) else {
     return 2;
   };
   let at = 0;
@@ -30,7 +29,52 @@ function main(): i32 {
     let Some(unit) = result else {
       return 0;
     };
-    emit(bytes, unit);
+    emit(bytes, unit, 0i64);
     at = unit.next_offset;
   }
+}
+
+function streamed(reader: Reader, chunk: i32): Result[void, string] {
+  let limits = input.Limits { ...input.default_limits(), input: source.Limits { chunk_size: chunk, max_buffer_bytes: 16777216 } };
+  let stream = match (input.create(limits)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  loop {
+    let step = match (stream.step(reader)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+    stream = step.stream;
+    match (step.event) {
+      input.Waiting => {},
+      input.End => {
+        return Ok(());
+      },
+      input.PacketReady(packet) => {
+        print("P " + packet.offset.to_string() + " " + hex.encode(packet.bytes));
+        emit(packet.bytes, packet.unit, packet.offset);
+      }
+    }
+  }
+}
+
+function sequential(path: string, size: string): i32 {
+  let Ok(chunk) = i32.parse_i32(size) else {
+    return 1;
+  };
+  let Ok(reader) = open_reader(path) else {
+    return 2;
+  };
+  let result = streamed(reader, chunk);
+  let closed = reader.close();
+  return match (result) {
+    Ok(_) => match (closed) { Ok(_) => 0, Err(error) => { eprint(error.message()); return 3; } },
+    Err(message) => { eprint(message); return 3; },
+  };
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() == 2) {
+    return packets(argv[1]);
+  }
+  if (argv.len() == 4 && argv[1] == "--stream") {
+    return sequential(argv[2], argv[3]);
+  }
+  return 1;
 }

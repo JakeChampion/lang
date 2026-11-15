@@ -1,0 +1,30 @@
+// spec: MC-06
+// An `if let` with an `else` is a match with two arms, so a value that each
+// arm consumes is consumed.
+
+import "std/i32";
+
+@must_consume
+struct Ticket { id: i32 }
+
+function redeem(own t: Ticket): i32 {
+    return t.id;
+}
+
+function main(): i32 {
+    let seat: Option[i32] = Some(4);
+    let a: Ticket = Ticket { id: 7 };
+    if let Some(n) = seat {
+        print((redeem(a) + n).to_string());
+    } else {
+        print(redeem(a).to_string());
+    }
+    let b: Ticket = Ticket { id: 2 };
+    if let None = seat {
+        print("none");
+        redeem(b);
+    } else {
+        print(redeem(b).to_string());
+    }
+    return 0;
+}

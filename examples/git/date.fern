@@ -1,0 +1,876 @@
+// Dates as git shows them and reads them (date.c of git).
+//
+// A zone is git's decimal reading of `+HHMM`: -0100 is the number -100. A
+// time is in seconds since 1970. `show` gives the text of each format of
+// `--date=`, and `approxidate` reads the dates of `--since` and `@{...}`.
+import "std/clock";
+import "std/i64";
+import "std/string";
+import "std/time";
+import "std/tz";
+import "../../coreutils/lib/timefmt";
+import "./objects";
+
+// The fields of a date. A field is -1 when a parse has not set it. `year`
+// counts from 1900 and `mon` from 0, as in C.
+pub struct Tm { year: i64, mon: i32, mday: i32, hour: i32, min: i32, sec: i32, wday: i32 }
+
+const MONTHS: string[] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+const WEEKDAYS: string[] = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+
+// The time now: `GIT_TEST_DATE_NOW` when it is set, as git reads it.
+pub function now(): i64 {
+  if let Some(text) = env("GIT_TEST_DATE_NOW") {
+    return atoi(text);
+  }
+  return clock.now().sec;
+}
+
+// The number at the start of `text`, as the C function `atoi` reads it.
+function atoi(text: string): i64 {
+  let i = 0;
+  while (i < text.len() && (text[i] == b' ' || text[i] == b'\t')) {
+    i += 1;
+  }
+  let negative = i < text.len() && text[i] == b'-';
+  if (i < text.len() && (text[i] == b'-' || text[i] == b'+')) {
+    i += 1;
+  }
+  let n: i64 = 0;
+  while (i < text.len() && text[i] >= b'0' && text[i] <= b'9') {
+    n = n * 10 + (text[i] - b'0') as i64;
+    i += 1;
+  }
+  return if (negative) { -n } else { n };
+}
+
+// The fields of the time `t` in UTC.
+pub function gmtime(t: i64): Tm {
+  let days = t.div_euclid(86400);
+  let rem = t.rem_euclid(86400) as i32;
+  let (year, month, day) = time.civil_from_days(days);
+  return Tm { year: year - 1900, mon: month - 1, mday: day, hour: rem / 3600, min: rem / 60 % 60, sec: rem % 60, wday: (days + 4).rem_euclid(7) as i32 };
+}
+
+// The fields of the time `t` in the local zone.
+pub function localtime(t: i64): Tm {
+  return gmtime(t + local_offset_seconds(t));
+}
+
+// The offset of the local zone from UTC at the time `t`, in seconds.
+function local_offset_seconds(t: i64): i64 {
+  return tz.local_zone().offset_at(time.timestamp_from_unix(t)) as i64;
+}
+
+// The time of the fields of `tm` read as UTC, or -1 for a year out of
+// 1970 to 2099, as `tm_to_time_t` of git gives it.
+pub function tm_to_time_t(tm: Tm): i64 {
+  let mdays: i64[] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+  let year = tm.year - 70;
+  let month = tm.mon;
+  let day = tm.mday as i64;
+  if (year < 0 || year > 129 || month < 0 || month > 11) {
+    return -1;
+  }
+  if (month < 2 || (year + 2) % 4 != 0) {
+    day -= 1;
+  }
+  if (tm.hour < 0 || tm.min < 0 || tm.sec < 0) {
+    return -1;
+  }
+  return (year * 365 + (year + 1) / 4 + mdays[month] + day) * 86400 + tm.hour as i64 * 3600 + tm.min as i64 * 60 + tm.sec as i64;
+}
+
+// The time of the fields of `tm` in the local zone, as the C function
+// `mktime` gives it: the fields may be out of their range.
+function mktime(tm: Tm): i64 {
+  let days = time.days_from_civil(1900 + tm.year + tm.mon.div_euclid(12) as i64, tm.mon.rem_euclid(12) + 1, 1) + tm.mday as i64 - 1;
+  let local = days * 86400 + tm.hour as i64 * 3600 + tm.min as i64 * 60 + tm.sec as i64;
+  let guess = local - local_offset_seconds(local);
+  return local - local_offset_seconds(guess);
+}
+
+// The zone of git for an offset of `seconds`: +0130 for 5400.
+function zone_of(seconds: i64): i32 {
+  let minutes = seconds.abs() / 60;
+  let z = (minutes / 60 * 100 + minutes % 60) as i32;
+  return if (seconds < 0) { -z } else { z };
+}
+
+// The zone of git that the local zone has at the time `t`.
+pub function local_zone_at(t: i64): i32 {
+  return zone_of(local_offset_seconds(t));
+}
+
+// The zone of git for the text `+HHMM` or `-HHMM`.
+pub function zone_number(text: string): i32 {
+  let n = 0;
+  for i in 0..text.len() {
+    if (text[i] >= b'0' && text[i] <= b'9') {
+      n = n * 10 + (text[i] - b'0') as i32;
+    }
+  }
+  return if (text.starts_with("-")) { -n } else { n };
+}
+
+function zone_seconds(zone: i32): i64 {
+  let z = zone.abs();
+  let minutes = (z / 100 * 60 + z % 100) as i64;
+  return if (zone < 0) { -minutes * 60 } else { minutes * 60 };
+}
+
+function two(n: i32): string {
+  return n.to_string().pad_start_str(2, "0");
+}
+
+function signed_zone(zone: i32): string {
+  let text = zone.abs().to_string().pad_start_str(4, "0");
+  return if (zone < 0) { "-" + text } else { "+" + text };
+}
+
+function plural(n: i64, one: string, many: string): string {
+  return n.to_string() + (if (n == 1) { one } else { many });
+}
+
+// The text of `--date=relative`: "3 days ago".
+pub function relative(t: i64, at: i64): string {
+  if (at < t) {
+    return "in the future";
+  }
+  let diff = at - t;
+  if (diff < 90) {
+    return plural(diff, " second ago", " seconds ago");
+  }
+  diff = (diff + 30) / 60;
+  if (diff < 90) {
+    return plural(diff, " minute ago", " minutes ago");
+  }
+  diff = (diff + 30) / 60;
+  if (diff < 36) {
+    return plural(diff, " hour ago", " hours ago");
+  }
+  diff = (diff + 12) / 24;
+  if (diff < 14) {
+    return plural(diff, " day ago", " days ago");
+  }
+  if (diff < 70) {
+    return plural((diff + 3) / 7, " week ago", " weeks ago");
+  }
+  if (diff < 365) {
+    return plural((diff + 15) / 30, " month ago", " months ago");
+  }
+  if (diff < 1825) {
+    let total = (diff * 12 * 2 + 365) / (365 * 2);
+    let years = total / 12;
+    let months = total % 12;
+    if (months > 0) {
+      return plural(years, " year", " years") + ", " + plural(months, " month ago", " months ago");
+    }
+    return plural(years, " year ago", " years ago");
+  }
+  return plural((diff + 183) / 365, " year ago", " years ago");
+}
+
+// The kinds of `--date=`.
+pub const NORMAL: i32 = 0;
+
+pub const RELATIVE: i32 = 1;
+
+pub const SHORT: i32 = 2;
+
+pub const ISO: i32 = 3;
+
+pub const ISO_STRICT: i32 = 4;
+
+pub const RFC: i32 = 5;
+
+pub const STRFTIME: i32 = 6;
+
+pub const RAW: i32 = 7;
+
+pub const UNIX: i32 = 8;
+
+pub const HUMAN: i32 = 9;
+
+// A form of `--date=`: the kind, the local zone in place of the zone of
+// the date, and the format of `format:`.
+pub struct Mode { kind: i32, local: boolean, format: string }
+
+pub function normal_mode(): Mode {
+  return Mode { kind: NORMAL, local: false, format: "" };
+}
+
+// The form of `--date=TEXT`, or the message of git.
+pub function parse_mode(text: string): Result[Mode, string] {
+  let format = text;
+  if (format.starts_with("auto:")) {
+    format = "default";
+  }
+  if (format == "local") {
+    format = "default-local";
+  }
+  let kinds: string[] = ["relative", "iso8601-strict", "iso-strict", "iso8601", "iso", "rfc2822", "rfc", "short", "default", "human", "raw", "unix", "format"];
+  let numbers: i32[] = [RELATIVE, ISO_STRICT, ISO_STRICT, ISO, ISO, RFC, RFC, SHORT, NORMAL, HUMAN, RAW, UNIX, STRFTIME];
+  for i in 0..kinds.len() {
+    if (format.starts_with(kinds[i])) {
+      let rest = objects.part(format, kinds[i].len(), format.len());
+      let local = rest.starts_with("-local");
+      if (local) {
+        rest = objects.part(rest, 6, rest.len());
+      }
+      if (numbers[i] == STRFTIME) {
+        if (!rest.starts_with(":")) {
+          return Err("date format missing colon separator: " + format);
+        }
+        return Ok(Mode { kind: STRFTIME, local: local, format: objects.part(rest, 1, rest.len()) });
+      }
+      if (rest.len() > 0) {
+        return Err("unknown date format " + format);
+      }
+      return Ok(Mode { kind: numbers[i], local: local, format: "" });
+    }
+  }
+  return Err("unknown date format " + format);
+}
+
+// The text of the time `t` with the zone `zone` in the form `m`.
+pub function show(t: i64, zone: i32, m: Mode): string {
+  if (m.kind == UNIX) {
+    return t.to_string();
+  }
+  let z = if (m.local) { local_zone_at(t) } else { zone };
+  if (m.kind == RAW) {
+    return t.to_string() + " " + signed_zone(z);
+  }
+  let at = now();
+  if (m.kind == RELATIVE) {
+    return relative(t, at);
+  }
+  let tm = if (m.local) { localtime(t) } else { gmtime(t + zone_seconds(z)) };
+  let year = (tm.year + 1900).to_string().pad_start_str(4, "0");
+  let day = year + "-" + two(tm.mon + 1) + "-" + two(tm.mday);
+  let clock_text = two(tm.hour) + ":" + two(tm.min) + ":" + two(tm.sec);
+  if (m.kind == SHORT) {
+    return day;
+  }
+  if (m.kind == ISO) {
+    return day + " " + clock_text + " " + signed_zone(z);
+  }
+  if (m.kind == ISO_STRICT) {
+    let a = z.abs();
+    return day + "T" + clock_text + (if (z >= 0) { "+" } else { "-" }) + two(a / 100) + ":" + two(a % 100);
+  }
+  if (m.kind == RFC) {
+    return objects.part(WEEKDAYS[tm.wday], 0, 3) + ", " + tm.mday.to_string() + " " + objects.part(MONTHS[tm.mon], 0, 3) + " " + (tm.year + 1900).to_string() + " " + clock_text + " " + signed_zone(z);
+  }
+  if (m.kind == STRFTIME) {
+    return strftime(m.format, t, z, m.local);
+  }
+  if (m.kind == HUMAN) {
+    let human_zone = local_zone_at(at);
+    return normal(t, tm, z, localtime(at), human_zone, m.local, at);
+  }
+  return normal(t, tm, z, Tm { year: 0, mon: 0, mday: 0, hour: 0, min: 0, sec: 0, wday: 0 }, -1, m.local, at);
+}
+
+// The default form, and the form of `human` that hides the fields that
+// the date of `human` shares with now.
+function normal(t: i64, tm: Tm, zone: i32, human: Tm, human_zone: i32, local: boolean, at: i64): string {
+  let hide_tz = local || zone == human_zone;
+  let hide_year = tm.year == human.year;
+  let hide_date = false;
+  let hide_wday = false;
+  if (hide_year && tm.mon == human.mon) {
+    if (tm.mday > human.mday) {} else if (tm.mday == human.mday) {
+      hide_date = true;
+      hide_wday = true;
+    } else if (tm.mday + 5 > human.mday) {
+      hide_date = true;
+    }
+  }
+  if (hide_wday) {
+    return relative(t, at);
+  }
+  let hide_seconds = false;
+  let hide_time = false;
+  if (human.year != 0) {
+    hide_seconds = true;
+    hide_tz = hide_tz || !hide_date;
+    hide_wday = !hide_year;
+    hide_time = !hide_year;
+  }
+  let out = "";
+  if (!hide_wday) {
+    out += objects.part(WEEKDAYS[tm.wday], 0, 3) + " ";
+  }
+  if (!hide_date) {
+    out += objects.part(MONTHS[tm.mon], 0, 3) + " " + tm.mday.to_string() + " ";
+  }
+  if (!hide_time) {
+    out += two(tm.hour) + ":" + two(tm.min);
+    if (!hide_seconds) {
+      out += ":" + two(tm.sec);
+    }
+  } else {
+    out = out.trim_end();
+  }
+  if (!hide_year) {
+    out += " " + (tm.year + 1900).to_string();
+  }
+  if (!hide_tz) {
+    out += " " + signed_zone(zone);
+  }
+  return out;
+}
+
+// The text of `format:` with the conversions of `strftime`. `%z` is the
+// zone of the date, and `%Z` is empty unless the date is in the local zone.
+function strftime(format: string, t: i64, zone: i32, local: boolean): string {
+  let z = if (local) { tz.local_zone() } else { tz.fixed_zone(zone_seconds(zone) as i32, "") };
+  if (format.len() == 0) {
+    return "";
+  }
+  return timefmt.strftime(format, z, t, 0);
+}
+
+// ---- Parsing ----
+
+const ZONES: string[] = ["IDLW", "NT", "CAT", "HST", "HDT", "YST", "YDT", "PST", "PDT", "MST", "MDT", "CST", "CDT", "EST", "EDT", "AST", "ADT", "WAT", "GMT", "UTC", "Z", "WET", "BST", "CET", "MET", "MEWT", "MEST", "CEST", "MESZ", "FWT", "FST", "EET", "EEST", "WAST", "WADT", "CCT", "JST", "EAST", "EADT", "GST", "NZT", "NZST", "NZDT", "IDLE"];
+
+const ZONE_HOURS: i32[] = [-12, -11, -10, -10, -9, -9, -8, -8, -7, -7, -6, -6, -5, -5, -4, -3, -2, -1, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 1, 2, 2, 3, 7, 8, 8, 9, 10, 11, 10, 12, 12, 13, 12];
+
+function is_alpha(b: u8): boolean {
+  return b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z';
+}
+
+function is_digit(b: u8): boolean {
+  return b >= b'0' && b <= b'9';
+}
+
+function upper(b: u8): u8 {
+  return if (b >= b'a' && b <= b'z') { b - 32 } else { b };
+}
+
+function at(text: string, i: i32): u8 {
+  return if (i < text.len()) { text[i] } else { 0 };
+}
+
+// The count of bytes of `text` from `from` that match `word`, with no case,
+// to the first byte that is not a letter or a digit, or 0 when a letter or
+// a digit differs.
+function match_string(text: string, from: i32, word: string): i32 {
+  let i = 0;
+  while (from + i < text.len()) {
+    let c = text[from + i];
+    let w = at(word, i);
+    if (c == w || upper(c) == upper(w)) {
+      i += 1;
+      continue;
+    }
+    if (!(is_alpha(c) || is_digit(c))) {
+      break;
+    }
+    return 0;
+  }
+  return i;
+}
+
+// A number at `from` in base 10, as `strtol` reads it with no sign, and
+// the place after it.
+function number_at(text: string, from: i32): (i64, i32) {
+  let i = from;
+  let n: i64 = 0;
+  while (i < text.len() && is_digit(text[i])) {
+    if (n < 922337203685477580) {
+      n = n * 10 + (text[i] - b'0') as i64;
+    }
+    i += 1;
+  }
+  return (n, i);
+}
+
+// The state of a parse of a date: the fields, the zone in minutes (-1
+// when no zone is known), and whether the fields are of UTC.
+struct Parse { tm: Tm, offset: i32, gmt: boolean }
+
+function unset_tm(): Tm {
+  return Tm { year: -1, mon: -1, mday: -1, hour: -1, min: -1, sec: -1, wday: 0 };
+}
+
+function match_alpha(text: string, from: i32, p: Parse): (Parse, i32) {
+  for i in 0..12 {
+    let m = match_string(text, from, MONTHS[i]);
+    if (m >= 3) {
+      return (Parse { ...p, tm: Tm { ...p.tm, mon: i } }, m);
+    }
+  }
+  for i in 0..7 {
+    let m = match_string(text, from, WEEKDAYS[i]);
+    if (m >= 3) {
+      return (Parse { ...p, tm: Tm { ...p.tm, wday: i } }, m);
+    }
+  }
+  for i in 0..ZONES.len() {
+    let m = match_string(text, from, ZONES[i]);
+    if (m >= 3 || m == ZONES[i].len()) {
+      let off = if (p.offset == -1) { 60 * ZONE_HOURS[i] } else { p.offset };
+      return (Parse { ...p, offset: off }, m);
+    }
+  }
+  if (match_string(text, from, "PM") == 2) {
+    return (Parse { ...p, tm: Tm { ...p.tm, hour: p.tm.hour % 12 + 12 } }, 2);
+  }
+  if (match_string(text, from, "AM") == 2) {
+    return (Parse { ...p, tm: Tm { ...p.tm, hour: p.tm.hour % 12 } }, 2);
+  }
+  if (text[from] == b'T' && is_digit(at(text, from + 1)) && p.tm.hour == -1) {
+    return (Parse { ...p, tm: Tm { ...p.tm, min: 0, sec: 0 } }, 1);
+  }
+  let i = 1;
+  while (is_alpha(at(text, from + i))) {
+    i += 1;
+  }
+  return (p, i);
+}
+
+// The fields with the date `year`-`month`-`day`, and true when the date
+// is sound. With `now_tm`, a date more than ten days after `now` is
+// refused, a year of -1 is the year of now, and a date that is refused
+// leaves the fields as they are. Without it, the month and the day are
+// set before the year is checked, as git sets them.
+function set_date(year: i64, month: i64, day: i64, now_tm: Option[Tm], now: i64, tm: Tm): (Tm, boolean) {
+  if (!(month > 0 && month < 13 && day > 0 && day < 32)) {
+    return (tm, false);
+  }
+  let r = Tm { ...tm, mon: (month - 1) as i32, mday: day as i32 };
+  let base = if (now_tm.is_none()) { r } else { tm };
+  if (year == -1) {
+    let Some(n) = now_tm else {
+      return (base, false);
+    };
+    r = Tm { ...r, year: n.year };
+  } else if (year >= 1970 && year < 2100) {
+    r = Tm { ...r, year: year - 1900 };
+  } else if (year > 70 && year < 100) {
+    r = Tm { ...r, year: year };
+  } else if (year < 38) {
+    r = Tm { ...r, year: year + 100 };
+  } else {
+    return (base, false);
+  }
+  if (now_tm.is_none()) {
+    return (r, true);
+  }
+  let specified = tm_to_time_t(r);
+  if (specified != -1 && now + 10 * 86400 < specified) {
+    return (tm, false);
+  }
+  let kept = Tm { ...tm, mon: r.mon, mday: r.mday };
+  return (if (year != -1) { Tm { ...kept, year: r.year } } else { kept }, true);
+}
+
+function set_time(hour: i64, minute: i64, second: i64, tm: Tm): Option[Tm] {
+  if (hour >= 0 && hour <= 24 && minute >= 0 && minute < 60 && second >= 0 && second <= 60) {
+    return Some(Tm { ...tm, hour: hour as i32, min: minute as i32, sec: second as i32 });
+  }
+  return None;
+}
+
+function date_known(tm: Tm): boolean {
+  return tm.year != -1 && tm.mon != -1 && tm.mday != -1;
+}
+
+// The fields after `num`, the separator `c` and one or two more numbers
+// from `after`, and the count of bytes from `from`, or 0 when they are not
+// a time or a date.
+function match_multi(num: i64, c: u8, text: string, from: i32, after: i32, tm: Tm, now_in: i64): (Tm, i32) {
+  let (num2, e2) = number_at(text, after + 1);
+  let end = e2;
+  let num3: i64 = -1;
+  if (at(text, end) == c && is_digit(at(text, end + 1))) {
+    let (n3, e3) = number_at(text, end + 1);
+    num3 = n3;
+    end = e3;
+  }
+  if (c == b':') {
+    if (num3 < 0) {
+      num3 = 0;
+    }
+    let Some(t) = set_time(num, num2, num3, tm) else {
+      return (tm, 0);
+    };
+    if (at(text, end) == b'.' && is_digit(at(text, end + 1)) && date_known(t)) {
+      let (_, e4) = number_at(text, end + 1);
+      end = e4;
+    }
+    return (t, end - from);
+  }
+  let now = if (now_in == 0) { now() } else { now_in };
+  let refuse: Option[Tm] = Some(gmtime(now));
+  let t = tm;
+  if (num > 70) {
+    let (a, ok_a) = set_date(num, num2, num3, None, now, t);
+    t = a;
+    if (ok_a) {
+      return (t, end - from);
+    }
+    let (b, ok_b) = set_date(num, num3, num2, None, now, t);
+    t = b;
+    if (ok_b) {
+      return (t, end - from);
+    }
+  }
+  if (c != b'.') {
+    let (d, ok_d) = set_date(num3, num, num2, refuse, now, t);
+    if (ok_d) {
+      return (d, end - from);
+    }
+  }
+  let (e, ok_e) = set_date(num3, num2, num, refuse, now, t);
+  if (ok_e) {
+    return (e, end - from);
+  }
+  if (c == b'.') {
+    let (f, ok_f) = set_date(num3, num, num2, refuse, now, t);
+    if (ok_f) {
+      return (f, end - from);
+    }
+  }
+  return (t, 0);
+}
+
+function no_date(tm: Tm): boolean {
+  return tm.year < 0 && tm.mon < 0 && tm.mday < 0 && tm.hour < 0 && tm.min < 0 && tm.sec < 0;
+}
+
+function maybe_iso(tm: Tm): boolean {
+  return tm.hour == -1 && tm.min == 0 && tm.sec == 0;
+}
+
+function match_digit(text: string, from: i32, p: Parse): (Parse, i32) {
+  let (num, end) = number_at(text, from);
+  if (num >= 100000000 && no_date(p.tm)) {
+    return (Parse { ...p, tm: gmtime(num), gmt: true }, end - from);
+  }
+  let c = at(text, end);
+  if ((c == b':' || c == b'.' || c == b'/' || c == b'-') && is_digit(at(text, end + 1))) {
+    let (t, m) = match_multi(num, c, text, from, end, p.tm, 0);
+    if (m > 0) {
+      return (Parse { ...p, tm: t }, m);
+    }
+    p = Parse { ...p, tm: t };
+  }
+  let n = end - from;
+  let tm = p.tm;
+  if (n == 8 || n == 6) {
+    let num1 = num / 10000;
+    let num2 = num % 10000 / 100;
+    let num3 = num % 100;
+    let used = n;
+    if (n == 8) {
+      let (t, _) = set_date(num1, num2, num3, None, 0, tm);
+      tm = t;
+    } else if let Some(t) = set_time(num1, num2, num3, tm) {
+      tm = t;
+      if (at(text, end) == b'.' && is_digit(at(text, end + 1))) {
+        let (_, e) = number_at(text, end + 1);
+        used = e - from;
+      }
+    }
+    return (Parse { ...p, tm: tm }, used);
+  }
+  if (maybe_iso(tm)) {
+    let num1 = if (n == 4) { num / 100 } else { num };
+    let num2 = if (n == 4) { num % 100 } else { 0 };
+    if ((n == 4 || n == 2) && !no_date(tm)) {
+      if let Some(t) = set_time(num1, num2, 0, tm) {
+        return (Parse { ...p, tm: t }, n);
+      }
+    }
+    tm = Tm { ...tm, min: -1, sec: -1 };
+  }
+  if (n == 4) {
+    if (num <= 1400 && p.offset == -1) {
+      return (Parse { ...p, tm: tm, offset: (num / 100 * 60 + num % 100) as i32 }, n);
+    }
+    if (num > 1900 && num < 2100) {
+      return (Parse { ...p, tm: Tm { ...tm, year: num - 1900 } }, n);
+    }
+    return (Parse { ...p, tm: tm }, n);
+  }
+  if (n > 2) {
+    return (Parse { ...p, tm: tm }, n);
+  }
+  if (num > 0 && num < 32 && tm.mday < 0) {
+    return (Parse { ...p, tm: Tm { ...tm, mday: num as i32 } }, n);
+  }
+  if (n == 2 && tm.year < 0) {
+    if (num < 10 && tm.mday >= 0) {
+      return (Parse { ...p, tm: Tm { ...tm, year: num + 100 } }, n);
+    }
+    if (num >= 70) {
+      return (Parse { ...p, tm: Tm { ...tm, year: num } }, n);
+    }
+  }
+  if (num > 0 && num < 13 && tm.mon < 0) {
+    tm = Tm { ...tm, mon: (num - 1) as i32 };
+  }
+  return (Parse { ...p, tm: tm }, n);
+}
+
+function match_tz(text: string, from: i32, p: Parse): (Parse, i32) {
+  let (hour_in, end_in) = number_at(text, from + 1);
+  let hour = hour_in;
+  let end = end_in;
+  let n = end - (from + 1);
+  let min: i64 = 0;
+  if (n == 4) {
+    min = hour % 100;
+    hour /= 100;
+  } else if (n != 2) {
+    min = 99;
+  } else if (at(text, end) == b':') {
+    let (m, e) = number_at(text, end + 1);
+    min = m;
+    end = e;
+    if (end - (from + 1) != 5) {
+      min = 99;
+    }
+  }
+  if (min < 60 && hour < 24) {
+    let off = (hour * 60 + min) as i32;
+    return (Parse { ...p, offset: if (text[from] == b'-') { -off } else { off } }, end - from);
+  }
+  return (p, end - from);
+}
+
+// The date of "@SECONDS +ZONE", as an object header holds it.
+function header_date(text: string): Option[(i64, i32)] {
+  if (!is_digit(at(text, 1))) {
+    return None;
+  }
+  let (stamp, end) = number_at(text, 1);
+  let sign = at(text, end + 1);
+  if (at(text, end) != b' ' || sign != b'+' && sign != b'-') {
+    return None;
+  }
+  let (z, zend) = number_at(text, end + 2);
+  if (zend < text.len() && text[zend] != b'\n' || zend != end + 6) {
+    return None;
+  }
+  let minutes = (z / 100 * 60 + z % 100) as i32;
+  return Some((stamp, if (sign == b'-') { -minutes } else { minutes }));
+}
+
+// The time and the zone in minutes of a date in one of the forms of
+// `parse_date_basic` of git, or None.
+pub function parse_basic(text: string): Option[(i64, i32)] {
+  if (text.starts_with("@")) {
+    if let Some(found) = header_date(text) {
+      return Some(found);
+    }
+  }
+  let p = Parse { tm: unset_tm(), offset: -1, gmt: false };
+  let i = 0;
+  while (i < text.len() && text[i] != b'\n' && text[i] != 0) {
+    let c = text[i];
+    let (next, m) = if (is_alpha(c)) { match_alpha(text, i, p) } else if (is_digit(c)) { match_digit(text, i, p) } else if ((c == b'-' || c == b'+') && is_digit(at(text, i + 1))) { match_tz(text, i, p) } else { (p, 0) };
+    p = next;
+    i += if (m == 0) { 1 } else { m };
+  }
+  let stamp = tm_to_time_t(p.tm);
+  if (stamp == -1) {
+    return None;
+  }
+  let offset = p.offset;
+  if (offset == -1) {
+    let local = mktime(Tm { ...p.tm });
+    offset = ((stamp - local) / 60) as i32;
+  }
+  return Some((if (p.gmt) { stamp } else { stamp - offset as i64 * 60 }, offset));
+}
+
+// ---- approxidate ----
+
+// The state of approxidate: the fields, the fields of now, and the
+// number that waits for a unit.
+struct Approx { tm: Tm, now: Tm, num: i64, touched: boolean }
+
+// The fields of `tm` moved back by `sec` seconds, with each field that is
+// not set from now: `update_tm` of git.
+function update(tm_in: Tm, now: Tm, sec: i64): Tm {
+  let tm = tm_in;
+  if (tm.mday < 0) {
+    tm = Tm { ...tm, mday: now.mday };
+  }
+  if (tm.mon < 0) {
+    tm = Tm { ...tm, mon: now.mon };
+  }
+  if (tm.year < 0) {
+    tm = Tm { ...tm, year: if (tm.mon > now.mon) { now.year - 1 } else { now.year } };
+  }
+  return localtime(mktime(tm) - sec);
+}
+
+function pending(a: Approx): Approx {
+  let n = a.num;
+  if (n == 0) {
+    return a;
+  }
+  let tm = a.tm;
+  if (tm.mday < 0 && n < 32) {
+    tm = Tm { ...tm, mday: n as i32 };
+  } else if (tm.mon < 0 && n < 13) {
+    tm = Tm { ...tm, mon: (n - 1) as i32 };
+  } else if (tm.year < 0) {
+    if (n > 1969 && n < 2100) {
+      tm = Tm { ...tm, year: n - 1900 };
+    } else if (n > 69 && n < 100) {
+      tm = Tm { ...tm, year: n };
+    } else if (n < 38) {
+      tm = Tm { ...tm, year: 100 + n };
+    }
+  }
+  return Approx { ...a, tm: tm, num: 0 };
+}
+
+function at_hour(a: Approx, hour: i32): Approx {
+  let tm = if (a.tm.hour < hour) { update(a.tm, a.now, 86400) } else { a.tm };
+  return Approx { ...a, tm: Tm { ...tm, hour: hour, min: 0, sec: 0 } };
+}
+
+function special(a: Approx, name: string): Approx {
+  return match (name) {
+    "yesterday" => Approx { ...a, num: 0, tm: update(a.tm, a.now, 86400) },
+    "noon" => at_hour(pending(a), 12),
+    "midnight" => at_hour(pending(a), 0),
+    "tea" => at_hour(pending(a), 17),
+    "PM" => {
+      let hour = if (a.num != 0) { a.num as i32 } else { a.tm.hour };
+      let tm = if (a.num != 0) { Tm { ...a.tm, min: 0, sec: 0 } } else { a.tm };
+      Approx { ...a, num: 0, tm: Tm { ...tm, hour: hour % 12 + 12 } }
+    },
+    "AM" => {
+      let hour = if (a.num != 0) { a.num as i32 } else { a.tm.hour };
+      let tm = if (a.num != 0) { Tm { ...a.tm, min: 0, sec: 0 } } else { a.tm };
+      Approx { ...a, num: 0, tm: Tm { ...tm, hour: hour % 12 } }
+    },
+    "never" => Approx { ...a, num: 0, tm: localtime(0) },
+    _ => Approx { ...a, num: 0, tm: update(a.tm, a.now, 0) },
+  };
+}
+
+const SPECIALS: string[] = ["yesterday", "noon", "midnight", "tea", "PM", "AM", "never", "now"];
+
+const NUMBERS: string[] = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+
+const UNITS: string[] = ["seconds", "minutes", "hours", "days", "weeks"];
+
+const UNIT_SECONDS: i64[] = [1, 60, 3600, 86400, 604800];
+
+function approx_alpha(text: string, from: i32, a_in: Approx): (Approx, i32) {
+  let a = a_in;
+  let end = from + 1;
+  while (is_alpha(at(text, end))) {
+    end += 1;
+  }
+  for i in 0..12 {
+    if (match_string(text, from, MONTHS[i]) >= 3) {
+      return (Approx { ...a, tm: Tm { ...a.tm, mon: i }, touched: true }, end);
+    }
+  }
+  for s in SPECIALS {
+    if (match_string(text, from, s) == s.len()) {
+      return (Approx { ...special(a, s), touched: true }, end);
+    }
+  }
+  if (a.num == 0) {
+    for i in 1..11 {
+      if (match_string(text, from, NUMBERS[i]) == NUMBERS[i].len()) {
+        return (Approx { ...a, num: i as i64, touched: true }, end);
+      }
+    }
+    if (match_string(text, from, "last") == 4) {
+      return (Approx { ...a, num: 1, touched: true }, end);
+    }
+    return (a, end);
+  }
+  for i in 0..UNITS.len() {
+    if (match_string(text, from, UNITS[i]) >= UNITS[i].len() - 1) {
+      return (Approx { ...a, tm: update(a.tm, a.now, UNIT_SECONDS[i] * a.num), num: 0, touched: true }, end);
+    }
+  }
+  for i in 0..7 {
+    if (match_string(text, from, WEEKDAYS[i]) >= 3) {
+      let n = a.num - 1;
+      let diff = (a.tm.wday - i) as i64;
+      if (diff <= 0) {
+        n += 1;
+      }
+      diff += 7 * n;
+      return (Approx { ...a, tm: update(a.tm, a.now, diff * 86400), num: 0, touched: true }, end);
+    }
+  }
+  if (match_string(text, from, "months") >= 5) {
+    let tm = update(a.tm, a.now, 0);
+    let n = tm.mon as i64 - a.num;
+    while (n < 0) {
+      n += 12;
+      tm = Tm { ...tm, year: tm.year - 1 };
+    }
+    return (Approx { ...a, tm: Tm { ...tm, mon: n as i32 }, num: 0, touched: true }, end);
+  }
+  if (match_string(text, from, "years") >= 4) {
+    let tm = update(a.tm, a.now, 0);
+    return (Approx { ...a, tm: Tm { ...tm, year: tm.year - a.num }, num: 0, touched: true }, end);
+  }
+  return (a, end);
+}
+
+function approx_digit(text: string, from: i32, a_in: Approx, now: i64): (Approx, i32) {
+  let a = a_in;
+  let (number, end) = number_at(text, from);
+  let c = at(text, end);
+  if ((c == b':' || c == b'.' || c == b'/' || c == b'-') && is_digit(at(text, end + 1))) {
+    let (t, m) = match_multi(number, c, text, from, end, a.tm, now);
+    if (m > 0) {
+      return (Approx { ...a, tm: t }, from + m);
+    }
+    a = Approx { ...a, tm: t };
+  }
+  if (text[from] != b'0' || end - from <= 2) {
+    return (Approx { ...a, num: number }, end);
+  }
+  return (a, end);
+}
+
+// The time that `text` names, as `approxidate_careful` of git reads it,
+// and true when no part of the text is a date.
+pub function approxidate(text: string): (i64, boolean) {
+  if let Some((stamp, _)) = parse_basic(text) {
+    return (stamp, false);
+  }
+  let at_now = now();
+  let local = localtime(at_now);
+  let a = Approx { tm: Tm { ...local, year: -1, mon: -1, mday: -1 }, now: local, num: 0, touched: false };
+  let i = 0;
+  while (i < text.len()) {
+    let c = text[i];
+    if (is_digit(c)) {
+      a = pending(a);
+      let (next, end) = approx_digit(text, i, a, at_now);
+      a = Approx { ...next, touched: true };
+      i = end;
+    } else if (is_alpha(c)) {
+      let (next, end) = approx_alpha(text, i, a);
+      a = next;
+      i = end;
+    } else {
+      i += 1;
+    }
+  }
+  a = pending(a);
+  let tm = update(a.tm, a.now, 0);
+  return (mktime(tm), !a.touched);
+}

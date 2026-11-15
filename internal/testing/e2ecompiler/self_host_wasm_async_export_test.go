@@ -82,7 +82,7 @@ func buildAsyncComponent(t *testing.T, cli *selfHostCLI, dir, src string) (strin
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host component: %v\n%s", err, out)
 	}
-	if out, err := exec.Command("wasm-tools", "validate", "--features", "wasm2,component-model,cm-async,cm-async-stackful", comp).CombinedOutput(); err != nil {
+	if out, err := exec.Command("wasm-tools", "validate", "--features", "wasm2,tail-call,component-model,cm-async,cm-async-stackful", comp).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
 	}
 	printed, err := exec.Command("wasm-tools", "print", comp).CombinedOutput()

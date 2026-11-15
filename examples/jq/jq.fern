@@ -1,200 +1,643 @@
-// A jq command line: `jq [-c] [-r] [-n] [-s] [--arg NAME VALUE] FILTER [FILE...]`.
-// It reads a stream of JSON values from the files, or from stdin when there
-// is none, and writes the outputs of FILTER for each value.
+// A jq command line with the options of jq 1.7. It reads a stream of JSON
+// values from the files, or from stdin when there is none, and writes the
+// outputs of the filter for each value.
 import "std/io";
 import "std/json";
 import "std/string";
 import "./eval";
 import "./filter";
 import "./input";
+import "./modules";
 import "./output";
 
-struct Options { compact: boolean, raw: boolean, null_input: boolean, slurp: boolean, env: eval.Env, filter: string, files: string[], error: string }
+// The parts of the command line.
+//
+// - `named` holds the named arguments in their order, and `positional` the
+//   arguments after `--args` or `--jsonargs`.
+// - `fail` is the message of an option that is not valid, and `exit` the exit
+//   status of an option that ends the command line.
+struct Options {
+  progname: string,
+  slurp: boolean,
+  raw_input: boolean,
+  null_input: boolean,
+  raw_output: boolean,
+  raw_output0: boolean,
+  join: boolean,
+  ascii: boolean,
+  color: boolean,
+  no_color: boolean,
+  sort: boolean,
+  indent: i32,
+  tab: boolean,
+  unbuffered: boolean,
+  seq: boolean,
+  stream: boolean,
+  stream_errors: boolean,
+  from_file: boolean,
+  exit_status: boolean,
+  library: string[],
+  names: string[],
+  named: json.JsonValue[],
+  positional: json.JsonValue[],
+  program: string,
+  have_program: boolean,
+  files: string[],
+  fail: string,
+  exit: i32,
+}
 
-function usage(): i32 {
-  eprint("Usage: jq [-c] [-r] [-n] [-s] [--arg NAME VALUE] FILTER [FILE...]");
-  return 2;
+const VERSION: string = "1.7";
+
+const BUILD_CONFIGURATION: string = "fern examples/jq";
+
+function new_options(progname: string): Options {
+  return Options {
+    progname: progname,
+    slurp: false,
+    raw_input: false,
+    null_input: false,
+    raw_output: false,
+    raw_output0: false,
+    join: false,
+    ascii: false,
+    color: false,
+    no_color: false,
+    sort: false,
+    indent: 2,
+    tab: false,
+    unbuffered: false,
+    seq: false,
+    stream: false,
+    stream_errors: false,
+    from_file: false,
+    exit_status: false,
+    library: [],
+    names: [],
+    named: [],
+    positional: [],
+    program: "",
+    have_program: false,
+    files: [],
+    fail: "",
+    exit: -1,
+  };
+}
+
+// jq reads an argument as an option when it is `--...` or `-` and a letter.
+function optish(a: string): boolean {
+  return a.len() > 1 && a[0] == b'-' && (a[1] == b'-' || a[1] >= b'a' && a[1] <= b'z' || a[1] >= b'A' && a[1] <= b'Z');
+}
+
+// Whether `a` is the long option `name`, or a group of short options that
+// holds `short`.
+function is_option(a: string, short: u8, name: string): boolean {
+  if (a.len() > 2 && a[1] == b'-') {
+    return slice_unchecked(a, 2, a.len()).to_owned() == name;
+  }
+  if (a[1] == b'-' || short == 0u8) {
+    return false;
+  }
+  for i in 1..a.len() {
+    if (a[i] == short) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The help text of jq. The short form ends with a note on `--help`.
+function usage(progname: string, short: boolean): string {
+  let head = "jq - commandline JSON processor [version " + VERSION + "]\n\nUsage:\t" + progname + " [options] <jq filter> [file...]\n\t" + progname + " [options] --args <jq filter> [strings...]\n\t" + progname + " [options] --jsonargs <jq filter> [JSON_TEXTS...]\n\n"
+    + "jq is a tool for processing JSON inputs, applying the given filter to\nits JSON text inputs and producing the filter's results as JSON on\nstandard output.\n\n"
+    + "The simplest filter is ., which copies jq's input to its output\nunmodified except for formatting. For more advanced filters see\nthe jq(1) manpage (\"man jq\") and/or https://jqlang.github.io/jq/.\n\n"
+    + "Example:\n\n\t$ echo '{\"foo\": 0}' | jq .\n\t{\n\t  \"foo\": 0\n\t}\n\n";
+  if (short) {
+    return head + "For listing the command options, use " + progname + " --help.\n";
+  }
+  return head + "Command options:\n"
+    + "  -n, --null-input          use `null` as the single input value;\n"
+    + "  -R, --raw-input           read each line as string instead of JSON;\n"
+    + "  -s, --slurp               read all inputs into an array and use it as\n                            the single input value;\n"
+    + "  -c, --compact-output      compact instead of pretty-printed output;\n"
+    + "  -r, --raw-output          output strings without escapes and quotes;\n"
+    + "      --raw-output0         implies -r and output NUL after each output;\n"
+    + "  -j, --join-output         implies -r and output without newline after\n                            each output;\n"
+    + "  -a, --ascii-output        output strings by only ASCII characters\n                            using escape sequences;\n"
+    + "  -S, --sort-keys           sort keys of each object on output;\n"
+    + "  -C, --color-output        colorize JSON output;\n"
+    + "  -M, --monochrome-output   disable colored output;\n"
+    + "      --tab                 use tabs for indentation;\n"
+    + "      --indent n            use n spaces for indentation (max 7 spaces);\n"
+    + "      --unbuffered          flush output stream after each output;\n"
+    + "      --stream              parse the input value in streaming fashion;\n"
+    + "      --stream-errors       implies --stream and report parse error as\n                            an array;\n"
+    + "      --seq                 parse input/output as application/json-seq;\n"
+    + "  -f, --from-file file      load filter from the file;\n"
+    + "  -L directory              search modules from the directory;\n"
+    + "      --arg name value      set $name to the string value;\n"
+    + "      --argjson name value  set $name to the JSON value;\n"
+    + "      --slurpfile name file set $name to an array of JSON values read\n                            from the file;\n"
+    + "      --rawfile name file   set $name to string contents of file;\n"
+    + "      --args                consume remaining arguments as positional\n                            string values;\n"
+    + "      --jsonargs            consume remaining arguments as positional\n                            JSON values;\n"
+    + "  -e, --exit-status         set exit status code based on the output;\n"
+    + "  -V, --version             show the version;\n"
+    + "  --build-configuration     show jq's build configuration;\n"
+    + "  -h, --help                show the help;\n"
+    + "  --                        terminates argument processing;\n\n"
+    + "Named arguments are also available as $ARGS.named[], while\npositional arguments are available as $ARGS.positional[].\n";
+}
+
+// The message that ends each error of an option.
+function die_text(progname: string): string {
+  return "Use " + progname + " --help for help with command-line options,\nor see the jq manpage, or online docs  at https://jqlang.github.io/jq\n";
+}
+
+function (o: Options) failing(message: string): Options {
+  return Options { ...o, fail: message + "\n" + die_text(o.progname), exit: 2 };
+}
+
+// The argument `a` when it is not an option: the program, an argument after
+// `--args` or `--jsonargs`, or an input file.
+function (o: Options) operand(a: string, mode: i32): Options {
+  if (!o.have_program) {
+    return Options { ...o, program: a, have_program: true };
+  }
+  if (mode == 1) {
+    return Options { ...o, positional: o.positional.append(json.JString(a)) };
+  }
+  if (mode == 2) {
+    let parsed = input.values_of(a);
+    if (parsed.error.len() > 0 || parsed.texts.len() != 1) {
+      return o.failing(o.progname + ": invalid JSON text passed to --jsonargs");
+    }
+    return Options { ...o, positional: o.positional.append(parsed.texts[0].value) };
+  }
+  return Options { ...o, files: o.files.append(a) };
+}
+
+// A named argument. The first one of a name stays.
+function (o: Options) with_named(name: string, v: json.JsonValue): Options {
+  if (o.names.contains(name)) {
+    return o;
+  }
+  return Options { ...o, names: o.names.append(name), named: o.named.append(v) };
 }
 
 function options(argv: string[]): Options {
-  let o = Options { compact: false, raw: false, null_input: false, slurp: false, env: eval.env(), filter: "", files: [], error: "" };
-  let have_filter = false;
+  let o = new_options(if (argv.len() > 0) { argv[0] } else { "jq" });
+  let done = false;
+  let mode = 0;
   let i = 1;
-  while (i < argv.len()) {
+  while (i < argv.len() && o.exit < 0) {
     let a = argv[i];
-    if (a == "--") {
-      for rest in i + 1..argv.len() {
-        if (!have_filter) {
-          o = Options { ...o, filter: argv[rest] };
-          have_filter = true;
-        } else {
-          o = Options { ...o, files: o.files.append(argv[rest]) };
-        }
+    if (done || !optish(a)) {
+      o = o.operand(a, mode);
+    } else if (a == "--") {
+      done = true;
+    } else if (a[1] == b'L') {
+      if (a.len() > 2) {
+        o = Options { ...o, library: o.library.append(slice_unchecked(a, 2, a.len()).to_owned()) };
+      } else if (i >= argv.len() - 1) {
+        o = Options { ...o, fail: "-L takes a parameter: (e.g. -L /search/path or -L/search/path)\n" + die_text(o.progname), exit: 2 };
+      } else {
+        o = Options { ...o, library: o.library.append(argv[i + 1]) };
+        i += 1;
       }
-      break;
-    }
-    if (a == "--arg") {
-      if (i + 2 >= argv.len()) {
-        return Options { ...o, error: "--arg takes two parameters (e.g. --arg varname value)" };
-      }
-      o = Options { ...o, env: o.env.with(argv[i + 1], json.JString(argv[i + 2])) };
-      i += 3;
-      continue;
-    }
-    if (a.len() > 1 && a[0] == b'-' && a[1] != b'-') {
-      for k in 1..a.len() {
-        if (a[k] == b'c') {
-          o = Options { ...o, compact: true };
-        } else if (a[k] == b'r') {
-          o = Options { ...o, raw: true };
-        } else if (a[k] == b'n') {
-          o = Options { ...o, null_input: true };
-        } else if (a[k] == b's') {
-          o = Options { ...o, slurp: true };
-        } else {
-          return Options { ...o, error: "Unknown option: " + a };
-        }
-      }
-    } else if (a == "--compact-output") {
-      o = Options { ...o, compact: true };
-    } else if (a == "--raw-output") {
-      o = Options { ...o, raw: true };
-    } else if (a == "--null-input") {
-      o = Options { ...o, null_input: true };
-    } else if (a == "--slurp") {
-      o = Options { ...o, slurp: true };
-    } else if (a.starts_with("--")) {
-      return Options { ...o, error: "Unknown option: " + a };
-    } else if (!have_filter) {
-      o = Options { ...o, filter: a };
-      have_filter = true;
     } else {
-      o = Options { ...o, files: o.files.append(a) };
+      let (next, used, skip) = o.option(argv, i);
+      o = next;
+      i += skip;
+      if (o.exit < 0 && used >= 0 && a[1] != b'-' && a.len() != used + 1) {
+        o = o.failing(o.progname + ": Unknown option " + a);
+      }
+      if (o.exit < 0 && used < 0) {
+        o = o.failing(o.progname + ": Unknown option " + a);
+      }
+      if (a == "--args") {
+        mode = 1;
+      } else if (a == "--jsonargs") {
+        mode = 2;
+      }
     }
     i += 1;
-  }
-  if (!have_filter) {
-    return Options { ...o, error: "usage" };
   }
   return o;
 }
 
-// The bytes of the inputs as a string. jq reads bytes that are not UTF-8, and
-// the reader gives U+FFFD for them in a string.
-function read_inputs(files: string[]): Result[string, string] {
-  if (files.len() == 0) {
-    return match (io.read_all_stdin_bytes()) {
-      Ok(b) => Ok(unsafe { string_from_bytes_unchecked(b) }),
-      Err(e) => Err("Could not read stdin: " + e.message()),
-    };
+// The option at `argv[i]`, the number of short options in it (-1 for no long
+// option that matched), and the number of arguments after it that it takes.
+function (o: Options) option(argv: string[], i: i32): (Options, i32, i32) {
+  let a = argv[i];
+  let n = 0;
+  let r = o;
+  let flags: (u8, string)[] = [(b's', "slurp"), (b'r', "raw-output"), (0u8, "raw-output0"), (b'j', "join-output"), (b'c', "compact-output"), (b'C', "color-output"), (b'M', "monochrome-output"), (b'a', "ascii-output"), (0u8, "unbuffered"), (b'S', "sort-keys"), (b'R', "raw-input"), (b'n', "null-input"), (b'f', "from-file"), (b'b', "binary"), (0u8, "tab"), (0u8, "seq"), (0u8, "stream"), (0u8, "stream-errors"), (b'e', "exit-status"), (0u8, "args"), (0u8, "jsonargs")];
+  for flag in flags {
+    let (short, name) = flag;
+    if (is_option(a, short, name)) {
+      r = r.set_flag(name);
+      if (a[1] == b'-') {
+        return (r, 0, 0);
+      }
+      n += 1;
+    }
   }
-  let all = "";
-  for f in files {
-    match (io.read_input_bytes(f)) {
-      Ok(b) => {
-        all += unsafe { string_from_bytes_unchecked(b) } + "\n";
-      },
-      Err(e) => {
-        return Err("Could not open " + f + ": " + e.message());
+  if (a == "--indent") {
+    if (i >= argv.len() - 1) {
+      return (r.failing(r.progname + ": --indent takes one parameter"), 0, 0);
+    }
+    let width = leading_int(argv[i + 1]);
+    if (width < -1 || width > 7) {
+      return (r.failing(r.progname + ": --indent takes a number between -1 and 7"), 0, 0);
+    }
+    return (Options { ...r, indent: if (width < 0) { 2 } else { width }, tab: width < 0 }, 0, 1);
+  }
+  if (a == "--arg" || a == "--argjson" || a == "--rawfile" || a == "--slurpfile") {
+    return r.named_option(argv, i);
+  }
+  if (is_option(a, b'h', "help")) {
+    return (Options { ...r, fail: usage(r.progname, false), exit: 0 }, 0, 0);
+  }
+  if (is_option(a, b'V', "version")) {
+    print("jq-" + VERSION);
+    return (Options { ...r, exit: 0 }, 0, 0);
+  }
+  if (a == "--build-configuration") {
+    print(BUILD_CONFIGURATION);
+    return (Options { ...r, exit: 0 }, 0, 0);
+  }
+  if (a[1] == b'-') {
+    return (r, -1, 0);
+  }
+  return (r, n, 0);
+}
+
+// The number at the start of `s`, as C `atoi` reads it.
+function leading_int(s: string): i32 {
+  let i = 0;
+  while (i < s.len() && (s[i] == b' ' || s[i] == b'\t')) {
+    i += 1;
+  }
+  let negative = false;
+  if (i < s.len() && (s[i] == b'-' || s[i] == b'+')) {
+    negative = s[i] == b'-';
+    i += 1;
+  }
+  let n = 0;
+  while (i < s.len() && s[i] >= b'0' && s[i] <= b'9' && n < 100000) {
+    n = n * 10 + (s[i] - b'0') as i32;
+    i += 1;
+  }
+  return if (negative) { -n } else { n };
+}
+
+function (o: Options) set_flag(name: string): Options {
+  return match (name) {
+    "slurp" => Options { ...o, slurp: true },
+    "raw-output" => Options { ...o, raw_output: true },
+    "raw-output0" => Options { ...o, raw_output: true, join: true, raw_output0: true },
+    "join-output" => Options { ...o, raw_output: true, join: true },
+    "compact-output" => Options { ...o, indent: 0, tab: false },
+    "color-output" => Options { ...o, color: true },
+    "monochrome-output" => Options { ...o, no_color: true },
+    "ascii-output" => Options { ...o, ascii: true },
+    "unbuffered" => Options { ...o, unbuffered: true },
+    "sort-keys" => Options { ...o, sort: true },
+    "raw-input" => Options { ...o, raw_input: true },
+    "null-input" => Options { ...o, null_input: true },
+    "from-file" => Options { ...o, from_file: true },
+    "tab" => Options { ...o, tab: true, indent: 1 },
+    "seq" => Options { ...o, seq: true },
+    "stream" => Options { ...o, stream: true },
+    "stream-errors" => Options { ...o, stream: true, stream_errors: true },
+    "exit-status" => Options { ...o, exit_status: true },
+    _ => o,
+  };
+}
+
+// `--arg`, `--argjson`, `--rawfile` and `--slurpfile`.
+function (o: Options) named_option(argv: string[], i: i32): (Options, i32, i32) {
+  let which = slice_unchecked(argv[i], 2, argv[i].len()).to_owned();
+  if (i >= argv.len() - 2) {
+    let example = match (which) {
+      "arg" => "varname value",
+      "argjson" => "varname text",
+      _ => "varname filename",
+    };
+    return (o.failing(o.progname + ": --" + which + " takes two parameters (e.g. --" + which + " " + example + ")"), 0, 0);
+  }
+  let name = argv[i + 1];
+  let text = argv[i + 2];
+  if (o.names.contains(name)) {
+    return (o, 0, 2);
+  }
+  if (which == "arg") {
+    return (o.with_named(name, json.JString(text)), 0, 2);
+  }
+  if (which == "argjson") {
+    let parsed = input.values_of(text);
+    if (parsed.error.len() > 0 || parsed.texts.len() != 1) {
+      return (o.failing(o.progname + ": invalid JSON text passed to --argjson"), 0, 2);
+    }
+    return (o.with_named(name, parsed.texts[0].value), 0, 2);
+  }
+  let data = match (io.read_input_bytes(text)) {
+    Ok(b) => unsafe { string_from_bytes_unchecked(b) },
+    Err(e) => {
+      return (Options { ...o, fail: o.progname + ": Bad JSON in --" + which + " " + name + " " + text + ": Could not open " + text + ": " + input.os_message(e) + "\n", exit: 2 }, 0, 2);
+    },
+  };
+  if (which == "rawfile") {
+    return (o.with_named(name, json.JString(data)), 0, 2);
+  }
+  let parsed = input.values_of(data);
+  if (parsed.error.len() > 0) {
+    return (Options { ...o, fail: o.progname + ": Bad JSON in --" + which + " " + name + " " + text + ": " + parsed.error + "\n", exit: 2 }, 0, 2);
+  }
+  let all: json.JsonValue[] = [];
+  for t in parsed.texts {
+    all = all.append(t.value);
+  }
+  return (o.with_named(name, json.JArray(all)), 0, 2);
+}
+
+// The variables of the program: each named argument, `$ARGS`, `$ENV` and
+// `$JQ_BUILD_CONFIGURATION`.
+function (o: Options) variables(): eval.Env {
+  let named = json.object();
+  for i in 0..o.names.len() {
+    named = named.insert(o.names[i], o.named[i]);
+  }
+  let args = json.object().insert("positional", json.JArray(o.positional)).insert("named", json.JObject(named));
+  let e = eval.env().with("ENV", eval.environment());
+  e = e.with("JQ_BUILD_CONFIGURATION", json.JString(BUILD_CONFIGURATION));
+  for i in 0..o.names.len() {
+    e = e.with(o.names[i], o.named[i]);
+  }
+  return e.with("ARGS", json.JObject(args));
+}
+
+function (o: Options) format(): output.Format {
+  let colors: string[] = [];
+  if (o.color && !o.no_color) {
+    colors = output.default_colors();
+    if let Some(spec) = env("JQ_COLORS") {
+      let set = output.colors_of(spec);
+      if (set.len() == 0) {
+        eprint("Failed to set $JQ_COLORS");
+      } else {
+        colors = set;
       }
     }
   }
-  return Ok(all);
+  return output.Format { indent: o.indent, tab: o.tab, sort: o.sort, ascii: o.ascii, colors: colors };
 }
 
-function write_value(v: json.JsonValue, o: Options): void {
-  if (o.raw) {
-    if let json.JString(s) = v {
-      print(s);
-      return;
+// The text of the program: the argument, or the file of `-f` without a
+// first line that starts with `#!`.
+function (o: Options) program_text(): Result[string, string] {
+  if (!o.from_file) {
+    return Ok(o.program);
+  }
+  return match (io.read_input_bytes(o.program)) {
+    Ok(b) => Ok(unsafe { string_from_bytes_unchecked(b) }),
+    Err(e) => Err(o.progname + ": Could not open " + o.program + ": " + input.os_message(e)),
+  };
+}
+
+// The sink of the command line: the text of each output in the buffer of the
+// state.
+function writer(o: Options, f: output.Format): (json.JsonValue, own eval.St) => own eval.St {
+  return (v: json.JsonValue, own s: eval.St): own eval.St => emit(v, o, f, s);
+}
+
+function emit(v: json.JsonValue, o: Options, f: output.Format, own st: eval.St): own eval.St {
+  let kind = 2;
+  let out = st.out;
+  let s = eval.St { ...st, out: "" };
+  if let json.JString(text) = v {
+    if (o.raw_output) {
+      if (o.raw_output0 && text.contains("\x00")) {
+        return eval.St { ...s, out: out, sig: eval.ERROR, err: json.JString("Cannot dump a string containing NUL with --raw-output0 option") };
+      }
+      if (o.ascii) {
+        out = output.write_quoted(out, text, true);
+      } else {
+        out += text;
+      }
+      return finish_output(out, 2, o, s);
     }
   }
-  if (o.compact) {
-    print(output.compact(v));
-  } else {
-    print(output.pretty(v, 0));
+  if (!eval.truthy(v)) {
+    kind = 1;
   }
+  if (o.seq) {
+    out += "\x1e";
+  }
+  out = output.write(out, v, f, 0);
+  return finish_output(out, kind, o, s);
 }
 
-// Runs the filter on one input, and gives false when it ended in an error.
-function apply(f: filter.Ast, input: json.JsonValue, at: string, o: Options): boolean {
-  let out = eval.run(f, input, o.env);
-  for v in out.values {
-    write_value(v, o);
+function finish_output(own out: string, kind: i32, o: Options, own s: eval.St): own eval.St {
+  let buf = out;
+  if (!o.join) {
+    buf += "\n";
   }
-  if (out.error.len() > 0) {
-    eprint("jq: error (at " + at + ")" + out.message());
-    return false;
+  if (o.raw_output0) {
+    buf += "\x00";
   }
-  return true;
+  if (o.unbuffered || buf.len() >= 65536) {
+    let _ = stdout().write(buf);
+    buf = "";
+  }
+  return eval.St { ...s, out: buf, last: kind };
+}
+
+function flush(own st: eval.St): own eval.St {
+  if (st.out.len() > 0) {
+    let _ = stdout().write(st.out);
+  }
+  return eval.St { ...st, out: "" };
+}
+
+// The result of the filter on one input.
+//
+// - `code` is the exit status of a halt, or 5 after an error.
+// - `kind` is the kind of the last output: 0 for none, 1 for false or null,
+//   and 2 for each other value.
+struct Ran { st: eval.St, code: i32, halted: boolean }
+
+function apply(f: filter.Ast, v: json.JsonValue, e: eval.Env, k: (json.JsonValue, own eval.St) => own eval.St, own st: eval.St): Ran {
+  let s = eval.run(f, v, e, k, eval.St { ...st, last: 0 });
+  if (s.sig == eval.HALT) {
+    let code = s.code;
+    return Ran { st: flush(s), code: code, halted: true };
+  }
+  if (s.sig == eval.ERROR) {
+    let message = eval.error_text(s.err);
+    let at = s.io.location();
+    eprint("jq: error (at " + at + ")" + message);
+    return Ran { st: eval.St { ...s, sig: eval.OK, err: json.JNull }, code: 5, halted: false };
+  }
+  return Ran { st: s, code: 0, halted: false };
+}
+
+// The value that jq gives for `--stream`: the events of each input.
+function streamed(v: json.JsonValue, k: (json.JsonValue, own eval.St) => own eval.St, f: filter.Ast, e: eval.Env, own st: eval.St): Ran {
+  let events = eval.stream_events(v);
+  let s = st;
+  let code = 0;
+  for ev in events {
+    let r = apply(f, ev, e, k, s);
+    s = r.st;
+    code = r.code;
+    if (r.halted) {
+      return r;
+    }
+  }
+  return Ran { st: s, code: code, halted: false };
 }
 
 function main(): i32 {
   let o = options(args());
-  if (o.error == "usage") {
-    return usage();
-  }
-  if (o.error.len() > 0) {
-    eprint("jq: " + o.error);
-    return usage();
-  }
-  let parsed = filter.parse(o.filter);
-  if (parsed.error.len() == 0) {
-    let free = filter.undefined_var(parsed.ast, o.env.names);
-    if (free.len() > 0) {
-      parsed = filter.Parsed { ...parsed, error: "$" + free + " is not defined" };
+  if (o.exit >= 0) {
+    if (o.exit == 0) {
+      print_raw(o.fail);
+    } else {
+      eprint_raw(o.fail);
     }
+    return o.exit;
   }
-  if (parsed.error.len() > 0) {
-    eprint("jq: error: " + parsed.error + " at <top-level>, line 1:");
-    eprint(o.filter);
-    eprint("jq: 1 compile error");
-    return 3;
-  }
-  if (o.null_input && !o.slurp) {
-    if (apply(parsed.ast, json.JNull, "<unknown>", o)) {
-      return 0;
+  if (!o.have_program) {
+    if (isatty(0) && isatty(1)) {
+      eprint_raw(usage(o.progname, true));
+      return 2;
     }
-    return 5;
+    o = Options { ...o, program: ".", have_program: true };
   }
   let text = "";
-  match (read_inputs(o.files)) {
+  match (o.program_text()) {
     Ok(t) => {
       text = t;
     },
-    Err(e) => {
-      eprint("jq: error: " + e);
+    Err(message) => {
+      eprint(message);
       return 2;
     }
   }
-  let st = input.stream(text);
-  let failed = false;
-  if (o.slurp && st.error.len() > 0) {
-    eprint("jq: parse error: " + st.error);
-    return 5;
+  let origin = if (o.from_file) { modules.dirname(o.program) } else { "." };
+  let jq_origin = modules.dirname(o.progname);
+  let vars = o.variables();
+  let compiled = modules.compile(skip_shebang(text), o.library, vars.names, origin, jq_origin);
+  if (compiled.errors.len() > 0) {
+    for message in compiled.errors {
+      eprint(message);
+    }
+    eprint("jq: " + compiled.count.to_string() + " compile error" + (if (compiled.count == 1) { "" } else { "s" }));
+    return 3;
   }
+  vars = vars.with("*search", compiled.search).with("*jq_origin", json.JString(jq_origin)).with("*prog_origin", json.JString(modules.absolute(origin)));
+  let env = eval.load(compiled, vars);
+  let f = compiled.ast;
+  let src = input.source(o.files, o.raw_input, o.seq);
   if (o.slurp) {
-    let all: json.JsonValue[] = [];
-    for t in st.texts {
-      all = all.append(t.value);
+    src = input.slurped(src);
+  }
+  let st = eval.state(src);
+  let k = writer(o, o.format());
+  let code = -4;
+  let last = -1;
+  if (o.null_input) {
+    let r = apply(f, json.JNull, env, k, st);
+    st = r.st;
+    code = r.code;
+    if (r.code == 0 && !r.halted) {
+      code = if (st.last == 0) { -4 } else if (st.last == 1) { -1 } else { 0 };
     }
-    let input = json.JArray(all);
-    if (o.null_input) {
-      input = json.JNull;
-    }
-    failed = !apply(parsed.ast, input, "<unknown>", o);
   } else {
-    // The exit status is that of the last input, as in jq.
-    for t in st.texts {
-      failed = !apply(parsed.ast, t.value, "<stdin>:" + t.line.to_string(), o);
+    while (true) {
+      let (io, next) = st.io.next();
+      st = eval.St { ...st, io: io };
+      if (next.kind == input.END) {
+        break;
+      }
+      if (next.kind == input.FAILED) {
+        if (o.seq) {
+          eprint("jq: ignoring parse error: " + next.message);
+          continue;
+        }
+        st = flush(st);
+        eprint("jq: parse error: " + next.message);
+        code = 5;
+        break;
+      }
+      let r = if (o.stream) { streamed(next.value, k, f, env, st) } else { apply(f, next.value, env, k, st) };
+      st = r.st;
+      code = r.code;
+      if (r.halted) {
+        break;
+      }
+      if (code == 0) {
+        code = if (st.last == 0) { -4 } else if (st.last == 1) { -1 } else { 0 };
+        if (code != -4) {
+          last = if (code == -1) { 0 } else { 1 };
+        }
+      }
     }
   }
-  if (st.error.len() > 0) {
-    eprint("jq: parse error: " + st.error);
-    return 5;
+  st = flush(st);
+  if (st.io.unreadable) {
+    code = 2;
   }
-  if (failed) {
-    return 5;
+  if (o.exit_status) {
+    if (code != -4) {
+      return if (code < 0) { -code } else { code };
+    }
+    if (last == -1) {
+      return 4;
+    }
+    return if (last == 0) { 1 } else { 0 };
   }
-  return 0;
+  return if (code > 0) { code } else { 0 };
+}
+
+// The program after a first line `#!...` that a second line continues, as
+// jq takes a program file that starts with a shell command.
+function skip_shebang(text: string): string {
+  if (!text.starts_with("#!")) {
+    return text;
+  }
+  let first = line_end(text, 0);
+  if (first < 0 || first + 1 >= text.len() || text[first + 1] != b'#') {
+    return text;
+  }
+  let second = line_end(text, first + 1);
+  if (second < 0 || second + 1 >= text.len() || text[second + 1] == b'#' || text[second - 1] != b'\\' || text[second - 2] == b'\\') {
+    return text;
+  }
+  let third = line_end(text, second + 1);
+  if (third < 0) {
+    return text;
+  }
+  return slice_unchecked(text, third + 1, text.len()).to_owned();
+}
+
+function line_end(s: string, from: i32): i32 {
+  let i = from;
+  while (i < s.len()) {
+    if (s[i] == b'\n') {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+function print_raw(s: string): void {
+  let _ = stdout().write(s);
+}
+
+function eprint_raw(s: string): void {
+  let _ = stderr().write(s);
 }

@@ -13,7 +13,7 @@ import "std/option";
 import "std/unicode";
 import "std/string";
 import "../look";
-import "../matrix";
+import "./icons";
 
 // A file of the library: its title, its artist, its album and its number
 // on the album, from its tags or from its path. `by` is the artist that
@@ -258,7 +258,9 @@ pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, Li
 // paths of the image files that the scan found in the directories. `art`
 // is the picture of the track that plays, at the size of its screen.
 // `lyrics` has the lines of the lyrics of that track, and `sung` tells
-// that the screen of the track shows them.
+// that the screen of the track shows them. `more` tells that the screen
+// of the track shows the speed and the pitch. `gone` tells that the
+// player gave back what it holds of Android.
 // `have` has the path of each track. While the player goes through its
 // directories, `walking` is true, `seen` has each path that it found and
 // `listed` has each directory that it read. `dirty` tells that the library
@@ -331,6 +333,8 @@ pub struct Model {
   art: Option[draw.Image],
   lyrics: Line[],
   sung: boolean,
+  more: boolean,
+  gone: boolean,
   have: Map[string, boolean],
   seen: Map[string, boolean],
   listed: Map[string, boolean],
@@ -346,7 +350,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: false, fade_s: 0, gain: no_gain(), editing: -1, draft: draft_of(plain("", "", "", 0i64)), asking: -1, tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: false, fade_s: 0, gain: no_gain(), editing: -1, draft: draft_of(plain("", "", "", 0i64)), asking: -1, tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, more: false, gone: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
@@ -373,15 +377,16 @@ pub function theme(m: Model, dark: boolean): ui.Theme {
   return plain_theme(d);
 }
 
-// The colors of a dot-matrix display, as those of the other Fern apps:
-// black or a light grey, with white or black text and buttons, and grey.
-// Only the dots of what is live are red: `look.red`.
+// The colors of Tune: a light grey or a black background, with white or
+// dark grey cards, and black or white text. Red marks what is on: the
+// tab that shows, the bar of the time, and a button that is on. `track`
+// is the grey of the button of the sound and of the bar of the tools.
 pub function plain_theme(dark: boolean): ui.Theme {
+  let white = draw.rgb(255, 255, 255);
   if (dark) {
-    return ui.Theme { background: look.bg(), surface: look.surface(), primary: look.ink(), on_primary: look.bg(), ink: look.ink(), muted: look.muted(), outline: look.outline(), track: draw.rgba(255, 255, 255, 46), pressed: draw.rgba(255, 255, 255, 31) };
+    return ui.Theme { background: draw.rgb(0, 0, 0), surface: draw.rgb(28, 28, 28), primary: look.red(), on_primary: white, ink: white, muted: draw.rgb(160, 160, 160), outline: draw.rgb(70, 70, 70), track: draw.rgb(48, 48, 48), pressed: draw.rgba(255, 255, 255, 31) };
   }
-  let paper = draw.rgb(242, 242, 242);
-  return ui.Theme { background: paper, surface: draw.rgb(255, 255, 255), primary: draw.rgb(0, 0, 0), on_primary: paper, ink: draw.rgb(0, 0, 0), muted: draw.rgb(110, 110, 110), outline: draw.rgb(200, 200, 200), track: draw.rgba(0, 0, 0, 46), pressed: draw.rgba(0, 0, 0, 31) };
+  return ui.Theme { background: draw.rgb(242, 242, 242), surface: white, primary: look.red(), on_primary: white, ink: draw.rgb(0, 0, 0), muted: draw.rgb(110, 110, 110), outline: draw.rgb(200, 200, 200), track: draw.rgb(222, 222, 222), pressed: draw.rgba(0, 0, 0, 31) };
 }
 
 // The key color of the cover of the track that plays, when the player
@@ -560,7 +565,7 @@ pub function start_in(home: string, folder: string): Model {
 // change the file of a track: the player writes it again when the app
 // comes back. `Background` puts the app behind the other apps, and the
 // track plays on.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), Restore(Place), Away, EditTags, Typed(i32, string), SaveTags, Retagged(i32, boolean), Asking(i32), Background, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, More, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), Restore(Place), Away, EditTags, Typed(i32, string), SaveTags, Retagged(i32, boolean), Asking(i32), Background, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -1090,18 +1095,38 @@ function lines(name: string, detail: string, color: i32): ui.El[Msg] {
   return ui.column([ui.text(name).sized(16.0).colored(color).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).justified(ui.CENTER).padding_xy(16.0, 0.0).wide().tall();
 }
 
-// The picture of the album of the key `key` at `side` dp, or rings in the
-// colors of `name` for an album with no picture.
+// The grey of a tile with no picture, which shows on a light and on a
+// dark background, and the grey of its letter and of the small icons.
+function tile_grey(): i32 {
+  return draw.rgba(128, 128, 128, 64);
+}
+
+function grey(): i32 {
+  return draw.rgb(128, 128, 128);
+}
+
+// A tile for `name`, which has no picture, at `side` dp.
+function tile(name: string, side: f64): ui.El[Msg] {
+  return ui.canvas("tile:" + name, icons.tile(name, tile_grey(), grey())).width(side).height(side);
+}
+
+// The picture of the album of the key `key` at `side` dp, or a tile with
+// the first letter of `name` for an album with no picture.
 function thumb(m: Model, key: string, name: string, side: f64): ui.El[Msg] {
   if let Some(img) = cover_of(m, key) {
-    return ui.picture("cover:" + key, img).width(side).height(side).rounded(6.0);
+    return ui.picture("cover:" + key, img).width(side).height(side).rounded(side / 8.0);
   }
-  return ui.canvas("rings:" + name, art(name)).width(side).height(side);
+  return tile(name, side);
 }
 
 // A row of a list: a picture, then a name over a detail.
 function entry(picture: ui.El[Msg], name: string, detail: string, color: i32): ui.El[Msg] {
-  return ui.row([picture, ui.column([ui.text(name).sized(16.0).colored(color).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).justified(ui.CENTER).wide()]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0).wide().tall();
+  return ui.row([picture, ui.column([ui.text(name).sized(16.0).colored(color).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).justified(ui.CENTER).wide()]).spaced(14.0).aligned(ui.CENTER).padding_xy(16.0, 0.0).wide().tall();
+}
+
+// The button with three dots that shows the menu of a track.
+function more_button(i: i32): ui.El[Msg] {
+  return ui.canvas("more", icons.dots(grey(), true)).width(40.0).height(48.0).on_tap(Menu(i)).described("More");
 }
 
 function track_row(m: Model, i: i32): ui.El[Msg] {
@@ -1119,7 +1144,7 @@ function track_row(m: Model, i: i32): ui.El[Msg] {
       name = t.number.to_string() + ". " + t.title;
     }
   }
-  let row = entry(thumb(m, album_key(t.by, t.album), t.album, 44.0), name, detail, color).on_tap(Pick(i)).on_long(Menu(i));
+  let row = ui.row([entry(thumb(m, album_key(t.by, t.album), t.album, 48.0), name, detail, color).padding_xy(0.0, 0.0), more_button(i)]).aligned(ui.CENTER).padding_xy(16.0, 0.0).on_tap(Pick(i)).on_long(Menu(i));
   if (m.chosen.contains(i)) {
     return row.background(ui.SURFACE);
   }
@@ -1134,35 +1159,46 @@ function count(n: i32, one: string): string {
 }
 
 function artist_row(g: Group): ui.El[Msg] {
-  return entry(ui.canvas("rings:" + g.name, art(g.name)).width(44.0).height(44.0), g.name, count(g.albums, "album") + " · " + count(g.songs, "song"), ui.INK).on_tap(Artist(g.name));
+  return entry(tile(g.name, 48.0), g.name, count(g.albums, "album") + " · " + count(g.songs, "song"), ui.INK).on_tap(Artist(g.name));
 }
 
 function genre_row(g: Group): ui.El[Msg] {
-  return entry(ui.canvas("rings:" + g.name, art(g.name)).width(44.0).height(44.0), g.name, count(g.songs, "song") + " · " + count(g.albums, "album"), ui.INK).on_tap(Genre(g.name));
+  return entry(tile(g.name, 48.0), g.name, count(g.songs, "song") + " · " + count(g.albums, "album"), ui.INK).on_tap(Genre(g.name));
 }
 
 function folder_row(g: Group): ui.El[Msg] {
-  return entry(ui.canvas("rings:" + g.name, art(g.name)).width(44.0).height(44.0), leaf(g.name), count(g.songs, "song") + " · " + g.name, ui.INK).on_tap(Place(g.name));
+  return entry(tile(leaf(g.name), 48.0), leaf(g.name), count(g.songs, "song") + " · " + g.name, ui.INK).on_tap(Place(g.name));
 }
 
-function album_row(m: Model, g: Group): ui.El[Msg] {
+// An album of the grid: its cover at `side` dp, its name and its detail.
+function album_cell(m: Model, g: Group, side: f64): ui.El[Msg] {
   let detail = g.by + " · " + count(g.songs, "song");
   if (g.year > 0) {
     detail = detail + " · " + g.year.to_string();
   }
-  return entry(thumb(m, album_key(g.by, g.name), g.name, 44.0), g.name, detail, ui.INK).on_tap(Album(g.by, g.name));
+  return ui.column([thumb(m, album_key(g.by, g.name), g.name, side), ui.text(g.name).sized(15.0).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(4.0).width(side).on_tap(Album(g.by, g.name));
+}
+
+// The space between the cells of the grid of the albums, and at its edges.
+const GAP: f64 = 16.0;
+
+// A row of the grid: the albums `2 * row` and `2 * row + 1`.
+function album_pair(m: Model, groups: Group[], row: i32, side: f64): ui.El[Msg] {
+  let cells: ui.El[Msg][] = [album_cell(m, groups[2 * row], side)];
+  if (2 * row + 1 < groups.len()) {
+    cells = cells.append(album_cell(m, groups[2 * row + 1], side));
+  }
+  return ui.row(cells).spaced(GAP).padding_xy(GAP, 0.0);
 }
 
 function tab(m: Model, name: string, which: i32): ui.El[Msg] {
-  if (m.tab == which) {
-    return ui.button(name, Tab(which));
-  }
-  return ui.text_button(name, Tab(which));
+  let color = if (m.tab == which) { ui.PRIMARY } else { ui.INK };
+  return ui.text(name).sized(15.0).colored(color).padding_xy(10.0, 16.0).on_tap(Tab(which));
 }
 
 // The title of the library, or the artist or the album that shows with a
 // button that goes up from it.
-function heading(m: Model, summary: string): ui.El[Msg] {
+function heading(m: Model, summary: string, theme: ui.Theme): ui.El[Msg] {
   let name = "Tune";
   if (m.list.len() > 0) {
     name = m.list;
@@ -1175,19 +1211,21 @@ function heading(m: Model, summary: string): ui.El[Msg] {
   } else if (m.place.len() > 0) {
     name = leaf(m.place);
   }
-  let top: ui.El[Msg][] = [ui.text(name).sized(28.0).weighted(700).clamped(1), ui.text(summary).colored(ui.MUTED).clamped(1)];
+  let top: ui.El[Msg][] = [ui.text(name).sized(34.0).weighted(500).clamped(1), ui.text(summary).colored(ui.MUTED).clamped(1)];
   if (m.list.len() > 0) {
     let acts = ui.row([ui.text_button("Export", Export), ui.text_button("Delete", DeleteList), ui.space(), ui.text_button("Up", Up)]).spaced(8.0);
     return ui.column([ui.column(top).spaced(4.0), acts]).spaced(4.0).padding_xy(16.0, 0.0);
   }
-  let row: ui.El[Msg][] = [ui.column(top).spaced(4.0).wide()];
+  let row: ui.El[Msg][] = [];
+  if (!rooted(m)) {
+    row = row.append(round(icons.chevron(grey(), true), "back", 48.0, Up, "Up"));
+  }
+  row = row.append(ui.column(top).spaced(4.0).wide());
   if (m.place.len() > 0) {
     row = row.append(ui.text_button("Hide", Hide));
   }
   if (rooted(m)) {
-    row = row.append(ui.text_button("Settings", Settings(true)));
-  } else {
-    row = row.append(ui.text_button("Up", Up));
+    row = row.append(round(icons.gear(theme.ink, theme.surface), "gear:" + theme.surface.to_string(), 48.0, Settings(true), "Settings"));
   }
   return ui.row(row).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
 }
@@ -1216,18 +1254,18 @@ function chooser(m: Model): ui.El[Msg] {
 function groups_list(m: Model): (ui.El[Msg], string) {
   if (m.tab == PLAYLISTS) {
     let lists = m.playlists;
-    return (ui.list("playlists", lists.len(), 64.0, (row: i32): ui.El[Msg] => entry(ui.canvas("rings:" + lists[row].name, art(lists[row].name)).width(44.0).height(44.0), lists[row].name, count(lists[row].paths.len(), "song"), ui.INK).on_tap(OpenList(lists[row].name))), count(lists.len(), "playlist"));
+    return (ui.list("playlists", lists.len(), 72.0, (row: i32): ui.El[Msg] => entry(tile(lists[row].name, 48.0), lists[row].name, count(lists[row].paths.len(), "song"), ui.INK).on_tap(OpenList(lists[row].name))), count(lists.len(), "playlist"));
   }
   if (m.tab == GENRES) {
     let groups = genres(m);
-    return (ui.list("genres", groups.len(), 64.0, (row: i32): ui.El[Msg] => genre_row(groups[row])), count(groups.len(), "genre"));
+    return (ui.list("genres", groups.len(), 72.0, (row: i32): ui.El[Msg] => genre_row(groups[row])), count(groups.len(), "genre"));
   }
   if (m.tab == FOLDERS) {
     let groups = folders(m);
-    return (ui.list("folders", groups.len(), 64.0, (row: i32): ui.El[Msg] => folder_row(groups[row])), count(groups.len(), "folder"));
+    return (ui.list("folders", groups.len(), 72.0, (row: i32): ui.El[Msg] => folder_row(groups[row])), count(groups.len(), "folder"));
   }
   let groups = artists(m);
-  return (ui.list("artists", groups.len(), 64.0, (row: i32): ui.El[Msg] => artist_row(groups[row])), count(groups.len(), "artist"));
+  return (ui.list("artists", groups.len(), 72.0, (row: i32): ui.El[Msg] => artist_row(groups[row])), count(groups.len(), "artist"));
 }
 
 // The order `sort` changes the list that shows: songs that are not those
@@ -1240,11 +1278,12 @@ function sorts(m: Model): boolean {
 }
 
 // The list of the tab that shows. An artist that shows has its albums, and
-// an album that shows has its songs.
-function listing(m: Model): (ui.El[Msg], string) {
+// an album that shows has its songs. The albums are a grid of two columns
+// on a screen `width` dp wide.
+function listing(m: Model, width: f64): (ui.El[Msg], string) {
   if (m.list.len() > 0) {
     let shown = songs(m);
-    let rows = ui.list("playlist", shown.len(), 64.0, (row: i32): ui.El[Msg] => track_row(m, shown[row])).on_move((from: i32, to: i32): Msg => Relist(from, to)).on_swipe((row: i32): Msg => Unlist(row));
+    let rows = ui.list("playlist", shown.len(), 72.0, (row: i32): ui.El[Msg] => track_row(m, shown[row])).on_move((from: i32, to: i32): Msg => Relist(from, to)).on_swipe((row: i32): Msg => Unlist(row));
     return (rows, count(shown.len(), "song") + MOVE_HINT);
   }
   if (rooted(m) && m.tab != SONGS && m.tab != ALBUMS) {
@@ -1252,15 +1291,49 @@ function listing(m: Model): (ui.El[Msg], string) {
   }
   if (m.album.len() == 0 && (m.tab == ALBUMS && rooted(m) || m.artist.len() > 0)) {
     let groups = albums(m);
-    return (ui.list("albums", groups.len(), 64.0, (row: i32): ui.El[Msg] => album_row(m, groups[row])), count(groups.len(), "album"));
+    let side = ((width - 3.0 * GAP) / 2.0).max(80.0);
+    return (ui.list("albums", (groups.len() + 1) / 2, side + 64.0, (row: i32): ui.El[Msg] => album_pair(m, groups, row, side)), count(groups.len(), "album"));
   }
   let shown = songs(m);
-  return (ui.list("tracks", shown.len(), 64.0, (row: i32): ui.El[Msg] => track_row(m, shown[row])), count(shown.len(), "song"));
+  return (ui.list("tracks", shown.len(), 72.0, (row: i32): ui.El[Msg] => track_row(m, shown[row])), count(shown.len(), "song"));
 }
 
-// The bar at the foot of the library, for the track that plays.
-function mini(m: Model): ui.El[Msg] {
-  return ui.column([ui.progress(part(m)), ui.row([ui.column([ui.text(title(m)).weighted(500).clamped(1), ui.text(clock(m.at_ms) + " / " + clock(m.length_ms)).sized(12.0).colored(ui.MUTED)]).spaced(2.0).wide(), ui.text_button(play_label(m), Toggle)]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 8.0)]).background(ui.SURFACE).on_tap(Opened).described("Now playing, " + title(m));
+// A round button of `side` dp with the icon `paint`, which says `say`.
+function round(paint: (draw.Frame, i32, i32, i32, i32) => void, key: string, side: f64, m: Msg, say: string): ui.El[Msg] {
+  return ui.canvas(key, paint).width(side).height(side).background(ui.SURFACE).rounded(side / 2.0).on_tap(m).described(say);
+}
+
+// The artist of the track that plays.
+function artist_of(m: Model): string {
+  if (m.current < 0 || m.current >= m.tracks.len()) {
+    return "";
+  }
+  return m.tracks[m.current].artist;
+}
+
+// The card at the foot of the library, for the track that plays: its
+// round cover, its title and its artist, the button of the sound, and a
+// red line for the time.
+function mini(m: Model, theme: ui.Theme): ui.El[Msg] {
+  let t = m.tracks[m.current];
+  let cover: ui.El[Msg] = ui.canvas("mini:" + album_key(t.by, t.album) + ":" + theme.surface.to_string(), icons.round_cover(m.art, t.album, tile_grey(), grey(), theme.surface)).width(48.0).height(48.0);
+  let sound = if (m.playing) { icons.pause(theme.primary) } else { icons.play(theme.primary) };
+  let button: ui.El[Msg] = ui.canvas("sound:" + m.playing.to_string(), sound).width(48.0).height(48.0).on_tap(Toggle).described(play_label(m));
+  let line: ui.El[Msg] = ui.progress(part(m)).padding_xy(36.0, 0.0);
+  let card = ui.row([cover, ui.column([ui.text(title(m)).sized(15.0).weighted(500).clamped(1), ui.text(artist_of(m)).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide(), button]).spaced(12.0).aligned(ui.CENTER).padding_xy(8.0, 8.0);
+  return ui.column([card, line]).spaced(2.0).padding_xy(0.0, 4.0).background(ui.SURFACE).rounded(32.0).on_tap(Opened).described("Now playing, " + title(m));
+}
+
+// The bar of the tabs at the foot of the library. The name of the tab
+// that shows is red.
+function tab_bar(m: Model): ui.El[Msg] {
+  let tabs: ui.El[Msg][] = [tab(m, "Songs", SONGS)];
+  for which in TABS {
+    if (!m.off.contains(which)) {
+      tabs = tabs.append(tab(m, tab_name(which), which));
+    }
+  }
+  return ui.row(tabs).aligned(ui.CENTER).padding_xy(6.0, 0.0).scroll("tabs").height(56.0).background(ui.SURFACE).rounded(28.0);
 }
 
 // The lists that the person can take the tab of, in the order of the tabs.
@@ -1274,6 +1347,11 @@ function look_label(look: i32): string {
   return ["System", "Light", "Dark"][look];
 }
 
+// The lines `rows` on a card with rounded corners.
+function card(rows: ui.El[Msg][]): ui.El[Msg] {
+  return ui.column([ui.column(rows).spaced(14.0).padding_xy(0.0, 14.0).background(ui.SURFACE).rounded(24.0)]).padding_xy(12.0, 0.0);
+}
+
 // A line of the settings: a name, a detail, and a button.
 function setting(name: string, detail: string, button: string, m: Msg): ui.El[Msg] {
   return ui.row([ui.column([ui.text(name).weighted(500), ui.text(detail).sized(12.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide(), ui.text_button(button, m)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
@@ -1282,11 +1360,11 @@ function setting(name: string, detail: string, button: string, m: Msg): ui.El[Ms
 // The screen of the settings: the theme, the folder of the library, the
 // tabs, and the directories that the person hides. Its screen of the
 // equalizer shows in its place.
-function settings(m: Model): ui.El[Msg] {
+function settings(m: Model, theme: ui.Theme): ui.El[Msg] {
   if (m.tuning) {
-    return tuner(m);
+    return tuner(m, theme);
   }
-  let head = ui.row([ui.text("Settings").sized(28.0).weighted(700).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  let head = ui.row([round(icons.chevron(grey(), true), "back", 48.0, Up, "Up"), ui.text("Settings").sized(34.0).weighted(500).wide()]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
   let folder = m.folder;
   if (folder.len() == 0) {
     folder = "The music of the phone";
@@ -1297,80 +1375,40 @@ function settings(m: Model): ui.El[Msg] {
   }
   let hidden = m.hidden;
   let rows = ui.list("hidden", hidden.len(), 48.0, (row: i32): ui.El[Msg] => ui.row([ui.text(hidden[row]).clamped(1).wide(), ui.text_button("Show", Unhide(hidden[row]))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0));
-  return ui.column([head, setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Album colors", "The colors of the cover of the track that plays", toggle_label("Album", m.tint), Tint), setting("Crossfade", "The end of a track fades into the next one", fade_label(m.fade_s), Fade), setting("Equalizer", "The loudness of the low, middle and high sounds", tone_name(m.tone), Tuning(true)), setting("Loudness", "The same level for each track or each album that tells its gain", level_label(m.level), Level), setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan), ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+  let sound = card([setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Album colors", "The colors of the cover of the track that plays", toggle_label("Album", m.tint), Tint), setting("Crossfade", "The end of a track fades into the next one", fade_label(m.fade_s), Fade), setting("Equalizer", "The loudness of the low, middle and high sounds", tone_name(m.tone), Tuning(true)), setting("Loudness", "The same level for each track or each album that tells its gain", level_label(m.level), Level)]);
+  let library = card([setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan)]);
+  return ui.column([head, sound, library, ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
 
 function sort_label(sort: i32): string {
   return ["By album", "By name", "By year", "By length"][sort];
 }
 
-function library(m: Model): ui.El[Msg] {
-  let (list, summary) = listing(m);
+function library(m: Model, s: ui.Screen): ui.El[Msg] {
+  let (list, summary) = listing(m, s.width());
   if (m.error.len() > 0) {
     summary = m.error;
   } else if (m.scan.len() > 0) {
     summary = summary + " · reading " + count(m.scan.len(), "file");
   }
-  let search: ui.El[Msg][] = [ui.field("search", m.query, "Search the library").on_edit((text: string): Msg => Search(text))];
+  let search: ui.El[Msg][] = [ui.field("search", m.query, "Search the library").on_edit((text: string): Msg => Search(text)).rounded(24.0)];
   if (sorts(m)) {
     search = search.append(ui.text_button(sort_label(m.sort), Sort));
   }
-  let kids: ui.El[Msg][] = [heading(m, summary), ui.row(search).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0)];
-  if (rooted(m)) {
-    let tabs: ui.El[Msg][] = [tab(m, "Songs", SONGS)];
-    for which in TABS {
-      if (!m.off.contains(which)) {
-        tabs = tabs.append(tab(m, tab_name(which), which));
-      }
-    }
-    kids = kids.append(ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tabs"));
-  }
-  kids = kids.append(list);
+  let kids: ui.El[Msg][] = [heading(m, summary, s.theme), ui.row(search).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0), list];
+  let foot: ui.El[Msg][] = [];
   if (m.chosen.len() > 0) {
     kids = kids.append(menu(m));
-  } else if (m.current >= 0) {
-    kids = kids.append(mini(m));
+  } else if (m.current >= 0 && m.current < m.tracks.len()) {
+    foot = foot.append(mini(m, s.theme));
+  }
+  if (rooted(m) && m.chosen.len() == 0) {
+    foot = foot.append(tab_bar(m));
+  }
+  if (foot.len() > 0) {
+    kids = kids.append(ui.column(foot).spaced(8.0).padding_xy(12.0, 0.0));
   }
   return ui.column(kids).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
-}
-
-// A picture for a track, from the letters of its title: rings in two
-// colors.
-// A cover for a name with no picture: a ring of round dots, and the first
-// letter of the name in dots. The grey shows on a dark and on a light
-// background.
-function art(name: string): (draw.Frame, i32, i32, i32, i32) => void {
-  let letter = name.trim().take(1);
-  let grey = draw.rgb(128, 128, 128);
-  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
-    let r = w.min(h) / 2;
-    let dot = (r / 14).max(1);
-    look.dotted_ring(f, x + w / 2, y + h / 2, r - dot, dot, 24, grey);
-    let pitch = (r / 6).max(1);
-    matrix.text(f, x + (w - matrix.width(letter, pitch)) / 2, y + (h - matrix.height(pitch)) / 2, letter, pitch, grey);
-  };
-}
-
-// The cover of the track that plays when it has no picture: a ring of 60
-// round dots like the dial of a watch, and the time of the track in dots.
-// The dots of the time that passed are `ink`, the dot of now is `live`,
-// and the others are `dim`.
-function dial(at_ms: i64, part: f64, ink: i32, dim: i32, live: i32): (draw.Frame, i32, i32, i32, i32) => void {
-  let now = ((part * 60.0) as i32).max(0).min(59);
-  let time = clock(at_ms);
-  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
-    let r = w.min(h) / 2;
-    let dot = (r / 40).max(1);
-    let cx = x + w / 2;
-    let cy = y + h / 2;
-    for k in 0..60 {
-      let a: f64 = 6.283185307179586 * (k as f64) / 60.0;
-      let color = if (k == now) { live } else if (k < now) { ink } else { dim };
-      f.disc(cx + ((r - 2 * dot) as f64 * a.sin()) as i32, cy - ((r - 2 * dot) as f64 * a.cos()) as i32, if (k == now) { dot * 2 } else { dot }, color);
-    }
-    let pitch = matrix.fit_pitch(time, r, (r / 12).max(1));
-    matrix.text(f, cx - matrix.width(time, pitch) / 2, cy - matrix.height(pitch) / 2, time, pitch, ink);
-  };
 }
 
 // The times of the crossfade in seconds: 0 is no crossfade.
@@ -1472,9 +1510,9 @@ function editor(m: Model): ui.El[Msg] {
 }
 
 // The screen of the equalizer: a slider for each band, and the presets.
-function tuner(m: Model): ui.El[Msg] {
+function tuner(m: Model, theme: ui.Theme): ui.El[Msg] {
   let head = ui.row([ui.text("Equalizer").sized(28.0).weighted(700).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
-  let rows: ui.El[Msg][] = [head];
+  let rows: ui.El[Msg][] = [head, spectrum(m.bars, theme.ink, theme.track, theme.primary).padding_xy(16.0, 0.0)];
   for i in 0..TONE_HZ.len() {
     let db = if (i < m.tone.len()) { m.tone[i] } else { 0 };
     let part = (db + TONE_DB) as f64 / ((2 * TONE_DB) as f64);
@@ -1495,8 +1533,6 @@ function tuner(m: Model): ui.El[Msg] {
   return ui.column(rows).spaced(16.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
 
-// The bars of the spectrum `bars` in the color `color`. The key changes
-// when a bar changes by a step of the 32 steps of its height.
 // The rows of dots of a bar of the spectrum.
 const LEVELS: i32 = 8;
 
@@ -1586,7 +1622,8 @@ function menu(m: Model): ui.El[Msg] {
   }
   let first = ui.row([ui.text_button("Play next", PlayNext), ui.text_button("Add to queue", Enqueue), ui.space(), ui.text_button("Close", MenuClosed)]).spaced(8.0).aligned(ui.CENTER);
   let top: ui.El[Msg][] = [ui.text(name).weighted(700).clamped(1)];
-  return ui.column(top.concat(kids).concat([first, ui.row(more).spaced(8.0).aligned(ui.CENTER).scroll("menu")])).spaced(4.0).padding_xy(16.0, 12.0).background(ui.SURFACE);
+  let sheet = ui.column(top.concat(kids).concat([first, ui.row(more).spaced(8.0).aligned(ui.CENTER).scroll("menu")])).spaced(4.0).padding_xy(20.0, 16.0).background(ui.SURFACE).rounded(28.0);
+  return ui.column([sheet]).padding_xy(12.0, 0.0);
 }
 
 // The screen where the person chooses the playlist that gets the paths of
@@ -1655,38 +1692,73 @@ function words(m: Model): ui.El[Msg] {
   return ui.column(shown).spaced(10.0).aligned(ui.CENTER).justified(ui.CENTER).tall();
 }
 
+// An icon of `side` dp that does `m` and says `say`.
+function icon(paint: (draw.Frame, i32, i32, i32, i32) => void, key: string, side: f64, m: Msg, say: string): ui.El[Msg] {
+  return ui.canvas(key, paint).width(side).height(side).on_tap(m).described(say);
+}
+
+// The color of a button that is on, or of one that is off.
+function lit(theme: ui.Theme, on: boolean): i32 {
+  return if (on) { theme.primary } else { theme.ink };
+}
+
+// The screen of the track that plays: its cover on a record, or its
+// lyrics, then its title, its artist in red and its album. Under them are
+// the bar of the time, the buttons of the sound, and a bar of tools: the
+// sleep timer, the lyrics, the queue and more. More shows the speed and
+// the pitch.
 function now_playing(m: Model, s: ui.Screen): ui.El[Msg] {
   let name = title(m);
-  let format = "";
+  let artist = "";
+  let album = "";
   if (m.current >= 0) {
     let t = m.tracks[m.current];
-    format = t.artist + " · " + t.album;
+    artist = t.artist;
+    album = t.album;
   }
-  // The cover or the lyrics take the height that the rest of the screen
-  // leaves, so the spectrum under them does not cover the title.
   let theme = s.theme;
-  let big: ui.El[Msg] = ui.canvas("dial:" + clock(m.at_ms) + ":" + ((part(m) * 60.0) as i32).to_string(), dial(m.at_ms, part(m), theme.ink, theme.outline, look.red())).width(240.0).tall().square();
-  if let Some(img) = m.art {
-    big = ui.picture("art:" + format, img).width(280.0).tall().square().rounded(12.0);
+  let ink = theme.ink;
+  let shade = theme.background.to_string();
+  // The record or the lyrics take the height that the rest of the screen
+  // leaves.
+  let big: ui.El[Msg] = ui.canvas("record:" + artist + "/" + album + ":" + shade, icons.record(m.art, draw.rgb(30, 30, 30), draw.rgb(52, 52, 52), draw.rgb(72, 72, 72), draw.rgb(232, 232, 232))).width(340.0).tall().square();
+  if (m.sung) {
+    big = words(m);
   }
-  let top: ui.El[Msg][] = [ui.text_button("Library", Closed), ui.space()];
-  if (m.lyrics.len() > 0) {
-    top = top.append(ui.text_button(toggle_label("Lyrics", m.sung), Lyrics));
-    if (m.sung) {
-      big = words(m);
-    }
-  }
-  return ui.column(
+  let favored = favorite(m);
+  let about = ui.row([ui.column([ui.text(name).sized(26.0).clamped(2), ui.text(artist).sized(16.0).colored(ui.PRIMARY).clamped(1), ui.text(album).sized(15.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide(), icon(icons.heart(ink, favored, theme.background), "heart:" + favored.to_string() + shade, 48.0, Favorite, toggle_label("Favorite", favored))]).spaced(8.0).aligned(ui.CENTER);
+  let time = ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(13.0), ui.space(), ui.text(clock(m.length_ms)).sized(13.0)])]);
+  let sound = if (m.playing) { icons.pause(ink) } else { icons.play(ink) };
+  let keys = ui.row(
     [
-      ui.row(top).aligned(ui.CENTER),
-      ui.column([big, spectrum(m.bars, theme.ink, theme.outline, look.red())]).spaced(12.0).centered().grow(1.0),
-      ui.row([ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0).wide(), ui.text_button(toggle_label("Favorite", favorite(m)), Favorite)]).spaced(8.0).aligned(ui.CENTER),
-      ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
-      ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
-      ui.row([ui.text_button(toggle_label("Shuffle", m.shuffle), Shuffled), ui.text_button(repeat_label(m.repeat), Repeated), ui.text_button("Queue", Lined(true))]).spaced(8.0).justified(ui.CENTER),
-      ui.row([ui.text_button(speed_label(m.speed), Speed), ui.text_button(pitch_label(m.pitch), Pitch), ui.text_button(sleep_label(m), Sleep)]).spaced(8.0).justified(ui.CENTER),
+      icon(icons.shuffle(lit(theme, m.shuffle)), "shuffle:" + m.shuffle.to_string() + shade, 48.0, Shuffled, toggle_label("Shuffle", m.shuffle)),
+      ui.space(),
+      icon(icons.skip(ink, true), "previous" + shade, 48.0, Previous, "Previous"),
+      ui.space(),
+      ui.canvas("sound:" + m.playing.to_string() + shade, sound).width(96.0).height(60.0).background(ui.TRACK).rounded(30.0).on_tap(Toggle).described(play_label(m)),
+      ui.space(),
+      icon(icons.skip(ink, false), "next" + shade, 48.0, Next, "Next"),
+      ui.space(),
+      icon(icons.repeat(lit(theme, m.repeat != NO_REPEAT), m.repeat == REPEAT_ONE), "repeat:" + m.repeat.to_string() + shade, 48.0, Repeated, repeat_label(m.repeat)),
     ],
-  ).spaced(16.0).padding(16.0).aligned(ui.STRETCH);
+  ).aligned(ui.CENTER);
+  let tools: ui.El[Msg][] = [icon(icons.timer(lit(theme, m.sleep_min > 0)), "timer:" + (m.sleep_min > 0).to_string() + shade, 48.0, Sleep, sleep_label(m))];
+  if (m.lyrics.len() > 0) {
+    tools = tools.append(icon(icons.lyrics(lit(theme, m.sung)), "lyrics:" + m.sung.to_string() + shade, 48.0, Lyrics, toggle_label("Lyrics", m.sung)));
+  }
+  tools = tools.append(icon(icons.queue(ink, theme.track), "queue" + shade, 48.0, Lined(true), "Queue")).append(icon(icons.dots(lit(theme, m.more), false), "dots:" + m.more.to_string() + shade, 48.0, More, "More"));
+  let foot: ui.El[Msg][] = [ui.space(), ui.row(tools).spaced(4.0).padding_xy(8.0, 2.0).background(ui.TRACK).rounded(26.0)];
+  let kids: ui.El[Msg][] = [
+    ui.row([icon(icons.chevron(ink, false), "down" + shade, 48.0, Closed, "Library"), ui.space()]).aligned(ui.CENTER),
+    ui.column([big]).centered().grow(1.0),
+    about,
+    time,
+    keys,
+  ];
+  if (m.more) {
+    kids = kids.append(ui.row([ui.text_button(speed_label(m.speed), Speed), ui.text_button(pitch_label(m.pitch), Pitch)]).spaced(8.0).justified(ui.CENTER));
+  }
+  return ui.column(kids.append(ui.row(foot).aligned(ui.CENTER))).spaced(16.0).padding(16.0).aligned(ui.STRETCH);
 }
 
 // The player with a tab for the list `which`, or with none when it has
@@ -1750,7 +1822,7 @@ pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
     return editor(m);
   }
   if (m.settings) {
-    return settings(m);
+    return settings(m, s.theme);
   }
   if (m.adding.len() > 0) {
     return picker(m);
@@ -1761,7 +1833,7 @@ pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   if (m.open && m.current >= 0) {
     return now_playing(m, s);
   }
-  return library(m);
+  return library(m, s);
 }
 
 function picked(m: Model, i: i32): Model {
@@ -2384,6 +2456,9 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Lyrics => {
       return Model { ...m, sung: !m.sung };
+    },
+    More => {
+      return Model { ...m, more: !m.more };
     },
     Sleep => {
       let minutes = after(SLEEPS, m.sleep_min);
