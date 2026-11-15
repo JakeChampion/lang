@@ -4425,7 +4425,7 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight): __Flight {
   let i = 0;
   while (i + 1 < w.set.len()) {
     let interest = w.set[i + 1];
-    if (!__own_connection(fl, w.set[i]) && interest != fetch.MAIL_INTEREST) {
+    if (w.set[i] >= 0 && !__own_connection(fl, w.set[i]) && interest != fetch.MAIL_INTEREST) {
       if (!__kept_pair(keeps, interest)) {
         let watched = drv.watch(w.set[i], async.interest_bits(interest) | once);
       } else if ((interest & async.WATCHED) == 0) {
@@ -4453,7 +4453,7 @@ function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight, fired: i32): vo
   let keeps = drv.keeps();
   let i = 0;
   while (i + 1 < fl.set.len()) {
-    if (!__own_connection(fl, fl.set[i]) && fl.set[i + 1] != fetch.MAIL_INTEREST && i / 2 != spent && !__kept_pair(keeps, fl.set[i + 1])) {
+    if (fl.set[i] >= 0 && !__own_connection(fl, fl.set[i]) && fl.set[i + 1] != fetch.MAIL_INTEREST && i / 2 != spent && !__kept_pair(keeps, fl.set[i + 1])) {
       let unwatched = drv.unwatch(fl.set[i]);
     }
     i += 2;
@@ -4517,7 +4517,7 @@ function __flight_index(fls: __Flights, fd: i32): i32 {
 function __flight_pair(fl: __Flight, fd: i32): i32 {
   let i = 0;
   while (i + 1 < fl.set.len()) {
-    if (fl.set[i] == fd) {
+    if (fl.set[i] == fd && fd >= 0) {
       return i / 2;
     }
     i += 2;
@@ -4640,7 +4640,9 @@ function __flights_room(fls: __Flights, extra: i32): __Flights {
 function __flights_count_all(fls: __Flights, fl: __Flight, at: i32): __Flights {
   let i = 0;
   while (i + 1 < fl.set.len()) {
-    fls = __flights_count(fls, __flight_key(0, fl.set[i]), at);
+    if (fl.set[i] >= 0) {
+      fls = __flights_count(fls, __flight_key(0, fl.set[i]), at);
+    }
     i += 2;
   }
   return __flights_count(fls, __flight_key(1, fl.fd), at);
@@ -4661,7 +4663,9 @@ function __flights_count(fls: __Flights, key: i64, at: i32): __Flights {
 function __flights_uncount_all(fls: __Flights, fl: __Flight, at: i32): __Flights {
   let i = 0;
   while (i + 1 < fl.set.len()) {
-    fls = __flights_uncount(fls, __flight_key(0, fl.set[i]), at);
+    if (fl.set[i] >= 0) {
+      fls = __flights_uncount(fls, __flight_key(0, fl.set[i]), at);
+    }
     i += 2;
   }
   return __flights_uncount(fls, __flight_key(1, fl.fd), at);
@@ -4697,7 +4701,9 @@ function __flights_unkey(fls: __Flights, slot: i32): __Flights {
 function __flights_respot(fls: __Flights, fl: __Flight, from: i32, to: i32): __Flights {
   let i: i32 = 0;
   while (i + 1 < fl.set.len()) {
-    fls = __flights_move_spot(fls, __flight_key(0, fl.set[i]), from, to);
+    if (fl.set[i] >= 0) {
+      fls = __flights_move_spot(fls, __flight_key(0, fl.set[i]), from, to);
+    }
     i = i + 2;
   }
   return __flights_move_spot(fls, __flight_key(1, fl.fd), from, to);
