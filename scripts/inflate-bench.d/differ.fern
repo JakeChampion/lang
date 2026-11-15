@@ -1,0 +1,64 @@
+import "std/deflate";
+import "std/hash/crc32";
+
+function le32(b: [u8], at: i32): i32 {
+  return b[at] as i32 | b[at + 1] as i32 << 8 | b[at + 2] as i32 << 16 | b[at + 3] as i32 << 24;
+}
+
+// differ FILE [reader]: a line for each raw DEFLATE stream of FILE, "ok",
+// the length and the CRC-32 of the output, or "err" and the message. With
+// "reader", the resumable reader decodes each stream.
+function main(): i32 {
+  let argv = args();
+  let Ok(data) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let reader = argv.len() > 2;
+  let at = 0;
+  let out = "";
+  while (at + 4 <= data.len()) {
+    let n = le32(data, at);
+    let z = data[at + 4:at + 4 + n];
+    if (reader) {
+      out += __read_all(z) + "\n";
+    } else {
+      match (deflate.inflate(z, 67108864)) {
+        Ok(got) => {
+          out += "ok " + got.out.len().to_string() + " " + crc32.of(got.out).to_string() + "\n";
+        },
+        Err(e) => {
+          out += "err " + e.message() + "\n";
+        }
+      }
+    }
+    at += 4 + n;
+  }
+  print(out);
+  return 0;
+}
+
+function __read_all(z: [u8]): string {
+  let copy: u8[] = [];
+  for b in z {
+    copy = copy.append(b);
+  }
+  let Ok(r) = deflate.inflate_reader(copy, 67108864) else {
+    return "err reader";
+  };
+  let all: u8[] = [];
+  let never = (): boolean => false;
+  while (true) {
+    match (r.read(32768, never)) {
+      Ok(chunk) => {
+        all = all.concat(chunk.bytes);
+        if (chunk.done) {
+          return "ok " + all.len().to_string() + " " + crc32.of(all).to_string();
+        }
+      },
+      Err(e) => {
+        return "err " + e.message();
+      }
+    }
+  }
+  return "err";
+}
