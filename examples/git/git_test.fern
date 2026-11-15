@@ -6,6 +6,7 @@ import "std/crypto";
 import "std/deflate";
 import "std/hex";
 import "std/result";
+import "./color";
 import "./config";
 import "./date";
 import "./width";
@@ -248,7 +249,7 @@ function shorts(name: string): string {
 }
 
 function context_of(c: log.Commit): log.Context {
-  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [] };
+  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false };
 }
 
 // The subject, the body, the built-in forms and the placeholders of a
@@ -665,6 +666,24 @@ function test_rename_names(): test.TestOutcome {
   return test.pass();
 }
 
+// The escape sequences of color specs, as `color_parse_mem` of git gives
+// them, and the specs that are not colors.
+function test_colors(): test.TestOutcome {
+  let cases = [["bold blue", "\x1b[1;34m"], ["reset", "\x1b[m"], ["normal", ""], ["Red ul bold", "\x1b[1;4;31m"], ["#102030 brightblue", "\x1b[38;2;16;32;48;104m"], ["nobold 200 normal", "\x1b[22;38;5;200m"], ["9 default", "\x1b[91;49m"], ["-1 green", "\x1b[42m"], ["no-ul", "\x1b[24m"]];
+  for c in cases {
+    let got = color.parse(c[0]).unwrap_or("none");
+    if (got != c[1]) {
+      return test.fail(c[0] + ": " + got.replace("\x1b", "ESC"));
+    }
+  }
+  for bad in ["foo", "red green blue", "256", "#12345", "-2"] {
+    if (color.parse(bad).is_some()) {
+      return test.fail("not a color: " + bad);
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
@@ -685,5 +704,6 @@ function main(): i32 {
   r = r.it("the tabs of a message", test_tabs);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);
+  r = r.it("the specs of colors", test_colors);
   return r.finish();
 }

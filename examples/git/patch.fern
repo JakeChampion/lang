@@ -3,6 +3,7 @@
 // `--summary`. The hunks come from the xdiff engine of std/linediff.
 import "std/array";
 import "std/linediff";
+import "./color";
 import "./objects";
 import "./store";
 import "./treediff";
@@ -11,11 +12,11 @@ import "../../coreutils/lib/bre";
 // The forms of the output and their options. `stat_width` is -1 for the
 // width of the terminal. `stat_name_width`, `stat_graph_width` and
 // `stat_count` are 0 for no limit. `src` and `dst` are the prefixes of
-// the two paths.
-pub struct Opts { patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32 }
+// the two paths. `color` gives the output the colors of git.
+pub struct Opts { patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
 
 pub function defaults(): Opts {
-  return Opts { patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0 };
+  return Opts { patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
 }
 
 // True when the options print a diff.
@@ -183,6 +184,212 @@ function hunks(o: Opts, a: u8[], b: u8[]): u8[] {
   return buf_take_bytes(out);
 }
 
+// ---- The colors of a patch ----
+
+// The line `text` of the header, with its line end.
+function meta_line(o: Opts, text: string): string {
+  return if (o.color) { color.BOLD + text + color.RESET + "\n" } else { text + "\n" };
+}
+
+// Each line of `lines`, which end with a line end, as a line of the
+// header.
+function meta_lines(o: Opts, lines: string): string {
+  if (!o.color) {
+    return lines;
+  }
+  let out = "";
+  for line in lines.split("\n") {
+    if (line.len() > 0) {
+      out += meta_line(o, line);
+    }
+  }
+  return out;
+}
+
+function is_space(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
+}
+
+function blank(data: u8[], from: i32, to: i32): boolean {
+  for i in from..to {
+    if (!is_space(data[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The count of the blank lines at the end of `data`:
+// `count_trailing_blank` of git.
+function trailing_blank(data: u8[]): i32 {
+  if (data.len() == 0) {
+    return 0;
+  }
+  let at = data.len() - 1;
+  if (data[at] == b'\n') {
+    at -= 1;
+  }
+  let n = 0;
+  while (0 < at) {
+    let eol = at;
+    while (eol >= 0 && data[eol] != b'\n') {
+      eol -= 1;
+    }
+    if (!blank(data, eol + 1, at + 1)) {
+      break;
+    }
+    n += 1;
+    at = eol - 1;
+  }
+  return n;
+}
+
+function line_count(data: u8[]): i32 {
+  if (data.len() == 0) {
+    return 0;
+  }
+  let n = 0;
+  for b in data {
+    if (b == b'\n') {
+      n += 1;
+    }
+  }
+  return if (data[data.len() - 1] == b'\n') { n } else { n + 1 };
+}
+
+// The first line of each side that is in the blank lines that the change
+// adds at the end of the file, or 0 for each when it adds none:
+// `check_blank_at_eof` of git.
+function blank_at_eof(a: u8[], b: u8[]): (i32, i32) {
+  let l1 = trailing_blank(a);
+  let l2 = trailing_blank(b);
+  if (l2 <= l1) {
+    return (0, 0);
+  }
+  return (line_count(a) - l1 + 1, line_count(b) - l2 + 1);
+}
+
+// The line `first` and `text` in the color `set`, with a carriage return
+// at the end after the color: `emit_line_0` of git.
+function line0(set: string, first: string, text: string): string {
+  if (text.len() > 0 && text[text.len() - 1] == b'\r') {
+    return set + first + objects.part(text, 0, text.len() - 1) + color.RESET + "\r";
+  }
+  return set + first + text + color.RESET;
+}
+
+// The text of an added line with its errors of white space in their
+// color: `ws_check_emit` of git with the rules blank-at-eol and
+// space-before-tab.
+function checked(text: string): string {
+  let trailing = text.len();
+  while (trailing > 0 && is_space(text[trailing - 1])) {
+    trailing -= 1;
+  }
+  let out = "";
+  let written = 0;
+  let i = 0;
+  while (i < trailing && (text[i] == b' ' || text[i] == b'\t')) {
+    if (text[i] == b'\t') {
+      if (written < i) {
+        out += color.BG_RED + objects.part(text, written, i) + color.RESET + "\t";
+      } else {
+        out += objects.part(text, written, i + 1);
+      }
+      written = i + 1;
+    }
+    i += 1;
+  }
+  if (trailing > written) {
+    out += color.GREEN + objects.part(text, written, trailing) + color.RESET;
+  }
+  if (trailing < text.len()) {
+    out += color.BG_RED + objects.part(text, trailing, text.len()) + color.RESET;
+  }
+  return out;
+}
+
+// The number after `sign` in a hunk header.
+function hunk_start(line: string, sign: u8): i32 {
+  let at = 0;
+  while (at < line.len() && line[at] != sign) {
+    at += 1;
+  }
+  let n = 0;
+  at += 1;
+  while (at < line.len() && line[at] >= b'0' && line[at] <= b'9') {
+    n = n * 10 + (line[at] - b'0') as i32;
+    at += 1;
+  }
+  return n;
+}
+
+// The hunk header `line` in its colors: `emit_hunk_header` of git.
+function hunk_header(line: string): string {
+  let ep = 2;
+  while (ep + 1 < line.len() && !(line[ep] == b'@' && line[ep + 1] == b'@')) {
+    ep += 1;
+  }
+  ep += 2;
+  let out = color.CYAN + objects.part(line, 0, ep.min(line.len())) + color.RESET;
+  let cp = ep;
+  while (ep < line.len() && (line[ep] == b' ' || line[ep] == b'\t')) {
+    ep += 1;
+  }
+  if (ep > cp) {
+    out += objects.part(line, cp, ep) + color.RESET;
+  }
+  if (ep < line.len()) {
+    out += objects.part(line, ep, line.len()) + color.RESET;
+  }
+  return out;
+}
+
+// The lines of the hunks of `a` and `b` in the colors of git, with the
+// errors of white space of the added lines (`fn_out_consume` and
+// `emit_diff_symbol` of git, with the default `core.whitespace`).
+function painted(body: string, a: u8[], b: u8[]): string {
+  let (pre_eof, post_eof) = blank_at_eof(a, b);
+  let pre = 0;
+  let post = 0;
+  let out = "";
+  let at = 0;
+  while (at < body.len()) {
+    let end = at;
+    while (end < body.len() && body[end] != b'\n') {
+      end += 1;
+    }
+    let line = objects.part(body, at, end);
+    let first = if (line.len() > 0) { line[0] } else { b' ' };
+    let rest = objects.part(line, 1.min(line.len()), line.len());
+    if (first == b'@') {
+      pre = hunk_start(line, b'-');
+      post = hunk_start(line, b'+');
+      out += hunk_header(line);
+    } else if (first == b'+') {
+      post += 1;
+      if (pre_eof > 0 && post_eof > 0 && pre_eof <= pre && post_eof <= post && blank(rest.bytes(), 0, rest.len())) {
+        out += line0(color.BG_RED, "+", rest);
+      } else {
+        out += line0(color.GREEN, "+", "") + checked(rest);
+      }
+    } else if (first == b'-') {
+      pre += 1;
+      out += line0(color.RED, "-", rest);
+    } else if (first == b' ') {
+      pre += 1;
+      post += 1;
+      out += line0("", " ", rest);
+    } else {
+      pre += 1;
+      out += line0("", "", line);
+    }
+    out += "\n";
+    at = end + 1;
+  }
+  return out;
+}
+
 // The header and the patch of one pair, without a split of a change of
 // kind: `fill_metainfo` and `builtin_diff` of git, with their calls for
 // the lines of the graph.
@@ -210,14 +417,15 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
     }
     meta += "\n";
   }
-  t = add(t, head_use, "diff --git " + a_one + " " + b_two + "\n");
+  meta = meta_lines(o, meta);
+  t = add(t, head_use, meta_line(o, "diff --git " + a_one + " " + b_two));
   if (!one.valid) {
-    t = add(add(t, head_use, "new file mode " + mode6(two.mode) + "\n"), meta_use, meta);
+    t = add(add(t, head_use, meta_line(o, "new file mode " + mode6(two.mode))), meta_use, meta);
   } else if (!two.valid) {
-    t = add(add(t, head_use, "deleted file mode " + mode6(one.mode) + "\n"), meta_use, meta);
+    t = add(add(t, head_use, meta_line(o, "deleted file mode " + mode6(one.mode))), meta_use, meta);
   } else {
     if (one.mode != two.mode) {
-      t = add(t, head_use, "old mode " + mode6(one.mode) + "\nnew mode " + mode6(two.mode) + "\n");
+      t = add(t, head_use, meta_line(o, "old mode " + mode6(one.mode)) + meta_line(o, "new mode " + mode6(two.mode)));
     }
     t = add(t, meta_use, meta);
     if (kind_of(one.mode) != kind_of(two.mode)) {
@@ -240,6 +448,11 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   let tab0 = if (lbl0.contains(" ")) { "\t" } else { "" };
   let tab1 = if (lbl1.contains(" ")) { "\t" } else { "" };
+  if (o.color) {
+    let labels = color.BOLD + "--- " + lbl0 + color.RESET + tab0 + "\n" + color.BOLD + "+++ " + lbl1 + color.RESET + tab1 + "\n";
+    t = add_each(t, labels + painted(text(body), a, b));
+    return (s, t);
+  }
   t = add_each(t, "--- " + lbl0 + tab0 + "\n+++ " + lbl1 + tab1 + "\n" + text(body));
   return (s, t);
 }
@@ -404,6 +617,15 @@ function summary_line(files: i32, adds: i64, dels: i64): string {
   return out + "\n";
 }
 
+function paint(o: Opts, set: string, text: string): string {
+  return if (o.color) { set + text + color.RESET } else { text };
+}
+
+// The `count` characters `c` of the graph of a stat: `show_graph` of git.
+function bar(o: Opts, set: string, c: string, count: i64): string {
+  return if (count > 0) { paint(o, set, c.repeat(count as i32)) } else { "" };
+}
+
 // The lines of `--stat`: `show_stats` of git. `prefix_width` is the width
 // of the graph before each line.
 function show_stats(stats: Stat[], o: Opts, prefix_width: i32): string {
@@ -475,7 +697,7 @@ function show_stats(stats: Stat[], o: Opts, prefix_width: i32): string {
       if (f.added == 0 && f.deleted == 0) {
         out += "\n";
       } else {
-        out += " " + f.deleted.to_string() + " -> " + f.added.to_string() + " bytes\n";
+        out += " " + paint(o, color.RED, f.deleted.to_string()) + " -> " + paint(o, color.GREEN, f.added.to_string()) + " bytes\n";
       }
       continue;
     }
@@ -495,7 +717,7 @@ function show_stats(stats: Stat[], o: Opts, prefix_width: i32): string {
       }
     }
     out += " " + prefix + name + spaces(padding) + " | " + pad_left((f.added + f.deleted).to_string(), number_width) + (if (f.added + f.deleted > 0) { " " } else { "" });
-    out += "+".repeat(add as i32) + "-".repeat(del as i32) + "\n";
+    out += bar(o, color.GREEN, "+", add) + bar(o, color.RED, "-", del) + "\n";
   }
   let adds: i64 = 0;
   let dels: i64 = 0;

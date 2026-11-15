@@ -53,8 +53,7 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   the commits that change them, with the history simplification of git,
   and `--full-history` keeps each side of a merge. The order is that of
   the dates, or that of `--topo-order`, `--date-order`,
-  `--author-date-order` and `--reverse`. `--graph` draws the graph of git
-  without colors.
+  `--author-date-order` and `--reverse`. `--graph` draws the graph of git.
 
   `--simplify-merges` and `--simplify-by-decoration` simplify the
   history as git does, and `--ancestry-path` keeps the commits on a path
@@ -93,6 +92,12 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `--inter-hunk-context=`, `--no-prefix`, `--src-prefix=`,
   `--dst-prefix=`, `--full-index`, `--text`, `--full-diff`,
   `--no-renames`, `-s`, and the widths and the count of `--stat`.
+
+  `--color`, `--color=WHEN`, `--no-color`, `color.ui` and `color.diff`
+  give the output the colors of git. The colors are on the header, the
+  decorations, the columns of the graph, the patch and the stat, and
+  `%C` sets them in a format. The patch shows the errors of white space
+  of the default `core.whitespace`.
 
 - `index-pack` makes the index of a packfile (version 1 or 2) and its
   reverse index, and prints the checksum of the packfile. It reads the
@@ -176,10 +181,20 @@ The standard output, the messages and the exit status are those of git
 
 ## What it does not have yet
 
-- These options of `log`: `--follow`, `-S` and `-G`, `--cherry-pick`,
-  `--left-right`, `--boundary`, `--ancestry-path`,
-  `--simplify-by-decoration`, `--walk-reflogs`, `--notes`, the signatures,
-  the mailmap (`%aN`) and colors.
+- These options of `log`: `--notes`, the signatures (`--show-signature`,
+  `%G?`), `-C` and `--find-copies` (`--follow` finds copies),
+  `--word-diff`, `--color-moved`, `--check`, `--raw`, `--cc` and `-m`
+  for the diff of a merge, and `-L`.
+
+- The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
+  `color.grep`, and the rules of `core.whitespace` and of the
+  `whitespace` attribute. The port uses the default colors and rules.
+
+- The placeholders of a format that change the columns of the next
+  placeholders: `%<(N)`, `%>(N)`, `%><(N)` and `%w()`.
+
+- The pager. `--color=auto` and `color.ui=auto` give colors only to a
+  terminal, as git does without a pager.
 
 - `rev-parse --short=N` with N above 40 in a repository with SHA-256
   names. The port gives the full name, and git 2.43 stops at 40 digits.
@@ -282,7 +297,10 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   version 1. Then it changes a date in the graph, and the port must use
   that date as git does, and not when `core.commitGraph` is false.
 
-- `TestSelfHostExampleGitOptions` runs the mailmap and the decorations.
+- `TestSelfHostExampleGitOptions` runs the mailmap, the decorations, the
+  sides of a range, the boundary, the simplifications, the reflog walk,
+  the pickaxe and `--follow`. `TestSelfHostExampleGitColor` runs the
+  forms of `log` with colors.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

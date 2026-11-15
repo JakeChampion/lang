@@ -155,6 +155,81 @@ func TestSelfHostExampleGitOptions(t *testing.T) {
 	}
 }
 
+// gitColorCases are the forms of log with colors, for the repository of
+// gitOptionsFixture and the commits that TestSelfHostExampleGitColor adds.
+var gitColorCases = []string{
+	"log --color", "log --color --oneline", "log --color --oneline --decorate=full", "log --color -p --stat",
+	"log --color --graph --oneline --all", "log --color --graph --all --stat", "log --color --graph -p --all",
+	"log --color --graph --oneline --boundary main~3..main", "log --color --left-right --oneline main...topic",
+	"log --color --left-right main...topic", "log --color --pretty=reference -3", "log --color -p -U0 -2",
+	"log --color --stat=50 --numstat --shortstat -3", "log --color --name-status -2", "log --color=always -1 -p",
+	"log --color=never -p -1", "log --no-color -p -1", "log --color --no-color -p -1", "log --color=bad -1",
+	"log --color --format=%Cred%h%Creset%x20%C(bold#102030)%s%C(reset)%C(auto)%d%x20%C(auto)%h%x20%H%x20%D",
+	"log --color --format=%C(ul#102030brightblue)a%C(nobold200normal)b%C(normal)c%C(reset)%C(-1)d%C(9)e%C(default)",
+	"log --format=%C(always,red)x%C(red)y%Cred%x20z%C(auto,blue)w -1", "log --color --format=%C(auto,blue)w%Cgreen -1",
+	"log --color --format=%C(foo)x -1", "log --format=%C(foo)x -1", "log --color --graph --format=%C(auto)%h%d",
+}
+
+// TestSelfHostExampleGitColor runs log with colors with git and with the
+// port: the header, the decorations, the columns of the graph, the patch
+// with errors of white space, the stat, and the colors of a format.
+func TestSelfHostExampleGitColor(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
+	for _, run := range gitRuns() {
+		port := gitPort(t, cli, run.target)
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			dir := t.TempDir()
+			gitOptionsFixture(t, oracle, dir, run)
+			must := func(args ...string) {
+				t.Helper()
+				args = append([]string{"-c", "user.name=T", "-c", "user.email=t@example.com"}, args...)
+				if _, stderr, code := oracle.run(t, dir, "", args...); code != 0 {
+					t.Fatalf("git %v: exit %d\n%s", args, code, stderr)
+				}
+			}
+			write := func(name, text string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Errors of white space: a space before a tab, blanks at the
+			// end of a line and at the end of the file, and a carriage
+			// return.
+			write("w", "int f(void)\n{\n\treturn 1;\n}\nx\n")
+			must("add", "w")
+			must("commit", "-q", "-m", "w one")
+			write("w", "int f(void)\n{\n\treturn 2;  \n \tx\n\t \t y\r\n}\n\n  \n")
+			must("add", "w")
+			must("commit", "-q", "-m", "w two")
+			// An octopus merge, for the dashes of the graph.
+			for _, b := range []string{"o1", "o2", "o3"} {
+				must("checkout", "-q", "-b", b, "main")
+				write(b, b+"\n")
+				must("add", b)
+				must("commit", "-q", "-m", b)
+			}
+			must("checkout", "-q", "main")
+			must("merge", "-q", "-m", "octopus", "o1", "o2", "o3")
+			// git 2.43 cannot stash in a repository with SHA-256 names.
+			must("update-ref", "refs/stash", "HEAD~1")
+			for _, c := range gitColorCases {
+				gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
+			}
+			gitCompare(t, oracle, port, dir, "", "log", "--color", "--oneline", "--decorate", "--all")
+			gitCompare(t, oracle, port, dir, "", "log", "--color", "--format=%C(bold blue)%h%C(reset) %s", "-2")
+			for _, v := range []string{"always", "true", "never", "false", "auto"} {
+				must("config", "color.ui", v)
+				gitCompare(t, oracle, port, dir, "", "log", "-p", "-1")
+				must("config", "color.diff", "always")
+				gitCompare(t, oracle, port, dir, "", "log", "--graph", "--oneline", "-3")
+				must("config", "--unset", "color.diff")
+			}
+		})
+	}
+}
+
 // TestSelfHostExampleGitPush reads `@{push}` with git and with the port:
 // each `push.default`, a push refspec, `remote.pushDefault`,
 // `branch.NAME.pushRemote`, and the branches that have no destination.
