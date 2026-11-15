@@ -1,8 +1,9 @@
 import "std/string";
 import "std/rand";
-import "std/unicode";
 import "../coreutils/lib/gnu";
 import "../coreutils/lib/bre";
+import "../coreutils/lib/locale";
+import "../coreutils/lib/glibc_ctype";
 
 const EXIT_BAD_USAGE: i32 = 1;
 
@@ -122,6 +123,14 @@ const CHUNK: i32 = 65536;
 // The buffer of stdio for a file. GNU sed writes a w file or the file of
 // -i only when this buffer is full, at the end, or after each line with -u.
 const BLOCK: i32 = 4096;
+
+// The calls of GNU sed to stdio: one that checks for an error, one that does
+// not, and a run of calls of a byte that do not.
+const CALL_CHECKED: i32 = 0;
+
+const CALL_PLAIN: i32 = 1;
+
+const CALL_BYTES: i32 = 2;
 
 const KIND_FILE: i32 = 0;
 
@@ -1451,7 +1460,16 @@ function read_all(r: Reader, name: string): u8[] {
 
 // An output. Two outputs can share a buffer: a w file named /dev/stdout
 // writes to standard output, but it keeps its own missing newline.
-struct Out { name: string, w: Writer, h: usize, kind: i32 }
+struct Out { name: string, w: Writer, h: usize, kind: i32, limit: Cell[i64], model: Cell[Gm] }
+
+// The buffer of stdio for standard output, as GNU sed has it. glibc fills a
+// buffer of `bs` bytes and writes it when a call to fwrite does not fit,
+// with the whole blocks of the rest of that call. `gw` is the count of bytes
+// that GNU sed has written, `base` the count that the port has written, and
+// `ends`, `lens` and `checks` tell for each write of GNU since `base` where
+// it ends, the length of the call that made it, and whether that call
+// checks for an error. `exact` writes at once at each write of GNU.
+struct Gm { bs: i64, alloc: boolean, base: i64, gw: i64, ends: i64[], lens: i64[], checks: boolean[], exact: boolean }
 
 struct App { file: boolean, data: u8[], name: string }
 
@@ -1484,20 +1502,62 @@ function zeros_i64(n: i32): i64[] {
   return out;
 }
 
-function make_outs(p: Prog): Out[] {
+function make_outs(p: Prog, inputs: i32): Out[] {
   let main_h = buf_new(CHUNK);
   let err_h = buf_new(256);
-  let outs: Out[] = [Out { name: "stdout", w: stdout(), h: main_h, kind: KIND_STDOUT }, Out { name: "", w: stdout(), h: main_h, kind: KIND_FILE }, Out { name: "stderr", w: stderr(), h: err_h, kind: KIND_STDERR }];
+  // With -u each output goes out at once, so no call fills the buffer.
+  let limit = cell_new(if (p.o.unbuffered) { 9223372036854775807i64 } else { -1i64 });
+  let model = cell_new(Gm { bs: stdio_block(), alloc: false, base: 0i64, gw: 0i64, ends: [], lens: [], checks: [], exact: exact_output(p, inputs) });
+  let spare = cell_new(Gm { bs: 0i64, alloc: false, base: 0i64, gw: 0i64, ends: [], lens: [], checks: [], exact: false });
+  let none = cell_new(0i64);
+  let outs: Out[] = [Out { name: "stdout", w: stdout(), h: main_h, kind: KIND_STDOUT, limit: limit, model: model }, Out { name: "", w: stdout(), h: main_h, kind: KIND_FILE, limit: none, model: spare }, Out { name: "stderr", w: stderr(), h: err_h, kind: KIND_STDERR, limit: none, model: spare }];
   for f in p.wfiles {
     if (f.kind == KIND_STDOUT) {
-      outs = outs.append(Out { name: "stdout", w: f.w, h: main_h, kind: KIND_STDOUT });
+      outs = outs.append(Out { name: "stdout", w: f.w, h: main_h, kind: KIND_STDOUT, limit: limit, model: model });
     } else if (f.kind == KIND_STDERR) {
-      outs = outs.append(Out { name: "stderr", w: f.w, h: err_h, kind: KIND_STDERR });
+      outs = outs.append(Out { name: "stderr", w: f.w, h: err_h, kind: KIND_STDERR, limit: none, model: spare });
     } else {
-      outs = outs.append(Out { name: f.name, w: f.w, h: buf_new(4096), kind: KIND_FILE });
+      outs = outs.append(Out { name: f.name, w: f.w, h: buf_new(4096), kind: KIND_FILE, limit: none, model: spare });
     }
   }
   return outs;
+}
+
+// The size of the buffer of glibc's stdio for standard output: the block
+// size of the file, when it is less than BUFSIZ.
+function stdio_block(): i64 {
+  if let Ok(st) = stdout().stat() {
+    if (st.blksize > 0i64 && st.blksize < 8192i64) {
+      return st.blksize;
+    }
+  }
+  return 8192i64;
+}
+
+// Whether standard output writes at each write of GNU sed. The port keeps
+// its large blocks only when an error found later shows nothing more than
+// an error found at once: each call to stdio checks for an error, and the
+// run writes nowhere else and reads at most one input.
+function exact_output(p: Prog, inputs: i32): boolean {
+  if (p.o.debug || p.o.in_place || p.o.unbuffered || inputs > 1) {
+    return true;
+  }
+  for f in p.wfiles {
+    if (f.kind != KIND_STDOUT) {
+      return true;
+    }
+  }
+  for sub in p.subs {
+    if (sub.eval) {
+      return true;
+    }
+  }
+  for cmd in p.cmds {
+    if (cmd.op == b'=' || cmd.op == b'F' || cmd.op == b'e') {
+      return true;
+    }
+  }
+  return false;
 }
 
 function make_rfiles(p: Prog): RFile[] {
@@ -1553,11 +1613,16 @@ function write_out(r: Run, i: i32, n: i32, name: string, items: i32): void {
 }
 
 function flush_out(r: Run, i: i32): void {
+  if (r.outs[i].kind == KIND_STDOUT && !r.outs[i].model.get().exact) {
+    let _ = std_write(r, i, true);
+    return;
+  }
   write_out(r, i, buf_len(r.outs[i].h), r.outs[i].name, -1);
 }
 
-// put adds bytes lo..hi of text to output i. A file writes its full blocks
-// when the buffer of stdio would overflow, as one fwrite of GNU sed does.
+// put adds bytes lo..hi of text to output i, as one fwrite of GNU sed. A
+// file writes its full blocks when the buffer of stdio would overflow.
+// Standard output follows the calls of put in settle_op, or in noted.
 function put(r: Run, i: i32, text: u8[], lo: i32, hi: i32): void {
   buf_push_bytes_range(r.outs[i].h, text, lo, hi);
   if (r.outs[i].kind == KIND_FILE) {
@@ -1570,6 +1635,177 @@ function put_byte(r: Run, i: i32, b: i32): void {
   if (r.outs[i].kind == KIND_FILE) {
     spill(r, i, 1);
   }
+}
+
+// noted follows one call of GNU sed to stdio, of `n` bytes. `checked` tells
+// that GNU sed checks the call for an error, as ck_fwrite does.
+function noted(r: Run, i: i32, n: i32, checked: boolean): void {
+  let kind = r.outs[i].kind;
+  if (kind == KIND_STDOUT) {
+    if (buf_len(r.outs[i].h) as i64 > r.outs[i].limit.get() && n > 0) {
+      std_slow(r, i, n, if (checked) { CALL_CHECKED } else { CALL_PLAIN });
+    }
+  } else if (kind == KIND_FILE) {
+    spill(r, i, n);
+  }
+}
+
+// std_piece follows a call of `n` bytes that ends `held` bytes into the
+// buffer, when it does not fit in the buffer of glibc.
+function std_piece(r: Run, i: i32, held: i64, n: i32, how: i32): void {
+  let o = r.outs[i];
+  let g = o.model.get();
+  if (n <= 0 || g.alloc && g.base + held <= g.gw + g.bs) {
+    return;
+  }
+  let g2 = std_step(g, held, n as i64, how);
+  let exact = g2.exact;
+  o.model.set(g2);
+  o.limit.set(g2.gw + g2.bs - g2.base);
+  if (exact) {
+    let _ = std_write(r, i, false);
+  }
+}
+
+// noted_bytes follows the trace of --debug, which GNU sed writes with
+// putchar and printf: calls of a byte or a few, that check for no error.
+function noted_bytes(r: Run, n: i32): void {
+  let o = r.outs[OUT_STDOUT];
+  if (buf_len(o.h) as i64 > o.limit.get() && n > 0) {
+    std_slow(r, OUT_STDOUT, n, CALL_BYTES);
+  }
+}
+
+// std_call follows the trace of the program before the run starts.
+function std_call(o: Out, n: i32): void {
+  if (buf_len(o.h) as i64 > o.limit.get() && n > 0) {
+    let g = std_step(o.model.get(), buf_len(o.h) as i64, n as i64, CALL_BYTES);
+    o.model.set(g);
+    o.limit.set(g.gw + g.bs - g.base);
+  }
+}
+
+// One call to fwrite of glibc that does not fit in its buffer: the buffer
+// and the whole blocks of the rest of the call go out. The first call finds
+// no buffer, and writes its whole blocks. A run of calls of one byte writes
+// the buffer each time it is full.
+function std_step(own g: Gm, held: i64, n: i64, how: i32): Gm {
+  let before = g.base + held - n;
+  if (how == CALL_BYTES) {
+    let gb = g.gw;
+    let out = g;
+    if (!out.alloc) {
+      out = Gm { ...out, alloc: true };
+    }
+    while (gb + out.bs < before + n) {
+      gb += out.bs;
+      out = Gm { ...out, gw: gb, ends: out.ends.append(gb), lens: out.lens.append(1i64), checks: out.checks.append(false) };
+    }
+    return out;
+  }
+  let gw = g.gw;
+  if (!g.alloc) {
+    gw = before + n - n % g.bs;
+  } else {
+    let rest = n - (g.bs - (before - gw));
+    gw = gw + g.bs + rest - rest % g.bs;
+  }
+  if (gw == g.gw) {
+    return Gm { ...g, alloc: true };
+  }
+  return Gm { ...g, alloc: true, gw: gw, ends: g.ends.append(gw), lens: g.lens.append(n), checks: g.checks.append(how == CALL_CHECKED) };
+}
+
+function std_slow(r: Run, i: i32, n: i32, how: i32): void {
+  let left = n;
+  let kind = how;
+  while (left > 0) {
+    let o = r.outs[i];
+    let g = std_step(o.model.get(), buf_len(o.h) as i64, left as i64, kind);
+    let exact = g.exact;
+    o.model.set(g);
+    o.limit.set(g.gw + g.bs - g.base);
+    if (!exact) {
+      return;
+    }
+    left = std_write(r, i, false);
+    kind = CALL_BYTES;
+  }
+}
+
+// std_write writes what GNU sed has written, or all of the buffer at the
+// end. An error names the call of GNU sed whose write failed first: the
+// first write of GNU that ends after the last byte that went out.
+// The result is the count of bytes after a lost one that the buffer of
+// glibc takes again, as calls of one byte.
+function std_write(r: Run, i: i32, all: boolean): i32 {
+  let o = r.outs[i];
+  let g = o.model.get();
+  let held = buf_len(o.h);
+  let n = if (all) { held } else { (g.gw - g.base) as i32 };
+  if (n <= 0) {
+    return 0;
+  }
+  let bytes = buf_take_bytes(o.h);
+  if (n < held) {
+    buf_push_bytes_range(o.h, bytes, n, held);
+  }
+  let done = 0;
+  let failed: Option[IoError] = None;
+  let going = true;
+  while (done < n && going) {
+    match (o.w.write_some_bytes(__bytes_range(bytes, done, n))) {
+      Ok(k) => {
+        done += k as i32;
+      },
+      Err(e) => {
+        failed = Some(e);
+        going = false;
+      }
+    }
+  }
+  let Some(err) = failed else {
+    std_wrote(o, g, n as i64);
+    return 0;
+  };
+  let at = g.base + done as i64;
+  let k = 0;
+  while (k < g.ends.len() && g.ends[k] <= at) {
+    k += 1;
+  }
+  if (k >= g.ends.len()) {
+    fail(r, "couldn't flush stdout: " + gnu.io_error_text(err));
+  }
+  if (g.checks[k]) {
+    let items = g.lens[k];
+    let noun = if (items == 1i64) { "item" } else { "items" };
+    fail(r, f"couldn't write {items} {noun} to stdout: " + gnu.io_error_text(err));
+  }
+  // After a call that checks nothing, glibc holds nothing: it drops its
+  // buffer and the rest of the call. A call of one byte drops that byte,
+  // and the bytes after it fill the buffer again.
+  let total = g.base + held as i64;
+  let from = if (g.lens[k] == 1i64) { g.ends[k] + 1i64 } else { total };
+  let rest = buf_take_bytes(o.h);
+  let keep = (total - from) as i32;
+  if (keep > 0) {
+    buf_push_bytes_range(o.h, rest, rest.len() - keep, rest.len());
+  }
+  o.model.set(Gm { ...g, base: from, gw: from, ends: [], lens: [], checks: [] });
+  o.limit.set(g.bs);
+  return if (keep > 0) { keep } else { 0 };
+}
+
+function std_wrote(o: Out, own g: Gm, n: i64): void {
+  let base = g.base + n;
+  let k = 0;
+  while (k < g.ends.len() && g.ends[k] <= base) {
+    k += 1;
+  }
+  let gw = g.gw;
+  let bs = g.bs;
+  o.model.set(Gm { ...g, base: base, ends: g.ends.drop(k), lens: g.lens.drop(k), checks: g.checks.drop(k) });
+  o.limit.set(gw + bs - base);
 }
 
 function spill(r: Run, i: i32, items: i32): void {
@@ -1589,7 +1825,26 @@ function settle(p: Prog, r: Run, i: i32): void {
   } else if (o.kind == KIND_STDERR) {
     write_out(r, i, n, o.name, n);
   } else if (o.kind == KIND_STDOUT && n >= CHUNK) {
-    write_out(r, i, n, o.name, n);
+    let _ = std_write(r, i, false);
+  }
+}
+
+// settle_op ends an output of two calls of GNU sed, of `first` and of
+// `last` bytes, which checks each call.
+function settle_op(p: Prog, r: Run, i: i32, first: i32, last: i32): void {
+  if (r.outs[i].kind != KIND_STDOUT || p.o.unbuffered) {
+    settle(p, r, i);
+    return;
+  }
+  let h = r.outs[i].h;
+  let n = buf_len(h);
+  if (n as i64 > r.outs[i].limit.get()) {
+    std_piece(r, i, (n - last) as i64, first, CALL_CHECKED);
+    std_piece(r, i, buf_len(h) as i64, last, CALL_CHECKED);
+    n = buf_len(h);
+  }
+  if (n >= CHUNK) {
+    let _ = std_write(r, i, false);
   }
 }
 
@@ -1598,6 +1853,7 @@ function missing_newline(p: Prog, own r: Run, i: i32): Run {
     return r;
   }
   put_byte(r, i, p.delim);
+  noted(r, i, 1, true);
   return Run { ...r, missing: r.missing.with(i, false) };
 }
 
@@ -1609,19 +1865,41 @@ function output_pattern(p: Prog, own r0: Run, i: i32, text: u8[], lo: i32, hi: i
   } else {
     r = Run { ...r, missing: r.missing.with(i, true) };
   }
-  settle(p, r, i);
+  settle_op(p, r, i, hi - lo, if (chomped) { 1 } else { 0 });
   return r;
 }
 
-// output_ps writes the pattern space, as p and the end of a cycle do.
+// output_ps writes the pattern space, as p and the end of a cycle do. Only
+// a file has calls that spill, so the other outputs take the bytes at once.
 function output_ps(p: Prog, own r0: Run, i: i32): Run {
-  let r = missing_newline(p, r0, i);
-  put(r, i, r.ps, 0, r.ps.len());
-  if (r.chomped) {
+  let r = if (r0.missing[i]) { missing_newline(p, r0, i) } else { r0 };
+  let n = r.ps.len();
+  let file = r.outs[i].kind == KIND_FILE;
+  if (file) {
+    put(r, i, r.ps, 0, n);
+  } else {
+    buf_push_bytes_range(r.outs[i].h, r.ps, 0, n);
+  }
+  if (!r.chomped) {
+    r = Run { ...r, missing: r.missing.with(i, true) };
+    settle_op(p, r, i, n, 0);
+    return r;
+  }
+  if (file) {
     put_byte(r, i, p.delim);
   } else {
-    r = Run { ...r, missing: r.missing.with(i, true) };
+    buf_push_byte(r.outs[i].h, p.delim);
   }
+  settle_op(p, r, i, n, 1);
+  return r;
+}
+
+// output_unchecked writes text as GNU sed writes = and F: with fprintf,
+// which does not check for an error.
+function output_unchecked(p: Prog, own r0: Run, i: i32, text: u8[]): Run {
+  let r = missing_newline(p, r0, i);
+  buf_push_bytes_range(r.outs[i].h, text, 0, text.len());
+  noted(r, i, text.len(), false);
   settle(p, r, i);
   return r;
 }
@@ -1629,7 +1907,7 @@ function output_ps(p: Prog, own r0: Run, i: i32): Run {
 function output_raw(p: Prog, own r0: Run, i: i32, text: u8[]): Run {
   let r = missing_newline(p, r0, i);
   put(r, i, text, 0, text.len());
-  settle(p, r, i);
+  settle_op(p, r, i, text.len(), 0);
   return r;
 }
 
@@ -1665,10 +1943,18 @@ function dump_append(p: Prog, own r0: Run): Run {
     r = missing_newline(p, r, cur);
     if (!a.file) {
       put(r, cur, a.data, 0, a.data.len());
+      noted(r, cur, a.data.len(), true);
       continue;
     }
+    // GNU sed copies a file of r through a buffer of 8192 bytes.
     let data = read_appended(a.name);
-    put(r, cur, data, 0, data.len());
+    let at = 0;
+    while (at < data.len()) {
+      let upto = if (data.len() - at > 8192) { at + 8192 } else { data.len() };
+      put(r, cur, data, at, upto);
+      noted(r, cur, upto - at, true);
+      at = upto;
+    }
   }
   settle(p, r, r.cur);
   return r;
@@ -1913,7 +2199,7 @@ function start_edit(p: Prog, own r: Run, path: string): Run {
   }
   let dir = dir_part(path);
   let made = make_temp(r, if (dir == "") { "./" } else { dir });
-  let out = Out { name: made.0, w: made.1, h: buf_new(CHUNK), kind: KIND_FILE };
+  let out = Out { ...r.outs[OUT_EDIT], name: made.0, w: made.1, h: buf_new(CHUNK), kind: KIND_FILE };
   let edit = Edit { target: path, tmp: made.0, st: st };
   return Run { ...r, inp: Inp { ...r.inp, edit: Some(edit) }, outs: r.outs.with(OUT_EDIT, out), cur: OUT_EDIT, missing: r.missing.with(OUT_EDIT, false) };
 }
@@ -2269,7 +2555,7 @@ function exec_cmd(p: Prog, own r: Run, pc: i32, cmd: Cmd): (Run, i32) {
     b'{' | b'}' | b':' => (r, next),
     b'=' => {
       let text = (f"{r.line}" + delim_text(p)).bytes();
-      (output_raw(p, r, cur, text), next)
+      (output_unchecked(p, r, cur, text), next)
     },
     b'a' => (Run { ...r, apps: r.apps.append(App { file: false, data: cmd.text, name: "" }) }, next),
     b'i' => (output_text(p, r, cmd.text), next),
@@ -2282,7 +2568,7 @@ function exec_cmd(p: Prog, own r: Run, pc: i32, cmd: Cmd): (Run, i32) {
     b'e' => (exec_command(p, r, cmd), next),
     b'F' => {
       let text = (r.inp.name + delim_text(p)).bytes();
-      (output_raw(p, r, cur, text), next)
+      (output_unchecked(p, r, cur, text), next)
     },
     b'g' => (Run { ...r, ps: r.hold, chomped: r.hchomped }, next),
     b'G' => (Run { ...r, ps: join(r.ps, p.delim, r.hold), chomped: r.hchomped }, next),
@@ -2440,16 +2726,17 @@ function exec_list(p: Prog, own r0: Run, cmd: Cmd): Run {
     if (width > 0 && col + esc.len() > width - 1) {
       buf_push_byte(h, 92);
       buf_push_byte(h, p.delim);
+      noted(r, cur, 2, true);
       col = 0;
     }
     buf_push(h, esc);
+    noted(r, cur, esc.len(), true);
     col += esc.len();
   }
-  buf_push_byte(h, 36);
-  buf_push_byte(h, p.delim);
-  if (r.outs[cur].kind == KIND_FILE) {
-    spill(r, cur, buf_len(h));
-  }
+  put_byte(r, cur, 36);
+  noted(r, cur, 1, true);
+  put_byte(r, cur, p.delim);
+  noted(r, cur, 1, true);
   settle(p, r, cur);
   return r;
 }
@@ -2610,9 +2897,9 @@ function push_text_utf8(h: usize, t: u8[], lo: i32, hi: i32, cs0: Cased): Cased 
     let mode = if (cs.once != CASE_ASIS) { cs.once } else { cs.mode };
     let cp = d.0;
     if (mode == CASE_UPPER || mode == CASE_UPPER_FIRST) {
-      cp = (cp as char).to_upper() as i32;
+      cp = glibc_ctype.upper(cp);
     } else if (mode == CASE_LOWER || mode == CASE_LOWER_FIRST) {
-      cp = (cp as char).to_lower() as i32;
+      cp = glibc_ctype.lower(cp);
     }
     for b in bre.utf8_bytes(cp) {
       buf_push_byte(h, b);
@@ -3061,11 +3348,13 @@ function debug_program(p: Prog): u8[] {
 // as GNU sed writes it with stdio.
 function trace_text(p: Prog, r: Run, text: string): void {
   buf_push(r.outs[OUT_STDOUT].h, text);
+  noted_bytes(r, text.len());
   settle(p, r, OUT_STDOUT);
 }
 
 function trace_space(p: Prog, r: Run, hold: boolean): void {
   let h = r.outs[OUT_STDOUT].h;
+  let before = buf_len(h);
   if (hold) {
     buf_push(h, "HOLD:    ");
     debug_bytes(h, r.hold);
@@ -3074,6 +3363,7 @@ function trace_space(p: Prog, r: Run, hold: boolean): void {
     debug_bytes(h, r.ps);
   }
   buf_push_byte(h, 10);
+  noted_bytes(r, buf_len(h) - before);
   settle(p, r, OUT_STDOUT);
 }
 
@@ -3093,6 +3383,7 @@ function trace_command(p: Prog, r: Run, pc: i32, cmd: Cmd): void {
     level -= 1;
   }
   let h = r.outs[OUT_STDOUT].h;
+  let before = buf_len(h);
   buf_push(h, "COMMAND: ");
   for _ in 0..level {
     buf_push(h, "  ");
@@ -3109,6 +3400,7 @@ function trace_command(p: Prog, r: Run, pc: i32, cmd: Cmd): void {
     level += 1;
   }
   p.dbg.level.set(level);
+  noted_bytes(r, buf_len(h) - before);
   settle(p, r, OUT_STDOUT);
 }
 
@@ -3145,6 +3437,7 @@ function trace_after(p: Prog, r: Run, pc: i32, cmd: Cmd): void {
 function trace_registers(p: Prog, r: Run, re: bre.Bre, ps: u8[], ms: i32, me: i32): void {
   let m = re.search_groups_bytes(ps, 0, ps.len());
   let h = r.outs[OUT_STDOUT].h;
+  let before = buf_len(h);
   buf_push(h, "MATCHED REGEX REGISTERS\n");
   for g in 0..re.ngroups + 1 {
     let lo = if (g == 0) { ms } else if (g < m.starts.len()) { m.starts[g] } else { -1 };
@@ -3156,6 +3449,7 @@ function trace_registers(p: Prog, r: Run, re: bre.Bre, ps: u8[], ms: i32, me: i3
     buf_push_bytes_range(h, ps, lo, hi);
     buf_push(h, "'\n");
   }
+  noted_bytes(r, buf_len(h) - before);
   settle(p, r, OUT_STDOUT);
 }
 
@@ -3261,48 +3555,13 @@ function apply_option(c: Comp, m: gnu.OptMatch): Comp {
   };
 }
 
-// locale_utf8 tells whether the locale reads text as UTF-8: the first of
-// LC_ALL, LC_CTYPE and LANG that is not empty names the codeset UTF-8.
-function locale_utf8(): boolean {
-  for name in ["LC_ALL", "LC_CTYPE", "LANG"] {
-    if let Some(v) = env(name) {
-      if (v.len() > 0) {
-        return codeset_utf8(v);
-      }
-    }
-  }
-  return false;
-}
-
-// The codeset is the part after the dot, before any @modifier. Case and
-// hyphens do not count.
-function codeset_utf8(locale: string): boolean {
-  let dot = __memchr(locale, 46, 0);
-  if (dot < 0) {
-    return false;
-  }
-  let h = buf_new(8);
-  for k in dot + 1..locale.len() {
-    let c = locale[k] as i32;
-    if (c == 64) {
-      break;
-    }
-    if (c != 45) {
-      buf_push_byte(h, lower_byte(c));
-    }
-  }
-  let code = buf_take(h);
-  buf_free(h);
-  return code == "utf8";
-}
-
 function main(): i32 {
   let argv = args();
   let posix = POSIX_EXTENDED;
   if let Some(_) = env("POSIXLY_CORRECT") {
     posix = POSIX_CORRECT;
   }
-  let o = Opts { debug: false, quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false, utf8: locale_utf8() };
+  let o = Opts { debug: false, quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false, utf8: locale.utf8() };
   let c = comp_new(o);
   let g = gnu.getopt_new(argv, options(), "sed", help_text(), EXIT_BAD_USAGE).in_package("sed");
   let have_script = false;
@@ -3336,10 +3595,11 @@ function main(): i32 {
     ops = ["-"];
   }
   let inp = Inp { files: ops, next: 0, r: stdin(), open: false, name: "-", edit: no_edit() };
-  let outs = make_outs(p);
+  let outs = make_outs(p, ops.len());
   if (p.o.debug) {
     let prog = debug_program(p);
     buf_push_bytes_range(outs[OUT_STDOUT].h, prog, 0, prog.len());
+    std_call(outs[OUT_STDOUT], prog.len());
   }
   let r = Run { ps: [], chomped: true, hold: [], hchomped: true, replaced: false, line: 0, end: END_NONE, code: 0, got: false, ibuf: [], ipos: 0, ieof: false, apps: [], ranges: initial_ranges(p), rend: zeros_i64(p.cmds.len()), last_rx: -1, nosub: p.rxs.map((x: Rx) => x.nosub), outs: outs, missing: falses(outs.len()), cur: OUT_STDOUT, rfiles: make_rfiles(p), inp: inp, bad: false };
   r = process(p, r);

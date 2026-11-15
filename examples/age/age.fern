@@ -44,11 +44,14 @@ function q(s: string): string {
   return text.quote(s.as_bytes());
 }
 
+// age's errorf and errorWithHint: the error, its hints, and the line that
+// tells the user where to report the error.
 function report(f: cli.Fatal): i32 {
   eprint("age: error: " + f.msg);
   for h in f.hints {
     eprint("age: hint: " + h);
   }
+  eprint("age: report unexpected or unhelpful errors at https://filippo.io/age/report");
   return 1;
 }
 
@@ -1460,7 +1463,7 @@ function main(): i32 {
     },
     cli.Run(o) => {
       if (o.version) {
-        print("v1.3.2-fern");
+        print("v1.3.2");
         return 0;
       }
       return run(argv, o);

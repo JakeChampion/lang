@@ -209,6 +209,7 @@ func TestFoldKnownAnswers(t *testing.T) {
 		{'\u00DF', "ss"},
 		{'\u017F', "s"},
 		{'\u00B5', "\u03BC"},
+		{'\u0130', "i\u0307"},
 		{'\uFB01', "fi"},
 		{'\uFB04', "ffl"},
 		{'\u212A', "k"},
@@ -219,7 +220,7 @@ func TestFoldKnownAnswers(t *testing.T) {
 			t.Errorf("U+%04X: fold = %q, want %q", tc.from, got, tc.want)
 		}
 	}
-	for _, cp := range []rune{'\u00DF', '\u017F', '\u00B5', '\uFB01', '\uFB04'} {
+	for _, cp := range []rune{'\u00DF', '\u017F', '\u00B5', '\u0130', '\uFB01', '\uFB04'} {
 		if _, ok := lookupFold(cp); !ok {
 			t.Errorf("U+%04X must be a fold-table entry; lowercase cannot produce it", cp)
 		}

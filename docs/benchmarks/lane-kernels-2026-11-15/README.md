@@ -14,6 +14,14 @@ whole program. The scalar counts are from the compiler of main at 3bdd72da.
 | `hex_encode` | 16 MiB | 492,114,730 | 70,631,215 | 7.0 |
 | `base64_encode` | 12 MiB | 311,247,402 | 93,474,351 | 3.3 |
 
+`bench/hex_decode.fern` decodes 128 KiB of digits 256 times. The decoder reads 32 digits in one step.
+A step that holds a byte that is not a digit stops, and the scalar decoder goes on from that step.
+The scalar count is from the compiler of main at 79104f89.
+
+| Program | Digits decoded | Scalar | Lanes | Ratio |
+| --- | --: | --: | --: | --: |
+| `hex_decode` | 32 MiB | 1,077,375,161 | 263,820,985 | 4.1 |
+
 `bench/base64_decode.fern` decodes the 128 KiB text of 96 KiB of bytes 256 times.
 The decoder reads 16 characters in one step and writes 12 bytes.
 A step that holds a pad or a byte outside the alphabet stops, and the scalar decoder goes on from that step.

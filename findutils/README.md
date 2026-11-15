@@ -22,7 +22,7 @@ $ ./find . -name '*.fern' -print0 | ./xargs -0 -n 50 wc -l
 
 ## What find does
 
-- The options before the paths: `-H`, `-L`, `-P` and `-O`.
+- The options before the paths: `-H`, `-L`, `-P`, `-O` and `-D`.
 - The options: `-depth` and `-d`, `-maxdepth`, `-mindepth`, `-mount` and
   `-xdev`, `-noleaf`, `-ignore_readdir_race`, `-noignore_readdir_race`,
   `-files0-from`, `-daystart`, `-follow`, `-regextype`, `-warn` and
@@ -52,7 +52,55 @@ The tests and the actions:
 The walk goes in the order of readdir. In a directory of more than 10000
 entries, it goes in the order of the inode numbers, as fts does. It opens each directory by its name
 in the directory above it, and it reads the type of each entry from
-readdir. A test of the name or of the type thus needs no stat.
+readdir. A test of the name or of the type thus needs no stat. Each test
+gets the stat that it needs before it runs, as in GNU find. When the stat
+fails, the test is false.
+
+### The optimiser and -D
+
+The port changes the order of the tests as the optimiser of GNU find 4.9.0
+does. The default level is 2. The order of the stat calls and of the errors
+of a stat that fails is thus the order of GNU find.
+
+The optimiser does these steps:
+
+- It writes each chain of `-a`, `-o` or `,` as a list down the left.
+- In a chain of `-a` or `-o`, it moves the tests between two side effects
+  to the front of the run. The level of `-O` selects the tests that move.
+- It sorts each list by the success rate that GNU estimates for each test.
+- It swaps the operands of an operator when the right one is cheaper, or
+  by their rates when the two have the same cost.
+
+The tests that move at each level:
+
+- At `-O0`, the tests of the name and `-regex`.
+- From `-O1`, each test that needs no data.
+- From `-O2`, also the tests of the type and the inode number, after them.
+  `-fstype` of a type that no mount has is false and needs no stat.
+- At `-O3`, each test, by its cost.
+
+`-D` takes the flags of GNU find 4.9.0: `exec`, `opt`, `rates`, `search`,
+`stat`, `time`, `tree`, `all` and `help`. Its trace has the same bytes.
+These flags show the work of the optimiser:
+
+- `tree` prints the list of the predicates and the trees before and after
+  the optimiser, with the cost, the rate and the needs of each node.
+- `opt` prints the trees, and each step of the optimiser.
+- `rates` prints the count of the visits and the successes of each node at
+  the end.
+
+These flags show the work of the walk:
+
+- `search` prints the two lines of `consider_visiting` for each entry,
+  with the name of fts for its state.
+- `stat` prints each stat that find takes after the walk, and the fallback
+  to lstat for a link that leads nowhere.
+- `exec` prints each command before it starts and its status after it ends.
+- `time` prints the start of the day of the time tests.
+
+The trace keeps the quirks of GNU find. For example, `-daystart` renames
+the item before it, `-size 1k` prints as `-size 1`, and the format of
+`-printf` prints with each escape written over its backslash.
 
 ## What xargs does
 
@@ -82,10 +130,10 @@ that exits with 255 there gives 124, also after a command that failed.
 
 ## What is not in the ports
 
-- `find -D` stops with an error.
-- `find -O` does not change the order of the tests. GNU find can test a
-  name before a size at `-O1` and up. The output is the same. But when a
-  stat of a file fails, one program can report it and the other not.
+- In a directory with a name that is not UTF-8, the port reads the names
+  without their types, so the walk takes the stat of each entry. The
+  output is the same, but not the trace of `-D search` and `-D stat`. The
+  runtime has no read of the names as bytes with their types.
 - On wasm32-wasi there are no processes. `-exec` and its kin stop find with
   an error, and xargs stops at once. `-fstype` names each file system
   `unknown`, `-readable` and its kin are false, and `%Z` has no context.

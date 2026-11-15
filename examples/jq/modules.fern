@@ -3,8 +3,9 @@
 //
 // A module gives its own definitions to the program that imports it, as
 // `NAME::f` for an import and as `f` for an include. Its own imports stay
-// inside it. A path is clean, and absolute from `$PWD`, but a symbolic link
-// in it is not followed.
+// inside it. As in jq, a path of a module and of a `-L` directory is the path
+// that C `realpath` gives, with each symbolic link followed, or the path as it
+// is when `realpath` fails.
 import "std/io";
 import "std/json";
 import "std/path";
@@ -30,18 +31,101 @@ pub function default_search(): string[] {
   return ["~/.jq", "$ORIGIN/../lib/jq", "$ORIGIN/../lib"];
 }
 
-// `p` with no `.` and `..` parts, and absolute from `$PWD` when it is
-// relative. A WASI program has no current directory to ask for.
-pub function absolute(p: string): string {
-  if (path.is_absolute(p)) {
-    return path.clean(p);
+// C `realpath` as glibc does it: an absolute path with no `.` and `..`
+// parts and no symbolic link. Each part must be there, and each part but the
+// last must be a directory. jq keeps `p` as it is when `realpath` fails.
+pub function realpath(p: string): string {
+  return match (resolve(p)) {
+    Some(r) => r,
+    None => p,
+  };
+}
+
+const S_IFMT: u32 = 0o170000u32;
+
+const S_IFLNK: u32 = 0o120000u32;
+
+const S_IFDIR: u32 = 0o040000u32;
+
+function resolve(p: string): Option[string] {
+  if (p.len() == 0) {
+    return None;
   }
-  if let Some(cwd) = env("PWD") {
-    if (path.is_absolute(cwd)) {
-      return path.clean(cwd + "/" + p);
+  let resolved = "";
+  let rest = p;
+  if (p[0] != b'/') {
+    // $PWD names the current directory, maybe through links, which the walk
+    // follows. A WASI program has no getcwd.
+    let Some(cwd) = env("PWD") else {
+      return None;
+    };
+    if (cwd.len() == 0 || cwd[0] != b'/') {
+      return None;
     }
+    rest = cwd + "/" + p;
   }
-  return path.clean(p);
+  let links = 0;
+  let at = 0;
+  while (at < rest.len()) {
+    while (at < rest.len() && rest[at] == b'/') {
+      at += 1;
+    }
+    let end = at;
+    while (end < rest.len() && rest[end] != b'/') {
+      end += 1;
+    }
+    let part = slice_unchecked(rest, at, end).to_owned();
+    if (part.len() == 0 || part == ".") {
+      at = end;
+      continue;
+    }
+    if (part == "..") {
+      resolved = parent(resolved);
+      at = end;
+      continue;
+    }
+    let next = resolved + "/" + part;
+    let Ok(st) = lstat(next) else {
+      return None;
+    };
+    let kind = st.mode & S_IFMT;
+    if (kind == S_IFLNK) {
+      links += 1;
+      if (links > 40) {
+        return None;
+      }
+      let Ok(target) = read_link(next) else {
+        return None;
+      };
+      rest = target + slice_unchecked(rest, end, rest.len()).to_owned();
+      at = 0;
+      if (target.len() > 0 && target[0] == b'/') {
+        resolved = "";
+      }
+      continue;
+    }
+    if (kind != S_IFDIR && end < rest.len()) {
+      return None;
+    }
+    resolved = next;
+    at = end;
+  }
+  if (resolved.len() == 0) {
+    return Some("/");
+  }
+  return Some(resolved);
+}
+
+// The path without its last part. The parent of the root is the root.
+function parent(p: string): string {
+  let i = p.len() - 1;
+  while (i >= 0 && p[i] != b'/') {
+    i -= 1;
+  }
+  if (i <= 0) {
+    return "";
+  }
+  return slice_unchecked(p, 0, i).to_owned();
 }
 
 // The directory part of `p`, as C `dirname` gives it.
@@ -68,11 +152,7 @@ pub function search_list(library: string[]): string[] {
   if (library.len() == 0) {
     return default_search();
   }
-  let out: string[] = [];
-  for d in library {
-    out = out.append(absolute(d));
-  }
-  return out;
+  return library;
 }
 
 function home(): string {
@@ -121,15 +201,9 @@ function relpath_error(rel: string): string {
   return "";
 }
 
-function exists(p: string): boolean {
-  return match (stat(p)) {
-    Ok(_) => true,
-    Err(_) => false,
-  };
-}
-
 // The file of the module `rel`: `D/rel.jq`, `D/rel/jq/main.jq` or
-// `D/rel/BASE.jq` for each directory D, or "" when there is none.
+// `D/rel/BASE.jq` for each directory D, or "" when there is none. As in jq,
+// a form after a path that is there but is not a file is not tried.
 function find_module(rel: string, dirs: string[], suffix: string): string {
   let parts = rel.split("/");
   let base = parts[parts.len() - 1];
@@ -138,9 +212,15 @@ function find_module(rel: string, dirs: string[], suffix: string): string {
       continue;
     }
     for candidate in [d + "/" + rel + suffix, d + "/" + rel + "/jq/main" + suffix, d + "/" + rel + "/" + base + suffix] {
-      let full = absolute(candidate);
-      if (exists(full)) {
-        return full;
+      let full = realpath(candidate);
+      match (stat(full)) {
+        Ok(_) => {
+          return full;
+        },
+        Err(NotFound(_)) => {},
+        Err(_) => {
+          break;
+        }
       }
     }
   }
@@ -197,6 +277,9 @@ struct Loading { modules: Module[], errors: string[], count: i32, library: strin
 // A compile error at the byte `at` of `text`: the message, the file and the
 // line, then the line itself up to the place of the error.
 pub function located(text_of_error: string, file: string, text: string, at: i32): string {
+  if (at < 0) {
+    return "jq: error: " + text_of_error + "\n<unknown location>";
+  }
   let message = text_of_error;
   if (message.starts_with("syntax error")) {
     message += filter.QUOTING;
@@ -390,7 +473,11 @@ function var_at(text: string, name: string, from: i32): i32 {
 // variables that the command line gives. `origin` is the directory of the
 // program, for the relative paths of its imports.
 pub function compile(text: string, library: string[], names: string[], origin: string, jq_origin: string): Compiled {
-  let search = search_list(library);
+  return compile_in(text, search_list(library), names, origin, jq_origin);
+}
+
+// `compile` with the search path `search`.
+pub function compile_in(text: string, search: string[], names: string[], origin: string, jq_origin: string): Compiled {
   let l = Loading { modules: [], errors: [], count: 0, library: search, jq_origin: jq_origin };
   let search_json: json.JsonValue[] = [];
   for s in search {
@@ -411,7 +498,7 @@ pub function compile(text: string, library: string[], names: string[], origin: s
       directives = [filter.Directive { include: true, path: "", alias: "", is_data: false, meta: json.JObject(json.object().insert("optional", json.JBool(true)).insert("search", json.JString(h))) }].concat(directives);
     }
   }
-  let (after, deps) = load_deps(l, directives, absolute(origin));
+  let (after, deps) = load_deps(l, directives, origin);
   if (after.count > 0) {
     return Compiled { modules: [], deps: [], ast: filter.Identity, errors: after.errors, count: after.count, search: json.JArray(search_json) };
   }

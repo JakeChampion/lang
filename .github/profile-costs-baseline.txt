@@ -3,7 +3,9 @@
 #
 # FORMAT: metric  value  [tolerance%]. scripts/profile-costs writes the report
 # and its header gives the metric keys. Each row is exact for a commit, so the
-# 1% default is a significance threshold.
+# 1% default is a significance threshold. The exception is `map_string.*.ir`:
+# core/map draws a string-hash seed for each process (#6194), so these rows
+# carry the 2% of `map_string.ir` in perf-baseline.txt.
 #
 # When a number moves on purpose, update it in the same PR. The job summary
 # prints the corrected lines. Keep the reason in the PR, not here.
@@ -166,16 +168,16 @@ profile/x86-64-linux/int_loop.safe.emit	298
 profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	136296
 profile/x86-64-linux/map_string.diagnostic.emit	11199
-profile/x86-64-linux/map_string.diagnostic.ir	57189779
+profile/x86-64-linux/map_string.diagnostic.ir	57189779	2
 profile/x86-64-linux/map_string.hardened.bytes	43984
 profile/x86-64-linux/map_string.hardened.emit	10422
-profile/x86-64-linux/map_string.hardened.ir	52039606
+profile/x86-64-linux/map_string.hardened.ir	52039606	2
 profile/x86-64-linux/map_string.minimal.bytes	37584
 profile/x86-64-linux/map_string.minimal.emit	9389
-profile/x86-64-linux/map_string.minimal.ir	53578562
+profile/x86-64-linux/map_string.minimal.ir	53578562	2
 profile/x86-64-linux/map_string.safe.bytes	38592
 profile/x86-64-linux/map_string.safe.emit	9772
-profile/x86-64-linux/map_string.safe.ir	50333274
+profile/x86-64-linux/map_string.safe.ir	50333274	2
 profile/x86-64-linux/startup.diagnostic.bytes	5168
 profile/x86-64-linux/startup.diagnostic.emit	508
 profile/x86-64-linux/startup.diagnostic.ir	213

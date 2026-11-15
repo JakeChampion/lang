@@ -68,6 +68,18 @@ function boxes(): ssa.SFunc {
   return ssa.SFunc { name: "boxes", nparams: 0, nvals: 7, blocks: [b], entry: 0, takes_env: false };
 }
 
+// v2 is a loop phi in memory and v4 the phi of a join in the loop. v4 is
+// v2 or a new v3, and only v2 reads v4. With `read`, a return reads v4.
+function rooted(read: boolean): ssa.SFunc {
+  let b0 = ssa.SBlock { id: 0, insts: [inst(6, 0, [], ""), inst(1, 1, [], "")], term: jump(1), preds: [] };
+  let b1 = ssa.SBlock { id: 1, insts: [inst(8, 2, [1, 4], ""), inst(9, 3, [0, 2], "add")], term: branch(3, 2, 3), preds: [0, 4] };
+  let b2 = ssa.SBlock { id: 2, insts: [], term: jump(4), preds: [1] };
+  let b3 = ssa.SBlock { id: 3, insts: [], term: jump(4), preds: [1] };
+  let b4 = ssa.SBlock { id: 4, insts: [inst(8, 4, [3, 2], "")], term: if (read) { ret(4) } else { branch(0, 1, 5) }, preds: [2, 3] };
+  let b5 = ssa.SBlock { id: 5, insts: [], term: ret(2), preds: [4] };
+  return ssa.SFunc { name: "rooted", nparams: 1, nvals: 5, blocks: [b0, b1, b2, b3, b4, b5], entry: 0, takes_env: false };
+}
+
 function check(ok: boolean, what: string, failures: i32): i32 {
   if (ok) {
     return failures;
@@ -139,6 +151,10 @@ function main(): i32 {
   let as_call = ssa.regalloc_linear_fixed(one_box, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
   failures = check(kept_reg.reg_of[0] >= 1, "a value across a light call keeps a register it does not change", failures);
   failures = check(as_call.reg_of[0] < 0, "a value across a call spills", failures);
+  let in_memory = [0, 1, -1, 2, 3];
+  failures = check(ssa.spilled_phi_cycles(rooted(false), in_memory)[4] == -1, "a join phi that only the loop phi in memory reads goes to memory", failures);
+  failures = check(ssa.spilled_phi_cycles(rooted(true), in_memory)[4] == 3, "a join phi that a return reads keeps its register", failures);
+  failures = check(ssa.spilled_phi_cycles(rooted(false), [0, 1, 4, 2, 3])[4] == 3, "a join phi of a loop phi in a register keeps its register", failures);
   print("failures=" + util.i32_to_string(failures));
   return failures;
 }

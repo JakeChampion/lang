@@ -4,6 +4,10 @@
 // jq writes it as the decNumber library does (`1.000`, `1E+2`, `123.0` for
 // `12.30e1`). A computed number is an f64: jq writes the shortest digits that
 // give the same f64, as `jvp_dtoa_fmt` does (`1e+17`, `1e-07`, `0.0001`).
+//
+// The text of a computed number starts with `~`, and the text of a literal
+// does not. jq compares two literals as decimals, and compares the other
+// pairs as two f64 values.
 import "std/f64";
 import "std/string";
 
@@ -58,9 +62,8 @@ function decimal(s: string): Decimal {
       return bad;
     }
     while (i < s.len() && is_digit(s[i])) {
-      if (exponent < 100000000) {
-        exponent = exponent * 10 + (s[i] - b'0') as i32;
-      }
+      // Each exponent above 2000000000 is out of range, as 2000000000 is.
+      exponent = if (exponent > 200000000) { 2000000000 } else { exponent * 10 + (s[i] - b'0') as i32 };
       i += 1;
     }
     exponent *= sign;
@@ -87,17 +90,52 @@ function zeros(n: i32): string {
   return out;
 }
 
+// The limits of the decNumber context of jq. A larger adjusted exponent is an
+// infinity, and a smaller exponent rounds half up to ETINY.
+const EMAX: i32 = 999999999;
+
+const ETINY: i32 = -1147483646;
+
+// The decimal `d` in the range of the decNumber context of jq.
+function in_range(d: Decimal): Decimal {
+  let n = d.digits.len();
+  if (d.digits == "0") {
+    let e = if (d.exponent > EMAX) { EMAX } else if (d.exponent < ETINY) { ETINY } else { d.exponent };
+    return Decimal { ...d, exponent: e };
+  }
+  if (d.exponent >= ETINY) {
+    return d;
+  }
+  let drop = ETINY - d.exponent;
+  if (drop > n) {
+    return Decimal { ...d, digits: "0", exponent: ETINY };
+  }
+  let keep = slice_unchecked(d.digits, 0, n - drop).to_owned();
+  if (d.digits[n - drop] < b'5') {
+    return Decimal { ...d, digits: if (keep.len() == 0) { "0" } else { keep }, exponent: ETINY };
+  }
+  if (keep.len() == 0) {
+    return Decimal { ...d, digits: "1", exponent: ETINY };
+  }
+  let (up, carry) = increment(keep);
+  return Decimal { ...d, digits: if (carry) { "1" + zeros(keep.len()) } else { up }, exponent: ETINY };
+}
+
 // The decNumber to-scientific-string of the literal `s`, or `s` when it is
-// not a decimal literal.
+// not a decimal literal. An infinity is `Infinity`, as decNumber writes it.
 pub function canonical(s: string): string {
-  let d = decimal(s);
-  if (!d.ok) {
+  let parsed = decimal(s);
+  if (!parsed.ok) {
     return s;
   }
   let sign = "";
-  if (d.negative) {
+  if (parsed.negative) {
     sign = "-";
   }
+  if (parsed.digits != "0" && parsed.exponent + parsed.digits.len() - 1 > EMAX) {
+    return sign + "Infinity";
+  }
+  let d = in_range(parsed);
   let n = d.digits.len();
   let adjusted = d.exponent + n - 1;
   if (d.exponent <= 0 && adjusted >= -6) {
@@ -121,15 +159,46 @@ pub function canonical(s: string): string {
 }
 
 // The texts of the three computed numbers that have no digits.
-const NAN: string = "nan";
+const NAN: string = "~nan";
 
-const INFINITY: string = "inf";
+const INFINITY: string = "~inf";
 
-const MINUS_INFINITY: string = "-inf";
+const MINUS_INFINITY: string = "~-inf";
+
+// The sign of the literal `t` when it is an infinity, or 0.
+function infinity_sign(t: string): i32 {
+  if (t.len() > 0 && t[0] == b'I') {
+    return 1;
+  }
+  if (t.len() > 1 && t[0] == b'-' && t[1] == b'I') {
+    return -1;
+  }
+  return 0;
+}
+
+// Whether `t` is the text of a computed number.
+pub function is_computed(t: string): boolean {
+  return t.len() > 0 && t[0] == b'~';
+}
+
+// The text of the computed number `n`.
+pub function integer(n: i64): string {
+  return "~" + n.to_string();
+}
 
 // The text of a number as jq writes it. NaN is null, and an infinity is the
 // largest finite f64 of its sign.
-pub function written(t: string): string {
+pub function written(t: string): str {
+  if (!is_computed(t)) {
+    let inf = infinity_sign(t);
+    if (inf > 0) {
+      return "1.7976931348623157e+308";
+    }
+    if (inf < 0) {
+      return "-1.7976931348623157e+308";
+    }
+    return t;
+  }
   if (t == NAN) {
     return "null";
   }
@@ -139,7 +208,7 @@ pub function written(t: string): string {
   if (t == MINUS_INFINITY) {
     return "-1.7976931348623157e+308";
   }
-  return t;
+  return slice_unchecked(t, 1, t.len());
 }
 
 // Whether the literal `t` is its own decNumber form: it has no exponent, and
@@ -169,18 +238,39 @@ pub function in_canonical_form(t: string): boolean {
   return true;
 }
 
-// The f64 of a number text, as jq compares numbers. An out-of-range literal
-// is an infinity.
+// The f64 of a number text. jq rounds a literal to 17 significant digits,
+// half to even, and then gives the nearest f64. An out-of-range literal is an
+// infinity.
 pub function value(s: string): f64 {
-  if (s == NAN) {
-    return 0.0 / 0.0;
+  if (is_computed(s)) {
+    if (s == NAN) {
+      return 0.0 / 0.0;
+    }
+    if (s == INFINITY) {
+      return 1.0 / 0.0;
+    }
+    if (s == MINUS_INFINITY) {
+      return -1.0 / 0.0;
+    }
+    return match (f64.parse_f64(slice_unchecked(s, 1, s.len()))) {
+      Ok(v) => v,
+      Err(_) => 0.0,
+    };
   }
-  if (s == INFINITY) {
-    return 1.0 / 0.0;
+  let inf = infinity_sign(s);
+  if (inf != 0) {
+    return inf as f64 / 0.0;
   }
-  if (s == MINUS_INFINITY) {
-    return -1.0 / 0.0;
+  if (s.len() > 17) {
+    let r = rounded(s);
+    if (r.len() > 0) {
+      return parse_literal(r);
+    }
   }
+  return parse_literal(s);
+}
+
+function parse_literal(s: string): f64 {
   match (f64.parse_f64(s)) {
     Ok(v) => {
       return v;
@@ -196,6 +286,48 @@ pub function value(s: string): f64 {
       return 0.0;
     }
   }
+}
+
+// The literal `s` with its coefficient rounded to 17 digits, half to even, or
+// "" when it has 17 significant digits or fewer.
+function rounded(s: string): string {
+  let d = decimal(s);
+  let n = d.digits.len();
+  let last = n;
+  while (last > 0 && d.digits[last - 1] == b'0') {
+    last -= 1;
+  }
+  if (!d.ok || last <= 17) {
+    return "";
+  }
+  let keep = slice_unchecked(d.digits, 0, 17).to_owned();
+  let next = d.digits[17];
+  let rest = last > 18;
+  let odd = (keep[16] - b'0') % 2u8 == 1u8;
+  let exponent = d.exponent + n - 17;
+  if (next > b'5' || next == b'5' && (rest || odd)) {
+    let (up, carry) = increment(keep);
+    keep = up;
+    if (carry) {
+      exponent += 1;
+    }
+  }
+  let sign = if (d.negative) { "-" } else { "" };
+  return sign + keep + "E" + exponent.to_string();
+}
+
+// The digits `digits` plus one in the last place, with the same count of
+// digits, and whether the sum is a power of ten.
+function increment(digits: string): (string, boolean) {
+  let i = digits.len() - 1;
+  while (i >= 0 && digits[i] == b'9') {
+    i -= 1;
+  }
+  if (i < 0) {
+    return ("1" + zeros(digits.len() - 1), true);
+  }
+  let d = (digits[i] - b'0') as i32 + 1;
+  return (slice_unchecked(digits, 0, i).to_owned() + d.to_string() + zeros(digits.len() - i - 1), false);
 }
 
 // The shortest digits of a finite, positive f64, and the place of its decimal
@@ -240,9 +372,9 @@ pub function format(x: f64): string {
   if (x < -1.7976931348623157e308) {
     return MINUS_INFINITY;
   }
-  let sign = "";
+  let sign = "~";
   if (x < 0.0 || x == 0.0 && 1.0 / x < 0.0) {
-    sign = "-";
+    sign = "~-";
   }
   let a = x;
   if (a < 0.0) {
@@ -266,9 +398,9 @@ pub function format(x: f64): string {
   return sign + slice_unchecked(s.digits, 0, s.point).to_owned() + "." + slice_unchecked(s.digits, s.point, n).to_owned();
 }
 
-// The order of two number texts as exact decimals. jq 1.7 compares two
-// number literals so, and the shortest digits of two f64 values order as the
-// f64 values do.
+// The order of two number texts. jq 1.7.1 compares two literals as exact
+// decimals, and the other pairs as two f64 values. The shortest digits of two
+// f64 values order as the f64 values do, so plain digits need no parse.
 pub function compare(a: string, b: string): i32 {
   // jq orders NaN below each number, and below NaN also.
   if (a == NAN) {
@@ -277,6 +409,17 @@ pub function compare(a: string, b: string): i32 {
   if (b == NAN) {
     return 1;
   }
+  let ca = is_computed(a);
+  let cb = is_computed(b);
+  if (ca && cb) {
+    let fast = plain_compare(slice_unchecked(a, 1, a.len()), slice_unchecked(b, 1, b.len()));
+    if (fast != 2) {
+      return fast;
+    }
+  }
+  if (ca || cb) {
+    return order(value(a), value(b));
+  }
   let fast = plain_compare(a, b);
   if (fast != 2) {
     return fast;
@@ -284,15 +427,7 @@ pub function compare(a: string, b: string): i32 {
   let x = decimal(a);
   let y = decimal(b);
   if (!x.ok || !y.ok) {
-    let fa = value(a);
-    let fb = value(b);
-    if (fa < fb) {
-      return -1;
-    }
-    if (fa > fb) {
-      return 1;
-    }
-    return 0;
+    return order(infinity_sign(a) as f64, infinity_sign(b) as f64);
   }
   let zx = x.digits == "0";
   let zy = y.digits == "0";
@@ -318,6 +453,10 @@ pub function compare(a: string, b: string): i32 {
     return 1;
   }
   return sx * magnitude(x, y);
+}
+
+function order(x: f64, y: f64): i32 {
+  return if (x < y) { -1 } else if (x > y) { 1 } else { 0 };
 }
 
 // The parts of a plain decimal: an optional minus, digits, and an optional
@@ -435,4 +574,18 @@ function magnitude(x: Decimal, y: Decimal): i32 {
     }
   }
   return 0;
+}
+
+// The whole part of the size of `x`, held to the range of an i64 as jq does.
+pub function int_magnitude(x: f64): u64 {
+  if (x <= -9223372036854775808.0) {
+    return 9223372036854775808u64;
+  }
+  if (x >= 9223372036854775807.0) {
+    return 9223372036854775807u64;
+  }
+  if (x < 0.0) {
+    return (-x) as u64;
+  }
+  return x as u64;
 }

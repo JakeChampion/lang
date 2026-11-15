@@ -84,21 +84,28 @@ The poison in the count word of such a box reports a later use, so the free cann
 Before this change, a second raw free quarantined the block again without a report, and the leak census showed one more free than allocations.
 
 A write through a dangling raw pointer to the header word of a freed box forges the free list link.
-In the release build the next allocation of that class takes the freed box, and the one after it returns the forged address.
+Before the encoding, the next allocation of that class took the freed box, and the one after it returned the forged address.
 A probe that wrote a non-address there ended by signal at that allocation.
-A forged address inside a mapping comes back without a report.
+A forged address inside a mapping came back without a report.
 
-Under `-harden` the link inside a free block is encoded: the stored word is the next address XOR the process canary XOR the block's page number.
+In each build the link inside a free block is encoded: the stored word is the next address XOR the link key XOR the block's page number.
+The link key `__fern_link_key` is 8 of the 16 random bytes at `AT_RANDOM` of the auxiliary vector, so the key costs no system call. Under `-harden` it is the canary from `getrandom`.
+
+A shared object has no startup, and a Darwin process has no `AT_RANDOM`. Their release key is zero, so their link is the next address XOR the page of the block alone.
 The list heads in `__fern_freelist` and `__fern_large_freelist` stay plain.
-Every push encodes the link with the key of the block it lands in, and `__fern_freelist_take` decodes each link it follows.
+Every push encodes the link with the key of the block it lands in, and every take decodes the link of the block it unlinks.
 A decoded link must be zero, or 8-byte aligned and inside the arena. Any other value aborts with `fern: corrupt free list link`, status 134.
 
 A forged word therefore aborts at the next allocation of its class, and a link copied from another block fails too.
-The cost is one load of the canary and three logical operations per push and per link followed. The release build keeps plain links.
-`TestSelfHostFreeListLinkForgery` pins the abort for a small class and a large class on both targets.
+
+The cost is one load of the key and three logical operations per push, and the same with the check per take.
+A full build of the compiler took 59.8 seconds with the encoding and 59.1 seconds without it. Each number is the mean of three runs on one x86-64 host.
+The difference is inside the noise of the runs.
+`TestSelfHostFreeListLinkForgery` pins the abort for a small class and a large class on both targets, in a release build and under `-harden`.
 `TestSelfHostHardenFreeListRoundTrip` recycles twelve blocks of each class through the encoded lists.
 
-The take under `-harden` writes zero over the link word of the block it hands out.
+The take under `-harden` writes zero over the link word of the block it hands out. The release build writes zero over it when `__fern_alloc` hands out a raw block. A typed box writes its header over the word.
+
 Before that change, a raw allocation from a free list read the encoded link.
 The link of the last block of a list is the key itself.
 With the key, a program can forge a link that decodes to a valid address.
@@ -136,7 +143,7 @@ The encoding therefore did not hold against the raw floor.
 
 | Gap | Consequence |
 |---|---|
-| Free list link inside the freed block | In the release build a raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address. `-harden` encodes the link and aborts on a bad one, and `-sanitize` quarantines freed blocks and detects the touch (SEC-023) |
+| Free list link on Darwin and in a shared object | The release key is zero there, so a program that knows the address of a block can forge its link. The check of each decoded link still refuses a link that is not aligned or not in the arena |
 | A raw double free with another free of the same class between the two | In the release build `__free` compares the block with the head of its list alone, so a free of another block of the class between the two frees hides the second. `-harden` walks the first 64 blocks of the list, so only a second free with 64 or more frees of the class between them links the block twice. `-sanitize` aborts while the block is in its quarantine (SEC-023) |
 | No zeroing on free in the release build | A secret stays in the arena until the block is reused and zero-filled. `-harden` zeroes each block before its push and clears the link word at the take. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
@@ -164,7 +171,7 @@ No program reaches that path through a checked entry, and every runtime entry re
 The check guards against a corrupted length that reaches the bump through the runtime's own arithmetic.
 
 The free list link inside a released block was plain on every build.
-Under `-harden` it is now encoded with the process canary and the block's page. A decoded link that is not aligned or not inside the arena aborts.
+It is now encoded with the link key and the block's page, in each build. A decoded link that is not aligned or not inside the arena aborts.
 The forgery probe ended by signal before the change, and ends with the corrupt-link cause after it.
 
 ## Commands

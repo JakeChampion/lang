@@ -6,13 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
-
-// ageInspectReport is the last line of each age-inspect error, which the
-// port does not write.
-const ageInspectReport = "age-inspect: report unexpected or unhelpful errors at https://filippo.io/age/report\n"
 
 // TestSelfHostExampleAgeInspect runs the age-inspect port and age-inspect
 // 1.3.2 on the same files: the 147 CCTV vectors, files that age encrypts in
@@ -55,8 +50,7 @@ func TestSelfHostExampleAgeInspect(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			port := ageProgram(t, cli, target, "inspect.fern")
 			run := func(tool ageTool, stdin []byte, args ...string) ([]byte, string, int) {
-				out, msg, code := tool.run(t, dir, stdin, args...)
-				return out, strings.ReplaceAll(msg, ageInspectReport, ""), code
+				return tool.run(t, dir, stdin, args...)
 			}
 			var cases [][]string
 			for _, f := range files {
