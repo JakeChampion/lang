@@ -251,6 +251,245 @@ func TestSelfHostExampleGitDiff(t *testing.T) {
 	}
 }
 
+// gitRandomMerges makes merges of two and three branches whose files of
+// lines change at random on each branch. A merge with conflicts takes
+// lines of each side and lines of its own, and a clean merge sometimes
+// changes a line of its own, so that the combined diffs have each kind of
+// hunk.
+func gitRandomMerges(t *testing.T, oracle gitTool, dir string, seed int64, n int, hash gitRun) {
+	t.Helper()
+	rnd := rand.New(rand.NewSource(seed))
+	when := 1700000000
+	run := func(args ...string) int {
+		t.Helper()
+		cmd := oracle.cmd(args...)
+		cmd.Dir = dir
+		stamp := fmt.Sprintf("%d +0000", when)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C",
+			"GIT_AUTHOR_NAME=M", "GIT_AUTHOR_EMAIL=m@example.com", "GIT_COMMITTER_NAME=M", "GIT_COMMITTER_EMAIL=m@example.com",
+			"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		out, err := cmd.CombinedOutput()
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return 0
+	}
+	must := func(args ...string) {
+		t.Helper()
+		if code := run(args...); code != 0 {
+			t.Fatalf("git %v: exit %d", args, code)
+		}
+	}
+	output := func(args ...string) string {
+		t.Helper()
+		cmd := oracle.cmd(args...)
+		cmd.Dir = dir
+		stamp := fmt.Sprintf("%d +0000", when)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C",
+			"GIT_AUTHOR_NAME=M", "GIT_AUTHOR_EMAIL=m@example.com", "GIT_COMMITTER_NAME=M", "GIT_COMMITTER_EMAIL=m@example.com",
+			"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	pool := []string{"alpha", "beta", "gamma", "delta", "", "int f(void)", "{", "}", "\treturn 0;", "_x", "$y"}
+	names := []string{"one.txt", "two.c", "three"}
+	edit := func() {
+		for _, name := range names {
+			if rnd.Intn(2) == 0 {
+				continue
+			}
+			data, _ := os.ReadFile(filepath.Join(dir, name))
+			lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+			for k := 0; k < 1+rnd.Intn(4); k++ {
+				at := rnd.Intn(len(lines) + 1)
+				switch rnd.Intn(3) {
+				case 0:
+					lines = append(lines[:at], append([]string{pool[rnd.Intn(len(pool))]}, lines[at:]...)...)
+				case 1:
+					if at < len(lines) {
+						lines = append(lines[:at], lines[at+1:]...)
+					}
+				default:
+					if at < len(lines) {
+						lines[at] = fmt.Sprintf("%s %d", pool[rnd.Intn(len(pool))], when)
+					}
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		when += 60
+		must("add", "-A")
+		must("commit", "-q", "--allow-empty", "-m", fmt.Sprintf("edit %d", when))
+	}
+	must("init", "-q", "-b", "main", "--object-format="+hash.format, ".")
+	for _, name := range names {
+		var b strings.Builder
+		for k := 0; k < 12; k++ {
+			b.WriteString(pool[rnd.Intn(len(pool))] + "\n")
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must("add", "-A")
+	must("commit", "-q", "-m", "base")
+	for i := 0; i < n; i++ {
+		sides := []string{"main"}
+		for k := 0; k < 1+rnd.Intn(2); k++ {
+			b := fmt.Sprintf("s%d-%d", i, k)
+			must("checkout", "-q", "-b", b, "main")
+			edit()
+			sides = append(sides, b)
+		}
+		must("checkout", "-q", "main")
+		edit()
+		when += 60
+		if run(append([]string{"merge", "-q", "--no-ff", "--no-commit"}, sides[1:]...)...) != 0 || rnd.Intn(3) == 0 {
+			for _, name := range names {
+				var b strings.Builder
+				for _, side := range sides {
+					cmd := oracle.cmd("show", side+":"+name)
+					cmd.Dir = dir
+					out, _ := cmd.Output()
+					for _, l := range strings.SplitAfter(string(out), "\n") {
+						if l != "" && rnd.Intn(3) != 0 {
+							b.WriteString(l)
+						}
+					}
+				}
+				if rnd.Intn(2) == 0 {
+					b.WriteString(fmt.Sprintf("own %d\n", i))
+				}
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		// An octopus merge with conflicts stops, so commit-tree makes each
+		// merge.
+		must("add", "-A")
+		args := []string{"commit-tree", output("write-tree"), "-m", fmt.Sprintf("merge %d", i)}
+		for _, side := range sides {
+			args = append(args, "-p", output("rev-parse", side))
+		}
+		must("update-ref", "refs/heads/main", output(args...))
+		must("reset", "-q", "--hard")
+	}
+}
+
+// gitMergeCases are the diffs of merges for the repositories of
+// gitFormsFixture and gitMergeFixture.
+var gitMergeCases = []string{
+	"log -m", "log -m -p", "log -m --raw", "log -m --stat --oneline", "log -m -p --format=%h", "log -m --name-status", "log -m -p --first-parent",
+	"log --first-parent -m -p --oneline", "log -m -p --oneline -- words.txt", "log -m -p --graph --oneline", "log --cc", "log -c", "log --cc --oneline",
+	"log --cc --stat", "log --cc --raw", "log -c --raw", "log --cc --name-status", "log -c --name-only", "log --cc --stat -p",
+	"log --cc --numstat --shortstat", "log --cc --summary", "log --cc --raw -p", "log --cc --raw --stat", "log --cc --raw --stat -p --summary",
+	"log -c --format=%h", "log --cc --format=", "log --cc -s", "log --cc --graph --oneline", "log --cc --graph", "log --cc --graph --stat",
+	"log --cc -m -p --oneline", "log -m --cc -p --oneline", "log --cc -U0", "log -c -U1", "log --cc -U10", "log --cc --color", "log -c --color --graph",
+	"log --cc --full-index", "log --cc --no-prefix", "log --cc --abbrev=12 --raw", "log --cc -- words.txt", "log --cc --first-parent",
+	"log --diff-merges=c", "log --diff-merges=separate", "log --diff-merges=bogus", "log --diff-merges=on", "log --diff-merges=off -p", "log --dd",
+	"log --no-diff-merges -p", "log --diff-merges=1", "log --diff-merges=c --oneline -2", "log --diff-merges=cc --stat", "log --cc --name-only --stat",
+	"log --cc -p --minimal", "log --cc --patience", "log -c --histogram",
+}
+
+// gitMergeFixture makes merges for gitMergeCases: a clean merge, an
+// octopus merge that adds, deletes and changes files and a binary file,
+// and a merge that changes the mode of a file.
+func gitMergeFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
+	t.Helper()
+	when := 1700000000
+	run := func(args ...string) {
+		t.Helper()
+		cmd := oracle.cmd(args...)
+		cmd.Dir = dir
+		stamp := fmt.Sprintf("%d +0100", when)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C",
+			"GIT_AUTHOR_NAME=A", "GIT_AUTHOR_EMAIL=a@example.com", "GIT_COMMITTER_NAME=C", "GIT_COMMITTER_EMAIL=c@example.com",
+			"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		if out, err := cmd.CombinedOutput(); err != nil && args[0] != "merge" {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(msg string) {
+		t.Helper()
+		when += 3600
+		run("add", "-A")
+		run("commit", "-q", "-m", msg)
+	}
+	seq := func(from, to int) string {
+		var b strings.Builder
+		for i := from; i <= to; i++ {
+			fmt.Fprintf(&b, "%d\n", i)
+		}
+		return b.String()
+	}
+	code := func(one, two string) string {
+		return "int f(void)\n{\n\treturn " + one + ";\n}\n\nint g(void)\n{\n\treturn " + two + ";\n}\n"
+	}
+	chmod := func(name string, mode os.FileMode) {
+		t.Helper()
+		if err := os.Chmod(filepath.Join(dir, name), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("init", "-q", "-b", "main", "--object-format="+hash.format, ".")
+	write("code.c", code("1", "2"))
+	write("n.txt", seq(1, 20))
+	write("keep.txt", "keep\n")
+	write("gone.txt", "gone\n")
+	write("b.bin", "bin\x00x\n")
+	commit("base")
+	run("checkout", "-q", "-b", "a")
+	write("code.c", code("10", "2"))
+	write("n.txt", seq(1, 22))
+	write("a.txt", "a\n")
+	commit("on a")
+	run("checkout", "-q", "-b", "b", "main")
+	write("code.c", code("1", "20"))
+	write("n.txt", seq(0, 20))
+	write("b.bin", "bin\x00y\n")
+	commit("on b")
+	run("checkout", "-q", "-b", "c", "main")
+	write("c.txt", "c\n")
+	chmod("keep.txt", 0o755)
+	commit("on c")
+	run("checkout", "-q", "main")
+	write("m.txt", "main\n")
+	commit("on main")
+	when += 3600
+	run("merge", "-q", "--no-ff", "-m", "clean merge of c", "c")
+	when += 3600
+	run("merge", "-q", "--no-ff", "--no-commit", "a", "b")
+	write("code.c", code("10", "20")+"int h;\n")
+	write("n.txt", seq(0, 22))
+	os.Remove(filepath.Join(dir, "gone.txt"))
+	write("b.bin", "bin\x00z\n")
+	write("new.txt", "new\n")
+	commit("octopus with changes")
+	run("checkout", "-q", "-b", "d", "HEAD~1")
+	write("keep.txt", "d\n")
+	commit("on d")
+	run("checkout", "-q", "main")
+	when += 3600
+	run("merge", "-q", "--no-ff", "--no-commit", "d")
+	write("keep.txt", "merged\n")
+	chmod("keep.txt", 0o644)
+	commit("merge d with a change of mode")
+}
+
 // gitFormCases are the forms of log for the repository of gitFormsFixture.
 // Each case is split at spaces, and `\s` in a case is a space.
 var gitFormCases = []string{
@@ -400,6 +639,20 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 					args[i] = strings.ReplaceAll(args[i], "\\s", " ")
 				}
 				gitCompare(t, oracle, port, dir, "", args...)
+			}
+			for _, c := range gitMergeCases {
+				gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
+			}
+			fixed := t.TempDir()
+			gitMergeFixture(t, oracle, fixed, run)
+			for _, c := range gitMergeCases {
+				gitCompare(t, oracle, port, fixed, "", strings.Fields(c)...)
+			}
+			merges := t.TempDir()
+			gitRandomMerges(t, oracle, merges, 3, 25, run)
+			for _, c := range []string{"log --cc", "log -c", "log --cc -U1", "log -c -U0", "log --cc -U0", "log --cc --raw --stat", "log -m --stat",
+				"log -m -p --oneline", "log --cc --color", "log --cc --patience", "log -c --histogram"} {
+				gitCompare(t, oracle, port, merges, "", strings.Fields(c)...)
 			}
 			for _, rule := range gitWhitespaceRules {
 				if _, stderr, code := oracle.run(t, dir, "", "config", "core.whitespace", rule); code != 0 {

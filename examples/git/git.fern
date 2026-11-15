@@ -20,6 +20,7 @@ import "std/crypto";
 import "std/hex";
 import "std/linediff";
 import "./color";
+import "./combine";
 import "./commitgraph";
 import "./config";
 import "./fsck";
@@ -1022,7 +1023,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
+struct LogOpts { merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1102,6 +1103,18 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
   if (x == "--abbrev" || x == "--no-abbrev" || x.starts_with("--abbrev=")) {
     let n = if (x == "--abbrev") { -1 } else if (x == "--no-abbrev") { 0 } else { log_digits(objects.part(x, 9, x.len())).max(4) };
     return (LogOpts { ...o, patch: patch.Opts { ...d, abbrev: n } }, 1);
+  }
+  if (x == "-m" || x == "-c" || x == "--cc" || x == "--dd" || x == "--no-diff-merges") {
+    let m = if (x == "-m") { "separate" } else if (x == "-c") { "combined" } else if (x == "--cc") { "dense-combined" } else if (x == "--dd") { "first-parent" } else { "off" };
+    return (LogOpts { ...o, merges: m, merges_need: false, imply_patch: o.imply_patch || x == "-c" || x == "--cc" || x == "--dd" }, 1);
+  }
+  let (dm, dm_taken) = option_value(argv, i, "--diff-merges");
+  if (dm_taken > 0) {
+    let m = merges_value(dm);
+    if (m.len() == 0) {
+      return (LogOpts { ...o, bad: "invalid value for '--diff-merges': '" + dm + "'" }, dm_taken);
+    }
+    return (LogOpts { ...o, merges: m, merges_need: m != "off" }, dm_taken);
   }
   if (x == "--raw") {
     return (with_form(o, patch.Opts { ...d, raw: true }), 1);
@@ -1205,6 +1218,26 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
     }
   }
   return (o, 0);
+}
+
+// The diff of a merge that a value of `--diff-merges=` names, or "".
+function merges_value(v: string): string {
+  if (v == "off" || v == "none") {
+    return "off";
+  }
+  if (v == "on" || v == "m" || v == "separate") {
+    return "separate";
+  }
+  if (v == "first-parent" || v == "1") {
+    return "first-parent";
+  }
+  if (v == "combined" || v == "c") {
+    return "combined";
+  }
+  if (v == "dense-combined" || v == "cc") {
+    return "dense-combined";
+  }
+  return "";
 }
 
 // The options of the diff that the configuration sets.
@@ -1605,16 +1638,60 @@ function decorations_of(r: refs.Repo, s: store.Store, full: boolean, f: Decorati
   return (st, by);
 }
 
-// The changes of the commit `c` against its first parent, with the
-// renames: none for a merge, unless the walk follows the first parents
-// only. With `--full-diff` the changes are not limited to the pathspec.
-function commit_changes(st: store.Store, c: log.Commit, parents: string[], o: LogOpts, follow: string): (store.Store, treediff.Change[], string) {
-  let (s1, changes, path) = commit_diff(st, c, parents, o, follow);
+// The changes of the commit `c` against the commit `parent`, or against
+// no commit for "", with the renames and the pickaxe. With `--full-diff`
+// the changes are not limited to the pathspec.
+function commit_changes(st: store.Store, c: log.Commit, parent: string, o: LogOpts, follow: string): (store.Store, treediff.Change[], string) {
+  let (s1, changes, path) = commit_diff(st, c, parent, o, follow);
   if (o.pick.kind == 0) {
     return (s1, changes, path);
   }
   let (s2, kept) = patch.pickaxe(s1, changes, o.pick, o.patch);
   return (s2, kept, path);
+}
+
+// The diff of a merge that the options select (`--diff-merges=` of git):
+// "off", "first-parent", "separate", "combined" or "dense-combined".
+// `--first-parent` gives the diff from the first parent, unless an option
+// selects another diff.
+function merge_mode(o: LogOpts): string {
+  if (o.merges == "" || o.merges == "separate") {
+    return if (o.walk.first_parent) { "first-parent" } else if (o.merges == "") { "off" } else { "separate" };
+  }
+  return o.merges;
+}
+
+// The changes of a commit from a parent, and the parent of `-m` for the
+// line `commit HASH (from PARENT)`, or "".
+struct Diff { from: string, changes: treediff.Change[] }
+
+// The diffs of the commit `c`: one for a commit with one parent or none,
+// and for a merge none, one from the first parent, or one from each
+// parent with `-m`.
+function commit_diffs(st: store.Store, c: log.Commit, parents: string[], o: LogOpts, follow: string): (store.Store, Diff[], string) {
+  let mode = merge_mode(o);
+  if (parents.len() <= 1 || mode == "first-parent") {
+    let (s1, changes, path) = commit_changes(st, c, if (parents.len() > 0) { parents[0] } else { "" }, o, follow);
+    return (s1, [Diff { from: "", changes: changes }], path);
+  }
+  if (mode != "separate") {
+    return (st, [], follow);
+  }
+  let s = st;
+  let path = follow;
+  let out: Diff[] = [];
+  for p in parents {
+    let (s2, changes, path2) = commit_changes(s, c, p, o, follow);
+    s = s2;
+    path = path2;
+    out = out.append(Diff { from: p, changes: changes });
+  }
+  return (s, out, path);
+}
+
+// True when a diff has a change.
+function any_change(diffs: Diff[]): boolean {
+  return diffs.any((d: Diff): boolean => d.changes.len() > 0);
 }
 
 // The source of the file `path` that the commit adds, as `--follow` finds
@@ -1651,17 +1728,14 @@ function follow_source(st: store.Store, base: string, tree: string, path: u8[]):
   return (s3, dst);
 }
 
-function commit_diff(st: store.Store, c: log.Commit, parents: string[], o: LogOpts, follow: string): (store.Store, treediff.Change[], string) {
-  if (parents.len() > 1 && !o.walk.first_parent) {
-    return (st, [], follow);
-  }
+function commit_diff(st: store.Store, c: log.Commit, parent: string, o: LogOpts, follow: string): (store.Store, treediff.Change[], string) {
   let s = st;
   let base = "";
-  if (parents.len() >= 1) {
-    let got = store.read(s, parents[0]);
+  if (parent.len() > 0) {
+    let got = store.read(s, parent);
     s = got.store;
     if let Ok(p) = got.object {
-      base = log.commit_of(parents[0], p.body).tree;
+      base = log.commit_of(parent, p.body).tree;
     }
   }
   if (o.follow) {
@@ -1901,8 +1975,9 @@ function graph_pad(o: LogOpts, sh: Shown): (Shown, string) {
   return (Shown { ...sh, graph: g }, line);
 }
 
-// The text of one commit, as `show_log` of git prints it, and its diff.
-function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context, least: i32, sh_in: Shown, known: treediff.Change[][]): (store.Store, string, Shown) {
+// The text of one commit, as `show_log` of git prints it, and the diff of
+// `changes`, or no diff when there are no changes.
+function entry_text(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context, least: i32, sh_in: Shown, changes: treediff.Change[]): (store.Store, string, Shown) {
   let s = st;
   let sh = sh_in;
   let out = "";
@@ -1953,19 +2028,6 @@ function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context,
     out += "\n";
   }
   sh = Shown { ...sh, missing: missing };
-  let diffs = !o.no_output && patch.any(o.patch);
-  if (o.diff.len() == 0 && !diffs) {
-    return (s, out, sh);
-  }
-  let changes: treediff.Change[] = [];
-  if (known.len() > 0) {
-    changes = known[0];
-  } else {
-    let (after, found, path) = commit_changes(s, c, ctx.parents, o, sh.follow);
-    s = after;
-    changes = found;
-    sh = Shown { ...sh, follow: path };
-  }
   if (changes.len() == 0) {
     return (s, out, sh);
   }
@@ -1977,18 +2039,8 @@ function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context,
   }
   if (o.diff == "check") {
     let (s7, checked, failed) = patch.check(s, changes, o.patch);
-    s = s7;
-    sh = Shown { ...sh, failed: sh.failed || failed };
-    for k in 0..checked.lines.len() {
-      let pad = "";
-      if (checked.uses[k] >= 0) {
-        let (sh8, p) = graph_pad(o, sh);
-        sh = sh8;
-        pad = p;
-      }
-      out += pad + checked.lines[k] + "\n";
-    }
-    return (s, out, sh);
+    let (sh8, text) = text_lines(o, Shown { ...sh, failed: sh.failed || failed }, checked);
+    return (s7, out + text, sh8);
   }
   if (o.diff.len() > 0) {
     for line in name_lines(changes, o).split("\n") {
@@ -2000,27 +2052,160 @@ function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context,
     }
     return (s, out, sh);
   }
+  let (s5, text, sh5) = diff_text(s, changes, o.patch, least, o, sh);
+  return (s5, out + text, sh5);
+}
+
+// The text of the diff of `changes` with the forms `d`, with the graph
+// before each line.
+function diff_text(s: store.Store, changes: treediff.Change[], d: patch.Opts, least: i32, o: LogOpts, sh_in: Shown): (store.Store, string, Shown) {
   // The graph lines that the first calls of the diff take, for the width
   // of the stat.
   let widths: i32[] = [];
-  let ahead = sh;
+  let ahead = sh_in;
   for k in 0..changes.len() + 2 {
     let (sh5, p) = graph_pad(o, ahead);
     ahead = sh5;
     widths = widths.append(p.len());
   }
-  let (s5, text) = patch.render(s, changes, o.patch, least, (k: i32): i32 => widths[k.min(widths.len() - 1)]);
-  s = s5;
+  let (s5, text) = patch.render(s, changes, d, least, (k: i32): i32 => widths[k.min(widths.len() - 1)]);
+  let (sh6, lines) = text_lines(o, sh_in, text);
+  return (s5, lines, sh6);
+}
+
+// The lines of `t` with the graph line of each call before them. A line
+// with the call -1 has no graph line, and a line with the call -2 - K has
+// the graph line of the call K and no line end, as in git.
+function text_lines(o: LogOpts, sh_in: Shown, t: patch.Text): (Shown, string) {
+  let sh = sh_in;
   let pads: string[] = [];
-  for k in 0..text.calls {
-    let (sh6, p) = graph_pad(o, sh);
-    sh = sh6;
+  for k in 0..t.calls {
+    let (sh1, p) = graph_pad(o, sh);
+    sh = sh1;
     pads = pads.append(p);
   }
-  for i in 0..text.lines.len() {
-    out += pads[text.uses[i]] + text.lines[i] + "\n";
+  let out = "";
+  for i in 0..t.lines.len() {
+    let u = t.uses[i];
+    if (u >= 0) {
+      out += pads[u] + t.lines[i] + "\n";
+    } else if (u == -1) {
+      out += t.lines[i] + "\n";
+    } else {
+      out += pads[-2 - u] + t.lines[i];
+    }
   }
-  return (s, out, sh);
+  return (sh, out);
+}
+
+// The forms of the diff for a merge: with `--diff-merges=`, a merge has a
+// patch when no option gives a form.
+function merge_forms(o: LogOpts, merge: boolean): LogOpts {
+  if (merge && o.merges_need && o.diff.len() == 0 && !o.no_output && !patch.any(o.patch)) {
+    return LogOpts { ...o, patch: patch.Opts { ...o.patch, patch: true } };
+  }
+  return o;
+}
+
+// The text of one commit and its diffs: one text for each diff with a
+// change, with `(from PARENT)` for `-m`, or the text alone. `known` holds
+// the diffs when the caller has them.
+function log_entry(st: store.Store, c: log.Commit, o_in: LogOpts, ctx: log.Context, least: i32, sh_in: Shown, known: Diff[][]): (store.Store, string, Shown) {
+  let merge = ctx.parents.len() > 1;
+  let o = merge_forms(o_in, merge);
+  let mode = merge_mode(o);
+  let wanted = o.diff.len() > 0 || !o.no_output && patch.any(o.patch);
+  if (!wanted) {
+    return entry_text(st, c, o, ctx, least, sh_in, []);
+  }
+  if (merge && (mode == "combined" || mode == "dense-combined")) {
+    return combined_entry(st, c, o, ctx, least, sh_in, mode == "dense-combined");
+  }
+  let s = st;
+  let sh = sh_in;
+  let diffs: Diff[] = [];
+  if (known.len() > 0) {
+    diffs = known[0];
+  } else {
+    let (s1, found, path) = commit_diffs(s, c, ctx.parents, o, sh.follow);
+    s = s1;
+    diffs = found;
+    sh = Shown { ...sh, follow: path };
+  }
+  let out = "";
+  for d in diffs {
+    if (d.changes.len() > 0) {
+      let (s2, text, sh2) = entry_text(s, c, o, log.Context { ...ctx, from: d.from }, least, sh, d.changes);
+      s = s2;
+      sh = sh2;
+      out += text;
+    }
+  }
+  if (out.len() > 0) {
+    return (s, out, sh);
+  }
+  return entry_text(s, c, o, ctx, least, sh, []);
+}
+
+// The text of a merge with its combined diff (`diff_tree_combined` of
+// git): the text, a line end even after one line, the stat from the
+// first parent, the raw lines or the names of the paths that change from
+// each parent, and their combined patches.
+function combined_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context, least: i32, sh_in: Shown, dense: boolean): (store.Store, string, Shown) {
+  let (s0, head, sh0) = entry_text(st, c, o, ctx, least, sh_in, []);
+  let s = s0;
+  let sh = sh0;
+  let out = head;
+  if (o.no_output) {
+    return (s, out, sh);
+  }
+  if (!(o.form == "format" && o.format.len() == 0)) {
+    let (sh1, p) = graph_pad(o, sh);
+    sh = sh1;
+    out += p + "\n";
+  }
+  let per: treediff.Change[][] = [];
+  for p in ctx.parents {
+    let (s1, changes, _) = commit_changes(s, c, p, o, sh.follow);
+    s = s1;
+    per = per.append(changes);
+  }
+  let d = o.patch;
+  let stats = o.diff.len() == 0 && (d.stat || d.numstat || d.shortstat || d.summary);
+  if (stats) {
+    let (s2, text, sh2) = diff_text(s, per[0], patch.Opts { ...d, raw: false, patch: false }, least, o, sh);
+    s = s2;
+    sh = sh2;
+    out += text;
+  }
+  let paths = combine.paths(per);
+  if (paths.len() == 0) {
+    return (s, out, sh);
+  }
+  let form = if (o.diff == "name-only" || o.diff == "name-status") { o.diff } else if (d.raw && o.diff.len() == 0) { "raw" } else { "" };
+  if (form.len() > 0) {
+    for p in paths {
+      let (sh3, pad) = graph_pad(o, sh);
+      sh = sh3;
+      out += pad + combine.raw_line(s, p, form, d, least) + "\n";
+    }
+  }
+  if (o.diff.len() > 0 || !d.patch) {
+    return (s, out, sh);
+  }
+  if (form.len() > 0 || stats) {
+    let (sh4, pad) = graph_pad(o, sh);
+    sh = sh4;
+    out += pad + "\n";
+  }
+  let t = patch.Text { lines: [], uses: [], calls: 0 };
+  for p in paths {
+    let (s5, t5) = combine.show(s, p, d, dense, least, t);
+    s = s5;
+    t = t5;
+  }
+  let (sh6, text) = text_lines(o, sh, t);
+  return (s, out + text, sh6);
 }
 
 // The parents of `h` that the graph draws: the first parent that the walk
@@ -2281,17 +2466,17 @@ function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Ma
   let st = w.g.store;
   let side = if ((f & revwalk.BOUNDARY) != 0) { "-" } else if ((f & revwalk.UNINTERESTING) != 0) { "^" } else if ((f & revwalk.PATCHSAME) != 0) { "=" } else if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
   let commit_least = if (o.patch.abbrev == 0) { 2 * st.width } else if (o.patch.abbrev > 0) { o.patch.abbrev } else { least };
-  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, commit_least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, graph_width: if (o.graph) { sh.graph.width } else { 0 } };
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, commit_least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, from: "", graph_width: if (o.graph) { sh.graph.width } else { 0 } };
   // With the pickaxe and with --follow, a commit with no changes is not
   // shown, but the graph still takes it.
   if (o.pick.kind != 0 || o.follow) {
-    let (s4, changes, path) = commit_changes(w.g.store, c, ps, o, sh.follow);
+    let (s4, diffs, path) = commit_diffs(w.g.store, c, ps, merge_forms(o, ps.len() > 1), sh.follow);
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s4 } };
     sh = Shown { ...sh, follow: path };
-    if (changes.len() == 0) {
+    if (!any_change(diffs)) {
       return (w, "", Shown { ...sh, hidden: true });
     }
-    let (s5, text1, after1) = log_entry(w.g.store, c, o, ctx, least, sh, [changes]);
+    let (s5, text1, after1) = log_entry(w.g.store, c, o, ctx, least, sh, [diffs]);
     return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s5 } }, text1, after1);
   }
   let (s3, text, after) = log_entry(w.g.store, c, o, ctx, least, sh, []);
@@ -2363,7 +2548,7 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: r.config.flag("diff.renames", true), walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
   if let Some(v) = r.config.get("core.whitespace") {
@@ -2482,6 +2667,9 @@ function log_command(argv: string[]): i32 {
   }
   if (o.names_twice) {
     return fatal("options '--name-only', '--name-status', '--check', and '-s' cannot be used together");
+  }
+  if (o.imply_patch && o.diff.len() == 0 && !o.no_output && !patch.any(o.patch)) {
+    o = LogOpts { ...o, patch: patch.Opts { ...o.patch, patch: true } };
   }
   o = LogOpts { ...o, patch: patch.Opts { ...o.patch, abbrev: o.patch.abbrev.min(2 * st0.width) } };
   let bad_color = if (o.form == "format") { log.bad_color(o.format, o.patch.color) } else { "" };

@@ -225,9 +225,10 @@ function rtrim(text: string): string {
 // the mark of `%m`.
 //
 // `reflog` holds the entry of the reflog of a walk of `--walk-reflogs`.
-// `color` is true when the output has colors, and `graph_width` is the
-// width of the graph before the text, which `%<|(N)` counts.
-pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: Decoration[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string, reflog: ReflogLine[], color: boolean, graph_width: i32 }
+// `color` is true when the output has colors, `from` is the parent of the
+// diff of `-m` or "", and `graph_width` is the width of the graph before
+// the text, which `%<|(N)` counts.
+pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: Decoration[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string, reflog: ReflogLine[], color: boolean, from: string, graph_width: i32 }
 
 // A ref that names a commit, with its kind (`color.DECORATION_LOCAL` and
 // the others). A decoration of `HEAD` that names a branch of the commit
@@ -356,6 +357,9 @@ pub function first_line(c: Commit, ctx: Context, form: string, with_parents: boo
     for p in ctx.parents {
       out += " " + (if (ctx.abbrev_commit) { abbrev(p) } else { p });
     }
+  }
+  if (ctx.from.len() > 0) {
+    out += " (from " + (if (ctx.abbrev_commit) { abbrev(ctx.from) } else { ctx.from }) + ")";
   }
   if (ctx.color) {
     out += color.RESET;

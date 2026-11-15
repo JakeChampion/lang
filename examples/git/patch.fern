@@ -35,12 +35,12 @@ pub function any(o: Opts): boolean {
 // each `diff_line_prefix`.
 pub struct Text { lines: string[], uses: i32[], calls: i32 }
 
-function call(t: Text): (Text, i32) {
+pub function call(t: Text): (Text, i32) {
   return (Text { ...t, calls: t.calls + 1 }, t.calls);
 }
 
 // Adds each line of `text` with the graph line of the call `at_call`.
-function add(t: Text, at_call: i32, text: string): Text {
+pub function add(t: Text, at_call: i32, text: string): Text {
   let lines = t.lines;
   let uses = t.uses;
   let at = 0;
@@ -55,7 +55,7 @@ function add(t: Text, at_call: i32, text: string): Text {
 }
 
 // Adds each line of `text`, each with a call of its own.
-function add_each(t_in: Text, text: string): Text {
+pub function add_each(t_in: Text, text: string): Text {
   let t = t_in;
   let at = 0;
   while (at < text.len()) {
@@ -88,7 +88,7 @@ function pair_of(c: treediff.Change): Pair {
   return Pair { status: c.status, score: c.score, one: old_side, two: new_side };
 }
 
-function mode6(mode: string): string {
+pub function mode6(mode: string): string {
   return mode.pad_start_str(6, "0");
 }
 
@@ -102,7 +102,7 @@ function quoted(path: u8[]): string {
 
 // The prefix and the path as one name, in quotes when one of them needs
 // them: `quote_two` of git.
-function quote_two(prefix: string, path: u8[]): string {
+pub function quote_two(prefix: string, path: u8[]): string {
   let joined = prefix.bytes().concat(path);
   if (objects.plain_name(joined)) {
     return text(joined);
@@ -126,8 +126,14 @@ function content(s: store.Store, side: Side): (store.Store, u8[]) {
   };
 }
 
+// The content of the blob `hash` of the mode `mode`, or none for an empty
+// mode.
+pub function blob(s: store.Store, mode: string, hash: string): (store.Store, u8[]) {
+  return content(s, Side { valid: mode.len() > 0, path: [], mode: mode, hash: hash });
+}
+
 // True when the content is binary for git: a NUL in its first 8000 bytes.
-function is_binary(data: u8[]): boolean {
+pub function is_binary(data: u8[]): boolean {
   let n = data.len().min(8000);
   for i in 0..n {
     if (data[i] == 0) {
@@ -153,7 +159,7 @@ function kind_of(mode: string): i32 {
 
 // The short name of `hash` for the index line. A name of zeros has the
 // length that no object shares.
-function abbrev_of(s: store.Store, hash: string, least: i32, full: boolean): string {
+pub function abbrev_of(s: store.Store, hash: string, least: i32, full: boolean): string {
   if (full) {
     return hash;
   }

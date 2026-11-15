@@ -92,7 +92,14 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   git. `--check` shows the errors of white space of the added lines, with
   the rules of `core.whitespace`, and gives the exit status 2 for an
   error, as git does. `--abbrev=N` and `--no-abbrev` set the length of the
-  short names. The patch
+  short names.
+
+  The diff of a merge is that of `-m`, `-c`, `--cc`, `--dd`,
+  `--no-diff-merges` and `--diff-merges=` with each value of git but
+  `remerge`. `-m` shows the diff from each parent, with
+  `(from PARENT)` after the name of the commit. `-c` and `--cc` show the
+  combined diff of the paths that change from each parent, with the
+  hunks and the stat of git. The patch
   has the header lines of git, the renames with their similarity, the
   changes of mode, and the line for a binary file. The hunks come from
   `std/linediff`. It has the Myers diff of xdiff with its heuristics and
@@ -198,8 +205,7 @@ the git of the machine. With git 2.43, four things are different:
 
 - These options of `log`: `--notes`, the signatures (`--show-signature`,
   `%G?`), `-C` and `--find-copies` (`--follow` finds copies),
-  `--word-diff`, `--color-moved`, `--cc` and `-m` for the diff of a
-  merge, and `-L`.
+  `--word-diff`, `--color-moved`, `--remerge-diff`, and `-L`.
 
 - The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
   `color.grep`, and the rules of the `whitespace` attribute. The port
@@ -343,8 +349,9 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   forms of `log` with colors.
 
 - `TestSelfHostExampleGitForms` runs the placeholders that change the
-  columns of a format, the wrap of `%w()`, `--raw`, and `--check` with
-  each rule of `core.whitespace`.
+  columns of a format, the wrap of `%w()`, `--raw`, `--check` with
+  each rule of `core.whitespace`, and the diffs of merges, also in a
+  random history of merges with conflicts.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

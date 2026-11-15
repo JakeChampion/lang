@@ -1,0 +1,592 @@
+// The combined diff of a merge (combine-diff.c of git): the paths that
+// differ from each parent, their raw lines, and the hunks of `-c` and
+// `--cc`.
+import "std/array";
+import "std/linediff";
+import "./color";
+import "./objects";
+import "./patch";
+import "./store";
+import "./treediff";
+
+// One parent of a path: its mode ("" when the parent has no such path),
+// its blob, and the status of the change from it.
+pub struct Parent { mode: string, hash: string, status: u8 }
+
+// A path that differs from each parent. The mode is "" when the merge
+// deletes the path.
+pub struct Path { path: u8[], mode: string, hash: string, parents: Parent[] }
+
+function path_cmp(a: u8[], b: u8[]): i32 {
+  let n = a.len().min(b.len());
+  for i in 0..n {
+    if (a[i] != b[i]) {
+      return a[i] as i32 - b[i] as i32;
+    }
+  }
+  return a.len() - b.len();
+}
+
+function parent_of(c: treediff.Change): Parent {
+  return Parent { mode: c.old_mode, hash: c.old_hash, status: c.status };
+}
+
+// The paths that change from each parent, from the changes from each
+// parent in the order of the paths: `intersect_paths` of git.
+pub function paths(changes: treediff.Change[][]): Path[] {
+  if (changes.len() == 0) {
+    return [];
+  }
+  let out: Path[] = [];
+  for c in changes[0] {
+    out = out.append(Path { path: c.path, mode: c.new_mode, hash: c.new_hash, parents: [parent_of(c)] });
+  }
+  for n in 1..changes.len() {
+    let q = changes[n];
+    let kept: Path[] = [];
+    let i = 0;
+    for p in out {
+      while (i < q.len() && path_cmp(p.path, q[i].path) > 0) {
+        i += 1;
+      }
+      if (i < q.len() && path_cmp(p.path, q[i].path) == 0) {
+        kept = kept.append(Path { ...p, parents: p.parents.append(parent_of(q[i])) });
+        i += 1;
+      }
+    }
+    out = kept;
+  }
+  return out;
+}
+
+// The raw line, the name with its statuses, or the name of a path, as
+// `show_raw_diff` of git writes them for `--raw`, `--name-status` and
+// `--name-only`.
+pub function raw_line(s: store.Store, p: Path, form: string, o: patch.Opts, least: i32): string {
+  let out = "";
+  if (form == "raw") {
+    let n = if (o.abbrev > 0) { o.abbrev } else { least };
+    let full = o.abbrev == 0;
+    out += ":".repeat(p.parents.len());
+    for q in p.parents {
+      out += patch.mode6(q.mode) + " ";
+    }
+    out += patch.mode6(p.mode);
+    for q in p.parents {
+      out += " " + patch.abbrev_of(s, q.hash, n, full);
+    }
+    out += " " + patch.abbrev_of(s, p.hash, n, full) + " ";
+  }
+  if (form == "raw" || form == "name-status") {
+    for q in p.parents {
+      out += unsafe { string_from_bytes_unchecked([q.status]) };
+    }
+    out += "\t";
+  }
+  return out + unsafe { string_from_bytes_unchecked(objects.quoted(p.path)) };
+}
+
+// A line that the merge lost, and the bits of the parents that had it.
+struct Lost { line: string, map: i32 }
+
+// The state of the lines of the result: for each line, the bits of the
+// parents that do not have it and the bits of the marks of `make_hunks`,
+// the lines lost before it, and the first line number of each parent
+// (`struct sline` of git). Line `cnt` holds the lines lost at the end.
+struct Lines { cnt: i32, parents: i32, flag: i32[], lost: Lost[][], plno: i32[] }
+
+// The lines lost from one parent merged into the lines lost from the
+// parents before it, with the longest common subsequence of the two lists
+// (`coalesce_lines` of git).
+function coalesce(base: Lost[], more: Lost[], n: i32): Lost[] {
+  if (more.len() == 0) {
+    return base;
+  }
+  if (base.len() == 0) {
+    return more;
+  }
+  let w = more.len() + 1;
+  let lcs = __alloc_i32((base.len() + 1) * w);
+  // 0 is a match, 1 takes from `more`, and 2 takes from `base`.
+  let dir = __alloc_i32((base.len() + 1) * w);
+  for i in 0..base.len() + 1 {
+    dir = dir.with(i * w, 2);
+  }
+  for j in 1..w {
+    dir = dir.with(j, 1);
+  }
+  for i in 1..base.len() + 1 {
+    for j in 1..w {
+      if (base[i - 1].line == more[j - 1].line) {
+        lcs = lcs.with(i * w + j, lcs[(i - 1) * w + j - 1] + 1);
+        dir = dir.with(i * w + j, 0);
+      } else if (lcs[i * w + j - 1] >= lcs[(i - 1) * w + j]) {
+        lcs = lcs.with(i * w + j, lcs[i * w + j - 1]);
+        dir = dir.with(i * w + j, 1);
+      } else {
+        lcs = lcs.with(i * w + j, lcs[(i - 1) * w + j]);
+        dir = dir.with(i * w + j, 2);
+      }
+    }
+  }
+  let reversed: Lost[] = [];
+  let i = base.len();
+  let j = more.len();
+  while (i != 0 || j != 0) {
+    let d = dir[i * w + j];
+    if (d == 0) {
+      reversed = reversed.append(Lost { ...base[i - 1], map: base[i - 1].map | 1 << n });
+      i -= 1;
+      j -= 1;
+    } else if (d == 1) {
+      reversed = reversed.append(more[j - 1]);
+      j -= 1;
+    } else {
+      reversed = reversed.append(base[i - 1]);
+      i -= 1;
+    }
+  }
+  return reversed.reverse();
+}
+
+// The text of the line `i` of `l` without its line end.
+function line_text(l: linediff.Lines, i: i32): string {
+  let s = l.starts[i];
+  let e = l.starts[i + 1];
+  if (e > s && l.data[e - 1] == b'\n') {
+    e -= 1;
+  }
+  return objects.part_bytes(l.data, s, e);
+}
+
+// The lines of the result after the diff from the parent `n` with the
+// content `a`: `combine_diff` of git, with no lines of context.
+function combine_one(st: Lines, a: u8[], result: u8[], n: i32, algo: linediff.Options): Lines {
+  let t = linediff.common_tail(a, result);
+  let la = linediff.lines_of(array.slice(a, 0, a.len() - t));
+  let lb = linediff.lines_of(array.slice(result, 0, result.len() - t));
+  let bit = 1 << n;
+  let flag = st.flag;
+  let pending: Lost[][] = [];
+  for k in 0..st.cnt + 1 {
+    pending = pending.append([]);
+  }
+  for ch in linediff.diff(la, lb, algo) {
+    let bucket = ch.i2;
+    for i in ch.i1..ch.i1 + ch.del {
+      pending = pending.with(bucket, pending[bucket].append(Lost { line: line_text(la, i), map: bit }));
+    }
+    for j in ch.i2..ch.i2 + ch.ins {
+      flag = flag.with(j, flag[j] | bit);
+    }
+  }
+  let lost = st.lost;
+  let plno = st.plno;
+  let p = 1;
+  for lno in 0..st.cnt + 1 {
+    plno = plno.with(lno * st.parents + n, p);
+    if (pending[lno].len() > 0) {
+      lost = lost.with(lno, coalesce(lost[lno], pending[lno], n));
+    }
+    for ll in lost[lno] {
+      if ((ll.map & bit) != 0) {
+        p += 1;
+      }
+    }
+    if (lno < st.cnt && (flag[lno] & bit) == 0) {
+      p += 1;
+    }
+  }
+  plno = plno.with((st.cnt + 1) * st.parents + n, p);
+  return Lines { ...st, flag: flag, lost: lost, plno: plno };
+}
+
+// The lines of the parent `i` as those of the parent `j`, which has the
+// same blob: `reuse_combine_diff` of git.
+function reuse(st: Lines, i: i32, j: i32): Lines {
+  let flag = st.flag;
+  let lost = st.lost;
+  let plno = st.plno;
+  for lno in 0..st.cnt + 1 {
+    plno = plno.with(lno * st.parents + i, plno[lno * st.parents + j]);
+    lost = lost.with(lno, lost[lno].map((ll: Lost): Lost => if ((ll.map & 1 << j) != 0) { Lost { ...ll, map: ll.map | 1 << i } } else { ll }));
+    if ((flag[lno] & 1 << j) != 0) {
+      flag = flag.with(lno, flag[lno] | 1 << i);
+    }
+  }
+  plno = plno.with((st.cnt + 1) * st.parents + i, plno[(st.cnt + 1) * st.parents + j]);
+  return Lines { ...st, flag: flag, lost: lost, plno: plno };
+}
+
+function interesting(st: Lines, i: i32, all: i32): boolean {
+  return (st.flag[i] & all) != 0 || st.lost[i].len() > 0;
+}
+
+// The first line from `i` that is marked, or that is not marked with
+// `unmarked`: `find_next` of git.
+function find_next(st: Lines, mark: i32, i_in: i32, unmarked: boolean): i32 {
+  let i = i_in;
+  while (i <= st.cnt) {
+    let marked = (st.flag[i] & mark) != 0;
+    if (marked != unmarked) {
+      return i;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+// The end of a hunk without its last line when that line only has lost
+// lines before it: `adjust_hunk_tail` of git.
+function adjust_tail(st: Lines, all: i32, begin: i32, i: i32): i32 {
+  if (begin + 1 <= i && (st.flag[i - 1] & all) == 0) {
+    return i - 1;
+  }
+  return i;
+}
+
+function marked(st: Lines, i: i32, bits: i32): Lines {
+  return Lines { ...st, flag: st.flag.with(i, st.flag[i] | bits) };
+}
+
+// The lines of context around the marked lines, and true when a line is
+// marked: `give_context` of git.
+function give_context(st_in: Lines, context: i32): (Lines, boolean) {
+  let st = st_in;
+  let all = (1 << st.parents) - 1;
+  let mark = 1 << st.parents;
+  let no_pre_delete = 2 << st.parents;
+  let i = find_next(st, mark, 0, false);
+  if (st.cnt < i) {
+    return (st, false);
+  }
+  while (i <= st.cnt) {
+    let j = if (context < i) { i - context } else { 0 };
+    while (j < i) {
+      if ((st.flag[j] & mark) == 0) {
+        st = marked(st, j, no_pre_delete);
+      }
+      st = marked(st, j, mark);
+      j += 1;
+    }
+    let again = true;
+    while (again) {
+      again = false;
+      let u = find_next(st, mark, i, true);
+      if (st.cnt < u) {
+        return (st, true);
+      }
+      let k = find_next(st, mark, u, false);
+      let e = adjust_tail(st, all, i, u);
+      if (k < e + context) {
+        while (e < k) {
+          st = marked(st, e, mark);
+          e += 1;
+        }
+        i = k;
+        again = true;
+      } else {
+        i = k;
+        let stop = if (e + context < st.cnt + 1) { e + context } else { st.cnt + 1 };
+        while (e < stop) {
+          st = marked(st, e, mark);
+          e += 1;
+        }
+      }
+    }
+  }
+  return (st, true);
+}
+
+// The marks of the hunks, and true when there is one: `make_hunks` of git.
+// With `dense`, a hunk that has the changes of one parent only, or the
+// same changes from each parent but one, is not shown.
+function make_hunks(st_in: Lines, dense: boolean, context: i32): (Lines, boolean) {
+  let st = st_in;
+  let all = (1 << st.parents) - 1;
+  let mark = 1 << st.parents;
+  for i in 0..st.cnt + 1 {
+    let f = if (interesting(st, i, all)) { st.flag[i] | mark } else { st.flag[i] & ~mark };
+    st = Lines { ...st, flag: st.flag.with(i, f) };
+  }
+  if (!dense) {
+    return give_context(st, context);
+  }
+  let i = 0;
+  while (i <= st.cnt) {
+    while (i <= st.cnt && (st.flag[i] & mark) == 0) {
+      i += 1;
+    }
+    if (st.cnt < i) {
+      break;
+    }
+    let begin = i;
+    let j = i + 1;
+    while (j <= st.cnt) {
+      if ((st.flag[j] & mark) == 0) {
+        let la = adjust_tail(st, all, begin, j);
+        la = if (la + context < st.cnt + 1) { la + context } else { st.cnt + 1 };
+        let contin = false;
+        while (la > 0 && j <= la - 1) {
+          la -= 1;
+          if ((st.flag[la] & mark) != 0) {
+            contin = true;
+            break;
+          }
+        }
+        if (!contin) {
+          break;
+        }
+        j = la;
+      }
+      j += 1;
+    }
+    let end = j;
+    let same = 0;
+    let differs = false;
+    let k = i;
+    while (k < end && !differs) {
+      let this_diff = st.flag[k] & all;
+      if (this_diff != 0) {
+        if (same == 0) {
+          same = this_diff;
+        } else if (same != this_diff) {
+          differs = true;
+        }
+      }
+      for ll in st.lost[k] {
+        if (!differs) {
+          if (same == 0) {
+            same = ll.map;
+          } else if (same != ll.map) {
+            differs = true;
+          }
+        }
+      }
+      k += 1;
+    }
+    if (!differs && same != all) {
+      for m in begin..end {
+        st = Lines { ...st, flag: st.flag.with(m, st.flag[m] & ~mark) };
+      }
+    }
+    i = end;
+  }
+  return give_context(st, context);
+}
+
+// The line with a carriage return at its end after the color reset:
+// `show_line_to_eol` of git.
+function to_eol(line: string, reset: string): string {
+  if (line.len() > 0 && line[line.len() - 1] == b'\r') {
+    return objects.part(line, 0, line.len() - 1) + reset + "\r";
+  }
+  return line + reset;
+}
+
+function is_alpha(b: u8): boolean {
+  return b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z';
+}
+
+// The colors of a combined patch, or none.
+struct Colors { frag: string, func: string, new_line: string, old: string, context: string, meta: string, reset: string }
+
+function colors_of(o: patch.Opts): Colors {
+  if (!o.color) {
+    return Colors { frag: "", func: "", new_line: "", old: "", context: "", meta: "", reset: "" };
+  }
+  return Colors { frag: color.CYAN, func: "", new_line: color.GREEN, old: color.RED, context: "", meta: color.BOLD, reset: color.RESET };
+}
+
+// The marks of the parents in a line: `sign` for each bit of `map`.
+function markers(map: i32, parents: i32, sign: string): string {
+  let out = "";
+  for j in 0..parents {
+    out += if ((map & 1 << j) != 0) { sign } else { " " };
+  }
+  return out;
+}
+
+// The function line of a hunk: the first 40 bytes of the line, without
+// the last of them that is not white space, as git cuts it.
+function comment_of(lb: linediff.Lines, i: i32): string {
+  let s = lb.starts[i];
+  let e = lb.starts[i + 1];
+  let end = 0;
+  let k = 0;
+  while (k < 40 && s + k < e) {
+    let ch = lb.data[s + k];
+    if (ch == 0 || ch == b'\n') {
+      break;
+    }
+    if (!objects.is_space(ch)) {
+      end = k;
+    }
+    k += 1;
+  }
+  return objects.part_bytes(lb.data, s, s + end);
+}
+
+// The count `n` as git prints an `unsigned long`: a count below 0 wraps.
+function unsigned(n: i32): string {
+  return ((n as i64) as u64).to_string();
+}
+
+// The lines of the hunks: `dump_sline` of git. Each line takes the graph
+// line of the call `at_call`. With no lines of context, a line that only
+// holds the lost lines before it leaves the graph line with no line end,
+// as in git.
+function dump(t_in: patch.Text, at_call: i32, st: Lines, lb: linediff.Lines, c: Colors, context: i32): patch.Text {
+  let t = t_in;
+  let np = st.parents;
+  let mark = 1 << np;
+  let no_pre_delete = 2 << np;
+  let cnt = st.cnt;
+  let at = "@".repeat(np + 1);
+  let lno = 0;
+  while (true) {
+    let comment = -1;
+    while (lno <= cnt && (st.flag[lno] & mark) == 0) {
+      if (lno < cnt && lb.starts[lno + 1] > lb.starts[lno]) {
+        let b = lb.data[lb.starts[lno]];
+        if (is_alpha(b) || b == b'_' || b == b'$') {
+          comment = lno;
+        }
+      }
+      lno += 1;
+    }
+    if (cnt < lno) {
+      break;
+    }
+    let hunk_end = lno + 1;
+    while (hunk_end <= cnt && (st.flag[hunk_end] & mark) != 0) {
+      hunk_end += 1;
+    }
+    let rlines = hunk_end - lno;
+    if (cnt < hunk_end) {
+      rlines -= 1;
+    }
+    let null_context = 0;
+    if (context == 0) {
+      for j in lno..hunk_end {
+        if ((st.flag[j] & mark - 1) == 0) {
+          null_context += 1;
+        }
+      }
+      rlines -= null_context;
+    }
+    let head = c.frag + at;
+    for i in 0..np {
+      let l0 = st.plno[lno * np + i];
+      let l1 = st.plno[hunk_end * np + i];
+      head += " -" + l0.to_string() + "," + unsigned(l1 - l0 - null_context);
+    }
+    head += " +" + (lno + 1).to_string() + "," + unsigned(rlines) + " " + at;
+    if (comment >= 0) {
+      let text = comment_of(lb, comment);
+      if (text.len() > 0) {
+        head += c.reset + c.context + " " + c.reset + c.func + text;
+      }
+    }
+    t = patch.add(t, at_call, head + c.reset);
+    while (lno < hunk_end) {
+      let sl = lno;
+      lno += 1;
+      if ((st.flag[sl] & no_pre_delete) == 0) {
+        for ll in st.lost[sl] {
+          t = patch.add(t, at_call, c.old + markers(ll.map, np, "-") + to_eol(ll.line, c.reset));
+        }
+      }
+      if (cnt < lno) {
+        break;
+      }
+      let set = c.new_line;
+      if ((st.flag[sl] & mark - 1) == 0) {
+        if (context == 0) {
+          t = patch.Text { lines: t.lines.append(""), uses: t.uses.append(-2 - at_call), calls: t.calls };
+          continue;
+        }
+        set = c.context;
+      }
+      t = patch.add(t, at_call, set + markers(st.flag[sl], np, "+") + to_eol(line_text(lb, sl), c.reset));
+    }
+  }
+  return t;
+}
+
+// The header of the combined patch of a path: `show_combined_header` of
+// git. A change of mode that is not a deletion has its line without the
+// graph, as in git.
+function header(t_in: patch.Text, at_call: i32, s: store.Store, p: Path, o: patch.Opts, dense: boolean, least: i32, mode_differs: boolean, file_header: boolean, c: Colors): patch.Text {
+  let t = patch.add(t_in, at_call, c.meta + (if (dense) { "diff --cc " } else { "diff --combined " }) + patch.quote_two("", p.path) + c.reset);
+  let index = c.meta + "index ";
+  for i in 0..p.parents.len() {
+    index += (if (i > 0) { "," } else { "" }) + patch.abbrev_of(s, p.parents[i].hash, least, o.full_index);
+  }
+  t = patch.add(t, at_call, index + ".." + patch.abbrev_of(s, p.hash, least, o.full_index) + c.reset);
+  let deleted = p.mode.len() == 0;
+  let added = !deleted && p.parents.all((q: Parent): boolean => q.status == b'A');
+  if (mode_differs) {
+    if (added) {
+      t = patch.add(t, at_call, c.meta + "new file mode " + patch.mode6(p.mode) + c.reset);
+    } else {
+      let modes = p.parents.map((q: Parent): string => patch.mode6(q.mode)).join(",") + (if (deleted) { "" } else { ".." + patch.mode6(p.mode) });
+      if (deleted) {
+        t = patch.add(t, at_call, c.meta + "deleted file mode " + modes + c.reset);
+      } else {
+        t = patch.Text { lines: t.lines.append("mode " + modes + c.reset), uses: t.uses.append(-1), calls: t.calls };
+      }
+    }
+  }
+  if (!file_header) {
+    return t;
+  }
+  t = patch.add(t, at_call, c.meta + "--- " + (if (added && mode_differs) { "/dev/null" } else { patch.quote_two(o.src, p.path) }) + c.reset);
+  return patch.add(t, at_call, c.meta + "+++ " + (if (deleted && mode_differs) { "/dev/null" } else { patch.quote_two(o.dst, p.path) }) + c.reset);
+}
+
+// The combined patch of one path, as `show_patch_diff` of git writes it,
+// with one graph line for each of its lines. `dense` is `--cc`.
+pub function show(s_in: store.Store, p: Path, o: patch.Opts, dense: boolean, least: i32, t_in: patch.Text): (store.Store, patch.Text) {
+  let (t0, at_call) = patch.call(t_in);
+  let t = t0;
+  let c = colors_of(o);
+  let np = p.parents.len();
+  let (s1, result) = patch.blob(s_in, p.mode, p.hash);
+  let s = s1;
+  let mode_differs = p.parents.any((q: Parent): boolean => q.mode != p.mode);
+  let binary = patch.is_binary(result);
+  let blobs: u8[][] = [];
+  for q in p.parents {
+    let (s2, a) = patch.blob(s, q.mode, q.hash);
+    s = s2;
+    blobs = blobs.append(a);
+    binary = binary || patch.is_binary(a);
+  }
+  if (binary) {
+    t = header(t, at_call, s, p, o, dense, least, mode_differs, false, c);
+    return (s, patch.Text { lines: t.lines.append("Binary files differ"), uses: t.uses.append(-1), calls: t.calls });
+  }
+  let lb = linediff.lines_of(result);
+  let cnt = lb.count();
+  let lost: Lost[][] = [];
+  for k in 0..cnt + 1 {
+    lost = lost.append([]);
+  }
+  let st = Lines { cnt: cnt, parents: np, flag: __alloc_i32(cnt + 1), lost: lost, plno: __alloc_i32((cnt + 2) * np) };
+  for i in 0..np {
+    let same = -1;
+    for j in 0..i {
+      if (same < 0 && p.parents[j].hash == p.parents[i].hash) {
+        same = j;
+      }
+    }
+    st = if (same >= 0) { reuse(st, i, same) } else { combine_one(st, blobs[i], result, i, o.algo) };
+  }
+  let (st2, show_hunks) = make_hunks(st, dense, o.context);
+  if (!show_hunks && !mode_differs) {
+    return (s, t);
+  }
+  t = header(t, at_call, s, p, o, dense, least, mode_differs, true, c);
+  return (s, dump(t, at_call, st2, lb, c, o.context));
+}
