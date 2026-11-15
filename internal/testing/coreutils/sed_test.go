@@ -2,7 +2,6 @@ package coreutils
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -25,6 +24,44 @@ func sedCases(t *testing.T) []invocation {
 	cases = append(cases, sedOptionCases()...)
 	cases = append(cases, sedBigCases()...)
 	cases = append(cases, sedCaptureCases()...)
+	cases = append(cases, sedDebugCases()...)
+	return cases
+}
+
+// sedDebugCases: --debug prints the program and a trace of each cycle. Each
+// script runs on lines that end in a newline, and on bytes that the trace
+// escapes, with no newline after the last line.
+func sedDebugCases() []invocation {
+	var cases []invocation
+	inputs := []string{"ab\ncd\nef\n", "a\x01\x08\x7f\x80\xff\tb\\c\nx"}
+	for _, script := range []string{
+		"1{h;s/a/X/gw /dev/null\n};$!d;/b/I,+2!p;y/ab/cd/;l 5;=;a foo\ni\\\nbar\nc baz\n:x\nb y;t x;T;r f3\nR f4\nw /dev/null\nW /dev/null\nq5;Q;s/x/\\U&\\E\\l&/2pie;N;n;D;P;G;H;x;z;F;e echo hi\n#c\n0~3p;2,~4p;\\,x,Mp;/x/,/y/p;$p;v\n:y",
+		`s/\(a\)\|\(b\)/[\1\2]/g`, `s/x/y/`, `n;N;D`, `G;H;x;g`, `2q`, `2Q7`, `$!N;P;D`, `s/\(.\)\(x\)*/\1/`, `=;l;F`,
+		`z;s/^$/e/`, `1!G;h;$!d`, "2c\\\nX", "1,2c\\\nX", `y/a\n/\tb/`, `y/cba/xyz/`, `s/a/\n\t\\/`, `1{b x};:x`, `1{2{p};x}`,
+		`s/a/&&/2`, `e echo hi`, `e`, `s/a/echo z/e`, `n`, `D`, "a X\nn", `\%a%Ip;s/a/b/Mg3w /dev/stdout`, `//p`, `/a/s//x/`,
+		`s/\o377\t/x/`, `0,/c/p;2,~2p;1~2p;$p`, `b;:a;t;T a`, `l 1;l 0`, `s/a/\u&x\Ub\lc\Ed\L\uE/`, `s/\(.*\)/\L\1\E-\U\1/;s/$/\\/`,
+		"2i\\\nX\\\nY", "$a\\\nEND", `s/\(x\)*\(b\)/\2\1/`, `s/a/x/gp`, `w /dev/stdout`, `e printf 'a\\0b'`, `$!{N};P;D`, `2{x;p;x}`,
+		`s/b*/x/g`, `s/a\nb\.\x41\x5c\*\t\d065\o101\cA[\n]\w/x/`, `s/a/\x26\x5c\&\\/`, `s,a\,b,x\,y,`, `/a/,$!{/b/d}`,
+		`s/\(a\|b\)\+/<\1>/g`, `:a;N;$!ba;s/\n/ /g`, `!p;1!{p}`, "#n\np",
+	} {
+		for k, in := range inputs {
+			cases = append(cases, invocation{name: "debug " + script + " #" + strconv.Itoa(k), args: []string{"--debug", script}, stdin: in, seedTree: sedTree})
+		}
+	}
+	for _, args := range [][]string{
+		{"-n", "--debug", `N;N;s/\n/+/;P;D`}, {"-z", "--debug", "s/b/x/;l"}, {"-E", "--debug", `s/(a|b)+/<\1>/g`},
+		{"--posix", "--debug", `s/a/\U&/`}, {"-s", "--debug", "-n", "$=;F", "f3", "f4"}, {"--debug", "-n", "$p;F", "f3", "-", "na"},
+		{"--debug", "-i", "s/1/X/;$F;w o", "f3", "f4"}, {"--debug", "p", "nosuch", "f3"}, {"--debug", "-i", "p"}, {"--debug", "-u", "-l", "3", "l"},
+	} {
+		cases = append(cases, invocation{name: "debug " + strings.Join(args, " "), args: args, stdin: "ab\ncd\n", seedTree: sedTree})
+	}
+	cases = append(cases, invocation{name: "debug with POSIXLY_CORRECT", args: []string{"--debug", "N;N;n"}, stdin: "a\nb\nc\nd\n", env: []string{"POSIXLY_CORRECT=1"}})
+	for _, script := range []string{`s/.*/\U&/`, `s/.*/\L&/`, `s/.*/\u&/`, `s/\(.\)\(.*\)/\l\1\U\2/`} {
+		cases = append(cases, invocation{name: "case conversion of bytes above 127 " + script, args: []string{script}, stdin: "a\x80\xc3\xa9z\xff\n"})
+	}
+	for _, script := range []string{"e", "s/^//e", "s/^//ep"} {
+		cases = append(cases, invocation{name: "e on a last line with no newline " + script, args: []string{script}, stdin: "echo a\necho b"})
+	}
 	return cases
 }
 
@@ -118,23 +155,6 @@ func TestSedHelpVersion(t *testing.T) {
 	requireHelp(t, "sed", []string{"--he"}, 0)
 	requireVersion(t, "sed", []string{"--version"}, 0)
 	requireVersion(t, "sed", []string{"--vers"}, 0)
-}
-
-// --debug traces the run in a form of GNU sed's own. The port does not have
-// it, and says so instead of running without the trace.
-func TestSedDebugIsRefused(t *testing.T) {
-	cmd := exec.Command(fernBin(t, "sed"), "--debug", "p")
-	cmd.Stdin = strings.NewReader("a\n")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	exit, ok := err.(*exec.ExitError)
-	if !ok || exit.ExitCode() != 1 {
-		t.Fatalf("sed --debug: want exit 1, got %v", err)
-	}
-	if len(out) != 0 || !strings.HasSuffix(stderr.String(), ": this port does not have the option '--debug'\n") {
-		t.Fatalf("sed --debug: stdout %q, stderr %q", out, stderr.String())
-	}
 }
 
 // sedScriptCases: The script language: addresses, commands, flags and the errors of the script.

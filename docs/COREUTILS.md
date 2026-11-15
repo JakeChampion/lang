@@ -815,7 +815,7 @@ use `coreutils/lib/gnu.fern` with `in_package("findutils")`, and
 `findutils/lib/cmdline.fern` holds what the two share: the size of a
 command line, the start of a command and the prompt of `-ok` and `-p`. A
 version line is `find (Fern findutils) 0.1`, for example. `find -D` traces
-GNU's own work, and the port refuses it, as the sed port refuses `--debug`.
+GNU's own work, and the port refuses it.
 
 The order of a walk is the order of readdir, so the corpus does not sort the
 output. Most cases of find read one shared tree, and both sides read the

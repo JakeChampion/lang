@@ -42,8 +42,16 @@ The parts of `s` and the escapes:
   `\xHH` in a regex, a replacement, `y` and a text.
 
 The options are `-n`, `-e`, `-f`, `-E` and `-r`, `-s`, `-i[SUFFIX]`,
-`-l N`, `-z`, `-u` and `-b`. The long options `--posix`, `--follow-symlinks`,
-`--sandbox`, `--help` and `--version` are also in the port. The port reads
+`-l N`, `-z`, `-u` and `-b`. The long options `--debug`, `--posix`,
+`--follow-symlinks`, `--sandbox`, `--help` and `--version` are also in the
+port.
+
+`--debug` prints the program before the run, and a trace of each cycle: the
+input line, each command that the run gets to, and the pattern space or the
+hold space after a command that changes it. The trace has the form of GNU
+sed 4.9, byte for byte, with its quirks. For example, the depth of the
+blocks goes on from one cycle to the next. Also, after the first run of `e`,
+the newline at the end of its text is a NUL. The port reads
 POSIXLY_CORRECT as GNU sed does.
 
 The regular expressions are the BRE and ERE of GNU sed, with character
@@ -59,10 +67,6 @@ The exit status is the code of `q` or `Q`, or one of these:
 - 4 for an error in the run.
 
 ## What the port does not do
-
-`--debug` is not in the port. GNU sed then prints the script and a trace of
-each cycle in a form of its own. The port stops with exit status 1 and the
-message `this port does not have the option '--debug'`.
 
 These differences remain:
 
