@@ -382,8 +382,9 @@ pub function entry_payload(o: Op): Op {
   return Op { ...o, i32_imm: 2 };
 }
 
-// The width of an array op is the width of its element: 8 for a byte, 32 for a
-// 4-byte integer, 64 for an 8-byte scalar, and width_ptr() for a pointer-width slot.
+// The width of an array op is the width of its element: 8 for a byte, 16 for a
+// 2-byte integer, 32 for a 4-byte integer, 64 for an 8-byte scalar, and
+// width_ptr() for a pointer-width slot.
 pub function packed(o: Op): Op {
   return Op { ...o, width: 8 };
 }
@@ -398,6 +399,37 @@ pub function compact(o: Op): Op {
 
 pub function is_compact(o: Op): boolean {
   return o.width == 32;
+}
+
+// The log2 of the elements that one word holds for the array op `o`: 3 for
+// bytes, 2 and 1 for 2-byte and 4-byte integers, and 0 for words.
+pub function elem_shift(o: Op): i32 {
+  if (is_packed(o)) {
+    return 3;
+  }
+  if (is_half(o)) {
+    return 2;
+  }
+  return if (is_compact(o)) { 1 } else { 0 };
+}
+
+// The suffix of the runtime names of an array of 2^shift elements to a word.
+pub function shift_suffix(shift: i32): string {
+  if (shift == 3) {
+    return "_u8";
+  }
+  if (shift == 2) {
+    return "_u16";
+  }
+  return if (shift == 1) { "_u32" } else { "" };
+}
+
+pub function half(o: Op): Op {
+  return Op { ...o, width: 16 };
+}
+
+pub function is_half(o: Op): boolean {
+  return o.width == 16;
 }
 
 pub function op_str_from_bytes(): Op {
@@ -694,6 +726,11 @@ pub function op_scan_set(): Op {
 // the results of the probes. A bit that is set in each result accepts.
 pub function op_scan_masks(): Op {
   return op0(K_SCAN_MASKS);
+}
+
+// `__scan_masks_bytes` is `__scan_masks` over the bytes of a u8[].
+pub function op_scan_masks_bytes(): Op {
+  return op0(K_SCAN_MASKS_BYTES);
 }
 
 pub function is_block_scan_set(o: Op): boolean {
@@ -2184,11 +2221,15 @@ pub function const_struct_is_bytes(packed: string): boolean {
 }
 
 pub function const_struct_is_array(packed: string): boolean {
-  return const_struct_type(packed) == "&arr" || const_struct_is_wide_array(packed) || const_struct_is_bytes(packed) || const_struct_is_compact_array(packed);
+  return const_struct_type(packed) == "&arr" || const_struct_is_wide_array(packed) || const_struct_is_bytes(packed) || const_struct_is_compact_array(packed) || const_struct_is_half_array(packed);
 }
 
 pub function const_struct_is_compact_array(packed: string): boolean {
   return const_struct_type(packed) == "&arr32";
+}
+
+pub function const_struct_is_half_array(packed: string): boolean {
+  return const_struct_type(packed) == "&arr16";
 }
 
 pub function const_struct_is_wide_array(packed: string): boolean {
@@ -3266,6 +3307,8 @@ pub const K_MAP_FILE: i32 = 568;
 
 pub const K_SCAN_MASKS: i32 = 569;
 
+pub const K_SCAN_MASKS_BYTES: i32 = 571;
+
 // The name of each IR kind, indexed by its id. An empty name marks an id
 // that names no kind: 0, a retired kind, or a gap. A new kind takes the next
 // id; run `go run ./cmd/irkindgen compiler/ir.fern` after an edit.
@@ -3841,10 +3884,11 @@ const KIND_NAMES: string[] = [
   "map_file",  // 568
   "scan_masks",  // 569
   "vsock_connect",  // 570
+  "scan_masks_bytes",  // 571
 ];
 
 // BEGIN GENERATED KIND ORDER (cmd/irkindgen) — do not edit by hand.
-const KIND_ORDER: i32[] = [237, 21, 403, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 524, 523, 521, 522, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 519, 151, 149, 150, 385, 557, 556, 554, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 568, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 558, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 555, 221, 418, 419, 483, 163, 282, 213, 280, 211, 560, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 569, 324, 361, 559, 525, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 552, 553, 409, 410, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 518, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 542, 526, 528, 529, 536, 546, 537, 544, 545, 539, 540, 534, 535, 532, 533, 548, 565, 566, 538, 541, 547, 549, 550, 551, 543, 527, 530, 531, 567, 563, 564, 561, 562, 467, 475, 520, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 570, 447, 457, 476, 451, 462, 472, 162, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
+const KIND_ORDER: i32[] = [237, 21, 403, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 524, 523, 521, 522, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 519, 151, 149, 150, 385, 557, 556, 554, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 568, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 558, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 555, 221, 418, 419, 483, 163, 282, 213, 280, 211, 560, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 569, 571, 324, 361, 559, 525, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 552, 553, 409, 410, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 518, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 542, 526, 528, 529, 536, 546, 537, 544, 545, 539, 540, 534, 535, 532, 533, 548, 565, 566, 538, 541, 547, 549, 550, 551, 543, 527, 530, 531, 567, 563, 564, 561, 562, 467, 475, 520, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 570, 447, 457, 476, 451, 462, 472, 162, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
 
 // END GENERATED KIND ORDER
 
@@ -4038,7 +4082,7 @@ function pops3(t: i32): boolean {
     || t == 280
     || t == 313
     || t == 314
-    || t == 324 || t == 569
+    || t == 324 || t == K_SCAN_MASKS || t == K_SCAN_MASKS_BYTES
     || t == 327
     || t == 364 || t == 365 || t == 376 || t == 377
     || t == 366 || t == 380
@@ -4536,6 +4580,12 @@ function fold_width_op(o: Op, v: i32): Option[i32] {
   }
   if (o.str == "u8") {
     return Some(v & 255);
+  }
+  if (o.str == "u16") {
+    return Some(v & 65535);
+  }
+  if (o.str == "i16") {
+    return Some((v & 65535 ^ 32768) - 32768);
   }
   if (o.str == "u32" && v >= 0) {
     return Some(v);
@@ -6218,7 +6268,7 @@ pub function op_allocates(tag: i32): boolean {
 
 // fern-lint: allow cyclomatic-complexity
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == K_CALL_WORD || tag == K_RET_WORD || tag == K_ARR_RESERVE || tag == K_INNER_MUL_ADD_F64 || tag == K_OUTER_MUL_F64 || tag == K_STR_FROM_BYTES_RANGE || tag == K_CRC32_CKSUM_ARRAY || tag == K_SUM_BYTES_ARRAY || tag == K_BSD_SUM_BYTES || tag == K_SCAN_SET_BYTES || tag == K_COUNT_RUNS_BYTES || tag == K_MISMATCH_BYTES || tag == K_RMEMCHR_BYTES || tag == K_COUNT_BYTE_BYTES || tag == K_COUNT_BELOW_U64 || tag == K_MEMCHR_BYTES || tag == K_STR_LEN || tag == K_STR_INDEX || tag == K_STR_SLICE
+  return tag == K_CALL_WORD || tag == K_RET_WORD || tag == K_ARR_RESERVE || tag == K_INNER_MUL_ADD_F64 || tag == K_OUTER_MUL_F64 || tag == K_STR_FROM_BYTES_RANGE || tag == K_CRC32_CKSUM_ARRAY || tag == K_SUM_BYTES_ARRAY || tag == K_BSD_SUM_BYTES || tag == K_SCAN_SET_BYTES || tag == K_SCAN_MASKS_BYTES || tag == K_COUNT_RUNS_BYTES || tag == K_MISMATCH_BYTES || tag == K_RMEMCHR_BYTES || tag == K_COUNT_BYTE_BYTES || tag == K_COUNT_BELOW_U64 || tag == K_MEMCHR_BYTES || tag == K_STR_LEN || tag == K_STR_INDEX || tag == K_STR_SLICE
     || tag == K_STR_BYTES || tag == K_STR_SPLIT || tag == K_STR_TO_UPPER
     || tag == K_STR_TO_LOWER || tag == K_STR_REPEAT || tag == K_STR_TRIM
     || tag == K_STR_REPLACE || tag == K_STR_LINES || tag == K_STR_CONCAT

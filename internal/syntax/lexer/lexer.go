@@ -74,7 +74,7 @@ func (t Token) FParts() []FStringPart {
 	return *t.fparts
 }
 
-var numericSuffixes = [...]string{"", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64"}
+var numericSuffixes = [...]string{"", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "u16", "i16"}
 
 func (t Token) Suffix() string { return numericSuffixes[t.suffix] }
 
@@ -102,6 +102,8 @@ var keywords = map[string]bool{
 	"i32":      true,
 	"i64":      true,
 	"u8":       true,
+	"u16":      true,
+	"i16":      true,
 	"u32":      true,
 	"u64":      true,
 	"usize":    true,
@@ -192,6 +194,10 @@ func numericSuffixIndex(s string) uint8 {
 		return 7
 	case "f64":
 		return 8
+	case "u16":
+		return 9
+	case "i16":
+		return 10
 	}
 	return 0
 }

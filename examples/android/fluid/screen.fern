@@ -48,7 +48,7 @@ pub function advance(f: sim.Fluid, m: fluid.Model, fr: fluid.Frame): (sim.Fluid,
     next = next.splat(m.cfg, sp.x, sp.y, sp.dx, sp.dy, sp.color);
   }
   for i in 0..fr.steps {
-    next = next.step(m.cfg, 0.016666666666666666);
+    next = next.step(m.cfg, fr.step);
   }
   return (next, model);
 }
@@ -107,7 +107,7 @@ pub function paint(before: Art, c: gl.Canvas, fs: text.Fonts, mt: overlay.Metric
   if (m.open) {
     let dark = backdrop(art.backdrop);
     c.draw_part(dark, gl.Part { x: 0, y: 0, w: 1, h: 1 }, gl.Part { x: 0, y: 0, w: mt.width, h: mt.height }, 1.0, gl.no_fade(), 0, mt.height);
-    let panel = fresh(art.panel, size, (): draw.Frame => overlay.panel_frame(fs, mt, l));
+    let panel = fresh(art.panel, m.speed + size, (): draw.Frame => overlay.panel_frame(fs, mt, l, m.speed));
     c.draw(panel.tex, l.panel.x, l.panel.y, 1.0, 0, mt.height);
     let row = m.pressed_row();
     let state = m.cfg.paused.to_string() + m.full.to_string() + m.cfg.bloom.to_string() + m.cfg.sunrays.to_string() + m.cfg.colorful.to_string() + row.to_string();

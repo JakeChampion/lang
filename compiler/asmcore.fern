@@ -249,7 +249,7 @@ pub function seccomp_allowlist(s: EmitState): i32[] {
 pub struct ArgRule { nr: i32, arg: i32, values: i32[], mask: i32 }
 
 // The rules of one architecture. The mapping calls take no executable
-// protection. A socket is AF_UNIX, AF_INET or AF_INET6. A prctl is one of
+// protection. A socket is AF_UNIX, AF_INET, AF_INET6 or AF_VSOCK. A prctl is one of
 // PR_SET_PDEATHSIG, PR_SET_DUMPABLE, PR_GET_TAGGED_ADDR_CTRL and
 // PR_PAC_GET_ENABLED_KEYS. An ioctl is one of the eight terminal and
 // reflink requests. A setsockopt level is SOL_IP, SOL_SOCKET, SOL_TCP,
@@ -269,7 +269,7 @@ pub function arg_rules(target: string): ArgRule[] {
       ArgRule { nr: 29, arg: 1, values: ioctls, mask: 0 },
       ArgRule { nr: 56, arg: 2, values: [], mask: 2145525822 },
       ArgRule { nr: 167, arg: 0, values: [1, 4, 56, 61], mask: 0 },
-      ArgRule { nr: 198, arg: 0, values: [1, 2, 10], mask: 0 },
+      ArgRule { nr: 198, arg: 0, values: [1, 2, 10, 40], mask: 0 },
       ArgRule { nr: 208, arg: 1, values: [0, 1, 6, 17, 41, 282], mask: 0 },
       ArgRule { nr: 208, arg: 2, values: sockopts, mask: 0 },
       ArgRule { nr: 220, arg: 0, values: [17], mask: 0 },
@@ -282,7 +282,7 @@ pub function arg_rules(target: string): ArgRule[] {
     ArgRule { nr: 9, arg: 2, values: [], mask: 4 },
     ArgRule { nr: 10, arg: 2, values: [], mask: 4 },
     ArgRule { nr: 16, arg: 1, values: ioctls, mask: 0 },
-    ArgRule { nr: 41, arg: 0, values: [1, 2, 10], mask: 0 },
+    ArgRule { nr: 41, arg: 0, values: [1, 2, 10, 40], mask: 0 },
     ArgRule { nr: 54, arg: 1, values: [0, 1, 6, 17, 41, 282], mask: 0 },
     ArgRule { nr: 54, arg: 2, values: sockopts, mask: 0 },
     ArgRule { nr: 56, arg: 0, values: [17], mask: 0 },
@@ -1828,19 +1828,28 @@ pub function packed_suffix(packed: boolean): string {
   return "";
 }
 
-// The log2 of the elements that one word holds for the array op `o`.
-pub function elem_shift(o: ir.Op): i32 {
-  if (ir.is_packed(o)) {
-    return 3;
+// The log2 of the elements that one word of an array holds, from the suffix
+// of a runtime call's name: 3 for bytes, 2 and 1 for 2-byte and 4-byte
+// integers, 0 for words.
+// The slices of 2-byte and 4-byte arrays share a kernel, so one runtime
+// module holds the slices that the program needs.
+pub function packed_slice_roots(s: EmitState): string {
+  let roots = "";
+  if (s.has_need("arr_slice_u16")) {
+    roots += " __fern_arr_slice_u16";
   }
-  return if (ir.is_compact(o)) { 1 } else { 0 };
+  if (s.has_need("arr_slice_u32")) {
+    roots += " __fern_arr_slice_u32";
+  }
+  return roots;
 }
 
-// The log2 of the elements that one word of an array holds, from the suffix
-// of a runtime call's name: 3 for bytes, 1 for 4-byte integers, 0 for words.
 pub function packed_shift(name: string): i32 {
   if (name.ends_with("_u8")) {
     return 3;
+  }
+  if (name.ends_with("_u16")) {
+    return 2;
   }
   if (name.ends_with("_u32")) {
     return 1;
@@ -3258,7 +3267,7 @@ function builtin_i32_names(): string[] {
     "__memchr",
     "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes",
     "__ascii_run",
-    "__scan_set", "__scan_set_bytes", "__scan_masks",
+    "__scan_set", "__scan_set_bytes", "__scan_masks", "__scan_masks_bytes",
     "__count_runs", "__count_runs_bytes",
     "__bsd_sum",
     "__str_hash",
@@ -3537,7 +3546,7 @@ function infer_call_named_type_part_11(id: ast.ExprIdent, c: ast.ExprCall, s: Em
   if (id.name == "getgroups") {
     return ty_array_i64();
   }
-  if (id.name == "__alloc_u8" || id.name == "__alloc_u8_uninit" || id.name == "__alloc_i32" || id.name == "__alloc_bool" || id.name == "buf_take_bytes") {
+  if (id.name == "__alloc_u8" || id.name == "__alloc_u8_uninit" || id.name == "__alloc_u16" || id.name == "__alloc_i16" || id.name == "__alloc_i32" || id.name == "__alloc_bool" || id.name == "buf_take_bytes") {
     return ty_array_i32();
   }
   if (id.name == "__alloc_i64") {
@@ -3949,6 +3958,9 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   if (ir.const_struct_is_compact_array(packed)) {
     return ConstAggPack { state: s, text: "4|" + ir.const_struct_payload(packed) };
   }
+  if (ir.const_struct_is_half_array(packed)) {
+    return ConstAggPack { state: s, text: "2|" + ir.const_struct_payload(packed) };
+  }
   let body = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
     let target = "__fn_" + sanitize_label(body) + entry;
@@ -4085,7 +4097,7 @@ function direct_need_deps(name: string): string[] {
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
     || name == "str_from_bytes" || name == "alloc_u8"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8"
-    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "arr_slice_u32" || name == "alloc_bytes" || name == "alloc_u32"
+    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "arr_slice_u16" || name == "arr_slice_u32" || name == "alloc_bytes" || name == "alloc_u16" || name == "alloc_u32"
     || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_borrow" || name == "str_grow"
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
@@ -4096,7 +4108,7 @@ function direct_need_deps(name: string): string[] {
     let dtrim: string[] = ["heap", "str_concat"];
     return dtrim;
   }
-  if (name == "arr_push_u8" || name == "arr_push_u32") {
+  if (name == "arr_push_u8" || name == "arr_push_u16" || name == "arr_push_u32") {
     let du8: string[] = ["heap"];
     return du8;
   }
@@ -5728,8 +5740,8 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
     return emit_const_bytes_block(st, i, ir.const_struct_payload(e));
   }
   let vals = ir.const_struct_values(e);
-  if (shp == "4") {
-    return emit_const_compact_block(st, i, vals);
+  if (shp == "4" || shp == "2") {
+    return emit_const_compact_block(st, i, vals, util.digits_to_i32(shp));
   }
   if (shp == "o") {
     return st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
@@ -5796,10 +5808,17 @@ pub function emit_const_agg_refs(s: EmitState): EmitState {
 }
 
 // A constant has no spare capacity, so an append copies it.
-function emit_const_compact_block(st: EmitState, i: i32, vals: string[]): EmitState {
+// The elements of a constant array of 2-byte or 4-byte integers. The
+// assemblers have no 2-byte directive, so a 2-byte element is two bytes.
+function emit_const_compact_block(st: EmitState, i: i32, vals: string[], size: i32): EmitState {
   st = st.write("    .quad 0\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + util.i32_to_string(vals.len()) + "\n");
   for v in vals {
-    st = st.write("    .long " + v + "\n");
+    if (size == 2) {
+      let bits = util.lit_to_i32(v) & 65535;
+      st = st.write("    .byte " + util.i32_to_string(bits & 255) + ", " + util.i32_to_string(bits >> 8) + "\n");
+    } else {
+      st = st.write("    .long " + v + "\n");
+    }
   }
   return st.write("    .balign 8\n");
 }
@@ -5873,6 +5892,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_alloc_size_abort",
     "__fern_arr_push_owned",
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
+    "__fern_alloc_u16", "__fern_arr_push_u16", "__fern_arr_push_owned_u16",
     "__fern_alloc_u32", "__fern_arr_push_u32", "__fern_arr_push_owned_u32",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",

@@ -340,6 +340,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 	all := []selfHostStdTestCase{
 		{"arithmetic", langSrcAbs(t, "tests/stdlib/arithmetic_test.fern"), ""},
 		{"strings", langSrcAbs(t, "tests/stdlib/strings_test.fern"), ""},
+		{"linediff", langSrcAbs(t, "tests/stdlib/linediff_test.fern"), ""},
 		{"dns", langSrcAbs(t, "tests/stdlib/dns_test.fern"), ""},
 		{"fail_fast", langSrcAbs(t, "tests/stdlib/fail_fast_test.fern"), ""},
 		{"quiet_mode", langSrcAbs(t, "tests/stdlib/quiet_mode_test.fern"), ""},

@@ -987,6 +987,10 @@ func ReceiverTypeName(t Type) (string, bool) {
 			return "u64", true
 		case rt.NormalWidth() == 8:
 			return "u8", true
+		case rt.NormalWidth() == 16 && !rt.IsSigned():
+			return "u16", true
+		case rt.NormalWidth() == 16:
+			return "i16", true
 		case !rt.IsSigned():
 			return "u32", true
 		default:

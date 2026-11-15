@@ -9,6 +9,10 @@ func TestUnaryNegationUsesCheckedWidth(t *testing.T) {
 	}{
 		{"i32 minimum", `function main(): i32 { let x = -2147483648i32; return -x; }`, -2147483648},
 		{"u8 wrap", `function main(): u8 { let x = 1u8; return -x; }`, 255},
+		{"u16 wrap", `function main(): u16 { let x = 1u16; return -x; }`, 65535},
+		{"i16 minimum", `function main(): i16 { let x = -32768i16; return -x; }`, -32768},
+		{"u16 not", `function main(): u16 { let x = 1u16; return ~x; }`, 65534},
+		{"i16 not", `function main(): i16 { let x = 0i16; return ~x; }`, -1},
 		{"u32 wrap", `function main(): u32 { let x = 1u32; return -x; }`, 4294967295},
 		{"u64 bits", `function main(): u64 { let x = 1u64; return -x; }`, -1},
 		{"i64 minimum", `function main(): i64 { let x = -9223372036854775808i64; return -x; }`, -9223372036854775808},

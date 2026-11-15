@@ -53,15 +53,53 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   the commits that change them, with the history simplification of git,
   and `--full-history` keeps each side of a merge. The order is that of
   the dates, or that of `--topo-order`, `--date-order`,
-  `--author-date-order` and `--reverse`. `--graph` draws the graph of git
-  without colors.
+  `--author-date-order` and `--reverse`. `--graph` draws the graph of git.
+  When more commits come after a root commit, the graph indents the root,
+  as git 2.56.1 does.
+
+  `--simplify-merges` and `--simplify-by-decoration` simplify the
+  history as git does, and `--ancestry-path` keeps the commits on a path
+  through a commit. The sides of `A...B` are `--left-right`,
+  `--left-only`, `--right-only`, `--cherry-pick`, `--cherry-mark` and
+  `--cherry`, with the patch ids of git. `--boundary` shows the excluded
+  parents of the shown commits.
+
+  `-S`, `-G`, `--pickaxe-regex` and `--pickaxe-all` select the commits
+  whose diff adds or removes a string or a line that matches. `--follow`
+  follows the renames and the copies of one file. `-g` walks the reflogs,
+  with the `Reflog:` lines of git and the placeholders `%gd`, `%gD`,
+  `%gs`, `%gn`, `%ge`, `%gN` and `%gE`.
 
   The formats are `--oneline`, `--pretty=` with each named format and
   `format:`, and `--format=`, with the placeholders of git. `--date=` has
   each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,
-  `--name-only` and `--name-status` add to the text. The changes of
+  `--name-only` and `--name-status` add to the text. `--decorate=full`,
+  `--decorate-refs=`, `--decorate-refs-exclude=`, `--clear-decorations`
+  and `log.excludeDecoration` select the refs of the decorations, with
+  the default set of git.
+
+  The mailmap of `.mailmap`, `mailmap.blob` and
+  `mailmap.file` gives the names of the header lines, of `%aN` and of
+  `--author`, as `log.mailmap` and `--use-mailmap` select. The changes of
   `--name-status` find renames as git does. A tab and a wide character in
   a message take the columns that git gives them.
+
+  The diff of each commit is `-p`, `--stat`, `--numstat`, `--shortstat`,
+  `--summary` or `--patch-with-stat`, with the bytes of git. The patch
+  has the header lines of git, the renames with their similarity, the
+  changes of mode, and the line for a binary file. The hunks come from
+  `std/linediff`. It has the Myers diff of xdiff with its heuristics and
+  the indent heuristic, `--minimal`, `--patience`, `--histogram` and
+  `--diff-algorithm=`. The other options are `-U<n>`,
+  `--inter-hunk-context=`, `--no-prefix`, `--src-prefix=`,
+  `--dst-prefix=`, `--full-index`, `--text`, `--full-diff`,
+  `--no-renames`, `-s`, and the widths and the count of `--stat`.
+
+  `--color`, `--color=WHEN`, `--no-color`, `color.ui` and `color.diff`
+  give the output the colors of git. The colors are on the header, the
+  decorations, the columns of the graph, the patch and the stat, and
+  `%C` sets them in a format. The patch shows the errors of white space
+  of the default `core.whitespace`.
 
 - `index-pack` makes the index of a packfile (version 1 or 2) and its
   reverse index, and prints the checksum of the packfile. It reads the
@@ -74,9 +112,12 @@ names (`git init --object-format=sha256`). The key
 `extensions.objectformat` of the `config` file gives the hash. With no
 repository, `hash-object`, `index-pack` and `verify-pack` use SHA-1, as
 git does.
+
 A packfile can be larger than 4 GiB. The port finds an object through the
-multi-pack index first, as git does. The port reads a packfile of more
-than 1 GiB in parts and never as a whole.
+multi-pack index first, as git does. The port maps a packfile of 1 GiB
+or less into memory with `map_file_unchecked`, and `index-pack` and
+`verify-pack` map the packfile that they read. The port reads a larger
+packfile in parts and never as a whole.
 
 A name is a full hash, a short hash of four digits or more, `HEAD`, a ref,
 or the output of `git describe`. The port looks for a ref as git does. It
@@ -84,19 +125,39 @@ reads loose refs, the file `packed-refs`, the reflogs, and the upstream of
 a branch in the configuration.
 
 A name can have operators after it: `^N`, `~N`, `^{KIND}`, `^{}`,
-`^{/TEXT}`, `@{N}`, `@{DATE}`, `@{-N}`, and `@{upstream}` or `@{u}`. `:PATH`
+`^{/TEXT}`, `@{N}`, `@{DATE}`, `@{-N}`, `@{upstream}` or `@{u}`, and
+`@{push}`, with `push.default`, the push refspecs, `remote.pushDefault`
+and `branch.NAME.pushRemote`. `:PATH`
 is the entry at a path below a tree, and `:N:PATH` is an entry of the
 index. `:/TEXT` is the latest commit whose message matches TEXT.
 
 A short name has the length that git gives it. In a shallow clone, a
 commit at the edge has no parent.
 
+The port reads the commit graph of git: the file
+`objects/info/commit-graph`, or the chain of files in
+`objects/info/commit-graphs/`. It takes the parents, the tree and the date
+of a commit from the graph, and reads the commit only for its text.
+
+With generation numbers (the levels of version 1 or the corrected dates
+of version 2), `--topo-order`, `--date-order` and `--graph` walk as git
+does: they show the first commits before they read the whole history. The
+changed-path Bloom filters tell `log -- PATH` which commits do not change
+PATH. `core.commitGraph=false`, a shallow clone, grafts and replace refs
+turn the graph off, as in git.
+
 The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
 current directory or of a directory above it. A `.git` file of a linked
 worktree gives the git directory.
 
 The standard output, the messages and the exit status are those of git
-2.43.
+2.56.1. That is the git of the CI runners. The tests compare the port with
+the git of the machine. With git 2.43, four things are different:
+
+- the indent of the roots in `--graph`
+- the order of the options in the message for `--graph` with `--reverse`
+- the check of the kind in `hash-object --literally`
+- the usage of `index-pack`.
 
 ## Files
 
@@ -112,10 +173,15 @@ The standard output, the messages and the exit status are those of git
 - `refs.fern`: the repository, the refs and the reflogs.
 - `dircache.fern`: the index of the worktree (versions 2 to 4).
 - `rev.fern`: the revisions and their operators.
+- `commitgraph.fern`: the commit graph, its generation numbers and its
+  Bloom filters.
+- `mailmap.fern`: the mailmap.
 - `walk.fern`: the graph of the commits and the merge bases.
 - `revwalk.fern`: the walk of `log`, with its limits and its orders.
 - `treediff.fern`: the changes between two trees, and the renames.
 - `graph.fern`: the graph of `--graph`.
+- `patch.fern`: the diff of a commit: the patch, `--stat`, `--numstat`,
+  `--shortstat` and `--summary`.
 - `log.fern`: the fields of a commit and the text that `log` prints.
 - `date.fern`: the dates that `log` prints and reads.
 - `width.fern`: the column width of a character (from `unicode-width.h`).
@@ -123,74 +189,99 @@ The standard output, the messages and the exit status are those of git
 
 ## What it does not have yet
 
-- The commit graph (`objects/info/commit-graph` and the chain in
-  `commit-graphs/`) and its changed-path filters. The port reads each
-  commit from the store. git walks with the generation numbers of a
-  commit graph, and the port does not.
+- These options of `log`: `--notes`, the signatures (`--show-signature`,
+  `%G?`), `-C` and `--find-copies` (`--follow` finds copies),
+  `--word-diff`, `--color-moved`, `--check`, `--raw`, `--cc` and `-m`
+  for the diff of a merge, and `-L`.
 
-- The diff of `log`: `-p`, `--stat` and the other forms of a patch. A
-  patch must have the bytes of the diff of git. The engine of
-  `diffutils/` does not give the hunks of the xdiff of git yet.
+- The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
+  `color.grep`, and the rules of `core.whitespace` and of the
+  `whitespace` attribute. The port uses the default colors and rules.
 
-- These options of `log`: `--follow`, `-S` and `-G`, `--cherry-pick`,
-  `--left-right`, `--boundary`, `--ancestry-path`,
-  `--simplify-by-decoration`, `--walk-reflogs`, `--notes`, the signatures,
-  the mailmap (`%aN`) and colors.
+- The placeholders of a format that change the columns of the next
+  placeholders: `%<(N)`, `%>(N)`, `%><(N)` and `%w()`.
 
-- `@{push}`.
+- The pager. `--color=auto` and `color.ui=auto` give colors only to a
+  terminal, as git does without a pager.
 
 - `rev-parse --short=N` with N above 40 in a repository with SHA-256
   names. The port gives the full name, and git 2.43 stops at 40 digits.
+
+- `index-pack -v`, `--verify`, `--strict` and `--fsck-objects`. The port
+  prints the usage of git for them.
+
+- The changed-path Bloom filters of version 2
+  (`commitGraph.changedPathsVersion`). The port walks a path without
+  them, and it uses the filters of version 1 only.
 
 - `--fix-thin` with a thin pack. The port adds the bases with the deflate
   of `std/deflate`, so the packfile, its name and its index do not have
   the bytes that git writes.
 
-- `index-pack` and `verify-pack` hold the whole packfile in memory. The
-  other commands read a packfile larger than 1 GiB in parts.
 
 ## Speed
 
-The times are the CPU time (user and system) of the best of three runs on
-x86-64, on a clone of the repository of Fern: 112,789 objects, 7,343
-commits, and a packfile of 300 MB. The port is built with `-O`. git 2.43
-has its threads for `index-pack`, and the port has a worker for each CPU.
+The times are the CPU time (user and system) of the best of three runs.
+The machine is x86-64 with 4 CPUs, and the repository is a clone of
+Fern: 292,676 objects, 24,135 commits, and a packfile of 430 MB. The port is built with
+`-O`. git is version 2.43.
 
 | Command | git | The port |
 |---|---|---|
-| `cat-file --batch` (all objects) | 22.7 s | 29.4 s |
-| `cat-file --batch-check` (all objects) | 0.30 s | 0.93 s |
-| `log` | 0.12 s | 0.16 s |
-| `log --oneline` | 0.11 s | 0.14 s |
-| `log --oneline -- examples/pigz` | 0.04 s | 0.12 s |
-| `log --graph --oneline` | 0.12 s | 0.16 s |
-| `log --name-status -200` | 0.03 s | 0.08 s |
-| `log --oneline --author=Claude --grep=fix` | 0.11 s | 0.23 s |
-| `log --oneline HEAD~500..HEAD` | 0.03 s | 0.04 s |
-| `log --oneline --topo-order` | 0.11 s | 0.15 s |
+| `cat-file --batch` (all objects) | 164.5 s | 168.5 s |
+| `cat-file --batch-check` (all objects) | 0.68 s | 1.15 s |
+| `log` | 0.52 s | 0.65 s |
+| `log --oneline` | 0.44 s | 0.49 s |
+| `log --oneline -- examples/pigz` | 0.33 s | 0.37 s |
+| `log --graph --oneline` | 0.47 s | 0.59 s |
+| `log --name-status -200` | 0.026 s | 0.041 s |
+| `log --oneline --author=Claude --grep=fix` | 0.51 s | 0.90 s |
+| `log --oneline HEAD~500..HEAD` | 0.028 s | 0.043 s |
+| `log --oneline --topo-order` | 0.47 s | 0.55 s |
+| `log -p -200` | 0.57 s | 0.70 s |
+| `log --stat -200` | 0.55 s | 0.67 s |
 | `rev-parse HEAD~100 HEAD^{tree} HEAD:README.md` | 0.003 s | 0.005 s |
-| `ls-tree -r HEAD` | 0.02 s | 0.03 s |
-| `ls-tree -r -l HEAD` | 0.06 s | 0.12 s |
-| `index-pack` (3.3 MB) | 0.014 s | 0.016 s |
-| `index-pack` (300 MB) | 19.9 s | 17.4 s |
+| `ls-tree -r HEAD` | 0.021 s | 0.029 s |
+| `ls-tree -r -l HEAD` | 0.061 s | 0.086 s |
+| `index-pack` (430 MB) | 72.0 s | 51.2 s |
+| `verify-pack -v` (430 MB) | 72.5 s | 45.7 s |
 
-The port is not yet faster than git, except for `index-pack` of a large
-packfile. The inflate of `std/deflate` is most of the gap. For
-`log --oneline`, it is two thirds of the 960 million instructions of the port, and git runs
-500 million instructions in all. For each small stream, the decoder
-fills a table of 1,024 entries for the literals and 256 for the
-distances. zlib fills fewer entries.
+With a commit graph that has Bloom filters
+(`git commit-graph write --reachable --changed-paths`):
+
+| Command | git | The port |
+|---|---|---|
+| `log --oneline -- examples/pigz` | 0.017 s | 0.038 s |
+| `log --graph --oneline` | 0.46 s | 0.70 s |
+| `log --oneline --topo-order` | 0.44 s | 0.58 s |
+| `log --oneline --author=Claude --grep=fix` | 0.53 s | 0.61 s |
+
+git has a thread for each CPU in `index-pack` and `verify-pack`. The
+port has a worker for each CPU in `index-pack`, and one thread in
+`verify-pack`. The real time of `index-pack` is 29.3 s for git and
+32.3 s for the port. For `verify-pack`, it is 29.6 s and 46.0 s.
+At its peak, git uses 248 MB and the port uses 1.7 GB.
+
+The port uses less CPU time than git only in `index-pack` and
+`verify-pack`. The inflate of `std/deflate` is most of the gap in the
+other commands: it is half of the instructions of
+`cat-file --batch-check`. For each small stream, the decoder fills a
+table of 1,024 entries for the literals and 256 for the distances. zlib
+fills fewer entries.
 
 The port inflates each commit one time: the graph of the walk keeps the
 commit for the text of `log`. It does not inflate a packed object for its
 kind and its size. They come from the header of the object and from the
-start of its delta.
+start of its delta. `cat-file --batch-check` with full names does not
+parse a name as a revision.
 
-The port keeps the bases of the deltas in a cache of 96 MB. For a packfile
-above 1 MiB, it reads the bytes of one object from the file. The reverse
-index of git (`.rev`) gives the end of each object. Without that file, the
-port sorts the offsets of the index. It reads the whole file after such
-reads for half of the objects, when the file is 1 GiB or smaller.
+The port keeps the bases of the deltas in a cache of 96 MB, which each
+copy of the store shares. The reverse index of git (`.rev`) gives the
+end of each object. Without that file, the port sorts the offsets of the
+index. A diff of trees reads the entries of a tree in place, and keeps the
+last trees that it read. With a commit graph, the walk reads the parents
+and the dates from the graph. A Bloom filter of the graph skips a commit
+that does not change the paths.
 
 `index-pack` gives each CPU one part of the packfile, with about the same
 count of bytes. A worker of `std/worker` makes the names of its part.
@@ -212,8 +303,7 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   byte. The index and the reverse index of `index-pack` have the bytes of
   git.
 
-  The packfile is above 1 MiB, so the port reads it in parts and then
-  whole. The test also has a shallow clone, and a store of 16,400 objects
+  The test also has a shallow clone, and a store of 16,400 objects
   where a short name has 8 digits.
 
 - Each of these tests runs on x86-64 and on arm64, in a repository with
@@ -231,6 +321,24 @@ count of bytes. A worker of `std/worker` makes the names of its part.
 - `TestSelfHostExampleGitLog` runs 121 forms of `log`, and
   `TestSelfHostExampleGitLogRandom` runs them on a random history with
   merges and renames.
+
+- `TestSelfHostExampleGitDiff` runs 78 forms of the diff of `log` on a
+  repository with each kind of change, and the patches of random edits
+  of code with each search of xdiff.
+
+- `TestSelfHostExampleGitCommitGraph` runs random forms of `log` in
+  random histories with a commit graph: one file with Bloom filters, a
+  chain of two files, and one file with the generation numbers of
+  version 1. Then it changes a date in the graph, and the port must use
+  that date as git does, and not when `core.commitGraph` is false.
+
+- `TestSelfHostExampleGitOptions` runs the mailmap, the decorations, the
+  sides of a range, the boundary, the simplifications, the reflog walk,
+  the pickaxe and `--follow`. `TestSelfHostExampleGitColor` runs the
+  forms of `log` with colors.
+
+- `TestSelfHostExampleGitPush` reads `@{push}` with each value of
+  `push.default` and the other settings of a push.
 
 - `TestSelfHostExampleGitMultiPackIndex` changes the multi-pack index, and
   the port must read the objects through it as git does.

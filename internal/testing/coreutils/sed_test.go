@@ -2,7 +2,6 @@ package coreutils
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -25,6 +24,195 @@ func sedCases(t *testing.T) []invocation {
 	cases = append(cases, sedOptionCases()...)
 	cases = append(cases, sedBigCases()...)
 	cases = append(cases, sedCaptureCases()...)
+	cases = append(cases, sedDebugCases()...)
+	cases = append(cases, sedUTF8Cases()...)
+	return cases
+}
+
+// sedUTF8Cases: in a UTF-8 locale, sed reads characters of UTF-8 in a regex,
+// in y and in the case conversions of s. A byte that starts no character
+// stays a byte. Each script also runs in the C locale, where each byte is a
+// character. The names of the locale come from LC_ALL, LC_CTYPE and LANG.
+func sedUTF8Cases() []invocation {
+	var cases []invocation
+	for _, c := range []struct {
+		in   string
+		args []string
+	}{
+		{"a\xffb\n", []string{"s/\\B/|/g"}},
+		{"\xffb\n", []string{"s/\\B/|/g"}},
+		{"\xffb\n", []string{"s/\\b/|/g"}},
+		{"a\xc3\n", []string{"s/\\B/|/g"}},
+		{" \xff \n", []string{"s/\\B/|/g"}},
+		{"a\xe2\x82b\n", []string{"s/\\B/|/g"}},
+		{"éé\n", []string{"s/\\B/|/g"}},
+		{"éé\n", []string{"s/x*\\B/|/g"}},
+		{"éé\n", []string{"s/\\>/|/g"}},
+		{"éa\n", []string{"s/\\B\\|x/|/g"}},
+		{"a\xffb\n", []string{"s/a\\xffb/\\U&/"}},
+		{"\xffb\n", []string{"s/\\xffb/\\u&/"}},
+		{"xé\n", []string{"s/x\\xc3/\\U&/"}},
+		{"a\xe2\x82x\n", []string{"s/a\\xe2\\x82x/\\U&/"}},
+		{"aéb\n", []string{"s/./X/g"}},
+		{"a\xffb\n", []string{"s/./X/g"}},
+		{"a\xc3b\n", []string{"s/./X/g"}},
+		{"éÉ\n", []string{"s/é/x/Ig"}},
+		{"aéz\n", []string{"s/[à-ê]/R/g"}},
+		{"éa\n", []string{"y/éa/eb/"}},
+		{"éa\n", []string{"s/.*/\\U&/"}},
+		{"ÉA\n", []string{"s/.*/\\L&/;s/^./\\u&/"}},
+		{"é\xff\n", []string{"l"}},
+		{"éa\n", []string{"s/\\w/W/g"}},
+		{"é\n", []string{"s/\\xc3/Z/"}},
+		{"ab\n", []string{"y/a/é/"}},
+		{"a\xffb\n", []string{"s/a.b/X/"}},
+		{"a\xffb\n", []string{"s/a[^x]b/X/"}},
+		{"a\xffb\n", []string{"s/\\o377/X/"}},
+		{"éé\n", []string{"s/x*/-/g"}},
+		{"\xed\xa0\x80\n", []string{"s/./X/g"}},
+		{"\xc0\x80\n", []string{"s/./X/g"}},
+		{"\xf4\x8f\xbf\xbf\n", []string{"s/./X/g"}},
+		{"\xf4\x90\x80\x80\n", []string{"s/./X/g"}},
+		{"\xc3\xa9\n", []string{"s/\\xa9/Z/"}},
+		{"éééa\n", []string{"s/é*/X/g"}},
+		{"é\xc3\n", []string{"s/[é]/X/g"}},
+		{"é\xffb\n", []string{"s/[^a]/X/g"}},
+		{"K\n", []string{"s/k/X/Ig"}},
+		{"k\n", []string{"s/K/X/Ig"}},
+		{"É\n", []string{"s/[é]/X/I"}},
+		{"x\n", []string{"s/[a-é]/X/"}},
+		{"x\n", []string{"s/[α-ω]/X/"}},
+		{"é²中٣\u0301‿\n", []string{"s/[[:alpha:]]/A/g"}},
+		{"ÉΣé\n", []string{"s/[[:upper:]]/U/g"}},
+		{"¿«a\n", []string{"s/[[:punct:]]/P/g"}},
+		{" x\xa0x\u3000x\n", []string{"s/[[:space:]]/S/g"}},
+		{"٣3\n", []string{"s/[[:digit:]]/D/g"}},
+		{"é中٣_\n", []string{"s/\\w/W/g"}},
+		{"éa b\n", []string{"s/\\b/|/g"}},
+		{"éa b\n", []string{"s/\\</|/g"}},
+		{"éa b\n", []string{"s/\\>/|/g"}},
+		{"éa béc\n", []string{"s/\\B/|/g"}},
+		{"ßﬁǅǆ\n", []string{"s/.*/\\U&/"}},
+		{"ǆa\n", []string{"s/.*/\\u&/"}},
+		{"ÉΣ\n", []string{"s/.*/\\L&/"}},
+		{"éaé\n", []string{"y/éa/EÀ/"}},
+		{"éa\n", []string{"y/éa/E/"}},
+		{"aéa\n", []string{"s/./X/2"}},
+		{"éé\n", []string{"s/\\(.\\)\\1/X/"}},
+		{"a\xff\n", []string{"s/[\\xff]/X/"}},
+		{"a\xffé\n", []string{"s/[^a]/X/g"}},
+		{"a\xffé \n", []string{"s/\\W/X/g"}},
+		{"a\xffé \n", []string{"s/\\S/X/g"}},
+		{"éeÉ\n", []string{"s/[[=é=]]/X/g"}},
+		{"éeÉ\n", []string{"s/[[=e=]]/X/g"}},
+		{"éeÉ\n", []string{"s/[[.é.]]/X/g"}},
+		{"aé\n", []string{"s/[[:alpha:]é]/X/g"}},
+		{"a\xffb\n", []string{"s/\\b/|/g"}},
+		{"a\xffb\n", []string{"s/\\</|/g"}},
+		{"\xc3\xa9\n", []string{"s/\\xc3\\xa9/X/"}},
+		{"\xc3\xa9\n", []string{"s/[\\xc3][\\xa9]/X/"}},
+		{"é\n", []string{"s/\\(\\xc3\\)/[\\1]/"}},
+		{"aé\n", []string{"s/a\\|é/X/g"}},
+		{"éé\n", []string{"s/é\\{2\\}/X/"}},
+		{"Éé\n", []string{"s/É/X/Ig"}},
+		{"ab\n", []string{"s/[^é]/X/g"}},
+		{"éa\n", []string{"s/./(&)/g"}},
+		{"a\xffé\n", []string{"s/.*/\\U&/"}},
+		{"É\xc3\n", []string{"s/.*/\\L&/"}},
+		{"a\xffb\n", []string{"y/\\xff/X/"}},
+		{"a\xffb\n", []string{"y/a\\xff/XY/"}},
+		{"aéb\n", []string{"y/é/\\xff/"}},
+		{"aéb\n", []string{"y/aé/é\\n/"}},
+		{"aé\n", []string{"--debug", "y/aé/éa/"}},
+		{"aé\n", []string{"--debug", "s/é/É/"}},
+		{"aé\n", []string{"--debug", "-n", "/[é]/p;l"}},
+		{"ab\n", []string{"y/aa/bc/"}},
+		{"é\n", []string{"y/\\xc3/X/"}},
+		{"aé\n", []string{"--debug", "y/aa/bc/"}},
+		{"é\xc3\n", []string{"y/\\xc3/X/"}},
+		{"a\xffbé\n", []string{"s/.*/\\U&/"}},
+		{"\xffab\n", []string{"s/.*/\\U&/"}},
+		{"é\xffa\n", []string{"s/.*/\\U&/"}},
+		{"ab\xc3\n", []string{"s/.*/\\U&/"}},
+		{"a\xc3bc\n", []string{"s/a\\(.*\\)/\\U&-\\1/"}},
+		{"a\xffb\n", []string{"s/\\(a\\)\\(.*\\)/\\U\\1\\2x/"}},
+		{"ab\n", []string{"s/a/\\xff\\U&/"}},
+		{"ab\n", []string{"s/a/\\U\\xffx&/"}},
+		{"éa\n", []string{"s/.*/\\u&/"}},
+		{"\xffa\n", []string{"s/.*/\\u&/"}},
+		{"éa\n", []string{"s/.*/\\U\\l&/"}},
+		{"a\xc3bc\n", []string{"s/.*/\\U&\\Ex/"}},
+		{"a\xc3bc\n", []string{"s/.*/\\U&\\E&x/"}},
+		{"a\xc3bc\n", []string{"s/\\(a\\)\\(.*\\)/\\U&\\E\\2x/"}},
+		{"a\xc3bc\n", []string{"s/.*/&x/"}},
+		{"a\xc3b a\xc3b\n", []string{"s/a\\(\\S*\\)/\\U\\1[&]/g"}},
+		{"\xc3bc\n", []string{"s/.*/\\u&x/"}},
+		{"x\xc3\n", []string{"s/x/\\u\\xffy/"}},
+		{"x\n", []string{"s/x/\\u\\xe2\\x82y/"}},
+		{"aé\n", []string{"s/a/\\u\\xc3\\xa9/"}},
+		{"İıiI\n", []string{"s/i/X/Ig"}},
+		{"sSſ\n", []string{"s/[s]/X/Ig"}},
+		{"ſ\n", []string{"s/[a-z]/X/I"}},
+		{"ab\nc\n", []string{"N;s/[^a]/X/g"}},
+		{"ab\nc\n", []string{"N;s/[^a]/X/Mg"}},
+		{"ab\nc\n", []string{"N;s/./X/Mg"}},
+		{"aé\n", []string{"-E", "s/(é|a)+/X/"}},
+		{"é\n", []string{"s/[[:alpha:]-z]/X/"}},
+		{"é\n", []string{"s/[[=a=]-z]/X/"}},
+		{"ééé\n", []string{"s/é/X/2"}},
+		{"éaé\n", []string{"/é$/s//X/"}},
+		{"é\n", []string{"-n", "/^.$/p"}},
+		{"é\n", []string{"-n", "/^..$/p"}},
+		{"Ǆǅǆ\n", []string{"s/ǅ/X/Ig"}},
+		{"aé\n", []string{"s/\\(é\\)/\\L\\1\\U\\1/"}},
+		{"ﬀ\n", []string{"s/.*/\\U&/"}},
+		{"é\n", []string{"--posix", "s/./X/"}},
+		{"a é\n", []string{"s/\\s/X/;s/\\S\\S*/Y/"}},
+	} {
+		for _, locale := range []string{"C.UTF-8", "C"} {
+			cases = append(cases, invocation{name: "locale " + locale + " " + strings.Join(c.args, " ") + " " + strconv.Quote(c.in), args: c.args, stdin: c.in, env: []string{"LC_ALL=" + locale}})
+		}
+	}
+	for _, env := range [][]string{{"LC_ALL=C.utf8"}, {"LC_ALL=", "LC_CTYPE=C.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8"}, {"LC_ALL=", "LC_CTYPE=C", "LANG=C.UTF-8"}, {"LC_ALL=C", "LC_CTYPE=C.UTF-8"}} {
+		cases = append(cases, invocation{name: "locale from " + strings.Join(env, " "), args: []string{"s/./X/g;y/é/e/"}, stdin: "aé\xff\n", env: env})
+	}
+	return cases
+}
+
+// sedDebugCases: --debug prints the program and a trace of each cycle. Each
+// script runs on lines that end in a newline, and on bytes that the trace
+// escapes, with no newline after the last line.
+func sedDebugCases() []invocation {
+	var cases []invocation
+	inputs := []string{"ab\ncd\nef\n", "a\x01\x08\x7f\x80\xff\tb\\c\nx"}
+	for _, script := range []string{
+		"1{h;s/a/X/gw /dev/null\n};$!d;/b/I,+2!p;y/ab/cd/;l 5;=;a foo\ni\\\nbar\nc baz\n:x\nb y;t x;T;r f3\nR f4\nw /dev/null\nW /dev/null\nq5;Q;s/x/\\U&\\E\\l&/2pie;N;n;D;P;G;H;x;z;F;e echo hi\n#c\n0~3p;2,~4p;\\,x,Mp;/x/,/y/p;$p;v\n:y",
+		`s/\(a\)\|\(b\)/[\1\2]/g`, `s/x/y/`, `n;N;D`, `G;H;x;g`, `2q`, `2Q7`, `$!N;P;D`, `s/\(.\)\(x\)*/\1/`, `=;l;F`,
+		`z;s/^$/e/`, `1!G;h;$!d`, "2c\\\nX", "1,2c\\\nX", `y/a\n/\tb/`, `y/cba/xyz/`, `s/a/\n\t\\/`, `1{b x};:x`, `1{2{p};x}`,
+		`s/a/&&/2`, `e echo hi`, `e`, `s/a/echo z/e`, `n`, `D`, "a X\nn", `\%a%Ip;s/a/b/Mg3w /dev/stdout`, `//p`, `/a/s//x/`,
+		`s/\o377\t/x/`, `0,/c/p;2,~2p;1~2p;$p`, `b;:a;t;T a`, `l 1;l 0`, `s/a/\u&x\Ub\lc\Ed\L\uE/`, `s/\(.*\)/\L\1\E-\U\1/;s/$/\\/`,
+		"2i\\\nX\\\nY", "$a\\\nEND", `s/\(x\)*\(b\)/\2\1/`, `s/a/x/gp`, `w /dev/stdout`, `e printf 'a\\0b'`, `$!{N};P;D`, `2{x;p;x}`,
+		`s/b*/x/g`, `s/a\nb\.\x41\x5c\*\t\d065\o101\cA[\n]\w/x/`, `s/a/\x26\x5c\&\\/`, `s,a\,b,x\,y,`, `/a/,$!{/b/d}`,
+		`s/\(a\|b\)\+/<\1>/g`, `:a;N;$!ba;s/\n/ /g`, `!p;1!{p}`, "#n\np",
+	} {
+		for k, in := range inputs {
+			cases = append(cases, invocation{name: "debug " + script + " #" + strconv.Itoa(k), args: []string{"--debug", script}, stdin: in, seedTree: sedTree})
+		}
+	}
+	for _, args := range [][]string{
+		{"-n", "--debug", `N;N;s/\n/+/;P;D`}, {"-z", "--debug", "s/b/x/;l"}, {"-E", "--debug", `s/(a|b)+/<\1>/g`},
+		{"--posix", "--debug", `s/a/\U&/`}, {"-s", "--debug", "-n", "$=;F", "f3", "f4"}, {"--debug", "-n", "$p;F", "f3", "-", "na"},
+		{"--debug", "-i", "s/1/X/;$F;w o", "f3", "f4"}, {"--debug", "p", "nosuch", "f3"}, {"--debug", "-i", "p"}, {"--debug", "-u", "-l", "3", "l"},
+	} {
+		cases = append(cases, invocation{name: "debug " + strings.Join(args, " "), args: args, stdin: "ab\ncd\n", seedTree: sedTree})
+	}
+	cases = append(cases, invocation{name: "debug with POSIXLY_CORRECT", args: []string{"--debug", "N;N;n"}, stdin: "a\nb\nc\nd\n", env: []string{"POSIXLY_CORRECT=1"}})
+	for _, script := range []string{`s/.*/\U&/`, `s/.*/\L&/`, `s/.*/\u&/`, `s/\(.\)\(.*\)/\l\1\U\2/`} {
+		cases = append(cases, invocation{name: "case conversion of bytes above 127 " + script, args: []string{script}, stdin: "a\x80\xc3\xa9z\xff\n"})
+	}
+	for _, script := range []string{"e", "s/^//e", "s/^//ep"} {
+		cases = append(cases, invocation{name: "e on a last line with no newline " + script, args: []string{script}, stdin: "echo a\necho b"})
+	}
 	return cases
 }
 
@@ -118,23 +306,6 @@ func TestSedHelpVersion(t *testing.T) {
 	requireHelp(t, "sed", []string{"--he"}, 0)
 	requireVersion(t, "sed", []string{"--version"}, 0)
 	requireVersion(t, "sed", []string{"--vers"}, 0)
-}
-
-// --debug traces the run in a form of GNU sed's own. The port does not have
-// it, and says so instead of running without the trace.
-func TestSedDebugIsRefused(t *testing.T) {
-	cmd := exec.Command(fernBin(t, "sed"), "--debug", "p")
-	cmd.Stdin = strings.NewReader("a\n")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	exit, ok := err.(*exec.ExitError)
-	if !ok || exit.ExitCode() != 1 {
-		t.Fatalf("sed --debug: want exit 1, got %v", err)
-	}
-	if len(out) != 0 || !strings.HasSuffix(stderr.String(), ": this port does not have the option '--debug'\n") {
-		t.Fatalf("sed --debug: stdout %q, stderr %q", out, stderr.String())
-	}
 }
 
 // sedScriptCases: The script language: addresses, commands, flags and the errors of the script.

@@ -35,7 +35,7 @@ function empty(why: string): irtables.LowerState {
 }
 
 function supported_integer(i: typeinfo.TypeI32): boolean {
-  return i.width == 32 || i.width == 8 && i.unsigned || i.width == 64 || i.width == typeinfo.width_ptr() && i.unsigned;
+  return i.width == 32 || i.width == 16 || i.width == 8 && i.unsigned || i.width == 64 || i.width == typeinfo.width_ptr() && i.unsigned;
 }
 
 function narrow_slot(t: typeinfo.Type): boolean {
@@ -43,6 +43,9 @@ function narrow_slot(t: typeinfo.Type): boolean {
 }
 
 function elem_width(t: typeinfo.Type): i32 {
+  if (half_elem(t)) {
+    return 16;
+  }
   if (compact_elem(t)) {
     return 32;
   }
@@ -62,6 +65,14 @@ function compact_elem(t: typeinfo.Type): boolean {
     return i.width == 32;
   }
   return ssasem.is_f32(t);
+}
+
+// A u16 or an i16, which an array holds in 2 bytes.
+function half_elem(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return i.width == 16;
+  }
+  return false;
 }
 
 // The write of the `elem` value on the stack with `op`.
@@ -146,7 +157,7 @@ function arr_get_op(elem: typeinfo.Type, unchecked: boolean, f: ssasem.Func): ir
   if (unchecked) {
     op = ir.op_arr_get_nc(elem_width(elem));
   }
-  if (ssasem.is_u32(elem) || ssasem.is_f32(elem)) {
+  if (ssasem.is_u32(elem) || ssasem.is_u16(elem) || ssasem.is_f32(elem)) {
     op = ir.Op { ...op, unsigned: true };
   }
   if (ssasem.counted(f, elem)) {
@@ -163,6 +174,9 @@ function arr_set_op(elem: typeinfo.Type): ir.Op {
 }
 
 function arr_push_op(elem: typeinfo.Type): ir.Op {
+  if (half_elem(elem)) {
+    return ir.half(ir.op_arr_push_owned());
+  }
   if (compact_elem(elem)) {
     return ir.compact(ir.op_arr_push_owned());
   }
@@ -179,6 +193,9 @@ function arr_push_op(elem: typeinfo.Type): ir.Op {
 }
 
 function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
+  if (half_elem(elem)) {
+    return ir.half(ir.op_arr_push());
+  }
   if (compact_elem(elem)) {
     return ir.compact(ir.op_arr_push());
   }
@@ -3054,13 +3071,21 @@ function binary_kind(op: string): string {
   return "ne";
 }
 
-function wraps(op: string): boolean {
-  return op == "+" || op == "-" || op == "*" || op == "<<";
+// The quotient of the least i16 and -1 is the one result of an i16 division
+// that does not fit in 16 bits.
+function wraps(op: string, t: typeinfo.Type): boolean {
+  return op == "+" || op == "-" || op == "*" || op == "<<" || op == "/" && ssasem.is_i16(t);
 }
 
 function wrap_kind(t: typeinfo.Type): string {
   if (ssasem.is_u8(t)) {
     return "u8";
+  }
+  if (ssasem.is_u16(t)) {
+    return "u16";
+  }
+  if (ssasem.is_i16(t)) {
+    return "i16";
   }
   if (ssasem.is_u32(t)) {
     return "u32";
@@ -3262,6 +3287,12 @@ function overflow_kind(t: typeinfo.Type): string {
   if (ssasem.is_u8(t)) {
     return "u8";
   }
+  if (ssasem.is_u16(t)) {
+    return "u16";
+  }
+  if (ssasem.is_i16(t)) {
+    return "i16";
+  }
   if (ssasem.is_u32(t)) {
     return "u32";
   }
@@ -3299,7 +3330,7 @@ function scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irt
   } else {
     r = emit(r, ir.op_bin("sub", w, false));
   }
-  if (!wraps(ins.str) || register_width(f.values[ins.result])) {
+  if (!wraps(ins.str, f.values[ins.result]) || register_width(f.values[ins.result])) {
     return r;
   }
   return emit(r, ir.op_int_cast(wrap_kind(f.values[ins.result])));
@@ -3319,18 +3350,28 @@ function narrow_mask(from: typeinfo.Type, to: typeinfo.Type): string {
   if (ssasem.is_u8(from)) {
     return "";
   }
+  if (ssasem.is_u16(to) || ssasem.is_i16(to)) {
+    return wrap_kind(to);
+  }
+  if (ssasem.is_u16(from) || ssasem.is_i16(from) && ssasem.is_i32(to)) {
+    return "";
+  }
   if (ssasem.is_u32(to)) {
     return "u32";
   }
   return "i32";
 }
 
-function out_of_float(own r: irtables.LowerState, to: typeinfo.Type): irtables.LowerState {
-  r = emit(r, from_f64(to));
-  if (!ssasem.is_u8(to)) {
+// The cast to a type narrower than 32 bits, after a conversion that gives 32.
+function narrow_after(own r: irtables.LowerState, to: typeinfo.Type): irtables.LowerState {
+  if (!ssasem.is_u8(to) && !ssasem.is_u16(to) && !ssasem.is_i16(to)) {
     return r;
   }
-  return emit(r, ir.op_int_cast("u8"));
+  return emit(r, ir.op_int_cast(wrap_kind(to)));
+}
+
+function out_of_float(own r: irtables.LowerState, to: typeinfo.Type): irtables.LowerState {
+  return narrow_after(emit(r, from_f64(to)), to);
 }
 
 function from_f64(to: typeinfo.Type): ir.Op {
@@ -3387,11 +3428,7 @@ function cast(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtab
     return emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
   }
   if (ssasem.is_wide(from)) {
-    r = emit(r, ir.op_int_wrap(ssasem.is_unsigned_int(to)));
-    if (!ssasem.is_u8(to)) {
-      return r;
-    }
-    return emit(r, ir.op_int_cast("u8"));
+    return narrow_after(emit(r, ir.op_int_wrap(ssasem.is_unsigned_int(to))), to);
   }
   let mask = narrow_mask(from, to);
   if (mask == "") {
@@ -3408,11 +3445,7 @@ function from_address(own r: irtables.LowerState, to: typeinfo.Type): irtables.L
   if (ssasem.is_wide(to)) {
     return r;
   }
-  r = emit(r, ir.op_int_wrap(ssasem.is_unsigned_int(to)));
-  if (!ssasem.is_u8(to)) {
-    return r;
-  }
-  return emit(r, ir.op_int_cast("u8"));
+  return narrow_after(emit(r, ir.op_int_wrap(ssasem.is_unsigned_int(to))), to);
 }
 
 function into_address(own r: irtables.LowerState, from: typeinfo.Type): irtables.LowerState {
@@ -4099,6 +4132,9 @@ function static_box(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
 function array_shape(elem: typeinfo.Type): string {
   if (ssasem.is_u8(elem)) {
     return "&bytes";
+  }
+  if (half_elem(elem)) {
+    return "&arr16";
   }
   if (compact_elem(elem)) {
     return "&arr32";
@@ -5057,7 +5093,8 @@ function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
 
 function with_set_op(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
   if let typeinfo.TypeLanes(l) = f.values[ins.args[2]] {
-    return ir.Op { ...ir.op_lane("vset", l.width), unsigned: ins.str == "lane_bytes" };
+    let op = ir.Op { ...ir.op_lane("vset", l.width), unsigned: ins.str == "lane_bytes" };
+    return if (ins.str == "lane_bytes" && ins.imm == ssasem.lane_span_proven()) { ir.in_bounds(op) } else { op };
   }
   if (ins.imm == 1 || p.checked_writes[ins.result]) {
     return ir.in_bounds(arr_set_op(elem));
@@ -6750,6 +6787,9 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__alloc_i32") {
     return Lowered { found: true, r: emit(r, ir.op_alloc_slots(32)) };
   }
+  if (ins.str == "__alloc_u16" || ins.str == "__alloc_i16") {
+    return Lowered { found: true, r: emit(r, ir.op_alloc_slots(16)) };
+  }
   if (ins.str == "__alloc_i64" || ins.str == "__alloc_f64") {
     return Lowered { found: true, r: emit(r, ir.op_alloc_slots(64)) };
   }
@@ -6943,6 +6983,7 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_masks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks())) },
+    "__scan_masks_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks_bytes())) },
     "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },
     "__count_runs_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs_bytes())) },

@@ -66,6 +66,16 @@ chose stays.
 
 A paused fluid uses no power: the app draws a frame only after a change.
 
+## Speed
+
+The fluid draws at most 2 pixels across one dp, as the page does, and the
+GPU makes that picture as large as the window. The controls draw at the
+resolution of the window. The `max_pixel_ratio` setting changes the limit.
+
+The dialog shows the frame rate of the last second, and the longest time
+from one frame to the next, next to its close button. Each 5 seconds, the app
+writes the same text to its log. `adb logcat -s fern` shows the lines.
+
 ## Settings
 
 Each value of the simulation has a default. A string extra of the Intent
@@ -109,13 +119,14 @@ to its log, and ignores it.
 | `sunrays` | `true` | boolean |
 | `sunrays_resolution` | 196 | 32 to 1024 |
 | `sunrays_weight` | 0.5 | 0 to 2 |
+| `max_pixel_ratio` | 2 | 0.5 to 4 |
 
 ## What is not the same as the page
 
 | The page | The app |
 |---|---|
 | Two backends, WebGPU and WebGL, and a `backend` setting | One backend, OpenGL ES 3 |
-| A `max_pixel_ratio` setting | The resolution of the window |
+| A step of 1/60 second, and a frame with no step or with two steps on some displays | One step for each frame, of the time of the frame, so the fluid moves by the same amount in each frame at 60, 90 and 120 Hz |
 | A default `dye_resolution` of 1024, and 512 on a phone | A default of 512 |
 | A slower advection shader for a GPU that does not filter float textures | No such shader: each OpenGL ES 3 GPU filters half-float textures |
 | Each finger pushes the dye | One finger pushes the dye: `std/android` gives an app the first pointer of a touch only |

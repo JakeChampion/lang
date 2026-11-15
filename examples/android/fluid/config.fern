@@ -33,9 +33,12 @@ pub struct Config {
   sunrays: boolean,
   sunrays_resolution: i32,
   sunrays_weight: f64,
+  max_pixel_ratio: f64,
 }
 
-// The dye resolution is the one that the web page gives a phone.
+// The dye resolution is the one that the web page gives a phone. The GPU
+// draws at most `max_pixel_ratio` pixels across one dp. More pixels cost
+// power, and the soft picture of the fluid does not show them.
 pub function defaults(): Config {
   return Config {
     sim_resolution: 128,
@@ -63,6 +66,7 @@ pub function defaults(): Config {
     sunrays: true,
     sunrays_resolution: 196,
     sunrays_weight: 0.5,
+    max_pixel_ratio: 2.0,
   };
 }
 
@@ -107,6 +111,7 @@ function specs(): Spec[] {
     Spec { key: "sunrays", kind: BOOLEAN, min: 0.0, max: 0.0 },
     Spec { key: "sunrays_resolution", kind: INT, min: 32.0, max: 1024.0 },
     Spec { key: "sunrays_weight", kind: NUMBER, min: 0.0, max: 2.0 },
+    Spec { key: "max_pixel_ratio", kind: NUMBER, min: 0.5, max: 4.0 },
   ];
 }
 
@@ -291,7 +296,10 @@ function with_number(c: Config, key: string, v: f64): Config {
   if (key == "bloom_soft_knee") {
     return Config { ...c, bloom_soft_knee: v };
   }
-  return Config { ...c, sunrays_weight: v };
+  if (key == "sunrays_weight") {
+    return Config { ...c, sunrays_weight: v };
+  }
+  return Config { ...c, max_pixel_ratio: v };
 }
 
 function with_flag(c: Config, key: string, v: boolean): Config {

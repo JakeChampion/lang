@@ -2,7 +2,7 @@
 
 Status: [policy] decided integer semantics.
 
-Fern's integer types (`u8`, `i32`/`u32`, `i64`/`u64`, and the
+Fern's integer types (`u8`, `i16`/`u16`, `i32`/`u32`, `i64`/`u64`, and the
 target-width `usize`) have **fully portable, never-trapping**
 semantics: every integer operation produces the same result on every
 backend (`interp`, `arm64`, `arm64-darwin`, `x86_64`, `wasm`) for the
@@ -17,7 +17,8 @@ the float edges are under-specified, the integer edges are pinned.
 
 An implicit numeric conversion must preserve every source value.
 The fixed integer conversions are `i32` to `i64`, `u8` to
-`u32`/`u64`/`i32`/`i64`, and `u32` to `u64`/`i64`.
+`u16`/`i16`/`u32`/`u64`/`i32`/`i64`, `u16` to `u32`/`u64`/`i32`/`i64`, `i16`
+to `i32`/`i64`, and `u32` to `u64`/`i64`.
 The float conversion is `f32` to `f64`.
 Other conversions require an explicit `as` cast.
 
@@ -43,7 +44,8 @@ so on an unsigned type it wraps too.
 
 ```
 255u8 + 1   == 0          // wraps at 8 bits
-2147483647 + 1 == -2147483648   // i32
+65535u16 + 1 == 0         // wraps at 16 bits
+32767i16 + 1 == -32768    // i16
 100000 * 100000 == 1410065408   // i32, mod 2^32
 -(5 as u32) == 4294967291 // u32, mod 2^32
 ```

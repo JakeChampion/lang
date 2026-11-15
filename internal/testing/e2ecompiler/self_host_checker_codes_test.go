@@ -689,7 +689,18 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"boolean-method-missing", "function main(): i32 { let b = true; return b.nope(); }\n", []string{"E043"}},
 		{"boolean-to-string-builtin", "function main(): i32 { let b = true; let s: string = b.to_string(); print(f\"<{b}>\"); print(b); return s.len(); }\n", nil},
 		{"boolean-to-string-is-a-string", "function main(): i32 { let n: i32 = true.to_string(); return n; }\n", []string{"E003"}},
-		{"unsigned-negation", "function main(): i32 { let x: u32 = 5; let y: u32 = -x; let z: u8 = 1; let w: u8 = -z; let d: usize = 2; let e: usize = -d; return 0; }\n", nil},
+		{"unsigned-negation", "function main(): i32 { let x: u32 = 5; let y: u32 = -x; let z: u8 = 1; let w: u8 = -z; let d: usize = 2; let e: usize = -d; let h: u16 = 3; let k: u16 = -h; return 0; }\n", nil},
+		{"sixteen-bit-widens-without-a-cast", "function a(n: u16): u32 { return n; }\nfunction b(n: u16): i32 { return n; }\nfunction c(n: i16): i64 { return n; }\nfunction d(n: u8): i16 { return n; }\nfunction e(n: u8): u16 { return n; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"sixteen-bit-narrows-with-as", "function main(): i32 { let x: i32 = 70000; let a = x as u16; let b = x as i16; let c = a as i16; let d = b as u16; return (a as i32) + (b as i32) + (c as i32) + (d as i32); }\n", nil},
+		{"i16-does-not-widen-to-u32", "function f(n: i16): u32 { return n; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"u16-does-not-widen-to-i16", "function f(n: u16): i16 { return n; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"i32-does-not-narrow-to-u16", "function f(n: i32): u16 { return n; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"u16-literal-out-of-range", "function main(): i32 { let x: u16 = 65536; return x as i32; }\n", []string{"E047"}},
+		{"i16-literal-out-of-range", "function main(): i32 { let x: i16 = -32769; return x as i32; }\n", []string{"E047"}},
+		{"i16-literal-least-in-range", "function main(): i32 { let x: i16 = -32768; let y: u16 = 65535u16; return x as i32 + y as i32; }\n", nil},
+		{"sixteen-bit-zeroed-allocations", "function main(): i32 { let a: u16[] = __alloc_u16(3); let b: i16[] = __alloc_i16(2); return a.len() + b.len(); }\n", nil},
+		{"sixteen-bit-allocation-element-type", "function main(): i32 { let a: i16[] = __alloc_u16(3); return a.len(); }\n", []string{"E003"}},
+		{"sixteen-bit-to-string", "function main(): i32 { let a: u16 = 65535; let b: i16 = -1; return a.to_string().len() + b.to_string().len() + f\"{a}{b}\".len(); }\n", nil},
 		{"union-method-missing", "struct Circle { r: i32 }\nstruct Square { s: i32 }\ntype Shape = Circle | Square;\nfunction main(): i32 { let sh: Shape = Circle { r: 1 }; return sh.area(); }\n", []string{"E043"}},
 		{"enum-and-union-methods-ok", "enum Color { Red, Green }\nfunction (c: Color) n(): i32 { return 1; }\nenum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) size(): i32 { return 1; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\ntype Shape = Circle | Square;\nfunction (sh: Shape) area(): i32 { return 1; }\nfunction (o: Option[T]) mine(): i32 { return 2; }\nfunction main(): i32 { let c: Color = Color.Red; let b: Box[i32] = Full(1); let sh: Shape = Circle { r: 1 }; let x: Option[i32] = Some(3); return c.n() + b.size() + sh.area() + x.mine(); }\n", nil},
 		{"enum-trait-method-ok", "trait Named { function name(self: Self): i32; }\nenum Color { Red, Green }\nimpl Named for Color { function name(self: Self): i32 { return 3; } }\nfunction main(): i32 { let c: Color = Color.Red; return c.name(); }\n", nil},
@@ -2283,6 +2294,17 @@ function main(): i32 { return 0; }
 		{"own-arg-spread-whole-own-arg", spreadSourceRead("n: eat_s(u)"), []string{"E051"}},
 		{"own-arg-spread-whole-in-array", spreadSourceRead("n: [u].len() as i32"), []string{"E051"}},
 		{"own-arg-spread-source-in-lambda", spreadSourceRead("n: (() => u.n)()"), []string{"E051"}},
+		{"own-arg-spread-borrowed-handle-field", literalFieldValue("b: H", "alt: b.w"), []string{"E051"}},
+		{"own-arg-spread-borrowed-handle-param", literalFieldValue("w: Writer", "alt: w"), []string{"E051"}},
+		{"own-arg-spread-borrowed-struct-field", literalFieldPrelude + "function f(own u: K, b: H): i32 {\n  let v = K { ...u, h: b };\n  return takek(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-self-update-borrowed", literalFieldPrelude + "function f(own u: H, b: H): i32 {\n  let v = H { ...u, n: 1 };\n  v = H { ...v, alt: b.alt };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-fresh-handle-field", literalFieldValue("b: H", "alt: stdout()"), nil},
+		{"own-arg-spread-own-param-handle-field", literalFieldValue("own w: Writer", "alt: w"), nil},
+		{"own-arg-spread-scalar-field", literalFieldValue("b: H", "n: b.n"), nil},
+		{"own-arg-spread-string-copy-field", literalFieldValue("b: H", "name: b.name"), nil},
+		{"own-arg-literal-borrowed-handle-fields", literalFieldPrelude + "function f(b: H): i32 {\n  let v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-literal-reassigned-borrow", literalFieldPrelude + "function f(own x: Writer, own y: Writer, b: H): i32 {\n  let v = H { w: x, alt: y, n: 0, name: \"\" };\n  v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-literal-own-param-fields", literalFieldPrelude + "function f(own x: Writer, own y: Writer): i32 {\n  let z = y;\n  let v = H { w: x, alt: z, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
@@ -2984,6 +3006,33 @@ function main(): i32 { return 0; }
 			want []string
 		}{"generic-builtin-method-name-" + name, "function " + fn + "(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}})
 	}
+	// The limit of the levels of nesting in a type (#15999).
+	deep := func(open, core, shut string, depth int) string {
+		return strings.Repeat(open, depth) + core + strings.Repeat(shut, depth)
+	}
+	for _, d := range []struct {
+		name  string
+		make  func(depth int) string
+		limit int
+	}{
+		{"constructor", func(n int) string { return "let x = " + deep("Some(", "1", ")", n) + ";" }, 63},
+		{"array-literal", func(n int) string { return "let x = " + deep("[", "1", "]", n) + ";" }, 63},
+		{"tuple", func(n int) string { return "let x = " + deep("(1, ", "2", ")", n) + ";" }, 63},
+		{"written-type", func(n int) string { return "let x: " + deep("Option[", "i32", "]", n) + " = None;" }, 63},
+		{"written-array-type", func(n int) string { return "let x: i32" + strings.Repeat("[]", n) + " = [];" }, 63},
+	} {
+		for _, at := range []struct {
+			label string
+			depth int
+			want  []string
+		}{{"at-the-limit-ok", d.limit, nil}, {"over-the-limit", d.limit + 1, []string{"E106"}}, {"far-over-the-limit", 2000, []string{"E106"}}} {
+			cases = append(cases, struct {
+				name string
+				src  string
+				want []string
+			}{"e106-depth-" + d.name + "-" + at.label, "function main(): i32 { " + d.make(at.depth) + " return 0; }\n", at.want})
+		}
+	}
 	cases = append(cases, tupleProjectionCases...)
 	cases = append(cases, exitResolutionCases...)
 	for _, tc := range cases {
@@ -3122,6 +3171,18 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 
 	progs := []struct{ name, src string }{
 		{"bytes-data-outside-block", `function main(): i32 { let b: u8[] = [1u8]; let p: usize = __bytes_data(b); return 0; }`},
+		{"sixteen-bit-joins", `function f(a: u16, b: i16, c: u8, d: u32): i64 { let x = a + b; let y = b + d; let z = c + a; let w: i64 = x + y + z; return w; } function main(): i32 { return 0; }`},
+		{"sixteen-bit-checked-and-saturating", `function f(a: u16, b: i16): i32 { let x = a +| 1; let y = b *| 2; let z = a +? 1; let w = b /? -1; return (x as i32) + (y as i32); } function main(): i32 { return 0; }`},
+		{"sixteen-bit-mismatched-operands", `function f(a: u16, b: u32): u16 { return a + b; } function main(): i32 { return 0; }`},
+		{"sixteen-bit-arrays", `function f(xs: u16[], ys: [i16]): i64 { let t: i64 = 0; for x in xs { t += x; } for y in ys { t += y; } return t; } function main(): i32 { let xs: u16[] = [1, 65535]; let ys: i16[] = [-1, 32767]; return f(xs, ys[0:1]) as i32; }`},
+		{"sixteen-bit-array-is-not-a-u32-array", `function f(xs: u16[]): u32[] { return xs; } function main(): i32 { return 0; }`},
+		{"spread-borrowed-handle-field", literalFieldValue("b: H", "alt: b.w")},
+		{"spread-borrowed-handle-param", literalFieldValue("w: Writer", "alt: w")},
+		{"spread-own-param-handle-field", literalFieldValue("own w: Writer", "alt: w")},
+		{"spread-fresh-handle-field", literalFieldValue("b: H", "alt: stdout()")},
+		{"spread-scalar-and-string-fields", literalFieldValue("b: H", "n: b.n, name: b.name")},
+		{"literal-borrowed-handle-fields", literalFieldPrelude + "function f(b: H): i32 {\n  let v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n"},
+		{"literal-nested-borrow", literalFieldPrelude + "function f(b: H): i32 {\n  let v = K { h: H { w: b.w, alt: b.alt, n: 0, name: \"\" }, n: 1 };\n  return takek(v);\n}\nfunction main(): i32 { return 0; }\n"},
 		{"bytes-data-inside-block", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b)); } return v - 7; }`},
 		{"bytes-data-kept-in-local", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { let p: usize = __bytes_data(b); v = __load_u8(p); } return v - 7; }`},
 		{"bytes-data-with-offset", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b) + 0 as usize); } return v - 7; }`},
@@ -4083,6 +4144,21 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 
 // spreadSourceRead is a program that passes `S { ...u, value }` to an own
 // parameter, where u is an own parameter.
+const literalFieldPrelude = `struct H { w: Writer, alt: Writer, n: i32, name: string }
+struct K { h: H, n: i32 }
+function take(own h: H): i32 { return h.n; }
+function takek(own k: K): i32 { return k.n; }
+`
+
+func literalFieldValue(params, value string) string {
+	return literalFieldPrelude + `function f(own u: H, ` + params + `): i32 {
+  let v = H { ...u, ` + value + ` };
+  return take(v);
+}
+function main(): i32 { return 0; }
+`
+}
+
 func spreadSourceRead(value string) string {
 	return `struct S { got: string[], label: string, tag: string, n: i32, m: i32, other: string[], r: Option[Reader] }
 function take(own s: S): i32 { return s.n + s.m; }

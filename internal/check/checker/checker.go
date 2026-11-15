@@ -74,6 +74,9 @@ type Info struct {
 	CallBorrowsBeside func(*ast.Call, string) bool
 	// CallOwnFlags reports which arguments of a call go to own parameters.
 	CallOwnFlags func(*ast.Call) []bool
+	// StructLitOwned reports a struct literal whose field values are each
+	// owned, as owned decides, or hold no handle.
+	StructLitOwned func(*ast.StructLit, func(ast.Expr) bool) bool
 	// NoReturn names the calls that never return: the builtin exit, and each
 	// function whose body never returns.
 	NoReturn map[string]bool
@@ -1126,6 +1129,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__scan_masks"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__scan_masks_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 			ast.NumberType{Width: 32, Signed: true},
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 		},
@@ -2393,6 +2404,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}},
 	}
+	c.info.FuncSigs["__alloc_u16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 16, Signed: false}},
+	}
+	c.info.FuncSigs["__alloc_i16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 16, Signed: true}},
+	}
 	c.info.FuncSigs["__alloc_i64"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
@@ -3153,6 +3172,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.CallScopedFresh = c.scopedCallFresh
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.CallOwnFlags = c.ownFlagsOf
+	c.info.StructLitOwned = c.structLitOwned
 	c.info.NoReturn = NoReturnFuncs(prog)
 
 	c.rewriteAssocConstReads(prog)
@@ -5934,6 +5954,10 @@ func builtinScalarMethod(typeName, name string) (string, bool) {
 		switch typeName {
 		case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "string":
 			return "__primitive_" + typeName + "_to_string", true
+		case "u16":
+			return "__primitive_u32_to_string", true
+		case "i16":
+			return "__primitive_i32_to_string", true
 		}
 	}
 	return "", false
@@ -5960,8 +5984,10 @@ type checker struct {
 	entryModule string
 	// Retain source types until contextual settlement selects conversions.
 	// Apply the casts after checking so every consumer sees the same AST.
-	numericTypes   map[ast.Expr]ast.Type
-	numericCasts   map[ast.Expr]*ast.CastExpr
+	numericTypes map[ast.Expr]ast.Type
+	numericCasts map[ast.Expr]*ast.CastExpr
+	// overLimit holds each call, tuple and array literal that has an E106, or that holds one.
+	overLimit      map[ast.Expr]bool
 	noRCIdentTypes map[*ast.Ident]ast.Type
 	// litTypes holds the type each struct literal checked to.
 	litTypes    map[*ast.StructLit]ast.Type
@@ -6674,6 +6700,10 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 }
 
 func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Position) {
+	if typeDepth(t, maxTypeDepth) > maxTypeDepth {
+		c.errfCode(pos, "E106", "type nests deeper than %d levels", maxTypeDepth)
+		return
+	}
 	switch x := t.(type) {
 	case ast.StructType:
 		if c.isBuiltinVec(x.Name, x.Args) {
@@ -6938,11 +6968,7 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 		if unsigned {
 			overflow = zero
 		} else {
-			maxLit := int64(2147483647)
-			if t.NormalWidth() == 64 {
-				maxLit = 9223372036854775807
-			}
-			minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1))
+			minExpr := bin("-", bin("-", num(0), num(signedMax(t))), num(1))
 			overflow = bin("||", zero,
 				bin("&&", bin("==", id(lN), minExpr), bin("==", id(rN), negOne)))
 		}
@@ -6962,11 +6988,7 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 			bin("<", bin("^", id(lN), id(rN)), num(0)),
 			bin("<", bin("^", id(sN), id(lN)), num(0)))
 	default:
-		maxLit := int64(2147483647)
-		if t.NormalWidth() == 64 {
-			maxLit = 9223372036854775807
-		}
-		minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1))
+		minExpr := bin("-", bin("-", num(0), num(signedMax(t))), num(1))
 		overflow = bin("&&", bin("!=", id(lN), num(0)),
 			bin("||",
 				bin("!=", bin("/", id(sN), id(lN)), id(rN)),
@@ -6985,6 +7007,11 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 		return nil
 	}
 	return block
+}
+
+// signedMax is the greatest value of the signed integer type t.
+func signedMax(t ast.NumberType) int64 {
+	return int64(1)<<(t.NormalWidth()-1) - 1
 }
 
 func (c *checker) buildCheckedCast(n *ast.DowncastExpr, src, dst ast.NumberType, s *scope) ast.Expr {
@@ -9138,7 +9165,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__mismatch_bytes": true, "__mismatch_bytes_str": true, "__count_byte_bytes": true, "__count_below_u64": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__scan_masks": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_masks": true, "__scan_masks_bytes": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
 	"__crc32_cksum": true, "__crc32_cksum_array": true, "__crc32_ieee_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true, "__mulhi_u64": true,
@@ -12120,6 +12147,10 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 // checkBlockExprAt checks a block whose value is expected to be of the union
 // type want; a nil want expects nothing of it.
 func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Type) ast.Type {
+	if n.Unsafe {
+		c.unsafeDepth++
+		defer func() { c.unsafeDepth-- }()
+	}
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
@@ -16947,10 +16978,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return paramSig(n.Params, n.ReturnType, n.ReturnOwn)
 	case *ast.BlockExpr:
-		if n.Unsafe {
-			c.unsafeDepth++
-			defer func() { c.unsafeDepth-- }()
-		}
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:
 		want := c.expectedType
@@ -17478,7 +17505,7 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
+	case "i32", "i64", "u8", "u16", "i16", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
 		return true
 	}
 	return false

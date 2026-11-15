@@ -79,6 +79,15 @@ function v_byte(n: i32): Value {
   return VInt { v: n & 255, is_char: false, is_byte: true };
 }
 
+// The low 16 bits of n, extended with the sign for an i16.
+function v_half(n: i64, signed: boolean): Value {
+  let lo = (n & 65535i64) as i32;
+  if (signed && lo >= 32768) {
+    return v_int(lo - 65536);
+  }
+  return v_int(lo);
+}
+
 function char_value(v: Value): Value {
   if let VInt(n) = v {
     if (n.is_char) {
@@ -222,6 +231,9 @@ function coerce_int_width(val: Value, type_name: string): Value {
   }
   if (type_name == "u8" && is_int_like(val)) {
     return v_byte(vint_as_i64(val) as i32);
+  }
+  if ((type_name == "u16" || type_name == "i16") && is_int_like(val)) {
+    return v_half(vint_as_i64(val), type_name == "i16");
   }
   if (type_name == "u32") {
     match (val) {
@@ -4295,7 +4307,7 @@ function is_checked_op(op: string): boolean {
 }
 
 function checked_operand_type(b: ast.ExprBinary, lv: Value): string {
-  let ints: string[] = ["u8", "i32", "u32", "i64", "u64"];
+  let ints: string[] = ["u8", "u16", "i16", "i32", "u32", "i64", "u64"];
   for side in [b.left, b.right] {
     let tag = ast.expr_ty(side);
     if let ast.ExprNumber(n) = side {
@@ -4312,10 +4324,12 @@ function eval_checked(op: string, lv: Value, rv: Value, ty: string): Value {
   if (!is_int_like(lv) || !is_int_like(rv)) {
     return v_err("checked operator `" + op + "` on a non-integer");
   }
-  let signed = ty == "i32" || ty == "i64";
+  let signed = ty == "i16" || ty == "i32" || ty == "i64";
   let width: i64 = 32;
   if (ty == "u8") {
     width = 8;
+  } else if (ty == "u16" || ty == "i16") {
+    width = 16;
   } else if (ty == "i64" || ty == "u64") {
     width = 64;
   }
@@ -4437,8 +4451,14 @@ function eval_typed_binary(op: string, lv: Value, rv: Value, ty: string): Value 
   if (ty == "u8" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
     return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), 0, 255) as i32);
   }
+  if (ty == "u16" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
+    return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), 0, 65535) as i32);
+  }
+  if (ty == "i16" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
+    return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), -32768, 32767) as i32);
+  }
   let v = eval_binary(op, lv, rv);
-  if (util.has_str(["u8", "i32", "u32", "i64", "u64", "usize"], ty)) {
+  if (util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], ty)) {
     return coerce_int_width(v, ty);
   }
   return v;
@@ -4762,148 +4782,193 @@ const EVAL_BINARY_ARITH_SET2: string[] = ["<", "<=", ">", ">="];
 
 const EVAL_BINARY_ARITH_SET3: string[] = ["&", "|", "^", "<<", ">>"];
 
+function eval_binary_arith_sub_mul_div(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VInt(li) => {
+      match (rv) {
+        VInt(ri) => {
+          if (op == "-") {
+            return v_int(li.v - ri.v);
+          }
+          if (op == "*") {
+            return v_int(li.v * ri.v);
+          }
+          if (op == "/") {
+            if (ri.v == 0) {
+              return v_int(0);
+            }
+            return v_int(li.v / ri.v);
+          }
+          if (ri.v == 0) {
+            return v_int(li.v);
+          }
+          return v_int(li.v % ri.v);
+        },
+        _ => {
+          return v_err("arithmetic rhs not i32");
+        }
+      }
+    },
+    VFloat(lf) => {
+      match (rv) {
+        VFloat(rf) => {
+          return match (op) {
+            "-" => v_float(lf.v - rf.v),
+            "*" => v_float(lf.v * rf.v),
+            "/" => v_float(lf.v / rf.v),
+            _ => v_err("`%` on f64 is unsupported"),
+          };
+        },
+        _ => {
+          return v_err("arithmetic rhs not f64");
+        }
+      }
+    },
+    _ => {
+      return v_err("arithmetic lhs not i32 or f64");
+    }
+  }
+  return eval_binary_arith_after_sub_mul_div(op, lv, rv);
+}
+
+function eval_binary_arith_after_sub_mul_div(op: string, lv: Value, rv: Value): Value {
+  if (util.has_str(EVAL_BINARY_ARITH_SET2, op)) {
+    return eval_binary_arith_compare(op, lv, rv);
+  }
+  return eval_binary_arith_after_compare(op, lv, rv);
+}
+
+function eval_binary_arith_compare(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VInt(li) => {
+      match (rv) {
+        VInt(ri) => {
+          return match (op) {
+            "<" => v_bool(li.v < ri.v),
+            "<=" => v_bool(li.v <= ri.v),
+            ">" => v_bool(li.v > ri.v),
+            _ => v_bool(li.v >= ri.v),
+          };
+        },
+        _ => {
+          return v_err("comparison rhs not i32");
+        }
+      }
+    },
+    VFloat(lf) => {
+      match (rv) {
+        VFloat(rf) => {
+          return match (op) {
+            "<" => v_bool(lf.v < rf.v),
+            "<=" => v_bool(lf.v <= rf.v),
+            ">" => v_bool(lf.v > rf.v),
+            _ => v_bool(lf.v >= rf.v),
+          };
+        },
+        _ => {
+          return v_err("comparison rhs not f64");
+        }
+      }
+    },
+    VString(ls) => {
+      if let VString(rs) = rv {
+        return v_bool(strings_ordered(op, ls.v, rs.v));
+      }
+      return v_err("comparison rhs not a string");
+    },
+    _ => {
+      return v_err("comparison lhs not i32, f64 or string");
+    }
+  }
+  return eval_binary_arith_after_compare(op, lv, rv);
+}
+
+function eval_binary_arith_after_compare(op: string, lv: Value, rv: Value): Value {
+  if (op == "==" || op == "!=") {
+    return eval_binary_arith_equal(op, lv, rv);
+  }
+  return eval_binary_arith_after_equal(op, lv, rv);
+}
+
+function eval_binary_arith_equal(op: string, lv: Value, rv: Value): Value {
+  let eq = value_eq(lv, rv);
+  if (op == "==") {
+    return v_bool(eq);
+  }
+  return v_bool(!eq);
+  return eval_binary_arith_after_equal(op, lv, rv);
+}
+
+function eval_binary_arith_after_equal(op: string, lv: Value, rv: Value): Value {
+  if (op == "&&" || op == "||") {
+    return eval_binary_arith_logic(op, lv, rv);
+  }
+  return eval_binary_arith_after_logic(op, lv, rv);
+}
+
+function eval_binary_arith_logic(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VBool(lb) => {
+      match (rv) {
+        VBool(rb) => {
+          if (op == "&&") {
+            return v_bool(lb.v && rb.v);
+          }
+          return v_bool(lb.v || rb.v);
+        },
+        _ => {
+          return v_err("logical rhs not bool");
+        }
+      }
+    },
+    _ => {
+      return v_err("logical lhs not bool");
+    }
+  }
+  return eval_binary_arith_after_logic(op, lv, rv);
+}
+
+function eval_binary_arith_after_logic(op: string, lv: Value, rv: Value): Value {
+  if (util.has_str(EVAL_BINARY_ARITH_SET3, op)) {
+    return eval_binary_arith_bits(op, lv, rv);
+  }
+  return eval_binary_arith_after_bits(op, lv, rv);
+}
+
+function eval_binary_arith_bits(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VInt(li) => {
+      match (rv) {
+        VInt(ri) => {
+          return match (op) {
+            "&" => v_int(li.v & ri.v),
+            "|" => v_int(li.v | ri.v),
+            "^" => v_int(li.v ^ ri.v),
+            "<<" => v_int(li.v << ri.v),
+            _ => v_int(li.v >> ri.v),
+          };
+        },
+        _ => {
+          return v_err("bitwise rhs not i32");
+        }
+      }
+    },
+    _ => {
+      return v_err("bitwise lhs not i32");
+    }
+  }
+  return eval_binary_arith_after_bits(op, lv, rv);
+}
+
+function eval_binary_arith_after_bits(op: string, lv: Value, rv: Value): Value {
+  return v_err("unknown binary op: " + op);
+}
+
 function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
   if (util.has_str(EVAL_BINARY_ARITH_SET, op)) {
-    match (lv) {
-      VInt(li) => {
-        match (rv) {
-          VInt(ri) => {
-            if (op == "-") {
-              return v_int(li.v - ri.v);
-            }
-            if (op == "*") {
-              return v_int(li.v * ri.v);
-            }
-            if (op == "/") {
-              if (ri.v == 0) {
-                return v_int(0);
-              }
-              return v_int(li.v / ri.v);
-            }
-            if (ri.v == 0) {
-              return v_int(li.v);
-            }
-            return v_int(li.v % ri.v);
-          },
-          _ => {
-            return v_err("arithmetic rhs not i32");
-          }
-        }
-      },
-      VFloat(lf) => {
-        match (rv) {
-          VFloat(rf) => {
-            return match (op) {
-              "-" => v_float(lf.v - rf.v),
-              "*" => v_float(lf.v * rf.v),
-              "/" => v_float(lf.v / rf.v),
-              _ => v_err("`%` on f64 is unsupported"),
-            };
-          },
-          _ => {
-            return v_err("arithmetic rhs not f64");
-          }
-        }
-      },
-      _ => {
-        return v_err("arithmetic lhs not i32 or f64");
-      }
-    }
+    return eval_binary_arith_sub_mul_div(op, lv, rv);
   }
-  if (util.has_str(EVAL_BINARY_ARITH_SET2, op)) {
-    match (lv) {
-      VInt(li) => {
-        match (rv) {
-          VInt(ri) => {
-            return match (op) {
-              "<" => v_bool(li.v < ri.v),
-              "<=" => v_bool(li.v <= ri.v),
-              ">" => v_bool(li.v > ri.v),
-              _ => v_bool(li.v >= ri.v),
-            };
-          },
-          _ => {
-            return v_err("comparison rhs not i32");
-          }
-        }
-      },
-      VFloat(lf) => {
-        match (rv) {
-          VFloat(rf) => {
-            return match (op) {
-              "<" => v_bool(lf.v < rf.v),
-              "<=" => v_bool(lf.v <= rf.v),
-              ">" => v_bool(lf.v > rf.v),
-              _ => v_bool(lf.v >= rf.v),
-            };
-          },
-          _ => {
-            return v_err("comparison rhs not f64");
-          }
-        }
-      },
-      VString(ls) => {
-        if let VString(rs) = rv {
-          return v_bool(strings_ordered(op, ls.v, rs.v));
-        }
-        return v_err("comparison rhs not a string");
-      },
-      _ => {
-        return v_err("comparison lhs not i32, f64 or string");
-      }
-    }
-  }
-  if (op == "==" || op == "!=") {
-    let eq = value_eq(lv, rv);
-    if (op == "==") {
-      return v_bool(eq);
-    }
-    return v_bool(!eq);
-  }
-  if (op == "&&" || op == "||") {
-    match (lv) {
-      VBool(lb) => {
-        match (rv) {
-          VBool(rb) => {
-            if (op == "&&") {
-              return v_bool(lb.v && rb.v);
-            }
-            return v_bool(lb.v || rb.v);
-          },
-          _ => {
-            return v_err("logical rhs not bool");
-          }
-        }
-      },
-      _ => {
-        return v_err("logical lhs not bool");
-      }
-    }
-  }
-  if (util.has_str(EVAL_BINARY_ARITH_SET3, op)) {
-    match (lv) {
-      VInt(li) => {
-        match (rv) {
-          VInt(ri) => {
-            return match (op) {
-              "&" => v_int(li.v & ri.v),
-              "|" => v_int(li.v | ri.v),
-              "^" => v_int(li.v ^ ri.v),
-              "<<" => v_int(li.v << ri.v),
-              _ => v_int(li.v >> ri.v),
-            };
-          },
-          _ => {
-            return v_err("bitwise rhs not i32");
-          }
-        }
-      },
-      _ => {
-        return v_err("bitwise lhs not i32");
-      }
-    }
-  }
-  return v_err("unknown binary op: " + op);
+  return eval_binary_arith_after_sub_mul_div(op, lv, rv);
 }
 
 function f64_trunc_u32(v: f64): i32 {
@@ -5173,6 +5238,12 @@ function eval_unary(op: string, ov: Value): Value {
   if (op == "as_u32") {
     return eval_unary_as_u32(ov);
   }
+  if (op == "as_u16") {
+    return v_half(vint_as_i64(eval_unary_as_u32(ov)), false);
+  }
+  if (op == "as_i16") {
+    return v_half(vint_as_i64(cast_i32_value(ov)), true);
+  }
   if (op == "as_i64" || op == "as_u64") {
     return eval_unary_as_i64(op, ov);
   }
@@ -5186,7 +5257,7 @@ function eval_unary(op: string, ov: Value): Value {
     return eval_unary_try(ov);
   }
   let is_as_opt = op.len() > 4 && op.starts_with("as?_");
-  if (is_as_opt && util.has_str(["u8", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
+  if (is_as_opt && util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
     return eval_unary_as_checked(op, ov);
   }
   if (is_as_opt) {
@@ -6003,7 +6074,7 @@ function settled_field(type_name: string, field: string, fv: Value, env: Env): V
 function eval_var_init(v: ast.StmtVar, env: Env): Value {
   if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
     if let ast.ExprCall(c) = v.init {
-      return eval_expr_call_expect(c, env, v.type_name);
+      return eval_expr_call_expect(c, env, bound_type_spelling(v.type_name, env));
     }
   }
   return eval_expr(v.init, env);
@@ -6368,11 +6439,21 @@ function tyarg_match_names(decl: string, tp: string, actual: string): string {
   if (decl == tp) {
     return actual;
   }
+  if (decl.ends_with("[]") && actual.ends_with("[]")) {
+    return tyarg_match_names(slice_unchecked(decl, 0, decl.len() - 2).to_owned(), tp, slice_unchecked(actual, 0, actual.len() - 2).to_owned());
+  }
   if (actual.len() == 0 || util.index_of_sub(decl, "[") < 0) {
     return "";
   }
   let dref = parser.parse_type_ref(decl);
   let aref = parser.parse_type_ref(actual);
+  if (dref.array_depth != aref.array_depth) {
+    return "";
+  }
+  if (dref.array_depth > 0) {
+    let delem = parser.render_type_ref(parser.TypeRef { ...dref, array_depth: 0 });
+    return tyarg_match_names(delem, tp, parser.render_type_ref(parser.TypeRef { ...aref, array_depth: 0 }));
+  }
   if (dref.base != aref.base || dref.args.len() != aref.args.len()) {
     return "";
   }
@@ -7707,22 +7788,36 @@ function call_crc32_array(name: string, args: Value[]): Value {
   return v_err(name + ": second arg must be an array");
 }
 
-// __scan_masks: the first offset at or after `from` where each probe of the
-// masks accepts its byte, or -1. Masks that are too short find nothing.
+// __scan_masks and __scan_masks_bytes: the first offset at or after `from`
+// where each probe of the masks accepts its byte, or -1. Masks that are too
+// short find nothing.
 // The checks of the arguments, and the loop of the kernel.
 // fern-lint: allow cyclomatic-complexity
-function call_scan_masks(args: Value[]): Value {
-  if (args.len() != 3 || !is_string_arg(args[0]) || !is_i32_arg(args[1])) {
-    return v_err("__scan_masks: expected 3 args (s, from, masks)");
+function call_scan_masks(name: string, args: Value[]): Value {
+  if (args.len() != 3 || !is_i32_arg(args[1])) {
+    return v_err(name + ": expected 3 args (s, from, masks)");
+  }
+  let text: u8[] = [];
+  if (name == "__scan_masks") {
+    if (!is_string_arg(args[0])) {
+      return v_err(name + ": expected 3 args (s, from, masks)");
+    }
+    text = vstr_of(args[0]).bytes();
+  } else {
+    let VArr(src) = args[0] else {
+      return v_err(name + ": the text must be a u8[]");
+    };
+    for k in 0..arr_len(src) {
+      text = text.append((vint_bits(arr_at(src, k)) & 255) as u8);
+    }
   }
   let VArr(arr) = args[2] else {
-    return v_err("__scan_masks: masks must be a u8[]");
+    return v_err(name + ": masks must be a u8[]");
   };
   let m: i32[] = [];
   for k in 0..arr_len(arr) {
     m = m.append(vint_bits(arr_at(arr, k)) & 255);
   }
-  let text = vstr_of(args[0]);
   let probes = if (m.len() < 4) { 0 } else { m[0] };
   if (probes < 1 || probes > 3 || m.len() < 4 + 32 * probes) {
     return v_int(-1);
@@ -8620,7 +8715,7 @@ function checked_alloc_length(args: Value[]): Value {
   return v_int(n as i32);
 }
 
-const CALL_FUNC_TARGS_SET: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
+const CALL_FUNC_TARGS_SET: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_u16", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
 
 const CALL_FUNC_TARGS_SET2: string[] = ["__clz32", "__ctz32", "__popcount32", "__clz64", "__ctz64", "__popcount64"];
 
@@ -9241,8 +9336,8 @@ function builtin_group_scale_f64(heap: interpheap.Heap, name: string, args: Valu
   if (name == "__scan_set") {
     return builtin_scan_set(args);
   }
-  if (name == "__scan_masks") {
-    return call_scan_masks(args);
+  if (name == "__scan_masks" || name == "__scan_masks_bytes") {
+    return call_scan_masks(name, args);
   }
   if (name == "__bsd_sum") {
     return builtin_bsd_sum(args);
@@ -10563,6 +10658,6 @@ const BUILTIN_GROUP_COUNT_BYTE_BYTES_NAMES: string[] = ["__count_byte_bytes", "_
 
 const BUILTIN_GROUP_SCAN_SET_BYTES_NAMES: string[] = ["__scan_set_bytes", "__count_runs_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__outer_mul_f64", "__inner_mul_add_f64", "__ct_secret", "__ct_public", "__bytes_owned"];
 
-const BUILTIN_GROUP_SCALE_F64_NAMES: string[] = ["__scale_f64", "__scan_set", "__scan_masks", "__bsd_sum", "__str_hash", "__count_runs", "__memchr", "__count_byte", "__sum_bytes"];
+const BUILTIN_GROUP_SCALE_F64_NAMES: string[] = ["__scale_f64", "__scan_set", "__scan_masks", "__scan_masks_bytes", "__bsd_sum", "__str_hash", "__count_runs", "__memchr", "__count_byte", "__sum_bytes"];
 
 const BUILTIN_GROUP_RMEMCHR_NAMES: string[] = ["__rmemchr", "__crc32_cksum", "__mismatch", "__ascii_run", "__arr_set_len", "cell_new", "f64_bits", "f64_from_bits", "f32_bits"];

@@ -472,6 +472,69 @@ function upstream_of(repo: refs.Repo, branch_in: string): Result[string, string]
   return Err("upstream branch '" + m + "' not stored as a remote-tracking branch");
 }
 
+// The remote-tracking ref of the ref `dst` of the remote `remote`, from
+// the refspecs of its fetch: `tracking_for_push_dest` of git.
+function tracking_for_push(repo: refs.Repo, remote: string, dst: string): Result[string, string] {
+  for e in repo.config.entries {
+    if (e.name == "remote." + remote + ".fetch") {
+      if let Some(t) = refspec_dst(e.value, dst) {
+        return Ok(t);
+      }
+    }
+  }
+  return Err("push destination '" + dst + "' on remote '" + remote + "' has no local tracking branch");
+}
+
+// The full name of the ref that `BRANCH@{push}` names, or the message of
+// git: `branch_get_push` with `push.default`.
+function push_of(repo: refs.Repo, branch_in: string): Result[string, string] {
+  let branch = branch_in;
+  if (branch.len() == 0) {
+    let head = refs.head_branch(repo);
+    if (!head.starts_with("refs/heads/")) {
+      return Err("HEAD does not point to a branch");
+    }
+    branch = objects.part(head, 11, head.len());
+  }
+  let c = repo.config;
+  let remote = match (c.get("branch." + branch + ".pushremote")) {
+    Some(r) => r,
+    None => match (c.get("remote.pushdefault")) {
+      Some(r) => r,
+      None => c.get("branch." + branch + ".remote").unwrap_or("origin"),
+    },
+  };
+  if (remote != "." && c.get("remote." + remote + ".url").is_none() && c.get("remote." + remote + ".pushurl").is_none()) {
+    return Err("branch '" + branch + "' has no remote for pushing");
+  }
+  let refname = "refs/heads/" + branch;
+  let pushes = c.all("remote." + remote + ".push");
+  if (pushes.len() > 0) {
+    for spec in pushes {
+      if let Some(dst) = refspec_dst(spec, refname) {
+        return tracking_for_push(repo, remote, dst);
+      }
+    }
+    return Err("push refspecs for '" + remote + "' do not include '" + branch + "'");
+  }
+  let mode = c.get("push.default").unwrap_or("simple").to_ascii_lower();
+  if (mode == "nothing") {
+    return Err("push has no destination (push.default is 'nothing')");
+  }
+  if (mode == "matching" || mode == "current") {
+    return tracking_for_push(repo, remote, refname);
+  }
+  if (mode == "upstream" || mode == "tracking") {
+    return upstream_of(repo, branch);
+  }
+  let up = upstream_of(repo, branch)?;
+  let cur = tracking_for_push(repo, remote, refname)?;
+  if (cur != up) {
+    return Err("cannot resolve 'simple' push to a single destination");
+  }
+  return Ok(cur);
+}
+
 // The destination of the ref `src` for the refspec `spec` of a fetch, as
 // `+refs/heads/*:refs/remotes/origin/*`, or None.
 function refspec_dst(spec_in: string, src: string): Option[string] {
@@ -518,6 +581,13 @@ function branch_name(repo: refs.Repo, name: string): (string, string) {
       if (up > 0 && !objects.part(name, 0, i).contains(":")) {
         return match (upstream_of(repo, objects.part(name, 0, i))) {
           Ok(full) => (full + objects.part(rest, up, rest.len()), ""),
+          Err(message) => ("", message),
+        };
+      }
+      let push = push_mark(rest);
+      if (push > 0 && !objects.part(name, 0, i).contains(":")) {
+        return match (push_of(repo, objects.part(name, 0, i))) {
+          Ok(full) => (full + objects.part(rest, push, rest.len()), ""),
           Err(message) => ("", message),
         };
       }
@@ -692,7 +762,7 @@ function oneline(st: Rev, pattern_in: string, starts: string[]): Rev {
       return fail(st);
     }
   }
-  let re = bre.bre_compile_syntax(pattern, bre.Syntax { emacs: false, newline_anchor: false, extended: true, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: true, dot_not_null: true });
+  let re = bre.bre_compile_syntax(pattern, bre.Syntax { emacs: false, newline_anchor: false, extended: true, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: true, dot_not_null: true, utf8: false });
   if (re.err.len() > 0) {
     return fail(st);
   }

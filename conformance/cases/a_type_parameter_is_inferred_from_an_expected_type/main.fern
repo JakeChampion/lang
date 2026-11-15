@@ -1,0 +1,59 @@
+// A call that writes no type arguments gets its type parameter from the
+// type the caller expects: the return type of the enclosing function, or
+// the declared type of a `let`. The callee then passes the parameter on.
+trait Make {
+  function make(n: i32): Self;
+}
+
+struct A { n: i32 }
+
+impl Make for A {
+  function make(n: i32): Self {
+    return A { n: n };
+  }
+}
+
+function many[T: Make](n: i32): T[] {
+  let out: T[] = [];
+  for i in 0..n {
+    out = out.append(T.make(i));
+  }
+  return out;
+}
+
+function one[T: Make](n: i32): T {
+  return T.make(n);
+}
+
+function inner_many[T: Make](n: i32): T[] {
+  return many[T](n);
+}
+
+function inner_one[T: Make](n: i32): T {
+  return one[T](n);
+}
+
+// The return type is an array of the type parameter.
+function from_return[T: Make](n: i32): T[] {
+  return inner_many(n);
+}
+
+// The declared type of the `let` is the type parameter.
+function from_let[T: Make](n: i32): T {
+  let r: T = inner_one(n);
+  return r;
+}
+
+// The declared type of the `let` is an array of the type parameter.
+function from_let_array[T: Make](n: i32): T[] {
+  let r: T[] = inner_many(n);
+  return r;
+}
+
+function main(): i32 {
+  let xs = from_return[A](3);
+  let a = from_let[A](5);
+  let ys = from_let_array[A](2);
+  print(xs.len().to_string() + " " + xs[2].n.to_string() + " " + a.n.to_string() + " " + ys.len().to_string() + " " + ys[1].n.to_string());
+  return 0;
+}

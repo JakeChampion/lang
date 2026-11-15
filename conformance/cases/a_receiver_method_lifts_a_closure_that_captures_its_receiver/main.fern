@@ -1,0 +1,12 @@
+import "std/http";
+import "std/http/router";
+import "std/platform";
+
+// handler() lifts a closure that captures a Router[P] in a method whose P
+// comes from the receiver.
+function main(): i32 {
+  let r = router.new[platform.Host]().get("/healthz", (req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
+  let h = r.handler();
+  print("lifted");
+  return 0;
+}

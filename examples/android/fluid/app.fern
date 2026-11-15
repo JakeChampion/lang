@@ -26,6 +26,37 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 @callback("app_main")
 function app_main_entry(): usize;
 
+// The frames that the app drew since `from_ns`, the time of the last one,
+// the longest time from one frame to the next, and the count of the seconds
+// that the pace measured.
+struct Pace { from_ns: i64, last_ns: i64, frames: i32, longest_ns: i64, seconds: i32 }
+
+function no_pace(): Pace {
+  return Pace { from_ns: 0i64, last_ns: 0i64, frames: 0, longest_ns: 0i64, seconds: 0 };
+}
+
+// The pace after a frame at `ns`, and the text of the frame rate when one
+// second of frames ends, or "". Each fifth second, the text goes to the log
+// also. A time of more than 1 second between two frames is a pause, and
+// starts the pace again.
+function (p: Pace) drew(ns: i64): (Pace, string) {
+  let gap = ns - p.last_ns;
+  if (p.frames == 0 || gap > 1000000000i64) {
+    return (Pace { ...p, from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64 }, "");
+  }
+  let next = Pace { ...p, last_ns: ns, frames: p.frames + 1, longest_ns: p.longest_ns.max(gap) };
+  let ms = (ns - p.from_ns) / 1000000i64;
+  if (ms < 1000i64) {
+    return (next, "");
+  }
+  let rate = ((next.frames - 1) as i64 * 1000i64 + ms / 2i64) / ms;
+  let text = rate.to_string() + " fps, longest " + (next.longest_ns / 1000000i64).to_string() + " ms";
+  if (p.seconds % 5 == 4) {
+    log.info("fluid: " + text);
+  }
+  return (Pace { from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64, seconds: p.seconds + 1 }, text);
+}
+
 // `unfit` tells that the GPU cannot run the simulation. `spoken` names the
 // items that the accessibility service has.
 struct App {
@@ -39,6 +70,7 @@ struct App {
   mt: overlay.Metrics,
   art: screen.Art,
   spoken: string,
+  pace: Pace,
 }
 
 function now_ms(): i64 {
@@ -87,6 +119,7 @@ function app_main(ctx: usize): usize {
     mt: overlay.Metrics { width: 1, height: 1, top: 0, bottom: 0, scale: 1.0, font: 1.0 },
     art: screen.no_art(),
     spoken: "",
+    pace: no_pace(),
   };
   let last = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => -1);
   closed(last);
@@ -150,6 +183,11 @@ function on_event(own s: App, e: android.Event): App {
       return laid_out(App { ...s, mt: overlay.Metrics { ...s.mt, top: top.max(0), bottom: (s.mt.height - bottom).max(0) } });
     },
     android.Vsync(ns) => {
+      // The next frame is asked for before this one draws. A frame that
+      // draws for a long time thus does not make the next one late.
+      if (s.model.animating(ns / 1000000i64)) {
+        android.request_frame(s.ctx);
+      }
       return frame(s, ns);
     },
     android.Touch(action, x, y) => {
@@ -215,6 +253,7 @@ function on_window(own s: App, w: android.Window): App {
   let width = w.width();
   let height = w.height();
   log.info("fluid: window " + width.to_string() + "x" + height.to_string());
+  let scale = android.density(s.ctx) as f64 / 160.0;
   let canvas: Option[gl.Canvas] = None;
   if let Some(c) = s.canvas {
     canvas = Some(c.attach(w));
@@ -225,14 +264,13 @@ function on_window(own s: App, w: android.Window): App {
   let unfit = s.unfit;
   if (canvas.is_some() && !unfit) {
     if let Some(f) = fl {
-      fl = Some(f.resized(s.model.cfg, width, height));
+      fl = Some(f.resized(s.model.cfg, width, height, scale));
     } else {
-      fl = sim.open(s.model.cfg, width, height, rand.rng_seed_from_os());
+      fl = sim.open(s.model.cfg, width, height, scale, rand.rng_seed_from_os());
       unfit = fl.is_none();
       log.info("fluid: gpu " + (!unfit).to_string());
     }
   }
-  let scale = android.density(s.ctx) as f64 / 160.0;
   let mt = overlay.Metrics { ...s.mt, width: width, height: height, scale: scale, font: scale * android.font_scale(s.ctx) };
   let on = laid_out(App { ...s, window: w.ptr, canvas: canvas, fluid: fl, unfit: unfit, mt: mt });
   return App { ...on, model: on.model.woke(monotonic_ns()) };
@@ -313,7 +351,7 @@ function frame(own s: App, ns: i64): App {
     return plain(out);
   };
   if let Some(f) = out.fluid {
-    f.render(m.cfg, f.window());
+    f.show(m.cfg);
     c.resume();
   } else {
     c.clear(draw.rgb(0, 0, 0));
@@ -324,7 +362,12 @@ function frame(own s: App, ns: i64): App {
       return lost(painted);
     },
     _ => {
-      return spoken(painted, ns / 1000000i64);
+      let (pace, speed) = painted.pace.drew(ns);
+      let model = painted.model;
+      if (speed.len() > 0) {
+        model = model.with_speed(speed);
+      }
+      return spoken(App { ...painted, pace: pace, model: model }, ns / 1000000i64);
     }
   }
 }

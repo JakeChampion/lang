@@ -1,0 +1,4 @@
+return value: expected u16, got i32
+return value: expected i16, got u32
+return value: expected i16, got u16
+return value: expected u8, got u16

@@ -73,6 +73,9 @@ function int_label(t: typeinfo.TypeI32): string {
     if (t.width == 8) {
       return "u8";
     }
+    if (t.width == 16) {
+      return "u16";
+    }
     if (t.width == typeinfo.width_ptr()) {
       return "usize";
     }
@@ -80,6 +83,9 @@ function int_label(t: typeinfo.TypeI32): string {
   }
   if (t.width == 64) {
     return "i64";
+  }
+  if (t.width == 16) {
+    return "i16";
   }
   return "i32";
 }
@@ -583,6 +589,12 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc_i32") {
     return typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false };
   }
+  if (argc == 1 && name == "__alloc_u16") {
+    return typeinfo.TypeArray { elem: typeinfo.t_u16(), view: false };
+  }
+  if (argc == 1 && name == "__alloc_i16") {
+    return typeinfo.TypeArray { elem: typeinfo.t_i16(), view: false };
+  }
   if (argc == 1 && name == "__alloc_i64") {
     return typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false };
   }
@@ -774,7 +786,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && util.has_str(["__ascii_run", "__bsd_sum", "__str_hash", "__count_byte", "__crc32_cksum", "__crc32_cksum_array", "__crc32_ieee_array", "__count_byte_bytes", "__count_below_u64", "__bsd_sum_bytes"], name)) {
     return typeinfo.t_i32();
   }
-  if (argc == 3 && util.has_str(["__scan_set", "__scan_masks", "__scan_set_bytes", "__count_runs", "__count_runs_bytes", "__memchr", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr"], name)) {
+  if (argc == 3 && util.has_str(["__scan_set", "__scan_masks", "__scan_masks_bytes", "__scan_set_bytes", "__count_runs", "__count_runs_bytes", "__memchr", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr"], name)) {
     return typeinfo.t_i32();
   }
   if (argc == 1 && name == "__sum_bytes_array") {
@@ -817,6 +829,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__clz32" || name == "__ctz32" || name == "__popcount32") {
     return ([typeinfo.t_u32()], true);
   }
+  return intrinsic_params_part_1(name, t);
+}
+
+function intrinsic_params_part_1(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__clz64" || name == "__ctz64" || name == "__popcount64") {
     return ([typeinfo.t_u64()], true);
   }
@@ -826,7 +842,11 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (util.has_str(["__alloc", "__fd_close", "__socket_from_fd"], name)) {
     return ([typeinfo.t_i32()], true);
   }
-  if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
+  return intrinsic_params_part_2(name, t);
+}
+
+function intrinsic_params_part_2(name: string, t: SigTable): (typeinfo.Type[], boolean) {
+  if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_u16" || name == "__alloc_i16" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
     return ([typeinfo.t_i32()], true);
   }
   if (name == "__free") {
@@ -838,6 +858,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__ptr_width") {
     return ([], true);
   }
+  return intrinsic_params_part_3(name, t);
+}
+
+function intrinsic_params_part_3(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__map_hash_seed") {
     return ([], true);
   }
@@ -859,6 +883,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__bytes_into") {
     return ([t_array(typeinfo.t_u8()), typeinfo.t_i32(), t_view(typeinfo.t_u8()), typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
+  return intrinsic_params_part_4(name, t);
+}
+
+function intrinsic_params_part_4(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (is_sha_hw_builtin(name)) {
     return ([], true);
   }
@@ -889,6 +917,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__task_enter") {
     return ([typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
+  return intrinsic_params_part_5(name, t);
+}
+
+function intrinsic_params_part_5(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__task_leave") {
     return ([], true);
   }
@@ -913,6 +945,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__task_cancelled") {
     return ([], true);
   }
+  return intrinsic_params_part_6(name, t);
+}
+
+function intrinsic_params_part_6(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__heap_mark") {
     return ([], true);
   }
@@ -928,6 +964,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__rc_inc" || name == "__rc_dec" || name == "__rc_get") {
     return ([t_array(typeinfo.t_u8())], true);
   }
+  return intrinsic_params_part_7(name, t);
+}
+
+function intrinsic_params_part_7(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__alloc_reuse") {
     return ([typeinfo.t_usize(), typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
@@ -946,6 +986,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__store_u8") {
     return ([typeinfo.t_usize(), typeinfo.t_i32()], true);
   }
+  return intrinsic_params_part_8(name, t);
+}
+
+function intrinsic_params_part_8(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__account_entry") {
     return ([typeinfo.t_i32(), typeinfo.t_usize()], true);
   }
@@ -973,6 +1017,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__mismatch_bytes") {
     return ([t_view(typeinfo.t_u8()), typeinfo.t_i32(), t_view(typeinfo.t_u8()), typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
+  return intrinsic_params_part_9(name, t);
+}
+
+function intrinsic_params_part_9(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__mismatch_bytes_str") {
     return ([t_array(typeinfo.t_u8()), typeinfo.t_i32(), typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
@@ -994,9 +1042,13 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__scan_set" || name == "__scan_masks") {
     return ([typeinfo.t_string(), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
   }
-  if (name == "__scan_set_bytes") {
+  if (name == "__scan_set_bytes" || name == "__scan_masks_bytes") {
     return ([t_array(typeinfo.t_u8()), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
   }
+  return intrinsic_params_part_10(name, t);
+}
+
+function intrinsic_params_part_10(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__count_runs") {
     return ([typeinfo.t_string(), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
   }
@@ -1021,6 +1073,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__crc32_cksum_array" || name == "__crc32_ieee_array") {
     return ([typeinfo.t_i32(), t_view(typeinfo.t_u8())], true);
   }
+  return intrinsic_params_part_11(name, t);
+}
+
+function intrinsic_params_part_11(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__memchr" || name == "__rmemchr") {
     return ([typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
@@ -1042,6 +1098,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__fern_rc_inc") {
     return ([typeinfo.t_usize()], true);
   }
+  return intrinsic_params_part_12(name, t);
+}
+
+function intrinsic_params_part_12(name: string, t: SigTable): (typeinfo.Type[], boolean) {
   if (name == "__fern_str_dec") {
     return ([typeinfo.t_string()], true);
   }
@@ -3893,13 +3953,13 @@ function scalar_integer_module(lb: string): string {
   if (lb == "u8") {
     return "std/u8";
   }
-  if (lb == "u32" || lb == "u16") {
+  if (lb == "u32") {
     return "std/u32";
   }
   if (lb == "i64") {
     return "std/i64";
   }
-  if (lb == "char") {
+  if (lb == "char" || lb == "u16" || lb == "i16") {
     return "";
   }
   return "std/i32";
@@ -4915,7 +4975,7 @@ function is_scalar_display_builtin(name: string): boolean {
 pub function builtin_method_sig(recv_name: string, name: string): typeinfo.Type {
   let builtin_name = "__method_" + recv_name + "_" + name;
   if (name == "to_string" && recv_name != "boolean") {
-    builtin_name = "__primitive_" + recv_name + "_to_string";
+    builtin_name = "__primitive_" + typeinfo.display_owner(recv_name) + "_to_string";
   }
   if let typeinfo.TypeFunc(bm) = builtin_sig(builtin_name) {
     let params: typeinfo.Type[] = [];
@@ -6214,9 +6274,23 @@ function projected_ret(ret_name: string, bn: string[], bt: typeinfo.Type[], s: S
 // that holds its argument two times doubles the type at each level of nesting.
 pub const MAX_TYPE_NODES: i32 = 4096;
 
+// The limit of the levels of nesting in a written type, and in the type of a
+// call, of a tuple or of an array literal. The work on a type grows faster
+// than its depth.
+pub const MAX_TYPE_DEPTH: i32 = 64;
+
 const TYPE_TOO_LARGE: string = "type has too many parts";
 
+const TYPE_TOO_DEEP: string = "type nests too deeply";
+
 function bounded_type(t: typeinfo.Type): typeinfo.Type {
+  let part = too_large_part(t);
+  if (type_too_large(part)) {
+    return part;
+  }
+  if (typeinfo.depth(t, MAX_TYPE_DEPTH) > MAX_TYPE_DEPTH) {
+    return t_unknown(TYPE_TOO_DEEP);
+  }
   if (typeinfo.nodes(t, MAX_TYPE_NODES) > MAX_TYPE_NODES) {
     return t_unknown(TYPE_TOO_LARGE);
   }
@@ -6225,12 +6299,33 @@ function bounded_type(t: typeinfo.Type): typeinfo.Type {
 
 function type_too_large(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(u) = t {
-    return u.reason == TYPE_TOO_LARGE;
+    return u.reason == TYPE_TOO_LARGE || u.reason == TYPE_TOO_DEEP;
   }
   return false;
 }
 
-// The E106 of a call or of a tuple whose type is over the limit. The result
+// The part of t that was over a limit, or t when it has none. A type that
+// holds such a part is over the limit too, and has no second diagnostic.
+function too_large_part(t: typeinfo.Type): typeinfo.Type {
+  for c in typeinfo.children(t) {
+    let part = too_large_part(c);
+    if (type_too_large(part)) {
+      return part;
+    }
+  }
+  return t;
+}
+
+function too_large_message(t: typeinfo.Type): string {
+  if let typeinfo.TypeUnknown(u) = t {
+    if (u.reason == TYPE_TOO_DEEP) {
+      return "type nests deeper than " + util.i32_to_string(MAX_TYPE_DEPTH) + " levels";
+    }
+  }
+  return "type has more than " + util.i32_to_string(MAX_TYPE_NODES) + " parts";
+}
+
+// The E106 of a call, of a tuple or of an array whose type is over a limit. The result
 // is found when an operand or the value is over the limit, and the diagnostic
 // is on the first value that is over it.
 function too_large_diags(value: typeinfo.Type, operands: ast.Expr[], line: i32, col: i32, s: Scope, out: util.Diag[]): (util.Diag[], boolean) {
@@ -6245,7 +6340,7 @@ function too_large_diags(value: typeinfo.Type, operands: ast.Expr[], line: i32, 
     out = util.append_diags(out, call_diags(operand, s));
   }
   if (!inner) {
-    out = out.append(dg_at("E106", "type has more than " + util.i32_to_string(MAX_TYPE_NODES) + " parts", line, col));
+    out = out.append(dg_at("E106", too_large_message(value), line, col));
   }
   return (out, true);
 }
@@ -6281,7 +6376,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       return bounded_type(t_tuple(elems));
     },
     ast.ExprArray(a) => {
-      return check_array_expr(a, s);
+      return bounded_type(check_array_expr(a, s));
     },
     ast.ExprBytes(_) => {
       return t_array(typeinfo.t_u8());
@@ -6340,6 +6435,12 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   }
   if (n.suffix == "u8") {
     return typeinfo.t_u8();
+  }
+  if (n.suffix == "u16") {
+    return typeinfo.t_u16();
+  }
+  if (n.suffix == "i16") {
+    return typeinfo.t_i16();
   }
   if (n.suffix == "usize") {
     return typeinfo.t_usize();
@@ -6580,6 +6681,9 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     return t_array(t_unknown("empty array literal"));
   }
   let first = check_expr(a.elements[0], s);
+  if (type_too_large(first)) {
+    return first;
+  }
   let gives = !reads_lit_local(a, s);
   let first_lit = element_literal_kind(a.elements[0], gives);
   let first_expr = a.elements[0];
@@ -7584,6 +7688,12 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   }
   if (name == "u8") {
     return typeinfo.t_u8();
+  }
+  if (name == "u16") {
+    return typeinfo.t_u16();
+  }
+  if (name == "i16") {
+    return typeinfo.t_i16();
   }
   if (name == "u32") {
     return typeinfo.t_u32();
@@ -12744,11 +12854,11 @@ function magnitude_is_zero(text: string, start: i32): boolean {
 }
 
 function main_result_ty(ty: string): boolean {
-  return ty == "void" || ty == "boolean" || ty == "i32" || ty == "i64" || is_unsigned_int_ty(ty);
+  return ty == "void" || ty == "boolean" || ty == "i16" || ty == "i32" || ty == "i64" || is_unsigned_int_ty(ty);
 }
 
 function is_unsigned_int_ty(ty: string): boolean {
-  return ty == "u8" || ty == "u32" || ty == "u64" || ty == "usize";
+  return ty == "u8" || ty == "u16" || ty == "u32" || ty == "u64" || ty == "usize";
 }
 
 function int_ty_max_dec(ty: string, negated: boolean): string {
@@ -12764,8 +12874,17 @@ function int_ty_max_dec(ty: string, negated: boolean): string {
     }
     return "9223372036854775807";
   }
+  if (ty == "i16") {
+    if (negated) {
+      return "32768";
+    }
+    return "32767";
+  }
   if (ty == "u8") {
     return "255";
+  }
+  if (ty == "u16") {
+    return "65535";
   }
   if (ty == "u32") {
     return "4294967295";
@@ -12789,8 +12908,17 @@ function int_ty_max_hex(ty: string, negated: boolean): string {
     }
     return "7fffffffffffffff";
   }
+  if (ty == "i16") {
+    if (negated) {
+      return "8000";
+    }
+    return "7fff";
+  }
   if (ty == "u8") {
     return "ff";
+  }
+  if (ty == "u16") {
+    return "ffff";
   }
   if (ty == "u32") {
     return "ffffffff";
@@ -14306,6 +14434,10 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
       out = diags;
     },
     ast.ExprArray(a) => {
+      let (large, found) = too_large_diags(check_expr(e, s), a.elements, a.line, a.col, s, out);
+      if (found) {
+        return large;
+      }
       out = call_diags_array(a, s, out);
       out = util.append_diags(out, lanes_inside_diags(check_expr(e, s), a.line, a.col));
     },
@@ -16717,6 +16849,10 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
     }
   }
   if let ast.ExprTuple(tup) = e {
+    let (large, found) = too_large_diags(check_expr(e, s), tup.elements, tup.line, tup.col, s, []);
+    if (found) {
+      return large;
+    }
     if let typeinfo.TypeTuple(dt) = dest {
       if (dt.elements.len() == tup.elements.len()) {
         let out: util.Diag[] = [];
@@ -16725,6 +16861,12 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
         }
         return out;
       }
+    }
+  }
+  if let ast.ExprArray(la) = e {
+    let (large, found) = too_large_diags(check_expr(e, s), la.elements, la.line, la.col, s, []);
+    if (found) {
+      return large;
     }
   }
   let elem = array_elem_type_of(dest);
@@ -18438,7 +18580,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   if (rt.len() == 0) {
     return true;
   }
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char" || typeinfo.lanes_width(rt) > 0) {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u16" || rt == "i16" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char" || typeinfo.lanes_width(rt) > 0) {
     return true;
   }
   for ch in rt {
@@ -18833,7 +18975,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
   "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_gen", "__task_inline", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
   "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
-  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
+  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u16", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
   "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
   "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
   "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
@@ -18846,7 +18988,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
   "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
   "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
-  "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_masks", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
+  "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_masks", "__scan_masks_bytes", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
   "__store_ptr", "__store_u8", "__str_bytes", "__bytes_data", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
   "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
@@ -20553,7 +20695,7 @@ function ow_is_owned(ctx: OwnCtx, name: string): boolean {
 }
 
 function ow_ownable_type(type_name: string): boolean {
-  let scalars: string[] = ["boolean", "i32", "i64", "u8", "u32", "u64", "f64", "f32", "char", "usize", "void"];
+  let scalars: string[] = ["boolean", "i32", "i64", "u8", "u16", "i16", "u32", "u64", "f64", "f32", "char", "usize", "void"];
   return !util.has_str(scalars, type_name);
 }
 
@@ -21495,6 +21637,38 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
   return found && lu_only_fresh_assigns(fx, name, seen);
 }
 
+// A struct literal is fresh when its base is fresh and each field value that
+// can hold a handle is fresh.
+function lu_fresh_lit(fx: LuFn, sl: ast.ExprStructLit): boolean {
+  if (sl.has_base && !lu_fresh_value(fx, sl.base)) {
+    return false;
+  }
+  for v in lu_handle_values(fx, sl) {
+    if (!lu_fresh_value(fx, v)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The field values that a struct literal sets that can hold a handle. A
+// number or a boolean literal holds none. The type of another value decides,
+// or the declared type of its field when the value has no type.
+function lu_handle_values(fx: LuFn, sl: ast.ExprStructLit): ast.Expr[] {
+  let out: ast.Expr[] = [];
+  for i in 0..sl.field_values.len() {
+    let v = sl.field_values[i];
+    let ty = ast.expr_ty(v);
+    if (ty.len() == 0) {
+      ty = ow_decl_field_type(fx.lenders.decls, sl.type_name, sl.field_names[i]);
+    }
+    if (!ow_scalar_literal(v) && !ow_holds_no_handle(ty, fx.lenders.decls)) {
+      out = out.append(v);
+    }
+  }
+  return out;
+}
+
 // An element read `v.1` of a fresh value no name holds, as a destructure binds it.
 function lu_fresh_projection(fx: LuFn, e: ast.Expr): boolean {
   let ast.ExprFieldAccess(fa) = e else {
@@ -21516,9 +21690,7 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
     }
   }
   if let ast.ExprStructLit(sl) = e {
-    if (sl.has_base) {
-      return lu_fresh_value(fx, sl.base);
-    }
+    return lu_fresh_lit(fx, sl);
   }
   if let ast.ExprTuple(_) = e {
     let empty: ast.Stmt[] = [];
@@ -21982,7 +22154,7 @@ function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]):
     return lu_if_body_owned(fx, name, branch.then_body, seen) && lu_if_body_owned(fx, name, branch.else_body, seen);
   }
   if let ast.ExprStructLit(sl) = e {
-    return sl.has_base && ow_ident_name(sl.base) == name;
+    return lu_assigned_update(fx, name, sl, seen);
   }
   if let ast.ExprCall(c) = e {
     return lu_plain_or_declared(fx, c) && !lu_call_borrows_beside(fx, c, name);
@@ -21998,6 +22170,20 @@ function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]):
     return lu_assigned_name_owned(fx, src, inner) || lu_payload_of(fx, src, name);
   }
   return lu_unpack_expr_in(fx, e, inner);
+}
+
+// A self-update `T { ...name, f: v }` whose each field value that can hold a
+// handle is an owned value to assign.
+function lu_assigned_update(fx: LuFn, name: string, sl: ast.ExprStructLit, seen: string[]): boolean {
+  if (!sl.has_base || ow_ident_name(sl.base) != name) {
+    return false;
+  }
+  for v in lu_handle_values(fx, sl) {
+    if (!lu_assigned_owned(fx, name, v, seen)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The transfer ends the payload's only use, before any intervening lender access.
@@ -22199,10 +22385,36 @@ function lu_owned_alias_in(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprIdent(src) = init {
     return lu_own_param(fx, src.name) && lu_is_last(fx, src);
   }
-  if let Some(src) = lu_spread_source(fx, init) {
-    return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
+  if let ast.ExprStructLit(sl) = init {
+    return lu_owned_lit(fx, init, sl);
   }
   return false;
+}
+
+// A struct literal takes its base and the names that it sets. It owns them
+// when each is an own parameter, a payload that a match took or a fresh
+// local, at its last use. Each other field value that can hold a handle must
+// be fresh or an unpack.
+function lu_owned_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit): boolean {
+  for v in lu_handle_values(fx, sl) {
+    if (!lu_fresh_value(fx, v) && !lu_unpack_expr(fx, v) && !lu_owned_source(fx, v)) {
+      return false;
+    }
+  }
+  if (!sl.has_base) {
+    return true;
+  }
+  let Some(src) = lu_spread_source(fx, init) else {
+    return false;
+  };
+  return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
+}
+
+function lu_owned_source(fx: LuFn, e: ast.Expr): boolean {
+  let ast.ExprIdent(src) = e else {
+    return false;
+  };
+  return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
 }
 
 // A named source at its last use transfers its payload to every yielding arm.
@@ -22549,10 +22761,35 @@ function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprIdent(src) = init {
     return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
   }
-  if let Some(src) = lu_spread_source(fx, init) {
-    return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
+  if let ast.ExprStructLit(sl) = init {
+    return lu_admitted_lit(fx, init, sl, seen);
   }
   return false;
+}
+
+// A struct literal takes its base and the names that it sets. Each must be
+// an owned name at its last use. Each other field value that can hold a
+// handle must be fresh or an unpack.
+function lu_admitted_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit, seen: string[]): boolean {
+  for v in lu_handle_values(fx, sl) {
+    if (!lu_fresh_value(fx, v) && !lu_unpack_expr(fx, v) && !lu_owned_last(fx, v, seen)) {
+      return false;
+    }
+  }
+  if (!sl.has_base) {
+    return true;
+  }
+  let Some(src) = lu_spread_source(fx, init) else {
+    return false;
+  };
+  return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
+}
+
+function lu_owned_last(fx: LuFn, e: ast.Expr, seen: string[]): boolean {
+  let ast.ExprIdent(src) = e else {
+    return false;
+  };
+  return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
 }
 
 // The base of a struct literal `T { ...src, f: v }`. The literal takes the
@@ -22706,9 +22943,23 @@ function lu_value_owned(fx: LuFn, target: string, e: ast.Expr, seen: string[]): 
     return lu_owned_name(fx, src.name, seen);
   }
   if let ast.ExprStructLit(sl) = e {
-    return sl.has_base && ow_ident_name(sl.base) == target;
+    return lu_owned_update(fx, target, sl, seen);
   }
   return false;
+}
+
+// A self-update `T { ...target, f: v }` whose each field value that can hold
+// a handle is owned.
+function lu_owned_update(fx: LuFn, target: string, sl: ast.ExprStructLit, seen: string[]): boolean {
+  if (!sl.has_base || ow_ident_name(sl.base) != target) {
+    return false;
+  }
+  for v in lu_handle_values(fx, sl) {
+    if (!lu_value_owned(fx, target, v, seen)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function lu_base_admitted(fx: LuFn, name: string): boolean {
@@ -26923,6 +27174,23 @@ function ow_named_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): b
   return ow_decl_holds_no_handle(name, dx, seen.append(name));
 }
 
+// The declared type of a field of the struct `name`, or "".
+function ow_decl_field_type(dx: OwnDecls, name: string, field: string): string {
+  let i = dx.snames.chain(name);
+  while (i >= 0) {
+    let sd = dx.structs[i];
+    if (sd.name == name && sd.enum_owner == "") {
+      for f in sd.fields {
+        if (f.name == field) {
+          return f.type_name.trim();
+        }
+      }
+    }
+    i = dx.snames.next[i];
+  }
+  return "";
+}
+
 // A declared struct, or every variant of a declared enum, whose fields hold
 // no handle. A name with no declaration can hold one.
 function ow_decl_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): boolean {
@@ -27670,7 +27938,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "clock_set", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u16", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority", "share_unchecked",
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",
@@ -28007,7 +28275,7 @@ function e049_is_ref(tn: string): boolean {
   if (tn.len() == 0) {
     return false;
   }
-  if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u32" || tn == "u64" || tn == "usize" || tn == "boolean" || tn == "f64" || tn == "f32" || tn == "char") {
+  if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u16" || tn == "i16" || tn == "u32" || tn == "u64" || tn == "usize" || tn == "boolean" || tn == "f64" || tn == "f32" || tn == "char") {
     return false;
   }
   return true;
@@ -28631,14 +28899,51 @@ function plain_ident(name: string): boolean {
 // unknown_type_diag reports a type spelling that names nothing: E096 for a
 // `Vec[N, T]` with no lane type on the portable tier, E064 otherwise.
 function unknown_type_diag(name: string, traits: string[], line: i32, col: i32): util.Diag {
+  if (name == TYPE_TOO_DEEP) {
+    return dg_at("E106", "type nests deeper than " + util.i32_to_string(MAX_TYPE_DEPTH) + " levels", line, col);
+  }
   if (name.starts_with("Vec[")) {
     return dg_at("E096", name + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", line, col);
   }
   return dg_at("E064", "cannot find type \"" + util.demangle(name) + "\" in this scope" + unknown_type_hint(name, traits), line, col);
 }
 
+// The name that a written type does not resolve, or TYPE_TOO_DEEP for a type
+// over the limit of nesting.
 function e064_unknown_name(type_name: string, tn: TypeNames, extra_known: string[], tparams: string[]): string {
-  return e064_unknown_name_tref(parser.parse_type_ref(type_name), tn, extra_known, tparams);
+  let tr = parser.parse_type_ref(type_name);
+  if (type_ref_depth(tr, MAX_TYPE_DEPTH) > MAX_TYPE_DEPTH) {
+    return TYPE_TOO_DEEP;
+  }
+  return e064_unknown_name_tref(tr, tn, extra_known, tparams);
+}
+
+// The E106 of each type that a statement or a lambda of the source writes
+// with more levels than the limit. The module is the source before the
+// checker gives a local the type of its value: the type of a value has its
+// E106 on the value.
+function written_depth_diags(source: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for fd in source.funcs {
+    for an in collect_annots(fd.body) {
+      if (type_ref_depth(parser.parse_type_ref(an.type_name), MAX_TYPE_DEPTH) > MAX_TYPE_DEPTH) {
+        out = out.append(unknown_type_diag(TYPE_TOO_DEEP, [], an.line, an.col));
+      }
+    }
+  }
+  return out;
+}
+
+// The levels of nesting in a written type. The count stops above limit.
+function type_ref_depth(tr: parser.TypeRef, limit: i32): i32 {
+  if (limit <= 0) {
+    return 1;
+  }
+  let most = 0;
+  for arg in tr.args {
+    most = most.max(type_ref_depth(arg, limit - 1 - tr.array_depth));
+  }
+  return most + 1 + tr.array_depth;
 }
 
 function e064_decl_spelling(type_name: string, fn_ret: string, fn_params: string): string {
@@ -29025,7 +29330,7 @@ function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], tpa
   let out: util.Diag[] = [];
   for elem in an {
     let vu = e064_unknown_name(elem.type_name, tn, extra_known, tparams);
-    if (vu.len() > 0) {
+    if (vu.len() > 0 && vu != TYPE_TOO_DEEP) {
       out = out.append(unknown_type_diag(vu, traits, elem.line, elem.col));
     }
   }
@@ -29516,7 +29821,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   let out: string[] = [];
   for name in [
-    "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_masks", "__scan_set_bytes",
+    "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_masks", "__scan_masks_bytes", "__scan_set_bytes",
     "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__mulhi_u64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
     "__f64x2_of", "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_lane_bits", "__f64x2_lane",
@@ -30365,7 +30670,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
 }
 
 function e021_derive_scalar(fty: string): boolean {
-  return fty == "i32" || fty == "i64" || fty == "u8" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string";
+  return fty == "i32" || fty == "i64" || fty == "u8" || fty == "u16" || fty == "i16" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string";
 }
 
 function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
@@ -30913,7 +31218,7 @@ function e060_set_of_name(dyns: string[], name: string): string {
 }
 
 function e060_is_primitive_name(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "str" || t == "usize" || t == "char";
+  return t == "i32" || t == "i64" || t == "u8" || t == "u16" || t == "i16" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "str" || t == "usize" || t == "char";
 }
 
 function e060_e062_stmts(stmts: ast.Stmt[], dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
@@ -31596,7 +31901,7 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
   let env = admission_env(mod, entry_file, raw_floor);
   mod = qualify_variants_in(mod, env, whole_focus(mod));
   let typed = annotate_prepared(mod, module_env(mod), whole_focus(mod));
-  let mt = ModuleTypes { ...check_module_pass(mod, env, fda_diags, [], typed.funcs), typed: typed };
+  let mt = ModuleTypes { ...check_module_pass(mod, env, util.append_diags(fda_diags, written_depth_diags(filled)), [], typed.funcs), typed: typed };
   if (mt.diags.len() > 0) {
     return mt;
   }
@@ -34439,7 +34744,7 @@ function vb_local_tag(t: typeinfo.Type): string {
   }
   let tag = type_to_irtag(t);
   if (tag == "string" || tag == "boolean" || tag == "f64" || tag == "f32" || tag == "char"
-    || tag == "i32" || tag == "i64" || tag == "u32" || tag == "u64" || tag == "u8") {
+    || tag == "i32" || tag == "i64" || tag == "u32" || tag == "u64" || tag == "u8" || tag == "u16" || tag == "i16") {
     return tag;
   }
   return "";
@@ -37810,7 +38115,7 @@ function agreed_tags(keys: string[], tags: string[]): (string[], string[]) {
 }
 
 function lit_suffix_spelled(tag: string): boolean {
-  return tag == "i64" || tag == "u64" || tag == "u32" || tag == "u8";
+  return tag == "i64" || tag == "u64" || tag == "u32" || tag == "u8" || tag == "u16" || tag == "i16";
 }
 
 function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, boolean) {

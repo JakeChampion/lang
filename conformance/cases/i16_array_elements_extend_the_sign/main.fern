@@ -1,0 +1,37 @@
+// An i16[] holds 2 bytes for each element on every target, and a read extends
+// the element with its sign: -1 is the bytes ff ff, and it reads back as -1
+// in an i32 and in an i64, not as 65535.
+import "std/array";
+
+const SIGNED: i16[] = [-32768, -1, 0, 1, 32767];
+
+function sum(xs: [i16]): i64 {
+  let s: i64 = 0;
+  for x in xs {
+    s += x;
+  }
+  return s;
+}
+
+function main(): i32 {
+  print(f"{SIGNED.len()} {SIGNED[0]} {SIGNED[1]} {SIGNED[4]} {sum(SIGNED)}");
+  let xs: i16[] = [-1, -2, 3];
+  xs = xs.append(-32768);
+  xs = xs.with(2, -3);
+  let wide: i32 = xs[0];
+  let wider: i64 = xs[3];
+  print(f"{xs.len()} {xs[0]} {xs[2]} {xs[3]} {wide} {wider} {sum(xs)}");
+  let zs = __alloc_i16(6);
+  zs = zs.with(5, -77);
+  print(f"{zs.len()} {zs[0]} {zs[5]}");
+  let part = xs[1:4];
+  print(f"{part.len()} {part[0]} {part[2]} {sum(part)}");
+  let both = xs.concat(part);
+  print(f"{both.len()} {both[3]} {both[6]} {sum(both)}");
+  let grow: i16[] = [];
+  for i in 0..3000 {
+    grow = grow.append((i * -23) as i16);
+  }
+  print(f"{grow.len()} {grow[1]} {grow[1500]} {grow[2999]} {sum(grow)}");
+  return 0;
+}

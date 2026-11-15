@@ -7,7 +7,7 @@ pub function width_ptr(): i32 {
 }
 
 pub function is_primitive_type_name(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
+  return t == "i32" || t == "i64" || t == "u8" || t == "u16" || t == "i16" || t == "u32" || t == "u64" || t == "usize"
     || t == "f32" || t == "f64" || lanes_width(t) > 0
     || t == "boolean" || t == "bool"
     || t == "string" || t == "str" || t == "char" || t == "void";
@@ -113,6 +113,37 @@ pub function t_u8(): Type {
   return TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
 }
 
+// The type whose `to_string` shows a value of the type `name`: a 16-bit integer
+// shows as its widening to 32 bits.
+pub function display_owner(name: string): string {
+  if (name == "u16") {
+    return "u32";
+  }
+  if (name == "i16") {
+    return "i32";
+  }
+  return name;
+}
+
+// The types that display_owner shows with the `to_string` of `owner`.
+pub function displayed_by(owner: string): string[] {
+  let out: string[] = [];
+  for t in ["u16", "i16"] {
+    if (display_owner(t) == owner) {
+      out = out.append(t);
+    }
+  }
+  return out;
+}
+
+pub function t_u16(): Type {
+  return TypeI32 { width: 16, unsigned: true, is_char: false, polymorphic: false };
+}
+
+pub function t_i16(): Type {
+  return TypeI32 { width: 16, unsigned: false, is_char: false, polymorphic: false };
+}
+
 pub function t_u32(): Type {
   return TypeI32 { width: 32, unsigned: true, is_char: false, polymorphic: false };
 }
@@ -173,7 +204,7 @@ function any_of(ts: Type[], p: (Type) => boolean): boolean {
 }
 
 // The types that t holds directly.
-function children(t: Type): Type[] {
+pub function children(t: Type): Type[] {
   match (t) {
     TypeArray(a) => {
       return [a.elem];
@@ -213,6 +244,19 @@ pub function nodes(t: Type, limit: i32): i32 {
     n += nodes(c, limit - n);
   }
   return n;
+}
+
+// depth is the levels of nesting in t: `i32` has one and `Option[i32][]`
+// has three. The count stops above limit.
+pub function depth(t: Type, limit: i32): i32 {
+  if (limit <= 0) {
+    return 1;
+  }
+  let most = 0;
+  for c in children(t) {
+    most = most.max(depth(c, limit - 1));
+  }
+  return most + 1;
 }
 
 pub function unchecked(): Type {
@@ -335,6 +379,9 @@ function unsigned_spelling(i: TypeI32): string {
   if (i.width == 8) {
     return "u8";
   }
+  if (i.width == 16) {
+    return "u16";
+  }
   if (i.width == 32) {
     return "u32";
   }
@@ -345,6 +392,9 @@ function unsigned_spelling(i: TypeI32): string {
 }
 
 function signed_spelling(i: TypeI32): string {
+  if (i.width == 16) {
+    return "i16";
+  }
   if (i.width == 32) {
     return "i32";
   }

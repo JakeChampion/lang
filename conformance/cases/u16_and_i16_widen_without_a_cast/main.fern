@@ -1,0 +1,26 @@
+// A u16 widens to i32, u32, i64 and u64 with no cast. An i16 widens to the
+// signed i32 and i64 with its sign. A u8 widens to both. A mixed operation
+// takes the smallest type that holds both operand ranges.
+
+function wide_u(n: u16): (i32, u32, i64, u64) { return (n, n, n, n); }
+function wide_s(n: i16): (i32, i64) { return (n, n); }
+function from_byte(b: u8): (u16, i16) { return (b, b); }
+function u16_of(n: u16): u16 { return n; }
+function i16_of(n: i16): i16 { return n; }
+
+function main(): i32 {
+  let (a, b, c, d) = wide_u(65535);
+  print(f"{a} {b} {c} {d}");
+  let (e, f) = wide_s(-32768);
+  print(f"{e} {f}");
+  let (g, h) = from_byte(255);
+  print(f"{g} {h}");
+  let x = u16_of(65535) + i16_of(-1);
+  let y = u16_of(65535) + 1u32;
+  let z = i16_of(-1) + 100000i32;
+  let w = i16_of(-1) + 4294967295u32;
+  print(f"{x} {y} {z} {w}");
+  let xs: i64[] = [u16_of(1), i16_of(-1)];
+  print(f"{xs[0] + xs[1]}");
+  return 0;
+}

@@ -808,6 +808,11 @@ arm64 leg under qemu, the GNU sed and its libraries come from the arm64
 packages of the distribution, as for coreutils. `sed/README.md` gives the
 scope of the port.
 
+The cases of `sedUTF8Cases` set `LC_ALL=C.UTF-8`, and the same scripts run
+again in the C locale. They are the only cases of the corpus outside the C
+locale. `coreutils/lib/bre.fern` reads UTF-8 only when `Syntax.utf8` is
+set, and only sed sets it.
+
 ## findutils
 
 The same gate holds the ports of GNU find and xargs in `findutils/`. They
@@ -815,7 +820,7 @@ use `coreutils/lib/gnu.fern` with `in_package("findutils")`, and
 `findutils/lib/cmdline.fern` holds what the two share: the size of a
 command line, the start of a command and the prompt of `-ok` and `-p`. A
 version line is `find (Fern findutils) 0.1`, for example. `find -D` traces
-GNU's own work, and the port refuses it, as the sed port refuses `--debug`.
+GNU's own work, and the port refuses it.
 
 The order of a walk is the order of readdir, so the corpus does not sort the
 output. Most cases of find read one shared tree, and both sides read the

@@ -742,6 +742,8 @@ func New() *Interp {
 	i.Builtins["__arr_set_len"] = &Builtin{Fn: builtinArrSetLen}
 	registerRawMemory(i)
 	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}
+	i.Builtins["__alloc_u16"] = &Builtin{Fn: builtinAllocFilled("__alloc_u16", Number(0))}
+	i.Builtins["__alloc_i16"] = &Builtin{Fn: builtinAllocFilled("__alloc_i16", Number(0))}
 	i.Builtins["__alloc_i64"] = &Builtin{Fn: builtinAllocFilled("__alloc_i64", Number(0))}
 	i.Builtins["__alloc_f64"] = &Builtin{Fn: builtinAllocFilled("__alloc_f64", Float{V: 0, Width: 64})}
 	i.Builtins["__alloc_bool"] = &Builtin{Fn: builtinAllocFilled("__alloc_bool", Bool(false))}
@@ -1359,6 +1361,24 @@ func New() *Interp {
 			return nil, fmt.Errorf("__scan_masks: expected a string, got %T", args[0])
 		}
 		return scanMasks([]byte(string(s)), args[1], args[2])
+	}}
+	i.Builtins["__scan_masks_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_masks_bytes: expected 3 args, got %d", len(args))
+		}
+		arr, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__scan_masks_bytes: expected an array, got %T", args[0])
+		}
+		b := make([]byte, len(arr.Elems()))
+		for at, e := range arr.Elems() {
+			n, ok := e.(Number)
+			if !ok {
+				return nil, fmt.Errorf("__scan_masks_bytes: element %d is %T, not u8", at, e)
+			}
+			b[at] = byte(n)
+		}
+		return scanMasks(b, args[1], args[2])
 	}}
 	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
@@ -7893,6 +7913,11 @@ func narrowInt(v int64, width int, unsigned bool) int64 {
 	switch width {
 	case 8:
 		return int64(uint8(v))
+	case 16:
+		if unsigned {
+			return int64(uint16(v))
+		}
+		return int64(int16(v))
 	case 32:
 		if unsigned {
 			return int64(uint32(v))
@@ -7908,6 +7933,8 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 		switch width {
 		case 8:
 			maxU = 255
+		case 16:
+			maxU = 0xFFFF
 		case 32:
 			maxU = 0xFFFFFFFF
 		default:
@@ -7952,6 +7979,8 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 	switch width {
 	case 8:
 		minS, maxS = -128, 127
+	case 16:
+		minS, maxS = math.MinInt16, math.MaxInt16
 	case 32:
 		minS, maxS = math.MinInt32, math.MaxInt32
 	default:
@@ -8076,6 +8105,8 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			switch width {
 			case 8:
 				return Number(uint8(int64(v)))
+			case 16:
+				return Number(uint16(int64(v)))
 			case 32:
 				return Number(uint32(int64(v)))
 			case 64:
@@ -8087,6 +8118,11 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			switch width {
 			case 8:
 				return Number(uint8(int64(v)))
+			case 16:
+				if b.IsUnsigned {
+					return Number(uint16(int64(v)))
+				}
+				return Number(int16(int64(v)))
 			case 32:
 				if b.IsUnsigned {
 					return Number(uint32(int64(v)))

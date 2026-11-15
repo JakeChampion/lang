@@ -12,7 +12,7 @@ import "./pack";
 // The index (version 1 or 2) and the reverse index of one packfile, the
 // checksum of the packfile, and the packfile with the objects that a thin
 // pack did not have.
-pub struct Built { idx: u8[], rev: u8[], name: string, data: u8[], input_count: i32 }
+pub struct Built { idx: u8[], rev: u8[], name: string, data: string, input_count: i32 }
 
 // How to write the index: the version, and the largest offset that the
 // table of 4-byte offsets of version 2 holds. `algo` is the hash of the
@@ -77,7 +77,7 @@ function inflate_error(at: i64, e: deflate.InflateError): string {
 // The place after the zlib stream at `at` of `data`, which makes `size`
 // bytes, or the message of git. The header and the checksum of the stream
 // are checked, as zlib checks them.
-function stream_end(data: u8[], at: i64, size: i32, start: i64): Result[i64, string] {
+function stream_end(data: string, at: i64, size: i32, start: i64): Result[i64, string] {
   let from = at as i32;
   if (from + 2 > data.len()) {
     return Err("fatal: early EOF");
@@ -96,7 +96,7 @@ function stream_end(data: u8[], at: i64, size: i32, start: i64): Result[i64, str
   if ((flg & 32) != 0) {
     return Err(bad_object(start, "inflate returned 2"));
   }
-  let got = match (deflate.inflate_from(data, from + 2, size)) {
+  let got = match (deflate.inflate_from(data.as_bytes(), from + 2, size)) {
     Ok(g) => g,
     Err(e) => {
       return Err(match (e) {
@@ -122,7 +122,7 @@ function stream_end(data: u8[], at: i64, size: i32, start: i64): Result[i64, str
 
 // The place after the object at `at`, or the message of git for an object
 // that is not sound.
-function object_end(data: u8[], at: i64, raw: i32): Result[i64, string] {
+function object_end(data: string, at: i64, raw: i32): Result[i64, string] {
   let i = at as i32;
   if (i >= data.len()) {
     return Err("fatal: early EOF");
@@ -177,7 +177,7 @@ function object_end(data: u8[], at: i64, raw: i32): Result[i64, string] {
 }
 
 // The offset of each object of the packfile, and the place after the last.
-function offsets_of(data: u8[], count: i32, raw: i32): Result[i64[], string] {
+function offsets_of(data: string, count: i32, raw: i32): Result[i64[], string] {
   let offsets: i64[] = [];
   let at: i64 = 12;
   for i in 0..count {
@@ -204,13 +204,13 @@ function starts(offsets: i64[], at: i64): boolean {
 
 // The source of the objects of the packfile: a delta by offset reads its
 // base only at the start of an object.
-function source(data: u8[], offsets: i64[], base: (u8[]) => i64, raw: i32): pack.Source {
-  return pack.Source { part: (at: i64, most: i32): pack.Window => if (starts(offsets, at)) { pack.whole(data, raw) } else { pack.Window { bytes: [], shift: at, width: raw } }, base: base };
+function source(data: string, offsets: i64[], base: (u8[]) => i64, raw: i32): pack.Source {
+  return pack.Source { part: (at: i64, most: i32): pack.Window => if (starts(offsets, at)) { pack.whole(data, raw) } else { pack.Window { bytes: "", shift: at, width: raw } }, base: base };
 }
 
 // The names of the objects from `first` to `end`, in order. An object whose
 // chain has a delta by name has the name "": it waits for the names.
-pub function names_part(data: u8[], offsets: i64[], first: i32, end: i32, raw: i32): string[] {
+pub function names_part(data: string, offsets: i64[], first: i32, end: i32, raw: i32): string[] {
   let a = raw;
   let names: string[] = [];
   let cache = pack.cache_new();
@@ -245,7 +245,7 @@ pub function parts_of(offsets: i64[], parts: i32): i32[] {
 // The count of the objects that stay without a name is `left`.
 struct Named { names: string[], left: i32 }
 
-function resolved(data: u8[], offsets: i64[], own names: string[], raw: i32): Named {
+function resolved(data: string, offsets: i64[], own names: string[], raw: i32): Named {
   let a = raw;
   let count = offsets.len() - 1;
   let left = 0;
@@ -315,9 +315,9 @@ function kind_number(kind: string): i32 {
 // The packfile with each base that a delta by name needs and that it does
 // not have, from `local`, at its end. The bases come in the order of the
 // deltas in the packfile.
-function completed(data: u8[], offsets: i64[], names: string[], a: i32, local: (string) => Option[objects.Object]): (u8[], i64[]) {
+function completed(data: string, offsets: i64[], names: string[], a: i32, local: (string) => Option[objects.Object]): (string, i64[]) {
   let count = offsets.len() - 1;
-  let body = array.slice(data, 0, offsets[count] as i32);
+  let body = objects.part(data, 0, offsets[count] as i32).bytes();
   let ends = offsets;
   let added: string[] = [];
   for i in 0..count {
@@ -335,14 +335,14 @@ function completed(data: u8[], offsets: i64[], names: string[], a: i32, local: (
   }
   let n = (ends.len() - 1) as i64;
   body = body.with(8, (n >> 24 & 255) as u8).with(9, (n >> 16 & 255) as u8).with(10, (n >> 8 & 255) as u8).with(11, (n & 255) as u8);
-  return (body.concat(objects.digest(a, body)), ends);
+  return (unsafe { string_from_bytes_unchecked(body.concat(objects.digest(a, body))) }, ends);
 }
 
 // The index of the packfile `data`. `first` gives the names of the objects
 // in parts that are in order and that cover the packfile: a caller with
 // workers gives each part to one worker. `local` gives an object of the
 // repository for a thin pack, or None.
-pub function build_with(data: u8[], o: Options, first: (u8[], i64[]) => string[][], local: (string) => Option[objects.Object]): Result[Built, string] {
+pub function build_with(data: string, o: Options, first: (string, i64[]) => string[][], local: (string) => Option[objects.Object]): Result[Built, string] {
   let raw = o.width;
   let n = data.len();
   if (n < 12) {
@@ -361,7 +361,8 @@ pub function build_with(data: u8[], o: Options, first: (u8[], i64[]) => string[]
   if (end + raw > n) {
     return Err("fatal: early EOF");
   }
-  if (hex.encode(objects.digest(o.width, array.slice(data, 0, end))) != hex.encode(array.slice(data, end, end + raw))) {
+  let view = data.as_bytes();
+  if (hex.encode(objects.digest(o.width, view[0:end])) != hex.encode(view[end:end + raw])) {
     return Err("fatal: pack is corrupted (SHA1 mismatch)");
   }
   if (end + raw != n) {
@@ -392,7 +393,7 @@ pub function build_with(data: u8[], o: Options, first: (u8[], i64[]) => string[]
   if (named.left > 0) {
     return Err("fatal: pack has " + named.left.to_string() + " unresolved delta" + (if (named.left == 1) { "" } else { "s" }));
   }
-  let sum = array.slice(whole, whole.len() - raw, whole.len());
+  let sum = objects.part(whole, whole.len() - raw, whole.len()).bytes();
   return Ok(Built { idx: idx_bytes(whole, ends, named.names, sum, o), rev: rev_bytes(ends, named.names, sum, o.width), name: hex.encode(sum), data: whole, input_count: count });
 }
 
@@ -406,7 +407,7 @@ function by_name(names: string[]): i32[] {
 }
 
 // The bytes of the index of the objects that start at `ends`.
-function idx_bytes(data: u8[], ends: i64[], names: string[], sum: u8[], o: Options): u8[] {
+function idx_bytes(data: string, ends: i64[], names: string[], sum: u8[], o: Options): u8[] {
   let count = names.len();
   let sorted = by_name(names);
   let last: i64 = 0;
@@ -431,7 +432,8 @@ function idx_bytes(data: u8[], ends: i64[], names: string[], sum: u8[], o: Optio
       table = be32(table, ends[i]);
     }
     table = table.concat(raw);
-    crcs = be32(crcs, crc32.of(array.slice(data, ends[i] as i32, ends[i + 1] as i32)) as i64);
+    let bytes = data.as_bytes();
+    crcs = be32(crcs, crc32.of(bytes[ends[i] as i32:ends[i + 1] as i32]) as i64);
     if (large(ends[i])) {
       at = be32(at, 2147483648 | wides as i64);
       wide = be32(be32(wide, ends[i] >> 32), ends[i] & 4294967295);
@@ -472,6 +474,6 @@ function rev_bytes(ends: i64[], names: string[], sum: u8[], a: i32): u8[] {
 }
 
 // The index of the packfile `data`, with each name from this process.
-pub function build(data: u8[], o: Options): Result[Built, string] {
-  return build_with(data, o, (d: u8[], offsets: i64[]): string[][] => [names_part(d, offsets, 0, offsets.len() - 1, o.width)], (name: string): Option[objects.Object] => None);
+pub function build(data: string, o: Options): Result[Built, string] {
+  return build_with(data, o, (d: string, offsets: i64[]): string[][] => [names_part(d, offsets, 0, offsets.len() - 1, o.width)], (name: string): Option[objects.Object] => None);
 }

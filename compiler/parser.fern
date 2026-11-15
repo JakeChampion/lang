@@ -2375,7 +2375,7 @@ function is_type_keyword_tok(p: Par, k: i32): boolean {
     return false;
   }
   if let lexer.TokKeyword(kw) = p.toks[p.pos + k] {
-    return kw.name == "i32" || kw.name == "i64" || kw.name == "u8" || kw.name == "u32" || kw.name == "u64" || kw.name == "usize" || kw.name == "f32" || kw.name == "f64" || typeinfo.lanes_width(kw.name) > 0 || kw.name == "string" || kw.name == "boolean" || kw.name == "void";
+    return kw.name == "i32" || kw.name == "i64" || kw.name == "u8" || kw.name == "u16" || kw.name == "i16" || kw.name == "u32" || kw.name == "u64" || kw.name == "usize" || kw.name == "f32" || kw.name == "f64" || typeinfo.lanes_width(kw.name) > 0 || kw.name == "string" || kw.name == "boolean" || kw.name == "void";
   }
   return false;
 }
@@ -2772,7 +2772,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       }
       let is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
         || x.name == "i32" || x.name == "i64"
-        || x.name == "u8" || x.name == "u32" || x.name == "u64"
+        || x.name == "u8" || x.name == "u16" || x.name == "i16" || x.name == "u32" || x.name == "u64"
         || x.name == "usize" || x.name == "f32" || x.name == "f64" || typeinfo.lanes_width(x.name) > 0;
       if (is_tykw) {
         let kwline = p.peek_line();
@@ -6817,7 +6817,7 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
 }
 
 function is_scalar_ret_name(n: string): boolean {
-  return n == "i32" || n == "i64" || n == "u8" || n == "u32" || n == "u64"
+  return n == "i32" || n == "i64" || n == "u8" || n == "u16" || n == "i16" || n == "u32" || n == "u64"
     || n == "f32" || n == "f64" || n == "boolean";
 }
 
@@ -6831,7 +6831,7 @@ pub function is_struct_ret_name(n: string): boolean {
       return false;
     }
   }
-  if (n == "i32" || n == "i64" || n == "u8" || n == "u32" || n == "u64"
+  if (n == "i32" || n == "i64" || n == "u8" || n == "u16" || n == "i16" || n == "u32" || n == "u64"
     || n == "f32" || n == "f64" || n == "string" || n == "boolean" || n == "void"
     || n == "fn" || n == "unknown" || n == "any") {
     return false;
@@ -6859,7 +6859,7 @@ function is_nominal_ret_name(n: string): boolean {
   if (base[0] == b'(') {
     return false;
   }
-  if (base == "i32" || base == "i64" || base == "u8" || base == "u32" || base == "u64"
+  if (base == "i32" || base == "i64" || base == "u8" || base == "u16" || base == "i16" || base == "u32" || base == "u64"
     || base == "f32" || base == "f64" || base == "string" || base == "boolean" || base == "void"
     || base == "fn" || base == "unknown" || base == "any") {
     return false;
@@ -11171,7 +11171,7 @@ function generic_base(t: string, funcs: MFns): string {
 }
 
 function stamped_type(tag: string): string {
-  if (util.has_str(["i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "string", "boolean"], tag)) {
+  if (util.has_str(["i32", "i64", "u8", "u16", "i16", "u32", "u64", "usize", "f32", "f64", "string", "boolean"], tag)) {
     return tag;
   }
   let elem = array_method_element(tag);
@@ -12042,7 +12042,8 @@ function mapm_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, func
   }
   let gi = bg_find(funcs, "__mapm_" + cfa.field);
   let snapshot = args.len() == 0 && (cfa.field == "keys" || cfa.field == "values");
-  if (gi < 0 && !snapshot) {
+  let read = cfa.field == "get_or" && args.len() == 2 || cfa.field == "get" && args.len() == 1;
+  if (gi < 0 && !snapshot && !read) {
     return "";
   }
   let rt = mono_infer(cfa.obj, env, funcs);
@@ -12053,6 +12054,12 @@ function mapm_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, func
     let kv = type_args_of(rt);
     if (kv.len() != 2) {
       return "";
+    }
+    if (cfa.field == "get_or") {
+      return kv[1];
+    }
+    if (cfa.field == "get") {
+      return "Option[" + kv[1] + "]";
     }
     if (cfa.field == "keys") {
       return kv[0] + "[]";
@@ -12841,7 +12848,7 @@ function bound_supplies(reqs: TraitReq[], bound: string, method: string): boolea
 }
 
 function native_order_agrees(t: string): boolean {
-  return util.has_str(["i32", "i64", "u32", "u64", "u8", "usize", "f32", "f64", "string"], t);
+  return util.has_str(["i32", "i64", "u32", "u64", "u8", "u16", "i16", "usize", "f32", "f64", "string"], t);
 }
 
 function native_eq_agrees(t: string): boolean {
@@ -20979,6 +20986,12 @@ function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], stru
       if (u.op == "as_u8") {
         return "u8";
       }
+      if (u.op == "as_u16") {
+        return "u16";
+      }
+      if (u.op == "as_i16") {
+        return "i16";
+      }
       if (u.op == "as_u32") {
         return "u32";
       }
@@ -21116,7 +21129,7 @@ function irt_payload_of(scrut_ty: string): string {
 }
 
 function irt_is_scalar_ty(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8"
+  return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8" || t == "u16" || t == "i16"
     || t == "usize" || t == "f64" || t == "f32";
 }
 
@@ -22448,7 +22461,7 @@ function synth_struct_display(sd: StructDecl): FuncDecl {
 }
 
 function dv_is_debug_scalar(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64"
+  return t == "i32" || t == "i64" || t == "u8" || t == "u16" || t == "i16" || t == "u32" || t == "u64"
     || t == "f32" || t == "f64" || t == "boolean";
 }
 
@@ -22989,7 +23002,7 @@ function synth_enum_json_derive(kind: string, ename: string, type_params: string
 }
 
 function dv_is_scalar(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64"
+  return t == "i32" || t == "i64" || t == "u8" || t == "u16" || t == "i16" || t == "u32" || t == "u64"
     || t == "f32" || t == "f64" || t == "boolean" || t == "string";
 }
 
