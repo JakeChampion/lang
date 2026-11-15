@@ -507,7 +507,7 @@ function copy_into(own w: u8[], at: i32, src: u8[], from: i32, n: i32): u8[] {
   let i = 0;
   while (i < n) {
     w = w.with(at + i, src[from + i]);
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
@@ -517,7 +517,7 @@ function append_from(own out: u8[], src: u8[], from: i32, n: i32): u8[] {
   let end = from + n;
   while (i < end) {
     out = out.append(src[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

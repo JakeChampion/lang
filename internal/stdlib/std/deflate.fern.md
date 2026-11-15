@@ -2489,9 +2489,32 @@ function __read_copy_byte(own cursor: __ReadCursor): __ReadCursor {
 
 ### The encoder of zlib
 
-`zlib_compress` gives its input to `std/deflate/zlib`, a port of `deflate.c` and `trees.c` of zlib 1.3 with a window of 32 KiB, a memory level of 8 and the default strategy. The pigz port uses the same module. Each step and each choice is that of zlib: the hash chains, the lazy matches of the levels 4 to 9, the blocks of 16383 symbols, the Huffman trees with the order of the heap of zlib, and the choice of a stored, a static or a dynamic block.
+`zlib_compress` gives its input to `std/deflate/zlib`. That module is a port of `deflate.c` and `trees.c` of zlib 1.3. It uses a window of 32 KiB, a memory level of 8 and the default strategy. The pigz port uses the same module.
 
-`zlib_compress_in` calls `deflate` with `Z_FINISH` until the stream ends, as a program that uses zlib does. Each call has the same space for output. At level 0 the space changes where each stored block ends, because zlib writes a block directly to the output only when the block fits in that space.
+Each step and each choice is that of zlib. These include the hash chains, the lazy matches of the levels 4 to 9 and the blocks of 16383 symbols. They also include the order of the heap of the Huffman trees, and the choice of a stored, a static or a dynamic block.
+
+`zlib_compress_in` calls `deflate` with `Z_FINISH` until the stream ends, as a program that uses zlib does. Each call has the same space for output. At level 0 the space changes where each stored block ends. zlib writes a block directly to the output only when the block fits in that space.
+
+#### Speed
+
+The input is a file of 10 MB: 7 MB of the Markdown, Fern and Go sources of this repository, then 3 MB of the `fern` binary. zlib 1.3 is the zlib of the system, and a C program calls `deflate` with `Z_FINISH` and all of the output space. Each stream has the bytes of zlib.
+
+Each row has the CPU time of one process that reads the file and compresses it, in seconds. It is the fastest of 15 runs, and the runs of the two programs alternate. x86-64, 2026-11-15.
+
+| Input | Level | zlib 1.3 | `zlib_compress` | The old encoder |
+| --- | --: | --: | --: | --: |
+| 10 MB | 0 | 0.019 | 0.015 | |
+| 10 MB | 1 | 0.097 | 0.089 | 21.7 |
+| 10 MB | 6 | 0.271 | 0.274 | 88.2 |
+| 10 MB | 9 | 0.556 | 0.561 | 90.2 |
+| 5000 inputs of 1000 bytes | 6 | 0.325 | 0.242 | |
+| 5000 inputs of 300 bytes | 1 | 0.245 | 0.168 | |
+
+The rows of 5000 inputs give each call to `deflate` 4096 bytes of space, as git does. The old encoder is the encoder of `std/deflate` before it used the port of zlib. Its column has one run of each level.
+
+At the levels 6 and 9, most of the time is in `longest`, the port of `longest_match`. It does the same steps as zlib, and it is less than 1.2% slower at these levels. Its loop waits for the loads of the window and of the hash chain, as the loop of zlib does. The loop has more instructions than the loop of zlib. The compiler adds bounds checks, sign extensions and stack slots for two of its values.
+
+For the 5000 inputs of 1000 bytes, zlib maps new memory for each stream: 97532 page faults and 0.17 s of system time. The port takes its tables from the memory that the last stream released: 1058 page faults and 0.03 s of system time. The port uses more user time than zlib.
 
 ```fern
 <<35 the encoder of zlib>>=
