@@ -1,10 +1,15 @@
 package coreutils
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"io"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func init() {
@@ -14,6 +19,18 @@ func init() {
 func numfmtCases(t *testing.T) []invocation {
 	t.Helper()
 	return []invocation{
+		{name: "zero width with a scaled unit exceeds int max", args: []string{"--format=[%05000000000.0f]", "--to=si", "--", "-1000"}},
+		{name: "zero width with a user suffix exceeds int max", args: []string{"--format=%02147483647.0f", "--suffix=Z", "1"}},
+		{name: "zero width preparation failure stops ignored operands", args: []string{"--format=%02147483647.0f", "--to=si", "--invalid=ignore", "1000", "2"}},
+		{name: "zero width preparation diagnostic uses scaled units", args: []string{"--format=%02147483647.0f", "--to=si", "--to-unit=2", "2000"}},
+		{name: "zero padding includes trailing precision zeros", args: []string{"--format=%017000.16501f", "--to=si", "1000"}},
+		{name: "zero padding includes negative precision zeros", args: []string{"--format=[%017000.16504f]", "--to=si", "--", "-1000"}},
+		{name: "precision exceeds the zero padding width", args: []string{"--format=%016000.16504f", "--to=iec", "1024"}},
+		{name: "zero padding with a sign and prefix", args: []string{"--format=[%012.3f]", "--to=si", "--", "-1000", "0", "1000"}},
+		{name: "left zero padding with a sign", args: []string{"--format=[%-012.3f]", "--to=si", "--", "-1000", "0", "1000"}},
+		{name: "zero padding before units and suffix", args: []string{"--format=%012.3f", "--unit-separator=:", "--suffix=X", "--to=iec", "--", "-1024X", "1024X", "0.25X"}},
+		{name: "zero padding in selected fields", args: []string{"--field=-", "--format=%08.1f", "--to=si", "1000 -1000 .5"}},
+		{name: "zero padding below the text width", args: []string{"--format=%02.2f", "--", "-1000", "0", "0.01"}},
 		{name: "no arguments"},
 		{name: "dashdash alone", args: []string{"--"}},
 		{name: "one operand", args: []string{"1"}},
@@ -889,6 +906,90 @@ func manyFields(n int) string {
 
 func TestNumfmtParity(t *testing.T) {
 	requireParity(t, "numfmt", numfmtCases(t))
+}
+
+func TestNumfmtFullWidthParity(t *testing.T) {
+	ref := referenceBin(t, "numfmt")
+	ours := fernBin(t, "numfmt")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "wide spaces", args: []string{"--format=%1000000010.0f", "1000"}},
+		{name: "zero width clamps to int max", args: []string{"--format=[%05000000000.0f]", "--", "-1000"}},
+		{name: "wide left padding", args: []string{"--format=%-5000000000.0f", "1000"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			want := numfmtStreamCommand(ctx, ref, tc.args)
+			got := numfmtStreamCommand(ctx, ours, tc.args)
+			var wantErr, gotErr bytes.Buffer
+			want.Stderr, got.Stderr = &wantErr, &gotErr
+			wr, err := want.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			gr, err := got.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				cancel()
+				for _, cmd := range []*exec.Cmd{want, got} {
+					if cmd.Process != nil && cmd.ProcessState == nil {
+						_ = cmd.Process.Kill()
+						_ = cmd.Wait()
+					}
+				}
+			}()
+			if err := want.Start(); err != nil {
+				t.Fatal(err)
+			}
+			if err := got.Start(); err != nil {
+				t.Fatal(err)
+			}
+			wb, gb := make([]byte, 64<<10), make([]byte, 64<<10)
+			var offset int64
+			for {
+				wn, we := io.ReadFull(wr, wb)
+				gn, ge := io.ReadFull(gr, gb)
+				if wn != gn || !bytes.Equal(wb[:wn], gb[:gn]) || we != ge {
+					t.Fatalf("stream differs at offset %d: GNU %d bytes (%v), Fern %d bytes (%v)", offset, wn, we, gn, ge)
+				}
+				offset += int64(wn)
+				if we != nil {
+					if we != io.EOF && we != io.ErrUnexpectedEOF {
+						t.Fatal(we)
+					}
+					break
+				}
+			}
+			if err := want.Wait(); err != nil {
+				t.Fatalf("GNU: %v: %s", err, wantErr.Bytes())
+			}
+			if err := got.Wait(); err != nil {
+				t.Fatalf("Fern: %v: %s", err, gotErr.Bytes())
+			}
+			if !bytes.Equal(wantErr.Bytes(), gotErr.Bytes()) {
+				t.Fatalf("stderr differs: GNU %q, Fern %q", wantErr.Bytes(), gotErr.Bytes())
+			}
+			if offset <= captureCap {
+				t.Fatalf("only %d bytes arrived", offset)
+			}
+		})
+	}
+}
+
+func numfmtStreamCommand(ctx context.Context, bin string, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Args[0] = "numfmt"
+	if pre := crossPrefix(); len(pre) > 0 {
+		argv := append(append(append([]string{}, pre...), "-0", "numfmt", bin), args...)
+		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
+	}
+	cmd.Env = baseEnv()
+	return cmd
 }
 
 func TestNumfmtHelp(t *testing.T) {

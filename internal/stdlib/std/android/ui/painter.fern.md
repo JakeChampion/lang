@@ -8,6 +8,8 @@ A `Painter` makes an image of each node one time, and keeps it on the GPU under 
 
 A label draws from a glyph atlas. A new label costs only the glyphs that the atlas does not hold. A fill with square corners draws as one pixel that the GPU stretches.
 
+`present_over` draws a picture of the app on the canvas first, such as the frame of a video, and the passes over it.
+
 `attach` puts the painter on a window, and `detach` takes it off. The context, the images and the glyphs stay through `detach`, so an app keeps them while its window is away. `present` draws a list of passes and shows the frame. A pass with an alpha below 1 draws as one image, so a screen fades as a whole.
 
 When the images hold more than 96 MB, `present` frees each image that the frame did not draw.
@@ -140,6 +142,12 @@ pub function with_size(p: Painter, w: i32, h: i32): Painter {
 // Clears the window to `background`, draws the passes in their order, and
 // shows the frame.
 pub function present(own p: Painter, passes: scene.Pass[], background: i32): Painter {
+  return present_over(p, passes, background, (c: gl.Canvas): void => {});
+}
+
+// As `present`, with `under` drawing on the canvas before the passes, for
+// example the frame of a video under its controls.
+pub function present_over(own p: Painter, passes: scene.Pass[], background: i32, under: (gl.Canvas) => void): Painter {
   let Some(c0) = p.canvas else {
     return p;
   };
@@ -149,6 +157,7 @@ pub function present(own p: Painter, passes: scene.Pass[], background: i32): Pai
   let c = c0.sized(p.w, p.h);
   let q = Painter { ...p, canvas: Some(c) };
   c.clear(background);
+  under(c);
   for pass in passes {
     if (pass.alpha < 1.0) {
       c.begin_layer();

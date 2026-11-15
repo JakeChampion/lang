@@ -1,0 +1,112 @@
+// The bodies of -F and -Z: a multipart form as curl and oha build it, and
+// the lines of a file, one body for each line.
+import "std/array";
+import "std/hex";
+import "std/rand";
+import "std/result";
+import "std/string";
+import "std/utf8";
+
+// A part of a form: its name, the file name and the type that it gives, and
+// its data.
+pub struct Part { name: string, filename: Option[string], content_type: Option[string], data: u8[] }
+
+// Reads a part of -F as curl writes it: `NAME=VALUE`, `NAME=@FILE` (the
+// file, with its name), or `NAME=<FILE` (the file, without its name). After
+// the value, `;filename=NAME` and `;type=TYPE` set the file name and the
+// type. Other `;key=value` items do nothing.
+pub function part(raw: string): Result[Part, string] {
+  let Some(eq) = raw.index_of("=") else {
+    return Err(f"-F {raw} has no '='");
+  };
+  let items = raw.drop(eq + 1).split(";");
+  let value = items[0];
+  let filename: Option[string] = None;
+  let content_type: Option[string] = None;
+  let data = value.bytes();
+  if (value.starts_with("@") || value.starts_with("<")) {
+    let path = value.drop(1);
+    match (read_file_bytes(path)) {
+      Ok(b) => {
+        data = b;
+      },
+      Err(e) => {
+        return Err(f"-F: cannot read the file '{path}': {e.message()}");
+      }
+    }
+    if (value.starts_with("@")) {
+      filename = base_name(path);
+    }
+  }
+  for k in 1..items.len() {
+    let Some(at) = items[k].index_of("=") else {
+      continue;
+    };
+    let key = items[k].take(at).trim();
+    let v = items[k].drop(at + 1).trim();
+    if (key == "filename") {
+      filename = Some(v);
+    } else if (key == "type") {
+      content_type = Some(v);
+    }
+  }
+  return Ok(Part { name: raw.take(eq), filename: filename, content_type: content_type, data: data });
+}
+
+// The last part of a path, as Rust's Path::file_name gives it.
+function base_name(path: string): Option[string] {
+  let trimmed = path.trim_end_chars("/");
+  let name = if let Some(i) = trimmed.last_index_of("/") { trimmed.drop(i + 1) } else { trimmed };
+  if (name.len() == 0 || name == "..") {
+    return None;
+  }
+  return Some(name);
+}
+
+// A boundary of 16 random bytes in hexadecimal.
+pub function boundary(): string {
+  return "----formdata-load-" + hex.encode(rand.bytes(16));
+}
+
+pub function form_type(boundary: string): string {
+  return "multipart/form-data; boundary=" + boundary;
+}
+
+// The body of a form with `parts`, as oha writes it.
+pub function form(parts: Part[], boundary: string): u8[] {
+  let out: u8[] = [];
+  for p in parts {
+    let head = f"--{boundary}\r\nContent-Disposition: form-data; name=\"{p.name}\"";
+    if let Some(f) = p.filename {
+      head += f"; filename=\"{f}\"";
+    }
+    head += "\r\n";
+    if let Some(t) = p.content_type {
+      head += f"Content-Type: {t}\r\n";
+    }
+    out = out.concat((head + "\r\n").bytes()).concat(p.data).concat("\r\n".bytes());
+  }
+  return out.concat(f"--{boundary}--\r\n".bytes());
+}
+
+// The lines of `data`, as Rust's BufRead::lines reads them: each without
+// its `\n` or `\r\n`. The lines stop at the first line that is not UTF-8.
+pub function lines(data: u8[]): u8[][] {
+  let out: u8[][] = [];
+  let start = 0;
+  let n = data.len();
+  while (start < n) {
+    let end = start;
+    while (end < n && data[end] != 10 as u8) {
+      end += 1;
+    }
+    let stop = if (end > start && data[end - 1] == 13 as u8 && end < n) { end - 1 } else { end };
+    let line = data.take(stop).drop(start);
+    if (utf8.from_bytes(line).is_err()) {
+      return out;
+    }
+    out = out.append(line);
+    start = end + 1;
+  }
+  return out;
+}

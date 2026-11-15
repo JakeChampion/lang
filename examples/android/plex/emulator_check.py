@@ -13,9 +13,11 @@ its intent, so it needs no sign-in at plex.tv. The check requires:
   decoder of Android;
 - a link plays the track to its end, reports the playback to the server
   and marks the track watched;
-- with VIDEO.mp4, a link shows the video on the window, a tap pauses it
-  and draws the controls on the window, and a tap on the play button shows
-  the video on the window again, then the back key stops it;
+- with VIDEO.mp4, a link shows the video on the window. When the app draws
+  the video, a tap shows the controls over it with no pause, and a tap on
+  the play button pauses it. Otherwise a tap pauses it. Paused, the app
+  draws the controls on the window, and a tap on the play button shows the
+  video on the window again, then the back key stops it;
 - logcat shows no crash.
 
 OUT_DIR gets logcat, the screens and the requests that the server saw.
@@ -245,8 +247,22 @@ def check_video(out, port):
     if colors < 12:
         fail(f"the video shows {colors} colours")
     adb("shell", "input", "tap", str(width // 2), str(height // 2))
+    if "plex: video on a texture" in logcat():
+        # The app draws the video, so a tap shows the controls over it and
+        # the video plays on. The play button is in the middle.
+        if not wait_for(lambda: "plex: controls over the video" in logcat()):
+            return fail("a tap did not show the controls over the video")
+        time.sleep(1)
+        _, _, px = screen(out, "controls")
+        button = count_color(px, PLAY)
+        print(f"controls: {button} pixels of the play button over the video", flush=True)
+        if button < 500:
+            fail(f"the controls over the video show {button} pixels of the play button")
+        if "plex: paused at" in logcat():
+            return fail("a tap on the video paused it")
+        adb("shell", "input", "tap", str(width // 2), str(height // 2))
     if not wait_for(lambda: "plex: paused at" in logcat()):
-        return fail("a tap did not pause the video")
+        return fail("the play button did not pause the video")
     time.sleep(1.5)
     _, _, px = screen(out, "paused")
     button = count_color(px, PLAY)

@@ -463,6 +463,12 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: truetype, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdTrueType, wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: tzif, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdTZif, wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: csv, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdCSV, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: bzip2, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdBzip2, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: lz4, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdLz4, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: lzw, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdLzw, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: xz, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdXz, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: lzma, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdLzma, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: zip, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdZip, wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 65

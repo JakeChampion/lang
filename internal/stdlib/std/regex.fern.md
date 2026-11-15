@@ -132,6 +132,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<36 function __rx_replace_captures(text: string, tmpl: string, all: RCaps[]): u8[]>>
 <<typed decode errors>>
 
+<<text generation>>
+
 <<errors of regex-syntax>>
 ```
 
@@ -144,6 +146,7 @@ import "core/cmp";
 import "core/error";
 import "core/map";
 import "std/i32";
+import "std/rand";
 import "std/string";
 import "std/unicode";
 import "std/utf8" as utf8;
@@ -155,9 +158,15 @@ A parse gives a tree of nodes. A literal byte is `RChar`, and an ASCII letter un
 
 `RLazy` holds a repetition that prefers one fewer repeat to one more.
 
+`RRep` holds a repetition with its bounds. Only a parse for `generator` makes it, so a search never sees one.
+
 ```fern
 <<3 struct RGroupData>>=
 struct RGroupData { idx: i32, node: RNode }
+
+// A repetition of `node` from `n` to `m` times, or with no most when `m` is
+// -1.
+struct RRepData { node: RNode, n: i32, m: i32 }
 
 // A set of characters. `ranges` holds the first and the last code point of
 // each range, in order. Each node of `nodes` is a list of edges of three
@@ -178,6 +187,7 @@ enum RNode {
   ROpt(RNode),
   RLazy(RNode),
   RGroup(RGroupData),
+  RRep(RRepData),
 }
 
 // A parsed node, the offset after it, the next group number, and the flags
@@ -185,8 +195,8 @@ enum RNode {
 struct RParse { node: RNode, pos: i32, g: i32, f: i32 }
 
 // The first error of a parse, the names of the groups in order, and the
-// pattern.
-struct RCtx { errors: Cell[Option[CompileError]], names: Cell[string[]], p: string }
+// pattern. With `reps`, a repetition is an `RRep` with its bounds.
+struct RCtx { errors: Cell[Option[CompileError]], names: Cell[string[]], p: string, reps: boolean }
 
 // The flags of a pattern: `(?i)`, `(?m)`, `(?s)`, `(?x)`, `(?u)`, `(?R)` and
 // `(?U)`. `(?u)` is on at the start.
@@ -449,7 +459,8 @@ function __rx_quant(cx: RCtx, depth: i32, i: i32, g: i32, f: i32): RParse {
       lazy = !lazy;
       end += 1;
     }
-    r = RParse { ...r, node: __rx_repeat(r.node, b, lazy), pos: end };
+    let node = if (cx.reps) { RRep(RRepData { node: r.node, n: b.n, m: if (b.inf) { -1 } else { b.m } }) } else { __rx_repeat(r.node, b, lazy) };
+    r = RParse { ...r, node: node, pos: end };
   }
   return r;
 }
@@ -2793,6 +2804,7 @@ pub enum CompileErrorKind {
   UnknownBoundary,
   UnknownEscape,
   UnknownProperty,
+  UnsupportedAnchor,
 }
 
 pub enum TextError { InvalidUtf8Output }
@@ -3666,7 +3678,7 @@ pub function (prog: Regex) captures_all(text: string): Captures[] {
 
 pub function compile(pattern: string): Result[Regex, CompileError] {
   let none: string[] = [];
-  let cx = RCtx { errors: cell_new(None), names: cell_new(none), p: pattern };
+  let cx = RCtx { errors: cell_new(None), names: cell_new(none), p: pattern, reps: false };
   let r = __rx_alt(cx, 0, 0, 1, RX_U);
   if let Some(e) = cx.errors.get() {
     return Err(e);
@@ -4555,6 +4567,9 @@ pub function (e: CompileError) to_string(): string {
     },
     UnknownProperty => {
       why = "unknown Unicode property";
+    },
+    UnsupportedAnchor => {
+      why = "anchor is not supported";
     }
   }
   return "regex byte " + e.offset.to_string() + ": " + why;
@@ -5717,4 +5732,371 @@ const SX_WB: string = "aletter cr doublequote dq eb ebase ebasegaz ebg em emodif
 ```fern
 <<module introduction>>=
 // Compiled regular expressions with checked syntax and UTF-8 output.
+```
+
+### Text generation
+
+`generator` gives the texts that a pattern matches, at random, with the distribution of the `rand_regex` crate. Thus a load generator can draw the URLs of its requests as oha does. A draw takes and gives back the state of the generator of `std/rand`.
+
+- A repetition draws its count once, uniformly from its least to its most count. `*`, `+` and `{n,}` have no most, so they take `max_repeat` repeats more than their least. Each repeat then draws its contents again. A repetition of a repetition multiplies the two counts, as `rand_regex` does.
+- An alternation draws one of its branches uniformly. An alternation in a branch adds its branches to the choice, also through a group. When each branch is one character or a set of characters, the alternation is one set, as the parser of the `regex` crate makes it.
+- A set draws one of its characters uniformly. A character of a set outside ASCII is UTF-8, and a set never gives a surrogate.
+- An assertion, such as `^`, `$` or `\b`, is an error, because a text drawn at random cannot satisfy it.
+
+```fern
+<<text generation>>=
+// The kinds of a node of a generator: literal bytes, a sequence, a choice of
+// nodes, and a set of code points, or of bytes when `raw`.
+enum RGenKind { GLit(u8[]), GSeq(RGen[]), GAny(RGen[]), GSet(i32[]) }
+
+// A node of a generator. Each draw repeats it `times` times the product of a
+// count drawn from each pair of `counts`.
+struct RGen { times: i32, counts: i32[], kind: RGenKind, raw: boolean }
+
+pub struct Generator { root: RGen }
+
+function __gen(kind: RGenKind): RGen {
+  let none: i32[] = [];
+  return RGen { times: 1, counts: none, kind: kind, raw: false };
+}
+
+function __gen_single(g: RGen): boolean {
+  return g.times == 1 && g.counts.len() == 0;
+}
+
+function __gen_empty(): RGen {
+  let none: u8[] = [];
+  return __gen(GLit(none));
+}
+
+// A generator of the texts that `pattern` matches.
+pub function generator(pattern: string, max_repeat: i32): Result[Generator, CompileError] {
+  let none: string[] = [];
+  let cx = RCtx { errors: cell_new(None), names: cell_new(none), p: pattern, reps: true };
+  let r = __rx_alt(cx, 0, 0, 1, RX_U);
+  if let Some(e) = cx.errors.get() {
+    return Err(e);
+  }
+  if (r.pos != pattern.len()) {
+    return Err(CompileError { kind: UnexpectedClose, offset: r.pos });
+  }
+  let Some(root) = __gen_node(r.node, max_repeat) else {
+    return Err(CompileError { kind: UnsupportedAnchor, offset: 0 });
+  };
+  return Ok(Generator { root: root });
+}
+
+// The node of `n`, or None when `n` holds an assertion.
+function __gen_node(n: RNode, most: i32): Option[RGen] {
+  match (n) {
+    RChar(c) => {
+      let byte: u8[] = [c as u8];
+      return Some(__gen(GLit(byte)));
+    },
+    RFold(c) => {
+      return Some(__gen(GSet([c - 32, c - 32, c, c])));
+    },
+    RClass(mask) => {
+      return Some(RGen { ...__gen(GSet(__gen_mask_ranges(mask))), raw: true });
+    },
+    RUni(u) => {
+      return Some(__gen(GSet(__gen_scalars(u.ranges))));
+    },
+    RBound(_) => {
+      return None;
+    },
+    RGroup(gd) => {
+      return __gen_node(gd.node, most);
+    },
+    RRep(d) => {
+      return __gen_repeat(d, most);
+    },
+    RSeq(xs) => {
+      return __gen_seq(xs, most);
+    },
+    RAlt(xs) => {
+      return __gen_alt(xs, most);
+    },
+    _ => {
+      return Some(__gen_empty());
+    }
+  }
+}
+
+function __gen_repeat(d: RRepData, most: i32): Option[RGen] {
+  let upper = if (d.m < 0) { d.n + most } else { d.m };
+  if (upper == 0) {
+    return Some(__gen_empty());
+  }
+  let g = __gen_node(d.node, most)?;
+  if (d.n == upper) {
+    g = RGen { ...g, times: g.times * upper };
+  } else {
+    g = RGen { ...g, counts: g.counts.append(d.n).append(upper) };
+  }
+  if (g.times > 1) {
+    match (g.kind) {
+      GLit(bytes) => {
+        let more: u8[] = [];
+        for _ in 0..g.times {
+          more = more.concat(bytes);
+        }
+        return Some(RGen { ...g, times: 1, kind: GLit(more) });
+      },
+      _ => {}
+    }
+  }
+  return Some(g);
+}
+
+// A sequence: the parts of a part that is a sequence join it, and literal
+// parts next to each other become one.
+function __gen_seq(xs: RNode[], most: i32): Option[RGen] {
+  let parts: RGen[] = [];
+  for x in xs {
+    let g = __gen_node(x, most)?;
+    for part in __gen_flat_seq(g) {
+      parts = __gen_joined(parts, part);
+    }
+  }
+  if (parts.len() == 0) {
+    return Some(__gen_empty());
+  }
+  if (parts.len() == 1) {
+    return Some(parts[0]);
+  }
+  return Some(__gen(GSeq(parts)));
+}
+
+function __gen_flat_seq(g: RGen): RGen[] {
+  if (__gen_single(g)) {
+    match (g.kind) {
+      GSeq(inner) => {
+        return inner;
+      },
+      _ => {}
+    }
+  }
+  return [g];
+}
+
+function __gen_joined(parts: RGen[], g: RGen): RGen[] {
+  let n = parts.len();
+  if (n == 0 || !__gen_single(g) || !__gen_single(parts[n - 1])) {
+    return parts.append(g);
+  }
+  match (parts[n - 1].kind) {
+    GLit(a) => {
+      match (g.kind) {
+        GLit(b) => {
+          return parts.with(n - 1, __gen(GLit(a.concat(b))));
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  return parts.append(g);
+}
+
+// An alternation: one branch, drawn uniformly. The branches of a branch that
+// is an alternation join the choice. When each branch is one character or a
+// set, the alternation is the set of all of them.
+function __gen_alt(xs: RNode[], most: i32): Option[RGen] {
+  let branches = __gen_branches(xs);
+  let set = __gen_char_union(branches);
+  if (set.len() > 0) {
+    return Some(__gen(GSet(set)));
+  }
+  let choices: RGen[] = [];
+  for b in branches {
+    let g = __gen_node(b, most)?;
+    choices = choices.concat(__gen_flat_any(g));
+  }
+  return Some(__gen(GAny(choices)));
+}
+
+function __gen_flat_any(g: RGen): RGen[] {
+  if (__gen_single(g)) {
+    match (g.kind) {
+      GAny(inner) => {
+        return inner;
+      },
+      _ => {}
+    }
+  }
+  return [g];
+}
+
+function __gen_branches(xs: RNode[]): RNode[] {
+  let out: RNode[] = [];
+  for x in xs {
+    match (x) {
+      RAlt(inner) => {
+        out = out.concat(__gen_branches(inner));
+      },
+      _ => {
+        out = out.append(x);
+      }
+    }
+  }
+  return out;
+}
+
+// The code points of the branches as ranges, when each branch is one
+// character or a set of characters, or [].
+function __gen_char_union(branches: RNode[]): i32[] {
+  let none: i32[] = [];
+  let rs: i32[] = [];
+  for b in branches {
+    let more = __gen_chars(b);
+    if (more.len() == 0) {
+      return none;
+    }
+    rs = rs.concat(more);
+  }
+  return __gen_scalars(__rx_norm(rs));
+}
+
+// The code points of a node that is one character or a set, or [].
+function __gen_chars(b: RNode): i32[] {
+  let none: i32[] = [];
+  match (b) {
+    RChar(c) => {
+      if (c < 128) {
+        return [c, c];
+      }
+    },
+    RFold(c) => {
+      return [c - 32, c - 32, c, c];
+    },
+    RClass(mask) => {
+      let rs = __gen_mask_ranges(mask);
+      if (rs.len() > 0 && rs[rs.len() - 1] < 128) {
+        return rs;
+      }
+    },
+    RUni(u) => {
+      return u.ranges;
+    },
+    _ => {}
+  }
+  return none;
+}
+
+// The ranges of the bytes of a mask.
+function __gen_mask_ranges(mask: u8[]): i32[] {
+  let rs: i32[] = [];
+  let b = 0;
+  while (b < 256) {
+    if (mask[b] == 0 as u8) {
+      b += 1;
+      continue;
+    }
+    let start = b;
+    while (b < 256 && mask[b] != 0 as u8) {
+      b += 1;
+    }
+    rs = rs.append(start).append(b - 1);
+  }
+  return rs;
+}
+
+// The ranges without the surrogates, which are not characters.
+function __gen_scalars(rs: i32[]): i32[] {
+  let out: i32[] = [];
+  let k = 0;
+  while (k + 1 < rs.len()) {
+    let lo = rs[k];
+    let hi = rs[k + 1];
+    if (lo < 55296 && hi > 57343) {
+      out = out.append(lo).append(55295).append(57344).append(hi);
+    } else if (hi < 55296 || lo > 57343) {
+      out = out.append(lo).append(hi);
+    } else if (lo < 55296) {
+      out = out.append(lo).append(55295);
+    } else if (hi > 57343) {
+      out = out.append(57344).append(hi);
+    }
+    k += 2;
+  }
+  return out;
+}
+
+// A text that the pattern of `g` matches, drawn with the state `state` of
+// the generator of `std/rand`, and the next state.
+pub function (g: Generator) sample(state: i64): (i64, u8[]) {
+  let out: u8[] = [];
+  return __gen_eval(g.root, state, out);
+}
+
+function __gen_eval(g: RGen, state: i64, own out: u8[]): (i64, u8[]) {
+  let st = state;
+  let count = g.times;
+  let k = 0;
+  while (k + 1 < g.counts.len()) {
+    let drawn = rand.rng_between(st, g.counts[k], g.counts[k + 1] + 1);
+    st = drawn.0;
+    count *= drawn.1;
+    k += 2;
+  }
+  match (g.kind) {
+    GLit(bytes) => {
+      for _ in 0..count {
+        out = out.concat(bytes);
+      }
+    },
+    GSeq(parts) => {
+      for _ in 0..count {
+        for part in parts {
+          let next = __gen_eval(part, st, out);
+          st = next.0;
+          out = next.1;
+        }
+      }
+    },
+    GAny(choices) => {
+      for _ in 0..count {
+        let pick = rand.rng_below(st, choices.len());
+        let next = __gen_eval(choices[pick.1], pick.0, out);
+        st = next.0;
+        out = next.1;
+      }
+    },
+    GSet(rs) => {
+      for _ in 0..count {
+        let drawn = __gen_draw(rs, g.raw, st, out);
+        st = drawn.0;
+        out = drawn.1;
+      }
+    }
+  }
+  return (st, out);
+}
+
+// One member of the set `rs`, drawn uniformly.
+function __gen_draw(rs: i32[], raw: boolean, state: i64, own out: u8[]): (i64, u8[]) {
+  let size = 0;
+  let k = 0;
+  while (k + 1 < rs.len()) {
+    size += rs[k + 1] - rs[k] + 1;
+    k += 2;
+  }
+  let pick = rand.rng_below(state, size);
+  let at = pick.1;
+  k = 0;
+  while (k + 1 < rs.len()) {
+    let width = rs[k + 1] - rs[k] + 1;
+    if (at < width) {
+      let cp = rs[k] + at;
+      if (raw || cp < 128) {
+        return (pick.0, out.append(cp as u8));
+      }
+      return (pick.0, out.concat(utf8.encode(cp as char).bytes()));
+    }
+    at -= width;
+    k += 2;
+  }
+  return (pick.0, out);
+}
 ```

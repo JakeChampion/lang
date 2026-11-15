@@ -27,6 +27,12 @@ pub function new(): Histogram {
   return Histogram { counts: counts, total: 0, min: 0, max: 0, sum: 0 };
 }
 
+// A histogram that holds no buckets until its first value.
+pub function empty(): Histogram {
+  let counts: i64[] = [];
+  return Histogram { counts: counts, total: 0, min: 0, max: 0, sum: 0 };
+}
+
 pub function index_of(v: i64): i32 {
   if (v < SUB as i64) {
     if (v < 0) {
@@ -59,6 +65,9 @@ pub function highest(index: i32): i64 {
 }
 
 pub function (h: Histogram) record(v: i64): Histogram {
+  if (h.counts.len() == 0) {
+    return new().record(v);
+  }
   let i = index_of(v);
   let min = if (h.total == 0 || v < h.min) { v } else { h.min };
   let max = if (v > h.max) { v } else { h.max };

@@ -57,6 +57,22 @@ function f(): i32 {
     let u: Ticket = Ticket { id: 2 };
     if let None = o { spend(u); } else { spend(u); }
 }`},
+		{"consumed_after_a_let_else", ticketDecl + `function f(o: Option[i32]): i32 {
+    let t: Ticket = Ticket { id: 1 };
+    let Some(x) = o else {
+        spend(t);
+        return 0;
+    };
+    spend(t);
+    return x;
+}`},
+		{"consumed_by_a_match_on_a_struct_pattern", ticketDecl + `function f(t: Ticket): i32 {
+    let n = 0;
+    match (t) {
+        Ticket { id } => { n = id; }
+    }
+    return n;
+}`},
 		{"for_binding_consumed", ticketDecl + `function f(ts: Ticket[]): void {
     for t in ts { spend(t); }
 }`},
@@ -165,6 +181,14 @@ func TestMustConsumeLeaks(t *testing.T) {
 		{"one_arm_of_an_if_let_leaks", ticketDecl + `function f(o: Option[i32]): void {
     let t: Ticket = Ticket { id: 1 };
     if let Some(n) = o { spend(t); }
+}`, scopeMsg},
+		{"let_else_returns_before_the_use", ticketDecl + `function f(o: Option[i32]): i32 {
+    let t: Ticket = Ticket { id: 1 };
+    let Some(x) = o else {
+        return 0;
+    };
+    spend(t);
+    return x;
 }`, scopeMsg},
 		{"for_binding_dropped", ticketDecl + `function f(ts: Ticket[]): void {
     for t in ts { print("skip"); }
