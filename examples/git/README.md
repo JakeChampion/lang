@@ -84,7 +84,9 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   The mailmap of `.mailmap`, `mailmap.blob` and
   `mailmap.file` gives the names of the header lines, of `%aN` and of
   `--author`, as `log.mailmap` and `--use-mailmap` select. The changes of
-  `--name-status` find renames as git does. A tab and a wide character in
+  `--name-status` find renames as git does. `-C`, `--find-copies`,
+  `--find-copies-harder`, `-M<n>` and `diff.renames=copies` find the
+  copies and set the least score of a rename or a copy. A tab and a wide character in
   a message take the columns that git gives them.
 
   The diff of each commit is `-p`, `--raw`, `--stat`, `--numstat`,
@@ -210,8 +212,7 @@ the git of the machine. With git 2.43, four things are different:
 ## What it does not have yet
 
 - These options of `log`: `--notes`, the signatures (`--show-signature`,
-  `%G?`), `-C` and `--find-copies` (`--follow` finds copies),
-  `--remerge-diff`, and `-L`.
+  `%G?`), `--remerge-diff`, and `-L`.
 
 - The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
   `color.grep`, and the rules of the `whitespace` attribute. The port
@@ -357,8 +358,8 @@ count of bytes. A worker of `std/worker` makes the names of its part.
 - `TestSelfHostExampleGitForms` runs the placeholders that change the
   columns of a format, the wrap of `%w()`, `--raw`, `--check` with
   each rule of `core.whitespace`, the diffs of merges, also in a random
-  history of merges with conflicts, the diffs of words, and the moved
-  lines, also of random edits.
+  history of merges with conflicts, the diffs of words, the moved lines,
+  also of random edits, and the copies, also in a random history.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

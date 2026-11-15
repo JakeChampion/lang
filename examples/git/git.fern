@@ -1024,7 +1024,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { moved_default: i32, word_regex: string, merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
+struct LogOpts { find: treediff.Detect, moved_default: i32, word_regex: string, merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1217,8 +1217,26 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
   if (x == "--no-renames") {
     return (LogOpts { ...o, renames: false }, 1);
   }
-  if (x == "-M" || x == "--find-renames") {
-    return (LogOpts { ...o, renames: true }, 1);
+  if (x == "--find-copies-harder") {
+    return (LogOpts { ...o, renames: true, find: treediff.Detect { ...o.find, copies: true, harder: true } }, 1);
+  }
+  let renaming = ["-M", "--find-renames=", "--find-renames", "-C", "--find-copies=", "--find-copies"];
+  for name in renaming {
+    if (x == name || name.ends_with("=") && x.starts_with(name) || name.len() == 2 && x.starts_with(name)) {
+      let copies = name.starts_with("-C") || name.starts_with("--find-copies");
+      let f = o.find;
+      if (x.len() > name.len()) {
+        let (score, rest) = treediff.parse_score(objects.part(x, name.len(), x.len()));
+        if (rest.len() > 0) {
+          return (LogOpts { ...o, bad: "error: invalid argument to " + (if (copies) { "find-copies" } else { "find-renames" }) }, 1);
+        }
+        f = treediff.Detect { ...f, min_score: score };
+      }
+      if (copies) {
+        f = treediff.Detect { ...f, harder: f.harder || f.copies, copies: true };
+      }
+      return (LogOpts { ...o, renames: true, find: f }, 1);
+    }
   }
   for name in ["--src-prefix", "--dst-prefix", "--diff-algorithm", "--inter-hunk-context", "--stat-width", "--stat-name-width", "--stat-graph-width", "--stat-count"] {
     let (v, taken) = option_value(argv, i, name);
@@ -1795,7 +1813,7 @@ function commit_diff(st: store.Store, c: log.Commit, parent: string, o: LogOpts,
   if (!o.renames) {
     return (after, found, follow);
   }
-  let (s4, renamed) = treediff.renames(after, found);
+  let (s4, renamed) = treediff.detect(after, found, o.find, base, items);
   return (s4, renamed, follow);
 }
 
@@ -1807,9 +1825,9 @@ function name_lines(changes: treediff.Change[], o: LogOpts): string {
     let status = unsafe { string_from_bytes_unchecked([ch.status]) };
     if (o.diff == "name-only") {
       out += path + "\n";
-    } else if (ch.status == b'R') {
+    } else if (ch.status == b'R' || ch.status == b'C') {
       let old = unsafe { string_from_bytes_unchecked(objects.quoted(ch.old_path)) };
-      out += "R" + (ch.score * 100 / 60000).to_string().pad_start_str(3, "0") + "\t" + old + "\t" + path + "\n";
+      out += status + (ch.score * 100 / 60000).to_string().pad_start_str(3, "0") + "\t" + old + "\t" + path + "\n";
     } else {
       out += status + "\t" + path + "\n";
     }
@@ -2576,9 +2594,11 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
-  o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: r.config.flag("diff.renames", true), walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
+  let renames_value = r.config.get("diff.renames").unwrap_or("true").to_ascii_lower();
+  let copies = renames_value == "copies" || renames_value == "copy";
+  o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: copies || r.config.flag("diff.renames", true), find: treediff.Detect { ...o.find, copies: copies }, walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
   if let Some(v) = r.config.get("diff.colormoved") {
     let form = moved.parse(v);
     if (form >= 0) {

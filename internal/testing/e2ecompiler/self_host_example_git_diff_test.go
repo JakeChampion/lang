@@ -450,6 +450,82 @@ func gitMovedFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
 	})
 }
 
+// gitCopyCases are the forms of -C and -M for the repository of
+// gitCopyFixture.
+var gitCopyCases = []string{
+	"log --name-status", "log --name-status -C", "log --name-status -C -C", "log --name-status --find-copies-harder",
+	"log --name-status --find-copies", "log --name-status --find-copies=90", "log --name-status -C90%", "log --name-status -C.95",
+	"log --name-status -C5", "log --name-status -M90", "log --name-status -M20", "log --name-status --find-renames=10%",
+	"log --name-status -Cx", "log --name-status -Mx", "log --raw -C -C", "log --stat -C -C", "log --numstat -C -C", "log --summary -C -C",
+	"log -p -C -C", "log -p --find-copies-harder --color", "log --name-status -C -- a2.txt", "log --name-status -C -C -- a2.txt a.txt",
+	"log --name-status -C -C -- g2.txt", "log --stat -C --find-copies-harder --format=%h", "log --name-status",
+	"log --name-status --no-renames", "log --summary",
+}
+
+// gitCopyFixture makes copies for gitCopyCases: of a changed file, of a
+// file that stays, of a deleted file to two places, with changes, and of
+// a link.
+func gitCopyFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
+	t.Helper()
+	when := 1700000000
+	run := func(args ...string) {
+		t.Helper()
+		cmd := oracle.cmd(args...)
+		cmd.Dir = dir
+		stamp := fmt.Sprintf("%d +0100", when)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C",
+			"GIT_AUTHOR_NAME=A", "GIT_AUTHOR_EMAIL=a@example.com", "GIT_COMMITTER_NAME=C", "GIT_COMMITTER_EMAIL=c@example.com",
+			"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	seq := func(from, to int) string {
+		var b strings.Builder
+		for i := from; i <= to; i++ {
+			fmt.Fprintf(&b, "%d\n", i)
+		}
+		return b.String()
+	}
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := func(name string) {
+		t.Helper()
+		if err := os.Symlink("a.txt", filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(msg string) {
+		t.Helper()
+		when += 3600
+		run("add", "-A")
+		run("commit", "-q", "-m", msg)
+	}
+	run("init", "-q", "-b", "main", "--object-format="+hash.format, ".")
+	write("a.txt", seq(1, 40))
+	write("b.txt", seq(100, 140))
+	write("gone.txt", seq(200, 240))
+	write("stay.txt", seq(300, 330))
+	link("link")
+	commit("one")
+	write("a.txt", seq(1, 41))
+	write("a2.txt", seq(1, 41))
+	write("a3.txt", seq(1, 38))
+	write("dir-stay.txt", seq(300, 330))
+	os.Remove(filepath.Join(dir, "gone.txt"))
+	write("g1.txt", seq(200, 240))
+	write("g2.txt", seq(200, 240)+"more\n")
+	link("link2")
+	write("zz.txt", seq(100, 140))
+	commit("two")
+	write("stay2.txt", seq(300, 329))
+	commit("three")
+}
+
 // gitMergeCases are the diffs of merges for the repositories of
 // gitFormsFixture and gitMergeFixture.
 var gitMergeCases = []string{
@@ -721,6 +797,25 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 			gitMergeFixture(t, oracle, fixed, run)
 			for _, c := range gitMergeCases {
 				gitCompare(t, oracle, port, fixed, "", strings.Fields(c)...)
+			}
+			copyDir := t.TempDir()
+			gitCopyFixture(t, oracle, copyDir, run)
+			for _, c := range gitCopyCases {
+				gitCompare(t, oracle, port, copyDir, "", strings.Fields(c)...)
+			}
+			for _, v := range []string{"copies", "copy"} {
+				if _, stderr, code := oracle.run(t, copyDir, "", "config", "diff.renames", v); code != 0 {
+					t.Fatalf("git config diff.renames %s: %s", v, stderr)
+				}
+				for _, c := range []string{"log --name-status", "log --summary", "log --name-status --no-renames"} {
+					gitCompare(t, oracle, port, copyDir, "", strings.Fields(c)...)
+				}
+			}
+			history := t.TempDir()
+			gitRandomHistory(t, oracle, history, 21, 60, run)
+			for _, c := range []string{"log --name-status -C", "log --name-status -C -C", "log --stat -C -C --all", "log --summary --find-copies-harder -M30%",
+				"log --raw -C50% --all"} {
+				gitCompare(t, oracle, port, history, "", strings.Fields(c)...)
 			}
 			movedDir := t.TempDir()
 			gitMovedFixture(t, oracle, movedDir, run)

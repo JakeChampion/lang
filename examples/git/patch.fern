@@ -479,10 +479,11 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   let lbl0 = if (one.valid) { a_one } else { "/dev/null" };
   let lbl1 = if (two.valid) { b_two } else { "/dev/null" };
   let meta = "";
-  if (p.status == b'R') {
+  if (p.status == b'R' || p.status == b'C') {
+    let word = if (p.status == b'R') { "rename" } else { "copy" };
     meta += "similarity index " + (p.score * 100 / 60000).to_string() + "%\n";
-    meta += "rename from " + quoted(name_a) + "\n";
-    meta += "rename to " + quoted(name_b) + "\n";
+    meta += word + " from " + quoted(name_a) + "\n";
+    meta += word + " to " + quoted(name_b) + "\n";
   }
   if (one.hash != two.hash) {
     let full = o.full_index;
@@ -855,7 +856,7 @@ pub function pprint_rename(a: u8[], b: u8[]): string {
 function stat_of(s_in: store.Store, o: Opts, p: Pair): (store.Store, Stat) {
   let (s1, a) = content(s_in, p.one);
   let (s2, b) = content(s1, p.two);
-  let renamed = p.status == b'R';
+  let renamed = p.status == b'R' || p.status == b'C';
   let name = if (renamed) { pprint_rename(p.one.path, p.two.path) } else { quoted(p.two.path) };
   let st = Stat { name: quoted(p.two.path), print_name: name, added: 0, deleted: 0, binary: false, renamed: renamed };
   let same = p.one.valid && p.two.valid && p.one.hash == p.two.hash;
@@ -1065,11 +1066,12 @@ function summary_of(p: Pair): string {
     return " create mode " + mode6(p.two.mode) + " " + quoted(p.two.path) + "\n";
   }
   let out = "";
-  if (p.status == b'R') {
-    out += " rename " + pprint_rename(p.one.path, p.two.path) + " (" + (p.score * 100 / 60000).to_string() + "%)\n";
+  let moved_path = p.status == b'R' || p.status == b'C';
+  if (moved_path) {
+    out += " " + (if (p.status == b'R') { "rename" } else { "copy" }) + " " + pprint_rename(p.one.path, p.two.path) + " (" + (p.score * 100 / 60000).to_string() + "%)\n";
   }
   if (p.one.mode != p.two.mode) {
-    out += " mode change " + mode6(p.one.mode) + " => " + mode6(p.two.mode) + (if (p.status == b'R') { "" } else { " " + quoted(p.two.path) }) + "\n";
+    out += " mode change " + mode6(p.one.mode) + " => " + mode6(p.two.mode) + (if (moved_path) { "" } else { " " + quoted(p.two.path) }) + "\n";
   }
   return out;
 }
