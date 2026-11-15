@@ -20,6 +20,13 @@ func TestAndroidFluidRules(t *testing.T) {
 	runAppSuite(t, fluidApp, "fluid_test.fern")
 }
 
+// fingers_test.fern checks the fingers on the fluid: the estimate of the
+// place of a finger at the time of the display, the lag between a frame and
+// the place that it takes, and how near the dye is to a finger that moves.
+func TestAndroidFluidFingers(t *testing.T) {
+	runAppSuite(t, fluidApp, "fingers_test.fern")
+}
+
 // pace_test.fern checks the pace of the frames: a frame for each refresh of
 // a display of 60 or 90 Hz, a frame for each second refresh at 120 Hz, and
 // a slower pace when many frames are late.

@@ -87,7 +87,6 @@ struct Programs {
   blur: Program,
   copy: Program,
   clear: Program,
-  color: Program,
   bloom_prefilter: Program,
   bloom_blur: Program,
   bloom_final: Program,
@@ -110,6 +109,7 @@ struct Targets {
   pressure: Pair,
   bloom: Target,
   blooms: Target[],
+  mask: Target,
   sunrays: Target,
   sunrays_temp: Target,
 }
@@ -185,8 +185,7 @@ function programs(base: i32, blur_vertex: i32): Option[Programs] {
   let (blur, a) = built(blur_vertex, shaders.blur(), true);
   let (copy, b) = built(base, shaders.copy(), a);
   let (clear, c) = built(base, shaders.clear(), b);
-  let (color, d) = built(base, shaders.color(), c);
-  let (bloom_prefilter, e) = built(base, shaders.bloom_prefilter(), d);
+  let (bloom_prefilter, e) = built(base, shaders.bloom_prefilter(), c);
   let (bloom_blur, f) = built(base, shaders.bloom_blur(), e);
   let (bloom_final, g) = built(base, shaders.bloom_final(), f);
   let (sunrays_mask, h) = built(base, shaders.sunrays_mask(), g);
@@ -202,7 +201,6 @@ function programs(base: i32, blur_vertex: i32): Option[Programs] {
     blur: blur,
     copy: copy,
     clear: clear,
-    color: color,
     bloom_prefilter: bloom_prefilter,
     bloom_blur: bloom_blur,
     bloom_final: bloom_final,
@@ -224,7 +222,7 @@ function programs(base: i32, blur_vertex: i32): Option[Programs] {
 }
 
 function (p: Programs) list(): Program[] {
-  return [p.blur, p.copy, p.clear, p.color, p.bloom_prefilter, p.bloom_blur, p.bloom_final, p.sunrays_mask, p.sunrays, p.splat, p.advection, p.divergence, p.curl, p.vorticity, p.pressure, p.gradient_subtract];
+  return [p.blur, p.copy, p.clear, p.bloom_prefilter, p.bloom_blur, p.bloom_final, p.sunrays_mask, p.sunrays, p.splat, p.advection, p.divergence, p.curl, p.vorticity, p.pressure, p.gradient_subtract];
 }
 
 function free_programs(p: Programs): void {
@@ -335,7 +333,7 @@ pub function open(cfg: config.Config, width: i32, height: i32, ratio: f64, rng: 
   for i in 0..8 {
     displays = displays.append(no_program());
   }
-  let empty = Targets { dye: no_pair(), velocity: no_pair(), divergence: no_target(), curl: no_target(), pressure: no_pair(), bloom: no_target(), blooms: [], sunrays: no_target(), sunrays_temp: no_target() };
+  let empty = Targets { dye: no_pair(), velocity: no_pair(), divergence: no_target(), curl: no_target(), pressure: no_pair(), bloom: no_target(), blooms: [], mask: no_target(), sunrays: no_target(), sunrays_temp: no_target() };
   let f = Fluid { quad: gles.quad(), formats: fs, base_vertex: base, programs: all, displays: displays, display: 0, dither: noise(cfg.dithering_resolution, rng), width: 0, height: 0, view: no_target(), targets: empty };
   return Some(f.with_keywords(cfg).resized(cfg, width, height, ratio));
 }
@@ -366,6 +364,7 @@ function free_targets(t: Targets): void {
   for b in t.blooms {
     free_target(b);
   }
+  free_target(t.mask);
   free_target(t.sunrays);
   free_target(t.sunrays_temp);
 }
@@ -470,6 +469,7 @@ pub function (f: Fluid) resized(cfg: config.Config, width: i32, height: i32, rat
     blooms: blooms,
     sunrays: float_target(rays_w, rays_h, fs.r, gles.LINEAR),
     sunrays_temp: float_target(rays_w, rays_h, fs.r, gles.LINEAR),
+    mask: float_target(rays_w, rays_h, fs.rgba, gles.LINEAR),
   };
   free_target(f.view);
   return Fluid { ...f, width: width, height: height, view: view_for(cfg, width, height, ratio), targets: targets };
@@ -541,14 +541,19 @@ pub function (f: Fluid) step(cfg: config.Config, dt: f64): Fluid {
 
   gles.use_program(ps.clear.id);
   gles.uniform1i(ps.clear.at[TEXTURE], attach(pressure.read, 0));
-  gles.uniform1f(ps.clear.at[VALUE], cfg.pressure as f32);
+  // The pressure passes do the same work in a second at each frame rate: a
+  // step of half the time has half the passes, and keeps more of the
+  // pressure of the step before it.
+  let part = (dt * 60.0).min(1.0);
+  let passes = ((cfg.pressure_iterations as f64 * part).round() as i32).max(cfg.pressure_iterations.min(4));
+  gles.uniform1f(ps.clear.at[VALUE], cfg.pressure.pow(part) as f32);
   fill(pressure.write);
   pressure = pressure.swap();
 
   gles.use_program(ps.pressure.id);
   texel(ps.pressure, velocity.read);
   gles.uniform1i(ps.pressure.at[DIVERGENCE], attach(t.divergence, 0));
-  for i in 0..cfg.pressure_iterations {
+  for i in 0..passes {
     gles.uniform1i(ps.pressure.at[PRESSURE], attach(pressure.read, 1));
     fill(pressure.write);
     pressure = pressure.swap();
@@ -579,25 +584,29 @@ pub function (f: Fluid) step(cfg: config.Config, dt: f64): Fluid {
   return Fluid { ...f, targets: Targets { ...t, dye: t.dye.swap(), velocity: velocity, pressure: pressure } };
 }
 
-// Draws the fluid into `to`: the bloom and the sun rays of `cfg`, the
-// background colour, and the dye over it.
-pub function (f: Fluid) render(cfg: config.Config, to: Target): void {
+// Draws the fluid into `to`: the background colour, and the dye over it
+// with the bloom and the sun rays of `cfg`. With `effects`, it makes the
+// bloom and the sun rays from the dye first. Without it, it uses the ones
+// of the draw before, which is correct for a part of a second: they are
+// soft pictures of the dye.
+pub function (f: Fluid) render(cfg: config.Config, to: Target, effects: boolean): void {
   f.begin();
   let t = f.targets;
-  if (cfg.bloom) {
+  if (effects && cfg.bloom) {
     f.bloom(cfg, t.dye.read, t.bloom);
   }
-  if (cfg.sunrays) {
-    f.sunrays(cfg, t.dye.read, t.dye.write, t.sunrays);
+  if (effects && cfg.sunrays) {
+    f.sunrays(cfg, t.dye.read, t.mask, t.sunrays);
     f.blur(t.sunrays, t.sunrays_temp);
   }
+  // The clear gives each pixel the background colour, and costs a phone
+  // GPU no pass.
+  gles.viewport(0, 0, to.width, to.height);
+  gles.bind_framebuffer(gles.FRAMEBUFFER, to.fbo);
+  gles.clear_color(cfg.back_color.r as f32, cfg.back_color.g as f32, cfg.back_color.b as f32, 1.0 as f32);
+  gles.clear(gles.COLOR_BUFFER_BIT);
   gles.blend_func(gles.ONE, gles.ONE_MINUS_SRC_ALPHA);
   gles.enable(gles.BLEND);
-
-  let back = f.programs.color;
-  gles.use_program(back.id);
-  gles.uniform4f(back.at[COLOR], cfg.back_color.r as f32, cfg.back_color.g as f32, cfg.back_color.b as f32, 1.0 as f32);
-  blit(to);
 
   let d = f.displays[f.display];
   gles.use_program(d.id);
@@ -617,13 +626,14 @@ pub function (f: Fluid) render(cfg: config.Config, to: Target): void {
 }
 
 // Draws the fluid on the window. A window with more pixels than the fluid
-// draws gets the picture of `view`, made larger.
-pub function (f: Fluid) show(cfg: config.Config): void {
+// draws gets the picture of `view`, made larger. `effects` is as for
+// `render`.
+pub function (f: Fluid) show(cfg: config.Config, effects: boolean): void {
   if (f.view.texture == 0) {
-    f.render(cfg, f.window());
+    f.render(cfg, f.window(), effects);
     return;
   }
-  f.render(cfg, f.view);
+  f.render(cfg, f.view, effects);
   gles.disable(gles.BLEND);
   let p = f.programs.copy;
   gles.use_program(p.id);
@@ -677,7 +687,8 @@ function (f: Fluid) bloom(cfg: config.Config, source: Target, to: Target): void 
 }
 
 // Draws the sun rays of `source` into `to`. `mask` takes the mask of the
-// dye between the two passes.
+// dye between the two passes. It has the size of the sun rays, which the
+// pass of the rays reads it at.
 function (f: Fluid) sunrays(cfg: config.Config, source: Target, mask: Target, to: Target): void {
   let ps = f.programs;
   gles.disable(gles.BLEND);
@@ -760,7 +771,7 @@ pub function (f: Fluid) capture(cfg: config.Config): Picture {
     free_target(to);
     return Picture { width: 0, height: 0, pixels: [] };
   }
-  f.render(cfg, to);
+  f.render(cfg, to, true);
   gles.bind_framebuffer(gles.FRAMEBUFFER, to.fbo);
   let pixels = gles.read_rgba(w, h);
   gles.bind_framebuffer(gles.FRAMEBUFFER, 0);
