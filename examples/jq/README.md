@@ -130,6 +130,11 @@ jq makes a tail call with no new stack frame. The port uses a stack frame for
 each call of a function of a `def`. Thus the stack sets the limit of the
 depth of a function that calls itself. A depth of 1000000 is good on x86-64.
 
+jq keeps its frames on the heap, so only the memory sets its limit. A depth
+of 3000000 is good in jq, and a depth of 30000000 gives an error that jq
+cannot allocate memory. In the port, a deeper recursion stops with a stack
+overflow and exit 134, because the evaluator calls itself for each filter.
+
 On wasm32-wasi, wasmtime gives 512 KiB of stack, and a depth of 100 is good.
 The compiler makes different frames for different programs, so the limit is
 between 150 and 500. The option `-W max-wasm-stack` of wasmtime makes the
