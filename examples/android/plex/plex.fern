@@ -231,7 +231,9 @@ pub function parse_account(body: string): Account {
 
 // --- plex.tv: the servers of the account
 
-pub struct Connection { uri: string, local: boolean, relay: boolean }
+// A connection of a server. `address` and `port` are the IP address and
+// the port that `uri` names, and `protocol` is "https" or "http".
+pub struct Connection { uri: string, local: boolean, relay: boolean, address: string, port: i32, protocol: string, ipv6: boolean }
 
 pub struct Server { name: string, id: string, token: string, owned: boolean, connections: Connection[] }
 
@@ -257,37 +259,133 @@ function server_of(d: json.Document, n: i32): Server {
   for c in elements(d, n, "connections") {
     let uri = str(d, c, "uri");
     if (uri.len() > 0) {
-      conns = conns.append(Connection { uri: uri, local: flag(d, c, "local"), relay: flag(d, c, "relay") });
+      conns = conns.append(Connection { uri: uri, local: flag(d, c, "local"), relay: flag(d, c, "relay"), address: str(d, c, "address"), port: int(d, c, "port") as i32, protocol: str(d, c, "protocol"), ipv6: flag(d, c, "IPv6") });
     }
   }
   return Server { name: str(d, n, "name"), id: str(d, n, "clientIdentifier"), token: str(d, n, "accessToken"), owned: flag(d, n, "owned"), connections: conns };
 }
 
-// The addresses of a server in the order to try them: local, then remote,
-// then the relay of plex.tv, which is slow and limited.
+// The addresses of a server in the order to try them: local, then the
+// plain HTTP address of each local one on a private network, then remote,
+// then the relay of plex.tv, which is slow and limited. IPv4 comes before
+// IPv6 in each group.
+//
+// The HTTP address needs no name lookup. A resolver can refuse a
+// plex.direct name with a private address, as a VPN such as Tailscale can.
+// Plezy does the same, and only for a private address, because each
+// request carries the token.
 pub function connection_order(s: Server): string[] {
   let out: string[] = [];
-  for c in s.connections {
-    if (c.local && !c.relay) {
-      out = out.append(c.uri);
+  for v6 in [false, true] {
+    for c in s.connections {
+      if (c.local && !c.relay && c.ipv6 == v6) {
+        out = add_new(out, c.uri);
+      }
     }
   }
-  for c in s.connections {
-    if (!c.local && !c.relay) {
-      out = out.append(c.uri);
+  for v6 in [false, true] {
+    for c in s.connections {
+      if (c.ipv6 == v6) {
+        out = add_new(out, http_fallback(c));
+      }
+    }
+  }
+  for v6 in [false, true] {
+    for c in s.connections {
+      if (!c.local && !c.relay && c.ipv6 == v6) {
+        out = add_new(out, c.uri);
+      }
     }
   }
   for c in s.connections {
     if (c.relay) {
-      out = out.append(c.uri);
+      out = add_new(out, c.uri);
     }
   }
   return out;
 }
 
+function add_new(own out: string[], uri: string): string[] {
+  if (uri.len() == 0) {
+    return out;
+  }
+  for u in out {
+    if (u == uri) {
+      return out;
+    }
+  }
+  return out.append(uri);
+}
+
+// The plain HTTP address of a local HTTPS connection on a private network,
+// as "http://address:port", or "".
+pub function http_fallback(c: Connection): string {
+  if (!c.local || c.relay || c.protocol != "https" || c.port <= 0 || !private_host(c.address)) {
+    return "";
+  }
+  if (!c.uri.contains(".plex.direct") && !ip_literal(c.address)) {
+    return "";
+  }
+  let host = c.address;
+  if (host.contains(":") && !host.starts_with("[")) {
+    host = "[" + host + "]";
+  }
+  return "http://" + host + ":" + c.port.to_string();
+}
+
+// The four numbers of an IPv4 address, or None.
+function ipv4_parts(host: string): Option[i32[]] {
+  let parts = host.split(".");
+  if (parts.len() != 4) {
+    return None;
+  }
+  let out: i32[] = [];
+  for p in parts {
+    if (p.len() == 0 || p.len() > 3 || digits(p) > 255i64) {
+      return None;
+    }
+    for b in p.bytes() {
+      if (b < 48u8 || b > 57u8) {
+        return None;
+      }
+    }
+    out = out.append(digits(p) as i32);
+  }
+  return Some(out);
+}
+
+function ip_literal(host: string): boolean {
+  if let Some(_) = ipv4_parts(host) {
+    return true;
+  }
+  return host.contains(":");
+}
+
+// Whether `host` is on a private network: an IPv4 address of 10/8,
+// 172.16/12, 192.168/16, 100.64/10 (the carrier-grade NAT range that
+// Tailscale uses), 127/8 or 169.254/16, a unique local IPv6 address
+// (fc00::/7), or a name of a local network such as "nas.local" or a
+// Tailscale name "nas.tail1234.ts.net".
+pub function private_host(host: string): boolean {
+  if let Some(a) = ipv4_parts(host) {
+    return a[0] == 10 || a[0] == 127 || a[0] == 172 && a[1] >= 16 && a[1] <= 31 || a[0] == 192 && a[1] == 168 || a[0] == 100 && a[1] >= 64 && a[1] <= 127 || a[0] == 169 && a[1] == 254;
+  }
+  let h = host.to_ascii_lower();
+  if (h.starts_with("[") && h.ends_with("]")) {
+    h = h.split_at(h.len() - 1).0.split_at(1).1;
+  }
+  if (h.contains(":")) {
+    return h.starts_with("fc") || h.starts_with("fd") || h == "::1";
+  }
+  if (h == "localhost" || h.len() > 0 && !h.contains(".")) {
+    return true;
+  }
+  return h.ends_with(".local") || h.ends_with(".lan") || h.ends_with(".home.arpa") || h.ends_with(".internal") || h.ends_with(".ts.net");
+}
+
 // A server that the user typed, with a token of their own.
 pub function manual_server(uri: string, token: string): Server {
-  return Server { name: uri, id: "", token: token, owned: true, connections: [Connection { uri: trim_slash(uri), local: true, relay: false }] };
+  return Server { name: uri, id: "", token: token, owned: true, connections: [Connection { uri: trim_slash(uri), local: true, relay: false, address: "", port: 0, protocol: "", ipv6: false }] };
 }
 
 function trim_slash(s: string): string {

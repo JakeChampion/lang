@@ -403,6 +403,39 @@ function test_saved_server_opens_home(): test.TestOutcome {
   return test.assert_eq((node(s, "hub:0:0").is_some() && node(s, "tab:3").is_some()).to_string(), "true");
 }
 
+// A saved address that this network cannot reach: the app opens the home
+// screen at once, races the connections of the server again, and changes
+// to the address that answers.
+function test_saved_server_moves_to_working_address(): test.TestOutcome {
+  let log = new_log();
+  note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_id=abc\nserver_uri=https://down.example:32400\nserver_token=srv\n");
+  let f = frame();
+  defer free_frame(f);
+  let s = settle(shown(log, f, "", ""), log, 100i64, f);
+  if (!has_url(log, "/api/v2/resources") || !has_url(log, "https://up.example:32400/identity")) {
+    return test.fail("no race of the connections: " + log.urls.get().join(" | "));
+  }
+  if (!has_url(log, "https://up.example:32400/library/sections") || s.error.len() > 0 || node(s, "hub:0:0").is_none()) {
+    return test.fail("the home screen did not load from the address that answered: " + s.error);
+  }
+  return test.assert_eq(file_of(log, "/data/settings").contains("server_uri=https://up.example:32400").to_string(), "true");
+}
+
+// A saved address that works: the race again keeps the home screen, and
+// asks for it once.
+function test_saved_server_recheck_is_quiet(): test.TestOutcome {
+  let log = new_log();
+  note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_id=abc\nserver_uri=https://up.example:32400\nserver_token=srv\n");
+  let f = frame();
+  defer free_frame(f);
+  let s = settle(shown(log, f, "", ""), log, 100i64, f);
+  let sections = log.urls.get().filter((u: string): boolean => u.contains("/library/sections")).len();
+  if (!has_url(log, "/api/v2/resources") || sections != 1) {
+    return test.fail("the race again loaded the home screen " + sections.to_string() + " times");
+  }
+  return test.assert_eq((node(s, "hub:0:0").is_some() && s.base.uri == "https://up.example:32400").to_string(), "true");
+}
+
 function count_calls(log: Log, call: string): i32 {
   return log.calls.get().filter((c: string): boolean => c == call).len();
 }
@@ -1006,6 +1039,8 @@ function main(): i32 {
   let r = test.new("plex control");
   r = r.it("a sign-in with a PIN reaches the home screen", test_sign_in_reaches_home);
   r = r.it("a saved server opens the home screen", test_saved_server_opens_home);
+  r = r.it("a saved address that fails moves to one that answers", test_saved_server_moves_to_working_address);
+  r = r.it("a saved address that works stays, with no reload", test_saved_server_recheck_is_quiet);
   r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
   r = r.it("a transcode seeks in its stream and stays alive while paused", test_transcode_seeks_in_its_stream);
   r = r.it("a file with no sound plays again as a transcode", test_lost_sound_transcodes);

@@ -59,6 +59,35 @@ function test_servers_and_connection_order(): test.TestOutcome {
   return test.assert_eq(order.join(" "), "https://10-0-0-5.abc.plex.direct:32400 https://1-2-3-4.abc.plex.direct:32400 https://relay.plex.direct:8443");
 }
 
+// A server on a home network that a phone reaches through Tailscale: its
+// LAN and Tailscale addresses are local, with plex.direct names, and its
+// public address is remote. Each private local address also gets a plain
+// HTTP address, after the local HTTPS ones and before the remote one.
+const TAILNET: string = "[{\"name\":\"Synology\",\"provides\":\"server\",\"clientIdentifier\":\"syn\",\"accessToken\":\"srv\",\"connections\":[{\"protocol\":\"https\",\"address\":\"fd7a:115c:a1e0::1\",\"port\":32400,\"uri\":\"https://fd7a-115c-a1e0--1.syn.plex.direct:32400\",\"local\":true,\"relay\":false,\"IPv6\":true},{\"protocol\":\"https\",\"address\":\"192.168.1.20\",\"port\":32400,\"uri\":\"https://192-168-1-20.syn.plex.direct:32400\",\"local\":true,\"relay\":false},{\"protocol\":\"https\",\"address\":\"100.101.102.103\",\"port\":32400,\"uri\":\"https://100-101-102-103.syn.plex.direct:32400\",\"local\":true,\"relay\":false},{\"protocol\":\"https\",\"address\":\"81.2.3.4\",\"port\":32400,\"uri\":\"https://81-2-3-4.syn.plex.direct:32400\",\"local\":true,\"relay\":false},{\"protocol\":\"https\",\"address\":\"81.2.3.4\",\"port\":12345,\"uri\":\"https://81-2-3-4.syn.plex.direct:12345\",\"local\":false,\"relay\":false}]}]";
+
+function test_private_connections_get_http(): test.TestOutcome {
+  let servers = plex.parse_servers(TAILNET);
+  if (servers.len() != 1) {
+    return test.fail("servers " + servers.len().to_string());
+  }
+  let want = [
+    "https://192-168-1-20.syn.plex.direct:32400",
+    "https://100-101-102-103.syn.plex.direct:32400",
+    "https://81-2-3-4.syn.plex.direct:32400",
+    "https://fd7a-115c-a1e0--1.syn.plex.direct:32400",
+    "http://192.168.1.20:32400",
+    "http://100.101.102.103:32400",
+    "http://[fd7a:115c:a1e0::1]:32400",
+    "https://81-2-3-4.syn.plex.direct:12345",
+  ];
+  return test.assert_eq(plex.connection_order(servers[0]).join(" "), want.join(" "));
+}
+
+function test_private_hosts(): test.TestOutcome {
+  let hosts = ["10.0.0.1", "172.16.0.1", "172.32.0.1", "192.168.0.1", "100.64.0.1", "100.128.0.1", "127.0.0.1", "169.254.1.1", "8.8.8.8", "fd7a:115c:a1e0::1", "2001:db8::1", "nas.local", "nas.tail1234.ts.net", "nas", "plex.tv", "300.1.1.1"];
+  return test.assert_eq(hosts.map((h: string): string => plex.private_host(h).to_string()).join(" "), "true true false true true false true true false true false true true true false false");
+}
+
 function test_manual_server(): test.TestOutcome {
   let s = plex.manual_server("http://192.168.1.4:32400/", "t");
   return test.assert_eq(plex.connection_order(s).join(" ") + " " + s.token, "http://192.168.1.4:32400 t");
@@ -322,6 +351,8 @@ function main(): i32 {
   r = r.it("each request names the client", test_headers_name_the_client);
   r = r.it("a PIN is read waiting and linked", test_pin_parse);
   r = r.it("servers are read and their connections ordered", test_servers_and_connection_order);
+  r = r.it("a private local connection gets a plain HTTP address", test_private_connections_get_http);
+  r = r.it("private hosts are told from public ones", test_private_hosts);
   r = r.it("a typed server has one connection", test_manual_server);
   r = r.it("the libraries of video and music are kept", test_sections_keep_video_and_music);
   r = r.it("an item is read with its media", test_item_fields);

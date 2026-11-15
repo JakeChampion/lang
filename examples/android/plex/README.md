@@ -27,6 +27,16 @@ Browsing:
   and summary, the seasons of a show and the episodes of a season. Mark an
   item watched or unwatched there.
 
+A local address on a private network also gets a plain HTTP address, such
+as `http://100.101.102.103:32400`. It needs no name lookup. Thus it works
+through a VPN such as Tailscale whose resolver refuses a `plex.direct`
+name. Plezy does the same.
+
+At each start, the app opens the saved server at once and asks all of its
+addresses again. When the saved address does not answer, the app changes
+to the address that answers. A request that reaches no server starts the
+same race, at most once in 10 seconds.
+
 Playback:
 
 - Play resumes from the position on the server, and a seek goes to the

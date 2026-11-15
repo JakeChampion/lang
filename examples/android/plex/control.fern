@@ -186,6 +186,10 @@ pub struct App {
   probe_states: i32[],
   probe_at: i64,
   probes: Probe[],
+  // True while the app races the connections of the server that it uses
+  // again, and the time that it last asked for that.
+  rechecking: boolean,
+  recheck_at: i64,
   left: worker.Worker[plex.Reply[]][],
   pin: plex.Pin,
   pin_at: i64,
@@ -340,7 +344,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     dev: dev, dir: dir, window: 0 as usize, w: 0, h: 0, top: 0, bottom: 0, shown: false,
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
-    servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
+    servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
     account: setting(text, "account"), quality: num(setting(text, "quality")),
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, item: plex.no_item(), children: [],
@@ -360,7 +364,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
   }
   save(s);
   if (s.base.uri.len() > 0) {
-    return open_home(s);
+    return recheck(open_home(s));
   }
   if (s.client.token.len() > 0) {
     return open_servers(s);
@@ -661,6 +665,42 @@ function failed(own s: App, what: string, r: plex.Reply): App {
   return App { ...s, error: what + ": " + r.problem(), dirty: true };
 }
 
+// How soon after a race of the connections another can start.
+const RECHECK_MS: i64 = 10000i64;
+
+// Races the connections of the server that the app uses again, as Plezy
+// does at each start: the address that the app saved can be one that this
+// network cannot reach. The screen stays. A server with no identifier came
+// from the intent, and has no other connection.
+function recheck(own s: App): App {
+  let now = s.dev.mono_ms();
+  if (s.client.token.len() == 0 || s.server.id.len() == 0 || s.probing >= 0 || now - s.recheck_at < RECHECK_MS) {
+    return s;
+  }
+  return ask(App { ...s, rechecking: true, recheck_at: now }, "recheck", Resources);
+}
+
+// The server list for a race again: the race of the server that the app
+// uses, or nothing when plex.tv no longer lists it.
+function got_recheck(own t: App, r: plex.Reply): App {
+  if (!r.ok()) {
+    return App { ...t, rechecking: false };
+  }
+  let list = plex.parse_servers(r.text());
+  let at = -1;
+  let states: string[] = [];
+  for k in 0..list.len() {
+    if (list[k].id == t.server.id) {
+      at = k;
+    }
+    states = states.append("");
+  }
+  if (at < 0) {
+    return App { ...t, rechecking: false };
+  }
+  return connect(App { ...t, servers: list, states: states }, at);
+}
+
 // Handles the reply to a request with `purpose`: the word before the first
 // colon says what the request was, and the rest names its item.
 function answer(own s: App, purpose: string, r: plex.Reply): App {
@@ -684,6 +724,9 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   if (verb == "resources") {
     return got_servers(t, r);
   }
+  if (verb == "recheck") {
+    return got_recheck(t, r);
+  }
   if (verb == "bif") {
     return got_bif(t, rest, r);
   }
@@ -691,6 +734,10 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
     return open_servers(App { ...t, error: "The server refused the sign-in. Choose a server again." });
   }
   if (!r.ok()) {
+    // A request that reached no server can mean that the network changed.
+    if (r.status == 0) {
+      return recheck(failed(t, verb, r));
+    }
     return failed(t, verb, r);
   }
   return got_media(t, verb, rest, r);
@@ -839,7 +886,7 @@ function connect(own s: App, i: i32): App {
   }
   let t = App { ...s, probing: i, probe_states: states, probe_at: s.dev.mono_ms(), probes: probes, left: left, states: s.states.with(i, "connecting"), dirty: true };
   if (order.len() == 0) {
-    return App { ...t, probing: -1, states: t.states.with(i, "unreachable") };
+    return App { ...t, probing: -1, rechecking: false, states: t.states.with(i, "unreachable") };
   }
   return t;
 }
@@ -920,7 +967,7 @@ function poll_probes(own s: App): App {
   let k = winner(states, expired);
   if (k < 0 && probes.len() == 0) {
     log.info("plex: no answer from " + s.servers[i].name);
-    return App { ...s, probes: probes, probe_states: states, left: left, probing: -1, states: s.states.with(i, "unreachable"), dirty: true };
+    return App { ...s, probes: probes, probe_states: states, left: left, probing: -1, rechecking: false, states: s.states.with(i, "unreachable"), dirty: true };
   }
   if (k < 0) {
     return App { ...s, probes: probes, probe_states: states, left: left };
@@ -928,9 +975,20 @@ function poll_probes(own s: App): App {
   let sv = s.servers[i];
   let order = plex.connection_order(sv);
   let rest = probe_workers(probes, left);
-  let u = App { ...s, probing: -1, probes: [], probe_states: states, left: rest, server: sv, base: plex.Base { uri: order[k], token: sv.token }, states: s.states.with(i, "connected"), error: "" };
+  // A race again keeps the screen when the address that won works already,
+  // or when nothing failed and the user is away from the home screen.
+  let quiet = s.rechecking && s.error.len() == 0;
+  let same = order[k] == s.base.uri;
+  let home = s.screen == ui.HOME;
+  let u = App { ...s, probing: -1, probes: [], probe_states: states, left: rest, rechecking: false, server: sv, base: plex.Base { uri: order[k], token: sv.token }, states: s.states.with(i, "connected"), error: "" };
+  if (quiet && same) {
+    return u;
+  }
   save(u);
   log.info("plex: connected to " + sv.name + " at connection " + k.to_string());
+  if (quiet && !home) {
+    return u;
+  }
   return open_home(u);
 }
 
