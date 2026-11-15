@@ -17,8 +17,10 @@ git verify-pack [-v] FILE.idx...
 git ls-tree [-r] [-t] [-d] [-l] [-z] [--name-only] [--object-only]
             [--full-name] [--full-tree] [--abbrev[=N]] TREE [PATH...]
 git log [OPTION...] [REVISION...] [-- PATH...]
-git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
-               [--index-version=N[,OFFSET]] [--[no-]rev-index] [FILE.pack]
+git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
+               [--index-version=N[,OFFSET]] [--[no-]rev-index] [--verify]
+               [--strict[=MSG=LEVEL...]] [--fsck-objects[=MSG=LEVEL...]]
+               [--threads=N] [FILE.pack]
 ```
 
 - `hash-object` prints the name of the object for each file, and for the
@@ -71,21 +73,53 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `%gs`, `%gn`, `%ge`, `%gN` and `%gE`.
 
   The formats are `--oneline`, `--pretty=` with each named format and
-  `format:`, and `--format=`, with the placeholders of git. `--date=` has
-  each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,
+  `format:`, and `--format=`, with the placeholders of git. `%<(N)`,
+  `%>(N)`, `%><(N)` and `%>>(N)` set the columns of the next placeholder.
+  They also have the forms with `|`, `trunc`, `ltrunc` and `mtrunc`.
+  `%w()` wraps the text.
+
+  `--date=` has each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,
   `--name-only` and `--name-status` add to the text. `--decorate=full`,
   `--decorate-refs=`, `--decorate-refs-exclude=`, `--clear-decorations`
   and `log.excludeDecoration` select the refs of the decorations, with
   the default set of git.
 
+  The notes of `refs/notes/` follow the message, as git shows them by
+  default and with `--notes`, `--notes=REF`, `--no-notes`, `%N`,
+  `core.notesRef`, `notes.displayRef`, `GIT_NOTES_REF` and
+  `GIT_NOTES_DISPLAY_REF`.
+
+  `--show-signature`, `log.showSignature` and the placeholders `%GG`,
+  `%G?`, `%GS`, `%GK`, `%GF`, `%GP` and `%GT` check the signature of a
+  commit. They run gpg as git runs it, with `gpg.program`.
+
   The mailmap of `.mailmap`, `mailmap.blob` and
   `mailmap.file` gives the names of the header lines, of `%aN` and of
   `--author`, as `log.mailmap` and `--use-mailmap` select. The changes of
-  `--name-status` find renames as git does. A tab and a wide character in
+  `--name-status` find renames as git does. `-C`, `--find-copies`,
+  `--find-copies-harder`, `-M<n>` and `diff.renames=copies` find the
+  copies and set the least score of a rename or a copy. A tab and a wide character in
   a message take the columns that git gives them.
 
-  The diff of each commit is `-p`, `--stat`, `--numstat`, `--shortstat`,
-  `--summary` or `--patch-with-stat`, with the bytes of git. The patch
+  The diff of each commit is `-p`, `--raw`, `--stat`, `--numstat`,
+  `--shortstat`, `--summary` or `--patch-with-stat`, with the bytes of
+  git. `--check` shows the errors of white space of the added lines, with
+  the rules of `core.whitespace`. It gives the exit status 2 for an
+  error, as git does. `--abbrev=N` and `--no-abbrev` set the length of the
+  short names.
+
+  The diff of a merge is that of `-m`, `-c`, `--cc`, `--dd`,
+  `--no-diff-merges` and `--diff-merges=` with each value of git but
+  `remerge`. `-m` shows the diff from each parent, with
+  `(from PARENT)` after the name of the commit. `-c` and `--cc` show the
+  combined diff of the paths that change from each parent, with the
+  hunks and the stat of git.
+
+  `--word-diff` with each of its forms, `--word-diff-regex=`,
+  `--color-words` and `diff.wordRegex` show the patch as a diff of
+  words. `--color-moved` with each of its forms, `--color-moved-ws=`,
+  `diff.colorMoved` and `diff.colorMovedWS` give the moved lines the
+  colors of git. The patch
   has the header lines of git, the renames with their similarity, the
   changes of mode, and the line for a binary file. The hunks come from
   `std/linediff`. It has the Myers diff of xdiff with its heuristics and
@@ -98,14 +132,29 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `--color`, `--color=WHEN`, `--no-color`, `color.ui` and `color.diff`
   give the output the colors of git. The colors are on the header, the
   decorations, the columns of the graph, the patch and the stat, and
-  `%C` sets them in a format. The patch shows the errors of white space
-  of the default `core.whitespace`.
+  `%C` sets them in a format. `color.diff.SLOT` and `color.decorate.SLOT`
+  set the colors of each slot. The patch shows the errors of white space
+  of `core.whitespace` and of the attribute `whitespace` of
+  `.gitattributes`, `$GIT_DIR/info/attributes` and `core.attributesFile`,
+  with the macros. With colors, the matches of `--grep`, `--author` and
+  `--committer` in the text of a commit have the colors of
+  `color.grep.selected` and `color.grep.matchSelected`, as in git.
 
 - `index-pack` makes the index of a packfile (version 1 or 2) and its
   reverse index, and prints the checksum of the packfile. It reads the
-  packfile from a file or from the standard input. `--fix-thin` adds the
-  bases of a thin pack from the store. For a packfile that is not sound,
-  the message and the exit status are those of git.
+  packfile from a file or from the standard input. For a packfile that is
+  not sound, the message and the exit status are those of git.
+
+  `--fix-thin` adds the bases of a thin pack from the store, in the order
+  of git. The zlib streams of the bases are those of git at the level of
+  `core.loosecompression` or `core.compression`. Thus the packfile, its
+  name and its index have the bytes of git.
+
+  `--strict` and `--fsck-objects` check the objects as git does.
+  `--verify` writes no file: it compares the index and the reverse index
+  of git with those that it makes. `-v` writes the progress of git. Its
+  lines of the deltas are those of git with `--threads=1`. Its rate of
+  the bytes from the standard input is that of the port.
 
 The port reads and writes repositories with SHA-1 names and with SHA-256
 names (`git init --object-format=sha256`). The key
@@ -142,8 +191,10 @@ of a commit from the graph, and reads the commit only for its text.
 With generation numbers (the levels of version 1 or the corrected dates
 of version 2), `--topo-order`, `--date-order` and `--graph` walk as git
 does: they show the first commits before they read the whole history. The
-changed-path Bloom filters tell `log -- PATH` which commits do not change
-PATH. `core.commitGraph=false`, a shallow clone, grafts and replace refs
+changed-path Bloom filters of version 1 and 2 tell `log -- PATH` which
+commits do not change PATH. `commitGraph.changedPathsVersion` and
+`commitGraph.readChangedPaths` select the version of the filters, as in
+git. `core.commitGraph=false`, a shallow clone, grafts and replace refs
 turn the graph off, as in git.
 
 The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
@@ -170,6 +221,9 @@ the git of the machine. With git 2.43, four things are different:
 - `index.fern`: the index of a packfile, made from the packfile.
 - `config.fern`: the configuration files.
 - `fsck.fern`: the checks of a commit, a tree and a tag.
+- `checkblob.fern`: the checks of the `.gitmodules` blobs.
+- `checkpack.fern`: the checks of `--strict` and `--fsck-objects`.
+- `color.fern`: the colors and the color slots of the output.
 - `refs.fern`: the repository, the refs and the reflogs.
 - `dircache.fern`: the index of the worktree (versions 2 to 4).
 - `rev.fern`: the revisions and their operators.
@@ -181,7 +235,13 @@ the git of the machine. With git 2.43, four things are different:
 - `treediff.fern`: the changes between two trees, and the renames.
 - `graph.fern`: the graph of `--graph`.
 - `patch.fern`: the diff of a commit: the patch, `--stat`, `--numstat`,
-  `--shortstat` and `--summary`.
+  `--shortstat` and `--summary`, `--raw`, `--check` and `--word-diff`.
+- `combine.fern`: the combined diff of a merge (`-c` and `--cc`).
+- `moved.fern`: the colors of the moved lines (`--color-moved`).
+- `ws.fern`: the rules of `core.whitespace` and their errors.
+- `attr.fern`: the attributes of `.gitattributes`.
+- `notes.fern`: the notes of the commits.
+- `sig.fern`: the check of a signature with gpg, and `%G?`.
 - `log.fern`: the fields of a commit and the text that `log` prints.
 - `date.fern`: the dates that `log` prints and reads.
 - `width.fern`: the column width of a character (from `unicode-width.h`).
@@ -189,17 +249,9 @@ the git of the machine. With git 2.43, four things are different:
 
 ## What it does not have yet
 
-- These options of `log`: `--notes`, the signatures (`--show-signature`,
-  `%G?`), `-C` and `--find-copies` (`--follow` finds copies),
-  `--word-diff`, `--color-moved`, `--check`, `--raw`, `--cc` and `-m`
-  for the diff of a merge, and `-L`.
-
-- The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
-  `color.grep`, and the rules of `core.whitespace` and of the
-  `whitespace` attribute. The port uses the default colors and rules.
-
-- The placeholders of a format that change the columns of the next
-  placeholders: `%<(N)`, `%>(N)`, `%><(N)` and `%w()`.
+- These options of `log`: `--remerge-diff`, and `-L`. The signatures
+  of `gpg.format=ssh` and `x509`, and the signed tags of a merge
+  (`mergetag`) that `--show-signature` shows.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.
@@ -207,16 +259,6 @@ the git of the machine. With git 2.43, four things are different:
 - `rev-parse --short=N` with N above 40 in a repository with SHA-256
   names. The port gives the full name, and git 2.43 stops at 40 digits.
 
-- `index-pack -v`, `--verify`, `--strict` and `--fsck-objects`. The port
-  prints the usage of git for them.
-
-- The changed-path Bloom filters of version 2
-  (`commitGraph.changedPathsVersion`). The port walks a path without
-  them, and it uses the filters of version 1 only.
-
-- `--fix-thin` with a thin pack. The port adds the bases with the deflate
-  of `std/deflate`, so the packfile, its name and its index do not have
-  the bytes that git writes.
 
 
 ## Speed
@@ -314,6 +356,8 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   sparse packfile of more than 4 GiB, made at test time.
   `gitIndexPackCases` runs `index-pack` on each form of its input, and on
   packfiles with a changed byte at each place of their first objects.
+  It also runs `-v`, and `--verify` with indexes that are not those of
+  git.
 
 - `TestSelfHostExampleGitRevisions` runs `rev-parse` on each form of a
   revision, with the reflogs, an upstream and an index with conflicts.
@@ -336,6 +380,17 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   sides of a range, the boundary, the simplifications, the reflog walk,
   the pickaxe and `--follow`. `TestSelfHostExampleGitColor` runs the
   forms of `log` with colors.
+
+- `TestSelfHostExampleGitForms` runs the placeholders that change the
+  columns of a format, the wrap of `%w()`, `--raw`, and `--check` with
+  each rule of `core.whitespace`. It runs the diffs of merges, also in a
+  random history of merges with conflicts. It runs the diffs of words
+  and the moved lines, also of random edits. It runs the copies, also in
+  a random history, the notes, and the signatures of two keys of gpg.
+
+- `TestSelfHostExampleGitFixThin` runs `index-pack --fix-thin` on a thin
+  pack of `pack-objects` at each level of zlib, and on deltas whose bases
+  are deltas.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

@@ -87,7 +87,7 @@ selfhost/wasm32-wasi/byte_copy_append.emit	562
 selfhost/wasm32-wasi/byte_copy_with.emit	576
 selfhost/wasm32-wasi/call_overhead.emit	119
 selfhost/wasm32-wasi/closure_call.emit	504
-selfhost/wasm32-wasi/deflate_decode.emit	26129
+selfhost/wasm32-wasi/deflate_decode.emit	26127
 selfhost/wasm32-wasi/deflate_encode.emit	12914
 selfhost/wasm32-wasi/enum_match.emit	545
 selfhost/wasm32-wasi/http_hello.emit	19326

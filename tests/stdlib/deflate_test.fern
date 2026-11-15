@@ -579,6 +579,32 @@ function test_inflate_after(): test.TestOutcome {
   return test.assert_eq(got, "context takeover!|error: the decompressed data is past its limit|error: malformed compressed data: a distance before the start of the output");
 }
 
+// The streams of zlib_compress are those of zlib 1.3 for small inputs at
+// the levels 0, 1, 6 and 9. tests/stdlib/deflate_zlib_test.fern has the larger
+// inputs, which are too slow for the interpreter.
+function test_zlib_compress(): test.TestOutcome {
+  let cases: string[][] = [
+    ["", "1", "7801030000000001"],
+    ["", "6", "789c030000000001"],
+    ["", "9", "78da030000000001"],
+    ["", "0", "7801010000ffff00000001"],
+    ["a", "0", "7801010100feff6100620062"],
+    ["hello hello hello hello\n", "0", "7801011800e7ff68656c6c6f2068656c6c6f2068656c6c6f2068656c6c6f0a70be08bb"],
+    ["a", "1", "78014b040000620062"],
+    ["a", "6", "789c4b040000620062"],
+    ["hello hello hello hello\n", "1", "7801cb48cdc9c957c84027b90070be08bb"],
+    ["hello hello hello hello\n", "9", "78dacb48cdc9c957c84027b90070be08bb"],
+  ];
+  for c in cases {
+    let level = c[1][0] as i32 - 48;
+    let got = hex.encode(deflate.zlib_compress(c[0].bytes(), level));
+    if (got != c[2]) {
+      return test.fail("zlib_compress of " + c[0] + " at level " + c[1] + ": " + got);
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("std/deflate");
   r = r.it("stored block", test_stored_block);
@@ -611,6 +637,7 @@ function main(): i32 {
   r = r.it("blocks with a dictionary join into one stream", test_deflate_blocks_with_a_dictionary);
   r = r.it("a stream decodes its input in parts", test_inflate_stream);
   r = r.it("a stream that does not decode gives the output before the error", test_inflate_stream_errors);
+  r = r.it("zlib_compress writes the bytes of zlib", test_zlib_compress);
   return r.finish();
 }
 
