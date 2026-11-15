@@ -283,31 +283,31 @@ function murmur3(seed_in: i64, data: u8[]): i64 {
     k = mul32(k, c1);
     k = rotl(k, 15);
     k = mul32(k, c2);
-    seed = seed ^ k;
+    seed ^= k;
     seed = rotl(seed, 13) * 5 + 3864292196 & MASK32;
   }
   let tail = 4 * len4;
   let k1: i64 = 0;
   let rest = data.len() - tail;
   if (rest == 3) {
-    k1 = k1 ^ data[tail + 2] as i64 << 16;
+    k1 ^= data[tail + 2] as i64 << 16;
   }
   if (rest >= 2) {
-    k1 = k1 ^ data[tail + 1] as i64 << 8;
+    k1 ^= data[tail + 1] as i64 << 8;
   }
   if (rest >= 1) {
-    k1 = k1 ^ data[tail] as i64;
+    k1 ^= data[tail] as i64;
     k1 = mul32(k1, c1);
     k1 = rotl(k1, 15);
     k1 = mul32(k1, c2);
-    seed = seed ^ k1;
+    seed ^= k1;
   }
-  seed = seed ^ data.len() as i64 & MASK32;
-  seed = seed ^ seed >> 16;
+  seed ^= data.len() as i64 & MASK32;
+  seed ^= seed >> 16;
   seed = mul32(seed, 2246822507);
-  seed = seed ^ seed >> 13;
+  seed ^= seed >> 13;
   seed = mul32(seed, 3266489909);
-  seed = seed ^ seed >> 16;
+  seed ^= seed >> 16;
   return seed;
 }
 

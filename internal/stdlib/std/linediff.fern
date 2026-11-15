@@ -38,8 +38,8 @@ function bogosqrt(n_in: i32): i32 {
   let n = n_in;
   let i = 1;
   while (n > 0) {
-    i = i << 1;
-    n = n >> 2;
+    i <<= 1;
+    n >>= 2;
   }
   return i;
 }
@@ -75,6 +75,9 @@ function abs_i64(v: i64): i64 {
 
 // The midpoint of a shortest edit script for the box [xoff, xlim) x
 // [yoff, ylim): `diag` of GNU diff and `xdl_split` of xdiff.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function diag(own v: i32[], sp: Space, xv: i32[], yv: i32[], xoff: i32, xlim: i32, yoff: i32, ylim: i32, find_minimal: boolean): i32[] {
   let fo = sp.fo;
   let bo = sp.bo;
@@ -308,6 +311,9 @@ function push5(own s: i32[], top: i32, a: i32, b: i32, c: i32, d: i32, e: i32): 
 // `k` of `yv` at `flags[base1 + yreal[k]]`. The two sequences hold the
 // class of each line. A stack holds the halves that wait, which gives the
 // marks of the recursion of GNU diff and xdiff.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 pub function compareseq(own flags: u8[], xv: i32[], xreal: i32[], yv: i32[], yreal: i32[], base0: i32, base1: i32, minimal: boolean, s: Search): u8[] {
   let n = xv.len();
   let m = yv.len();
@@ -398,7 +404,7 @@ function same_line(a: Lines, i: i32, b: Lines, j: i32): boolean {
 }
 
 function line_hash(l: Lines, i: i32): u64 {
-  let h: u64 = 14695981039346656037u64;
+  let h = 14695981039346656037u64;
   for k in l.starts[i]..l.starts[i + 1] {
     h = (h ^ l.data[k] as u64) * 1099511628211u64;
   }
@@ -416,7 +422,7 @@ function classify(a: Lines, b: Lines): Classes {
   let n2 = b.count();
   let size = 16;
   while (size < 2 * (n1 + n2)) {
-    size = size * 2;
+    size *= 2;
   }
   let mask = (size - 1) as u64;
   // Each slot holds the class + 1, or 0; `first` holds the side (0 or 1)
@@ -499,6 +505,9 @@ const SIMSCAN_WINDOW: i32 = 100;
 
 // True when the line `i`, which has many matches, is in a run of lines
 // with no match: `xdl_clean_mmatch`.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function clean_mmatch(dis: u8[], i: i32, s_in: i32, e_in: i32): boolean {
   let s = if (i - s_in > SIMSCAN_WINDOW) { i - SIMSCAN_WINDOW } else { s_in };
   let e = if (e_in - i > SIMSCAN_WINDOW) { i + SIMSCAN_WINDOW } else { e_in };
@@ -545,6 +554,9 @@ function clean_mmatch(dis: u8[], i: i32, s_in: i32, e_in: i32): boolean {
 // of the new text, as `xdl_do_diff` makes it of those lines alone: the
 // common ends are trimmed, the lines with no match and the lines in a run
 // of such lines are changed, and the search finds the rest.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function myers(own e: Env, lo1: i32, hi1: i32, lo2: i32, hi2: i32): Env {
   let nrec1 = hi1 - lo1;
   let nrec2 = hi2 - lo2;
@@ -633,6 +645,9 @@ const NON_UNIQUE: i32 = -1;
 
 // The patience diff of the lines from `line1` (`count1` of them) and from
 // `line2`, counted from 1.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function patience(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32): Env {
   if (count1 == 0) {
     return mark(e, 1, line2, count2);
@@ -721,6 +736,9 @@ function patience(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32):
 
 // The diff of the parts between the lines of the common sequence `chain`:
 // `walk_common_sequence`.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function walk_common(own e: Env, entry1: i32[], entry2: i32[], chain: i32[], line1_in: i32, count1: i32, line2_in: i32, count2: i32): Env {
   let line1 = line1_in;
   let line2 = line2_in;
@@ -766,6 +784,9 @@ const MAX_CHAIN_LENGTH: i32 = 64;
 // `find_lcs`. It gives 1 when the search must fall back to Myers, 0
 // otherwise, and the region (begin1, end1, begin2, end2), all 0 when
 // there is none.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function find_lcs(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32): (Env, i32, i32[]) {
   let end1 = line1 + count1 - 1;
   let end2 = line2 + count2 - 1;
@@ -918,6 +939,9 @@ const INDENT_HEURISTIC_MAX_SLIDING: i32 = 100;
 
 // The indent of the line `i`, a tab to the next multiple of 8, or -1 for
 // a line of white space only.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function get_indent(l: Lines, i: i32): i32 {
   let ret = 0;
   for k in l.starts[i]..l.starts[i + 1] {
@@ -939,6 +963,9 @@ function get_indent(l: Lines, i: i32): i32 {
 
 // The score of the split before line `split`: (effective indent,
 // penalty), added to `score`.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function score_split(l: Lines, split: i32, score: (i32, i32)): (i32, i32) {
   let nrec = l.count();
   let end_of_file = split >= nrec;
@@ -1074,6 +1101,9 @@ function slide_up(own r: u8[], s: Side, g: Group): (u8[], Group, boolean) {
 // Moves each group of changes of `xs` up and down to merge it with the
 // groups next to it, then to the place that matches a group of `os`, or
 // to the best place for the indent heuristic.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function compact(own r: u8[], l: Lines, xs: Side, os: Side, indent: boolean): u8[] {
   let g = group_init(r, xs);
   let go = group_init(r, os);
@@ -1270,6 +1300,9 @@ function hunk_end(script: Change[], k: i32, em: Emit): i32 {
 // The function line at line `i` of the old text, as `def_ff` of xdiff
 // finds it: a line that starts with a letter, `_` or `$`, its first 80
 // bytes with no white space at their end. None for another line.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 function func_line(l: Lines, i: i32): Option[(i32, i32)] {
   let s = l.starts[i];
   let len = l.starts[i + 1] - s;
@@ -1304,6 +1337,9 @@ function put_line(out: usize, l: Lines, i: i32, prefix: i32): void {
 // Writes the hunks of the changes `script` from `a` to `b` to the buffer
 // `out`, as `xdl_emit_diff` of xdiff writes them: `@@ -A,B +C,D @@ FUNC`
 // and the lines with ` `, `-` and `+`.
+// Its branches follow the C of xdiff and GNU diff, so that the output
+// stays the same as theirs.
+// fern-lint: allow cyclomatic-complexity
 pub function unified(out: usize, a: Lines, b: Lines, script: Change[], em: Emit): void {
   let n1 = a.count();
   let n2 = b.count();
