@@ -17107,6 +17107,11 @@ pub function is_iflet_value_local(name: string): boolean {
   return is_value_local_name(name) && name.starts_with("__il");
 }
 
+// True for the local that holds the subject of a match on a struct pattern.
+pub function is_struct_match_subject(name: string): boolean {
+  return name.len() > 6 && name.starts_with("__sm") && name.ends_with("_v");
+}
+
 pub function is_value_local_name(name: string): boolean {
   let n = name.len();
   if (n < 6 || !name.ends_with("_r")) {

@@ -1,0 +1,33 @@
+// spec: RH-39
+// A `for` over a borrowed array binds a copy of each element. A copy that
+// holds no handle can go to an `own` parameter, and the array keeps its
+// elements.
+
+import "std/string";
+import "std/i32";
+
+struct Note { text: string, tags: string[] }
+
+function eat(own n: Note): i32 {
+    return n.text.len() + n.tags.len();
+}
+
+function total(ns: Note[]): i32 {
+    let s = 0;
+    for n in ns {
+        s += eat(n);
+    }
+    return s;
+}
+
+function main(): i32 {
+    let ns: Note[] = [];
+    for i in 0..5 {
+        ns = ns.append(Note { text: "ab".repeat(i + 4), tags: ["x".repeat(i + 1), "y"] });
+    }
+    print(total(ns).to_string());
+    print(total(ns).to_string());
+    print(ns[4].text);
+    print(ns[0].tags[0]);
+    return 0;
+}
