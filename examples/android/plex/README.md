@@ -58,7 +58,8 @@ Playback:
 
 Music plays with the controls on the screen. It plays on while the app is
 away, with the media controls of Android in the notification panel and on
-the lock screen. A foreground service and a wake lock keep the stream at
+the lock screen. On Android 13 and later, the first track asks for the
+permission to post notifications. A foreground service and a wake lock keep the stream at
 work while the screen is off. A video pauses when the app goes away.
 
 Gestures on the video:
@@ -96,7 +97,8 @@ when the player selects no sound track, or when it reports that the sound
 stopped. The player shows "Direct play" or "Transcode" after the title.
 
 The app runs on Android TV. `fern.toml` sets `tv`, so the app is on the
-launcher of the TV, and it needs no touch screen. The D-pad of the remote
+launcher of the TV, with `banner.png` as its banner, and it needs no touch
+screen. The D-pad of the remote
 moves a ring of focus to the nearest control in its direction, and the
 list scrolls to show it. The centre key presses the focused control. On
 the video, left and right seek as the buttons do, and the centre shows the
@@ -161,7 +163,7 @@ window, which stretches it, and a tap there pauses.
 ```sh
 make build
 ./bin/fern -apk fern-plex.apk -apk-package dev.fern.plex -apk-label "Fern for Plex" \
-     -apk-min-sdk 30 -apk-cleartext -apk-tv \
+     -apk-min-sdk 30 -apk-cleartext -apk-tv -apk-banner examples/android/plex/banner.png \
      -apk-permission INTERNET,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK,POST_NOTIFICATIONS,WAKE_LOCK \
      examples/android/plex/app.fern
 adb install -r fern-plex.apk
@@ -199,6 +201,9 @@ pattern that ffmpeg writes. The check requires:
 
 - The home screen shows the posters.
 - A link plays the track to its end, reports it, and marks it watched.
+- Down and the centre key of a remote open the first poster.
+- After the home key sends the app away, the track plays on to its end, and
+  the media session of Android shows the app.
 - A link shows the video on a texture that the app draws. The 4:3 test
   pattern fills the width with black bars above and below it, and it is
   upright. A tap shows the controls over the video with no pause, and a tap

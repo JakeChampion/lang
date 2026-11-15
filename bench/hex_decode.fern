@@ -1,0 +1,29 @@
+import "std/hex";
+
+// The 128 KiB of digits of 64 KiB of bytes that take each value.
+function digits(): string {
+  let n = 65536;
+  let bs = __alloc_u8(n);
+  let s = 12345;
+  for i in 0..n {
+    s = s * 1103515245 + 12345 & 2147483647;
+    bs = bs.with(i, (s >> 16 & 255) as u8);
+  }
+  return hex.encode(bs);
+}
+
+function main(): i32 {
+  let text = digits();
+  let acc = 0;
+  for r in 0..256 {
+    match (hex.decode(text)) {
+      Ok(bs) => {
+        acc += bs[r * 200] as i32 + bs[bs.len() - 1 - r] as i32;
+      },
+      Err(_) => {
+        return 1;
+      }
+    }
+  }
+  return acc % 97;
+}

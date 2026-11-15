@@ -1,0 +1,103 @@
+import "std/i32";
+import "std/i64";
+import "std/u64";
+import "std/f64";
+
+// __fma_f64(a, b, c) rounds a * b + c one time. The plain a * b + c rounds
+// the product first, so each named case gives two different results. The
+// last line hashes the results of a fixed set of random cases, so that each
+// backend must give the bits of a hardware fused multiply-add. f64.fma is the
+// form in software, and it must give the same bits.
+
+function bits(x: f64): string {
+  if (x != x) {
+    return "nan";
+  }
+  return f64_bits(x).to_string();
+}
+
+function show(name: string, a: f64, b: f64, c: f64): void {
+  let fused = __fma_f64(a, b, c);
+  let soft = if (bits(a.fma(b, c)) == bits(fused)) { "same" } else { "soft " + bits(a.fma(b, c)) };
+  print(name + " " + bits(fused) + " " + bits(a * b + c) + " " + soft);
+}
+
+// Each sum is held in a register across the loop: in the first factor, in
+// the second factor, and in the addend.
+function chains(x: f64): void {
+  let a = 1.0;
+  let b = 1.0;
+  let c = 1.0;
+  let i = 0;
+  while (i < 20) {
+    a = __fma_f64(a, x, 0.1);
+    b = __fma_f64(x, b, 0.3);
+    c = __fma_f64(x, 0.7, c);
+    i += 1;
+  }
+  print("chains " + bits(a) + " " + bits(b) + " " + bits(c));
+}
+
+// A step of xorshift64, so that each backend draws the same cases.
+function step(s: u64): u64 {
+  let x = s ^ s << 13 as u64;
+  x = x ^ x >> 7 as u64;
+  return x ^ x << 17 as u64;
+}
+
+// The sign and the significand of r with the exponent field e, held in [0, 2047].
+function with_exp(r: u64, e: i64): f64 {
+  let field: i64 = if (e < 0) { 0 } else if (e > 2047) { 2047 } else { e };
+  let keep = 1 as u64 << 63 as u64 | 4503599627370495 as u64;
+  return f64_from_bits((r & keep) as i64 | field << 52);
+}
+
+function canon(x: f64): u64 {
+  return if (x != x) { 9221120237041090560 as u64 } else { f64_bits(x) as u64 };
+}
+
+function random_cases(n: i32): void {
+  let s = 88172645463325252 as u64;
+  let h = 1469598103934665603 as u64;
+  let differ = 0;
+  let i = 0;
+  while (i < n) {
+    s = step(s);
+    let r1 = s;
+    s = step(s);
+    let r2 = s;
+    s = step(s);
+    let r3 = s;
+    let ex = (r1 >> 52 as u64 & 2047 as u64) as i64;
+    if ((r1 & 15 as u64) == 0 as u64) {
+      ex = 0;
+    }
+    let ey = (r2 >> 53 as u64 & 1023 as u64) as i64 + 512;
+    let x = with_exp(r1, ex);
+    let y = with_exp(r2, ey);
+    let z = with_exp(r3, ex + ey - 1151 + (r3 >> 56 as u64) as i64);
+    if ((r3 & 3 as u64) == 0 as u64) {
+      z = f64_from_bits(f64_bits(0.0 - x * y) ^ (r3 >> 2 as u64 & 7 as u64) as i64);
+    }
+    let r = __fma_f64(x, y, z);
+    if (canon(r) != canon(x.fma(y, z))) {
+      differ += 1;
+    }
+    h = (h ^ canon(r)) * (1099511628211 as u64);
+    i += 1;
+  }
+  print("random " + n.to_string() + " " + h.to_string() + " soft differs " + differ.to_string());
+}
+
+function main(): i32 {
+  show("tenth", 0.1, 10.0, -1.0);
+  show("third", 0.3333333333333333, 3.0, -1.0);
+  show("square", 1.0000000000000002, 1.0000000000000004, -1.0);
+  show("cancel", 134217729.0, 134217727.0, -18014398509481984.0);
+  show("overflow", 1.5e308, 2.0, -1.5e308);
+  show("infinity", 1.0e308, 10.0, -1.0 / 0.0);
+  show("zero", -1.0e-200, 1.0e-200, 0.0);
+  chains(1.0000001);
+  random_cases(4096);
+  return 0;
+}

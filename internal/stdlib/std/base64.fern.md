@@ -4,7 +4,7 @@ This module encodes and decodes Base64 data under RFC 4648.
 
 ## Model
 
-Standard Base64 and URL-safe Base64 use separate alphabets. Encoders borrow byte views. Decoders return owned arrays and preserve arbitrary byte values.
+Standard Base64 and URL-safe Base64 use separate alphabets. Encoders borrow byte views. Decoders return owned arrays and preserve arbitrary byte values. A decoder reads 16 characters in one step, as lanes, until a step finds a byte that is not in the alphabet.
 
 ## Contracts
 
@@ -251,7 +251,11 @@ pub function decode_url(input: string): Result[u8[], codec.DecodeError] {
 <<7 function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeError]>>=
 function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeError] {
   let encoding = if (url) { "base64url" } else { "base64" };
-  let n = 0;
+  let output = __alloc_u8(input.len() / 4 * 3 + 2);
+  let lanes = __b64_unlanes(input.as_bytes(), output, url);
+  output = lanes.bytes;
+  let first = lanes.at;
+  let n = first;
   while (n < input.len() && input[n] != 61) {
     if (__b64_decode_char(input[n] as i32, url) < 0) {
       return Err(codec.error(encoding, n, codec.InvalidByte(input[n])));
@@ -269,11 +273,10 @@ function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeErr
   if (trailing > 0 && (__b64_decode_char(input[n - 1] as i32, url) & (1 << trailing) - 1) != 0) {
     return Err(codec.error(encoding, n - 1, codec.NonZeroTrailingBits));
   }
-  let output = __alloc_u8(n / 4 * 3 + rem * 6 / 8);
-  let at = 0;
+  let at = first / 4 * 3;
   let acc = 0;
   let bits = 0;
-  for i in 0..n {
+  for i in first..n {
     acc = acc << 6 | __b64_decode_char(input[i] as i32, url);
     bits += 6;
     if (bits >= 8) {
@@ -282,6 +285,62 @@ function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeErr
       at += 1;
     }
   }
-  return Ok(output);
+  return Ok(output.truncate(n / 4 * 3 + rem * 6 / 8));
+}
+
+struct __B64Decoded { bytes: u8[], at: i32 }
+
+// Writes the bytes of each group of 16 characters of `chars` to `bytes`, up
+// to the first group with a byte that is not in the alphabet. 16 characters
+// give 12 bytes. A step writes 16 bytes, so it runs only where they fit, and
+// the next step writes over the last 4. `at` is the index of the first
+// character that it does not decode, a multiple of 4.
+function __b64_unlanes(chars: [u8], own bytes: u8[], url: boolean): __B64Decoded {
+  let none = 255 as u8;
+  // Output byte 3k + r takes sextets r and r + 1 of group k.
+  let first = __u8x16_of(0 as u8, 1 as u8, 2 as u8, 4 as u8, 5 as u8, 6 as u8, 8 as u8, 9 as u8, 10 as u8, 12 as u8, 13 as u8, 14 as u8, none, none, none, none);
+  let second = __u8x16_of(1 as u8, 2 as u8, 3 as u8, 5 as u8, 6 as u8, 7 as u8, 9 as u8, 10 as u8, 11 as u8, 13 as u8, 14 as u8, 15 as u8, none, none, none, none);
+  let r0 = __u8x16_of(none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8);
+  let r1 = __u8x16_of(0 as u8, none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8);
+  let r2 = __u8x16_of(0 as u8, 0 as u8, none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, none, 0 as u8, 0 as u8, 0 as u8, 0 as u8);
+  let plus = if (url) { 45 as u8 } else { 43 as u8 };
+  let slash = if (url) { 95 as u8 } else { 47 as u8 };
+  let i = 0;
+  while (i + 16 <= chars.len() && i / 4 * 3 + 16 <= bytes.len()) {
+    let v = __u8x16_load_view(chars, i);
+    if (__u8x16_bitmask(__b64_valid(v, plus, slash)) != 65535) {
+      return __B64Decoded { bytes: bytes, at: i };
+    }
+    let six = __b64_sextets(v, plus, slash);
+    let a = __u8x16_swizzle(six, first);
+    let b = __u8x16_swizzle(six, second);
+    let left = __u8x16_or(__u8x16_or(__u8x16_and(__u8x16_shl(a, 2), r0), __u8x16_and(__u8x16_shl(a, 4), r1)), __u8x16_and(__u8x16_shl(a, 6), r2));
+    let right = __u8x16_or(__u8x16_or(__u8x16_and(__u8x16_shr(b, 4), r0), __u8x16_and(__u8x16_shr(b, 2), r1)), __u8x16_and(b, r2));
+    bytes = __u8x16_with(bytes, i / 4 * 3, __u8x16_or(left, right));
+    i += 16;
+  }
+  return __B64Decoded { bytes: bytes, at: i };
+}
+
+// A lane of ones for each byte of `v` that is in the alphabet with the two
+// characters `plus` and `slash`.
+function __b64_valid(v: u8x16, plus: u8, slash: u8): u8x16 {
+  let upper = __u8x16_lt(v - __u8x16_splat(65 as u8), __u8x16_splat(26 as u8));
+  let lower = __u8x16_lt(v - __u8x16_splat(97 as u8), __u8x16_splat(26 as u8));
+  let digit = __u8x16_lt(v - __u8x16_splat(48 as u8), __u8x16_splat(10 as u8));
+  let extra = __u8x16_or(__u8x16_eq(v, __u8x16_splat(plus)), __u8x16_eq(v, __u8x16_splat(slash)));
+  return __u8x16_or(__u8x16_or(upper, lower), __u8x16_or(digit, extra));
+}
+
+// The 6-bit value of each character of `v`. A byte that is not in the
+// alphabet gives a value that the caller does not use.
+function __b64_sextets(v: u8x16, plus: u8, slash: u8): u8x16 {
+  let upper = v - __u8x16_splat(65 as u8);
+  let lower = v - __u8x16_splat(71 as u8);
+  let digit = v + __u8x16_splat(4 as u8);
+  let value = __u8x16_select(upper, lower, __u8x16_lt(upper, __u8x16_splat(26 as u8)));
+  value = __u8x16_select(digit, value, __u8x16_lt(v - __u8x16_splat(48 as u8), __u8x16_splat(10 as u8)));
+  value = __u8x16_select(__u8x16_splat(62 as u8), value, __u8x16_eq(v, __u8x16_splat(plus)));
+  return __u8x16_select(__u8x16_splat(63 as u8), value, __u8x16_eq(v, __u8x16_splat(slash)));
 }
 ```

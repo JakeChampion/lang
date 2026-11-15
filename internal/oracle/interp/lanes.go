@@ -277,7 +277,11 @@ func (i *Interp) registerLaneBuiltins() {
 			if err != nil {
 				return nil, err
 			}
+			// The f64 lanes round one time. The f32 lanes round two times.
 			return mapLanes(ls, func(xs []float64) float64 {
+				if width == 64 {
+					return math.FMA(xs[0], xs[1], xs[2])
+				}
 				return round(width, round(width, xs[0]*xs[1])+xs[2])
 			}), nil
 		}}

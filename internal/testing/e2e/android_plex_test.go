@@ -75,8 +75,16 @@ func TestAndroidPlexApk(t *testing.T) {
 	for _, f := range zr.File {
 		names = append(names, f.Name)
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	// fern.toml of the app gives the banner of the launcher of Android TV.
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
+	}
+	banner, err := os.ReadFile(e2eharness.RepoPath(plexApp, "banner.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(readZipEntry(t, zr, "res/drawable/banner.png"), banner) {
+		t.Error("the banner in the APK is not banner.png of the app")
 	}
 	want := []string{"ANativeActivity_onCreate", "Java_dev_fern_plex_Media_onPrepared", "Java_dev_fern_plex_Media_onCompletion",
 		"Java_dev_fern_plex_Media_onError", "Java_dev_fern_plex_Media_onInfo", "Java_dev_fern_plex_Media_onSeekComplete",

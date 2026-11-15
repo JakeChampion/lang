@@ -94,11 +94,21 @@ Every push encodes the link with the key of the block it lands in, and `__fern_f
 A decoded link must be zero, or 8-byte aligned and inside the arena. Any other value aborts with `fern: corrupt free list link`, status 134.
 
 A forged word therefore aborts at the next allocation of its class, and a link copied from another block fails too.
-The cost is one load of the canary and three logical operations per push and per link followed. The release build keeps plain links.
+The cost is one load of the canary and three logical operations per push and per link followed.
+
+The release build keeps plain links, by decision of the owner on 2026-11-15.
+With the encoding in each build, allocation-heavy programs retired 11 to 17 percent more instructions on both ISAs under callgrind.
+A small HTTP server retired 5 to 6 percent more.
+
+Safe code cannot write the link. Only a fault in an `unsafe` block, in foreign code or in the runtime can.
+`-harden` is the profile for a program that must survive such a fault.
 `TestSelfHostFreeListLinkForgery` pins the abort for a small class and a large class on both targets.
 `TestSelfHostHardenFreeListRoundTrip` recycles twelve blocks of each class through the encoded lists.
 
 The take under `-harden` writes zero over the link word of the block it hands out.
+The release build writes zero over it when `__fern_alloc` hands out a raw block. A raw block thus does not show the address of the next free block.
+A typed box writes its header over the word.
+
 Before that change, a raw allocation from a free list read the encoded link.
 The link of the last block of a list is the key itself.
 With the key, a program can forge a link that decodes to a valid address.

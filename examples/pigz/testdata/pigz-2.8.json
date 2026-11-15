@@ -2,626 +2,696 @@
   "GZIP": {
     "exit": 0,
     "stderr": "",
-    "digest": "077daf26cd8aae0d6ddb839c"
+    "digest": "82445dcea6035b8e75448fd9"
   },
   "GZIP and PIGZ": {
     "exit": 0,
     "stderr": "",
-    "digest": "35eac9296b99a65f214f60b1"
+    "digest": "2b1b84c0b6e0e2225977f4cc"
   },
   "GZIP blank": {
     "exit": 22,
     "stderr": "pigz: abort: cannot provide files in GZIP environment variable\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "GZIP file": {
     "exit": 22,
     "stderr": "pigz: abort: cannot provide files in GZIP environment variable\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "LZW output": {
     "exit": 22,
     "stderr": "pigz: abort: invalid option: LZW output not supported: -Z\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "PIGZ invalid": {
     "exit": 22,
     "stderr": "pigz: abort: invalid option: -x\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "PIGZ parameter": {
     "exit": 22,
     "stderr": "pigz: abort: missing parameter after -p\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "ascii": {
     "exit": 22,
     "stderr": "pigz: abort: invalid option: no ascii conversion: -a\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "bad number": {
     "exit": 22,
     "stderr": "pigz: abort: invalid numeric parameter: x\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "best": {
     "exit": 0,
     "stderr": "",
-    "digest": "bd4dd517c431a6ec294447db"
+    "digest": "5b9616fb73a2f79fc100b7f3"
   },
   "blocksize 1000": {
     "exit": 0,
     "stderr": "",
-    "digest": "3ec1e0e02ceeba049f2bc7df"
+    "digest": "a0937e65d03020dbcc6c3be4"
   },
   "blocksize 32": {
     "exit": 0,
     "stderr": "",
-    "digest": "32fcccf8c406306f32301677"
+    "digest": "f3fbff6eb71e31ca649948e4"
   },
   "cat empty": {
     "exit": 0,
     "stderr": "",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "cat junk": {
     "exit": 0,
     "stderr": "",
-    "digest": "72cd4375fdf2eded316f8e18"
+    "digest": "2c9c29b20425810f04da93aa"
   },
   "cat plain": {
     "exit": 0,
     "stderr": "",
-    "digest": "b9e00e30d4c24f68f7fe3149"
+    "digest": "aacdf78d62c35ef1d23123e0"
   },
   "comment": {
     "exit": 0,
     "stderr": "",
-    "digest": "0dc34e26b59a7f1ecd93a182"
+    "digest": "77c3d8df8b1a358a5007ab3f"
   },
   "comment space": {
     "exit": 22,
     "stderr": "pigz: abort: invalid usage: -C must be followed by space\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "dash": {
     "exit": 0,
     "stderr": "",
-    "digest": "85f40e11c85531b9bac441a9"
+    "digest": "5d884f1788fe73d1eef9ef99"
   },
   "decompress": {
     "exit": 0,
     "stderr": "",
-    "digest": "8cf61f5cd18930082015e244"
+    "digest": "2b5e78521ce7be5b04799f32"
   },
   "decompress exists": {
     "exit": 1,
     "stderr": "pigz: skipping: x exists\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "decompress finds suffix": {
     "exit": 0,
     "stderr": "",
-    "digest": "7ae2d0ccdfcbca21bb97458c"
+    "digest": "9ea53200cac7db0463881522"
   },
   "decompress junk": {
     "exit": 0,
     "stderr": "",
-    "digest": "9b6b01119767c3c11c419664"
+    "digest": "f0e7f4d4c9d04cd6eb9bc65e"
   },
   "decompress junk verbose": {
     "exit": 1,
     "stderr": "junk.gz to junk pigz: warning: junk.gz: trailing junk was ignored\n\n",
-    "digest": "9b6b01119767c3c11c419664"
+    "digest": "f0e7f4d4c9d04cd6eb9bc65e"
   },
   "decompress lzw": {
     "exit": 0,
     "stderr": "",
-    "digest": "1d8f674d536fee8f754f8064"
+    "digest": "a77dee4e1f98d4d3729eb2ed"
   },
   "decompress lzw 9 bits": {
     "exit": 1,
     "stderr": "pigz: skipping: lines9.Z: invalid lzw code\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "decompress members": {
     "exit": 0,
     "stderr": "",
-    "digest": "591390fc2f3a9a53b0b9a3a2"
+    "digest": "26d7f4117b90332ec2102f35"
   },
   "decompress name": {
     "exit": 1,
     "stderr": "pigz: skipping: hi exists\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "decompress name time": {
     "exit": 1,
     "stderr": "pigz: skipping: hi exists\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "decompress tgz": {
     "exit": 0,
     "stderr": "",
-    "digest": "d71c451e3c501c60f0f1822b"
+    "digest": "f119ef21217129801610962c"
   },
   "decompress time": {
     "exit": 0,
     "stderr": "",
-    "digest": "a65990b53f1bb37f6c994002"
+    "digest": "17090d7251aee569de885e0a"
+  },
+  "decompress truncated file": {
+    "exit": 1,
+    "stderr": "pigz: skipping: trunc.gz: corrupted -- incomplete deflate data\n",
+    "digest": "fafefddb029249bea7a840ce"
   },
   "decompress without suffix": {
     "exit": 1,
     "stderr": "pigz: skipping: mid does not have compressed suffix\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "decompress zip": {
     "exit": 0,
     "stderr": "",
-    "digest": "4c577af39189a6265d49e42c"
+    "digest": "06dee8f395c93d56a573098e"
   },
   "decompress zip descriptor": {
     "exit": 0,
     "stderr": "",
-    "digest": "55e05a6fed9f3c7715512dd3"
+    "digest": "698b2d3f35aa42ca8d941c38"
   },
   "decompress zip stored": {
     "exit": 1,
     "stderr": "pigz: skipping: zs.zip unknown compression method\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "decompress zlib": {
     "exit": 0,
     "stderr": "",
-    "digest": "6c5f0e6de9f3d8aa849d19c7"
+    "digest": "7aa609a1c454a545370a4259"
   },
   "decompress zlib junk": {
     "exit": 1,
     "stderr": "pigz: warning: zjunk.zz: trailing junk was ignored\n",
-    "digest": "df107eb0234ade91a6d25076"
+    "digest": "d65df70fe2fc11e3f0bc97ea"
   },
   "default": {
     "exit": 0,
     "stderr": "",
-    "digest": "e9d066b07aa5188f39239a16"
+    "digest": "f21589380d38aec1723c20ee"
   },
   "directory": {
     "exit": 1,
     "stderr": "pigz: skipping: sub is a directory\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "empty": {
     "exit": 1,
     "stderr": "pigz: skipping: empty.gz exists\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "ends with suffix": {
     "exit": 0,
     "stderr": "pigz: skipping: pre.gz ends with .gz\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "fast": {
     "exit": 0,
     "stderr": "",
-    "digest": "c8d2abdb28d4cff257666cef"
+    "digest": "52a0c0205d176954466337b7"
   },
   "force hard link": {
     "exit": 0,
     "stderr": "",
-    "digest": "faa0e0d49ae47e01873e4188"
+    "digest": "6156eda21770d518125c868e"
   },
   "force suffix": {
     "exit": 0,
     "stderr": "",
-    "digest": "3f3095c69db14456a17b6aa3"
+    "digest": "f88f28cc7b5300b2d2d6c855"
   },
   "force symbolic link": {
     "exit": 0,
     "stderr": "",
-    "digest": "c776efc898ab297600ac6fe1"
+    "digest": "dd9557d1e409617c999fe2be"
   },
   "hard link": {
     "exit": 1,
     "stderr": "pigz: hard has hard links -- not unlinking\n",
-    "digest": "6b23bc9043ec18b2788baaf1"
+    "digest": "b3af5ea1fb97b94371d81243"
   },
   "help": {
     "exit": 0,
     "stderr": "Usage: pigz [options] [files ...]\n  will compress files in place, adding the suffix '.gz'. If no files are\n  specified, stdin will be compressed to stdout. pigz does what gzip does,\n  but spreads the work over multiple processors and cores when compressing.\n\nOptions:\n  -0 to -9, -11        Compression level (level 11, zopfli, is much slower)\n  --fast, --best       Compression levels 1 and 9 respectively\n  -A, --alias xxx      Use xxx as the name for any --zip entry from stdin\n  -b, --blocksize mmm  Set compression block size to mmmK (default 128K)\n  -c, --stdout         Write all processed output to stdout (won't delete)\n  -C, --comment ccc    Put comment ccc in the gzip or zip header\n  -d, --decompress     Decompress the compressed input\n  -f, --force          Force overwrite, compress .gz, links, and to terminal\n  -F  --first          Do iterations first, before block split for -11\n  -h, --help           Display a help screen and quit\n  -H, --huffman        Use only Huffman coding for compression\n  -i, --independent    Compress blocks independently for damage recovery\n  -I, --iterations n   Number of iterations for -11 optimization\n  -J, --maxsplits n    Maximum number of split blocks for -11\n  -k, --keep           Do not delete original file after processing\n  -K, --zip            Compress to PKWare zip (.zip) single entry format\n  -l, --list           List the contents of the compressed input\n  -L, --license        Display the pigz license and quit\n  -m, --no-time        Do not store or restore mod time\n  -M, --time           Store or restore mod time\n  -n, --no-name        Do not store or restore file name or mod time\n  -N, --name           Store or restore file name and mod time\n  -O  --oneblock       Do not split into smaller blocks for -11\n  -p, --processes n    Allow up to n compression threads (default is the\n                       number of online processors, or 8 if unknown)\n  -q, --quiet          Print no messages, even on error\n  -r, --recursive      Process the contents of all subdirectories\n  -R, --rsyncable      Input-determined block locations for rsync\n  -S, --suffix .sss    Use suffix .sss instead of .gz (for compression)\n  -t, --test           Test the integrity of the compressed input\n  -U, --rle            Use run-length encoding for compression\n  -v, --verbose        Provide more verbose output\n  -V  --version        Show the version of pigz\n  -Y  --synchronous    Force output file write to permanent storage\n  -z, --zlib           Compress to zlib (.zz) instead of gzip format\n  --                   All arguments after \"--\" are treated as files\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "huffman": {
     "exit": 0,
     "stderr": "",
-    "digest": "518d1e61a1e631bd9845ce93"
+    "digest": "977ac1504c12f478cd67ee76"
   },
   "independent": {
     "exit": 0,
     "stderr": "",
-    "digest": "686c66f9be0464e7ee22f5cb"
+    "digest": "52b8295c875f0e752aed4c75"
   },
   "independent one process": {
     "exit": 0,
     "stderr": "",
-    "digest": "686c66f9be0464e7ee22f5cb"
+    "digest": "52b8295c875f0e752aed4c75"
   },
   "invalid long option": {
     "exit": 22,
     "stderr": "pigz: abort: invalid option: --bogus\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "invalid option": {
     "exit": 22,
     "stderr": "pigz: abort: invalid option: -x\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "keep": {
     "exit": 0,
     "stderr": "",
-    "digest": "badcf1534984ae22598a4c6d"
+    "digest": "7a1c994c4599b4f05cfa1d11"
   },
   "level 0": {
     "exit": 0,
     "stderr": "",
-    "digest": "f17ed4c9119058574d2ff767"
+    "digest": "14d90a9ba2a08409e3f9ac68"
   },
   "level 0 one process": {
     "exit": 0,
     "stderr": "",
-    "digest": "437df405aff531ff0eb5eed5"
+    "digest": "59459ac8407bf815b290f9b4"
   },
   "level 1": {
     "exit": 0,
     "stderr": "",
-    "digest": "0ed94365b7870a1c577d1c82"
+    "digest": "23739414a1d8be2f8add9170"
   },
   "level 10": {
     "exit": 22,
     "stderr": "pigz: abort: only levels 0..9 and 11 are allowed\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
+  },
+  "level 11": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "9becd5ebd241813b906158d0"
+  },
+  "level 11 independent rsyncable": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "102225fd8414c25a51723892"
+  },
+  "level 11 one process": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "a4f17db40128b648c0ac957e"
+  },
+  "level 11 settings": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "67dc221d7b7f455b3ccee4e5"
+  },
+  "level 11 zip": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "cc89571108420bcc9ebeded4"
   },
   "level 9 one process": {
     "exit": 0,
     "stderr": "",
-    "digest": "5d6689dca5eef71511747c0b"
+    "digest": "f244b4aea9d8e3ea941c912e"
   },
   "license": {
     "exit": 0,
     "stderr": "",
-    "digest": "eb31fe328ee334ba01a29b7d"
+    "digest": "1bca104a4cf84b5068515d4e"
   },
   "list": {
     "exit": 0,
     "stderr": "",
-    "digest": "b774eecf501f9733748c8117"
+    "digest": "837fed30435f0e119c55608d"
   },
   "list each": {
     "exit": 0,
     "stderr": "",
-    "digest": "a898379e7ab71f7a67b7efff"
+    "digest": "e649c04f8f6900c7f049428e"
   },
   "list quiet": {
     "exit": 0,
     "stderr": "",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "list refusals": {
     "exit": 1,
     "stderr": "pigz: skipping: empty.gz empty\npigz: skipping: plain.gz unrecognized format\n",
-    "digest": "516d64a31c64f00b89a2952b"
+    "digest": "10264480ab770ab00a0d0e3b"
   },
   "list test": {
     "exit": 0,
     "stderr": "",
-    "digest": "de89df30d2dbaf2140a8ad32"
+    "digest": "129cb1b156ce4d55bd7b890d"
   },
   "list test verbose": {
     "exit": 0,
     "stderr": "",
-    "digest": "80ea3f197f169ae0d32387a1"
+    "digest": "ad23657d529db8a687dab9f5"
   },
   "list verbose": {
     "exit": 0,
     "stderr": "",
-    "digest": "10b39d5ec141763dddebeab5"
+    "digest": "8a2d29ea4cb67c5cfb46f018"
   },
   "long parameter": {
     "exit": 22,
     "stderr": "pigz: abort: invalid option: --processes=2\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "missing": {
     "exit": 1,
     "stderr": "pigz: skipping: nosuch does not exist\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "missing parameter": {
     "exit": 22,
     "stderr": "pigz: abort: missing parameter after -p\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "name": {
     "exit": 0,
     "stderr": "",
-    "digest": "e9d066b07aa5188f39239a16"
+    "digest": "f21589380d38aec1723c20ee"
   },
   "no name": {
     "exit": 0,
     "stderr": "",
-    "digest": "9bdb36a398514f0f07c5302a"
+    "digest": "8c2603a46765a0837af6a5ea"
   },
   "no processes": {
     "exit": 22,
     "stderr": "pigz: abort: invalid number of processes: 0\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "no time": {
     "exit": 0,
     "stderr": "",
-    "digest": "6ce9744d916799342f7dc0b9"
+    "digest": "4daaae8d932939459aa6f7c6"
   },
   "no time T": {
     "exit": 0,
     "stderr": "",
-    "digest": "6ce9744d916799342f7dc0b9"
+    "digest": "4daaae8d932939459aa6f7c6"
   },
   "one process": {
     "exit": 0,
     "stderr": "",
-    "digest": "badcf1534984ae22598a4c6d"
+    "digest": "7a1c994c4599b4f05cfa1d11"
   },
   "quiet help": {
     "exit": 0,
     "stderr": "",
-    "digest": "e9d066b07aa5188f39239a16"
+    "digest": "f21589380d38aec1723c20ee"
   },
   "quiet invalid": {
     "exit": 22,
     "stderr": "",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "quiet missing": {
     "exit": 1,
     "stderr": "",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "recursive": {
     "exit": 0,
     "stderr": "",
-    "digest": "a78a98e371114af217d0a57c"
+    "digest": "c2b90f473f03997bb70f590f"
   },
   "recursive decompress": {
     "exit": 0,
     "stderr": "",
-    "digest": "9dda75f1102078a71b40f849"
+    "digest": "242fcb6524de38fdc5094f68"
   },
   "recursive list": {
     "exit": 0,
     "stderr": "",
-    "digest": "370c6795c2e4a166f5b953e7"
+    "digest": "4acbe517e1c197c365873f97"
   },
   "recursive test": {
     "exit": 0,
     "stderr": "",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "replace": {
     "exit": 0,
     "stderr": "",
-    "digest": "93480b6a572b4040d5f5be0a"
+    "digest": "a313975b56770b88c55556c7"
   },
   "rle": {
     "exit": 0,
     "stderr": "",
-    "digest": "14a8fde57dc32ccc5a32caae"
+    "digest": "a5a97ce49ce3591ef1f5dacc"
   },
   "rsyncable": {
     "exit": 0,
     "stderr": "",
-    "digest": "badcf1534984ae22598a4c6d"
+    "digest": "7a1c994c4599b4f05cfa1d11"
   },
   "rsyncable one process": {
     "exit": 0,
     "stderr": "",
-    "digest": "badcf1534984ae22598a4c6d"
+    "digest": "7a1c994c4599b4f05cfa1d11"
   },
   "small block": {
     "exit": 22,
     "stderr": "pigz: abort: block size too small (must be \u003e= 32K)\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "stdin": {
     "exit": 0,
     "stderr": "",
-    "digest": "38e0744d3e9d8a86b4228145"
+    "digest": "1e1b830bcea68eaf963bdd25"
   },
   "stdin decompress": {
     "exit": 0,
     "stderr": "",
-    "digest": "f789dc301f56a6b193f9da06"
+    "digest": "907502f9472bc46e538a4dd9"
   },
   "stdin decompress lzw": {
     "exit": 0,
     "stderr": "",
-    "digest": "6ce4490300bbf61243a3f941"
+    "digest": "8ca7aa9d804f3aee0e9ebed2"
   },
   "stdin decompress zip": {
     "exit": 0,
     "stderr": "",
-    "digest": "f789dc301f56a6b193f9da06"
+    "digest": "907502f9472bc46e538a4dd9"
   },
   "stdin list": {
     "exit": 0,
     "stderr": "",
-    "digest": "b774eecf501f9733748c8117"
+    "digest": "837fed30435f0e119c55608d"
   },
   "stdin list test": {
     "exit": 0,
     "stderr": "",
-    "digest": "03e7a09c0f3a89ff147e99bd"
+    "digest": "5b8df8c3949d0cca05132df8"
   },
   "stdin list zlib": {
     "exit": 0,
     "stderr": "",
-    "digest": "944f5ab97d98b2ac552887a5"
+    "digest": "cff741b3a525887ae1568591"
   },
   "stdin no name": {
     "exit": 0,
     "stderr": "",
-    "digest": "15311232a48795c7c0952dc6"
+    "digest": "76f6053d94c486365cebd8f3"
   },
   "stdin one process": {
     "exit": 0,
     "stderr": "",
-    "digest": "e58fadfd24d3184e9dc2a227"
+    "digest": "79cb4fc6611cb84c15594d3a"
   },
   "stdin zip alias": {
     "exit": 0,
     "stderr": "",
-    "digest": "5475d39fc3b212ea050e831b"
+    "digest": "4317daf4521208d6814d5776"
   },
   "stdin zlib": {
     "exit": 0,
     "stderr": "",
-    "digest": "02e0e509554795620e8e6947"
+    "digest": "ce17d9accf30b0323040af98"
   },
   "stdout": {
     "exit": 0,
     "stderr": "",
-    "digest": "3027b089ae0c10c3ff4c67d0"
+    "digest": "251e49e53059e55ee9ff9a42"
+  },
+  "stdout bad data": {
+    "exit": 1,
+    "stderr": "pigz: skipping: bad.gz: corrupted -- invalid deflate data (invalid bit length repeat)\n",
+    "digest": "fafefddb029249bea7a840ce"
+  },
+  "stdout crc": {
+    "exit": 1,
+    "stderr": "pigz: skipping: crc.gz: corrupted -- crc32 mismatch\n",
+    "digest": "907502f9472bc46e538a4dd9"
+  },
+  "stdout lzw long": {
+    "exit": 0,
+    "stderr": "",
+    "digest": "1160fc86cdd3db3b77f1eab5"
+  },
+  "stdout lzw long short": {
+    "exit": 1,
+    "stderr": "pigz: skipping: longhalf.Z: lzw premature end\n",
+    "digest": "b611b7f1c4a925d9c312a5e5"
+  },
+  "stdout lzw short": {
+    "exit": 1,
+    "stderr": "pigz: skipping: half.Z: lzw premature end\n",
+    "digest": "fafefddb029249bea7a840ce"
   },
   "stdout symbolic link": {
     "exit": 0,
     "stderr": "",
-    "digest": "7600281c6cb8a4190d5a57f8"
+    "digest": "a0b507b0ce5a01b28317fa3c"
+  },
+  "stdout truncated": {
+    "exit": 1,
+    "stderr": "pigz: skipping: trunc.gz: corrupted -- incomplete deflate data\n",
+    "digest": "428b6a0f7481cf9e91a04c77"
+  },
+  "stdout truncated verbose": {
+    "exit": 1,
+    "stderr": "trunc.gz to \u003cstdout\u003e pigz: skipping: trunc.gz: corrupted -- incomplete deflate data\n\n",
+    "digest": "428b6a0f7481cf9e91a04c77"
+  },
+  "stdout zlib adler": {
+    "exit": 1,
+    "stderr": "pigz: skipping: ad.zz: corrupted -- adler32 mismatch\n",
+    "digest": "907502f9472bc46e538a4dd9"
   },
   "suffix": {
     "exit": 0,
     "stderr": "",
-    "digest": "4c247feb0db7991c1aab6c83"
+    "digest": "38fd55cdda8bbdc1ee477a98"
   },
   "suffix space": {
     "exit": 22,
     "stderr": "pigz: abort: invalid usage: -S must be followed by space\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "symbolic link": {
     "exit": 1,
     "stderr": "pigz: skipping: link is a symbolic link\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "synchronous": {
     "exit": 0,
     "stderr": "",
-    "digest": "e9d066b07aa5188f39239a16"
+    "digest": "f21589380d38aec1723c20ee"
   },
   "test adler": {
     "exit": 1,
     "stderr": "pigz: skipping: ad.zz: corrupted -- adler32 mismatch\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test bad data": {
     "exit": 1,
     "stderr": "pigz: skipping: bad.gz: corrupted -- invalid deflate data (invalid bit length repeat)\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test crc": {
     "exit": 1,
     "stderr": "pigz: skipping: crc.gz: corrupted -- crc32 mismatch\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test each": {
     "exit": 0,
     "stderr": "",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test empty": {
     "exit": 1,
     "stderr": "pigz: skipping: empty.gz empty\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test length": {
     "exit": 1,
     "stderr": "pigz: skipping: len.gz: corrupted -- length mismatch\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test lzw flags": {
     "exit": 1,
     "stderr": "pigz: skipping: flags.Z: unknown lzw flags set\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test lzw short": {
     "exit": 1,
     "stderr": "pigz: skipping: half.Z: lzw premature end\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test plain": {
     "exit": 1,
     "stderr": "pigz: skipping: plain.gz unrecognized format\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "test truncated": {
     "exit": 1,
     "stderr": "pigz: skipping: trunc.gz: corrupted -- incomplete deflate data\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "time": {
     "exit": 0,
     "stderr": "",
-    "digest": "e9d066b07aa5188f39239a16"
+    "digest": "f21589380d38aec1723c20ee"
   },
   "two members": {
     "exit": 0,
     "stderr": "",
-    "digest": "a690271fe3d1aeab961773ca"
+    "digest": "e74bc0d031d1998fc481507c"
   },
   "two zip entries": {
     "exit": 1,
     "stderr": "pigz: warning: output will be concatenated zip files -- pigz will not be able to extract\n",
-    "digest": "21afddd8c7be923207255397"
+    "digest": "4ed537db59310943b26bea3b"
   },
   "unpigz stdout": {
     "exit": 1,
     "stderr": "pigz: skipping: plain.gz unrecognized format\n",
-    "digest": "2d9a5c09e5bb977d5dc3ff8b"
+    "digest": "fafefddb029249bea7a840ce"
   },
   "verbose": {
     "exit": 0,
     "stderr": "mid to mid.gz \n",
-    "digest": "e9d066b07aa5188f39239a16"
+    "digest": "f21589380d38aec1723c20ee"
   },
   "verbose version": {
     "exit": 0,
     "stderr": "",
-    "digest": "4903fd3dc7378d5c8f124f28"
+    "digest": "82e156f1a1df6378b5b33dd8"
   },
   "version": {
     "exit": 0,
     "stderr": "",
-    "digest": "f6050c0f62a1d3c0e675e8b5"
+    "digest": "2459268f2290e614e021b0ff"
   },
   "zip": {
     "exit": 0,
     "stderr": "",
-    "digest": "da3e739feb605a27ac767ca0"
+    "digest": "c607adafbfb1659ed7cc6022"
   },
   "zip comment": {
     "exit": 0,
     "stderr": "",
-    "digest": "4e0df01264129bb0e1f864ee"
+    "digest": "c9d31030a4e555401d59eb07"
   },
   "zlib": {
     "exit": 0,
     "stderr": "",
-    "digest": "24d3571528ef358acb1fd9b5"
+    "digest": "034761941e40089749f69dbd"
   },
   "zlib comment": {
     "exit": 1,
     "stderr": "pigz: can't store comment in zlib format -- ignoring\n",
-    "digest": "c384b7f4d83e149cb5593a59"
+    "digest": "c86c02d09ca2bded21ceabe9"
   },
   "zopfli settings": {
     "exit": 0,
     "stderr": "",
-    "digest": "e9d066b07aa5188f39239a16"
+    "digest": "f21589380d38aec1723c20ee"
   }
 }

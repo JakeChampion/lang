@@ -21,36 +21,28 @@ pub function render(t: nodes.Tree, o: markdown.Options): u8[] {
   return r.bytes();
 }
 
-function is_block(k: i32): boolean {
-  return k <= nodes.RULE;
-}
-
 function tight(t: nodes.Tree, list: i32): boolean {
   return t.kind(list) == nodes.LIST && t.has(list, nodes.TIGHT);
 }
 
-// True when the block that holds `x` is an item of a tight list, or is in
-// one.
-function in_tight_item(t: nodes.Tree, x: i32): boolean {
-  let b = x;
-  while (!is_block(t.kind(b))) {
-    b = t.parent(b);
+// As in cmark, a node in a list item takes the tightness of its list, and
+// the end of a list takes that of the item that holds it.
+function tight_item(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): out.R {
+  let p = t.parent(x);
+  if (entering && p != nodes.NONE && t.kind(p) == nodes.ITEM) {
+    return out.R { ...r, in_tight_list_item: tight(t, t.parent(p)) };
   }
-  if (t.kind(b) == nodes.ITEM && tight(t, t.parent(b))) {
-    return true;
+  if (!entering && k == nodes.LIST) {
+    return out.R { ...r, in_tight_list_item: p != nodes.NONE && t.kind(p) == nodes.ITEM && tight(t, t.parent(p)) };
   }
-  let p = t.parent(b);
-  return p != nodes.NONE && t.kind(p) == nodes.ITEM && tight(t, t.parent(p));
+  return r;
 }
 
 // Writes the node `x` as cmark does. Gives true when the walk skips the
 // children of the node.
 function node(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): (out.R, boolean) {
   let k = t.kind(x);
-  let r = r0;
-  if (!(k == nodes.ITEM && t.prev(x) == nodes.NONE && entering)) {
-    r = out.R { ...r, in_tight_list_item: in_tight_item(t, x) };
-  }
+  let r = tight_item(r0, t, x, k, entering);
   if (k == nodes.QUOTE || k == nodes.LIST || k == nodes.ITEM || k == nodes.HEADING) {
     return (container(r, t, x, k, entering), false);
   }
@@ -79,7 +71,7 @@ function container(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): 
     let q = r.lit("> ");
     return out.R { ...q, begin_content: true, prefix: q.prefix + "> " };
   }
-  return out.R { ...r, prefix: slice_unchecked(r.prefix, 0, r.prefix.len() - 2).to_owned() }.blankline();
+  return shorter_prefix(r, 2).blankline();
 }
 
 // An ATX heading. Its text has no line breaks.
@@ -269,15 +261,28 @@ function item(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): out.R {
   }
   let r = r0;
   if (!entering) {
-    r = out.R { ...r, prefix: slice_unchecked(r.prefix, 0, r.prefix.len() - marker.len()).to_owned() };
-    return r.cr();
+    return shorter_prefix(r, marker.len()).cr();
   }
-  r = r.lit(marker);
+  r = out.R { ...r.lit(marker), begin_content: true };
+  if (t.first(x) == nodes.NONE) {
+    return r.blankline();
+  }
   let pad = "";
   for _ in 0..marker.len() {
     pad += " ";
   }
-  return out.R { ...r, begin_content: true, prefix: r.prefix + pad };
+  return out.R { ...r, prefix: r.prefix + pad };
+}
+
+// The prefix without its last `n` bytes. As in cmark, the prefix is empty
+// when it has fewer bytes: an empty item adds no prefix, but its end takes
+// the width of its marker from the prefix.
+function shorter_prefix(r: out.R, n: i32): out.R {
+  let keep = r.prefix.len() - n;
+  if (keep < 0) {
+    keep = 0;
+  }
+  return out.R { ...r, prefix: slice_unchecked(r.prefix, 0, keep).to_owned() };
 }
 
 // A code block is always fenced. The fence is longer than each string of

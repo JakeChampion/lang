@@ -8,9 +8,9 @@ import (
 	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
-// brightness sets the brightness of the window on the UI thread, and the
-// volume calls read and set the music stream on the loop thread. Each call
-// releases the local references that it makes.
+// brightness sets the brightness of the window on the UI thread through
+// SetFloatField, and the volume calls read and set the music stream on the
+// loop thread. Each call releases the local references that it makes.
 func TestAndroidBrightnessAndVolume(t *testing.T) {
 	raw, err := os.ReadFile(e2eharness.RepoPath("internal", "stdlib", "std", "android.fern.md"))
 	if err != nil {
@@ -49,7 +49,7 @@ static float level = 9.0f;
 static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "%s: locals=%d attrs=%d\n", what, locals, attrs); exit(1); } }
 
 enum { WINDOW = 300, PARAMS = 400, FIELD = 500, AUDIO = 600, RESOLVER = 700, SETTINGS = 800 };
-static const char *names[] = { "", "getWindow", "getAttributes", "getField", "setFloat", "setAttributes",
+static const char *names[] = { "", "getWindow", "getAttributes", "", "", "setAttributes",
   "getSystemService", "getStreamVolume", "getStreamMaxVolume", "setStreamVolume", "getContentResolver", "getInt" };
 
 static uintptr_t get_class(uintptr_t e, uintptr_t obj) { require(obj != 0, "class of null"); locals++; return obj + 1000; }
@@ -70,22 +70,27 @@ static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t
   locals++;
   if (id == 1) { require(obj == 100, "getWindow"); return WINDOW; }
   if (id == 2) { require(obj == WINDOW, "getAttributes"); return PARAMS; }
-  if (id == 3) { require(obj == PARAMS + 1000 && args[0] == 900 + 16, "getField screenBrightness"); return FIELD; }
   if (id == 6) { require(obj == 100 && args[0] == 900 + 5, "getSystemService audio"); return AUDIO; }
   require(id == 10 && obj == 100, "getContentResolver");
   return RESOLVER;
 }
 static void call(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
-  if (id == 4) {
-    require(obj == FIELD && args[0] == PARAMS, "setFloat");
-    memcpy(&level, &args[1], sizeof level);
-  } else if (id == 5) {
+  if (id == 5) {
     require(obj == WINDOW && args[0] == PARAMS, "setAttributes");
     attrs++;
   } else {
     require(id == 9 && obj == AUDIO && args[0] == 3 && args[2] == 0, "setStreamVolume");
     volume_set = (int)args[1];
   }
+}
+static uintptr_t field_id(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
+  require(cls == PARAMS + 1000 && !strcmp(name, "screenBrightness") && !strcmp(sig, "F"), "GetFieldID screenBrightness");
+  return FIELD;
+}
+// SetFloatField takes its value in the first vector register.
+static void set_float(uintptr_t e, uintptr_t obj, uintptr_t field, float v) {
+  require(obj == PARAMS && field == FIELD, "SetFloatField");
+  level = v;
 }
 static int32_t call_int(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   require(obj == AUDIO && args[0] == 3, "stream");
@@ -124,6 +129,8 @@ int main(int argc, char **argv) {
   table[36] = (uintptr_t)object;
   table[51] = (uintptr_t)call_int;
   table[63] = (uintptr_t)call;
+  table[94] = (uintptr_t)field_id;
+  table[111] = (uintptr_t)set_float;
   table[113] = (uintptr_t)static_method;
   table[131] = (uintptr_t)call_static_int;
   table[163] = (uintptr_t)new_string;
@@ -152,4 +159,49 @@ int main(int argc, char **argv) {
 }
 `
 	androidJNIMockCheck(t, src, "context_size,wire,light,requests,level,set_level,system_light", check)
+}
+
+// The float and double field setters of std/jni pass their value in the
+// first vector register, as the C ABI of JNI wants, with env, the object and
+// the field in the first integer registers.
+func TestJNIFloatFieldSetters(t *testing.T) {
+	const src = `import "std/jni";
+pub function set_all(env: usize): void {
+  jni.set_float_field(env, 11 as usize, 21 as usize, 1.5f32);
+  jni.set_double_field(env, 12 as usize, 22 as usize, -2.25);
+  jni.set_static_float_field(env, 13 as usize, 23 as usize, 0.125f32);
+  jni.set_static_double_field(env, 14 as usize, 24 as usize, 1e300);
+}
+`
+	const check = `#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <dlfcn.h>
+
+static int seen;
+static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "%s\n", what); exit(1); } }
+static uintptr_t env_seen;
+static void setf(uintptr_t e, uintptr_t obj, uintptr_t field, float v) { require(e == env_seen && obj == 11 && field == 21 && v == 1.5f, "SetFloatField"); seen |= 1; }
+static void setd(uintptr_t e, uintptr_t obj, uintptr_t field, double v) { require(e == env_seen && obj == 12 && field == 22 && v == -2.25, "SetDoubleField"); seen |= 2; }
+static void setsf(uintptr_t e, uintptr_t cls, uintptr_t field, float v) { require(e == env_seen && cls == 13 && field == 23 && v == 0.125f, "SetStaticFloatField"); seen |= 4; }
+static void setsd(uintptr_t e, uintptr_t cls, uintptr_t field, double v) { require(e == env_seen && cls == 14 && field == 24 && v == 1e300, "SetStaticDoubleField"); seen |= 8; }
+
+int main(int argc, char **argv) {
+  void *lib = dlopen(argv[1], RTLD_NOW);
+  if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 2; }
+  void (*set_all)(uintptr_t) = dlsym(lib, "set_all");
+  require(set_all != NULL, "export");
+  static uintptr_t table[240];
+  table[111] = (uintptr_t)setf;
+  table[112] = (uintptr_t)setd;
+  table[161] = (uintptr_t)setsf;
+  table[162] = (uintptr_t)setsd;
+  uintptr_t env = (uintptr_t)table;
+  env_seen = (uintptr_t)&env;
+  set_all((uintptr_t)&env);
+  require(seen == 15, "not every setter ran");
+  return 0;
+}
+`
+	androidJNIMockCheck(t, src, "set_all", check)
 }

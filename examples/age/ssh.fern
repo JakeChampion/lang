@@ -3,6 +3,7 @@
 // agessh package. The messages are those of age 1.3.2 and of
 // golang.org/x/crypto/ssh.
 import "std/array";
+import "std/bigint";
 import "std/crypto";
 import "std/crypto/aes";
 import "std/crypto/chacha20poly1305";
@@ -15,6 +16,7 @@ import "std/hex";
 import "std/option";
 import "./bcrypt";
 import "./format";
+import "./goasn1";
 import "./text";
 
 const ED25519_LABEL: string = "age-encryption.org/v1/ssh-ed25519";
@@ -263,6 +265,14 @@ function parse_ed25519(w: Wire): Result[Public, string] {
 // ssh's parseDSA: p, q, g and y, with the checks of checkDSAParams.
 function parse_dss(w: Wire): Result[Public, string] {
   let (f, rest) = fields(w, 4)?;
+  dss_checks(f)?;
+  if (rest.len() != 0) {
+    return Err(TRAILING_JUNK);
+  }
+  return Ok(OtherPublic("ssh-dss"));
+}
+
+function dss_checks(f: u8[][]): Result[void, string] {
   let p = f[0];
   let g = f[2];
   let y = f[3];
@@ -281,10 +291,287 @@ function parse_dss(w: Wire): Result[Public, string] {
   if (sign(y) <= 0 || cmp_mpint(y, p) >= 0) {
     return Err("ssh: DSA public value Y out of range");
   }
+  return Ok(());
+}
+
+// A field of a struct that ssh.Unmarshal fills: a string, a []byte, a
+// *big.Int, a uint64 or a uint32, and the name of the field.
+struct WireField { kind: i32, name: string }
+
+const W_STRING: i32 = 0;
+
+const W_BYTES: i32 = 1;
+
+const W_MPINT: i32 = 2;
+
+const W_U64: i32 = 3;
+
+const W_U32: i32 = 4;
+
+// Go's ssh.Unmarshal of the struct `name` with the fields `spec`: the value
+// of each field, and the bytes after them. A struct with no `ssh:"rest"`
+// field must use all of the bytes.
+function unmarshal_wire(w: Wire, name: string, spec: WireField[], has_rest: boolean): Result[(u8[][], u8[]), string] {
+  if (w.at == w.b.len()) {
+    return Err("ssh: parse error in message type 0");
+  }
+  let out: u8[][] = [];
+  let at = w;
+  for f in spec {
+    if (f.kind == W_U64 || f.kind == W_U32) {
+      let size = if (f.kind == W_U64) { 8 } else { 4 };
+      if (at.b.len() - at.at < size) {
+        return Err("ssh: short read");
+      }
+      out = out.append(array.slice(at.b, at.at, at.at + size));
+      at = Wire { ...at, at: at.at + size };
+      continue;
+    }
+    let Some((v, s)) = read_string(at) else {
+      if (f.kind == W_STRING) {
+        return Err(f"ssh: unmarshal error for field {f.name} of type {name}");
+      }
+      return Err("ssh: short read");
+    };
+    out = out.append(s);
+    at = v;
+  }
+  let rest = rest_of(at);
+  if (!has_rest && rest.len() > 0) {
+    return Err("ssh: parse error in message type 0");
+  }
+  return Ok((out, rest));
+}
+
+// The prime, the coefficient b and the size of a NIST curve, by its name.
+struct Curve { p: bigint.BigInt, b: bigint.BigInt, size: i32 }
+
+function nist_curve(name: string): Option[Curve] {
+  let hex_p = "";
+  let hex_b = "";
+  if (name == "nistp256") {
+    hex_p = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+    hex_b = "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b";
+  } else if (name == "nistp384") {
+    hex_p = "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff";
+    hex_b = "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef";
+  } else if (name == "nistp521") {
+    hex_p = "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    hex_b = "0051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00";
+  } else {
+    return None;
+  }
+  let p = bigint_of(hex.decode(hex_p).unwrap_or([]));
+  let b = bigint_of(hex.decode(hex_b).unwrap_or([]));
+  return Some(Curve { p: p, b: b, size: (p.bit_length() + 7) / 8 });
+}
+
+// elliptic.Unmarshal of a NIST curve: an uncompressed point with each
+// coordinate below p, on the curve y² = x³ - 3x + b.
+function on_curve(c: Curve, point: [u8]): boolean {
+  if (point.len() != 1 + 2 * c.size || point[0] != 4u8) {
+    return false;
+  }
+  let x = bigint_of(point[1:1 + c.size]);
+  let y = bigint_of(point[1 + c.size:point.len()]);
+  if (x.cmp(c.p) >= 0 || y.cmp(c.p) >= 0) {
+    return false;
+  }
+  let lhs = y.mul(y).divmod(c.p).1;
+  let rhs = x.mul(x).mul(x).add(c.b).add(c.p.mul(bigint.from_i64(3))).sub(x.mul(bigint.from_i64(3))).divmod(c.p).1;
+  return lhs.cmp(rhs) == 0;
+}
+
+// ssh's parseECDSA: the bytes after the key.
+function ecdsa_body(w: Wire, algo: string): Result[u8[], string] {
+  let (f, rest) = unmarshal_wire(w, "", [WireField { kind: W_STRING, name: "Curve" }, WireField { kind: W_BYTES, name: "KeyBytes" }], true)?;
+  let actual = text.copy("ecdsa-sha2-".as_bytes()).concat(f[0]);
+  if (!text.equals(actual, algo)) {
+    return Err(f"ssh: algorithm type mismatch: expected {text.quote(algo.as_bytes())}, found curve {text.quote(f[0])} (type {text.quote(actual)})");
+  }
+  let Some(c) = nist_curve(text.ascii(f[0])) else {
+    return Err("ssh: unsupported curve");
+  };
+  if (!on_curve(c, f[1])) {
+    return Err("ssh: invalid curve point");
+  }
+  return Ok(rest);
+}
+
+// ssh's parseSKECDSA.
+function sk_ecdsa_body(w: Wire): Result[u8[], string] {
+  let (f, rest) = unmarshal_wire(w, "", [WireField { kind: W_STRING, name: "Curve" }, WireField { kind: W_BYTES, name: "KeyBytes" }, WireField { kind: W_STRING, name: "Application" }], true)?;
+  if (!text.equals(f[0], "nistp256")) {
+    return Err("ssh: unsupported curve");
+  }
+  let Some(c) = nist_curve("nistp256") else {
+    return Err("ssh: unsupported curve");
+  };
+  if (!on_curve(c, f[1])) {
+    return Err("ssh: invalid curve point");
+  }
+  return Ok(rest);
+}
+
+// ssh's parseSKEd25519.
+function sk_ed25519_body(w: Wire): Result[u8[], string] {
+  let (f, rest) = unmarshal_wire(w, "", [WireField { kind: W_BYTES, name: "KeyBytes" }, WireField { kind: W_STRING, name: "Application" }], true)?;
+  if (f[0].len() != 32) {
+    return Err(f"invalid size {f[0].len()} for Ed25519 public key");
+  }
+  return Ok(rest);
+}
+
+// ssh's certKeyAlgoNames: the key type of each type of certificate.
+function cert_key(t: string): Option[string] {
+  return match (t) {
+    "ssh-rsa-cert-v01@openssh.com" => Some("ssh-rsa"),
+    "ssh-dss-cert-v01@openssh.com" => Some("ssh-dss"),
+    "ecdsa-sha2-nistp256-cert-v01@openssh.com" => Some("ecdsa-sha2-nistp256"),
+    "ecdsa-sha2-nistp384-cert-v01@openssh.com" => Some("ecdsa-sha2-nistp384"),
+    "ecdsa-sha2-nistp521-cert-v01@openssh.com" => Some("ecdsa-sha2-nistp521"),
+    "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com" => Some("sk-ecdsa-sha2-nistp256@openssh.com"),
+    "ssh-ed25519-cert-v01@openssh.com" => Some("ssh-ed25519"),
+    "sk-ssh-ed25519-cert-v01@openssh.com" => Some("sk-ssh-ed25519@openssh.com"),
+    _ => None,
+  };
+}
+
+// The fields of genericCertData, after the key of the certificate.
+function cert_fields(): WireField[] {
+  return [
+    WireField { kind: W_U64, name: "Serial" }, WireField { kind: W_U32, name: "CertType" }, WireField { kind: W_STRING, name: "KeyId" },
+    WireField { kind: W_BYTES, name: "ValidPrincipals" }, WireField { kind: W_U64, name: "ValidAfter" }, WireField { kind: W_U64, name: "ValidBefore" },
+    WireField { kind: W_BYTES, name: "CriticalOptions" }, WireField { kind: W_BYTES, name: "Extensions" }, WireField { kind: W_BYTES, name: "Reserved" },
+    WireField { kind: W_BYTES, name: "SignatureKey" }, WireField { kind: W_BYTES, name: "Signature" },
+  ];
+}
+
+// ssh's parseCert, for a certificate of a key of the type `algo`.
+function cert_body(w: Wire, algo: string): Result[u8[], string] {
+  let Some((after_nonce, _)) = read_string(w) else {
+    return Err("ssh: short read");
+  };
+  let rest = key_body(wire_of(rest_of(after_nonce)), algo)?;
+  let (g, _) = unmarshal_wire(wire_of(rest), "genericCertData", cert_fields(), false)?;
+  let principals = wire_of(g[3]);
+  while (principals.at < principals.b.len()) {
+    let Some((next, _)) = read_string(principals) else {
+      return Err("ssh: short read");
+    };
+    principals = next;
+  }
+  tuples(g[6])?;
+  tuples(g[7])?;
+  let Some((_, sig_algo)) = read_string(wire_of(g[9])) else {
+    return Err("ssh: short read");
+  };
+  if (cert_key(text.ascii(sig_algo)).is_some()) {
+    return Err(f"ssh: the signature key type {text.quote(sig_algo)} is invalid for certificates");
+  }
+  validate_public(g[9])?;
+  if (!signature_body(g[10])) {
+    return Err("ssh: signature parse error");
+  }
+  return Ok([]);
+}
+
+// ssh's parseTuples: names in lexical order, each with a value that is
+// empty or holds one string.
+function tuples(b: [u8]): Result[void, string] {
+  let w = wire_of(b);
+  let last: Option[u8[]] = None;
+  while (w.at < w.b.len()) {
+    let Some((v, key)) = read_string(w) else {
+      return Err("ssh: short read");
+    };
+    if let Some(prev) = last {
+      if (cmp_bytes(key, prev) <= 0) {
+        return Err("ssh: certificate options are not in lexical order");
+      }
+    }
+    last = Some(key);
+    let Some((v2, value)) = read_string(v) else {
+      return Err("ssh: short read");
+    };
+    if (value.len() > 0) {
+      let Some((inner, _)) = read_string(wire_of(value)) else {
+        return Err("ssh: short read");
+      };
+      if (inner.at < inner.b.len()) {
+        return Err("ssh: unexpected trailing data after certificate option value");
+      }
+    }
+    w = v2;
+  }
+  return Ok(());
+}
+
+// ssh's parseSignatureBody with no bytes after it: a format and a blob. A
+// signature of a security key keeps the bytes after its blob.
+function signature_body(b: [u8]): boolean {
+  let Some((v, format)) = read_string(wire_of(b)) else {
+    return false;
+  };
+  let Some((v2, _)) = read_string(v) else {
+    return false;
+  };
+  let t = text.ascii(format);
+  if (t == "sk-ecdsa-sha2-nistp256@openssh.com" || t == "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com" || t == "sk-ssh-ed25519@openssh.com" || t == "sk-ssh-ed25519-cert-v01@openssh.com") {
+    return true;
+  }
+  return v2.at == v2.b.len();
+}
+
+// ssh's parsePubKey for each key type of x/crypto/ssh: the bytes after the
+// key.
+function key_body(w: Wire, algo: string): Result[u8[], string] {
+  if (algo == "ssh-rsa") {
+    let (f, rest) = fields(w, 2)?;
+    rsa_sizes(f[0], f[1])?;
+    return Ok(rest);
+  }
+  if (algo == "ssh-dss") {
+    let (f, rest) = fields(w, 4)?;
+    dss_checks(f)?;
+    return Ok(rest);
+  }
+  if (algo == "ssh-ed25519") {
+    let (f, rest) = fields(w, 1)?;
+    if (f[0].len() != 32) {
+      return Err(f"invalid size {f[0].len()} for Ed25519 public key");
+    }
+    return Ok(rest);
+  }
+  if (algo == "ecdsa-sha2-nistp256" || algo == "ecdsa-sha2-nistp384" || algo == "ecdsa-sha2-nistp521") {
+    return ecdsa_body(w, algo);
+  }
+  if (algo == "sk-ecdsa-sha2-nistp256@openssh.com") {
+    return sk_ecdsa_body(w);
+  }
+  if (algo == "sk-ssh-ed25519@openssh.com") {
+    return sk_ed25519_body(w);
+  }
+  if let Some(k) = cert_key(algo) {
+    return cert_body(w, k);
+  }
+  if let Some(format) = key_format(algo) {
+    return Err(f"ssh: signature algorithm {text.quote(algo.as_bytes())} isn't a key format; key is malformed and should be re-encoded with type {text.quote(format.as_bytes())}");
+  }
+  return Err(f"ssh: unknown key algorithm: {algo}");
+}
+
+// ssh.ParsePublicKey with no key object: the checks of each key type, and
+// no bytes after the key.
+function validate_public(b: [u8]): Result[void, string] {
+  let Some((w, kind)) = read_string(wire_of(b)) else {
+    return Err("ssh: short read");
+  };
+  let rest = key_body(w, text.ascii(kind))?;
   if (rest.len() != 0) {
     return Err(TRAILING_JUNK);
   }
-  return Ok(OtherPublic("ssh-dss"));
+  return Ok(());
 }
 
 // ssh's keyFormatForAlgorithm for a signature algorithm that is not a key
@@ -312,18 +599,12 @@ pub function parse_public(b: [u8]): Result[Public, string] {
   if (t == "ssh-dss") {
     return parse_dss(w);
   }
-  if (OTHER_KEYS.index_of(" " + t + " ").is_some()) {
-    return Ok(OtherPublic(t));
+  let rest = key_body(w, t)?;
+  if (cert_key(t).is_none() && rest.len() != 0) {
+    return Err(TRAILING_JUNK);
   }
-  if let Some(format) = key_format(t) {
-    return Err(f"ssh: signature algorithm {text.quote(kind)} isn't a key format; key is malformed and should be re-encoded with type {text.quote(format.as_bytes())}");
-  }
-  return Err(f"ssh: unknown key algorithm: {t}");
+  return Ok(OtherPublic(t));
 }
-
-// The other key types that x/crypto/ssh parses. The port does not check
-// their bodies.
-const OTHER_KEYS: string = " ecdsa-sha2-nistp256 ecdsa-sha2-nistp384 ecdsa-sha2-nistp521 sk-ecdsa-sha2-nistp256@openssh.com sk-ssh-ed25519@openssh.com ssh-rsa-cert-v01@openssh.com ssh-dss-cert-v01@openssh.com ssh-ed25519-cert-v01@openssh.com ecdsa-sha2-nistp256-cert-v01@openssh.com ecdsa-sha2-nistp384-cert-v01@openssh.com ecdsa-sha2-nistp521-cert-v01@openssh.com sk-ecdsa-sha2-nistp256-cert-v01@openssh.com sk-ssh-ed25519-cert-v01@openssh.com ";
 
 function blank(c: u8): boolean {
   return c == b' ' || c == b'\t';
@@ -487,12 +768,44 @@ pub function unsupported_key(line: [u8]): Option[string] {
   };
 }
 
-// The Curve25519 public key of an Ed25519 key.
+// The Curve25519 public key of an Ed25519 key. As edwards25519's SetBytes
+// does, the encoding can hold a y of p or more, and the sign bit of a zero x.
+// The key becomes canonical first.
 function montgomery_of(key: [u8]): Result[u8[], string] {
-  return match (ed25519.public_key(key)) {
+  return match (ed25519.public_key(canonical_ed25519(key))) {
     Ok(k) => Ok(k.montgomery()),
     Err(_) => Err("invalid Ed25519 public key: edwards25519: invalid point encoding"),
   };
+}
+
+// The canonical encoding of the point of an Ed25519 public key: y below
+// p = 2^255 - 19, and no sign bit when x is zero, which is when y is 1 or -1.
+function canonical_ed25519(key: [u8]): u8[] {
+  let b = text.copy(key);
+  if (b.len() != 32) {
+    return b;
+  }
+  let sign = b[31] & 128u8;
+  b = b.with(31, b[31] & 127u8);
+  let high = true;
+  for i in 1..31 {
+    high = high && b[i] == 255u8;
+  }
+  if (high && b[31] == 127u8 && b[0] >= 0xedu8) {
+    b = b.with(0, b[0] - 0xedu8);
+    for i in 1..32 {
+      b = b.with(i, 0u8);
+    }
+  }
+  let rest_zero = true;
+  for i in 1..32 {
+    rest_zero = rest_zero && b[i] == 0u8;
+  }
+  let minus_one = high && b[31] == 127u8 && b[0] == 0xecu8;
+  if (sign != 0u8 && !(rest_zero && b[0] == 1u8 || minus_one)) {
+    b = b.with(31, b[31] | 128u8);
+  }
+  return b;
 }
 
 // The wire form, and for Ed25519 the Curve25519 public key, of a key that
@@ -596,8 +909,8 @@ function wrap_ed25519(file_key: [u8], wire: [u8], public: [u8], own ephemeral: u
   __ct_public(share);
   let shared = match (x25519.x25519(ephemeral, public)) {
     Ok(s) => s,
-    Err(e) => {
-      return Err(e.message());
+    Err(_) => {
+      return Err(format.LOW_ORDER);
     },
   };
   crypto.erase(ephemeral);
@@ -684,7 +997,7 @@ function identity_key(scalar: [u8], share: [u8], ours: [u8], wire: [u8]): Result
   let shared = match (x25519.x25519(scalar, share)) {
     Ok(s) => s,
     Err(_) => {
-      return Err("invalid X25519 recipient: crypto/ecdh: bad X25519 remote ECDH input: low order point");
+      return Err("invalid X25519 recipient: " + format.LOW_ORDER);
     },
   };
   return ed25519_key(shared, share, ours, wire);
@@ -951,12 +1264,14 @@ function decrypt_pem(block: Pem, passphrase: [u8]): Parsed {
       return Bad("ssh: cannot decode encrypted private keys: " + why);
     },
   };
+  // A wrong passphrase can give valid padding. Then the key is noise, and
+  // ssh gives the error of a wrong passphrase for an asn1 structure error.
   if (block.kind == "RSA PRIVATE KEY") {
-    let p = pkcs1(der);
-    return match (p) {
-      Bad(_) => Bad(WRONG_PASSWORD),
-      _ => p,
-    };
+    let (p, structure) = pkcs1_parse(der);
+    if (structure) {
+      return Bad(WRONG_PASSWORD);
+    }
+    return p;
   }
   if (block.kind == "EC PRIVATE KEY") {
     return ec_private(der);
@@ -1227,60 +1542,72 @@ pub function parse_private(b: [u8]): Parsed {
   return Bad(f"ssh: unsupported key type {text.quote(block.kind.as_bytes())}");
 }
 
-// One DER element at w.at: its tag and its contents.
-function der(w: Wire): Option[(Wire, u8, u8[])] {
-  if (w.b.len() - w.at < 2) {
-    return None;
-  }
-  let tag = w.b[w.at];
-  let first = w.b[w.at + 1] as i32;
-  let at = w.at + 2;
-  let n = first;
-  if (first >= 128) {
-    let count = first - 128;
-    if (count < 1 || count > 3 || w.b.len() - at < count) {
-      return None;
-    }
-    n = 0;
-    for _ in 0..count {
-      n = n << 8 | w.b[at] as i32;
-      at += 1;
-    }
-  }
-  if (n > w.b.len() - at) {
-    return None;
-  }
-  return Some((Wire { ...w, at: at + n }, tag, array.slice(w.b, at, at + n)));
+// The Go structs of the private keys, as goasn1 types: x509's
+// pkcs1PrivateKey, pkcs1AdditionalRSAPrime, ecPrivateKey, pkcs8 and
+// pkix.AlgorithmIdentifier, and the struct of ssh's ParseDSAPrivateKey.
+const PKCS1: i32 = 0;
+
+const PRIME: i32 = 1;
+
+const EC: i32 = 2;
+
+const PKCS8: i32 = 3;
+
+const ALGORITHM: i32 = 4;
+
+const DSA: i32 = 5;
+
+function key_types(): goasn1.Type[] {
+  let whole = goasn1.field(goasn1.INT);
+  let big = goasn1.field(goasn1.BIG);
+  let bytes = goasn1.field(goasn1.BYTES);
+  let crt = goasn1.optional(goasn1.BIG);
+  let primes = goasn1.Field { ...goasn1.nested(goasn1.SLICE, PRIME), optional: true, omit_empty: true };
+  let curve = goasn1.Field { ...goasn1.optional(goasn1.OID), explicit: true, tag: 0 };
+  let public = goasn1.Field { ...goasn1.optional(goasn1.BITS), explicit: true, tag: 1 };
+  return [
+    goasn1.Type { name: "pkcs1PrivateKey", fields: [whole, big, whole, big, big, big, crt, crt, crt, primes] },
+    goasn1.Type { name: "pkcs1AdditionalRSAPrime", fields: [big, big, big] },
+    goasn1.Type { name: "ecPrivateKey", fields: [whole, bytes, curve, public] },
+    goasn1.Type { name: "pkcs8", fields: [whole, goasn1.nested(goasn1.STRUCT, ALGORITHM), bytes] },
+    goasn1.Type { name: "AlgorithmIdentifier", fields: [goasn1.field(goasn1.OID), goasn1.optional(goasn1.RAW)] },
+    goasn1.Type { name: "", fields: [whole, big, big, big, big, big] },
+  ];
 }
 
-// A DER element with the tag that the caller wants.
-function der_of(w: Wire, want: u8): Option[(Wire, u8[])] {
-  let (v, tag, body) = der(w)?;
-  if (tag != want) {
-    return None;
-  }
-  return Some((v, body));
+// True when asn1.Unmarshal of `der` into the type `t` gives no error.
+function parses_as(der: [u8], t: i32): boolean {
+  return goasn1.unmarshal(der, key_types(), t).is_ok();
 }
 
-const DER_INTEGER: u8 = 2u8;
-
-const DER_OCTETS: u8 = 4u8;
-
-const DER_OID: u8 = 6u8;
-
-const DER_SEQUENCE: u8 = 48u8;
-
-// The integers of a DER SEQUENCE that holds only integers.
-function der_integers(b: [u8]): Option[u8[][]] {
-  let (_, body) = der_of(wire_of(b), DER_SEQUENCE)?;
-  let w = wire_of(body);
-  let out: u8[][] = [];
-  while (w.at < w.b.len()) {
-    let (v, n) = der_of(w, DER_INTEGER)?;
-    out = out.append(positive(n)?);
-    w = v;
+// True for an INTEGER above zero: big.Int's Sign() > 0.
+function above_zero(v: goasn1.Value): boolean {
+  if (v.content.len() == 0 || v.content[0] >= 128u8) {
+    return false;
   }
-  return Some(out);
+  for c in v.content {
+    if (c != 0u8) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The value of an INTEGER that is not negative, with no leading zeros. A
+// field that is not there is empty.
+function unsigned(v: goasn1.Value): u8[] {
+  return positive(v.content).unwrap_or([]);
+}
+
+// The minimal big-endian form of an int64 above zero.
+function int_bytes(v: i64): u8[] {
+  let out: u8[] = [];
+  let x = v;
+  while (x > 0) {
+    out = [(x & 255) as u8].concat(out);
+    x >>= 8;
+  }
+  return out;
 }
 
 // The secret values of an RSA key become secret after the checks of the
@@ -1291,93 +1618,175 @@ function mark_rsa(k: rsa.PrivateKey): void {
   }
 }
 
-// Go's x509.ParsePKCS1PrivateKey: version, n, e, d, p, q and the CRT values.
-function pkcs1(b: [u8]): Parsed {
-  let Some(f) = der_integers(b) else {
-    return Bad("x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)");
+// Go's x509.ParsePKCS1PrivateKey, and true when its error is an
+// asn1.StructuralError.
+function pkcs1_parse(der: [u8]): (Parsed, boolean) {
+  let v = match (goasn1.unmarshal(der, key_types(), PKCS1)) {
+    Ok((values, end)) => {
+      if (end < der.len()) {
+        return (Bad("asn1: syntax error: trailing data"), false);
+      }
+      values
+    },
+    Err(e) => {
+      if (parses_as(der, EC)) {
+        return (Bad("x509: failed to parse private key (use ParseECPrivateKey instead for this key format)"), false);
+      }
+      if (parses_as(der, PKCS8)) {
+        return (Bad("x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)"), false);
+      }
+      return (Bad(e.message()), e.structural);
+    },
   };
-  if (f.len() < 9 || f[0].len() != 0) {
-    return Bad("x509: unsupported private key version");
+  if (v[0].n > 1i64) {
+    return (Bad("x509: unsupported private key version"), false);
   }
-  return match (rsa.private_key(f[1], f[2], f[3], f[4], f[5], f[8])) {
+  let some = !above_zero(v[1]) || !above_zero(v[3]) || !above_zero(v[4]) || !above_zero(v[5]);
+  for i in 6..9 {
+    some = some || v[i].present && !above_zero(v[i]);
+  }
+  if (some) {
+    return (Bad("x509: private key contains zero or negative value"), false);
+  }
+  for i in 0..v[9].n as i32 {
+    if (!above_zero(v[10 + 3 * i])) {
+      return (Bad("x509: private key contains zero or negative prime"), false);
+    }
+  }
+  let n = unsigned(v[1]);
+  let e = int_bytes(v[2].n);
+  let crt: Option[(u8[], u8[], u8[])] = None;
+  if (v[6].present && v[7].present && v[8].present) {
+    crt = Some((unsigned(v[6]), unsigned(v[7]), unsigned(v[8])));
+  }
+  if (v[9].n == 0i64) {
+    let why = go_rsa_check(n, v[2].n, unsigned(v[3]), unsigned(v[4]), unsigned(v[5]), crt);
+    if (why.len() > 0) {
+      return (Bad(why), false);
+    }
+  }
+  return match (rsa.private_key(n, e, unsigned(v[3]), unsigned(v[4]), unsigned(v[5]), unsigned(v[8]))) {
     Ok(key) => {
       mark_rsa(key);
-      Key(RsaPrivate(RsaPublic(rsa_wire(f[1], f[2]), key.public_key()), key))
+      (Key(RsaPrivate(RsaPublic(rsa_wire(n, e), key.public_key()), key)), false)
     },
-    Err(e) => Bad(e.message()),
+    Err(why) => (Bad(why.message()), false),
   };
 }
 
-const OID_RSA: string = "2a864886f70d010101";
+// The checks of Go's crypto/rsa for a key of two primes, in the order of
+// NewPrivateKeyWithPrecomputation, or of NewPrivateKey for a key with no CRT
+// values. Gives Go's error, or "" for a valid key.
+function go_rsa_check(n0: [u8], e: i64, d0: [u8], p0: [u8], q0: [u8], crt: Option[(u8[], u8[], u8[])]): string {
+  let one = bigint.from_i64(1);
+  let n = bigint_of(n0);
+  let p = bigint_of(p0);
+  let q = bigint_of(q0);
+  let d = bigint_of(d0);
+  if (n.cmp(one) <= 0 || p.cmp(one) <= 0 || q.cmp(one) <= 0) {
+    return "modulus must be > 1";
+  }
+  if (d.cmp(n) >= 0) {
+    return "input overflows the modulus";
+  }
+  let p1 = p.sub(one);
+  let q1 = q.sub(one);
+  let Some((dp0, dq0, qinv0)) = crt else {
+    if (p1.cmp(one) <= 0 || q1.cmp(one) <= 0) {
+      return "modulus must be > 1";
+    }
+    if (!p.bit(0)) {
+      return "crypto/rsa: p is even";
+    }
+    let qinv = mod_pow(q.divmod(p).1, p.sub(bigint.from_i64(2)), p);
+    return go_rsa_key(n, e, d, p, q, d.divmod(p1).1, d.divmod(q1).1, qinv);
+  };
+  let qinv = bigint_of(qinv0);
+  if (qinv.cmp(p) >= 0) {
+    return "input overflows the modulus";
+  }
+  return go_rsa_key(n, e, d, p, q, bigint_of(dp0), bigint_of(dq0), qinv);
+}
 
-const OID_ED25519: string = "2b6570";
+// Go's checkPrivateKey for a key of two primes.
+function go_rsa_key(n: bigint.BigInt, e: i64, d: bigint.BigInt, p: bigint.BigInt, q: bigint.BigInt, dp: bigint.BigInt, dq: bigint.BigInt, qinv: bigint.BigInt): string {
+  let one = bigint.from_i64(1);
+  if (!n.bit(0)) {
+    return "crypto/rsa: public modulus is even";
+  }
+  if (e < 2i64) {
+    return "crypto/rsa: public exponent too small or negative";
+  }
+  if (e % 2i64 == 0i64) {
+    return "crypto/rsa: public exponent is even";
+  }
+  if (e > 2147483647i64) {
+    return "crypto/rsa: public exponent too large";
+  }
+  if (p.cmp(n) >= 0 || q.cmp(n) >= 0) {
+    return "crypto/rsa: invalid prime";
+  }
+  if (!p.mul(q).divmod(n).1.is_zero()) {
+    return "crypto/rsa: p * q != n";
+  }
+  let big_e = bigint.from_i64(e);
+  for (prime, exponent) in [(p, dp), (q, dq)] {
+    let m = prime.sub(one);
+    if (m.cmp(one) <= 0) {
+      return "crypto/rsa: invalid prime";
+    }
+    if (exponent.cmp(m) >= 0 || big_e.mul(exponent).divmod(m).1.cmp(one) != 0) {
+      return "crypto/rsa: invalid CRT exponent";
+    }
+  }
+  if (q.divmod(p).1.mul(qinv).divmod(p).1.cmp(one) != 0) {
+    return "crypto/rsa: invalid CRT coefficient";
+  }
+  if (d.divmod(p.sub(one)).1.cmp(dp) != 0) {
+    return "crypto/rsa: d does not match dP";
+  }
+  if (d.divmod(q.sub(one)).1.cmp(dq) != 0) {
+    return "crypto/rsa: d does not match dQ";
+  }
+  if (p.cmp(q) == 0) {
+    return "crypto/rsa: p == q";
+  }
+  let diff = if (p.cmp(q) > 0) { p.sub(q) } else { q.sub(p) };
+  if (diff.bit_length() <= n.bit_length() / 2 - 100) {
+    return "crypto/rsa: |p - q| too small";
+  }
+  if (d.bit_length() <= n.bit_length() / 2) {
+    return "crypto/rsa: d too small";
+  }
+  return "";
+}
 
-// The NIST curves of x509's namedCurveFromOID, by the hex of the OID, with
-// the hex of the order of each one.
+// b to the power e modulo m.
+function mod_pow(b: bigint.BigInt, e: bigint.BigInt, m: bigint.BigInt): bigint.BigInt {
+  let r = bigint.from_i64(1);
+  let i = e.bit_length() - 1;
+  while (i >= 0) {
+    r = r.mul(r).divmod(m).1;
+    if (e.bit(i)) {
+      r = r.mul(b).divmod(m).1;
+    }
+    i -= 1;
+  }
+  return r;
+}
+
+function pkcs1(der: [u8]): Parsed {
+  return pkcs1_parse(der).0;
+}
+
+// The NIST curves of x509's namedCurveFromOID, by OID, with the hex of the
+// order of each one.
 const EC_CURVES: string[] = [
-  "2b81040021", "ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d",
-  "2a8648ce3d030107", "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
-  "2b81040022", "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973",
-  "2b81040023", "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbfa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409",
+  "1.3.132.0.33", "ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d",
+  "1.2.840.10045.3.1.7", "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+  "1.3.132.0.34", "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973",
+  "1.3.132.0.35", "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbfa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409",
 ];
-
-// x509's message for a DER key in a format that the parser does not take.
-function other_format(der: [u8], what: string): string {
-  if let Some(f) = der_integers(der) {
-    if (f.len() >= 9) {
-      return "x509: failed to parse private key (use ParsePKCS1PrivateKey instead for this key format)";
-    }
-  }
-  if let Some((_, body)) = der_of(wire_of(der), DER_SEQUENCE) {
-    if let Some((w1, _)) = der_of(wire_of(body), DER_INTEGER) {
-      if (der_of(w1, DER_SEQUENCE).is_some()) {
-        return "x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)";
-      }
-    }
-  }
-  return what + ": asn1: structure error";
-}
-
-// Go's x509.ParseECPrivateKey: version 1, a private key below the order of
-// a named curve. A valid key is a type that age does not use.
-function ec_private(der: [u8]): Parsed {
-  let bad = Bad(other_format(der, "x509: failed to parse EC private key"));
-  let Some((_, body)) = der_of(wire_of(der), DER_SEQUENCE) else {
-    return bad;
-  };
-  let Some((w1, version)) = der_of(wire_of(body), DER_INTEGER) else {
-    return bad;
-  };
-  let Some((w2, key)) = der_of(w1, DER_OCTETS) else {
-    return bad;
-  };
-  if (version.len() != 1 || version[0] != 1u8) {
-    return Bad(f"x509: unknown EC private key version {small(version)}");
-  }
-  let order = match (der_of(w2, 0xa0u8)) {
-    Some((_, explicit)) => match (der_of(wire_of(explicit), DER_OID)) {
-      Some((_, oid)) => curve_order(hex.encode(oid)),
-      None => "",
-    },
-    None => "",
-  };
-  if (order.len() == 0) {
-    return Bad("x509: unknown elliptic curve");
-  }
-  let n = match (hex.decode(order)) {
-    Ok(b) => b,
-    Err(_) => [],
-  };
-  let at = 0;
-  while (at < key.len() && key[at] == 0u8) {
-    at += 1;
-  }
-  let k = key[at:key.len()];
-  if (k.len() > n.len() || k.len() == n.len() && cmp_bytes(k, n) >= 0) {
-    return Bad("x509: invalid elliptic curve private key value");
-  }
-  return Unsupported("*ecdsa.PrivateKey");
-}
 
 function curve_order(oid: string): string {
   let i = 0;
@@ -1390,55 +1799,164 @@ function curve_order(oid: string): string {
   return "";
 }
 
+// Go's x509.parseECPrivateKey: version 1, and a private key of the size of
+// a named curve. `named` is the curve of a PKCS#8 key. A valid key is a type
+// that age does not use. As ecdsa.ParseRawPrivateKey does, a multiple of
+// the order gives the point at infinity, and a value above the order
+// overflows.
+function ec_private_with(der: [u8], named: Option[string]): Parsed {
+  let v = match (goasn1.unmarshal(der, key_types(), EC)) {
+    Ok((values, _)) => values,
+    Err(e) => {
+      if (parses_as(der, PKCS8)) {
+        return Bad("x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)");
+      }
+      if (parses_as(der, PKCS1)) {
+        return Bad("x509: failed to parse private key (use ParsePKCS1PrivateKey instead for this key format)");
+      }
+      return Bad("x509: failed to parse EC private key: " + e.message());
+    },
+  };
+  if (v[0].n != 1i64) {
+    return Bad(f"x509: unknown EC private key version {v[0].n}");
+  }
+  let order = curve_order(named.unwrap_or(v[2].oid));
+  if (order.len() == 0) {
+    return Bad("x509: unknown elliptic curve");
+  }
+  let n = match (hex.decode(order)) {
+    Ok(b) => b,
+    Err(_) => [],
+  };
+  let size = (bigint_of(n).bit_length() + 7) / 8;
+  let key = v[1].content;
+  let at = 0;
+  while (key.len() - at > size) {
+    if (key[at] != 0u8) {
+      return Bad("x509: invalid private key length");
+    }
+    at += 1;
+  }
+  let d = bigint_of(key[at:key.len()]);
+  let order_n = bigint_of(n);
+  if (d.divmod(order_n).1.is_zero()) {
+    return Bad("ecdsa: invalid public key encoding");
+  }
+  if (d.cmp(order_n) >= 0) {
+    return Bad("input overflows the modulus");
+  }
+  return Unsupported("*ecdsa.PrivateKey");
+}
+
+function ec_private(der: [u8]): Parsed {
+  return ec_private_with(der, None);
+}
+
+function bigint_of(b: [u8]): bigint.BigInt {
+  let v = bigint.zero();
+  for c in b {
+    v = v.shl(8).add(bigint.from_i64(c as i64));
+  }
+  return v;
+}
+
 // x/crypto's ParseDSAPrivateKey: a SEQUENCE of six integers.
 function dsa_private(der: [u8]): Parsed {
-  let Some((rest, _)) = der_of(wire_of(der), DER_SEQUENCE) else {
-    return Bad("ssh: failed to parse DSA key: asn1: structure error");
-  };
-  let Some(f) = der_integers(der) else {
-    return Bad("ssh: failed to parse DSA key: asn1: structure error");
-  };
-  if (f.len() < 6) {
-    return Bad("ssh: failed to parse DSA key: asn1: structure error");
-  }
-  if (rest.at != der.len()) {
-    return Bad("ssh: garbage after DSA key");
+  match (goasn1.unmarshal(der, key_types(), DSA)) {
+    Ok((_, end)) => {
+      if (end < der.len()) {
+        return Bad("ssh: garbage after DSA key");
+      }
+      return Unsupported("*dsa.PrivateKey");
+    },
+    Err(e) => {
+      return Bad("ssh: failed to parse DSA key: " + e.message());
+    }
   }
   return Unsupported("*dsa.PrivateKey");
 }
 
-// Go's x509.ParsePKCS8PrivateKey for RSA and Ed25519 keys.
-function pkcs8(b: [u8]): Parsed {
-  let bad = "x509: failed to parse private key (use ParseECPrivateKey instead for this key format)";
-  let Some((_, body)) = der_of(wire_of(b), DER_SEQUENCE) else {
-    return Bad(bad);
+// The OBJECT IDENTIFIERs of the key algorithms of x509's PKCS#8 parser.
+const OID_RSA: string = "1.2.840.113549.1.1.1";
+
+const OID_ECDSA: string = "1.2.840.10045.2.1";
+
+const OID_ED25519: string = "1.3.101.112";
+
+const OID_X25519: string = "1.3.101.110";
+
+const OID_MLDSA: string[] = ["2.16.840.1.101.3.4.3.17", "2.16.840.1.101.3.4.3.18", "2.16.840.1.101.3.4.3.19"];
+
+// Go's x509.ParsePKCS8PrivateKey.
+function pkcs8(der: [u8]): Parsed {
+  let v = match (goasn1.unmarshal(der, key_types(), PKCS8)) {
+    Ok((values, _)) => values,
+    Err(e) => {
+      if (parses_as(der, EC)) {
+        return Bad("x509: failed to parse private key (use ParseECPrivateKey instead for this key format)");
+      }
+      if (parses_as(der, PKCS1)) {
+        return Bad("x509: failed to parse private key (use ParsePKCS1PrivateKey instead for this key format)");
+      }
+      return Bad(e.message());
+    },
   };
-  let Some((w1, _)) = der_of(wire_of(body), DER_INTEGER) else {
-    return Bad(bad);
-  };
-  let Some((w2, algorithm)) = der_of(w1, DER_SEQUENCE) else {
-    return Bad(bad);
-  };
-  let Some((_, key)) = der_of(w2, DER_OCTETS) else {
-    return Bad(bad);
-  };
-  let Some((_, oid)) = der_of(wire_of(algorithm), DER_OID) else {
-    return Bad(bad);
-  };
-  let id = hex.encode(oid);
-  if (id == OID_RSA) {
-    return pkcs1(key);
+  let oid = v[1].oid;
+  let params = v[2].full;
+  let key = v[3].content;
+  if (oid == OID_RSA) {
+    return embedded(pkcs1(key), "x509: failed to parse RSA private key embedded in PKCS#8: ");
   }
-  if (id == OID_ED25519) {
-    return pkcs8_ed25519(key);
+  if (oid == OID_ECDSA) {
+    let named = match (goasn1.unmarshal_field(params, [], goasn1.field(goasn1.OID))) {
+      Ok((values, _)) => Some(values[0].oid),
+      Err(_) => None,
+    };
+    return embedded(ec_private_with(key, named), "x509: failed to parse EC private key embedded in PKCS#8: ");
   }
-  return Bad("x509: PKCS#8 wrapping contained private key with unknown algorithm");
+  if (oid == OID_ED25519) {
+    return pkcs8_ed25519(key, params);
+  }
+  if (OID_MLDSA.contains(oid)) {
+    return pkcs8_mldsa(key, params);
+  }
+  if (oid == OID_X25519) {
+    if (params.len() != 0) {
+      return Bad("x509: invalid X25519 private key parameters");
+    }
+    let seed = match (goasn1.unmarshal_field(key, [], goasn1.field(goasn1.BYTES))) {
+      Ok((values, _)) => values[0].content,
+      Err(e) => {
+        return Bad("x509: invalid X25519 private key: " + e.message());
+      },
+    };
+    if (seed.len() != 32) {
+      return Bad("crypto/ecdh: invalid private key size");
+    }
+    return Unsupported("*ecdh.PrivateKey");
+  }
+  return Bad("x509: PKCS#8 wrapping contained private key with unknown algorithm: " + oid);
+}
+
+// The result of the parser of a key in a PKCS#8 key, with `prefix` before
+// its error.
+function embedded(p: Parsed, prefix: string): Parsed {
+  if let Bad(why) = p {
+    return Bad(prefix + why);
+  }
+  return p;
 }
 
 // The seed of a PKCS#8 Ed25519 key, in an OCTET STRING.
-function pkcs8_ed25519(key: [u8]): Parsed {
-  let Some((_, seed)) = der_of(wire_of(key), DER_OCTETS) else {
-    return Bad("x509: invalid Ed25519 private key: asn1: structure error");
+function pkcs8_ed25519(key: [u8], params: [u8]): Parsed {
+  if (params.len() != 0) {
+    return Bad("x509: invalid Ed25519 private key parameters");
+  }
+  let seed = match (goasn1.unmarshal_field(key, [], goasn1.field(goasn1.BYTES))) {
+    Ok((values, _)) => values[0].content,
+    Err(e) => {
+      return Bad("x509: invalid Ed25519 private key: " + e.message());
+    },
   };
   if (seed.len() != 32) {
     return Bad(f"x509: invalid Ed25519 private key length: {seed.len()}");
@@ -1452,4 +1970,30 @@ function pkcs8_ed25519(key: [u8]): Parsed {
     },
     Err(e) => Bad(e.message()),
   };
+}
+
+// The checks of x509 for a PKCS#8 ML-DSA key, which must hold only a seed.
+function pkcs8_mldsa(key: [u8], params: [u8]): Parsed {
+  if (params.len() != 0) {
+    return Bad("x509: invalid ML-DSA private key parameters");
+  }
+  if (key.len() == 0) {
+    return Bad("x509: invalid ML-DSA private key length: 0");
+  }
+  if (key[0] == 0x04u8) {
+    return Bad("x509: semi-expanded ML-DSA private keys without seed are not supported");
+  }
+  if (key[0] == 0x30u8) {
+    return Bad("x509: ML-DSA private keys with both seed and expanded key are not supported, use e.g. \"openssl pkey -provparam ml-dsa.output_formats=seed-only\" to convert to a seed-only key");
+  }
+  if (key[0] != 0x80u8) {
+    return Bad("x509: invalid ML-DSA private key: invalid ASN.1 tag " + hex.encode(key[0:1]));
+  }
+  if (key.len() != 34) {
+    return Bad(f"x509: invalid ML-DSA private key length: {key.len()}");
+  }
+  if (key[1] != 32u8) {
+    return Bad("x509: invalid ML-DSA private key ASN.1 encoding");
+  }
+  return Unsupported("*mldsa.PrivateKey");
 }

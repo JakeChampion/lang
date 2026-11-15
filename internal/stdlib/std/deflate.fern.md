@@ -87,6 +87,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<34 resumable output>>
 
 <<35 the encoder of zlib>>
+
+<<36 streaming inflate>>
 ```
 
 ### `dependencies 1`
@@ -3443,5 +3445,165 @@ function __zstatic_block(w_in: __ZBits, z: __Z, lastbit: i32, slen: i32[], dstat
     dc = dc.with(k, __zreverse(k, 5));
   }
   return __zcompress(w, z, __zstatic_codes(slen), slen, dc, dstat);
+}
+```
+
+### Streaming inflate
+
+An `InflateStream` decodes a deflate stream from input that comes in parts. Memory stays bounded: the stream keeps 32768 bytes of history and one output buffer. Each call of `inflate_part` decodes from `input[from:]`. It returns at most about 32 KiB of new output, the count of input bytes that it used, and an error or the end of the stream.
+
+When `last` is false, more input can follow `input`. The part then stops before the input ends, at a point where it can continue. The next call gives the input again from `from + used`, with more bytes after it. When `last` is true, the input ends at `input.len()`, and an end of the input inside the stream is `Truncated`.
+
+A call can return with input that it did not use, because its output is full. Then `done` is false and `error` is None, and the caller calls again with the input that is left. When the data does not decode, `out` holds the output before the error. That output does not include the output of the symbol that has the error.
+
+When `done` is true, the stream ends at byte `from + used`, after the padding bits of its last byte.
+
+```fern
+<<36 streaming inflate>>=
+// The output of one part before it returns.
+const PART_OUT: i32 = 32768;
+
+// The input that a block header and its code lengths can take.
+const HEADER_NEED: i32 = 1024;
+
+const P_HEADER: i32 = 0;
+
+const P_STORED: i32 = 1;
+
+const P_CODES: i32 = 2;
+
+const P_DONE: i32 = 3;
+
+pub struct InflateStream {
+  // The history in buf[0:n].
+  buf: u8[],
+  n: i32,
+  bitbuf: i32,
+  bitcnt: i32,
+  phase: i32,
+  final_block: boolean,
+  // The bytes left in a stored block.
+  remaining: i32,
+  literal: i32[],
+  distance: i32[],
+}
+
+pub struct InflatePart {
+  stream: InflateStream,
+  out: u8[],
+  used: i32,
+  done: boolean,
+  error: Option[InflateError],
+}
+
+pub function inflate_stream(): InflateStream {
+  return InflateStream { buf: __alloc_u8(32768 + PART_OUT + SLACK), n: 0, bitbuf: 0, bitcnt: 0, phase: P_HEADER, final_block: false, remaining: 0, literal: [], distance: [] };
+}
+
+// fern-lint: allow cyclomatic-complexity
+pub function inflate_part(own st: InflateStream, input: [u8], from: i32, last: boolean): InflatePart {
+  if (from < 0) {
+    return InflatePart { stream: st, out: [], used: 0, done: false, error: Some(Malformed("an offset below zero")) };
+  }
+  let InflateStream { buf, n, bitbuf, bitcnt, phase, final_block, remaining, literal, distance } = st;
+  let keep = cmp.min(n, 32768);
+  if (n > keep) {
+    let history = __bytes_into(__alloc_u8(keep), 0, buf, n - keep, keep);
+    buf = __bytes_into(buf, 0, history, 0, keep);
+  }
+  // The fast loop stops at `room`. With a limit 300 bytes past it, no match
+  // reaches the limit.
+  let room = buf.len() - SLACK;
+  let limit = room + 300;
+  let s = __State { pos: from, bitbuf: bitbuf, bitcnt: bitcnt, out: buf, n: keep, max_out: limit, last: 0, failed: false, error: Truncated, lengths: [], counts: [] };
+  let lit = literal;
+  let dist = distance;
+  while (phase != P_DONE && !s.failed && s.n < room) {
+    if (phase == P_HEADER) {
+      if (!last && input.len() - s.pos < HEADER_NEED) {
+        break;
+      }
+      s = __bits(s, input, 1);
+      final_block = s.last == 1;
+      s = __bits(s, input, 2);
+      let kind = s.last;
+      if (kind == 0) {
+        s = __State { ...s, bitbuf: 0, bitcnt: 0 };
+        if (s.pos + 4 > input.len()) {
+          s = __fail(s, Truncated);
+          break;
+        }
+        let len = input[s.pos] as i32 | input[s.pos + 1] as i32 << 8;
+        let nlen = input[s.pos + 2] as i32 | input[s.pos + 3] as i32 << 8;
+        if (len != (nlen ^ 65535)) {
+          s = __fail(s, Malformed("a stored block's length and its complement disagree"));
+          break;
+        }
+        s = __State { ...s, pos: s.pos + 4 };
+        remaining = len;
+        phase = P_STORED;
+      } else if (kind == 1) {
+        lit = FIXED_LIT_TABLE;
+        dist = FIXED_DIST_TABLE;
+        phase = P_CODES;
+      } else if (kind == 2) {
+        let t = __dynamic_tables(s, input);
+        s = t.state;
+        lit = t.literal;
+        dist = t.distance;
+        phase = P_CODES;
+      } else {
+        s = __fail(s, Malformed("a reserved block type"));
+      }
+    } else if (phase == P_STORED) {
+      let take = cmp.min(cmp.min(remaining, input.len() - s.pos), room - s.n);
+      let out = s.out;
+      let at = s.n;
+      s = __State { ...s, out: [] };
+      out = __bytes_into(out, at, input, s.pos, take);
+      s = __State { ...s, out: out, n: at + take, pos: s.pos + take };
+      remaining -= take;
+      if (remaining == 0) {
+        phase = if (final_block) { P_DONE } else { P_HEADER };
+      } else if (s.n < room) {
+        if (last) {
+          s = __fail(s, Truncated);
+        }
+        break;
+      }
+    } else {
+      let out = s.out;
+      s = __State { ...s, out: [] };
+      let f = __fast(out, s.n, input, s.pos, s.bitbuf as u64, s.bitcnt, s.max_out, lit, dist);
+      let back = f.bitcnt >> 3;
+      let cnt = f.bitcnt & 7;
+      s = __State { ...s, out: f.out, n: f.n, pos: f.pos - back, bitbuf: __low(f.bitbuf, cnt) as i32, bitcnt: cnt };
+      if (f.status == F_END) {
+        phase = if (final_block) { P_DONE } else { P_HEADER };
+      } else if (f.status != F_ROOM) {
+        match (__status_error(f.status)) {
+          Some(err) => {
+            s = __fail(s, err);
+          },
+          None => {}
+        }
+      } else if (f.n <= room && f.pos > input.len() - 8) {
+        if (!last) {
+          break;
+        }
+        s = __codes(__State { ...s, max_out: 2147483647 - SLACK }, input, lit, dist);
+        s = __State { ...s, max_out: limit };
+        if (!s.failed) {
+          phase = if (final_block) { P_DONE } else { P_HEADER };
+        }
+      } else {
+        break;
+      }
+    }
+  }
+  let out = __bytes_into(__alloc_u8(s.n - keep), 0, s.out, keep, s.n - keep);
+  let error: Option[InflateError] = if (s.failed) { Some(s.error) } else { None };
+  let next = InflateStream { buf: s.out, n: s.n, bitbuf: s.bitbuf, bitcnt: s.bitcnt, phase: phase, final_block: final_block, remaining: remaining, literal: lit, distance: dist };
+  return InflatePart { stream: next, out: out, used: s.pos - from, done: phase == P_DONE && !s.failed, error: error };
 }
 ```

@@ -1,0 +1,1703 @@
+// Deflate as the zopfli of pigz 2.8 writes it (zopfli/src/zopfli in the
+// pigz source): ZopfliDeflatePart with dynamic blocks, which is what -11
+// calls. The output of pigz -11 is the output of zopfli, so this port keeps
+// the order of the calculations of zopfli. The costs of the optimal parse
+// are floats in zopfli, so `costs` keeps each value rounded to f32. The
+// cost model calls log, and std/f64's log gives the bits of glibc's log.
+//
+// Copyright 2011 Google Inc. All Rights Reserved. Licensed under the Apache
+// License, Version 2.0. Authors: Lode Vandevenne, Jyrki Alakuijala.
+import "std/array";
+import "std/f64";
+
+const MAX_MATCH: i32 = 258;
+
+const MIN_MATCH: i32 = 3;
+
+const NUM_LL: i32 = 288;
+
+const NUM_D: i32 = 32;
+
+const WINDOW_SIZE: i32 = 32768;
+
+const WINDOW_MASK: i32 = 32767;
+
+const LARGE_FLOAT: f64 = 1e30;
+
+const CACHE_LENGTH: i32 = 8;
+
+const MAX_CHAIN_HITS: i32 = 8192;
+
+const HASH_SHIFT: i32 = 5;
+
+const HASH_MASK: i32 = 32767;
+
+// The settings of -11: -I, -J and -O.
+pub struct Options {
+  iterations: i32,
+  blocksplitting: boolean,
+  maxblocks: i32,
+}
+
+// --- symbols ---
+
+function dist_extra_bits(dist: i32): i32 {
+  if (dist < 5) {
+    return 0;
+  }
+  return 31 - (dist - 1).leading_zeros() - 1;
+}
+
+function dist_extra_bits_value(dist: i32): i32 {
+  if (dist < 5) {
+    return 0;
+  }
+  let l = 31 - (dist - 1).leading_zeros();
+  return dist - (1 + (1 << l)) & (1 << l - 1) - 1;
+}
+
+function dist_symbol(dist: i32): i32 {
+  if (dist < 5) {
+    return dist - 1;
+  }
+  let l = 31 - (dist - 1).leading_zeros();
+  let r = dist - 1 >> l - 1 & 1;
+  return l * 2 + r;
+}
+
+function length_extra_bits(l: i32): i32 {
+  if (l < 11) {
+    return 0;
+  }
+  if (l == 258) {
+    return 0;
+  }
+  return 31 - (l - 3).leading_zeros() - 2;
+}
+
+function length_extra_bits_value(l: i32): i32 {
+  let n = length_extra_bits(l);
+  if (n == 0) {
+    return 0;
+  }
+  return l - 3 & (1 << n) - 1;
+}
+
+function length_symbol(l: i32): i32 {
+  if (l < 11) {
+    return 254 + l;
+  }
+  if (l == 258) {
+    return 285;
+  }
+  let n = length_extra_bits(l);
+  return 257 + 4 * n + 4 + (l - 3 >> n) - 4;
+}
+
+function length_symbol_extra_bits(s: i32): i32 {
+  if (s < 265 || s == 285) {
+    return 0;
+  }
+  return s - 261 >> 2;
+}
+
+function dist_symbol_extra_bits(s: i32): i32 {
+  if (s < 4) {
+    return 0;
+  }
+  return (s >> 1) - 1;
+}
+
+// --- the LZ77 store ---
+
+// The symbols of a parse in order. ll_counts and d_counts hold a histogram
+// of the symbols so far after each NUM_LL and NUM_D symbols, as zopfli
+// keeps them.
+struct Store {
+  litlens: i32[],
+  dists: i32[],
+  pos: i32[],
+  ll_symbol: i32[],
+  d_symbol: i32[],
+  ll_counts: i32[],
+  d_counts: i32[],
+}
+
+function new_store(): Store {
+  return Store { litlens: [], dists: [], pos: [], ll_symbol: [], d_symbol: [], ll_counts: [], d_counts: [] };
+}
+
+function snapshot(own counts: i32[], size: i32, n: i32): i32[] {
+  if (size % n == 0) {
+    for i in 0..n {
+      counts = counts.append(if (size == 0) { 0 } else { counts[size - n + i] });
+    }
+  }
+  return counts;
+}
+
+function store_lit_len_dist(own st: Store, length: i32, dist: i32, pos: i32): Store {
+  let size = st.litlens.len();
+  let llc = snapshot(st.ll_counts, size, NUM_LL);
+  let dc = snapshot(st.d_counts, size, NUM_D);
+  let llstart = NUM_LL * (size / NUM_LL);
+  let dstart = NUM_D * (size / NUM_D);
+  if (dist == 0) {
+    llc = llc.with(llstart + length, llc[llstart + length] + 1);
+    return Store { litlens: st.litlens.append(length), dists: st.dists.append(0), pos: st.pos.append(pos), ll_symbol: st.ll_symbol.append(length), d_symbol: st.d_symbol.append(0), ll_counts: llc, d_counts: dc };
+  }
+  let ls = length_symbol(length);
+  let ds = dist_symbol(dist);
+  llc = llc.with(llstart + ls, llc[llstart + ls] + 1);
+  dc = dc.with(dstart + ds, dc[dstart + ds] + 1);
+  return Store { litlens: st.litlens.append(length), dists: st.dists.append(dist), pos: st.pos.append(pos), ll_symbol: st.ll_symbol.append(ls), d_symbol: st.d_symbol.append(ds), ll_counts: llc, d_counts: dc };
+}
+
+function append_store(own target: Store, st: Store): Store {
+  for i in 0..st.litlens.len() {
+    target = store_lit_len_dist(target, st.litlens[i], st.dists[i], st.pos[i]);
+  }
+  return target;
+}
+
+function byte_range(st: Store, lstart: i32, lend: i32): i32 {
+  if (lstart == lend) {
+    return 0;
+  }
+  let l = lend - 1;
+  return st.pos[l] + (if (st.dists[l] == 0) { 1 } else { st.litlens[l] }) - st.pos[lstart];
+}
+
+function histogram_at(st: Store, lpos: i32): (i32[], i32[]) {
+  let llpos = NUM_LL * (lpos / NUM_LL);
+  let dpos = NUM_D * (lpos / NUM_D);
+  let size = st.litlens.len();
+  let ll = __alloc_i32(NUM_LL);
+  for i in 0..NUM_LL {
+    ll = ll.with(i, st.ll_counts[llpos + i]);
+  }
+  let i = lpos + 1;
+  while (i < llpos + NUM_LL && i < size) {
+    let s = st.ll_symbol[i];
+    ll = ll.with(s, ll[s] - 1);
+    i += 1;
+  }
+  let d = __alloc_i32(NUM_D);
+  for k in 0..NUM_D {
+    d = d.with(k, st.d_counts[dpos + k]);
+  }
+  i = lpos + 1;
+  while (i < dpos + NUM_D && i < size) {
+    if (st.dists[i] != 0) {
+      let s = st.d_symbol[i];
+      d = d.with(s, d[s] - 1);
+    }
+    i += 1;
+  }
+  return (ll, d);
+}
+
+function histogram(st: Store, lstart: i32, lend: i32): (i32[], i32[]) {
+  if (lstart + NUM_LL * 3 > lend) {
+    let ll = __alloc_i32(NUM_LL);
+    let d = __alloc_i32(NUM_D);
+    for i in lstart..lend {
+      let s = st.ll_symbol[i];
+      ll = ll.with(s, ll[s] + 1);
+      if (st.dists[i] != 0) {
+        let ds = st.d_symbol[i];
+        d = d.with(ds, d[ds] + 1);
+      }
+    }
+    return (ll, d);
+  }
+  let (ll, d) = histogram_at(st, lend - 1);
+  if (lstart > 0) {
+    let (ll2, d2) = histogram_at(st, lstart - 1);
+    for i in 0..NUM_LL {
+      ll = ll.with(i, ll[i] - ll2[i]);
+    }
+    for i in 0..NUM_D {
+      d = d.with(i, d[i] - d2[i]);
+    }
+  }
+  return (ll, d);
+}
+
+// --- the hash ---
+
+struct Hash {
+  head: i32[],
+  prev: i32[],
+  hashval: i32[],
+  val: i32,
+  head2: i32[],
+  prev2: i32[],
+  hashval2: i32[],
+  val2: i32,
+  same: i32[],
+}
+
+function minus_one(n: i32): i32[] {
+  let out = __alloc_i32(n);
+  for i in 0..n {
+    out = out.with(i, -1);
+  }
+  return out;
+}
+
+function identity(n: i32): i32[] {
+  let out = __alloc_i32(n);
+  for i in 0..n {
+    out = out.with(i, i);
+  }
+  return out;
+}
+
+function new_hash(): Hash {
+  return Hash { head: minus_one(65536), prev: identity(WINDOW_SIZE), hashval: minus_one(WINDOW_SIZE), val: 0, head2: minus_one(65536), prev2: identity(WINDOW_SIZE), hashval2: minus_one(WINDOW_SIZE), val2: 0, same: __alloc_i32(WINDOW_SIZE) };
+}
+
+function update_hash(own h: Hash, data: u8[], pos: i32, end: i32): Hash {
+  let hpos = pos & WINDOW_MASK;
+  let c = if (pos + MIN_MATCH <= end) { data[pos + MIN_MATCH - 1] as i32 } else { 0 };
+  let val = (h.val << HASH_SHIFT ^ c) & HASH_MASK;
+  let head = h.head;
+  let prev = h.prev;
+  let hashval = h.hashval.with(hpos, val);
+  let hv = head[val];
+  prev = prev.with(hpos, if (hv != -1 && hashval[hv] == val) { hv } else { hpos });
+  head = head.with(val, hpos);
+  let same = h.same;
+  let amount = 0;
+  let before = same[pos - 1 & WINDOW_MASK];
+  if (before > 1) {
+    amount = before - 1;
+  }
+  let first = data[pos];
+  while (pos + amount + 1 < end && first == data[pos + amount + 1] && amount < 65535) {
+    amount += 1;
+  }
+  same = same.with(hpos, amount);
+  let val2 = amount - MIN_MATCH & 255 ^ val;
+  let head2 = h.head2;
+  let prev2 = h.prev2;
+  let hashval2 = h.hashval2.with(hpos, val2);
+  let hv2 = head2[val2];
+  prev2 = prev2.with(hpos, if (hv2 != -1 && hashval2[hv2] == val2) { hv2 } else { hpos });
+  head2 = head2.with(val2, hpos);
+  return Hash { head: head, prev: prev, hashval: hashval, val: val, head2: head2, prev2: prev2, hashval2: hashval2, val2: val2, same: same };
+}
+
+function warmup_hash(own h: Hash, data: u8[], pos: i32, end: i32): Hash {
+  let val = (h.val << HASH_SHIFT ^ data[pos] as i32) & HASH_MASK;
+  if (pos + 1 < end) {
+    val = (val << HASH_SHIFT ^ data[pos + 1] as i32) & HASH_MASK;
+  }
+  return Hash { ...h, val: val };
+}
+
+// A new hash with the window before `instart` in it.
+function window_hash(data: u8[], instart: i32, inend: i32): Hash {
+  let windowstart = if (instart > WINDOW_SIZE) { instart - WINDOW_SIZE } else { 0 };
+  let h = warmup_hash(new_hash(), data, windowstart, inend);
+  for i in windowstart..instart {
+    h = update_hash(h, data, i, inend);
+  }
+  return h;
+}
+
+// --- the longest match cache ---
+
+// The cache of the longest matches of a block, and the sublengths of the
+// last search. `on` is false when the block has no cache.
+struct Matcher {
+  on: boolean,
+  blockstart: i32,
+  length: i32[],
+  dist: i32[],
+  sub: u8[],
+  sublen: i32[],
+}
+
+function new_matcher(on: boolean, blockstart: i32, blockend: i32): Matcher {
+  let n = if (on) { blockend - blockstart } else { 0 };
+  let length = __alloc_i32(n);
+  for i in 0..n {
+    length = length.with(i, 1);
+  }
+  return Matcher { on: on, blockstart: blockstart, length: length, dist: __alloc_i32(n), sub: __alloc_u8(CACHE_LENGTH * 3 * n), sublen: __alloc_i32(259) };
+}
+
+function max_cached_sublen(sub: u8[], lmcpos: i32): i32 {
+  let base = CACHE_LENGTH * lmcpos * 3;
+  if (sub[base + 1] == 0 && sub[base + 2] == 0) {
+    return 0;
+  }
+  return sub[base + (CACHE_LENGTH - 1) * 3] as i32 + 3;
+}
+
+function sublen_to_cache(own sub: u8[], sublen: i32[], lmcpos: i32, length: i32): u8[] {
+  let base = CACHE_LENGTH * lmcpos * 3;
+  if (length < 3) {
+    return sub;
+  }
+  let j = 0;
+  let best = 0;
+  let i = 3;
+  while (i <= length) {
+    if (i == length || sublen[i] != sublen[i + 1]) {
+      sub = sub.with(base + j * 3, (i - 3) as u8);
+      sub = sub.with(base + j * 3 + 1, (sublen[i] % 256) as u8);
+      sub = sub.with(base + j * 3 + 2, (sublen[i] >> 8 & 255) as u8);
+      best = i;
+      j += 1;
+      if (j >= CACHE_LENGTH) {
+        break;
+      }
+    }
+    i += 1;
+  }
+  if (j < CACHE_LENGTH) {
+    sub = sub.with(base + (CACHE_LENGTH - 1) * 3, (best - 3) as u8);
+  }
+  return sub;
+}
+
+function cache_to_sublen(sub: u8[], lmcpos: i32, length: i32, own sublen: i32[]): i32[] {
+  if (length < 3) {
+    return sublen;
+  }
+  let maxlength = max_cached_sublen(sub, lmcpos);
+  let prevlength = 0;
+  let base = CACHE_LENGTH * lmcpos * 3;
+  for j in 0..CACHE_LENGTH {
+    let len = sub[base + j * 3] as i32 + 3;
+    let dist = sub[base + j * 3 + 1] as i32 + 256 * (sub[base + j * 3 + 2] as i32);
+    let i = prevlength;
+    while (i <= len) {
+      sublen = sublen.with(i, dist);
+      i += 1;
+    }
+    if (len == maxlength) {
+      break;
+    }
+    prevlength = len + 1;
+  }
+  return sublen;
+}
+
+// The result of a search: the matcher, the distance and the length.
+struct Found {
+  m: Matcher,
+  dist: i32,
+  length: i32,
+}
+
+function get_match(data: u8[], scan0: i32, mt0: i32, end: i32): i32 {
+  let scan = scan0;
+  let mt = mt0;
+  while (scan != end && data[scan] == data[mt]) {
+    scan += 1;
+    mt += 1;
+  }
+  return scan;
+}
+
+// ZopfliFindLongestMatch. `want` is false where zopfli passes no sublen
+// array.
+// It keeps the branches of ZopfliFindLongestMatch() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function find_longest(own m: Matcher, h: Hash, data: u8[], pos: i32, size: i32, limit0: i32, want: boolean): Found {
+  let limit = limit0;
+  let lmcpos = pos - m.blockstart;
+  if (m.on) {
+    let cl = m.length[lmcpos];
+    let available = cl == 0 || m.dist[lmcpos] != 0;
+    let limit_ok = available && (limit == MAX_MATCH || cl <= limit || want && max_cached_sublen(m.sub, lmcpos) >= limit);
+    if (limit_ok && available) {
+      if (!want || cl <= max_cached_sublen(m.sub, lmcpos)) {
+        let length = if (cl > limit) { limit } else { cl };
+        if (want) {
+          let sublen = cache_to_sublen(m.sub, lmcpos, length, m.sublen);
+          let d = sublen[length];
+          return Found { m: Matcher { ...m, sublen: sublen }, dist: d, length: length };
+        }
+        let d = m.dist[lmcpos];
+        return Found { m: m, dist: d, length: length };
+      }
+      limit = cl;
+    }
+  }
+  if (size - pos < MIN_MATCH) {
+    return Found { m: m, dist: 0, length: 0 };
+  }
+  if (pos + limit > size) {
+    limit = size - pos;
+  }
+  let arrayend = pos + limit;
+  let hpos = pos & WINDOW_MASK;
+  let bestdist = 0;
+  let bestlength = 1;
+  let chain_counter = MAX_CHAIN_HITS;
+  let second = false;
+  let hprev = h.prev;
+  let same = h.same;
+  let sublen = m.sublen;
+  let pp = h.head[h.val];
+  let p = hprev[pp];
+  let dist = if (p < pp) { pp - p } else { WINDOW_SIZE - p + pp };
+  while (dist < WINDOW_SIZE) {
+    let currentlength = 0;
+    if (dist > 0) {
+      let scan = pos;
+      let mt = pos - dist;
+      if (pos + bestlength >= size || data[scan + bestlength] == data[mt + bestlength]) {
+        let same0 = same[pos & WINDOW_MASK];
+        if (same0 > 2 && data[scan] == data[mt]) {
+          let same1 = same[pos - dist & WINDOW_MASK];
+          let s = if (same0 < same1) { same0 } else { same1 };
+          if (s > limit) {
+            s = limit;
+          }
+          scan += s;
+          mt += s;
+        }
+        currentlength = get_match(data, scan, mt, arrayend) - pos;
+      }
+      if (currentlength > bestlength) {
+        if (want) {
+          for j in bestlength + 1..currentlength + 1 {
+            sublen = sublen.with(j, dist);
+          }
+        }
+        bestdist = dist;
+        bestlength = currentlength;
+        if (currentlength >= limit) {
+          break;
+        }
+      }
+    }
+    if (!second && bestlength >= same[hpos] && h.val2 == h.hashval2[p]) {
+      second = true;
+      hprev = h.prev2;
+    }
+    pp = p;
+    p = hprev[p];
+    if (p == pp) {
+      break;
+    }
+    dist += if (p < pp) { pp - p } else { WINDOW_SIZE - p + pp };
+    chain_counter -= 1;
+    if (chain_counter <= 0) {
+      break;
+    }
+  }
+  m = Matcher { ...m, sublen: sublen };
+  if (m.on && limit == MAX_MATCH && want && !(m.length[lmcpos] == 0 || m.dist[lmcpos] != 0)) {
+    let small = bestlength < MIN_MATCH;
+    m = Matcher { ...m, dist: m.dist.with(lmcpos, if (small) { 0 } else { bestdist }), length: m.length.with(lmcpos, if (small) { 0 } else { bestlength }) };
+    m = Matcher { ...m, sub: sublen_to_cache(m.sub, m.sublen, lmcpos, bestlength) };
+  }
+  return Found { m: m, dist: bestdist, length: bestlength };
+}
+
+function length_score(length: i32, distance: i32): i32 {
+  return if (distance > 1024) { length - 1 } else { length };
+}
+
+// ZopfliLZ77Greedy: the greedy parse with one step of lazy matching.
+// It keeps the branches of ZopfliLZ77Greedy() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function greedy(own m: Matcher, data: u8[], instart: i32, inend: i32): (Matcher, Store) {
+  let st = new_store();
+  if (instart == inend) {
+    return (m, st);
+  }
+  let h = window_hash(data, instart, inend);
+  let prev_length = 0;
+  let prev_match = 0;
+  let available = false;
+  let i = instart;
+  while (i < inend) {
+    h = update_hash(h, data, i, inend);
+    let f = find_longest(m, h, data, i, inend, MAX_MATCH, true);
+    m = f.m;
+    let leng = f.length;
+    let dist = f.dist;
+    let score = length_score(leng, dist);
+    let prevscore = length_score(prev_length, prev_match);
+    if (available) {
+      available = false;
+      if (score > prevscore + 1) {
+        st = store_lit_len_dist(st, data[i - 1] as i32, 0, i - 1);
+        if (score >= MIN_MATCH && leng < MAX_MATCH) {
+          available = true;
+          prev_length = leng;
+          prev_match = dist;
+          i += 1;
+          continue;
+        }
+      } else {
+        leng = prev_length;
+        dist = prev_match;
+        st = store_lit_len_dist(st, leng, dist, i - 1);
+        for _ in 2..leng {
+          i += 1;
+          h = update_hash(h, data, i, inend);
+        }
+        i += 1;
+        continue;
+      }
+    } else if (score >= MIN_MATCH && leng < MAX_MATCH) {
+      available = true;
+      prev_length = leng;
+      prev_match = dist;
+      i += 1;
+      continue;
+    }
+    if (score >= MIN_MATCH) {
+      st = store_lit_len_dist(st, leng, dist, i);
+    } else {
+      leng = 1;
+      st = store_lit_len_dist(st, data[i] as i32, 0, i);
+    }
+    for _ in 1..leng {
+      i += 1;
+      h = update_hash(h, data, i, inend);
+    }
+    i += 1;
+  }
+  return (m, st);
+}
+
+// --- the optimal parse ---
+
+struct Stats {
+  litlens: i32[],
+  dists: i32[],
+  ll_symbols: f64[],
+  d_symbols: f64[],
+}
+
+function new_stats(): Stats {
+  return Stats { litlens: __alloc_i32(NUM_LL), dists: __alloc_i32(NUM_D), ll_symbols: __alloc_f64(NUM_LL), d_symbols: __alloc_f64(NUM_D) };
+}
+
+// ZopfliCalculateEntropy.
+function entropy(count: i32[]): f64[] {
+  let n = count.len();
+  let sum = 0i64;
+  for c in count {
+    sum = sum + c as i64 & 0xffffffffi64;
+  }
+  let log2sum = (if (sum == 0i64) { (n as f64).log() } else { (sum as f64).log() }) * 1.4426950408889;
+  let out = __alloc_f64(n);
+  for i in 0..n {
+    let b = if (count[i] == 0) { log2sum } else { log2sum - (count[i] as f64).log() * 1.4426950408889 };
+    if (b < 0.0 && b > -1e-5) {
+      b = 0.0;
+    }
+    out = out.with(i, b);
+  }
+  return out;
+}
+
+function calculated(own s: Stats): Stats {
+  let ll = entropy(s.litlens);
+  let d = entropy(s.dists);
+  return Stats { ...s, ll_symbols: ll, d_symbols: d };
+}
+
+function statistics(st: Store): Stats {
+  let ll = __alloc_i32(NUM_LL);
+  let d = __alloc_i32(NUM_D);
+  for i in 0..st.litlens.len() {
+    if (st.dists[i] == 0) {
+      let l = st.litlens[i];
+      ll = ll.with(l, ll[l] + 1);
+    } else {
+      let ls = length_symbol(st.litlens[i]);
+      let ds = dist_symbol(st.dists[i]);
+      ll = ll.with(ls, ll[ls] + 1);
+      d = d.with(ds, d[ds] + 1);
+    }
+  }
+  ll = ll.with(256, 1);
+  return calculated(Stats { ...new_stats(), litlens: ll, dists: d });
+}
+
+function weighed(a: i32[], w1: f64, b: i32[], w2: f64): i32[] {
+  let out = __alloc_i32(a.len());
+  for i in 0..a.len() {
+    out = out.with(i, (a[i] as f64 * w1 + b[i] as f64 * w2) as i32);
+  }
+  return out;
+}
+
+// The random state of zopfli, two u32 words.
+struct Ran {
+  w: i64,
+  z: i64,
+}
+
+function ran_next(r: Ran): (Ran, i64) {
+  let z = 36969i64 * (r.z & 65535i64) + (r.z >> 16) & 0xffffffffi64;
+  let w = 18000i64 * (r.w & 65535i64) + (r.w >> 16) & 0xffffffffi64;
+  return (Ran { w: w, z: z }, (z << 16) + w & 0xffffffffi64);
+}
+
+function randomized(r0: Ran, f: i32[]): (Ran, i32[]) {
+  let freqs = f;
+  let r = r0;
+  let n = freqs.len() as i64;
+  for i in 0..freqs.len() {
+    let (a, x) = ran_next(r);
+    r = a;
+    if ((x >> 4) % 3i64 == 0i64) {
+      let (b, y) = ran_next(r);
+      r = b;
+      freqs = freqs.with(i, freqs[(y % n) as i32]);
+    }
+  }
+  return (r, freqs);
+}
+
+// The cost of a symbol: the fixed tree when `stat` is false, else the
+// entropy of the statistics.
+function cost(stat: boolean, s: Stats, litlen: i32, dist: i32): f64 {
+  if (!stat) {
+    if (dist == 0) {
+      return if (litlen <= 143) { 8.0 } else { 9.0 };
+    }
+    let c = if (length_symbol(litlen) <= 279) { 7 } else { 8 };
+    return (c + 5 + dist_extra_bits(dist) + length_extra_bits(litlen)) as f64;
+  }
+  if (dist == 0) {
+    return s.ll_symbols[litlen];
+  }
+  return (length_extra_bits(litlen) + dist_extra_bits(dist)) as f64 + s.ll_symbols[length_symbol(litlen)] + s.d_symbols[dist_symbol(dist)];
+}
+
+function min_cost(stat: boolean, s: Stats): f64 {
+  let dsymbols = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+  let mincost = LARGE_FLOAT;
+  let bestlength = 0;
+  for i in 3..259 {
+    let c = cost(stat, s, i, 1);
+    if (c < mincost) {
+      bestlength = i;
+      mincost = c;
+    }
+  }
+  mincost = LARGE_FLOAT;
+  let bestdist = 0;
+  for d in dsymbols {
+    let c = cost(stat, s, 3, d);
+    if (c < mincost) {
+      bestdist = d;
+      mincost = c;
+    }
+  }
+  return cost(stat, s, bestlength, bestdist);
+}
+
+function f32_of(x: f64): f64 {
+  return (x as f32) as f64;
+}
+
+// GetBestLengths: the length of the step that ends at each position of the
+// cheapest parse.
+// It keeps the branches of GetBestLengths() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function best_lengths(own m: Matcher, data: u8[], instart: i32, inend: i32, stat: boolean, s: Stats): (Matcher, i32[]) {
+  let blocksize = inend - instart;
+  let lengths = __alloc_i32(blocksize + 1);
+  if (instart == inend) {
+    return (m, lengths);
+  }
+  let mincost = min_cost(stat, s);
+  let h = window_hash(data, instart, inend);
+  let costs = __alloc_f64(blocksize + 1);
+  let large = f32_of(LARGE_FLOAT);
+  for i in 1..blocksize + 1 {
+    costs = costs.with(i, large);
+  }
+  let i = instart;
+  while (i < inend) {
+    let j = i - instart;
+    h = update_hash(h, data, i, inend);
+    if (h.same[i & WINDOW_MASK] > MAX_MATCH * 2 && i > instart + MAX_MATCH + 1 && i + MAX_MATCH * 2 + 1 < inend && h.same[i - MAX_MATCH & WINDOW_MASK] > MAX_MATCH) {
+      let symbolcost = cost(stat, s, MAX_MATCH, 1);
+      for _ in 0..MAX_MATCH {
+        costs = costs.with(j + MAX_MATCH, f32_of(costs[j] + symbolcost));
+        lengths = lengths.with(j + MAX_MATCH, MAX_MATCH);
+        i += 1;
+        j += 1;
+        h = update_hash(h, data, i, inend);
+      }
+    }
+    let f = find_longest(m, h, data, i, inend, MAX_MATCH, true);
+    m = f.m;
+    let leng = f.length;
+    let cj = costs[j];
+    if (i + 1 <= inend) {
+      let c = cost(stat, s, data[i] as i32, 0) + cj;
+      if (c < costs[j + 1]) {
+        costs = costs.with(j + 1, f32_of(c));
+        lengths = lengths.with(j + 1, 1);
+      }
+    }
+    let kend = if (leng < inend - i) { leng } else { inend - i };
+    let bound = mincost + cj;
+    let sublen = m.sublen;
+    let k = 3;
+    while (k <= kend) {
+      if (costs[j + k] > bound) {
+        let c = cost(stat, s, k, sublen[k]) + cj;
+        if (c < costs[j + k]) {
+          costs = costs.with(j + k, f32_of(c));
+          lengths = lengths.with(j + k, k);
+        }
+      }
+      k += 1;
+    }
+    i += 1;
+  }
+  return (m, lengths);
+}
+
+function trace_backwards(size: i32, lengths: i32[]): i32[] {
+  let path: i32[] = [];
+  if (size == 0) {
+    return path;
+  }
+  let index = size;
+  loop {
+    path = path.append(lengths[index]);
+    index -= lengths[index];
+    if (index == 0) {
+      break;
+    }
+  }
+  let n = path.len();
+  let out = __alloc_i32(n);
+  for i in 0..n {
+    out = out.with(i, path[n - 1 - i]);
+  }
+  return out;
+}
+
+function follow_path(own m: Matcher, data: u8[], instart: i32, inend: i32, path: i32[]): (Matcher, Store) {
+  let st = new_store();
+  if (instart == inend) {
+    return (m, st);
+  }
+  let h = window_hash(data, instart, inend);
+  let pos = instart;
+  for length0 in path {
+    let length = length0;
+    h = update_hash(h, data, pos, inend);
+    if (length >= MIN_MATCH) {
+      let f = find_longest(m, h, data, pos, inend, length, false);
+      m = f.m;
+      st = store_lit_len_dist(st, length, f.dist, pos);
+    } else {
+      length = 1;
+      st = store_lit_len_dist(st, data[pos] as i32, 0, pos);
+    }
+    for j in 1..length {
+      h = update_hash(h, data, pos + j, inend);
+    }
+    pos += length;
+  }
+  return (m, st);
+}
+
+function optimal_run(own m: Matcher, data: u8[], instart: i32, inend: i32, stat: boolean, s: Stats): (Matcher, Store) {
+  let (m2, lengths) = best_lengths(m, data, instart, inend, stat, s);
+  let path = trace_backwards(inend - instart, lengths);
+  return follow_path(m2, data, instart, inend, path);
+}
+
+// ZopfliLZ77Optimal: repeated optimal parses, each with the statistics of
+// the one before it.
+function lz77_optimal(data: u8[], instart: i32, inend: i32, iterations: i32): Store {
+  let m = new_matcher(true, instart, inend);
+  let (m1, first) = greedy(m, data, instart, inend);
+  m = m1;
+  let stats = statistics(first);
+  let best = new_store();
+  let beststats = new_stats();
+  let bestcost = LARGE_FLOAT;
+  let lastcost = 0.0;
+  let ran = Ran { w: 1i64, z: 2i64 };
+  let lastrandomstep = -1;
+  for i in 0..iterations {
+    let (m2, current) = optimal_run(m, data, instart, inend, true, stats);
+    m = m2;
+    let c = block_size(current, 0, current.litlens.len(), 2);
+    if (c < bestcost) {
+      best = current;
+      beststats = stats;
+      bestcost = c;
+    }
+    let laststats = stats;
+    stats = statistics(current);
+    if (lastrandomstep != -1) {
+      stats = calculated(Stats { ...stats, litlens: weighed(stats.litlens, 1.0, laststats.litlens, 0.5).with(256, 1), dists: weighed(stats.dists, 1.0, laststats.dists, 0.5) });
+    }
+    if (i > 5 && c == lastcost) {
+      let (r1, ll) = randomized(ran, beststats.litlens);
+      let (r2, d) = randomized(r1, beststats.dists);
+      ran = r2;
+      stats = calculated(Stats { ...beststats, litlens: ll.with(256, 1), dists: d });
+      lastrandomstep = i;
+    }
+    lastcost = c;
+  }
+  return best;
+}
+
+function lz77_optimal_fixed(data: u8[], instart: i32, inend: i32): Store {
+  let m = new_matcher(true, instart, inend);
+  let (_, st) = optimal_run(m, data, instart, inend, false, new_stats());
+  return st;
+}
+
+// --- Huffman code lengths (katajainen.c) ---
+
+// The node pool of the boundary package-merge: the weight, the tail and the
+// count of each node, by index. -1 is no tail.
+struct Pool {
+  weight: i64[],
+  tail: i32[],
+  count: i32[],
+  next: i32,
+}
+
+function pool_node(own p: Pool, weight: i64, count: i32, tail: i32): (Pool, i32) {
+  let at = p.next;
+  return (Pool { weight: p.weight.with(at, weight), tail: p.tail.with(at, tail), count: p.count.with(at, count), next: at + 1 }, at);
+}
+
+// BoundaryPM. lists[2 * index] and lists[2 * index + 1] are the two
+// chains of each list.
+function boundary_pm(own p: Pool, own lists: i32[], leaves: i64[], leafcount: i32[], numsymbols: i32, index: i32): (Pool, i32[]) {
+  let lastcount = p.count[lists[2 * index + 1]];
+  if (index == 0 && lastcount >= numsymbols) {
+    return (p, lists);
+  }
+  let oldchain = lists[2 * index + 1];
+  lists = lists.with(2 * index, oldchain);
+  if (index == 0) {
+    let (p1, node) = pool_node(p, leaves[lastcount], lastcount + 1, -1);
+    return (p1, lists.with(2 * index + 1, node));
+  }
+  let sum = p.weight[lists[2 * index - 2]] + p.weight[lists[2 * index - 1]];
+  if (lastcount < numsymbols && sum > leaves[lastcount]) {
+    let tail = p.tail[oldchain];
+    let (p1, node) = pool_node(p, leaves[lastcount], lastcount + 1, tail);
+    return (p1, lists.with(2 * index + 1, node));
+  }
+  let (p1, node) = pool_node(p, sum, lastcount, lists[2 * index - 1]);
+  lists = lists.with(2 * index + 1, node);
+  let (p2, l2) = boundary_pm(p1, lists, leaves, leafcount, numsymbols, index - 1);
+  return boundary_pm(p2, l2, leaves, leafcount, numsymbols, index - 1);
+}
+
+function sort_i64(own xs: i64[]): i64[] {
+  let n = xs.len();
+  let gap = n / 2;
+  while (gap > 0) {
+    for i in gap..n {
+      let v = xs[i];
+      let j = i;
+      while (j >= gap && xs[j - gap] > v) {
+        xs = xs.with(j, xs[j - gap]);
+        j -= gap;
+      }
+      xs = xs.with(j, v);
+    }
+    gap /= 2;
+  }
+  return xs;
+}
+
+// ZopfliLengthLimitedCodeLengths: the code lengths of at most `maxbits` bits
+// for the frequencies.
+// It keeps the branches of ZopfliLengthLimitedCodeLengths() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function code_lengths(frequencies: i32[], maxbits0: i32): i32[] {
+  let n = frequencies.len();
+  let bitlengths = __alloc_i32(n);
+  let keys: i64[] = [];
+  for i in 0..n {
+    if (frequencies[i] != 0) {
+      keys = keys.append(frequencies[i] as i64 << 9 | i as i64);
+    }
+  }
+  let numsymbols = keys.len();
+  if (numsymbols == 0) {
+    return bitlengths;
+  }
+  if (numsymbols == 1) {
+    return bitlengths.with((keys[0] & 511i64) as i32, 1);
+  }
+  if (numsymbols == 2) {
+    bitlengths = bitlengths.with((keys[0] & 511i64) as i32, 1);
+    return bitlengths.with((keys[1] & 511i64) as i32, 1);
+  }
+  keys = sort_i64(keys);
+  let leaves = __alloc_i64(numsymbols);
+  let leafcount = __alloc_i32(numsymbols);
+  for i in 0..numsymbols {
+    leaves = leaves.with(i, keys[i] >> 9);
+    leafcount = leafcount.with(i, (keys[i] & 511i64) as i32);
+  }
+  let maxbits = if (numsymbols - 1 < maxbits0) { numsymbols - 1 } else { maxbits0 };
+  let size = maxbits * 2 * numsymbols;
+  let p = Pool { weight: __alloc_i64(size), tail: __alloc_i32(size), count: __alloc_i32(size), next: 0 };
+  let (p1, node0) = pool_node(p, leaves[0], 1, -1);
+  let (p2, node1) = pool_node(p1, leaves[1], 2, -1);
+  p = p2;
+  let lists = __alloc_i32(2 * maxbits);
+  for i in 0..maxbits {
+    lists = lists.with(2 * i, node0).with(2 * i + 1, node1);
+  }
+  let runs = 2 * numsymbols - 4;
+  for _ in 0..runs - 1 {
+    let (p3, l3) = boundary_pm(p, lists, leaves, leafcount, numsymbols, maxbits - 1);
+    p = p3;
+    lists = l3;
+  }
+  let index = maxbits - 1;
+  let lastcount = p.count[lists[2 * index + 1]];
+  let sum = p.weight[lists[2 * index - 2]] + p.weight[lists[2 * index - 1]];
+  if (lastcount < numsymbols && sum > leaves[lastcount]) {
+    let at = p.next;
+    let oldtail = p.tail[lists[2 * index + 1]];
+    p = Pool { ...p, count: p.count.with(at, lastcount + 1), tail: p.tail.with(at, oldtail) };
+    lists = lists.with(2 * index + 1, at);
+  } else {
+    p = Pool { ...p, tail: p.tail.with(lists[2 * index + 1], lists[2 * index - 1]) };
+  }
+  let counts = __alloc_i32(16);
+  let end = 16;
+  let node = lists[2 * index + 1];
+  while (node != -1) {
+    end -= 1;
+    counts = counts.with(end, p.count[node]);
+    node = p.tail[node];
+  }
+  let val = counts[15];
+  let ptr = 15;
+  let value = 1;
+  while (ptr >= end) {
+    while (val > counts[ptr - 1]) {
+      bitlengths = bitlengths.with(leafcount[val - 1], value);
+      val -= 1;
+    }
+    ptr -= 1;
+    value += 1;
+  }
+  return bitlengths;
+}
+
+// ZopfliLengthsToSymbols: the canonical codes of the lengths.
+function lengths_to_symbols(lengths: i32[], maxbits: i32): i32[] {
+  let n = lengths.len();
+  let symbols = __alloc_i32(n);
+  let bl_count = __alloc_i32(maxbits + 1);
+  for l in lengths {
+    bl_count = bl_count.with(l, bl_count[l] + 1);
+  }
+  bl_count = bl_count.with(0, 0);
+  let next_code = __alloc_i32(maxbits + 1);
+  let code = 0;
+  for bits in 1..maxbits + 1 {
+    code = code + bl_count[bits - 1] << 1;
+    next_code = next_code.with(bits, code);
+  }
+  for i in 0..n {
+    let len = lengths[i];
+    if (len != 0) {
+      symbols = symbols.with(i, next_code[len]);
+      next_code = next_code.with(len, next_code[len] + 1);
+    }
+  }
+  return symbols;
+}
+
+// --- block sizes (deflate.c) ---
+
+// The bits of a deflate stream so far: `bp` bits of the last byte are
+// used, and 0 means that the last byte is full.
+struct Bits {
+  out: u8[],
+  bp: i32,
+}
+
+function add_bits(own w: Bits, symbol: i32, length: i32): Bits {
+  let out = w.out;
+  let bp = w.bp;
+  for i in 0..length {
+    if (bp == 0) {
+      out = out.append(0 as u8);
+    }
+    let last = out.len() - 1;
+    out = out.with(last, out[last] | ((symbol >> i & 1) << bp) as u8);
+    bp = bp + 1 & 7;
+  }
+  return Bits { out: out, bp: bp };
+}
+
+function add_huffman_bits(own w: Bits, symbol: i32, length: i32): Bits {
+  let out = w.out;
+  let bp = w.bp;
+  for i in 0..length {
+    if (bp == 0) {
+      out = out.append(0 as u8);
+    }
+    let last = out.len() - 1;
+    out = out.with(last, out[last] | ((symbol >> length - i - 1 & 1) << bp) as u8);
+    bp = bp + 1 & 7;
+  }
+  return Bits { out: out, bp: bp };
+}
+
+function patch_distance_codes(own d: i32[]): i32[] {
+  let num = 0;
+  for i in 0..30 {
+    if (d[i] != 0) {
+      num += 1;
+    }
+    if (num >= 2) {
+      return d;
+    }
+  }
+  if (num == 0) {
+    return d.with(0, 1).with(1, 1);
+  }
+  return d.with(if (d[0] != 0) { 1 } else { 0 }, 1);
+}
+
+function cl_order(): i32[] {
+  return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+}
+
+// EncodeTree: the size in bits of the tree with the repeat codes that the
+// three flags allow, and the tree itself when `write` is true.
+// It keeps the branches of EncodeTree() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function encode_tree(ll: i32[], d: i32[], use16: boolean, use17: boolean, use18: boolean, write: boolean, own w: Bits): (i64, Bits) {
+  let hlit = 29;
+  let hdist = 29;
+  while (hlit > 0 && ll[257 + hlit - 1] == 0) {
+    hlit -= 1;
+  }
+  while (hdist > 0 && d[1 + hdist - 1] == 0) {
+    hdist -= 1;
+  }
+  let hlit2 = hlit + 257;
+  let total = hlit2 + hdist + 1;
+  let clcounts = __alloc_i32(19);
+  let rle: i32[] = [];
+  let rle_bits: i32[] = [];
+  let i = 0;
+  while (i < total) {
+    let symbol = if (i < hlit2) { ll[i] } else { d[i - hlit2] };
+    let count = 1;
+    if (use16 || symbol == 0 && (use17 || use18)) {
+      let j = i + 1;
+      while (j < total && symbol == (if (j < hlit2) { ll[j] } else { d[j - hlit2] })) {
+        count += 1;
+        j += 1;
+      }
+    }
+    i += count - 1;
+    if (symbol == 0 && count >= 3) {
+      if (use18) {
+        while (count >= 11) {
+          let count2 = if (count > 138) { 138 } else { count };
+          if (write) {
+            rle = rle.append(18);
+            rle_bits = rle_bits.append(count2 - 11);
+          }
+          clcounts = clcounts.with(18, clcounts[18] + 1);
+          count -= count2;
+        }
+      }
+      if (use17) {
+        while (count >= 3) {
+          let count2 = if (count > 10) { 10 } else { count };
+          if (write) {
+            rle = rle.append(17);
+            rle_bits = rle_bits.append(count2 - 3);
+          }
+          clcounts = clcounts.with(17, clcounts[17] + 1);
+          count -= count2;
+        }
+      }
+    }
+    if (use16 && count >= 4) {
+      count -= 1;
+      clcounts = clcounts.with(symbol, clcounts[symbol] + 1);
+      if (write) {
+        rle = rle.append(symbol);
+        rle_bits = rle_bits.append(0);
+      }
+      while (count >= 3) {
+        let count2 = if (count > 6) { 6 } else { count };
+        if (write) {
+          rle = rle.append(16);
+          rle_bits = rle_bits.append(count2 - 3);
+        }
+        clcounts = clcounts.with(16, clcounts[16] + 1);
+        count -= count2;
+      }
+    }
+    clcounts = clcounts.with(symbol, clcounts[symbol] + count);
+    while (count > 0) {
+      if (write) {
+        rle = rle.append(symbol);
+        rle_bits = rle_bits.append(0);
+      }
+      count -= 1;
+    }
+    i += 1;
+  }
+  let clcl = code_lengths(clcounts, 7);
+  let order = cl_order();
+  let hclen = 15;
+  while (hclen > 0 && clcounts[order[hclen + 3]] == 0) {
+    hclen -= 1;
+  }
+  if (write) {
+    let clsymbols = lengths_to_symbols(clcl, 7);
+    w = add_bits(w, hlit, 5);
+    w = add_bits(w, hdist, 5);
+    w = add_bits(w, hclen, 4);
+    for k in 0..hclen + 4 {
+      w = add_bits(w, clcl[order[k]], 3);
+    }
+    for k in 0..rle.len() {
+      let r = rle[k];
+      w = add_huffman_bits(w, clsymbols[r], clcl[r]);
+      if (r == 16) {
+        w = add_bits(w, rle_bits[k], 2);
+      } else if (r == 17) {
+        w = add_bits(w, rle_bits[k], 3);
+      } else if (r == 18) {
+        w = add_bits(w, rle_bits[k], 7);
+      }
+    }
+  }
+  let size = 14i64 + (hclen + 4) as i64 * 3i64;
+  for k in 0..19 {
+    size += (clcl[k] * clcounts[k]) as i64;
+  }
+  size += (clcounts[16] * 2 + clcounts[17] * 3 + clcounts[18] * 7) as i64;
+  return (size, w);
+}
+
+function no_bits(): Bits {
+  return Bits { out: [], bp: 0 };
+}
+
+function best_tree(ll: i32[], d: i32[]): (i32, i64) {
+  let best = 0;
+  let bestsize = 0i64;
+  for i in 0..8 {
+    let (size, _) = encode_tree(ll, d, (i & 1) != 0, (i & 2) != 0, (i & 4) != 0, false, no_bits());
+    if (bestsize == 0i64 || size < bestsize) {
+      bestsize = size;
+      best = i;
+    }
+  }
+  return (best, bestsize);
+}
+
+function fixed_tree(): (i32[], i32[]) {
+  let ll = __alloc_i32(NUM_LL);
+  for i in 0..NUM_LL {
+    ll = ll.with(i, if (i < 144) { 8 } else if (i < 256) { 9 } else if (i < 280) { 7 } else { 8 });
+  }
+  let d = __alloc_i32(NUM_D);
+  for i in 0..NUM_D {
+    d = d.with(i, 5);
+  }
+  return (ll, d);
+}
+
+function symbol_size_small(ll: i32[], d: i32[], st: Store, lstart: i32, lend: i32): i64 {
+  let result = 0i64;
+  for i in lstart..lend {
+    if (st.dists[i] == 0) {
+      result += ll[st.litlens[i]] as i64;
+    } else {
+      let ls = length_symbol(st.litlens[i]);
+      let ds = dist_symbol(st.dists[i]);
+      result += (ll[ls] + d[ds] + length_symbol_extra_bits(ls) + dist_symbol_extra_bits(ds)) as i64;
+    }
+  }
+  return result + ll[256] as i64;
+}
+
+function symbol_size_counts(llc: i32[], dc: i32[], ll: i32[], d: i32[], st: Store, lstart: i32, lend: i32): i64 {
+  if (lstart + NUM_LL * 3 > lend) {
+    return symbol_size_small(ll, d, st, lstart, lend);
+  }
+  let result = 0i64;
+  for i in 0..256 {
+    result += (ll[i] * llc[i]) as i64;
+  }
+  for i in 257..286 {
+    result += ((ll[i] + length_symbol_extra_bits(i)) * llc[i]) as i64;
+  }
+  for i in 0..30 {
+    result += ((d[i] + dist_symbol_extra_bits(i)) * dc[i]) as i64;
+  }
+  return result + ll[256] as i64;
+}
+
+function symbol_size(ll: i32[], d: i32[], st: Store, lstart: i32, lend: i32): i64 {
+  if (lstart + NUM_LL * 3 > lend) {
+    return symbol_size_small(ll, d, st, lstart, lend);
+  }
+  let (llc, dc) = histogram(st, lstart, lend);
+  return symbol_size_counts(llc, dc, ll, d, st, lstart, lend);
+}
+
+function abs_diff(x: i32, y: i32): i32 {
+  return if (x > y) { x - y } else { y - x };
+}
+
+// OptimizeHuffmanForRle: counts that the run-length codes of the tree can
+// encode in fewer bits.
+// It keeps the branches of OptimizeHuffmanForRle() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function optimize_for_rle(c: i32[]): i32[] {
+  let counts = c;
+  let length = counts.len();
+  while (length > 0 && counts[length - 1] == 0) {
+    length -= 1;
+  }
+  if (length == 0) {
+    return counts;
+  }
+  let good = __alloc_i32(length);
+  let symbol = counts[0];
+  let stride = 0;
+  for i in 0..length + 1 {
+    if (i == length || counts[i] != symbol) {
+      if (symbol == 0 && stride >= 5 || symbol != 0 && stride >= 7) {
+        for k in 0..stride {
+          good = good.with(i - k - 1, 1);
+        }
+      }
+      stride = 1;
+      if (i != length) {
+        symbol = counts[i];
+      }
+    } else {
+      stride += 1;
+    }
+  }
+  stride = 0;
+  let limit = counts[0];
+  let sum = 0;
+  for i in 0..length + 1 {
+    if (i == length || good[i] != 0 || abs_diff(counts[i], limit) >= 4) {
+      if (stride >= 4 || stride >= 3 && sum == 0) {
+        let count = (sum + stride / 2) / stride;
+        if (count < 1) {
+          count = 1;
+        }
+        if (sum == 0) {
+          count = 0;
+        }
+        for k in 0..stride {
+          counts = counts.with(i - k - 1, count);
+        }
+      }
+      stride = 0;
+      sum = 0;
+      if (length < 3 || i < length - 3) {
+        limit = (counts[i] + counts[i + 1] + counts[i + 2] + counts[i + 3] + 2) / 4;
+      } else if (i < length) {
+        limit = counts[i];
+      } else {
+        limit = 0;
+      }
+    }
+    stride += 1;
+    if (i != length) {
+      sum += counts[i];
+    }
+  }
+  return counts;
+}
+
+// The dynamic code lengths of a block and the size of the block in bits
+// after its 3 header bits.
+struct Dynamic {
+  ll: i32[],
+  d: i32[],
+  size: i64,
+}
+
+function dynamic_lengths(st: Store, lstart: i32, lend: i32): Dynamic {
+  let (llc0, dc) = histogram(st, lstart, lend);
+  let llc = llc0.with(256, 1);
+  let ll = code_lengths(llc, 15);
+  let d = patch_distance_codes(code_lengths(dc, 15));
+  let (_, treesize) = best_tree(ll, d);
+  let datasize = symbol_size_counts(llc, dc, ll, d, st, lstart, lend);
+  let ll2 = code_lengths(optimize_for_rle(llc), 15);
+  let d2 = patch_distance_codes(code_lengths(optimize_for_rle(dc), 15));
+  let (_, treesize2) = best_tree(ll2, d2);
+  let datasize2 = symbol_size_counts(llc, dc, ll2, d2, st, lstart, lend);
+  if (treesize2 + datasize2 < treesize + datasize) {
+    return Dynamic { ll: ll2, d: d2, size: treesize2 + datasize2 };
+  }
+  return Dynamic { ll: ll, d: d, size: treesize + datasize };
+}
+
+// ZopfliCalculateBlockSize: the size in bits of a block of type btype.
+function block_size(st: Store, lstart: i32, lend: i32, btype: i32): f64 {
+  if (btype == 0) {
+    let length = byte_range(st, lstart, lend) as i64;
+    let blocks = length / 65535i64 + (if (length % 65535i64 != 0i64) { 1i64 } else { 0i64 });
+    return (blocks * 5i64 * 8i64 + length * 8i64) as f64;
+  }
+  if (btype == 1) {
+    let (ll, d) = fixed_tree();
+    return 3.0 + symbol_size(ll, d, st, lstart, lend) as f64;
+  }
+  return 3.0 + dynamic_lengths(st, lstart, lend).size as f64;
+}
+
+function block_size_auto(st: Store, lstart: i32, lend: i32): f64 {
+  let uncompressed = block_size(st, lstart, lend, 0);
+  let fixed = if (st.litlens.len() > 1000) { uncompressed } else { block_size(st, lstart, lend, 1) };
+  let dynamic = block_size(st, lstart, lend, 2);
+  if (uncompressed < fixed && uncompressed < dynamic) {
+    return uncompressed;
+  }
+  return if (fixed < dynamic) { fixed } else { dynamic };
+}
+
+// --- block splitting (blocksplitter.c) ---
+
+function split_cost(st: Store, start: i32, i: i32, end: i32): f64 {
+  return block_size_auto(st, start, i) + block_size_auto(st, i, end);
+}
+
+// FindMinimum over SplitCost: the position and the cost of the cheapest
+// split of st[start0:end0].
+// It keeps the branches of FindMinimum() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function find_minimum(st: Store, lstart: i32, lend: i32, start0: i32, end0: i32): (i32, f64) {
+  let start = start0;
+  let end = end0;
+  if (end - start < 1024) {
+    let best = LARGE_FLOAT;
+    let result = start;
+    for i in start..end {
+      let v = split_cost(st, lstart, i, lend);
+      if (v < best) {
+        best = v;
+        result = i;
+      }
+    }
+    return (result, best);
+  }
+  let lastbest = LARGE_FLOAT;
+  let pos = start;
+  let p = __alloc_i32(9);
+  let vp = __alloc_f64(9);
+  loop {
+    if (end - start <= 9) {
+      break;
+    }
+    for i in 0..9 {
+      p = p.with(i, start + (i + 1) * ((end - start) / 10));
+      vp = vp.with(i, split_cost(st, lstart, p[i], lend));
+    }
+    let besti = 0;
+    let best = vp[0];
+    for i in 1..9 {
+      if (vp[i] < best) {
+        best = vp[i];
+        besti = i;
+      }
+    }
+    if (best > lastbest) {
+      break;
+    }
+    start = if (besti == 0) { start } else { p[besti - 1] };
+    end = if (besti == 8) { end } else { p[besti + 1] };
+    pos = p[besti];
+    lastbest = best;
+  }
+  return (pos, lastbest);
+}
+
+function add_sorted(points: i32[], value: i32): i32[] {
+  let out: i32[] = [];
+  let placed = false;
+  for v in points {
+    if (!placed && v > value) {
+      out = out.append(value);
+      placed = true;
+    }
+    out = out.append(v);
+  }
+  if (!placed) {
+    out = out.append(value);
+  }
+  return out;
+}
+
+// ZopfliBlockSplitLZ77: the symbol indexes where the blocks of st start,
+// for at most `maxblocks` blocks.
+// It keeps the branches of ZopfliBlockSplitLZ77() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function split_lz77(st: Store, maxblocks: i32): i32[] {
+  let size = st.litlens.len();
+  let points: i32[] = [];
+  if (size < 10) {
+    return points;
+  }
+  let done = __alloc_u8(size);
+  let lstart = 0;
+  let lend = size;
+  let numblocks = 1;
+  loop {
+    if (maxblocks > 0 && numblocks >= maxblocks) {
+      break;
+    }
+    let (llpos, splitcost) = find_minimum(st, lstart, lend, lstart + 1, lend);
+    let origcost = block_size_auto(st, lstart, lend);
+    if (splitcost > origcost || llpos == lstart + 1 || llpos == lend) {
+      done = done.with(lstart, 1 as u8);
+    } else {
+      points = add_sorted(points, llpos);
+      numblocks += 1;
+    }
+    let found = false;
+    let longest = 0;
+    for i in 0..points.len() + 1 {
+      let start = if (i == 0) { 0 } else { points[i - 1] };
+      let end = if (i == points.len()) { size - 1 } else { points[i] };
+      if (done[start] == 0 && end - start > longest) {
+        lstart = start;
+        lend = end;
+        found = true;
+        longest = end - start;
+      }
+    }
+    if (!found || lend - lstart < 10) {
+      break;
+    }
+  }
+  return points;
+}
+
+// ZopfliBlockSplit: the byte positions where the blocks start, from a
+// greedy parse.
+function block_split(data: u8[], instart: i32, inend: i32, maxblocks: i32): i32[] {
+  let (_, st) = greedy(new_matcher(false, instart, inend), data, instart, inend);
+  let lz = split_lz77(st, maxblocks);
+  let points: i32[] = [];
+  if (lz.len() == 0) {
+    return points;
+  }
+  let pos = instart;
+  for i in 0..st.litlens.len() {
+    if (lz[points.len()] == i) {
+      points = points.append(pos);
+      if (points.len() == lz.len()) {
+        break;
+      }
+    }
+    pos += if (st.dists[i] == 0) { 1 } else { st.litlens[i] };
+  }
+  return points;
+}
+
+// --- writing blocks ---
+
+function add_stored(own w: Bits, final: boolean, data: u8[], instart: i32, inend: i32): Bits {
+  let pos = instart;
+  loop {
+    let size = 65535;
+    if (pos + size > inend) {
+      size = inend - pos;
+    }
+    let current = pos + size >= inend;
+    let nlen = ~size & 65535;
+    w = add_bits(w, if (final && current) { 1 } else { 0 }, 1);
+    w = add_bits(w, 0, 2);
+    let out = w.out.append((size & 255) as u8).append((size >> 8) as u8).append((nlen & 255) as u8).append((nlen >> 8) as u8);
+    for i in 0..size {
+      out = out.append(data[pos + i]);
+    }
+    w = Bits { out: out, bp: 0 };
+    if (current) {
+      break;
+    }
+    pos += size;
+  }
+  return w;
+}
+
+function add_lz77_data(own w: Bits, st: Store, lstart: i32, lend: i32, llsym: i32[], ll: i32[], dsym: i32[], d: i32[]): Bits {
+  for i in lstart..lend {
+    let dist = st.dists[i];
+    let litlen = st.litlens[i];
+    if (dist == 0) {
+      w = add_huffman_bits(w, llsym[litlen], ll[litlen]);
+    } else {
+      let ls = length_symbol(litlen);
+      let ds = dist_symbol(dist);
+      w = add_huffman_bits(w, llsym[ls], ll[ls]);
+      w = add_bits(w, length_extra_bits_value(litlen), length_extra_bits(litlen));
+      w = add_huffman_bits(w, dsym[ds], d[ds]);
+      w = add_bits(w, dist_extra_bits_value(dist), dist_extra_bits(dist));
+    }
+  }
+  return w;
+}
+
+function add_block(own w: Bits, btype: i32, final: boolean, st: Store, data: u8[], lstart: i32, lend: i32): Bits {
+  if (btype == 0) {
+    let length = byte_range(st, lstart, lend);
+    let pos = if (lstart == lend) { 0 } else { st.pos[lstart] };
+    return add_stored(w, final, data, pos, pos + length);
+  }
+  w = add_bits(w, if (final) { 1 } else { 0 }, 1);
+  w = add_bits(w, btype & 1, 1);
+  w = add_bits(w, btype >> 1 & 1, 1);
+  let ll: i32[] = [];
+  let d: i32[] = [];
+  if (btype == 1) {
+    let (fl, fd) = fixed_tree();
+    ll = fl;
+    d = fd;
+  } else {
+    let dl = dynamic_lengths(st, lstart, lend);
+    ll = dl.ll;
+    d = dl.d;
+    let (best, _) = best_tree(ll, d);
+    let (_, w2) = encode_tree(ll, d, (best & 1) != 0, (best & 2) != 0, (best & 4) != 0, true, w);
+    w = w2;
+  }
+  let llsym = lengths_to_symbols(ll, 15);
+  let dsym = lengths_to_symbols(d, 15);
+  w = add_lz77_data(w, st, lstart, lend, llsym, ll, dsym, d);
+  return add_huffman_bits(w, llsym[256], ll[256]);
+}
+
+function add_block_auto(own w: Bits, final: boolean, st: Store, data: u8[], lstart: i32, lend: i32): Bits {
+  let uncompressed = block_size(st, lstart, lend, 0);
+  let fixedcost = block_size(st, lstart, lend, 1);
+  let dyncost = block_size(st, lstart, lend, 2);
+  let expensivefixed = st.litlens.len() < 1000 || fixedcost <= dyncost * 1.1;
+  if (lstart == lend) {
+    w = add_bits(w, if (final) { 1 } else { 0 }, 1);
+    w = add_bits(w, 1, 2);
+    return add_bits(w, 0, 7);
+  }
+  let fixedstore = new_store();
+  if (expensivefixed) {
+    let instart = st.pos[lstart];
+    let inend = instart + byte_range(st, lstart, lend);
+    fixedstore = lz77_optimal_fixed(data, instart, inend);
+    fixedcost = block_size(fixedstore, 0, fixedstore.litlens.len(), 1);
+  }
+  if (uncompressed < fixedcost && uncompressed < dyncost) {
+    return add_block(w, 0, final, st, data, lstart, lend);
+  }
+  if (fixedcost < dyncost) {
+    if (expensivefixed) {
+      return add_block(w, 1, final, fixedstore, data, 0, fixedstore.litlens.len());
+    }
+    return add_block(w, 1, final, st, data, lstart, lend);
+  }
+  return add_block(w, 2, final, st, data, lstart, lend);
+}
+
+// ZopfliDeflatePart with dynamic blocks: the deflate data of
+// data[instart:inend], with the bytes before instart as the window. It
+// gives the bytes and the count of bits of the last byte that are used,
+// where 0 means all eight.
+// It keeps the branches of ZopfliDeflatePart() of zopfli in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function deflate_part(o: Options, data: u8[], instart: i32, inend: i32, final: boolean): (u8[], i32) {
+  let starts: i32[] = [];
+  if (o.blocksplitting) {
+    starts = block_split(data, instart, inend, o.maxblocks);
+  }
+  let lz = new_store();
+  let points: i32[] = [];
+  let totalcost = 0.0;
+  for i in 0..starts.len() + 1 {
+    let start = if (i == 0) { instart } else { starts[i - 1] };
+    let end = if (i == starts.len()) { inend } else { starts[i] };
+    let st = lz77_optimal(data, start, end, o.iterations);
+    totalcost += block_size_auto(st, 0, st.litlens.len());
+    lz = append_store(lz, st);
+    if (i < starts.len()) {
+      points = points.append(lz.litlens.len());
+    }
+  }
+  if (o.blocksplitting && starts.len() > 1) {
+    let points2 = split_lz77(lz, o.maxblocks);
+    let totalcost2 = 0.0;
+    for i in 0..points2.len() + 1 {
+      let start = if (i == 0) { 0 } else { points2[i - 1] };
+      let end = if (i == points2.len()) { lz.litlens.len() } else { points2[i] };
+      totalcost2 += block_size_auto(lz, start, end);
+    }
+    if (totalcost2 < totalcost) {
+      points = points2;
+    }
+  }
+  let w = no_bits();
+  for i in 0..points.len() + 1 {
+    let start = if (i == 0) { 0 } else { points[i - 1] };
+    let end = if (i == points.len()) { lz.litlens.len() } else { points[i] };
+    w = add_block_auto(w, i == points.len() && final, lz, data, start, end);
+  }
+  return (w.out, w.bp);
+}
+
+// The deflate data of pigz -11 for data[from:from + len], with the bytes of
+// data[window:from] before it, brought to a byte boundary as pigz does when
+// `more` is true. `setdict` is false for -i.
+pub function block(o: Options, data: u8[], window: i32, from: i32, len: i32, more: boolean, setdict: boolean): u8[] {
+  let part = array.slice(data, window, from + len);
+  let (out, bits0) = deflate_part(o, part, from - window, from - window + len, !more);
+  if (!more) {
+    return out;
+  }
+  let bits = bits0 & 7;
+  if ((bits & 1) != 0 || !setdict) {
+    if (bits == 0 || bits > 5) {
+      out = out.append(0 as u8);
+    }
+    out = out.append(0 as u8).append(0 as u8).append(255 as u8).append(255 as u8);
+  } else if (bits != 0) {
+    while (bits < 8) {
+      let last = out.len() - 1;
+      out = out.with(last, (out[last] as i32 + (2 << bits)) as u8).append(0 as u8);
+      bits += 2;
+    }
+  }
+  if (!setdict) {
+    out = out.append(0 as u8).append(0 as u8).append(0 as u8).append(255 as u8).append(255 as u8);
+  }
+  return out;
+}

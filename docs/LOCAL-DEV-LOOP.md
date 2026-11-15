@@ -347,6 +347,9 @@ the same duration-weighted LPT partition CI uses.
 **A `-run` filter does not save you from the DEFAULT 10 m timeout**, so pass
 `-timeout` even for one leg: `-run TestSelfHostWasm` takes **887 s** (measured
 2026-09-02, 4-core container) and at the default panics before it finishes. The
+checker set (`TestSelfHostCheckAgreesWithGoOn*` with `TestSelfHostCheckerCodes`)
+takes **902 s** (measured 2026-11-15, 4-core container), most of it in
+`…OnStdlibTests`. The
 `--- FAIL` rule below applies with a twist that makes this one read even more
 like a breakage — the panic can land while the suite is still BUILDING a driver
 binary, so the goroutine dump bottoms out in `e2eharness.CompileWithSelfHost`

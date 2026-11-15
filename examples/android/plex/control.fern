@@ -81,6 +81,9 @@ pub struct Device {
   now_playing: (string, string, string, i64, boolean, i64) => void,
   // Ends the media controls, and lets the app stop with its window.
   media_end: () => void,
+  // Asks for the permission to post notifications, where Android needs it
+  // and the app has not got it, so the media controls can show.
+  ask_notifications: () => void,
   random: () => i32,
   // The MIME types that the decoders of the phone take.
   decoders: string[],
@@ -243,6 +246,8 @@ pub struct App {
   // The action of the node that the D-pad of a TV remote has focused, or
   // "" while the app takes touches.
   focus: string,
+  // True once the app asked for the permission to post notifications.
+  asked_notifications: boolean,
   // The users of the Plex Home of the account, the user whose PIN the
   // keypad asks for, or "", and the digits typed so far.
   users: plex.HomeUser[],
@@ -375,7 +380,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
-    play: no_play(), press: no_press(), menu: plex.no_item(), focus: "", users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
+    play: no_play(), press: no_press(), menu: plex.no_item(), focus: "", asked_notifications: false, users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
   };
   s = App { ...s, server: plex.Server { ...no_server(), name: setting(text, "server_name"), id: setting(text, "server_id"), token: s.base.token } };
   if (s.quality < 0 || s.quality >= plex.qualities().len()) {
@@ -1577,6 +1582,11 @@ function resume(own s: App): App {
   let at = s.dev.mono_ms();
   let t = timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at }, dirty: true }, "playing");
   announce(t);
+  // The media controls of a track are a notification.
+  if (audio(t.play) && !t.asked_notifications) {
+    t.dev.ask_notifications();
+    return App { ...t, asked_notifications: true };
+  }
   return t;
 }
 

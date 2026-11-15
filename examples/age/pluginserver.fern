@@ -580,7 +580,7 @@ pub function serve[K](h: Handlers[K], machine: string): i32 {
 }
 
 // The version that each command of the port prints.
-pub const VERSION: string = "v1.3.2-fern";
+pub const VERSION: string = "v1.3.2";
 
 // The flags of a plugin with the flags of age's plugin package: the state
 // machine and -version. The result is the flags of the command line, or the
