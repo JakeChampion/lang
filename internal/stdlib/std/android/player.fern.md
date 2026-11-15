@@ -13,7 +13,9 @@ The listener runs on the main thread of the app. Each callback sends an event to
 
 `Buffering(true)` and `Buffering(false)` come when the player waits for the network and when it plays again. `Rendering` comes when the first video frame shows. `AudioNotPlaying` and `VideoNotPlaying` come when one track stops while the other plays on, for example when no decoder takes the sound. `has_audio` tells whether the player selected a sound track at all: a track that the extractor cannot read is not selected. `Failed` has the `what` and `extra` codes of `MediaPlayer.OnErrorListener`.
 
-`target` makes a `SurfaceTexture` of Android on an external texture of `std/android/gl`, and a `Surface` that feeds it. `show_target` puts the video on that surface in place of the window. The app then draws each frame with the GPU, for example with bars that keep the shape of the video. `next_frame` takes the newest frame into the texture, and gives its transform matrix and its time. Call `target`, `next_frame` and `close_target` with the GL context of the texture current. `close_target` releases the two objects, after `hide` or `stop` takes the video off the surface.
+`target` makes a `SurfaceTexture` of Android on an external texture of `std/android/gl`, and a `Surface` that feeds it. `show_target` puts the video on that surface in place of the window. The app then draws each frame with the GPU, for example with bars that keep the shape of the video.
+
+`next_frame` takes the newest frame into the texture, and gives its transform matrix and its time. `held` is false until the texture holds a frame of the target. Call `target`, `next_frame` and `close_target` with the GL context of the texture current. `close_target` releases the two objects, after `hide` or `stop` takes the video off the surface.
 
 The module needs API level 26, for `ANativeWindow_toSurface` and the long seek API.
 Android selects the codecs and controls A/V synchronization.
@@ -477,6 +479,25 @@ pub function show_target(ctx: usize, p: Player, t: Target): boolean {
 // The newest frame of a target: the 16 numbers of its transform matrix,
 // column by column, and its time in nanoseconds.
 pub struct TargetFrame { matrix: f32[], time_ns: i64 }
+
+// True when the texture holds a frame of the target. Until then the matrix
+// is the identity, and the texture can still hold a frame of a target
+// before: the transform of each real frame turns the rows over.
+pub function (f: TargetFrame) held(): boolean {
+  if (f.matrix.len() != 16) {
+    return false;
+  }
+  for i in 0..16 {
+    let want: f32 = 0.0;
+    if (i % 5 == 0) {
+      want = 1.0;
+    }
+    if (f.matrix[i] != want) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Takes the newest frame of the video into the texture of `t`.
 pub function next_frame(ctx: usize, t: Target): Option[TargetFrame] {

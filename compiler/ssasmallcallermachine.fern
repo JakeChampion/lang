@@ -238,9 +238,9 @@ function consume(s: State, r: flow.Relation, e: flow.Event, register_entry: bool
     return State { ...s, ok: false };
   }
   let next = State { ...s, heap: n.heap, objects: s.objects.with(i, Object { ...obj, live: false }) };
-  // The box release gives the array release the address one word above the
-  // box, so %rax does not hold the box at the return.
-  next = write(write(next, 0, token(10, 0)), 1, number((heap.capacity_of(r.words) + 2) as i64));
+  // The box release puts a box of 1 to 255 words on its free list itself, so
+  // %rcx holds the number of words of the box at the return. %rax is not known.
+  next = write(write(next, 0, token(10, 0)), 1, number(r.words as i64));
   next = write(write(next, 2, number(obj.address)), 7, number(s.heap.head));
   return write(next, 8, token(8, 0));
 }
