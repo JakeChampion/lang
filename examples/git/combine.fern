@@ -503,7 +503,7 @@ function dump(t_in: patch.Text, at_call: i32, st: Lines, lb: linediff.Lines, c: 
       let set = c.new_line;
       if ((st.flag[sl] & mark - 1) == 0) {
         if (context == 0) {
-          t = patch.Text { lines: t.lines.append(""), uses: t.uses.append(-2 - at_call), calls: t.calls };
+          t = patch.push(t, at_call, "", false);
           continue;
         }
         set = c.context;
@@ -534,7 +534,7 @@ function header(t_in: patch.Text, at_call: i32, s: store.Store, p: Path, o: patc
       if (deleted) {
         t = patch.add(t, at_call, c.meta + "deleted file mode " + modes + c.reset);
       } else {
-        t = patch.Text { lines: t.lines.append("mode " + modes + c.reset), uses: t.uses.append(-1), calls: t.calls };
+        t = patch.push(t, -1, "mode " + modes + c.reset, true);
       }
     }
   }
@@ -565,7 +565,7 @@ pub function show(s_in: store.Store, p: Path, o: patch.Opts, dense: boolean, lea
   }
   if (binary) {
     t = header(t, at_call, s, p, o, dense, least, mode_differs, false, c);
-    return (s, patch.Text { lines: t.lines.append("Binary files differ"), uses: t.uses.append(-1), calls: t.calls });
+    return (s, patch.push(t, -1, "Binary files differ", true));
   }
   let lb = linediff.lines_of(result);
   let cnt = lb.count();

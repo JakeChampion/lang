@@ -531,6 +531,14 @@ var gitFormCases = []string{
 	"log --check --format=%h", "log --check --format=", "log --check -p", "log --check --stat", "log --check --raw", "log --check --name-only",
 	"log --name-only --check", "log --check -s", "log -s --check", "log --check --first-parent", "log --check -- code.c", "log -p --color",
 	"log -p --color --graph",
+	// --word-diff in each form, with the regexes of the words.
+	"log -p --word-diff", "log -p --word-diff=plain", "log -p --word-diff=porcelain", "log -p --word-diff=color", "log -p --word-diff=none",
+	"log -p --word-diff=bad", "log -p --color-words", "log -p --color-words=.", "log -p --color-words=[a-z]+",
+	"log -p --word-diff-regex=[^[:space:]]", "log -p --word-diff-regex=.", "log -p --word-diff-regex [a-z]", "log -p --word-diff --color",
+	"log -p --word-diff=porcelain --color", "log -p --word-diff --graph", "log -p --word-diff --graph --oneline", "log -p --word-diff=porcelain --graph",
+	"log -p --color-words --graph", "log -p --word-diff -U0", "log -p --word-diff -U1", "log -p --word-diff --stat", "log --word-diff",
+	"log -p --word-diff --no-color", "log -p --color-words --no-color", "log -p --word-diff-regex=( -1", "log -p --word-diff --cc",
+	"log -p --word-diff=plain --word-diff", "log -p --color-words=x --word-diff=plain",
 }
 
 // gitWhitespaceRules are values of core.whitespace for the errors of
@@ -647,6 +655,13 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 			gitMergeFixture(t, oracle, fixed, run)
 			for _, c := range gitMergeCases {
 				gitCompare(t, oracle, port, fixed, "", strings.Fields(c)...)
+			}
+			edits := t.TempDir()
+			gitInit(t, oracle, edits, run)
+			gitEdits(t, oracle, edits, 11, 30)
+			for _, c := range []string{"log -p --word-diff", "log -p --word-diff=porcelain", "log -p --color-words", "log -p --word-diff-regex=[a-z]+",
+				"log -p --word-diff -U1 --graph"} {
+				gitCompare(t, oracle, port, edits, "", strings.Fields(c)...)
 			}
 			merges := t.TempDir()
 			gitRandomMerges(t, oracle, merges, 3, 25, run)

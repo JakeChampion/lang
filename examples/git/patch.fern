@@ -17,11 +17,13 @@ import "../../coreutils/lib/bre";
 // the two paths. `color` gives the output the colors of git. `raw` is the
 // form of `--raw`. `abbrev` is the length of a short name that `--abbrev`
 // sets: -1 for the length of git, and 0 for full names. `ws_rule` holds
-// the rules of white space of `core.whitespace`.
-pub struct Opts { ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
+// the rules of white space of `core.whitespace`. `word_diff` is a form of
+// `--word-diff`, and `word_regex` holds the regex of its words, or none.
+// `word_regex_error` is a regex of words that is not sound, or "".
+pub struct Opts { word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
 
 pub function defaults(): Opts {
-  return Opts { ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
+  return Opts { word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
 }
 
 // True when the options print a diff.
@@ -29,29 +31,38 @@ pub function any(o: Opts): boolean {
   return o.raw || o.patch || o.stat || o.numstat || o.shortstat || o.summary;
 }
 
-// The lines of a diff. A line of the graph goes before each line: the
-// line `i` takes the graph line of the call `uses[i]`, and `calls` is the
-// count of graph lines that the diff asks for, as git asks for one with
-// each `diff_line_prefix`.
-pub struct Text { lines: string[], uses: i32[], calls: i32 }
+// The text of a diff, in parts. The graph line of the call `uses[i]` goes
+// before the part `i`, or no graph line for -1, and a line end goes after
+// it when `ends[i]` is true. `calls` is the count of graph lines that the
+// diff asks for, as git asks for one with each `diff_line_prefix`.
+// `fatal` is the message of an error that stops the diff, or "".
+pub struct Text { lines: string[], uses: i32[], ends: boolean[], calls: i32, fatal: string }
+
+pub function text_new(): Text {
+  return Text { lines: [], uses: [], ends: [], calls: 0, fatal: "" };
+}
 
 pub function call(t: Text): (Text, i32) {
   return (Text { ...t, calls: t.calls + 1 }, t.calls);
 }
 
+// Adds the part `line` after the graph line of the call `at_call`, or -1,
+// with a line end when `end` is true.
+pub function push(t: Text, at_call: i32, line: string, end: boolean): Text {
+  return Text { ...t, lines: t.lines.append(line), uses: t.uses.append(at_call), ends: t.ends.append(end) };
+}
+
 // Adds each line of `text` with the graph line of the call `at_call`.
-pub function add(t: Text, at_call: i32, text: string): Text {
-  let lines = t.lines;
-  let uses = t.uses;
+pub function add(t_in: Text, at_call: i32, text: string): Text {
+  let t = t_in;
   let at = 0;
   while (at < text.len()) {
     let nl = __memchr_bytes(text.bytes(), 10, at);
     let end = if (nl < 0) { text.len() } else { nl };
-    lines = lines.append(objects.part(text, at, end));
-    uses = uses.append(at_call);
+    t = push(t, at_call, objects.part(text, at, end), true);
     at = end + 1;
   }
-  return Text { lines: lines, uses: uses, calls: t.calls };
+  return t;
 }
 
 // Adds each line of `text`, each with a call of its own.
@@ -62,8 +73,24 @@ pub function add_each(t_in: Text, text: string): Text {
     let nl = __memchr_bytes(text.bytes(), 10, at);
     let end = if (nl < 0) { text.len() } else { nl };
     let (t1, at_call) = call(t);
-    t = Text { lines: t1.lines.append(objects.part(text, at, end)), uses: t1.uses.append(at_call), calls: t1.calls };
+    t = push(t1, at_call, objects.part(text, at, end), true);
     at = end + 1;
+  }
+  return t;
+}
+
+// Adds `text` as it is, without graph lines: a part for each line, and
+// a last part with no line end when `text` does not end with one.
+pub function add_raw(t_in: Text, text: string): Text {
+  let t = t_in;
+  let at = 0;
+  while (at < text.len()) {
+    let nl = __memchr_bytes(text.bytes(), 10, at);
+    if (nl < 0) {
+      return push(t, -1, objects.part(text, at, text.len()), false);
+    }
+    t = push(t, -1, objects.part(text, at, nl), true);
+    at = nl + 1;
   }
   return t;
 }
@@ -192,7 +219,15 @@ function hunks(o: Opts, a: u8[], b: u8[]): u8[] {
   let script = linediff.diff(la, lb, o.algo);
   let out = buf_new(4096);
   linediff.unified(out, la, lb, script, linediff.Emit { context: o.context, interhunk: o.interhunk, funcnames: true });
-  return buf_take_bytes(out);
+  return taken(out);
+}
+
+// The bytes of the builder `out`, which is then free: a builder has no
+// drop of its own.
+function taken(out: usize): u8[] {
+  let b = buf_take_bytes(out);
+  buf_free(out);
+  return b;
 }
 
 // ---- The colors of a patch ----
@@ -417,6 +452,13 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   let tab0 = if (lbl0.contains(" ")) { "\t" } else { "" };
   let tab1 = if (lbl1.contains(" ")) { "\t" } else { "" };
+  if (o.word_diff != WORDS_NONE && o.word_regex_error.len() > 0) {
+    return (s, Text { ...t_in, fatal: "invalid regular expression: " + o.word_regex_error });
+  }
+  if (o.word_diff != WORDS_NONE) {
+    let labels = if (o.color) { color.BOLD + "--- " + lbl0 + color.RESET + tab0 + "\n" + color.BOLD + "+++ " + lbl1 + color.RESET + tab1 + "\n" } else { "--- " + lbl0 + tab0 + "\n+++ " + lbl1 + tab1 + "\n" };
+    return (s, word_body(add_each(t, labels), o, text(body)));
+  }
   if (o.color) {
     let labels = color.BOLD + "--- " + lbl0 + color.RESET + tab0 + "\n" + color.BOLD + "+++ " + lbl1 + color.RESET + tab1 + "\n";
     t = add_each(t, labels + painted(o, text(body), a, b));
@@ -424,6 +466,236 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   t = add_each(t, "--- " + lbl0 + tab0 + "\n+++ " + lbl1 + tab1 + "\n" + text(body));
   return (s, t);
+}
+
+// ---- The diff of words (`--word-diff`, diff_words_show of git) ----
+
+// The forms of `--word-diff`.
+pub const WORDS_NONE: i32 = 0;
+
+pub const WORDS_PLAIN: i32 = 1;
+
+pub const WORDS_COLOR: i32 = 2;
+
+pub const WORDS_PORCELAIN: i32 = 3;
+
+// How one kind of words shows: its color, and the texts before and after.
+struct WordStyle { color: string, before: string, after: string }
+
+// The styles of the added words, the removed words and the common words,
+// and the text of a line end: `diff_words_styles` of git.
+struct WordStyles { added: WordStyle, removed: WordStyle, common: WordStyle, newline: string }
+
+function word_styles(o: Opts): WordStyles {
+  let new_color = if (o.color) { color.GREEN } else { "" };
+  let old_color = if (o.color) { color.RED } else { "" };
+  if (o.word_diff == WORDS_PORCELAIN) {
+    return WordStyles { added: WordStyle { color: new_color, before: "+", after: "\n" }, removed: WordStyle { color: old_color, before: "-", after: "\n" }, common: WordStyle { color: "", before: " ", after: "\n" }, newline: "~\n" };
+  }
+  if (o.word_diff == WORDS_PLAIN) {
+    return WordStyles { added: WordStyle { color: new_color, before: "{+", after: "+}" }, removed: WordStyle { color: old_color, before: "[-", after: "-]" }, common: WordStyle { color: "", before: "", after: "" }, newline: "\n" };
+  }
+  return WordStyles { added: WordStyle { color: new_color, before: "", after: "" }, removed: WordStyle { color: old_color, before: "", after: "" }, common: WordStyle { color: "", before: "", after: "" }, newline: "\n" };
+}
+
+// The words of `text` after an empty word at 0: the start and the end of
+// each. A word is a match of the regex of the words, cut at a line end,
+// or a run of bytes that are not white space (`find_word_boundaries`).
+function words_of(text: u8[], re: bre.Bre[]): (i32[], i32[]) {
+  let begins: i32[] = [0];
+  let ends: i32[] = [0];
+  let i = 0;
+  while (i < text.len()) {
+    let begin = i;
+    let end = -1;
+    if (re.len() > 0) {
+      while (begin < text.len() && end < 0) {
+        let (ms, me) = re[0].search_from_bytes(text, begin, text.len());
+        if (ms < 0) {
+          return (begins, ends);
+        }
+        let nl = __memchr_bytes(text, 10, ms);
+        let e = if (nl >= 0 && nl < me) { nl } else { me };
+        if (ms == e) {
+          begin = ms + 1;
+        } else {
+          begin = ms;
+          end = e;
+        }
+      }
+      if (end < 0) {
+        return (begins, ends);
+      }
+    } else {
+      while (begin < text.len() && objects.is_space(text[begin])) {
+        begin += 1;
+      }
+      if (begin >= text.len()) {
+        return (begins, ends);
+      }
+      end = begin + 1;
+      while (end < text.len() && !objects.is_space(text[end])) {
+        end += 1;
+      }
+    }
+    begins = begins.append(begin);
+    ends = ends.append(end);
+    i = end;
+  }
+  return (begins, ends);
+}
+
+// The words as lines, one word in each, for the diff of the words.
+function word_lines(text: u8[], begins: i32[], ends: i32[]): u8[] {
+  let out = buf_new(text.len() + begins.len());
+  for k in 1..begins.len() {
+    buf_push_bytes_range(out, text, begins[k], ends[k]);
+    buf_push_byte(out, 10);
+  }
+  return taken(out);
+}
+
+// Adds the bytes `from` to `to` of `text` in the style `st`, and the line
+// end of the styles for each line end, with the graph line before each
+// line after the first: `fn_out_diff_words_write_helper` of git.
+function words_write(t_in: Text, st: WordStyle, newline: string, text: u8[], from: i32, to: i32): Text {
+  let t = t_in;
+  let print = false;
+  let at = from;
+  while (at < to) {
+    let found = __memchr_bytes(text, 10, at);
+    let p = if (found >= 0 && found < to) { found } else { -1 };
+    if (print) {
+      let (t1, k) = call(t);
+      t = push(t1, k, "", false);
+    }
+    if (p != at) {
+      let reset = if (st.color.len() > 0) { color.RESET } else { "" };
+      t = add_raw(t, st.color + st.before + objects.part_bytes(text, at, if (p < 0) { to } else { p }) + st.after + reset);
+    }
+    if (p < 0) {
+      return t;
+    }
+    t = add_raw(t, newline);
+    at = p + 1;
+    print = true;
+  }
+  return t;
+}
+
+// True when the next words start a line, so that the graph goes before
+// them: `color_words_output_graph_prefix` of git.
+function words_line_start(plus: u8[], current: i32, last_minus: i32): boolean {
+  return last_minus == 0 && current == 0 || current > 0 && plus[current - 1] == b'\n';
+}
+
+// The diff of the words of the removed lines `minus` and of the added
+// lines `plus`: the common text of `plus`, and the removed and the added
+// words in their styles.
+function words_show(t_in: Text, o: Opts, minus: u8[], plus: u8[]): Text {
+  let sty = word_styles(o);
+  let (t, prefix) = call(t_in);
+  if (plus.len() == 0) {
+    return words_write(push(t, prefix, "", false), sty.removed, sty.newline, minus, 0, minus.len());
+  }
+  let (mb, me) = words_of(minus, o.word_regex);
+  let (pb, pe) = words_of(plus, o.word_regex);
+  let ma = word_lines(minus, mb, me);
+  let pa = word_lines(plus, pb, pe);
+  let tail = linediff.common_tail(ma, pa);
+  let la = linediff.lines_of(array.slice(ma, 0, ma.len() - tail));
+  let lb = linediff.lines_of(array.slice(pa, 0, pa.len() - tail));
+  let plain = linediff.Options { algorithm: linediff.MYERS, minimal: false, indent_heuristic: false };
+  let current = 0;
+  let last_minus = 0;
+  for ch in linediff.diff(la, lb, plain) {
+    let (t1, k) = call(t);
+    t = t1;
+    let minus_first = if (ch.del > 0) { ch.i1 + 1 } else { ch.i1 };
+    let plus_first = if (ch.ins > 0) { ch.i2 + 1 } else { ch.i2 };
+    let minus_begin = if (ch.del > 0) { mb[minus_first] } else { me[minus_first] };
+    let minus_end = if (ch.del > 0) { me[minus_first + ch.del - 1] } else { minus_begin };
+    let plus_begin = if (ch.ins > 0) { pb[plus_first] } else { pe[plus_first] };
+    let plus_end = if (ch.ins > 0) { pe[plus_first + ch.ins - 1] } else { plus_begin };
+    if (words_line_start(plus, current, last_minus)) {
+      t = push(t, k, "", false);
+    }
+    if (current != plus_begin) {
+      t = words_write(t, sty.common, sty.newline, plus, current, plus_begin);
+    }
+    if (minus_begin != minus_end) {
+      t = words_write(t, sty.removed, sty.newline, minus, minus_begin, minus_end);
+    }
+    if (plus_begin != plus_end) {
+      t = words_write(t, sty.added, sty.newline, plus, plus_begin, plus_end);
+    }
+    current = plus_end;
+    last_minus = minus_first;
+  }
+  if (current != plus.len()) {
+    if (words_line_start(plus, current, last_minus)) {
+      t = push(t, prefix, "", false);
+    }
+    t = words_write(t, sty.common, sty.newline, plus, current, plus.len());
+  }
+  return t;
+}
+
+// The line `text` in the color `set`, as `emit_line` of git writes it: an
+// empty line has no color, and a carriage return goes after the reset.
+function emit_line(set: string, reset: string, text: string): string {
+  let cr = text.len() > 0 && text[text.len() - 1] == b'\r';
+  let body = if (cr) { objects.part(text, 0, text.len() - 1) } else { text };
+  if (body.len() == 0) {
+    return if (cr) { "\r" } else { "" };
+  }
+  return set + body + reset + (if (cr) { "\r" } else { "" });
+}
+
+// The hunks `body` as a diff of words: the hunk headers, the common lines,
+// and the diff of the words of each run of removed and added lines
+// (`fn_out_consume` of git with `diff_words`).
+function word_body(t_in: Text, o: Opts, body: string): Text {
+  let t = t_in;
+  let reset = if (o.color) { color.RESET } else { "" };
+  let minus = buf_new(256);
+  let plus = buf_new(256);
+  let pending = false;
+  let at = 0;
+  while (at < body.len()) {
+    let nl = __memchr_bytes(body.bytes(), 10, at);
+    let end = if (nl < 0) { body.len() } else { nl };
+    let line = objects.part(body, at, end);
+    at = end + 1;
+    let first = if (line.len() > 0) { line[0] } else { b' ' };
+    if (first == b'-' || first == b'+') {
+      buf_push(if (first == b'-') { minus } else { plus }, objects.part(line, 1, line.len()) + "\n");
+      pending = true;
+      continue;
+    }
+    if (first == b'\\') {
+      continue;
+    }
+    if (pending) {
+      t = words_show(t, o, buf_take_bytes(minus), buf_take_bytes(plus));
+      pending = false;
+    }
+    let (t1, k) = call(t);
+    t = t1;
+    if (first == b'@') {
+      t = push(t, k, if (o.color) { hunk_header(line) } else { line }, true);
+    } else if (o.word_diff == WORDS_PORCELAIN) {
+      t = push(push(t, k, emit_line("", reset, line), true), -1, "~", true);
+    } else {
+      t = push(t, k, emit_line("", reset, objects.part(line, 1.min(line.len()), line.len())), true);
+    }
+  }
+  if (pending) {
+    t = words_show(t, o, buf_take_bytes(minus), buf_take_bytes(plus));
+  }
+  buf_free(minus);
+  buf_free(plus);
+  return t;
 }
 
 // The patch of one pair. A change between a file and a link is a deletion
@@ -736,7 +1008,7 @@ function summary_of(p: Pair): string {
 // of a file has no line of the graph before it, as in git.
 pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (store.Store, Text, boolean) {
   let s = s_in;
-  let t = Text { lines: [], uses: [], calls: 0 };
+  let t = text_new();
   let failed = false;
   let set = if (o.color) { color.GREEN } else { "" };
   let reset = if (o.color) { color.RESET } else { "" };
@@ -774,7 +1046,7 @@ pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (sto
       let (_, post) = blank_at_eof(a, b);
       if (post > 0) {
         failed = true;
-        t = Text { lines: t.lines.append(name + ":" + post.to_string() + ": " + ws.error_string(ws.BLANK_AT_EOF) + "."), uses: t.uses.append(-1), calls: t.calls };
+        t = push(t, -1, name + ":" + post.to_string() + ": " + ws.error_string(ws.BLANK_AT_EOF) + ".", true);
       }
     }
   }
@@ -803,7 +1075,7 @@ function raw_line(s: store.Store, o: Opts, p: Pair, least: i32): string {
 // of a call. There are no lines when there are no changes.
 pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, least: i32, prefix_width: (i32) => i32): (store.Store, Text) {
   let s = s_in;
-  let t = Text { lines: [], uses: [], calls: 0 };
+  let t = text_new();
   if (changes.len() == 0) {
     return (s, t);
   }
@@ -849,9 +1121,12 @@ pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, leas
   if (o.patch) {
     if (separator) {
       let (t2, at_call) = call(t);
-      t = Text { lines: t2.lines.append(""), uses: t2.uses.append(at_call), calls: t2.calls };
+      t = push(t2, at_call, "", true);
     }
     for p in pairs {
+      if (t.fatal.len() > 0) {
+        return (s, t);
+      }
       let (s2, t3) = patch_pair(s, o, p, least, t);
       s = s2;
       t = t3;
@@ -920,7 +1195,7 @@ pub function patch_id_text(s_in: store.Store, changes: treediff.Change[]): (stor
     let script = linediff.diff(la, lb, plain);
     let hunk = buf_new(1024);
     linediff.unified(hunk, la, lb, script, linediff.Emit { context: 3, interhunk: 0, funcnames: false });
-    let text = buf_take_bytes(hunk);
+    let text = taken(hunk);
     // The lines without the hunk headers and the lines that say that a
     // file has no line end at its end.
     let at = 0;
@@ -935,7 +1210,7 @@ pub function patch_id_text(s_in: store.Store, changes: treediff.Change[]): (stor
       at = end;
     }
   }
-  return (s, buf_take_bytes(out));
+  return (s, taken(out));
 }
 
 // ---- Pickaxe (diffcore-pickaxe.c) ----

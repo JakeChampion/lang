@@ -1023,7 +1023,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
+struct LogOpts { word_regex: string, merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1115,6 +1115,27 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
       return (LogOpts { ...o, bad: "invalid value for '--diff-merges': '" + dm + "'" }, dm_taken);
     }
     return (LogOpts { ...o, merges: m, merges_need: m != "off" }, dm_taken);
+  }
+  if (x == "--word-diff" || x.starts_with("--word-diff=")) {
+    if (x == "--word-diff") {
+      return (LogOpts { ...o, patch: patch.Opts { ...d, word_diff: if (d.word_diff == patch.WORDS_NONE) { patch.WORDS_PLAIN } else { d.word_diff } } }, 1);
+    }
+    let v = objects.part(x, 12, x.len());
+    let forms = ["none", "plain", "color", "porcelain"];
+    for k in 0..forms.len() {
+      if (v == forms[k]) {
+        return (LogOpts { ...o, patch: patch.Opts { ...d, word_diff: k, color: d.color || k == patch.WORDS_COLOR } }, 1);
+      }
+    }
+    return (LogOpts { ...o, bad: "error: bad --word-diff argument: " + v }, 1);
+  }
+  if (x == "--color-words" || x.starts_with("--color-words=")) {
+    let re = if (x == "--color-words") { "" } else { objects.part(x, 14, x.len()) };
+    return (LogOpts { ...o, word_regex: re, patch: patch.Opts { ...d, word_diff: patch.WORDS_COLOR, color: true } }, 1);
+  }
+  let (wr, wr_taken) = option_value(argv, i, "--word-diff-regex");
+  if (wr_taken > 0) {
+    return (LogOpts { ...o, word_regex: wr, patch: patch.Opts { ...d, word_diff: if (d.word_diff == patch.WORDS_NONE) { patch.WORDS_PLAIN } else { d.word_diff } } }, wr_taken);
   }
   if (x == "--raw") {
     return (with_form(o, patch.Opts { ...d, raw: true }), 1);
@@ -1964,7 +1985,7 @@ function ref_option(x: string): string {
 // and its text had no line end at its end.
 // `follow` is the path that `--follow` follows now.
 // `hidden` is true when the last commit gave no text.
-struct Shown { graph: graph.Graph, any: boolean, missing: boolean, follow: string, hidden: boolean, failed: boolean }
+struct Shown { graph: graph.Graph, any: boolean, missing: boolean, follow: string, hidden: boolean, failed: boolean, fatal: string }
 
 // The padding of the graph before a line, or "" with no graph.
 function graph_pad(o: LogOpts, sh: Shown): (Shown, string) {
@@ -2070,12 +2091,10 @@ function diff_text(s: store.Store, changes: treediff.Change[], d: patch.Opts, le
   }
   let (s5, text) = patch.render(s, changes, d, least, (k: i32): i32 => widths[k.min(widths.len() - 1)]);
   let (sh6, lines) = text_lines(o, sh_in, text);
-  return (s5, lines, sh6);
+  return (s5, lines, Shown { ...sh6, fatal: text.fatal });
 }
 
-// The lines of `t` with the graph line of each call before them. A line
-// with the call -1 has no graph line, and a line with the call -2 - K has
-// the graph line of the call K and no line end, as in git.
+// The parts of `t` with the graph line of each call before them.
 function text_lines(o: LogOpts, sh_in: Shown, t: patch.Text): (Shown, string) {
   let sh = sh_in;
   let pads: string[] = [];
@@ -2087,13 +2106,7 @@ function text_lines(o: LogOpts, sh_in: Shown, t: patch.Text): (Shown, string) {
   let out = "";
   for i in 0..t.lines.len() {
     let u = t.uses[i];
-    if (u >= 0) {
-      out += pads[u] + t.lines[i] + "\n";
-    } else if (u == -1) {
-      out += t.lines[i] + "\n";
-    } else {
-      out += pads[-2 - u] + t.lines[i];
-    }
+    out += (if (u >= 0) { pads[u] } else { "" }) + t.lines[i] + (if (t.ends[i]) { "\n" } else { "" });
   }
   return (sh, out);
 }
@@ -2198,7 +2211,7 @@ function combined_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Con
     sh = sh4;
     out += pad + "\n";
   }
-  let t = patch.Text { lines: [], uses: [], calls: 0 };
+  let t = patch.text_new();
   for p in paths {
     let (s5, t5) = combine.show(s, p, d, dense, least, t);
     s = s5;
@@ -2379,7 +2392,7 @@ function reflog_walk(r: refs.Repo, w_in: revwalk.Walk, o: LogOpts, names: string
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s2 } };
     decorations = by;
   }
-  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: "", hidden: false, failed: false };
+  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: "", hidden: false, failed: false, fatal: "" };
   let buf: u8[] = [];
   let count = 0;
   let skipped = 0;
@@ -2548,7 +2561,7 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: r.config.flag("diff.renames", true), walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
   if let Some(v) = r.config.get("core.whitespace") {
@@ -2668,6 +2681,11 @@ function log_command(argv: string[]): i32 {
   if (o.names_twice) {
     return fatal("options '--name-only', '--name-status', '--check', and '-s' cannot be used together");
   }
+  if (o.word_regex.len() > 0 && o.patch.word_diff != patch.WORDS_NONE) {
+    let re = bre.bre_compile_syntax(o.word_regex, bre.Syntax { ...bre.posix_basic(), extended: true, newline_anchor: true });
+    let d = if (re.err.len() > 0) { patch.Opts { ...o.patch, word_regex_error: o.word_regex } } else { patch.Opts { ...o.patch, word_regex: [re] } };
+    o = LogOpts { ...o, patch: d };
+  }
   if (o.imply_patch && o.diff.len() == 0 && !o.no_output && !patch.any(o.patch)) {
     o = LogOpts { ...o, patch: patch.Opts { ...o.patch, patch: true } };
   }
@@ -2776,7 +2794,7 @@ function log_command(argv: string[]): i32 {
   }
   let shown: string[] = [];
   let buf: u8[] = [];
-  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: if (o.follow) { items[0] } else { "" }, hidden: false, failed: false };
+  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: if (o.follow) { items[0] } else { "" }, hidden: false, failed: false, fatal: "" };
   let p = Pull { w: w, skipped: 0, count: 0, candidates: [] };
   // The boundary commits to show after the walk (`get_revision_internal`),
   // and the commits after the current one, for the visual roots of the
@@ -2841,6 +2859,10 @@ function log_command(argv: string[]): i32 {
       p = Pull { ...p, count: p.count - 1 };
     }
     buf = buf.concat(text.bytes());
+    if (after.fatal.len() > 0) {
+      put(buf);
+      return fatal(after.fatal);
+    }
     if (buf.len() > 65536) {
       put(buf);
       buf = [];

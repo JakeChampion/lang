@@ -99,7 +99,11 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `remerge`. `-m` shows the diff from each parent, with
   `(from PARENT)` after the name of the commit. `-c` and `--cc` show the
   combined diff of the paths that change from each parent, with the
-  hunks and the stat of git. The patch
+  hunks and the stat of git.
+
+  `--word-diff` with each of its forms, `--word-diff-regex=`,
+  `--color-words` and `diff.wordRegex` show the patch as a diff of
+  words. The patch
   has the header lines of git, the renames with their similarity, the
   changes of mode, and the line for a binary file. The hunks come from
   `std/linediff`. It has the Myers diff of xdiff with its heuristics and
@@ -205,7 +209,7 @@ the git of the machine. With git 2.43, four things are different:
 
 - These options of `log`: `--notes`, the signatures (`--show-signature`,
   `%G?`), `-C` and `--find-copies` (`--follow` finds copies),
-  `--word-diff`, `--color-moved`, `--remerge-diff`, and `-L`.
+  `--color-moved`, `--remerge-diff`, and `-L`.
 
 - The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
   `color.grep`, and the rules of the `whitespace` attribute. The port
@@ -350,8 +354,9 @@ count of bytes. A worker of `std/worker` makes the names of its part.
 
 - `TestSelfHostExampleGitForms` runs the placeholders that change the
   columns of a format, the wrap of `%w()`, `--raw`, `--check` with
-  each rule of `core.whitespace`, and the diffs of merges, also in a
-  random history of merges with conflicts.
+  each rule of `core.whitespace`, the diffs of merges, also in a random
+  history of merges with conflicts, and the diffs of words, also of
+  random edits.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

@@ -206,6 +206,14 @@ pub function width_of(b: u8[], from: i32, to: i32): i32 {
 
 // ---- The columns of a text (utf8.c of git) ----
 
+// The bytes of the builder `out`, which is then free: a builder has no
+// drop of its own.
+function taken(out: usize): u8[] {
+  let b = buf_take_bytes(out);
+  buf_free(out);
+  return b;
+}
+
 // The width of the terminal: `COLUMNS`, or 80 (`term_columns` of git
 // without a terminal).
 pub function term_columns(): i32 {
@@ -286,7 +294,7 @@ pub function replaced(b: u8[], pos: i32, width: i32, subst: string): u8[] {
     }
     let (c, n) = char_at(b, at, b.len());
     if (n == 0) {
-      let _ = buf_take_bytes(out);
+      buf_free(out);
       return b;
     }
     let g = wcwidth(c).max(0);
@@ -301,7 +309,7 @@ pub function replaced(b: u8[], pos: i32, width: i32, subst: string): u8[] {
     w += g;
     at += n;
   }
-  return buf_take_bytes(out);
+  return taken(out);
 }
 
 function is_alnum(b: u8): boolean {
@@ -354,15 +362,15 @@ pub function wrapped(b_in: u8[], indent1: i32, indent2: i32, width: i32): u8[] {
   let out = buf_new(b.len() + 64);
   if (width <= 0) {
     indented(out, b, indent1, indent2);
-    return buf_take_bytes(out);
+    return taken(out);
   }
   if (wrap_into(out, b, indent1, indent2, width, true)) {
-    return buf_take_bytes(out);
+    return taken(out);
   }
-  let _ = buf_take_bytes(out);
+  buf_free(out);
   let again = buf_new(b.len() + 64);
   let _ = wrap_into(again, b, indent1, indent2, width, false);
-  return buf_take_bytes(again);
+  return taken(again);
 }
 
 // The loop of `wrapped`. It gives false when it finds bytes that are not
