@@ -894,8 +894,8 @@ function supplied_unit(owned: boolean[], ids: i32[], v: i32): i32 {
 }
 
 function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
-  let out: boolean[] = [false];
   let callee = f.values[ins.args[0]];
+  let out: boolean[] = [ssasem.func_once(callee)];
   let params = ssasem.func_params(callee);
   for i in 0..params.len() {
     out = out.append(ssasem.func_param_own(callee, i) && ssasem.counted(f, f.values[ins.args[i + 1]]));

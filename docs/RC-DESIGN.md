@@ -192,6 +192,24 @@ it, the caller hands over its last unit. The sink then updates or adopts the
 box and does not copy it. The callee releases the parameter on each other
 path. A view, a cell, a handle and a closure environment stay borrowed.
 
+A `once` closure is the one exception for an environment (#16170). A call
+of a `once` function consumes the callee: the plan supplies it
+(`ssaunits.call_value_supplied`), and the caller drops it after the call,
+because the body still borrows the environment. So during the call the
+count of the environment is the number of its holders.
+
+The prelude of the body reads each capture with `__env_take`, and its
+environment type has the prefix `__env$+` (`semtypes.env_takes`). The
+lowering of the take (`ssarc.env_take`) has two paths:
+
+- When the environment has one reference, the slot is cleared, and the
+  reference moves to the result.
+- When it has more, the capture gets a new reference.
+
+The result is owned but not fresh, because a shared capture keeps its other
+holders. The drop of a taking environment loads each field without the
+counted mark, so the release of a cleared slot keeps its test for 0.
+
 A string box changes in place only where it grows. A concatenation consumes
 its left operand at the last use of that operand, and the lowering then grows
 the buffer in place (`ssarc.grow_or_concat`). Thus the inference counts a
