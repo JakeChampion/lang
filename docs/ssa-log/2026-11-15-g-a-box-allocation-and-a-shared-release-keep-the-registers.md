@@ -40,6 +40,26 @@ box loses 1 from its count. Only a unique box calls the helper, with the
 live registers saved around that call. The helper has no entry past its
 tests, so the call goes to its `.r` entry.
 
+## The models
+
+- `ssaconstructormachine` took a constructor only when each register had its
+  value of the entry at the return. A constructor now keeps its fields in
+  `%r8` and `%r9` across `__fern_rec_box`. The model now reads `%rax` and the
+  registers that a call keeps: `%rbx`, `%rsp`, `%rbp` and `%r12` to `%r15`.
+
+The model of the routine:
+
+- The model said that `__fern_rec_box` leaves its saved `%rdi` below the
+  stack pointer. The direct path of the routine pushes `%rcx` there. The word
+  is now not known, and a read of it makes a refusal.
+
+The credit models and the controls:
+
+- `ssa.plain_imm` takes the mark `ir.box_release` as no mark, so the credit
+  models read a marked release as a release.
+- The controls of `ssaconstructormachines` and `ssaallocationchains` find
+  the stores of the fields in the text, and do not name their registers.
+
 ## Measured
 
 x86-64, Cachegrind, with the small inputs, against `7b7b5597`:

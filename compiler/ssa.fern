@@ -154,7 +154,7 @@ pub function plain_str(ins: SInst): string {
 }
 
 pub function plain_imm(ins: SInst): i32 {
-  if (ins.kind_tag == CALL && ins.imm >= 1 && ins.imm <= 3) {
+  if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7)) {
     return 0;
   }
   return ins.imm;
