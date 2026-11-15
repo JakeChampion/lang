@@ -54,13 +54,21 @@ the same behaviour:
 - `limit`, `first`, `until`, `while`, `repeat`, `range` and `recurse`, which
   stop at the first output that the caller does not need.
 
-The modules of jq 1.7: `import`, `include`, data imports, `modulemeta`,
-`get_search_list`, the `-L` directories and the include of `~/.jq`. A path
-is clean, and absolute from `$PWD`, but the port does not follow a symbolic
-link in it.
+The port has the modules of jq 1.7: `import`, `include`, data imports,
+`modulemeta`, `get_search_list`, the `-L` directories and the include of
+`~/.jq`. As jq does, the port gives C `realpath` the path of a module, of a
+`-L` directory and of the program file. Thus each symbolic link is followed.
+When `realpath` fails, the path stays as it is. A WASI program has no
+`getcwd`, so the port takes the current directory from `$PWD`.
 
-The command line has each option of jq 1.7 except `--run-tests` and the
-debug options, with the messages and the exit codes of jq.
+The command line has each option of jq 1.7, with the messages and the exit
+codes of jq, except the debug options. `--debug-dump-disasm` and
+`--debug-trace` show the bytecode of jq, and the port has no bytecode.
+
+`--run-tests` is the test runner of jq. It reads the test file, or stdin,
+with `--skip N` and `--take N`, and writes each line of jq. As in jq, a
+test has no input callback, so `debug`, `stderr` and `halt_error` write
+nothing, and `get_prog_origin` and `get_jq_origin` give no output.
 
 ## Generators
 
@@ -204,7 +212,8 @@ places where jq names them most often. In other places, the text after
   the outputs as JSON values, as jq does. Each of the 709 cases passes.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
-  status.
+  status. It runs `--run-tests` on each test file of jq, and it follows
+  symbolic links in module paths.
 
 ## Speed
 

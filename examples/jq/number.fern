@@ -436,3 +436,17 @@ function magnitude(x: Decimal, y: Decimal): i32 {
   }
   return 0;
 }
+
+// The whole part of the size of `x`, held to the range of an i64 as jq does.
+pub function int_magnitude(x: f64): u64 {
+  if (x <= -9223372036854775808.0) {
+    return 9223372036854775808u64;
+  }
+  if (x >= 9223372036854775807.0) {
+    return 9223372036854775807u64;
+  }
+  if (x < 0.0) {
+    return (-x) as u64;
+  }
+  return x as u64;
+}

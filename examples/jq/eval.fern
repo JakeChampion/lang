@@ -235,27 +235,6 @@ function unescaped(own s: St): own St {
   return St { ...s, esc: s.esc - 1 };
 }
 
-pub function type_name(v: json.JsonValue): string {
-  return match (v) {
-    json.JNull => "null",
-    json.JBool(_) => "boolean",
-    json.JNumber(_) => "number",
-    json.JString(_) => "string",
-    json.JArray(_) => "array",
-    json.JObject(_) => "object",
-  };
-}
-
-// The value as an error message shows it: compact, and cut to 11 bytes and
-// "..." when it is longer than 14.
-pub function shown(v: json.JsonValue): string {
-  let s = output.compact(v);
-  if (s.len() > 14) {
-    return slice_unchecked(s, 0, 11).to_owned() + "...";
-  }
-  return s;
-}
-
 pub function truthy(v: json.JsonValue): boolean {
   return match (v) {
     json.JNull => false,
@@ -542,6 +521,21 @@ function new_label(own st: St): (i32, St) {
   return (id, St { ...st, labels: id + 1 });
 }
 
+// An attribute of jq. When it is not set, as in `--run-tests`, it gives no
+// output.
+function attribute(e: Env, name: string, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  let found = lookup(e, name);
+  if (found.values.len() == 0) {
+    return st;
+  }
+  return k(found.values[0], st);
+}
+
+// True in `--run-tests`, which writes no messages.
+function quiet(e: Env): boolean {
+  return e.names.contains("*quiet");
+}
+
 function lookup(e: Env, name: string): Outputs {
   let i = e.names.len() - 1;
   while (i >= 0) {
@@ -581,7 +575,7 @@ function iterate_to(v: json.JsonValue, guard: boolean, k: (json.JsonValue, own S
       if (guard) {
         return st;
       }
-      return failed_with(st, "Cannot iterate over " + type_name(v) + " (" + shown(v) + ")");
+      return failed_with(st, "Cannot iterate over " + output.type_name(v) + " (" + output.shown(v) + ")");
     }
   }
 }
@@ -590,7 +584,7 @@ function iterate(v: json.JsonValue): Outputs {
   return match (v) {
     json.JArray(items) => ok(items),
     json.JObject(o) => ok(o.values()),
-    _ => fail("Cannot iterate over " + type_name(v) + " (" + shown(v) + ")"),
+    _ => fail("Cannot iterate over " + output.type_name(v) + " (" + output.shown(v) + ")"),
   };
 }
 
@@ -598,7 +592,7 @@ function negate(v: json.JsonValue): Outputs {
   if let json.JNumber(t) = v {
     return one(json.JNumber(number.format(-number.value(t))));
   }
-  return fail(type_name(v) + " (" + shown(v) + ") cannot be negated");
+  return fail(output.type_name(v) + " (" + output.shown(v) + ") cannot be negated");
 }
 
 // The step `step` with a `?`: an error of the step itself gives no output.
@@ -660,7 +654,7 @@ function build_object(keys: filter.Ast[], values: filter.Ast[], at: i32, names: 
 // right side of an operator does.
 function object_entry(keys: filter.Ast[], values: filter.Ast[], at: i32, names: string[], items: json.JsonValue[], kv: json.JsonValue, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let json.JString(name) = kv else {
-    return failed_with(st, "Cannot use " + type_name(kv) + " (" + shown(kv) + ") as object key");
+    return failed_with(st, "Cannot use " + output.type_name(kv) + " (" + output.shown(kv) + ") as object key");
   };
   if (!single(values[at], e)) {
     return run(values[at], input, e, (v: json.JsonValue, own s: St): own St => build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s), st);
@@ -812,10 +806,15 @@ function call0(name: string, input: json.JsonValue, e: Env, k: (json.JsonValue, 
       return read_inputs(k, st);
     },
     "debug" => {
-      eprint("[\"DEBUG:\"," + output.compact(input) + "]");
+      if (!quiet(e)) {
+        eprint("[\"DEBUG:\"," + output.compact(input) + "]");
+      }
       return k(input, st);
     },
     "stderr" => {
+      if (quiet(e)) {
+        return k(input, st);
+      }
       if let json.JString(s) = input {
         eprint_raw(s);
       } else {
@@ -833,10 +832,10 @@ function call0(name: string, input: json.JsonValue, e: Env, k: (json.JsonValue, 
       return give(lookup(e, "*search"), k, st);
     },
     "get_jq_origin" => {
-      return give(lookup(e, "*jq_origin"), k, st);
+      return attribute(e, "*jq_origin", k, st);
     },
     "get_prog_origin" => {
-      return give(lookup(e, "*prog_origin"), k, st);
+      return attribute(e, "*prog_origin", k, st);
     },
     "modulemeta" => {
       return give(module_meta(input, e), k, st);
@@ -848,7 +847,7 @@ function call0(name: string, input: json.JsonValue, e: Env, k: (json.JsonValue, 
       return entries_to(input, k, st);
     },
     "halt_error" => {
-      return halt_with(input, json.JNumber("5"), st);
+      return halt_with(input, json.JNumber("5"), quiet(e), st);
     },
     _ => {
       return give(value0(name, input), k, st);
@@ -927,7 +926,7 @@ function call1(name: string, arg: filter.Ast, input: json.JsonValue, e: Env, k: 
       return run(arg, input, e, (v: json.JsonValue, own s: St): own St => raised(s, v), st);
     },
     "halt_error" => {
-      return run(arg, input, e, (c: json.JsonValue, own s: St): own St => halt_with(input, c, s), st);
+      return run(arg, input, e, (c: json.JsonValue, own s: St): own St => halt_with(input, c, quiet(e), s), st);
     },
     _ => {
       return run(arg, input, e, (a: json.JsonValue, own s: St): own St => give(value1(name, input, a), k, s), st);
@@ -1376,11 +1375,16 @@ function walk(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own 
 }
 
 // `halt_error` writes a string as it is and any other value as JSON with a
-// newline, and stops with the exit status `code`.
-function halt_with(v: json.JsonValue, code: json.JsonValue, own st: St): own St {
+// newline, and stops with the exit status `code`. In `--run-tests`, jq has
+// no callback for the messages, so `debug`, `stderr` and `halt_error` write
+// nothing.
+function halt_with(v: json.JsonValue, code: json.JsonValue, silent: boolean, own st: St): own St {
   let json.JNumber(t) = code else {
     return failed_with(st, "halt_error/1: number required");
   };
+  if (silent) {
+    return St { ...st, sig: HALT, code: number.value(t) as i32 };
+  }
   if let json.JString(s) = v {
     eprint_raw(s);
   } else {
@@ -1431,7 +1435,7 @@ function read_inputs(k: (json.JsonValue, own St) => own St, own st: St): own St 
 function value0(name: string, v: json.JsonValue): Outputs {
   return match (name) {
     "not" => one(json.JBool(!truthy(v))),
-    "type" => one(json.JString(type_name(v))),
+    "type" => one(json.JString(output.type_name(v))),
     "length" => length(v),
     "keys" => keys(v, true),
     "keys_unsorted" => keys(v, false),
@@ -1626,7 +1630,7 @@ function unique(v: json.JsonValue): Outputs {
 // their keys `ks`.
 function by(what: string, input: json.JsonValue, items: json.JsonValue[], ks: json.JsonValue[]): Outputs {
   let json.JArray(_) = input else {
-    let both = type_name(input) + " (" + shown(input) + ") and array (" + shown(json.JArray(ks)) + ")";
+    let both = output.type_name(input) + " (" + output.shown(input) + ") and array (" + output.shown(json.JArray(ks)) + ")";
     if (what == "min" || what == "max") {
       return fail(both + " cannot be iterated over");
     }
@@ -1670,7 +1674,7 @@ function strptime_value(v: json.JsonValue, f: json.JsonValue): Outputs {
 // `format(name)` is `@name`.
 function format_value(v: json.JsonValue, f: json.JsonValue): Outputs {
   let json.JString(name) = f else {
-    return fail(type_name(f) + " (" + shown(f) + ") is not a valid format");
+    return fail(output.type_name(f) + " (" + output.shown(f) + ") is not a valid format");
   };
   return format(name, v);
 }
@@ -1882,7 +1886,7 @@ function path_iterate(it: PathItem, guard: boolean, k: (PathItem, own St) => own
       if (guard) {
         return s;
       }
-      return failed_with(s, "Cannot iterate over " + type_name(it.value) + " (" + shown(it.value) + ")");
+      return failed_with(s, "Cannot iterate over " + output.type_name(it.value) + " (" + output.shown(it.value) + ")");
     }
   }
 }
@@ -1890,7 +1894,7 @@ function path_iterate(it: PathItem, guard: boolean, k: (PathItem, own St) => own
 // One step from `it` with the key `kv`. The value comes from `index`.
 function path_step(it: PathItem, kv: json.JsonValue, guard: boolean, k: (PathItem, own St) => own St, own st: St): own St {
   if (!it.attached) {
-    return failed_with(st, "Invalid path expression near attempt to access element " + shown(kv) + " of " + shown_long(it.value));
+    return failed_with(st, "Invalid path expression near attempt to access element " + output.shown(kv) + " of " + shown_long(it.value));
   }
   let v = index(it.value, kv);
   if (v.failed()) {
@@ -2399,9 +2403,9 @@ function slice_of(v: json.JsonValue, o: json.JsonObject): Outputs {
 
 function index_error(v: json.JsonValue, k: json.JsonValue): Outputs {
   if let json.JString(s) = k {
-    return fail("Cannot index " + type_name(v) + " with string \"" + s + "\"");
+    return fail("Cannot index " + output.type_name(v) + " with string \"" + s + "\"");
   }
-  return fail("Cannot index " + type_name(v) + " with " + type_name(k));
+  return fail("Cannot index " + output.type_name(v) + " with " + output.type_name(k));
 }
 
 pub function index(v: json.JsonValue, k: json.JsonValue): Outputs {
@@ -2550,7 +2554,7 @@ pub function slice(v: json.JsonValue, f: json.JsonValue, t: json.JsonValue): Out
       return one(json.JString(slice_unchecked(s, starts[b.start], starts[b.end]).to_owned()));
     },
     _ => {
-      return fail("Cannot index " + type_name(v) + " with object");
+      return fail("Cannot index " + output.type_name(v) + " with object");
     }
   }
 }
@@ -2730,7 +2734,7 @@ function computed(x: f64): json.JsonValue {
 }
 
 function cannot(l: json.JsonValue, r: json.JsonValue, what: string): Outputs {
-  return fail(type_name(l) + " (" + shown(l) + ") and " + type_name(r) + " (" + shown(r) + ") cannot be " + what);
+  return fail(output.type_name(l) + " (" + output.shown(l) + ") and " + output.type_name(r) + " (" + output.shown(r) + ") cannot be " + what);
 }
 
 function add(l: json.JsonValue, r: json.JsonValue): Outputs {
@@ -2892,20 +2896,6 @@ function split(s: string, sep: string): json.JsonValue[] {
   return out;
 }
 
-// The whole part of the size of `x`, held to the range of an i64 as jq does.
-function magnitude(x: f64): u64 {
-  if (x <= -9223372036854775808.0) {
-    return 9223372036854775808u64;
-  }
-  if (x >= 9223372036854775807.0) {
-    return 9223372036854775807u64;
-  }
-  if (x < 0.0) {
-    return (-x) as u64;
-  }
-  return x as u64;
-}
-
 // jq takes the remainder of the whole parts. The sign is that of the left.
 function remainder(l: json.JsonValue, r: json.JsonValue): Outputs {
   let json.JNumber(x) = l else {
@@ -2919,11 +2909,11 @@ function remainder(l: json.JsonValue, r: json.JsonValue): Outputs {
   if (a != a || b != b) {
     return one(computed(0.0 / 0.0));
   }
-  let d = magnitude(b);
+  let d = number.int_magnitude(b);
   if (d == 0u64) {
     return cannot(l, r, "divided (remainder) because the divisor is zero");
   }
-  let m = (magnitude(a) % d) as f64;
+  let m = (number.int_magnitude(a) % d) as f64;
   if (a < 0.0) {
     return one(computed(-m));
   }
@@ -2944,7 +2934,7 @@ function length(v: json.JsonValue): Outputs {
     json.JString(s) => one(whole(char_starts(s).len() - 1)),
     json.JArray(items) => one(whole(items.len())),
     json.JObject(o) => one(whole(o.len())),
-    _ => fail(type_name(v) + " (" + shown(v) + ") has no length"),
+    _ => fail(output.type_name(v) + " (" + output.shown(v) + ") has no length"),
   };
 }
 
@@ -2966,7 +2956,7 @@ function keys(v: json.JsonValue, in_order: boolean): Outputs {
       }
     },
     _ => {
-      return fail(type_name(v) + " (" + shown(v) + ") has no keys");
+      return fail(output.type_name(v) + " (" + output.shown(v) + ") has no keys");
     }
   }
   return one(json.JArray(out));
@@ -2985,7 +2975,7 @@ function has(v: json.JsonValue, k: json.JsonValue): Outputs {
       return one(json.JBool(items.len() > 0 && x > -1.0 && x < items.len() as f64));
     }
   }
-  return fail("Cannot check whether " + type_name(v) + " has a " + type_name(k) + " key");
+  return fail("Cannot check whether " + output.type_name(v) + " has a " + output.type_name(k) + " key");
 }
 
 function sum(o: Outputs): Outputs {
@@ -3044,7 +3034,7 @@ function from_entries(v: json.JsonValue): Outputs {
       return key;
     }
     let json.JString(name) = key.values[0] else {
-      return fail("Cannot use " + type_name(key.values[0]) + " (" + shown(key.values[0]) + ") as object key");
+      return fail("Cannot use " + output.type_name(key.values[0]) + " (" + output.shown(key.values[0]) + ") as object key");
     };
     let present = has(x, json.JString("value"));
     if (present.failed()) {
@@ -3065,7 +3055,7 @@ function to_string(v: json.JsonValue): json.JsonValue {
 
 // `values`, `nulls`, `scalars` and the other selectors by type.
 function of_type(name: string, v: json.JsonValue): Outputs {
-  let t = type_name(v);
+  let t = output.type_name(v);
   let nested = t == "array" || t == "object";
   let keep = match (name) {
     "values" => t != "null",
@@ -3097,7 +3087,7 @@ function sort(v: json.JsonValue): Outputs {
   if let json.JArray(items) = v {
     return one(json.JArray(sorted_values(items)));
   }
-  return fail(type_name(v) + " (" + shown(v) + ") cannot be sorted, as it is not an array");
+  return fail(output.type_name(v) + " (" + output.shown(v) + ") cannot be sorted, as it is not an array");
 }
 
 // jq 1.7: `[.[length - 1 - range(0; length)]]`.
@@ -3118,13 +3108,13 @@ function reverse(v: json.JsonValue): Outputs {
   if (order(n.values[0], whole(0)) == 0) {
     return one(json.JArray(out));
   }
-  return fail("Cannot index " + type_name(v) + " with number");
+  return fail("Cannot index " + output.type_name(v) + " with number");
 }
 
 // Of equal values, `min` gives the first and `max` gives the last.
 function extreme(v: json.JsonValue, least: boolean): Outputs {
   let json.JArray(items) = v else {
-    let what = type_name(v) + " (" + shown(v) + ")";
+    let what = output.type_name(v) + " (" + output.shown(v) + ")";
     return fail(what + " and " + what + " cannot be iterated over");
   };
   if (items.len() == 0) {
@@ -3157,7 +3147,7 @@ function join(v: json.JsonValue, sep: json.JsonValue): Outputs {
       return left;
     }
     let part = x;
-    let t = type_name(x);
+    let t = output.type_name(x);
     if (t == "boolean" || t == "number") {
       part = to_string(x);
     } else if (t == "null") {
@@ -3333,9 +3323,9 @@ function implode(v: json.JsonValue): Outputs {
       cp = number.value(t);
     }
     if (cp != cp) {
-      return fail(type_name(x) + " (" + shown(x) + ") can't be imploded, unicode codepoint needs to be numeric");
+      return fail(output.type_name(x) + " (" + output.shown(x) + ") can't be imploded, unicode codepoint needs to be numeric");
     }
-    s += filter.codepoint_text(floor_index(cp));
+    s += reader.codepoint_text(floor_index(cp));
   }
   return one(json.JString(s));
 }
@@ -3343,7 +3333,7 @@ function implode(v: json.JsonValue): Outputs {
 // The one value of the JSON text `v`, read as jq reads its input.
 function from_json(v: json.JsonValue): Outputs {
   let json.JString(s) = v else {
-    return fail(type_name(v) + " (" + shown(v) + ") only strings can be parsed");
+    return fail(output.type_name(v) + " (" + output.shown(v) + ") only strings can be parsed");
   };
   let r = reader.read(s);
   let bad = r.error;
@@ -3363,7 +3353,7 @@ function to_number(v: json.JsonValue): Outputs {
     return one(v);
   }
   let json.JString(_) = v else {
-    return fail(type_name(v) + " (" + shown(v) + ") cannot be parsed as a number");
+    return fail(output.type_name(v) + " (" + output.shown(v) + ") cannot be parsed as a number");
   };
   let parsed = from_json(v);
   if (parsed.failed()) {
@@ -3372,14 +3362,14 @@ function to_number(v: json.JsonValue): Outputs {
   if let json.JNumber(_) = parsed.values[0] {
     return parsed;
   }
-  return fail(type_name(v) + " (" + shown(v) + ") cannot be parsed as a number");
+  return fail(output.type_name(v) + " (" + output.shown(v) + ") cannot be parsed as a number");
 }
 
 function byte_length(v: json.JsonValue): Outputs {
   if let json.JString(s) = v {
     return one(whole(s.len()));
   }
-  return fail(type_name(v) + " (" + shown(v) + ") only strings have UTF-8 byte length");
+  return fail(output.type_name(v) + " (" + output.shown(v) + ") only strings have UTF-8 byte length");
 }
 
 function text_function(name: string, v: json.JsonValue, a: json.JsonValue): Outputs {
@@ -3408,7 +3398,7 @@ function text_error(name: string): string {
 
 function contains_checked(a: json.JsonValue, b: json.JsonValue): Outputs {
   if (rank(a) != rank(b)) {
-    return fail(type_name(a) + " (" + shown(a) + ") and " + type_name(b) + " (" + shown(b) + ") cannot have their containment checked");
+    return fail(output.type_name(a) + " (" + output.shown(a) + ") and " + output.type_name(b) + " (" + output.shown(b) + ") cannot have their containment checked");
   }
   return one(json.JBool(contains(a, b)));
 }
@@ -3537,7 +3527,7 @@ function number_of(v: json.JsonValue): (f64, Outputs) {
   if let json.JNumber(t) = v {
     return (number.value(t), ok([]));
   }
-  return (0.0, fail(type_name(v) + " (" + shown(v) + ") number required"));
+  return (0.0, fail(output.type_name(v) + " (" + output.shown(v) + ") number required"));
 }
 
 function texts(names: string[]): json.JsonValue[] {
@@ -3711,7 +3701,7 @@ function uri(s: string): string {
 // A row of `@csv` or of `@tsv`. null and NaN are empty fields.
 function row(name: string, v: json.JsonValue): Outputs {
   let json.JArray(items) = v else {
-    return fail(type_name(v) + " (" + shown(v) + ") cannot be " + name + "-formatted, only array");
+    return fail(output.type_name(v) + " (" + output.shown(v) + ") cannot be " + name + "-formatted, only array");
   };
   let fields: string[] = [];
   for x in items {
@@ -3734,7 +3724,7 @@ function row(name: string, v: json.JsonValue): Outputs {
         }
       },
       _ => {
-        return fail(type_name(x) + " (" + shown(x) + ") is not valid in a csv row");
+        return fail(output.type_name(x) + " (" + output.shown(x) + ") is not valid in a csv row");
       }
     }
   }
@@ -3757,10 +3747,10 @@ function shell(v: json.JsonValue): Outputs {
         words = words.append("'" + escaped(s, "sh") + "'");
       },
       json.JArray(_) => {
-        return fail(type_name(x) + " (" + shown(x) + ") can not be escaped for shell");
+        return fail(output.type_name(x) + " (" + output.shown(x) + ") can not be escaped for shell");
       },
       json.JObject(_) => {
-        return fail(type_name(x) + " (" + shown(x) + ") can not be escaped for shell");
+        return fail(output.type_name(x) + " (" + output.shown(x) + ") can not be escaped for shell");
       },
       _ => {
         words = words.append(output.compact(x));
@@ -3800,7 +3790,7 @@ function base64_decoded(s: string): Outputs {
     }
     let d = base64_digit(s[i]);
     if (d < 0) {
-      return fail("string (" + shown(json.JString(s)) + ") is not valid base64 data");
+      return fail("string (" + output.shown(json.JString(s)) + ") is not valid base64 data");
     }
     code = code * 64 + d;
     pending += 1;
@@ -3811,7 +3801,7 @@ function base64_decoded(s: string): Outputs {
     }
   }
   if (pending == 1) {
-    return fail("string (" + shown(json.JString(s)) + ") trailing base64 byte found");
+    return fail("string (" + output.shown(json.JString(s)) + ") trailing base64 byte found");
   }
   if (pending == 3) {
     bytes = bytes.append((code >> 10 & 255) as u8).append((code >> 2 & 255) as u8);
@@ -3949,7 +3939,7 @@ function delpaths(v: json.JsonValue, paths: json.JsonValue): Outputs {
   let sorted_paths: json.JsonValue[][] = [];
   for p in sorted_values(all) {
     let json.JArray(keys) = p else {
-      return fail("Path must be specified as array, not " + type_name(p));
+      return fail("Path must be specified as array, not " + output.type_name(p));
     };
     if (keys.len() == 0) {
       return one(json.JNull);
@@ -4017,7 +4007,7 @@ function delete_keys(v: json.JsonValue, keys: json.JsonValue[]): Outputs {
       let fields = o;
       for k in keys {
         let json.JString(name) = k else {
-          return fail("Cannot delete " + type_name(k) + " field of object");
+          return fail("Cannot delete " + output.type_name(k) + " field of object");
         };
         fields = fields.remove(name);
       }
@@ -4027,7 +4017,7 @@ function delete_keys(v: json.JsonValue, keys: json.JsonValue[]): Outputs {
       return delete_items(items, keys);
     },
     _ => {
-      return fail("Cannot delete fields from " + type_name(v));
+      return fail("Cannot delete fields from " + output.type_name(v));
     }
   }
 }
@@ -4059,7 +4049,7 @@ function delete_items(items: json.JsonValue[], keys: json.JsonValue[]): Outputs 
         end = b.end;
       },
       _ => {
-        return fail("Cannot delete " + type_name(k) + " element of array");
+        return fail("Cannot delete " + output.type_name(k) + " element of array");
       }
     }
     for i in start..end {
@@ -4083,10 +4073,10 @@ function delete_items(items: json.JsonValue[], keys: json.JsonValue[]): Outputs 
 // otherwise an array of the matches, with offsets and lengths in code points.
 function match_impl(input: json.JsonValue, re: json.JsonValue, flags: json.JsonValue, test: json.JsonValue): Outputs {
   let json.JString(text) = input else {
-    return fail(type_name(input) + " (" + shown(input) + ") cannot be matched, as it is not a string");
+    return fail(output.type_name(input) + " (" + output.shown(input) + ") cannot be matched, as it is not a string");
   };
   let json.JString(pattern) = re else {
-    return fail(type_name(re) + " (" + shown(re) + ") is not a string");
+    return fail(output.type_name(re) + " (" + output.shown(re) + ") is not a string");
   };
   let mode = "";
   match (flags) {
@@ -4100,7 +4090,7 @@ function match_impl(input: json.JsonValue, re: json.JsonValue, flags: json.JsonV
     },
     json.JNull => {},
     _ => {
-      return fail(type_name(flags) + " (" + shown(flags) + ") is not a string");
+      return fail(output.type_name(flags) + " (" + output.shown(flags) + ") is not a string");
     }
   }
   let compiled = match (regex.compile(pattern, mode)) {

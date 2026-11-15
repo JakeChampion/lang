@@ -8,6 +8,8 @@ import "std/json";
 import "std/string";
 import "std/utf8";
 import "./number";
+import "./output";
+import "./reader";
 
 pub enum Ast {
   Identity,
@@ -64,7 +66,7 @@ pub enum Tok {
   TEnd,
 }
 
-struct Lexed { toks: Tok[], offs: i32[], error: string }
+struct Lexed { toks: Tok[], offs: i32[], error: string, at: i32 }
 
 function is_ident_start(b: u8): boolean {
   return b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b == b'_';
@@ -120,37 +122,10 @@ function text(s: string, from: i32, to: i32): string {
   return slice_unchecked(s, from, to).to_owned();
 }
 
-function hex_digit(b: u8): i32 {
-  if (is_digit(b)) {
-    return (b - b'0') as i32;
-  }
-  if (b >= b'a' && b <= b'f') {
-    return (b - b'a') as i32 + 10;
-  }
-  if (b >= b'A' && b <= b'F') {
-    return (b - b'A') as i32 + 10;
-  }
-  return -1;
-}
-
-pub function hex4(s: string, i: i32): i32 {
-  if (i + 4 > s.len()) {
-    return -1;
-  }
-  let v = 0;
-  for k in i..i + 4 {
-    let d = hex_digit(s[k]);
-    if (d < 0) {
-      return -1;
-    }
-    v = v * 16 + d;
-  }
-  return v;
-}
-
 // A string literal. `texts` holds the text before each `\(...)`, and
-// `sources` holds the program between each pair of parentheses.
-struct Scanned { value: string, end: i32, error: string, texts: string[], sources: string[] }
+// `sources` holds the program between each pair of parentheses. `at` is
+// the place of an error.
+struct Scanned { value: string, end: i32, error: string, texts: string[], sources: string[], at: i32 }
 
 // The offset of the `)` that ends the interpolation whose program starts at
 // `i`, or -1.
@@ -200,14 +175,45 @@ function string_end(s: string, i: i32): i32 {
   return -1;
 }
 
-pub function codepoint_text(cp: i32): string {
-  if let Some(ch) = utf8.char_from_i32(cp) {
-    return utf8.encode(ch);
+// The end of the run of escapes at `j`, as the lexer of jq finds it: `\`
+// and a byte that is not `u` or `(`, or `\u` and up to four letters and
+// digits. A byte of more than one byte of UTF-8 stays whole.
+function escapes_end(s: string, j0: i32): i32 {
+  let j = j0;
+  while (j + 1 < s.len() && s[j] == b'\\' && s[j + 1] != b'(') {
+    if (s[j + 1] == b'u') {
+      j += 2;
+      let n = 0;
+      while (n < 4 && j < s.len() && is_alnum(s[j])) {
+        j += 1;
+        n += 1;
+      }
+    } else {
+      j += 1 + utf8_width(s[j + 1]);
+    }
   }
-  return "�";
+  return j;
 }
 
-// The string literal that starts at the quote at `i`.
+function utf8_width(b: u8): i32 {
+  if (b < 0xc0u8) {
+    return 1;
+  }
+  if (b < 0xe0u8) {
+    return 2;
+  }
+  if (b < 0xf0u8) {
+    return 3;
+  }
+  return 4;
+}
+
+function is_alnum(b: u8): boolean {
+  return b >= b'0' && b <= b'9' || b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z';
+}
+
+// The string literal that starts at the quote at `i`. As in jq, the JSON
+// reader reads each run of escapes in quotes, and gives its errors.
 function scan_string(s: string, i: i32): Scanned {
   let texts: string[] = [];
   let sources: string[] = [];
@@ -217,7 +223,7 @@ function scan_string(s: string, i: i32): Scanned {
   while (j < s.len()) {
     let b = s[j];
     if (b == b'"') {
-      return Scanned { value: out + text(s, run, j), end: j + 1, error: "", texts: texts, sources: sources };
+      return Scanned { value: out + text(s, run, j), end: j + 1, error: "", texts: texts, sources: sources, at: -1 };
     }
     if (b != b'\\') {
       j += 1;
@@ -232,7 +238,7 @@ function scan_string(s: string, i: i32): Scanned {
     if (e == b'(') {
       let close = interp_end(s, j);
       if (close < 0) {
-        return Scanned { value: "", end: j, error: "syntax error, unexpected QQSTRING_START", texts: [], sources: [] };
+        return Scanned { value: "", end: j, error: "syntax error, unexpected QQSTRING_START", texts: [], sources: [], at: -1 };
       }
       texts = texts.append(out);
       sources = sources.append(text(s, j, close));
@@ -241,36 +247,20 @@ function scan_string(s: string, i: i32): Scanned {
       run = j;
       continue;
     }
-    if (e == b'u') {
-      let cp = hex4(s, j);
-      if (cp < 0) {
-        return Scanned { value: "", end: j, error: "invalid \\u escape", texts: [], sources: [] };
-      }
-      j += 4;
-      if (cp >= 0xd800 && cp < 0xdc00 && j + 6 <= s.len() && s[j] == b'\\' && s[j + 1] == b'u') {
-        let lo = hex4(s, j + 2);
-        if (lo >= 0xdc00 && lo < 0xe000) {
-          cp = 0x10000 + (cp - 0xd800) * 1024 + (lo - 0xdc00);
-          j += 6;
-        }
-      }
-      out += codepoint_text(cp);
-    } else {
-      out += match (e) {
-        b'n' => "\n",
-        b't' => "\t",
-        b'r' => "\r",
-        b'b' => "\x08",
-        b'f' => "\x0c",
-        b'"' => "\"",
-        b'\\' => "\\",
-        b'/' => "/",
-        _ => "\\" + text(s, j - 1, j),
-      };
+    let start = j - 2;
+    let end = escapes_end(s, start);
+    let quoted = "\"" + text(s, start, end) + "\"";
+    let r = reader.read(quoted);
+    if (r.error.len() > 0 || r.values.len() != 1) {
+      return Scanned { value: "", end: end, error: r.error + " (while parsing '" + quoted + "')", texts: [], sources: [], at: start };
     }
+    if let json.JString(v) = r.values[0].value {
+      out += v;
+    }
+    j = end;
     run = j;
   }
-  return Scanned { value: "", end: j, error: "unterminated string literal", texts: [], sources: [] };
+  return Scanned { value: "", end: j, error: "unterminated string literal", texts: [], sources: [], at: -1 };
 }
 
 function two_char_punct(s: string, i: i32): string {
@@ -350,7 +340,7 @@ pub function lex(s: string): Lexed {
     } else if (b == b'"') {
       let sc = scan_string(s, i);
       if (sc.error.len() > 0) {
-        return Lexed { toks: toks, offs: offs, error: sc.error };
+        return Lexed { toks: toks, offs: offs, error: sc.error, at: if (sc.at >= 0) { sc.at } else { 0 } };
       }
       if (sc.sources.len() > 0) {
         toks = toks.append(TInterp(sc.texts.append(sc.value), sc.sources));
@@ -389,7 +379,7 @@ pub function lex(s: string): Lexed {
   }
   // jq places the end of the program at the start of its last token.
   let end = if (offs.len() > 0) { offs[offs.len() - 1] } else { 0 };
-  return Lexed { toks: toks.append(TEnd), offs: offs.append(end), error: "" };
+  return Lexed { toks: toks.append(TEnd), offs: offs.append(end), error: "", at: 0 };
 }
 
 // ---- Parser ----
@@ -404,7 +394,9 @@ pub struct Parsed { ast: Ast, error: string, at: i32, defs: string[], undefined:
 // program in `$__loc__`.
 // `undefined` holds the message of each call of a function that is not
 // defined, and `undefined_at` its offset. jq reports each of them.
-struct P { toks: Tok[], offs: i32[], at: i32, error: string, err_at: i32, defs: string[], library: boolean, file: string, check: boolean, undefined: string[], undefined_at: i32[] }
+// `ended` is true when the definitions of a library reach the end of the
+// text with no main expression.
+struct P { toks: Tok[], offs: i32[], at: i32, error: string, err_at: i32, defs: string[], library: boolean, file: string, check: boolean, undefined: string[], undefined_at: i32[], ended: boolean }
 
 function (p: P) peek(): Tok {
   return p.toks[p.at];
@@ -589,9 +581,9 @@ const PRELUDE: string = "def abs: if . < 0 then - . else . end;"
 pub function parse_unchecked(program: string, file: string, skip: i32): Parsed {
   let lx = lex(program);
   if (lx.error.len() > 0) {
-    return Parsed { ast: Identity, error: lx.error, at: 0, defs: [], undefined: [], undefined_at: [] };
+    return Parsed { ast: Identity, error: lx.error, at: lx.at, defs: [], undefined: [], undefined_at: [] };
   }
-  let p = P { toks: lx.toks, offs: lx.offs, at: skip, error: "", err_at: 0, defs: [], library: true, file: file, check: false, undefined: [], undefined_at: [] };
+  let p = P { toks: lx.toks, offs: lx.offs, at: skip, error: "", err_at: 0, defs: [], library: true, file: file, check: false, undefined: [], undefined_at: [], ended: false };
   if let TEnd = p.peek() {
     return Parsed { ast: Identity, error: "", at: 0, defs: [], undefined: [], undefined_at: [] };
   }
@@ -630,21 +622,22 @@ function defined_before(defs: Ast, program: Ast): Ast {
 pub function parse_in(program: string, defs: string[], file: string, library: boolean, skip: i32): Parsed {
   let lx = lex(program);
   if (lx.error.len() > 0) {
-    return Parsed { ast: Identity, error: lx.error, at: 0, defs: [], undefined: [], undefined_at: [] };
+    return Parsed { ast: Identity, error: lx.error, at: lx.at, defs: [], undefined: [], undefined_at: [] };
   }
-  let p = P { toks: lx.toks, offs: lx.offs, at: skip, error: "", err_at: 0, defs: defs, library: library, file: file, check: true, undefined: [], undefined_at: [] };
+  let p = P { toks: lx.toks, offs: lx.offs, at: skip, error: "", err_at: 0, defs: defs, library: library, file: file, check: true, undefined: [], undefined_at: [], ended: false };
   if (library) {
     if let TEnd = p.peek() {
       return Parsed { ast: Identity, error: "", at: 0, defs: [], undefined: [], undefined_at: [] };
-    }
-    if (!p.is_ident("def")) {
-      let q = p.fail("library should only have function definitions, not a main expression");
-      return Parsed { ast: Identity, error: q.error, at: q.err_at, defs: [], undefined: [], undefined_at: [] };
     }
   }
   let (ast, q) = parse_pipe(p);
   if (q.error.len() == 0) {
     if let TEnd = q.peek() {
+      // As jq_parse_library does, a library that parses and has a main
+      // expression gets an error with no place.
+      if (library && !q.ended) {
+        return Parsed { ast: Identity, error: MAIN_IN_LIBRARY, at: -1, defs: [], undefined: [], undefined_at: [] };
+      }
       return Parsed { ast: ast, error: "", at: 0, defs: top_defs(ast), undefined: q.undefined, undefined_at: q.undefined_at };
     }
     q = q.fail(unexpected(q.peek()) + END_EXPECTED);
@@ -949,8 +942,9 @@ function parse_pattern_key(p: P): (Ast, P) {
     _ => {
       if (p.is_punct("(")) {
         let (key, q) = parse_pipe(p.advance());
-        if let Literal(json.JNumber(n)) = key {
-          return (Identity, p.fail("Cannot use number (" + n + ") as object key"));
+        let bad = key_error(key);
+        if (bad.len() > 0) {
+          return (Identity, p.fail(bad));
         }
         return (key, q.expect(")"));
       }
@@ -1387,16 +1381,15 @@ function parse_def(p: P): (Ast, P) {
   }
   if let TEnd = t.peek() {
     if (t.library) {
-      return (Def(name, params, body, Identity), P { ...t, defs: outer });
+      return (Def(name, params, body, Identity), P { ...t, defs: outer, ended: true });
     }
     return (Identity, t.fail("Top-level program not given (try \".\")"));
-  }
-  if (t.library && !t.is_ident("def")) {
-    return (Identity, t.fail("library should only have function definitions, not a main expression"));
   }
   let (rest, u) = parse_pipe(t);
   return (Def(name, params, body, rest), P { ...u, defs: outer });
 }
+
+pub const MAIN_IN_LIBRARY: string = "jq: error: library should only have function definitions, not a main expression";
 
 // The name of a parameter with no `$`.
 pub function param_name(x: string): string {
@@ -1519,6 +1512,10 @@ function parse_object_key(p: P): (Ast, Ast, P) {
     TPunct(x) => {
       if (x == "(") {
         let (k, q) = parse_pipe(p.advance());
+        let bad = key_error(k);
+        if (bad.len() > 0) {
+          return (Identity, Identity, p.fail(bad));
+        }
         return (k, Index(Identity, k), q.expect(")"));
       }
       return (Identity, Identity, p.fail(unexpected(p.peek())));
@@ -1619,9 +1616,9 @@ pub struct Directives { meta: json.JsonValue, deps: Directive[], next: i32, erro
 pub function directives(program: string): Directives {
   let lx = lex(program);
   if (lx.error.len() > 0) {
-    return Directives { meta: json.JNull, deps: [], next: 0, error: lx.error, at: 0 };
+    return Directives { meta: json.JNull, deps: [], next: 0, error: lx.error, at: lx.at };
   }
-  let p = P { toks: lx.toks, offs: lx.offs, at: 0, error: "", err_at: 0, defs: [], library: false, file: "", check: true, undefined: [], undefined_at: [] };
+  let p = P { toks: lx.toks, offs: lx.offs, at: 0, error: "", err_at: 0, defs: [], library: false, file: "", check: true, undefined: [], undefined_at: [], ended: false };
   let meta: json.JsonValue = json.JNull;
   if (p.is_ident("module")) {
     let (m, q) = parse_metadata(p.advance());
@@ -1693,6 +1690,19 @@ function parse_metadata(p: P): (json.JsonValue, P) {
   return (v, q);
 }
 
+// jq's check_object_key: the error of a key in parentheses that is a
+// constant but not a string, or "".
+function key_error(k: Ast): string {
+  let (v, constant) = const_of(k);
+  if (!constant) {
+    return "";
+  }
+  if let json.JString(_) = v {
+    return "";
+  }
+  return "Cannot use " + output.type_name(v) + " (" + output.shown(v) + ") as object key";
+}
+
 // The value of a constant filter, and whether it is constant.
 function const_of(e: Ast): (json.JsonValue, boolean) {
   match (e) {
@@ -1728,10 +1738,131 @@ function const_of(e: Ast): (json.JsonValue, boolean) {
       }
       return (json.JObject(o), true);
     },
+    Arith(op, a, b) => {
+      return fold_arith(op, a, b);
+    },
+    Compare(op, a, b) => {
+      return fold_compare(op, a, b);
+    },
     _ => {
       return (json.JNull, false);
     }
   }
+}
+
+// jq's constant_fold of an operator of arithmetic on two constants. jq
+// folds each operator, and an error gives no constant. This folds the
+// operators on numbers, and `+` on null, strings and arrays.
+function fold_arith(op: string, a: Ast, b: Ast): (json.JsonValue, boolean) {
+  let (x, xc) = const_of(a);
+  let (y, yc) = const_of(b);
+  if (!xc || !yc) {
+    return (json.JNull, false);
+  }
+  if (op == "+") {
+    if let json.JNull = x {
+      return (y, true);
+    }
+    if let json.JNull = y {
+      return (x, true);
+    }
+    if let json.JString(s) = x {
+      if let json.JString(t) = y {
+        return (json.JString(s + t), true);
+      }
+    }
+    if let json.JArray(s) = x {
+      if let json.JArray(t) = y {
+        return (json.JArray(s.concat(t)), true);
+      }
+    }
+  }
+  let json.JNumber(m) = x else {
+    return (json.JNull, false);
+  };
+  let json.JNumber(n) = y else {
+    return (json.JNull, false);
+  };
+  let u = number.value(m);
+  let v = number.value(n);
+  if (op == "+") {
+    return (json.JNumber(number.format(u + v)), true);
+  }
+  if (op == "-") {
+    return (json.JNumber(number.format(u - v)), true);
+  }
+  if (op == "*") {
+    return (json.JNumber(number.format(u * v)), true);
+  }
+  if (op == "/" && v != 0.0) {
+    return (json.JNumber(number.format(u / v)), true);
+  }
+  if (op == "%") {
+    return fold_remainder(u, v);
+  }
+  return (json.JNull, false);
+}
+
+// The remainder of jq on two integers of intmax_t, as eval gives it.
+function fold_remainder(u: f64, v: f64): (json.JsonValue, boolean) {
+  if (u != u || v != v) {
+    return (json.JNumber(number.format(0.0 / 0.0)), true);
+  }
+  let d = number.int_magnitude(v);
+  if (d == 0u64) {
+    return (json.JNull, false);
+  }
+  let m = (number.int_magnitude(u) % d) as f64;
+  return (json.JNumber(number.format(if (u < 0.0) { -m } else { m })), true);
+}
+
+// jq's constant_fold of a comparison of two constants that are null,
+// booleans, numbers or strings.
+function fold_compare(op: string, a: Ast, b: Ast): (json.JsonValue, boolean) {
+  let (x, xc) = const_of(a);
+  let (y, yc) = const_of(b);
+  if (!xc || !yc) {
+    return (json.JNull, false);
+  }
+  let kx = scalar_rank(x);
+  let ky = scalar_rank(y);
+  if (kx < 0 || ky < 0) {
+    return (json.JNull, false);
+  }
+  let c = kx - ky;
+  if (c == 0) {
+    if let json.JNumber(m) = x {
+      if let json.JNumber(n) = y {
+        c = number.compare(m, n);
+      }
+    }
+    if let json.JString(s) = x {
+      if let json.JString(t) = y {
+        c = if (s < t) { -1 } else if (s > t) { 1 } else { 0 };
+      }
+    }
+  }
+  let r = match (op) {
+    "==" => c == 0,
+    "!=" => c != 0,
+    "<" => c < 0,
+    "<=" => c <= 0,
+    ">" => c > 0,
+    _ => c >= 0,
+  };
+  return (json.JBool(r), true);
+}
+
+// The place of a value in the order of jq for the kinds before arrays, or
+// -1 for an array or an object.
+function scalar_rank(v: json.JsonValue): i32 {
+  return match (v) {
+    json.JNull => 0,
+    json.JBool(b) => if (b) { 2 } else { 1 },
+    json.JNumber(_) => 3,
+    json.JString(_) => 4,
+    _ => -1,
+  };
 }
 
 // The parts of `a, b, c`.
