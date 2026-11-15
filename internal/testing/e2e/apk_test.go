@@ -76,7 +76,7 @@ func TestApkWriter(t *testing.T) {
 			t.Errorf("%s: data at %d, want a multiple of %d", f.Name, off, align)
 		}
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	man := readZipEntry(t, zr, "AndroidManifest.xml")
@@ -288,11 +288,11 @@ func TestApkRefusals(t *testing.T) {
 			t.Errorf("%v: want a refusal, got %v\n%s", flag, err, o)
 		}
 	}
-	for _, level := range []string{"9", "35", "x"} {
+	for _, level := range []string{"9", "37", "x"} {
 		args := []string{"-apk", filepath.Join(dir, "z.apk"), "-apk-min-sdk", level, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
 		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
 		cmd.Env = e2eharness.ChildEnv()
-		if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "-apk-min-sdk takes an API level from 24 to 34") {
+		if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "-apk-min-sdk takes an API level from 24 to 36") {
 			t.Errorf("-apk-min-sdk %s: want a refusal, got %v\n%s", level, err, o)
 		}
 	}
@@ -380,7 +380,7 @@ func TestApkIcon(t *testing.T) {
 			t.Errorf("%s: method %d at %d, want stored at a multiple of 4 (%v)", f.Name, f.Method, off, err)
 		}
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml resources.arsc res/drawable/icon.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	if got := readZipEntry(t, zr, "res/drawable/icon.png"); !bytes.Equal(got, buf.Bytes()) {
@@ -437,8 +437,8 @@ func TestApkBanner(t *testing.T) {
 		entries string
 		id      string
 	}{
-		{"with an icon", []string{"-apk-icon", icon, "-apk-banner", banner}, "AndroidManifest.xml resources.arsc res/drawable/icon.png res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010001"},
-		{"alone", []string{"-apk-banner", banner}, "AndroidManifest.xml resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010000"},
+		{"with an icon", []string{"-apk-icon", icon, "-apk-banner", banner}, "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010001"},
+		{"alone", []string{"-apk-banner", banner}, "AndroidManifest.xml classes.dex resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path, raw := buildApk(t, dir, tc.flags...)
@@ -602,7 +602,7 @@ func v2Digest(sections ...[]byte) []byte {
 
 // An app with @jni classes: fern -apk writes them to classes.dex, the
 // manifest says hasCode, and the class that extends NativeActivity is the
-// activity. TestApkWriter's app has no @jni class, and so no classes.dex.
+// activity.
 func TestApkJniClasses(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "dextest.apk")

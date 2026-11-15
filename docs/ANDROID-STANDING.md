@@ -50,8 +50,8 @@ Play today:
 
 1. **Play Store packaging.** Play needs an AAB, a version code that goes
    up, and a target API level of 36 for new apps and updates since
-   31 August 2026. `fern -apk` writes an APK only, and its target API
-   level is 34.
+   31 August 2026. `fern -apk` writes an APK only. Its target API level
+   was 34, and it is now 36.
 
 2. **No Java or Kotlin libraries.** The APK path cannot include a JAR or
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
@@ -101,7 +101,7 @@ compressed.
 |---|---|---|---|---|
 | Toolchain to install | None | Android Studio, Gradle, JDK | Flutter SDK, Android SDK | Node, Android SDK, Gradle |
 | Release format | Signed APK | AAB with R8 | AAB | AAB through EAS |
-| Target API 36 | No (34) | Yes | Yes | Yes |
+| Target API 36 | Yes | Yes | Yes | Yes |
 | Download size of a small app | About 0.1 to 1 MB | About 2 MB | Several MB per ABI | About 16 MB |
 | Use of Android and Java libraries | JNI and generated bindings, no JAR or AAR | Direct | Plugins and channels | Native modules |
 | Hot reload | No | Live Edit, limited | Yes, stateful | Fast Refresh |
@@ -126,9 +126,9 @@ The order puts first what stops a release, then what most apps need.
    - The version code and the version name: `-apk-version-code`,
      `-apk-version-name`, and `version_code` and `version_name` in the
      `[android]` table. Done.
-   - Target API 36. An app that targets API 36 does not get the back key
+   - Target API 36, done. An app that targets API 36 does not get the back key
      as a key event, so it needs a back callback. Its window goes under
-     the system bars, so it needs the insets of the bars.
+     the system bars, so it needs the insets of the bars. `std/android/launch` registers both.
    - An AAB, with the manifest and the resources in the protocol buffer
      format of aapt2.
 

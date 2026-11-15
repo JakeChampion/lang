@@ -95,7 +95,7 @@ pub const MIN_SDK: i32 = 24;
 // The largest android:versionCode that Google Play takes.
 pub const MAX_VERSION_CODE: i64 = 2100000000i64;
 
-pub const TARGET_SDK: i32 = 34;
+pub const TARGET_SDK: i32 = 36;
 
 // Byte encodings, little-endian.
 
@@ -133,11 +133,12 @@ function prefixed(b: [u8]): u8[] {
 // excludeFromRecents, launchMode,
 // configChanges, value, minSdkVersion, versionCode, versionName,
 // resource, windowSoftInputMode, targetSdkVersion, resumeWhilePausing,
-// extractNativeLibs, usesCleartextTraffic and foregroundServiceType. Android
+// extractNativeLibs, usesCleartextTraffic, foregroundServiceType and
+// enableOnBackInvokedCallback. Android
 // finds the attributes of an element by a search in the order of their IDs,
 // so each element lists its attributes in that order too.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16843276, 16843291, 16843292, 16843307, 16843376, 16843406, 16843762, 16843954, 16844010, 16844012, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16843276, 16843291, 16843292, 16843307, 16843376, 16843406, 16843762, 16843954, 16844010, 16844012, 16844185, 16844396];
 }
 
 // The features and the launcher category of an app for Android TV.
@@ -201,15 +202,17 @@ const S_CLEARTEXT: i32 = 25;
 
 const S_FOREGROUND_TYPE: i32 = 26;
 
-const S_PREFIX: i32 = 27;
+const S_BACK_CALLBACK: i32 = 27;
 
-const S_URI: i32 = 28;
+const S_PREFIX: i32 = 28;
 
-const S_PACKAGE: i32 = 29;
+const S_URI: i32 = 29;
+
+const S_PACKAGE: i32 = 30;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "required", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
+    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "required", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType", "enableOnBackInvokedCallback",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -454,6 +457,9 @@ pub function manifest(app: App): u8[] {
   if (app.cleartext) {
     app_attrs = app_attrs.append(attr_int(S_CLEARTEXT, 18, -1));
   }
+  // The back key goes to the OnBackInvokedCallback of std/android from
+  // Android 13, as it must for an app that targets Android 16.
+  app_attrs = app_attrs.append(attr_int(S_BACK_CALLBACK, 18, -1));
   body = start(body, 3, application, app_attrs);
   activity_attrs = activity_attrs.append(attr_str(S_NAME, at(s, app.activity))).append(attr_int(S_EXPORTED, 18, -1));
   if (app.home) {
@@ -464,7 +470,8 @@ pub function manifest(app: App): u8[] {
   // singleTask, so a start of the app that runs gives its intent to the
   // activity, and the process has one activity and one loop.
   // SOFT_INPUT_ADJUST_RESIZE, so the content rectangle leaves out the
-  // keyboard.
+  // keyboard before Android 15. From Android 15 the window goes under the
+  // bars and the keyboard, and std/android reads their insets.
   activity_attrs = activity_attrs.append(attr_int(S_LAUNCH_MODE, 16, 2)).append(attr_int(S_CONFIG_CHANGES, 17, 1184)).append(attr_int(S_SOFT_INPUT, 17, 16));
   if (app.home) {
     // resumeWhilePausing, so home shows at once.
