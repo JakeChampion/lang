@@ -134,6 +134,11 @@ function wide(s: string, o: i32): u64 { return s[o] as u64 << 56 | s[o + 1] as u
 function main(): i32 { let s: string = "the quick brown fox"; return ((word(s, 3) ^ word(s, 15) ^ (wide(s, 9) >> 21u64) as u32 ^ wide(slice_unchecked(s, 2, 12), 1) as u32) & 63u32) as i32; }`},
 	{"grouped_view_word", `function word(v: str, o: i32): u32 { return v[o] as u32 | v[o + 1] as u32 << 8 | v[o + 2] as u32 << 16 | v[o + 3] as u32 << 24; }
 function main(): i32 { let s: string = "the quick brown fox"; let v: str = slice_unchecked(s, 4, 15); return ((word(v, 2) ^ word(slice_unchecked(s, 1, 9), 3)) & 63u32) as i32; }`},
+	{"grouped_nested_offset", `@inline function le32(bs: [u8], at: i32): u32 { return bs[at] as u32 | bs[at + 1] as u32 << 8 | bs[at + 2] as u32 << 16 | bs[at + 3] as u32 << 24; }
+function mix(bs: [u8]): u32 { let t: u32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 8; while (i <= last) { t = t ^ le32(bs, i + 4); i = i + 3; } return t; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]; return (mix(xs) & 63u32) as i32; }`},
+	{"written_param_guard", `function put(own out: u8[], k: i32): u8[] { let n: i32 = 0; let room: i32 = out.len() - 4; while (n <= room && n < k) { out = out.with(n, 1u8); out = out.with(n + 3, 2u8); n = n + 1; } return out; }
+function main(): i32 { let xs: u8[] = [0, 0, 0, 0, 0, 0, 0, 0]; let ys: u8[] = put(xs, 100); return ys[0] as i32 + ys[7] as i32 * 3 + ys.len(); }`},
 }
 
 var guardBoundsTwins = []struct{ name, proven, unproven string }{
@@ -179,6 +184,18 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"grouped_reads",
 		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 5); }`,
 		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 / d + bs[off + 2] as i32 / d + bs[off + 3] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 1) + 2; }`},
+	{"grouped_nested_offset",
+		`@inline function le32(bs: [u8], at: i32): u32 { return bs[at] as u32 | bs[at + 1] as u32 << 8 | bs[at + 2] as u32 << 16 | bs[at + 3] as u32 << 24; } @noinline function mix(bs: [u8]): u32 { let t: u32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 8; while (i <= last) { t = t ^ le32(bs, i + 4); i = i + 3; } return t; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9]; return (mix(xs) & 63u32) as i32; }`,
+		`@inline function le32(bs: [u8], at: i32): u32 { return bs[at] as u32 | bs[at + 1] as u32 << 8 | bs[at + 2] as u32 << 16 | bs[at + 3] as u32 << 24; } @noinline function mix(bs: [u8]): u32 { let t: u32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 7; while (i <= last) { t = t ^ le32(bs, i + 4); i = i + 3; } return t; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9]; return (mix(xs) & 63u32) as i32; }`},
+	{"written_param_guard",
+		`@noinline function put(own out: u8[], k: i32): u8[] { let n: i32 = 0; let room: i32 = out.len() - 4; while (n <= room && n < k) { out = out.with(n, 1u8); out = out.with(n + 3, 2u8); n = n + 1; } return out; } function main(): i32 { let xs: u8[] = [0, 0, 0, 0, 0, 0, 0, 0]; return put(xs, 100)[7] as i32; }`,
+		`@noinline function put(own out: u8[], k: i32): u8[] { let n: i32 = 0; let room: i32 = k - 4; while (n <= room && n < k) { out = out.with(n, 1u8); out = out.with(n + 3, 2u8); n = n + 1; } return out; } function main(): i32 { let xs: u8[] = [0, 0, 0, 0, 0, 0, 0, 0]; return put(xs, 8)[7] as i32; }`},
+	{"lane_write_offset",
+		`@noinline function put(own out: u8[]): u8[] { let v = __u8x16_splat(7u8); let n: i32 = 0; let room: i32 = out.len() - 32; while (n <= room) { out = __u8x16_with(out, n + 16, v); n = n + 4; } return out; } function main(): i32 { let xs: u8[] = __alloc_u8(40); return put(xs)[39] as i32; }`,
+		`@noinline function put(own out: u8[]): u8[] { let v = __u8x16_splat(7u8); let n: i32 = 0; let room: i32 = out.len() - 31; while (n <= room) { out = __u8x16_with(out, n + 16, v); n = n + 4; } return out; } function main(): i32 { let xs: u8[] = __alloc_u8(40); return put(xs)[39] as i32; }`},
+	{"lane_read_back",
+		`@noinline function back(own out: u8[], d: i32): u8[] { let k: i32 = d & 15; let n: i32 = 16; let room: i32 = out.len() - 48; while (n <= room) { if (k > n) { return out; } let v = __u8x16_load(out, n - k + 16); out = __u8x16_with(out, n, v); n = n + 16; } return out; } function main(): i32 { let xs: u8[] = __alloc_u8(96); xs = xs.with(30, 9u8); return back(xs, 5)[73] as i32; }`,
+		`@noinline function back(own out: u8[], d: i32): u8[] { let k: i32 = d & 15; let n: i32 = 16; let room: i32 = out.len() - 48; while (n <= room) { let v = __u8x16_load(out, n - k + 16); out = __u8x16_with(out, n, v); n = n + 16; } return out; } function main(): i32 { let xs: u8[] = __alloc_u8(96); xs = xs.with(30, 9u8); return back(xs, 5)[73] as i32; }`},
 }
 
 var guardBoundsUnsafe = []struct{ name, src string }{
@@ -248,6 +265,19 @@ function main(): i32 { return word("abcdefg") as i32; }`},
 function main(): i32 { let s: string = "abcdefghijkl"; return word(slice_unchecked(s, 2, 7), 2) as i32; }`},
 	{"grouped_view_word_far_end", `function word(v: str, o: i32): u32 { return v[o] as u32 | v[o + 1] as u32 << 8 | v[o + 2] as u32 << 16 | v[o + 3] as u32 << 24; }
 function main(): i32 { let s: string = "abcdefghijkl"; let v: str = slice_unchecked(s, 2, 7); return word(v, 2) as i32; }`},
+	{"grouped_nested_offset_far_end", `@inline function le32(bs: [u8], at: i32): u32 { return bs[at] as u32 | bs[at + 1] as u32 << 8 | bs[at + 2] as u32 << 16 | bs[at + 3] as u32 << 24; }
+function mix(bs: [u8]): u32 { let t: u32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 7; while (i <= last) { t = t ^ le32(bs, i + 4); i = i + 1; } return t; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8]; return mix(xs) as i32; }`},
+	{"lane_write_past_guard", `function put(own out: u8[]): u8[] { let v = __u8x16_splat(7u8); let n: i32 = 0; let room: i32 = out.len() - 31; while (n <= room) { out = __u8x16_with(out, n + 16, v); n = n + 1; } return out; }
+function main(): i32 { let xs: u8[] = __alloc_u8(40); return put(xs)[0] as i32; }`},
+	{"lane_read_past_guard", `function scan(bs: u8[]): i32 { let t: i32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 31; while (i <= last) { t = t + __u8x16_bitmask(__u8x16_load(bs, i + 16)); i = i + 1; } return t; }
+function main(): i32 { let xs: u8[] = __alloc_u8(40); return scan(xs); }`},
+	{"lane_read_back_past_guard", `function back(own out: u8[], d: i32): u8[] { let n: i32 = 16; let room: i32 = out.len() - 48; while (n <= room) { if (d > n + 20) { return out; } let v = __u8x16_load(out, n - d); out = __u8x16_with(out, n, v); n = n + 16; } return out; }
+function main(): i32 { let xs: u8[] = __alloc_u8(96); return back(xs, 30)[0] as i32; }`},
+	{"written_param_past_guard", `function put(own out: u8[]): u8[] { let n: i32 = 0; let room: i32 = out.len() - 2; while (n <= room) { out = out.with(n + 2, 2u8); n = n + 1; } return out; }
+function main(): i32 { let xs: u8[] = [0, 0, 0, 0]; return put(xs)[0] as i32; }`},
+	{"written_param_replaced", `function put(own out: u8[]): u8[] { let n: i32 = 0; let room: i32 = out.len() - 1; while (n <= room) { out = out.with(n, 2u8); if (n == 0) { out = [1u8]; } n = n + 1; } return out; }
+function main(): i32 { let xs: u8[] = [0, 0, 0, 0]; return put(xs).len(); }`},
 }
 
 func TestSelfHostGuardBoundsX86_64(t *testing.T) {
