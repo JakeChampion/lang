@@ -16233,6 +16233,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.onceCalls = map[*ast.Call]bool{}
 			}
 			c.onceCalls[n] = true
+			if c.holdsNoHandle(ft) {
+				if c.handleFreeArgs == nil {
+					c.handleFreeArgs = map[ast.Expr]bool{}
+				}
+				c.handleFreeArgs[n.Callee] = true
+			}
 		}
 		if ft != nil {
 			c.recordOwnedResult(n, ft.ResultOwn)

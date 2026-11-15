@@ -43,6 +43,7 @@ a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
 a_once_closure_owns_its_captures                     0
+a_once_function_called_through_an_alias              0
 a_once_function_type_in_a_generic_position           0
 a_receiver_method_lifts_a_closure_that_captures_its_receiver 0
 a_returned_value_match_returns_from_each_arm         0
