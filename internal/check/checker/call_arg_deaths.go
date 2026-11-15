@@ -27,22 +27,13 @@ type IdentOrder struct {
 	Idx    map[*ast.Ident]int
 	last   map[string]int
 	byName map[string][]*ast.Ident
-	arms   map[*ast.Ident][]forkArm
-}
-
-// forkArm is one arm of a match or an if outside every loop. One run takes
-// one arm, so an identifier in one arm is not after one in another arm.
-// exit is true when the arm ends in a return: an identifier outside the arm
-// is not after one in it.
-type forkArm struct {
-	fork, arm int
-	exit      bool
+	flow   *flowTree
 }
 
 // IdentOrderOf numbers the identifiers of body in source order. The else arm
 // of a let-else is the last arm of its match, but the source writes it first.
 func IdentOrderOf(body ast.Node) IdentOrder {
-	o := IdentOrder{Idx: map[*ast.Ident]int{}, last: map[string]int{}, byName: map[string][]*ast.Ident{}, arms: map[*ast.Ident][]forkArm{}}
+	o := IdentOrder{Idx: map[*ast.Ident]int{}, last: map[string]int{}, byName: map[string][]*ast.Ident{}}
 	n := 0
 	var visit func(node ast.Node) bool
 	visit = func(node ast.Node) bool {
@@ -74,106 +65,241 @@ func IdentOrderOf(body ast.Node) IdentOrder {
 	}
 	ast.Walk(body, visit)
 	if st, ok := body.(ast.Stmt); ok {
-		forks := 0
-		o.markForks(st, nil, &forks)
+		o.flow = newFlowTree(st, o.Idx)
 	}
 	return o
 }
 
-// markForks records the arms of the forks that hold each identifier of st.
-// A loop body can take each arm in turn, so it records no fork inside a loop.
-func (o IdentOrder) markForks(st ast.Stmt, path []forkArm, forks *int) {
-	in := func(fork, arm int, body ast.Stmt) []forkArm {
-		return append(slices.Clone(path), forkArm{fork, arm, endsInReturn(body)})
-	}
-	switch x := st.(type) {
-	case *ast.Block:
-		for _, s := range x.Stmts {
-			o.markForks(s, path, forks)
-		}
-		return
-	case *ast.If:
-		fork := *forks
-		*forks++
-		o.markIdents(x.Cond, path)
-		if x.Then != nil {
-			o.markForks(x.Then, in(fork, 0, x.Then), forks)
-		}
-		if x.Else != nil {
-			o.markForks(x.Else, in(fork, 1, x.Else), forks)
-		}
-		return
-	case *ast.Match:
-		fork := *forks
-		*forks++
-		o.markIdents(x.Tag, path)
-		for i, a := range x.Arms {
-			if a.Guard != nil {
-				o.markIdents(a.Guard, in(fork, i, nil))
-			}
-			if a.Body != nil {
-				o.markForks(a.Body, in(fork, i, a.Body), forks)
-			}
-		}
-		return
-	}
-	o.markIdents(st, path)
-}
-
-func (o IdentOrder) markIdents(node ast.Node, path []forkArm) {
-	if len(path) == 0 || node == nil {
-		return
-	}
-	ast.Walk(node, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok {
-			o.arms[id] = path
-		}
-		return true
-	})
-}
-
+// IsLast reports whether no run reads the name of id after id: each later
+// read is in a branch that the run of id does not take, or after a return.
 func (o IdentOrder) IsLast(id *ast.Ident) bool {
 	if o.Idx[id] == o.last[id.Name] {
 		return true
 	}
+	node := -2
 	for _, later := range o.byName[id.Name] {
-		if o.Idx[later] > o.Idx[id] && !forksApart(o.arms[id], o.arms[later]) {
+		if o.Idx[later] <= o.Idx[id] {
+			continue
+		}
+		if o.flow == nil {
+			return false
+		}
+		if node == -2 {
+			node = o.flow.nodeAt(o.Idx[id])
+		}
+		if o.flow.reaches(node, o.Idx[later]) {
 			return false
 		}
 	}
 	return true
 }
 
-// forksApart reports whether no run reaches b after a, for a b after a: the
-// two are in two arms of one fork, or a is in an arm that ends in a return
-// and b is outside that arm.
-func forksApart(a, b []forkArm) bool {
-	for _, x := range a {
-		inFork := false
-		for _, y := range b {
-			if x.fork == y.fork {
-				inFork = true
-				if x.arm != y.arm {
-					return true
+// flowTree holds the statements of a function as a tree, for the question
+// whether a run can read one identifier after another, as LuFlow of
+// compiler/checker.fern does. Node n is a statement: first[n] and last[n]
+// are the numbers of its first and its last identifier, or -1. ends[n] is
+// true when no run goes on after it, looping[n] for a loop, kids[n] are its
+// blocks, and block[n] and slot[n] say where it is. Block b holds the nodes
+// blocks[b] in order, and owner[b] is the node that holds it, or -1.
+type flowTree struct {
+	first, last []int
+	ends        []bool
+	looping     []bool
+	kids        [][]int
+	block, slot []int
+	blocks      [][]int
+	owner       []int
+}
+
+func newFlowTree(body ast.Stmt, idx map[*ast.Ident]int) *flowTree {
+	f := &flowTree{}
+	f.addBlock(flowStmts(body), -1, idx)
+	return f
+}
+
+// flowStmts is the statements of a block, or the one statement st.
+func flowStmts(st ast.Stmt) []ast.Stmt {
+	if st == nil {
+		return nil
+	}
+	if b, ok := st.(*ast.Block); ok {
+		if b == nil {
+			return nil
+		}
+		return b.Stmts
+	}
+	return []ast.Stmt{st}
+}
+
+func (f *flowTree) addBlock(stmts []ast.Stmt, owner int, idx map[*ast.Ident]int) {
+	b := len(f.blocks)
+	f.blocks = append(f.blocks, nil)
+	f.owner = append(f.owner, owner)
+	var nodes []int
+	for k, st := range stmts {
+		n := len(f.first)
+		lo, hi := -1, -1
+		ast.Walk(st, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok {
+				if at, numbered := idx[id]; numbered {
+					if lo < 0 || at < lo {
+						lo = at
+					}
+					if at > hi {
+						hi = at
+					}
 				}
 			}
+			return true
+		})
+		f.first = append(f.first, lo)
+		f.last = append(f.last, hi)
+		f.ends = append(f.ends, flowEnds(st))
+		f.looping = append(f.looping, flowLoop(st))
+		f.kids = append(f.kids, nil)
+		f.block = append(f.block, b)
+		f.slot = append(f.slot, k)
+		nodes = append(nodes, n)
+		var kids []int
+		for _, body := range flowBodies(st) {
+			kids = append(kids, len(f.blocks))
+			f.addBlock(body, n, idx)
 		}
-		if x.exit && !inFork {
+		f.kids[n] = kids
+	}
+	f.blocks[b] = nodes
+}
+
+// flowBodies is the blocks of st that the flow follows: the arms of an if or
+// a match, and the body of a loop.
+func flowBodies(st ast.Stmt) [][]ast.Stmt {
+	switch x := st.(type) {
+	case *ast.If:
+		return [][]ast.Stmt{flowStmts(x.Then), flowStmts(x.Else)}
+	case *ast.Match:
+		var out [][]ast.Stmt
+		for _, a := range x.Arms {
+			out = append(out, flowStmts(a.Body))
+		}
+		return out
+	case *ast.While:
+		return [][]ast.Stmt{flowStmts(x.Body)}
+	case *ast.Loop:
+		return [][]ast.Stmt{flowStmts(x.Body)}
+	case *ast.For:
+		return [][]ast.Stmt{flowStmts(x.Body)}
+	case *ast.ForEach:
+		return [][]ast.Stmt{flowStmts(x.Body)}
+	}
+	return nil
+}
+
+func flowLoop(st ast.Stmt) bool {
+	switch st.(type) {
+	case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
+		return true
+	}
+	return false
+}
+
+// flowEnds reports whether no run goes on after st. A break or a continue
+// goes on elsewhere, so it does not end the run here.
+func flowEnds(st ast.Stmt) bool {
+	switch x := st.(type) {
+	case *ast.Return:
+		return true
+	case *ast.Block:
+		return x != nil && flowBlockEnds(x.Stmts)
+	case *ast.If:
+		return flowBlockEnds(flowStmts(x.Then)) && flowBlockEnds(flowStmts(x.Else))
+	case *ast.Match:
+		if len(x.Arms) == 0 {
+			return false
+		}
+		for _, a := range x.Arms {
+			if !flowBlockEnds(flowStmts(a.Body)) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func flowBlockEnds(stmts []ast.Stmt) bool {
+	for _, st := range stmts {
+		if flowEnds(st) {
 			return true
 		}
 	}
 	return false
 }
 
-// endsInReturn reports whether the arm body st ends in a return statement.
-func endsInReturn(st ast.Stmt) bool {
-	switch x := st.(type) {
-	case *ast.Return:
-		return true
-	case *ast.Block:
-		return x != nil && len(x.Stmts) > 0 && endsInReturn(x.Stmts[len(x.Stmts)-1])
+func (f *flowTree) holds(n, at int) bool {
+	return f.first[n] >= 0 && f.first[n] <= at && at <= f.last[n]
+}
+
+// nodeAt is the innermost statement that holds the identifier numbered at,
+// or -1.
+func (f *flowTree) nodeAt(at int) int {
+	found := -1
+	b := 0
+	for len(f.blocks) > 0 {
+		next := -1
+		for _, n := range f.blocks[b] {
+			if !f.holds(n, at) {
+				continue
+			}
+			found = n
+			for _, kb := range f.kids[n] {
+				for _, m := range f.blocks[kb] {
+					if next < 0 && f.holds(m, at) {
+						next = kb
+					}
+				}
+			}
+			break
+		}
+		if next < 0 {
+			return found
+		}
+		b = next
 	}
-	return false
+	return found
+}
+
+// reaches reports whether a run can reach the identifier numbered at after
+// statement n, which holds the earlier read. A run goes on through the
+// statements after n until one ends it, and out of the block to the
+// statements after its owner. The end of a loop body goes back to the loop,
+// so it reaches every place after.
+func (f *flowTree) reaches(n, at int) bool {
+	if n < 0 || f.holds(n, at) {
+		return true
+	}
+	if f.ends[n] {
+		return false
+	}
+	cur := n
+	for {
+		b := f.block[cur]
+		for _, m := range f.blocks[b][f.slot[cur]+1:] {
+			if f.holds(m, at) {
+				return true
+			}
+			if f.ends[m] {
+				return false
+			}
+		}
+		up := f.owner[b]
+		if up < 0 {
+			return false
+		}
+		if f.looping[up] {
+			return true
+		}
+		cur = up
+	}
 }
 
 func DeferOrLambdaNames(body ast.Node) map[string]bool {

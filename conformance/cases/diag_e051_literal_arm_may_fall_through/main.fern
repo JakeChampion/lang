@@ -1,0 +1,6 @@
+// The nested if has no else, so the arm can go on to the read after it.
+import "std/worker";
+struct Out { k: i32, w: Option[worker.Worker[i32]] }
+function bump(own o: Out, d: i32): Out { return Out { ...o, k: o.k + d }; }
+function bad(own o: Out, x: i32, y: i32): Out { if (x > 0) { let t = Out { ...o, k: 1 }; if (y > 0) { return bump(t, 1); } } return o; }
+function main(): i32 { return 0; }

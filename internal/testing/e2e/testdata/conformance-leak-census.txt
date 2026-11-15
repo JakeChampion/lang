@@ -476,6 +476,7 @@ handle_field_closes_from_local                       0
 handle_foreach_destructured_field_own                0
 handle_foreach_field_local_own                       0
 handle_let_literal_in_returning_arm                  0
+handle_literal_in_arm_of_nested_returns              0
 handle_literal_reads_scalar_field_of_base            0
 handle_nested_fields_close_from_owned_root           0
 handle_payload_closes_from_local_match               0
