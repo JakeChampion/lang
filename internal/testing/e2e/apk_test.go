@@ -748,6 +748,47 @@ func TestApkHome(t *testing.T) {
 	}
 }
 
+// -apk-tv puts the app on the launcher of Android TV: the leanback launcher
+// category beside the launcher category, and the leanback and touch screen
+// features, neither of them required. An APK without it has none of them.
+func TestApkTv(t *testing.T) {
+	dir := t.TempDir()
+	_, plain := buildApk(t, dir)
+	man := readZipEntry(t, zipOf(t, plain), "AndroidManifest.xml")
+	for _, s := range []string{"android.intent.category.LEANBACK_LAUNCHER", "android.software.leanback", "uses-feature"} {
+		if bytes.Contains(man, utf16le(s)) {
+			t.Errorf("an APK with no -apk-tv has the string %q", s)
+		}
+	}
+	path, raw := buildApk(t, dir, "-apk-tv")
+	man = readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
+	for _, s := range []string{"android.intent.category.LEANBACK_LAUNCHER", "android.intent.category.LAUNCHER", "android.software.leanback", "android.hardware.touchscreen"} {
+		if !bytes.Contains(man, utf16le(s)) {
+			t.Errorf("the manifest has no string %q", s)
+		}
+	}
+	verifyApkV2(t, raw)
+	aapt, err := exec.LookPath("aapt")
+	if err != nil {
+		t.Skip("aapt is not on PATH, so the manifest tree is not checked")
+	}
+	o, err := exec.Command(aapt, "dump", "xmltree", path, "AndroidManifest.xml").CombinedOutput()
+	if err != nil {
+		t.Fatalf("aapt dump xmltree: %v\n%s", err, o)
+	}
+	tree := string(o)
+	for _, want := range []string{
+		`A: android:name(0x01010003)="android.software.leanback"`,
+		`A: android:name(0x01010003)="android.hardware.touchscreen"`,
+		"A: android:required(0x0101028e)=(type 0x12)0x0",
+		`A: android:name(0x01010003)="android.intent.category.LEANBACK_LAUNCHER"`,
+	} {
+		if !strings.Contains(tree, want) {
+			t.Errorf("the manifest has no %s:\n%s", want, tree)
+		}
+	}
+}
+
 // -apk-asset puts each file under assets/ with its own name, stored, and
 // refuses a file it cannot read and two files with one name.
 func TestApkAsset(t *testing.T) {

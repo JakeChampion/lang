@@ -24,7 +24,7 @@ import "./util";
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries. `home`
 // makes the activity a home screen, and `assets` go under assets/.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: Asset[], widget: Widget }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, assets: Asset[], widget: Widget }
 
 // The app widget of the home screen: the Java class of its provider, which
 // extends android.appwidget.AppWidgetProvider, and the items of its row. An
@@ -134,8 +134,15 @@ function prefixed(b: [u8]): u8[] {
 // finds the attributes of an element by a search in the order of their IDs,
 // so each element lists its attributes in that order too.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16843276, 16843291, 16843292, 16843307, 16843376, 16843954, 16844010, 16844012, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16843276, 16843291, 16843292, 16843307, 16843376, 16843406, 16843954, 16844010, 16844012, 16844185];
 }
+
+// The features and the launcher category of an app for Android TV.
+const LEANBACK: string = "android.software.leanback";
+
+const TOUCHSCREEN: string = "android.hardware.touchscreen";
+
+const LEANBACK_LAUNCHER: string = "android.intent.category.LEANBACK_LAUNCHER";
 
 const S_THEME: i32 = 0;
 
@@ -179,23 +186,25 @@ const S_SOFT_INPUT: i32 = 19;
 
 const S_TARGET_SDK: i32 = 20;
 
-const S_RESUME_WHILE_PAUSING: i32 = 21;
+const S_REQUIRED: i32 = 21;
 
-const S_EXTRACT_NATIVE_LIBS: i32 = 22;
+const S_RESUME_WHILE_PAUSING: i32 = 22;
 
-const S_CLEARTEXT: i32 = 23;
+const S_EXTRACT_NATIVE_LIBS: i32 = 23;
 
-const S_FOREGROUND_TYPE: i32 = 24;
+const S_CLEARTEXT: i32 = 24;
 
-const S_PREFIX: i32 = 25;
+const S_FOREGROUND_TYPE: i32 = 25;
 
-const S_URI: i32 = 26;
+const S_PREFIX: i32 = 26;
 
-const S_PACKAGE: i32 = 27;
+const S_URI: i32 = 27;
+
+const S_PACKAGE: i32 = 28;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
+    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "required", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -212,6 +221,9 @@ function pool_strings(app: App): string[] {
   }
   if (app.home) {
     out = out.append("android.intent.category.HOME").append("android.intent.category.DEFAULT").append("");
+  }
+  if (app.tv) {
+    out = out.append("uses-feature").append(LEANBACK).append(TOUCHSCREEN).append(LEANBACK_LAUNCHER);
   }
   if (app.widget.provider.len() > 0) {
     out = out.append("receiver").append(app.widget.provider).append(WIDGET_UPDATE).append(WIDGET_META);
@@ -385,7 +397,9 @@ function end(out: u8[], line: i32, name: i32): u8[] {
 
 // The binary AndroidManifest.xml of `app`: one NativeActivity that loads
 // lib<app.lib>.so, with the launcher intent filter. A home screen also has
-// the home categories, so Android offers it as the home app.
+// the home categories, so Android offers it as the home app. An app for a
+// TV also has the launcher category of Android TV, and needs no touch
+// screen.
 pub function manifest(app: App): u8[] {
   let s = pool_strings(app);
   let body = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
@@ -396,6 +410,13 @@ pub function manifest(app: App): u8[] {
   let uses = at(s, "uses-permission");
   for p in app.permissions {
     body = end(start(body, 2, uses, [attr_str(S_NAME, at(s, p))]), 2, uses);
+  }
+  if (app.tv) {
+    // An app for a TV runs on a phone too, so neither feature is required.
+    let feature = at(s, "uses-feature");
+    for f in [LEANBACK, TOUCHSCREEN] {
+      body = end(start(body, 2, feature, [attr_str(S_NAME, at(s, f)), attr_int(S_REQUIRED, 18, 0)]), 2, feature);
+    }
   }
   let has_code = 0;
   if (app.dex.len() > 0) {
@@ -446,6 +467,9 @@ pub function manifest(app: App): u8[] {
   body = start(body, 6, at(s, "intent-filter"), []);
   body = end(start(body, 7, at(s, "action"), [attr_str(S_NAME, at(s, "android.intent.action.MAIN"))]), 7, at(s, "action"));
   body = category(body, 8, s, "android.intent.category.LAUNCHER");
+  if (app.tv) {
+    body = category(body, 8, s, LEANBACK_LAUNCHER);
+  }
   if (app.home) {
     body = category(category(body, 8, s, "android.intent.category.HOME"), 8, s, "android.intent.category.DEFAULT");
   }
