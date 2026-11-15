@@ -6306,3 +6306,52 @@ pub function emit_shuffle_masks(s: EmitState): EmitState {
   }
   return s.write("    .text\n");
 }
+
+// An instruction that only names a constant. A backend gives an immediate no code.
+pub function immediate_inst(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.CONST_INT || ins.kind_tag == ssa.CONST_I64 || ins.kind_tag == ssa.SHAPE_ADDR;
+}
+
+// The position at or before `k` past the immediates, which emit nothing.
+pub function before_immediates(imm: ssa.Imms, blk: ssa.SBlock, k: i32, stop: i32): i32 {
+  while (k >= 0 && blk.insts[k].result != stop && immediate_inst(blk.insts[k]) && imm.is_imm[blk.insts[k].result]) {
+    k -= 1;
+  }
+  return k;
+}
+
+// A compare that a branch fuses, as the count of instructions it covers and
+// its two operands. `narrow` means that it reads only the low 32 bits.
+pub struct FusedCompare { n: i32, a: i32, b: i32, narrow: boolean }
+
+// A compare of two values of 32 bits or less reads only their low 32 bits. A
+// wrap to 32 bits next to the compare, which gives its value to no other
+// instruction, then has no effect, and the compare takes the value before the
+// wrap. The rule holds for the equality and the signed order conditions.
+pub function narrow_compare(uses: i32[], imm: ssa.Imms, blk: ssa.SBlock, cmp: ssa.SInst, tag: i32, c: FusedCompare): FusedCompare {
+  if (cmp.imm != 0 || !signed_order(tag) || imm.is_imm[c.b] && ssa.imm_sym(imm, c.b) != "") {
+    return c;
+  }
+  let k = before_immediates(imm, blk, blk.insts.len() - c.n - 1, -1);
+  if (k < 0 || !lone_wrap(uses, imm, blk.insts[k])) {
+    return c;
+  }
+  let wrap = blk.insts[k];
+  if (wrap.result == c.a) {
+    return FusedCompare { n: blk.insts.len() - k, a: wrap.args[0], b: c.b, narrow: true };
+  }
+  return if (wrap.result == c.b) { FusedCompare { n: blk.insts.len() - k, a: c.a, b: wrap.args[0], narrow: true } } else { c };
+}
+
+// A wrap to 32 bits with the sign, of a value that is not an immediate, that
+// gives its value to one instruction.
+function lone_wrap(uses: i32[], imm: ssa.Imms, ins: ssa.SInst): boolean {
+  if (ins.kind_tag != ssa.UNARY || ins.args.len() != 1 || ins.imm != 0 || uses[ins.result] != 1) {
+    return false;
+  }
+  return (ins.str == "int_cast:i32" || ins.str == "int_wrap") && !imm.is_imm[ins.args[0]];
+}
+
+function signed_order(tag: i32): boolean {
+  return tag == ir.K_EQ || tag == ir.K_NE || tag == ir.K_LT_S || tag == ir.K_LE_S || tag == ir.K_GT_S || tag == ir.K_GE_S;
+}

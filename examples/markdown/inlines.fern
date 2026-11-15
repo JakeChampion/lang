@@ -126,18 +126,15 @@ const Q_LEFT: i32 = 4;
 // delimiter opens before it.
 const MS: i32 = 3;
 
-// The fields of a bracket. They are its token, 1 for an image, and 1 when it
-// can open a link. Then come 1 when a bracket opened after it, and the start
-// of its text.
+// The fields of a bracket. They are its token, 1 for an image, 1 when a
+// bracket opened after it, and the start of its text.
 const B_IMAGE: i32 = 1;
 
-const B_ACTIVE: i32 = 2;
+const B_AFTER: i32 = 2;
 
-const B_AFTER: i32 = 3;
+const B_TEXT: i32 = 3;
 
-const B_TEXT: i32 = 4;
-
-const BS: i32 = 5;
+const BS: i32 = 4;
 
 // The fields of a link. They are 1 for an image, and the row of its
 // definition in `Work.found` or -1. Then come the start and the end of its
@@ -253,6 +250,9 @@ pub struct Work {
   ticks: i32[],
   scanned: boolean,
   skip: i32,
+  // As in cmark 0.31, true until a bracket that is not an image opens, and
+  // again after each link.
+  no_links: boolean,
 }
 
 function put(t: u8[], c: i32, s: string): u8[] {
@@ -298,7 +298,7 @@ pub function work(opt: i32): Work {
   for _ in 0..14 {
     bottoms = bottoms.append(0);
   }
-  return Work { t: tables(), opt: opt, tk: [], nt: 0, dl: [], nd: 0, tail: -1, em: [], ne: 0, br: [], nb: 0, ln: [], nl: 0, found: [], nf: 0, bottoms: bottoms, ticks: ticks, scanned: false, skip: 0 };
+  return Work { t: tables(), opt: opt, tk: [], nt: 0, dl: [], nd: 0, tail: -1, em: [], ne: 0, br: [], nb: 0, ln: [], nl: 0, found: [], nf: 0, bottoms: bottoms, ticks: ticks, scanned: false, skip: 0, no_links: true };
 }
 
 // Writes `s[a:b]` with `"`, `&`, `<` and `>` escaped.
@@ -705,7 +705,7 @@ function inline(out: usize, s: string, a: i32, e: i32, d: blocks.Doc, w: Work): 
 }
 
 function fresh(w: Work): Work {
-  return Work { ...w, nt: 0, nd: 0, tail: -1, ne: 0, nb: 0, nl: 0, nf: 0, scanned: false, skip: 0 };
+  return Work { ...w, nt: 0, nd: 0, tail: -1, ne: 0, nb: 0, nl: 0, nf: 0, scanned: false, skip: 0, no_links: true };
 }
 
 // The tree.
@@ -741,23 +741,11 @@ function col(c: Cursor, p: i32): i32 {
 }
 
 // Adds the text `s[a:b]` between two tokens, which is at the bytes `a` to
-// `q`. A string of backticks in it opens no code span. As in cmark, the
-// position of such a string is the byte after it.
+// `q`.
 function between(t: nodes.Tree, s: string, a: i32, b: i32, c: Cursor, q: i32): nodes.Tree {
-  let p = a;
-  if (s[a] == b'`') {
-    p = a + 1;
-    while (p < b && s[p] == b'`') {
-      p += 1;
-    }
-  }
   let start = t.here();
   buf_push_range(t.bytes(), s, a, b);
-  let ec = col(c, q);
-  if (s[q] == b'`') {
-    ec += 1;
-  }
-  return t.add_text(start, c.line, col(c, p), ec);
+  return t.add_text(start, c.line, col(c, a), col(c, q));
 }
 
 // Adds the literal text `lit` for the bytes `p` to `q`.
@@ -923,15 +911,23 @@ function autolink_node(t0: nodes.Tree, w: Work, s: string, start: i32, end: i32,
 }
 
 // A run of delimiters: the emphasis that it closes, the delimiters that no
-// emphasis uses, and the emphasis that it opens. Each node of emphasis
-// starts at the start of the run that opens it and ends at the end of the
-// run that closes it.
+// emphasis uses, and the emphasis that it opens. As in cmark 0.31, each node
+// of emphasis starts at its first delimiter and ends at its last delimiter.
+// The text of the delimiters that no emphasis uses is between them.
 function run_nodes(t0: nodes.Tree, w: Work, d: i32, c: Cursor, start: i32, end: i32): nodes.Tree {
   let t = t0;
+  let used = col(c, start) - 1;
   let m = dget(w, d, D_CLOSE);
   while (m >= 0) {
-    t = t.set_end(t.open, c.line, col(c, end - 1)).leave();
+    used += w.em[m * MS];
+    t = t.set_end(t.open, c.line, used).leave();
     m = w.em[m * MS + 1];
+  }
+  let opened = col(c, end - 1) + 1;
+  m = dget(w, d, D_OPEN);
+  while (m >= 0) {
+    opened -= w.em[m * MS];
+    m = w.em[m * MS + 2];
   }
   let ch = dget(w, d, D_CHAR);
   if (ch == 34 || ch == 39) {
@@ -941,7 +937,7 @@ function run_nodes(t0: nodes.Tree, w: Work, d: i32, c: Cursor, start: i32, end: 
     for _ in 0..dget(w, d, D_LEFT) {
       buf_push_byte(t.bytes(), ch);
     }
-    t = t.add_text(from, c.line, col(c, start), col(c, end - 1));
+    t = t.add_text(from, c.line, used + 1, opened - 1);
   }
   m = dget(w, d, D_OPEN);
   while (m >= 0) {
@@ -950,7 +946,8 @@ function run_nodes(t0: nodes.Tree, w: Work, d: i32, c: Cursor, start: i32, end: 
       kind = nodes.STRONG;
     }
     t = t.enter(kind);
-    t = t.set_start(t.open, c.line, col(c, start));
+    t = t.set_start(t.open, c.line, opened);
+    opened += w.em[m * MS];
     m = w.em[m * MS + 2];
   }
   return t;
@@ -1259,7 +1256,7 @@ function html_end(s: string, i: i32, e: i32, skip: i32): (i32, i32) {
     return bang_end(s, i, e, skip);
   }
   if (c == b'?') {
-    return search(s, i + 2, e, "?>", skip, NO_PI);
+    return scanned(pi_end(s, i + 2, e), skip, NO_PI);
   }
   if (c == b'/') {
     return (tags.closing_tag_end(s, i, e), skip);
@@ -1268,8 +1265,12 @@ function html_end(s: string, i: i32, e: i32, skip: i32): (i32, i32) {
 }
 
 // A comment, a CDATA section or a declaration. As in cmark, the letters of
-// `CDATA` can be in any case.
+// `CDATA` can be in any case. After a comment with no end, no raw HTML
+// starts with `<!` in the rest of the text.
 function bang_end(s: string, i: i32, e: i32, skip: i32): (i32, i32) {
+  if ((skip & NO_COMMENT) != 0) {
+    return (-1, skip);
+  }
   if (at(s, i + 2, e) == 45 && at(s, i + 3, e) == 45) {
     if (at(s, i + 4, e) == 62) {
       return (i + 5, skip);
@@ -1277,10 +1278,10 @@ function bang_end(s: string, i: i32, e: i32, skip: i32): (i32, i32) {
     if (at(s, i + 4, e) == 45 && at(s, i + 5, e) == 62) {
       return (i + 6, skip);
     }
-    return search(s, i + 4, e, "-->", skip, NO_COMMENT);
+    return scanned(comment_end(s, i + 4, e), skip, NO_COMMENT);
   }
   if (at(s, i + 2, e) == 91 && word_ci(s, i + 3, e, "cdata[")) {
-    return search(s, i + 9, e, "]]>", skip, NO_CDATA);
+    return scanned(cdata_end(s, i + 9, e), skip, NO_CDATA);
   }
   if (is_letter(at(s, i + 2, e))) {
     return search(s, i + 3, e, ">", skip, NO_DECL);
@@ -1300,6 +1301,85 @@ function word_ci(s: string, i: i32, e: i32, word: string): boolean {
     }
   }
   return true;
+}
+
+// The end `end` of raw HTML, or -1. When there is no end, the kind `flag`
+// joins `skip`, and the scan does not run again.
+function scanned(end: i32, skip: i32, flag: i32): (i32, i32) {
+  if ((skip & flag) != 0) {
+    return (-1, skip);
+  }
+  if (end < 0) {
+    return (-1, skip | flag);
+  }
+  return (end, skip);
+}
+
+// The scanners below are the regular expressions of cmark, which do not
+// find the first end in each case. Each one reads the bytes in pairs: in
+// a run of `-`, `]` or `?`, each byte of an even place joins the next byte.
+
+// The end of a comment whose text starts at `i`, after `<!--`: the end of
+// the first `-->` whose `--` starts no pair.
+function comment_end(s: string, i: i32, e: i32): i32 {
+  let k = i;
+  let dashes = 0;
+  while (k < e) {
+    let c = s[k];
+    if (dashes == 2) {
+      if (c == b'>') {
+        return k + 1;
+      }
+      dashes = 0;
+    } else if (c == b'-') {
+      dashes += 1;
+    } else {
+      dashes = 0;
+    }
+    k += 1;
+  }
+  return -1;
+}
+
+// The end of a processing instruction whose text starts at `i`, after `<?`:
+// the end of the first `?>` whose `?` starts no pair.
+function pi_end(s: string, i: i32, e: i32): i32 {
+  let k = i;
+  while (k < e) {
+    if (s[k] == b'?') {
+      if (k + 1 >= e) {
+        return -1;
+      }
+      if (s[k + 1] == b'>') {
+        return k + 2;
+      }
+      k += 1;
+    }
+    k += 1;
+  }
+  return -1;
+}
+
+// The end of a CDATA section whose text starts at `i`, after `<![CDATA[`:
+// the end of the first `]]>` whose `]]` starts no pair.
+function cdata_end(s: string, i: i32, e: i32): i32 {
+  let k = i;
+  let close = 0;
+  while (k < e) {
+    let c = s[k];
+    if (close == 2) {
+      if (c == b'>') {
+        return k + 1;
+      }
+      close = 0;
+    } else if (c == b']') {
+      close += 1;
+    } else {
+      close = 0;
+    }
+    k += 1;
+  }
+  return -1;
 }
 
 // The end of the first `word` at or after `from`. When there is none, the
@@ -1665,8 +1745,8 @@ function open_bracket(w: Work, start: i32, end: i32, image: i32): Work {
     br = br.with((q.nb - 1) * BS + B_AFTER, 1);
   }
   let b = q.nb * BS;
-  br = put_i32(put_i32(put_i32(put_i32(put_i32(br, b, q.nt - 1), b + 1, image), b + 2, 1), b + 3, 0), b + 4, end);
-  return Work { ...q, br: br, nb: q.nb + 1 };
+  br = put_i32(put_i32(put_i32(put_i32(br, b, q.nt - 1), b + B_IMAGE, image), b + B_AFTER, 0), b + B_TEXT, end);
+  return Work { ...q, br: br, nb: q.nb + 1, no_links: q.no_links && image == 1 };
 }
 
 // Takes the last bracket off the stack. Its token is text.
@@ -1683,7 +1763,7 @@ function close_bracket(w: Work, s: string, j: i32, e: i32, d: blocks.Doc): (Work
     return (w, j + 1);
   }
   let o = (w.nb - 1) * BS;
-  if (w.br[o + B_ACTIVE] == 0) {
+  if (w.br[o + B_IMAGE] == 0 && w.no_links) {
     return (pop_bracket(w), j + 1);
   }
   let (end, ds, de, ts, te) = inline_link(s, j + 1, e);
@@ -1758,8 +1838,8 @@ function inline_link(s: string, p: i32, e: i32): (i32, i32, i32, i32, i32) {
 }
 
 // Makes a link or an image from the last bracket and the `]` at `j`. The
-// emphasis in its text is found now, and a link makes each bracket below it
-// unable to open a link.
+// emphasis in its text is found now. After a link, no bracket can open a
+// link until a new bracket opens.
 function link(w: Work, j: i32, end: i32, found: i32, ds: i32, de: i32, ts: i32, te: i32): Work {
   let o = (w.nb - 1) * BS;
   let tok = w.br[o];
@@ -1768,22 +1848,7 @@ function link(w: Work, j: i32, end: i32, found: i32, ds: i32, de: i32, ts: i32, 
   let ln = put_i32(put_i32(put_i32(put_i32(put_i32(put_i32(w.ln, l, image), l + 1, found), l + 2, ds), l + 3, de), l + 4, ts), l + 5, te);
   let tk = w.tk.with(tok * TS, LINK + image).with(tok * TS + 3, w.nl);
   let q = emphasis(add_token(Work { ...w, ln: ln, tk: tk, nl: w.nl + 1 }, END, j, end, w.nl), tok);
-  let nb = q.nb - 1;
-  if (image == 1) {
-    return Work { ...q, nb: nb };
-  }
-  let br = q.br;
-  let k = nb - 1;
-  while (k >= 0) {
-    if (br[k * BS + B_IMAGE] == 0) {
-      if (br[k * BS + B_ACTIVE] == 0) {
-        break;
-      }
-      br = br.with(k * BS + B_ACTIVE, 0);
-    }
-    k -= 1;
-  }
-  return Work { ...q, br: br, nb: nb };
+  return Work { ...q, nb: q.nb - 1, no_links: q.no_links || image == 0 };
 }
 
 // The writer.

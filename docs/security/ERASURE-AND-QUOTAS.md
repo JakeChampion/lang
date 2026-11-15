@@ -14,7 +14,7 @@ A program can observe these rules about fresh memory on both native targets.
 | A struct | Every field is written by the literal that builds it, because the checker refuses a missing field | `E005` |
 | An unsafe byte array from `__alloc_u8_uninit` | Initial payload contents are unspecified. The caller must initialize every byte before any read or observation | The ordinary array size guards and ownership apply; the allocation skips the payload clear |
 | A raw block from `__alloc` | Not filled in the release build. It can carry the bytes of a released block of the same size class. Under `-harden` it holds zeros | The control of `TestSelfHostEraseZeroesStorage` reads 48 secret bytes back through `__alloc(72)`. `TestSelfHostHardenScrubsReleasedBlocks` reads none under `-harden` |
-| A released block | Not zeroed in the release build. Only its first word changes, to the free list link. Under `-harden` every other word is zero before the block goes on its free list, and the take clears the link word | `TestSelfHostHardenScrubsReleasedBlocks` |
+| A released block | Not zeroed in the release build. Only its first word changes, to the encoded free list link, and `__fern_alloc` clears that word when it hands out the block. Under `-harden` every other word is zero before the block goes on its free list, and the take clears the link word | `TestSelfHostHardenScrubsReleasedBlocks` |
 | A range that `__heap_release_to` rewinds | Not zeroed in the release build. Under `-harden` the range is zero before the bump hands it out again | `TestSelfHostHardenScrubsReleasedBlocks` |
 | A stack frame | Spill slots are not zeroed when a frame is released, and the next frame overwrites them as it uses them | the prologue stores no fill |
 

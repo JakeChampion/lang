@@ -1047,6 +1047,21 @@ pub function header_refusal(method: i32, path: string): string {
 }
 
 // One decompressed member, for a listing.
+// The length of the input and its last `n` bytes, or all of it when it is
+// shorter.
+pub function tail_of(own feed: Feed, n: i32): Result[(i64, u8[]), Fail] {
+  let f = feed;
+  while (!f.ended) {
+    if (f.buf.len() - f.at > n) {
+      f = Feed { ...f, at: f.buf.len() - n };
+    }
+    let need = f.buf.len() - f.at + READ_SIZE;
+    f = fill(f, need)?;
+  }
+  let from = if (f.buf.len() - n > f.at) { f.buf.len() - n } else { f.at };
+  return Ok((f.start + f.buf.len() as i64, array.slice(f.buf, from, f.buf.len())));
+}
+
 pub struct Member {
   form: i32,
   check: u32,
@@ -1054,10 +1069,84 @@ pub struct Member {
   ulen: i64,
 }
 
-// What infchk() or unlzw() gives: the output and the members before any
-// error, and the messages.
+// A fatal error: the text after "abort: " and the exit code.
+pub struct Fail {
+  why: string,
+  code: i32,
+}
+
+// The input of a decompression, read in parts. buf[at:] is the input that
+// is not yet used, and `ended` is true when no input follows buf. `read`
+// gives up to n more bytes, and no bytes at the end of the input.
+pub struct Feed {
+  buf: u8[],
+  at: i32,
+  ended: boolean,
+  // The offset in the input of buf[0].
+  start: i64,
+  read: (i32) => Result[u8[], Fail],
+}
+
+const READ_SIZE: i32 = 262144;
+
+pub function feed_of(read: (i32) => Result[u8[], Fail]): Feed {
+  return Feed { buf: [], at: 0, ended: false, start: 0i64, read: read };
+}
+
+// A feed of input that is all in memory.
+pub function memory_feed(data: u8[]): Feed {
+  return Feed { buf: data, at: 0, ended: true, start: 0i64, read: (n: i32): Result[u8[], Fail] => Ok([]) };
+}
+
+// The feed with at least `need` bytes after `at`, or with all of the input
+// when the input has fewer.
+pub function fill(own f: Feed, need: i32): Result[Feed, Fail] {
+  if (f.ended || f.buf.len() - f.at >= need) {
+    return Ok(f);
+  }
+  let rest = __bytes_into(__alloc_u8(f.buf.len() - f.at), 0, f.buf, f.at, f.buf.len() - f.at);
+  let ended = false;
+  while (!ended && rest.len() < need) {
+    let want = if (need - rest.len() > READ_SIZE) { need - rest.len() } else { READ_SIZE };
+    let chunk = f.read(want)?;
+    if (chunk.len() == 0) {
+      ended = true;
+    } else {
+      rest = rest.concat(chunk);
+    }
+  }
+  return Ok(Feed { ...f, buf: rest, at: 0, ended: ended, start: f.start + f.at as i64 });
+}
+
+// The feed with all of the rest of the input after `at`.
+pub function fill_all(own f: Feed): Result[Feed, Fail] {
+  while (!f.ended) {
+    let need = f.buf.len() - f.at + READ_SIZE;
+    f = fill(f, need)?;
+  }
+  return Ok(f);
+}
+
+// The input bytes left after `at`, through the end of the input, to `out`.
+// It gives the count of bytes.
+pub function copy_rest(own f: Feed, out: (u8[]) => Result[void, Fail]): Result[i64, Fail] {
+  let total = 0i64;
+  loop {
+    f = fill(f, 1)?;
+    if (f.buf.len() == f.at) {
+      return Ok(total);
+    }
+    let part = __bytes_into(__alloc_u8(f.buf.len() - f.at), 0, f.buf, f.at, f.buf.len() - f.at);
+    out(part)?;
+    total += part.len() as i64;
+    f = Feed { ...f, at: f.buf.len() };
+  }
+  return Ok(total);
+}
+
+// What infchk() or unlzw() gives: the members before any error, and the
+// messages. The output went to the sink before them.
 pub struct Decoded {
-  out: u8[],
   members: Member[],
   // The text after "skipping: " for corrupt data, or "".
   error: string,
@@ -1069,14 +1158,12 @@ pub struct Decoded {
   comment: Option[string],
 }
 
-function decoded(out: u8[], members: Member[]): Decoded {
-  return Decoded { out: out, members: members, error: "", warning: "", keep: false, comment: None };
+function decoded(members: Member[]): Decoded {
+  return Decoded { members: members, error: "", warning: "", keep: false, comment: None };
 }
 
-function failed(why: string): Decoded {
-  let none: u8[] = [];
-  let members: Member[] = [];
-  return Decoded { ...decoded(none, members), error: why };
+function failed(members: Member[], why: string): Decoded {
+  return Decoded { ...decoded(members), error: why };
 }
 
 // The message of zlib for the inflate error of std/deflate.
@@ -1101,66 +1188,121 @@ function zlib_message(what: string): string {
 
 const SIG: i64 = 134695760;
 
+// The longest header that get_header() reads: the fixed part of a zip
+// local header with its name and its extra field.
+pub const HEADER_NEED: i32 = 131136;
+
+// The check of data in parts: CRC-32, or Adler-32 for zlib.
+struct Check {
+  adler: boolean,
+  crc: crc32.Crc32,
+  value: u32,
+  len: i64,
+}
+
+function new_check(adler: boolean): Check {
+  return Check { adler: adler, crc: crc32.new(), value: 1u32, len: 0i64 };
+}
+
+function check_add(own c: Check, part: u8[]): Check {
+  if (!c.adler) {
+    return Check { ...c, crc: c.crc.update(part), len: c.len + part.len() as i64 };
+  }
+  let a = deflate.adler32(part);
+  let value = if (c.len == 0i64) { a } else { crc_combine(c.value, a, part.len() as i64, true) };
+  return Check { ...c, value: value, len: c.len + part.len() as i64 };
+}
+
+function check_value(c: Check): u32 {
+  return if (c.adler) { c.value } else { c.crc.finish() };
+}
+
+// The deflate data of one member at the feed, with its output to `out`.
+struct Inflated {
+  feed: Feed,
+  check: u32,
+  clen: i64,
+  ulen: i64,
+  error: Option[deflate.InflateError],
+}
+
+function inflate_member(own feed: Feed, adler: boolean, out: (u8[]) => Result[void, Fail]): Result[Inflated, Fail] {
+  let f = feed;
+  let st = deflate.inflate_stream();
+  let c = new_check(adler);
+  let clen = 0i64;
+  loop {
+    f = fill(f, 65536)?;
+    let p = deflate.inflate_part(st, f.buf, f.at, f.ended);
+    st = p.stream;
+    if (p.out.len() > 0) {
+      out(p.out)?;
+      c = check_add(c, p.out);
+    }
+    clen += p.used as i64;
+    f = Feed { ...f, at: f.at + p.used };
+    if (p.error.is_some() || p.done) {
+      return Ok(Inflated { feed: f, check: check_value(c), clen: clen, ulen: c.len, error: p.error });
+    }
+  }
+  return Ok(Inflated { feed: f, check: check_value(c), clen: clen, ulen: c.len, error: None });
+}
+
 // infchk() for the deflate data after the header `first`: each gzip member,
-// or one zlib stream or zip entry, with its trailer.
+// or one zlib stream or zip entry, with its trailer. The output goes to
+// `out` as it decodes, so the output before an error is there.
 // It keeps the branches of infchk() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-pub function infchk(data: u8[], first: Header, path: string, o: Options, now: i64): Decoded {
-  let out: u8[] = [];
+pub function infchk(own feed: Feed, first: Header, path: string, o: Options, now: i64, out: (u8[]) => Result[void, Fail]): Result[Decoded, Fail] {
+  let f = Feed { ...feed, at: first.next };
   let members: Member[] = [];
   let h = first;
-  let pos = first.next;
   let form = first.form;
   let ret = 8;
   let more = false;
   let comment: Option[string] = None;
   loop {
-    let piece: u8[] = [];
-    let clen = 0i64;
-    match (deflate.inflate_from(data, pos, 2147483647 - out.len())) {
-      Ok(got) => {
-        piece = got.out;
-        clen = got.consumed as i64;
-        pos += got.consumed;
-      },
-      Err(e) => {
-        return Decoded { ...decoded(out, members), error: path + ": corrupted -- " + inflate_refusal(e) };
-      }
+    let got = inflate_member(f, form == 1, out)?;
+    f = got.feed;
+    if let Some(e) = got.error {
+      return Ok(failed(members, path + ": corrupted -- " + inflate_refusal(e)));
     }
-    let ulen = piece.len() as i64;
-    let check = if (form == 1) { deflate.adler32(piece) } else { crc32.of(piece) };
-    let t = if (form > 1) { zip_trailer_of(data, pos, h, check, clen, ulen, o.list && o.verbosity >= 2) } else { trailer_of(data, pos, form, check, ulen) };
+    let find = o.list && o.verbosity >= 2;
+    f = if (form > 1 && find) { fill_all(f)? } else { fill(f, 64)? };
+    let t = if (form > 1) { zip_trailer_of(f.buf, f.at, h, got.check, got.clen, got.ulen, find) } else { trailer_of(f.buf, f.at, form, got.check, got.ulen) };
     if (t.error.len() > 0) {
-      return Decoded { ...decoded(out, members), error: path + ": " + t.error };
+      return Ok(failed(members, path + ": " + t.error));
     }
-    pos = t.pos;
+    f = Feed { ...f, at: t.pos };
     more = t.more;
     comment = t.comment;
-    out = if (out.len() == 0) { piece } else { out.concat(piece) };
-    members = members.append(Member { form: form, check: check, clen: clen, ulen: ulen });
+    members = members.append(Member { form: form, check: got.check, clen: got.clen, ulen: got.ulen });
     if (form != 0) {
       break;
     }
-    let next = get_header(data, pos, false, form, now);
+    f = fill(f, HEADER_NEED)?;
+    let next = get_header(f.buf, f.at, false, form, now);
     ret = next.method;
     form = next.form;
     if (ret != 8) {
       break;
     }
     h = Header { ...next, stamp: h.stamp, name: h.name, comment: h.comment };
-    pos = next.next;
+    f = Feed { ...f, at: next.next };
   }
-  let d = Decoded { ...decoded(out, members), comment: comment };
+  let d = Decoded { ...decoded(members), comment: comment };
   if (form == 0 && ret == -2 && o.force && o.pipeout && o.decode != 2 && !o.list) {
-    return Decoded { ...d, out: d.out.concat(data[pos:data.len()]) };
+    copy_rest(f, out)?;
+    return Ok(d);
   }
   if (more) {
-    return Decoded { ...d, warning: "warning: " + path + ": entries after the first were ignored", keep: true };
+    return Ok(Decoded { ...d, warning: "warning: " + path + ": entries after the first were ignored", keep: true });
   }
-  if (o.verbosity > 1 && form == 0 && ret != -1 || form == 1 && pos < data.len()) {
-    return Decoded { ...d, warning: "warning: " + path + ": trailing junk was ignored" };
+  let rest = fill(f, 1)?;
+  if (o.verbosity > 1 && form == 0 && ret != -1 || form == 1 && rest.buf.len() > rest.at) {
+    return Ok(Decoded { ...d, warning: "warning: " + path + ": trailing junk was ignored" });
   }
-  return d;
+  return Ok(d);
 }
 
 // The trailer after a member: the position after it or the error, and for
@@ -1257,9 +1399,6 @@ function inflate_refusal(e: deflate.InflateError): string {
     deflate.Malformed(what) => {
       return "invalid deflate data (" + zlib_message(what) + ")";
     },
-    deflate.OutputLimit => {
-      return "the output is longer than 2 GiB";
-    },
     _ => {
       return "incomplete deflate data";
     }
@@ -1333,72 +1472,115 @@ function le32(data: u8[], at: i32): i64 {
   return le16(data, at) as i64 | le16(data, at + 2) as i64 << 16;
 }
 
-// unlzw(): the output of the compress data after the two magic bytes at
-// data[at:].
+// The state of unlzw() between two reads: the feed and the output that is
+// not yet at the sink.
+struct Lzw {
+  f: Feed,
+  pos: i32,
+  pend: u8[],
+  total: i64,
+}
+
+// The feed with at least 64 bytes after `pos`, or all that is left.
+function lzw_fill(own z: Lzw): Result[Lzw, Fail] {
+  if (z.f.ended || z.f.buf.len() - z.pos >= 64) {
+    return Ok(z);
+  }
+  let f = fill(Feed { ...z.f, at: z.pos }, 64)?;
+  return Ok(Lzw { ...z, f: f, pos: f.at });
+}
+
+// The end of the buffered input, or no end when more input follows.
+function lzw_end(z: Lzw): i32 {
+  return if (z.f.ended) { z.f.buf.len() } else { 2147483647 };
+}
+
+function lzw_flush(own z: Lzw, out: (u8[]) => Result[void, Fail]): Result[Lzw, Fail] {
+  if (z.pend.len() > 0) {
+    out(z.pend)?;
+  }
+  return Ok(Lzw { ...z, pend: [], total: z.total + z.pend.len() as i64 });
+}
+
+// An error of unlzw(). As in pigz, the output that is not yet a full
+// buffer of LZW_OUT bytes does not go to the sink.
+function lzw_failed(why: string): Result[Decoded, Fail] {
+  let none: Member[] = [];
+  return Ok(failed(none, why));
+}
+
+// The output buffer of unlzw() in pigz.
+const LZW_OUT: i32 = 32768;
+
+// unlzw(): the compress data after the two magic bytes at the feed. The
+// output goes to `out` as it decodes, so the output before an error is
+// there.
 // It keeps the branches of unlzw() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-pub function unlzw(data: u8[], at: i32, path: string): Decoded {
-  let none: Member[] = [];
-  let out: u8[] = [];
-  let pos = at;
-  let end_of = data.len();
-  if (pos >= end_of) {
-    return failed(path + ": lzw premature end");
+pub function unlzw(own feed: Feed, path: string, out: (u8[]) => Result[void, Fail]): Result[Decoded, Fail] {
+  let at = feed.at;
+  let z = lzw_fill(Lzw { f: feed, pos: at, pend: [], total: 0i64 })?;
+  if (z.pos >= lzw_end(z)) {
+    return lzw_failed(path + ": lzw premature end");
   }
-  let flags = data[pos] as i32;
-  pos += 1;
+  let flags = z.f.buf[z.pos] as i32;
+  z = Lzw { ...z, pos: z.pos + 1 };
   if ((flags & 96) != 0) {
-    return failed(path + ": unknown lzw flags set");
+    return lzw_failed(path + ": unknown lzw flags set");
   }
   let max = flags & 31;
   if (max < 9 || max > 16) {
-    return failed(path + ": lzw bits out of range");
+    return lzw_failed(path + ": lzw bits out of range");
   }
   if (max == 9) {
     max = 10;
   }
   let block = (flags & 128) != 0;
-  let mark = pos;
+  let mark = z.f.start + z.pos as i64;
   let bits = 9;
   let mask = 511;
   let end = if (block) { 256 } else { 255 };
-  if (pos >= end_of) {
-    return decoded(out, none);
+  if (z.pos >= lzw_end(z)) {
+    return Ok(decoded([]));
   }
-  let buf = data[pos] as i32;
-  pos += 1;
-  if (pos >= end_of) {
-    return failed(path + ": lzw premature end");
+  let buf = z.f.buf[z.pos] as i32;
+  let pos = z.pos + 1;
+  if (pos >= lzw_end(z)) {
+    return lzw_failed(path + ": lzw premature end");
   }
-  buf += data[pos] as i32 << 8;
+  buf += z.f.buf[pos] as i32 << 8;
   pos += 1;
   let prev = buf & mask;
   let last = prev;
   buf >>= bits;
   let left = 16 - bits;
   if (prev > 255) {
-    return failed(path + ": invalid lzw code");
+    return lzw_failed(path + ": invalid lzw code");
   }
-  out = out.append(last as u8);
+  z = Lzw { ...z, pos: pos, pend: z.pend.append(last as u8) };
   let prefix = filled(65536, 0);
   let suffix = __alloc_u8(65536);
   let stack: u8[] = [];
   loop {
+    z = lzw_fill(z)?;
+    let end_of = lzw_end(z);
+    let data = z.f.buf;
+    pos = z.pos;
     if (end >= mask && bits < max) {
-      let rem = (pos - mark) % bits;
+      let rem = ((z.f.start + pos as i64 - mark) % (bits as i64)) as i32;
       if (rem != 0) {
         rem = bits - rem;
         if (pos >= end_of) {
           break;
         }
         if (rem > end_of - pos) {
-          return failed(path + ": lzw premature end");
+          return lzw_failed(path + ": lzw premature end");
         }
         pos += rem;
       }
       buf = 0;
       left = 0;
-      mark = pos;
+      mark = z.f.start + pos as i64;
       bits += 1;
       mask = (mask << 1) + 1;
     }
@@ -1410,7 +1592,7 @@ pub function unlzw(data: u8[], at: i32, path: string): Decoded {
     left += 8;
     if (left < bits) {
       if (pos >= end_of) {
-        return failed(path + ": lzw premature end");
+        return lzw_failed(path + ": lzw premature end");
       }
       buf += data[pos] as i32 << left;
       pos += 1;
@@ -1420,27 +1602,28 @@ pub function unlzw(data: u8[], at: i32, path: string): Decoded {
     buf >>= bits;
     left -= bits;
     if (code == 256 && block) {
-      let rem = (pos - mark) % bits;
+      let rem = ((z.f.start + pos as i64 - mark) % (bits as i64)) as i32;
       if (rem != 0) {
         rem = bits - rem;
         if (rem > end_of - pos) {
-          return failed(path + ": lzw premature end");
+          return lzw_failed(path + ": lzw premature end");
         }
         pos += rem;
       }
       buf = 0;
       left = 0;
-      mark = pos;
+      mark = z.f.start + pos as i64;
       bits = 9;
       mask = 511;
       end = 255;
+      z = Lzw { ...z, pos: pos };
       continue;
     }
     let temp = code;
     stack = stack.truncate(0);
     if (code > end) {
       if (code != end + 1 || prev > end) {
-        return failed(path + ": invalid lzw code");
+        return lzw_failed(path + ": invalid lzw code");
       }
       stack = stack.append(last as u8);
       code = prev;
@@ -1457,13 +1640,26 @@ pub function unlzw(data: u8[], at: i32, path: string): Decoded {
       suffix = suffix.with(end, last as u8);
     }
     prev = temp;
+    let pend = z.pend;
+    z = Lzw { ...z, pos: pos, pend: [] };
     let k = stack.len();
+    while (k > LZW_OUT - pend.len()) {
+      while (pend.len() < LZW_OUT) {
+        k -= 1;
+        pend = pend.append(stack[k]);
+      }
+      z = lzw_flush(Lzw { ...z, pend: pend }, out)?;
+      pend = [];
+    }
     while (k > 0) {
       k -= 1;
-      out = out.append(stack[k]);
+      pend = pend.append(stack[k]);
     }
+    z = Lzw { ...z, pend: pend };
   }
-  return decoded(out, [Member { form: -1, check: 0u32, clen: (end_of - 3) as i64, ulen: out.len() as i64 }]);
+  let size = z.f.start + z.f.buf.len() as i64;
+  z = lzw_flush(z, out)?;
+  return Ok(decoded([Member { form: -1, check: 0u32, clen: size - 3i64, ulen: z.total }]));
 }
 
 function filled(n: i32, v: i32): i32[] {

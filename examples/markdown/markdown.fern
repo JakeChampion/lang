@@ -327,7 +327,10 @@ function code(out: usize, d: blocks.Doc, r: i32, st: State): void {
     from += 1;
   }
   if (lang.len() > 0) {
-    tag(out, d, r, st, "<pre><code class=\"language-", 4);
+    tag(out, d, r, st, "<pre><code class=\"", 4);
+    if (!lang.starts_with("language-")) {
+      buf_push(out, "language-");
+    }
     inlines.escape(out, lang, 0, lang.len(), t);
     buf_push(out, "\">");
   } else {

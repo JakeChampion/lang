@@ -1,7 +1,8 @@
 name: port-oracles
 description: >
   Install the reference programs for the port differential tests.
-  Ubuntu 24.04 supplies ripgrep 14.1.0 and cmark 0.30.2.
+  Ubuntu 24.04 supplies ripgrep 14.1.0. The cmark 0.31.2 tag supplies cmark,
+  and a cache keeps the built cmark for each runner OS and architecture.
   The Debian source archive of pigz 2.8 and the zlib 1.3 release archive
   supply pigz. A cache keeps the built pigz for each runner OS and architecture.
   The age 1.3.2 release archive supplies age, age-keygen, age-inspect, and four plugins.
@@ -10,13 +11,13 @@ runs:
   using: composite
   steps:
     - uses: ./.github/actions/disable-chrome-apt
-    - name: Install ripgrep and cmark
+    - name: Install ripgrep
       shell: bash
       # timeout runs under sudo, so the signal stops apt, not the sudo wrapper.
       run: |
         set -euo pipefail
         for try in 1 2 3; do
-          if sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq --no-install-recommends ripgrep cmark; then
+          if sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq --no-install-recommends ripgrep; then
             break
           fi
           echo "apt attempt $try failed" >&2
@@ -32,7 +33,37 @@ runs:
           esac
         }
         check 'ripgrep 14.1.0' rg --version
-        check 'cmark 0.30.2 ' cmark --version
+    # The step checks the commit of the tag, so a moved tag fails the build.
+    - name: Cache cmark 0.31.2
+      id: cmark-oracle
+      uses: actions/cache@v6
+      with:
+        path: ~/cmark-oracle
+        key: cmark-0.31.2-${{ runner.os }}-${{ runner.arch }}
+    - name: Build cmark 0.31.2
+      if: steps.cmark-oracle.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        work="$(mktemp -d "$RUNNER_TEMP/cmark-oracle.XXXXXX")"
+        git clone -q --depth 1 --branch 0.31.2 https://github.com/commonmark/cmark "$work/cmark"
+        test "$(git -C "$work/cmark" rev-parse HEAD)" = eec0eeba6d31189fd828314576494566d539b1e3
+        cmake -S "$work/cmark" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+        cmake --build "$work/build" -j2
+        mkdir -p "$HOME/cmark-oracle"
+        install -m 0755 "$work/build/src/cmark" "$HOME/cmark-oracle/cmark"
+        rm -rf "$work"
+    - name: Check cmark 0.31.2
+      shell: bash
+      run: |
+        set -euo pipefail
+        got="$("$HOME/cmark-oracle/cmark" --version | head -1)"
+        echo "$got"
+        if [ "$got" != "cmark 0.31.2 - CommonMark converter" ]; then
+          echo "the markdown port requires cmark 0.31.2" >&2
+          exit 1
+        fi
+        echo "$HOME/cmark-oracle" >> "$GITHUB_PATH"
     # zlib.net gives wrong bytes to GitHub runners, so the archives come from
     # Debian and from GitHub. Debian's archive holds the files of the pigz 2.8
     # release and a .gitignore.

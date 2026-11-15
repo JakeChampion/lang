@@ -123,3 +123,48 @@ func TestSelfHostDropReadsTheNextNodeFirst(t *testing.T) {
 		}
 	}
 }
+
+// Each tree holds one node in both of its fields, and the array drops the
+// trees through the drop helper. The helper tests the next node before it
+// drops the other field, and that drop lowers the count to one after the
+// test. The helper must then free the node with its string.
+const dropSharedNextProg = `enum Tree { Leaf, Node(Tree, string, Tree) }
+
+function label(i: i32): string {
+  return "node " + i.to_string();
+}
+
+@noinline function twin(i: i32): Tree {
+  let shared = Node(Leaf, label(i), Leaf);
+  return Node(shared, label(i + 10), shared);
+}
+
+@noinline function size(t: Tree): i32 {
+  return match (t) { Leaf => 0, Node(l, s, r) => size(l) + s.len() + size(r) };
+}
+
+function main(): i32 {
+  let trees: Tree[] = [];
+  for i in 0..3 {
+    trees = trees.append(twin(i));
+  }
+  let total = 0;
+  for t in trees {
+    total += size(t);
+  }
+  return if (total == 57) { 42 } else { 1 };
+}
+`
+
+func TestSelfHostDropChainFreesASharedNextNode(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, dropSharedNextProg, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 42 {
+				t.Fatalf("exit %d, want 42\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}

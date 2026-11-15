@@ -54,13 +54,21 @@ the same behaviour:
 - `limit`, `first`, `until`, `while`, `repeat`, `range` and `recurse`, which
   stop at the first output that the caller does not need.
 
-The modules of jq 1.7: `import`, `include`, data imports, `modulemeta`,
-`get_search_list`, the `-L` directories and the include of `~/.jq`. A path
-is clean, and absolute from `$PWD`, but the port does not follow a symbolic
-link in it.
+The port has the modules of jq 1.7: `import`, `include`, data imports,
+`modulemeta`, `get_search_list`, the `-L` directories and the include of
+`~/.jq`. As jq does, the port gives C `realpath` the path of a module, of a
+`-L` directory and of the program file. Thus each symbolic link is followed.
+When `realpath` fails, the path stays as it is. A WASI program has no
+`getcwd`, so the port takes the current directory from `$PWD`.
 
-The command line has each option of jq 1.7 except `--run-tests` and the
-debug options, with the messages and the exit codes of jq.
+The command line has each option of jq 1.7, with the messages and the exit
+codes of jq, except the debug options. `--debug-dump-disasm` and
+`--debug-trace` show the bytecode of jq, and the port has no bytecode.
+
+`--run-tests` is the test runner of jq. It reads the test file, or stdin,
+with `--skip N` and `--take N`, and writes each line of jq. As in jq, a
+test has no input callback, so `debug`, `stderr` and `halt_error` write
+nothing, and `get_prog_origin` and `get_jq_origin` give no output.
 
 ## Generators
 
@@ -122,6 +130,11 @@ jq makes a tail call with no new stack frame. The port uses a stack frame for
 each call of a function of a `def`. Thus the stack sets the limit of the
 depth of a function that calls itself. A depth of 1000000 is good on x86-64.
 
+jq keeps its frames on the heap, so only the memory sets its limit. A depth
+of 3000000 is good in jq, and a depth of 30000000 gives an error that jq
+cannot allocate memory. In the port, a deeper recursion stops with a stack
+overflow and exit 134, because the evaluator calls itself for each filter.
+
 On wasm32-wasi, wasmtime gives 512 KiB of stack, and a depth of 100 is good.
 The compiler makes different frames for different programs, so the limit is
 between 150 and 500. The option `-W max-wasm-stack` of wasmtime makes the
@@ -139,21 +152,33 @@ jq 1.7 writes a number in one of two forms, and the port does the same:
   The two stay numbers: NaN is below each number in the order, and it is not
   equal to NaN.
 
-Two numbers compare as exact decimals, so
-`13911860366432393 == 13911860366432392` is false, as it is in jq 1.7. jq
-compares a literal with a computed number as two f64 values. The port
-compares them as decimals, so the two can differ when the literal has more
-than 17 significant digits.
+Two literals compare as exact decimals, so
+`13911860366432393 == 13911860366432392` is false, as it is in jq 1.7.1.
+The other pairs compare as two f64 values. To get the f64 of a literal, jq
+rounds it to 17 significant digits, half to even, and the port does the
+same. The port starts the text of a computed number with `~`, so it knows
+the two kinds apart.
 
-A math function with no exact result can differ from jq in its last digit.
-jq takes these results from the C library, and they differ from one C library
-to the next. The exact results are the same: `exp10` of 2 is 100.
+A literal has the range of the decNumber context of jq. When its adjusted
+exponent is more than 999999999, it is an infinity. An exponent below
+-1147483646 rounds half up to that exponent, as `0E-1147483646`.
 
-`std/f64` has the math functions of C that jq uses: `erf`, `lgamma`,
-`tgamma`, the Bessel functions and the others. jq takes each result from
-glibc. A function with no exact result can differ from glibc in its last
-digit. Near a zero, `j0` and `lgamma` can differ by up to 8 units in the
-last place.
+jq takes the result of a math function from the C library. The port takes
+it from `std/f64`. `cbrt`, `hypot`, `erf`, `erfc`, `lgamma`, `tgamma`, the
+Bessel functions, `sin` and `cos` of `std/f64` follow glibc 2.39 for x86-64.
+A result can still differ from jq in its last bit, for two reasons:
+
+- glibc on a CPU with FMA computes `sin`, `cos`, `exp`, `log`, `pow` and
+  some other functions with fused multiply-adds. `std/f64` has no fused
+  multiply-add, so it cannot give the same roundings. For `sin` and `cos`,
+  about 7 arguments of each 10000 differ. Each function that calls one of
+  these, such as the Bessel functions for x >= 2, can differ too.
+- `tan`, `asin`, `acos`, `atan` and `atan2` do not follow the algorithms of
+  glibc yet, and differ in the last bit more often.
+
+The results also differ from one C library to the next, so jq on a
+different system can give different last digits. The exact results are the
+same: `exp10` of 2 is 100.
 
 The functions with exact results, such as `frexp`, `fmod` and `nextafter`,
 give the results of glibc. The jq 1.7 binary of Ubuntu has no `pow10`,
@@ -204,7 +229,8 @@ places where jq names them most often. In other places, the text after
   the outputs as JSON values, as jq does. Each of the 709 cases passes.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
-  status.
+  status. It runs `--run-tests` on each test file of jq, and it follows
+  symbolic links in module paths.
 
 ## Speed
 

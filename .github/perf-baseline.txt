@@ -136,9 +136,9 @@ aarch64/call_overhead.ir	11250826
 aarch64/closure_call.text	1309
 aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	29405604
-aarch64/deflate_decode.text	16972
+aarch64/deflate_decode.text	16997
 aarch64/deflate_encode.ir	41706789
-aarch64/deflate_encode.text	8251
+aarch64/deflate_encode.text	8276
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24975095
 aarch64/http_hello.text	16947
@@ -207,7 +207,7 @@ aarch64/perceus_rbtree_ck.text	3753
 aarch64/perceus_rbtree_ck.ir	42101863
 x86_64/video_qtrle.text 5679
 x86_64/video_qtrle.ir 1547169520
-aarch64/video_qtrle.text 5949
+aarch64/video_qtrle.text 5974
 aarch64/video_qtrle.ir 1296439833
 x86_64/hex_encode.text	2357
 x86_64/hex_encode.ir	70631215
@@ -217,3 +217,6 @@ x86_64/base64_encode.ir	93474351
 aarch64/base64_encode.text	3194
 aarch64/hex_encode.ir	72029017
 aarch64/base64_encode.ir	74873689
+x86_64/hex_decode.text	2927
+x86_64/hex_decode.ir	263820985
+aarch64/hex_decode.text	3101

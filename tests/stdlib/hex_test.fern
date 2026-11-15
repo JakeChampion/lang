@@ -97,6 +97,55 @@ function test_encode_each_length(): test.TestOutcome {
   return test.assert_eq(bad.join(", "), "");
 }
 
+// The decoder reads 32 digits in one step. Each length from 0 to 140 has
+// each number of steps from 0 to 4 and each length of the rest, in each
+// case. A byte that is not a digit at each place of 100 digits stops the
+// decoder at that place, as do a byte just below and just above each range.
+function test_decode_each_length(): test.TestOutcome {
+  let all: u8[] = [];
+  for k in 0..256 {
+    all = all.append((k * 167 + 13) as u8);
+  }
+  let lower = hex.encode(all);
+  let upper = hex.encode_upper(all);
+  let bad: string[] = [];
+  for n in 0..141 {
+    for digits in [lower, upper] {
+      match (hex.decode(slice_unchecked(digits, 0, n).to_owned())) {
+        Ok(b) => {
+          if (n % 2 != 0 || hex.encode(b) != slice_unchecked(lower, 0, n)) {
+            bad = bad.append("length " + n.to_string());
+          }
+        },
+        Err(e) => {
+          if (n % 2 == 0 || e.offset != n) {
+            bad = bad.append("length " + n.to_string());
+          }
+        }
+      }
+    }
+  }
+  for at in 0..100 {
+    for c in [47, 58, 64, 71, 96, 103, 0, 255] {
+      let b = __alloc_u8(100);
+      for k in 0..100 {
+        b = b.with(k, lower[k]);
+      }
+      match (hex.decode(text(b.with(at, c as u8)))) {
+        Ok(_) => {
+          bad = bad.append("byte " + c.to_string() + " at " + at.to_string());
+        },
+        Err(e) => {
+          if (e.offset != at) {
+            bad = bad.append("byte " + c.to_string() + " at " + at.to_string());
+          }
+        }
+      }
+    }
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
 function test_encode_lowercase_digits(): test.TestOutcome {
   return test.assert_eq(hex.encode(__codec_bytes(hex.decode("ff"))), "ff");
 }
@@ -153,6 +202,7 @@ function main(): i32 {
   r = r.it("decode_checked rejects", test_decode_checked_rejects);
   r = r.it("encode_upper", test_encode_upper);
   r = r.it("encode each length", test_encode_each_length);
+  r = r.it("decode each length", test_decode_each_length);
   return r.finish();
 }
 

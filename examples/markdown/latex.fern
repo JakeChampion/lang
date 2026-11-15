@@ -105,7 +105,7 @@ function list(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): out.R {
     }
   }
   if (level >= 1 && level <= 5) {
-    r = r.lit("\\setcounter{enum" + COUNTERS[level] + "}{").out(start.to_string(), false, out.NORMAL).lit("}");
+    r = r.lit("\\setcounter{enum" + COUNTERS[level] + "}{").out((start - 1).to_string(), false, out.NORMAL).lit("}");
   }
   return r.cr();
 }
@@ -131,6 +131,9 @@ function inline(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (ou
 function span(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (out.R, boolean) {
   if (k == nodes.HTML) {
     return (r, false);
+  }
+  if (!entering && k == nodes.LINK && link_kind(t, x) == EMAIL_AUTOLINK) {
+    return (r.lit("}}"), false);
   }
   if (!entering) {
     return (r.lit("}"), false);
@@ -172,7 +175,7 @@ function link(r: out.R, t: nodes.Tree, x: i32): (out.R, boolean) {
     return (r.lit("\\url{").out(url, false, out.URL).lit("}"), true);
   }
   if (kind == EMAIL_AUTOLINK) {
-    return (r.lit("\\href{").out(url, false, out.URL).lit("}\\nolinkurl{"), false);
+    return (r.lit("\\href{").out(url, false, out.URL).lit("}{\\nolinkurl{"), false);
   }
   if (kind == NORMAL_LINK) {
     return (r.lit("\\href{").out(url, false, out.URL).lit("}{"), false);

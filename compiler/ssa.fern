@@ -1988,11 +1988,59 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   if (nfs > 0) {
     reg_of = lanes_off_saved(f, reg_of, nregs + nsaved + nf);
   }
+  reg_of = spilled_phi_cycles(f, reg_of);
   let shape = SlotShape { at: at, blk_start: blk_start, def_blk: def_blk, def_pos: def_pos, def_a: def_a, def_b: def_b };
   if (sites.start.len() == 0 && spilled_mates(reg_of, def_pos, mates.hint)) {
     sites = read_sites(f, at, blk_start);
   }
   return Alloc { reg_of: assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites), def_pos: def_pos, lo: lo, hi: hi, cold: cold };
+}
+
+// A phi in a register whose only reads are phis in memory, one of which is
+// also its own operand, goes to memory too. A loop that keeps a value in a
+// slot then moves it only where it changes, not on each edge of the loop.
+pub function spilled_phi_cycles(f: SFunc, reg_of: i32[]): i32[] {
+  let other = __alloc_bool(f.nvals);
+  let users: i32[][] = [];
+  for v in 0..f.nvals {
+    users = users.append([]);
+  }
+  for b in f.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals) {
+          if (ins.kind_tag == PHI && ins.result >= 0) {
+            users = users.with(a, users[a].append(ins.result));
+          } else {
+            other = other.with(a, true);
+          }
+        }
+      }
+    }
+    let t = term_operand(b.term);
+    if (t >= 0 && t < f.nvals) {
+      other = other.with(t, true);
+    }
+  }
+  let out = reg_of;
+  for b in f.blocks {
+    for ins in b.insts {
+      let v = ins.result;
+      if (ins.kind_tag == PHI && v >= 0 && v < f.nvals && reg_of[v] >= 0 && !other[v] && users[v].len() > 0 && memory_phis(users[v], reg_of) && util.index_of_i32(ins.args, users[v][0]) >= 0) {
+        out = out.with(v, -1);
+      }
+    }
+  }
+  return out;
+}
+
+function memory_phis(phis: i32[], reg_of: i32[]): boolean {
+  for h in phis {
+    if (reg_of[h] != -1) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32): i32[] {
