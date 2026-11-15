@@ -6368,6 +6368,9 @@ function tyarg_match_names(decl: string, tp: string, actual: string): string {
   if (decl == tp) {
     return actual;
   }
+  if (decl.ends_with("[]") && actual.ends_with("[]")) {
+    return tyarg_match_names(slice_unchecked(decl, 0, decl.len() - 2).to_owned(), tp, slice_unchecked(actual, 0, actual.len() - 2).to_owned());
+  }
   if (actual.len() == 0 || util.index_of_sub(decl, "[") < 0) {
     return "";
   }
