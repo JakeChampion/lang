@@ -1,5 +1,6 @@
 import "std/string";
 import "std/rand";
+import "std/unicode";
 import "../coreutils/lib/gnu";
 import "../coreutils/lib/bre";
 
@@ -164,13 +165,16 @@ function usage(status: i32): void {
   exit(status);
 }
 
-struct Opts { debug: boolean, quiet: boolean, extended: boolean, separate: boolean, in_place: boolean, suffix: string, posix: i32, zero: boolean, unbuffered: boolean, line_len: i32, follow: boolean, sandbox: boolean }
+// `utf8` is set when the locale reads text as UTF-8.
+struct Opts { debug: boolean, quiet: boolean, extended: boolean, separate: boolean, in_place: boolean, suffix: string, posix: i32, zero: boolean, unbuffered: boolean, line_len: i32, follow: boolean, sandbox: boolean, utf8: boolean }
 
 struct Addr { kind: i32, n: i64, step: i64, rx: i32 }
 
 // A command. `jump` is the target of b, t and T, and the index of the
 // closing brace of {. `out` is the output of w, W and the w flag of s.
-struct Cmd { a1: Addr, a2: Addr, bang: boolean, op: u8, text: u8[], name: string, num: i64, jump: i32, sub: i32, out: i32, table: u8[] }
+// In a UTF-8 locale `ymap` holds the characters of y in pairs, and `table`
+// is empty unless each pair maps a byte of ASCII to one byte.
+struct Cmd { a1: Addr, a2: Addr, bang: boolean, op: u8, text: u8[], name: string, num: i64, jump: i32, sub: i32, out: i32, table: u8[], ymap: u8[][] }
 
 // An empty regex stands for the last regex that ran. `nosub` marks a regex of
 // an address: GNU sed compiles it without groups, and checks the groups when
@@ -580,7 +584,7 @@ function compile_rx(c: Comp, pat: u8[], icase: boolean, multi: boolean, refs: i3
     return (Comp { ...c, rxs: c.rxs.append(Rx { re: empty, empty: true, nosub: false, src: [], icase: false, multi: false }) }, idx);
   }
   let text = normalize(c, pat, TEXT_REGEX);
-  let syntax = bre.sed_syntax(c.o.extended, icase, multi, c.o.posix == POSIX_BASIC);
+  let syntax = bre.Syntax { ...bre.sed_syntax(c.o.extended, icase, multi, c.o.posix == POSIX_BASIC), utf8: c.o.utf8 };
   let re = bre.bre_compile_bytes_syntax(text, syntax);
   if (re.err.len() > 0) {
     bad_prog(c, re.err);
@@ -650,7 +654,7 @@ function compile_address(c0: Comp, ch: i32): (Comp, Addr, boolean) {
 }
 
 function new_cmd(a1: Addr, a2: Addr, bang: boolean, op: i32): Cmd {
-  return Cmd { a1: a1, a2: a2, bang: bang, op: op as u8, text: [], name: "", num: -1, jump: -1, sub: -1, out: -1, table: [] };
+  return Cmd { a1: a1, a2: a2, bang: bang, op: op as u8, text: [], name: "", num: -1, jump: -1, sub: -1, out: -1, table: [], ymap: [] };
 }
 
 function push_cmd(c: Comp, cmd: Cmd): Comp {
@@ -1252,6 +1256,9 @@ function compile_translate(c0: Comp, cmd: Cmd): Comp {
   }
   let src = y_text(c, m1.1);
   let dst = y_text(c, m2.1);
+  if (c.o.utf8) {
+    return compile_translate_utf8(read_end_of_cmd(c), cmd, chars_of(src), chars_of(dst));
+  }
   if (src.len() != dst.len()) {
     bad_prog(c, "strings for `y' command are different lengths");
   }
@@ -1263,6 +1270,82 @@ function compile_translate(c0: Comp, cmd: Cmd): Comp {
     table = table.with(src[k] as i32, dst[k]);
   }
   return push_cmd(read_end_of_cmd(c), Cmd { ...cmd, table: table });
+}
+
+// In a UTF-8 locale y maps characters, and the first pair of a character
+// counts. A byte that starts no character maps only that byte.
+function compile_translate_utf8(c: Comp, cmd: Cmd, src: u8[][], dst: u8[][]): Comp {
+  if (src.len() != dst.len()) {
+    bad_prog(c, "strings for `y' command are different lengths");
+  }
+  let pairs: u8[][] = [];
+  let single = true;
+  for k in 0..src.len() {
+    pairs = pairs.append(src[k]).append(dst[k]);
+    single = single && src[k].len() == 1 && src[k][0] < 128u8 && dst[k].len() == 1;
+  }
+  let table: u8[] = [];
+  if (single) {
+    table = __alloc_u8(256);
+    for b in 0..256 {
+      table = table.with(b, b as u8);
+    }
+    let k = src.len() - 1;
+    while (k >= 0) {
+      table = table.with(src[k][0] as i32, dst[k][0]);
+      k -= 1;
+    }
+  }
+  return push_cmd(c, Cmd { ...cmd, table: table, ymap: pairs });
+}
+
+// chars_of splits UTF-8 text into its characters. A byte that starts no
+// character is one of its own.
+function chars_of(t: u8[]): u8[][] {
+  let out: u8[][] = [];
+  let k = 0;
+  while (k < t.len()) {
+    let n = bre.utf8_decode(t, k).1;
+    out = out.append(__bytes_range(t, k, k + n));
+    k += n;
+  }
+  return out;
+}
+
+function translate_chars(ps: u8[], pairs: u8[][]): u8[] {
+  let h = buf_new(ps.len() + 1);
+  let k = 0;
+  while (k < ps.len()) {
+    let n = bre.utf8_decode(ps, k).1;
+    let j = 0;
+    while (j < pairs.len() && !same_bytes(pairs[j], ps, k, n)) {
+      j += 2;
+    }
+    if (j < pairs.len()) {
+      buf_push_bytes_range(h, pairs[j + 1], 0, pairs[j + 1].len());
+    } else {
+      buf_push_bytes_range(h, ps, k, k + n);
+    }
+    k += n;
+  }
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// A pair of y matches a character of the text when its first n bytes are
+// the n bytes of that character, as in GNU sed. Thus a byte that starts no
+// character takes the first pair whose character starts with it.
+function same_bytes(a: u8[], t: u8[], at: i32, n: i32): boolean {
+  if (a.len() < n) {
+    return false;
+  }
+  for k in 0..n {
+    if (a[k] != t[at + k]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The script after every chunk: the program the run executes.
@@ -2219,7 +2302,7 @@ function exec_cmd(p: Prog, own r: Run, pc: i32, cmd: Cmd): (Run, i32) {
     b'w' => (output_ps(p, r, cmd.out + 3), next),
     b'W' => (output_first(p, r, cmd.out + 3), next),
     b'x' => (Run { ...r, ps: r.hold, chomped: r.hchomped, hold: r.ps, hchomped: r.chomped }, next),
-    b'y' => (Run { ...r, ps: translate(r.ps, cmd.table) }, next),
+    b'y' => (Run { ...r, ps: if (cmd.table.len() > 0 || !p.o.utf8) { translate(r.ps, cmd.table) } else { translate_chars(r.ps, cmd.ymap) } }, next),
     b'z' => (Run { ...r, ps: [] }, next),
     _ => (r, next),
   };
@@ -2507,6 +2590,54 @@ function apply_case(cs: Cased, n: i32): Cased {
   return Cased { mode: n, once: CASE_ASIS };
 }
 
+// push_text_utf8 adds text in the case of `cs`, a character at a time. A
+// byte that starts no character goes as it is, and ends a \u or \l.
+function push_text_utf8(h: usize, t: u8[], lo: i32, hi: i32, cs0: Cased): Cased {
+  let cs = cs0;
+  let k = lo;
+  while (k < hi) {
+    let d = bre.utf8_decode(t, k);
+    if (d.0 < 0 || k + d.1 > hi) {
+      buf_push_byte(h, t[k] as i32);
+      cs = Cased { ...cs, once: CASE_ASIS };
+      k += 1;
+      continue;
+    }
+    let mode = if (cs.once != CASE_ASIS) { cs.once } else { cs.mode };
+    let cp = d.0;
+    if (mode == CASE_UPPER || mode == CASE_UPPER_FIRST) {
+      cp = (cp as char).to_upper() as i32;
+    } else if (mode == CASE_LOWER || mode == CASE_LOWER_FIRST) {
+      cp = (cp as char).to_lower() as i32;
+    }
+    for b in bre.utf8_bytes(cp) {
+      buf_push_byte(h, b);
+    }
+    cs = Cased { ...cs, once: CASE_ASIS };
+    k += d.1;
+  }
+  return cs;
+}
+
+// In a UTF-8 locale each piece of a replacement changes its case a
+// character at a time.
+function append_replacement_utf8(h: usize, sub: Sub, ps: u8[], m: bre.BreMatch, ms: i32, me: i32): void {
+  let cs = Cased { mode: CASE_ASIS, once: CASE_ASIS };
+  for op in sub.ops {
+    if (op.kind == R_TEXT) {
+      cs = push_text_utf8(h, op.text, 0, op.text.len(), cs);
+    } else if (op.kind == R_GROUP && op.n == 0) {
+      cs = push_text_utf8(h, ps, ms, me, cs);
+    } else if (op.kind == R_GROUP) {
+      if (op.n < m.starts.len() && m.starts[op.n] >= 0) {
+        cs = push_text_utf8(h, ps, m.starts[op.n], m.ends[op.n], cs);
+      }
+    } else {
+      cs = apply_case(cs, op.n);
+    }
+  }
+}
+
 // append_replacement writes the replacement of the match from `ms` to `me`.
 // `m` holds the groups when the replacement uses them.
 function append_replacement(h: usize, sub: Sub, ps: u8[], m: bre.BreMatch, ms: i32, me: i32): void {
@@ -2584,7 +2715,11 @@ function exec_subst(p: Prog, own r0: Run, sub: Sub): Run {
         did = true;
       }
       buf_push_bytes_range(h, ps, copy, ms);
-      append_replacement(h, sub, ps, m, ms, me);
+      if (p.o.utf8) {
+        append_replacement_utf8(h, sub, ps, m, ms, me);
+      } else {
+        append_replacement(h, sub, ps, m, ms, me);
+      }
       copy = me;
       if (!sub.global) {
         break;
@@ -2851,7 +2986,11 @@ function debug_command(p: Prog, cmd: Cmd): u8[] {
   } else if (op == b'w' || op == b'W') {
     buf_push(h, p.wfiles[cmd.out].name);
   } else if (op == b'y') {
-    debug_translation(h, cmd.table);
+    if (p.o.utf8) {
+      debug_pairs(h, cmd.ymap);
+    } else {
+      debug_translation(h, cmd.table);
+    }
   }
   let out = buf_take_bytes(h);
   buf_free(h);
@@ -2871,6 +3010,19 @@ function debug_translation(h: usize, table: u8[]): void {
   for b in 0..256 {
     if (table[b] as i32 != b) {
       buf_push_byte(h, table[b] as i32);
+    }
+  }
+  buf_push_byte(h, 47);
+}
+
+// In a UTF-8 locale GNU sed prints the pairs of y in their order, as bytes.
+function debug_pairs(h: usize, pairs: u8[][]): void {
+  for half in 0..2 {
+    buf_push_byte(h, 47);
+    let k = half;
+    while (k < pairs.len()) {
+      buf_push_bytes_range(h, pairs[k], 0, pairs[k].len());
+      k += 2;
     }
   }
   buf_push_byte(h, 47);
@@ -3105,13 +3257,48 @@ function apply_option(c: Comp, m: gnu.OptMatch): Comp {
   };
 }
 
+// locale_utf8 tells whether the locale reads text as UTF-8: the first of
+// LC_ALL, LC_CTYPE and LANG that is not empty names the codeset UTF-8.
+function locale_utf8(): boolean {
+  for name in ["LC_ALL", "LC_CTYPE", "LANG"] {
+    if let Some(v) = env(name) {
+      if (v.len() > 0) {
+        return codeset_utf8(v);
+      }
+    }
+  }
+  return false;
+}
+
+// The codeset is the part after the dot, before any @modifier. Case and
+// hyphens do not count.
+function codeset_utf8(locale: string): boolean {
+  let dot = __memchr(locale, 46, 0);
+  if (dot < 0) {
+    return false;
+  }
+  let h = buf_new(8);
+  for k in dot + 1..locale.len() {
+    let c = locale[k] as i32;
+    if (c == 64) {
+      break;
+    }
+    if (c != 45) {
+      buf_push_byte(h, lower_byte(c));
+    }
+  }
+  let code = buf_take(h);
+  buf_free(h);
+  return code == "utf8";
+}
+
 function main(): i32 {
   let argv = args();
   let posix = POSIX_EXTENDED;
   if let Some(_) = env("POSIXLY_CORRECT") {
     posix = POSIX_CORRECT;
   }
-  let o = Opts { debug: false, quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false };
+  let o = Opts { debug: false, quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false, utf8: locale_utf8() };
   let c = comp_new(o);
   let g = gnu.getopt_new(argv, options(), "sed", help_text(), EXIT_BAD_USAGE).in_package("sed");
   let have_script = false;

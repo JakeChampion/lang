@@ -808,6 +808,11 @@ arm64 leg under qemu, the GNU sed and its libraries come from the arm64
 packages of the distribution, as for coreutils. `sed/README.md` gives the
 scope of the port.
 
+The cases of `sedUTF8Cases` set `LC_ALL=C.UTF-8`, and the same scripts run
+again in the C locale. They are the only cases of the corpus outside the C
+locale. `coreutils/lib/bre.fern` reads UTF-8 only when `Syntax.utf8` is
+set, and only sed sets it.
+
 ## findutils
 
 The same gate holds the ports of GNU find and xargs in `findutils/`. They

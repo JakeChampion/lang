@@ -54,6 +54,24 @@ blocks goes on from one cycle to the next. Also, after the first run of `e`,
 the newline at the end of its text is a NUL. The port reads
 POSIXLY_CORRECT as GNU sed does.
 
+In a UTF-8 locale the port reads characters of UTF-8, as GNU sed does. The
+locale is the first of LC_ALL, LC_CTYPE and LANG that is set, and its
+codeset must be UTF-8, as in `C.UTF-8`. Then:
+
+- `.`, a bracket expression, `\w`, `\W`, `\s` and `\S` match one
+  character. A byte that starts no character matches only itself, outside a
+  bracket expression.
+- The classes, the case conversions of `s` and the `I` flag follow the
+  rules of glibc in C.UTF-8. For example, `[[:alpha:]]` holds the decimal
+  digits outside ASCII. Two characters are equal under `I` when they have
+  the same upper case.
+- A range in a bracket expression takes two ASCII ends, as in C.UTF-8.
+- `y` maps characters, and `--debug` prints its pairs in their order.
+- The word assertions read the character before and after each position.
+- `l` and the trace of `--debug` still show bytes.
+
+In the C locale each byte is a character.
+
 The regular expressions are the BRE and ERE of GNU sed, with character
 classes and back references. The GNU operators are `\+`, `\?`, `\|`, `\w`,
 `\W`, `\s`, `\S`, `\b`, `\B`, `\<`, `\>`, `` \` `` and `\'`. An empty
@@ -70,13 +88,22 @@ The exit status is the code of `q` or `Q`, or one of these:
 
 These differences remain:
 
-- The port works on bytes, as GNU sed does in the C locale. Thus it does
-  not know multibyte characters.
+- The port does not check that the locale is on the system. When it is
+  not, GNU sed uses the C locale.
+- The tables of Unicode are those of version 17. glibc 2.39 has an older
+  version, so some characters that came later are in different classes.
+  An example is U+0363 COMBINING LATIN SMALL LETTER A, which is in
+  `[[:alpha:]]` in the port and in `[[:punct:]]` in GNU sed.
+- In a UTF-8 locale, a byte that continues a character but follows a
+  complete one can move a match that has a word assertion. Then GNU sed
+  can start the match inside the character before it.
 - The port writes standard output in blocks of 64 KiB, and GNU sed writes
   it in blocks of 4 KiB. Thus a write error on standard output after the
   first 4 KiB gives a different message. The port names the bytes of its
   block, and GNU sed names the bytes of its last write. A w file and the
-  file of `-i` use the blocks of GNU sed, and give the same messages.
+  file of `-i` use the blocks of GNU sed, and give the same messages. The
+  blocks of GNU sed on standard output cost 4% of the instructions of `y`
+  and 8% of `p`, and then `y` is slower than in GNU sed.
 - On wasm32-wasi, the `e` command and the `e` flag stop with an error,
   because WASI has no processes.
 
