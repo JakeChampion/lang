@@ -195,14 +195,15 @@ function test_a_drag_gives_one_splat_for_each_frame(): test.TestOutcome {
   let Some(sp) = fr.splat else {
     return test.fail("the frame after a drag has no splat");
   };
-  // The last move is 200 pixels up, a tenth of the height. The splat is at
-  // the finger, with y up. A move across counts for less on a tall window.
+  // The two moves of the frame add up: 100 pixels across, a tenth of the
+  // width, and 200 pixels up, a tenth of the height. The splat is at the
+  // finger, with y up. A move across counts for less on a tall window.
   let across = started(false).touched(0, 500.0, 1000.0, 0i64).touched(2, 600.0, 1000.0, 0i64);
   let (ignored, wide) = across.frame(SECOND / 60i64);
   let Some(side) = wide.splat else {
     return test.fail("the frame after a move across has no splat");
   };
-  return test.assert_true(none.splat.is_none() && sp.x == 0.6 && sp.y == 0.6 && sp.dx == 0.0 && (sp.dy - 600.0).abs() < 0.001 && quiet.splat.is_none() && (side.dx - 300.0).abs() < 0.001 && side.dy == 0.0);
+  return test.assert_true(none.splat.is_none() && sp.x == 0.6 && sp.y == 0.6 && (sp.dx - 300.0).abs() < 0.001 && (sp.dy - 600.0).abs() < 0.001 && quiet.splat.is_none() && after.pointer.dx == 0.0 && (side.dx - 300.0).abs() < 0.001 && side.dy == 0.0);
 }
 
 function test_the_button_opens_the_dialog_and_gives_no_splat(): test.TestOutcome {
@@ -376,7 +377,7 @@ function main(): i32 {
   r = r.it("the app starts with a burst", test_app_starts_with_a_burst);
   r = r.it("with no animations, the app starts still until a touch", test_no_animation_starts_still_until_a_touch);
   r = r.it("a pause that the person chose stays after a touch", test_a_pause_of_the_person_stays_after_a_touch);
-  r = r.it("a drag gives one splat for each frame", test_a_drag_gives_one_splat_for_each_frame);
+  r = r.it("a drag gives one splat for each frame, with each move of the frame", test_a_drag_gives_one_splat_for_each_frame);
   r = r.it("the button opens the dialog and gives no splat", test_the_button_opens_the_dialog_and_gives_no_splat);
   r = r.it("the close button, the backdrop and the back key close the dialog", test_the_dialog_closes);
   r = r.it("a touch on the dialog does not reach the fluid", test_a_touch_on_the_dialog_does_not_reach_the_fluid);

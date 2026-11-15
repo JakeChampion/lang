@@ -72,8 +72,9 @@ The fluid draws at most 2 pixels across one dp, as the page does, and the
 GPU makes that picture as large as the window. The controls draw at the
 resolution of the window. The `max_pixel_ratio` setting changes the limit.
 
-Each 5 seconds, the app writes the number of frames and the longest frame
-to its log. `adb logcat -s fern` shows the lines.
+The dialog shows the frame rate of the last second, and the longest time
+from one frame to the next, next to its close button. Each 5 seconds, the app
+writes the same text to its log. `adb logcat -s fern` shows the lines.
 
 ## Settings
 
