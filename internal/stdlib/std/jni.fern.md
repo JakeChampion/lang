@@ -6,6 +6,8 @@ This module calls JNI methods from Fern.
 
 The JNI environment supplies a table of function pointers. Typed helpers select table entries and marshal arguments into JNI call forms.
 
+A setter of a float or a double field passes its value in a vector register, which the integer call shims cannot fill. These setters call the table entry through `__c_callv`, the C call with float arguments, which loads both kinds of argument registers.
+
 ## Contracts
 
 Environment pointers, object references, method identifiers, and field identifiers must belong to the active JNI context. Pointer-sized integers do not validate that context.
@@ -429,6 +431,38 @@ pub function set_int_field(env: usize, obj: usize, field: usize, value: usize): 
 
 pub function set_long_field(env: usize, obj: usize, field: usize, value: usize): usize {
   return call3(env, 110, obj, field, value);
+}
+
+pub function set_float_field(env: usize, obj: usize, field: usize, value: f32): void {
+  call_with_float(env, 111, obj, field, f32_bits(value) as i64);
+}
+
+pub function set_double_field(env: usize, obj: usize, field: usize, value: f64): void {
+  call_with_float(env, 112, obj, field, f64_bits(value));
+}
+
+pub function set_static_float_field(env: usize, clazz: usize, field: usize, value: f32): void {
+  call_with_float(env, 161, clazz, field, f32_bits(value) as i64);
+}
+
+pub function set_static_double_field(env: usize, clazz: usize, field: usize, value: f64): void {
+  call_with_float(env, 162, clazz, field, f64_bits(value));
+}
+
+// Calls the table entry `index` with env, a0 and a1 in the first integer
+// registers and the float `bits` in the first vector register.
+function call_with_float(env: usize, index: i32, a0: usize, a1: usize, bits: i64): void {
+  unsafe {
+    let ints: usize = __alloc(128);
+    let floats: usize = __alloc(80);
+    __store_i64(ints, env as i64);
+    __store_i64(ints + 8 as usize, a0 as i64);
+    __store_i64(ints + 16 as usize, a1 as i64);
+    __store_i64(floats, bits);
+    let ignored: usize = __c_callv(method_ptr(env, index), ints, floats, 0);
+    __free(ints, 128);
+    __free(floats, 80);
+  }
 }
 
 pub function get_static_object_field(env: usize, clazz: usize, field: usize): usize {

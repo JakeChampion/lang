@@ -13,6 +13,10 @@ its intent, so it needs no sign-in at plex.tv. The check requires:
   decoder of Android;
 - a link plays the track to its end, reports the playback to the server
   and marks the track watched;
+- the D-pad of a remote moves the focus to the first poster, and the
+  centre key opens it;
+- a track plays on to its end after the home key sends the app away, and
+  the media session of Android shows the app;
 - with VIDEO.mp4, a link shows the video on a texture that the app draws.
   The 4:3 pattern fills the width with black bars above and below it, and
   it is upright. A tap shows the controls over it with no pause, and a tap
@@ -276,6 +280,36 @@ def check_track(out, port):
         fail("no report that the track stopped")
 
 
+def requests_for(part):
+    return sum(1 for r in requests if part in r)
+
+
+def check_remote(out, port):
+    start(port)
+    if not wait_for(lambda: seen("/hubs") and seen("/photo/:/transcode")):
+        return fail("the home screen asked for no hubs or no posters")
+    time.sleep(2)
+    before = requests_for("/library/metadata/901")
+    adb("shell", "input", "keyevent", "20")
+    time.sleep(1)
+    screen(out, "focus")
+    adb("shell", "input", "keyevent", "23")
+    if not wait_for(lambda: requests_for("/library/metadata/901") > before):
+        fail("down and the centre key did not open the first poster")
+
+
+def check_background(out, port):
+    start(port, "900")
+    if not wait_for(lambda: "plex: prepared 900" in logcat()):
+        return fail("the track did not prepare")
+    adb("shell", "input", "keyevent", "3")
+    session = adb("shell", "dumpsys", "media_session", check=False)
+    if PACKAGE not in session:
+        fail("the media session of Android does not show the app")
+    if not wait_for(lambda: requests_for("/:/scrobble?identifier=com.plexapp.plugins.library&key=900") >= 2, timeout=20):
+        fail("the track did not play on to its end after the home key")
+
+
 def check_video(out, port):
     start(port, "901")
     if not wait_for(lambda: count_log(r"plex: video on the window") >= 1):
@@ -339,7 +373,9 @@ def main(apk, out, video=None):
     adb("logcat", "-c")
     try:
         check_home(out, port)
+        check_remote(out, port)
         check_track(out, port)
+        check_background(out, port)
         if video:
             check_video(out, port)
         else:

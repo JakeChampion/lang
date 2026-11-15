@@ -1854,8 +1854,7 @@ function do_request(ctx: usize, r: UiRequest): boolean {
 }
 
 // Sets WindowManager.LayoutParams.screenBrightness to `permille` / 1000, or
-// to BRIGHTNESS_OVERRIDE_NONE (-1) for a negative `permille`. JNI has no call
-// of SetFloatField here, so the float goes through Field.setFloat.
+// to BRIGHTNESS_OVERRIDE_NONE (-1) for a negative `permille`.
 function apply_brightness(ctx: usize, permille: i32): void {
   let level = -1.0f32;
   if (permille >= 0) {
@@ -1872,18 +1871,11 @@ function apply_brightness(ctx: usize, permille: i32): void {
     }
     if (lp != 0 as usize) {
       let class: usize = jni.get_object_class(e, lp);
-      let name: usize = jni.new_string(e, "screenBrightness");
-      let field: usize = jni.call_object(e, class, "getField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;", [name]);
+      let field: usize = jni.get_field_id(e, class, "screenBrightness", "F");
       if (field != 0 as usize) {
-        let fclass: usize = jni.get_object_class(e, field);
-        let args: usize = jni.jvalue_set_f32(jni.jvalues([lp, 0 as usize]), 1, level);
-        let set: usize = jni.call_void_method_a(e, field, jni.get_method_id(e, fclass, "setFloat", "(Ljava/lang/Object;F)V"), args);
-        jni.free_buffer(args);
+        jni.set_float_field(e, lp, field, level);
         let applied = jni.call_void(e, window, "setAttributes", "(Landroid/view/WindowManager$LayoutParams;)V", [lp]);
-        let a: usize = jni.delete_local_ref(e, fclass);
-        let b: usize = jni.delete_local_ref(e, field);
       }
-      let c: usize = jni.delete_local_ref(e, name);
       let d: usize = jni.delete_local_ref(e, class);
       let f: usize = jni.delete_local_ref(e, lp);
     }
