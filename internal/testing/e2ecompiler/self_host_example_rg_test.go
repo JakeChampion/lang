@@ -106,6 +106,9 @@ func rgFixtures(t *testing.T, dir string) {
 		"z/bad.bz2":   "garbage",
 		"z/bad.xz":    "garbage",
 		"z/plain.txt": "foo plain\n",
+		"z/raw.lz4":   "foo in no lz4 frame\n",
+		"z/raw.zst":   "foo in no zstd frame\n",
+		"z/raw.br":    "foo in no brotli stream\n",
 		"rgconfig":    "# A comment\n\n  --colors=match:fg:green  \n-n\n--color=always\n",
 		"badconfig":   "--bogus\n",
 	}
@@ -120,6 +123,7 @@ func rgFixtures(t *testing.T, dir string) {
 	scripts := map[string]string{
 		"pre.sh":   "#!/bin/sh\necho \"pre: $1\"\ncat\n",
 		"fail.sh":  "#!/bin/sh\necho foo one\necho oops >&2\nexit 1\n",
+		"part.sh":  "#!/bin/sh\nprintf 'foo one\\nfoo two'\nexit 1\n",
 		"quiet.sh": "#!/bin/sh\nexit 3\n",
 	}
 	for name, text := range scripts {
@@ -428,13 +432,13 @@ func rgLateCases() []rgCase {
 		"-E iso-2022-jp --passthru x iso2022.txt", "-E csiso2022kr foo a.txt", "-E auto foo a.txt", "-E NONE foo a.txt",
 		"-E x-user-defined --passthru x latin.txt", "-E windows-1251 --passthru x latin.txt", "-E iso-8859-8-i --passthru x latin.txt",
 		// The preprocessor of --pre, and -z.
-		"--pre ./pre.sh foo a.txt", "--pre ./pre.sh -j1 pre a.txt w.txt", "--pre ./fail.sh foo a.txt", "--pre ./fail.sh -c foo a.txt",
+		"--pre ./pre.sh foo a.txt", "--pre ./pre.sh -j1 pre a.txt w.txt", "--pre ./fail.sh foo a.txt", "--pre ./fail.sh -c foo a.txt", "--pre ./part.sh foo a.txt",
 		"--pre ./fail.sh -l foo a.txt", "--pre ./fail.sh -l zzz a.txt", "--pre ./quiet.sh foo a.txt", "--pre nosuchprogram foo a.txt",
 		"--pre ./pre.sh --pre-glob *.md -j1 foo a.txt long.md", "--pre ./pre.sh --pre-glob !*.md -j1 pre a.txt long.md",
 		"--pre ./pre.sh foo nosuch.txt", "--pre ./pre.sh --no-pre pre a.txt", "--pre= pre a.txt", "--pre ./pre.sh -z pre a.txt",
 		"-z foo z/t.gz", "-z -c foo z/t.bz2", "-z -n foo z/t.xz", "-z foo z/t.lzma", "-z foo z/t.Z", "-z foo z/trunc.xz",
 		"-z foo z/bad.gz", "-z foo z/bad.bz2", "-z foo z/bad.xz", "-z -j1 --sort path foo z", "--search-zip -l foo z/t.gz",
-		"-z --no-search-zip foo z/t.xz", "-z foo a.txt",
+		"-z --no-search-zip foo z/t.xz", "-z foo a.txt", "-z foo z/raw.lz4", "-z -c foo z/raw.zst z/raw.br",
 	}
 	var cases []rgCase
 	for _, l := range lines {
@@ -508,7 +512,7 @@ func rgLogCases() []rgCase {
 		"--debug --hyperlink-format vscode foo a.txt", "--debug --hostname-bin /bin/false foo a.txt", "--debug -g *.txt foo a.txt",
 		"--debug --trace foo a.txt", "--trace --debug foo a.txt", "--debug --files a.txt", "--debug --engine auto (?<=f)oo a.txt",
 		"--trace -", "--debug -j1 foo tree", "--trace -j1 foo tree", "--debug -j1 --hidden foo tree", "--debug -j1 -uu foo tree",
-		"--debug -j1 --max-filesize 10 foo tree",
+		"--debug -j1 --max-filesize 10 foo tree", "--debug -z foo z/raw.lz4", "--trace -z -j1 foo z/raw.br z/t.gz",
 	}
 	var cases []rgCase
 	for _, l := range lines {

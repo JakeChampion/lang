@@ -37,7 +37,7 @@ searches the current directory, and it writes each name without the leading
 | `-f F` | `--file F` | The patterns of the lines of F, or of the standard input for `-`. |
 | | `--pre P`, `--no-pre` | Search the output of the program P for each file. P gets the path of the file as its argument, and the file on its standard input. `std/process` runs it. |
 | | `--pre-glob G` | Run the program of `--pre` only for the files that the globs keep, as with `-g`. |
-| `-z` | `--search-zip` | Decompress each file with the extension of gzip, bzip2, xz, lzma, lz4, brotli, zstd or compress, and search the result. |
+| `-z` | `--search-zip` | Run the program of each file with the extension of gzip, bzip2, xz, lzma, lz4, brotli, zstd or compress, and search its output. When the program is not on the host, search the file as it is. |
 | `-a` | `--text` | Search binary files as text. |
 | | `--binary` | Search a binary file that the walk finds as a file on the command line. |
 | | `--mmap`, `--no-mmap` | Map the files into memory, or read them in buffers. This changes the rules for binary files. |
@@ -258,15 +258,6 @@ order of the walk.
   for each entry of a walk. With more than one thread, ripgrep writes the
   lines of the searches in the order that the threads run them.
 
-- **Decompression.** ripgrep 14.1.0 runs the programs `gzip`, `bzip2`,
-  `xz`, `lz4`, `brotli`, `zstd` and `uncompress` for `-z`, and the port
-  decompresses with `std/deflate`, `std/bzip2`, `std/xz`, `std/lz4`,
-  `std/brotli`, `std/zstd` and `std/lzw`. When a program is not on the
-  host, ripgrep searches the compressed file, but the port decompresses
-  it. For data that is not valid, the port writes the messages of the
-  programs. For data that ends early, the count of the bytes before the
-  error can differ from that of the program.
-
 - **PCRE2.** `std/pcre` is a backtracking engine in Fern, and ripgrep links
   the C library of PCRE2 with its JIT. Thus `--pcre2-version` and
   `--version` say `JIT is unavailable`. The match limit of `std/pcre` counts
@@ -306,7 +297,7 @@ order of the walk.
   with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 665 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 670 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
@@ -316,7 +307,9 @@ order of the walk.
   hidden files and a binary file of 70 KiB.
 
   The cases of `-z` search files
-  of gzip, bzip2, xz, lzma and compress, and files that are not valid. The
+  of gzip, bzip2, xz, lzma and compress, and files that are not valid. They
+  also search files of lz4, zstd and brotli that the programs refuse, or
+  that a host with no program searches as they are. The
   cases of `--pre` run scripts that pass, that fail and that write no
   error.
 

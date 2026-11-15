@@ -197,11 +197,13 @@ function pcre_logs(ctx: Ctx, o: flags.Options): void {
   decompress_log(o);
 }
 
-// The logs of the search of a file, before it: the binary detection and
-// how the searcher of ripgrep reads the file.
+// The logs of the search of a file, before it: the binary detection, a
+// program of -z that could not start, and how the searcher of ripgrep reads
+// the file.
 function file_logs(ctx: Ctx, re: matcher.Matcher, path: string, explicit: boolean, hay: Haystack, decoded: boolean): void {
   let level = ctx.p.log;
   if (level < logs.TRACE) {
+    spawn_log(level, hay);
     return;
   }
   let p = ctx.p;
@@ -209,6 +211,7 @@ function file_logs(ctx: Ctx, re: matcher.Matcher, path: string, explicit: boolea
   let src = source(ctx, walk.Item { path: path, explicit: explicit, message: "", error: false, log: false }, 0, false);
   let kind = if (src.detect == search.DETECT_NONE) { "None" } else if (src.detect == search.DETECT_CONVERT) { "Convert(0)" } else { "Quit(0)" };
   logs.trace(level, "rg::search", "crates/core/search.rs", 254, shown + ": binary detection: BinaryDetection(" + kind + ")");
+  spawn_log(level, hay);
   let module = "grep_searcher::searcher";
   let file = logs.source("grep-searcher-0.1.13", "searcher/mod.rs");
   let whole = p.multiline && (ctx.pcre || re.can_match_byte(p.term as u8));
@@ -237,6 +240,12 @@ function file_logs(ctx: Ctx, re: matcher.Matcher, path: string, explicit: boolea
   if (!whole) {
     let fast = !p.passthru && !ctx.pcre && p.term != 0 && !(p.multiline && re.can_match_byte(10u8));
     logs.trace(level, "grep_searcher::searcher::core", logs.source("grep-searcher-0.1.13", "searcher/core.rs"), if (fast) { 65 } else { 67 }, if (fast) { "searcher core: will use fast line searcher" } else { "searcher core: will use slow line searcher" });
+  }
+}
+
+function spawn_log(level: i32, hay: Haystack): void {
+  if (hay.log != "") {
+    logs.debug(level, "grep_cli::decompress", logs.source("grep-cli-0.1.10", "decompress.rs"), 234, hay.log);
   }
 }
 
@@ -400,9 +409,10 @@ struct Searched { out: Option[search.Outcome], nanos: i64, errors: string[] }
 // The bytes that the search of a file reads, with no check of UTF-8: the
 // file, the output of the preprocessor of --pre, or the file that -z
 // decompresses. `prefix` and `late` are the message of a program that failed
-// after its output. `piped` says that ripgrep reads the bytes from a
-// program, not from a map of the file.
-struct Haystack { text: string, prefix: string, late: string, piped: boolean }
+// after its output. `piped` says that ripgrep reads the bytes with its
+// generic reader, not from a map of the file. `log` is the debug log of a
+// program of -z that could not start, or "".
+struct Haystack { text: string, prefix: string, late: string, piped: boolean, log: string }
 
 // Searches the file of `it`, and writes its output to `h`.
 function search_file(ctx: Ctx, re: matcher.Matcher, it: walk.Item, cap: i32, h: usize, written: boolean): Searched {
@@ -445,10 +455,14 @@ function haystack(ctx: Ctx, path: string, name: string): Result[Haystack, string
   if (path != "-" && ctx.pre != "" && preprocessed(ctx, name)) {
     return preprocess(ctx, path, name);
   }
-  let prog = if (ctx.search_zip && path != "-") { decompress.program(path) } else { "" };
-  if (prog == "" && ctx.mmap && path != "-") {
+  let none: string[] = [];
+  let cmd = if (ctx.search_zip && path != "-") { decompress.command(path) } else { none };
+  if (cmd.len() > 0) {
+    return decompressed(cmd, path, name, ctx.p.term);
+  }
+  if (ctx.mmap && path != "-") {
     return match (unsafe { map_file_unchecked(path) }) {
-      Ok(text) => Ok(Haystack { text: text, prefix: "", late: "", piped: false }),
+      Ok(text) => Ok(Haystack { text: text, prefix: "", late: "", piped: false, log: "" }),
       Err(e) => Err(ignore.os_error(e)),
     };
   }
@@ -458,11 +472,32 @@ function haystack(ctx: Ctx, path: string, name: string): Result[Haystack, string
       return Err(ignore.os_error(e));
     },
   };
-  if (prog == "") {
-    return Ok(Haystack { text: raw(bytes), prefix: "", late: "", piped: false });
+  return Ok(Haystack { text: raw(bytes), prefix: "", late: "", piped: false, log: "" });
+}
+
+// The output of the program of -z for the file, as ripgrep runs it with the
+// path of the file as its last argument. When the program cannot start,
+// ripgrep reads the file as it is.
+function decompressed(cmd: string[], path: string, name: string, term: i32): Result[Haystack, string] {
+  let args = cmd.drop(1).append(name);
+  match (process.run(cmd[0], args, "")) {
+    Ok(out) => {
+      let late = if (out.status == 0) { "" } else { stderr_text(unsafe { string_from_bytes_unchecked(out.stderr) }) };
+      return Ok(Haystack { text: raw(searched_output(out, term)), prefix: "", late: late, piped: true, log: "" });
+    },
+    Err(e) => {
+      let bytes = match (read_input(path)) {
+        Ok(b) => b,
+        Err(why) => {
+          return Err(ignore.os_error(why));
+        },
+      };
+      let shown = debug_arg(cmd[0]) + " " + args.map((a: string): string => debug_arg(a)).join(" ");
+      let log = f"{name}: error spawning command '{shown}': {ignore.os_error(e)} (falling back to uncompressed reader)";
+      return Ok(Haystack { text: raw(bytes), prefix: "", late: "", piped: true, log: log });
+    }
   }
-  let (out, why) = decompress.decompressed(prog, name, bytes);
-  return Ok(Haystack { text: raw(out), prefix: "", late: if (why == "") { "" } else { stderr_text(why) }, piped: true });
+  return Err("no program");
 }
 
 function raw(own bytes: u8[]): string {
@@ -489,7 +524,21 @@ function preprocess(ctx: Ctx, path: string, name: string): Result[Haystack, stri
     },
   };
   let late = if (out.status == 0) { "" } else { stderr_text(unsafe { string_from_bytes_unchecked(out.stderr) }) };
-  return Ok(Haystack { text: raw(out.stdout), prefix: "preprocessor command failed: '" + cmd + "': ", late: late, piped: true });
+  return Ok(Haystack { text: raw(searched_output(out, ctx.p.term)), prefix: "preprocessor command failed: '" + cmd + "': ", late: late, piped: true, log: "" });
+}
+
+// The output of a program that ripgrep searches. When the program fails,
+// ripgrep gets the error at the read after the last full line, so it does
+// not search a last line with no terminator.
+function searched_output(out: process.Output, term: i32): u8[] {
+  if (out.status == 0) {
+    return out.stdout;
+  }
+  let end = out.stdout.len();
+  while (end > 0 && out.stdout[end - 1] as i32 != term) {
+    end -= 1;
+  }
+  return out.stdout.take(end);
 }
 
 // An argument in quotes, as Rust writes it for debug.
