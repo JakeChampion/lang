@@ -62,7 +62,7 @@
 # not link checker.fern at all, and found one irlower slice reading +6.8% or
 # +9.2% for the same absolute growth depending only on which driver divided it.
 
-fern.fern/stage2 18594752
+fern.fern/stage2 18592896
 fern.fern 17504544
 drivers/runtime_run.fern 17506224
 drivers/asm_load_run.fern 13460128

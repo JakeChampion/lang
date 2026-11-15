@@ -462,13 +462,16 @@ function cleared_slot(own r: irtables.LowerState, f: ssasem.Func, get: ssa.SInst
 
 struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[], gated_records: i32[], gated_fields: i32[] }
 
-function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[]): Held {
+// A borrowed array at its last use goes to the callee with no bracket, so a
+// callee that grows it can write in place. A view of it in another argument
+// reads that storage during the call, so the array is not at its last use.
+function bracketed(f: ssasem.Func, a: ssasem.Analysis, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[]): Held {
   let out = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
   if (ins.kind_tag == ssasem.call_value()) {
-    return dispatch_bracketed(f, step, ins, grows, links, ssaunits.indirect_callee(), 1);
+    return dispatch_bracketed(f, a, step, ins, grows, links, ssaunits.indirect_callee(), 1);
   }
   if (dyn_call(ins)) {
-    return dispatch_bracketed(f, step, ins, grows, links, ins.str, 0);
+    return dispatch_bracketed(f, a, step, ins, grows, links, ins.str, 0);
   }
   if (ins.kind_tag != ssasem.call()) {
     return out;
@@ -477,7 +480,7 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
   let i = 0;
   while (i < ins.args.len() && i < modes.len()) {
     let v = ins.args[i];
-    let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1;
+    let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !ssaunits.lends_view_of(f, a, ins.args, v);
     if (modes[i] == ssaunits.borrow_mode() && !last) {
       let handed = i < step.hand_roots.len() && step.hand_roots[i] >= 0;
       if (bracketable(f.values[v]) && !handed && ssaunits.grows_buffer(grows, ins.str, i) && util.index_of_i32(out.arrays, v) < 0) {
@@ -501,13 +504,13 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
   return out;
 }
 
-function dispatch_bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[], name: string, first: i32): Held {
+function dispatch_bracketed(f: ssasem.Func, a: ssasem.Analysis, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[], name: string, first: i32): Held {
   let out = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
   let modes = dispatch_modes(f, ins, first);
   for i in first..ins.args.len() {
     let v = ins.args[i];
     let linked = v < links.len() && links[v] >= 0;
-    let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !linked;
+    let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !linked && !ssaunits.lends_view_of(f, a, ins.args, v);
     if (i < modes.len() && modes[i] == ssaunits.borrow_mode() && !last && whole_bracketable(f.values[v]) && ssaunits.grows_buffer(grows, name, i)
       && util.index_of_i32(out.arrays, v) < 0) {
       out = Held { ...out, arrays: out.arrays.append(v) };
@@ -7190,7 +7193,7 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   for ins in b.insts {
     if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
       let step = at(p, idx, b.id, pos, -1);
-      let held = bracketed(f, step, ins, grows, links);
+      let held = bracketed(f, p.unit_analysis, step, ins, grows, links);
       let defer0 = ssaunits.deferred_retain(f, p, step, ins);
       r = begin_keeps(r, keeps, slots, first, pos);
       let kb = construction_keep(keeps, pos);

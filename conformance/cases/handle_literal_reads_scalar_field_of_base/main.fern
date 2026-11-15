@@ -1,0 +1,41 @@
+// A literal that spreads a local can read a scalar field of it: the read
+// runs before the literal takes the local. A scalar field read before a
+// call in an enclosing expression runs before the call too.
+import "std/worker";
+
+struct Out { k: i32, on: boolean, w: Option[worker.Worker[i32]] }
+
+function bump(own o: Out, d: i32): Out {
+  return Out { ...o, k: o.k + d };
+}
+
+function take(own o: Out): boolean {
+  return o.on;
+}
+
+function same(b: boolean): boolean {
+  return b;
+}
+
+function flip(own o: Out): Out {
+  let t = Out { ...o, k: 1 };
+  return bump(Out { ...t, on: !t.on }, 1);
+}
+
+function plus(own o: Out): Out {
+  let t = Out { ...o, k: 1 };
+  return bump(Out { ...t, k: t.k + 10 }, 1);
+}
+
+function both(own o: Out): boolean {
+  let t = Out { ...o, k: 1 };
+  return same(t.on && take(t));
+}
+
+function main(): i32 {
+  let a = flip(Out { k: 0, on: false, w: None });
+  let b = plus(Out { k: 0, on: false, w: None });
+  let c = both(Out { k: 0, on: true, w: None });
+  print(a.k.to_string() + " " + a.on.to_string() + " " + b.k.to_string() + " " + c.to_string());
+  return 0;
+}

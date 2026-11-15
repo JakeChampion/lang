@@ -15175,9 +15175,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
-		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
-			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
-			!isBareNumericLiteral(n.Inner) {
+		} else if _, tgtNum := n.Target.(ast.NumberType); tgtNum && !isBareNumericLiteral(n.Inner) {
+			// A literal expression computes at its own type, and the cast converts the result.
 			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
