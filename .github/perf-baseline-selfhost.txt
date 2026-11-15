@@ -62,7 +62,7 @@ selfhost/arm64-linux/map_int.emit	8910
 selfhost/arm64-linux/map_probe_chain.emit	8920
 selfhost/arm64-linux/map_string.emit	9849
 selfhost/arm64-linux/ordmap_insert.emit	6330
-selfhost/arm64-linux/pmap_insert.emit	3736
+selfhost/arm64-linux/pmap_insert.emit	3775
 selfhost/arm64-linux/pvec_with.emit	3681
 selfhost/arm64-linux/record_update.emit	1347
 selfhost/arm64-linux/sort_inplace.emit	1841
@@ -147,8 +147,8 @@ selfhost/x86-64-linux/tokenize.emit	1294
 selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8363
 selfhost/x86-64-linux/utf8_ingest_validated.emit	9061
 selfhost/x86-64-linux/perceus_cfold.emit	2125
-selfhost/arm64-linux/perceus_cfold.emit	2324
-selfhost/wasm32-wasi/perceus_cfold.emit	1766
+selfhost/arm64-linux/perceus_cfold.emit	2351
+selfhost/wasm32-wasi/perceus_cfold.emit	1823
 selfhost/x86-64-linux/perceus_deriv.emit	2740
 selfhost/arm64-linux/perceus_deriv.emit	3122
 selfhost/wasm32-wasi/perceus_deriv.emit	2862
