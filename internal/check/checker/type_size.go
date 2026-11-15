@@ -36,6 +36,41 @@ func typeNodes(t ast.Type, limit int) int {
 	return n
 }
 
+// MaxInstanceDepth is the limit of the levels of type arguments in an instance
+// of a generic function. A function that calls itself with a larger type has
+// no last instance.
+const MaxInstanceDepth = 64
+
+// TypeArgsDepth is the levels of type arguments in t: `W[W[i32]]` has two.
+// An array has one level at the least, as its spelling has.
+func TypeArgsDepth(t ast.Type) int {
+	most := 0
+	for _, child := range typeChildren(t) {
+		if d := TypeArgsDepth(child); d > most {
+			most = d
+		}
+	}
+	switch t.(type) {
+	case ast.StructType, ast.EnumType, ast.SliceType:
+		if len(typeChildren(t)) > 0 {
+			return most + 1
+		}
+	case ast.ArrayType:
+		if most == 0 {
+			return 1
+		}
+	}
+	return most
+}
+
+// InstanceDepthError is the E107 of a generic function with an instance at
+// the limit.
+func InstanceDepthError(info *Info, fn *ast.FuncDecl) error {
+	c := &checker{info: info}
+	c.errfCode(fn.P, "E107", "generic function %q has an instance with %d levels of type arguments: a call in its body gives it a larger type each time", boundSite(fn), MaxInstanceDepth)
+	return c.errors[0]
+}
+
 // typeChildren is the types that t holds directly.
 func typeChildren(t ast.Type) []ast.Type {
 	switch x := t.(type) {

@@ -2506,7 +2506,7 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
   if (util.has_str(["__task_free", "__task_enter", "__task_set_ready", "__task_set_cancelled"], name)) {
     return v_void();
   }
-  if (util.has_str(["__task_cur", "__task_leave", "__task_cancelled", "__task_fd_gen"], name)) {
+  if (util.has_str(["__task_cur", "__task_leave", "__task_cancelled", "__task_fd_gen", "__task_gen"], name)) {
     return v_int(0);
   }
   // The number of worker bodies that run in this process.

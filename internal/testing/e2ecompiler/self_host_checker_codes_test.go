@@ -15,6 +15,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/oracle/monomorph"
 	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
@@ -47,7 +48,11 @@ func goCheckerDiagCodes(t *testing.T, dir, src string) []string {
 		return nil
 	}
 	if err = constfold.Fold(prog, nil); err == nil {
-		_, err = checker.Check(prog)
+		var info *checker.Info
+		if info, err = checker.Check(prog); err == nil {
+			// The oracle checks the program again when each generic has its instances.
+			err = monomorph.Run(prog, info)
+		}
 	}
 	if err == nil {
 		return nil
@@ -247,6 +252,12 @@ var exitResolutionCases = []struct {
 	{"missing-return-module-exit", "function exit(code: i32): void { print(\"x\"); }\nfunction f(): i32 { exit(4); }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 	{"let-else-module-exit", "enum Opt { Has(i32), Nil }\nfunction exit(code: i32): void { print(\"x\"); }\nfunction f(o: Opt): i32 { let Has(v) = o else { exit(1); }; return v; }\nfunction main(): i32 { return 0; }\n", []string{"E022"}},
 	{"todo-beside-module-exit", "function exit(code: i32): void { print(\"x\"); }\nfunction f(): i32 { todo; }\nfunction main(): i32 { return 0; }\n", nil},
+	{"value-branch-module-exit", "function exit(c: i32): void {}\nfunction main(): i32 { let c = true; let x: i32 = if (c) { exit(1); } else { 5 }; return x; }\n", []string{"E061"}},
+	{"value-branch-local-exit", "function main(): i32 { let exit = (k: i32): void => {}; let x: i32 = if (true) { 1 } else { exit(2); }; return x; }\n", []string{"E061"}},
+	{"match-arm-param-exit", "enum Opt { Has(i32), Nil }\nfunction f(o: Opt, exit: (i32) => void): i32 { return match (o) { Has(v) => v, Nil => { exit(3); } }; }\nfunction main(): i32 { return 0; }\n", []string{"E061"}},
+	{"value-branch-builtin-exit", "function main(): i32 { let c = true; let x: i32 = if (c) { 5 } else { exit(1); }; return x; }\n", nil},
+	{"value-branch-nested-builtin-exit", "function f(n: i32): i32 { let v: i32 = if (n >= 0) { n } else { if (n < -10) { exit(2); } else { exit(3); } }; return v; }\nfunction main(): i32 { return f(1); }\n", nil},
+	{"value-branch-nested-module-exit", "function exit(c: i32): void {}\nfunction f(n: i32): i32 { let v: i32 = if (n >= 0) { n } else { if (n < -10) { exit(2); } else { return 3; } }; return v; }\nfunction main(): i32 { return f(1); }\n", []string{"E061"}},
 }
 
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
@@ -2956,6 +2967,13 @@ function main(): i32 { return 0; }
 		{"builtin-method-name-string-len", "function __method_string_len(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"builtin-method-name-reader-close", "function __method_Reader_close(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"intrinsic-family-prefix-name", "function __port_text(x: i32): i32 { return x; }\nfunction main(): i32 { return __port_text(0); }\n", nil},
+		{"e107-struct-nests-itself-in-its-argument", "struct Nest[T] { head: T, tail: Nest[Nest[T]] }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-enum-gives-itself-an-array-of-its-parameter", "enum Nest[T] { Leaf(T), More(Nest[T[]]) }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-through-a-second-struct", "struct A[T] { head: T, b: Option[B[T[]]] }\nstruct B[T] { a: Option[A[T]] }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-in-a-function-type-field", "struct Call[T] { f: (Call[T[]]) => i32 }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-recursive-struct-same-argument-ok", "struct List[T] { head: T, tail: Option[List[T]] }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e107-recursive-struct-exchanged-arguments-ok", "struct Pair[A, B] { a: A, b: B, next: Option[Pair[B, A]] }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e107-larger-argument-with-no-loop-ok", "struct Box[T] { v: T }\nstruct Rows[T] { rows: Box[T[]] }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	// The symbol of each generic builtin method (#15210).
 	for _, name := range []string{"Array_len", "Array_push", "Array_set", "Array_truncate", "Cell_get", "Cell_set", "Map_clear", "Map_contains", "Map_get", "Map_get_or", "Map_keys", "Map_len", "Map_remove", "Map_set", "Map_values", "slice_len"} {

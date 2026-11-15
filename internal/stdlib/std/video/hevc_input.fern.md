@@ -10,6 +10,10 @@ AUD, VPS, SPS, PPS, and prefix SEI belong to the next picture.
 Suffix SEI, filler, EOS, and EOB remain with the current picture.
 EOS requires an IRAP picture in the next access unit. EOB permits no subsequent NAL unit.
 
+AUD and filler temporal identifiers must match their coded picture.
+The reader retains one optional AUD identifier until that picture arrives and clears it after each packet.
+These header checks follow H.265 clause 7.4.2.2. They do not inspect filler payload syntax.
+
 Packets use canonical four-byte prefixes and preserve original prefix offsets.
 The IRAP flag identifies types 16 through 21. The IDR flag identifies types 19 and 20 only.
 These flags do not establish random-access safety for CRA or BLA pictures.
@@ -61,7 +65,7 @@ struct SequenceSlot { value: hevc.Sequence, encoded: u8[], generation: i64 }
 
 struct PictureSlot { value: pps.PictureParameters, encoded: u8[], generation: i64 }
 
-pub struct Stream { units: nals.Stream, sequences: SequenceSlot[], pictures: PictureSlot[], next_sequence: i64, packet: u8[], packet_offset: i64, packet_units: i32, last: Option[Identity], pending: Option[nals.Unit], pending_offset: i64, ended: boolean, need_irap: boolean, bitstream_end: boolean, finished: boolean, packets: i32, limits: Limits }
+pub struct Stream { units: nals.Stream, sequences: SequenceSlot[], pictures: PictureSlot[], next_sequence: i64, aud_temporal: Option[i32], packet: u8[], packet_offset: i64, packet_units: i32, last: Option[Identity], pending: Option[nals.Unit], pending_offset: i64, ended: boolean, need_irap: boolean, bitstream_end: boolean, finished: boolean, packets: i32, limits: Limits }
 
 pub struct Step { stream: Stream, event: Event }
 
@@ -74,7 +78,7 @@ pub function create(limits: Limits): Result[Stream, nals.ReadError] {
     return Err(nals.ReadVideo(frame.Limit));
   }
   let units = nals.create(limits.input)?;
-  return Ok(Stream { units: units, sequences: [], pictures: [], next_sequence: 0i64, packet: [], packet_offset: 0i64, packet_units: 0, last: None, pending: None, pending_offset: 0i64, ended: false, need_irap: false, bitstream_end: false, finished: false, packets: 0, limits: limits });
+  return Ok(Stream { units: units, sequences: [], pictures: [], next_sequence: 0i64, aud_temporal: None, packet: [], packet_offset: 0i64, packet_units: 0, last: None, pending: None, pending_offset: 0i64, ended: false, need_irap: false, bitstream_end: false, finished: false, packets: 0, limits: limits });
 }
 
 function irap(kind: i32): boolean {
@@ -292,19 +296,44 @@ function emit(own stream: Stream): Result[Step, frame.VideoError] {
   }
   let kind = match (stream.last) { Some(value) => value.kind, None => -1 };
   let packet = Packet { offset: stream.packet_offset, irap: irap(kind), idr: kind == 19 || kind == 20, bytes: stream.packet };
-  return Ok(Step { stream: Stream { ...stream, packet: [], packet_units: 0, last: None, ended: false, packets: stream.packets + 1 }, event: PacketReady(packet) });
+  return Ok(Step { stream: Stream { ...stream, packet: [], packet_units: 0, last: None, aud_temporal: None, ended: false, packets: stream.packets + 1 }, event: PacketReady(packet) });
 }
 
-function append_unit(own stream: Stream, unit: nals.Unit, offset: i64, kind: i32, identity: Option[Identity]): Result[Step, frame.VideoError] {
+function packet_temporal(stream: Stream, header: Header, identity: Option[Identity]): Result[void, frame.VideoError] {
+  if let Some(picture) = identity {
+    if let Some(temporal) = stream.aud_temporal {
+      if (temporal != picture.temporal) {
+        return Err(frame.Header);
+      }
+    }
+  }
+  if (header.kind == 38) {
+    if let Some(picture) = stream.last {
+      if (header.temporal != picture.temporal) {
+        return Err(frame.Header);
+      }
+    }
+  }
+  return Ok(());
+}
+
+function aud_identifier(header: Header, previous: Option[i32]): Option[i32] {
+  return if (header.kind == 35) { Some(header.temporal) } else { previous };
+}
+
+function append_unit(own stream: Stream, unit: nals.Unit, offset: i64, header: Header, identity: Option[Identity]): Result[Step, frame.VideoError] {
   if (stream.packet_units >= stream.limits.max_units_per_packet) {
     return Err(frame.Limit);
   }
+  packet_temporal(stream, header, identity)?;
+  let kind = header.kind;
   let updated = parameters(stream, unit.bytes, kind)?;
   let at = if (updated.packet_units == 0) { offset } else { updated.packet_offset };
   let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes)?;
   let last = if (identity.is_some()) { identity } else { updated.last };
+  let aud_temporal = aud_identifier(header, updated.aud_temporal);
   let need_irap = if (kind == 36) { true } else if (identity.is_some()) { false } else { updated.need_irap };
-  return Ok(Step { stream: Stream { ...updated, packet: bytes, packet_offset: at, packet_units: updated.packet_units + 1, last: last, ended: kind == 36 || kind == 37, need_irap: need_irap, bitstream_end: kind == 37 }, event: Waiting });
+  return Ok(Step { stream: Stream { ...updated, packet: bytes, packet_offset: at, packet_units: updated.packet_units + 1, last: last, aud_temporal: aud_temporal, ended: kind == 36 || kind == 37, need_irap: need_irap, bitstream_end: kind == 37 }, event: Waiting });
 }
 
 function checked_identity(own stream: Stream, input: [u8], header: Header): Result[(Stream, Option[Identity]), frame.VideoError] {
@@ -329,7 +358,7 @@ function accept(own stream: Stream, unit: nals.Unit, offset: i64): Result[Step, 
   if (boundary(prepared, header.kind, identity)) {
     return emit(Stream { ...prepared, pending: Some(unit), pending_offset: offset });
   }
-  return append_unit(prepared, unit, offset, header.kind, identity);
+  return append_unit(prepared, unit, offset, header, identity);
 }
 
 function finish(own stream: Stream): Result[Step, frame.VideoError] {

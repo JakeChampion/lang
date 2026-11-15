@@ -4,6 +4,21 @@
 import "std/android/draw";
 import "std/android/gl";
 
+@import("libGLESv2.so", "glViewport")
+function gl_viewport(x: i32, y: i32, width: i32, height: i32): void;
+
+@import("libGLESv2.so", "glUseProgram")
+function gl_use_program(program: i32): void;
+
+@import("libGLESv2.so", "glDisable")
+function gl_disable(cap: i32): void;
+
+@import("libGLESv2.so", "glActiveTexture")
+function gl_active_texture(unit: i32): void;
+
+@import("libGLESv2.so", "glBlendFunc")
+function gl_blend_func(source: i32, dest: i32): void;
+
 // The two pixels differ by at most 2 in each channel.
 function near(a: i32, b: i32): boolean {
   for shift in [0, 8, 16, 24] {
@@ -17,8 +32,9 @@ function near(a: i32, b: i32): boolean {
 // Each check is a digit of the result: the clear colour, a premultiplied
 // texture over it, a stretched part, the alpha ramp, the row clip, the
 // layer at half alpha, the texture drawn again on a new surface after the
-// canvas left the first one, glyphs from two pages of an atlas, and an
-// external texture in the rectangle that `fit` gives.
+// canvas left the first one, glyphs from two pages of an atlas, an
+// external texture in the rectangle that `fit` gives, and a draw after
+// OpenGL ES calls of the app and `resume`.
 pub function check(): i32 {
   let Some(c) = gl.open_offscreen(64, 64) else {
     return 1;
@@ -72,9 +88,34 @@ pub function check(): i32 {
   draw.release(g);
   n += glyphs(k, bg);
   n += external(k, bg);
+  n += resumed(k, t, bg);
   gl.free(t);
   gl.close(k);
   return n;
+}
+
+// 1000000000 when the canvas draws a texture as before, after OpenGL ES
+// calls of the app changed the viewport, the program, the texture unit, the
+// blend and the scissor test, and `resume` followed them.
+function resumed(c: gl.Canvas, t: gl.Texture, bg: i32): i32 {
+  let c2 = c.attach_offscreen(32, 8);
+  c2.clear(bg);
+  gl_viewport(0, 0, 1, 1);
+  gl_use_program(0);
+  gl_active_texture(33985);
+  gl_disable(3042);
+  gl_disable(3089);
+  gl_blend_func(1, 1);
+  c2.resume();
+  c2.draw(t, 4, 2, 1.0, 0, 4);
+  let f = c2.read();
+  let half = draw.over(draw.rgba(255, 255, 255, 128), bg);
+  let ok = near(f.pixel(4, 2), draw.rgb(0, 0, 255)) && near(f.pixel(6, 2), half) && near(f.pixel(3, 2), bg) && near(f.pixel(4, 4), bg);
+  draw.release(f);
+  if (ok) {
+    return 1000000000;
+  }
+  return 0;
 }
 
 // 100000000 when an external texture with no frame draws on the rectangle
