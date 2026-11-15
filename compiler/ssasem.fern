@@ -377,6 +377,13 @@ pub function is_unique_check(name: string): boolean {
   return name.starts_with("__sem_unique$");
 }
 
+// A builtin that allocates an array of a length it is given.
+pub function sized_alloc(name: string): boolean {
+  return util.has_str(SIZED_ALLOCS, name);
+}
+
+const SIZED_ALLOCS: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_u16", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
+
 pub function fresh_result_builtin(name: string): boolean {
   return is_unique_check(name) || util.has_str(FRESH_RESULT_BUILTINS, name);
 }
