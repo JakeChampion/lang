@@ -14,6 +14,7 @@ import "./options";
 import "./report";
 import "./schedule";
 import "./sigv4";
+import "./tui";
 import "./urls";
 
 function shown(args: string[]): string {
@@ -823,6 +824,90 @@ function test_values(): test.TestOutcome {
   ]);
 }
 
+// The rows of a frame of the live display, as a terminal shows them.
+function frame_rows(text: string): string[] {
+  let out: string[] = [];
+  for part in text.split("\x1b[K") {
+    let Some(h) = part.index_of("H") else {
+      continue;
+    };
+    out = out.append(part.drop(h + 1));
+  }
+  return out;
+}
+
+// The frames of the display at 24 rows and 80 columns are the cells that
+// oha 1.16.0 draws: one with a request that waits, and one at 1.5 s with
+// three responses of 200 near the start and one request that waits.
+function test_live_display(): test.TestOutcome {
+  let none: i64[] = [];
+  let l = tui.Live {
+    start: 0i64, total: 1i64, duration: 0i64, ends: none, latencies: none, bytes: none, slots: none, scale: -1, next_frame: 0i64,
+    frame_ns: 62500000i64, color: false, saved: none, quit: false,
+  };
+  let none_codes: (i64, string)[] = [];
+  let idle = frame_rows(l.frame(600000000i64, 24, 80, none_codes, none_codes, "14 / 20000"));
+  let busy = tui.Live { ...l, total: 4i64 };
+  for k in 0..3 {
+    busy = busy.response(report.Response { status: 200, latency: 300000i64, first_byte: 0i64, bytes: 5i64, dialup: 0i64, sent: 0i64, due: 0i64, ended: 1000000i64 + k as i64, url: "" });
+  }
+  let data = frame_rows(busy.frame(1500000000i64, 24, 80, [(3i64, "200")], none_codes, "14 / 20000"));
+  let colored = tui.Live { ...busy, color: true }.frame(1500000000i64, 24, 80, [(3i64, "200")], none_codes, "14 / 20000");
+  if (!colored.contains("\x1b[38;5;6m\x1b[49m████") || !colored.contains("\x1b[39m\x1b[48;5;6m3 / 4") || !colored.contains("\x1b[38;5;2m┌Requests")) {
+    return test.fail("the colors are not those of crossterm");
+  }
+  return test.assert_eq_array(idle.concat(data), [
+    "┌Progress──────────────────────────────────────────────────────────────────────┐",
+    "│                                    0 / 1                                     │",
+    "└──────────────────────────────────────────────────────────────────────────────┘",
+    "┌Stats for last ms─────────────────────┐┌Status code distribution──────────────┐",
+    "│Requests : 0                          ││                                      │",
+    "│Slowest: -inf secs                    ││                                      │",
+    "│Fastest: inf secs                     ││                                      │",
+    "│Average: NaN secs                     ││                                      │",
+    "│Data: 0 B                             ││                                      │",
+    "│Number of open files: 14 / 20000      ││                                      │",
+    "└──────────────────────────────────────┘└──────────────────────────────────────┘",
+    "┌Error distribution────────────────────────────────────────────────────────────┐",
+    "└──────────────────────────────────────────────────────────────────────────────┘",
+    "┌Requests / past ms (auto). press -/+/a┐┌Response time histogram───────────────┐",
+    "│                                      ││                                      │",
+    "│                                      ││                                      │",
+    "│                                      ││                                      │",
+    "│                                      ││                                      │",
+    "│                                      ││                                      │",
+    "│                                      ││                                      │",
+    "│                                      ││                                      │",
+    "│                                      ││                                      │",
+    "│ 0ms    1ms    2ms    3ms    4ms      ││  NaN     NaN     NaN     NaN         │",
+    "└──────────────────────────────────────┘└──────────────────────────────────────┘",
+    "┌Progress──────────────────────────────────────────────────────────────────────┐",
+    "│████████████████████████████████████3 / 4 █████████████████                   │",
+    "└──────────────────────────────────────────────────────────────────────────────┘",
+    "┌Stats for last sec────────────────────┐┌Status code distribution──────────────┐",
+    "│Requests : 0                          ││[200] 3 responses                     │",
+    "│Slowest: -inf secs                    ││                                      │",
+    "│Fastest: inf secs                     ││                                      │",
+    "│Average: NaN secs                     ││                                      │",
+    "│Data: 0 B                             ││                                      │",
+    "│Number of open files: 14 / 20000      ││                                      │",
+    "└──────────────────────────────────────┘└──────────────────────────────────────┘",
+    "┌Error distribution────────────────────────────────────────────────────────────┐",
+    "└──────────────────────────────────────────────────────────────────────────────┘",
+    "┌Requests / past sec (auto). press -/+/┐┌Response time histogram───────────────┐",
+    "│      █████                           ││                                      │",
+    "│      █████                           ││                                      │",
+    "│      █████                           ││                                      │",
+    "│      █████                           ││                                      │",
+    "│      █████                           ││                                      │",
+    "│      █████                           ││                                      │",
+    "│      █████                           ││                                      │",
+    "│      ██3██                           ││                                      │",
+    "│ 0s    1s    2s    3s    4s    5s     ││  NaN     NaN     NaN     NaN         │",
+    "└──────────────────────────────────────┘└──────────────────────────────────────┘",
+  ]);
+}
+
 function main(): i32 {
   let r = test.new("load");
   r = r.it("the options of oha, in any order", test_options);
@@ -856,5 +941,6 @@ function main(): i32 {
   r = r.it("the summary on a terminal has the colors of oha", test_styled_summary);
   r = r.it("--debug writes the request and the response as oha does", test_debug_text);
   r = r.it("durations, counts and URL patterns as oha reads them", test_values);
+  r = r.it("the live display has the cells of oha", test_live_display);
   return r.finish();
 }

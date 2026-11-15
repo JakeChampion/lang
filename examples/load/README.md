@@ -354,8 +354,14 @@ time of the run, and `q` or Ctrl-C stops the run. When the run ends, the
 tool restores the terminal and writes the summary. The summary on a terminal
 has the colors of oha, except with `--no-color`.
 
+The live display has the cells and the colors that oha 1.16.0 draws for the
+same size of terminal, except the count of open files, which is a count of
+the process. A unit test compares two frames at 24 rows and 80 columns with
+frames that oha drew.
+
 The live display needs the responses as they come, so a run with the live
-display uses one reactor.
+display uses one reactor. A `std/worker` worker gives its result only when
+it ends, and it has no channel to send responses while it runs.
 
 ## The JSON summary
 
@@ -415,8 +421,8 @@ These differences are in what the tool does:
   `--no-pre-lookup` does not change that. With a proxy, the tool looks up only
   the proxy.
 
-- The live display is near the layout of oha, but it is not the same cell
-  for cell. It forces one reactor.
+- The live display forces one reactor. oha draws it from all its worker
+  threads.
 
 - oha 1.16.0 accepts `--http-version 0.9` and `--proxy-http-version 0.9`,
   but it cannot send a request of HTTP/0.9. When a connection is open,

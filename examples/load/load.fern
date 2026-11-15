@@ -633,7 +633,11 @@ function draw_live(own r: Run, now: i64): (Run, Option[i64]) {
     rows = size.rows as i32;
     cols = size.cols as i32;
   }
-  let text = l.frame(now, rows, cols, r.tally.codes(), report.ranked_errors(r.tally));
+  let files = match (read_dir("/dev/fd")) {
+    Ok(names) => names.len().to_string(),
+    Err(_) => "Error",
+  };
+  let text = l.frame(now, rows, cols, r.tally.codes(), report.ranked_errors(r.tally), f"{files} / {rlimit_nofile()}");
   let _ = stdout().write(text);
   let next = now + l.frame_ns;
   return (Run { ...r, live: Some(tui.Live { ...l, next_frame: next }) }, Some(next));
