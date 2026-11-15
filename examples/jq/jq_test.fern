@@ -1266,6 +1266,28 @@ function test_constant_keys(): test.TestOutcome {
   ]);
 }
 
+// jq compares two literals as decimals, and the other pairs as f64 values. It
+// rounds a literal to 17 digits, half to even, before it gives the f64.
+function test_literal_compare(): test.TestOutcome {
+  return checks([
+    ("[1.0000000000000001 == (1+0), 1.0000000000000001 == 1, 1.000 == (1|.+0)]", "null", "[true,false,true]"),
+    ("[.[0] == .[1], .[0] < (.[1]|.+0), ([.[0], (.[1]|.+0)]|unique)]", "[1.0000000000000001, 1]", "[false,false,[1.0000000000000001]]"),
+    ("[{a: 1.0000000000000001} == {a: (1+0)}, ([1.0000000000000001]|index([1+0]))]", "null", "[true,0]"),
+    ("[836325471441701108668 + 0, 190946523642418605 + 0, 99999999999999999999 + 0]", "null", "[836325471441701200000,190946523642418600,1e+20]"),
+    ("[13911860366432393 == 13911860366432392, -1.0000000000000001 == -1]", "null", "[false,true]"),
+  ]);
+}
+
+// The decNumber context of jq has the exponents -999999999 to 999999999. A
+// larger number is an infinity, and a smaller exponent rounds half up.
+function test_literal_range(): test.TestOutcome {
+  return checks([
+    (".", "[1e999999999, 10e999999999, 0e2000000000, 0e-2000000000]", "[1E+999999999,1.7976931348623157e+308,0E+999999999,0E-1147483646]"),
+    (".", "[5e-1147483647, 25e-1147483647, 12345e-1147483649, 995e-1147483648, -1e-99999999999999]", "[1E-1147483646,3E-1147483646,1.2E-1147483645,1.0E-1147483645,-0E-1147483646]"),
+    ("[1e1000000000 > 1E+999999999, 1e1000000000 == 1e1000000001, 1e1000000000 == infinite, (1e1000000000|tostring)]", "null", "[true,true,true,\"1.7976931348623157e+308\"]"),
+  ]);
+}
+
 // A path that realpath cannot resolve stays as it is. The test of the
 // command line follows symbolic links.
 function test_realpath(): test.TestOutcome {
@@ -1320,6 +1342,8 @@ function main(): i32 {
   r = r.it("one check", (): test.TestOutcome => check(".a", "{\"a\":[1]}", "[1]"));
   r = r.it("escapes of string literals, read as JSON", test_literal_escapes);
   r = r.it("constant keys that are not strings", test_constant_keys);
+  r = r.it("a literal and a computed number", test_literal_compare);
+  r = r.it("the range of a literal", test_literal_range);
   r = r.it("a path that realpath cannot resolve", test_realpath);
   return r.finish();
 }

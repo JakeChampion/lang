@@ -291,7 +291,7 @@ function line_of(s: string, at: i32): i32 {
 // The value of `$__loc__` on `line` of `file`.
 function location(file: string, line: i32): Ast {
   let o = json.object().insert("file", json.JString(file));
-  return Literal(json.JObject(o.insert("line", json.JNumber(line.to_string()))));
+  return Literal(json.JObject(o.insert("line", json.JNumber(number.integer(line as i64)))));
 }
 
 pub function lex(s: string): Lexed {
@@ -869,7 +869,7 @@ function parse_array_pattern(p: P, held: Ast, found: Binding[]): (Binding[], P) 
   let q = p;
   let i = 0;
   while (q.error.len() == 0) {
-    let (more, r) = parse_pattern(q, Index(held, Literal(json.JNumber(i.to_string()))), all);
+    let (more, r) = parse_pattern(q, Index(held, Literal(json.JNumber(number.integer(i as i64)))), all);
     all = more;
     if (r.is_punct("]")) {
       return (all, r.advance());
@@ -1030,7 +1030,7 @@ function unpacked(held: string, alts: Binding[][], body: Ast): Ast {
   let bs: Binding[] = [];
   let names = pattern_names(alts);
   for i in 0..names.len() {
-    bs = bs.append(Binding { name: names[i], source: Index(Var(held), Literal(json.JNumber(i.to_string()))) });
+    bs = bs.append(Binding { name: names[i], source: Index(Var(held), Literal(json.JNumber(number.integer(i as i64)))) });
   }
   return nested(bs, body);
 }

@@ -2921,7 +2921,7 @@ function remainder(l: json.JsonValue, r: json.JsonValue): Outputs {
 }
 
 function whole(n: i32): json.JsonValue {
-  return json.JNumber(n.to_string());
+  return json.JNumber(number.integer(n as i64));
 }
 
 function length(v: json.JsonValue): Outputs {
@@ -3541,11 +3541,11 @@ function texts(names: string[]): json.JsonValue[] {
 function tm_value(t: dates.Tm, seconds: f64): json.JsonValue {
   let parts: json.JsonValue[] = [];
   for n in [t.year, t.mon, t.mday, t.hour, t.min] {
-    parts = parts.append(json.JNumber(n.to_string()));
+    parts = parts.append(json.JNumber(number.integer(n)));
   }
   parts = parts.append(computed(seconds));
-  parts = parts.append(json.JNumber(t.wday.to_string()));
-  return json.JArray(parts.append(json.JNumber(t.yday.to_string())));
+  parts = parts.append(json.JNumber(number.integer(t.wday)));
+  return json.JArray(parts.append(json.JNumber(number.integer(t.yday))));
 }
 
 // `gmtime` and `localtime`. The seconds keep the fraction of the input.
@@ -3590,7 +3590,7 @@ function make_time(input: json.JsonValue): Outputs {
   if (seconds == -2) {
     return fail("mktime not supported on this platform");
   }
-  return one(json.JNumber(seconds.to_string()));
+  return one(json.JNumber(number.integer(seconds)));
 }
 
 // The time of the input of `strftime`: an array, or a number of seconds.

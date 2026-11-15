@@ -147,11 +147,16 @@ jq 1.7 writes a number in one of two forms, and the port does the same:
   The two stay numbers: NaN is below each number in the order, and it is not
   equal to NaN.
 
-Two numbers compare as exact decimals, so
-`13911860366432393 == 13911860366432392` is false, as it is in jq 1.7. jq
-compares a literal with a computed number as two f64 values. The port
-compares them as decimals, so the two can differ when the literal has more
-than 17 significant digits.
+Two literals compare as exact decimals, so
+`13911860366432393 == 13911860366432392` is false, as it is in jq 1.7.1.
+The other pairs compare as two f64 values. To get the f64 of a literal, jq
+rounds it to 17 significant digits, half to even, and the port does the
+same. The port starts the text of a computed number with `~`, so it knows
+the two kinds apart.
+
+A literal has the range of the decNumber context of jq. When its adjusted
+exponent is more than 999999999, it is an infinity. An exponent below
+-1147483646 rounds half up to that exponent, as `0E-1147483646`.
 
 A math function with no exact result can differ from jq in its last digit.
 jq takes these results from the C library, and they differ from one C library
