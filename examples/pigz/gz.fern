@@ -18,7 +18,7 @@ const DICT: i32 = 32768;
 
 pub struct Options {
   level: i32,
-  // zdeflate.DEFAULT_STRATEGY, HUFFMAN_ONLY (-H) or RLE (-U).
+  // std/deflate/zlib DEFAULT_STRATEGY, HUFFMAN_ONLY (-H) or RLE (-U).
   strategy: i32,
   // The input bytes of one block (-b).
   block: i32,

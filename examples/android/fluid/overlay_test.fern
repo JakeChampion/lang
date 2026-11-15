@@ -40,7 +40,7 @@ function turned(): overlay.Metrics {
 }
 
 function model(mt: overlay.Metrics): fluid.Model {
-  return fluid.new(config.defaults(), false, 1i64, 0i64).laid_out(overlay.layout(test_fonts(), mt)).with_speed("120 fps, longest 9 ms");
+  return fluid.new(config.defaults(), false, 1i64, 0i64).laid_out(overlay.layout(test_fonts(), mt)).with_report("120 fps", ["Display: 120 fps at 120 Hz, longest 9.1 ms", "Shown 25.0 ms after the frame starts", "Touch: each place at once, read 0.4 ms to 3.1 ms after", "GPU: 3.1 G texels and pixels a second, done 7.2 ms after the refresh", "Loop: the priority of a thread that draws"]);
 }
 
 function inside(inner: fluid.Rect, outer: fluid.Rect): boolean {
@@ -120,14 +120,16 @@ function test_dialog_is_in_the_window(): test.TestOutcome {
   let mt = phone();
   let l = overlay.layout(test_fonts(), mt);
   let free = fluid.Rect { x: 0, y: mt.top, w: mt.width, h: mt.height - mt.top - mt.bottom };
-  let ok = inside(l.panel, free) && inside(l.close, l.panel) && inside(l.list, l.panel) && l.rows.len() == 8 && l.content == l.list.h;
+  let ok = inside(l.panel, free) && inside(l.close, l.panel) && inside(l.list, l.panel) && l.rows.len() == 8 && l.content >= l.list.h;
   for i in 1..l.rows.len() {
     ok = ok && l.rows[i].y >= l.rows[i - 1].y + l.rows[i - 1].h;
   }
   let last = l.rows[l.rows.len() - 1];
   let m = model(mt).touched(0, 1000.0, 150.0, 0i64).touched(1, 1000.0, 150.0, 0i64);
   saved(screen(mt, m, 0i64), "overlay-2-dialog");
-  return test.assert_true(ok && last.y + last.h == l.content && m.open);
+  saved(screen(mt, fluid.Model { ...m, scroll: l.content - l.list.h }, 0i64), "overlay-2-details");
+  // The details of what the app measured are below the last row.
+  return test.assert_true(ok && last.y + last.h < l.content && m.open);
 }
 
 function test_dialog_scrolls_on_a_low_window(): test.TestOutcome {

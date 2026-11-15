@@ -25,6 +25,7 @@ import "./color";
 import "./combine";
 import "./commitgraph";
 import "./config";
+import "./linelog";
 import "./fsck";
 import "./checkpack";
 import "./graph";
@@ -1037,7 +1038,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { hi: log.Highlight, gpg_program: string, show_signature: boolean, notes: notes.Tree[], notes_given: boolean, show_notes: boolean, notes_default: i32, notes_extra: string[], find: treediff.Detect, moved_default: i32, word_regex: string, merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
+struct LogOpts { lines: string[], hi: log.Highlight, gpg: sig.Programs, show_signature: boolean, notes: notes.Tree[], notes_given: boolean, show_notes: boolean, notes_default: i32, notes_extra: string[], find: treediff.Detect, moved_default: i32, word_regex: string, merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1301,43 +1302,125 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
   return (o, 0);
 }
 
-// The check of the signature of the commit `body` with gpg, as
-// `check_commit_signature` of git runs it: the signature in a temporary
-// file and the payload on the standard input of
-// `gpg --keyid-format=long --status-fd=1 --verify FILE -`.
-function verify_signature(width: i32, body: u8[], program: string): sig.Check {
+// The value of the path setting `name`, with `~/` as the home directory
+// (`git_config_pathname`).
+function config_path(r: refs.Repo, name: string, otherwise: string): string {
+  let Some(v) = r.config.get(name) else {
+    return otherwise;
+  };
+  if (v.starts_with("~/")) {
+    return env("HOME").unwrap_or("") + objects.part(v, 1, v.len());
+  }
+  return v;
+}
+
+// The programs and the settings of the check of a signature. The last of
+// `gpg.program` and `gpg.openpgp.program` names the program of gpg.
+function gpg_programs(r: refs.Repo): sig.Programs {
+  let openpgp = "gpg";
+  for e in r.config.entries {
+    if (e.name == "gpg.program" || e.name == "gpg.openpgp.program") {
+      openpgp = e.value;
+    }
+  }
+  if (openpgp.starts_with("~/")) {
+    openpgp = env("HOME").unwrap_or("") + objects.part(openpgp, 1, openpgp.len());
+  }
+  return sig.Programs { dir: if (r.prefix.len() > 0) { r.top } else { "" }, openpgp: openpgp, x509: config_path(r, "gpg.x509.program", "gpgsm"), ssh: config_path(r, "gpg.ssh.program", "ssh-keygen"), allowed: config_path(r, "gpg.ssh.allowedsignersfile", ""), revocation: config_path(r, "gpg.ssh.revocationfile", ""), min_trust: sig.trust_of(r.config.get("gpg.mintrustlevel").unwrap_or("undefined")).max(0) };
+}
+
+// The check of the signature of the commit `body`
+// (`check_commit_signature` of git).
+function verify_signature(width: i32, body: u8[], programs: sig.Programs): sig.Check {
   let (payload, signature, signed) = sig.split(body, width);
   if (!signed) {
     return sig.unsigned();
   }
-  let dir = env("TMPDIR").unwrap_or("/tmp");
-  let stem = dir + "/.git_vtag_tmp" + objects.part(objects.hash_of(objects.SHA1, "blob", body), 0, 12);
-  let sig_file = stem + "s";
-  let payload_file = stem + "p";
-  let failed = sig.Check { ...sig.unsigned(), signed: true };
-  if let Err(_) = write_file_bytes(sig_file, signature) {
-    return failed;
+  return sig.check(programs, payload, signature, "committer");
+}
+
+// The object and the name of the tag `value`, or none for a tag that is
+// not sound (`parse_tag_buffer` of git). The lines `object`, `type` and
+// `tag` come first, in that order.
+function tag_fields(value: u8[], width: i32): string[] {
+  let text = unsafe { string_from_bytes_unchecked(value) };
+  let hex = 2 * width;
+  if (value.len() < hex + 24 || !text.starts_with("object ") || value[7 + hex] != b'\n') {
+    return [];
   }
-  if let Err(_) = write_file_bytes(payload_file, payload) {
-    let _ = remove_file(sig_file);
-    return failed;
+  let object = objects.part(text, 7, 7 + hex).to_ascii_lower();
+  for i in 0..hex {
+    if (!(object[i] >= b'0' && object[i] <= b'9' || object[i] >= b'a' && object[i] <= b'f')) {
+      return [];
+    }
   }
-  let ran = process.run(program, ["--keyid-format=long", "--status-fd=1", "--verify", sig_file, "-"], payload_file);
-  let _ = remove_file(sig_file);
-  let _ = remove_file(payload_file);
-  return match (ran) {
-    Ok(out) => sig.parse(unsafe { string_from_bytes_unchecked(out.stdout) }, unsafe { string_from_bytes_unchecked(out.stderr) }, out.status == 0),
-    Err(_) => sig.Check { ...failed, has_output: true },
+  let at = 8 + hex;
+  if (!objects.part(text, at, text.len()).starts_with("type ")) {
+    return [];
+  }
+  let Some(nl) = objects.part(text, at + 5, text.len()).index_of("\n") else {
+    return [];
   };
+  let kind = objects.part(text, at + 5, at + 5 + nl);
+  if (kind.len() >= 20) {
+    return [];
+  }
+  if (kind != "blob" && kind != "tree" && kind != "commit" && kind != "tag") {
+    eprint("error: unknown tag type '" + kind + "' in " + objects.hash_of(width, "tag", value));
+    return [];
+  }
+  at = at + 6 + nl;
+  if (at + 4 >= text.len() || !objects.part(text, at, text.len()).starts_with("tag ")) {
+    return [];
+  }
+  let Some(end) = objects.part(text, at + 4, text.len()).index_of("\n") else {
+    return [];
+  };
+  return [object, objects.part(text, at + 4, at + 4 + end)];
+}
+
+// The lines of the signed tags of the merge `c` with `parents` in
+// `--show-signature`: the tag and its parent, and the check of its
+// signature (`show_one_mergetag` of git).
+function mergetag_lines(o: LogOpts, sh_in: Shown, c: log.Commit, parents: string[], width: i32): (Shown, string) {
+  let sh = sh_in;
+  let out = "";
+  for value in objects.extra_headers(c.body, "mergetag") {
+    let text = "";
+    let fields = tag_fields(value, width);
+    if (fields.len() == 0) {
+      text = "malformed mergetag\n";
+    } else if (parents.len() == 2 && fields[0] == parents[1]) {
+      text = "merged tag '" + fields[1] + "'\n";
+    } else {
+      text = match (parents.index_of(fields[0])) {
+        Some(k) => "parent #" + (k + 1).to_string() + ", tagged '" + fields[1] + "'\n",
+        None => "tag " + fields[1] + " names a non-parent " + fields[0] + "\n",
+      };
+    }
+    let failed = true;
+    let (payload, signature, signed) = sig.split_tag(value, width);
+    if (signed) {
+      let checked = sig.check(o.gpg, payload, signature, "tagger");
+      if (checked.died.len() > 0) {
+        return (Shown { ...sh, fatal: checked.died }, out);
+      }
+      text += if (checked.has_output) { checked.output } else { "No signature\n" };
+      failed = checked.failed;
+    }
+    let (sh1, lines) = signature_lines(o, sh, text, failed);
+    sh = sh1;
+    out += lines;
+  }
+  return (sh, out);
 }
 
 // The lines of the check of a signature in `--show-signature`, each in the
 // color of a good or a bad signature with the graph after it
 // (`show_sig_lines` of git).
-function signature_lines(o: LogOpts, sh_in: Shown, c: sig.Check): (Shown, string) {
+function signature_lines(o: LogOpts, sh_in: Shown, text: string, failed: boolean): (Shown, string) {
   let sh = sh_in;
-  let text = if (c.failed && !c.has_output) { "No signature\n" } else { c.output };
-  let set = if (!o.patch.color) { "" } else if (c.failed) { o.patch.pal.get(color.WHITESPACE) } else { o.patch.pal.get(color.FRAG) };
+  let set = if (!o.patch.color) { "" } else if (failed) { o.patch.pal.get(color.WHITESPACE) } else { o.patch.pal.get(color.FRAG) };
   let reset = if (o.patch.color) { color.RESET } else { "" };
   let out = "";
   let at = 0;
@@ -1623,6 +1706,12 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
     }
   }
   let valued = ["--max-count", "--skip", "--format", "--pretty", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep", "--min-parents", "--max-parents"];
+  // The options of revision.c that take the next argument
+  // (`parse_long_opt`) need one.
+  let next_valued = ["--max-count", "--skip", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep"];
+  if (next_valued.contains(x) && i + 1 >= argv.len()) {
+    return (LogOpts { ...o, bad: "Option '" + x + "' requires a value" }, g, 1);
+  }
   for name in valued {
     let (v, taken) = option_value(argv, i, name);
     if (taken > 0 && !(name == "--pretty" && taken == 2)) {
@@ -2023,7 +2112,7 @@ function log_rev(r: refs.Repo, w_in: revwalk.Walk, name: string, excluded: boole
     if (range || excluded) {
       return (w, true, "cannot walk reflogs for " + check);
     }
-    return (revwalk.Walk { ...w, pending: w.pending.append(name) }, true, "");
+    return (revwalk.Walk { ...w, pending: w.pending.append(name), names: w.names.append(name) }, true, "");
   }
   let off = if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 };
   let on = if (excluded) { 0 } else { revwalk.UNINTERESTING | revwalk.BOTTOM };
@@ -2049,11 +2138,11 @@ function log_rev(r: refs.Repo, w_in: revwalk.Walk, name: string, excluded: boole
           for base in bases {
             w = revwalk.add(w, base, revwalk.UNINTERESTING | revwalk.BOTTOM);
           }
-          w = revwalk.add(w, ha, off | revwalk.LEFT);
-          w = revwalk.add(w, hb, off);
+          w = revwalk.add_named(w, ha, off | revwalk.LEFT, if (a.len() == 0) { "HEAD" } else { a });
+          w = revwalk.add_named(w, hb, off, if (b.len() == 0) { "HEAD" } else { b });
         } else {
-          w = revwalk.add(w, ha, on);
-          w = revwalk.add(w, hb, off);
+          w = revwalk.add_named(w, ha, on, if (a.len() == 0) { "HEAD" } else { a });
+          w = revwalk.add_named(w, hb, off, if (b.len() == 0) { "HEAD" } else { b });
         }
         return (w, true, "");
       }
@@ -2075,11 +2164,11 @@ function log_rev(r: refs.Repo, w_in: revwalk.Walk, name: string, excluded: boole
           if (mark != "^-" || exclude <= ps.len()) {
             for i in 0..ps.len() {
               if (mark != "^-" || i + 1 == exclude) {
-                w = revwalk.add(w, ps[i], if (mark == "^@") { off } else { on });
+                w = revwalk.add_named(w, ps[i], if (mark == "^@") { off } else { on }, name);
               }
             }
             if (mark != "^@") {
-              w = revwalk.add(w, h, off);
+              w = revwalk.add_named(w, h, off, objects.part(name, 0, at));
             }
             return (w, true, "");
           }
@@ -2105,7 +2194,7 @@ function log_rev(r: refs.Repo, w_in: revwalk.Walk, name: string, excluded: boole
   let (s, at, kind) = peel_commit(w.g.store, named.hash);
   w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s } };
   if (kind == "commit") {
-    w = revwalk.add(w, at, if (not) { on } else { off });
+    w = revwalk.add_named(w, at, if (not) { on } else { off }, plain);
   }
   return (w, true, "");
 }
@@ -2141,6 +2230,35 @@ function ref_option(x: string): string {
     "--remotes" => "refs/remotes/",
     _ => "",
   };
+}
+
+// The ranges of the arguments `args` of `-L` in the one commit that the
+// revisions give (`line_log_init`), or the message of git.
+function line_log_init(r: refs.Repo, w_in: revwalk.Walk, args: string[]): (revwalk.Walk, string) {
+  let w = w_in;
+  let start = "";
+  let start_name = "";
+  for k in 0..w.pending.len() {
+    let h = w.pending[k];
+    if ((revwalk.flag(w, h) & revwalk.UNINTERESTING) != 0) {
+      continue;
+    }
+    if (start.len() > 0) {
+      return (w, "More than one commit to dig from: " + w.names[k] + " and " + start_name + "?");
+    }
+    start = h;
+    start_name = w.names[k];
+  }
+  if (start.len() == 0) {
+    return (w, "No commit specified?");
+  }
+  let (g, n) = walk.node(w.g, start);
+  let (s, entries, died) = linelog.parse(g.store, n.tree, r.prefix, r.top, args);
+  w = revwalk.Walk { ...w, g: walk.Graph { ...g, store: s } };
+  if (died.len() > 0) {
+    return (w, died);
+  }
+  return (revwalk.with_lines(w, start, entries), "");
 }
 
 // The state of the output of log: the graph, and whether a commit is shown
@@ -2192,12 +2310,39 @@ function entry_text(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context
       }
     }
   }
-  if (o.show_signature && ctx.sig.signed) {
-    let (sh_sig, text) = signature_lines(o, sh, ctx.sig);
-    sh = sh_sig;
-    out += text;
+  // A walk of the reflogs puts its lines after the first line, and
+  // `--oneline` shows only the line of the reflog (`show_log` of git).
+  let reflog_oneline = ctx.reflog.len() > 0 && o.form == "oneline";
+  let text_ctx = ctx;
+  if (!user && ctx.reflog.len() > 0 && !reflog_oneline) {
+    out += log.reflog_header(ctx.reflog[0]);
+    text_ctx = log.Context { ...ctx, reflog: [] };
   }
-  let msg = if (o.form == "format") { log.formatted(c, ctx, o.format) } else if (o.form == "reference") { log.reference(c, ctx) } else { log.pretty(c, ctx, o.form) + ctx.notes };
+  if (o.show_signature && !reflog_oneline) {
+    let checked = verify_signature(s.width, c.body, o.gpg);
+    if (checked.died.len() > 0) {
+      return (s, out, Shown { ...sh, fatal: checked.died });
+    }
+    if (checked.signed) {
+      let (sh_sig, text) = signature_lines(o, sh, if (checked.has_output) { checked.output } else { "No signature\n" }, checked.failed);
+      sh = sh_sig;
+      out += text;
+    }
+    let (sh_tag, tags) = mergetag_lines(o, sh, c, ctx.parents, s.width);
+    sh = sh_tag;
+    out += tags;
+    if (sh.fatal.len() > 0) {
+      return (s, out, sh);
+    }
+  }
+  if (o.form == "format" && log.uses_signature(o.format)) {
+    let checked = verify_signature(s.width, c.body, o.gpg);
+    if (checked.died.len() > 0) {
+      return (s, out, Shown { ...sh, fatal: checked.died });
+    }
+    text_ctx = log.Context { ...text_ctx, sig: checked };
+  }
+  let msg = if (o.form == "format") { log.formatted(c, text_ctx, o.format) } else if (o.form == "reference") { log.reference(c, text_ctx) } else { log.pretty(c, text_ctx, o.form) + text_ctx.notes };
   let missing = msg.len() == 0 || msg[msg.len() - 1] != b'\n';
   if (o.graph) {
     let (g, text) = graph.show_msg(sh.graph, msg);
@@ -2611,6 +2756,10 @@ function reflog_walk(r: refs.Repo, w_in: revwalk.Walk, o: LogOpts, names: string
       count -= 1;
     }
     buf = buf.concat(text.bytes());
+    if (after.fatal.len() > 0) {
+      put(buf);
+      return fatal(after.fatal);
+    }
     if (buf.len() > 65536) {
       put(buf);
       buf = [];
@@ -2646,11 +2795,34 @@ function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Ma
   let st = w.g.store;
   let side = if ((f & revwalk.BOUNDARY) != 0) { "-" } else if ((f & revwalk.UNINTERESTING) != 0) { "^" } else if ((f & revwalk.PATCHSAME) != 0) { "=" } else if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
   let commit_least = if (o.patch.abbrev == 0) { 2 * st.width } else if (o.patch.abbrev > 0) { o.patch.abbrev } else { least };
-  let wants_sig = o.show_signature || o.form == "format" && o.format.contains("%G");
-  let checked = if (wants_sig) { verify_signature(w.g.store.width, c.body, o.gpg_program) } else { sig.unsigned() };
   let (st2, note_text) = if (o.show_notes) { notes.text_of(st, o.notes, h, o.form == "format" || o.form == "reference") } else { (st, "") };
   w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: st2 } };
-  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, commit_least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, pal: o.patch.pal, hi: o.hi, from: "", notes: note_text, notes_shown: o.show_notes, sig: checked, graph_width: if (o.graph) { sh.graph.width } else { 0 } };
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, commit_least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, pal: o.patch.pal, hi: o.hi, from: "", notes: note_text, notes_shown: o.show_notes, sig: sig.unsigned(), graph_width: if (o.graph) { sh.graph.width } else { 0 } };
+  // The diff of `-L` holds the changes that touch a range, each with the
+  // ranges of its file (`line_log_queue_pairs`).
+  if (o.lines.len() > 0) {
+    let changes: treediff.Change[] = [];
+    let ranges: Map[string, i32[]] = Map { };
+    for e in revwalk.lines_of(w, h) {
+      if (e.pair.len() > 0) {
+        changes = changes.append(e.pair[0]);
+        ranges = ranges.insert(e.path, e.ranges);
+      }
+    }
+    if (o.pick.kind != 0) {
+      let (s6, kept) = patch.pickaxe(w.g.store, changes, o.pick, o.patch);
+      w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s6 } };
+      if (kept.len() == 0) {
+        return (w, "", Shown { ...sh, hidden: true });
+      }
+      changes = kept;
+    }
+    if (o.diff.len() == 0 && (o.no_output || !patch.any(o.patch))) {
+      changes = [];
+    }
+    let (s7, text2, after2) = entry_text(w.g.store, c, LogOpts { ...o, patch: patch.Opts { ...o.patch, line_ranges: ranges } }, ctx, least, sh, changes);
+    return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s7 } }, text2, after2);
+  }
   // With the pickaxe and with --follow, a commit with no changes is not
   // shown, but the graph still takes it.
   if (o.pick.kind != 0 || o.follow) {
@@ -2733,7 +2905,7 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { hi: log.no_highlight(), gpg_program: r.config.get("gpg.openpgp.program").unwrap_or(r.config.get("gpg.program").unwrap_or("gpg")), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { lines: [], hi: log.no_highlight(), gpg: gpg_programs(r), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   let renames_value = r.config.get("diff.renames").unwrap_or("true").to_ascii_lower();
   let copies = renames_value == "copies" || renames_value == "copy";
@@ -2772,6 +2944,26 @@ function log_command(argv: string[]): i32 {
     paths = array.slice(argv, dashdash + 1, argv.len());
     args = array.slice(argv, 0, dashdash);
   }
+  // Each `-L` before `--` comes out first, as `parse_options` of git
+  // takes it before the revisions and the other options.
+  let rest: string[] = [];
+  let k = 0;
+  while (k < args.len()) {
+    let x = args[k];
+    if (!x.starts_with("-L")) {
+      rest = rest.append(x);
+    } else if (x.len() > 2) {
+      o = LogOpts { ...o, lines: o.lines.append(objects.part(x, 2, x.len())) };
+    } else if (k + 1 < args.len()) {
+      o = LogOpts { ...o, lines: o.lines.append(args[k + 1]) };
+      k += 1;
+    } else {
+      eprint("error: switch `L' requires a value");
+      return 129;
+    }
+    k += 1;
+  }
+  args = rest;
   let st0 = r.store();
   let cg = commit_graph(r, st0);
   let w = revwalk.walk_of(walk.graph_with(st0, cg), o.walk);
@@ -2790,11 +2982,11 @@ function log_command(argv: string[]): i32 {
       if (prefix.len() > 0 && o.walk_reflogs) {
         for e in refs.all_refs(r) {
           if (e.name.starts_with(prefix)) {
-            w = revwalk.Walk { ...w, pending: w.pending.append(e.name) };
+            w = revwalk.Walk { ...w, pending: w.pending.append(e.name), names: w.names.append(e.name) };
           }
         }
         if (x == "--all") {
-          w = revwalk.Walk { ...w, pending: w.pending.append("HEAD") };
+          w = revwalk.Walk { ...w, pending: w.pending.append("HEAD"), names: w.names.append("HEAD") };
         }
         named += 1;
         i += 1;
@@ -2806,14 +2998,14 @@ function log_command(argv: string[]): i32 {
             let (s, at, kind) = peel_commit(w.g.store, e.hash);
             w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s } };
             if (kind == "commit") {
-              w = revwalk.add(w, at, if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 });
+              w = revwalk.add_named(w, at, if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 }, e.name);
             }
           }
         }
         if (x == "--all") {
           let head = refs.resolve_ref(r, "HEAD");
           if (head.hash.len() > 0) {
-            w = revwalk.add(w, head.hash, if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 });
+            w = revwalk.add_named(w, head.hash, if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 }, "HEAD");
           }
         }
         named += 1;
@@ -2868,7 +3060,7 @@ function log_command(argv: string[]): i32 {
     return fatal("options '--name-only', '--name-status', '--check', and '-s' cannot be used together");
   }
   if (o.word_regex.len() > 0 && o.patch.word_diff != patch.WORDS_NONE) {
-    let re = bre.bre_compile_syntax(o.word_regex, bre.Syntax { ...bre.posix_basic(), extended: true, newline_anchor: true });
+    let re = bre.bre_compile_syntax(o.word_regex, bre.Syntax { ...bre.posix_basic(), extended: true, newline_anchor: true, multiline: true });
     let d = if (re.err.len() > 0) { patch.Opts { ...o.patch, word_regex_error: o.word_regex } } else { patch.Opts { ...o.patch, word_regex: [re] } };
     o = LogOpts { ...o, patch: d };
   }
@@ -2912,9 +3104,23 @@ function log_command(argv: string[]): i32 {
   if (o.follow && items.len() != 1) {
     return fatal("--follow requires exactly one pathspec");
   }
+  if (o.lines.len() > 0) {
+    if (o.full_diff || o.patch.stat || o.patch.numstat || o.patch.shortstat || o.diff == "check") {
+      return fatal("-L does not yet support the requested diff format");
+    }
+    if (items.len() > 0) {
+      return fatal("-L<range>:<file> cannot be used with pathspec");
+    }
+    // -L sorts the walk by topology, and its diff is the patch unless an
+    // option names another form.
+    o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, line: true, topo: true, line_renames: linelog.Renames { on: o.renames, find: o.find } } };
+    if (!o.no_output && !patch.any(o.patch) && o.diff.len() == 0) {
+      o = LogOpts { ...o, patch: patch.Opts { ...o.patch, patch: true } };
+    }
+  }
   o = LogOpts { ...o, pick: patch.Pickaxe { ...o.pick, icase: g.icase } };
   if (o.pick.kind == 2 || o.pick.kind == 1 && o.pick.regex) {
-    let syntax = bre.Syntax { ...bre.posix_basic(), extended: true, icase: g.icase, newline_anchor: true };
+    let syntax = bre.Syntax { ...bre.posix_basic(), extended: true, icase: g.icase, newline_anchor: true, multiline: true };
     let re = bre.bre_compile_syntax(o.pick.needle, syntax);
     if (re.err.len() > 0) {
       return fatal("invalid regex: " + re.err);
@@ -2966,8 +3172,15 @@ function log_command(argv: string[]): i32 {
     let (s, at, kind) = peel_commit(w.g.store, head.hash);
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s } };
     if (kind == "commit") {
-      w = revwalk.add(w, at, 0);
+      w = revwalk.add_named(w, at, 0, "HEAD");
     }
+  }
+  if (o.lines.len() > 0) {
+    let (w7, died) = line_log_init(r, w, o.lines);
+    if (died.len() > 0) {
+      return fatal(died);
+    }
+    w = w7;
   }
   if (o.walk.ancestry && o.ancestry_names.len() == 0 && !w.pending.any((h: string): boolean => (revwalk.flag(w, h) & revwalk.BOTTOM) != 0)) {
     return fatal("--ancestry-path given but there are no bottom commits");
@@ -3072,6 +3285,10 @@ function log_command(argv: string[]): i32 {
     w = w3;
     sh = after;
     buf = buf.concat(text.bytes());
+    if (after.fatal.len() > 0) {
+      put(buf);
+      return fatal(after.fatal);
+    }
     if (buf.len() > 65536) {
       put(buf);
       buf = [];

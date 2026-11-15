@@ -12,8 +12,9 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The fill and move loops of sembytecopy (#15974). Each `ref` function does
-// the same writes through a call, which keeps its loop element by element.
+// The fill, move and slide loops of sembytecopy (#15974). Each `ref`
+// function does the same writes through a call, which keeps its loop element
+// by element.
 const fillMoveLoopFunctions = `@noinline function fill8(own a: u8[], at: i32, n: i32, v: u8): u8[] {
   for i in at..at + n { a = a.with(i, v); }
   return a;
@@ -68,6 +69,20 @@ const fillMoveLoopFunctions = `@noinline function fill8(own a: u8[], at: i32, n:
   while (i < n) { a = a.with(at + i, v); i = i + 1; }
   return a;
 }
+@noinline function slide16(own a: u16[], k: i32): u16[] {
+  for i in 0..a.len() {
+    let m = a[i];
+    a = a.with(i, if (m as i32 >= k) { (m as i32 - k) as u16 } else { 0 });
+  }
+  return a;
+}
+@noinline function top16(own a: u16[], from: i32): u16[] {
+  for i in from..a.len() {
+    let m = a[i];
+    a = a.with(i, if (m >= 32768) { (m - 32768) as u16 } else { 0 });
+  }
+  return a;
+}
 @noinline function move16(own w: u16[], at: i32, from: i32, n: i32): u16[] {
   let i = 0;
   while (i < n) { w = w.with(at + i, w[from + i]); i += 1; }
@@ -106,6 +121,13 @@ const fillMoveLoopFunctions = `@noinline function fill8(own a: u8[], at: i32, n:
   let i = 0;
   while (i < n) { let x = w[from + i]; w = seti16(w, at + i, x); i += 1; }
   return w;
+}
+@noinline function rslide16(own a: u16[], from: i32, k: i32): u16[] {
+  for i in from..a.len() {
+    let m = a[i] as i32;
+    a = set16(a, i, if (m >= k) { (m - k) as u16 } else { 0 });
+  }
+  return a;
 }
 @noinline function rfill16(own a: u16[], at: i32, n: i32, v: u16): u16[] {
   for i in at..at + n { a = set16(a, i, v); }
@@ -217,6 +239,19 @@ const fillMoveLoopMain = `function main(): i32 {
       if (!samei16(filli16(seqi16(64), at, n, (0 - 7) as i16), rfilli16(seqi16(64), at, n, (0 - 7) as i16))) { return 16; }
     }
   }
+  let ks: i32[] = [0 - 70000, 0 - 5, 0, 1, 3, 255, 4096, 32767, 32768, 32769, 65535, 65536, 70000];
+  for k in ks {
+    for n in [0, 1, 3, 4, 5, 9, 33, 100] {
+      if (!same16(slide16(seq16(n), k), rslide16(seq16(n), 0, k))) { return 17; }
+    }
+  }
+  for from in [0, 1, 3, 4, 30] {
+    if (!same16(top16(seq16(100), from), rslide16(seq16(100), from, 32768))) { return 18; }
+  }
+  let shared = seq16(12);
+  let held = shared;
+  let slid = top16(shared, 0);
+  if (!same16(held, seq16(12)) || !same16(slid, rslide16(seq16(12), 0, 32768))) { return 19; }
   return 0;
 }`
 
@@ -227,7 +262,7 @@ func TestSelfHostFillMoveLoops(t *testing.T) {
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	kernels := []string{"__fern_arr_fill_u8", "__fern_arr_fill_u16", "__fern_arr_fill_u32", "__fern_arr_fill_u64", "__fern_arr_move_u8", "__fern_arr_move_u16", "__fern_arr_move_u32", "__fern_arr_move_u64"}
+	kernels := []string{"__fern_arr_fill_u8", "__fern_arr_fill_u16", "__fern_arr_fill_u32", "__fern_arr_fill_u64", "__fern_arr_move_u8", "__fern_arr_move_u16", "__fern_arr_move_u32", "__fern_arr_move_u64", "__fern_arr_slide_u16"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")

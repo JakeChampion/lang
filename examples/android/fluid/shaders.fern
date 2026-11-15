@@ -3,6 +3,8 @@
 // advection pass has only its branch for a GPU that filters float textures,
 // which each OpenGL ES 3 GPU does.
 import "std/array";
+import "std/i32";
+import "std/string";
 
 // The vertex shader of each pass but the blur: the texture coordinates of
 // a pixel and of its four neighbours.
@@ -469,4 +471,46 @@ pub function gradient_subtract(): string {
     "    gl_FragColor = vec4(velocity, 0.0, 1.0);",
     "}",
   ].join("\n") + "\n";
+}
+
+// The texels that one pixel of the fragment shader `source` reads: each
+// `texture2D` call that the `#ifdef` lines keep, and a call in the body of
+// a loop to ITERATIONS that many times.
+pub function taps(source: string): i32 {
+  let defined: string[] = [];
+  let live: boolean[] = [true];
+  let iterations = 1;
+  let in_loop = false;
+  let n = 0;
+  for raw in source.split("\n") {
+    let line = raw.trim();
+    let on = live[live.len() - 1];
+    if (line.starts_with("#ifdef ")) {
+      live = live.append(on && defined.contains(line.trim_start_matches("#ifdef ").trim()));
+    } else if (line == "#else") {
+      let outer = live.len() < 2 || live[live.len() - 2];
+      live = live.truncate(live.len() - 1).append(outer && !on);
+    } else if (line == "#endif") {
+      live = live.truncate((live.len() - 1).max(1));
+    } else if (on && line.starts_with("#define ")) {
+      let parts = line.split(" ");
+      defined = defined.append(parts[1]);
+      if (parts[1] == "ITERATIONS" && parts.len() > 2) {
+        if let Ok(k) = i32.parse_i32(parts[2]) {
+          iterations = k;
+        }
+      }
+    } else if (on && line.starts_with("for (")) {
+      in_loop = true;
+    } else if (on && in_loop && line == "}") {
+      in_loop = false;
+    } else if (on) {
+      let calls = line.count("texture2D(");
+      if (in_loop) {
+        calls *= iterations;
+      }
+      n += calls;
+    }
+  }
+  return n;
 }

@@ -328,13 +328,13 @@ function test_wake_reaches_the_owner_of_its_pair(): test.TestOutcome {
     return test.fail("pair 3 did not wake the third pair of the second watcher");
   }
   set = waits_on(second);
-  if (set.len() != 6 || set[0] != 100 || set[2] != 300) {
-    return test.fail("a ready input kept its pairs in the wait");
+  if (set.len() != 12 || set[0] != 100 || set[2] != async.HOLE || set[4] != async.HOLE || set[6] != async.HOLE || set[8] != 300) {
+    return test.fail("a ready input did not leave holes in its slots");
   }
-  let third = woken(woken(second, 9), 2);
+  let third = woken(woken(woken(second, 9), 1), 5);
   if (a.get() != 0 || c.get() != 2) {
     async.cancel(third);
-    return test.fail("pair 2 did not wake the second pair of the last watcher");
+    return test.fail("pair 5 did not wake the second pair of the last watcher");
   }
   if let Ready(got) = woken(third, 0) {
     return test.assert_eq(got[0] * 1000 + got[1] * 100 + got[2] * 10 + got[3], 1923);

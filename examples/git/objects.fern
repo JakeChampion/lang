@@ -477,6 +477,37 @@ pub function starts_at(body: u8[], at: i32, key: string): boolean {
 
 // The values of the header lines `key` of a commit or a tag: the lines
 // before the first empty line.
+// The values of the header `key` of a commit that are not one of the
+// standard headers, each with its continued lines: the space at the start
+// of a continued line goes (`read_commit_extra_headers` of git).
+pub function extra_headers(body: u8[], key: string): u8[][] {
+  let found: u8[][] = [];
+  let value: u8[] = [];
+  let open = false;
+  let i = 0;
+  while (i < body.len() && body[i] != b'\n') {
+    let nl = __memchr_bytes(body, 10, i);
+    let next = if (nl < 0) { body.len() } else { nl + 1 };
+    if (body[i] == b' ') {
+      if (open) {
+        value = value.concat(array.slice(body, i + 1, next));
+      }
+      i = next;
+      continue;
+    }
+    if (open) {
+      found = found.append(value);
+    }
+    open = next - i > key.len() && body[i + key.len()] == b' ' && starts_at(body, i, key);
+    value = if (open) { array.slice(body, i + key.len() + 1, next) } else { [] };
+    i = next;
+  }
+  if (open) {
+    found = found.append(value);
+  }
+  return found;
+}
+
 pub function header_values(body: u8[], key: string): string[] {
   let found: string[] = [];
   let i = 0;

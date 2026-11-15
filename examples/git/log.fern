@@ -435,6 +435,35 @@ function header(c: Commit, ctx: Context, form: string): string {
   return out;
 }
 
+// The lines of an entry of a reflog after the first line of a built-in
+// form other than "oneline" (`show_reflog_message` of git).
+pub function reflog_header(e: ReflogLine): string {
+  return "Reflog: " + e.selector + " (" + e.who + ")\nReflog message: " + e.message + "\n";
+}
+
+// True when the format has a placeholder `%G`, for which git checks the
+// signature of the commit, with or without `+`, `-` or a space before the
+// letter.
+pub function uses_signature(format: string): boolean {
+  let i = 0;
+  while (i + 1 < format.len()) {
+    if (format[i] != b'%') {
+      i += 1;
+      continue;
+    }
+    if (format[i + 1] == b'%') {
+      i += 2;
+      continue;
+    }
+    let at = if (format[i + 1] == b'+' || format[i + 1] == b'-' || format[i + 1] == b' ') { i + 2 } else { i + 1 };
+    if (at < format.len() && format[at] == b'G') {
+      return true;
+    }
+    i = at;
+  }
+  return false;
+}
+
 // The text of a built-in form after its first line, as
 // `pretty_print_commit` of git gives it: "oneline" gives the subject, and
 // the other forms end with a line end.
@@ -445,7 +474,7 @@ pub function pretty(c: Commit, ctx: Context, form: string): string {
     if (form == "oneline") {
       return e.selector + ": " + e.message;
     }
-    return "Reflog: " + e.selector + " (" + e.who + ")\nReflog message: " + e.message + "\n" + pretty(c, Context { ...ctx, reflog: [] }, form);
+    return reflog_header(e) + pretty(c, Context { ...ctx, reflog: [] }, form);
   }
   if (form == "oneline") {
     let (s, _) = subject_from(m, skip_blank(m, 0), " ");

@@ -139,16 +139,52 @@ from a frame to the display. When that time is longer than the best that
 the app measured, the app leaves one refresh with no frame. The queue then
 has one frame less. `pace.fern` has these rules.
 
-The loop of the app has the priority of a thread that draws for the
-display.
+The loop of the app asks for the priority of a thread that draws for the
+display. The details of the dialog tell whether the phone allowed it.
 
 Each pass that writes each pixel of its target tells the GPU so. A phone
 GPU draws in tiles, and it then does not load the old pixels of the target.
 
+### The work of the GPU
+
+The simulation counts the work of each pass: the pixels that it writes,
+and the texels that it reads. `work_check.fern` runs the passes on Mesa's
+OpenGL ES for a phone of 1080 by 2400 pixels. It compares one second of
+the app with one second of the page, in millions of pixels and texels:
+
+| Display | The app | The page |
+|---|---|---|
+| 60 Hz | 1831 | 1831 |
+| 90 Hz | 2411 | 2510 |
+| 120 Hz | 3123 | 3188 |
+
+The page takes a step of 1/60 second for each 1/60 second. On a display of
+120 Hz it thus shows each picture for 2 refreshes. The app shows a new
+picture at each refresh, and it does less work than the page.
+
+A frame that the app only draws again costs 2 passes. The display pass
+writes the picture of the fluid, and a copy makes it as large as the
+window. The copy is about one quarter of that work.
+
+### What the app measured
+
 The dialog shows the frame rate of the last second next to its close
-button. It also shows the longest time from one frame to the next, and the
-time from a frame to the display. Each 5 seconds, the app writes the same text to its log,
-and what the touches were. `adb logcat -s fern` shows the lines.
+button. Its Details, below the rows, show what the app measured in that
+second:
+
+- The frame rate, the rate of the display, and the longest time from one
+  frame to the next.
+- The time from a frame to the display, or that the phone does not tell
+  it.
+- Whether the phone gives each place of a finger at once, and how old a
+  place is when the app reads it.
+- The work of the GPU in a second, and the time from a refresh to the time
+  that the GPU completed its frame.
+- Whether the loop has the priority of a thread that draws.
+
+A screenshot of the dialog thus tells what is slow on a phone. Each 5
+seconds, the app writes the same lines to its log. `adb logcat -s fern`
+shows them.
 
 ## Settings
 
@@ -219,7 +255,8 @@ to its log, and ignores it.
 | `clock.fern` | The time step of each frame |
 | `fingers.fern` | The fingers on the fluid, the push of each one in a frame, and the place of its dye |
 | `trail.fern` | The path of a finger, its place at one time, and the estimate of its place after the path |
-| `pace.fern` | The refreshes of the display for one frame |
+| `pace.fern` | The refreshes of the display for one frame, and the times of the frames |
+| `report.fern` | The text of what the app measured, for the dialog and the log |
 | `color.fern` | The colours of the dye |
 | `sim.fern` | The passes of the simulation and of the display |
 | `shaders.fern` | The GLSL source of each pass |
@@ -245,16 +282,24 @@ These tests run on the host:
 - `TestAndroidFluidPace` runs `pace_test.fern` on the host: the pace of the
   frames at each display rate, the slower pace after late frames, and the
   queue of the frames.
+- `TestAndroidFluidReport` runs `report_test.fern` on the host: the text
+  of what the app measured.
 - `TestAndroidFluidOverlay` runs `overlay_test.fern` on the host: the
   places of the controls and what TalkBack reads.
-- `TestAndroidFluidGPU` runs `gpu_test.fern` with Mesa's OpenGL ES on the
-  host: the simulation, and the controls over it.
+
+These tests run with Mesa's OpenGL ES on the host:
+
+- `TestAndroidFluidGPU` runs `gpu_test.fern`: the simulation, and the
+  controls over it.
+- `TestAndroidFluidGPUWork` runs `work_check.fern`: the work of the GPU in
+  a second of the app and of the page.
 
 These tests use the APK:
 
 - `TestAndroidFluidApk` builds the APK and checks its entries.
 - `emulator_check.py` drives the APK on an emulator in the Android lane of
-  CI. It swipes with one finger and with two fingers.
+  CI. It swipes with one finger and with two fingers, and prints the
+  details that the app wrote to its log.
 
 With `FLUID_PNG` set to a directory, `overlay_test.fern` and `gpu_test.fern`
 write their pictures there as PNG files.

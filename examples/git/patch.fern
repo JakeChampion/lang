@@ -3,6 +3,7 @@
 // `--summary`. The hunks come from the xdiff engine of std/linediff.
 import "std/array";
 import "std/linediff";
+import "core/map";
 import "./attr";
 import "./color";
 import "./moved";
@@ -25,11 +26,13 @@ import "../../coreutils/lib/bre";
 // `color_moved` and `color_moved_ws` are the form and the modes of
 // `--color-moved` and `--color-moved-ws`. `ws_attrs` holds the
 // attributes of the worktree for the attribute `whitespace`, or none.
-// `pal` holds the colors of `color.diff.SLOT`.
-pub struct Opts { pal: color.Palette, ws_attrs: attr.Attrs[], color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
+// `pal` holds the colors of `color.diff.SLOT`. `line_ranges` holds the
+// ranges of lines of `-L` of each path of the new side: the patch of such
+// a path shows only the lines in its ranges.
+pub struct Opts { line_ranges: Map[string, i32[]], pal: color.Palette, ws_attrs: attr.Attrs[], color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
 
 pub function defaults(): Opts {
-  return Opts { pal: color.palette_default(), ws_attrs: [], color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
+  return Opts { line_ranges: Map { }, pal: color.palette_default(), ws_attrs: [], color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
 }
 
 // True when the options print a diff.
@@ -218,8 +221,12 @@ pub function abbrev_of(s: store.Store, hash: string, least: i32, full: boolean):
 }
 
 // The lines of the change in one pair, after its header: the hunks, or
-// the line for a binary file. Each line ends with a line end.
-function hunks(o: Opts, a: u8[], b: u8[]): u8[] {
+// the line for a binary file. Each line ends with a line end. With ranges
+// of `-L` for the path `path`, the hunks have the lines of the ranges.
+function hunks(o: Opts, a: u8[], b: u8[], path: u8[]): u8[] {
+  if let Some(ranges) = o.line_ranges.get(unsafe { string_from_bytes_unchecked(path) }) {
+    return in_ranges(o, a, b, ranges);
+  }
   let ab = a;
   let bb = b;
   if (o.context == 0) {
@@ -232,6 +239,157 @@ function hunks(o: Opts, a: u8[], b: u8[]): u8[] {
   let script = linediff.diff(la, lb, o.algo);
   let out = buf_new(4096);
   linediff.unified(out, la, lb, script, linediff.Emit { context: o.context, interhunk: o.interhunk, funcnames: true });
+  return taken(out);
+}
+
+// ---- The hunks in the ranges of `-L` (`line_range_callback` of git) ----
+
+// The function line of the old side at or above the line `start`, down to
+// the line after `limit`, as xdiff finds it for a hunk header: the first
+// 80 bytes of a line that starts with a letter, `_` or `$`, with no white
+// space at their end. The third value is false when there is none.
+function func_above(a: linediff.Lines, start: i32, limit: i32): (i32, i32, boolean) {
+  let l = start;
+  while (l != limit && 0 <= l && l < a.count()) {
+    let s = a.starts[l];
+    let len = a.starts[l + 1] - s;
+    if (len > 0) {
+      let c = a.data[s];
+      if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c == b'_' || c == b'$') {
+        let n = len.min(80);
+        while (n > 0 && objects.is_space(a.data[s + n - 1])) {
+          n -= 1;
+        }
+        return (s, s + n, true);
+      }
+    }
+    l -= 1;
+  }
+  return (0, 0, false);
+}
+
+// The numbers of a hunk header `@@ -A,B +C,D @@`: A, B, C and D, with 1
+// for a count that the header leaves out.
+function hunk_numbers(line: string): (i32, i32, i32, i32) {
+  let parts = line.split(" ");
+  let side = (text: string): (i32, i32) => {
+    let at = text.index_of(",").unwrap_or(text.len());
+    let start = digits_of(objects.part(text, 1, at));
+    let count = if (at < text.len()) { digits_of(objects.part(text, at + 1, text.len())) } else { 1 };
+    return (start, count);
+  };
+  let (a, b) = side(parts[1]);
+  let (c, d) = side(parts[2]);
+  return (a, b, c, d);
+}
+
+function digits_of(text: string): i32 {
+  let n = 0;
+  for i in 0..text.len() {
+    n = n * 10 + (text[i] - b'0') as i32;
+  }
+  return n;
+}
+
+// The state of the filter of the lines of xdiff for the ranges of `-L`:
+// the range now, the next line of each side, the function line of the
+// hunk of xdiff, the hunk of the range that grows, and the removed lines
+// that wait for the next line to tell whether they are in a range.
+struct RangeHunk { cur: i32, post: i32, pre: i32, func: u8[], active: boolean, changes: boolean, old_begin: i32, old_count: i32, new_begin: i32, new_count: i32, lines: u8[], pending: u8[], pending_count: i32, pending_begin: i32 }
+
+// Writes the hunk of the range with its header, unless it has only lines
+// of context (`flush_rhunk`).
+function flush_range(out: usize, h_in: RangeHunk): RangeHunk {
+  let h = h_in;
+  if (!h.active) {
+    return h;
+  }
+  if (h.pending_count > 0) {
+    h = RangeHunk { ...h, lines: h.lines.concat(h.pending), old_count: h.old_count + h.pending_count, changes: true, pending: [], pending_count: 0 };
+  }
+  if (h.changes) {
+    buf_push(out, "@@ -" + h.old_begin.to_string() + "," + h.old_count.to_string() + " +" + h.new_begin.to_string() + "," + h.new_count.to_string() + " @@");
+    if (h.func.len() > 0) {
+      buf_push_byte(out, b' ' as i32);
+      buf_push_bytes_range(out, h.func, 0, h.func.len());
+    }
+    buf_push_byte(out, b'\n' as i32);
+    buf_push_bytes_range(out, h.lines, 0, h.lines.len());
+  }
+  return RangeHunk { ...h, active: false, lines: [] };
+}
+
+// The patch of `a` to `b` with only the lines in the ranges `ranges` of
+// the new side: the hunks of xdiff with enough context for each range,
+// cut at the ends of the ranges, each with a header of its own. A hunk
+// of a range with no change does not show.
+// fern-lint: allow cyclomatic-complexity
+pub function in_ranges(o: Opts, a: u8[], b: u8[], ranges: i32[]): u8[] {
+  let span = 0;
+  let k = 0;
+  while (k < ranges.len()) {
+    span = span.max(ranges[k + 1] - ranges[k]);
+    k += 2;
+  }
+  let la = linediff.lines_of(a);
+  let lb = linediff.lines_of(b);
+  let script = linediff.diff(la, lb, o.algo);
+  let full = buf_new(4096);
+  linediff.unified(full, la, lb, script, linediff.Emit { context: o.context.max(span), interhunk: o.interhunk, funcnames: false });
+  let text = taken(full);
+  let out = buf_new(4096);
+  let h = RangeHunk { cur: 0, post: 0, pre: 0, func: [], active: false, changes: false, old_begin: 0, old_count: 0, new_begin: 0, new_count: 0, lines: [], pending: [], pending_count: 0, pending_begin: 0 };
+  let funclineprev = -1;
+  let at = 0;
+  while (at < text.len()) {
+    let nl = __memchr_bytes(text, 10, at);
+    let next = if (nl < 0) { text.len() } else { nl + 1 };
+    let line = array.slice(text, at, next);
+    at = next;
+    let first = line[0];
+    if (first == b'@') {
+      let (old_begin, old_count, new_begin, _) = hunk_numbers(unsafe { string_from_bytes_unchecked(line) });
+      let s1 = if (old_count != 0) { old_begin - 1 } else { old_begin };
+      let (fs, fe, found) = func_above(la, s1 - 1, funclineprev);
+      funclineprev = s1 - 1;
+      h = RangeHunk { ...h, post: new_begin, pre: old_begin, func: if (found) { array.slice(la.data, fs, fe) } else { h.func } };
+      continue;
+    }
+    if (first == b'-') {
+      if (h.pending_count == 0) {
+        h = RangeHunk { ...h, pending_begin: h.pre };
+      }
+      h = RangeHunk { ...h, pre: h.pre + 1, pending: h.pending.concat(line), pending_count: h.pending_count + 1 };
+      continue;
+    }
+    if (first == b'\\') {
+      if (h.pending_count > 0) {
+        h = RangeHunk { ...h, pending: h.pending.concat(line) };
+      } else if (h.active) {
+        h = RangeHunk { ...h, lines: h.lines.concat(line) };
+      }
+      continue;
+    }
+    let lno = h.post - 1;
+    let cur_pre = h.pre;
+    h = RangeHunk { ...h, post: h.post + 1, pre: if (first == b' ') { h.pre + 1 } else { h.pre } };
+    while (h.cur < ranges.len() && lno >= ranges[h.cur + 1]) {
+      h = flush_range(out, h);
+      h = RangeHunk { ...h, pending: [], pending_count: 0, cur: h.cur + 2 };
+    }
+    if (h.cur >= ranges.len() || lno < ranges[h.cur]) {
+      h = RangeHunk { ...h, pending: [], pending_count: 0 };
+      continue;
+    }
+    if (!h.active) {
+      h = RangeHunk { ...h, active: true, changes: false, new_begin: lno + 1, old_begin: if (h.pending_count > 0) { h.pending_begin } else { cur_pre }, old_count: 0, new_count: 0, lines: [] };
+    }
+    if (h.pending_count > 0) {
+      h = RangeHunk { ...h, lines: h.lines.concat(h.pending), old_count: h.old_count + h.pending_count, changes: true, pending: [], pending_count: 0 };
+    }
+    h = RangeHunk { ...h, lines: h.lines.concat(line), new_count: h.new_count + 1, changes: h.changes || first == b'+', old_count: if (first == b'+') { h.old_count } else { h.old_count + 1 } };
+  }
+  flush_range(out, h);
   return taken(out);
 }
 
@@ -527,9 +685,12 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
     let (t1, at_call) = call(t);
     return (s, add(t1, at_call, "Binary files " + lbl0 + " and " + lbl1 + " differ\n"));
   }
-  let body = hunks(o, a, b);
+  let body = hunks(o, a, b, p.two.path);
   if (body.len() == 0) {
-    return (s, t);
+    // git writes the header of a change of content with its first line
+    // of the patch, and the ranges of `-L` can leave no line.
+    let must_show = !one.valid || !two.valid || one.mode != two.mode || p.status == b'R' || p.status == b'C';
+    return (s, if (must_show) { t } else { t_in });
   }
   let tab0 = if (lbl0.contains(" ")) { "\t" } else { "" };
   let tab1 = if (lbl1.contains(" ")) { "\t" } else { "" };
