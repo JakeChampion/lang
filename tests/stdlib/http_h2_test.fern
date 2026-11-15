@@ -617,6 +617,23 @@ function test_client_reads_a_body_past_one_window(): test.TestOutcome {
   return test.assert_eq(p.client.streams_open() + p.server.streams_open(), 0);
 }
 
+// `received` gives the bytes of a response body that have come so far, and
+// 0 once the response is complete.
+function test_client_received(): test.TestOutcome {
+  let p = paired();
+  let (sent, stream) = p.client.request(outgoing("GET", "/slow", "", headers.new()));
+  p = exchanged(Pair { ...p, client: sent.conn, events: [] }, sent.output, []);
+  let head = p.server.respond_head(stream, http.ok(""));
+  let part = head.conn.write(stream, "par".bytes());
+  p = exchanged(Pair { ...p, server: part.conn, events: [] }, [], head.output.concat(part.output));
+  let got = "received " + p.client.received(stream).to_string() + " events " + p.events.len().to_string() + "\n";
+  let rest = p.server.write(stream, "tial".bytes());
+  let ended = rest.conn.end(stream, headers.new());
+  p = exchanged(Pair { ...p, server: ended.conn, events: [] }, [], rest.output.concat(ended.output));
+  got = got + events_text(p.events) + "received " + p.client.received(stream).to_string();
+  return test.assert_eq(got, "received 3 events 0\nanswered 1 200 content-type=- body=partial trailer=-\nreceived 0");
+}
+
 function test_client_body_and_interim(): test.TestOutcome {
   let p = paired();
   let (sent, stream) = p.client.request(outgoing("POST", "/up", "abc", headers.new().append("Checksum", "9")));
@@ -631,6 +648,32 @@ function test_client_body_and_interim(): test.TestOutcome {
   got += events_text(p.events);
   let (again, next) = p.client.request(outgoing("GET", "/again", "", headers.new()));
   return test.assert_eq(got + "next " + next.to_string(), "request 1 POST /up host=example.test body=abc trailer=9\ninterim events=0 open=1\nanswered 1 200 content-type=- body=ok trailer=7\nnext 3");
+}
+
+function test_client_tunnel(): test.TestOutcome {
+  let cs = h2.client(h2.config());
+  let ss = h2.server(h2.Config { ...h2.config(), stream_bodies: true });
+  let p = exchanged(Pair { client: cs.conn, server: ss.conn, events: [] }, cs.output, ss.output);
+  let (sent, stream) = p.client.connect("origin.test:443", headers.new().append("Host", "wrong.test").append("Proxy-Authorization", "Basic eA=="));
+  let up = sent.conn.write(stream, "hello".bytes());
+  p = exchanged(Pair { ...p, client: up.conn, events: [] }, sent.output.concat(up.output), []);
+  let got = events_text(p.events);
+  let head = p.server.respond_head(stream, http.ok(""));
+  let back = head.conn.write(stream, "world".bytes());
+  p = exchanged(Pair { ...p, server: back.conn, events: [] }, [], head.output.concat(back.output));
+  got += events_text(p.events);
+  let fin = p.server.end(stream, headers.new());
+  p = exchanged(Pair { ...p, server: fin.conn, events: [] }, [], fin.output);
+  got = got + events_text(p.events) + "open " + p.client.streams_open().to_string() + "\n";
+  let closing = p.client.end(stream, headers.new());
+  p = exchanged(Pair { ...p, client: closing.conn, events: [] }, closing.output, []);
+  got = got + events_text(p.events) + "open " + p.client.streams_open().to_string() + "\n";
+  let (asked, refused) = p.client.connect("origin.test:443", headers.new());
+  p = exchanged(Pair { ...p, client: asked.conn, events: [] }, asked.output, []);
+  let no = p.server.respond(refused, HttpResponse { ...http.ok("no"), status: 403 });
+  p = exchanged(Pair { ...p, server: no.conn, events: [] }, [], no.output);
+  got += events_text(p.events);
+  return test.assert_eq(got, "streamed 1 CONNECT  host=origin.test:443\ndata 1 hello\nanswered 1 200 content-type=- body= trailer=-\ndata 1 world\nend 1 trailer=-\nopen 1\nend 1 trailer=-\nopen 0\nanswered 3 403 content-type=- body=no trailer=-\n");
 }
 
 function test_client_goaway_and_push(): test.TestOutcome {
@@ -938,6 +981,8 @@ function main(): i32 {
   r = r.it("a client's request and its answer", test_client_round_trip);
   r = r.it("a client's body, trailers and an interim response", test_client_body_and_interim);
   r = r.it("a client reads a body larger than one window", test_client_reads_a_body_past_one_window);
+  r = r.it("a client counts the body of a response as it comes", test_client_received);
+  r = r.it("a client opens a CONNECT tunnel", test_client_tunnel);
   r = r.it("a client under GOAWAY, PUSH_PROMISE and RST_STREAM", test_client_goaway_and_push);
   r = r.it("a client refuses DATA before HEADERS and a 101, and ends the requests that a GOAWAY leaves out", test_client_rules);
   return r.finish();

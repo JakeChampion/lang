@@ -4538,6 +4538,9 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irtables.StructTab, funcs: par
       parts = parts.append("    if (result " + drt + ")\n");
       for dek in 0..dargc {
         parts = parts.append("    local.get " + util.i32_to_string(dbase + dek) + "\n");
+        if (dek == 0 && irtables.enum_immediate(structs, funcs, dbn)) {
+          parts = parts.append("    i32.const 8\n    i32.add\n    i32.load\n");
+        }
       }
       parts = parts.append("    call $" + dbn + "." + funcs[dfi].name + "\n");
       parts = parts.append("    else\n");
@@ -11360,6 +11363,9 @@ function extern_variant_string_arm_test(arms: i32[]): string {
 
 pub function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string): string {
   let stab = irtables.struct_tab(mod.structs);
+  if (irtables.enum_immediate(stab, mod.funcs, t)) {
+    return "(local.get " + eploc + ")";
+  }
   for ei in 0..mod.enums.len() {
     if (mod.enums[ei].name == t) {
       let n = mod.enums[ei].variant_names.len();
@@ -12816,9 +12822,13 @@ pub function extern_wrappers(mod: parser.Module): string {
         parts = parts.append(" " + extern_core_arg(f.params[ena].type_name, "$ep" + util.i32_to_string(ena)));
       }
       parts = parts.append("))\n");
-      parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(0)) + ")\n");
-      parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
-      parts = parts.append("    (local.get $s))\n");
+      if (irtables.enum_immediate(irtables.struct_tab(mod.structs), mod.funcs, f.ret_type)) {
+        parts = parts.append("    (local.get $d))\n");
+      } else {
+        parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(0)) + ")\n");
+        parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
+        parts = parts.append("    (local.get $s))\n");
+      }
     } else if (is_sync_extern(f) && extern_variant_string_arms(mod, f.ret_type).len() > 0) {
       let sarms = extern_variant_string_arms(mod, f.ret_type);
       parts = parts.append("  (func $" + f.name);

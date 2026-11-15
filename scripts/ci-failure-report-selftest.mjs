@@ -2,7 +2,7 @@
 // Tests of the parts of ci-failure-report.mjs that make the report from a log.
 // The log lines are from job 132508689286 of this repository.
 import assert from "node:assert/strict";
-import { MARKER, body, errorExcerpt, failedTests, render } from "./ci-failure-report.mjs";
+import { MARKER, body, errorExcerpt, failedTests, outcome, render } from "./ci-failure-report.mjs";
 
 const ts = "2026-11-14T16:42:40.2274379Z ";
 const goLog = [
@@ -96,6 +96,17 @@ let cases = 0;
   assert.match(none, /No job has the conclusion `failure`/);
   const green = body({ conclusion: "success", sha, runUrl: "https://example.test/run", jobs: [] });
   assert.ok(green.startsWith(`${MARKER}\n## CI passed on \`34d740f3\``));
+  cases++;
+}
+
+// One failed lane cancels the rest of the run, so a red run of a pull request
+// concludes `cancelled`. Run 43653064445 of #15980 did, with one failed job.
+{
+  assert.equal(outcome("cancelled", 1), "failure");
+  assert.equal(outcome("cancelled", 0), null);
+  assert.equal(outcome("failure", 0), "failure");
+  assert.equal(outcome("success", 0), "success");
+  assert.equal(outcome("skipped", 0), null);
   cases++;
 }
 

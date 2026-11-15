@@ -132,7 +132,8 @@ Backend support:
 | Parser | `parser.parseBranchBody` + `branchStmtStart`, wired into `parseIfExpr` and the `match`-expr arm body (`internal/syntax/parser/parser.go`) |
 | Checker | `checker.checkBlockExpr` (child scope → statements → tail type); no-tail → **E061** unless the statements diverge (`stmtsDiverge`) → `never`; `assignable` / `unifyIfArms` / match-arm unifiers fold `never`; numeric settle / `postSettleType` recurse into `Tail` (`internal/check/checker/checker.go`) |
 | Interp | `*ast.BlockExpr` arm in `evalExpr` — child env, exec statements, eval tail; a non-normal `r.flow` unwinds as a `controlFlowSignal` that `execStmt` catches (`internal/oracle/interp/interp.go`) |
-| Self-host parse | `parse_branch_body` + `branch_stmt_start`, wired into `parse_if_chain` and the match-expr arm body (`compiler/parser.fern`) |
+| Self-host parse | `parse_branch_body` + `branch_stmt_start`, wired into `parse_if_chain` and the match-expr arm body (`compiler/parser.fern`). A no-tail branch gets a dead tail when its statements end in a return, a break, a continue or a loop. Otherwise it ends in the `MISSING_TAIL` statement. The parser does not look at calls, because it has no scopes |
+| Self-host checker | `mx_stmts` reports **E061** for a `MISSING_TAIL` statement unless `block_diverges` finds that the statements before it end the path. `value_block_tail_type` gives that branch `never`. `block_diverges` uses the scopes: a call ends the path only when it reaches the builtin `exit` (`compiler/checker.fern`) |
 | Compiled value blocks | The `value_block` route processes the statements before the final value (`compiler/semsource.fern`). Every `-target` build uses this compiler. |
 | Other passes | The Go syntax visitors (`internal/syntax/ast/walk.go`) and self-hosted visitors (`compiler/astwalk.fern`) traverse the block contents. |
 

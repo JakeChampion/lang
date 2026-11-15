@@ -177,6 +177,15 @@ mode each parameter ends with (`mode_bits`), not the raw escape, so a caller
 handing a field to a parameter its callee can never count keeps its own
 parameter borrowed.
 
+A quiet cycle has one exception. A slot of the cycle is **eager** while each
+call in the module gives it a value that dies at the call: the caller owns
+the value, and does not use it again (`ownership.kept_alive`). The value is a
+part of a parameter that the caller consumes, the result of a call, a new
+box, or a phi of such values. An eager slot is consumed, so a walk such as a
+fold releases each box while it reads it, and no second walk releases the
+tree. One call that keeps its argument clears the slot for each caller
+(`semsource.without_kept_alive`), and the walk borrows as before.
+
 The inference counts a record, a variant, an owned array, a map or a string
 (`owned_shape`). When a callee gives such a parameter to a sink that consumes
 it, the caller hands over its last unit. The sink then updates or adopts the
@@ -211,7 +220,7 @@ halves (`docs/rc-log/2026-09-21-owned-by-default-alone-is-a-regression.md`).
 
 A value has a unit only when its type is counted (`ssasem.counted`). An enum
 whose variants hold no field is not counted, because each of its values is
-the address of a static object. The plan, the physical lowering and the
+the index of its variant and not an address. The plan, the physical lowering and the
 certifier use the same predicate. A parameter of such a type keeps its
 declared mode, and the certifier reads it as a word (`physicalbody.abis`).
 

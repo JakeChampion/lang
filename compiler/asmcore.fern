@@ -3182,6 +3182,7 @@ function builtin_i32_names(): string[] {
     "tcp_connect_with",
     "unix_listen",
     "unix_connect",
+    "vsock_connect",
     "reactor_new",
     "reactor_ctl",
     "reactor_wait",
@@ -4457,9 +4458,6 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
   if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
     return util.Diag { related: [], length: 0, code: "P005", message: where + ": input nests deeper than " + util.i32_to_string(parser.MAX_NEST_DEPTH) + " levels", line: line, col: col, fix: None };
   }
-  if (kind == "value branch has no trailing expression" || kind == "stmt: value branch has no trailing expression") {
-    return util.Diag { related: [], length: 0, code: "E061", message: parser.BLOCK_VALUE_REQUIRED_MESSAGE, line: line, col: col, fix: None };
-  }
   let decl = decl_sentinel_text(kind);
   if (decl.len() > 0) {
     return util.Diag { related: [], length: 0, code: "P001", message: where + ": " + decl, line: line, col: col, fix: None };
@@ -4531,7 +4529,7 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
       return a;
     },
     ast.StmtUnknown(u) => {
-      if (u.kind == parser.REPORTED) {
+      if (u.kind == parser.REPORTED || u.kind == parser.MISSING_TAIL) {
         return a;
       }
       return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, "stmt: " + u.kind, u.line, u.col)) };
@@ -5516,16 +5514,6 @@ pub function parse_errors(mod: parser.Module): util.Diag[] {
   return ordered;
 }
 
-pub function parse_errors_before_check(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = [];
-  for d in parse_errors(mod) {
-    if (d.code != "E061") {
-      out = out.append(d);
-    }
-  }
-  return out;
-}
-
 function insert_by_position(ds: util.Diag[], d: util.Diag): util.Diag[] {
   let out: util.Diag[] = [];
   let placed = false;
@@ -5910,48 +5898,6 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl:
   return d;
 }
 
-function dbg_shape_type(s: EmitState, t: string): string {
-  let out = "";
-  let run = 0;
-  let i = 0;
-  while (i < t.len()) {
-    if (t[i] == b'%') {
-      let a = __memchr(t, 123, i + 1);
-      let b = __memchr(t, 125, a + 1);
-      if (a < 0 || b < 0) {
-        return t;
-      }
-      out = out + slice_unchecked(t, run, a + 1) + dbg_enum_members(s, t, a + 1, b) + "}";
-      i = b + 1;
-      run = i;
-    } else {
-      i += 1;
-    }
-  }
-  return out + slice_unchecked(t, run, t.len());
-}
-
-function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
-  let out = "";
-  while (i < end) {
-    let j = __memchr(t, 44, i);
-    if (j < 0 || j > end) {
-      j = end;
-    }
-    let shape = slice_unchecked(t, i, j).to_owned();
-    if (out != "") {
-      out += ",";
-    }
-    let k = shape.len();
-    while (k > 0 && shape[k - 1] != b'$') {
-      k -= 1;
-    }
-    out = out + slice_unchecked(shape, k, shape.len()) + "=" + util.i64_to_string(shape_tag(s, shape));
-    i = j + 1;
-  }
-  return out;
-}
-
 function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
   let param = "0";
   if (r.dbg_slots[i] < r.n_params) {
@@ -6027,11 +5973,7 @@ pub function emit_debug_rows(s: EmitState): EmitState {
 }
 
 function emit_debug_row(own s: EmitState, row: string): EmitState {
-  let a = __memchr(row, 124, 0);
-  let b = __memchr(row, 124, a + 1);
-  let c = __memchr(row, 124, b + 1);
-  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c).to_owned());
-  return s.write("    .fern_var " + slice_unchecked(row, 0, b + 1) + shaped + slice_unchecked(row, c, row.len()) + "\n");
+  return s.write("    .fern_var " + row + "\n");
 }
 
 pub function dbg_hex(bytes: i32[]): string {

@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // The std/fetch client over HTTP/3 on the simulated network: requests to an
@@ -14,10 +16,11 @@ import (
 // Alt-Svc field values are read and aged.
 const simFetchH3Suite = "tests/stdlib/sim_fetch_h3_test.fern"
 
-var simFetchH3Want = []string{"# Suite: std/fetch over HTTP/3", "# pass 11", "# fail 0", "1..11"}
+var simFetchH3Want = []string{"# Suite: std/fetch over HTTP/3", "# fail 0"}
 
 func checkSimFetchH3Output(t *testing.T, leg, out string) {
 	t.Helper()
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range simFetchH3Want {
 		if !strings.Contains(out, w) {
 			t.Errorf("%s: output missing %q\nfull output:\n%s", leg, w, out)
