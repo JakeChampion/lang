@@ -12018,7 +12018,8 @@ function mapm_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, func
   }
   let gi = bg_find(funcs, "__mapm_" + cfa.field);
   let snapshot = args.len() == 0 && (cfa.field == "keys" || cfa.field == "values");
-  if (gi < 0 && !snapshot) {
+  let read = cfa.field == "get_or" && args.len() == 2 || cfa.field == "get" && args.len() == 1;
+  if (gi < 0 && !snapshot && !read) {
     return "";
   }
   let rt = mono_infer(cfa.obj, env, funcs);
@@ -12029,6 +12030,12 @@ function mapm_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, func
     let kv = type_args_of(rt);
     if (kv.len() != 2) {
       return "";
+    }
+    if (cfa.field == "get_or") {
+      return kv[1];
+    }
+    if (cfa.field == "get") {
+      return "Option[" + kv[1] + "]";
     }
     if (cfa.field == "keys") {
       return kv[0] + "[]";
