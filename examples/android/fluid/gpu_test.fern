@@ -26,7 +26,7 @@ function saved(f: draw.Frame, name: string): void {
 
 // The frame that the canvas shows for the fluid.
 function shown(c: gl.Canvas, f: sim.Fluid, cfg: config.Config): draw.Frame {
-  f.render(cfg, f.window());
+  f.render(cfg, f.window(), true);
   return c.read();
 }
 
@@ -58,7 +58,7 @@ const DITHER: i32 = 16;
 // 1. A new fluid shows the background colour.
 // 2. A splat shows dye at its place, and none far from it.
 // 3. Steps move the dye, and a fluid that takes no step shows the same
-//    picture again.
+//    picture again, also with the bloom and the sun rays of the draw before.
 // 4. The dye stays when the window gets a new size.
 // 5. The bloom and the sun rays each change the picture.
 // 6. The capture has the capture resolution and shows the dye.
@@ -97,11 +97,14 @@ pub function check(): i32 {
   let moved = shown(c, f, cfg);
   saved(moved, "3-moved");
   let still = shown(c, f, cfg);
-  if (lit(moved, H / 2, H) > 50 && testkit.differ(moved, still, 0) == 0) {
+  f.render(cfg, f.window(), false);
+  let kept = c.read();
+  if (lit(moved, H / 2, H) > 50 && testkit.differ(moved, still, 0) == 0 && testkit.differ(moved, kept, 0) == 0) {
     n += 100;
   }
   draw.release(splat);
   draw.release(still);
+  draw.release(kept);
 
   let wide = c.attach_offscreen(H, W);
   f = f.resized(cfg, H, W, 1.0);
@@ -147,7 +150,7 @@ pub function check(): i32 {
   dot.store(0, 0, 2, 2, draw.rgb(0, 255, 0));
   let t = gl.texture(dot);
   draw.release(dot);
-  plain_fluid.render(plain_cfg, plain_fluid.window());
+  plain_fluid.render(plain_cfg, plain_fluid.window(), true);
   wide.resume();
   wide.draw(t, 10, 10, 1.0, 0, W);
   let over = wide.read();
@@ -170,10 +173,10 @@ pub function check(): i32 {
 // 100000000 when a window with 4 pixels across one dp shows the fluid from
 // a picture with 2 pixels across one dp, and the two are almost the same.
 function scaled(c: gl.Canvas, f: sim.Fluid, cfg: config.Config): i32 {
-  f.show(cfg);
+  f.show(cfg, true);
   let full = c.read();
   let half = f.resized(cfg, 360, 640, 4.0);
-  half.show(cfg);
+  half.show(cfg, true);
   let small = c.read();
   saved(small, "12-scaled");
   let far = testkit.differ(full, small, 48);
@@ -189,7 +192,7 @@ function scaled(c: gl.Canvas, f: sim.Fluid, cfg: config.Config): i32 {
 // The frame of the app for the model `m`: the fluid, and the controls over
 // it.
 function framed(c: gl.Canvas, f: sim.Fluid, m: fluid.Model, mt: overlay.Metrics, unfit: boolean, name: string): draw.Frame {
-  f.render(m.cfg, f.window());
+  f.render(m.cfg, f.window(), true);
   c.resume();
   if (unfit) {
     c.clear(draw.rgb(0, 0, 0));

@@ -10,6 +10,10 @@ function test_format_positional(): test.TestOutcome {
   return test.assert_eq(format.format("{} + {} = {}", ["1", "2", "3"]), "1 + 2 = 3");
 }
 
+function test_format_width_counts_code_points(): test.TestOutcome {
+  return test.assert_eq(format.format("[{:>4}] [{:<3}]", ["éé", "日"]), "[  éé] [日  ]");
+}
+
 function test_format_no_placeholders(): test.TestOutcome {
   return test.assert_eq(format.format("plain text", []), "plain text");
 }
@@ -273,5 +277,6 @@ function main(): i32 {
   r = r.it("duration negative", test_duration_negative);
   r = r.it("duration round-trips parse", test_duration_round_trips_parse);
   r = r.it("format mixed long", test_format_mixed_long);
+  r = r.it("width counts code points", test_format_width_counts_code_points);
   return r.finish();
 }

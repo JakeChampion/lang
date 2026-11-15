@@ -7040,6 +7040,10 @@ function ssa_result_word_regs(words: i32): i32 {
 // rdx. A value live across a cold call stays off them; the others are saved.
 const COLD_CLOBBERS: i32 = 1 | 1 << 1 | 1 << 2 | 1 << 6 | 1 << 7;
 
+// __fern_rec_box and __fn___fern_alloc_reuse.f change rax, and their
+// argument moves write rsi and rdi.
+const LIGHT_CLOBBERS: i32 = 1 | 1 << 1 | 1 << 2;
+
 const COLD_SLOTS: i32 = 4;
 
 function ssa_cold_clobbers(cold: i32[]): i32[] {
@@ -7047,6 +7051,8 @@ function ssa_cold_clobbers(cold: i32[]): i32[] {
   for kind in cold {
     if (kind == ssa.COLD_SLOW || kind == ssa.COLD_BRANCH) {
       masks = masks.append(COLD_CLOBBERS);
+    } else if (kind == ssa.COLD_LIGHT) {
+      masks = masks.append(LIGHT_CLOBBERS);
     } else {
       masks = masks.append(0);
     }
@@ -7182,7 +7188,7 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, ops: ir.Op[], s: asmcore.Emit
   let homeless = ssa_homeless(f, imm);
   let prefs = ssa_arg_prefs(f, s);
   let floats = ssa.float_values(f, [], false);
-  let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
+  let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), direct_boxes(s));
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
   let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   let audited = ssa_can_borrow_r11(f, imm, floats);
@@ -8018,7 +8024,7 @@ function ssa_commutative(tag: i32): boolean {
 }
 
 function ssa_imm_right(): string[] {
-  return ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "div_s", "div_u", "rem_s", "rem_u"];
+  return ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "div_s", "div_u", "rem_s", "rem_u", "vishl", "vishru", "vishrs"];
 }
 
 function ssa_imm_left(): string[] {
@@ -8478,14 +8484,14 @@ function ssa_lane_sfx(width: i32): string {
 
 // The ops on integer lanes. `ins.imm` is the width of a lane: 8, 16 or 32
 // bits. An op that a width does not have is a refusal that names the op.
-function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let id = ir.kind_id(b);
   let w = ins.imm;
   if (w != 8 && w != 16 && w != 32) {
     ircore.unsupported_op_refuse(id, "x86-64");
   }
   if (id >= ir.K_VISHL) {
-    return ssa_vint_shift(ins, b, reg_of, s);
+    return ssa_vint_shift(ins, b, reg_of, imm, s);
   }
   if (id < ir.K_VINEG || id == ir.K_VIMUL) {
     return ssa_vint_bin(ins, b, reg_of, s);
@@ -8587,18 +8593,38 @@ function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitS
 }
 
 // A shift of each lane by one count. The count is modulo the lane width.
-function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let op = if (b == "vishl") { "vpsll" } else if (b == "vishrs") { "vpsra" } else { "vpsrl" };
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
-  s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (imm.is_imm[ins.args[1]]) {
+    return ssa_fput(reg_of, ins.result, d, s.write(x86_lane_shift_by(b, op, ins.imm, imm.value[ins.args[1]] as i32 & ins.imm - 1, a, d)));
+  }
+  s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   s = s.write("    andl $" + util.i32_to_string(ins.imm - 1) + ", %ecx\n    movd %ecx, %xmm2\n");
   if (ins.imm == 8) {
     return ssa_fput(reg_of, ins.result, d, s.write(x86_byte_lane_shift(b, a, d)));
   }
   s = s.write("    " + op + ssa_vint_sfx(ins.imm) + " %xmm2, " + a + ", " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// A shift by a count that the compiler knows. Lanes of 16 and 32 bits take
+// the count in the instruction. Lanes of 8 bits take the shift of 16 bits
+// and a mask of constant bytes. The signed shift of bytes keeps the
+// sequence of x86_byte_lane_shift, with its count from a constant.
+function x86_lane_shift_by(b: string, op: string, w: i32, count: i32, a: string, d: string): string {
+  let c = util.i32_to_string(count);
+  if (w != 8) {
+    return "    " + op + ssa_vint_sfx(w) + " $" + c + ", " + a + ", " + d + "\n";
+  }
+  if (b == "vishrs") {
+    return "    movl $" + c + ", %ecx\n    movd %ecx, %xmm2\n" + x86_byte_lane_shift(b, a, d);
+  }
+  let kept = if (b == "vishl") { 255 << count & 255 } else { 255 >> count };
+  return "    " + op + "w $" + c + ", " + a + ", %xmm0\n    movl $" + util.i32_to_string(kept) + ", %ecx\n    movd %ecx, %xmm1\n"
+    + "    vpbroadcastb %xmm1, %xmm1\n    vpand %xmm1, %xmm0, " + d + "\n";
 }
 
 // Lanes of 8 bits have no shift instruction. The shift of the lanes of 16
@@ -8676,10 +8702,10 @@ function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
   return ssa_fput(reg_of, ins.result, d, s.write("    " + pack + " " + y + ", " + a + ", " + d + "\n"));
 }
 
-function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
   if (ir.is_lane_int_kind(ir.kind_id(b))) {
-    return ssa_vint(ins, b, reg_of, s);
+    return ssa_vint(ins, b, reg_of, imm, s);
   }
   if (ir.is_lane_shape_kind(ir.kind_id(b))) {
     return ssa_vint_shape(ins, b, reg_of, s);
@@ -8774,9 +8800,9 @@ function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {
   return ssa.lane_inst(ins) || ins.kind_tag == ssa.COPY && ins.result < fr.lanes.len() && fr.lanes[ins.result];
 }
 
-function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   if (ssa.lane_inst(ins)) {
-    return ssa_lane_inst(ins, reg_of, s);
+    return ssa_lane_inst(ins, reg_of, imm, s);
   }
   return ssa_vcopy(ins, reg_of, s);
 }
@@ -9341,12 +9367,18 @@ function ssa_alloc_inline(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFram
 
 // An instruction whose caller registers are saved around its call.
 function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, saves: SlowSaves, own s: asmcore.EmitState): asmcore.EmitState {
-  if (saves.mask != 0 && asmcore.ssa_inline_rc_dec(blk.insts[ii], s)) {
+  if (saves.mask != 0 && (asmcore.ssa_inline_rc_dec(blk.insts[ii], s) || ssa_box_release(blk.insts[ii], s))) {
     return ssa_rc_dec(blk.insts[ii], reg_of, lp, saves, asmcore.ssa_x0_forget(s));
   }
   s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
   s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
   return ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
+}
+
+// The helper release of a record or a variant, which `ssa_rc_dec` tests
+// inline at a position where the call saves the caller registers.
+function ssa_box_release(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+  return ssa.inline_release(ins) && ins.imm == 7 && !s.rc_free_debug && !s.size;
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
@@ -9373,7 +9405,8 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves,
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, -8), J_JG, dec);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, -8), J_JS, kept);
   s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
-  s = ssa_helper_entry(ins, reg_of, ".u", s);
+  // A helper release has no entry past its tests, so it takes them again.
+  s = ssa_helper_entry(ins, reg_of, if (ins.imm == 7) { ".r" } else { ".u" }, s);
   s = ssa_cold_save(s, saves.mask, saves.base, saves.save, true);
   s = ssa_branch(s, J_JMP, done).lab_def(dec);
   s = ssa_alu_im(s, 5, 32, 1, p, -8).lab_def(kept);
@@ -11027,7 +11060,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     return asmcore.ssa_line_loc(ins, s);
   }
   if (ssa_lane_arm_at(ins, fr)) {
-    return ssa_lane_arm(ins, reg_of, s);
+    return ssa_lane_arm(ins, reg_of, fr.imm, s);
   }
   if ((k == ssa.CONST_INT || k == ssa.CONST_I64) && fr.imm.is_imm[ins.result]) {
     return s;

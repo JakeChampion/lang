@@ -1,0 +1,155 @@
+package e2e
+
+import (
+	"os"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+	"github.com/jakechampion/lang/internal/tools/literate"
+)
+
+// brightness sets the brightness of the window on the UI thread, and the
+// volume calls read and set the music stream on the loop thread. Each call
+// releases the local references that it makes.
+func TestAndroidBrightnessAndVolume(t *testing.T) {
+	raw, err := os.ReadFile(e2eharness.RepoPath("internal", "stdlib", "std", "android.fern.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _, err := literate.Parse(string(raw)).Tangle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src += `
+pub function context_size(): i32 { return Context.c_size() as i32; }
+pub function wire(ctx: usize, activity: usize, read: i32, write: i32, e: usize): void {
+  unsafe {
+    Context.c_store_activity(ctx, activity);
+    Context.c_store_ui_read(ctx, read);
+    Context.c_store_ui_write(ctx, write);
+    Context.c_store_env(ctx, e);
+  }
+}
+pub function light(ctx: usize, permille: i32): void { brightness(ctx, permille as f32 / 1000.0f32); }
+pub function requests(ctx: usize, read: i32): i32 { return on_ui_request(read, 0, ctx); }
+pub function level(ctx: usize): i32 { let (v, m) = volume(ctx); return v * 100 + m; }
+pub function set_level(ctx: usize, v: i32): void { set_volume(ctx, v); }
+pub function system_light(ctx: usize): i32 { return (system_brightness(ctx) * 1000.0f32) as i32; }
+`
+	const check = `#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+static int locals, attrs, volume_set = -1;
+static float level = 9.0f;
+static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "%s: locals=%d attrs=%d\n", what, locals, attrs); exit(1); } }
+
+enum { WINDOW = 300, PARAMS = 400, FIELD = 500, AUDIO = 600, RESOLVER = 700, SETTINGS = 800 };
+static const char *names[] = { "", "getWindow", "getAttributes", "getField", "setFloat", "setAttributes",
+  "getSystemService", "getStreamVolume", "getStreamMaxVolume", "setStreamVolume", "getContentResolver", "getInt" };
+
+static uintptr_t get_class(uintptr_t e, uintptr_t obj) { require(obj != 0, "class of null"); locals++; return obj + 1000; }
+static uintptr_t find_class(uintptr_t e, const char *name) {
+  require(!strcmp(name, "android/provider/Settings$System"), "class name");
+  locals++;
+  return SETTINGS;
+}
+static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
+  for (uintptr_t i = 1; i < sizeof names / sizeof names[0]; i++) {
+    if (!strcmp(name, names[i])) return i;
+  }
+  require(0, name);
+  return 0;
+}
+static uintptr_t new_string(uintptr_t e, const uint16_t *units, uintptr_t n) { locals++; return 900 + n; }
+static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  locals++;
+  if (id == 1) { require(obj == 100, "getWindow"); return WINDOW; }
+  if (id == 2) { require(obj == WINDOW, "getAttributes"); return PARAMS; }
+  if (id == 3) { require(obj == PARAMS + 1000 && args[0] == 900 + 16, "getField screenBrightness"); return FIELD; }
+  if (id == 6) { require(obj == 100 && args[0] == 900 + 5, "getSystemService audio"); return AUDIO; }
+  require(id == 10 && obj == 100, "getContentResolver");
+  return RESOLVER;
+}
+static void call(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  if (id == 4) {
+    require(obj == FIELD && args[0] == PARAMS, "setFloat");
+    memcpy(&level, &args[1], sizeof level);
+  } else if (id == 5) {
+    require(obj == WINDOW && args[0] == PARAMS, "setAttributes");
+    attrs++;
+  } else {
+    require(id == 9 && obj == AUDIO && args[0] == 3 && args[2] == 0, "setStreamVolume");
+    volume_set = (int)args[1];
+  }
+}
+static int32_t call_int(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  require(obj == AUDIO && args[0] == 3, "stream");
+  return id == 7 ? 7 : 15;
+}
+static uintptr_t static_method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
+  require(cls == SETTINGS && !strcmp(name, "getInt") && !strcmp(sig, "(Landroid/content/ContentResolver;Ljava/lang/String;I)I"), "getInt");
+  return 11;
+}
+static int32_t call_static_int(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) {
+  require(cls == SETTINGS && id == 11 && args[0] == RESOLVER && args[1] == 900 + 17 && args[2] == 128, "getInt args");
+  return 51;
+}
+static uintptr_t none(uintptr_t e) { return 0; }
+static void release(uintptr_t e, uintptr_t obj) { require(obj != 0, "release of null"); locals--; }
+
+int main(int argc, char **argv) {
+  void *lib = dlopen(argv[1], RTLD_NOW);
+  if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 2; }
+  int (*context_size)(void) = dlsym(lib, "context_size");
+  void (*wire)(uintptr_t, uintptr_t, int, int, uintptr_t) = dlsym(lib, "wire");
+  void (*light)(uintptr_t, int) = dlsym(lib, "light");
+  int (*requests)(uintptr_t, int) = dlsym(lib, "requests");
+  int (*get_level)(uintptr_t) = dlsym(lib, "level");
+  void (*set_level)(uintptr_t, int) = dlsym(lib, "set_level");
+  int (*system_light)(uintptr_t) = dlsym(lib, "system_light");
+  require(context_size && wire && light && requests && get_level && set_level && system_light, "exports");
+  static uintptr_t table[240];
+  uintptr_t activity[8] = {0};
+  table[6] = (uintptr_t)find_class;
+  table[15] = (uintptr_t)none;
+  table[17] = (uintptr_t)none;
+  table[23] = (uintptr_t)release;
+  table[31] = (uintptr_t)get_class;
+  table[33] = (uintptr_t)method;
+  table[36] = (uintptr_t)object;
+  table[51] = (uintptr_t)call_int;
+  table[63] = (uintptr_t)call;
+  table[113] = (uintptr_t)static_method;
+  table[131] = (uintptr_t)call_static_int;
+  table[163] = (uintptr_t)new_string;
+  uintptr_t env = (uintptr_t)table;
+  uintptr_t *ctx = calloc(1, context_size());
+  int fds[2];
+  require(pipe(fds) == 0 && fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0, "pipe");
+  wire((uintptr_t)ctx, (uintptr_t)activity, fds[0], fds[1], (uintptr_t)&env);
+  activity[2] = (uintptr_t)&env;
+  activity[3] = 100;
+  activity[7] = (uintptr_t)ctx;
+
+  light((uintptr_t)ctx, 250);
+  require(attrs == 0, "brightness ran on the loop thread");
+  require(requests((uintptr_t)ctx, fds[0]) == 1, "requests");
+  require(attrs == 1 && level == 0.25f && locals == 0, "brightness 0.25");
+  light((uintptr_t)ctx, -1000);
+  require(requests((uintptr_t)ctx, fds[0]) == 1, "requests");
+  require(attrs == 2 && level == -1.0f && locals == 0, "brightness of the system");
+
+  require(get_level((uintptr_t)ctx) == 715 && locals == 0, "volume");
+  set_level((uintptr_t)ctx, 4);
+  require(volume_set == 4 && locals == 0, "set_volume");
+  require(system_light((uintptr_t)ctx) == 200 && locals == 0, "system_brightness");
+  return 0;
+}
+`
+	androidJNIMockCheck(t, src, "context_size,wire,light,requests,level,set_level,system_light", check)
+}

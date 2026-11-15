@@ -194,9 +194,9 @@ function stack_step(s: State, op: isa.Op): State {
 
 // The call gives a box of `words` words with a header of one word below it:
 // a count of 1 in the low half and the number of words in the high half. The
-// body then stores the tag of the shape over that high half. The
-// helper leaves the return address and its saved %rdi below the stack
-// pointer. The words below those two are not known.
+// body then stores the tag of the shape over that high half. The helper
+// leaves the return address below the stack pointer. The words below it are
+// not known: a push of %rcx or of %rdi.
 function allocation(s: State, words: i32, pc: i32, op: isa.Op): State {
   if (op.symbol != "__fern_rec_box" || s.calls != 0 || !equal(s.regs[7], number(words as i64))) {
     return State { ...s, ok: false };
@@ -206,7 +206,7 @@ function allocation(s: State, words: i32, pc: i32, op: isa.Op): State {
     return State { ...s, ok: false };
   }
   let called = store_at(s, cell(s, sp, -8, 64), 64, token(8, (pc + 1) as i64));
-  called = store_at(called, cell(called, sp, -16, 64), 64, number(words as i64));
+  called = store_at(called, cell(called, sp, -16, 64), 64, token(11, 0));
   return write(State { ...called, memory: helper_memory(called.memory, sp, words), calls: 1 }, 0, token(3, 8));
 }
 
@@ -268,23 +268,18 @@ function expected_memory(original: State, tag: i64, i: i32): Half {
   return if (i % 2 == 0) { w.low } else { w.high };
 }
 
+// At the return, %rax holds the box and each register that a call keeps has
+// its value at the entry. A caller does not read the other registers.
 function finished(s: State, words: i32, tag: i64, register_entry: boolean): boolean {
   if (s.calls != 1 || !s.ok) {
     return false;
   }
   let original = initial(words, register_entry);
-  for i in 0..16 {
-    let expected = original.regs[i];
-    if (i == 0) {
-      expected = token(3, 8);
-    }
-    if (i == 6 && words == 2) {
-      expected = token(9, 1);
-    }
-    if (i == 7) {
-      expected = number(words as i64);
-    }
-    if (!equal(s.regs[i], expected)) {
+  if (!equal(s.regs[0], token(3, 8))) {
+    return false;
+  }
+  for i in [3, 4, 5, 12, 13, 14, 15] {
+    if (!equal(s.regs[i], original.regs[i])) {
       return false;
     }
   }

@@ -133,12 +133,36 @@ def measure(command, prefix, timeout, env=None, unlimited_stack=False):
     return result
 
 
+def build_commands(language, name, tools, root, out, target):
+    """The commands that build workload `name` in `language` at out/language-name."""
+    binary = out / f"{language}-{name}"
+    if language == "fern":
+        return [[str(tools["fern"].resolve()), "-target", target, "-o", str(binary),
+                 str(root / f"bench/perceus/fern/run_{name.replace('-', '_')}.fern"), str(root / "internal/stdlib")]]
+    if language == "koka":
+        return [[str(tools["koka"].resolve()), "-O2", "--builddir=" + str(out / "koka-build"), "-o", str(binary),
+                 str(root / f"bench/perceus/koka/{name}.kk")]]
+    if language == "roc":
+        return [[str(tools["roc"].resolve()), "build", "--optimize", "--output", str(binary),
+                 str(root / f"bench/perceus/roc/{name}.roc")]]
+    cfile = out / f"{name}.c"
+    return [[str(tools["lean"].resolve()), "-c", str(cfile), str(root / f"bench/perceus/lean/{name}.lean")],
+            [str(tools["lean"].with_name("leanc").resolve()), "-O3", "-o", str(binary), str(cfile)]]
+
+
+def turn_order(languages, repeat):
+    """Rotate the languages so that no language always runs in the same position."""
+    turn = repeat % len(languages)
+    return languages[turn:] + languages[:turn]
+
+
 def main():
     pipeline_started = time.perf_counter_ns()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fern", type=Path, required=True)
     parser.add_argument("--koka", type=Path, required=True)
     parser.add_argument("--lean", type=Path, required=True)
+    parser.add_argument("--roc", type=Path, help="also build and time the Roc twins with this roc executable")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--reuse-builds", type=Path, help="reuse verified identical compiler/kernel binaries from a prior output")
     parser.add_argument("--case", action="append", required=True, help="workload:size; may repeat")
@@ -176,7 +200,9 @@ def main():
         shutil.copy2(root / "scripts" / script, sources / script)
     target = ("arm64" if machine in ("arm64", "aarch64") else "x86-64") + ("-darwin" if platform.system() == "Darwin" else "-linux")
     versions = {}
-    for name, executable in (("koka", args.koka), ("lean", args.lean)):
+    languages_all = ("fern", "koka", "lean") + (("roc",) if args.roc else ())
+    tools = (("koka", args.koka), ("lean", args.lean)) + ((("roc", args.roc),) if args.roc else ())
+    for name, executable in tools:
         versions[name] = subprocess.check_output([str(executable), "--version"], text=True)
     metadata = {"platform": platform.platform(), "machine": machine,
                 "environment_label": args.environment_label,
@@ -189,7 +215,7 @@ def main():
                 "root_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
                 "target": target, "versions": versions, "cases": cases, "repeats": args.repeats,
                 "compilers": {name: {"path": str(path.resolve()), "sha256": sha(path)} for name, path in
-                              (("fern", args.fern), ("koka", args.koka), ("lean", args.lean), ("leanc", args.lean.with_name("leanc")))},
+                              (("fern", args.fern), ("leanc", args.lean.with_name("leanc"))) + tools},
                 "sources": {str(path.relative_to(sources)): sha(path) for path in sources.rglob("*") if path.is_file()},
                 "measurement_scope": "Whole process including startup, printing and teardown; one verified warmup per language/case excluded; separate instrumented untimed Fern allocation census."}
     (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -201,13 +227,12 @@ def main():
         previous = json.loads((prior / "metadata.json").read_text())
         if any(previous[key] != metadata[key] for key in ("platform", "machine", "target", "compilers", "versions")):
             raise ValueError("reuse requires identical host, target and compiler binaries/versions")
-        relevant = lambda rows: {key: value for key, value in rows.items() if key.endswith((".fern", ".lean", ".kk"))}
+        relevant = lambda rows: {key: value for key, value in rows.items() if key.endswith((".fern", ".lean", ".kk", ".roc"))}
         if relevant(previous["sources"]) != relevant(metadata["sources"]):
             raise ValueError("reuse requires identical kernel, driver and standard-library source hashes")
         previous_builds = {(row["language"], row["workload"]): row for row in json.loads((prior / "builds.json").read_text())}
     for name in dict.fromkeys(name for name, _ in cases):
-        fern_name = name.replace("-", "_")
-        for language in ("fern", "koka", "lean"):
+        for language in languages_all:
             binary = out / f"{language}-{name}"
             if previous_builds is not None:
                 for kind in (("fern", "fern-census") if language == "fern" else (language,)):
@@ -221,17 +246,7 @@ def main():
                     builds.append(row)
                     binaries[kind, name] = str(destination)
                 continue
-            if language == "fern":
-                commands = [[str(args.fern.resolve()), "-target", target, "-o", str(binary),
-                             str(root / f"bench/perceus/fern/run_{fern_name}.fern"), str(root / "internal/stdlib")]]
-            elif language == "koka":
-                commands = [[str(args.koka.resolve()), "-O2", "--builddir=" + str(out / "koka-build"), "-o", str(binary),
-                             str(root / f"bench/perceus/koka/{name}.kk")]]
-            else:
-                source = root / f"bench/perceus/lean/{name}.lean"
-                cfile = out / f"{name}.c"
-                commands = [[str(args.lean.resolve()), "-c", str(cfile), str(source)],
-                            [str(args.lean.with_name("leanc").resolve()), "-O3", "-o", str(binary), str(cfile)]]
+            commands = build_commands(language, name, dict(tools, fern=args.fern), root, out, target)
             for i, command in enumerate(commands):
                 command_run(command, out / f"compile-{language}-{name}-{i}.log", cwd=root)
             builds.append({"language": language, "workload": name, "commands": commands, "binary_sha256": sha(binary), "binary_bytes": binary.stat().st_size})
@@ -249,7 +264,7 @@ def main():
     for name, size in cases:
         answer = expected(name, size, root)
         (out / f"expected-{name}-{size}.txt").write_text(answer)
-        for language in ("fern", "koka", "lean"):
+        for language in languages_all:
             prefix = out / f"warm-{name}-{size}-{language}"
             measure([binaries[language, name], str(size)], prefix, args.timeout, unlimited_stack=args.unlimited_stack)
             if prefix.with_suffix(".stdout").read_text() != answer:
@@ -257,8 +272,7 @@ def main():
         for repeat in range(args.repeats):
             # Rotate order across repeats to avoid always giving one language
             # the same position; preserve actual execution order in results.
-            languages = ("fern", "koka", "lean")
-            languages = languages[repeat % 3:] + languages[:repeat % 3]
+            languages = turn_order(languages_all, repeat)
             for language in languages:
                 prefix = out / f"run-{name}-{size}-{repeat}-{language}"
                 result = measure([binaries[language, name], str(size)], prefix, args.timeout, unlimited_stack=args.unlimited_stack)

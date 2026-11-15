@@ -1,0 +1,274 @@
+// Checks the fingers on the host: the estimate of the place of a finger at
+// the time of the display, the lag between a frame and the place that it
+// takes, and how near the dye is to a finger that moves.
+import "std/f64";
+import "std/i64";
+import "std/rand";
+import "std/test";
+import "./config";
+import "./fingers";
+import "./trail";
+
+const SECOND: i64 = 1000000000i64;
+
+const MS: i64 = 1000000i64;
+
+const PI: f64 = 3.141592653589793;
+
+function white(): config.Rgb {
+  return config.Rgb { r: 1.0, g: 1.0, b: 1.0 };
+}
+
+function test_a_steady_finger_keeps_its_speed(): test.TestOutcome {
+  // The finger moves across at 0.5 and up at 0.25 in each second, with a
+  // place each 8 ms.
+  let path = trail.start(trail.Sample { ns: 0i64, x: 0.1, y: 0.2 });
+  for i in 1..8 {
+    let t = i as f64 * 0.008;
+    path = path.add(trail.Sample { ns: i as i64 * 8i64 * MS, x: 0.1 + 0.5 * t, y: 0.2 + 0.25 * t });
+  }
+  let (dx, dy) = path.ahead(0.04);
+  let (one_x, one_y) = trail.start(trail.Sample { ns: 0i64, x: 0.1, y: 0.2 }).ahead(0.04);
+  let (two_x, two_y) = trail.start(trail.Sample { ns: 0i64, x: 0.1, y: 0.2 }).add(trail.Sample { ns: 8i64 * MS, x: 0.104, y: 0.2 }).ahead(0.04);
+  return test.assert_true((dx - 0.02).abs() < 0.000001 && (dy - 0.01).abs() < 0.000001 && one_x == 0.0 && one_y == 0.0 && (two_x - 0.02).abs() < 0.000001 && two_y == 0.0);
+}
+
+function test_a_finger_that_gets_slower_stops_and_does_not_go_back(): test.TestOutcome {
+  // The finger starts at 1 in each second and gets slower by 10 in each
+  // second, so it stops after 0.1 seconds at 0.05. The path ends 20 ms
+  // before that, at 0.048.
+  let path = trail.start(trail.Sample { ns: 0i64, x: 0.0, y: 0.5 });
+  for i in 1..11 {
+    let t = i as f64 * 0.008;
+    path = path.add(trail.Sample { ns: i as i64 * 8i64 * MS, x: t - 5.0 * t * t, y: 0.5 });
+  }
+  let (near, a) = path.ahead(0.01);
+  let (at_stop, b) = path.ahead(0.02);
+  let (after, c) = path.ahead(0.06);
+  // A line through the last places goes on for 0.012.
+  return test.assert_true((near - 0.0015).abs() < 0.00001 && (at_stop - 0.002).abs() < 0.00001 && (after - 0.002).abs() < 0.00001 && a == 0.0 && c == 0.0);
+}
+
+// What a drag gave: the fingers at its end, the push up of each frame, and
+// the count of the frames that came after the lag got longer.
+struct Drag { f: fingers.Fingers, pushes: f64[], grew: i32 }
+
+// A finger that goes up at 0.6 in each second from `from_ns` to `to_ns`,
+// with a place each 8 ms and a frame each 16 ms. The app gets a place
+// `late_ms` after its time.
+function drag(own d: Drag, from_ns: i64, to_ns: i64, late_ms: i64): Drag {
+  let f = d.f;
+  let pushes = d.pushes;
+  let grew = d.grew;
+  let sent = from_ns / (8i64 * MS) * (8i64 * MS);
+  let now = from_ns / (16i64 * MS) * (16i64 * MS) + 16i64 * MS;
+  while (now <= to_ns) {
+    while (sent + 8i64 * MS + late_ms * MS <= now) {
+      sent += 8i64 * MS;
+      f = f.moved(0, 0.5, 0.1 + 0.6 * (sent as f64 / 1.0e9), sent);
+    }
+    let (next, out, longer) = f.frame(now, 0.016, 0i64, 0.0);
+    f = next;
+    let push = 0.0;
+    for p in out {
+      push += p.dy;
+    }
+    pushes = pushes.append(push);
+    if (longer) {
+      grew += 1;
+    }
+    now += 16i64 * MS;
+  }
+  return Drag { f: f, pushes: pushes, grew: grew };
+}
+
+function start(): Drag {
+  return Drag { f: fingers.none().down(0, 0.5, 0.1, 0i64, white()), pushes: [], grew: 0 };
+}
+
+// The smallest and the largest of the pushes from the index `from`, as
+// parts of the push of a frame of 16 ms.
+function range(pushes: f64[], from: i32): (f64, f64) {
+  let low = pushes[from];
+  let high = pushes[from];
+  for i in from..pushes.len() {
+    low = low.min(pushes[i]);
+    high = high.max(pushes[i]);
+  }
+  return (low / (0.6 * 0.016), high / (0.6 * 0.016));
+}
+
+function test_a_finger_that_stops_does_not_make_the_lag_longer(): test.TestOutcome {
+  // The finger moves, stays for 200 ms with no new place, and moves again.
+  let moved = drag(start(), 0i64, 400i64 * MS, 1i64);
+  let stayed = moved.f;
+  for i in 1..13 {
+    let (next, out, longer) = stayed.frame(400i64 * MS + i as i64 * 16i64 * MS, 0.016, 0i64, 0.0);
+    stayed = next;
+  }
+  let again = drag(Drag { f: stayed, pushes: [], grew: 0 }, 600i64 * MS, SECOND, 1i64);
+  // The newest place is at most 9 ms old at a frame of a finger that
+  // moves.
+  let (low, high) = range(again.pushes, 4);
+  return test.assert_true(again.f.lag_ns <= 9i64 * MS && again.grew == 0 && (low - 1.0).abs() < 0.000001 && (high - 1.0).abs() < 0.000001);
+}
+
+function test_places_that_come_late_make_the_lag_longer(): test.TestOutcome {
+  // Each place comes 12 ms after its time, so the newest place is up to
+  // 20 ms old at a frame.
+  let d = drag(start(), 0i64, SECOND, 12i64);
+  let (low, high) = range(d.pushes, 30);
+  let back = false;
+  for p in d.pushes {
+    back = back || p < 0.0;
+  }
+  if (d.f.lag_ns < 12i64 * MS || d.f.lag_ns > 20i64 * MS) {
+    return test.fail("the lag is " + (d.f.lag_ns / MS).to_string() + " ms");
+  }
+  // With the longer lag, each frame takes the same move, and no frame takes
+  // the finger back.
+  return test.assert_true(d.grew >= 1 && !back && (low - 1.0).abs() < 0.000001 && (high - 1.0).abs() < 0.000001);
+}
+
+function test_the_lag_gets_shorter_when_the_places_come_in_time_again(): test.TestOutcome {
+  let late = drag(start(), 0i64, SECOND, 12i64);
+  let frames = late.pushes.len();
+  let grew = late.grew;
+  let d = drag(late, SECOND, 3i64 * SECOND, 1i64);
+  let (low, high) = range(d.pushes, frames + 2);
+  if (d.f.lag_ns > 11i64 * MS) {
+    return test.fail("the lag stays at " + (d.f.lag_ns / MS).to_string() + " ms");
+  }
+  // While the lag gets shorter, a frame takes at most 2 parts in 100 more
+  // than its move. The lag then stays, and each frame takes the same move.
+  let (last_low, last_high) = range(d.pushes, d.pushes.len() - 30);
+  return test.assert_true(d.grew == grew && low > 0.999999 && high < 1.0201 && (last_low - 1.0).abs() < 0.000001 && (last_high - 1.0).abs() < 0.000001);
+}
+
+// The motions of a finger.
+const LINE: i32 = 0;
+
+const SLOW_WAVE: i32 = 1;
+
+const FAST_WAVE: i32 = 2;
+
+const CIRCLE: i32 = 3;
+
+const REACH: i32 = 4;
+
+// The place of the finger of the motion `kind` at `t` seconds.
+function place(kind: i32, t: f64): (f64, f64) {
+  if (kind == LINE) {
+    return (0.5, 0.1 + 0.6 * t);
+  }
+  if (kind == SLOW_WAVE) {
+    return (0.5, 0.5 + 0.3 * (2.0 * PI * t).sin());
+  }
+  if (kind == FAST_WAVE) {
+    return (0.5, 0.5 + 0.3 * (4.0 * PI * t).sin());
+  }
+  if (kind == CIRCLE) {
+    return (0.5 + 0.2 * (3.0 * PI * t).cos(), 0.5 + 0.2 * (3.0 * PI * t).sin());
+  }
+  // A reach of 0.3 seconds with the least jerk. The finger then stays.
+  let u = (t / 0.3).min(1.0);
+  return (0.2 + 0.6 * u * u * u * (10.0 - 15.0 * u + 6.0 * u * u), 0.5);
+}
+
+// How far the dye is from the finger: the usual distance, and the longest
+// distance that a push is after the end of the reach, each as a part of
+// the window.
+struct Miss { usual: f64, after: f64 }
+
+// The finger of the motion `kind` on a display of `hz` frames in a second,
+// which shows a frame 2 refreshes after the frame starts. The touch screen
+// gives `touch_hz` places in a second, each with a noise of a quarter of a
+// pixel of 2000, and the app gets a place 1 to 3 ms after its time.
+function follow(kind: i32, hz: i32, touch_hz: i32, prediction: f64): Miss {
+  let period = SECOND / (hz as i64);
+  let step = SECOND / (touch_hz as i64);
+  let rng = rand.rng_seed(7i64);
+  let (x0, y0) = place(kind, 0.0);
+  let f = fingers.none().down(0, x0, y0, 0i64, white());
+  let sent = 0i64;
+  let sum = 0.0;
+  let count = 0;
+  let after = 0.0;
+  let end = SECOND;
+  if (kind == REACH) {
+    end = SECOND / 2i64;
+  }
+  let now = period;
+  while (now < end) {
+    while (true) {
+      let (r1, delay) = rand.rng_between(rng, 1, 4);
+      if (sent + step + delay as i64 * MS > now) {
+        break;
+      }
+      sent += step;
+      let (r2, nx) = rand.rng_between(r1, -25, 26);
+      let (r3, ny) = rand.rng_between(r2, -25, 26);
+      rng = r3;
+      if (kind != REACH || sent <= 300i64 * MS) {
+        let (px, py) = place(kind, sent as f64 / 1.0e9);
+        f = f.moved(0, px + nx as f64 / 200000.0, py + ny as f64 / 200000.0, sent);
+      }
+    }
+    let (next, pushes, longer) = f.frame(now, period as f64 / 1.0e9, 2i64 * period, prediction);
+    f = next;
+    if (now > 100i64 * MS) {
+      let (tx, ty) = place(kind, (now + 2i64 * period) as f64 / 1.0e9);
+      for p in pushes {
+        sum += (p.x - tx) * (p.x - tx) + (p.y - ty) * (p.y - ty);
+        count += 1;
+        after = after.max(p.x - 0.8);
+      }
+    }
+    now += period;
+  }
+  if (count == 0) {
+    return Miss { usual: 1.0, after: 1.0 };
+  }
+  return Miss { usual: (sum / (count as f64)).sqrt(), after: after };
+}
+
+function test_the_dye_is_near_a_finger_that_moves(): test.TestOutcome {
+  for hz in [60, 120] {
+    for touch_hz in [120, 240] {
+      let name = hz.to_string() + " Hz with " + touch_hz.to_string() + " places in a second";
+      // The dye of a finger with a constant speed is at the finger, to 3
+      // pixels of 2000.
+      let line = follow(LINE, hz, touch_hz, 1.0);
+      if (line.usual > 0.0015) {
+        return test.fail("a line at " + name + " is " + (line.usual * 2000.0).to_string() + " pixels from the finger");
+      }
+      // With no estimate, the dye is where the finger was 2 refreshes and
+      // the lag before. The estimate brings it 3 times nearer or more.
+      for kind in [SLOW_WAVE, FAST_WAVE, CIRCLE, REACH] {
+        let behind = follow(kind, hz, touch_hz, 0.0);
+        let near = follow(kind, hz, touch_hz, 1.0);
+        if (near.usual * 3.0 > behind.usual) {
+          return test.fail("the motion " + kind.to_string() + " at " + name + " is " + (near.usual * 2000.0).to_string() + " pixels from the finger, and " + (behind.usual * 2000.0).to_string() + " with no estimate");
+        }
+      }
+      // The dye does not go more than 20 pixels of 2000 after the place
+      // where the finger stops.
+      let reach = follow(REACH, hz, touch_hz, 1.0);
+      if (reach.after > 0.01) {
+        return test.fail("the dye goes " + (reach.after * 2000.0).to_string() + " pixels after the end of a reach at " + name);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/fluid fingers");
+  r = r.it("a steady finger keeps its speed", test_a_steady_finger_keeps_its_speed);
+  r = r.it("a finger that gets slower stops, and does not go back", test_a_finger_that_gets_slower_stops_and_does_not_go_back);
+  r = r.it("a finger that stops does not make the lag longer", test_a_finger_that_stops_does_not_make_the_lag_longer);
+  r = r.it("places that come late make the lag longer", test_places_that_come_late_make_the_lag_longer);
+  r = r.it("the lag gets shorter when the places come in time again", test_the_lag_gets_shorter_when_the_places_come_in_time_again);
+  r = r.it("the dye is near a finger that moves", test_the_dye_is_near_a_finger_that_moves);
+  return r.finish();
+}

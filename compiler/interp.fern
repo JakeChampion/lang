@@ -2672,9 +2672,12 @@ function integer_lanes_load(width: i32, kind: i32, a: VArr, at: i32): Value {
 
 function integer_lanes_with(heap: interpheap.Heap, args: Value[]): Value {
   let at = lane_window(8, args);
+  if (at < 0) {
+    return lane_abort(args);
+  }
   let ls = lane_args([args[2]]);
-  if (at < 0 || ls.len() != 1) {
-    return v_err("lane with out of bounds");
+  if (ls.len() != 1) {
+    return v_err("lane with: expected a lane value");
   }
   if let VArr(a) = args[0] {
     let out = arr_els(a);
@@ -2769,7 +2772,7 @@ function integer_lanes_memory(heap: interpheap.Heap, verb: string, width: i32, k
   }
   let at = lane_window(8, args);
   if (at < 0) {
-    return v_err("lane load out of bounds");
+    return lane_abort(args);
   }
   if let VArr(a) = args[0] {
     return integer_lanes_load(width, kind, a, at);
@@ -2932,17 +2935,25 @@ function lanes_of(width: i32, args: Value[]): Value {
 function lane_window(width: i32, args: Value[]): i32 {
   if let VArr(a) = args[0] {
     let at = vint_as_i64(args[1]) as i32;
-    if (at >= 0 && at + 128 / width <= arr_len(a)) {
+    if (at >= 0 && at <= arr_len(a) - 128 / width) {
       return at;
     }
   }
   return -1;
 }
 
+// The abort of a lane access whose window is not in its array.
+function lane_abort(args: Value[]): Value {
+  if let VArr(a) = args[0] {
+    return index_abort(aborts.arr_oob(), util.i64_to_string(vint_as_i64(args[1])), arr_len(a));
+  }
+  return v_err("lane access: expected an array");
+}
+
 function lanes_load(width: i32, args: Value[]): Value {
   let at = lane_window(width, args);
   if (at < 0) {
-    return v_err("lane load out of bounds");
+    return lane_abort(args);
   }
   if let VArr(a) = args[0] {
     let xs: Value[] = [];
@@ -2956,9 +2967,12 @@ function lanes_load(width: i32, args: Value[]): Value {
 
 function lanes_with(heap: interpheap.Heap, width: i32, args: Value[]): Value {
   let at = lane_window(width, args);
+  if (at < 0) {
+    return lane_abort(args);
+  }
   let ls = lane_args([args[2]]);
-  if (at < 0 || ls.len() != 1) {
-    return v_err("lane with out of bounds");
+  if (ls.len() != 1) {
+    return v_err("lane with: expected a lane value");
   }
   if let VArr(a) = args[0] {
     let out = arr_els(a);
@@ -2979,7 +2993,7 @@ function lanes_bytes(heap: interpheap.Heap, width: i32, args: Value[], store: bo
   if let VArr(a) = args[0] {
     let at = vint_as_i64(args[1]);
     if (at < 0 || at > arr_len(a) as i64 - 16i64) {
-      return v_err("packed lane access out of bounds");
+      return lane_abort(args);
     }
     let bytes = width / 8;
     if (store) {
@@ -4116,6 +4130,10 @@ function sat_exact(op: string, a: i64, b: i64): i64 {
       return sat_shl_oor(a);
     }
     return a << b;
+  }
+  // The product of two numbers of type u32 can be above the range of i64.
+  if (a > 0 && b > 0 && a > 9223372036854775807 / b) {
+    return 9223372036854775807;
   }
   return a * b;
 }

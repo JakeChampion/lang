@@ -154,7 +154,7 @@ pub function plain_str(ins: SInst): string {
 }
 
 pub function plain_imm(ins: SInst): i32 {
-  if (ins.kind_tag == CALL && ins.imm >= 1 && ins.imm <= 3) {
+  if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7)) {
     return 0;
   }
   return ins.imm;
@@ -554,21 +554,47 @@ pub const COLD_BRANCH: i32 = 2;
 
 pub const COLD_INLINE: i32 = 3;
 
-pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
+// A call of a routine that changes only the registers that `light_call`
+// names. A value that lives across it keeps any other register, and the
+// call saves nothing.
+pub const COLD_LIGHT: i32 = 4;
+
+// `light` says the box routines of the build change only the result and
+// their arguments.
+pub function cold_positions(f: SFunc, size: boolean, back: boolean, light: boolean): i32[] {
   let cold = cold_blocks(f);
   let out: i32[] = [];
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
     for k in 0..blk.insts.len() {
-      out = out.append(cold_kind(blk, k, cold[bi], size, back));
+      out = out.append(cold_kind(blk, k, cold[bi], size, back, light));
     }
     out = out.append(COLD_NONE);
   }
   return out;
 }
 
-function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean): i32 {
+// The block of a record, a variant or a tuple, and the allocation for a null
+// token, which goes to the same routine.
+pub function light_call(ins: SInst): boolean {
+  return ins.kind_tag == ARR_BOX && ins.str == "box" || fresh_alloc_call(ins);
+}
+
+// A release that the emitters test inline: the count of a shared box goes
+// down by one, and only a unique box calls the routine. The helper release
+// of a record or a variant has the mark 7 (`ir.box_release`).
+pub function inline_release(ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && ins.imm != 5 || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
+}
+
+function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean, light: boolean): i32 {
   let ins = blk.insts[k];
+  if (light && light_call(ins)) {
+    return COLD_LIGHT;
+  }
+  if (!size && inline_release(ins)) {
+    return COLD_BRANCH;
+  }
   if (cold_call(ins) || back && back_copy_call(ins)) {
     return COLD_SLOW;
   }
@@ -1687,7 +1713,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let hard = hard_spans(f, cum, cold, lo, hi, weight, crossing);
   let sole = sole_readers(f);
 
-  let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [] };
+  let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [], nparams: f.nparams };
   let phi_side: boolean[] = [];
   let reg_of = __alloc_i32(f.nvals);
   let shared_with = __alloc_i32(f.nvals);
@@ -2565,7 +2591,7 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
   return out;
 }
 
-struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ_a: i32[], succ_b: i32[], phi_end: i32[] }
+struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ_a: i32[], succ_b: i32[], phi_end: i32[], nparams: i32 }
 
 function cached_read_sites(f: SFunc, own sites: ReadSites, at: i32[], blk_start: i32[]): ReadSites {
   if (sites.start.len() == 0) {
@@ -2665,7 +2691,7 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
     }
     pass += 1;
   }
-  return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end };
+  return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end, nparams: f.nparams };
 }
 
 // reads are the operands of v's definition: the emitter can write v before it
@@ -2772,7 +2798,12 @@ function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i3
   return 2;
 }
 
+// The entry of a function writes each parameter at one time, so two
+// parameters are live at the definition of each other.
 function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
+  if (r < sites.nparams && a < sites.nparams) {
+    return true;
+  }
   let near = live_near(sites, r, a, def_blk, def_pos);
   if (near != 2) {
     return near == 1;
@@ -5305,20 +5336,25 @@ function sink_round(f: SFunc): Sunk {
     moved = moved.append([]);
   }
   let blocks = f.blocks;
+  let splits: Split[] = [];
   let changed = false;
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
     let kept: SInst[] = [];
     let tail = pure_tail(blk);
+    let fl = Flow { at: at, idom: idom, entries: entries, term: blk.term };
     for k in 0..blk.insts.len() {
-      let to = -1;
-      if (k >= tail) {
-        to = sink_target(blk.insts[k], bi, Flow { at: at, idom: idom, entries: entries, term: blk.term }, readers);
+      let ins = blk.insts[k];
+      let sk = sink_of(ins, bi, k >= tail, fl, readers);
+      if (sk.other >= 0) {
+        let copy = f.nvals + splits.len();
+        splits = splits.append(Split { from: ins.result, to: copy, side: sk.other });
+        moved = moved.with(sk.other, moved[sk.other].append(SInst { ...ins, result: copy }));
       }
-      if (to < 0) {
-        kept = kept.append(blk.insts[k]);
+      if (sk.to < 0) {
+        kept = kept.append(ins);
       } else {
-        moved = moved.with(to, moved[to].append(blk.insts[k]));
+        moved = moved.with(sk.to, moved[sk.to].append(ins));
         changed = true;
       }
     }
@@ -5332,7 +5368,95 @@ function sink_round(f: SFunc): Sunk {
       blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: after_phis(blocks[bi].insts, moved[bi]) });
     }
   }
-  return Sunk { f: SFunc { ...f, blocks: blocks }, changed: true };
+  return Sunk { f: SFunc { ...f, nvals: f.nvals + splits.len(), blocks: renamed_sides(blocks, idom, splits) }, changed: true };
+}
+
+// A load that both sides of a branch read gets a copy on side `side`, and
+// the blocks that run after that side read the copy `to`.
+struct Split { from: i32, to: i32, side: i32 }
+
+// Where an instruction goes: successor `to` takes it, and successor `other`
+// takes a copy. Each is -1 for none.
+struct Sink { to: i32, other: i32 }
+
+function sink_of(ins: SInst, bi: i32, in_tail: boolean, fl: Flow, readers: Readers): Sink {
+  if (!in_tail) {
+    return Sink { to: -1, other: -1 };
+  }
+  let to = sink_target(ins, bi, fl, readers);
+  if (to >= 0) {
+    return Sink { to: to, other: -1 };
+  }
+  let other = split_target(ins, bi, fl, readers);
+  if (other < 0) {
+    return Sink { to: -1, other: -1 };
+  }
+  return Sink { to: distinct_successor_position(fl.at, fl.term, 0), other: other };
+}
+
+// The second successor, when the load of `ins` can go to each side of the
+// branch as one copy, or -1. A side that reads the value in its first block
+// gains nothing, so one side must read it later.
+function split_target(ins: SInst, bi: i32, fl: Flow, readers: Readers): i32 {
+  if (ins.kind_tag != LD_AT || fl.term.kind_tag != TERM_BRIF || readers.pinned[ins.result]) {
+    return -1;
+  }
+  let read = readers.blocks[ins.result];
+  let s0 = distinct_successor_position(fl.at, fl.term, 0);
+  let s1 = distinct_successor_position(fl.at, fl.term, 1);
+  if (!single_entry_sides(fl, bi, s0, s1) || util.index_of_i32(read, bi) >= 0) {
+    return -1;
+  }
+  if (util.index_of_i32(read, s0) >= 0 && util.index_of_i32(read, s1) >= 0) {
+    return -1;
+  }
+  return if (each_after_a_side(fl.idom, s0, s1, read)) { s1 } else { -1 };
+}
+
+function single_entry_sides(fl: Flow, bi: i32, s0: i32, s1: i32): boolean {
+  return s0 >= 0 && s1 >= 0 && s0 != bi && s1 != bi && fl.entries[s0] == 1 && fl.entries[s1] == 1;
+}
+
+function each_after_a_side(idom: i32[], s0: i32, s1: i32, read: i32[]): boolean {
+  for b in read {
+    if (!dominates(idom, s0, b) && !dominates(idom, s1, b)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function renamed_sides(own blocks: SBlock[], idom: i32[], splits: Split[]): SBlock[] {
+  for sp in splits {
+    for bi in 0..blocks.len() {
+      if (dominates(idom, sp.side, bi)) {
+        blocks = blocks.with(bi, block_reading(blocks[bi], sp.from, sp.to));
+      }
+    }
+  }
+  return blocks;
+}
+
+// The block with each read of value `from` turned into a read of `to`.
+function block_reading(blk: SBlock, from: i32, to: i32): SBlock {
+  let insts: SInst[] = [];
+  for ins in blk.insts {
+    let args = ins.args;
+    for a in 0..args.len() {
+      if (args[a] == from) {
+        args = args.with(a, to);
+      }
+    }
+    insts = insts.append(SInst { ...ins, args: args });
+  }
+  let term = blk.term;
+  if (term.cond == from) {
+    term = STerm { ...term, cond: to };
+  }
+  if (term.value == from) {
+    term = STerm { ...term, value: to };
+  }
+  return SBlock { ...blk, insts: insts, term: term };
 }
 
 struct Flow { at: i32[], idom: i32[], entries: i32[], term: STerm }

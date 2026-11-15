@@ -1189,7 +1189,13 @@ function __rfc3339(s: string): Option[(Timestamp, i32)] {
     return None;
   }
   let local_sec = days_from_civil(y as i64, mo, d) * 86400 + (h * 3600 + mn * 60 + sc) as i64;
-  return Some((Timestamp { sec: local_sec - offset_seconds as i64, nsec: nsec }, offset_seconds));
+  let sec = local_sec - offset_seconds as i64;
+  // RFC 3339 has the years 0000 to 9999. An offset can put the instant
+  // outside them, and format_rfc3339 has no text for such an instant.
+  if (sec < days_from_civil(0, 1, 1) * 86400 || sec >= days_from_civil(10000, 1, 1) * 86400) {
+    return None;
+  }
+  return Some((Timestamp { sec: sec, nsec: nsec }, offset_seconds));
 }
 
 pub function span_seconds(n: i32): Span {
@@ -1233,7 +1239,7 @@ pub function span_years(n: i32): Span {
 }
 
 pub function (d: Date) add_span(s: Span): Date {
-  let serial_month = d.year as i64 * 12 + (d.month - 1 + s.years * 12 + s.months) as i64;
+  let serial_month = d.year as i64 * 12 + (d.month - 1) as i64 + s.years as i64 * 12 + s.months as i64;
   let new_year = serial_month.div_euclid(12) as i32;
   let new_month = serial_month.rem_euclid(12) as i32 + 1;
   let max_day = days_in_month(new_year, new_month);
