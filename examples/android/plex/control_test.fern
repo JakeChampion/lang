@@ -289,6 +289,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     set_volume: (level: i32): void => note(log.calls, "volume " + level.to_string()),
     now_playing: (title: string, artist: string, album: string, length_ms: i64, playing: boolean, at_ms: i64): void => note(log.calls, "media " + title + " by " + artist + " on " + album + " playing=" + playing.to_string()),
     media_end: (): void => note(log.calls, "media end"),
+    ask_notifications: (): void => note(log.calls, "ask notifications"),
     random: (): i32 => 5,
     decoders: log.decoders.get(),
   };
@@ -537,7 +538,8 @@ function test_switch_home_user(): test.TestOutcome {
 }
 
 // A track plays on when the app goes away, and the media controls of
-// Android pause it, play it and stop it. Each change reaches them.
+// Android pause it, play it and stop it. Each change reaches them. The
+// first track asks once for the permission to post notifications.
 function test_music_media_controls(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -562,6 +564,9 @@ function test_music_media_controls(): test.TestOutcome {
     return test.fail("the play of the media controls did not play");
   }
   let ended = settle(at(again, log, 500i64, f, android.Posted(32, 0 as usize)), log, 500i64, f);
+  if (count_calls(log, "ask notifications") != 1) {
+    return test.fail("the app did not ask once for the permission of notifications");
+  }
   return test.assert_eq((has_call(log, "stop") && has_call(log, "media end") && !ended.play.active).to_string(), "true");
 }
 

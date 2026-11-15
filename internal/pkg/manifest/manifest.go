@@ -555,7 +555,7 @@ func validDepName(s string) bool {
 // ANDROID_TEXT, ANDROID_SWITCHES and ANDROID_LISTS of compiler/fern_toml.fern
 // list them. TestAndroidKeysMatchCompiler holds the two in step.
 var (
-	androidText     = []string{"package", "label", "icon", "key"}
+	androidText     = []string{"package", "label", "icon", "banner", "key"}
 	androidSwitches = []string{"home", "tv", "compress", "cleartext", "debuggable"}
 	androidLists    = []string{"permissions", "assets", "widget"}
 )
