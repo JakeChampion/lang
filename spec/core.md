@@ -138,7 +138,7 @@ is the number of slots it leaves.
 | `ffloor` | 59 | 1 | 1 |
 | `ftrunc` | 60 | 1 | 1 |
 | `fround` | 61 | 1 | 1 |
-| `load` | 67 | — | 1 |
+| `load` | 67 | 1 | 1 |
 | `store` | 68 | — | 1 |
 | `load_i32` | 69 | 1 | 1 |
 | `load_i64` | 70 | 1 | 1 |
@@ -593,6 +593,8 @@ is the number of slots it leaves.
 | `vinarrows` | 565 | 2 | 1 |
 | `vinarrowu` | 566 | 2 | 1 |
 | `viswizzle` | 567 | 2 | 1 |
+| `map_file` | 568 | 1 | 1 |
+| `scan_masks` | 569 | 3 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.
