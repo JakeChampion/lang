@@ -4438,6 +4438,10 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight): __Flight {
   if let Some(at) = w.until {
     due = time.instant_nanos(at);
   }
+  // A pair whose descriptor number closed gets no event, so the wait is due.
+  if (async.stale(w.set) >= 0) {
+    due = 0i64;
+  }
   return __Flight { ...fl, set: w.set, due: due };
 }
 

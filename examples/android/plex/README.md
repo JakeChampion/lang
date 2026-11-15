@@ -16,8 +16,9 @@ Browsing:
 
 - Sign in with a PIN: the app shows a code, and you type it at
   `plex.tv/link`.
-- The app finds the servers of the account. It tries the local address of
-  a server first, then the remote address, then the relay of plex.tv.
+- The app finds the servers of the account. It asks every address of a
+  server at once, and takes the local one, else the remote one, else the
+  relay of plex.tv.
 - The home screen shows the hubs of the server, such as Continue Watching
   and Recently Added, as rows of posters that scroll across.
 - The Libraries tab shows the movie, show and music libraries. A library is
@@ -31,13 +32,24 @@ Playback:
 - Play resumes from the position on the server, and a seek goes to the
   nearest sync frame.
 - The app reports the position every 10 seconds, and marks an item watched
-  at its end. The next episode of a season plays after the end of an
-  episode.
+  at its end.
 - A tap on the video shows the controls over it for 4 seconds while the
-  video plays on: back 10 seconds, play, forward 30 seconds, and a bar to
-  seek. A tap outside them hides them, and the play button pauses.
+  video plays on: back 10 seconds, play, forward 30 seconds, and a bar that
+  seeks as a finger drags along it, with a preview thumbnail of the time. A tap outside them hides them, and the play button pauses.
 
 Music plays with the controls on the screen.
+
+In the credits of an episode, or 20 seconds before its end, a card shows
+the next episode of the season. It counts down from 10 seconds, and then
+the next episode plays. Play on the card starts it at once. Cancel hides
+the card, and the episode plays to its end.
+
+In the intro or the credits of a video, a Skip button shows over it. The
+app asks the server for the markers of the item when it starts to play.
+
+The Tracks button of the player chooses the sound and the subtitles, and
+the server remembers the choice. A file that plays as it is changes its
+sound in place. Subtitles burn into a transcode.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
@@ -82,8 +94,10 @@ API, one fetches a batch of posters, and one sends the reports of playback.
 The network, TLS and JSON are Fern code.
 
 The posters come from the photo transcoder of the server at the size of
-their cards. `std/android/image` decodes them with the image decoder of
-Android, and `std/android/draw` copies them into the frame.
+their cards. The app keeps each poster in the cache directory of Android,
+so it comes from the network once. `std/android/image` decodes them with
+the image decoder of Android, and `std/android/draw` copies them into the
+frame.
 
 The painter of `std/android/ui/painter` draws each screen with OpenGL ES 2.
 It keeps the image of each node on the GPU, so a scroll moves images and
@@ -141,7 +155,9 @@ pattern that ffmpeg writes. The check requires:
 
 - The home screen shows the posters.
 - A link plays the track to its end, reports it, and marks it watched.
-- A link shows the video on the window. A tap shows the controls over the
-  video with no pause, and a tap on play pauses it. A tap on play shows the
-  video on the window again. The back key stops it.
+- A link shows the video on a texture that the app draws. The 4:3 test
+  pattern fills the width with black bars above and below it, and it is
+  upright. A tap shows the controls over the video with no pause, and a tap
+  on play pauses it. A tap on play shows the video again, upright. The back
+  key stops it.
 - logcat shows no crash.

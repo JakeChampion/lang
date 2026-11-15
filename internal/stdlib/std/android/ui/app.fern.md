@@ -101,6 +101,7 @@ function show_keyboard(ctx: usize, text: string, lines: boolean): void {
 // The device of the activity of the context `ctx`.
 function device(ctx: usize): ui.Device {
   return ui.Device {
+    stays: (): boolean => android.kept(ctx),
     size: (window: usize): (i32, i32) => {
       let w = android.Window { ptr: window };
       return (w.width(), w.height());

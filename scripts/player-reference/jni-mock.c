@@ -6,7 +6,7 @@
 typedef struct { int kind; const char *text; } Object;
 typedef union { void *l; int32_t i; int64_t j; } Value;
 enum { ACTIVITY, LOADER, LISTENER_CLASS, LISTENER, PLAYER_CLASS, PLAYER, ATTRS_CLASS, BUILDER, ATTRS, TIMESTAMP, SURFACE, STRING, EXCEPTION, CLASS, URI_CLASS, URI,
-       TEXTURE_CLASS, TEXTURE, SURFACE_CLASS, TARGET_SURFACE, FLOATS, OBJECT_COUNT };
+       TEXTURE_CLASS, TEXTURE, SURFACE_CLASS, TARGET_SURFACE, FLOATS, TRACKS, TRACK0, TRACK1, TRACK2, OBJECT_COUNT };
 static Object objects[OBJECT_COUNT];
 static Object exception = {EXCEPTION, 0}, text = {STRING, "mock"};
 static void *table[235];
@@ -14,14 +14,14 @@ static void **env_table = table;
 static uintptr_t context[8], activity[8], window[24];
 static int mode, locals, globals, frames, saved_locals, pending, releases, opens, prepares, starts, global_calls, target_releases;
 static int64_t last_seek;
-static int last_seek_mode, audio_track;
+static int last_seek_mode, audio_track, selected_track = -1;
 
 enum { CONSTRUCTOR=1, GET_LOADER, LOAD_CLASS, PREPARED, COMPLETED, ERROR, INFO, SEEKED,
        SET_USAGE, SET_CONTENT, BUILD, SET_ATTRS, RESET, SOURCE, PREPARE, SET_SURFACE,
        START, PAUSE, SEEK, POSITION, DURATION, PLAYING, WIDTH, HEIGHT, RELEASE,
-       GET_TIMESTAMP, MEDIA_TIME, SYSTEM_TIME, PARSE, TEXTURE_INIT, SURFACE_INIT, UPDATE, MATRIX, FRAME_TIME, SELECTED_TRACK };
-static const char *names[] = {"", "<init>", "getClassLoader", "loadClass", "setOnPreparedListener", "setOnCompletionListener", "setOnErrorListener", "setOnInfoListener", "setOnSeekCompleteListener", "setUsage", "setContentType", "build", "setAudioAttributes", "reset", "setDataSource", "prepareAsync", "setSurface", "start", "pause", "seekTo", "getCurrentPosition", "getDuration", "isPlaying", "getVideoWidth", "getVideoHeight", "release", "getTimestamp", "getAnchorMediaTimeUs", "getAnchorSytemNanoTime", "parse", "<init>", "<init>", "updateTexImage", "getTransformMatrix", "getTimestamp", "getSelectedTrack"};
-static const char *signatures[] = {"", "()V", "()Ljava/lang/ClassLoader;", "(Ljava/lang/String;)Ljava/lang/Class;", "(Landroid/media/MediaPlayer$OnPreparedListener;)V", "(Landroid/media/MediaPlayer$OnCompletionListener;)V", "(Landroid/media/MediaPlayer$OnErrorListener;)V", "(Landroid/media/MediaPlayer$OnInfoListener;)V", "(Landroid/media/MediaPlayer$OnSeekCompleteListener;)V", "(I)Landroid/media/AudioAttributes$Builder;", "(I)Landroid/media/AudioAttributes$Builder;", "()Landroid/media/AudioAttributes;", "(Landroid/media/AudioAttributes;)V", "()V", "(Landroid/content/Context;Landroid/net/Uri;)V", "()V", "(Landroid/view/Surface;)V", "()V", "()V", "(JI)V", "()I", "()I", "()Z", "()I", "()I", "()V", "()Landroid/media/MediaTimestamp;", "()J", "()J", "(Ljava/lang/String;)Landroid/net/Uri;", "(I)V", "(Landroid/graphics/SurfaceTexture;)V", "()V", "([F)V", "()J", "(I)I"};
+       GET_TIMESTAMP, MEDIA_TIME, SYSTEM_TIME, PARSE, TEXTURE_INIT, SURFACE_INIT, UPDATE, MATRIX, FRAME_TIME, SELECTED_TRACK, TRACK_INFO, TRACK_TYPE, SELECT_TRACK };
+static const char *names[] = {"", "<init>", "getClassLoader", "loadClass", "setOnPreparedListener", "setOnCompletionListener", "setOnErrorListener", "setOnInfoListener", "setOnSeekCompleteListener", "setUsage", "setContentType", "build", "setAudioAttributes", "reset", "setDataSource", "prepareAsync", "setSurface", "start", "pause", "seekTo", "getCurrentPosition", "getDuration", "isPlaying", "getVideoWidth", "getVideoHeight", "release", "getTimestamp", "getAnchorMediaTimeUs", "getAnchorSytemNanoTime", "parse", "<init>", "<init>", "updateTexImage", "getTransformMatrix", "getTimestamp", "getSelectedTrack", "getTrackInfo", "getTrackType", "selectTrack"};
+static const char *signatures[] = {"", "()V", "()Ljava/lang/ClassLoader;", "(Ljava/lang/String;)Ljava/lang/Class;", "(Landroid/media/MediaPlayer$OnPreparedListener;)V", "(Landroid/media/MediaPlayer$OnCompletionListener;)V", "(Landroid/media/MediaPlayer$OnErrorListener;)V", "(Landroid/media/MediaPlayer$OnInfoListener;)V", "(Landroid/media/MediaPlayer$OnSeekCompleteListener;)V", "(I)Landroid/media/AudioAttributes$Builder;", "(I)Landroid/media/AudioAttributes$Builder;", "()Landroid/media/AudioAttributes;", "(Landroid/media/AudioAttributes;)V", "()V", "(Landroid/content/Context;Landroid/net/Uri;)V", "()V", "(Landroid/view/Surface;)V", "()V", "()V", "(JI)V", "()I", "()I", "()Z", "()I", "()I", "()V", "()Landroid/media/MediaTimestamp;", "()J", "()J", "(Ljava/lang/String;)Landroid/net/Uri;", "(I)V", "(Landroid/graphics/SurfaceTexture;)V", "()V", "([F)V", "()J", "(I)I", "()[Landroid/media/MediaPlayer$TrackInfo;", "()I", "(I)V"};
 
 static Object *local(Object *obj) { assert(obj); locals++; assert(locals < 64); return obj; }
 static Object *find_class(void *env, const char *name) {
@@ -42,7 +42,7 @@ static Object *get_class(void *env, Object *obj) {
 }
 static void *method_id(void *env, Object *cls, const char *name, const char *sig) {
     (void)env; assert(cls && !pending);
-    for (int i=1; i<=SELECTED_TRACK; i++) if (!strcmp(name, names[i]) && !strcmp(sig, signatures[i])) {
+    for (int i=1; i<=SELECT_TRACK; i++) if (!strcmp(name, names[i]) && !strcmp(sig, signatures[i])) {
         if (mode == 11 && i == START) { pending = 1; return 0; }
         return (void *)(uintptr_t)i;
     }
@@ -93,6 +93,7 @@ static Object *object_call(void *env, Object *obj, void *method, Value *args) {
         if (mode == 4) { pending = 1; return 0; }
         return local(objects + ATTRS);
     case GET_TIMESTAMP: assert(obj == objects + PLAYER); return mode == 13 ? 0 : local(objects + TIMESTAMP);
+    case TRACK_INFO: assert(obj == objects + PLAYER); return local(objects + TRACKS);
     default: assert(0); return 0;
     }
 }
@@ -123,13 +124,20 @@ static void void_call(void *env, Object *obj, void *method, Value *args) {
     case SET_SURFACE: assert(!args[0].l || args[0].l == objects + SURFACE || args[0].l == objects + TARGET_SURFACE); break;
     case START: starts++; break;
     case PAUSE: break;
+    case SELECT_TRACK: selected_track = args[0].i; break;
     case SEEK: last_seek = args[0].j; last_seek_mode = args[1].i; assert(last_seek_mode == 2 || last_seek_mode == 3); break;
     case RELEASE: releases++; if (mode == 16) pending = 1; break;
     default: assert(0);
     }
 }
 static int32_t int_call(void *env, Object *obj, void *method, Value *args) {
-    (void)env; (void)args; assert(obj == objects + PLAYER && method && !pending);
+    (void)env; (void)args; assert(method && !pending);
+    if ((uintptr_t)method == TRACK_TYPE) {
+        /* A video track, then two sound tracks. */
+        assert(obj == objects + TRACK0 || obj == objects + TRACK1 || obj == objects + TRACK2);
+        return obj == objects + TRACK0 ? 1 : 2;
+    }
+    assert(obj == objects + PLAYER);
     switch ((uintptr_t)method) {
     case POSITION: return 1234;
     case DURATION: if (mode == 18) { pending = 1; return 0; } return 4000;
@@ -188,6 +196,12 @@ int64_t mock_player_seek(void) { return last_seek; }
 int mock_player_seek_mode(void) { return last_seek_mode; }
 void mock_player_audio_track(int track) { audio_track = track; }
 int mock_player_target_releases(void) { return target_releases; }
+int mock_player_selected_track(void) { return selected_track; }
+static int32_t array_length(void *env, Object *array) { (void)env; assert(array == objects + TRACKS); return 3; }
+static Object *array_element(void *env, Object *array, int32_t index) {
+    (void)env; assert(array == objects + TRACKS && index >= 0 && index < 3);
+    return local(objects + TRACK0 + index);
+}
 void *mock_player_window(void) { return window; }
 void *ANativeWindow_toSurface(void *env, void *native_window) {
     (void)env; assert(native_window == window && !pending);
@@ -203,5 +217,6 @@ void *mock_player_context(void) {
     table[51] = int_call; table[54] = long_call; table[63] = void_call; table[163] = new_string;
     table[17] = exception_clear; table[113] = static_method_id; table[116] = static_object_call;
     table[181] = new_floats; table[205] = float_region;
+    table[171] = array_length; table[173] = array_element;
     return context;
 }

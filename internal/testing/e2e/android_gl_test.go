@@ -71,6 +71,14 @@ func TestAndroidGLCanvas(t *testing.T) {
 	runGLCheck(t, "tests/android/gl/check.fern", "1111111111")
 }
 
+// A canvas gives the number of its next frame and the times of a frame:
+// when the GPU completed it, when the system took it, and when the display
+// showed it. Two functions of the check stand for the EGL functions of
+// Android, which Mesa does not have.
+func TestAndroidGLFrameTimes(t *testing.T) {
+	runGLCheck(t, "tests/android/gl/frames.fern", "111")
+}
+
 // The GPU painter of Paper draws home, the app list sliding in over home,
 // a dialog, and home in the dark theme as the CPU draws them.
 func TestAndroidPaperGPU(t *testing.T) {

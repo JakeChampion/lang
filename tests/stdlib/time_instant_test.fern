@@ -69,6 +69,19 @@ function test_timestamp_millis(): test.TestOutcome {
   return test.assert_eq(before.unix_millis(), -1i64);
 }
 
+function test_rfc3339_offset_out_of_the_years(): test.TestOutcome {
+  if (time.timestamp_parse_rfc3339("0000-01-01T00:00:00+01:00").is_ok()) {
+    return test.fail("an instant before the year 0000 parsed");
+  }
+  if (time.timestamp_parse_rfc3339("9999-12-31T23:30:00-01:00").is_ok()) {
+    return test.fail("an instant after the year 9999 parsed");
+  }
+  let Ok(first) = time.timestamp_parse_rfc3339("0000-01-01T01:00:00+01:00") else {
+    return test.fail("the first instant did not parse");
+  };
+  return test.assert_eq(first.format_rfc3339(), "0000-01-01T00:00:00Z");
+}
+
 function main(): i32 {
   let t = test.new("time instant");
   t = t.it("now is monotonic", test_now_is_monotonic);
@@ -77,5 +90,6 @@ function main(): i32 {
   t = t.it("arithmetic saturates", test_arithmetic_saturates);
   t = t.it("timestamp arithmetic", test_timestamp_arithmetic);
   t = t.it("timestamp millis", test_timestamp_millis);
+  t = t.it("an offset cannot leave the RFC 3339 years", test_rfc3339_offset_out_of_the_years);
   return t.finish();
 }

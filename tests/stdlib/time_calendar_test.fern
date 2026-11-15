@@ -87,6 +87,11 @@ function test_parse_iso_impossible_dates(): test.TestOutcome {
   return test.assert_eq(got, "nnnny");
 }
 
+function test_add_span_many_years(): test.TestOutcome {
+  let d = time.date_of(2024, 1, 31).add_span(time.span_years(178956971));
+  return test.assert_eq(d.format_iso(), "178958995-01-31");
+}
+
 function main(): i32 {
   let r = test.new("std/time calendar");
   r = r.it("is_leap_year", test_is_leap_year);
@@ -105,5 +110,6 @@ function main(): i32 {
   r = r.it("format_iso basic", test_format_iso_basic);
   r = r.it("format_iso zero-pad", test_format_iso_zero_pad);
   r = r.it("date_parse_iso impossible dates", test_parse_iso_impossible_dates);
+  r = r.it("add_span of many years", test_add_span_many_years);
   return r.finish();
 }

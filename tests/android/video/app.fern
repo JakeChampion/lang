@@ -131,8 +131,10 @@ function start_content(own s: App, window: android.Window, uri: string, native_a
   };
   log.warn("videotest: source=content offset=" + src.offset.to_string() + " length=" + src.length.to_string());
   log.warn("videotest: decoder name=" + p.info.name + " implementation=" + p.info.implementation.to_debug());
-  let opened = App { ...s, playback: Some(p), content: Some(src), started_ns: monotonic_ns() };
-  return if (native_audio) { start_content_sound(opened, src, 0i64) } else { opened };
+  if (native_audio) {
+    return start_content_sound(App { ...s, playback: Some(p), content: Some(src), started_ns: monotonic_ns() }, src, 0i64);
+  }
+  return App { ...s, playback: Some(p), content: Some(src), started_ns: monotonic_ns() };
 }
 
 pub function start_content_sound(own s: App, src: source.Source, media_us: i64): App {
