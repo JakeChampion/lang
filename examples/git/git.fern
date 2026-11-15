@@ -1509,8 +1509,21 @@ function graph_parents(w_in: revwalk.Walk, h: string, first_parent: boolean): (r
   return (w, out);
 }
 
-// The text of the commit `h`, with the graph.
-function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[string, string[]], least: i32, sh_in: Shown): (revwalk.Walk, string, Shown) {
+struct LogItem { hash: string, parents: string[] }
+
+function log_next(w_in: revwalk.Walk, o: LogOpts): (revwalk.Walk, LogItem) {
+  let (w, h) = revwalk.next(w_in);
+  if (!o.graph || h.len() == 0) {
+    return (w, LogItem { hash: h, parents: [] });
+  }
+  // Capture graph parents before lookahead marks later commits as shown.
+  let (after, parents) = graph_parents(w, h, o.walk.first_parent);
+  return (after, LogItem { hash: h, parents: parents });
+}
+
+// The text of a commit, with the graph.
+function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Map[string, string[]], least: i32, sh_in: Shown, following: LogItem[]): (revwalk.Walk, string, Shown) {
+  let h = item.hash;
   let w = w_in;
   let sh = sh_in;
   let (g, n) = walk.node(w.g, h);
@@ -1520,9 +1533,9 @@ function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[st
   }
   let c = n.commit;
   if (o.graph) {
-    let (w1, ips) = graph_parents(w, h, o.walk.first_parent);
-    w = w1;
-    sh = Shown { ...sh, graph: graph.update(sh.graph, h, ips) };
+    let next = if (following.len() > 0) { following[0].hash } else { "" };
+    let next_root = following.len() > 1 && following[0].parents.len() == 0;
+    sh = Shown { ...sh, graph: graph.update(sh.graph, h, item.parents, next, next_root) };
   }
   let (w2, ps) = revwalk.parents(w, h);
   w = w2;
@@ -1659,7 +1672,7 @@ function log_command(argv: string[]): i32 {
     return fatal("Failed to traverse parents of commit " + w.failed);
   }
   if (o.reverse && o.graph) {
-    return fatal("options '--reverse' and '--graph' cannot be used together");
+    return fatal("options '--graph' and '--reverse' cannot be used together");
   }
   let needs_shorts = o.abbrev_commit || o.form != "raw" && o.form != "oneline";
   if (needs_shorts) {
@@ -1677,13 +1690,22 @@ function log_command(argv: string[]): i32 {
   let skipped = 0;
   let buf: u8[] = [];
   let sh = Shown { graph: graph.graph_new(), any: false, missing: false };
+  let following: LogItem[] = [];
   while (o.limit < 0 || count < o.limit) {
-    let (w1, h) = revwalk.next(w);
-    w = w1;
+    let item = LogItem { hash: "", parents: [] };
+    if (following.len() > 0) {
+      item = following[0];
+      following = array.slice(following, 1, following.len());
+    } else {
+      let (w1, next) = log_next(w, o);
+      w = w1;
+      item = next;
+    }
     if (w.failed.len() > 0) {
       put(buf);
       return fatal("Failed to traverse parents of commit " + w.failed);
     }
+    let h = item.hash;
     if (h.len() == 0) {
       break;
     }
@@ -1696,7 +1718,20 @@ function log_command(argv: string[]): i32 {
       shown = shown.append(h);
       continue;
     }
-    let (w2, text, after) = log_show(w, h, o, decorations, least, sh);
+    let room = if (o.limit < 0) { 2 } else { (o.limit - count).min(2) };
+    while (o.graph && following.len() < room) {
+      let (w1, next) = log_next(w, o);
+      w = w1;
+      if (w.failed.len() > 0) {
+        put(buf);
+        return fatal("Failed to traverse parents of commit " + w.failed);
+      }
+      if (next.hash.len() == 0) {
+        break;
+      }
+      following = following.append(next);
+    }
+    let (w2, text, after) = log_show(w, item, o, decorations, least, sh, following);
     w = w2;
     sh = after;
     buf = buf.concat(text.bytes());
@@ -1706,7 +1741,7 @@ function log_command(argv: string[]): i32 {
     }
   }
   for h in shown.reverse() {
-    let (w3, text, after) = log_show(w, h, o, decorations, least, sh);
+    let (w3, text, after) = log_show(w, LogItem { hash: h, parents: [] }, o, decorations, least, sh, []);
     w = w3;
     sh = after;
     buf = buf.concat(text.bytes());
