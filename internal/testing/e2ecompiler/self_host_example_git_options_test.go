@@ -21,6 +21,22 @@ var gitOptionCases = []string{
 	"log --oneline --decorate --decorate-refs=refs/tags", "log --oneline --decorate --decorate-refs=foo",
 	"log --oneline --decorate --decorate-refs-exclude=refs/tags", "log --oneline --decorate --decorate-refs-exclude=refs/heads/*",
 	"log --oneline --decorate --clear-decorations",
+	"log --oneline --left-right main...topic", "log --oneline --left-right --graph main...topic", "log --left-right main...topic",
+	"log --format=%m%h --left-right main...topic", "log --format=%m%h main...side", "log --oneline --left-only main...topic",
+	"log --oneline --right-only main...topic", "log --oneline --left-only main...side", "log --oneline --right-only side...main",
+	"log --oneline --left-only main", "log --oneline --left-only --topo-order main",
+	"log --oneline --cherry-pick main...topic", "log --oneline --cherry-mark main...topic", "log --oneline --cherry main...topic",
+	"log --oneline --cherry-mark --left-right main...side", "log --oneline --cherry-pick --left-right main...pick",
+	"log --oneline --cherry-mark pick...main", "log --oneline --cherry main...pick",
+	"log --oneline --boundary main~2..main", "log --boundary main~2..main", "log --oneline --boundary --graph main~2..main",
+	"log --format=%m%h --boundary topic..main", "log --oneline --boundary --graph topic..main", "log --boundary -p topic..side",
+	"log --boundary --oneline -n1 topic..main", "log --boundary --oneline --skip=1 -n1 topic..main",
+	"log --boundary --oneline --reverse topic..main", "log --left-right --boundary --format=%m%h main...side",
+	"log --oneline --ancestry-path topic..main", "log --oneline --ancestry-path=side topic..main", "log --oneline --ancestry-path=topic main",
+	"log --oneline --ancestry-path main", "log --oneline --ancestry-path --graph topic..main", "log --oneline --simplify-by-decoration",
+	"log --oneline --simplify-by-decoration --decorate", "log --oneline --simplify-by-decoration -- s",
+	"log --oneline --simplify-by-decoration --graph", "log --oneline --simplify-by-decoration --graph --all",
+	"log --oneline --simplify-merges -- s", "log --oneline --graph --simplify-merges --all -- f",
 }
 
 // gitOptionsFixture makes a repository with a mailmap, branches, tags, a
@@ -80,6 +96,11 @@ func gitOptionsFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
 	run("update-ref", "refs/foo/bar", "HEAD~1")
 	run("update-ref", "refs/notes/x", "HEAD~2")
 	run("update-ref", "refs/remotes/o/HEAD", "HEAD~3")
+	// A branch with a copy of the change of "four", for --cherry-pick.
+	run("checkout", "-q", "-b", "pick", "topic")
+	write("f", "4\n")
+	commit("four again")
+	run("checkout", "-q", "main")
 	write(".mailmap", "# comment line\nNew Name <new@example.com> Old Name <old@example.com>\nCommitter Proper <c@example.com>\n"+
 		"Joe Real <joe@home.com>\n<other-new@example.com> <other@example.com>\nSide Person <side@new.com> <side@example.com>\n")
 }

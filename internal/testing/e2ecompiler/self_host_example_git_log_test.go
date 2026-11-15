@@ -204,7 +204,9 @@ func gitRandomLog(rnd *rand.Rand, refs []string, count int) [][]string {
 		{"--name-only", "--format=%s"}, {"--graph", "--oneline"}, {"--graph"}, {"--graph", "--format=%h%n%s"}, {"--graph", "--name-status", "--oneline"},
 		{"--graph", "--parents", "--format=%h %p"}}
 	walks := [][]string{{}, {"--topo-order"}, {"--date-order"}, {"--first-parent"}, {"--reverse"}, {"--no-merges"}, {"--merges"}, {"-n", "5"},
-		{"--author=Ann"}, {"--grep=fix"}, {"--since=1700100000"}, {"--until=1700100000"}, {"--author-date-order"}, {"--full-history"}}
+		{"--author=Ann"}, {"--grep=fix"}, {"--since=1700100000"}, {"--until=1700100000"}, {"--author-date-order"}, {"--full-history"},
+		{"--simplify-by-decoration"}, {"--simplify-merges"}, {"--full-history", "--simplify-merges"}, {"--ancestry-path"}, {"--boundary"},
+		{"--left-right"}, {"--cherry-pick"}, {"--cherry-mark"}, {"--left-only"}, {"--right-only"}, {"--cherry"}, {"--boundary", "--left-right"}}
 	paths := []string{"a", "b", "dir", "dir/c", "dir/sub", "other", "x.txt", "dir/sub/e", "nosuch", "*.txt", "dir/*", "moved"}
 	var out [][]string
 	for k := 0; k < count; k++ {

@@ -56,6 +56,13 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `--author-date-order` and `--reverse`. `--graph` draws the graph of git
   without colors.
 
+  `--simplify-merges` and `--simplify-by-decoration` simplify the
+  history as git does, and `--ancestry-path` keeps the commits on a path
+  through a commit. The sides of `A...B` are `--left-right`,
+  `--left-only`, `--right-only`, `--cherry-pick`, `--cherry-mark` and
+  `--cherry`, with the patch ids of git. `--boundary` shows the excluded
+  parents of the shown commits.
+
   The formats are `--oneline`, `--pretty=` with each named format and
   `format:`, and `--format=`, with the placeholders of git. `--date=` has
   each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,

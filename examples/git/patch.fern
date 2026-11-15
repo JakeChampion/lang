@@ -610,3 +610,81 @@ pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, leas
   }
   return (s, t);
 }
+
+// ---- Patch ids (diff_get_patch_id of git) ----
+
+function without_space(b: u8[]): u8[] {
+  let out: u8[] = [];
+  for c in b {
+    if (!(c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' || c == 11 || c == 12)) {
+      out = out.append(c);
+    }
+  }
+  return out;
+}
+
+// The text that the patch id of the changes hashes: the names, the
+// modes, and the lines of the patch with three lines of context and no
+// white space, or the names of the objects of a binary file. Two commits
+// with the same text have the same patch id.
+pub function patch_id_text(s_in: store.Store, changes: treediff.Change[]): (store.Store, u8[]) {
+  let s = s_in;
+  let out = buf_new(1024);
+  for c in changes {
+    let p = pair_of(c);
+    let one = without_space(p.one.path);
+    let two = without_space(p.two.path);
+    buf_push(out, "diff--gita/");
+    buf_push_bytes_range(out, one, 0, one.len());
+    buf_push(out, "b/");
+    buf_push_bytes_range(out, two, 0, two.len());
+    if (!p.one.valid) {
+      buf_push(out, "newfilemode" + mode6(p.two.mode));
+    } else if (!p.two.valid) {
+      buf_push(out, "deletedfilemode" + mode6(p.one.mode));
+    } else if (p.one.mode != p.two.mode) {
+      buf_push(out, "oldmode" + mode6(p.one.mode) + "newmode" + mode6(p.two.mode));
+    }
+    let (s1, a) = content(s, p.one);
+    let (s2, b) = content(s1, p.two);
+    s = s2;
+    if (is_binary(a) || is_binary(b)) {
+      buf_push(out, p.one.hash + p.two.hash);
+      continue;
+    }
+    if (!p.one.valid) {
+      buf_push(out, "---/dev/null+++b/");
+      buf_push_bytes_range(out, two, 0, two.len());
+    } else if (!p.two.valid) {
+      buf_push(out, "---a/");
+      buf_push_bytes_range(out, one, 0, one.len());
+      buf_push(out, "+++/dev/null");
+    } else {
+      buf_push(out, "---a/");
+      buf_push_bytes_range(out, one, 0, one.len());
+      buf_push(out, "+++b/");
+      buf_push_bytes_range(out, two, 0, two.len());
+    }
+    let la = linediff.lines_of(a);
+    let lb = linediff.lines_of(b);
+    let plain = linediff.Options { algorithm: linediff.MYERS, minimal: false, indent_heuristic: false };
+    let script = linediff.diff(la, lb, plain);
+    let hunk = buf_new(1024);
+    linediff.unified(hunk, la, lb, script, linediff.Emit { context: 3, interhunk: 0, funcnames: false });
+    let text = buf_take_bytes(hunk);
+    // The lines without the hunk headers and the lines that say that a
+    // file has no line end at its end.
+    let at = 0;
+    while (at < text.len()) {
+      let nl = __memchr_bytes(text, 10, at);
+      let end = if (nl < 0) { text.len() } else { nl + 1 };
+      let skip = text[at] == b'@' || end - at > 12 && text[at] == b'\\' && text[at + 1] == b' ';
+      if (!skip) {
+        let line = without_space(array.slice(text, at, end));
+        buf_push_bytes_range(out, line, 0, line.len());
+      }
+      at = end;
+    }
+  }
+  return (s, buf_take_bytes(out));
+}

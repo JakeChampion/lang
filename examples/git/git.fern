@@ -999,7 +999,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
+struct LogOpts { left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1229,9 +1229,29 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
   let g = g_in;
   let w = o.walk;
   let x = argv[i];
-  let flags = ["--use-mailmap", "--mailmap", "--no-use-mailmap", "--no-mailmap", "--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no", "--decorate=full", "--decorate=auto", "--clear-decorations"];
+  let flags = ["--left-right", "--left-only", "--right-only", "--cherry-pick", "--cherry-mark", "--cherry", "--boundary", "--ancestry-path", "--simplify-by-decoration", "--simplify-merges", "--use-mailmap", "--mailmap", "--no-use-mailmap", "--no-mailmap", "--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no", "--decorate=full", "--decorate=auto", "--clear-decorations"];
   if (flags.contains(x)) {
-    if (x == "--use-mailmap" || x == "--mailmap" || x == "--no-use-mailmap" || x == "--no-mailmap") {
+    if (x == "--left-right") {
+      o = LogOpts { ...o, left_right: true };
+    } else if (x == "--left-only") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, left_only: true } };
+    } else if (x == "--right-only") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, right_only: true } };
+    } else if (x == "--cherry-pick") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, cherry_pick: true } };
+    } else if (x == "--cherry-mark") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, cherry_mark: true } };
+    } else if (x == "--cherry") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, right_only: true, cherry_mark: true, max_parents: 1 } };
+    } else if (x == "--boundary") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, boundary: true } };
+    } else if (x == "--ancestry-path") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, ancestry: true, full_history: true } };
+    } else if (x == "--simplify-by-decoration") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, by_decoration: true, simplify_merges: true, topo: true, rewrite: true, full_history: true } };
+    } else if (x == "--simplify-merges") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, simplify_merges: true, topo: true, rewrite: true, full_history: true } };
+    } else if (x == "--use-mailmap" || x == "--mailmap" || x == "--no-use-mailmap" || x == "--no-mailmap") {
       o = LogOpts { ...o, use_mailmap: !x.starts_with("--no-") };
     } else if (x == "--oneline") {
       o = LogOpts { ...log_form(o, "oneline", false), abbrev_commit: true };
@@ -1304,6 +1324,9 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
   }
   if (x.starts_with("-") && !x.starts_with("--") && log_number(objects.part(x, 1, x.len())) >= 0) {
     return (LogOpts { ...o, limit: log_number(objects.part(x, 1, x.len())) }, g, 1);
+  }
+  if (x.starts_with("--ancestry-path=")) {
+    return (LogOpts { ...o, ancestry_names: o.ancestry_names.append(objects.part(x, 16, x.len())), walk: revwalk.Opts { ...w, ancestry: true, full_history: true } }, g, 1);
   }
   for name in ["--decorate-refs", "--decorate-refs-exclude"] {
     let (v, taken) = option_value(argv, i, name);
@@ -1803,6 +1826,27 @@ function graph_parents(w_in: revwalk.Walk, h: string, first_parent: boolean): (r
   return (w, out);
 }
 
+// The mark of a commit before its name, from its flags `f`:
+// `get_revision_mark` of git.
+function revision_mark(o: LogOpts, f: i32): string {
+  if ((f & revwalk.BOUNDARY) != 0) {
+    return "-";
+  }
+  if ((f & revwalk.UNINTERESTING) != 0) {
+    return "^";
+  }
+  if ((f & revwalk.PATCHSAME) != 0) {
+    return "=";
+  }
+  if (o.left_right) {
+    return if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
+  }
+  if (o.graph) {
+    return "*";
+  }
+  return if (o.walk.cherry_mark) { "+" } else { "" };
+}
+
 // The text of the commit `h`, with the graph.
 function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[string, string[]], least: i32, sh_in: Shown): (revwalk.Walk, string, Shown) {
   let w = w_in;
@@ -1814,15 +1858,19 @@ function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[st
   }
   let (g1, c) = walk.commit(w.g, h);
   w = revwalk.Walk { ...w, g: g1 };
+  let f = revwalk.flag(w, h);
+  let mark = revision_mark(o, f);
   if (o.graph) {
     let (w1, ips) = graph_parents(w, h, o.walk.first_parent);
     w = w1;
-    sh = Shown { ...sh, graph: graph.update(sh.graph, h, ips) };
+    let g2 = graph.Graph { ...sh.graph, mark: if ((f & revwalk.BOUNDARY) != 0) { "o" } else { mark } };
+    sh = Shown { ...sh, graph: graph.update(g2, h, ips) };
   }
   let (w2, ps) = revwalk.parents(w, h);
   w = w2;
   let st = w.g.store;
-  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap };
+  let side = if ((f & revwalk.BOUNDARY) != 0) { "-" } else if ((f & revwalk.UNINTERESTING) != 0) { "^" } else if ((f & revwalk.PATCHSAME) != 0) { "=" } else if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side };
   let (s3, text, after) = log_entry(w.g.store, c, o, ctx, least, sh);
   return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s3 } }, text, after);
 }
@@ -1892,7 +1940,7 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: r.config.flag("diff.renames", true) };
   let dashdash = -1;
@@ -2003,6 +2051,27 @@ function log_command(argv: string[]): i32 {
   }
   let bloom = if (items.len() == 1 && !treediff.has_wildcard(items[0])) { commitgraph.keys(cg, items[0]) } else { [] };
   o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, items: items, bloom: bloom, grep: compiled } };
+  if (o.walk.by_decoration) {
+    let (s4, by) = decorations_of(r, w.g.store, false, o.decorate_filter);
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s4 } };
+    let decorated: Map[string, boolean] = Map { };
+    for e in by.entries() {
+      let (hash, _) = e;
+      decorated = decorated.insert(hash, true);
+    }
+    o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, decorated: decorated } };
+  }
+  for name in o.ancestry_names {
+    let (w6, at, died) = log_commit(r, w, name);
+    w = w6;
+    if (died.len() > 0) {
+      return fatal(died);
+    }
+    if (at.len() == 0) {
+      return fatal("bad revision '" + name + "'");
+    }
+    o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, ancestry_of: o.walk.ancestry_of.append(at) } };
+  }
   w = revwalk.Walk { ...w, opts: o.walk };
   if (named == 0) {
     let head = refs.resolve_ref(r, "HEAD");
@@ -2018,6 +2087,9 @@ function log_command(argv: string[]): i32 {
     if (kind == "commit") {
       w = revwalk.add(w, at, 0);
     }
+  }
+  if (o.walk.ancestry && o.ancestry_names.len() == 0 && !w.pending.any((h: string): boolean => (revwalk.flag(w, h) & revwalk.BOTTOM) != 0)) {
+    return fatal("--ancestry-path given but there are no bottom commits");
   }
   w = revwalk.prepare(w);
   if (w.failed.len() > 0) {
@@ -2042,21 +2114,64 @@ function log_command(argv: string[]): i32 {
   let skipped = 0;
   let buf: u8[] = [];
   let sh = Shown { graph: graph.graph_new(), any: false, missing: false };
-  while (o.limit < 0 || count < o.limit) {
-    let (w1, h) = revwalk.next(w);
-    w = w1;
-    if (w.failed.len() > 0) {
-      put(buf);
-      return fatal("Failed to traverse parents of commit " + w.failed);
+  // The parents of the shown commits that may be boundary commits, and
+  // the boundary commits to show after the walk (`get_revision_internal`).
+  let candidates: string[] = [];
+  let boundary: string[] = [];
+  let at_boundary = false;
+  while (true) {
+    let h = "";
+    if (at_boundary) {
+      if (boundary.len() == 0) {
+        break;
+      }
+      h = boundary[0];
+      boundary = array.slice(boundary, 1, boundary.len());
+      w = revwalk.with_flag(w, h, revwalk.SHOWN);
+    } else {
+      if (o.limit < 0 || count < o.limit) {
+        let (w1, next) = revwalk.next(w);
+        w = w1;
+        if (w.failed.len() > 0) {
+          put(buf);
+          return fatal("Failed to traverse parents of commit " + w.failed);
+        }
+        h = next;
+      }
+      if (h.len() == 0) {
+        if (!o.walk.boundary) {
+          break;
+        }
+        at_boundary = true;
+        let list: string[] = [];
+        for c in candidates {
+          let f = revwalk.flag(w, c);
+          if ((f & revwalk.CHILD_SHOWN) != 0 && (f & (revwalk.SHOWN | revwalk.BOUNDARY)) == 0) {
+            w = revwalk.with_flag(w, c, revwalk.BOUNDARY);
+            list = [c].concat(list);
+          }
+        }
+        let (w4, sorted) = revwalk.sorted_topo(w, list);
+        w = w4;
+        boundary = sorted;
+        continue;
+      }
+      if (skipped < o.skip) {
+        skipped += 1;
+        continue;
+      }
+      count += 1;
+      if (o.walk.boundary) {
+        let (w5, ps) = revwalk.parents(w, h);
+        w = w5;
+        for p in ps {
+          if ((revwalk.flag(w, p) & (revwalk.CHILD_SHOWN | revwalk.SHOWN)) == 0) {
+            w = revwalk.with_flag(w, p, revwalk.CHILD_SHOWN);
+            candidates = candidates.append(p);
+          }
+        }
+      }
     }
-    if (h.len() == 0) {
-      break;
-    }
-    if (skipped < o.skip) {
-      skipped += 1;
-      continue;
-    }
-    count += 1;
     if (o.reverse) {
       shown = shown.append(h);
       continue;

@@ -222,7 +222,11 @@ function rtrim(text: string): string {
 // parents to show (after the simplification of the history), the form of
 // the dates, the decorations, and the mailmap, which `%aN` uses and the
 // header lines use with `use_mailmap`.
-pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: string[], mailmap: mailmap.Mailmap, use_mailmap: boolean }
+//
+// `mark` goes before the name of the commit on its first line, as
+// `--left-right`, `--boundary` and `--cherry-mark` give it, and `side` is
+// the mark of `%m`.
+pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: string[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string }
 
 // The person of a header line, with the mailmap when the log uses it.
 function shown(p: Person, ctx: Context): Person {
@@ -298,7 +302,8 @@ pub function pretty(c: Commit, ctx: Context, form: string): string {
 pub function first_line(c: Commit, ctx: Context, form: string, with_parents: boolean): string {
   let abbrev = ctx.abbrev;
   let name = if (ctx.abbrev_commit) { abbrev(c.hash) } else { c.hash };
-  let out = if (form == "oneline") { name } else { "commit " + name };
+  let mark = if (ctx.mark.len() > 0) { ctx.mark + " " } else { "" };
+  let out = if (form == "oneline") { mark + name } else { "commit " + mark + name };
   if (with_parents) {
     for p in ctx.parents {
       out += " " + (if (ctx.abbrev_commit) { abbrev(p) } else { p });
@@ -435,7 +440,7 @@ function placeholder(c: Commit, ctx: Context, format: string, at: i32): (string,
     b't' => (abbrev(c.tree), 1),
     b'P' => (ctx.parents.join(" "), 1),
     b'p' => (ctx.parents.map((p: string): string => abbrev(p)).join(" "), 1),
-    b'm' => (">", 1),
+    b'm' => (ctx.side, 1),
     b'd' => (if (ctx.decorations.len() > 0) { " (" + ctx.decorations.join(", ") + ")" } else { "" }, 1),
     b'D' => (ctx.decorations.join(", "), 1),
     b's' => (subject(c.message), 1),
