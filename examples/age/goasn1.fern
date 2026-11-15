@@ -1,0 +1,388 @@
+// Go's encoding/asn1 Unmarshal for the structures of the private keys that
+// x509 and x/crypto/ssh parse. A structure is a table of fields, as the Go
+// struct is. The errors have the text of Go, so the messages of age for a
+// key that does not parse are those of age.
+import "./text";
+
+// The kinds of a field: the Go types int, *big.Int, []byte,
+// asn1.ObjectIdentifier, asn1.BitString, asn1.RawValue, a struct and a
+// slice of a struct.
+pub const INT: i32 = 0;
+
+pub const BIG: i32 = 1;
+
+pub const BYTES: i32 = 2;
+
+pub const OID: i32 = 3;
+
+pub const BITS: i32 = 4;
+
+pub const RAW: i32 = 5;
+
+pub const STRUCT: i32 = 6;
+
+pub const SLICE: i32 = 7;
+
+// A field and the tags of its `asn1` struct tag. `tag` is -1 when there is
+// none. For STRUCT and SLICE, `sub` is the index of the struct type in the
+// table of types.
+pub struct Field { kind: i32, optional: boolean, explicit: boolean, tag: i32, omit_empty: boolean, sub: i32 }
+
+// A Go struct type: its name, which is empty for a struct with no name, and
+// its fields.
+pub struct Type { name: string, fields: Field[] }
+
+pub function field(kind: i32): Field {
+  return Field { kind: kind, optional: false, explicit: false, tag: -1, omit_empty: false, sub: -1 };
+}
+
+pub function optional(kind: i32): Field {
+  return Field { ...field(kind), optional: true };
+}
+
+// A field of a struct type, or a slice of it.
+pub function nested(kind: i32, sub: i32): Field {
+  return Field { ...field(kind), sub: sub };
+}
+
+// A value that the parse gives, in the order of the fields. A field that is
+// not there has `present` false. `content` is the contents of the element,
+// `full` is all of its bytes, and `n` is the value of an INT, the number of
+// elements of a SLICE, and the bit length of a BITS. `oid` is the dotted
+// form of an OID.
+pub struct Value { present: boolean, content: u8[], full: u8[], n: i64, oid: string }
+
+// An error of Go's encoding/asn1: a StructuralError, or else a SyntaxError.
+pub struct AsnError { msg: string, structural: boolean }
+
+pub function (e: AsnError) message(): string {
+  if (e.structural) {
+    return "asn1: structure error: " + e.msg;
+  }
+  return "asn1: syntax error: " + e.msg;
+}
+
+function structural(msg: string): AsnError {
+  return AsnError { msg: msg, structural: true };
+}
+
+function syntax(msg: string): AsnError {
+  return AsnError { msg: msg, structural: false };
+}
+
+const ABSENT: Value = Value { present: false, content: [], full: [], n: 0, oid: "" };
+
+// Go's tagAndLength.
+struct Tag { class: i32, tag: i32, length: i32, compound: boolean }
+
+// asn1.Unmarshal of `b` into the type `t` of `types`: the values and the
+// number of bytes that it reads. The rest of `b` is after them.
+pub function unmarshal(b: [u8], types: Type[], t: i32): Result[(Value[], i32), AsnError] {
+  return unmarshal_field(b, types, nested(STRUCT, t));
+}
+
+// asn1.Unmarshal of `b` into a value of the type of `f`.
+pub function unmarshal_field(b: [u8], types: Type[], f: Field): Result[(Value[], i32), AsnError] {
+  let (values, offset) = parse_field(b, 0, f, types, [], 0)?;
+  return Ok((values, offset));
+}
+
+// parseTagAndLength.
+function tag_and_length(b: [u8], at: i32): Result[(Tag, i32), AsnError] {
+  let offset = at;
+  let c = b[offset] as i32;
+  offset += 1;
+  let t = Tag { class: c >> 6, tag: c & 31, length: 0, compound: (c & 32) != 0 };
+  if (t.tag == 31) {
+    let (v, o) = base128(b, offset)?;
+    offset = o;
+    if (v < 31) {
+      return Err(syntax("non-minimal tag"));
+    }
+    t = Tag { ...t, tag: v };
+  }
+  if (offset >= b.len()) {
+    return Err(syntax("truncated tag or length"));
+  }
+  let l = b[offset] as i32;
+  offset += 1;
+  if ((l & 128) == 0) {
+    return Ok((Tag { ...t, length: l & 127 }, offset));
+  }
+  let count = l & 127;
+  if (count == 0) {
+    return Err(syntax("indefinite length found (not DER)"));
+  }
+  let length = 0;
+  for _ in 0..count {
+    if (offset >= b.len()) {
+      return Err(syntax("truncated tag or length"));
+    }
+    let d = b[offset] as i32;
+    offset += 1;
+    if (length >= 1 << 23) {
+      return Err(structural("length too large"));
+    }
+    length = length << 8 | d;
+    if (length == 0) {
+      return Err(structural("superfluous leading zeros in length"));
+    }
+  }
+  if (length < 128) {
+    return Err(structural("non-minimal length"));
+  }
+  return Ok((Tag { ...t, length: length }, offset));
+}
+
+// parseBase128Int.
+function base128(b: [u8], at: i32): Result[(i32, i32), AsnError] {
+  let offset = at;
+  let v = 0i64;
+  let shifted = 0;
+  while (offset < b.len()) {
+    if (shifted == 5) {
+      return Err(structural("base 128 integer too large"));
+    }
+    v = v << 7;
+    let c = b[offset] as i64;
+    if (shifted == 0 && c == 128) {
+      return Err(syntax("integer is not minimally encoded"));
+    }
+    v = v | c & 127;
+    offset += 1;
+    if ((c & 128) == 0) {
+      if (v > 2147483647i64) {
+        return Err(structural("base 128 integer too large"));
+      }
+      return Ok((v as i32, offset));
+    }
+    shifted += 1;
+  }
+  return Err(syntax("truncated base 128 integer"));
+}
+
+// The universal tag of a kind, and whether its element is compound.
+function universal(kind: i32): (i32, boolean) {
+  if (kind == INT || kind == BIG) {
+    return (2, false);
+  }
+  if (kind == BYTES) {
+    return (4, false);
+  }
+  if (kind == OID) {
+    return (6, false);
+  }
+  if (kind == BITS) {
+    return (3, false);
+  }
+  return (16, true);
+}
+
+// The name of the Go type of a field. A pointer or a slice that has no
+// name has an empty name.
+function type_name(f: Field, types: Type[]): string {
+  if (f.kind == INT) {
+    return "int";
+  }
+  if (f.kind == OID) {
+    return "ObjectIdentifier";
+  }
+  if (f.kind == BITS) {
+    return "BitString";
+  }
+  if (f.kind == STRUCT) {
+    return types[f.sub].name;
+  }
+  return "";
+}
+
+function show_tag(t: Tag): string {
+  return f"{{class:{t.class} tag:{t.tag} length:{t.length} isCompound:{t.compound}}}";
+}
+
+// The fieldParameters of `f` as Go's %+v gives them. Go writes the address
+// of a tag, but each field with a tag in the tables of age is optional, and
+// an optional field does not give this error.
+function show_params(f: Field): string {
+  return f"{{optional:{f.optional} explicit:{f.explicit} application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:{f.omit_empty}}}";
+}
+
+// parseField: the values of `f` appended to `out`, and the offset after it.
+function parse_field(b: [u8], at: i32, f: Field, types: Type[], out: Value[], depth: i32): Result[(Value[], i32), AsnError] {
+  if (depth + 1 > 10000) {
+    return Err(structural("nesting depth exceeded"));
+  }
+  if (at == b.len()) {
+    if (!f.optional) {
+      return Err(syntax("sequence truncated"));
+    }
+    return Ok((absent(f, types, out), at));
+  }
+  let (outer, o1) = tag_and_length(b, at)?;
+  let t = outer;
+  let offset = o1;
+  if (f.explicit) {
+    if (offset == b.len()) {
+      return Err(structural("explicit tag has no child"));
+    }
+    if (!(t.class == 2 && t.tag == f.tag && (t.length == 0 || t.compound))) {
+      if (f.optional) {
+        return Ok((absent(f, types, out), at));
+      }
+      return Err(structural("explicitly tagged member didn't match"));
+    }
+    if (f.kind != RAW) {
+      if (t.length == 0) {
+        return Err(structural("zero length explicit tag was not an asn1.Flag"));
+      }
+      let (inner, o2) = tag_and_length(b, offset)?;
+      t = inner;
+      offset = o2;
+    }
+  }
+  if (f.kind != RAW) {
+    let (want, compound) = universal(f.kind);
+    if (t.class != 0 || t.tag != want || t.compound != compound) {
+      if (f.optional) {
+        return Ok((absent(f, types, out), at));
+      }
+      return Err(structural(f"tags don't match ({want} vs {show_tag(t)}) {show_params(f)} {type_name(f, types)} @{offset}"));
+    }
+  }
+  if (t.length > b.len() - offset) {
+    return Err(syntax("data truncated"));
+  }
+  let content = text.copy(b[offset:offset + t.length]);
+  let end = offset + t.length;
+  let v = Value { present: true, content: content, full: text.copy(b[at:end]), n: 0, oid: "" };
+  if (f.kind == INT) {
+    return Ok((out.append(Value { ...v, n: int64_of(content)? }), end));
+  }
+  if (f.kind == BIG) {
+    check_integer(content)?;
+    return Ok((out.append(v), end));
+  }
+  if (f.kind == OID) {
+    return Ok((out.append(Value { ...v, oid: oid_of(content)? }), end));
+  }
+  if (f.kind == BITS) {
+    return Ok((out.append(Value { ...v, n: bit_string(content)? }), end));
+  }
+  if (f.kind == STRUCT) {
+    return Ok((parse_struct(content, types, f.sub, out, depth + 1)?, end));
+  }
+  if (f.kind == SLICE) {
+    return Ok((parse_sequence_of(content, types, f.sub, out, v, depth + 1)?, end));
+  }
+  return Ok((out.append(v), end));
+}
+
+// The values of a field that is not there: one for a leaf, and one for
+// each leaf of a struct.
+function absent(f: Field, types: Type[], out: Value[]): Value[] {
+  if (f.kind != STRUCT) {
+    return out.append(ABSENT);
+  }
+  let o = out;
+  for g in types[f.sub].fields {
+    o = absent(g, types, o);
+  }
+  return o;
+}
+
+// The fields of a struct in its contents. Go allows bytes after the last
+// field.
+function parse_struct(b: [u8], types: Type[], t: i32, out: Value[], depth: i32): Result[Value[], AsnError] {
+  let o = out;
+  let at = 0;
+  for g in types[t].fields {
+    let (values, next) = parse_field(b, at, g, types, o, depth)?;
+    o = values;
+    at = next;
+  }
+  return Ok(o);
+}
+
+// parseSequenceOf for a slice of a struct: a value that holds the number of
+// elements, and then the values of each element.
+function parse_sequence_of(b: [u8], types: Type[], t: i32, out: Value[], v: Value, depth: i32): Result[Value[], AsnError] {
+  let n = 0;
+  let at = 0;
+  while (at < b.len()) {
+    let (tag, o) = tag_and_length(b, at)?;
+    if (tag.class != 0 || !tag.compound || tag.tag != 16) {
+      return Err(structural("sequence tag mismatch"));
+    }
+    if (tag.length > b.len() - o) {
+      return Err(syntax("truncated sequence"));
+    }
+    at = o + tag.length;
+    n += 1;
+  }
+  let values = out.append(Value { ...v, n: n as i64 });
+  let offset = 0;
+  for _ in 0..n {
+    let (more, next) = parse_field(b, offset, nested(STRUCT, t), types, values, depth)?;
+    values = more;
+    offset = next;
+  }
+  return Ok(values);
+}
+
+// checkInteger.
+function check_integer(b: [u8]): Result[void, AsnError] {
+  if (b.len() == 0) {
+    return Err(structural("empty integer"));
+  }
+  if (b.len() > 1 && (b[0] == 0u8 && b[1] < 128u8 || b[0] == 255u8 && b[1] >= 128u8)) {
+    return Err(structural("integer not minimally-encoded"));
+  }
+  return Ok(());
+}
+
+// parseInt64.
+function int64_of(b: [u8]): Result[i64, AsnError] {
+  check_integer(b)?;
+  if (b.len() > 8) {
+    return Err(structural("integer too large"));
+  }
+  let v = 0i64;
+  for c in b {
+    v = v << 8 | c as i64;
+  }
+  let shift = 64i64 - 8i64 * (b.len() as i64);
+  return Ok(v << shift >> shift);
+}
+
+// parseBitString: the bit length.
+function bit_string(b: [u8]): Result[i64, AsnError] {
+  if (b.len() == 0) {
+    return Err(syntax("zero length BIT STRING"));
+  }
+  let pad = b[0] as i32;
+  if (pad > 7 || b.len() == 1 && pad > 0 || (b[b.len() - 1] as i32 & (1 << pad) - 1) != 0) {
+    return Err(syntax("invalid padding bits in BIT STRING"));
+  }
+  return Ok(((b.len() - 1) * 8 - pad) as i64);
+}
+
+// parseObjectIdentifier: the dotted form.
+function oid_of(b: [u8]): Result[string, AsnError] {
+  if (b.len() == 0) {
+    return Err(syntax("zero length OBJECT IDENTIFIER"));
+  }
+  let (first, o) = base128(b, 0)?;
+  let out = "";
+  if (first < 80) {
+    out = (first / 40).to_string() + "." + (first % 40).to_string();
+  } else {
+    out = "2." + (first - 80).to_string();
+  }
+  let at = o;
+  while (at < b.len()) {
+    let (v, next) = base128(b, at)?;
+    out = out + "." + v.to_string();
+    at = next;
+  }
+  return Ok(out);
+}

@@ -222,6 +222,7 @@ key gets the message of age for a type that it does not use.
 | `bech32.fern` | Bech32, and a constant-time decoder for a secret key line. |
 | `format.fern` | The header, its MAC, the X25519, hybrid and scrypt stanzas and the STREAM chunks. |
 | `ssh.fern` | SSH keys: the wire format, `authorized_keys` lines, private key files, and the `ssh-ed25519` and `ssh-rsa` stanzas. |
+| `goasn1.fern` | Go's `encoding/asn1` Unmarshal for the structures of private keys, with the errors of Go. |
 | `bcrypt.fern` | Blowfish, `bcrypt_pbkdf`, AES-256-CTR and AES-256-CBC, for an OpenSSH key with a passphrase. |
 | `tty.fern` | The terminal: prompts with no echo, and the messages for the user at the terminal. |
 | `wordlist.fern` | The BIP 39 word list, for the passphrases that age makes. |
@@ -279,17 +280,14 @@ complete. Use `-o` for no partial plaintext.
 age 1.3.2 tries the other stanzas when `-i` names identities. The CCTV
 vector `scrypt_and_x25519` tests this.
 
-**SSH keys.** Go's parsers of EC, DSA and PKCS#1 keys give the text of an
-`encoding/asn1` error for some malformed keys. The port gives
-`asn1: structure error` with no detail. The same holds for a malformed
-ECDSA, security-key or certificate public key: the port gives
-`unknown SSH recipient type` where age gives the message of Go's parser
-for that type. Go's edwards25519 accepts an Ed25519 public key with a y value that is
-not canonical, and the port refuses it.
+**SSH keys.** `std/crypto/rsa` refuses an RSA key of less than 1024 bits
+and a key of more than two primes, as a security rule. Go parses such a
+key, so age can give another message for it.
 
-After an encrypted PEM key decrypts with valid padding, a key that does
-not parse gives `x509: decryption password incorrect`. Go gives the
-message of its parser when the error is not a structure error.
+The port gives the errors of Go's `x509`, `asn1` and `x/crypto/ssh`
+parsers. One message of Go can hold bytes that are not UTF-8: the type of
+a public key in `ssh: unknown key algorithm:`. A Fern string is UTF-8, so
+the port writes the type only when it is UTF-8.
 
 **Plugins.** The `request-public` line editor has the keys of a simple
 line: the printable bytes, Backspace, Enter, Ctrl-C and Ctrl-D. x/term
