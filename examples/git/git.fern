@@ -2634,7 +2634,7 @@ function index_names(data: string, offsets: i64[], raw: i32): string[][] {
   return index_parts(data, offsets, index.parts_of(offsets, parts), 0, raw);
 }
 
-const INDEX_PACK_USAGE: string = "usage: git index-pack [-v] [-o <index-file>] [--keep | --keep=<msg>] [--[no-]rev-index] [--verify] [--strict] (<pack-file> | --stdin [--fix-thin] [<pack-file>])";
+const INDEX_PACK_USAGE: string = "usage: git index-pack [-v] [-o <index-file>] [--keep | --keep=<msg>] [--[no-]rev-index] [--verify] [--strict[=<msg-id>=<severity>...]] [--fsck-objects[=<msg-id>=<severity>...]] (<pack-file> | --stdin [--fix-thin] [<pack-file>])";
 
 struct PackArgs { stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, format: string, bad: string }
 
