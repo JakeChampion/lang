@@ -10388,8 +10388,9 @@ struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave:
 // With `test`, `b` is the immediate mask of an `and` whose result the compare tested against zero.
 // load_bits is not 0 when the compare reads one operand from memory, with a
 // load of that many bits at offset load_at. The base of the load is then in
-// `b` when load_right is set, and in `a` when it is not.
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, test: boolean, load_bits: i32, load_at: i32, load_right: boolean }
+// `b` when load_right is set, and in `a` when it is not. `narrow` says the
+// compare reads the low 32 bits of each operand.
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, test: boolean, load_bits: i32, load_at: i32, load_right: boolean, narrow: boolean }
 
 // What deciding a fusion reads: the use counts and the immediates. The
 // allocator decides with it before a frame exists.
@@ -10400,14 +10401,14 @@ function ssa_fuse_view(fr: SsaFrame): FuseView {
 }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
 }
 
 function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boolean): ssaprepare.Fusion[] {
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: fu.test, load_bits: fu.load_bits, load_at: fu.load_at, load_right: fu.load_right });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: fu.test, load_bits: fu.load_bits, load_at: fu.load_at, load_right: fu.load_right, narrow: fu.narrow });
 }
 
 function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
@@ -10423,7 +10424,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let n = 1;
   let inverted = false;
   if (last.kind_tag == ssa.UNARY && last.str == "!") {
-    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false };
+    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -10438,7 +10439,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa.unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4, test: false, load_bits: 0, load_at: 0, load_right: false };
+    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
   }
   if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
@@ -10451,14 +10452,55 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
       } else {
         tag = "fge";
       }
-      return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false };
+      return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
     }
-    return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false };
+    return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
   }
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return ssa_test_fuse(fv, blk, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false });
+    return ssa_int_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
   }
-  return ssa_test_fuse(fv, blk, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false });
+  return ssa_int_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
+}
+
+function ssa_int_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
+  let narrow = ssa_wrap_fuse(fv, blk, cmp, fu);
+  return if (narrow.narrow) { narrow } else { ssa_test_fuse(fv, blk, fu) };
+}
+
+// A compare of two values of 32 bits or less reads only their low 32 bits
+// with `cmpl`. A wrap to 32 bits next to the compare, which gives its value
+// to no other instruction, then has no effect, and the compare takes the
+// value before the wrap.
+function ssa_wrap_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
+  if (cmp.imm != 0 || !ssa_signed_order(fu.tag) || fv.imm.is_imm[fu.b] && ssa.imm_sym(fv.imm, fu.b) != "") {
+    return fu;
+  }
+  let k = ssa_before_immediates(fv, blk, blk.insts.len() - fu.n - 1, -1);
+  if (k < 0 || !ssa_lone_wrap(fv, blk.insts[k])) {
+    return fu;
+  }
+  let wrap = blk.insts[k];
+  if (wrap.result == fu.a) {
+    return SsaFuse { ...fu, n: blk.insts.len() - k, a: wrap.args[0], narrow: true };
+  }
+  return if (wrap.result == fu.b) { SsaFuse { ...fu, n: blk.insts.len() - k, b: wrap.args[0], narrow: true } } else { fu };
+}
+
+// A wrap to 32 bits with the sign, of a value that is not an immediate, that
+// gives its value to one instruction.
+function ssa_lone_wrap(fv: FuseView, ins: ssa.SInst): boolean {
+  if (ins.kind_tag != ssa.UNARY || ins.args.len() != 1 || ins.imm != 0 || fv.uses[ins.result] != 1) {
+    return false;
+  }
+  return (ins.str == "int_cast:i32" || ins.str == "int_wrap") && !fv.imm.is_imm[ins.args[0]];
+}
+
+function ssa_compare_bits(fu: SsaFuse): i32 {
+  return if (fu.narrow) { 32 } else { 64 };
+}
+
+function ssa_signed_order(tag: i32): boolean {
+  return tag == ir.K_EQ || tag == ir.K_NE || tag == ir.K_LT_S || tag == ir.K_LE_S || tag == ir.K_GT_S || tag == ir.K_GE_S;
 }
 
 // `(x & mask) == 0` and `!= 0` read the flags of one `test` of x.
@@ -10640,9 +10682,9 @@ function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
 
 function ssa_cmp_flags(fv: FuseView, cmp: ssa.SInst): SsaFuse {
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false };
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
   }
-  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false };
+  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
 }
 
 function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
@@ -11320,6 +11362,7 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
     s = ssa_fread(reg_of, fu.b, "%xmm2", s);
     return s.write("    ucomisd " + ssa_fsrc(reg_of, fu.b, "%xmm2") + ", " + ssa_fsrc(reg_of, fu.a, "%xmm1") + "\n");
   }
+  let size = ssa_compare_bits(fu);
   let b_in_slot = !fr.imm.is_imm[fu.b] && reg_of[fu.b] < 0;
   if (reg_of[fu.a] < 0 && s.ssa_x0 != fu.a && !b_in_slot) {
     let disp = ssa_slot_disp(ssa.spill_slot(reg_of[fu.a]), s.ssa_save);
@@ -11330,14 +11373,14 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
       }
       let v = fr.imm.value[fu.b];
       if (v >= -2147483648i64 && v <= 2147483647i64) {
-        return ssa_alu_im(s, 7, 64, v as i32, "%rbp", disp);
+        return ssa_alu_im(s, 7, size, v as i32, "%rbp", disp);
       }
       return s.write("    cmpq $" + util.i64_to_string(v) + ", " + ssa_slot(ssa.spill_slot(reg_of[fu.a]), s.ssa_save) + "\n");
     }
-    return ssa_alu_rm(s, 7, 64, false, ssa_reg(reg_of[fu.b]), "%rbp", disp);
+    return ssa_alu_rm(s, 7, size, false, ssa_reg(reg_of[fu.b]), "%rbp", disp);
   }
   s = ssa_read(reg_of, fu.a, "%r11", s);
-  return ssa_alu_rhs(s, 7, 64, fr, reg_of, fu.b, ssa_src(reg_of, fu.a, "%r11"));
+  return ssa_alu_rhs(s, 7, size, fr, reg_of, fu.b, ssa_src(reg_of, fu.a, "%r11"));
 }
 
 function ssa_load_compare(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {

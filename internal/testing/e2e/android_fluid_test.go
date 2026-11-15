@@ -30,9 +30,10 @@ func TestAndroidFluidOverlay(t *testing.T) {
 // The simulation runs in its shaders on Mesa's OpenGL ES: a splat shows
 // dye, steps move it, a new window size keeps it, the bloom and the sun
 // rays change the picture, and the capture reads it. The canvas of
-// std/android/gl then draws the controls over the fluid.
+// std/android/gl then draws the controls over the fluid. A window with
+// many pixels for each dp shows the fluid from a smaller picture.
 func TestAndroidFluidGPU(t *testing.T) {
-	runGLCheck(t, "examples/android/fluid/gpu_test.fern", "11111111")
+	runGLCheck(t, "examples/android/fluid/gpu_test.fern", "111111111")
 }
 
 // fern -apk builds the app from its fern.toml: a library for each ABI, the

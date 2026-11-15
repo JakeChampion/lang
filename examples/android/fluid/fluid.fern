@@ -42,8 +42,9 @@ pub struct Pointer { down: boolean, moved: boolean, x: f64, y: f64, dx: f64, dy:
 pub struct Splat { x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
 
 // What one frame does on the GPU: a burst of `burst` random splats, the
-// splat of the finger, `steps` steps of the simulation, and a draw.
-pub struct Frame { burst: i32, splat: Option[Splat], steps: i32, draw: boolean }
+// splat of the finger, `steps` steps of the simulation of `step` seconds
+// each, and a draw.
+pub struct Frame { burst: i32, splat: Option[Splat], steps: i32, step: f64, draw: boolean }
 
 const NONE: i32 = 0;
 
@@ -201,7 +202,7 @@ function (m: Model) moving(now_ns: i64): Model {
   if (!m.still) {
     return m;
   }
-  return Model { ...m, still: false, cfg: config.Config { ...m.cfg, paused: false }, clock: m.clock.reset(now_ns), redraw: true };
+  return Model { ...m, still: false, cfg: config.Config { ...m.cfg, paused: false }, clock: clock.new(now_ns), redraw: true };
 }
 
 function (m: Model) burst(): Model {
@@ -250,7 +251,7 @@ pub function (m: Model) act(a: Action, now_ns: i64): Model {
   match (a) {
     Pause => {
       let paused = !m.cfg.paused;
-      return Model { ...m, still: false, cfg: config.Config { ...m.cfg, paused: paused }, clock: m.clock.reset(now_ns), redraw: true };
+      return Model { ...m, still: false, cfg: config.Config { ...m.cfg, paused: paused }, clock: clock.new(now_ns), redraw: true };
     },
     Burst => {
       return m.moving(now_ns).burst();
@@ -499,7 +500,7 @@ pub function (m: Model) back(): (Model, boolean) {
 // The model when the app shows again: the time that it did not show is not
 // time of the simulation.
 pub function (m: Model) woke(now_ns: i64): Model {
-  return Model { ...m, clock: m.clock.reset(now_ns), redraw: true };
+  return Model { ...m, clock: clock.new(now_ns), redraw: true };
 }
 
 function wrap01(v: f64): f64 {
@@ -539,12 +540,12 @@ pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
     p = Pointer { ...p, moved: false };
   }
   let steps = 0;
-  let after = ticked.clear();
+  let step = 0.0;
   if (!out.cfg.paused) {
-    let (advanced, n) = ticked.advance(dt);
-    after = advanced;
+    let (n, size) = clock.steps(dt);
     steps = n;
+    step = size;
   }
   let draw = !out.cfg.paused || out.redraw || burst > 0 || splatted || out.hold_ms >= 0i64 || out.noting(now_ms);
-  return (Model { ...out, clock: after, rng: rng, pointer: p, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splat: splat, steps: steps, draw: draw });
+  return (Model { ...out, clock: ticked, rng: rng, pointer: p, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splat: splat, steps: steps, step: step, draw: draw });
 }

@@ -5057,7 +5057,8 @@ function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
 
 function with_set_op(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
   if let typeinfo.TypeLanes(l) = f.values[ins.args[2]] {
-    return ir.Op { ...ir.op_lane("vset", l.width), unsigned: ins.str == "lane_bytes" };
+    let op = ir.Op { ...ir.op_lane("vset", l.width), unsigned: ins.str == "lane_bytes" };
+    return if (ins.str == "lane_bytes" && ins.imm == ssasem.lane_span_proven()) { ir.in_bounds(op) } else { op };
   }
   if (ins.imm == 1 || p.checked_writes[ins.result]) {
     return ir.in_bounds(arr_set_op(elem));

@@ -65,12 +65,13 @@ const DITHER: i32 = 16;
 // 7. The canvas draws a texture over the fluid after `resume`.
 // 8. The frame of the app shows the button over the fluid, then the dialog
 //    over a dark fluid, and the text of a GPU that cannot run the fluid.
+// 9. A window with many pixels shows the fluid from a smaller picture.
 pub function check(): i32 {
   let Some(c) = gl.open_offscreen(W, H) else {
     return 0;
   };
   let cfg = config.Config { ...config.defaults(), dye_resolution: 128, sim_resolution: 64, capture_resolution: 64, back_color: config.Rgb { r: 0.0, g: 0.0, b: 0.25 } };
-  let Some(first) = sim.open(cfg, W, H, rand.rng_seed(7i64)) else {
+  let Some(first) = sim.open(cfg, W, H, 1.0, rand.rng_seed(7i64)) else {
     gl.close(c);
     return 0;
   };
@@ -103,7 +104,7 @@ pub function check(): i32 {
   draw.release(still);
 
   let wide = c.attach_offscreen(H, W);
-  f = f.resized(cfg, H, W);
+  f = f.resized(cfg, H, W, 1.0);
   let turned = shown(wide, f, cfg);
   saved(turned, "4-resized");
   if (turned.width == H && turned.height == W && lit(turned, 0, W) > 50) {
@@ -158,10 +159,31 @@ pub function check(): i32 {
   draw.release(plain);
   gl.free(t);
   let tall = wide.attach_offscreen(360, 640);
-  n += controls(tall, plain_fluid.resized(plain_cfg, 360, 640), plain_cfg);
-  sim.close(plain_fluid);
+  let sized = plain_fluid.resized(plain_cfg, 360, 640, 1.0);
+  n += controls(tall, sized, plain_cfg);
+  n += scaled(tall, sized, plain_cfg);
+  sim.close(sized);
   gl.close(tall);
   return n;
+}
+
+// 100000000 when a window with 4 pixels across one dp shows the fluid from
+// a picture with 2 pixels across one dp, and the two are almost the same.
+function scaled(c: gl.Canvas, f: sim.Fluid, cfg: config.Config): i32 {
+  f.show(cfg);
+  let full = c.read();
+  let half = f.resized(cfg, 360, 640, 4.0);
+  half.show(cfg);
+  let small = c.read();
+  saved(small, "12-scaled");
+  let far = testkit.differ(full, small, 48);
+  let ok = f.view.texture == 0 && half.view.width == 180 && half.view.height == 320 && lit(full, 0, 640) > 50 && lit(small, 0, 640) > 50 && far < 360 * 640 / 50;
+  draw.release(full);
+  draw.release(small);
+  if (ok) {
+    return 100000000;
+  }
+  return 0;
 }
 
 // The frame of the app for the model `m`: the fluid, and the controls over
