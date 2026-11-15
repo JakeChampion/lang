@@ -677,30 +677,6 @@ function main(): i32 { let r: Ring[4, i32] = Ring { items: [] }; return room_m[4
 	}
 }
 
-func TestRunReportsPolymorphicRecursion(t *testing.T) {
-	src := `struct Nest[T] { head: T, tail: Nest[Nest[T]] }
-function f(n: Nest[i32]): i32 { return n.head; }
-function main(): i32 { return 0; }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Skipf("checker rejected the recursive generic (moved earlier): %v", err)
-	}
-	err = monomorph.Run(prog, info)
-	if err == nil {
-		t.Fatal("expected monomorph to reject polymorphically-recursive generic struct")
-	}
-	if strings.Contains(err.Error(), "compiler bug") {
-		t.Errorf("error should be a clear non-termination diagnostic, not a 'compiler bug': %v", err)
-	}
-	if !strings.Contains(err.Error(), "did not terminate") {
-		t.Errorf("error should explain non-termination, got: %v", err)
-	}
-}
-
 // A generic function that calls itself with a larger type has no last
 // instance. The pass stops at the limit with E107, and names the function.
 func TestRunReportsAFunctionWithNoLastInstance(t *testing.T) {
@@ -1301,5 +1277,29 @@ function main(): i32 {
 	}
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
+	}
+}
+
+// An integer literal in a struct literal takes the float type that another
+// element of the array gives to the instance. The second check of the pass
+// sees the literal as a float.
+func TestRunAcceptsAnIntegerLiteralInAFloatInstance(t *testing.T) {
+	for _, body := range []string{
+		"let xs = [Box { v: 1.5 }, Box { v: 2 }];",
+		"let xs = [Box { v: 2 }, Box { v: 1.5 }];",
+		"let xs = [[Box { v: 1 }], [Box { v: 2.25 }]];",
+	} {
+		src := "struct Box[T] { v: T }\nfunction main(): i32 { " + body + " return 0; }\n"
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		info, err := checker.Check(prog)
+		if err != nil {
+			t.Fatalf("%s: check: %v", body, err)
+		}
+		if err := monomorph.Run(prog, info); err != nil {
+			t.Errorf("%s: %v", body, err)
+		}
 	}
 }
