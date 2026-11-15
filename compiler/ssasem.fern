@@ -1272,10 +1272,15 @@ function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
   if (ins.str != "" && (!is_usize(result) || ins.imm != 0)) {
     return "narrow constant carries text";
   }
-  if (is_u8(result) && (ins.imm < 0 || ins.imm > 255) || is_u16(result) && (ins.imm < 0 || ins.imm > 65535) || is_i16(result) && (ins.imm < -32768 || ins.imm > 32767)) {
+  if (!narrow_holds(result, ins.imm as i64)) {
     return "integer constant range";
   }
   return "";
+}
+
+// Whether a type of fewer than 32 bits holds v. A wider type holds each i32.
+pub function narrow_holds(t: typeinfo.Type, v: i64): boolean {
+  return !(is_u8(t) && (v < 0 || v > 255) || is_u16(t) && (v < 0 || v > 65535) || is_i16(t) && (v < -32768 || v > 32767));
 }
 
 function float_constant_error(ins: ssa.SInst): string {

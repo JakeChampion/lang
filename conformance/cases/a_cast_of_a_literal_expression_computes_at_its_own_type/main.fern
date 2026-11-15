@@ -1,0 +1,20 @@
+// A literal expression computes at its own type, and the cast converts the
+// result. The type is i32, or i64 when a literal does not fit i32.
+
+import "std/i32";
+import "std/u32";
+import "std/i64";
+import "std/u64";
+
+function main(): i32 {
+  print(((0 - 6) / 2) as u32);
+  print((2147483647 + 1) as i64);
+  print((65536 * 65536) as u64);
+  print((4294967295 + 1) as u64);
+  print((0 - 6) as u64);
+  print(((300 + 1) as u8) as i32);
+  print(((70000 + 1) as u16) as i32);
+  print(((40000 + 1) as i16) as i32);
+  print((255 as u8) as i32);
+  return 0;
+}
