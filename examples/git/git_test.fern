@@ -14,6 +14,7 @@ import "./index";
 import "./log";
 import "./objects";
 import "./pack";
+import "./patch";
 
 function unhex(s: string): u8[] {
   let Ok(b) = hex.decode(s) else {
@@ -650,6 +651,19 @@ function test_config(): test.TestOutcome {
   return test.pass();
 }
 
+// The name of a rename in the stat: the common parts of the two paths
+// stay outside the braces.
+function test_rename_names(): test.TestOutcome {
+  let cases = [["dir/sub/file", "dir/moved", "dir/{sub/file => moved}"], ["a/b/c", "a/x/c", "a/{b => x}/c"], ["x/c", "y/c", "{x => y}/c"], ["long.txt", "long2.txt", "long.txt => long2.txt"], ["t\tb", "c", "\"t\\tb\" => c"]];
+  for c in cases {
+    let got = patch.pprint_rename(c[0].bytes(), c[1].bytes());
+    if (got != c[2]) {
+      return test.fail(c[0] + " to " + c[1] + ": " + got);
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
@@ -669,5 +683,6 @@ function main(): i32 {
   r = r.it("a configuration file", test_config);
   r = r.it("the tabs of a message", test_tabs);
   r = r.it("the forms of a date", test_dates);
+  r = r.it("the names of renames in a stat", test_rename_names);
   return r.finish();
 }

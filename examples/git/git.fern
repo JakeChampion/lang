@@ -18,12 +18,14 @@ import "core/cmp";
 import "core/map";
 import "std/crypto";
 import "std/hex";
+import "std/linediff";
 import "./fsck";
 import "./graph";
 import "./index";
 import "./log";
 import "./objects";
 import "./pack";
+import "./patch";
 import "./refs";
 import "./rev";
 import "./revwalk";
@@ -991,8 +993,10 @@ function log_limit(text: string): i32 {
 // The options of log. `form` is a built-in form or "format", and `format`
 // is the text of the format. `terminator` puts a line end after each
 // commit, and its absence puts one between two commits. `diff` is "",
-// "name-only" or "name-status".
-struct LogOpts { limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, decorate: boolean, walk: revwalk.Opts, bad: string }
+// "name-only" or "name-status", and `patch` holds the other forms of the
+// diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
+// the pathspec selects, and `renames` finds the renames of the diff.
+struct LogOpts { limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: boolean, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1035,6 +1039,186 @@ function log_time(text: string): i64 {
   return t;
 }
 
+// The diff with the form `f` on, and without `-s`.
+function with_form(o: LogOpts, d: patch.Opts): LogOpts {
+  return LogOpts { ...o, patch: d, no_output: false };
+}
+
+// The parts of `--stat=WIDTH,NAME-WIDTH,COUNT`.
+function stat_value(d: patch.Opts, v: string): patch.Opts {
+  let parts = v.split(",");
+  let out = d;
+  if (parts.len() > 0 && parts[0].len() > 0) {
+    out = patch.Opts { ...out, stat_width: log_limit(parts[0]) };
+  }
+  if (parts.len() > 1 && parts[1].len() > 0) {
+    out = patch.Opts { ...out, stat_name_width: log_limit(parts[1]) };
+  }
+  if (parts.len() > 2 && parts[2].len() > 0) {
+    out = patch.Opts { ...out, stat_count: log_limit(parts[2]) };
+  }
+  return out;
+}
+
+// Reads the option of the diff at `i`, and gives the count of arguments
+// that it takes, or 0 when it is not an option of the diff.
+function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
+  let x = argv[i];
+  let d = o.patch;
+  let algo = d.algo;
+  if (x == "-p" || x == "-u" || x == "--patch") {
+    return (with_form(o, patch.Opts { ...d, patch: true }), 1);
+  }
+  if (x == "-s" || x == "--no-patch") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, patch: false, stat: false, numstat: false, shortstat: false, summary: false }, diff: "", no_output: true }, 1);
+  }
+  if (x == "--stat") {
+    return (with_form(o, patch.Opts { ...d, stat: true }), 1);
+  }
+  if (x.starts_with("--stat=")) {
+    return (with_form(o, stat_value(patch.Opts { ...d, stat: true }, objects.part(x, 7, x.len()))), 1);
+  }
+  if (x == "--numstat") {
+    return (with_form(o, patch.Opts { ...d, numstat: true }), 1);
+  }
+  if (x == "--shortstat") {
+    return (with_form(o, patch.Opts { ...d, shortstat: true }), 1);
+  }
+  if (x == "--summary") {
+    return (with_form(o, patch.Opts { ...d, summary: true }), 1);
+  }
+  if (x == "--patch-with-stat") {
+    return (with_form(o, patch.Opts { ...d, patch: true, stat: true }), 1);
+  }
+  if (x.starts_with("-U") || x.starts_with("--unified=")) {
+    let v = if (x.starts_with("-U")) { objects.part(x, 2, x.len()) } else { objects.part(x, 10, x.len()) };
+    let n = log_number(v);
+    if (v.len() > 0 && n < 0) {
+      return (LogOpts { ...o, bad: "--unified expects a numerical value" }, 1);
+    }
+    return (with_form(o, patch.Opts { ...d, patch: true, context: if (v.len() > 0) { n } else { d.context } }), 1);
+  }
+  if (x == "--no-prefix") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, src: "", dst: "" } }, 1);
+  }
+  if (x == "--default-prefix") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, src: "a/", dst: "b/" } }, 1);
+  }
+  if (x == "--minimal") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, algo: linediff.Options { ...algo, minimal: true } } }, 1);
+  }
+  if (x == "--patience") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, algo: linediff.Options { ...algo, algorithm: linediff.PATIENCE } } }, 1);
+  }
+  if (x == "--histogram") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, algo: linediff.Options { ...algo, algorithm: linediff.HISTOGRAM } } }, 1);
+  }
+  if (x == "--indent-heuristic" || x == "--no-indent-heuristic") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, algo: linediff.Options { ...algo, indent_heuristic: x == "--indent-heuristic" } } }, 1);
+  }
+  if (x == "--full-index") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, full_index: true } }, 1);
+  }
+  if (x == "-a" || x == "--text") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, text: true } }, 1);
+  }
+  if (x == "--full-diff") {
+    return (LogOpts { ...o, full_diff: true }, 1);
+  }
+  if (x == "--no-renames") {
+    return (LogOpts { ...o, renames: false }, 1);
+  }
+  if (x == "-M" || x == "--find-renames") {
+    return (LogOpts { ...o, renames: true }, 1);
+  }
+  for name in ["--src-prefix", "--dst-prefix", "--diff-algorithm", "--inter-hunk-context", "--stat-width", "--stat-name-width", "--stat-graph-width", "--stat-count"] {
+    let (v, taken) = option_value(argv, i, name);
+    if (taken > 0) {
+      if (name == "--src-prefix") {
+        return (LogOpts { ...o, patch: patch.Opts { ...d, src: v } }, taken);
+      }
+      if (name == "--dst-prefix") {
+        return (LogOpts { ...o, patch: patch.Opts { ...d, dst: v } }, taken);
+      }
+      if (name == "--diff-algorithm") {
+        let a = diff_algorithm(algo, v);
+        if (a.algorithm < 0) {
+          return (LogOpts { ...o, bad: "option diff-algorithm accepts \"myers\", \"minimal\", \"patience\" and \"histogram\"" }, taken);
+        }
+        return (LogOpts { ...o, patch: patch.Opts { ...d, algo: a } }, taken);
+      }
+      let n = log_limit(v);
+      if (name == "--inter-hunk-context") {
+        return (LogOpts { ...o, patch: patch.Opts { ...d, interhunk: n } }, taken);
+      }
+      let st = patch.Opts { ...d, stat: true };
+      if (name == "--stat-width") {
+        return (with_form(o, patch.Opts { ...st, stat_width: n }), taken);
+      }
+      if (name == "--stat-name-width") {
+        return (with_form(o, patch.Opts { ...st, stat_name_width: n }), taken);
+      }
+      if (name == "--stat-graph-width") {
+        return (with_form(o, patch.Opts { ...st, stat_graph_width: n }), taken);
+      }
+      return (with_form(o, patch.Opts { ...st, stat_count: n }), taken);
+    }
+  }
+  return (o, 0);
+}
+
+// The options of the diff that the configuration sets.
+function diff_config(r: refs.Repo, d: patch.Opts): patch.Opts {
+  let c = r.config;
+  let out = d;
+  if (c.flag("diff.noprefix", false)) {
+    out = patch.Opts { ...out, src: "", dst: "" };
+  }
+  if let Some(v) = c.get("diff.context") {
+    if (log_number(v) >= 0) {
+      out = patch.Opts { ...out, context: log_number(v) };
+    }
+  }
+  if let Some(v) = c.get("diff.interhunkcontext") {
+    if (log_number(v) >= 0) {
+      out = patch.Opts { ...out, interhunk: log_number(v) };
+    }
+  }
+  if let Some(v) = c.get("diff.algorithm") {
+    let a = diff_algorithm(out.algo, v);
+    if (a.algorithm >= 0) {
+      out = patch.Opts { ...out, algo: a };
+    }
+  }
+  out = patch.Opts { ...out, algo: linediff.Options { ...out.algo, indent_heuristic: c.flag("diff.indentheuristic", true) } };
+  if let Some(v) = c.get("diff.statnamewidth") {
+    out = patch.Opts { ...out, stat_name_width: log_limit(v) };
+  }
+  if let Some(v) = c.get("diff.statgraphwidth") {
+    out = patch.Opts { ...out, stat_graph_width: log_limit(v) };
+  }
+  return out;
+}
+
+// The search that `--diff-algorithm=NAME` selects, with an algorithm of
+// -1 for a name that git does not know.
+function diff_algorithm(a: linediff.Options, name: string): linediff.Options {
+  let n = name.to_ascii_lower();
+  if (n == "myers" || n == "default") {
+    return linediff.Options { ...a, algorithm: linediff.MYERS };
+  }
+  if (n == "minimal") {
+    return linediff.Options { ...a, algorithm: linediff.MYERS, minimal: true };
+  }
+  if (n == "patience") {
+    return linediff.Options { ...a, algorithm: linediff.PATIENCE };
+  }
+  if (n == "histogram") {
+    return linediff.Options { ...a, algorithm: linediff.HISTOGRAM };
+  }
+  return linediff.Options { ...a, algorithm: -1 };
+}
+
 // Reads the option at `i`, and gives the count of arguments that it takes,
 // or 0 when it is not an option of log.
 function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (LogOpts, GrepArgs, i32) {
@@ -1055,7 +1239,7 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
     } else if (x == "--graph") {
       o = LogOpts { ...o, graph: true, walk: revwalk.Opts { ...w, rewrite: true, topo: true } };
     } else if (x == "--name-only" || x == "--name-status") {
-      o = LogOpts { ...o, diff: objects.part(x, 2, x.len()) };
+      o = LogOpts { ...o, diff: objects.part(x, 2, x.len()), names_twice: o.names_twice || o.diff.len() > 0 && o.diff != objects.part(x, 2, x.len()) || o.no_output };
     } else if (x == "--first-parent") {
       o = LogOpts { ...o, walk: revwalk.Opts { ...w, first_parent: true } };
     } else if (x == "--topo-order") {
@@ -1098,6 +1282,10 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
       o = LogOpts { ...o, decorate: false };
     }
     return (o, g, 1);
+  }
+  let (od, dtaken) = diff_option(o, argv, i);
+  if (dtaken > 0) {
+    return (od, g, dtaken);
   }
   if (x == "-n" && i + 1 < argv.len()) {
     return (LogOpts { ...o, limit: log_limit(argv[i + 1]) }, g, 2);
@@ -1218,12 +1406,12 @@ function decorations_of(r: refs.Repo, s: store.Store): (store.Store, Map[string,
   return (st, by);
 }
 
-// The lines of `--name-only` or `--name-status` for the commit `c`
-// against its first parent: no lines for a merge, unless the walk follows
-// the first parents only.
-function name_lines(st: store.Store, c: log.Commit, parents: string[], o: LogOpts): (store.Store, string) {
+// The changes of the commit `c` against its first parent, with the
+// renames: none for a merge, unless the walk follows the first parents
+// only. With `--full-diff` the changes are not limited to the pathspec.
+function commit_changes(st: store.Store, c: log.Commit, parents: string[], o: LogOpts): (store.Store, treediff.Change[]) {
   if (parents.len() > 1 && !o.walk.first_parent) {
-    return (st, "");
+    return (st, []);
   }
   let s = st;
   let base = "";
@@ -1234,8 +1422,16 @@ function name_lines(st: store.Store, c: log.Commit, parents: string[], o: LogOpt
       base = log.commit_of(parents[0], p.body).tree;
     }
   }
-  let (after, found) = treediff.changes(s, base, c.tree, o.walk.items);
-  let (renamed, changes) = treediff.renames(after, found);
+  let items = if (o.full_diff) { [] } else { o.walk.items };
+  let (after, found) = treediff.changes(s, base, c.tree, items);
+  if (!o.renames) {
+    return (after, found);
+  }
+  return treediff.renames(after, found);
+}
+
+// The lines of `--name-only` or `--name-status`.
+function name_lines(changes: treediff.Change[], o: LogOpts): string {
   let out = "";
   for ch in changes {
     let path = unsafe { string_from_bytes_unchecked(objects.quoted(ch.path)) };
@@ -1249,7 +1445,7 @@ function name_lines(st: store.Store, c: log.Commit, parents: string[], o: LogOpt
       out += status + "\t" + path + "\n";
     }
   }
-  return (renamed, out);
+  return out;
 }
 
 // The pathspec of the paths `args`, from the current directory, or the
@@ -1417,7 +1613,7 @@ function graph_pad(o: LogOpts, sh: Shown): (Shown, string) {
 }
 
 // The text of one commit, as `show_log` of git prints it, and its diff.
-function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context, sh_in: Shown): (store.Store, string, Shown) {
+function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context, least: i32, sh_in: Shown): (store.Store, string, Shown) {
   let s = st;
   let sh = sh_in;
   let out = "";
@@ -1468,23 +1664,50 @@ function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context,
     out += "\n";
   }
   sh = Shown { ...sh, missing: missing };
+  let diffs = !o.no_output && patch.any(o.patch);
+  if (o.diff.len() == 0 && !diffs) {
+    return (s, out, sh);
+  }
+  let (after, changes) = commit_changes(s, c, ctx.parents, o);
+  s = after;
+  if (changes.len() == 0) {
+    return (s, out, sh);
+  }
+  if (o.form != "oneline" && !empty) {
+    let (sh3, p) = graph_pad(o, sh);
+    sh = sh3;
+    let dashes = o.diff.len() == 0 && o.patch.patch && o.patch.stat;
+    out += p + (if (dashes) { "---" } else { "" }) + "\n";
+  }
   if (o.diff.len() > 0) {
-    let (after, names) = name_lines(s, c, ctx.parents, o);
-    s = after;
-    if (names.len() > 0) {
-      if (o.form != "oneline" && !empty) {
-        let (sh3, p) = graph_pad(o, sh);
-        sh = sh3;
-        out += p + "\n";
-      }
-      for line in names.split("\n") {
-        if (line.len() > 0) {
-          let (sh4, p) = graph_pad(o, sh);
-          sh = sh4;
-          out += p + line + "\n";
-        }
+    for line in name_lines(changes, o).split("\n") {
+      if (line.len() > 0) {
+        let (sh4, p) = graph_pad(o, sh);
+        sh = sh4;
+        out += p + line + "\n";
       }
     }
+    return (s, out, sh);
+  }
+  // The graph lines that the first calls of the diff take, for the width
+  // of the stat.
+  let widths: i32[] = [];
+  let ahead = sh;
+  for k in 0..changes.len() + 2 {
+    let (sh5, p) = graph_pad(o, ahead);
+    ahead = sh5;
+    widths = widths.append(p.len());
+  }
+  let (s5, text) = patch.render(s, changes, o.patch, least, (k: i32): i32 => widths[k.min(widths.len() - 1)]);
+  s = s5;
+  let pads: string[] = [];
+  for k in 0..text.calls {
+    let (sh6, p) = graph_pad(o, sh);
+    sh = sh6;
+    pads = pads.append(p);
+  }
+  for i in 0..text.lines.len() {
+    out += pads[text.uses[i]] + text.lines[i] + "\n";
   }
   return (s, out, sh);
 }
@@ -1528,7 +1751,7 @@ function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[st
   w = w2;
   let st = w.g.store;
   let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []) };
-  let (s3, text, after) = log_entry(w.g.store, c, o, ctx, sh);
+  let (s3, text, after) = log_entry(w.g.store, c, o, ctx, least, sh);
   return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s3 } }, text, after);
 }
 
@@ -1538,8 +1761,9 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", decorate: false, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: false, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
+  o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: r.config.flag("diff.renames", true) };
   let dashdash = -1;
   for k in 0..argv.len() {
     if (dashdash < 0 && argv[k] == "--") {
@@ -1624,6 +1848,9 @@ function log_command(argv: string[]): i32 {
     }
     named += 1;
     i += 1;
+  }
+  if (o.names_twice) {
+    return fatal("options '--name-only', '--name-status', '--check', and '-s' cannot be used together");
   }
   let items = match (log_items(r, paths)) {
     Ok(list) => list,

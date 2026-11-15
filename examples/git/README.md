@@ -63,6 +63,17 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `--name-status` find renames as git does. A tab and a wide character in
   a message take the columns that git gives them.
 
+  The diff of each commit is `-p`, `--stat`, `--numstat`, `--shortstat`,
+  `--summary` or `--patch-with-stat`, with the bytes of git. The patch
+  has the header lines of git, the renames with their similarity, the
+  changes of mode, and the line for a binary file. The hunks come from
+  `std/linediff`. It has the Myers diff of xdiff with its heuristics and
+  the indent heuristic, `--minimal`, `--patience`, `--histogram` and
+  `--diff-algorithm=`. The other options are `-U<n>`,
+  `--inter-hunk-context=`, `--no-prefix`, `--src-prefix=`,
+  `--dst-prefix=`, `--full-index`, `--text`, `--full-diff`,
+  `--no-renames`, `-s`, and the widths and the count of `--stat`.
+
 - `index-pack` makes the index of a packfile (version 1 or 2) and its
   reverse index, and prints the checksum of the packfile. It reads the
   packfile from a file or from the standard input. `--fix-thin` adds the
@@ -116,6 +127,8 @@ The standard output, the messages and the exit status are those of git
 - `revwalk.fern`: the walk of `log`, with its limits and its orders.
 - `treediff.fern`: the changes between two trees, and the renames.
 - `graph.fern`: the graph of `--graph`.
+- `patch.fern`: the diff of a commit: the patch, `--stat`, `--numstat`,
+  `--shortstat` and `--summary`.
 - `log.fern`: the fields of a commit and the text that `log` prints.
 - `date.fern`: the dates that `log` prints and reads.
 - `width.fern`: the column width of a character (from `unicode-width.h`).
@@ -127,10 +140,6 @@ The standard output, the messages and the exit status are those of git
   `commit-graphs/`) and its changed-path filters. The port reads each
   commit from the store. git walks with the generation numbers of a
   commit graph, and the port does not.
-
-- The diff of `log`: `-p`, `--stat` and the other forms of a patch. A
-  patch must have the bytes of the diff of git. The engine of
-  `diffutils/` does not give the hunks of the xdiff of git yet.
 
 - These options of `log`: `--follow`, `-S` and `-G`, `--cherry-pick`,
   `--left-right`, `--boundary`, `--ancestry-path`,
@@ -231,6 +240,10 @@ count of bytes. A worker of `std/worker` makes the names of its part.
 - `TestSelfHostExampleGitLog` runs 121 forms of `log`, and
   `TestSelfHostExampleGitLogRandom` runs them on a random history with
   merges and renames.
+
+- `TestSelfHostExampleGitDiff` runs 64 forms of the diff of `log` on a
+  repository with each kind of change, and the patches of random edits
+  of code with each search of xdiff.
 
 - `TestSelfHostExampleGitMultiPackIndex` changes the multi-pack index, and
   the port must read the objects through it as git does.
