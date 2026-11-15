@@ -999,7 +999,62 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 					gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
 				}
 			}
+			gitCompareAttributes(t, oracle, port, run)
 		})
+	}
+}
+
+// gitCompareAttributes runs log with each form of the attribute
+// whitespace, with the colors of color.diff.SLOT, color.decorate.SLOT and
+// color.grep.SLOT, and with the matches of grep in their colors.
+func gitCompareAttributes(t *testing.T, oracle, port gitTool, run gitRun) {
+	t.Helper()
+	dir := t.TempDir()
+	gitFormsFixture(t, oracle, dir, run)
+	attributes := []string{
+		"f.txt whitespace=-trailing-space,indent-with-non-tab\n", "*.txt -whitespace\n", "*.txt whitespace\n",
+		"*.txt whitespace\nf.txt !whitespace\n", "[attr]loose -whitespace\nf* loose\n", "/renamed.txt whitespace=tab-in-indent\n",
+		"**/f.txt whitespace=cr-at-eol\n", "f.t[xy]t whitespace=-blank-at-eof\n", "code.c whitespace=-space-before-tab\n",
+	}
+	for _, text := range attributes {
+		if err := os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []string{"log --check", "log -p --color", "log -p --color --color-moved"} {
+			gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
+		}
+	}
+	os.MkdirAll(filepath.Join(dir, ".git", "info"), 0o755)
+	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("f.txt whitespace=space-before-tab\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCompare(t, oracle, port, dir, "", "log", "--check")
+	os.Remove(filepath.Join(dir, ".git", "info", "attributes"))
+	os.Remove(filepath.Join(dir, ".gitattributes"))
+	for _, c := range []string{"log --color --grep=word", "log --color --grep=wo.d --author=A --oneline", "log --color --author=A --pretty=fuller",
+		"log --color --committer=C --pretty=full", "log --color --grep=e -i --pretty=fuller", "log --color --grep=e --grep=in", "log --color --grep=E -i -F",
+		"log --color --grep=e --invert-grep", "log --color --grep=^m", "log --color --grep=s --pretty=short", "log --color --grep=a --format=%s%n%b"} {
+		gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
+	}
+	settings := [][]string{{"color.diff.old", "blue"}, {"color.diff.new", "bold yellow"}, {"color.diff.meta", "reverse"}, {"color.diff.frag", "magenta ul"},
+		{"color.diff.func", "green"}, {"color.diff.commit", "cyan bold"}, {"color.diff.whitespace", "blue reverse"}, {"color.diff.context", "dim"},
+		{"color.decorate.branch", "red"}, {"color.decorate.HEAD", "bold blue"}, {"color.decorate.tag", "green"}, {"color.grep.match", "red"},
+		{"color.grep.selected", "green"}}
+	for _, setting := range settings {
+		if _, stderr, code := oracle.run(t, dir, "", "config", setting[0], setting[1]); code != 0 {
+			t.Fatalf("git config %v: %s", setting, stderr)
+		}
+	}
+	for _, c := range []string{"log -p --color --decorate", "log --color --oneline --decorate --all", "log --color --stat", "log --color --check",
+		"log -p --color --word-diff", "log -p --color --color-words", "log -p --color --color-moved", "log --cc --color",
+		"log --color --format=%C(auto)%h%d%x20%s", "log --color --pretty=reference", "log --color --grep=word"} {
+		gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
+	}
+	for _, setting := range [][]string{{"color.diff.whitespace", "normal"}, {"color.diff.plain", "red"}, {"diff.color.old", "green"}, {"color.grep.matchSelected", "blue"}} {
+		if _, stderr, code := oracle.run(t, dir, "", "config", setting[0], setting[1]); code != 0 {
+			t.Fatalf("git config %v: %s", setting, stderr)
+		}
+		gitCompare(t, oracle, port, dir, "", "log", "-p", "--color", "--grep=e")
 	}
 }
 

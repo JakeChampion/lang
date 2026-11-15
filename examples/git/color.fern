@@ -221,3 +221,87 @@ pub function parse(spec: string): Option[string] {
   }
   return if (parts.len() == 0) { Some("") } else { Some("\x1b[" + parts.join(";") + "m") };
 }
+
+// ---- The colors of the slots of `color.diff.SLOT` and `color.decorate.SLOT` ----
+
+// The slots of `color.diff.SLOT` (`color_diff_slots` of git), then those
+// of `color.decorate.SLOT` (`color_decorate_slots`), in order.
+pub const CONTEXT: i32 = 0;
+
+pub const META: i32 = 1;
+
+pub const FRAG: i32 = 2;
+
+pub const OLD: i32 = 3;
+
+pub const NEW: i32 = 4;
+
+pub const COMMIT: i32 = 5;
+
+pub const WHITESPACE: i32 = 6;
+
+pub const FUNC: i32 = 7;
+
+pub const OLD_MOVED_SLOT: i32 = 8;
+
+pub const OLD_MOVED_ALT_SLOT: i32 = 9;
+
+pub const OLD_MOVED_DIM_SLOT: i32 = 10;
+
+pub const OLD_MOVED_ALT_DIM_SLOT: i32 = 11;
+
+pub const NEW_MOVED_SLOT: i32 = 12;
+
+pub const NEW_MOVED_ALT_SLOT: i32 = 13;
+
+pub const NEW_MOVED_DIM_SLOT: i32 = 14;
+
+pub const NEW_MOVED_ALT_DIM_SLOT: i32 = 15;
+
+// The first slot of the decorations: the slot of a decoration of the kind
+// K is DECORATE + K - 1.
+pub const DECORATE: i32 = 22;
+
+const DIFF_SLOTS: string[] = ["context", "meta", "frag", "old", "new", "commit", "whitespace", "func", "oldmoved", "oldmovedalternative", "oldmoveddimmed", "oldmovedalternativedimmed", "newmoved", "newmovedalternative", "newmoveddimmed", "newmovedalternativedimmed", "contextdimmed", "olddimmed", "newdimmed", "contextbold", "oldbold", "newbold"];
+
+const DECORATE_SLOTS: string[] = ["branch", "remotebranch", "tag", "stash", "head", "grafted"];
+
+const DEFAULTS: string[] = ["", BOLD, CYAN, RED, GREEN, YELLOW, BG_RED, "", OLD_MOVED, OLD_MOVED_ALT, MOVED_DIM, MOVED_ALT_DIM, NEW_MOVED, NEW_MOVED_ALT, MOVED_DIM, MOVED_ALT_DIM, "\x1b[2m", "\x1b[2;31m", "\x1b[2;32m", BOLD, "\x1b[1;31m", "\x1b[1;32m", "\x1b[1;32m", "\x1b[1;31m", "\x1b[1;33m", "\x1b[1;35m", "\x1b[1;36m", "\x1b[1;34m"];
+
+// The color of each slot.
+pub struct Palette { slots: string[] }
+
+pub function palette_default(): Palette {
+  return Palette { slots: DEFAULTS };
+}
+
+pub function (p: Palette) get(slot: i32): string {
+  return p.slots[slot];
+}
+
+// The palette with the colors of the keys `names` of the configuration,
+// in their order, with their values. A value that is not a color leaves
+// the color of its slot.
+pub function palette_of(names: string[], values: string[]): Palette {
+  let slots = DEFAULTS;
+  for k in 0..names.len() {
+    let name = names[k];
+    let slot = -1;
+    for i in 0..DIFF_SLOTS.len() {
+      if (name == "color.diff." + DIFF_SLOTS[i] || name == "diff.color." + DIFF_SLOTS[i] || i == CONTEXT && (name == "color.diff.plain" || name == "diff.color.plain")) {
+        slot = i;
+      }
+    }
+    for i in 0..DECORATE_SLOTS.len() {
+      if (name == "color.decorate." + DECORATE_SLOTS[i]) {
+        slot = DECORATE + i;
+      }
+    }
+    if (slot >= 0) {
+      if let Some(code) = parse(values[k]) {
+        slots = slots.with(slot, code);
+      }
+    }
+  }
+  return Palette { slots: slots };
+}

@@ -395,7 +395,8 @@ function colors_of(o: patch.Opts): Colors {
   if (!o.color) {
     return Colors { frag: "", func: "", new_line: "", old: "", context: "", meta: "", reset: "" };
   }
-  return Colors { frag: color.CYAN, func: "", new_line: color.GREEN, old: color.RED, context: "", meta: color.BOLD, reset: color.RESET };
+  let p = o.pal;
+  return Colors { frag: p.get(color.FRAG), func: p.get(color.FUNC), new_line: p.get(color.NEW), old: p.get(color.OLD), context: p.get(color.CONTEXT), meta: p.get(color.META), reset: color.RESET };
 }
 
 // The marks of the parents in a line: `sign` for each bit of `map`.

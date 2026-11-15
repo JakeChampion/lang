@@ -255,7 +255,7 @@ function shorts(name: string): string {
 }
 
 function context_of(c: log.Commit): log.Context {
-  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false, from: "", graph_width: 0, notes: "", notes_shown: false, sig: sig.unsigned() };
+  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false, pal: color.palette_default(), hi: log.no_highlight(), from: "", graph_width: 0, notes: "", notes_shown: false, sig: sig.unsigned() };
 }
 
 // The subject, the body, the built-in forms and the placeholders of a

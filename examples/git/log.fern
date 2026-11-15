@@ -8,6 +8,7 @@ import "./mailmap";
 import "./objects";
 import "./sig";
 import "./width";
+import "../../coreutils/lib/bre";
 
 // A name, an address, the seconds since 1970 and the zone, as `+0100`.
 pub struct Person { name: string, email: string, time: i64, zone: string }
@@ -186,7 +187,7 @@ pub function tabs_expanded(text: string, at: i32, end: i32): string {
 // The lines of the message after the header, from `at`: each line with
 // `indent` spaces, and the tabs expanded with `tabs`. The empty lines at
 // the start go, and `short` stops at the first empty line.
-function remainder(text: string, at_in: i32, indent: i32, tabs: boolean, short: boolean): string {
+function remainder(text: string, at_in: i32, indent: i32, tabs: boolean, short: boolean, ctx: Context): string {
   let at = at_in;
   let out = "";
   let first = true;
@@ -203,10 +204,114 @@ function remainder(text: string, at_in: i32, indent: i32, tabs: boolean, short: 
       }
     }
     first = false;
-    out += " ".repeat(indent) + (if (tabs) { tabs_expanded(text, at, e) } else { objects.part(text, at, e) }) + "\n";
+    out += " ".repeat(indent) + highlighted_line(ctx, text, at, e, tabs) + "\n";
     at = end;
   }
   return out;
+}
+
+// ---- The matches of grep in the text (append_line_with_color of git) ----
+
+// A pattern of grep: its regex, or a fixed text.
+pub struct HiPattern { re: bre.Bre[], fixed: string, icase: boolean }
+
+// The patterns of `--grep`, `--author` and `--committer`, and the colors
+// of `color.grep.selected` and `color.grep.matchSelected`. With no
+// patterns or with `--invert-grep`, there is no color.
+pub struct Highlight { body: HiPattern[], authors: HiPattern[], committers: HiPattern[], line: string, matched: string, invert: boolean }
+
+pub function no_highlight(): Highlight {
+  return Highlight { body: [], authors: [], committers: [], line: "", matched: "", invert: false };
+}
+
+function lower(b: u8): u8 {
+  return if (b >= b'A' && b <= b'Z') { b + 32 } else { b };
+}
+
+// The first match of `p` in the bytes `from` to `to` of `b`, or (-1, -1).
+function find_match(p: HiPattern, b: u8[], from: i32, to: i32): (i32, i32) {
+  if (p.re.len() > 0) {
+    let (s, e) = p.re[0].search_from_bytes(b, from, to);
+    return if (s < 0 || e > to) { (-1, -1) } else { (s, e) };
+  }
+  let n = p.fixed.len();
+  let i = from;
+  while (i + n <= to) {
+    let same = true;
+    let k = 0;
+    while (same && k < n) {
+      same = b[i + k] == p.fixed[k] || p.icase && lower(b[i + k]) == lower(p.fixed[k]);
+      k += 1;
+    }
+    if (same) {
+      return (i, i + n);
+    }
+    i += 1;
+  }
+  return (-1, -1);
+}
+
+function with_color(set: string, text: string): string {
+  return set + text + (if (set.len() > 0) { color.RESET } else { "" });
+}
+
+// The bytes `from` to `to` of `text` with each match of `pats` in its
+// color: the leftmost match of the patterns, and the longest of those.
+pub function highlighted(h: Highlight, pats: HiPattern[], on: boolean, text: string, from: i32, to: i32): string {
+  if (!on || h.invert || pats.len() == 0) {
+    return objects.part(text, from, to);
+  }
+  let b = text.bytes();
+  let out = "";
+  let at = from;
+  let any = false;
+  while (at < to) {
+    let best_s = -1;
+    let best_e = -1;
+    for p in pats {
+      let (s, e) = find_match(p, b, at, to);
+      if (s >= 0 && (best_s < 0 || s < best_s || s == best_s && e > best_e)) {
+        best_s = s;
+        best_e = e;
+      }
+    }
+    if (best_s < 0 || best_s == best_e) {
+      break;
+    }
+    out += with_color(h.line, objects.part(text, at, best_s)) + with_color(h.matched, objects.part(text, best_s, best_e));
+    at = best_e;
+    any = true;
+  }
+  if (!any) {
+    return objects.part(text, from, to);
+  }
+  return out + with_color(h.line, objects.part(text, at, to));
+}
+
+// A line of the message, with its tabs expanded when `tabs` is true, and
+// the matches of `--grep` in their colors: each part between two tabs has
+// its own matches, as in `strbuf_add_tabexpand` of git.
+function highlighted_line(ctx: Context, text: string, at: i32, end: i32, tabs: boolean): string {
+  let h = ctx.hi;
+  if (!tabs) {
+    return highlighted(h, h.body, ctx.color, text, at, end);
+  }
+  let b = text.bytes();
+  let out = "";
+  let from = at;
+  let i = at;
+  while (i < end) {
+    if (b[i] == b'\t') {
+      let w = width.width_of(b, from, i);
+      if (w < 0) {
+        return out + highlighted(h, h.body, ctx.color, text, from, end);
+      }
+      out += highlighted(h, h.body, ctx.color, text, from, i) + " ".repeat(8 - w % 8);
+      from = i + 1;
+    }
+    i += 1;
+  }
+  return out + highlighted(h, h.body, ctx.color, text, from, end);
 }
 
 // The text with no white space at its end.
@@ -226,12 +331,13 @@ function rtrim(text: string): string {
 // the mark of `%m`.
 //
 // `reflog` holds the entry of the reflog of a walk of `--walk-reflogs`.
-// `color` is true when the output has colors, `from` is the parent of the
+// `color` is true when the output has colors, with the colors of `pal`
+// and the matches of grep of `hi`, `from` is the parent of the
 // diff of `-m` or "", and `graph_width` is the width of the graph before
 // the text, which `%<|(N)` counts. `notes` is the text of the notes of
 // the commit when `notes_shown` is true, which `%N` gives. `sig` is the
 // check of the signature of the commit, which `%G?` and the others give.
-pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: Decoration[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string, reflog: ReflogLine[], color: boolean, from: string, graph_width: i32, notes: string, notes_shown: boolean, sig: sig.Check }
+pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: Decoration[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string, reflog: ReflogLine[], color: boolean, pal: color.Palette, hi: Highlight, from: string, graph_width: i32, notes: string, notes_shown: boolean, sig: sig.Check }
 
 // A ref that names a commit, with its kind (`color.DECORATION_LOCAL` and
 // the others). A decoration of `HEAD` that names a branch of the commit
@@ -240,11 +346,11 @@ pub struct Decoration { name: string, kind: i32, branch: string }
 
 // The decorations `ds` between `prefix` and `suffix`, with `, ` between
 // two: `format_decorations` of git.
-pub function decorations_text(ds: Decoration[], with_color: boolean, prefix: string, suffix: string): string {
+pub function decorations_text(ds: Decoration[], with_color: boolean, pal: color.Palette, prefix: string, suffix: string): string {
   if (ds.len() == 0) {
     return "";
   }
-  let commit = if (with_color) { color.YELLOW } else { "" };
+  let commit = if (with_color) { pal.get(color.COMMIT) } else { "" };
   let reset = if (with_color) { color.RESET } else { "" };
   let out = "";
   let before = prefix;
@@ -252,13 +358,13 @@ pub function decorations_text(ds: Decoration[], with_color: boolean, prefix: str
     if (before.len() > 0) {
       out += commit + before + reset;
     }
-    let c = if (with_color) { color.decoration(d.kind) } else { "" };
+    let c = if (!with_color) { "" } else if (d.kind == color.DECORATION_NONE) { color.decoration(d.kind) } else { pal.get(color.DECORATE + d.kind - 1) };
     if (d.kind == color.DECORATION_TAG) {
       out += c + "tag: " + reset;
     }
     out += c + d.name + reset;
     if (d.branch.len() > 0) {
-      out += commit + " -> " + reset + (if (with_color) { color.decoration(color.DECORATION_LOCAL) } else { "" }) + d.branch + reset;
+      out += commit + " -> " + reset + (if (with_color) { pal.get(color.DECORATE + color.DECORATION_LOCAL - 1) } else { "" }) + d.branch + reset;
     }
     before = ", ";
   }
@@ -295,8 +401,10 @@ function shown_parents(ctx: Context, names: string[]): string {
   return out;
 }
 
-function user_line(what: string, p: Person, fuller: boolean): string {
-  return what + ": " + (if (fuller) { "    " } else { "" }) + p.name + " <" + p.email + ">\n";
+function user_line(ctx: Context, what: string, p: Person, fuller: boolean): string {
+  let id = p.name + " <" + p.email + ">";
+  let h = ctx.hi;
+  return what + ": " + (if (fuller) { "    " } else { "" }) + highlighted(h, if (what == "Author") { h.authors } else { h.committers }, ctx.color, id, 0, id.len()) + "\n";
 }
 
 // The header lines of a built-in form, after the `commit` line.
@@ -312,14 +420,14 @@ function header(c: Commit, ctx: Context, form: string): string {
   if (ctx.parents.len() > 1) {
     out += "Merge:" + shown_parents(ctx, ctx.parents) + "\n";
   }
-  out += user_line("Author", shown(c.author, ctx), form == "fuller");
+  out += user_line(ctx, "Author", shown(c.author, ctx), form == "fuller");
   if (form == "medium") {
     out += "Date:   " + date.show(c.author.time, c.author.zone_number(), ctx.dates) + "\n";
   } else if (form == "fuller") {
     out += "AuthorDate: " + date.show(c.author.time, c.author.zone_number(), ctx.dates) + "\n";
   }
   if (form == "full" || form == "fuller") {
-    out += user_line("Commit", shown(c.committer, ctx), form == "fuller");
+    out += user_line(ctx, "Commit", shown(c.committer, ctx), form == "fuller");
     if (form == "fuller") {
       out += "CommitDate: " + date.show(c.committer.time, c.committer.zone_number(), ctx.dates) + "\n";
     }
@@ -344,7 +452,7 @@ pub function pretty(c: Commit, ctx: Context, form: string): string {
     return rtrim(s);
   }
   let tabs = form == "medium" || form == "full" || form == "fuller";
-  let text = header(c, ctx, form) + "\n" + remainder(m, 0, 4, tabs, form == "short");
+  let text = header(c, ctx, form) + "\n" + remainder(m, 0, 4, tabs, form == "short", ctx);
   return rtrim(text) + "\n";
 }
 
@@ -354,7 +462,7 @@ pub function first_line(c: Commit, ctx: Context, form: string, with_parents: boo
   let abbrev = ctx.abbrev;
   let name = if (ctx.abbrev_commit) { abbrev(c.hash) } else { c.hash };
   let mark = if (ctx.mark.len() > 0) { ctx.mark + " " } else { "" };
-  let out = if (ctx.color) { color.YELLOW } else { "" };
+  let out = if (ctx.color) { ctx.pal.get(color.COMMIT) } else { "" };
   out += if (form == "oneline") { mark + name } else { "commit " + mark + name };
   if (with_parents) {
     for p in ctx.parents {
@@ -367,13 +475,13 @@ pub function first_line(c: Commit, ctx: Context, form: string, with_parents: boo
   if (ctx.color) {
     out += color.RESET;
   }
-  return out + decorations_text(ctx.decorations, ctx.color, " (", ")");
+  return out + decorations_text(ctx.decorations, ctx.color, ctx.pal, " (", ")");
 }
 
 // The form `reference`: `abbrev (subject, date)`.
 pub function reference(c: Commit, ctx: Context): string {
   let abbrev = ctx.abbrev;
-  return commit_color(abbrev(c.hash), ctx.color) + " (" + subject(c.message) + ", " + date.show(c.author.time, c.author.zone_number(), date.Mode { kind: date.SHORT, local: false, format: "" }) + ")";
+  return commit_color(ctx.pal, abbrev(c.hash), ctx.color) + " (" + subject(c.message) + ", " + date.show(c.author.time, c.author.zone_number(), date.Mode { kind: date.SHORT, local: false, format: "" }) + ")";
 }
 
 // ---- The placeholders of a format ----
@@ -447,8 +555,8 @@ function person_field(raw: Person, letter: u8, ctx: Context): Option[string] {
   };
 }
 
-function commit_color(text: string, auto: boolean): string {
-  return if (auto) { color.YELLOW + text + color.RESET } else { text };
+function commit_color(pal: color.Palette, text: string, auto: boolean): string {
+  return if (auto) { pal.get(color.COMMIT) + text + color.RESET } else { text };
 }
 
 // The text of the color placeholder at `at` (the `C` after a `%`), and the
@@ -575,15 +683,15 @@ function placeholder(c: Commit, ctx: Context, format: string, at: i32, auto: boo
     return ("", 0);
   }
   return match (letter) {
-    b'H' => (commit_color(c.hash, auto), 1),
-    b'h' => (commit_color(abbrev(c.hash), auto), 1),
+    b'H' => (commit_color(ctx.pal, c.hash, auto), 1),
+    b'h' => (commit_color(ctx.pal, abbrev(c.hash), auto), 1),
     b'T' => (c.tree, 1),
     b't' => (abbrev(c.tree), 1),
     b'P' => (ctx.parents.join(" "), 1),
     b'p' => (ctx.parents.map((p: string): string => abbrev(p)).join(" "), 1),
     b'm' => (ctx.side, 1),
-    b'd' => (decorations_text(ctx.decorations, auto, " (", ")"), 1),
-    b'D' => (decorations_text(ctx.decorations, auto, "", ""), 1),
+    b'd' => (decorations_text(ctx.decorations, auto, ctx.pal, " (", ")"), 1),
+    b'D' => (decorations_text(ctx.decorations, auto, ctx.pal, "", ""), 1),
     b's' => (subject(c.message), 1),
     b'f' => {
       let first = skip_blank(c.message, 0);

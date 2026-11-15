@@ -1,0 +1,450 @@
+// The attributes of paths (attr.c of git): the lines of `.gitattributes`
+// in the worktree, of `$GIT_DIR/info/attributes` and of the file of
+// `core.attributesFile`, and the value of an attribute for a path, with
+// the macros.
+import "std/array";
+import "std/string";
+import "core/map";
+import "./objects";
+import "./refs";
+
+// The value of an attribute: set, unset with `-`, back to unspecified
+// with `!`, not given, or a text after `=`.
+pub const SET: string = "\x01set";
+
+pub const UNSET: string = "\x01unset";
+
+pub const UNSPECIFIED: string = "\x01unspecified";
+
+// One line of a file of attributes: the pattern and its parts as
+// `parse_path_pattern` of git gives them, the directory of the file, and
+// the attributes with their values. A macro line has no pattern.
+struct Line { macro: string, pattern: string, prefix: i32, nodir: boolean, dir_only: boolean, ends_with: boolean, base: string, names: string[], values: string[] }
+
+// The files of attributes of a worktree, from the lowest priority to the
+// highest: the global file and the file at the top of the worktree; the
+// files of the directories below are read for each path. `info` has the
+// highest priority.
+pub struct Attrs { top: string, global: Line[], root: Line[], info: Line[], macros: Map[string, Line] }
+
+function is_blank(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\r' || b == b'\n';
+}
+
+function is_special(b: u8): boolean {
+  return b == b'*' || b == b'?' || b == b'[' || b == b'\\';
+}
+
+// The lines of the attributes of `text`, in the directory `base` ("" for
+// the top). `macros` allows the lines `[attr]NAME`.
+function parse(text: string, base: string, macros: boolean): Line[] {
+  let out: Line[] = [];
+  for raw in text.split("\n") {
+    let line = raw.bytes();
+    let at = 0;
+    while (at < line.len() && is_blank(line[at])) {
+      at += 1;
+    }
+    if (at >= line.len() || line[at] == b'#') {
+      continue;
+    }
+    let start = at;
+    while (at < line.len() && !is_blank(line[at])) {
+      at += 1;
+    }
+    let name = objects.part(raw, start, at);
+    let macro = "";
+    if (name.starts_with("[attr]") && name.len() > 6) {
+      if (!macros) {
+        continue;
+      }
+      macro = objects.part(name, 6, name.len());
+    }
+    let names: string[] = [];
+    let values: string[] = [];
+    while (at < line.len()) {
+      while (at < line.len() && is_blank(line[at])) {
+        at += 1;
+      }
+      if (at >= line.len()) {
+        break;
+      }
+      let s = at;
+      while (at < line.len() && !is_blank(line[at])) {
+        at += 1;
+      }
+      let state = objects.part(raw, s, at);
+      if (state.starts_with("-")) {
+        names = names.append(objects.part(state, 1, state.len()));
+        values = values.append(UNSET);
+      } else if (state.starts_with("!")) {
+        names = names.append(objects.part(state, 1, state.len()));
+        values = values.append(UNSPECIFIED);
+      } else if let Some(eq) = state.index_of("=") {
+        names = names.append(objects.part(state, 0, eq));
+        values = values.append(objects.part(state, eq + 1, state.len()));
+      } else {
+        names = names.append(state);
+        values = values.append(SET);
+      }
+    }
+    if (macro.len() > 0) {
+      out = out.append(Line { macro: macro, pattern: "", prefix: 0, nodir: false, dir_only: false, ends_with: false, base: base, names: names, values: values });
+      continue;
+    }
+    if (name.starts_with("!")) {
+      continue;
+    }
+    let p = name;
+    let dir_only = p.ends_with("/");
+    if (dir_only) {
+      p = objects.part(p, 0, p.len() - 1);
+    }
+    let prefix = 0;
+    while (prefix < p.len() && !is_special(p[prefix])) {
+      prefix += 1;
+    }
+    let ends_with = p.starts_with("*") && objects.part(p, 1, p.len()).bytes().all((b: u8): boolean => !is_special(b));
+    out = out.append(Line { macro: "", pattern: p, prefix: prefix, nodir: !p.contains("/"), dir_only: dir_only, ends_with: ends_with, base: base, names: names, values: values });
+  }
+  return out;
+}
+
+function read_lines(path: string, base: string, macros: boolean): Line[] {
+  return match (read_file(path)) {
+    Ok(text) => parse(text, base, macros),
+    Err(_) => [],
+  };
+}
+
+// The files of attributes of the repository `r`.
+pub function load(r: refs.Repo): Attrs {
+  let global_path = match (r.config.get("core.attributesfile")) {
+    Some(p) => if (p.starts_with("~/")) { env("HOME").unwrap_or("") + objects.part(p, 1, p.len()) } else { p },
+    None => match (env("XDG_CONFIG_HOME")) {
+      Some(x) => if (x.len() > 0) { x + "/git/attributes" } else { env("HOME").unwrap_or("") + "/.config/git/attributes" },
+      None => env("HOME").unwrap_or("") + "/.config/git/attributes",
+    },
+  };
+  let global = read_lines(global_path, "", true);
+  let root = if (r.top.len() > 0) { read_lines(r.top + "/.gitattributes", "", true) } else { [] };
+  let info = read_lines(r.common + "/info/attributes", "", true);
+  let macros: Map[string, Line] = Map { };
+  macros = macros.insert("binary", Line { macro: "binary", pattern: "", prefix: 0, nodir: false, dir_only: false, ends_with: false, base: "", names: ["diff", "merge", "text"], values: [UNSET, UNSET, UNSET] });
+  for l in global.concat(root).concat(info) {
+    if (l.macro.len() > 0) {
+      macros = macros.insert(l.macro, l);
+    }
+  }
+  return Attrs { top: r.top, global: global, root: root, info: info, macros: macros };
+}
+
+// True when the line `l` matches `path`, a path of a file from the top:
+// `path_matches` of git.
+function matches(l: Line, path: string): boolean {
+  if (l.macro.len() > 0 || l.dir_only) {
+    return false;
+  }
+  if (l.nodir) {
+    let slash = path.last_index_of("/").unwrap_or(-1);
+    let name = objects.part(path, slash + 1, path.len());
+    if (l.prefix == l.pattern.len()) {
+      return name == l.pattern;
+    }
+    if (l.ends_with) {
+      return name.ends_with(objects.part(l.pattern, 1, l.pattern.len()));
+    }
+    return wildmatch(l.pattern.bytes(), 0, name.bytes(), 0, false) == MATCH;
+  }
+  let pattern = l.pattern;
+  let prefix = l.prefix;
+  if (pattern.starts_with("/")) {
+    pattern = objects.part(pattern, 1, pattern.len());
+    prefix -= 1;
+  }
+  let baselen = l.base.len();
+  if (path.len() < baselen + 1 || baselen > 0 && (path[baselen] != b'/' || !path.starts_with(l.base))) {
+    return false;
+  }
+  let name = if (baselen > 0) { objects.part(path, baselen + 1, path.len()) } else { path };
+  if (prefix > 0) {
+    if (prefix > name.len() || objects.part(pattern, 0, prefix) != objects.part(name, 0, prefix)) {
+      return false;
+    }
+    if (prefix == pattern.len() && prefix == name.len()) {
+      return true;
+    }
+    pattern = objects.part(pattern, prefix, pattern.len());
+    name = objects.part(name, prefix, name.len());
+  }
+  return wildmatch(pattern.bytes(), 0, name.bytes(), 0, true) == MATCH;
+}
+
+// The results of `dowild` of git.
+const MATCH: i32 = 0;
+
+const NO_MATCH: i32 = 1;
+
+const ABORT_ALL: i32 = -1;
+
+const ABORT_TO_STARSTAR: i32 = -2;
+
+function at_or_nul(b: u8[], i: i32): u8 {
+  return if (i < b.len()) { b[i] } else { 0 as u8 };
+}
+
+function class_matches(name: string, c: u8): (boolean, boolean) {
+  let alpha = c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
+  let digit = c >= b'0' && c <= b'9';
+  return match (name) {
+    "alnum" => (true, alpha || digit),
+    "alpha" => (true, alpha),
+    "blank" => (true, c == b' ' || c == b'\t'),
+    "cntrl" => (true, c < 32 || c == 127),
+    "digit" => (true, digit),
+    "graph" => (true, c > 32 && c < 127),
+    "lower" => (true, c >= b'a' && c <= b'z'),
+    "print" => (true, c >= 32 && c < 127),
+    "punct" => (true, c > 32 && c < 127 && !alpha && !digit),
+    "space" => (true, c == b' ' || c >= 9 && c <= 13),
+    "upper" => (true, c >= b'A' && c <= b'Z'),
+    "xdigit" => (true, digit || c >= b'a' && c <= b'f' || c >= b'A' && c <= b'F'),
+    _ => (false, false),
+  };
+}
+
+// The match of the pattern `p` from `pi` with the text `t` from `ti`:
+// `dowild` of git, where `pathname` is WM_PATHNAME.
+function wildmatch(p: u8[], pi_in: i32, t: u8[], ti_in: i32, pathname: boolean): i32 {
+  let pi = pi_in;
+  let ti = ti_in;
+  while (pi < p.len()) {
+    let pc = p[pi];
+    let tc = at_or_nul(t, ti);
+    if (tc == 0 && pc != b'*') {
+      return ABORT_ALL;
+    }
+    if (pc == b'\\') {
+      pi += 1;
+      if (at_or_nul(p, pi) != tc) {
+        return NO_MATCH;
+      }
+    } else if (pc == b'?') {
+      if (pathname && tc == b'/') {
+        return NO_MATCH;
+      }
+    } else if (pc == b'*') {
+      return star(p, pi, t, ti, pathname);
+    } else if (pc == b'[') {
+      let (r, next) = bracket(p, pi, tc, pathname);
+      if (r != MATCH) {
+        return r;
+      }
+      pi = next;
+    } else if (pc != tc) {
+      return NO_MATCH;
+    }
+    pi += 1;
+    ti += 1;
+  }
+  return if (ti < t.len()) { NO_MATCH } else { MATCH };
+}
+
+// The part of `wildmatch` for a `*` at `pi`.
+function star(p: u8[], pi_in: i32, t: u8[], ti_in: i32, pathname: boolean): i32 {
+  let pi = pi_in + 1;
+  let ti = ti_in;
+  let match_slash = !pathname;
+  if (at_or_nul(p, pi) == b'*') {
+    let prev = pi_in - 1;
+    while (at_or_nul(p, pi) == b'*') {
+      pi += 1;
+    }
+    let after = at_or_nul(p, pi);
+    if ((prev < 0 || p[prev] == b'/') && (after == 0 || after == b'/' || after == b'\\' && at_or_nul(p, pi + 1) == b'/')) {
+      if (after == b'/' && wildmatch(p, pi + 1, t, ti, pathname) == MATCH) {
+        return MATCH;
+      }
+      match_slash = true;
+    } else {
+      match_slash = false;
+    }
+  }
+  if (pi >= p.len()) {
+    if (!match_slash) {
+      for k in ti..t.len() {
+        if (t[k] == b'/') {
+          return NO_MATCH;
+        }
+      }
+    }
+    return MATCH;
+  }
+  if (!match_slash && p[pi] == b'/') {
+    let k = ti;
+    while (k < t.len() && t[k] != b'/') {
+      k += 1;
+    }
+    if (k >= t.len()) {
+      return NO_MATCH;
+    }
+    return wildmatch(p, pi + 1, t, k + 1, pathname);
+  }
+  while (ti < t.len()) {
+    let pc = p[pi];
+    if (!is_special(pc)) {
+      while (ti < t.len() && (match_slash || t[ti] != b'/') && t[ti] != pc) {
+        ti += 1;
+      }
+      if (at_or_nul(t, ti) != pc) {
+        return if (match_slash) { ABORT_ALL } else { ABORT_TO_STARSTAR };
+      }
+    }
+    let r = wildmatch(p, pi, t, ti, pathname);
+    if (r != NO_MATCH) {
+      if (!match_slash || r != ABORT_TO_STARSTAR) {
+        return r;
+      }
+    } else if (!match_slash && t[ti] == b'/') {
+      return ABORT_TO_STARSTAR;
+    }
+    ti += 1;
+  }
+  return ABORT_ALL;
+}
+
+// The match of the class `[...]` at `pi` with the byte `tc`, and the place
+// of its `]`.
+function bracket(p: u8[], pi_in: i32, tc: u8, pathname: boolean): (i32, i32) {
+  let pi = pi_in + 1;
+  let pc = at_or_nul(p, pi);
+  let negated = pc == b'!' || pc == b'^';
+  if (negated) {
+    pi += 1;
+    pc = at_or_nul(p, pi);
+  }
+  let prev: u8 = 0;
+  let matched = false;
+  while (true) {
+    if (pc == 0) {
+      return (ABORT_ALL, pi);
+    }
+    if (pc == b'\\') {
+      pi += 1;
+      pc = at_or_nul(p, pi);
+      if (pc == 0) {
+        return (ABORT_ALL, pi);
+      }
+      if (tc == pc) {
+        matched = true;
+      }
+    } else if (pc == b'-' && prev != 0 && at_or_nul(p, pi + 1) != 0 && at_or_nul(p, pi + 1) != b']') {
+      pi += 1;
+      pc = p[pi];
+      if (pc == b'\\') {
+        pi += 1;
+        pc = at_or_nul(p, pi);
+        if (pc == 0) {
+          return (ABORT_ALL, pi);
+        }
+      }
+      if (tc <= pc && tc >= prev) {
+        matched = true;
+      }
+      pc = 0;
+    } else if (pc == b'[' && at_or_nul(p, pi + 1) == b':') {
+      let s = pi + 2;
+      let e = s;
+      while (e < p.len() && p[e] != b']') {
+        e += 1;
+      }
+      if (e >= p.len()) {
+        return (ABORT_ALL, e);
+      }
+      if (e - s - 1 < 0 || p[e - 1] != b':') {
+        if (tc == b'[') {
+          matched = true;
+        }
+      } else {
+        let (known, yes) = class_matches(objects.part_bytes(p, s, e - 1), tc);
+        if (!known) {
+          return (ABORT_ALL, e);
+        }
+        if (yes) {
+          matched = true;
+        }
+        pi = e;
+        pc = 0;
+      }
+    } else if (tc == pc) {
+      matched = true;
+    }
+    prev = pc;
+    pi += 1;
+    pc = at_or_nul(p, pi);
+    if (pc == b']') {
+      break;
+    }
+  }
+  if (matched == negated || pathname && tc == b'/') {
+    return (NO_MATCH, pi);
+  }
+  return (MATCH, pi);
+}
+
+// The lines of the files of attributes of the directories above `path`,
+// below the top, from the top down.
+function dir_lines(a: Attrs, path: string): Line[][] {
+  let out: Line[][] = [];
+  let at = path.index_of("/").unwrap_or(-1);
+  while (at > 0) {
+    let dir = objects.part(path, 0, at);
+    out = out.append(read_lines(a.top + "/" + dir + "/.gitattributes", dir, false));
+    let next = objects.part(path, at + 1, path.len()).index_of("/").unwrap_or(-1);
+    at = if (next < 0) { -1 } else { at + 1 + next };
+  }
+  return out;
+}
+
+// The values that the attributes of `l` give, after those of `known`, with
+// the macros set in it: `fill_one` and `macroexpand_one` of git.
+function fill(a: Attrs, known_in: Map[string, string], l: Line): Map[string, string] {
+  let known = known_in;
+  let i = l.names.len();
+  while (i > 0) {
+    i -= 1;
+    let name = l.names[i];
+    if (!known.contains(name)) {
+      known = known.insert(name, l.values[i]);
+      if (l.values[i] == SET) {
+        if let Some(m) = a.macros.get(name) {
+          known = fill(a, known, m);
+        }
+      }
+    }
+  }
+  return known;
+}
+
+// The value of the attribute `name` for the file `path`, from the top:
+// SET, UNSET, UNSPECIFIED, or its text.
+pub function value_of(a: Attrs, path: string, name: string): string {
+  let stack: Line[][] = [a.global, a.root].concat(dir_lines(a, path)).append(a.info);
+  let known: Map[string, string] = Map { };
+  let k = stack.len();
+  while (k > 0) {
+    k -= 1;
+    let lines = stack[k];
+    let i = lines.len();
+    while (i > 0) {
+      i -= 1;
+      if (matches(lines[i], path)) {
+        known = fill(a, known, lines[i]);
+        if (known.contains(name)) {
+          return known.get_or(name, UNSPECIFIED);
+        }
+      }
+    }
+  }
+  return UNSPECIFIED;
+}

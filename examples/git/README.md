@@ -131,8 +131,13 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `--color`, `--color=WHEN`, `--no-color`, `color.ui` and `color.diff`
   give the output the colors of git. The colors are on the header, the
   decorations, the columns of the graph, the patch and the stat, and
-  `%C` sets them in a format. The patch shows the errors of white space
-  of the default `core.whitespace`.
+  `%C` sets them in a format. `color.diff.SLOT` and `color.decorate.SLOT`
+  set the colors of each slot. The patch shows the errors of white space
+  of `core.whitespace` and of the attribute `whitespace` of
+  `.gitattributes`, `$GIT_DIR/info/attributes` and `core.attributesFile`,
+  with the macros. With colors, the matches of `--grep`, `--author` and
+  `--committer` in the text of a commit have the colors of
+  `color.grep.selected` and `color.grep.matchSelected`, as in git.
 
 - `index-pack` makes the index of a packfile (version 1 or 2) and its
   reverse index, and prints the checksum of the packfile. It reads the
@@ -230,11 +235,6 @@ the git of the machine. With git 2.43, four things are different:
 - These options of `log`: `--remerge-diff`, and `-L`. The signatures
   of `gpg.format=ssh` and `x509`, and the signed tags of a merge
   (`mergetag`) that `--show-signature` shows.
-
-- The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
-  `color.grep`, and the rules of the `whitespace` attribute. The port
-  uses the default colors, and the rules of `core.whitespace` for each
-  path.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.
