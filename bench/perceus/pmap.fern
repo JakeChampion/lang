@@ -3,8 +3,8 @@ pub struct Key { hi: i64, lo: i64 }
 
 pub enum Color { Red, Black }
 
-pub enum Map {
-  Node(Color, Map, Key, i64, Map),
+pub enum PMap {
+  Node(Color, PMap, Key, i64, PMap),
   Leaf,
 }
 
@@ -18,11 +18,11 @@ function compare(a: Key, b: Key): i32 {
   return 0;
 }
 
-function is_red(t: Map): boolean {
+function is_red(t: PMap): boolean {
   return match (t) { Node(Red(), _, _, _, _) => true, _ => false };
 }
 
-function balance_left(l: Map, k: Key, v: i64, r: Map): Map {
+function balance_left(l: PMap, k: Key, v: i64, r: PMap): PMap {
   match (l) {
     Node(_, Node(Red(), lx, kx, vx, rx), ky, vy, ry) => {
       return Node(Red, Node(Black, lx, kx, vx, rx), ky, vy, Node(Black, ry, k, v, r));
@@ -39,7 +39,7 @@ function balance_left(l: Map, k: Key, v: i64, r: Map): Map {
   }
 }
 
-function balance_right(l: Map, k: Key, v: i64, r: Map): Map {
+function balance_right(l: PMap, k: Key, v: i64, r: PMap): PMap {
   match (r) {
     Node(_, Node(Red(), lx, kx, vx, rx), ky, vy, ry) => {
       return Node(Red, Node(Black, l, k, v, lx), kx, vx, Node(Black, rx, ky, vy, ry));
@@ -56,7 +56,7 @@ function balance_right(l: Map, k: Key, v: i64, r: Map): Map {
   }
 }
 
-function ins(t: Map, k: Key, v: i64): Map {
+function ins(t: PMap, k: Key, v: i64): PMap {
   match (t) {
     Node(Red(), l, kx, vx, r) => {
       let c = compare(k, kx);
@@ -90,16 +90,16 @@ function ins(t: Map, k: Key, v: i64): Map {
   }
 }
 
-function set_black(t: Map): Map {
+function set_black(t: PMap): PMap {
   return match (t) { Node(_, l, k, v, r) => Node(Black, l, k, v, r), _ => t };
 }
 
-pub function insert(t: Map, k: Key, v: i64): Map {
+pub function insert(t: PMap, k: Key, v: i64): PMap {
   return set_black(ins(t, k, v));
 }
 
 // The value at `k`, or -1.
-pub function find(t: Map, k: Key): i64 {
+pub function find(t: PMap, k: Key): i64 {
   return match (t) {
     Node(_, l, kx, vx, r) => {
       let c = compare(k, kx);
