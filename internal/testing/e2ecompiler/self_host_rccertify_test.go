@@ -144,6 +144,24 @@ function pick(name: string): Case {
         let b2: ssa.SBlock = block(2, [0, 1], [call(4, "__fern_rc_dec", [0]), const_int(5, 0)], ret(5));
         return Case { f: func(1, 6, [b0, b1, b2]), modes: [counted], returns_unit: false };
     }
+    if (name == "unique-child-two-tested-edges") {
+        // Both edges into b2 leave a branch that tested v0 unique, so b2 owns
+        // the child of v0 as a block with one tested edge does.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0])], brif(1, 2, 1));
+        let b1: ssa.SBlock = block(1, [0], [call(6, "__fern_rc_is_unique", [0])], brif(6, 2, 3));
+        let b2: ssa.SBlock = block(2, [0, 1], [counted_load(2, 0, 8), call(3, "__fern_rc_dec", [2])], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [call(4, "__fern_rc_dec", [0]), const_int(5, 0)], ret(5));
+        return Case { f: func(1, 7, [b0, b1, b2, b3]), modes: [counted], returns_unit: false };
+    }
+    if (name == "unique-child-one-untested-edge") {
+        // The edge from b1 branches on a word that tests nothing, so b2 does
+        // not own the child.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0])], brif(1, 2, 1));
+        let b1: ssa.SBlock = block(1, [0], [const_int(6, 1)], brif(6, 2, 3));
+        let b2: ssa.SBlock = block(2, [0, 1], [counted_load(2, 0, 8), call(3, "__fern_rc_dec", [2])], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [call(4, "__fern_rc_dec", [0]), const_int(5, 0)], ret(5));
+        return Case { f: func(1, 7, [b0, b1, b2, b3]), modes: [counted], returns_unit: false };
+    }
     if (name == "shared-child-released") {
         let insts: ssa.SInst[] = [param(0), counted_load(1, 0, 8), call(2, "__fern_rc_dec", [1]), call(3, "__fern_rc_dec", [0]), const_int(4, 0)];
         return Case { f: one_block(1, 5, insts, ret(4)), modes: [counted], returns_unit: false };
@@ -612,6 +630,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"address-into-a-borrow-stored", nil, 0, ""},
 		{"address-into-a-released-box-stored", nil, 0, ""},
 		{"unique-child-released", nil, 0, ""},
+		{"unique-child-two-tested-edges", nil, 0, ""},
+		{"unique-child-one-untested-edge", []string{"spent without a unit of v2"}, 0, ""},
 		{"shared-child-released", []string{"spent without a unit of v1"}, 0, ""},
 		{"shell-slot-read-twice", nil, 0, ""},
 		{"shell-payload-kept", []string{"of v1"}, 0, ""},

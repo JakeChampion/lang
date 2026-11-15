@@ -1,0 +1,36 @@
+// Each tree holds one node in both of its fields. The array drops the trees
+// through the drop helper of Tree, which frees the shared node and its string.
+enum Tree { Leaf, Node(Tree, string, Tree) }
+
+function label(i: i32): string {
+  return "node " + i.to_string();
+}
+
+function twin(i: i32): Tree {
+  let shared = Node(Leaf, label(i), Leaf);
+  return Node(shared, label(i + 10), shared);
+}
+
+function size(t: Tree): i32 {
+  match (t) {
+    Leaf => {
+      return 0;
+    },
+    Node(l, s, r) => {
+      return size(l) + s.len() + size(r);
+    }
+  }
+}
+
+function main(): i32 {
+  let trees: Tree[] = [];
+  for i in 0..3 {
+    trees = trees.append(twin(i));
+  }
+  let total = 0;
+  for t in trees {
+    total += size(t);
+  }
+  print(total.to_string());
+  return 0;
+}

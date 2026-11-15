@@ -660,7 +660,7 @@ function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolea
       if (c.on_true) {
         arm = w.at[t.t];
       }
-      if (c.root >= 0 && arm >= 0 && w.f.blocks[arm].preds.len() == 1) {
+      if (c.root >= 0 && arm >= 0 && (w.f.blocks[arm].preds.len() == 1 || each_edge_tests(w, rg.roots, arm, c.root, with_tokens))) {
         rg = open_region(rg, dom, reach, arm, c.root, w.f.blocks[bi].id);
         for other in c.also {
           rg = open_region(rg, dom, reach, arm, other, w.f.blocks[bi].id);
@@ -669,6 +669,30 @@ function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolea
     }
   }
   return rg;
+}
+
+// Each edge into the block leaves a branch whose taken arm proves the box
+// unique, so each path into the block proves it.
+function each_edge_tests(w: Walk, regions: i32[][], arm: i32, root: i32, with_tokens: boolean): boolean {
+  for pid in w.f.blocks[arm].preds {
+    let pb = w.at[pid];
+    if (pb < 0) {
+      return false;
+    }
+    let t = w.f.blocks[pb].term;
+    if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
+      return false;
+    }
+    let c = cond_of(w, regions, t.cond, with_tokens);
+    let taken = w.at[t.f];
+    if (c.on_true) {
+      taken = w.at[t.t];
+    }
+    if (taken != arm || c.root != root && util.index_of_i32(c.also, root) < 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function unique_regions(w: Walk, dom: ssadeps.Dom, reach: boolean[]): Regions {
