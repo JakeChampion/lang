@@ -1,0 +1,30 @@
+// __fern_fma_sum adds the addend zhi:zlo to the product rhi:rlo of x and y.
+// Both have the exponent e. The sum goes to __fern_fma_round as 63 bits and a
+// sticky bit.
+function __fern_fma_sum(rhi: u64, rlo: u64, zhi: u64, zlo: u64, e: i32, x: f64, y: f64, z: f64): f64 {
+  let neg = (f64_bits(x) ^ f64_bits(y)) < 0;
+  let lo = rlo + zlo;
+  let hi = rhi + zhi + __fern_fma_bit(lo < zlo);
+  if (neg != f64_bits(z) < 0) {
+    lo = rlo - zlo;
+    hi = rhi - zhi - __fern_fma_bit(rlo < lo);
+    if (hi >> 63 as u64 != 0 as u64) {
+      lo = 0 as u64 - lo;
+      hi = 0 as u64 - hi - __fern_fma_bit(lo != 0 as u64);
+      neg = !neg;
+    }
+  }
+  if (hi != 0 as u64) {
+    let d = __clz64(hi) - 1;
+    let k = d as u64;
+    return __fern_fma_round(hi << k | lo >> 64 as u64 - k | __fern_fma_bit(lo << k != 0 as u64), e + 64 - d, neg);
+  }
+  if (lo == 0 as u64) {
+    return x * y + z;
+  }
+  let d = __clz64(lo) - 1;
+  if (d < 0) {
+    return __fern_fma_round(lo >> 1 as u64 | lo & 1 as u64, e + 1, neg);
+  }
+  return __fern_fma_round(lo << d as u64, e - d, neg);
+}

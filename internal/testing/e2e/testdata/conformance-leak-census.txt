@@ -361,6 +361,7 @@ explicit_type_argument_names_union_or_option         0
 f32_array_element                                    0
 f32_array_param                                      0
 f64_elements                                         0
+f64_fma                                              0
 f64_if_expr                                          0
 f64_sqrt                                             0
 f64_tryop_widen                                      0
@@ -586,6 +587,7 @@ lambda_tuple_return                                  0
 lanes_array_memory                                   0
 lanes_calls                                          0
 lanes_f32x4_ops                                      0
+lanes_f64x2_fma                                      0
 lanes_f64x2_ops                                      0
 lanes_generic_instances                              0
 lanes_integer_ops                                    0
@@ -593,6 +595,7 @@ lanes_integer_shapes                                 0
 lanes_map_fusion                                     0
 lanes_methods                                        0
 lanes_receivers                                      0
+lanes_select_in_place                                0
 lanes_spill_pressure                                 0
 lanes_through_calls                                  0
 lanes_u8x16_ops                                      0

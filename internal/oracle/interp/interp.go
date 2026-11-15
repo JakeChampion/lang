@@ -1568,6 +1568,7 @@ func New() *Interp {
 	i.Builtins["__round_f64"] = mkUnaryF64Builtin("__round_f64", math.Round)
 	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
 	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
+	i.Builtins["__fma_f64"] = &Builtin{Fn: builtinFmaF64}
 	i.registerLaneBuiltins()
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
@@ -2395,6 +2396,22 @@ func mkUnaryF64Builtin(name string, fn func(float64) float64) *Builtin {
 		}
 		return Float{V: fn(f.V), Width: 64}, nil
 	}}
+}
+
+// builtinFmaF64 gives a*b + c with one rounding.
+func builtinFmaF64(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("__fma_f64: expected 3 args, got %d", len(args))
+	}
+	var xs [3]float64
+	for k, a := range args {
+		f, ok := a.(Float)
+		if !ok {
+			return nil, fmt.Errorf("__fma_f64: expected float arg, got %T", a)
+		}
+		xs[k] = f.V
+	}
+	return Float{V: math.FMA(xs[0], xs[1], xs[2]), Width: 64}, nil
 }
 
 func builtinIntToString(_ *Interp, args []Value) (Value, error) {

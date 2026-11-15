@@ -1,0 +1,11 @@
+// __fern_fma_exp gives the exponent of the significand that __fern_fma_sig
+// gives, so that x is that significand times 2 to this exponent. Zero gives
+// 972, and infinity and NaN give 971.
+function __fern_fma_exp(x: f64): i32 {
+  let e = (f64_bits(x) >> 52 & 2047) as i32;
+  if (e == 0) {
+    let s = (f64_bits(x * 9223372036854775808.0) >> 52 & 2047) as i32;
+    e = if (s == 0) { 2048 } else { s - 63 };
+  }
+  return e - 1076;
+}

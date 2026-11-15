@@ -1,0 +1,91 @@
+// Each select in a loop gives its result the register of an operand that
+// dies there. In pick, the result takes the register of the first or of the
+// second choice. In crowd, the register pressure also spills one choice, so
+// it is loaded from memory while the other choice is still in a register.
+
+function show(tag: string, v: f64x2): void {
+  print(tag + " " + __f64x2_lane(v, 0).to_string() + " " + __f64x2_lane(v, 1).to_string());
+}
+
+function show4(tag: string, v: f32x4): void {
+  print(tag + " " + __f32x4_lane(v, 0).to_string() + " " + __f32x4_lane(v, 1).to_string() + " " + __f32x4_lane(v, 2).to_string() + " " + __f32x4_lane(v, 3).to_string());
+}
+
+@noinline
+function pick(x: f64x2, y: f64x2, n: i32): void {
+  let a = x;
+  let b = y;
+  let i = 0;
+  while (i < n) {
+    let m = __f64x2_lt(__f64x2_splat(i as f64), __f64x2_of(2.0, 4.0));
+    a = __f64x2_select(a, y, m);
+    b = __f64x2_select(x, b, m);
+    i += 1;
+  }
+  show("pick first", a);
+  show("pick second", b);
+}
+
+@noinline
+function pick4(x: f32x4, y: f32x4, n: i32): void {
+  let a = x;
+  let b = y;
+  let i = 0;
+  while (i < n) {
+    let m = __f32x4_lt(__f32x4_splat(i as f32), __f32x4_of(1.0, 2.0, 3.0, 4.0));
+    a = __f32x4_select(a, y, m);
+    b = __f32x4_select(x, b, m);
+    i += 1;
+  }
+  show4("pick4 first", a);
+  show4("pick4 second", b);
+}
+
+@noinline
+function crowd(x: f64x2, y: f64x2, n: i32): void {
+  let a = x;
+  let b = y;
+  let v1 = x + __f64x2_splat(1.0);
+  let v2 = x + __f64x2_splat(2.0);
+  let v3 = x + __f64x2_splat(3.0);
+  let v4 = x + __f64x2_splat(4.0);
+  let v5 = x + __f64x2_splat(5.0);
+  let v6 = x + __f64x2_splat(6.0);
+  let v7 = x + __f64x2_splat(7.0);
+  let v8 = x + __f64x2_splat(8.0);
+  let v9 = x + __f64x2_splat(9.0);
+  let v10 = x + __f64x2_splat(10.0);
+  let v11 = x + __f64x2_splat(11.0);
+  let v12 = x + __f64x2_splat(12.0);
+  let v13 = x + __f64x2_splat(13.0);
+  let v14 = x + __f64x2_splat(14.0);
+  let i = 0;
+  while (i < n) {
+    let m = __f64x2_lt(__f64x2_splat(i as f64), __f64x2_of(2.0, 4.0));
+    a = __f64x2_select(a, v14, m);
+    b = __f64x2_select(v13, b, m);
+    v1 = v1 + v2;
+    v2 = v2 + v3;
+    v3 = v3 + v4;
+    v4 = v4 + v5;
+    v5 = v5 + v6;
+    v6 = v6 + v7;
+    v7 = v7 + v8;
+    v8 = v8 + v9;
+    v9 = v9 + v10;
+    v10 = v10 + v11;
+    v11 = v11 + v12;
+    v12 = v12 + v13;
+    i += 1;
+  }
+  show("crowd first", a);
+  show("crowd second", b);
+  show("crowd sum", v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11 + v12 + v13 + v14);
+}
+
+function main(): i32 {
+  pick(__f64x2_of(1.0, 5.0), __f64x2_of(3.0, 2.0), 3);
+  pick4(__f32x4_of(1.0, 2.0, 3.0, 4.0), __f32x4_of(-1.0, -2.0, -3.0, -4.0), 3);
+  crowd(__f64x2_of(1.0, 5.0), __f64x2_of(3.0, 2.0), 3);
+  return 0;
+}

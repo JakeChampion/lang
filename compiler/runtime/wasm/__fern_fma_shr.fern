@@ -1,0 +1,14 @@
+// __fern_fma_shr gives the low word of hi:lo shifted right by d. Bit 0 is set
+// when a lost bit is set. Each caller shifts the smaller operand, so a shift
+// of 64 or more puts all of it below the rounding bit, and the sticky bit
+// alone is enough.
+function __fern_fma_shr(hi: u64, lo: u64, d: i32): u64 {
+  if (d == 0) {
+    return lo;
+  }
+  if (d < 64) {
+    let k = d as u64;
+    return hi << 64 as u64 - k | lo >> k | __fern_fma_bit(lo << 64 as u64 - k != 0 as u64);
+  }
+  return __fern_fma_bit((hi | lo) != 0 as u64);
+}

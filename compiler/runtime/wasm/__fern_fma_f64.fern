@@ -1,0 +1,32 @@
+// __fern_fma_f64 gives x * y + z with one rounding. The product of the two
+// significands is exact in 128 bits, and the addend joins it at the same
+// exponent.
+function __fern_fma_f64(x: f64, y: f64, z: f64): f64 {
+  let ex = __fern_fma_exp(x);
+  let ey = __fern_fma_exp(y);
+  let ez = __fern_fma_exp(z);
+  if (ex >= 971 || ey >= 971) {
+    return x * y + z;
+  }
+  if (ez >= 971) {
+    return if (ez == 971) { z } else { x * y };
+  }
+  let mx = __fern_fma_sig(x);
+  let my = __fern_fma_sig(y);
+  let mask = 4294967295 as u64;
+  let t1 = (mx & mask) * (my & mask);
+  let t2 = (mx & mask) * (my >> 32 as u64) + (mx >> 32 as u64) * (my & mask);
+  let lo = t1 + (t2 << 32 as u64);
+  let hi = (mx >> 32 as u64) * (my >> 32 as u64) + (t2 >> 32 as u64) + __fern_fma_bit(t1 > lo);
+  let mz = __fern_fma_sig(z);
+  let d = ez - ex - ey;
+  if (d <= 0) {
+    return __fern_fma_sum(hi, lo, 0 as u64, __fern_fma_shr(0 as u64, mz, -d), ex + ey, x, y, z);
+  }
+  if (d < 64) {
+    return __fern_fma_sum(hi, lo, mz >> (64 - d) as u64, mz << d as u64, ex + ey, x, y, z);
+  }
+  let k = d - 64;
+  let top = if (k < 64) { hi >> k as u64 } else { 0 as u64 };
+  return __fern_fma_sum(top, __fern_fma_shr(hi, lo, k), mz, 0 as u64, ez - 64, x, y, z);
+}
