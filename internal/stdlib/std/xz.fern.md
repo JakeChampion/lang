@@ -91,7 +91,7 @@ The range decoder holds 32-bit values in `i64`. A probability is 11 bits, and it
 struct __Rc { range: i64, code: i64, pos: i32, end: i32 }
 
 function __rc_new(input: [u8], at: i32, end: i32): __Rc {
-  if (at + 5 > end || input[at] != 0u8) {
+  if (at + 5 > end || end > input.len() || input[at] != 0u8) {
     return __Rc { range: 0i64, code: 0i64, pos: -1, end: end };
   }
   let code = 0i64;
