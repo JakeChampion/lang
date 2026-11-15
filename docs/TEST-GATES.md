@@ -143,6 +143,9 @@ that the suite passed, and two pull requests that pass alone and fail together
 do not reach it.
 
 - **One batch at a time.** The branch is the lock.
+- **A stale lock.** The queue deletes a lock with no run of
+  `merge-queue-batch.yml` that is still going. A failed dispatch deletes the
+  branch at once.
 - **A red batch is split.** Its two halves go to the retry list, and the queue
   tests them before it takes new pull requests. A batch of one that fails
   loses the label and gets a comment with the run.
@@ -166,6 +169,19 @@ setting: a ruleset on `main` that requires the `CI verdict` check, with
 "Require branches to be up to date". The commit that the queue pushes has
 that check from its batch run. The token of the queue (`AUTO_REBASE_TOKEN`)
 needs the `workflow` scope, because a batch can change a workflow file.
+
+The queue uses the token of the workflow for the Actions API: the dispatch
+and the list of runs. The personal token can have no Actions permission.
+
+The queue failed in this way on 2026-11-14. The personal token got HTTP 403
+for the dispatch of a batch. The branch of that batch then held the lock for
+more than a day. Each run of `merge-queue.yml` said "a batch is in flight"
+and passed.
+
+Pull requests then merged by hand, each one tested only on its own base. Two
+of them, #16050 and #16056, merged four minutes apart, and together they broke
+`sed`. A green run of `merge-queue.yml` does not show that the queue works. A
+run of `merge-queue-batch.yml` shows it.
 
 Two meta-gates keep the lane set honest, and they are inverses. `make testnames`
 (`scripts/testname_gate.sh`) fails when a lane's `-run` names a test that does not

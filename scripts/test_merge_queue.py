@@ -19,6 +19,21 @@ elif args[0] == "api":
     sha = args[1].split("/commits/")[1].split("/")[0]
     runs = [{"conclusion": "success"}] if sha in world["green"] else []
     print(json.dumps({"check_runs": runs}))
+elif args[:2] == ["workflow", "run"]:
+    if os.environ.get("GH_TOKEN") != world.get("actions_token"):
+        sys.stderr.write("HTTP 403: Resource not accessible by personal access token\n")
+        sys.exit(1)
+    if args[2] == "merge-queue-batch.yml":
+        import subprocess
+        head = subprocess.run(["git", "ls-remote", "origin", "refs/heads/merge-queue/batch"],
+                              capture_output=True, text=True).stdout.split()[0]
+        runs = json.load(open(os.environ["FAKE_GH_RUNS"]))
+        runs.insert(0, {"headSha": head, "status": "queued"})
+        json.dump(runs, open(os.environ["FAKE_GH_RUNS"], "w"))
+elif args[:2] == ["run", "list"]:
+    if os.environ.get("GH_TOKEN") != world.get("actions_token"):
+        sys.exit(1)
+    print(open(os.environ["FAKE_GH_RUNS"]).read())
 '''
 
 
@@ -29,6 +44,9 @@ class MergeQueueTest(unittest.TestCase):
         self.work = os.path.join(self.tmp, "work")
         self.world = os.path.join(self.tmp, "world.json")
         self.log = os.path.join(self.tmp, "gh.log")
+        self.runs = os.path.join(self.tmp, "runs.json")
+        with open(self.runs, "w") as f:
+            f.write("[]")
         fake = os.path.join(self.tmp, "gh")
         with open(fake, "w") as f:
             f.write(FAKE_GH)
@@ -39,7 +57,9 @@ class MergeQueueTest(unittest.TestCase):
             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@fern.invalid",
             "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
             "MERGE_QUEUE_GH": fake, "FAKE_GH_WORLD": self.world, "FAKE_GH_LOG": self.log,
+            "FAKE_GH_RUNS": self.runs, "GH_TOKEN": "personal", "MERGE_QUEUE_ACTIONS_TOKEN": "workflow",
         }
+        self.actions_token = "workflow"
         self.git(self.tmp, "init", "-q", "--bare", "-b", "main", self.remote)
         self.git(self.tmp, "clone", "-q", self.remote, self.work)
         self.write("base.txt", "base\n")
@@ -88,12 +108,12 @@ class MergeQueueTest(unittest.TestCase):
         self.commit(f"main moves {rel}")
         self.git(self.work, "push", "-q", "origin", "main")
 
-    def queue(self, *args):
+    def queue(self, *args, code=0):
         with open(self.world, "w") as f:
-            json.dump({"prs": self.prs, "green": self.green}, f)
+            json.dump({"prs": self.prs, "green": self.green, "actions_token": self.actions_token}, f)
         open(self.log, "w").close()
         r = subprocess.run([SCRIPT, *args], cwd=self.work, env=self.env, capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.returncode, code, r.stdout + r.stderr)
         with open(self.log) as f:
             self.calls = [json.loads(line) for line in f]
         # The labels that the script set are the labels of the next call.
@@ -142,6 +162,52 @@ class MergeQueueTest(unittest.TestCase):
         self.queue("form")
         self.assertEqual(self.remote_ref("merge-queue/batch"), tip)
         self.assertEqual(self.called("workflow", "run"), [])
+
+    def set_runs(self, runs):
+        with open(self.runs, "w") as f:
+            json.dump(runs, f)
+
+    def test_a_failed_dispatch_takes_the_lock_away(self):
+        # The token of the workflow is the one with the Actions permission.
+        self.pull_request(1, "a.txt", "a\n")
+        self.actions_token = "other"
+        out = self.queue("form", code=1)
+        self.assertEqual(self.remote_ref("merge-queue/batch"), "", out)
+        self.actions_token = "workflow"
+        self.queue("form")
+        self.assertEqual(self.batch(), [1])
+
+    def test_a_lock_with_no_run_is_stale_after_its_time(self):
+        self.pull_request(1, "a.txt", "a\n")
+        self.queue("form")
+        self.set_runs([])
+        self.pull_request(2, "b.txt", "b\n")
+        self.queue("form")
+        self.assertEqual(self.batch(), [1])
+        self.env["MERGE_QUEUE_STALE_SECONDS"] = "0"
+        self.queue("form")
+        self.assertEqual(self.batch(), [1, 2])
+        self.assertEqual(len(self.called("workflow", "run")), 1)
+
+    def test_a_lock_whose_run_ended_is_stale(self):
+        self.pull_request(1, "a.txt", "a\n")
+        self.queue("form")
+        head = self.remote_ref("merge-queue/batch")
+        self.set_runs([{"headSha": head, "status": "completed"}])
+        self.pull_request(2, "b.txt", "b\n")
+        self.queue("form")
+        self.assertEqual(self.batch(), [1, 2])
+
+    def test_a_lock_stays_when_the_runs_cannot_be_read(self):
+        self.pull_request(1, "a.txt", "a\n")
+        self.queue("form")
+        tip = self.remote_ref("merge-queue/batch")
+        self.set_runs([])
+        self.env["MERGE_QUEUE_STALE_SECONDS"] = "0"
+        self.actions_token = "other"
+        self.pull_request(2, "b.txt", "b\n")
+        self.queue("form")
+        self.assertEqual(self.remote_ref("merge-queue/batch"), tip)
 
     def test_form_with_nothing_ready_makes_no_batch(self):
         self.pull_request(1, "a.txt", "a\n", green=False)
