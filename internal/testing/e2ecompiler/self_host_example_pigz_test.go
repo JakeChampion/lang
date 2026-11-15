@@ -4,10 +4,14 @@ package e2ecompiler
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -139,6 +143,15 @@ var pigzCases = []pigzCase{
 	pc("cat plain", "-dcf", "plain.gz"),
 	pc("cat junk", "-dcf", "junk.gz"),
 	pc("cat empty", "-dcf", "empty.gz"),
+	pc("stdout truncated", "-dc", "trunc.gz"),
+	pc("stdout truncated verbose", "-dcv", "trunc.gz"),
+	pc("stdout bad data", "-dc", "bad.gz"),
+	pc("stdout crc", "-dc", "crc.gz"),
+	pc("stdout lzw short", "-dc", "half.Z"),
+	pc("stdout lzw long short", "-dc", "longhalf.Z"),
+	pc("stdout lzw long", "-dc", "long.Z"),
+	pc("stdout zlib adler", "-dc", "ad.zz"),
+	pc("decompress truncated file", "-dk", "trunc.gz"),
 	pc("test truncated", "-t", "trunc.gz"),
 	pc("test crc", "-t", "crc.gz"),
 	pc("test length", "-t", "len.gz"),
@@ -186,6 +199,11 @@ var pigzCases = []pigzCase{
 	pc("fast", "--fast", "-k", "mid"),
 	pc("dash", "-k", "-", "mid"),
 	pc("zopfli settings", "-I", "3", "-J", "3", "-F", "-O", "-k", "mid"),
+	pc("level 11", "-11", "-k", "mid"),
+	pc("level 11 one process", "-11", "-k", "-p", "1", "-b", "32", "mid"),
+	pc("level 11 settings", "-11", "-I", "3", "-J", "2", "-O", "-k", "-p", "2", "-b", "32", "mid"),
+	pc("level 11 zip", "-11", "-K", "-k", "-p", "1", "hi"),
+	pc("level 11 independent rsyncable", "-11", "-i", "-R", "-k", "-p", "2", "-b", "32", "mid"),
 	pc("recursive decompress", "-dr", "subgz"),
 	pc("recursive list", "-lr", "subgz"),
 	pc("recursive test", "-tr", "subgz"),
@@ -265,7 +283,7 @@ func pigzInputs(t *testing.T, port func(dir string, args ...string) []byte) pigz
 	files["len.gz"] = flip(g, -4)
 	files["ad.zz"] = flip(files["z.zz"], -1)
 	files["bad.gz"] = flip(g, 30)
-	for _, name := range []string{"lines.Z", "lines9.Z"} {
+	for _, name := range []string{"lines.Z", "lines9.Z", "long.Z"} {
 		data, err := os.ReadFile(filepath.Join("../../../examples/pigz/testdata", name))
 		if err != nil {
 			t.Fatal(err)
@@ -275,6 +293,7 @@ func pigzInputs(t *testing.T, port func(dir string, args ...string) []byte) pigz
 	files["flags.Z"] = append([]byte{}, files["lines.Z"]...)
 	files["flags.Z"][2] = 0x70
 	files["half.Z"] = files["lines.Z"][:len(files["lines.Z"])/2]
+	files["longhalf.Z"] = files["long.Z"][:len(files["long.Z"])/2]
 	files["zd.zip"] = pigzZip(t, corpus[:50000], zip.Deflate)
 	files["zs.zip"] = pigzZip(t, []byte("stored\n"), zip.Store)
 	files["subgz/x.gz"] = files["x.gz"]
@@ -480,12 +499,6 @@ func TestSelfHostExamplePigzCLI(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Run("level 11", func(t *testing.T) {
-				got := pigzRun(t, port, files, pc("level 11", "-11", "-k", "hi"))
-				if got.Exit != 22 || got.Stderr != "pigz: abort: level 11 (zopfli) is not available in this port\n" {
-					t.Errorf("pigz -11: exit %d, stderr %q", got.Exit, got.Stderr)
-				}
-			})
 		})
 	}
 }
@@ -510,4 +523,79 @@ func pigzNamed(t *testing.T, bin string) string {
 		t.Fatal(err)
 	}
 	return named
+}
+
+// pigzLargeStream is a gzip member of n bytes of one line that repeats, n a
+// multiple of 64 MiB. The deflate data is the blocks of 64 MiB of the lines
+// with a sync flush, n / 64 MiB times, then an empty final block. Each copy
+// of the blocks decodes to the same bytes, because a match in them goes
+// back no further than the start of its 64 MiB.
+func pigzLargeStream(t *testing.T, n int64) ([]byte, uint32) {
+	t.Helper()
+	line := []byte("a line of the large stream, with some words in it\n")
+	unit := bytes.Repeat(line, (64<<20)/len(line)+1)[:64<<20]
+	var blocks bytes.Buffer
+	w, err := flate.NewWriter(&blocks, flate.BestSpeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(unit); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out := []byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3}
+	crc := uint32(0)
+	for i := int64(0); i < n/int64(len(unit)); i++ {
+		out = append(out, blocks.Bytes()...)
+		crc = crc32.Update(crc, crc32.IEEETable, unit)
+	}
+	out = append(out, 3, 0)
+	out = binary.LittleEndian.AppendUint32(out, crc)
+	out = binary.LittleEndian.AppendUint32(out, uint32(n))
+	return out, crc
+}
+
+// TestSelfHostExamplePigzLarge decompresses and tests a member of 4.5 GiB on
+// x86-64. The port reads the input in parts and writes the output in parts,
+// so the length of the output has no limit.
+func TestSelfHostExamplePigzLarge(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src, err := filepath.Abs("../../../examples/pigz/pigz.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := pigzNamed(t, cli.x86Binary(t, src))
+	const n = int64(4608) << 20
+	data, crc := pigzLargeStream(t, n)
+	path := filepath.Join(t.TempDir(), "big.gz")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(cli.runner, bin, "-dc", path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	h := crc32.NewIEEE()
+	got, err := io.Copy(h, stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("pigz -dc: %v\n%s", err, stderr.String())
+	}
+	if got != n || h.Sum32() != crc {
+		t.Errorf("pigz -dc wrote %d bytes with CRC %08x, want %d bytes with CRC %08x", got, h.Sum32(), n, crc)
+	}
+	test := runX86_64Bin(cli.runner, bin, "-t", path)
+	if msg, err := test.CombinedOutput(); err != nil || len(msg) != 0 {
+		t.Errorf("pigz -t: %v %q", err, msg)
+	}
 }
