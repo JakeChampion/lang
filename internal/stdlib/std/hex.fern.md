@@ -4,7 +4,7 @@ This module encodes and decodes hexadecimal data.
 
 ## Model
 
-Encoders borrow a byte view and choose lowercase or uppercase digits. An encoder reads 16 bytes in one step, as lanes. Decode accepts either hexadecimal case and returns an owned byte array.
+Encoders borrow a byte view and choose lowercase or uppercase digits. An encoder reads 16 bytes in one step, as lanes. Decode accepts either hexadecimal case and returns an owned byte array. Decode reads 32 digits in one step, as lanes, until a step finds a byte that is not a digit.
 
 ## Contracts
 
@@ -133,7 +133,14 @@ pub function encode_upper(bs: [u8]): string {
 }
 
 pub function decode(input: string): Result[u8[], codec.DecodeError] {
+  let bytes = __alloc_u8(input.len() / 2);
   let i = 0;
+  if (input.len() % 2 == 0) {
+    let lanes = __hex_unlanes(input.as_bytes(), bytes);
+    bytes = lanes.bytes;
+    i = lanes.at;
+  }
+  let first = i;
   while (i < input.len()) {
     if (__hex_value(input[i] as i32) < 0) {
       return Err(codec.error("hex", i, codec.InvalidByte(input[i])));
@@ -143,8 +150,7 @@ pub function decode(input: string): Result[u8[], codec.DecodeError] {
   if (input.len() % 2 != 0) {
     return Err(codec.error("hex", input.len(), codec.InvalidLength));
   }
-  let bytes = __alloc_u8(input.len() / 2);
-  i = 0;
+  i = first / 2;
   while (i < bytes.len()) {
     let hi = __hex_value(input[i * 2] as i32);
     let lo = __hex_value(input[i * 2 + 1] as i32);
@@ -152,5 +158,48 @@ pub function decode(input: string): Result[u8[], codec.DecodeError] {
     i += 1;
   }
   return Ok(bytes);
+}
+
+struct __HexDecoded { bytes: u8[], at: i32 }
+
+// Writes the bytes of each group of 32 digits of `digits` to `bytes`, up to
+// the first group with a byte that is not a digit. `at` is the index of the
+// first digit that it does not decode.
+function __hex_unlanes(digits: [u8], own bytes: u8[]): __HexDecoded {
+  let none = 255 as u8;
+  let even_a = __u8x16_of(0 as u8, 2 as u8, 4 as u8, 6 as u8, 8 as u8, 10 as u8, 12 as u8, 14 as u8, none, none, none, none, none, none, none, none);
+  let even_b = __u8x16_of(none, none, none, none, none, none, none, none, 0 as u8, 2 as u8, 4 as u8, 6 as u8, 8 as u8, 10 as u8, 12 as u8, 14 as u8);
+  let odd_a = __u8x16_of(1 as u8, 3 as u8, 5 as u8, 7 as u8, 9 as u8, 11 as u8, 13 as u8, 15 as u8, none, none, none, none, none, none, none, none);
+  let odd_b = __u8x16_of(none, none, none, none, none, none, none, none, 1 as u8, 3 as u8, 5 as u8, 7 as u8, 9 as u8, 11 as u8, 13 as u8, 15 as u8);
+  let i = 0;
+  while (i + 32 <= digits.len()) {
+    let x = __u8x16_load_view(digits, i);
+    let y = __u8x16_load_view(digits, i + 16);
+    if (__u8x16_bitmask(__u8x16_and(__hex_valid(x), __hex_valid(y))) != 65535) {
+      return __HexDecoded { bytes: bytes, at: i };
+    }
+    let xv = __hex_nibbles(x);
+    let yv = __hex_nibbles(y);
+    let hi = __u8x16_or(__u8x16_swizzle(xv, even_a), __u8x16_swizzle(yv, even_b));
+    let lo = __u8x16_or(__u8x16_swizzle(xv, odd_a), __u8x16_swizzle(yv, odd_b));
+    bytes = __u8x16_with(bytes, i / 2, __u8x16_or(__u8x16_shl(hi, 4), lo));
+    i += 32;
+  }
+  return __HexDecoded { bytes: bytes, at: i };
+}
+
+// A lane of ones for each byte of `v` that is a digit of either case.
+function __hex_valid(v: u8x16): u8x16 {
+  let digit = __u8x16_lt(v - __u8x16_splat(48 as u8), __u8x16_splat(10 as u8));
+  let letter = __u8x16_lt(__u8x16_or(v, __u8x16_splat(32 as u8)) - __u8x16_splat(97 as u8), __u8x16_splat(6 as u8));
+  return __u8x16_or(digit, letter);
+}
+
+// The value of each digit of `v`. A byte that is not a digit gives a value
+// that the caller does not use.
+function __hex_nibbles(v: u8x16): u8x16 {
+  let digit = v - __u8x16_splat(48 as u8);
+  let letter = __u8x16_or(v, __u8x16_splat(32 as u8)) - __u8x16_splat(87 as u8);
+  return __u8x16_select(digit, letter, __u8x16_lt(digit, __u8x16_splat(10 as u8)));
 }
 ```
