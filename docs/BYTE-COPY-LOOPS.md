@@ -125,6 +125,32 @@ physical ownership signatures consume the receiver at push slot 2, 3 or 4.
 Native entry shims and WASM parameter declarations use that same convention.
 The runtime need and symbol inventories include all three parent helpers.
 
+## Slide loops
+
+The pass also recognizes the slide of the hash chains of an LZ77 encoder on
+an owned `u16[]`:
+
+```fern
+for i in lo..hi { let m = a[i]; a = a.with(i, if (m >= k) { (m - k) as u16 } else { 0 }); }
+```
+
+The value `k` is an `i32` or a `u16` from before the loop or a constant. The
+compare and the subtraction can read `m` widened to `i32`. The loop becomes a
+call to `__fern_arr_slide_u16`. The kernel checks the complete range once,
+and copies a receiver that is not unique, as a fill does.
+
+On the natives, a `k` from 1 to 65535 takes four elements in each 64-bit
+word. For `k` = 32768, an element keeps its low 15 bits when its bit 15 is
+set. For another `k`, the kernel puts each element in a 32-bit lane and sets
+bit 16 of the lane. After the subtraction of `k`, bit 16 is set when the
+element is at least `k`. On WASM, `i16x8.sub_sat_u` takes eight elements
+at a time. Other values of `k` and the last elements take one element at a
+time.
+
+`std/deflate/zlib` slides its two tables of 32768 entries for each 32 KiB of
+input. The kernel takes 13 µs for the 65536 entries on x86-64, and the loop
+took 70 µs (2026-11-15).
+
 The byte-copy tests cover these items:
 
 - native helper bodies with reuse enabled and disabled

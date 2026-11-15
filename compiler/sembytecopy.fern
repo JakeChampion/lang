@@ -15,10 +15,11 @@ struct Index { defs: ssa.SInst[], homes: i32[], blocks: i32[] }
 // in a step block between the body and the header; step is -1 when the body
 // branches to the header itself. A concat loop appends a range of another
 // array or view, and becomes a range concat instead of a byte helper call. A
-// fill writes `value`, and a move reads the array itself. `shift` is the log2
-// of the bytes of an element, or -1. `lifted` holds the constants of the body
-// that the call needs.
-struct Loop { ok: boolean, head: i32, body: i32, step: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean, concat: boolean, kind: i32, value: i32, shift: i32, lifted: i32[] }
+// fill writes `value`, and a move reads the array itself. A slide takes
+// `value` from each element. `shift` is the log2 of the bytes of an element,
+// or -1. `lifted` holds the constants of the body that the call needs.
+// `extra` holds the other blocks of a body that branches.
+struct Loop { ok: boolean, head: i32, body: i32, step: i32, extra: i32[], exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean, concat: boolean, kind: i32, value: i32, shift: i32, lifted: i32[] }
 
 const COPY: i32 = 0;
 
@@ -26,8 +27,10 @@ const FILL: i32 = 1;
 
 const MOVE: i32 = 2;
 
+const SLIDE: i32 = 3;
+
 function no_loop(): Loop {
-  return Loop { ok: false, head: 0, body: 0, step: -1, exit: 0, outer: 0, array: ssa.no_inst(), counter: ssa.no_inst(), update: ssa.no_inst(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false, concat: false, kind: COPY, value: -1, shift: -1, lifted: [] };
+  return Loop { ok: false, head: 0, body: 0, step: -1, extra: [], exit: 0, outer: 0, array: ssa.no_inst(), counter: ssa.no_inst(), update: ssa.no_inst(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false, concat: false, kind: COPY, value: -1, shift: -1, lifted: [] };
 }
 
 function bytes(t: typeinfo.Type): boolean {
@@ -106,7 +109,7 @@ function invariant(ix: Index, v: i32, l: Loop): boolean {
 
 function inside(ix: Index, v: i32, l: Loop): boolean {
   let home = ix.homes[v];
-  return home == l.head || home == l.body || l.step >= 0 && home == l.step;
+  return home == l.head || home == l.body || l.step >= 0 && home == l.step || util.has_i32(l.extra, home);
 }
 
 // A constant of the body or the step block, which the call can compute
@@ -497,6 +500,132 @@ function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop 
   return out;
 }
 
+function block_of(f: ssasem.Func, ix: Index, id: i32): ssa.SBlock {
+  return f.graph.blocks[ix.blocks[id]];
+}
+
+function only_pred(b: ssa.SBlock, id: i32): boolean {
+  return b.preds.len() == 1 && b.preds[0] == id;
+}
+
+// The loop of a slide: the header, a body that compares an element with k,
+// the arm that subtracts k, the arm that gives 0, and the block that joins
+// the arms and writes the element.
+function slide_header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
+  let no = no_loop();
+  if (h.term.kind_tag != ssa.TERM_BRIF || h.preds.len() != 2) {
+    return no;
+  }
+  let body = block_of(f, ix, h.term.t);
+  let exit = block_of(f, ix, h.term.f);
+  if (body.term.kind_tag != ssa.TERM_BRIF || !only_pred(body, h.id) || !only_pred(exit, h.id)) {
+    return no;
+  }
+  let yes = block_of(f, ix, body.term.t);
+  let zero = block_of(f, ix, body.term.f);
+  if (yes.term.kind_tag != ssa.TERM_BR || zero.term.kind_tag != ssa.TERM_BR || yes.term.target != zero.term.target || !only_pred(yes, body.id) || !only_pred(zero, body.id)) {
+    return no;
+  }
+  let join = block_of(f, ix, yes.term.target);
+  let back = util.index_of_i32(h.preds, join.id);
+  if (join.term.kind_tag != ssa.TERM_BR || join.term.target != h.id || join.preds.len() != 2 || back < 0) {
+    return no;
+  }
+  let cmp = ix.defs[h.term.cond];
+  if (!loop_compare(cmp)) {
+    return no;
+  }
+  let shape = Loop { ...no, head: h.id, body: body.id, step: join.id, extra: [yes.id, zero.id], exit: exit.id, outer: 1 - back };
+  let chain = count_chain(ix, cmp.args[1], shape, Chain { ok: true, values: [] }, 8);
+  if (!chain.ok) {
+    return no;
+  }
+  let phis = header_phis(f, h, chain.values);
+  if (!phis.ok || !invariant(ix, phis.counter.args[shape.outer], shape) || cmp.args[0] != phis.counter.result) {
+    return no;
+  }
+  return Loop { ...shape, ok: true, array: phis.array, counter: phis.counter, count: cmp.args[1], chain: chain.values, shift: phis.shift };
+}
+
+function u16_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view && ssasem.is_u16(a.elem);
+  }
+  return false;
+}
+
+// The value that a cast to i32 or i64 reads, or `v` itself.
+function widened(f: ssasem.Func, ix: Index, v: i32): i32 {
+  let d = ix.defs[v];
+  if (d.kind_tag == ssasem.cast() && d.args.len() == 1 && (ssasem.is_i32(f.values[v]) || ssasem.is_i64(f.values[v]))) {
+    return d.args[0];
+  }
+  return v;
+}
+
+function same_value(ix: Index, a: i32, b: i32): boolean {
+  let da = ix.defs[a];
+  return a == b || da.kind_tag == ssa.CONST_INT && literal(ix, b, da.imm);
+}
+
+// for i in lo..hi { a = a.with(i, if (a[i] >= k) { (a[i] - k) as u16 } else { 0 }) }
+// on a u16[], the slide of the hash chains of an LZ77 encoder.
+function slide_loop(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
+  let no = no_loop();
+  let l = slide_header(f, ix, h);
+  if (!l.ok || !u16_array(f.values[l.array.result])) {
+    return no;
+  }
+  let body = block_of(f, ix, l.body);
+  let join = block_of(f, ix, l.step);
+  let ge = ix.defs[body.term.cond];
+  if (ge.kind_tag != ssa.BINARY || ge.str != ">=" || ge.args.len() != 2) {
+    return no;
+  }
+  let read = ix.defs[widened(f, ix, ge.args[0])];
+  let k = ge.args[1];
+  if (!own_read(read, l) || read.args[1] != l.counter.result || !fixed(ix, k, l) || !ssasem.is_i32(f.values[k]) && !ssasem.is_u16(f.values[k])) {
+    return no;
+  }
+  let back = 1 - l.outer;
+  let update = ix.defs[l.array.args[back]];
+  if (update.kind_tag != ssasem.with() || update.args.len() != 3 || update.args[0] != l.array.result || update.args[1] != l.counter.result) {
+    return no;
+  }
+  let phi = ix.defs[update.args[2]];
+  let arm = util.index_of_i32(join.preds, body.term.t);
+  if (phi.kind_tag != ssa.PHI || ix.homes[phi.result] != join.id || phi.args.len() != 2 || arm < 0 || !literal(ix, phi.args[1 - arm], 0)) {
+    return no;
+  }
+  let cast = ix.defs[phi.args[arm]];
+  if (cast.kind_tag != ssasem.cast() || cast.args.len() != 1) {
+    return no;
+  }
+  let diff = ix.defs[cast.args[0]];
+  if (diff.kind_tag != ssa.BINARY || diff.str != "-" || diff.args.len() != 2 || widened(f, ix, diff.args[0]) != read.result || !same_value(ix, diff.args[1], k)) {
+    return no;
+  }
+  let inc = ix.defs[l.counter.args[back]];
+  if (!increment(ix, inc, l.counter.result)) {
+    return no;
+  }
+  let lifted = lifted_consts(ix, l, [k]);
+  let allowed = [read.result, ge.args[0], k, ge.result, diff.args[0], diff.args[1], diff.result, cast.result, phi.args[1 - arm], phi.result, update.result, inc.result, inc.args[1]];
+  for id in l.extra {
+    if (!pure_block(block_of(f, ix, id), allowed)) {
+      return no;
+    }
+  }
+  if (!pure_body(f, ix, l, allowed)) {
+    return no;
+  }
+  let out = Loop { ...l, update: update, src: -1, from: -1, at: -1, kind: SLIDE, value: k, lifted: lifted };
+  if (!closed_body(f, ix, out)) {
+    return no;
+  }
+  return out;
+}
+
 function increment(ix: Index, ins: ssa.SInst, counter: i32): boolean {
   return ins.kind_tag == ssa.BINARY && ins.str == "+" && ins.args.len() == 2 && ins.args[0] == counter && literal(ix, ins.args[1], 1);
 }
@@ -504,7 +633,7 @@ function increment(ix: Index, ins: ssa.SInst, counter: i32): boolean {
 // No block outside the loop reads a value the body or the step block defines.
 function closed_body(f: ssasem.Func, ix: Index, l: Loop): boolean {
   for b in f.graph.blocks {
-    if (b.id != l.head && b.id != l.body && b.id != l.step && body_escapes(b, ix, l)) {
+    if (b.id != l.head && b.id != l.body && b.id != l.step && !util.has_i32(l.extra, b.id) && body_escapes(b, ix, l)) {
       return false;
     }
   }
@@ -530,7 +659,7 @@ function in_loop_body(ix: Index, v: i32, l: Loop): boolean {
   if (v < 0) {
     return false;
   }
-  return ix.homes[v] == l.body || l.step >= 0 && ix.homes[v] == l.step;
+  return ix.homes[v] == l.body || l.step >= 0 && ix.homes[v] == l.step || util.has_i32(l.extra, ix.homes[v]);
 }
 
 // A function in a module that defines a helper's name keeps its loops, since
@@ -556,6 +685,8 @@ pub function rewrite(f: ssasem.Func, contracts: ssasem.Contract[]): Rewritten {
     let l = header(out, ix, out.graph.blocks[h]);
     if (l.ok) {
       l = body_loop(out, ix, l);
+    } else {
+      l = slide_loop(out, ix, out.graph.blocks[h]);
     }
     if (l.ok && l.kind != COPY && !contract_fits(out.calls, kernel_contract(out, l))) {
       l = no_loop();
@@ -692,7 +823,7 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
     }
     args = [receiver, dist, l.count];
     ci = 2;
-  } else if (l.kind == FILL) {
+  } else if (l.kind == FILL || l.kind == SLIDE) {
     args = [receiver, at, sp.count, l.value];
   } else if (l.kind == MOVE) {
     args = [receiver, at, from, sp.count];
@@ -710,13 +841,13 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
   let blocks: ssa.SBlock[] = [];
   for old in f.graph.blocks {
     let b = old;
-    if (b.id == l.step) {
+    if (b.id == l.step || util.has_i32(l.extra, b.id)) {
       continue;
     }
     if (b.id == l.head) {
       b = replaced_header(b, l, zero);
     } else if (b.id == l.body) {
-      b = ssa.SBlock { ...b, insts: util.append_all(util.append_all(lifted_defs(ix, l), distance), [call]), term: ssa.STerm { ...b.term, target: l.exit } };
+      b = ssa.SBlock { ...b, insts: util.append_all(util.append_all(lifted_defs(ix, l), distance), [call]), term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: l.exit } };
     } else {
       b = outside(b, l, fresh);
       if (b.id == l.exit) {
@@ -756,8 +887,8 @@ function lifted_defs(ix: Index, l: Loop): ssa.SInst[] {
   return out;
 }
 
-// fill(a, at, n, v) and move(a, at, from, n) consume the array, which they
-// write in place when it is unique.
+// fill(a, at, n, v), slide(a, at, n, k) and move(a, at, from, n) consume
+// the array, which they write in place when it is unique.
 function kernel_contract(f: ssasem.Func, l: Loop): ssasem.Contract {
   let t = f.values[l.array.result];
   let i = typeinfo.t_i32();
@@ -765,6 +896,9 @@ function kernel_contract(f: ssasem.Func, l: Loop): ssasem.Contract {
   let modes = [ssasem.counted_mode(), v, v, v];
   if (l.kind == FILL) {
     return ssasem.Contract { name: rtbytecopy.fill_name(l.shift), params: [t, i, i, f.values[l.value]], modes: modes, result: t };
+  }
+  if (l.kind == SLIDE) {
+    return ssasem.Contract { name: rtbytecopy.slide_name(), params: [t, i, i, f.values[l.value]], modes: modes, result: t };
   }
   return ssasem.Contract { name: rtbytecopy.move_name(l.shift), params: [t, i, i, i], modes: modes, result: t };
 }

@@ -114,12 +114,13 @@ file that does not decode is removed.
 pigz writes what zlib 1.3 writes, in its own block layout. So the port has
 two parts:
 
-- `zdeflate.fern` is a port of the parts of zlib 1.3 deflate that pigz
-  uses: raw deflate, a window of 32 KiB, memLevel 8, the levels 0 to 9,
-  and two strategies, Huffman-only (`-H`) and RLE (`-U`). It keeps the
-  window, the hash chains, the symbol buffer and the tree builder of zlib.
-  It also keeps the room of the output buffer, because the stored blocks
-  and the flushes of zlib use it.
+- `std/deflate/zlib` is a port of zlib 1.3 deflate in the standard
+  library. pigz uses raw deflate, a window of 32 KiB, memLevel 8, the
+  levels 0 to 9, and two strategies, Huffman-only (`-H`) and RLE (`-U`).
+  The module keeps the window, the hash chains, the symbol buffer and the
+  tree builder of zlib. It also keeps the room of the output buffer,
+  because the stored blocks and the flushes of zlib use it.
+  `zlib_compress` of `std/deflate` uses the same module.
 
 - `layout.fern` is the block layout of pigz. One process (`-p 1`) writes one
   deflate stream, as `single_compress` does. More processes write the jobs
@@ -200,11 +201,10 @@ The hash tables `head` and `prev` are `u16[]`, as in zlib, so they use
 4.70 s of CPU at `-6 -p 1` and 9.45 s at `-9 -p 1`. So the 2-byte tables
 take 13% and 16% less CPU time there.
 
-The compiler makes three loops into calls to its kernels (#15974): the
-copy of the input into the window, the slide of the window, and the clear
-of `head`. The slide of `head` and `prev` subtracts a distance from each
-element, so it is not a fill or a move. It runs a copy of its loop with no
-checks (#15975).
+The compiler makes four loops into calls to its kernels (#15974): the
+copy of the input into the window, the slide of the window, the clear of
+`head`, and the slide of `head` and `prev` (`docs/BYTE-COPY-LOOPS.md`). The
+runs of the table are older than the slide kernel.
 
 Most of the time of a compression is in `longest`, the port of
 `longest_match`. Its loop waits for the loads of the window and of the hash
@@ -245,9 +245,10 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
 
 - `gz_test.fern`: the options, the environment variables, the names, the
   headers and trailers, the decoders and their messages, the list lines,
-  and the check combination. It also checks the output of `zdeflate`,
-  `zopfli` and the block layouts. The bytes that it expects come from zlib
-  1.3, from the zopfli of pigz 2.8, and from pigz 2.8.
+  and the check combination. It also checks the output of
+  `std/deflate/zlib`, `zopfli` and the block layouts. The bytes that it
+  expects come from zlib 1.3, from the zopfli of pigz 2.8, and from pigz
+  2.8.
   `TestSelfHostExamplePigzUnit` runs it on x86-64, arm64 and wasm32-wasi
   with the leak census.
 

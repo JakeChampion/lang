@@ -1,0 +1,43 @@
+// for i in at..at + n { a = a.with(i, if (a[i] >= k) { (a[i] - k) as u16 } else { 0 }) }
+// for u16 elements. A k from 1 to 65535 takes four elements at a time. Each
+// element goes in a 32-bit lane with bit 16 set, and after the subtraction
+// of k, bit 16 is set when the element is at least k. For k = 32768, bit 15
+// of the element tells it.
+function __fern_arr_slide_u16(own a: i32[], at: i32, n: i32, k: i32): i32[] {
+  if (n <= 0) {
+    return a;
+  }
+  if (at as u32 > a.len() as u32 || n > a.len() - at) {
+    __fern_oob_abort();
+  }
+  let out = __fern_arr_sole(a, 1);
+  let p = __raw_arr_ptr(out) + 8 + (at as usize << 1);
+  let end = p + (n as usize << 1);
+  if (k == 32768) {
+    while (p + 8 <= end) {
+      let w = __load_i64(p) as u64;
+      let top = w & 9223512776490647552u64;
+      __store_i64(p, (w & top - (top >> 15u64)) as i64);
+      p += 8;
+    }
+  } else if (k > 0 && k < 65536) {
+    let lanes = k as u64 * 4294967297u64;
+    while (p + 8 <= end) {
+      let w = __load_i64(p) as u64;
+      let even = (w & 281470681808895u64 | 281474976776192u64) - lanes;
+      let odd = (w >> 16u64 & 281470681808895u64 | 281474976776192u64) - lanes;
+      let keep_even = (even >> 16u64 & 4294967297u64) * 65535u64;
+      let keep_odd = (odd >> 16u64 & 4294967297u64) * 65535u64;
+      __store_i64(p, (even & keep_even | (odd & keep_odd) << 16u64) as i64);
+      p += 8;
+    }
+  }
+  while (p < end) {
+    let m = __load_u8(p) | __load_u8(p + 1) << 8;
+    let r = if (m >= k) { m - k } else { 0 };
+    __store_u8(p, r & 255);
+    __store_u8(p + 1, r >> 8 & 255);
+    p += 2;
+  }
+  return out;
+}
