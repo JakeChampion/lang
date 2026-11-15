@@ -23,8 +23,8 @@ func TestSelfHostVariantTestReadsShapeAsImmediateX86_64(t *testing.T) {
 function main(): i32 { return area(make(0)) + area(make(1)) + area(make(2)); }`,
 			want: 12 + 9 + 1,
 			has: map[string][]string{
-				"area": {`\n    cmpq \$\.S[0-9]+, %r[a-z0-9]+\n`},
-				"make": {`\n    leaq \.S[0-9]+\(%rip\), %r[a-z0-9]+\n`},
+				"area": {`\n    movl -4\(%r[a-z0-9]+\), %e[a-z0-9]+\n`, `\n    cmpq \$65537, %r[a-z0-9]+\n`},
+				"make": {`\n    movl %e[a-z0-9]+, -4\(%r[a-z0-9]+\)\n`},
 			},
 			lacks: map[string][]string{
 				"area": {`leaq \.S[0-9]+\(%rip\)`},

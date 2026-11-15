@@ -324,11 +324,11 @@ function elide_bytes_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
 function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: string, reg: Region): gnu.Stream {
   let out = o;
   let span = reg.end - reg.start;
-  if (s.count.n >= span as u64) {
-    return out;
+  if (s.count.n == 0 as u64) {
+    return copy_span(r, out, name, reg.start, span);
   }
-  let skip = s.count.n as i64;
-  let block = read_size() as i64;
+  let skip = s.count.n;
+  let block = 8192 as i64;
   let want = span % block;
   if (want == 0 as i64) {
     want = block;
@@ -344,24 +344,26 @@ function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
     let buf = rb.1;
     if (first) {
       if (buf.len() > 0 && buf[buf.len() - 1] as i32 != s.term) {
-        skip = skip - 1 as i64;
-      }
-      if (skip < 0 as i64) {
-        return copy_span(r, out, name, reg.start, span);
+        skip -= 1 as u64;
       }
       first = false;
     }
-    let j = buf.len() - 1;
-    while (j >= 0) {
-      j = __rmemchr_bytes(buf, s.term, j);
-      if (j < 0) {
-        break;
+    let found = __count_byte_bytes(buf, s.term) as u64;
+    if (found <= skip) {
+      skip -= found;
+    } else {
+      let j = buf.len() - 1;
+      while (j >= 0) {
+        j = __rmemchr_bytes(buf, s.term, j);
+        if (j < 0) {
+          break;
+        }
+        if (skip == 0 as u64) {
+          return copy_span(r, out, name, reg.start, pos + j as i64 + 1 as i64 - reg.start);
+        }
+        skip -= 1 as u64;
+        j -= 1;
       }
-      if (skip == 0 as i64) {
-        return copy_span(r, out, name, reg.start, pos + j as i64 + 1 as i64 - reg.start);
-      }
-      skip = skip - 1 as i64;
-      j -= 1;
     }
     if (pos <= reg.start) {
       return out;
@@ -442,6 +444,23 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
   return out;
 }
 
+function copy_elided(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
+  if (s.lines && s.count.n == 18446744073709551615 as u64) {
+    return o;
+  }
+  let reg = seekable_region(r, s);
+  if (reg.ok && s.lines) {
+    return elide_lines_seekable(r, o, s, name, reg);
+  }
+  if (reg.ok) {
+    return elide_bytes_seekable(r, o, s, name, reg);
+  }
+  if (s.lines) {
+    return copy_elide_lines(r, o, s, name);
+  }
+  return copy_elide_bytes(r, o, s, name);
+}
+
 function head_file(path: string, o: gnu.Stream, s: Settings, show: boolean): gnu.Stream {
   let out = o;
   let stdin_input = path == "-";
@@ -464,16 +483,7 @@ function head_file(path: string, o: gnu.Stream, s: Settings, show: boolean): gnu
     out = gnu.stream_header(out, name);
   }
   if (s.count.elide) {
-    let reg = seekable_region(r, s);
-    if (reg.ok && s.lines) {
-      out = elide_lines_seekable(r, out, s, name, reg);
-    } else if (reg.ok) {
-      out = elide_bytes_seekable(r, out, s, name, reg);
-    } else if (s.lines) {
-      out = copy_elide_lines(r, out, s, name);
-    } else {
-      out = copy_elide_bytes(r, out, s, name);
-    }
+    out = copy_elided(r, out, s, name);
   } else {
     out = copy_head(r, out, s, name);
   }
