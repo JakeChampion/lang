@@ -31069,10 +31069,6 @@ function thin_map_import_diags(ds: util.Diag[]): util.Diag[] {
 
 struct Inst { name: string, cts: string[], depth: i32 }
 
-function max_inst_depth(): i32 {
-  return 64;
-}
-
 function spellable(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeUnknown(_) => {
@@ -31306,8 +31302,14 @@ function inst_stmt(st: ast.Stmt, cur: Scope, gens: parser.FuncDecl[], depth: i32
   return out;
 }
 
-function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDecl[] {
+// The instances of the generic functions that the module calls, and an E107
+// for each generic function whose chain of instances reaches the limit.
+struct Clones { funcs: parser.FuncDecl[], diags: util.Diag[] }
+
+function instantiated_clones(mod: parser.Module, env: ModuleEnv): Clones {
   let clones: parser.FuncDecl[] = [];
+  let deep: string[] = [];
+  let diags: util.Diag[] = [];
   let gens: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     if (fd.receiver_name.len() == 0 && fd.all_type_params.len() > 0) {
@@ -31315,7 +31317,7 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
     }
   }
   if (gens.len() == 0) {
-    return clones;
+    return Clones { funcs: clones, diags: diags };
   }
   let msc = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   let mf = parser.mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
@@ -31341,17 +31343,27 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
       spelled += ct;
     }
     let key = inst.name + "__" + parser.sanitize_key(spelled);
-    if (inst.depth >= max_inst_depth() || util.has_str(keys, key)) {
+    if (util.has_str(keys, key)) {
+      continue;
+    }
+    let g = gens[template_index(gens, inst.name)];
+    if (parser.type_args_depth(spelled) >= parser.MAX_INSTANCE_DEPTH) {
+      if (!util.has_str(deep, inst.name)) {
+        deep = deep.append(inst.name);
+        diags = diags.append(dg_at("E107", "generic function \"" + inst.name + "\" has an instance with " + util.i32_to_string(parser.MAX_INSTANCE_DEPTH) + " levels of type arguments: a call in its body gives it a larger type each time", g.line, g.col));
+      }
+      continue;
+    }
+    if (inst.depth >= parser.MAX_INSTANCE_DEPTH) {
       continue;
     }
     keys = keys.append(key);
-    let g = gens[template_index(gens, inst.name)];
     let routed = parser.FuncDecl { ...g, body: parser.route_bound_calls(g, inst.cts, env.trait_reqs, mf) };
     let cl = parser.instantiate_func(routed, key, g.all_type_params, inst.cts, mod.impls);
     clones = clones.append(cl);
     pending = body_insts(cl, env, msc, gens, inst.depth + 1, pending);
   }
-  return clones;
+  return Clones { funcs: clones, diags: diags };
 }
 
 function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
@@ -31464,7 +31476,11 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
   if (mt.diags.len() > 0) {
     return mt;
   }
-  let clones = instantiated_clones(mod, env);
+  let made = instantiated_clones(mod, env);
+  if (made.diags.len() > 0) {
+    return ModuleTypes { ...mt, all_well_typed: false, diags: made.diags };
+  }
+  let clones = made.funcs;
   if (clones.len() == 0) {
     return mt;
   }
