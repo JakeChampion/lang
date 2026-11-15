@@ -1,0 +1,26 @@
+// A nested function can call itself, alone, with a captured local, and as a
+// function value. The interpreter of the compiler did not find its name.
+function main(): i32 {
+  function fact(n: i32): i32 {
+    if (n < 2) {
+      return 1;
+    }
+    return n * fact(n - 1);
+  }
+  function fib(n: i32): i32 {
+    if (n < 2) {
+      return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+  }
+  let k = 3;
+  function add_down(n: i32): i32 {
+    if (n == 0) {
+      return k;
+    }
+    return 1 + add_down(n - 1);
+  }
+  let fs = [fact, fib];
+  print(f"{fact(5)} {fib(10)} {add_down(4)} {fs[0](4)} {fs[1](7)}");
+  return 0;
+}

@@ -2234,6 +2234,28 @@ function first(o: Option[Shape]): i32 {
 
 function main(): i32 { return area(Circle(2)) + first(None); }
 `},
+	{"value-block-whose-statements-all-leave", `function f(n: i32): i32 {
+  let x: i32 = { return 5; };
+  let y: i32 = {
+    if (n > 0) { return 1; }
+    return 2;
+  };
+  let w: i32 = { return 5; 5 };
+  let v: i32 = { print("a"); exit(1); };
+  return x + y + w + v;
+}
+
+function main(): i32 { return f(1); }
+`},
+	{"grouped-function-types", `function keep(own ys: i32[]): i32 { return ys[0]; }
+function apply(g: ((i32[]) => i32), zs: i32[]): i32 { return g(zs); }
+function through(mk: (i32) => ((i32) => i32)): i32 { return mk(1)(2); }
+function factory(): own (() => own (() => i32)) { return (): own () => i32 => (): i32 => 1; }
+function pairs(): own (() => own ((i32, i32)[])) { return (): own (i32, i32)[] => [(1, 2)]; }
+function each(gs: ((i32) => i32)[], p: (i32, i32)): i32 { return gs[0](p.0); }
+
+function main(): i32 { return apply(keep, [0]); }
+`},
 	{"type-arguments-with-a-trailing-comma", `function id[T](x: T): T { return x; }
 function first[A, B](a: A, b: B): A { return a; }
 

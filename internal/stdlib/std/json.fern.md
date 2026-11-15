@@ -2448,7 +2448,13 @@ impl FromJson for string {
 ```fern
 <<52 pub function decode[T: FromJson](text: string): Result[T, JsonError]>>=
 pub function decode[T: FromJson](text: string): Result[T, JsonError] {
-  match (parse(text)) {
+  return decode_with_depth(text, 128);
+}
+
+// decode_with_depth is decode with a lower depth limit. The rule for depth is
+// that of parse_with_depth.
+pub function decode_with_depth[T: FromJson](text: string, depth: i32): Result[T, JsonError] {
+  match (parse_with_depth(text, depth)) {
     Ok(v) => {
       return T.from_json_value(v);
     },
@@ -2729,7 +2735,13 @@ An invalid element retains its array index in the typed error.
 ```fern
 <<array and optional decoding>>=
 pub function decode_array[T: FromJson](text: string): Result[T[], JsonError] {
-  match (parse(text)) {
+  return decode_array_with_depth(text, 128);
+}
+
+// decode_array_with_depth is decode_array with a lower depth limit. The rule
+// for depth is that of parse_with_depth.
+pub function decode_array_with_depth[T: FromJson](text: string, depth: i32): Result[T[], JsonError] {
+  match (parse_with_depth(text, depth)) {
     Ok(v) => {
       return from_json_array[T](v);
     },
