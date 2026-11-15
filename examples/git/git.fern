@@ -1705,6 +1705,12 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
     }
   }
   let valued = ["--max-count", "--skip", "--format", "--pretty", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep", "--min-parents", "--max-parents"];
+  // The options of revision.c that take the next argument
+  // (`parse_long_opt`) need one.
+  let next_valued = ["--max-count", "--skip", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep"];
+  if (next_valued.contains(x) && i + 1 >= argv.len()) {
+    return (LogOpts { ...o, bad: "Option '" + x + "' requires a value" }, g, 1);
+  }
   for name in valued {
     let (v, taken) = option_value(argv, i, name);
     if (taken > 0 && !(name == "--pretty" && taken == 2)) {
