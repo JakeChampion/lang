@@ -313,6 +313,17 @@ pub function is_lane_call(op: Op): boolean {
   return op.i64_imm == 6;
 }
 
+// The release of a record or a variant through its helper. A box that
+// another value holds only loses a count, so the emitter can test the
+// count inline and call the helper for a unique box alone.
+pub function box_release(op: Op): Op {
+  return Op { ...op, i64_imm: 7 };
+}
+
+pub function is_box_release(op: Op): boolean {
+  return op.i64_imm == 7;
+}
+
 pub function op_arr_set(width: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: K_ARR_SET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
