@@ -2283,6 +2283,17 @@ function main(): i32 { return 0; }
 		{"own-arg-spread-whole-own-arg", spreadSourceRead("n: eat_s(u)"), []string{"E051"}},
 		{"own-arg-spread-whole-in-array", spreadSourceRead("n: [u].len() as i32"), []string{"E051"}},
 		{"own-arg-spread-source-in-lambda", spreadSourceRead("n: (() => u.n)()"), []string{"E051"}},
+		{"own-arg-spread-borrowed-handle-field", literalFieldValue("b: H", "alt: b.w"), []string{"E051"}},
+		{"own-arg-spread-borrowed-handle-param", literalFieldValue("w: Writer", "alt: w"), []string{"E051"}},
+		{"own-arg-spread-borrowed-struct-field", literalFieldPrelude + "function f(own u: K, b: H): i32 {\n  let v = K { ...u, h: b };\n  return takek(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-self-update-borrowed", literalFieldPrelude + "function f(own u: H, b: H): i32 {\n  let v = H { ...u, n: 1 };\n  v = H { ...v, alt: b.alt };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-fresh-handle-field", literalFieldValue("b: H", "alt: stdout()"), nil},
+		{"own-arg-spread-own-param-handle-field", literalFieldValue("own w: Writer", "alt: w"), nil},
+		{"own-arg-spread-scalar-field", literalFieldValue("b: H", "n: b.n"), nil},
+		{"own-arg-spread-string-copy-field", literalFieldValue("b: H", "name: b.name"), nil},
+		{"own-arg-literal-borrowed-handle-fields", literalFieldPrelude + "function f(b: H): i32 {\n  let v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-literal-reassigned-borrow", literalFieldPrelude + "function f(own x: Writer, own y: Writer, b: H): i32 {\n  let v = H { w: x, alt: y, n: 0, name: \"\" };\n  v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-literal-own-param-fields", literalFieldPrelude + "function f(own x: Writer, own y: Writer): i32 {\n  let z = y;\n  let v = H { w: x, alt: z, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
@@ -3149,6 +3160,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 
 	progs := []struct{ name, src string }{
 		{"bytes-data-outside-block", `function main(): i32 { let b: u8[] = [1u8]; let p: usize = __bytes_data(b); return 0; }`},
+		{"spread-borrowed-handle-field", literalFieldValue("b: H", "alt: b.w")},
+		{"spread-borrowed-handle-param", literalFieldValue("w: Writer", "alt: w")},
+		{"spread-own-param-handle-field", literalFieldValue("own w: Writer", "alt: w")},
+		{"spread-fresh-handle-field", literalFieldValue("b: H", "alt: stdout()")},
+		{"spread-scalar-and-string-fields", literalFieldValue("b: H", "n: b.n, name: b.name")},
+		{"literal-borrowed-handle-fields", literalFieldPrelude + "function f(b: H): i32 {\n  let v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n"},
+		{"literal-nested-borrow", literalFieldPrelude + "function f(b: H): i32 {\n  let v = K { h: H { w: b.w, alt: b.alt, n: 0, name: \"\" }, n: 1 };\n  return takek(v);\n}\nfunction main(): i32 { return 0; }\n"},
 		{"bytes-data-inside-block", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b)); } return v - 7; }`},
 		{"bytes-data-kept-in-local", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { let p: usize = __bytes_data(b); v = __load_u8(p); } return v - 7; }`},
 		{"bytes-data-with-offset", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b) + 0 as usize); } return v - 7; }`},
@@ -4110,6 +4128,21 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 
 // spreadSourceRead is a program that passes `S { ...u, value }` to an own
 // parameter, where u is an own parameter.
+const literalFieldPrelude = `struct H { w: Writer, alt: Writer, n: i32, name: string }
+struct K { h: H, n: i32 }
+function take(own h: H): i32 { return h.n; }
+function takek(own k: K): i32 { return k.n; }
+`
+
+func literalFieldValue(params, value string) string {
+	return literalFieldPrelude + `function f(own u: H, ` + params + `): i32 {
+  let v = H { ...u, ` + value + ` };
+  return take(v);
+}
+function main(): i32 { return 0; }
+`
+}
+
 func spreadSourceRead(value string) string {
 	return `struct S { got: string[], label: string, tag: string, n: i32, m: i32, other: string[], r: Option[Reader] }
 function take(own s: S): i32 { return s.n + s.m; }

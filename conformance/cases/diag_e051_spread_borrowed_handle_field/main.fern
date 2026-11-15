@@ -1,0 +1,18 @@
+// A spread literal sets a field value that does not name its source. The
+// value is a handle that a borrowed parameter holds, so the local does not
+// own it and cannot go to an own parameter.
+struct H { w: Writer, alt: Writer, n: i32 }
+
+function take(own h: H): i32 {
+  return h.n;
+}
+
+function f(own u: H, b: H): i32 {
+  let v = H { ...u, alt: b.w };
+  return take(v);
+}
+
+function main(): i32 {
+  let b = H { w: stdout(), alt: stdout(), n: 2 };
+  return f(H { w: stdout(), alt: stdout(), n: 1 }, b);
+}
