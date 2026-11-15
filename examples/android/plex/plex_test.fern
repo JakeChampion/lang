@@ -299,6 +299,24 @@ function test_cache_name(): test.TestOutcome {
   return test.assert_eq(plex.cache_name(a).ends_with(".img").to_string(), "true");
 }
 
+function test_markers(): test.TestOutcome {
+  let body = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":5000,\"endTimeOffset\":65000},{\"type\":\"bookmark\",\"startTimeOffset\":70000,\"endTimeOffset\":71000},{\"type\":\"credits\",\"startTimeOffset\":2400000,\"endTimeOffset\":2500000}]}]}}";
+  let Some(it) = plex.parse_item(body) else {
+    return test.fail("no item");
+  };
+  if (it.markers.len() != 2) {
+    return test.fail("markers " + it.markers.len().to_string());
+  }
+  let at = (ms: i64): string => match (plex.marker_at(it, ms)) {
+    Some(m) => m.kind,
+    None => "-",
+  };
+  if (plex.metadata(client(), base(), "77").url != "https://10-0-0-5.abc.plex.direct:32400/library/metadata/77?includeMarkers=1") {
+    return test.fail("no markers asked for");
+  }
+  return test.assert_eq([at(0i64), at(5000i64), at(64999i64), at(65000i64), at(70500i64), at(2450000i64)].join(" "), "- intro intro - - credits");
+}
+
 function main(): i32 {
   let r = test.new("plex");
   r = r.it("each request names the client", test_headers_name_the_client);
@@ -316,6 +334,7 @@ function main(): i32 {
   r = r.it("the preview thumbnails of a BIF file", test_bif);
   r = r.it("the sound and subtitle tracks of a file", test_tracks);
   r = r.it("the name of a kept image", test_cache_name);
+  r = r.it("the intro and credits markers of an item", test_markers);
   r = r.it("a part with preview thumbnails", test_thumbnail_part);
   return r.finish();
 }

@@ -40,6 +40,9 @@ const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"t
 
 const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
 
+// The movie of the second poster: the movie above, with an intro marker.
+const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
+
 // A page of a library of 63 movies from `start`.
 function page(start: i32): string {
   let n = 60;
@@ -102,6 +105,9 @@ function reply_to(r: plex.Request): plex.Reply {
   }
   if (u.contains("/library/sections")) {
     return ok(SECTIONS);
+  }
+  if (u.contains("/library/metadata/502")) {
+    return ok(INTRO);
   }
   if (u.contains("/library/metadata/501")) {
     return ok(MOVIE);
@@ -598,6 +604,30 @@ function test_connection_race(): test.TestOutcome {
   return test.assert_eq(got.map((k: i32): string => k.to_string()).join(" "), "-1 1 1 0 -1 -1");
 }
 
+// In an intro, a Skip intro button shows over the video with no controls,
+// and a tap on it seeks to the end of the intro.
+function test_skip_intro(): test.TestOutcome {
+  let log = new_log();
+  log.gpu.set(true);
+  let f = frame();
+  defer free_frame(f);
+  let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:1"), log, 200i64, f, "play");
+  if (!has_url(log, "/library/metadata/502?includeMarkers=1")) {
+    return test.fail("no metadata of the item that plays");
+  }
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  let ticked = settle(ready, log, 1000i64, f);
+  if (node(ticked, "skip").is_none() || node(ticked, "overlay").is_none()) {
+    return test.fail("no skip button over the video");
+  }
+  let drawn = at(ticked, log, 1010i64, f, android.Vsync(1000000000i64));
+  if (count_calls(log, "draw video with controls") == 0) {
+    return test.fail("the skip button did not draw over the video");
+  }
+  let skipped = tap(drawn, log, 1100i64, f, "skip");
+  return test.assert_eq(has_call(log, "seek 130000").to_string(), "true");
+}
+
 function test_library_pages(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -836,6 +866,7 @@ function main(): i32 {
   r = r.it("a drag on the seek bar scrubs with thumbnails", test_drag_scrubs_with_thumbnails);
   r = r.it("the sheet of tracks changes the sound and burns subtitles", test_tracks_sheet);
   r = r.it("the connections of a server race", test_connection_race);
+  r = r.it("a skip button skips the intro", test_skip_intro);
   r = r.it("a library loads its next page at its end", test_library_pages);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);

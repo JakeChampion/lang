@@ -680,6 +680,9 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
   if (verb == "items") {
     return got_items(t, rest, r);
   }
+  if (verb == "playmeta") {
+    return got_play_meta(t, rest, r);
+  }
   if (verb == "meta") {
     if (t.screen == ui.DETAIL && t.item.key == rest) {
       if let Some(it) = plex.parse_item(r.text()) {
@@ -1095,6 +1098,11 @@ function start_play(own s: App, it: plex.Item, queue: plex.Item[]): App {
   if let Some(part) = plex.thumbnail_part(it) {
     t = ask(t, "bif:" + part.id, Bif(part.id));
   }
+  // An item from a list has no markers and no tracks, so the app asks for
+  // all of its metadata.
+  if (!audio(t.play)) {
+    t = ask(t, "playmeta:" + it.key, Meta(it.key));
+  }
   log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
   if (!t.dev.play(stream.url)) {
     return App { ...t, play: Play { ...t.play, status: "The player refused the stream" } };
@@ -1387,7 +1395,10 @@ function play_tick(own s: App, now: i64): App {
     t = App { ...t, play: Play { ...t.play, overlay: false }, dirty: true };
   }
   if (now - p.updated_at >= 500i64) {
-    t = App { ...t, play: Play { ...t.play, position: t.dev.position(), updated_at: now }, dirty: t.dirty || t.play.overlay };
+    let before = skip_label(t.play);
+    let moved = Play { ...t.play, position: t.dev.position(), updated_at: now };
+    let after = skip_label(moved);
+    t = App { ...t, play: moved, dirty: t.dirty || t.play.overlay || before != after };
   }
   if (now - t.play.reported_at >= REPORT_MS) {
     t = App { ...t, play: Play { ...t.play, reported_at: now } };
@@ -1398,6 +1409,40 @@ function play_tick(own s: App, now: i64): App {
 
 // How long the controls show over the video after a tap.
 const CONTROLS_MS: i64 = 4000i64;
+
+// The markers and the media of the item that plays, from all of its
+// metadata. The thumbnails come now when the item of the list had none.
+function got_play_meta(own t: App, key: string, r: plex.Reply): App {
+  if (!t.play.active || t.play.item.key != key) {
+    return t;
+  }
+  let Some(full) = plex.parse_item(r.text()) else {
+    return t;
+  };
+  let had = plex.thumbnail_part(t.play.item).is_some();
+  let item = plex.Item { ...t.play.item, markers: full.markers, media: full.media };
+  let u = App { ...t, play: Play { ...t.play, item: item } };
+  if (!had) {
+    if let Some(part) = plex.thumbnail_part(item) {
+      return ask(u, "bif:" + part.id, Bif(part.id));
+    }
+  }
+  return u;
+}
+
+// The words of the skip button at the place of the playback, or "".
+function skip_label(p: Play): string {
+  if (!p.active || !p.prepared || audio(p)) {
+    return "";
+  }
+  let Some(m) = plex.marker_at(p.item, p.position) else {
+    return "";
+  };
+  if (m.kind == "credits") {
+    return "Skip credits";
+  }
+  return "Skip intro";
+}
 
 // The preview thumbnails of the part `id`, when the item that plays has
 // that part. A server with no thumbnails answers 404, and then the drag
@@ -1491,6 +1536,13 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
       return resume(s);
     }
     return pause_play(s);
+  }
+  if (act == "skip") {
+    if let Some(m) = plex.marker_at(p.item, p.position) {
+      log.info("plex: skip the " + m.kind);
+      return seek_to(s, m.end_ms);
+    }
+    return s;
   }
   if (act == "tracks") {
     return App { ...s, play: Play { ...p, sheet: true }, dirty: true };
@@ -1885,7 +1937,7 @@ pub function view(s: App): ui.View {
     hubs = s.results;
   }
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: p.status };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: skip_label(p), sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: p.status };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
@@ -2077,7 +2129,7 @@ function frame(own s: App, ns: i64): App {
   if (t.gpu && t.window != 0 as usize) {
     if (t.play.video) {
       let over: scene.Node[] = [];
-      if (t.play.overlay) {
+      if (t.play.overlay || skip_label(t.play).len() > 0) {
         over = t.nodes;
       }
       if (t.dev.present(t.window, over, true)) {

@@ -40,6 +40,9 @@ Playback:
 
 Music plays with the controls on the screen.
 
+In the intro or the credits of a video, a Skip button shows over it. The
+app asks the server for the markers of the item when it starts to play.
+
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice. A file that plays as it is changes its
 sound in place. Subtitles burn into a transcode.

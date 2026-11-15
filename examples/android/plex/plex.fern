@@ -321,7 +321,7 @@ pub function hubs(c: Client, b: Base): Request {
 }
 
 pub function metadata(c: Client, b: Base, key: string): Request {
-  return get(c.with_token(b.token), b.uri + "/library/metadata/" + key);
+  return get(c.with_token(b.token), b.uri + "/library/metadata/" + key + "?includeMarkers=1");
 }
 
 pub function children(c: Client, b: Base, key: string): Request {
@@ -423,10 +423,15 @@ pub struct Item {
   studio: string,
   genres: string[],
   media: Media[],
+  markers: Marker[],
 }
 
+// A part of a video that a viewer can skip: "intro" or "credits", from
+// `start_ms` up to `end_ms`.
+pub struct Marker { kind: string, start_ms: i64, end_ms: i64 }
+
 pub function no_item(): Item {
-  return Item { key: "", kind: "", title: "", parent: "", grandparent: "", year: 0, index: 0, parent_index: 0, summary: "", thumb: "", art: "", parent_thumb: "", grandparent_thumb: "", duration_ms: 0i64, offset_ms: 0i64, views: 0, leaves: 0, viewed_leaves: 0, children: 0, rating: "", content_rating: "", studio: "", genres: [], media: [] };
+  return Item { key: "", kind: "", title: "", parent: "", grandparent: "", year: 0, index: 0, parent_index: 0, summary: "", thumb: "", art: "", parent_thumb: "", grandparent_thumb: "", duration_ms: 0i64, offset_ms: 0i64, views: 0, leaves: 0, viewed_leaves: 0, children: 0, rating: "", content_rating: "", studio: "", genres: [], media: [], markers: [] };
 }
 
 function tags(d: json.Document, n: i32, key: string): string[] {
@@ -486,7 +491,29 @@ pub function item_of(d: json.Document, n: i32): Item {
     studio: str(d, n, "studio"),
     genres: tags(d, n, "Genre"),
     media: media_of(d, n),
+    markers: markers_of(d, n),
   };
+}
+
+function markers_of(d: json.Document, n: i32): Marker[] {
+  let out: Marker[] = [];
+  for m in elements(d, n, "Marker") {
+    let kind = str(d, m, "type");
+    if (kind == "intro" || kind == "credits") {
+      out = out.append(Marker { kind: kind, start_ms: int(d, m, "startTimeOffset"), end_ms: int(d, m, "endTimeOffset") });
+    }
+  }
+  return out;
+}
+
+// The marker that `ms` is in, or None.
+pub function marker_at(it: Item, ms: i64): Option[Marker] {
+  for m in it.markers {
+    if (m.start_ms <= ms && ms < m.end_ms) {
+      return Some(m);
+    }
+  }
+  return None;
 }
 
 // A page of a library: the items, and the count of all its items.
