@@ -28,13 +28,13 @@ function dependency(output: ssaprepare.Output, from: string, to: string): void {
 
 function allocator_paths(output: ssaprepare.Output): void {
   dependency(output, "__fern_alloc:", "__absent_alloc:");
-  dependency(output, "popq (%rdi)\n    ret", "popq (%rax)\n    ret");
+  dependency(output, "popq (%rdi)\n    movq $0, (%rax)\n    ret", "popq (%rax)\n    movq $0, (%rax)\n    ret");
   dependency(output, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rax, __fern_heap_ptr(%rip)");
   dependency(output, "movl $9, %eax", "movl $8, %eax");
   dependency(output, "movq %rcx, __fern_heap_end(%rip)", "movq %rax, __fern_heap_end(%rip)");
   let bad_first = change(output.text, "movl $9, %eax", "movl $8, %eax");
   require(initialized.check(bad_first) && !first.check(bad_first), "initialized alone cannot certify first mapping");
-  let bad_fast = change(output.text, "popq (%rdi)\n    ret", "popq (%rax)\n    ret");
+  let bad_fast = change(output.text, "popq (%rdi)\n    movq $0, (%rax)\n    ret", "popq (%rax)\n    movq $0, (%rax)\n    ret");
   require(first.check(bad_fast) && !initialized.check(bad_fast), "first mapping alone cannot certify free list");
   let bad_carry = change(output.text, "jc __fern_alloc_size_abort", "jnc __fern_alloc_size_abort");
   require(initialized.check(bad_carry) && !first.check(bad_carry), "initialized path cannot certify mapping carry");

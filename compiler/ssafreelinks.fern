@@ -38,8 +38,12 @@ pub function plain(lines: [string]): Plain {
   let out: string[] = [];
   let at: i32[] = [];
   let from: i32[] = [];
-  let i = 0;
-  while (i < lines.len()) {
+  // The lines before `next` are in a sequence that a collapse took.
+  let next = 0;
+  for i in 0..lines.len() {
+    if (i < next) {
+      continue;
+    }
     let d = decode_end(lines, i);
     if (d > 0 && flags_dead(lines, d + 1)) {
       let block = operand(lines[i], 0);
@@ -53,24 +57,23 @@ pub function plain(lines: [string]): Plain {
         out = out.append("popq " + slot);
         from = from.append(-1);
         at = at.append(out.len() - 1);
-        i = d + 2;
+        next = d + 2;
         continue;
       }
       out = out.append("movq (" + block + "), " + scratch).append("movq " + scratch + ", " + slot);
       from = from.append(-1).append(-1);
       at = mark(at, d - i - 1, -1).append(out.len() - 2).append(out.len() - 1);
-      i = d + 1;
+      next = d + 1;
       continue;
     }
     if (encode(lines, i) && flags_dead(lines, i + 6)) {
       at = mark(at, 6, -1);
-      i += 6;
+      next = i + 6;
       continue;
     }
     out = out.append(lines[i]);
     from = from.append(i);
     at = at.append(out.len() - 1);
-    i += 1;
   }
   return Plain { lines: out, at: at, from: from };
 }
@@ -117,8 +120,10 @@ function decode_end(lines: [string], i: i32): i32 {
   if (b == "" || s == "" || !label.starts_with(".") || !label.ends_with(":")) {
     return -1;
   }
-  let want = ["shrq $12, " + s, "xorq __fern_link_key(%rip), " + s, "xorq (" + b + "), " + s, "testq " + s + ", " + s, "jz " + chop(label),
-    "testq $7, " + s, "jnz __fern_free_link_abort", "cmpq __fern_heap_base(%rip), " + s, "jb __fern_free_link_abort", "cmpq __fern_heap_end(%rip), " + s, "jae __fern_free_link_abort"];
+  let want = [
+    "shrq $12, " + s, "xorq __fern_link_key(%rip), " + s, "xorq (" + b + "), " + s, "testq " + s + ", " + s, "jz " + chop(label),
+    "testq $7, " + s, "jnz __fern_free_link_abort", "cmpq __fern_heap_base(%rip), " + s, "jb __fern_free_link_abort", "cmpq __fern_heap_end(%rip), " + s, "jae __fern_free_link_abort",
+  ];
   for k in 0..want.len() {
     if (lines[i + 1 + k] != want[k]) {
       return -1;
@@ -147,8 +152,7 @@ function encode(lines: [string], i: i32): boolean {
 // Whether no line from `i` reads the flags before a line writes them, a
 // branch leaves or the body ends. A label does not stop the scan.
 function flags_dead(lines: [string], i: i32): boolean {
-  let at = i;
-  while (at < lines.len()) {
+  for at in i..lines.len() {
     let line = lines[at];
     let name = line.split(" ")[0];
     if (reads_flags(name)) {
@@ -160,7 +164,6 @@ function flags_dead(lines: [string], i: i32): boolean {
     if (!line.ends_with(":") && !neutral(name)) {
       return false;
     }
-    at += 1;
   }
   return true;
 }
