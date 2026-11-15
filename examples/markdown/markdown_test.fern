@@ -1,6 +1,5 @@
-// The CommonMark renderer. Each expected text is the output of cmark 0.30.2
-// with --unsafe, except where a comment gives a change of spec 0.31.2. Some
-// cases check the shape of the block tree.
+// The CommonMark renderer. Each expected text is the output of cmark 0.31.2
+// with --unsafe. Some cases check the shape of the block tree.
 import "core/map";
 import "std/test";
 import "./blocks";
@@ -540,7 +539,7 @@ function test_formats(): test.TestOutcome {
     ("commonmark", o, "# A\n\n> b *c* **d** _e_ `` ` ``\n\n- f\n\n  g\n- h\n\n1. i\n2. j\n\n<!-- -->\n\n    code\n\n[k](l \"m\") <http://n> ![o](p) \\* 1. 2) - + = #\n***\n", "# A\n\n> b *c* **d** *e* `` ` ``\n\n  - f\n    \n    g\n\n  - h\n\n<!-- end list -->\n\n1.  i\n2.  j\n\n<!-- -->\n\n``` \ncode\n```\n\n[k](l \"m\") <http://n> ![o](p) \\* 1. 2) - + = \\#\n\n-----\n"),
     ("commonmark", markdown.Options { ...o, width: 20 }, "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3\n\n- iii jjj kkk lll mmm nnn ooo\n", "> aaa bbb ccc ddd\n> eee fff ggg\n> hhh 1 2 3\n\n  - iii jjj kkk lll\n    mmm nnn ooo\n"),
     ("man", o, "# A\n\n## B\n\n.b 'c' \\ - *d* **e** `f`\n\n- g\n\n  h\n- i\n\n2. j\n\n> k\n\n    l\n\n---\n\n[m](n) ![o](p)\nq  \nr\n", ".SH\nA\n.SS\nB\n.PP\n\\&.b 'c' \\e \\- \\f[I]d\\f[] \\f[B]e\\f[] \\f[C]f\\f[]\n.IP \\[bu] 2\ng\n.RS\n.PP\nh\n.RE\n.IP \\[bu] 2\ni\n.IP \"2.\" 4\nj\n.RS\n.PP\nk\n.RE\n.IP\n.nf\n\\f[C]\nl\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nm (n) [IMAGE: o]\nq.PD 0\n.P\n.PD\nr\n"),
-    ("latex", markdown.Options { ...o, smart: true }, "# A\n###### B\n\n{}#%&$_-~^\\|<>[]\"' ... -- --- 'x' \"y\"\n\n3. a\n   4. b\n\n- c\n\n> d\n\n```\ne\n```\n\n[f](#g) [h](http://h) <i@j.k> [l](m) [](n) ![o](p)\n\n***\n", "\\section{A}\n\n{B}\n\n\\{\\}\\#\\%\\&\\$\\_-\\textasciitilde{}\\^{}\\textbar{}\\textless{}\\textgreater{}{[}{]}''' \\ldots{} -- --- `x' ``y''\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item a\n4. b\n\n\\end{enumerate}\n\n\\begin{itemize}\n\\item c\n\n\\end{itemize}\n\n\\begin{quote}\nd\n\n\\end{quote}\n\n\\begin{verbatim}\ne\n\\end{verbatim}\n\n\\protect\\hyperlink{g}{f} \\href{http://h}{h} \\href{mailto:i@j.k}\\nolinkurl{i@j.k} {l} {} \\protect\\includegraphics{p}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n"),
+    ("latex", markdown.Options { ...o, smart: true }, "# A\n###### B\n\n{}#%&$_-~^\\|<>[]\"' ... -- --- 'x' \"y\"\n\n3. a\n   4. b\n\n- c\n\n> d\n\n```\ne\n```\n\n[f](#g) [h](http://h) <i@j.k> [l](m) [](n) ![o](p)\n\n***\n", "\\section{A}\n\n{B}\n\n\\{\\}\\#\\%\\&\\$\\_-\\textasciitilde{}\\^{}\\textbar{}\\textless{}\\textgreater{}{[}{]}''' \\ldots{} -- --- `x' ``y''\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item a\n4. b\n\n\\end{enumerate}\n\n\\begin{itemize}\n\\item c\n\n\\end{itemize}\n\n\\begin{quote}\nd\n\n\\end{quote}\n\n\\begin{verbatim}\ne\n\\end{verbatim}\n\n\\protect\\hyperlink{g}{f} \\href{http://h}{h} \\href{mailto:i@j.k}{\\nolinkurl{i@j.k}} {l} {} \\protect\\includegraphics{p}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n"),
   ];
   for c in cases {
     let (format, opt, md, want) = c;
@@ -552,19 +551,59 @@ function test_formats(): test.TestOutcome {
   return test.pass();
 }
 
-// Where spec 0.31.2 and cmark 0.30.2 do not agree, the port follows the
-// spec. cmark keeps one bottom for the openers of all `_` closers. It does
-// not count a symbol such as `£` as punctuation. It has the comments and
-// declarations of spec 0.30. It keeps the title of a definition when the
-// title is not the end of its line, and the line is text.
-function test_spec_over_cmark(): test.TestOutcome {
+// The changes of cmark 0.31: the bottoms of `_` openers, a symbol as
+// punctuation, the comments and declarations of spec 0.31.2, `search`, and
+// a code block class that starts with `language-`. Then come the details
+// where cmark does not follow the text of the spec: a definition keeps a
+// title that is not the end of its line, a link can hold a link after a
+// bracket that opens no link, the scanners of comments, processing
+// instructions and CDATA sections read the bytes in pairs, and no raw HTML
+// starts with `<!` after a comment with no end. The table of punctuation and
+// symbols is that of cmark, which has no U+2FFC or U+31EF.
+function test_cmark_031(): test.TestOutcome {
   return checks([
     ("__)_>__", "<p><strong>)_&gt;</strong></p>\n"),
     ("_a*_*b_ *£*bravo. *€*charlie.", "<p><em>a*</em>*b_ *£*bravo. *€*charlie.</p>\n"),
     ("foo <!-- this is a --\ncomment - with hyphens --> <!--> a --> <!---> b -->", "<p>foo <!-- this is a --\ncomment - with hyphens --> <!--> a --&gt; <!---> b --&gt;</p>\n"),
     ("a <!doctype x> b", "<p>a <!doctype x> b</p>\n"),
-    ("[a]: /u\n\"t\" x\n\n[a]", "<p>&quot;t&quot; x</p>\n<p><a href=\"/u\">a</a></p>\n"),
+    ("<search>\n*a*\n\n<source> *b*", "<search>\n*a*\n<p><source> <em>b</em></p>\n"),
+    ("```language-r\nx\n```\n``` language-\ny\n```", "<pre><code class=\"language-r\">x\n</code></pre>\n<pre><code class=\"language-\">y\n</code></pre>\n"),
+    ("[a]: /u\n\"t\" x\n\n[a]", "<p>&quot;t&quot; x</p>\n<p><a href=\"/u\" title=\"t\">a</a></p>\n"),
+    ("[a [b](c) [d] e](f)", "<p><a href=\"f\">a <a href=\"c\">b</a> [d] e</a></p>\n"),
+    ("a <!-- x ----> b --> c <!-- y -----> d", "<p>a <!-- x ----> b --> c <!-- y -----> d</p>\n"),
+    ("a <???> b ?> c <?x??> d", "<p>a <???> b ?> c &lt;?x??&gt; d</p>\n"),
+    ("a <![CDATA[x]]]> b", "<p>a &lt;![CDATA[x]]]&gt; b</p>\n"),
+    ("a <!-- x <!y> <![CDATA[z]]> <?p?>", "<p>a &lt;!-- x &lt;!y&gt; &lt;![CDATA[z]]&gt; <?p?></p>\n"),
+    ("*⿼*b *㇯*c *£*d", "<p><em>⿼</em>b <em>㇯</em>c *£*d</p>\n"),
+    ("[İ]: /u\n\n[i̇]", "<p><a href=\"/u\">i̇</a></p>\n"),
+    ("- a\n\n\n- b\n\n\n\n    c", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n<p>c</p>\n</li>\n</ul>\n"),
   ]);
+}
+
+// The other formats of cmark 0.31: the source positions of the nodes of
+// emphasis and of a string of backticks that opens no code span, an empty
+// list item and `!` in CommonMark, U+FFFE and U+FFFF as UTF-8, and the
+// LaTeX of an email autolink and of a list counter. cmark tests a code point
+// with the tests of C for a byte, so U+0130 is a digit at the start of a line.
+function test_cmark_031_formats(): test.TestOutcome {
+  let o = markdown.options();
+  let cases = [
+    ("xml", markdown.Options { ...o, sourcepos: true }, "a***b* c*\n*****Hello*world****\n`a ``b", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document sourcepos=\"1:1-3:6\" xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph sourcepos=\"1:1-3:6\">\n    <text sourcepos=\"1:1-1:1\" xml:space=\"preserve\">a</text>\n    <emph sourcepos=\"1:2-2:11\">\n      <emph sourcepos=\"1:3-1:9\">\n        <emph sourcepos=\"1:4-1:6\">\n          <text sourcepos=\"1:5-1:5\" xml:space=\"preserve\">b</text>\n        </emph>\n        <text sourcepos=\"1:7-1:8\" xml:space=\"preserve\"> c</text>\n      </emph>\n      <softbreak />\n      <text sourcepos=\"2:1-2:10\" xml:space=\"preserve\">*****Hello</text>\n    </emph>\n    <text sourcepos=\"2:12-2:20\" xml:space=\"preserve\">world****</text>\n    <softbreak />\n    <text sourcepos=\"3:1-3:6\" xml:space=\"preserve\">`a ``b</text>\n  </paragraph>\n</document>\n"),
+    ("commonmark", o, "- a\n-\n- b\n\n> 1)\n", "  - a\n  - \n  - b\n\n> 1)  \n"),
+    ("commonmark", o, "!a\\!b! \\!\\[x\\] &amp;b [c][d\\!]\n\n[d!]: /u", "!a!b! \\!\\[x\\] \\&b \\[c\\]\\[d!\\]\n"),
+    ("commonmark", o, "İ-x\n\nİ1) y\n\nİ", "İ\\-x\n\nİ1\\) y\n\nİ\n"),
+    ("commonmark", o, "(&#xFFFE;&#xFFFF;)", "(￾￿)\n"),
+    ("man", o, "(&#xFFFE;&#xFFFF;)", ".PP\n(￾￿)\n"),
+    ("latex", o, "<a@b.c> [x](#y)\n\n3. a\n   4. b", "\\href{mailto:a@b.c}{\\nolinkurl{a@b.c}} \\protect\\hyperlink{y}{x}\n\n\\begin{enumerate}\n\\setcounter{enumi}{2}\n\\item a\n4. b\n\n\\end{enumerate}\n"),
+  ];
+  for c in cases {
+    let (format, opt, md, want) = c;
+    let got = markdown.text_of(render.render(md, format, opt), false);
+    if (got != want) {
+      return test.fail(format + " \"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
+    }
+  }
+  return test.pass();
 }
 
 function main(): i32 {
@@ -594,7 +633,8 @@ function main(): i32 {
   r = r.it("autolinks", test_autolinks);
   r = r.it("raw HTML", test_raw_html);
   r = r.it("hard and soft line breaks", test_line_breaks);
-  r = r.it("spec 0.31.2 where cmark 0.30.2 differs", test_spec_over_cmark);
+  r = r.it("the changes of cmark 0.31 and its details", test_cmark_031);
+  r = r.it("the changes of cmark 0.31 in the other formats", test_cmark_031_formats);
   r = r.it("raw HTML and dangerous URLs without the unsafe option", test_safe);
   r = r.it("smart punctuation", test_smart);
   r = r.it("hard breaks and no breaks", test_breaks);

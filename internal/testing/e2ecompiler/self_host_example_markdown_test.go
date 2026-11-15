@@ -95,7 +95,9 @@ func runMarkdown(t *testing.T, bin, input string, args ...string) (string, strin
 
 // The spec runner of CommonMark normalizes the HTML before it compares it.
 // This test compares the exact text, because the port gives the HTML of cmark.
-// As the spec runner of cmark does, it gives md the option --unsafe.
+// As the spec runner of cmark does, it gives md the option --unsafe. Then it
+// runs the regression tests and the smart punctuation tests of cmark 0.31.2
+// in the same way, the second with --smart.
 func TestSelfHostExampleMarkdownSpec(t *testing.T) {
 	data, err := os.ReadFile("../../../examples/markdown/tests/spec.json")
 	if err != nil {
@@ -146,24 +148,56 @@ func TestSelfHostExampleMarkdownSpec(t *testing.T) {
 	if len(lost) > 0 {
 		t.Errorf("examples %v are in markdownSpecPass and fail", lost)
 	}
+	for _, suite := range []struct {
+		file string
+		n    int
+		args []string
+	}{
+		{"regression.json", 23, []string{"--unsafe"}},
+		{"smart_punct.json", 16, []string{"--unsafe", "--smart"}},
+	} {
+		data, err := os.ReadFile("../../../examples/markdown/tests/" + suite.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cases []markdownExample
+		if err := json.Unmarshal(data, &cases); err != nil {
+			t.Fatal(err)
+		}
+		if len(cases) != suite.n {
+			t.Fatalf("%s has %d examples, want the %d of cmark 0.31.2", suite.file, len(cases), suite.n)
+		}
+		for _, ex := range cases {
+			got, stderr, code := runMarkdown(t, bin, ex.Markdown, suite.args...)
+			if code != 0 || got != ex.HTML {
+				t.Errorf("%s example %d: exit %d\ninput %q\ngot   %q\nwant  %q\n%s", suite.file, ex.Example, code, ex.Markdown, got, ex.HTML, stderr)
+			}
+		}
+	}
 }
 
-// The command line gives the HTML of cmark. cmark 0.30.2 is the version in
-// the package archives. Where it does not follow spec 0.31.2, the port
-// follows the spec (see examples/markdown/README.md). Thus no case uses the
-// tags `search` or `source`, `<!` and a lower-case letter, or a comment that
-// spec 0.31.2 changed. No case has a symbol such as `£` next to a delimiter
-// run, or a `_` closer after a `_` closer that found no opener. No case has
-// a definition whose title is not the end of its line.
-func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
+// markdownOracleVersion is the first line of `cmark --version` for the
+// release that the port follows. The port-oracles action builds it.
+const markdownOracleVersion = "cmark 0.31.2 - CommonMark converter"
+
+// markdownOracle gives the path of cmark 0.31.2 on the PATH. A missing
+// oracle, or another release, fails the test.
+func markdownOracle(t *testing.T) string {
+	t.Helper()
 	ref, err := exec.LookPath("cmark")
 	if err != nil {
-		t.Fatalf("cmark 0.30.2 is required on PATH: %v", err)
+		t.Fatalf("cmark 0.31.2 is required on PATH: %v", err)
 	}
 	version, err := exec.Command(ref, "--version").Output()
-	if err != nil || !strings.HasPrefix(string(version), "cmark 0.30.2 ") {
-		t.Fatalf("the oracle is cmark 0.30.2, but %s gives %q (%v)", ref, strings.SplitN(string(version), "\n", 2)[0], err)
+	if got := strings.SplitN(string(version), "\n", 2)[0]; err != nil || got != markdownOracleVersion {
+		t.Fatalf("the oracle is cmark 0.31.2, but %s gives %q (%v)", ref, got, err)
 	}
+	return ref
+}
+
+// The command line gives the HTML of cmark 0.31.2.
+func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
+	ref := markdownOracle(t)
 	bin := buildMarkdown(t)
 	cases := []string{
 		"# h1\n## h2 ##\n###### h6\n####### p\n#nope\n",
@@ -324,18 +358,13 @@ type markdownCase struct {
 	Exit   int             `json:"exit"`
 }
 
-// The usage text of md is the usage text of cmark with the name md. Its
-// version text names md, and is not in the cases.
-func markdownUsage(stdout string) string {
-	return strings.Replace(stdout, "Usage:   cmark [FILE*]", "Usage:   md [FILE*]", 1)
-}
-
 // TestSelfHostExampleMarkdownCmarkCases runs md on each target on the cases
 // of tests/cmark.json, which scripts/gen-markdown-cmark-cases.py records
-// from cmark 0.30.2: each option and format, the errors of the command
+// from cmark 0.31.2: each option and format, the errors of the command
 // line, files that are joined, missing or a directory, and invalid UTF-8.
 // Stdout, stderr and the exit status must be those of cmark. When cmark is
-// on the PATH, the recorded output must still be its output.
+// on the PATH, it must be cmark 0.31.2, and the recorded output must still
+// be its output.
 func TestSelfHostExampleMarkdownCmarkCases(t *testing.T) {
 	data, err := os.ReadFile("../../../examples/markdown/tests/cmark.json")
 	if err != nil {
@@ -357,7 +386,8 @@ func TestSelfHostExampleMarkdownCmarkCases(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "dir"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if ref, err := exec.LookPath("cmark"); err == nil {
+	if _, err := exec.LookPath("cmark"); err == nil {
+		ref := markdownOracle(t)
 		for _, c := range corpus.Cases {
 			stdout, stderr, code := markdownExec(t, exec.Command(ref, c.Args...), markdownBytes(t, c.Stdin), dir)
 			if stdout != string(markdownBytes(t, c.Stdout)) || stderr != string(markdownBytes(t, c.Stderr)) || code != c.Exit {
@@ -371,7 +401,7 @@ func TestSelfHostExampleMarkdownCmarkCases(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			for _, c := range corpus.Cases {
 				stdout, stderr, code := run(c.Args, markdownBytes(t, c.Stdin), dir)
-				want := markdownUsage(string(markdownBytes(t, c.Stdout)))
+				want := string(markdownBytes(t, c.Stdout))
 				wantErr := string(markdownBytes(t, c.Stderr))
 				if stdout != want || stderr != wantErr || code != c.Exit {
 					t.Errorf("md %q: exit %d, want %d\nstdout %q\nwant   %q\nstderr %q\nwant   %q", c.Args, code, c.Exit, stdout, want, stderr, wantErr)
@@ -381,19 +411,11 @@ func TestSelfHostExampleMarkdownCmarkCases(t *testing.T) {
 	}
 }
 
-// markdownCmarkOnly is the set of the spec examples where the port follows
-// spec 0.31.2 and cmark 0.30.2 does not (see examples/markdown/README.md).
-// Their output differs in each format.
-var markdownCmarkOnly = map[int]bool{354: true, 625: true, 626: true}
-
 // TestSelfHostExampleMarkdownFormats gives each example of the spec to md on
 // each target and to cmark, for each format and some sets of options, and
-// compares the output. Only the examples of markdownCmarkOnly differ.
+// compares the output.
 func TestSelfHostExampleMarkdownFormats(t *testing.T) {
-	ref, err := exec.LookPath("cmark")
-	if err != nil {
-		t.Fatalf("cmark 0.30.2 is required on PATH: %v", err)
-	}
+	ref := markdownOracle(t)
 	data, err := os.ReadFile("../../../examples/markdown/tests/spec.json")
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +476,7 @@ func TestSelfHostExampleMarkdownFormats(t *testing.T) {
 			differ := map[string][]int{}
 			for i, j := range jobs {
 				n := examples[j.example].Example
-				if (got[i] != want[i]) == markdownCmarkOnly[n] {
+				if got[i] == want[i] {
 					continue
 				}
 				key := strings.Join(sets[j.set], " ")
@@ -464,7 +486,7 @@ func TestSelfHostExampleMarkdownFormats(t *testing.T) {
 				}
 			}
 			for key, list := range differ {
-				t.Errorf("md %s: examples %v are not as markdownCmarkOnly says", key, list)
+				t.Errorf("md %s: examples %v differ from cmark", key, list)
 			}
 		})
 	}
