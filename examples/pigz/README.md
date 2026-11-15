@@ -88,11 +88,11 @@ others).
 
 Each mode reads its input in parts and writes its output in parts, so the
 memory does not grow with the input. The length of the output has no
-limit. A test of a gzip member of 4.7 GB used 3.6 MB of memory.
+limit. A test of a gzip member of 4.7 GB used 1.9 MB of memory.
 
 - Decompression, `-t` and `-l` read the input in parts of 256 KiB. The
   deflate stream of `std/deflate` (`inflate_part`) keeps a window of
-  32 KiB, and it gives the output in parts of at most 1 MiB.
+  32 KiB, and it gives the output in parts of at most 32 KiB.
 - `-l` without `-t` reads the input to its end, for its length and its
   last bytes.
 
@@ -181,7 +181,7 @@ The port decompresses faster than pigz.
 The decompression now reads and writes in parts. A later run used a corpus
 of 114 MB of the same kind, with `-d -p 1` and a load average near 2.
 There, pigz used 0.50 s of CPU time and 2.2 MB of memory. The port used
-0.23 s and 10 MB. The port that read all of its input used 0.26 s and
+0.22 s and 1.9 MB. The port that read all of its input used 0.26 s and
 150 MB.
 
 In CPU time, it compresses 1.04

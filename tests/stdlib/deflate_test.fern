@@ -362,20 +362,15 @@ function stream_text(data: u8[], size: i32): string {
   return out.len().to_string() + " " + crc32.of(out).to_string() + " " + how;
 }
 
-// More than 1 MiB of output, so a part stops when its output is full.
+// More than 32 KiB of output, so a part stops when its output is full. The
+// zeros make long matches, so the test is fast in the interpreter too.
 function stream_input(): u8[] {
-  let out: u8[] = [];
-  let i = 0;
-  while (out.len() < 3000000) {
-    out = __appended(out, "row " + (i * 7919 % 100003).to_string() + " of the stream\n");
-    i += 1;
-  }
-  return out;
+  return __alloc_u8(50000).concat("the quick brown fox jumps over the lazy dog ".repeat(40).bytes());
 }
 
 function test_inflate_stream(): test.TestOutcome {
   let big = stream_input();
-  let packed = deflate.deflate_level(big, 6);
+  let packed = deflate.deflate_level(big, 1);
   let small = lcg_bytes(3000).concat("the quick brown fox jumps over the lazy dog ".repeat(30).bytes());
   let small_packed = deflate.deflate_level(small, 1).concat("tail".bytes());
   let stored = __codec_bytes(hex.decode("000500faff68656c6c6f010500faff776f726c64"));
@@ -395,22 +390,28 @@ function test_inflate_stream(): test.TestOutcome {
 // distance gives the output before the match.
 function test_inflate_stream_errors(): test.TestOutcome {
   let big = stream_input();
-  let packed = deflate.deflate_level(big, 6);
+  let packed = deflate.deflate_level(big, 1);
   let half = array_prefix(packed, packed.len() / 2);
   let (out, how) = streamed(half, 4096);
   if (how != "error: the compressed data ends early") {
     return test.fail("truncated: " + how);
   }
-  if (out.len() < 1000000 || hex.encode(out) != hex.encode(array_prefix(big, out.len()))) {
+  if (out.len() < 10000 || hex.encode(out) != hex.encode(array_prefix(big, out.len()))) {
     return test.fail("truncated: the output is not the start of the input, " + out.len().to_string() + " bytes");
   }
   let stored = __codec_bytes(hex.decode("000500faff68656c6c"));
   let far = __codec_bytes(hex.decode("000500faff68656c6c6faba8045e000000"));
-  let got = [stream_text(stored, 2), stream_text(far, 1), stream_text(far, far.len())];
+  let below = deflate.inflate_part(deflate.inflate_stream(), stored, -1, true);
+  let below_text = match (below.error) {
+    Some(e) => e.message(),
+    None => "no error",
+  };
+  let got = [stream_text(stored, 2), stream_text(far, 1), stream_text(far, far.len()), below_text];
   return test.assert_eq_array(got, [
     "4 478544099 error: the compressed data ends early",
     "7 3716818841 error: malformed compressed data: a distance before the start of the output",
     "7 3716818841 error: malformed compressed data: a distance before the start of the output",
+    "malformed compressed data: an offset below zero",
   ]);
 }
 

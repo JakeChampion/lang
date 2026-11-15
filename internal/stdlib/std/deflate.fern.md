@@ -2549,7 +2549,7 @@ function __read_copy_byte(own cursor: __ReadCursor): __ReadCursor {
 
 ### Streaming inflate
 
-An `InflateStream` decodes a deflate stream from input that comes in parts. Memory stays bounded: the stream keeps 32768 bytes of history and one output buffer. Each call of `inflate_part` decodes from `input[from:]`. It returns at most about 1 MiB of new output, the count of input bytes that it used, and an error or the end of the stream.
+An `InflateStream` decodes a deflate stream from input that comes in parts. Memory stays bounded: the stream keeps 32768 bytes of history and one output buffer. Each call of `inflate_part` decodes from `input[from:]`. It returns at most about 32 KiB of new output, the count of input bytes that it used, and an error or the end of the stream.
 
 When `last` is false, more input can follow `input`. The part then stops before the input ends, at a point where it can continue. The next call gives the input again from `from + used`, with more bytes after it. When `last` is true, the input ends at `input.len()`, and an end of the input inside the stream is `Truncated`.
 
@@ -2560,7 +2560,7 @@ When `done` is true, the stream ends at byte `from + used`, after the padding bi
 ```fern
 <<35 streaming inflate>>=
 // The output of one part before it returns.
-const PART_OUT: i32 = 1048576;
+const PART_OUT: i32 = 32768;
 
 // The input that a block header and its code lengths can take.
 const HEADER_NEED: i32 = 1024;
@@ -2601,6 +2601,9 @@ pub function inflate_stream(): InflateStream {
 
 // fern-lint: allow cyclomatic-complexity
 pub function inflate_part(own st: InflateStream, input: [u8], from: i32, last: boolean): InflatePart {
+  if (from < 0) {
+    return InflatePart { stream: st, out: [], used: 0, done: false, error: Some(Malformed("an offset below zero")) };
+  }
   let InflateStream { buf, n, bitbuf, bitcnt, phase, final_block, remaining, literal, distance } = st;
   let keep = cmp.min(n, 32768);
   if (n > keep) {
