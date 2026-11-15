@@ -9,6 +9,7 @@ import "std/android/draw";
 import "std/android/gl";
 import "std/android/text";
 import "std/f64";
+import "std/i64";
 import "std/log";
 import "std/png";
 import "std/rand";
@@ -16,6 +17,7 @@ import "./config";
 import "./device";
 import "./fluid";
 import "./overlay";
+import "./pace";
 import "./screen";
 import "./sim";
 
@@ -26,35 +28,14 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 @callback("app_main")
 function app_main_entry(): usize;
 
-// The frames that the app drew since `from_ns`, the time of the last one,
-// the longest time from one frame to the next, and the count of the seconds
-// that the pace measured.
-struct Pace { from_ns: i64, last_ns: i64, frames: i32, longest_ns: i64, seconds: i32 }
+// What the touches of the last seconds were: the count of the events and
+// of their places, the shortest and the longest time from the time of an
+// event to the step that read it, and the count of the frames whose newest
+// place was older than each one before it in the drag.
+struct Touches { events: i32, places: i32, soonest_ns: i64, latest_ns: i64, starved: i32 }
 
-function no_pace(): Pace {
-  return Pace { from_ns: 0i64, last_ns: 0i64, frames: 0, longest_ns: 0i64, seconds: 0 };
-}
-
-// The pace after a frame at `ns`, and the text of the frame rate when one
-// second of frames ends, or "". Each fifth second, the text goes to the log
-// also. A time of more than 1 second between two frames is a pause, and
-// starts the pace again.
-function (p: Pace) drew(ns: i64): (Pace, string) {
-  let gap = ns - p.last_ns;
-  if (p.frames == 0 || gap > 1000000000i64) {
-    return (Pace { ...p, from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64 }, "");
-  }
-  let next = Pace { ...p, last_ns: ns, frames: p.frames + 1, longest_ns: p.longest_ns.max(gap) };
-  let ms = (ns - p.from_ns) / 1000000i64;
-  if (ms < 1000i64) {
-    return (next, "");
-  }
-  let rate = ((next.frames - 1) as i64 * 1000i64 + ms / 2i64) / ms;
-  let text = rate.to_string() + " fps, longest " + (next.longest_ns / 1000000i64).to_string() + " ms";
-  if (p.seconds % 5 == 4) {
-    log.info("fluid: " + text);
-  }
-  return (Pace { from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64, seconds: p.seconds + 1 }, text);
+function no_touches(): Touches {
+  return Touches { events: 0, places: 0, soonest_ns: 0i64, latest_ns: 0i64, starved: 0 };
 }
 
 // `unfit` tells that the GPU cannot run the simulation. `spoken` names the
@@ -70,7 +51,8 @@ struct App {
   mt: overlay.Metrics,
   art: screen.Art,
   spoken: string,
-  pace: Pace,
+  pace: pace.Pace,
+  touches: Touches,
 }
 
 function now_ms(): i64 {
@@ -119,7 +101,8 @@ function app_main(ctx: usize): usize {
     mt: overlay.Metrics { width: 1, height: 1, top: 0, bottom: 0, scale: 1.0, font: 1.0 },
     art: screen.no_art(),
     spoken: "",
-    pace: no_pace(),
+    pace: pace.new(),
+    touches: no_touches(),
   };
   let last = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => -1);
   closed(last);
@@ -188,10 +171,15 @@ function on_event(own s: App, e: android.Event): App {
       if (s.model.animating(ns / 1000000i64)) {
         android.request_frame(s.ctx);
       }
-      return frame(s, ns);
+      let (paced, due) = s.pace.vsync(ns);
+      if (!due) {
+        return App { ...s, pace: paced };
+      }
+      return frame(App { ...s, pace: paced }, ns);
     },
     android.Touch(action, x, y) => {
-      return App { ...s, model: touched(s.model, android.touch_samples(s.ctx), action, x as f64, y as f64) };
+      let samples = android.touch_samples(s.ctx);
+      return App { ...s, model: touched(s.model, samples, action, x as f64, y as f64), touches: s.touches.read(samples) };
     },
     android.Key(code, action) => {
       // The back key and the Escape key, when they go up.
@@ -220,6 +208,33 @@ function on_event(own s: App, e: android.Event): App {
       return s;
     }
   }
+}
+
+// The touches with one more event, which has the places `samples`.
+function (t: Touches) read(samples: android.TouchSample[]): Touches {
+  if (samples.len() == 0) {
+    return t;
+  }
+  let wait = monotonic_ns() - samples[samples.len() - 1].ns;
+  let soonest = wait;
+  if (t.events > 0) {
+    soonest = t.soonest_ns.min(wait);
+  }
+  return Touches { ...t, events: t.events + 1, places: t.places + samples.len(), soonest_ns: soonest, latest_ns: t.latest_ns.max(wait) };
+}
+
+// Writes the frame rate `speed` to the log each fifth second, with what
+// the touches were since the line before it, and gives the touches for the
+// next line.
+function logged(t: Touches, speed: string, seconds: i32): Touches {
+  if (seconds % 5 != 0) {
+    return t;
+  }
+  log.info("fluid: " + speed);
+  if (t.events > 0) {
+    log.info("fluid: touch " + t.events.to_string() + " events, " + t.places.to_string() + " places, read " + (t.soonest_ns / 1000i64).to_string() + " to " + (t.latest_ns / 1000i64).to_string() + " us after their time, " + t.starved.to_string() + " frames with an old place");
+  }
+  return no_touches();
 }
 
 // The model after a touch event with the places `samples`. The last place
@@ -353,13 +368,17 @@ function saved(own s: App): App {
 // steps, and the canvas shows it with the controls over it.
 function frame(own s: App, ns: i64): App {
   let (m, fr) = s.model.frame(ns);
+  let touches = s.touches;
+  if (fr.starved) {
+    touches = Touches { ...touches, starved: touches.starved + 1 };
+  }
   let fl = s.fluid;
   if let Some(f) = fl {
     let (next, after) = screen.advance(f, m, fr);
     fl = Some(next);
     m = after;
   }
-  let out = App { ...s, model: m, fluid: fl };
+  let out = App { ...s, model: m, fluid: fl, touches: touches };
   if (!fr.draw || out.window == 0 as usize) {
     return out;
   }
@@ -378,12 +397,14 @@ function frame(own s: App, ns: i64): App {
       return lost(painted);
     },
     _ => {
-      let (pace, speed) = painted.pace.drew(ns);
+      let (paced, speed) = painted.pace.drew(ns);
       let model = painted.model;
+      let touches = painted.touches;
       if (speed.len() > 0) {
         model = model.with_speed(speed);
+        touches = logged(touches, speed, paced.seconds);
       }
-      return spoken(App { ...painted, pace: pace, model: model }, ns / 1000000i64);
+      return spoken(App { ...painted, pace: paced, model: model, touches: touches }, ns / 1000000i64);
     }
   }
 }
