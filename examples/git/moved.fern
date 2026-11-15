@@ -77,13 +77,13 @@ pub function parse_ws(v: string): (i32, string[]) {
     if (w == "no") {
       mode = 0;
     } else if (w == "ignore-space-change") {
-      mode = mode | WS_IGNORE_CHANGE;
+      mode |= WS_IGNORE_CHANGE;
     } else if (w == "ignore-space-at-eol") {
-      mode = mode | WS_IGNORE_AT_EOL;
+      mode |= WS_IGNORE_AT_EOL;
     } else if (w == "ignore-all-space") {
-      mode = mode | WS_IGNORE_ALL;
+      mode |= WS_IGNORE_ALL;
     } else if (w == "allow-indentation-change") {
-      mode = mode | WS_ALLOW_INDENT;
+      mode |= WS_ALLOW_INDENT;
     } else {
       errors = errors.append("error: unknown color-moved-ws mode '" + w + "', possible values are 'ignore-space-change', 'ignore-space-at-eol', 'ignore-all-space', 'allow-indentation-change'");
     }

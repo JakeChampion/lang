@@ -111,7 +111,7 @@ pub function all_rules(base: i32): i32 {
   let rule = tab_width(base);
   for i in 0..NAMES.len() {
     if (!NOT_IN_ALL[i]) {
-      rule = rule | BITS[i];
+      rule |= BITS[i];
     }
   }
   return rule;
@@ -162,7 +162,7 @@ pub function check_emit(line: string, rule: i32, set: string, reset: string, ws:
     let i = len - 1;
     while (i >= 0 && objects.is_space(line[i])) {
       trailing = i;
-      result = result | BLANK_AT_EOL;
+      result |= BLANK_AT_EOL;
       i -= 1;
     }
   }
@@ -181,10 +181,10 @@ pub function check_emit(line: string, rule: i32, set: string, reset: string, ws:
       break;
     }
     if ((rule & SPACE_BEFORE_TAB) != 0 && written < i) {
-      result = result | SPACE_BEFORE_TAB;
+      result |= SPACE_BEFORE_TAB;
       out += ws + objects.part(line, written, i) + reset + "\t";
     } else if ((rule & TAB_IN_INDENT) != 0) {
-      result = result | TAB_IN_INDENT;
+      result |= TAB_IN_INDENT;
       out += objects.part(line, written, i) + ws + "\t" + reset;
     } else {
       out += objects.part(line, written, i + 1);
@@ -193,7 +193,7 @@ pub function check_emit(line: string, rule: i32, set: string, reset: string, ws:
     i += 1;
   }
   if ((rule & INDENT_WITH_NON_TAB) != 0 && i - written >= tab_width(rule)) {
-    result = result | INDENT_WITH_NON_TAB;
+    result |= INDENT_WITH_NON_TAB;
     out += ws + objects.part(line, written, i) + reset;
     written = i;
   }
