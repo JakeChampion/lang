@@ -4269,7 +4269,9 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 
 struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, narrow: boolean }
+// `shape` names the shape whose tag `b` is, when the fused test covers the
+// instruction that makes `b`.
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, narrow: boolean, shape: string }
 
 // What deciding a fusion reads: the use counts and the immediates. The
 // allocator decides with it before a frame exists.
@@ -4280,7 +4282,7 @@ function ssa_fuse_view(fr: SsaFrame): FuseView {
 }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, narrow: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, narrow: false, shape: "" };
 }
 
 function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boolean): ssaprepare.Fusion[] {
@@ -4303,7 +4305,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let n = 1;
   let inverted = false;
   if (last.kind_tag == ssa.UNARY && last.str == "!") {
-    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, narrow: false };
+    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, narrow: false, shape: "" };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -4318,23 +4320,44 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa.unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4, narrow: false };
+    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4, narrow: false, shape: "" };
   }
   if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
   }
   if (ssa.float_cmp(cmp.str)) {
-    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false };
+    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
   }
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false });
+    return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" });
   }
-  return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false });
+  return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" });
 }
 
 function ssa_narrow_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
   let c = asmcore.narrow_compare(fv.uses, fv.imm, blk, cmp, fu.tag, asmcore.FusedCompare { n: fu.n, a: fu.a, b: fu.b, narrow: false });
-  return SsaFuse { ...fu, n: c.n, a: c.a, b: c.b, narrow: c.narrow };
+  if (c.narrow) {
+    return SsaFuse { ...fu, n: c.n, a: c.a, b: c.b, narrow: true };
+  }
+  return ssa_shape_fuse(fv, blk, fu);
+}
+
+// An equality test of a shape tag takes the instruction that makes the tag,
+// when that instruction is directly before the compare and the compare is its
+// one reader. The test then needs no register for the tag.
+function ssa_shape_fuse(fv: FuseView, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
+  let k = blk.insts.len() - fu.n - 1;
+  if (k < 0 || fu.tag != ir.K_EQ && fu.tag != ir.K_NE) {
+    return fu;
+  }
+  let ins = blk.insts[k];
+  if (ins.kind_tag != ssa.SHAPE_ADDR || fv.uses[ins.result] != 1 || fv.imm.is_imm[ins.result]) {
+    return fu;
+  }
+  if (ins.result == fu.b) {
+    return SsaFuse { ...fu, n: fu.n + 1, shape: ins.str };
+  }
+  return if (ins.result == fu.a) { SsaFuse { ...fu, n: fu.n + 1, a: fu.b, b: fu.a, shape: ins.str } } else { fu };
 }
 
 function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
@@ -4367,7 +4390,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa.low_word_pair(blk, ii - 1, fr.uses)) {
     return ssa_bin_sized(blk.insts[ii - 1], ins.result, 32, reg_of, fr, s);
   }
-  if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI || ssa_feeds_select(fr, blk, ii + 1)) {
+  if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI || ssa_feeds_select(fr, blk, ii + 1) || ssa_shape_feeds_select(fr, blk, ii)) {
     return s;
   }
   return ssa_inst(ins, reg_of, fr, lp, r, s);
@@ -4395,14 +4418,75 @@ function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
   if (cmp.result != c || !ssa_fusable_cmp(cmp)) {
     return none;
   }
-  return SelectCond { fu: ssa_cmp_flags(fv, cmp), first: ii == run[0] };
+  return SelectCond { fu: ssa_select_shape(fv, blk, run[0] - 1, ssa_cmp_flags(fv, cmp)), first: ii == run[0] };
+}
+
+// The shape instruction before the compare at `at` that the compare of a
+// select takes in, past the constants for the select, or -1.
+function ssa_shape_before(fv: FuseView, blk: ssa.SBlock, at: i32, fu: SsaFuse): i32 {
+  if (fu.tag != ir.K_EQ && fu.tag != ir.K_NE) {
+    return -1;
+  }
+  let k = ssa_before_constants(blk, at);
+  if (k < 0) {
+    return -1;
+  }
+  let ins = blk.insts[k];
+  let operand = ins.result == fu.a || ins.result == fu.b;
+  return if (ins.kind_tag == ssa.SHAPE_ADDR && operand && fv.uses[ins.result] == 1 && !fv.imm.is_imm[ins.result]) { k } else { -1 };
+}
+
+function ssa_select_shape(fv: FuseView, blk: ssa.SBlock, at: i32, fu: SsaFuse): SsaFuse {
+  let k = ssa_shape_before(fv, blk, at, fu);
+  if (k < 0) {
+    return fu;
+  }
+  let ins = blk.insts[k];
+  return if (ins.result == fu.b) { SsaFuse { ...fu, shape: ins.str } } else { SsaFuse { ...fu, a: fu.b, b: fu.a, shape: ins.str } };
+}
+
+function ssa_is_constant(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.CONST_INT || ins.kind_tag == ssa.CONST_I64;
+}
+
+// The last position before `at` that is not a constant, or -1.
+function ssa_before_constants(blk: ssa.SBlock, at: i32): i32 {
+  for d in 0..at {
+    if (!ssa_is_constant(blk.insts[at - 1 - d])) {
+      return at - 1 - d;
+    }
+  }
+  return -1;
+}
+
+// The first position from `from` that is not a constant.
+function ssa_after_constants(blk: ssa.SBlock, from: i32): i32 {
+  for j in from..blk.insts.len() {
+    if (!ssa_is_constant(blk.insts[j])) {
+      return j;
+    }
+  }
+  return blk.insts.len();
+}
+
+// A shape instruction that the fused compare of a select takes in has no code.
+function ssa_shape_feeds_select(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean {
+  if (blk.insts[ii].kind_tag != ssa.SHAPE_ADDR) {
+    return false;
+  }
+  let j = ssa_after_constants(blk, ii + 1);
+  if (!ssa.select_at(blk, j + 1)) {
+    return false;
+  }
+  let fu = ssa_select_fuse(ssa_fuse_view(fr), blk, j + 1).fu;
+  return fu.n > 0 && fu.shape != "" && fu.b == blk.insts[ii].result;
 }
 
 function ssa_cmp_flags(fv: FuseView, cmp: ssa.SInst): SsaFuse {
   if (!ssa.float_cmp(cmp.str) && fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false };
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" };
   }
-  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false };
+  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
 }
 
 function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
@@ -5006,6 +5090,9 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
     s = ssa_fread(reg_of, fu.b, "d1", s);
     return s.write("    fcmp " + ssa_fsrc(reg_of, fu.a, "d0") + ", " + ssa_fsrc(reg_of, fu.b, "d1") + "\n");
   }
+  if (fu.shape != "") {
+    return ssa_shape_compare(reg_of, fu.a, asmcore.shape_tag(s, fu.shape), ssa_read(reg_of, fu.a, "x4", s));
+  }
   s = ssa_read(reg_of, fu.a, "x4", s);
   let bx = ssa_rhs_scratch(reg_of, fu.b, s);
   s = ssa_read_rhs(fr, reg_of, fu.b, bx, s);
@@ -5019,6 +5106,20 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
     }
   }
   return s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_rhs(fr, reg_of, fu.b, bx) + "\n");
+}
+
+// The flags of a compare of `a` with the tag of a shape. A tag of 24 bits is
+// a subtraction of its high 12 bits and a compare with its low 12 bits.
+function ssa_shape_compare(reg_of: i32[], a: i32, tag: i64, s: asmcore.EmitState): asmcore.EmitState {
+  let x = ssa_src(reg_of, a, "x4");
+  if (tag >= 0i64 && tag < 4096i64) {
+    return s.write("    cmp " + x + ", #" + util.i64_to_string(tag) + "\n");
+  }
+  if (tag > 0i64 && tag < 16777216i64) {
+    let hi = util.i64_to_string(tag / 4096i64);
+    return s.write("    sub x5, " + x + ", #" + hi + ", lsl #12\n    cmp x5, #" + util.i64_to_string(tag % 4096i64) + "\n");
+  }
+  return s.write(mov_tag("w5", tag) + "    cmp " + x + ", x5\n");
 }
 
 function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string, s: asmcore.EmitState): asmcore.EmitState {
@@ -5056,6 +5157,11 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   if (ssa.has_phis(f, fr.blk_pos, h.term.t) || ssa.has_phis(f, fr.blk_pos, h.term.f)) {
     return false;
   }
+  return ssa_only_test(fr, h);
+}
+
+// The head has no instruction before its fused test but phis and immediates.
+function ssa_only_test(fr: SsaFrame, h: ssa.SBlock): boolean {
   let tail = h.insts.len() - ssa_fuse(ssa_fuse_view(fr), h).n;
   for k in 0..tail {
     let ins = h.insts[k];

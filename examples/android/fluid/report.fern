@@ -1,0 +1,100 @@
+// What the app measured on the phone, as the dialog and the log show it:
+// the frames, the time of the display, the touch events, the work of the
+// GPU and the priority of the loop. A screenshot of the dialog thus tells
+// what is slow on a phone.
+//
+// It makes no Android call, so the host tests it.
+import "std/i32";
+import "std/i64";
+import "./pace";
+
+// The touch events since the last line of the log: their count, the count
+// of the places of their first pointer, the shortest and the longest time
+// from the newest place of an event to the step that read it, the count of
+// the frames after the lag of the fingers got longer, and the most
+// pointers of one event.
+pub struct Touch { events: i32, places: i32, soonest_ns: i64, latest_ns: i64, starved: i32, most: i32 }
+
+pub function no_touch(): Touch {
+  return Touch { events: 0, places: 0, soonest_ns: 0i64, latest_ns: 0i64, starved: 0, most: 0 };
+}
+
+// The touches with one more event of `places` places of its first pointer
+// and of `pointers` pointers, read `wait_ns` after its newest place.
+pub function (t: Touch) read(places: i32, pointers: i32, wait_ns: i64): Touch {
+  let soonest = wait_ns;
+  if (t.events > 0) {
+    soonest = t.soonest_ns.min(wait_ns);
+  }
+  return Touch { ...t, events: t.events + 1, places: t.places + places, soonest_ns: soonest, latest_ns: t.latest_ns.max(wait_ns), most: t.most.max(pointers) };
+}
+
+// The touches with one more frame after the lag of the fingers got longer.
+pub function (t: Touch) starved_frame(): Touch {
+  return Touch { ...t, starved: t.starved + 1 };
+}
+
+// What the app knows after one second of frames. `work` is the pixels that
+// the passes of the GPU wrote and the texels that they read in the second.
+// `priority` tells that the loop has the priority of a thread that draws.
+pub struct Facts { second: pace.Second, touch: Touch, work: i64, priority: boolean }
+
+// The frame rate, for the top of the dialog.
+pub function header(s: pace.Second): string {
+  return s.fps.to_string() + " fps";
+}
+
+// A time in milliseconds with one decimal.
+function ms(ns: i64): string {
+  let tenths = (ns + 50000i64) / 100000i64;
+  return (tenths / 10i64).to_string() + "." + (tenths % 10i64).to_string() + " ms";
+}
+
+// The lines of the details of the dialog.
+pub function details(f: Facts): string[] {
+  let s = f.second;
+  let display = "Display: " + s.fps.to_string() + " fps";
+  if (s.period_ns > 0i64) {
+    display += " at " + ((1000000000i64 + s.period_ns / 2i64) / s.period_ns).to_string() + " Hz";
+  }
+  if (s.every > 1) {
+    display += ", 1 frame in " + s.every.to_string() + " refreshes";
+  }
+  display += ", longest " + ms(s.longest_ns);
+  let shown = "Shown: the phone does not tell when";
+  if (s.times == pace.TIMES_TOLD && s.shown_ns > 0i64) {
+    shown = "Shown " + ms(s.shown_ns) + " after the frame starts";
+  } else if (s.times == pace.TIMES_UNKNOWN) {
+    shown = "Shown: no time from the phone yet";
+  }
+  let t = f.touch;
+  let touch = "Touch: none since the last line";
+  if (t.events > 0) {
+    let read = ", read " + ms(t.soonest_ns) + " to " + ms(t.latest_ns) + " after";
+    if (t.places * 10 <= t.events * 12) {
+      touch = "Touch: each place at once" + read;
+    } else {
+      touch = "Touch: " + ((t.places + t.events / 2) / t.events).to_string() + " places in each event" + read;
+    }
+  }
+  let gpu = "GPU: " + ((f.work + 50000000i64) / 100000000i64 / 10i64).to_string() + "." + ((f.work + 50000000i64) / 100000000i64 % 10i64).to_string() + " G texels and pixels a second";
+  if (s.done_ns > 0i64) {
+    gpu += ", done " + ms(s.done_ns) + " after the refresh";
+  }
+  let thread = "Loop: the priority of a thread that draws";
+  if (!f.priority) {
+    thread = "Loop: normal priority, the phone refused more";
+  }
+  return [display, shown, touch, gpu, thread];
+}
+
+// The lines of the log for one second of frames: the frame rate, and the
+// touch events when there were some.
+pub function log_lines(f: Facts): string[] {
+  let lines = [f.second.text()];
+  let t = f.touch;
+  if (t.events > 0) {
+    lines = lines.append("touch " + t.events.to_string() + " events, " + t.places.to_string() + " places, read " + (t.soonest_ns / 1000i64).to_string() + " to " + (t.latest_ns / 1000i64).to_string() + " us after their time, " + t.starved.to_string() + " frames with an old place, " + t.most.to_string() + " fingers at most");
+  }
+  return lines;
+}

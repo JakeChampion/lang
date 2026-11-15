@@ -1,11 +1,11 @@
-// The block layout of pigz 2.8 over zdeflate: single_compress for one
+// The block layout of pigz 2.8 over std/deflate/zlib: single_compress for one
 // process, and the jobs of parallel_compress for more. With one process,
 // pigz writes one deflate stream. With more, each job starts a new stream
 // with the 32 KiB before it as its dictionary. So the two give different
 // bytes, and each gives the bytes of pigz.
 import "std/array";
 import "std/worker";
-import "./zdeflate" as zd;
+import "std/deflate/zlib" as zd;
 import "./zopfli";
 
 pub const DICT: i32 = 32768;

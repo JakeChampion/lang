@@ -16,6 +16,7 @@
 a_binding_arm_can_follow_a_literal_arm               0
 a_branch_that_returns_gives_its_if_expression_no_type 0
 a_builtin_method_does_not_see_the_programs_variants  0
+a_closure_in_a_generic_function_captures_a_function_of_its_type_parameter 0
 a_cast_of_a_literal_expression_computes_at_its_own_type 0
 a_const_in_a_tuple_or_payload_pattern_matches_its_value 0
 a_deep_type_argument_that_does_not_grow_is_accepted  0
@@ -343,6 +344,7 @@ enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
 eq_operator_calls_a_user_eq_method                   0
 eq_struct_enum                                       0
+eq_wide_array_with_literal_array                     0
 erased_typevar_ret                                   0
 escape_sequences                                     0
 eval_order_aggregate_literal                         0
@@ -476,6 +478,7 @@ handle_field_closes_from_local                       0
 handle_foreach_destructured_field_own                0
 handle_foreach_field_local_own                       0
 handle_let_literal_in_returning_arm                  0
+handle_literal_in_arm_of_nested_returns              0
 handle_literal_reads_scalar_field_of_base            0
 handle_nested_fields_close_from_owned_root           0
 handle_payload_closes_from_local_match               0
@@ -671,6 +674,7 @@ match_arm_tuple                                      0
 match_expr_arm_width                                 0
 match_expr_array                                     0
 match_expr_binder_body                               0
+match_expr_every_arm_returns                         0
 match_expr_lambda_arm                                0
 match_expr_u32_payload_capturing_arm                 0
 match_multi_arm                                      0

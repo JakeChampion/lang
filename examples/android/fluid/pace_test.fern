@@ -36,8 +36,8 @@ function ran(r: Run, hz: i32, seconds: i32, cost_ns: i64): Run {
       p = after;
       frames += 1;
       free = start + cost_ns;
-      if (said.len() > 0) {
-        text = said;
+      if let Some(s) = said {
+        text = s.text();
       }
     }
     k = start / period + 1i64;
@@ -103,7 +103,7 @@ function test_a_pause_is_not_a_late_frame(): test.TestOutcome {
   let r = ran(fresh(), 60, 2, 1000000i64);
   let (after, due) = r.p.vsync(r.p.vsync_ns + 30i64 * SECOND);
   let (drew, said) = after.drew(after.vsync_ns, after.vsync_ns);
-  return test.assert_true(due && said == "" && drew.late == 0 && drew.every() == 1 && drew.period_ns == r.p.period_ns);
+  return test.assert_true(due && said.is_none() && drew.late == 0 && drew.every() == 1 && drew.period_ns == r.p.period_ns);
 }
 
 // The pace after `frames` frames of a display of 60 Hz. The display shows
@@ -163,6 +163,100 @@ function test_frames_that_need_more_time_get_one_refresh_with_no_frame(): test.T
   return test.assert_true(good.skips == 1 && slow.skips == 2 && (slow.ahead_ns() - 50300000i64).abs() < 1000i64);
 }
 
+const MS: i64 = 1000000i64;
+
+// A pace on a display of 60 Hz that knows its period.
+function at_60(): pace.Pace {
+  let p = pace.new();
+  for k in 1..10 {
+    let (next, due) = p.vsync(k as i64 * 16666667i64);
+    p = next;
+  }
+  return p;
+}
+
+// The times of the frame `n`: the GPU completes it 9 ms after its refresh,
+// and the display shows it 33 ms after its refresh. The refresh of the
+// frame `n` is at n * 16666667 ns.
+function told(n: i64): pace.Times {
+  let vsync = n * 16666667i64;
+  return pace.Times { done_ns: vsync + 9i64 * MS, taken_ns: vsync + 20i64 * MS, shown_ns: vsync + 33i64 * MS };
+}
+
+function test_the_pace_asks_for_the_times_of_a_frame_after_two_refreshes(): test.TestOutcome {
+  let asked = cell_new(0);
+  let ask = (n: i64): pace.Times => {
+    asked.set(asked.get() + 1);
+    return told(n);
+  };
+  let p = at_60().sent_frame(20i64, 20i64 * 16666667i64);
+  let soon = p.heard(21i64 * 16666667i64, ask);
+  let early = asked.get();
+  let later = soon.heard(22i64 * 16666667i64, ask);
+  return test.assert_true(early == 0 && soon.sent.len() == 1 && asked.get() == 1 && later.sent.len() == 0 && later.told == 1 && later.times == pace.TIMES_TOLD && later.done_ns == 9i64 * MS);
+}
+
+function test_the_pace_takes_the_time_of_the_display_from_each_frame(): test.TestOutcome {
+  let p = at_60();
+  for n in 20..30 {
+    p = p.sent_frame(n as i64, n as i64 * 16666667i64).heard((n + 2) as i64 * 16666667i64, told);
+  }
+  return test.assert_true(p.told == 10 && p.ahead_ns() == 33i64 * MS && p.sent.len() == 0);
+}
+
+function test_a_frame_with_no_time_of_the_display_takes_the_time_of_the_system(): test.TestOutcome {
+  let ask = (n: i64): pace.Times => pace.Times { ...told(n), shown_ns: -1i64 };
+  let p = at_60();
+  for n in 20..30 {
+    p = p.sent_frame(n as i64, n as i64 * 16666667i64).heard((n + 2) as i64 * 16666667i64, ask);
+  }
+  // The system took each frame 20 ms after its refresh, and the display
+  // shows it one refresh later.
+  return test.assert_true(p.told == 10 && p.ahead_ns() == 20i64 * MS + p.period_ns && p.times == pace.TIMES_TOLD);
+}
+
+function test_a_system_that_tells_no_times_is_noted(): test.TestOutcome {
+  let none = (n: i64): pace.Times => pace.Times { done_ns: -1i64, taken_ns: -1i64, shown_ns: -1i64 };
+  let asked = cell_new(0);
+  let counted = (n: i64): pace.Times => {
+    asked.set(asked.get() + 1);
+    return none(n);
+  };
+  let untold = at_60().sent_frame(20i64, 20i64 * 16666667i64).heard(23i64 * 16666667i64, none);
+  // A system with no numbers of frames gets no question.
+  let numberless = at_60().sent_frame(-1i64, 20i64 * 16666667i64).heard(23i64 * 16666667i64, counted);
+  return test.assert_true(untold.times == pace.TIMES_NONE && untold.sent.len() == 0 && untold.told == 0 && numberless.times == pace.TIMES_NONE && asked.get() == 0 && pace.new().times == pace.TIMES_UNKNOWN);
+}
+
+function test_the_pace_waits_for_the_times_of_a_frame_for_eight_frames(): test.TestOutcome {
+  let later = (n: i64): pace.Times => pace.Times { done_ns: 0i64, taken_ns: 0i64, shown_ns: 0i64 };
+  let p = at_60();
+  for n in 20..28 {
+    p = p.sent_frame(n as i64, n as i64 * 16666667i64).heard((n + 2) as i64 * 16666667i64, later);
+  }
+  let eight = p.sent.len();
+  p = p.sent_frame(28i64, 28i64 * 16666667i64).heard(30i64 * 16666667i64, later);
+  return test.assert_true(eight == 8 && p.sent.len() == 8 && p.sent[0].frame == 21i64);
+}
+
+function test_a_second_of_frames_has_the_time_of_the_gpu(): test.TestOutcome {
+  let p = at_60();
+  let second: Option[pace.Second] = None;
+  for n in 10..80 {
+    let ns = n as i64 * 16666667i64;
+    let (q, due) = p.vsync(ns);
+    let (drawn, said) = q.sent_frame(n as i64, ns).heard(ns, told).drew(ns, ns);
+    p = drawn;
+    if let Some(s) = said {
+      second = Some(s);
+    }
+  }
+  let Some(s) = second else {
+    return test.fail("no second of frames ended");
+  };
+  return test.assert_true(s.fps == 60i64 && s.done_ns == 9i64 * MS && s.times == pace.TIMES_TOLD && s.shown_ns == 33i64 * MS && p.done_ns == 9i64 * MS && s.text() == "60 fps, longest 16 ms, shown after 33 ms");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/fluid pace");
   r = r.it("a display of 60, 90 or 120 Hz has a frame for each refresh", test_a_frame_for_each_refresh);
@@ -173,5 +267,11 @@ function main(): i32 {
   r = r.it("the pace gives the time from a frame to the display", test_the_pace_gives_the_time_to_the_display);
   r = r.it("one refresh with no frame takes a frame out of the queue", test_one_refresh_with_no_frame_empties_the_queue);
   r = r.it("frames that need more time get one refresh with no frame, and no more", test_frames_that_need_more_time_get_one_refresh_with_no_frame);
+  r = r.it("the pace asks for the times of a frame after two refreshes", test_the_pace_asks_for_the_times_of_a_frame_after_two_refreshes);
+  r = r.it("the pace takes the time of the display from each frame", test_the_pace_takes_the_time_of_the_display_from_each_frame);
+  r = r.it("a frame with no time of the display takes the time of the system", test_a_frame_with_no_time_of_the_display_takes_the_time_of_the_system);
+  r = r.it("a system that tells no times is noted", test_a_system_that_tells_no_times_is_noted);
+  r = r.it("the pace waits for the times of a frame for eight frames", test_the_pace_waits_for_the_times_of_a_frame_for_eight_frames);
+  r = r.it("a second of frames has the time of the GPU", test_a_second_of_frames_has_the_time_of_the_gpu);
   return r.finish();
 }

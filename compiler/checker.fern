@@ -6658,6 +6658,9 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
     if (same_type_any_mode(lt, rt) && !is_unknown(lt)) {
       return typeinfo.t_bool();
     }
+    if (!is_unknown(lt) && !is_unknown(rt) && (settles_to(b.left, rt, s) || settles_to(b.right, lt, s))) {
+      return typeinfo.t_bool();
+    }
     if (is_integer(lt) && is_integer(rt)
       && (int_literal_tree(b.left) || int_literal_tree(b.right) || !is_unknown(scalar_numeric_join(lt, rt)))) {
       return typeinfo.t_bool();
@@ -21384,13 +21387,10 @@ struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns:
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
-struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, forks: LuFork[] }
+struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, flow: LuFlow }
 
 // A match or an if outside every loop, with the occurrences in each arm. One
 // run takes one arm, so an occurrence in one arm is not after one in another.
-// The arms of an if or a match outside every loop, with whether each arm
-// ends in a return.
-struct LuFork { arms: LuOcc[][], exits: boolean[] }
 
 // A frame is one block on the path from the function body to a statement:
 // the block, the index of the statement on the path, and the loop statement
@@ -23097,85 +23097,204 @@ function lu_base_admitted(fx: LuFn, name: string): boolean {
   return lu_own_param(fx, root) || lu_fresh_init(fx, root) || lu_unpack_init(fx, root);
 }
 
+// No run reads the name of `id` after `id`: each later read is in a branch
+// that the run of `id` does not take, or after a return.
 function lu_is_last(fx: LuFn, id: ast.ExprIdent): boolean {
+  let n = -2;
   for o in fx.facts.occ {
-    if (o.name == id.name && (o.line > id.line || o.line == id.line && o.col > id.col) && !lu_apart(fx.forks, id, o)) {
-      return false;
+    if (o.name == id.name && (o.line > id.line || o.line == id.line && o.col > id.col)) {
+      if (n == -2) {
+        n = lu_flow_node(fx.flow, lu_place(id.line, id.col));
+      }
+      if (lu_flow_reaches(fx.flow, n, lu_place(o.line, o.col))) {
+        return false;
+      }
     }
   }
   return true;
 }
 
-// The forks of `stmts`. A loop body can take each arm in turn, so the forks
-// inside a loop are not collected.
-function lu_forks(stmts: ast.Stmt[], own acc: LuFork[]): LuFork[] {
-  for st in stmts {
-    match (st) {
-      ast.StmtIf(f) => {
-        acc = acc.append(LuFork { arms: [lu_arm_occ(f.then_body), lu_arm_occ(f.else_body)], exits: [lu_ends_in_return(f.then_body), lu_ends_in_return(f.else_body)] });
-        acc = lu_forks(f.else_body, lu_forks(f.then_body, acc));
-      },
-      ast.StmtMatch(m) => {
-        let arms: LuOcc[][] = [];
-        let exits: boolean[] = [];
-        for arm in m.arms {
-          arms = arms.append(lu_arm_occ(arm.body));
-          exits = exits.append(lu_ends_in_return(arm.body));
-        }
-        acc = acc.append(LuFork { arms: arms, exits: exits });
-        for arm in m.arms {
-          acc = lu_forks(arm.body, acc);
-        }
-      },
-      _ => {}
-    }
-  }
-  return acc;
+// The statements of a function as a tree, for the question whether a run
+// can read one name after another. Node n is a statement: `first[n]` and
+// `last[n]` are the places of the first and the last name in it (line times
+// 65536 plus column, or -1 with no name), `ends[n]` is true when no run goes
+// on after it (a return, or an if or a match whose every arm ends so),
+// `looping[n]` is true for a loop, `kids[n]` holds its blocks, and `block[n]` and
+// `slot[n]` say where it is. Block b holds the nodes `blocks[b]` in order, and
+// `owner[b]` is the node that holds it, or -1 for the body.
+struct LuFlow { first: i64[], last: i64[], ends: boolean[], looping: boolean[], kids: i32[][], block: i32[], slot: i32[], blocks: i32[][], owner: i32[] }
+
+function lu_place(line: i32, col: i32): i64 {
+  return line as i64 * 65536i64 + col as i64;
 }
 
-function lu_ends_in_return(body: ast.Stmt[]): boolean {
-  if (body.len() == 0) {
-    return false;
+function lu_flow(body: ast.Stmt[]): LuFlow {
+  let f = LuFlow { first: [], last: [], ends: [], looping: [], kids: [], block: [], slot: [], blocks: [], owner: [] };
+  return lu_flow_block(body, -1, f);
+}
+
+function lu_flow_block(stmts: ast.Stmt[], owner: i32, own f: LuFlow): LuFlow {
+  let b = f.blocks.len();
+  f = LuFlow { ...f, blocks: f.blocks.append([]), owner: f.owner.append(owner) };
+  let nodes: i32[] = [];
+  for k in 0..stmts.len() {
+    let st = stmts[k];
+    let n = f.first.len();
+    let (lo, hi) = lu_span(st);
+    f = LuFlow { ...f, first: f.first.append(lo), last: f.last.append(hi), ends: f.ends.append(lu_ends(st)), looping: f.looping.append(lu_is_loop_stmt(st)), kids: f.kids.append([]), block: f.block.append(b), slot: f.slot.append(k) };
+    nodes = nodes.append(n);
+    let kids: i32[] = [];
+    for body in lu_bodies(st) {
+      kids = kids.append(f.blocks.len());
+      f = lu_flow_block(body, n, f);
+    }
+    f = LuFlow { ...f, kids: f.kids.with(n, kids) };
   }
-  if let ast.StmtReturn(_) = body[body.len() - 1] {
+  return LuFlow { ...f, blocks: f.blocks.with(b, nodes) };
+}
+
+// The blocks of statement `st` that the flow follows: the arms of an if or a
+// match, and the body of a loop.
+function lu_bodies(st: ast.Stmt): ast.Stmt[][] {
+  match (st) {
+    ast.StmtIf(f) => {
+      return [f.then_body, f.else_body];
+    },
+    ast.StmtMatch(m) => {
+      let out: ast.Stmt[][] = [];
+      for arm in m.arms {
+        out = out.append(arm.body);
+      }
+      return out;
+    },
+    ast.StmtWhile(w) => {
+      return [w.body];
+    },
+    ast.StmtFor(fo) => {
+      return [fo.body];
+    },
+    ast.StmtVar(_) | ast.StmtReturn(_) | ast.StmtExpr(_) | ast.StmtAssign(_) | ast.StmtBreak(_) | ast.StmtContinue(_) | ast.StmtUnknown(_) | ast.StmtDefer(_) => {
+      return [];
+    }
+  }
+}
+
+// No run goes on after `st`. A break or a continue goes on elsewhere, so it
+// does not end the run here.
+function lu_ends(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtReturn(_) => {
+      return true;
+    },
+    ast.StmtIf(f) => {
+      return lu_block_ends(f.then_body) && lu_block_ends(f.else_body);
+    },
+    ast.StmtMatch(m) => {
+      if (m.arms.len() == 0) {
+        return false;
+      }
+      for arm in m.arms {
+        if (!lu_block_ends(arm.body)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    ast.StmtVar(_) | ast.StmtExpr(_) | ast.StmtWhile(_) | ast.StmtAssign(_) | ast.StmtFor(_) | ast.StmtBreak(_) | ast.StmtContinue(_) | ast.StmtUnknown(_) | ast.StmtDefer(_) => {
+      return false;
+    }
+  }
+}
+
+function lu_block_ends(stmts: ast.Stmt[]): boolean {
+  for st in stmts {
+    if (lu_ends(st)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The places of the first and the last name in `st`, or -1 and -1.
+function lu_span(st: ast.Stmt): (i64, i64) {
+  let f = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  let lo = -1i64;
+  let hi = -1i64;
+  for o in f.occ {
+    let at = lu_place(o.line, o.col);
+    if (lo < 0i64 || at < lo) {
+      lo = at;
+    }
+    if (at > hi) {
+      hi = at;
+    }
+  }
+  return (lo, hi);
+}
+
+function lu_holds(fl: LuFlow, n: i32, at: i64): boolean {
+  return fl.first[n] >= 0i64 && fl.first[n] <= at && at <= fl.last[n];
+}
+
+// The innermost statement that holds the place `at`, or -1.
+function lu_flow_node(fl: LuFlow, at: i64): i32 {
+  let found = -1;
+  let b = 0;
+  let more = fl.blocks.len() > 0;
+  while (more) {
+    more = false;
+    for n in fl.blocks[b] {
+      if (lu_holds(fl, n, at)) {
+        found = n;
+        for kb in fl.kids[n] {
+          for m in fl.blocks[kb] {
+            if (!more && lu_holds(fl, m, at)) {
+              b = kb;
+              more = true;
+            }
+          }
+        }
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+// Whether a run can reach the place `at` after statement `n`, which holds
+// the earlier read. A run goes on through the statements after `n` until one
+// ends it, and out of the block to the statements after its owner. The end of
+// a loop body goes back to the loop, so it reaches every place after.
+function lu_flow_reaches(fl: LuFlow, n: i32, at: i64): boolean {
+  if (n < 0 || lu_holds(fl, n, at)) {
     return true;
   }
-  return false;
-}
-
-function lu_arm_occ(body: ast.Stmt[]): LuOcc[] {
-  let f = lu_empty_facts();
-  for st in body {
-    f = astwalk.fold_stmt_nodes(st, f, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  if (fl.ends[n]) {
+    return false;
   }
-  return f.occ;
-}
-
-// Whether no run reads `o` after `id`, for an `o` after `id`: the two are
-// in two arms of one fork, or `id` is in an arm that ends in a return and
-// `o` is outside that arm.
-function lu_apart(forks: LuFork[], id: ast.ExprIdent, o: LuOcc): boolean {
-  for fork in forks {
-    let a = lu_arm_at(fork, id.line, id.col);
-    if (a >= 0) {
-      let b = lu_arm_at(fork, o.line, o.col);
-      if (b >= 0 && b != a || b < 0 && fork.exits[a]) {
+  let cur = n;
+  while (true) {
+    let b = fl.block[cur];
+    let nodes = fl.blocks[b];
+    for j in fl.slot[cur] + 1..nodes.len() {
+      let m = nodes[j];
+      if (lu_holds(fl, m, at)) {
         return true;
       }
-    }
-  }
-  return false;
-}
-
-function lu_arm_at(fork: LuFork, line: i32, col: i32): i32 {
-  for i in 0..fork.arms.len() {
-    for o in fork.arms[i] {
-      if (o.line == line && o.col == col) {
-        return i;
+      if (fl.ends[m]) {
+        return false;
       }
     }
+    let up = fl.owner[b];
+    if (up < 0) {
+      return false;
+    }
+    if (fl.looping[up]) {
+      return true;
+    }
+    cur = up;
   }
-  return -1;
+  return true;
 }
 
 function lu_mentions(st: ast.Stmt, name: string): i32 {
@@ -25263,7 +25382,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
   facts = lu_ended_callback_loans(fn.body, facts);
-  let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
+  let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
@@ -32661,6 +32780,33 @@ pub function variant_shape_sig(s: Scope, name: string, owner: string): Option[St
   return None;
 }
 
+// A match or an if whose every arm leaves the function gives no value.
+function arms_all_exit(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtMatch(m) => {
+      if (m.arms.len() == 0) {
+        return false;
+      }
+      for arm in m.arms {
+        if (!arm_exits(arm.body)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    ast.StmtIf(f) => {
+      return f.else_body.len() > 0 && arm_exits(f.then_body) && arm_exits(f.else_body);
+    },
+    ast.StmtVar(_) | ast.StmtReturn(_) | ast.StmtExpr(_) | ast.StmtWhile(_) | ast.StmtAssign(_) | ast.StmtFor(_) | ast.StmtBreak(_) | ast.StmtContinue(_) | ast.StmtUnknown(_) | ast.StmtDefer(_) => {
+      return false;
+    }
+  }
+}
+
+function arm_exits(body: ast.Stmt[]): boolean {
+  return parser.branch_exits_early(body) || body.len() > 0 && arms_all_exit(body[body.len() - 1]);
+}
+
 // An earlier return exits the function and does not determine the block type.
 // Integer literal tails retain their polymorphic type for the receiver.
 function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
@@ -32673,7 +32819,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
     }
     return t_unknown("missing block value");
   }
-  if (parser.branch_exits_early(body)) {
+  if (parser.branch_exits_early(body) || arms_all_exit(body[body.len() - 1])) {
     return typeinfo.TypeNever { tag: 0 };
   }
   if let ast.StmtReturn(r) = body[body.len() - 1] {

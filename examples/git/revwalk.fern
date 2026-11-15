@@ -11,6 +11,7 @@ import "core/cmp";
 import "core/map";
 import "../../coreutils/lib/bre";
 import "./commitgraph";
+import "./linelog";
 import "./log";
 import "./mailmap";
 import "./objects";
@@ -77,10 +78,10 @@ pub const BY_AUTHOR: i32 = 2;
 // `A...B`. `ancestry` is `--ancestry-path`, with the commits that it names
 // in `ancestry_of`. With `by_decoration`, the commits of `decorated` are
 // the ones that change.
-pub struct Opts { reflog_walk: boolean, max_age: i64, min_age: i64, first_parent: boolean, topo: boolean, order: i32, items: string[], bloom: i64[][], rewrite: boolean, min_parents: i32, max_parents: i32, grep: Grep, full_history: boolean, simplify_merges: boolean, left_only: boolean, right_only: boolean, cherry_pick: boolean, cherry_mark: boolean, ancestry: boolean, ancestry_of: string[], boundary: boolean, by_decoration: boolean, decorated: Map[string, boolean] }
+pub struct Opts { line: boolean, line_renames: linelog.Renames, reflog_walk: boolean, max_age: i64, min_age: i64, first_parent: boolean, topo: boolean, order: i32, items: string[], bloom: i64[][], rewrite: boolean, min_parents: i32, max_parents: i32, grep: Grep, full_history: boolean, simplify_merges: boolean, left_only: boolean, right_only: boolean, cherry_pick: boolean, cherry_mark: boolean, ancestry: boolean, ancestry_of: string[], boundary: boolean, by_decoration: boolean, decorated: Map[string, boolean] }
 
 pub function options(): Opts {
-  return Opts { reflog_walk: false, max_age: -1, min_age: -1, first_parent: false, topo: false, order: BY_GRAPH, items: [], bloom: [], rewrite: false, min_parents: 0, max_parents: -1, grep: no_grep(), full_history: false, simplify_merges: false, left_only: false, right_only: false, cherry_pick: false, cherry_mark: false, ancestry: false, ancestry_of: [], boundary: false, by_decoration: false, decorated: Map { } };
+  return Opts { line: false, line_renames: linelog.Renames { on: false, find: treediff.detect_default() }, reflog_walk: false, max_age: -1, min_age: -1, first_parent: false, topo: false, order: BY_GRAPH, items: [], bloom: [], rewrite: false, min_parents: 0, max_parents: -1, grep: no_grep(), full_history: false, simplify_merges: false, left_only: false, right_only: false, cherry_pick: false, cherry_mark: false, ancestry: false, ancestry_of: [], boundary: false, by_decoration: false, decorated: Map { } };
 }
 
 // True when the walk drops the commits that change nothing it looks at:
@@ -91,7 +92,7 @@ function prunes(o: Opts): boolean {
 
 // True when the walk must find each commit before it shows one.
 pub function must_limit(o: Opts): boolean {
-  return o.cherry_pick || o.cherry_mark || o.ancestry || o.by_decoration || o.simplify_merges;
+  return o.cherry_pick || o.cherry_mark || o.ancestry || o.by_decoration || o.simplify_merges || o.line && o.rewrite;
 }
 
 // A commit of the list, with its committer date.
@@ -102,11 +103,13 @@ struct Item { hash: string, time: i64 }
 // `list` from `head` on. A topological walk with the generation numbers
 // of the commit graph has `topo` instead. With `--full-history`,
 // `treesame` holds for a merge whether its tree is the tree of each
-// parent.
-pub struct Walk { g: walk.Graph, flags: Map[string, i32], parents: Map[string, string[]], list: Item[], head: i32, pending: string[], opts: Opts, limited: boolean, failed: string, topo: Topo[], treesame: Map[string, boolean[]] }
+// parent. `lines` holds the ranges of `-L` of each commit that has them.
+// `names` holds the name of each commit of `pending` as the command line
+// gives it, or "".
+pub struct Walk { g: walk.Graph, flags: Map[string, i32], parents: Map[string, string[]], list: Item[], head: i32, pending: string[], names: string[], opts: Opts, limited: boolean, failed: string, topo: Topo[], treesame: Map[string, boolean[]], lines: Map[string, linelog.Entry[]] }
 
 pub function walk_of(g: walk.Graph, o: Opts): Walk {
-  return Walk { g: g, flags: Map { }, parents: Map { }, list: [], head: 0, pending: [], opts: o, limited: false, failed: "", topo: [], treesame: Map { } };
+  return Walk { g: g, flags: Map { }, parents: Map { }, list: [], head: 0, pending: [], names: [], opts: o, limited: false, failed: "", topo: [], treesame: Map { }, lines: Map { } };
 }
 
 pub function flag(w: Walk, h: string): i32 {
@@ -172,9 +175,14 @@ function popped(w: Walk): (Walk, Item) {
 
 // Adds a commit that the command line names, with `flags`: UNINTERESTING
 // and BOTTOM for an excluded commit.
-pub function add(w_in: Walk, h: string, flags: i32): Walk {
+pub function add(w: Walk, h: string, flags: i32): Walk {
+  return add_named(w, h, flags, "");
+}
+
+// Adds the commit `h` with the name `name` of the command line.
+pub function add_named(w_in: Walk, h: string, flags: i32, name: string): Walk {
   let (w, _) = node(w_in, h);
-  return Walk { ...set(w, h, flags), pending: w.pending.append(h) };
+  return Walk { ...set(w, h, flags), pending: w.pending.append(h), names: w.names.append(name) };
 }
 
 // Each ancestor of `h` that the walk has read is UNINTERESTING.
@@ -621,7 +629,7 @@ function limit_list(w_in: Walk): Walk {
       }
       break;
     }
-    if (w.opts.min_age != -1 && c.time > w.opts.min_age) {
+    if (w.opts.min_age != -1 && c.time > w.opts.min_age && !w.opts.line) {
       continue;
     }
     date = c.time;
@@ -926,6 +934,9 @@ pub function prepare(w_in: Walk): Walk {
     if (w.opts.topo && w.failed.len() == 0) {
       w = topo_sort(w);
     }
+    if (w.opts.line && w.opts.rewrite && w.failed.len() == 0) {
+      w = line_filter(w);
+    }
     if (w.opts.simplify_merges && prunes(w.opts) && w.failed.len() == 0) {
       w = simplify_merges(w);
     }
@@ -961,6 +972,15 @@ pub function next(w_in: Walk): (Walk, string) {
         return (w, "");
       }
     }
+    // Without a rewrite of the parents, the ranges of `-L` cross each
+    // commit when the walk comes to it (`simplify_commit` of git).
+    if (w.opts.line && !w.opts.rewrite && (flag(w, c.hash) & (SHOWN | UNINTERESTING)) == 0) {
+      let (w2, changed) = line_step(w, c.hash);
+      w = w2;
+      if (!changed) {
+        continue;
+      }
+    }
     let (w1, show) = wanted(w, c.hash);
     w = w1;
     if (show) {
@@ -971,6 +991,131 @@ pub function next(w_in: Walk): (Walk, string) {
     }
   }
   return (w, "");
+}
+
+// ---- The ranges of `-L` (line-log.c of git) ----
+
+// The ranges of `-L` of the first commit of the walk.
+pub function with_lines(w: Walk, c: string, entries: linelog.Entry[]): Walk {
+  return Walk { ...w, lines: w.lines.insert(c, entries) };
+}
+
+// The ranges of `-L` of `c`, with the changes of `c` that touch them.
+pub function lines_of(w: Walk, c: string): linelog.Entry[] {
+  return w.lines.get_or(c, []);
+}
+
+// Adds the ranges `range` to the ranges of `c` (`add_line_range`).
+function add_lines(w: Walk, c: string, range: linelog.Entry[]): Walk {
+  if let Some(old) = w.lines.get(c) {
+    return Walk { ...w, lines: w.lines.insert(c, linelog.merge(old, range)) };
+  }
+  return Walk { ...w, lines: w.lines.insert(c, range) };
+}
+
+// The tree of the commit `c`, or "" for none.
+function tree_of(w: Walk, c: string): (Walk, string) {
+  if (c.len() == 0) {
+    return (w, "");
+  }
+  let (w1, n) = node(w, c);
+  return (w1, n.tree);
+}
+
+// Takes the ranges of `-L` across the commit `c` to its parents, and
+// gives true when `c` changes a range
+// (`line_log_process_ranges_arbitrary_commit`). A commit that changes no
+// range is TREESAME. When one parent of a merge has each range, that
+// parent is the only parent of the merge, and the merge has no ranges.
+function line_step(w_in: Walk, c: string): (Walk, boolean) {
+  let w = w_in;
+  let Some(range) = w.lines.get(c) else {
+    return (set(w, c, TREESAME), false);
+  };
+  let (w1, tree) = tree_of(w, c);
+  let (w2, ps) = parents(w1, c);
+  w = w2;
+  if (ps.len() <= 1) {
+    let parent = if (ps.len() == 1) { ps[0] } else { "" };
+    let (w3, base) = tree_of(w, parent);
+    let st = linelog.step(w3.g.store, range, base, tree, w.opts.line_renames);
+    w = Walk { ...w3, g: walk.Graph { ...w3.g, store: st.store }, lines: w3.lines.insert(c, st.range) };
+    if (parent.len() > 0) {
+      w = add_lines(w, parent, st.parent);
+    }
+    if (st.changed == 0) {
+      return (set(w, c, TREESAME), false);
+    }
+    return (w, true);
+  }
+  let count = if (w.opts.first_parent) { 1 } else { ps.len() };
+  let found: linelog.Entry[][] = [];
+  for i in 0..count {
+    let (w4, base) = tree_of(w, ps[i]);
+    let st = linelog.step(w4.g.store, range, base, tree, w.opts.line_renames);
+    w = Walk { ...w4, g: walk.Graph { ...w4.g, store: st.store } };
+    if (st.changed == 0) {
+      // This parent takes each range, and the walk follows it only.
+      w = add_lines(w, ps[i], st.parent);
+      w = Walk { ...w, parents: w.parents.insert(c, [ps[i]]), lines: w.lines.remove(c) };
+      return (set(w, c, TREESAME), false);
+    }
+    found = found.append(st.parent);
+  }
+  for i in 0..count {
+    w = add_lines(w, ps[i], found[i]);
+  }
+  return (Walk { ...w, lines: w.lines.remove(c) }, true);
+}
+
+// The parent to show for the parent `p` of a commit of a walk of `-L`
+// with a rewrite of the parents: `p`, or the first commit after it that
+// is a merge, UNINTERESTING or not TREESAME, or "" when the history ends
+// first (`line_log_rewrite_one`).
+function line_rewrite_one(w_in: Walk, p_in: string): (Walk, string) {
+  let w = w_in;
+  let p = p_in;
+  while (true) {
+    let (w1, ps) = parents(w, p);
+    w = w1;
+    let f = flag(w, p);
+    if (ps.len() > 1 || (f & UNINTERESTING) != 0 || (f & TREESAME) == 0) {
+      return (w, p);
+    }
+    if (ps.len() == 0) {
+      return (w, "");
+    }
+    p = ps[0];
+  }
+  return (w, p);
+}
+
+// The commits of a limited walk of `-L` that change a range, with their
+// parents rewritten past the others (`line_log_filter`).
+function line_filter(w_in: Walk): Walk {
+  let w = w_in;
+  let kept: Item[] = [];
+  for c in w.list {
+    let (w1, changed) = line_step(w, c.hash);
+    w = w1;
+    if (changed) {
+      kept = kept.append(c);
+    }
+  }
+  for c in kept {
+    let (w2, ps) = parents(w, c.hash);
+    w = w2;
+    let out: string[] = [];
+    for p in ps {
+      let (w3, q) = line_rewrite_one(w, p);
+      w = w3;
+      if (q.len() > 0 && !out.contains(q)) {
+        out = out.append(q);
+      }
+    }
+    w = Walk { ...w, parents: w.parents.insert(c.hash, out) };
+  }
+  return Walk { ...w, list: kept, head: 0 };
 }
 
 // ---- The topological walk with generation numbers (revision.c) ----

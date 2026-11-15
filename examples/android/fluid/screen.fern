@@ -4,6 +4,7 @@
 import "std/android/draw";
 import "std/android/gl";
 import "std/android/text";
+import "std/array";
 import "std/f64";
 import "./fluid";
 import "./overlay";
@@ -110,7 +111,7 @@ pub function paint(before: Art, c: gl.Canvas, fs: text.Fonts, mt: overlay.Metric
     let panel = fresh(art.panel, m.speed + size, (): draw.Frame => overlay.panel_frame(fs, mt, l, m.speed));
     c.draw(panel.tex, l.panel.x, l.panel.y, 1.0, 0, mt.height);
     let row = m.pressed_row();
-    let state = m.cfg.paused.to_string() + m.full.to_string() + m.cfg.bloom.to_string() + m.cfg.sunrays.to_string() + m.cfg.colorful.to_string() + row.to_string();
+    let state = m.cfg.paused.to_string() + m.full.to_string() + m.cfg.bloom.to_string() + m.cfg.sunrays.to_string() + m.cfg.colorful.to_string() + row.to_string() + m.details.join("|");
     let list = fresh(art.list, state + size, (): draw.Frame => overlay.list_frame(fs, mt, l, m, row));
     c.draw(list.tex, l.list.x, l.list.y - m.scroll, 1.0, l.list.y, l.list.y + l.list.h);
     art = Art { ...art, backdrop: dark, panel: panel, list: list };
