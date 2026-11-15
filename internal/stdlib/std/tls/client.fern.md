@@ -237,8 +237,7 @@ function __is_address(name: string): boolean {
 ```fern
 <<8 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure]>>=
 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure] {
-  let buf = __copy(s.held);
-  buf = buf.concat(input);
+  let buf = s.held.concat(input);
   let session = Session { ...s, held: [] };
   let output: u8[] = [];
   let data: u8[] = [];
@@ -262,7 +261,7 @@ pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, t
     keys = keys.then(next.rekeyed);
     at = end;
   }
-  return Ok(Step { session: Session { ...session, held: __copy(buf[at:buf.len()]) }, output: output, data: data, closed: closed, tickets: tickets, rekeyed: keys });
+  return Ok(Step { session: Session { ...session, held: __bytes_owned(buf[at:buf.len()]) }, output: output, data: data, closed: closed, tickets: tickets, rekeyed: keys });
 }
 ```
 
@@ -360,7 +359,7 @@ pub function restore(saved: [u8]): Result[Session, tls.TlsError] {
   }
   match (handshake.client_restore(saved[4:4 + n])) {
     Ok(c) => {
-      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __copy(saved[4 + n:saved.len()]), verify: true });
+      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __bytes_owned(saved[4 + n:saved.len()]), verify: true });
     },
     Err(e) => {
       return Err(tls.HandshakeFailed(e));
@@ -431,7 +430,7 @@ function __judged(s: Session, first: handshake.ClientStep, now: time.Timestamp):
         c = next.client;
         output = output.concat(next.output);
         data = data.concat(next.data);
-        events = __more(events, next.events);
+        events = events.concat(next.events);
       }
     }
     i += 1;
@@ -579,18 +578,6 @@ function __leaf(s: Session, v: handshake.Verification, now: time.Timestamp): Res
     }
   }
   return Err(verify.EmptyChain);
-}
-
-function __copy(b: [u8]): u8[] {
-  let none: u8[] = [];
-  return none.concat(b);
-}
-
-function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event[] {
-  for e in b {
-    a = a.append(e);
-  }
-  return a;
 }
 ```
 
@@ -963,7 +950,7 @@ function __close_notify(c: Connection): Result[void, tls.TlsError] {
 function __send_fd(sock: Socket, data: [u8]): Result[void, tls.TlsError] {
   let at = 0;
   while (at < data.len()) {
-    let n = tcp_send_bytes(sock, __copy(data[at:data.len()]));
+    let n = tcp_send_bytes(sock, __bytes_owned(data[at:data.len()]));
     if (n < 0) {
       return Err(tls.NetFailed(net.error_from_host(-n)));
     }

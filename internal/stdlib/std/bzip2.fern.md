@@ -8,7 +8,7 @@ A stream starts with `BZh` and the size of its blocks, from 1 to 9 hundred thous
 
 ## Contracts
 
-`decode` gives the bytes of the blocks before the first error, and the error, as the `bzip2` tool writes them. The decoder checks the CRC of each block. It does not decode the randomised blocks of bzip2 0.9.0, and it reports them as an error of the data. `decompress` gives the bytes, or the error.
+`decode` gives the bytes of the blocks before the first error, and the error, as the `bzip2` tool writes them. The decoder checks the CRC of each block. It does not decode the randomised blocks of bzip2 0.9.0, and it reports them as an error of the data. `decompress` gives the bytes, or the error. `decode_with_limit` and `decompress_with_limit` refuse output above a limit of bytes: a caller that reads data from a stranger gives one.
 
 ## Executable example
 
@@ -44,16 +44,17 @@ function main(): i32 {
 import "core/error";
 import "core/cmp";
 
-// The errors of bzip2 data: not a stream of bzip2, data that ends early, or
-// data that is not valid.
+// The errors of bzip2 data: not a stream of bzip2, data that ends early,
+// data that is not valid, or output above the limit of the caller.
 @derive(cmp.Eq)
-pub enum Bzip2Error { NotBzip2, Truncated, Corrupt }
+pub enum Bzip2Error { NotBzip2, Truncated, Corrupt, OutputLimit }
 
 pub function (e: Bzip2Error) message(): string {
   return match (e) {
     NotBzip2 => "not a bzip2 file",
     Truncated => "compressed file ends unexpectedly",
     Corrupt => "data integrity error when decompressing",
+    OutputLimit => "the output is larger than the limit",
   };
 }
 
@@ -77,7 +78,13 @@ The bits of a stream come from the high bit of each byte first. A read past the 
 <<bits>>=
 // decompress gives the bytes of bzip2 streams, or the error.
 pub function decompress(input: [u8]): Result[u8[], Bzip2Error] {
-  let d = decode(input);
+  return decompress_with_limit(input, 2147483647);
+}
+
+// decompress_with_limit gives the bytes of bzip2 streams, or the error. It
+// refuses output above `limit` bytes.
+pub function decompress_with_limit(input: [u8], limit: i32): Result[u8[], Bzip2Error] {
+  let d = decode_with_limit(input, limit);
   return match (d.error) {
     Some(e) => Err(e),
     None => Ok(d.out),
@@ -100,6 +107,12 @@ function __bz_bits(input: [u8], pos: i64, n: i32): i32 {
 // decode gives the bytes of the streams of `input` before the first error,
 // and the error.
 pub function decode(input: [u8]): Decoded {
+  return decode_with_limit(input, 2147483647);
+}
+
+// decode_with_limit gives the bytes that `decode` gives, up to `limit`
+// bytes. Output above the limit is the error `OutputLimit`.
+pub function decode_with_limit(input: [u8], limit: i32): Decoded {
   let out: u8[] = [];
   let pos = 0i64;
   let first = true;
@@ -109,7 +122,7 @@ pub function decode(input: [u8]): Decoded {
       let err = if (!first) { None } else if (input.len() < 4 && __bz_prefix(input)) { Some(Truncated) } else { Some(NotBzip2) };
       return Decoded { out: out, error: err };
     }
-    let r = __bz_stream(input, (start as i64 + 4i64) * 8i64, (input[start + 3] as i32 - 48) * 100000, out);
+    let r = __bz_stream(input, (start as i64 + 4i64) * 8i64, (input[start + 3] as i32 - 48) * 100000, out, limit);
     out = r.out;
     if (r.pos < 0i64) {
       return Decoded { out: out, error: Some(r.error) };
@@ -146,7 +159,7 @@ function __bz_prefix(input: [u8]): boolean {
 struct __BzRun { out: u8[], pos: i64, error: Bzip2Error }
 
 // The blocks of a stream from the bit `pos`, up to its end mark.
-function __bz_stream(input: [u8], pos0: i64, size: i32, own out: u8[]): __BzRun {
+function __bz_stream(input: [u8], pos0: i64, size: i32, own out: u8[], limit: i32): __BzRun {
   let pos = pos0;
   while (true) {
     let hi = __bz_bits(input, pos, 24);
@@ -160,7 +173,7 @@ function __bz_stream(input: [u8], pos0: i64, size: i32, own out: u8[]): __BzRun 
     if (hi != 3227993 || lo != 2511705) {
       return __BzRun { out: out, pos: -1i64, error: Corrupt };
     }
-    let r = __bz_block(input, pos + 48i64, size, out);
+    let r = __bz_block(input, pos + 48i64, size, out, limit);
     out = r.out;
     if (r.pos < 0i64) {
       return r;
@@ -175,7 +188,7 @@ function __bz_stream(input: [u8], pos0: i64, size: i32, own out: u8[]): __BzRun 
 struct __BzHead { crc: i64, orig: i32, used: u8[], lens: i32[][], selectors: i32[], pos: i64 }
 
 // One block from the bit `pos` after its magic number.
-function __bz_block(input: [u8], pos: i64, size: i32, own out: u8[]): __BzRun {
+function __bz_block(input: [u8], pos: i64, size: i32, own out: u8[], limit: i32): __BzRun {
   let (h, error) = __bz_head(input, pos);
   if (h.pos < 0i64) {
     return __BzRun { out: out, pos: -1i64, error: error };
@@ -188,7 +201,10 @@ function __bz_block(input: [u8], pos: i64, size: i32, own out: u8[]): __BzRun {
     return __BzRun { out: out, pos: -1i64, error: Corrupt };
   }
   let before = out.len();
-  out = __bz_untransform(tt, n, h.orig, out);
+  out = __bz_untransform(tt, n, h.orig, out, limit);
+  if (out.len() > limit) {
+    return __BzRun { out: out.truncate(limit), pos: -1i64, error: OutputLimit };
+  }
   if (__bz_crc(out, before) != h.crc) {
     return __BzRun { out: out.truncate(before), pos: -1i64, error: Corrupt };
   }
@@ -282,7 +298,7 @@ function __bz_selectors(input: [u8], pos0: i64, groups: i32, count: i32): (i32[]
   for s in 0..count {
     let j = 0;
     let b = __bz_bits(input, pos, 1);
-    while (b == 1 && j < groups) {
+    while (b == 1 && j < groups - 1) {
       j += 1;
       pos += 1i64;
       b = __bz_bits(input, pos, 1);
@@ -453,8 +469,8 @@ function __bz_front(own mtf: u8[], j: i32): u8[] {
 }
 
 // Undoes the transform and the runs of four equal bytes, and appends the
-// bytes of the block.
-function __bz_untransform(tt0: i32[], n: i32, orig: i32, own out: u8[]): u8[] {
+// bytes of the block. It stops after the output is above `limit`.
+function __bz_untransform(tt0: i32[], n: i32, orig: i32, own out: u8[], limit: i32): u8[] {
   if (n == 0) {
     return out;
   }
@@ -480,7 +496,7 @@ function __bz_untransform(tt0: i32[], n: i32, orig: i32, own out: u8[]): u8[] {
   let last = -1;
   let same = 0;
   let k = 0;
-  while (k < n) {
+  while (k < n && out.len() <= limit) {
     let b = tt[p] & 255;
     p = tt[p] >> 8;
     k += 1;

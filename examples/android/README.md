@@ -12,7 +12,8 @@ tree. [`counter/`](counter/README.md) is the smallest such app, and
 `std/android/ui/sim` runs both in tests on the host. The
 [Android guide](https://fern-lang.netlify.app/android/) explains each part.
 
-`native/` is the smallest app that draws its own pixels. [`stopwatch/`](stopwatch/README.md),
+`native/` is the smallest app that draws its own pixels. [`fluid/`](fluid/README.md)
+is a fluid simulation that runs in its own OpenGL ES shaders. [`stopwatch/`](stopwatch/README.md),
 [`walkie/`](walkie/README.md), [`plex/`](plex/README.md), a Plex client,
 and [`paper/`](paper/README.md), a home screen, are complete apps. They share the dot font of
 `matrix.fern` and the look of `look.fern`.
