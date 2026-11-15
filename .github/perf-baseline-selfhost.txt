@@ -61,7 +61,7 @@ selfhost/arm64-linux/int_loop.emit	376
 selfhost/arm64-linux/map_int.emit	8910
 selfhost/arm64-linux/map_probe_chain.emit	8920
 selfhost/arm64-linux/map_string.emit	9849
-selfhost/arm64-linux/ordmap_insert.emit	6188
+selfhost/arm64-linux/ordmap_insert.emit	6253
 selfhost/arm64-linux/pmap_insert.emit	3736
 selfhost/arm64-linux/pvec_with.emit	3592
 selfhost/arm64-linux/record_update.emit	1322
@@ -130,7 +130,7 @@ selfhost/x86-64-linux/map_int.emit	8891
 selfhost/x86-64-linux/map_probe_chain.emit	8895
 selfhost/x86-64-linux/map_string.emit	9772
 selfhost/x86-64-linux/ordmap_insert.emit	5815
-selfhost/x86-64-linux/pmap_insert.emit	3379
+selfhost/x86-64-linux/pmap_insert.emit	3415
 selfhost/x86-64-linux/pvec_with.emit	3332
 selfhost/x86-64-linux/record_update.emit	1081
 selfhost/x86-64-linux/sort_inplace.emit	1586
@@ -155,11 +155,11 @@ selfhost/wasm32-wasi/perceus_deriv.emit	2831
 selfhost/x86-64-linux/perceus_nqueens.emit	1636
 selfhost/arm64-linux/perceus_nqueens.emit	1891
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
-selfhost/x86-64-linux/perceus_rbtree.emit	2619
-selfhost/arm64-linux/perceus_rbtree.emit	2908
+selfhost/x86-64-linux/perceus_rbtree.emit	2704
+selfhost/arm64-linux/perceus_rbtree.emit	2977
 selfhost/wasm32-wasi/perceus_rbtree.emit	3688
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	3051
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3330
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	3176
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3490
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4278
 selfhost/x86-64-linux/video_qtrle.emit 5204
 selfhost/arm64-linux/video_qtrle.emit 5549
