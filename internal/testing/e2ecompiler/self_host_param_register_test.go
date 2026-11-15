@@ -55,3 +55,40 @@ func TestSelfHostParametersDoNotShareARegister(t *testing.T) {
 		}
 	}
 }
+
+// The guard is false at compile time, so `ws` is `xs` on each path and the
+// release of `ws` tests `xs != xs`.
+const selfCompareReleaseProg = `import "std/i32";
+
+@noinline
+function count(xs: i32[]): i32 {
+    let ws: i32[] = xs;
+    if ((0 - 8) / 2 > 0) {
+        ws = ws.with(0, 0);
+    }
+    return ws.len();
+}
+
+function main(): i32 {
+    let xs: i32[] = [1, 2, 3];
+    print(count(xs).to_string());
+    return 0;
+}
+`
+
+// The certifier takes a comparison of a value with itself as decided. It
+// refused this function for the release behind `xs != xs`, which does not run.
+func TestSelfHostSelfComparedReleaseCertifies(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(selfCompareReleaseProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runX86_64Bin(cli.runner, cli.x86Binary(t, src)).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "3\n" {
+		t.Errorf("stdout %q, want %q", out, "3\n")
+	}
+}
