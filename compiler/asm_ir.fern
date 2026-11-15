@@ -4186,7 +4186,7 @@ function emit_quarantine_data(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
+function emit_ir_runtime_part_1(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .bss\n");
   s = s.write("    .align 8\n");
   s = s.write("    .globl __fern_heap_ptr\n");
@@ -4337,6 +4337,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
   s = s.write("    testq %rax, %rax\n");
   s = s.write("    jne .Lalloc_inited\n");
+  return s;
+}
+
+function emit_ir_runtime_part_2(s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.process_entry(s)) {
     s = emit_arena_map(s);
   } else {
@@ -4396,6 +4400,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $1, 8(%rax)\n");
   s = s.write("    movq %rdi, 16(%rax)\n");
   s = s.write("    addq $16, %rax\n");
+  return s;
+}
+
+function emit_ir_runtime_part_3(s: asmcore.EmitState): asmcore.EmitState {
   if (hev_on(s)) {
     s = s.write("    leave\n");
   }
@@ -4513,6 +4521,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    popq %rcx\n");
   s = s.write("    popq %rax\n");
   s = s.write("    ret\n");
+  return s;
+}
+
+function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = emit_quarantine(s);
     s = emit_raw_alloc_san(s);
@@ -4616,6 +4628,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
   }
   s = s.write(".Larrdec_large:\n");
+  return s;
+}
+
+function emit_ir_runtime_part_5(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = s.write("    leaq -16(%rax), %rdi\n");
     s = hev_free(s, "%rdi", "%rcx");
@@ -4731,6 +4747,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lstrfree_quar\n");
   }
   s = s.write(".Lstrfree_fused_large:\n");
+  return s;
+}
+
+function emit_ir_runtime_part_6(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = hev_free(s, "%rcx", "%rdx");
     s = s.write(".Lstrfree_quar:\n");
@@ -5026,6 +5046,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $16, %rax\n");
     s = s.write("    ret\n");
   }
+  return s;
+}
+
+function emit_ir_runtime_part_7(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("str_borrow")) {
     s = s.write("__fn___fern_str_borrow:\n");
     s = s.write("    movq $24, %rdi\n");
@@ -5209,6 +5233,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("memcpy")) {
     s = emit_runtime_memcpy(s);
   }
+  return s;
+}
+
+function emit_ir_runtime_part_8(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("buf")) {
     if (s.has_need("buf_push_bytes_range")) {
       s = emit_buf_push_bytes_range(s, false);
@@ -5450,6 +5478,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
   }
+  return s;
+}
+
+function emit_ir_runtime_part_9(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("alloc_u8")) {
     s = s.write(empty_array_block(s, ".Lfern_empty_u8"));
     s = s.write(".globl __fern_alloc_u8\n");
@@ -5562,6 +5594,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 
   s = emit_packed_arrays(s);
 
+  return s;
+}
+
+function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  s = emit_ir_runtime_part_1(s);
+  s = emit_ir_runtime_part_2(s);
+  s = emit_ir_runtime_part_3(s);
+  s = emit_ir_runtime_part_4(s);
+  s = emit_ir_runtime_part_5(s);
+  s = emit_ir_runtime_part_6(s);
+  s = emit_ir_runtime_part_7(s);
+  s = emit_ir_runtime_part_8(s);
+  s = emit_ir_runtime_part_9(s);
   return s;
 }
 
@@ -13987,7 +14032,7 @@ function emit_task_close_drop(s: asmcore.EmitState): asmcore.EmitState {
   return s.write(".Ltask_close_drop_done:\n    ret\n");
 }
 
-function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
+function emit_entry_runtime_part_1(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_entry_core_runtime(s);
   if (hev_on(s)) {
     s = s.write("    .text\n");
@@ -14026,6 +14071,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_string_from_bytes_u8", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_2(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("str_from_bytes_range_u8")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_string_from_bytes_range_u8", s);
@@ -14057,6 +14106,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_random_bytes", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_3(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_slice")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_arr_slice", s);
@@ -14090,6 +14143,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_i64_to_string", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("u64_to_string")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_u64_to_string", s);
@@ -14122,6 +14179,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_proc_exec", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_5(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("proc_exec_as")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_proc_exec_as", s);
@@ -14165,11 +14226,19 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_putchar", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_6(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("eprint")) {
     s = s.write("    .text\n");
     s = emit_log_write("__fern_eprint_str", s);
   }
   s = emit_rt_clocks(s);
+  return s;
+}
+
+function emit_entry_runtime_part_7(s: asmcore.EmitState): asmcore.EmitState {
   if (needs_fs_runtime(s)) {
     s = s.write("    .text\n");
     let fs_roots = "__fern_path_copy __fern_io_error";
@@ -14453,6 +14522,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     s = emit_runtime(fs_roots, s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_8(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("env")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_env", s);
@@ -14485,6 +14558,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_prctl_query", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_9(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("ct_mark")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_ct_mark __fern_ct_secret __fern_ct_public", s);
@@ -14518,6 +14595,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_runtime("__fern_signal_catch", s);
   }
   s = emit_rt_signal_flags(s);
+  return s;
+}
+
+function emit_entry_runtime_part_10(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("signal_raise")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_signal_raise", s);
@@ -14551,6 +14632,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_cpu_count", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_11(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("tcp_listen_with")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_tcp_listen_with", s);
@@ -14583,6 +14668,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_udp_bind_with", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_12(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("udp_bind_with_u8")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_udp_bind_with_u8", s);
@@ -14615,6 +14704,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_tcp_connect_with", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_13(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("tcp_connect_with_u8")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_tcp_connect_with_u8", s);
@@ -14651,6 +14744,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_tcp_ktls_u8", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_14(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("task")) {
     s = s.write("    .text\n");
     s = emit_runtime(asmcore.task_runtime_roots(), asmcore.EmitState { ...s, rt_owned_allocs: true });
@@ -14679,6 +14776,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("udp_sendmmsg")) {
     s = emit_runtime("__fern_udp_sendmmsg", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_15(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("udp_sendmmsg_u8")) {
     s = emit_runtime("__fern_udp_sendmmsg_u8", s);
   }
@@ -14708,6 +14809,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_sleep_ms", s);
   }
+  return s;
+}
+
+function emit_entry_runtime_part_16(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("sleep_ns")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_sleep_ns", s);
@@ -14715,6 +14820,26 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (needs_heap_runtime(s)) {
     s = emit_trap_stubs(s.write("    .text\n"));
   }
+  return s;
+}
+
+function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  s = emit_entry_runtime_part_1(s);
+  s = emit_entry_runtime_part_2(s);
+  s = emit_entry_runtime_part_3(s);
+  s = emit_entry_runtime_part_4(s);
+  s = emit_entry_runtime_part_5(s);
+  s = emit_entry_runtime_part_6(s);
+  s = emit_entry_runtime_part_7(s);
+  s = emit_entry_runtime_part_8(s);
+  s = emit_entry_runtime_part_9(s);
+  s = emit_entry_runtime_part_10(s);
+  s = emit_entry_runtime_part_11(s);
+  s = emit_entry_runtime_part_12(s);
+  s = emit_entry_runtime_part_13(s);
+  s = emit_entry_runtime_part_14(s);
+  s = emit_entry_runtime_part_15(s);
+  s = emit_entry_runtime_part_16(s);
   return s;
 }
 

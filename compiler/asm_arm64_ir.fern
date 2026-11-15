@@ -11235,7 +11235,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   return emit_task_close_drop(s);
 }
 
-function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+function emit_rt_collections_and_proc_part_1(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("crc32_cksum")) {
     s = emit_rt_crc32_cksum(s);
   }
@@ -11321,6 +11321,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write(rt_unframe(s));
     s = s.write("    ret\n");
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_2(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("arr_push")) {
     s = s.write("__fern_arr_push:\n");
     s = s.write(arr_push_fast(".Larr_push_slow", s.rc_free_debug));
@@ -11422,6 +11426,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("str_bytes")) {
     s = emit_runtime("__fern_str_bytes", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_3(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("str_replace")) {
     s = emit_runtime("__fern_str_dup __fern_str_replace", s);
   }
@@ -11431,7 +11439,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("str_split")) {
     s = emit_runtime("__fern_utf8_step __fern_str_split", s);
   }
-  let tgt = rt_key(darwin);
   if (s.has_need("random_bytes")) {
     s = emit_runtime("__fern_random_bytes", s);
   }
@@ -11447,6 +11454,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("str_from_bytes_range_u8")) {
     s = emit_runtime("__fern_string_from_bytes_range_u8", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_4(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("arr_slice_u32")) {
     s = emit_runtime("__fern_arr_slice_u32", s);
   }
@@ -11462,6 +11473,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("tcp_addr_into_u8")) {
     s = emit_runtime("__fern_tcp_addr_into_u8", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_5(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  let tgt = rt_key(darwin);
   if (needs_fs_runtime(s)) {
     let fs_roots = "__fern_path_copy __fern_io_error";
     if (s.has_need("uname_field")) {
@@ -11744,6 +11760,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     s = emit_runtime(fs_roots, s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_6(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("env")) {
     s = emit_runtime("__fern_env", s);
   }
@@ -11768,6 +11788,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("sleep_ns")) {
     s = emit_runtime("__fern_sleep_ns", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_7(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("poll")) {
     s = emit_runtime("__fern_poll", s);
   }
@@ -11793,6 +11817,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("getuid")) {
     s = emit_runtime("__fern_getuid", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_8(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("getgid")) {
     s = emit_runtime("__fern_getgid", s);
   }
@@ -11818,6 +11846,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("prctl_query")) {
     s = emit_runtime("__fern_prctl_query", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_9(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("ct_mark")) {
     s = emit_runtime("__fern_ct_mark __fern_ct_secret __fern_ct_public", s);
   }
@@ -11843,6 +11875,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = emit_runtime("__fern_signal_catch", s);
   }
   s = emit_rt_signal_flags(s, darwin);
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_10(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("signal_raise")) {
     s = emit_runtime("__fern_signal_raise", s);
   }
@@ -11867,6 +11903,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("udp_bind")) {
     s = emit_runtime("__fern_udp_bind", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_11(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("udp_bind_u8")) {
     s = emit_runtime("__fern_udp_bind_u8", s);
   }
@@ -11891,6 +11931,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("udp_recvfrom")) {
     s = emit_runtime("__fern_udp_recvfrom", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_12(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("udp_recvfrom_u8")) {
     s = emit_runtime("__fern_udp_recvfrom_u8", s);
   }
@@ -11918,6 +11962,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("reactor_wait")) {
     s = emit_runtime("__fern_reactor_wait", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_13(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.any_need(["ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8"])) {
     s = emit_runtime("__fern_ring_queued __fern_ring_flush __fern_ring_push __fern_ring_entry __fern_ring_ready_at __fern_ring_zc_at __fern_ring_send_zc_u8 __fern_ring_zc_done __fern_ring_u16 __fern_ring_set16 __fern_ring_give __fern_ring_list __fern_ring_pend __fern_ring_ud __fern_ring_arm __fern_ring_unarm __fern_ring_rud __fern_ring_recv_arm __fern_ring_recv_stop __fern_ring_drop __fern_ring_enqueue __fern_ring_fall_back __fern_ring_resume __fern_ring_set __fern_ring_set_ctl __fern_ring_watch __fern_ring_new __fern_ring_ctl __fern_ring_wait __fern_ring_reap __fern_ring_recv_done __fern_ring_emit __fern_ring_emit_one __fern_ring_recv_u8 __fern_ring_set_wait", s);
   }
@@ -11944,6 +11992,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("udp_sendto_bytes")) {
     s = emit_runtime("__fern_udp_sendto_bytes", s);
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_14(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("udp_sendto_bytes_u8")) {
     s = emit_runtime("__fern_udp_sendto_bytes_u8", s);
   }
@@ -11984,6 +12036,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_hash_seed, .-__fern_map_hash_seed\n");
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc_part_15(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("proc_fork")) {
     if (darwin) {
       s = s.write(".globl __fn___fern_proc_fork\n");
@@ -12029,6 +12085,25 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write(rt_unframe(s));
     s = s.write("    ret\n");
   }
+  return s;
+}
+
+function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  s = emit_rt_collections_and_proc_part_1(s, darwin);
+  s = emit_rt_collections_and_proc_part_2(s, darwin);
+  s = emit_rt_collections_and_proc_part_3(s, darwin);
+  s = emit_rt_collections_and_proc_part_4(s, darwin);
+  s = emit_rt_collections_and_proc_part_5(s, darwin);
+  s = emit_rt_collections_and_proc_part_6(s, darwin);
+  s = emit_rt_collections_and_proc_part_7(s, darwin);
+  s = emit_rt_collections_and_proc_part_8(s, darwin);
+  s = emit_rt_collections_and_proc_part_9(s, darwin);
+  s = emit_rt_collections_and_proc_part_10(s, darwin);
+  s = emit_rt_collections_and_proc_part_11(s, darwin);
+  s = emit_rt_collections_and_proc_part_12(s, darwin);
+  s = emit_rt_collections_and_proc_part_13(s, darwin);
+  s = emit_rt_collections_and_proc_part_14(s, darwin);
+  s = emit_rt_collections_and_proc_part_15(s, darwin);
   return s;
 }
 
