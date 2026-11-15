@@ -44,7 +44,7 @@ pub function advance(f: sim.Fluid, m: fluid.Model, fr: fluid.Frame): (sim.Fluid,
     next = burst;
     model = fluid.Model { ...m, rng: rng };
   }
-  if let Some(sp) = fr.splat {
+  for sp in fr.splats {
     next = next.splat(m.cfg, sp.x, sp.y, sp.dx, sp.dy, sp.color);
   }
   for i in 0..fr.steps {

@@ -1,0 +1,98 @@
+// Asks std/android/gl for the times of frames. It is a shared object:
+// check() gives one digit for each check that passes.
+// internal/testing/e2e loads it with Mesa's OpenGL ES on the host. Mesa
+// does not tell the times of frames, so two functions of this file stand
+// for the two EGL functions of Android.
+import "std/android/gl";
+
+@callback("frame_id")
+function frame_id_entry(): usize;
+
+// eglGetNextFrameIdANDROID: the next frame of the surface 7 has the number
+// 41.
+function frame_id(display: usize, surface: usize, out: usize): i32 {
+  if (surface != 7 as usize) {
+    return 0;
+  }
+  unsafe {
+    __store_i64(out, 41i64);
+  }
+  return 1;
+}
+
+@callback("frame_times")
+function frame_times_entry(): usize;
+
+// One time of the frame `frame`: 0 is the time that the GPU completed it,
+// 1 is the time that the system took it, and 2 is the time that the
+// display showed it. The GPU completed the frame 40 at 100, the system took
+// it at 200, and the display showed it at 300. The frame 41 is complete at
+// 400, and the system does not know its other times yet. The system does
+// not tell the time that the display showed the frame 42.
+function time_of(frame: i64, at: i32): i64 {
+  if (frame == 40i64) {
+    return 100i64 * (at as i64 + 1i64);
+  }
+  if (frame == 41i64) {
+    if (at == 0) {
+      return 400i64;
+    }
+    return -2i64;
+  }
+  if (at == 2) {
+    return -1i64;
+  }
+  return 500i64 + at as i64;
+}
+
+// eglGetFrameTimestampsANDROID, for the three times that the canvas asks
+// for with one call. It knows the frames 40, 41 and 42 only.
+function frame_times(display: usize, surface: usize, frame: i64, count: i32, names: usize, out: usize): i32 {
+  if (surface != 7 as usize || count != 3 || frame < 40i64 || frame > 42i64) {
+    return 0;
+  }
+  unsafe {
+    for i in 0..count {
+      let name = __load_i32(names + (i * 4) as usize);
+      let at = name - 12341;
+      if (name == 12346) {
+        at = 2;
+      }
+      __store_i64(out + (i * 8) as usize, time_of(frame, at));
+    }
+  }
+  return 1;
+}
+
+function same(t: gl.FrameTimes, done: i64, taken: i64, shown: i64): boolean {
+  return t.done_ns == done && t.taken_ns == taken && t.shown_ns == shown;
+}
+
+// Each check is a digit of the result:
+// 1. A canvas that is not on a window has no frame number and no times.
+// 2. A canvas on a window gives the frame number of the system.
+// 3. A time that the system knows is that time, a time that it does not
+//    know yet is 0, and a time that it does not tell is -1. A frame that it
+//    does not know has no times.
+pub function check(): i32 {
+  let Some(c) = gl.open_offscreen(8, 8) else {
+    return 0;
+  };
+  let n = 0;
+  if (c.next_frame() == -1i64 && same(c.frame_times(40i64), -1i64, -1i64, -1i64)) {
+    n += 1;
+  }
+  let shown = gl.Canvas { ...c, window: 5 as usize, surface: 7 as usize, frame_id: frame_id_entry(), frame_times: frame_times_entry() };
+  if (shown.next_frame() == 41i64 && gl.Canvas { ...shown, surface: 8 as usize }.next_frame() == -1i64) {
+    n += 10;
+  }
+  if (same(shown.frame_times(40i64), 100i64, 200i64, 300i64) && same(shown.frame_times(41i64), 400i64, 0i64, 0i64) && same(shown.frame_times(42i64), 500i64, 501i64, -1i64) && same(shown.frame_times(43i64), -1i64, -1i64, -1i64) && same(shown.frame_times(-1i64), -1i64, -1i64, -1i64)) {
+    n += 100;
+  }
+  gl.close(c);
+  return n;
+}
+
+function main(): i32 {
+  return 0;
+}

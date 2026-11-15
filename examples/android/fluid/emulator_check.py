@@ -8,7 +8,8 @@ with a background colour and no bloom as settings. The app draws its own
 pixels, so the check reads the log lines of the app and the colours of the
 screen. It requires that the GPU runs the simulation, the background
 colour of the settings on a still screen, dye after a swipe, the places of
-the touches with their times on the clock of the frames, the dialog
+the touches with their times on the clock of the frames, an event of two
+fingers, the dialog
 after a tap on the button, a pause from a tap on its first row, a still
 screen while the fluid is paused, the bloom from the B key, a picture in
 the gallery from the S key, and the back key that closes the dialog and
@@ -107,6 +108,28 @@ def main(apk, out):
     pace = re.findall(r"fluid: (\d+ fps, longest \d+ ms.*)", logcat())
     if pace:
         print("pace: " + pace[-1], flush=True)
+
+    # Two fingers that move at the same time. `input` has one finger only,
+    # so a script of monkey gives the two. The app then writes the largest
+    # count of the fingers of one event.
+    script = f"{out}/two-fingers.txt"
+    with open(script, "w") as f:
+        f.write("type= raw events\ncount= 1\nspeed= 1.0\nstart data >>\n")
+        for _ in range(8):
+            f.write(
+                f"PinchZoom({width // 4},{height // 3},{width // 4},{2 * height // 3},"
+                f"{3 * width // 4},{2 * height // 3},{3 * width // 4},{height // 3},40)\n"
+            )
+            f.write("UserWait(700)\n")
+    adb("push", script, "/data/local/tmp/two-fingers.txt")
+    adb("shell", "monkey", "-f", "/data/local/tmp/two-fingers.txt", "1", check=False)
+    both = wait_for(r"fluid: touch \d+ events, .* ([2-9]) fingers at most", 20)
+    if not both:
+        fail("the app read no event of two fingers")
+    else:
+        print("two fingers: " + both.group(0), flush=True)
+    # The script ends with one finger down. A tap starts a new touch.
+    adb("shell", "input", "tap", str(width // 2), str(height // 2))
 
     # The places of the button and of the first row come again with the
     # insets of the system bars, so the last line has them.
