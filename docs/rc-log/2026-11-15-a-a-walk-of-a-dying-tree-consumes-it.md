@@ -54,8 +54,9 @@ Best CPU time of seven runs, with no stack limit: rbtree 4,200,000 goes from
 2870 ms, and Koka takes 2060 ms.
 
 Each of the 40 programs of `bench/` runs the same number of instructions or
-fewer: `perceus_rbtree` 2.5% fewer, `perceus_rbtree_ck` 1.7% fewer and
-`map_string` 0.6% fewer. Each of the 626 programs of `tests/stdlib` gives the
+fewer: `perceus_rbtree` 2.5% fewer and `perceus_rbtree_ck` 1.7% fewer. The
+count of `map_string` changes by 0.5% from one run to the next, because the
+map takes a random seed, and its text does not change. Each of the 626 programs of `tests/stdlib` gives the
 same output. Stage 2 and stage 3 of the compiler are the same file.
 
 ## Traps
