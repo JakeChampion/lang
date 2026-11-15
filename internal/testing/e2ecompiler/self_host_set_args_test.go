@@ -8,11 +8,13 @@ import (
 	"testing"
 )
 
-var setArgsCases = []struct {
+type setArgsCase struct {
 	name, src string
 	args      []string
 	want      int
-}{
+}
+
+var setArgsCases = []setArgsCase{
 	{"shift", `function main(): i32 {
     let argv: string[] = args();
     if (argv.len() != 3) { return 1; }
@@ -77,7 +79,26 @@ function main(): i32 {
 func TestSelfHostSetArgs(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	native := buildFernCLIBin(t)
-	for _, tc := range setArgsCases {
+	cases := append([]setArgsCase(nil), setArgsCases...)
+	for _, helper := range []struct{ name, prefix string }{
+		{"lent-through-call", "@noinline function save(a: string[]): void { set_args(a); }\n"},
+		{"lent-through-two-calls", "@noinline function keep(a: string[]): void { set_args(a); }\n@noinline function save(a: string[]): void { keep(a); }\n"},
+	} {
+		source := helper.prefix + strings.Replace(setArgsCases[2].src, "set_args(mine);", "save(mine);", 1)
+		cases = append(cases, setArgsCase{name: helper.name, src: source, want: 42})
+	}
+	cases = append(cases, setArgsCase{name: "nonretaining-call", src: `
+@noinline function read(a: string[]): i32 { return a[0].len(); }
+function main(): i32 {
+    let a = ["one", "two"];
+    if (read(a) != 3) { return 1; }
+    let copies = __arr_push_shared_count();
+    a = a.append("three");
+    if (a.len() != 3 || a[2] != "three") { return 2; }
+    if (__arr_push_shared_count() != copies) { return 3; }
+    return 42;
+}`, want: 42})
+	for _, tc := range cases {
 		src := filepath.Join(t.TempDir(), tc.name+".fern")
 		if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
 			t.Fatal(err)

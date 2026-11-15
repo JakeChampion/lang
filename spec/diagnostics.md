@@ -178,7 +178,7 @@ language does not have. It is deleted.
 | `E104` | an `@early` hook of the wrong shape, a second hook, or a target without a reset entry | — |
 | `E105` | a `@secondary` entry of the wrong shape, a second entry, or a target without a secondary entry | — |
 | `E106` | the type of a call or of a tuple has more than 4096 parts | `diag_e106` |
-| `E107` | a generic function has an instance with 64 levels of type arguments | `diag_e107` |
+| `E107` | a generic function, struct or enum has no last instance | `diag_e107` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

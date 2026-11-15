@@ -1,0 +1,550 @@
+// The behaviour of the app: what a touch, a key and a frame do to the fluid,
+// to the controls and to kid mode. It makes no Android call and no OpenGL ES
+// call. It puts what it wants from the phone in `wants`, and each frame gives
+// the splats and the steps for the GPU. So the host tests each rule.
+import "std/f64";
+import "std/rand";
+import "./clock";
+import "./color";
+import "./config";
+
+pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
+
+pub function (r: Rect) contains(x: f64, y: f64): boolean {
+  return x >= r.x as f64 && y >= r.y as f64 && x < (r.x + r.w) as f64 && y < (r.y + r.h) as f64;
+}
+
+// Where the controls are on a window of `width` by `height` pixels. `button`
+// opens the dialog, and `exit` leaves kid mode. `panel` is the dialog, and
+// `close` is its close button. `list` is the part of the panel that scrolls.
+// `rows` has the row of each action of `actions`, from the top of what
+// scrolls, and `content` is the height of what scrolls. `slop` is how far a
+// finger moves before a touch is a drag.
+pub struct Layout { width: i32, height: i32, button: Rect, exit: Rect, panel: Rect, close: Rect, list: Rect, rows: Rect[], content: i32, slop: i32 }
+
+// What a row of the dialog, or a key, does.
+pub enum Action { Pause, Burst, Save, Kid, Full, Bloom, Sunrays, Colorful }
+
+// The actions of the rows of the dialog, from the top.
+pub function actions(): Action[] {
+  return [Pause, Burst, Save, Kid, Full, Bloom, Sunrays, Colorful];
+}
+
+// What the app does on the phone for the model. `Pin` pins the app to the
+// screen, so the Home key and the Overview key do not leave it.
+pub enum Want { Save, Keywords, Immersive(boolean), Awake(boolean), Pin(boolean) }
+
+// The finger on the fluid. `x` and `y` go from 0 to 1 with y up, and `dx`
+// and `dy` are the last move.
+pub struct Pointer { down: boolean, moved: boolean, x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
+
+// A splat for the GPU: its place, its velocity and its colour.
+pub struct Splat { x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
+
+// What one frame does on the GPU: a burst of `burst` random splats, the
+// splat of the finger, `steps` steps of the simulation, and a draw.
+pub struct Frame { burst: i32, splat: Option[Splat], steps: i32, draw: boolean }
+
+const NONE: i32 = 0;
+
+const ON_FLUID: i32 = 1;
+
+const ON_BUTTON: i32 = 2;
+
+const ON_EXIT: i32 = 3;
+
+const ON_CLOSE: i32 = 4;
+
+const ON_BACKDROP: i32 = 5;
+
+const ON_LIST: i32 = 6;
+
+const ON_PANEL: i32 = 7;
+
+// A child does not hold a corner this long by accident.
+pub const HOLD_MS: i64 = 3000i64;
+
+// How long the note of kid mode shows.
+pub const KID_NOTE_MS: i64 = 5000i64;
+
+// How long each other note shows.
+pub const NOTE_MS: i64 = 2500i64;
+
+pub const KID_NOTE: string = "Kid mode: hold the corner button for 3 seconds to leave.";
+
+const MIN_BURST: i32 = 5;
+
+const MAX_BURST: i32 = 24;
+
+// One burst goes to the fluid in each frame, so more would wait.
+const MAX_BURSTS: i32 = 8;
+
+// `still` tells that the system asks for no animation, and that the person
+// did not touch the fluid yet. `open` tells that the dialog shows. `touch`
+// is what the finger went down on, with the row of the dialog in `row`, and
+// `dragged` tells that it scrolls the dialog. `hold_ms` is the time that
+// the hold on the exit button started, or -1. `note` shows until `note_ms`.
+// `redraw` asks for a draw of a paused fluid.
+pub struct Model {
+  cfg: config.Config,
+  clock: clock.Clock,
+  rng: i64,
+  layout: Layout,
+  pointer: Pointer,
+  bursts: i32[],
+  color_timer: f64,
+  still: boolean,
+  open: boolean,
+  scroll: i32,
+  touch: i32,
+  row: i32,
+  dragged: boolean,
+  touch_y: f64,
+  kid: boolean,
+  hold_ms: i64,
+  full: boolean,
+  note: string,
+  note_ms: i64,
+  redraw: boolean,
+  wants: Want[],
+}
+
+function no_layout(): Layout {
+  let none = Rect { x: 0, y: 0, w: 0, h: 0 };
+  return Layout { width: 1, height: 1, button: none, exit: none, panel: none, close: none, list: none, rows: [], content: 0, slop: 8 };
+}
+
+// The model at the start of the app. `still` tells that the system asks for
+// no animation: the fluid then starts paused, with no burst.
+pub function new(cfg: config.Config, still: boolean, seed: i64, now_ns: i64): Model {
+  let (rng, first) = color.generate(rand.rng_seed(seed));
+  let m = Model {
+    cfg: config.Config { ...cfg, paused: cfg.paused || still },
+    clock: clock.new(now_ns),
+    rng: rng,
+    layout: no_layout(),
+    pointer: Pointer { down: false, moved: false, x: 0.0, y: 0.0, dx: 0.0, dy: 0.0, color: first },
+    bursts: [],
+    color_timer: 0.0,
+    still: still,
+    open: false,
+    scroll: 0,
+    touch: NONE,
+    row: -1,
+    dragged: false,
+    touch_y: 0.0,
+    kid: false,
+    hold_ms: -1i64,
+    full: false,
+    note: "",
+    note_ms: 0i64,
+    redraw: true,
+    wants: [],
+  };
+  if (still) {
+    return m;
+  }
+  return m.burst();
+}
+
+// The model on the window that `layout` describes.
+pub function (m: Model) laid_out(layout: Layout): Model {
+  return Model { ...m, layout: layout, redraw: true }.scrolled(m.scroll);
+}
+
+// The model with no wants, after the app did them.
+pub function (m: Model) done(): Model {
+  return Model { ...m, wants: [] };
+}
+
+function (m: Model) want(w: Want): Model {
+  return Model { ...m, wants: m.wants.append(w), redraw: true };
+}
+
+// The model with the text `text` at the bottom of the screen for `ms`.
+pub function (m: Model) noted(text: string, now_ms: i64, ms: i64): Model {
+  return Model { ...m, note: text, note_ms: now_ms + ms, redraw: true };
+}
+
+// The note that shows at `now_ms`, or the empty text.
+pub function (m: Model) note_at(now_ms: i64): string {
+  if (now_ms < m.note_ms) {
+    return m.note;
+  }
+  return "";
+}
+
+// The part of the hold on the exit button that is done at `now_ms`, from 0
+// to 1.
+pub function (m: Model) held(now_ms: i64): f64 {
+  if (m.hold_ms < 0i64) {
+    return 0.0;
+  }
+  return ((now_ms - m.hold_ms) as f64 / (HOLD_MS as f64)).clamp(0.0, 1.0);
+}
+
+// A note shows, or it went a moment ago, and a frame must take it off the
+// screen.
+function (m: Model) noting(now_ms: i64): boolean {
+  return m.note_ms > 0i64 && now_ms < m.note_ms + 100i64;
+}
+
+// The app must draw frames: the fluid moves, or a part of the screen changes
+// with the time.
+pub function (m: Model) animating(now_ms: i64): boolean {
+  return !m.cfg.paused || m.redraw || m.bursts.len() > 0 || m.pointer.moved || m.hold_ms >= 0i64 || m.noting(now_ms);
+}
+
+// The fluid moves again after a touch on it, when the system asked for no
+// animation. A pause that the person chose stays.
+function (m: Model) moving(now_ns: i64): Model {
+  if (!m.still) {
+    return m;
+  }
+  return Model { ...m, still: false, cfg: config.Config { ...m.cfg, paused: false }, clock: m.clock.reset(now_ns), redraw: true };
+}
+
+function (m: Model) burst(): Model {
+  if (m.bursts.len() >= MAX_BURSTS) {
+    return m;
+  }
+  let (rng, n) = rand.rng_between(m.rng, MIN_BURST, MAX_BURST + 1);
+  return Model { ...m, rng: rng, bursts: m.bursts.append(n) };
+}
+
+function (m: Model) scrolled(to: i32): Model {
+  let most = m.layout.content - m.layout.list.h;
+  let s = to;
+  if (s > most) {
+    s = most;
+  }
+  if (s < 0) {
+    s = 0;
+  }
+  return Model { ...m, scroll: s };
+}
+
+// The state of the toggle of `a`, for the rows that are toggles.
+pub function (m: Model) is_on(a: Action): boolean {
+  match (a) {
+    Full => {
+      return m.full;
+    },
+    Bloom => {
+      return m.cfg.bloom;
+    },
+    Sunrays => {
+      return m.cfg.sunrays;
+    },
+    Colorful => {
+      return m.cfg.colorful;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+// The model after the action `a`.
+pub function (m: Model) act(a: Action, now_ns: i64): Model {
+  match (a) {
+    Pause => {
+      let paused = !m.cfg.paused;
+      return Model { ...m, still: false, cfg: config.Config { ...m.cfg, paused: paused }, clock: m.clock.reset(now_ns), redraw: true };
+    },
+    Burst => {
+      return m.moving(now_ns).burst();
+    },
+    Save => {
+      return m.want(Want.Save);
+    },
+    Kid => {
+      if (m.kid) {
+        return m.leave_kid();
+      }
+      return m.enter_kid(now_ns / 1000000i64);
+    },
+    Full => {
+      let full = !m.full;
+      return Model { ...m, full: full }.want(Immersive(full));
+    },
+    Bloom => {
+      return Model { ...m, cfg: config.Config { ...m.cfg, bloom: !m.cfg.bloom } }.want(Keywords);
+    },
+    Sunrays => {
+      return Model { ...m, cfg: config.Config { ...m.cfg, sunrays: !m.cfg.sunrays } }.want(Keywords);
+    },
+    Colorful => {
+      return Model { ...m, cfg: config.Config { ...m.cfg, colorful: !m.cfg.colorful }, redraw: true };
+    }
+  }
+}
+
+// Kid mode takes the controls away, fills the screen, keeps the screen on
+// and pins the app.
+function (m: Model) enter_kid(now_ms: i64): Model {
+  let on = Model { ...m, kid: true, open: false, hold_ms: -1i64, touch: NONE };
+  return on.noted(KID_NOTE, now_ms, KID_NOTE_MS).want(Awake(true)).want(Immersive(true)).want(Pin(true));
+}
+
+function (m: Model) leave_kid(): Model {
+  let off = Model { ...m, kid: false, hold_ms: -1i64, note_ms: 0i64, touch: NONE };
+  return off.want(Pin(false)).want(Awake(false)).want(Immersive(m.full));
+}
+
+// The model after an accessibility service, such as TalkBack, did a click
+// on the exit button. Such a service cannot hold a button, so its click
+// leaves kid mode with no hold.
+pub function (m: Model) leave_by_service(): Model {
+  if (m.kid) {
+    return m.leave_kid();
+  }
+  return m;
+}
+
+function (m: Model) opened(open: boolean): Model {
+  return Model { ...m, open: open, scroll: 0, touch: NONE, redraw: true };
+}
+
+// The model with the dialog open, or closed.
+pub function (m: Model) toggle_dialog(): Model {
+  if (m.kid) {
+    return m;
+  }
+  return m.opened(!m.open);
+}
+
+// A move of the same number of pixels pushes the same fluid on a window of
+// each shape.
+function (m: Model) moved_to(x: f64, y: f64): Model {
+  let p = m.pointer;
+  let tx = x / (m.layout.width as f64);
+  let ty = 1.0 - y / (m.layout.height as f64);
+  let aspect = m.layout.width as f64 / (m.layout.height as f64);
+  let dx = tx - p.x;
+  let dy = ty - p.y;
+  if (aspect < 1.0) {
+    dx *= aspect;
+  }
+  if (aspect > 1.0) {
+    dy /= aspect;
+  }
+  return Model { ...m, pointer: Pointer { ...p, x: tx, y: ty, dx: dx, dy: dy, moved: dx != 0.0 || dy != 0.0 } };
+}
+
+function (m: Model) pressed(x: f64, y: f64, now_ns: i64): Model {
+  let (rng, c) = color.generate(m.rng);
+  let tx = x / (m.layout.width as f64);
+  let ty = 1.0 - y / (m.layout.height as f64);
+  let on = Model { ...m, rng: rng, touch: ON_FLUID, pointer: Pointer { down: true, moved: false, x: tx, y: ty, dx: 0.0, dy: 0.0, color: c } };
+  return on.moving(now_ns);
+}
+
+// The row of the dialog at x and y, or -1.
+function (m: Model) row_at(x: f64, y: f64): i32 {
+  let l = m.layout;
+  if (!l.list.contains(x, y)) {
+    return -1;
+  }
+  for i in 0..l.rows.len() {
+    let r = l.rows[i];
+    if (Rect { x: l.list.x + r.x, y: l.list.y + r.y - m.scroll, w: r.w, h: r.h }.contains(x, y)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function (m: Model) down(x: f64, y: f64, now_ns: i64): Model {
+  let l = m.layout;
+  if (m.kid) {
+    if (l.exit.contains(x, y)) {
+      return Model { ...m, touch: ON_EXIT, hold_ms: now_ns / 1000000i64, redraw: true };
+    }
+    return m.pressed(x, y, now_ns);
+  }
+  if (m.open) {
+    let on = Model { ...m, row: -1, dragged: false, touch_y: y };
+    if (l.close.contains(x, y)) {
+      return Model { ...on, touch: ON_CLOSE };
+    }
+    if (!l.panel.contains(x, y)) {
+      return Model { ...on, touch: ON_BACKDROP };
+    }
+    if (l.list.contains(x, y)) {
+      return Model { ...on, touch: ON_LIST, row: m.row_at(x, y), redraw: true };
+    }
+    return Model { ...on, touch: ON_PANEL };
+  }
+  if (l.button.contains(x, y)) {
+    return Model { ...m, touch: ON_BUTTON, redraw: true };
+  }
+  return m.pressed(x, y, now_ns);
+}
+
+function (m: Model) move(x: f64, y: f64): Model {
+  if (m.touch == ON_FLUID) {
+    return m.moved_to(x, y);
+  }
+  if (m.touch == ON_LIST) {
+    let far = (y - m.touch_y).abs() > m.layout.slop as f64;
+    if (m.dragged || far) {
+      return Model { ...m, dragged: true, row: -1, touch_y: y, redraw: true }.scrolled(m.scroll - (y - m.touch_y) as i32);
+    }
+  }
+  return m;
+}
+
+function (m: Model) up(x: f64, y: f64, now_ns: i64): Model {
+  let l = m.layout;
+  let off = Model { ...m, touch: NONE, row: -1, dragged: false, pointer: Pointer { ...m.pointer, down: false }, redraw: true };
+  if (m.touch == ON_EXIT) {
+    return Model { ...off, hold_ms: -1i64 };
+  }
+  if (m.touch == ON_BUTTON && l.button.contains(x, y)) {
+    return off.opened(true);
+  }
+  if (m.touch == ON_CLOSE && l.close.contains(x, y)) {
+    return off.opened(false);
+  }
+  if (m.touch == ON_BACKDROP && !l.panel.contains(x, y)) {
+    return off.opened(false);
+  }
+  if (m.touch == ON_LIST && m.row >= 0 && m.row == m.row_at(x, y)) {
+    return off.act(actions()[m.row], now_ns);
+  }
+  return off;
+}
+
+// The model after a touch event of `android.Touch`: 0 is down, 1 is up, 2
+// is a move and 3 is a cancel. x and y are in pixels of the window.
+pub function (m: Model) touched(action: i32, x: f64, y: f64, now_ns: i64): Model {
+  if (action == 0) {
+    return m.down(x, y, now_ns);
+  }
+  if (action == 2) {
+    return m.move(x, y);
+  }
+  if (action == 1) {
+    return m.up(x, y, now_ns);
+  }
+  if (action == 3) {
+    return Model { ...m, touch: NONE, row: -1, dragged: false, hold_ms: -1i64, pointer: Pointer { ...m.pointer, down: false }, redraw: true };
+  }
+  return m;
+}
+
+// The row of the dialog that the finger is on, or -1.
+pub function (m: Model) pressed_row(): i32 {
+  if (m.touch == ON_LIST && !m.dragged) {
+    return m.row;
+  }
+  return -1;
+}
+
+// The finger is on the button that opens the dialog.
+pub function (m: Model) pressed_button(): boolean {
+  return m.touch == ON_BUTTON;
+}
+
+// The model after a keyboard typed the character `c`. Kid mode keeps the
+// dialog closed, and K leaves kid mode, because a keyboard is in the hands
+// of an adult.
+pub function (m: Model) typed(c: i32, now_ns: i64): Model {
+  // K and k.
+  if (c == 75 || c == 107) {
+    return m.act(Kid, now_ns);
+  }
+  // The question mark.
+  if (c == 63) {
+    return m.toggle_dialog();
+  }
+  // The space.
+  if (c == 32) {
+    return m.act(Burst, now_ns);
+  }
+  if (c == 80 || c == 112) {
+    return m.act(Pause, now_ns);
+  }
+  if (c == 83 || c == 115) {
+    return m.act(Save, now_ns);
+  }
+  if (c == 66 || c == 98) {
+    return m.act(Bloom, now_ns);
+  }
+  if (c == 82 || c == 114) {
+    return m.act(Sunrays, now_ns);
+  }
+  if (c == 67 || c == 99) {
+    return m.act(Colorful, now_ns);
+  }
+  if (c == 70 || c == 102) {
+    return m.act(Full, now_ns);
+  }
+  return m;
+}
+
+// The model after the back key or the Escape key, and whether the key
+// closes the app. The key closes the dialog. In kid mode it does nothing.
+pub function (m: Model) back(): (Model, boolean) {
+  if (m.kid) {
+    return (m, false);
+  }
+  if (m.open) {
+    return (m.opened(false), false);
+  }
+  return (m, true);
+}
+
+// The model when the app shows again: the time that it did not show is not
+// time of the simulation.
+pub function (m: Model) woke(now_ns: i64): Model {
+  return Model { ...m, clock: m.clock.reset(now_ns), redraw: true };
+}
+
+function wrap01(v: f64): f64 {
+  return v - v.floor();
+}
+
+// The model after the frame at `now_ns`, and what the frame does on the GPU.
+pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
+  let now_ms = now_ns / 1000000i64;
+  let out = m;
+  if (out.kid && out.hold_ms >= 0i64 && now_ms - out.hold_ms >= HOLD_MS) {
+    out = out.leave_kid();
+  }
+  let (ticked, dt) = out.clock.frame(now_ns);
+  let rng = out.rng;
+  let p = out.pointer;
+  let timer = out.color_timer;
+  if (out.cfg.colorful) {
+    timer += dt * out.cfg.color_update_speed;
+    if (timer >= 1.0) {
+      timer = wrap01(timer);
+      let (next, c) = color.generate(rng);
+      rng = next;
+      p = Pointer { ...p, color: c };
+    }
+  }
+  let burst = 0;
+  let bursts = out.bursts;
+  if (bursts.len() > 0) {
+    burst = bursts[bursts.len() - 1];
+    bursts = bursts.truncate(bursts.len() - 1);
+  }
+  let splat: Option[Splat] = None;
+  let splatted = p.moved;
+  if (p.moved) {
+    splat = Some(Splat { x: p.x, y: p.y, dx: p.dx * out.cfg.splat_force, dy: p.dy * out.cfg.splat_force, color: p.color });
+    p = Pointer { ...p, moved: false };
+  }
+  let steps = 0;
+  let after = ticked.clear();
+  if (!out.cfg.paused) {
+    let (advanced, n) = ticked.advance(dt);
+    after = advanced;
+    steps = n;
+  }
+  let draw = !out.cfg.paused || out.redraw || burst > 0 || splatted || out.hold_ms >= 0i64 || out.noting(now_ms);
+  return (Model { ...out, clock: after, rng: rng, pointer: p, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splat: splat, steps: steps, draw: draw });
+}

@@ -118,9 +118,63 @@ func TestSelfHostTaskDroppedWhileParkedIsCancelled(t *testing.T) {
 	checkTaskProgramOnTargets(t, taskDroppedProgram, taskDroppedWant)
 }
 
+// A call that ended is resumed again. Its task record is released, so the
+// program stops with status 134 before the second resume runs the body.
+const staleCallProgram = `import "std/async";
+
+function body(name: string, n: i32): i32 {
+    print("start " + name);
+    match (async.wait_any([], None)) {
+        Woke(_) => { print("woke " + name); },
+        TimedOut => { print("timed out " + name); },
+        Cancelled => { print("cancelled " + name); }
+    }
+    return n;
+}
+
+function again[A, B, T](c: async.Call[A, B, T]): void {
+    match (async.call_resume(c, async.Wake.TimedOut)) {
+        Done(_) => { print("done"); },
+        Suspended(_) => { print("suspended"); }
+    }
+}
+
+function main(): i32 {
+    match (async.call_start(body, "first", 1)) {
+        Returned(_) => { print("returned"); },
+        Parked(c, _) => {
+            again(c);
+            match (async.call_start(body, "second", 2)) {
+                Returned(_) => { print("returned"); },
+                Parked(d, _) => {
+                    again(c);
+                    again(d);
+                }
+            }
+        }
+    }
+    print("end of main");
+    return 0;
+}
+`
+
+const staleCallWant = `start first
+timed out first
+done
+start second
+`
+
+func TestSelfHostStaleCallStops(t *testing.T) {
+	checkTaskProgramExitOnTargets(t, staleCallProgram, staleCallWant, 134)
+}
+
 // checkTaskProgramOnTargets runs program on x86-64-linux, arm64-linux and
 // wasm32-wasi (composed against cmd/fern/wit) and compares its stdout with want.
 func checkTaskProgramOnTargets(t *testing.T, program, want string) {
+	checkTaskProgramExitOnTargets(t, program, want, 0)
+}
+
+func checkTaskProgramExitOnTargets(t *testing.T, program, want string, status int) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
@@ -177,8 +231,14 @@ func checkTaskProgramOnTargets(t *testing.T, program, want string) {
 			var out, errb bytes.Buffer
 			cmd.Stdout = &out
 			cmd.Stderr = &errb
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("run: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errb.String())
+			// A component exit carries only ok or error, which wasmtime reports as 1.
+			wantStatus := status
+			if target == "wasm32-wasi" && status != 0 {
+				wantStatus = 1
+			}
+			err := cmd.Run()
+			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != wantStatus {
+				t.Fatalf("run: %v, want status %d\nstdout:\n%s\nstderr:\n%s", err, wantStatus, out.String(), errb.String())
 			}
 			if out.String() != want {
 				t.Fatalf("stdout:\n%s\nwant:\n%s\nstderr:\n%s", out.String(), want, errb.String())
