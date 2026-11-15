@@ -143,12 +143,12 @@ function base128(b: [u8], at: i32): Result[(i32, i32), AsnError] {
     if (shifted == 5) {
       return Err(structural("base 128 integer too large"));
     }
-    v = v << 7;
+    v <<= 7;
     let c = b[offset] as i64;
     if (shifted == 0 && c == 128) {
       return Err(syntax("integer is not minimally encoded"));
     }
-    v = v | c & 127;
+    v |= c & 127;
     offset += 1;
     if ((c & 128) == 0) {
       if (v > 2147483647i64) {

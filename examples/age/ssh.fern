@@ -1605,7 +1605,7 @@ function int_bytes(v: i64): u8[] {
   let x = v;
   while (x > 0) {
     out = [(x & 255) as u8].concat(out);
-    x = x >> 8;
+    x >>= 8;
   }
   return out;
 }
