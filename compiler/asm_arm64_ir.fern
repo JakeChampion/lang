@@ -5972,6 +5972,11 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("reader");
     s = s.need("fd_flags");
     s = s.write("    bl __fn___fern_fd_flags\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == ir.K_READER_FROM_FD) {
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("reader_from_fd");
+    s = s.write("    bl __fn___fern_reader_from_fd\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_READER_SEEK) {
     s = s.need("heap");
     s = s.need("reader");
@@ -11873,6 +11878,9 @@ function emit_rt_collections_and_proc_part_5(s: asmcore.EmitState, darwin: boole
     }
     if (s.has_need("fd_flags")) {
       fs_roots = fs_roots + " " + "__fern_fd_flags";
+    }
+    if (s.has_need("reader_from_fd")) {
+      fs_roots = fs_roots + " " + "__fern_reader_from_fd";
     }
     if (s.has_need("fd_dup_onto")) {
       fs_roots = fs_roots + " " + "__fern_fd_dup_onto";

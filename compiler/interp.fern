@@ -3766,6 +3766,10 @@ function call_host_proc(name: string, args: Value[]): Value {
   if (name == "pipe") {
     return pipe_result_value(pipe());
   }
+  // The stage0 pin does not know reader_from_fd, so the interpreter cannot call it until the pin moves.
+  if (name == "reader_from_fd") {
+    return enosys_error("");
+  }
   if (name == "process_alive") {
     return v_bool(process_alive(arg_i32(args, 0)));
   }
