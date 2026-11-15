@@ -145,6 +145,40 @@ function check_icase(): i32 {
   return 0;
 }
 
+function utf8_span(pat: string, subj: string, gnulib: boolean): string {
+  let re = bre.bre_compile_syntax(pat, bre.Syntax { ...bre.sed_syntax(false, false, false, false), utf8: true, gnulib: gnulib });
+  if (re.err.len() > 0) {
+    return "error " + re.err;
+  }
+  let m = re.search_groups_bytes(subj.bytes(), 0, subj.len());
+  if (!m.matched) {
+    return "none";
+  }
+  return f"{m.starts[0]},{m.ends[0]};";
+}
+
+// In UTF-8 the regex of glibc refuses a range end outside ASCII. The regex
+// of gnulib compares the code points of the ends, and refuses a byte that
+// starts no character.
+function check_ranges(): i32 {
+  let ecollate = "error Invalid collation character";
+  if (utf8_span("[à-ê]", "aéz", false) != ecollate || utf8_span("[a-é]", "x", false) != ecollate || utf8_span("[a-z]", "éx", false) != "2,3;") {
+    return 81;
+  }
+  if (utf8_span("[à-ê]", "aéz", true) != "1,3;" || utf8_span("[a-é]", "x", true) != "0,1;" || utf8_span("[α-ω]", "x", true) != "none") {
+    return 82;
+  }
+  if (utf8_span("[α-ω]", "aβ", true) != "1,3;" || utf8_span("[^à-ê]", "éz", true) != "2,3;" || utf8_span("x[à-ê]*y", "xéày", true) != "0,6;") {
+    return 83;
+  }
+  let lone: u8[] = [91, 97, 45, 195, 93];
+  let byte_end = bre.bre_compile_bytes_syntax(lone, bre.Syntax { ...bre.sed_syntax(false, false, false, false), utf8: true, gnulib: true });
+  if (utf8_span("[ê-à]", "x", true) != "error Invalid range end" || byte_end.err != "Invalid collation character") {
+    return 84;
+  }
+  return 0;
+}
+
 function check_search_from(): i32 {
   let re = bre.bre_compile_syntax("^a\\|\\<b", bre.sed_syntax(false, false, false, false));
   let text = "aab b".bytes();
@@ -268,6 +302,10 @@ function main(): i32 {
     return r;
   }
   r = check_icase();
+  if (r != 0) {
+    return r;
+  }
+  r = check_ranges();
   if (r != 0) {
     return r;
   }
