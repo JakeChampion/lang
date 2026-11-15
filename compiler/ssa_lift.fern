@@ -201,8 +201,8 @@ function kind_facts(): KindFacts {
     "map_new", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
     "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "secondary_entry", "port_in", "port_out",
   ];
-  let f64_un: string[] = [
-    "const_f64", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
+  let f64_ops: string[] = [
+    "const_f64", "ffma", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
     "i32_to_f64", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
   ];
   let f = KindFacts { ix: util.name_index([]), bits: [], argc: [], host: [] };
@@ -213,7 +213,7 @@ function kind_facts(): KindFacts {
   f = listed(f, three, 0, 3, false);
   f = listed(f, two_io, 0, 2, false);
   f = listed(f, host, 0, 0, true);
-  f = listed(f, f64_un, 4, 0, false);
+  f = listed(f, f64_ops, 4, 0, false);
   return listed(f, ir.lane_kind_names(), 16, 0, false);
 }
 
@@ -289,10 +289,7 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
 }
 
 function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
-  let argc = 1;
-  if (fbin_sym(k) != "") {
-    argc = 2;
-  }
+  let argc = ir.op_pops(op);
   if (stack.len() < argc) {
     return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: false };
   }
@@ -305,6 +302,8 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
   nvals += 1;
   if (fbin_sym(k) != "") {
     insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v, args: args, imm: 64, str: k });
+  } else if (argc == 3) {
+    insts = insts.append(ssa.SInst { kind_tag: ssa.TERNARY, result: v, args: args, imm: 64, str: k });
   } else {
     let what = k;
     if (k == "i32_to_f64") {

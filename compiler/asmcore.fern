@@ -3580,7 +3580,7 @@ function infer_call_named_type_part_12(id: ast.ExprIdent, c: ast.ExprCall, s: Em
 function infer_call_named_type_part_13(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
     || id.name == "__floor_f64" || id.name == "__ceil_f64"
-    || id.name == "__trunc_f64" || id.name == "__round_f64") {
+    || id.name == "__trunc_f64" || id.name == "__round_f64" || id.name == "__fma_f64") {
     return ty_f64();
   }
   if (id.name == "str_split") {

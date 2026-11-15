@@ -1,0 +1,9 @@
+// __fern_fma_sig gives the significand of a finite x that is not zero, in
+// [2^53, 2^54). A subnormal x is scaled into the normal range first.
+function __fern_fma_sig(x: f64): u64 {
+  let b = f64_bits(x);
+  if ((b >> 52 & 2047) == 0) {
+    b = f64_bits(x * 9223372036854775808.0);
+  }
+  return ((b & 4503599627370495 | 4503599627370496) << 1) as u64;
+}

@@ -2291,6 +2291,9 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (k == ssa.UNARY) {
     return ssa_unary_known(ins.str);
   }
+  if (k == ssa.TERNARY) {
+    return ins.str == "ffma";
+  }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
   }
@@ -3049,6 +3052,15 @@ function ssa_fmath_op(what: string): string {
     "fabs" => "fabs",
     _ => "",
   };
+}
+
+function ssa_ffma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  s = ssa_fread(reg_of, ins.args[1], "d2", s);
+  s = ssa_fread(reg_of, ins.args[2], "d3", s);
+  let d = ssa_fdst(reg_of, ins.result);
+  s = s.write("    fmadd " + d + ", " + ssa_fsrc(reg_of, ins.args[0], "d1") + ", " + ssa_fsrc(reg_of, ins.args[1], "d2") + ", " + ssa_fsrc(reg_of, ins.args[2], "d3") + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
 }
 
 function ssa_funary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -4646,6 +4658,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   }
   if (k == ssa.UNARY && ssa_funary_direct(ins.str)) {
     return ssa_funary(ins, reg_of, s);
+  }
+  if (k == ssa.TERNARY) {
+    return ssa_ffma(ins, reg_of, s);
   }
   if (k == ssa.UNARY && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) {
     let rd = ssa_fhome(reg_of, ins.result);

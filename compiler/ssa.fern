@@ -114,7 +114,7 @@ pub const FLAT_OP: i32 = 59;
 
 pub const DYN_DISPATCH: i32 = 60;
 
-pub const LANE3: i32 = 61;
+pub const TERNARY: i32 = 61;
 
 pub const LANE_STORE: i32 = 62;
 
@@ -282,7 +282,7 @@ const KIND_NAMES: string[] = [
   "sym_addr",  // 58
   "flat_op",  // 59
   "dyn_dispatch",  // 60
-  "lane3",  // 61
+  "ternary",  // 61
   "lane_store",  // 62
 ];
 
@@ -1255,7 +1255,7 @@ pub function lane_op(op: string): boolean {
 
 pub function lane_inst(ins: SInst): boolean {
   let k = ins.kind_tag;
-  return (k == BINARY || k == UNARY || k == LANE3 || k == LANE_STORE) && lane_op(ins.str);
+  return (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && lane_op(ins.str);
 }
 
 pub function lane_param(f: SFunc, p: i32): boolean {
@@ -1302,7 +1302,7 @@ function lane_results(f: SFunc): boolean[] {
   for blk in f.blocks {
     for ins in blk.insts {
       let k = ins.kind_tag;
-      let maybe = k == PARAM || k == CALL && ins.imm == 6 || (k == BINARY || k == UNARY || k == LANE3 || k == LANE_STORE) && ins.str.len() > 1 && ins.str[0] == b'v';
+      let maybe = k == PARAM || k == CALL && ins.imm == 6 || (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && ins.str.len() > 1 && ins.str[0] == b'v';
       if (maybe && ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
         if (lanes.len() == 0) {
           lanes = __alloc_bool(f.nvals);
@@ -1450,7 +1450,7 @@ function float_def(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str.starts_with("i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
   }
-  return false;
+  return k == TERNARY && ins.str == "ffma";
 }
 
 function float_load(ins: SInst): boolean {
@@ -1477,7 +1477,7 @@ function float_use(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits" || ins.str == "vsplat";
   }
-  return false;
+  return k == TERNARY && ins.str == "ffma";
 }
 
 pub function float_arith(op: string): boolean {
@@ -5781,7 +5781,7 @@ function lane_constant_fact(ins: SInst): i32 {
 }
 
 function lane_identity(ins: SInst, facts: i32[]): SInst {
-  if (ins.kind_tag == LANE3 && ins.str == "vselect" && ins.args.len() == 3) {
+  if (ins.kind_tag == TERNARY && ins.str == "vselect" && ins.args.len() == 3) {
     if (facts[ins.args[1]] == 1) {
       return SInst { ...ins, kind_tag: BINARY, str: "vand", args: [ins.args[0], ins.args[2]] };
     }
@@ -5808,7 +5808,7 @@ pub function fold_lane_identities(f: SFunc): SFunc {
       has_two = has_two || fact == 2;
       has_zero = has_zero || fact == 1;
       has_multiply = has_multiply || ins.kind_tag == BINARY && (ins.str == "vmul" || ins.str == "fmul");
-      has_select = has_select || ins.kind_tag == LANE3 && ins.str == "vselect";
+      has_select = has_select || ins.kind_tag == TERNARY && ins.str == "vselect";
     }
   }
   if (!(has_two && has_multiply || has_zero && has_select)) {
@@ -7429,7 +7429,7 @@ function inst_has_effect(k: i32): boolean {
   if (k < PRINT) {
     return k == PARAM || k == CALL || k == CALL_INDIRECT || k == ALLOC || k == STORE_ELEM || k == CONCAT;
   }
-  return k != SELECT && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != LANE3;
+  return k != SELECT && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY;
 }
 
 function prune_roots(f: SFunc): i32[] {

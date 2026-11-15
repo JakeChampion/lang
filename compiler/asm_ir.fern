@@ -8225,6 +8225,9 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (k == ssa.UNARY) {
     return ssa_unary_known(ins.str);
   }
+  if (k == ssa.TERNARY) {
+    return ins.str == "ffma";
+  }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
   }
@@ -9127,6 +9130,31 @@ function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
     s = s.write("    xorpd " + d + ", " + d + "\n");
   }
   s = s.write("    " + ssa_fmath_op(ins.str) + " " + a + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// vfmadd231sd adds the product to its destination, so the destination takes
+// the addend first. A destination that holds a factor uses the scratch.
+function ssa_ffma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let b = ssa_fsrc(reg_of, ins.args[1], "%xmm2");
+  let c = ssa_fhome(reg_of, ins.args[2]);
+  let home = ssa_fhome(reg_of, ins.result);
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (c != d && (d == a || d == b)) {
+    d = "%xmm0";
+  }
+  if (c == "") {
+    s = ssa_load(reg_of, ins.args[2], d, s);
+  } else if (c != d) {
+    s = ssa_mov_rr(s, d, c);
+  }
+  s = s.write("    vfmadd231sd " + b + ", " + a + ", " + d + "\n");
+  if (d == "%xmm0" && home != "") {
+    return ssa_mov_rr(s, home, d);
+  }
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
@@ -11070,6 +11098,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   }
   if (k == ssa.UNARY && ssa_fmath_op(ins.str) != "") {
     return ssa_fmath(ins, reg_of, s);
+  }
+  if (k == ssa.TERNARY) {
+    return ssa_ffma(ins, reg_of, s);
   }
   let d = ssa_dst(reg_of, ins.result);
   if (k == ssa.CONST_INT) {

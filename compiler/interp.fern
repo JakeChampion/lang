@@ -2503,6 +2503,9 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
   if (name == "__map_hash_seed") {
     return v_int(__map_hash_seed());
   }
+  if (name == "__fma_f64") {
+    return call_fma_f64(args);
+  }
   if (util.has_str(["__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64", "__abs_f64"], name)) {
     if (args.len() != 1 || !is_float_like(args[0])) {
       return v_err(name + ": expected 1 float arg");
@@ -3143,6 +3146,13 @@ function call_lane_op(verb: string, width: i32, args: Value[]): Value {
     return lanes_select(ls);
   }
   return lanes_apply(verb, ls);
+}
+
+function call_fma_f64(args: Value[]): Value {
+  if (args.len() != 3 || !is_float_like(args[0]) || !is_float_like(args[1]) || !is_float_like(args[2])) {
+    return v_err("__fma_f64: expected 3 float args");
+  }
+  return v_float(vfloat_as_f64(args[0]).fma(vfloat_as_f64(args[1]), vfloat_as_f64(args[2])));
 }
 
 function f64_primitive(name: string, x: f64): f64 {
