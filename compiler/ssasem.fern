@@ -49,6 +49,9 @@ pub struct Func {
   dbg_names: string[],
   source_positions: sourcepos.SourceInfo,
   schema_checked: boolean,
+  // A record of the target keeps its shape in a slot of its box. The native
+  // targets keep the shape in the header, and wasm keeps it in the first slot.
+  shape_slot: boolean,
 }
 
 // schema_checked says the verifier passed records and enums; a change to either clears it.

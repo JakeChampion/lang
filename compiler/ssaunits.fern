@@ -4144,6 +4144,13 @@ pub function receiver_retained(step: Step): boolean {
 
 pub struct ReusePairs { tokens: i32[], builds: i32[], selfs: i32[] }
 
+// The slots that the shape of a record takes in its box: one on a target
+// that keeps the shape there, and none on a target that keeps it in the
+// header. A record and a tuple of one size in slots can share a block.
+function shape_slots(f: ssasem.Func): i32 {
+  return if (f.shape_slot) { 1 } else { 0 };
+}
+
 function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   if (semtypes.is_env(t) || typeinfo.is_cell(t)) {
     return -1;
@@ -4158,7 +4165,7 @@ function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
     if (semrecords.find(f.records, t) < 0) {
       return -1;
     }
-    return ssasem.record_fields(t, f).len() + 1;
+    return ssasem.record_fields(t, f).len() + shape_slots(f);
   }
   if let typeinfo.TypeUnion(_) = t {
     return union_slots(t, f);
@@ -4185,7 +4192,7 @@ function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   if (n < 0) {
     return -1;
   }
-  return n + 1;
+  return n + shape_slots(f);
 }
 
 function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
@@ -4197,7 +4204,7 @@ function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
   if (v < 0) {
     return -1;
   }
-  return f.enums[at].variants[v].fields.len() + 1;
+  return f.enums[at].variants[v].fields.len() + shape_slots(f);
 }
 
 function donor_slots(f: ssasem.Func, vr: VariantReads, b: ssa.SBlock, d: i32): i32 {
