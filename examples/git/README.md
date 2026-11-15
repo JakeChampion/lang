@@ -105,9 +105,12 @@ names (`git init --object-format=sha256`). The key
 `extensions.objectformat` of the `config` file gives the hash. With no
 repository, `hash-object`, `index-pack` and `verify-pack` use SHA-1, as
 git does.
+
 A packfile can be larger than 4 GiB. The port finds an object through the
-multi-pack index first, as git does. The port reads a packfile of more
-than 1 GiB in parts and never as a whole.
+multi-pack index first, as git does. The port maps a packfile of 1 GiB
+or less into memory with `map_file_unchecked`, and `index-pack` and
+`verify-pack` map the packfile that they read. The port reads a larger
+packfile in parts and never as a whole.
 
 A name is a full hash, a short hash of four digits or more, `HEAD`, a ref,
 or the output of `git describe`. The port looks for a ref as git does. It
@@ -185,8 +188,6 @@ The standard output, the messages and the exit status are those of git
   of `std/deflate`, so the packfile, its name and its index do not have
   the bytes that git writes.
 
-- `index-pack` and `verify-pack` hold the whole packfile in memory. The
-  other commands read a packfile larger than 1 GiB in parts.
 
 ## Speed
 
@@ -225,11 +226,12 @@ commit for the text of `log`. It does not inflate a packed object for its
 kind and its size. They come from the header of the object and from the
 start of its delta.
 
-The port keeps the bases of the deltas in a cache of 96 MB. For a packfile
-above 1 MiB, it reads the bytes of one object from the file. The reverse
-index of git (`.rev`) gives the end of each object. Without that file, the
-port sorts the offsets of the index. It reads the whole file after such
-reads for half of the objects, when the file is 1 GiB or smaller.
+The port keeps the bases of the deltas in a cache of 96 MB, which each
+copy of the store shares. For a packfile above 1 GiB, it reads the bytes
+of one object from the file. The reverse index of git (`.rev`) gives the
+end of each object. Without that file, the port sorts the offsets of the
+index. A diff of trees reads the entries of a tree in place, and keeps the
+last trees that it read.
 
 `index-pack` gives each CPU one part of the packfile, with about the same
 count of bytes. A worker of `std/worker` makes the names of its part.
@@ -251,8 +253,7 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   byte. The index and the reverse index of `index-pack` have the bytes of
   git.
 
-  The packfile is above 1 MiB, so the port reads it in parts and then
-  whole. The test also has a shallow clone, and a store of 16,400 objects
+  The test also has a shallow clone, and a store of 16,400 objects
   where a short name has 8 digits.
 
 - Each of these tests runs on x86-64 and on arm64, in a repository with

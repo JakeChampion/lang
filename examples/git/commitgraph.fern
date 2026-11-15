@@ -165,7 +165,7 @@ pub function position(g: Graph, hash: string): i32 {
   if (g.layers.len() == 0) {
     return -1;
   }
-  let Ok(raw) = hex.decode(hash) else {
+  let Some(raw) = objects.raw_name(hash) else {
     return -1;
   };
   let k = g.layers.len() - 1;
