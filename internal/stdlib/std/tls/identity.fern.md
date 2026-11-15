@@ -53,7 +53,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 pub function (key: PrivateKey) scheme(): i32>>
 
-<<17 function __cat(own a: u8[], b: [u8]): u8[]>>
+<<17 function __same(a: [u8], b: [u8]): boolean>>
 ```
 
 ### `module introduction`
@@ -67,6 +67,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/array";
 import "std/crypto/ecdsa";
 import "std/crypto/sha2";
 import "std/crypto/ed25519";
@@ -337,7 +338,7 @@ function __padded(d: u8[], size: i32): u8[] {
   while (out.len() + d.len() < size) {
     out = out.append(0 as u8);
   }
-  return __cat(out, d);
+  return out.concat(d);
 }
 
 function __ec_curve(b: [u8], parts: der.Element[], known: Option[ecdsa.Curve]): Result[ecdsa.Curve, KeyError] {
@@ -526,19 +527,10 @@ pub function (key: PrivateKey) sign(scheme: i32, content: [u8]): Result[u8[], Ke
 }
 ```
 
-### `17 function __cat(own a: u8[], b: [u8]): u8[]`
+### `17 function __same(a: [u8], b: [u8]): boolean`
 
 ```fern
-<<17 function __cat(own a: u8[], b: [u8]): u8[]>>=
-function __cat(own a: u8[], b: [u8]): u8[] {
-  let i = 0;
-  while (i < b.len()) {
-    a = a.append(b[i]);
-    i += 1;
-  }
-  return a;
-}
-
+<<17 function __same(a: [u8], b: [u8]): boolean>>=
 function __same(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;

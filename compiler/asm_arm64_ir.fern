@@ -14,7 +14,6 @@ import "./irtables";
 import "./irverifygate";
 import "./lexer";
 import "./ircore";
-import "./rtbytecopy";
 import "./ssa";
 import "./ssalive";
 import "./ssadeps";
@@ -3301,7 +3300,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
     return ssa_rc_dec(ins, reg_of, lp, 0, 0, s);
   }
-  if (ircore.is_runtime_helper_call(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || rtbytecopy.is_helper(ins.str))) {
+  if (ircore.is_runtime_helper_call(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || ircore.register_helper(ins.str))) {
     return ssa_helper_call(ins, reg_of, s);
   }
   let rr = "x0";

@@ -35,7 +35,7 @@ function main(): i32 {
 	{"shared-param-accumulator-appended-in-a-loop", `function chunk(out: i32[], s: i32[]): i32[] {
     let bs: i32[] = out;
     let i: i32 = 0;
-    while (i < s.len()) { bs = bs.append(s[i]); i = i + 1; }
+    while (i < s.len()) { bs = bs.append(s[i] * 2); i = i + 1; }
     return bs;
 }
 function main(): i32 {
@@ -47,7 +47,7 @@ function main(): i32 {
     let keep: i32[] = a;
     let c: i32[] = chunk(a, s);
     if (keep.len() != 5 || c.len() != 6) { return 250; }
-    if (c[5] != 9 || keep[4] != 4) { return 251; }
+    if (c[5] != 18 || keep[4] != 4) { return 251; }
     return __arr_push_shared_count();
 }`, 1},
 	{"scalar-field-read-after-the-call-that-consumes-its-record", `struct P { n: i32[], count: i32, off: i32 }
