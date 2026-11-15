@@ -864,7 +864,8 @@ function kept_flag(ctx: usize): boolean {
 
 // The app keeps the loop alive, and the loop is the live one of the process.
 // A loop of an older activity that a new activity replaced does not stay.
-function kept(ctx: usize): boolean {
+// During a Destroy event, it tells that the loop runs on after it.
+pub function kept(ctx: usize): boolean {
   unsafe {
     return Context.c_load_kept(ctx) != 0 && live_loop(env(ctx)) == ctx;
   }

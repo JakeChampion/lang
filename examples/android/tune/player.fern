@@ -272,9 +272,6 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
     tune.WriteList(name) => {
       let told = exported(dev, m, name);
       return Player { model: tune.update(m, tune.Exported(told)), deck: deck, incoming: incoming };
-    },
-    tune.Quit => {
-      return wrap(closed(dev, m));
     }
   }
 }
@@ -708,18 +705,15 @@ function settled(dev: Device, own p: Player, until: i64): Player {
 }
 
 // The state after the player gave back the sound, the locks that keep the
-// phone awake, and what it holds of Android. The app closes it so when it
-// closes, and when its loop ends with no window. It does that one time.
+// phone awake, and what it holds of Android. The program does that in the
+// Destroy that ends its loop. A track that plays keeps the loop alive.
 pub function closed(dev: Device, own m: tune.Model): tune.Model {
-  if (m.gone) {
-    return m;
-  }
   dev.close(m.sound);
   if (m.awake.wake != 0 as usize) {
     dev.sleep(m.awake);
   }
   dev.quit(tune.now_title(m));
-  return tune.Model { ...m, sound: tune.no_sound(), pending: [], awake: tune.Awake { wake: 0 as usize, wifi: 0 as usize }, gone: true };
+  return tune.Model { ...m, sound: tune.no_sound(), pending: [], awake: tune.Awake { wake: 0 as usize, wifi: 0 as usize } };
 }
 
 // The player after the device did each thing that the state wants.
@@ -790,5 +784,5 @@ function step(dev: Device, own p: Player, msg: tune.Msg): Player {
 }
 
 pub function program(dev: Device): ui.Program[Player, tune.Msg] {
-  return ui.program((p: Player, s: ui.Screen): ui.El[tune.Msg] => tune.view(p.model, s), (own p: Player, msg: tune.Msg): Player => step(dev, p, msg)).with_tick((p: Player): i32 => tune.beat(p.model), tune.Beat).with_back((p: Player): Option[tune.Msg] => tune.back(p.model)).with_theme_of((p: Player, dark: boolean): ui.Theme => tune.theme(p.model, dark));
+  return ui.program((p: Player, s: ui.Screen): ui.El[tune.Msg] => tune.view(p.model, s), (own p: Player, msg: tune.Msg): Player => step(dev, p, msg)).with_tick((p: Player): i32 => tune.beat(p.model), tune.Beat).with_back((p: Player): Option[tune.Msg] => tune.back(p.model)).with_theme_of((p: Player, dark: boolean): ui.Theme => tune.theme(p.model, dark)).with_close((own p: Player): own Player => wrap(closed(dev, p.model)));
 }

@@ -489,11 +489,15 @@ function test_program_closes_final_state(): test.TestOutcome {
   if (closed.get() != -1) {
     return test.fail("a live program closed its state");
   }
-  s = sim.event(s, android.Destroy);
-  if (closed.get() != 1) {
-    return test.fail("Destroy did not close the final state");
+  s = sim.event(sim.kept(s, true), android.Destroy);
+  if (closed.get() != -1) {
+    return test.fail("a Destroy that the loop runs on after closed the state");
   }
-  return test.assert_eq(s.shell.app.count, 11);
+  s = sim.event(sim.kept(s, false), android.Destroy);
+  if (closed.get() != 2) {
+    return test.fail("the Destroy that ends the loop did not close the final state");
+  }
+  return test.assert_eq(s.shell.app.count, 12);
 }
 
 function test_program_taps(): test.TestOutcome {
