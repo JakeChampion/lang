@@ -203,7 +203,9 @@ function semantic_arrives(k: i32, result: typeinfo.Type, u: Universe): boolean {
   if (k == ssasem.zero()) {
     return !typeinfo.is_record(result) && !is_variant_enum(result, u);
   }
-  return k == ssasem.dyn_as() || k == ssasem.variant_up();
+  // A cast to an enum takes the index of a variant from a word, so it can
+  // give each variant.
+  return k == ssasem.dyn_as() || k == ssasem.variant_up() || k == ssasem.cast() && is_variant_enum(result, u);
 }
 
 function is_option_enum(t: typeinfo.Type, u: Universe): boolean {

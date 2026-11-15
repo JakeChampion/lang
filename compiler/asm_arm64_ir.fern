@@ -3425,6 +3425,12 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (ins.result >= 0 && ssa_fhome(reg_of, ins.result) != "") {
     d = ssa_fhome(reg_of, ins.result);
   }
+  if (k == ssa.LD_AT && ins.str == "u8") {
+    return ssa_store(reg_of, ins.result, d, s.write("    ldrb " + ssa_wreg(d) + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n"));
+  }
+  if (k == ssa.LD_AT && ins.str == "i32") {
+    return ssa_store(reg_of, ins.result, d, s.write("    ldrsw " + d + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n"));
+  }
   if (k == ssa.LD_AT) {
     s = ssa_ldst(s, true, if (ins.str == "u32") { ssa_wreg(d) } else { d }, a, ins.imm);
     return ssa_store(reg_of, ins.result, d, s);
