@@ -10,6 +10,7 @@ import "./config";
 import "./date";
 import "./width";
 import "./fsck";
+import "./graph";
 import "./index";
 import "./log";
 import "./objects";
@@ -650,6 +651,40 @@ function test_config(): test.TestOutcome {
   return test.pass();
 }
 
+function graph_roots_text(names: string[], parents: string[][]): string {
+  let g = graph.graph_new();
+  let out = "";
+  for i in 0..names.len() {
+    let next = if (i + 1 < names.len()) { names[i + 1] } else { "" };
+    let next_root = i + 2 < names.len() && parents[i + 1].len() == 0;
+    g = graph.update(g, names[i], parents[i], next, next_root);
+    let (g1, prefix) = graph.show_commit(g);
+    let (g2, message) = graph.show_msg(g1, names[i] + "\n");
+    g = g2;
+    out += prefix + message;
+  }
+  return out;
+}
+
+function test_graph_roots(): test.TestOutcome {
+  if (graph_roots_text(["child", "root", "other"], [["root"], [], []]) != "* child\n \\ \n  * root\n* other\n") {
+    return test.fail("chain-root");
+  }
+  if (graph_roots_text(["root"], [[]]) != "* root\n") {
+    return test.fail("single");
+  }
+  if (graph_roots_text(["r0", "r1"], [[], []]) != "  * r0\n* r1\n") {
+    return test.fail("two-roots");
+  }
+  if (graph_roots_text(["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"], [[], [], [], [], [], [], [], [], [], []]) != "* r0\n  * r1\n    * r2\n      * r3\n* r4\n  * r5\n    * r6\n      * r7\n  * r8\n* r9\n") {
+    return test.fail("ten-roots");
+  }
+  if (graph_roots_text(["merge", "side", "child", "root", "other"], [["child", "side"], [], ["root"], [], []]) != "*   merge\n|\\  \n| * side\n* child\n \\ \n  * root\n* other\n") {
+    return test.fail("merge-root");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
@@ -669,5 +704,6 @@ function main(): i32 {
   r = r.it("a configuration file", test_config);
   r = r.it("the tabs of a message", test_tabs);
   r = r.it("the forms of a date", test_dates);
+  r = r.it("the visual roots of a graph", test_graph_roots);
   return r.finish();
 }

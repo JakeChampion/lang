@@ -1,0 +1,22 @@
+// spec: MC-09
+// The else arm of a `let ... else` leaves the function. A @must_consume
+// value that it does not consume first is rejected (E067).
+
+@must_consume
+struct Ticket { id: i32 }
+
+function redeem(own t: Ticket): i32 {
+    return t.id;
+}
+
+function seat_of(seat: Option[i32]): i32 {
+    let t: Ticket = Ticket { id: 7 };
+    let Some(n) = seat else {
+        return 0;
+    };
+    return redeem(t) + n;
+}
+
+function main(): i32 {
+    return seat_of(Some(1));
+}
