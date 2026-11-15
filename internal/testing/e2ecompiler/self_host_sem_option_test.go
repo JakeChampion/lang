@@ -66,7 +66,7 @@ function fixture(row: i32): ssasem.Func {
   if (row == 4) { debug = [1]; names = ["out"]; }
   let finalizers: ssasem.Finalizer[] = [];
   if (row == 5) { finalizers = [ssasem.Finalizer { receiver: "Option", symbol: "Option.drop", writes: true }]; }
-  return ssasem.Func { schema_checked: false, source_positions: sourcepos.no_source(),  graph: ssa.SFunc { name: "option", nparams: params.len(), nvals: values.len(), entry: 0, takes_env: false, blocks: blocks },
+  return ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  graph: ssa.SFunc { name: "option", nparams: params.len(), nvals: values.len(), entry: 0, takes_env: false, blocks: blocks },
     values: values, params: params, result: result, records: semrecords.no_records(), enums: enums,
     calls: calls, envs: [], anchors: [], dyns: [], shadows: [], finalizers: finalizers,
     map_module: false, dbg_vals: debug, dbg_names: names };
