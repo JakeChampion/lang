@@ -5305,20 +5305,25 @@ function sink_round(f: SFunc): Sunk {
     moved = moved.append([]);
   }
   let blocks = f.blocks;
+  let splits: Split[] = [];
   let changed = false;
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
     let kept: SInst[] = [];
     let tail = pure_tail(blk);
+    let fl = Flow { at: at, idom: idom, entries: entries, term: blk.term };
     for k in 0..blk.insts.len() {
-      let to = -1;
-      if (k >= tail) {
-        to = sink_target(blk.insts[k], bi, Flow { at: at, idom: idom, entries: entries, term: blk.term }, readers);
+      let ins = blk.insts[k];
+      let sk = sink_of(ins, bi, k >= tail, fl, readers);
+      if (sk.other >= 0) {
+        let copy = f.nvals + splits.len();
+        splits = splits.append(Split { from: ins.result, to: copy, side: sk.other });
+        moved = moved.with(sk.other, moved[sk.other].append(SInst { ...ins, result: copy }));
       }
-      if (to < 0) {
-        kept = kept.append(blk.insts[k]);
+      if (sk.to < 0) {
+        kept = kept.append(ins);
       } else {
-        moved = moved.with(to, moved[to].append(blk.insts[k]));
+        moved = moved.with(sk.to, moved[sk.to].append(ins));
         changed = true;
       }
     }
@@ -5332,7 +5337,95 @@ function sink_round(f: SFunc): Sunk {
       blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: after_phis(blocks[bi].insts, moved[bi]) });
     }
   }
-  return Sunk { f: SFunc { ...f, blocks: blocks }, changed: true };
+  return Sunk { f: SFunc { ...f, nvals: f.nvals + splits.len(), blocks: renamed_sides(blocks, idom, splits) }, changed: true };
+}
+
+// A load that both sides of a branch read gets a copy on side `side`, and
+// the blocks that run after that side read the copy `to`.
+struct Split { from: i32, to: i32, side: i32 }
+
+// Where an instruction goes: successor `to` takes it, and successor `other`
+// takes a copy. Each is -1 for none.
+struct Sink { to: i32, other: i32 }
+
+function sink_of(ins: SInst, bi: i32, in_tail: boolean, fl: Flow, readers: Readers): Sink {
+  if (!in_tail) {
+    return Sink { to: -1, other: -1 };
+  }
+  let to = sink_target(ins, bi, fl, readers);
+  if (to >= 0) {
+    return Sink { to: to, other: -1 };
+  }
+  let other = split_target(ins, bi, fl, readers);
+  if (other < 0) {
+    return Sink { to: -1, other: -1 };
+  }
+  return Sink { to: distinct_successor_position(fl.at, fl.term, 0), other: other };
+}
+
+// The second successor, when the load of `ins` can go to each side of the
+// branch as one copy, or -1. A side that reads the value in its first block
+// gains nothing, so one side must read it later.
+function split_target(ins: SInst, bi: i32, fl: Flow, readers: Readers): i32 {
+  if (ins.kind_tag != LD_AT || fl.term.kind_tag != TERM_BRIF || readers.pinned[ins.result]) {
+    return -1;
+  }
+  let read = readers.blocks[ins.result];
+  let s0 = distinct_successor_position(fl.at, fl.term, 0);
+  let s1 = distinct_successor_position(fl.at, fl.term, 1);
+  if (!single_entry_sides(fl, bi, s0, s1) || util.index_of_i32(read, bi) >= 0) {
+    return -1;
+  }
+  if (util.index_of_i32(read, s0) >= 0 && util.index_of_i32(read, s1) >= 0) {
+    return -1;
+  }
+  return if (each_after_a_side(fl.idom, s0, s1, read)) { s1 } else { -1 };
+}
+
+function single_entry_sides(fl: Flow, bi: i32, s0: i32, s1: i32): boolean {
+  return s0 >= 0 && s1 >= 0 && s0 != bi && s1 != bi && fl.entries[s0] == 1 && fl.entries[s1] == 1;
+}
+
+function each_after_a_side(idom: i32[], s0: i32, s1: i32, read: i32[]): boolean {
+  for b in read {
+    if (!dominates(idom, s0, b) && !dominates(idom, s1, b)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function renamed_sides(own blocks: SBlock[], idom: i32[], splits: Split[]): SBlock[] {
+  for sp in splits {
+    for bi in 0..blocks.len() {
+      if (dominates(idom, sp.side, bi)) {
+        blocks = blocks.with(bi, block_reading(blocks[bi], sp.from, sp.to));
+      }
+    }
+  }
+  return blocks;
+}
+
+// The block with each read of value `from` turned into a read of `to`.
+function block_reading(blk: SBlock, from: i32, to: i32): SBlock {
+  let insts: SInst[] = [];
+  for ins in blk.insts {
+    let args = ins.args;
+    for a in 0..args.len() {
+      if (args[a] == from) {
+        args = args.with(a, to);
+      }
+    }
+    insts = insts.append(SInst { ...ins, args: args });
+  }
+  let term = blk.term;
+  if (term.cond == from) {
+    term = STerm { ...term, cond: to };
+  }
+  if (term.value == from) {
+    term = STerm { ...term, value: to };
+  }
+  return SBlock { ...blk, insts: insts, term: term };
 }
 
 struct Flow { at: i32[], idom: i32[], entries: i32[], term: STerm }
