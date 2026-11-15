@@ -334,3 +334,7 @@ selfhost/wasm32-wasi/utf8_ingest_validated.emit	10386
 selfhost/x86-64-linux/video_qtrle.emit	5679
 selfhost/arm64-linux/video_qtrle.emit	5949
 selfhost/wasm32-wasi/video_qtrle.emit	6232
+
+# lane: selfhost-alloc-x86_64
+x86_64/checker.allocs	51529866
+x86_64/checker.frees	51529798
