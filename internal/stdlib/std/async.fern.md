@@ -1090,6 +1090,8 @@ pub struct Call[A, B, T] { id: i32, f: (A, B) => T, a: A, b: B, parked: Cell[boo
 impl[A, B, T] mem.Drop for Call[A, B, T] {
   function drop(self: Call[A, B, T]): void {
     if (self.parked.get()) {
+      // A copy of the record shares the cell, so it does not cancel again.
+      self.parked.set(false);
       __call_dropped(self.id, self.f, self.a, self.b);
     }
   }
