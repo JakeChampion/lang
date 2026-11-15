@@ -158,15 +158,22 @@ A literal has the range of the decNumber context of jq. When its adjusted
 exponent is more than 999999999, it is an infinity. An exponent below
 -1147483646 rounds half up to that exponent, as `0E-1147483646`.
 
-A math function with no exact result can differ from jq in its last digit.
-jq takes these results from the C library, and they differ from one C library
-to the next. The exact results are the same: `exp10` of 2 is 100.
+jq takes the result of a math function from the C library. The port takes
+it from `std/f64`. `cbrt`, `hypot`, `erf`, `erfc`, `lgamma`, `tgamma`, the
+Bessel functions, `sin` and `cos` of `std/f64` follow glibc 2.39 for x86-64.
+A result can still differ from jq in its last bit, for two reasons:
 
-`std/f64` has the math functions of C that jq uses: `erf`, `lgamma`,
-`tgamma`, the Bessel functions and the others. jq takes each result from
-glibc. A function with no exact result can differ from glibc in its last
-digit. Near a zero, `j0` and `lgamma` can differ by up to 8 units in the
-last place.
+- glibc on a CPU with FMA computes `sin`, `cos`, `exp`, `log`, `pow` and
+  some other functions with fused multiply-adds. `std/f64` has no fused
+  multiply-add, so it cannot give the same roundings. For `sin` and `cos`,
+  about 7 arguments of each 10000 differ. Each function that calls one of
+  these, such as the Bessel functions for x >= 2, can differ too.
+- `tan`, `asin`, `acos`, `atan` and `atan2` do not follow the algorithms of
+  glibc yet, and differ in the last bit more often.
+
+The results also differ from one C library to the next, so jq on a
+different system can give different last digits. The exact results are the
+same: `exp10` of 2 is 100.
 
 The functions with exact results, such as `frexp`, `fmod` and `nextafter`,
 give the results of glibc. The jq 1.7 binary of Ubuntu has no `pow10`,
