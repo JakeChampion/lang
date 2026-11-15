@@ -217,3 +217,6 @@ x86_64/base64_encode.ir	93474351
 aarch64/base64_encode.text	3194
 aarch64/hex_encode.ir	72029017
 aarch64/base64_encode.ir	74873689
+x86_64/gather_many.text	5540
+x86_64/gather_many.ir	112502557
+aarch64/gather_many.text	6053

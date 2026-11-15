@@ -1,0 +1,44 @@
+// gather of 4000 inputs. Each input waits on one pair two times, and each
+// wake goes to the input of its slot.
+import "std/async";
+
+function input(id: i32, left: i32): async.Future[i32] {
+  let set: i32[] = [id, 1];
+  return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => __next(id, left));
+}
+
+function __next(id: i32, left: i32): async.Future[i32] {
+  if (left == 0) {
+    return Ready(id);
+  }
+  return input(id, left - 1);
+}
+
+function main(): i32 {
+  let n = 4000;
+  let fs: async.Future[i32][] = [];
+  for i in 0..n {
+    fs = fs.append(input(i + 3, 1));
+  }
+  let f = async.gather(fs);
+  let wakes = 0;
+  while (true) {
+    match (f) {
+      Pending(w, k) => {
+        f = k(async.Wake.Woke(wakes % n));
+        wakes += 1;
+      },
+      Ready(v) => {
+        let sum = wakes;
+        for i in 0..v.len() {
+          sum += v[i];
+        }
+        return sum % 97;
+      },
+      Cancelled => {
+        return 101;
+      }
+    }
+  }
+  return 102;
+}
