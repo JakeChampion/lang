@@ -1083,29 +1083,9 @@ wait costs no closure and no handle.
 
 ```fern
 <<21 pub struct Call[A, B, T]>>=
-// `parked` is true while the call waits. It is false when the call ended.
-pub struct Call[A, B, T] { id: i32, f: (A, B) => T, a: A, b: B, parked: Cell[boolean] }
-
-// A parked call whose last handle goes away is cancelled, as a task is.
-impl[A, B, T] mem.Drop for Call[A, B, T] {
-  function drop(self: Call[A, B, T]): void {
-    if (self.parked.get()) {
-      // A copy of the record shares the cell, so it does not cancel again.
-      self.parked.set(false);
-      __call_dropped(self.id, self.f, self.a, self.b);
-    }
-  }
-}
-
-function __call_dropped[A, B, T](id: i32, f: (A, B) => T, a: A, b: B): void {
-  unsafe {
-    __task_set_cancelled(id);
-    __task_enter(id, 2);
-    let v = f(a, b);
-    __task_leave();
-    __task_free(id);
-  }
-}
+// `gen` is the generation of the task record when the call parked. The
+// runtime changes the generation when the record is released.
+pub struct Call[A, B, T] { id: i32, gen: i32, f: (A, B) => T, a: A, b: B }
 
 @must_consume
 pub enum CallStatus[A, B, T] { Returned(T), Parked(Call[A, B, T], Wait) }
@@ -1124,20 +1104,23 @@ pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): CallStatus[A, B, T
         return Returned(v);
       },
       Suspended(w) => {
-        return Parked(Call { id: id, f: f, a: a, b: b, parked: cell_new(true) }, w);
+        return Parked(Call { id: id, gen: __task_gen(id), f: f, a: a, b: b }, w);
       }
     }
-    return Parked(Call { id: id, f: f, a: a, b: b, parked: cell_new(true) }, Wait { set: [], until: None });
+    return Parked(Call { id: id, gen: __task_gen(id), f: f, a: a, b: b }, Wait { set: [], until: None });
   }
 }
 
 pub function call_resume[A, B, T](c: Call[A, B, T], wake: Wake): TaskStatus[T] {
-  __task_wake(c.id, wake);
-  let st = __settled(c.id, run_task_call(c.id, c.f, c.a, c.b, 2));
-  if let Done(_) = st {
-    c.parked.set(false);
+  // Stops the program for a call that ended: its record is released, or
+  // holds a different task. There is no message, as for __task_expect.
+  unsafe {
+    if (__task_gen(c.id) != c.gen) {
+      exit(134);
+    }
   }
-  return st;
+  __task_wake(c.id, wake);
+  return __settled(c.id, run_task_call(c.id, c.f, c.a, c.b, 2));
 }
 
 // Resumes a parked call with Cancelled and takes its status, as task_cancel

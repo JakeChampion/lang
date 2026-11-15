@@ -119,6 +119,11 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		done[k] = true
 		gen := info.GenericFuncs[k.name]
 		args := instantiations[k]
+		for _, arg := range args {
+			if checker.TypeArgsDepth(arg) >= checker.MaxInstanceDepth {
+				return diag.Errors{checker.InstanceDepthError(info, gen)}
+			}
+		}
 		sub := make(map[string]ast.Type, len(gen.TypeParams))
 		for i, tp := range gen.TypeParams {
 			sub[tp] = args[i]
@@ -291,7 +296,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 	}
 	if !converged {
-		return fmt.Errorf("monomorph: generic struct instantiation did not terminate after %d rounds — a generic type appears to be infinitely (polymorphically) recursive, e.g. a field typed `T[T]`-style that nests the struct inside its own type argument; such types can't be monomorphised", maxStructInstRounds)
+		return fmt.Errorf("monomorph: the generic struct instances did not converge in %d rounds", maxStructInstRounds)
 	}
 
 	existingFunc := func(name string) bool {

@@ -1,0 +1,25 @@
+function __fern_vsock_connect(cid: i32, port: i32): i32 {
+  let fd = __syscall3(198, 40, 1, 0) as i32;
+  if (fd < 0) {
+    return fd;
+  }
+  let sa = __raw_scratch(16);
+  let i = 0;
+  while (i < 16) {
+    __raw_store8(sa, i, 0);
+    i += 1;
+  }
+  __raw_store8(sa, 0, 40);
+  let k = 0;
+  while (k < 4) {
+    __raw_store8(sa, 4 + k, port >> 8 * k & 255);
+    __raw_store8(sa, 8 + k, cid >> 8 * k & 255);
+    k += 1;
+  }
+  let r = __syscall3(203, fd as i64, sa as i64, 16) as i32;
+  if (r < 0) {
+    __syscall3(57, fd as i64, 0, 0);
+    return r;
+  }
+  return fd;
+}

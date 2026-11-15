@@ -184,14 +184,14 @@ pub function struct_tab(decls: parser.StructDecl[]): StructTab {
 pub function replaced_decls(decls: parser.StructDecl[], extra: parser.StructDecl[]): parser.StructDecl[] {
   let names: string[] = [];
   for d in extra {
-    names = names.append(d.name);
+    names = names.append(decl_shape(d));
   }
   let ix = util.name_index(names);
   let used = __alloc_bool(extra.len());
   let out: parser.StructDecl[] = [];
   for d in decls {
-    let at = ix.find(d.name);
-    if (at >= 0 && d.enum_owner == "" && extra[at].enum_owner == "") {
+    let at = ix.find(decl_shape(d));
+    if (at >= 0 && d.enum_owner == extra[at].enum_owner) {
       out = out.append(extra[at]);
       used = used.with(at, true);
     } else {
@@ -272,6 +272,24 @@ pub function decl_is_struct(structs: StructTab, name: string): boolean {
 
 pub function dyn_arm_matches(fd: parser.FuncDecl, tag: string): boolean {
   return util.index_of_str(ir.dyn_dispatch_arms(tag), parser.decl_key(fd)) >= 0;
+}
+
+// A value of the enum is the index of its variant: no variant holds a field,
+// and the enum has no `drop`.
+pub function enum_immediate(structs: StructTab, funcs: parser.FuncDecl[], owner: string): boolean {
+  let i = stab_enum_first(structs, owner);
+  while (i >= 0) {
+    if (structs.decls[i].fields.len() > 0) {
+      return false;
+    }
+    i = stab_enum_next(structs, i, owner);
+  }
+  for fd in funcs {
+    if (parser.drop_provider(fd) && util.base_type_name(fd.receiver_type) == owner) {
+      return false;
+    }
+  }
+  return true;
 }
 
 pub function decl_is_enum(structs: StructTab, name: string): boolean {

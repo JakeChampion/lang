@@ -1,0 +1,363 @@
+// The OpenGL ES calls of the simulation. They run on the context of a canvas
+// of std/android/gl. Each function is in OpenGL ES 2, so libGLESv2.so has
+// it. The float formats are constants of OpenGL ES 3.
+import "std/jni";
+import "std/log";
+
+pub const VERTEX_SHADER: i32 = 35633;
+
+pub const FRAGMENT_SHADER: i32 = 35632;
+
+const COMPILE_STATUS: i32 = 35713;
+
+const LINK_STATUS: i32 = 35714;
+
+pub const TEXTURE_2D: i32 = 3553;
+
+pub const TEXTURE0: i32 = 33984;
+
+pub const FRAMEBUFFER: i32 = 36160;
+
+const COLOR_ATTACHMENT0: i32 = 36064;
+
+const FRAMEBUFFER_COMPLETE: i32 = 36053;
+
+pub const COLOR_BUFFER_BIT: i32 = 16384;
+
+pub const BLEND: i32 = 3042;
+
+pub const SCISSOR_TEST: i32 = 3089;
+
+pub const ONE: i32 = 1;
+
+pub const ONE_MINUS_SRC_ALPHA: i32 = 771;
+
+pub const NEAREST: i32 = 9728;
+
+pub const LINEAR: i32 = 9729;
+
+pub const CLAMP_TO_EDGE: i32 = 33071;
+
+pub const REPEAT: i32 = 10497;
+
+pub const FLOAT: i32 = 5126;
+
+pub const UNSIGNED_BYTE: i32 = 5121;
+
+pub const HALF_FLOAT: i32 = 5131;
+
+pub const RGBA: i32 = 6408;
+
+pub const RGBA8: i32 = 32856;
+
+pub const RGBA16F: i32 = 34842;
+
+pub const RG: i32 = 33319;
+
+pub const RG16F: i32 = 33327;
+
+pub const RED: i32 = 6403;
+
+pub const R16F: i32 = 33325;
+
+pub const TRIANGLE_STRIP: i32 = 5;
+
+@import("libGLESv2.so", "glCreateShader")
+function create_shader(kind: i32): i32;
+
+@import("libGLESv2.so", "glShaderSource")
+function shader_source(shader: i32, count: i32, strings: usize, lengths: usize): void;
+
+@import("libGLESv2.so", "glCompileShader")
+function compile_shader(shader: i32): void;
+
+@import("libGLESv2.so", "glGetShaderiv")
+function shader_iv(shader: i32, name: i32, out: usize): void;
+
+@import("libGLESv2.so", "glGetShaderInfoLog")
+function shader_info_log(shader: i32, size: i32, length: usize, out: usize): void;
+
+@import("libGLESv2.so", "glDeleteShader")
+pub function delete_shader(shader: i32): void;
+
+@import("libGLESv2.so", "glCreateProgram")
+function create_program(): i32;
+
+@import("libGLESv2.so", "glAttachShader")
+function attach_shader(program: i32, shader: i32): void;
+
+@import("libGLESv2.so", "glBindAttribLocation")
+function bind_attrib_location(program: i32, index: i32, name: usize): void;
+
+@import("libGLESv2.so", "glLinkProgram")
+function link_program(program: i32): void;
+
+@import("libGLESv2.so", "glGetProgramiv")
+function program_iv(program: i32, name: i32, out: usize): void;
+
+@import("libGLESv2.so", "glDeleteProgram")
+pub function delete_program(program: i32): void;
+
+@import("libGLESv2.so", "glUseProgram")
+pub function use_program(program: i32): void;
+
+@import("libGLESv2.so", "glGetUniformLocation")
+function uniform_location(program: i32, name: usize): i32;
+
+@import("libGLESv2.so", "glUniform1i")
+pub function uniform1i(location: i32, v: i32): void;
+
+@import("libGLESv2.so", "glUniform1f")
+pub function uniform1f(location: i32, v: f32): void;
+
+@import("libGLESv2.so", "glUniform2f")
+pub function uniform2f(location: i32, a: f32, b: f32): void;
+
+@import("libGLESv2.so", "glUniform3f")
+pub function uniform3f(location: i32, a: f32, b: f32, c: f32): void;
+
+@import("libGLESv2.so", "glUniform4f")
+pub function uniform4f(location: i32, a: f32, b: f32, c: f32, d: f32): void;
+
+@import("libGLESv2.so", "glVertexAttribPointer")
+pub function vertex_attrib_pointer(index: i32, size: i32, kind: i32, normalized: i32, stride: i32, data: usize): void;
+
+@import("libGLESv2.so", "glEnableVertexAttribArray")
+pub function enable_vertex_attrib_array(index: i32): void;
+
+@import("libGLESv2.so", "glGenTextures")
+function gen_textures(n: i32, out: usize): void;
+
+@import("libGLESv2.so", "glDeleteTextures")
+function delete_textures(n: i32, ids: usize): void;
+
+@import("libGLESv2.so", "glBindTexture")
+pub function bind_texture(target: i32, id: i32): void;
+
+@import("libGLESv2.so", "glActiveTexture")
+pub function active_texture(unit: i32): void;
+
+@import("libGLESv2.so", "glTexParameteri")
+function tex_parameter(target: i32, name: i32, value: i32): void;
+
+@import("libGLESv2.so", "glTexImage2D")
+function tex_image(target: i32, level: i32, inner: i32, width: i32, height: i32, border: i32, format: i32, kind: i32, pixels: usize): void;
+
+@import("libGLESv2.so", "glGenFramebuffers")
+function gen_framebuffers(n: i32, out: usize): void;
+
+@import("libGLESv2.so", "glDeleteFramebuffers")
+function delete_framebuffers(n: i32, ids: usize): void;
+
+@import("libGLESv2.so", "glBindFramebuffer")
+pub function bind_framebuffer(target: i32, id: i32): void;
+
+@import("libGLESv2.so", "glFramebufferTexture2D")
+function framebuffer_texture(target: i32, attachment: i32, textarget: i32, texture: i32, level: i32): void;
+
+@import("libGLESv2.so", "glCheckFramebufferStatus")
+function framebuffer_status(target: i32): i32;
+
+@import("libGLESv2.so", "glViewport")
+pub function viewport(x: i32, y: i32, width: i32, height: i32): void;
+
+@import("libGLESv2.so", "glEnable")
+pub function enable(cap: i32): void;
+
+@import("libGLESv2.so", "glDisable")
+pub function disable(cap: i32): void;
+
+@import("libGLESv2.so", "glBlendFunc")
+pub function blend_func(source: i32, dest: i32): void;
+
+@import("libGLESv2.so", "glClearColor")
+pub function clear_color(r: f32, g: f32, b: f32, a: f32): void;
+
+@import("libGLESv2.so", "glClear")
+pub function clear(mask: i32): void;
+
+@import("libGLESv2.so", "glDrawArrays")
+pub function draw_arrays(mode: i32, first: i32, count: i32): void;
+
+@import("libGLESv2.so", "glReadPixels")
+function read_pixels(x: i32, y: i32, width: i32, height: i32, format: i32, kind: i32, pixels: usize): void;
+
+// The shader of `kind` from `source`, or 0 when it does not compile. The
+// log of the compiler goes to the log of the app.
+pub function shader(kind: i32, source: string): i32 {
+  let id = create_shader(kind);
+  if (id == 0) {
+    return 0;
+  }
+  unsafe {
+    let text = jni.cstr(source);
+    let list: usize = __alloc(16);
+    __store_ptr(list, text);
+    shader_source(id, 1, list, 0 as usize);
+    compile_shader(id);
+    __store_i32(list + 8 as usize, 0);
+    shader_iv(id, COMPILE_STATUS, list + 8 as usize);
+    let ok = __load_i32(list + 8 as usize) != 0;
+    __free(list, 16);
+    jni.free_buffer(text);
+    if (!ok) {
+      log.warn("fluid: shader: " + info_log(id));
+      delete_shader(id);
+      return 0;
+    }
+  }
+  return id;
+}
+
+// The first 512 bytes of the log of the compiler for the shader `id`.
+function info_log(id: i32): string {
+  let bytes: u8[] = [];
+  unsafe {
+    let buf: usize = __alloc(512);
+    __store_u8(buf, 0);
+    shader_info_log(id, 512, 0 as usize, buf);
+    let i = 0;
+    while (i < 511 && __load_u8(buf + i as usize) != 0) {
+      bytes = bytes.append(__load_u8(buf + i as usize) as u8);
+      i += 1;
+    }
+    __free(buf, 512);
+    return string_from_bytes_unchecked(bytes);
+  }
+}
+
+// The program of the two shaders, with the attribute `attribute` at index
+// 0, or 0 when it does not link.
+pub function program(vertex: i32, fragment: i32, attribute: string): i32 {
+  if (vertex == 0 || fragment == 0) {
+    return 0;
+  }
+  let id = create_program();
+  attach_shader(id, vertex);
+  attach_shader(id, fragment);
+  let name = jni.cstr(attribute);
+  bind_attrib_location(id, 0, name);
+  jni.free_buffer(name);
+  link_program(id);
+  unsafe {
+    let out: usize = __alloc(8);
+    __store_i32(out, 0);
+    program_iv(id, LINK_STATUS, out);
+    let ok = __load_i32(out) != 0;
+    __free(out, 8);
+    if (!ok) {
+      delete_program(id);
+      return 0;
+    }
+  }
+  return id;
+}
+
+// The location of the uniform `name` of `program`, or -1 when the program
+// does not use it. A call that sets location -1 does nothing.
+pub function location(program: i32, name: string): i32 {
+  let s = jni.cstr(name);
+  let at = uniform_location(program, s);
+  jni.free_buffer(s);
+  return at;
+}
+
+// A texture of `width` by `height` in the format `inner`, with the filter
+// `filter` and the wrap mode `wrap`. `pixels` is 0, or the address of its
+// first pixels in `format` and `kind`.
+pub function texture(width: i32, height: i32, inner: i32, format: i32, kind: i32, filter: i32, wrap: i32, pixels: usize): i32 {
+  let id = 0;
+  unsafe {
+    let out: usize = __alloc(8);
+    gen_textures(1, out);
+    id = __load_i32(out);
+    __free(out, 8);
+  }
+  active_texture(TEXTURE0);
+  bind_texture(TEXTURE_2D, id);
+  // The MIN and MAG filters, then WRAP_S and WRAP_T.
+  tex_parameter(TEXTURE_2D, 10241, filter);
+  tex_parameter(TEXTURE_2D, 10240, filter);
+  tex_parameter(TEXTURE_2D, 10242, wrap);
+  tex_parameter(TEXTURE_2D, 10243, wrap);
+  tex_image(TEXTURE_2D, 0, inner, width, height, 0, format, kind, pixels);
+  return id;
+}
+
+pub function delete_texture(id: i32): void {
+  if (id == 0) {
+    return;
+  }
+  unsafe {
+    let ids: usize = __alloc(8);
+    __store_i32(ids, id);
+    delete_textures(1, ids);
+    __free(ids, 8);
+  }
+}
+
+// A framebuffer that draws into `texture`, bound, and whether the GPU can
+// draw into the format of the texture.
+pub function framebuffer(texture: i32): (i32, boolean) {
+  let id = 0;
+  unsafe {
+    let out: usize = __alloc(8);
+    gen_framebuffers(1, out);
+    id = __load_i32(out);
+    __free(out, 8);
+  }
+  bind_framebuffer(FRAMEBUFFER, id);
+  framebuffer_texture(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, texture, 0);
+  return (id, framebuffer_status(FRAMEBUFFER) == FRAMEBUFFER_COMPLETE);
+}
+
+pub function delete_framebuffer(id: i32): void {
+  if (id == 0) {
+    return;
+  }
+  unsafe {
+    let ids: usize = __alloc(8);
+    __store_i32(ids, id);
+    delete_framebuffers(1, ids);
+    __free(ids, 8);
+  }
+}
+
+// The RGBA bytes of the `width` by `height` pixels of the bound
+// framebuffer, with the top row first.
+pub function read_rgba(width: i32, height: i32): u8[] {
+  let out: u8[] = [];
+  unsafe {
+    let n = width * height * 4;
+    let buf: usize = __alloc(n);
+    read_pixels(0, 0, width, height, RGBA, UNSIGNED_BYTE, buf);
+    // OpenGL ES gives the bottom row first.
+    for row in 0..height {
+      let from = buf + ((height - 1 - row) * width * 4) as usize;
+      for i in 0..width * 4 {
+        out = out.append(__load_u8(from + i as usize) as u8);
+      }
+    }
+    __free(buf, n);
+  }
+  return out;
+}
+
+// Eight floats in C memory: the corners of the square from -1 to 1, in the
+// order of a triangle strip. Free them with `free_quad`.
+pub function quad(): usize {
+  unsafe {
+    let q: usize = __alloc(32);
+    let corners = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
+    for i in 0..8 {
+      __store_i32(q + (4 * i) as usize, f32_bits(corners[i] as f32));
+    }
+    return q;
+  }
+}
+
+pub function free_quad(q: usize): void {
+  unsafe {
+    __free(q, 32);
+  }
+}

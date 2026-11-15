@@ -1,0 +1,372 @@
+// Fluid: a fluid simulation that fills the screen. A finger pushes coloured
+// dye through the fluid. It is a NativeActivity with no Java code of its
+// own. fluid.fern holds its behaviour, sim.fern runs the simulation on the
+// GPU, and overlay.fern draws the controls. This file gives them the window,
+// the GPU context and the system calls of the phone.
+import "std/android";
+import "std/android/access";
+import "std/android/draw";
+import "std/android/gl";
+import "std/android/text";
+import "std/f64";
+import "std/log";
+import "std/png";
+import "std/rand";
+import "./config";
+import "./device";
+import "./fluid";
+import "./overlay";
+import "./screen";
+import "./sim";
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+// `unfit` tells that the GPU cannot run the simulation. `spoken` names the
+// items that the accessibility service has.
+struct App {
+  ctx: usize,
+  model: fluid.Model,
+  fs: text.Fonts,
+  window: usize,
+  canvas: Option[gl.Canvas],
+  fluid: Option[sim.Fluid],
+  unfit: boolean,
+  mt: overlay.Metrics,
+  art: screen.Art,
+  spoken: string,
+}
+
+function now_ms(): i64 {
+  return monotonic_ns() / 1000000i64;
+}
+
+// The values of the simulation, with each setting that the Intent of the
+// activity has as a string extra.
+function settings(ctx: usize): config.Config {
+  let cfg = config.defaults();
+  for key in config.keys() {
+    let raw = android.intent_extra(ctx, key);
+    if (raw.len() > 0) {
+      match (config.set(cfg, key, raw)) {
+        Ok(next) => {
+          cfg = next;
+        },
+        Err(message) => {
+          log.warn("fluid: " + message);
+        }
+      }
+    }
+  }
+  return cfg;
+}
+
+function system_fonts(ctx: usize): text.Fonts {
+  let fs = text.system(ctx, "sans-serif", overlay.weights());
+  if (fs.faces.len() > 0) {
+    return fs;
+  }
+  return text.system(ctx, "Roboto", overlay.weights());
+}
+
+function app_main(ctx: usize): usize {
+  let still = device.still(ctx);
+  log.info("fluid: still " + still.to_string());
+  let first = App {
+    ctx: ctx,
+    model: fluid.new(settings(ctx), still, rand.rng_seed_from_os(), monotonic_ns()),
+    fs: system_fonts(ctx),
+    window: 0 as usize,
+    canvas: None,
+    fluid: None,
+    unfit: false,
+    mt: overlay.Metrics { width: 1, height: 1, top: 0, bottom: 0, scale: 1.0, font: 1.0 },
+    art: screen.no_art(),
+    spoken: "",
+  };
+  let last = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => -1);
+  closed(last);
+  log.info("fluid: destroyed");
+  return 0 as usize;
+}
+
+// Frees what the app has on the GPU.
+function closed(s: App): void {
+  if let Some(f) = s.fluid {
+    sim.close(f);
+  }
+  screen.free_art(s.art);
+  if let Some(c) = s.canvas {
+    gl.close(c);
+  }
+}
+
+function flag(name: string, before: boolean, after: boolean): void {
+  if (before != after) {
+    log.info("fluid: " + name + " " + after.to_string());
+  }
+}
+
+// Writes each change of the state to the log.
+function report(a: fluid.Model, b: fluid.Model): void {
+  flag("dialog", a.open, b.open);
+  flag("paused", a.cfg.paused, b.cfg.paused);
+  flag("bloom", a.cfg.bloom, b.cfg.bloom);
+  flag("sunrays", a.cfg.sunrays, b.cfg.sunrays);
+  flag("colorful", a.cfg.colorful, b.cfg.colorful);
+  flag("full", a.full, b.full);
+  flag("kid", a.kid, b.kid);
+}
+
+function step(own s: App, e: android.Event): App {
+  let before = s.model;
+  let out = effects(on_event(s, e));
+  report(before, out.model);
+  if (out.window != 0 as usize && out.model.animating(now_ms())) {
+    android.request_frame(out.ctx);
+  }
+  return out;
+}
+
+function on_event(own s: App, e: android.Event): App {
+  match (e) {
+    android.WindowCreated(w) => {
+      return on_window(s, w);
+    },
+    android.WindowResized(w) => {
+      return on_window(s, w);
+    },
+    android.WindowRedraw(_) => {
+      return App { ...s, model: s.model.woke(monotonic_ns()) };
+    },
+    android.WindowDestroyed(_) => {
+      return off_window(s);
+    },
+    android.ContentRect(_, top, _, bottom) => {
+      return laid_out(App { ...s, mt: overlay.Metrics { ...s.mt, top: top.max(0), bottom: (s.mt.height - bottom).max(0) } });
+    },
+    android.Vsync(ns) => {
+      return frame(s, ns);
+    },
+    android.Touch(action, x, y) => {
+      return App { ...s, model: s.model.touched(action, x as f64, y as f64, monotonic_ns()) };
+    },
+    android.Key(code, action) => {
+      // The back key and the Escape key, when they go up.
+      if ((code == 4 || code == 111) && action == 1) {
+        let (m, close) = s.model.back();
+        if (close) {
+          android.finish(s.ctx);
+        }
+        return App { ...s, model: m };
+      }
+      return s;
+    },
+    android.Char(c) => {
+      return App { ...s, model: s.model.typed(c, monotonic_ns()) };
+    },
+    android.Access(id, _) => {
+      return App { ...s, model: clicked(s.model, id) };
+    },
+    android.Resume => {
+      return App { ...s, model: s.model.woke(monotonic_ns()) };
+    },
+    android.Focus(_) => {
+      return App { ...s, model: s.model.woke(monotonic_ns()) };
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+// The model after a click of an accessibility service on the item `id`.
+function clicked(m: fluid.Model, id: i32): fluid.Model {
+  if (id == overlay.ITEM_EXIT) {
+    return m.leave_by_service();
+  }
+  if (id == overlay.ITEM_BUTTON || id == overlay.ITEM_CLOSE) {
+    return m.toggle_dialog();
+  }
+  let row = id - overlay.ITEM_ROW;
+  if (m.open && row >= 0 && row < fluid.actions().len()) {
+    return m.act(fluid.actions()[row], monotonic_ns());
+  }
+  return m;
+}
+
+// The app with the places of the controls for its window.
+function laid_out(s: App): App {
+  let l = overlay.layout(s.fs, s.mt);
+  let b = l.button;
+  let row = l.rows[0];
+  // The middle of the button, and the middle of the first row of the dialog.
+  log.info("fluid: button " + (b.x + b.w / 2).to_string() + "," + (b.y + b.h / 2).to_string() + " row " + (l.list.x + row.x + row.w / 2).to_string() + "," + (l.list.y + row.y + row.h / 2).to_string());
+  return App { ...s, model: s.model.laid_out(l) };
+}
+
+// The app on the window `w`: the canvas draws on it, and the fluid has its
+// size.
+function on_window(own s: App, w: android.Window): App {
+  let width = w.width();
+  let height = w.height();
+  log.info("fluid: window " + width.to_string() + "x" + height.to_string());
+  let canvas: Option[gl.Canvas] = None;
+  if let Some(c) = s.canvas {
+    canvas = Some(c.attach(w));
+  } else if let Some(c) = gl.open_context() {
+    canvas = Some(c.attach(w));
+  }
+  let fl = s.fluid;
+  let unfit = s.unfit;
+  if (canvas.is_some() && !unfit) {
+    if let Some(f) = fl {
+      fl = Some(f.resized(s.model.cfg, width, height));
+    } else {
+      fl = sim.open(s.model.cfg, width, height, rand.rng_seed_from_os());
+      unfit = fl.is_none();
+      log.info("fluid: gpu " + (!unfit).to_string());
+    }
+  }
+  let scale = android.density(s.ctx) as f64 / 160.0;
+  let mt = overlay.Metrics { ...s.mt, width: width, height: height, scale: scale, font: scale * android.font_scale(s.ctx) };
+  let on = laid_out(App { ...s, window: w.ptr, canvas: canvas, fluid: fl, unfit: unfit, mt: mt });
+  return App { ...on, model: on.model.woke(monotonic_ns()) };
+}
+
+// The app with no window. The context of the GPU and the fluid stay.
+function off_window(own s: App): App {
+  let canvas: Option[gl.Canvas] = None;
+  if let Some(c) = s.canvas {
+    canvas = Some(c.detach());
+  }
+  return App { ...s, window: 0 as usize, canvas: canvas };
+}
+
+// Does on the phone what the model wants.
+function effects(own s: App): App {
+  let wants = s.model.wants;
+  let out = s;
+  for want in wants {
+    match (want) {
+      fluid.Want.Save => {
+        out = saved(out);
+      },
+      fluid.Keywords => {
+        if let Some(f) = out.fluid {
+          out = App { ...out, fluid: Some(f.with_keywords(out.model.cfg)) };
+        }
+      },
+      fluid.Immersive(on) => {
+        android.immersive(out.ctx, on);
+      },
+      fluid.Awake(on) => {
+        android.keep_screen_on(out.ctx, on);
+      },
+      fluid.Pin(on) => {
+        device.pin(out.ctx, on);
+      }
+    }
+  }
+  return App { ...out, model: out.model.done() };
+}
+
+// Puts a picture of the fluid in the gallery, and shows a note of the
+// result.
+function saved(own s: App): App {
+  let ok = false;
+  if let Some(f) = s.fluid {
+    let picture = f.capture(s.model.cfg);
+    if (picture.width > 0) {
+      if let Ok(bytes) = png.encode_rgba8(picture.width, picture.height, picture.pixels) {
+        ok = device.save_png(s.ctx, "fluid-" + now_unix_ms().to_string() + ".png", bytes);
+      }
+    }
+  }
+  log.info("fluid: saved " + ok.to_string());
+  let note = "Could not save the picture.";
+  if (ok) {
+    note = "Saved to " + device.FOLDER + ".";
+  }
+  return App { ...s, model: s.model.noted(note, now_ms(), fluid.NOTE_MS) };
+}
+
+// The app after the frame at `ns`: the fluid takes its splats and its
+// steps, and the canvas shows it with the controls over it.
+function frame(own s: App, ns: i64): App {
+  let (m, fr) = s.model.frame(ns);
+  let fl = s.fluid;
+  if let Some(f) = fl {
+    let (next, after) = screen.advance(f, m, fr);
+    fl = Some(next);
+    m = after;
+  }
+  let out = App { ...s, model: m, fluid: fl };
+  if (!fr.draw || out.window == 0 as usize) {
+    return out;
+  }
+  let Some(c) = out.canvas else {
+    return plain(out);
+  };
+  if let Some(f) = out.fluid {
+    f.render(m.cfg, f.window());
+    c.resume();
+  } else {
+    c.clear(draw.rgb(0, 0, 0));
+  }
+  let painted = App { ...out, art: screen.paint(out.art, c, out.fs, out.mt, m, ns / 1000000i64, out.unfit) };
+  match (c.present()) {
+    gl.Lost => {
+      return lost(painted);
+    },
+    _ => {
+      return spoken(painted, ns / 1000000i64);
+    }
+  }
+}
+
+// The app with a new context of the GPU, after the device lost the one
+// before it. The fluid and the pictures went with that context.
+function lost(own s: App): App {
+  log.warn("fluid: the GPU context is lost");
+  if let Some(c) = s.canvas {
+    gl.close(c);
+  }
+  let window = android.Window { ptr: s.window };
+  return on_window(App { ...s, canvas: None, fluid: None, art: screen.no_art() }, window);
+}
+
+// Shows the text of a device with no OpenGL ES, on the pixels of the window.
+function plain(own s: App): App {
+  let w = android.Window { ptr: s.window };
+  let f = w.lock();
+  if (f.width == 0) {
+    return s;
+  }
+  f.fill(0, 0, f.width, f.height, draw.rgb(0, 0, 0));
+  let note = overlay.note_frame(s.fs, s.mt, screen.UNFIT);
+  f.blit(note, (f.width - note.width) / 2, (f.height - note.height) / 2);
+  draw.release(note);
+  android.post(f);
+  return s;
+}
+
+// Gives the accessibility service the items of the screen, when they are
+// not the ones that it has.
+function spoken(own s: App, ms: i64): App {
+  let m = s.model;
+  let key = m.open.to_string() + m.kid.to_string() + m.scroll.to_string() + m.cfg.paused.to_string() + m.full.to_string() + m.cfg.bloom.to_string() + m.cfg.sunrays.to_string() + m.cfg.colorful.to_string() + m.note_at(ms) + s.mt.width.to_string() + "x" + s.mt.height.to_string() + s.unfit.to_string();
+  if (key == s.spoken) {
+    return s;
+  }
+  if (s.unfit) {
+    access.publish(s.ctx, [android.AccessItem { id: overlay.ITEM_FLUID, x: 0, y: 0, w: s.mt.width, h: s.mt.height, text: screen.UNFIT, actions: 0 }]);
+  } else {
+    access.publish(s.ctx, overlay.items(m, ms));
+  }
+  return App { ...s, spoken: key };
+}

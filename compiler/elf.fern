@@ -1302,7 +1302,7 @@ function dw_in_place_parse(t: DwTypes, s: string, i: i32): DwParsed {
 
 function dw_enum_parse(t: DwTypes, s: string, i: i32): DwParsed {
   let name = dw_token(s, i + 1);
-  t = dw_types_add(dw_types_add(t, "%" + name, 1, 8), name, 3, 8);
+  t = dw_types_add(t, name, 3, 8);
   let first = !dw_has_members(t, util.index_of_str(t.keys, name));
   let at = i + 2 + name.len();
   while (at < s.len() && s[at] != b'}') {
@@ -1316,7 +1316,7 @@ function dw_enum_parse(t: DwTypes, s: string, i: i32): DwParsed {
       at += 1;
     }
   }
-  return DwParsed { t: t, key: "%" + name, next: at + 1 };
+  return DwParsed { t: t, key: name, next: at + 1 };
 }
 
 function dw_members_parse(t: DwTypes, owner: string, s: string, i: i32): DwParsed {

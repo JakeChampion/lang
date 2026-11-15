@@ -55,6 +55,12 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostStdTrueType` | the font reader of `std/truetype`: the glyph of seven characters, the metrics, a bitmap of each glyph, and a variable axis | `tests/fuzz/stdparse.fern truetype` | the same |
 | `FuzzSelfHostStdTZif` | the TZif reader of `std/tz`, and the offset and the abbreviation of the zone at each transition and at times across the range of an `i64` | `tests/fuzz/stdparse.fern tzif` | the same |
 | `FuzzSelfHostStdCSV` | the CSV reader of `std/csv`, and the writer and a second read of each document that it accepts | `tests/fuzz/stdparse.fern csv` | the same, and the same rows from the second read |
+| `FuzzSelfHostStdBzip2` | the bzip2 decoder of `std/bzip2` under a limit of 1048576 bytes, compared with Go's `compress/bzip2` | `tests/fuzz/stdparse.fern bzip2` | the same, and for a stream that it accepts the bytes that Go reads |
+| `FuzzSelfHostStdLz4` | the LZ4 frame decoder of `std/lz4` under the same limit | `tests/fuzz/stdparse.fern lz4` | the same |
+| `FuzzSelfHostStdLzw` | the decoder of `std/lzw` for the `.Z` files of compress, under the same limit | `tests/fuzz/stdparse.fern lzw` | the same |
+| `FuzzSelfHostStdXz` | the xz decoder of `std/xz` under the same limit | `tests/fuzz/stdparse.fern xz` | the same |
+| `FuzzSelfHostStdLzma` | the `.lzma` decoder of `std/xz` under the same limit | `tests/fuzz/stdparse.fern lzma` | the same |
+| `FuzzSelfHostStdZip` | the ZIP reader of `std/zip`, and a read of each entry whose size is under the limit | `tests/fuzz/stdparse.fern zip` | the same |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -218,6 +224,12 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdTrueType` | 31047 in 150 s (2026-11-14), on the repairs of main | 1 | four, which `31960636` on main repairs |
 | `FuzzSelfHostStdTZif` | 18543 in 120 s (2026-11-14) | 1 | none |
 | `FuzzSelfHostStdCSV` | 25172 in 150 s (2026-11-14), after the repair | 1 | one, fixed in this change |
+| `FuzzSelfHostStdBzip2` | 4622 in 90 s (2026-11-15), after the repair | 9 | one by the probe that came before the target, fixed in this change |
+| `FuzzSelfHostStdLz4` | 10834 in 90 s (2026-11-15), after the repair | 0 | one by the same probe, fixed in this change |
+| `FuzzSelfHostStdLzw` | 12103 in 90 s (2026-11-15) | 1 | none |
+| `FuzzSelfHostStdXz` | 11669 in 90 s (2026-11-15) | 0 | none |
+| `FuzzSelfHostStdLzma` | 11512 in 90 s (2026-11-15) | 0 | none by the target. One by the review of the decoder, fixed in this change |
+| `FuzzSelfHostStdZip` | 11926 in 90 s (2026-11-15) | 2 | none |
 
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
@@ -231,6 +243,24 @@ The target confirms those repairs. Its two inputs are in `testdata/fuzz/FuzzSelf
 The CSV target found one document that changes after a write and a second read: one carriage return.
 `parse` gives one record of one empty field for it. `serialize` wrote that record as an empty line, and `parse` takes an empty line at the end of a document for no record.
 So the last record of a document was lost when it had one empty field. `serialize` now writes such a record as a pair of quotes. `tests/stdlib/csv_test.fern` has the case, and the input is in `testdata/fuzz/FuzzSelfHostStdCSV/`.
+
+The archive decoders had no target. A probe that changed bytes of valid streams found two faults before the targets were written.
+Each one stopped the program with a bounds trap.
+
+In `std/bzip2`, a selector could name the Huffman table after the last one. The decoder accepted a run of as many 1 bits as the block has tables.
+It now refuses that run, as the bzip2 tool does.
+
+In `std/lz4`, a block can give its size as 2 GiB less one. The sum of that size and an offset wrapped, so the check that the block is inside the input passed.
+The check now subtracts. A count of literals or of a copy that wraps is refused too.
+
+The review of `std/xz` found one more. A `.lzma` header gives the size in 64 bits, and the decoder kept the low 32.
+A size of 4 GiB and 3 bytes gave 3 bytes as the whole file. A size that an array cannot hold now ends at the end of the data.
+
+The four modules had no output limit, so a stream of 49 bytes gave 3 MB.
+Each one now has forms with the suffix `_with_limit` and the error `OutputLimit`, and the targets run under them.
+`TestSelfHostStdArchiveLimits` pins the limit of each decoder. `tests/stdlib/compress_test.fern` has the three streams and the limits.
+
+Go's `compress/bzip2` accepts some streams that the bzip2 tool refuses. The bzip2 target thus compares the streams that Fern accepts, and no refusal.
 
 The review for the ELF target found one fault in `std/user_process`, the one program that loads an image through `std/elf`.
 A load segment with more bytes in the file than in memory passed the range check of the loader, which uses the memory size. The loader then mapped and wrote the pages of the file bytes beyond that range.
@@ -260,7 +290,7 @@ It cannot see into the Fern process that reads each input, so it mutates the rea
 It builds the program of each reader with `fern -cover`, and each run writes its counters to stderr at exit.
 The loop keeps each input that reaches a counter that no earlier input reached.
 
-The loop takes forty readers: the twenty-eight of `tests/fuzz/stdparse.fern`, and the readers of five drivers in `compiler/drivers/`.
+The loop takes forty-six readers: the thirty-four of `tests/fuzz/stdparse.fern`, and the readers of five drivers in `compiler/drivers/`.
 The drivers read build manifests, packages, literate documents, op streams and assembly text.
 The image modes of `asm_fuzz_run.fern` write their images beside the input, so the check can read them.
 The counters of a program cover the modules that it imports.
@@ -314,11 +344,11 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the forty targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the forty-six targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the forty targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the forty-six targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
-`fuzz-diff.yml` also runs the coverage-guided loop of the forty readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
+`fuzz-diff.yml` also runs the coverage-guided loop of the forty-six readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
 Each nightly row of a reader then runs that loop for 15 minutes from its own cached corpus.
 
 ## Limits

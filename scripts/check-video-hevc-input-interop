@@ -94,6 +94,66 @@ def compare(path, frames):
     print(f"{path.name}: {frames} native/WASI access units match FFprobe; all FFmpeg planes match", flush=True)
 
 
+def temporal_headers(path):
+    trace = subprocess.run(["ffmpeg", "-v", "verbose", "-i", str(path), "-map", "0:v:0",
+                            "-c", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"],
+                           capture_output=True, text=True)
+    headers = re.findall(r"nal_unit_type\s+[01]+\s+=\s+(\d+).*?"
+                         r"nuh_temporal_id_plus1\s+[01]+\s+=\s+(\d+)", trace.stderr, re.S)
+    assert headers, trace.stderr[-3000:]
+    return [(int(kind), int(temporal) - 1) for kind, temporal in headers]
+
+
+def filler_units(path):
+    data = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-c", "copy",
+                                    "-bsf:v", "filter_units=pass_types=38", "-f", "hevc", "-"])
+    return units(data)
+
+
+def temporal_association(directory, original):
+    data = original.read_bytes()
+    metadata = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets", "-of", "json", str(original)]))
+    groups, temporals = [], []
+    for packet in metadata["packets"]:
+        at, size = int(packet["pos"]), int(packet["size"])
+        payload = [unit for unit in units(data[at:at + size]) if unit[0] >> 1 & 63 != 35]
+        temporal = next((unit[1] & 7) - 1 for unit in payload if unit[0] >> 1 & 63 < 32)
+        temporals.append(temporal)
+        groups.append([bytes([70, temporal + 1, 0x50]), *payload, bytes([76, temporal + 1, 0xff, 0x80])])
+    assert set(temporals) == {0, 1} and len(groups) == 18
+    encode_groups = lambda values: b"".join(b"\0\0\0\1" + unit for group in values for unit in group)
+    expected = lambda values: [(unit[0] >> 1 & 63, (unit[1] & 7) - 1) for group in values for unit in group
+                               if unit[0] >> 1 & 63 < 32 or unit[0] >> 1 & 63 == 35]
+    selected = lambda path: [(kind, temporal) for kind, temporal in temporal_headers(path) if kind < 32 or kind == 35]
+    path = directory / "temporal-aud-filler.hevc"
+    path.write_bytes(encode_groups(groups))
+    actual = selected(path)
+    assert actual == expected(groups), (actual, expected(groups))
+    assert filler_units(path) == [group[-1] for group in groups]
+    compare(path, 18)
+    assert decoded(path) == decoded(original)
+    for temporal in (0, 1):
+        index = temporals.index(temporal)
+        for position, kind in ((0, 35), (-1, 38)):
+            for other in range(7):
+                if other == temporal:
+                    continue
+                changed = [list(group) for group in groups]
+                unit = changed[index][position]
+                changed[index][position] = unit[:1] + bytes([other + 1]) + unit[2:]
+                path = directory / f"invalid-temporal-{temporal}-{kind}-{other}.hevc"
+                path.write_bytes(encode_groups(changed))
+                assert selected(path) == expected(changed)
+                assert filler_units(path) == [group[-1] for group in changed]
+                native = subprocess.run([str(binary), str(path)], capture_output=True, text=True)
+                wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                                      cwd=directory, capture_output=True, text=True)
+                assert native.returncode == wasi.returncode == 1 and native.stdout == wasi.stdout
+                assert "invalid video header or packet" in native.stderr and "invalid video header or packet" in wasi.stderr
+                assert re.search(r"leakcheck: allocs=([1-9]\d*) frees=\1 live_bytes=0", native.stderr), native.stderr
+                print(f"picture {temporal}, NAL {kind}, temporal {other}: independent headers match; native/WASI refusal follows H.265", flush=True)
+
+
 def temporal_parameters(directory):
     original = encode(directory, "temporal-layers", "main", "yuv420p",
                       "bframes=3:b-pyramid=1:temporal-layers=2:aud=1")
@@ -102,15 +162,23 @@ def temporal_parameters(directory):
         original = encode(directory, "temporal-layers", "main", "yuv420p",
                           "bframes=3:b-pyramid=1:temporal-layers=1:aud=1")
     rebuilt, picture_temporals = [], set()
+    pending_aud, aud_changes = None, 0
     picture = None
     for unit in units(original.read_bytes()):
         kind = unit[0] >> 1 & 63
+        if kind == 35:
+            pending_aud = len(rebuilt)
         if kind == 34:
             picture = unit
         if kind < 32 and unit[2] & 0x80:
             assert picture is not None
             temporal = unit[1] & 7
             picture_temporals.add(temporal - 1)
+            if pending_aud is not None:
+                aud = rebuilt[pending_aud]
+                aud_changes += int((aud[1] & 7) != temporal)
+                rebuilt[pending_aud] = aud[:1] + bytes([(aud[1] & 0xf8) | temporal]) + aud[2:]
+                pending_aud = None
             rebuilt.append(picture[:1] + bytes([(picture[1] & 0xf8) | temporal]) + picture[2:])
         rebuilt.append(unit)
     assert picture_temporals == {0, 1}, picture_temporals
@@ -126,7 +194,16 @@ def temporal_parameters(directory):
                          r"nuh_temporal_id_plus1\s+[01]+\s+=\s+(\d+)", trace.stderr, re.S)
     pps_temporals = {int(temporal) - 1 for kind, temporal in headers if int(kind) == 34}
     assert pps_temporals == picture_temporals, pps_temporals
+    aud = None
+    for kind, temporal in headers:
+        if int(kind) == 35:
+            aud = int(temporal)
+        elif int(kind) < 32 and aud is not None:
+            assert aud == int(temporal)
+            aud = None
+    print(f"AUD header corrections to match coded pictures: {aud_changes}; original decoded planes remain exact", flush=True)
     print("PPS temporal layers 0/1: independent CBS headers and unchanged source planes agree", flush=True)
+    temporal_association(directory, path)
 
 
 def parameter_context(fixtures, oracle, mode):

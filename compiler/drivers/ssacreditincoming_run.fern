@@ -22,7 +22,7 @@ function expect(f: ssa.SFunc, producers: ssa.SFunc[], consumers: ssa.SFunc[], wh
     require(p.sites.len() == 2 && p.proof.message == "proved pre-call incoming capacity", 92);
     let input = 0;
     for site in p.sites {
-      require(site.input == input && site.words == 3 && site.parameter == 0 && site.consumer == consumers[0].name, 93);
+      require(site.input == input && site.words == 2 && site.parameter == 0 && site.consumer == consumers[0].name, 93);
       let found = 0;
       for b in f.blocks {
         for op in b.insts {
