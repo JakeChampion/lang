@@ -16,6 +16,7 @@ import re
 import resource
 import shutil
 import signal
+import statistics
 import subprocess
 import time
 
@@ -217,6 +218,30 @@ def build_commands(language, name, tools, root, out, target):
             [str(tools["lean"].with_name("leanc").resolve()), "-O3", "-o", str(binary), str(cfile)]]
 
 
+def summary(results):
+    """A Markdown table of the processor time and the peak memory of each run.
+
+    Each time cell is the median in milliseconds, with the best run in
+    brackets. Each memory cell is the largest peak resident set in MB.
+    """
+    languages = [language for language in ("fern", "koka", "lean", "roc") if any(row["language"] == language for row in results)]
+    cases = list(dict.fromkeys((row["workload"], row["size"]) for row in results))
+    times, peaks = {}, {}
+    for row in results:
+        key = row["workload"], row["size"], row["language"]
+        times.setdefault(key, []).append(1000 * (row["user_seconds"] + row["system_seconds"]))
+        peaks.setdefault(key, []).append(row["peak_rss_bytes"] / 2**20)
+    head = "| workload | size | " + " | ".join(languages) + " |\n|---|---|" + "---|" * len(languages) + "\n"
+    time_rows = memory_rows = ""
+    for name, size in cases:
+        cells = [times.get((name, size, language)) for language in languages]
+        time_rows += f"| {name} | {size} | " + " | ".join(f"{statistics.median(v):.0f} ({min(v):.0f})" if v else "-" for v in cells) + " |\n"
+        cells = [peaks.get((name, size, language)) for language in languages]
+        memory_rows += f"| {name} | {size} | " + " | ".join(f"{max(v):.0f}" if v else "-" for v in cells) + " |\n"
+    return ("Processor time in ms, the median with the best run in brackets:\n\n" + head + time_rows +
+            "\nPeak resident memory in MB:\n\n" + head + memory_rows)
+
+
 def turn_order(languages, repeat):
     """Row `repeat` of a balanced Latin square over the languages.
 
@@ -367,6 +392,7 @@ def main():
                 result.update(language=language, workload=name, size=size, repeat=repeat)
                 results.append(result)
                 (out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+                (out / "summary.md").write_text(summary(results))
         prefix = out / f"census-{name}-{size}"
         measure([binaries["fern-census", name], str(size)], prefix, args.timeout, unlimited_stack=args.unlimited_stack)
         if prefix.with_suffix(".stdout").read_text() != answer:

@@ -128,6 +128,14 @@ class LanguageTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue((roc / f"{name}.roc").is_file())
 
+    def test_summary_gives_median_best_and_peak(self):
+        row = lambda language, seconds, mb: {"language": language, "workload": "msort", "size": 10,
+                                            "user_seconds": seconds, "system_seconds": 0.0, "peak_rss_bytes": mb * 2**20}
+        text = bench.summary([row("fern", 0.3, 5), row("koka", 0.2, 7), row("fern", 0.1, 6), row("koka", 0.4, 7), row("fern", 0.2, 5)])
+        self.assertIn("| workload | size | fern | koka |\n", text)
+        self.assertIn("| msort | 10 | 200 (100) | 300 (200) |\n", text)
+        self.assertIn("| msort | 10 | 6 | 7 |\n", text)
+
 
 if __name__ == "__main__":
     unittest.main()

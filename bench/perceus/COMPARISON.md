@@ -90,7 +90,13 @@ Wall time, CPU time and peak RSS cover startup, output and teardown. Fern
 allocations come from a separate binary compiled with `FERN_LEAKCHECK=1`, with
 balanced frees and zero live bytes required. Instrumented runs are excluded
 from timing comparisons. No allocator or ownership annotations tune the Fern
-kernels. Compiler build time is excluded.
+kernels. Compiler build time is excluded. The harness writes the table of
+times and peak memory to `summary.md` in its output directory.
+
+`.github/workflows/perceus-compare.yml` runs the comparison at full size on a
+native arm64 runner each week, and when it is started by hand. Koka, Lean and
+Roc come from `mise.perceus.toml` and its lock. The table goes to the job
+summary, and the output directory is an artifact.
 
 The workload deadline also applies to warm-ups and allocation-census runs.
 On timeout, the harness saves a failure record before sending SIGKILL and
