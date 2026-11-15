@@ -209,3 +209,9 @@ x86_64/video_qtrle.text 5204
 x86_64/video_qtrle.ir 1547169520
 aarch64/video_qtrle.text 5549
 aarch64/video_qtrle.ir 1559097809
+x86_64/hex_encode.text	2370
+x86_64/hex_encode.ir	84262703
+aarch64/hex_encode.text	2612
+x86_64/base64_encode.text	3506
+x86_64/base64_encode.ir	117717039
+aarch64/base64_encode.text	3723

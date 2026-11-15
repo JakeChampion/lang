@@ -19,6 +19,62 @@ function test_encode_two_pad(): test.TestOutcome {
   return test.assert_eq(base64.encode("M".bytes()), "TQ==");
 }
 
+// The characters of `bs`, one group of 3 bytes at a time.
+function scalar_base64(bs: [u8]): string {
+  let digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out: u8[] = [];
+  let i = 0;
+  while (i < bs.len()) {
+    let b0 = bs[i] as i32;
+    let b1 = 0;
+    let b2 = 0;
+    if (i + 1 < bs.len()) {
+      b1 = bs[i + 1] as i32;
+    }
+    if (i + 2 < bs.len()) {
+      b2 = bs[i + 2] as i32;
+    }
+    out = out.append(digits[b0 >> 2]);
+    out = out.append(digits[(b0 & 3) << 4 | b1 >> 4]);
+    if (i + 1 < bs.len()) {
+      out = out.append(digits[(b1 & 15) << 2 | b2 >> 6]);
+    } else {
+      out = out.append(61 as u8);
+    }
+    if (i + 2 < bs.len()) {
+      out = out.append(digits[b2 & 63]);
+    } else {
+      out = out.append(61 as u8);
+    }
+    i += 3;
+  }
+  return text(out);
+}
+
+// The encoder takes 12 bytes in one step while 16 bytes are left. Each
+// length from 0 to 80 has each number of steps from 0 to 6 and each length
+// of the rest. The views start at each of 3 offsets, and the 768 bytes have
+// each digit in each of its 4 places.
+function test_encode_each_length(): test.TestOutcome {
+  let all: u8[] = [];
+  for k in 0..768 {
+    all = all.append((k * 167 + 13 + k / 256 * 7) as u8);
+  }
+  let bad: string[] = [];
+  for from in 0..3 {
+    for n in 0..81 {
+      let part: [u8] = all[from * 61:from * 61 + n];
+      if (base64.encode(part) != scalar_base64(part)) {
+        bad = bad.append(from.to_string() + " " + n.to_string());
+      }
+    }
+  }
+  if (base64.encode(all) != scalar_base64(all)) {
+    bad = bad.append("each byte value");
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
 function test_encode_longer(): test.TestOutcome {
   return test.assert_eq(base64.encode("hello".bytes()), "aGVsbG8=");
 }
@@ -142,6 +198,7 @@ function main(): i32 {
   r = r.it("encode (two pad)", test_encode_two_pad);
   r = r.it("encode (longer)", test_encode_longer);
   r = r.it("encode (empty)", test_encode_empty);
+  r = r.it("encode each length", test_encode_each_length);
   r = r.it("decode (no pad)", test_decode_no_pad);
   r = r.it("decode (one pad)", test_decode_one_pad);
   r = r.it("decode (two pad)", test_decode_two_pad);
