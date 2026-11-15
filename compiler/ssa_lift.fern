@@ -502,8 +502,8 @@ function prod_call_kind(k: string): i32 {
 }
 
 function ld_off(k: string, op: ir.Op): i32 {
-  if (k == "struct_get") {
-    return op.i32_imm * 8;
+  if (k == "struct_get" || k == "tuple_get") {
+    return slot_offset(op.i32_imm);
   }
   if (k == "arr_len" || k == "str_data" || k == "opt_tag") {
     return 0;
@@ -511,10 +511,12 @@ function ld_off(k: string, op: ir.Op): i32 {
   if (k == "str_len" || k == "opt_payload") {
     return 8;
   }
-  if (k == "tuple_get") {
-    return op.i32_imm * 8;
-  }
   return -1;
+}
+
+// -1 for a slot whose offset does not fit in an i32.
+function slot_offset(slot: i32): i32 {
+  return if (slot < 0 || slot > 2147483647 / 8) { -1 } else { slot * 8 };
 }
 
 function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
@@ -624,8 +626,12 @@ function lift_store_keep(lv: LiftVals, kind: i32): LiftVals {
 }
 
 function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
-  if (ld_off(k, op) >= 0) {
-    return lift_pop_push(lv, 1, 40, ld_off(k, op), counted_mark(op));
+  let offset = ld_off(k, op);
+  if (offset >= 0) {
+    return lift_pop_push(lv, 1, 40, offset, counted_mark(op));
+  }
+  if (k == "struct_get" || k == "tuple_get") {
+    return LiftVals { ...lv, ok: false };
   }
   return match (k) {
     "raw_load_ptr" => lift_pop_push(lv, 2, 52, 0, ""),

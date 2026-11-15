@@ -47,7 +47,7 @@ function expect(p: helper.Proof, name: string, why: string): void {
 }
 
 function check(sub: ircore.Sub, wrapper: ssa.SFunc): helper.Proof {
-  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  let fields = [reuse.ScalarField { root: 3, offset: 0 }, reuse.ScalarField { root: 4, offset: 0 }, reuse.ScalarField { root: 5, offset: 0 }];
   return continuation.check(wrapper, [body(sub, "parent")], body(sub, "replace"), body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [body(sub, "require")]);
 }
 
@@ -155,7 +155,7 @@ function branched(f: ssa.SFunc, mode: i32): ssa.SFunc {
 }
 
 function controls(sub: ircore.Sub, wrapper: ssa.SFunc): void {
-  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  let fields = [reuse.ScalarField { root: 3, offset: 0 }, reuse.ScalarField { root: 4, offset: 0 }, reuse.ScalarField { root: 5, offset: 0 }];
   let invocation = reuse.check_invocations(straight(wrapper, 0), [body(sub, "parent")], body(sub, "replace"), body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [body(sub, "require")]);
   require(invocation.ok && invocation.function_name == "replace" && invocation.message == "proved checked-capacity consumer invocation", 7);
   let reasons = ["continuation must return owned consumer result", "continuation must return owned consumer result", "continuation must return owned consumer result", "unsupported post-call continuation effect", "unsupported post-call continuation effect", "spent reference in wrapper continuation", "proved checked storage wrapper continuation", "caller origin producer binding", "proved checked storage wrapper continuation"];

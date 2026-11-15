@@ -28,6 +28,7 @@ Stream end permits no later NAL unit in this stream.
 
 The reader assigns no timestamp.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
+An IDR slice requires a zero frame number. Non-IDR frame numbers retain their supported width from the SPS.
 
 The reader does not validate entropy data or complete slice coverage and does not decode pixels.
 The byte limits exclude retained output packets and do not define an exact process-memory bound.
@@ -174,6 +175,9 @@ function order_fields(input: [u8], at: i64, context: avc.SliceSequence, pps: avc
 function slice_fields(input: [u8], at: i64, context: avc.SliceSequence, pps: avc.PictureParameters, header: u8): Result[Identity, frame.VideoError] {
   let (at, number) = avc.read(input, at, context.frame_bits)?;
   let idr = (header & 31u8) == 5u8;
+  if (idr && number != 0u32) {
+    return Err(frame.Header);
+  }
   let id = 0u32;
   if (idr) {
     let (next, value) = avc.bounded_ue(input, at, 65535u32)?;

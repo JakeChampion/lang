@@ -49,6 +49,9 @@ pub struct Func {
   dbg_names: string[],
   source_positions: sourcepos.SourceInfo,
   schema_checked: boolean,
+  // A record of the target keeps its shape in a slot of its box. The native
+  // targets keep the shape in the header, and wasm keeps it in the first slot.
+  shape_slot: boolean,
 }
 
 // schema_checked says the verifier passed records and enums; a change to either clears it.
@@ -388,6 +391,12 @@ const FRESH_RESULT_BUILTINS: string[] = [
 // reference to them, so the call adds no holder.
 pub function holds_no_argument(name: string): boolean {
   return name == "__arr_set_len" || name == "__str_bytes" || name == "__bytes_data" || name == "__ct_secret" || name == "__ct_public" || name == "string_from_bytes_range_unchecked";
+}
+
+// A builtin whose runtime keeps a reference to a borrowed argument in the
+// state of the process, where no result and no other argument shows it.
+pub function keeps_argument(name: string): boolean {
+  return name == "set_args";
 }
 
 // The positions of the array arguments a builtin reaches raw: the arrays it
@@ -734,10 +743,34 @@ pub function reference(t: typeinfo.Type): boolean {
   }
 }
 
-// A value of an enum whose variants hold no field is the address of a static
-// object, so it has no count to keep.
+// A value of an enum whose variants hold no field is the index of its
+// variant, so it has no count to keep.
 pub function counted(f: Func, t: typeinfo.Type): boolean {
   return counted_in(f.enums, f.finalizers, t);
+}
+
+pub function immediate_enum(f: Func, t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    return static_enum(f.enums, f.finalizers, u, t);
+  }
+  return false;
+}
+
+// A dyn value is a box that holds a tag. A value of an immediate enum has
+// no tag, so its widening to a dyn value makes a box.
+pub function boxed_enum_dyns(f: Func): Func {
+  let blocks = f.graph.blocks;
+  for b in 0..blocks.len() {
+    let insts = blocks[b].insts;
+    for i in 0..insts.len() {
+      let ins = insts[i];
+      if (ins.kind_tag == dyn_up() && immediate_enum(f, f.values[ins.args[0]])) {
+        insts = insts.with(i, ssa.SInst { ...ins, kind_tag: dyn_box(), str: typeinfo.spelling(f.values[ins.args[0]]) });
+      }
+    }
+    blocks = blocks.with(b, ssa.SBlock { ...blocks[b], insts: insts });
+  }
+  return Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
 }
 
 pub function counted_in(enums: semrecords.Enum[], finalizers: Finalizer[], t: typeinfo.Type): boolean {
@@ -1630,7 +1663,7 @@ function dyn_box_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "dyn box type";
   }
   let from = f.values[ins.args[0]];
-  if (!boxes_into_dyn(from) || typeinfo.spelling(from) != ins.str) {
+  if (!boxes_into_dyn(from) && !immediate_enum(f, from) || typeinfo.spelling(from) != ins.str) {
     return "dyn box operand";
   }
   return "";

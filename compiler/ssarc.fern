@@ -2952,19 +2952,16 @@ function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
 }
 
 function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
-  let at = semrecords.find_enum(f.enums, t);
-  if (at < 0 || f.enums[at].layout != semrecords.layout_variant()) {
+  if (!ssasem.immediate_enum(f, t)) {
     return "";
   }
   let out = "";
-  for v in f.enums[at].variants {
-    if (v.fields.len() > 0) {
-      return "";
-    }
-    if (out != "") {
+  let variants = f.enums[semrecords.find_enum(f.enums, t)].variants;
+  for i in 0..variants.len() {
+    if (i > 0) {
       out += ",";
     }
-    out += member_shape(f, t, v.name);
+    out = out + variants[i].name + "=" + util.i32_to_string(i);
   }
   return "%" + dbg_type_name(s) + "{" + out + "}";
 }
@@ -3487,7 +3484,7 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
     return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), decl_of(f, ins, structs)));
   }
   if (ins.kind_tag == ssasem.dyn_box()) {
-    return emit(r, ir.op_dyn_box(ins.str));
+    return emit(r, ir.op_dyn_box(dyn_box_shape(f, f.values[ins.args[0]], ins.str)));
   }
   if (ins.kind_tag == ssasem.length()) {
     if (ssasem.is_text(f.values[ins.args[0]])) {
@@ -3933,6 +3930,9 @@ function variant(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, str
   if (enum_layout(f, whole) == semrecords.layout_option()) {
     return option_site(r, f, ins, whole);
   }
+  if (ssasem.immediate_enum(f, whole)) {
+    return immediate_site(r, f, ins, whole);
+  }
   if (ins.kind_tag == ssasem.variant_new()) {
     return emit(r, ir.op_struct_make(member_shape(f, whole, ins.str), ins.args.len(), decl_of(f, ins, structs)));
   }
@@ -3940,6 +3940,15 @@ function variant(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, str
     return emit(r, ir.op_variant_is(member_shape(f, whole, ins.str)));
   }
   return field_get(r, f, ins);
+}
+
+// A value of an enum whose variants hold no field is the index of its variant.
+function immediate_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irtables.LowerState {
+  r = emit(r, ir.op_const_i32(variant_tag(f, whole, ins.str)));
+  if (ins.kind_tag == ssasem.variant_is()) {
+    return emit(r, ir.op_bin("eq", 0, false));
+  }
+  return r;
 }
 
 function dyn_test(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
@@ -3974,6 +3983,15 @@ function enum_layout(f: ssasem.Func, t: typeinfo.Type): i32 {
     return 0;
   }
   return f.enums[at].layout;
+}
+
+// The box of an immediate enum has the tag of the first variant, and the
+// dispatch of the enum takes the index from the box.
+function dyn_box_shape(f: ssasem.Func, from: typeinfo.Type, spelling: string): string {
+  if (!ssasem.immediate_enum(f, from)) {
+    return spelling;
+  }
+  return member_shape(f, from, f.enums[semrecords.find_enum(f.enums, from)].variants[0].name);
 }
 
 function member_shape(f: ssasem.Func, whole: typeinfo.Type, name: string): string {
@@ -6201,6 +6219,9 @@ function os_floor_process_site(own r: irtables.LowerState, ins: ssa.SInst): Lowe
   }
   if (ins.str == "unix_connect") {
     return Lowered { found: true, r: emit(r, ir.op_unix_connect()) };
+  }
+  if (ins.str == "vsock_connect") {
+    return Lowered { found: true, r: emit(r, ir.op_vsock_connect()) };
   }
   if (ins.str == "reactor_new") {
     return Lowered { found: true, r: emit(r, ir.op_reactor_new()) };

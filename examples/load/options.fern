@@ -2,13 +2,49 @@
 import "std/array";
 import "std/base64";
 import "std/f64";
-import "std/format";
 import "std/i32";
+import "std/result";
 import "std/string";
 import "std/time";
 import "std/url";
+import "std/utf8";
+import "./fields";
+
+// The versions of HTTP, ten times the version number.
+pub const HTTP_10: i32 = 10;
+
+pub const HTTP_11: i32 = 11;
+
+pub const HTTP_2: i32 = 20;
+
+pub const HTTP_3: i32 = 30;
+
+// How the operand names the URLs: one URL, a regular expression of URLs
+// (--rand-regex-url), or a file with a URL on each line (--urls-from-file).
+pub const URL_ONE: i32 = 0;
+
+pub const URL_REGEX: i32 = 1;
+
+pub const URL_FILE: i32 = 2;
+
+pub struct ConnectTo { from_host: string, from_port: i32, to_host: string, to_port: i32 }
+
+// The URL of a request: the scheme, the host, the port and the target.
+pub struct Origin { scheme: string, tls: boolean, host: string, port: i32, target: string }
+
+// The AWS SigV4 signature of --aws-sigv4, with the keys of -a.
+pub struct Aws { access: string, secret: string, session: Option[string], region: string, service: string }
 
 pub struct Options {
+  // The operand, and how it names the URLs.
+  url: string,
+  urls: i32,
+  max_repeat: i32,
+  // --dump-urls: write this count of URLs and stop, or -1.
+  dump_urls: i64,
+  // The URL of the first request. A generated URL can differ for each
+  // request.
+  scheme: string,
   tls: boolean,
   host: string,
   port: i32,
@@ -23,21 +59,31 @@ pub struct Options {
   // The latency of a request of -q starts when it is due.
   correct: boolean,
   connections: i32,
-  // --worker-threads, or 0 for one for each CPU.
+  // -p: the requests in flight on each HTTP/2 connection.
+  parallel: i32,
+  // --worker-threads, or 0 for the default.
   threads: i32,
   wait: boolean,
   method: string,
-  // The fields of -H. A field replaces an earlier field of the same name.
-  headers: string[],
+  // The fields of -H, in the order given.
+  headers: fields.Field[],
   // -A, -T, --host and -a. A field of -H replaces them.
   accept: string,
   content_type: string,
   host_field: string,
+  // -a USER:PASSWORD as given.
   auth: string,
   body: u8[],
   // -D: the file that holds the body.
   body_file: string,
-  // "text", "json" or "quiet".
+  // -Z: the file of the bodies, one on each line, and its lines.
+  lines_file: string,
+  lines: u8[][],
+  // -F: the parts of a multipart form, as curl gives them.
+  form: string[],
+  // The Content-Type of the form, with its boundary.
+  form_type: string,
+  // "text", "json", "csv" or "quiet".
   format: string,
   output: string,
   // -u: the unit of the times of the text summary, or "" to select one.
@@ -48,26 +94,64 @@ pub struct Options {
   redirects: i32,
   insecure: boolean,
   cacert: string,
+  // --cert and --key: the client certificate and its key.
+  cert: string,
+  key: string,
   // 4 or 6 to use only addresses of that family, 0 for any.
   family: i32,
   // --connect-to: the connections to `from_host:from_port` go to
-  // `to_host:to_port`.
-  connect_to: Option[ConnectTo],
+  // `to_host:to_port`. A random entry applies when several match.
+  connect_to: ConnectTo[],
   compression: boolean,
+  // The HTTP version of the requests, and of a connection to the proxy.
+  http: i32,
+  proxy: Option[Origin],
+  proxy_headers: fields.Field[],
+  proxy_http: i32,
+  aws: Option[Aws],
+  unix_socket: string,
+  // --vsock-addr CID:PORT, or -1 and -1.
+  vsock_cid: i64,
+  vsock_port: i64,
+  db_url: string,
+  debug: boolean,
+  breakdown: boolean,
+  // The live display, unless --no-tui.
+  tui: boolean,
+  fps: i32,
+  color: boolean,
+  // The options on the command line, for the rules on repeats and
+  // conflicts. --http2, --http-version and their proxy peers wait here
+  // until the check of the run.
+  given: string[],
+  http_version: string,
+  proxy_version: string,
+  aws_sigv4: string,
+  aws_session: Option[string],
 }
 
-pub struct ConnectTo { from_host: string, from_port: i32, to_host: string, to_port: i32 }
+// Run(o) runs, Refused(why) is a usage error (exit code 2), and Failed(why)
+// is an error of oha's checks before the run (exit code 1).
+pub enum Parsed { Run(Options), Help, Version, Refused(string), Failed(string) }
 
-pub enum Parsed { Run(Options), Help, Version, Refused(string) }
+pub const VERSION: string = "fern-load 0.4";
 
-pub const VERSION: string = "fern-load 0.3";
+pub const USER_AGENT: string = "fern-load/0.4";
 
-pub const USAGE: string = "Usage: load [OPTIONS] URL\n  -n COUNT  -c CONNECTIONS  -z DURATION  -w  -q RATE  --latency-correction\n  --burst-delay DURATION  --burst-rate COUNT  --worker-threads COUNT\n  -m METHOD  -H \"Name: value\"  -d BODY  -D FILE  -A ACCEPT  -T TYPE  -a USER:PASSWORD  --host HOST\n  -t TIMEOUT  --connect-timeout TIMEOUT  --disable-keepalive  -r REDIRECTS  --disable-compression\n  --insecure  --cacert FILE  --connect-to HOST:PORT:HOST:PORT  --ipv4  --ipv6\n  --output-format text|json|quiet  -o FILE  -u ns|us|ms|s|m|h  --no-tui  -V";
+pub const USAGE: string = "Usage: load [OPTIONS] URL\n  -n COUNT  -c CONNECTIONS  -p PARALLEL  -z DURATION  -w  -q RATE  --latency-correction\n  --burst-delay DURATION  --burst-rate COUNT  --worker-threads COUNT\n  --rand-regex-url  --max-repeat COUNT  --urls-from-file  --dump-urls COUNT\n  -m METHOD  -H \"Name: value\"  -d BODY  -D FILE  -Z FILE  -F NAME=VALUE  -A ACCEPT  -T TYPE\n  -a USER:PASSWORD  --aws-sigv4 aws:amz:REGION:SERVICE  --aws-session TOKEN  --host HOST\n  -t TIMEOUT  --connect-timeout TIMEOUT  --disable-keepalive  -r REDIRECTS  --disable-compression\n  --http2  --http-version 1.0|1.1|2|3  -x PROXY  --proxy-header \"Name: value\"  --proxy-http2\n  --proxy-http-version 1.0|1.1|2  --insecure  --cacert FILE  --cert FILE  --key FILE\n  --connect-to HOST:PORT:HOST:PORT  --ipv4  --ipv6  --unix-socket PATH  --vsock-addr CID:PORT\n  --output-format text|json|csv|quiet  -o FILE  -u ns|us|ms|s|m|h  --stats-success-breakdown\n  --db-url FILE  --debug  --no-tui  --fps COUNT  --no-color  -V";
 
 function defaults(): Options {
   let none: string[] = [];
   let empty: u8[] = [];
+  let no_fields: fields.Field[] = [];
+  let no_lines: u8[][] = [];
+  let nowhere: ConnectTo[] = [];
   return Options {
+    url: "",
+    urls: URL_ONE,
+    max_repeat: 4,
+    dump_urls: -1,
+    scheme: "http",
     tls: false,
     host: "",
     port: 80,
@@ -79,16 +163,21 @@ function defaults(): Options {
     burst: 0,
     correct: false,
     connections: 50,
+    parallel: 1,
     threads: 0,
     wait: false,
     method: "GET",
-    headers: none,
+    headers: no_fields,
     accept: "",
     content_type: "",
     host_field: "",
     auth: "",
     body: empty,
     body_file: "",
+    lines_file: "",
+    lines: no_lines,
+    form: none,
+    form_type: "",
     format: "text",
     output: "",
     unit: "",
@@ -98,29 +187,56 @@ function defaults(): Options {
     redirects: 0,
     insecure: false,
     cacert: "",
+    cert: "",
+    key: "",
     family: 0,
-    connect_to: None,
+    connect_to: nowhere,
     compression: true,
+    http: HTTP_11,
+    proxy: None,
+    proxy_headers: no_fields,
+    proxy_http: HTTP_11,
+    aws: None,
+    unix_socket: "",
+    vsock_cid: -1,
+    vsock_port: -1,
+    db_url: "",
+    debug: false,
+    breakdown: false,
+    tui: true,
+    fps: 16,
+    color: true,
+    given: none,
+    http_version: "",
+    proxy_version: "",
+    aws_sigv4: "",
+    aws_session: None,
   };
 }
 
 // Reads the arguments after the program name.
 pub function parse(args: string[]): Parsed {
   let o = defaults();
-  let urls: string[] = [];
+  let operands: string[] = [];
   let i = 0;
+  let options_end = false;
   while (i < args.len()) {
     let arg = args[i];
+    if (options_end || !arg.starts_with("-") || arg == "-") {
+      operands = operands.append(arg);
+      i += 1;
+      continue;
+    }
+    if (arg == "--") {
+      options_end = true;
+      i += 1;
+      continue;
+    }
     if (["-h", "--help"].contains(arg)) {
       return Help;
     }
     if (["-V", "--version"].contains(arg)) {
       return Version;
-    }
-    if (!arg.starts_with("-") || arg == "-") {
-      urls = urls.append(arg);
-      i += 1;
-      continue;
     }
     match (option(o, args, i)) {
       Ok(next) => {
@@ -132,100 +248,99 @@ pub function parse(args: string[]): Parsed {
       }
     }
   }
-  if (urls.len() != 1) {
+  if (operands.len() != 1) {
     return Refused("give one URL");
   }
   if let Some(why) = conflict(o) {
     return Refused(why);
   }
-  return with_url(o, urls[0]);
+  match (checked(Options { ...o, url: operands[0] })) {
+    Ok(ready) => {
+      return Run(ready);
+    },
+    Err(why) => {
+      return Failed(why);
+    }
+  }
+  return Failed("give one URL");
 }
 
-// Why the options cannot go together, or None.
+function given(o: Options, name: string): boolean {
+  return o.given.contains(name);
+}
+
+// Why the options cannot go together, or None. These are the rules of the
+// command line of oha.
 function conflict(o: Options): Option[string] {
-  if (o.burst_delay.is_some() != o.burst > 0) {
-    return Some("--burst-delay and --burst-rate go together");
+  let pairs: (string, string)[] = [("-n", "-z"), ("-q", "--burst-delay"), ("-q", "--burst-rate"), ("-d", "-D"), ("-d", "-Z"), ("-d", "-F"), ("-D", "-Z"), ("-D", "-F"), ("-Z", "-F"), ("--unix-socket", "--vsock-addr")];
+  for p in pairs {
+    if (given(o, p.0) && given(o, p.1)) {
+      return Some(f"give {p.0} or {p.1}, not both");
+    }
   }
-  if (o.burst > 0 && o.rate.is_some()) {
-    return Some("give -q or --burst-delay, not both");
-  }
-  if (o.wait && o.duration.is_none()) {
-    return Some("-w needs -z");
+  let needs: (string, string)[] = [("-w", "-z"), ("--burst-delay", "--burst-rate"), ("--burst-rate", "--burst-delay"), ("--max-repeat", "--rand-regex-url"), ("--cert", "--key"), ("--key", "--cert")];
+  for p in needs {
+    if (given(o, p.0) && !given(o, p.1)) {
+      return Some(f"{p.0} needs {p.1}");
+    }
   }
   return None;
 }
 
 // The options that take no value.
-const FLAGS: string[] = ["-w", "--latency-correction", "--no-tui", "--no-color", "--no-pre-lookup", "--disable-keepalive", "--disable-compression", "--insecure", "--ipv4", "--ipv6"];
+const FLAGS: string[] = ["-w", "--latency-correction", "--no-tui", "--no-color", "--no-pre-lookup", "--disable-keepalive", "--disable-compression", "--insecure", "--ipv4", "--ipv6", "--http2", "--proxy-http2", "--rand-regex-url", "--urls-from-file", "--stats-success-breakdown", "--debug"];
 
 // The options that take a value. A short option can have its value in the
 // same argument, as in `-n200`.
-const SHORT: string[] = ["-n", "-c", "-z", "-q", "-m", "-H", "-d", "-D", "-A", "-T", "-a", "-t", "-r", "-o", "-u", "-p"];
+const SHORT: string[] = ["-n", "-c", "-p", "-z", "-q", "-m", "-H", "-d", "-D", "-Z", "-F", "-A", "-T", "-a", "-t", "-r", "-o", "-u", "-x"];
 
-const LONG: string[] = ["--output-format", "--worker-threads", "--burst-delay", "--burst-rate", "--connect-timeout", "--host", "--cacert", "--connect-to", "--fps", "--http-version"];
+const LONG: string[] = ["--output-format", "--worker-threads", "--burst-delay", "--burst-rate", "--connect-timeout", "--host", "--cacert", "--cert", "--key", "--connect-to", "--fps", "--http-version", "--proxy-http-version", "--proxy-header", "--max-repeat", "--dump-urls", "--aws-session", "--aws-sigv4", "--unix-socket", "--vsock-addr", "--db-url"];
 
-// The long names of options that also have a short name.
-const ALIASES: string[] = ["--wait-ongoing-requests-after-deadline", "-w", "--method", "-m", "--redirect", "-r", "--output", "-o", "--time-unit", "-u"];
+// The options that can be given more than once.
+const MANY: string[] = ["-H", "-F", "--proxy-header", "--connect-to"];
 
-// The options of oha that the tool refuses, and why.
-const REFUSED: string[] = [
-  "--http2", "HTTP/2 is not supported: the tool uses HTTP/1.1",
-  "--proxy-http2", "proxies are not supported",
-  "-x", "proxies are not supported",
-  "--proxy-header", "proxies are not supported",
-  "--proxy-http-version", "proxies are not supported",
-  "--rand-regex-url", "URL generation is not supported: give one URL",
-  "--urls-from-file", "URL generation is not supported: give one URL",
-  "--max-repeat", "URL generation is not supported: give one URL",
-  "--dump-urls", "URL generation is not supported: give one URL",
-  "-Z", "a body for each line is not supported: use -d or -D",
-  "-F", "multipart forms are not supported: use -D with -T",
-  "--form", "multipart forms are not supported: use -D with -T",
-  "--aws-session", "AWS signatures are not supported",
-  "--aws-sigv4", "AWS signatures are not supported",
-  "--cert", "client certificates are not supported",
-  "--key", "client certificates are not supported",
-  "--unix-socket", "Unix sockets are not supported: give a TCP URL",
-  "--vsock-addr", "VSOCK sockets are not supported: give a TCP URL",
-  "--db-url", "the request database is not supported: use --output-format json",
-  "--debug", "--debug is not supported",
-  "--stats-success-breakdown", "--stats-success-breakdown is not supported",
-];
+// The long names of options that also have a short name, and the other
+// names of oha.
+const ALIASES: string[] = ["--wait-ongoing-requests-after-deadline", "-w", "--method", "-m", "--redirect", "-r", "--output", "-o", "--time-unit", "-u", "--form", "-F", "--disable-color", "--no-color"];
 
-// Reads the option at `args[i]`, and gives the index of the argument after
-// it and its value.
+// Reads the option at `args[i]`, and gives the options with it and the
+// index of the next argument.
 function option(o: Options, args: string[], i: i32): Result[(Options, i32), string] {
   let arg = args[i];
   let (name, value) = split_option(arg);
-  if let Some(why) = refusal(name) {
-    return Err(f"{name}: {why}");
-  }
-  if (FLAGS.contains(name)) {
-    if (value.is_some()) {
-      return Err(f"{name} takes no value");
-    }
-    return Ok((with_flag(o, name), i + 1));
-  }
-  if (!SHORT.contains(name) && !LONG.contains(name)) {
+  let flag = FLAGS.contains(name);
+  if (!flag && !SHORT.contains(name) && !LONG.contains(name)) {
     return Err(f"unknown option {arg}");
   }
-  if let Some(v) = value {
-    return Ok((with_value(o, name, v)?, i + 1));
+  if (given(o, name) && !MANY.contains(name)) {
+    return Err(f"give {name} once");
   }
-  if (i + 1 >= args.len()) {
+  let seen = Options { ...o, given: o.given.append(name) };
+  if (flag) {
+    if (value.is_some() && name != "--no-color") {
+      return Err(f"{name} takes no value");
+    }
+    return Ok((with_flag(seen, name), i + 1));
+  }
+  if let Some(v) = value {
+    return Ok((with_value(seen, name, v)?, i + 1));
+  }
+  if (i + 1 >= args.len() || args[i + 1].starts_with("-") && args[i + 1] != "-") {
     return Err(f"{name} needs a value");
   }
-  return Ok((with_value(o, name, args[i + 1])?, i + 2));
+  return Ok((with_value(seen, name, args[i + 1])?, i + 2));
 }
 
 // The name of the option `arg`, and its value when the argument holds it: a
-// short option as in `-n200`, and a long option as in `--redirect=2`.
+// short option as in `-n200` or `-n=200`, and a long option as in
+// `--redirect=2`.
 function split_option(arg: string): (string, Option[string]) {
   if (!arg.starts_with("--")) {
     if (FLAGS.contains(arg) || arg.len() <= 2) {
       return (arg, None);
     }
-    return (arg.take(2), Some(arg.drop(2)));
+    let rest = arg.drop(2);
+    return (arg.take(2), Some(if (rest.starts_with("=")) { rest.drop(1) } else { rest }));
   }
   let Some(eq) = arg.index_of("=") else {
     return (alias(arg), None);
@@ -242,190 +357,147 @@ function alias(name: string): string {
   return name;
 }
 
-// Why the tool refuses the option `name`, or None.
-function refusal(name: string): Option[string] {
-  for r in 0..REFUSED.len() / 2 {
-    if (REFUSED[2 * r] == name) {
-      return Some(REFUSED[2 * r + 1]);
-    }
-  }
-  return None;
-}
-
 function with_flag(o: Options, name: string): Options {
-  if (name == "-w") {
-    return Options { ...o, wait: true };
-  }
-  if (name == "--latency-correction") {
-    return Options { ...o, correct: true };
-  }
-  if (name == "--disable-keepalive") {
-    return Options { ...o, keep_alive: false };
-  }
-  if (name == "--disable-compression") {
-    return Options { ...o, compression: false };
-  }
-  if (name == "--insecure") {
-    return Options { ...o, insecure: true };
-  }
-  if (name == "--ipv4") {
-    return Options { ...o, family: 4 };
-  }
-  if (name == "--ipv6") {
-    return Options { ...o, family: 6 };
-  }
-  // The tool has no TUI and no colors, and it always looks up the name once
-  // before the run.
-  return o;
+  return match (name) {
+    "-w" => Options { ...o, wait: true },
+    "--latency-correction" => Options { ...o, correct: true },
+    "--disable-keepalive" => Options { ...o, keep_alive: false },
+    "--disable-compression" => Options { ...o, compression: false },
+    "--insecure" => Options { ...o, insecure: true },
+    "--ipv4" => Options { ...o, family: if (o.family == 6) { 0 } else { 4 } },
+    "--ipv6" => Options { ...o, family: if (o.family == 4) { 0 } else { 6 } },
+    "--rand-regex-url" => Options { ...o, urls: URL_REGEX },
+    "--urls-from-file" => Options { ...o, urls: if (o.urls == URL_REGEX) { URL_REGEX } else { URL_FILE } },
+    "--stats-success-breakdown" => Options { ...o, breakdown: true },
+    "--debug" => Options { ...o, debug: true },
+    "--no-tui" => Options { ...o, tui: false },
+    "--no-color" => Options { ...o, color: false },
+    // The tool looks up each host once and keeps the address, as oha does
+    // without this option. --http2 and --proxy-http2 wait in `given`.
+    _ => o,
+  };
 }
 
 function with_value(o: Options, name: string, value: string): Result[Options, string] {
-  if (["-n", "-c", "--worker-threads", "--burst-rate", "-p", "--fps"].contains(name)) {
+  if (["-n", "-c", "-p", "--worker-threads", "--burst-rate", "--fps", "--max-repeat", "--dump-urls", "-r"].contains(name)) {
     return with_count(o, name, value);
   }
   if (["-z", "-q", "-t", "--connect-timeout", "--burst-delay"].contains(name)) {
     return with_time(o, name, value);
   }
-  if (["--output-format", "-o", "-u"].contains(name)) {
+  if (["--output-format", "-o", "-u", "--db-url"].contains(name)) {
     return with_output(o, name, value);
   }
-  if (["-A", "-T", "--host"].contains(name)) {
-    return with_named(o, name, value);
-  }
-  if (["-m", "-H", "-d", "-D", "-a"].contains(name)) {
+  if (["-m", "-H", "-d", "-D", "-Z", "-F", "-A", "-T", "-a", "--host"].contains(name)) {
     return with_request(o, name, value);
   }
   return with_connection(o, name, value);
 }
 
-// The options of -r, --cacert, --connect-to and --http-version.
+// The options of TLS, proxies, the versions of HTTP, sockets and AWS.
 function with_connection(o: Options, name: string, value: string): Result[Options, string] {
-  if (name == "-r") {
-    let Ok(n) = i32.parse_i32(value) else {
-      return Err(f"-r {value} is not a count");
-    };
-    if (n < 0) {
-      return Err(f"-r {value} is not a count");
-    }
-    return Ok(Options { ...o, redirects: n });
+  return match (name) {
+    "--cacert" => Ok(Options { ...o, cacert: value }),
+    "--cert" => Ok(Options { ...o, cert: value }),
+    "--key" => Ok(Options { ...o, key: value }),
+    "--connect-to" => Ok(Options { ...o, connect_to: o.connect_to.append(connect_to(value)?) }),
+    "--http-version" => Ok(Options { ...o, http_version: value }),
+    "--proxy-http-version" => Ok(Options { ...o, proxy_version: value }),
+    "--proxy-header" => Ok(Options { ...o, proxy_headers: o.proxy_headers.append(field("--proxy-header", value)?) }),
+    "-x" => Ok(Options { ...o, proxy: Some(proxy(value)?) }),
+    "--aws-sigv4" => Ok(Options { ...o, aws_sigv4: value }),
+    "--aws-session" => Ok(Options { ...o, aws_session: Some(value) }),
+    "--unix-socket" => Ok(Options { ...o, unix_socket: value }),
+    _ => vsock(o, value),
+  };
+}
+
+// --vsock-addr CID:PORT, each an unsigned 32-bit number.
+function vsock(o: Options, value: string): Result[Options, string] {
+  let Some(colon) = value.index_of(":") else {
+    return Err(f"--vsock-addr {value} is not CID:PORT");
+  };
+  let cid = unsigned(value.take(colon), 4294967295);
+  let port = unsigned(value.drop(colon + 1), 4294967295);
+  if (cid < 0 || port < 0) {
+    return Err(f"--vsock-addr {value} is not CID:PORT");
   }
-  if (name == "--cacert") {
-    return Ok(Options { ...o, cacert: value });
+  return Ok(Options { ...o, vsock_cid: cid, vsock_port: port });
+}
+
+// The proxy of -x: an absolute URL.
+function proxy(value: string): Result[Origin, string] {
+  let none = Origin { scheme: "", tls: false, host: "", port: 0, target: "/" };
+  let Ok(at) = origin(value, none) else {
+    return Err(f"-x {value} is not a URL");
+  };
+  if (at.host.len() == 0) {
+    return Err(f"-x {value} is not a URL");
   }
-  if (name == "--connect-to") {
-    return Ok(connect_to(o, value)?);
-  }
-  if (name == "--http-version") {
-    if (value != "1.1") {
-      return Err(f"--http-version {value} is not supported: the tool uses HTTP/1.1");
-    }
-    return Ok(o);
-  }
-  return Err(f"unknown option {name}");
+  return Ok(at);
 }
 
 // The options that change the request.
 function with_request(o: Options, name: string, value: string): Result[Options, string] {
-  if (name == "-m") {
-    if (!token(value)) {
-      return Err(f"-m {value} is not a method");
-    }
-    return Ok(Options { ...o, method: value });
-  }
-  if (name == "-H") {
-    return Ok(Options { ...o, headers: with_field(o.headers, header(value)?) });
-  }
-  if (name == "-d") {
-    let empty = "";
-    return Ok(Options { ...o, body: value.bytes(), body_file: empty });
-  }
-  if (name == "-D") {
-    let empty: u8[] = [];
-    return Ok(Options { ...o, body: empty, body_file: value });
-  }
-  if (name == "-a") {
-    if (value.index_of(":").is_none()) {
-      return Err(f"-a {value} is not USER:PASSWORD");
-    }
-    return Ok(Options { ...o, auth: "Basic " + base64.encode(value.bytes()) });
-  }
-  return Err(f"unknown option {name}");
+  return match (name) {
+    "-m" => if (token(value)) { Ok(Options { ...o, method: value }) } else { Err(f"-m {value} is not a method") },
+    "-H" => Ok(Options { ...o, headers: o.headers.append(field("-H", value)?) }),
+    "-d" => Ok(Options { ...o, body: value.bytes() }),
+    "-D" => Ok(Options { ...o, body_file: value }),
+    "-Z" => Ok(Options { ...o, lines_file: value }),
+    "-F" => Ok(Options { ...o, form: o.form.append(value) }),
+    "-A" => Ok(Options { ...o, accept: value }),
+    "-T" => Ok(Options { ...o, content_type: value }),
+    "-a" => Ok(Options { ...o, auth: value }),
+    _ => Ok(Options { ...o, host_field: value }),
+  };
 }
 
-// The options -A, -T and --host, which set a field of the request.
-function with_named(o: Options, name: string, value: string): Result[Options, string] {
-  if (value.index_of("\r").is_some() || value.index_of("\n").is_some()) {
-    return Err(f"{name} has a control character in its value");
-  }
-  if (name == "-A") {
-    return Ok(Options { ...o, accept: value });
-  }
-  if (name == "-T") {
-    return Ok(Options { ...o, content_type: value });
-  }
-  return Ok(Options { ...o, host_field: value });
-}
-
-// The name of the field `Name: value`, in lower case.
-function field_name(field: string): string {
-  return field.take(field.index_of(":").unwrap_or(0)).to_ascii_lower();
-}
-
-// `fields` with `field`, which replaces the field of the same name.
-function with_field(fields: string[], field: string): string[] {
-  let name = field_name(field);
-  for i in 0..fields.len() {
-    if (field_name(fields[i]) == name) {
-      return fields.with(i, field);
-    }
-  }
-  return fields.append(field);
-}
-
+// The counts. oha reads -n with the suffixes `k` and `m`.
 function with_count(o: Options, name: string, value: string): Result[Options, string] {
-  let n = count(name, value)?;
   if (name == "-n") {
-    return Ok(Options { ...o, requests: n });
+    return Ok(Options { ...o, requests: requests(value)? });
   }
-  if (name == "--burst-rate") {
-    return Ok(Options { ...o, burst: n });
+  let n = unsigned(value, 2147483647);
+  if (n < 0) {
+    return Err(f"{name} {value} is not a count");
   }
-  if (name == "-p" || name == "--fps") {
-    // -p sets the requests on each HTTP/2 connection, and --fps the TUI.
-    return Ok(o);
+  if (n == 0 && ["-p", "--worker-threads", "--burst-rate"].contains(name)) {
+    return Err(f"{name} {value} must be more than 0");
   }
-  let most = if (name == "-c") { 65536 } else { 1024 };
-  if (n > most as i64) {
-    return Err(f"{name} {value} is more than {most}");
-  }
-  if (name == "-c") {
-    return Ok(Options { ...o, connections: n as i32 });
-  }
-  return Ok(Options { ...o, threads: n as i32 });
+  return match (name) {
+    "-c" => Ok(Options { ...o, connections: n as i32 }),
+    "-p" => Ok(Options { ...o, parallel: n as i32 }),
+    "--worker-threads" => Ok(Options { ...o, threads: n as i32 }),
+    "--burst-rate" => Ok(Options { ...o, burst: n }),
+    "--fps" => Ok(Options { ...o, fps: n as i32 }),
+    "--max-repeat" => Ok(Options { ...o, max_repeat: n as i32 }),
+    "--dump-urls" => Ok(Options { ...o, dump_urls: n }),
+    _ => Ok(Options { ...o, redirects: n as i32 }),
+  };
 }
 
 // The options of -z, -q, -t, --connect-timeout and --burst-delay.
 function with_time(o: Options, name: string, value: string): Result[Options, string] {
   if (name == "-q") {
-    return Ok(Options { ...o, rate: Some(rate(value)?) });
+    return Ok(Options { ...o, rate: rate(value)? });
   }
-  let d = duration(name, value)?;
-  if (name == "-z") {
-    return Ok(Options { ...o, duration: Some(d) });
-  }
-  if (name == "-t") {
-    return Ok(Options { ...o, timeout: Some(d) });
-  }
-  if (name == "--burst-delay") {
-    return Ok(Options { ...o, burst_delay: Some(d) });
-  }
-  return Ok(Options { ...o, connect_timeout: d });
+  let d = humantime(name, value)?;
+  return match (name) {
+    "-z" => Ok(Options { ...o, duration: Some(d) }),
+    "-t" => Ok(Options { ...o, timeout: Some(d) }),
+    "--burst-delay" => Ok(Options { ...o, burst_delay: Some(d) }),
+    _ => Ok(Options { ...o, connect_timeout: d }),
+  };
 }
 
-// The options of --output-format, -o and -u.
+// The options of --output-format, -o, -u and --db-url.
 function with_output(o: Options, name: string, value: string): Result[Options, string] {
   if (name == "-o") {
     return Ok(Options { ...o, output: value });
+  }
+  if (name == "--db-url") {
+    return Ok(Options { ...o, db_url: value });
   }
   if (name == "-u") {
     if (!["ns", "us", "ms", "s", "m", "h"].contains(value)) {
@@ -433,54 +505,131 @@ function with_output(o: Options, name: string, value: string): Result[Options, s
     }
     return Ok(Options { ...o, unit: value });
   }
-  if (value == "csv") {
-    return Err("--output-format csv is not supported: use text, json or quiet");
-  }
-  if (value != "text" && value != "json" && value != "quiet") {
-    return Err(f"--output-format {value} is not supported: use text, json or quiet");
+  if (!["text", "json", "csv", "quiet"].contains(value)) {
+    return Err(f"--output-format {value} is not a format: use text, json, csv or quiet");
   }
   return Ok(Options { ...o, format: value });
 }
 
-// --connect-to HOST:PORT:TARGET_HOST:TARGET_PORT. An IPv6 address is in
-// brackets.
-function connect_to(o: Options, value: string): Result[Options, string] {
-  let parts = host_ports(value);
-  if (parts.len() != 4) {
-    return Err(f"--connect-to {value} is not HOST:PORT:TARGET_HOST:TARGET_PORT");
+// The checks that oha makes before the run, which give exit code 1: the
+// versions of HTTP, the keys of AWS, -a, the values of -A, -T and --host,
+// and the URL.
+function checked(o: Options): Result[Options, string] {
+  let aws = aws_of(o)?;
+  let http = version_of(given(o, "--http2"), o.http_version)?;
+  let proxy_http = version_of(given(o, "--proxy-http2"), o.proxy_version)?;
+  if (proxy_http == HTTP_3) {
+    return Err("a proxy speaks HTTP/1.0, HTTP/1.1 or HTTP/2");
   }
-  let Ok(from_port) = i32.parse_i32(parts[1]) else {
-    return Err(f"--connect-to {value} is not HOST:PORT:TARGET_HOST:TARGET_PORT");
-  };
-  let Ok(to_port) = i32.parse_i32(parts[3]) else {
-    return Err(f"--connect-to {value} is not HOST:PORT:TARGET_HOST:TARGET_PORT");
-  };
-  if (parts[2].len() == 0) {
-    return Err(f"--connect-to {value} is not HOST:PORT:TARGET_HOST:TARGET_PORT");
+  if (http == HTTP_3 && o.proxy.is_some()) {
+    return Err("HTTP/3 does not go through a proxy");
   }
-  if (o.connect_to.is_some()) {
-    return Err("give --connect-to once");
+  if (o.auth.len() > 0 && o.auth.index_of(":").is_none()) {
+    return Err(f"-a {o.auth} is not USER:PASSWORD");
   }
-  return Ok(Options { ...o, connect_to: Some(ConnectTo { from_host: parts[0], from_port: from_port, to_host: parts[2], to_port: to_port }) });
-}
-
-// The fields of `s` between colons. A colon in brackets does not split.
-function host_ports(s: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  for i in 0..s.len() {
-    let c = s[i];
-    if (c == 91) {
-      depth += 1;
-    } else if (c == 93) {
-      depth -= 1;
-    } else if (c == 58 && depth == 0) {
-      out = out.append(unbracket(s.drop(start).take(i - start)));
-      start = i + 1;
+  for v in [("-A", o.accept), ("-T", o.content_type), ("--host", o.host_field)] {
+    if (!value_ok(v.1)) {
+      return Err(f"{v.0} has a control character in its value");
     }
   }
-  return out.append(unbracket(s.drop(start)));
+  let ready = Options { ...o, aws: aws, http: http, proxy_http: proxy_http };
+  if (o.urls != URL_ONE) {
+    return Ok(ready);
+  }
+  let Ok(at) = first_url(o.url) else {
+    return Err(first_url(o.url).err().unwrap_or(o.url));
+  };
+  return Ok(with_origin(ready, at));
+}
+
+// The options with `at` as the URL of the first request.
+pub function with_origin(o: Options, at: Origin): Options {
+  return Options { ...o, scheme: at.scheme, tls: at.tls, host: at.host, port: at.port, target: at.target };
+}
+
+// The URL operand, or a generated URL: an absolute URL with a host.
+pub function first_url(raw: string): Result[Origin, string] {
+  let none = Origin { scheme: "", tls: false, host: "", port: 0, target: "/" };
+  let at = origin(raw, none)?;
+  if (at.host.len() == 0) {
+    return Err(f"{raw} is not a URL");
+  }
+  return Ok(at);
+}
+
+// --http2 and --http-version, or their proxy peers.
+function version_of(http2: boolean, version: string): Result[i32, string] {
+  if (http2 && version.len() > 0) {
+    return Err("give --http2 or --http-version, not both");
+  }
+  if (http2) {
+    return Ok(HTTP_2);
+  }
+  return match (version.trim()) {
+    "" => Ok(HTTP_11),
+    "1.1" => Ok(HTTP_11),
+    "1.0" => Ok(HTTP_10),
+    "2" => Ok(HTTP_2),
+    "2.0" => Ok(HTTP_2),
+    "3" => Ok(HTTP_3),
+    "3.0" => Ok(HTTP_3),
+    "0.9" => Err("HTTP/0.9 is not supported: use 1.0, 1.1, 2 or 3"),
+    _ => Err(f"HTTP version {version} is not known: use 1.0, 1.1, 2 or 3"),
+  };
+}
+
+// --aws-sigv4 aws:amz:REGION:SERVICE, with the keys ACCESS:SECRET of -a.
+function aws_of(o: Options): Result[Option[Aws], string] {
+  if (o.aws_sigv4.len() == 0) {
+    return Ok(None);
+  }
+  if (o.auth.len() == 0) {
+    return Err("--aws-sigv4 needs the AWS keys in -a ACCESS_KEY:SECRET_KEY");
+  }
+  let keys = o.auth.split(":");
+  if (keys.len() != 2) {
+    return Err("-a must be ACCESS_KEY:SECRET_KEY for --aws-sigv4");
+  }
+  let params = if (o.aws_sigv4.starts_with("aws:amz:")) { o.aws_sigv4.drop(8).split(":") } else { [""] };
+  if (params.len() != 2) {
+    return Err(f"--aws-sigv4 {o.aws_sigv4} is not aws:amz:REGION:SERVICE");
+  }
+  return Ok(Some(Aws { access: keys[0], secret: keys[1], session: o.aws_session, region: params[0], service: params[1] }));
+}
+
+// Whether `v` is a valid value of a header field: no control character
+// except the tab.
+function value_ok(v: string): boolean {
+  for c in v.bytes() {
+    if (c < 32 as u8 && c != 9 as u8 || c == 127 as u8) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// --connect-to HOST:PORT:TARGET_HOST:TARGET_PORT, read from the right as
+// oha reads it. An IPv6 address is in brackets.
+function connect_to(value: string): Result[ConnectTo, string] {
+  let bad = f"--connect-to {value} is not HOST:PORT:TARGET_HOST:TARGET_PORT";
+  let Some(c3) = value.last_index_of(":") else {
+    return Err(bad);
+  };
+  let rest = value.take(c3);
+  let c2 = if (rest.ends_with("]")) { rest.last_index_of(":[").unwrap_or(-1) } else { rest.last_index_of(":").unwrap_or(-1) };
+  if (c2 < 0) {
+    return Err(bad);
+  }
+  let first = rest.take(c2);
+  let Some(c1) = first.last_index_of(":") else {
+    return Err(bad);
+  };
+  let from_port = unsigned(first.drop(c1 + 1), 65535);
+  let to_port = unsigned(value.drop(c3 + 1), 65535);
+  if (from_port < 0 || to_port < 0) {
+    return Err(bad);
+  }
+  return Ok(ConnectTo { from_host: unbracket(first.take(c1)), from_port: from_port as i32, to_host: unbracket(rest.drop(c2 + 1)), to_port: to_port as i32 });
 }
 
 function unbracket(s: string): string {
@@ -490,82 +639,124 @@ function unbracket(s: string): string {
   return s;
 }
 
-// A positive count, with the suffix `k` (1,000) or `m` (1,000,000) as oha
-// accepts.
-pub function count(name: string, value: string): Result[i64, string] {
-  let digits = value;
-  let scale: i64 = 1;
-  if (value.ends_with("k")) {
-    digits = value.take(value.len() - 1);
-    scale = 1000;
-  } else if (value.ends_with("m")) {
-    digits = value.take(value.len() - 1);
-    scale = 1000000;
-  }
-  if (digits.len() == 0 || digits.len() > 12) {
-    return Err(f"{name} {value} is not a count");
+// A number of digits with an optional `+`, up to `most`, or -1.
+function unsigned(value: string, most: i64): i64 {
+  let digits = if (value.starts_with("+")) { value.drop(1) } else { value };
+  if (digits.len() == 0 || digits.len() > 18) {
+    return -1;
   }
   let n: i64 = 0;
   for c in digits.bytes() {
     if (c < 48 as u8 || c > 57 as u8) {
-      return Err(f"{name} {value} is not a count");
+      return -1;
     }
     n = n * 10 + (c - 48 as u8) as i64;
   }
-  if (n == 0) {
-    return Err(f"{name} {value} must be more than 0");
+  if (n > most) {
+    return -1;
   }
-  return Ok(n * scale);
+  return n;
 }
 
-// A duration such as `10s`, `500ms`, `1m` or `1m 30s`.
-pub function duration(name: string, value: string): Result[Duration, string] {
-  match (format.parse_duration(value)) {
-    Ok(d) => {
-      if (d.is_zero()) {
-        return Err(f"{name} {value} must be longer than 0");
-      }
-      return Ok(d);
-    },
-    Err(e) => {
-      return Err(f"{name} {value} is not a duration such as 10s, 500ms or 1m");
+// The count of -n as oha reads it: a number, or a decimal with the suffix
+// `k` (1,000) or `m` (1,000,000), as in `10k` or `1.5m`.
+pub function requests(value: string): Result[i64, string] {
+  let s = value.trim().to_ascii_lower();
+  if (s.ends_with("k") || s.ends_with("m")) {
+    let scale = if (s.ends_with("k")) { 1000.0 } else { 1000000.0 };
+    let Ok(x) = f64.parse_f64(s.take(s.len() - 1)) else {
+      return Err(f"-n {value} is not a count");
+    };
+    let n = x * scale;
+    if (!(n > 0.0)) {
+      return Ok(0);
     }
+    if (n >= 9.0e18) {
+      return Ok(9000000000000000000);
+    }
+    return Ok(n as i64);
   }
+  let n = unsigned(s, 9000000000000000000);
+  if (n < 0) {
+    return Err(f"-n {value} is not a count");
+  }
+  return Ok(n);
 }
 
-// A number of requests per second, such as `100` or `0.5`: more than 0 and
-// not more than 10^9.
-pub function rate(value: string): Result[f64, string] {
+// The nanoseconds of each unit of humantime.
+const UNITS: string[] = ["nanos", "nsec", "ns", "usec", "us", "µs", "millis", "msec", "ms", "seconds", "second", "secs", "sec", "s", "minutes", "minute", "mins", "min", "m", "hours", "hour", "hrs", "hr", "h", "days", "day", "d", "weeks", "week", "w", "months", "month", "M", "years", "year", "y"];
+
+const UNIT_NS: i64[] = [1, 1, 1, 1000, 1000, 1000, 1000000, 1000000, 1000000, 1000000000, 1000000000, 1000000000, 1000000000, 1000000000, 60000000000, 60000000000, 60000000000, 60000000000, 60000000000, 3600000000000, 3600000000000, 3600000000000, 3600000000000, 3600000000000, 86400000000000, 86400000000000, 86400000000000, 604800000000000, 604800000000000, 604800000000000, 2630016000000000, 2630016000000000, 2630016000000000, 31557600000000000, 31557600000000000, 31557600000000000];
+
+// A duration as the humantime crate of oha reads it: one or more numbers,
+// each with a unit, such as `10s`, `500ms`, `1m 30s` or `2min`.
+pub function duration(name: string, value: string): Result[Duration, string] {
+  return humantime(name, value);
+}
+
+function humantime(name: string, value: string): Result[Duration, string] {
+  let bad = f"{name} {value} is not a duration such as 10s, 500ms or 1m";
+  let n = value.len();
+  let i = 0;
+  let total: i64 = 0;
+  let parts = 0;
+  while (i < n) {
+    if (value[i] == 32) {
+      i += 1;
+      continue;
+    }
+    let start = i;
+    while (i < n && value[i] >= 48 && value[i] <= 57) {
+      i += 1;
+    }
+    let count = unsigned(value.drop(start).take(i - start), 9000000000000000000);
+    let mark = i;
+    while (i < n && value[i] != 32 && (value[i] < 48 || value[i] > 57)) {
+      i += 1;
+    }
+    let unit = UNITS.index_of(value.drop(mark).take(i - mark)).unwrap_or(-1);
+    if (count < 0 || unit < 0 || count > 9000000000000000000 / UNIT_NS[unit] - total / UNIT_NS[unit]) {
+      return Err(bad);
+    }
+    total += count * UNIT_NS[unit];
+    parts += 1;
+  }
+  if (parts == 0) {
+    return Err(bad);
+  }
+  return Ok(time.duration_nanos(total));
+}
+
+// The rate of -q, such as `100` or `0.5`. 0 means no limit, as in oha.
+pub function rate(value: string): Result[Option[f64], string] {
   let Ok(q) = f64.parse_f64(value) else {
     return Err(f"-q {value} is not a rate such as 100 or 0.5");
   };
-  if (!(q > 0.0) || q > 1000000000.0) {
-    return Err(f"-q {value} must be more than 0 and not more than 1000000000");
+  if (q == 0.0 || q > 0.0 && !q.is_finite()) {
+    return Ok(None);
   }
-  return Ok(q);
+  if (!(q > 0.0)) {
+    return Err(f"-q {value} must be 0 or more");
+  }
+  return Ok(Some(q));
 }
 
-// A field `Name: value`, given back as `Name: value` with the spaces around
-// the value removed.
-pub function header(field: string): Result[string, string] {
-  let Some(colon) = field.index_of(":") else {
-    return Err(f"-H {field} is not a field such as \"Name: value\"");
+// A field of -H or --proxy-header, `Name: value`, as oha reads it: the name
+// is a token, which becomes lower case, and the value loses the spaces
+// before it.
+pub function field(option: string, raw: string): Result[fields.Field, string] {
+  let Some(colon) = raw.index_of(":") else {
+    return Err(f"{option} {raw} is not a field such as \"Name: value\"");
   };
-  let name = field.take(colon);
-  let value = field.drop(colon + 1).trim();
+  let name = raw.take(colon);
+  let value = raw.drop(colon + 1).trim_start_chars(" ");
   if (!token(name)) {
-    return Err(f"-H {field} has no valid field name");
+    return Err(f"{option} {raw} has no valid field name");
   }
-  for c in value.bytes() {
-    if (c == 13 as u8 || c == 10 as u8 || c == 0 as u8) {
-      return Err(f"-H {name} has a control character in its value");
-    }
+  if (!value_ok(value)) {
+    return Err(f"{option} {name} has a control character in its value");
   }
-  let lower = name.to_ascii_lower();
-  if (lower == "content-length" || lower == "transfer-encoding") {
-    return Err(f"-H {name} is not allowed: the tool frames the body of -d itself");
-  }
-  return Ok(f"{name}: {value}");
+  return Ok(fields.Field { name: name.to_ascii_lower(), value: value });
 }
 
 // Whether `s` is an HTTP token (RFC 9110 section 5.6.2).
@@ -591,118 +782,230 @@ function symbol(c: u8): boolean {
   return false;
 }
 
-// The URL of a request: the scheme, the host, the port and the target.
-pub struct Origin { tls: boolean, host: string, port: i32, target: string }
+// The default port of a scheme, as the URL standard gives it, or 0.
+function default_port(scheme: string): i32 {
+  return match (scheme) {
+    "http" => 80,
+    "ws" => 80,
+    "https" => 443,
+    "wss" => 443,
+    "ftp" => 21,
+    _ => 0,
+  };
+}
 
 // Reads an absolute URL, or a reference such as `/next` or `next` that
 // `base` resolves.
 pub function origin(raw: string, base: Origin): Result[Origin, string] {
   if (raw.starts_with("//")) {
-    let scheme = if (base.tls) { "https:" } else { "http:" };
-    return origin(scheme + raw, base);
+    return origin(base.scheme + ":" + raw, base);
   }
   if (raw.starts_with("/")) {
-    return Ok(Origin { ...base, target: raw });
+    return Ok(Origin { ...base, target: target_of(raw) });
   }
   if (raw.index_of("://").is_none()) {
     let dir = base.target.take(base.target.last_index_of("/").unwrap_or(0) + 1);
-    return Ok(Origin { ...base, target: dir + raw });
+    return Ok(Origin { ...base, target: target_of(dir + raw) });
   }
   return absolute(raw);
 }
 
-// Reads an absolute URL.
+// Reads an absolute URL. A scheme other than http and https is plain HTTP,
+// as in oha, and needs a port when it has no default.
 function absolute(raw: string): Result[Origin, string] {
   let Ok(u) = url.parse(raw) else {
     return Err(f"{raw} is not a URL");
   };
-  if (u.scheme != "http" && u.scheme != "https") {
-    return Err(f"{raw} is not an http or https URL");
-  }
   if (u.host.len() == 0) {
     return Err(f"{raw} has no host");
   }
-  let target = if (u.path.len() == 0) { "/" } else { u.path };
-  if (u.query.len() > 0) {
-    target = f"{target}?{u.query}";
+  let scheme = u.scheme.to_ascii_lower();
+  let port = if (u.port != 0) { u.port } else { default_port(scheme) };
+  if (port == 0) {
+    return Err(f"{raw} has no port");
   }
-  let tls = u.scheme == "https";
-  let port = if (u.port != 0) { u.port } else if (tls) { 443 } else { 80 };
-  return Ok(Origin { tls: tls, host: u.host, port: port, target: target });
+  let path = if (u.path.len() == 0) { "/" } else { u.path };
+  let query = if (u.query.len() > 0) { "?" + u.query } else { "" };
+  return Ok(Origin { scheme: scheme, tls: scheme == "https", host: u.host.to_ascii_lower(), port: port, target: target_of(path + query) });
 }
 
-function with_url(o: Options, raw: string): Parsed {
-  let none = Origin { tls: false, host: "", port: 0, target: "/" };
-  match (origin(raw, none)) {
-    Ok(at) => {
-      if (at.host.len() == 0) {
-        return Refused(f"{raw} is not a URL");
-      }
-      return Run(Options { ...o, tls: at.tls, host: at.host, port: at.port, target: at.target });
-    },
-    Err(why) => {
-      return Refused(why);
+// The target of a request as the URL standard writes it: no fragment, no
+// dot segments, and a percent escape for each byte that a path or a query
+// cannot hold.
+function target_of(raw: string): string {
+  let whole = raw.take(raw.index_of("#").unwrap_or(raw.len()));
+  let q = whole.index_of("?");
+  let path = url.remove_dot_segments(whole.take(q.unwrap_or(whole.len())));
+  let query = if let Some(at) = q { whole.drop(at) } else { "" };
+  return escaped(path, "\"<>`{}") + escaped(query, "\"<>'");
+}
+
+function escaped(s: string, marks: string): string {
+  let marked = marks.bytes();
+  let out: u8[] = [];
+  let hex = "0123456789ABCDEF".bytes();
+  for c in s.bytes() {
+    if (c <= 32 as u8 || c >= 127 as u8 || marked.contains(c)) {
+      out = out.append(37 as u8).append(hex[(c >> 4) as i32]).append(hex[(c & 15 as u8) as i32]);
+    } else {
+      out = out.append(c);
     }
   }
-  return Refused(f"{raw} is not a URL");
+  return utf8.from_bytes_lossy(out);
 }
 
-// The host and port that a connection to `at` goes to. --connect-to
-// changes them when it names the host and port of `at`, as in oha.
-pub function (o: Options) address(at: Origin): (string, i32) {
-  if let Some(c) = o.connect_to {
+// The host and port that a connection to `at` goes to, and the index of the
+// --connect-to entry, or -1. With several matching entries, `pick` chooses
+// among them, as oha chooses one at random.
+pub function (o: Options) address(at: Origin, pick: i32): (string, i32) {
+  let matching: ConnectTo[] = [];
+  for c in o.connect_to {
     if (c.from_host == at.host && c.from_port == at.port) {
-      return (c.to_host, c.to_port);
+      matching = matching.append(c);
     }
   }
-  return (at.host, at.port);
+  if (matching.len() == 0) {
+    return (at.host, at.port);
+  }
+  let c = matching[pick % matching.len()];
+  return (c.to_host, c.to_port);
+}
+
+// The number of --connect-to entries for `at`.
+pub function (o: Options) choices(at: Origin): i32 {
+  let n = 0;
+  for c in o.connect_to {
+    if (c.from_host == at.host && c.from_port == at.port) {
+      n += 1;
+    }
+  }
+  return n;
 }
 
 pub function (o: Options) origin(): Origin {
-  return Origin { tls: o.tls, host: o.host, port: o.port, target: o.target };
+  return Origin { scheme: o.scheme, tls: o.tls, host: o.host, port: o.port, target: o.target };
 }
 
-function authority(at: Origin): string {
-  let default_port = if (at.tls) { 443 } else { 80 };
-  if (at.port == default_port) {
-    return at.host;
+// Whether a request to `at` goes to the proxy as an absolute URL: a proxy
+// and a URL that is not https.
+pub function (o: Options) absolute_form(at: Origin): boolean {
+  return o.proxy.is_some() && !at.tls;
+}
+
+// The host and port of `at` as the URL standard writes them: a default port
+// is not there, and an IPv6 address is in brackets.
+pub function authority(at: Origin): string {
+  let host = if (at.host.index_of(":").is_some()) { f"[{at.host}]" } else { at.host };
+  if (at.port == default_port(at.scheme)) {
+    return host;
   }
-  return f"{at.host}:{at.port}";
+  return f"{host}:{at.port}";
 }
 
-// The fields of a request to `at` before the fields of -H.
-function named_fields(o: Options, at: Origin): string[] {
-  let fields = [f"Host: {authority(at)}", "User-Agent: fern-load/0.3", "Accept: */*"];
+// The URL of `at` as text.
+pub function text_of(at: Origin): string {
+  return f"{at.scheme}://{authority(at)}{at.target}";
+}
+
+// The fields of each request, in the order of oha's header map: the
+// defaults, then -A, -T or the type of the form, --host, -a, `Connection:
+// close` of --disable-keepalive, and -H. A field replaces an earlier field
+// of the same name in its place.
+pub function base_fields(o: Options): fields.Field[] {
+  let f: fields.Field[] = [];
+  f = fields.insert(f, "accept", "*/*");
   if (o.compression) {
-    fields = fields.append("Accept-Encoding: gzip, compress, deflate, br");
+    f = fields.insert(f, "accept-encoding", "gzip, compress, deflate, br");
   }
-  let named = [("Accept", o.accept), ("Content-Type", o.content_type), ("Host", o.host_field), ("Authorization", o.auth)];
+  f = fields.insert(f, "user-agent", USER_AGENT);
+  let content_type = if (o.content_type.len() > 0) { o.content_type } else { o.form_type };
+  let named = [("accept", o.accept), ("content-type", content_type), ("host", o.host_field)];
   for n in named {
     if (n.1.len() > 0) {
-      fields = with_field(fields, f"{n.0}: {n.1}");
+      f = fields.insert(f, n.0, n.1);
     }
   }
-  if (!o.keep_alive) {
-    fields = with_field(fields, "Connection: close");
+  if (o.auth.len() > 0) {
+    f = fields.insert(f, "authorization", "Basic " + base64.encode(o.auth.bytes()));
   }
-  return fields;
+  if (!o.keep_alive && o.http == HTTP_11) {
+    f = fields.insert(f, "connection", "close");
+  }
+  for h in o.headers {
+    f = fields.insert(f, h.name, h.value);
+  }
+  return f;
 }
 
-// The bytes of a request to `at`. Every request to the URL of the run is
-// the same. A redirect to another host changes the target and the Host
-// field. The fields are in the order of oha: the defaults, then -A, -T,
-// --host, -a and -H. A field replaces an earlier field of the same name.
+// The fields of a request of HTTP/1 to `at`, after `base`: the proxy fields
+// for a request to a proxy, and a Host field. A redirect away from the host
+// of `first`, the URL of the request, sends the Host field of `at`.
+pub function head_fields(o: Options, base: fields.Field[], first: Origin, at: Origin): fields.Field[] {
+  let f = base;
+  if (o.absolute_form(at)) {
+    for p in o.proxy_headers {
+      f = fields.insert(f, p.name, p.value);
+    }
+  }
+  if (authority(at) != authority(first)) {
+    f = fields.insert(f, "host", authority(at));
+  }
+  return fields.or_insert(f, "host", authority(at));
+}
+
+// The target of the request line of a request to `at`: its path and query,
+// or for a proxy its absolute URL, with the host and port of --connect-to
+// entry `pick`.
+pub function target_text(o: Options, at: Origin, pick: i32): string {
+  if (!o.absolute_form(at)) {
+    return at.target;
+  }
+  let place = o.address(at, pick);
+  return text_of(Origin { ...at, host: place.0, port: place.1 });
+}
+
+// The bytes of a request of HTTP/1 with the target `target` and the fields
+// `f`, as hyper writes them. A Transfer-Encoding field of -H makes the body
+// chunked, a Content-Length field of -H limits the body, and else a body
+// that is not empty gets a Content-Length field.
+pub function head(o: Options, f: fields.Field[], target: string, body: u8[]): u8[] {
+  let out = f;
+  let sent = body;
+  if let Some(te) = fields.get(f, "transfer-encoding") {
+    if (te.to_ascii_lower().trim().ends_with("chunked")) {
+      sent = chunked(body);
+    }
+  } else if let Some(cl) = fields.get(f, "content-length") {
+    let n = unsigned(cl.trim(), 9000000000000000000);
+    if (n >= 0 && n < body.len() as i64) {
+      sent = body.take(n as i32);
+    }
+  } else if (body.len() > 0) {
+    out = out.append(fields.Field { name: "content-length", value: body.len().to_string() });
+  }
+  let version = if (o.http == HTTP_10) { "HTTP/1.0" } else { "HTTP/1.1" };
+  let line = f"{o.method} {target} {version}\r\n" + fields.lines(out) + "\r\n";
+  return line.bytes().concat(sent);
+}
+
+function chunked(body: u8[]): u8[] {
+  if (body.len() == 0) {
+    return "0\r\n\r\n".bytes();
+  }
+  return (body.len().to_hex().to_ascii_upper() + "\r\n").bytes().concat(body).concat("\r\n0\r\n\r\n".bytes());
+}
+
+// The bytes of a request to `at` with the body of -d or -D: the request of
+// each request of a run with one URL and no signature.
 pub function request(o: Options, at: Origin): u8[] {
-  let fields = named_fields(o, at);
-  for h in o.headers {
-    fields = with_field(fields, h);
+  return head(o, head_fields(o, base_fields(o), o.origin(), at), target_text(o, at, 0), o.body);
+}
+
+// The proxy of the run, or `at` without one: where a connection to `at`
+// goes.
+pub function (o: Options) via(at: Origin): Origin {
+  if let Some(p) = o.proxy {
+    return p;
   }
-  if (at.host != o.host || at.port != o.port || at.tls != o.tls) {
-    fields = with_field(fields, f"Host: {authority(at)}");
-  }
-  if (o.body.len() > 0 || o.method == "POST" || o.method == "PUT" || o.method == "PATCH") {
-    fields = fields.append(f"Content-Length: {o.body.len()}");
-  }
-  let head = f"{o.method} {at.target} HTTP/1.1\r\n" + fields.join("\r\n") + "\r\n\r\n";
-  return head.bytes().concat(o.body);
+  return at;
 }

@@ -12,7 +12,7 @@ import (
 
 const simPlatformSuite = "tests/stdlib/sim_platform_test.fern"
 
-var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 14", "# fail 0", "1..14"}
+var simPlatformWant = []string{"# Suite: std/sim_platform", "# fail 0"}
 
 var hostProxyEnv = []string{"http_proxy=http://192.0.2.1:9", "https_proxy=http://192.0.2.1:9", "HTTPS_PROXY=http://192.0.2.1:9"}
 
@@ -30,6 +30,7 @@ func runUnderHostProxy(t *testing.T, cmd *exec.Cmd) (string, int) {
 
 func checkSimPlatformOutput(t *testing.T, leg, out string) {
 	t.Helper()
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range simPlatformWant {
 		if !strings.Contains(out, w) {
 			t.Errorf("%s: output missing %q\nfull output:\n%s", leg, w, out)

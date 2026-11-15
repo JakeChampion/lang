@@ -1593,6 +1593,18 @@ pub const MAX_NEST_DEPTH: i32 = 5000;
 
 pub const BLOCK_VALUE_REQUIRED_MESSAGE: string = "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value";
 
+// The kind of the statement that ends a value branch with no trailing
+// expression, when its statements do not end in a jump. The checker decides
+// if the statements before it end the path.
+pub const MISSING_TAIL: string = "value branch has no trailing expression";
+
+pub function is_missing_tail(st: ast.Stmt): boolean {
+  if let ast.StmtUnknown(u) = st {
+    return u.kind == MISSING_TAIL;
+  }
+  return false;
+}
+
 const BLOCK_NEST_UNITS: i32 = 8;
 
 function (p: Par) with_depth(v: i32): Par {
@@ -3928,6 +3940,9 @@ function branch_stmt_start(p: Par): boolean {
   return false;
 }
 
+// The statements end in a jump on every path: a return, a break, a continue or
+// a loop with no test. A call never counts, as only the scopes tell which
+// function a name calls.
 pub function branch_stmts_diverge(stmts: ast.Stmt[]): boolean {
   return stmts_exit(stmts, true);
 }
@@ -3943,10 +3958,6 @@ function stmt_exits(st: ast.Stmt, loops: boolean): boolean {
   match (st) {
     ast.StmtReturn(_) => {
       return true;
-    },
-    ast.StmtExpr(x) => {
-      // No scopes here, so a call through a local named exit matches too.
-      return calls_exit(x.value, false);
     },
     ast.StmtBreak(_) => {
       return true;
@@ -3980,17 +3991,6 @@ function stmt_exits(st: ast.Stmt, loops: boolean): boolean {
   }
 }
 
-// A call to the builtin exit. A desugar's call names the builtin; a written `exit(...)` does unless
-// exit_bound says a local named `exit` is in scope.
-pub function calls_exit(e: ast.Expr, exit_bound: boolean): boolean {
-  if let ast.ExprCall(c) = e {
-    if let ast.ExprIdent(id) = c.callee {
-      return id.name == "exit" && (id.builtin || !exit_bound);
-    }
-  }
-  return false;
-}
-
 function exiting_if_tail(e: ast.Expr): Option[ast.Stmt] {
   if let ast.ExprCall(c) = e {
     if let ast.ExprLambda(lam) = c.callee {
@@ -4011,7 +4011,7 @@ pub function branch_exits_early(body: ast.Stmt[]): boolean {
   return body.len() >= 2 && stmt_exits(body[body.len() - 2], false);
 }
 
-function without_last(body: ast.Stmt[]): ast.Stmt[] {
+pub function without_last(body: ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let i = 0;
   while (i + 1 < body.len()) {
@@ -4206,7 +4206,7 @@ function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
   }
   if (!have_tail) {
     if (!branch_stmts_diverge(leading)) {
-      leading = leading.append(s_unknown_at("value branch has no trailing expression", open_line, open_col));
+      leading = leading.append(s_unknown_at(MISSING_TAIL, open_line, open_col));
       return (leading, rt, false, p);
     }
     let dead = branch_dead_tail(leading);
@@ -8866,7 +8866,7 @@ pub function builtin_function_names(): string[] {
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
     "tcp_listen", "tcp_accept", "tcp_accept_with", "tcp_local_port", "tcp_send_bytes", "tcp_close", "__tcp_close_unchecked", "__fd_close", "__socket_from_fd",
     "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into",
-    "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
+    "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "vsock_connect",
     "udp_sendto_bytes",
     "udp_sendmmsg",
     "udp_recvmmsg",
@@ -11707,12 +11707,10 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
     ast.ExprArray(a) => {
       let els: ast.Expr[] = [];
       let cur = ins;
-      let i = 0;
-      while (i < a.elements.len()) {
-        let re = mono_expr(a.elements[i], env, funcs, cur);
+      for el in a.elements {
+        let re = mono_expr(el, env, funcs, cur);
         cur = re.rins;
         els = els.append(re.rexpr);
-        i += 1;
       }
       return RExpr { rexpr: ast.ExprArray { ...a, elements: els }, rins: cur };
     },
@@ -13717,6 +13715,26 @@ function erased_vars_bindable(params: ast.ParamDecl[], vars: string[]): boolean 
   return true;
 }
 
+// The limit of the levels of type arguments in an instance of a generic
+// function. A function that calls itself with a larger type has no last
+// instance. The checker reports E107 at the limit.
+pub const MAX_INSTANCE_DEPTH: i32 = 64;
+
+// The levels of `[` in the spelling of the type arguments of an instance.
+pub function type_args_depth(key: string): i32 {
+  let depth = 0;
+  let most = 0;
+  for i in 0..key.len() {
+    if (key[i] == b'[') {
+      depth += 1;
+      most = most.max(depth);
+    } else if (key[i] == b']') {
+      depth -= 1;
+    }
+  }
+  return most;
+}
+
 pub function monomorphize_all(mod: Module): Module {
   let candidates: string[] = [];
   for fd in mod.funcs {
@@ -13847,10 +13865,16 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
     let gi = bg_find(fns, nm);
     if (gi >= 0) {
       let cl = clone_bg(funcs[gi], ct, mod.impls, mod.trait_reqs, fns);
-      let cenv = env_from_params(cl.params);
-      let crb = mono_stmts(cl.body, cenv, instance_fns(fns, ct), ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
-      ins = crb.rins3;
-      rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: crb.rstmts });
+      if (type_args_depth(ct) > MAX_INSTANCE_DEPTH) {
+        // The body of this instance asks for a larger one. A body that
+        // does not return ends the chain.
+        rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: [s_while(e_bool(true), [])] });
+      } else {
+        let cenv = env_from_params(cl.params);
+        let crb = mono_stmts(cl.body, cenv, instance_fns(fns, ct), ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
+        ins = crb.rins3;
+        rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: crb.rstmts });
+      }
     }
     wi += 1;
   }
@@ -22346,6 +22370,12 @@ pub function is_inherited_default(impls: ImplInfo[], reqs: TraitReq[], fd: FuncD
     }
   }
   return false;
+}
+
+// The function is the `drop` of its receiver type.
+pub function drop_provider(fd: FuncDecl): boolean {
+  let provider = fd.impl_trait == "Drop" || fd.impl_trait == "" && util.index_of_str(fd.dyn_traits, "Drop") >= 0;
+  return provider && derive_simple_name(fd.name) == "drop" && fd.receiver_type != "";
 }
 
 pub function derive_simple_name(name: string): string {

@@ -1,0 +1,12 @@
+struct W[T] { v: T }
+
+function f[T](x: T, n: i32): i32 {
+  if (n == 0) {
+    return 0;
+  }
+  return f(W[T] { v: x }, n - 1);
+}
+
+function main(): i32 {
+  return f(1, 3);
+}
