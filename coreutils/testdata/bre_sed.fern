@@ -179,6 +179,22 @@ function check_ranges(): i32 {
   return 0;
 }
 
+// The classes come from the libc of GNU sed on the target. Darwin puts
+// U+0663 in [[:digit:]], and glibc puts it in [[:alpha:]].
+function check_classes(): i32 {
+  let three = "٣";
+  let darwin = target_os() == "darwin";
+  let digit = utf8_span("[[:digit:]]", three, true);
+  let alpha = utf8_span("[[:alpha:]]", three, true);
+  if (darwin && (digit != "0,2;" || alpha != "none")) {
+    return 85;
+  }
+  if (!darwin && (digit != "none" || alpha != "0,2;")) {
+    return 86;
+  }
+  return 0;
+}
+
 function check_search_from(): i32 {
   let re = bre.bre_compile_syntax("^a\\|\\<b", bre.sed_syntax(false, false, false, false));
   let text = "aab b".bytes();
@@ -306,6 +322,10 @@ function main(): i32 {
     return r;
   }
   r = check_ranges();
+  if (r != 0) {
+    return r;
+  }
+  r = check_classes();
   if (r != 0) {
     return r;
   }

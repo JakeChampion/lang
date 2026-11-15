@@ -1,6 +1,6 @@
 import "std/string";
 import "std/array";
-import "./glibc_ctype";
+import "./libc_ctype";
 
 enum Input { Text(string, i32), Bytes(u8[], i32) }
 
@@ -123,7 +123,7 @@ function backref_end(re: Bre, t: Input, pos: i32, s: i32, n: i32, hi: i32): i32 
       if (a.0 >= 0 || b.0 >= 0 || t.at(i) != t.at(j)) {
         return -1;
       }
-    } else if (glibc_ctype.upper(a.0) != glibc_ctype.upper(b.0)) {
+    } else if (libc_ctype.upper(a.0) != libc_ctype.upper(b.0)) {
       return -1;
     }
     i += a.1;
@@ -962,10 +962,10 @@ function cps_valid(): i32[] {
   return [0, 55295, 57344, 1114111];
 }
 
-// uc_class gives the code points of a character class as glibc gives them
-// in C.UTF-8.
+// uc_class gives the code points of a character class as the libc of GNU
+// sed on the target gives them in C.UTF-8.
 function uc_class(name: string): i32[] {
-  return glibc_ctype.class_ranges(name);
+  return libc_ctype.class_ranges(name);
 }
 
 // The characters of \w, and of the word assertions.
@@ -1005,11 +1005,11 @@ function fold_index(f: Folds, cp: i32): i32 {
 }
 
 function fold_classes(): Folds {
-  let cps = glibc_ctype.case_points();
+  let cps = libc_ctype.case_points();
   let ups: i32[] = [];
   let moved: i32[] = [];
   for c in cps {
-    let u = glibc_ctype.upper(c);
+    let u = libc_ctype.upper(c);
     ups = ups.append(u);
     if (u != c) {
       moved = cps_push(moved, c, c);
@@ -1050,16 +1050,16 @@ function fold_set(f: Folds, s: i32[]): i32[] {
     if (!cps_has(s, c)) {
       continue;
     }
-    let uc = glibc_ctype.upper(c);
-    let lc = glibc_ctype.lower(uc);
+    let uc = libc_ctype.upper(c);
+    let lc = libc_ctype.lower(uc);
     if (uc != c) {
       mark = mark.with(fold_index(f, uc), 1 as u8);
     }
-    if (lc != uc && lc != c && glibc_ctype.upper(lc) == uc) {
+    if (lc != uc && lc != c && libc_ctype.upper(lc) == uc) {
       mark = mark.with(fold_index(f, lc), 1 as u8);
     }
     for li in lone_lowers() {
-      if (li != lc && li != uc && li != c && glibc_ctype.upper(li) == uc) {
+      if (li != lc && li != uc && li != c && libc_ctype.upper(li) == uc) {
         mark = mark.with(fold_index(f, li), 1 as u8);
       }
     }
@@ -1210,7 +1210,7 @@ function utf8_char_node(p0: P, cp: i32): (P, i32) {
   let p = p0;
   if (p.icase) {
     let fs: (P, Folds) = folds_of(p);
-    let u = glibc_ctype.upper(cp);
+    let u = libc_ctype.upper(cp);
     let s = if (fs.0.gate) { fold_set(fs.1, [cp, cp]) } else { upper_preimage(fs.1, [u, u]) };
     p = P { ...fs.0, gap: fs.0.gap || !fs.0.gate && gap_upper(u) };
     if (s.len() != 2 || s[0] != cp || s[1] != cp) {
@@ -1357,7 +1357,7 @@ function utf8_item(p: P, k: i32): UItem {
 // the names of classes and the escaped bytes.
 function pat_upper(p: P, cp: i32): i32 {
   if (p.icase && !p.gate && cp >= 0) {
-    return glibc_ctype.upper(cp);
+    return libc_ctype.upper(cp);
   }
   return cp;
 }
