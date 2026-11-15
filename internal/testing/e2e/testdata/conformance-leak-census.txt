@@ -16,6 +16,7 @@
 a_binding_arm_can_follow_a_literal_arm               0
 a_branch_that_returns_gives_its_if_expression_no_type 0
 a_builtin_method_does_not_see_the_programs_variants  0
+a_closure_in_a_generic_function_captures_a_function_of_its_type_parameter 0
 a_const_in_a_tuple_or_payload_pattern_matches_its_value 0
 a_deep_type_argument_that_does_not_grow_is_accepted  0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0

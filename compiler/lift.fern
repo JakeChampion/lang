@@ -568,33 +568,51 @@ function lambda_captures(lam: ast.ExprLambda, fd: parser.FuncDecl): string[] {
   return names;
 }
 
-function capture_tvar(t: typeinfo.Type): string {
+// named_tvars gives each type variable in t the type of its own name, so
+// that the spelling of a capture keeps the variable.
+function named_tvars(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeErased(e) = t {
-    return e.name;
+    return typeinfo.TypeStruct { name: e.name, args: [] };
   }
   if let typeinfo.TypeUnknown(u) = t {
     let tv = checker.typevar_reason_name(u.reason);
     if (parser.looks_type_var(tv)) {
-      return tv;
+      return typeinfo.TypeStruct { name: tv, args: [] };
     }
   }
   if let typeinfo.TypeArray(a) = t {
-    let elem = capture_tvar(a.elem);
-    if (elem.len() > 0) {
-      return elem + "[]";
-    }
+    return typeinfo.TypeArray { ...a, elem: named_tvars(a.elem) };
   }
-  return "";
+  if let typeinfo.TypeStruct(st) = t {
+    return typeinfo.TypeStruct { ...st, args: named_tvars_each(st.args) };
+  }
+  if let typeinfo.TypeTuple(p) = t {
+    return typeinfo.TypeTuple { elements: named_tvars_each(p.elements) };
+  }
+  if let typeinfo.TypeMap(m) = t {
+    return typeinfo.TypeMap { key: named_tvars(m.key), value: named_tvars(m.value) };
+  }
+  if let typeinfo.TypeUnion(un) = t {
+    return typeinfo.TypeUnion { ...un, args: named_tvars_each(un.args) };
+  }
+  if let typeinfo.TypeFunc(f) = t {
+    return typeinfo.TypeFunc { ...f, param_types: named_tvars_each(f.param_types), ret_type: named_tvars(f.ret_type) };
+  }
+  return t;
+}
+
+function named_tvars_each(ts: typeinfo.Type[]): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for t in ts {
+    out = out.append(named_tvars(t));
+  }
+  return out;
 }
 
 function lambda_capture_param(lam: ast.ExprLambda, name: string): ast.ParamDecl {
   for cap in lam.captures {
     if (cap.name == name) {
-      let tv = capture_tvar(cap.ty);
-      if (tv.len() > 0) {
-        return ast.ParamDecl { ...decltypes.param_from_type(name, cap.ty), type_name: tv };
-      }
-      return decltypes.param_from_type(name, cap.ty);
+      return decltypes.param_from_type(name, named_tvars(cap.ty));
     }
   }
   return decltypes.param_from_type(name, typeinfo.unchecked());
@@ -609,11 +627,7 @@ function lambda_capture_type(lam: ast.ExprLambda, name: string): string {
       if let typeinfo.TypeString(s) = cap.ty {
         return "string";
       }
-      let tv = capture_tvar(cap.ty);
-      if (tv.len() > 0) {
-        return tv;
-      }
-      return decltypes.capture_spelling(cap.ty);
+      return decltypes.capture_spelling(named_tvars(cap.ty));
     }
   }
   return "";
