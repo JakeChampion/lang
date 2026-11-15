@@ -4181,7 +4181,7 @@ function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boole
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false, load_bits: 0, load_at: 0, load_right: false });
 }
 
 function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
