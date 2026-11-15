@@ -60,6 +60,14 @@ nothing about `i` (`AB-10`), and a scaled index that wraps negative fails
 its own `>= 0` guard (`AB-14`). `docs/security/ARITHMETIC-AUDIT.md`
 records the rules the proofs use.
 
+## Lane loads and stores
+
+A lane load or store of `std/simd` is an access of 16 bytes from its index.
+The 16 bytes must be in the array or view: the index is not negative, and the
+index plus 16 is not more than the length. A load that is not in range aborts
+with the cause line of an index (`AB-15`), and so does a store (`AB-16`). The
+natives, wasm and the two interpreters agree.
+
 ## Proofs from accesses and loop versions (#15975)
 
 A write `a.with(i, v)` has no check when an access of the same index ran

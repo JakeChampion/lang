@@ -745,6 +745,8 @@ oob_index_wrapped                                    0
 oob_index_wrapped_guard                              0
 # The program stops through exit(134), which does not unwind. The copy that `.with` makes before its bounds check is live.
 oob_index_write                                      1
+oob_lane_load_past_length                            0
+oob_lane_store_past_length                           1
 oob_loop_guard_past_length                           0
 oob_slice_negative_start                             0
 oob_slice_range                                      0
