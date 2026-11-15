@@ -11,7 +11,9 @@ The listener runs on the main thread of the app. Each callback sends an event to
 
 `open` starts to prepare a stream, and `Prepared` comes when the player can start. `show` puts the video on the window of the activity: it calls `Window.release_cpu` first, because a window has one producer of pixels at a time. `hide` takes the video off the window, so the app can lock the window and draw on it again. Do not lock the window between `show` and `hide`.
 
-`Buffering(true)` and `Buffering(false)` come when the player waits for the network and when it plays again. `Rendering` comes when the first video frame shows. `AudioNotPlaying` and `VideoNotPlaying` come when one track stops while the other plays on, for example when no decoder takes the sound. `has_audio` tells whether the player selected a sound track at all: a track that the extractor cannot read is not selected. `Failed` has the `what` and `extra` codes of `MediaPlayer.OnErrorListener`.
+`Buffering(true)` and `Buffering(false)` come when the player waits for the network and when it plays again. `Rendering` comes when the first video frame shows. `AudioNotPlaying` and `VideoNotPlaying` come when one track stops while the other plays on, for example when no decoder takes the sound. `has_audio` tells whether the player selected a sound track at all: a track that the extractor cannot read is not selected.
+
+`audio_tracks` gives the index of each sound track of the stream, in the order of the file, and `select_track` plays the track with an index. `Failed` has the `what` and `extra` codes of `MediaPlayer.OnErrorListener`.
 
 `target` makes a `SurfaceTexture` of Android on an external texture of `std/android/gl`, and a `Surface` that feeds it. `show_target` puts the video on that surface in place of the window. The app then draws each frame with the GPU, for example with bars that keep the shape of the video.
 
@@ -671,6 +673,46 @@ pub function has_audio(ctx: usize, p: Player): boolean {
   let track = jni.call_int_method_a(e, p.obj, id, values);
   jni.free_buffer(values);
   return !cleared(e) && track >= 0;
+}
+
+// The index of each sound track of the prepared player, in the order of
+// the file.
+pub function audio_tracks(ctx: usize, p: Player): i32[] {
+  let e: usize = android.env(ctx);
+  let out: i32[] = [];
+  if (!begin(e)) {
+    return out;
+  }
+  defer end(e);
+  let infos = call_object(e, p.obj, "getTrackInfo", "()[Landroid/media/MediaPlayer$TrackInfo;", []);
+  if (infos == 0 as usize) {
+    return out;
+  }
+  let n = jni.get_array_length(e, infos);
+  if (cleared(e)) {
+    return out;
+  }
+  for i in 0..n {
+    let info = jni.get_object_array_element(e, infos, i);
+    if (cleared(e) || info == 0 as usize) {
+      return out;
+    }
+    if (call_int(e, info, "getTrackType") == TRACK_AUDIO) {
+      out = out.append(i);
+    }
+    let _ = jni.delete_local_ref(e, info);
+  }
+  return out;
+}
+
+// Plays the track with the index `index`.
+pub function select_track(ctx: usize, p: Player, index: i32): boolean {
+  let e: usize = android.env(ctx);
+  if (!begin(e)) {
+    return false;
+  }
+  defer end(e);
+  return call_void(e, p.obj, "selectTrack", "(I)V", [index as usize]);
 }
 
 // The width and the height of the video, or 0 and 0 for audio.

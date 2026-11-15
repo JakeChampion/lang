@@ -292,6 +292,8 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]]): control.D
     duration: (): i64 => duration(ctx, p, has),
     stop: (): void => stop(ctx, p, has),
     has_audio: (): boolean => has && player.has_audio(ctx, p),
+    audio_tracks: (): i32[] => sound_tracks(ctx, p, has),
+    select_track: (i: i32): boolean => has && player.select_track(ctx, p, i),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
   };
@@ -333,6 +335,13 @@ function stop(ctx: usize, p: player.Player, has: boolean): void {
   if (has) {
     player.stop(ctx, p);
   }
+}
+
+function sound_tracks(ctx: usize, p: player.Player, has: boolean): i32[] {
+  if (has) {
+    return player.audio_tracks(ctx, p);
+  }
+  return [];
 }
 
 function app_main(ctx: usize): usize {

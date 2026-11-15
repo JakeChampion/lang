@@ -39,6 +39,10 @@ Playback:
 
 Music plays with the controls on the screen.
 
+The Tracks button of the player chooses the sound and the subtitles, and
+the server remembers the choice. A file that plays as it is changes its
+sound in place. Subtitles burn into a transcode.
+
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
 sound. When the phone decodes only the video, the server copies the video
