@@ -8647,7 +8647,7 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
   for m in c.modes {
     bits = bits.append(m == ssaunits.counted_mode());
   }
-  return ownership.Escapes { name: c.name, bits: bits, lends: may_hold_view(c.result) && !ssasem.fresh_result_builtin(c.name) && !rtbytecopy.is_helper(c.name), cycle: -1, quiet: [] };
+  return ownership.Escapes { name: c.name, bits: bits, lends: may_hold_view(c.result) && !ssasem.fresh_result_builtin(c.name) && !rtbytecopy.is_helper(c.name), cycle: -1, quiet: [], eager: [] };
 }
 
 // The types of builtins.fern that hold no view and no function.
@@ -8769,7 +8769,11 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
   let comp = ownership.cycles(succ);
   let out_rows: ownership.Escapes[] = [];
   for k in 0..rows.len() {
-    out_rows = out_rows.append(ownership.Escapes { ...rows[k], cycle: comp[k], quiet: slots[k] });
+    let eager: boolean[] = [];
+    if (comp[k] >= 0) {
+      eager = slots[k];
+    }
+    out_rows = out_rows.append(ownership.Escapes { ...rows[k], cycle: comp[k], quiet: slots[k], eager: eager });
   }
   return out_rows;
 }
@@ -8823,7 +8827,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     modes_change = modes_change.append(inferred_modes_change(all[i]));
     kernel = kernel.append(kernel_named(all[i], names[i], lowered));
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !taken_ix.has(names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: row_bits(all[i], [], kernel[i]), lends: false, cycle: -1, quiet: [] });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: row_bits(all[i], [], kernel[i]), lends: false, cycle: -1, quiet: [], eager: [] });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
@@ -8862,22 +8866,65 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     wi += 1;
     queued = queued.with(i, false);
     let at = own_row[i];
+    let lazy = without_kept_alive(rows, ix, all[i], analyses[i]);
+    rows = lazy.rows;
+    let again = lazy.again;
     if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
       let transfers = ownership.transfers(all[i].func, analyses[i], rows, ix, modes_change[i]);
       let next = row_bits(all[i], transfers.escapes, kernel[i]);
       let lends = rows[at].lends || transfers.lends;
       if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
         rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
-        for j in readers[at] {
-          if (!queued[j]) {
-            work = work.append(j);
-            queued = queued.with(j, true);
-          }
-        }
+        again = again.append(at);
       }
+    }
+    for row in again {
+      let next = with_queued(Worklist { work: work, queued: queued }, util.append_all(readers[row], row_owners(own_row, row)));
+      work = next.work;
+      queued = next.queued;
     }
   }
   return rows;
+}
+
+struct Worklist { work: i32[], queued: boolean[] }
+
+function with_queued(own q: Worklist, more: i32[]): Worklist {
+  for j in more {
+    if (!q.queued[j]) {
+      q = Worklist { work: q.work.append(j), queued: q.queued.with(j, true) };
+    }
+  }
+  return q;
+}
+
+struct Lazy { rows: ownership.Escapes[], again: i32[] }
+
+// Clears each eager slot that a call of `p` gives a value that lives on.
+// `again` has the rows that changed.
+function without_kept_alive(own rows: ownership.Escapes[], ix: ownership.Index, p: Produced, a: ssasem.Analysis): Lazy {
+  let again: i32[] = [];
+  if (!p.ok) {
+    return Lazy { rows: rows, again: again };
+  }
+  for slot in ownership.kept_alive(p.func, a, rows, ix) {
+    if (ownership.eager_slot(rows, slot.row, slot.at)) {
+      rows = rows.with(slot.row, ownership.Escapes { ...rows[slot.row], eager: rows[slot.row].eager.with(slot.at, false) });
+      again = again.append(slot.row);
+    }
+  }
+  return Lazy { rows: rows, again: again };
+}
+
+// The functions that have this row.
+function row_owners(own_row: i32[], row: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..own_row.len() {
+    if (own_row[i] == row) {
+      out = out.append(i);
+    }
+  }
+  return out;
 }
 
 function row_readers(all: Produced[], own_row: i32[], rows: ownership.Escapes[], ix: ownership.Index): i32[][] {
