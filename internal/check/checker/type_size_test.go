@@ -67,3 +67,48 @@ func TestFailedArgumentDoesNotReportTypeParameter(t *testing.T) {
 		t.Errorf("want no E040, got:\n%s", msg)
 	}
 }
+
+// nested is a main function whose let has depth levels of open and close
+// around core, with the annotation written before the value.
+func nested(annotation, open, core, close string, depth int) string {
+	return "function main(): i32 {\n\tlet x" + annotation + " = " +
+		strings.Repeat(open, depth) + core + strings.Repeat(close, depth) + ";\n\treturn 0;\n}\n"
+}
+
+// A type of 64 levels checks. One level more is the one E106, on the first
+// value that is over the limit, and the check of a much deeper value ends.
+func TestTypeDepthLimit(t *testing.T) {
+	deepType := func(depth int) string {
+		return ": " + strings.Repeat("Option[", depth) + "i32" + strings.Repeat("]", depth)
+	}
+	cases := []struct {
+		name   string
+		accept string
+		refuse string
+		deep   string
+	}{
+		{"constructor", nested("", "Some(", "1", ")", 63), nested("", "Some(", "1", ")", 64), nested("", "Some(", "1", ")", 2000)},
+		{"array literal", nested("", "[", "1", "]", 63), nested("", "[", "1", "]", 64), nested("", "[", "1", "]", 2000)},
+		{"tuple", nested("", "(1, ", "2", ")", 63), nested("", "(1, ", "2", ")", 64), nested("", "(1, ", "2", ")", 2000)},
+		{"written type", nested(deepType(63), "", "None", "", 0), nested(deepType(64), "", "None", "", 0), nested(deepType(2000), "", "None", "", 0)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if msg := checkSrc(t, tc.accept); msg != "" {
+				t.Fatalf("64 levels: %s", msg)
+			}
+			msg := checkSrc(t, tc.refuse)
+			if n := strings.Count(msg, "type nests deeper than 64 levels"); n != 1 {
+				t.Errorf("65 levels: want one E106 for the depth, got %d:\n%s", n, msg)
+			}
+			start := time.Now()
+			msg = checkSrc(t, tc.deep)
+			if took := time.Since(start); took > 5*time.Second {
+				t.Errorf("2000 levels took %v", took)
+			}
+			if n := strings.Count(msg, "type nests deeper than 64 levels"); n != 1 {
+				t.Errorf("2000 levels: want one E106, got %d", n)
+			}
+		})
+	}
+}

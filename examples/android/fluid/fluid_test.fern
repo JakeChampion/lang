@@ -65,7 +65,7 @@ function test_settings_report_what_they_cannot_read(): test.TestOutcome {
 }
 
 function test_each_setting_has_a_reader(): test.TestOutcome {
-  let ok = config.keys().len() == 25;
+  let ok = config.keys().len() == 26;
   for key in config.keys() {
     ok = ok && !message(key, "x!").starts_with("Unknown");
   }
@@ -79,40 +79,45 @@ function test_resolution_is_on_the_short_side(): test.TestOutcome {
   return test.assert_true(w == 228 && h == 128 && tw == 128 && th == 228 && sw == 64 && sh == 64);
 }
 
-// The steps of one second of frames at `hz` frames in a second.
-function steps_in_a_second(hz: i32): i32 {
+// The seconds of the simulation in one second of frames at `hz` frames in
+// a second, and the most steps of one frame.
+function one_second(hz: i32): (f64, i32) {
   let c = clock.new(0i64);
-  let total = 0;
+  let total = 0.0;
+  let most = 0;
   for i in 1..hz + 1 {
     let (ticked, dt) = c.frame(i as i64 * 1000000000i64 / (hz as i64));
-    let (next, n) = ticked.advance(dt);
-    c = next;
-    total += n;
+    let (n, size) = clock.steps(dt);
+    c = ticked;
+    total += n as f64 * size;
+    most = most.max(n);
   }
-  return total;
+  return (total, most);
 }
 
 function test_clock_has_the_same_rate_on_each_display(): test.TestOutcome {
-  let at_30 = steps_in_a_second(30);
-  let at_60 = steps_in_a_second(60);
-  let at_120 = steps_in_a_second(120);
-  return test.assert_true((at_30 - 60).abs() <= 1 && (at_60 - 60).abs() <= 1 && (at_120 - 60).abs() <= 1);
+  let (at_30, steps_30) = one_second(30);
+  let (at_60, steps_60) = one_second(60);
+  let (at_90, steps_90) = one_second(90);
+  let (at_120, steps_120) = one_second(120);
+  let same = (at_30 - 1.0).abs() < 0.000001 && (at_60 - 1.0).abs() < 0.000001 && (at_90 - 1.0).abs() < 0.000001 && (at_120 - 1.0).abs() < 0.000001;
+  return test.assert_true(same && steps_30 == 2 && steps_60 == 1 && steps_90 == 1 && steps_120 == 1);
 }
 
 function test_clock_limits_a_long_frame(): test.TestOutcome {
   let c = clock.new(1000000000i64);
   let (after, long) = c.frame(9000000000i64);
   let (back, negative) = after.frame(0i64);
-  let (dropped, steps) = after.advance(long);
-  return test.assert_true(long == clock.MAX_FRAME_TIME && negative == 0.0 && steps == clock.MAX_SUBSTEPS && dropped.backlog == 0.0);
+  let (steps, size) = clock.steps(long);
+  return test.assert_true(long == clock.MAX_FRAME_TIME && negative == 0.0 && steps == clock.MAX_SUBSTEPS && size == clock.MAX_STEP);
 }
 
-function test_clock_keeps_a_part_of_a_step(): test.TestOutcome {
-  let c = clock.new(0i64);
-  let (a, none) = c.advance(0.010);
-  let (b, one) = a.advance(0.010);
-  let (d, cleared) = b.clear().advance(0.010);
-  return test.assert_true(none == 0 && one == 1 && cleared == 0 && b.backlog > 0.003 && b.reset(5i64).backlog == 0.0);
+function test_each_frame_has_a_step_of_its_own_time(): test.TestOutcome {
+  let (none, zero) = clock.steps(0.0);
+  let (one, late) = clock.steps(0.018);
+  let (two, half) = clock.steps(0.034);
+  let (fast, short) = clock.steps(0.008333);
+  return test.assert_true(none == 0 && zero == 0.0 && one == 1 && late == 0.018 && two == 2 && half == 0.017 && fast == 1 && short == 0.008333);
 }
 
 function test_colours_go_around_the_wheel(): test.TestOutcome {
@@ -148,7 +153,7 @@ function layout(): fluid.Layout {
 
 const SECOND: i64 = 1000000000i64;
 
-// The time of a frame that is a little longer than a step of the clock.
+// The time of a frame of a display of 60 Hz that comes a little late.
 const TICK: i64 = 17000000i64;
 
 function started(still: boolean): fluid.Model {
@@ -163,7 +168,7 @@ function test_app_starts_with_a_burst(): test.TestOutcome {
   let m = started(false);
   let (after, fr) = m.frame(TICK);
   let (later, second) = after.frame(2i64 * TICK);
-  return test.assert_true(!m.cfg.paused && fr.burst >= 5 && fr.burst <= 24 && fr.steps == 1 && fr.draw && second.burst == 0 && second.draw && later.animating(40i64));
+  return test.assert_true(!m.cfg.paused && fr.burst >= 5 && fr.burst <= 24 && fr.steps == 1 && fr.step == 0.017 && fr.draw && second.burst == 0 && second.draw && later.animating(40i64));
 }
 
 function test_no_animation_starts_still_until_a_touch(): test.TestOutcome {
@@ -364,9 +369,9 @@ function main(): i32 {
   r = r.it("settings report a name or a value that they cannot read", test_settings_report_what_they_cannot_read);
   r = r.it("each setting name has a reader", test_each_setting_has_a_reader);
   r = r.it("a texture has its resolution on the short side of the window", test_resolution_is_on_the_short_side);
-  r = r.it("the clock has the same rate on each display", test_clock_has_the_same_rate_on_each_display);
+  r = r.it("the fluid has the same rate on each display, with one step for a frame", test_clock_has_the_same_rate_on_each_display);
   r = r.it("the clock limits a long frame and drops the time that it cannot use", test_clock_limits_a_long_frame);
-  r = r.it("the clock keeps a part of a step for the next frame", test_clock_keeps_a_part_of_a_step);
+  r = r.it("each frame has one step of its own time, and a long frame has more", test_each_frame_has_a_step_of_its_own_time);
   r = r.it("colours go around the wheel, and a dye colour is dim", test_colours_go_around_the_wheel);
   r = r.it("the app starts with a burst", test_app_starts_with_a_burst);
   r = r.it("with no animations, the app starts still until a touch", test_no_animation_starts_still_until_a_touch);

@@ -283,7 +283,8 @@ generations differ, so a call that ended does not resume a different task.
 
 **A handle that names no task.** `Task` is an opaque struct, so only
 `std/async` builds a handle or reads its fields. A program that writes one
-gets E021. `task_id` and `task_entry` read the id and the entry.
+gets E021. `Call` is opaque also, so a program cannot give a parked call a
+different function or generation. `task_id` and `task_entry` read the id and the entry.
 `task_adopted(id, entry)` rebuilds the handle of a parked task from them. It
 is an unsafe function, because its caller proves that the id and the entry
 belong to one parked task. `std/sim` uses it for a worker that waits in a

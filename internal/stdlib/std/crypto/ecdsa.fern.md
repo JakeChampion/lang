@@ -64,6 +64,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module provides ECDSA operations for the NIST P-256 and P-384 curves.
+import "std/array";
 import "std/bigint";
 import "std/crypto";
 import "std/crypto/sha2";
@@ -473,7 +474,7 @@ pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] 
   if (!__scalar_ok(curve, d)) {
     return Err(ScalarRange);
   }
-  return Ok(PrivateKey { curve: curve, d: __copy(d) });
+  return Ok(PrivateKey { curve: curve, d: __bytes_owned(d) });
 }
 
 // Consumes this key holder. Zeroes uniquely held secret arrays before release.
@@ -496,14 +497,6 @@ function __scalar_ok(curve: Curve, d: [u8]): boolean {
   }
   let s = __signer(curve);
   return d.len() == s.bytes && __revealed(mont.in_range(s.fn, d));
-}
-
-function __copy(b: [u8]): u8[] {
-  let out: u8[] = [];
-  for x in b {
-    out = out.append(x);
-  }
-  return out;
 }
 ```
 
@@ -760,17 +753,11 @@ function __mac(h: sha2.Hash, key: [u8], msg: [u8]): u8[] {
 }
 
 function __cat3(a: [u8], tag: i32, b: [u8], c: [u8]): u8[] {
-  let out = __copy(a);
+  let out = __bytes_owned(a);
   if (tag >= 0) {
     out = out.append(tag as u8);
   }
-  for x in b {
-    out = out.append(x);
-  }
-  for x in c {
-    out = out.append(x);
-  }
-  return out;
+  return out.concat(b).concat(c);
 }
 
 // The DRBG's key, its value and every message it feeds the MAC carry the private

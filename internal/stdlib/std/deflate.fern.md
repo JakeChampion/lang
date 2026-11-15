@@ -34,19 +34,17 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<8 function __fail(own s: __State, e: InflateError): __State>>
 
-<<9 struct __Huff>>
+<<9 decode table entries>>
 
-<<10 function __construct(lengths: i32[], n: i32): __Huff>>
+<<10 the decode table of a code>>
 
-<<11 const LENGTH_BASE: i32[]>>
+<<11 table bits>>
 
-<<12 function __table(h: __Huff, bits: i32, lit: boolean): i32[]>>
+<<12 the read of one symbol>>
 
-<<13 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff, lit: i32[], dtab: i32[]): __State>>
+<<13 the decode loops>>
 
 <<14 function __fixed(own s: __State, data: [u8]): __State>>
-
-<<15 function __repeated(own lengths: i32[], times: i32, value: i32): i32[]>>
 
 <<16 pub function gunzip(input: [u8], max_out: i32): Result[u8[], InflateError]>>
 
@@ -184,14 +182,19 @@ pub function inflate_after(history: [u8], input: [u8], max_out: i32): Result[Inf
 
 ### `6 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError]`
 
+The output buffer is longer than the output. `n` counts the bytes that the
+decoder wrote, and the decoder writes at an index. The length of the buffer
+goes down to `n` at the end.
+
 ```fern
 <<6 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError]>>=
 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
   let out = history;
-  if (history.len() == 0) {
+  let n = history.len();
+  if (n == 0) {
     out = __room(input.len() - from, max_out);
   }
-  let s = __State { pos: from, bitbuf: 0, bitcnt: 0, out: out, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
+  let s = __State { pos: from, bitbuf: 0, bitcnt: 0, out: out, n: n, max_out: max_out + n, last: 0, failed: false, error: Truncated, lengths: [], counts: [] };
   let done = false;
   while (!done && !s.failed) {
     s = __bits(s, input, 1);
@@ -203,27 +206,62 @@ function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result
   if (s.failed) {
     return Err(s.error);
   }
-  return Ok(Inflated { out: s.out, consumed: s.pos - from });
+  return Ok(Inflated { out: __produced(s.out, s.n), consumed: s.pos - from });
 }
 
+// The bytes past the output that the fast loop can write: three literals,
+// or a match of 258 bytes and the 15 bytes that a copy of 16 bytes can pass
+// its end. It is more than the 511 + 31 that the masks of a length in
+// `__fast` allow, so the bounds prover finds that the output index does not
+// overflow. The masks of a distance keep it from being negative.
+const SLACK: i32 = 600;
+
 // Room for four times the input, at least 4 KiB and at most the output
-// limit, so the output rarely grows and copies.
+// limit, and SLACK - 3 more, so the output rarely grows and copies. With at
+// most SLACK - 3 bytes past the limit, the fast loop can write three
+// literals wherever it has room for SLACK bytes.
 function __room(avail: i32, max_out: i32): u8[] {
-  unsafe {
-    let want = avail as i64 * 4i64;
-    if (want < 4096i64) {
-      want = 4096i64;
-    }
-    if (want > max_out as i64) {
-      want = max_out as i64;
-    }
-    if (want < 0i64) {
-      want = 0i64;
-    }
-    let out = __alloc_u8(want as i32);
-    __arr_set_len(out, 0);
-    return out;
+  let want = avail as i64 * 4i64;
+  if (want < 4096i64) {
+    want = 4096i64;
   }
+  if (want > max_out as i64) {
+    want = max_out as i64;
+  }
+  if (want < 0i64) {
+    want = 0i64;
+  }
+  return __alloc_u8(__capped(want + (SLACK - 3) as i64));
+}
+
+function __capped(want: i64): i32 {
+  if (want > 2147483647i64) {
+    return 2147483647;
+  }
+  return want as i32;
+}
+
+// A buffer with the first `n` bytes of `out` and room for `need` more,
+// at least twice as long as `out`, and at most SLACK - 3 past the output
+// limit.
+function __grown(own out: u8[], n: i32, need: i32, max_out: i32): u8[] {
+  let want = cmp.max(out.len() as i64 * 2i64, n as i64 + need as i64 + 2i64 * (SLACK as i64));
+  want = cmp.min(want, max_out as i64 + (SLACK - 3) as i64);
+  want = cmp.max(want, n as i64 + need as i64);
+  let bigger = __alloc_u8(__capped(want));
+  let i = 0;
+  while (i < n) {
+    bigger = bigger.with(i, out[i]);
+    i += 1;
+  }
+  return bigger;
+}
+
+function __produced(own out: u8[], n: i32): u8[] {
+  unsafe {
+    __arr_set_len(out, n);
+  }
+  return out;
 }
 ```
 
@@ -231,7 +269,7 @@ function __room(avail: i32, max_out: i32): u8[] {
 
 ```fern
 <<7 struct __State>>=
-struct __State { pos: i32, bitbuf: i32, bitcnt: i32, out: u8[], max_out: i32, last: i32, distance: i32, failed: boolean, error: InflateError, lengths: i32[] }
+struct __State { pos: i32, bitbuf: i32, bitcnt: i32, out: u8[], n: i32, max_out: i32, last: i32, failed: boolean, error: InflateError, lengths: i32[], counts: i32[] }
 ```
 
 ### `8 function __fail(own s: __State, e: InflateError): __State`
@@ -242,7 +280,7 @@ function __fail(own s: __State, e: InflateError): __State {
   if (s.failed) {
     return s;
   }
-  return __State { ...s, failed: true, error: e, last: 0, distance: 0 };
+  return __State { ...s, failed: true, error: e, last: 0 };
 }
 
 function __block(own s: __State, data: [u8], kind: i32): __State {
@@ -291,132 +329,225 @@ function __stored(own s: __State, data: [u8]): __State {
   if (at + len > data.len()) {
     return __fail(s, Truncated);
   }
-  if (s.out.len() + len > s.max_out) {
+  if (s.n + len > s.max_out) {
     return __fail(s, OutputLimit);
   }
   let out = s.out;
+  let n = s.n;
   s = __State { ...s, out: [] };
+  if (n + len > out.len()) {
+    out = __grown(out, n, len, s.max_out);
+  }
   let i = 0;
   while (i < len) {
-    out = out.append(data[at + i]);
+    out = out.with(n + i, data[at + i]);
     i += 1;
   }
-  return __State { ...s, pos: at + len, out: out };
+  return __State { ...s, pos: at + len, out: out, n: n + len };
 }
 ```
 
-### `9 struct __Huff`
+### `9 decode table entries`
+
+A decode table has one entry for each pattern of the first `bits` input
+bits. After these entries, it has a subtable for each pattern that starts
+a longer code.
+
+Bits 0-7 of an entry hold the count of bits that the entry takes from the
+input: the code, and the extra bits of a length or a distance. Bits 8-11
+hold the length of the code, so the extra bits are the bits above it. A
+subtable entry holds the part of the code after the first `bits` bits.
+
+Bits 12-15 are flags. Bits 16-30 hold the literal, the base of the length
+or the distance, or the start of a subtable. A literal also has bit 31, so
+a literal entry is below zero.
+
+An entry with E_SUB takes the first `bits` bits, and bits 8-11 give the
+index bits of its subtable. An entry with E_NO_CODE is a pattern of an
+incomplete code that is no code. It takes as many bits as the longest
+code, so a decoder with fewer bits finds the input short.
 
 ```fern
-<<9 struct __Huff>>=
-// `longest` is the length of the longest code.
-struct __Huff { count: i32[], symbol: i32[], left: i32, longest: i32 }
+<<9 decode table entries>>=
+const E_END: i32 = 4096;
 
-struct __Tables { state: __State, literal: __Huff, distance: __Huff }
+const E_SUB: i32 = 8192;
+
+const E_NO_CODE: i32 = 16384;
+
+const E_PAST: i32 = 32768;
+
+const E_FLAGS: i32 = 61440;
+
+const E_LITERAL: i32 = -2147483647 - 1;
+
+struct __Tables { state: __State, literal: i32[], distance: i32[] }
 
 function __empty_tables(s: __State): __Tables {
-  let empty = __Huff { count: [], symbol: [], left: 0, longest: 0 };
-  return __Tables { state: s, literal: empty, distance: empty };
+  return __Tables { state: s, literal: [], distance: [] };
 }
-```
 
-### `10 function __construct(lengths: i32[], n: i32): __Huff`
-
-```fern
-<<10 function __construct(lengths: i32[], n: i32): __Huff>>=
-function __construct(lengths: i32[], n: i32): __Huff {
-  let count = __zeros(16);
-  let sym = 0;
-  while (sym < n) {
-    count = count.with(lengths[sym], count[lengths[sym]] + 1);
-    sym += 1;
-  }
+// The count of codes that the code does not use: zero for a complete code,
+// below zero for an over-subscribed code. `count[at + len]` counts the
+// codes of `len` bits.
+function __left(count: i32[], at: i32): i32 {
   let left = 1;
   let len = 1;
   while (len <= 15) {
-    left <<= 1;
-    left -= count[len];
+    left = (left << 1) - count[at + len];
     if (left < 0) {
-      return __Huff { count: count, symbol: [], left: -1, longest: 0 };
+      return -1;
     }
     len += 1;
   }
-  let offs = __zeros(16);
-  len = 1;
+  return left;
+}
+
+// RFC 1951 lets an incomplete code have one code of one bit, and lets a
+// distance code have no codes.
+function __invalid(count: i32[], at: i32, left: i32, symbols: i32, empty: boolean): boolean {
+  if (left <= 0) {
+    return left < 0;
+  }
+  let used = symbols - count[at];
+  return !(empty && used == 0 || used == 1 && count[at + 1] == 1);
+}
+
+// The entry of each symbol with no code length: the literal, or the base of
+// a length or a distance and its count of extra bits from RFC 1951 section
+// 3.2.5. A code of `len` bits adds 257 * len, so bits 0-7 also count the
+// extra bits.
+const LIT_VALUES: i32[] = [-2147483648, -2147418112, -2147352576, -2147287040, -2147221504, -2147155968, -2147090432, -2147024896, -2146959360, -2146893824, -2146828288, -2146762752, -2146697216, -2146631680, -2146566144, -2146500608, -2146435072, -2146369536, -2146304000, -2146238464, -2146172928, -2146107392, -2146041856, -2145976320, -2145910784, -2145845248, -2145779712, -2145714176, -2145648640, -2145583104, -2145517568, -2145452032, -2145386496, -2145320960, -2145255424, -2145189888, -2145124352, -2145058816, -2144993280, -2144927744, -2144862208, -2144796672, -2144731136, -2144665600, -2144600064, -2144534528, -2144468992, -2144403456, -2144337920, -2144272384, -2144206848, -2144141312, -2144075776, -2144010240, -2143944704, -2143879168, -2143813632, -2143748096, -2143682560, -2143617024, -2143551488, -2143485952, -2143420416, -2143354880, -2143289344, -2143223808, -2143158272, -2143092736, -2143027200, -2142961664, -2142896128, -2142830592, -2142765056, -2142699520, -2142633984, -2142568448, -2142502912, -2142437376, -2142371840, -2142306304, -2142240768, -2142175232, -2142109696, -2142044160, -2141978624, -2141913088, -2141847552, -2141782016, -2141716480, -2141650944, -2141585408, -2141519872, -2141454336, -2141388800, -2141323264, -2141257728, -2141192192, -2141126656, -2141061120, -2140995584, -2140930048, -2140864512, -2140798976, -2140733440, -2140667904, -2140602368, -2140536832, -2140471296, -2140405760, -2140340224, -2140274688, -2140209152, -2140143616, -2140078080, -2140012544, -2139947008, -2139881472, -2139815936, -2139750400, -2139684864, -2139619328, -2139553792, -2139488256, -2139422720, -2139357184, -2139291648, -2139226112, -2139160576, -2139095040, -2139029504, -2138963968, -2138898432, -2138832896, -2138767360, -2138701824, -2138636288, -2138570752, -2138505216, -2138439680, -2138374144, -2138308608, -2138243072, -2138177536, -2138112000, -2138046464, -2137980928, -2137915392, -2137849856, -2137784320, -2137718784, -2137653248, -2137587712, -2137522176, -2137456640, -2137391104, -2137325568, -2137260032, -2137194496, -2137128960, -2137063424, -2136997888, -2136932352, -2136866816, -2136801280, -2136735744, -2136670208, -2136604672, -2136539136, -2136473600, -2136408064, -2136342528, -2136276992, -2136211456, -2136145920, -2136080384, -2136014848, -2135949312, -2135883776, -2135818240, -2135752704, -2135687168, -2135621632, -2135556096, -2135490560, -2135425024, -2135359488, -2135293952, -2135228416, -2135162880, -2135097344, -2135031808, -2134966272, -2134900736, -2134835200, -2134769664, -2134704128, -2134638592, -2134573056, -2134507520, -2134441984, -2134376448, -2134310912, -2134245376, -2134179840, -2134114304, -2134048768, -2133983232, -2133917696, -2133852160, -2133786624, -2133721088, -2133655552, -2133590016, -2133524480, -2133458944, -2133393408, -2133327872, -2133262336, -2133196800, -2133131264, -2133065728, -2133000192, -2132934656, -2132869120, -2132803584, -2132738048, -2132672512, -2132606976, -2132541440, -2132475904, -2132410368, -2132344832, -2132279296, -2132213760, -2132148224, -2132082688, -2132017152, -2131951616, -2131886080, -2131820544, -2131755008, -2131689472, -2131623936, -2131558400, -2131492864, -2131427328, -2131361792, -2131296256, -2131230720, -2131165184, -2131099648, -2131034112, -2130968576, -2130903040, -2130837504, -2130771968, 4096, 196608, 262144, 327680, 393216, 458752, 524288, 589824, 655360, 720897, 851969, 983041, 1114113, 1245186, 1507330, 1769474, 2031618, 2293763, 2818051, 3342339, 3866627, 4390916, 5439492, 6488068, 7536644, 8585221, 10682373, 12779525, 14876677, 16908288, 32768, 32768];
+
+const DIST_VALUES: i32[] = [65536, 131072, 196608, 262144, 327681, 458753, 589826, 851970, 1114115, 1638403, 2162692, 3211268, 4259845, 6356997, 8454150, 12648454, 16842759, 25231367, 33619976, 50397192, 67174409, 100728841, 134283274, 201392138, 268501003, 402718731, 536936460, 805371916, 1073807373, 1610678285];
+
+const LENGTH_VALUES: i32[] = [0, 65536, 131072, 196608, 262144, 327680, 393216, 458752, 524288, 589824, 655360, 720896, 786432, 851968, 917504, 983040, 1048576, 1114112, 1179648];
+```
+
+### `10 the decode table of a code`
+
+`__build` sorts the symbols by the length of their code, so the codes come
+in their canonical order. `rev` is the next code with its bits reversed, as
+the input gives them. So `rev` is also the index of the code in the table.
+
+The table starts with an entry for each pattern of the shortest code. It
+doubles before each longer length up to `bits`. The copy of the shorter
+codes fills the entries that their codes also match, so each code is
+written once, as libdeflate does it.
+
+The codes longer than `bits` go in subtables after the main entries. The
+codes with the same first `bits` bits are next to each other. Their
+subtable is as large as the longest of them needs, as zlib computes it.
+
+```fern
+<<10 the decode table of a code>>=
+// The decode table of the `n` code lengths from `from`. `count[at + len]`
+// counts the codes of `len` bits, and `left` is their __left. `values` has
+// the entry of each symbol with no code length.
+// fern-lint: allow cyclomatic-complexity
+function __build(lengths: i32[], from: i32, n: i32, count: i32[], at: i32, left: i32, bits: i32, values: i32[]): i32[] {
+  let offs = __alloc_i32(16);
+  let len = 1;
   while (len < 15) {
-    offs = offs.with(len + 1, offs[len] + count[len]);
+    offs = offs.with(len + 1, offs[len] + count[at + len]);
     len += 1;
   }
-  let symbols = __zeros(n);
-  sym = 0;
+  let sorted = __alloc_i32(n);
+  let sym = 0;
   while (sym < n) {
-    if (lengths[sym] != 0) {
-      symbols = symbols.with(offs[lengths[sym]], sym);
-      offs = offs.with(lengths[sym], offs[lengths[sym]] + 1);
+    len = lengths[from + sym];
+    if (len != 0) {
+      sorted = sorted.with(offs[len], sym);
+      offs = offs.with(len, offs[len] + 1);
     }
     sym += 1;
   }
   let longest = 15;
-  while (longest > 0 && count[longest] == 0) {
+  while (longest > 0 && count[at + longest] == 0) {
     longest -= 1;
   }
-  return __Huff { count: count, symbol: symbols, left: left, longest: longest };
-}
-
-function __zeros(n: i32): i32[] {
-  return __alloc_i32(n);
-}
-
-// Reads one symbol of the code `h`, one bit for each step. The bits stay in
-// locals, so a symbol makes one new state. `table` names the code in an error.
-function __decode(own s: __State, data: [u8], h: __Huff, table: string): __State {
-  if (s.failed) {
-    return s;
+  let none = E_NO_CODE | longest << 8 | longest;
+  let first = 1;
+  while (first < bits && count[at + first] == 0) {
+    first += 1;
   }
-  let buf = s.bitbuf;
-  let cnt = s.bitcnt;
-  let pos = s.pos;
-  let code = 0;
-  let first = 0;
-  let index = 0;
-  let len = 1;
-  while (len <= h.longest) {
-    if (cnt == 0) {
-      if (pos >= data.len()) {
-        return __fail(s, Truncated);
-      }
-      buf = data[pos] as i32;
-      pos += 1;
-      cnt = 8;
+  let table = if (left != 0) { __filled(1 << bits, none) } else { __alloc_i32(1 << bits) };
+  table = table.truncate(1 << first);
+  let rev = 0;
+  let i = 0;
+  len = first;
+  while (len <= bits) {
+    if (len > first) {
+      table = table.concat(table);
     }
-    code |= buf & 1;
-    buf >>= 1;
-    cnt -= 1;
-    let count = h.count[len];
-    if (code - count < first) {
-      return __State { ...s, pos: pos, bitbuf: buf, bitcnt: cnt, last: h.symbol[index + (code - first)] };
+    let k = count[at + len];
+    let code = len * 257;
+    while (k > 0) {
+      table = table.with(rev, values[sorted[i]] + code);
+      rev = __next_code(rev, len);
+      i += 1;
+      k -= 1;
     }
-    index += count;
-    first = first + count << 1;
-    code <<= 1;
     len += 1;
   }
-  return __fail(s, Malformed("a bit pattern that is no " + table + " code"));
+  let mask = (1 << bits) - 1;
+  let low = -1;
+  let start = 0;
+  let sub = 0;
+  while (len <= longest) {
+    let k = count[at + len];
+    while (k > 0) {
+      if ((rev & mask) != low) {
+        low = rev & mask;
+        sub = len - bits;
+        let room = (1 << sub) - k;
+        while (sub + bits < longest && room > 0) {
+          sub += 1;
+          room = (room << 1) - count[at + sub + bits];
+        }
+        start = table.len();
+        let j = 0;
+        while (j < 1 << sub) {
+          table = table.append(none);
+          j += 1;
+        }
+        table = table.with(low, E_SUB | start << 16 | sub << 8 | bits);
+      }
+      let entry = values[sorted[i]] + (len - bits) * 257;
+      let at = rev >> bits;
+      while (at < 1 << sub) {
+        table = table.with(start + at, entry);
+        at += 1 << len - bits;
+      }
+      rev = __next_code(rev, len);
+      i += 1;
+      k -= 1;
+    }
+    len += 1;
+  }
+  return table;
+}
+
+// The code after `rev` in a code of `len` bits, both with their bits
+// reversed.
+function __next_code(rev: i32, len: i32): i32 {
+  let free = (rev ^ (1 << len) - 1) as u32;
+  if (free == 0u32) {
+    return 0;
+  }
+  let bit = 1 << 31 - __clz32(free);
+  return rev & bit - 1 | bit;
 }
 ```
 
-### `11 const LENGTH_BASE: i32[]`
+### `11 table bits`
+
+The main part of the literal/length table has an entry for each pattern of
+10 bits. The main part of the distance table has one for each pattern of 8
+bits.
 
 ```fern
-<<11 const LENGTH_BASE: i32[]>>=
-const LENGTH_BASE: i32[] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
-
-const LENGTH_EXTRA: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-
-const DIST_BASE: i32[] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
-
-const DIST_EXTRA: i32[] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
-
+<<11 table bits>>=
 const LIT_BITS: i32 = 10;
 
 const DIST_BITS: i32 = 8;
@@ -426,86 +557,47 @@ const LIT_MASK: u64 = 1023u64;
 const DIST_MASK: u64 = 255u64;
 ```
 
-### `12 function __table(h: __Huff, bits: i32, lit: boolean): i32[]`
+### `12 the read of one symbol`
+
+The resumable reader reads one symbol at a time with `__symbol`. It takes
+the bits of the code and leaves the extra bits in the input. The whole bytes
+that stay in the bit buffer go back to the input, as `__bits` keeps them.
 
 ```fern
-<<12 function __table(h: __Huff, bits: i32, lit: boolean): i32[]>>=
-// An entry holds the code length in bits 0-3, the extra bit count in bits
-// 4-7 and the literal, length base or distance base from bit 16. Zero is a
-// code longer than the table, which __walk reads.
-const E_LITERAL: i32 = 256;
-
-const E_END: i32 = 512;
-
-const E_NO_CODE: i32 = 1024;
-
-const E_PAST: i32 = 2048;
-
-function __table(h: __Huff, bits: i32, lit: boolean): i32[] {
-  let table = __zeros(1 << bits);
-  let code = 0;
-  let index = 0;
-  let len = 1;
-  while (len <= bits) {
-    let k = 0;
-    while (k < h.count[len]) {
-      let entry = __entry(h.symbol[index], len, lit);
-      let at = __reversed(code, len);
-      while (at < table.len()) {
-        table = table.with(at, entry);
-        at += 1 << len;
-      }
-      code += 1;
-      index += 1;
-      k += 1;
+<<12 the read of one symbol>>=
+// The entry of the next code of `table` in `last`. `name` names the code
+// in an error.
+function __symbol(own s: __State, data: [u8], table: i32[], bits: i32, name: string): __State {
+  if (s.failed) {
+    return s;
+  }
+  let buf = s.bitbuf;
+  let cnt = s.bitcnt;
+  let pos = s.pos;
+  while (cnt < 16 && pos < data.len()) {
+    buf |= data[pos] as i32 << cnt;
+    pos += 1;
+    cnt += 8;
+  }
+  let e = table[buf & (1 << bits) - 1];
+  if ((e & E_SUB) != 0) {
+    if (bits > cnt) {
+      return __fail(s, Truncated);
     }
-    code <<= 1;
-    len += 1;
+    buf >>= bits;
+    cnt -= bits;
+    e = table[(e >> 16) + (buf & (1 << (e >> 8 & 15)) - 1)];
   }
-  return table;
-}
-
-function __entry(sym: i32, len: i32, lit: boolean): i32 {
-  if (!lit) {
-    if (sym >= 30) {
-      return E_PAST | len;
-    }
-    return DIST_BASE[sym] << 16 | DIST_EXTRA[sym] << 4 | len;
+  let used = e >> 8 & 15;
+  if (used > cnt) {
+    return __fail(s, Truncated);
   }
-  if (sym < 256) {
-    return sym << 16 | E_LITERAL | len;
+  if ((e & E_NO_CODE) != 0) {
+    return __fail(s, Malformed("a bit pattern that is no " + name + " code"));
   }
-  if (sym == 256) {
-    return E_END | len;
-  }
-  if (sym - 257 >= 29) {
-    return E_PAST | len;
-  }
-  return LENGTH_BASE[sym - 257] << 16 | LENGTH_EXTRA[sym - 257] << 4 | len;
-}
-
-// The entry of a code longer than the table: zero when `avail` bits do not
-// hold it, E_NO_CODE when no code matches.
-function __walk(h: __Huff, bits: u64, avail: i32, lit: boolean): i32 {
-  let code = 0;
-  let first = 0;
-  let index = 0;
-  let len = 1;
-  while (len <= h.longest) {
-    if (len > avail) {
-      return 0;
-    }
-    code |= (bits >> (len - 1) as u64 & 1u64) as i32;
-    let count = h.count[len];
-    if (code - count < first) {
-      return __entry(h.symbol[index + (code - first)], len, lit);
-    }
-    index += count;
-    first = first + count << 1;
-    code <<= 1;
-    len += 1;
-  }
-  return E_NO_CODE;
+  buf >>= used;
+  cnt -= used;
+  return __State { ...s, pos: pos - (cnt >> 3), bitbuf: buf & (1 << (cnt & 7)) - 1, bitcnt: cnt & 7, last: e };
 }
 
 @inline
@@ -513,122 +605,146 @@ function __le64(data: [u8], at: i32): u64 {
   return data[at] as u64 | data[at + 1] as u64 << 8 | data[at + 2] as u64 << 16 | data[at + 3] as u64 << 24
     | data[at + 4] as u64 << 32 | data[at + 5] as u64 << 40 | data[at + 6] as u64 << 48 | data[at + 7] as u64 << 56;
 }
+
+// The low `n` bits of `x`.
+@inline
+function __low(x: u64, n: i32): u64 {
+  return x & (1u64 << n as u64) - 1u64;
+}
 ```
 
-### `13 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff, lit: i32[], dtab: i32[]): __State`
+### `13 the decode loops`
 
-`__fast` runs while eight input bytes and 258 output bytes are left. One
-word refill leaves at least 56 bits, and a length with its distance needs at
-most 48, so it reads a whole symbol pair with no bit count check. The careful
-loop in `__codes` decodes what is left one byte at a time. The two loops are
-in separate functions so that the fast one has the registers to itself.
+`__fast` runs while eight input bytes and SLACK output bytes are left. One
+word refill leaves at least 56 bits. A length with its distance needs at
+most 48, so the loop reads a whole symbol pair with no bit count check.
+Three literals need at most 45 bits. So after a literal, the loop decodes
+up to two more. Then it finds the entry of the code after them.
+
+The careful loop in `__codes` decodes what is left one byte at a time. The
+two loops are in separate functions so that the fast one has the registers
+to itself.
 
 ```fern
-<<13 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff, lit: i32[], dtab: i32[]): __State>>=
+<<13 the decode loops>>=
 // fern-lint: allow cyclomatic-complexity
-function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff, lit: i32[], dtab: i32[]): __State {
-  let lmask = (1 << LIT_BITS) as u64 - 1u64;
-  let dmask = (1 << DIST_BITS) as u64 - 1u64;
+function __codes(own s: __State, data: [u8], lit: i32[], dtab: i32[]): __State {
   let out = s.out;
+  let n = s.n;
   let max_out = s.max_out;
   let pos = s.pos;
   let bitbuf = s.bitbuf as u64;
   let bitcnt = s.bitcnt;
-  let n = data.len();
+  let end = data.len();
   s = __State { ...s, out: [], lengths: [] };
-  let error: Option[InflateError] = None;
-  let done = false;
-  let fast = __fast(out, data, pos, bitbuf, bitcnt, max_out, lit, dtab, lencode, distcode);
-  out = fast.out;
-  pos = fast.pos;
-  bitbuf = fast.bitbuf;
-  bitcnt = fast.bitcnt;
-  if (fast.status != F_ROOM) {
-    error = __fast_error(fast.status);
-    done = true;
+  let status = F_ROOM;
+  while (true) {
+    let fast = __fast(out, n, data, pos, bitbuf, bitcnt, max_out, lit, dtab);
+    out = fast.out;
+    n = fast.n;
+    pos = fast.pos;
+    bitbuf = fast.bitbuf;
+    bitcnt = fast.bitcnt;
+    status = fast.status;
+    if (status != F_ROOM || pos > end - 8 || n > max_out - 3 || n <= out.len() - SLACK) {
+      break;
+    }
+    let before = out.len();
+    out = __grown(out, n, SLACK, max_out);
+    if (out.len() == before) {
+      break;
+    }
   }
-  while (!done) {
-    while (bitcnt <= 48 && pos < n) {
+  while (status == F_ROOM) {
+    while (bitcnt <= 56 && pos < end) {
       bitbuf |= data[pos] as u64 << bitcnt as u64;
       pos += 1;
       bitcnt += 8;
     }
-    let e = lit[(bitbuf & lmask) as i32];
-    if (e == 0) {
-      e = __walk(lencode, bitbuf, bitcnt, true);
-    }
-    let used = e & 15;
-    if (e == 0 || used > bitcnt) {
-      error = Some(Truncated);
-      done = true;
-    } else {
-      bitbuf >>= used as u64;
-      bitcnt -= used;
-      if ((e & E_LITERAL) != 0) {
-        if (out.len() >= max_out) {
-          error = Some(OutputLimit);
-          done = true;
-        } else {
-          out = out.append((e >> 16) as u8);
-        }
-      } else if ((e & (E_END | E_NO_CODE | E_PAST)) != 0) {
-        error = __symbol_error(e, true);
-        done = true;
-      } else {
-        let lx = e >> 4 & 15;
-        let len = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
-        if (lx > bitcnt) {
-          error = Some(Truncated);
-          done = true;
-        } else {
-          bitbuf >>= lx as u64;
-          bitcnt -= lx;
-          while (bitcnt <= 48 && pos < n) {
-            bitbuf |= data[pos] as u64 << bitcnt as u64;
-            pos += 1;
-            bitcnt += 8;
-          }
-          let d = dtab[(bitbuf & dmask) as i32];
-          if (d == 0) {
-            d = __walk(distcode, bitbuf, bitcnt, false);
-          }
-          let dused = d & 15;
-          if (d == 0 || dused > bitcnt) {
-            error = Some(Truncated);
-            done = true;
-          } else {
-            bitbuf >>= dused as u64;
-            bitcnt -= dused;
-            let dx = d >> 4 & 15;
-            if ((d & (E_NO_CODE | E_PAST)) != 0) {
-              error = __symbol_error(d, false);
-              done = true;
-            } else if (dx > bitcnt) {
-              error = Some(Truncated);
-              done = true;
-            } else {
-              let dist = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
-              bitbuf >>= dx as u64;
-              bitcnt -= dx;
-              if (dist > out.len()) {
-                error = Some(Malformed("a distance before the start of the output"));
-                done = true;
-              } else if (out.len() + len > max_out) {
-                error = Some(OutputLimit);
-                done = true;
-              } else {
-                out = __copy(out, len, dist);
-              }
-            }
-          }
-        }
+    let e = lit[(bitbuf & LIT_MASK) as i32];
+    if ((e & E_SUB) != 0) {
+      if (LIT_BITS > bitcnt) {
+        status = F_SHORT;
+        break;
       }
+      bitbuf >>= LIT_BITS as u64;
+      bitcnt -= LIT_BITS;
+      e = lit[(e >> 16) + __low(bitbuf, e >> 8 & 15) as i32];
     }
+    let used = e & 255;
+    if (used > bitcnt) {
+      status = F_SHORT;
+      break;
+    }
+    let saved = bitbuf;
+    bitbuf >>= used as u64;
+    bitcnt -= used;
+    if (e < 0) {
+      if (n >= max_out) {
+        status = F_LIMIT;
+        break;
+      }
+      if (n >= out.len()) {
+        out = __grown(out, n, 1, max_out);
+      }
+      out = out.with(n, (e >> 16) as u8);
+      n += 1;
+      continue;
+    }
+    if ((e & E_FLAGS) != 0) {
+      status = __end_status(e);
+      break;
+    }
+    let len = (e >> 16) + (__low(saved, used) >> (e >> 8 & 15) as u64) as i32;
+    while (bitcnt <= 56 && pos < end) {
+      bitbuf |= data[pos] as u64 << bitcnt as u64;
+      pos += 1;
+      bitcnt += 8;
+    }
+    let d = dtab[(bitbuf & DIST_MASK) as i32];
+    if ((d & E_SUB) != 0) {
+      if (DIST_BITS > bitcnt) {
+        status = F_SHORT;
+        break;
+      }
+      bitbuf >>= DIST_BITS as u64;
+      bitcnt -= DIST_BITS;
+      d = dtab[(d >> 16) + __low(bitbuf, d >> 8 & 15) as i32];
+    }
+    used = d & 255;
+    if (used > bitcnt) {
+      status = F_SHORT;
+      break;
+    }
+    if ((d & E_FLAGS) != 0) {
+      status = F_NO_DISTANCE;
+      break;
+    }
+    let dist = (d >> 16) + (__low(bitbuf, used) >> (d >> 8 & 15) as u64) as i32;
+    bitbuf >>= used as u64;
+    bitcnt -= used;
+    if (dist > n) {
+      status = F_TOO_FAR;
+      break;
+    }
+    if (n + len > max_out) {
+      status = F_LIMIT;
+      break;
+    }
+    if (n + len > out.len()) {
+      out = __grown(out, n, len, max_out);
+    }
+    let k = 0;
+    while (k < len) {
+      out = out.with(n + k, out[n + k - dist]);
+      k += 1;
+    }
+    n += len;
   }
   let back = bitcnt >> 3;
   bitcnt &= 7;
-  s = __State { ...s, out: out, pos: pos - back, bitbuf: (bitbuf & (1u64 << bitcnt as u64) - 1u64) as i32, bitcnt: bitcnt };
-  match (error) {
+  s = __State { ...s, out: out, n: n, pos: pos - back, bitbuf: __low(bitbuf, bitcnt) as i32, bitcnt: bitcnt };
+  match (__status_error(status)) {
     Some(err) => {
       return __fail(s, err);
     },
@@ -639,7 +755,7 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff, 
   return s;
 }
 
-struct __Fast { out: u8[], pos: i32, bitbuf: u64, bitcnt: i32, status: i32 }
+struct __Fast { out: u8[], n: i32, pos: i32, bitbuf: u64, bitcnt: i32, status: i32 }
 
 const F_ROOM: i32 = 0;
 
@@ -649,93 +765,186 @@ const F_NO_CODE: i32 = 2;
 
 const F_LENGTH_PAST: i32 = 3;
 
-const F_DISTANCE_PAST: i32 = 4;
+const F_TOO_FAR: i32 = 4;
 
-const F_TOO_FAR: i32 = 5;
+const F_NO_DISTANCE: i32 = 5;
 
-const F_NO_DISTANCE: i32 = 6;
+const F_LIMIT: i32 = 6;
 
-// Decodes while eight input bytes and 258 output bytes are left, and stops
-// with F_ROOM when they are not. After a literal at least 41 bits are left,
-// so the next entry is read before the refill, and a second literal is
-// decoded with no refill. After a match `e` is -1 and is read after it. The guard at the top is what lets the
-// bounds prover drop the checks on the input words and the two tables.
-function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, max_out: i32, lit: i32[], dtab: i32[], lencode: __Huff, distcode: __Huff): __Fast {
+const F_SHORT: i32 = 7;
+
+// Decodes while eight input bytes and SLACK output bytes are left, and
+// stops with F_ROOM when they are not. The guard at the top is what lets
+// the bounds prover drop the checks on the input words and the two main
+// tables. `e` is the entry of the next code when the bits of the last
+// iteration found it, and zero when the next iteration reads it.
+// fern-lint: allow cyclomatic-complexity
+function __fast(own out: u8[], n: i32, data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, max_out: i32, lit: i32[], dtab: i32[]): __Fast {
   let fast_in = data.len() - 8;
-  let fast_out = max_out - 258;
+  let room = out.len() - SLACK;
   let status = F_ROOM;
-  if (pos < 0 || lit.len() < 1 << LIT_BITS || dtab.len() < 1 << DIST_BITS) {
-    return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
+  if (pos < 0 || n < 0 || room > max_out - 3 || lit.len() < 1 << LIT_BITS || dtab.len() < 1 << DIST_BITS) {
+    return __Fast { out: out, n: n, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
   }
-  let e = -1;
-  while (pos <= fast_in && out.len() <= fast_out) {
-    bitbuf |= __le64(data, pos) << bitcnt as u64;
-    pos += (bitcnt >> 3 ^ 7) & 7;
-    bitcnt |= 56;
-    if (e < 0) {
-      e = lit[(bitbuf & LIT_MASK) as i32];
-    }
+  let cnt = bitcnt as u64;
+  let e = 0;
+  while (pos <= fast_in && n <= room) {
+    bitbuf |= __le64(data, pos) << cnt;
+    pos += ((cnt >> 3u64 ^ 7u64) & 7u64) as i32;
+    cnt |= 56u64;
     if (e == 0) {
-      e = __walk(lencode, bitbuf, bitcnt, true);
-    }
-    let used = e & 15;
-    bitbuf >>= used as u64;
-    bitcnt -= used;
-    if ((e & E_LITERAL) != 0) {
-      out = out.append((e >> 16) as u8);
       e = lit[(bitbuf & LIT_MASK) as i32];
-      if ((e & E_LITERAL) != 0) {
-        bitbuf >>= (e & 15) as u64;
-        bitcnt -= e & 15;
-        out = out.append((e >> 16) as u8);
-        e = lit[(bitbuf & LIT_MASK) as i32];
+    }
+    let saved = bitbuf;
+    let used = (e & 255) as u64;
+    bitbuf >>= used;
+    cnt -= used;
+    if (e < 0) {
+      out = out.with(n, (e >> 16) as u8);
+      e = lit[(bitbuf & LIT_MASK) as i32];
+      if (e >= 0) {
+        n += 1;
+        continue;
       }
+      used = (e & 255) as u64;
+      bitbuf >>= used;
+      cnt -= used;
+      out = out.with(n + 1, (e >> 16) as u8);
+      e = lit[(bitbuf & LIT_MASK) as i32];
+      if (e >= 0) {
+        n += 2;
+        continue;
+      }
+      used = (e & 255) as u64;
+      bitbuf >>= used;
+      cnt -= used;
+      out = out.with(n + 2, (e >> 16) as u8);
+      n += 3;
+      e = lit[(bitbuf & LIT_MASK) as i32];
       continue;
     }
-    if ((e & (E_END | E_NO_CODE | E_PAST)) != 0) {
-      status = __fast_status(e, F_NO_CODE, F_LENGTH_PAST);
-      break;
+    if ((e & E_FLAGS) != 0) {
+      if ((e & E_SUB) == 0) {
+        status = __end_status(e);
+        break;
+      }
+      e = lit[(e >> 16) + __low(bitbuf, e >> 8 & 15) as i32];
+      saved = bitbuf;
+      used = (e & 255) as u64;
+      bitbuf >>= used;
+      cnt -= used;
+      if (e < 0) {
+        out = out.with(n, (e >> 16) as u8);
+        n += 1;
+        e = 0;
+        continue;
+      }
+      if ((e & E_FLAGS) != 0) {
+        status = __end_status(e);
+        break;
+      }
     }
-    let lx = e >> 4 & 15;
-    let len = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
-    bitbuf >>= lx as u64;
-    bitcnt -= lx;
+    let len = (e >> 16 & 511) + ((__low(saved, e & 255) >> (e >> 8 & 15) as u64) as i32 & 31);
     let d = dtab[(bitbuf & DIST_MASK) as i32];
-    if (d == 0) {
-      d = __walk(distcode, bitbuf, bitcnt, false);
+    saved = bitbuf;
+    used = (d & 255) as u64;
+    bitbuf >>= used;
+    cnt -= used;
+    if ((d & E_FLAGS) != 0) {
+      if ((d & E_SUB) == 0) {
+        status = F_NO_DISTANCE;
+        break;
+      }
+      d = dtab[(d >> 16) + __low(bitbuf, d >> 8 & 15) as i32];
+      saved = bitbuf;
+      used = (d & 255) as u64;
+      bitbuf >>= used;
+      cnt -= used;
+      if ((d & E_FLAGS) != 0) {
+        status = F_NO_DISTANCE;
+        break;
+      }
     }
-    let dused = d & 15;
-    bitbuf >>= dused as u64;
-    bitcnt -= dused;
-    if ((d & (E_NO_CODE | E_PAST)) != 0) {
-      status = __fast_status(d, F_NO_DISTANCE, F_DISTANCE_PAST);
-      break;
-    }
-    let dx = d >> 4 & 15;
-    let dist = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
-    bitbuf >>= dx as u64;
-    bitcnt -= dx;
-    if (dist > out.len()) {
+    let dist = (d >> 16 & 32767) + ((__low(saved, d & 255) >> (d >> 8 & 15) as u64) as i32 & 8191);
+    if (dist > n) {
       status = F_TOO_FAR;
       break;
     }
-    out = __copy(out, len, dist);
-    e = -1;
+    if (n + len > max_out) {
+      status = F_LIMIT;
+      break;
+    }
+    out = __copy(out, n, dist, len);
+    n += len;
+    e = 0;
   }
-  return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
+  return __Fast { out: out, n: n, pos: pos, bitbuf: bitbuf, bitcnt: cnt as i32, status: status };
 }
 
-function __fast_status(e: i32, no_code: i32, past: i32): i32 {
+// Copies `len` bytes from `dist` back to `n`, 16 at a time. It can write
+// 15 bytes past the copy. Most copies are at most 32 bytes, so the first two
+// blocks need no loop. When `dist` is below 16, the first bytes are copied
+// one at a time, up to a multiple of `dist` that is at least 16, and the
+// blocks of 16 after them come from that far back.
+@inline
+function __copy(own out: u8[], n: i32, dist: i32, len: i32): u8[] {
+  if (dist >= 16) {
+    let from = n - dist;
+    let v = __u8x16_load(out, from);
+    out = __u8x16_with(out, n, v);
+    if (len <= 16) {
+      return out;
+    }
+    let w = __u8x16_load(out, from + 16);
+    out = __u8x16_with(out, n + 16, w);
+    return __copy_rest(out, n, dist, len, 32);
+  }
+  if (dist == 1) {
+    let v = __u8x16_splat(out[n - 1]);
+    out = __u8x16_with(out, n, v);
+    let k = 16;
+    while (k < len) {
+      out = __u8x16_with(out, n + k, v);
+      k += 16;
+    }
+    return out;
+  }
+  let back = dist;
+  while (back < 16) {
+    back += dist;
+  }
+  let stop = cmp.min(len, back);
+  let k = 0;
+  while (k < stop) {
+    out = out.with(n + k, out[n + k - dist]);
+    k += 1;
+  }
+  return __copy_rest(out, n, back, len, k);
+}
+
+// The blocks of a copy from `k` on, `back` bytes back.
+@inline
+function __copy_rest(own out: u8[], n: i32, back: i32, len: i32, k: i32): u8[] {
+  while (k < len) {
+    let v = __u8x16_load(out, n + k - back);
+    out = __u8x16_with(out, n + k, v);
+    k += 16;
+  }
+  return out;
+}
+
+// The status of an entry with E_END, E_NO_CODE or E_PAST.
+function __end_status(e: i32): i32 {
   if ((e & E_END) != 0) {
     return F_END;
   }
   if ((e & E_NO_CODE) != 0) {
-    return no_code;
+    return F_NO_CODE;
   }
-  return past;
+  return F_LENGTH_PAST;
 }
 
-function __fast_error(status: i32): Option[InflateError] {
+function __status_error(status: i32): Option[InflateError] {
   if (status == F_NO_CODE) {
     return Some(Malformed("a bit pattern that is no literal/length code"));
   }
@@ -745,39 +954,16 @@ function __fast_error(status: i32): Option[InflateError] {
   if (status == F_LENGTH_PAST) {
     return Some(Malformed("a length code past 285"));
   }
-  if (status == F_DISTANCE_PAST) {
-    return Some(Malformed("a distance code past 29"));
-  }
   if (status == F_TOO_FAR) {
     return Some(Malformed("a distance before the start of the output"));
   }
+  if (status == F_LIMIT) {
+    return Some(OutputLimit);
+  }
+  if (status == F_SHORT) {
+    return Some(Truncated);
+  }
   return None;
-}
-
-// None for the end-of-block code, the error for the others.
-function __symbol_error(e: i32, lit: boolean): Option[InflateError] {
-  if ((e & E_END) != 0) {
-    return None;
-  }
-  if ((e & E_NO_CODE) != 0 && lit) {
-    return Some(Malformed("a bit pattern that is no literal/length code"));
-  }
-  if ((e & E_NO_CODE) != 0) {
-    return Some(Malformed("a bit pattern that is no distance code"));
-  }
-  if (lit) {
-    return Some(Malformed("a length code past 285"));
-  }
-  return Some(Malformed("a distance code past 29"));
-}
-
-function __copy(own out: u8[], len: i32, dist: i32): u8[] {
-  let i = 0;
-  while (i < len) {
-    out = out.append(out[out.len() - dist]);
-    i += 1;
-  }
-  return out;
 }
 ```
 
@@ -785,31 +971,20 @@ function __copy(own out: u8[], len: i32, dist: i32): u8[] {
 
 ```fern
 <<14 function __fixed(own s: __State, data: [u8]): __State>>=
-// The fixed codes of RFC 1951 section 3.2.6, in the form that __construct
-// and __table give for them.
-const FIXED_LIT_COUNT: i32[] = [0, 0, 0, 0, 0, 0, 0, 24, 152, 112, 0, 0, 0, 0, 0, 0];
+// The decode tables of the fixed codes of RFC 1951 section 3.2.6, as
+// __build gives them. The literal/length code has 288 codes: 0-143 of eight
+// bits, 144-255 of nine, 256-279 of seven and 280-287 of eight. The distance
+// code has 30 codes of five bits, so the other two patterns are no code.
+const FIXED_LIT_TABLE: i32[] = [5895, -2142238712, -2146433016, 7538700, 2033417, -2140141560, -2144335864, -2134898423, 657159, -2141190136, -2145384440, -2136995575, -2147481592, -2139092984, -2143287288, -2132801271, 395015, -2141714424, -2145908728, -2138044151, 3868426, -2139617272, -2143811576, -2133849847, 1115912, -2140665848, -2144860152, -2135946999, -2146957304, -2138568696, -2142763000, -2131752695, 263943, -2141976568, -2146170872, 14878733, 2819850, -2139879416, -2144073720, -2134374135, 853768, -2140927992, -2145122296, -2136471287, -2147219448, -2138830840, -2143025144, -2132276983, 526087, -2141452280, -2145646584, -2137519863, 5441291, -2139355128, -2143549432, -2133325559, 1509129, -2140403704, -2144598008, -2135422711, -2146695160, -2138306552, -2142500856, -2131228407, 198407, -2142107640, -2146301944, 10684429, 2295562, -2140010488, -2144204792, -2134636279, 722696, -2141059064, -2145253368, -2136733431, -2147350520, -2138961912, -2143156216, -2132539127, 460551, -2141583352, -2145777656, -2137782007, 4392715, -2139486200, -2143680504, -2133587703, 1246985, -2140534776, -2144729080, -2135684855, -2146826232, -2138437624, -2142631928, -2131490551, 329479, -2141845496, -2146039800, 34824, 3344138, -2139748344, -2143942648, -2134111991, 984840, -2140796920, -2144991224, -2136209143, -2147088376, -2138699768, -2142894072, -2132014839, 591623, -2141321208, -2145515512, -2137257719, 6489867, -2139224056, -2143418360, -2133063415, 1771273, -2140272632, -2144466936, -2135160567, -2146564088, -2138175480, -2142369784, -2130966263, 5895, -2142173176, -2146367480, 8587277, 2033417, -2140076024, -2144270328, -2134767351, 657159, -2141124600, -2145318904, -2136864503, -2147416056, -2139027448, -2143221752, -2132670199, 395015, -2141648888, -2145843192, -2137913079, 3868426, -2139551736, -2143746040, -2133718775, 1115912, -2140600312, -2144794616, -2135815927, -2146891768, -2138503160, -2142697464, -2131621623, 263943, -2141911032, -2146105336, 16910344, 2819850, -2139813880, -2144008184, -2134243063, 853768, -2140862456, -2145056760, -2136340215, -2147153912, -2138765304, -2142959608, -2132145911, 526087, -2141386744, -2145581048, -2137388791, 5441291, -2139289592, -2143483896, -2133194487, 1509129, -2140338168, -2144532472, -2135291639, -2146629624, -2138241016, -2142435320, -2131097335, 198407, -2142042104, -2146236408, 12781581, 2295562, -2139944952, -2144139256, -2134505207, 722696, -2140993528, -2145187832, -2136602359, -2147284984, -2138896376, -2143090680, -2132408055, 460551, -2141517816, -2145712120, -2137650935, 4392715, -2139420664, -2143614968, -2133456631, 1246985, -2140469240, -2144663544, -2135553783, -2146760696, -2138372088, -2142566392, -2131359479, 329479, -2141779960, -2145974264, 34824, 3344138, -2139682808, -2143877112, -2133980919, 984840, -2140731384, -2144925688, -2136078071, -2147022840, -2138634232, -2142828536, -2131883767, 591623, -2141255672, -2145449976, -2137126647, 6489867, -2139158520, -2143352824, -2132932343, 1771273, -2140207096, -2144401400, -2135029495, -2146498552, -2138109944, -2142304248, -2130835191, 5895, -2142238712, -2146433016, 7538700, 2033417, -2140141560, -2144335864, -2134832887, 657159, -2141190136, -2145384440, -2136930039, -2147481592, -2139092984, -2143287288, -2132735735, 395015, -2141714424, -2145908728, -2137978615, 3868426, -2139617272, -2143811576, -2133784311, 1115912, -2140665848, -2144860152, -2135881463, -2146957304, -2138568696, -2142763000, -2131687159, 263943, -2141976568, -2146170872, 14878733, 2819850, -2139879416, -2144073720, -2134308599, 853768, -2140927992, -2145122296, -2136405751, -2147219448, -2138830840, -2143025144, -2132211447, 526087, -2141452280, -2145646584, -2137454327, 5441291, -2139355128, -2143549432, -2133260023, 1509129, -2140403704, -2144598008, -2135357175, -2146695160, -2138306552, -2142500856, -2131162871, 198407, -2142107640, -2146301944, 10684429, 2295562, -2140010488, -2144204792, -2134570743, 722696, -2141059064, -2145253368, -2136667895, -2147350520, -2138961912, -2143156216, -2132473591, 460551, -2141583352, -2145777656, -2137716471, 4392715, -2139486200, -2143680504, -2133522167, 1246985, -2140534776, -2144729080, -2135619319, -2146826232, -2138437624, -2142631928, -2131425015, 329479, -2141845496, -2146039800, 34824, 3344138, -2139748344, -2143942648, -2134046455, 984840, -2140796920, -2144991224, -2136143607, -2147088376, -2138699768, -2142894072, -2131949303, 591623, -2141321208, -2145515512, -2137192183, 6489867, -2139224056, -2143418360, -2132997879, 1771273, -2140272632, -2144466936, -2135095031, -2146564088, -2138175480, -2142369784, -2130900727, 5895, -2142173176, -2146367480, 8587277, 2033417, -2140076024, -2144270328, -2134701815, 657159, -2141124600, -2145318904, -2136798967, -2147416056, -2139027448, -2143221752, -2132604663, 395015, -2141648888, -2145843192, -2137847543, 3868426, -2139551736, -2143746040, -2133653239, 1115912, -2140600312, -2144794616, -2135750391, -2146891768, -2138503160, -2142697464, -2131556087, 263943, -2141911032, -2146105336, 16910344, 2819850, -2139813880, -2144008184, -2134177527, 853768, -2140862456, -2145056760, -2136274679, -2147153912, -2138765304, -2142959608, -2132080375, 526087, -2141386744, -2145581048, -2137323255, 5441291, -2139289592, -2143483896, -2133128951, 1509129, -2140338168, -2144532472, -2135226103, -2146629624, -2138241016, -2142435320, -2131031799, 198407, -2142042104, -2146236408, 12781581, 2295562, -2139944952, -2144139256, -2134439671, 722696, -2140993528, -2145187832, -2136536823, -2147284984, -2138896376, -2143090680, -2132342519, 460551, -2141517816, -2145712120, -2137585399, 4392715, -2139420664, -2143614968, -2133391095, 1246985, -2140469240, -2144663544, -2135488247, -2146760696, -2138372088, -2142566392, -2131293943, 329479, -2141779960, -2145974264, 34824, 3344138, -2139682808, -2143877112, -2133915383, 984840, -2140731384, -2144925688, -2136012535, -2147022840, -2138634232, -2142828536, -2131818231, 591623, -2141255672, -2145449976, -2137061111, 6489867, -2139158520, -2143352824, -2132866807, 1771273, -2140207096, -2144401400, -2134963959, -2146498552, -2138109944, -2142304248, -2130769655, 5895, -2142238712, -2146433016, 7538700, 2033417, -2140141560, -2144335864, -2134898423, 657159, -2141190136, -2145384440, -2136995575, -2147481592, -2139092984, -2143287288, -2132801271, 395015, -2141714424, -2145908728, -2138044151, 3868426, -2139617272, -2143811576, -2133849847, 1115912, -2140665848, -2144860152, -2135946999, -2146957304, -2138568696, -2142763000, -2131752695, 263943, -2141976568, -2146170872, 14878733, 2819850, -2139879416, -2144073720, -2134374135, 853768, -2140927992, -2145122296, -2136471287, -2147219448, -2138830840, -2143025144, -2132276983, 526087, -2141452280, -2145646584, -2137519863, 5441291, -2139355128, -2143549432, -2133325559, 1509129, -2140403704, -2144598008, -2135422711, -2146695160, -2138306552, -2142500856, -2131228407, 198407, -2142107640, -2146301944, 10684429, 2295562, -2140010488, -2144204792, -2134636279, 722696, -2141059064, -2145253368, -2136733431, -2147350520, -2138961912, -2143156216, -2132539127, 460551, -2141583352, -2145777656, -2137782007, 4392715, -2139486200, -2143680504, -2133587703, 1246985, -2140534776, -2144729080, -2135684855, -2146826232, -2138437624, -2142631928, -2131490551, 329479, -2141845496, -2146039800, 34824, 3344138, -2139748344, -2143942648, -2134111991, 984840, -2140796920, -2144991224, -2136209143, -2147088376, -2138699768, -2142894072, -2132014839, 591623, -2141321208, -2145515512, -2137257719, 6489867, -2139224056, -2143418360, -2133063415, 1771273, -2140272632, -2144466936, -2135160567, -2146564088, -2138175480, -2142369784, -2130966263, 5895, -2142173176, -2146367480, 8587277, 2033417, -2140076024, -2144270328, -2134767351, 657159, -2141124600, -2145318904, -2136864503, -2147416056, -2139027448, -2143221752, -2132670199, 395015, -2141648888, -2145843192, -2137913079, 3868426, -2139551736, -2143746040, -2133718775, 1115912, -2140600312, -2144794616, -2135815927, -2146891768, -2138503160, -2142697464, -2131621623, 263943, -2141911032, -2146105336, 16910344, 2819850, -2139813880, -2144008184, -2134243063, 853768, -2140862456, -2145056760, -2136340215, -2147153912, -2138765304, -2142959608, -2132145911, 526087, -2141386744, -2145581048, -2137388791, 5441291, -2139289592, -2143483896, -2133194487, 1509129, -2140338168, -2144532472, -2135291639, -2146629624, -2138241016, -2142435320, -2131097335, 198407, -2142042104, -2146236408, 12781581, 2295562, -2139944952, -2144139256, -2134505207, 722696, -2140993528, -2145187832, -2136602359, -2147284984, -2138896376, -2143090680, -2132408055, 460551, -2141517816, -2145712120, -2137650935, 4392715, -2139420664, -2143614968, -2133456631, 1246985, -2140469240, -2144663544, -2135553783, -2146760696, -2138372088, -2142566392, -2131359479, 329479, -2141779960, -2145974264, 34824, 3344138, -2139682808, -2143877112, -2133980919, 984840, -2140731384, -2144925688, -2136078071, -2147022840, -2138634232, -2142828536, -2131883767, 591623, -2141255672, -2145449976, -2137126647, 6489867, -2139158520, -2143352824, -2132932343, 1771273, -2140207096, -2144401400, -2135029495, -2146498552, -2138109944, -2142304248, -2130835191, 5895, -2142238712, -2146433016, 7538700, 2033417, -2140141560, -2144335864, -2134832887, 657159, -2141190136, -2145384440, -2136930039, -2147481592, -2139092984, -2143287288, -2132735735, 395015, -2141714424, -2145908728, -2137978615, 3868426, -2139617272, -2143811576, -2133784311, 1115912, -2140665848, -2144860152, -2135881463, -2146957304, -2138568696, -2142763000, -2131687159, 263943, -2141976568, -2146170872, 14878733, 2819850, -2139879416, -2144073720, -2134308599, 853768, -2140927992, -2145122296, -2136405751, -2147219448, -2138830840, -2143025144, -2132211447, 526087, -2141452280, -2145646584, -2137454327, 5441291, -2139355128, -2143549432, -2133260023, 1509129, -2140403704, -2144598008, -2135357175, -2146695160, -2138306552, -2142500856, -2131162871, 198407, -2142107640, -2146301944, 10684429, 2295562, -2140010488, -2144204792, -2134570743, 722696, -2141059064, -2145253368, -2136667895, -2147350520, -2138961912, -2143156216, -2132473591, 460551, -2141583352, -2145777656, -2137716471, 4392715, -2139486200, -2143680504, -2133522167, 1246985, -2140534776, -2144729080, -2135619319, -2146826232, -2138437624, -2142631928, -2131425015, 329479, -2141845496, -2146039800, 34824, 3344138, -2139748344, -2143942648, -2134046455, 984840, -2140796920, -2144991224, -2136143607, -2147088376, -2138699768, -2142894072, -2131949303, 591623, -2141321208, -2145515512, -2137192183, 6489867, -2139224056, -2143418360, -2132997879, 1771273, -2140272632, -2144466936, -2135095031, -2146564088, -2138175480, -2142369784, -2130900727, 5895, -2142173176, -2146367480, 8587277, 2033417, -2140076024, -2144270328, -2134701815, 657159, -2141124600, -2145318904, -2136798967, -2147416056, -2139027448, -2143221752, -2132604663, 395015, -2141648888, -2145843192, -2137847543, 3868426, -2139551736, -2143746040, -2133653239, 1115912, -2140600312, -2144794616, -2135750391, -2146891768, -2138503160, -2142697464, -2131556087, 263943, -2141911032, -2146105336, 16910344, 2819850, -2139813880, -2144008184, -2134177527, 853768, -2140862456, -2145056760, -2136274679, -2147153912, -2138765304, -2142959608, -2132080375, 526087, -2141386744, -2145581048, -2137323255, 5441291, -2139289592, -2143483896, -2133128951, 1509129, -2140338168, -2144532472, -2135226103, -2146629624, -2138241016, -2142435320, -2131031799, 198407, -2142042104, -2146236408, 12781581, 2295562, -2139944952, -2144139256, -2134439671, 722696, -2140993528, -2145187832, -2136536823, -2147284984, -2138896376, -2143090680, -2132342519, 460551, -2141517816, -2145712120, -2137585399, 4392715, -2139420664, -2143614968, -2133391095, 1246985, -2140469240, -2144663544, -2135488247, -2146760696, -2138372088, -2142566392, -2131293943, 329479, -2141779960, -2145974264, 34824, 3344138, -2139682808, -2143877112, -2133915383, 984840, -2140731384, -2144925688, -2136012535, -2147022840, -2138634232, -2142828536, -2131818231, 591623, -2141255672, -2145449976, -2137061111, 6489867, -2139158520, -2143352824, -2132866807, 1771273, -2140207096, -2144401400, -2134963959, -2146498552, -2138109944, -2142304248, -2130769655];
 
-const FIXED_LIT_SYMBOL: i32[] = [256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 280, 281, 282, 283, 284, 285, 286, 287, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255];
-
-const FIXED_DIST_COUNT: i32[] = [0, 0, 0, 0, 0, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-
-const FIXED_DIST_SYMBOL: i32[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29];
-
-const FIXED_LIT_TABLE: i32[] = [519, 5243144, 1048840, 7536712, 2031655, 7340296, 3145992, 12583177, 655367, 6291720, 2097416, 10486025, 264, 8388872, 4194568, 14680329, 393223, 5767432, 1573128, 9437449, 3866679, 7864584, 3670280, 13631753, 1114135, 6816008, 2621704, 11534601, 524552, 8913160, 4718856, 15728905, 262151, 5505288, 1310984, 14876760, 2818103, 7602440, 3408136, 13107465, 851991, 6553864, 2359560, 11010313, 262408, 8651016, 4456712, 15204617, 524295, 6029576, 1835272, 9961737, 5439559, 8126728, 3932424, 14156041, 1507367, 7078152, 2883848, 12058889, 786696, 9175304, 4981000, 16253193, 196615, 5374216, 1179912, 10682456, 2293815, 7471368, 3277064, 12845321, 720919, 6422792, 2228488, 10748169, 131336, 8519944, 4325640, 14942473, 458759, 5898504, 1704200, 9699593, 4390983, 7995656, 3801352, 13893897, 1245223, 6947080, 2752776, 11796745, 655624, 9044232, 4849928, 15991049, 327687, 5636360, 1442056, 2056, 3342391, 7733512, 3539208, 13369609, 983063, 6684936, 2490632, 11272457, 393480, 8782088, 4587784, 15466761, 589831, 6160648, 1966344, 10223881, 6488135, 8257800, 4063496, 14418185, 1769511, 7209224, 3014920, 12321033, 917768, 9306376, 5112072, 16515337, 519, 5308680, 1114376, 8585304, 2031655, 7405832, 3211528, 12714249, 655367, 6357256, 2162952, 10617097, 65800, 8454408, 4260104, 14811401, 393223, 5832968, 1638664, 9568521, 3866679, 7930120, 3735816, 13762825, 1114135, 6881544, 2687240, 11665673, 590088, 8978696, 4784392, 15859977, 262151, 5570824, 1376520, 16908296, 2818103, 7667976, 3473672, 13238537, 851991, 6619400, 2425096, 11141385, 327944, 8716552, 4522248, 15335689, 524295, 6095112, 1900808, 10092809, 5439559, 8192264, 3997960, 14287113, 1507367, 7143688, 2949384, 12189961, 852232, 9240840, 5046536, 16384265, 196615, 5439752, 1245448, 12779608, 2293815, 7536904, 3342600, 12976393, 720919, 6488328, 2294024, 10879241, 196872, 8585480, 4391176, 15073545, 458759, 5964040, 1769736, 9830665, 4390983, 8061192, 3866888, 14024969, 1245223, 7012616, 2818312, 11927817, 721160, 9109768, 4915464, 16122121, 327687, 5701896, 1507592, 2056, 3342391, 7799048, 3604744, 13500681, 983063, 6750472, 2556168, 11403529, 459016, 8847624, 4653320, 15597833, 589831, 6226184, 2031880, 10354953, 6488135, 8323336, 4129032, 14549257, 1769511, 7274760, 3080456, 12452105, 983304, 9371912, 5177608, 16646409, 519, 5243144, 1048840, 7536712, 2031655, 7340296, 3145992, 12648713, 655367, 6291720, 2097416, 10551561, 264, 8388872, 4194568, 14745865, 393223, 5767432, 1573128, 9502985, 3866679, 7864584, 3670280, 13697289, 1114135, 6816008, 2621704, 11600137, 524552, 8913160, 4718856, 15794441, 262151, 5505288, 1310984, 14876760, 2818103, 7602440, 3408136, 13173001, 851991, 6553864, 2359560, 11075849, 262408, 8651016, 4456712, 15270153, 524295, 6029576, 1835272, 10027273, 5439559, 8126728, 3932424, 14221577, 1507367, 7078152, 2883848, 12124425, 786696, 9175304, 4981000, 16318729, 196615, 5374216, 1179912, 10682456, 2293815, 7471368, 3277064, 12910857, 720919, 6422792, 2228488, 10813705, 131336, 8519944, 4325640, 15008009, 458759, 5898504, 1704200, 9765129, 4390983, 7995656, 3801352, 13959433, 1245223, 6947080, 2752776, 11862281, 655624, 9044232, 4849928, 16056585, 327687, 5636360, 1442056, 2056, 3342391, 7733512, 3539208, 13435145, 983063, 6684936, 2490632, 11337993, 393480, 8782088, 4587784, 15532297, 589831, 6160648, 1966344, 10289417, 6488135, 8257800, 4063496, 14483721, 1769511, 7209224, 3014920, 12386569, 917768, 9306376, 5112072, 16580873, 519, 5308680, 1114376, 8585304, 2031655, 7405832, 3211528, 12779785, 655367, 6357256, 2162952, 10682633, 65800, 8454408, 4260104, 14876937, 393223, 5832968, 1638664, 9634057, 3866679, 7930120, 3735816, 13828361, 1114135, 6881544, 2687240, 11731209, 590088, 8978696, 4784392, 15925513, 262151, 5570824, 1376520, 16908296, 2818103, 7667976, 3473672, 13304073, 851991, 6619400, 2425096, 11206921, 327944, 8716552, 4522248, 15401225, 524295, 6095112, 1900808, 10158345, 5439559, 8192264, 3997960, 14352649, 1507367, 7143688, 2949384, 12255497, 852232, 9240840, 5046536, 16449801, 196615, 5439752, 1245448, 12779608, 2293815, 7536904, 3342600, 13041929, 720919, 6488328, 2294024, 10944777, 196872, 8585480, 4391176, 15139081, 458759, 5964040, 1769736, 9896201, 4390983, 8061192, 3866888, 14090505, 1245223, 7012616, 2818312, 11993353, 721160, 9109768, 4915464, 16187657, 327687, 5701896, 1507592, 2056, 3342391, 7799048, 3604744, 13566217, 983063, 6750472, 2556168, 11469065, 459016, 8847624, 4653320, 15663369, 589831, 6226184, 2031880, 10420489, 6488135, 8323336, 4129032, 14614793, 1769511, 7274760, 3080456, 12517641, 983304, 9371912, 5177608, 16711945, 519, 5243144, 1048840, 7536712, 2031655, 7340296, 3145992, 12583177, 655367, 6291720, 2097416, 10486025, 264, 8388872, 4194568, 14680329, 393223, 5767432, 1573128, 9437449, 3866679, 7864584, 3670280, 13631753, 1114135, 6816008, 2621704, 11534601, 524552, 8913160, 4718856, 15728905, 262151, 5505288, 1310984, 14876760, 2818103, 7602440, 3408136, 13107465, 851991, 6553864, 2359560, 11010313, 262408, 8651016, 4456712, 15204617, 524295, 6029576, 1835272, 9961737, 5439559, 8126728, 3932424, 14156041, 1507367, 7078152, 2883848, 12058889, 786696, 9175304, 4981000, 16253193, 196615, 5374216, 1179912, 10682456, 2293815, 7471368, 3277064, 12845321, 720919, 6422792, 2228488, 10748169, 131336, 8519944, 4325640, 14942473, 458759, 5898504, 1704200, 9699593, 4390983, 7995656, 3801352, 13893897, 1245223, 6947080, 2752776, 11796745, 655624, 9044232, 4849928, 15991049, 327687, 5636360, 1442056, 2056, 3342391, 7733512, 3539208, 13369609, 983063, 6684936, 2490632, 11272457, 393480, 8782088, 4587784, 15466761, 589831, 6160648, 1966344, 10223881, 6488135, 8257800, 4063496, 14418185, 1769511, 7209224, 3014920, 12321033, 917768, 9306376, 5112072, 16515337, 519, 5308680, 1114376, 8585304, 2031655, 7405832, 3211528, 12714249, 655367, 6357256, 2162952, 10617097, 65800, 8454408, 4260104, 14811401, 393223, 5832968, 1638664, 9568521, 3866679, 7930120, 3735816, 13762825, 1114135, 6881544, 2687240, 11665673, 590088, 8978696, 4784392, 15859977, 262151, 5570824, 1376520, 16908296, 2818103, 7667976, 3473672, 13238537, 851991, 6619400, 2425096, 11141385, 327944, 8716552, 4522248, 15335689, 524295, 6095112, 1900808, 10092809, 5439559, 8192264, 3997960, 14287113, 1507367, 7143688, 2949384, 12189961, 852232, 9240840, 5046536, 16384265, 196615, 5439752, 1245448, 12779608, 2293815, 7536904, 3342600, 12976393, 720919, 6488328, 2294024, 10879241, 196872, 8585480, 4391176, 15073545, 458759, 5964040, 1769736, 9830665, 4390983, 8061192, 3866888, 14024969, 1245223, 7012616, 2818312, 11927817, 721160, 9109768, 4915464, 16122121, 327687, 5701896, 1507592, 2056, 3342391, 7799048, 3604744, 13500681, 983063, 6750472, 2556168, 11403529, 459016, 8847624, 4653320, 15597833, 589831, 6226184, 2031880, 10354953, 6488135, 8323336, 4129032, 14549257, 1769511, 7274760, 3080456, 12452105, 983304, 9371912, 5177608, 16646409, 519, 5243144, 1048840, 7536712, 2031655, 7340296, 3145992, 12648713, 655367, 6291720, 2097416, 10551561, 264, 8388872, 4194568, 14745865, 393223, 5767432, 1573128, 9502985, 3866679, 7864584, 3670280, 13697289, 1114135, 6816008, 2621704, 11600137, 524552, 8913160, 4718856, 15794441, 262151, 5505288, 1310984, 14876760, 2818103, 7602440, 3408136, 13173001, 851991, 6553864, 2359560, 11075849, 262408, 8651016, 4456712, 15270153, 524295, 6029576, 1835272, 10027273, 5439559, 8126728, 3932424, 14221577, 1507367, 7078152, 2883848, 12124425, 786696, 9175304, 4981000, 16318729, 196615, 5374216, 1179912, 10682456, 2293815, 7471368, 3277064, 12910857, 720919, 6422792, 2228488, 10813705, 131336, 8519944, 4325640, 15008009, 458759, 5898504, 1704200, 9765129, 4390983, 7995656, 3801352, 13959433, 1245223, 6947080, 2752776, 11862281, 655624, 9044232, 4849928, 16056585, 327687, 5636360, 1442056, 2056, 3342391, 7733512, 3539208, 13435145, 983063, 6684936, 2490632, 11337993, 393480, 8782088, 4587784, 15532297, 589831, 6160648, 1966344, 10289417, 6488135, 8257800, 4063496, 14483721, 1769511, 7209224, 3014920, 12386569, 917768, 9306376, 5112072, 16580873, 519, 5308680, 1114376, 8585304, 2031655, 7405832, 3211528, 12779785, 655367, 6357256, 2162952, 10682633, 65800, 8454408, 4260104, 14876937, 393223, 5832968, 1638664, 9634057, 3866679, 7930120, 3735816, 13828361, 1114135, 6881544, 2687240, 11731209, 590088, 8978696, 4784392, 15925513, 262151, 5570824, 1376520, 16908296, 2818103, 7667976, 3473672, 13304073, 851991, 6619400, 2425096, 11206921, 327944, 8716552, 4522248, 15401225, 524295, 6095112, 1900808, 10158345, 5439559, 8192264, 3997960, 14352649, 1507367, 7143688, 2949384, 12255497, 852232, 9240840, 5046536, 16449801, 196615, 5439752, 1245448, 12779608, 2293815, 7536904, 3342600, 13041929, 720919, 6488328, 2294024, 10944777, 196872, 8585480, 4391176, 15139081, 458759, 5964040, 1769736, 9896201, 4390983, 8061192, 3866888, 14090505, 1245223, 7012616, 2818312, 11993353, 721160, 9109768, 4915464, 16187657, 327687, 5701896, 1507592, 2056, 3342391, 7799048, 3604744, 13566217, 983063, 6750472, 2556168, 11469065, 459016, 8847624, 4653320, 15663369, 589831, 6226184, 2031880, 10420489, 6488135, 8323336, 4129032, 14614793, 1769511, 7274760, 3080456, 12517641, 983304, 9371912, 5177608, 16711945];
-
-const FIXED_DIST_TABLE: i32[] = [65541, 16842869, 1114165, 268501173, 327701, 67174549, 4259925, 1073807573, 196613, 33620101, 2162757, 536936645, 589861, 134283429, 8454245, 0, 131077, 25231477, 1638453, 402718901, 458773, 100728981, 6357077, 1610678485, 262149, 50397317, 3211333, 805372101, 852005, 201392293, 12648549, 0, 65541, 16842869, 1114165, 268501173, 327701, 67174549, 4259925, 1073807573, 196613, 33620101, 2162757, 536936645, 589861, 134283429, 8454245, 0, 131077, 25231477, 1638453, 402718901, 458773, 100728981, 6357077, 1610678485, 262149, 50397317, 3211333, 805372101, 852005, 201392293, 12648549, 0, 65541, 16842869, 1114165, 268501173, 327701, 67174549, 4259925, 1073807573, 196613, 33620101, 2162757, 536936645, 589861, 134283429, 8454245, 0, 131077, 25231477, 1638453, 402718901, 458773, 100728981, 6357077, 1610678485, 262149, 50397317, 3211333, 805372101, 852005, 201392293, 12648549, 0, 65541, 16842869, 1114165, 268501173, 327701, 67174549, 4259925, 1073807573, 196613, 33620101, 2162757, 536936645, 589861, 134283429, 8454245, 0, 131077, 25231477, 1638453, 402718901, 458773, 100728981, 6357077, 1610678485, 262149, 50397317, 3211333, 805372101, 852005, 201392293, 12648549, 0, 65541, 16842869, 1114165, 268501173, 327701, 67174549, 4259925, 1073807573, 196613, 33620101, 2162757, 536936645, 589861, 134283429, 8454245, 0, 131077, 25231477, 1638453, 402718901, 458773, 100728981, 6357077, 1610678485, 262149, 50397317, 3211333, 805372101, 852005, 201392293, 12648549, 0, 65541, 16842869, 1114165, 268501173, 327701, 67174549, 4259925, 1073807573, 196613, 33620101, 2162757, 536936645, 589861, 134283429, 8454245, 0, 131077, 25231477, 1638453, 402718901, 458773, 100728981, 6357077, 1610678485, 262149, 50397317, 3211333, 805372101, 852005, 201392293, 12648549, 0, 65541, 16842869, 1114165, 268501173, 327701, 67174549, 4259925, 1073807573, 196613, 33620101, 2162757, 536936645, 589861, 134283429, 8454245, 0, 131077, 25231477, 1638453, 402718901, 458773, 100728981, 6357077, 1610678485, 262149, 50397317, 3211333, 805372101, 852005, 201392293, 12648549, 0, 65541, 16842869, 1114165, 268501173, 327701, 67174549, 4259925, 1073807573, 196613, 33620101, 2162757, 536936645, 589861, 134283429, 8454245, 0, 131077, 25231477, 1638453, 402718901, 458773, 100728981, 6357077, 1610678485, 262149, 50397317, 3211333, 805372101, 852005, 201392293, 12648549, 0];
+const FIXED_DIST_TABLE: i32[] = [66821, 16844044, 1115400, 268502288, 328966, 67175694, 4261130, 1073808658, 197893, 33621261, 2163977, 536937745, 591111, 134284559, 8455435, 17669, 132357, 25232652, 1639688, 402720016, 460038, 100730126, 6358282, 1610679570, 263429, 50398477, 3212553, 805373201, 853255, 201393423, 12649739, 17669, 66821, 16844044, 1115400, 268502288, 328966, 67175694, 4261130, 1073808658, 197893, 33621261, 2163977, 536937745, 591111, 134284559, 8455435, 17669, 132357, 25232652, 1639688, 402720016, 460038, 100730126, 6358282, 1610679570, 263429, 50398477, 3212553, 805373201, 853255, 201393423, 12649739, 17669, 66821, 16844044, 1115400, 268502288, 328966, 67175694, 4261130, 1073808658, 197893, 33621261, 2163977, 536937745, 591111, 134284559, 8455435, 17669, 132357, 25232652, 1639688, 402720016, 460038, 100730126, 6358282, 1610679570, 263429, 50398477, 3212553, 805373201, 853255, 201393423, 12649739, 17669, 66821, 16844044, 1115400, 268502288, 328966, 67175694, 4261130, 1073808658, 197893, 33621261, 2163977, 536937745, 591111, 134284559, 8455435, 17669, 132357, 25232652, 1639688, 402720016, 460038, 100730126, 6358282, 1610679570, 263429, 50398477, 3212553, 805373201, 853255, 201393423, 12649739, 17669, 66821, 16844044, 1115400, 268502288, 328966, 67175694, 4261130, 1073808658, 197893, 33621261, 2163977, 536937745, 591111, 134284559, 8455435, 17669, 132357, 25232652, 1639688, 402720016, 460038, 100730126, 6358282, 1610679570, 263429, 50398477, 3212553, 805373201, 853255, 201393423, 12649739, 17669, 66821, 16844044, 1115400, 268502288, 328966, 67175694, 4261130, 1073808658, 197893, 33621261, 2163977, 536937745, 591111, 134284559, 8455435, 17669, 132357, 25232652, 1639688, 402720016, 460038, 100730126, 6358282, 1610679570, 263429, 50398477, 3212553, 805373201, 853255, 201393423, 12649739, 17669, 66821, 16844044, 1115400, 268502288, 328966, 67175694, 4261130, 1073808658, 197893, 33621261, 2163977, 536937745, 591111, 134284559, 8455435, 17669, 132357, 25232652, 1639688, 402720016, 460038, 100730126, 6358282, 1610679570, 263429, 50398477, 3212553, 805373201, 853255, 201393423, 12649739, 17669, 66821, 16844044, 1115400, 268502288, 328966, 67175694, 4261130, 1073808658, 197893, 33621261, 2163977, 536937745, 591111, 134284559, 8455435, 17669, 132357, 25232652, 1639688, 402720016, 460038, 100730126, 6358282, 1610679570, 263429, 50398477, 3212553, 805373201, 853255, 201393423, 12649739, 17669];
 
 function __fixed(own s: __State, data: [u8]): __State {
-  let tables = __fixed_tables(s);
-  return __codes(__State { ...tables.state }, data, tables.literal, tables.distance, FIXED_LIT_TABLE, FIXED_DIST_TABLE);
+  return __codes(s, data, FIXED_LIT_TABLE, FIXED_DIST_TABLE);
 }
 
 function __fixed_tables(s: __State): __Tables {
-  return __Tables {
-    state: s,
-    literal: __Huff { count: FIXED_LIT_COUNT, symbol: FIXED_LIT_SYMBOL, left: 0, longest: 9 },
-    distance: __Huff { count: FIXED_DIST_COUNT, symbol: FIXED_DIST_SYMBOL, left: 2048, longest: 5 },
-  };
+  return __Tables { state: s, literal: FIXED_LIT_TABLE, distance: FIXED_DIST_TABLE };
 }
 
 function __code_length_order(): i32[] {
@@ -821,98 +996,65 @@ function __dynamic(own s: __State, data: [u8]): __State {
   if (tables.state.failed) {
     return tables.state;
   }
-  let lit = __table(tables.literal, LIT_BITS, true);
-  let dtab = __table(tables.distance, DIST_BITS, false);
-  return __codes(__State { ...tables.state }, data, tables.literal, tables.distance, lit, dtab);
+  return __codes(__State { ...tables.state }, data, tables.literal, tables.distance);
 }
 
 function __dynamic_tables(own s: __State, data: [u8]): __Tables {
-  s = __bits(s, data, 5);
-  let nlen = s.last + 257;
-  s = __bits(s, data, 5);
-  let ndist = s.last + 1;
-  s = __bits(s, data, 4);
-  let ncode = s.last + 4;
+  s = __bits(s, data, 14);
+  let nlen = (s.last & 31) + 257;
+  let ndist = (s.last >> 5 & 31) + 1;
+  let ncode = (s.last >> 10) + 4;
   if (nlen > 286 || ndist > 30) {
     return __empty_tables(__fail(s, Malformed("too many length or distance codes")));
   }
   let order = __code_length_order();
-  let lengths = __zeros(19);
+  let lengths = __alloc_i32(19);
+  let count = __alloc_i32(16);
   let i = 0;
   while (i < ncode) {
-    s = __bits(s, data, 3);
-    lengths = lengths.with(order[i], s.last);
-    i += 1;
+    let k = cmp.min(ncode - i, 7);
+    s = __bits(s, data, 3 * k);
+    let three = s.last;
+    let stop = i + k;
+    while (i < stop) {
+      let len = three & 7;
+      lengths = lengths.with(order[i], len);
+      count = count.with(len, count[len] + 1);
+      three >>= 3;
+      i += 1;
+    }
   }
-  let lencode = __construct(lengths, 19);
-  if (lencode.left != 0) {
+  let left = __left(count, 0);
+  if (left != 0) {
     return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed code length code")));
   }
-  s = __code_lengths(s, data, lencode, nlen + ndist);
+  s = __code_lengths(s, data, __build(lengths, 0, 19, count, 0, left, 7, LENGTH_VALUES), nlen, ndist);
   if (s.failed) {
     return __empty_tables(s);
   }
   return __dynamic_codes(s, nlen, ndist);
 }
 
+// `s.counts` holds the count of the codes of each length of the
+// literal/length code, then of the distance code.
 function __dynamic_codes(own s: __State, nlen: i32, ndist: i32): __Tables {
   let all = s.lengths;
+  let counts = s.counts;
+  s = __State { ...s, lengths: [], counts: [] };
   if (all[256] == 0) {
     return __empty_tables(__fail(s, Malformed("no end-of-block code")));
   }
-  let lit = __construct(all, nlen);
-  if (__invalid_tree(lit, nlen, false)) {
+  let ll = __left(counts, 0);
+  if (__invalid(counts, 0, ll, nlen, false)) {
     return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed literal/length code")));
   }
-  let dist = __construct(__tail(all, nlen, nlen + ndist), ndist);
-  if (__invalid_tree(dist, ndist, true)) {
+  let dl = __left(counts, 16);
+  if (__invalid(counts, 16, dl, ndist, true)) {
     return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed distance code")));
   }
+  let lit = __build(all, 0, nlen, counts, 0, ll, LIT_BITS, LIT_VALUES);
+  let dist = __build(all, nlen, ndist, counts, 16, dl, DIST_BITS, DIST_VALUES);
   return __Tables { state: s, literal: lit, distance: dist };
-}
-
-function __invalid_tree(tree: __Huff, symbols: i32, empty: boolean): boolean {
-  if (tree.left <= 0) {
-    return tree.left < 0;
-  }
-  let used = symbols - tree.count[0];
-  return !(empty && used == 0 || used == 1 && tree.count[1] == 1);
-}
-
-function __tail(xs: i32[], from: i32, end: i32): i32[] {
-  let out: i32[] = [];
-  let i = from;
-  while (i < end) {
-    out = out.append(xs[i]);
-    i += 1;
-  }
-  return out;
-}
-
-// The entry of each seven-bit pattern for the code of the code lengths:
-// the symbol from bit 4 and the code length in bits 0-3.
-function __length_table(code: __Huff): i32[] {
-  let table = __zeros(128);
-  let next = 0;
-  let index = 0;
-  let len = 1;
-  while (len <= 7) {
-    let k = 0;
-    while (k < code.count[len]) {
-      let entry = code.symbol[index] << 4 | len;
-      let at = __reversed(next, len);
-      while (at < 128) {
-        table = table.with(at, entry);
-        at += 1 << len;
-      }
-      next += 1;
-      index += 1;
-      k += 1;
-    }
-    next <<= 1;
-    len += 1;
-  }
-  return table;
 }
 
 // The count of extra bits of a repeat symbol, and the count that the extra
@@ -921,40 +1063,56 @@ const REPEAT_EXTRA: i32[] = [2, 3, 7];
 
 const REPEAT_BASE: i32[] = [3, 3, 11];
 
-// Reads `n` code lengths. A symbol with its extra bits needs 14 bits at
+// Reads `nlen` code lengths of the literal/length code and `ndist` of the
+// distance code with the code of `table`, and counts the codes of each
+// length of the two codes. A symbol with its extra bits needs 14 bits at
 // most, so one refill serves each symbol. The whole bytes that stay in the
 // bit buffer go back to the input at the end.
-function __code_lengths(own s: __State, data: [u8], code: __Huff, n: i32): __State {
-  let table = __length_table(code);
-  let lengths: i32[] = [];
+// fern-lint: allow cyclomatic-complexity
+function __code_lengths(own s: __State, data: [u8], table: i32[], nlen: i32, ndist: i32): __State {
+  let n = nlen + ndist;
+  let lengths = __alloc_i32(n);
+  let counts = __alloc_i32(32);
+  let i = 0;
   let pos = s.pos;
-  let buf = s.bitbuf;
+  let buf = s.bitbuf as u64;
   let cnt = s.bitcnt;
+  let end = data.len();
   let error: Option[InflateError] = None;
-  while (lengths.len() < n) {
-    while (cnt < 14 && pos < data.len()) {
-      buf |= data[pos] as i32 << cnt;
-      pos += 1;
-      cnt += 8;
+  if (table.len() < 128) {
+    return __fail(s, Truncated);
+  }
+  while (i < n) {
+    if (cnt < 14) {
+      if (pos <= end - 8) {
+        buf |= __le64(data, pos) << cnt as u64;
+        pos += (cnt >> 3 ^ 7) & 7;
+        cnt |= 56;
+      } else {
+        while (cnt <= 56 && pos < end) {
+          buf |= data[pos] as u64 << cnt as u64;
+          pos += 1;
+          cnt += 8;
+        }
+      }
     }
-    let entry = table[buf & 127];
-    let used = entry & 15;
-    if (used == 0) {
-      error = Some(Malformed("a bit pattern that is no code length code"));
-      break;
-    }
+    let entry = table[(buf & 127u64) as i32];
+    let used = entry & 255;
     if (used > cnt) {
       error = Some(Truncated);
       break;
     }
-    buf >>= used;
+    buf >>= used as u64;
     cnt -= used;
-    let sym = entry >> 4;
+    let sym = entry >> 16;
     if (sym < 16) {
-      lengths = lengths.append(sym);
+      lengths = lengths.with(i, sym);
+      let c = if (i < nlen) { sym } else { sym + 16 };
+      counts = counts.with(c, counts[c] + 1);
+      i += 1;
       continue;
     }
-    if (sym == 16 && lengths.len() == 0) {
+    if (sym == 16 && i == 0) {
       error = Some(Malformed("a repeat with no length before it"));
       break;
     }
@@ -963,37 +1121,33 @@ function __code_lengths(own s: __State, data: [u8], code: __Huff, n: i32): __Sta
       error = Some(Truncated);
       break;
     }
-    let times = REPEAT_BASE[sym - 16] + (buf & (1 << extra) - 1);
-    buf >>= extra;
+    let times = REPEAT_BASE[sym - 16] + __low(buf, extra) as i32;
+    buf >>= extra as u64;
     cnt -= extra;
-    if (lengths.len() + times > n) {
+    if (i + times > n) {
       error = Some(Malformed("more code lengths than codes"));
       break;
     }
-    let value = if (sym == 16) { lengths[lengths.len() - 1] } else { 0 };
-    lengths = __repeated(lengths, times, value);
+    let value = if (sym == 16) { lengths[i - 1] } else { 0 };
+    let stop = i + times;
+    let first = cmp.max(cmp.min(stop, nlen) - i, 0);
+    counts = counts.with(value, counts[value] + first);
+    counts = counts.with(value + 16, counts[value + 16] + times - first);
+    if (value != 0) {
+      while (i < stop) {
+        lengths = lengths.with(i, value);
+        i += 1;
+      }
+    }
+    i = stop;
   }
   pos -= cnt >> 3;
   cnt &= 7;
-  s = __State { ...s, pos: pos, bitbuf: buf & (1 << cnt) - 1, bitcnt: cnt, lengths: lengths };
+  s = __State { ...s, pos: pos, bitbuf: __low(buf, cnt) as i32, bitcnt: cnt, lengths: lengths, counts: counts };
   return match (error) {
     Some(e) => __fail(s, e),
     None => s,
   };
-}
-```
-
-### `15 function __repeated(own lengths: i32[], times: i32, value: i32): i32[]`
-
-```fern
-<<15 function __repeated(own lengths: i32[], times: i32, value: i32): i32[]>>=
-function __repeated(own lengths: i32[], times: i32, value: i32): i32[] {
-  let k = 0;
-  while (k < times) {
-    lengths = lengths.append(value);
-    k += 1;
-  }
-  return lengths;
 }
 ```
 
@@ -1147,35 +1301,73 @@ pub function zlib_decode(input: [u8], max_out: i32): Result[u8[], InflateError] 
 }
 
 // The sums take their modulus once for each 5552 bytes, zlib's NMAX: the
-// most bytes after which b cannot pass 2^32.
+// most bytes after which b cannot pass 2^32. A word of eight bytes holds
+// four lanes of 16 bits for the even bytes and four for the odd bytes.
+// Each lane counts at most eight words before the lanes are added up, so
+// no lane passes 16 bits. In a chunk of `len` bytes, b gets `len` times
+// the a before the chunk, eight times the bytes before each word, and
+// 8 - k times byte k of each word.
 pub function adler32(bs: [u8]): u32 {
-  let a = 1;
-  let b = 0;
+  let a = 1u64;
+  let b = 0u64;
   let n = bs.len();
+  let last = n - 16;
   let i = 0;
-  while (i < n) {
-    let end = cmp.min(n, i + 5552);
-    while (i + 4 <= end) {
-      a += bs[i] as u32;
-      b += a;
-      a += bs[i + 1] as u32;
-      b += a;
-      a += bs[i + 2] as u32;
-      b += a;
-      a += bs[i + 3] as u32;
-      b += a;
-      i += 4;
+  while (i <= last) {
+    let stop = i + cmp.min(n - i >> 4, 347) * 16;
+    let len = (stop - i) as u64;
+    let sum = 0u64;
+    let before = 0u64;
+    let weighted = 0u64;
+    while (i < stop) {
+      let run = cmp.min(stop, i + 64);
+      let even = 0u64;
+      let odd = 0u64;
+      let r = 0u64;
+      let words = 0u64;
+      while (i <= last) {
+        let w = __le64(bs, i);
+        let v = __le64(bs, i + 8);
+        r += even + odd;
+        even += w & BYTE_LANES;
+        odd += w >> 8 & BYTE_LANES;
+        r += even + odd;
+        even += v & BYTE_LANES;
+        odd += v >> 8 & BYTE_LANES;
+        i += 16;
+        words += 2u64;
+        if (i >= run) {
+          break;
+        }
+      }
+      before += words * sum + (r * LANE_SUM >> 48);
+      sum += (even + odd) * LANE_SUM >> 48;
+      weighted += (even * EVEN_WEIGHTS >> 48) + (odd * ODD_WEIGHTS >> 48);
     }
-    while (i < end) {
-      a += bs[i] as u32;
-      b += a;
-      i += 1;
-    }
-    a %= 65521;
-    b %= 65521;
+    b = (b + len * a + 8u64 * before + weighted) % 65521u64;
+    a = (a + sum) % 65521u64;
   }
-  return b << 16 | a;
+  while (i < n) {
+    a += bs[i] as u64;
+    b += a;
+    i += 1;
+  }
+  a %= 65521u64;
+  b %= 65521u64;
+  return (b << 16 | a) as u32;
 }
+
+// The low byte of each 16-bit lane.
+const BYTE_LANES: u64 = 71777214294589695u64;
+
+// A product with it adds the four lanes in the top lane.
+const LANE_SUM: u64 = 281479271743489u64;
+
+// Products with these put 8, 6, 4 and 2 times the even lanes, and 7, 5, 3
+// and 1 times the odd lanes, in the top lane.
+const EVEN_WEIGHTS: u64 = 2251825583751170u64;
+
+const ODD_WEIGHTS: u64 = 1970346312007681u64;
 
 pub function deflate(input: [u8]): u8[] {
   return __deflated(input, 15, true);
@@ -2158,8 +2350,8 @@ enum __ReadPhase { ReadHeader, ReadStored, ReadCodes, ReadCopy, ReadEnd }
 
 struct __ReadCursor {
   state: __State,
-  literal: __Huff,
-  distance_code: __Huff,
+  literal: i32[],
+  distance_code: i32[],
   history: u8[],
   total: i32,
   phase: __ReadPhase,
@@ -2174,10 +2366,9 @@ pub function inflate_reader(input: u8[], max_out: i32): Result[InflateReader, In
   if (max_out < 0) {
     return Err(ReadRequest);
   }
-  let bits = __State { pos: 0, bitbuf: 0, bitcnt: 0, out: [], max_out: max_out, last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
-  let empty = __Huff { count: [], symbol: [], left: 0, longest: 0 };
+  let bits = __State { pos: 0, bitbuf: 0, bitcnt: 0, out: [], n: 0, max_out: max_out, last: 0, failed: false, error: Truncated, lengths: [], counts: [] };
   let initial = __ReadCursor {
-    state: bits, literal: empty, distance_code: empty, history: [], total: 0, phase: ReadHeader,
+    state: bits, literal: [], distance_code: [], history: [], total: 0, phase: ReadHeader,
     final_block: false, remaining: 0, distance: 0, byte: -1, cancelled: false,
   };
   let state = cell_new(Some(initial));
@@ -2301,36 +2492,36 @@ function __read_emit(own cursor: __ReadCursor, byte: u8): __ReadCursor {
 }
 
 function __read_code(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
-  let state = __decode(__State { ...cursor.state }, input, cursor.literal, "literal/length");
+  let state = __symbol(__State { ...cursor.state }, input, cursor.literal, LIT_BITS, "literal/length");
   cursor = __ReadCursor { ...cursor, state: state };
   if (state.failed) {
     return cursor;
   }
-  if (state.last < 256) {
-    return __read_emit(cursor, state.last as u8);
+  let e = state.last;
+  if (e < 0) {
+    return __read_emit(cursor, (e >> 16) as u8);
   }
-  if (state.last == 256) {
+  if ((e & E_END) != 0) {
     return __read_block_end(cursor);
   }
-  if (state.last > 285) {
+  if ((e & E_PAST) != 0) {
     return __ReadCursor { ...cursor, state: __fail(state, Malformed("a length code past 285")) };
   }
-  return __read_match(cursor, input, state.last - 257);
+  return __read_match(cursor, input, e);
 }
 
-function __read_match(own cursor: __ReadCursor, input: [u8], symbol: i32): __ReadCursor {
-  let state = __bits(__State { ...cursor.state }, input, LENGTH_EXTRA[symbol]);
-  let length = LENGTH_BASE[symbol] + state.last;
-  state = __decode(state, input, cursor.distance_code, "distance");
+// `e` is the entry of a length. The extra bits of an entry are the bits it
+// takes past its code.
+function __read_match(own cursor: __ReadCursor, input: [u8], e: i32): __ReadCursor {
+  let state = __bits(__State { ...cursor.state }, input, (e & 255) - (e >> 8 & 15));
+  let length = (e >> 16) + state.last;
+  state = __symbol(state, input, cursor.distance_code, DIST_BITS, "distance");
   if (state.failed) {
     return __ReadCursor { ...cursor, state: state };
   }
-  if (state.last >= 30) {
-    return __ReadCursor { ...cursor, state: __fail(state, Malformed("a distance code past 29")) };
-  }
-  let distance_symbol = state.last;
-  state = __bits(state, input, DIST_EXTRA[distance_symbol]);
-  let distance = DIST_BASE[distance_symbol] + state.last;
+  let d = state.last;
+  state = __bits(state, input, (d & 255) - (d >> 8 & 15));
+  let distance = (d >> 16) + state.last;
   if (distance > cmp.min(cursor.total, 32768)) {
     state = __fail(state, Malformed("a distance before the available history"));
   }

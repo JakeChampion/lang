@@ -3382,8 +3382,7 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       let ins = f.graph.blocks[at[st.block]].insts[st.point];
       for i in 0..ins.args.len() {
         let a = ins.args[i];
-        let reads = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length()) || ins.kind_tag == ssasem.call() && ssasem.holds_no_argument(ins.str);
-        if (a >= 0 && !reads && !moved_at(st, a, i)) {
+        if (a >= 0 && !only_reads(ins, i) && !moved_at(st, a, i)) {
           sole = sole.with(a, false);
         }
       }
@@ -3393,6 +3392,17 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
     }
   }
   return settled(sole, links);
+}
+
+// Whether `ins` only reads its operand at `i`, so the operand stays sole.
+function only_reads(ins: ssa.SInst, i: i32): boolean {
+  if (ins.kind_tag == ssasem.call() && ssasem.holds_no_argument(ins.str)) {
+    return true;
+  }
+  if (i == 0) {
+    return ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length();
+  }
+  return ins.kind_tag == ssasem.arr_concat();
 }
 
 struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }

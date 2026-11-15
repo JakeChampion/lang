@@ -4367,17 +4367,23 @@ function join_call(own r: irtables.LowerState, ins: ssa.SInst): irtables.LowerSt
 // The helper takes the second operand as its length and data, so a view is
 // read where it points.
 function concat_call(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, counted: boolean): irtables.LowerState {
-  let b = ins.args[1];
-  r = emit(r, ir.op_const_i32(elem_width(typeinfo.array_elem(f.values[ins.result]))));
-  r = emit(r, ir.op_load_local(b));
-  if (typeinfo.is_array_view(f.values[b])) {
-    r = emit(r, ssabytes.read(b, false, false));
-    r = emit(r, ir.op_load_local(b));
-    r = emit(r, ssabytes.read_data(b));
+  let elem = typeinfo.array_elem(f.values[ins.result]);
+  let width = elem_width(elem);
+  if (ins.args.len() == 4) {
+    r = concat_range_check(r, f, ins);
+  }
+  r = concat_width(r, width, ssasem.counted(f, elem));
+  if (ins.args.len() == 4) {
+    r = emit(r, ir.op_load_local(ins.args[3]));
   } else {
-    r = emit(r, ir.op_arr_len());
-    r = emit(r, ir.op_load_local(b));
-    r = emit(r, ir.op_const_i32(8));
+    r = concat_source_len(r, f, ins.args[1]);
+  }
+  r = concat_source_data(r, f, ins.args[1]);
+  if (ins.args.len() == 4) {
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    for op in ssabytes.scaled(width) {
+      r = emit(r, op);
+    }
     r = emit(r, ir.op_raw_addr());
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -4388,28 +4394,119 @@ function concat_call(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
   return emit(r, call);
 }
 
+// The width the helper takes is eight times the size of an element in bytes,
+// so a pointer-sized element has the width of the target. Bit 0 marks counted
+// elements, which the helper retains as it copies them.
+function concat_width(own r: irtables.LowerState, width: i32, counted: boolean): irtables.LowerState {
+  if (width != ir.width_ptr()) {
+    return emit(r, ir.op_const_i32(width));
+  }
+  r = emit(r, ir.op_ptr_width());
+  r = emit(r, ir.op_const_i32(8));
+  r = emit(r, ir.op_bin("mul", 0, false));
+  if (!counted) {
+    return r;
+  }
+  r = emit(r, ir.op_const_i32(1));
+  return emit(r, ir.op_bin("add", 0, false));
+}
+
+function concat_source_len(own r: irtables.LowerState, f: ssasem.Func, b: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(b));
+  if (typeinfo.is_array_view(f.values[b])) {
+    return emit(r, ssabytes.read(b, false, false));
+  }
+  return emit(r, ir.op_arr_len());
+}
+
+function concat_source_data(own r: irtables.LowerState, f: ssasem.Func, b: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(b));
+  if (typeinfo.is_array_view(f.values[b])) {
+    return emit(r, ssabytes.read_data(b));
+  }
+  r = emit(r, ir.op_const_i32(8));
+  return emit(r, ir.op_raw_addr());
+}
+
+// A range of n > 0 elements from `from` must lie in the source, as each
+// read of the loop it replaces must. A range of n <= 0 appends nothing.
+function concat_range_check(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
+  let b = ins.args[1];
+  let from = ins.args[2];
+  let n = ins.args[3];
+  r = emit(r, ir.op_load_local(n));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("gt_s", 0, false));
+  r = emit(r, ir.op_load_local(from));
+  r = concat_source_len(r, f, b);
+  r = emit(r, ir.op_bin("gt_u", 0, false));
+  r = emit(r, ir.op_load_local(n));
+  r = concat_source_len(r, f, b);
+  r = emit(r, ir.op_load_local(from));
+  r = emit(r, ir.op_bin("sub", 0, false));
+  r = emit(r, ir.op_bin("gt_s", 0, false));
+  r = emit(r, ir.op_bin("or", 0, false));
+  r = emit(r, ir.op_bin("and", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_call_direct("__fern_oob_abort", 0));
+  r = emit(r, ir.op_drop());
+  return emit(r, ir.op_end());
+}
+
+// A grown copy of a unique receiver takes its elements, and the release
+// frees only its box. A copy of a shared receiver shares its elements.
 function concat_owned(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, res: i32): irtables.LowerState {
+  let elem = typeinfo.array_elem(f.values[ins.result]);
+  let counted = ssasem.counted(f, elem);
+  let unique = res + 1;
+  if (counted) {
+    r = reserve(r, unique + 1);
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_store_local(unique));
+  }
   r = concat_call(r, f, ins, true);
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_load_local(res));
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
   r = emit(r, ir.op_if(0));
+  if (counted) {
+    r = emit(r, ir.op_load_local(unique));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = own_copied(r, elem, res, ins.args[0]);
+    r = emit(r, ir.op_end());
+  }
   r = release(r, ins.args[0], f.values[ins.args[0]], f);
   return emit(r, ir.op_end());
 }
 
+// The receiver outlives the call, so a copy of it shares its elements.
 function concat_borrowed(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerState {
+  let elem = typeinfo.array_elem(f.values[ins.result]);
+  let counted = ssasem.counted(f, elem);
   r = concat_call(r, f, ins, false);
   r = emit(r, ir.op_store_local(scratch));
-  if (out) {
+  if (out && !counted) {
     return r;
   }
   r = emit(r, ir.op_load_local(scratch));
   r = emit(r, ir.op_load_local(ins.args[0]));
+  if (out) {
+    r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
+    r = emit(r, ir.op_if(0));
+    r = own_copied(r, elem, scratch, ins.args[0]);
+    return emit(r, ir.op_end());
+  }
   r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
   r = emit(r, ir.op_if(0));
   r = helper(r, scratch, "__fern_rc_inc");
+  if (counted) {
+    r = emit(r, ir.op_else());
+    r = own_copied(r, elem, scratch, ins.args[0]);
+  }
   return emit(r, ir.op_end());
 }
 
@@ -4451,6 +4548,11 @@ function concat_field(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pl
   r = emit(r, ir.op_load_local(root));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
+  let elem = typeinfo.array_elem(f.values[ins.result]);
+  if (ssasem.counted(f, elem)) {
+    r = emit(r, ir.op_else());
+    r = own_copied(r, elem, res, ins.args[0]);
+  }
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(res));
 }
@@ -4955,7 +5057,8 @@ function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
 
 function with_set_op(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
   if let typeinfo.TypeLanes(l) = f.values[ins.args[2]] {
-    return ir.Op { ...ir.op_lane("vset", l.width), unsigned: ins.str == "lane_bytes" };
+    let op = ir.Op { ...ir.op_lane("vset", l.width), unsigned: ins.str == "lane_bytes" };
+    return if (ins.str == "lane_bytes" && ins.imm == ssasem.lane_span_proven()) { ir.in_bounds(op) } else { op };
   }
   if (ins.imm == 1 || p.checked_writes[ins.result]) {
     return ir.in_bounds(arr_set_op(elem));
@@ -6841,6 +6944,7 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_masks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks())) },
+    "__scan_masks_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks_bytes())) },
     "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },
     "__count_runs_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs_bytes())) },

@@ -725,7 +725,21 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
 }
 
 function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
-  let tref = parser.parse_type_ref(tn);
+  return rewrite_type_parsed(tn, parser.parse_type_ref(tn), ctx);
+}
+
+// The rewrite of one argument of a parsed type. The argument is not parsed a
+// second time, so the work on a type does not grow with the square of its
+// depth at each level.
+function rewrite_type_arg(arg: parser.TypeRef, ctx: RewriteCtx): string {
+  let spelling = parser.render_type_ref(arg);
+  if (parser.spelling_is_own(spelling)) {
+    return rewrite_type_name(spelling, ctx);
+  }
+  return rewrite_type_parsed(spelling, arg, ctx);
+}
+
+function rewrite_type_parsed(tn: string, tref: parser.TypeRef, ctx: RewriteCtx): string {
   if (util.has_str(ctx.type_params, tref.base)) {
     return tn;
   }
@@ -735,7 +749,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       if (ti > 0) {
         out += ", ";
       }
-      out += rewrite_type_name(parser.render_type_ref(tref.args[ti]), ctx);
+      out += rewrite_type_arg(tref.args[ti], ctx);
     }
     out += ")";
     for td in 0..tref.array_depth {
@@ -750,10 +764,10 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       if (fi > 0) {
         fout += ", ";
       }
-      fout += rewrite_type_name(parser.render_type_ref(tref.args[fi]), ctx);
+      fout += rewrite_type_arg(tref.args[fi], ctx);
       fi += 1;
     }
-    fout = fout + ") => " + rewrite_type_name(parser.render_type_ref(tref.args[tref.args.len() - 1]), ctx);
+    fout = fout + ") => " + rewrite_type_arg(tref.args[tref.args.len() - 1], ctx);
     for fd in 0..tref.array_depth {
       fout += "[]";
     }
@@ -772,7 +786,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       if (gi > 0) {
         gout += ", ";
       }
-      gout += rewrite_type_name(parser.render_type_ref(tref.args[gi]), ctx);
+      gout += rewrite_type_arg(tref.args[gi], ctx);
     }
     gout += "]";
     for gad in 0..tref.array_depth {

@@ -112,12 +112,14 @@ function read_tail(own builder: Builder, seek: (i64) => Result[i64, IoError], re
     let next = current.step_with(seek, read)?;
     return Ok((Builder { decoder: decoder, entries: entries, frame_size: frame_size, window: Some(next), trailer: trailer, audio_end: audio_end, input_bytes: input_bytes, stage: stage, limits: limits }, BuildPending));
   }
-  let remainder = Builder { decoder: decoder, entries: entries, frame_size: frame_size, window: None, trailer: trailer, audio_end: audio_end, input_bytes: input_bytes, stage: stage, limits: limits };
-  if let Tail = stage {
+  let tail = match (stage) { Tail => true, _ => false };
+  let first = if (tail) { trailer.first } else { bytes(current.view()) };
+  let next_trailer = metadata.Trailer { ...trailer, first: first };
+  let remainder = Builder { decoder: decoder, entries: entries, frame_size: frame_size, window: None, trailer: next_trailer, audio_end: audio_end, input_bytes: input_bytes, stage: stage, limits: limits };
+  if (tail) {
     return inspect_tail(remainder, current);
   }
-  let next_trailer = metadata.Trailer { ...trailer, first: bytes(current.view()) };
-  return finish_tail(Builder { ...remainder, trailer: next_trailer });
+  return finish_tail(remainder);
 }
 
 function record(own builder: Builder, offset: i64, encoded: i64, h: Option[header.Header]): Result[Builder, source.ReadError] {

@@ -114,7 +114,9 @@ struct Targets {
   sunrays_temp: Target,
 }
 
-// `width` and `height` are the size of the window in pixels. `displays` has
+// `width` and `height` are the size of the window in pixels. `view` is the
+// target that the fluid draws into before the window, for a window with
+// more pixels than the fluid draws, or the target with no texture. `displays` has
 // the display program of each set of keywords, with the id 0 for a set that
 // no frame used yet, and `display` is the index of the set in use.
 pub struct Fluid {
@@ -127,6 +129,7 @@ pub struct Fluid {
   dither: Target,
   width: i32,
   height: i32,
+  view: Target,
   targets: Targets,
 }
 
@@ -308,10 +311,11 @@ function (f: Fluid) begin(): void {
   gles.clear_color(0.0 as f32, 0.0 as f32, 0.0 as f32, 1.0 as f32);
 }
 
-// A fluid for a window of `width` by `height`, or None when the GPU cannot
+// A fluid for a window of `width` by `height` with `ratio` pixels across one
+// dp, or None when the GPU cannot
 // run it: it has no half-float texture to draw into, or a shader does not
 // compile. `rng` gives the noise of the dither.
-pub function open(cfg: config.Config, width: i32, height: i32, rng: i64): Option[Fluid] {
+pub function open(cfg: config.Config, width: i32, height: i32, ratio: f64, rng: i64): Option[Fluid] {
   let Some(fs) = formats() else {
     return None;
   };
@@ -332,13 +336,14 @@ pub function open(cfg: config.Config, width: i32, height: i32, rng: i64): Option
     displays = displays.append(no_program());
   }
   let empty = Targets { dye: no_pair(), velocity: no_pair(), divergence: no_target(), curl: no_target(), pressure: no_pair(), bloom: no_target(), blooms: [], sunrays: no_target(), sunrays_temp: no_target() };
-  let f = Fluid { quad: gles.quad(), formats: fs, base_vertex: base, programs: all, displays: displays, display: 0, dither: noise(cfg.dithering_resolution, rng), width: 0, height: 0, targets: empty };
-  return Some(f.with_keywords(cfg).resized(cfg, width, height));
+  let f = Fluid { quad: gles.quad(), formats: fs, base_vertex: base, programs: all, displays: displays, display: 0, dither: noise(cfg.dithering_resolution, rng), width: 0, height: 0, view: no_target(), targets: empty };
+  return Some(f.with_keywords(cfg).resized(cfg, width, height, ratio));
 }
 
 // Frees each program and each texture of the fluid.
 pub function close(f: Fluid): void {
   free_targets(f.targets);
+  free_target(f.view);
   free_pair(f.targets.dye);
   free_pair(f.targets.velocity);
   gles.delete_texture(f.dither.texture);
@@ -405,9 +410,27 @@ function (f: Fluid) pair_sized(p: Pair, width: i32, height: i32, format: Format,
   return Pair { read: read, write: float_target(width, height, format, filter) };
 }
 
-// The fluid for a window of `width` by `height`. The dye and the velocity
-// keep their state.
-pub function (f: Fluid) resized(cfg: config.Config, width: i32, height: i32): Fluid {
+// The target that the fluid draws into before a window of `width` by
+// `height` with `ratio` pixels across one dp, or the target with no texture
+// when the fluid draws each pixel of the window.
+function view_for(cfg: config.Config, width: i32, height: i32, ratio: f64): Target {
+  let part = cfg.max_pixel_ratio / ratio;
+  if (part >= 1.0) {
+    return no_target();
+  }
+  let w = ((width as f64 * part).round() as i32).max(1);
+  let h = ((height as f64 * part).round() as i32).max(1);
+  let (t, complete) = target(w, h, gles.RGBA8, gles.RGBA, gles.UNSIGNED_BYTE, gles.LINEAR);
+  if (!complete) {
+    free_target(t);
+    return no_target();
+  }
+  return t;
+}
+
+// The fluid for a window of `width` by `height` with `ratio` pixels across
+// one dp. The dye and the velocity keep their state.
+pub function (f: Fluid) resized(cfg: config.Config, width: i32, height: i32, ratio: f64): Fluid {
   f.begin();
   gles.disable(gles.BLEND);
   let (sim_w, sim_h) = config.resolution(width, height, cfg.sim_resolution);
@@ -438,7 +461,8 @@ pub function (f: Fluid) resized(cfg: config.Config, width: i32, height: i32): Fl
     sunrays: float_target(rays_w, rays_h, fs.r, gles.LINEAR),
     sunrays_temp: float_target(rays_w, rays_h, fs.r, gles.LINEAR),
   };
-  return Fluid { ...f, width: width, height: height, targets: targets };
+  free_target(f.view);
+  return Fluid { ...f, width: width, height: height, view: view_for(cfg, width, height, ratio), targets: targets };
 }
 
 // The fluid with the display program for the shading, the bloom and the sun
@@ -580,6 +604,21 @@ pub function (f: Fluid) render(cfg: config.Config, to: Target): void {
     gles.uniform1i(d.at[SUNRAYS], attach(t.sunrays, 3));
   }
   blit(to);
+}
+
+// Draws the fluid on the window. A window with more pixels than the fluid
+// draws gets the picture of `view`, made larger.
+pub function (f: Fluid) show(cfg: config.Config): void {
+  if (f.view.texture == 0) {
+    f.render(cfg, f.window());
+    return;
+  }
+  f.render(cfg, f.view);
+  gles.disable(gles.BLEND);
+  let p = f.programs.copy;
+  gles.use_program(p.id);
+  gles.uniform1i(p.at[TEXTURE], attach(f.view, 0));
+  blit(f.window());
 }
 
 // Draws the bloom of `source` into `to`: the bright part of the dye, made

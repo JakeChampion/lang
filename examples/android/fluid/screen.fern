@@ -48,7 +48,7 @@ pub function advance(f: sim.Fluid, m: fluid.Model, fr: fluid.Frame): (sim.Fluid,
     next = next.splat(m.cfg, sp.x, sp.y, sp.dx, sp.dy, sp.color);
   }
   for i in 0..fr.steps {
-    next = next.step(m.cfg, 0.016666666666666666);
+    next = next.step(m.cfg, fr.step);
   }
   return (next, model);
 }

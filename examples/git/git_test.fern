@@ -8,6 +8,8 @@ import "std/hex";
 import "std/result";
 import "./color";
 import "./config";
+import "./checkpack";
+import "./checkblob";
 import "./date";
 import "./width";
 import "./fsck";
@@ -719,6 +721,196 @@ function test_graph_roots(): test.TestOutcome {
   return test.pass();
 }
 
+// Pack bytes for the validation controls, including both hash widths.
+function validation_pack(width: i32, kinds: i32[], bodies: u8[][]): string {
+  let data: u8[] = [b'P', b'A', b'C', b'K', 0, 0, 0, 2, 0, 0, 0, bodies.len() as u8];
+  for i in 0..bodies.len() {
+    let size = bodies[i].len();
+    data = data.append((kinds[i] << 4 | size & 15 | (if (size >= 16) { 128 } else { 0 })) as u8);
+    size >>= 4;
+    while (size > 0) {
+      data = data.append((size & 127 | (if (size >= 128) { 128 } else { 0 })) as u8);
+      size >>= 7;
+    }
+    data = data.concat(zlib_of(bodies[i]));
+  }
+  return pack.text_of(data.concat(objects.digest(width, data)));
+}
+
+function test_pack_policy(): test.TestOutcome {
+  let p = checkpack.policy();
+  if (checkpack.level(p, "missingAuthor") != 2 || checkpack.level(p, "hasDot") != 2 || checkpack.level(p, "badFilemode") != 1 || checkpack.level(p, "extraHeaderEntry") != 0) {
+    return test.fail("the default severities");
+  }
+  for text in ["missingAuthor=unknown", "doesNotExist=warn", "missingAuthor", "nulInHeader=warn", "unterminatedHeader=ignore", "missingAuthor=IGNORE"] {
+    if let Ok(_) = checkpack.configure(p, text) {
+      return test.fail("accepted invalid policy: " + text);
+    }
+  }
+  let Ok(changed) = checkpack.configure(p, "MISSINGAUTHOR:ignore | missingCommitter=warn,missingAuthor=error") else {
+    return test.fail("the policy separators and message names");
+  };
+  if (checkpack.level(changed, "missingAuthor") != 2 || checkpack.level(changed, "missingCommitter") != 1 || checkpack.level(p, "missingCommitter") != 2) {
+    return test.fail("the last override or the original policy");
+  }
+  return test.pass();
+}
+
+function test_pack_validation(): test.TestOutcome {
+  let no_local = (name: string): Option[objects.Object] => None;
+  let base = checkpack.policy();
+  let p = checkpack.Policy { ...base, enabled: true };
+  let strict = checkpack.Policy { ...p, strict: true };
+  for width in [objects.SHA1, objects.SHA256] {
+    let unknown = "f".repeat(width * 2);
+    let ident = "A <a@example.com> 1700000000 +0000\n";
+    let body = ("tree " + unknown + "\nauthor " + ident + "committer " + ident + "\nmessage\n").bytes();
+    let Ok(built) = index.build(validation_pack(width, [1], [body]), index.options(width)) else {
+      return test.fail("a structurally sound commit pack");
+    };
+    if (!checkpack.validate(built, width, p, no_local).ok) {
+      return test.fail("fsck requires a child that is outside the pack");
+    }
+    let absent = checkpack.validate(built, width, strict, no_local);
+    if (absent.ok || absent.lines != ["fatal: did not receive expected object " + unknown]) {
+      return test.fail("strict accepts a missing tree");
+    }
+    let external = (name: string): Option[objects.Object] => if (name == unknown) { Some(objects.Object { kind: "tree", body: [] }) } else { None };
+    if (!checkpack.validate(built, width, strict, external).ok) {
+      return test.fail("strict rejects a local tree");
+    }
+    let wrong = (name: string): Option[objects.Object] => Some(objects.Object { kind: "blob", body: [] });
+    let bad = checkpack.validate(built, width, strict, wrong);
+    if (bad.ok || bad.lines != ["fatal: object " + unknown + ": expected type tree, found blob"]) {
+      return test.fail("strict accepts a wrong local type");
+    }
+    let empty = objects.hash_of(width, "tree", []);
+    let missing_people = ("tree " + empty + "\n\nmessage\n").bytes();
+    let Ok(people) = index.build(validation_pack(width, [1], [missing_people]), index.options(width)) else {
+      return test.fail("the person control pack");
+    };
+    let Ok(ignore_author) = checkpack.configure(p, "missingAuthor=ignore") else {
+      return test.fail("the author override");
+    };
+    let second = checkpack.validate(people, width, ignore_author, no_local);
+    let name = objects.hash_of(width, "commit", missing_people);
+    if (second.ok || second.lines != ["error: object " + name + ": missingCommitter: invalid format - expected 'committer' line", "fatal: fsck error in packed object"]) {
+      return test.fail("ignoring the author hides the invalid committer");
+    }
+    let Ok(warn_committer) = checkpack.configure(ignore_author, "missingCommitter=warn") else {
+      return test.fail("the committer override");
+    };
+    let warned = checkpack.validate(people, width, warn_committer, no_local);
+    if (!warned.ok || warned.lines != ["warning: object " + name + ": missingCommitter: invalid format - expected 'committer' line"]) {
+      return test.fail("the committer warning");
+    }
+    let child = entry("160000", "sub".bytes(), unknown);
+    let Ok(gitlink) = index.build(validation_pack(width, [2], [child]), index.options(width)) else {
+      return test.fail("the gitlink control pack");
+    };
+    if (!checkpack.validate(gitlink, width, strict, no_local).ok) {
+      return test.fail("strict requires submodule objects in the parent repository");
+    }
+    let thin = unhex(if (width == objects.SHA1) { "5041434b0000000200000001f309fcd4989c0b35a94fc0ab7a3c52a38a4edcf9b41a789ce3ed63ac2f294a4d553049b230324d493633314a4e324b4db24c343033483535494ab34831b334b2b0484b4a4d35b13430e14a2c2dc9c82f527054b0497448ad48cc2dc849d54bcecfb5533034378002056d10c90514cdcd2c294925a0981fa29a2b37b5b838313d950b0062c029b9623034ffdbfaf7351ce9c45beebf91dc2da8b4bb" } else { "5041434b0000000200000001fb0a8852a07594e754ec4da1364f849d77a9937fb23dab9d0782f7a8930251ce282d789c7dca410ac230108561dc06bc43762e04c92493a603227a944c3251c1d0d24670e76d3ca715baf62dfec5e3db7e36ef3689e84e0a102358eb93771d15486030a3cf7deebd94486c7c60ef18909189c951ce01b3a4c55b50f1d96ec3a42ffa18cff28a757cc8210df5a42198757affab5ade7a6f4d56bcfbaf5595798e57515f6f0530407a965ddc4eebc785d72a4ec51ebe2ce30236886d7a9713a1a5e2ea3c168eb2fe" });
+    let old_body = "not a commit\n".bytes();
+    let old_name = objects.hash_of(width, "commit", old_body);
+    let old_object = (name: string): Option[objects.Object] => if (name == old_name) { Some(objects.Object { kind: "commit", body: old_body }) } else { None };
+    let raw = width;
+    let Ok(completed) = index.build_with(pack.text_of(thin), index.options(width), (data: string, offsets: i64[]): string[][] => [index.names_part(data, offsets, 0, offsets.len() - 1, raw)], old_object) else {
+      return test.fail("the thin control pack");
+    };
+    if (completed.input_count != 1 || completed.data.as_bytes()[11] != 2 || !checkpack.validate(completed, width, strict, old_object).ok) {
+      return test.fail("an old delta base receives new-object checks");
+    }
+    let blob = "hello\n".bytes();
+    let target = objects.hash_of(width, "blob", blob);
+    let tag = ("object " + target + "\ntype tree\ntag v1\ntagger " + ident + "\nmessage\n").bytes();
+    let tag_name = objects.hash_of(width, "tag", tag);
+    let Ok(bad_tag) = index.build(validation_pack(width, [3, 4], [blob, tag]), index.options(width)) else {
+      return test.fail("the tag control pack");
+    };
+    let refused_tag = checkpack.validate(bad_tag, width, p, no_local);
+    if (refused_tag.ok || refused_tag.lines != ["error: object " + target + " is a blob, not a tree", "error: bad tag pointer to " + target + " in " + tag_name, "fatal: invalid tag"]) {
+      return test.fail("a tag with a wrong target type");
+    }
+    let Ok(forward) = index.build(validation_pack(width, [4, 3], [tag, blob]), index.options(width)) else {
+      return test.fail("the forward tag control pack");
+    };
+    let refused_forward = checkpack.validate(forward, width, p, no_local);
+    if (refused_forward.ok || refused_forward.lines != ["error: object " + target + " is a tree, not a blob", "fatal: invalid blob object " + target]) {
+      return test.fail("a tag before its wrong target");
+    }
+  }
+  return test.pass();
+}
+
+function test_special_blobs(): test.TestOutcome {
+  for url in ["-evil", "../%0aevil", "..//evil", "https://example.com/%0aevil", "http://example.com:0/x", "https://example.com:65536/x", "https://example.com:bad/x", "http:///x", "http://bad host/x", "http://example.com/%zz", "http://example.com/../x", "http://example.com/%2e%2e/x"] {
+    let found = checkblob.inspect("gitmodules", ("[submodule \"x\"]\nurl = " + url + "\n").bytes());
+    if (found.len() != 1 || found[0].id != "gitmodulesUrl") {
+      return test.fail("accepted submodule URL: " + url);
+    }
+  }
+  for url in ["https://example.com/x", "../x", "./x", "git://example.com/x", "ssh://host/x", "http://user:pass@host:80/x", "https://[::1]:443/x", "http://host/a/../x", "http://host/a/./x", "https::https://host/x", "http::file:///x", "http://host:00080/x"] {
+    if (checkblob.inspect("gitmodules", ("[submodule \"x\"]\nurl = " + url + "\n").bytes()).len() != 0) {
+      return test.fail("refused submodule URL: " + url);
+    }
+  }
+  let invalid = checkblob.inspect("gitmodules", "[submodule \"x\"\nurl = -evil\n".bytes());
+  if (invalid.len() != 1 || invalid[0].id != "gitmodulesParse") {
+    return test.fail("values after an invalid config header");
+  }
+  let later = checkblob.inspect("gitmodules", "[submodule \"x\"]\nurl = -evil\nbad = \"unclosed\n".bytes());
+  if (later.len() != 2 || later[0].id != "gitmodulesUrl" || later[1].id != "gitmodulesParse") {
+    return test.fail("a value before a config error");
+  }
+  if (checkblob.inspect("gitattributes", "x".repeat(2047).bytes()).len() != 0 || checkblob.inspect("gitattributes", "x".repeat(2048).bytes()).len() != 1) {
+    return test.fail("the attribute line boundary");
+  }
+  if (checkblob.inspect("gitattributes", ("x\x00" + "y".repeat(2048)).bytes()).len() != 0) {
+    return test.fail("attributes after NUL");
+  }
+  return test.pass();
+}
+
+function test_deferred_blobs(): test.TestOutcome {
+  let no_local = (name: string): Option[objects.Object] => None;
+  let base = checkpack.policy();
+  let p = checkpack.Policy { ...base, enabled: true };
+  for width in [objects.SHA1, objects.SHA256] {
+    let blob = "[submodule \"x\"]\nurl = -evil\n".bytes();
+    let name = objects.hash_of(width, "blob", blob);
+    let tree = entry("100644", ".gitmodules".bytes(), name);
+    let Ok(first) = index.build(validation_pack(width, [3, 2], [blob, tree]), index.options(width)) else {
+      return test.fail("the deferred pack");
+    };
+    let checked = checkpack.validate(first, width, p, no_local);
+    if (!checked.ok || checked.delayed.len() != 1 || checked.lines.len() != 0) {
+      return test.fail("the blob before its tree");
+    }
+    let deferred = checkpack.queued(first, width, p, checked.delayed, no_local, true, true);
+    if (deferred.ok || deferred.lines != ["error: object " + name + ": gitmodulesUrl: disallowed submodule url: -evil", "fatal: fsck error in pack objects"]) {
+      return test.fail("the deferred URL refusal");
+    }
+    let absent = checkpack.queued(first, width, p, checked.delayed, no_local, true, false);
+    if (!absent.ok || absent.missing_modules != [name] || absent.lines.len() != 0) {
+      return test.fail("a pack without a matching index name");
+    }
+    let outside = checkpack.queued(first, width, p, checked.delayed, no_local, false, true);
+    if (outside.ok || outside.lines != ["fatal: cannot perform queued object checks outside of a repository"]) {
+      return test.fail("deferred checks outside a repository");
+    }
+    let Ok(last) = index.build(validation_pack(width, [2, 3], [tree, blob]), index.options(width)) else {
+      return test.fail("the immediate pack");
+    };
+    let immediate = checkpack.validate(last, width, p, no_local);
+    if (immediate.ok || immediate.lines != ["error: object " + name + ": gitmodulesUrl: disallowed submodule url: -evil", "fatal: fsck error in packed object"]) {
+      return test.fail("the blob after its tree");
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
@@ -741,5 +933,9 @@ function main(): i32 {
   r = r.it("the names of renames in a stat", test_rename_names);
   r = r.it("the specs of colors", test_colors);
   r = r.it("the visual roots of a graph", test_graph_roots);
+  r = r.it("the packed-object severity policy", test_pack_policy);
+  r = r.it("packed-object formats and strict references", test_pack_validation);
+  r = r.it("the special blob checks", test_special_blobs);
+  r = r.it("the deferred blob checks", test_deferred_blobs);
   return r.finish();
 }

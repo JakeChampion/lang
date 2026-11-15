@@ -23,6 +23,7 @@ import "./color";
 import "./commitgraph";
 import "./config";
 import "./fsck";
+import "./checkpack";
 import "./graph";
 import "./index";
 import "./log";
@@ -2653,7 +2654,7 @@ function index_names(data: string, offsets: i64[], raw: i32): string[][] {
 
 const INDEX_PACK_USAGE: string = "usage: git index-pack [-v] [-o <index-file>] [--keep | --keep=<msg>] [--[no-]rev-index] [--verify] [--strict[=<msg-id>=<severity>...]] [--fsck-objects[=<msg-id>=<severity>...]] (<pack-file> | --stdin [--fix-thin] [<pack-file>])";
 
-struct PackArgs { stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, format: string, bad: string }
+struct PackArgs { stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, format: string, bad: string, checking: checkpack.Policy, failure: string }
 
 // The number at the start of `text` in base 10, or in the base that the C
 // function `strtoul` gives for base 0 when `c` is true: 0x for 16 and 0
@@ -2681,12 +2682,21 @@ function number_of(text: string, c: boolean): (i64, i32) {
 }
 
 function pack_args(argv: string[]): PackArgs {
-  let a = PackArgs { stdin: false, thin: false, rev: true, out: "", file: "", keep: "", keeps: false, version: 2, limit: 2147483647, format: "", bad: "" };
+  let a = PackArgs { stdin: false, thin: false, rev: true, out: "", file: "", keep: "", keeps: false, version: 2, limit: 2147483647, format: "", bad: "", checking: checkpack.policy(), failure: "" };
   let i = 0;
   while (i < argv.len()) {
     let x = argv[i];
     if (x == "--stdin") {
       a = PackArgs { ...a, stdin: true };
+    } else if (x == "--strict" || x.starts_with("--strict=") || x == "--fsck-objects" || x.starts_with("--fsck-objects=")) {
+      let strict = x == "--strict" || x.starts_with("--strict=");
+      let start = if (strict) { 9 } else { 15 };
+      let text = if (x.len() >= start) { objects.part(x, start, x.len()) } else { "" };
+      let checked = match (checkpack.configure(a.checking, text)) {
+        Ok(p) => p,
+        Err(e) => { return PackArgs { ...a, failure: e }; },
+      };
+      a = PackArgs { ...a, checking: checkpack.Policy { ...checked, enabled: true, strict: checked.strict || strict } };
     } else if (x == "--fix-thin") {
       a = PackArgs { ...a, thin: true };
     } else if (x == "--rev-index") {
@@ -2789,6 +2799,9 @@ function kept(a: PackArgs, stem: string): Result[string, string] {
 
 function index_pack(argv: string[]): i32 {
   let a = pack_args(argv);
+  if (a.failure.len() > 0) {
+    return fatal(a.failure);
+  }
   if (a.bad.len() > 0 && a.bad != "usage") {
     return fatal("bad " + a.bad);
   }
@@ -2847,6 +2860,17 @@ function index_pack(argv: string[]): i32 {
       return 128;
     },
   };
+  let pending: checkpack.Task[] = [];
+  if (a.checking.enabled) {
+    let checked = checkpack.validate(built, algo, a.checking, local_objects(repo, repo.len() > 0));
+    for line in checked.lines {
+      eprint(line);
+    }
+    if (!checked.ok) {
+      return 128;
+    }
+    pending = checked.delayed;
+  }
   let stem = if (repo.len() > 0) { repo[0].objects() + "/pack/pack-" + built.name } else { "" };
   let report = match (kept(a, stem)) {
     Ok(r) => r,
@@ -2870,6 +2894,21 @@ function index_pack(argv: string[]): i32 {
     return fatal(message);
   }
   put_line(if (a.stdin) { report + "\t" + built.name } else { built.name });
+  if (a.checking.enabled) {
+    let final_index = if (idx_name.len() > 0) { idx_name } else { stem + ".idx" };
+    let final_pack = if (a.file.len() > 0) { a.file } else { stem + ".pack" };
+    let visible = match (derived(final_index, "idx", "pack")) { Ok(path) => path == final_pack, Err(_) => false };
+    let checked = checkpack.queued(built, algo, a.checking, pending, local_objects(repo, repo.len() > 0), repo.len() > 0, visible);
+    for name in checked.missing_modules {
+      put_line(name);
+    }
+    for line in checked.lines {
+      eprint(line);
+    }
+    if (!checked.ok) {
+      return 128;
+    }
+  }
   return 0;
 }
 

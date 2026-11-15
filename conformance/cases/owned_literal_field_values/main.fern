@@ -1,0 +1,24 @@
+// A literal local goes to an own parameter. Each field value that it sets
+// is fresh, an own parameter, a scalar or a counted string copy.
+struct H { w: Writer, alt: Writer, n: i32, name: string }
+
+function take(own h: H): i32 {
+  return h.n + h.name.len() as i32;
+}
+
+function spread(own u: H, own w: Writer, b: H): i32 {
+  let v = H { ...u, alt: w, n: b.n, name: b.name };
+  return take(v);
+}
+
+function plain(own w: Writer, b: H): i32 {
+  let v = H { w: w, alt: stdout(), n: b.n + 1, name: b.name + "!" };
+  return take(v);
+}
+
+function main(): i32 {
+  let b = H { w: stdout(), alt: stdout(), n: 2, name: "ab" };
+  let total = spread(H { w: stdout(), alt: stdout(), n: 1, name: "" }, stdout(), b) + plain(stdout(), b);
+  print(total.to_string());
+  return 0;
+}

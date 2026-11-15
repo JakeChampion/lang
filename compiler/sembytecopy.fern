@@ -12,11 +12,12 @@ struct Index { defs: ssa.SInst[], homes: i32[], blocks: i32[] }
 // A back loop appends a[a.len() - from] to a itself, or a[from + i] when it
 // is rebased, with -1 for a zero from. A for-each loop increments its index
 // in a step block between the body and the header; step is -1 when the body
-// branches to the header itself.
-struct Loop { ok: boolean, head: i32, body: i32, step: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean }
+// branches to the header itself. A concat loop appends a range of another
+// array or view, and becomes a range concat instead of a byte helper call.
+struct Loop { ok: boolean, head: i32, body: i32, step: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean, concat: boolean }
 
 function no_loop(): Loop {
-  return Loop { ok: false, head: 0, body: 0, step: -1, exit: 0, outer: 0, array: ssa.no_inst(), counter: ssa.no_inst(), update: ssa.no_inst(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false };
+  return Loop { ok: false, head: 0, body: 0, step: -1, exit: 0, outer: 0, array: ssa.no_inst(), counter: ssa.no_inst(), update: ssa.no_inst(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false, concat: false };
 }
 
 function bytes(t: typeinfo.Type): boolean {
@@ -28,10 +29,18 @@ function bytes(t: typeinfo.Type): boolean {
   return false;
 }
 
-function any_byte_update(f: ssasem.Func): boolean {
+// An owned array that a range concat can extend: any element but a string view.
+function concat_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view && !ssasem.is_view(a.elem);
+  }
+  return false;
+}
+
+function any_copy_update(f: ssasem.Func): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
-      if ((ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with()) && bytes(f.values[ins.result])) {
+      if (ins.kind_tag == ssasem.append() && concat_array(f.values[ins.result]) || ins.kind_tag == ssasem.with() && bytes(f.values[ins.result])) {
         return true;
       }
     }
@@ -110,7 +119,7 @@ function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
   let counter = ssa.no_inst();
   for ins in h.insts {
     if (ins.kind_tag == ssa.PHI && ins.args.len() == 2) {
-      if (bytes(f.values[ins.result]) && array.result < 0) {
+      if (concat_array(f.values[ins.result]) && array.result < 0) {
         array = ins;
       } else if (ssasem.is_i32(f.values[ins.result]) && counter.result < 0) {
         counter = ins;
@@ -208,15 +217,34 @@ function copy_update(ins: ssa.SInst, receiver: i32): boolean {
   return (ins.kind_tag == ssasem.append() && ins.args.len() == 2 || ins.kind_tag == ssasem.with() && ins.args.len() == 3) && ins.args[0] == receiver;
 }
 
+// A read of an invariant array or view with the receiver's elements.
 function source_read(f: ssasem.Func, ix: Index, update: ssa.SInst, l: Loop): ssa.SInst {
   let read = ix.defs[update.args[update.args.len() - 1]];
   if (read.kind_tag != ssasem.array_get() || read.imm == ssasem.check_only() || read.args.len() != 2) {
     return ssa.no_inst();
   }
-  if (!invariant(ix, read.args[0], l) || !bytes(f.values[read.args[0]])) {
+  if (!invariant(ix, read.args[0], l) || !ssasem.same_elements(f.values[read.args[0]], f.values[l.array.result])) {
     return ssa.no_inst();
   }
   return read;
+}
+
+// The byte helpers take owned u8[] sources: kind 0. Any other append of a
+// range is a range concat, kind 1, which reads a view in place. Its source
+// must not be the receiver that the loop starts from. Kind -1 keeps the loop,
+// as it does when there is no such read.
+function copy_kind(f: ssasem.Func, l: Loop, read: ssa.SInst, write: boolean): i32 {
+  if (read.result < 0) {
+    return -1;
+  }
+  let src = read.args[0];
+  if (bytes(f.values[l.array.result]) && bytes(f.values[src])) {
+    return 0;
+  }
+  if (write || src == l.array.args[l.outer]) {
+    return -1;
+  }
+  return 1;
 }
 
 // The body and the step block compute only the allowed values.
@@ -288,7 +316,8 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
     }
   }
   let read = source_read(f, ix, update, l);
-  if (read.result < 0) {
+  let kind = copy_kind(f, l, read, write);
+  if (kind < 0) {
     return no;
   }
   let from = offset(ix, read.args[1], l.counter.result, l);
@@ -303,7 +332,7 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
   if (!pure_body(f, ix, l, copy_values(update, read, inc, write))) {
     return no;
   }
-  let out = Loop { ...l, update: update, src: read.args[0], from: from, at: at };
+  let out = Loop { ...l, update: update, src: read.args[0], from: from, at: at, concat: kind == 1 };
   if (!closed_body(f, ix, out)) {
     return no;
   }
@@ -313,7 +342,7 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
 function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop {
   let no = no_loop();
   let read = ix.defs[update.args[1]];
-  if (!literal(ix, l.counter.args[l.outer], 0)) {
+  if (!bytes(f.values[l.array.result]) || !literal(ix, l.counter.args[l.outer], 0)) {
     return no;
   }
   if (!own_read(read, l)) {
@@ -392,7 +421,7 @@ function shadows_helper(f: ssasem.Func): boolean {
 }
 
 pub function rewrite(f: ssasem.Func, contracts: ssasem.Contract[]): Rewritten {
-  if (!may_have_copy_loop(f.graph) || !any_byte_update(f) || shadows_helper(f)) {
+  if (!may_have_copy_loop(f.graph) || !any_copy_update(f) || shadows_helper(f)) {
     return Rewritten { func: f, changed: false };
   }
   let out = f;
@@ -540,7 +569,9 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
     args = [receiver, at, l.src, from, sp.count];
     ci = 1;
   }
-  let call = ssa.SInst { ...l.update, result: l.array.result, kind_tag: ssasem.call(), args: args, str: contracts[ci].name, imm: 0 };
+  let copied = values.len();
+  values = values.append(f.values[l.array.result]);
+  let call = copy_call(l, copied, args, contracts[ci].name);
   let blocks: ssa.SBlock[] = [];
   for old in f.graph.blocks {
     let b = old;
@@ -548,23 +579,38 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
       continue;
     }
     if (b.id == l.head) {
-      b = replaced_header(b, l, call, zero, distance);
+      b = replaced_header(b, l, zero);
     } else if (b.id == l.body) {
-      b = ssa.SBlock { ...b, insts: [], term: ssa.STerm { ...b.term, target: l.exit } };
+      b = ssa.SBlock { ...b, insts: util.append_all(distance, [call]), term: ssa.STerm { ...b.term, target: l.exit } };
     } else {
       b = outside(b, l, fresh);
       if (b.id == l.exit) {
-        let phis = [ssa.SInst { kind_tag: ssa.PHI, result: fresh, args: [zero, l.count], imm: 0, str: "" }];
+        let phis = [
+          ssa.SInst { kind_tag: ssa.PHI, result: l.array.result, args: [receiver, copied], imm: 0, str: "" },
+          ssa.SInst { kind_tag: ssa.PHI, result: fresh, args: [zero, l.count], imm: 0, str: "" },
+        ];
         b = ssa.SBlock { ...b, preds: [l.head, l.body], insts: util.append_all(phis, b.insts) };
       }
     }
     blocks = blocks.append(b);
   }
-  let calls = f.calls;
-  if (ssasem.find_contract_in(calls, contracts[ci].name) < 0) {
-    calls = calls.append(contracts[ci]);
+  let calls = called(f.calls, l, contracts[ci]);
+  return ssasem.Func { ...f, source_positions: replaced_source(f.source_positions, l, copied), calls: calls, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } };
+}
+
+// A byte helper call, or a range concat with the same operands.
+function copy_call(l: Loop, result: i32, args: i32[], helper: string): ssa.SInst {
+  if (l.concat) {
+    return ssa.SInst { ...l.update, result: result, kind_tag: ssasem.arr_concat(), args: args, str: "", imm: 0 };
   }
-  return ssasem.Func { ...f, source_positions: replaced_source(f.source_positions, l, values.len() - 1), calls: calls, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } };
+  return ssa.SInst { ...l.update, result: result, kind_tag: ssasem.call(), args: args, str: helper, imm: 0 };
+}
+
+function called(calls: ssasem.Contract[], l: Loop, helper: ssasem.Contract): ssasem.Contract[] {
+  if (l.concat || ssasem.find_contract_in(calls, helper.name) >= 0) {
+    return calls;
+  }
+  return calls.append(helper);
 }
 
 // The distance of a rebased back loop is the receiver's entry length minus from.
@@ -579,7 +625,9 @@ function rebased_distance(l: Loop, receiver: i32, next: i32): ssa.SInst[] {
   return [len, ssa.SInst { kind_tag: ssa.BINARY, result: next + 1, args: [next, l.from], imm: 0, str: "-" }];
 }
 
-function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32, distance: ssa.SInst[]): ssa.SBlock {
+// The header keeps its test, so an empty range makes no call. The
+// copy runs in the body, and a phi in the exit joins its result.
+function replaced_header(b: ssa.SBlock, l: Loop, zero: i32): ssa.SBlock {
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
     if (util.index_of_i32(l.chain, ins.result) >= 0) {
@@ -588,11 +636,8 @@ function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32, dis
   }
   for old in b.insts {
     let ins = old;
-    if (util.index_of_i32(l.chain, ins.result) < 0) {
-      if (ins.result == l.array.result) {
-        insts = util.append_all(insts, distance);
-        ins = call;
-      } else if (ins.result == l.counter.result) {
+    if (util.index_of_i32(l.chain, ins.result) < 0 && ins.result != l.array.result) {
+      if (ins.result == l.counter.result) {
         ins = copy(ins.result, zero);
       }
       insts = insts.append(ins);
@@ -601,13 +646,13 @@ function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32, dis
   return ssa.SBlock { ...b, insts: insts, preds: [b.preds[l.outer]] };
 }
 
-function replaced_source(source: sourcepos.SourceInfo, l: Loop, last: i32): sourcepos.SourceInfo {
+function replaced_source(source: sourcepos.SourceInfo, l: Loop, copied: i32): sourcepos.SourceInfo {
   if (source.entry.line == 0) {
     return source;
   }
   let values = source.values;
-  while (values.len() <= last) {
+  while (values.len() <= copied) {
     values = values.append(sourcepos.SourcePos { line: 0, col: "0" });
   }
-  return sourcepos.SourceInfo { ...source, values: values.with(l.array.result, sourcepos.at(source.values, l.update.result)) };
+  return sourcepos.SourceInfo { ...source, values: values.with(copied, sourcepos.at(source.values, l.update.result)) };
 }

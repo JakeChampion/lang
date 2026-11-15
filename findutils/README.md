@@ -93,27 +93,31 @@ that exits with 255 there gives 124, also after a command that failed.
 ## Speed
 
 The tree has 501000 files in 5511 directories on ext4, on Linux x86-64
-with 4 cores. Each time is the best of 7 runs. A cold run drops the page
-cache, the dentries and the inodes first. A ratio above 1 means that the
-port is faster.
+with 4 cores. Each time is the best of 11 runs, with the runs of the two
+programs in turn, 2026-11-15. The cache was warm. A ratio above 1 means
+that the port is faster. The load of the machine was 4 to 7, so a
+difference of less than 5% is noise. The user time is the time of the
+program outside the kernel.
 
-| Workload | GNU warm | Fern warm | Ratio | GNU cold | Fern cold | Ratio |
-|---|---|---|---|---|---|---|
-| `find . -name '*.go'` | 0.249 s | 0.185 s | 1.34 | 0.693 s | 0.602 s | 1.15 |
-| `find . -type f -size +10k` | 0.777 s | 0.801 s | 0.97 | 2.655 s | 2.643 s | 1.00 |
-| `find . -printf '%p %s\n'` | 0.832 s | 0.854 s | 0.97 | 2.694 s | 2.751 s | 0.98 |
-| `find . -newer ref` | 0.798 s | 0.807 s | 0.99 | 2.789 s | 2.644 s | 1.06 |
-| `find . -print0 \| xargs -0 -n 100 true` | 4.821 s | 4.985 s | 0.97 | 4.902 s | 5.252 s | 0.93 |
+| Workload | GNU | Fern | Ratio | GNU user | Fern user |
+|---|---|---|---|---|---|
+| `find . -name '*.go'` | 0.263 s | 0.200 s | 1.32 | 0.117 s | 0.051 s |
+| `find . -type f -size +10k` | 0.861 s | 0.887 s | 0.97 | 0.143 s | 0.127 s |
+| `find . -printf '%p %s\n'` | 0.901 s | 0.919 s | 0.98 | 0.200 s | 0.147 s |
+| `find . -newer ref` | 0.855 s | 0.870 s | 0.98 | 0.093 s | 0.116 s |
+| `find . -print0 \| xargs -0 -n 100 true` | 5.124 s | 5.178 s | 0.99 | | |
 
-Other programs used the machine during the runs, so a difference of less
-than 5% is noise. A test of the name needs no stat, and there the port is
-faster. A test of the size or the time needs a stat of each file.
+A test of the name needs no stat, and there the port is faster. A test of
+the size or the time needs a stat of each file, and then the kernel uses
+80% of the time. The walk no longer copies its entry for each stat. Thus
+the user time of the port is at most that of GNU find on two of the three
+rows that stat each file.
 
-In that case the kernel uses 80% of the time. The two programs make the
-same system calls, so the time is the same. The port uses more user time
-than GNU find: 0.12 s to 0.15 s against 0.09 s to 0.11 s. Most of it is
-the copy of the entry of the walk for each file. The pipeline with xargs
-spends its time in the 5000 runs of `true`.
+The rest of the difference is in the kernel. The port reads each stat with
+statx, and GNU find reads it with newfstatat. A test of the two calls on
+the files of one directory gives 426 ns for statx and 412 ns for
+newfstatat. Over 501000 files that is about 0.02 s. The runtime uses statx
+because the birth time of `ls` and of `%B` comes from it.
 
 The table below compares xargs `-P` with GNU xargs 4.9.0 on the same
 machine. Each value is the median of 11 runs. The total CPU time includes
@@ -126,7 +130,13 @@ from run to run.
 | `seq 2000 \| xargs -P 4 -n 1 true` | 3.42 s | 3.01 s | 2.25 s | 2.14 s | 157 ms | 144 ms |
 | 400 commands that sleep 0 to 40 ms, `-P 4` | 2.34 s | 2.25 s | 0.56 s | 0.54 s | 51 ms | 50 ms |
 | one command that sleeps 1 s, then 150 of 10 ms, `-P 2` | 1.53 s | 1.54 s | 0.21 s | 0.20 s | 21 ms | 19 ms |
-| `seq 2000 \| xargs -n 1 true` | 3.24 s | 3.60 s | 2.21 s | 2.17 s | 163 ms | 167 ms |
+| `seq 2000 \| xargs -n 1 true` | 1.88 s | 1.89 s | 1.86 s | 1.77 s | | |
+
+The row of `-n 1` is from 2026-11-15: the best of 9 runs in turn, with no
+`-P`. The two wall times are equal within the noise, and their medians are
+2.42 s and 2.39 s. callgrind counts 658000 instructions in GNU xargs and
+648000 in the port for 200 commands. The port has 188 kB of resident
+memory and GNU xargs 1904 kB, so a fork of the port is no slower.
 
 xargs waits for the first command that ends, so a slow command does not
 stop the start of the next ones. xargs reads the environment one time and
