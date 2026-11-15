@@ -536,7 +536,7 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 					if j.Summary.TotalData != 6*int64(tc.n) || j.Summary.SizePerRequest == nil || *j.Summary.SizePerRequest != 6 || j.Summary.SizePerSec <= 0 {
 						t.Errorf("totalData %d, sizePerRequest %v, sizePerSec %v; want %d, 6 and more than 0\n%s", j.Summary.TotalData, j.Summary.SizePerRequest, j.Summary.SizePerSec, 6*tc.n, out)
 					}
-					if d := j.Details.DNSDialup; d.Average == nil || *d.Fastest > *d.Slowest || *d.Slowest <= 0 || j.Details.DNSLookup.Average == nil || *j.Details.DNSLookup.Slowest != 0 {
+					if d, l := j.Details.DNSDialup, j.Details.DNSLookup; d.Average == nil || *d.Fastest > *d.Slowest || *d.Slowest <= 0 || l.Average == nil || *l.Fastest <= 0 || *l.Slowest > *d.Slowest {
 						t.Errorf("details %+v\n%s", j.Details, out)
 					}
 				}

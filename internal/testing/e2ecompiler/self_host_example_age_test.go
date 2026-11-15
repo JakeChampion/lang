@@ -23,10 +23,6 @@ func TestSelfHostExampleAgeUnit(t *testing.T) {
 	testCensusTargets(t, path)
 }
 
-// ageReport is the last line of each age error. The port does not print it:
-// it points to the issue tracker of age.
-const ageReport = "age: report unexpected or unhelpful errors at https://filippo.io/age/report\n"
-
 // ageTool runs one implementation of age in a directory.
 type ageTool struct {
 	name string
@@ -46,7 +42,7 @@ func (a ageTool) run(t *testing.T, dir string, stdin []byte, args ...string) ([]
 	if cmd.ProcessState == nil {
 		t.Fatalf("%s did not start: %s", a.name, &stderr)
 	}
-	msg := strings.ReplaceAll(stderr.String(), ageReport, "")
+	msg := stderr.String()
 	if a.bin != "" {
 		msg = strings.ReplaceAll(msg, a.bin, "age")
 	}
@@ -400,7 +396,7 @@ func ageMalformed(t *testing.T, oracle, port ageTool, dir, r1 string) {
 		data      []byte
 		code      int
 	}{
-		{"scrypt with another stanza", "age: error: an scrypt recipient must be the only one\n", edit("-> X25519", "-> scrypt c2FsdA 10\n\n-> X25519"), 1},
+		{"scrypt with another stanza", "age: error: an scrypt recipient must be the only one\nage: report unexpected or unhelpful errors at https://filippo.io/age/report\n", edit("-> X25519", "-> scrypt c2FsdA 10\n\n-> X25519"), 1},
 	} {
 		ageWrite(t, filepath.Join(dir, "m.age"), tc.data)
 		_, got, code := port.run(t, dir, nil, "-d", "-i", "k1", "m.age")
@@ -510,10 +506,6 @@ func ageMessages(t *testing.T, oracle, port ageTool, dir, r1 string) {
 	for _, args := range cases {
 		_, want, wantCode := oracle.run(t, dir, []byte("hello"), args...)
 		_, got, gotCode := port.run(t, dir, []byte("hello"), args...)
-		if wantCode == 2 {
-			// A flag error: Go's message, then the usage, which differs.
-			want, got = strings.SplitN(want, "\n", 2)[0], strings.SplitN(got, "\n", 2)[0]
-		}
 		if gotCode != wantCode || got != want {
 			t.Errorf("age %s: age exit %d %q; fern age exit %d %q", strings.Join(args, " "), wantCode, want, gotCode, got)
 		}
@@ -527,11 +519,13 @@ func ageMessages(t *testing.T, oracle, port ageTool, dir, r1 string) {
 			t.Errorf("fern age %s: exit %d: %s", strings.Join(args, " "), code, stderr)
 		}
 	}
-	if _, stderr, code := port.run(t, dir, nil, "-h"); code != 0 || !strings.HasPrefix(stderr, "Usage:") {
-		t.Errorf("fern age -h: exit %d: %s", code, stderr)
-	}
-	if _, stderr, code := port.run(t, dir, nil); code != 1 || !strings.HasPrefix(stderr, "Usage:") {
-		t.Errorf("fern age with no arguments: exit %d: %s", code, stderr)
+	// The usage text and the version are those of age.
+	for _, args := range [][]string{{"-h"}, {"--help"}, {}, {"--version"}, {"-version"}} {
+		wantOut, want, wantCode := oracle.run(t, dir, nil, args...)
+		gotOut, got, gotCode := port.run(t, dir, nil, args...)
+		if gotCode != wantCode || got != want || !bytes.Equal(gotOut, wantOut) {
+			t.Errorf("age %v: age exit %d %q %q; fern age exit %d %q %q", args, wantCode, want, wantOut, gotCode, got, gotOut)
+		}
 	}
 }
 

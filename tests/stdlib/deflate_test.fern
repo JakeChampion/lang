@@ -319,6 +319,110 @@ function test_deflate_varied(): test.TestOutcome {
   return test.assert_eq(round_trip(varied()), "ok 3669");
 }
 
+// The output of `data` through an InflateStream that gets its input in
+// parts of `size` bytes, and how the stream ended.
+function streamed(data: u8[], size: i32): (u8[], string) {
+  let st = deflate.inflate_stream();
+  let rest: u8[] = [];
+  let given = 0;
+  let out: u8[] = [];
+  loop {
+    let last = given >= data.len();
+    let p = deflate.inflate_part(st, rest, 0, last);
+    st = p.stream;
+    out = out.concat(p.out);
+    if let Some(e) = p.error {
+      return (out, "error: " + e.message());
+    }
+    let left = rest.len() - p.used;
+    if (p.done) {
+      return (out, "done at " + (given - left).to_string());
+    }
+    let next = __alloc_u8(left);
+    for i in 0..left {
+      next = next.with(i, rest[p.used + i]);
+    }
+    rest = next;
+    if (p.used == 0 && p.out.len() == 0) {
+      if (last) {
+        return (out, "no progress");
+      }
+      let end = if (given + size > data.len()) { data.len() } else { given + size };
+      for i in given..end {
+        rest = rest.append(data[i]);
+      }
+      given = end;
+    }
+  }
+  return (out, "");
+}
+
+function stream_text(data: u8[], size: i32): string {
+  let (out, how) = streamed(data, size);
+  return out.len().to_string() + " " + crc32.of(out).to_string() + " " + how;
+}
+
+// More than 32 KiB of output, so a part stops when its output is full. The
+// zeros make long matches, so the test is fast in the interpreter too.
+function stream_input(): u8[] {
+  return __alloc_u8(50000).concat("the quick brown fox jumps over the lazy dog ".repeat(40).bytes());
+}
+
+function test_inflate_stream(): test.TestOutcome {
+  let big = stream_input();
+  let packed = deflate.deflate_level(big, 1);
+  let small = lcg_bytes(3000).concat("the quick brown fox jumps over the lazy dog ".repeat(30).bytes());
+  let small_packed = deflate.deflate_level(small, 1).concat("tail".bytes());
+  let stored = __codec_bytes(hex.decode("000500faff68656c6c6f010500faff776f726c64"));
+  let want = big.len().to_string() + " " + crc32.of(big).to_string() + " done at " + packed.len().to_string();
+  let small_want = small.len().to_string() + " " + crc32.of(small).to_string() + " done at " + (small_packed.len() - 4).to_string();
+  let got = [
+    stream_text(packed, 65536),
+    stream_text(packed, packed.len()),
+    stream_text(small_packed, 1),
+    stream_text(small_packed, 3),
+    stream_text(stored, 1),
+  ];
+  return test.assert_eq_array(got, [want, want, small_want, small_want, "10 4192936109 done at 20"]);
+}
+
+// A stream that stops early gives the output before its end, and a bad
+// distance gives the output before the match.
+function test_inflate_stream_errors(): test.TestOutcome {
+  let big = stream_input();
+  let packed = deflate.deflate_level(big, 1);
+  let half = array_prefix(packed, packed.len() / 2);
+  let (out, how) = streamed(half, 4096);
+  if (how != "error: the compressed data ends early") {
+    return test.fail("truncated: " + how);
+  }
+  if (out.len() < 10000 || hex.encode(out) != hex.encode(array_prefix(big, out.len()))) {
+    return test.fail("truncated: the output is not the start of the input, " + out.len().to_string() + " bytes");
+  }
+  let stored = __codec_bytes(hex.decode("000500faff68656c6c"));
+  let far = __codec_bytes(hex.decode("000500faff68656c6c6faba8045e000000"));
+  let below = deflate.inflate_part(deflate.inflate_stream(), stored, -1, true);
+  let below_text = match (below.error) {
+    Some(e) => e.message(),
+    None => "no error",
+  };
+  let got = [stream_text(stored, 2), stream_text(far, 1), stream_text(far, far.len()), below_text];
+  return test.assert_eq_array(got, [
+    "4 478544099 error: the compressed data ends early",
+    "7 3716818841 error: malformed compressed data: a distance before the start of the output",
+    "7 3716818841 error: malformed compressed data: a distance before the start of the output",
+    "malformed compressed data: an offset below zero",
+  ]);
+}
+
+function array_prefix(data: u8[], n: i32): u8[] {
+  let out = __alloc_u8(n);
+  for i in 0..n {
+    out = out.with(i, data[i]);
+  }
+  return out;
+}
+
 function test_deflate_blocks(): test.TestOutcome {
   let input = lcg_bytes(17000).concat("the quick brown fox jumps over the lazy dog ".repeat(40).bytes());
   return test.assert_eq(round_trip(input), "ok 17095");
@@ -531,6 +635,8 @@ function main(): i32 {
   r = r.it("an offset outside the input is an error", test_offset_below_zero);
   r = r.it("gzip marks the fastest and the smallest levels", test_gzip_levels);
   r = r.it("blocks with a dictionary join into one stream", test_deflate_blocks_with_a_dictionary);
+  r = r.it("a stream decodes its input in parts", test_inflate_stream);
+  r = r.it("a stream that does not decode gives the output before the error", test_inflate_stream_errors);
   r = r.it("zlib_compress writes the bytes of zlib", test_zlib_compress);
   return r.finish();
 }

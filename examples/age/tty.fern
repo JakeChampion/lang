@@ -161,32 +161,443 @@ function read_byte(r: Reader): Result[u8, string] {
   return Err("EOF");
 }
 
-// The line editor of x/term's Terminal.ReadLine for the keys of a simple
-// line: each printable byte shows as the user types it, Backspace erases
-// the last byte, and Enter ends the line. Ctrl-C, and Ctrl-D on an empty
-// line, end the input.
-function edit_line(r: Reader, w: Writer): Result[u8[], string] {
-  let line: u8[] = [];
-  loop {
-    let c = read_byte(r)?;
-    if (c == b'\r' || c == b'\n') {
-      w.write("\r\n");
-      return Ok(line);
-    }
-    if (c == 3u8 || c == 4u8 && line.len() == 0) {
-      return Err("EOF");
-    }
-    if (c == 127u8 || c == 8u8) {
-      if (line.len() > 0) {
-        line = array.slice(line, 0, line.len() - 1);
-        w.write("\x1b[D \x1b[D");
-      }
-    } else if (c >= 32u8) {
-      line = line.append(c);
-      w.write_bytes([c]);
+// x/term's Terminal.ReadLine for a terminal with no prompt and the default
+// size of 80 columns. Each new Terminal has no history, so the Up and the
+// Down keys do nothing.
+struct Edit { line: i32[], pos: i32, cx: i32, cy: i32, max_line: i32, out: u8[], paste: boolean }
+
+const WIDTH: i32 = 80;
+
+const MAX_LINE: i32 = 4096;
+
+const RUNE_ERROR: i32 = 0xfffd;
+
+const KEY_CTRL_C: i32 = 3;
+
+const KEY_CTRL_D: i32 = 4;
+
+const KEY_CTRL_U: i32 = 21;
+
+const KEY_ENTER: i32 = 13;
+
+const KEY_LF: i32 = 10;
+
+const KEY_BACKSPACE: i32 = 127;
+
+// The keys of x/term above the runes: 0xd800 and the index of the constant.
+const KEY_UNKNOWN: i32 = 0xd807;
+
+const KEY_UP: i32 = 0xd808;
+
+const KEY_DOWN: i32 = 0xd809;
+
+const KEY_LEFT: i32 = 0xd80a;
+
+const KEY_RIGHT: i32 = 0xd80b;
+
+const KEY_ALT_LEFT: i32 = 0xd80c;
+
+const KEY_ALT_RIGHT: i32 = 0xd80d;
+
+const KEY_HOME: i32 = 0xd80e;
+
+const KEY_END: i32 = 0xd80f;
+
+const KEY_DELETE_WORD: i32 = 0xd810;
+
+const KEY_DELETE_LINE: i32 = 0xd811;
+
+const KEY_DELETE: i32 = 0xd812;
+
+const KEY_CLEAR_SCREEN: i32 = 0xd813;
+
+const KEY_TRANSPOSE: i32 = 0xd814;
+
+const KEY_PASTE_START: i32 = 0xd815;
+
+const KEY_PASTE_END: i32 = 0xd816;
+
+// The UTF-8 bytes of a rune, as Go's string conversion gives them: a
+// surrogate is U+FFFD.
+function rune_bytes(own out: u8[], rune: i32): u8[] {
+  let r = if (rune >= 0xd800 && rune <= 0xdfff || rune > 0x10ffff) { 0xfffd } else { rune };
+  if (r < 0x80) {
+    return out.append(r as u8);
+  }
+  if (r < 0x800) {
+    return out.append((0xc0 | r >> 6) as u8).append((0x80 | r & 0x3f) as u8);
+  }
+  if (r < 0x10000) {
+    return out.append((0xe0 | r >> 12) as u8).append((0x80 | r >> 6 & 0x3f) as u8).append((0x80 | r & 0x3f) as u8);
+  }
+  return out.append((0xf0 | r >> 18) as u8).append((0x80 | r >> 12 & 0x3f) as u8).append((0x80 | r >> 6 & 0x3f) as u8).append((0x80 | r & 0x3f) as u8);
+}
+
+function queue_text(own e: Edit, s: string): Edit {
+  return Edit { ...e, out: e.out.concat(s.bytes()) };
+}
+
+// Go's utf8.FullRune at b[i:].
+function full_rune(b: [u8], i: i32): boolean {
+  let n = b.len() - i;
+  let c = b[i];
+  let size = if (c < 0x80u8 || c < 0xc2u8 || c > 0xf4u8) { 1 } else if (c < 0xe0u8) { 2 } else if (c < 0xf0u8) { 3 } else { 4 };
+  if (n >= size) {
+    return true;
+  }
+  let lo = if (c == 0xe0u8) { 0xa0u8 } else if (c == 0xf0u8) { 0x90u8 } else { 0x80u8 };
+  let hi = if (c == 0xedu8) { 0x9fu8 } else if (c == 0xf4u8) { 0x8fu8 } else { 0xbfu8 };
+  if (n > 1 && (b[i + 1] < lo || b[i + 1] > hi)) {
+    return true;
+  }
+  return n > 2 && (b[i + 2] < 0x80u8 || b[i + 2] > 0xbfu8);
+}
+
+function control_key(c: u8): i32 {
+  return match (c) {
+    1u8 => KEY_HOME,
+    2u8 => KEY_LEFT,
+    5u8 => KEY_END,
+    6u8 => KEY_RIGHT,
+    8u8 => KEY_BACKSPACE,
+    11u8 => KEY_DELETE_LINE,
+    12u8 => KEY_CLEAR_SCREEN,
+    20u8 => KEY_TRANSPOSE,
+    23u8 => KEY_DELETE_WORD,
+    14u8 => KEY_DOWN,
+    16u8 => KEY_UP,
+    _ => -1,
+  };
+}
+
+function has_at(b: [u8], i: i32, s: string): boolean {
+  if (b.len() - i < s.len()) {
+    return false;
+  }
+  for k in 0..s.len() {
+    if (b[i + k] != s[k]) {
+      return false;
     }
   }
-  return Ok(line);
+  return true;
+}
+
+// x/term's bytesToKey: the key at b[i:] and the index after it. RUNE_ERROR
+// at the same index asks for more bytes.
+// fern-lint: allow cyclomatic-complexity
+function bytes_to_key(b: [u8], i: i32, paste: boolean): (i32, i32) {
+  if (i >= b.len()) {
+    return (RUNE_ERROR, i);
+  }
+  if (!paste) {
+    let k = control_key(b[i]);
+    if (k >= 0) {
+      return (k, i + 1);
+    }
+  }
+  if (b[i] != 27u8) {
+    if (!full_rune(b, i)) {
+      return (RUNE_ERROR, i);
+    }
+    let (r, n) = text.rune_at(b, i);
+    return (r, i + n);
+  }
+  if (!paste && b.len() - i >= 3 && b[i + 1] == b'[') {
+    let k = match (b[i + 2]) {
+      b'A' => KEY_UP,
+      b'B' => KEY_DOWN,
+      b'C' => KEY_RIGHT,
+      b'D' => KEY_LEFT,
+      b'H' => KEY_HOME,
+      b'F' => KEY_END,
+      _ => -1,
+    };
+    if (k >= 0) {
+      return (k, i + 3);
+    }
+  }
+  if (!paste && has_at(b, i, "\x1b[3~")) {
+    return (KEY_DELETE, i + 4);
+  }
+  if (!paste && b.len() - i >= 6 && has_at(b, i, "\x1b[1;3")) {
+    if (b[i + 5] == b'C') {
+      return (KEY_ALT_RIGHT, i + 6);
+    }
+    if (b[i + 5] == b'D') {
+      return (KEY_ALT_LEFT, i + 6);
+    }
+  }
+  if (!paste && has_at(b, i, "\x1b[200~")) {
+    return (KEY_PASTE_START, i + 6);
+  }
+  if (paste && has_at(b, i, "\x1b[201~")) {
+    return (KEY_PASTE_END, i + 6);
+  }
+  for j in i..b.len() {
+    let c = b[j];
+    if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c == b'~') {
+      return (KEY_UNKNOWN, j + 1);
+    }
+  }
+  return (RUNE_ERROR, i);
+}
+
+// The escape sequence that moves the cursor n places in the direction d.
+function moves(n: i32, d: string): string {
+  if (n == 1) {
+    return "\x1b[" + d;
+  }
+  if (n > 1) {
+    return "\x1b[" + n.to_string() + d;
+  }
+  return "";
+}
+
+function move_cursor(own e: Edit, pos: i32): Edit {
+  let y = pos / WIDTH;
+  let x = pos % WIDTH;
+  let up = if (y < e.cy) { e.cy - y } else { 0 };
+  let down = if (y > e.cy) { y - e.cy } else { 0 };
+  let left = if (x < e.cx) { e.cx - x } else { 0 };
+  let right = if (x > e.cx) { x - e.cx } else { 0 };
+  let m = moves(up, "A") + moves(down, "B") + moves(right, "C") + moves(left, "D");
+  return queue_text(Edit { ...e, cx: x, cy: y }, m);
+}
+
+function advance(own e: Edit, places: i32): Edit {
+  let x = e.cx + places;
+  let y = e.cy + x / WIDTH;
+  let top = if (y > e.max_line) { y } else { e.max_line };
+  let r = Edit { ...e, cx: x % WIDTH, cy: y, max_line: top };
+  if (places > 0 && r.cx == 0) {
+    return queue_text(r, "\r\n");
+  }
+  return r;
+}
+
+// x/term's writeLine: the runes from `from` to `to`, wrapped at the width.
+function write_runes(own e: Edit, runes: i32[], from: i32, to: i32): Edit {
+  let at = from;
+  while (at < to) {
+    let todo = to - at;
+    if (todo > WIDTH - e.cx) {
+      todo = WIDTH - e.cx;
+    }
+    let out = e.out;
+    for k in at..at + todo {
+      out = rune_bytes(out, runes[k]);
+    }
+    e = advance(Edit { ...e, out: out }, todo);
+    at += todo;
+  }
+  return e;
+}
+
+function erase_previous(own e: Edit, count: i32): Edit {
+  if (count == 0) {
+    return e;
+  }
+  let n = if (e.pos < count) { e.pos } else { count };
+  let pos = e.pos - n;
+  e = move_cursor(Edit { ...e, pos: pos }, pos);
+  let line = array.slice(e.line, 0, pos).concat(array.slice(e.line, pos + n, e.line.len()));
+  e = write_runes(Edit { ...e, line: line }, line, pos, line.len());
+  for i in 0..n {
+    e = queue_text(e, " ");
+  }
+  return move_cursor(advance(e, n), pos);
+}
+
+function left_word(e: Edit): i32 {
+  if (e.pos == 0) {
+    return 0;
+  }
+  let p = e.pos - 1;
+  while (p > 0 && e.line[p] == 32) {
+    p -= 1;
+  }
+  while (p > 0) {
+    if (e.line[p] == 32) {
+      p += 1;
+      break;
+    }
+    p -= 1;
+  }
+  return e.pos - p;
+}
+
+function right_word(e: Edit): i32 {
+  let p = e.pos;
+  while (p < e.line.len() && e.line[p] != 32) {
+    p += 1;
+  }
+  while (p < e.line.len() && e.line[p] == 32) {
+    p += 1;
+  }
+  return p - e.pos;
+}
+
+function add_key(own e: Edit, key: i32): Edit {
+  let line = array.slice(e.line, 0, e.pos).append(key).concat(array.slice(e.line, e.pos, e.line.len()));
+  e = write_runes(Edit { ...e, line: line }, line, e.pos, line.len());
+  return move_cursor(Edit { ...e, pos: e.pos + 1 }, e.pos + 1);
+}
+
+function to_pos(own e: Edit, pos: i32): Edit {
+  return move_cursor(Edit { ...e, pos: pos }, pos);
+}
+
+function printable(key: i32): boolean {
+  return key >= 32 && !(key >= 0xd800 && key <= 0xdbff);
+}
+
+// x/term's handleKey. The line is Some at the end of a line.
+// fern-lint: allow cyclomatic-complexity
+function handle_key(own e: Edit, key: i32): (Edit, Option[u8[]]) {
+  if (e.paste && key != KEY_ENTER && key != KEY_LF) {
+    return (add_key(e, key), None);
+  }
+  let n = e.line.len();
+  let pos = e.pos;
+  if (key == KEY_BACKSPACE) {
+    return (if (e.pos == 0) { e } else { erase_previous(e, 1) }, None);
+  }
+  if (key == KEY_ALT_LEFT) {
+    let k = left_word(e);
+    return (to_pos(e, pos - k), None);
+  }
+  if (key == KEY_ALT_RIGHT) {
+    let k = right_word(e);
+    return (to_pos(e, pos + k), None);
+  }
+  if (key == KEY_LEFT) {
+    return (if (pos == 0) { e } else { to_pos(e, pos - 1) }, None);
+  }
+  if (key == KEY_RIGHT) {
+    return (if (pos == n) { e } else { to_pos(e, pos + 1) }, None);
+  }
+  if (key == KEY_HOME) {
+    return (if (pos == 0) { e } else { to_pos(e, 0) }, None);
+  }
+  if (key == KEY_END) {
+    return (if (pos == n) { e } else { to_pos(e, n) }, None);
+  }
+  if (key == KEY_UP || key == KEY_DOWN) {
+    return (e, None);
+  }
+  if (key == KEY_ENTER || key == KEY_LF) {
+    e = queue_text(move_cursor(e, n), "\r\n");
+    let bytes: u8[] = [];
+    for r in e.line {
+      bytes = rune_bytes(bytes, r);
+    }
+    return (Edit { ...e, line: [], pos: 0, cx: 0, cy: 0, max_line: 0 }, Some(bytes));
+  }
+  if (key == KEY_DELETE_WORD) {
+    let k = left_word(e);
+    return (erase_previous(e, k), None);
+  }
+  if (key == KEY_DELETE_LINE) {
+    for i in e.pos..n {
+      e = advance(queue_text(e, " "), 1);
+    }
+    return (move_cursor(Edit { ...e, line: array.slice(e.line, 0, e.pos) }, e.pos), None);
+  }
+  if (key == KEY_CTRL_D || key == KEY_DELETE) {
+    return (if (e.pos < n) { erase_previous(Edit { ...e, pos: e.pos + 1 }, 1) } else { e }, None);
+  }
+  if (key == KEY_CTRL_U) {
+    return (erase_previous(e, pos), None);
+  }
+  if (key == KEY_TRANSPOSE) {
+    if (n < 2 || e.pos < 1) {
+      return (e, None);
+    }
+    let swap = if (e.pos == n) { e.pos - 1 } else { e.pos };
+    let line = e.line.with(swap - 1, e.line[swap]).with(swap, e.line[swap - 1]);
+    let pos = if (e.pos < n) { e.pos + 1 } else { e.pos };
+    e = move_cursor(Edit { ...e, line: line, pos: pos }, swap - 1);
+    e = write_runes(e, line, swap - 1, n);
+    return (move_cursor(e, pos), None);
+  }
+  if (key == KEY_CLEAR_SCREEN) {
+    e = advance(queue_text(Edit { ...e, cx: 0, cy: 0 }, "\x1b[2J\x1b[H"), 0);
+    let line = e.line;
+    e = write_runes(move_cursor(e, 0), line, 0, n);
+    return (move_cursor(e, pos), None);
+  }
+  if (!printable(key) || n == MAX_LINE) {
+    return (e, None);
+  }
+  return (add_key(e, key), None);
+}
+
+// x/term's ReadLine: the keys of each read, then the echo of that read. A
+// RUNE_ERROR ends the keys of a read, so the bytes after it wait for the
+// next read. Ctrl-C, and Ctrl-D on an empty line, give io.EOF, and the echo
+// of that read is lost, as in x/term.
+// fern-lint: allow cyclomatic-complexity
+function edit_line(r: Reader, w: Writer): Result[u8[], string] {
+  let e = Edit { line: [], pos: 0, cx: 0, cy: 0, max_line: 0, out: [], paste: false };
+  let rest: u8[] = [];
+  let pasted = false;
+  loop {
+    let i = 0;
+    let done: Option[u8[]] = None;
+    while (done.is_none()) {
+      let (key, next) = bytes_to_key(rest, i, e.paste);
+      i = next;
+      if (key == RUNE_ERROR) {
+        break;
+      }
+      if (!e.paste) {
+        if (key == KEY_CTRL_D && e.line.len() == 0 || key == KEY_CTRL_C) {
+          return Err("EOF");
+        }
+        if (key == KEY_PASTE_START) {
+          e = Edit { ...e, paste: true };
+          if (e.line.len() == 0) {
+            pasted = true;
+          }
+          continue;
+        }
+      } else if (key == KEY_PASTE_END) {
+        e = Edit { ...e, paste: false };
+        continue;
+      }
+      if (!e.paste) {
+        pasted = false;
+      }
+      if (key == KEY_ENTER && i < rest.len() && rest[i] == 10u8) {
+        i += 1;
+      }
+      let (e2, got) = handle_key(e, key);
+      e = e2;
+      done = got;
+    }
+    rest = array.slice(rest, i, rest.len());
+    if (e.out.len() > 0) {
+      w.write_bytes(e.out);
+      e = Edit { ...e, out: [] };
+    }
+    if let Some(line) = done {
+      if (pasted) {
+        return Err("terminal: ErrPasteIndicator not correctly handled");
+      }
+      return Ok(line);
+    }
+    let b = match (r.read_chunk_bytes(256 - rest.len())) {
+      Ok(b) => b,
+      Err(err) => {
+        return Err(text.errno_text(err));
+      },
+    };
+    if (b.len() == 0) {
+      return Err("EOF");
+    }
+    rest = rest.concat(b);
+  }
+  return Err("EOF");
 }
 
 // age's term.ReadPublic: the prompt, then a line that the terminal shows.

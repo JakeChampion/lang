@@ -8,26 +8,23 @@ function test_cbrt_perfect(): test.TestOutcome {
   return test.assert_eq_f64_near(8.0.cbrt(), 2.0, 0.001);
 }
 
-// A cube has its exact root, at each size. The largest and the smallest
-// numbers have the nearest root.
-function test_cbrt_exact(): test.TestOutcome {
-  for n in [3.0, 7.0, 10.0, 99.0, 12345.0, 200000.0] {
-    if ((n * n * n).cbrt() != n) {
-      return test.fail("cbrt of the cube of " + n.to_string() + " is " + (n * n * n).cbrt().to_string());
+// cbrt is the algorithm of glibc, so it gives the results of glibc. These
+// are not always the nearest numbers: glibc gives 3.0000000000000004 for 27.
+function test_cbrt_glibc(): test.TestOutcome {
+  let inputs = [27.0, 8.0, -8.0, 0.125, 1e300, 1e-300, 0.001, 1.7976931348623157e308, 5e-324, 2.0, -2.0, 1000.0, 343.0, 1e-310];
+  let want = [3.0000000000000004, 2.0, -2.0, 0.49999999999999994, 1e100, 1e-100, 0.1, 5.643803094122362e102, 1.7031839360032601e-108, 1.2599210498948734, -1.2599210498948734, 10.0, 7.0, 4.641588833612775e-104];
+  for i in 0..inputs.len() {
+    if (inputs[i].cbrt() != want[i]) {
+      return test.fail("cbrt " + inputs[i].to_string() + " is " + inputs[i].cbrt().to_string() + ", want " + want[i].to_string());
     }
-  }
-  if (1e300.cbrt() != 1e100 || 1e-300.cbrt() != 1e-100 || 0.001.cbrt() != 0.1) {
-    return test.fail("cbrt of a power of 1000");
-  }
-  if (1.7976931348623157e308.cbrt() != 5.643803094122362e102 || 5e-324.cbrt() != 1.7031839360032603e-108) {
-    return test.fail("cbrt at the limits");
-  }
-  if (2.0.cbrt() != 1.2599210498948732 || (0.0 - 2.0).cbrt() != 0.0 - 1.2599210498948732) {
-    return test.fail("cbrt 2");
   }
   let inf = 1.0 / 0.0;
   if (inf.cbrt() != inf || (0.0 - inf).cbrt() != 0.0 - inf) {
     return test.fail("cbrt of an infinity");
+  }
+  let z = (-0.0).cbrt();
+  if (z != 0.0 || 1.0 / z > 0.0 || (0.0 / 0.0).cbrt() == (0.0 / 0.0).cbrt()) {
+    return test.fail("cbrt of -0 or NaN");
   }
   return test.pass();
 }
@@ -72,7 +69,7 @@ function float_near(a: f64, b: f64): boolean {
 function main(): i32 {
   let r = test.new("std/f64 cbrt/hypot3");
   r = r.it("cbrt perfect cube", test_cbrt_perfect);
-  r = r.it("cbrt is exact for a cube, and the nearest number at the limits", test_cbrt_exact);
+  r = r.it("cbrt gives the results of glibc", test_cbrt_glibc);
   r = r.it("cbrt negative", test_cbrt_negative);
   r = r.it("cbrt fractional", test_cbrt_fractional);
   r = r.it("hypot3 pythagorean", test_hypot3_pythagorean);

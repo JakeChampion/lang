@@ -20,6 +20,7 @@ import "std/deflate" as deflate;
 import "std/worker";
 import "./gz";
 import "./layout";
+import "./zopfli";
 
 const S_IFMT: u32 = 61440u32;
 
@@ -40,13 +41,6 @@ struct Run {
   ret: i32,
   listing: gz.Listing,
   now: i64,
-}
-
-// An error that stops pigz: "abort:" with the message, and the exit code,
-// which is the error number.
-struct Fatal {
-  why: string,
-  code: i32,
 }
 
 function say(r: Run, text: string): void {
@@ -89,8 +83,8 @@ function error_text(e: IoError): string {
   return e.message();
 }
 
-function fatal(what: string, name: string, e: IoError): Fatal {
-  return Fatal { why: what + " error on " + name + " (" + error_text(e) + ")", code: errno.of(e) };
+function fatal(what: string, name: string, e: IoError): gz.Fail {
+  return gz.Fail { why: what + " error on " + name + " (" + error_text(e) + ")", code: errno.of(e) };
 }
 
 // The processes of a compression: -p, or one for each CPU.
@@ -115,7 +109,7 @@ function job_size(block: i32): i32 {
 }
 
 // readn(): up to `n` bytes, fewer only at the end of the input.
-function readn(rd: Reader, n: i32, path: string): Result[u8[], Fatal] {
+function readn(rd: Reader, n: i32, path: string): Result[u8[], gz.Fail] {
   let out: u8[] = [];
   while (out.len() < n) {
     match (rd.read_chunk_bytes(n - out.len())) {
@@ -134,7 +128,8 @@ function readn(rd: Reader, n: i32, path: string): Result[u8[], Fatal] {
 }
 
 function settings(o: gz.Options): layout.Settings {
-  return layout.Settings { level: o.level, strategy: o.strategy, block: o.block, rsync: o.rsync, setdict: o.setdict };
+  let zopts = zopfli.Options { iterations: o.iterations, blocksplitting: o.blocksplitting, maxblocks: o.maxsplits };
+  return layout.Settings { level: o.level, strategy: o.strategy, block: o.block, rsync: o.rsync, setdict: o.setdict, zopts: zopts };
 }
 
 // The check of the input so far: CRC-32, or Adler-32 for zlib.
@@ -195,7 +190,7 @@ function trailer(r: Run, name: Option[string], mtime: i64, c: Check, clen: i64, 
   return gz.gzip_trailer(crc, c.ulen);
 }
 
-function put(w: Writer, bytes: u8[], outf: string): Result[void, Fatal] {
+function put(w: Writer, bytes: u8[], outf: string): Result[void, gz.Fail] {
   match (w.write_bytes(bytes)) {
     Ok(_) => {
       return Ok(());
@@ -214,8 +209,15 @@ struct Written {
   clen: i64,
 }
 
+// The compressed length that single_compress counts for a block. pigz 2.8
+// does not count the output of zopfli there, so the zip entry of -11 -p 1
+// has a compressed length of zero.
+function single_clen(s: layout.Settings, bytes: u8[]): i64 {
+  return if (s.level > 9) { 0i64 } else { bytes.len() as i64 };
+}
+
 // single_compress: one deflate stream, a block at a time.
-function single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, Fatal] {
+function single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, gz.Fail] {
   let c = c0;
   let clen = 0i64;
   let st = layout.single_start(s);
@@ -227,7 +229,7 @@ function single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf
     st = after;
     c = check_of(c, cur);
     put(w, bytes, outf)?;
-    clen += bytes.len() as i64;
+    clen += single_clen(s, bytes);
     if (!more) {
       break;
     }
@@ -242,7 +244,7 @@ struct Feed {
   next: u8[],
   dict: u8[],
   ended: boolean,
-  failed: Option[Fatal],
+  failed: Option[gz.Fail],
 }
 
 // The input of one job, with the 32 KiB before it.
@@ -306,14 +308,14 @@ function drain(own jobs: worker.Worker[JobOut][]): void {
 // the 32 KiB before it as its dictionary. Up to `procs` jobs run in workers
 // at a time. The parent reads the input, starts a job when one ends, and
 // writes the output of the jobs in order, as pigz does.
-function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, Fatal] {
+function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, gz.Fail] {
   let size = job_size(s.block);
   let first = readn(rd, size, path)?;
-  let none: Option[Fatal] = None;
+  let none: Option[gz.Fail] = None;
   let feed = Feed { next: first, dict: [], ended: false, failed: none };
   let check = c0;
   let clen = 0i64;
-  let failed: Option[Fatal] = None;
+  let failed: Option[gz.Fail] = None;
   let queue: worker.Worker[JobOut][] = [];
   while (!feed.ended && queue.len() < procs) {
     let t = take(feed, rd, size, path);
@@ -356,6 +358,173 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
   return Ok(Written { check: check, clen: clen });
 }
 
+// The input of -R: the check of the input so far and the first read error.
+// The compression reads through layout, so these are cells.
+struct RsyncIn {
+  err: Cell[Option[gz.Fail]],
+  check: Cell[Check],
+}
+
+function rsync_read(rd: Reader, n: i32, path: string, inp: RsyncIn): u8[] {
+  if (inp.err.get().is_some()) {
+    return [];
+  }
+  match (rd.read_chunk_bytes(n)) {
+    Ok(chunk) => {
+      inp.check.set(check_of(inp.check.get(), chunk));
+      return chunk;
+    },
+    Err(e) => {
+      inp.err.set(Some(fatal("read", path, e)));
+    }
+  }
+  return [];
+}
+
+// What -R has written: the compressed length and the first write error.
+struct RsyncOut {
+  clen: i64,
+  failed: Option[gz.Fail],
+}
+
+// Writes a block of single_compress with -R. A read error or a write error
+// stops the compression.
+function rsync_put(w: Writer, bytes: u8[], outf: string, s: layout.Settings, inp: RsyncIn, out: Cell[RsyncOut]): boolean {
+  if (inp.err.get().is_some()) {
+    return false;
+  }
+  let o = out.get();
+  if let Err(e) = put(w, bytes, outf) {
+    out.set(RsyncOut { ...o, failed: Some(e) });
+    return false;
+  }
+  out.set(RsyncOut { ...o, clen: o.clen + single_clen(s, bytes) });
+  return true;
+}
+
+function rsync_input(c0: Check): RsyncIn {
+  let none: Option[gz.Fail] = None;
+  return RsyncIn { err: cell_new(none), check: cell_new(c0) };
+}
+
+// single_compress with -R, which reads the input in blocks.
+function rsync_single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, gz.Fail] {
+  let inp = rsync_input(c0);
+  let none: Option[gz.Fail] = None;
+  let out = cell_new(RsyncOut { clen: 0i64, failed: none });
+  layout.single_rsync_to(s, layout.lazy_reader((n: i32): u8[] => rsync_read(rd, n, path, inp)), (b: u8[]): boolean => rsync_put(w, b, outf, s, inp, out));
+  if let Some(e) = inp.err.get() {
+    return Err(e);
+  }
+  if let Some(e) = out.get().failed {
+    return Err(e);
+  }
+  return Ok(Written { check: inp.check.get(), clen: out.get().clen });
+}
+
+// A run of the jobs of -R for one worker: the input from the 32 KiB before
+// the first job, and the jobs at their positions in it.
+struct RsyncGroup {
+  data: u8[],
+  jobs: layout.Job[],
+  last: boolean,
+}
+
+// The jobs of -R up to `size` bytes, or to the last job.
+function rsync_group(s: layout.Settings, own g0: layout.RsyncJobs, own l0: layout.Lazy, size: i32): (layout.RsyncJobs, layout.Lazy, RsyncGroup) {
+  let g = g0;
+  let l = l0;
+  let first = g.ns;
+  let start = if (first > layout.DICT as i64) { first - layout.DICT as i64 } else { 0i64 };
+  let jobs: layout.Job[] = [];
+  let total = 0;
+  let end = first;
+  let last = false;
+  loop {
+    let (g1, l1, j) = layout.rsync_next(s, g, l);
+    g = g1;
+    l = l1;
+    jobs = jobs.append(layout.Job { from: (j.from - start) as i32, len: j.len, lens: j.lens });
+    total += j.len;
+    end = j.from + j.len as i64;
+    last = j.last;
+    if (last || total >= size) {
+      break;
+    }
+  }
+  let data = layout.lazy_bytes(l, start, end);
+  let keep = if (g.ns > layout.DICT as i64) { g.ns - layout.DICT as i64 } else { 0i64 };
+  return (g, layout.lazy_forget(l, keep), RsyncGroup { data: data, jobs: jobs, last: last });
+}
+
+function start_group(s: layout.Settings, grp: RsyncGroup): worker.Worker[u8[]] {
+  let data = grp.data;
+  let jobs = grp.jobs;
+  let more = !grp.last;
+  return worker.spawn((): u8[] => layout.run_group(s, data, jobs, more));
+}
+
+// parallel_compress with -R: the jobs end after the last hash hit in the
+// next block. Up to `procs` runs of jobs are in workers at a time, and the
+// parent writes their output in order.
+// It keeps the branches of parallel_compress() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function rsync_parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, gz.Fail] {
+  let inp = rsync_input(c0);
+  let (g0, l0) = layout.rsync_start(s, layout.lazy_reader((n: i32): u8[] => rsync_read(rd, n, path, inp)));
+  let g = g0;
+  let l = l0;
+  let size = job_size(s.block);
+  let ended = false;
+  let clen = 0i64;
+  let failed: Option[gz.Fail] = None;
+  let queue: worker.Worker[u8[]][] = [];
+  while (!ended && queue.len() < procs) {
+    let (g1, l1, grp) = rsync_group(s, g, l, size);
+    g = g1;
+    l = l1;
+    ended = grp.last;
+    queue = queue.append(start_group(s, grp));
+  }
+  loop {
+    let later: worker.Worker[u8[]][] = [];
+    for job in queue {
+      let bytes = job.join();
+      if (failed.is_none() && inp.err.get().is_none()) {
+        if let Err(e) = put(w, bytes, outf) {
+          failed = Some(e);
+        }
+        clen += bytes.len() as i64;
+      }
+      if (!ended && failed.is_none() && inp.err.get().is_none()) {
+        let (g1, l1, grp) = rsync_group(s, g, l, size);
+        g = g1;
+        l = l1;
+        ended = grp.last;
+        later = later.append(start_group(s, grp));
+      }
+    }
+    if (later.len() == 0) {
+      drain_groups(later);
+      break;
+    }
+    queue = later;
+  }
+  if let Some(e) = inp.err.get() {
+    return Err(e);
+  }
+  if let Some(e) = failed {
+    return Err(e);
+  }
+  return Ok(Written { check: inp.check.get(), clen: clen });
+}
+
+function drain_groups(own jobs: worker.Worker[u8[]][]): void {
+  for job in jobs {
+    let _ = job.join();
+  }
+}
+
 // The name in the header: the name of a file without its directory, for -N
 // and by default.
 function header_name(o: gz.Options, src: Source): Option[string] {
@@ -368,7 +537,9 @@ function header_name(o: gz.Options, src: Source): Option[string] {
 // The compression of the input that `rd` streams: the header, the deflate
 // data in the block layout of pigz, and the trailer, each written to `w`
 // as it is ready.
-function compress_to(r0: Run, src: Source, rd: Reader, w: Writer, outf: string): Result[Run, Fatal] {
+// It keeps the branches of single_compress() and parallel_compress() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function compress_to(r0: Run, src: Source, rd: Reader, w: Writer, outf: string): Result[Run, gz.Fail] {
   let o = r0.o;
   let name = header_name(o, src);
   let (r, head) = header(r0, name, src.mtime);
@@ -376,14 +547,22 @@ function compress_to(r0: Run, src: Source, rd: Reader, w: Writer, outf: string):
   let s = settings(o);
   let n = procs(o);
   let c = new_check(o.form == 1);
-  let done = if (n > 1) { parallel_to(s, n, rd, w, src.path, outf, c)? } else { single_to(s, rd, w, src.path, outf, c)? };
+  let done = if (s.rsync && n > 1) {
+    rsync_parallel_to(s, n, rd, w, src.path, outf, c)?
+  } else if (s.rsync) {
+    rsync_single_to(s, rd, w, src.path, outf, c)?
+  } else if (n > 1) {
+    parallel_to(s, n, rd, w, src.path, outf, c)?
+  } else {
+    single_to(s, rd, w, src.path, outf, c)?
+  };
   put(w, trailer(r, name, src.mtime, done.check, done.clen, head.len() as i64), outf)?;
   return Ok(r);
 }
 
 // A streamed compression to the standard output or to `outf`. A file that
 // a fatal error leaves is removed.
-function streamed(r: Run, src: Source, own rd: Reader, to_stdout: boolean, outf: string): Result[Run, Fatal] {
+function streamed(r: Run, src: Source, own rd: Reader, to_stdout: boolean, outf: string): Result[Run, gz.Fail] {
   if (to_stdout) {
     let done = compress_to(r, src, rd, stdout(), outf);
     if (src.st.is_some()) {
@@ -399,7 +578,7 @@ function streamed(r: Run, src: Source, own rd: Reader, to_stdout: boolean, outf:
         if let Err(e) = w.fsync() {
           w.close();
           let _ = remove_file(outf);
-          return Err(Fatal { why: "sync error on " + outf + " (" + error_text(e) + ")", code: errno.of(e) });
+          return Err(gz.Fail { why: "sync error on " + outf + " (" + error_text(e) + ")", code: errno.of(e) });
         }
       }
       w.close();
@@ -414,19 +593,6 @@ function streamed(r: Run, src: Source, own rd: Reader, to_stdout: boolean, outf:
     }
   }
   return Ok(r);
-}
-
-// The compressed form of all of `data`, for -R: the header, the deflate
-// data in the block layout of pigz, and the trailer.
-function compressed(r0: Run, data: u8[], name: Option[string], mtime: i64): (Run, u8[]) {
-  let o = r0.o;
-  let (r, head) = header(r0, name, mtime);
-  let s = settings(o);
-  let n = procs(o);
-  let body = if (n > 1) { layout.parallel(s, data, layout.jobs(s, data), n) } else { layout.single(s, data) };
-  let c = check_of(new_check(o.form == 1), data);
-  let tail = trailer(r, name, mtime, c, body.len() as i64, head.len() as i64);
-  return (r, head.concat(body).concat(tail));
 }
 
 function zip_name(o: gz.Options, name: Option[string]): string {
@@ -444,8 +610,7 @@ function zip_name(o: gz.Options, name: Option[string]): string {
 // The input and its name in the messages.
 struct Source {
   path: string,
-  // The whole input, or nothing when `reader` streams it.
-  data: u8[],
+  // The input, or None in a copy of the source for its name and status.
   reader: Option[Reader],
   // The status from lstat(), or None for the standard input.
   st: Option[FileStat],
@@ -453,7 +618,7 @@ struct Source {
   mtime: i64,
 }
 
-function write_stdout(bytes: u8[]): Result[void, Fatal] {
+function write_stdout(bytes: u8[]): Result[void, gz.Fail] {
   match (stdout().write_bytes(bytes)) {
     Ok(_) => {
       return Ok(());
@@ -465,43 +630,45 @@ function write_stdout(bytes: u8[]): Result[void, Fatal] {
   return Ok(());
 }
 
-function print_listing(r: Run): Result[Run, Fatal] {
+function print_listing(r: Run): Result[Run, gz.Fail] {
   if (r.listing.text.len() > 0) {
     write_stdout(r.listing.text.bytes())?;
   }
   return Ok(Run { ...r, listing: gz.Listing { ...r.listing, text: "" } });
 }
 
-// list_info(): one line for the input from its header and trailer.
-function list_info(r: Run, src: Source): Result[Run, Fatal] {
-  let data = src.data;
-  let h = gz.get_header(data, 0, true, 0, r.now);
+// list_info(): one line for the input from its header and trailer. It reads
+// the input to its end, to know its length and its last bytes.
+// It keeps the branches of list_info() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function list_info(r: Run, src: Source, own f: gz.Feed, h: gz.Header): Result[Run, gz.Fail] {
   if (h.method < 0) {
     return Ok(complain(r, "skipping: " + list_refusal(h.method, src.path)));
   }
   let o = r.o;
   if (h.form > 1) {
-    let (_, comment) = gz.zip_comment(data, h.next, 0u32, o.verbosity >= 2);
+    let all = if (o.verbosity >= 2) { gz.fill_all(f)? } else { f };
+    let (_, comment) = gz.zip_comment(all.buf, h.next, 0u32, o.verbosity >= 2);
     r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, h.method, h.zip_crc as u32, h.zip_clen, h.zip_ulen, false, comment) };
     return print_listing(r);
   }
-  let size = data.len();
+  let (size, tail) = gz.tail_of(f, 8)?;
   if (h.form == 1) {
-    let check = if (size >= 4) { gz.be32(data, size - 4) } else { 0u32 };
-    r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, 1, h.method, check, (size - 6) as i64, 0i64, false, None) };
+    let check = if (tail.len() >= 4) { gz.be32(tail, tail.len() - 4) } else { 0u32 };
+    r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, 1, h.method, check, size - 6i64, 0i64, false, None) };
     return print_listing(r);
   }
   if (h.method == 257) {
-    r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, 257, 0u32, (size - 3) as i64, 0i64, false, None) };
+    r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, 257, 0u32, size - 3i64, 0i64, false, None) };
     return print_listing(r);
   }
-  let rest = size - h.next;
-  if (rest < 8 || rest - 8 < 2) {
+  let rest = size - h.next as i64;
+  if (rest < 8i64 || rest - 8i64 < 2i64) {
     return Ok(complain(r, "skipping: " + src.path + " not a valid gzip file"));
   }
-  let check = gz.le32_of(data, size - 8);
-  let len = gz.le32_of(data, size - 4) as i64;
-  r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, h.method, check, (rest - 8) as i64, len, false, h.comment) };
+  let check = gz.le32_of(tail, 0);
+  let len = gz.le32_of(tail, 4) as i64;
+  r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, h.method, check, rest - 8i64, len, false, h.comment) };
   return print_listing(r);
 }
 
@@ -548,7 +715,7 @@ enum Opened {
 }
 
 // The standard input, with the time of the file it is, if any.
-function open_stdin(r: Run): Result[Opened, Fatal] {
+function open_stdin(r: Run): Result[Opened, gz.Fail] {
   let mtime = 0i64;
   if ((r.o.headis & 2) != 0) {
     if let Ok(st) = stdin().stat() {
@@ -558,20 +725,7 @@ function open_stdin(r: Run): Result[Opened, Fatal] {
     }
   }
   let none: Option[FileStat] = None;
-  let empty: u8[] = [];
-  if (streams(r.o)) {
-    return Ok(File(r, Source { path: "<stdin>", data: empty, reader: Some(stdin()), st: none, mtime: mtime }));
-  }
-  let Ok(data) = io.read_all_stdin_bytes() else {
-    return Err(Fatal { why: "read error on <stdin>", code: 5 });
-  };
-  return Ok(File(r, Source { path: "<stdin>", data: data, reader: None, st: none, mtime: mtime }));
-}
-
-// Whether a compression reads its input as it goes. -R reads all of it,
-// because its blocks end where the hash of the input says.
-function streams(o: gz.Options): boolean {
-  return o.decode == 0 && !o.list && !o.rsync;
+  return Ok(File(r, Source { path: "<stdin>", reader: Some(stdin()), st: none, mtime: mtime }));
 }
 
 // The name of the input and its lstat(). A decompression of a name that
@@ -609,7 +763,7 @@ function wrong_kind(o: gz.Options, inf: string, kind: u32): string {
 
 // It keeps the branches of process() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-function open_source(r: Run, path: string): Result[Opened, Fatal] {
+function open_source(r: Run, path: string): Result[Opened, gz.Fail] {
   if (path == "") {
     return open_stdin(r);
   }
@@ -634,20 +788,9 @@ function open_source(r: Run, path: string): Result[Opened, Fatal] {
     return Ok(Skip(complain(r, "skipping: " + inf + " does not have compressed suffix")));
   }
   let mtime = if ((o.headis & 2) != 0) { st.mtime } else { 0i64 };
-  if (streams(o)) {
-    match (open_reader(inf)) {
-      Ok(rd) => {
-        let empty: u8[] = [];
-        return Ok(File(r, Source { path: inf, data: empty, reader: Some(rd), st: Some(st), mtime: mtime }));
-      },
-      Err(e) => {
-        return Err(fatal("read", inf, e));
-      }
-    }
-  }
-  match (read_file_bytes(inf)) {
-    Ok(data) => {
-      return Ok(File(r, Source { path: inf, data: data, reader: None, st: Some(st), mtime: mtime }));
+  match (open_reader(inf)) {
+    Ok(rd) => {
+      return Ok(File(r, Source { path: inf, reader: Some(rd), st: Some(st), mtime: mtime }));
     },
     Err(e) => {
       return Err(fatal("read", inf, e));
@@ -669,7 +812,7 @@ function is_missing(looked: Result[FileStat, IoError]): boolean {
 }
 
 // process(): one file, or the standard input for "".
-function process(r0: Run, path: string): Result[Run, Fatal] {
+function process(r0: Run, path: string): Result[Run, gz.Fail] {
   let opened = open_source(r0, path)?;
   match (opened) {
     Skip(next) => {
@@ -685,30 +828,72 @@ function process(r0: Run, path: string): Result[Run, Fatal] {
   return Ok(r0);
 }
 
-// The input of process(): a listing, a test, or an output.
+// The input of `src` as a feed, read in parts.
+function feed_of(path: string, reader: Option[Reader]): gz.Feed {
+  match (reader) {
+    Some(rd) => {
+      return gz.feed_of((n: i32): Result[u8[], gz.Fail] => read_part(rd, n, path));
+    },
+    None => {
+      return gz.memory_feed([]);
+    }
+  }
+  return gz.memory_feed([]);
+}
+
+function read_part(rd: Reader, n: i32, path: string): Result[u8[], gz.Fail] {
+  match (rd.read_chunk_bytes(n)) {
+    Ok(chunk) => {
+      return Ok(chunk);
+    },
+    Err(e) => {
+      return Err(fatal("read", path, e));
+    }
+  }
+  return Ok([]);
+}
+
+// The input of process(): a listing, a test, or an output. A decompression,
+// a test and a listing read the input in parts.
+function convert(r: Run, own src: Source): Result[Run, gz.Fail] {
+  if (r.o.decode == 0 && !r.o.list) {
+    return output(r, src);
+  }
+  let Source { path, reader, st, mtime } = src;
+  let plain = Source { path: path, reader: None, st: st, mtime: mtime };
+  let done = match (gz.fill(feed_of(path, reader), gz.HEADER_NEED)) {
+    Ok(f) => decode_convert(r, plain, f),
+    Err(e) => Err(e),
+  };
+  if let Some(rd) = reader {
+    if (st.is_some()) {
+      let _ = rd.close();
+    }
+  }
+  return done;
+}
+
 // It keeps the branches of process() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-function convert(r: Run, own src: Source): Result[Run, Fatal] {
+function decode_convert(r: Run, src: Source, own f: gz.Feed): Result[Run, gz.Fail] {
   let o = r.o;
+  let h = gz.get_header(f.buf, f.at, true, 0, r.now);
   if (o.list && o.decode != 2) {
-    return list_info(r, src);
+    return list_info(r, src, f, h);
   }
-  let h = gz.get_header(src.data, 0, true, 0, r.now);
-  if (o.decode != 0) {
-    let cat = (h.method == -1 || h.method == -2) && o.force && o.pipeout && o.decode != 2 && !o.list;
-    if (h.method != 8 && h.method != 257 && !cat) {
-      return Ok(complain(r, "skipping: " + gz.header_refusal(h.method, src.path)));
-    }
-    if (o.decode == 2) {
-      return tested(r, src, h);
-    }
+  let cat = (h.method == -1 || h.method == -2) && o.force && o.pipeout && o.decode != 2 && !o.list;
+  if (h.method != 8 && h.method != 257 && !cat) {
+    return Ok(complain(r, "skipping: " + gz.header_refusal(h.method, src.path)));
   }
-  return output(r, src, h);
+  if (o.decode == 2) {
+    return tested(r, src, f, h);
+  }
+  return decode_output(r, src, f, h);
 }
 
 // A test, with the listing of -l.
-function tested(r0: Run, src: Source, h: gz.Header): Result[Run, Fatal] {
-  let d = decoded(r0, src, h);
+function tested(r0: Run, src: Source, own f: gz.Feed, h: gz.Header): Result[Run, gz.Fail] {
+  let d = decoded(r0, f, h, src.path, (b: u8[]): Result[void, gz.Fail] => Ok(()))?;
   let r = print_listing(list_members(r0, src, h, d, h.method))?;
   if (d.error.len() > 0) {
     return Ok(complain(r, "skipping: " + d.error));
@@ -719,16 +904,16 @@ function tested(r0: Run, src: Source, h: gz.Header): Result[Run, Fatal] {
   return Ok(Run { ...r, o: gz.Options { ...r.o, keep: r.o.keep || d.keep } });
 }
 
-// The decompressed form of the input.
-function decoded(r: Run, src: Source, h: gz.Header): gz.Decoded {
+// The decompression of the input, with the output to `out` as it decodes.
+function decoded(r: Run, own f: gz.Feed, h: gz.Header, path: string, out: (u8[]) => Result[void, gz.Fail]): Result[gz.Decoded, gz.Fail] {
   if (h.method == 8) {
-    return gz.infchk(src.data, h, src.path, r.o, r.now);
+    return gz.infchk(f, h, path, r.o, r.now, out);
   }
   if (h.method == 257) {
-    return gz.unlzw(src.data, h.next, src.path);
+    return gz.unlzw(gz.Feed { ...f, at: h.next }, path, out);
   }
-  let none: gz.Member[] = [];
-  return gz.Decoded { out: src.data, members: none, error: "", warning: "", keep: false, comment: None };
+  gz.copy_rest(f, out)?;
+  return Ok(gz.Decoded { members: [], error: "", warning: "", keep: false, comment: None });
 }
 
 // Where the output goes.
@@ -738,11 +923,11 @@ enum Dest {
   Refused(Run),
 }
 
-function destination(r: Run, src: Source, h: gz.Header): Result[Dest, Fatal] {
+function destination(r: Run, src: Source, h: gz.Header): Result[Dest, gz.Fail] {
   let o = r.o;
   if (src.st.is_none() || o.pipeout) {
     if (o.decode == 0 && !o.force && isatty(1)) {
-      return Err(Fatal { why: "trying to write compressed data to a terminal (use -f to force)", code: 22 });
+      return Err(gz.Fail { why: "trying to write compressed data to a terminal (use -f to force)", code: 22 });
     }
     return Ok(ToStdout);
   }
@@ -753,36 +938,15 @@ function destination(r: Run, src: Source, h: gz.Header): Result[Dest, Fatal] {
   return Ok(ToFile(outf));
 }
 
-// The output bytes and the messages after them.
-struct Converted {
-  r: Run,
-  bytes: u8[],
-  failure: string,
-  warning: string,
-}
-
-function converted(r: Run, src: Source, h: gz.Header): Converted {
-  let o = r.o;
-  if (o.decode != 0) {
-    let d = decoded(r, src, h);
-    let keep = r.o.keep || d.keep;
-    return Converted { r: Run { ...r, o: gz.Options { ...r.o, keep: keep } }, bytes: d.out, failure: d.error, warning: d.warning };
-  }
-  let name = if ((o.headis & 1) != 0 && src.st.is_some()) { Some(gz.justname(src.path)) } else { None };
-  let (next, packed) = compressed(r, src.data, name, src.mtime);
-  return Converted { r: next, bytes: packed, failure: "", warning: "" };
-}
-
-// The rest of process(): write the output to the standard output or to a
-// file, then keep the time and the mode, and remove the input.
+// The rest of process() for a compression: write the output to the
+// standard output or to a file, then keep the time and the mode, and remove
+// the input.
 // It keeps the branches of process() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-function output(r0: Run, own input: Source, h: gz.Header): Result[Run, Fatal] {
-  let Source { path, data, reader, st, mtime } = input;
-  let src = Source { path: path, data: data, reader: None, st: st, mtime: mtime };
-  if (r0.o.decode == 0 && r0.o.level == 11) {
-    return Err(Fatal { why: "level 11 (zopfli) is not available in this port", code: 22 });
-  }
+function output(r0: Run, own input: Source): Result[Run, gz.Fail] {
+  let h = gz.get_header([], 0, false, 0, r0.now);
+  let Source { path, reader, st, mtime } = input;
+  let src = Source { path: path, reader: None, st: st, mtime: mtime };
   let dest = destination(r0, src, h)?;
   let outf = match (dest) {
     Refused(r) => {
@@ -795,33 +959,85 @@ function output(r0: Run, own input: Source, h: gz.Header): Result[Run, Fatal] {
   if (verbose) {
     let _ = stderr().write(src.path + " to " + outf + " ");
   }
-  if let Some(rd) = reader {
-    let to_stdout = src.st.is_none() || r0.o.pipeout;
-    let r = streamed(r0, src, rd, to_stdout, outf)?;
-    if (verbose) {
-      let _ = stderr().write("\n");
-    }
-    if (to_stdout) {
-      return Ok(r);
-    }
-    return finish(r, src, h, outf);
-  }
-  let c = converted(r0, src, h);
-  let r = c.r;
   let to_stdout = src.st.is_none() || r0.o.pipeout;
-  if (to_stdout) {
-    write_stdout(c.bytes)?;
-  } else if (c.failure.len() == 0) {
-    write_file(outf, c.bytes, r.o.sync)?;
+  let r = r0;
+  if let Some(rd) = reader {
+    r = streamed(r0, src, rd, to_stdout, outf)?;
   }
-  if (c.failure.len() > 0) {
+  if (verbose) {
+    let _ = stderr().write("\n");
+  }
+  if (to_stdout) {
+    return Ok(r);
+  }
+  return finish(r, src, h, outf);
+}
+
+// The output of a decompression to `w`.
+function sink(w: Writer, outf: string): (u8[]) => Result[void, gz.Fail] {
+  return (b: u8[]): Result[void, gz.Fail] => put(w, b, outf);
+}
+
+// The rest of process() for a decompression. The output goes to the
+// standard output or to a file as it decodes. When the data does not decode,
+// the standard output keeps the output before the error, and a file is
+// removed.
+// It keeps the branches of process() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function decode_output(r0: Run, src: Source, own f: gz.Feed, h: gz.Header): Result[Run, gz.Fail] {
+  let dest = destination(r0, src, h)?;
+  let outf = match (dest) {
+    Refused(r) => {
+      return Ok(r);
+    },
+    ToFile(name) => name,
+    ToStdout => "<stdout>",
+  };
+  let verbose = r0.o.verbosity > 1;
+  if (verbose) {
+    let _ = stderr().write(src.path + " to " + outf + " ");
+  }
+  let to_stdout = src.st.is_none() || r0.o.pipeout;
+  let w = stdout();
+  if (!to_stdout) {
+    match (open_writer(outf)) {
+      Ok(file) => {
+        w = file;
+      },
+      Err(e) => {
+        return Err(fatal("write", outf, e));
+      }
+    }
+  }
+  let done = decoded(r0, f, h, src.path, sink(w, outf));
+  let failed = match (done) {
+    Ok(d) => d.error.len() > 0,
+    Err(_) => true,
+  };
+  let synced: Result[void, IoError] = Ok(());
+  if (!to_stdout) {
+    if (!failed && r0.o.sync) {
+      synced = w.fsync();
+    }
+    w.close();
+    if (failed) {
+      let _ = remove_file(outf);
+    }
+  }
+  let d = done?;
+  let r = Run { ...r0, o: gz.Options { ...r0.o, keep: r0.o.keep || d.keep } };
+  if (d.error.len() > 0) {
+    r = complain(r, "skipping: " + d.error);
     if (verbose) {
       let _ = stderr().write("\n");
     }
-    return Ok(complain(r, "skipping: " + c.failure));
+    return Ok(r);
   }
-  if (c.warning.len() > 0) {
-    r = complain(r, c.warning);
+  if let Err(e) = synced {
+    return Err(gz.Fail { why: "sync error on " + outf + " (" + error_text(e) + ")", code: errno.of(e) });
+  }
+  if (d.warning.len() > 0) {
+    r = complain(r, d.warning);
   }
   if (verbose) {
     let _ = stderr().write("\n");
@@ -847,33 +1063,9 @@ function overwrite(r: Run, outf: string): boolean {
   return answer.starts_with("y") || answer.starts_with("Y");
 }
 
-function write_file(outf: string, bytes: u8[], sync: boolean): Result[void, Fatal] {
-  match (open_writer(outf)) {
-    Ok(w) => {
-      if let Err(e) = w.write_bytes(bytes) {
-        w.close();
-        let _ = remove_file(outf);
-        return Err(fatal("write", outf, e));
-      }
-      if (sync) {
-        if let Err(e) = w.fsync() {
-          w.close();
-          return Err(Fatal { why: "sync error on " + outf + " (" + error_text(e) + ")", code: errno.of(e) });
-        }
-      }
-      w.close();
-      return Ok(());
-    },
-    Err(e) => {
-      return Err(fatal("write", outf, e));
-    }
-  }
-  return Ok(());
-}
-
 // The end of process() for an output file: copymeta(), then the removal of
 // the input, then the time of the header for -dN and -dM.
-function finish(r0: Run, src: Source, h: gz.Header, outf: string): Result[Run, Fatal] {
+function finish(r0: Run, src: Source, h: gz.Header, outf: string): Result[Run, gz.Fail] {
   let r = r0;
   let o = r.o;
   copymeta(src.path, outf);
@@ -909,7 +1101,7 @@ function copymeta(from: string, to: string): void {
 }
 
 // The entries of a directory for -r, in the order of readdir().
-function recurse(r0: Run, dir: string): Result[Run, Fatal] {
+function recurse(r0: Run, dir: string): Result[Run, gz.Fail] {
   let r = r0;
   let Ok(names) = read_dir(dir) else {
     return Ok(r);
@@ -921,7 +1113,7 @@ function recurse(r0: Run, dir: string): Result[Run, Fatal] {
   return Ok(r);
 }
 
-function run_all(r0: Run): Result[Run, Fatal] {
+function run_all(r0: Run): Result[Run, gz.Fail] {
   let r = r0;
   let o = r.o;
   if (o.files.len() == 0) {

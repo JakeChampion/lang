@@ -143,7 +143,14 @@ function read(s: State, at: i32, width: i32, reg: i32): State {
 }
 
 function writable(at: i32, bump: boolean): boolean {
-  return at >= 0 && at < 16 || at >= (if (bump) { 22 } else { 20 }) && at < (if (bump) { 24 } else { 22 });
+  return at >= 0 && at < 16 || at >= (if (bump) { 22 } else { 20 }) && at < (if (bump) { 24 } else { 22 }) || link_word(at, bump);
+}
+
+// The first word of a block that a free list gives. It held the encoded link
+// of the block, and the allocator can clear it (SEC-023). It can hold zero
+// alone.
+function link_word(at: i32, bump: boolean): boolean {
+  return !bump && (at == 28 || at == 29);
 }
 
 function store(s: State, at: i32, width: i32, w: Word, bump: boolean): State {
@@ -151,7 +158,7 @@ function store(s: State, at: i32, width: i32, w: Word, bump: boolean): State {
   let writes = s.writes;
   for i in 0..width / 32 {
     let pos = at + i;
-    if (!writable(pos, bump) || pos >= 20 && writes[pos] != 0) {
+    if (!writable(pos, bump) || pos >= 20 && writes[pos] != 0 || link_word(pos, bump) && !same(if (i == 0) { w.low } else { w.high }, number(0).low)) {
       return State { ...s, ok: false };
     }
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
@@ -495,7 +502,9 @@ function finished_memory(s: State, original: State, request: i32, bump: boolean)
   let changed = if (bump) { token(3, request as i64) } else { token(8, 0) };
   for i in 16..s.memory.len() {
     let selected = i == start || i == start + 1;
-    let good = if (selected) { moved(s, i, changed, request, bump) } else { same(s.memory[i], original.memory[i]) && s.writes[i] == 0 };
+    let kept = same(s.memory[i], original.memory[i]) && s.writes[i] == 0;
+    let cleared = link_word(i, bump) && same(s.memory[i], number(0).low) && s.writes[i] == 1;
+    let good = if (selected) { moved(s, i, changed, request, bump) } else { kept || cleared };
     if (!good) {
       return false;
     }

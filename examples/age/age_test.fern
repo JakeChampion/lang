@@ -919,6 +919,62 @@ function test_ssh_private_refusals(): test.TestOutcome {
   return test.assert_eq_array(got, ["ssh: no key found", "ssh: unsupported key type \"FOO\"", "ssh: invalid openssh private key format", "passphrase"]);
 }
 
+// The messages of Go's x509 and asn1 parsers for DER keys in PEM files. Each
+// expected text is the error of ssh.ParseRawPrivateKey.
+function test_go_asn1(): test.TestOutcome {
+  let cases = [
+    ("RSA PRIVATE KEY", "3000", "asn1: syntax error: sequence truncated"),
+    ("RSA PRIVATE KEY", "3001", "asn1: syntax error: data truncated"),
+    ("RSA PRIVATE KEY", "308105", "asn1: structure error: non-minimal length"),
+    ("RSA PRIVATE KEY", "30050201000400", "x509: failed to parse private key (use ParseECPrivateKey instead for this key format)"),
+    ("RSA PRIVATE KEY", "3004020200010000", "asn1: structure error: integer not minimally-encoded"),
+    ("RSA PRIVATE KEY", "30", "asn1: syntax error: truncated tag or length"),
+    ("RSA PRIVATE KEY", "30060201000c0100", "asn1: structure error: tags don't match (2 vs {class:0 tag:12 length:1 isCompound:false}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false}  @5"),
+    ("DSA PRIVATE KEY", "30030c0100", "ssh: failed to parse DSA key: asn1: structure error: tags don't match (2 vs {class:0 tag:12 length:1 isCompound:false}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} int @2"),
+    ("EC PRIVATE KEY", "3003020102", "x509: failed to parse EC private key: asn1: syntax error: sequence truncated"),
+    ("EC PRIVATE KEY", "300602010104017f", "x509: unknown elliptic curve"),
+    ("PRIVATE KEY", "300d020100300806032b6570050004010000", "asn1: syntax error: sequence truncated"),
+    ("PRIVATE KEY", "3007020100300206000400", "asn1: syntax error: zero length OBJECT IDENTIFIER"),
+    ("DSA PRIVATE KEY", "30120201000201010201020201030201040201050000", "ssh: garbage after DSA key"),
+    ("DSA PRIVATE KEY", "301f", "ssh: failed to parse DSA key: asn1: syntax error: data truncated"),
+  ];
+  for c in cases {
+    let (kind, der, want) = c;
+    let pem = "-----BEGIN " + kind + "-----\n" + base64.encode(unhex(der)) + "\n-----END " + kind + "-----\n";
+    let got = private_error(pem);
+    if (got != want) {
+      return test.fail(kind + " " + der + ": got \"" + got + "\", want \"" + want + "\"");
+    }
+  }
+  return test.pass();
+}
+
+// edwards25519 takes a y of p or more, and the sign bit of a zero x, so the
+// recipient of such an Ed25519 key is the recipient of its canonical form.
+function test_ed25519_encodings(): test.TestOutcome {
+  let canonical = unhex("0000000000000000000000000000000000000000000000000000000000000000");
+  let wire = ssh.ed25519_wire(canonical);
+  let got = [
+    ssh_recipient("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+    ssh_recipient("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+    ssh_recipient("0100000000000000000000000000000000000000000000000000000000000080"),
+    ssh_recipient("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+    ssh_recipient("0200000000000000000000000000000000000000000000000000000000000000"),
+  ];
+  if (wire.len() != 51) {
+    return test.fail("the wire form");
+  }
+  return test.assert_eq_array(got, ["ok", "ok", "ok", "ok", "invalid Ed25519 public key: edwards25519: invalid point encoding"]);
+}
+
+function ssh_recipient(key: string): string {
+  let line = "ssh-ed25519 " + base64.encode(ssh.ed25519_wire(unhex(key)));
+  return match (ssh.parse_recipient(line)) {
+    Ok(_) => "ok",
+    Err(why) => why.replace("malformed SSH recipient: " + text.quote(line.as_bytes()) + ": ", ""),
+  };
+}
+
 // bcrypt_pbkdf and AES-256-CTR against Python: a pure Python bcrypt_pbkdf
 // that age accepts, and the cryptography package's CTR mode, whose counter
 // carries over 32 bits.
@@ -1075,6 +1131,33 @@ function test_quote_rune(): test.TestOutcome {
   return test.assert_eq_array(got, ["'3'", "'\\''", "'\\\\'", "'\\x1b'", "'\\n'", "'é'", "'\\u0085'", "a�b�c", "a�"]);
 }
 
+// The writes of a stanza to a plugin are those of Go's Stanza.Marshal, and
+// together they are the marshaled stanza.
+function test_marshal_writes(): test.TestOutcome {
+  let body: u8[] = [];
+  for i in 0..800 {
+    body = body.append((i * 7) as u8);
+  }
+  let st = format.Stanza { kind: "x", args: ["a", "b"], body: body };
+  let w = plugin.marshal_writes(st);
+  let all = "";
+  for p in w {
+    all += p;
+  }
+  if (all != format.marshal_stanza(st)) {
+    return test.fail("the writes are not the marshaled stanza");
+  }
+  let sizes: i32[] = [];
+  for p in w {
+    sizes = sizes.append(p.len());
+  }
+  let empty = plugin.marshal_writes(format.Stanza { kind: "done", args: [], body: [] });
+  if (empty.len() != 4 || empty[2] != "\n" || empty[3] != "\n") {
+    return test.fail("an empty body is not two newlines");
+  }
+  return test.assert_eq_array(sizes, [2, 2, 2, 2, 1, 1040, 40, 3, 1]);
+}
+
 function main(): i32 {
   let r = test.new("age");
   r = r.it("plugin recipients and identities", test_plugin_encodings);
@@ -1106,7 +1189,10 @@ function main(): i32 {
   r = r.it("authorized_keys lines as ssh.ParseAuthorizedKey reads them", test_authorized_keys);
   r = r.it("an ssh-ed25519 key wraps and unwraps a file key", test_ssh_ed25519);
   r = r.it("malformed SSH private key files", test_ssh_private_refusals);
+  r = r.it("the messages of Go's x509 and asn1 parsers", test_go_asn1);
+  r = r.it("Ed25519 keys whose encoding is not canonical", test_ed25519_encodings);
   r = r.it("bcrypt_pbkdf and AES-256-CTR", test_bcrypt);
   r = r.it("identity files as age-keygen -y reads them", test_library_identities);
+  r = r.it("the writes of a stanza to a plugin", test_marshal_writes);
   return r.finish();
 }

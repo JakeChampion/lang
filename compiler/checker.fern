@@ -21373,8 +21373,11 @@ struct LuRebind { source: ast.ExprCall, value: ast.ExprIdent, target: string }
 struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
 // updates holds, for the base of each update literal `S { ...q, f: v }`, one
-// entry per field the literal replaces.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], copy_sels: string[], scalar_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
+// entry per field the literal replaces. value_sels holds the reads of a
+// nested field of a primitive type or of an array of one: an array can reach
+// a borrowed parameter as a view, so such a read is not always a copy.
+// scalar_sels holds the reads of a field of a scalar type, which are copies.
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: string[], scalar_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -21594,7 +21597,7 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
           return lu_scalar_selection(fa, LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) });
         },
         _ => {
-          return lu_scalar_selection(fa, lu_copy_selection(fa, f));
+          return lu_scalar_selection(fa, lu_value_selection(fa, f));
         }
       }
     },
@@ -21617,13 +21620,13 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
   }
 }
 
-function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
+function lu_value_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   if (!lu_copy_type(fa.ty)) {
     return f;
   }
   let enclosing = ow_enclosing_field(fa);
   if let ast.ExprIdent(id) = enclosing.obj {
-    return LuFacts { ...f, copy_sels: f.copy_sels.append(lu_key(id.line, id.col)) };
+    return LuFacts { ...f, value_sels: f.value_sels.append(lu_key(id.line, id.col)) };
   }
   return f;
 }
@@ -23251,7 +23254,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], copy_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ
@@ -24704,7 +24707,7 @@ function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolea
       if (selected.len() == 0) {
         return false;
       }
-      if (selected == field && !util.has_str(fx.facts.copy_sels, lu_key(o.line, o.col))) {
+      if (selected == field && !util.has_str(fx.facts.value_sels, lu_key(o.line, o.col))) {
         reads += 1;
       }
     }

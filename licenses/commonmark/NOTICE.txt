@@ -16,9 +16,12 @@ scripts/gen-markdown-tables.py writes the file from the table in the Python stan
 
 The Fern port in examples/markdown does not copy source code from cmark or from the spec repository.
 It implements the behaviour of the CommonMark Spec 0.31.2.
-Its output is the output of cmark 0.30.2 in each format of cmark.
+Its output is the output of cmark 0.31.2 in each format of cmark.
 
-The usage text of examples/markdown/md.fern is the usage text of the cmark command line, with the name md.
-examples/markdown/tests/cmark.json holds the output of cmark 0.30.2 for the inputs of scripts/gen-markdown-cmark-cases.py.
-Reference: https://github.com/commonmark/cmark/tree/0.30.2
-Copyright (c) 2014, John MacFarlane. cmark has the BSD 2-Clause license: https://github.com/commonmark/cmark/blob/0.30.2/COPYING
+The usage text and the version text of examples/markdown/md.fern are those of the cmark command line.
+examples/markdown/tests/cmark.json holds the output of cmark 0.31.2 for the inputs of scripts/gen-markdown-cmark-cases.py.
+examples/markdown/tests/regression.json and smart_punct.json hold the tests of test/regression.txt and test/smart_punct.txt of cmark 0.31.2.
+They are the JSON that test/spec_tests.py --dump-tests writes for those files.
+scripts/gen-markdown-tables.py reads the table of punctuation and symbols from src/utf8.c of cmark 0.31.2.
+Reference: https://github.com/commonmark/cmark/tree/0.31.2
+Copyright (c) 2014, John MacFarlane. cmark has the BSD 2-Clause license: https://github.com/commonmark/cmark/blob/0.31.2/COPYING

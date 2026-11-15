@@ -11,6 +11,9 @@ import "std/utf8";
 import "./fields";
 
 // The versions of HTTP, ten times the version number.
+// HTTP/0.9, which oha 1.16.0 accepts and cannot send.
+pub const HTTP_09: i32 = 9;
+
 pub const HTTP_10: i32 = 10;
 
 pub const HTTP_11: i32 = 11;
@@ -91,6 +94,8 @@ pub struct Options {
   timeout: Option[Duration],
   connect_timeout: Duration,
   keep_alive: boolean,
+  // Without --no-pre-lookup, the hosts are looked up before the run.
+  pre_lookup: boolean,
   redirects: i32,
   insecure: boolean,
   cacert: string,
@@ -184,6 +189,7 @@ function defaults(): Options {
     timeout: None,
     connect_timeout: time.duration_seconds(5),
     keep_alive: true,
+    pre_lookup: true,
     redirects: 0,
     insecure: false,
     cacert: "",
@@ -362,6 +368,7 @@ function with_flag(o: Options, name: string): Options {
     "-w" => Options { ...o, wait: true },
     "--latency-correction" => Options { ...o, correct: true },
     "--disable-keepalive" => Options { ...o, keep_alive: false },
+    "--no-pre-lookup" => Options { ...o, pre_lookup: false },
     "--disable-compression" => Options { ...o, compression: false },
     "--insecure" => Options { ...o, insecure: true },
     "--ipv4" => Options { ...o, family: if (o.family == 6) { 0 } else { 4 } },
@@ -573,8 +580,8 @@ function version_of(http2: boolean, version: string): Result[i32, string] {
     "2.0" => Ok(HTTP_2),
     "3" => Ok(HTTP_3),
     "3.0" => Ok(HTTP_3),
-    "0.9" => Err("HTTP/0.9 is not supported: use 1.0, 1.1, 2 or 3"),
-    _ => Err(f"HTTP version {version} is not known: use 1.0, 1.1, 2 or 3"),
+    "0.9" => Ok(HTTP_09),
+    _ => Err(f"HTTP version {version} is not known: use 0.9, 1.0, 1.1, 2 or 3"),
   };
 }
 

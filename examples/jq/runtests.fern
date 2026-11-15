@@ -1,0 +1,346 @@
+// `jq --run-tests`: the test runner of jq 1.7.1. A test is a program on one
+// line, an input on the next line, and the expected outputs on the lines
+// after it, up to a blank line or a comment. A test after `%%FAIL` must not
+// compile, and its next line is the first line of the error.
+import "std/io";
+import "std/json";
+import "./eval";
+import "./input";
+import "./modules";
+import "./output";
+
+// The lines of the test file as C `fgets` reads them, each with its line
+// feed, and the index of the next line.
+struct Lines { all: string[], next: i32 }
+
+function (l: Lines) read(): (Lines, Option[string]) {
+  if (l.next >= l.all.len()) {
+    return (l, None);
+  }
+  return (Lines { ...l, next: l.next + 1 }, Some(l.all[l.next]));
+}
+
+function split_lines(text: string): string[] {
+  let out: string[] = [];
+  let from = 0;
+  let i = 0;
+  while (i < text.len()) {
+    if (text[i] == b'\n') {
+      out = out.append(slice_unchecked(text, from, i + 1).to_owned());
+      from = i + 1;
+    }
+    i += 1;
+  }
+  if (from < text.len()) {
+    out = out.append(slice_unchecked(text, from, text.len()).to_owned());
+  }
+  return out;
+}
+
+// jq's skipline: spaces and tabs, then a comment, a line feed or the end.
+function skipline(s: string): boolean {
+  let p = 0;
+  while (p < s.len() && (s[p] == b' ' || s[p] == b'\t')) {
+    p += 1;
+  }
+  return p == s.len() || s[p] == b'#' || s[p] == b'\n';
+}
+
+// A line that ends the data of a skipped test.
+function blank_line(s: string): boolean {
+  return s == "\n" || s.starts_with("\r\n");
+}
+
+function chomp(s: string): string {
+  if (s.len() > 0 && s[s.len() - 1] == b'\n') {
+    return slice_unchecked(s, 0, s.len() - 1).to_owned();
+  }
+  return s;
+}
+
+// The value of a line, as jv_parse reads it: exactly one value.
+function parse_one(s: string): Option[json.JsonValue] {
+  let st = input.stream(s);
+  if (st.error.len() > 0 || st.texts.len() != 1) {
+    return None;
+  }
+  return Some(st.texts[0].value);
+}
+
+// C `atoi`.
+function atoi(s: string): i32 {
+  let i = 0;
+  while (i < s.len() && (s[i] == b' ' || s[i] >= b'\t' && s[i] <= b'\r')) {
+    i += 1;
+  }
+  let negative = false;
+  if (i < s.len() && (s[i] == b'-' || s[i] == b'+')) {
+    negative = s[i] == b'-';
+    i += 1;
+  }
+  let n = 0;
+  while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
+    n = n * 10 + (s[i] - b'0') as i32;
+    i += 1;
+  }
+  return if (negative) { -n } else { n };
+}
+
+function out(s: string): void {
+  let _ = stdout().write(s);
+}
+
+// The counts of the run and the state of the next test.
+struct Run { tests: i32, passed: i32, invalid: i32, lineno: i32, must_fail: boolean, check_msg: boolean, err_msg: string }
+
+// jq_testsuite: the arguments after `--run-tests` are `--skip N`, `--take
+// N` and the test file, which is stdin when there is none. `library` holds
+// the `-L` directories. Gives the exit status.
+pub function run(library: string[], argv: string[]): i32 {
+  let skip = -1;
+  let take = -1;
+  let file = "";
+  let i = 0;
+  while (i < argv.len()) {
+    if (argv[i] == "--skip") {
+      skip = atoi(if (i + 1 < argv.len()) { argv[i + 1] } else { "" });
+      i += 1;
+    } else if (argv[i] == "--take") {
+      take = atoi(if (i + 1 < argv.len()) { argv[i + 1] } else { "" });
+      i += 1;
+    } else {
+      file = argv[i];
+    }
+    i += 1;
+  }
+  let text = "";
+  if (file.len() > 0) {
+    match (io.read_input_bytes(file)) {
+      Ok(b) => {
+        text = unsafe { string_from_bytes_unchecked(b) };
+      },
+      Err(e) => {
+        eprint("fopen: " + io_text(e));
+        return 1;
+      }
+    }
+  } else {
+    match (io.read_all_stdin_bytes()) {
+      Ok(b) => {
+        text = unsafe { string_from_bytes_unchecked(b) };
+      },
+      Err(_) => {}
+    }
+  }
+  return tests(library, Lines { all: split_lines(text), next: 0 }, skip, take);
+}
+
+function io_text(e: IoError): string {
+  return match (e) {
+    NotFound(_) => "No such file or directory",
+    PermissionDenied(_) => "Permission denied",
+    _ => e.message(),
+  };
+}
+
+function tests(library: string[], lines0: Lines, skip0: i32, take0: i32): i32 {
+  let lines = lines0;
+  let skip = skip0;
+  let take = take0;
+  let to_skip = if (skip0 > 0) { skip0 } else { 0 };
+  let r = Run { tests: 0, passed: 0, invalid: 0, lineno: 0, must_fail: false, check_msg: false, err_msg: "" };
+  loop {
+    let (l1, line) = lines.read();
+    lines = l1;
+    let Some(prog0) = line else {
+      break;
+    };
+    r = Run { ...r, lineno: r.lineno + 1 };
+    if (skipline(prog0)) {
+      continue;
+    }
+    if (prog0 == "%%FAIL\n" || prog0 == "%%FAIL IGNORE MSG\n") {
+      r = Run { ...r, must_fail: true, check_msg: prog0 == "%%FAIL\n" };
+      continue;
+    }
+    let prog = chomp(prog0);
+    if (skip > 0) {
+      skip -= 1;
+      let (l2, r2) = skip_data(lines, r);
+      lines = l2;
+      r = Run { ...r2, must_fail: false, check_msg: false };
+      continue;
+    } else if (skip == 0) {
+      out(f"Skipped {to_skip} tests\n");
+      skip = -1;
+    }
+    if (take > 0) {
+      take -= 1;
+    } else if (take == 0) {
+      out(f"Hit the number of tests limit ({take0}), breaking\n");
+      break;
+    }
+    r = Run { ...r, tests: r.tests + 1 };
+    out(f"Test #{r.tests + to_skip}: '{prog}' at line number {r.lineno}\n");
+    let (l3, r3, stop) = one(library, lines, r, prog);
+    lines = l3;
+    r = r3;
+    if (stop) {
+      break;
+    }
+  }
+  let skipped = if (skip > 0) { to_skip - skip } else { to_skip };
+  out(f"{r.passed} of {r.tests} tests passed ({r.invalid} malformed, {skipped} skipped)\n");
+  if (skip > 0) {
+    out("WARN: skipped past the end of file, exiting with status 2\n");
+    return 2;
+  }
+  return if (r.passed != r.tests) { 1 } else { 0 };
+}
+
+// The lines of a test up to a blank line.
+function skip_data(lines0: Lines, r0: Run): (Lines, Run) {
+  let lines = lines0;
+  let r = r0;
+  loop {
+    let (l, line) = lines.read();
+    lines = l;
+    let Some(s) = line else {
+      break;
+    };
+    r = Run { ...r, lineno: r.lineno + 1 };
+    if (blank_line(s)) {
+      break;
+    }
+  }
+  return (lines, r);
+}
+
+// One test: the program `prog`, and the lines after it. Gives true when
+// the file ends where jq stops.
+function one(library: string[], lines0: Lines, r0: Run, prog: string): (Lines, Run, boolean) {
+  let lines = lines0;
+  let r = r0;
+  let compiled = modules.compile_in(prog, library, ["ENV"], "", "");
+  let ok = compiled.errors.len() == 0;
+  if (r.must_fail) {
+    let err_msg = r.err_msg;
+    for m in compiled.errors {
+      if (m.starts_with("jq: error")) {
+        err_msg = first_line(m);
+      }
+    }
+    r = Run { ...r, err_msg: err_msg };
+    let (l, line) = lines.read();
+    lines = l;
+    let Some(want0) = line else {
+      return (lines, Run { ...r, invalid: r.invalid + 1 }, true);
+    };
+    r = Run { ...r, lineno: r.lineno + 1 };
+    let want = chomp(want0);
+    if (ok) {
+      out(f"*** Test program compiled that should not have at line {r.lineno}: {prog}\n");
+      return (lines, Run { ...r, must_fail: false, check_msg: false, invalid: r.invalid + 1 }, false);
+    }
+    if (r.check_msg && want != err_msg) {
+      out(f"*** Erroneous test program failed with wrong message ({err_msg}) at line {r.lineno}: {prog}\n");
+      r = Run { ...r, invalid: r.invalid + 1 };
+    } else {
+      r = Run { ...r, passed: r.passed + 1 };
+    }
+    return (lines, Run { ...r, must_fail: false, check_msg: false }, false);
+  }
+  if (!ok) {
+    for m in compiled.errors {
+      eprint(m);
+    }
+    eprint("jq: " + compiled.count.to_string() + " compile error" + (if (compiled.count == 1) { "" } else { "s" }));
+    out(f"*** Test program failed to compile at line {r.lineno}: {prog}\n");
+    let (l2, r2) = skip_data(lines, Run { ...r, invalid: r.invalid + 1 });
+    return (l2, r2, false);
+  }
+  let (l, line) = lines.read();
+  lines = l;
+  let Some(input_line) = line else {
+    return (lines, Run { ...r, invalid: r.invalid + 1 }, true);
+  };
+  r = Run { ...r, lineno: r.lineno + 1 };
+  let Some(v) = parse_one(input_line) else {
+    out(f"*** Input is invalid on line {r.lineno}: {input_line}\n");
+    return (lines, Run { ...r, invalid: r.invalid + 1 }, false);
+  };
+  let vars = eval.env().with("ENV", eval.environment()).with("*search", compiled.search).with("*quiet", json.JNull);
+  let results = pull(compiled, vars, v, expected_count(lines) + 1);
+  let next = 0;
+  let pass = true;
+  loop {
+    let (l4, line4) = lines.read();
+    lines = l4;
+    let Some(s) = line4 else {
+      break;
+    };
+    r = Run { ...r, lineno: r.lineno + 1 };
+    if (skipline(s)) {
+      break;
+    }
+    let Some(expected) = parse_one(s) else {
+      out(f"*** Expected result is invalid on line {r.lineno}: {s}\n");
+      r = Run { ...r, invalid: r.invalid + 1 };
+      continue;
+    };
+    if (next >= results.len()) {
+      out(f"*** Insufficient results for test at line number {r.lineno}: {prog}\n");
+      pass = false;
+      break;
+    }
+    let actual = results[next];
+    next += 1;
+    if (eval.order(expected, actual) != 0) {
+      out("*** Expected " + output.compact(expected) + ", but got " + output.compact(actual) + f" for test at line number {r.lineno}: {prog}\n");
+      pass = false;
+    }
+  }
+  if (pass && next < results.len()) {
+    out("*** Superfluous result: " + output.compact(results[next]) + f" for test at line number {r.lineno}, {prog}\n");
+    pass = false;
+  }
+  if (pass) {
+    r = Run { ...r, passed: r.passed + 1 };
+  }
+  return (lines, r, false);
+}
+
+function first_line(s: string): string {
+  let i = 0;
+  while (i < s.len() && s[i] != b'\n') {
+    i += 1;
+  }
+  return slice_unchecked(s, 0, i).to_owned();
+}
+
+// The number of lines before the next line that ends the outputs of a test:
+// the most outputs that jq takes from the program.
+function expected_count(lines: Lines): i32 {
+  let n = 0;
+  let i = lines.next;
+  while (i < lines.all.len() && !skipline(lines.all[i])) {
+    n += 1;
+    i += 1;
+  }
+  return n;
+}
+
+// The first `limit` outputs of the program for `v`. As jq_next does, an
+// error ends the outputs.
+function pull(c: modules.Compiled, vars: eval.Env, v: json.JsonValue, limit: i32): json.JsonValue[] {
+  let env = eval.load(c, vars);
+  let k = (x: json.JsonValue, own s: eval.St): own eval.St => {
+    let t = eval.St { ...s, items: s.items.append(x) };
+    if (t.items.len() >= limit) {
+      return eval.St { ...t, sig: eval.HALT };
+    }
+    return t;
+  };
+  let s = eval.run(c.ast, v, env, k, eval.state(input.empty()));
+  return s.items;
+}

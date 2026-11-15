@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generate examples/markdown/tests/cmark.json: the command lines of the
-cases below, and what cmark 0.30.2 gives for each of them on stdout and
+cases below, and what cmark 0.31.2 gives for each of them on stdout and
 stderr, with its exit status. TestSelfHostExampleMarkdownCmarkCases runs
 `md` on each case on each target and compares the result."""
 import base64
@@ -54,7 +54,7 @@ def cases():
         out.append({'args': args, 'stdin': stdin, 'files': list(files)})
 
     # The options, and the errors that end a command line.
-    for args in (['--help'], ['-h'], ['--bogus'], ['-'], ['-x', 'a.md'], ['--width'], ['--width', 'abc'],
+    for args in (['--help'], ['-h'], ['--version'], ['--bogus'], ['-'], ['-x', 'a.md'], ['--width'], ['--width', 'abc'],
                  ['--width', '12abc'], ['--width', ''], ['--width', ' 5', '-t', 'commonmark', 'b.md'],
                  ['--width', '-3', '-t', 'commonmark'], ['--width', '99999999999999999999', '-t', 'commonmark'],
                  ['--width', '+7', '-t', 'man'], ['-t'], ['--to'], ['-t', 'foo'], ['-t', 'HTML'], ['--to', 'xml', 'a.md'],
@@ -96,10 +96,10 @@ def text(b):
 def main():
     cmark = shutil.which('cmark')
     if cmark is None:
-        sys.exit('cmark 0.30.2 is not on PATH')
+        sys.exit('cmark 0.31.2 is not on PATH')
     version = subprocess.run([cmark, '--version'], capture_output=True).stdout
-    if not version.startswith(b'cmark 0.30.2 '):
-        sys.exit('the oracle is cmark 0.30.2, not %r' % version)
+    if not version.startswith(b'cmark 0.31.2 '):
+        sys.exit('the oracle is cmark 0.31.2, not %r' % version)
     rows = []
     with tempfile.TemporaryDirectory() as tmp:
         for name, data in FILES.items():

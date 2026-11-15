@@ -106,6 +106,9 @@ func rgFixtures(t *testing.T, dir string) {
 		"z/bad.bz2":   "garbage",
 		"z/bad.xz":    "garbage",
 		"z/plain.txt": "foo plain\n",
+		"z/raw.lz4":   "foo in no lz4 frame\n",
+		"z/raw.zst":   "foo in no zstd frame\n",
+		"z/raw.br":    "foo in no brotli stream\n",
 		"rgconfig":    "# A comment\n\n  --colors=match:fg:green  \n-n\n--color=always\n",
 		"badconfig":   "--bogus\n",
 	}
@@ -120,6 +123,7 @@ func rgFixtures(t *testing.T, dir string) {
 	scripts := map[string]string{
 		"pre.sh":   "#!/bin/sh\necho \"pre: $1\"\ncat\n",
 		"fail.sh":  "#!/bin/sh\necho foo one\necho oops >&2\nexit 1\n",
+		"part.sh":  "#!/bin/sh\nprintf 'foo one\\nfoo two'\nexit 1\n",
 		"quiet.sh": "#!/bin/sh\nexit 3\n",
 	}
 	for name, text := range scripts {
@@ -309,6 +313,7 @@ func rgCases(dir string) []rgCase {
 	cases = append(cases, rgFlagCases()...)
 	cases = append(cases, rgLateCases()...)
 	cases = append(cases, rgPcreCases()...)
+	cases = append(cases, rgLogCases()...)
 	return append(cases, rgWalkCases()...)
 }
 
@@ -427,13 +432,13 @@ func rgLateCases() []rgCase {
 		"-E iso-2022-jp --passthru x iso2022.txt", "-E csiso2022kr foo a.txt", "-E auto foo a.txt", "-E NONE foo a.txt",
 		"-E x-user-defined --passthru x latin.txt", "-E windows-1251 --passthru x latin.txt", "-E iso-8859-8-i --passthru x latin.txt",
 		// The preprocessor of --pre, and -z.
-		"--pre ./pre.sh foo a.txt", "--pre ./pre.sh -j1 pre a.txt w.txt", "--pre ./fail.sh foo a.txt", "--pre ./fail.sh -c foo a.txt",
+		"--pre ./pre.sh foo a.txt", "--pre ./pre.sh -j1 pre a.txt w.txt", "--pre ./fail.sh foo a.txt", "--pre ./fail.sh -c foo a.txt", "--pre ./part.sh foo a.txt",
 		"--pre ./fail.sh -l foo a.txt", "--pre ./fail.sh -l zzz a.txt", "--pre ./quiet.sh foo a.txt", "--pre nosuchprogram foo a.txt",
 		"--pre ./pre.sh --pre-glob *.md -j1 foo a.txt long.md", "--pre ./pre.sh --pre-glob !*.md -j1 pre a.txt long.md",
 		"--pre ./pre.sh foo nosuch.txt", "--pre ./pre.sh --no-pre pre a.txt", "--pre= pre a.txt", "--pre ./pre.sh -z pre a.txt",
 		"-z foo z/t.gz", "-z -c foo z/t.bz2", "-z -n foo z/t.xz", "-z foo z/t.lzma", "-z foo z/t.Z", "-z foo z/trunc.xz",
 		"-z foo z/bad.gz", "-z foo z/bad.bz2", "-z foo z/bad.xz", "-z -j1 --sort path foo z", "--search-zip -l foo z/t.gz",
-		"-z --no-search-zip foo z/t.xz", "-z foo a.txt",
+		"-z --no-search-zip foo z/t.xz", "-z foo a.txt", "-z foo z/raw.lz4", "-z -c -j1 foo z/raw.zst z/raw.br",
 	}
 	var cases []rgCase
 	for _, l := range lines {
@@ -475,12 +480,45 @@ func rgPcreCases() []rgCase {
 		"-P * a.txt", "-P a{2,1} a.txt", "-P \\p{Foo} a.txt", "-P [[:foo:]] a.txt", "-P -w ( a.txt", "-P -x ( a.txt",
 		"-P -e a -e ( a.txt", "--engine auto ( a.txt", "--engine auto a(?=b)( a.txt", "-P \\ a.txt", "-P (?P<n>a)(?P<n>b) a.txt",
 		"-P (a+)+$ limit.txt", "-P -j1 -c (a|aa)+$ limit.txt a.txt", "-P -c (x+x+)+y long.md", "\\1 a.txt", "(?=a) a.txt", "(?<!a)b a.txt",
+		"-P -o fo+(*COMMIT)o w.txt", "-P (?:(*COMMIT)g|f)oo a.txt", "-U -P (?:(*COMMIT)g|f)oo a.txt", "-P -o f(*SKIP)oo|o w.txt",
+		"-P -o \\w+(*PRUNE)o w.txt", "-P -o (?:o(*THEN)x|fo)o w.txt", "-P -o (?:o(*THEN:N)x|fo)o w.txt",
+		"-P -o f(*MARK:M)o(*SKIP:M)x|o a.txt", "-P -o foo(*ACCEPT)bar|ga a.txt", "-P -o (?C1)fo(?C\"x\")o a.txt",
+		"-P -c (*FAIL)|foo a.txt", "-P (*COMMIT)+ a.txt", "-P (*MARK) a.txt", "-P (*NOPE) a.txt", "-P (*UTF)foo a.txt",
+		"-P (*LIMIT_MATCH=10)foo a.txt", "-P (?C256)foo a.txt", "-P (?C\"foo a.txt", "-P -o (*pla:foo)\\w+ w.txt",
+		"-P -o (*atomic:fo+)o w.txt", "-P -o (a|ab)(?1)c a.txt", "-P -o ^(.)(?1)$ hw.txt", "-P -o (?(R)a|b(?R)) a.txt",
+		"-P (?(R1)a|b) a.txt", "-P -o (?<=f(*COMMIT)o)o w.txt", "-P -o (?!x(*SKIP))foo w.txt", "-P --crlf -o (?m)^two crlf.txt",
+		"-P --crlf -c \\r$ crlf.txt", "-P --crlf -c \\r crlf.txt", "-P --crlf -o o$ crlf.txt", "-U -P --crlf -c \\r crlf.txt",
+		"-P --crlf -n \\s$ crlf.txt",
 	}
 	var cases []rgCase
 	for _, l := range lines {
 		cases = append(cases, rgCase{args: rgArgs(l)})
 	}
 	return cases
+}
+
+// rgLogCases give --debug and --trace: the settings, the matcher of a
+// pattern of literals and of PCRE2, the search of each file, binary files,
+// and the decisions of a walk. Each walk has one thread, as ripgrep writes
+// the lines of more threads in the order that they end.
+func rgLogCases() []rgCase {
+	lines := []string{
+		"--debug foo a.txt", "--trace foo a.txt", "--trace -c foo a.txt", "--trace --json foo a.txt", "--trace -l foo a.txt",
+		"--trace -e foo -e bar a.txt", "--trace -e ab -e cd a.txt", "--trace -e a -e bcd a.txt", "--trace -F a.b a.txt",
+		"--trace -w foo a.txt", "--trace -x -e foo -e bar a.txt", "--trace -x -e ab -e cd a.txt", "--trace -U foo a.txt",
+		"--trace -P foo a.txt", "--trace -U -P foo a.txt", "--trace --no-mmap foo a.txt", "--trace -j1 foo a.txt w.txt",
+		"--trace foo bin.dat", "--trace -a foo bin.dat", "--debug -c foo bin.dat", "--trace --passthru foo a.txt",
+		"--trace --null-data foo a.txt", "--trace --crlf foo crlf.txt", "--debug --no-config foo a.txt",
+		"--debug --hyperlink-format vscode foo a.txt", "--debug --hostname-bin /bin/false foo a.txt", "--debug -g *.txt foo a.txt",
+		"--debug --trace foo a.txt", "--trace --debug foo a.txt", "--debug --files a.txt", "--debug --engine auto (?<=f)oo a.txt",
+		"--trace -", "--debug -j1 foo tree", "--trace -j1 foo tree", "--debug -j1 --hidden foo tree", "--debug -j1 -uu foo tree",
+		"--debug -j1 --max-filesize 10 foo tree", "--debug -z foo z/raw.lz4", "--trace -z -j1 foo z/raw.br z/t.gz",
+	}
+	var cases []rgCase
+	for _, l := range lines {
+		cases = append(cases, rgCase{args: rgArgs(l), stdin: "foo\n"})
+	}
+	return append(cases, rgCase{args: rgArgs("--debug -j1 foo"), dir: "tree", noStdin: true})
 }
 
 // rgTimes match the times of --stats and --json, which differ from run to

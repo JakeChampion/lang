@@ -4,6 +4,7 @@ import "core/cmp";
 import "std/glob";
 import "std/option";
 import "std/string";
+import "./logs";
 import "./types";
 
 // The answer of a matcher for a path.
@@ -15,11 +16,13 @@ pub const KEEP: i32 = 2;
 
 // One line of an ignore file. A whitelist rule starts with `!`, and a
 // directory rule ends with `/`.
-struct Rule { glob: glob.Glob, whitelist: boolean, dir_only: boolean }
+// `original` is the line and `actual` the glob, which --debug writes.
+struct Rule { glob: glob.Glob, whitelist: boolean, dir_only: boolean, original: string, actual: string, ci: boolean }
 
 // The rules of one ignore file, and the directory that they apply to.
 // `ignores` counts the rules that are not whitelist rules.
-pub struct Matcher { root: string, rules: Rule[], ignores: i32 }
+// `file` is the ignore file of the rules, or "".
+pub struct Matcher { root: string, rules: Rule[], ignores: i32, file: string }
 
 // A matcher and the messages of the lines that did not compile.
 pub struct Loaded { m: Matcher, errors: string[] }
@@ -65,7 +68,7 @@ pub function join(dir: string, name: string): string {
 }
 
 pub function empty(root: string): Matcher {
-  return Matcher { root: strip_dot(root), rules: [], ignores: 0 };
+  return Matcher { root: strip_dot(root), rules: [], ignores: 0, file: "" };
 }
 
 function is_space(c: u8): boolean {
@@ -138,7 +141,7 @@ function rule_of(raw: string, ci: boolean): Result[Option[Rule], string] {
   let opts = glob.GlobOptions { literal_separator: true, backslash_escape: true, case_insensitive: ci };
   match (glob.compile(actual, opts)) {
     Ok(g) => {
-      return Ok(Some(Rule { glob: g, whitelist: m.whitelist, dir_only: m.dir_only }));
+      return Ok(Some(Rule { glob: g, whitelist: m.whitelist, dir_only: m.dir_only, original: line, actual: actual, ci: ci }));
     },
     Err(e) => {
       return Err(f"error parsing glob '{raw}': {e.reason}");
@@ -197,7 +200,38 @@ pub function load(root: string, file: string, ci: boolean): Loaded {
 // The rules of the text of the ignore file `file`, matched from `root`.
 pub function parse(root: string, text: string, ci: boolean, file: string): Loaded {
   let none: string[] = [];
-  return add_text(Loaded { m: empty(root), errors: none }, text, ci, file);
+  return add_text(Loaded { m: Matcher { ...empty(root), file: file }, errors: none }, text, ci, file);
+}
+
+// The message of globset for the rules, or "" for none.
+pub function (m: Matcher) glob_log(): string {
+  if (m.rules.len() == 0) {
+    return "";
+  }
+  let globs: string[] = [];
+  let ci: boolean[] = [];
+  for r in m.rules {
+    globs = globs.append(r.actual);
+    ci = ci.append(r.ci);
+  }
+  return logs.glob_set_message(globs, true, ci);
+}
+
+// The rule of the last rule that matches `path`, as the ignore crate
+// writes it with {:?}, and the answer, or "" and NONE.
+pub function (m: Matcher) described(path: string, is_dir: boolean): (i32, string) {
+  let p = m.strip(path);
+  let k = m.rules.len() - 1;
+  while (k >= 0) {
+    let r = m.rules[k];
+    if ((!r.dir_only || is_dir) && r.glob.matches(p)) {
+      let from = if (m.file == "") { "None" } else { "Some(" + logs.quoted(m.file) + ")" };
+      let text = "Gitignore(Glob { from: " + from + ", original: " + logs.quoted(r.original) + ", actual: " + logs.quoted(r.actual) + f", is_whitelist: {r.whitelist}, is_only_dir: {r.dir_only} " + "})";
+      return (if (r.whitelist) { KEEP } else { IGNORE }, text);
+    }
+    k -= 1;
+  }
+  return (NONE, "");
 }
 
 // `path` relative to the root of the matcher, as the ignore crate strips
@@ -740,6 +774,77 @@ function matched_ignore(s: Stack, cfg: Config, path: string, is_dir: boolean): i
 
 function has_rules(cfg: Config): boolean {
   return cfg.dot || cfg.global || cfg.vcs || cfg.exclude || cfg.explicit.len() > 0;
+}
+
+// The answer of the ignore files for `path` with the rule that gives it,
+// as matched_ignore finds it.
+function described_ignore(s: Stack, cfg: Config, path: string, is_dir: boolean): (i32, string) {
+  let git = any_git(s, cfg);
+  let found: (i32, string)[] = [(NONE, ""), (NONE, ""), (NONE, ""), (NONE, "")];
+  let saw_git = false;
+  let k = s.levels.len() - 1;
+  let abs = if (cfg.parents && s.base != "") { parent_path(s, path) } else { path };
+  while (k >= 0) {
+    let l = s.levels[k];
+    if (l.absolute && !(cfg.parents && s.base != "")) {
+      break;
+    }
+    let p = if (l.absolute) { abs } else { path };
+    let use_git = git && !saw_git;
+    let ms = [l.custom, l.dot, l.git, l.exclude];
+    for i in 0..4 {
+      if (found[i].0 == NONE && (i < 2 || use_git)) {
+        found = found.with(i, ms[i].described(p, is_dir));
+      }
+    }
+    saw_git = saw_git || l.has_git;
+    k -= 1;
+  }
+  for f in found {
+    if (f.0 != NONE) {
+      return f;
+    }
+  }
+  let global = if (git) { cfg.global_rules.described(path, is_dir) } else { (NONE, "") };
+  if (global.0 != NONE) {
+    return global;
+  }
+  let e = cfg.explicit.len() - 1;
+  while (e >= 0) {
+    let d = cfg.explicit[e].described(path, is_dir);
+    if (d.0 != NONE) {
+      return d;
+    }
+    e -= 1;
+  }
+  return (NONE, "");
+}
+
+// The answer for an entry of a walk as `verdict` gives it, and the match
+// as the ignore crate writes it with {:?}. The text is "" for a match of
+// -g, --iglob or a type, which the port does not describe.
+pub function reason(s: Stack, cfg: Config, path: string, is_dir: boolean): (i32, string) {
+  let p = strip_dot(path);
+  let o = cfg.overrides.override(p, is_dir);
+  if (o != NONE) {
+    return (o, "");
+  }
+  let kept = (NONE, "");
+  if (has_rules(cfg)) {
+    let m = described_ignore(s, cfg, p, is_dir);
+    if (m.0 == IGNORE) {
+      return (IGNORE, "Ignore(IgnoreMatch(" + m.1 + "))");
+    }
+    kept = m;
+  }
+  let t = cfg.types.matched(p, is_dir);
+  if (t != NONE) {
+    return (t, "");
+  }
+  if (kept.0 == NONE && cfg.skip_hidden && base_name(p).starts_with(".")) {
+    return (IGNORE, "Ignore(IgnoreMatch(Hidden))");
+  }
+  return if (kept.0 == NONE) { kept } else { (kept.0, "Whitelist(IgnoreMatch(" + kept.1 + "))") };
 }
 
 // The answer for an entry of a walk: the -g globs first, then the ignore

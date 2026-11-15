@@ -212,21 +212,24 @@ pub function parse_def(s: string, i: i32): Def {
     dest = slice_unchecked(s, ds + 1, de - 1).to_owned();
   }
   let ts = spnl(s, de);
-  let te = -1;
+  let title = "";
   if (ts > de) {
-    te = title_end(s, ts, s.len());
-  }
-  if (te > 0) {
-    let end = line_end(s, skip_spaces(s, te));
-    if (end >= 0) {
-      return Def { end: end, label: normalize(raw), dest: dest, title: slice_unchecked(s, ts, te).to_owned() };
+    let te = title_end(s, ts, s.len());
+    if (te > 0) {
+      title = slice_unchecked(s, ts, te).to_owned();
+      let end = line_end(s, skip_spaces(s, te));
+      if (end >= 0) {
+        return Def { end: end, label: normalize(raw), dest: dest, title: title };
+      }
     }
   }
+  // When the title is not the end of its line, the definition ends after
+  // the destination. As in cmark, it keeps the title.
   let end = line_end(s, skip_spaces(s, de));
   if (end < 0) {
     return NO_DEF;
   }
-  return Def { end: end, label: normalize(raw), dest: dest, title: "" };
+  return Def { end: end, label: normalize(raw), dest: dest, title: title };
 }
 
 // The form of a label that two matching labels share: Unicode case folding,
