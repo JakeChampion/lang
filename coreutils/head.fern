@@ -321,6 +321,16 @@ function elide_bytes_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
   return copy_span(r, o, name, reg.start, span - s.count.n as i64);
 }
 
+// GNU head reads back from the end in blocks of BUFSIZ. With too few lines,
+// the offset stays after the block at the start. BUFSIZ is 8192 in glibc and
+// 1024 in the libc of Darwin, Android and WASI.
+function bufsiz(): i64 {
+  if (target_os() == "linux") {
+    return 8192 as i64;
+  }
+  return 1024 as i64;
+}
+
 function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: string, reg: Region): gnu.Stream {
   let out = o;
   let span = reg.end - reg.start;
@@ -328,7 +338,7 @@ function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
     return copy_span(r, out, name, reg.start, span);
   }
   let skip = s.count.n;
-  let block = 8192 as i64;
+  let block = bufsiz();
   let want = span % block;
   if (want == 0 as i64) {
     want = block;
