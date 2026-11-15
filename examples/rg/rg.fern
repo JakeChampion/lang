@@ -186,7 +186,7 @@ function pcre_matcher(ctx: Ctx): Result[matcher.Matcher, string] {
   let Ok(none) = regex.compile(NOTHING) else {
     return Err("internal error");
   };
-  return Ok(matcher.of_pcre(pc, none));
+  return Ok(matcher.of_pcre(pc, none, ctx.p.eol == "\r\n" && !ctx.p.multiline));
 }
 
 // A pattern of std/regex that matches nothing.

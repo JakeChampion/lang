@@ -336,7 +336,7 @@ function run_pcre(args: string[], text: string): string {
   let Ok(none) = regex.compile("[^\\x00-\\x{10FFFF}]") else {
     return "bad pattern";
   };
-  return run_with(o, matcher.of_pcre(pc, none), text, MAPPED);
+  return run_with(o, matcher.of_pcre(pc, none, o.eol == "\r\n" && !o.has(flags.MULTILINE)), text, MAPPED);
 }
 
 // -P builds the pattern of PCRE2 as ripgrep does, and a search that goes
@@ -349,12 +349,14 @@ function test_pcre(): test.TestOutcome {
     run_pcre(["-P", "-o", "-r", "<$n>", "(?<n>o+)", "a"], "foo\n"), run_pcre(["-P", "a(", "a"], "a\n"),
     run_pcre(["-P", "-w", "a(", "a"], "a\n"), run_pcre(["-P", "(a+)+$", "a"], "ok\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac\nok\n"),
     run_pcre(["-P", "--no-pcre2-unicode", "-c", "^.$", "a"], "é\n"), run_pcre(["-P", "-c", "^.$", "a"], "é\n"),
+    run_pcre(["-P", "--crlf", "-c", "\\r", "a"], "a\r\nb\r\n"), run_pcre(["-P", "-c", "\\r", "a"], "a\r\nb\r\n"),
+    run_pcre(["-P", "-o", "fo+(*COMMIT)o", "a"], "fooo\nfoo\n"), run_pcre(["-P", "-o", "(a|ab)(?1)c", "a"], "aabc\n"),
   ];
   return test.assert_eq_array(got, [
     "foo\n0", "foo\n0", "a\nb\n0", "Foo\n0", "a.(\n0", "2\n0", "<oo>\n0",
     "PCRE2: error compiling pattern at offset 6: missing closing parenthesis",
     "PCRE2: error compiling pattern at offset 23: missing closing parenthesis",
-    "PCRE2: error matching: match limit exceeded|1", "1", "1\n0",
+    "PCRE2: error matching: match limit exceeded|1", "1", "1\n0", "1", "2\n0", "1", "aabc\n0",
   ]);
 }
 

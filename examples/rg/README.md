@@ -257,15 +257,26 @@ order of the walk.
 - **PCRE2.** `std/pcre` is a backtracking engine in Fern, and ripgrep links
   the C library of PCRE2 with its JIT. Thus `--pcre2-version` and
   `--version` say `JIT is unavailable`. The match limit of `std/pcre` counts
-  the choices of a search, ten million, and PCRE2 counts the calls of its
-  match function. A search that goes far above the limit gives the error of
-  PCRE2 in each, but near the limit the two can differ.
+  the choices of each attempt at a start, ten million, and PCRE2 counts the
+  calls of its match function. A search that goes far above the limit gives
+  the error of PCRE2 in each, but near the limit the two can differ.
 
-- **Calls and verbs of PCRE2.** A call of a group,
-  such as `(?1)` or `(?R)`, is atomic in `std/pcre`, as it was in PCRE2
-  before 10.30. Some items of PCRE2 give the error of a verb that is not
-  known: the verbs (*COMMIT), (*PRUNE), (*SKIP) and (*THEN), the callouts,
-  and the options at the start of a pattern, such as (*UTF).
+- **Calls and verbs of PCRE2.** `std/pcre` follows the interpreter of
+  PCRE2 10.42, and ripgrep runs the JIT. A pattern such as `(?R)` alone
+  calls a group in the same group at the same offset. The interpreter
+  gives the error `nested recursion at the same subject position`, and
+  the JIT of ripgrep gives `JIT stack limit reached`. When (*THEN) goes
+  back through a look-ahead that matched, the interpreter ends the branch,
+  and the JIT goes on to the next branch. The port does what the
+  interpreter does.
+
+- **Script runs.** The script runs of PCRE2, such as (*sr:...), need the
+  Script_Extensions property. The port gives the error of an assertion
+  that is not known.
+
+- **Start options.** ripgrep puts each pattern in a group. Thus an option
+  at the start of a pattern, such as (*UTF), gives the error of a verb
+  that is not known, in each.
 
 - **Size limits.** `--dfa-size-limit` does not change the output of
   ripgrep, and the port accepts it. `--regex-size-limit` is not a limit of
@@ -282,7 +293,7 @@ order of the walk.
   with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 595 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 627 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
@@ -296,8 +307,9 @@ order of the walk.
   cases of `--pre` run scripts that pass, that fail and that write no
   error.
 
-  74 cases give `-P`, `--engine pcre2` or `--engine auto`: the syntax of
-  PCRE2, its errors, and a search that goes above the match limit.
+  106 cases give `-P`, `--engine pcre2` or `--engine auto`: the syntax of
+  PCRE2, its verbs, calls and callouts, its errors, and a search that goes
+  above the match limit.
 
   The test makes the times of `--stats` and `--json` the same before it
   compares them. 8 cases run with the standard output on a terminal, with
@@ -312,9 +324,16 @@ order of the walk.
   and `--version`, which say that the port has no JIT.
 
 - The stdlib suite of `std/pcre`, `tests/stdlib/pcre_test.fern`, holds
-  matches and errors of PCRE2 10.42. A differential test outside the tree
-  compared `std/pcre` with `libpcre2-8` on 17,099 pairs of a pattern and a
-  text. Each pair gave the same matches, groups and errors.
+  matches and errors of PCRE2 10.42. Its cases of verbs, calls, callouts and
+  start options came from `libpcre2-8` 10.42. A differential test outside
+  the tree compared `std/pcre` with `libpcre2-8` on 17,099 pairs of a
+  pattern and a text. Each pair gave the same matches, groups and errors.
+
+  A later run compared 39,000 random patterns with verbs, calls,
+  conditions and look-arounds, and 10 gave a different result. In 9, a
+  call is in the same group at the same offset, and the start
+  optimizations of PCRE2 try other starts. One is a capture in a
+  possessive group with a back reference.
 
 - `TestSelfHostExampleRgVendoredCases` runs the cases of the integration
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from

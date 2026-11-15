@@ -475,6 +475,15 @@ func rgPcreCases() []rgCase {
 		"-P * a.txt", "-P a{2,1} a.txt", "-P \\p{Foo} a.txt", "-P [[:foo:]] a.txt", "-P -w ( a.txt", "-P -x ( a.txt",
 		"-P -e a -e ( a.txt", "--engine auto ( a.txt", "--engine auto a(?=b)( a.txt", "-P \\ a.txt", "-P (?P<n>a)(?P<n>b) a.txt",
 		"-P (a+)+$ limit.txt", "-P -j1 -c (a|aa)+$ limit.txt a.txt", "-P -c (x+x+)+y long.md", "\\1 a.txt", "(?=a) a.txt", "(?<!a)b a.txt",
+		"-P -o fo+(*COMMIT)o w.txt", "-P (?:(*COMMIT)g|f)oo a.txt", "-U -P (?:(*COMMIT)g|f)oo a.txt", "-P -o f(*SKIP)oo|o w.txt",
+		"-P -o \\w+(*PRUNE)o w.txt", "-P -o (?:o(*THEN)x|fo)o w.txt", "-P -o (?:o(*THEN:N)x|fo)o w.txt",
+		"-P -o f(*MARK:M)o(*SKIP:M)x|o a.txt", "-P -o foo(*ACCEPT)bar|ga a.txt", "-P -o (?C1)fo(?C\"x\")o a.txt",
+		"-P -c (*FAIL)|foo a.txt", "-P (*COMMIT)+ a.txt", "-P (*MARK) a.txt", "-P (*NOPE) a.txt", "-P (*UTF)foo a.txt",
+		"-P (*LIMIT_MATCH=10)foo a.txt", "-P (?C256)foo a.txt", "-P (?C\"foo a.txt", "-P -o (*pla:foo)\\w+ w.txt",
+		"-P -o (*atomic:fo+)o w.txt", "-P -o (a|ab)(?1)c a.txt", "-P -o ^(.)(?1)$ hw.txt", "-P -o (?(R)a|b(?R)) a.txt",
+		"-P (?(R1)a|b) a.txt", "-P -o (?<=f(*COMMIT)o)o w.txt", "-P -o (?!x(*SKIP))foo w.txt", "-P --crlf -o (?m)^two crlf.txt",
+		"-P --crlf -c \\r$ crlf.txt", "-P --crlf -c \\r crlf.txt", "-P --crlf -o o$ crlf.txt", "-U -P --crlf -c \\r crlf.txt",
+		"-P --crlf -n \\s$ crlf.txt",
 	}
 	var cases []rgCase
 	for _, l := range lines {
