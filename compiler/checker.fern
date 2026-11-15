@@ -21382,7 +21382,9 @@ struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params
 
 // A match or an if outside every loop, with the occurrences in each arm. One
 // run takes one arm, so an occurrence in one arm is not after one in another.
-struct LuFork { arms: LuOcc[][] }
+// The arms of an if or a match outside every loop, with whether each arm
+// ends in a return.
+struct LuFork { arms: LuOcc[][], exits: boolean[] }
 
 // A frame is one block on the path from the function body to a statement:
 // the block, the index of the statement on the path, and the loop statement
@@ -23091,15 +23093,17 @@ function lu_forks(stmts: ast.Stmt[], own acc: LuFork[]): LuFork[] {
   for st in stmts {
     match (st) {
       ast.StmtIf(f) => {
-        acc = acc.append(LuFork { arms: [lu_arm_occ(f.then_body), lu_arm_occ(f.else_body)] });
+        acc = acc.append(LuFork { arms: [lu_arm_occ(f.then_body), lu_arm_occ(f.else_body)], exits: [lu_ends_in_return(f.then_body), lu_ends_in_return(f.else_body)] });
         acc = lu_forks(f.else_body, lu_forks(f.then_body, acc));
       },
       ast.StmtMatch(m) => {
         let arms: LuOcc[][] = [];
+        let exits: boolean[] = [];
         for arm in m.arms {
           arms = arms.append(lu_arm_occ(arm.body));
+          exits = exits.append(lu_ends_in_return(arm.body));
         }
-        acc = acc.append(LuFork { arms: arms });
+        acc = acc.append(LuFork { arms: arms, exits: exits });
         for arm in m.arms {
           acc = lu_forks(arm.body, acc);
         }
@@ -23110,6 +23114,16 @@ function lu_forks(stmts: ast.Stmt[], own acc: LuFork[]): LuFork[] {
   return acc;
 }
 
+function lu_ends_in_return(body: ast.Stmt[]): boolean {
+  if (body.len() == 0) {
+    return false;
+  }
+  if let ast.StmtReturn(_) = body[body.len() - 1] {
+    return true;
+  }
+  return false;
+}
+
 function lu_arm_occ(body: ast.Stmt[]): LuOcc[] {
   let f = lu_empty_facts();
   for st in body {
@@ -23118,13 +23132,15 @@ function lu_arm_occ(body: ast.Stmt[]): LuOcc[] {
   return f.occ;
 }
 
-// Whether `id` and `o` are in two arms of one fork.
+// Whether no run reads `o` after `id`, for an `o` after `id`: the two are
+// in two arms of one fork, or `id` is in an arm that ends in a return and
+// `o` is outside that arm.
 function lu_apart(forks: LuFork[], id: ast.ExprIdent, o: LuOcc): boolean {
   for fork in forks {
     let a = lu_arm_at(fork, id.line, id.col);
     if (a >= 0) {
       let b = lu_arm_at(fork, o.line, o.col);
-      if (b >= 0 && b != a) {
+      if (b >= 0 && b != a || b < 0 && fork.exits[a]) {
         return true;
       }
     }

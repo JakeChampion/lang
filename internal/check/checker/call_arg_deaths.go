@@ -32,7 +32,12 @@ type IdentOrder struct {
 
 // forkArm is one arm of a match or an if outside every loop. One run takes
 // one arm, so an identifier in one arm is not after one in another arm.
-type forkArm struct{ fork, arm int }
+// exit is true when the arm ends in a return: an identifier outside the arm
+// is not after one in it.
+type forkArm struct {
+	fork, arm int
+	exit      bool
+}
 
 // IdentOrderOf numbers the identifiers of body in source order. The else arm
 // of a let-else is the last arm of its match, but the source writes it first.
@@ -78,8 +83,8 @@ func IdentOrderOf(body ast.Node) IdentOrder {
 // markForks records the arms of the forks that hold each identifier of st.
 // A loop body can take each arm in turn, so it records no fork inside a loop.
 func (o IdentOrder) markForks(st ast.Stmt, path []forkArm, forks *int) {
-	in := func(fork, arm int) []forkArm {
-		return append(slices.Clone(path), forkArm{fork, arm})
+	in := func(fork, arm int, body ast.Stmt) []forkArm {
+		return append(slices.Clone(path), forkArm{fork, arm, endsInReturn(body)})
 	}
 	switch x := st.(type) {
 	case *ast.Block:
@@ -92,10 +97,10 @@ func (o IdentOrder) markForks(st ast.Stmt, path []forkArm, forks *int) {
 		*forks++
 		o.markIdents(x.Cond, path)
 		if x.Then != nil {
-			o.markForks(x.Then, in(fork, 0), forks)
+			o.markForks(x.Then, in(fork, 0, x.Then), forks)
 		}
 		if x.Else != nil {
-			o.markForks(x.Else, in(fork, 1), forks)
+			o.markForks(x.Else, in(fork, 1, x.Else), forks)
 		}
 		return
 	case *ast.Match:
@@ -104,10 +109,10 @@ func (o IdentOrder) markForks(st ast.Stmt, path []forkArm, forks *int) {
 		o.markIdents(x.Tag, path)
 		for i, a := range x.Arms {
 			if a.Guard != nil {
-				o.markIdents(a.Guard, in(fork, i))
+				o.markIdents(a.Guard, in(fork, i, nil))
 			}
 			if a.Body != nil {
-				o.markForks(a.Body, in(fork, i), forks)
+				o.markForks(a.Body, in(fork, i, a.Body), forks)
 			}
 		}
 		return
@@ -139,13 +144,34 @@ func (o IdentOrder) IsLast(id *ast.Ident) bool {
 	return true
 }
 
+// forksApart reports whether no run reaches b after a, for a b after a: the
+// two are in two arms of one fork, or a is in an arm that ends in a return
+// and b is outside that arm.
 func forksApart(a, b []forkArm) bool {
 	for _, x := range a {
+		inFork := false
 		for _, y := range b {
-			if x.fork == y.fork && x.arm != y.arm {
-				return true
+			if x.fork == y.fork {
+				inFork = true
+				if x.arm != y.arm {
+					return true
+				}
 			}
 		}
+		if x.exit && !inFork {
+			return true
+		}
+	}
+	return false
+}
+
+// endsInReturn reports whether the arm body st ends in a return statement.
+func endsInReturn(st ast.Stmt) bool {
+	switch x := st.(type) {
+	case *ast.Return:
+		return true
+	case *ast.Block:
+		return x != nil && len(x.Stmts) > 0 && endsInReturn(x.Stmts[len(x.Stmts)-1])
 	}
 	return false
 }
