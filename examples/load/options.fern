@@ -11,6 +11,9 @@ import "std/utf8";
 import "./fields";
 
 // The versions of HTTP, ten times the version number.
+// HTTP/0.9, which oha 1.16.0 accepts and cannot send.
+pub const HTTP_09: i32 = 9;
+
 pub const HTTP_10: i32 = 10;
 
 pub const HTTP_11: i32 = 11;
@@ -573,8 +576,8 @@ function version_of(http2: boolean, version: string): Result[i32, string] {
     "2.0" => Ok(HTTP_2),
     "3" => Ok(HTTP_3),
     "3.0" => Ok(HTTP_3),
-    "0.9" => Err("HTTP/0.9 is not supported: use 1.0, 1.1, 2 or 3"),
-    _ => Err(f"HTTP version {version} is not known: use 1.0, 1.1, 2 or 3"),
+    "0.9" => Ok(HTTP_09),
+    _ => Err(f"HTTP version {version} is not known: use 0.9, 1.0, 1.1, 2 or 3"),
   };
 }
 

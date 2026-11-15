@@ -16,6 +16,7 @@ import "std/http/h3q";
 import "std/net";
 import "std/quic/conn" as quic;
 import "std/rand";
+import "std/signal";
 import "std/time";
 import "std/tls/client";
 import "std/tls/identity";
@@ -1131,9 +1132,36 @@ function opened(own r: Run, i: i32): Run {
   if (r.h2) {
     return h2_opened(r, i);
   }
+  let o = r.job.o;
+  if ((if (o.proxy.is_some() && !r.conns[i].peer.tls) { o.proxy_http } else { o.http }) == options.HTTP_09) {
+    http09_abort();
+  }
   let request = r.conns[i].request;
   return seal(r, i, request, READING);
 }
+
+// oha 1.16.0 accepts HTTP/0.9, but hyper 1.11 panics when it writes the
+// head of the first request, and the panic aborts the process. The tool
+// writes the text of the panic and aborts in the same way. Its thread
+// number is the process id of the tool.
+function http09_abort(): void {
+  let id = match (read_file_bytes("/proc/self/stat")) {
+    Ok(b) => unsafe { string_from_bytes_unchecked(b) }.split(" ")[0],
+    Err(_) => "0",
+  };
+  let trace = env("RUST_BACKTRACE").unwrap_or("0");
+  let note = if (trace == "0" || trace == "") {
+    "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+  } else {
+    "stack backtrace:\nnote: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace."
+  };
+  eprint(f"\nthread '<unnamed>' ({id}) panicked at /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-1.11.0/src/proto/h1/role.rs:1221:22:\nunexpected request version: HTTP/0.9\n{note}");
+  signal.default(SIGABRT);
+  signal.raise(SIGABRT);
+  exit(134);
+}
+
+const SIGABRT: i32 = 6;
 
 // Sends the CONNECT of a tunnel to the host and port of the URL, after
 // --connect-to, with the fields of --proxy-header. With --proxy-http2, the

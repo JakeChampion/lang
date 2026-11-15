@@ -418,8 +418,13 @@ These differences are in what the tool does:
 - The live display is near the layout of oha, but it is not the same cell
   for cell. It forces one reactor.
 
-- `--http-version 0.9` and `--proxy-http-version 0.9` give exit code 2. oha
-  accepts them.
+- oha 1.16.0 accepts `--http-version 0.9` and `--proxy-http-version 0.9`,
+  but it cannot send a request of HTTP/0.9. When a connection is open,
+  hyper 1.11 panics before it writes the head of the request, and oha
+  aborts with exit code 134. The tool does the same, with the text of the
+  panic. The number in the text is the process id of the tool, and oha
+  gives the id of its thread. With `RUST_BACKTRACE` set, oha writes the
+  frames of a backtrace, and the tool writes none.
 
 - An error that `std/net` has no name for, such as ENODEV, has the text
   `Network error (errno 19) (os error 19)`. oha gives the text of the system,

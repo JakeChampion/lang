@@ -1058,6 +1058,7 @@ func loadOhaTests(t *testing.T, run loadRun) {
 			{"-u", "x"}, {"--connect-to", "bad", "-n", "1"}, {"--aws-sigv4", "aws:amz:r:s", "-n", "1"}, {"--aws-sigv4", "bad", "-a", "a:b", "-n", "1"},
 			{"-n", "1", "-n", "2"}, {"--insecure", "--insecure", "-n", "1"}, {"-n", "-5"}, {"-x", "notaurl", "-n", "1"}, {"-a", "nocolon", "-n", "1"},
 			{"-n", "3", "-c", "1", "-Z", "/nonexistent"}, {"-A", "a\x01", "-n", "1"}, {"--rand-regex-url", "-n", "1", "--max-repeat", "2"},
+			{"--http-version", "0.9", "-n", "2"}, {"--proxy-http-version", "0.9", "-n", "2"},
 		} {
 			full := append(append([]string{}, args...), refused)
 			if args[0] == "--rand-regex-url" {
@@ -1067,6 +1068,32 @@ func loadOhaTests(t *testing.T, run loadRun) {
 			_, ourErr, got := run(t, full...)
 			if got != want {
 				t.Errorf("%v: exit %d, oha %d\n%s\noha: %s", args, got, want, ourErr, ohaErr)
+			}
+		}
+	})
+
+	// oha 1.16.0 accepts HTTP/0.9, and hyper panics when it writes the
+	// first request on an open connection. Both abort with the same text.
+	t.Run("http 0.9", func(t *testing.T) {
+		c := startCaptureServer(t)
+		base := "http://" + c.addr
+		thread := regexp.MustCompile(`\(\d+\)`)
+		for _, args := range [][]string{
+			{"--http-version", "0.9", base + "/"},
+			{"--proxy-http-version", "0.9", "-x", base, "http://127.0.0.1:1/p"},
+		} {
+			full := append([]string{"-n", "2", "-c", "1"}, args...)
+			ohaOut, ohaErr, want := runOha(t, oha, full...)
+			ourOut, ourErr, got := run(t, full...)
+			head := func(s string) string {
+				lines := strings.SplitN(thread.ReplaceAllString(s, "(N)"), "\n", 4)
+				return strings.Join(lines[:min(3, len(lines))], "\n")
+			}
+			if got != want || head(ourErr) != head(ohaErr) || ourOut != ohaOut {
+				t.Errorf("%v: exit %d, stdout %q, stderr %q\noha: exit %d, stdout %q, stderr %q", args, got, ourOut, ourErr, want, ohaOut, ohaErr)
+			}
+			if len(c.take()) != 0 {
+				t.Errorf("%v: a request reached the server", args)
 			}
 		}
 	})
