@@ -1,0 +1,9 @@
+// A function of the module named exit takes the name from the builtin. A
+// call to it returns, so the first branch ends with no value.
+function exit(c: i32): void {}
+
+function main(): i32 {
+  let c = true;
+  let x: i32 = if (c) { exit(1); } else { 5 };
+  return x;
+}

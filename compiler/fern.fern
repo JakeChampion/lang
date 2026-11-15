@@ -3957,7 +3957,7 @@ function load_checked(s: Sources, root: string, target: string, embed_dir: strin
 }
 
 function parse_findings(mod: parser.Module): Finding[] {
-  return errors_of(asmcore.parse_errors_before_check(mod));
+  return errors_of(asmcore.parse_errors(mod));
 }
 
 function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[]) {

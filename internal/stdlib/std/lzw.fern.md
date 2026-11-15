@@ -8,7 +8,7 @@ A file starts with the bytes 0x1F and 0x9D, and a byte of flags: the largest wid
 
 ## Contracts
 
-`decode` gives the bytes before the first error, and the error, as `gzip -d` does for a `.Z` file. `decompress` gives the bytes, or the error.
+`decode` gives the bytes before the first error, and the error, as `gzip -d` does for a `.Z` file. `decompress` gives the bytes, or the error. `decode_with_limit` and `decompress_with_limit` refuse output above a limit of bytes: a caller that reads data from a stranger gives one.
 
 ## Executable example
 
@@ -42,8 +42,9 @@ import "core/cmp";
 import "core/error";
 
 // The errors of a `.Z` file: not a file of compress, a width that is not
-// valid, a code that is not in the table, or a file that ends early.
-pub enum LzwError { NotLzw, BadWidth, BadCode, Truncated }
+// valid, a code that is not in the table, a file that ends early, or output
+// above the limit of the caller.
+pub enum LzwError { NotLzw, BadWidth, BadCode, Truncated, OutputLimit }
 
 pub function (e: LzwError) message(): string {
   return match (e) {
@@ -51,6 +52,7 @@ pub function (e: LzwError) message(): string {
     BadWidth => "compressed with more than 16 bits",
     BadCode => "corrupt input",
     Truncated => "unexpected end of file",
+    OutputLimit => "the output is larger than the limit",
   };
 }
 
@@ -74,7 +76,13 @@ pub struct Decoded { out: u8[], error: Option[LzwError] }
 <<decode>>=
 // decompress gives the bytes of a `.Z` file, or its error.
 pub function decompress(input: [u8]): Result[u8[], LzwError] {
-  let d = decode(input);
+  return decompress_with_limit(input, 2147483647);
+}
+
+// decompress_with_limit gives the bytes of a `.Z` file, or its error. It
+// refuses output above `limit` bytes.
+pub function decompress_with_limit(input: [u8], limit: i32): Result[u8[], LzwError] {
+  let d = decode_with_limit(input, limit);
   return match (d.error) {
     Some(e) => Err(e),
     None => Ok(d.out),
@@ -89,6 +97,12 @@ struct __Lzw { prefix: i32[], suffix: u8[], bits: i32, max: i32, free: i32, pos:
 // decode gives the bytes of a `.Z` file before the first error, and the
 // error.
 pub function decode(input: [u8]): Decoded {
+  return decode_with_limit(input, 2147483647);
+}
+
+// decode_with_limit gives the bytes that `decode` gives, up to `limit`
+// bytes. Output above the limit is the error `OutputLimit`.
+pub function decode_with_limit(input: [u8], limit: i32): Decoded {
   let out: u8[] = [];
   if let Some(e) = __lzw_header(input) {
     return Decoded { out: out, error: Some(e) };
@@ -116,6 +130,9 @@ pub function decode(input: [u8]): Decoded {
     let kwk = code == s.free;
     let (next, first) = __lzw_string(s, out, if (kwk) { old } else { code }, kwk, fin);
     out = next;
+    if (out.len() > limit) {
+      return Decoded { out: out.truncate(limit), error: Some(OutputLimit) };
+    }
     fin = first;
     s = __lzw_add(s, old, fin, 1 << maxbits);
     old = code;

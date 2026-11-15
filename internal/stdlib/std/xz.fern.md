@@ -10,7 +10,7 @@ The LZMA decoder reads bits with a range decoder and adaptive probabilities. Eac
 
 ## Contracts
 
-`decode_xz` and `decode_lzma` give the bytes before the first error, and the error, with the texts of the `xz` tool. A block can hold only the LZMA2 filter. The decoder verifies a check of CRC32, CRC64 or SHA-256, and it gives the bytes of a block whose check does not agree with the error. For data that ends early, the count of bytes before the error can differ from that of `xz`. `decompress_xz` and `decompress_lzma` give the bytes, or the error.
+`decode_xz` and `decode_lzma` give the bytes before the first error, and the error, with the texts of the `xz` tool. A block can hold only the LZMA2 filter. The decoder verifies a check of CRC32, CRC64 or SHA-256, and it gives the bytes of a block whose check does not agree with the error. For data that ends early, the count of bytes before the error can differ from that of `xz`. `decompress_xz` and `decompress_lzma` give the bytes, or the error. Each of the four has a form with the suffix `_with_limit`, which refuses output above a limit of bytes: a caller that reads data from a stranger gives one. A `.lzma` file that gives its size as 2 GiB or more is decoded to the end of its data.
 
 ## Executable example
 
@@ -49,8 +49,9 @@ import "std/hash/crc32";
 ```fern
 <<errors>>=
 // The errors of xz and lzma data: an unknown format, a filter that the
-// decoder does not have, data that is not valid, or data that ends early.
-pub enum XzError { NotXz, Unsupported, Corrupt, Truncated }
+// decoder does not have, data that is not valid, data that ends early, or
+// output above the limit of the caller.
+pub enum XzError { NotXz, Unsupported, Corrupt, Truncated, OutputLimit }
 
 pub function (e: XzError) message(): string {
   return match (e) {
@@ -58,6 +59,7 @@ pub function (e: XzError) message(): string {
     Unsupported => "Unsupported options",
     Corrupt => "Compressed data is corrupt",
     Truncated => "Unexpected end of input",
+    OutputLimit => "Memory usage limit reached",
   };
 }
 
@@ -221,12 +223,15 @@ function __lz_reset(lz: __Lz): __Lz {
 struct __LzRun { out: u8[], lz: __Lz, rc: __Rc, end: i32, error: XzError }
 
 // Decodes until the output holds `limit` bytes, or until an end mark when
-// `limit` is -1.
-function __lz_run(input: [u8], lz0: __Lz, rc0: __Rc, own out: u8[], limit: i32): __LzRun {
+// `limit` is -1. Output above `cap` bytes is the error `OutputLimit`.
+function __lz_run(input: [u8], lz0: __Lz, rc0: __Rc, own out: u8[], limit: i32, cap: i32): __LzRun {
   let lz = lz0;
   let probs = lz0.probs;
   let rc = rc0;
   while (limit < 0 || out.len() < limit) {
+    if (out.len() > cap) {
+      return __LzRun { out: out.truncate(cap), lz: __Lz { ...lz, probs: probs }, rc: rc, end: -1, error: OutputLimit };
+    }
     if (rc.pos < 0) {
       return __LzRun { out: out, lz: __Lz { ...lz, probs: probs }, rc: rc, end: -1, error: Truncated };
     }
@@ -251,6 +256,9 @@ function __lz_run(input: [u8], lz0: __Lz, rc0: __Rc, own out: u8[], limit: i32):
     }
     let n = if (limit >= 0 && out.len() + step.len > limit) { limit - out.len() } else { step.len };
     out = __lz_copy(out, step.dist, n);
+  }
+  if (out.len() > cap) {
+    return __LzRun { out: out.truncate(cap), lz: __Lz { ...lz, probs: probs }, rc: rc, end: -1, error: OutputLimit };
   }
   return __LzRun { out: out, lz: __Lz { ...lz, probs: probs }, rc: rc, end: 0, error: Corrupt };
 }
@@ -378,6 +386,18 @@ pub function decompress_xz(input: [u8]): Result[u8[], XzError] {
   return __xz_result(decode_xz(input));
 }
 
+// decompress_xz_with_limit gives the bytes of an xz file, or the error. It
+// refuses output above `limit` bytes.
+pub function decompress_xz_with_limit(input: [u8], limit: i32): Result[u8[], XzError] {
+  return __xz_result(decode_xz_with_limit(input, limit));
+}
+
+// decompress_lzma_with_limit gives the bytes of a `.lzma` file, or the
+// error. It refuses output above `limit` bytes.
+pub function decompress_lzma_with_limit(input: [u8], limit: i32): Result[u8[], XzError] {
+  return __xz_result(decode_lzma_with_limit(input, limit));
+}
+
 // decompress_lzma gives the bytes of a `.lzma` file, or the error.
 pub function decompress_lzma(input: [u8]): Result[u8[], XzError] {
   return __xz_result(decode_lzma(input));
@@ -390,6 +410,12 @@ function __xz_fail(own out: u8[], e: XzError): Decoded {
 // decode_lzma gives the bytes of a `.lzma` file before the first error, and
 // the error. A size of all ones means that an end mark ends the data.
 pub function decode_lzma(input: [u8]): Decoded {
+  return decode_lzma_with_limit(input, 2147483647);
+}
+
+// decode_lzma_with_limit gives the bytes that `decode_lzma` gives, up to
+// `limit` bytes. Output above the limit is the error `OutputLimit`.
+pub function decode_lzma_with_limit(input: [u8], limit: i32): Decoded {
   let out: u8[] = [];
   if (input.len() < 13) {
     return __xz_fail(out, if (input.len() == 0) { NotXz } else { Truncated });
@@ -406,7 +432,9 @@ pub function decode_lzma(input: [u8]): Decoded {
   if (rc.pos < 0) {
     return __xz_fail(out, Truncated);
   }
-  let r = __lz_run(input, __lz_new(input[0] as i32, 0), rc, out, if (known) { size as i32 } else { -1 });
+  // An array holds less than 2 GiB, so a larger size ends at the end of the data.
+  let count = if (!known) { -1 } else if (size < 0i64 || size > 2147483647i64) { 2147483647 } else { size as i32 };
+  let r = __lz_run(input, __lz_new(input[0] as i32, 0), rc, out, count, limit);
   if (r.end < 0) {
     return Decoded { out: r.out, error: Some(r.error) };
   }
@@ -439,6 +467,12 @@ function __xz_check_size(kind: i32): i32 {
 // decode_xz gives the bytes of the streams of an xz file before the first
 // error, and the error.
 pub function decode_xz(input: [u8]): Decoded {
+  return decode_xz_with_limit(input, 2147483647);
+}
+
+// decode_xz_with_limit gives the bytes that `decode_xz` gives, up to
+// `limit` bytes. Output above the limit is the error `OutputLimit`.
+pub function decode_xz_with_limit(input: [u8], limit: i32): Decoded {
   let out: u8[] = [];
   let at = 0;
   let first = true;
@@ -447,7 +481,7 @@ pub function decode_xz(input: [u8]): Decoded {
       at += 1;
       continue;
     }
-    let r = __xz_stream(input, at, out, first);
+    let r = __xz_stream(input, at, out, first, limit);
     out = r.out;
     if (r.at < 0) {
       return __xz_fail(out, r.error);
@@ -462,14 +496,14 @@ pub function decode_xz(input: [u8]): Decoded {
 // error for -1.
 struct __XzRun { out: u8[], at: i32, error: XzError }
 
-function __xz_stream(input: [u8], at: i32, own out: u8[], first: boolean): __XzRun {
+function __xz_stream(input: [u8], at: i32, own out: u8[], first: boolean, cap: i32): __XzRun {
   if let Some(e) = __xz_header(input, at, first) {
     return __XzRun { out: out, at: -1, error: e };
   }
   let check = input[at + 7] as i32;
   let pos = at + 12;
   while (pos < input.len() && input[pos] != 0u8) {
-    let r = __xz_block(input, pos, out, check);
+    let r = __xz_block(input, pos, out, check, cap);
     out = r.out;
     if (r.at < 0) {
       return r;
@@ -525,12 +559,12 @@ function __xz_index(input: [u8], at: i32, own out: u8[]): __XzRun {
 }
 
 // One block from its header at `at`.
-function __xz_block(input: [u8], at: i32, own out: u8[], check: i32): __XzRun {
+function __xz_block(input: [u8], at: i32, own out: u8[], check: i32, cap: i32): __XzRun {
   if let Some(e) = __xz_block_header(input, at) {
     return __XzRun { out: out, at: -1, error: e };
   }
   let first = out.len();
-  let r = __lzma2(input, at + (input[at] as i32 + 1) * 4, out);
+  let r = __lzma2(input, at + (input[at] as i32 + 1) * 4, out, cap);
   out = r.out;
   if (r.at < 0) {
     return r;
@@ -618,7 +652,7 @@ function __xz_lzma2(input: [u8], pos: i32, end: i32): boolean {
 }
 
 // The chunks of LZMA2 data from `at`, up to the chunk 0.
-function __lzma2(input: [u8], at: i32, own out: u8[]): __XzRun {
+function __lzma2(input: [u8], at: i32, own out: u8[], cap: i32): __XzRun {
   let pos = at;
   let lz = __lz_new(0, out.len());
   let have_props = false;
@@ -628,13 +662,16 @@ function __lzma2(input: [u8], at: i32, own out: u8[]): __XzRun {
       lz = if (c == 1) { __Lz { ...lz, start: out.len() } } else { lz };
       let r = __lzma2_stored(input, pos, out);
       out = r.out;
+      if (out.len() > cap) {
+        return __XzRun { out: out.truncate(cap), at: -1, error: OutputLimit };
+      }
       if (r.at < 0) {
         return r;
       }
       pos = r.at;
       continue;
     }
-    let r = __lzma2_chunk(input, pos, out, lz, have_props);
+    let r = __lzma2_chunk(input, pos, out, lz, have_props, cap);
     out = r.run.out;
     if (r.run.at < 0) {
       return r.run;
@@ -667,7 +704,7 @@ function __lzma2_stored(input: [u8], pos: i32, own out: u8[]): __XzRun {
 struct __Lzma2Chunk { run: __XzRun, lz: __Lz }
 
 // An LZMA chunk from its control byte at `pos`.
-function __lzma2_chunk(input: [u8], pos: i32, own out: u8[], lz0: __Lz, have_props: boolean): __Lzma2Chunk {
+function __lzma2_chunk(input: [u8], pos: i32, own out: u8[], lz0: __Lz, have_props: boolean, cap: i32): __Lzma2Chunk {
   let c = input[pos] as i32;
   let reset = c >> 5 & 3;
   let head = if (reset >= 2) { 6 } else { 5 };
@@ -680,18 +717,18 @@ function __lzma2_chunk(input: [u8], pos: i32, own out: u8[], lz0: __Lz, have_pro
   if (lz.lc < 0 || reset < 2 && !have_props) {
     return __Lzma2Chunk { run: __XzRun { out: out, at: -1, error: Corrupt }, lz: lz0 };
   }
-  return __lzma2_data(input, pos + head, packed, out, lz, unpacked);
+  return __lzma2_data(input, pos + head, packed, out, lz, unpacked, cap);
 }
 
 // The LZMA data of a chunk at `start`: `packed` bytes that give `unpacked`
 // bytes.
-function __lzma2_data(input: [u8], start: i32, packed: i32, own out: u8[], lz: __Lz, unpacked: i32): __Lzma2Chunk {
+function __lzma2_data(input: [u8], start: i32, packed: i32, own out: u8[], lz: __Lz, unpacked: i32, cap: i32): __Lzma2Chunk {
   let rc = __rc_new(input, start, start + packed);
   if (start + packed > input.len() || rc.pos < 0) {
     return __Lzma2Chunk { run: __XzRun { out: out, at: -1, error: if (start + packed > input.len()) { Truncated } else { Corrupt } }, lz: lz };
   }
   let limit = out.len() + unpacked;
-  let r = __lz_run(input, lz, rc, out, limit);
+  let r = __lz_run(input, lz, rc, out, limit, cap);
   if (r.end != 0) {
     return __Lzma2Chunk { run: __XzRun { out: r.out, at: -1, error: if (r.end < 0) { r.error } else { Corrupt } }, lz: r.lz };
   }

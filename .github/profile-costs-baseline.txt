@@ -120,7 +120,7 @@ profile/x86-64-linux/deflate_decode.diagnostic.bytes	115280
 profile/x86-64-linux/deflate_decode.diagnostic.emit	14256
 profile/x86-64-linux/deflate_decode.diagnostic.ir	39645249
 profile/x86-64-linux/deflate_decode.hardened.bytes	59200
-profile/x86-64-linux/deflate_decode.hardened.emit	14362
+profile/x86-64-linux/deflate_decode.hardened.emit	14109
 profile/x86-64-linux/deflate_decode.hardened.ir	32590499
 profile/x86-64-linux/deflate_decode.minimal.bytes	51136
 profile/x86-64-linux/deflate_decode.minimal.emit	12720

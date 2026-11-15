@@ -74,7 +74,7 @@ function target_checks(target: string): void {
   let release = releases[0];
   let d = lift(drop);
   let r = lift(release);
-  let layout = proof.FlatChild { offset: 8 };
+  let layout = proof.FlatChild { offset: 0 };
   expect(proof.drop_body(d, layout), true, d.name, 10);
   expect(proof.release_body(r, d, layout), true, r.name, 11);
   let missing = lift(rename_call(drop, "__fern_rc_dec", "__fern_rc_is_unique"));
@@ -104,8 +104,8 @@ function target_checks(target: string): void {
     }
   }
   expect(proof.release_body(ssa.SFunc { ...r, blocks: reversed }, d, layout), false, r.name, 19);
-  expect(proof.release_body(r, d, proof.FlatChild { offset: 16 }), false, d.name, 20);
-  expect(proof.release_body(r, d, proof.FlatChild { offset: 0 }), false, d.name, 21);
+  expect(proof.release_body(r, d, proof.FlatChild { offset: 8 }), false, d.name, 20);
+  expect(proof.release_body(r, d, proof.FlatChild { offset: -8 }), false, d.name, 21);
   let renamed = lift(rename_call(release, drop.name, "audited_child_drop"));
   expect(proof.release_body(renamed, ssa.SFunc { ...d, name: "audited_child_drop" }, layout), true, r.name, 22);
   expect(proof.release_body(ssa.register_form(renamed).f, ssa.register_form(ssa.SFunc { ...d, name: "audited_child_drop" }).f, layout), true, r.name, 82);
@@ -133,7 +133,7 @@ function target_checks(target: string): void {
   duplicate_values = duplicate_values.with(3, ssa.SInst { ...duplicate_values[3], result: duplicate_values[2].result });
   let malformed = ssa.SFunc { ...d, blocks: [ssa.SBlock { ...d.blocks[0], insts: duplicate_values }] };
   expect(proof.release_body(r, malformed, layout), false, d.name, 25);
-  optimized_checks(d, r, proof.FlatChildren { offsets: [8] });
+  optimized_checks(d, r, proof.FlatChildren { offsets: [0] });
 }
 
 function many_expect(p: proof.Proof, ok: boolean, name: string, why: string, id: i32): void {
@@ -158,24 +158,24 @@ function many_checks(target: string): void {
   let drop = drops[0];
   let d = lift(drop);
   let r = lift(releases[0]);
-  let layout = proof.FlatChildren { offsets: [8, 24] };
+  let layout = proof.FlatChildren { offsets: [0, 16] };
   many_expect(proof.drop_body_many(d, layout), true, d.name, "proved flat-child drop body", 31);
   many_expect(proof.release_body_many(r, d, layout), true, r.name, "proved conditional parent release body", 32);
-  expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [24, 8] }), true, d.name, 33);
+  expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [16, 0] }), true, d.name, 33);
   let b = d.blocks[0];
   let ops = b.insts;
   require(ops.len() == 7, 34);
   let swapped = [ops[0], ops[1], ops[4], ops[5], ops[2], ops[3], ops[6]];
   expect(proof.release_body_many(r, ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: swapped }] }, layout), true, r.name, 35);
   let layouts: proof.FlatChildren[] = [
-    proof.FlatChildren { offsets: [] }, proof.FlatChildren { offsets: [8, 8] },
-    proof.FlatChildren { offsets: [0, 24] }, proof.FlatChildren { offsets: [8, 23] },
+    proof.FlatChildren { offsets: [] }, proof.FlatChildren { offsets: [0, 0] },
+    proof.FlatChildren { offsets: [-8, 16] }, proof.FlatChildren { offsets: [0, 15] },
   ];
   for bad in layouts {
     many_expect(proof.release_body_many(r, d, bad), false, d.name, "unsupported child layout", 36);
   }
-  many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [8] }), false, d.name, "unsupported drop effects", 37);
-  many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [8, 16] }), false, d.name, "child slot mismatch", 38);
+  many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [0] }), false, d.name, "unsupported drop effects", 37);
+  many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [0, 8] }), false, d.name, "child slot mismatch", 38);
   for mutation in 0..5 {
     let changed: ir.Op[] = [];
     let calls = 0;
@@ -225,7 +225,7 @@ function many_checks(target: string): void {
   many_expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: wrong_child }] }, layout), false, d.name, "child release mismatch", 45);
   let missing = [ops[0], ops[1], ops[2], ops[3], ops[6]];
   many_expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: missing }] }, layout), false, d.name, "unsupported drop effects", 46);
-  expect(proof.drop_body(d, proof.FlatChild { offset: 8 }), false, d.name, 47);
+  expect(proof.drop_body(d, proof.FlatChild { offset: 0 }), false, d.name, 47);
   expect(proof.release_body_many(r, d, layout), true, r.name, 48);
   optimized_checks(d, r, layout);
 }
@@ -241,7 +241,7 @@ function optimized_drop(d: ssa.SFunc, layout: proof.FlatChildren): void {
       changed = changed.with(2, ssa.SInst { ...ops[2], args: [ops[0].result] });
     }
     if (mode == 1) {
-      changed = changed.with(1, ssa.SInst { ...ops[1], imm: 0 });
+      changed = changed.with(1, ssa.SInst { ...ops[1], imm: ops[1].imm + 8 });
     }
     if (mode == 2) {
       changed = changed.with(2, ssa.SInst { ...ops[2], str: "__fern_rc_inc" });

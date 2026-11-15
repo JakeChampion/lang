@@ -1,0 +1,219 @@
+// Runs the simulation on an offscreen canvas and reads the pixels back. It
+// is a shared object: check() gives one digit for each check that passes.
+// internal/testing/e2e loads it with Mesa's OpenGL ES on the host. With
+// FLUID_PNG set to a directory, it writes the pictures there as PNG files.
+import "std/android/draw";
+import "std/android/gl";
+import "std/android/testkit";
+import "std/png";
+import "std/rand";
+import "./config";
+import "./fluid";
+import "./overlay";
+import "./overlay_test";
+import "./screen";
+import "./sim";
+
+const W: i32 = 180;
+
+const H: i32 = 320;
+
+function saved(f: draw.Frame, name: string): void {
+  if let Some(out) = env("FLUID_PNG") {
+    let ok = testkit.save_png(f, out + "/" + name + ".png");
+  }
+}
+
+// The frame that the canvas shows for the fluid.
+function shown(c: gl.Canvas, f: sim.Fluid, cfg: config.Config): draw.Frame {
+  f.render(cfg, f.window());
+  return c.read();
+}
+
+// The sum of the red, green and blue of the pixel at x and y.
+function light(f: draw.Frame, x: i32, y: i32): i32 {
+  let p = f.pixel(x, y);
+  return (p & 255) + (p >> 8 & 255) + (p >> 16 & 255);
+}
+
+// The pixels of the rows from y0 up to y1 that are lighter than the
+// background and its dither.
+function lit(f: draw.Frame, y0: i32, y1: i32): i32 {
+  let n = 0;
+  for y in y0..y1 {
+    for x in 0..f.width {
+      if (light(f, x, y) > 150) {
+        n += 1;
+      }
+    }
+  }
+  return n;
+}
+
+// The dither of the bloom changes a channel of the background by less than
+// this.
+const DITHER: i32 = 16;
+
+// Each check is a digit of the result:
+// 1. A new fluid shows the background colour.
+// 2. A splat shows dye at its place, and none far from it.
+// 3. Steps move the dye, and a fluid that takes no step shows the same
+//    picture again.
+// 4. The dye stays when the window gets a new size.
+// 5. The bloom and the sun rays each change the picture.
+// 6. The capture has the capture resolution and shows the dye.
+// 7. The canvas draws a texture over the fluid after `resume`.
+// 8. The frame of the app shows the button over the fluid, then the dialog
+//    over a dark fluid, and the text of a GPU that cannot run the fluid.
+pub function check(): i32 {
+  let Some(c) = gl.open_offscreen(W, H) else {
+    return 0;
+  };
+  let cfg = config.Config { ...config.defaults(), dye_resolution: 128, sim_resolution: 64, capture_resolution: 64, back_color: config.Rgb { r: 0.0, g: 0.0, b: 0.25 } };
+  let Some(first) = sim.open(cfg, W, H, rand.rng_seed(7i64)) else {
+    gl.close(c);
+    return 0;
+  };
+  let n = 0;
+  let empty = shown(c, first, cfg);
+  saved(empty, "1-empty");
+  if (testkit.near(empty.pixel(W / 2, H / 2), draw.rgb(0, 0, 64), DITHER) && testkit.near(empty.pixel(3, 3), draw.rgb(0, 0, 64), DITHER) && lit(empty, 0, H) == 0) {
+    n += 1;
+  }
+  draw.release(empty);
+
+  // The y of a splat goes up, so 0.75 is a quarter of the way down the frame.
+  let f = first.splat(cfg, 0.5, 0.75, 0.0, -600.0, config.Rgb { r: 1.5, g: 0.3, b: 0.0 });
+  let splat = shown(c, f, cfg);
+  saved(splat, "2-splat");
+  if (light(splat, W / 2, H / 4) > 300 && lit(splat, 0, H / 2) > 50 && lit(splat, H / 2, H) == 0) {
+    n += 10;
+  }
+
+  for i in 0..40 {
+    f = f.step(cfg, 0.016666666666666666);
+  }
+  let moved = shown(c, f, cfg);
+  saved(moved, "3-moved");
+  let still = shown(c, f, cfg);
+  if (lit(moved, H / 2, H) > 50 && testkit.differ(moved, still, 0) == 0) {
+    n += 100;
+  }
+  draw.release(splat);
+  draw.release(still);
+
+  let wide = c.attach_offscreen(H, W);
+  f = f.resized(cfg, H, W);
+  let turned = shown(wide, f, cfg);
+  saved(turned, "4-resized");
+  if (turned.width == H && turned.height == W && lit(turned, 0, W) > 50) {
+    n += 1000;
+  }
+  draw.release(moved);
+
+  let plain_cfg = config.Config { ...cfg, bloom: false, sunrays: false, shading: false };
+  let plain_fluid = f.with_keywords(plain_cfg);
+  let plain = shown(wide, plain_fluid, plain_cfg);
+  saved(plain, "5-plain");
+  let rays_cfg = config.Config { ...plain_cfg, sunrays: true };
+  let rays = shown(wide, f.with_keywords(rays_cfg), rays_cfg);
+  let bloom_cfg = config.Config { ...plain_cfg, bloom: true };
+  let bloom = shown(wide, f.with_keywords(bloom_cfg), bloom_cfg);
+  if (testkit.differ(plain, turned, 4) > 0 && testkit.differ(plain, rays, 4) > 0 && testkit.differ(plain, bloom, 4) > 0) {
+    n += 10000;
+  }
+  draw.release(rays);
+  draw.release(bloom);
+  draw.release(turned);
+
+  let picture = f.capture(cfg);
+  let bright = 0;
+  for i in 0..picture.pixels.len() / 4 {
+    if (picture.pixels[i * 4] as i32 > 100) {
+      bright += 1;
+    }
+  }
+  if let Some(out) = env("FLUID_PNG") {
+    if let Ok(bytes) = png.encode_rgba8(picture.width, picture.height, picture.pixels) {
+      let wrote = write_file_bytes(out + "/6-capture.png", bytes);
+    }
+  }
+  if (picture.width == 114 && picture.height == 64 && picture.pixels.len() == 114 * 64 * 4 && bright > 10) {
+    n += 100000;
+  }
+
+  let dot = draw.offscreen(2, 2);
+  dot.store(0, 0, 2, 2, draw.rgb(0, 255, 0));
+  let t = gl.texture(dot);
+  draw.release(dot);
+  plain_fluid.render(plain_cfg, plain_fluid.window());
+  wide.resume();
+  wide.draw(t, 10, 10, 1.0, 0, W);
+  let over = wide.read();
+  saved(over, "7-over");
+  if (over.pixel(10, 10) == draw.rgb(0, 255, 0) && over.pixel(11, 11) == draw.rgb(0, 255, 0) && testkit.differ(over, plain, 0) == 4) {
+    n += 1000000;
+  }
+  draw.release(over);
+  draw.release(plain);
+  gl.free(t);
+  let tall = wide.attach_offscreen(360, 640);
+  n += controls(tall, plain_fluid.resized(plain_cfg, 360, 640), plain_cfg);
+  sim.close(plain_fluid);
+  gl.close(tall);
+  return n;
+}
+
+// The frame of the app for the model `m`: the fluid, and the controls over
+// it.
+function framed(c: gl.Canvas, f: sim.Fluid, m: fluid.Model, mt: overlay.Metrics, unfit: boolean, name: string): draw.Frame {
+  f.render(m.cfg, f.window());
+  c.resume();
+  if (unfit) {
+    c.clear(draw.rgb(0, 0, 0));
+  }
+  let art = screen.paint(screen.no_art(), c, overlay_test.test_fonts(), mt, m, 0i64, unfit);
+  let out = c.read();
+  saved(out, name);
+  screen.free_art(art);
+  return out;
+}
+
+// 10000000 when the frames of the app show the controls.
+function controls(c: gl.Canvas, f: sim.Fluid, cfg: config.Config): i32 {
+  let mt = overlay.Metrics { width: 360, height: 640, top: 20, bottom: 0, scale: 1.0, font: 1.0 };
+  let l = overlay.layout(overlay_test.test_fonts(), mt);
+  let m = fluid.new(cfg, true, 3i64, 0i64).laid_out(l);
+  let surface = draw.rgb(12, 16, 21);
+  let closed = framed(c, f, m, mt, false, "8-button");
+  let b = l.button;
+  let ok = testkit.near(closed.pixel(b.x + 4, b.y + b.h / 2), surface, 6) && testkit.near(closed.pixel(2, 638), draw.rgb(0, 0, 64), 2);
+  draw.release(closed);
+  let open = framed(c, f, m.toggle_dialog(), mt, false, "9-dialog");
+  ok = ok && testkit.near(open.pixel(l.panel.x + 12, l.panel.y + 12), surface, 6) && testkit.near(open.pixel(2, 638), draw.rgb(0, 0, 35), 2);
+  // The first row is lighter than the panel.
+  let row = l.rows[0];
+  ok = ok && testkit.near(open.pixel(l.list.x + row.x + 3, l.list.y + row.y + row.h / 2), draw.rgb(19, 23, 28), 6);
+  draw.release(open);
+  // A drag up to the end of the list shows the last row, which is on: it
+  // has the accent colour.
+  let x = (l.list.x + 20) as f64;
+  let y = (l.list.y + l.list.h - 4) as f64;
+  let end = m.toggle_dialog().touched(0, x, y, 0i64).touched(2, x, y - 2000.0, 0i64).touched(1, x, y - 2000.0, 0i64);
+  let last = l.rows[7];
+  let scrolled = framed(c, f, end, mt, false, "10-scrolled");
+  let p = scrolled.pixel(l.list.x + last.x + 3, l.list.y + last.y - end.scroll + last.h / 2);
+  ok = ok && end.scroll == l.content - l.list.h && (p >> 8 & 255) > 35 && (p >> 16 & 255) > 40;
+  draw.release(scrolled);
+  let unfit = framed(c, f, m, mt, true, "11-unfit");
+  ok = ok && unfit.pixel(2, 2) == draw.rgb(0, 0, 0) && lit(unfit, 280, 360) > 100 && lit(unfit, 0, 200) == 0;
+  draw.release(unfit);
+  if (ok) {
+    return 10000000;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  return 0;
+}

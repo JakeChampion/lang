@@ -73,9 +73,9 @@ x86_64/map_probe_chain.ir	235291505
 x86_64/map_string.text	9772
 x86_64/map_string.ir	51764454	2
 x86_64/ordmap_insert.text	5815
-x86_64/ordmap_insert.ir	71065393
+x86_64/ordmap_insert.ir	71328152
 x86_64/pmap_insert.text	3379
-x86_64/pmap_insert.ir	49145731
+x86_64/pmap_insert.ir	47881009
 x86_64/pvec_with.text	3332
 x86_64/pvec_with.ir	50694324
 x86_64/record_update.ir	34412384
@@ -85,7 +85,7 @@ x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	2339
 x86_64/sort_ints.ir	22018892
 x86_64/sort_strings.text	3961
-x86_64/sort_strings.ir	95874142
+x86_64/sort_strings.ir	93965542
 x86_64/string_build.text	2087
 x86_64/string_build.ir	38746123
 x86_64/string_count_byte.text	1422
