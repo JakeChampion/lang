@@ -3077,7 +3077,7 @@ function index_names(data: string, offsets: i64[], raw: i32): string[][] {
 
 const INDEX_PACK_USAGE: string = "usage: git index-pack [-v] [-o <index-file>] [--keep | --keep=<msg>] [--[no-]rev-index] [--verify] [--strict[=<msg-id>=<severity>...]] [--fsck-objects[=<msg-id>=<severity>...]] (<pack-file> | --stdin [--fix-thin] [<pack-file>])";
 
-struct PackArgs { stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, format: string, bad: string, checking: checkpack.Policy, failure: string }
+struct PackArgs { verbose: boolean, verify: boolean, stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, format: string, bad: string, checking: checkpack.Policy, failure: string }
 
 // The number at the start of `text` in base 10, or in the base that the C
 // function `strtoul` gives for base 0 when `c` is true: 0x for 16 and 0
@@ -3105,12 +3105,22 @@ function number_of(text: string, c: boolean): (i64, i32) {
 }
 
 function pack_args(argv: string[]): PackArgs {
-  let a = PackArgs { stdin: false, thin: false, rev: true, out: "", file: "", keep: "", keeps: false, version: 2, limit: 2147483647, format: "", bad: "", checking: checkpack.policy(), failure: "" };
+  let a = PackArgs { verbose: false, verify: false, stdin: false, thin: false, rev: true, out: "", file: "", keep: "", keeps: false, version: 2, limit: 2147483647, format: "", bad: "", checking: checkpack.policy(), failure: "" };
   let i = 0;
   while (i < argv.len()) {
     let x = argv[i];
     if (x == "--stdin") {
       a = PackArgs { ...a, stdin: true };
+    } else if (x == "-v") {
+      a = PackArgs { ...a, verbose: true };
+    } else if (x == "--verify") {
+      a = PackArgs { ...a, verify: true };
+    } else if (x.starts_with("--threads=")) {
+      let text = objects.part(x, 10, x.len());
+      let (_, used) = number_of(text, false);
+      if (text.len() == 0 || used != text.len()) {
+        return PackArgs { ...a, bad: "usage" };
+      }
     } else if (x == "--strict" || x.starts_with("--strict=") || x == "--fsck-objects" || x.starts_with("--fsck-objects=")) {
       let strict = x == "--strict" || x.starts_with("--strict=");
       let start = if (strict) { 9 } else { 15 };
@@ -3255,10 +3265,38 @@ function index_pack(argv: string[]): i32 {
   if (a.stdin && a.format.len() > 0) {
     return fatal("options '--object-format' and '--stdin' cannot be used together");
   }
+  if (a.verify && a.file.len() == 0) {
+    return fatal("--verify with no packfile name given");
+  }
   let (idx_name, rev_name) = match (index_names_of(a)) {
     Ok(names) => names,
     Err(message) => { return fatal(message); },
   };
+  // --verify writes no file: it checks the index of git, and its
+  // version gives the version of the index.
+  let existing_idx: u8[] = [];
+  if (a.verify) {
+    let checked_name = if (idx_name.len() > 0) { idx_name } else { a.file };
+    let Ok(pack_path) = derived(checked_name, "idx", "pack") else {
+      return fatal("Cannot open existing pack file '" + checked_name + "'");
+    };
+    if let Err(_) = stat(pack_path) {
+      return fatal("Cannot open existing pack file '" + checked_name + "'");
+    }
+    let Ok(old) = read_file_bytes(checked_name) else {
+      return fatal("Cannot open existing pack idx file for '" + checked_name + "'");
+    };
+    match (pack.index_of(old, algo, checked_name)) {
+      Ok(ix) => {
+        a = PackArgs { ...a, version: ix.version };
+      },
+      Err(message) => {
+        eprint("error: " + message);
+        return fatal("Cannot open existing pack idx file for '" + checked_name + "'");
+      },
+    }
+    existing_idx = old;
+  }
   // A packfile on the command line is mapped, not read into memory.
   let data = if (a.stdin) {
     match (io.read_all_stdin_bytes()) {
@@ -3275,6 +3313,7 @@ function index_pack(argv: string[]): i32 {
     },
   };
   let raw = algo;
+  let started = monotonic_ns();
   let o = index.Options { width: algo, version: a.version, limit: a.limit };
   let built = match (index.build_with(bytes, o, (d: string, offsets: i64[]): string[][] => index_names(d, offsets, raw), local_objects(repo, a.thin))) {
     Ok(b) => b,
@@ -3283,6 +3322,9 @@ function index_pack(argv: string[]): i32 {
       return 128;
     },
   };
+  if (a.verbose) {
+    let _ = stderr().write_bytes(progress_text(built, algo, a.stdin, monotonic_ns() - started).bytes());
+  }
   let pending: checkpack.Task[] = [];
   if (a.checking.enabled) {
     let checked = checkpack.validate(built, algo, a.checking, local_objects(repo, repo.len() > 0));
@@ -3293,6 +3335,31 @@ function index_pack(argv: string[]): i32 {
       return 128;
     }
     pending = checked.delayed;
+  }
+  if (a.verify) {
+    let idx_path = if (idx_name.len() > 0) { idx_name } else { a.file };
+    let failure = verified(idx_path, existing_idx, built.idx);
+    if (failure.len() > 0) {
+      return fatal(failure);
+    }
+    if (a.rev && rev_name.len() > 0) {
+      if let Ok(old_rev) = read_file_bytes(rev_name) {
+        let rev_failure = verified(rev_name, old_rev, built.rev);
+        if (rev_failure.len() > 0) {
+          return fatal(rev_failure);
+        }
+      }
+    }
+    if (a.checking.enabled) {
+      let checked = checkpack.queued(built, algo, a.checking, pending, local_objects(repo, repo.len() > 0), repo.len() > 0, true);
+      for line in checked.lines {
+        eprint(line);
+      }
+      if (!checked.ok) {
+        return 128;
+      }
+    }
+    return 0;
   }
   let stem = if (repo.len() > 0) { repo[0].objects() + "/pack/pack-" + built.name } else { "" };
   let report = match (kept(a, stem)) {
@@ -3333,6 +3400,96 @@ function index_pack(argv: string[]): i32 {
     }
   }
   return 0;
+}
+
+// The message of git when the file `path` with the bytes `old` is not the
+// file `new` that index-pack makes, or "": `hashfd_check` of git compares
+// the file in blocks of 128 KiB.
+function verified(path: string, old: u8[], new: u8[]): string {
+  let block = 131072;
+  let at = 0;
+  while (at < new.len()) {
+    let end = (at + block).min(new.len());
+    if (old.len() < end) {
+      return path + ": sha1 file truncated";
+    }
+    for i in at..end {
+      if (old[i] != new[i]) {
+        return "sha1 file '" + path + "' validation error";
+      }
+    }
+    at = end;
+  }
+  if (old.len() > new.len()) {
+    return path + ": sha1 file has trailing garbage";
+  }
+  return "";
+}
+
+// The lines of the progress of a count to `total` with the title `title`,
+// as `display_progress` of git writes them to a pipe: a line for each new
+// percent from the count `from`, each line after a carriage return, and the
+// last line with `end` and a line end. `tail` goes after the counts of the
+// last line.
+function progress_lines(title: string, from: i64, total: i64, tail: string, end: string): string {
+  if (total == 0) {
+    return "";
+  }
+  let out = "";
+  let last: i64 = -1;
+  let k = from;
+  while (k <= total) {
+    let percent = k * 100 / total;
+    if (percent != last) {
+      last = percent;
+      out += title + ": " + percent.to_string().pad_start_str(3, " ") + "% (" + k.to_string() + "/" + total.to_string() + ")\r";
+    }
+    k += 1;
+  }
+  return out + title + ": 100% (" + total.to_string() + "/" + total.to_string() + ")" + tail + ", " + end + ".\n";
+}
+
+// A count of bytes as `strbuf_humanise_bytes` of git writes it.
+function humanise(n: i64, rate: boolean): string {
+  let units = if (rate) { ["GiB/s", "MiB/s", "KiB/s"] } else { ["GiB", "MiB", "KiB"] };
+  let scales: i64[] = [1073741824, 1048576, 1024];
+  for k in 0..3 {
+    if (n > scales[k]) {
+      let x = n / scales[k];
+      let frac = n % scales[k] / (scales[k] / 1024) * 100 / 1024;
+      return x.to_string() + "." + frac.to_string().pad_start_str(2, "0") + " " + units[k];
+    }
+  }
+  return n.to_string() + (if (rate) { if (n == 1) { " byte/s" } else { " bytes/s" } } else if (n == 1) { " byte" } else { " bytes" });
+}
+
+// The progress of `index-pack -v`: the objects, with the bytes and their
+// rate from the standard input, and the deltas, as git resolves them in
+// one thread.
+function progress_text(built: index.Built, width: i32, stdin: boolean, nanos: i64): string {
+  let ix = match (pack.index_of(built.idx, width, "")) {
+    Ok(v) => v,
+    Err(_) => {
+      return "";
+    },
+  };
+  let w = pack.whole(built.data, width);
+  let deltas: i64 = 0;
+  for i in 0..ix.count {
+    let e = pack.entry_in(w, pack.offset_at(ix, i));
+    if (e.kind == 6 || e.kind == 7) {
+      deltas += 1;
+    }
+  }
+  let count = built.input_count as i64;
+  let tail = "";
+  if (stdin) {
+    let misecs = nanos / 1000000 * 1024 / 1000;
+    let bytes = built.data.len() as i64;
+    tail = ", " + humanise(bytes, false) + " | " + humanise(bytes / (if (misecs > 0) { misecs } else { 1 }) * 1024, true);
+  }
+  let out = progress_lines(if (stdin) { "Receiving objects" } else { "Indexing objects" }, 1, count, tail, "done");
+  return out + progress_lines("Resolving deltas", 0, deltas, "", "done");
 }
 
 // ---- verify-pack ----

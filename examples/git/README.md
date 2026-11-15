@@ -17,8 +17,10 @@ git verify-pack [-v] FILE.idx...
 git ls-tree [-r] [-t] [-d] [-l] [-z] [--name-only] [--object-only]
             [--full-name] [--full-tree] [--abbrev[=N]] TREE [PATH...]
 git log [OPTION...] [REVISION...] [-- PATH...]
-git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
-               [--index-version=N[,OFFSET]] [--[no-]rev-index] [FILE.pack]
+git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
+               [--index-version=N[,OFFSET]] [--[no-]rev-index] [--verify]
+               [--strict[=MSG=LEVEL...]] [--fsck-objects[=MSG=LEVEL...]]
+               [--threads=N] [FILE.pack]
 ```
 
 - `hash-object` prints the name of the object for each file, and for the
@@ -136,7 +138,12 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   reverse index, and prints the checksum of the packfile. It reads the
   packfile from a file or from the standard input. `--fix-thin` adds the
   bases of a thin pack from the store. For a packfile that is not sound,
-  the message and the exit status are those of git.
+  the message and the exit status are those of git. `--strict` and
+  `--fsck-objects` check the objects as git does. `--verify` writes no
+  file: it compares the index and the reverse index of git with those
+  that it makes. `-v` writes the progress of git: the lines of the deltas
+  are those of git with `--threads=1`, and the rate of the bytes from the
+  standard input is that of the port.
 
 The port reads and writes repositories with SHA-1 names and with SHA-256
 names (`git init --object-format=sha256`). The key
@@ -234,9 +241,6 @@ the git of the machine. With git 2.43, four things are different:
 
 - `rev-parse --short=N` with N above 40 in a repository with SHA-256
   names. The port gives the full name, and git 2.43 stops at 40 digits.
-
-- `index-pack -v`, `--verify`, `--strict` and `--fsck-objects`. The port
-  prints the usage of git for them.
 
 - The changed-path Bloom filters of version 2
   (`commitGraph.changedPathsVersion`). The port walks a path without
@@ -342,6 +346,8 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   sparse packfile of more than 4 GiB, made at test time.
   `gitIndexPackCases` runs `index-pack` on each form of its input, and on
   packfiles with a changed byte at each place of their first objects.
+  It also runs `-v`, and `--verify` with indexes that are not those of
+  git.
 
 - `TestSelfHostExampleGitRevisions` runs `rev-parse` on each form of a
   revision, with the reflogs, an upstream and an index with conflicts.
