@@ -1,0 +1,745 @@
+// The log of ranges of lines of `log -L` (line-log.c and line-range.c of
+// git): the ranges of each `-L`, which follow the changes of their files
+// back through the history, one commit at a time.
+import "std/array";
+import "std/linediff";
+import "std/string";
+import "../../coreutils/lib/bre";
+import "./objects";
+import "./store";
+import "./treediff";
+
+// ---- Sets of ranges ----
+
+// A set of ranges of lines is an array of pairs: the first line of a
+// range from 0, and the line after its last line. The ranges are in
+// order, and a range can be empty.
+
+// The union of `a` and `b`, with no empty range and with each run of
+// ranges that touch as one range (`range_set_union`).
+pub function union(a: i32[], b: i32[]): i32[] {
+  let out: i32[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.len() || j < b.len()) {
+    let s = 0;
+    let e = 0;
+    if (i < a.len() && j < b.len()) {
+      if (a[i] < b[j] || a[i] == b[j] && a[i + 1] < b[j + 1]) {
+        s = a[i];
+        e = a[i + 1];
+        i += 2;
+      } else {
+        s = b[j];
+        e = b[j + 1];
+        j += 2;
+      }
+    } else if (i < a.len()) {
+      s = a[i];
+      e = a[i + 1];
+      i += 2;
+    } else {
+      s = b[j];
+      e = b[j + 1];
+      j += 2;
+    }
+    if (s == e) {
+      continue;
+    }
+    let n = out.len();
+    if (n == 0 || out[n - 1] < s) {
+      out = out.append(s).append(e);
+    } else if (out[n - 1] < e) {
+      out = out.with(n - 1, e);
+    }
+  }
+  return out;
+}
+
+// The lines of `a` that are not in `b` (`range_set_difference`).
+function difference(a: i32[], b: i32[]): i32[] {
+  let out: i32[] = [];
+  let j = 0;
+  let i = 0;
+  while (i < a.len()) {
+    let start = a[i];
+    let end = a[i + 1];
+    while (start < end) {
+      while (j < b.len() && start >= b[j + 1]) {
+        j += 2;
+      }
+      if (j >= b.len() || end <= b[j]) {
+        out = out.append(start).append(end);
+        break;
+      }
+      if (start >= b[j]) {
+        start = b[j + 1];
+      } else if (end > b[j]) {
+        if (start < b[j]) {
+          out = out.append(start).append(b[j]);
+        }
+        start = b[j + 1];
+      }
+    }
+    i += 2;
+  }
+  return out;
+}
+
+// The ranges of `rs` moved by the lines that the hunks before each range
+// add or remove: the hunks are `parent` and `target` (`range_set_shift_diff`).
+function shift(rs: i32[], parent: i32[], target: i32[]): i32[] {
+  let out: i32[] = [];
+  let j = 0;
+  let offset = 0;
+  let i = 0;
+  while (i < rs.len()) {
+    while (j < target.len() && rs[i] >= target[j]) {
+      offset += parent[j + 1] - parent[j] - (target[j + 1] - target[j]);
+      j += 2;
+    }
+    out = out.append(rs[i] + offset).append(rs[i + 1] + offset);
+    i += 2;
+  }
+  return out;
+}
+
+// The ranges in order with the ranges that overlap or touch as one, and
+// with no empty range (`sort_and_merge_range_set`).
+function sort_merge(rs: i32[]): i32[] {
+  let n = rs.len() / 2;
+  let order: i32[] = [];
+  for k in 0..n {
+    order = order.append(k);
+  }
+  // An insertion sort keeps the order of ranges with one start, as the
+  // sort of git does for the ranges of one file.
+  for a in 1..n {
+    let k = a;
+    while (k > 0 && rs[2 * order[k - 1]] > rs[2 * order[k]]) {
+      let t = order[k - 1];
+      order = order.with(k - 1, order[k]).with(k, t);
+      k -= 1;
+    }
+  }
+  let out: i32[] = [];
+  for k in order {
+    let s = rs[2 * k];
+    let e = rs[2 * k + 1];
+    if (s == e) {
+      continue;
+    }
+    let m = out.len();
+    if (m > 0 && s <= out[m - 1]) {
+      if (out[m - 1] < e) {
+        out = out.with(m - 1, e);
+      }
+    } else {
+      out = out.append(s).append(e);
+    }
+  }
+  return out;
+}
+
+// The hunks of `parent` and `target` whose target side overlaps a range
+// of `rs` (`diff_ranges_filter_touched`).
+function touched(parent: i32[], target: i32[], rs: i32[]): (i32[], i32[]) {
+  let tp: i32[] = [];
+  let tt: i32[] = [];
+  let j = 0;
+  if (rs.len() == 0) {
+    return (tp, tt);
+  }
+  let i = 0;
+  while (i < target.len()) {
+    while (target[i] >= rs[j + 1]) {
+      j += 2;
+      if (j == rs.len()) {
+        return (tp, tt);
+      }
+    }
+    if (!(target[i + 1] <= rs[j] || rs[j + 1] <= target[i])) {
+      tp = tp.append(parent[i]).append(parent[i + 1]);
+      tt = tt.append(target[i]).append(target[i + 1]);
+    }
+    i += 2;
+  }
+  return (tp, tt);
+}
+
+// The ranges `rs` of the new side of a diff with the hunks `parent` and
+// `target`, on the old side, and the old sides of the hunks that touch a
+// range (`range_set_map_across_diff`). The lines of a hunk that touches a
+// range go to its old side, and the other lines move by the lines that
+// the hunks before them add or remove.
+pub function map_across(rs: i32[], parent: i32[], target: i32[]): (i32[], i32[]) {
+  let (tp, tt) = touched(parent, target, rs);
+  return (union(shift(difference(rs, tt), parent, target), tp), tp);
+}
+
+// ---- The ranges of each file ----
+
+// The order of two paths, as `strcmp` gives it.
+function compare(a: u8[], b: u8[]): i32 {
+  let n = a.len().min(b.len());
+  for i in 0..n {
+    if (a[i] != b[i]) {
+      return if (a[i] < b[i]) { -1 } else { 1 };
+    }
+  }
+  return a.len() - b.len();
+}
+
+// The ranges of one file at one commit. `pair` holds the change of the
+// commit that touches the ranges, for the output of the commit.
+pub struct Entry { path: string, ranges: i32[], pair: treediff.Change[] }
+
+function entry_of(path: string, ranges: i32[]): Entry {
+  return Entry { path: path, ranges: ranges, pair: [] };
+}
+
+// The ranges of `a` and of `b` by path, with the union of the ranges of
+// one path (`line_log_data_merge`). Each list is in the order of its
+// paths, as git keeps it.
+pub function merge(a: Entry[], b: Entry[]): Entry[] {
+  let out: Entry[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.len() || j < b.len()) {
+    let cmp = if (i >= a.len()) { 1 } else if (j >= b.len()) { -1 } else { compare(a[i].path.bytes(), b[j].path.bytes()) };
+    if (cmp < 0) {
+      out = out.append(entry_of(a[i].path, a[i].ranges));
+      i += 1;
+    } else if (cmp == 0) {
+      out = out.append(entry_of(a[i].path, union(a[i].ranges, b[j].ranges)));
+      i += 1;
+      j += 1;
+    } else {
+      out = out.append(entry_of(b[j].path, b[j].ranges));
+      j += 1;
+    }
+  }
+  return out;
+}
+
+// ---- The parse of `-L` ----
+
+// The places in a blob after each line (`fill_line_ends`): 0, then the
+// place of each line end, and of the last byte when it is not a line end.
+// The count of lines is one less than the count of places.
+function line_ends(data: u8[]): i32[] {
+  let ends: i32[] = [0];
+  for num in 0..data.len() {
+    if (data[num] == b'\n' || num == data.len() - 1) {
+      ends = ends.append(num);
+    }
+  }
+  return ends;
+}
+
+// The start of the line `line` from 0, or the end of the blob for the
+// line after the last (`nth_line`).
+function nth_line(ends: i32[], line: i32): i32 {
+  return if (line == 0) { 0 } else { ends[line] + 1 };
+}
+
+// A blob and the ends of its lines, for the parse of a range.
+struct Blob { data: u8[], ends: i32[], lines: i32 }
+
+function c_space(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\n' || b == 11 || b == 12 || b == b'\r';
+}
+
+// The number at `at` as `strtol` reads it, and the place after it, which
+// is `at` when there are no digits.
+function strtol(s: string, at: i32): (i64, i32) {
+  let i = at;
+  while (i < s.len() && c_space(s[i])) {
+    i += 1;
+  }
+  let negative = false;
+  if (i < s.len() && (s[i] == b'+' || s[i] == b'-')) {
+    negative = s[i] == b'-';
+    i += 1;
+  }
+  let first = i;
+  let n: i64 = 0;
+  while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
+    if (n < 1000000000000) {
+      n = n * 10 + (s[i] - b'0') as i64;
+    }
+    i += 1;
+  }
+  if (i == first) {
+    return (0, at);
+  }
+  return (if (negative) { -n } else { n }, i);
+}
+
+// The end of the text of `/REGEX/` that starts at `at`, after its last
+// `/`, or -1 when no `/` ends it.
+function regex_end(s: string, at: i32): i32 {
+  let t = at + 1;
+  while (t < s.len() && s[t] != b'/') {
+    if (s[t] == b'\\') {
+      t += 1;
+    }
+    t += 1;
+  }
+  return if (t < s.len()) { t + 1 } else { -1 };
+}
+
+// The end of the range part of the argument `arg` of `-L`, where the
+// file name starts (`skip_range_arg`), or -1.
+function skip_range(arg: string): i32 {
+  if (arg.starts_with(":") || arg.starts_with("^:")) {
+    let at = if (arg[0] == b'^') { 1 } else { 0 };
+    let term = funcname_end(arg, at);
+    return if (term == at + 1) { -1 } else { term };
+  }
+  let after = skip_loc(arg, 0, true);
+  if (after < arg.len() && arg[after] == b',') {
+    return skip_loc(arg, after + 1, false);
+  }
+  return after;
+}
+
+// The end of the pattern of `:FUNCNAME` from the `:` at `at`.
+function funcname_end(arg: string, at: i32): i32 {
+  let term = at + 1;
+  while (term < arg.len() && arg[term] != b':') {
+    if (arg[term] == b'\\' && term + 1 < arg.len()) {
+      term += 1;
+    }
+    term += 1;
+  }
+  return term;
+}
+
+// The end of one place of a range at `at` with no regard to the blob:
+// the scan of `parse_loc`. `first` is true for the start of a range.
+function skip_loc(s: string, at_in: i32, first: boolean): i32 {
+  let at = at_in;
+  let (_, term) = strtol(s, at);
+  if (term != at) {
+    return term;
+  }
+  if (first && at < s.len() && s[at] == b'^') {
+    at += 1;
+  }
+  if (at >= s.len() || s[at] != b'/') {
+    return at;
+  }
+  let e = regex_end(s, at);
+  return if (e < 0) { at } else { e };
+}
+
+// The result of the parse of one place: the place after it in the text,
+// the line, and the message of git when it stops.
+struct Loc { term: i32, line: i64, died: string }
+
+// The compiled regex of `-L`: a basic regex where `^` and `$` match at
+// each line end, and `.` matches no line end (REG_NEWLINE).
+function regex_of(pattern: string): bre.Bre {
+  return bre.bre_compile_syntax(pattern, bre.Syntax { ...bre.posix_basic(), newline_anchor: true, multiline: true });
+}
+
+// The first match of `re` in the blob from `from`, which stops at a zero
+// byte as the C string of git does: its start and its end, or -1.
+function search(re: bre.Bre, b: Blob, from: i32): (i32, i32) {
+  let hi = __memchr_bytes(b.data, 0, from);
+  return re.search_from_bytes(b.data, from, if (hi < 0) { b.data.len() } else { hi });
+}
+
+// One place of a range (`parse_loc`): a line number, `+N` or `-N` after
+// the start (when `begin` is the line after the start), or `/REGEX/`,
+// searched from the line `-begin` for a start (with `^/REGEX/` from the
+// first line). The lines count from 1.
+function parse_loc(s: string, at_in: i32, b: Blob, begin_in: i64): Loc {
+  let at = at_in;
+  let begin = begin_in;
+  if (1 <= begin && at < s.len() && (s[at] == b'+' || s[at] == b'-')) {
+    let (num_in, term) = strtol(s, at + 1);
+    if (term == at + 1) {
+      return Loc { term: at, line: 0, died: "" };
+    }
+    if (num_in == 0) {
+      return Loc { term: term, line: 0, died: "-L invalid empty range" };
+    }
+    let num = if (s[at] == b'-') { -num_in } else { num_in };
+    let line = if (num > 0) { begin + num - 2 } else if (begin + num > 0) { begin + num } else { 1 };
+    return Loc { term: term, line: line, died: "" };
+  }
+  let (num, term) = strtol(s, at);
+  if (term != at) {
+    if (num <= 0) {
+      return Loc { term: term, line: 0, died: "-L invalid line number: " + num.to_string() };
+    }
+    return Loc { term: term, line: num, died: "" };
+  }
+  if (begin < 0) {
+    if (at < s.len() && s[at] == b'^') {
+      begin = 1;
+      at += 1;
+    } else {
+      begin = -begin;
+    }
+  }
+  if (at >= s.len() || s[at] != b'/') {
+    return Loc { term: at, line: 0, died: "" };
+  }
+  let e = regex_end(s, at);
+  if (e < 0) {
+    return Loc { term: at, line: 0, died: "" };
+  }
+  let pattern = objects.part(s, at + 1, e - 1);
+  let idx = (begin - 1) as i32;
+  let line = nth_line(b.ends, idx);
+  let re = regex_of(pattern);
+  if (re.err.len() > 0) {
+    return Loc { term: e, line: 0, died: "-L parameter '" + pattern + "' starting at line " + (idx + 1).to_string() + ": " + re.err };
+  }
+  let (ms, _) = search(re, b, line);
+  if (ms < 0) {
+    return Loc { term: e, line: 0, died: "-L parameter '" + pattern + "' starting at line " + (idx + 1).to_string() + ": No match" };
+  }
+  // The line that holds the start of the match.
+  let k = idx;
+  let at_line = line;
+  while (true) {
+    let more = k < b.lines;
+    k += 1;
+    if (!more) {
+      break;
+    }
+    let next = nth_line(b.ends, k);
+    if (at_line <= ms && ms < next) {
+      break;
+    }
+    at_line = next;
+  }
+  return Loc { term: e, line: k as i64, died: "" };
+}
+
+// True when the line from `bol` to `eol` is the line of a function for
+// the hunk headers of git: it starts with a letter, `_` or `$`.
+function funcname_line(data: u8[], bol: i32, eol: i32): boolean {
+  if (bol == eol) {
+    return false;
+  }
+  let c = data[bol];
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c == b'_' || c == b'$';
+}
+
+// The range of `:FUNCNAME` (`parse_range_funcname`): from the first line
+// of a function that matches the regex, from `anchor`, to the line before
+// the next line of a function.
+function parse_funcname(arg: string, b: Blob, anchor_in: i32): (i32, i64, i64, string) {
+  let at = 0;
+  let anchor = anchor_in;
+  if (arg[0] == b'^') {
+    anchor = 1;
+    at = 1;
+  }
+  let term = funcname_end(arg, at);
+  if (term == at + 1) {
+    return (-1, 0, 0, "");
+  }
+  let pattern = objects.part(arg, at + 1, term);
+  anchor -= 1;
+  let re = regex_of(pattern);
+  if (re.err.len() > 0) {
+    return (term, 0, 0, "-L parameter '" + pattern + "': " + re.err);
+  }
+  let start = nth_line(b.ends, anchor);
+  let found = -1;
+  while (start < b.data.len() && b.data[start] != 0) {
+    let (ms, me) = search(re, b, start);
+    if (ms < 0) {
+      break;
+    }
+    let bol = ms;
+    while (bol > start) {
+      bol -= 1;
+      if (b.data[bol] == b'\n') {
+        break;
+      }
+    }
+    if (b.data[bol] == b'\n') {
+      bol += 1;
+    }
+    let eol = me;
+    while (eol < b.data.len() && b.data[eol] != 0 && b.data[eol] != b'\n') {
+      eol += 1;
+    }
+    if (eol < b.data.len() && b.data[eol] == b'\n') {
+      eol += 1;
+    }
+    if (funcname_line(b.data, bol, eol)) {
+      found = bol;
+      break;
+    }
+    start = eol;
+  }
+  if (found < 0) {
+    return (term, 0, 0, "-L parameter '" + pattern + "' starting at line " + (anchor + 1).to_string() + ": no match");
+  }
+  let begin = 0;
+  while (found > nth_line(b.ends, begin)) {
+    begin += 1;
+  }
+  if (begin >= b.lines) {
+    return (term, 0, 0, "-L parameter '" + pattern + "' matches at EOF");
+  }
+  let end = begin + 1;
+  while (end < b.lines && !funcname_line(b.data, nth_line(b.ends, end), nth_line(b.ends, end + 1))) {
+    end += 1;
+  }
+  return (term, (begin + 1) as i64, end as i64, "");
+}
+
+// The start and the end of the range `arg`, in lines from 1, with 0 for a
+// place that is not given (`parse_range_arg`). The second value is false
+// for a range that is not sound, and the third is the message of git when
+// it stops.
+function parse_range(arg: string, b: Blob, anchor_in: i32): (i64, i64, boolean, string) {
+  let anchor = anchor_in.max(1);
+  if (anchor > b.lines) {
+    anchor = b.lines + 1;
+  }
+  if (arg.starts_with(":") || arg.starts_with("^:")) {
+    let (term, begin, end, died) = parse_funcname(arg, b, anchor);
+    if (died.len() > 0) {
+      return (0, 0, true, died);
+    }
+    return (begin, end, term >= 0 && term == arg.len(), "");
+  }
+  let start = parse_loc(arg, 0, b, -(anchor as i64));
+  if (start.died.len() > 0) {
+    return (0, 0, true, start.died);
+  }
+  let term = start.term;
+  let end: i64 = 0;
+  if (term < arg.len() && arg[term] == b',') {
+    let e = parse_loc(arg, term + 1, b, start.line + 1);
+    if (e.died.len() > 0) {
+      return (0, 0, true, e.died);
+    }
+    term = e.term;
+    end = e.line;
+  }
+  if (term < arg.len()) {
+    return (0, 0, false, "");
+  }
+  if (start.line != 0 && end != 0 && end < start.line) {
+    return (end, start.line, true, "");
+  }
+  return (start.line, end, true, "");
+}
+
+// The start and the end of the range `arg` in the blob `data`, from the
+// line `anchor`, as `parse_range` gives them.
+pub function range_in(arg: string, data: u8[], anchor: i32): (i64, i64, boolean, string) {
+  let ends = line_ends(data);
+  return parse_range(arg, Blob { data: data, ends: ends, lines: ends.len() - 1 }, anchor);
+}
+
+// The path of the name `name` of `-L` from the directory `prefix` below
+// the top of the worktree, or the message of git (`prefix_path`).
+function full_name(prefix: string, name: string, top: string): Result[string, string] {
+  let parts: string[] = [];
+  for p in (prefix + name).split("/") {
+    if (p == "..") {
+      if (parts.len() == 0) {
+        return Err("'" + name + "' is outside repository at '" + top + "'");
+      }
+      parts = array.slice(parts, 0, parts.len() - 1);
+    } else if (p.len() > 0 && p != ".") {
+      parts = parts.append(p);
+    }
+  }
+  return Ok(parts.join("/"));
+}
+
+// The blob of `path` in the tree `tree` (`get_tree_entry`), or the
+// message of git for no entry and for an entry that is not a blob.
+function blob_at(s_in: store.Store, tree: string, path: string): (store.Store, Result[u8[], string]) {
+  let s = s_in;
+  let at = tree;
+  let parts = path.split("/");
+  for k in 0..parts.len() {
+    let (s1, t) = treediff.entries_of(s, at);
+    s = s1;
+    let next = -1;
+    for i in 0..t.count() {
+      if (t.entry_name(i) == parts[k].bytes()) {
+        next = i;
+      }
+    }
+    if (next < 0 || k + 1 < parts.len() && !t.is_tree(next)) {
+      return (s, Err("There is no path " + path + " in the commit"));
+    }
+    at = t.hash_hex(next);
+  }
+  let got = store.read(s, at);
+  return match (got.object) {
+    Ok(o) => (got.store, if (o.kind == "blob") { Ok(o.body) } else { Err("Cannot read blob " + at) }),
+    Err(_) => (got.store, Err("Cannot read blob " + at)),
+  };
+}
+
+// The index of the entry of `path` in `list`, or -1.
+function find(list: Entry[], path: string): i32 {
+  for i in 0..list.len() {
+    if (list[i].path == path) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The ranges of the arguments `args` of `-L` in the tree `tree` of the
+// first commit (`parse_lines`), in the order of their paths, or the
+// message of git when it stops.
+pub function parse(s_in: store.Store, tree: string, prefix: string, top: string, args: string[]): (store.Store, Entry[], string) {
+  let s = s_in;
+  let list: Entry[] = [];
+  for arg in args {
+    let name_at = skip_range(arg);
+    if (name_at < 0 || name_at >= arg.len() || arg[name_at] != b':' || name_at + 1 >= arg.len()) {
+      return (s, [], "-L argument not 'start,end:file' or ':funcname:file': " + arg);
+    }
+    let range = objects.part(arg, 0, name_at);
+    let name = objects.part(arg, name_at + 1, arg.len());
+    let path = match (full_name(prefix, name, top)) {
+      Ok(p) => p,
+      Err(message) => {
+        return (s, [], message);
+      },
+    };
+    let (s1, data) = blob_at(s, tree, path);
+    s = s1;
+    let bytes = match (data) {
+      Ok(b) => b,
+      Err(message) => {
+        return (s, [], message);
+      },
+    };
+    let ends = line_ends(bytes);
+    let b = Blob { data: bytes, ends: ends, lines: ends.len() - 1 };
+    let at = find(list, path);
+    let anchor = if (at >= 0 && list[at].ranges.len() > 0) { list[at].ranges[list[at].ranges.len() - 1] + 1 } else { 1 };
+    let (begin_in, end_in, sound, died) = parse_range(range, b, anchor);
+    if (died.len() > 0) {
+      return (s, [], died);
+    }
+    if (!sound) {
+      return (s, [], "malformed -L argument '" + range + "'");
+    }
+    let lines = b.lines as i64;
+    if (lines == 0 && (begin_in != 0 || end_in != 0) || lines < begin_in) {
+      return (s, [], "file " + name + " has only " + lines.to_string() + " lines");
+    }
+    let begin = begin_in.max(1) - 1;
+    let end = if (end_in < 1 || lines < end_in) { lines } else { end_in };
+    if (at >= 0) {
+      list = list.with(at, Entry { ...list[at], ranges: list[at].ranges.append(begin as i32).append(end as i32) });
+    } else {
+      // A new path goes after the last path that sorts before it.
+      let k = 0;
+      for i in 0..list.len() {
+        if (compare(list[i].path.bytes(), path.bytes()) < 0) {
+          k = i + 1;
+        }
+      }
+      list = array.slice(list, 0, k).append(entry_of(path, [begin as i32, end as i32])).concat(array.slice(list, k, list.len()));
+    }
+  }
+  return (s, list.map((e: Entry): Entry => Entry { ...e, ranges: sort_merge(e.ranges) }), "");
+}
+
+// ---- One commit ----
+
+// The search of renames for the ranges: off, or the options of `-M` and
+// `-C`.
+pub struct Renames { on: boolean, find: treediff.Detect }
+
+// The changes of the files of `range` from the tree `base` to the tree
+// `tree` (`queue_diffs`). When a file of a range is new, the deleted files
+// of the whole diff are the sources of its rename.
+function queue(s_in: store.Store, range: Entry[], base: string, tree: string, r: Renames): (store.Store, treediff.Change[]) {
+  let paths = range.map((e: Entry): string => e.path);
+  let (s, found) = treediff.changes(s_in, base, tree, paths);
+  if (!r.on || !found.any((c: treediff.Change): boolean => c.status == b'A')) {
+    return (s, found);
+  }
+  let (s1, all) = treediff.changes(s, base, tree, []);
+  let named = (c: treediff.Change): boolean => paths.contains(unsafe { string_from_bytes_unchecked(c.path) });
+  let sources: treediff.Change[] = all.filter((c: treediff.Change): boolean => c.status == b'D' || named(c));
+  let (s2, renamed) = treediff.detect(s1, sources, treediff.Detect { ...r.find, harder: false }, base, []);
+  return (s2, renamed.filter((c: treediff.Change): boolean => c.status != b'D' && named(c)));
+}
+
+// The text of the blob `hash`, or none for the zero name.
+function text_of(s: store.Store, hash: string): (store.Store, u8[]) {
+  if (hash.len() == 0 || hash == "0".repeat(hash.len())) {
+    return (s, []);
+  }
+  let got = store.read(s, hash);
+  return match (got.object) {
+    Ok(o) => (got.store, o.body),
+    Err(_) => (got.store, []),
+  };
+}
+
+// The hunks of the diff of `a` to `b` with no context, as the sides of
+// each: `collect_diff`, with the common end that xdiff leaves out. The
+// search is Myers with no heuristic, whatever the options of the patch.
+function hunks_of(a: u8[], b: u8[]): (i32[], i32[]) {
+  let algo = linediff.Options { algorithm: linediff.MYERS, minimal: false, indent_heuristic: false };
+  let t = linediff.common_tail(a, b);
+  let la = linediff.lines_of(array.slice(a, 0, a.len() - t));
+  let lb = linediff.lines_of(array.slice(b, 0, b.len() - t));
+  let parent: i32[] = [];
+  let target: i32[] = [];
+  for ch in linediff.diff(la, lb, algo) {
+    parent = parent.append(ch.i1).append(ch.i1 + ch.del);
+    target = target.append(ch.i2).append(ch.i2 + ch.ins);
+  }
+  return (parent, target);
+}
+
+// The result of one commit against one parent: the ranges for the
+// parent, the ranges of the commit with the changes that touch them, and
+// the count of the changes that touch a range (`process_all_files`).
+pub struct Step { store: store.Store, parent: Entry[], range: Entry[], changed: i32 }
+
+// Maps the ranges of the commit with the tree `tree` to the parent with
+// the tree `base` ("" for none) across the diff of each file.
+pub function step(s_in: store.Store, range: Entry[], base: string, tree: string, r: Renames): Step {
+  let (s1, pairs) = queue(s_in, range, base, tree, r);
+  let s = s1;
+  let out = range.map((e: Entry): Entry => entry_of(e.path, e.ranges));
+  let input = range;
+  let changed = 0;
+  for p in pairs {
+    let two = unsafe { string_from_bytes_unchecked(p.path) };
+    let at = find(out, two);
+    if (at < 0 || out[at].ranges.len() == 0) {
+      continue;
+    }
+    let (s2, target) = text_of(s, p.new_hash);
+    let (s3, parent) = text_of(s2, p.old_hash);
+    s = s3;
+    let (hp, ht) = hunks_of(parent, target);
+    let (mapped, tp) = map_across(out[at].ranges, hp, ht);
+    let one = if (p.status == b'R' || p.status == b'C') { unsafe { string_from_bytes_unchecked(p.old_path) } } else { two };
+    out = out.with(at, Entry { ...out[at], path: one, ranges: mapped });
+    if (tp.len() > 0) {
+      changed += 1;
+      let k = find(input, two);
+      input = input.with(k, Entry { ...input[k], pair: [p] });
+    }
+  }
+  return Step { store: s, parent: out, range: input, changed: changed };
+}

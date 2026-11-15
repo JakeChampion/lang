@@ -72,6 +72,15 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   with the `Reflog:` lines of git and the placeholders `%gd`, `%gD`,
   `%gs`, `%gn`, `%ge`, `%gN` and `%gE`.
 
+  `-L START,END:FILE` and `-L :FUNCNAME:FILE` follow ranges of lines of
+  a file back through the history, as `line-log.c` of git does. A place
+  of a range is a line number, `+N` or `-N` after the start, `/REGEX/`
+  or `^/REGEX/`. Each range moves across the diff of each commit, across
+  a rename of its file, and to the parent of a merge that has each
+  change. The patch shows the hunks in the ranges, as git 2.56.1 shows
+  them, and `--raw`, `--name-only`, `--name-status`, `--summary`, the
+  pickaxe, `--parents` and `--graph` also apply.
+
   The formats are `--oneline`, `--pretty=` with each named format and
   `format:`, and `--format=`, with the placeholders of git. `%<(N)`,
   `%>(N)`, `%><(N)` and `%>>(N)` set the columns of the next placeholder.
@@ -209,7 +218,7 @@ worktree gives the git directory.
 
 The standard output, the messages and the exit status are those of git
 2.56.1. That is the git of the CI runners. The tests compare the port with
-the git of the machine. With git 2.43, six things are different:
+the git of the machine. With git 2.43, seven things are different:
 
 - the indent of the roots in `--graph`
 - the order of the options in the message for `--graph` with `--reverse`
@@ -219,6 +228,10 @@ the git of the machine. With git 2.43, six things are different:
   names. git 2.56.1 gives N digits, and git 2.43 stops at 40.
 - the color of the good signature of an expired key of gpg in
   `--show-signature`. git 2.43 gives it the color of a bad signature.
+- the diff of `-L`. git 2.43 has its own patch, with no `index` line,
+  no function names and a range with no change. It has no other forms
+  of the diff and no pickaxe, and its message for `--stat` is not that
+  of git 2.56.1.
 
 ## Files
 
@@ -254,13 +267,19 @@ the git of the machine. With git 2.43, six things are different:
 - `sig.fern`: the check of a signature with gpg, gpgsm or ssh-keygen,
   and `%G?`.
 - `log.fern`: the fields of a commit and the text that `log` prints.
+- `linelog.fern`: the ranges of lines of `-L` and their walk through the
+  history.
 - `date.fern`: the dates that `log` prints and reads.
 - `width.fern`: the column width of a character (from `unicode-width.h`).
 - `git.fern`: the command line.
 
 ## What it does not have yet
 
-- These options of `log`: `--remerge-diff`, and `-L`.
+- The option `--remerge-diff` of `log`.
+
+- The drivers of the attribute `diff`, with their `xfuncname`, for the
+  function names of the hunk headers and of `-L :FUNCNAME:FILE`. The
+  port finds a function name with the default rule of git.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.
@@ -400,6 +419,10 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   revoked key, a key that is not valid at the date of its commit, an
   expired key of gpg, a bad signature, the signed tags of merges, and a
   signature of no known format.
+
+- `TestSelfHostExampleGitLineLog` runs each form of `-L` and of its
+  output, with merges, a rename, a binary file and the errors of git,
+  at the top of the worktree, below it, and with a commit graph.
 
 - `TestSelfHostExampleGitFixThin` runs `index-pack --fix-thin` on a thin
   pack of `pack-objects` at each level of zlib, and on deltas whose bases
