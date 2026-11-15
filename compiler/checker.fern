@@ -574,6 +574,10 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (is_lane_builtin(name) && argc == typeinfo.lane_builtin_params(name).len()) {
     return typeinfo.lane_builtin_result(name);
   }
+  return intrinsic_result_part_1(name, argc, t);
+}
+
+function intrinsic_result_part_1(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && is_bit_count(name)) {
     return typeinfo.t_i32();
   }
@@ -586,6 +590,10 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && (name == "__alloc_u8" || name == "__alloc_u8_uninit")) {
     return typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
   }
+  return intrinsic_result_part_2(name, argc, t);
+}
+
+function intrinsic_result_part_2(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc_i32") {
     return typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false };
   }
@@ -598,6 +606,10 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc_i64") {
     return typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false };
   }
+  return intrinsic_result_part_3(name, argc, t);
+}
+
+function intrinsic_result_part_3(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc_f64") {
     return typeinfo.TypeArray { elem: typeinfo.TypeFloat { width: 64, polymorphic: false }, view: false };
   }
@@ -610,6 +622,10 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 2 && name == "__fern_box_free") {
     return typeinfo.t_usize();
   }
+  return intrinsic_result_part_4(name, argc, t);
+}
+
+function intrinsic_result_part_4(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc_len") {
     return typeinfo.t_i32();
   }
@@ -622,12 +638,20 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 0 && name == "__heap_bump_bytes") {
     return typeinfo.t_i64();
   }
+  return intrinsic_result_part_5(name, argc, t);
+}
+
+function intrinsic_result_part_5(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 0 && name == "__heap_alloc_count") {
     return typeinfo.t_i64();
   }
   if (argc == 1 && (name == "__ct_secret" || name == "__ct_public")) {
     return typeinfo.t_void();
   }
+  return intrinsic_result_part_6(name, argc, t);
+}
+
+function intrinsic_result_part_6(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__bytes_owned" || argc == 3 && name == "__bytes_range" || argc == 5 && name == "__bytes_into") {
     return t_array(typeinfo.t_u8());
   }
@@ -637,6 +661,10 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == byte_kernel_arity(name) || argc == byte_into_arity(name)) {
     return t_array(typeinfo.t_u8());
   }
+  return intrinsic_result_part_7(name, argc, t);
+}
+
+function intrinsic_result_part_7(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 0 && is_sha_hw_builtin(name)) {
     return typeinfo.t_bool();
   }
@@ -689,6 +717,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_wait") {
     return t_array(typeinfo.t_i32());
   }
+  return intrinsic_result_task_part_1(name, argc);
+}
+
+function intrinsic_result_task_part_1(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_timeout") {
     return typeinfo.t_i32();
   }
@@ -701,6 +733,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_set_cancelled") {
     return typeinfo.t_void();
   }
+  return intrinsic_result_task_part_2(name, argc);
+}
+
+function intrinsic_result_task_part_2(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && util.has_str(["__task_fd_gen", "__task_gen", "__task_inline"], name)) {
     return typeinfo.t_i32();
   }
@@ -713,6 +749,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__heap_release_to") {
     return typeinfo.t_void();
   }
+  return intrinsic_result_task_part_3(name, argc);
+}
+
+function intrinsic_result_task_part_3(name: string, argc: i32): typeinfo.Type {
   if (is_worker_builtin(name) && argc == worker_params(name).len()) {
     return worker_result(name);
   }
@@ -725,6 +765,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 0 && name == "__arr_push_shared_bytes") {
     return typeinfo.t_i64();
   }
+  return intrinsic_result_task_part_4(name, argc);
+}
+
+function intrinsic_result_task_part_4(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__rc_inc") {
     return typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
   }
@@ -737,6 +781,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 3 && name == "__alloc_reuse") {
     return typeinfo.t_usize();
   }
+  return intrinsic_result_task_part_5(name, argc);
+}
+
+function intrinsic_result_task_part_5(name: string, argc: i32): typeinfo.Type {
   if (argc == 3 && name == "__memcpy") {
     return typeinfo.t_void();
   }
@@ -749,6 +797,10 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__account_entry") {
     return typeinfo.t_usize();
   }
+  return intrinsic_result_task_part_6(name, argc);
+}
+
+function intrinsic_result_task_part_6(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__load_i32") {
     return typeinfo.t_i32();
   }
@@ -771,6 +823,10 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (builtinsigs.device_intrinsic(name)) {
     return device_sig(name).result;
   }
+  return intrinsic_result_memory_part_1(name, argc);
+}
+
+function intrinsic_result_memory_part_1(name: string, argc: i32): typeinfo.Type {
   if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes" || name == "__mismatch_bytes_str")) {
     return typeinfo.t_i32();
   }
@@ -780,6 +836,10 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && (name == "__scale_f64" || name == "__outer_mul_f64")) {
     return t_array(typeinfo.t_f64());
   }
+  return intrinsic_result_memory_part_2(name, argc);
+}
+
+function intrinsic_result_memory_part_2(name: string, argc: i32): typeinfo.Type {
   if (argc == 6 && name == "__inner_mul_add_f64") {
     return t_array(typeinfo.t_f64());
   }
@@ -792,6 +852,10 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__sum_bytes_array") {
     return typeinfo.t_i32();
   }
+  return intrinsic_result_memory_part_3(name, argc);
+}
+
+function intrinsic_result_memory_part_3(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && (name == "__fern_rc_inc" || name == "__fern_str_dec")) {
     return typeinfo.t_usize();
   }
@@ -7686,6 +7750,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "i64") {
     return typeinfo.t_i64();
   }
+  return type_from_ref_names_part_1(r, tn, name);
+}
+
+function type_from_ref_names_part_1(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (name == "u8") {
     return typeinfo.t_u8();
   }
@@ -7713,6 +7781,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "str") {
     return typeinfo.t_str();
   }
+  return type_from_ref_names_part_2(r, tn, name);
+}
+
+function type_from_ref_names_part_2(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (name == "f32") {
     return typeinfo.t_f32();
   }
@@ -7734,6 +7806,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "fn") {
     return t_func_opaque(t_unknown("fn result (the coarse tag records none)"));
   }
+  return type_from_ref_names_part_3(r, tn, name);
+}
+
+function type_from_ref_names_part_3(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (r.is_tuple) {
     if (r.args.len() >= 2) {
       let elems: typeinfo.Type[] = [];
@@ -7760,6 +7836,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     }
     return t_union_g(r.base, uargs);
   }
+  return type_from_ref_names_part_4(r, tn, name);
+}
+
+function type_from_ref_names_part_4(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (r.args.len() > 0) {
     if (tn.structs.has(r.base)) {
       let gargs: typeinfo.Type[] = [];
@@ -7782,6 +7862,10 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (tn.unions.has(name)) {
     return t_union(name);
   }
+  return type_from_ref_names_part_5(r, tn, name);
+}
+
+function type_from_ref_names_part_5(r: parser.TypeRef, tn: TypeNames, name: string): typeinfo.Type {
   if (parser.is_reserved_struct_name(name) && name != "Map" && name != "Cell") {
     return t_struct(name);
   }
