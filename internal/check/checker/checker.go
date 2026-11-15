@@ -6065,13 +6065,13 @@ type checker struct {
 	handleFreeTypes   map[handleTypeKey]bool
 	// consumingTypes names the types with a method that consumes its
 	// receiver. Such a type is a user-defined handle.
-	consumingTypes      map[string]bool
-	callOwnFlags        map[*ast.Call][]bool
-	callOwnResults      map[*ast.Call]bool
-	callValueCallees    map[*ast.Call]bool
+	consumingTypes   map[string]bool
+	callOwnFlags     map[*ast.Call][]bool
+	callOwnResults   map[*ast.Call]bool
+	callValueCallees map[*ast.Call]bool
 	// onceCalls holds each call of a value of a `once` function type. The
 	// call consumes its callee.
-	onceCalls map[*ast.Call]bool
+	onceCalls           map[*ast.Call]bool
 	callCopyTypes       map[string]bool
 	resultCopyParts     map[ast.Expr]bool
 	resultCallbackParts map[ast.Expr]bool
