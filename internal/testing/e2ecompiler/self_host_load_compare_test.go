@@ -111,3 +111,66 @@ func TestSelfHostCompareReadsItsOperandFromMemory(t *testing.T) {
 		}
 	}
 }
+
+// The box of `inner` is loaded to %rcx, and `k` is in a frame slot. The
+// compare reads `limit` from the box, so `k` must go to a different register.
+const loadCompareSpilledProg = `struct Inner { used: i64, limit: i64, a: i64, b: i64, c: i64, d: i64 }
+struct Outer { inner: Inner, pad: i64 }
+
+@noinline function note(n: i64): i64 {
+  return n + 1i64;
+}
+
+// Six values live across the calls take the saved registers and one frame
+// slot. Six more are live at the compare, so the box of inner is in %rcx.
+@noinline function over(o: Outer, a: i64, b: i64, c: i64, d: i64, e: i64): i64 {
+  let k = note(a);
+  let p = note(b) + a;
+  let q = note(c) + b;
+  let r = note(d) + c;
+  let t = note(e) + d;
+  let u = note(k) + e;
+  let v1 = p * 3i64;
+  let v2 = q * 5i64;
+  let v3 = r * 7i64;
+  let v4 = t * 11i64;
+  let v5 = u * 13i64;
+  let v6 = a * 17i64;
+  if (o.inner.limit > k) {
+    return v1 + v2 + v3 + v4 + v5 + v6 + p + q + r + t + u;
+  }
+  return v1 - v2 + v3 - v4 + v5 - v6 + p + q + r + t + u + k;
+}
+
+function main(): i32 {
+  let o = Outer { inner: Inner { used: 1i64, limit: 5i64, a: 0i64, b: 0i64, c: 0i64, d: 0i64 }, pad: 0i64 };
+  let x = over(o, 1i64, 2i64, 3i64, 4i64, 5i64);
+  let y = over(o, 9i64, 2i64, 3i64, 4i64, 5i64);
+  print(x.to_string() + " " + y.to_string());
+  return 0;
+}
+`
+
+func TestSelfHostCompareFromMemoryKeepsItsBase(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(loadCompareSpilledProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asm, err := os.ReadFile(cli.emit(t, src, "x86-64-linux"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := tailCallBody(t, string(asm), "over")
+	if !regexp.MustCompile(`cmpq %rdx, 8\(%rcx\)`).MatchString(body) {
+		t.Errorf("over does not compare a register with the field of the box in %%rcx:\n%s", body)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		for _, env := range []string{"", "FERN_SANITIZE=1"} {
+			stdout, code := cli.exitOf(t, loadCompareSpilledProg, target, env)
+			if code != 0 {
+				t.Errorf("%s %s: exit %d, want 0\n%s", target, env, code, stdout)
+			}
+		}
+	}
+}
