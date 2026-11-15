@@ -6,9 +6,10 @@ import (
 	"testing"
 )
 
-// An i32, a u32, a char or an f32 array element takes 4 bytes on every target. Each
-// program runs on x86-64, arm64 and wasm32 under the sanitizer and the leak
-// census, and its output is what the Go interpreter prints for it.
+// An i32, a u32, a char or an f32 array element takes 4 bytes on every target,
+// and a u16 or an i16 element takes 2. Each program runs on x86-64, arm64 and
+// wasm32 under the sanitizer and the leak census, and its output is what the
+// Go interpreter prints for it.
 
 const compactElemsI32Src = `import "std/i32";
 import "std/i64";
@@ -390,6 +391,157 @@ const compactElemsF32StrideWant = "push true\n" +
 	"for true\n" +
 	"lens 2097152 1048575"
 
+// A u16 or an i16 array element takes 2 bytes, and a read extends it with
+// zeros or with the sign.
+const compactElemsU16Src = `import "std/i32";
+import "std/i64";
+import "std/array";
+
+function total(xs: [u16]): i64 {
+    let t: i64 = 0;
+    for x in xs { t = t * 31 + x; }
+    return t;
+}
+
+function mk(): u16[] { return [7, 65535, 9]; }
+
+function main(): i32 {
+    let lit: u16[] = [1, 65534, 32768, 65535];
+    print("lit " + lit.len().to_string() + " " + total(lit).to_string() + " " + lit[3].to_string() + " " + lit[2].to_string());
+    let grown: u16[] = [];
+    let i: i32 = 0;
+    while (i < 1000) { grown = grown.append((i * 67) as u16); i = i + 1; }
+    print("grown " + grown.len().to_string() + " " + total(grown).to_string() + " " + grown[999].to_string() + " " + grown[978].to_string());
+    let shared: u16[] = grown;
+    grown = grown.with(3, 65000);
+    let w: u16[] = grown.with(4, 88);
+    print("with " + grown[3].to_string() + " " + w[4].to_string() + " " + grown[4].to_string() + " " + shared[3].to_string());
+    let sl: [u16] = grown[10:20];
+    let inner: [u16] = sl[2:5];
+    print("view " + sl.len().to_string() + " " + total(sl).to_string() + " " + inner[0].to_string() + " " + total(inner).to_string());
+    let cp: u16[] = array.slice(grown, 5, 9);
+    print("slice " + cp.len().to_string() + " " + total(cp).to_string());
+    let z: u16[] = __alloc_u16(13);
+    z = z.with(12, 65535);
+    print("alloc " + z.len().to_string() + " " + total(z).to_string() + " " + z[11].to_string());
+    let cat: u16[] = lit.concat(mk());
+    let cat2: u16[] = grown.concat(grown[0:3]);
+    print("concat " + cat.len().to_string() + " " + total(cat).to_string() + " " + cat2.len().to_string() + " " + cat2[1001].to_string());
+    let r: u16[] = array.reverse(lit);
+    print("rev " + r[0].to_string() + " " + r[3].to_string());
+    let t: u16[] = grown.truncate(10);
+    print("truncate " + t.len().to_string() + " " + total(t).to_string());
+    let ext: i64[] = [];
+    for x in lit { ext = ext.append(x); }
+    print("ext " + ext[1].to_string() + " " + ext[3].to_string() + " " + (lit[3] >> 1).to_string() + " " + (lit[1] / 2).to_string());
+    let sq: u16[] = [];
+    for k in 0..300000 { sq = sq.append((k * 7) as u16); }
+    print("large " + total(sq).to_string() + " " + sq[299999].to_string() + " " + sq.with(0, 5)[0].to_string());
+    return 0;
+}
+`
+
+const compactElemsU16Want = "lit 4 64089308 65535 32768\n" +
+	"grown 1000 -1648300877659165988 1397 65526\n" +
+	"with 65000 88 268 201\n" +
+	"view 10 18366048515046415 804 800583\n" +
+	"slice 4 10381382\n" +
+	"alloc 13 65535 0\n" +
+	"concat 7 1909286612949 1003 67\n" +
+	"rev 65535 1\n" +
+	"truncate 10 118526123500334\n" +
+	"ext 65534 65535 32767 32767\n" +
+	"large -6065535928341633648 2841 5"
+
+const compactElemsI16Src = `import "std/i32";
+import "std/i64";
+import "std/array";
+
+function total(xs: [i16]): i64 {
+    let t: i64 = 0;
+    for x in xs { t = t * 31 + x; }
+    return t;
+}
+
+function mk(): i16[] { return [7, -8, 9]; }
+
+function main(): i32 {
+    let lit: i16[] = [1, -2, 32767, -32768];
+    print("lit " + lit.len().to_string() + " " + total(lit).to_string() + " " + lit[3].to_string() + " " + lit[2].to_string());
+    let grown: i16[] = [];
+    let i: i32 = 0;
+    while (i < 1000) { grown = grown.append((i * 67 - 33000) as i16); i = i + 1; }
+    print("grown " + grown.len().to_string() + " " + total(grown).to_string() + " " + grown[999].to_string() + " " + grown[0].to_string());
+    let shared: i16[] = grown;
+    grown = grown.with(3, -77);
+    let w: i16[] = grown.with(4, 88);
+    print("with " + grown[3].to_string() + " " + w[4].to_string() + " " + grown[4].to_string() + " " + shared[3].to_string());
+    let sl: [i16] = grown[10:20];
+    let inner: [i16] = sl[2:5];
+    print("view " + sl.len().to_string() + " " + total(sl).to_string() + " " + inner[0].to_string() + " " + total(inner).to_string());
+    let cp: i16[] = array.slice(grown, 5, 9);
+    print("slice " + cp.len().to_string() + " " + total(cp).to_string());
+    let z: i16[] = __alloc_i16(13);
+    z = z.with(12, -9);
+    print("alloc " + z.len().to_string() + " " + total(z).to_string() + " " + z[11].to_string());
+    let cat: i16[] = lit.concat(mk());
+    let cat2: i16[] = grown.concat(grown[0:3]);
+    print("concat " + cat.len().to_string() + " " + total(cat).to_string() + " " + cat2.len().to_string() + " " + cat2[1001].to_string());
+    let r: i16[] = array.reverse(lit);
+    print("rev " + r[0].to_string() + " " + r[3].to_string());
+    let ext: i64[] = [];
+    for x in lit { ext = ext.append(x); }
+    let ext32: i32[] = [];
+    for x in lit { ext32 = ext32.append(x); }
+    print("ext " + ext[1].to_string() + " " + ext[3].to_string() + " " + ext32[3].to_string() + " " + (lit[3] >> 1).to_string() + " " + (lit[1] / 2).to_string());
+    let sq: i16[] = [];
+    for k in 0..300000 { sq = sq.append((k - 150000) as i16); }
+    print("large " + total(sq).to_string() + " " + sq[299999].to_string() + " " + sq.with(0, 5)[0].to_string());
+    return 0;
+}
+`
+
+const compactElemsI16Want = "lit 4 1010878 -32768 32767\n" +
+	"grown 1000 -4998896028704897316 -31603 32536\n" +
+	"with -77 88 -32732 32737\n" +
+	"view 10 -883225067163833585 -32196 -31968417\n" +
+	"slice 4 -1005490618\n" +
+	"alloc 13 -9 0\n" +
+	"concat 7 30115072986 1003 32603\n" +
+	"rev -32768 1\n" +
+	"ext -2 -32768 -32768 -16384 -1\n" +
+	"large 3286641973724989936 18927 5"
+
+// With 4-byte elements each cost below is about twice its bound.
+const compactElemsHalfStrideSrc = `import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+    let before: i64 = __heap_bump_bytes();
+    let xs: u16[] = [];
+    let i = 0;
+    while (i < 1048576) { xs = xs.append(i as u16); i += 1; }
+    let push_cost: i64 = __heap_bump_bytes() - before;
+    before = __heap_bump_bytes();
+    let ys: i16[] = [];
+    for k in 0..1048576 { ys = ys.append(-1); }
+    let for_cost: i64 = __heap_bump_bytes() - before;
+    before = __heap_bump_bytes();
+    let zs: u16[] = __alloc_u16(1048576);
+    let alloc_cost: i64 = __heap_bump_bytes() - before;
+    print("push " + (push_cost < (6000000 as i64)).to_string());
+    print("for " + (for_cost < (3000000 as i64)).to_string());
+    print("alloc " + (alloc_cost < (3000000 as i64)).to_string());
+    print("lens " + (xs.len() + ys.len() + zs.len()).to_string() + " " + xs[1048575].to_string() + " " + ys[1048575].to_string());
+    return 0;
+}
+`
+
+const compactElemsHalfStrideWant = "push true\n" +
+	"for true\n" +
+	"alloc true\n" +
+	"lens 3145728 65535 -1"
+
 func TestSelfHostCompactElements(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -411,6 +563,9 @@ func TestSelfHostCompactElements(t *testing.T) {
 		{"f32", compactElemsF32Src, compactElemsF32Want},
 		{"f32-lanes", compactElemsF32LanesSrc, compactElemsF32LanesWant},
 		{"f32-stride", compactElemsF32StrideSrc, compactElemsF32StrideWant},
+		{"u16", compactElemsU16Src, compactElemsU16Want},
+		{"i16", compactElemsI16Src, compactElemsI16Want},
+		{"half-stride", compactElemsHalfStrideSrc, compactElemsHalfStrideWant},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

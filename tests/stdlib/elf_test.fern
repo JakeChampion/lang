@@ -5,26 +5,26 @@ import "std/elf";
 import "std/string";
 import "std/test";
 
-function u16(own b: u8[], v: i64): u8[] {
+function append_half(own b: u8[], v: i64): u8[] {
   return b.append((v & 255) as u8).append((v >> 8 & 255) as u8);
 }
 
 // An ELF64 header for `machine` with `count` program headers right after it.
 function header(machine: i64, count: i64, kind: i64): u8[] {
   let b: u8[] = [0x7fu8, 0x45u8, 0x4cu8, 0x46u8, 2u8, 1u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-  b = u16(b, kind);
-  b = u16(b, machine);
+  b = append_half(b, kind);
+  b = append_half(b, machine);
   b = binary.append_u32_le(b, 1 as u32);
   b = binary.append_u64_le(b, 0x401000 as u64);
   b = binary.append_u64_le(b, 64 as u64);
   b = binary.append_u64_le(b, 0 as u64);
   b = binary.append_u32_le(b, 0 as u32);
-  b = u16(b, 64);
-  b = u16(b, 56);
-  b = u16(b, count);
-  b = u16(b, 0);
-  b = u16(b, 0);
-  return u16(b, 0);
+  b = append_half(b, 64);
+  b = append_half(b, 56);
+  b = append_half(b, count);
+  b = append_half(b, 0);
+  b = append_half(b, 0);
+  return append_half(b, 0);
 }
 
 function program_header(own b: u8[], kind: i64, flags: i64, offset: i64, address: i64, file_size: i64, memory_size: i64): u8[] {

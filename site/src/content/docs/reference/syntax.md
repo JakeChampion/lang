@@ -17,7 +17,7 @@ Reserved across all syntactic positions:
 function let use as
 if else while for loop break continue return
 true false boolean void string
-i32 i64 u8 u32 u64 usize f32 f64
+i16 i32 i64 u8 u16 u32 u64 usize f32 f64
 struct enum type
 import pub const
 match when
@@ -46,7 +46,7 @@ identifiers everywhere else:
 | Form | Examples | Type |
 | ---- | -------- | ---- |
 | Integer | `42`, `1_000_000`, `0xff`, `0b1010`, `0o17` | whatever integer type the context needs, else `i32` |
-| Suffixed integer | `7i64`, `3u32`, `255u8`, `8usize` | the suffix (`i32` `i64` `u8` `u32` `u64` `usize`) |
+| Suffixed integer | `7i64`, `3u32`, `255u8`, `9u16`, `8usize` | the suffix (`i16` `i32` `i64` `u8` `u16` `u32` `u64` `usize`) |
 | Float | `2.5`, `1e3`, `2.5f32`, `1_000.25` | `f64`, or `f32` with the suffix |
 | Character | `'x'`, `'é'`, `'\u{1F600}'` | `char`, one Unicode scalar value |
 | Byte | `b'x'`, `b'\n'` | `u8` |

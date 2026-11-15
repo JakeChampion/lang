@@ -79,6 +79,15 @@ function v_byte(n: i32): Value {
   return VInt { v: n & 255, is_char: false, is_byte: true };
 }
 
+// The low 16 bits of n, extended with the sign for an i16.
+function v_half(n: i64, signed: boolean): Value {
+  let lo = (n & 65535i64) as i32;
+  if (signed && lo >= 32768) {
+    return v_int(lo - 65536);
+  }
+  return v_int(lo);
+}
+
 function char_value(v: Value): Value {
   if let VInt(n) = v {
     if (n.is_char) {
@@ -222,6 +231,9 @@ function coerce_int_width(val: Value, type_name: string): Value {
   }
   if (type_name == "u8" && is_int_like(val)) {
     return v_byte(vint_as_i64(val) as i32);
+  }
+  if ((type_name == "u16" || type_name == "i16") && is_int_like(val)) {
+    return v_half(vint_as_i64(val), type_name == "i16");
   }
   if (type_name == "u32") {
     match (val) {
@@ -4295,7 +4307,7 @@ function is_checked_op(op: string): boolean {
 }
 
 function checked_operand_type(b: ast.ExprBinary, lv: Value): string {
-  let ints: string[] = ["u8", "i32", "u32", "i64", "u64"];
+  let ints: string[] = ["u8", "u16", "i16", "i32", "u32", "i64", "u64"];
   for side in [b.left, b.right] {
     let tag = ast.expr_ty(side);
     if let ast.ExprNumber(n) = side {
@@ -4312,10 +4324,12 @@ function eval_checked(op: string, lv: Value, rv: Value, ty: string): Value {
   if (!is_int_like(lv) || !is_int_like(rv)) {
     return v_err("checked operator `" + op + "` on a non-integer");
   }
-  let signed = ty == "i32" || ty == "i64";
+  let signed = ty == "i16" || ty == "i32" || ty == "i64";
   let width: i64 = 32;
   if (ty == "u8") {
     width = 8;
+  } else if (ty == "u16" || ty == "i16") {
+    width = 16;
   } else if (ty == "i64" || ty == "u64") {
     width = 64;
   }
@@ -4437,8 +4451,14 @@ function eval_typed_binary(op: string, lv: Value, rv: Value, ty: string): Value 
   if (ty == "u8" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
     return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), 0, 255) as i32);
   }
+  if (ty == "u16" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
+    return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), 0, 65535) as i32);
+  }
+  if (ty == "i16" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
+    return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), -32768, 32767) as i32);
+  }
   let v = eval_binary(op, lv, rv);
-  if (util.has_str(["u8", "i32", "u32", "i64", "u64", "usize"], ty)) {
+  if (util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], ty)) {
     return coerce_int_width(v, ty);
   }
   return v;
@@ -5218,6 +5238,12 @@ function eval_unary(op: string, ov: Value): Value {
   if (op == "as_u32") {
     return eval_unary_as_u32(ov);
   }
+  if (op == "as_u16") {
+    return v_half(vint_as_i64(eval_unary_as_u32(ov)), false);
+  }
+  if (op == "as_i16") {
+    return v_half(vint_as_i64(cast_i32_value(ov)), true);
+  }
   if (op == "as_i64" || op == "as_u64") {
     return eval_unary_as_i64(op, ov);
   }
@@ -5231,7 +5257,7 @@ function eval_unary(op: string, ov: Value): Value {
     return eval_unary_try(ov);
   }
   let is_as_opt = op.len() > 4 && op.starts_with("as?_");
-  if (is_as_opt && util.has_str(["u8", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
+  if (is_as_opt && util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
     return eval_unary_as_checked(op, ov);
   }
   if (is_as_opt) {
@@ -8689,7 +8715,7 @@ function checked_alloc_length(args: Value[]): Value {
   return v_int(n as i32);
 }
 
-const CALL_FUNC_TARGS_SET: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
+const CALL_FUNC_TARGS_SET: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_u16", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
 
 const CALL_FUNC_TARGS_SET2: string[] = ["__clz32", "__ctz32", "__popcount32", "__clz64", "__ctz64", "__popcount64"];
 

@@ -28,7 +28,7 @@ are tokens, not characters. The **lexical** grammar is
 | Kind | Written in `grammar.ebnf` as |
 | --- | --- |
 | `Ident` | `IDENT`, or a quoted literal where a name is contextual |
-| `Number` | `NUMBER` — decimal, `0x` hex, `0b` binary or `0o` octal, optional `i32`/`i64`/`u8`/`u32`/`u64`/`usize` suffix |
+| `Number` | `NUMBER` — decimal, `0x` hex, `0b` binary or `0o` octal, optional `i32`/`i64`/`i16`/`u8`/`u16`/`u32`/`u64`/`usize` suffix |
 | `Float` | `FLOAT` — optional `f32`/`f64` suffix |
 
 In either, an `_` between two digits is ignored (`1_000`, `0xffff_0000`,

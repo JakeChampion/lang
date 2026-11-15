@@ -1,0 +1,4 @@
+literal 65536 does not fit in u16
+literal -1 does not fit in u16: unsigned types have no negative values
+literal 32768 does not fit in i16
+literal -32769 does not fit in i16

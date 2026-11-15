@@ -466,7 +466,7 @@ const ARITH_NAMES: string[] = [
   "i64.reinterpret_f64", "f32.reinterpret_i32", "f64.reinterpret_i64", "f64.eq", "f64.ne", "f64.lt",
   "f64.gt", "f64.le", "f64.ge", "f64.abs", "f64.neg", "f64.ceil",
   "f64.floor", "f64.trunc", "f64.nearest", "f64.sqrt", "f64.add", "f64.sub",
-  "f64.mul", "f64.div", "f64.min", "f64.max", "f64.copysign",
+  "f64.mul", "f64.div", "f64.min", "f64.max", "f64.copysign", "i32.extend16_s",
 ];
 
 const ARITH_CODES: i32[] = [
@@ -475,7 +475,7 @@ const ARITH_CODES: i32[] = [
   127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 80, 81, 82, 83,
   84, 85, 86, 87, 88, 89, 90, 121, 122, 123, 167, 172, 173, 170, 171, 176,
   177, 183, 184, 185, 186, 182, 187, 188, 189, 190, 191, 97, 98, 99, 100, 101,
-  102, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166,
+  102, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 193,
 ];
 
 function arith_opcode(op: string): i32 {

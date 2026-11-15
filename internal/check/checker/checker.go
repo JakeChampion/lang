@@ -2404,6 +2404,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}},
 	}
+	c.info.FuncSigs["__alloc_u16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 16, Signed: false}},
+	}
+	c.info.FuncSigs["__alloc_i16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 16, Signed: true}},
+	}
 	c.info.FuncSigs["__alloc_i64"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
@@ -5946,6 +5954,10 @@ func builtinScalarMethod(typeName, name string) (string, bool) {
 		switch typeName {
 		case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "string":
 			return "__primitive_" + typeName + "_to_string", true
+		case "u16":
+			return "__primitive_u32_to_string", true
+		case "i16":
+			return "__primitive_i32_to_string", true
 		}
 	}
 	return "", false
@@ -6956,11 +6968,7 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 		if unsigned {
 			overflow = zero
 		} else {
-			maxLit := int64(2147483647)
-			if t.NormalWidth() == 64 {
-				maxLit = 9223372036854775807
-			}
-			minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1))
+			minExpr := bin("-", bin("-", num(0), num(signedMax(t))), num(1))
 			overflow = bin("||", zero,
 				bin("&&", bin("==", id(lN), minExpr), bin("==", id(rN), negOne)))
 		}
@@ -6980,11 +6988,7 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 			bin("<", bin("^", id(lN), id(rN)), num(0)),
 			bin("<", bin("^", id(sN), id(lN)), num(0)))
 	default:
-		maxLit := int64(2147483647)
-		if t.NormalWidth() == 64 {
-			maxLit = 9223372036854775807
-		}
-		minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1))
+		minExpr := bin("-", bin("-", num(0), num(signedMax(t))), num(1))
 		overflow = bin("&&", bin("!=", id(lN), num(0)),
 			bin("||",
 				bin("!=", bin("/", id(sN), id(lN)), id(rN)),
@@ -7003,6 +7007,11 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 		return nil
 	}
 	return block
+}
+
+// signedMax is the greatest value of the signed integer type t.
+func signedMax(t ast.NumberType) int64 {
+	return int64(1)<<(t.NormalWidth()-1) - 1
 }
 
 func (c *checker) buildCheckedCast(n *ast.DowncastExpr, src, dst ast.NumberType, s *scope) ast.Expr {
@@ -17496,7 +17505,7 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
+	case "i32", "i64", "u8", "u16", "i16", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "char":
 		return true
 	}
 	return false
