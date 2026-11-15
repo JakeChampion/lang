@@ -2020,11 +2020,56 @@ function log_item(w: revwalk.Walk, h: string, o: LogOpts): (revwalk.Walk, LogIte
   return (after, LogItem { hash: h, parents: parents });
 }
 
-// The next commit of the walk. Its parents come before a lookahead marks
-// later commits as shown.
-function log_next(w_in: revwalk.Walk, o: LogOpts): (revwalk.Walk, LogItem) {
-  let (w, h) = revwalk.next(w_in);
-  return log_item(w, h, o);
+// The state of the walk of log: the walk, the counts of the commits that
+// `--skip` passed and that `-n` counts, and the parents that can be
+// boundary commits.
+struct Pull { w: revwalk.Walk, skipped: i32, count: i32, candidates: string[] }
+
+// The next commit that log shows, as `get_revision` of git gives it: after
+// `--skip` and within `-n`. With `--boundary`, its parents are marked as
+// parents of a shown commit before its parents in the graph come.
+function log_pull(p_in: Pull, o: LogOpts): (Pull, LogItem) {
+  let p = p_in;
+  let none = LogItem { hash: "", parents: [] };
+  while (o.limit < 0 || p.count < o.limit) {
+    let (w, h) = revwalk.next(p.w);
+    p = Pull { ...p, w: w };
+    if (w.failed.len() > 0 || h.len() == 0) {
+      return (p, none);
+    }
+    if (p.skipped < o.skip) {
+      p = Pull { ...p, skipped: p.skipped + 1 };
+      continue;
+    }
+    p = Pull { ...p, count: p.count + 1 };
+    if (o.walk.boundary) {
+      let (w1, ps) = revwalk.parents(p.w, h);
+      p = Pull { ...p, w: w1 };
+      for c in ps {
+        if ((revwalk.flag(p.w, c) & (revwalk.CHILD_SHOWN | revwalk.SHOWN)) == 0) {
+          p = Pull { ...p, w: revwalk.with_flag(p.w, c, revwalk.CHILD_SHOWN), candidates: p.candidates.append(c) };
+        }
+      }
+    }
+    let (w2, item) = log_item(p.w, h, o);
+    return (Pull { ...p, w: w2 }, item);
+  }
+  return (p, none);
+}
+
+// The boundary commits of the parents `candidates` of the shown commits:
+// those that the walk did not show, in topological order.
+function boundary_commits(w_in: revwalk.Walk, candidates: string[]): (revwalk.Walk, string[]) {
+  let w = w_in;
+  let list: string[] = [];
+  for c in candidates {
+    let f = revwalk.flag(w, c);
+    if ((f & revwalk.CHILD_SHOWN) != 0 && (f & (revwalk.SHOWN | revwalk.BOUNDARY)) == 0) {
+      w = revwalk.with_flag(w, c, revwalk.BOUNDARY);
+      list = [c].concat(list);
+    }
+  }
+  return revwalk.sorted_topo(w, list);
 }
 
 // The mark of a commit before its name, from its flags `f`:
@@ -2495,17 +2540,14 @@ function log_command(argv: string[]): i32 {
     decorations = by;
   }
   let shown: string[] = [];
-  let count = 0;
-  let skipped = 0;
   let buf: u8[] = [];
   let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: if (o.follow) { items[0] } else { "" }, hidden: false };
-  // The parents of the shown commits that may be boundary commits, and
-  // the boundary commits to show after the walk (`get_revision_internal`).
-  let candidates: string[] = [];
+  let p = Pull { w: w, skipped: 0, count: 0, candidates: [] };
+  // The boundary commits to show after the walk (`get_revision_internal`),
+  // and the commits after the current one, for the visual roots of the
+  // graph.
   let boundary: string[] = [];
   let at_boundary = false;
-  // The commits after the current one, with their parents in the graph,
-  // for the visual roots of the graph.
   let following: LogItem[] = [];
   while (true) {
     let item = LogItem { hash: "", parents: [] };
@@ -2513,55 +2555,30 @@ function log_command(argv: string[]): i32 {
       if (boundary.len() == 0) {
         break;
       }
-      let (w0, b0) = log_item(w, boundary[0], o);
-      w = revwalk.with_flag(w0, b0.hash, revwalk.SHOWN);
+      let (w0, b0) = log_item(p.w, boundary[0], o);
+      p = Pull { ...p, w: revwalk.with_flag(w0, b0.hash, revwalk.SHOWN) };
       item = b0;
       boundary = array.slice(boundary, 1, boundary.len());
+    } else if (following.len() > 0) {
+      item = following[0];
+      following = array.slice(following, 1, following.len());
     } else {
-      if (following.len() > 0) {
-        item = following[0];
-        following = array.slice(following, 1, following.len());
-      } else if (o.limit < 0 || count < o.limit) {
-        let (w1, next) = log_next(w, o);
-        w = w1;
-        if (w.failed.len() > 0) {
-          put(buf);
-          return fatal("Failed to traverse parents of commit " + w.failed);
-        }
-        item = next;
+      let (p1, next) = log_pull(p, o);
+      p = p1;
+      if (p.w.failed.len() > 0) {
+        put(buf);
+        return fatal("Failed to traverse parents of commit " + p.w.failed);
       }
+      item = next;
       if (item.hash.len() == 0) {
         if (!o.walk.boundary) {
           break;
         }
         at_boundary = true;
-        let list: string[] = [];
-        for c in candidates {
-          let f = revwalk.flag(w, c);
-          if ((f & revwalk.CHILD_SHOWN) != 0 && (f & (revwalk.SHOWN | revwalk.BOUNDARY)) == 0) {
-            w = revwalk.with_flag(w, c, revwalk.BOUNDARY);
-            list = [c].concat(list);
-          }
-        }
-        let (w4, sorted) = revwalk.sorted_topo(w, list);
-        w = w4;
+        let (w4, sorted) = boundary_commits(p.w, p.candidates);
+        p = Pull { ...p, w: w4 };
         boundary = sorted;
         continue;
-      }
-      if (skipped < o.skip) {
-        skipped += 1;
-        continue;
-      }
-      count += 1;
-      if (o.walk.boundary) {
-        let (w5, ps) = revwalk.parents(w, item.hash);
-        w = w5;
-        for p in ps {
-          if ((revwalk.flag(w, p) & (revwalk.CHILD_SHOWN | revwalk.SHOWN)) == 0) {
-            w = revwalk.with_flag(w, p, revwalk.CHILD_SHOWN);
-            candidates = candidates.append(p);
-          }
-        }
       }
     }
     let h = item.hash;
@@ -2569,25 +2586,24 @@ function log_command(argv: string[]): i32 {
       shown = shown.append(h);
       continue;
     }
-    let room = if (at_boundary) { 0 } else if (o.limit < 0) { 2 } else { (o.limit - count).min(2) };
-    while (o.graph && following.len() < room) {
-      let (w1, next) = log_next(w, o);
-      w = w1;
-      if (w.failed.len() > 0) {
+    while (o.graph && !at_boundary && following.len() < 2) {
+      let (p1, next) = log_pull(p, o);
+      p = p1;
+      if (p.w.failed.len() > 0) {
         put(buf);
-        return fatal("Failed to traverse parents of commit " + w.failed);
+        return fatal("Failed to traverse parents of commit " + p.w.failed);
       }
       if (next.hash.len() == 0) {
         break;
       }
       following = following.append(next);
     }
-    let (w2, text, after) = log_show(w, item, o, decorations, least, sh, [], following);
-    w = w2;
+    let (w2, text, after) = log_show(p.w, item, o, decorations, least, sh, [], following);
+    p = Pull { ...p, w: w2 };
     sh = after;
     // A commit that gives no text does not count for `-n`.
     if (after.hidden && !at_boundary) {
-      count -= 1;
+      p = Pull { ...p, count: p.count - 1 };
     }
     buf = buf.concat(text.bytes());
     if (buf.len() > 65536) {
@@ -2595,6 +2611,7 @@ function log_command(argv: string[]): i32 {
       buf = [];
     }
   }
+  w = p.w;
   for h in shown.reverse() {
     let (w3, text, after) = log_show(w, LogItem { hash: h, parents: [] }, o, decorations, least, sh, [], []);
     w = w3;
