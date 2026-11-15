@@ -760,14 +760,14 @@ function with_stat(p: Prog, own r: Run): Run {
   if (r.e.have != ST_NONE) {
     return r;
   }
-  let e = r.e;
-  match (stat_in(r, e, follows(p, e))) {
+  match (stat_in(r, r.e, follows(p, r.e))) {
     Ok(st) => {
-      return Run { ...r, e: Ent { ...e, st: st, have: ST_OK } };
+      return Run { ...r, e: Ent { ...r.e, st: st, have: ST_OK } };
     },
     Err(err) => {
-      let r2 = report(r, q(e.path) + ": " + why(err));
-      return Run { ...r2, e: Ent { ...e, have: ST_FAILED } };
+      let msg = q(r.e.path) + ": " + why(err);
+      let r2 = report(r, msg);
+      return Run { ...r2, e: Ent { ...r2.e, have: ST_FAILED } };
     }
   }
   return r;
@@ -778,16 +778,15 @@ function with_lstat(own r: Run): Run {
   if (r.e.lhave != ST_NONE) {
     return r;
   }
-  let e = r.e;
-  if (e.have == ST_OK && (!follows_link(e) || (e.st.mode & S_IFMT) == S_IFLNK)) {
-    return Run { ...r, e: Ent { ...e, lst: e.st, lhave: ST_OK } };
+  if (r.e.have == ST_OK && (!follows_link(r.e) || (r.e.st.mode & S_IFMT) == S_IFLNK)) {
+    return Run { ...r, e: Ent { ...r.e, lst: r.e.st, lhave: ST_OK } };
   }
-  match (stat_in(r, e, false)) {
+  match (stat_in(r, r.e, false)) {
     Ok(st) => {
-      return Run { ...r, e: Ent { ...e, lst: st, lhave: ST_OK } };
+      return Run { ...r, e: Ent { ...r.e, lst: st, lhave: ST_OK } };
     },
     Err(_) => {
-      return Run { ...r, e: Ent { ...e, lhave: ST_FAILED } };
+      return Run { ...r, e: Ent { ...r.e, lhave: ST_FAILED } };
     }
   }
   return r;
@@ -3130,7 +3129,7 @@ struct Anc { dev: i64, ino: i64, path: string }
 
 struct Walker { anc: Anc[], top_dev: i64 }
 
-function eval_entry(p: Prog, own r: Run, e: Ent): Run {
+function eval_entry(p: Prog, own r: Run, own e: Ent): Run {
   let r1 = Run { ...r, e: e, prune: false };
   return eval(p, p.root, r1);
 }
@@ -3347,7 +3346,7 @@ function loop_of(w: Walker, st: FileStat): i32 {
 
 // The stat of an entry under -L. A loop of links is an error, and the
 // entry is not evaluated.
-function follow_check(p: Prog, own r: Run, e: Ent): (boolean, Run) {
+function follow_check(p: Prog, own r: Run, own e: Ent): (boolean, Run) {
   if (!follows(p, e) || e.have != ST_NONE) {
     return (true, Run { ...r, e: e });
   }
@@ -3362,7 +3361,7 @@ function follow_check(p: Prog, own r: Run, e: Ent): (boolean, Run) {
   return (false, r);
 }
 
-function visit(p: Prog, own r0: Run, w: Walker, e0: Ent): Run {
+function visit(p: Prog, own r0: Run, w: Walker, own e0: Ent): Run {
   if (e0.dtype != 0u32 && e0.dtype != S_IFDIR && !follows(p, e0)) {
     if (e0.depth < p.o.mindepth) {
       return r0;
@@ -3395,7 +3394,7 @@ function visit(p: Prog, own r0: Run, w: Walker, e0: Ent): Run {
     descend = false;
   }
   if (!p.o.depth_first && evaluated) {
-    r = eval_entry(p, r, e);
+    r = eval_entry(p, r, Ent { ...e });
     if (r.quit) {
       return r;
     }

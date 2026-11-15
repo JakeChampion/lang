@@ -2462,15 +2462,27 @@ function is_string_array(t: typeinfo.Type): boolean {
   return false;
 }
 
+// The concat method of std/array, or its free function: `xs.concat(b)` or
+// `array.concat(xs, b)`.
 function concat_kernel(name: string, c: ast.ExprCall, s: State): boolean {
-  if (c.args.len() != 2 || !name.starts_with("__arrm_concat__")) {
+  if (c.args.len() != 2 || !name.starts_with("__arrm_concat__") && !std_array_function(name, "concat", s)) {
     return false;
   }
   let t = checked(c.args[0], s);
   if let typeinfo.TypeArray(a) = t {
-    return !a.view && !ssasem.reference(a.elem) && semtypes.concrete(a.elem, false) && ssasem.same_elements(checked(c.args[1], s), t);
+    return !a.view && !ssasem.is_view(a.elem) && semtypes.concrete(a.elem, false) && ssasem.same_elements(checked(c.args[1], s), t);
   }
   return false;
+}
+
+// A generic function of std/array, or one of its instances (`array__concat__u8`).
+function std_array_function(name: string, base: string, s: State): boolean {
+  let module = util.mangle_prefix("array");
+  let whole = module + "__" + base;
+  if (name != whole && !name.starts_with(whole + "__")) {
+    return false;
+  }
+  return match (s.scope.lookup_sig(name)) { Some(sig) => sig.module == module, None => false };
 }
 
 // The second operand is an array or a view of one; a view is read in place.
@@ -8600,6 +8612,7 @@ function byte_scan_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__ascii_run", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__scan_set", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__scan_masks", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__scan_masks_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__scan_set_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__bsd_sum", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__str_hash", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },

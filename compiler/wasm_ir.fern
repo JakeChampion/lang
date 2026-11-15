@@ -318,6 +318,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (any_op(cache, is_scan_masks)) {
     out = out.append("@uses_scan_masks");
   }
+  if (any_op(cache, is_scan_masks_bytes)) {
+    out = out.append("@uses_scan_masks_bytes");
+  }
   if (module_uses_count_runs(cache)) {
     out = out.append("@uses_count_runs");
   }
@@ -674,6 +677,10 @@ pub function module_uses_count_byte(cache: irtables.LowerResult[]): boolean {
 
 function is_scan_masks(o: ir.Op): boolean {
   return o.kind_tag == ir.K_SCAN_MASKS;
+}
+
+function is_scan_masks_bytes(o: ir.Op): boolean {
+  return o.kind_tag == ir.K_SCAN_MASKS_BYTES;
 }
 
 pub function module_uses_scan_set(cache: irtables.LowerResult[]): boolean {
@@ -5293,6 +5300,9 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == ir.K_SCAN_MASKS) {
     return "    call $__fern_scan_masks\n";
   }
+  if (o.kind_tag == ir.K_SCAN_MASKS_BYTES) {
+    return "    call $__fern_scan_masks_bytes\n";
+  }
   if (o.kind_tag == ir.K_COUNT_RUNS) {
     return "    call $__fern_count_runs\n";
   }
@@ -9499,9 +9509,10 @@ pub function arr_concat_helper(): string {
   let o = "";
   o += "  (func $__fern_arr_concat (param $width i32) (param $nb i32) (param $src i32) (param $a i32) (result i32)\n";
   o += "    (local $na i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
-  o += "    (local.set $stride (i32.const 4))\n";
-  o += "    (if (i32.eq (local.get $width) (i32.const 8)) (then (local.set $stride (i32.const 1))))\n";
-  o += "    (if (i32.eq (local.get $width) (i32.const 64)) (then (local.set $stride (i32.const 8))))\n";
+  // memory.copy checks its source address even when it copies no byte, and an
+  // empty range can point anywhere.
+  o += "    (if (i32.le_s (local.get $nb) (i32.const 0)) (then (local.set $nb (i32.const 0)) (local.set $src (local.get $a))))\n";
+  o += "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
   o += "    (local.set $na (i32.load (local.get $a)))\n";
   o += "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
   o += "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
@@ -9510,6 +9521,7 @@ pub function arr_concat_helper(): string {
   o += "    (if (i32.and (local.get $sole) (i32.le_s (local.get $n) (local.get $cap))) (then\n";
   o += "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o += "      (i32.store (local.get $a) (local.get $n))\n";
+  o += "      (call $__fern_arr_concat_retain (local.get $width) (local.get $a) (local.get $na) (local.get $n))\n";
   o += "      (return (local.get $a))))\n";
   o += "    (local.set $ncap (local.get $n))\n";
   o += "    (if (local.get $sole) (then\n";
@@ -9519,7 +9531,15 @@ pub function arr_concat_helper(): string {
   o += "    (i32.store offset=4 (local.get $r) (local.get $ncap))\n";
   o += "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride)))\n";
   o += "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o += "    (call $__fern_arr_concat_retain (local.get $width) (local.get $r) (local.get $na) (local.get $n))\n";
   o += "    (local.get $r))\n";
+  // An odd width marks counted elements: the slots [from, to) copied from src each take a count.
+  o += "  (func $__fern_arr_concat_retain (param $width i32) (param $r i32) (param $from i32) (param $to i32)\n";
+  o += "    (if (i32.eqz (i32.and (local.get $width) (i32.const 1))) (then (return)))\n";
+  o += "    (block $done (loop $next (br_if $done (i32.ge_s (local.get $from) (local.get $to)))\n";
+  o += "      (drop (call $__fern_rc_inc (i32.load (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.shl (local.get $from) (i32.const 2))))))\n";
+  o += "      (local.set $from (i32.add (local.get $from) (i32.const 1))) (br $next)))\n";
+  o += "  )\n";
   return o;
 }
 
@@ -9988,6 +10008,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   }
   if (need(needs, "@uses_scan_masks")) {
     roots += " __fern_scan_masks";
+  }
+  if (need(needs, "@uses_scan_masks_bytes")) {
+    roots += " __fern_scan_masks_bytes";
   }
   if (need(needs, "@uses_scan_set_bytes")) {
     roots += " __fern_scan_set_bytes";

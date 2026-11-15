@@ -43,6 +43,22 @@ the final index, including zero for a negative count. Other reads of the
 receiver's evolving phi keep their scalar walk. Additional effects, extra
 loop-carried state and other loop shapes also keep it.
 
+The first and fourth shapes also apply to arrays of other element types,
+and to a view source. The pass then does not call a byte helper. It writes
+a range concat (#15829): an `arr_concat` of the receiver, the source, the
+start and the count. The source must not be the
+receiver that the loop starts from. An element that is a string view keeps
+the loop.
+
+The range concat checks a range with a count above zero against the
+source. A range outside the source aborts with the index error of the loop.
+A count of zero or less appends nothing. The concat helper increments the
+count of each counted element that it copies.
+
+Each replacement runs in the body block of the old loop, and a phi in the
+exit joins its result with the receiver. The header keeps its test, so an
+empty range makes no call.
+
 Each replacement is an ordinary typed call that consumes the receiver and
 borrows the source. The unit planner and independent verifier account for
 those arguments normally. A source alias of the receiver keeps its owner

@@ -1869,19 +1869,27 @@ pub function same_elements(t: typeinfo.Type, arr: typeinfo.Type): boolean {
   return false;
 }
 
+// A concat of four operands appends only b[from .. from + n] of its second.
 function arr_concat_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  if (ins.args.len() != 2) {
+  if (ins.args.len() != 2 && ins.args.len() != 4) {
     return "array concat arity";
   }
   if (!semtypes.equal(f.values[ins.args[0]], result) || !same_elements(f.values[ins.args[1]], result)) {
     return "array concat operand type";
   }
+  if (!concat_range_typed(ins, f)) {
+    return "array concat range type";
+  }
   if let typeinfo.TypeArray(a) = result {
-    if (!a.view && !counted(f, a.elem)) {
+    if (!a.view && !is_view(a.elem)) {
       return "";
     }
   }
   return "array concat result";
+}
+
+function concat_range_typed(ins: ssa.SInst, f: Func): boolean {
+  return ins.args.len() == 2 || is_i32(f.values[ins.args[2]]) && is_i32(f.values[ins.args[3]]);
 }
 
 function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {

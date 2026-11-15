@@ -1,0 +1,3 @@
+function __fern_scan_masks_bytes(s: usize, from: i32, m: usize): i32 {
+  return __fern_scan_masks_in(s + 8, __load_i32(s), from, m);
+}
