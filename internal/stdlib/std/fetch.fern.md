@@ -1867,7 +1867,7 @@ function __datagram_watched(sock: Socket, max: i32, wait: Duration): Result[net.
     if (at - monotonic_ns() < 1000000i64) {
       at = monotonic_ns() + 1000000i64;
     }
-    match (async.wait_any([sock.fd, 1], Some(time.instant_from_nanos(at)))) {
+    match (async.wait_any([sock.fd, async.counted(sock.fd, 1)], Some(time.instant_from_nanos(at)))) {
       async.Woke(_) => {},
       async.TimedOut => {
         return Ok(net.Elapsed);
