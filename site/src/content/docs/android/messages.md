@@ -205,6 +205,24 @@ ui.program(view, update).with_system((e: android.Event): Option[Msg] => {
 })
 ```
 
+## Play on with no window, and close
+
+A music player plays on when the person closes its window. Call
+`android.keep_alive(ctx, true)` while it plays. Then a Destroy of the
+activity does not end the loop. The app gets the events of its media
+session and of its service with no window.
+
+`with_close` takes the state at the Destroy that ends the loop, and
+gives back its closed state. Give back the sound, the session and the
+locks there. It runs inside the loop, while Android lets the app call
+Java. A Destroy that `keep_alive` keeps the loop through does not close
+the state. After `app.run` returns, do not call Java: the loop thread
+has no JNIEnv then.
+
+```fern
+ui.program(view, update).with_close((own m: Model): own Model => released(m))
+```
+
 Other modules of `std/android` reach more of the phone: `audio`,
 `player`, `video`, `service`, `image`, `fonts` and `p2p`. The standard
 library reference lists them.
