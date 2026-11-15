@@ -86,7 +86,7 @@ The exit status is the code of `q` or `Q`, or one of these:
 
 ## What the port does not do
 
-These differences remain:
+These differences remain in a UTF-8 locale:
 
 - The port does not check that the locale is on the system. When it is
   not, GNU sed uses the C locale.
@@ -97,13 +97,17 @@ These differences remain:
 - In a UTF-8 locale, a byte that continues a character but follows a
   complete one can move a match that has a word assertion. Then GNU sed
   can start the match inside the character before it.
+
+These differences come from the output and from WASI:
+
 - The port writes standard output in blocks of 64 KiB, and GNU sed writes
   it in blocks of 4 KiB. Thus a write error on standard output after the
   first 4 KiB gives a different message. The port names the bytes of its
-  block, and GNU sed names the bytes of its last write. A w file and the
-  file of `-i` use the blocks of GNU sed, and give the same messages. The
-  blocks of GNU sed on standard output cost 4% of the instructions of `y`
-  and 8% of `p`, and then `y` is slower than in GNU sed.
+  block, and GNU sed names the bytes of its last write. The blocks of GNU
+  sed cost 4% of the instructions of `y` and 8% of `p`, so the port keeps
+  its blocks.
+- A w file and the file of `-i` use the blocks of GNU sed, and give the
+  same messages.
 - On wasm32-wasi, the `e` command and the `e` flag stop with an error,
   because WASI has no processes.
 
@@ -126,34 +130,44 @@ GNU binary. No case comes from the test suite of GNU sed.
 
 ## Performance
 
-The input is a file of 100 MiB: 2,295,335 lines of 3 to 14 words from a set
+The input is a file of 100 MiB: 2,205,598 lines of 3 to 14 words from a set
 of 32 words. The file is in the page cache, and the output goes to
 `/dev/null`. Each value is the best of seven runs, with the runs of the two
-programs in turn, on a 4-core x86-64 container, 2026-11-13. Other jobs ran
-on the container at the same time, so a value can change by 20% from one set
-of runs to the next. The two programs give the same output for each script.
+programs in turn, on a 4-core x86-64 container, 2026-11-15.
 
-| Script | GNU sed 4.9 | Fern sed |
-|---|--:|--:|
-| `s/foo/bar/g` | 0.379 s | 0.220 s |
-| `-n '/lazy dog/p'` | 0.247 s | 0.190 s |
-| `-n '/[0-9]x\|q[a-z]*z/p'` | 0.167 s | 0.180 s |
-| `y/abcdefghij/ABCDEFGHIJ/` | 0.195 s | 0.180 s |
-| `-n '1000000,1100000p'` | 0.084 s | 0.062 s |
-| `-n '$p'` | 0.099 s | 0.071 s |
-| `-n '$='` | 0.085 s | 0.063 s |
-| `p` | 0.169 s | 0.134 s |
-| `d` | 0.086 s | 0.077 s |
-| `s/\(fox\) \(\w*\)/\2 \1/g` | 0.626 s | 0.491 s |
-| `-E 's/(a\|e)+/X/g'` | 5.821 s | 1.767 s |
+The load of the container was 7 to 11 during the runs. Thus a wall time
+can change by 20% from one set of runs to the next. The CPU time is the
+user time and the system time of the program, and it changes less. The two
+programs give the same output for each script.
 
-The port is faster on each script but one. On the regex
-`[0-9]x\|q[a-z]*z` the two programs are equal within the noise:
-`perf stat` over nine runs gives 178 ms to 200 ms for the port and 198 ms to
-214 ms for GNU sed. No literal string starts a match of that regex. Thus
-the port finds each byte that can start a match with the set scan of the
-runtime. The scan takes one third of the time, and it reads one byte at a
-time.
+| Script | GNU sed 4.9 | Fern sed | GNU CPU | Fern CPU |
+|---|--:|--:|--:|--:|
+| `s/foo/bar/g` | 0.436 s | 0.314 s | 0.435 s | 0.313 s |
+| `-n '/lazy dog/p'` | 0.356 s | 0.283 s | 0.352 s | 0.279 s |
+| `-n '/[0-9]x\|q[a-z]*z/p'` | 0.220 s | 0.227 s | 0.218 s | 0.226 s |
+| `y/abcdefghij/ABCDEFGHIJ/` | 0.260 s | 0.303 s | 0.259 s | 0.280 s |
+| `-n '1000000,1100000p'` | 0.110 s | 0.109 s | 0.108 s | 0.106 s |
+| `-n '$p'` | 0.116 s | 0.106 s | 0.115 s | 0.105 s |
+| `-n '$='` | 0.120 s | 0.112 s | 0.118 s | 0.106 s |
+| `p` | 0.304 s | 0.246 s | 0.243 s | 0.195 s |
+| `d` | 0.139 s | 0.146 s | 0.107 s | 0.113 s |
+| `s/\(fox\) \(\w*\)/\2 \1/g` | 0.985 s | 0.784 s | 0.832 s | 0.736 s |
+| `-E 's/(a\|e)+/X/g'` | 9.964 s | 2.835 s | 9.346 s | 2.764 s |
+
+The port is faster on eight scripts. On `y`, on `d` and on the regex
+`[0-9]x\|q[a-z]*z` it is not. callgrind counts the instructions on the
+first 10 MB of the input. For `y`, GNU sed runs 213 million and the port
+259 million. For `d`, GNU sed runs 71 million and the port 86 million.
+
+Thus the port spends more on each line before the script runs: about 400
+instructions for `d`. Half of that is the copy of the line into the
+pattern space, with its allocation and its release.
+
+The regex `[0-9]x\|q[a-z]*z` has no literal string at the start of a match.
+The port now finds each byte that can start a match with `__scan_masks`.
+The scan tests 16 or 32 bytes at a time, and no longer one byte. That takes the
+script from 257 ms to 213 ms of CPU time. The rest is the cost of each
+line.
 
 These changes made the port faster.
 
@@ -169,6 +183,8 @@ The changes in the shared code:
 
 - In `coreutils/lib/bre.fern`, a regex that is one literal string gives
   its match from the literal search, without the DFA.
+- A regex with no literal at its start finds the bytes that can start a
+  match with the SIMD probes of `__scan_masks_bytes`.
 - A regex that few bytes can start runs the DFA only from those bytes.
 - A regex with at most two repetitions and no repeated group gets its
   groups from a walk to the end of the match, without the thread list.
