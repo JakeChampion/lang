@@ -278,6 +278,7 @@ func sedTree(t *testing.T, dir string) {
 		"f3": "1\n2\n3\n", "f4": "1\n2\n3\n4\n", "na": "a", "nonl": "x", "empty": "",
 		"s1.sed": "p\n{p\n", "s2.sed": "p\ns/a/b\np\n", "s3.sed": "s//x/\n", "s4.sed": "#n\np\n",
 		"s5.sed": "a\\\nfoo\\\n", "s6.sed": "p\nk\n", "s7.sed": "p;k", "sub/f": "x\ny\n",
+		"big": strings.Repeat("0123456789abcde\n", 1500),
 	}
 	for name, content := range files {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
@@ -781,7 +782,7 @@ func sedScriptCases() []invocation {
 
 // sedOptionCases: Files, options, w, r, R, e and in-place editing.
 func sedOptionCases() []invocation {
-	return []invocation{
+	cases := []invocation{
 		{name: "sed -n 2,3p;$= f3 f4", args: []string{"-n", "2,3p;$=", "f3", "f4"}, seedTree: sedTree},
 		{name: "sed -s -n 2,3p;$= f3 f4", args: []string{"-s", "-n", "2,3p;$=", "f3", "f4"}, seedTree: sedTree},
 		{name: "sed -s -n /2/,3p;F f3 f4", args: []string{"-s", "-n", "/2/,3p;F", "f3", "f4"}, seedTree: sedTree},
@@ -993,6 +994,35 @@ func sedOptionCases() []invocation {
 		{name: "e to a full stdout", args: []string{"e echo hi"}, stdin: "a\n", stdout: stdoutFull},
 		{name: "w /dev/stdout to a full stdout", args: []string{"-n", "w /dev/stdout"}, stdin: "a\n", stdout: stdoutFull},
 	}
+	// Past its first block, the error names the call of GNU sed that
+	// filled the buffer of stdio: a line, a newline, a byte of l or a
+	// block of 8192 bytes of r. = and F check for no error.
+	seq := sedSeq(3000)
+	long := strings.Repeat("x", 5000) + "\n" + strings.Repeat("y", 8192) + "\n" + seq
+	for _, c := range []struct {
+		in   string
+		args []string
+	}{
+		{seq, []string{"p"}}, {seq, []string{"-n", "p"}}, {seq, []string{"s/1/xyz/g"}}, {seq, []string{"G"}},
+		{seq, []string{"-n", "l"}}, {seq, []string{"-n", "l 3"}}, {seq, []string{"-n", "="}}, {seq, []string{"-n", "F"}},
+		{seq, []string{"-n", "p;="}}, {seq, []string{"-n", "=;p"}}, {seq, []string{"-n", "i\\\nabc"}}, {seq, []string{"-n", "a\\\nabc"}},
+		{seq, []string{"-n", "w /dev/stdout"}}, {seq, []string{"-z", "p"}}, {seq, []string{"n;d"}}, {seq, []string{"q5"}},
+		{long, []string{"p"}}, {long, []string{"-n", "$p"}}, {"a\nb", []string{"p"}},
+		{"1\n2\n", []string{"r big"}}, {"1\n", []string{"R big"}}, {seq, []string{"-n", "e echo hi"}},
+	} {
+		cases = append(cases, invocation{name: "full stdout " + strings.Join(c.args, " ") + " " + strconv.Itoa(len(c.in)), args: c.args, stdin: c.in, stdout: stdoutFull, seedTree: sedTree})
+	}
+	return cases
+}
+
+// sedSeq is the output of seq n.
+func sedSeq(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		b.WriteString(strconv.Itoa(i))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // sedBigCases: Large inputs: lines across the read buffer, long lines and long files.

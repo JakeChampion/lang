@@ -118,6 +118,19 @@ The exit status is the code of `q` or `Q`, or one of these:
 - 2 when sed cannot read an input file.
 - 4 for an error in the run.
 
+The port writes standard output in blocks of 64 KiB. GNU sed writes it
+through stdio, in blocks of the block size of the file, at most 8 KiB. The
+port keeps a record of the calls of GNU sed to stdio after its last block:
+the length of each call, and whether GNU sed checks it for an error.
+
+After a failed write, the port finds the call that filled the block of
+stdio at the failed byte. It gives the message of that call, with the same
+count of items. After a call that GNU sed does not check, the port drops
+the bytes that stdio drops, and continues. The port writes each block at
+once, as GNU sed does, when the record cannot show the same result: with
+`--debug`, `-i` or `-u`, with more than one input, with a w file that is
+not standard output, and with `e`, `=` or `F`.
+
 ## What the port does not do
 
 This difference remains in a UTF-8 locale:
@@ -141,14 +154,9 @@ These differences come from the regex of glibc:
 
 These differences come from the output and from WASI:
 
-- The port writes standard output in blocks of 64 KiB, and GNU sed writes
-  it in blocks of 4 KiB. Thus a write error on standard output after the
-  first 4 KiB gives a different message. The port names the bytes of its
-  block, and GNU sed names the bytes of its last write. The blocks of GNU
-  sed cost 4% of the instructions of `y` and 8% of `p`, so the port keeps
-  its blocks.
-- A w file and the file of `-i` use the blocks of GNU sed, and give the
-  same messages.
+- With `--debug`, a write error on standard output can give a different
+  message. GNU sed writes the trace in many small calls to stdio. The record
+  of the port takes each byte of the trace as one call.
 - On wasm32-wasi, the `e` command and the `e` flag stop with an error,
   because WASI has no processes.
 
