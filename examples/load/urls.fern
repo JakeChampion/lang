@@ -1,0 +1,84 @@
+// The URLs of the requests: one URL, a URL drawn from a regular expression
+// (--rand-regex-url), or a URL drawn from the lines of a file
+// (--urls-from-file). Each request draws its URL.
+import "std/array";
+import "std/rand";
+import "std/regex";
+import "std/string";
+import "std/utf8";
+import "./options";
+
+pub struct Source { kind: i32, one: options.Origin, list: options.Origin[], gen: Option[regex.Generator] }
+
+// The pattern of --rand-regex-url. oha escapes each `.` of the URL, because
+// the host of most URLs has dots.
+pub function pattern(url: string): string {
+  return url.replace(".", "\\.");
+}
+
+// The source of the URLs of the options. For --urls-from-file it reads the
+// file.
+pub function source(o: options.Options): Result[Source, string] {
+  let none: options.Origin[] = [];
+  let base = Source { kind: o.urls, one: o.origin(), list: none, gen: None };
+  if (o.urls == options.URL_REGEX) {
+    match (regex.generator(pattern(o.url), o.max_repeat)) {
+      Ok(g) => {
+        return Ok(Source { ...base, gen: Some(g) });
+      },
+      Err(e) => {
+        return Err(f"--rand-regex-url {o.url}: {e.to_string()}");
+      }
+    }
+  }
+  if (o.urls != options.URL_FILE) {
+    return Ok(base);
+  }
+  let text = match (read_file(o.url)) {
+    Ok(t) => t,
+    Err(e) => {
+      return Err(f"--urls-from-file {o.url}: {e.message()}");
+    },
+  };
+  let list: options.Origin[] = [];
+  for line in text.split("\n") {
+    let raw = line.trim_end_chars("\r");
+    if (raw.trim().len() == 0) {
+      continue;
+    }
+    list = list.append(options.first_url(raw)?);
+  }
+  if (list.len() == 0) {
+    return Err(f"--urls-from-file {o.url} has no URL");
+  }
+  return Ok(Source { ...base, list: list });
+}
+
+// Whether each request has the same URL.
+pub function (s: Source) fixed(): boolean {
+  return s.kind == options.URL_ONE;
+}
+
+// The URL of a request, drawn with the state `state` of the generator of
+// `std/rand`, and the next state. A drawn text that is not a URL gives the
+// error of the request.
+pub function (s: Source) draw(state: i64): (i64, Result[options.Origin, string]) {
+  if (s.kind == options.URL_FILE) {
+    let (next, i) = rand.rng_below(state, s.list.len());
+    return (next, Ok(s.list[i]));
+  }
+  let Some(g) = s.gen else {
+    return (state, Ok(s.one));
+  };
+  let (next, bytes) = g.sample(state);
+  let text = utf8.from_bytes_lossy(bytes);
+  match (options.first_url(text)) {
+    Ok(at) => {
+      return (next, Ok(at));
+    },
+    Err(why) => {
+      return (next, Err(f"{why}, generated url: {text}"));
+    }
+  }
+  return (next, Err(text));
+}

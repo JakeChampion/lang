@@ -51,9 +51,10 @@ function main(): i32 {
 // two words less, and for no word for a box of one. So the block of two
 // fields has 24 bytes. Each constructor stores a tag in the high half of
 // the header, and the low 16 bits of the tag are the number of words.
-// A 32-bit store to the high half of the header word of a box.
+// A 32-bit store to the high half of the header word of a box. On x86-64 the
+// store takes the tag as an immediate.
 var tagStore = map[string]*regexp.Regexp{
-	"x86-64-linux": regexp.MustCompile(`movl %e\w+, -4\(%r\w+\)`),
+	"x86-64-linux": regexp.MustCompile(`movl \$\d+, -4\(%r\w+\)`),
 	"arm64-linux":  regexp.MustCompile(`stu?r w\d+, \[x\d+, #-4\]`),
 }
 

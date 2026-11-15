@@ -1,0 +1,20 @@
+// A function of the module named exit takes the name from the builtin. A
+// call to it returns, so the local that moves into the own parameter is read
+// again after the branch.
+struct W { d: i32[], n: i32 }
+
+function exit(code: i32): i32 {
+  return code;
+}
+
+function eat(own w: W): i32 {
+  return w.n + w.d.len();
+}
+
+function main(): i32 {
+  let w: W = W { d: [1], n: 1 };
+  if (w.n > 5) {
+    exit(eat(w));
+  }
+  return w.n;
+}
