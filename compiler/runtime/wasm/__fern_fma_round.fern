@@ -17,7 +17,7 @@ function __fern_fma_round(m: u64, e: i32, neg: boolean): f64 {
   // At 2^-1085 the subnormal holds bits 62 to 11 of m. A top bit at 2^63
   // moves the rounding of the conversion to bit 11, and the subtraction
   // removes that bit again.
-  let c = if (neg) { 0.0 - 9223372036854775808.0 } else { 9223372036854775808.0 };
+  let c = if (neg) { -9223372036854775808.0 } else { 9223372036854775808.0 };
   let j = m >> 1 as u64 | m & 1 as u64 | 4611686018427387904 as u64;
   return __fern_fma_scale(2.0 * __fern_fma_signed(j, neg) - c, e);
 }

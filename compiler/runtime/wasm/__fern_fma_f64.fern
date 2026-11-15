@@ -21,7 +21,7 @@ function __fern_fma_f64(x: f64, y: f64, z: f64): f64 {
   let mz = __fern_fma_sig(z);
   let d = ez - ex - ey;
   if (d <= 0) {
-    return __fern_fma_sum(hi, lo, 0 as u64, __fern_fma_shr(0 as u64, mz, 0 - d), ex + ey, x, y, z);
+    return __fern_fma_sum(hi, lo, 0 as u64, __fern_fma_shr(0 as u64, mz, -d), ex + ey, x, y, z);
   }
   if (d < 64) {
     return __fern_fma_sum(hi, lo, mz >> (64 - d) as u64, mz << d as u64, ex + ey, x, y, z);

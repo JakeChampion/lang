@@ -1,5 +1,5 @@
 // __fern_fma_signed converts m, which is below 2^63, to f64 with the sign neg.
 function __fern_fma_signed(m: u64, neg: boolean): f64 {
   let i = m as i64;
-  return if (neg) { (0 - i) as f64 } else { i as f64 };
+  return if (neg) { (-i) as f64 } else { i as f64 };
 }
