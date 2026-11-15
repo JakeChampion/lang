@@ -51,6 +51,9 @@ func catCases(t *testing.T) []invocation {
 	hund := catFile(t, dir, "hund", strings.Repeat("x\n", 150))
 	self := catFile(t, dir, "self", "s\n")
 	selfEmpty := catFile(t, dir, "selfempty", "")
+	squeezePairs := catFile(t, dir, "squeezepairs", strings.Repeat("x\n", 65535)+"\n\n\x0b\n\x0b\x00\xff\n\nend")
+	squeezeSplit := catFile(t, dir, "squeezesplit", strings.Repeat("x", 131071)+"\n\n\nend\n\n")
+	squeezeBorrow := catFile(t, dir, "squeezeborrow", strings.Repeat("a\n\x0b\x0b\xff\x00\n", 20000))
 
 	return []invocation{
 		{name: "one file", args: []string{ab}},
@@ -97,6 +100,13 @@ func catCases(t *testing.T) []invocation {
 		{name: "squeeze a large file", args: []string{"-s", big}},
 		{name: "squeeze only blanks", args: []string{"-s"}, stdin: "\n\n\n"},
 		{name: "squeeze with an unterminated blank", args: []string{"-s", endsBlank, nonl}},
+		{name: "squeeze pairs across words", args: []string{"-s", squeezePairs}},
+		{name: "squeeze pairs across reads", args: []string{"-s", squeezeSplit}},
+		{name: "squeeze adjacent non-newline bytes", args: []string{"-s", squeezeBorrow}},
+		{name: "squeeze pairs across files", args: []string{"-s", squeezeSplit, oneBlank, squeezePairs}},
+		{name: "squeeze pairs with numbers", args: []string{"-sn", squeezePairs, squeezeSplit}},
+		{name: "squeeze pairs with output full", args: []string{"-s", squeezeSplit, missing}, stdout: stdoutFull},
+		{name: "squeeze pairs with output closed", args: []string{"-s", squeezePairs, missing}, stdout: stdoutClosed},
 
 		{name: "show ends", args: []string{"-E", ctrl}},
 		{name: "show ends long", args: []string{"--show-ends", nonl}},

@@ -77,8 +77,14 @@ def controls():
     yield "SEI belongs to next packet", [[s, p, slice_nal(frame=1)], [sei, slice_nal(frame=2)]]
     yield "AUD belongs to next packet", [[b"\x09\xf0", s, p, slice_nal(frame=1)],
                                          [b"\x09\xf0", slice_nal(frame=2)]]
-    yield "sequence end forces a boundary", [[s, p, slice_nal(frame=0, idr=True), b"\x0a\x80"],
+    yield "sequence end forces a boundary", [[s, p, slice_nal(frame=0, idr=True), b"\x0a"],
                                              [slice_nal(frame=0, idr=True)]]
+    yield "both end markers remain in the last picture", [[s, p, slice_nal(frame=0, idr=True), b"\x0a", b"\x0b"]]
+    yield "stream end follows a non-IDR picture", [[s, p, slice_nal(frame=1), b"\x0b"]]
+    yield "sequence end survives prefix metadata", [[s, p, slice_nal(frame=0, idr=True), b"\x0a"],
+                                                   [sei, s, p, slice_nal(frame=0, idr=True)]]
+    yield "filler after sequence end remains a suffix", [[s, p, slice_nal(frame=0, idr=True), b"\x0a", b"\x0c\xff\x80"],
+                                                        [slice_nal(frame=0, idr=True), b"\x0b"]]
     yield "parameter replacement", [[s, p, slice_nal(frame=1)],
                                     [sequence(poc=0), pps.make(bottom=1), slice_nal(order=0, bottom=True, b=1)]]
     yield from replacement_controls()
@@ -138,6 +144,15 @@ def invalid():
     yield "field pictures remain unsupported", [sequence(poc=2, only=0), p], "Unsupported"
     yield "slice groups remain unsupported", [s, pps.make(groups=2)], "Unsupported"
     yield "redundant pictures remain unsupported", [s, pps.make(redundant=1)], "Unsupported"
+    for marker in (10, 11):
+        for payload in (b"\x80", b"\xff\x80", b"\x01\x80"):
+            yield f"end marker {marker} rejects payload {payload.hex()}", [s, p, slice_nal(), bytes([marker]) + payload], "Header"
+        yield f"end marker {marker} requires a picture", [s, p, bytes([marker])], "Header"
+    yield "sequence end requires the next IDR", [s, p, slice_nal(idr=True), b"\x0a", slice_nal()], "Header"
+    yield "sequence end survives prefix metadata before a non-IDR", [s, p, slice_nal(idr=True), b"\x0a", b"\x09\xf0", s, p, slice_nal()], "Header"
+    yield "sequence end survives filler before a non-IDR", [s, p, slice_nal(idr=True), b"\x0a", b"\x0c\xff\x80", slice_nal()], "Header"
+    for following in (slice_nal(idr=True), s, p, b"\x0a", b"\x0b", b"\x0c\xff\x80"):
+        yield f"stream end rejects subsequent NAL {following[0] & 31}", [s, p, slice_nal(), b"\x0b", following], "Header"
     for name, before, after, picture, category in incompatible_pairs():
         yield name, [before, picture, slice_nal(frame=1), after, slice_nal(frame=2)], category
     yield "full PPS cache drops on a stale parameter error", (
