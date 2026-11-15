@@ -1360,6 +1360,24 @@ func New() *Interp {
 		}
 		return scanMasks([]byte(string(s)), args[1], args[2])
 	}}
+	i.Builtins["__scan_masks_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_masks_bytes: expected 3 args, got %d", len(args))
+		}
+		arr, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__scan_masks_bytes: expected an array, got %T", args[0])
+		}
+		b := make([]byte, len(arr.Elems()))
+		for at, e := range arr.Elems() {
+			n, ok := e.(Number)
+			if !ok {
+				return nil, fmt.Errorf("__scan_masks_bytes: element %d is %T, not u8", at, e)
+			}
+			b[at] = byte(n)
+		}
+		return scanMasks(b, args[1], args[2])
+	}}
 	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__scan_set_bytes: expected 3 args, got %d", len(args))

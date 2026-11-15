@@ -774,7 +774,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && util.has_str(["__ascii_run", "__bsd_sum", "__str_hash", "__count_byte", "__crc32_cksum", "__crc32_cksum_array", "__crc32_ieee_array", "__count_byte_bytes", "__count_below_u64", "__bsd_sum_bytes"], name)) {
     return typeinfo.t_i32();
   }
-  if (argc == 3 && util.has_str(["__scan_set", "__scan_masks", "__scan_set_bytes", "__count_runs", "__count_runs_bytes", "__memchr", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr"], name)) {
+  if (argc == 3 && util.has_str(["__scan_set", "__scan_masks", "__scan_masks_bytes", "__scan_set_bytes", "__count_runs", "__count_runs_bytes", "__memchr", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr"], name)) {
     return typeinfo.t_i32();
   }
   if (argc == 1 && name == "__sum_bytes_array") {
@@ -994,7 +994,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__scan_set" || name == "__scan_masks") {
     return ([typeinfo.t_string(), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
   }
-  if (name == "__scan_set_bytes") {
+  if (name == "__scan_set_bytes" || name == "__scan_masks_bytes") {
     return ([t_array(typeinfo.t_u8()), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
   }
   if (name == "__count_runs") {
@@ -18838,7 +18838,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
   "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
   "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
-  "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_masks", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
+  "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_masks", "__scan_masks_bytes", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
   "__store_ptr", "__store_u8", "__str_bytes", "__bytes_data", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
   "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
@@ -29467,7 +29467,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   let out: string[] = [];
   for name in [
-    "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_masks", "__scan_set_bytes",
+    "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_masks", "__scan_masks_bytes", "__scan_set_bytes",
     "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__mulhi_u64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
     "__f64x2_of", "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_lane_bits", "__f64x2_lane",

@@ -771,7 +771,7 @@ function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: u
 function copied_scalar_result(name: string): boolean {
   return name == ssabytes.word_name(4) || name == ssabytes.word_name(8) || name == ssabytes.swap_name(4) || name == ssabytes.swap_name(8)
     || name == "__sum_bytes" || name == "__crc32_cksum" || name == "__crc32_cksum_array"
-    || name == "__crc32_ieee_array" || name == "__ascii_run" || name == "__scan_set" || name == "__scan_masks"
+    || name == "__crc32_ieee_array" || name == "__ascii_run" || name == "__scan_set" || name == "__scan_masks" || name == "__scan_masks_bytes"
     || name == "__scan_set_bytes" || name == "__bsd_sum" || name == "__str_hash"
     || name == "__count_runs" || name == "__count_runs_bytes" || name == "__count_byte"
     || name == "__memchr" || name == "__count_byte_bytes" || name == "__count_below_u64"

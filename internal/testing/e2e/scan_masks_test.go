@@ -2,10 +2,11 @@ package e2e
 
 import "testing"
 
-// scanMasksSrc checks __scan_masks against a scan written in Fern. It tries
-// one, two and three probes at offsets up to 40, on texts of each length from
-// 0 to 99 and from each start, so that each vector block and each tail is
-// reached. Masks with a bad count or too few bytes find nothing.
+// scanMasksSrc checks __scan_masks and __scan_masks_bytes against a scan
+// written in Fern. It tries one, two and three probes at offsets up to 40, on
+// texts of each length from 0 to 99 and from each start, so that each vector
+// block and each tail is reached. Masks with a bad count or too few bytes
+// find nothing.
 const scanMasksSrc = `function next(x: i32): i32 {
   return (x * 1103515245 + 12345) & 2147483647;
 }
@@ -60,10 +61,6 @@ function bytes_of(n: i32, seed: i32): u8[] {
   return b;
 }
 
-function text_of(n: i32, seed: i32): string {
-  return unsafe { string_from_bytes_unchecked(bytes_of(n, seed)) };
-}
-
 // Masks that accept one byte at each probe, as the masks of a literal do.
 function exact(k: i32, offs: i32[], vals: i32[]): u8[] {
   let out: u8[] = [k as u8, offs[0] as u8, offs[1] as u8, offs[2] as u8];
@@ -97,7 +94,8 @@ function planted(n: i32, k: i32, seed: i32): i32 {
   let text = unsafe { string_from_bytes_unchecked(b) };
   let bad = 0;
   for from in [0, at - 33, at - 1, at, at + 1, n] {
-    if (__scan_masks(text, from, m) != slow(text, from, m)) {
+    let want = slow(text, from, m);
+    if (__scan_masks(text, from, m) != want || __scan_masks_bytes(b, from, m) != want) {
       bad += 1;
     }
   }
@@ -109,7 +107,8 @@ function main(): i32 {
   let checks = 0;
   let found = 0;
   for n in 0..100 {
-    let text = text_of(n, n * 7 + 1);
+    let raw = bytes_of(n, n * 7 + 1);
+    let text = unsafe { string_from_bytes_unchecked(raw) };
     for k in 1..4 {
       let m = masks(k, n * 13 + k);
       for from in -1..n + 2 {
@@ -119,7 +118,7 @@ function main(): i32 {
         if (got >= 0) {
           found += 1;
         }
-        if (got != want) {
+        if (got != want || __scan_masks_bytes(raw, from, m) != want) {
           bad += 1;
         }
       }
@@ -136,8 +135,9 @@ function main(): i32 {
   let none: u8[] = [];
   let four = masks(3, 5).with(0, 4);
   let zero = masks(1, 5).with(0, 0);
-  let probe = text_of(64, 3);
-  if (__scan_masks(probe, 0, short) != -1 || __scan_masks(probe, 0, none) != -1 || __scan_masks(probe, 0, four) != -1 || __scan_masks(probe, 0, zero) != -1) {
+  let probe_bytes = bytes_of(64, 3);
+  let probe = unsafe { string_from_bytes_unchecked(probe_bytes) };
+  if (__scan_masks(probe, 0, short) != -1 || __scan_masks(probe, 0, none) != -1 || __scan_masks(probe, 0, four) != -1 || __scan_masks(probe, 0, zero) != -1 || __scan_masks_bytes(probe_bytes, 0, short) != -1 || __scan_masks_bytes(probe_bytes, 0, zero) != -1) {
     bad += 1;
   }
   if (checks != 15750 || found < 1000) {
