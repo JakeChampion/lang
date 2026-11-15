@@ -547,6 +547,7 @@ int_div_rem_by_zero                                  0
 int_extend_signedness                                0
 int_min_arithmetic                                   0
 int_saturating_ops                                   0
+int_saturating_product_of_wide_operands              0
 int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
