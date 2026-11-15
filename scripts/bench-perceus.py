@@ -151,9 +151,27 @@ def build_commands(language, name, tools, root, out, target):
 
 
 def turn_order(languages, repeat):
-    """Rotate the languages so that no language always runs in the same position."""
-    turn = repeat % len(languages)
-    return languages[turn:] + languages[:turn]
+    """Row `repeat` of a balanced Latin square over the languages.
+
+    Each language takes each position equally often, and each language runs
+    directly after each other language equally often. A run inherits the memory
+    that the run before it left, and huge pages are only cheap when free memory
+    is not fragmented, so a fixed neighbour biases a language.
+    """
+    n = len(languages)
+    first = []
+    low, high = 0, n - 1
+    for i in range(n):
+        if i % 2 == 0:
+            first.append(low)
+            low += 1
+        else:
+            first.append(high)
+            high -= 1
+    rows = [[(k + shift) % n for k in first] for shift in range(n)]
+    if n % 2:
+        rows += [row[::-1] for row in rows]
+    return tuple(languages[k] for k in rows[repeat % len(rows)])
 
 
 def main():

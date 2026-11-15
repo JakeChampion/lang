@@ -55,6 +55,8 @@ pub struct Printer {
   // -U, and a match can hold the line terminator: the search is of the whole
   // text, and a match can cover more than one line.
   multiline: boolean,
+  // The level of the logs of --debug and --trace.
+  log: i32,
   // The escapes of the colors of the file names, the line numbers, the
   // columns and the matches, and whether a match has a color.
   path_color: string,
@@ -79,7 +81,9 @@ pub struct Stats { matches: i32, lines: i32, printed: i64, searched: i64 }
 // and `written` says whether the output so far holds any bytes. `upto` is
 // the offset up to which the search read the file. `cap` is the capacity of
 // the line buffer after the search.
-pub struct Outcome { matched: boolean, written: boolean, upto: i32, cap: i32, stats: Stats }
+// `binary_at` is the offset of the NUL byte that stopped the search of a
+// binary file, or -1.
+pub struct Outcome { matched: boolean, written: boolean, upto: i32, cap: i32, stats: Stats, binary_at: i32 }
 
 // How ripgrep reads one file and looks for binary data in it. It maps the
 // file into memory, or it reads the file through its line buffer. The next
@@ -114,7 +118,7 @@ pub function printer(o: flags.Options, tty: boolean, term_color: boolean, one_fi
     include_zero: o.has(flags.INCLUDE_ZERO), column: false, byte_offset: false, vimgrep: false, replace: o.replace,
     trim: o.has(flags.TRIM), max_columns: o.max_columns, preview: o.has(flags.PREVIEW), passthru: o.has(flags.PASSTHRU),
     stop_on_nonmatch: o.has(flags.STOP_ON_NONMATCH), term: if (o.eol == "\x00") { 0 } else { 10 }, eol: o.eol,
-    json: o.has(flags.JSON), counts: o.has(flags.JSON) || o.has(flags.STATS), multiline: o.has(flags.MULTILINE),
+    json: o.has(flags.JSON), counts: o.has(flags.JSON) || o.has(flags.STATS), multiline: o.has(flags.MULTILINE), log: o.log,
     path_color: o.colors.path.escape(), line_color: o.colors.line.escape(), column_color: o.colors.column.escape(),
     match_color: o.colors.matched.escape(), match_colored: false, hyperlink: o.hyperlink, link: "",
     field_match: o.field_match, field_context: o.field_context,
@@ -1552,7 +1556,7 @@ function finish_lines(p: Printer, h: usize, name: string, s: Scan, g: Group, upt
 }
 
 function outcome(matched: boolean, written: boolean, upto: i32): Outcome {
-  return Outcome { matched: matched, written: written, upto: upto, cap: 0, stats: Stats { matches: 0, lines: 0, printed: 0i64, searched: 0i64 } };
+  return Outcome { matched: matched, written: written, upto: upto, cap: 0, stats: Stats { matches: 0, lines: 0, printed: 0i64, searched: 0i64 }, binary_at: -1 };
 }
 
 // The output of a summary mode: -c, --count-matches, -l and
@@ -1633,7 +1637,7 @@ pub function search(p0: Printer, re: matcher.Matcher, text: string, name: string
   if (p.json && printed > 0i64) {
     push_json_end(h, name, s, done, monotonic_ns() - t0);
   }
-  return with_cap(done, s, src, keep);
+  return with_cap(Outcome { ...done, binary_at: if (s.quit && s.offset >= 0) { s.offset } else { -1 } }, s, src, keep);
 }
 
 // The outcome with the capacity of the line buffer after the search.

@@ -90,6 +90,11 @@ func (s *featureServer) handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/missing" {
 		w.WriteHeader(http.StatusNotFound)
 	}
+	if r.URL.Path == "/late" {
+		w.WriteHeader(http.StatusOK)
+		_ = http.NewResponseController(w).Flush()
+		time.Sleep(150 * time.Millisecond)
+	}
 	_, _ = w.Write([]byte("hello\n"))
 }
 
@@ -303,6 +308,34 @@ func loadFeatureTests(t *testing.T, run loadRun) {
 		reqs := s.requests()
 		if j.responses() != 4 || protosOf(reqs)["HTTP/1.0"] != 4 || s.conns.Load() != 4 {
 			t.Errorf("--http-version 1.0: %d responses, server %v on %d connections", j.responses(), protosOf(reqs), s.conns.Load())
+		}
+	})
+
+	// As in oha, the first byte is the first data of the body, not the head
+	// of the response, on HTTP/1 and on HTTP/2.
+	t.Run("first byte", func(t *testing.T) {
+		s := startFeatureServer(t, false)
+		for _, args := range [][]string{{"-n", "2", "-c", "1"}, {"-n", "2", "-c", "1", "--http2"}} {
+			j := summaryOf(t, run, append(args, s.URL+"/late")...)
+			fb := j.Details.FirstByte
+			if j.responses() != 2 || fb.Fastest == nil || *fb.Fastest < 0.15 {
+				t.Errorf("%v: %d responses, first byte %v, want at least 0.15 s", args, j.responses(), fb.Fastest)
+			}
+		}
+	})
+
+	// As in oha, each new connection has the time to the address of its
+	// host, from the cache of the lookup before the run, or from a lookup
+	// of its own with --no-pre-lookup.
+	t.Run("dns lookup", func(t *testing.T) {
+		s := startFeatureServer(t, false)
+		local := strings.Replace(s.URL, "127.0.0.1", "localhost", 1)
+		for _, args := range [][]string{{"-n", "4", "-c", "2"}, {"-n", "4", "-c", "2", "--no-pre-lookup"}} {
+			j := summaryOf(t, run, append(args, local+"/")...)
+			l, d := j.Details.DNSLookup, j.Details.DNSDialup
+			if j.responses() != 4 || l.Fastest == nil || d.Slowest == nil || *l.Fastest <= 0 || *l.Slowest > *d.Slowest {
+				t.Errorf("%v: %d responses, DNS lookup %v to %v, dialup to %v", args, j.responses(), l.Fastest, l.Slowest, d.Slowest)
+			}
 		}
 	})
 
@@ -1058,6 +1091,7 @@ func loadOhaTests(t *testing.T, run loadRun) {
 			{"-u", "x"}, {"--connect-to", "bad", "-n", "1"}, {"--aws-sigv4", "aws:amz:r:s", "-n", "1"}, {"--aws-sigv4", "bad", "-a", "a:b", "-n", "1"},
 			{"-n", "1", "-n", "2"}, {"--insecure", "--insecure", "-n", "1"}, {"-n", "-5"}, {"-x", "notaurl", "-n", "1"}, {"-a", "nocolon", "-n", "1"},
 			{"-n", "3", "-c", "1", "-Z", "/nonexistent"}, {"-A", "a\x01", "-n", "1"}, {"--rand-regex-url", "-n", "1", "--max-repeat", "2"},
+			{"--http-version", "0.9", "-n", "2"}, {"--proxy-http-version", "0.9", "-n", "2"},
 		} {
 			full := append(append([]string{}, args...), refused)
 			if args[0] == "--rand-regex-url" {
@@ -1067,6 +1101,32 @@ func loadOhaTests(t *testing.T, run loadRun) {
 			_, ourErr, got := run(t, full...)
 			if got != want {
 				t.Errorf("%v: exit %d, oha %d\n%s\noha: %s", args, got, want, ourErr, ohaErr)
+			}
+		}
+	})
+
+	// oha 1.16.0 accepts HTTP/0.9, and hyper panics when it writes the
+	// first request on an open connection. Both abort with the same text.
+	t.Run("http 0.9", func(t *testing.T) {
+		c := startCaptureServer(t)
+		base := "http://" + c.addr
+		thread := regexp.MustCompile(`\(\d+\)`)
+		for _, args := range [][]string{
+			{"--http-version", "0.9", base + "/"},
+			{"--proxy-http-version", "0.9", "-x", base, "http://127.0.0.1:1/p"},
+		} {
+			full := append([]string{"-n", "2", "-c", "1"}, args...)
+			ohaOut, ohaErr, want := runOha(t, oha, full...)
+			ourOut, ourErr, got := run(t, full...)
+			head := func(s string) string {
+				lines := strings.SplitN(thread.ReplaceAllString(s, "(N)"), "\n", 4)
+				return strings.Join(lines[:min(3, len(lines))], "\n")
+			}
+			if got != want || head(ourErr) != head(ohaErr) || ourOut != ohaOut {
+				t.Errorf("%v: exit %d, stdout %q, stderr %q\noha: exit %d, stdout %q, stderr %q", args, got, ourOut, ourErr, want, ohaOut, ohaErr)
+			}
+			if len(c.take()) != 0 {
+				t.Errorf("%v: a request reached the server", args)
 			}
 		}
 	})

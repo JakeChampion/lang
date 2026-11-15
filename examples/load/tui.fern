@@ -21,6 +21,15 @@ const MILLISECOND: i32 = 2;
 // The bars of the chart of the requests in the past.
 const BARS: i32 = 32;
 
+// The colors of oha, as crossterm writes them: indexes of the palette.
+const GREEN: i32 = 2;
+
+const YELLOW: i32 = 3;
+
+const CYAN: i32 = 6;
+
+const RESET: i32 = -1;
+
 // The termios flags of the raw mode of crossterm.
 const ICRNL: i64 = 256;
 
@@ -126,27 +135,28 @@ function (l: Live) scale_at(now: i64): i32 {
 
 // The text of a frame of the display at `now`, for a terminal of `rows` and
 // `cols`, with the status codes `codes` and the errors `errors`, each as
-// (count, label) with the largest count first.
-pub function (l: Live) frame(now: i64, rows: i32, cols: i32, codes: (i64, string)[], errors: (i64, string)[]): string {
+// (count, label) with the largest count first. `files` is the count of open
+// files and its limit, such as `14 / 20000`.
+pub function (l: Live) frame(now: i64, rows: i32, cols: i32, codes: (i64, string)[], errors: (i64, string)[], files: string): string {
   let scale = l.scale_at(now);
   let bin = SCALE_NS[scale];
   let name = SCALE_NAMES[scale];
   let lines: string[] = [];
-  lines = lines.concat(box("Progress", [l.gauge(now, cols - 2)], cols, "36"));
+  lines = lines.concat(box("Progress", [l.gauge(now, cols - 2)], cols, RESET));
   let recent = l.since(now - bin);
-  let stats = l.stats(recent);
-  let left = cols / 2;
+  let stats = l.stats(recent, files);
+  let left = (cols + 1) / 2;
   let right = cols - left;
   let status_rows: string[] = [];
   for c in codes {
     status_rows = status_rows.append(f"[{c.1}] {c.0} responses");
   }
-  lines = lines.concat(side(box("Stats for last " + name, stats, left, ""), box("Status code distribution", fill(status_rows, 6), right, "")));
+  lines = lines.concat(side(box("Stats for last " + name, stats, left, RESET), box("Status code distribution", fill(status_rows, 6), right, RESET)));
   let error_rows: string[] = [];
   for e in errors {
     error_rows = error_rows.append(f"[{e.0}] {e.1}");
   }
-  lines = lines.concat(box("Error distribution", error_rows, cols, ""));
+  lines = lines.concat(box("Error distribution", error_rows, cols, RESET));
   let height = rows - lines.len();
   if (height < 3) {
     height = 3;
@@ -154,7 +164,7 @@ pub function (l: Live) frame(now: i64, rows: i32, cols: i32, codes: (i64, string
   let auto = if (l.scale < 0) { " (auto)" } else { "" };
   let chart = l.requests_chart(now, scale, left - 2, height - 2);
   let histo = l.histogram(recent, right - 2, height - 2);
-  lines = lines.concat(side(box("Requests / past " + name + auto + ". press -/+/a to change", chart, left, "32"), box("Response time histogram", histo, right, "33")));
+  lines = lines.concat(side(box("Requests / past " + name + auto + ". press -/+/a to change", chart, left, GREEN), box("Response time histogram", histo, right, YELLOW)));
   let out = "";
   for k in 0..lines.len() {
     if (k >= rows) {
@@ -198,19 +208,26 @@ function (l: Live) gauge(now: i64, width: i32): string {
   if (ratio > 1.0) {
     ratio = 1.0;
   }
-  let filled = (ratio * (width as f64)) as i32;
-  let at = (width - label.len()) / 2;
+  // As the Gauge of ratatui draws it: each cell in the color of the gauge,
+  // the filled cells as full blocks, and the cells of the label in the
+  // filled part with the colors swapped.
+  let end = (ratio * (width as f64)).round() as i32;
+  let lw = if (label.len() < width) { label.len() } else { width };
+  let at = (width - lw) / 2;
   let out = "";
+  let last = -2;
   for k in 0..width {
-    if (k >= at && k < at + label.len()) {
-      out += label.drop(k - at).take(1);
-    } else if (k < filled) {
-      out += "█";
-    } else {
-      out += " ";
+    let in_label = k >= at && k < at + lw;
+    let swapped = k < end && k >= at && k <= at + lw;
+    let symbol = if (in_label) { label.drop(k - at).take(1) } else if (k < end && !swapped) { "█" } else { " " };
+    let mode = if (swapped) { 1 } else { 0 };
+    if (mode != last) {
+      out += if (swapped) { "\x1b[39m\x1b[48;5;6m" } else { "\x1b[38;5;6m\x1b[49m" };
+      last = mode;
     }
+    out += symbol;
   }
-  return out;
+  return out + "\x1b[39m\x1b[49m";
 }
 
 // A duration as humantime writes it, such as `1m 30s`.
@@ -234,7 +251,7 @@ function humantime(ns: i64): string {
 }
 
 // The lines of the stats of the responses from index `from`.
-function (l: Live) stats(from: i32): string[] {
+function (l: Live) stats(from: i32, files: string): string[] {
   let n = l.ends.len() - from;
   let slowest = 0.0 - f64.INFINITY;
   let fastest = f64.INFINITY;
@@ -252,17 +269,13 @@ function (l: Live) stats(from: i32): string[] {
     data += l.bytes[k];
   }
   let average = if (n > 0) { sum / (n as f64) } else { f64.NAN };
-  let files = match (read_dir("/dev/fd")) {
-    Ok(names) => names.len().to_string(),
-    Err(_) => "Error",
-  };
   return [
     f"Requests : {n}",
-    "\x1b[33mSlowest: " + fixed(slowest) + " secs\x1b[0m",
-    "\x1b[32mFastest: " + fixed(fastest) + " secs\x1b[0m",
-    "\x1b[36mAverage: " + fixed(average) + " secs\x1b[0m",
+    "\x1b[38;5;3mSlowest: " + fixed(slowest) + " secs\x1b[39m",
+    "\x1b[38;5;2mFastest: " + fixed(fastest) + " secs\x1b[39m",
+    "\x1b[38;5;6mAverage: " + fixed(average) + " secs\x1b[39m",
     "Data: " + report.size(data),
-    f"Number of open files: {files} / {rlimit_nofile()}",
+    "Number of open files: " + files,
   ];
 }
 
@@ -296,12 +309,19 @@ function (l: Live) requests_chart(now: i64, scale: i32, width: i32, height: i32)
     counts = counts.with(i, counts[i] + 1);
     k -= 1;
   }
+  let digits = 0;
+  for i in 0..BARS {
+    digits = max(digits, counts[i].to_string().len());
+  }
   let labels: string[] = [];
   let wide = 0;
   for i in 0..BARS {
     let label = bar_label(i, scale);
+    if (digits > label.len()) {
+      label += " ".repeat(digits - label.len());
+    }
     labels = labels.append(label);
-    wide = max(wide, max(label.len(), counts[i].to_string().len()));
+    wide = max(wide, label.len());
   }
   return bars(counts, labels, wide + 2, width, height);
 }
@@ -356,37 +376,46 @@ function (l: Live) histogram(from: i32, width: i32, height: i32): string[] {
   return bars(counts, labels, 7, width, height);
 }
 
-// Vertical bars of `counts`, each `bar` columns wide with a space after
-// it, as many as fit in `width`: the bars, then a row of the counts, then
-// a row of the labels.
+// Vertical bars of `counts`, as the BarChart of ratatui draws them in
+// `width` columns and `height` rows: bars `bar` wide with a gap of one, as
+// many as fit, each value that is not zero on the bottom row of its bar,
+// and a row of the labels.
 function bars(counts: i64[], labels: string[], bar: i32, width: i32, height: i32): string[] {
-  let n = (width + 1) / (bar + 1);
-  if (n > counts.len()) {
-    n = counts.len();
+  let n = counts.len();
+  if (width <= n * bar + (n - 1)) {
+    n = (width + 1) / (bar + 1);
   }
   let most: i64 = 1;
   for i in 0..n {
     most = if (counts[i] > most) { counts[i] } else { most };
   }
-  let tall = height - 2;
+  let tall = height - 1;
   let eighths = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
   let out: string[] = [];
   for row in 0..tall {
     let line = "";
     let below = (tall - 1 - row) as i64 * 8;
     for i in 0..n {
-      let fill = counts[i] * (tall as i64) * 8 / most - below;
-      line += (if (fill <= 0) { " ".repeat(bar) } else if (fill >= 8) { "█".repeat(bar) } else { eighths[fill as i32 - 1].repeat(bar) }) + " ";
+      let ticks = counts[i] * (tall as i64) * 8 / most;
+      let fill = ticks - below;
+      let symbol = if (fill <= 0) { " " } else if (fill >= 8) { "█" } else { eighths[fill as i32 - 1] };
+      let cells = symbol.repeat(bar);
+      let text = counts[i].to_string();
+      if (row == tall - 1 && counts[i] != 0 && (text.len() < bar || text.len() == bar && ticks >= 8)) {
+        let at = (bar - text.len()) / 2;
+        cells = symbol.repeat(at) + text + symbol.repeat(bar - at - text.len());
+      }
+      line += cells + (if (i + 1 < n) { " " } else { "" });
     }
     out = out.append(line);
   }
-  let values = "";
   let names = "";
   for i in 0..n {
-    values += centered(counts[i].to_string(), bar) + " ";
-    names += centered(labels[i], bar) + " ";
+    let label = if (labels[i].len() > bar) { labels[i].take(bar) } else { labels[i] };
+    let at = (bar - label.len()) / 2;
+    names += " ".repeat(at) + label + " ".repeat(bar - label.len() - at) + (if (i + 1 < n) { " " } else { "" });
   }
-  return out.append(values).append(names);
+  return out.append(names);
 }
 
 function centered(s: string, width: i32): string {
@@ -410,17 +439,18 @@ function fill(rows: string[], n: i32): string[] {
 }
 
 // A box with borders, its title in the top border and `rows` in it, `width`
-// wide, in the color `color` of SGR.
-function box(title: string, rows: string[], width: i32, color: string): string[] {
+// wide. With a `color` of the palette, each cell of the box has it, as the
+// style of a Block of ratatui gives it.
+function box(title: string, rows: string[], width: i32, color: i32): string[] {
   let inner = width - 2;
-  let on = if (color.len() > 0) { "\x1b[" + color + "m" } else { "" };
-  let off = if (color.len() > 0) { "\x1b[0m" } else { "" };
+  let on = if (color >= 0) { f"\x1b[38;5;{color}m" } else { "" };
+  let off = if (color >= 0) { "\x1b[39m" } else { "" };
   let top = "┌" + clip(title, inner);
   top += "─".repeat(inner - visible(clip(title, inner)));
   let out: string[] = [on + top + "┐" + off];
   for r in rows {
     let text = clip(r, inner);
-    out = out.append(on + "│" + off + text + " ".repeat(inner - visible(text)) + on + "│" + off);
+    out = out.append(on + "│" + text + " ".repeat(inner - visible(text)) + "│" + off);
   }
   return out.append(on + "└" + "─".repeat(inner) + "┘" + off);
 }

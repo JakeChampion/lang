@@ -168,12 +168,52 @@ func sedUTF8Cases() []invocation {
 		{"ﬀ\n", []string{"s/.*/\\U&/"}},
 		{"é\n", []string{"--posix", "s/./X/"}},
 		{"a é\n", []string{"s/\\s/X/;s/\\S\\S*/Y/"}},
+		// The tables of glibc 2.39: U+0363 is punctuation there, and
+		// U+1C89 of Unicode 16 is no letter.
+		{"\u0363\n", []string{"s/[[:punct:]]/X/"}},
+		{"\u1c89\u1c8a\n", []string{"s/[[:alpha:]]/X/g;s/.*/\\U&\\L&/"}},
+		// Under I the regex compares upper cases, and the pattern is in
+		// upper case but for its escaped bytes and class names. The dfa
+		// takes the counterparts of gnulib, which leave out U+1C80 to
+		// U+1C88, and rejects the line first when a search starts at 0.
+		{"ᲄТт\n", []string{"s/т/X/Ig"}},
+		{"ᲄ т\n", []string{"s/т/X/I"}},
+		{"ᲄ т\n", []string{"s/т/X/2I"}},
+		{"ᲄ\n", []string{"s/т*$/X/I"}},
+		{"ᲄ\nᲄ т\n", []string{"/т/Id"}},
+		{"ᲄт\n", []string{"s/\\(ᲄ\\)\\1/X/I"}},
+		{"ᲄ т\n", []string{"s/\\bт/X/I;s/[т]/Y/I"}},
+		{"ᲄ т\n", []string{"s/[[:digit:]т]/X/I"}},
+		{"qQ\n", []string{"s/\\q/X/Ig;s/\\Q/Y/I"}},
+		{"qQ\n", []string{"s/[[=q=]]/X/I;s/[[.q.]]/Y/I"}},
+		{"x\n", []string{"s/[Z-a]/X/I"}},
+		{"ab\n", []string{"s/[a-Z]/X/Ig"}},
+		{"xy\n", []string{"s/[ſ-x]/X/Ig"}},
+		{"aA\n", []string{"s/[[:lower:]]/X/Ig"}},
+		{"éÉ ıI Iı ſs\n", []string{"s/\\(.\\)\\1/X/Ig"}},
+		{"ᲄТт\n", []string{"s/ᲄ/X/Ig"}},
+		{"ᲄᲅТт\n", []string{"s/[^ᲄ]/X/Ig"}},
+		{"\u212akK\n", []string{"s/k/X/Ig"}},
+		{"ıiI\n", []string{"s/i/X/Ig;s/ı/Y/Ig"}},
+		{"ſsS\n", []string{"s/[s]/X/Ig"}},
+		{"ẞß\n", []string{"s/ß/X/Ig;s/.*/\\U&/"}},
+		{"ǅǄǆ\n", []string{"s/.*/\\u&\\l&/"}},
 	} {
 		for _, locale := range []string{"C.UTF-8", "C"} {
 			cases = append(cases, invocation{name: "locale " + locale + " " + strings.Join(c.args, " ") + " " + strconv.Quote(c.in), args: c.args, stdin: c.in, env: []string{"LC_ALL=" + locale}})
 		}
 	}
-	for _, env := range [][]string{{"LC_ALL=C.utf8"}, {"LC_ALL=", "LC_CTYPE=C.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8"}, {"LC_ALL=", "LC_CTYPE=C", "LANG=C.UTF-8"}, {"LC_ALL=C", "LC_CTYPE=C.UTF-8"}} {
+	for _, env := range [][]string{
+		{"LC_ALL=C.utf8"}, {"LC_ALL=", "LC_CTYPE=C.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8"}, {"LC_ALL=", "LC_CTYPE=C", "LANG=C.UTF-8"}, {"LC_ALL=C", "LC_CTYPE=C.UTF-8"},
+		// A locale that is not on the system gives the C locale, and so
+		// does a category of the locale that does not load.
+		{"LC_ALL=xx_YY.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8", "LC_TIME=xx_YY.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8", "LC_MESSAGES=xx_YY"},
+		{"LC_ALL=", "LANG=C.UTF-8", "LC_TIME=POSIX", "LC_NUMERIC=C"}, {"LC_ALL=", "LC_CTYPE=xx_YY.UTF-8", "LANG=C.UTF-8"},
+		// glibc drops the territory and the modifier to find a locale, and
+		// compares the codeset by its aliases.
+		{"LC_ALL=C_XX.UTF-8"}, {"LC_ALL=C.UTF-8@euro"}, {"LC_ALL=C.UTF8"}, {"LC_ALL=C.u-t-f-8"}, {"LC_ALL=c.utf8"},
+		{"LC_ALL=../C.utf8"}, {"LC_ALL=C.UTF-8", "LOCPATH=/nonexistent"},
+	} {
 		cases = append(cases, invocation{name: "locale from " + strings.Join(env, " "), args: []string{"s/./X/g;y/é/e/"}, stdin: "aé\xff\n", env: env})
 	}
 	return cases
@@ -238,6 +278,7 @@ func sedTree(t *testing.T, dir string) {
 		"f3": "1\n2\n3\n", "f4": "1\n2\n3\n4\n", "na": "a", "nonl": "x", "empty": "",
 		"s1.sed": "p\n{p\n", "s2.sed": "p\ns/a/b\np\n", "s3.sed": "s//x/\n", "s4.sed": "#n\np\n",
 		"s5.sed": "a\\\nfoo\\\n", "s6.sed": "p\nk\n", "s7.sed": "p;k", "sub/f": "x\ny\n",
+		"big": strings.Repeat("0123456789abcde\n", 1500),
 	}
 	for name, content := range files {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
@@ -741,7 +782,7 @@ func sedScriptCases() []invocation {
 
 // sedOptionCases: Files, options, w, r, R, e and in-place editing.
 func sedOptionCases() []invocation {
-	return []invocation{
+	cases := []invocation{
 		{name: "sed -n 2,3p;$= f3 f4", args: []string{"-n", "2,3p;$=", "f3", "f4"}, seedTree: sedTree},
 		{name: "sed -s -n 2,3p;$= f3 f4", args: []string{"-s", "-n", "2,3p;$=", "f3", "f4"}, seedTree: sedTree},
 		{name: "sed -s -n /2/,3p;F f3 f4", args: []string{"-s", "-n", "/2/,3p;F", "f3", "f4"}, seedTree: sedTree},
@@ -953,6 +994,35 @@ func sedOptionCases() []invocation {
 		{name: "e to a full stdout", args: []string{"e echo hi"}, stdin: "a\n", stdout: stdoutFull},
 		{name: "w /dev/stdout to a full stdout", args: []string{"-n", "w /dev/stdout"}, stdin: "a\n", stdout: stdoutFull},
 	}
+	// Past its first block, the error names the call of GNU sed that
+	// filled the buffer of stdio: a line, a newline, a byte of l or a
+	// block of 8192 bytes of r. = and F check for no error.
+	seq := sedSeq(3000)
+	long := strings.Repeat("x", 5000) + "\n" + strings.Repeat("y", 8192) + "\n" + seq
+	for _, c := range []struct {
+		in   string
+		args []string
+	}{
+		{seq, []string{"p"}}, {seq, []string{"-n", "p"}}, {seq, []string{"s/1/xyz/g"}}, {seq, []string{"G"}},
+		{seq, []string{"-n", "l"}}, {seq, []string{"-n", "l 3"}}, {seq, []string{"-n", "="}}, {seq, []string{"-n", "F"}},
+		{seq, []string{"-n", "p;="}}, {seq, []string{"-n", "=;p"}}, {seq, []string{"-n", "i\\\nabc"}}, {seq, []string{"-n", "a\\\nabc"}},
+		{seq, []string{"-n", "w /dev/stdout"}}, {seq, []string{"-z", "p"}}, {seq, []string{"n;d"}}, {seq, []string{"q5"}},
+		{long, []string{"p"}}, {long, []string{"-n", "$p"}}, {"a\nb", []string{"p"}},
+		{"1\n2\n", []string{"r big"}}, {"1\n", []string{"R big"}}, {seq, []string{"-n", "e echo hi"}},
+	} {
+		cases = append(cases, invocation{name: "full stdout " + strings.Join(c.args, " ") + " " + strconv.Itoa(len(c.in)), args: c.args, stdin: c.in, stdout: stdoutFull, seedTree: sedTree})
+	}
+	return cases
+}
+
+// sedSeq is the output of seq n.
+func sedSeq(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		b.WriteString(strconv.Itoa(i))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // sedBigCases: Large inputs: lines across the read buffer, long lines and long files.

@@ -17,12 +17,12 @@ import "./pack";
 
 // One file of the graph. The places of the chunks are -1 when the file has
 // no such chunk. `base` is the count of commits in the files below it.
-pub struct Layer { ix: pack.Index, base: i32, cdat: i32, gda2: i32, gdo2: i32, gdo2_end: i32, edge: i32, edge_end: i32, bidx: i32, bdat: i32, bdat_end: i32, hashes: i32 }
+pub struct Layer { ix: pack.Index, base: i32, cdat: i32, gda2: i32, gdo2: i32, gdo2_end: i32, edge: i32, edge_end: i32, bidx: i32, bdat: i32, bdat_end: i32, hashes: i32, bloom: i32 }
 
 // The files of the graph, the lowest first. `v2` is true when each file
 // has the corrected commit dates. `hashes` is the count of the hashes of a
 // Bloom filter, 0 when no file has filters.
-pub struct Graph { layers: Layer[], width: i32, v2: boolean, hashes: i32 }
+pub struct Graph { layers: Layer[], width: i32, v2: boolean, hashes: i32, bloom: i32 }
 
 // The generation of a commit that the graph does not have.
 pub const INFINITY: i64 = 9223372036854775807;
@@ -33,7 +33,7 @@ const PARENT_NONE: i64 = 1879048192;
 const EXTRA_EDGES: i64 = 2147483648;
 
 pub function none(): Graph {
-  return Graph { layers: [], width: 0, v2: false, hashes: 0 };
+  return Graph { layers: [], width: 0, v2: false, hashes: 0, bloom: 0 };
 }
 
 pub function (g: Graph) enabled(): boolean {
@@ -63,8 +63,10 @@ function chunk(b: u8[], chunks: i32, id: string): (i32, i32) {
 
 // The file in `b` with names of `a` bytes and `base` commits below it, or
 // None for a file that git does not take. `bases` are the names of the
-// files below it, the lowest first.
-function layer_of(b: u8[], a: i32, base: i32, bases: string[]): Option[Layer] {
+// files below it, the lowest first. Its Bloom filters count only when
+// their version is `bloom`, or when `bloom` is -1 for any version (1 or
+// 2), as `graph_read_bloom_data` of git reads them.
+function layer_of(b: u8[], a: i32, base: i32, bases: string[], bloom: i32): Option[Layer] {
   if (b.len() < 8 + 12 + a || b[0] != b'C' || b[1] != b'G' || b[2] != b'P' || b[3] != b'H' || b[4] != 1) {
     return None;
   }
@@ -102,23 +104,29 @@ function layer_of(b: u8[], a: i32, base: i32, bases: string[]): Option[Layer] {
   let (bidx, bidx_end) = chunk(b, chunks, "BIDX");
   let (bdat, bdat_end) = chunk(b, chunks, "BDAT");
   let hashes = 0;
-  if (bidx >= 0 && bdat >= 0 && bidx_end - bidx >= 4 * (count as i32) && bdat_end - bdat >= 12 && be32(b, bdat) == 1) {
+  let version = if (bdat >= 0 && bdat_end - bdat >= 12) { be32(b, bdat) as i32 } else { 0 };
+  if (bidx >= 0 && bdat >= 0 && bidx_end - bidx >= 4 * (count as i32) && bdat_end - bdat >= 12 && (version == 1 || version == 2) && (bloom == -1 || bloom == version)) {
     hashes = be32(b, bdat + 4) as i32;
   } else {
+    version = 0;
     bidx = -1;
     bdat = -1;
   }
   let ix = pack.Index { bytes: b, version: 2, width: a, count: count as i32, fanout: fanout, names: lookup, stride: a, offsets: -1, large: -1 };
-  return Some(Layer { ix: ix, base: base, cdat: cdat, gda2: gda2, gdo2: gdo2, gdo2_end: gdo2_end, edge: edge, edge_end: edge_end, bidx: bidx, bdat: bdat, bdat_end: bdat_end, hashes: hashes });
+  return Some(Layer { ix: ix, base: base, cdat: cdat, gda2: gda2, gdo2: gdo2, gdo2_end: gdo2_end, edge: edge, edge_end: edge_end, bidx: bidx, bdat: bdat, bdat_end: bdat_end, hashes: hashes, bloom: version });
 }
 
 // The graph of the directory of objects `dir` with names of `a` bytes:
 // the file `info/commit-graph`, or the chain of `info/commit-graphs/`. A
-// file of the chain that git does not take ends the chain.
-pub function open(dir: string, a: i32): Graph {
+// file of the chain that git does not take ends the chain. `bloom` is the
+// version of the Bloom filters that `commitGraph.changedPathsVersion`
+// selects: -1 for the version of the first file with filters, and 0 for
+// none.
+pub function open(dir: string, a: i32, bloom_in: i32): Graph {
+  let bloom = bloom_in;
   let layers: Layer[] = [];
   if let Ok(b) = read_file_bytes(dir + "/info/commit-graph") {
-    if let Some(l) = layer_of(b, a, 0, []) {
+    if let Some(l) = layer_of(b, a, 0, [], bloom) {
       layers = [l];
     }
   } else if let Ok(text) = read_file(dir + "/info/commit-graphs/commit-graph-chain") {
@@ -127,7 +135,10 @@ pub function open(dir: string, a: i32): Graph {
     for line in text.split("\n") {
       if (line.len() == 2 * a && layers.len() == names.len()) {
         if let Ok(b) = read_file_bytes(dir + "/info/commit-graphs/graph-" + line + ".graph") {
-          if let Some(l) = layer_of(b, a, base, names) {
+          if let Some(l) = layer_of(b, a, base, names, bloom) {
+            if (bloom == -1 && l.bloom > 0) {
+              bloom = l.bloom;
+            }
             layers = layers.append(l);
             base += l.ix.count;
           }
@@ -147,7 +158,7 @@ pub function open(dir: string, a: i32): Graph {
       hashes = l.hashes;
     }
   }
-  return Graph { layers: layers, width: a, v2: v2, hashes: hashes };
+  return Graph { layers: layers, width: a, v2: v2, hashes: hashes, bloom: if (bloom > 0) { bloom } else { layers[0].bloom } };
 }
 
 // True when the graph has generation numbers: the first commit of the top
@@ -325,7 +336,8 @@ function key_of(g: Graph, path: u8[]): i64[] {
 // The keys of the path `item` of a pathspec and of each directory above
 // it, as `prepare_to_use_bloom_filter` makes them, or none when the
 // filters cannot tell: no filters, an empty path, or a path with a byte
-// above 127, which the filters of version 1 hash as a signed byte.
+// above 127 for the filters of version 1, which hash it as a signed byte.
+// The filters of version 2 hash each byte as unsigned.
 pub function keys(g: Graph, item: string): i64[][] {
   let path = if (item.ends_with("/")) { objects.part(item, 0, item.len() - 1) } else { item };
   if (g.hashes == 0 || path.len() == 0) {
@@ -333,7 +345,7 @@ pub function keys(g: Graph, item: string): i64[][] {
   }
   let b = path.bytes();
   for c in b {
-    if (c >= 128) {
+    if (c >= 128 && g.bloom != 2) {
       return [];
     }
   }

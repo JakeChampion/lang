@@ -4,10 +4,10 @@ pub function is_helper(name: string): boolean {
   return name == "__fern_bytes_append_range" || name == "__fern_bytes_write_range" || name == "__fern_bytes_append_back" || util.has_str(kernel_names(), name);
 }
 
-// The fill and move kernels for elements of 1, 4 and 8 bytes. A shift is the
-// log2 of the bytes of an element.
+// The fill and move kernels for elements of 1, 2, 4 and 8 bytes. A shift is
+// the log2 of the bytes of an element.
 pub function kernel_names(): string[] {
-  return ["__fern_arr_fill_u8", "__fern_arr_fill_u32", "__fern_arr_fill_u64", "__fern_arr_move_u8", "__fern_arr_move_u32", "__fern_arr_move_u64"];
+  return ["__fern_arr_fill_u8", "__fern_arr_fill_u16", "__fern_arr_fill_u32", "__fern_arr_fill_u64", "__fern_arr_move_u8", "__fern_arr_move_u16", "__fern_arr_move_u32", "__fern_arr_move_u64"];
 }
 
 pub function fill_name(shift: i32): string {
@@ -22,14 +22,19 @@ function width_suffix(shift: i32): string {
   if (shift == 0) {
     return "_u8";
   }
+  if (shift == 1) {
+    return "_u16";
+  }
   return if (shift == 2) { "_u32" } else { "_u64" };
 }
 
 function kernel_shift(name: string): i32 {
-  if (name.ends_with("_u8")) {
-    return 0;
+  for shift in 0..3 {
+    if (name.ends_with(width_suffix(shift))) {
+      return shift;
+    }
   }
-  return if (name.ends_with("_u32")) { 2 } else { 3 };
+  return 3;
 }
 
 // `kernels` are the names from kernel_names() that the module calls.
@@ -121,10 +126,11 @@ function wasm_fill(name: string): string {
     return out + "    (memory.fill (local.get $p) (local.get $v) (local.get $n))\n    (local.get $r))\n";
   }
   let zero = if (shift == 3) { "(i64.eqz (local.get $v))" } else { "(i32.eqz (local.get $v))" };
+  let store = if (shift == 1) { "i32.store16" } else { vty + ".store" };
   return out + "    (local.set $end (i32.add (local.get $p) (i32.mul (local.get $n) (i32.const " + size + "))))\n"
     + "    (if " + zero + " (then (memory.fill (local.get $p) (i32.const 0) (i32.sub (local.get $end) (local.get $p))) (return (local.get $r))))\n"
     + "    (block $done (loop $store (br_if $done (i32.ge_u (local.get $p) (local.get $end)))\n"
-    + "      (" + vty + ".store (local.get $p) (local.get $v)) (local.set $p (i32.add (local.get $p) (i32.const " + size + "))) (br $store)))\n"
+    + "      (" + store + " (local.get $p) (local.get $v)) (local.set $p (i32.add (local.get $p) (i32.const " + size + "))) (br $store)))\n"
     + "    (local.get $r))\n";
 }
 
@@ -148,8 +154,9 @@ function wasm_move(): string {
     + "    (if (i32.lt_u (i32.mul (local.get $d) (local.get $size)) (i32.const 32)) (then\n"
     + "      (block $each_done (loop $each (br_if $each_done (i32.ge_s (local.get $k) (local.get $n)))\n"
     + "        (if (i32.eq (local.get $size) (i32.const 1)) (then (i32.store8 (local.get $p) (i32.load8_u (local.get $q))))\n"
+    + "          (else (if (i32.eq (local.get $size) (i32.const 2)) (then (i32.store16 (local.get $p) (i32.load16_u (local.get $q))))\n"
     + "          (else (if (i32.eq (local.get $size) (i32.const 4)) (then (i32.store (local.get $p) (i32.load (local.get $q))))\n"
-    + "            (else (i64.store (local.get $p) (i64.load (local.get $q)))))))\n"
+    + "            (else (i64.store (local.get $p) (i64.load (local.get $q)))))))))\n"
     + "        (local.set $p (i32.add (local.get $p) (local.get $size))) (local.set $q (i32.add (local.get $q) (local.get $size)))\n"
     + "        (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $each)))\n"
     + "      (return (local.get $r))))\n"
