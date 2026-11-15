@@ -1,0 +1,29 @@
+import "std/base64";
+
+// The base64 text of 96 KiB of bytes that take each value.
+function digits(): string {
+  let n = 98304;
+  let bs = __alloc_u8(n);
+  let s = 12345;
+  for i in 0..n {
+    s = s * 1103515245 + 12345 & 2147483647;
+    bs = bs.with(i, (s >> 16 & 255) as u8);
+  }
+  return base64.encode(bs);
+}
+
+function main(): i32 {
+  let text = digits();
+  let acc = 0;
+  for r in 0..256 {
+    match (base64.decode(text)) {
+      Ok(bs) => {
+        acc += bs[r * 200] as i32 + bs[bs.len() - 1 - r] as i32;
+      },
+      Err(_) => {
+        return 1;
+      }
+    }
+  }
+  return acc % 97;
+}

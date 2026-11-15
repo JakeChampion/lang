@@ -170,3 +170,6 @@ selfhost/wasm32-wasi/hex_encode.emit	2021
 selfhost/x86-64-linux/base64_encode.emit	2970
 selfhost/arm64-linux/base64_encode.emit	3194
 selfhost/wasm32-wasi/base64_encode.emit	3226
+selfhost/x86-64-linux/base64_decode.emit	3858
+selfhost/arm64-linux/base64_decode.emit	3960
+selfhost/wasm32-wasi/base64_decode.emit	4708
