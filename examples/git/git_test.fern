@@ -16,6 +16,7 @@ import "./width";
 import "./ws";
 import "./fsck";
 import "./graph";
+import "./linelog";
 import "./index";
 import "./log";
 import "./mailmap";
@@ -389,6 +390,93 @@ function test_signatures(): test.TestOutcome {
   let twice = sig.parse(status + "[GNUPG:] BADSIG X Y\n", "", true);
   if (twice.result != b'E' || !twice.failed || sig.placeholder(sig.unsigned(), b'?').unwrap_or("") != "N") {
     return test.fail("two results and no signature");
+  }
+  return test.pass();
+}
+
+function test_signature_formats(): test.TestOutcome {
+  if (sig.format_of("-----BEGIN PGP MESSAGE-----\n".bytes()) != sig.OPENPGP || sig.format_of("-----BEGIN SIGNED MESSAGE-----".bytes()) != sig.X509 || sig.format_of("-----BEGIN SSH SIGNATURE-----\n".bytes()) != sig.SSH || sig.format_of("-----BEGIN NO SIGNATURE-----".bytes()) != -1) {
+    return test.fail("the format of a signature");
+  }
+  if (sig.trust_of("Fully") != sig.TRUST_FULLY || sig.trust_of("never") != sig.TRUST_NEVER || sig.trust_of("bogus") != -1) {
+    return test.fail("the names of gpg.minTrustLevel");
+  }
+  let tag = "object o\ntype commit\ntag t\n\n-----BEGIN PGP SIGNATURE-----\nmessage\n-----BEGIN SSH SIGNATURE-----\nsig\n";
+  let (payload, signature, signed) = sig.split_tag(tag.bytes(), objects.SHA1);
+  if (!signed || payload != "object o\ntype commit\ntag t\n\n-----BEGIN PGP SIGNATURE-----\nmessage\n".bytes() || signature != "-----BEGIN SSH SIGNATURE-----\nsig\n".bytes()) {
+    return test.fail("the signature of a tag starts at its last line of a signature");
+  }
+  let (_, _, none) = sig.split_tag("object o\n\nno signature\n".bytes(), objects.SHA1);
+  if (none) {
+    return test.fail("a tag with no signature");
+  }
+  let good = sig.parse_ssh("Good \"git\" signature for a with b with ED25519 key SHA256:K\nmore\n", true);
+  if (good.failed || good.result != b'G' || good.trust != sig.TRUST_FULLY || good.signer != "a with b" || good.key != "SHA256:K" || good.fingerprint != "SHA256:K") {
+    return test.fail("a good signature of a principal that holds \" with \"");
+  }
+  let unknown = sig.parse_ssh("Good \"git\" signature with RSA key SHA256:X\n", false);
+  if (!unknown.failed || sig.placeholder(unknown, b'?').unwrap_or("") != "U" || unknown.signer != "" || unknown.key != "SHA256:X") {
+    return test.fail("a good signature of a key that no principal has");
+  }
+  if (sig.parse_ssh("Good \"git\" signature for nobody\n", true).result != b'B' || sig.parse_ssh("Good \"git\" signature with no key\n", true).result != b'B' || sig.parse_ssh("", true).trust != sig.TRUST_NEVER) {
+    return test.fail("a bad signature of ssh-keygen");
+  }
+  if (sig.stripspace("\n  \na  \n\n\n\tb\t\n\n") != "a\n\n\tb\n" || sig.stripspace("x") != "x\n" || sig.stripspace(" \n") != "") {
+    return test.fail("the space of the output of ssh-keygen");
+  }
+  let expired = sig.parse("[GNUPG:] NEWSIG\n[GNUPG:] EXPKEYSIG ABCD Old <o@example.com>\n", "", true);
+  if (expired.failed || expired.result != b'Y') {
+    return test.fail("an expired key gives a good signature in git 2.56.1");
+  }
+  let merge = "tree t\nparent p\nmergetag object a\n type commit\n tag one\n \n sig\nmergetag object b\nauthor x\nmergetagx y\n\nmergetag body\n";
+  let tags = objects.extra_headers(merge.bytes(), "mergetag");
+  if (tags.len() != 2 || tags[0] != "object a\ntype commit\ntag one\n\nsig\n".bytes() || tags[1] != "object b\n".bytes()) {
+    return test.fail("the mergetag headers of a merge");
+  }
+  if (!log.uses_signature("%h %G?") || !log.uses_signature("%<(5)%-GS") || log.uses_signature("%%G %h") || log.uses_signature("G%") || !log.uses_signature("%Gx")) {
+    return test.fail("the placeholders that check a signature");
+  }
+  return test.pass();
+}
+
+function test_line_ranges(): test.TestOutcome {
+  if (linelog.union([0, 2, 5, 6], [2, 3, 4, 4, 7, 9]) != [0, 3, 5, 6, 7, 9] || linelog.union([], [1, 1]) != []) {
+    return test.fail("the union of sets of ranges");
+  }
+  // Line 4 changes and line 7 goes: the range of lines 3 to 8 holds
+  // the old line 4, and the old line 7 stays out of it.
+  let (mapped, touched) = linelog.map_across([2, 8], [3, 4, 6, 7], [3, 4, 6, 6]);
+  if (mapped != [2, 9] || touched != [3, 4, 6, 7]) {
+    return test.fail("the ranges across a diff");
+  }
+  let (moved, none) = linelog.map_across([5, 6], [0, 0], [0, 2]);
+  if (moved != [3, 4] || none.len() != 0) {
+    return test.fail("the ranges after added lines");
+  }
+  let a = linelog.Entry { path: "a", ranges: [0, 2], pair: [] };
+  let b = linelog.Entry { path: "b", ranges: [1, 2], pair: [] };
+  let merged = linelog.merge([a, b], [linelog.Entry { ...a, ranges: [2, 4] }]);
+  if (merged.len() != 2 || merged[0].ranges != [0, 4] || merged[1].path != "b") {
+    return test.fail("the merge of the ranges of two commits");
+  }
+  let data = "#include <x>\n\nint f(void)\n{\n\treturn 1;\n}\n\nint main(void)\n{\n}".bytes();
+  let (s1, e1, ok1, _) = linelog.range_in(":f", data, 1);
+  let (s2, e2, ok2, _) = linelog.range_in("/return/,+1", data, 1);
+  let (s3, e3, ok3, _) = linelog.range_in("5,-3", data, 1);
+  let (s4, _, ok4, _) = linelog.range_in(":.*", data, 1);
+  if (!ok1 || s1 != 3 || e1 != 7 || !ok2 || s2 != 5 || e2 != 5 || !ok3 || s3 != 3 || e3 != 5 || !ok4 || s4 != 3) {
+    return test.fail("the forms of a range");
+  }
+  let (_, _, _, died) = linelog.range_in(":zz", data, 1);
+  let (_, _, sound, _) = linelog.range_in("1,x", data, 1);
+  if (died != "-L parameter 'zz' starting at line 1: no match" || sound) {
+    return test.fail("a range that is not sound");
+  }
+  let o = patch.defaults();
+  let old = "a\nb\nc\nd\ne\nf\ng\nh\n".bytes();
+  let new = "a\nB\nc\nd\ne\nF\ng\nh\n".bytes();
+  if (patch.in_ranges(o, old, new, [4, 7]) != "@@ -5,3 +5,3 @@\n e\n-f\n+F\n g\n".bytes() || patch.in_ranges(o, old, new, [2, 4]).len() != 0) {
+    return test.fail("the hunks in the ranges of -L");
   }
   return test.pass();
 }
@@ -1055,6 +1143,8 @@ function main(): i32 {
   r = r.it("the rules of white space", test_whitespace);
   r = r.it("the moved blocks of a patch", test_moved);
   r = r.it("the signatures of commits", test_signatures);
+  r = r.it("the formats of signatures, ssh-keygen and mergetag", test_signature_formats);
+  r = r.it("the ranges of lines of -L", test_line_ranges);
   r = r.it("the keys of the Bloom filters", test_bloom_keys);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);

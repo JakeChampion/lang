@@ -33,6 +33,8 @@ var gitDiffCases = []string{
 	"log --oneline --follow -- big.txt", "log --oneline -S twenty", "log -p -S twenty", "log --oneline -G x{9}",
 	"log --oneline -S bin", "log --oneline -G ary", "log --oneline --follow --all -- side.txt",
 	"log --oneline --first-parent -S side", "log --oneline --follow -- nosuch",
+	// A regex of git has REG_NEWLINE: `.` matches no line end.
+	"log --oneline -S 1.2 --pickaxe-regex", "log -p --word-diff-regex=o.t",
 }
 
 // gitDiffFixture makes a repository with each kind of change: text with

@@ -157,6 +157,13 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 				{"", []string{"rev-parse", "--verify", "HEAD"}},
 				{"", []string{"rev-parse", "--short", "HEAD"}},
 				{"", []string{"rev-parse", "--short=10", "v1"}},
+				// A length above 40 in a SHA-256 repository, and a length
+				// past the name, which gives the full name.
+				{"", []string{"rev-parse", "--short=41", "HEAD", "v1"}},
+				{"", []string{"rev-parse", "--short=50", "HEAD"}},
+				{"", []string{"rev-parse", "--short=63", "HEAD"}},
+				{"", []string{"rev-parse", "--short=64", "HEAD"}},
+				{"", []string{"rev-parse", "--short=99", "HEAD"}},
 				{"", []string{"rev-parse", commit[:8]}},
 				{"", []string{"rev-parse", strings.ToUpper(commit)}},
 				{"", []string{"rev-parse", zero}},
@@ -298,13 +305,6 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 						t.Errorf("git %v in %s:\n got exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q", args, strings.TrimPrefix(dir, top), gotCode, gotOut, gotErr, wantCode, wantOut, wantErr)
 					}
 				}
-			}
-			// A short length past the name gives the full name. git 2.43
-			// stops at 40 digits in a SHA-256 repository, so the full name is
-			// the reference.
-			full, _, _ := oracle.run(t, top, "", "rev-parse", "HEAD")
-			if got, _, code := port.run(t, top, "", "rev-parse", "--short=99", "HEAD"); code != 0 || got != full {
-				t.Errorf("rev-parse --short=99 HEAD gave %q with exit %d, want %q", got, code, full)
 			}
 			// The port writes a loose object, and git reads it and finds the store sound.
 			text := "written by the port\n" + strings.Repeat("line\n", 4000)
