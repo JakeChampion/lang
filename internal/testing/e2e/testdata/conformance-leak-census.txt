@@ -470,6 +470,7 @@ handle_elements_close_in_for_each                    0
 handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
 handle_foreach_destructured_field_own                0
+handle_foreach_field_local_own                       0
 handle_nested_fields_close_from_owned_root           0
 handle_payload_closes_from_local_match               0
 handle_payload_closes_in_loop_from_unpack            0
