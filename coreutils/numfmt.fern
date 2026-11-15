@@ -162,7 +162,7 @@ function unit_letters(): string {
   return "KMGTPEZYRQ";
 }
 
-struct Fmt { prefix: string, suffix: string, width: i32, prec: i64, zero: boolean, left: boolean, group: boolean, given: boolean }
+struct Fmt { prefix: string, suffix: string, width: i64, prec: i64, zero: boolean, left: boolean, group: boolean, given: boolean }
 
 function no_format(): Fmt {
   return Fmt { prefix: "", suffix: "", width: 0, prec: 0 - 1 as i64, zero: false, left: false, group: false, given: false };
@@ -543,8 +543,8 @@ function parse_directive(s: string, from: i32): (Fmt, i32) {
     group = true;
     i = skip_blanks(s, i + 1);
   }
-  let w: (i32, i32, boolean) = read_signed(s, i);
-  let width = 0;
+  let w: (i64, i32, boolean) = read_signed(s, i);
+  let width = 0 as i64;
   let left = false;
   if (w.2 && w.0 != 0) {
     width = w.0;
@@ -584,24 +584,27 @@ function skip_blanks(s: string, from: i32): i32 {
   return i;
 }
 
-function read_signed(s: string, from: i32): (i32, i32, boolean) {
+function read_signed(s: string, from: i32): (i64, i32, boolean) {
   let i = skip_blanks(s, from);
   let neg = false;
   if (i < s.len() && (s[i] as i32 == 45 || s[i] as i32 == 43)) {
     neg = s[i] as i32 == 45;
     i += 1;
   }
-  let acc = 0;
+  let acc = 0 as i64;
   let digits = 0;
   while (i < s.len() && is_digit(s[i] as i32)) {
-    if (acc <= 100000000) {
-      acc = acc * 10 + (s[i] as i32 - 48);
+    let digit = (s[i] as i32 - 48) as i64;
+    if (acc > (9223372036854775807 as i64 - digit) / (10 as i64)) {
+      acc = 9223372036854775807 as i64;
+    } else {
+      acc = acc * (10 as i64) + digit;
     }
     digits += 1;
     i += 1;
   }
   if (digits == 0) {
-    return (0, from, false);
+    return (0 as i64, from, false);
   }
   if (neg) {
     acc = -acc;
@@ -1036,20 +1039,12 @@ function pad_for(w: i64, o: Opts, auto: i32): i64 {
 
 function zero_pad_width(o: Opts): i32 {
   if (o.fmt.given && o.fmt.zero && o.fmt.width > 0) {
-    return o.fmt.width;
+    if (o.fmt.width > 2147483647 as i64) {
+      return 2147483647;
+    }
+    return o.fmt.width as i32;
   }
   return 0;
-}
-
-function zero_pad_to(text: string, width: i32): string {
-  if (text.len() >= width) {
-    return text;
-  }
-  let fill = width - text.len();
-  if (text.len() > 0 && text[0] as i32 == 45) {
-    return "-" + "0".repeat(fill) + slice_unchecked(text, 1, text.len());
-  }
-  return "0".repeat(fill) + text;
 }
 
 function convert(line: u8[], from: i32, to: i32, o: Opts, auto: i32): Human {
@@ -1075,13 +1070,24 @@ function convert(line: u8[], from: i32, to: i32, o: Opts, auto: i32): Human {
   if (h.err.len() > 0) {
     return h;
   }
-  let body_text = h.text;
-  if (o.zero_width > 0) {
-    body_text = zero_pad_to(h.text, o.zero_width);
-  }
   let tail = h.unit + o.suffix;
-  let width = body_text.len() as i64 + h.zeros + tail.len() as i64;
-  return Human { text: body_text, zeros: h.zeros, unit: tail, err: "", fatal: false, pad: pad_for(width, o, auto) };
+  let pad = number_pad(h, tail, o, auto);
+  if (o.zero_width > 0 && h.text.len() as i64 + h.zeros + pad + tail.len() as i64 > 2147483647 as i64) {
+    return Human { text: "", zeros: 0 as i64, unit: "", err: "failed to prepare value " + gnu.quote(o.ldbl.to_fixed(val, 6)) + " for printing", fatal: true, pad: 0 as i64 };
+  }
+  return Human { text: h.text, zeros: h.zeros, unit: tail, err: "", fatal: false, pad: pad };
+}
+
+function number_pad(h: Human, tail: string, o: Opts, auto: i32): i64 {
+  if (o.zero_width > 0) {
+    let body_width = h.text.len() as i64 + h.zeros;
+    if (body_width < o.zero_width as i64) {
+      return o.zero_width as i64 - body_width;
+    }
+    return 0 as i64;
+  }
+  let width = h.text.len() as i64 + h.zeros + tail.len() as i64;
+  return pad_for(width, o, auto);
 }
 
 function scaled(n: Num, o: Opts): ld.LD {
@@ -1186,13 +1192,7 @@ function process_line(line: u8[], from: i32, n: i32, term: i32, o: Opts, out: Ou
           return Out { w: w, status: status, failed: true, stopped: true };
         }
       } else {
-        buf_push(h, o.fmt.prefix);
-        w = push_fill(w, h, " ", hm.pad);
-        buf_push(h, hm.text);
-        w = push_fill(w, h, "0", hm.zeros);
-        buf_push(h, hm.unit);
-        w = push_fill(w, h, " ", 0 as i64 - hm.pad);
-        buf_push(h, o.fmt.suffix);
+        w = push_number(w, h, hm, o);
         converted = true;
       }
     }
@@ -1210,6 +1210,27 @@ function process_line(line: u8[], from: i32, n: i32, term: i32, o: Opts, out: Ou
     buf_push_byte(h, term);
   }
   return Out { w: gnu.settle(w), status: status, failed: failed, stopped: false };
+}
+
+function push_number(w: io_buffered.BufWriter, h: usize, hm: Human, o: Opts): io_buffered.BufWriter {
+  let ww = w;
+  let from = 0;
+  let fill = " ";
+  buf_push(h, o.fmt.prefix);
+  if (o.zero_width > 0) {
+    fill = "0";
+    if (hm.text.len() > 0 && hm.text[0] as i32 == 45) {
+      buf_push_byte(h, 45);
+      from = 1;
+    }
+  }
+  ww = push_fill(ww, h, fill, hm.pad);
+  buf_push_range(h, hm.text, from, hm.text.len());
+  ww = push_fill(ww, h, "0", hm.zeros);
+  buf_push(h, hm.unit);
+  ww = push_fill(ww, h, " ", 0 as i64 - hm.pad);
+  buf_push(h, o.fmt.suffix);
+  return ww;
 }
 
 function push_fill(w: io_buffered.BufWriter, h: usize, ch: string, n: i64): io_buffered.BufWriter {

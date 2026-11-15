@@ -28,7 +28,7 @@ function block(address: i64, header: i64, live: boolean): heap.Block {
 function bounds(c: i32): void {
   let h = empty();
   require(heap.valid(c, h) && heap.trace(c, h, []), "empty initialized mapping");
-  for invalid in [0, 3, 4, -1, 2147483647] {
+  for invalid in [3, 4, -1, 2147483647] {
     require(!heap.valid(invalid, h), "unsupported capacity");
   }
   for b in [0 as i64, 65528 as i64, 65537 as i64, -(1 as i64), 9223372036854775807 as i64] {
@@ -100,7 +100,7 @@ function live_blocks(c: i32): void {
   for count in [-1, 0, 2, 2147483647] {
     require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, rc: count }] }), "unsupported live credit count");
   }
-  require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, header: 0 as i64 }] }), "overwritten capacity");
+  require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, header: (c + 1) as i64 }] }), "overwritten capacity");
   for address in [b.address - 8, b.address + 1, b.address + 8, live.cursor, 9223372036854775807 as i64] {
     require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, address: address }] }), "block extent");
   }

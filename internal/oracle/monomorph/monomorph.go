@@ -119,6 +119,11 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		done[k] = true
 		gen := info.GenericFuncs[k.name]
 		args := instantiations[k]
+		for _, arg := range args {
+			if checker.TypeArgsDepth(arg) >= checker.MaxInstanceDepth {
+				return diag.Errors{checker.InstanceDepthError(info, gen)}
+			}
+		}
 		sub := make(map[string]ast.Type, len(gen.TypeParams))
 		for i, tp := range gen.TypeParams {
 			sub[tp] = args[i]

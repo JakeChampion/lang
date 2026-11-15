@@ -17,6 +17,7 @@ a_binding_arm_can_follow_a_literal_arm               0
 a_branch_that_returns_gives_its_if_expression_no_type 0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_const_in_a_tuple_or_payload_pattern_matches_its_value 0
+a_deep_type_argument_that_does_not_grow_is_accepted  0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0
 a_float_literal_array_takes_the_width_of_its_first_use 0
 a_function_named_like_a_safe_intrinsic_shadows_it    0
@@ -136,6 +137,7 @@ array_with_narrow_index                              0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
 arrpush                                              0
+assert_fails_with_module_exit                        0
 assert_fails_with_shadowing_exit                     0
 assert_todo_ignore_shadowing_names                   0
 associated_factory_result_is_owned                   0
@@ -345,6 +347,7 @@ exit_after_a_worker_keeps_its_status                 0
 exit_code                                            0
 exit_diverges                                        0
 exit_diverges_let_else_taken                         0
+exit_ends_a_value_branch                             0
 exit_in_a_callee_whose_record_is_taken_apart         0
 exit_in_a_loop_whose_array_is_kept                   0
 exit_max                                             0
@@ -679,9 +682,11 @@ must_consume_if_let_arms                             0
 must_consume_in_a_loop_that_always_runs              0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
+must_consume_let_else                                0
 must_consume_method_receiver                         0
 must_consume_own_sink                                0
 must_consume_sibling_bindings_share_a_name           0
+must_consume_struct_pattern                          0
 mutual_recursion                                     0
 named_args                                           0
 narrowing_cast_of_expression                         0
@@ -690,6 +695,8 @@ negative_literal_patterns                            0
 nested_arm_patterns                                  0
 nested_array_literals_take_the_wider_element_type    0
 nested_call_temp                                     0
+nested_function_calls_itself                         0
+nested_lambdas_check_in_linear_time                  0
 nested_loops                                         0
 nested_option                                        0
 nested_owned_field_transfer                          0
@@ -760,6 +767,7 @@ own_consuming_match                                  0
 own_field_move_in_one_branch                         0
 own_field_moves_beside_a_sibling_branch_read         0
 own_field_moves_beside_an_if_value                   0
+own_for_element_of_borrowed_array                    0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
@@ -1320,7 +1328,7 @@ task_handle_with_a_made_up_id                        5
 # The program stops through exit(134), which does not unwind. The task handle and its strings are live.
 task_resumed_after_it_ended                          6
 # The program stops through exit(134), which does not unwind. The task is live.
-task_resumed_with_another_function                   10
+task_resumed_with_another_function                   8
 # The program stops through exit(134), which does not unwind. The task handle and its strings are live.
 task_started_two_times                               6
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
@@ -1343,6 +1351,7 @@ trmc_map                                             0
 try_binding_takes_its_success_payload                0
 try_op_in_closure                                    0
 try_result_struct_payload                            0
+try_runs_defers_in_the_scope_it_leaves               0
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
 tuple_binder_shadows_outer_var                       0

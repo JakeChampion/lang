@@ -1045,7 +1045,7 @@ function placeable(f: ssasem.Func, raw: boolean[], out: string[], ins: ssa.SInst
   if (!built.ok || built.fields.len() != ins.args.len() || raw_literal(raw, ins) || out[ins.result] != "") {
     return Construction { ...built, ok: false };
   }
-  if (ssasem.has_finalizer(f, f.values[ins.result])) {
+  if (ssasem.has_finalizer(f, f.values[ins.result]) || ssasem.immediate_enum(f, f.values[ins.result])) {
     return Construction { ...built, ok: false };
   }
   return built;
@@ -1071,6 +1071,9 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
     }
     if (w == "") {
       w = option_word(f, defs, ins.args[j]);
+    }
+    if (w == "") {
+      w = enum_word(f, defs, ins.args[j]);
     }
     if (w == "") {
       let at = placed_box(f, defs, raw, ins.args[j]);
@@ -1114,6 +1117,17 @@ function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
     return "";
   }
   return ir.const_option_ref(semrecords.find_variant(f.enums[e], d.str));
+}
+
+function enum_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
+  if (v < 0) {
+    return "";
+  }
+  let d = ssa.copy_source(defs, v);
+  if (d.kind_tag != ssasem.variant_new() || d.result < 0 || !ssasem.immediate_enum(f, f.values[d.result])) {
+    return "";
+  }
+  return util.i32_to_string(semrecords.find_variant(f.enums[semrecords.find_enum(f.enums, f.values[d.result])], d.str));
 }
 
 function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): i32 {
@@ -4107,6 +4121,13 @@ pub function receiver_retained(step: Step): boolean {
 
 pub struct ReusePairs { tokens: i32[], builds: i32[], selfs: i32[] }
 
+// The slots that the shape of a record takes in its box: one on a target
+// that keeps the shape there, and none on a target that keeps it in the
+// header. A record and a tuple of one size in slots can share a block.
+function shape_slots(f: ssasem.Func): i32 {
+  return if (f.shape_slot) { 1 } else { 0 };
+}
+
 function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   if (semtypes.is_env(t) || typeinfo.is_cell(t)) {
     return -1;
@@ -4121,7 +4142,7 @@ function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
     if (semrecords.find(f.records, t) < 0) {
       return -1;
     }
-    return ssasem.record_fields(t, f).len() + 1;
+    return ssasem.record_fields(t, f).len() + shape_slots(f);
   }
   if let typeinfo.TypeUnion(_) = t {
     return union_slots(t, f);
@@ -4148,7 +4169,7 @@ function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   if (n < 0) {
     return -1;
   }
-  return n + 1;
+  return n + shape_slots(f);
 }
 
 function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
@@ -4160,7 +4181,7 @@ function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
   if (v < 0) {
     return -1;
   }
-  return f.enums[at].variants[v].fields.len() + 1;
+  return f.enums[at].variants[v].fields.len() + shape_slots(f);
 }
 
 function donor_slots(f: ssasem.Func, vr: VariantReads, b: ssa.SBlock, d: i32): i32 {

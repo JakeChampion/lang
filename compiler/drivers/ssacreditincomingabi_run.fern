@@ -33,7 +33,7 @@ function site_matches(b: irtables.LowerResult, site: incoming.Site): i32 {
 function check_sites(sub: ircore.Sub, name: string, consumer: string, sites: incoming.Site[]): void {
   let input = 0;
   for site in sites {
-    require(site.input == input && site.consumer == consumer && site.parameter == 0 && site.words == 3, 92);
+    require(site.input == input && site.consumer == consumer && site.parameter == 0 && site.words == 2, 92);
     let found = 0;
     for b in util.append_all(sub.bodies, sub.extra) {
       if (b.name == name) {

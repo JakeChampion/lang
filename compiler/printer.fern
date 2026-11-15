@@ -430,7 +430,7 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt)
         return ("unsafe " + text, nf);
       }
       let last = lm.body[lm.body.len() - 1];
-      if (is_missing_tail(last)) {
+      if (parser.is_missing_tail(last) || is_made_tail(lm.body)) {
         return print_value_block(lm.body, parser.e_unknown("block tail"), false, depth, f);
       }
       if (print_return_only([last], depth).len() == 0) {
@@ -461,11 +461,23 @@ function unsafe_value_body(body: ast.Stmt[]): Option[ast.Stmt[]] {
   return None;
 }
 
-// Whether st is the statement that the parser puts where a value block has no
-// trailing expression.
-function is_missing_tail(st: ast.Stmt): boolean {
-  if let ast.StmtUnknown(u) = st {
-    return u.kind == "value branch has no trailing expression";
+// Whether the parser made the tail of `body`. A value block whose statements
+// all leave has no written tail, and the parser gives it the value of its
+// last `return`, or a zero.
+function is_made_tail(body: ast.Stmt[]): boolean {
+  let n = body.len();
+  if (n < 2) {
+    return false;
+  }
+  let tail = tail_expr(body[n - 1]);
+  if let ast.ExprNumber(zero) = tail {
+    if (zero.line == 0) {
+      return true;
+    }
+  }
+  if let ast.StmtReturn(prev) = body[n - 2] {
+    let line = ast.expr_line(tail);
+    return line > 0 && line == ast.expr_line(prev.value) && ast.expr_col(tail) == ast.expr_col(prev.value);
   }
   return false;
 }
@@ -519,6 +531,9 @@ function print_if_value_branch(body: ast.Stmt[], dead: boolean, depth: i32, f: F
     return ("", f);
   }
   let last = body[body.len() - 1];
+  if (parser.is_missing_tail(last)) {
+    return print_value_block(body, parser.e_unknown("block tail"), false, depth, f);
+  }
   if (print_return_only([last], depth) == "") {
     return ("", f);
   }
@@ -856,6 +871,9 @@ function arm_expr_value(body: ast.Stmt[], v: string, bare: boolean, depth: i32, 
     return ("", f);
   }
   let last = body[body.len() - 1];
+  if (parser.is_missing_tail(last)) {
+    return print_value_block(body, parser.e_unknown("block tail"), false, depth, f);
+  }
   if (v.len() > 0) {
     return local_arm_value(body, v, bare, depth, f);
   }

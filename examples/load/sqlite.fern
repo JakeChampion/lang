@@ -1,0 +1,529 @@
+// The database of --db-url: a SQLite file with the table `oha` of oha 1.16
+// and a row for each response. The tool writes the file format of SQLite 3
+// itself. It makes a new file, or adds the rows to a file that holds only
+// the table `oha`, such as a file that oha or the tool wrote before.
+import "std/array";
+import "std/result";
+import "std/string";
+import "std/utf8";
+
+// A row of the table `oha`: the URL, the start, the time at which the
+// request was due with --latency-correction, the end and the duration in
+// seconds from the start of the run, the status, the length of the body,
+// and the start of the run in seconds of Unix time.
+pub struct Row { url: string, start: f64, due: Option[f64], end: f64, duration: f64, status: i64, len: i64, run: i64 }
+
+// The statement of oha, as SQLite keeps it in its schema.
+pub const SCHEMA: string = "CREATE TABLE oha (\n            url TEXT NOT NULL,\n            start REAL NOT NULL,\n            start_latency_correction REAL,\n            end REAL NOT NULL,\n            duration REAL NOT NULL,\n            status INTEGER NOT NULL,\n            len_bytes INTEGER NOT NULL,\n            run INTEGER NOT NULL\n        )";
+
+// The size of each page that the tool writes.
+const PAGE: i32 = 4096;
+
+// The kinds of the pages of a b-tree of a table.
+const LEAF: i32 = 13;
+
+const INTERIOR: i32 = 5;
+
+// A value of a record: NULL, an integer, a real or a text.
+pub enum Value { VNull, VInt(i64), VReal(f64), VText(string) }
+
+// Writes the rows of the file `path` and then `rows` to the file, and gives
+// the count of rows that it added.
+pub function store(path: string, rows: Row[]): Result[i64, string] {
+  for journal in ["-wal", "-journal"] {
+    if let Ok(log) = read_file_bytes(path + journal) {
+      if (log.len() > 0) {
+        return Err(f"--db-url {path}: the file has a {journal.drop(1)} file, so the tool cannot add to it");
+      }
+    }
+  }
+  let before: Row[] = [];
+  if let Ok(data) = read_file_bytes(path) {
+    if (data.len() > 0) {
+      match (read_rows(data)) {
+        Ok(found) => {
+          before = found;
+        },
+        Err(why) => {
+          return Err(f"--db-url {path}: {why}");
+        }
+      }
+    }
+  }
+  match (write_file_bytes(path, file(before.concat(rows)))) {
+    Ok(_) => {
+      return Ok(rows.len() as i64);
+    },
+    Err(e) => {
+      return Err(f"--db-url {path}: {e.message()}");
+    }
+  }
+  return Ok(0);
+}
+
+// The pages of a file after page 1, in order: page k of the file is
+// `pages[k - 2]`.
+struct Pages { pages: u8[][] }
+
+function (p: Pages) next(): i32 {
+  return p.pages.len() + 2;
+}
+
+function (p: Pages) add(page: u8[]): Pages {
+  return Pages { pages: p.pages.append(page) };
+}
+
+// The bytes of a database file with the table `oha` and `rows`. Page 1 is
+// the schema. The leaves of the table and their overflow pages follow, and
+// then each level of interior pages up to the root.
+pub function file(rows: Row[]): u8[] {
+  let none: u8[][] = [];
+  let p = Pages { pages: none };
+  let leaves: i32[] = [];
+  let keys: i64[] = [];
+  let cells: u8[][] = [];
+  let used = 8;
+  for k in 0..rows.len() {
+    let rec = record(row_values(rows[k]));
+    let (spilled, cell) = leaf_cell(p, k as i64 + 1, rec);
+    p = spilled;
+    if (used + cell.len() + 2 > PAGE) {
+      leaves = leaves.append(p.next());
+      keys = keys.append(k as i64);
+      p = p.add(page_of(LEAF, cells, 0, 0));
+      cells = [];
+      used = 8;
+    }
+    cells = cells.append(cell);
+    used += cell.len() + 2;
+  }
+  leaves = leaves.append(p.next());
+  keys = keys.append(rows.len() as i64);
+  p = p.add(page_of(LEAF, cells, 0, 0));
+  while (leaves.len() > 1) {
+    let up = level(p, leaves, keys);
+    p = up.0;
+    leaves = up.1;
+    keys = up.2;
+  }
+  let schema = record([VText("table"), VText("oha"), VText("oha"), VInt(leaves[0] as i64), VText(SCHEMA)]);
+  let first = page_of(LEAF, [leaf_cell(p, 1, schema).1], 100, 0);
+  let out = header(p.pages.len() + 1).concat(first.drop(100));
+  for page in p.pages {
+    out = out.concat(page);
+  }
+  return out;
+}
+
+// One level of interior pages over the pages `children`, whose largest row
+// ids are `keys`. Each interior page has a cell for each child but its last,
+// which is its right child. It gives the pages, the new level and its keys.
+function level(p: Pages, children: i32[], keys: i64[]): (Pages, i32[], i64[]) {
+  let out = p;
+  let up: i32[] = [];
+  let up_keys: i64[] = [];
+  let i = 0;
+  while (i < children.len()) {
+    let cells: u8[][] = [];
+    let used = 12;
+    let j = i;
+    while (j < children.len() - 1) {
+      let cell = u32_bytes(children[j]).concat(varint(keys[j]));
+      if (used + cell.len() + 2 > PAGE) {
+        break;
+      }
+      cells = cells.append(cell);
+      used += cell.len() + 2;
+      j += 1;
+    }
+    up = up.append(out.next());
+    up_keys = up_keys.append(keys[j]);
+    out = out.add(page_of(INTERIOR, cells, 0, children[j]));
+    i = j + 1;
+  }
+  return (out, up, up_keys);
+}
+
+// The 100 bytes of the header of a database file of `pages` pages, with a
+// page size of PAGE and text in UTF-8.
+function header(pages: i32): u8[] {
+  let h = "SQLite format 3".bytes().append(0 as u8);
+  h = h.concat([(PAGE >> 8) as u8, 0 as u8, 1 as u8, 1 as u8, 0 as u8, 64 as u8, 32 as u8, 32 as u8]);
+  h = h.concat(u32_bytes(1)).concat(u32_bytes(pages)).concat(u32_bytes(0)).concat(u32_bytes(0));
+  h = h.concat(u32_bytes(1)).concat(u32_bytes(4)).concat(u32_bytes(0)).concat(u32_bytes(0));
+  h = h.concat(u32_bytes(1)).concat(u32_bytes(0)).concat(u32_bytes(0)).concat(u32_bytes(0));
+  for _ in 0..20 {
+    h = h.append(0 as u8);
+  }
+  return h.concat(u32_bytes(1)).concat(u32_bytes(3046000));
+}
+
+// A page of a b-tree of the kind `kind` with `cells`, after `skip` bytes of
+// a file header, and the right child of an interior page. The cells fill
+// the page from its end.
+function page_of(kind: i32, cells: u8[][], skip: i32, right: i32): u8[] {
+  let head = if (kind == INTERIOR) { 12 } else { 8 };
+  let p: u8[] = [];
+  for _ in 0..PAGE {
+    p = p.append(0 as u8);
+  }
+  let content = PAGE;
+  let ptrs: i32[] = [];
+  for c in cells {
+    content -= c.len();
+    for k in 0..c.len() {
+      p = p.with(content + k, c[k]);
+    }
+    ptrs = ptrs.append(content);
+  }
+  p = p.with(skip, kind as u8);
+  p = put16(p, skip + 3, cells.len());
+  p = put16(p, skip + 5, content);
+  if (kind == INTERIOR) {
+    let r = u32_bytes(right);
+    for k in 0..4 {
+      p = p.with(skip + 8 + k, r[k]);
+    }
+  }
+  for k in 0..ptrs.len() {
+    p = put16(p, skip + head + 2 * k, ptrs[k]);
+  }
+  return p;
+}
+
+function put16(p: u8[], at: i32, v: i32): u8[] {
+  return p.with(at, (v >> 8 & 255) as u8).with(at + 1, (v & 255) as u8);
+}
+
+function u32_bytes(v: i32): u8[] {
+  return [(v >> 24 & 255) as u8, (v >> 16 & 255) as u8, (v >> 8 & 255) as u8, (v & 255) as u8];
+}
+
+// The bytes of a record: its header, with the serial type of each value,
+// and then the values, as SQLite writes them.
+pub function record(values: Value[]): u8[] {
+  let types: u8[] = [];
+  let body: u8[] = [];
+  for v in values {
+    match (v) {
+      VNull => {
+        types = types.append(0 as u8);
+      },
+      VInt(n) => {
+        let (code, width) = int_type(n);
+        types = types.concat(varint(code));
+        for k in 0..width {
+          body = body.append((n >> ((width - 1 - k) * 8) as i64 & 255) as u8);
+        }
+      },
+      VReal(x) => {
+        types = types.append(7 as u8);
+        let bits = f64_bits(x);
+        for k in 0..8 {
+          body = body.append((bits >> ((7 - k) * 8) as i64 & 255) as u8);
+        }
+      },
+      VText(s) => {
+        types = types.concat(varint((s.len() * 2 + 13) as i64));
+        body = body.concat(s.bytes());
+      }
+    }
+  }
+  let size = types.len() + 1;
+  if (varint(size as i64).len() > 1) {
+    size += 1;
+  }
+  return varint(size as i64).concat(types).concat(body);
+}
+
+// The serial type of an integer, and its width in bytes.
+function int_type(n: i64): (i64, i32) {
+  if (n == 0) {
+    return (8, 0);
+  }
+  if (n == 1) {
+    return (9, 0);
+  }
+  let widths: i32[] = [1, 2, 3, 4, 6];
+  for k in 0..widths.len() {
+    let half = 1 as i64 << (widths[k] * 8 - 1) as i64;
+    if (n >= -half && n < half) {
+      return ((k + 1) as i64, widths[k]);
+    }
+  }
+  return (6, 8);
+}
+
+// A variable-length integer of SQLite: seven bits in each byte, the most
+// significant first, and all eight bits in a ninth byte.
+pub function varint(v: i64): u8[] {
+  if (v >= 0 && v < 128) {
+    return [v as u8];
+  }
+  if (v < 0 || v >= 1 as i64 << 56) {
+    let out: u8[] = [];
+    for k in 0..8 {
+      out = out.append((v >> (64 - 7 * (k + 1)) as i64 & 127 | 128) as u8);
+    }
+    return out.append((v & 255) as u8);
+  }
+  let groups: u8[] = [];
+  let x = v;
+  while (x > 0) {
+    groups = groups.append((x & 127) as u8);
+    x >>= 7;
+  }
+  let out: u8[] = [];
+  for k in 0..groups.len() {
+    let g = groups[groups.len() - 1 - k];
+    out = out.append(if (k == groups.len() - 1) { g } else { g | 128 as u8 });
+  }
+  return out;
+}
+
+// The bytes of a payload of `size` bytes that a cell of a leaf of a table
+// keeps on its page of `page` bytes. SQLite puts the rest on overflow pages.
+pub function local_size(size: i32, page: i32): i32 {
+  let x = page - 35;
+  if (size <= x) {
+    return size;
+  }
+  let m = (page - 12) * 32 / 255 - 23;
+  let k = m + (size - m) % (page - 4);
+  return if (k <= x) { k } else { m };
+}
+
+// A cell of a leaf of a table: the size of the record, the row id, the part
+// of the record on the page, and the number of the first overflow page. The
+// overflow pages go to `p` first.
+function leaf_cell(p: Pages, rowid: i64, rec: u8[]): (Pages, u8[]) {
+  let local = local_size(rec.len(), PAGE);
+  let cell = varint(rec.len() as i64).concat(varint(rowid)).concat(rec.take(local));
+  if (local == rec.len()) {
+    return (p, cell);
+  }
+  let first = p.next();
+  let out = p;
+  let at = local;
+  while (at < rec.len()) {
+    let part = rec.drop(at).take(PAGE - 4);
+    at += PAGE - 4;
+    let following = if (at < rec.len()) { out.next() + 1 } else { 0 };
+    let page = u32_bytes(following).concat(part);
+    while (page.len() < PAGE) {
+      page = page.append(0 as u8);
+    }
+    out = out.add(page);
+  }
+  return (out, cell.concat(u32_bytes(first)));
+}
+
+function row_values(r: Row): Value[] {
+  let due = if let Some(d) = r.due { VReal(d) } else { VNull };
+  return [VText(r.url), VReal(r.start), due, VReal(r.end), VReal(r.duration), VInt(r.status), VInt(r.len), VInt(r.run)];
+}
+
+// A database file to read: its bytes and its page size.
+struct Db { data: u8[], page: i32 }
+
+function (d: Db) u16_at(at: i32): i32 {
+  return d.data[at] as i32 << 8 | d.data[at + 1] as i32;
+}
+
+function (d: Db) u32_at(at: i32): i32 {
+  return d.data[at] as i32 << 24 | d.data[at + 1] as i32 << 16 | d.data[at + 2] as i32 << 8 | d.data[at + 3] as i32;
+}
+
+// The varint at `at`, and the offset after it.
+function (d: Db) varint_at(at: i32): (i64, i32) {
+  let v: i64 = 0;
+  for k in 0..8 {
+    let b = d.data[at + k];
+    v = v << 7 | (b & 127 as u8) as i64;
+    if (b < 128 as u8) {
+      return (v, at + k + 1);
+    }
+  }
+  return (v << 8 | d.data[at + 8] as i64, at + 9);
+}
+
+// The rows of the table `oha` of a database file. The tool writes the whole
+// file again, so it refuses a file with another table, an index, or another
+// schema of the table.
+pub function read_rows(data: u8[]): Result[Row[], string] {
+  if (data.len() < 100 || utf8.from_bytes_lossy(data.take(16)) != "SQLite format 3\x00") {
+    return Err("the file is not a SQLite database");
+  }
+  let raw_page = data[16] as i32 << 8 | data[17] as i32;
+  let db = Db { data: data, page: if (raw_page == 1) { 65536 } else { raw_page } };
+  if (db.u32_at(56) != 1) {
+    return Err("the text of the database is not UTF-8");
+  }
+  let schema = records(db, 1)?;
+  if (schema.len() != 1) {
+    return Err("the database has more than the table oha");
+  }
+  let entry = schema[0];
+  if (entry.len() != 5 || !is_text(entry[1], "oha") || !is_text(entry[4], SCHEMA)) {
+    return Err("the database has a table that is not the table oha of oha 1.16");
+  }
+  let root = match (entry[3]) {
+    VInt(n) => n as i32,
+    _ => 0,
+  };
+  let out: Row[] = [];
+  for values in records(db, root)? {
+    out = out.append(row_of(values)?);
+  }
+  return Ok(out);
+}
+
+function is_text(v: Value, want: string): boolean {
+  match (v) {
+    VText(s) => {
+      return s == want;
+    },
+    _ => {}
+  }
+  return false;
+}
+
+// The values of each record of the b-tree of a table at page `root`, in the
+// order of the row ids.
+function records(db: Db, root: i32): Result[Value[][], string] {
+  let out: Value[][] = [];
+  let todo: i32[] = [root];
+  let seen = 0;
+  while (todo.len() > 0) {
+    let n = todo[0];
+    todo = todo.drop(1);
+    seen += 1;
+    if (n < 1 || n as i64 * (db.page as i64) > db.data.len() as i64 || seen > db.data.len() / 512 + 2) {
+      return Err("the database has a page that is not there");
+    }
+    let base = (n - 1) * db.page;
+    let at = if (n == 1) { base + 100 } else { base };
+    let kind = db.data[at] as i32;
+    let count = db.u16_at(at + 3);
+    if (kind == INTERIOR) {
+      let children: i32[] = [];
+      for k in 0..count {
+        children = children.append(db.u32_at(base + db.u16_at(at + 12 + 2 * k)));
+      }
+      todo = children.append(db.u32_at(at + 8)).concat(todo);
+      continue;
+    }
+    if (kind != LEAF) {
+      return Err("the database has a page that is not of a table");
+    }
+    for k in 0..count {
+      out = out.append(decode(db, payload(db, base + db.u16_at(at + 8 + 2 * k))?)?);
+    }
+  }
+  return Ok(out);
+}
+
+// The payload of the cell of a leaf at `at`, with its overflow pages.
+function payload(db: Db, at: i32): Result[u8[], string] {
+  let (size, after_size) = db.varint_at(at);
+  let (_, start) = db.varint_at(after_size);
+  let local = local_size(size as i32, db.page);
+  let out = db.data.drop(start).take(local);
+  let next = if (local < size as i32) { db.u32_at(start + local) } else { 0 };
+  let hops = 0;
+  while (out.len() < size as i32) {
+    hops += 1;
+    if (next < 1 || next as i64 * (db.page as i64) > db.data.len() as i64 || hops > db.data.len() / db.page) {
+      return Err("the database has an overflow page that is not there");
+    }
+    let base = (next - 1) * db.page;
+    out = out.concat(db.data.drop(base + 4).take(if (size as i32 - out.len() < db.page - 4) { size as i32 - out.len() } else { db.page - 4 }));
+    next = db.u32_at(base);
+  }
+  return Ok(out);
+}
+
+// The values of a record.
+function decode(db: Db, rec: u8[]): Result[Value[], string] {
+  let d = Db { ...db, data: rec.concat([0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8]) };
+  let (head, first) = d.varint_at(0);
+  let types: i64[] = [];
+  let at = first;
+  while (at < head as i32) {
+    let (t, after) = d.varint_at(at);
+    types = types.append(t);
+    at = after;
+  }
+  let body = head as i32;
+  let out: Value[] = [];
+  for t in types {
+    let (v, width) = value_at(d, body, t);
+    if (body + width > rec.len()) {
+      return Err("the database has a record that ends early");
+    }
+    out = out.append(v);
+    body += width;
+  }
+  return Ok(out);
+}
+
+// The value of serial type `t` at `at`, and its width.
+function value_at(d: Db, at: i32, t: i64): (Value, i32) {
+  if (t == 0) {
+    return (VNull, 0);
+  }
+  if (t == 8 || t == 9) {
+    return (VInt(t - 8), 0);
+  }
+  if (t >= 1 && t <= 6) {
+    let widths: i32[] = [1, 2, 3, 4, 6, 8];
+    let w = widths[t as i32 - 1];
+    let n: i64 = if (d.data[at] >= 128 as u8) { -1 } else { 0 };
+    for k in 0..w {
+      n = n << 8 | d.data[at + k] as i64;
+    }
+    return (VInt(n), w);
+  }
+  if (t == 7) {
+    let bits: i64 = 0;
+    for k in 0..8 {
+      bits = bits << 8 | d.data[at + k] as i64;
+    }
+    return (VReal(f64_from_bits(bits)), 8);
+  }
+  let n = ((t - 12) / 2) as i32;
+  return (VText(utf8.from_bytes_lossy(d.data.drop(at).take(n))), n);
+}
+
+// A row of the table from its values. SQLite keeps a real with no fraction
+// as an integer.
+function row_of(v: Value[]): Result[Row, string] {
+  if (v.len() != 8) {
+    return Err("the database has a row that is not a row of oha");
+  }
+  let url = match (v[0]) {
+    VText(s) => s,
+    _ => "",
+  };
+  let due = match (v[2]) {
+    VNull => None,
+    _ => Some(real(v[2])),
+  };
+  return Ok(Row { url: url, start: real(v[1]), due: due, end: real(v[3]), duration: real(v[4]), status: int(v[5]), len: int(v[6]), run: int(v[7]) });
+}
+
+function real(v: Value): f64 {
+  return match (v) {
+    VReal(x) => x,
+    VInt(n) => n as f64,
+    _ => 0.0,
+  };
+}
+
+function int(v: Value): i64 {
+  return match (v) {
+    VInt(n) => n,
+    VReal(x) => x as i64,
+    _ => 0,
+  };
+}

@@ -62,7 +62,7 @@ function mutation(body: irtables.LowerResult, mode: i32): irtables.LowerResult {
       ops = ops.append(ir.op_drop());
       hits += 1;
     } else if (mode == 8 && op.kind_tag == ir.kind_id("const_i32") && op.i32_imm == 3) {
-      ops = ops.append(ir.op_const_i32(2));
+      ops = ops.append(ir.op_const_i32(3));
       hits += 1;
     } else {
       ops = ops.append(op);
@@ -114,21 +114,21 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
         changed = ssa.SInst { ...op, result: f.nvals };
         nvals = f.nvals + 1;
         hits += 1;
-      } else if (mode == 4 && op.kind_tag == 41 && op.imm == 0) {
+      } else if (mode == 4 && op.kind_tag == 41 && op.imm == ssa.tag_offset()) {
         changed = ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" };
         hits += 1;
-      } else if (mode == 5 && op.kind_tag == 41 && op.imm == 8) {
-        changed = ssa.SInst { ...op, imm: 16 };
+      } else if (mode == 5 && op.kind_tag == 41 && op.imm == 0) {
+        changed = ssa.SInst { ...op, imm: 8 };
         hits += 1;
       } else if (mode == 6 && op.kind_tag == 8 && hits == 0) {
         changed = ssa.SInst { ...op, args: op.args.with(0, op.result) };
         hits += 1;
-      } else if (mode == 7 && op.kind_tag == 41 && op.imm == 0) {
+      } else if (mode == 7 && op.kind_tag == 41 && op.imm == ssa.tag_offset()) {
         ops = ops.append(op);
         changed = ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" };
         nvals = f.nvals + 1;
         hits += 1;
-      } else if (mode == 8 && op.kind_tag == 40 && op.imm == 8) {
+      } else if (mode == 8 && op.kind_tag == 40 && op.imm == 0) {
         ops = ops.append(op);
         changed = ssa.SInst { kind_tag: 9, result: f.nvals, args: [1, op.result], imm: 0, str: "eq" };
         nvals = f.nvals + 1;
@@ -276,7 +276,7 @@ function scalar_read_mutation(body: irtables.LowerResult, field: i32, mode: i32)
 }
 
 function scalar_reads(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
-  let facts = [reuse.ScalarField { root: 4 + field, offset: 8 }];
+  let facts = [reuse.ScalarField { root: 4 + field, offset: 0 }];
   let reasons = ["proved guarded two-child partial replacement", "child used after final credit or anchor", "missing scalar child field layout", "flat child reference required"];
   for mode in 0..reasons.len() {
     let f = lift(scalar_read_mutation(body, field, mode));
@@ -289,11 +289,11 @@ function scalar_reads(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, fi
   let f = lift(scalar_read_mutation(body, field, 0));
   let duplicate = reuse.check_fields(f, d, r, "Parent", facts.append(facts[0]));
   require(!duplicate.ok && duplicate.function_name == f.name && duplicate.message == "duplicate scalar child field layout", 105);
-  for offset in [-2147483648, 0, 9, 2147483647] {
+  for offset in [-2147483648, -8, 9, 2147483647] {
     let invalid = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 4 + field, offset: offset }]);
     require(!invalid.ok && invalid.function_name == f.name && invalid.message == "invalid scalar child field layout", 106);
   }
-  let wrong = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 5 - field, offset: 8 }]);
+  let wrong = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 5 - field, offset: 0 }]);
   require(!wrong.ok && wrong.function_name == f.name && wrong.message == "missing scalar child field layout", 107);
   expect(f, d, r, false, "parent reference required", 108);
   expect(lift(body), d, r, true, "proved guarded two-child partial replacement", 109);
@@ -357,7 +357,7 @@ function numeric_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, 
   let reasons = ["proved guarded two-child partial replacement", "child used after final credit or anchor", "integer add requires numeric operands", "signed comparison requires narrowed numeric operands", "unsupported reuse operation", "unsupported reuse operation", "unsupported reuse operation", "unsupported reuse operation", "integer cast requires numeric operand", "proved guarded two-child partial replacement"];
   for mode in 0..reasons.len() {
     let f = lift(numeric_mutation(body, field, mode));
-    let p = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 4 + field, offset: 8 }]);
+    let p = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 4 + field, offset: 0 }]);
     if (p.ok != (mode == 0 || mode == 9) || p.function_name != f.name || p.message != reasons[mode]) {
       print(p.function_name + ": " + p.message);
       exit(111 + mode);
@@ -603,7 +603,7 @@ function caller_controls(target: string): void {
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(text)), target).sub;
   let d = named_body(sub.extra, "__sem_drop_Parent");
   let r = named_body(sub.extra, "__sem_release_Parent");
-  let fields = [reuse.ScalarField { root: 3, offset: 8 }];
+  let fields = [reuse.ScalarField { root: 3, offset: 0 }];
   for field in [0, 1] {
     let name = "partial_left";
     if (field == 1) {

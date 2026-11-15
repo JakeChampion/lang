@@ -142,6 +142,7 @@ function bunzip(name: string, input: u8[]): (u8[], string) {
     Some(bzip2.NotBzip2) => "bzip2: " + name + " is not a bzip2 file.",
     Some(bzip2.Truncated) => "bzip2: Compressed file ends unexpectedly;\n\tperhaps it is corrupted?  *Possible* reason follows.\nbzip2: Success\n" + tail,
     Some(bzip2.Corrupt) => "bzip2: Data integrity error when decompressing.\n" + tail,
+    Some(bzip2.OutputLimit) => "bzip2: " + name + ": " + bzip2.OutputLimit.message(),
     None => "",
   });
 }

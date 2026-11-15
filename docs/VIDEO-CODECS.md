@@ -183,6 +183,14 @@ The cache retains at most 16 MiB of PPS payloads, without an exact process-memor
 Slice inspection copies at most 64 unescaped bytes, without a complete slice-payload copy.
 Returned packets contain canonical four-byte Annex B prefixes and an IDR flag, without assigned timestamps.
 
+AVC sequence-end and stream-end NAL units have empty payloads and follow a coded picture.
+Both markers remain in that picture's access unit. Sequence end requires IDR in the next access unit, through intervening prefix metadata.
+Stream end permits no subsequent NAL unit in the same reader. A separate bitstream requires a new reader.
+These checks follow H.264 clauses 7.3.2.5, 7.3.2.6, 7.4.1.2.2, and 7.4.1.2.3.
+
+An IDR slice requires a zero frame number, as specified in clause 7.4.3.
+The existing SPS context supplies its width. Non-IDR frame numbers retain their full supported range.
+
 The supported path requires matching parameter sets before each slice.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
@@ -626,6 +634,10 @@ Six synthetic headers cover scaling lists, separate color planes, 255 picture-or
 FFmpeg's coded bitstream reader independently accepts those synthetic headers.
 
 The AVC access-unit comparison also uses this reader to check incompatible SPS and cached PPS pairs.
+
+Nine IDR frame-number controls use fresh Baseline, Main, and High 10 slices.
+Independent CBS traces confirm the changed fields. Native refusal follows H.264 clause 7.4.3, without an external-refusal claim.
+
 That comparison requires a C compiler, the FFmpeg development headers, and `pkg-config`.
 Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.

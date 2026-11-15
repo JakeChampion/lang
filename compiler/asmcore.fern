@@ -2878,23 +2878,17 @@ pub function ty_friendly(t: Ty): string {
   }
 }
 
-function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState): Ty {
-  let rt = infer_expr_type(fa.obj, s);
-  if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk_bytes") {
-    return ty_result(ty_array_i32());
-  }
-  if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk") {
-    return ty_option(ty_string());
-  }
-  if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "stat") {
-    return ty_result(ty_unknown());
-  }
+function infer_call_method_type_part_1(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && (fa.field == "seek" || fa.field == "flags")) {
     return ty_result(ty_i32());
   }
   if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "isatty") {
     return ty_bool();
   }
+  return infer_call_method_type_part_2(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_2(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_struct_name(rt) == "Writer" && (fa.field == "write_some" || fa.field == "write_some_bytes")) {
     return ty_result(ty_i32());
   }
@@ -2904,6 +2898,10 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (ty_struct_name(rt) == "Writer" && util.has_str(["write", "write_bytes", "truncate", "set_nonblocking", "set_times"], fa.field)) {
     return ty_result(ty_unknown());
   }
+  return infer_call_method_type_part_3(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_3(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "dup_onto") {
     return ty_result(ty_unknown());
   }
@@ -2913,6 +2911,10 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (ty_struct_name(rt) == "Reader" && fa.field == "termios_get") {
     return ty_result(ty_array_i64());
   }
+  return infer_call_method_type_part_4(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_4(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_struct_name(rt) == "Reader" && (fa.field == "set_window_size" || fa.field == "termios_set" || fa.field == "set_extproc")) {
     return ty_result(ty_unknown());
   }
@@ -2922,6 +2924,10 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (is_map(rt) && fa.field == "get") {
     return ty_option(map_val(rt));
   }
+  return infer_call_method_type_part_5(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_5(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (is_map(rt) && fa.field == "get_or") {
     return map_val(rt);
   }
@@ -2934,6 +2940,10 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (is_map(rt) && fa.field == "len") {
     return ty_i32();
   }
+  return infer_call_method_type_part_6(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_6(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (is_map(rt) && fa.field == "keys") {
     if (map_key_is_i32(rt)) {
       return ty_array_i32();
@@ -2951,15 +2961,27 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     return ty_array();
   }
 
+  return infer_call_method_type_part_7(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_7(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if ((is_int_tag(rt) || ty_is_string(rt)) && fa.field == "to_string") {
     return ty_string();
   }
   if (ty_is_f64(rt) && fa.field == "to_string") {
     return ty_string();
   }
+  return infer_call_method_type_part_8(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_8(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_is_i32(rt) && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "gcd" || fa.field == "lcm")) {
     return ty_i32();
   }
+  return infer_call_method_type_part_9(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_9(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_is_u8(rt) && (fa.field == "to_ascii_lower" || fa.field == "to_ascii_upper")) {
     return ty_u8();
   }
@@ -2969,24 +2991,48 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (ty_is_u8(rt) && (fa.field == "to_ascii_string" || fa.field == "hex_digit")) {
     return ty_string();
   }
+  return infer_call_method_type_part_10(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_10(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_is_i32(rt) && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative")) {
     return ty_bool();
   }
+  return infer_call_method_type_part_11(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_11(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_is_u8(rt) && (fa.field == "is_ascii_digit" || fa.field == "is_ascii_letter" || fa.field == "is_ascii_letter" || fa.field == "is_ascii_alphanumeric" || fa.field == "is_ascii_lower" || fa.field == "is_ascii_upper" || fa.field == "is_ascii_hex_digit" || fa.field == "is_ascii" || fa.field == "is_ascii_punct" || fa.field == "is_ascii_whitespace" || fa.field == "is_ascii_newline" || fa.field == "is_ascii_vowel" || fa.field == "is_ascii_printable" || fa.field == "is_ascii_control" || fa.field == "matches_any")) {
     return ty_bool();
   }
+  return infer_call_method_type_part_12(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_12(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (fa.field == "len"
     && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
     return ty_i32();
   }
+  return infer_call_method_type_part_13(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_13(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (fa.field == "is_empty"
     && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
     return ty_bool();
   }
+  return infer_call_method_type_part_14(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_14(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if ((fa.field == "append" || fa.field == "reverse" || fa.field == "concat")
     && (is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
     return rt;
   }
+  return infer_call_method_type_part_15(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_15(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if ((fa.field == "first" || fa.field == "last")
     && (is_int_array_tag(rt) || ty_is_array_string(rt))) {
     if (ty_is_array_i32(rt)) {
@@ -3003,6 +3049,10 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     }
     return ty_string();
   }
+  return infer_call_method_type_part_16(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_16(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_is_array_i32(rt) || ty_is_array_string(rt)) {
     if (fa.field == "index_of") {
       return ty_option(ty_i32());
@@ -3015,12 +3065,20 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     && (fa.field == "sum" || fa.field == "product")) {
     return ty_i32();
   }
+  return infer_call_method_type_part_17(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_17(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_is_array_i32(rt) && (fa.field == "min" || fa.field == "max")) {
     return ty_option(ty_i32());
   }
   if (ty_is_array_string(rt) && fa.field == "join") {
     return ty_string();
   }
+  return infer_call_method_type_part_18(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_18(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (ty_is_string(rt)) {
     if (fa.field == "split") {
       return ty_array_string();
@@ -3053,6 +3111,10 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
       return ty_string();
     }
   }
+  return infer_call_method_type_part_19(fa, c, s, rt);
+}
+
+function infer_call_method_type_part_19(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState, rt: Ty): Ty {
   if (!ty_is_unknown(rt)) {
     let mi = s.funcs_ix.chain(fa.field);
     while (mi >= 0) {
@@ -3064,6 +3126,20 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     }
   }
   return ty_unknown();
+}
+
+function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState): Ty {
+  let rt = infer_expr_type(fa.obj, s);
+  if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk_bytes") {
+    return ty_result(ty_array_i32());
+  }
+  if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk") {
+    return ty_option(ty_string());
+  }
+  if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "stat") {
+    return ty_result(ty_unknown());
+  }
+  return infer_call_method_type_part_1(fa, c, s, rt);
 }
 
 function builtin_i32_names(): string[] {
@@ -3103,6 +3179,7 @@ function builtin_i32_names(): string[] {
     "tcp_connect_with",
     "unix_listen",
     "unix_connect",
+    "vsock_connect",
     "reactor_new",
     "reactor_ctl",
     "reactor_wait",
@@ -3210,24 +3287,7 @@ function builtin_string_names(): string[] {
   ];
 }
 
-function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
-  if (s.has_local(id.name)) {
-    let lt = s.local_type_of(id.name);
-    if (is_fn(lt)) {
-      return fn_ret(lt);
-    }
-    return ty_unknown();
-  }
-  let ctor_fn: i32 = -1;
-  if (id.name == "Some" || id.name == "Ok" || id.name == "Err") {
-    ctor_fn = top_level_fn(id.name, s);
-  }
-  if (ctor_fn >= 0) {
-    return ty_from_name(s.funcs[ctor_fn].ret_type);
-  }
-  if (id.name == "Some" && c.args.len() == 1) {
-    return ty_option(infer_expr_type(c.args[0], s));
-  }
+function infer_call_named_type_part_1(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "Ok" && c.args.len() == 1) {
     return ty_result(infer_expr_type(c.args[0], s));
   }
@@ -3246,6 +3306,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "write_file_exec") {
     return ty_result(ty_unknown());
   }
+  return infer_call_named_type_part_2(id, c, s);
+}
+
+function infer_call_named_type_part_2(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (s.builtin_i32.has(id.name)) {
     return ty_i32();
   }
@@ -3273,6 +3337,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "rename") {
     return ty_option(ty_unknown());
   }
+  return infer_call_named_type_part_3(id, c, s);
+}
+
+function infer_call_named_type_part_3(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "rename_noreplace") {
     return ty_option(ty_unknown());
   }
@@ -3300,6 +3368,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "truncate") {
     return ty_option(ty_unknown());
   }
+  return infer_call_named_type_part_4(id, c, s);
+}
+
+function infer_call_named_type_part_4(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "sync") {
     return ty_unknown();
   }
@@ -3315,6 +3387,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_link" || id.name == "getcwd" || id.name == "map_file_unchecked") {
     return ty_result(ty_string());
   }
+  return infer_call_named_type_part_5(id, c, s);
+}
+
+function infer_call_named_type_part_5(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "read_link_bytes" || id.name == "getxattr_bytes" || id.name == "lgetxattr_bytes") {
     return ty_result(ty_array_i32());
   }
@@ -3324,6 +3400,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "setxattr" || id.name == "lsetxattr" || id.name == "setxattr_bytes" || id.name == "lsetxattr_bytes") {
     return ty_option(ty_unknown());
   }
+  return infer_call_named_type_part_6(id, c, s);
+}
+
+function infer_call_named_type_part_6(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "window_size") {
     return ty_unknown();
   }
@@ -3345,6 +3425,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "environ") {
     return ty_array_string();
   }
+  return infer_call_named_type_part_7(id, c, s);
+}
+
+function infer_call_named_type_part_7(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "stat") {
     return ty_result(ty_unknown());
   }
@@ -3366,6 +3450,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "f64_from_bits" || id.name == "f32_from_bits") {
     return ty_f64();
   }
+  return infer_call_named_type_part_8(id, c, s);
+}
+
+function infer_call_named_type_part_8(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "env" || id.name == "config_get") {
     return ty_option(ty_string());
   }
@@ -3381,6 +3469,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "stdin") {
     return ty_named("Reader");
   }
+  return infer_call_named_type_part_9(id, c, s);
+}
+
+function infer_call_named_type_part_9(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "stdout" || id.name == "stderr") {
     return ty_named("Writer");
   }
@@ -3399,6 +3491,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "__heap_bump_bytes") {
     return ty_i64();
   }
+  return infer_call_named_type_part_10(id, c, s);
+}
+
+function infer_call_named_type_part_10(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "__heap_alloc_count") {
     return ty_i64();
   }
@@ -3412,6 +3508,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "__mulhi_u64") {
     return ty_u64();
   }
+  return infer_call_named_type_part_11(id, c, s);
+}
+
+function infer_call_named_type_part_11(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "__arr_push_shared_bytes") {
     return ty_i64();
   }
@@ -3427,6 +3527,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "__alloc_i64") {
     return ty_array_i64();
   }
+  return infer_call_named_type_part_12(id, c, s);
+}
+
+function infer_call_named_type_part_12(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "__alloc_f64") {
     return ty_array();
   }
@@ -3442,6 +3546,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "cell_new" && c.args.len() == 1) {
     return ty_cell(infer_expr_type(c.args[0], s));
   }
+  return infer_call_named_type_part_13(id, c, s);
+}
+
+function infer_call_named_type_part_13(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
     || id.name == "__floor_f64" || id.name == "__ceil_f64"
     || id.name == "__trunc_f64" || id.name == "__round_f64") {
@@ -3455,6 +3563,27 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     return ty_from_name(s.funcs[fi].ret_type);
   }
   return ty_unknown();
+}
+
+function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
+  if (s.has_local(id.name)) {
+    let lt = s.local_type_of(id.name);
+    if (is_fn(lt)) {
+      return fn_ret(lt);
+    }
+    return ty_unknown();
+  }
+  let ctor_fn: i32 = -1;
+  if (id.name == "Some" || id.name == "Ok" || id.name == "Err") {
+    ctor_fn = top_level_fn(id.name, s);
+  }
+  if (ctor_fn >= 0) {
+    return ty_from_name(s.funcs[ctor_fn].ret_type);
+  }
+  if (id.name == "Some" && c.args.len() == 1) {
+    return ty_option(infer_expr_type(c.args[0], s));
+  }
+  return infer_call_named_type_part_1(id, c, s);
 }
 
 pub function top_level_fn(name: string, s: EmitState): i32 {
@@ -4326,9 +4455,6 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
   if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
     return util.Diag { related: [], length: 0, code: "P005", message: where + ": input nests deeper than " + util.i32_to_string(parser.MAX_NEST_DEPTH) + " levels", line: line, col: col, fix: None };
   }
-  if (kind == "value branch has no trailing expression" || kind == "stmt: value branch has no trailing expression") {
-    return util.Diag { related: [], length: 0, code: "E061", message: parser.BLOCK_VALUE_REQUIRED_MESSAGE, line: line, col: col, fix: None };
-  }
   let decl = decl_sentinel_text(kind);
   if (decl.len() > 0) {
     return util.Diag { related: [], length: 0, code: "P001", message: where + ": " + decl, line: line, col: col, fix: None };
@@ -4400,7 +4526,7 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
       return a;
     },
     ast.StmtUnknown(u) => {
-      if (u.kind == parser.REPORTED) {
+      if (u.kind == parser.REPORTED || u.kind == parser.MISSING_TAIL) {
         return a;
       }
       return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, "stmt: " + u.kind, u.line, u.col)) };
@@ -5385,16 +5511,6 @@ pub function parse_errors(mod: parser.Module): util.Diag[] {
   return ordered;
 }
 
-pub function parse_errors_before_check(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = [];
-  for d in parse_errors(mod) {
-    if (d.code != "E061") {
-      out = out.append(d);
-    }
-  }
-  return out;
-}
-
 function insert_by_position(ds: util.Diag[], d: util.Diag): util.Diag[] {
   let out: util.Diag[] = [];
   let placed = false;
@@ -5779,48 +5895,6 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl:
   return d;
 }
 
-function dbg_shape_type(s: EmitState, t: string): string {
-  let out = "";
-  let run = 0;
-  let i = 0;
-  while (i < t.len()) {
-    if (t[i] == b'%') {
-      let a = __memchr(t, 123, i + 1);
-      let b = __memchr(t, 125, a + 1);
-      if (a < 0 || b < 0) {
-        return t;
-      }
-      out = out + slice_unchecked(t, run, a + 1) + dbg_enum_members(s, t, a + 1, b) + "}";
-      i = b + 1;
-      run = i;
-    } else {
-      i += 1;
-    }
-  }
-  return out + slice_unchecked(t, run, t.len());
-}
-
-function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
-  let out = "";
-  while (i < end) {
-    let j = __memchr(t, 44, i);
-    if (j < 0 || j > end) {
-      j = end;
-    }
-    let shape = slice_unchecked(t, i, j).to_owned();
-    if (out != "") {
-      out += ",";
-    }
-    let k = shape.len();
-    while (k > 0 && shape[k - 1] != b'$') {
-      k -= 1;
-    }
-    out = out + slice_unchecked(shape, k, shape.len()) + "=" + util.i64_to_string(shape_tag(s, shape));
-    i = j + 1;
-  }
-  return out;
-}
-
 function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
   let param = "0";
   if (r.dbg_slots[i] < r.n_params) {
@@ -5896,11 +5970,7 @@ pub function emit_debug_rows(s: EmitState): EmitState {
 }
 
 function emit_debug_row(own s: EmitState, row: string): EmitState {
-  let a = __memchr(row, 124, 0);
-  let b = __memchr(row, 124, a + 1);
-  let c = __memchr(row, 124, b + 1);
-  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c).to_owned());
-  return s.write("    .fern_var " + slice_unchecked(row, 0, b + 1) + shaped + slice_unchecked(row, c, row.len()) + "\n");
+  return s.write("    .fern_var " + row + "\n");
 }
 
 pub function dbg_hex(bytes: i32[]): string {

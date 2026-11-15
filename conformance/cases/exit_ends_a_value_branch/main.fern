@@ -1,0 +1,62 @@
+// A value branch with no trailing expression is correct when its statements
+// end the path. A call to the builtin exit ends it, also inside an if, a
+// match or a block that ends the branch.
+enum Opt { Has(i32), Nil }
+
+function nested(n: i32): i32 {
+  let v: i32 = if (n >= 0) { n } else { if (n < -10) { exit(2); } else { exit(3); } };
+  return v;
+}
+
+function by_match(o: Opt, code: i32): i32 {
+  let v: i32 = match (o) {
+    Has(x) => x,
+    Nil => {
+      match (code) {
+        0 => {
+          exit(4);
+        },
+        _ => {
+          exit(5);
+        }
+      }
+    },
+  };
+  return v;
+}
+
+function pair(p: (i32, Opt)): i32 {
+  return match (p) {
+    (k, Has(x)) => k + x,
+    (_, Nil()) => { eprint("none"); exit(6); },
+  };
+}
+
+function scoped(n: i32): i32 {
+  let v: i32 = if (n > 0) { n * 2 } else {
+    {
+      eprint("scoped");
+      exit(7);
+    }
+  };
+  return v;
+}
+
+function block(n: i32): i32 {
+  if (n > 0) {
+    return n * 3;
+  }
+  let v: i32 = { eprint("block"); exit(8); };
+  return v;
+}
+
+function unpack(o: Opt): i32 {
+  let v: i32 = if let Has(x) = o { x } else { exit(9); };
+  return v;
+}
+
+function main(): i32 {
+  let total = nested(1) + by_match(Opt.Has(2), 0) + pair((3, Opt.Has(4))) + scoped(5) + block(2) + unpack(Opt.Has(6));
+  print(f"{total}");
+  return 0;
+}

@@ -133,8 +133,20 @@ function stack_checks(): i32 {
     return 96;
   }
 
-  let unmodelled: ir.Op[] = [ir.op_load(32)];
-  if (sp_bail(unmodelled) != "unmodelled op load") {
+  let loaded: ir.Op[] = [ir.op_const_i32(0), ir.op_load(32), ir.op_return()];
+  if (sp_bail(loaded).len() != 0 || sp_count(loaded) != 0) {
+    return 107;
+  }
+  let no_address: ir.Op[] = [ir.op_load(32), ir.op_return()];
+  if (sp_bail(no_address).len() != 0 || sp_count(no_address) != 1) {
+    return 108;
+  }
+  if (!util.contains(sp_msg(no_address), "operand stack underflow - needs 1 operand slot(s), but the enclosing scope holds 0")) {
+    return 109;
+  }
+
+  let unmodelled: ir.Op[] = [ir.op_store(32)];
+  if (sp_bail(unmodelled) != "unmodelled op store") {
     return 100;
   }
   if (sp_count(unmodelled) != 0) {
@@ -161,8 +173,8 @@ function stack_checks(): i32 {
 
   let cov = irverifystack.coverage_new();
   cov = irverifystack.coverage_add(cov, "a", "");
-  cov = irverifystack.coverage_add(cov, "b", "unmodelled op load");
-  cov = irverifystack.coverage_add(cov, "c", "unmodelled op load");
+  cov = irverifystack.coverage_add(cov, "b", "unmodelled op store");
+  cov = irverifystack.coverage_add(cov, "c", "unmodelled op store");
   if (cov.funcs != 3 || cov.modelled != 1) {
     return 110;
   }
@@ -172,7 +184,7 @@ function stack_checks(): i32 {
   if (!util.contains(irverifystack.coverage_str(cov), "modelled 1/3")) {
     return 112;
   }
-  if (!util.contains(irverifystack.coverage_str(cov), "skipped 2: unmodelled op load")) {
+  if (!util.contains(irverifystack.coverage_str(cov), "skipped 2: unmodelled op store")) {
     return 113;
   }
   return 0;

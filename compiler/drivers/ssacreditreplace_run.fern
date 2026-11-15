@@ -65,7 +65,7 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
     } else if (mode == 1 && op.kind_tag == ssa.SHAPE_ADDR) {
       changed = ssa.SInst { ...op, str: "Other" };
       hits += 1;
-    } else if (mode >= 2 && op.kind_tag == ssa.ST_AT && op.imm == 8) {
+    } else if (mode >= 2 && op.kind_tag == ssa.ST_AT && op.imm == 0) {
       if (mode == 2) {
         changed = ssa.SInst { ...op, kind_tag: ssa.CONST_INT, args: [], imm: 0 };
       } else if (mode == 3) {

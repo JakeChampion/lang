@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func runLangInterp(t *testing.T, bin, src string) (int, string, string) {
@@ -21,31 +21,6 @@ func runLangInterp(t *testing.T, bin, src string) (int, string, string) {
 	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
-var (
-	tapPlanRe  = regexp.MustCompile(`(?m)^1\.\.(\d+)$`)
-	tapCountRe = regexp.MustCompile(`(?m)^# (pass|fail|skip) (\d+)$`)
-)
-
-// checkTAPPlan holds a suite that must pass without a pin of how many cases
-// it has: the plan is not empty, each case of the plan passed or was skipped,
-// and none failed. A new case in the suite then needs no edit here.
-func checkTAPPlan(t *testing.T, out string) {
-	t.Helper()
-	plan := tapPlanRe.FindStringSubmatch(out)
-	if plan == nil {
-		t.Fatalf("no TAP plan in:\n%s", out)
-	}
-	counts := map[string]int{}
-	for _, m := range tapCountRe.FindAllStringSubmatch(out, -1) {
-		counts[m[1]], _ = strconv.Atoi(m[2])
-	}
-	n, _ := strconv.Atoi(plan[1])
-	if n == 0 || counts["fail"] != 0 || counts["pass"]+counts["skip"] != n {
-		t.Errorf("plan 1..%d with %d passed, %d skipped, %d failed\nfull output:\n%s",
-			n, counts["pass"], counts["skip"], counts["fail"], out)
-	}
-}
-
 func TestRunnerSimdExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/simd_test.fern")
@@ -53,7 +28,7 @@ func TestRunnerSimdExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: simd", "ok 18 - sweep against std/f64", "ok 23 - lane Math against the scalar", "ok 26 - byte lane memory", "ok 27 - integer lanes against the scalar", "ok 28 - integer lane masks", "ok 30 - lane swizzle", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -90,7 +65,7 @@ func TestRunnerRegexExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/regex", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -105,7 +80,7 @@ func TestRunnerCmpHelpersExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: core/cmp helpers", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -120,7 +95,7 @@ func TestRunnerU32ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/u32 helpers", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -135,7 +110,7 @@ func TestRunnerUintRangeExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/uint range", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -150,7 +125,7 @@ func TestRunnerIntWidthParityExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: integer width parity", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -165,7 +140,7 @@ func TestRunnerStringFindAllExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/string find_all", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -180,7 +155,7 @@ func TestRunnerTimeRelativeExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/time relative_to", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -195,7 +170,7 @@ func TestRunnerEqBoundDeriveExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: Eq-bound verbs on a derived element", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -210,7 +185,7 @@ func TestRunnerCmpNanTotalOrderExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: core/cmp NaN total order", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -359,7 +334,7 @@ func TestRunnerUtf8ValidityProperty(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{
 		"ok 1 - byte-count operations snap to boundaries",
 		"ok 2 - s[a:b] Some payload is always valid",
@@ -518,7 +493,7 @@ func TestRunnerHttpResponseBodyShimExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{
 		"# Suite: HTTP response body shim",
 		"ok 1 - body_text_lossy round-trips",
@@ -541,7 +516,7 @@ func TestRunnerHttpStatusExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/http status", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -556,7 +531,7 @@ func TestRunnerCmpTraitsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: cmp traits on stdlib types", "ok 4 - PSet in a PSet", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -571,7 +546,7 @@ func TestRunnerNdarrayExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/ndarray", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -586,7 +561,7 @@ func TestRunnerUnicodeExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/unicode", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -601,7 +576,7 @@ func TestRunnerSemverExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/semver", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -616,7 +591,7 @@ func TestRunnerGlobExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/glob", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -631,7 +606,7 @@ func TestRunnerDotenvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/dotenv", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -646,7 +621,7 @@ func TestRunnerRandExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/rand", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -661,7 +636,7 @@ func TestRunnerBase32ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/base32", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -676,7 +651,7 @@ func TestRunnerStrdistExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/strdist", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -691,7 +666,7 @@ func TestRunnerTableExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/table", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -706,7 +681,7 @@ func TestRunnerTextwrapExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/textwrap", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -721,7 +696,7 @@ func TestRunnerFormatDurationParseExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/format parse_duration", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -736,7 +711,7 @@ func TestRunnerAnsiExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: std/ansi", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -874,7 +849,7 @@ func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: coreutils/lib/resolv", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -889,7 +864,7 @@ func TestRunnerCoreutilsPwdbExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: coreutils/lib/pwdb + lib/utmp", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -904,7 +879,7 @@ func TestRunnerCoreutilsSelinuxExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: coreutils/lib/selinux", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -919,7 +894,7 @@ func TestRunnerCoreutilsTimefmtExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: coreutils/lib/timefmt", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
@@ -934,7 +909,7 @@ func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	checkTAPPlan(t, out)
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range []string{"# Suite: coreutils/lib/ld", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
