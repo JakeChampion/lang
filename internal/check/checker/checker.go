@@ -1353,6 +1353,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.StringType{}},
 		Result: sock,
 	}
+	c.info.FuncSigs["vsock_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: sock,
+	}
 	c.info.FuncSigs["reactor_new"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.NumberType{},

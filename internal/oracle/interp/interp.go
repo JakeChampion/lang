@@ -1653,6 +1653,7 @@ func New() *Interp {
 	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
 	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
 	i.Builtins["unix_connect"] = &Builtin{Fn: builtinUnixConnect}
+	i.Builtins["vsock_connect"] = &Builtin{Fn: builtinKtlsUnsupported}
 	i.Builtins["reactor_new"] = &Builtin{Fn: builtinReactorNew}
 	i.Builtins["reactor_ctl"] = &Builtin{Fn: builtinReactorCtl}
 	i.Builtins["reactor_wait"] = &Builtin{Fn: builtinReactorWait}

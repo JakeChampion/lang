@@ -6201,6 +6201,9 @@ function os_floor_process_site(own r: irtables.LowerState, ins: ssa.SInst): Lowe
   if (ins.str == "unix_connect") {
     return Lowered { found: true, r: emit(r, ir.op_unix_connect()) };
   }
+  if (ins.str == "vsock_connect") {
+    return Lowered { found: true, r: emit(r, ir.op_vsock_connect()) };
+  }
   if (ins.str == "reactor_new") {
     return Lowered { found: true, r: emit(r, ir.op_reactor_new()) };
   }

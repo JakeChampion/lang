@@ -3179,6 +3179,7 @@ function builtin_i32_names(): string[] {
     "tcp_connect_with",
     "unix_listen",
     "unix_connect",
+    "vsock_connect",
     "reactor_new",
     "reactor_ctl",
     "reactor_wait",

@@ -3766,7 +3766,7 @@ function kernel_argument(v: Value, want: typeinfo.Type): Value {
 
 // The kernels in the list return the descriptor number of a new socket.
 function kernel_result(result: Value, name: string): Value {
-  if (util.has_str(["tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_accept_with", "tcp_connect_with", "udp_bind", "udp_bind_with", "unix_listen", "unix_connect"], name)) {
+  if (util.has_str(["tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_accept_with", "tcp_connect_with", "udp_bind", "udp_bind_with", "unix_listen", "unix_connect", "vsock_connect"], name)) {
     return socket_of(result);
   }
   return result;
@@ -7696,6 +7696,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "tcp_connect_with", params: [bytes, typeinfo.t_i32(), typeinfo.t_bool()], modes: [b, v, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "unix_listen", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "unix_connect", params: [typeinfo.t_string()], modes: [b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "vsock_connect", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "reactor_new", params: [], modes: [], result: typeinfo.t_i32() },
     ssasem.Contract { name: "reactor_ctl", params: [typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "reactor_wait", params: [typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false }, typeinfo.t_i32()], modes: [v, b, v], result: typeinfo.t_i32() },
