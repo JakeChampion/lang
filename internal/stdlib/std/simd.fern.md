@@ -1592,6 +1592,7 @@ A number that the narrow lane cannot hold becomes the nearest limit of that lane
 A pixel kernel uses the two together: it widens bytes to lanes of 16 bits, does its arithmetic there, and narrows the result.
 
 `swizzle_u8x16` gives the bytes of a value at the indexes of another value. An index above 15 gives 0.
+`shuffle_u8x16` does the same for two values: the indexes from 16 to 31 read the second value. It is two swizzles.
 
 ```fern
 <<lane shapes>>=
@@ -1668,5 +1669,11 @@ pub function narrow_u_i32x4(a: i32x4, b: i32x4): u16x8 {
 // Byte `indexes[k]` of `value` in lane `k`, or 0 for an index above 15.
 pub function swizzle_u8x16(value: u8x16, indexes: u8x16): u8x16 {
   return __u8x16_swizzle(value, indexes);
+}
+
+// Byte `indexes[k]` of `a` for an index below 16, and of `b` for an index
+// from 16 to 31. An index above 31 gives 0.
+pub function shuffle_u8x16(a: u8x16, b: u8x16, indexes: u8x16): u8x16 {
+  return __u8x16_or(__u8x16_swizzle(a, indexes), __u8x16_swizzle(b, indexes - __u8x16_splat(16 as u8)));
 }
 ```

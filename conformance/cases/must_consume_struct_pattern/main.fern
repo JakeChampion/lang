@@ -1,0 +1,22 @@
+// spec: MC-10
+// A match on a struct pattern consumes its subject.
+
+import "std/i32";
+
+@must_consume
+struct Ticket { id: i32, seat: i32 }
+
+function total(t: Ticket): i32 {
+    let n = 0;
+    match (t) {
+        Ticket { id, seat } => {
+            n = id + seat;
+        }
+    }
+    return n;
+}
+
+function main(): i32 {
+    print(total(Ticket { id: 7, seat: 4 }).to_string());
+    return 0;
+}

@@ -1,0 +1,39 @@
+fn-defer
+fn-errdefer
+err bad
+fn-defer
+ok 5
+iter 0
+iter 1
+iter 2
+outer
+inner-err
+err bad
+iter 0
+iter 1
+iter 2
+outer
+ok 7
+err bad
+never armed
+ok 2
+opt-defer
+true
+opt-defer
+true
+value-defer
+err bad
+value-defer
+ok 3
+cond-errdefer
+err bad
+ok 12
+ok 1
+lambda-defer
+after lambda
+outer-defer
+err bad
+lambda-defer
+after lambda
+outer-defer
+ok 6
