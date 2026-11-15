@@ -362,7 +362,7 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
   if (!copy_update(update, l.array.result)) {
     return no;
   }
-  if (write) {
+  if (write && l.shift >= 0) {
     let filled = fill_loop(f, ix, l, update);
     if (filled.ok) {
       return filled;

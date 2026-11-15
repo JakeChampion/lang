@@ -228,3 +228,77 @@ func TestSelfHostFillMoveLoopBounds(t *testing.T) {
 		}
 	}
 }
+
+// An element that is not 1, 4 or 8 bytes on each target, or that has a
+// reference count, has no kernel. The append lets the pass see the function.
+const fillMoveOtherElements = `@noinline function fillz(own a: usize[], n: i32, v: usize): usize[] {
+  for i in 0..n { a = a.with(i, v); }
+  a = a.append(v);
+  return a;
+}
+@noinline function moves(own w: string[], at: i32, from: i32, n: i32): string[] {
+  let i = 0;
+  while (i < n) { w = w.with(at + i, w[from + i]); i += 1; }
+  w = w.append("tail");
+  return w;
+}
+@noinline function moveb(own w: boolean[], at: i32, from: i32, n: i32): boolean[] {
+  let i = 0;
+  while (i < n) { w = w.with(at + i, w[from + i]); i += 1; }
+  return w.append(true);
+}
+@noinline function seqz(n: i32): usize[] {
+  let out: usize[] = [];
+  for i in 0..n { out = out.append((i + 1) as usize); }
+  return out;
+}
+@noinline function names(n: i32): string[] {
+  let out: string[] = [];
+  for i in 0..n { out = out.append("name-" + i.to_string()); }
+  return out;
+}
+@noinline function flags(n: i32): boolean[] {
+  let out: boolean[] = [];
+  for i in 0..n { out = out.append(i >= 4); }
+  return out;
+}
+function main(): i32 {
+  let b = fillz(seqz(8), 3, 9 as usize);
+  if (b.len() != 9 || b[0] != 9 as usize || b[2] != 9 as usize || b[3] != 4 as usize || b[7] != 8 as usize) { return 1; }
+  let s = moves(names(6), 0, 3, 3);
+  if (s.len() != 7 || s[0] != "name-3" || s[2] != "name-5" || s[3] != "name-3" || s[5] != "name-5") { return 2; }
+  let f = moveb(flags(8), 0, 4, 4);
+  if (f.len() != 9 || !f[0] || !f[3] || !f[4] || !f[7]) { return 3; }
+  return 0;
+}`
+
+func TestSelfHostFillMoveKeepsOtherElements(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "other.fern")
+	if err := os.WriteFile(src, []byte(fillMoveOtherElements), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	kernel := regexp.MustCompile(`(?m)(?:call|bl|jmp|b) \$?L?(?:__fn_)?__fern_arr_(?:fill|move)`)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, fillMoveOtherElements, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("loops over other elements: exit %d, want 0\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			assembly, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if call := kernel.Find(assembly); call != nil {
+				t.Errorf("a loop became a kernel call: %s", call)
+			}
+			if target == "wasm32-wasi" {
+				bin := cli.wasmComponent(t, src)
+				if out, err := exec.Command(e2eharness.Wasmtime(t), "run", bin).CombinedOutput(); err != nil {
+					t.Fatalf("encoded WASI loops over other elements: %v\n%s", err, out)
+				}
+			}
+		})
+	}
+}
