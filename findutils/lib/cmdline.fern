@@ -21,7 +21,7 @@ pub struct Spec { words: string[], plus: boolean, dir: boolean, ask: boolean, na
 pub struct Batch { args: string[], size: i64, dir: string, limit: i64 }
 
 // How a command ended. `errno` is set when it could not start.
-pub struct Outcome { code: i32, signal: i32, errno: i32 }
+pub struct Outcome { code: i32, signal: i32, errno: i32, pid: i32 }
 
 // The standard input of a command: the one of the program, none, /dev/null
 // or the terminal.
@@ -277,7 +277,7 @@ pub function run(argv: string[], dir: string, close_stdin: boolean, envp: string
   let mode = if (close_stdin) { STDIN_CLOSE } else { STDIN_KEEP };
   let pid = start(argv, dir, mode, envp);
   if (pid.1 != 0) {
-    return Outcome { code: 1, signal: 0, errno: pid.1 };
+    return Outcome { code: 1, signal: 0, errno: pid.1, pid: pid.0 };
   }
   return wait(pid.0);
 }
@@ -303,7 +303,7 @@ pub function start(argv: string[], dir: string, stdin_mode: i32, envp: string[])
   ep.r.close();
   if (failed != 0) {
     proc_waitpid_status(pid);
-    return (-1, failed);
+    return (pid, failed);
   }
   return (pid, 0);
 }
@@ -392,13 +392,13 @@ function read_errno(r: Reader): i32 {
 // Waits for a process and says how it ended.
 pub function wait(pid: i32): Outcome {
   let st = proc_waitpid_status(pid);
-  return outcome_of(st);
+  return Outcome { ...outcome_of(st), pid: pid };
 }
 
 pub function outcome_of(st: i32): Outcome {
   let sig = st & 127;
   if (sig != 0) {
-    return Outcome { code: 128 + sig, signal: sig, errno: 0 };
+    return Outcome { code: 128 + sig, signal: sig, errno: 0, pid: 0 };
   }
-  return Outcome { code: st >> 8 & 255, signal: 0, errno: 0 };
+  return Outcome { code: st >> 8 & 255, signal: 0, errno: 0, pid: 0 };
 }

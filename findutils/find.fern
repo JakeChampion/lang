@@ -2,6 +2,7 @@ import "std/string";
 import "std/io_buffered";
 import "std/errno";
 import "std/tz";
+import "std/bigint";
 import "core/cmp";
 import "../coreutils/lib/gnu";
 import "../coreutils/lib/bre";
@@ -182,9 +183,71 @@ const SORT_THRESHOLD: i32 = 10000;
 
 const READ_BATCH: i32 = 100000;
 
+// The costs of GNU find's optimiser, from the cheapest. A node takes the
+// cost of the data that it needs, or its own cost when that is more.
+const C_NOTHING: i32 = 0;
+
+const C_INODE: i32 = 1;
+
+const C_TYPE: i32 = 2;
+
+const C_STAT: i32 = 3;
+
+const C_LINK: i32 = 4;
+
+const C_ACCESS: i32 = 5;
+
+const C_SYNC: i32 = 6;
+
+const C_EVENTUAL: i32 = 7;
+
+const C_IMMEDIATE: i32 = 8;
+
+const C_USER: i32 = 9;
+
+const C_UNKNOWN: i32 = 10;
+
+// What a node needs before it runs: the stat of the file, its type, or its
+// inode number.
+const NEED_STAT: i32 = 1;
+
+const NEED_TYPE: i32 = 2;
+
+const NEED_INUM: i32 = 4;
+
+// The precedences of GNU find.
+const PREC_NO: i32 = 0;
+
+const PREC_COMMA: i32 = 1;
+
+const PREC_OR: i32 = 2;
+
+const PREC_AND: i32 = 3;
+
+const PREC_NEGATE: i32 = 4;
+
+// The flags of -D.
+const D_EXEC: i32 = 1;
+
+const D_OPT: i32 = 2;
+
+const D_RATES: i32 = 4;
+
+const D_SEARCH: i32 = 8;
+
+const D_STAT: i32 = 16;
+
+const D_TIME: i32 = 32;
+
+const D_TREE: i32 = 64;
+
+const D_HELP: i32 = 128;
+
+const D_ALL: i32 = 127;
+
 function help_text(): string {
   let p = gnu.prog();
-  let out = "Usage: " + p + " [-H] [-L] [-P] [-Olevel] [path...] [expression]\n";
+  let out = "Usage: " + p + " [-H] [-L] [-P] [-Olevel] [-D debugopts] [path...] [expression]\n";
   out += "Search the directory trees that start at each PATH, and evaluate the\n";
   out += "EXPRESSION for each file. The default PATH is the current directory.\n";
   out += "The default EXPRESSION is -print.\n";
@@ -192,8 +255,8 @@ function help_text(): string {
   out += "  -P   never follow symbolic links (the default)\n";
   out += "  -H   follow symbolic links that are on the command line\n";
   out += "  -L   follow all symbolic links\n";
-  out += "  -O   give an optimization level; this port evaluates in the given order\n";
-  out += "  -D   not in this port: find stops with an error\n";
+  out += "  -O   give the level of optimisation, as in GNU find\n";
+  out += "  -D   print diagnostics; -D help lists them\n";
   out += "\n";
   out += "Operators, from the highest precedence:\n";
   out += "  ( EXPR )  ! EXPR  -not EXPR  EXPR -a EXPR  EXPR -and EXPR\n";
@@ -224,11 +287,17 @@ function help_text(): string {
   return out;
 }
 
-// One node of the expression. `l` and `r` are the operands of an operator.
-// `a` and `b` hold small arguments: an index into one of the tables of the
-// program, a time letter, or a flag. `num` and `num2` hold a number, or a
-// time in seconds and nanoseconds.
-struct Node { kind: i32, l: i32, r: i32, cmp: i32, a: i32, b: i32, num: i64, num2: i64, s: string }
+// One node of the expression. `l` and `r` are the operands of an operator,
+// and the operand of ! is `r`, as in GNU find. `a` and `b` hold small
+// arguments: an index into one of the tables of the program, a time letter,
+// or a flag. `num` and `num2` hold a number, or a time in seconds and
+// nanoseconds. `needs` tells what the node needs before it runs.
+struct Node { kind: i32, l: i32, r: i32, cmp: i32, a: i32, b: i32, num: i64, num2: i64, s: string, needs: i32 }
+
+// A node as the parser and the optimiser hold it. `name` and `arg` are the
+// words that -D prints, and `cost`, `rate` and `side` are the data of GNU
+// find's optimiser.
+struct Pred { kind: i32, l: i32, r: i32, cmp: i32, a: i32, b: i32, num: i64, num2: i64, s: string, name: string, arg: string, has_arg: boolean, cost: i32, rate: f32, needs: i32, side: boolean }
 
 // A compiled -name or -path pattern. `lit` is the fixed part for the fast
 // kinds. `fold` compares without case.
@@ -243,7 +312,9 @@ struct Fmt { pieces: Piece[] }
 // standard output.
 struct OutSpec { name: string }
 
-struct Tok { kind: i32, node: i32, text: string }
+// A token of the expression. `art` marks the parentheses, the -a and the
+// -print that GNU find adds round an expression without an action.
+struct Tok { kind: i32, node: i32, text: string, art: boolean }
 
 struct Opts {
   follow: i32,
@@ -262,12 +333,16 @@ struct Opts {
   delete: boolean,
   prune: boolean,
   explicit_depth: boolean,
+  dbg: i32,
+  level: i32,
 }
 
 struct Prog {
   o: Opts,
   nodes: Node[],
   root: i32,
+  preds: Pred[],
+  trace: Cell[Trace],
   globs: Glob[],
   rxs: bre.Bre[],
   fmts: Fmt[],
@@ -293,6 +368,7 @@ struct Ent {
   is_top: boolean,
   rel: boolean,
   name: string,
+  ino: i64,
 }
 
 // The state of a run. `ok` is the value of the node that was evaluated last.
@@ -313,6 +389,10 @@ struct Run {
   pd: Option[Dir],
 }
 
+// What -D search and -D rates keep across the walk: the depth of the last
+// entry, and the visits and the successes of each node.
+struct Trace { prev_depth: i32, visits: i64[], wins: i64[] }
+
 // The bytes of a buffer as text, kept as they are: a file name need not be
 // UTF-8. The buffer is freed.
 function take_text(h: usize): string {
@@ -325,8 +405,13 @@ function zero_stat(): FileStat {
   return FileStat { is_file: false, is_dir: false, size: 0i64, mode: 0u32, nlink: 0u32, uid: 0u32, gid: 0u32, dev: 0i64, rdev: 0i64, ino: 0i64, blksize: 0i64, blocks: 0i64, atime: 0i64, atime_nsec: 0i64, mtime: 0i64, mtime_nsec: 0i64, ctime: 0i64, ctime_nsec: 0i64, btime: 0i64, btime_nsec: 0i64 };
 }
 
-function node(kind: i32): Node {
-  return Node { kind: kind, l: -1, r: -1, cmp: CMP_EQ, a: 0, b: 0, num: 0i64, num2: 0i64, s: "" };
+function node(kind: i32): Pred {
+  return Pred { kind: kind, l: -1, r: -1, cmp: CMP_EQ, a: 0, b: 0, num: 0i64, num2: 0i64, s: "", name: "", arg: "", has_arg: false, cost: C_UNKNOWN, rate: 1.0 as f32, needs: 0, side: false };
+}
+
+// A node with the data of the optimiser.
+function traits(n: Pred, rate: f32, needs: i32, side: boolean): Pred {
+  return Pred { ...n, rate: rate, needs: needs, side: side };
 }
 
 // ---------------------------------------------------------------------------
@@ -754,13 +839,51 @@ function follows(p: Prog, e: Ent): boolean {
   return p.o.follow == FOLLOW_ALL || p.o.follow == FOLLOW_ARGS && e.is_top;
 }
 
-// The entry with its stat filled in. A failure leaves `have` at ST_FAILED
-// and reports nothing: the walk reported it when it met the entry.
+// The name that GNU find gives the stat calls of an entry: its name in its
+// directory, or its path at the top and under -L.
+function acc_path(p: Prog, e: Ent): string {
+  if (e.is_top || p.o.follow == FOLLOW_ALL) {
+    return e.path;
+  }
+  return e.name;
+}
+
+// The entry with its stat filled in, as GNU's get_statinfo does it. A
+// failure leaves `have` at ST_FAILED and is reported once.
 function with_stat(p: Prog, own r: Run): Run {
   if (r.e.have != ST_NONE) {
     return r;
   }
   match (stat_in(r, r.e, follows(p, r.e))) {
+    Ok(st) => {
+      return Run { ...r, e: Ent { ...r.e, st: st, have: ST_OK } };
+    },
+    Err(err) => {
+      let msg = q(r.e.path) + ": " + why(err);
+      let r2 = report(r, msg);
+      return Run { ...r2, e: Ent { ...r2.e, have: ST_FAILED } };
+    }
+  }
+  return r;
+}
+
+// with_stat under -D stat, which traces each stat. A later need of a stat
+// that failed tries again, as in GNU find.
+function with_stat_traced(p: Prog, own r: Run): Run {
+  if (r.e.have == ST_OK) {
+    return r;
+  }
+  let follow = follows(p, r.e);
+  let got = stat_in(r, r.e, follow);
+  let fell = false;
+  if let Ok(fs) = got {
+    fell = follow && (fs.mode & S_IFMT) == S_IFLNK;
+  }
+  debug_stat(p.o.dbg, acc_path(p, r.e), fell);
+  if (r.e.have == ST_FAILED) {
+    return r;
+  }
+  match (got) {
     Ok(st) => {
       return Run { ...r, e: Ent { ...r.e, st: st, have: ST_OK } };
     },
@@ -818,7 +941,7 @@ struct Parser {
   argv: string[],
   i: i32,
   o: Opts,
-  nodes: Node[],
+  nodes: Pred[],
   toks: Tok[],
   globs: Glob[],
   rxs: bre.Bre[],
@@ -841,15 +964,16 @@ function after_operand(ps: Parser): boolean {
 // An implicit -a joins two operands that stand next to each other.
 function joined(own ps: Parser): Parser {
   if (after_operand(ps)) {
-    return Parser { ...ps, toks: ps.toks.append(Tok { kind: T_AND, node: -1, text: "-a" }) };
+    return Parser { ...ps, toks: ps.toks.append(Tok { kind: T_AND, node: -1, text: "-a", art: false }) };
   }
   return ps;
 }
 
-function add_node(own ps0: Parser, n: Node, text: string): Parser {
+function add_node(own ps0: Parser, n: Pred, text: string): Parser {
   let ps = joined(ps0);
   let idx = ps.nodes.len();
-  return Parser { ...ps, nodes: ps.nodes.append(n), toks: ps.toks.append(Tok { kind: T_PRED, node: idx, text: text }) };
+  let named = Pred { ...n, name: text };
+  return Parser { ...ps, nodes: ps.nodes.append(named), toks: ps.toks.append(Tok { kind: T_PRED, node: idx, text: text, art: false }) };
 }
 
 // The argument of the predicate `name`, or the error of a missing one.
@@ -913,7 +1037,7 @@ function name_test(own ps0: Parser, name: string, fold: boolean): Parser {
   }
   let g = ps.globs.len();
   ps = Parser { ...ps, globs: ps.globs.append(glob_new(pat, fold)), names: true };
-  return add_node(ps, Node { ...node(P_NAME), a: g }, name);
+  return add_node(ps, traits(Pred { ...node(P_NAME), a: g }, pattern_rate(pat, false), 0, false), name);
 }
 
 function path_test(own ps0: Parser, name: string, fold: boolean, kind: i32): Parser {
@@ -923,7 +1047,11 @@ function path_test(own ps0: Parser, name: string, fold: boolean, kind: i32): Par
   }
   let g = ps.globs.len();
   ps = Parser { ...ps, globs: ps.globs.append(glob_new(pat, fold)) };
-  return add_node(ps, Node { ...node(kind), a: g }, name);
+  let n = Pred { ...node(kind), a: g };
+  if (kind == P_LNAME) {
+    return add_node(ps, traits(n, (0.1 * (pattern_rate(pat, false) as f64)) as f32, NEED_STAT | NEED_TYPE, false), name);
+  }
+  return add_node(ps, traits(n, pattern_rate(pat, false), 0, false), name);
 }
 
 function rx_syntax(kind: i32, fold: boolean): bre.Syntax {
@@ -947,7 +1075,7 @@ function regex_test(own ps0: Parser, name: string, fold: boolean): Parser {
   }
   let x = ps.rxs.len();
   ps = Parser { ...ps, rxs: ps.rxs.append(re) };
-  return add_node(ps, Node { ...node(P_REGEX), a: x }, name);
+  return add_node(ps, traits(Pred { ...node(P_REGEX), a: x }, pattern_rate(pat, true), 0, false), name);
 }
 
 function regextype_named(t: string): i32 {
@@ -992,9 +1120,11 @@ function type_test(own ps0: Parser, name: string, kind: i32): Parser {
     fail("Arguments to " + name + " should contain at least one letter");
   }
   let set = 0i64;
+  let rate = 0.0 as f32;
   let i = 0;
   while (i < a.len()) {
     let c = a[i] as i32;
+    rate = rate + type_rate(c);
     let bit = type_bit(c);
     if (bit == 0u32) {
       fail("Unknown argument to " + name + ": " + slice_unchecked(a, i, i + 1));
@@ -1018,7 +1148,49 @@ function type_test(own ps0: Parser, name: string, kind: i32): Parser {
       }
     }
   }
-  return add_node(ps, Node { ...node(kind), num: set }, name);
+  let needs = if (kind == P_TYPE) { NEED_TYPE } else { NEED_STAT };
+  return add_node(ps, traits(Pred { ...node(kind), num: set }, rate, needs, false), name);
+}
+
+// GNU find's share of the files of each type, from its parser.
+function type_rate(c: i32): f32 {
+  return match (c) {
+    98 => 0.000888 as f32,
+    99 => 0.000443 as f32,
+    100 => 0.0922 as f32,
+    112 => 0.000007554 as f32,
+    102 => 0.875 as f32,
+    108 => 0.0311 as f32,
+    115 => 0.0000159 as f32,
+    _ => 0.00001 as f32,
+  };
+}
+
+// GNU's estimate of how often a pattern matches: a pattern with a wildcard
+// matches most files.
+function pattern_rate(pat: string, regex: boolean): f32 {
+  let wild = if (regex) { "*?[." } else { "*?[" };
+  let i = 0;
+  while (i < pat.len()) {
+    if (__memchr(wild, pat[i] as i32, 0) >= 0) {
+      return 0.8 as f32;
+    }
+    i += 1;
+  }
+  return 0.1 as f32;
+}
+
+// GNU's estimate for a time: few files are newer than a day, and 30% are
+// older than 100 days. The days are whole, from the start of the day.
+function time_rate(o: Opts, at: i64): f32 {
+  let days = (day_start(o) - at) / DAY;
+  if (days <= 0i64) {
+    return 0.01 as f32;
+  }
+  if (days > 100i64) {
+    return 0.3 as f32;
+  }
+  return 0.39 as f32;
 }
 
 function size_test(own ps0: Parser): Parser {
@@ -1049,7 +1221,10 @@ function size_test(own ps0: Parser): Parser {
   if (v < 0i64) {
     fail("Invalid argument `" + a + "' to -size");
   }
-  return add_node(ps, Node { ...node(P_SIZE), cmp: cmp, num: v, num2: unit }, "-size");
+  let big = v * unit > 20480i64;
+  let rate = if (cmp == CMP_EQ) { 0.01 as f32 } else if (cmp == CMP_GT && big || cmp == CMP_LT && !big) { 0.1 as f32 } else { 0.9 as f32 };
+  let n = traits(Pred { ...node(P_SIZE), cmp: cmp, num: v, num2: unit, arg: slice_unchecked(a, 0, end) + "", has_arg: true }, rate, NEED_STAT, false);
+  return add_node(ps, n, "-size");
 }
 
 function perm_test(own ps0: Parser): Parser {
@@ -1074,7 +1249,8 @@ function perm_test(own ps0: Parser): Parser {
   if (how == 2 && bits == 0) {
     warn("you have specified a mode pattern " + a + " (which is equivalent to /000). The meaning of -perm /000 has now been changed to be consistent with -perm -000; that is, while it used to match no files, it now matches all files.");
   }
-  return add_node(ps, Node { ...node(P_PERM), a: how, num: bits as i64 }, "-perm");
+  let rate = if (how == 0) { 0.01 as f32 } else if (how == 1) { 0.2 as f32 } else if (bits == 0) { 0.9986 as f32 } else { 0.3 as f32 };
+  return add_node(ps, traits(Pred { ...node(P_PERM), a: how, num: bits as i64 }, rate, NEED_STAT | NEED_TYPE, false), "-perm");
 }
 
 function octal_value(s: string): i32 {
@@ -1126,7 +1302,9 @@ function birth_known(st: FileStat): boolean {
 
 // The stat of a reference file of -newer, -samefile and the others.
 function ref_stat(ps: Parser, f: string): FileStat {
-  match (stat_entry(ps.o.follow != FOLLOW_NEVER, f)) {
+  let follow = ps.o.follow != FOLLOW_NEVER;
+  ref_debug(ps, f);
+  match (stat_entry(follow, f)) {
     Ok(st) => {
       return st;
     },
@@ -1137,10 +1315,18 @@ function ref_stat(ps: Parser, f: string): FileStat {
   return zero_stat();
 }
 
+// The trace of -D stat for a reference file.
+function ref_debug(ps: Parser, f: string): void {
+  if ((ps.o.dbg & D_STAT) != 0) {
+    debug_stat(ps.o.dbg, f, ps.o.follow != FOLLOW_NEVER && dangling(stat(f)));
+  }
+}
+
 function newer_test(own ps0: Parser, name: string, which: i32): Parser {
   let (f, ps) = arg_of(ps0, name);
   let st = ref_stat(ps, f);
-  return add_node(ps, Node { ...node(P_NEWER), a: which, num: st.mtime, num2: st.mtime_nsec }, name);
+  let n = traits(Pred { ...node(P_NEWER), a: which, num: st.mtime, num2: st.mtime_nsec }, time_rate(ps.o, st.mtime), NEED_STAT | NEED_TYPE, false);
+  return add_node(ps, n, name);
 }
 
 function newer_xy(own ps0: Parser, name: string): Parser {
@@ -1163,14 +1349,16 @@ function newer_xy(own ps0: Parser, name: string): Parser {
     if (!r.ok) {
       fail("I cannot figure out how to interpret " + q(f) + " as a date or time");
     }
-    return add_node(ps, Node { ...node(P_NEWER), a: x, num: r.sec, num2: r.nsec }, name);
+    let lit = traits(Pred { ...node(P_NEWER), a: x, num: r.sec, num2: r.nsec, arg: name, has_arg: true }, time_rate(ps.o, r.sec), NEED_STAT | NEED_TYPE, false);
+    return add_node(ps, lit, name);
   }
   let st = ref_stat(ps, f);
   if (y == TIME_B && !birth_known(st)) {
     fail("Cannot obtain birth time of file " + q(f));
   }
   let (sec, nsec) = time_of(st, y);
-  return add_node(ps, Node { ...node(P_NEWER), a: x, num: sec, num2: nsec }, name);
+  let n = traits(Pred { ...node(P_NEWER), a: x, num: sec, num2: nsec, arg: name, has_arg: true }, time_rate(ps.o, sec), NEED_STAT | NEED_TYPE, false);
+  return add_node(ps, n, name);
 }
 
 // -atime and the others. The reference time and the window are fixed here:
@@ -1192,7 +1380,11 @@ function age_test(own ps0: Parser, name: string): Parser {
     origin += DAY - 1i64;
   }
   let (sec, nsec) = shift_back(origin, ps.o.now_nsec, v * (unit as f64));
-  return add_node(ps, Node { ...node(P_AGE), a: which, cmp: cmp, num: sec, num2: nsec, b: unit as i32 }, name);
+  if (!minutes && (ps.o.dbg & (D_TREE | D_OPT)) != 0) {
+    debug_inserting(slice_unchecked(name, 1, name.len()) + "", cmp, sec);
+  }
+  let n = traits(Pred { ...node(P_AGE), a: which, cmp: cmp, num: sec, num2: nsec, b: unit as i32 }, time_rate(ps.o, sec), NEED_STAT | NEED_TYPE, false);
+  return add_node(ps, n, name);
 }
 
 // The start of the day of the time tests: 24 hours before now, or the
@@ -1230,14 +1422,14 @@ function used_test(own ps0: Parser): Parser {
     fail("Invalid argument " + a + " to -used");
   }
   let (sec, nsec) = shift_back(0i64, 0i64, 0.0 - v * (DAY as f64));
-  return add_node(ps, Node { ...node(P_USED), cmp: cmp, num: sec, num2: nsec }, "-used");
+  return add_node(ps, traits(Pred { ...node(P_USED), cmp: cmp, num: sec, num2: nsec }, 0.01 as f32, NEED_STAT | NEED_TYPE, false), "-used");
 }
 
 function user_test(own ps0: Parser): Parser {
   let (a, ps) = arg_of(ps0, "-user");
   match (pwdb.user_by_name(a)) {
     Some(u) => {
-      return add_node(ps, Node { ...node(P_UID), num: u.uid }, "-user");
+      return add_node(ps, id_node(P_UID, u.uid), "-user");
     },
     None => {}
   }
@@ -1248,14 +1440,14 @@ function user_test(own ps0: Parser): Parser {
     }
     fail(q(a) + " is not the name of a known user");
   }
-  return add_node(ps, Node { ...node(P_UID), num: v }, "-user");
+  return add_node(ps, id_node(P_UID, v), "-user");
 }
 
 function group_test(own ps0: Parser): Parser {
   let (a, ps) = arg_of(ps0, "-group");
   match (pwdb.group_by_name(a)) {
     Some(g) => {
-      return add_node(ps, Node { ...node(P_GID), num: g.gid }, "-group");
+      return add_node(ps, traits(Pred { ...node(P_GID), num: g.gid }, 0.99 as f32, NEED_STAT | NEED_TYPE, false), "-group");
     },
     None => {}
   }
@@ -1266,13 +1458,20 @@ function group_test(own ps0: Parser): Parser {
     }
     fail(q(a) + " is not the name of an existing group");
   }
-  return add_node(ps, Node { ...node(P_GID), num: v }, "-group");
+  return add_node(ps, traits(Pred { ...node(P_GID), num: v }, 0.99 as f32, NEED_STAT | NEED_TYPE, false), "-group");
+}
+
+// A test of a user or group ID. GNU guesses that most files have a small ID.
+function id_node(kind: i32, v: i64): Pred {
+  let rate = if (v < 100i64) { 0.99 as f32 } else { 0.2 as f32 };
+  return traits(Pred { ...node(kind), num: v }, rate, NEED_STAT | NEED_TYPE, false);
 }
 
 function samefile_test(own ps0: Parser): Parser {
   let (f, ps) = arg_of(ps0, "-samefile");
   let st = ref_stat(ps, f);
-  return add_node(ps, Node { ...node(P_SAMEFILE), num: st.dev, num2: st.ino }, "-samefile");
+  ref_debug(ps, f);
+  return add_node(ps, traits(Pred { ...node(P_SAMEFILE), num: st.dev, num2: st.ino }, 0.01 as f32, NEED_STAT, false), "-samefile");
 }
 
 // An output file, opened now as GNU opens it. Two predicates that name the
@@ -1312,7 +1511,10 @@ function print_action(own ps0: Parser, name: string, kind: i32, to_file: boolean
     ps = p3;
     f = k;
   }
-  return add_node(ps, Node { ...node(kind), b: f }, name);
+  if (kind == A_LS) {
+    return add_node(ps, traits(Pred { ...node(kind), b: f }, 1.0 as f32, NEED_STAT | NEED_TYPE, true), name);
+  }
+  return add_node(ps, traits(Pred { ...node(kind), b: f }, 1.0 as f32, 0, true), name);
 }
 
 function printf_action(own ps0: Parser, name: string, to_file: boolean): Parser {
@@ -1331,7 +1533,12 @@ function printf_action(own ps0: Parser, name: string, to_file: boolean): Parser 
   ps = p4;
   let x = ps.fmts.len();
   ps = Parser { ...ps, fmts: ps.fmts.append(compile_format(fmt)), names: true };
-  return add_node(ps, Node { ...node(A_PRINTF), a: x, b: f }, name);
+  let (cost, needs) = format_needs(fmt);
+  let n = traits(Pred { ...node(A_PRINTF), a: x, b: f, cost: cost }, 1.0 as f32, needs, true);
+  if (!to_file) {
+    n = Pred { ...n, arg: edited_format(fmt), has_arg: true };
+  }
+  return add_node(ps, n, name);
 }
 
 function exec_action(own ps0: Parser, name: string): Parser {
@@ -1388,7 +1595,186 @@ function exec_action(own ps0: Parser, name: string): Parser {
   let x = ps.execs.len();
   let spec = cmdline.spec_new(words, plus, dir, ask, name);
   ps = Parser { ...ps, execs: ps.execs.append(spec), i: j + 1, last_arg: ps.argv[j], names: true };
-  return add_node(ps, Node { ...node(A_EXEC), a: x }, name);
+  return add_node(ps, traits(Pred { ...node(A_EXEC), a: x }, 1.0 as f32, 0, true), name);
+}
+
+// The cost and the needs of a -printf format, as GNU's parser finds them
+// from its directives. The directives after \c do not count.
+function format_needs(f: string): (i32, i32) {
+  let cost = C_NOTHING;
+  let needs = 0;
+  let i = 0;
+  while (i < f.len()) {
+    let c = f[i] as i32;
+    if (c == 92 && i + 1 < f.len() && f[i + 1] == b'c') {
+      break;
+    }
+    if (c == 92) {
+      i += 2;
+      continue;
+    }
+    if (c != 37 || i + 1 >= f.len()) {
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    while (j < f.len() && (is_flag(f[j] as i32) || digit(f[j] as i32) || f[j] == b'.')) {
+      j += 1;
+    }
+    if (j >= f.len()) {
+      break;
+    }
+    let d = f[j] as i32;
+    let mine = C_NOTHING;
+    if (time_dir(d) && j + 1 >= f.len()) {
+      break;
+    }
+    if (d == 105) {
+      needs = needs | NEED_INUM;
+      mine = C_INODE;
+    } else if (d == 108) {
+      needs = needs | NEED_STAT;
+      mine = C_LINK;
+    } else if (d == 121) {
+      needs = needs | NEED_TYPE;
+      mine = C_TYPE;
+    } else if (d == 90) {
+      mine = C_ACCESS;
+    } else if ("aAbBcCDFgGkmMnsStTuUY".contains(str_of_byte(d))) {
+      needs = needs | NEED_STAT;
+      mine = C_STAT;
+    }
+    if (mine > cost) {
+      cost = mine;
+    }
+    i = j + 1;
+  }
+  if ((needs & NEED_STAT) != 0 && cost < C_STAT) {
+    cost = C_STAT;
+  }
+  return (cost, needs);
+}
+
+// The format of -printf as -D prints it. GNU's parser writes the byte of
+// each escape over its backslash in the argument, and stops at \c. A NUL
+// ends the text.
+function edited_format(f: string): string {
+  let b = f.bytes();
+  let i = 0;
+  while (i + 1 < b.len()) {
+    if (b[i] != 92u8) {
+      i += 1;
+      continue;
+    }
+    let d = b[i + 1] as i32;
+    if (d == 99) {
+      break;
+    }
+    if (d >= 48 && d <= 55) {
+      let v = 0;
+      let j = i + 1;
+      while (j < b.len() && j < i + 4 && b[j] as i32 >= 48 && b[j] as i32 <= 55) {
+        v = v * 8 + (b[j] as i32 - 48);
+        j += 1;
+      }
+      b = b.with(i, (v & 255) as u8);
+      i = j;
+      continue;
+    }
+    let e = escape_byte(d);
+    if (e >= 0) {
+      b = b.with(i, e as u8);
+    }
+    i += 2;
+  }
+  let end = 0;
+  while (end < b.len() && b[end] != 0u8) {
+    end += 1;
+  }
+  return unsafe { string_from_bytes_range_unchecked(b, 0, end) };
+}
+
+// -fstype. From -O2 a type that no mount has can never match, so GNU puts
+// a test that is false in its place.
+function fstype_test(own ps0: Parser, name: string): Parser {
+  let (a, ps) = arg_of(ps0, name);
+  let used = false;
+  for t in mount_types() {
+    if (t == a) {
+      used = true;
+    }
+  }
+  if (ps.o.level >= 2 && !used) {
+    if ((ps.o.dbg & D_OPT) != 0) {
+      dbg_out("-fstype " + a + " can never succeed, substituting -false\n");
+    }
+    return add_node(ps, traits(node(P_FALSE), 0.0 as f32, 0, false), name);
+  }
+  let rate = if (root_fs_type() == a) { 0.7 as f32 } else { 0.3 as f32 };
+  return add_node(ps, traits(Pred { ...node(P_FSTYPE), s: a }, rate, NEED_STAT | NEED_TYPE, false), name);
+}
+
+function mount_list(): MountEntry[] {
+  if (target_os() != "wasi") {
+    if let Ok(ms) = mounts() {
+      return ms;
+    }
+  }
+  return [];
+}
+
+function mount_types(): string[] {
+  let out: string[] = [];
+  for m in mount_list() {
+    out = out.append(m.fstype);
+  }
+  return out;
+}
+
+// The type of the file system of "/", which GNU takes for the most common.
+function root_fs_type(): string {
+  let Ok(st) = stat("/") else {
+    return "";
+  };
+  for m in mount_list() {
+    if (m.dev == st.dev) {
+      return m.fstype;
+    }
+  }
+  return "unknown";
+}
+
+// The trace of a stat of -D stat. A stat that follows a link and finds
+// nothing goes back to the link, and -D stat says so.
+function debug_stat(dbg: i32, path: string, fell_back: boolean): void {
+  if ((dbg & D_STAT) == 0) {
+    return;
+  }
+  dbg_out("debug_stat (" + path + ")\n");
+  if (fell_back) {
+    dbg_out("fallback_stat(): stat(" + path + ") failed; falling back on lstat()\n");
+  }
+}
+
+// What -D tree prints for -atime, -ctime and -mtime: the time that the
+// test compares with.
+function debug_inserting(name: string, cmp: i32, sec: i64): void {
+  let z = tz.local_zone();
+  let out = "inserting " + name + "\n";
+  if (cmp == CMP_EQ) {
+    out += "    type: eq    >=  " + sec.to_string() + " " + ctime(z, sec);
+    out += "                 <  " + (sec + DAY).to_string() + " " + ctime(z, sec + DAY);
+  } else if (cmp == CMP_LT) {
+    out += "    type: gt     >  " + sec.to_string() + " " + ctime(z, sec);
+  } else {
+    out += "    type: lt     <  " + sec.to_string() + " " + ctime(z, sec);
+  }
+  dbg_out(out);
+}
+
+// The text of C's ctime, with its newline.
+function ctime(z: tz.Zone, sec: i64): string {
+  return timefmt.strftime("%a %b %e %H:%M:%S %Y", z, sec, 0i64) + "\n";
 }
 
 function context_test(own ps0: Parser): Parser {
@@ -1396,7 +1782,7 @@ function context_test(own ps0: Parser): Parser {
   if (!selinux.enabled()) {
     fail("invalid predicate -context: SELinux is not enabled.");
   }
-  return add_node(ps, Node { ...node(P_CONTEXT), s: a }, "-context");
+  return add_node(ps, traits(Pred { ...node(P_CONTEXT), s: a }, 0.01 as f32, 0, false), "-context");
 }
 
 function files0_option(own ps0: Parser): Parser {
@@ -1450,7 +1836,18 @@ function positional_option(own ps: Parser, name: string): Parser {
 
 function count_test(own ps0: Parser, name: string, kind: i32): Parser {
   let (cmp, v, ps) = count_arg(ps0, name);
-  return add_node(ps, Node { ...node(kind), cmp: cmp, num: v }, name);
+  if ((ps.o.dbg & (D_TREE | D_OPT)) != 0) {
+    let how = if (cmp == CMP_EQ) { "eq     =  " } else if (cmp == CMP_GT) { "gt     >  " } else { "lt     <  " };
+    dbg_out("inserting " + slice_unchecked(name, 1, name.len()) + "\n    type: " + how + v.to_string() + "\n");
+  }
+  if (kind == P_INUM) {
+    return add_node(ps, traits(Pred { ...node(kind), cmp: cmp, num: v }, 0.000001 as f32, NEED_INUM, false), name);
+  }
+  if (kind == P_LINKS) {
+    let rate = if (v == 1i64) { 0.99 as f32 } else if (v == 2i64) { 0.01 as f32 } else { 0.001 as f32 };
+    return add_node(ps, traits(Pred { ...node(kind), cmp: cmp, num: v }, rate, NEED_STAT | NEED_TYPE, false), name);
+  }
+  return add_node(ps, Pred { ...id_node(kind, v), cmp: cmp }, name);
 }
 
 function show_help(): void {
@@ -1533,8 +1930,7 @@ function parse_test2(own ps: Parser, name: string): (boolean, Parser) {
     return (true, samefile_test(ps));
   }
   if (name == "-fstype") {
-    let (a, p2) = arg_of(ps, name);
-    return (true, add_node(p2, Node { ...node(P_FSTYPE), s: a }, name));
+    return (true, fstype_test(ps, name));
   }
   if (name == "-context") {
     return (true, context_test(ps));
@@ -1558,7 +1954,17 @@ function parse_test2(own ps: Parser, name: string): (boolean, Parser) {
     "-writable" => 2,
     _ => 1,
   };
-  return (true, add_node(ps, Node { ...node(simple), a: bit }, name));
+  let rate = match (name) {
+    "-true" => 1.0 as f32,
+    "-false" => 0.0 as f32,
+    "-nouser" => 0.001 as f32,
+    "-nogroup" => 0.0001 as f32,
+    "-empty" => 0.01 as f32,
+    "-executable" => 0.2 as f32,
+    _ => 0.9 as f32,
+  };
+  let needs = if (simple == P_NOUSER || simple == P_NOGROUP || simple == P_EMPTY) { NEED_STAT | NEED_TYPE } else { 0 };
+  return (true, add_node(ps, traits(Pred { ...node(simple), a: bit }, rate, needs, false), name));
 }
 
 function parse_action(own ps: Parser, name: string): (boolean, Parser) {
@@ -1591,15 +1997,16 @@ function parse_action(own ps: Parser, name: string): (boolean, Parser) {
   }
   if (name == "-prune") {
     let o = Opts { ...ps.o, prune: true };
-    let p2 = add_node(Parser { ...ps, o: o }, node(A_PRUNE), name);
+    let needs = if (ps.o.depth_first) { 0 } else { NEED_STAT | NEED_TYPE };
+    let p2 = add_node(Parser { ...ps, o: o }, traits(node(A_PRUNE), 1.0 as f32, needs, true), name);
     return (true, p2);
   }
   if (name == "-quit") {
-    return (true, add_node(Parser { ...ps, has_action: true }, node(A_QUIT), name));
+    return (true, add_node(Parser { ...ps, has_action: true }, traits(node(A_QUIT), 1.0 as f32, 0, true), name));
   }
   if (name == "-delete") {
     let o2 = Opts { ...ps.o, delete: true, depth_first: true };
-    let p3 = add_node(Parser { ...ps, has_action: true, o: o2 }, node(A_DELETE), name);
+    let p3 = add_node(Parser { ...ps, has_action: true, o: o2 }, traits(node(A_DELETE), 1.0 as f32, 0, true), name);
     return (true, p3);
   }
   return (false, ps);
@@ -1634,7 +2041,7 @@ function parse_option(own ps: Parser, name: string): (boolean, Parser) {
 }
 
 function add_tok(own ps: Parser, kind: i32, text: string): Parser {
-  return Parser { ...ps, toks: ps.toks.append(Tok { kind: kind, node: -1, text: text }) };
+  return Parser { ...ps, toks: ps.toks.append(Tok { kind: kind, node: -1, text: text, art: false }) };
 }
 
 function operator_kind(a: string): i32 {
@@ -1674,42 +2081,68 @@ function parse_one(own ps0: Parser): Parser {
     ps = joined(ps);
   }
   if (op >= 0) {
-    if ((op == T_AND || op == T_OR || op == T_COMMA) && !after_operand(ps)) {
-      fail("invalid expression; you have used a binary operator '" + a + "' with nothing before it.");
-    }
     ps = note_test(ps, a);
     return add_tok(ps, op, a);
   }
   if (a.len() < 2 || a[0] != b'-') {
     stray(ps, a);
   }
+  let start = ps.i;
+  let before = ps.toks.len();
   let r1: (boolean, Parser) = parse_option(ps, a);
   if (r1.0) {
-    return Parser { ...r1.1, last_pred: a };
+    return name_last(r1.1, a, start, before);
   }
   let r2: (boolean, Parser) = parse_test(note_test(r1.1, a), a);
   if (r2.0) {
-    return Parser { ...r2.1, last_pred: a };
+    return name_last(r2.1, a, start, before);
   }
   let r3: (boolean, Parser) = parse_action(r2.1, a);
   if (r3.0) {
-    return Parser { ...r3.1, last_pred: a };
+    return name_last(r3.1, a, start, before);
   }
   fail("unknown predicate `" + a + "'");
   return r3.1;
 }
 
+// After each predicate, GNU find gives the last item of the expression the
+// name of the predicate, and the argument after the name when the parser
+// took one. -daystart adds no item, so it renames the item before it.
+function name_last(own ps0: Parser, name: string, start: i32, before: i32): Parser {
+  let ps = Parser { ...ps0, last_pred: name };
+  let n = ps.toks.len();
+  if (n == 0) {
+    return ps;
+  }
+  let tok = ps.toks[n - 1];
+  if (tok.kind != T_PRED) {
+    let (_, kept) = ps.toks.swap_at(n - 1, Tok { ...tok, text: name });
+    return Parser { ...ps, toks: kept };
+  }
+  let nd = ps.nodes[tok.node];
+  let fresh = n > before;
+  let renamed = Pred { ...nd, name: name };
+  if (!fresh || !nd.has_arg) {
+    let took = ps.i > start;
+    renamed = Pred { ...renamed, arg: if (took) { ps.argv[start] } else { "" }, has_arg: took };
+  }
+  let (_, nodes) = ps.nodes.swap_at(tok.node, renamed);
+  return Parser { ...ps, nodes: nodes };
+}
+
 // ---------------------------------------------------------------------------
 // The tree of the expression
 
-struct Tree { nodes: Node[], toks: Tok[], i: i32 }
+struct Tree { nodes: Pred[], toks: Tok[], i: i32 }
 
+// The precedence of a token, as GNU find gives it to the item.
 function prec_of(kind: i32): i32 {
   return match (kind) {
-    T_COMMA => 1,
-    T_OR => 2,
-    T_AND => 3,
-    _ => 0,
+    T_COMMA => PREC_COMMA,
+    T_OR => PREC_OR,
+    T_AND => PREC_AND,
+    T_NOT => PREC_NEGATE,
+    _ => PREC_NO,
   };
 }
 
@@ -1717,6 +2150,7 @@ function op_node(kind: i32): i32 {
   return match (kind) {
     T_COMMA => N_COMMA,
     T_OR => N_OR,
+    T_NOT => N_NOT,
     _ => N_AND,
   };
 }
@@ -1725,96 +2159,853 @@ function is_operator(t: Tok): boolean {
   return t.kind == T_NOT || t.kind == T_AND || t.kind == T_OR || t.kind == T_COMMA;
 }
 
-function new_node(own t: Tree, n: Node): (i32, Tree) {
+// The name of a token: its word, or the name of its node.
+function tok_name(t: Tree, k: i32): string {
+  let tok = t.toks[k];
+  if (tok.kind == T_PRED) {
+    return t.nodes[tok.node].name;
+  }
+  return tok.text;
+}
+
+function new_node(own t: Tree, n: Pred): (i32, Tree) {
   let i = t.nodes.len();
   return (i, Tree { ...t, nodes: t.nodes.append(n) });
 }
 
-function parse_unary(own t: Tree): (i32, Tree) {
+// An operator node with the name of its token.
+function op_from(t: Tree, k: i32, l: i32, r: i32): Pred {
+  return Pred { ...node(op_node(t.toks[k].kind)), l: l, r: r, name: tok_name(t, k) };
+}
+
+// GNU find's get_expr: one operand, and the operators after it that bind
+// more tightly than `prev_prec`. `prev` is the token before the operand,
+// or -1, for the messages of an empty operand.
+function get_expr(own t: Tree, prev_prec: i32, prev: i32): (i32, Tree) {
   if (t.i >= t.toks.len()) {
     fail("invalid expression");
   }
-  let tok = t.toks[t.i];
+  let at = t.i;
+  let tok = t.toks[at];
+  let next = -1;
   if (tok.kind == T_PRED) {
-    return (tok.node, Tree { ...t, i: t.i + 1 });
-  }
-  if (tok.kind == T_NOT) {
-    let (x, t2) = parse_unary(Tree { ...t, i: t.i + 1 });
-    return new_node(t2, Node { ...node(N_NOT), l: x });
-  }
-  if (tok.kind == T_OPEN) {
-    let t3 = Tree { ...t, i: t.i + 1 };
-    if (t3.i >= t3.toks.len()) {
-      fail("invalid expression; expected to find a ')' but didn't see one. Perhaps you need an extra predicate after '('");
+    next = tok.node;
+    t = Tree { ...t, i: at + 1 };
+  } else if (tok.kind == T_NOT) {
+    let (x, t2) = get_expr(Tree { ...t, i: at + 1 }, PREC_NEGATE, at);
+    let made_node = op_from(t2, at, -1, x);
+    let (made, t3) = new_node(t2, made_node);
+    next = made;
+    t = t3;
+  } else if (tok.kind == T_OPEN) {
+    if (at + 1 >= t.toks.len() || t.toks[at + 1].art) {
+      fail("invalid expression; expected to find a ')' but didn't see one. Perhaps you need an extra predicate after '" + tok_name(t, at) + "'");
     }
-    if (t3.toks[t3.i].kind == T_CLOSE) {
+    if (t.toks[at + 1].kind == T_CLOSE) {
       fail("invalid expression; empty parentheses are not allowed.");
     }
-    let (y, t4) = parse_binary(t3, 0);
+    let (y, t4) = get_expr(Tree { ...t, i: at + 1 }, PREC_NO, at);
     if (t4.i >= t4.toks.len() || t4.toks[t4.i].kind != T_CLOSE) {
       fail("invalid expression; I was expecting to find a ')' somewhere but did not see one.");
     }
-    return (y, Tree { ...t4, i: t4.i + 1 });
-  }
-  if (tok.kind == T_CLOSE) {
-    if (t.i > 0 && is_operator(t.toks[t.i - 1])) {
-      fail("expected an expression between '" + t.toks[t.i - 1].text + "' and ')'");
+    next = y;
+    t = Tree { ...t4, i: t4.i + 1 };
+  } else if (tok.kind == T_CLOSE) {
+    if (prev < 0) {
+      fail("invalid expression: expected expression before closing parentheses '" + tok_name(t, at) + "'.");
     }
-    fail("you have too many ')'");
+    if (is_operator(t.toks[prev])) {
+      if (tok.art) {
+        fail("expected an expression after '" + tok_name(t, prev) + "'");
+      }
+      fail("expected an expression between '" + tok_name(t, prev) + "' and ')'");
+    }
+    fail("invalid expression; you have too many ')'");
+  } else {
+    fail("invalid expression; you have used a binary operator '" + tok_name(t, at) + "' with nothing before it.");
   }
-  fail("invalid expression; you have used a binary operator '" + tok.text + "' with nothing before it.");
-  return (-1, t);
+  if (t.i < t.toks.len() && prec_of(t.toks[t.i].kind) > prev_prec) {
+    return scan_rest(t, next, prev_prec);
+  }
+  return (next, t);
 }
 
-function parse_binary(own t0: Tree, min: i32): (i32, Tree) {
-  let (lhs, t) = parse_unary(t0);
-  while (t.i < t.toks.len()) {
-    let tok = t.toks[t.i];
-    let p = prec_of(tok.kind);
-    if (p == 0 || p <= min) {
-      break;
+// GNU find's scan_rest: the binary operators after an operand.
+function scan_rest(own t0: Tree, head: i32, prev_prec: i32): (i32, Tree) {
+  let t = t0;
+  let tree = head;
+  while (t.i < t.toks.len() && prec_of(t.toks[t.i].kind) > prev_prec) {
+    let at = t.i;
+    let kind = t.toks[at].kind;
+    if (kind != T_AND && kind != T_OR && kind != T_COMMA) {
+      fail("invalid expression");
     }
-    let (rhs, t2) = parse_binary(Tree { ...t, i: t.i + 1 }, p);
-    let (n, t3) = new_node(t2, Node { ...node(op_node(tok.kind)), l: lhs, r: rhs });
-    lhs = n;
+    let (rhs, t2) = get_expr(Tree { ...t, i: at + 1 }, prec_of(kind), at);
+    let made_node = op_from(t2, at, tree, rhs);
+    let (made, t3) = new_node(t2, made_node);
+    tree = made;
     t = t3;
   }
-  return (lhs, t);
+  return (tree, t);
 }
 
-// The root of the expression, with the -print that an expression without
-// an action gets.
-function build_tree(own ps: Parser): (i32, Node[]) {
-  let toks = ps.toks;
-  let n = toks.len();
-  if (n > 0 && toks[n - 1].kind == T_OPEN) {
-    fail("invalid expression; expected to find a ')' but didn't see one. Perhaps you need an extra predicate after '('");
+// The tokens of the expression. GNU find puts an expression without an
+// action in parentheses, and adds -a -print after it.
+function full_tokens(own ps: Parser): (Tok[], Pred[]) {
+  if (ps.has_action) {
+    return (ps.toks, ps.nodes);
   }
-  if (!ps.has_action && n > 0 && is_operator(toks[n - 1])) {
-    fail("expected an expression after '" + ps.last_arg + "'");
+  let pr = ps.nodes.len();
+  let nodes = ps.nodes.append(traits(Pred { ...node(A_PRINT), name: "-print" }, 1.0 as f32, 0, true));
+  let print_tok = Tok { kind: T_PRED, node: pr, text: "-print", art: true };
+  if (ps.toks.len() == 0) {
+    return ([print_tok], nodes);
   }
-  let t = Tree { nodes: ps.nodes, toks: toks, i: 0 };
-  let root = -1;
-  if (n > 0) {
-    let (r, t2) = parse_binary(t, 0);
-    if (t2.i < n) {
+  let toks = [Tok { kind: T_OPEN, node: -1, text: "(", art: true }].concat(ps.toks);
+  toks = toks.append(Tok { kind: T_CLOSE, node: -1, text: ")", art: true }).append(Tok { kind: T_AND, node: -1, text: "-a", art: true }).append(print_tok);
+  return (toks, nodes);
+}
+
+// The tree of the expression, as GNU find's build_expression_tree makes it.
+function build_tree(own ps: Parser): (i32, Pred[]) {
+  let dbg = ps.o.dbg;
+  let clash = ps.o.delete && ps.o.prune && !ps.o.explicit_depth;
+  let (toks, nodes) = full_tokens(ps);
+  let t = Tree { nodes: nodes, toks: toks, i: 0 };
+  if ((dbg & (D_TREE | D_OPT)) != 0) {
+    let line = "";
+    for k in 0..toks.len() {
+      line += "[" + tok_name(t, k) + "] ";
+    }
+    dbg_out("Predicate List:\n" + line + "\n");
+  }
+  let (root, t2) = get_expr(t, PREC_NO, -1);
+  if (t2.i < t2.toks.len()) {
+    if (t2.toks[t2.i].kind == T_CLOSE) {
       fail("you have too many ')'");
     }
-    root = r;
-    t = t2;
+    fail("unexpected extra predicate '" + tok_name(t2, t2.i) + "'");
   }
-  if (!ps.has_action) {
-    let (pr, t3) = new_node(t, node(A_PRINT));
-    t = t3;
-    if (root < 0) {
-      root = pr;
-    } else {
-      let (both, t4) = new_node(t, Node { ...node(N_AND), l: root, r: pr });
-      root = both;
-      t = t4;
+  if (clash) {
+    fail("The -delete action automatically turns on -depth, but -prune does nothing when -depth is in effect.  If you want to carry on anyway, just explicitly use the -depth option.");
+  }
+  return (root, t2.nodes);
+}
+
+// ---------------------------------------------------------------------------
+// The optimiser of GNU find, and the trees that -D tree and -D opt print
+
+// The tree while the optimiser changes it. A slot names a link of the tree:
+// -1 is the root, 2*i is the left operand of node i, and 2*i+1 its right
+// operand.
+struct Opt { nodes: Pred[], root: i32, level: i32, dbg: i32 }
+
+// The lists of the optimiser, by the head and the tail of each: the cheap
+// predicates first, then the regular expressions of -O0, then one list for
+// each cost.
+struct Lists { head: i32[], tail: i32[] }
+
+function dbg_out(s: string): void {
+  let w = stderr();
+  w.write(s);
+}
+
+function is_binary(kind: i32): boolean {
+  return kind == N_AND || kind == N_OR || kind == N_COMMA;
+}
+
+function node_prec(kind: i32): i32 {
+  return match (kind) {
+    N_AND => PREC_AND,
+    N_OR => PREC_OR,
+    N_COMMA => PREC_COMMA,
+    N_NOT => PREC_NEGATE,
+    _ => PREC_NO,
+  };
+}
+
+function slot_get(o: Opt, slot: i32): i32 {
+  if (slot < 0) {
+    return o.root;
+  }
+  let n = o.nodes[slot / 2];
+  return if (slot % 2 == 0) { n.l } else { n.r };
+}
+
+function slot_set(own o: Opt, slot: i32, v: i32): Opt {
+  if (slot < 0) {
+    return Opt { ...o, root: v };
+  }
+  let i = slot / 2;
+  let n = o.nodes[i];
+  let changed = if (slot % 2 == 0) { Pred { ...n, l: v } } else { Pred { ...n, r: v } };
+  return Opt { ...o, nodes: o.nodes.with(i, changed) };
+}
+
+function set_left(own o: Opt, i: i32, v: i32): Opt {
+  return slot_set(o, 2 * i, v);
+}
+
+function constrain(rate: f32): f32 {
+  if (rate > 1.0 as f32) {
+    return 1.0 as f32;
+  }
+  if (rate < 0.0 as f32) {
+    return 0.0 as f32;
+  }
+  return rate;
+}
+
+function rate_at(o: Opt, i: i32): f32 {
+  if (i < 0) {
+    return 1.0 as f32;
+  }
+  return o.nodes[i].rate;
+}
+
+// GNU's calculate_derived_rates: the rate of each operator from its operands.
+function derive(own o: Opt, p: i32): Opt {
+  let n = o.nodes[p];
+  if (n.r >= 0) {
+    o = derive(o, n.r);
+  }
+  if (n.l >= 0) {
+    o = derive(o, n.l);
+  }
+  let rate = n.rate;
+  if (n.kind == N_NOT) {
+    rate = (1.0 - rate_at(o, n.r) as f64) as f32;
+  } else if (n.kind == N_AND) {
+    rate = constrain(rate_at(o, n.r) * rate_at(o, n.l));
+  } else if (n.kind == N_OR) {
+    rate = constrain(rate_at(o, n.r) + rate_at(o, n.l));
+  } else if (n.kind == N_COMMA) {
+    rate = 1.0 as f32;
+  } else {
+    return o;
+  }
+  return Opt { ...o, nodes: o.nodes.with(p, Pred { ...n, rate: rate }) };
+}
+
+// The cost of a node itself, without the data that it needs.
+function own_cost(execs: cmdline.Spec[], n: Pred): i32 {
+  let k = n.kind;
+  if (k == P_LNAME) {
+    return C_LINK;
+  }
+  if (k == P_TYPE || k == P_XTYPE) {
+    return C_TYPE;
+  }
+  if (k == P_INUM) {
+    return C_INODE;
+  }
+  if (k == P_ACCESS || k == P_CONTEXT) {
+    return C_ACCESS;
+  }
+  if (k == A_PRINTF) {
+    return n.cost;
+  }
+  if (k == A_DELETE) {
+    return C_SYNC;
+  }
+  if (k == A_EXEC) {
+    let spec = execs[n.a];
+    if (spec.ask) {
+      return C_USER;
+    }
+    return if (spec.plus) { C_EVENTUAL } else { C_IMMEDIATE };
+  }
+  if (k == P_NAME || k == P_PATH || k == P_REGEX || k == P_TRUE || k == P_FALSE || k < P_TRUE || k == A_PRINT || k == A_PRINT0 || k == A_QUIT || k == A_PRUNE) {
+    return C_NOTHING;
+  }
+  return C_STAT;
+}
+
+// GNU's estimate_costs: the cost of each node is the greater of its own
+// cost and the cost of the data that it needs.
+function estimate_costs(execs: cmdline.Spec[], own nodes: Pred[]): Pred[] {
+  let i = 0;
+  while (i < nodes.len()) {
+    let n = nodes[i];
+    let data = if ((n.needs & NEED_STAT) != 0) { C_STAT } else if ((n.needs & NEED_INUM) != 0) { C_INODE } else if ((n.needs & NEED_TYPE) != 0) { C_TYPE } else { C_NOTHING };
+    let inherent = own_cost(execs, n);
+    nodes = nodes.with(i, Pred { ...n, cost: if (inherent > data) { inherent } else { data } });
+    i += 1;
+  }
+  return nodes;
+}
+
+function cost_name(c: i32): string {
+  return match (c) {
+    C_NOTHING => "Nothing",
+    C_INODE => "InodeNumber",
+    C_TYPE => "Type",
+    C_STAT => "StatInfo",
+    C_LINK => "LinkName",
+    C_ACCESS => "AccessInfo",
+    C_SYNC => "SyncDiskHit",
+    C_EVENTUAL => "EventualExec",
+    C_IMMEDIATE => "ImmediateExec",
+    C_USER => "UserInteraction",
+    _ => "Unknown",
+  };
+}
+
+function prec_name(p: i32): string {
+  return match (p) {
+    PREC_COMMA => "comma",
+    PREC_OR => "or",
+    PREC_AND => "and",
+    PREC_NEGATE => "negate",
+    _ => "no",
+  };
+}
+
+function type_name(kind: i32): string {
+  if (is_binary(kind)) {
+    return "bi_op";
+  }
+  if (kind == N_NOT) {
+    return "uni_op";
+  }
+  return "primary";
+}
+
+function pred_text(n: Pred): string {
+  if (n.has_arg) {
+    return n.name + " " + n.arg;
+  }
+  return n.name;
+}
+
+function indent_of(k: i32): string {
+  return repeat_byte(32, 4 * k);
+}
+
+// GNU's print_tree.
+function tree_text(o: Opt, p: i32, indent: i32): string {
+  if (p < 0) {
+    return "";
+  }
+  let n = o.nodes[p];
+  let pad = indent_of(indent);
+  let out = pad + "pred=[" + pred_text(n) + "] type=" + type_name(n.kind) + " prec=" + prec_name(node_prec(n.kind));
+  out += " cost=" + cost_name(n.cost) + " est_success_rate=" + fmt_g(n.rate as f64, 4, true) + " " + (if (n.side) { "" } else { "no " }) + "side effects ";
+  if (n.needs != 0) {
+    let parts: string[] = [];
+    if ((n.needs & NEED_STAT) != 0) {
+      parts = parts.append("stat");
+    }
+    if ((n.needs & NEED_INUM) != 0) {
+      parts = parts.append("inode");
+    }
+    if ((n.needs & NEED_TYPE) != 0) {
+      parts = parts.append("type");
+    }
+    out += "Needs " + parts[0];
+    for k in 1..parts.len() {
+      out += "," + parts[k];
     }
   }
-  return (root, t.nodes);
+  out += "\n" + pad;
+  if (n.l < 0 && n.r < 0) {
+    return out + "no children.\n";
+  }
+  if (n.l >= 0) {
+    out += "left:\n" + tree_text(o, n.l, indent + 1);
+  } else {
+    out += "no left.\n";
+  }
+  out += pad;
+  if (n.r >= 0) {
+    return out + "right:\n" + tree_text(o, n.r, indent + 1);
+  }
+  return out + "no right.\n";
+}
+
+// GNU's print_optlist: the expression in the order of evaluation, with the
+// counts of each node when `counts` holds them.
+function optlist_text(o: Opt, p: i32, visits: i64[], wins: i64[]): string {
+  if (p < 0) {
+    return "";
+  }
+  let n = o.nodes[p];
+  let out = parenthesised(o, n.l, visits, wins);
+  if ((n.needs & NEED_STAT) != 0) {
+    out += "[call stat] ";
+  }
+  if ((n.needs & NEED_TYPE) != 0) {
+    out += "[need type] ";
+  }
+  if ((n.needs & NEED_INUM) != 0) {
+    out += "[need inum] ";
+  }
+  out += pred_text(n) + " [est success rate " + fmt_g(n.rate as f64, 4, false) + "] ";
+  if (visits.len() > 0) {
+    let v = visits[p];
+    out += "[real success rate " + wins[p].to_string() + "/" + v.to_string();
+    if (v > 0i64) {
+      out += "=" + fmt_g(wins[p] as f64 / (v as f64), 4, false) + "] ";
+    } else {
+      out += "=_] ";
+    }
+  }
+  return out + parenthesised(o, n.r, visits, wins);
+}
+
+function parenthesised(o: Opt, p: i32, visits: i64[], wins: i64[]): string {
+  if (p < 0) {
+    return "";
+  }
+  let n = o.nodes[p];
+  if ((n.kind == N_OR || n.kind == N_AND) && n.l < 0) {
+    return parenthesised(o, n.r, visits, wins);
+  }
+  if (n.l >= 0 || n.r >= 0) {
+    return " ( " + optlist_text(o, p, visits, wins) + " ) ";
+  }
+  return optlist_text(o, p, visits, wins);
+}
+
+// GNU's set_new_parent: a new operator of precedence `prec` above the node
+// in `slot`, with the node as its right operand.
+function new_parent(own o: Opt, curr: i32, prec: i32, slot: i32): (i32, Opt) {
+  let rate = constrain(o.nodes[curr].rate);
+  let n = node(N_AND);
+  if (prec == PREC_COMMA) {
+    n = Pred { ...node(N_COMMA), name: ",", rate: 1.0 as f32 };
+  } else if (prec == PREC_OR) {
+    n = Pred { ...node(N_OR), name: "-o", rate: rate };
+  } else {
+    n = Pred { ...node(N_AND), name: "-a", rate: rate };
+  }
+  let idx = o.nodes.len();
+  let made = Opt { ...o, nodes: o.nodes.append(Pred { ...n, cost: C_NOTHING, r: curr }) };
+  return (idx, slot_set(made, slot, idx));
+}
+
+// GNU's predlist_insert: the node in `slot` goes to the head of a list, and
+// its left operand takes its place.
+function list_insert(own o: Opt, own ls: Lists, k: i32, curr: i32, slot: i32): (Opt, Lists) {
+  let below = o.nodes[curr].l;
+  let o2 = slot_set(o, slot, below);
+  let o3 = set_left(o2, curr, ls.head[k]);
+  let tail = if (ls.tail[k] < 0) { curr } else { ls.tail[k] };
+  return (o3, Lists { head: ls.head.with(k, curr), tail: ls.tail.with(k, tail) });
+}
+
+// GNU's predlist_merge_sort: the list in order of success, the likely
+// failures first under -a, and the list back in the tree at `last`.
+function merge_sort(own o: Opt, own ls: Lists, k: i32, last: i32): (Opt, Lists) {
+  let head = ls.head[k];
+  if (head < 0) {
+    return (o, ls);
+  }
+  if ((o.dbg & D_OPT) != 0) {
+    dbg_out("predlist before merge sort:\n" + tree_text(o, head, 2));
+  }
+  o = derive(o, head);
+  let new_head = -1;
+  let new_tail = -1;
+  while (head >= 0) {
+    let q = head;
+    head = o.nodes[head].l;
+    o = set_left(o, q, -1);
+    let p = new_head;
+    while (p >= 0) {
+      let want_failure = node_prec(o.nodes[p].kind) != PREC_OR;
+      let rp = o.nodes[o.nodes[p].r].rate;
+      let rq = o.nodes[o.nodes[q].r].rate;
+      if (want_failure && rp >= rq || !want_failure && rp <= rq) {
+        break;
+      }
+      p = o.nodes[p].l;
+    }
+    if (p >= 0) {
+      let after = o.nodes[p].l;
+      o = set_left(o, q, after);
+      if (after < 0) {
+        new_tail = q;
+      }
+      o = set_left(o, p, q);
+    } else {
+      o = set_left(o, q, new_head);
+      new_head = q;
+      if (new_tail < 0) {
+        new_tail = q;
+      }
+    }
+  }
+  if ((o.dbg & D_OPT) != 0) {
+    dbg_out("predlist after merge sort:\n" + tree_text(o, new_head, 2));
+  }
+  o = derive(o, new_head);
+  let rest = slot_get(o, last);
+  o = set_left(o, new_tail, rest);
+  o = slot_set(o, last, new_head);
+  return (o, Lists { head: ls.head.with(k, -1), tail: ls.tail.with(k, -1) });
+}
+
+function merge_lists(own o: Opt, own ls: Lists, last: i32): (Opt, Lists) {
+  let k = 0;
+  while (k < ls.head.len()) {
+    let (o2, ls2) = merge_sort(o, ls, k, last);
+    o = o2;
+    ls = ls2;
+    k += 1;
+  }
+  return (o, ls);
+}
+
+// GNU's opt_expr on the subtree in `slot`: the tree as a chain of operators
+// down the left, then the predicates of each run between two side effects
+// in order of cost. The result tells whether the subtree has side effects.
+function opt_expr(own o: Opt, slot: i32): (Opt, boolean) {
+  if (slot_get(o, slot) < 0) {
+    return (o, false);
+  }
+  let prevp = slot;
+  let prev_prec = PREC_AND;
+  let curr = slot_get(o, prevp);
+  while (o.nodes[curr].l >= 0) {
+    prevp = 2 * curr;
+    prev_prec = node_prec(o.nodes[curr].kind);
+    curr = o.nodes[curr].l;
+  }
+  if (!is_binary(o.nodes[curr].kind)) {
+    let (_, o2) = new_parent(o, curr, prev_prec, prevp);
+    o = o2;
+  }
+  if ((o.dbg & (D_TREE | D_OPT)) != 0) {
+    dbg_out("Normalized Eval Tree:\n" + tree_text(o, slot_get(o, slot), 0));
+  }
+  let empty: i32[] = [];
+  for _ in 0..C_UNKNOWN + 3 {
+    empty = empty.append(-1);
+  }
+  let ls = Lists { head: empty, tail: empty };
+  let side = false;
+  prevp = slot;
+  let biop_prec = PREC_NO;
+  if (is_binary(o.nodes[slot_get(o, prevp)].kind)) {
+    biop_prec = node_prec(o.nodes[slot_get(o, prevp)].kind);
+  }
+  while (slot_get(o, prevp) >= 0) {
+    curr = slot_get(o, prevp);
+    let ck = o.nodes[curr].kind;
+    if (is_binary(ck) && node_prec(ck) != biop_prec) {
+      let (made, o3) = new_parent(o, curr, biop_prec, prevp);
+      curr = made;
+      o = o3;
+    }
+    let right = o.nodes[curr].r;
+    let rn = o.nodes[right];
+    if (rn.kind == N_NOT) {
+      let (o4, s4) = opt_expr(o, 2 * right + 1);
+      o = Opt { ...o4, nodes: o4.nodes.with(right, Pred { ...o4.nodes[right], side: s4 }) };
+    } else if (is_binary(rn.kind)) {
+      // GNU reads the right operand before the call that can replace it,
+      // so the flag goes to the operand that was there before.
+      let (o5, s5) = opt_expr(o, 2 * curr + 1);
+      o = Opt { ...o5, nodes: o5.nodes.with(right, Pred { ...o5.nodes[right], side: s5 }) };
+    } else if (!rn.side && o.nodes[curr].kind != N_COMMA) {
+      let k = -1;
+      let cheap = if (o.level == 0) { rn.kind == P_NAME || rn.kind == P_PATH } else { rn.cost == C_NOTHING };
+      if (cheap) {
+        if ((o.dbg & D_OPT) != 0) {
+          dbg_out("-O" + o.level.to_string() + ": promoting cheap predicate " + pred_text(rn) + " into name_list\n");
+        }
+        k = 0;
+      } else if (o.level == 0 && rn.kind == P_REGEX) {
+        k = 1;
+      } else if (o.level > 2 || o.level > 1 && (rn.cost == C_TYPE || rn.cost == C_INODE) && (rn.needs & NEED_STAT) == 0) {
+        if ((o.dbg & D_OPT) != 0) {
+          dbg_out("-O" + o.level.to_string() + ": categorising predicate " + pred_text(rn) + " by cost (" + cost_name(rn.cost) + ")\n");
+        }
+        k = rn.cost + 2;
+      }
+      if (k >= 0) {
+        let (o6, ls6) = list_insert(o, ls, k, curr, prevp);
+        o = o6;
+        ls = ls6;
+        continue;
+      }
+    }
+    if (o.nodes[o.nodes[curr].r].side) {
+      let (o7, ls7) = merge_lists(o, ls, prevp);
+      o = o7;
+      ls = ls7;
+      side = true;
+    }
+    prevp = 2 * curr;
+  }
+  let (o8, _) = merge_lists(o, ls, prevp);
+  return (o8, side);
+}
+
+function subtree_side(o: Opt, p: i32): boolean {
+  if (p < 0) {
+    return false;
+  }
+  let n = o.nodes[p];
+  return n.side || subtree_side(o, n.l) || subtree_side(o, n.r);
+}
+
+function worst_cost(o: Opt, p: i32): i32 {
+  if (p < 0) {
+    return 0;
+  }
+  let n = o.nodes[p];
+  let worst = worst_cost(o, n.l).max(worst_cost(o, n.r));
+  return worst.max(n.cost);
+}
+
+// GNU's consider_arm_swap: whether to swap the right operand of a node
+// with the right operand of its left operand, and the swap.
+function arm_swap(own o: Opt, p: i32): (Opt, boolean) {
+  let n = o.nodes[p];
+  let reason = "";
+  if (!is_binary(n.kind)) {
+    reason = "Not a binary operation";
+  } else if (n.l < 0 || n.r < 0) {
+    reason = "Doesn't have two arms";
+  } else if (o.nodes[n.l].r < 0) {
+    reason = "Left arm has no child on RHS";
+  }
+  let pl = -1;
+  let pr = -1;
+  let lc = 0;
+  let rc = 0;
+  if (reason == "") {
+    pl = o.nodes[n.l].r;
+    pr = n.r;
+    if (subtree_side(o, pl)) {
+      reason = "Left subtree has side-effects";
+    } else if (subtree_side(o, pr)) {
+      reason = "Right subtree has side-effects";
+    } else {
+      lc = worst_cost(o, pl);
+      rc = worst_cost(o, pr);
+      if (lc < rc) {
+        reason = "efficient as-is";
+      }
+    }
+  }
+  if (reason == "") {
+    let want = true;
+    if (lc == rc) {
+      let l = o.nodes[pl].rate;
+      let r = o.nodes[pr].rate;
+      if ((o.dbg & D_OPT) != 0) {
+        dbg_out("Success rates: l=" + fmt_f(l as f64) + ", r=" + fmt_f(r as f64) + "\n");
+      }
+      if (n.kind == N_OR) {
+        want = r < l;
+        if (!want) {
+          reason = "Operation is OR; right success rate >= left";
+        }
+      } else if (n.kind == N_AND) {
+        want = r > l;
+        if (!want) {
+          reason = "Operation is AND; right success rate <= left";
+        }
+      } else {
+        want = false;
+        reason = "Not 'AND' or 'OR'";
+      }
+    }
+    if (want) {
+      if ((o.dbg & D_OPT) != 0) {
+        dbg_out("Performing arm swap on:\n" + tree_text(o, p, 0));
+      }
+      let o2 = slot_set(o, 2 * n.l + 1, pr);
+      return (slot_set(o2, 2 * p + 1, pl), true);
+    }
+  }
+  if ((o.dbg & D_OPT) != 0) {
+    dbg_out("Not an arm swap candidate (" + reason + "):\n" + tree_text(o, p, 0));
+  }
+  return (o, false);
+}
+
+// GNU's do_arm_swaps: a node until it needs no swap, then its operands.
+function arm_swaps(own o: Opt, p: i32): Opt {
+  if (p < 0) {
+    return o;
+  }
+  loop {
+    let (o2, swapped) = arm_swap(o, p);
+    o = o2;
+    if (!swapped) {
+      break;
+    }
+  }
+  let l = o.nodes[p].l;
+  let o3 = arm_swaps(o, l);
+  let r = o3.nodes[p].r;
+  return arm_swaps(o3, r);
+}
+
+// The optimised tree, and what -D tree and -D opt print on the way.
+function optimise(own nodes0: Pred[], root: i32, o0: Opts, execs: cmdline.Spec[]): (Pred[], i32) {
+  let o = derive(Opt { nodes: nodes0, root: root, level: o0.level, dbg: o0.dbg }, root);
+  let show = (o.dbg & (D_TREE | D_OPT)) != 0;
+  if (show) {
+    dbg_out("Eval Tree:\n" + tree_text(o, o.root, 0));
+  }
+  o = Opt { ...o, nodes: estimate_costs(execs, o.nodes) };
+  let (o2, _) = opt_expr(o, -1);
+  let top = o2.root;
+  let o3 = arm_swaps(o2, top);
+  if (show) {
+    let none: i64[] = [];
+    let counts = if ((o3.dbg & D_RATES) != 0) { zeros(o3.nodes.len()) } else { none };
+    dbg_out("Optimized Eval Tree:\n" + tree_text(o3, o3.root, 0) + "Optimized command line:\n" + optlist_text(o3, o3.root, counts, counts) + "\n");
+  }
+  return (o3.nodes, o3.root);
+}
+
+function zeros(n: i32): i64[] {
+  let out: i64[] = [];
+  for _ in 0..n {
+    out = out.append(0i64);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Reals as C's printf writes them, from their exact value
+
+// The decimal digits of v >= 0, and the count of them after the point.
+function exact_digits(v: f64): (string, i32) {
+  let bits = f64_bits(v);
+  let e = (bits >> 52i64 & 2047i64) as i32;
+  let m = bits & 4503599627370495i64;
+  if (e != 0) {
+    m = m | 4503599627370496i64;
+  }
+  let e2 = if (e == 0) { -1074 } else { e - 1075 };
+  let big = bigint.from_i64(m);
+  if (e2 >= 0) {
+    return (big.shl(e2).to_string(), 0);
+  }
+  return (big.mul_pow5(0 - e2).to_string(), 0 - e2);
+}
+
+// The first `keep` digits of `ds`, rounded to nearest with ties to even.
+// The flag tells that the result has one more digit than it kept.
+function round_digits(ds: string, keep: i32): (string, boolean) {
+  if (keep >= ds.len()) {
+    return (ds + repeat_byte(48, keep - ds.len()), false);
+  }
+  let up = false;
+  if (keep >= 0) {
+    let c = ds[keep] as i32;
+    if (c > 53) {
+      up = true;
+    } else if (c == 53) {
+      let rest = false;
+      for j in keep + 1..ds.len() {
+        if (ds[j] != b'0') {
+          rest = true;
+        }
+      }
+      let odd = keep > 0 && (ds[keep - 1] as i32 - 48) % 2 == 1;
+      up = rest || odd;
+    }
+  }
+  let kept = if (keep > 0) { slice_unchecked(ds, 0, keep) + "" } else { "" };
+  if (!up) {
+    return (kept, false);
+  }
+  let h = buf_new(keep + 1);
+  let carry = 1;
+  let digits: i32[] = [];
+  let i = kept.len() - 1;
+  while (i >= 0) {
+    let d = kept[i] as i32 - 48 + carry;
+    carry = if (d == 10) { 1 } else { 0 };
+    digits = digits.append(if (d == 10) { 0 } else { d });
+    i -= 1;
+  }
+  if (carry == 1) {
+    buf_push_byte(h, 49);
+  }
+  let k = digits.len() - 1;
+  while (k >= 0) {
+    buf_push_byte(h, 48 + digits[k]);
+    k -= 1;
+  }
+  let out = buf_take(h);
+  buf_free(h);
+  return (out, carry == 1);
+}
+
+function strip_point_zeros(s: string): string {
+  if (__memchr(s, 46, 0) < 0) {
+    return s;
+  }
+  let n = s.len();
+  while (n > 0 && s[n - 1] == b'0') {
+    n -= 1;
+  }
+  if (n > 0 && s[n - 1] == b'.') {
+    n -= 1;
+  }
+  return slice_unchecked(s, 0, n) + "";
+}
+
+// %.<prec>g, and %#.<prec>g with `alt`, of v >= 0.
+function fmt_g(v: f64, prec0: i32, alt: boolean): string {
+  let prec = if (prec0 == 0) { 1 } else { prec0 };
+  if (v == 0.0) {
+    if (alt) {
+      return "0." + repeat_byte(48, prec - 1);
+    }
+    return "0";
+  }
+  let (ds0, frac) = exact_digits(v);
+  let lead = 0;
+  while (lead < ds0.len() - 1 && ds0[lead] == b'0') {
+    lead += 1;
+  }
+  let ds = slice_unchecked(ds0, lead, ds0.len()) + "";
+  let x = ds.len() - 1 - frac;
+  let (g, longer) = round_digits(ds, prec);
+  if (longer) {
+    g = slice_unchecked(g, 0, prec) + "";
+    x += 1;
+  }
+  let out = "";
+  if (x < -4 || x >= prec) {
+    out = slice_unchecked(g, 0, 1) + "." + slice_unchecked(g, 1, prec) + "";
+    if (!alt) {
+      out = strip_point_zeros(out);
+    }
+    let ax = if (x < 0) { 0 - x } else { x };
+    return out + (if (x < 0) { "e-" } else { "e+" }) + (if (ax < 10) { "0" } else { "" }) + ax.to_string();
+  }
+  if (x >= 0) {
+    out = slice_unchecked(g, 0, x + 1) + "." + slice_unchecked(g, x + 1, prec);
+  } else {
+    out = "0." + repeat_byte(48, -1 - x) + g;
+  }
+  if (!alt) {
+    out = strip_point_zeros(out);
+  }
+  return out;
+}
+
+// %f of v >= 0: six digits after the point.
+function fmt_f(v: f64): string {
+  let (ds, frac) = exact_digits(v);
+  let keep = ds.len() - frac + 6;
+  let (g, _) = round_digits(ds, keep);
+  if (g.len() < 7) {
+    g = repeat_byte(48, 7 - g.len()) + g;
+  }
+  let cut = g.len() - 6;
+  return slice_unchecked(g, 0, cut) + "." + slice_unchecked(g, cut, g.len());
 }
 
 // ---------------------------------------------------------------------------
@@ -2309,6 +3500,10 @@ function number_dir(st: FileStat, c: i32): string {
 
 // The text of one directive that needs the stat of the file.
 function stat_dir(p: Prog, own r0: Run, d: Piece): (string, Run) {
+  if (d.dir == 105 && r0.e.have != ST_OK && r0.e.ino != 0i64) {
+    let ino = r0.e.ino.to_string();
+    return (pad_text(d, ino), r0);
+  }
   let r = with_stat(p, r0);
   let st = r.e.st;
   let c = d.dir;
@@ -2654,39 +3849,141 @@ function set_ok(own r: Run, ok: boolean): Run {
   return Run { ...r, ok: ok };
 }
 
+// GNU's apply_predicate: the node, after the data that it needs. A node
+// whose data the run cannot get is false.
 function eval(p: Prog, i: i32, own r: Run): Run {
   let n = p.nodes[i];
   let k = n.kind;
   if (k == N_AND) {
-    let r1 = eval(p, n.l, r);
-    if (!r1.ok || r1.quit) {
-      return r1;
+    if (n.l >= 0) {
+      let r1 = eval(p, n.l, r);
+      if (!r1.ok || r1.quit) {
+        return r1;
+      }
+      return eval(p, n.r, r1);
     }
-    return eval(p, n.r, r1);
+    return eval(p, n.r, r);
   }
   if (k == N_OR) {
-    let r2 = eval(p, n.l, r);
-    if (r2.ok || r2.quit) {
-      return r2;
+    if (n.l >= 0) {
+      let r2 = eval(p, n.l, r);
+      if (r2.ok || r2.quit) {
+        return r2;
+      }
+      return eval(p, n.r, r2);
     }
-    return eval(p, n.r, r2);
+    return eval(p, n.r, r);
   }
-  if (k == N_NOT) {
-    let r3 = eval(p, n.l, r);
-    let flipped = !r3.ok;
-    return set_ok(r3, flipped);
+  if (k == P_NAME || k == P_PATH || k == P_REGEX) {
+    return eval_name(p, n, r);
   }
-  if (k == N_COMMA) {
-    let r4 = eval(p, n.l, r);
-    if (r4.quit) {
-      return r4;
-    }
-    return eval(p, n.r, r4);
+  if (k == N_NOT || k == N_COMMA || n.needs != 0 && r.e.have != ST_OK) {
+    return eval_rest(p, n, r);
   }
   if (k >= A_PRINT) {
     return eval_action(p, n, r);
   }
   return eval_test(p, n, r);
+}
+
+// eval under -D rates, which counts the visits and the successes of each
+// node.
+function eval_counted(p: Prog, i: i32, own r: Run): Run {
+  let t = p.trace.get();
+  let v = t.visits[i] + 1i64;
+  p.trace.set(Trace { ...t, visits: t.visits.with(i, v) });
+  let n = p.nodes[i];
+  let k = n.kind;
+  let done = r;
+  if (k == N_AND) {
+    if (n.l >= 0) {
+      done = eval_counted(p, n.l, done);
+      if (done.ok && !done.quit) {
+        done = eval_counted(p, n.r, done);
+      }
+    } else {
+      done = eval_counted(p, n.r, done);
+    }
+  } else if (k == N_OR) {
+    if (n.l >= 0) {
+      done = eval_counted(p, n.l, done);
+      if (!done.ok && !done.quit) {
+        done = eval_counted(p, n.r, done);
+      }
+    } else {
+      done = eval_counted(p, n.r, done);
+    }
+  } else {
+    done = eval_rest(p, n, done);
+  }
+  if (done.ok) {
+    let t2 = p.trace.get();
+    let w = t2.wins[i] + 1i64;
+    p.trace.set(Trace { ...t2, wins: t2.wins.with(i, w) });
+  }
+  return done;
+}
+
+// An operand of ! or of a comma, counted under -D rates.
+function eval_sub(p: Prog, i: i32, own r: Run): Run {
+  if ((p.o.dbg & D_RATES) != 0) {
+    return eval_counted(p, i, r);
+  }
+  return eval(p, i, r);
+}
+
+// The nodes other than -a and -o, for -D rates and for ! and the comma.
+function eval_rest(p: Prog, n: Node, own r: Run): Run {
+  let k = n.kind;
+  if (k == N_NOT) {
+    let r3 = eval_sub(p, n.r, r);
+    let flipped = !r3.ok;
+    return set_ok(r3, flipped);
+  }
+  if (k == N_COMMA) {
+    if (n.l >= 0) {
+      let r4 = eval_sub(p, n.l, r);
+      if (r4.quit) {
+        return r4;
+      }
+      return eval_sub(p, n.r, r4);
+    }
+    return eval_sub(p, n.r, r);
+  }
+  if (n.needs != 0 && r.e.have != ST_OK && info_needed(n.needs, r.e)) {
+    return eval_with_info(p, n, r);
+  }
+  if (k >= A_PRINT) {
+    return eval_action(p, n, r);
+  }
+  return eval_test(p, n, r);
+}
+
+// The tests that take the stat that they need first, and are false when
+// it fails, as after GNU's get_info. They need no check before them, but
+// for the trace of -D stat.
+function takes_stat(kind: i32): boolean {
+  return kind == P_TYPE || kind >= P_LINKS && kind <= P_USED && kind != P_INUM && kind != P_ACCESS || kind == P_FSTYPE || kind == P_SAMEFILE;
+}
+
+// A node after the stat that it needs. It is false when the stat fails.
+function eval_with_info(p: Prog, n: Node, own r: Run): Run {
+  let r5 = if ((p.o.dbg & D_STAT) != 0) { with_stat_traced(p, r) } else { with_stat(p, r) };
+  if (r5.e.have != ST_OK) {
+    return set_ok(r5, false);
+  }
+  if (n.kind >= A_PRINT) {
+    return eval_action(p, n, r5);
+  }
+  return eval_test(p, n, r5);
+}
+
+// GNU's get_info: whether a node needs the stat of an entry that has none.
+// It needs it for the stat, for a type that readdir did not give, or for an
+// inode number that readdir did not give for a file that is not a directory.
+function info_needed(needs: i32, e: Ent): boolean {
+  let typed = e.dtype != 0u32;
+  return (needs & NEED_STAT) != 0 || (needs & NEED_TYPE) != 0 && !typed || (needs & NEED_INUM) != 0 && (e.ino == 0i64 || !typed || e.dtype == S_IFDIR);
 }
 
 function eval_name(p: Prog, n: Node, own r: Run): Run {
@@ -2738,7 +4035,12 @@ function eval_xtype(p: Prog, n: Node, own r: Run): Run {
   if (t != S_IFLNK) {
     return set_ok(r2, type_in(n.num, t));
   }
-  match (stat(r2.e.path)) {
+  let target = stat(r2.e.path);
+  if ((p.o.dbg & D_STAT) != 0 && dangling(target)) {
+    let name = acc_path(p, r2.e);
+    dbg_out("fallback_stat(): stat(" + name + ") failed; falling back on lstat()\n");
+  }
+  match (target) {
     Ok(st) => {
       return set_ok(r2, type_in(n.num, st.mode & S_IFMT));
     },
@@ -2835,8 +4137,11 @@ function size_units(size: i64, unit: i64): i64 {
 }
 
 function eval_stat_test(p: Prog, n: Node, own r0: Run): Run {
-  let r = with_stat(p, r0);
-  if (r.e.have != ST_OK) {
+  let r = r0;
+  if (n.kind != P_INUM) {
+    r = with_stat(p, r);
+  }
+  if (r.e.have != ST_OK && n.kind != P_INUM) {
     return set_ok(r, false);
   }
   let st = r.e.st;
@@ -2848,7 +4153,8 @@ function eval_stat_test(p: Prog, n: Node, own r0: Run): Run {
     return set_ok(r, compare(n.cmp, st.nlink as i64, n.num));
   }
   if (k == P_INUM) {
-    return set_ok(r, compare(n.cmp, st.ino, n.num));
+    let ino = if (r.e.have == ST_OK) { st.ino } else { r.e.ino };
+    return set_ok(r, compare(n.cmp, ino, n.num));
   }
   if (k == P_UID) {
     return set_ok(r, compare(n.cmp, st.uid as i64, n.num));
@@ -3071,9 +4377,31 @@ function eval_exec_here(p: Prog, x: i32, own r0: Run): Run {
       return set_ok(r, false);
     }
   }
-  let res = cmdline.run(argv, dir, spec.ask, p.env);
+  let res = run_traced(p, argv, dir, spec.ask);
   let r2 = exec_outcome(r, spec, res);
+  exit_trace(p, res);
   return set_ok(r2, res.errno == 0 && res.signal == 0 && res.code == 0);
+}
+
+// A command, with the trace of -D exec before it starts.
+function run_traced(p: Prog, argv: string[], dir: string, ask: boolean): cmdline.Outcome {
+  if ((p.o.dbg & D_EXEC) != 0) {
+    let line = "DebugExec: launching process (argc=" + argv.len().to_string() + "):";
+    for a in argv {
+      line += " " + q(a);
+    }
+    dbg_out(line + "\n");
+  }
+  return cmdline.run(argv, dir, ask, p.env);
+}
+
+// The trace of -D exec after a command ends. A command that could not
+// start ends with status 1, as GNU's child does. A signal has no trace.
+function exit_trace(p: Prog, res: cmdline.Outcome): void {
+  if ((p.o.dbg & D_EXEC) != 0 && res.signal == 0) {
+    let code = if (res.errno != 0) { 1 } else { res.code };
+    dbg_out("DebugExec: process (PID=" + res.pid.to_string() + ") terminated with exit status: " + code.to_string() + "\n");
+  }
 }
 
 function add_to_batch(p: Prog, own r0: Run, x: i32, dir: string, arg: string): Run {
@@ -3096,8 +4424,9 @@ function run_batch(p: Prog, own r0: Run, x: i32): Run {
   let spec = p.execs[x];
   let r = flush_out(r0);
   let argv = cmdline.batch_argv(spec, b);
-  let res = cmdline.run(argv, b.dir, false, p.env);
+  let res = run_traced(p, argv, b.dir, false);
   let r2 = exec_outcome(r, spec, res);
+  exit_trace(p, res);
   let (_, kept) = r2.batches.swap_at(x, cmdline.batch_new(spec));
   return Run { ...r2, batches: kept };
 }
@@ -3131,7 +4460,7 @@ struct Walker { anc: Anc[], top_dev: i64 }
 
 function eval_entry(p: Prog, own r: Run, own e: Ent): Run {
   let r1 = Run { ...r, e: e, prune: false };
-  return eval(p, p.root, r1);
+  return eval_sub(p, p.root, r1);
 }
 
 // The entries of a directory in the order of the walk. Names that are not
@@ -3196,7 +4525,7 @@ function fts_order(path: string, es: DirEntry[]): DirEntry[] {
 // directory with the slash that a name follows.
 function child_ent(parent: Ent, prefix: string, d: DirEntry, rel: boolean): Ent {
   let path = prefix + d.name;
-  return Ent { path: path, base: prefix.len(), depth: parent.depth + 1, dtype: d.kind, st: parent.st, have: ST_NONE, lst: parent.st, lhave: ST_NONE, top: parent.top, is_top: false, rel: rel, name: d.name };
+  return Ent { path: path, base: prefix.len(), depth: parent.depth + 1, dtype: d.kind, st: parent.st, have: ST_NONE, lst: parent.st, lhave: ST_NONE, top: parent.top, is_top: false, rel: rel, name: d.name, ino: d.ino };
 }
 
 function dir_prefix(path: string): string {
@@ -3206,14 +4535,9 @@ function dir_prefix(path: string): string {
   return path + "/";
 }
 
-// Whether the walk goes into the entry, and its stat for the check of
-// loops and of -xdev.
-function is_dir_entry(p: Prog, own r: Run): (boolean, Run) {
-  let (t, r2) = type_of(p, r);
-  return (t == S_IFDIR, r2);
-}
-
-function walk_children(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
+// The children of a directory. The flag tells that the directory could not
+// be read.
+function walk_children(p: Prog, own r0: Run, w: Walker, dir: Ent): (Run, boolean) {
   if (target_os() == "wasi") {
     return walk_children_by_path(p, r0, w, dir);
   } else {
@@ -3222,7 +4546,7 @@ function walk_children(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
 }
 
 // The walk by paths, for WASI, which has no directory handles.
-function walk_children_by_path(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
+function walk_children_by_path(p: Prog, own r0: Run, w: Walker, dir: Ent): (Run, boolean) {
   let r = r0;
   let es: DirEntry[] = [];
   match (list_dir(dir.path)) {
@@ -3230,16 +4554,22 @@ function walk_children_by_path(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
       es = list;
     },
     Err(e) => {
-      return report(r, q(dir.path) + ": " + why(e));
+      return (unreadable(p, r, dir, e), true);
     }
   }
   for d in es {
     r = visit(p, r, w, child_ent(dir, dir_prefix(dir.path), d, false));
     if (r.quit) {
-      return r;
+      return (r, false);
     }
   }
-  return r;
+  return (r, false);
+}
+
+// A directory that the walk cannot read: fts gives it as FTS_DNR.
+function unreadable(p: Prog, own r0: Run, dir: Ent, e: IoError): Run {
+  let r = early(p, r0, dir, "FTS_DNR");
+  return report(r, q(dir.path) + ": " + why(e));
 }
 
 // Opens a directory of the walk: by its name in the directory the run holds
@@ -3290,14 +4620,14 @@ function entries_of(d: Dir): Result[DirEntry[], IoError] {
   return Ok(out);
 }
 
-function walk_children_in(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
+function walk_children_in(p: Prog, own r0: Run, w: Walker, dir: Ent): (Run, boolean) {
   let r = r0;
   let opened = open_entry(r, dir);
   let Ok(d) = opened else {
     if let Err(e) = opened {
-      return report(r, q(dir.path) + ": " + why(e));
+      return (unreadable(p, r, dir, e), true);
     }
-    return r;
+    return (r, true);
   };
   let es: DirEntry[] = [];
   match (entries_of(d)) {
@@ -3306,7 +4636,7 @@ function walk_children_in(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
     },
     Err(e2) => {
       d.close();
-      return report(r, q(dir.path) + ": " + why(e2));
+      return (unreadable(p, r, dir, e2), true);
     }
   }
   let outer = r.pd;
@@ -3318,7 +4648,7 @@ function walk_children_in(p: Prog, own r0: Run, w: Walker, dir: Ent): Run {
       break;
     }
   }
-  return close_level(r, outer);
+  return (close_level(r, outer), false);
 }
 
 // Closes the directory of a level of the walk, and goes back to the one
@@ -3344,53 +4674,135 @@ function loop_of(w: Walker, st: FileStat): i32 {
   return -1;
 }
 
-// The stat of an entry under -L. A loop of links is an error, and the
-// entry is not evaluated.
-function follow_check(p: Prog, own r: Run, own e: Ent): (boolean, Run) {
-  if (!follows(p, e) || e.have != ST_NONE) {
-    return (true, Run { ...r, e: e });
+// The stat that fts takes of an entry that readdir did not type, of a
+// directory, and of a link that the walk follows. The result is the error
+// of a stat that failed.
+function fts_stat(p: Prog, own r: Run, own e: Ent): (Run, Option[IoError]) {
+  if (e.have != ST_NONE) {
+    return (Run { ...r, e: e }, None);
   }
-  match (stat_in(r, e, true)) {
+  match (stat_in(r, e, follows(p, e))) {
     Ok(st) => {
-      return (true, Run { ...r, e: Ent { ...e, st: st, have: ST_OK } });
+      return (Run { ...r, e: Ent { ...e, st: st, have: ST_OK } }, None);
     },
     Err(err) => {
-      return (false, report(r, q(e.path) + ": " + why(err)));
+      return (Run { ...r, e: Ent { ...e, have: ST_FAILED } }, Some(err));
     }
   }
-  return (false, r);
+  return (r, None);
 }
 
+// The name of fts for an entry with a stat.
+function fts_info(p: Prog, e: Ent, kind: u32): string {
+  if (kind == S_IFDIR) {
+    return "FTS_D";
+  }
+  if (kind == S_IFLNK) {
+    return if (follows(p, e)) { "FTS_SLNONE" } else { "FTS_SL" };
+  }
+  if (kind == S_IFREG) {
+    return "FTS_F";
+  }
+  return "FTS_DEFAULT";
+}
+
+function pad_info(info: string): string {
+  if (info.len() < 6) {
+    return info + spaces(6 - info.len());
+  }
+  return info;
+}
+
+// The first line of -D search for an entry. fts_level is the depth.
+function early(p: Prog, own r: Run, e: Ent, info: string): Run {
+  if ((p.o.dbg & D_SEARCH) == 0) {
+    return r;
+  }
+  let level = e.depth.to_string();
+  if (level.len() < 2) {
+    level = " " + level;
+  }
+  let t = p.trace.get();
+  dbg_out("consider_visiting (early): " + q(e.path) + ": fts_info=" + pad_info(info) + ", fts_level=" + level + ", prev_depth=" + t.prev_depth.to_string() + " fts_path=" + q(e.path) + ", fts_accpath=" + q(acc_path(p, e)) + "\n");
+  p.trace.set(Trace { ...t, prev_depth: e.depth });
+  return r;
+}
+
+function bit(b: boolean): string {
+  return if (b) { "1" } else { "0" };
+}
+
+// The second line of -D search, before find evaluates the entry.
+function late(p: Prog, e: Ent, info: string, isdir: boolean, ignore: boolean): void {
+  if ((p.o.dbg & D_SEARCH) == 0) {
+    return;
+  }
+  let typed = e.have == ST_OK || e.dtype != 0u32;
+  dbg_out("consider_visiting (late): " + q(e.path) + ": fts_info=" + pad_info(info) + ", isdir=" + bit(isdir) + " ignore=" + bit(ignore) + " have_stat=" + bit(e.have == ST_OK) + " have_type=" + bit(typed) + " \n");
+}
+
+// GNU's symlink_loop for an entry that fts could not follow: a stat that
+// -D stat traces.
+function loop_trace(p: Prog, e: Ent): void {
+  if ((p.o.dbg & D_STAT) == 0) {
+    return;
+  }
+  let name = acc_path(p, e);
+  debug_stat(p.o.dbg, name, dangling(stat(e.path)));
+}
+
+// An entry that fts gives without a stat, under -D search.
+function nsok_traced(p: Prog, own r0: Run, own e: Ent, shallow: boolean): Run {
+  let r = early(p, r0, e, "FTS_NSOK");
+  late(p, e, "FTS_NSOK", false, shallow);
+  if (shallow) {
+    return r;
+  }
+  return eval_entry(p, r, e);
+}
+
+// One entry of the walk, as GNU's consider_visiting takes it from fts.
 function visit(p: Prog, own r0: Run, w: Walker, own e0: Ent): Run {
-  if (e0.dtype != 0u32 && e0.dtype != S_IFDIR && !follows(p, e0)) {
-    if (e0.depth < p.o.mindepth) {
+  if (e0.dtype != 0u32 && e0.dtype != S_IFDIR && (e0.dtype != S_IFLNK || !follows(p, e0))) {
+    let shallow = e0.depth < p.o.mindepth;
+    if ((p.o.dbg & D_SEARCH) != 0) {
+      return nsok_traced(p, r0, e0, shallow);
+    }
+    if (shallow) {
       return r0;
     }
     return eval_entry(p, r0, e0);
   }
-  let (fine, r) = follow_check(p, r0, e0);
-  if (!fine) {
-    return r;
+  let (r1, failed) = fts_stat(p, r0, e0);
+  let e = r1.e;
+  let kind = if (e.have == ST_OK) { kind_of(e.st) } else { 0u32 };
+  let is_dir = kind == S_IFDIR;
+  let at = -1;
+  if (is_dir && e.st.ino != 0i64) {
+    at = loop_of(w, e.st);
   }
-  let (is_dir, r1) = is_dir_entry(p, r);
-  r = r1;
-  let e = r.e;
-  let w2 = w;
-  if (is_dir) {
-    let r2 = with_stat(p, r);
-    r = r2;
-    e = r.e;
-    if (e.have == ST_OK && e.st.ino != 0i64) {
-      let at = loop_of(w, e.st);
-      if (at >= 0) {
-        return report(r, "File system loop detected; " + q(e.path) + " is part of the same file system loop as " + q(w.anc[at].path) + ".");
-      }
-      w2 = Walker { ...w, anc: w.anc.append(Anc { dev: e.st.dev, ino: e.st.ino, path: e.path }) };
+  let info = if (e.have != ST_OK) { "FTS_NS" } else if (at >= 0) { "FTS_DC" } else { fts_info(p, e, kind) };
+  let r = early(p, r1, e, info);
+  if let Some(err) = failed {
+    if (e.depth > 0) {
+      loop_trace(p, e);
     }
+    return report(r, q(e.path) + ": " + why(err));
+  }
+  if (at >= 0) {
+    return report(r, "File system loop detected; " + q(e.path) + " is part of the same file system loop as " + q(w.anc[at].path) + ".");
+  }
+  if (info == "FTS_SLNONE") {
+    loop_trace(p, e);
+  }
+  let w2 = w;
+  if (is_dir && e.st.ino != 0i64) {
+    w2 = Walker { ...w, anc: w.anc.append(Anc { dev: e.st.dev, ino: e.st.ino, path: e.path }) };
   }
   let evaluated = e.depth >= p.o.mindepth;
+  late(p, e, info, is_dir, is_dir && p.o.depth_first || !evaluated);
   let descend = is_dir && e.depth < p.o.maxdepth;
-  if (descend && p.o.xdev && e.have == ST_OK && e.st.dev != w.top_dev) {
+  if (descend && p.o.xdev && e.st.dev != w.top_dev) {
     descend = false;
   }
   if (!p.o.depth_first && evaluated) {
@@ -3403,10 +4815,25 @@ function visit(p: Prog, own r0: Run, w: Walker, own e0: Ent): Run {
     }
   }
   if (descend) {
-    r = walk_children(p, r, w2, e);
+    let (r2, unread) = walk_children(p, r, w2, e);
+    r = r2;
     if (r.quit) {
       return r;
     }
+    if (unread) {
+      if (!p.o.depth_first) {
+        return r;
+      }
+      late(p, e, "FTS_DNR", true, !evaluated);
+      if (evaluated) {
+        return eval_entry(p, r, e);
+      }
+      return r;
+    }
+  }
+  if (is_dir) {
+    r = early(p, r, e, "FTS_DP");
+    late(p, e, "FTS_DP", true, !p.o.depth_first || !evaluated);
   }
   if (p.o.depth_first && evaluated) {
     r = eval_entry(p, r, e);
@@ -3422,21 +4849,24 @@ function top_ent(path: string): Ent {
   while (base > 0 && path[base - 1] != b'/') {
     base -= 1;
   }
-  return Ent { path: path, base: base, depth: 0, dtype: 0u32, st: zero_stat(), have: ST_NONE, lst: zero_stat(), lhave: ST_NONE, top: path, is_top: true, rel: false, name: path };
+  return Ent { path: path, base: base, depth: 0, dtype: 0u32, st: zero_stat(), have: ST_NONE, lst: zero_stat(), lhave: ST_NONE, top: path, is_top: true, rel: false, name: path, ino: 0i64 };
 }
 
-function walk_top(p: Prog, own r: Run, path: string): Run {
+function walk_top(p: Prog, own r0: Run, path: string): Run {
   let e = top_ent(path);
   let got = stat_entry(follows(p, e), path);
   let Ok(st) = got else {
+    let r = early(p, r0, e, "FTS_NS");
     if let Err(err) = got {
       return report(r, q(path) + ": " + why(err));
     }
     return r;
   };
   if ((st.mode & S_IFMT) != S_IFDIR && path.len() > 0 && path[path.len() - 1] == b'/') {
-    return report(r, q(path) + ": Not a directory");
+    let r2 = early(p, r0, e, "FTS_NS");
+    return report(r2, q(path) + ": Not a directory");
   }
+  let r = r0;
   let w = Walker { anc: [], top_dev: st.dev };
   return visit(p, r, w, Ent { ...e, st: st, have: ST_OK });
 }
@@ -3447,7 +4877,7 @@ function walk_top(p: Prog, own r: Run, path: string): Run {
 function opts_new(): Opts {
   let ms = now_unix_ms();
   let ns = now_ns();
-  return Opts { follow: FOLLOW_NEVER, maxdepth: 2147483647, mindepth: 0, depth_first: false, xdev: false, warn: false, ignore_race: false, regextype: RX_EMACS, now: ns / 1000000000i64, now_nsec: ns % 1000000000i64, daystart: false, files0: "", has_files0: false, delete: false, prune: false, explicit_depth: false };
+  return Opts { follow: FOLLOW_NEVER, maxdepth: 2147483647, mindepth: 0, depth_first: false, xdev: false, warn: false, ignore_race: false, regextype: RX_EMACS, now: ns / 1000000000i64, now_nsec: ns % 1000000000i64, daystart: false, files0: "", has_files0: false, delete: false, prune: false, explicit_depth: false, dbg: 0, level: 2 };
 }
 
 // The options before the paths: -H, -L, -P, -D and -O.
@@ -3466,9 +4896,10 @@ function leading_options(argv: string[], own o: Opts): (i32, Opts) {
         gnu.error("Missing argument after the -D option.");
         gnu.try_help_in("findutils", 1);
       }
-      fail("this port does not have the option '-D'");
+      i += 1;
+      o = Opts { ...o, dbg: o.dbg | debug_flags(argv[i]) };
     } else if (a.len() >= 2 && a[0] == b'-' && a[1] == b'O') {
-      optimisation_level(a);
+      o = Opts { ...o, level: optimisation_level(a) };
     } else if (a == "--") {
       return (i + 1, o);
     } else {
@@ -3479,9 +4910,8 @@ function leading_options(argv: string[], own o: Opts): (i32, Opts) {
   return (i, o);
 }
 
-// -O: GNU's levels go up to 65535. This port evaluates every level in the
-// order of the command line.
-function optimisation_level(a: string): void {
+// The level of -O. GNU's levels go up to 65535.
+function optimisation_level(a: string): i32 {
   if (a.len() == 2) {
     fail("The -O option must be immediately followed by a decimal integer");
   }
@@ -3496,9 +4926,73 @@ function optimisation_level(a: string): void {
   if (end < a.len()) {
     fail("Invalid optimisation level " + text);
   }
-  if (decimal(a, 2, a.len(), 65535i64) < 0i64) {
+  let v = decimal(a, 2, a.len(), 65535i64);
+  if (v < 0i64) {
     fail("Optimisation level " + text + " is too high.  If you want to find files very quickly, consider using GNU locate.");
   }
+  return v as i32;
+}
+
+function debug_flag(name: string): i32 {
+  return match (name) {
+    "exec" => D_EXEC,
+    "opt" => D_OPT,
+    "rates" => D_RATES,
+    "search" => D_SEARCH,
+    "stat" => D_STAT,
+    "time" => D_TIME,
+    "tree" => D_TREE,
+    "all" => D_ALL,
+    "help" => D_HELP,
+    _ => 0,
+  };
+}
+
+// The flags of one argument of -D, a list with commas. GNU splits the
+// argument with strtok, so its message for a flag it does not know names
+// the argument up to the end of the first flag.
+function debug_flags(arg: string): i32 {
+  let flags = 0;
+  let first_end = -1;
+  let i = 0;
+  while (i < arg.len()) {
+    if (arg[i] == b',') {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < arg.len() && arg[j] != b',') {
+      j += 1;
+    }
+    if (first_end < 0) {
+      first_end = j;
+    }
+    let f = debug_flag(slice_unchecked(arg, i, j) + "");
+    if (f == 0) {
+      gnu.error("Ignoring unrecognised debug flag " + q(slice_unchecked(arg, 0, first_end) + ""));
+    }
+    flags = flags | f;
+    i = j;
+  }
+  if (first_end < 0) {
+    gnu.error("Empty argument to the -D option.");
+    gnu.try_help_in("findutils", 1);
+  }
+  if ((flags & D_HELP) != 0) {
+    let out = "Valid arguments for -D:\n";
+    out += "exec       Show diagnostic information relating to -exec, -execdir, -ok and -okdir\n";
+    out += "opt        Show diagnostic information relating to optimisation\n";
+    out += "rates      Indicate how often each predicate succeeded\n";
+    out += "search     Navigate the directory tree verbosely\n";
+    out += "stat       Trace calls to stat(2) and lstat(2)\n";
+    out += "time       Show diagnostic information relating to time-of-day and timestamp comparisons\n";
+    out += "tree       Display the expression tree\n";
+    out += "all        Set all of the debug flags (but help)\n";
+    out += "help       Explain the various -D options\n";
+    gnu.write_out(out);
+    exit(0);
+  }
+  return flags;
 }
 
 function starts_expression(a: string): boolean {
@@ -3567,6 +5061,9 @@ function main(): i32 {
     o = Opts { ...o, warn: true };
   }
   let (first, o2) = leading_options(argv, o);
+  if ((o2.dbg & D_TIME) != 0) {
+    dbg_out("cur_day_start = " + ctime(tz.local_zone(), o2.now - DAY));
+  }
   let i = first;
   let paths: string[] = [];
   while (i < argv.len() && !starts_expression(argv[i])) {
@@ -3578,9 +5075,6 @@ function main(): i32 {
   while (ps.i < ps.argv.len()) {
     ps = parse_one(ps);
   }
-  if (ps.o.delete && ps.o.prune && !ps.o.explicit_depth) {
-    fail("The -delete action automatically turns on -depth, but -prune does nothing when -depth is in effect.  If you want to carry on anyway, just explicitly use the -depth option.");
-  }
   let opts = ps.o;
   let globs = ps.globs;
   let rxs = ps.rxs;
@@ -3589,7 +5083,16 @@ function main(): i32 {
   let execs = ps.execs;
   let writers = ps.writers;
   let needs_names = ps.names;
-  let (root, nodes) = build_tree(ps);
+  let (root0, nodes0) = build_tree(ps);
+  let (preds, root) = optimise(nodes0, root0, opts, execs);
+  let nodes: Node[] = [];
+  for pd in preds {
+    let needs = if ((opts.dbg & D_STAT) == 0 && takes_stat(pd.kind)) { 0 } else { pd.needs };
+    nodes = nodes.append(Node { kind: pd.kind, l: pd.l, r: pd.r, cmp: pd.cmp, a: pd.a, b: pd.b, num: pd.num, num2: pd.num2, s: pd.s, needs: needs });
+  }
+  if ((opts.dbg & D_RATES) == 0) {
+    preds = [];
+  }
   if (opts.has_files0) {
     if (paths.len() > 0) {
       gnu.error("extra operand " + q(paths[0]));
@@ -3603,7 +5106,9 @@ function main(): i32 {
   if (execs.len() > 0) {
     env = environ();
   }
-  let p = Prog { o: opts, nodes: nodes, root: root, globs: globs, rxs: rxs, fmts: fmts, outs: outs, execs: execs, env: env, zone: tz.local_zone(), needs_names: needs_names };
+  let nodes_n = if ((opts.dbg & D_RATES) != 0) { nodes.len() } else { 0 };
+  let trace = cell_new(Trace { prev_depth: -2147483648, visits: zeros(nodes_n), wins: zeros(nodes_n) });
+  let p = Prog { o: opts, nodes: nodes, root: root, preds: preds, trace: trace, globs: globs, rxs: rxs, fmts: fmts, outs: outs, execs: execs, env: env, zone: tz.local_zone(), needs_names: needs_names };
   let batches: cmdline.Batch[] = [];
   for s in execs {
     batches = batches.append(cmdline.batch_new(s));
@@ -3614,6 +5119,10 @@ function main(): i32 {
     if (r.quit) {
       break;
     }
+  }
+  if ((p.o.dbg & D_RATES) != 0 && !r.quit) {
+    let o = Opt { nodes: p.preds, root: p.root, level: p.o.level, dbg: p.o.dbg };
+    dbg_out("Predicate success rates after completion:\n" + optlist_text(o, p.root, p.trace.get().visits, p.trace.get().wins) + "\n");
   }
   r = run_batches(p, r);
   return finish(r);
