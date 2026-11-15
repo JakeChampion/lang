@@ -565,6 +565,80 @@ function test_music_media_controls(): test.TestOutcome {
   return test.assert_eq((has_call(log, "stop") && has_call(log, "media end") && !ended.play.active).to_string(), "true");
 }
 
+// A key that goes down and up at time `now`, then ticks.
+function press(own s: control.App, log: Log, now: i64, f: draw.Frame, code: i32): control.App {
+  return settle(at(at(s, log, now, f, android.Key(code, 0)), log, now, f, android.Key(code, 1)), log, now, f);
+}
+
+function ringed(s: control.App): boolean {
+  let last = s.nodes[s.nodes.len() - 1];
+  return match (last.paint) {
+    scene.Outline(_, _, _) => s.focus.len() > 0,
+    _ => false,
+  };
+}
+
+// The D-pad of a TV remote: the first key focuses the poster at the top
+// left, down moves to the row below, the centre opens the focused poster,
+// and a touch hides the focus.
+function test_remote_moves_focus(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let first = press(home, log, 100i64, f, 20);
+  if (first.focus != "hub:0:0" || !ringed(first)) {
+    return test.fail("the first key did not focus the first poster: " + first.focus);
+  }
+  let below = press(first, log, 200i64, f, 20);
+  if (below.focus != "hub:1:0") {
+    return test.fail("down did not move to the row below: " + below.focus);
+  }
+  let right = press(below, log, 300i64, f, 22);
+  if (right.focus != "hub:1:1") {
+    return test.fail("right did not move along the row: " + right.focus);
+  }
+  let left = press(right, log, 400i64, f, 21);
+  let opened = press(left, log, 500i64, f, 23);
+  if (opened.screen != ui.DETAIL || !has_url(log, "/library/metadata/501")) {
+    return test.fail("the centre did not open the poster");
+  }
+  let touched = at(opened, log, 600i64, f, android.Touch(0, 10.0, 600.0));
+  let cleared = touched.focus == "";
+  let lifted = draw_now(touched, log, f);
+  return test.assert_eq((cleared && !ringed(lifted)).to_string(), "true");
+}
+
+function draw_now(own s: control.App, log: Log, f: draw.Frame): control.App {
+  return at(s, log, 700i64, f, android.Touch(1, 10.0, 600.0));
+}
+
+// On the video, left and right seek as the buttons do, the centre shows
+// the controls with the focus on play, and the centre then pauses. The
+// play and pause key of a remote plays again.
+function test_remote_on_the_video(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let drawn = settle(video_drawn(log, f), log, 900i64, f);
+  let ahead = press(drawn, log, 1000i64, f, 22);
+  let back = press(ahead, log, 1100i64, f, 21);
+  if (!has_call(log, "seek 150000") || !has_call(log, "seek 110000")) {
+    return test.fail("left and right did not seek: " + log.calls.get().join(" | "));
+  }
+  let shown = press(back, log, 1200i64, f, 23);
+  if (shown.focus != "toggle" || node(shown, "toggle").is_none() || has_call(log, "pause")) {
+    return test.fail("the centre did not show the controls with the focus on play");
+  }
+  let paused = press(shown, log, 1300i64, f, 23);
+  if (!has_call(log, "pause") || !paused.play.paused) {
+    return test.fail("the centre on play did not pause");
+  }
+  let starts = count_calls(log, "start");
+  let again = press(paused, log, 1400i64, f, 85);
+  return test.assert_eq((count_calls(log, "start") == starts + 1 && !again.play.paused).to_string(), "true");
+}
+
 function count_calls(log: Log, call: string): i32 {
   return log.calls.get().filter((c: string): boolean => c == call).len();
 }
@@ -1232,6 +1306,8 @@ function main(): i32 {
   r = r.it("a held poster opens a menu of its actions", test_poster_menu);
   r = r.it("a user of the Plex Home takes over with a PIN", test_switch_home_user);
   r = r.it("music plays on in the background with the media controls", test_music_media_controls);
+  r = r.it("the D-pad of a TV remote moves the focus and presses it", test_remote_moves_focus);
+  r = r.it("the keys of a TV remote seek, show the controls and pause", test_remote_on_the_video);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);
