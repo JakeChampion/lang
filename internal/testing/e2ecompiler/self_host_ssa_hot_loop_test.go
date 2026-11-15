@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// hotLoopMid is the middle-snake search of diffutils/diff.fern in small: a
+// hotLoopMid is the middle-snake search of std/linediff.fern in small: a
 // forward and a backward diagonal loop, each with a snake loop inside, and a
 // return from each loop that reads the snake's x and y. EXIT is the value the
 // forward return stores.

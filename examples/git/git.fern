@@ -18,19 +18,26 @@ import "core/cmp";
 import "core/map";
 import "std/crypto";
 import "std/hex";
+import "std/linediff";
+import "./color";
+import "./commitgraph";
+import "./config";
 import "./fsck";
 import "./checkpack";
 import "./graph";
 import "./index";
 import "./log";
+import "./mailmap";
 import "./objects";
 import "./pack";
+import "./patch";
 import "./refs";
 import "./rev";
 import "./revwalk";
 import "./treediff";
 import "./date";
 import "../../coreutils/lib/bre";
+import "../../coreutils/lib/fnmatch";
 import "./store";
 import "./walk";
 
@@ -264,9 +271,17 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   let buf: u8[] = [];
   for i in 0..count {
     let name = lines[i];
-    let named = rev.parse(r, s, name);
-    s = named.store;
-    let hash = named.hash;
+    // A full name needs no search: git does not look for a ref of that
+    // name in a batch.
+    let low = name.to_ascii_lower();
+    let hash = "";
+    if (objects.is_name(r.width, low)) {
+      hash = low;
+    } else {
+      let named = rev.parse(r, s, name);
+      s = named.store;
+      hash = named.hash;
+    }
     let line = name + " missing";
     let body: u8[] = [];
     let has = false;
@@ -992,8 +1007,10 @@ function log_limit(text: string): i32 {
 // The options of log. `form` is a built-in form or "format", and `format`
 // is the text of the format. `terminator` puts a line end after each
 // commit, and its absence puts one between two commits. `diff` is "",
-// "name-only" or "name-status".
-struct LogOpts { limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, decorate: boolean, walk: revwalk.Opts, bad: string }
+// "name-only" or "name-status", and `patch` holds the other forms of the
+// diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
+// the pathspec selects, and `renames` finds the renames of the diff.
+struct LogOpts { pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1036,6 +1053,225 @@ function log_time(text: string): i64 {
   return t;
 }
 
+// The diff with the form `f` on, and without `-s`.
+function with_form(o: LogOpts, d: patch.Opts): LogOpts {
+  return LogOpts { ...o, patch: d, no_output: false };
+}
+
+// The parts of `--stat=WIDTH,NAME-WIDTH,COUNT`.
+function stat_value(d: patch.Opts, v: string): patch.Opts {
+  let parts = v.split(",");
+  let out = d;
+  if (parts.len() > 0 && parts[0].len() > 0) {
+    out = patch.Opts { ...out, stat_width: log_limit(parts[0]) };
+  }
+  if (parts.len() > 1 && parts[1].len() > 0) {
+    out = patch.Opts { ...out, stat_name_width: log_limit(parts[1]) };
+  }
+  if (parts.len() > 2 && parts[2].len() > 0) {
+    out = patch.Opts { ...out, stat_count: log_limit(parts[2]) };
+  }
+  return out;
+}
+
+// Reads the option of the diff at `i`, and gives the count of arguments
+// that it takes, or 0 when it is not an option of the diff.
+function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
+  let x = argv[i];
+  let d = o.patch;
+  let algo = d.algo;
+  if (x == "--color" || x.starts_with("--color=") || x == "--no-color") {
+    let choice = if (x == "--no-color") { 0 } else if (x == "--color") { 1 } else { color_when(objects.part(x, 8, x.len())) };
+    if (choice < 0) {
+      return (LogOpts { ...o, bad: "error: option `color' expects \"always\", \"auto\", or \"never\"" }, 1);
+    }
+    return (LogOpts { ...o, patch: patch.Opts { ...d, color: wants_color(choice) } }, 1);
+  }
+  if (x == "-p" || x == "-u" || x == "--patch") {
+    return (with_form(o, patch.Opts { ...d, patch: true }), 1);
+  }
+  if (x == "-s" || x == "--no-patch") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, patch: false, stat: false, numstat: false, shortstat: false, summary: false }, diff: "", no_output: true }, 1);
+  }
+  if (x == "--stat") {
+    return (with_form(o, patch.Opts { ...d, stat: true }), 1);
+  }
+  if (x.starts_with("--stat=")) {
+    return (with_form(o, stat_value(patch.Opts { ...d, stat: true }, objects.part(x, 7, x.len()))), 1);
+  }
+  if (x == "--numstat") {
+    return (with_form(o, patch.Opts { ...d, numstat: true }), 1);
+  }
+  if (x == "--shortstat") {
+    return (with_form(o, patch.Opts { ...d, shortstat: true }), 1);
+  }
+  if (x == "--summary") {
+    return (with_form(o, patch.Opts { ...d, summary: true }), 1);
+  }
+  if (x == "--patch-with-stat") {
+    return (with_form(o, patch.Opts { ...d, patch: true, stat: true }), 1);
+  }
+  if (x.starts_with("-U") || x.starts_with("--unified=")) {
+    let v = if (x.starts_with("-U")) { objects.part(x, 2, x.len()) } else { objects.part(x, 10, x.len()) };
+    let n = log_number(v);
+    if (v.len() > 0 && n < 0) {
+      return (LogOpts { ...o, bad: "--unified expects a numerical value" }, 1);
+    }
+    return (with_form(o, patch.Opts { ...d, patch: true, context: if (v.len() > 0) { n } else { d.context } }), 1);
+  }
+  if (x == "--no-prefix") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, src: "", dst: "" } }, 1);
+  }
+  if (x == "--default-prefix") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, src: "a/", dst: "b/" } }, 1);
+  }
+  if (x == "--minimal") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, algo: linediff.Options { ...algo, minimal: true } } }, 1);
+  }
+  if (x == "--patience") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, algo: linediff.Options { ...algo, algorithm: linediff.PATIENCE } } }, 1);
+  }
+  if (x == "--histogram") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, algo: linediff.Options { ...algo, algorithm: linediff.HISTOGRAM } } }, 1);
+  }
+  if (x == "--indent-heuristic" || x == "--no-indent-heuristic") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, algo: linediff.Options { ...algo, indent_heuristic: x == "--indent-heuristic" } } }, 1);
+  }
+  if (x == "--full-index") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, full_index: true } }, 1);
+  }
+  if (x == "-a" || x == "--text") {
+    return (LogOpts { ...o, patch: patch.Opts { ...d, text: true } }, 1);
+  }
+  if (x == "--full-diff") {
+    return (LogOpts { ...o, full_diff: true }, 1);
+  }
+  if (x == "--no-renames") {
+    return (LogOpts { ...o, renames: false }, 1);
+  }
+  if (x == "-M" || x == "--find-renames") {
+    return (LogOpts { ...o, renames: true }, 1);
+  }
+  for name in ["--src-prefix", "--dst-prefix", "--diff-algorithm", "--inter-hunk-context", "--stat-width", "--stat-name-width", "--stat-graph-width", "--stat-count"] {
+    let (v, taken) = option_value(argv, i, name);
+    if (taken > 0) {
+      if (name == "--src-prefix") {
+        return (LogOpts { ...o, patch: patch.Opts { ...d, src: v } }, taken);
+      }
+      if (name == "--dst-prefix") {
+        return (LogOpts { ...o, patch: patch.Opts { ...d, dst: v } }, taken);
+      }
+      if (name == "--diff-algorithm") {
+        let a = diff_algorithm(algo, v);
+        if (a.algorithm < 0) {
+          return (LogOpts { ...o, bad: "option diff-algorithm accepts \"myers\", \"minimal\", \"patience\" and \"histogram\"" }, taken);
+        }
+        return (LogOpts { ...o, patch: patch.Opts { ...d, algo: a } }, taken);
+      }
+      let n = log_limit(v);
+      if (name == "--inter-hunk-context") {
+        return (LogOpts { ...o, patch: patch.Opts { ...d, interhunk: n } }, taken);
+      }
+      let st = patch.Opts { ...d, stat: true };
+      if (name == "--stat-width") {
+        return (with_form(o, patch.Opts { ...st, stat_width: n }), taken);
+      }
+      if (name == "--stat-name-width") {
+        return (with_form(o, patch.Opts { ...st, stat_name_width: n }), taken);
+      }
+      if (name == "--stat-graph-width") {
+        return (with_form(o, patch.Opts { ...st, stat_graph_width: n }), taken);
+      }
+      return (with_form(o, patch.Opts { ...st, stat_count: n }), taken);
+    }
+  }
+  return (o, 0);
+}
+
+// The options of the diff that the configuration sets.
+// The value of `--color=WHEN`: 0 for never, 1 for always, 2 for auto,
+// or -1.
+function color_when(v: string): i32 {
+  let low = v.to_ascii_lower();
+  return if (low == "never") { 0 } else if (low == "always") { 1 } else if (low == "auto") { 2 } else { -1 };
+}
+
+// The value of a color setting of the configuration: a value of
+// `color_when`, or a boolean, where true is auto (`git_config_colorbool`).
+function color_bool(c: config.Config, name: string, v: string): i32 {
+  let choice = color_when(v);
+  if (choice >= 0) {
+    return choice;
+  }
+  return if (c.flag(name, false)) { 2 } else { 0 };
+}
+
+// True when the output has colors: auto gives colors to a terminal.
+function wants_color(choice: i32): boolean {
+  if (choice != 2) {
+    return choice == 1;
+  }
+  return isatty(1) && env("TERM").unwrap_or("dumb") != "dumb";
+}
+
+function diff_config(r: refs.Repo, d: patch.Opts): patch.Opts {
+  let c = r.config;
+  let out = d;
+  let choice = 2;
+  for name in ["color.ui", "color.diff", "diff.color"] {
+    if let Some(v) = c.get(name) {
+      choice = color_bool(c, name, v);
+    }
+  }
+  out = patch.Opts { ...out, color: wants_color(choice) };
+  if (c.flag("diff.noprefix", false)) {
+    out = patch.Opts { ...out, src: "", dst: "" };
+  }
+  if let Some(v) = c.get("diff.context") {
+    if (log_number(v) >= 0) {
+      out = patch.Opts { ...out, context: log_number(v) };
+    }
+  }
+  if let Some(v) = c.get("diff.interhunkcontext") {
+    if (log_number(v) >= 0) {
+      out = patch.Opts { ...out, interhunk: log_number(v) };
+    }
+  }
+  if let Some(v) = c.get("diff.algorithm") {
+    let a = diff_algorithm(out.algo, v);
+    if (a.algorithm >= 0) {
+      out = patch.Opts { ...out, algo: a };
+    }
+  }
+  out = patch.Opts { ...out, algo: linediff.Options { ...out.algo, indent_heuristic: c.flag("diff.indentheuristic", true) } };
+  if let Some(v) = c.get("diff.statnamewidth") {
+    out = patch.Opts { ...out, stat_name_width: log_limit(v) };
+  }
+  if let Some(v) = c.get("diff.statgraphwidth") {
+    out = patch.Opts { ...out, stat_graph_width: log_limit(v) };
+  }
+  return out;
+}
+
+// The search that `--diff-algorithm=NAME` selects, with an algorithm of
+// -1 for a name that git does not know.
+function diff_algorithm(a: linediff.Options, name: string): linediff.Options {
+  let n = name.to_ascii_lower();
+  if (n == "myers" || n == "default") {
+    return linediff.Options { ...a, algorithm: linediff.MYERS };
+  }
+  if (n == "minimal") {
+    return linediff.Options { ...a, algorithm: linediff.MYERS, minimal: true };
+  }
+  if (n == "patience") {
+    return linediff.Options { ...a, algorithm: linediff.PATIENCE };
+  }
+  if (n == "histogram") {
+    return linediff.Options { ...a, algorithm: linediff.HISTOGRAM };
+  }
+  return linediff.Options { ...a, algorithm: -1 };
+}
+
 // Reads the option at `i`, and gives the count of arguments that it takes,
 // or 0 when it is not an option of log.
 function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (LogOpts, GrepArgs, i32) {
@@ -1043,9 +1279,39 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
   let g = g_in;
   let w = o.walk;
   let x = argv[i];
-  let flags = ["--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no"];
+  let flags = ["--follow", "--pickaxe-all", "--pickaxe-regex", "-g", "--walk-reflogs", "--left-right", "--left-only", "--right-only", "--cherry-pick", "--cherry-mark", "--cherry", "--boundary", "--ancestry-path", "--simplify-by-decoration", "--simplify-merges", "--use-mailmap", "--mailmap", "--no-use-mailmap", "--no-mailmap", "--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no", "--decorate=full", "--decorate=auto", "--clear-decorations"];
   if (flags.contains(x)) {
-    if (x == "--oneline") {
+    if (x == "--follow") {
+      o = LogOpts { ...o, follow: true };
+    } else if (x == "--pickaxe-all") {
+      o = LogOpts { ...o, pick: patch.Pickaxe { ...o.pick, all: true } };
+    } else if (x == "--pickaxe-regex") {
+      o = LogOpts { ...o, pick: patch.Pickaxe { ...o.pick, regex: true } };
+    } else if (x == "-g" || x == "--walk-reflogs") {
+      o = LogOpts { ...o, walk_reflogs: true };
+    } else if (x == "--left-right") {
+      o = LogOpts { ...o, left_right: true };
+    } else if (x == "--left-only") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, left_only: true } };
+    } else if (x == "--right-only") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, right_only: true } };
+    } else if (x == "--cherry-pick") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, cherry_pick: true } };
+    } else if (x == "--cherry-mark") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, cherry_mark: true } };
+    } else if (x == "--cherry") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, right_only: true, cherry_mark: true, max_parents: 1 } };
+    } else if (x == "--boundary") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, boundary: true } };
+    } else if (x == "--ancestry-path") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, ancestry: true, full_history: true } };
+    } else if (x == "--simplify-by-decoration") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, by_decoration: true, simplify_merges: true, topo: true, rewrite: true, full_history: true } };
+    } else if (x == "--simplify-merges") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, simplify_merges: true, topo: true, rewrite: true, full_history: true } };
+    } else if (x == "--use-mailmap" || x == "--mailmap" || x == "--no-use-mailmap" || x == "--no-mailmap") {
+      o = LogOpts { ...o, use_mailmap: !x.starts_with("--no-") };
+    } else if (x == "--oneline") {
       o = LogOpts { ...log_form(o, "oneline", false), abbrev_commit: true };
     } else if (x == "--pretty") {
       o = log_form(o, "medium", false);
@@ -1056,7 +1322,7 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
     } else if (x == "--graph") {
       o = LogOpts { ...o, graph: true, walk: revwalk.Opts { ...w, rewrite: true, topo: true } };
     } else if (x == "--name-only" || x == "--name-status") {
-      o = LogOpts { ...o, diff: objects.part(x, 2, x.len()) };
+      o = LogOpts { ...o, diff: objects.part(x, 2, x.len()), names_twice: o.names_twice || o.diff.len() > 0 && o.diff != objects.part(x, 2, x.len()) || o.no_output };
     } else if (x == "--first-parent") {
       o = LogOpts { ...o, walk: revwalk.Opts { ...w, first_parent: true } };
     } else if (x == "--topo-order") {
@@ -1092,13 +1358,21 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
     } else if (x == "--no-abbrev-commit") {
       o = LogOpts { ...o, abbrev_commit: false };
     } else if (x == "--relative-date") {
-      o = LogOpts { ...o, dates: date.Mode { kind: date.RELATIVE, local: false, format: "" } };
+      o = LogOpts { ...o, dates: date.Mode { kind: date.RELATIVE, local: false, format: "" }, date_explicit: true };
     } else if (x == "--decorate" || x == "--decorate=short") {
-      o = LogOpts { ...o, decorate: true };
-    } else if (x == "--no-decorate" || x == "--decorate=no") {
-      o = LogOpts { ...o, decorate: false };
+      o = LogOpts { ...o, decorate: 1 };
+    } else if (x == "--decorate=full") {
+      o = LogOpts { ...o, decorate: 2 };
+    } else if (x == "--no-decorate" || x == "--decorate=no" || x == "--decorate=auto") {
+      o = LogOpts { ...o, decorate: 0 };
+    } else if (x == "--clear-decorations") {
+      o = LogOpts { ...o, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: [], clear: true } };
     }
     return (o, g, 1);
+  }
+  let (od, dtaken) = diff_option(o, argv, i);
+  if (dtaken > 0) {
+    return (od, g, dtaken);
   }
   if (x == "-n" && i + 1 < argv.len()) {
     return (LogOpts { ...o, limit: log_limit(argv[i + 1]) }, g, 2);
@@ -1108,6 +1382,27 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
   }
   if (x.starts_with("-") && !x.starts_with("--") && log_number(objects.part(x, 1, x.len())) >= 0) {
     return (LogOpts { ...o, limit: log_number(objects.part(x, 1, x.len())) }, g, 1);
+  }
+  if (x.starts_with("-S") || x.starts_with("-G")) {
+    let kind = if (x.starts_with("-S")) { 1 } else { 2 };
+    if (x.len() > 2) {
+      return (LogOpts { ...o, pick: patch.Pickaxe { ...o.pick, kind: kind, needle: objects.part(x, 2, x.len()) } }, g, 1);
+    }
+    if (i + 1 < argv.len()) {
+      return (LogOpts { ...o, pick: patch.Pickaxe { ...o.pick, kind: kind, needle: argv[i + 1] } }, g, 2);
+    }
+  }
+  if (x.starts_with("--ancestry-path=")) {
+    return (LogOpts { ...o, ancestry_names: o.ancestry_names.append(objects.part(x, 16, x.len())), walk: revwalk.Opts { ...w, ancestry: true, full_history: true } }, g, 1);
+  }
+  for name in ["--decorate-refs", "--decorate-refs-exclude"] {
+    let (v, taken) = option_value(argv, i, name);
+    if (taken > 0) {
+      let f = o.decorate_filter;
+      let p = ref_pattern(v);
+      let nf = if (name == "--decorate-refs") { DecorationFilter { ...f, include: f.include.append(p) } } else { DecorationFilter { ...f, exclude: f.exclude.append(p) } };
+      return (LogOpts { ...o, decorate_filter: nf }, g, taken);
+    }
   }
   let valued = ["--max-count", "--skip", "--format", "--pretty", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep", "--min-parents", "--max-parents", "--abbrev"];
   for name in valued {
@@ -1123,7 +1418,7 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
         o = log_form(o, v, false);
       } else if (name == "--date") {
         o = match (date.parse_mode(v)) {
-          Ok(m) => LogOpts { ...o, dates: m },
+          Ok(m) => LogOpts { ...o, dates: m, date_explicit: true },
           Err(message) => LogOpts { ...o, bad: message },
         };
       } else if (name == "--since" || name == "--after") {
@@ -1178,16 +1473,86 @@ function grep_of(g: GrepArgs): Result[revwalk.Grep, string] {
   return Ok(out);
 }
 
+// A pattern of `--decorate-refs`: a full ref name with `refs/` before
+// it, and with no `/` at its end. A pattern with no wildcard matches the
+// refs below it (`normalize_glob_ref` of git).
+function ref_pattern(text: string): string {
+  let p = if (!text.starts_with("refs/") && text != "HEAD") { "refs/" + text } else { text };
+  return if (p.ends_with("/")) { objects.part(p, 0, p.len() - 1) } else { p };
+}
+
+function pattern_matches(pattern: string, name: string): boolean {
+  if (treediff.has_wildcard(pattern)) {
+    return fnmatch.fnmatch(pattern, name);
+  }
+  return name.starts_with(pattern) && (name.len() == pattern.len() || name[pattern.len()] == b'/');
+}
+
+// The filter of the decorations: the patterns of `--decorate-refs`, of
+// `--decorate-refs-exclude` and of `log.excludeDecoration`, and whether
+// `--clear-decorations` turns off the default set.
+struct DecorationFilter { include: string[], exclude: string[], config_exclude: string[], clear: boolean }
+
+// True when the filter shows the ref `name`: `ref_filter_match` of git,
+// with the default set of git 2.43 when no pattern is given.
+function decorates(f: DecorationFilter, name: string): boolean {
+  for p in f.exclude {
+    if (pattern_matches(p, name)) {
+      return false;
+    }
+  }
+  if (f.include.len() > 0) {
+    for p in f.include {
+      if (pattern_matches(p, name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  for p in f.config_exclude {
+    if (pattern_matches(p, name)) {
+      return false;
+    }
+  }
+  if (f.clear || f.exclude.len() > 0 || f.config_exclude.len() > 0) {
+    return true;
+  }
+  for p in ["refs/heads/", "refs/tags/", "refs/remotes/", "refs/replace/"] {
+    if (name.starts_with(p)) {
+      return true;
+    }
+  }
+  return name == "HEAD" || name == "refs/stash";
+}
+
+// The kind of the decoration of the ref `name`.
+function decoration_kind(name: string): i32 {
+  if (name.starts_with("refs/heads/")) {
+    return color.DECORATION_LOCAL;
+  }
+  if (name.starts_with("refs/remotes/")) {
+    return color.DECORATION_REMOTE;
+  }
+  if (name.starts_with("refs/tags/")) {
+    return color.DECORATION_TAG;
+  }
+  if (name.starts_with("refs/replace/")) {
+    return color.DECORATION_GRAFTED;
+  }
+  return if (name == "refs/stash") { color.DECORATION_STASH } else { color.DECORATION_NONE };
+}
+
 // The decorations of each commit: the refs that name it, as `git log`
 // shows them, with `HEAD -> BRANCH` when HEAD names a branch of the
-// commit.
-function decorations_of(r: refs.Repo, s: store.Store): (store.Store, Map[string, string[]]) {
-  let by: Map[string, string[]] = Map { };
+// commit. `full` keeps the whole names of the refs.
+function decorations_of(r: refs.Repo, s: store.Store, full: boolean, f: DecorationFilter): (store.Store, Map[string, log.Decoration[]]) {
+  let by: Map[string, log.Decoration[]] = Map { };
   let st = s;
-  let add = (m: Map[string, string[]], hash: string, name: string): Map[string, string[]] => m.insert(hash, [name].concat(m.get_or(hash, [])));
+  let add = (m: Map[string, log.Decoration[]], hash: string, d: log.Decoration): Map[string, log.Decoration[]] => m.insert(hash, [d].concat(m.get_or(hash, [])));
   for e in refs.all_refs(r) {
-    if (!e.name.starts_with("refs/notes/")) {
-      let shown = if (e.name.starts_with("refs/heads/")) { objects.part(e.name, 11, e.name.len()) } else if (e.name.starts_with("refs/remotes/")) { objects.part(e.name, 13, e.name.len()) } else if (e.name.starts_with("refs/tags/")) { "tag: " + objects.part(e.name, 10, e.name.len()) } else { e.name };
+    if (decorates(f, e.name)) {
+      let short = if (full) { e.name } else if (e.name.starts_with("refs/heads/")) { objects.part(e.name, 11, e.name.len()) } else if (e.name.starts_with("refs/remotes/")) { objects.part(e.name, 13, e.name.len()) } else if (e.name.starts_with("refs/tags/")) { objects.part(e.name, 10, e.name.len()) } else { e.name };
+      let shown = log.Decoration { name: short, kind: decoration_kind(e.name), branch: "" };
       let at = e.hash;
       by = add(by, at, shown);
       for step in 0..16 {
@@ -1206,25 +1571,70 @@ function decorations_of(r: refs.Repo, s: store.Store): (store.Store, Map[string,
     }
   }
   let head = refs.resolve_ref(r, "HEAD");
-  if (head.hash.len() > 0) {
+  if (head.hash.len() > 0 && decorates(f, "HEAD")) {
     let branch = refs.head_branch(r);
     let list = by.get_or(head.hash, []);
-    let short = if (branch.starts_with("refs/heads/")) { objects.part(branch, 11, branch.len()) } else { "" };
-    if (short.len() > 0 && list.contains(short)) {
-      by = by.insert(head.hash, ["HEAD -> " + short].concat(list.filter((n: string): boolean => n != short)));
+    let short = if (full) { branch } else if (branch.starts_with("refs/heads/")) { objects.part(branch, 11, branch.len()) } else { "" };
+    let current = (d: log.Decoration): boolean => d.kind == color.DECORATION_LOCAL && d.name == short;
+    if (branch.starts_with("refs/heads/") && list.any(current)) {
+      let others: log.Decoration[] = list.filter((d: log.Decoration): boolean => !current(d));
+      by = by.insert(head.hash, [log.Decoration { name: "HEAD", kind: color.DECORATION_HEAD, branch: short }].concat(others));
     } else {
-      by = by.insert(head.hash, ["HEAD"].concat(list));
+      by = by.insert(head.hash, [log.Decoration { name: "HEAD", kind: color.DECORATION_HEAD, branch: "" }].concat(list));
     }
   }
   return (st, by);
 }
 
-// The lines of `--name-only` or `--name-status` for the commit `c`
-// against its first parent: no lines for a merge, unless the walk follows
-// the first parents only.
-function name_lines(st: store.Store, c: log.Commit, parents: string[], o: LogOpts): (store.Store, string) {
+// The changes of the commit `c` against its first parent, with the
+// renames: none for a merge, unless the walk follows the first parents
+// only. With `--full-diff` the changes are not limited to the pathspec.
+function commit_changes(st: store.Store, c: log.Commit, parents: string[], o: LogOpts, follow: string): (store.Store, treediff.Change[], string) {
+  let (s1, changes, path) = commit_diff(st, c, parents, o, follow);
+  if (o.pick.kind == 0) {
+    return (s1, changes, path);
+  }
+  let (s2, kept) = patch.pickaxe(s1, changes, o.pick, o.patch);
+  return (s2, kept, path);
+}
+
+// The source of the file `path` that the commit adds, as `--follow` finds
+// it: a deleted file or a file that stays, whose content is close enough
+// (`try_to_follow_renames` of git). The change is a rename or a copy, or
+// none.
+function follow_source(st: store.Store, base: string, tree: string, path: u8[]): (store.Store, treediff.Change[]) {
+  let (s1, all) = treediff.changes(st, base, tree, []);
+  let dst: treediff.Change[] = all.filter((c: treediff.Change): boolean => c.status == b'A' && c.path == path);
+  if (dst.len() == 0) {
+    return (s1, []);
+  }
+  // Each file of the parent is a source: a deleted one gives a rename,
+  // one that stays gives a copy.
+  let (s2, old) = treediff.changes(s1, "", base, []);
+  let deleted: Map[string, boolean] = Map { };
+  for c in all {
+    if (c.status == b'D') {
+      deleted = deleted.insert(unsafe { string_from_bytes_unchecked(c.path) }, true);
+    }
+  }
+  let zero = "0".repeat(2 * st.width);
+  let sources: treediff.Change[] = [];
+  for c in old {
+    sources = sources.append(treediff.Change { status: b'D', path: c.path, old_mode: c.new_mode, new_mode: "", old_hash: c.new_hash, new_hash: zero, old_path: c.path, score: 0 });
+  }
+  let (s3, found) = treediff.copies(s2, dst.concat(sources));
+  for c in found {
+    if (c.status == b'R' && c.path == path) {
+      let stays = !deleted.contains(unsafe { string_from_bytes_unchecked(c.old_path) });
+      return (s3, [treediff.Change { ...c, status: if (stays) { b'C' } else { b'R' } }]);
+    }
+  }
+  return (s3, dst);
+}
+
+function commit_diff(st: store.Store, c: log.Commit, parents: string[], o: LogOpts, follow: string): (store.Store, treediff.Change[], string) {
   if (parents.len() > 1 && !o.walk.first_parent) {
-    return (st, "");
+    return (st, [], follow);
   }
   let s = st;
   let base = "";
@@ -1235,8 +1645,33 @@ function name_lines(st: store.Store, c: log.Commit, parents: string[], o: LogOpt
       base = log.commit_of(parents[0], p.body).tree;
     }
   }
-  let (after, found) = treediff.changes(s, base, c.tree, o.walk.items);
-  let (renamed, changes) = treediff.renames(after, found);
+  if (o.follow) {
+    let (after, found) = treediff.changes(s, base, c.tree, [follow]);
+    // git looks for the source only of a path that is the pathspec.
+    if (found.len() == 1 && found[0].status == b'A' && found[0].path == follow.bytes()) {
+      let (s2, chosen) = follow_source(after, base, c.tree, found[0].path);
+      if (chosen.len() == 1 && chosen[0].status != b'A') {
+        return (s2, chosen, unsafe { string_from_bytes_unchecked(chosen[0].old_path) });
+      }
+      return (s2, found, follow);
+    }
+    if (!o.renames) {
+      return (after, found, follow);
+    }
+    let (s3, renamed) = treediff.renames(after, found);
+    return (s3, renamed, follow);
+  }
+  let items = if (o.full_diff) { [] } else { o.walk.items };
+  let (after, found) = treediff.changes(s, base, c.tree, items);
+  if (!o.renames) {
+    return (after, found, follow);
+  }
+  let (s4, renamed) = treediff.renames(after, found);
+  return (s4, renamed, follow);
+}
+
+// The lines of `--name-only` or `--name-status`.
+function name_lines(changes: treediff.Change[], o: LogOpts): string {
   let out = "";
   for ch in changes {
     let path = unsafe { string_from_bytes_unchecked(objects.quoted(ch.path)) };
@@ -1250,7 +1685,7 @@ function name_lines(st: store.Store, c: log.Commit, parents: string[], o: LogOpt
       out += status + "\t" + path + "\n";
     }
   }
-  return (renamed, out);
+  return out;
 }
 
 // The pathspec of the paths `args`, from the current directory, or the
@@ -1267,10 +1702,6 @@ function log_items(r: refs.Repo, args: string[]): Result[string[], string] {
   return Ok(items);
 }
 
-// Adds the commits that `name` gives to the walk: a range, the shorthands
-// for parents, an excluded commit, or one commit. The second value is
-// false when `name` is no revision, and the third is the message of git
-// when it stops.
 // The commit that `text` names, or "", and the message of git when it
 // stops.
 function log_commit(r: refs.Repo, w: revwalk.Walk, text: string): (revwalk.Walk, string, string) {
@@ -1284,8 +1715,40 @@ function log_commit(r: refs.Repo, w: revwalk.Walk, text: string): (revwalk.Walk,
   return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: c.store } }, c.hash, "");
 }
 
+// Adds the commits that `name` gives to the walk: a range, the shorthands
+// for parents, an excluded commit, or one commit. The second value is
+// false when `name` is no revision, and the third is the message of git
+// when it stops.
 function log_rev(r: refs.Repo, w_in: revwalk.Walk, name: string, excluded: boolean, dashdash: boolean): (revwalk.Walk, boolean, string) {
   let w = w_in;
+  if (w.opts.reflog_walk) {
+    // A walk of the reflogs takes the names of refs, and no ranges.
+    let check = name;
+    let range = false;
+    if let Some(dots) = name.index_of("..") {
+      check = objects.part(name, 0, dots);
+      range = true;
+    } else if (name.starts_with("^")) {
+      check = objects.part(name, 1, name.len());
+      range = true;
+    }
+    if (check.len() == 0) {
+      check = "HEAD";
+    }
+    let named = rev.parse_with(r, w.g.store, check, rev.COMMITTISH);
+    print_errors(named.errors);
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: named.store } };
+    if (named.died.len() > 0) {
+      return (w, false, named.died);
+    }
+    if (named.hash.len() == 0) {
+      return (w, false, "");
+    }
+    if (range || excluded) {
+      return (w, true, "cannot walk reflogs for " + check);
+    }
+    return (revwalk.Walk { ...w, pending: w.pending.append(name) }, true, "");
+  }
   let off = if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 };
   let on = if (excluded) { 0 } else { revwalk.UNINTERESTING | revwalk.BOTTOM };
   if let Some(dots) = name.index_of("..") {
@@ -1406,7 +1869,9 @@ function ref_option(x: string): string {
 
 // The state of the output of log: the graph, and whether a commit is shown
 // and its text had no line end at its end.
-struct Shown { graph: graph.Graph, any: boolean, missing: boolean }
+// `follow` is the path that `--follow` follows now.
+// `hidden` is true when the last commit gave no text.
+struct Shown { graph: graph.Graph, any: boolean, missing: boolean, follow: string, hidden: boolean }
 
 // The padding of the graph before a line, or "" with no graph.
 function graph_pad(o: LogOpts, sh: Shown): (Shown, string) {
@@ -1418,7 +1883,7 @@ function graph_pad(o: LogOpts, sh: Shown): (Shown, string) {
 }
 
 // The text of one commit, as `show_log` of git prints it, and its diff.
-function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context, sh_in: Shown): (store.Store, string, Shown) {
+function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context, least: i32, sh_in: Shown, known: treediff.Change[][]): (store.Store, string, Shown) {
   let s = st;
   let sh = sh_in;
   let out = "";
@@ -1469,23 +1934,57 @@ function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context,
     out += "\n";
   }
   sh = Shown { ...sh, missing: missing };
-  if (o.diff.len() > 0) {
-    let (after, names) = name_lines(s, c, ctx.parents, o);
+  let diffs = !o.no_output && patch.any(o.patch);
+  if (o.diff.len() == 0 && !diffs) {
+    return (s, out, sh);
+  }
+  let changes: treediff.Change[] = [];
+  if (known.len() > 0) {
+    changes = known[0];
+  } else {
+    let (after, found, path) = commit_changes(s, c, ctx.parents, o, sh.follow);
     s = after;
-    if (names.len() > 0) {
-      if (o.form != "oneline" && !empty) {
-        let (sh3, p) = graph_pad(o, sh);
-        sh = sh3;
-        out += p + "\n";
-      }
-      for line in names.split("\n") {
-        if (line.len() > 0) {
-          let (sh4, p) = graph_pad(o, sh);
-          sh = sh4;
-          out += p + line + "\n";
-        }
+    changes = found;
+    sh = Shown { ...sh, follow: path };
+  }
+  if (changes.len() == 0) {
+    return (s, out, sh);
+  }
+  if (o.form != "oneline" && !empty) {
+    let (sh3, p) = graph_pad(o, sh);
+    sh = sh3;
+    let dashes = o.diff.len() == 0 && o.patch.patch && o.patch.stat;
+    out += p + (if (dashes) { "---" } else { "" }) + "\n";
+  }
+  if (o.diff.len() > 0) {
+    for line in name_lines(changes, o).split("\n") {
+      if (line.len() > 0) {
+        let (sh4, p) = graph_pad(o, sh);
+        sh = sh4;
+        out += p + line + "\n";
       }
     }
+    return (s, out, sh);
+  }
+  // The graph lines that the first calls of the diff take, for the width
+  // of the stat.
+  let widths: i32[] = [];
+  let ahead = sh;
+  for k in 0..changes.len() + 2 {
+    let (sh5, p) = graph_pad(o, ahead);
+    ahead = sh5;
+    widths = widths.append(p.len());
+  }
+  let (s5, text) = patch.render(s, changes, o.patch, least, (k: i32): i32 => widths[k.min(widths.len() - 1)]);
+  s = s5;
+  let pads: string[] = [];
+  for k in 0..text.calls {
+    let (sh6, p) = graph_pad(o, sh);
+    sh = sh6;
+    pads = pads.append(p);
+  }
+  for i in 0..text.lines.len() {
+    out += pads[text.uses[i]] + text.lines[i] + "\n";
   }
   return (s, out, sh);
 }
@@ -1510,40 +2009,317 @@ function graph_parents(w_in: revwalk.Walk, h: string, first_parent: boolean): (r
   return (w, out);
 }
 
+// A commit of the log, with its parents in the graph when the log has a
+// graph.
 struct LogItem { hash: string, parents: string[] }
 
-function log_next(w_in: revwalk.Walk, o: LogOpts): (revwalk.Walk, LogItem) {
-  let (w, h) = revwalk.next(w_in);
+function log_item(w: revwalk.Walk, h: string, o: LogOpts): (revwalk.Walk, LogItem) {
   if (!o.graph || h.len() == 0) {
     return (w, LogItem { hash: h, parents: [] });
   }
-  // Capture graph parents before lookahead marks later commits as shown.
   let (after, parents) = graph_parents(w, h, o.walk.first_parent);
   return (after, LogItem { hash: h, parents: parents });
 }
 
-// The text of a commit, with the graph.
-function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Map[string, string[]], least: i32, sh_in: Shown, following: LogItem[]): (revwalk.Walk, string, Shown) {
+// The state of the walk of log: the walk, the counts of the commits that
+// `--skip` passed and that `-n` counts, and the parents that can be
+// boundary commits.
+struct Pull { w: revwalk.Walk, skipped: i32, count: i32, candidates: string[] }
+
+// The next commit that log shows, as `get_revision` of git gives it: after
+// `--skip` and within `-n`. With `--boundary`, its parents are marked as
+// parents of a shown commit before its parents in the graph come.
+function log_pull(p_in: Pull, o: LogOpts): (Pull, LogItem) {
+  let p = p_in;
+  let none = LogItem { hash: "", parents: [] };
+  while (o.limit < 0 || p.count < o.limit) {
+    let (w, h) = revwalk.next(p.w);
+    p = Pull { ...p, w: w };
+    if (w.failed.len() > 0 || h.len() == 0) {
+      return (p, none);
+    }
+    if (p.skipped < o.skip) {
+      p = Pull { ...p, skipped: p.skipped + 1 };
+      continue;
+    }
+    p = Pull { ...p, count: p.count + 1 };
+    if (o.walk.boundary) {
+      let (w1, ps) = revwalk.parents(p.w, h);
+      p = Pull { ...p, w: w1 };
+      for c in ps {
+        if ((revwalk.flag(p.w, c) & (revwalk.CHILD_SHOWN | revwalk.SHOWN)) == 0) {
+          p = Pull { ...p, w: revwalk.with_flag(p.w, c, revwalk.CHILD_SHOWN), candidates: p.candidates.append(c) };
+        }
+      }
+    }
+    let (w2, item) = log_item(p.w, h, o);
+    return (Pull { ...p, w: w2 }, item);
+  }
+  return (p, none);
+}
+
+// The boundary commits of the parents `candidates` of the shown commits:
+// those that the walk did not show, in topological order.
+function boundary_commits(w_in: revwalk.Walk, candidates: string[]): (revwalk.Walk, string[]) {
+  let w = w_in;
+  let list: string[] = [];
+  for c in candidates {
+    let f = revwalk.flag(w, c);
+    if ((f & revwalk.CHILD_SHOWN) != 0 && (f & (revwalk.SHOWN | revwalk.BOUNDARY)) == 0) {
+      w = revwalk.with_flag(w, c, revwalk.BOUNDARY);
+      list = [c].concat(list);
+    }
+  }
+  return revwalk.sorted_topo(w, list);
+}
+
+// The mark of a commit before its name, from its flags `f`:
+// `get_revision_mark` of git.
+function revision_mark(o: LogOpts, f: i32): string {
+  if ((f & revwalk.BOUNDARY) != 0) {
+    return "-";
+  }
+  if ((f & revwalk.UNINTERESTING) != 0) {
+    return "^";
+  }
+  if ((f & revwalk.PATCHSAME) != 0) {
+    return "=";
+  }
+  if (o.left_right) {
+    return if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
+  }
+  if (o.graph) {
+    return "*";
+  }
+  return if (o.walk.cherry_mark) { "+" } else { "" };
+}
+
+// The position of a reflog in a walk of `--walk-reflogs`: the name as the
+// command line gives it, its entries, and the entry to show next.
+struct ReflogPos { name: string, entries: refs.LogEntry[], at: i32 }
+
+// The reflog that the name `text` gives: `NAME`, `NAME@{N}` or `@{N}`,
+// as `add_reflog_for_walk` of git reads it, or none.
+function reflog_of(r: refs.Repo, text: string): ReflogPos[] {
+  let base = text;
+  let start = 0;
+  if let Some(at) = text.index_of("@{") {
+    if (text.ends_with("}")) {
+      let n = log_number(objects.part(text, at + 2, text.len() - 1));
+      if (n >= 0) {
+        base = objects.part(text, 0, at);
+        start = n;
+      }
+    }
+  }
+  if (base.len() == 0) {
+    base = refs.head_branch(r);
+    if (base.len() == 0) {
+      base = "HEAD";
+    }
+  }
+  let entries = refs.reflog(r, base);
+  if (entries.len() == 0) {
+    let d = refs.dwim_log(r, base);
+    if (d.count == 1) {
+      entries = refs.reflog(r, d.name);
+    }
+  }
+  if (entries.len() == 0) {
+    return [];
+  }
+  return [ReflogPos { name: base, entries: entries, at: entries.len() - 1 - start }];
+}
+
+// The short form of a ref name for `%gd`.
+function short_ref(name: string): string {
+  for p in ["refs/heads/", "refs/tags/", "refs/remotes/"] {
+    if (name.starts_with(p)) {
+      return objects.part(name, p.len(), name.len());
+    }
+  }
+  return name;
+}
+
+// The log of the entries of the reflogs of the names `names`, the latest
+// entry first: `next_reflog_entry` of git.
+function reflog_walk(r: refs.Repo, w_in: revwalk.Walk, o: LogOpts, names: string[]): i32 {
+  let w = w_in;
+  let logs: ReflogPos[] = [];
+  for n in names {
+    logs = logs.concat(reflog_of(r, n));
+  }
+  let needs_shorts = o.abbrev_commit || o.form != "raw" && o.form != "oneline";
+  if (needs_shorts) {
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: store.listed(w.g.store) } };
+  }
+  let least = store.short_length(w.g.store);
+  let decorations: Map[string, log.Decoration[]] = Map { };
+  if (o.decorate > 0 || o.form == "format" && (o.format.contains("%d") || o.format.contains("%D"))) {
+    let (s2, by) = decorations_of(r, w.g.store, o.decorate == 2, o.decorate_filter);
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s2 } };
+    decorations = by;
+  }
+  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: "", hidden: false };
+  let buf: u8[] = [];
+  let count = 0;
+  let skipped = 0;
+  while (o.limit < 0 || count < o.limit) {
+    let best = -1;
+    for i in 0..logs.len() {
+      let l = logs[i];
+      let at = l.at;
+      while (at >= 0) {
+        let info = store.info(w.g.store, l.entries[at].new);
+        w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: info.store } };
+        if (info.kind == "commit") {
+          break;
+        }
+        at -= 1;
+      }
+      logs = logs.with(i, ReflogPos { ...l, at: at });
+      if (at >= 0 && (best < 0 || l.entries[at].time > logs[best].entries[logs[best].at].time)) {
+        best = i;
+      }
+    }
+    if (best < 0) {
+      break;
+    }
+    let l = logs[best];
+    let e = l.entries[l.at];
+    logs = logs.with(best, ReflogPos { ...l, at: l.at - 1 });
+    if (o.walk.max_age != -1 && e.time < o.walk.max_age || o.walk.min_age != -1 && e.time > o.walk.min_age) {
+      continue;
+    }
+    let (w1, yes) = revwalk.reflog_wanted(w, e.new);
+    w = w1;
+    if (!yes) {
+      continue;
+    }
+    if (skipped < o.skip) {
+      skipped += 1;
+      continue;
+    }
+    count += 1;
+    let n = (l.entries.len() - 1 - l.at).to_string();
+    let inside = if (o.date_explicit) { date.show(e.time, e.zone, o.dates) } else { n };
+    let line = log.ReflogLine { selector: l.name + "@{" + inside + "}", short: short_ref(l.name) + "@{" + inside + "}", message: e.message, who: e.who };
+    let (w3, item) = log_item(w, e.new, o);
+    let (w2, text, after) = log_show(w3, item, o, decorations, least, sh, [line], []);
+    w = w2;
+    sh = after;
+    if (after.hidden) {
+      count -= 1;
+    }
+    buf = buf.concat(text.bytes());
+    if (buf.len() > 65536) {
+      put(buf);
+      buf = [];
+    }
+  }
+  put(buf);
+  return 0;
+}
+
+// The text of a commit, with the graph. `following` holds the commits
+// that the log shows next, as far as the lookahead goes.
+function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Map[string, log.Decoration[]], least: i32, sh_in: Shown, reflog: log.ReflogLine[], following: LogItem[]): (revwalk.Walk, string, Shown) {
   let h = item.hash;
   let w = w_in;
-  let sh = sh_in;
+  let sh = Shown { ...sh_in, hidden: false };
   let (g, n) = walk.node(w.g, h);
   w = revwalk.Walk { ...w, g: g };
   if (!n.ok) {
     return (w, "", sh);
   }
-  let c = n.commit;
+  let (g1, c) = walk.commit(w.g, h);
+  w = revwalk.Walk { ...w, g: g1 };
+  let f = revwalk.flag(w, h);
+  let mark = revision_mark(o, f);
   if (o.graph) {
     let next = if (following.len() > 0) { following[0].hash } else { "" };
     let next_root = following.len() > 1 && following[0].parents.len() == 0;
-    sh = Shown { ...sh, graph: graph.update(sh.graph, h, item.parents, next, next_root) };
+    let g2 = graph.Graph { ...sh.graph, mark: if ((f & revwalk.BOUNDARY) != 0) { "o" } else { mark } };
+    sh = Shown { ...sh, graph: graph.update(g2, h, item.parents, next, next_root) };
   }
   let (w2, ps) = revwalk.parents(w, h);
   w = w2;
   let st = w.g.store;
-  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []) };
-  let (s3, text, after) = log_entry(w.g.store, c, o, ctx, sh);
+  let side = if ((f & revwalk.BOUNDARY) != 0) { "-" } else if ((f & revwalk.UNINTERESTING) != 0) { "^" } else if ((f & revwalk.PATCHSAME) != 0) { "=" } else if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color };
+  // With the pickaxe and with --follow, a commit with no changes is not
+  // shown, but the graph still takes it.
+  if (o.pick.kind != 0 || o.follow) {
+    let (s4, changes, path) = commit_changes(w.g.store, c, ps, o, sh.follow);
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s4 } };
+    sh = Shown { ...sh, follow: path };
+    if (changes.len() == 0) {
+      return (w, "", Shown { ...sh, hidden: true });
+    }
+    let (s5, text1, after1) = log_entry(w.g.store, c, o, ctx, least, sh, [changes]);
+    return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s5 } }, text1, after1);
+  }
+  let (s3, text, after) = log_entry(w.g.store, c, o, ctx, least, sh, []);
   return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s3 } }, text, after);
+}
+
+// The mailmap of the repository: `.mailmap` at the top of the worktree,
+// unless it is a link, the blob of `mailmap.blob` (`HEAD:.mailmap` in a
+// bare repository), and the file of `mailmap.file`.
+function read_mailmap(r: refs.Repo, s: store.Store): mailmap.Mailmap {
+  let m = mailmap.empty();
+  if (r.top.len() > 0) {
+    let path = r.top + "/.mailmap";
+    let link = match (lstat(path)) {
+      Ok(st) => (st.mode & 61440) == 40960,
+      Err(_) => true,
+    };
+    if (!link) {
+      if let Ok(text) = read_file(path) {
+        m = mailmap.add_text(m, text);
+      }
+    }
+  }
+  let blob = match (r.config.get("mailmap.blob")) {
+    Some(v) => v,
+    None => if (r.top.len() == 0) { "HEAD:.mailmap" } else { "" },
+  };
+  if (blob.len() > 0) {
+    let named = rev.parse(r, s, blob);
+    if (named.hash.len() > 0) {
+      let got = store.read(named.store, named.hash);
+      if let Ok(o) = got.object {
+        if (o.kind == "blob") {
+          m = mailmap.add_text(m, unsafe { string_from_bytes_unchecked(o.body) });
+        }
+      }
+    }
+  }
+  if let Some(file) = r.config.get("mailmap.file") {
+    let path = if (file.starts_with("~/")) { env("HOME").unwrap_or("") + objects.part(file, 1, file.len()) } else if (file.starts_with("/") || r.top.len() == 0) { file } else { r.top + "/" + file };
+    if let Ok(text) = read_file(path) {
+      m = mailmap.add_text(m, text);
+    }
+  }
+  return m;
+}
+
+// The commit graph of the repository, or none when the configuration
+// turns it off or the history of the store is not that of its objects:
+// a shallow clone, grafts, or replace refs (`commit_graph_compatible`).
+function commit_graph(r: refs.Repo, s: store.Store): commitgraph.Graph {
+  if (!r.config.flag("core.commitgraph", true) || s.shallow.len() > 0) {
+    return commitgraph.none();
+  }
+  if let Ok(_) = stat(r.common + "/info/grafts") {
+    return commitgraph.none();
+  }
+  for e in refs.all_refs(r) {
+    if (e.name.starts_with("refs/replace/")) {
+      return commitgraph.none();
+    }
+  }
+  return commitgraph.open(r.objects(), r.width);
 }
 
 function log_command(argv: string[]): i32 {
@@ -1552,8 +2328,9 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", decorate: false, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
+  o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: r.config.flag("diff.renames", true), walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
   let dashdash = -1;
   for k in 0..argv.len() {
     if (dashdash < 0 && argv[k] == "--") {
@@ -1566,7 +2343,9 @@ function log_command(argv: string[]): i32 {
     paths = array.slice(argv, dashdash + 1, argv.len());
     args = array.slice(argv, 0, dashdash);
   }
-  let w = revwalk.walk_of(walk.graph_of(r.store()), o.walk);
+  let st0 = r.store();
+  let cg = commit_graph(r, st0);
+  let w = revwalk.walk_of(walk.graph_with(st0, cg), o.walk);
   let excluded = false;
   let named = 0;
   let i = 0;
@@ -1579,6 +2358,19 @@ function log_command(argv: string[]): i32 {
         continue;
       }
       let prefix = ref_option(x);
+      if (prefix.len() > 0 && o.walk_reflogs) {
+        for e in refs.all_refs(r) {
+          if (e.name.starts_with(prefix)) {
+            w = revwalk.Walk { ...w, pending: w.pending.append(e.name) };
+          }
+        }
+        if (x == "--all") {
+          w = revwalk.Walk { ...w, pending: w.pending.append("HEAD") };
+        }
+        named += 1;
+        i += 1;
+        continue;
+      }
       if (prefix.len() > 0) {
         for e in refs.all_refs(r) {
           if (e.name.starts_with(prefix)) {
@@ -1605,6 +2397,10 @@ function log_command(argv: string[]): i32 {
       }
       o = o1;
       g = g1;
+      if (o.bad.starts_with("error: ")) {
+        eprint(o.bad);
+        return 129;
+      }
       if (o.bad.len() > 0) {
         return fatal(o.bad);
       }
@@ -1639,6 +2435,14 @@ function log_command(argv: string[]): i32 {
     named += 1;
     i += 1;
   }
+  if (o.names_twice) {
+    return fatal("options '--name-only', '--name-status', '--check', and '-s' cannot be used together");
+  }
+  let bad_color = if (o.form == "format") { log.bad_color(o.format, o.patch.color) } else { "" };
+  if (bad_color.len() > 0) {
+    eprint("error: invalid color value: " + bad_color);
+    return fatal("unable to parse --pretty format");
+  }
   let items = match (log_items(r, paths)) {
     Ok(list) => list,
     Err(message) => {
@@ -1651,8 +2455,55 @@ function log_command(argv: string[]): i32 {
       return fatal(message);
     },
   };
-  o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, items: items, grep: compiled } };
+  o = LogOpts { ...o, mm: read_mailmap(r, w.g.store) };
+  if (o.use_mailmap) {
+    compiled = revwalk.Grep { ...compiled, mailmap: o.mm };
+  }
+  if (o.follow && items.len() != 1) {
+    return fatal("--follow requires exactly one pathspec");
+  }
+  o = LogOpts { ...o, pick: patch.Pickaxe { ...o.pick, icase: g.icase } };
+  if (o.pick.kind == 2 || o.pick.kind == 1 && o.pick.regex) {
+    let syntax = bre.Syntax { ...bre.posix_basic(), extended: true, icase: g.icase, newline_anchor: true };
+    let re = bre.bre_compile_syntax(o.pick.needle, syntax);
+    if (re.err.len() > 0) {
+      return fatal("invalid regex: " + re.err);
+    }
+    o = LogOpts { ...o, pick: patch.Pickaxe { ...o.pick, re: [re] } };
+  }
+  let bloom = if (o.follow) { [] } else if (items.len() == 1 && !treediff.has_wildcard(items[0])) { commitgraph.keys(cg, items[0]) } else { [] };
+  o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, items: if (o.follow) { [] } else { items }, bloom: bloom, grep: compiled } };
+  if (o.walk.by_decoration) {
+    let (s4, by) = decorations_of(r, w.g.store, false, o.decorate_filter);
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s4 } };
+    let decorated: Map[string, boolean] = Map { };
+    for e in by.entries() {
+      let (hash, _) = e;
+      decorated = decorated.insert(hash, true);
+    }
+    o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, decorated: decorated } };
+  }
+  for name in o.ancestry_names {
+    let (w6, at, died) = log_commit(r, w, name);
+    w = w6;
+    if (died.len() > 0) {
+      return fatal(died);
+    }
+    if (at.len() == 0) {
+      return fatal("bad revision '" + name + "'");
+    }
+    o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, ancestry_of: o.walk.ancestry_of.append(at) } };
+  }
   w = revwalk.Walk { ...w, opts: o.walk };
+  if (o.walk_reflogs) {
+    if (o.reverse) {
+      return fatal("options '--reverse' and '--walk-reflogs' cannot be used together");
+    }
+    if (o.walk.topo && !commitgraph.generation_numbers(w.g.cg) || revwalk.must_limit(o.walk)) {
+      return fatal("cannot combine --walk-reflogs with history-limiting options");
+    }
+    return reflog_walk(r, w, o, if (named == 0) { ["HEAD"] } else { w.pending });
+  }
   if (named == 0) {
     let head = refs.resolve_ref(r, "HEAD");
     if (head.hash.len() == 0) {
@@ -1668,6 +2519,9 @@ function log_command(argv: string[]): i32 {
       w = revwalk.add(w, at, 0);
     }
   }
+  if (o.walk.ancestry && o.ancestry_names.len() == 0 && !w.pending.any((h: string): boolean => (revwalk.flag(w, h) & revwalk.BOTTOM) != 0)) {
+    return fatal("--ancestry-path given but there are no bottom commits");
+  }
   w = revwalk.prepare(w);
   if (w.failed.len() > 0) {
     return fatal("Failed to traverse parents of commit " + w.failed);
@@ -1680,69 +2534,87 @@ function log_command(argv: string[]): i32 {
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: store.listed(w.g.store) } };
   }
   let least = store.short_length(w.g.store);
-  let decorations: Map[string, string[]] = Map { };
-  if (o.decorate || o.form == "format" && (o.format.contains("%d") || o.format.contains("%D"))) {
-    let (s2, by) = decorations_of(r, w.g.store);
+  let decorations: Map[string, log.Decoration[]] = Map { };
+  if (o.decorate > 0 || o.form == "format" && (o.format.contains("%d") || o.format.contains("%D"))) {
+    let (s2, by) = decorations_of(r, w.g.store, o.decorate == 2, o.decorate_filter);
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s2 } };
     decorations = by;
   }
   let shown: string[] = [];
-  let count = 0;
-  let skipped = 0;
   let buf: u8[] = [];
-  let sh = Shown { graph: graph.graph_new(), any: false, missing: false };
+  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: if (o.follow) { items[0] } else { "" }, hidden: false };
+  let p = Pull { w: w, skipped: 0, count: 0, candidates: [] };
+  // The boundary commits to show after the walk (`get_revision_internal`),
+  // and the commits after the current one, for the visual roots of the
+  // graph.
+  let boundary: string[] = [];
+  let at_boundary = false;
   let following: LogItem[] = [];
-  while (o.limit < 0 || count < o.limit) {
+  while (true) {
     let item = LogItem { hash: "", parents: [] };
-    if (following.len() > 0) {
+    if (at_boundary) {
+      if (boundary.len() == 0) {
+        break;
+      }
+      let (w0, b0) = log_item(p.w, boundary[0], o);
+      p = Pull { ...p, w: revwalk.with_flag(w0, b0.hash, revwalk.SHOWN) };
+      item = b0;
+      boundary = array.slice(boundary, 1, boundary.len());
+    } else if (following.len() > 0) {
       item = following[0];
       following = array.slice(following, 1, following.len());
     } else {
-      let (w1, next) = log_next(w, o);
-      w = w1;
+      let (p1, next) = log_pull(p, o);
+      p = p1;
+      if (p.w.failed.len() > 0) {
+        put(buf);
+        return fatal("Failed to traverse parents of commit " + p.w.failed);
+      }
       item = next;
-    }
-    if (w.failed.len() > 0) {
-      put(buf);
-      return fatal("Failed to traverse parents of commit " + w.failed);
+      if (item.hash.len() == 0) {
+        if (!o.walk.boundary) {
+          break;
+        }
+        at_boundary = true;
+        let (w4, sorted) = boundary_commits(p.w, p.candidates);
+        p = Pull { ...p, w: w4 };
+        boundary = sorted;
+        continue;
+      }
     }
     let h = item.hash;
-    if (h.len() == 0) {
-      break;
-    }
-    if (skipped < o.skip) {
-      skipped += 1;
-      continue;
-    }
-    count += 1;
     if (o.reverse) {
       shown = shown.append(h);
       continue;
     }
-    let room = if (o.limit < 0) { 2 } else { (o.limit - count).min(2) };
-    while (o.graph && following.len() < room) {
-      let (w1, next) = log_next(w, o);
-      w = w1;
-      if (w.failed.len() > 0) {
+    while (o.graph && !at_boundary && following.len() < 2) {
+      let (p1, next) = log_pull(p, o);
+      p = p1;
+      if (p.w.failed.len() > 0) {
         put(buf);
-        return fatal("Failed to traverse parents of commit " + w.failed);
+        return fatal("Failed to traverse parents of commit " + p.w.failed);
       }
       if (next.hash.len() == 0) {
         break;
       }
       following = following.append(next);
     }
-    let (w2, text, after) = log_show(w, item, o, decorations, least, sh, following);
-    w = w2;
+    let (w2, text, after) = log_show(p.w, item, o, decorations, least, sh, [], following);
+    p = Pull { ...p, w: w2 };
     sh = after;
+    // A commit that gives no text does not count for `-n`.
+    if (after.hidden && !at_boundary) {
+      p = Pull { ...p, count: p.count - 1 };
+    }
     buf = buf.concat(text.bytes());
     if (buf.len() > 65536) {
       put(buf);
       buf = [];
     }
   }
+  w = p.w;
   for h in shown.reverse() {
-    let (w3, text, after) = log_show(w, LogItem { hash: h, parents: [] }, o, decorations, least, sh, []);
+    let (w3, text, after) = log_show(w, LogItem { hash: h, parents: [] }, o, decorations, least, sh, [], []);
     w = w3;
     sh = after;
     buf = buf.concat(text.bytes());
@@ -1762,7 +2634,7 @@ const MIN_PARALLEL: i32 = 32;
 
 // The names of the parts from `part`, in order. A worker makes the names
 // of each part but the last, which this process makes.
-function index_parts(data: u8[], offsets: i64[], cuts: i32[], part: i32, raw: i32): string[][] {
+function index_parts(data: string, offsets: i64[], cuts: i32[], part: i32, raw: i32): string[][] {
   let first = cuts[part];
   let end = cuts[part + 1];
   if (part + 2 >= cuts.len()) {
@@ -1774,7 +2646,7 @@ function index_parts(data: u8[], offsets: i64[], cuts: i32[], part: i32, raw: i3
 }
 
 // The names of the objects of a packfile: one part for each CPU.
-function index_names(data: u8[], offsets: i64[], raw: i32): string[][] {
+function index_names(data: string, offsets: i64[], raw: i32): string[][] {
   let count = offsets.len() - 1;
   let parts = if (worker.parallel() && count >= MIN_PARALLEL) { (cpu_count() as i32).max(1).min(16) } else { 1 };
   return index_parts(data, offsets, index.parts_of(offsets, parts), 0, raw);
@@ -1964,7 +2836,15 @@ function index_pack(argv: string[]): i32 {
     Ok(names) => names,
     Err(message) => { return fatal(message); },
   };
-  let data = if (a.stdin) { io.read_all_stdin_bytes() } else { read_file_bytes(a.file) };
+  // A packfile on the command line is mapped, not read into memory.
+  let data = if (a.stdin) {
+    match (io.read_all_stdin_bytes()) {
+      Ok(b) => Ok(unsafe { string_from_bytes_unchecked(b) }),
+      Err(e) => Err(e),
+    }
+  } else {
+    unsafe { map_file_unchecked(a.file) }
+  };
   let bytes = match (data) {
     Ok(b) => b,
     Err(e) => {
@@ -1973,7 +2853,7 @@ function index_pack(argv: string[]): i32 {
   };
   let raw = algo;
   let o = index.Options { width: algo, version: a.version, limit: a.limit };
-  let built = match (index.build_with(bytes, o, (d: u8[], offsets: i64[]): string[][] => index_names(d, offsets, raw), local_objects(repo, a.thin))) {
+  let built = match (index.build_with(bytes, o, (d: string, offsets: i64[]): string[][] => index_names(d, offsets, raw), local_objects(repo, a.thin))) {
     Ok(b) => b,
     Err(messages) => {
       eprint(messages);
@@ -2000,7 +2880,7 @@ function index_pack(argv: string[]): i32 {
   };
   if (a.stdin) {
     let pack_name = if (a.file.len() > 0) { a.file } else { stem + ".pack" };
-    if let Err(message) = write_fixed(pack_name, built.data) {
+    if let Err(message) = write_fixed(pack_name, built.data.bytes()) {
       return fatal(message);
     }
   }
@@ -2076,15 +2956,16 @@ function at_offset(ix: pack.Index, order: i32[], offset: i64): i32 {
 
 // True if the two checksums of the files hold: the hash of the packfile at
 // its end and in the index, and the hash of the index at its end.
-function checksums_ok(a: i32, data: u8[], idx: u8[]): boolean {
+function checksums_ok(a: i32, data: string, idx: u8[]): boolean {
   let n = data.len();
   let m = idx.len();
   let raw = a;
   if (n < 12 + raw || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
     return false;
   }
-  let sum = hex.encode(objects.digest(a, array.slice(data, 0, n - raw)));
-  if (sum != hex.encode(array.slice(data, n - raw, n)) || sum != hex.encode(array.slice(idx, m - 2 * raw, m - raw))) {
+  let view = data.as_bytes();
+  let sum = hex.encode(objects.digest(a, view[0:n - raw]));
+  if (sum != hex.encode(view[n - raw:n]) || sum != hex.encode(array.slice(idx, m - 2 * raw, m - raw))) {
     return false;
   }
   return hex.encode(objects.digest(a, array.slice(idx, 0, m - raw))) == hex.encode(array.slice(idx, m - raw, m));
@@ -2095,7 +2976,7 @@ function checksums_ok(a: i32, data: u8[], idx: u8[]): boolean {
 // each object in the order of the packfile, and the lengths of the chains.
 function verify_one(a: i32, file: string, verbose: boolean): boolean {
   let path = pack_path(file);
-  let Ok(data) = read_file_bytes(path) else {
+  let Ok(data) = unsafe { map_file_unchecked(path) } else {
     eprint("fatal: Cannot open existing pack file '" + file + "'");
     return false;
   };
@@ -2111,7 +2992,8 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
     return false;
   }
   let order = by_offset(ix);
-  let src = pack.memory(data, (name: u8[]): i64 => pack.offset_of(ix, name), a);
+  let text = data;
+  let src = pack.memory(text, (name: u8[]): i64 => pack.offset_of(ix, name), a);
   let cache = pack.cache_new();
   let chains: i32[] = [];
   let out: u8[] = [];
@@ -2135,7 +3017,7 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
     }
     chains = chains.with(depth, chains[depth] + 1);
     let end = if (k + 1 < order.len()) { pack.offset_at(ix, order[k + 1]) } else { (data.len() - a) as i64 };
-    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_in(pack.whole(data, a), offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
+    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_in(pack.whole(text, a), offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
     if (depth > 0) {
       let base = at_offset(ix, order, chain[1]);
       line = line + " " + depth.to_string() + " " + pack.hex_name_at(ix, base);

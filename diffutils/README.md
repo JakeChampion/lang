@@ -51,7 +51,8 @@ same hunks as GNU diff, also when more than one shortest diff is possible:
 
 4. It finds a shortest edit script with the Myers O(ND) algorithm. It uses
    the cost limit of GNU diff, and the heuristic of `-H`. `-d` disables
-   both and the step before.
+   both and the step before. The search is in `std/linediff`, which the
+   git port also uses with the heuristics of xdiff.
 
 5. It moves each run of changes as `shift_boundaries` does.
 

@@ -2,7 +2,9 @@
 // (pretty.c of git).
 import "std/array";
 import "std/string";
+import "./color";
 import "./date";
+import "./mailmap";
 import "./objects";
 import "./width";
 
@@ -92,10 +94,6 @@ pub function date_text(p: Person): string {
 
 // ---- Lines of a message ----
 
-function is_space(b: u8): boolean {
-  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == 11 || b == 12;
-}
-
 // The end of the line at `at`, after its line end, or the end of `text`.
 function line_end(text: string, at: i32): i32 {
   let i = at;
@@ -109,7 +107,7 @@ function line_end(text: string, at: i32): i32 {
 // at its end.
 function trim_end(text: string, at: i32, end: i32): i32 {
   let e = end;
-  while (e > at && is_space(text[e - 1])) {
+  while (e > at && objects.is_space(text[e - 1])) {
     e -= 1;
   }
   return e;
@@ -219,8 +217,69 @@ function rtrim(text: string): string {
 
 // What a form needs besides the commit: the short form of a hash, the
 // parents to show (after the simplification of the history), the form of
-// the dates, and the decorations.
-pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: string[] }
+// the dates, the decorations, and the mailmap, which `%aN` uses and the
+// header lines use with `use_mailmap`.
+//
+// `mark` goes before the name of the commit on its first line, as
+// `--left-right`, `--boundary` and `--cherry-mark` give it, and `side` is
+// the mark of `%m`.
+//
+// `reflog` holds the entry of the reflog of a walk of `--walk-reflogs`.
+// `color` is true when the output has colors.
+pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: Decoration[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string, reflog: ReflogLine[], color: boolean }
+
+// A ref that names a commit, with its kind (`color.DECORATION_LOCAL` and
+// the others). A decoration of `HEAD` that names a branch of the commit
+// holds that branch in `branch`, for `HEAD -> BRANCH`.
+pub struct Decoration { name: string, kind: i32, branch: string }
+
+// The decorations `ds` between `prefix` and `suffix`, with `, ` between
+// two: `format_decorations` of git.
+pub function decorations_text(ds: Decoration[], with_color: boolean, prefix: string, suffix: string): string {
+  if (ds.len() == 0) {
+    return "";
+  }
+  let commit = if (with_color) { color.YELLOW } else { "" };
+  let reset = if (with_color) { color.RESET } else { "" };
+  let out = "";
+  let before = prefix;
+  for d in ds {
+    if (before.len() > 0) {
+      out += commit + before + reset;
+    }
+    let c = if (with_color) { color.decoration(d.kind) } else { "" };
+    if (d.kind == color.DECORATION_TAG) {
+      out += c + "tag: " + reset;
+    }
+    out += c + d.name + reset;
+    if (d.branch.len() > 0) {
+      out += commit + " -> " + reset + (if (with_color) { color.decoration(color.DECORATION_LOCAL) } else { "" }) + d.branch + reset;
+    }
+    before = ", ";
+  }
+  if (suffix.len() > 0) {
+    out += commit + suffix + reset;
+  }
+  return out;
+}
+
+// An entry of a reflog: its selector (`HEAD@{1}`), the selector with a
+// short ref name, the message, and the person `NAME <EMAIL>`.
+pub struct ReflogLine { selector: string, short: string, message: string, who: string }
+
+// The person of a header line, with the mailmap when the log uses it.
+function shown(p: Person, ctx: Context): Person {
+  return if (ctx.use_mailmap) { mapped(p, ctx) } else { p };
+}
+
+// The person with the proper name and email of the mailmap.
+function mapped(p: Person, ctx: Context): Person {
+  if (ctx.mailmap.is_empty()) {
+    return p;
+  }
+  let (name, email) = mailmap.map_user(ctx.mailmap, p.name, p.email);
+  return Person { ...p, name: name, email: email };
+}
 
 function shown_parents(ctx: Context, names: string[]): string {
   let abbrev = ctx.abbrev;
@@ -248,14 +307,14 @@ function header(c: Commit, ctx: Context, form: string): string {
   if (ctx.parents.len() > 1) {
     out += "Merge:" + shown_parents(ctx, ctx.parents) + "\n";
   }
-  out += user_line("Author", c.author, form == "fuller");
+  out += user_line("Author", shown(c.author, ctx), form == "fuller");
   if (form == "medium") {
     out += "Date:   " + date.show(c.author.time, c.author.zone_number(), ctx.dates) + "\n";
   } else if (form == "fuller") {
     out += "AuthorDate: " + date.show(c.author.time, c.author.zone_number(), ctx.dates) + "\n";
   }
   if (form == "full" || form == "fuller") {
-    out += user_line("Commit", c.committer, form == "fuller");
+    out += user_line("Commit", shown(c.committer, ctx), form == "fuller");
     if (form == "fuller") {
       out += "CommitDate: " + date.show(c.committer.time, c.committer.zone_number(), ctx.dates) + "\n";
     }
@@ -268,6 +327,13 @@ function header(c: Commit, ctx: Context, form: string): string {
 // the other forms end with a line end.
 pub function pretty(c: Commit, ctx: Context, form: string): string {
   let m = c.message;
+  if (ctx.reflog.len() > 0) {
+    let e = ctx.reflog[0];
+    if (form == "oneline") {
+      return e.selector + ": " + e.message;
+    }
+    return "Reflog: " + e.selector + " (" + e.who + ")\nReflog message: " + e.message + "\n" + pretty(c, Context { ...ctx, reflog: [] }, form);
+  }
   if (form == "oneline") {
     let (s, _) = subject_from(m, skip_blank(m, 0), " ");
     return rtrim(s);
@@ -282,22 +348,24 @@ pub function pretty(c: Commit, ctx: Context, form: string): string {
 pub function first_line(c: Commit, ctx: Context, form: string, with_parents: boolean): string {
   let abbrev = ctx.abbrev;
   let name = if (ctx.abbrev_commit) { abbrev(c.hash) } else { c.hash };
-  let out = if (form == "oneline") { name } else { "commit " + name };
+  let mark = if (ctx.mark.len() > 0) { ctx.mark + " " } else { "" };
+  let out = if (ctx.color) { color.YELLOW } else { "" };
+  out += if (form == "oneline") { mark + name } else { "commit " + mark + name };
   if (with_parents) {
     for p in ctx.parents {
       out += " " + (if (ctx.abbrev_commit) { abbrev(p) } else { p });
     }
   }
-  if (ctx.decorations.len() > 0) {
-    out += " (" + ctx.decorations.join(", ") + ")";
+  if (ctx.color) {
+    out += color.RESET;
   }
-  return out;
+  return out + decorations_text(ctx.decorations, ctx.color, " (", ")");
 }
 
 // The form `reference`: `abbrev (subject, date)`.
 pub function reference(c: Commit, ctx: Context): string {
   let abbrev = ctx.abbrev;
-  return abbrev(c.hash) + " (" + subject(c.message) + ", " + date.show(c.author.time, c.author.zone_number(), date.Mode { kind: date.SHORT, local: false, format: "" }) + ")";
+  return commit_color(abbrev(c.hash), ctx.color) + " (" + subject(c.message) + ", " + date.show(c.author.time, c.author.zone_number(), date.Mode { kind: date.SHORT, local: false, format: "" }) + ")";
 }
 
 // ---- The placeholders of a format ----
@@ -348,7 +416,8 @@ function hex_value(b: u8): i32 {
 }
 
 // The text for the two letters after `%a` or `%c`, or None.
-function person_field(p: Person, letter: u8, ctx: Context): Option[string] {
+function person_field(raw: Person, letter: u8, ctx: Context): Option[string] {
+  let p = if (letter == b'N' || letter == b'E' || letter == b'L') { mapped(raw, ctx) } else { raw };
   let z = p.zone_number();
   let mode = (kind: i32): date.Mode => date.Mode { kind: kind, local: false, format: "" };
   return match (letter) {
@@ -370,28 +439,83 @@ function person_field(p: Person, letter: u8, ctx: Context): Option[string] {
   };
 }
 
-// The length of a color placeholder at `at` (after `%C`), which prints
-// nothing when the output is not a terminal, or 0.
-function color_length(format: string, at: i32): i32 {
-  if (at < format.len() && format[at] == b'(') {
-    let close = at;
+function commit_color(text: string, auto: boolean): string {
+  return if (auto) { color.YELLOW + text + color.RESET } else { text };
+}
+
+// The text of the color placeholder at `at` (the `C` after a `%`), and the
+// count of bytes that it takes, or 0: `parse_color` of git. With no
+// colors, only `%C(always,...)` gives a text. A spec that is not a color
+// gives none, and `bad_color` finds it first.
+function color_placeholder(format: string, at: i32, want: boolean): (string, i32) {
+  if (at + 1 < format.len() && format[at + 1] == b'(') {
+    let close = at + 2;
     while (close < format.len() && format[close] != b')') {
       close += 1;
     }
-    return if (close < format.len()) { close - at + 2 } else { 0 };
+    if (close >= format.len()) {
+      return ("", 0);
+    }
+    let (spec, parsed) = color_spec(objects.part(format, at + 2, close), want);
+    let n = close - at + 1;
+    if (!parsed) {
+      return ("", n);
+    }
+    return (color.parse(spec).unwrap_or(""), n);
   }
-  let rest = objects.part(format, at, format.len());
-  for name in ["red", "green", "blue", "reset"] {
-    if (rest.starts_with(name)) {
-      return name.len() + 1;
+  let rest = objects.part(format, at + 1, format.len());
+  let names = ["red", "green", "blue", "reset"];
+  let codes = [color.RED, color.GREEN, color.BLUE, color.RESET];
+  for i in 0..names.len() {
+    if (rest.starts_with(names[i])) {
+      return (if (want) { codes[i] } else { "" }, names[i].len() + 1);
     }
   }
-  return 0;
+  return ("", 0);
+}
+
+// The color of a spec of `%C(...)` without its `auto,` or `always,`, and
+// false when the spec gives no color.
+function color_spec(text: string, want: boolean): (string, boolean) {
+  if (text.starts_with("auto,")) {
+    return (objects.part(text, 5, text.len()), want);
+  }
+  if (text.starts_with("always,")) {
+    return (objects.part(text, 7, text.len()), true);
+  }
+  return (text, want);
+}
+
+// The first color spec of the format that is not a color, which git
+// stops on, or an empty string.
+pub function bad_color(format: string, want: boolean): string {
+  let i = 0;
+  while (i + 1 < format.len()) {
+    if (format[i] == b'%' && format[i + 1] == b'%') {
+      i += 2;
+      continue;
+    }
+    if (format[i] == b'%' && format[i + 1] == b'C' && i + 2 < format.len() && format[i + 2] == b'(') {
+      let close = i + 3;
+      while (close < format.len() && format[close] != b')') {
+        close += 1;
+      }
+      let text = objects.part(format, i + 3, close.min(format.len()));
+      if (close < format.len() && text != "auto") {
+        let (spec, parsed) = color_spec(text, want);
+        if (parsed && color.parse(spec).is_none()) {
+          return spec;
+        }
+      }
+    }
+    i += 1;
+  }
+  return "";
 }
 
 // The text for the placeholder at `at`, which is after a `%`, and the
 // count of bytes that it takes. A count of 0 is not a placeholder.
-function placeholder(c: Commit, ctx: Context, format: string, at: i32): (string, i32) {
+function placeholder(c: Commit, ctx: Context, format: string, at: i32, auto: boolean): (string, i32) {
   let letter = format[at];
   let abbrev = ctx.abbrev;
   if ((letter == b'a' || letter == b'c') && at + 1 < format.len()) {
@@ -401,6 +525,34 @@ function placeholder(c: Commit, ctx: Context, format: string, at: i32): (string,
       None => ("", 0),
     };
   }
+  if (letter == b'g' && at + 1 < format.len()) {
+    if (ctx.reflog.len() == 0) {
+      let known = match (format[at + 1]) {
+        b'd' => true,
+        b'D' => true,
+        b's' => true,
+        b'n' => true,
+        b'e' => true,
+        b'N' => true,
+        b'E' => true,
+        _ => false,
+      };
+      return ("", if (known) { 2 } else { 0 });
+    }
+    let e = ctx.reflog[0];
+    let p = person(e.who + " 0 +0000");
+    let m = mapped(p, ctx);
+    return match (format[at + 1]) {
+      b'd' => (e.short, 2),
+      b'D' => (e.selector, 2),
+      b's' => (e.message, 2),
+      b'n' => (p.name, 2),
+      b'e' => (p.email, 2),
+      b'N' => (m.name, 2),
+      b'E' => (m.email, 2),
+      _ => ("", 0),
+    };
+  }
   if (letter == b'x') {
     if (at + 2 < format.len() && hex_value(format[at + 1]) >= 0 && hex_value(format[at + 2]) >= 0) {
       let v = hex_value(format[at + 1]) * 16 + hex_value(format[at + 2]);
@@ -408,19 +560,16 @@ function placeholder(c: Commit, ctx: Context, format: string, at: i32): (string,
     }
     return ("", 0);
   }
-  if (letter == b'C') {
-    return ("", color_length(format, at + 1));
-  }
   return match (letter) {
-    b'H' => (c.hash, 1),
-    b'h' => (abbrev(c.hash), 1),
+    b'H' => (commit_color(c.hash, auto), 1),
+    b'h' => (commit_color(abbrev(c.hash), auto), 1),
     b'T' => (c.tree, 1),
     b't' => (abbrev(c.tree), 1),
     b'P' => (ctx.parents.join(" "), 1),
     b'p' => (ctx.parents.map((p: string): string => abbrev(p)).join(" "), 1),
-    b'm' => (">", 1),
-    b'd' => (if (ctx.decorations.len() > 0) { " (" + ctx.decorations.join(", ") + ")" } else { "" }, 1),
-    b'D' => (ctx.decorations.join(", "), 1),
+    b'm' => (ctx.side, 1),
+    b'd' => (decorations_text(ctx.decorations, auto, " (", ")"), 1),
+    b'D' => (decorations_text(ctx.decorations, auto, "", ""), 1),
     b's' => (subject(c.message), 1),
     b'f' => {
       let first = skip_blank(c.message, 0);
@@ -441,6 +590,7 @@ function placeholder(c: Commit, ctx: Context, format: string, at: i32): (string,
 // takes off the line ends before an empty text.
 pub function formatted(c: Commit, ctx: Context, format: string): string {
   let out = "";
+  let auto = false;
   let i = 0;
   while (i < format.len()) {
     if (format[i] != b'%' || i + 1 >= format.len()) {
@@ -464,7 +614,24 @@ pub function formatted(c: Commit, ctx: Context, format: string): string {
       i += 1;
       continue;
     }
-    let (text, taken) = placeholder(c, ctx, format, at);
+    let text = "";
+    let taken = 0;
+    if (format[at] == b'C' && objects.part(format, at, format.len()).starts_with("C(auto)")) {
+      auto = ctx.color;
+      text = if (auto && out.len() > 0) { color.RESET } else { "" };
+      taken = 7;
+    } else if (format[at] == b'C') {
+      let (t, n) = color_placeholder(format, at, ctx.color);
+      text = t;
+      taken = n;
+      if (n > 0) {
+        auto = false;
+      }
+    } else {
+      let (t, n) = placeholder(c, ctx, format, at, auto);
+      text = t;
+      taken = n;
+    }
     if (taken == 0) {
       out += "%";
       i += 1;

@@ -4,43 +4,73 @@
 import "std/array";
 import "core/cmp";
 import "core/map";
+import "./commitgraph";
 import "./log";
 import "./objects";
 import "./store";
 
 // One commit of the graph, with the commit as `log.commit_of` reads it.
-// `ok` is false for a commit that the store does not have.
-pub struct Node { parents: string[], tree: string, time: i64, ok: boolean, commit: log.Commit }
+// `ok` is false for a commit that the store does not have. A commit of
+// the commit graph has its place `pos` in it and its generation number,
+// and `loaded` is false until the walk reads its content for its text.
+pub struct Node { parents: string[], tree: string, time: i64, ok: boolean, commit: log.Commit, pos: i32, generation: i64, loaded: boolean }
 
-// The commits read so far.
-pub struct Graph { store: store.Store, nodes: Map[string, Node] }
+// The commits read so far, and the commit graph of the repository.
+pub struct Graph { store: store.Store, nodes: Map[string, Node], cg: commitgraph.Graph }
 
 pub function graph_of(s: store.Store): Graph {
-  return Graph { store: s, nodes: Map { } };
+  return Graph { store: s, nodes: Map { }, cg: commitgraph.none() };
 }
 
-// The node of the commit `hash`, read from the store the first time.
+// The graph of the commits of `s` with the commit graph `cg`.
+pub function graph_with(s: store.Store, cg: commitgraph.Graph): Graph {
+  return Graph { store: s, nodes: Map { }, cg: cg };
+}
+
+// The node of the commit `hash`: from the commit graph, or read from the
+// store the first time.
 pub function node(g: Graph, hash: string): (Graph, Node) {
   if let Some(n) = g.nodes.get(hash) {
     return (g, n);
+  }
+  let pos = commitgraph.position(g.cg, hash);
+  if (pos >= 0) {
+    let e = commitgraph.entry(g.cg, pos);
+    let n = Node { parents: e.parents, tree: e.tree, time: e.time, ok: true, commit: log.commit_of(hash, []), pos: pos, generation: e.generation, loaded: false };
+    return (Graph { ...g, nodes: g.nodes.insert(hash, n) }, n);
   }
   let got = store.read(g.store, hash);
   let n = match (got.object) {
     Ok(o) => if (o.kind == "commit") { node_of(got.store, hash, o.body) } else { missing(hash) },
     Err(_) => missing(hash),
   };
-  return (Graph { store: got.store, nodes: g.nodes.insert(hash, n) }, n);
+  return (Graph { ...g, store: got.store, nodes: g.nodes.insert(hash, n) }, n);
+}
+
+// The commit `hash` with its content, for its text.
+pub function commit(g_in: Graph, hash: string): (Graph, log.Commit) {
+  let (g, n) = node(g_in, hash);
+  if (n.loaded || !n.ok) {
+    return (g, n.commit);
+  }
+  let got = store.read(g.store, hash);
+  let body: u8[] = match (got.object) {
+    Ok(o) => o.body,
+    Err(_) => [],
+  };
+  let c = log.commit_of(hash, body);
+  return (Graph { ...g, store: got.store, nodes: g.nodes.insert(hash, Node { ...n, commit: c, loaded: true }) }, c);
 }
 
 // The node of the commit `hash` with the content `body`.
 pub function node_of(s: store.Store, hash: string, body: u8[]): Node {
   let c = log.commit_of(hash, body);
   let parents = if (store.at_edge(s, hash)) { [] } else { c.parents };
-  return Node { parents: parents, tree: c.tree, time: c.committer.time, ok: true, commit: c };
+  return Node { parents: parents, tree: c.tree, time: c.committer.time, ok: true, commit: c, pos: -1, generation: commitgraph.INFINITY, loaded: true };
 }
 
 function missing(hash: string): Node {
-  return Node { parents: [], tree: "", time: 0, ok: false, commit: log.commit_of(hash, []) };
+  return Node { parents: [], tree: "", time: 0, ok: false, commit: log.commit_of(hash, []), pos: -1, generation: commitgraph.INFINITY, loaded: true };
 }
 
 // A commit in a queue, with its flags.
@@ -151,6 +181,10 @@ pub function reaches(g_in: Graph, a: string, b: string): (Graph, boolean) {
         seen = seen.insert(p, true);
         let (g3, pn) = node(g, p);
         g = g3;
+        // A commit with a lower generation number than `b` cannot reach it.
+        if (pn.generation < nb.generation && nb.generation != commitgraph.INFINITY) {
+          continue;
+        }
         if (pn.time >= nb.time - 86400) {
           todo = todo.append(p);
         } else {

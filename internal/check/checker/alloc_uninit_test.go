@@ -30,3 +30,20 @@ func TestUninitializedByteAllocationRequiresUnsafe(t *testing.T) {
 		}
 	}
 }
+
+// An unsafe block that is the arm of an if expression with a union type
+// is checked in the unsafe context, as any other unsafe block.
+func TestUnsafeArmOfUnionIfAllowsRawBuiltins(t *testing.T) {
+	source := `function pick(b: boolean, v: u8[]): Option[string] {
+	let s: Option[string] = if (b) { None } else { unsafe { Some(string_from_bytes_unchecked(v)) } };
+	return s;
+}
+function main(): i32 { return 0; }`
+	program, err := parser.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(program); err != nil {
+		t.Fatal(err)
+	}
+}
