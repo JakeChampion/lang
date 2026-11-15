@@ -157,13 +157,11 @@ pub struct App {
   states: string[],
   // The server whose connections the app probes, or -1, the state of each
   // connection (0 waits, 1 answered, 2 failed), the time the probes
-  // started, the workers that run with the connection of each, and the
-  // workers of a race that ended.
+  // started, the probes that run, and the workers of a race that ended.
   probing: i32,
   probe_states: i32[],
   probe_at: i64,
-  probes: worker.Worker[plex.Reply[]][],
-  probe_conns: i32[],
+  probes: Probe[],
   left: worker.Worker[plex.Reply[]][],
   pin: plex.Pin,
   pin_at: i64,
@@ -318,7 +316,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     dev: dev, dir: dir, window: 0 as usize, w: 0, h: 0, top: 0, bottom: 0, shown: false,
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
-    servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], probe_conns: [], left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
+    servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
     account: setting(text, "account"), quality: num(setting(text, "quality")),
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, item: plex.no_item(), children: [],
@@ -808,35 +806,38 @@ function connect(own s: App, i: i32): App {
   }
   let sv = s.servers[i];
   let order = plex.connection_order(sv);
-  let left = s.left;
-  for w in s.probes {
-    left = left.append(w);
-  }
-  let probes: worker.Worker[plex.Reply[]][] = [];
-  let conns: i32[] = [];
+  let left = probe_workers(s.probes, s.left);
+  let probes: Probe[] = [];
   let states: i32[] = [];
   for k in 0..order.len() {
-    probes = probes.append(s.dev.fetch([plex.identity(s.client, plex.Base { uri: order[k], token: sv.token })]));
-    conns = conns.append(k);
+    probes = probes.append(Probe { conn: k, w: s.dev.fetch([plex.identity(s.client, plex.Base { uri: order[k], token: sv.token })]) });
     states = states.append(0);
   }
-  let t = App { ...s, probing: i, probe_states: states, probe_at: s.dev.mono_ms(), probes: probes, probe_conns: conns, left: left, states: s.states.with(i, "connecting"), dirty: true };
+  let t = App { ...s, probing: i, probe_states: states, probe_at: s.dev.mono_ms(), probes: probes, left: left, states: s.states.with(i, "connecting"), dirty: true };
   if (order.len() == 0) {
     return App { ...t, probing: -1, states: t.states.with(i, "unreachable") };
   }
   return t;
 }
 
-// The probes that still run with the connection of each, and the state
-// of each connection.
-function poll_probe_list(own ws: worker.Worker[plex.Reply[]][], conns: i32[], states: i32[]): (worker.Worker[plex.Reply[]][], i32[], i32[]) {
-  let running: worker.Worker[plex.Reply[]][] = [];
-  let still: i32[] = [];
+// A worker that asks connection `conn` of a server for its identity.
+struct Probe { conn: i32, w: worker.Worker[plex.Reply[]] }
+
+// The workers of `ps` after those of `left`.
+function probe_workers(own ps: Probe[], own left: worker.Worker[plex.Reply[]][]): worker.Worker[plex.Reply[]][] {
+  for p in ps {
+    let Probe { conn, w } = p;
+    left = left.append(w);
+  }
+  return left;
+}
+
+// The probes that still run, and the state of each connection.
+function poll_probe_list(own ps: Probe[], states: i32[]): (Probe[], i32[]) {
+  let running: Probe[] = [];
   let out = states;
-  let k = 0;
-  for w in ws {
-    let conn = conns[k];
-    k += 1;
+  for p in ps {
+    let Probe { conn, w } = p;
     let polled = w.poll();
     match (polled) {
       worker.Finished(rs) => {
@@ -847,12 +848,11 @@ function poll_probe_list(own ws: worker.Worker[plex.Reply[]][], conns: i32[], st
         }
       },
       worker.Running(again) => {
-        running = running.append(again);
-        still = still.append(conn);
+        running = running.append(Probe { conn: conn, w: again });
       }
     }
   }
-  return (running, still, out);
+  return (running, out);
 }
 
 // The workers of a race that ended, less those that finished.
@@ -887,27 +887,24 @@ pub function winner(states: i32[], expired: boolean): i32 {
 
 function poll_probes(own s: App): App {
   let left = poll_left(s.left);
-  let (probes, conns, states) = poll_probe_list(s.probes, s.probe_conns, s.probe_states);
+  let (probes, states) = poll_probe_list(s.probes, s.probe_states);
   let i = s.probing;
   if (i < 0 || i >= s.servers.len()) {
-    return App { ...s, probes: probes, probe_conns: conns, probe_states: states, left: left };
+    return App { ...s, probes: probes, probe_states: states, left: left };
   }
   let expired = s.dev.mono_ms() - s.probe_at >= PROBE_MS;
   let k = winner(states, expired);
   if (k < 0 && probes.len() == 0) {
     log.info("plex: no answer from " + s.servers[i].name);
-    return App { ...s, probes: probes, probe_conns: conns, probe_states: states, left: left, probing: -1, states: s.states.with(i, "unreachable"), dirty: true };
+    return App { ...s, probes: probes, probe_states: states, left: left, probing: -1, states: s.states.with(i, "unreachable"), dirty: true };
   }
   if (k < 0) {
-    return App { ...s, probes: probes, probe_conns: conns, probe_states: states, left: left };
+    return App { ...s, probes: probes, probe_states: states, left: left };
   }
   let sv = s.servers[i];
   let order = plex.connection_order(sv);
-  let rest = left;
-  for w in probes {
-    rest = rest.append(w);
-  }
-  let u = App { ...s, probing: -1, probes: [], probe_conns: [], probe_states: states, left: rest, server: sv, base: plex.Base { uri: order[k], token: sv.token }, states: s.states.with(i, "connected"), error: "" };
+  let rest = probe_workers(probes, left);
+  let u = App { ...s, probing: -1, probes: [], probe_states: states, left: rest, server: sv, base: plex.Base { uri: order[k], token: sv.token }, states: s.states.with(i, "connected"), error: "" };
   save(u);
   log.info("plex: connected to " + sv.name + " at connection " + k.to_string());
   return open_home(u);
@@ -2235,7 +2232,8 @@ pub function close(own s: App): void {
   if (s.play.active) {
     s.dev.stop();
   }
-  for w in s.probes {
+  for p in s.probes {
+    let Probe { conn, w } = p;
     let rs = w.join();
   }
   for w in s.left {

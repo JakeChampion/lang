@@ -959,6 +959,19 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if v != nil && iterOwned[forEachElementOf(v)] && !borrowedAssigns[v] && !loopRepeats(body, c, v) && lastInBinding(bf, c, aid, order) {
 				moves[aid] = true
 			}
+			// A field that a destructure takes from such an element at the
+			// element's last read moves at its own last read.
+			d := bindingDestructure(bf, c, aid.Name)
+			if d != nil && !assignedNames[aid.Name] && !loopRepeats(body, c, d) && lastInBinding(bf, c, aid, order) {
+				src, isID := d.Init.(*ast.Ident)
+				ev := (*ast.Var)(nil)
+				if isID && !escaping[src.Name] && !lambdaCaptured[src.Name] {
+					ev = bindingVar(bf, d, src.Name)
+				}
+				if ev != nil && d.AtName == "" && !destructureNests(d, aid.Name) && iterOwned[forEachElementOf(ev)] && !borrowedAssigns[ev] && lastInBinding(bf, d, src, order) {
+					moves[aid] = true
+				}
+			}
 		}
 		return true
 	})
@@ -2926,6 +2939,34 @@ func bindingVar(bf *bodyFrames, c ast.Node, name string) *ast.Var {
 		}
 	}
 	return nil
+}
+
+// bindingDestructure is the destructure that binds name for c, or nil when
+// a let or nothing binds it.
+func bindingDestructure(bf *bodyFrames, c ast.Node, name string) *ast.Destructure {
+	frames := bf.of(c)
+	l := bindingLevel(frames, name)
+	if l < 0 {
+		return nil
+	}
+	f := frames[l]
+	for j := f.idx - 1; j >= 0; j-- {
+		if bindsName(f.stmts[j], name) {
+			d, _ := f.stmts[j].(*ast.Destructure)
+			return d
+		}
+	}
+	return nil
+}
+
+// destructureNests reports whether name comes from a nested pattern of d.
+func destructureNests(d *ast.Destructure, name string) bool {
+	for i, nm := range d.Names {
+		if nm == name {
+			return i < len(d.Nested) && d.Nested[i] != nil
+		}
+	}
+	return false
 }
 
 // bindsName reports whether the statement itself declares name, not a
