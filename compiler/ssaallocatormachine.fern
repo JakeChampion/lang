@@ -146,9 +146,8 @@ function writable(at: i32, bump: boolean): boolean {
   return at >= 0 && at < 16 || at >= (if (bump) { 22 } else { 20 }) && at < (if (bump) { 24 } else { 22 }) || link_word(at, bump);
 }
 
-// The first word of a block that a free list gives. It held the encoded link
-// of the block, and the allocator can clear it (SEC-023). It can hold zero
-// alone.
+// The first word of a block that a free list gives. It held the link of the
+// block, and the allocator can clear it. It can hold zero alone.
 function link_word(at: i32, bump: boolean): boolean {
   return !bump && (at == 28 || at == 29);
 }
