@@ -56,10 +56,10 @@ x86_64/call_overhead.text	353
 x86_64/call_overhead.ir	8250814
 x86_64/closure_call.text	1019
 x86_64/closure_call.ir	41178167
-x86_64/deflate_decode.ir	31550893
-x86_64/deflate_decode.text	13688
+x86_64/deflate_decode.ir	28280931
+x86_64/deflate_decode.text	14789
 x86_64/deflate_encode.ir	41579468
-x86_64/deflate_encode.text	7121
+x86_64/deflate_encode.text	7048
 x86_64/enum_match.text	990
 x86_64/enum_match.ir	29250077
 x86_64/http_hello.text	15877
@@ -136,7 +136,7 @@ aarch64/call_overhead.ir	11250826
 aarch64/closure_call.text	1255
 aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	33507614
-aarch64/deflate_decode.text	14509
+aarch64/deflate_decode.text	15773
 aarch64/deflate_encode.ir	42496722
 aarch64/deflate_encode.text	7648
 aarch64/enum_match.text	1219
