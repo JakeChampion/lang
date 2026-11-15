@@ -113,11 +113,11 @@ function hash_args(argv: string[]): HashArgs {
 }
 
 // Prints the name of the object with `body`, and writes it when `-w` is set.
-// Without `--literally`, the kind is one of the four, and a commit, a tree
-// or a tag has the form that fsck checks.
+// The kind is one of the four. Without `--literally`, a commit, a tree or
+// a tag has the form that fsck checks.
 function hash_one(a: HashArgs, repo: refs.Repo[], body: u8[]): i32 {
   let algo = if (repo.len() > 0) { repo[0].width } else { objects.SHA1 };
-  if (!a.literally && !objects.is_kind(a.kind)) {
+  if (!objects.is_kind(a.kind)) {
     return fatal("invalid object type \"" + a.kind + "\"");
   }
   if (!a.literally) {
