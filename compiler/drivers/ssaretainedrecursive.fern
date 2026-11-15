@@ -33,21 +33,54 @@ function find(rows: ssaprepare.Emitted[], name: string): i32 {
   return at;
 }
 
+// The kind of the instruction that defines `v`, or -1.
+function kind_of(row: ssaprepare.Emitted, v: i32): i32 {
+  for block in row.body.formed.f.blocks {
+    for ins in block.insts {
+      if (ins.result == v) {
+        return ins.kind_tag;
+      }
+    }
+  }
+  return -1;
+}
+
+// Whether `v` is a link loaded from a node: a load, or a phi of loads and of
+// the integer that a link local holds before the first load.
+function loaded_value(row: ssaprepare.Emitted, v: i32): boolean {
+  let kind = kind_of(row, v);
+  if (kind == 40) {
+    return true;
+  }
+  if (kind != 8) {
+    return false;
+  }
+  for block in row.body.formed.f.blocks {
+    for ins in block.insts {
+      if (ins.result == v) {
+        let loaded = false;
+        for a in ins.args {
+          let k = kind_of(row, a);
+          if (k == 40) {
+            loaded = true;
+          } else if (k != 1) {
+            return false;
+          }
+        }
+        return loaded;
+      }
+    }
+  }
+  return false;
+}
+
 function loaded_link(row: ssaprepare.Emitted): void {
   let calls = 0;
   for block in row.body.formed.f.blocks {
     for op in block.insts {
       if (op.kind_tag == 11 && op.str == "__fern_rc_is_unique") {
         require(op.args.len() == 1, 203);
-        let loaded = false;
-        for definer in row.body.formed.f.blocks {
-          for load in definer.insts {
-            if (load.result == op.args[0] && load.kind_tag == 40) {
-              loaded = true;
-            }
-          }
-        }
-        require(loaded, 204);
+        require(loaded_value(row, op.args[0]), 204);
         calls += 1;
       }
     }
