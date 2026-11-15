@@ -305,6 +305,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool, scalar map[ast.Expr]bool) ArgDeaths {
 	body := fn.Body
 	bf := newBodyFrames(body)
+	bf.scalar = scalar
 	out := map[*ast.Call]map[string]bool{}
 	occurrences := map[string]int{}
 	ast.Walk(body, func(n ast.Node) bool {
@@ -1035,11 +1036,12 @@ func argParts(c *ast.Call) []ast.Expr {
 			out = append(out, e)
 			return
 		}
-		if sl.Base != nil {
-			add(sl.Base)
-		}
+		// The field values run before the literal takes its base.
 		for _, f := range sl.Fields {
 			add(f.Value)
+		}
+		if sl.Base != nil {
+			add(sl.Base)
 		}
 	}
 	for _, a := range c.Args {
@@ -1752,6 +1754,25 @@ func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]
 // copiedArgs names direct scalar field reads before an argument that is name
 // alone. A scalar-returning call can consume name through an aggregate, so
 // its result type alone does not make it a copy of a field.
+// markScalarReads marks each read of a scalar field of `name` in e: a copy
+// that holds nothing of `name`.
+func markScalarReads(out map[ast.Expr]bool, e ast.Expr, name string, scalar map[ast.Expr]bool) {
+	ast.Walk(e, func(m ast.Node) bool {
+		if _, ok := m.(*ast.Lambda); ok {
+			return false
+		}
+		fa, isField := m.(*ast.FieldAccess)
+		if !isField || !scalar[fa] {
+			return true
+		}
+		if target, ok := fa.Target.(*ast.Ident); ok && target.Name == name {
+			out[fa] = true
+			return false
+		}
+		return true
+	})
+}
+
 func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.Expr]bool {
 	out := map[ast.Expr]bool{}
 	if len(scalar) == 0 {
@@ -1766,13 +1787,7 @@ func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.E
 		for k, a := range parts {
 			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
 				for _, before := range parts[:k] {
-					fa, isField := before.(*ast.FieldAccess)
-					if !isField || !scalar[before] {
-						continue
-					}
-					if target, ok := fa.Target.(*ast.Ident); ok && target.Name == name {
-						out[before] = true
-					}
+					markScalarReads(out, before, name, scalar)
 				}
 			}
 		}
@@ -1916,10 +1931,18 @@ func (b *bodyFrames) heldByEnclosingCall(c *ast.Call, name string) bool {
 	names, ok := b.held[c]
 	if !ok {
 		names = map[string]bool{}
+		first := c.P
 		for _, p := range b.enclosing[c] {
 			ast.Walk(p, func(m ast.Node) bool {
 				if mc, ok := m.(*ast.Call); ok && mc == c {
 					return false
+				}
+				// A read of a scalar field before the call is a copy that
+				// ends before the call runs.
+				if fa, ok := m.(*ast.FieldAccess); ok && b.scalar[fa] && posBefore(fa.P, first) {
+					if _, named := fa.Target.(*ast.Ident); named {
+						return false
+					}
 				}
 				if id, ok := m.(*ast.Ident); ok {
 					names[id.Name] = true
@@ -2185,6 +2208,12 @@ type bodyFrames struct {
 	assigns   map[string][]*ast.Assign
 	enclosing map[*ast.Call][]*ast.Call // the outermost calls that hold each call
 	held      map[*ast.Call]map[string]bool
+	scalar    map[ast.Expr]bool // the expressions of a type that holds no handle
+}
+
+// posBefore reports whether a comes before b in the source.
+func posBefore(a, b ast.Position) bool {
+	return a.Line < b.Line || a.Line == b.Line && a.Col < b.Col
 }
 
 func newBodyFrames(body *ast.Block) *bodyFrames {
