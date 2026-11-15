@@ -118,7 +118,9 @@ reads loose refs, the file `packed-refs`, the reflogs, and the upstream of
 a branch in the configuration.
 
 A name can have operators after it: `^N`, `~N`, `^{KIND}`, `^{}`,
-`^{/TEXT}`, `@{N}`, `@{DATE}`, `@{-N}`, and `@{upstream}` or `@{u}`. `:PATH`
+`^{/TEXT}`, `@{N}`, `@{DATE}`, `@{-N}`, `@{upstream}` or `@{u}`, and
+`@{push}`, with `push.default`, the push refspecs, `remote.pushDefault`
+and `branch.NAME.pushRemote`. `:PATH`
 is the entry at a path below a tree, and `:N:PATH` is an entry of the
 index. `:/TEXT` is the latest commit whose message matches TEXT.
 
@@ -178,8 +180,6 @@ The standard output, the messages and the exit status are those of git
   `--left-right`, `--boundary`, `--ancestry-path`,
   `--simplify-by-decoration`, `--walk-reflogs`, `--notes`, the signatures,
   the mailmap (`%aN`) and colors.
-
-- `@{push}`.
 
 - `rev-parse --short=N` with N above 40 in a repository with SHA-256
   names. The port gives the full name, and git 2.43 stops at 40 digits.
@@ -283,6 +283,9 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   that date as git does, and not when `core.commitGraph` is false.
 
 - `TestSelfHostExampleGitOptions` runs the mailmap and the decorations.
+
+- `TestSelfHostExampleGitPush` reads `@{push}` with each value of
+  `push.default` and the other settings of a push.
 
 - `TestSelfHostExampleGitMultiPackIndex` changes the multi-pack index, and
   the port must read the objects through it as git does.

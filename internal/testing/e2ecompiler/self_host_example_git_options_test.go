@@ -154,3 +154,63 @@ func TestSelfHostExampleGitOptions(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostExampleGitPush reads `@{push}` with git and with the port:
+// each `push.default`, a push refspec, `remote.pushDefault`,
+// `branch.NAME.pushRemote`, and the branches that have no destination.
+func TestSelfHostExampleGitPush(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
+	for _, run := range gitRuns() {
+		port := gitPort(t, cli, run.target)
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			top := t.TempDir()
+			up, dir := filepath.Join(top, "up"), filepath.Join(top, "repo")
+			must := func(at string, args ...string) {
+				t.Helper()
+				if _, stderr, code := oracle.run(t, at, "", args...); code != 0 {
+					t.Fatalf("git %v: exit %d\n%s", args, code, stderr)
+				}
+			}
+			for _, d := range []string{up, dir} {
+				if err := os.Mkdir(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				must(d, "init", "-q", "-b", "main", "--object-format="+run.format, ".")
+				if err := os.WriteFile(filepath.Join(d, "f"), []byte(d+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				must(d, "add", "f")
+				must(d, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "one")
+			}
+			must(up, "branch", "other")
+			must(up, "branch", "topic")
+			for _, args := range [][]string{{"remote", "add", "origin", up}, {"remote", "add", "fork", up}, {"fetch", "-q", "origin"}, {"fetch", "-q", "fork"},
+				{"branch", "-q", "--set-upstream-to=origin/main", "main"}, {"branch", "-q", "topic"}, {"branch", "-q", "--set-upstream-to=origin/topic", "topic"},
+				{"branch", "-q", "lone"}, {"branch", "-q", "diff"}, {"branch", "-q", "--set-upstream-to=origin/other", "diff"}, {"branch", "-q", "local"},
+				{"config", "branch.local.remote", "."}, {"config", "branch.local.merge", "refs/heads/main"}, {"branch", "-q", "pr"},
+				{"config", "branch.pr.pushRemote", "fork"}, {"branch", "-q", "--set-upstream-to=origin/main", "pr"}} {
+				must(dir, args...)
+			}
+			branches := []string{"", "main", "diff", "topic", "lone", "local", "pr", "nosuch"}
+			check := func() {
+				t.Helper()
+				for _, b := range branches {
+					gitCompare(t, oracle, port, dir, "", "rev-parse", b+"@{push}")
+				}
+				gitCompare(t, oracle, port, dir, "", "log", "--oneline", "-1", "main@{PUSH}~0")
+			}
+			check()
+			for _, mode := range []string{"current", "matching", "nothing", "upstream", "tracking", "simple"} {
+				must(dir, "config", "push.default", mode)
+				check()
+			}
+			must(dir, "config", "--unset", "push.default")
+			must(dir, "config", "remote.origin.push", "refs/heads/main:refs/heads/other")
+			check()
+			must(dir, "config", "--unset", "remote.origin.push")
+			must(dir, "config", "remote.pushDefault", "fork")
+			check()
+		})
+	}
+}
