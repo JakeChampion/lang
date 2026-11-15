@@ -175,8 +175,10 @@ def check_annex(directory, stream):
     for sized, width in ((False, 1), (True, 1), (True, 8)):
         data = bytearray()
         expected = []
+        streamed_expected = []
         for (_, packet), layout in zip(packets, layouts, strict=True):
             encoded, lines = annex_packet(packet, layout, sized, width, len(data))
+            streamed_expected += [f'P {len(data)} {encoded.hex()}'] + lines
             data += encoded
             expected += lines
         path = directory / f'{pixel_format}-{sized}-{width}.annexb'
@@ -187,11 +189,18 @@ def check_annex(directory, stream):
         assert native.returncode == wasi.returncode == 0, (native, wasi)
         assert re.search(r'leakcheck: allocs=(\d+) frees=\1 live_bytes=0', native.stderr), native.stderr
         assert native.stdout.splitlines() == wasi.stdout.splitlines() == expected
+        for chunk in (1, 3, 31):
+            sequential = subprocess.run([str(annex_binary), '--stream', str(path), str(chunk)], capture_output=True, text=True)
+            sequential_wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(annex_wasm), '--stream', path.name, str(chunk)],
+                                             cwd=directory, capture_output=True, text=True)
+            assert sequential.returncode == sequential_wasi.returncode == 0, (sequential, sequential_wasi)
+            assert re.search(r'leakcheck: allocs=([1-9]\d*) frees=\1 live_bytes=0', sequential.stderr), sequential.stderr
+            assert sequential.stdout.splitlines() == sequential_wasi.stdout.splitlines() == streamed_expected
         for decoder in ('libaom-av1', 'libdav1d'):
             planes = subprocess.check_output(['ffmpeg', '-v', 'error', '-xerror', '-f', 'av1', '-c:v', decoder,
                                               '-i', str(path), '-pix_fmt', pixel_format, '-f', 'rawvideo', '-'])
             assert planes == reference, (path.name, decoder)
-        print(f'{path.name}: all Annex B ranges and payloads match CBS source; both independent decoders preserve all planes', flush=True)
+        print(f'{path.name}: complete-view and streamed native/WASI ranges match CBS source at chunks 1/3/31; both decoders preserve all planes', flush=True)
 
 
 with tempfile.TemporaryDirectory() as temporary:

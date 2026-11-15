@@ -3168,7 +3168,7 @@ function builtin_i32_names(): string[] {
     "__memchr",
     "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes",
     "__ascii_run",
-    "__scan_set", "__scan_set_bytes",
+    "__scan_set", "__scan_set_bytes", "__scan_masks",
     "__count_runs", "__count_runs_bytes",
     "__bsd_sum",
     "__str_hash",
@@ -3206,6 +3206,7 @@ function builtin_string_names(): string[] {
     "str_repeat",
     "str_replace",
     "__raw_string",
+    "__raw_mapped_string",
     "string_from_bytes_unchecked",
     "string_from_bytes_range_unchecked",
     "buf_take",
@@ -3314,7 +3315,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "set_file_times") {
     return ty_option(ty_unknown());
   }
-  if (id.name == "read_link" || id.name == "getcwd") {
+  if (id.name == "read_link" || id.name == "getcwd" || id.name == "map_file_unchecked") {
     return ty_result(ty_string());
   }
   if (id.name == "read_link_bytes" || id.name == "getxattr_bytes" || id.name == "lgetxattr_bytes") {
@@ -6040,7 +6041,7 @@ pub function ssa_host_bare(op: string): boolean {
 }
 
 pub function ssa_host_kind(op: string): boolean {
-  return op.starts_with("syscall") || op == "exit" || op == "raw_string" || op.starts_with("dev_");
+  return op.starts_with("syscall") || op == "exit" || op == "raw_string" || op == "raw_mapped_string" || op.starts_with("dev_");
 }
 
 pub function ssa_host_need(op: string): string {
