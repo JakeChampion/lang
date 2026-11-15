@@ -180,7 +180,8 @@ pub function slice_name(width: i32): string {
   return "__sem_view_slice";
 }
 
-function scaled(width: i32): ir.Op[] {
+// Turns the i32 element index on the stack into a byte offset.
+pub function scaled(width: i32): ir.Op[] {
   if (width == 8) {
     return [];
   }

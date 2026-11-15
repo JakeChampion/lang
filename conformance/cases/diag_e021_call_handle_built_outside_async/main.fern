@@ -1,0 +1,23 @@
+// A call handle is opaque. A program cannot read its fields, so it cannot
+// write a handle that resumes the task with a different function.
+import "std/async";
+
+function body(name: string, n: i32): i32 {
+  let none: i32[] = [];
+  match (async.wait_any(none, None)) {
+    _ => {}
+  }
+  return n;
+}
+
+function main(): i32 {
+  match (async.call_start(body, "one", 1)) {
+    Returned(v) => {
+      return v;
+    },
+    Parked(c, _) => {
+      return c.id;
+    }
+  }
+  return 0;
+}

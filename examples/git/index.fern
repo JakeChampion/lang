@@ -12,7 +12,7 @@ import "./pack";
 // The index (version 1 or 2) and the reverse index of one packfile, the
 // checksum of the packfile, and the packfile with the objects that a thin
 // pack did not have.
-pub struct Built { idx: u8[], rev: u8[], name: string, data: u8[] }
+pub struct Built { idx: u8[], rev: u8[], name: string, data: u8[], input_count: i32 }
 
 // How to write the index: the version, and the largest offset that the
 // table of 4-byte offsets of version 2 holds. `algo` is the hash of the
@@ -393,7 +393,7 @@ pub function build_with(data: u8[], o: Options, first: (u8[], i64[]) => string[]
     return Err("fatal: pack has " + named.left.to_string() + " unresolved delta" + (if (named.left == 1) { "" } else { "s" }));
   }
   let sum = array.slice(whole, whole.len() - raw, whole.len());
-  return Ok(Built { idx: idx_bytes(whole, ends, named.names, sum, o), rev: rev_bytes(ends, named.names, sum, o.width), name: hex.encode(sum), data: whole });
+  return Ok(Built { idx: idx_bytes(whole, ends, named.names, sum, o), rev: rev_bytes(ends, named.names, sum, o.width), name: hex.encode(sum), data: whole, input_count: count });
 }
 
 // The places of the objects in the order of their names.

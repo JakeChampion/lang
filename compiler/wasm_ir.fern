@@ -1218,18 +1218,19 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "    (local.set $id (global.get $__fern_task_fresh_g))\n"
     + "    (global.set $__fern_task_fresh_g (i32.add (local.get $id) (i32.const 1)))\n"
     + "    (if (i32.lt_s (local.get $id) (local.get $cap)) (then\n"
-    + "      (i64.store (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 96))))\n"
+    + "      (i64.store (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 104))))\n"
     + "      (return (local.get $id))))\n"
     + "    (local.set $nt (call $__fern_task_zalloc (i32.shl (local.get $cap) (i32.const 4))))\n"
     + "    (memory.copy (local.get $nt) (global.get $__fern_task_tab) (i32.shl (local.get $cap) (i32.const 3)))\n"
     + "    (global.set $__fern_task_tab (local.get $nt))\n"
     + "    (global.set $__fern_task_cap (i32.shl (local.get $cap) (i32.const 1)))\n"
-    + "    (i64.store (i32.add (local.get $nt) (i32.shl (local.get $cap) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 96))))\n"
+    + "    (i64.store (i32.add (local.get $nt) (i32.shl (local.get $cap) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 104))))\n"
     + "    (local.get $cap))\n"
     + "  (func $__fern_task_free (param $id i32) (result i32) (local $r i32)\n"
     + "    (local.set $r (call $__fern_task_slot (local.get $id)))\n"
     + "    (if (local.get $r) (then (if (i64.eqz (i64.load offset=56 (local.get $r))) (then\n"
     + "      (i64.store offset=56 (local.get $r) (i64.extend_i32_u (i32.add (global.get $__fern_task_free_g) (i32.const 1))))\n"
+    + "      (i64.store offset=96 (local.get $r) (i64.add (i64.load offset=96 (local.get $r)) (i64.const 1)))\n"
     + "      (global.set $__fern_task_free_g (local.get $id))))))\n"
     + "    (i32.const 0))\n"
     + "  (func $__fern_task_cur (result i32) (global.get $__fern_task_cur_g))\n"
@@ -1287,6 +1288,12 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n"
     + "      (br $copy)))\n"
     + "    (local.get $out))\n"
+    + "  (func $__fern_task_gen (param $id i32) (result i32) (local $r i32)\n"
+    + "    (if (i32.or (i32.lt_s (local.get $id) (i32.const 1)) (i32.ge_s (local.get $id) (global.get $__fern_task_cap))) (then (return (i32.const -1))))\n"
+    + "    (local.set $r (i32.wrap_i64 (i64.load (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))))))\n"
+    + "    (if (i32.eqz (local.get $r)) (then (return (i32.const -1))))\n"
+    + "    (if (i64.ne (i64.load offset=56 (local.get $r)) (i64.const 0)) (then (return (i32.const -1))))\n"
+    + "    (i32.wrap_i64 (i64.load offset=96 (local.get $r))))\n"
     + "  (func $__fern_task_timeout (param $id i32) (result i32)\n"
     + "    (i32.wrap_i64 (i64.load offset=8 (call $__fern_task_rec (local.get $id)))))\n"
     + "  (func $__fern_task_until (param $id i32) (result i64)\n"
@@ -9492,9 +9499,10 @@ pub function arr_concat_helper(): string {
   let o = "";
   o += "  (func $__fern_arr_concat (param $width i32) (param $nb i32) (param $src i32) (param $a i32) (result i32)\n";
   o += "    (local $na i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
-  o += "    (local.set $stride (i32.const 4))\n";
-  o += "    (if (i32.eq (local.get $width) (i32.const 8)) (then (local.set $stride (i32.const 1))))\n";
-  o += "    (if (i32.eq (local.get $width) (i32.const 64)) (then (local.set $stride (i32.const 8))))\n";
+  // memory.copy checks its source address even when it copies no byte, and an
+  // empty range can point anywhere.
+  o += "    (if (i32.le_s (local.get $nb) (i32.const 0)) (then (local.set $nb (i32.const 0)) (local.set $src (local.get $a))))\n";
+  o += "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
   o += "    (local.set $na (i32.load (local.get $a)))\n";
   o += "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
   o += "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
@@ -9503,6 +9511,7 @@ pub function arr_concat_helper(): string {
   o += "    (if (i32.and (local.get $sole) (i32.le_s (local.get $n) (local.get $cap))) (then\n";
   o += "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o += "      (i32.store (local.get $a) (local.get $n))\n";
+  o += "      (call $__fern_arr_concat_retain (local.get $width) (local.get $a) (local.get $na) (local.get $n))\n";
   o += "      (return (local.get $a))))\n";
   o += "    (local.set $ncap (local.get $n))\n";
   o += "    (if (local.get $sole) (then\n";
@@ -9512,7 +9521,15 @@ pub function arr_concat_helper(): string {
   o += "    (i32.store offset=4 (local.get $r) (local.get $ncap))\n";
   o += "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride)))\n";
   o += "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o += "    (call $__fern_arr_concat_retain (local.get $width) (local.get $r) (local.get $na) (local.get $n))\n";
   o += "    (local.get $r))\n";
+  // An odd width marks counted elements: the slots [from, to) copied from src each take a count.
+  o += "  (func $__fern_arr_concat_retain (param $width i32) (param $r i32) (param $from i32) (param $to i32)\n";
+  o += "    (if (i32.eqz (i32.and (local.get $width) (i32.const 1))) (then (return)))\n";
+  o += "    (block $done (loop $next (br_if $done (i32.ge_s (local.get $from) (local.get $to)))\n";
+  o += "      (drop (call $__fern_rc_inc (i32.load (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.shl (local.get $from) (i32.const 2))))))\n";
+  o += "      (local.set $from (i32.add (local.get $from) (i32.const 1))) (br $next)))\n";
+  o += "  )\n";
   return o;
 }
 
