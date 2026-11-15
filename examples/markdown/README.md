@@ -238,25 +238,29 @@ it does not visit each block of the list.
 
 ## Speed
 
-Measured 2026-11-13 on the 4-core x86-64 container, with other work on the
+Measured 2026-11-15 on the 4-core x86-64 container, with other work on the
 machine: the median of 15 runs, and the peak memory. Each program reads the
 input from a file and writes to `/dev/null`. Both `md` and cmark use their
-default options. md4c 0.4.8 runs through a small driver of `md_html` with
-`MD_DIALECT_COMMONMARK`, which writes each part of the HTML when md4c gives
-it.
+default options.
 
 The first input is the Markdown files of the repository (`git ls-files
-'*.md'`) one after the other, 23.5 MB. The second input is the 652 spec
+'*.md'`) one after the other, 24.3 MB. The second input is the 652 spec
 examples, each with a blank line after it, repeated to 16.9 MB.
 
-| input | format | `md` | cmark 0.30.2 | md4c 0.4.8 |
-|---|---|---:|---:|---:|
-| the repository, 23.5 MB | HTML | 0.112 s, 32 MB | 0.415 s, 159 MB | 0.125 s, 29 MB |
-| the repository, 23.5 MB | `--to xml` | 0.385 s, 328 MB | 0.464 s, 182 MB | |
-| the repository, 23.5 MB | `--to commonmark` | 0.560 s, 351 MB | 0.689 s, 157 MB | |
-| the spec examples, 16.9 MB | HTML | 0.356 s, 66 MB | 1.058 s, 444 MB | 0.390 s, 44 MB |
-| the spec examples, 16.9 MB | `--to xml` | 1.035 s, 883 MB | 1.243 s, 511 MB | |
-| the spec examples, 16.9 MB | `--to commonmark` | 1.179 s, 884 MB | 1.247 s, 434 MB | |
+| input | format | `md` | cmark 0.31.2 |
+|---|---|---:|---:|
+| the repository, 24.3 MB | HTML | 0.129 s, 36 MB | 0.467 s, 150 MB |
+| the repository, 24.3 MB | `--to xml` | 0.329 s, 240 MB | 0.558 s, 174 MB |
+| the repository, 24.3 MB | `--to commonmark` | 0.507 s, 264 MB | 0.827 s, 148 MB |
+| the spec examples, 16.9 MB | HTML | 0.448 s, 76 MB | 1.267 s, 400 MB |
+| the spec examples, 16.9 MB | `--to xml` | 0.896 s, 388 MB | 1.518 s, 466 MB |
+| the spec examples, 16.9 MB | `--to commonmark` | 1.044 s, 392 MB | 1.661 s, 390 MB |
+
+This machine has no md4c now. On 2026-11-13, the repository was 23.5 MB.
+md4c 0.4.8 then took 0.125 s and 29 MB for its HTML. For the HTML of the
+spec input, it took 0.390 s and 44 MB. A small driver of `md_html` with `MD_DIALECT_COMMONMARK` ran it, and wrote each part
+of the HTML when md4c gave it. In the same runs, `md` took 0.112 s and
+0.356 s.
 
 The HTML does not use the node tree. callgrind counts the instructions of
 `md` before and after it got the options of cmark. On the first 6 MB of the
