@@ -1234,8 +1234,21 @@ pub function data_dir(ctx: usize): string {
 // to a backup or to a new device, or "" when there is none. Keep keys here.
 // Call it on the loop thread.
 pub function no_backup_dir(ctx: usize): string {
+  return context_dir(ctx, "getNoBackupFilesDir");
+}
+
+// The directory for files that the app can make again, such as images from
+// the network, or "". Android deletes files in it when storage runs low,
+// and does not back it up.
+pub function cache_dir(ctx: usize): string {
+  return context_dir(ctx, "getCacheDir");
+}
+
+// The absolute path of the directory that the Context method `method`
+// gives, or "" when it throws or gives none.
+function context_dir(ctx: usize, method: string): string {
   let e: usize = env(ctx);
-  let dir: usize = jni.call_object(e, activity_object(ctx), "getNoBackupFilesDir", "()Ljava/io/File;", []);
+  let dir: usize = jni.call_object(e, activity_object(ctx), method, "()Ljava/io/File;", []);
   if (jni.exception_occurred(e) != 0 as usize || dir == 0 as usize) {
     let cleared: usize = jni.exception_clear(e);
     return "";
@@ -1287,17 +1300,7 @@ pub function finish(ctx: usize): void {
 
 // The directory of the private files of the Application Context.
 function files_dir(ctx: usize): string {
-  let e: usize = env(ctx);
-  let dir: usize = jni.call_object(e, activity_object(ctx), "getFilesDir", "()Ljava/io/File;", []);
-  if (jni.exception_occurred(e) != 0 as usize || dir == 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
-    return "";
-  }
-  let path: usize = jni.call_object(e, dir, "getAbsolutePath", "()Ljava/lang/String;", []);
-  let text = jni.string_of(e, path);
-  let a: usize = jni.delete_local_ref(e, path);
-  let b: usize = jni.delete_local_ref(e, dir);
-  return text;
+  return context_dir(ctx, "getFilesDir");
 }
 
 // Keeps the screen on while the window shows, or stops that.

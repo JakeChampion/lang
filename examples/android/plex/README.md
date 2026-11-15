@@ -16,8 +16,9 @@ Browsing:
 
 - Sign in with a PIN: the app shows a code, and you type it at
   `plex.tv/link`.
-- The app finds the servers of the account. It tries the local address of
-  a server first, then the remote address, then the relay of plex.tv.
+- The app finds the servers of the account. It asks every address of a
+  server at once, and takes the local one, else the remote one, else the
+  relay of plex.tv.
 - The home screen shows the hubs of the server, such as Continue Watching
   and Recently Added, as rows of posters that scroll across.
 - The Libraries tab shows the movie, show and music libraries. A library is
@@ -38,6 +39,9 @@ Playback:
   seeks as a finger drags along it, with a preview thumbnail of the time. A tap outside them hides them, and the play button pauses.
 
 Music plays with the controls on the screen.
+
+In the intro or the credits of a video, a Skip button shows over it. The
+app asks the server for the markers of the item when it starts to play.
 
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice. A file that plays as it is changes its
@@ -86,8 +90,10 @@ API, one fetches a batch of posters, and one sends the reports of playback.
 The network, TLS and JSON are Fern code.
 
 The posters come from the photo transcoder of the server at the size of
-their cards. `std/android/image` decodes them with the image decoder of
-Android, and `std/android/draw` copies them into the frame.
+their cards. The app keeps each poster in the cache directory of Android,
+so it comes from the network once. `std/android/image` decodes them with
+the image decoder of Android, and `std/android/draw` copies them into the
+frame.
 
 The painter of `std/android/ui/painter` draws each screen with OpenGL ES 2.
 It keeps the image of each node on the GPU, so a scroll moves images and
