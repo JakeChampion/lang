@@ -899,7 +899,7 @@ function drop_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
       r = emit(r, ir.op_if(0));
-      r = drop_record_fields(r, slot, v.fields, scratch, f, false);
+      r = drop_record_fields(r, slot, v.fields, scratch, f, false, false);
       open += 1;
     }
   }
@@ -1127,7 +1127,9 @@ function drop_tuple_fields(own r: irtables.LowerState, slot: i32, tup: typeinfo.
   return r;
 }
 
-function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean): irtables.LowerState {
+// A record of a `@secret` struct zeroes each numeric array that it holds
+// alone before the array goes back to the allocator.
+function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean, secret: boolean): irtables.LowerState {
   let child = scratch;
   r = reserve(r, child + 1);
   for i in 0..fields.len() {
@@ -1140,10 +1142,33 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
       r = emit(r, ir.op_store_local(child));
+      let shift = ssasem.elem_shift(fields[i].ty);
+      if (secret && shift >= 0) {
+        r = wipe_sole(r, child, shift);
+      }
       r = drop_value(r, child, fields[i].ty, child + 1, f);
     }
   }
   return r;
+}
+
+// Zeroes the elements of the array in `slot` when no other value holds it.
+// The elements of an array start one word after its box.
+function wipe_sole(own r: irtables.LowerState, slot: i32, shift: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_const_i32(8));
+  r = emit(r, ir.op_raw_addr());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_const_i32(shift));
+  r = emit(r, ir.op_bin("shl", 0, false));
+  r = emit(r, ir.op_memset());
+  r = emit(r, ir.op_drop());
+  return emit(r, ir.op_end());
 }
 
 function drops(own r: irtables.LowerState, step: ssaunits.Step, f: ssasem.Func, p: ssaunits.Plan, links: i32[]): irtables.LowerState {
@@ -1972,7 +1997,7 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
     r = helper(r, 0, finalizer);
   }
   if let typeinfo.TypeStruct(_) = t {
-    r = drop_record_fields(r, 0, ssasem.record_fields(t, f), 1, f, semtypes.is_env(t));
+    r = drop_record_fields(r, 0, ssasem.record_fields(t, f), 1, f, semtypes.is_env(t), ssasem.secret_record(t, f));
   }
   if let typeinfo.TypeUnion(_) = t {
     if (self_tail_enum(t, f)) {

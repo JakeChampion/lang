@@ -169,6 +169,8 @@ of them.
 | `MC-08` | `docs/MUST-CONSUME.md` | A value that the statements after a `let ... else` consume, and that its else arm consumes, is consumed | `must_consume_let_else` |
 | `MC-09` | `docs/MUST-CONSUME.md` | An else arm of a `let ... else` that leaves the function before it consumes a `@must_consume` value is rejected (`E067`) | `diag_e067_let_else_return` |
 | `MC-10` | `docs/MUST-CONSUME.md` | A match on a struct pattern consumes its subject | `must_consume_struct_pattern` |
+| `SE-01` | `docs/SECRET-TYPES.md` | A `@secret` record reads its fields like any other record, and an array that another value still holds keeps its elements after the record goes away | `secret_record_keeps_a_shared_array` |
+| `SE-02` | `docs/SECRET-TYPES.md` | `@secret` applies only to a `struct` declaration (`P001`) | `diag_secret_on_a_function` |
 | `WK-01` | `docs/WORKERS.md` | A `send` parameter admits only a send-safe argument; a closure written at the call crosses with send-safe captures and result, and a function value does not (`E100`) | `diag_e100` |
 | `WK-02` | `docs/WORKERS.md` | `worker.spawn` runs its closure once and `join` returns the result, with the same contents on every engine | `worker_spawn_join` |
 | `WK-03` | `docs/WORKERS.md` | A `Worker` is `@must_consume`, so a spawned worker that is not joined is rejected (`E067`) | `diag_e067_worker_unjoined` |
