@@ -321,7 +321,9 @@ func xargsOutOfOrderCases() []invocation {
 	seed := func(code, body string) func(t *testing.T, dir string) {
 		return func(t *testing.T, dir string) {
 			t.Helper()
-			script := "#!/bin/sh\nif [ \"$1\" = a ]; then sleep 1; echo a; exit " + code + "; else " + body + "; fi\n"
+			// The first shell must open the script before the second child
+			// removes it or changes its permissions.
+			script := "#!/bin/sh\nif [ \"$1\" = a ]; then : > started; sleep 1; echo a; exit " + code + "; else while [ ! -e started ]; do :; done; " + body + "; fi\n"
 			if err := os.WriteFile(filepath.Join(dir, "cmd"), []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}

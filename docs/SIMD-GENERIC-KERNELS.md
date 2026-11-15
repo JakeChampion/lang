@@ -606,7 +606,9 @@ lowering holds each lane to the largest number of the narrow lane with
   `narrow` and `swizzle`.
 
 A shuffle by constants is a swizzle with indexes from `__u8x16_of`. A
-shuffle of two values is not in this slice.
+shuffle of two values is `simd.shuffle_u8x16(a, b, indexes)`: the indexes
+from 16 to 31 read `b`. It is two swizzles and an `or`, and it has no
+builtin of its own.
 
 `std/simd` has a function for each builtin, such as `simd.widen_lo_u8x16`,
 `simd.narrow_u_i16x8` and `simd.swizzle_u8x16`.

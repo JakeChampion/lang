@@ -173,10 +173,10 @@ function main(): i32 {
     return n;
 }
 `,
-		want: map[string][]string{"x86-64-linux": {`movq 0\(%r\w+\), %r\w+`}, "arm64-linux": {`ldr x\d+, \[x\d+, #0\]`}},
+		want: map[string][]string{"x86-64-linux": {`movl -4\(%r\w+\), %\w+`}, "arm64-linux": {`ldr w\d+, \[x\d+, #-4\]`}},
 		forbid: map[string][]string{
-			"x86-64-linux": {`(?s)movq 0\(%r\w+\), %r\w+.*movq 0\(%r\w+\), %r\w+`},
-			"arm64-linux":  {`(?s)ldr x\d+, \[x\d+, #0\].*ldr x\d+, \[x\d+, #0\]`}}},
+			"x86-64-linux": {`(?s)movl -4\(%r\w+\), %\w+.*movl -4\(%r\w+\), %\w+`},
+			"arm64-linux":  {`(?s)ldr w\d+, \[x\d+, #-4\].*ldr w\d+, \[x\d+, #-4\]`}}},
 	{name: "rc_inc_in_memory", fn: "twice", exit: 5, src: `
 struct Two { a: string, b: string }
 @noinline function twice(s: string): Two { return Two { a: s, b: s }; }
@@ -503,11 +503,11 @@ enum Shape { Circle(i32), Square(i32), Tri(i32), Line(i32) }
 function main(): i32 { return area(Line(7)) + area(Tri(4)); }
 `,
 		want: map[string][]string{
-			"x86-64-linux": {`\.Lssa_area_\d+:\n\s+cmpq \$\.S\d+, %r\w+`},
-			"arm64-linux":  {`\.Lssa_area_\d+:\n\s+adrp x\d+, \.S\d+`}},
+			"x86-64-linux": {`\.Lssa_area_\d+:\n\s+movl -4\(%r\w+\), %\w+\n\s+cmpq \$65537, %r\w+`},
+			"arm64-linux":  {`\.Lssa_area_\d+:\n\s+ldr w\d+, \[x\d+, #-4\]`, `movz w\d+, #1\n\s+movk w\d+, #1, lsl #16`}},
 		forbid: map[string][]string{
-			"x86-64-linux": {`(?s)movq 0\(%r\w+\), %r\w+\n\s+cmpq \$\.S.*movq 0\(%r\w+\), %r\w+\n\s+cmpq \$\.S`, `leaq \.S\d+\(%rip\)`},
-			"arm64-linux":  {`(?s)ldr x\d+, \[x\d+, #0\]\n\s+adrp x\d+, \.S.*ldr x\d+, \[x\d+, #0\]\n\s+adrp x\d+, \.S`}}},
+			"x86-64-linux": {`(?s)movl -4\(%r\w+\), %\w+.*movl -4\(%r\w+\), %\w+`, `\$\.S\d+`, `leaq \.S\d+\(%rip\)`},
+			"arm64-linux":  {`(?s)ldr w\d+, \[x\d+, #-4\].*ldr w\d+, \[x\d+, #-4\]`, `adrp x\d+, \.S\d+`}}},
 }
 
 func TestSelfHostOptimisationShapes(t *testing.T) {
