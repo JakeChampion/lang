@@ -1,0 +1,72 @@
+// The path of a finger: its places with their times. Android gives the
+// places of a finger at times that are not the times of the frames of the
+// display. `at` gives the place at one time, between two places of the
+// path. A frame that asks for the place at a fixed time before it thus gets
+// places that are the same time apart, and a finger with a constant speed
+// moves by the same amount in each frame. It makes no Android call, so the
+// host tests it.
+
+// A place at the time `ns` on the monotonic clock, in nanoseconds.
+pub struct Sample { ns: i64, x: f64, y: f64 }
+
+// The places of a path, from the oldest. A path has one place or more.
+pub struct Trail { samples: Sample[] }
+
+// A path that starts at `s`.
+pub function start(s: Sample): Trail {
+  return Trail { samples: [s] };
+}
+
+// The path with the place `s` at its end. A place that is not later than
+// the end of the path has the time of the end, and takes its place.
+pub function (t: Trail) add(s: Sample): Trail {
+  let last = t.samples[t.samples.len() - 1];
+  if (s.ns <= last.ns) {
+    return Trail { samples: t.samples.truncate(t.samples.len() - 1).append(Sample { ...s, ns: last.ns }) };
+  }
+  return Trail { samples: t.samples.append(s) };
+}
+
+// The time of the last place of the path.
+pub function (t: Trail) end_ns(): i64 {
+  return t.samples[t.samples.len() - 1].ns;
+}
+
+// The place of the finger at the time `ns`: on the line between the two
+// places around that time. Before the path it is the first place, and after
+// the path it is the last place.
+pub function (t: Trail) at(ns: i64): Sample {
+  let first = t.samples[0];
+  if (ns <= first.ns) {
+    return Sample { ...first, ns: ns };
+  }
+  for i in 1..t.samples.len() {
+    let b = t.samples[i];
+    if (ns < b.ns) {
+      let a = t.samples[i - 1];
+      let part = (ns - a.ns) as f64 / ((b.ns - a.ns) as f64);
+      return Sample { ns: ns, x: a.x + (b.x - a.x) * part, y: a.y + (b.y - a.y) * part };
+    }
+  }
+  let last = t.samples[t.samples.len() - 1];
+  return Sample { ...last, ns: ns };
+}
+
+// The path with no place that a time from `ns` does not need: it starts at
+// the last place that is not after `ns`.
+pub function (t: Trail) since(ns: i64): Trail {
+  let from = 0;
+  for i in 1..t.samples.len() {
+    if (t.samples[i].ns <= ns) {
+      from = i;
+    }
+  }
+  if (from == 0) {
+    return t;
+  }
+  let out: Sample[] = [];
+  for i in from..t.samples.len() {
+    out = out.append(t.samples[i]);
+  }
+  return Trail { samples: out };
+}

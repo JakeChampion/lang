@@ -1,6 +1,7 @@
 // Checks the rules of the app on the host: the settings, the clock of the
 // simulation, the colours, and what a touch, a key and a frame do.
 import "std/f64";
+import "std/rand";
 import "std/test";
 import "./clock";
 import "./color";
@@ -186,24 +187,149 @@ function test_a_pause_of_the_person_stays_after_a_touch(): test.TestOutcome {
   return test.assert_true(m.cfg.paused && !m.still && touched.cfg.paused);
 }
 
-function test_a_drag_gives_one_splat_for_each_frame(): test.TestOutcome {
-  let m = started(false).touched(0, 500.0, 1000.0, 0i64);
-  let (down, none) = m.frame(SECOND / 60i64);
-  let dragged = down.touched(2, 600.0, 1000.0, 0i64).touched(2, 600.0, 800.0, 0i64);
-  let (after, fr) = dragged.frame(2i64 * SECOND / 60i64);
-  let (idle, quiet) = after.frame(3i64 * SECOND / 60i64);
-  let Some(sp) = fr.splat else {
-    return test.fail("the frame after a drag has no splat");
+const MS: i64 = 1000000i64;
+
+function test_a_frame_takes_the_place_of_the_finger_at_its_time(): test.TestOutcome {
+  // The finger goes down at 1 second, and it is 200 pixels higher 20 ms
+  // later. Each frame takes the place of the finger 5 ms before the frame
+  // before it.
+  let m = started(false).touched(0, 500.0, 1000.0, SECOND);
+  let (down, none) = m.frame(SECOND + 10i64 * MS);
+  let dragged = down.touched(2, 500.0, 800.0, SECOND + 20i64 * MS);
+  let (a, first) = dragged.frame(SECOND + 27i64 * MS);
+  let (b, second) = a.frame(SECOND + 44i64 * MS);
+  let (c, third) = b.frame(SECOND + 61i64 * MS);
+  let Some(one) = first.splat else {
+    return test.fail("the first frame after a move has no splat");
   };
-  // The two moves of the frame add up: 100 pixels across, a tenth of the
-  // width, and 200 pixels up, a tenth of the height. The splat is at the
-  // finger, with y up. A move across counts for less on a tall window.
-  let across = started(false).touched(0, 500.0, 1000.0, 0i64).touched(2, 600.0, 1000.0, 0i64);
-  let (ignored, wide) = across.frame(SECOND / 60i64);
-  let Some(side) = wide.splat else {
+  let Some(two) = second.splat else {
+    return test.fail("the second frame after a move has no splat");
+  };
+  // 5 ms of the 20 ms is 50 pixels of the 2000 of the height, and the rest
+  // is 150 pixels. The splat is at the finger, with y up.
+  let quarter = (one.dy - 150.0).abs() < 0.001 && (one.y - 0.525).abs() < 0.000001 && one.dx == 0.0 && a.pointer.moved;
+  let rest = (two.dy - 450.0).abs() < 0.001 && (two.y - 0.6).abs() < 0.000001 && !b.pointer.moved;
+  return test.assert_true(none.splat.is_none() && quarter && rest && third.splat.is_none() && !c.animating(2000i64) == c.cfg.paused);
+}
+
+function test_a_move_across_counts_for_less_on_a_tall_window(): test.TestOutcome {
+  let m = started(false).touched(0, 500.0, 1000.0, SECOND).touched(2, 600.0, 1000.0, SECOND + 10i64 * MS);
+  let (a, first) = m.frame(SECOND + 20i64 * MS);
+  let (b, second) = a.frame(SECOND + 40i64 * MS);
+  let Some(sp) = second.splat else {
     return test.fail("the frame after a move across has no splat");
   };
-  return test.assert_true(none.splat.is_none() && sp.x == 0.6 && sp.y == 0.6 && (sp.dx - 300.0).abs() < 0.001 && (sp.dy - 600.0).abs() < 0.001 && quiet.splat.is_none() && after.pointer.dx == 0.0 && (side.dx - 300.0).abs() < 0.001 && side.dy == 0.0);
+  // 100 pixels are a tenth of the width, and the window is half as wide as
+  // it is high.
+  return test.assert_true(first.splat.is_none() && (sp.dx - 300.0).abs() < 0.001 && sp.dy == 0.0 && sp.x == 0.6);
+}
+
+// What Android does with the places of a finger. BATCHED gives one event
+// for each frame of the display, with a time of 5 ms before the frame, and
+// the event comes before the frame or after it. RAW gives each place of a
+// touch screen of 240 Hz, 1 to 3 ms after its time.
+const BATCHED: i32 = 0;
+
+const RAW: i32 = 1;
+
+// The push of each frame of a drag up at 1200 pixels in a second for half
+// a second, on a display of `hz` frames in a second, and the sum of the
+// pushes after the finger went up. The pushes are in the units of a splat.
+function drag(hz: i32, how: i32, seed: i64): (f64[], f64) {
+  let period = SECOND / (hz as i64);
+  let start = SECOND;
+  let end = start + SECOND / 2i64;
+  let rng = rand.rng_seed(seed);
+  let m = started(false).touched(0, 500.0, 1800.0, start);
+  let pushes: f64[] = [];
+  let sum = 0.0;
+  let sent = start;
+  let late = false;
+  let k = start / period + 1i64;
+  while (k * period < end + SECOND / 5i64) {
+    let now = k * period;
+    // The places that come before this frame.
+    if (how == BATCHED) {
+      let (r1, coin) = rand.rng_below(rng, 2);
+      rng = r1;
+      let before = coin == 0;
+      // The event of the frame before this one, when it came after that
+      // frame, and then the event of this frame, when it comes before it.
+      let from = k;
+      if (late) {
+        from = k - 1i64;
+      }
+      let to = k - 1i64;
+      if (before) {
+        to = k;
+      }
+      late = !before;
+      let j = from;
+      while (j <= to) {
+        let at = j * period - 5i64 * MS;
+        if (at > start && at <= end) {
+          m = m.touched(2, 500.0, 1800.0 - 1200.0 * ((at - start) as f64 / 1.0e9), at);
+        }
+        j += 1i64;
+      }
+    } else {
+      let step = SECOND / 240i64;
+      while (sent + step <= end) {
+        let (r2, lag) = rand.rng_between(rng, 1, 4);
+        if (sent + step + lag as i64 * MS > now) {
+          break;
+        }
+        rng = r2;
+        sent += step;
+        m = m.traced(500.0, 1800.0 - 1200.0 * ((sent - start) as f64 / 1.0e9), sent);
+      }
+    }
+    if (now > end + 30i64 * MS && m.pointer.down) {
+      m = m.touched(2, 500.0, 1200.0, end).touched(1, 500.0, 1200.0, end);
+    }
+    let (next, fr) = m.frame(now);
+    m = next;
+    let push = 0.0;
+    if let Some(sp) = fr.splat {
+      push = sp.dy;
+    }
+    pushes = pushes.append(push);
+    sum += push;
+    k += 1i64;
+  }
+  return (pushes, sum);
+}
+
+// The largest difference between two pushes of the middle of a drag, as a
+// part of the push of one frame at a constant speed.
+function unevenness(pushes: f64[], hz: i32): f64 {
+  let want = 1200.0 / (hz as f64) / 2000.0 * 6000.0;
+  let low = pushes[8];
+  let high = pushes[8];
+  for i in 8..pushes.len() * 2 / 3 - 8 {
+    low = low.min(pushes[i]);
+    high = high.max(pushes[i]);
+  }
+  return (high - want).abs().max((low - want).abs()) / want;
+}
+
+function test_a_steady_drag_pushes_the_same_in_each_frame(): test.TestOutcome {
+  let worst = 0.0;
+  let lost = 0.0;
+  for hz in [60, 90, 120] {
+    for how in [BATCHED, RAW] {
+      for seed in [1i64, 2i64, 3i64, 4i64, 5i64] {
+        let (pushes, sum) = drag(hz, how, seed);
+        worst = worst.max(unevenness(pushes, hz));
+        // The whole drag is 600 pixels of the 2000 of the height.
+        lost = lost.max((sum - 600.0 / 2000.0 * 6000.0).abs());
+      }
+    }
+  }
+  if (worst > 0.000001) {
+    return test.fail("a frame of a steady drag differs from the others by the part " + worst.to_string());
+  }
+  return test.assert_true(lost < 0.001);
 }
 
 function test_the_button_opens_the_dialog_and_gives_no_splat(): test.TestOutcome {
@@ -377,7 +503,9 @@ function main(): i32 {
   r = r.it("the app starts with a burst", test_app_starts_with_a_burst);
   r = r.it("with no animations, the app starts still until a touch", test_no_animation_starts_still_until_a_touch);
   r = r.it("a pause that the person chose stays after a touch", test_a_pause_of_the_person_stays_after_a_touch);
-  r = r.it("a drag gives one splat for each frame, with each move of the frame", test_a_drag_gives_one_splat_for_each_frame);
+  r = r.it("a frame takes the place of the finger at a fixed time before it", test_a_frame_takes_the_place_of_the_finger_at_its_time);
+  r = r.it("a move across counts for less on a tall window", test_a_move_across_counts_for_less_on_a_tall_window);
+  r = r.it("a steady drag pushes the same amount in each frame, at each display rate and event timing", test_a_steady_drag_pushes_the_same_in_each_frame);
   r = r.it("the button opens the dialog and gives no splat", test_the_button_opens_the_dialog_and_gives_no_splat);
   r = r.it("the close button, the backdrop and the back key close the dialog", test_the_dialog_closes);
   r = r.it("a touch on the dialog does not reach the fluid", test_a_touch_on_the_dialog_does_not_reach_the_fluid);
