@@ -38,6 +38,7 @@ a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
 a_returned_value_match_returns_from_each_arm         0
+a_specialised_callee_keeps_its_record_update_donor                      0
 a_struct_literal_from_a_module_takes_its_type_arguments_from_its_fields 0
 a_struct_name_call_wraps_a_union_member_across_modules 0
 a_three_trait_bound_in_an_imported_module            0
@@ -678,9 +679,11 @@ must_consume_if_let_arms                             0
 must_consume_in_a_loop_that_always_runs              0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
+must_consume_let_else                                0
 must_consume_method_receiver                         0
 must_consume_own_sink                                0
 must_consume_sibling_bindings_share_a_name           0
+must_consume_struct_pattern                          0
 mutual_recursion                                     0
 named_args                                           0
 narrowing_cast_of_expression                         0
@@ -689,6 +692,8 @@ negative_literal_patterns                            0
 nested_arm_patterns                                  0
 nested_array_literals_take_the_wider_element_type    0
 nested_call_temp                                     0
+nested_function_calls_itself                         0
+nested_lambdas_check_in_linear_time                  0
 nested_loops                                         0
 nested_option                                        0
 nested_owned_field_transfer                          0
@@ -759,6 +764,7 @@ own_consuming_match                                  0
 own_field_move_in_one_branch                         0
 own_field_moves_beside_a_sibling_branch_read         0
 own_field_moves_beside_an_if_value                   0
+own_for_element_of_borrowed_array                    0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
@@ -1319,7 +1325,7 @@ task_handle_with_a_made_up_id                        5
 # The program stops through exit(134), which does not unwind. The task handle and its strings are live.
 task_resumed_after_it_ended                          6
 # The program stops through exit(134), which does not unwind. The task is live.
-task_resumed_with_another_function                   10
+task_resumed_with_another_function                   8
 # The program stops through exit(134), which does not unwind. The task handle and its strings are live.
 task_started_two_times                               6
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
@@ -1342,6 +1348,7 @@ trmc_map                                             0
 try_binding_takes_its_success_payload                0
 try_op_in_closure                                    0
 try_result_struct_payload                            0
+try_runs_defers_in_the_scope_it_leaves               0
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
 tuple_binder_shadows_outer_var                       0

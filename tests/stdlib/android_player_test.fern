@@ -24,6 +24,16 @@ function simple_events(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+// A target holds a frame once its transform is not the identity.
+function target_frames(): test.TestOutcome {
+  let one: f32 = 1.0;
+  let zero: f32 = 0.0;
+  let none = player.TargetFrame { matrix: [one, zero, zero, zero, zero, one, zero, zero, zero, zero, one, zero, zero, zero, zero, one], time_ns: 0i64 };
+  let flip = player.TargetFrame { matrix: [one, zero, zero, zero, zero, 0.0 - one, zero, zero, zero, zero, one, zero, zero, one, zero, one], time_ns: 0i64 };
+  let empty = player.TargetFrame { matrix: [], time_ns: 5i64 };
+  return test.assert_eq(none.held().to_string() + " " + flip.held().to_string() + " " + empty.held().to_string(), "false true false");
+}
+
 function info_events(): test.TestOutcome {
   match (player.event(android.Posted(22, 3 as usize))) {
     Some(player.Rendering) => {},
@@ -35,6 +45,18 @@ function info_events(): test.TestOutcome {
     Some(player.Buffering(true)) => {},
     _ => {
       return test.fail("buffering start");
+    }
+  }
+  match (player.event(android.Posted(22, 804 as usize))) {
+    Some(player.AudioNotPlaying) => {},
+    _ => {
+      return test.fail("audio not playing");
+    }
+  }
+  match (player.event(android.Posted(22, 805 as usize))) {
+    Some(player.VideoNotPlaying) => {},
+    _ => {
+      return test.fail("video not playing");
     }
   }
   match (player.event(android.Posted(22, 702 as usize))) {
@@ -88,5 +110,6 @@ function main(): i32 {
   suite = suite.it("prepared, completion, and seek", simple_events);
   suite = suite.it("rendering, buffering, and unrelated events", info_events);
   suite = suite.it("signed platform error codes", error_events);
+  suite = suite.it("a target holds a frame once its transform turns", target_frames);
   return suite.finish();
 }

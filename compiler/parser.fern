@@ -3408,7 +3408,7 @@ function parse_tuple_arm_pattern_nested(p: Par): (i32[], string[], ast.Expr[], a
       lits = lits.append(e_bool(true));
       pats = pats.append(p_wildcard());
     } else if (p.peek_is_pat_literal()) {
-      let (le_expr, le_p) = parse_expr(p);
+      let (le_expr, le_p) = parse_binary(p, pattern_min_prec());
       p = le_p;
       elem_kinds = elem_kinds.append(2);
       binds = binds.append("");
@@ -3423,13 +3423,13 @@ function parse_tuple_arm_pattern_nested(p: Par): (i32[], string[], ast.Expr[], a
     }
     break;
   }
-  if (p.peek_punct() == ")") {
-    p = p.advance();
-  }
   if (elem_kinds.len() < 2) {
+    if (p.peek_punct() == ")") {
+      p = p.advance();
+    }
     return (none, [], [], no_pats, p);
   }
-  return (elem_kinds, binds, lits, pats, p);
+  return (elem_kinds, binds, lits, pats, p.expect(")"));
 }
 
 function tuple_elem_names(prefix: string, n: i32): string {
@@ -5041,6 +5041,9 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
       }
       if (p.peek_punct() == ",") {
         p = p.advance();
+      } else if (p.peek_punct() != ")") {
+        p = p.expect(")");
+        break;
       }
     }
     if (p.peek_punct() == ")") {
@@ -7127,6 +7130,9 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   }
   if (is_fn && !top_comma && !(top_arrow && p.peek_punct() == "=>")) {
     if (p.verbatim) {
+      if (p.peek_punct() != "[") {
+        return (ungrouped(tbuf), "", p);
+      }
       return consume_array_suffix(p, tbuf);
     }
     let (gname, gunused, gp) = consume_array_suffix(p, "fn");
@@ -7159,6 +7165,26 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
     return consume_array_suffix(p, unwrap_grouping_parens(tbuf));
   }
   return consume_array_suffix(p, tbuf);
+}
+
+// The function type `s` with no pair of parentheses around the whole of it,
+// and none around the whole of its result.
+function ungrouped(s: string): string {
+  let t = s;
+  while (t.len() > 2 && t[0] == b'(' && matching_close(t, 0) == Some(t.len() - 1) && !group_has_top_comma(t, 0, t.len() - 1)) {
+    t = slice_unchecked(t, 1, t.len() - 1).to_owned();
+  }
+  let arrow = top_arrow_at(t);
+  if (arrow < 0) {
+    return t;
+  }
+  let head = slice_unchecked(t, 0, arrow + 3).to_owned();
+  let result = slice_unchecked(t, arrow + 3, t.len()).to_owned();
+  if (result.starts_with("own ")) {
+    head += "own ";
+    result = slice_unchecked(result, 4, result.len()).to_owned();
+  }
+  return head + ungrouped(result);
 }
 
 function unwrap_grouping_parens(s: string): string {
@@ -8810,6 +8836,8 @@ pub function builtin_function_names(): string[] {
     "sysctl",
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "read_link_bytes", "umask", "rename",
     "clone_file",
+    // the bytes of a file, mapped where the target can map it
+    "map_file_unchecked",
     "rename_noreplace", "rename_exchange",
     "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes",
     "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes",
@@ -17105,6 +17133,11 @@ pub function is_iflet_value_local(name: string): boolean {
   return is_value_local_name(name) && name.starts_with("__il");
 }
 
+// True for the local that holds the subject of a match on a struct pattern.
+pub function is_struct_match_subject(name: string): boolean {
+  return name.len() > 6 && name.starts_with("__sm") && name.ends_with("_v");
+}
+
 pub function is_value_local_name(name: string): boolean {
   let n = name.len();
   if (n < 6 || !name.ends_with("_r")) {
@@ -18683,6 +18716,24 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_
   body = body.append(s_if(e_ident(DFA_TRYALL), cleanup, noelse));
   body = body.append(s_if(e_ident(DFA_TRYERR), cleanup_err, noelse));
   return body;
+}
+
+// The statements that lower_defers_body puts after a body for a `?` that
+// leaves it: the actions of the deferred statements, each behind its flag.
+pub function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  for st in body {
+    if let ast.StmtIf(f) = st {
+      if let ast.ExprIdent(id) = f.cond {
+        if (id.name == DFA_TRYALL || id.name == DFA_TRYERR) {
+          for c in f.then_body {
+            out = out.append(c);
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function dl_lower_lambda_bodies(stmts: ast.Stmt[]): ast.Stmt[] {

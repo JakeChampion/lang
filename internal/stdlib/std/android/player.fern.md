@@ -11,9 +11,11 @@ The listener runs on the main thread of the app. Each callback sends an event to
 
 `open` starts to prepare a stream, and `Prepared` comes when the player can start. `show` puts the video on the window of the activity: it calls `Window.release_cpu` first, because a window has one producer of pixels at a time. `hide` takes the video off the window, so the app can lock the window and draw on it again. Do not lock the window between `show` and `hide`.
 
-`Buffering(true)` and `Buffering(false)` come when the player waits for the network and when it plays again. `Rendering` comes when the first video frame shows. `Failed` has the `what` and `extra` codes of `MediaPlayer.OnErrorListener`.
+`Buffering(true)` and `Buffering(false)` come when the player waits for the network and when it plays again. `Rendering` comes when the first video frame shows. `AudioNotPlaying` and `VideoNotPlaying` come when one track stops while the other plays on, for example when no decoder takes the sound. `has_audio` tells whether the player selected a sound track at all: a track that the extractor cannot read is not selected. `Failed` has the `what` and `extra` codes of `MediaPlayer.OnErrorListener`.
 
-`target` makes a `SurfaceTexture` of Android on an external texture of `std/android/gl`, and a `Surface` that feeds it. `show_target` puts the video on that surface in place of the window. The app then draws each frame with the GPU, for example with bars that keep the shape of the video. `next_frame` takes the newest frame into the texture, and gives its transform matrix and its time. Call `target`, `next_frame` and `close_target` with the GL context of the texture current. `close_target` releases the two objects, after `hide` or `stop` takes the video off the surface.
+`target` makes a `SurfaceTexture` of Android on an external texture of `std/android/gl`, and a `Surface` that feeds it. `show_target` puts the video on that surface in place of the window. The app then draws each frame with the GPU, for example with bars that keep the shape of the video.
+
+`next_frame` takes the newest frame into the texture, and gives its transform matrix and its time. `held` is false until the texture holds a frame of the target. Call `target`, `next_frame` and `close_target` with the GL context of the texture current. `close_target` releases the two objects, after `hide` or `stop` takes the video off the surface.
 
 The module needs API level 26, for `ANativeWindow_toSurface` and the long seek API.
 Android selects the codecs and controls A/V synchronization.
@@ -72,7 +74,7 @@ The kinds from 19 to 23 belong to this module. A `Failed` event packs `what` in 
 
 ```fern
 <<events>>=
-pub enum Change { Prepared, Completed, Failed(i32, i32), Buffering(boolean), Rendering, Seeked }
+pub enum Change { Prepared, Completed, Failed(i32, i32), Buffering(boolean), Rendering, Seeked, AudioNotPlaying, VideoNotPlaying }
 
 const PREPARED: i32 = 19;
 
@@ -92,6 +94,11 @@ const INFO_BUFFERING_START: i32 = 701;
 
 const INFO_BUFFERING_END: i32 = 702;
 
+// MediaPlayer.MEDIA_INFO_AUDIO_NOT_PLAYING and VIDEO_NOT_PLAYING.
+const INFO_AUDIO_NOT_PLAYING: i32 = 804;
+
+const INFO_VIDEO_NOT_PLAYING: i32 = 805;
+
 function info_change(what: i32): Option[Change] {
   if (what == INFO_RENDERING) {
     return Some(Rendering);
@@ -101,6 +108,12 @@ function info_change(what: i32): Option[Change] {
   }
   if (what == INFO_BUFFERING_END) {
     return Some(Buffering(false));
+  }
+  if (what == INFO_AUDIO_NOT_PLAYING) {
+    return Some(AudioNotPlaying);
+  }
+  if (what == INFO_VIDEO_NOT_PLAYING) {
+    return Some(VideoNotPlaying);
   }
   return None;
 }
@@ -136,7 +149,7 @@ pub function event(e: android.Event): Option[Change] {
 `MediaPlayer` keeps its listeners across `reset`, so `open` can play one stream after another.
 A failed reset prevents source and preparation calls.
 `open` rejects empty addresses, embedded NUL bytes, and addresses longer than 8192 UTF-8 bytes.
-`seek` uses the API 26 method with `SEEK_CLOSEST`.
+`seek` uses the API 26 method with `SEEK_CLOSEST` or `SEEK_CLOSEST_SYNC`.
 It rejects negative positions and positions above 2,147,483,647 milliseconds.
 Android clamps larger values internally, despite the Java long parameter.
 
@@ -467,6 +480,25 @@ pub function show_target(ctx: usize, p: Player, t: Target): boolean {
 // column by column, and its time in nanoseconds.
 pub struct TargetFrame { matrix: f32[], time_ns: i64 }
 
+// True when the texture holds a frame of the target. Until then the matrix
+// is the identity, and the texture can still hold a frame of a target
+// before: the transform of each real frame turns the rows over.
+pub function (f: TargetFrame) held(): boolean {
+  if (f.matrix.len() != 16) {
+    return false;
+  }
+  for i in 0..16 {
+    let want: f32 = 0.0;
+    if (i % 5 == 0) {
+      want = 1.0;
+    }
+    if (f.matrix[i] != want) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Takes the newest frame of the video into the texture of `t`.
 pub function next_frame(ctx: usize, t: Target): Option[TargetFrame] {
   let e: usize = android.env(ctx);
@@ -619,6 +651,26 @@ pub function timestamp(ctx: usize, p: Player): Option[Timestamp] {
     return None;
   }
   return Some(Timestamp { media_us: media, monotonic_ns: system });
+}
+
+// MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO.
+const TRACK_AUDIO: i32 = 2;
+
+// True when the prepared player selected a sound track.
+pub function has_audio(ctx: usize, p: Player): boolean {
+  let e: usize = android.env(ctx);
+  if (!begin(e)) {
+    return false;
+  }
+  defer end(e);
+  let id = method(e, p.obj, "getSelectedTrack", "(I)I");
+  if (id == 0 as usize) {
+    return false;
+  }
+  let values = jni.jvalues([TRACK_AUDIO as usize]);
+  let track = jni.call_int_method_a(e, p.obj, id, values);
+  jni.free_buffer(values);
+  return !cleared(e) && track >= 0;
 }
 
 // The width and the height of the video, or 0 and 0 for audio.

@@ -1118,6 +1118,29 @@ function test_lane_swizzle(): test.TestOutcome {
   return test.assert_eq(bad.join(", "), "");
 }
 
+// A shuffle reads the first value below index 16 and the second from 16 to
+// 31, and gives 0 above 31.
+function test_lane_shuffle(): test.TestOutcome {
+  let xs = ramp(16);
+  let ys: u8[] = [];
+  let indexes: u8[] = [];
+  for i in 0..16 {
+    ys = ys.append((200 - i) as u8);
+    indexes = indexes.append((i * 5 + 2) as u8);
+  }
+  indexes = indexes.with(3, 31 as u8).with(6, 32 as u8).with(8, 255 as u8).with(12, 16 as u8).with(14, 15 as u8);
+  let got = simd.with_u8x16(zeros16(), 0, simd.shuffle_u8x16(simd.load_u8x16(xs, 0), simd.load_u8x16(ys, 0), simd.load_u8x16(indexes, 0)));
+  let bad: string[] = [];
+  for k in 0..16 {
+    let at = indexes[k] as i32;
+    let want = if (at < 16) { xs[at] as i32 } else if (at < 32) { ys[at - 16] as i32 } else { 0 };
+    if (got[k] as i32 != want) {
+      bad = bad.append("lane " + k.to_string());
+    }
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
 function main(): i32 {
   let r = test.new("simd");
   r = r.it("kernel on f64", test_kernel_on_f64);
@@ -1150,5 +1173,6 @@ function main(): i32 {
   r = r.it("integer lane masks", test_integer_lane_masks);
   r = r.it("lane shapes against the scalar", test_lane_shapes_against_the_scalar);
   r = r.it("lane swizzle", test_lane_swizzle);
+  r = r.it("lane shuffle", test_lane_shuffle);
   return r.finish();
 }

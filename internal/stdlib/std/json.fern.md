@@ -342,7 +342,7 @@ pub function (o: JsonObject) get_or(key: string, fallback: JsonValue): JsonValue
   return o.items[at];
 }
 
-pub function (own o: JsonObject) insert(key: string, value: JsonValue): JsonObject {
+pub function (o: JsonObject) insert(key: string, value: JsonValue): JsonObject {
   let at = __json_member_at(o, key);
   if (at >= 0) {
     return JsonObject { ...o, items: o.items.with(at, value) };
@@ -379,12 +379,12 @@ pub function (o: JsonObject) remove(key: string): JsonObject {
   return object_of(keys, values);
 }
 
-pub function (own o: JsonObject) update(key: string, init: JsonValue, f: (JsonValue) => JsonValue): JsonObject {
+pub function (o: JsonObject) update(key: string, init: JsonValue, f: (JsonValue) => JsonValue): JsonObject {
   let v = f(o.get_or(key, init));
   return o.insert(key, v);
 }
 
-pub function (own o: JsonObject) merge(other: JsonObject): JsonObject {
+pub function (o: JsonObject) merge(other: JsonObject): JsonObject {
   let out = o;
   let i = 0;
   while (i < other.names.len()) {
@@ -979,7 +979,6 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
         }
         i += 4;
         let cp1 = 65533;
-        let cp2 = -1;
         if (u >= 55296 && u <= 56319) {
           if (i + 6 > n
             || s[i] != 92
@@ -994,7 +993,7 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
             i += 4;
             if (low < 56320 || low > 57343) {
               cp1 = 65533;
-              cp2 = low;
+              i -= 6;
             } else {
               cp1 = 65536
                 + (u - 55296 << 10)
@@ -1011,14 +1010,6 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
         while (ci < cb.len()) {
           out = out.append(cb[ci] as u8);
           ci += 1;
-        }
-        if (cp2 >= 0) {
-          cb = __json_cp_bytes(cp2);
-          ci = 0;
-          while (ci < cb.len()) {
-            out = out.append(cb[ci] as u8);
-            ci += 1;
-          }
         }
       } else {
         let ch = -1;
@@ -2457,7 +2448,13 @@ impl FromJson for string {
 ```fern
 <<52 pub function decode[T: FromJson](text: string): Result[T, JsonError]>>=
 pub function decode[T: FromJson](text: string): Result[T, JsonError] {
-  match (parse(text)) {
+  return decode_with_depth(text, 128);
+}
+
+// decode_with_depth is decode with a lower depth limit. The rule for depth is
+// that of parse_with_depth.
+pub function decode_with_depth[T: FromJson](text: string, depth: i32): Result[T, JsonError] {
+  match (parse_with_depth(text, depth)) {
     Ok(v) => {
       return T.from_json_value(v);
     },
@@ -2706,6 +2703,27 @@ pub function parse_with_depth(s: string, depth: i32): Result[JsonValue, JsonErro
   }
   return Ok(v);
 }
+
+// parse_at reads one value of `s` that starts at the offset `start`, after
+// any white space. It gives the value and the offset just after the value,
+// and it does not read the text after the value. A stream of values reads
+// one value at a time so.
+pub function parse_at(s: string, start: i32): Result[(JsonValue, i32), JsonError] {
+  let at = cell_new(start);
+  let v = __json_p_value(s, at, 0);
+  let end = at.get();
+  if (end < 0) {
+    let off = -1 - end;
+    let (ln, cl) = __json_line_col(s, off);
+    return Err(JsonError {
+      message: __json_message(s, off),
+      offset: off,
+      line: ln,
+      col: cl,
+    });
+  }
+  return Ok((v, end));
+}
 ```
 
 ### Array and optional decoding
@@ -2717,7 +2735,13 @@ An invalid element retains its array index in the typed error.
 ```fern
 <<array and optional decoding>>=
 pub function decode_array[T: FromJson](text: string): Result[T[], JsonError] {
-  match (parse(text)) {
+  return decode_array_with_depth(text, 128);
+}
+
+// decode_array_with_depth is decode_array with a lower depth limit. The rule
+// for depth is that of parse_with_depth.
+pub function decode_array_with_depth[T: FromJson](text: string, depth: i32): Result[T[], JsonError] {
+  match (parse_with_depth(text, depth)) {
     Ok(v) => {
       return from_json_array[T](v);
     },

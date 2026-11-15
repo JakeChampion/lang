@@ -2770,6 +2770,12 @@ function main(): i32 { return 0; }
 		{"mc-nested-block-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(c: boolean): void { if (c) { let t: Ticket = Ticket { id: 1 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
 		{"mc-unmarked-unaffected-ok", "struct Plain { id: i32 }\nfunction f(): void { let p: Plain = Plain { id: 1 }; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"mc-call-result-dropped", "@must_consume\nstruct Ticket { id: i32 }\nfunction issue(): Ticket { return Ticket { id: 1 }; }\nfunction f(): void { issue(); }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-let-else-then-use-ok", "@must_consume\nstruct Ticket { id: i32 }\nfunction spend(own t: Ticket): void {}\nfunction f(o: Option[i32]): i32 { let t: Ticket = Ticket { id: 1 }; let Some(x) = o else { spend(t); return 0; }; spend(t); return x; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"mc-let-else-return-before-use-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction spend(own t: Ticket): void {}\nfunction f(o: Option[i32]): i32 { let t: Ticket = Ticket { id: 1 }; let Some(x) = o else { return 0; }; spend(t); return x; }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-struct-pattern-match-ok", "@must_consume\nstruct Ticket { id: i32 }\nfunction spend(own t: Ticket): void {}\nfunction f(t: Ticket): i32 { let n = 0; match (t) { Ticket { id } => { n += id; } } return n; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-for-element-of-borrowed-array-ok", "struct Ticket { id: i32 }\nfunction spend(own t: Ticket): void {}\nfunction f(ts: Ticket[]): void { for t in ts { spend(t); } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-for-element-of-borrowed-array-used-after", "struct Ticket { id: i32 }\nfunction spend(own t: Ticket): void {}\nfunction f(ts: Ticket[]): i32 { let n = 0; for t in ts { spend(t); n += t.id; } return n; }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-for-handle-element-of-borrowed-array", "function f(ss: Socket[]): void { for s in ss { tcp_close(s); } }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"e009-mixed-sign-add", "function main(): i32 { let n: i32 = 1; let u: u32 = 2; return (n + u) as i32; }\n", nil},
 		{"e009-mixed-sign-sub", "function main(): i32 { let n: i32 = 1; let u: u32 = 2; return (n - u) as i32; }\n", nil},
 		{"e009-mixed-sign-shift", "function main(): i32 { let n: i32 = 1; let u: u32 = 2; return (u << n) as i32; }\n", nil},
@@ -3999,6 +4005,7 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 		{"function-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nfunction Hit(x: i32): i32 { return x; }\nfunction main(): i32 { return Hit(2); }\n", nil},
 		{"local-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nfunction main(): i32 { let Hit: i32 = 1; return Hit; }\n", nil},
 		{"pattern-settled-by-scrutinee", "import \"./a\";\nimport \"./b\";\nfunction pick(): b.B { return b.Stay; }\nfunction main(): i32 { match (pick()) { Hit => { return 1; }, Stay => { return 0; } } }\n", nil},
+		{"return-in-a-match-arm-expects-the-function-type", "import \"./a\";\nenum Mine { Hit, Q }\nfunction f(n: i32): Result[i32, i32] { return Ok(n); }\nfunction g(n: i32): Result[i32, Mine] { let v = match (f(n)) { Ok(x) => x, Err(e) => { return Err(Hit); } }; return Ok(v); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"modules-that-do-not-see-each-other", "import \"./indep_a\";\nimport \"./indep_b\";\nfunction main(): i32 { return indep_a.f() + indep_b.g(); }\n", nil},
 		// IoError also has Interrupted, so a lookup by the bare name finds the
 		// other enum.

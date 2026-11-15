@@ -28,14 +28,16 @@ Browsing:
 
 Playback:
 
-- Play resumes from the position on the server. A seek goes to the
+- Play resumes from the position on the server, and a seek goes to the
   nearest sync frame.
 - The app reports the position every 10 seconds, and marks an item watched
   at its end. The next episode of a season plays after the end of an
   episode.
-- A tap on the video pauses it and shows the controls: back 10 seconds,
-  play, forward 30 seconds, and a bar to seek. Music plays with the controls
-  on the screen.
+- A tap on the video shows the controls over it for 4 seconds while the
+  video plays on: back 10 seconds, play, forward 30 seconds, and a bar to
+  seek. A tap outside them hides them, and the play button pauses.
+
+Music plays with the controls on the screen.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
@@ -44,6 +46,12 @@ and converts the sound. Otherwise the server transcodes the file to HLS at
 the quality of the settings. A transcode is of the whole item, and the
 player seeks in it, as Plezy does. While the player is paused, the app pings
 the transcode so that the server keeps it.
+
+A phone can list a decoder that the media player does not use. Thus a file
+that plays as it is can have no sound. Then the app plays it again
+from the same place as a transcode that converts the sound. It does this
+when the player selects no sound track, or when it reports that the sound
+stopped. The player shows "Direct play" or "Transcode" after the title.
 
 Search and settings:
 
@@ -59,7 +67,7 @@ and trackers. This app does not.
 | file | what it does |
 |---|---|
 | `plex.fern` | The model: the requests to plex.tv and to a server, and the records in their JSON replies. Every function is pure. |
-| `ui.fern` | The look. `nodes` lays out a screen as a list of nodes of `std/android/ui/scene`, each with a rectangle, what it shows, and the action of a tap. The scene module draws the nodes and finds the node under a touch, so one layout serves both. |
+| `ui.fern` | The look. `nodes` lays out a screen as a list of nodes of `std/android/ui/scene`, each with a rectangle, what it shows, and the action of a tap. `std/android/ui/painter` draws the nodes with the GPU, and the scene module finds the node under a touch, so one layout serves both. |
 | `control.fern` | The behaviour on each event: the touches, the keys, the replies, the player and the window. Each input and output goes through a `Device`. |
 | `app.fern` | The NativeActivity, the `Device` of the phone, and the @jni listener of the media player. |
 | `plex_test.fern` | The tests of `plex.fern`, with replies in the shape that plex.tv and a server send. |
@@ -77,16 +85,20 @@ The posters come from the photo transcoder of the server at the size of
 their cards. `std/android/image` decodes them with the image decoder of
 Android, and `std/android/draw` copies them into the frame.
 
+The painter of `std/android/ui/painter` draws each screen with OpenGL ES 2.
+It keeps the image of each node on the GPU, so a scroll moves images and
+draws nothing again. A change makes the nodes of the screen at once, and the
+painter draws them at the next vsync. A list moves on after a swipe, along
+the fling of `std/android/motion`, and a touch stops it. A device with no
+OpenGL ES 2 draws with the CPU at each change.
+
 `std/android/player` plays the stream with the media player of Android. The
 player draws the video into a `SurfaceTexture` on an external texture of
-`std/android/gl`. At each vsync, the app draws the newest frame in the middle
-of the window with OpenGL ES 2. Black bars keep the shape of the video. A
-device with no OpenGL ES 2 or no external textures shows the video on the
-window, which stretches it.
-
-A window has one producer of pixels at a time. A play gives the window to
-OpenGL with `Window.release_cpu`. A pause takes the video and OpenGL off the
-window, and the app draws the controls with the CPU.
+`std/android/gl`. At each vsync, the painter draws the newest frame in the
+middle of the window, with the controls over it. Black bars keep the shape
+of the video. Until the texture holds a frame of the stream, the
+video is black. A device with no external textures shows the video on the
+window, which stretches it, and a tap there pauses.
 
 ## Build
 
@@ -129,7 +141,7 @@ pattern that ffmpeg writes. The check requires:
 
 - The home screen shows the posters.
 - A link plays the track to its end, reports it, and marks it watched.
-- A link shows the video on the window. A tap pauses it and draws the
-  controls. A tap on play shows the video on the window again. The back key
-  stops it.
+- A link shows the video on the window. A tap shows the controls over the
+  video with no pause, and a tap on play pauses it. A tap on play shows the
+  video on the window again. The back key stops it.
 - logcat shows no crash.

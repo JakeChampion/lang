@@ -299,7 +299,14 @@ func xargsParallelCases() []invocation {
 		unordered(xc("a b c\n", `-n 1 -P 2 --process-slot-var=S sh -c 'echo $0 $S; if [ $0 = a ]; then sleep 1; fi'`)),
 		unordered(xc("a b c d e f\n", `-n 1 -P 2 sh -c 'exit 1'`)),
 		unordered(xc("1 2 3 4 5 6 7 8 9 10\n", `-n 2 -P 4 echo`)),
-		xc("a b c\n", `-n 1 -P 2 sh -c 'exit 255'`),
+		{
+			name:  "xargs -P 2 waits for both children with status 255",
+			args:  []string{"-n", "1", "-P", "2", "sh", "-c", `: > "$0"; while [ ! -e a ] || [ ! -e b ]; do :; done; exit 255`},
+			stdin: "a b c\n",
+			// Both children start before either exits. Otherwise GNU xargs
+			// can stop before the second child starts and print one message.
+			seedTree: func(t *testing.T, dir string) {},
+		},
 		xc("a b c\n", `-n 1 -P 2 nosuchcmd`),
 		unordered(xc("x\n", `-P 2 --process-slot-var=SLOT sh -c 'echo $SLOT $0'`)),
 	}
@@ -314,7 +321,9 @@ func xargsOutOfOrderCases() []invocation {
 	seed := func(code, body string) func(t *testing.T, dir string) {
 		return func(t *testing.T, dir string) {
 			t.Helper()
-			script := "#!/bin/sh\nif [ \"$1\" = a ]; then sleep 1; echo a; exit " + code + "; else " + body + "; fi\n"
+			// The first shell must open the script before the second child
+			// removes it or changes its permissions.
+			script := "#!/bin/sh\nif [ \"$1\" = a ]; then : > started; sleep 1; echo a; exit " + code + "; else while [ ! -e started ]; do :; done; " + body + "; fi\n"
 			if err := os.WriteFile(filepath.Join(dir, "cmd"), []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}

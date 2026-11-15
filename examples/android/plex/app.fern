@@ -8,6 +8,9 @@ import "std/android/gl";
 import "std/android/image";
 import "std/android/keyboard";
 import "std/android/player";
+import "std/android/text";
+import "std/android/ui/painter";
+import "std/android/ui/scene";
 import "std/android/video/capabilities";
 import "std/fetch";
 import "std/log";
@@ -117,83 +120,120 @@ function decoders(ctx: usize): string[] {
   return [];
 }
 
-// The video on the GPU: a GL context, the external texture that the player
-// draws into, the target on that texture while the video shows, and the
-// time of the frame on the window.
-struct Gpu { canvas: gl.Canvas, texture: gl.Texture, target: Option[player.Target], shown_ns: i64 }
+// The GPU side of the app: a painter on a GL context, which draws each
+// screen on `window`, and the external texture that the player draws the
+// video into, whose id is 0 on a GPU with no external textures. `target`
+// is on that texture while the video shows. `shown_ns` is the time of the
+// frame on the window, `matrix` its transform, `held` is true once the
+// texture holds a frame of the target, `w` and `h` are the size of the
+// window, and `overlaid` is true when controls showed over that frame.
+struct Gpu { painter: painter.Painter, texture: gl.Texture, target: Option[player.Target], window: usize, shown_ns: i64, matrix: f32[], held: boolean, w: i32, h: i32, overlaid: boolean }
 
 function new_gpu(): Option[Gpu] {
   let Some(c) = gl.open_context() else {
     return None;
   };
   let (on, t) = c.external();
-  if (t.id == 0) {
-    gl.close(on);
-    return None;
-  }
-  return Some(Gpu { canvas: on, texture: t, target: None, shown_ns: -1i64 });
+  let pt = painter.on_canvas(painter.new(text.Fonts { faces: [], weights: [] }), Some(on));
+  return Some(Gpu { painter: pt, texture: t, target: None, window: 0 as usize, shown_ns: -1i64, matrix: [], held: false, w: 0, h: 0, overlaid: false });
 }
 
-// Puts the video on the window. With a GL context, the player draws into a
-// texture, and draw_video draws it with bars that keep its shape. With no
-// context, the player draws on the window itself.
+// Puts the painter on the window. False when the phone has no OpenGL ES 2,
+// and then the app draws with the CPU.
+function attach_gpu(gpu: Cell[Option[Gpu]], window: usize): boolean {
+  let made = gpu.get();
+  if (made.is_none()) {
+    made = new_gpu();
+  }
+  let Some(g) = made else {
+    log.warn("plex: no OpenGL ES 2, so the app draws with the CPU");
+    return false;
+  };
+  let on = painter.attach(g.painter, window);
+  gpu.set(Some(Gpu { ...g, painter: on, window: window, w: 0, h: 0 }));
+  return painter.attached(on);
+}
+
+function detach_gpu(gpu: Cell[Option[Gpu]]): void {
+  if let Some(g) = gpu.get() {
+    gpu.set(Some(Gpu { ...g, painter: painter.detach(g.painter), window: 0 as usize }));
+  }
+}
+
+// Draws the nodes on the window. With `video`, the newest frame of the
+// video goes under them, in the middle of the window, with black bars that
+// keep its shape. Until the texture holds a frame of this target, the video
+// is black: the texture can still hold a frame of the target before. False
+// when the GPU cannot draw it.
+function present(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], window: usize, nodes: scene.Node[], video: boolean): boolean {
+  let Some(g) = gpu.get() else {
+    return false;
+  };
+  if (!painter.attached(g.painter)) {
+    return false;
+  }
+  let w = android.Window { ptr: window };
+  let ww = w.width();
+  let wh = w.height();
+  let passes = [scene.Pass { nodes: nodes, dy: 0, alpha: 1.0 }];
+  if (!video) {
+    let pt = painter.present(painter.with_size(g.painter, ww, wh), passes, draw.rgb(0, 0, 0));
+    gpu.set(Some(Gpu { ...g, painter: pt, w: ww, h: wh, overlaid: false }));
+    return true;
+  }
+  let Some(t) = g.target else {
+    return false;
+  };
+  let time = g.shown_ns;
+  let matrix = g.matrix;
+  let held = g.held;
+  if let Some(f) = player.next_frame(ctx, t) {
+    time = f.time_ns;
+    matrix = f.matrix;
+    held = f.held();
+  }
+  let changed = time != g.shown_ns || ww != g.w || wh != g.h || nodes.len() > 0 || g.overlaid;
+  if (!changed) {
+    return true;
+  }
+  let (vw, vh) = player.video_size(ctx, p);
+  let tex = g.texture;
+  let under = (c: gl.Canvas): void => {
+    if (held) {
+      c.draw_external(tex, matrix, gl.fit(vw, vh, gl.Part { x: 0, y: 0, w: c.width, h: c.height }));
+    }
+  };
+  let pt = painter.present_over(painter.with_size(g.painter, ww, wh), passes, draw.rgb(0, 0, 0), under);
+  gpu.set(Some(Gpu { ...g, painter: pt, shown_ns: time, matrix: matrix, held: held, w: ww, h: wh, overlaid: nodes.len() > 0 }));
+  return true;
+}
+
+// Puts the video on the window. With external textures, the player draws
+// into the texture, and present draws it. Otherwise the player draws on the
+// window itself, so the painter leaves the window first.
 function show_video(ctx: usize, p: player.Player, has: boolean, gpu: Cell[Option[Gpu]], window: usize): boolean {
   if (!has) {
     return false;
   }
-  let w = android.Window { ptr: window };
-  let made = gpu.get();
-  if (made.is_none()) {
-    made = new_gpu();
-    gpu.set(made);
-  }
-  let Some(g) = made else {
-    log.warn("plex: no OpenGL ES 2, so the video fills the window");
-    return player.show(ctx, p, w);
-  };
-  let released = w.release_cpu();
-  let on = g.canvas.attach(w);
-  if (on.attached()) {
-    if let Some(t) = player.target(ctx, g.texture.id) {
-      if (player.show_target(ctx, p, t)) {
-        gpu.set(Some(Gpu { ...g, canvas: on, target: Some(t), shown_ns: -1i64 }));
-        log.info("plex: video on a texture");
-        return true;
+  if let Some(g) = gpu.get() {
+    if (painter.attached(g.painter) && g.texture.id != 0) {
+      if let Some(t) = player.target(ctx, g.texture.id) {
+        if (player.show_target(ctx, p, t)) {
+          gpu.set(Some(Gpu { ...g, target: Some(t), shown_ns: -1i64, matrix: [], held: false }));
+          log.info("plex: video on a texture");
+          return true;
+        }
+        player.close_target(ctx, t);
       }
-      player.close_target(ctx, t);
     }
+    gpu.set(Some(Gpu { ...g, painter: painter.detach(g.painter) }));
   }
-  gpu.set(Some(Gpu { ...g, canvas: on.detach() }));
   log.warn("plex: no video texture, so the video fills the window");
-  return player.show(ctx, p, w);
+  return player.show(ctx, p, android.Window { ptr: window });
 }
 
-// Draws the newest frame of the video in the middle of the window, with
-// black bars that keep its shape. False when the video is not on a texture.
-function draw_video(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], window: usize): boolean {
-  let Some(g) = gpu.get() else {
-    return false;
-  };
-  let Some(t) = g.target else {
-    return false;
-  };
-  let w = android.Window { ptr: window };
-  let c = g.canvas.sized(w.width(), w.height());
-  let Some(f) = player.next_frame(ctx, t) else {
-    gpu.set(Some(Gpu { ...g, canvas: c }));
-    return true;
-  };
-  if (f.time_ns != g.shown_ns || c.width != g.canvas.width || c.height != g.canvas.height) {
-    c.clear(draw.rgb(0, 0, 0));
-    let (vw, vh) = player.video_size(ctx, p);
-    c.draw_external(g.texture, f.matrix, gl.fit(vw, vh, gl.Part { x: 0, y: 0, w: c.width, h: c.height }));
-    let shown = c.present();
-  }
-  gpu.set(Some(Gpu { ...g, canvas: c, shown_ns: f.time_ns }));
-  return true;
-}
-
-// Takes the video off the window, so the app can lock it again.
+// Takes the video off the window, and gives the window back to the
+// painter.
 function hide_video(ctx: usize, p: player.Player, has: boolean, gpu: Cell[Option[Gpu]]): void {
   if (!has) {
     return;
@@ -203,14 +243,18 @@ function hide_video(ctx: usize, p: player.Player, has: boolean, gpu: Cell[Option
     if let Some(t) = g.target {
       player.close_target(ctx, t);
     }
-    gpu.set(Some(Gpu { ...g, canvas: g.canvas.detach(), target: None }));
+    let pt = g.painter;
+    if (!painter.attached(pt) && g.window != 0 as usize) {
+      pt = painter.attach(pt, g.window);
+    }
+    gpu.set(Some(Gpu { ...g, painter: pt, target: None }));
   }
 }
 
 function close_gpu(gpu: Cell[Option[Gpu]]): void {
   if let Some(g) = gpu.get() {
     gl.free(g.texture);
-    gl.close(g.canvas);
+    let closed = painter.close(g.painter);
   }
   gpu.set(None);
 }
@@ -236,7 +280,9 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]]): control.D
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
     play: (uri: string): boolean => has && player.open(ctx, p, uri),
     show_video: (window: usize): boolean => show_video(ctx, p, has, gpu, window),
-    draw_video: (window: usize): boolean => draw_video(ctx, p, gpu, window),
+    attach: (window: usize): boolean => attach_gpu(gpu, window),
+    detach: (): void => detach_gpu(gpu),
+    present: (window: usize, nodes: scene.Node[], video: boolean): boolean => present(ctx, p, gpu, window, nodes, video),
     hide_video: (): void => hide_video(ctx, p, has, gpu),
     request_frame: (): void => android.request_frame(ctx),
     start: (): void => start(ctx, p, has),
@@ -245,6 +291,7 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]]): control.D
     position: (): i64 => position(ctx, p, has),
     duration: (): i64 => duration(ctx, p, has),
     stop: (): void => stop(ctx, p, has),
+    has_audio: (): boolean => has && player.has_audio(ctx, p),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
   };

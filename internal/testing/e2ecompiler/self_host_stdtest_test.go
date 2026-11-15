@@ -138,7 +138,7 @@ var interpSlowStdTests = map[string]bool{
 	"wavpack_input": true, "wavpack_input_boundary": true, "wavpack_file": true, "wavpack_file_boundary": true,
 	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
 	"vorbis": true, "vorbis_kernel": true, "vorbis_boundary": true,
-	"vorbis_file": true, "vorbis_input": true, "vorbis_seek": true,
+	"vorbis_file": true, "vorbis_input": true, "vorbis_seek": true, "vorbis_seek_view": true,
 	// Seek boundaries take 65 seconds. Exact seek smoke stays in the interpreter gate.
 	"vorbis_seek_boundary": true,
 	// Full MP4 corpora exceed a minute. Independent M4A smoke stays here.
@@ -452,6 +452,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"alac_boundary", langSrcAbs(t, "tests/stdlib/alac_boundary_test.fern"), ""},
 		{"alac_smoke", langSrcAbs(t, "tests/stdlib/alac_smoke_test.fern"), ""},
 		{"vorbis_seek", langSrcAbs(t, "tests/stdlib/vorbis_seek_test.fern"), ""},
+		{"vorbis_seek_view", langSrcAbs(t, "tests/stdlib/vorbis_seek_view_test.fern"), ""},
 		{"vorbis_seek_boundary", langSrcAbs(t, "tests/stdlib/vorbis_seek_boundary_test.fern"), ""},
 		{"vorbis_seek_smoke", langSrcAbs(t, "tests/stdlib/vorbis_seek_smoke_test.fern"), ""},
 		{"vorbis_file", langSrcAbs(t, "tests/stdlib/vorbis_file_test.fern"), ""},
@@ -627,9 +628,12 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"ci_string_and_log_kv", langSrcAbs(t, "tests/stdlib/ci_string_and_log_kv_test.fern"), ""},
 		{"env_unreachable", langSrcAbs(t, "tests/stdlib/env_unreachable_test.fern"), ""},
 		{"file_lines_and_timestamp", langSrcAbs(t, "tests/stdlib/file_lines_and_timestamp_test.fern"), ""},
+		{"f64_special", langSrcAbs(t, "tests/stdlib/f64_special_test.fern"), ""},
 		{"float", langSrcAbs(t, "tests/stdlib/float_test.fern"), ""},
 		{"helpers", langSrcAbs(t, "tests/stdlib/helpers_test.fern"), ""},
 		{"json_detail", langSrcAbs(t, "tests/stdlib/json_detail_test.fern"), ""},
+		{"json_parse_at", langSrcAbs(t, "tests/stdlib/json_parse_at_test.fern"), ""},
+		{"json_value_ownership", langSrcAbs(t, "tests/stdlib/json_value_ownership_test.fern"), ""},
 		{"one_of_none_of", langSrcAbs(t, "tests/stdlib/one_of_none_of_test.fern"), ""},
 		{"set_eq", langSrcAbs(t, "tests/stdlib/set_eq_test.fern"), ""},
 		{"string_count_and_dir_listing", langSrcAbs(t, "tests/stdlib/string_count_and_dir_listing_test.fern"), ""},
@@ -666,6 +670,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"json_document", langSrcAbs(t, "tests/stdlib/json_document_test.fern"), ""},
 		{"regex", langSrcAbs(t, "tests/stdlib/regex_test.fern"), ""},
 		{"regex_syntax", langSrcAbs(t, "tests/stdlib/regex_syntax_test.fern"), ""},
+		{"pcre", langSrcAbs(t, "tests/stdlib/pcre_test.fern"), ""},
 		{"encoding", langSrcAbs(t, "tests/stdlib/encoding_test.fern"), ""},
 		{"compress", langSrcAbs(t, "tests/stdlib/compress_test.fern"), ""},
 		{"array_combinators", langSrcAbs(t, "tests/stdlib/array_combinators_test.fern"), ""},

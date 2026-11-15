@@ -1,9 +1,14 @@
 // Tests of std/audio/tags: each test writes the bytes of a tag by hand, as
 // the format puts them in a file.
+import "std/audio/ogg";
 import "std/audio/tags";
 import "std/audio/wire";
 import "std/base64";
 import "std/test";
+import "aac_kernel_check" as ref;
+import "opus_file_check";
+import "opus_file_vectors";
+import "vorbis_file_vectors";
 
 function bytes_of(s: string): u8[] {
   let out: u8[] = [];
@@ -520,6 +525,119 @@ function test_retagged_length_bounds(): test.TestOutcome {
   return test.pass();
 }
 
+// The packets of the Ogg file `file`. The reader checks the checksum and
+// the sequence number of each page.
+function ogg_packets(file: [u8]): Result[u8[][], string] {
+  let d = match (ogg.decoder(ogg.default_limits())) { Ok(value) => value, Err(_) => { return Err("no reader"); } };
+  let out: u8[][] = [];
+  let at = 0;
+  let more = true;
+  while (more) {
+    let (next, used, page) = match (d.feed(file[at:])) { Ok(value) => value, Err(_) => { return Err("a bad page at " + at.to_string()); } };
+    d = next;
+    at += used;
+    match (page) {
+      Some(p) => {
+        for k in p.packets {
+          out = out.append(k.bytes);
+        }
+      },
+      None => {
+        more = false;
+      }
+    }
+  }
+  if (at != file.len() || d.finish().is_err()) {
+    return Err("an incomplete page at the end");
+  }
+  return Ok(out);
+}
+
+function same_bytes(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Each packet of `after` is that of `before`, but for the comment packet.
+function same_but_comments(before: u8[][], after: u8[][]): boolean {
+  if (before.len() != after.len()) {
+    return false;
+  }
+  for i in 0..before.len() {
+    if (i != 1 && !same_bytes(before[i], after[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ogg_file_retag(file: [u8], t: tags.Tags): string {
+  let Some(out) = tags.retagged(file, t) else {
+    return "no file";
+  };
+  let before = match (ogg_packets(file)) { Ok(value) => value, Err(e) => { return "the old file: " + e; } };
+  let after = match (ogg_packets(out)) { Ok(value) => value, Err(e) => { return "the new file: " + e; } };
+  if (!same_but_comments(before, after)) {
+    return "the packets changed";
+  }
+  let got = tags.read(out);
+  if (got.title != t.title || got.artist != t.artist || got.album != t.album || got.track != t.track || got.year != t.year) {
+    return "the tags are " + show(got);
+  }
+  return "";
+}
+
+// The Vorbis and the Opus files of the vectors get new comments, and each
+// other packet stays. A long album takes the comments over more pages, and
+// each later page gets its new sequence number and checksum.
+function test_writing_ogg_files(): test.TestOutcome {
+  let fresh = tags.Tags { ...tags.none(), title: "Morning Fern", artist: "Fern", track: 4, year: 2026 };
+  let long = tags.Tags { ...fresh, album: "A".repeat(140000) };
+  let Ok(vorbis) = ref.unpack(vorbis_file_vectors.vectors()[0].encoded) else {
+    return test.fail("the Vorbis file");
+  };
+  let Ok(opus) = opus_file_check.reference(opus_file_vectors.CASES[0]) else {
+    return test.fail("the Opus file");
+  };
+  for (name, file) in [("Vorbis", vorbis), ("Opus", opus.bytes)] {
+    for t in [fresh, long] {
+      let wrong = ogg_file_retag(file, t);
+      if (wrong.len() > 0) {
+        return test.fail(name + " with an album of " + t.album.len().to_string() + " bytes: " + wrong);
+      }
+    }
+  }
+  return test.pass();
+}
+
+// The comment packet keeps each other comment, and the binary data after
+// the comments when the first bit of its first byte is 1. Headers that
+// share a page with the sound give None.
+function test_writing_ogg_comments(): test.TestOutcome {
+  let fresh = tags.Tags { ...tags.none(), title: "New" };
+  let list = joined([comment("fern encoder"), wire.put_le([], 2u64, 4), comment("TITLE=Old"), comment("R128_TRACK_GAIN=256")]);
+  let got: string[] = [];
+  for extra in [[1u8, 9u8], [0u8, 9u8]] {
+    let file = joined([page([bytes_of("OpusHead")]), page([joined([bytes_of("OpusTags"), list, extra])]), page([[7u8]])]);
+    let Some(out) = tags.retagged(file, fresh) else {
+      return test.fail("an Opus file with binary data");
+    };
+    let t = tags.read(out);
+    got = got.append(t.title + " " + t.gain.to_string() + " " + out[out.len() - 31].to_string() + " " + out.len().to_string());
+  }
+  let shared = joined([page([bytes_of("OpusHead")]), page([joined([bytes_of("OpusTags"), list]), [7u8]])]);
+  let vorbis_shared = joined([page([joined([[1u8], bytes_of("vorbis"), [0u8, 0u8]])]), page([joined([[3u8], bytes_of("vorbis"), list]), [5u8], [7u8]])]);
+  got = got.append(tags.retagged(shared, fresh).is_none().to_string() + " " + tags.retagged(vorbis_shared, fresh).is_none().to_string());
+  return test.assert_eq(got.join(" / "), "New 6 1 159 / New 6 53 157 / true true");
+}
+
 function main(): i32 {
   let r = test.new("std/audio/tags");
   r = r.it("an ID3v2.3 tag has texts in UTF-16 and in Latin-1", test_id3v23);
@@ -537,6 +655,8 @@ function main(): i32 {
   r = r.it("a file holds the gain of its album", test_album_gain);
   r = r.it("an MP3 file gets new tags and keeps its other frames", test_writing_id3);
   r = r.it("a FLAC file gets new comments and keeps its other blocks", test_writing_flac);
+  r = r.it("an Ogg file gets new comments and keeps its other packets", test_writing_ogg_files);
+  r = r.it("an Ogg comment packet keeps its other comments", test_writing_ogg_comments);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
   r = r.it("comment lengths keep prior fields", test_comment_length_bounds);
   r = r.it("vendor lengths stay inside their block", test_vendor_length_bounds);

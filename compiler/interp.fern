@@ -43,7 +43,7 @@ pub struct VArr { items: Value[], elem: string, view: boolean, store: interpheap
 // zero for a value that a builtin builds.
 pub struct VTuple { elements: Value[], key: i64 }
 
-pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string }
+pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string, self_name: string }
 
 pub struct VMap { keys: Value[], values: Value[], key: i64 }
 
@@ -1032,7 +1032,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
+pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, try_cleanup: ast.Stmt[], heap: interpheap.Heap }
 
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
@@ -1078,14 +1078,14 @@ pub function new_env(heap: interpheap.Heap): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", heap: heap };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", try_cleanup: [], heap: heap };
 }
 
 function new_module_env(heap: interpheap.Heap, fs: Funcs, al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "", heap: heap };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "", try_cleanup: [], heap: heap };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -1637,7 +1637,7 @@ function cell_tree_text(h: usize, v: Value, own edges: interpheap.Root[], heap: 
         if (!captured.ok) {
           return (false, edges);
         }
-        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name };
+        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name, self_name: f.self_name };
         let root = interpheap.allocate_closure(heap, code, captured.text, captured.edges);
         cell_bits_text(h, 70, edges.len() as i64);
         return (true, edges.append(root));
@@ -1895,7 +1895,7 @@ function cell_leaf_value(s: string, at: Cell[i32], edges: interpheap.Root[], hea
     let payload = interpheap.get(root);
     if let Some(code) = payload.closure {
       let captured = cell_parts_value(payload.text, cell_new(0), interpheap.children(root), heap, []);
-      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name };
+      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name, self_name: code.self_name };
     }
     return v_err("function binding has no code");
   }
@@ -2189,6 +2189,18 @@ function string_result_value(r: Result[string, IoError]): Value {
   }
 }
 
+// The bytes as a string with no UTF-8 check, as map_file_unchecked gives them.
+function unchecked_result_value(r: Result[u8[], IoError]): Value {
+  match (r) {
+    Ok(b) => {
+      return ok_value(v_string(unsafe { string_from_bytes_unchecked(b) }));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
 function bytes_result_value(heap: interpheap.Heap, r: Result[u8[], IoError]): Value {
   match (r) {
     Ok(b) => {
@@ -2466,7 +2478,7 @@ function is_raw_floor(name: string): boolean {
     || util.has_str(["__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32", "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64"], name)
     || util.has_str(["__c_call3", "__c_call3_f32", "__c_call3_f64", "__c_call4", "__c_call4_f32", "__c_call4_f64"], name)
     || util.has_str(["__c_call5", "__c_call5_f32", "__c_call5_f64", "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv"], name)
-    || util.has_str(["__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
+    || util.has_str(["__raw_alloc", "__raw_string", "__raw_mapped_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
 }
 
 function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value[]): Value {
@@ -3387,6 +3399,7 @@ function call_host_fs_read(heap: interpheap.Heap, name: string, path: string): V
     "read_file" => string_result_value(read_file(path)),
     "read_file_bytes" => bytes_result_value(heap, read_file_bytes(path)),
     "read_link" => string_result_value(read_link(path)),
+    "map_file_unchecked" => unchecked_result_value(read_file_bytes(path)),
     "read_link_bytes" => bytes_result_value(heap, read_link_bytes(path)),
     "temp_dir" => string_result_value(temp_dir(path)),
     "stat" => stat_result_value(stat(path)),
@@ -4431,162 +4444,118 @@ function eval_typed_binary(op: string, lv: Value, rv: Value, ty: string): Value 
   return v;
 }
 
-function eval_binary(op: string, lv: Value, rv: Value): Value {
-  if let VLanes(a) = lv {
-    return lanes_binary(op, a, rv);
-  }
-  if (is_int_like(lv) && is_int_like(rv) && (is_vusize(lv) || is_vusize(rv))) {
-    return eval_usize_binary(op, vint_as_i64(lv) as u64, vint_as_i64(rv) as u64);
-  }
-  if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
-    let a = vint_as_i64(lv);
-    let b = vint_as_i64(rv);
-    let uns = is_vuint64(lv) || is_vuint64(rv);
-    if (op == "+") {
-      return v_wide(a + b, uns);
-    }
-    if (op == "-") {
-      return v_wide(a - b, uns);
-    }
-    if (op == "*") {
-      return v_wide(a * b, uns);
-    }
-    if (op == "&") {
-      return v_wide(a & b, uns);
-    }
-    if (op == "|") {
-      return v_wide(a | b, uns);
-    }
-    if (op == "^") {
-      return v_wide(a ^ b, uns);
-    }
-    if (op == "<<") {
-      return v_wide(a << b, uns);
-    }
-    if (op == "==") {
-      return v_bool(a == b);
-    }
-    if (op == "!=") {
-      return v_bool(a != b);
-    }
-    if (uns) {
-      let ua = a as u64;
-      let ub = b as u64;
-      let uzero = 0 as u64;
-      if (lexer.is_saturating_op(op)) {
-        return v_uint64(sat_u64(op, ua, ub));
-      }
-      if (op == "/") {
-        if (ub == uzero) {
-          return v_uint64(0);
+function eval_binary_saturating(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VInt(li) => {
+      match (rv) {
+        VInt(ri) => {
+          let sv = sat_exact(op, li.v as i64, ri.v as i64);
+          return v_int(sat_clamp(sv, -2147483647 - 1, 2147483647) as i32);
+        },
+        _ => {
+          return v_err("saturating rhs not i32");
         }
-        let uq = ua / ub;
-        return v_uint64(uq as i64);
       }
-      if (op == "%") {
-        if (ub == uzero) {
-          return v_uint64(a);
-        }
-        let ur = ua % ub;
-        return v_uint64(ur as i64);
-      }
-      if (op == ">>") {
-        let ush = ua >> ub;
-        return v_uint64(ush as i64);
-      }
-      if (op == "<") {
-        return v_bool(ua < ub);
-      }
-      if (op == "<=") {
-        return v_bool(ua <= ub);
-      }
-      if (op == ">") {
-        return v_bool(ua > ub);
-      }
-      if (op == ">=") {
-        return v_bool(ua >= ub);
-      }
+    },
+    _ => {
+      return v_err("saturating lhs not i32");
     }
+  }
+}
+
+function eval_binary_plus(lv: Value, rv: Value): Value {
+  match (lv) {
+    VInt(li) => {
+      match (rv) {
+        VInt(ri) => {
+          return v_int(li.v + ri.v);
+        },
+        _ => {
+          return v_err("`+` rhs not i32");
+        }
+      }
+    },
+    VString(ls) => {
+      match (rv) {
+        VString(rs) => {
+          return v_string(ls.v + rs.v);
+        },
+        _ => {
+          return v_err("`+` rhs not string");
+        }
+      }
+    },
+    VFloat(lf) => {
+      match (rv) {
+        VFloat(rf) => {
+          return v_float(lf.v + rf.v);
+        },
+        _ => {
+          return v_err("`+` rhs not f64");
+        }
+      }
+    },
+    _ => {
+      return v_err("`+` lhs not i32, string, or f64");
+    }
+  }
+}
+
+function eval_binary_i64(op: string, lv: Value, rv: Value): Value {
+  let a = vint_as_i64(lv);
+  let b = vint_as_i64(rv);
+  let uns = is_vuint64(lv) || is_vuint64(rv);
+  if (op == "+") {
+    return v_wide(a + b, uns);
+  }
+  if (op == "-") {
+    return v_wide(a - b, uns);
+  }
+  if (op == "*") {
+    return v_wide(a * b, uns);
+  }
+  if (op == "&") {
+    return v_wide(a & b, uns);
+  }
+  if (op == "|") {
+    return v_wide(a | b, uns);
+  }
+  if (op == "^") {
+    return v_wide(a ^ b, uns);
+  }
+  if (op == "<<") {
+    return v_wide(a << b, uns);
+  }
+  if (op == "==") {
+    return v_bool(a == b);
+  }
+  if (op == "!=") {
+    return v_bool(a != b);
+  }
+  if (uns) {
+    let ua = a as u64;
+    let ub = b as u64;
+    let uzero = 0 as u64;
     if (lexer.is_saturating_op(op)) {
-      return v_int64(sat_i64(op, a, b));
+      return v_uint64(sat_u64(op, ua, ub));
     }
     if (op == "/") {
-      if (b == 0) {
-        return v_int64(0);
-      }
-      let q64 = a / b;
-      return v_int64(q64);
-    }
-    if (op == "%") {
-      if (b == 0) {
-        return v_int64(a);
-      }
-      let r64 = a % b;
-      return v_int64(r64);
-    }
-    if (op == "<") {
-      return v_bool(a < b);
-    }
-    if (op == "<=") {
-      return v_bool(a <= b);
-    }
-    if (op == ">") {
-      return v_bool(a > b);
-    }
-    if (op == ">=") {
-      return v_bool(a >= b);
-    }
-    if (op == ">>") {
-      return v_int64(a >> b);
-    }
-  }
-  if (is_int_like(lv) && is_int_like(rv) && (is_vuint(lv) || is_vuint(rv))) {
-    let la = vint_bits(lv);
-    let rb = vint_bits(rv);
-    if (op == "+") {
-      return v_uint(la + rb);
-    }
-    if (op == "-") {
-      return v_uint(la - rb);
-    }
-    if (op == "*") {
-      return v_uint(la * rb);
-    }
-    if (lexer.is_saturating_op(op)) {
-      return v_uint(sat_clamp(sat_exact(op, uint_zext(la), uint_zext(rb)), 0, 4294967295) as i32);
-    }
-    if (op == "&") {
-      return v_uint(la & rb);
-    }
-    if (op == "|") {
-      return v_uint(la | rb);
-    }
-    if (op == "^") {
-      return v_uint(la ^ rb);
-    }
-    if (op == "<<") {
-      return v_uint(la << (rb & 31));
-    }
-    let ua = uint_zext(la);
-    let ub = uint_zext(rb);
-    if (op == ">>") {
-      let sc = (rb & 31) as i64;
-      let shifted = ua >> sc;
-      return v_uint(shifted as i32);
-    }
-    if (op == "/") {
-      if (ub == 0) {
-        return v_uint(0);
+      if (ub == uzero) {
+        return v_uint64(0);
       }
       let uq = ua / ub;
-      return v_uint(uq as i32);
+      return v_uint64(uq as i64);
     }
     if (op == "%") {
-      if (ub == 0) {
-        return v_uint(la);
+      if (ub == uzero) {
+        return v_uint64(a);
       }
       let ur = ua % ub;
-      return v_uint(ur as i32);
+      return v_uint64(ur as i64);
+    }
+    if (op == ">>") {
+      let ush = ua >> ub;
+      return v_uint64(ush as i64);
     }
     if (op == "<") {
       return v_bool(ua < ub);
@@ -4600,112 +4569,191 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
     if (op == ">=") {
       return v_bool(ua >= ub);
     }
-    if (op == "==") {
-      return v_bool(la == rb);
-    }
-    if (op == "!=") {
-      return v_bool(la != rb);
-    }
-  }
-  if ((is_vfloat32(lv) || is_vfloat32(rv)) && (is_float_like(lv) || is_int_like(lv)) && (is_float_like(rv) || is_int_like(rv))) {
-    let fa = vfloat_as_f64(lv);
-    if (is_int_like(lv)) {
-      fa = vint_as_i64(lv) as f64;
-    }
-    let fb = vfloat_as_f64(rv);
-    if (is_int_like(rv)) {
-      fb = vint_as_i64(rv) as f64;
-    }
-    if (op == "+") {
-      return v_float32(fa + fb);
-    }
-    if (op == "-") {
-      return v_float32(fa - fb);
-    }
-    if (op == "*") {
-      return v_float32(fa * fb);
-    }
-    if (op == "/") {
-      return v_float32(fa / fb);
-    }
-    if (op == "%") {
-      return v_err("`%` on f32 is unsupported");
-    }
-    if (op == "<") {
-      return v_bool(fa < fb);
-    }
-    if (op == "<=") {
-      return v_bool(fa <= fb);
-    }
-    if (op == ">") {
-      return v_bool(fa > fb);
-    }
-    if (op == ">=") {
-      return v_bool(fa >= fb);
-    }
-    if (op == "==") {
-      return v_bool(fa == fb);
-    }
-    if (op == "!=") {
-      return v_bool(fa != fb);
-    }
   }
   if (lexer.is_saturating_op(op)) {
-    match (lv) {
-      VInt(li) => {
-        match (rv) {
-          VInt(ri) => {
-            let sv = sat_exact(op, li.v as i64, ri.v as i64);
-            return v_int(sat_clamp(sv, -2147483647 - 1, 2147483647) as i32);
-          },
-          _ => {
-            return v_err("saturating rhs not i32");
-          }
-        }
-      },
-      _ => {
-        return v_err("saturating lhs not i32");
-      }
+    return v_int64(sat_i64(op, a, b));
+  }
+  if (op == "/") {
+    if (b == 0) {
+      return v_int64(0);
     }
+    let q64 = a / b;
+    return v_int64(q64);
+  }
+  if (op == "%") {
+    if (b == 0) {
+      return v_int64(a);
+    }
+    let r64 = a % b;
+    return v_int64(r64);
+  }
+  if (op == "<") {
+    return v_bool(a < b);
+  }
+  if (op == "<=") {
+    return v_bool(a <= b);
+  }
+  if (op == ">") {
+    return v_bool(a > b);
+  }
+  if (op == ">=") {
+    return v_bool(a >= b);
+  }
+  if (op == ">>") {
+    return v_int64(a >> b);
+  }
+  return eval_binary_after_i64(op, lv, rv);
+}
+
+function eval_binary_after_i64(op: string, lv: Value, rv: Value): Value {
+  if (is_int_like(lv) && is_int_like(rv) && (is_vuint(lv) || is_vuint(rv))) {
+    return eval_binary_u32(op, lv, rv);
+  }
+  return eval_binary_after_u32(op, lv, rv);
+}
+
+function eval_binary_u32(op: string, lv: Value, rv: Value): Value {
+  let la = vint_bits(lv);
+  let rb = vint_bits(rv);
+  if (op == "+") {
+    return v_uint(la + rb);
+  }
+  if (op == "-") {
+    return v_uint(la - rb);
+  }
+  if (op == "*") {
+    return v_uint(la * rb);
+  }
+  if (lexer.is_saturating_op(op)) {
+    return v_uint(sat_clamp(sat_exact(op, uint_zext(la), uint_zext(rb)), 0, 4294967295) as i32);
+  }
+  if (op == "&") {
+    return v_uint(la & rb);
+  }
+  if (op == "|") {
+    return v_uint(la | rb);
+  }
+  if (op == "^") {
+    return v_uint(la ^ rb);
+  }
+  if (op == "<<") {
+    return v_uint(la << (rb & 31));
+  }
+  let ua = uint_zext(la);
+  let ub = uint_zext(rb);
+  if (op == ">>") {
+    let sc = (rb & 31) as i64;
+    let shifted = ua >> sc;
+    return v_uint(shifted as i32);
+  }
+  if (op == "/") {
+    if (ub == 0) {
+      return v_uint(0);
+    }
+    let uq = ua / ub;
+    return v_uint(uq as i32);
+  }
+  if (op == "%") {
+    if (ub == 0) {
+      return v_uint(la);
+    }
+    let ur = ua % ub;
+    return v_uint(ur as i32);
+  }
+  if (op == "<") {
+    return v_bool(ua < ub);
+  }
+  if (op == "<=") {
+    return v_bool(ua <= ub);
+  }
+  if (op == ">") {
+    return v_bool(ua > ub);
+  }
+  if (op == ">=") {
+    return v_bool(ua >= ub);
+  }
+  if (op == "==") {
+    return v_bool(la == rb);
+  }
+  if (op == "!=") {
+    return v_bool(la != rb);
+  }
+  return eval_binary_after_u32(op, lv, rv);
+}
+
+function eval_binary_after_u32(op: string, lv: Value, rv: Value): Value {
+  if ((is_vfloat32(lv) || is_vfloat32(rv)) && (is_float_like(lv) || is_int_like(lv)) && (is_float_like(rv) || is_int_like(rv))) {
+    return eval_binary_f32(op, lv, rv);
+  }
+  return eval_binary_after_f32(op, lv, rv);
+}
+
+function eval_binary_f32(op: string, lv: Value, rv: Value): Value {
+  let fa = vfloat_as_f64(lv);
+  if (is_int_like(lv)) {
+    fa = vint_as_i64(lv) as f64;
+  }
+  let fb = vfloat_as_f64(rv);
+  if (is_int_like(rv)) {
+    fb = vint_as_i64(rv) as f64;
   }
   if (op == "+") {
-    match (lv) {
-      VInt(li) => {
-        match (rv) {
-          VInt(ri) => {
-            return v_int(li.v + ri.v);
-          },
-          _ => {
-            return v_err("`+` rhs not i32");
-          }
-        }
-      },
-      VString(ls) => {
-        match (rv) {
-          VString(rs) => {
-            return v_string(ls.v + rs.v);
-          },
-          _ => {
-            return v_err("`+` rhs not string");
-          }
-        }
-      },
-      VFloat(lf) => {
-        match (rv) {
-          VFloat(rf) => {
-            return v_float(lf.v + rf.v);
-          },
-          _ => {
-            return v_err("`+` rhs not f64");
-          }
-        }
-      },
-      _ => {
-        return v_err("`+` lhs not i32, string, or f64");
-      }
-    }
+    return v_float32(fa + fb);
+  }
+  if (op == "-") {
+    return v_float32(fa - fb);
+  }
+  if (op == "*") {
+    return v_float32(fa * fb);
+  }
+  if (op == "/") {
+    return v_float32(fa / fb);
+  }
+  if (op == "%") {
+    return v_err("`%` on f32 is unsupported");
+  }
+  if (op == "<") {
+    return v_bool(fa < fb);
+  }
+  if (op == "<=") {
+    return v_bool(fa <= fb);
+  }
+  if (op == ">") {
+    return v_bool(fa > fb);
+  }
+  if (op == ">=") {
+    return v_bool(fa >= fb);
+  }
+  if (op == "==") {
+    return v_bool(fa == fb);
+  }
+  if (op == "!=") {
+    return v_bool(fa != fb);
+  }
+  return eval_binary_after_f32(op, lv, rv);
+}
+
+function eval_binary_after_f32(op: string, lv: Value, rv: Value): Value {
+  if (lexer.is_saturating_op(op)) {
+    return eval_binary_saturating(op, lv, rv);
+  }
+  if (op == "+") {
+    return eval_binary_plus(lv, rv);
   }
   return eval_binary_arith(op, lv, rv);
+}
+
+function eval_binary(op: string, lv: Value, rv: Value): Value {
+  if let VLanes(a) = lv {
+    return lanes_binary(op, a, rv);
+  }
+  if (is_int_like(lv) && is_int_like(rv) && (is_vusize(lv) || is_vusize(rv))) {
+    return eval_usize_binary(op, vint_as_i64(lv) as u64, vint_as_i64(rv) as u64);
+  }
+  if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
+    return eval_binary_i64(op, lv, rv);
+  }
+  return eval_binary_after_i64(op, lv, rv);
 }
 
 const EVAL_BINARY_ARITH_SET: string[] = ["-", "*", "/", "%"];
@@ -4906,47 +4954,206 @@ function bitwise_not(ov: Value): Value {
   }
 }
 
-function eval_unary(op: string, ov: Value): Value {
-  if (op == "-") {
-    match (ov) {
-      VInt(i) => {
-        return v_int(0 - i.v);
-      },
-      VInt64(i) => {
-        if (i.ptr) {
-          return v_usize(0 - unpack_i64(i));
-        }
-        return v_wide(0 - unpack_i64(i), i.unsigned);
-      },
-      VUint(u) => {
-        return v_uint(0 - u.v);
-      },
-      VFloat(f) => {
-        return v_float(-f.v);
-      },
-      VFloat32(f) => {
-        return v_float32(-f.v);
-      },
-      VLanes(l) => {
-        if (l.kind != typeinfo.LANE_FLOAT) {
-          return integer_lanes_negated(l, false);
-        }
-        return lanes_map_bits(l, lane_sign(l.width), 0);
-      },
-      _ => {
-        return v_err("unary `-` operand not i32 or f64");
+function eval_unary_neg(ov: Value): Value {
+  match (ov) {
+    VInt(i) => {
+      return v_int(0 - i.v);
+    },
+    VInt64(i) => {
+      if (i.ptr) {
+        return v_usize(0 - unpack_i64(i));
       }
+      return v_wide(0 - unpack_i64(i), i.unsigned);
+    },
+    VUint(u) => {
+      return v_uint(0 - u.v);
+    },
+    VFloat(f) => {
+      return v_float(-f.v);
+    },
+    VFloat32(f) => {
+      return v_float32(-f.v);
+    },
+    VLanes(l) => {
+      if (l.kind != typeinfo.LANE_FLOAT) {
+        return integer_lanes_negated(l, false);
+      }
+      return lanes_map_bits(l, lane_sign(l.width), 0);
+    },
+    _ => {
+      return v_err("unary `-` operand not i32 or f64");
     }
   }
-  if (op == "!") {
-    match (ov) {
-      VBool(b) => {
-        return v_bool(!b.v);
-      },
-      _ => {
-        return v_err("unary `!` operand not bool");
-      }
+}
+
+function eval_unary_not(ov: Value): Value {
+  match (ov) {
+    VBool(b) => {
+      return v_bool(!b.v);
+    },
+    _ => {
+      return v_err("unary `!` operand not bool");
     }
+  }
+}
+
+function eval_unary_as_u8(ov: Value): Value {
+  match (ov) {
+    VInt(i) => {
+      return v_byte(i.v & 255);
+    },
+    VInt64(i) => {
+      return v_byte((unpack_i64(i) & 255) as i32);
+    },
+    VUint(u) => {
+      return v_byte(u.v & 255);
+    },
+    VFloat(f) => {
+      return v_byte(f64_trunc_u32(f.v) & 255);
+    },
+    VFloat32(f) => {
+      return v_byte(f64_trunc_u32(f.v) & 255);
+    },
+    _ => {
+      return v_err("`as` integer cast operand not numeric");
+    }
+  }
+}
+
+function eval_unary_as_u32(ov: Value): Value {
+  match (ov) {
+    VInt(i) => {
+      return v_uint(i.v);
+    },
+    VInt64(i) => {
+      return v_uint(i.lo);
+    },
+    VUint(u) => {
+      return ov;
+    },
+    VFloat(f) => {
+      return v_uint(f64_trunc_u32(f.v));
+    },
+    VFloat32(f) => {
+      return v_uint(f64_trunc_u32(f.v));
+    },
+    _ => {
+      return v_err("`as` integer cast operand not numeric");
+    }
+  }
+}
+
+function eval_unary_as_i64(op: string, ov: Value): Value {
+  let uns = op == "as_u64";
+  match (ov) {
+    VInt(i) => {
+      return v_wide(i.v as i64, uns);
+    },
+    VInt64(i) => {
+      return v_wide(unpack_i64(i), uns);
+    },
+    VUint(u) => {
+      return v_wide(uint_zext(u.v), uns);
+    },
+    VFloat(f) => {
+      if (uns) {
+        return v_wide(f64_trunc_u64(f.v), uns);
+      }
+      return v_wide(f.v as i64, uns);
+    },
+    VFloat32(f) => {
+      if (uns) {
+        return v_wide(f64_trunc_u64(f.v), uns);
+      }
+      return v_wide(f.v as i64, uns);
+    },
+    _ => {
+      return v_err("`as` integer cast operand not numeric");
+    }
+  }
+}
+
+function eval_unary_as_f64(ov: Value): Value {
+  match (ov) {
+    VInt(i) => {
+      return v_float(i.v as f64);
+    },
+    VInt64(i) => {
+      return v_float(wide_as_f64(i));
+    },
+    VUint(u) => {
+      return v_float(uint_zext(u.v) as f64);
+    },
+    VFloat(f) => {
+      return v_float(f.v);
+    },
+    VFloat32(f) => {
+      return v_float(f.v);
+    },
+    _ => {
+      return v_err("`as` float cast operand not numeric");
+    }
+  }
+}
+
+function eval_unary_as_f32(ov: Value): Value {
+  match (ov) {
+    VInt(i) => {
+      return v_float32(i.v as f64);
+    },
+    VInt64(i) => {
+      return v_float32(wide_as_f64(i));
+    },
+    VUint(u) => {
+      return v_float32(uint_zext(u.v) as f64);
+    },
+    VFloat(f) => {
+      return v_float32(f.v);
+    },
+    VFloat32(f) => {
+      return ov;
+    },
+    _ => {
+      return v_err("`as` float cast operand not numeric");
+    }
+  }
+}
+
+function eval_unary_try(ov: Value): Value {
+  match (ov) {
+    VStruct(sv) => {
+      if (sv.type_name == "Some" || sv.type_name == "Ok") {
+        if (sv.field_values.len() == 0) {
+          return v_err("`?` on a payload-less " + sv.type_name);
+        }
+        return sv.field_values[0];
+      }
+      if (sv.type_name == "None" || sv.type_name == "Err") {
+        return VTry { box: ov };
+      }
+      return v_err("`?` operand is not an Option or Result: " + sv.type_name);
+    },
+    _ => {
+      return v_err("`?` operand is not an Option or Result");
+    }
+  }
+}
+
+function eval_unary_as_checked(op: string, ov: Value): Value {
+  let t = eval_unary("as_" + slice_unchecked(op, 4, op.len()), ov);
+  if (vint_as_i64(t) == vint_as_i64(ov) && int_is_negative(t) == int_is_negative(ov)) {
+    return v_variant("Some", [t]);
+  }
+  let none: Value[] = [];
+  return v_variant("None", none);
+}
+
+function eval_unary(op: string, ov: Value): Value {
+  if (op == "-") {
+    return eval_unary_neg(ov);
+  }
+  if (op == "!") {
+    return eval_unary_not(ov);
   }
   if (op == "~") {
     return bitwise_not(ov);
@@ -4955,26 +5162,7 @@ function eval_unary(op: string, ov: Value): Value {
     return char_value(ov);
   }
   if (op == "as_u8" || op == "as_byte") {
-    match (ov) {
-      VInt(i) => {
-        return v_byte(i.v & 255);
-      },
-      VInt64(i) => {
-        return v_byte((unpack_i64(i) & 255) as i32);
-      },
-      VUint(u) => {
-        return v_byte(u.v & 255);
-      },
-      VFloat(f) => {
-        return v_byte(f64_trunc_u32(f.v) & 255);
-      },
-      VFloat32(f) => {
-        return v_byte(f64_trunc_u32(f.v) & 255);
-      },
-      _ => {
-        return v_err("`as` integer cast operand not numeric");
-      }
-    }
+    return eval_unary_as_u8(ov);
   }
   if (op == "as_i32") {
     return cast_i32_value(ov);
@@ -4983,127 +5171,23 @@ function eval_unary(op: string, ov: Value): Value {
     return cast_usize_value(ov);
   }
   if (op == "as_u32") {
-    match (ov) {
-      VInt(i) => {
-        return v_uint(i.v);
-      },
-      VInt64(i) => {
-        return v_uint(i.lo);
-      },
-      VUint(u) => {
-        return ov;
-      },
-      VFloat(f) => {
-        return v_uint(f64_trunc_u32(f.v));
-      },
-      VFloat32(f) => {
-        return v_uint(f64_trunc_u32(f.v));
-      },
-      _ => {
-        return v_err("`as` integer cast operand not numeric");
-      }
-    }
+    return eval_unary_as_u32(ov);
   }
   if (op == "as_i64" || op == "as_u64") {
-    let uns = op == "as_u64";
-    match (ov) {
-      VInt(i) => {
-        return v_wide(i.v as i64, uns);
-      },
-      VInt64(i) => {
-        return v_wide(unpack_i64(i), uns);
-      },
-      VUint(u) => {
-        return v_wide(uint_zext(u.v), uns);
-      },
-      VFloat(f) => {
-        if (uns) {
-          return v_wide(f64_trunc_u64(f.v), uns);
-        }
-        return v_wide(f.v as i64, uns);
-      },
-      VFloat32(f) => {
-        if (uns) {
-          return v_wide(f64_trunc_u64(f.v), uns);
-        }
-        return v_wide(f.v as i64, uns);
-      },
-      _ => {
-        return v_err("`as` integer cast operand not numeric");
-      }
-    }
+    return eval_unary_as_i64(op, ov);
   }
   if (op == "as_f64") {
-    match (ov) {
-      VInt(i) => {
-        return v_float(i.v as f64);
-      },
-      VInt64(i) => {
-        return v_float(wide_as_f64(i));
-      },
-      VUint(u) => {
-        return v_float(uint_zext(u.v) as f64);
-      },
-      VFloat(f) => {
-        return v_float(f.v);
-      },
-      VFloat32(f) => {
-        return v_float(f.v);
-      },
-      _ => {
-        return v_err("`as` float cast operand not numeric");
-      }
-    }
+    return eval_unary_as_f64(ov);
   }
   if (op == "as_f32") {
-    match (ov) {
-      VInt(i) => {
-        return v_float32(i.v as f64);
-      },
-      VInt64(i) => {
-        return v_float32(wide_as_f64(i));
-      },
-      VUint(u) => {
-        return v_float32(uint_zext(u.v) as f64);
-      },
-      VFloat(f) => {
-        return v_float32(f.v);
-      },
-      VFloat32(f) => {
-        return ov;
-      },
-      _ => {
-        return v_err("`as` float cast operand not numeric");
-      }
-    }
+    return eval_unary_as_f32(ov);
   }
   if (op == "try_") {
-    match (ov) {
-      VStruct(sv) => {
-        if (sv.type_name == "Some" || sv.type_name == "Ok") {
-          if (sv.field_values.len() == 0) {
-            return v_err("`?` on a payload-less " + sv.type_name);
-          }
-          return sv.field_values[0];
-        }
-        if (sv.type_name == "None" || sv.type_name == "Err") {
-          return VTry { box: ov };
-        }
-        return v_err("`?` operand is not an Option or Result: " + sv.type_name);
-      },
-      _ => {
-        return v_err("`?` operand is not an Option or Result");
-      }
-    }
+    return eval_unary_try(ov);
   }
   let is_as_opt = op.len() > 4 && op.starts_with("as?_");
   if (is_as_opt && util.has_str(["u8", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
-    let t = eval_unary("as_" + slice_unchecked(op, 4, op.len()), ov);
-    if (vint_as_i64(t) == vint_as_i64(ov) && int_is_negative(t) == int_is_negative(ov)) {
-      return v_variant("Some", [t]);
-    }
-    let none: Value[] = [];
-    return v_variant("None", none);
+    return eval_unary_as_checked(op, ov);
   }
   if (is_as_opt) {
     if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()).to_owned())) {
@@ -5214,6 +5298,7 @@ function resolve_ident_value(name: string, env: Env): Value {
           captured_values: no_values,
           captured_types: no_types,
           generic_name: generic_name,
+          self_name: "",
         };
       }
     }
@@ -5422,6 +5507,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         captured_values: captured.values,
         captured_types: captured.types,
         generic_name: "",
+        self_name: "",
       };
     },
     ast.ExprMapLit(_) => {
@@ -6108,7 +6194,7 @@ function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Fu
 }
 
 function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
-  let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "" };
+  let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "", self_name: "" };
   match (cv) {
     VFunc(v) => {
       fv = v;
@@ -6123,9 +6209,16 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", heap: heap };
+  let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", try_cleanup: [], heap: heap };
   for j in 0..fv.params.len() {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
+  }
+  if (!inline_value) {
+    env = Env { ...env, try_cleanup: parser.try_cleanup(fv.body) };
+  }
+  // A nested function sees its own name.
+  if (fv.self_name.len() > 0) {
+    env = env.bind(fv.self_name, cv);
   }
   // Each evaluation branch shares the environment with its managed roots.
   if (inline_value) {
@@ -6205,7 +6298,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
+  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body) };
   let targs = parser.parse_type_ref(type_name).args;
   let tps = fd.type_params;
   if (tps.len() == 0) {
@@ -6805,7 +6898,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
+      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body) };
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       env = bind_receiver_consts(env, fd.receiver_type, recv_static);
       env = env.bind(fd.receiver_name, recv);
@@ -7612,6 +7705,45 @@ function call_crc32_array(name: string, args: Value[]): Value {
     return v_int(crc);
   }
   return v_err(name + ": second arg must be an array");
+}
+
+// __scan_masks: the first offset at or after `from` where each probe of the
+// masks accepts its byte, or -1. Masks that are too short find nothing.
+// The checks of the arguments, and the loop of the kernel.
+// fern-lint: allow cyclomatic-complexity
+function call_scan_masks(args: Value[]): Value {
+  if (args.len() != 3 || !is_string_arg(args[0]) || !is_i32_arg(args[1])) {
+    return v_err("__scan_masks: expected 3 args (s, from, masks)");
+  }
+  let VArr(arr) = args[2] else {
+    return v_err("__scan_masks: masks must be a u8[]");
+  };
+  let m: i32[] = [];
+  for k in 0..arr_len(arr) {
+    m = m.append(vint_bits(arr_at(arr, k)) & 255);
+  }
+  let text = vstr_of(args[0]);
+  let probes = if (m.len() < 4) { 0 } else { m[0] };
+  if (probes < 1 || probes > 3 || m.len() < 4 + 32 * probes) {
+    return v_int(-1);
+  }
+  let reach = 0;
+  for j in 0..probes {
+    reach = if (m[1 + j] > reach) { m[1 + j] } else { reach };
+  }
+  let from = vint_bits(args[1]);
+  let start = if (from < 0) { 0 } else { from };
+  for at in start..text.len() - reach {
+    let acc = 255;
+    for j in 0..probes {
+      let c = text[at + m[1 + j]] as i32;
+      acc = acc & m[4 + 32 * j + (c & 15)] & m[4 + 32 * j + 16 + (c >> 4)];
+    }
+    if (acc != 0) {
+      return v_int(at);
+    }
+  }
+  return v_int(-1);
 }
 
 function call_scale_f64(heap: interpheap.Heap, args: Value[]): Value {
@@ -8494,57 +8626,541 @@ const CALL_FUNC_TARGS_SET2: string[] = ["__clz32", "__ctz32", "__popcount32", "_
 
 const CALL_FUNC_TARGS_SET3: string[] = ["getxattr", "lgetxattr", "setxattr", "lsetxattr", "getxattr_bytes", "lgetxattr_bytes", "setxattr_bytes", "lsetxattr_bytes"];
 
-function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
-  if (name == "print" || name == "write" || name == "eprint") {
-    if (args.len() != 1) {
-      return v_err(name + " takes exactly 1 argument");
+function builtin_print(heap: interpheap.Heap, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  if (args.len() != 1) {
+    return v_err(name + " takes exactly 1 argument");
+  }
+  let text_val = args[0];
+  match (text_val) {
+    VString(_) => {},
+    _ => {
+      let no_args: Value[] = [];
+      text_val = call_method(heap, args[0], "to_string", no_args, funcs, aliases, type_decls);
     }
-    let text_val = args[0];
-    match (text_val) {
-      VString(_) => {},
-      _ => {
-        let no_args: Value[] = [];
-        text_val = call_method(heap, args[0], "to_string", no_args, funcs, aliases, type_decls);
+  }
+  match (text_val) {
+    VErr(_) => {
+      return text_val;
+    },
+    VString(s) => {
+      let text = s.v;
+      if (name == "print") {
+        print(text);
+      } else if (name == "write") {
+        write(text);
+      } else {
+        eprint(text);
       }
+      return v_int(0);
+    },
+    _ => {
+      return v_err(name + ": to_string() did not return a string");
     }
-    match (text_val) {
-      VErr(_) => {
-        return text_val;
-      },
-      VString(s) => {
-        let text = s.v;
-        if (name == "print") {
-          print(text);
-        } else if (name == "write") {
-          write(text);
-        } else {
-          eprint(text);
+  }
+}
+
+function builtin_putchar(args: Value[]): Value {
+  if (args.len() != 1 || !is_i32_arg(args[0])) {
+    return v_err("putchar takes exactly 1 integer argument");
+  }
+  putchar(vint_bits(args[0]));
+  return v_int(0);
+}
+
+function builtin_target_os(args: Value[]): Value {
+  if (args.len() != 0) {
+    return v_err("target_os takes no arguments");
+  }
+  return v_string(target_os());
+}
+
+function builtin_target_arch(args: Value[]): Value {
+  if (args.len() != 0) {
+    return v_err("target_arch takes no arguments");
+  }
+  return v_string(target_arch());
+}
+
+function builtin_call_func_targs_set(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (args.len() != 1) {
+    return v_err(name + ": expected 1 arg (n)");
+  }
+  if (!is_i32_arg(args[0])) {
+    return v_err(name + ": arg must be an integer");
+  }
+  let an = vint_bits(args[0]);
+  if (an < 0) {
+    return v_abort(aborts.alloc_size(), name + " length " + util.i32_to_string(an));
+  }
+  let zero = v_int(0);
+  if (name == "__alloc_i64") {
+    zero = v_int64(0i64);
+  }
+  if (name == "__alloc_f64") {
+    zero = v_float(0.0);
+  }
+  if (name == "__alloc_bool") {
+    zero = v_bool(false);
+  }
+  let zs: Value[] = [];
+  for zi in 0..an {
+    zs = zs.append(zero);
+  }
+  return v_arr(heap, zs);
+}
+
+function builtin_string_from_bytes_unchecked(args: Value[]): Value {
+  if (args.len() != 1) {
+    return v_err("string_from_bytes_unchecked: expected 1 arg (bs)");
+  }
+  match (args[0]) {
+    VArr(a) => {
+      let raw: u8[] = [];
+      let ri = 0;
+      while (ri < arr_len(a)) {
+        if (!is_i32_arg(arr_at(a, ri))) {
+          return v_err("string_from_bytes_unchecked: element " + util.i32_to_string(ri) + " is not an integer");
         }
-        return v_int(0);
-      },
-      _ => {
-        return v_err(name + ": to_string() did not return a string");
+        raw = raw.append((vint_bits(arr_at(a, ri)) & 255) as u8);
+        ri += 1;
       }
+      unsafe {
+        return v_string(string_from_bytes_unchecked(raw));
+      }
+    },
+    _ => {
+      return v_err("string_from_bytes_unchecked: arg must be an array");
     }
+  }
+}
+
+function builtin_share_unchecked(args: Value[]): Value {
+  if (args.len() != 1) {
+    return v_err("share_unchecked: expected 1 arg");
+  }
+  return args[0];
+}
+
+function builtin_string_from_bytes_range_unchecked(args: Value[]): Value {
+  if (args.len() != 3 || !is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+    return v_err("string_from_bytes_range_unchecked: expected 3 args (bs, from, end)");
+  }
+  let from = vint_bits(args[1]);
+  let end = vint_bits(args[2]);
+  match (args[0]) {
+    VArr(a) => {
+      if (from < 0 || end > arr_len(a) || from > end) {
+        return v_err("string_from_bytes_range_unchecked: range out of bounds");
+      }
+      let raw: u8[] = [];
+      let ri = from;
+      while (ri < end) {
+        raw = raw.append((vint_bits(arr_at(a, ri)) & 255) as u8);
+        ri += 1;
+      }
+      unsafe {
+        return v_string(string_from_bytes_unchecked(raw));
+      }
+    },
+    _ => {
+      return v_err("string_from_bytes_range_unchecked: arg must be an array");
+    }
+  }
+}
+
+function builtin_slice_unchecked(args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err("slice_unchecked: expected 3 args (s, a, b)");
+  }
+  if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+    return v_err("slice_unchecked: bounds must be integers");
+  }
+  match (args[0]) {
+    VString(s) => {
+      let sua = vint_bits(args[1]);
+      let sub = vint_bits(args[2]);
+      if (sua < 0 || sub > s.v.len() || sua > sub) {
+        return slice_abort(aborts.str_oob(), "slice_unchecked", sua, sub, s.v.len());
+      }
+      return v_string(slice_unchecked(s.v, sua, sub));
+    },
+    _ => {
+      return v_err("slice_unchecked: arg must be a string");
+    }
+  }
+}
+
+function builtin_mulhi_u64(name: string, args: Value[]): Value {
+  if (args.len() != 2 || !is_int_like(args[0]) || !is_int_like(args[1])) {
+    return v_err(name + ": expected 2 integer args");
+  }
+  return v_uint64(interp_mulhi(vint_as_i64(args[0]) as u64, vint_as_i64(args[1]) as u64) as i64);
+}
+
+function builtin_call_func_targs_set3(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (target_arch() == "wasm32") {
+    return v_variant("Err", [io_error_value(Unsupported)]);
+  } else {
+    return call_xattr(heap, name, args);
+  }
+}
+
+function builtin_bytes_owned(heap: interpheap.Heap, args: Value[]): Value {
+  let bs = byte_args(args);
+  if (args.len() != 1 || bs.len() != 1) {
+    return v_err("__bytes_owned: expected one byte array");
+  }
+  return byte_value(heap, bs[0]);
+}
+
+function builtin_scan_set(args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err("__scan_set: expected 3 args (s, from, set)");
+  }
+  if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
+    return v_err("__scan_set: s must be a string and from an integer");
+  }
+  let ss = vstr_of(args[0]);
+  let si = vint_bits(args[1]);
+  if (si < 0) {
+    si = 0;
+  }
+  match (args[2]) {
+    VArr(set) => {
+      while (si < ss.len()) {
+        let sb = ss[si] as i32;
+        if (sb < arr_len(set) && vint_bits(arr_at(set, sb)) != 0) {
+          return v_int(si);
+        }
+        si += 1;
+      }
+      return v_int(ss.len());
+    },
+    _ => {
+      return v_err("__scan_set: set must be a u8[]");
+    }
+  }
+}
+
+function builtin_bsd_sum(args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("__bsd_sum: expected 2 args (s, sum)");
+  }
+  if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
+    return v_err("__bsd_sum: s must be a string and sum an integer");
+  }
+  let bs = vstr_of(args[0]);
+  let sum = vint_bits(args[1]) & 65535;
+  for bi in 0..bs.len() {
+    sum = (sum >> 1 | sum << 15) & 65535;
+    sum = sum + bs[bi] as i32 & 65535;
+  }
+  return v_int(sum);
+}
+
+function builtin_str_hash(args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("__str_hash: expected 2 args (s, seed)");
+  }
+  if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
+    return v_err("__str_hash: s must be a string and seed an integer");
+  }
+  let hs = vstr_of(args[0]);
+  let hn = hs.len();
+  let h = -3750763034362895579i64 ^ vint_bits(args[1]) as i64 ^ hn as i64;
+  let hi = 0;
+  while (hi + 8 <= hn) {
+    h = (h ^ str_hash_word(hs, hi, 8)) * 1099511628211i64;
+    hi += 8;
+  }
+  if (hi < hn) {
+    if (hn >= 8) {
+      h = (h ^ str_hash_word(hs, hn - 8, 8)) * 1099511628211i64;
+    } else {
+      h = (h ^ str_hash_word(hs, 0, hn)) * 1099511628211i64;
+    }
+  }
+  h = h ^ (h as u64 >> 33u64) as i64;
+  h = h * -49064778989728563i64;
+  h = h ^ (h as u64 >> 33u64) as i64;
+  h = h * -4265267296055464877i64;
+  h = h ^ (h as u64 >> 33u64) as i64;
+  return v_int(str_hash_low32(h));
+}
+
+function builtin_count_runs(args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err("__count_runs: expected 3 args (s, inside, set)");
+  }
+  if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
+    return v_err("__count_runs: s must be a string and inside an integer");
+  }
+  let rs = vstr_of(args[0]);
+  let prev = vint_bits(args[1]) != 0;
+  match (args[2]) {
+    VArr(set) => {
+      let runs = 0;
+      let ri = 0;
+      while (ri < rs.len()) {
+        let rb = rs[ri] as i32;
+        let member = rb < arr_len(set) && vint_bits(arr_at(set, rb)) != 0;
+        if (member && !prev) {
+          runs += 1;
+        }
+        prev = member;
+        ri += 1;
+      }
+      return v_int(runs);
+    },
+    _ => {
+      return v_err("__count_runs: set must be a u8[]");
+    }
+  }
+}
+
+function builtin_memchr(name: string, args: Value[]): Value {
+  let cb = name == "__count_byte";
+  let sb = name == "__sum_bytes";
+  if (sb) {
+    if (args.len() != 1) {
+      return v_err("__sum_bytes: expected 1 arg (s)");
+    }
+  } else if (cb) {
+    if (args.len() != 2) {
+      return v_err("__count_byte: expected 2 args (s, byte)");
+    }
+    if (!is_i32_arg(args[1])) {
+      return v_err("__count_byte: byte must be an integer");
+    }
+  } else {
+    if (args.len() != 3) {
+      return v_err("__memchr: expected 3 args (s, byte, from)");
+    }
+    if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+      return v_err("__memchr: byte and start must be integers");
+    }
+  }
+  match (args[0]) {
+    VString(s) => {
+      if (sb) {
+        let si = 0;
+        let sacc = 0;
+        while (si < s.v.len()) {
+          sacc = sacc + s.v[si] as i32;
+          si += 1;
+        }
+        return v_int(sacc);
+      }
+      let want = vint_bits(args[1]);
+      if (cb) {
+        if (want < 0 || want > 255) {
+          return v_int(0);
+        }
+        let ci = 0;
+        let cn = 0;
+        while (ci < s.v.len()) {
+          if (s.v[ci] as i32 == want) {
+            cn += 1;
+          }
+          ci += 1;
+        }
+        return v_int(cn);
+      }
+      if (want < 0 || want > 255) {
+        return v_int(-1);
+      }
+      let mi = vint_bits(args[2]);
+      if (mi < 0) {
+        mi = 0;
+      }
+      while (mi < s.v.len()) {
+        if (s.v[mi] as i32 == want) {
+          return v_int(mi);
+        }
+        mi += 1;
+      }
+      return v_int(-1);
+    },
+    _ => {
+      return v_err("__memchr: first arg must be a string");
+    }
+  }
+}
+
+function builtin_rmemchr(args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err("__rmemchr: expected 3 args (s, byte, from)");
+  }
+  if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+    return v_err("__rmemchr: byte and start must be integers");
+  }
+  match (args[0]) {
+    VString(s) => {
+      let rwant = vint_bits(args[1]);
+      if (rwant < 0 || rwant > 255) {
+        return v_int(-1);
+      }
+      let ri = vint_bits(args[2]);
+      if (ri > s.v.len() - 1) {
+        ri = s.v.len() - 1;
+      }
+      while (ri >= 0) {
+        if (s.v[ri] as i32 == rwant) {
+          return v_int(ri);
+        }
+        ri -= 1;
+      }
+      return v_int(-1);
+    },
+    _ => {
+      return v_err("__rmemchr: first arg must be a string");
+    }
+  }
+}
+
+function builtin_crc32_cksum(args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("__crc32_cksum: expected 2 args (crc, s)");
+  }
+  if (!is_i32_arg(args[0])) {
+    return v_err("__crc32_cksum: crc must be an integer");
+  }
+  match (args[1]) {
+    VString(s) => {
+      let crc = vint_bits(args[0]);
+      for ci in 0..s.v.len() {
+        crc = crc32_cksum_byte(crc, s.v[ci] as i32);
+      }
+      return v_int(crc);
+    },
+    _ => {
+      return v_err("__crc32_cksum: second arg must be a string");
+    }
+  }
+}
+
+function builtin_mismatch(args: Value[]): Value {
+  if (args.len() != 5) {
+    return v_err("__mismatch: expected 5 args (a, ao, b, bo, n)");
+  }
+  if (!is_string_arg(args[0]) || !is_string_arg(args[2])) {
+    return v_err("__mismatch: first and third args must be strings");
+  }
+  if (!is_i32_arg(args[1]) || !is_i32_arg(args[3]) || !is_i32_arg(args[4])) {
+    return v_err("__mismatch: offsets and length must be integers");
+  }
+  let ma = vstr_of(args[0]);
+  let mb = vstr_of(args[2]);
+  let mao = clamp_offset(vint_bits(args[1]), ma.len());
+  let mbo = clamp_offset(vint_bits(args[3]), mb.len());
+  let mn = vint_bits(args[4]);
+  if (mn > ma.len() - mao) {
+    mn = ma.len() - mao;
+  }
+  if (mn > mb.len() - mbo) {
+    mn = mb.len() - mbo;
+  }
+  if (mn < 0) {
+    mn = 0;
+  }
+  for mk in 0..mn {
+    if (ma[mao + mk] != mb[mbo + mk]) {
+      return v_int(mk);
+    }
+  }
+  return v_int(mn);
+}
+
+function builtin_ascii_run(args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("__ascii_run: expected 2 args (s, from)");
+  }
+  if (!is_i32_arg(args[1])) {
+    return v_err("__ascii_run: start must be an integer");
+  }
+  match (args[0]) {
+    VString(s) => {
+      let ai = vint_bits(args[1]);
+      if (ai < 0) {
+        ai = 0;
+      }
+      while (ai < s.v.len()) {
+        if (s.v[ai] as i32 >= 128) {
+          return v_int(ai);
+        }
+        ai += 1;
+      }
+      return v_int(s.v.len());
+    },
+    _ => {
+      return v_err("__ascii_run: first arg must be a string");
+    }
+  }
+}
+
+function builtin_arr_set_len(args: Value[]): Value {
+  if (args.len() != 2 || !is_i32_arg(args[1])) {
+    return v_err("__arr_set_len: expected an array and a length");
+  }
+  if let VArr(a) = args[0] {
+    let n = vint_bits(args[1]);
+    let slots = arr_slots(a);
+    if (n < 0 || n > slots.len()) {
+      return v_err("__arr_set_len: length exceeds reserved storage");
+    }
+    arr_store_set(a, n, slots);
+    return v_void();
+  }
+  return v_err("__arr_set_len: expected an array");
+}
+
+function builtin_cell_new(heap: interpheap.Heap, args: Value[]): Value {
+  if (args.len() != 1) {
+    return v_err("cell_new takes exactly 1 argument");
+  }
+  return cell_value(heap, args[0]);
+}
+
+function builtin_f64_bits(args: Value[]): Value {
+  if (args.len() != 1 || !is_float_like(args[0])) {
+    return v_err("f64_bits: expected 1 float arg");
+  }
+  return box_i64(f64_bits(vfloat_as_f64(args[0])));
+}
+
+function builtin_f64_from_bits(args: Value[]): Value {
+  if (args.len() != 1 || !is_int_like(args[0])) {
+    return v_err("f64_from_bits: expected 1 integer arg");
+  }
+  return v_float(f64_from_bits(vint_as_i64(args[0])));
+}
+
+function builtin_f32_bits(args: Value[]): Value {
+  if (args.len() != 1 || !is_float_like(args[0])) {
+    return v_err("f32_bits: expected 1 float arg");
+  }
+  return v_int(f32_bits(vfloat_as_f64(args[0]) as f32));
+}
+
+function builtin_f32_from_bits(args: Value[]): Value {
+  if (args.len() != 1 || !is_i32_arg(args[0])) {
+    return v_err("f32_from_bits: expected 1 integer arg");
+  }
+  return v_float32(f32_from_bits(vint_bits(args[0])) as f64);
+}
+
+function builtin_group_print(heap: interpheap.Heap, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  if (name == "print" || name == "write" || name == "eprint") {
+    return builtin_print(heap, name, args, funcs, aliases, type_decls);
   }
   if (name == "putchar") {
-    if (args.len() != 1 || !is_i32_arg(args[0])) {
-      return v_err("putchar takes exactly 1 integer argument");
-    }
-    putchar(vint_bits(args[0]));
-    return v_int(0);
+    return builtin_putchar(args);
   }
   if (name == "target_os") {
-    if (args.len() != 0) {
-      return v_err("target_os takes no arguments");
-    }
-    return v_string(target_os());
+    return builtin_target_os(args);
   }
   if (name == "target_arch") {
-    if (args.len() != 0) {
-      return v_err("target_arch takes no arguments");
-    }
-    return v_string(target_arch());
+    return builtin_target_arch(args);
   }
   if (name == "map_new" || name == "__map_new_i32") {
     return v_map_new();
@@ -8552,150 +9168,26 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "__alloc_len") {
     return checked_alloc_length(args);
   }
-  if (util.has_str(CALL_FUNC_TARGS_SET, name)) {
-    if (args.len() != 1) {
-      return v_err(name + ": expected 1 arg (n)");
-    }
-    if (!is_i32_arg(args[0])) {
-      return v_err(name + ": arg must be an integer");
-    }
-    let an = vint_bits(args[0]);
-    if (an < 0) {
-      return v_abort(aborts.alloc_size(), name + " length " + util.i32_to_string(an));
-    }
-    let zero = v_int(0);
-    if (name == "__alloc_i64") {
-      zero = v_int64(0i64);
-    }
-    if (name == "__alloc_f64") {
-      zero = v_float(0.0);
-    }
-    if (name == "__alloc_bool") {
-      zero = v_bool(false);
-    }
-    let zs: Value[] = [];
-    for zi in 0..an {
-      zs = zs.append(zero);
-    }
-    return v_arr(heap, zs);
-  }
+  return v_err(name + ": not a builtin of this group");
+}
+
+function builtin_group_string_from_bytes_unchecked(name: string, args: Value[]): Value {
   if (name == "string_from_bytes_unchecked") {
-    if (args.len() != 1) {
-      return v_err("string_from_bytes_unchecked: expected 1 arg (bs)");
-    }
-    match (args[0]) {
-      VArr(a) => {
-        let raw: u8[] = [];
-        let ri = 0;
-        while (ri < arr_len(a)) {
-          if (!is_i32_arg(arr_at(a, ri))) {
-            return v_err("string_from_bytes_unchecked: element " + util.i32_to_string(ri) + " is not an integer");
-          }
-          raw = raw.append((vint_bits(arr_at(a, ri)) & 255) as u8);
-          ri += 1;
-        }
-        unsafe {
-          return v_string(string_from_bytes_unchecked(raw));
-        }
-      },
-      _ => {
-        return v_err("string_from_bytes_unchecked: arg must be an array");
-      }
-    }
+    return builtin_string_from_bytes_unchecked(args);
   }
   if (name == "share_unchecked") {
-    if (args.len() != 1) {
-      return v_err("share_unchecked: expected 1 arg");
-    }
-    return args[0];
+    return builtin_share_unchecked(args);
   }
   if (name == "string_from_bytes_range_unchecked") {
-    if (args.len() != 3 || !is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
-      return v_err("string_from_bytes_range_unchecked: expected 3 args (bs, from, end)");
-    }
-    let from = vint_bits(args[1]);
-    let end = vint_bits(args[2]);
-    match (args[0]) {
-      VArr(a) => {
-        if (from < 0 || end > arr_len(a) || from > end) {
-          return v_err("string_from_bytes_range_unchecked: range out of bounds");
-        }
-        let raw: u8[] = [];
-        let ri = from;
-        while (ri < end) {
-          raw = raw.append((vint_bits(arr_at(a, ri)) & 255) as u8);
-          ri += 1;
-        }
-        unsafe {
-          return v_string(string_from_bytes_unchecked(raw));
-        }
-      },
-      _ => {
-        return v_err("string_from_bytes_range_unchecked: arg must be an array");
-      }
-    }
+    return builtin_string_from_bytes_range_unchecked(args);
   }
   if (name == "slice_unchecked") {
-    if (args.len() != 3) {
-      return v_err("slice_unchecked: expected 3 args (s, a, b)");
-    }
-    if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
-      return v_err("slice_unchecked: bounds must be integers");
-    }
-    match (args[0]) {
-      VString(s) => {
-        let sua = vint_bits(args[1]);
-        let sub = vint_bits(args[2]);
-        if (sua < 0 || sub > s.v.len() || sua > sub) {
-          return slice_abort(aborts.str_oob(), "slice_unchecked", sua, sub, s.v.len());
-        }
-        return v_string(slice_unchecked(s.v, sua, sub));
-      },
-      _ => {
-        return v_err("slice_unchecked: arg must be a string");
-      }
-    }
+    return builtin_slice_unchecked(args);
   }
-  if (is_buf_builtin(name)) {
-    return call_buf_builtin(heap, name, args);
-  }
-  if (is_raw_mem_builtin(name)) {
-    return call_raw_mem_builtin(heap, name, args);
-  }
-  let rt = call_runtime_intrinsic(heap, name, args);
-  if (!is_err(rt) || is_abort(rt)) {
-    return rt;
-  }
-  if (name == "__mulhi_u64") {
-    if (args.len() != 2 || !is_int_like(args[0]) || !is_int_like(args[1])) {
-      return v_err(name + ": expected 2 integer args");
-    }
-    return v_uint64(interp_mulhi(vint_as_i64(args[0]) as u64, vint_as_i64(args[1]) as u64) as i64);
-  }
-  if (util.has_str(CALL_FUNC_TARGS_SET2, name)) {
-    if (args.len() != 1) {
-      return v_err(name + ": expected 1 arg");
-    }
-    if (!is_int_like(args[0])) {
-      return v_err(name + ": arg must be an integer");
-    }
-    let bits = vint_as_i64(args[0]) as u64;
-    return match (name) {
-      "__clz32" => v_int(__clz32(bits as u32)),
-      "__ctz32" => v_int(__ctz32(bits as u32)),
-      "__popcount32" => v_int(__popcount32(bits as u32)),
-      "__clz64" => v_int(__clz64(bits)),
-      "__ctz64" => v_int(__ctz64(bits)),
-      _ => v_int(__popcount64(bits)),
-    };
-  }
-  if (util.has_str(CALL_FUNC_TARGS_SET3, name)) {
-    if (target_arch() == "wasm32") {
-      return v_variant("Err", [io_error_value(Unsupported)]);
-    } else {
-      return call_xattr(heap, name, args);
-    }
-  }
+  return v_err(name + ": not a builtin of this group");
+}
+
+function builtin_group_count_byte_bytes(name: string, args: Value[]): Value {
   if (name == "__count_byte_bytes") {
     return call_count_byte_bytes(args);
   }
@@ -8714,6 +9206,10 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "__crc32_cksum_array" || name == "__crc32_ieee_array") {
     return call_crc32_array(name, args);
   }
+  return v_err(name + ": not a builtin of this group");
+}
+
+function builtin_group_scan_set_bytes(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "__scan_set_bytes" || name == "__count_runs_bytes") {
     return call_byte_set_scan(name, args);
   }
@@ -8733,11 +9229,115 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     return v_void();
   }
   if (name == "__bytes_owned") {
-    let bs = byte_args(args);
-    if (args.len() != 1 || bs.len() != 1) {
-      return v_err("__bytes_owned: expected one byte array");
+    return builtin_bytes_owned(heap, args);
+  }
+  return v_err(name + ": not a builtin of this group");
+}
+
+function builtin_group_scale_f64(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (name == "__scale_f64") {
+    return call_scale_f64(heap, args);
+  }
+  if (name == "__scan_set") {
+    return builtin_scan_set(args);
+  }
+  if (name == "__scan_masks") {
+    return call_scan_masks(args);
+  }
+  if (name == "__bsd_sum") {
+    return builtin_bsd_sum(args);
+  }
+  if (name == "__str_hash") {
+    return builtin_str_hash(args);
+  }
+  if (name == "__count_runs") {
+    return builtin_count_runs(args);
+  }
+  if (name == "__memchr" || name == "__count_byte" || name == "__sum_bytes") {
+    return builtin_memchr(name, args);
+  }
+  return v_err(name + ": not a builtin of this group");
+}
+
+function builtin_group_rmemchr(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (name == "__rmemchr") {
+    return builtin_rmemchr(args);
+  }
+  if (name == "__crc32_cksum") {
+    return builtin_crc32_cksum(args);
+  }
+  if (name == "__mismatch") {
+    return builtin_mismatch(args);
+  }
+  if (name == "__ascii_run") {
+    return builtin_ascii_run(args);
+  }
+  if (name == "__arr_set_len") {
+    return builtin_arr_set_len(args);
+  }
+  if (name == "cell_new") {
+    return builtin_cell_new(heap, args);
+  }
+  if (name == "f64_bits") {
+    return builtin_f64_bits(args);
+  }
+  if (name == "f64_from_bits") {
+    return builtin_f64_from_bits(args);
+  }
+  if (name == "f32_bits") {
+    return builtin_f32_bits(args);
+  }
+  return v_err(name + ": not a builtin of this group");
+}
+
+function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  if (util.has_str(BUILTIN_GROUP_PRINT_NAMES, name)) {
+    return builtin_group_print(heap, name, args, funcs, aliases, type_decls);
+  }
+  if (util.has_str(CALL_FUNC_TARGS_SET, name)) {
+    return builtin_call_func_targs_set(heap, name, args);
+  }
+  if (util.has_str(BUILTIN_GROUP_STRING_FROM_BYTES_UNCHECKED_NAMES, name)) {
+    return builtin_group_string_from_bytes_unchecked(name, args);
+  }
+  if (is_buf_builtin(name)) {
+    return call_buf_builtin(heap, name, args);
+  }
+  if (is_raw_mem_builtin(name)) {
+    return call_raw_mem_builtin(heap, name, args);
+  }
+  let rt = call_runtime_intrinsic(heap, name, args);
+  if (!is_err(rt) || is_abort(rt)) {
+    return rt;
+  }
+  if (name == "__mulhi_u64") {
+    return builtin_mulhi_u64(name, args);
+  }
+  if (util.has_str(CALL_FUNC_TARGS_SET2, name)) {
+    if (args.len() != 1) {
+      return v_err(name + ": expected 1 arg");
     }
-    return byte_value(heap, bs[0]);
+    if (!is_int_like(args[0])) {
+      return v_err(name + ": arg must be an integer");
+    }
+    let bits = vint_as_i64(args[0]) as u64;
+    return match (name) {
+      "__clz32" => v_int(__clz32(bits as u32)),
+      "__ctz32" => v_int(__ctz32(bits as u32)),
+      "__popcount32" => v_int(__popcount32(bits as u32)),
+      "__clz64" => v_int(__clz64(bits)),
+      "__ctz64" => v_int(__ctz64(bits)),
+      _ => v_int(__popcount64(bits)),
+    };
+  }
+  if (util.has_str(CALL_FUNC_TARGS_SET3, name)) {
+    return builtin_call_func_targs_set3(heap, name, args);
+  }
+  if (util.has_str(BUILTIN_GROUP_COUNT_BYTE_BYTES_NAMES, name)) {
+    return builtin_group_count_byte_bytes(name, args);
+  }
+  if (util.has_str(BUILTIN_GROUP_SCAN_SET_BYTES_NAMES, name)) {
+    return builtin_group_scan_set_bytes(heap, name, args);
   }
   if (name == "__bytes_range") {
     return call_bytes_range(heap, args);
@@ -8760,329 +9360,14 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (args.len() == 2 && is_sha_blocks_name(name)) {
     return byte_value(heap, []);
   }
-  if (name == "__scale_f64") {
-    return call_scale_f64(heap, args);
+  if (util.has_str(BUILTIN_GROUP_SCALE_F64_NAMES, name)) {
+    return builtin_group_scale_f64(heap, name, args);
   }
-  if (name == "__scan_set") {
-    if (args.len() != 3) {
-      return v_err("__scan_set: expected 3 args (s, from, set)");
-    }
-    if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
-      return v_err("__scan_set: s must be a string and from an integer");
-    }
-    let ss = vstr_of(args[0]);
-    let si = vint_bits(args[1]);
-    if (si < 0) {
-      si = 0;
-    }
-    match (args[2]) {
-      VArr(set) => {
-        while (si < ss.len()) {
-          let sb = ss[si] as i32;
-          if (sb < arr_len(set) && vint_bits(arr_at(set, sb)) != 0) {
-            return v_int(si);
-          }
-          si += 1;
-        }
-        return v_int(ss.len());
-      },
-      _ => {
-        return v_err("__scan_set: set must be a u8[]");
-      }
-    }
-  }
-  if (name == "__bsd_sum") {
-    if (args.len() != 2) {
-      return v_err("__bsd_sum: expected 2 args (s, sum)");
-    }
-    if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
-      return v_err("__bsd_sum: s must be a string and sum an integer");
-    }
-    let bs = vstr_of(args[0]);
-    let sum = vint_bits(args[1]) & 65535;
-    for bi in 0..bs.len() {
-      sum = (sum >> 1 | sum << 15) & 65535;
-      sum = sum + bs[bi] as i32 & 65535;
-    }
-    return v_int(sum);
-  }
-  if (name == "__str_hash") {
-    if (args.len() != 2) {
-      return v_err("__str_hash: expected 2 args (s, seed)");
-    }
-    if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
-      return v_err("__str_hash: s must be a string and seed an integer");
-    }
-    let hs = vstr_of(args[0]);
-    let hn = hs.len();
-    let h = -3750763034362895579i64 ^ vint_bits(args[1]) as i64 ^ hn as i64;
-    let hi = 0;
-    while (hi + 8 <= hn) {
-      h = (h ^ str_hash_word(hs, hi, 8)) * 1099511628211i64;
-      hi += 8;
-    }
-    if (hi < hn) {
-      if (hn >= 8) {
-        h = (h ^ str_hash_word(hs, hn - 8, 8)) * 1099511628211i64;
-      } else {
-        h = (h ^ str_hash_word(hs, 0, hn)) * 1099511628211i64;
-      }
-    }
-    h = h ^ (h as u64 >> 33u64) as i64;
-    h = h * -49064778989728563i64;
-    h = h ^ (h as u64 >> 33u64) as i64;
-    h = h * -4265267296055464877i64;
-    h = h ^ (h as u64 >> 33u64) as i64;
-    return v_int(str_hash_low32(h));
-  }
-  if (name == "__count_runs") {
-    if (args.len() != 3) {
-      return v_err("__count_runs: expected 3 args (s, inside, set)");
-    }
-    if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
-      return v_err("__count_runs: s must be a string and inside an integer");
-    }
-    let rs = vstr_of(args[0]);
-    let prev = vint_bits(args[1]) != 0;
-    match (args[2]) {
-      VArr(set) => {
-        let runs = 0;
-        let ri = 0;
-        while (ri < rs.len()) {
-          let rb = rs[ri] as i32;
-          let member = rb < arr_len(set) && vint_bits(arr_at(set, rb)) != 0;
-          if (member && !prev) {
-            runs += 1;
-          }
-          prev = member;
-          ri += 1;
-        }
-        return v_int(runs);
-      },
-      _ => {
-        return v_err("__count_runs: set must be a u8[]");
-      }
-    }
-  }
-  if (name == "__memchr" || name == "__count_byte" || name == "__sum_bytes") {
-    let cb = name == "__count_byte";
-    let sb = name == "__sum_bytes";
-    if (sb) {
-      if (args.len() != 1) {
-        return v_err("__sum_bytes: expected 1 arg (s)");
-      }
-    } else if (cb) {
-      if (args.len() != 2) {
-        return v_err("__count_byte: expected 2 args (s, byte)");
-      }
-      if (!is_i32_arg(args[1])) {
-        return v_err("__count_byte: byte must be an integer");
-      }
-    } else {
-      if (args.len() != 3) {
-        return v_err("__memchr: expected 3 args (s, byte, from)");
-      }
-      if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
-        return v_err("__memchr: byte and start must be integers");
-      }
-    }
-    match (args[0]) {
-      VString(s) => {
-        if (sb) {
-          let si = 0;
-          let sacc = 0;
-          while (si < s.v.len()) {
-            sacc = sacc + s.v[si] as i32;
-            si += 1;
-          }
-          return v_int(sacc);
-        }
-        let want = vint_bits(args[1]);
-        if (cb) {
-          if (want < 0 || want > 255) {
-            return v_int(0);
-          }
-          let ci = 0;
-          let cn = 0;
-          while (ci < s.v.len()) {
-            if (s.v[ci] as i32 == want) {
-              cn += 1;
-            }
-            ci += 1;
-          }
-          return v_int(cn);
-        }
-        if (want < 0 || want > 255) {
-          return v_int(-1);
-        }
-        let mi = vint_bits(args[2]);
-        if (mi < 0) {
-          mi = 0;
-        }
-        while (mi < s.v.len()) {
-          if (s.v[mi] as i32 == want) {
-            return v_int(mi);
-          }
-          mi += 1;
-        }
-        return v_int(-1);
-      },
-      _ => {
-        return v_err("__memchr: first arg must be a string");
-      }
-    }
-  }
-  if (name == "__rmemchr") {
-    if (args.len() != 3) {
-      return v_err("__rmemchr: expected 3 args (s, byte, from)");
-    }
-    if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
-      return v_err("__rmemchr: byte and start must be integers");
-    }
-    match (args[0]) {
-      VString(s) => {
-        let rwant = vint_bits(args[1]);
-        if (rwant < 0 || rwant > 255) {
-          return v_int(-1);
-        }
-        let ri = vint_bits(args[2]);
-        if (ri > s.v.len() - 1) {
-          ri = s.v.len() - 1;
-        }
-        while (ri >= 0) {
-          if (s.v[ri] as i32 == rwant) {
-            return v_int(ri);
-          }
-          ri -= 1;
-        }
-        return v_int(-1);
-      },
-      _ => {
-        return v_err("__rmemchr: first arg must be a string");
-      }
-    }
-  }
-  if (name == "__crc32_cksum") {
-    if (args.len() != 2) {
-      return v_err("__crc32_cksum: expected 2 args (crc, s)");
-    }
-    if (!is_i32_arg(args[0])) {
-      return v_err("__crc32_cksum: crc must be an integer");
-    }
-    match (args[1]) {
-      VString(s) => {
-        let crc = vint_bits(args[0]);
-        for ci in 0..s.v.len() {
-          crc = crc32_cksum_byte(crc, s.v[ci] as i32);
-        }
-        return v_int(crc);
-      },
-      _ => {
-        return v_err("__crc32_cksum: second arg must be a string");
-      }
-    }
-  }
-  if (name == "__mismatch") {
-    if (args.len() != 5) {
-      return v_err("__mismatch: expected 5 args (a, ao, b, bo, n)");
-    }
-    if (!is_string_arg(args[0]) || !is_string_arg(args[2])) {
-      return v_err("__mismatch: first and third args must be strings");
-    }
-    if (!is_i32_arg(args[1]) || !is_i32_arg(args[3]) || !is_i32_arg(args[4])) {
-      return v_err("__mismatch: offsets and length must be integers");
-    }
-    let ma = vstr_of(args[0]);
-    let mb = vstr_of(args[2]);
-    let mao = clamp_offset(vint_bits(args[1]), ma.len());
-    let mbo = clamp_offset(vint_bits(args[3]), mb.len());
-    let mn = vint_bits(args[4]);
-    if (mn > ma.len() - mao) {
-      mn = ma.len() - mao;
-    }
-    if (mn > mb.len() - mbo) {
-      mn = mb.len() - mbo;
-    }
-    if (mn < 0) {
-      mn = 0;
-    }
-    for mk in 0..mn {
-      if (ma[mao + mk] != mb[mbo + mk]) {
-        return v_int(mk);
-      }
-    }
-    return v_int(mn);
-  }
-  if (name == "__ascii_run") {
-    if (args.len() != 2) {
-      return v_err("__ascii_run: expected 2 args (s, from)");
-    }
-    if (!is_i32_arg(args[1])) {
-      return v_err("__ascii_run: start must be an integer");
-    }
-    match (args[0]) {
-      VString(s) => {
-        let ai = vint_bits(args[1]);
-        if (ai < 0) {
-          ai = 0;
-        }
-        while (ai < s.v.len()) {
-          if (s.v[ai] as i32 >= 128) {
-            return v_int(ai);
-          }
-          ai += 1;
-        }
-        return v_int(s.v.len());
-      },
-      _ => {
-        return v_err("__ascii_run: first arg must be a string");
-      }
-    }
-  }
-  if (name == "__arr_set_len") {
-    if (args.len() != 2 || !is_i32_arg(args[1])) {
-      return v_err("__arr_set_len: expected an array and a length");
-    }
-    if let VArr(a) = args[0] {
-      let n = vint_bits(args[1]);
-      let slots = arr_slots(a);
-      if (n < 0 || n > slots.len()) {
-        return v_err("__arr_set_len: length exceeds reserved storage");
-      }
-      arr_store_set(a, n, slots);
-      return v_void();
-    }
-    return v_err("__arr_set_len: expected an array");
-  }
-  if (name == "cell_new") {
-    if (args.len() != 1) {
-      return v_err("cell_new takes exactly 1 argument");
-    }
-    return cell_value(heap, args[0]);
-  }
-  if (name == "f64_bits") {
-    if (args.len() != 1 || !is_float_like(args[0])) {
-      return v_err("f64_bits: expected 1 float arg");
-    }
-    return box_i64(f64_bits(vfloat_as_f64(args[0])));
-  }
-  if (name == "f64_from_bits") {
-    if (args.len() != 1 || !is_int_like(args[0])) {
-      return v_err("f64_from_bits: expected 1 integer arg");
-    }
-    return v_float(f64_from_bits(vint_as_i64(args[0])));
-  }
-  if (name == "f32_bits") {
-    if (args.len() != 1 || !is_float_like(args[0])) {
-      return v_err("f32_bits: expected 1 float arg");
-    }
-    return v_int(f32_bits(vfloat_as_f64(args[0]) as f32));
+  if (util.has_str(BUILTIN_GROUP_RMEMCHR_NAMES, name)) {
+    return builtin_group_rmemchr(heap, name, args);
   }
   if (name == "f32_from_bits") {
-    if (args.len() != 1 || !is_i32_arg(args[0])) {
-      return v_err("f32_from_bits: expected 1 integer arg");
-    }
-    return v_float32(f32_from_bits(vint_bits(args[0])) as f64);
+    return builtin_f32_from_bits(args);
   }
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
@@ -9090,7 +9375,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
-      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
+      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body) };
       let no_recv = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
       for j in 0..fd.params.len() {
@@ -9650,6 +9935,11 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       if (is_err(val)) {
         return step_stop(env, val);
       }
+      if (ast.var_binds_itself(v)) {
+        if let VFunc(f) = val {
+          val = VFunc { ...f, self_name: v.name };
+        }
+      }
       if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
         return destructure_step(env, v, val);
       }
@@ -9963,10 +10253,27 @@ function eval_block(body: ast.Stmt[], own env: Env): StepResult {
     let r = eval_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
+      if let VTry(left) = r.ret {
+        if (cur.try_cleanup.len() > 0) {
+          return leave_by_try(left.box, cur);
+        }
+      }
       return StepResult { env: cur, ret: r.ret, sig: r.sig };
     }
   }
   return step_none(cur);
+}
+
+// A `?` leaves the function from the block of `env`. The deferred statements
+// that are armed run in the scope of that block, and the value then returns
+// as a `return` does.
+function leave_by_try(value: Value, own env: Env): StepResult {
+  let actions = env.try_cleanup;
+  let cleanup = eval_block(actions, Env { ...env, try_cleanup: [] });
+  if (cleanup.sig != 0 && is_err(cleanup.ret)) {
+    return cleanup;
+  }
+  return StepResult { env: Env { ...cleanup.env, try_cleanup: actions }, ret: value, sig: 1 };
 }
 
 pub function exit_status(v: Value): (boolean, i32) {
@@ -10247,3 +10554,15 @@ function interp_mulhi(a: u64, b: u64): u64 {
   let mid = ah * bl + (al * bl >> sh);
   return ah * bh + (mid >> sh) + ((mid & m) + al * bh >> sh);
 }
+
+const BUILTIN_GROUP_PRINT_NAMES: string[] = ["print", "write", "eprint", "putchar", "target_os", "target_arch", "map_new", "__map_new_i32", "__alloc_len"];
+
+const BUILTIN_GROUP_STRING_FROM_BYTES_UNCHECKED_NAMES: string[] = ["string_from_bytes_unchecked", "share_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked"];
+
+const BUILTIN_GROUP_COUNT_BYTE_BYTES_NAMES: string[] = ["__count_byte_bytes", "__count_below_u64", "__memchr_bytes", "__rmemchr_bytes", "__sum_bytes_array", "__bsd_sum_bytes", "__crc32_cksum_array", "__crc32_ieee_array"];
+
+const BUILTIN_GROUP_SCAN_SET_BYTES_NAMES: string[] = ["__scan_set_bytes", "__count_runs_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__outer_mul_f64", "__inner_mul_add_f64", "__ct_secret", "__ct_public", "__bytes_owned"];
+
+const BUILTIN_GROUP_SCALE_F64_NAMES: string[] = ["__scale_f64", "__scan_set", "__scan_masks", "__bsd_sum", "__str_hash", "__count_runs", "__memchr", "__count_byte", "__sum_bytes"];
+
+const BUILTIN_GROUP_RMEMCHR_NAMES: string[] = ["__rmemchr", "__crc32_cksum", "__mismatch", "__ascii_run", "__arr_set_len", "cell_new", "f64_bits", "f64_from_bits", "f32_bits"];

@@ -774,7 +774,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && util.has_str(["__ascii_run", "__bsd_sum", "__str_hash", "__count_byte", "__crc32_cksum", "__crc32_cksum_array", "__crc32_ieee_array", "__count_byte_bytes", "__count_below_u64", "__bsd_sum_bytes"], name)) {
     return typeinfo.t_i32();
   }
-  if (argc == 3 && util.has_str(["__scan_set", "__scan_set_bytes", "__count_runs", "__count_runs_bytes", "__memchr", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr"], name)) {
+  if (argc == 3 && util.has_str(["__scan_set", "__scan_masks", "__scan_set_bytes", "__count_runs", "__count_runs_bytes", "__memchr", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr"], name)) {
     return typeinfo.t_i32();
   }
   if (argc == 1 && name == "__sum_bytes_array") {
@@ -991,7 +991,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__ascii_run") {
     return ([typeinfo.t_string(), typeinfo.t_i32()], true);
   }
-  if (name == "__scan_set") {
+  if (name == "__scan_set" || name == "__scan_masks") {
     return ([typeinfo.t_string(), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
   }
   if (name == "__scan_set_bytes") {
@@ -1136,6 +1136,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__raw_store_ptr", params: [p, n, p], result: typeinfo.t_void() },
     RawFloorSig { name: "__raw_load_ptr", params: [p, n], result: p },
     RawFloorSig { name: "__raw_string", params: [p, n], result: typeinfo.t_string() },
+    RawFloorSig { name: "__raw_mapped_string", params: [p, n], result: typeinfo.t_string() },
     RawFloorSig { name: "__raw_array", params: [p], result: typeinfo.TypeArray { elem: n, view: false } },
     RawFloorSig { name: "__raw_arr_ptr", params: [typeinfo.TypeArray { elem: n, view: false }], result: p },
     RawFloorSig { name: "__raw_data", params: [typeinfo.t_string()], result: p },
@@ -3467,8 +3468,6 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
   if (parser.builtin_enum_of(bare).len() > 0) {
     n = 1;
   }
-  let own = false;
-  let owns_two = false;
   let last: i32 = -1;
   let e = s.unions.bhead[util.hash_bucket(bare, 4093)];
   while (e >= 0) {
@@ -3476,18 +3475,9 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
     let u = s.unions.unions[o];
     if (s.unions.bnames[e] == bare && u.is_enum && o != last && enum_visible_from(u, s.fn_module)) {
       n += 1;
-      if (u.module == s.fn_module) {
-        owns_two = own;
-        own = true;
-      }
       last = o;
     }
     e = s.unions.bnext[e];
-  }
-  // The flattener gives a variant of an enum of this module the prefix of
-  // the module, so only the enums of this module can make it ambiguous.
-  if (bare != name && own) {
-    return owns_two;
   }
   return n >= 2;
 }
@@ -6852,7 +6842,6 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   }
   let rt = lambda_ret_type(lm, s);
   let body_scope = lambda_body_scope(lm, s);
-  check_block(lm.body, body_scope);
   if (lm.ret_type.len() == 0 && is_unknown(rt)) {
     let (returned, at) = first_returned(lm.body, body_scope);
     if (!parser.bare_return(returned)) {
@@ -9925,10 +9914,10 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
   return (false, false, out);
 }
 
-// The arms of an if-let are the arms of the source. The statements after a
-// let-else continue its first arm, so the walk does not read its arms.
+// The arms of an if-let are the arms of the source. The first arm of a
+// let-else holds the statements after it, and its other arm is the else.
 function mc_reads_arms(origin: string): boolean {
-  return ordinary_match_origin(origin) || origin == "if_let";
+  return ordinary_match_origin(origin) || origin == "if_let" || origin == "let_else";
 }
 
 function mc_check_binding(stmts: ast.Stmt[], from: i32, name: string, tname: string, bline: i32, bcol: i32, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
@@ -9980,7 +9969,9 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
     let st = stmts[i];
     match (st) {
       ast.StmtVar(v) => {
-        let tn = mc_var_type_name(v, cur, structs, enums);
+        // A match on a struct pattern consumes its subject. The local that
+        // holds the subject is not a binding of the program.
+        let tn = if (parser.is_struct_match_subject(v.name)) { "" } else { mc_var_type_name(v, cur, structs, enums) };
         if (tn.len() > 0) {
           out = util.append_diags(out, mc_check_binding(stmts, i + 1, v.name, tn, v.line, v.col, structs, enums));
         }
@@ -10362,7 +10353,7 @@ pub function unsafe_intrinsics(): string[] {
     "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64",
     "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__cache_sync_code", "__user_run", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
-    "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "share_unchecked",
+    "__memcpy", "__memset", "__str_bytes", "__bytes_data", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "share_unchecked", "map_file_unchecked",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
     "__rc_inc", "__rc_dec", "__rc_get", "__fern_rc_dec",
     "__arr_set_len", "__heap_mark", "__heap_release_to", "__heap_adopt", "__send_adopt", "__send_root", "__send_release", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
@@ -18845,7 +18836,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
   "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
   "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
-  "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
+  "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_masks", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
   "__store_ptr", "__store_u8", "__str_bytes", "__bytes_data", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
   "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
@@ -23736,9 +23727,26 @@ function lu_binding_level(frames: LuFrame[], name: string): i32 {
   return -1;
 }
 
+// The name is the binding of a for-each, and no let declares it again. A
+// binding of a borrowed array is not fresh: lu_loose_tag gives its use the
+// tag of a read out of a borrowed structure.
+function lu_each_binding(fx: LuFn, site: LuSite, name: string): boolean {
+  if (util.has_str(fx.params, name) || lu_decl_count(fx, name) > 0) {
+    return false;
+  }
+  let l = lu_binding_level(site.frames, name);
+  if (l < 0) {
+    return false;
+  }
+  if let ast.StmtFor(fo) = site.frames[l].head {
+    return fo.var_name == name;
+  }
+  return false;
+}
+
 function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name = aid.name;
-  let elem = lu_elem_fresh(fx, site, name);
+  let elem = lu_elem_fresh(fx, site, name) || lu_each_binding(fx, site, name);
   if (!lu_is_local(fx, name) && !elem && !lu_owned_field_payload(fx, name)) {
     return false;
   }
@@ -25845,10 +25853,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         ri = ru_expr(fr.iter, moved, ctx);
       }
       let fctx = ow_bind_ctx(ctx, fr.var_name);
-      if (!takes && !util.contains(fr.var_name, ",")) {
+      let inner = for_body_scope(fr, ctx.scope);
+      // A loop over a borrowed array lends each element. An element that
+      // holds no handle is a copy, so the body can give it away.
+      if (!takes && !util.contains(fr.var_name, ",") && !ow_holds_no_handle(typeinfo.spelling(inner.lookup(fr.var_name)), ctx.decls)) {
         fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
       }
-      let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
+      let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: inner });
       return OwnWalk { moved: ld.moved, diags: util.append_diags(ri.diags, ld.diags) };
     },
     ast.StmtMatch(m) => {
@@ -29438,7 +29449,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   let out: string[] = [];
   for name in [
-    "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
+    "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_masks", "__scan_set_bytes",
     "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__mulhi_u64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
     "__f64x2_of", "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_lane_bits", "__f64x2_lane",
@@ -35111,6 +35122,41 @@ function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean)
   }
 }
 
+// qualify_value_body qualifies the body of a value block, as vb_ret_diags
+// reads it. Its last statement, or the last statement of each arm of a
+// last `if` or `match`, gives the value of the block, of the type `want`.
+// A `return` before it leaves the function, so it expects the type that
+// the function returns.
+function qualify_value_body(body: ast.Stmt[], s: Scope, want: typeinfo.Type, coll: util.NameIndex): ast.Stmt[] {
+  if (body.len() == 0) {
+    return body;
+  }
+  let out: ast.Stmt[] = [];
+  let cur = s;
+  for i in 0..body.len() - 1 {
+    let q = qualify_stmt(body[i], cur.with_block_ret(s.try_ret), coll);
+    out = out.append(q);
+    cur = bind_stmt(q, cur);
+  }
+  let none = t_unknown("no expected type");
+  let last = body[body.len() - 1];
+  if let ast.StmtIf(f) = last {
+    return out.append(ast.StmtIf { ...f, cond: qualify_expr(f.cond, none, cur, coll), then_body: qualify_value_body(f.then_body, cur, want, coll), else_body: qualify_value_body(f.else_body, cur, want, coll) });
+  }
+  if let ast.StmtMatch(m) = last {
+    let arms: ast.MatchArm[] = [];
+    let scrut = check_expr(m.scrutinee, cur);
+    for arm in m.arms {
+      arms = arms.append(ast.MatchArm { ...arm, body: qualify_value_body(arm.body, annotate_arm_scope(arm, cur, scrut), want, coll) });
+    }
+    return out.append(ast.StmtMatch { ...m, scrutinee: qualify_expr(m.scrutinee, none, cur, coll), arms: arms });
+  }
+  // A tail after a statement that leaves is the copy of that `return` that
+  // the parser adds, so it expects what the function returns.
+  let tail = if (mx_branch_yields(body)) { want } else { s.try_ret };
+  return out.append(qualify_stmt(last, cur.with_block_ret(tail), coll));
+}
+
 function dest_slot(slots: typeinfo.Type[], k: i32): typeinfo.Type {
   if (k < slots.len()) {
     return slots[k];
@@ -35161,10 +35207,8 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
   if (parser.is_value_block(c)) {
     if let ast.ExprLambda(lm) = c.callee {
       let bs = lambda_body_scope(lm, s);
-      if (!is_unknown(want)) {
-        bs = bs.with_block_ret(want);
-      }
-      return ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: qualify_stmts(lm.body, bs, coll) } };
+      let tail = if (is_unknown(want)) { bs.ret_type } else { want };
+      return ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: qualify_value_body(lm.body, bs, tail, coll) } };
     }
   }
   let callee = c.callee;

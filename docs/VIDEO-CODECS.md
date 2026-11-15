@@ -183,6 +183,11 @@ The cache retains at most 16 MiB of PPS payloads, without an exact process-memor
 Slice inspection copies at most 64 unescaped bytes, without a complete slice-payload copy.
 Returned packets contain canonical four-byte Annex B prefixes and an IDR flag, without assigned timestamps.
 
+AVC sequence-end and stream-end NAL units have empty payloads and follow a coded picture.
+Both markers remain in that picture's access unit. Sequence end requires IDR in the next access unit, through intervening prefix metadata.
+Stream end permits no subsequent NAL unit in the same reader. A separate bitstream requires a new reader.
+These checks follow H.264 clauses 7.3.2.5, 7.3.2.6, 7.4.1.2.2, and 7.4.1.2.3.
+
 The supported path requires matching parameter sets before each slice.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
@@ -488,6 +493,14 @@ The parser reuses the OBU header checks and accepts both size-field forms.
 The packet budget applies before access. Separate limits bound frame and OBU records per temporal unit.
 Returned ranges retain no input bytes or payload copies. The caller preserves the immutable source.
 Payload syntax, complete frame coverage, timestamps, and pixel decode remain outside this reader.
+
+`std/video/av1/annex_b/input` reads the same temporal units from a sequential source through short reads.
+Each cooperative step performs at most one source read and emits at most one packet event.
+Separate limits bound the byte window, encoded packets, nested records, temporal-unit count, and source-read operations.
+
+Each packet owns its original bytes and their scalar ranges. Its signed 64-bit offset identifies the original temporal-unit length field.
+EOF between temporal units ends the stream. EOF inside a length or body returns `Truncated`.
+The caller owns and closes the source. Blocking reads belong outside the Android loop callback.
 
 `std/video/av1/sequence.inspect` reads one complete sequence-header OBU through the same framing reader.
 It reports maximum frame dimensions, precision, color fields, and sequence tool flags without a payload copy.
