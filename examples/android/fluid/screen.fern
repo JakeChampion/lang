@@ -1,0 +1,127 @@
+// What the app draws in a frame: the fluid, and the pictures of the controls
+// over it. It makes no Android call, so the host runs it on an offscreen
+// canvas.
+import "std/android/draw";
+import "std/android/gl";
+import "std/android/text";
+import "std/f64";
+import "./fluid";
+import "./overlay";
+import "./sim";
+
+pub const UNFIT: string = "This animation needs OpenGL ES 3 with float render targets, which this device does not provide.";
+
+// A picture on the GPU, and the text that names what it shows. The picture
+// is made again only for a new key.
+struct Slot { key: string, tex: gl.Texture }
+
+function no_slot(): Slot {
+  return Slot { key: "", tex: gl.Texture { id: 0, width: 0, height: 0 } };
+}
+
+// The pictures of the controls. `backdrop` is one dark pixel, which the
+// canvas makes as large as the window behind the dialog.
+pub struct Art { button: Slot, panel: Slot, list: Slot, exit: Slot, note: Slot, backdrop: gl.Texture }
+
+pub function no_art(): Art {
+  return Art { button: no_slot(), panel: no_slot(), list: no_slot(), exit: no_slot(), note: no_slot(), backdrop: gl.Texture { id: 0, width: 0, height: 0 } };
+}
+
+pub function free_art(a: Art): void {
+  for s in [a.button, a.panel, a.list, a.exit, a.note] {
+    gl.free(s.tex);
+  }
+  gl.free(a.backdrop);
+}
+
+// The fluid after the splats and the steps of the frame `fr`, and the model
+// with the state of its generator after the burst.
+pub function advance(f: sim.Fluid, m: fluid.Model, fr: fluid.Frame): (sim.Fluid, fluid.Model) {
+  let next = f;
+  let model = m;
+  if (fr.burst > 0) {
+    let (burst, rng) = next.burst(m.cfg, fr.burst, m.rng);
+    next = burst;
+    model = fluid.Model { ...m, rng: rng };
+  }
+  if let Some(sp) = fr.splat {
+    next = next.splat(m.cfg, sp.x, sp.y, sp.dx, sp.dy, sp.color);
+  }
+  for i in 0..fr.steps {
+    next = next.step(m.cfg, 0.016666666666666666);
+  }
+  return (next, model);
+}
+
+// The slot with the picture for `key`. `make` draws it when the slot has
+// the picture of another key.
+function fresh(s: Slot, key: string, make: () => draw.Frame): Slot {
+  if (s.key == key && s.tex.id != 0) {
+    return s;
+  }
+  gl.free(s.tex);
+  let f = make();
+  let t = gl.texture(f);
+  draw.release(f);
+  return Slot { key: key, tex: t };
+}
+
+function backdrop(t: gl.Texture): gl.Texture {
+  if (t.id != 0) {
+    return t;
+  }
+  let f = draw.offscreen(1, 1);
+  f.store(0, 0, 1, 1, draw.rgba(0, 0, 0, 115));
+  let out = gl.texture(f);
+  draw.release(f);
+  return out;
+}
+
+// Draws the controls of the model `m` on the canvas, over the fluid, at
+// `ms`, and gives the pictures that it made. `unfit` tells that the GPU
+// cannot run the simulation: the canvas then shows the text that says so.
+pub function paint(before: Art, c: gl.Canvas, fs: text.Fonts, mt: overlay.Metrics, m: fluid.Model, ms: i64, unfit: boolean): Art {
+  let l = m.layout;
+  let art = before;
+  let size = mt.width.to_string() + "x" + mt.height.to_string() + "@" + mt.font.to_string();
+  if (unfit) {
+    let note = fresh(art.note, UNFIT + size, (): draw.Frame => overlay.note_frame(fs, mt, UNFIT));
+    c.draw(note.tex, (mt.width - note.tex.width) / 2, (mt.height - note.tex.height) / 2, 1.0, 0, mt.height);
+    return Art { ...art, note: note };
+  }
+  if (m.kid) {
+    let part = m.held(ms);
+    let exit = fresh(art.exit, ((part * 200.0) as i32).to_string() + size, (): draw.Frame => overlay.exit_frame(mt, part));
+    let alpha = 0.25;
+    if (part > 0.0) {
+      alpha = 1.0;
+    }
+    c.draw(exit.tex, l.exit.x, l.exit.y, alpha, 0, mt.height);
+    art = Art { ...art, exit: exit };
+  } else {
+    let pressed = m.pressed_button();
+    let button = fresh(art.button, pressed.to_string() + size, (): draw.Frame => overlay.button_frame(mt, pressed));
+    c.draw(button.tex, l.button.x, l.button.y, 1.0, 0, mt.height);
+    art = Art { ...art, button: button };
+  }
+  if (m.open) {
+    let dark = backdrop(art.backdrop);
+    c.draw_part(dark, gl.Part { x: 0, y: 0, w: 1, h: 1 }, gl.Part { x: 0, y: 0, w: mt.width, h: mt.height }, 1.0, gl.no_fade(), 0, mt.height);
+    let panel = fresh(art.panel, size, (): draw.Frame => overlay.panel_frame(fs, mt, l));
+    c.draw(panel.tex, l.panel.x, l.panel.y, 1.0, 0, mt.height);
+    let row = m.pressed_row();
+    let state = m.cfg.paused.to_string() + m.full.to_string() + m.cfg.bloom.to_string() + m.cfg.sunrays.to_string() + m.cfg.colorful.to_string() + row.to_string();
+    let list = fresh(art.list, state + size, (): draw.Frame => overlay.list_frame(fs, mt, l, m, row));
+    c.draw(list.tex, l.list.x, l.list.y - m.scroll, 1.0, l.list.y, l.list.y + l.list.h);
+    art = Art { ...art, backdrop: dark, panel: panel, list: list };
+  }
+  let text = m.note_at(ms);
+  if (text.len() > 0) {
+    let note = fresh(art.note, text + size, (): draw.Frame => overlay.note_frame(fs, mt, text));
+    // The note goes away in its last 400 ms.
+    let alpha = ((m.note_ms - ms) as f64 / 400.0).clamp01();
+    c.draw(note.tex, (mt.width - note.tex.width) / 2, mt.height - mt.bottom - note.tex.height - (20.0 * mt.scale) as i32, alpha, 0, mt.height);
+    art = Art { ...art, note: note };
+  }
+  return art;
+}

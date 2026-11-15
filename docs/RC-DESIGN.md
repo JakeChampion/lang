@@ -550,6 +550,17 @@ pointer that flows through the program points past the header.
   of an array and keeps the tag in the same half. A program can have 32,766
   shapes, and a record can have 65,535 fields. On wasm32 a record keeps its
   shape in its first slot.
+- A value of an enum whose variants hold no field is the index of its
+  variant, and not an address (`ssasem.immediate_enum`).
+- On a native target the **narrow fields of a variant share one word** when
+  two or more of them fit in 64 bits (`semsource.packing`). A narrow field is
+  a boolean, a `u8`, an `i32`, a `u32` or such an enum. The fields of one
+  byte are at the low bits, and a field of 32 bits starts at bit 0 or at
+  bit 32. The word is where the first narrow field was, and each other field
+  keeps its order. The schema of the variant and its declaration have the
+  word as one field of 64 bits, so the count of words, the reuse, the release
+  and the proofs read whole words. A record and a tuple keep one word for
+  each field, and so does each box on wasm32.
 - A **string** box is a data
   pointer and a length, released through `__fern_str_free`; a fused string
   carries its bytes behind the same block, and a grown one (the

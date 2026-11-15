@@ -7195,7 +7195,7 @@ function unwrap_grouping_parens(s: string): string {
   return t;
 }
 
-function matching_bracket(s: string, start: i32): i32 {
+pub function matching_bracket(s: string, start: i32): i32 {
   let depth = 0;
   for i in start..s.len() {
     if (s[i] == b'[') {
@@ -23809,7 +23809,7 @@ function ret_mentions_any(ret_type: string, tps: string[]): boolean {
   return false;
 }
 
-function type_mentions_var(ty: string, name: string): boolean {
+pub function type_mentions_var(ty: string, name: string): boolean {
   let i = 0;
   let nl = name.len();
   if (nl == 0) {

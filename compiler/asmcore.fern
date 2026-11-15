@@ -18,7 +18,7 @@ import "std/envflag";
 import "std/string";
 
 pub function task_runtime_roots(): string {
-  return "__fern_task_tab __fern_task_rec __fern_task_blank __fern_task_new __fern_task_free __fern_task_cur __fern_task_enter __fern_task_leave __fern_task_mode __fern_task_park __fern_task_park_until __fern_task_wait __fern_task_timeout __fern_task_until __fern_task_set_ready __fern_task_set_cancelled __fern_task_cancelled __fern_task_reserve __fern_task_take __fern_task_pop_w __fern_task_fd_closed __fern_task_fd_gen __fern_task_inline";
+  return "__fern_task_tab __fern_task_rec __fern_task_blank __fern_task_new __fern_task_free __fern_task_cur __fern_task_enter __fern_task_leave __fern_task_mode __fern_task_park __fern_task_park_until __fern_task_wait __fern_task_timeout __fern_task_until __fern_task_set_ready __fern_task_set_cancelled __fern_task_cancelled __fern_task_reserve __fern_task_take __fern_task_pop_w __fern_task_fd_closed __fern_task_fd_gen __fern_task_inline __fern_task_gen";
 }
 
 pub function sanitize_label(name: string): string {
@@ -3242,7 +3242,7 @@ function builtin_i32_names(): string[] {
     "__memchr",
     "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes",
     "__ascii_run",
-    "__scan_set", "__scan_set_bytes", "__scan_masks",
+    "__scan_set", "__scan_set_bytes", "__scan_masks", "__scan_masks_bytes",
     "__count_runs", "__count_runs_bytes",
     "__bsd_sum",
     "__str_hash",

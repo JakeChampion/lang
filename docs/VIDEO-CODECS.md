@@ -201,6 +201,15 @@ It reuses bounded NAL input and the native SPS and PPS validators.
 The first-slice flag separates pictures. Subsequent slices retain the same PPS, NAL type, and temporal identifier.
 AUD and prefix parameter or SEI NAL units belong to the next picture. Suffix SEI and filler remain with the current picture.
 
+AUD and filler temporal identifiers must equal the coded picture's temporal identifier.
+One optional scalar retains the pending AUD identifier. Each packet clears that state, including pictures without another AUD.
+These checks follow H.265 clause 7.4.2.2, without a complete non-VCL syntax or stream-conformance claim.
+
+VPS and SPS require a containing picture at temporal identifier zero.
+Contained PPS and prefix SEI headers cannot have a lower identifier than their picture. Suffix SEI obeys the same lower bound.
+TSA and base-layer STSA pictures require a nonzero identifier.
+An optional prefix minimum enforces the containing-picture bound and resets with each packet. Cached PPS activation retains its existing temporal bound.
+
 EOS and EOB have empty payloads and end the current picture. EOS requires IRAP in the next access unit.
 EOB permits no subsequent NAL unit.
 
@@ -642,13 +651,24 @@ That comparison requires a C compiler, the FFmpeg development headers, and `pkg-
 Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
-`scripts/check-video-hevc-input-interop` compares thirteen cases with 252 coded pictures from fresh x265 streams.
+`scripts/check-video-hevc-input-interop` compares fifteen cases with 288 coded pictures from fresh x265 streams.
 Native and real WASI output match FFprobe picture positions, canonical payloads, and all FFmpeg decoded planes.
 FFprobe versions can report the three-byte suffix of a four-byte start prefix as the packet position.
 The comparison resolves the complete prefix from source bytes and verifies every payload byte.
 
 A two-layer stream replaces PPS headers at temporal identifiers zero and one.
 CBS confirms those headers. All decoded planes also match the original stream before PPS replacement.
+The fixture also corrects x265 AUD temporal headers to match their coded pictures.
+CBS confirms the corrected headers. Native packet offsets and bytes still match the corrected source exactly.
+
+A temporal-layer stream also carries AUD and filler units with matching identifiers.
+Twenty-four header mutations cover both unit types, pictures at layers zero and one, and all six mismatched identifiers.
+CBS traces confirm the AUD and picture identifiers. FFmpeg's unit filter independently preserves every non-VCL header and payload.
+Native refusal follows the specification, without an external-refusal claim.
+
+One case permits SEI identifiers above the picture's identifier and preserves every original decoded plane.
+Nine additional refusals cover zero-identifier TSA/STSA and lower-identifier parameter or SEI headers.
+Each control retains the independent header checks and all earlier AUD/filler controls.
 
 For terminal EOS/EOB, FFprobe emits a separate control-only packet.
 The comparison joins only the exact empty EOS/EOB pair to the preceding picture and verifies every byte.

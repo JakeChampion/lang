@@ -771,7 +771,7 @@ function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: u
 function copied_scalar_result(name: string): boolean {
   return name == ssabytes.word_name(4) || name == ssabytes.word_name(8) || name == ssabytes.swap_name(4) || name == ssabytes.swap_name(8)
     || name == "__sum_bytes" || name == "__crc32_cksum" || name == "__crc32_cksum_array"
-    || name == "__crc32_ieee_array" || name == "__ascii_run" || name == "__scan_set" || name == "__scan_masks"
+    || name == "__crc32_ieee_array" || name == "__ascii_run" || name == "__scan_set" || name == "__scan_masks" || name == "__scan_masks_bytes"
     || name == "__scan_set_bytes" || name == "__bsd_sum" || name == "__str_hash"
     || name == "__count_runs" || name == "__count_runs_bytes" || name == "__count_byte"
     || name == "__memchr" || name == "__count_byte_bytes" || name == "__count_below_u64"
@@ -2976,16 +2976,44 @@ function sizes_of(funcs: ssasem.Func[]): i32[] {
   return out;
 }
 
+// The steps of a field of a shared word, and a constant that only such a
+// step reads, do not count: the read of the field counts once.
 function count_insts(g: ssa.SFunc): i32 {
+  let read = read_outside_steps(g);
   let n = 0;
   for b in g.blocks {
     for ins in b.insts {
-      if (!line_mark(ins.kind_tag)) {
+      let step_constant = ins.kind_tag == ssa.CONST_INT && ins.result >= 0 && ins.result < read.len() && !read[ins.result];
+      if (!line_mark(ins.kind_tag) && !ssasem.is_field_step(ins) && !step_constant) {
         n += 1;
       }
     }
   }
   return n;
+}
+
+// The values that an instruction other than a field step reads, or a
+// terminator.
+function read_outside_steps(g: ssa.SFunc): boolean[] {
+  let read = __alloc_bool(g.nvals);
+  for b in g.blocks {
+    for ins in b.insts {
+      if (!ssasem.is_field_step(ins)) {
+        read = marked_all(read, ins.args);
+      }
+    }
+    read = marked_all(read, [b.term.cond, b.term.value]);
+  }
+  return read;
+}
+
+function marked_all(own read: boolean[], values: i32[]): boolean[] {
+  for v in values {
+    if (v >= 0 && v < read.len()) {
+      read = read.with(v, true);
+    }
+  }
+  return read;
 }
 
 function drop_unread(f: ssasem.Func): Rewrite {

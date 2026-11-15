@@ -1360,6 +1360,24 @@ func New() *Interp {
 		}
 		return scanMasks([]byte(string(s)), args[1], args[2])
 	}}
+	i.Builtins["__scan_masks_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_masks_bytes: expected 3 args, got %d", len(args))
+		}
+		arr, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__scan_masks_bytes: expected an array, got %T", args[0])
+		}
+		b := make([]byte, len(arr.Elems()))
+		for at, e := range arr.Elems() {
+			n, ok := e.(Number)
+			if !ok {
+				return nil, fmt.Errorf("__scan_masks_bytes: element %d is %T, not u8", at, e)
+			}
+			b[at] = byte(n)
+		}
+		return scanMasks(b, args[1], args[2])
+	}}
 	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__scan_set_bytes: expected 3 args, got %d", len(args))
@@ -1529,6 +1547,7 @@ func New() *Interp {
 	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
 	// A handle of this interpreter is not reused, so no count can change.
 	i.Builtins["__task_fd_gen"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_gen"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	// __task_inline adds its argument to the number of worker bodies that run
 	// in this process, and gives the new number.
 	i.Builtins["__task_inline"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) {

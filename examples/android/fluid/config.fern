@@ -1,0 +1,354 @@
+// The values of the simulation, and the reader of the settings that change
+// them. It makes no Android call and no OpenGL ES call, so the host tests it.
+import "std/f64";
+import "std/i32";
+import "std/string";
+
+// A colour with each channel from 0 to 1.
+pub struct Rgb { r: f64, g: f64, b: f64 }
+
+pub struct Config {
+  sim_resolution: i32,
+  dye_resolution: i32,
+  capture_resolution: i32,
+  density_dissipation: f64,
+  velocity_dissipation: f64,
+  pressure: f64,
+  pressure_iterations: i32,
+  dithering_resolution: i32,
+  curl: f64,
+  splat_radius: f64,
+  splat_force: f64,
+  shading: boolean,
+  colorful: boolean,
+  color_update_speed: f64,
+  paused: boolean,
+  back_color: Rgb,
+  bloom: boolean,
+  bloom_iterations: i32,
+  bloom_resolution: i32,
+  bloom_intensity: f64,
+  bloom_threshold: f64,
+  bloom_soft_knee: f64,
+  sunrays: boolean,
+  sunrays_resolution: i32,
+  sunrays_weight: f64,
+}
+
+// The dye resolution is the one that the web page gives a phone.
+pub function defaults(): Config {
+  return Config {
+    sim_resolution: 128,
+    dye_resolution: 512,
+    capture_resolution: 512,
+    density_dissipation: 1.0,
+    velocity_dissipation: 0.2,
+    pressure: 0.8,
+    pressure_iterations: 20,
+    dithering_resolution: 64,
+    curl: 30.0,
+    splat_radius: 0.25,
+    splat_force: 6000.0,
+    shading: true,
+    colorful: true,
+    color_update_speed: 10.0,
+    paused: false,
+    back_color: Rgb { r: 0.0, g: 0.0, b: 0.0 },
+    bloom: true,
+    bloom_iterations: 8,
+    bloom_resolution: 256,
+    bloom_intensity: 0.4,
+    bloom_threshold: 0.8,
+    bloom_soft_knee: 0.7,
+    sunrays: true,
+    sunrays_resolution: 196,
+    sunrays_weight: 0.5,
+  };
+}
+
+const INT: i32 = 0;
+
+const NUMBER: i32 = 1;
+
+const BOOLEAN: i32 = 2;
+
+const COLOR: i32 = 3;
+
+const POW2: i32 = 4;
+
+// A setting: its name, its kind, and the range of a number. A large texture
+// or many pressure iterations can stop the GPU, so each number has limits.
+struct Spec { key: string, kind: i32, min: f64, max: f64 }
+
+function specs(): Spec[] {
+  return [
+    Spec { key: "sim_resolution", kind: INT, min: 16.0, max: 512.0 },
+    Spec { key: "dye_resolution", kind: INT, min: 64.0, max: 2048.0 },
+    Spec { key: "capture_resolution", kind: INT, min: 64.0, max: 4096.0 },
+    Spec { key: "density_dissipation", kind: NUMBER, min: 0.0, max: 10.0 },
+    Spec { key: "velocity_dissipation", kind: NUMBER, min: 0.0, max: 10.0 },
+    Spec { key: "pressure", kind: NUMBER, min: 0.0, max: 1.0 },
+    Spec { key: "pressure_iterations", kind: INT, min: 1.0, max: 60.0 },
+    Spec { key: "dithering_resolution", kind: POW2, min: 8.0, max: 512.0 },
+    Spec { key: "curl", kind: NUMBER, min: 0.0, max: 200.0 },
+    Spec { key: "splat_radius", kind: NUMBER, min: 0.01, max: 2.0 },
+    Spec { key: "splat_force", kind: NUMBER, min: 0.0, max: 20000.0 },
+    Spec { key: "shading", kind: BOOLEAN, min: 0.0, max: 0.0 },
+    Spec { key: "colorful", kind: BOOLEAN, min: 0.0, max: 0.0 },
+    Spec { key: "color_update_speed", kind: NUMBER, min: 0.0, max: 100.0 },
+    Spec { key: "paused", kind: BOOLEAN, min: 0.0, max: 0.0 },
+    Spec { key: "back_color", kind: COLOR, min: 0.0, max: 0.0 },
+    Spec { key: "bloom", kind: BOOLEAN, min: 0.0, max: 0.0 },
+    Spec { key: "bloom_iterations", kind: INT, min: 1.0, max: 12.0 },
+    Spec { key: "bloom_resolution", kind: INT, min: 32.0, max: 1024.0 },
+    Spec { key: "bloom_intensity", kind: NUMBER, min: 0.0, max: 2.0 },
+    Spec { key: "bloom_threshold", kind: NUMBER, min: 0.0, max: 2.0 },
+    Spec { key: "bloom_soft_knee", kind: NUMBER, min: 0.0, max: 1.0 },
+    Spec { key: "sunrays", kind: BOOLEAN, min: 0.0, max: 0.0 },
+    Spec { key: "sunrays_resolution", kind: INT, min: 32.0, max: 1024.0 },
+    Spec { key: "sunrays_weight", kind: NUMBER, min: 0.0, max: 2.0 },
+  ];
+}
+
+// The name of each setting.
+pub function keys(): string[] {
+  let out: string[] = [];
+  for s in specs() {
+    out = out.append(s.key);
+  }
+  return out;
+}
+
+// The value of a setting.
+enum Value { Int(i32), Number(f64), Flag(boolean), Color(Rgb) }
+
+// `key` in the form of the names of `keys`: `SIM_RESOLUTION` and
+// `sim-resolution` are `sim_resolution`.
+function canonical(key: string): string {
+  return key.trim().to_ascii_lower().replace("-", "_");
+}
+
+function read_boolean(raw: string): Option[boolean] {
+  let v = raw.trim().to_ascii_lower();
+  if (v == "1" || v == "true" || v == "yes" || v == "on") {
+    return Some(true);
+  }
+  if (v == "0" || v == "false" || v == "no" || v == "off") {
+    return Some(false);
+  }
+  return None;
+}
+
+function hex_pair(s: string): Option[f64] {
+  if let Ok(n) = i32.parse_i32_radix(s, 16) {
+    return Some(n as f64 / 255.0);
+  }
+  return None;
+}
+
+function channel(s: string): Option[f64] {
+  if let Ok(n) = f64.parse_f64(s.trim()) {
+    if (n >= 0.0 && n <= 255.0) {
+      return Some(n / 255.0);
+    }
+  }
+  return None;
+}
+
+function rgb_of(r: Option[f64], g: Option[f64], b: Option[f64]): Option[Rgb] {
+  if let Some(rv) = r {
+    if let Some(gv) = g {
+      if let Some(bv) = b {
+        return Some(Rgb { r: rv, g: gv, b: bv });
+      }
+    }
+  }
+  return None;
+}
+
+// A colour from `#rrggbb`, `rrggbb`, `#rgb`, or `r,g,b` with each channel
+// from 0 to 255.
+function read_color(raw: string): Option[Rgb] {
+  let v = raw.trim().remove_prefix("#");
+  if (v.len() == 6 && v.is_hex_string()) {
+    return rgb_of(hex_pair(v.slice_snap(0, 2)), hex_pair(v.slice_snap(2, 4)), hex_pair(v.slice_snap(4, 6)));
+  }
+  if (v.len() == 3 && v.is_hex_string()) {
+    return rgb_of(hex_pair(v.slice_snap(0, 1).repeat(2)), hex_pair(v.slice_snap(1, 2).repeat(2)), hex_pair(v.slice_snap(2, 3).repeat(2)));
+  }
+  let parts = v.split(",");
+  if (parts.len() == 3) {
+    return rgb_of(channel(parts[0]), channel(parts[1]), channel(parts[2]));
+  }
+  return None;
+}
+
+// The power of two nearest to `n` on the scale of the exponents.
+function nearest_pow2(n: f64): i32 {
+  return 1 << n.log2().round() as i32;
+}
+
+// The value of `raw` for the setting `spec`. A number outside the range of
+// the setting takes the nearest limit.
+function read(spec: Spec, raw: string): Option[Value] {
+  if (spec.kind == BOOLEAN) {
+    if let Some(b) = read_boolean(raw) {
+      return Some(Flag(b));
+    }
+    return None;
+  }
+  if (spec.kind == COLOR) {
+    if let Some(c) = read_color(raw) {
+      return Some(Color(c));
+    }
+    return None;
+  }
+  let Ok(n) = f64.parse_f64(raw.trim()) else {
+    return None;
+  };
+  if (!n.is_finite()) {
+    return None;
+  }
+  let bounded = n.clamp(spec.min, spec.max);
+  if (spec.kind == INT) {
+    return Some(Int(bounded.round() as i32));
+  }
+  if (spec.kind == POW2) {
+    return Some(Int(nearest_pow2(bounded)));
+  }
+  return Some(Number(bounded));
+}
+
+function kind_name(kind: i32): string {
+  if (kind == BOOLEAN) {
+    return "boolean";
+  }
+  if (kind == COLOR) {
+    return "color";
+  }
+  if (kind == INT) {
+    return "int";
+  }
+  if (kind == POW2) {
+    return "pow2";
+  }
+  return "number";
+}
+
+function with_int(c: Config, key: string, v: i32): Config {
+  if (key == "sim_resolution") {
+    return Config { ...c, sim_resolution: v };
+  }
+  if (key == "dye_resolution") {
+    return Config { ...c, dye_resolution: v };
+  }
+  if (key == "capture_resolution") {
+    return Config { ...c, capture_resolution: v };
+  }
+  if (key == "pressure_iterations") {
+    return Config { ...c, pressure_iterations: v };
+  }
+  if (key == "dithering_resolution") {
+    return Config { ...c, dithering_resolution: v };
+  }
+  if (key == "bloom_iterations") {
+    return Config { ...c, bloom_iterations: v };
+  }
+  if (key == "bloom_resolution") {
+    return Config { ...c, bloom_resolution: v };
+  }
+  return Config { ...c, sunrays_resolution: v };
+}
+
+function with_number(c: Config, key: string, v: f64): Config {
+  if (key == "density_dissipation") {
+    return Config { ...c, density_dissipation: v };
+  }
+  if (key == "velocity_dissipation") {
+    return Config { ...c, velocity_dissipation: v };
+  }
+  if (key == "pressure") {
+    return Config { ...c, pressure: v };
+  }
+  if (key == "curl") {
+    return Config { ...c, curl: v };
+  }
+  if (key == "splat_radius") {
+    return Config { ...c, splat_radius: v };
+  }
+  if (key == "splat_force") {
+    return Config { ...c, splat_force: v };
+  }
+  if (key == "color_update_speed") {
+    return Config { ...c, color_update_speed: v };
+  }
+  if (key == "bloom_intensity") {
+    return Config { ...c, bloom_intensity: v };
+  }
+  if (key == "bloom_threshold") {
+    return Config { ...c, bloom_threshold: v };
+  }
+  if (key == "bloom_soft_knee") {
+    return Config { ...c, bloom_soft_knee: v };
+  }
+  return Config { ...c, sunrays_weight: v };
+}
+
+function with_flag(c: Config, key: string, v: boolean): Config {
+  if (key == "shading") {
+    return Config { ...c, shading: v };
+  }
+  if (key == "colorful") {
+    return Config { ...c, colorful: v };
+  }
+  if (key == "paused") {
+    return Config { ...c, paused: v };
+  }
+  if (key == "bloom") {
+    return Config { ...c, bloom: v };
+  }
+  return Config { ...c, sunrays: v };
+}
+
+// `c` with the setting `key` at the value that `raw` gives. An unknown name
+// or a value that the setting cannot read gives a message, and no change.
+pub function set(c: Config, key: string, raw: string): Result[Config, string] {
+  let k = canonical(key);
+  for spec in specs() {
+    if (spec.key == k) {
+      let Some(v) = read(spec, raw) else {
+        return Err("Could not read \"" + key + "=" + raw + "\" as " + kind_name(spec.kind) + "; ignored.");
+      };
+      match (v) {
+        Int(n) => {
+          return Ok(with_int(c, k, n));
+        },
+        Number(n) => {
+          return Ok(with_number(c, k, n));
+        },
+        Flag(b) => {
+          return Ok(with_flag(c, k, b));
+        },
+        Color(rgb) => {
+          return Ok(Config { ...c, back_color: rgb });
+        }
+      }
+    }
+  }
+  return Err("Unknown setting \"" + key + "\" ignored.");
+}
+
+// The size of a texture of the resolution `resolution` for a window of
+// `width` by `height`: the resolution on the short side, and the long side
+// in the shape of the window.
+pub function resolution(width: i32, height: i32, resolution: i32): (i32, i32) {
+  let aspect = width as f64 / (height as f64);
+  if (aspect < 1.0) {
+    aspect = 1.0 / aspect;
+  }
+  let long = (resolution as f64 * aspect).round() as i32;
+  if (width > height) {
+    return (long, resolution);
+  }
+  return (resolution, long);
+}
