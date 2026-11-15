@@ -4,10 +4,14 @@ package e2ecompiler
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -519,4 +523,79 @@ func pigzNamed(t *testing.T, bin string) string {
 		t.Fatal(err)
 	}
 	return named
+}
+
+// pigzLargeStream is a gzip member of n bytes of one line that repeats, n a
+// multiple of 64 MiB. The deflate data is the blocks of 64 MiB of the lines
+// with a sync flush, n / 64 MiB times, then an empty final block. Each copy
+// of the blocks decodes to the same bytes, because a match in them goes
+// back no further than the start of its 64 MiB.
+func pigzLargeStream(t *testing.T, n int64) ([]byte, uint32) {
+	t.Helper()
+	line := []byte("a line of the large stream, with some words in it\n")
+	unit := bytes.Repeat(line, (64<<20)/len(line)+1)[:64<<20]
+	var blocks bytes.Buffer
+	w, err := flate.NewWriter(&blocks, flate.BestSpeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(unit); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out := []byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3}
+	crc := uint32(0)
+	for i := int64(0); i < n/int64(len(unit)); i++ {
+		out = append(out, blocks.Bytes()...)
+		crc = crc32.Update(crc, crc32.IEEETable, unit)
+	}
+	out = append(out, 3, 0)
+	out = binary.LittleEndian.AppendUint32(out, crc)
+	out = binary.LittleEndian.AppendUint32(out, uint32(n))
+	return out, crc
+}
+
+// TestSelfHostExamplePigzLarge decompresses and tests a member of 4.5 GiB on
+// x86-64. The port reads the input in parts and writes the output in parts,
+// so the length of the output has no limit.
+func TestSelfHostExamplePigzLarge(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src, err := filepath.Abs("../../../examples/pigz/pigz.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := pigzNamed(t, cli.x86Binary(t, src))
+	const n = int64(4608) << 20
+	data, crc := pigzLargeStream(t, n)
+	path := filepath.Join(t.TempDir(), "big.gz")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(cli.runner, bin, "-dc", path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	h := crc32.NewIEEE()
+	got, err := io.Copy(h, stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("pigz -dc: %v\n%s", err, stderr.String())
+	}
+	if got != n || h.Sum32() != crc {
+		t.Errorf("pigz -dc wrote %d bytes with CRC %08x, want %d bytes with CRC %08x", got, h.Sum32(), n, crc)
+	}
+	test := runX86_64Bin(cli.runner, bin, "-t", path)
+	if msg, err := test.CombinedOutput(); err != nil || len(msg) != 0 {
+		t.Errorf("pigz -t: %v %q", err, msg)
+	}
 }
