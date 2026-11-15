@@ -6655,6 +6655,9 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
     if (same_type_any_mode(lt, rt) && !is_unknown(lt)) {
       return typeinfo.t_bool();
     }
+    if (!is_unknown(lt) && !is_unknown(rt) && (settles_to(b.left, rt, s) || settles_to(b.right, lt, s))) {
+      return typeinfo.t_bool();
+    }
     if (is_integer(lt) && is_integer(rt)
       && (int_literal_tree(b.left) || int_literal_tree(b.right) || !is_unknown(scalar_numeric_join(lt, rt)))) {
       return typeinfo.t_bool();
@@ -32658,6 +32661,33 @@ pub function variant_shape_sig(s: Scope, name: string, owner: string): Option[St
   return None;
 }
 
+// A match or an if whose every arm leaves the function gives no value.
+function arms_all_exit(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtMatch(m) => {
+      if (m.arms.len() == 0) {
+        return false;
+      }
+      for arm in m.arms {
+        if (!arm_exits(arm.body)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    ast.StmtIf(f) => {
+      return f.else_body.len() > 0 && arm_exits(f.then_body) && arm_exits(f.else_body);
+    },
+    ast.StmtVar(_) | ast.StmtReturn(_) | ast.StmtExpr(_) | ast.StmtWhile(_) | ast.StmtAssign(_) | ast.StmtFor(_) | ast.StmtBreak(_) | ast.StmtContinue(_) | ast.StmtUnknown(_) | ast.StmtDefer(_) => {
+      return false;
+    }
+  }
+}
+
+function arm_exits(body: ast.Stmt[]): boolean {
+  return parser.branch_exits_early(body) || body.len() > 0 && arms_all_exit(body[body.len() - 1]);
+}
+
 // An earlier return exits the function and does not determine the block type.
 // Integer literal tails retain their polymorphic type for the receiver.
 function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
@@ -32670,7 +32700,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
     }
     return t_unknown("missing block value");
   }
-  if (parser.branch_exits_early(body)) {
+  if (parser.branch_exits_early(body) || arms_all_exit(body[body.len() - 1])) {
     return typeinfo.TypeNever { tag: 0 };
   }
   if let ast.StmtReturn(r) = body[body.len() - 1] {
