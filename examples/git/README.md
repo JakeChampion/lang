@@ -185,8 +185,10 @@ of a commit from the graph, and reads the commit only for its text.
 With generation numbers (the levels of version 1 or the corrected dates
 of version 2), `--topo-order`, `--date-order` and `--graph` walk as git
 does: they show the first commits before they read the whole history. The
-changed-path Bloom filters tell `log -- PATH` which commits do not change
-PATH. `core.commitGraph=false`, a shallow clone, grafts and replace refs
+changed-path Bloom filters of version 1 and 2 tell `log -- PATH` which
+commits do not change PATH. `commitGraph.changedPathsVersion` and
+`commitGraph.readChangedPaths` select the version of the filters, as in
+git. `core.commitGraph=false`, a shallow clone, grafts and replace refs
 turn the graph off, as in git.
 
 The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
@@ -241,10 +243,6 @@ the git of the machine. With git 2.43, four things are different:
 
 - `rev-parse --short=N` with N above 40 in a repository with SHA-256
   names. The port gives the full name, and git 2.43 stops at 40 digits.
-
-- The changed-path Bloom filters of version 2
-  (`commitGraph.changedPathsVersion`). The port walks a path without
-  them, and it uses the filters of version 1 only.
 
 - `--fix-thin` with a thin pack. The port adds the bases with the deflate
   of `std/deflate`, so the packfile, its name and its index do not have

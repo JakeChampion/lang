@@ -7,6 +7,7 @@ import "std/deflate";
 import "std/hex";
 import "std/result";
 import "./color";
+import "./commitgraph";
 import "./config";
 import "./checkpack";
 import "./checkblob";
@@ -388,6 +389,24 @@ function test_signatures(): test.TestOutcome {
   let twice = sig.parse(status + "[GNUPG:] BADSIG X Y\n", "", true);
   if (twice.result != b'E' || !twice.failed || sig.placeholder(sig.unsigned(), b'?').unwrap_or("") != "N") {
     return test.fail("two results and no signature");
+  }
+  return test.pass();
+}
+
+// The keys of the Bloom filters of version 2 hash each byte as unsigned;
+// the filters of version 1 do not take a path with a byte above 127.
+function test_bloom_keys(): test.TestOutcome {
+  let g = commitgraph.Graph { layers: [], width: 20, v2: false, hashes: 3, bloom: 2 };
+  let k = commitgraph.keys(g, "éx");
+  if (k.len() != 1 || k[0] != [1577287697, 1225892902, 874498107]) {
+    return test.fail("the keys of version 2");
+  }
+  let d = commitgraph.keys(g, "café/d");
+  if (d.len() != 2 || d[0] != [409610376, 1024026324, 1638442272]) {
+    return test.fail("the keys of a path in a directory");
+  }
+  if (commitgraph.keys(commitgraph.Graph { ...g, bloom: 1 }, "éx").len() != 0) {
+    return test.fail("a high byte with version 1");
   }
   return test.pass();
 }
@@ -1036,6 +1055,7 @@ function main(): i32 {
   r = r.it("the rules of white space", test_whitespace);
   r = r.it("the moved blocks of a patch", test_moved);
   r = r.it("the signatures of commits", test_signatures);
+  r = r.it("the keys of the Bloom filters", test_bloom_keys);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);
   r = r.it("the specs of colors", test_colors);

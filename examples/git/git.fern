@@ -1017,6 +1017,15 @@ function log_digits(text: string): i32 {
   return n;
 }
 
+// The integer `text`, with a sign, or -1 when it is not one.
+function log_digits_signed(text: string): i32 {
+  if (text.starts_with("-")) {
+    let n = log_number(objects.part(text, 1, text.len()));
+    return if (n < 0) { -1 } else { -n };
+  }
+  return log_number(text);
+}
+
 // git 2.43 reads a limit that is not a count as 0.
 function log_limit(text: string): i32 {
   return log_number(text).max(0);
@@ -2714,7 +2723,8 @@ function commit_graph(r: refs.Repo, s: store.Store): commitgraph.Graph {
       return commitgraph.none();
     }
   }
-  return commitgraph.open(r.objects(), r.width);
+  let version = if (!r.config.flag("commitgraph.readchangedpaths", true)) { 0 } else { log_digits_signed(r.config.get("commitgraph.changedpathsversion").unwrap_or("-1")) };
+  return commitgraph.open(r.objects(), r.width, if (version < -1 || version > 2) { -1 } else { version });
 }
 
 function log_command(argv: string[]): i32 {
