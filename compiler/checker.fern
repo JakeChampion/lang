@@ -33665,20 +33665,22 @@ function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   return parser.settle_int_tree(e, tag);
 }
 
-function settle_at(e: ast.Expr, t: typeinfo.Type): ast.Expr {
+// A literal takes the type that its place declares. The field literals of a
+// generic struct literal take the field types of the declared instance.
+function settle_at(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Expr {
   if (is_integer(t) && int_literal_tree(e)) {
     return settle_int_tree(e, type_to_irtag(t));
   }
-  return e;
+  return settle_struct_lit_wide(e, t, s);
 }
 
-function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[]): ast.Expr[] {
+function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[], s: Scope): ast.Expr[] {
   if (params.len() != args.len()) {
     return args;
   }
   let out: ast.Expr[] = [];
   for i in 0..args.len() {
-    out = out.append(settle_at(args[i], params[i]));
+    out = out.append(settle_at(args[i], params[i], s));
   }
   return out;
 }
@@ -33856,7 +33858,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
-      nargs = settle_args_at_params(nargs, call_param_types(c, s));
+      nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct = check_expr(e, s);
@@ -34334,7 +34336,7 @@ function annotate_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): ast.Stmt {
     init = annotate_expr(v.init, s);
   }
   if (v.type_name.len() > 0) {
-    init = settle_at(init, t);
+    init = settle_at(init, t, s);
   }
   let callable = decltypes.fn_param_from_type(v.name, t);
   if (callable.type_name == "fn") {
@@ -34352,7 +34354,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return annotate_var(v, s, after.lookup(v.name));
     },
     ast.StmtReturn(r) => {
-      return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type), line: r.line, col: r.col };
+      return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type, s), line: r.line, col: r.col };
     },
     ast.StmtExpr(x) => {
       return ast.StmtExpr { ...x, value: annotate_expr(x.value, s) };
@@ -34364,7 +34366,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtAssign(a) => {
-      return ast.StmtAssign { ...a, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target)) };
+      return ast.StmtAssign { ...a, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target), s) };
     },
     ast.StmtMatch(m) => {
       return annotate_match_stmt(m, s);
