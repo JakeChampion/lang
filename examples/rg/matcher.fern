@@ -6,16 +6,27 @@ import "std/option";
 import "std/pcre";
 import "std/regex";
 
-pub struct Matcher { rx: regex.Regex, pc: Option[pcre.Pcre], error: Cell[string] }
+pub struct Matcher { rx: regex.Regex, pc: Option[pcre.Pcre], error: Cell[string], strip_cr: boolean }
 
 pub function of_regex(rx: regex.Regex): Matcher {
-  return Matcher { rx: rx, pc: None, error: cell_new("") };
+  return Matcher { rx: rx, pc: None, error: cell_new(""), strip_cr: false };
 }
 
 // A matcher of PCRE2. `none` is a regex that matches nothing, and no
-// method uses it.
-pub function of_pcre(pc: pcre.Pcre, none: regex.Regex): Matcher {
-  return Matcher { rx: none, pc: Some(pc), error: cell_new("") };
+// method uses it. With `strip_cr`, a line that ends with a CR is searched
+// without it, as the line searcher of ripgrep gives a line of --crlf
+// without its CRLF.
+pub function of_pcre(pc: pcre.Pcre, none: regex.Regex, strip_cr: boolean): Matcher {
+  return Matcher { rx: none, pc: Some(pc), error: cell_new(""), strip_cr: strip_cr };
+}
+
+// Whether PCRE2 searches `text` without its last byte, a CR.
+function strips(m: Matcher, text: string): boolean {
+  return m.strip_cr && text.len() > 0 && text[text.len() - 1] == 13u8;
+}
+
+function without_cr(text: string): string {
+  return slice_unchecked(text, 0, text.len() - 1).to_owned();
 }
 
 // The error of the last search, or "", and then no error.
@@ -37,7 +48,7 @@ pub function (m: Matcher) is_match(text: string): boolean {
   let Some(pc) = m.pc else {
     return m.rx.is_match(text);
   };
-  return match (pc.is_match(text)) {
+  return match (if (strips(m, text)) { pc.is_match(without_cr(text)) } else { pc.is_match(text) }) {
     Ok(yes) => yes,
     Err(e) => {
       fail(m, e);
@@ -50,7 +61,7 @@ pub function (m: Matcher) find_at(text: string, at: i32): Option[regex.Match] {
   let Some(pc) = m.pc else {
     return m.rx.find_at(text, at);
   };
-  return match (pc.find_at(text, at)) {
+  return match (if (strips(m, text)) { pc.find_at(without_cr(text), at) } else { pc.find_at(text, at) }) {
     Ok(Some(x)) => Some(regex.Match { start: x.start, end: x.end }),
     Ok(None()) => None,
     Err(e) => {
@@ -64,7 +75,7 @@ pub function (m: Matcher) captures_at(text: string, at: i32): Option[regex.Captu
   let Some(pc) = m.pc else {
     return m.rx.captures_at(text, at);
   };
-  let slots = match (pc.captures_at(text, at)) {
+  let slots = match (if (strips(m, text)) { pc.captures_at(without_cr(text), at) } else { pc.captures_at(text, at) }) {
     Ok(Some(s)) => s,
     Ok(None()) => {
       return None;
