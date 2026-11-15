@@ -18947,7 +18947,7 @@ func (c *checker) registerLaneBuiltins() {
 // integerLaneVerbs are the verbs of the builtins of an integer lane type,
 // in the order of the self-hosted checker.
 func integerLaneVerbs(lt ast.LanesType) []string {
-	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "with", "shl", "shr"}
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "load_view", "with", "shl", "shr"}
 	if lt.Width <= 16 {
 		verbs = append(verbs, "add_sat", "sub_sat")
 		if lt.Kind == ast.LaneUnsigned {
@@ -18982,16 +18982,17 @@ func (c *checker) registerIntegerLaneBuiltins() {
 			of[i] = e
 		}
 		sigs := map[string]*ast.FuncType{
-			"splat":   {Params: []ast.Type{e}, Result: lt},
-			"of":      {Params: of, Result: lt},
-			"lane":    {Params: []ast.Type{lt, i32}, Result: e},
-			"bitmask": {Params: []ast.Type{lt}, Result: i32},
-			"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
-			"load":    {Params: []ast.Type{bytes, i32}, Result: lt},
-			"with":    {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
-			"shl":     {Params: []ast.Type{lt, i32}, Result: lt},
-			"shr":     {Params: []ast.Type{lt, i32}, Result: lt},
-			"abs":     {Params: []ast.Type{lt}, Result: lt},
+			"splat":     {Params: []ast.Type{e}, Result: lt},
+			"of":        {Params: of, Result: lt},
+			"lane":      {Params: []ast.Type{lt, i32}, Result: e},
+			"bitmask":   {Params: []ast.Type{lt}, Result: i32},
+			"select":    {Params: []ast.Type{lt, lt, lt}, Result: lt},
+			"load":      {Params: []ast.Type{bytes, i32}, Result: lt},
+			"load_view": {Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, i32}, Result: lt},
+			"with":      {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
+			"shl":       {Params: []ast.Type{lt, i32}, Result: lt},
+			"shr":       {Params: []ast.Type{lt, i32}, Result: lt},
+			"abs":       {Params: []ast.Type{lt}, Result: lt},
 		}
 		wide := ast.LanesType{Width: lt.Width * 2, Kind: lt.Kind}
 		sigs["widen_lo"] = &ast.FuncType{Params: []ast.Type{lt}, Result: wide}

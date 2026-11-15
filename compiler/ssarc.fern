@@ -2819,7 +2819,8 @@ function lane_view_read(f: ssasem.Func, ins: ssa.SInst): boolean {
     return false;
   }
   if let typeinfo.TypeLanes(_) = f.values[ins.result] {
-    return true;
+    // A read of 16 bytes from a view of bytes has a lowering.
+    return ins.str != "lane_bytes" || !ssasem.is_byte_view(f.values[ins.args[0]]);
   }
   return false;
 }
@@ -3554,7 +3555,13 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
   if (ins.kind_tag == ssasem.array_get()) {
     if (ins.str == "lane_bytes") {
       let op = ir.Op { ...arr_get_op(f.values[ins.result], false, f), unsigned: true };
-      return emit(r, if (ins.imm == ssasem.lane_span_proven()) { ir.in_bounds(op) } else { op });
+      if (ins.imm == ssasem.lane_span_proven()) {
+        op = ir.in_bounds(op);
+      }
+      if (ssasem.is_byte_view(f.values[ins.args[0]])) {
+        return emit(r, ssabytes.element(ins.args[0], op));
+      }
+      return emit(r, op);
     }
     if (typeinfo.is_array_view(f.values[ins.args[0]]) && ins.imm == ssasem.check_only()) {
       return emit(r, ssabytes.check(ins.args[0]));

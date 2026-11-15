@@ -97,6 +97,12 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
     ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_u", 0, false)]);
     ops = abort_if(ops);
   }
+  // A lane read takes 16 bytes from the index. The index is below the
+  // length here, so the sum does not wrap.
+  if (op.str == element_name() && op.i32_imm == 0 && op.kind_tag == ir.kind_id("vget")) {
+    ops = joined(ops, [ir.op_load_local(index), ir.op_const_i32(16), ir.op_bin("add", 0, false), ir.op_load_local(base + 1), ir.op_bin("gt_u", 0, false)]);
+    ops = abort_if(ops);
+  }
   if (op.str == element_name()) {
     let slot = ir.Op { ...op, str: "", decl: -1, i32_imm: 1 };
     return joined(ops, [ir.op_load_local(base), ir.op_const_i32(-8), ir.op_raw_addr(), ir.op_load_local(index), slot]);

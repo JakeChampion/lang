@@ -1118,6 +1118,41 @@ function test_lane_swizzle(): test.TestOutcome {
   return test.assert_eq(bad.join(", "), "");
 }
 
+// The 16 bytes that each integer lane type loads from the view `bytes` at
+// `at`. Each must be the 16 bytes of `want`.
+function view_loads(name: string, bytes: [u8], at: i32, want: u8[]): string[] {
+  let bad: string[] = [];
+  bad = all_of(bad, same_bytes(name + " u8x16", byte_lanes(simd.load_view_u8x16(bytes, at)), want));
+  bad = all_of(bad, same_bytes(name + " i8x16", bytes_i8x16(simd.load_view_i8x16(bytes, at)), want));
+  bad = all_of(bad, same_bytes(name + " u16x8", simd.with_u16x8(zeros16(), 0, simd.load_view_u16x8(bytes, at)), want));
+  bad = all_of(bad, same_bytes(name + " i16x8", simd.with_i16x8(zeros16(), 0, simd.load_view_i16x8(bytes, at)), want));
+  bad = all_of(bad, same_bytes(name + " u32x4", simd.with_u32x4(zeros16(), 0, simd.load_view_u32x4(bytes, at)), want));
+  bad = all_of(bad, same_bytes(name + " i32x4", simd.with_i32x4(zeros16(), 0, simd.load_view_i32x4(bytes, at)), want));
+  return bad;
+}
+
+// A load from a view gives the bytes that a load from an array gives. The
+// view is an array, a part of an array, or the bytes of a string.
+function test_lane_view_loads(): test.TestOutcome {
+  let xs = ramp(48);
+  let part: [u8] = xs[5:45];
+  let bad: string[] = [];
+  for at in 0..25 {
+    let want = byte_lanes(simd.load_u8x16(xs, at + 5));
+    bad = all_of(bad, view_loads("part " + at.to_string(), part, at, want));
+    bad = all_of(bad, view_loads("array " + at.to_string(), xs, at + 5, want));
+  }
+  let text = "the bytes of a string, 34 of them.";
+  let copy: u8[] = [];
+  for k in 0..text.len() {
+    copy = copy.append(text[k]);
+  }
+  for at in 0..text.len() - 15 {
+    bad = all_of(bad, view_loads("string " + at.to_string(), text.as_bytes(), at, byte_lanes(simd.load_u8x16(copy, at))));
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
 // A shuffle reads the first value below index 16 and the second from 16 to
 // 31, and gives 0 above 31.
 function test_lane_shuffle(): test.TestOutcome {
@@ -1173,6 +1208,7 @@ function main(): i32 {
   r = r.it("integer lane masks", test_integer_lane_masks);
   r = r.it("lane shapes against the scalar", test_lane_shapes_against_the_scalar);
   r = r.it("lane swizzle", test_lane_swizzle);
+  r = r.it("lane view loads", test_lane_view_loads);
   r = r.it("lane shuffle", test_lane_shuffle);
   return r.finish();
 }
