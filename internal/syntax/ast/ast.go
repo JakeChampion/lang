@@ -121,6 +121,9 @@ type FuncType struct {
 	ParamOwn  []bool
 	Result    Type
 	ResultOwn bool
+	// Once marks `once (A) => B`: a call consumes the function, and the body
+	// of a `once` lambda owns its captures.
+	Once bool
 }
 
 func (f *FuncType) OwnAt(i int) bool {
@@ -480,7 +483,7 @@ func SubstSelf(t Type, self Type) Type {
 		for i, pt := range tt.Params {
 			params[i] = SubstSelf(pt, self)
 		}
-		return &FuncType{Params: params, ParamOwn: tt.ParamOwn, Result: SubstSelf(tt.Result, self), ResultOwn: tt.ResultOwn}
+		return &FuncType{Params: params, ParamOwn: tt.ParamOwn, Result: SubstSelf(tt.Result, self), ResultOwn: tt.ResultOwn, Once: tt.Once}
 	case ProjType:
 		return ProjType{Base: SubstSelf(tt.Base, self), Name: tt.Name}
 	default:
@@ -829,6 +832,9 @@ func CloneExpr(e Expr) Expr {
 
 func (f *FuncType) String() string {
 	out := "("
+	if f.Once {
+		out = "once ("
+	}
 	for i, p := range f.Params {
 		if i > 0 {
 			out += ", "
@@ -1064,7 +1070,7 @@ func Equal(a, b Type) bool {
 		return true
 	case *FuncType:
 		y, ok := b.(*FuncType)
-		if !ok || len(x.Params) != len(y.Params) || x.ResultOwn != y.ResultOwn || !Equal(x.Result, y.Result) {
+		if !ok || len(x.Params) != len(y.Params) || x.ResultOwn != y.ResultOwn || x.Once != y.Once || !Equal(x.Result, y.Result) {
 			return false
 		}
 		for i := range x.Params {
@@ -1410,6 +1416,8 @@ type Lambda struct {
 	Body              *Block
 	Captures          []Param
 	Synthetic         *FuncDecl
+	// Once marks a `once` lambda: its type is `once (A) => B`.
+	Once bool
 }
 
 type CaptureRef struct {

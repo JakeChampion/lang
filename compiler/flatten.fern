@@ -768,6 +768,9 @@ function rewrite_type_parsed(tn: string, tref: parser.TypeRef, ctx: RewriteCtx):
       fi += 1;
     }
     fout = fout + ") => " + rewrite_type_arg(tref.args[tref.args.len() - 1], ctx);
+    if (tref.is_once) {
+      fout = "once " + fout;
+    }
     for fd in 0..tref.array_depth {
       fout += "[]";
     }

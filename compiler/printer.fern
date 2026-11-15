@@ -1171,6 +1171,9 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
     ast.ExprLambda(lm) => {
       let (pats, npre) = param_patterns_for(lm.params, lm.body);
       let out = print_params_with(lm.params, pats, false, depth);
+      if (lm.once) {
+        out = "once " + out;
+      }
       if (lm.ret_type.len() > 0) {
         out = out + ": ";
         if (lm.ret_own) {

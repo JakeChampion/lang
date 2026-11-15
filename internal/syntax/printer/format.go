@@ -2221,6 +2221,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte('(')
 		}
+		if x.Once {
+			f.b.WriteString("once ")
+		}
 		f.b.WriteByte('(')
 		for i, p := range x.Params {
 			if i > 0 {
@@ -2556,6 +2559,9 @@ func formatType(t ast.Type) string {
 		return out + ")"
 	case *ast.FuncType:
 		out := "("
+		if x.Once {
+			out = "once ("
+		}
 		for i, p := range x.Params {
 			if i > 0 {
 				out += ", "

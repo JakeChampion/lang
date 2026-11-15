@@ -122,8 +122,13 @@ ResourceDecl
 
 Type        = DynType ;
 DynType     = 'dyn' Bound { '+' Bound }
+            | OnceFnType
             | FnOrTupleType
             ;
+
+# `once (A) => B`: a call consumes the function (docs/CLOSURE-CAPTURE.md).
+# `once` is a word only here and before a lambda, so it stays a name.
+OnceFnType  = 'once' '(' [ FnParam { ',' FnParam } [ ',' ] ] ')' '=>' FnResult ;
 
 # `(A, B) => C` is a function type; `(A, B)` a tuple; `(A)` a grouping.
 FnOrTupleType
@@ -458,9 +463,9 @@ MatchExprArm
 # would fail rather than the annotation being re-read. The two readings
 # are therefore whole alternatives of ArrowLambda itself, greedy first,
 # so a failure to find the lambda's arrow backtracks into the second.
-ArrowLambda = '(' [ LambdaParams ] ')' ':' [ 'own' ] Type '=>' Expr
-            | '(' [ LambdaParams ] ')' ':' [ 'own' ] RetType '=>' Expr
-            | '(' [ LambdaParams ] ')' '=>' Expr
+ArrowLambda = [ 'once' ] '(' [ LambdaParams ] ')' ':' [ 'own' ] Type '=>' Expr
+            | [ 'once' ] '(' [ LambdaParams ] ')' ':' [ 'own' ] RetType '=>' Expr
+            | [ 'once' ] '(' [ LambdaParams ] ')' '=>' Expr
             ;
 
 # A return annotation read with the lambda's own arrow RESERVED: the

@@ -6069,6 +6069,9 @@ type checker struct {
 	callOwnFlags        map[*ast.Call][]bool
 	callOwnResults      map[*ast.Call]bool
 	callValueCallees    map[*ast.Call]bool
+	// onceCalls holds each call of a value of a `once` function type. The
+	// call consumes its callee.
+	onceCalls map[*ast.Call]bool
 	callCopyTypes       map[string]bool
 	resultCopyParts     map[ast.Expr]bool
 	resultCallbackParts map[ast.Expr]bool
@@ -7209,7 +7212,7 @@ func (c *checker) resolveProj(t ast.Type) ast.Type {
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProj(x.Result), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
+		out := &ast.FuncType{Result: c.resolveProj(x.Result), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn, Once: x.Once}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProj(p))
 		}
@@ -7269,7 +7272,7 @@ func (c *checker) resolveProjWithSub(t ast.Type, sub map[string]ast.Type) ast.Ty
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProjWithSub(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
+		out := &ast.FuncType{Result: c.resolveProjWithSub(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn, Once: x.Once}
 		for _, pp := range x.Params {
 			out.Params = append(out.Params, c.resolveProjWithSub(pp, sub))
 		}
@@ -7320,7 +7323,7 @@ func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
+		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn, Once: x.Once}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProjWith(p, bindings))
 		}
@@ -7481,7 +7484,7 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substByName(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
+		out := &ast.FuncType{Result: substByName(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn, Once: x.Once}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substByName(p, sub))
 		}
@@ -7739,7 +7742,7 @@ func normalizeParamRefs(t ast.Type, tpSet map[string]bool) ast.Type {
 	case ast.SliceType:
 		return ast.SliceType{Elem: normalizeParamRefs(b.Elem, tpSet)}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: normalizeParamRefs(b.Result, tpSet), ParamOwn: b.ParamOwn, ResultOwn: b.ResultOwn}
+		out := &ast.FuncType{Result: normalizeParamRefs(b.Result, tpSet), ParamOwn: b.ParamOwn, ResultOwn: b.ResultOwn, Once: b.Once}
 		for _, p := range b.Params {
 			out.Params = append(out.Params, normalizeParamRefs(p, tpSet))
 		}
@@ -7866,7 +7869,7 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
+		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn, Once: x.Once}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
@@ -8513,7 +8516,7 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	}
 	if d, ok := dst.(*ast.FuncType); ok {
 		s, ok := src.(*ast.FuncType)
-		if !ok || len(d.Params) != len(s.Params) || d.ResultOwn && !s.ResultOwn {
+		if !ok || len(d.Params) != len(s.Params) || d.ResultOwn && !s.ResultOwn || s.Once && !d.Once {
 			return false
 		}
 		for i := range d.Params {
@@ -11271,6 +11274,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		return false
 	}
 	guardCallArgs := func(x *ast.Call) {
+		if c.onceCalls[x] && !isOwnedExpr(x.Callee) {
+			c.errfCode(x.Callee.Pos(), "E051", "a call of a `once` function consumes it: call an owned value (an `own` parameter, or a local at its last use), not a borrowed one")
+		}
 		flags, isOwn := c.callOwnFlags[x]
 		if !isOwn {
 			id, idOK := x.Callee.(*ast.Ident)
@@ -11680,8 +11686,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					immediate[lm] = true
 				}
 				guardCallArgs(x)
-				if id, ok := x.Callee.(*ast.Ident); ok {
+				if id, ok := x.Callee.(*ast.Ident); ok && !c.onceCalls[x] {
 					borrow[id] = true
+				} else if ok && id.Local && !borrowedParam[id.Name] {
+					localConsumes[id] = true
 				}
 				flags, isOwn := c.callOwnFlags[x]
 				if id, named := x.Callee.(*ast.Ident); named && !isOwn {
@@ -11742,7 +11750,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 			}
 			captures := lam.Captures
-			if called {
+			if called || lam.Once {
 				captures = nil
 			}
 			walkNested(lam.Params, captures, lam.Body, lam.ReturnOwn, lam.ReturnType, moved)
@@ -16220,6 +16228,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if len(calleeOwnFlags) == 0 && ft != nil {
 			calleeOwnFlags = ft.ParamOwn
 		}
+		if ft != nil && ft.Once && calleeIsValue {
+			if c.onceCalls == nil {
+				c.onceCalls = map[*ast.Call]bool{}
+			}
+			c.onceCalls[n] = true
+		}
 		if ft != nil {
 			c.recordOwnedResult(n, ft.ResultOwn)
 			if c.callbackValues == nil {
@@ -16986,7 +17000,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if lanesSignature(n.Params, n.ReturnType) {
 			c.errfCode(n.P, "E085", "a lambda cannot take or return a lane value; a lane value crosses only a direct call")
 		}
-		return paramSig(n.Params, n.ReturnType, n.ReturnOwn)
+		sig := paramSig(n.Params, n.ReturnType, n.ReturnOwn)
+		sig.Once = n.Once
+		return sig
 	case *ast.BlockExpr:
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:

@@ -426,7 +426,7 @@ function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): a
 }
 
 function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32, ret_fn_ret: string, ret_fn_param_types: string, ret_own: boolean): ast.Expr {
-  return ast.ExprLambda { params: params, ret_own: ret_own, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: ret_fn_ret, ret_fn_param_types: ret_fn_param_types };
+  return ast.ExprLambda { params: params, ret_own: ret_own, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: ret_fn_ret, ret_fn_param_types: ret_fn_param_types, once: false };
 }
 
 function e_lambda_origin(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string): ast.Expr {
@@ -860,7 +860,7 @@ function maybe_desugar_array_build(base: ast.Expr): ast.Expr {
                     stmts = stmts.append(rewritten[ri]);
                   }
                   stmts = stmts.append(s_return(e_ident(bname)));
-                  let iife: ast.Expr = ast.ExprLambda { params: [], ret_own: false, ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+                  let iife: ast.Expr = ast.ExprLambda { params: [], ret_own: false, ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", once: false };
                   return ast.ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_args: [], ty: "" };
                 },
                 _ => {
@@ -937,7 +937,7 @@ function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
                     stmts = stmts.append(rewritten[ri]);
                   }
                   stmts = stmts.append(s_return(e_ident(bname)));
-                  let iife: ast.Expr = ast.ExprLambda { params: [], ret_own: false, ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+                  let iife: ast.Expr = ast.ExprLambda { params: [], ret_own: false, ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", once: false };
                   return ast.ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_args: [], ty: "" };
                 },
                 _ => {
@@ -2015,7 +2015,7 @@ function (p: Par) arrow_lambda_at(): boolean {
   return p.closer_followed_by(open, "(", ")", "=>", ":");
 }
 
-function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
+function parse_arrow_lambda(p: Par, once: boolean): (ast.Expr, Par) {
   let lam_line = p.peek_line();
   let lam_col = p.peek_col();
   p = p.advance();
@@ -2099,7 +2099,11 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     body = [s_return(ber_expr)];
   }
   body = prepend_param_destrs(body, apd);
-  return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col, lam_fn_ret, lam_fn_ptys, ret_own));
+  let lam = e_lambda_at(params, ret_type, body, "", lam_line, lam_col, lam_fn_ret, lam_fn_ptys, ret_own);
+  if let ast.ExprLambda(lm) = lam {
+    lam = ast.ExprLambda { ...lm, once: once };
+  }
+  return parse_postfix(p, lam);
 }
 
 function map_key_kind_of_expr(e: ast.Expr): i32 {
@@ -2788,6 +2792,10 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       let idline = p.peek_line();
       let idcol = p.peek_col();
       p = p.advance();
+      // `once` is a word only before a lambda: a name is not valid there.
+      if (x.name == "once" && p.peek_punct() == "(" && p.arrow_lambda_at()) {
+        return parse_arrow_lambda(p, true);
+      }
       let base = e_ident_at(x.name, idline, idcol);
       if (x.name == "Map" && !p.no_struct && p.peek_punct() == "{") {
         return parse_map_lit(p);
@@ -2802,7 +2810,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
     lexer.TokPunct(x) => {
       if (x.text == "(") {
         if (p.arrow_lambda_at()) {
-          return parse_arrow_lambda(p);
+          return parse_arrow_lambda(p, false);
         }
         let tpl = p.peek_line();
         let tpc = p.peek_col();
@@ -4822,7 +4830,7 @@ function parse_use_stmt(p: Par, body: ast.Stmt[]): (ast.Stmt[], Par) {
   p = rest_p;
   let cbparam = ast.ParamDecl { name: uname, type_name: utype, own: false, send: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 };
   let cbparams: ast.ParamDecl[] = [cbparam];
-  let cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_own: false, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: uline, col: ucol, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+  let cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_own: false, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: uline, col: ucol, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", once: false };
   if (ubad.len() > 0) {
     return (body.append(ubad[0]), p);
   }
@@ -7124,12 +7132,12 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
     }
     tbuf += tseg;
     tprev_word = true;
-    tprev_prefix = tseg == "dyn" || tseg == "own" || tseg == "borrow";
+    tprev_prefix = tseg == "dyn" || tseg == "own" || tseg == "borrow" || tseg == "once" && p.peek_punct_at(1) == "(";
     telem_empty = false;
     p = p.advance();
   }
   if (is_fn && !top_comma && !(top_arrow && p.peek_punct() == "=>")) {
-    if (p.verbatim) {
+    if (p.verbatim || ref_is_once(parse_type_ref(tbuf))) {
       if (p.peek_punct() != "[") {
         return (ungrouped(tbuf), "", p);
       }
@@ -7387,6 +7395,9 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
       continue;
     }
     if (pk == "(") {
+      if (prev_ident && ends_with_once(inner)) {
+        inner += " ";
+      }
       inner += "(";
       p = p.advance();
       prev_ident = false;
@@ -7525,6 +7536,17 @@ function fn_ref_of(name: string, written: string): TypeRef {
   return ref;
 }
 
+// `once (A) => B`: a function type whose call consumes the function. The
+// type keeps its whole spelling, also where a function type is a tag.
+function parse_type_once(p: Par): (string, string, Par) {
+  let (name, fn_ret, q) = parse_type_punct_led(Par { ...p.advance(), verbatim: true });
+  q = Par { ...q, verbatim: p.verbatim };
+  if (!ref_is_fn_value(parse_type_ref(name))) {
+    return (name, "", q.refused_type("`once` marks a function type: write `once (A) => B`"));
+  }
+  return ("once " + name, "", q);
+}
+
 function fn_contract_of(name: string, written: string): (string, string) {
   if (!is_fn_contract_tag(name)) {
     return ("", "");
@@ -7546,6 +7568,9 @@ function parse_type_name_nested(p: Par): (string, string, Par) {
   }
   if (base == "own" || base == "borrow") {
     return parse_type_handle(p, base);
+  }
+  if (base == "once" && p.peek_punct_at(1) == "(") {
+    return parse_type_once(p);
   }
   if (base.len() == 0) {
     return parse_type_punct_led(p);
@@ -9435,7 +9460,7 @@ pub function strip_type_spaces(t: string): string {
   return t.replace(" ", "");
 }
 
-pub struct TypeRef { base: string, args: TypeRef[], array_depth: i32, is_tuple: boolean, is_fn: boolean, is_view: boolean }
+pub struct TypeRef { base: string, args: TypeRef[], array_depth: i32, is_tuple: boolean, is_fn: boolean, is_view: boolean, is_once: boolean }
 
 pub function elem_type_ref(t: TypeRef): TypeRef {
   return TypeRef { ...t, array_depth: t.array_depth - 1 };
@@ -9479,7 +9504,14 @@ function try_payload_spelling(t: string): string {
 
 pub function parse_type_ref(sin: string): TypeRef {
   if (plain_type_spelling(sin)) {
-    return TypeRef { base: sin, args: [], array_depth: 0, is_tuple: false, is_fn: false, is_view: false };
+    return TypeRef { base: sin, args: [], array_depth: 0, is_tuple: false, is_fn: false, is_view: false, is_once: false };
+  }
+  let once = once_fn_body(sin);
+  if (once.len() > 0) {
+    let f = parse_type_ref(once);
+    if (f.is_fn) {
+      return TypeRef { ...f, is_once: true };
+    }
   }
   let s = sin;
   let depth = 0;
@@ -9503,7 +9535,7 @@ pub function parse_type_ref(sin: string): TypeRef {
         }
       }
       fargs = fargs.append(parse_type_ref(rhs));
-      return TypeRef { base: "", args: fargs, array_depth: 0, is_tuple: false, is_fn: true, is_view: false };
+      return TypeRef { base: "", args: fargs, array_depth: 0, is_tuple: false, is_fn: true, is_view: false, is_once: false };
     }
   }
   while (s.len() >= 2 && s[s.len() - 2] == b'[' && s[s.len() - 1] == b']') {
@@ -9511,7 +9543,7 @@ pub function parse_type_ref(sin: string): TypeRef {
     s = slice_unchecked(s, 0, s.len() - 2).to_owned();
   }
   if (s.len() >= 2 && s[0] == b'[' && matching_bracket(s, 0) == s.len() - 1) {
-    return TypeRef { base: "", args: [parse_type_ref(slice_unchecked(s, 1, s.len() - 1).to_owned())], array_depth: depth, is_tuple: false, is_fn: false, is_view: true };
+    return TypeRef { base: "", args: [parse_type_ref(slice_unchecked(s, 1, s.len() - 1).to_owned())], array_depth: depth, is_tuple: false, is_fn: false, is_view: true, is_once: false };
   }
   if (s.len() >= 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
     let tsegs = split_top_commas(slice_unchecked(s, 1, s.len() - 1));
@@ -9519,7 +9551,7 @@ pub function parse_type_ref(sin: string): TypeRef {
     for ti in 0..tsegs.len() {
       targs = targs.append(parse_type_ref(tsegs[ti]));
     }
-    return TypeRef { base: "", args: targs, array_depth: depth, is_tuple: true, is_fn: false, is_view: false };
+    return TypeRef { base: "", args: targs, array_depth: depth, is_tuple: true, is_fn: false, is_view: false, is_once: false };
   }
   let lb: i32 = -1;
   let j = 0;
@@ -9540,11 +9572,11 @@ pub function parse_type_ref(sin: string): TypeRef {
     let gbase = slice_unchecked(s, 0, lb).to_owned();
     let lanes = vec_lanes(gbase, gargs);
     if (lanes.len() > 0) {
-      return TypeRef { base: lanes, args: [], array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
+      return TypeRef { base: lanes, args: [], array_depth: depth, is_tuple: false, is_fn: false, is_view: false, is_once: false };
     }
-    return TypeRef { base: gbase, args: gargs, array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
+    return TypeRef { base: gbase, args: gargs, array_depth: depth, is_tuple: false, is_fn: false, is_view: false, is_once: false };
   }
-  return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
+  return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false, is_fn: false, is_view: false, is_once: false };
 }
 
 // canon_vec spells a `Vec[N, T]` of the portable tier as its lane type.
@@ -9736,6 +9768,25 @@ pub function ref_ungroup(r: TypeRef): TypeRef {
   return t;
 }
 
+// Whether the spelling `s` ends with the word `once`.
+function ends_with_once(s: string): boolean {
+  let n = s.len();
+  return n >= 4 && s.ends_with("once") && (n == 4 || !ident_byte(s[n - 5] as i32));
+}
+
+// The function type after the marker of `once (A) => B`, or "".
+pub function once_fn_body(s: string): string {
+  if (s.len() > 6 && s.starts_with("once ") && s[5] == b'(') {
+    return slice_unchecked(s, 5, s.len()).to_owned();
+  }
+  return "";
+}
+
+pub function ref_is_once(r: TypeRef): boolean {
+  let f = ref_ungroup(r);
+  return f.array_depth == 0 && f.is_fn && f.is_once;
+}
+
 pub function ref_is_fn_value(r: TypeRef): boolean {
   let f = ref_ungroup(r);
   return f.array_depth == 0 && f.is_fn;
@@ -9860,6 +9911,9 @@ function render_fn_ref(t: TypeRef): string {
     f += 1;
   }
   inner = inner + ") => " + render_type_ref(t.args[t.args.len() - 1]);
+  if (t.is_once) {
+    inner = "once " + inner;
+  }
   if (t.array_depth > 0) {
     return "(" + inner + ")";
   }
@@ -11362,6 +11416,9 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       if (lret.len() == 0) {
         return "";
       }
+      if (lm.once) {
+        return "once (" + lps + ") => " + lret;
+      }
       return "(" + lps + ") => " + lret;
     },
     ast.ExprBinary(b) => {
@@ -12433,6 +12490,10 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
   }
   if (name.len() > 4 && name.starts_with("own ")) {
     return "own " + subst_ty(slice_unchecked(name, 4, name.len()).to_owned(), tparams, cts);
+  }
+  let once = once_fn_body(name);
+  if (once.len() > 0) {
+    return "once " + subst_ty(once, tparams, cts);
   }
   if (spelling_is_view(name)) {
     return "[" + subst_ty(slice_unchecked(name, 1, name.len() - 1).to_owned(), tparams, cts) + "]";
@@ -14154,6 +14215,11 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     let o = mg_ty(slice_unchecked(ty, 4, ty.len()).to_owned(), gstructs, ins);
     return TyIns { ty: "own " + o.ty, mins: o.mins };
   }
+  let once = once_fn_body(ty);
+  if (once.len() > 0) {
+    let f = mg_ty(once, gstructs, ins);
+    return TyIns { ty: "once " + f.ty, mins: f.mins };
+  }
   if (spelling_is_view(ty)) {
     let v = mg_ty(slice_unchecked(ty, 1, ty.len() - 1).to_owned(), gstructs, ins);
     return TyIns { ty: "[" + v.ty + "]", mins: v.mins };
@@ -15777,7 +15843,7 @@ function me_rewrite_ref(t: TypeRef, enums: EnumDecl[]): TypeRef {
     if (spelling_is_own(t.base)) {
       base = "own " + base;
     }
-    return TypeRef { base: base, args: [], array_depth: t.array_depth, is_tuple: false, is_fn: false, is_view: false };
+    return TypeRef { base: base, args: [], array_depth: t.array_depth, is_tuple: false, is_fn: false, is_view: false, is_once: false };
   }
   let args: TypeRef[] = [];
   for a in t.args {
@@ -16557,7 +16623,9 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
                 }
                 lfs += lm.params[lfi].type_name;
               }
-              if (lfok) {
+              if (lfok && lm.once) {
+                vty = "once (" + lfs + ") => " + lm.ret_type;
+              } else if (lfok) {
                 vty = "(" + lfs + ") => " + lm.ret_type;
               } else {
                 vty = "fn => " + lm.ret_type;

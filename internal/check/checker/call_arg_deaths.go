@@ -849,7 +849,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if !isCall {
 				return true
 			}
-			for _, a := range argParts(c) {
+			for _, a := range consumedParts(c) {
 				if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
 					site = c
 				}
@@ -989,7 +989,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if !ok || inLambda[c] {
 			return true
 		}
-		for _, a := range argParts(c) {
+		for _, a := range consumedParts(c) {
 			aid, ok := a.(*ast.Ident)
 			if !ok || escaping[aid.Name] || !admitted(aid.Name) && declCount[aid.Name] == 0 {
 				continue
@@ -1153,6 +1153,12 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 // argParts lists the arguments of c, with each struct literal argument
 // replaced by its base and its field values, at any depth. The literal takes
 // each part, so a part is an argument position for the last-use facts.
+// consumedParts are the parts of a call that it can consume: its arguments,
+// and its callee, which a call of a `once` function value consumes.
+func consumedParts(c *ast.Call) []ast.Expr {
+	return append(argParts(c), c.Callee)
+}
+
 func argParts(c *ast.Call) []ast.Expr {
 	var out []ast.Expr
 	var add func(e ast.Expr)
@@ -1417,6 +1423,9 @@ func freshInit(info *Info, init ast.Expr) bool {
 		return info == nil || info.CallBorrows == nil || !info.CallBorrows(init)
 	case *ast.ArrayLit, *ast.StringLit:
 		return true
+	case *ast.Lambda:
+		// A `once` lambda moves its captures into a new environment.
+		return init.Once
 	case *ast.StructLit:
 		return (init.Base == nil || freshInit(info, init.Base)) && litFieldsOwned(info, init, func(v ast.Expr) bool { return freshInit(info, v) })
 	case *ast.MatchExpr:
@@ -2198,7 +2207,7 @@ func lastUseArgsOf(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		if nested[call] {
 			continue
 		}
-		for _, a := range argParts(call) {
+		for _, a := range consumedParts(call) {
 			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && (local[id.Name] || d.Bound[id.Name]) && (!d.Escaping[id.Name] || d.Deferred[call]) {
 				out[id] = true
 				if d.Unadmitted[id.Name] {
