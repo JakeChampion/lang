@@ -95,6 +95,14 @@ from the same place as a transcode that converts the sound. It does this
 when the player selects no sound track, or when it reports that the sound
 stopped. The player shows "Direct play" or "Transcode" after the title.
 
+The app runs on Android TV. `fern.toml` sets `tv`, so the app is on the
+launcher of the TV, and it needs no touch screen. The D-pad of the remote
+moves a ring of focus to the nearest control in its direction, and the
+list scrolls to show it. The centre key presses the focused control. On
+the video, left and right seek as the buttons do, and the centre shows the
+controls. The media keys play, pause and seek the video, and a touch hides
+the ring.
+
 Search and settings:
 
 - Search starts when you stop typing, and shows the hubs of the results.
@@ -153,7 +161,7 @@ window, which stretches it, and a tap there pauses.
 ```sh
 make build
 ./bin/fern -apk fern-plex.apk -apk-package dev.fern.plex -apk-label "Fern for Plex" \
-     -apk-min-sdk 30 -apk-cleartext \
+     -apk-min-sdk 30 -apk-cleartext -apk-tv \
      -apk-permission INTERNET,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK,POST_NOTIFICATIONS,WAKE_LOCK \
      examples/android/plex/app.fern
 adb install -r fern-plex.apk

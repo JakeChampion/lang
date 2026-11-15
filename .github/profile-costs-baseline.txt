@@ -50,12 +50,12 @@ profile/arm64-linux/enum_match.safe.bytes	6072
 profile/arm64-linux/enum_match.safe.emit	1273
 profile/arm64-linux/http_hello.diagnostic.bytes	129376
 profile/arm64-linux/http_hello.diagnostic.emit	16927
-profile/arm64-linux/http_hello.hardened.bytes	81480
+profile/arm64-linux/http_hello.hardened.bytes	82504
 profile/arm64-linux/http_hello.hardened.emit	18495
 profile/arm64-linux/http_hello.minimal.bytes	63800
 profile/arm64-linux/http_hello.minimal.emit	13923
-profile/arm64-linux/http_hello.safe.bytes	75240
-profile/arm64-linux/http_hello.safe.emit	16799
+profile/arm64-linux/http_hello.safe.bytes	76360
+profile/arm64-linux/http_hello.safe.emit	17106
 profile/arm64-linux/int_loop.diagnostic.bytes	5472
 profile/arm64-linux/int_loop.diagnostic.emit	562
 profile/arm64-linux/int_loop.hardened.bytes	2824
@@ -143,9 +143,9 @@ profile/x86-64-linux/enum_match.safe.ir	29250077
 profile/x86-64-linux/http_hello.diagnostic.bytes	120296
 profile/x86-64-linux/http_hello.diagnostic.emit	15704
 profile/x86-64-linux/http_hello.diagnostic.ir	40308693
-profile/x86-64-linux/http_hello.hardened.bytes	71904
-profile/x86-64-linux/http_hello.hardened.emit	16432
-profile/x86-64-linux/http_hello.hardened.ir	30548218
+profile/x86-64-linux/http_hello.hardened.bytes	72736
+profile/x86-64-linux/http_hello.hardened.emit	16708
+profile/x86-64-linux/http_hello.hardened.ir	30227048
 profile/x86-64-linux/http_hello.minimal.bytes	56960
 profile/x86-64-linux/http_hello.minimal.emit	13588
 profile/x86-64-linux/http_hello.minimal.ir	23488377
@@ -175,7 +175,7 @@ profile/x86-64-linux/map_string.minimal.emit	9389
 profile/x86-64-linux/map_string.minimal.ir	53578562
 profile/x86-64-linux/map_string.safe.bytes	38592
 profile/x86-64-linux/map_string.safe.emit	9772
-profile/x86-64-linux/map_string.safe.ir	51131957
+profile/x86-64-linux/map_string.safe.ir	50333274
 profile/x86-64-linux/startup.diagnostic.bytes	5168
 profile/x86-64-linux/startup.diagnostic.emit	508
 profile/x86-64-linux/startup.diagnostic.ir	213
