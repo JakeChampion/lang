@@ -22348,6 +22348,12 @@ pub function is_inherited_default(impls: ImplInfo[], reqs: TraitReq[], fd: FuncD
   return false;
 }
 
+// The function is the `drop` of its receiver type.
+pub function drop_provider(fd: FuncDecl): boolean {
+  let provider = fd.impl_trait == "Drop" || fd.impl_trait == "" && util.index_of_str(fd.dyn_traits, "Drop") >= 0;
+  return provider && derive_simple_name(fd.name) == "drop" && fd.receiver_type != "";
+}
+
 pub function derive_simple_name(name: string): string {
   let last_dot: i32 = -1;
   for i in 0..name.len() {

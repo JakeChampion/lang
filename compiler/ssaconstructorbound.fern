@@ -68,14 +68,18 @@ function shape_tag(output: string, name: string): i64 {
   let found = 0i64;
   for i in 0..p.ops.len() {
     let op = p.ops[i];
-    if (op.kind == 4 && op.width == 32 && op.base == 0 && op.index == -1 && op.offset == -4) {
+    if ((op.kind == 4 || op.kind == 22) && op.width == 32 && op.base == 0 && op.index == -1 && op.offset == -4) {
       if (found != 0i64) {
         return 0i64;
       }
-      found = constant_before(p, i, op.source);
+      found = if (op.kind == 22) { stored_tag(op) } else { constant_before(p, i, op.source) };
     }
   }
   return found;
+}
+
+function stored_tag(op: isa.Op): i64 {
+  return if (op.immediate > 0) { op.immediate as i64 } else { 0i64 };
 }
 
 // The constant that the last 32-bit move to `reg` above index `at` gives.

@@ -733,13 +733,10 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ptr, ok := dwarfVarType(t, d, "turn", "d").(*dwarf.PtrType)
+			// A value of an enum with no field is the index of its variant.
+			et, ok := dwarfVarType(t, d, "turn", "d").(*dwarf.EnumType)
 			if !ok {
-				t.Fatalf("turn.d is not a pointer to its box")
-			}
-			et, ok := ptr.Type.(*dwarf.EnumType)
-			if !ok {
-				t.Fatalf("turn.d points to a %T, want an enum", ptr.Type)
+				t.Fatalf("turn.d is a %T, want an enum", dwarfVarType(t, d, "turn", "d"))
 			}
 			if et.EnumName != "Direction" || et.ByteSize != 8 || len(et.Val) != len(names) {
 				t.Fatalf("enum %s of %d bytes with %v, want Direction of 8 with %v", et.EnumName, et.ByteSize, et.Val, names)
@@ -748,8 +745,8 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 				if v.Name != names[i] {
 					t.Errorf("enumerator %d is %s, want %s", i, v.Name, names[i])
 				}
-				if want := int64((i+1)<<16 | 1); v.Val != want {
-					t.Errorf("%s has tag %#x, want %#x", v.Name, v.Val, want)
+				if v.Val != int64(i) {
+					t.Errorf("%s = %d, want its index %d", v.Name, v.Val, i)
 				}
 			}
 			heading, ok := dwarfVarType(t, d, "pace", "h").(*dwarf.PtrType)
@@ -760,8 +757,8 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 			if !ok || len(st.Field) != 2 || st.Field[0].Name != "dir" || st.Field[0].ByteOffset != 0 {
 				t.Fatalf("pace.h = %v, want a Heading whose dir is at 0", heading.Type)
 			}
-			if p, ok := st.Field[0].Type.(*dwarf.PtrType); !ok || p.Type != dwarf.Type(et) {
-				t.Errorf("Heading.dir is a %v, want a pointer to the same Direction", st.Field[0].Type)
+			if st.Field[0].Type != dwarf.Type(et) {
+				t.Errorf("Heading.dir is a %v, want the same Direction", st.Field[0].Type)
 			}
 		})
 	}
@@ -770,7 +767,7 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 	if err != nil || runtime.GOARCH != "amd64" || bins["x86-64-linux"] == "" {
 		t.Skip("gdb on an amd64 host reads the x86-64 binary's enum; none here")
 	}
-	o, err := exec.Command(gdb, "-batch", "-ex", "break enums.fern:16", "-ex", "run", "-ex", "print *d", "-ex", "print *h.dir", bins["x86-64-linux"]).CombinedOutput()
+	o, err := exec.Command(gdb, "-batch", "-ex", "break enums.fern:4", "-ex", "run", "-ex", "print d", "-ex", "up", "-ex", "print h.dir", bins["x86-64-linux"]).CombinedOutput()
 	if err != nil {
 		t.Fatalf("gdb: %v\n%s", err, o)
 	}

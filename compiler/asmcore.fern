@@ -5908,48 +5908,6 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl:
   return d;
 }
 
-function dbg_shape_type(s: EmitState, t: string): string {
-  let out = "";
-  let run = 0;
-  let i = 0;
-  while (i < t.len()) {
-    if (t[i] == b'%') {
-      let a = __memchr(t, 123, i + 1);
-      let b = __memchr(t, 125, a + 1);
-      if (a < 0 || b < 0) {
-        return t;
-      }
-      out = out + slice_unchecked(t, run, a + 1) + dbg_enum_members(s, t, a + 1, b) + "}";
-      i = b + 1;
-      run = i;
-    } else {
-      i += 1;
-    }
-  }
-  return out + slice_unchecked(t, run, t.len());
-}
-
-function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
-  let out = "";
-  while (i < end) {
-    let j = __memchr(t, 44, i);
-    if (j < 0 || j > end) {
-      j = end;
-    }
-    let shape = slice_unchecked(t, i, j).to_owned();
-    if (out != "") {
-      out += ",";
-    }
-    let k = shape.len();
-    while (k > 0 && shape[k - 1] != b'$') {
-      k -= 1;
-    }
-    out = out + slice_unchecked(shape, k, shape.len()) + "=" + util.i64_to_string(shape_tag(s, shape));
-    i = j + 1;
-  }
-  return out;
-}
-
 function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
   let param = "0";
   if (r.dbg_slots[i] < r.n_params) {
@@ -6025,11 +5983,7 @@ pub function emit_debug_rows(s: EmitState): EmitState {
 }
 
 function emit_debug_row(own s: EmitState, row: string): EmitState {
-  let a = __memchr(row, 124, 0);
-  let b = __memchr(row, 124, a + 1);
-  let c = __memchr(row, 124, b + 1);
-  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c).to_owned());
-  return s.write("    .fern_var " + slice_unchecked(row, 0, b + 1) + shaped + slice_unchecked(row, c, row.len()) + "\n");
+  return s.write("    .fern_var " + row + "\n");
 }
 
 pub function dbg_hex(bytes: i32[]): string {
