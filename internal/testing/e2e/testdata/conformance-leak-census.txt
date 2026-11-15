@@ -344,6 +344,7 @@ enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
 eq_operator_calls_a_user_eq_method                   0
 eq_struct_enum                                       0
+eq_wide_array_with_literal_array                     0
 erased_typevar_ret                                   0
 escape_sequences                                     0
 eval_order_aggregate_literal                         0
@@ -477,6 +478,7 @@ handle_field_closes_from_local                       0
 handle_foreach_destructured_field_own                0
 handle_foreach_field_local_own                       0
 handle_let_literal_in_returning_arm                  0
+handle_literal_in_arm_of_nested_returns              0
 handle_literal_reads_scalar_field_of_base            0
 handle_nested_fields_close_from_owned_root           0
 handle_payload_closes_from_local_match               0
@@ -672,6 +674,7 @@ match_arm_tuple                                      0
 match_expr_arm_width                                 0
 match_expr_array                                     0
 match_expr_binder_body                               0
+match_expr_every_arm_returns                         0
 match_expr_lambda_arm                                0
 match_expr_u32_payload_capturing_arm                 0
 match_multi_arm                                      0

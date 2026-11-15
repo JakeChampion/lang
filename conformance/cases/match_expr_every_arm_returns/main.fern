@@ -1,0 +1,38 @@
+// A match or an if expression whose every arm returns from the function
+// gives no value, so it can stand where any value goes.
+import "std/option";
+
+function parse(text: string): Result[i32, string] {
+  if (text == "") {
+    return Err("empty");
+  }
+  return Ok(text.len() as i32);
+}
+
+function size(text: string): Option[i32] {
+  return match (parse(text)) {
+    Ok(n) => {
+      print("parsed");
+      return Some(n);
+    },
+    Err(e) => {
+      print(e);
+      return None;
+    },
+  };
+}
+
+function sign(n: i32): string {
+  return if (n < 0) {
+    return "negative";
+  } else {
+    return "positive";
+  };
+}
+
+function main(): void {
+  print(size("abc").unwrap_or(-1));
+  print(size("").unwrap_or(-1));
+  print(sign(-4));
+  print(sign(4));
+}
