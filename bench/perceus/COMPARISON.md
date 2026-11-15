@@ -35,6 +35,13 @@ and constant folding use `I64`. Constant folding and the derivative use the
 wrapping `add_wrap` and `mul_wrap`, as Fern does, because the checked Roc
 operators stop the program on an overflow.
 
+`binarytrees` is not in the pinned source. It is the binary-trees workload of
+the Computer Language Benchmarks Game, in the form where each node holds an
+item. The four files translate one design. The two children of a node
+take different items, so no compiler can make the two subtrees one tree. The
+check of a tree is its item plus the check of its left child, less the check
+of its right child. The full size is depth 21.
+
 The pinned source has no Lean n-queens or constant-fold implementation.
 Those two files directly translate the Koka algorithms. N-queens materializes
 the same breadth-wise lists of partial solutions, without a bitset solver.

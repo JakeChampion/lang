@@ -88,7 +88,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let calls = call_counts_by_root(funcs0, ix, roots);
   let sp = splice_plan(funcs0, ix, calls, inlinable, unnamed, always, size);
   let done = splice_rounds(funcs0, rewrite, modes, sp);
-  let rounds = done.out;
+  let rounds = unrolled_all(done.out, rewrite, sp);
   sp = grown_leaves(rounds, done.sp);
   let ctors = constructor_leaves(rounds.funcs, sp);
   let scalars = scalar_all(rounds, names, rewrite, uncalled, modes);
@@ -96,6 +96,87 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let out = scrutinee_reads_all(split_all(paired_all(laid, names, rewrite, uncalled), rewrite, scalars.modes));
   dump_wanted(out.funcs);
   return Inlined { ...out, modes: scalars.modes, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
+}
+
+function max_unrolled_insts(): i32 {
+  return 60;
+}
+
+// A small function that calls itself twice and returns a value with no count
+// has its body spliced once into each of those calls. A walk of a tree then
+// meets a leaf without a call: the copy tests the child, and only a child with
+// children of its own makes the call.
+function unrolled_all(own out: Inlined, rewrite: boolean[], sp: Spliceable): Inlined {
+  if (sp.size) {
+    return out;
+  }
+  for i in 0..out.funcs.len() {
+    let sites = self_calls(out.funcs[i], sp.ix, i);
+    if (rewrite[i] && sp.inlinable[i] && sites.len() == 2 && unrollable(out.funcs[i])) {
+      let f = out.funcs[i];
+      let g = f;
+      for d in 0..sites.len() {
+        let site = sites[sites.len() - 1 - d];
+        g = splice(g, site / 65536, site % 65536, f);
+      }
+      out = Inlined { ...out, funcs: out.funcs.with(i, g), rewritten: out.rewritten.with(i, true) };
+    }
+  }
+  return out;
+}
+
+// The calls of function `self` to itself, as block * 65536 + position.
+function self_calls(f: ssasem.Func, ix: util.NameIndex, self: i32): i32[] {
+  let out: i32[] = [];
+  for bi in 0..f.graph.blocks.len() {
+    let insts = f.graph.blocks[bi].insts;
+    for k in 0..insts.len() {
+      if (called(insts[k], ix) == self && k < 65536) {
+        out = out.append(bi * 65536 + k);
+      }
+    }
+  }
+  return out;
+}
+
+function unrollable(f: ssasem.Func): boolean {
+  if (ssasem.counted(f, f.result) || count_insts(f.graph) > max_unrolled_insts() || loops(f.graph)) {
+    return false;
+  }
+  let entry = f.graph.blocks[f.graph.entry];
+  if (entry.term.kind_tag != ssa.TERM_BRIF) {
+    return false;
+  }
+  return returns_without_call(f.graph, entry.term.t) || returns_without_call(f.graph, entry.term.f);
+}
+
+// The block `id` reaches a return through jumps, and calls nothing on the way.
+function returns_without_call(g: ssa.SFunc, id: i32): boolean {
+  let pos = ssa.block_positions(g);
+  let cur = id;
+  for step in 0..4 {
+    let at = if (cur >= 0 && cur < pos.len()) { pos[cur] } else { -1 };
+    if (at < 0 || calls_any(g.blocks[at])) {
+      return false;
+    }
+    if (g.blocks[at].term.kind_tag == ssa.TERM_RET) {
+      return true;
+    }
+    if (g.blocks[at].term.kind_tag != ssa.TERM_BR) {
+      return false;
+    }
+    cur = g.blocks[at].term.target;
+  }
+  return false;
+}
+
+function calls_any(b: ssa.SBlock): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag == ssasem.call() || ins.kind_tag == ssasem.call_value()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], inlinable: boolean[], unnamed: boolean[], always: boolean[], size: boolean): Spliceable {

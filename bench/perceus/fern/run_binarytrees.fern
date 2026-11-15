@@ -1,0 +1,22 @@
+import "../binarytrees";
+import "./scale";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  let Some(n) = scale.read(21) else {
+    return 2;
+  };
+  let low = 4;
+  let high = if (n < low + 2) { low + 2 } else { n };
+  print(f"stretch tree of depth {high + 1} check: {binarytrees.check(binarytrees.make(0i64, high + 1))}");
+  let long_lived = binarytrees.make(0i64, high);
+  let depth = low;
+  while (depth <= high) {
+    let iterations = 1i64 << (high - depth + low) as i64;
+    print(f"{2i64 * iterations} trees of depth {depth} check: {binarytrees.sweep(iterations, depth)}");
+    depth += 2;
+  }
+  print(f"long lived tree of depth {high} check: {binarytrees.check(long_lived)}");
+  return 0;
+}

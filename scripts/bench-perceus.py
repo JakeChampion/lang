@@ -19,8 +19,8 @@ import signal
 import subprocess
 import time
 
-NAMES = ("rbtree", "rbtree-ck", "deriv", "nqueens", "cfold")
-MAXIMUM = dict(zip(NAMES, (4200000, 4200000, 10, 13, 20)))
+NAMES = ("rbtree", "rbtree-ck", "deriv", "nqueens", "cfold", "binarytrees")
+MAXIMUM = dict(zip(NAMES, (4200000, 4200000, 10, 13, 20, 21)))
 
 
 def sha(path):
@@ -44,7 +44,27 @@ def queens(n):
     return visit(0, 0, 0)
 
 
+def binarytrees(n):
+    """The output of binary trees with items.
+
+    A tree of depth 0 with item i checks to i. A deeper one checks to
+    i + (2i - 1 - 1) - (2i - 1) = i - 1, by induction on the depth.
+    """
+    tree = lambda item, depth: item if depth == 0 else item - 1
+    low = 4
+    high = max(n, low + 2)
+    lines = [f"stretch tree of depth {high + 1} check: {tree(0, high + 1)}"]
+    for depth in range(low, high + 1, 2):
+        iterations = 1 << (high - depth + low)
+        total = sum(tree(i, depth) + tree(-i, depth) for i in range(1, iterations + 1))
+        lines.append(f"{2 * iterations} trees of depth {depth} check: {total}")
+    lines.append(f"long lived tree of depth {high} check: {tree(0, high)}")
+    return "\n".join(lines) + "\n"
+
+
 def expected(name, n, root):
+    if name == "binarytrees":
+        return binarytrees(n)
     if name == "rbtree":
         return f"{(n + 9) // 10}\n"
     if name == "rbtree-ck":

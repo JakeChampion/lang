@@ -106,6 +106,17 @@ class LanguageTests(unittest.TestCase):
                 self.assertEqual(len(pairs), len(languages) * (len(languages) - 1))
                 self.assertEqual(len(set(pairs.values())), 1)
 
+    def test_binarytrees_oracle_sums_the_items(self):
+        self.assertEqual(bench.binarytrees(10), "\n".join([
+            "stretch tree of depth 11 check: -1",
+            "2048 trees of depth 4 check: -2048",
+            "512 trees of depth 6 check: -512",
+            "128 trees of depth 8 check: -128",
+            "32 trees of depth 10 check: -32",
+            "long lived tree of depth 10 check: -1",
+        ]) + "\n")
+        self.assertTrue(bench.binarytrees(0).startswith("stretch tree of depth 7 check: -1\n"))
+
     def test_every_workload_has_a_roc_twin(self):
         roc = Path(__file__).resolve().parent.parent / "bench/perceus/roc"
         for name in bench.NAMES:
