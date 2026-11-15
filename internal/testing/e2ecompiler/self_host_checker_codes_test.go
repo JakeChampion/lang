@@ -15,6 +15,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/oracle/monomorph"
 	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
@@ -47,7 +48,11 @@ func goCheckerDiagCodes(t *testing.T, dir, src string) []string {
 		return nil
 	}
 	if err = constfold.Fold(prog, nil); err == nil {
-		_, err = checker.Check(prog)
+		var info *checker.Info
+		if info, err = checker.Check(prog); err == nil {
+			// The oracle checks the program again when each generic has its instances.
+			err = monomorph.Run(prog, info)
+		}
 	}
 	if err == nil {
 		return nil

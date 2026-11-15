@@ -70,6 +70,7 @@ alloc_flat_struct_string_field                       0
 alloc_flat_under_reclaim                             0
 alloc_flat_writer_accumulator                        0
 alloc_grows_when_retained                            0
+an_array_of_generic_struct_literals_takes_the_float_instance 0
 an_at_binding_binds_its_own_alternative              0
 an_empty_map_arm_takes_the_type_of_the_other_arm     0
 an_empty_map_takes_the_type_of_its_first_use         0

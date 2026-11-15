@@ -6114,11 +6114,16 @@ function widened_field_type(sig: StructSig, j: i32, largs: typeinfo.Type[], s: S
 }
 
 function reads_i64(t: typeinfo.Type): boolean {
-  if (type_to_irtag(t) == "i64") {
+  return reads_scalar(t, false);
+}
+
+// reads_scalar is true when t holds an i64, or a float when float is set.
+function reads_scalar(t: typeinfo.Type, float: boolean): boolean {
+  if (float && is_float(t) || !float && type_to_irtag(t) == "i64") {
     return true;
   }
   if let typeinfo.TypeArray(at) = t {
-    return reads_i64(at.elem);
+    return reads_scalar(at.elem, float);
   }
   let parts: typeinfo.Type[] = [];
   if let typeinfo.TypeStruct(st) = t {
@@ -6128,7 +6133,7 @@ function reads_i64(t: typeinfo.Type): boolean {
     parts = tt.elements;
   }
   for p in parts {
-    if (reads_i64(p)) {
+    if (reads_scalar(p, float)) {
       return true;
     }
   }
@@ -33318,7 +33323,7 @@ function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
       if (typeinfo.is_tuple(at.elem)) {
         settled = settle_float_literals(settled, at.elem);
       }
-      if (reads_i64(at.elem)) {
+      if (reads_i64(at.elem) || reads_scalar(at.elem, true)) {
         settled = settle_struct_lit_wide(settle_wide_literals(settled, at.elem), at.elem, s);
       }
       els = els.append(settled);
@@ -33356,6 +33361,13 @@ function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Ex
         if (fi >= 0 && fi < sig.field_type_names.len()) {
           let ft = type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[fi]), sig.type_params, ts.args, s.type_names());
           v = settle_struct_lit_wide(settle_wide_literals(v, ft), ft, s);
+          if (is_float(ft) && int_literal_tree(v)) {
+            let width = "f64";
+            if (settled_number(ft)) {
+              width = typeinfo.spelling(ft);
+            }
+            v = lit_float_read(v, parser.parse_type_ref(width));
+          }
         }
         nv = nv.append(v);
       }
@@ -38191,9 +38203,9 @@ function scalar_numeric_join(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type 
 }
 
 function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
-  return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(e, t, first, s)
+  return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_yields(e, t, first, s, true)
     && (type_eq(t, first) || literal_gives_way(first_lit, t))
-    || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
+    || struct_lit_yields(first_expr, first, t, s, true) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
 }
 
 // literal_array_takes is true when the array literal e holds only integer literals, and each one takes the innermost element type of to.

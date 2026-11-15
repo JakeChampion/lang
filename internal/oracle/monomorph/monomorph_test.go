@@ -1279,3 +1279,27 @@ function main(): i32 {
 		t.Fatalf("monomorph: %v", err)
 	}
 }
+
+// An integer literal in a struct literal takes the float type that another
+// element of the array gives to the instance. The second check of the pass
+// sees the literal as a float.
+func TestRunAcceptsAnIntegerLiteralInAFloatInstance(t *testing.T) {
+	for _, body := range []string{
+		"let xs = [Box { v: 1.5 }, Box { v: 2 }];",
+		"let xs = [Box { v: 2 }, Box { v: 1.5 }];",
+		"let xs = [[Box { v: 1 }], [Box { v: 2.25 }]];",
+	} {
+		src := "struct Box[T] { v: T }\nfunction main(): i32 { " + body + " return 0; }\n"
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		info, err := checker.Check(prog)
+		if err != nil {
+			t.Fatalf("%s: check: %v", body, err)
+		}
+		if err := monomorph.Run(prog, info); err != nil {
+			t.Errorf("%s: %v", body, err)
+		}
+	}
+}
