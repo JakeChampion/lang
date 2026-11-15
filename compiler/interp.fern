@@ -6003,7 +6003,7 @@ function settled_field(type_name: string, field: string, fv: Value, env: Env): V
 function eval_var_init(v: ast.StmtVar, env: Env): Value {
   if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
     if let ast.ExprCall(c) = v.init {
-      return eval_expr_call_expect(c, env, v.type_name);
+      return eval_expr_call_expect(c, env, bound_type_spelling(v.type_name, env));
     }
   }
   return eval_expr(v.init, env);
@@ -6373,6 +6373,13 @@ function tyarg_match_names(decl: string, tp: string, actual: string): string {
   }
   let dref = parser.parse_type_ref(decl);
   let aref = parser.parse_type_ref(actual);
+  if (dref.array_depth != aref.array_depth) {
+    return "";
+  }
+  if (dref.array_depth > 0) {
+    let delem = parser.render_type_ref(parser.TypeRef { ...dref, array_depth: 0 });
+    return tyarg_match_names(delem, tp, parser.render_type_ref(parser.TypeRef { ...aref, array_depth: 0 }));
+  }
   if (dref.base != aref.base || dref.args.len() != aref.args.len()) {
     return "";
   }
