@@ -393,6 +393,37 @@ function test_signatures(): test.TestOutcome {
   return test.pass();
 }
 
+function test_signature_formats(): test.TestOutcome {
+  if (sig.format_of("-----BEGIN PGP MESSAGE-----\n".bytes()) != sig.OPENPGP || sig.format_of("-----BEGIN SIGNED MESSAGE-----".bytes()) != sig.X509 || sig.format_of("-----BEGIN SSH SIGNATURE-----\n".bytes()) != sig.SSH || sig.format_of("-----BEGIN NO SIGNATURE-----".bytes()) != -1) {
+    return test.fail("the format of a signature");
+  }
+  if (sig.trust_of("Fully") != sig.TRUST_FULLY || sig.trust_of("never") != sig.TRUST_NEVER || sig.trust_of("bogus") != -1) {
+    return test.fail("the names of gpg.minTrustLevel");
+  }
+  let good = sig.parse_ssh("Good \"git\" signature for a with b with ED25519 key SHA256:K\nmore\n", true);
+  if (good.failed || good.result != b'G' || good.trust != sig.TRUST_FULLY || good.signer != "a with b" || good.key != "SHA256:K" || good.fingerprint != "SHA256:K") {
+    return test.fail("a good signature of a principal that holds \" with \"");
+  }
+  let unknown = sig.parse_ssh("Good \"git\" signature with RSA key SHA256:X\n", false);
+  if (!unknown.failed || sig.placeholder(unknown, b'?').unwrap_or("") != "U" || unknown.signer != "" || unknown.key != "SHA256:X") {
+    return test.fail("a good signature of a key that no principal has");
+  }
+  if (sig.parse_ssh("Good \"git\" signature for nobody\n", true).result != b'B' || sig.parse_ssh("Good \"git\" signature with no key\n", true).result != b'B' || sig.parse_ssh("", true).trust != sig.TRUST_NEVER) {
+    return test.fail("a bad signature of ssh-keygen");
+  }
+  if (sig.stripspace("\n  \na  \n\n\n\tb\t\n\n") != "a\n\n\tb\n" || sig.stripspace("x") != "x\n" || sig.stripspace(" \n") != "") {
+    return test.fail("the space of the output of ssh-keygen");
+  }
+  let expired = sig.parse("[GNUPG:] NEWSIG\n[GNUPG:] EXPKEYSIG ABCD Old <o@example.com>\n", "", true);
+  if (expired.failed || expired.result != b'Y') {
+    return test.fail("an expired key gives a good signature in git 2.56.1");
+  }
+  if (!log.uses_signature("%h %G?") || !log.uses_signature("%<(5)%-GS") || log.uses_signature("%%G %h") || log.uses_signature("G%") || !log.uses_signature("%Gx")) {
+    return test.fail("the placeholders that check a signature");
+  }
+  return test.pass();
+}
+
 // The keys of the Bloom filters of version 2 hash each byte as unsigned;
 // the filters of version 1 do not take a path with a byte above 127.
 function test_bloom_keys(): test.TestOutcome {
@@ -1055,6 +1086,7 @@ function main(): i32 {
   r = r.it("the rules of white space", test_whitespace);
   r = r.it("the moved blocks of a patch", test_moved);
   r = r.it("the signatures of commits", test_signatures);
+  r = r.it("the formats of signatures and ssh-keygen", test_signature_formats);
   r = r.it("the keys of the Bloom filters", test_bloom_keys);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);

@@ -1,9 +1,31 @@
-// The signatures of commits (gpg-interface.c of git): the payload and the
-// signature of a signed commit, and the result of `gpg --verify` from the
-// lines of its status.
+// The signatures of commits and tags (gpg-interface.c of git): the payload
+// and the signature of a signed object, and the check of the signature
+// with gpg, gpgsm or ssh-keygen.
 import "std/array";
+import "std/process";
 import "std/string";
+import "./date";
 import "./objects";
+
+// The formats of a signature (`gpg_format` of git), which the first line of
+// the signature gives.
+pub const OPENPGP: i32 = 0;
+
+pub const X509: i32 = 1;
+
+pub const SSH: i32 = 2;
+
+const FORMAT_STARTS: string[] = ["-----BEGIN PGP SIGNATURE-----", "-----BEGIN PGP MESSAGE-----", "-----BEGIN SIGNED MESSAGE-----", "-----BEGIN SSH SIGNATURE-----"];
+
+const FORMAT_OF_START: i32[] = [0, 0, 1, 2];
+
+// The settings of a check: the directory of the programs (the top of the
+// worktree, where git runs them, or "" for the current directory), the
+// program of each format (`gpg.program`, `gpg.x509.program` and
+// `gpg.ssh.program`), the files of `gpg.ssh.allowedSignersFile` and
+// `gpg.ssh.revocationFile` ("" when they are not set), and the least trust
+// of `gpg.minTrustLevel`. A relative path is from the directory.
+pub struct Programs { dir: string, openpgp: string, x509: string, ssh: string, allowed: string, revocation: string, min_trust: i32 }
 
 // The trust of a key, as gpg gives it in a line `TRUST_...`.
 pub const TRUST_UNDEFINED: i32 = 0;
@@ -18,16 +40,38 @@ pub const TRUST_ULTIMATE: i32 = 4;
 
 const TRUST_NAMES: string[] = ["UNDEFINED", "NEVER", "MARGINAL", "FULLY", "ULTIMATE"];
 
+// The trust of the name `text` of `gpg.minTrustLevel`, in any case, or -1.
+pub function trust_of(text: string): i32 {
+  let upper = text.to_ascii_upper();
+  for k in 0..TRUST_NAMES.len() {
+    if (TRUST_NAMES[k] == upper) {
+      return k;
+    }
+  }
+  return -1;
+}
+
 // The result of the check of a signature (`struct signature_check`): the
 // letter of `%G?` before the trust, the trust, the text that gpg writes
 // for a person, the key, the signer, the fingerprint and the fingerprint
 // of the primary key. `has_output` is false when gpg did not run, `signed`
 // is false for a commit with no signature,
-// and `failed` is the status of `check_signature`.
-pub struct Check { has_output: boolean, signed: boolean, result: u8, trust: i32, output: string, key: string, signer: string, fingerprint: string, primary: string, failed: boolean }
+// and `failed` is the status of `check_signature`. `died` is the message of
+// git when it stops at a signature of no known format.
+pub struct Check { has_output: boolean, signed: boolean, result: u8, trust: i32, output: string, key: string, signer: string, fingerprint: string, primary: string, failed: boolean, died: string }
 
 pub function unsigned(): Check {
-  return Check { has_output: false, signed: false, result: b'N', trust: TRUST_UNDEFINED, output: "", key: "", signer: "", fingerprint: "", primary: "", failed: true };
+  return Check { has_output: false, signed: false, result: b'N', trust: TRUST_UNDEFINED, output: "", key: "", signer: "", fingerprint: "", primary: "", failed: true, died: "" };
+}
+
+// The format of the signature `signature`, or -1 (`get_format_by_sig`).
+pub function format_of(signature: u8[]): i32 {
+  for i in 0..FORMAT_STARTS.len() {
+    if (starts(signature, 0, FORMAT_STARTS[i])) {
+      return FORMAT_OF_START[i];
+    }
+  }
+  return -1;
 }
 
 // The payload and the signature of a commit: the commit without the lines
@@ -150,8 +194,231 @@ pub function parse(status: string, output: string, ran_ok: boolean): Check {
       c = Check { ...c, trust: level };
     }
   }
-  let good = ran_ok && status.contains("\n[GNUPG:] GOODSIG ");
-  return Check { ...c, failed: !good || c.result != b'G' };
+  let good = ran_ok && (status.contains("\n[GNUPG:] GOODSIG ") || status.contains("\n[GNUPG:] EXPKEYSIG "));
+  return Check { ...c, failed: !good };
+}
+
+// The check after ssh-keygen, from the first line of its output
+// (`parse_ssh_output` of git): a good signature of a principal of the
+// allowed signers, a good signature of a key that no principal has, or a
+// bad signature.
+pub function parse_ssh(output: string, ran_ok: boolean): Check {
+  let c = Check { ...unsigned(), has_output: true, signed: true, output: output, result: b'B', trust: TRUST_NEVER, failed: !ran_ok };
+  let line = objects.part(output, 0, output.index_of("\n").unwrap_or(output.len()));
+  let known = "Good \"git\" signature for ";
+  let unknown = "Good \"git\" signature with ";
+  let rest = "";
+  if (line.starts_with(known)) {
+    let principal = objects.part(line, known.len(), line.len());
+    // The principal can hold " with ", so the last one ends it.
+    let end = -1;
+    let from = 0;
+    while (true) {
+      let Some(k) = objects.part(principal, from, principal.len()).index_of(" with ") else {
+        break;
+      };
+      end = from + k;
+      from = end + 1;
+    }
+    if (end < 0) {
+      return c;
+    }
+    c = Check { ...c, result: b'G', trust: TRUST_FULLY, signer: objects.part(principal, 0, end) };
+    rest = objects.part(principal, end + 1, principal.len());
+  } else if (line.starts_with(unknown)) {
+    c = Check { ...c, result: b'G', trust: TRUST_UNDEFINED };
+    rest = objects.part(line, unknown.len(), line.len());
+  } else {
+    return c;
+  }
+  let Some(k) = rest.index_of("key ") else {
+    return Check { ...c, result: b'B' };
+  };
+  let key = objects.part(rest, k + 4, rest.len());
+  return Check { ...c, key: key, fingerprint: key };
+}
+
+// The text with no white space at the end of each line, no empty lines at
+// its start and end, one empty line for each run of them, and a line end
+// after the last line (`strbuf_stripspace` of git).
+pub function stripspace(text: string): string {
+  let out = "";
+  let blank = false;
+  let at = 0;
+  while (at < text.len()) {
+    let nl = __memchr_bytes(text.bytes(), 10, at);
+    let end = if (nl < 0) { text.len() } else { nl };
+    let e = end;
+    while (e > at && objects.is_space(text[e - 1])) {
+      e -= 1;
+    }
+    if (e == at) {
+      blank = out.len() > 0;
+    } else {
+      if (blank) {
+        out += "\n";
+      }
+      out += objects.part(text, at, e) + "\n";
+      blank = false;
+    }
+    at = if (nl < 0) { text.len() } else { nl + 1 };
+  }
+  return out;
+}
+
+// The output of a program that a check runs, and false when it did not
+// start. git writes the message of a program that does not start.
+struct Ran { started: boolean, status: i32, out: string, err: string }
+
+function run_program(program: string, args: string[], input: string): Ran {
+  return match (process.run(program, args, input)) {
+    Ok(o) => Ran { started: true, status: o.status, out: unsafe { string_from_bytes_unchecked(o.stdout) }, err: unsafe { string_from_bytes_unchecked(o.stderr) } },
+    Err(e) => {
+      let why = match (e) {
+        PermissionDenied(_) => "Permission denied",
+        _ => "No such file or directory",
+      };
+      eprint("error: cannot run " + program + ": " + why);
+      Ran { started: false, status: -1, out: "", err: "" }
+    },
+  };
+}
+
+// The time of the person of the header `name` in the payload, and false
+// when the payload has no such person (`parse_payload_metadata` of git).
+// The time is 0 when the line has no digits after the address.
+function payload_time(payload: u8[], name: string): (boolean, i64) {
+  let at = 0;
+  while (at < payload.len() && payload[at] != b'\n') {
+    let nl = __memchr_bytes(payload, 10, at);
+    let end = if (nl < 0) { payload.len() } else { nl };
+    if (starts(payload, at, name + " ") && end > at + name.len() + 1) {
+      let line = unsafe { string_from_bytes_unchecked(array.slice(payload, at + name.len() + 1, end)) };
+      let Some(open) = line.index_of("<") else {
+        return (false, 0);
+      };
+      let close = line.len() - 1;
+      while (close > open && line[close] != b'>') {
+        close -= 1;
+      }
+      if (close <= open) {
+        return (false, 0);
+      }
+      let i = close + 1;
+      while (i < line.len() && objects.is_space(line[i])) {
+        i += 1;
+      }
+      let t: i64 = 0;
+      while (i < line.len() && line[i] >= b'0' && line[i] <= b'9') {
+        t = t * 10 + (line[i] - b'0') as i64;
+        i += 1;
+      }
+      return (true, t);
+    }
+    at = end + 1;
+  }
+  return (false, 0);
+}
+
+// The check with ssh-keygen (`verify_ssh_signed_buffer` of git): the
+// principals of the allowed signers that have the key, and the check with
+// each of them, or a check of the signature alone, which fails.
+function check_ssh(p: Programs, file: string, payload_file: string, time: i64): Check {
+  let none = Check { ...unsigned(), signed: true };
+  if (p.allowed.len() == 0) {
+    eprint("error: gpg.ssh.allowedSignersFile needs to be configured and exist for ssh signature verification");
+    return none;
+  }
+  let at = if (time != 0) { "-Overify-time=" + date.show(time, 0, date.Mode { kind: date.STRFTIME, local: true, format: "%Y%m%d%H%M%S" }) } else { "" };
+  let find = run_program(p.ssh, ["-Y", "find-principals", "-f", p.allowed, "-s", file, at], "");
+  let found = find.started && find.status == 0;
+  if (!found && find.err.contains("usage:")) {
+    eprint("error: ssh-keygen -Y find-principals/verify is needed for ssh signature verification (available in openssh version 8.2p1+)");
+    return none;
+  }
+  let last = Ran { started: true, status: 0, out: "", err: "" };
+  let good = false;
+  if (!found || find.out.len() == 0) {
+    last = run_program(p.ssh, ["-Y", "check-novalidate", "-n", "git", "-s", file, at], payload_file);
+  } else {
+    good = true;
+    let line = 0;
+    while (line < find.out.len()) {
+      let nl = __memchr_bytes(find.out.bytes(), 10, line);
+      let end = if (nl < 0) { find.out.len() } else { nl };
+      let next = if (nl < 0) { end } else { nl + 1 };
+      if (nl >= 0 && end > line && find.out[end - 1] == b'\r') {
+        end -= 1;
+      }
+      if (end > line) {
+        let args = ["-Y", "verify", "-n", "git", "-f", p.allowed, "-I", objects.part(find.out, line, end), "-s", file, at];
+        if (p.revocation.len() > 0) {
+          if let Ok(_) = stat(p.revocation) {
+            args = args.concat(["-r", p.revocation]);
+          } else {
+            eprint("warning: ssh signing revocation file configured but not found: " + p.revocation);
+          }
+        }
+        last = run_program(p.ssh, args, payload_file);
+        good = last.started && last.status == 0 && last.out.starts_with("Good");
+        if (good) {
+          break;
+        }
+      }
+      line = next;
+    }
+  }
+  return parse_ssh(stripspace(last.out) + find.err + stripspace(last.err), good);
+}
+
+// The check of `signature` over `payload` (`check_signature` of git). The
+// person of the header `signer` ("committer" or "tagger") gives the time
+// of the check of an ssh signature. The format of the signature selects
+// gpg, gpgsm or ssh-keygen. The signature goes in a temporary file, and
+// the payload is the standard input of the program.
+pub function check(p: Programs, payload: u8[], signature: u8[], signer: string): Check {
+  let none = Check { ...unsigned(), signed: true };
+  let fmt = format_of(signature);
+  if (fmt < 0) {
+    return Check { ...none, died: "bad/incompatible signature '" + unsafe { string_from_bytes_unchecked(signature) } + "'" };
+  }
+  let (known, time) = payload_time(payload, signer);
+  if (!known) {
+    return none;
+  }
+  let dir = env("TMPDIR").unwrap_or("/tmp");
+  let stem = dir + "/.git_vtag_tmp" + objects.part(objects.hash_of(objects.SHA1, "blob", signature.concat(payload)), 0, 12);
+  let sig_file = stem + "s";
+  let payload_file = stem + "p";
+  if let Err(_) = write_file_bytes(sig_file, signature) {
+    return none;
+  }
+  if let Err(_) = write_file_bytes(payload_file, payload) {
+    let _ = remove_file(sig_file);
+    return none;
+  }
+  let back = "";
+  if (p.dir.len() > 0) {
+    back = getcwd().unwrap_or("");
+    let _ = chdir(p.dir);
+  }
+  let c = none;
+  if (fmt == SSH) {
+    c = check_ssh(p, sig_file, payload_file, time);
+  } else {
+    let args = if (fmt == OPENPGP) { ["--keyid-format=long"] } else { [] };
+    let ran = run_program(if (fmt == OPENPGP) { p.openpgp } else { p.x509 }, args.concat(["--status-fd=1", "--verify", sig_file, "-"]), payload_file);
+    c = parse(ran.out, ran.err, ran.started && ran.status == 0);
+  }
+  if (back.len() > 0) {
+    let _ = chdir(back);
+  }
+  let _ = remove_file(sig_file);
+  let _ = remove_file(payload_file);
+  if (c.failed && !c.has_output) {
+    return c;
+  }
+  return Check { ...c, failed: c.failed || c.result != b'G' && c.result != b'Y' || c.trust < p.min_trust };
 }
 
 // The text of the placeholder `%G` and `letter`, or None for a letter
