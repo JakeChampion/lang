@@ -1,0 +1,7 @@
+waiver: harness-limit
+reason: an aborting program is observable as an exit code on the
+  interpreter and the native backends, which all print the same cause
+  line and exit 134. The wasm leg builds with PrintMainResult and
+  recovers the exit code from a trailing stdout line, which a trapping
+  program never reaches: the runner sees empty stdout and a trap, not
+  134. internal/testing/e2e/array_bounds_test.go covers the wasm trap.
