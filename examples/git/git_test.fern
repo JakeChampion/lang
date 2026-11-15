@@ -18,6 +18,7 @@ import "./graph";
 import "./index";
 import "./log";
 import "./mailmap";
+import "./moved";
 import "./objects";
 import "./pack";
 import "./patch";
@@ -345,6 +346,27 @@ function test_whitespace(): test.TestOutcome {
   }
   if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7)) {
     return test.fail("the conflict markers");
+  }
+  return test.pass();
+}
+
+// The moved blocks of `--color-moved`: a block of enough letters that a
+// commit removes and adds again, in the two colors of the zebra.
+function test_moved(): test.TestOutcome {
+  if (moved.parse("dimmed_zebra") != moved.DIMMED_ZEBRA || moved.parse("true") != moved.ZEBRA || moved.parse("off") != moved.NO || moved.parse("x") != -1) {
+    return test.fail("the forms of --color-moved");
+  }
+  let a = "a line with enough letters\n";
+  let b = "another line with letters\n";
+  let kinds = [moved.MINUS, moved.MINUS, moved.OTHER, moved.PLUS, moved.PLUS, moved.PLUS];
+  let texts = [a, b, "", b, a, "x\n"];
+  let marks = moved.mark(kinds, texts, [8, 8, 8, 8, 8, 8], moved.ZEBRA, 0);
+  if (marks != [moved.MOVED, moved.MOVED | moved.ALT, 0, moved.MOVED, moved.MOVED | moved.ALT, 0]) {
+    return test.fail("the marks of the zebra");
+  }
+  let (mode, errors) = moved.parse_ws("allow-indentation-change,ignore-all-space");
+  if (mode != (moved.WS_ALLOW_INDENT | moved.WS_IGNORE_ALL) || errors.len() != 1) {
+    return test.fail("the modes of --color-moved-ws");
   }
   return test.pass();
 }
@@ -991,6 +1013,7 @@ function main(): i32 {
   r = r.it("the tabs of a message", test_tabs);
   r = r.it("the columns of the placeholders of a format", test_format_columns);
   r = r.it("the rules of white space", test_whitespace);
+  r = r.it("the moved blocks of a patch", test_moved);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);
   r = r.it("the specs of colors", test_colors);

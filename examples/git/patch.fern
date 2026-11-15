@@ -4,6 +4,7 @@
 import "std/array";
 import "std/linediff";
 import "./color";
+import "./moved";
 import "./objects";
 import "./store";
 import "./treediff";
@@ -20,10 +21,12 @@ import "../../coreutils/lib/bre";
 // the rules of white space of `core.whitespace`. `word_diff` is a form of
 // `--word-diff`, and `word_regex` holds the regex of its words, or none.
 // `word_regex_error` is a regex of words that is not sound, or "".
-pub struct Opts { word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
+// `color_moved` and `color_moved_ws` are the form and the modes of
+// `--color-moved` and `--color-moved-ws`.
+pub struct Opts { color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
 
 pub function defaults(): Opts {
-  return Opts { word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
+  return Opts { color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
 }
 
 // True when the options print a diff.
@@ -36,10 +39,17 @@ pub function any(o: Opts): boolean {
 // it when `ends[i]` is true. `calls` is the count of graph lines that the
 // diff asks for, as git asks for one with each `diff_line_prefix`.
 // `fatal` is the message of an error that stops the diff, or "".
-pub struct Text { lines: string[], uses: i32[], ends: boolean[], calls: i32, fatal: string }
+// `moved` holds the added and the removed lines for `--color-moved`.
+pub struct Text { lines: string[], uses: i32[], ends: boolean[], calls: i32, fatal: string, moved: Moved }
+
+// The added and the removed lines of a patch: the part of each in the
+// text, its kind (`moved.PLUS` or `moved.MINUS`), its content after the
+// sign, the rules of white space of its file, and whether it is a blank
+// line at the end of a file.
+pub struct Moved { at: i32[], kinds: i32[], texts: string[], rules: i32[], eof: boolean[] }
 
 pub function text_new(): Text {
-  return Text { lines: [], uses: [], ends: [], calls: 0, fatal: "" };
+  return Text { lines: [], uses: [], ends: [], calls: 0, fatal: "", moved: Moved { at: [], kinds: [], texts: [], rules: [], eof: [] } };
 }
 
 pub function call(t: Text): (Text, i32) {
@@ -347,14 +357,33 @@ function hunk_header(line: string): string {
   return out;
 }
 
-// The lines of the hunks of `a` and `b` in the colors of git, with the
-// errors of white space of the added lines (`fn_out_consume` and
-// `emit_diff_symbol` of git, with the default `core.whitespace`).
-function painted(o: Opts, body: string, a: u8[], b: u8[]): string {
+// The line of an added or a removed line in the colors of git, with the
+// marks of `--color-moved`: `emit_diff_symbol` of git.
+function sign_line(kind: i32, rest: string, rule: i32, eof: boolean, marks: i32): string {
+  let moved_line = (marks & moved.MOVED) != 0;
+  let alt = (marks & moved.ALT) != 0;
+  let dim = (marks & moved.DIM) != 0;
+  if (kind == moved.MINUS) {
+    let set = if (!moved_line) { color.RED } else if (alt && dim) { color.MOVED_ALT_DIM } else if (alt) { color.OLD_MOVED_ALT } else if (dim) { color.MOVED_DIM } else { color.OLD_MOVED };
+    return line0(set, "-", rest);
+  }
+  let set = if (!moved_line) { color.GREEN } else if (alt && dim) { color.MOVED_ALT_DIM } else if (alt) { color.NEW_MOVED_ALT } else if (dim) { color.MOVED_DIM } else { color.NEW_MOVED };
+  if (eof) {
+    return line0(color.BG_RED, "+", rest);
+  }
+  let (_, text) = ws.check_emit(rest, rule, set, color.RESET, color.BG_RED);
+  return line0(set, "+", "") + text;
+}
+
+// Adds the lines of the hunks of `a` and `b` in the colors of git, each
+// with a graph line of its own, with the errors of white space of the
+// added lines (`fn_out_consume` and `emit_diff_symbol` of git). The added
+// and the removed lines go in `moved` for `--color-moved`.
+function painted(t_in: Text, o: Opts, body: string, a: u8[], b: u8[]): Text {
+  let t = t_in;
   let (pre_eof, post_eof) = if ((o.ws_rule & ws.BLANK_AT_EOF) != 0) { blank_at_eof(a, b) } else { (0, 0) };
   let pre = 0;
   let post = 0;
-  let out = "";
   let at = 0;
   while (at < body.len()) {
     let end = at;
@@ -364,33 +393,76 @@ function painted(o: Opts, body: string, a: u8[], b: u8[]): string {
     let line = objects.part(body, at, end);
     let first = if (line.len() > 0) { line[0] } else { b' ' };
     let rest = objects.part(line, 1.min(line.len()), line.len());
+    let out = "";
+    let kind = moved.OTHER;
+    let eof = false;
     if (first == b'@') {
       pre = hunk_start(line, b'-');
       post = hunk_start(line, b'+');
-      out += hunk_header(line);
+      out = hunk_header(line);
     } else if (first == b'+') {
       post += 1;
-      if (pre_eof > 0 && post_eof > 0 && pre_eof <= pre && post_eof <= post && ws.blank(rest.bytes(), 0, rest.len())) {
-        out += line0(color.BG_RED, "+", rest);
-      } else {
-        let (_, text) = ws.check_emit(rest, o.ws_rule, color.GREEN, color.RESET, color.BG_RED);
-        out += line0(color.GREEN, "+", "") + text;
-      }
+      kind = moved.PLUS;
+      eof = pre_eof > 0 && post_eof > 0 && pre_eof <= pre && post_eof <= post && ws.blank(rest.bytes(), 0, rest.len());
+      out = sign_line(kind, rest, o.ws_rule, eof, 0);
     } else if (first == b'-') {
       pre += 1;
-      out += line0(color.RED, "-", rest);
+      kind = moved.MINUS;
+      out = sign_line(kind, rest, o.ws_rule, false, 0);
     } else if (first == b' ') {
       pre += 1;
       post += 1;
-      out += line0("", " ", rest);
+      out = line0("", " ", rest);
     } else {
       pre += 1;
-      out += line0("", "", line);
+      out = line0("", "", line);
     }
-    out += "\n";
+    let (t1, k) = call(t);
+    t = push(t1, k, out, true);
+    if (kind != moved.OTHER) {
+      let m = t.moved;
+      t = Text { ...t, moved: Moved { at: m.at.append(t.lines.len() - 1), kinds: m.kinds.append(kind), texts: m.texts.append(rest + "\n"), rules: m.rules.append(o.ws_rule), eof: m.eof.append(eof) } };
+    }
     at = end + 1;
   }
-  return out;
+  return t;
+}
+
+// The text with the colors of the moved lines: `mark_color_as_moved` of
+// git on the added and the removed lines of the whole patch.
+function color_moved(t: Text, o: Opts): Text {
+  let m = t.moved;
+  if (m.at.len() == 0) {
+    return t;
+  }
+  // The lines of the search: a line that is not added or removed comes
+  // between two lines that are not next to each other in the text.
+  let kinds: i32[] = [];
+  let texts: string[] = [];
+  let tabs: i32[] = [];
+  let index: i32[] = [];
+  for j in 0..m.at.len() {
+    if (j > 0 && m.at[j - 1] + 1 != m.at[j]) {
+      kinds = kinds.append(moved.OTHER);
+      texts = texts.append("");
+      tabs = tabs.append(8);
+      index = index.append(-1);
+    }
+    kinds = kinds.append(m.kinds[j]);
+    texts = texts.append(m.texts[j]);
+    tabs = tabs.append(ws.tab_width(m.rules[j]));
+    index = index.append(j);
+  }
+  let marks = moved.mark(kinds, texts, tabs, o.color_moved, o.color_moved_ws);
+  let lines = t.lines;
+  for i in 0..kinds.len() {
+    let j = index[i];
+    if (j >= 0 && marks[i] != 0) {
+      let rest = objects.part(m.texts[j], 0, m.texts[j].len() - 1);
+      lines = lines.with(m.at[j], sign_line(m.kinds[j], rest, m.rules[j], m.eof[j], marks[i]));
+    }
+  }
+  return Text { ...t, lines: lines };
 }
 
 // The header and the patch of one pair, without a split of a change of
@@ -461,8 +533,7 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   if (o.color) {
     let labels = color.BOLD + "--- " + lbl0 + color.RESET + tab0 + "\n" + color.BOLD + "+++ " + lbl1 + color.RESET + tab1 + "\n";
-    t = add_each(t, labels + painted(o, text(body), a, b));
-    return (s, t);
+    return (s, painted(add_each(t, labels), o, text(body), a, b));
   }
   t = add_each(t, "--- " + lbl0 + tab0 + "\n+++ " + lbl1 + tab1 + "\n" + text(body));
   return (s, t);
@@ -1130,6 +1201,9 @@ pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, leas
       let (s2, t3) = patch_pair(s, o, p, least, t);
       s = s2;
       t = t3;
+    }
+    if (o.color && o.color_moved != moved.NO) {
+      t = color_moved(t, o);
     }
   }
   return (s, t);

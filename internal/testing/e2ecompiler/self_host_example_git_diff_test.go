@@ -384,6 +384,72 @@ func gitRandomMerges(t *testing.T, oracle gitTool, dir string, seed int64, n int
 	}
 }
 
+// gitMovedCases are the forms of --color-moved for the repository of
+// gitMovedFixture. Each case is split at spaces, and `\s` is a space.
+var gitMovedCases = []string{
+	"log -p --color --color-moved", "log -p --color --color-moved=plain", "log -p --color --color-moved=blocks",
+	"log -p --color --color-moved=zebra", "log -p --color --color-moved=default", "log -p --color --color-moved=dimmed-zebra",
+	"log -p --color --color-moved=dimmed_zebra", "log -p --color --color-moved=no", "log -p --color --color-moved=true",
+	"log -p --color --color-moved=bad", "log -p --color-moved", "log -p --color --no-color-moved",
+	"log -p --color --color-moved --color-moved-ws=ignore-space-change", "log -p --color --color-moved --color-moved-ws=ignore-space-at-eol",
+	"log -p --color --color-moved --color-moved-ws=ignore-all-space",
+	"log -p --color --color-moved --color-moved-ws=allow-indentation-change",
+	"log -p --color --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change", "log -p --color --color-moved --color-moved-ws=no",
+	"log -p --color --color-moved --color-moved-ws=bogus",
+	"log -p --color --color-moved --color-moved-ws=allow-indentation-change,ignore-all-space",
+	"log -p --color --color-moved --color-moved-ws=\\signore-space-change\\s,ignore-space-at-eol", "log -p --color --color-moved --graph",
+	"log -p --color --color-moved -U0", "log -p --color --color-moved --stat", "log -p --color", "log -p --color --color-moved",
+	"log -p --color --color-moved=blocks", "log -p --color", "log -p --color",
+}
+
+// gitMovedFixture makes moved blocks for gitMovedCases: in a file, across
+// files, two blocks next to each other, a short block, and blocks with a
+// new indent and new spaces.
+func gitMovedFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
+	t.Helper()
+	when := 1700000000
+	run := func(args ...string) {
+		t.Helper()
+		cmd := oracle.cmd(args...)
+		cmd.Dir = dir
+		stamp := fmt.Sprintf("%d +0100", when)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C",
+			"GIT_AUTHOR_NAME=A", "GIT_AUTHOR_EMAIL=a@example.com", "GIT_COMMITTER_NAME=C", "GIT_COMMITTER_EMAIL=c@example.com",
+			"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	commit := func(msg string, files map[string]string) {
+		t.Helper()
+		for name, text := range files {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		when += 3600
+		run("add", "-A")
+		run("commit", "-q", "-m", msg)
+	}
+	fn := func(indent, name, args string) string {
+		return indent + "int " + name + "(void)\n" + indent + "{\n" + indent + "\treturn compute_" + name + "_value(" + args + ");\n" + indent + "}\n"
+	}
+	helpers := []string{"static int helper_one = 1;\n", "static int helper_two = 2;\n", "static int helper_three = 3;\n"}
+	run("init", "-q", "-b", "main", "--object-format="+hash.format, ".")
+	commit("one", map[string]string{
+		"a.c": fn("", "alpha", "1, 2, 3") + "\n" + fn("", "beta", "4, 5, 6") + "\n" + fn("", "gamma", "7, 8, 9") + "x\ny\n",
+		"b.c": helpers[0] + helpers[1] + helpers[2],
+	})
+	commit("two", map[string]string{
+		"a.c": fn("", "gamma", "7, 8, 9") + "\n" + fn("", "beta", "4, 5, 6") + "y\nx\n" + helpers[0] + helpers[1],
+		"b.c": fn("", "alpha", "1, 2, 3") + helpers[2],
+	})
+	commit("three", map[string]string{
+		"a.c": "    int gamma(void)\n    {\n    \treturn compute_gamma_value(7, 8, 9);\n    }\n\nint beta(void)\n{\n  return  compute_beta_value(4, 5, 6);  \n}\ny\nx\n",
+		"b.c": helpers[0] + helpers[1] + fn("\t", "alpha", "1, 2, 3") + helpers[2],
+	})
+}
+
 // gitMergeCases are the diffs of merges for the repositories of
 // gitFormsFixture and gitMergeFixture.
 var gitMergeCases = []string{
@@ -656,11 +722,30 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 			for _, c := range gitMergeCases {
 				gitCompare(t, oracle, port, fixed, "", strings.Fields(c)...)
 			}
+			movedDir := t.TempDir()
+			gitMovedFixture(t, oracle, movedDir, run)
+			for _, c := range gitMovedCases {
+				args := strings.Fields(c)
+				for i := range args {
+					args[i] = strings.ReplaceAll(args[i], "\\s", " ")
+				}
+				gitCompare(t, oracle, port, movedDir, "", args...)
+			}
+			for _, setting := range [][]string{{"diff.colorMoved", "plain"}, {"diff.colorMoved", "dimmed-zebra"}, {"diff.colorMovedWS", "allow-indentation-change"}} {
+				if _, stderr, code := oracle.run(t, movedDir, "", "config", setting[0], setting[1]); code != 0 {
+					t.Fatalf("git config %v: %s", setting, stderr)
+				}
+				for _, c := range []string{"log -p --color", "log -p --color --color-moved", "log -p --color --color-moved=blocks"} {
+					gitCompare(t, oracle, port, movedDir, "", strings.Fields(c)...)
+				}
+			}
 			edits := t.TempDir()
 			gitInit(t, oracle, edits, run)
 			gitEdits(t, oracle, edits, 11, 30)
 			for _, c := range []string{"log -p --word-diff", "log -p --word-diff=porcelain", "log -p --color-words", "log -p --word-diff-regex=[a-z]+",
-				"log -p --word-diff -U1 --graph"} {
+				"log -p --word-diff -U1 --graph",
+				"log -p --color --color-moved", "log -p --color --color-moved=dimmed-zebra", "log -p --color --color-moved=plain",
+				"log -p --color --color-moved --color-moved-ws=allow-indentation-change", "log -p --color --color-moved --color-moved-ws=ignore-all-space"} {
 				gitCompare(t, oracle, port, edits, "", strings.Fields(c)...)
 			}
 			merges := t.TempDir()
