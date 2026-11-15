@@ -410,7 +410,7 @@ func TestParseAndroidRefusals(t *testing.T) {
 	for _, tc := range []struct{ line, want string }{
 		{`home = "yes"`, "[android] home: expected true or false"},
 		{`tv = 1`, "[android] tv: expected true or false"},
-		{`min_sdk = "26"`, "[android] min_sdk: expected an API level"},
+		{`min_sdk = "26"`, "[android] min_sdk: expected a whole number"},
 		{`assets = "a.png"`, "[android] assets: expected an array"},
 		{`colour = "red"`, "[android] colour: unknown key"},
 	} {
