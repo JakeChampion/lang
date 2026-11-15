@@ -95,8 +95,12 @@ stopped. The player shows "Direct play" or "Transcode" after the title.
 Search and settings:
 
 - Search starts when you stop typing, and shows the hubs of the results.
-- Settings: the account, the server, the quality from Original to 240p, and
+- Settings: the user, the server, the quality from Original to 240p, and
   sign-out.
+
+The User row of the settings lists the users of the Plex Home of the
+account. A user with a PIN gets a keypad. After the switch, the app uses
+the token of that user and finds the servers of that user.
 
 Plezy also supports Jellyfin and Emby, downloads, Live TV, Watch Together
 and trackers. This app does not.

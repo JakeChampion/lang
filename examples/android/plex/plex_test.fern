@@ -98,6 +98,15 @@ function test_library_requests(): test.TestOutcome {
   return test.assert_eq(words.join(" "), "https://s:32400/library/sections/3/all?X-Plex-Container-Start=120&X-Plex-Container-Size=60&sort=year%3Adesc&includeGuids=0&unwatched=1 https://s:32400/library/sections/3/firstCharacter #=4,B=7 4");
 }
 
+function test_home_users(): test.TestOutcome {
+  let c = plex.Client { id: "id", device: "Android", token: "t" };
+  let users = plex.parse_home_users("{\"id\":1,\"users\":[{\"uuid\":\"a1\",\"title\":\"Ada\",\"admin\":true},{\"uuid\":\"k2\",\"title\":\"Kid\",\"protected\":true},{\"title\":\"No id\"}]}");
+  let words = users.map((u: plex.HomeUser): string => u.title + "/" + u.protected.to_string() + "/" + u.admin.to_string()).join(",");
+  let open = plex.switch_user(c, "a1", "");
+  let pin = plex.switch_user(c, "k2", "0042");
+  return test.assert_eq(words + " " + open.method + " " + open.url + " " + pin.url + " " + plex.parse_switch("{\"authToken\":\"x9\"}"), "Ada/false/true,Kid/true/false POST https://clients.plex.tv/api/v2/home/users/a1/switch https://clients.plex.tv/api/v2/home/users/k2/switch?pin=0042 x9");
+}
+
 function test_manual_server(): test.TestOutcome {
   let s = plex.manual_server("http://192.168.1.4:32400/", "t");
   return test.assert_eq(plex.connection_order(s).join(" ") + " " + s.token, "http://192.168.1.4:32400 t");
@@ -364,6 +373,7 @@ function main(): i32 {
   r = r.it("a private local connection gets a plain HTTP address", test_private_connections_get_http);
   r = r.it("private hosts are told from public ones", test_private_hosts);
   r = r.it("a library page asks in its order and filter, and the letters count", test_library_requests);
+  r = r.it("the users of a Plex Home are read, and a switch asks with the PIN", test_home_users);
   r = r.it("a typed server has one connection", test_manual_server);
   r = r.it("the libraries of video and music are kept", test_sections_keep_video_and_music);
   r = r.it("an item is read with its media", test_item_fields);

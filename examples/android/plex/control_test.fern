@@ -89,6 +89,18 @@ function reply_to(r: plex.Request): plex.Reply {
   if (u.contains("/api/v2/pins")) {
     return ok("{\"id\":7,\"code\":\"ABCD\",\"authToken\":null}");
   }
+  if (r.method == "POST" && u.contains("/api/v2/home/users/kid/switch")) {
+    if (u.ends_with("?pin=1234")) {
+      return ok("{\"authToken\":\"kid-tok\"}");
+    }
+    return plex.Reply { status: 403, body: [], error: "" };
+  }
+  if (r.method == "POST" && u.contains("/api/v2/home/users/guest/switch")) {
+    return ok("{\"authToken\":\"guest-tok\"}");
+  }
+  if (u.contains("/api/v2/home/users")) {
+    return ok("{\"id\":1,\"users\":[{\"uuid\":\"ada\",\"title\":\"Ada\",\"admin\":true},{\"uuid\":\"kid\",\"title\":\"Kid\",\"protected\":true},{\"uuid\":\"guest\",\"title\":\"Guest\"}]}");
+  }
   if (u.contains("/api/v2/user")) {
     return ok("{\"friendlyName\":\"Ada\"}");
   }
@@ -479,6 +491,41 @@ function test_poster_menu(): test.TestOutcome {
   let drag = at(at(back, log, 3000i64, f, android.Touch(0, x as f32, y as f32)), log, 3050i64, f, android.Touch(2, x as f32 + 60.0, y as f32));
   let after = at(drag, log, 3600i64, f, android.Tick);
   return test.assert_eq(node(after, "menu:close").is_none().to_string(), "true");
+}
+
+// The User row of the settings lists the users of the Plex Home. A user
+// with a PIN gets the keypad: a wrong PIN shows an error, and the right one
+// switches. The app then uses the token of that user, and connects again.
+function test_switch_home_user(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = signed_in(log, f);
+  let list = tap(tap(home, log, 3000i64, f, "tab:3"), log, 3100i64, f, "users");
+  if (list.screen != ui.USERS || node(list, "user:1").is_none()) {
+    return test.fail("no list of the users: " + log.urls.get().join(" | "));
+  }
+  let pad = tap(list, log, 3200i64, f, "user:1");
+  if (node(pad, "pinkey:5").is_none()) {
+    return test.fail("no keypad for a user with a PIN");
+  }
+  save_png(f, "pin");
+  let wrong = pad;
+  for d in ["1", "1", "1", "1"] {
+    wrong = tap(wrong, log, 3300i64, f, "pinkey:" + d);
+  }
+  if (wrong.error != "Wrong PIN" || wrong.client.token != "tok-1" || node(wrong, "pinkey:5").is_none()) {
+    return test.fail("a wrong PIN did not show its error: " + wrong.error);
+  }
+  let right = wrong;
+  for d in ["1", "2", "3", "del", "3", "4"] {
+    right = tap(right, log, 3400i64, f, "pinkey:" + d);
+  }
+  let done = settle(right, log, 6000i64, f);
+  if (done.client.token != "kid-tok" || done.account != "Kid" || done.screen != ui.HOME) {
+    return test.fail("the right PIN did not switch: " + done.client.token + " " + done.account + " " + done.screen.to_string());
+  }
+  return test.assert_eq(file_of(log, "/data/settings").contains("token=kid-tok").to_string(), "true");
 }
 
 function count_calls(log: Log, call: string): i32 {
@@ -1146,6 +1193,7 @@ function main(): i32 {
   r = r.it("the letter strip jumps to the first item of a letter", test_library_letters);
   r = r.it("the chips change the order and the filter of a library", test_library_sort_and_filter);
   r = r.it("a held poster opens a menu of its actions", test_poster_menu);
+  r = r.it("a user of the Plex Home takes over with a PIN", test_switch_home_user);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);

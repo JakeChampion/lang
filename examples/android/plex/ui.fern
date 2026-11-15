@@ -32,6 +32,8 @@ pub const SETTINGS: i32 = 7;
 
 pub const PLAYER: i32 = 8;
 
+pub const USERS: i32 = 9;
+
 // The tabs of the bar at the bottom, and the screen of each.
 pub function tab_names(): string[] {
   return ["Home", "Libraries", "Search", "Settings"];
@@ -78,6 +80,9 @@ pub struct View {
   letters: plex.Letter[],
   // The item of the menu of a held poster, or no_item.
   menu: plex.Item,
+  users: plex.HomeUser[],
+  pin_for: string,
+  pin_digits: string,
   item: plex.Item,
   children: plex.Item[],
   pin_code: string,
@@ -98,7 +103,7 @@ pub struct View {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
 }
 
 // --- metrics
@@ -877,7 +882,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
   let y = top_height(m) + 8 * m.u - v.scroll;
   let p = title_pitch(m);
   let rows: (string, string, string)[] = [
-    ("Account", v.account, ""),
+    ("User", v.account, "users"),
     ("Server", v.server_name, "servers"),
     ("Quality", v.quality, "quality"),
     ("Sign out", "", "signout"),
@@ -905,6 +910,80 @@ function settings(m: Metrics, v: View): scene.Node[] {
   }
   let about = plex.PRODUCT + " " + plex.VERSION + ". A Plex client written in Fern, with no Java code: the screens, the network, TLS and JSON are Fern, and the video plays through the media player of Android.";
   out = util_append(out, wrapped(m, 16 * m.u, y + 16 * m.u, m.w - 32 * m.u, about, look.muted()));
+  return out;
+}
+
+// The users of the Plex Home, one panel each: the name, and "PIN" for a
+// user with a PIN. The keypad shows over them while it asks for a PIN.
+function users(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
+  let y = top_height(m) + 8 * m.u - v.scroll;
+  let p = title_pitch(m);
+  let sp = small_pitch(m);
+  let row = 72 * m.u;
+  if (v.users.len() == 0) {
+    out = out.append(note(m, y + 16 * m.u, "Loading"));
+  }
+  for i in 0..v.users.len() {
+    let u = v.users[i];
+    out = out.append(tap(panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u), "user:" + i.to_string()));
+    let ty = y + (row - 8 * m.u - matrix.height(p)) / 2;
+    out = out.append(heading(m, 32 * m.u, ty, m.w - 160 * m.u, u.title, p, look.ink()));
+    let mark = "";
+    if (u.protected) {
+      mark = "PIN";
+    } else if (u.admin) {
+      mark = "ADMIN";
+    }
+    if (mark.len() > 0) {
+      out = out.append(dots(m.w - 32 * m.u - matrix.width(mark, sp), y + (row - 8 * m.u - matrix.height(sp)) / 2, mark, sp, look.muted()));
+    }
+    y += row;
+  }
+  if (v.error.len() > 0) {
+    out = out.append(label(m, 16 * m.u, y + 8 * m.u, fit(v.error, (m.w - 32 * m.u) / m.cw), m.ts, look.red()));
+  }
+  if (v.pin_for.len() > 0) {
+    out = util_append(out, pin_pad(m, v.pin_digits));
+  }
+  return out;
+}
+
+// The keypad of a PIN: four dots that fill as the digits come, the digits,
+// a key that deletes the last digit, and Cancel.
+function pin_pad(m: Metrics, digits: string): scene.Node[] {
+  let key = 72 * m.u;
+  let w = 3 * key + 4 * 12 * m.u;
+  let h = 72 * m.u + 4 * (key + 12 * m.u) + 12 * m.u;
+  let x = (m.w - w) / 2;
+  let y = (m.h - h) / 2;
+  let out: scene.Node[] = [scene.Node { ...fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 200), 0), barrier: true }, panel(m, x, y, w, h)];
+  let r = 8 * m.u;
+  for k in 0..4 {
+    let cx = m.w / 2 + (k * 2 - 3) * 3 * r;
+    let color = look.outline();
+    if (k < digits.len()) {
+      color = look.ink();
+    }
+    out = out.append(fill(cx - r, y + 32 * m.u, 2 * r, 2 * r, color, r));
+  }
+  let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "cancel", "0", "del"];
+  let p = title_pitch(m);
+  let sp = small_pitch(m);
+  for k in 0..keys.len() {
+    let kx = x + 12 * m.u + k % 3 * (key + 12 * m.u);
+    let ky = y + 72 * m.u + k / 3 * (key + 12 * m.u);
+    let text = keys[k];
+    let pitch = p;
+    if (text == "cancel") {
+      text = "CANCEL";
+      pitch = sp;
+    } else if (text == "del") {
+      text = "<";
+    }
+    out = out.append(tap(fill(kx, ky, key, key, look.bg(), key / 2), "pinkey:" + keys[k]));
+    out = out.append(dots(kx + (key - matrix.width(text, pitch)) / 2, ky + (key - matrix.height(pitch)) / 2, text, pitch, look.ink()));
+  }
   return out;
 }
 
@@ -1165,10 +1244,12 @@ pub function nodes(v: View): scene.Node[] {
     body = detail(m, v);
   } else if (v.screen == SEARCH) {
     body = search(m, v);
+  } else if (v.screen == USERS) {
+    body = users(m, v);
   } else {
     body = settings(m, v);
   }
-  let back = v.screen == LIBRARY || v.screen == DETAIL;
+  let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS;
   let out = util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
   if (v.menu.key.len() > 0) {
     out = util_append(out, poster_menu(m, v.menu));

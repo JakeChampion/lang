@@ -233,6 +233,11 @@ pub struct App {
   press: Press,
   // The item of the menu that a held finger on a poster opened, or no_item.
   menu: plex.Item,
+  // The users of the Plex Home of the account, the user whose PIN the
+  // keypad asks for, or "", and the digits typed so far.
+  users: plex.HomeUser[],
+  pin_for: string,
+  pin_digits: string,
   nodes: scene.Node[],
   dirty: boolean,
   // The painter draws on the window, and `paint` is true when the nodes
@@ -360,7 +365,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
-    play: no_play(), press: no_press(), menu: plex.no_item(), nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
+    play: no_play(), press: no_press(), menu: plex.no_item(), users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
   };
   s = App { ...s, server: plex.Server { ...no_server(), name: setting(text, "server_name"), id: setting(text, "server_id"), token: s.base.token } };
   if (s.quality < 0 || s.quality >= plex.qualities().len()) {
@@ -391,6 +396,8 @@ enum Want {
   CheckPin(i64),
   User,
   Resources,
+  HomeUsers,
+  SwitchUser(string, string),
   Sections,
   Hubs,
   Items(string, i32, i32, boolean),
@@ -417,6 +424,12 @@ function request_of(c: plex.Client, b: plex.Base, w: Want): plex.Request {
     },
     User => {
       return plex.user_request(c);
+    },
+    HomeUsers => {
+      return plex.home_users(c);
+    },
+    SwitchUser(uuid, pin) => {
+      return plex.switch_user(c, uuid, pin);
     },
     Resources => {
       return plex.resources_request(c);
@@ -741,6 +754,15 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   if (verb == "recheck") {
     return got_recheck(t, r);
   }
+  if (verb == "homeusers") {
+    if (!r.ok()) {
+      return failed(t, "the users", r);
+    }
+    return App { ...t, users: plex.parse_home_users(r.text()), error: "" };
+  }
+  if (verb == "switch") {
+    return got_switch(t, rest, r);
+  }
   if (verb == "bif") {
     return got_bif(t, rest, r);
   }
@@ -878,6 +900,69 @@ function got_pin_check(own t: App, r: plex.Reply): App {
   save(u);
   log.info("plex: signed in");
   return ask(open_servers(u), "user", User);
+}
+
+// The users of the Plex Home of the account, to switch to one.
+function open_users(own s: App): App {
+  return ask(App { ...push(s), screen: ui.USERS, title: "Switch user", scroll: 0, pin_for: "", pin_digits: "", dirty: true }, "homeusers", HomeUsers);
+}
+
+// A tap on user `i`: a protected user gets the keypad of the PIN first.
+function pick_user(own s: App, i: i32): App {
+  if (i < 0 || i >= s.users.len()) {
+    return s;
+  }
+  let u = s.users[i];
+  if (u.protected) {
+    return App { ...s, pin_for: u.uuid, pin_digits: "", error: "", dirty: true };
+  }
+  return ask(s, "switch:" + u.title, SwitchUser(u.uuid, ""));
+}
+
+// A key of the keypad of the PIN. The fourth digit sends the PIN.
+function pin_key(own s: App, key: string): App {
+  if (key == "del") {
+    let n = s.pin_digits.len();
+    if (n == 0) {
+      return s;
+    }
+    return App { ...s, pin_digits: s.pin_digits.take(n - 1).to_owned(), dirty: true };
+  }
+  if (key == "cancel") {
+    return App { ...s, pin_for: "", pin_digits: "", dirty: true };
+  }
+  let digits = s.pin_digits + key;
+  if (digits.len() < 4) {
+    return App { ...s, pin_digits: digits, dirty: true };
+  }
+  let uuid = s.pin_for;
+  let title = "";
+  for u in s.users {
+    if (u.uuid == uuid) {
+      title = u.title;
+    }
+  }
+  return ask(App { ...s, pin_digits: digits, dirty: true }, "switch:" + title, SwitchUser(uuid, digits));
+}
+
+// The reply of a switch: the token of the user replaces that of the
+// account, and the app finds the servers of that user.
+function got_switch(own t: App, title: string, r: plex.Reply): App {
+  let token = "";
+  if (r.ok()) {
+    token = plex.parse_switch(r.text());
+  }
+  if (token.len() == 0) {
+    let why = "The switch failed";
+    if (r.status == 401 || r.status == 403) {
+      why = "Wrong PIN";
+    }
+    return App { ...t, pin_digits: "", error: why, dirty: true };
+  }
+  let u = App { ...t, client: t.client.with_token(token), account: title, server: no_server(), base: plex.Base { uri: "", token: "" }, hubs: [], sections: [], results: [], users: [], pin_for: "", pin_digits: "", error: "" };
+  save(u);
+  log.info("plex: switched to the user " + title);
+  return open_servers(u);
 }
 
 function open_servers(own s: App): App {
@@ -2256,6 +2341,15 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (a == "quality") {
     return cycle_quality(t);
   }
+  if (a == "users") {
+    return open_users(t);
+  }
+  if (a.starts_with("user:")) {
+    return pick_user(t, num(a.split_at(5).1));
+  }
+  if (a.starts_with("pinkey:")) {
+    return pin_key(t, a.split_at(7).1.to_owned());
+  }
   if (a == "signout") {
     return sign_out(t);
   }
@@ -2385,7 +2479,7 @@ pub function view(s: App): ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: s.error, servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,

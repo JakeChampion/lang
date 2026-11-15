@@ -214,6 +214,45 @@ pub function user_request(c: Client): Request {
   return get(c, PLEX_TV + "/api/v2/user");
 }
 
+// A user of the Plex Home of the account. A protected user has a PIN.
+pub struct HomeUser { uuid: string, title: string, protected: boolean, admin: boolean }
+
+pub function home_users(c: Client): Request {
+  return get(c, CLIENTS + "/api/v2/home/users");
+}
+
+pub function parse_home_users(body: string): HomeUser[] {
+  let out: HomeUser[] = [];
+  let Ok(d) = json.parse_document(body) else {
+    return out;
+  };
+  for n in elements(d, d.root(), "users") {
+    let uuid = str(d, n, "uuid");
+    if (uuid.len() > 0) {
+      out = out.append(HomeUser { uuid: uuid, title: str(d, n, "title"), protected: flag(d, n, "protected"), admin: flag(d, n, "admin") });
+    }
+  }
+  return out;
+}
+
+// Switches the account to Home user `uuid`, with `pin` when the user has
+// one. The reply holds the token of that user.
+pub function switch_user(c: Client, uuid: string, pin: string): Request {
+  let u = CLIENTS + "/api/v2/home/users/" + url.encode(uuid) + "/switch";
+  if (pin.len() > 0) {
+    u = u + "?" + url.query_encode([("pin", pin)]);
+  }
+  return post(c, u);
+}
+
+// The token in the reply of a switch, or "".
+pub function parse_switch(body: string): string {
+  let Ok(d) = json.parse_document(body) else {
+    return "";
+  };
+  return str(d, d.root(), "authToken");
+}
+
 pub function parse_account(body: string): Account {
   let Ok(d) = json.parse_document(body) else {
     return Account { name: "", email: "" };
