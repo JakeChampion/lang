@@ -24261,7 +24261,7 @@ function lu_copy_tag(call: ast.Expr, name: string): string {
 // A local that is not admitted can be a read out of a borrowed structure.
 // Its key carries "^", and only a type that cannot hold a handle moves.
 function lu_loose_tag(fx: LuFn, site: LuSite, name: string): string {
-  if (lu_admitted(fx, name) || lu_elem_fresh(fx, site, name)) {
+  if (lu_admitted(fx, name) || lu_elem_fresh(fx, site, name) || lu_unpacked_elem(fx, site, name)) {
     return "";
   }
   return "^";
@@ -24277,7 +24277,7 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   }
   let fresh_local = lu_is_local(fx, q.name) && lu_decl_count(fx, q.name) == 1 && (lu_fresh_init(fx, q.name) || lu_unpack_init(fx, q.name) || lu_owned_alias(fx, q.name));
   let bound = !util.has_str(fx.params, q.name) && lu_decl_count(fx, q.name) == 0 && util.has_str(site.binders, q.name);
-  if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name)) {
+  if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name) && !lu_unpacked_elem(fx, site, q.name)) {
     return false;
   }
   if (astwalk.count_ident_expr(call, q.name) - lu_other_field_reads(call, q.name, fa.field) != 1) {
@@ -24404,6 +24404,23 @@ function lu_scrutinee_owned(fx: LuFn, e: ast.Expr): boolean {
     return lu_own_param(fx, id.name) && lu_decl_count(fx, id.name) == 0;
   }
   return lu_iter_owned(fx, e);
+}
+
+// A field that a destructure takes from a fresh for-each binding at its
+// last use, declared once in the loop body: it is fresh on each round.
+function lu_unpacked_elem(fx: LuFn, site: LuSite, name: string): boolean {
+  if (lu_decl_count(fx, name) != 1 || !lu_only_fresh_assigns(fx, name, [])) {
+    return false;
+  }
+  for u in fx.facts.unpacked {
+    if (u.name == name) {
+      let ast.ExprIdent(src) = u.init else {
+        return false;
+      };
+      return lu_elem_fresh(fx, site, src.name) && lu_is_last(fx, src) && !util.has_str(fx.facts.captured, src.name);
+    }
+  }
+  return false;
 }
 
 function lu_elem_fresh(fx: LuFn, site: LuSite, name: string): boolean {
