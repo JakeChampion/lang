@@ -534,7 +534,9 @@ pointer that flows through the program points past the header.
   are one more than the index of its shape in the declarations of the
   program (`asmcore.shape_tag`), so a `match` compares the tag with a
   constant. An array has zero in that half, and `__fn___fern_box_dec` reads
-  it to tell a box from an array. A build with the sanitizer, the
+  it to tell a box from an array. In a build that counts no allocation, a
+  box of 1 to 255 words has a block of n + 1 words, which the two routines
+  take from and give to its free list directly. A build with the sanitizer, the
   quarantine, `-harden` or an allocation profile gives each box the header
   of an array and keeps the tag in the same half. A program can have 32,766
   shapes, and a record can have 65,535 fields. On wasm32 a record keeps its
