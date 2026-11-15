@@ -1,0 +1,30 @@
+// A destructure of a for-each binding of an owned array takes each field
+// as a fresh local, so a field can go to an own receiver or parameter.
+struct Handle { fd: i32, name: string }
+function (own h: Handle) close(): i32 { return h.fd; }
+function take(own h: Handle): i32 { return h.fd * 10; }
+struct Pair { k: i32, h: Handle }
+function by_receiver(own ps: Pair[]): i32 {
+  let t = 0;
+  for p in ps {
+    let Pair { k, h } = p;
+    t += k + h.close();
+  }
+  return t;
+}
+function by_argument(own ps: Pair[]): i32 {
+  let t = 0;
+  for p in ps {
+    let Pair { k, h } = p;
+    let x = take(h);
+    t += k + x;
+  }
+  return t;
+}
+function pairs(): Pair[] {
+  return [Pair { k: 1, h: Handle { fd: 2, name: "a" } }, Pair { k: 3, h: Handle { fd: 4, name: "b" } }];
+}
+function main(): i32 {
+  print(by_receiver(pairs()).to_string() + " " + by_argument(pairs()).to_string());
+  return 0;
+}

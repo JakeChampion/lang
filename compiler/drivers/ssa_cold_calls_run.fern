@@ -59,6 +59,15 @@ function unused_result(): ssa.SFunc {
   return ssa.SFunc { name: "unused_result", nparams: 0, nvals: 3, blocks: [b], entry: 0, takes_env: false };
 }
 
+// v0 lives across the block of a box, a helper release and a count release.
+function boxes(): ssa.SFunc {
+  let release = ssa.SInst { ...inst(11, 2, [1], "__sem_release_T"), imm: 7 };
+  let plain = inst(11, 3, [1], "__sem_release_T");
+  let insts: ssa.SInst[] = [inst(1, 0, [], ""), ssa.SInst { ...inst(48, 1, [], "box"), imm: 1 }, release, plain, inst(11, 4, [1], "__fern_rc_dec"), inst(48, 5, [], ""), inst(9, 6, [0, 0], "add")];
+  let b = ssa.SBlock { id: 0, insts: insts, term: ret(6), preds: [] };
+  return ssa.SFunc { name: "boxes", nparams: 0, nvals: 7, blocks: [b], entry: 0, takes_env: false };
+}
+
 function check(ok: boolean, what: string, failures: i32): i32 {
   if (ok) {
     return failures;
@@ -72,12 +81,12 @@ function main(): i32 {
   let failures = 0;
   let cold = ssa.cold_blocks(f);
   failures = check(!cold[0] && !cold[1] && !cold[2] && cold[3] && !cold[4] && !cold[5], "cold_blocks", failures);
-  let kinds = ssa.cold_positions(f, false, true);
+  let kinds = ssa.cold_positions(f, false, true, false);
   failures = check(kinds[7] == ssa.COLD_BRANCH, "a call some iterations skip is COLD_BRANCH", failures);
   failures = check(kinds[9] == ssa.COLD_NONE, "a call every iteration makes is a call", failures);
   failures = check(kinds[10] == ssa.COLD_SLOW, "a push is COLD_SLOW", failures);
   failures = check(kinds[11] == ssa.COLD_INLINE, "an inline rc primitive is COLD_INLINE", failures);
-  let sized = ssa.cold_positions(f, true, false);
+  let sized = ssa.cold_positions(f, true, false, false);
   failures = check(sized[11] == ssa.COLD_NONE, "a size-mode rc helper remains a call", failures);
   let inside = ssafixed.with_clobbers(ssafixed.none(), 0, 1, [0, 1, 0, 0]);
   let plain = ssafixed.table(0, 1, [0, 1, 0, 0]);
@@ -89,15 +98,15 @@ function main(): i32 {
   failures = check(!ssafixed.allows(both, 1, 0, 2) && ssafixed.allows(both, 1, 1, 3), "a joined table keeps its clobbers", failures);
   let ab = aborting("__fern_oob_abort");
   let ret = aborting("every");
-  let aborts = ssa.regalloc_linear_fixed(ab, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ab, false, true), []);
-  let returns = ssa.regalloc_linear_fixed(ret, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ret, false, true), []);
+  let aborts = ssa.regalloc_linear_fixed(ab, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ab, false, true, false), []);
+  let returns = ssa.regalloc_linear_fixed(ret, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ret, false, true, false), []);
   failures = check(aborts.reg_of[1] >= 0, "an abort leaves the hot phi a register", failures);
   failures = check(returns.reg_of[1] < 0, "a call that returns spills the hot phi", failures);
   failures = check(!ssa.calls(inst(11, 7, [], "__fern_oob_abort")), "an abort is not a call", failures);
   let g = cold_only();
-  let kept = ssa.regalloc_linear_fixed(g, 2, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, false, true), []);
+  let kept = ssa.regalloc_linear_fixed(g, 2, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, false, true, false), []);
   let spilled = ssa.regalloc_linear_fixed(g, 2, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
-  let sized_alloc = ssa.regalloc_linear_fixed(g, 2, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, true, false), []);
+  let sized_alloc = ssa.regalloc_linear_fixed(g, 2, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, true, false, false), []);
   failures = check(sized_alloc.reg_of[1] < 0, "a size-mode rc call spills the hot phi", failures);
   failures = check(kept.reg_of[1] >= 0, "cold calls leave the hot phi a register", failures);
   failures = check(spilled.reg_of[1] < 0, "calls spill the hot phi", failures);
@@ -114,6 +123,22 @@ function main(): i32 {
   let homes = ssa.regalloc_linear(unused, 1, 1, 0, false, [], [], [], 0, 0);
   failures = check(homes.reg_of[1] == -1 && homes.hi[1] < 0, "an unused call result needs no register or spill slot", failures);
   failures = check(homes.reg_of[0] >= 1 && homes.reg_of[2] >= 0, "the live input and returned result retain their homes", failures);
+  let bx = boxes();
+  let light = ssa.cold_positions(bx, false, false, true);
+  let heavy = ssa.cold_positions(bx, false, false, false);
+  failures = check(light[1] == ssa.COLD_LIGHT && heavy[1] == ssa.COLD_NONE, "the block of a box is a light call where the box routines are light", failures);
+  failures = check(light[5] == ssa.COLD_NONE, "the block of an array is a call", failures);
+  failures = check(heavy[2] == ssa.COLD_BRANCH && heavy[4] == ssa.COLD_BRANCH, "a marked helper release and a count release save what they change", failures);
+  failures = check(heavy[3] == ssa.COLD_NONE, "an unmarked helper release is a call", failures);
+  let small = ssa.cold_positions(bx, true, false, true);
+  failures = check(small[1] == ssa.COLD_LIGHT && small[2] == ssa.COLD_NONE && small[4] == ssa.COLD_NONE, "a size build keeps each release a call", failures);
+  let one_box = ssa.SFunc { ...bx, blocks: [ssa.SBlock { ...bx.blocks[0], insts: [bx.blocks[0].insts[0], bx.blocks[0].insts[1], bx.blocks[0].insts[6]] }] };
+  let kinds_box = ssa.cold_positions(one_box, false, false, true);
+  let around = ssafixed.with_clobbers(ssafixed.none(), 0, 3, [0, 1, 0, 0]);
+  let kept_reg = ssa.regalloc_linear_fixed(one_box, 3, 0, -1, false, [], [], [], 0, 0, around, kinds_box, ssalive.lives(one_box, ssa.hard_call_positions(one_box, kinds_box)).crossing);
+  let as_call = ssa.regalloc_linear_fixed(one_box, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
+  failures = check(kept_reg.reg_of[0] >= 1, "a value across a light call keeps a register it does not change", failures);
+  failures = check(as_call.reg_of[0] < 0, "a value across a call spills", failures);
   print("failures=" + util.i32_to_string(failures));
   return failures;
 }

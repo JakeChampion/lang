@@ -1,0 +1,49 @@
+// A task waits for bytes on a connection, with a deadline of 20 seconds. The
+// parent closes the connection, and a new connection gets its descriptor
+// number and stays silent. The wait of the task ends at once with an error.
+// It does not last to the deadline.
+//
+// A pair with a plain interest holds no close count and is not examined. A
+// pair from `async.counted` is stale after the close.
+
+import "std/async";
+import "std/net";
+import "std/time";
+
+function waited(s: Socket): string {
+  return match (net.read_deadline(s, 16, time.duration_millis(20000i64))) {
+    Ok(_) => "read",
+    Err(_) => "refused",
+  };
+}
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: Socket = tcp_listen_with(lo, 0, 16, false);
+  let port = tcp_local_port(ls);
+  let first: Socket = tcp_connect_with(lo, port, false);
+  let peer: Socket = tcp_accept(ls);
+  let fd = first.fd;
+  let pairs = [fd, 1, fd, async.counted(fd, 1)];
+  print("open: stale pair " + async.stale(pairs).to_string());
+  let fut = async.spawn((): string => waited(first));
+  unsafe {
+    __tcp_close_unchecked(first);
+  }
+  let second: Socket = tcp_connect_with(lo, port, false);
+  let other: Socket = tcp_accept(ls);
+  print("same number " + (second.fd == fd).to_string() + ": stale pair " + async.stale(pairs).to_string());
+  let start = monotonic_ns();
+  match (async.block_on(fut)) {
+    Some(r) => {
+      print("the task was " + r);
+    },
+    None => {
+      print("the task was cancelled");
+    }
+  }
+  print("before the deadline " + (monotonic_ns() - start < 5000000000i64).to_string());
+  let closed: i32 = tcp_close(second) + tcp_close(other) + tcp_close(peer) + tcp_close(ls);
+  print("closed " + closed.to_string());
+  return 0;
+}

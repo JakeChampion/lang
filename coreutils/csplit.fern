@@ -990,7 +990,7 @@ pub function main(): i32 {
   let settings = Settings { prefix: prefix, fmt: fmt, keep: keep, elide: elide, suppress: suppress, quiet: quiet };
 
   let so = gnu.out_new();
-  let st = St { r: r0, buf: empty_bytes(), wpos: 0, soff: 0, wline: 1 as i64, sline: 1 as i64, eof: false, back: max_back(pats), out: so, open: false, name: "", written: 0 as i64, created: 0, so: so, s: settings };
+  let st = St { r: r0, buf: empty_bytes(), wpos: 0, soff: 0, wline: 1 as i64, sline: 1 as i64, eof: false, back: max_back(pats), out: io_buffered.buf_writer_new(stdout(), 0), open: false, name: "", written: 0 as i64, created: 0, so: so, s: settings };
 
   let i = 0;
   while (i < pats.len()) {

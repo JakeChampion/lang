@@ -3,6 +3,7 @@ package interp
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -152,7 +153,7 @@ func laneWindow(name string, arr Value, idx Value, lanes int) (Array, int, error
 	}
 	i := int(n)
 	if i < 0 || i+lanes > len(a.Elems()) {
-		return Array{}, 0, fmt.Errorf("%s: lanes %d to %d are out of bounds for length %d", name, i, i+lanes-1, len(a.Elems()))
+		return Array{}, 0, indexAbort(CauseArrOOB, strconv.Itoa(i), len(a.Elems()))
 	}
 	return a, i, nil
 }

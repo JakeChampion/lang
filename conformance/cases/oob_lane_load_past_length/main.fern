@@ -1,0 +1,21 @@
+// spec: AB-15
+// A lane load reads 16 bytes. The load at the last index that holds 16 bytes
+// gives them, and the load one index later aborts.
+
+import "std/i32";
+import "std/simd";
+
+@noinline
+function first_and_last(bs: u8[], at: i32): i32 {
+    let o: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let p: u8[] = simd.with_u8x16(o, 0, simd.load_u8x16(bs, at));
+    return (p[0] as i32) * 100 + (p[15] as i32);
+}
+
+function main(): i32 {
+    let bs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+    print(first_and_last(bs, 0).to_string());
+    print(first_and_last(bs, 1).to_string());
+    print(first_and_last(bs, 2).to_string());
+    return 0;
+}

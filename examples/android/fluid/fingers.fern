@@ -1,0 +1,231 @@
+// The fingers on the fluid. Each finger has its own path and its own
+// colour, so more than one finger pushes the fluid at the same time. A
+// mouse that moves with no button down is a finger also.
+//
+// Each frame takes, for each finger, the place of the finger at one time
+// before the frame. The move from the place of the frame before it is the
+// push of the fluid, so a finger with a constant speed pushes by the same
+// amount in each frame. The display shows a frame some time after the frame
+// starts. So the push goes where the finger is at that later time: its
+// newest place, and its move from that place to the time of the display.
+// The dye is then below the finger, not behind it.
+//
+// It makes no Android call, so the host tests it.
+import "std/f64";
+import "std/i64";
+import "./color";
+import "./config";
+import "./trail";
+
+// A finger. `id` is the number that Android gives the pointer, or HOVER.
+// `x` and `y` are the place that the last frame took, from 0 to 1 with y
+// up, and `at_ns` is the time of that place. `down` tells that the finger
+// is on the screen, and `moved` tells that its path has a place that no
+// frame reached yet. `waited_ns` is the longest time that the newest place
+// was old at a frame, since that place came.
+pub struct Finger { id: i32, down: boolean, moved: boolean, x: f64, y: f64, at_ns: i64, waited_ns: i64, color: config.Rgb, path: trail.Trail }
+
+// The id of the mouse that moves with no button down.
+pub const HOVER: i32 = -2;
+
+// A frame takes the place of a finger at a time before the frame, so that
+// the path has a place after that time, and the frame does not wait for a
+// place. The time before the frame is the lag and this margin.
+pub const MARGIN_NS: i64 = 1000000i64;
+
+// The lag before the app measured it.
+pub const FIRST_LAG_NS: i64 = 6000000i64;
+
+// Two places that are at most this time apart are of a finger that moves
+// all the time. A longer time is a finger that stopped.
+const STEADY_NS: i64 = 25000000i64;
+
+// The lag is the longest wait of the last two parts of this time.
+const PART_NS: i64 = 250000000i64;
+
+// A lag that is longer than the fingers need, by more than SLACK_NS, gets
+// shorter by this part of the time of each frame, so that a frame takes
+// almost the same move as the frame before it. A lag that is near the need
+// does not change, so each frame of a steady finger takes the same move.
+const EASE: f64 = 0.02;
+
+const SLACK_NS: i64 = 2000000i64;
+
+// The longest time after its newest place that the app tells the place of
+// a finger for.
+pub const MOST_AHEAD_NS: i64 = 60000000i64;
+
+// `lag_ns` is the longest time that the newest place of a finger was old
+// at a frame, while the finger moved. `recent_ns` is the longest such time
+// since `turned_ns`, and `before_ns` is that of the part before it. `grew`
+// tells that the lag got longer since the last frame.
+pub struct Fingers { all: Finger[], lag_ns: i64, recent_ns: i64, before_ns: i64, turned_ns: i64, grew: boolean }
+
+pub function none(): Fingers {
+  return Fingers { all: [], lag_ns: FIRST_LAG_NS, recent_ns: 0i64, before_ns: 0i64, turned_ns: 0i64, grew: false };
+}
+
+// The push of one finger in one frame: the place of the push, and the move
+// of the finger since the frame before it, each from 0 to 1 with y up.
+pub struct Push { x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
+
+pub function (f: Fingers) has(id: i32): boolean {
+  for one in f.all {
+    if (one.id == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A finger has a place that no frame reached yet.
+pub function (f: Fingers) pending(): boolean {
+  for one in f.all {
+    if (one.moved) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The fingers without the finger `id`.
+pub function (f: Fingers) without(id: i32): Fingers {
+  let all: Finger[] = [];
+  for one in f.all {
+    if (one.id != id) {
+      all = all.append(one);
+    }
+  }
+  return Fingers { ...f, all: all };
+}
+
+// The fingers with the finger `id` down at x and y at the time `ns`, in
+// the colour `c`. A finger with that id that was there starts again.
+pub function (f: Fingers) down(id: i32, x: f64, y: f64, ns: i64, c: config.Rgb): Fingers {
+  let rest = f.without(id);
+  return Fingers { ...rest, all: rest.all.append(Finger { id: id, down: true, moved: false, x: x, y: y, at_ns: ns, waited_ns: 0i64, color: c, path: trail.start(trail.Sample { ns: ns, x: x, y: y }) }) };
+}
+
+// The fingers with one more place of the finger `id`.
+pub function (f: Fingers) moved(id: i32, x: f64, y: f64, ns: i64): Fingers {
+  let all: Finger[] = [];
+  let lag = f.lag_ns;
+  let recent = f.recent_ns;
+  let grew = f.grew;
+  for one in f.all {
+    if (one.id == id && one.down) {
+      // The finger moved all the time since its last place. So the frames
+      // since then waited for this place.
+      if (ns - one.path.end_ns() <= STEADY_NS) {
+        recent = recent.max(one.waited_ns);
+        if (one.waited_ns > lag) {
+          lag = one.waited_ns;
+          grew = true;
+        }
+      }
+      all = all.append(Finger { ...one, moved: true, waited_ns: 0i64, path: one.path.add(trail.Sample { ns: ns, x: x, y: y }) });
+    } else {
+      all = all.append(one);
+    }
+  }
+  return Fingers { all: all, lag_ns: lag, recent_ns: recent, before_ns: f.before_ns, turned_ns: f.turned_ns, grew: grew };
+}
+
+// The fingers with the finger `id` off the screen. The frames that follow
+// take the rest of its path.
+pub function (f: Fingers) up(id: i32): Fingers {
+  let all: Finger[] = [];
+  for one in f.all {
+    if (one.id == id) {
+      all = all.append(Finger { ...one, down: false });
+    } else {
+      all = all.append(one);
+    }
+  }
+  return Fingers { ...f, all: all };
+}
+
+// The fingers with each finger off the screen.
+pub function (f: Fingers) all_up(): Fingers {
+  let all: Finger[] = [];
+  for one in f.all {
+    all = all.append(Finger { ...one, down: false });
+  }
+  return Fingers { ...f, all: all };
+}
+
+// The fingers with a new colour for each one, and the next state of the
+// generator `rng`.
+pub function (f: Fingers) recolored(rng: i64): (Fingers, i64) {
+  let all: Finger[] = [];
+  let state = rng;
+  for one in f.all {
+    let (next, c) = color.generate(state);
+    state = next;
+    all = all.append(Finger { ...one, color: c });
+  }
+  return (Fingers { ...f, all: all }, state);
+}
+
+// The fingers after the frame at `now_ns`, and the push of each finger
+// that moved. `dt` is the seconds since the frame before it. The display
+// shows the frame `ahead_ns` after `now_ns`. `prediction` is the part of
+// the way, from the place that the frame took to the place of the finger
+// at that time, that the push goes: 0 for none, 1 for all of it. The
+// boolean tells that the lag got longer since the frame before it.
+pub function (f: Fingers) frame(now_ns: i64, dt: f64, ahead_ns: i64, prediction: f64): (Fingers, Push[], boolean) {
+  let recent = f.recent_ns;
+  let before = f.before_ns;
+  let turned = f.turned_ns;
+  if (now_ns - turned >= PART_NS) {
+    before = recent;
+    recent = 0i64;
+    turned = now_ns;
+  }
+  // A lag that no finger needed for some time gets shorter. It stays when
+  // no finger moved in that time.
+  let lag = f.lag_ns;
+  let need = recent.max(before);
+  if (need > 0i64 && lag > need + SLACK_NS) {
+    lag = (need + SLACK_NS / 2i64).max(lag - (dt * EASE * 1.0e9) as i64);
+  }
+  let all: Finger[] = [];
+  let pushes: Push[] = [];
+  for one in f.all {
+    let waited = one.waited_ns;
+    if (one.down) {
+      waited = waited.max(now_ns - one.path.end_ns());
+    }
+    if (one.moved) {
+      // A finger that went up has no more places, so the frame takes the
+      // end of its path. A lag that got longer does not take the finger
+      // back.
+      let at = (now_ns - lag - MARGIN_NS).max(one.at_ns);
+      if (!one.down) {
+        at = one.path.end_ns();
+      }
+      let end = one.path.end_ns();
+      let to = one.path.at(at.min(end));
+      if (to.x != one.x || to.y != one.y) {
+        let px = to.x;
+        let py = to.y;
+        if (one.down && prediction > 0.0) {
+          // The newest place of the finger, and its move from that place
+          // to the time of the display.
+          let newest = one.path.at(end);
+          let (ax, ay) = one.path.ahead((now_ns + ahead_ns - end).min(MOST_AHEAD_NS).max(0i64) as f64 / 1.0e9);
+          px = (to.x + (newest.x + ax - to.x) * prediction).clamp01();
+          py = (to.y + (newest.y + ay - to.y) * prediction).clamp01();
+        }
+        pushes = pushes.append(Push { x: px, y: py, dx: to.x - one.x, dy: to.y - one.y, color: one.color });
+      }
+      let rest = Finger { ...one, x: to.x, y: to.y, at_ns: to.ns, waited_ns: waited, moved: to.ns < end, path: one.path.since(to.ns) };
+      if (rest.down || rest.moved) {
+        all = all.append(rest);
+      }
+    } else if (one.down) {
+      all = all.append(Finger { ...one, waited_ns: waited });
+    }
+  }
+  return (Fingers { all: all, lag_ns: lag, recent_ns: recent, before_ns: before, turned_ns: turned, grew: false }, pushes, f.grew);
+}

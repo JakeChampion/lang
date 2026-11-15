@@ -54,6 +54,10 @@ pub function get(c: Client, u: string): Request {
   return Request { method: "GET", url: u, headers: headers(c), body: "" };
 }
 
+pub function put(c: Client, u: string): Request {
+  return Request { method: "PUT", url: u, headers: headers(c), body: "" };
+}
+
 pub function post(c: Client, u: string): Request {
   return Request { method: "POST", url: u, headers: headers(c), body: "" };
 }
@@ -210,6 +214,45 @@ pub function user_request(c: Client): Request {
   return get(c, PLEX_TV + "/api/v2/user");
 }
 
+// A user of the Plex Home of the account. A protected user has a PIN.
+pub struct HomeUser { uuid: string, title: string, protected: boolean, admin: boolean }
+
+pub function home_users(c: Client): Request {
+  return get(c, CLIENTS + "/api/v2/home/users");
+}
+
+pub function parse_home_users(body: string): HomeUser[] {
+  let out: HomeUser[] = [];
+  let Ok(d) = json.parse_document(body) else {
+    return out;
+  };
+  for n in elements(d, d.root(), "users") {
+    let uuid = str(d, n, "uuid");
+    if (uuid.len() > 0) {
+      out = out.append(HomeUser { uuid: uuid, title: str(d, n, "title"), protected: flag(d, n, "protected"), admin: flag(d, n, "admin") });
+    }
+  }
+  return out;
+}
+
+// Switches the account to Home user `uuid`, with `pin` when the user has
+// one. The reply holds the token of that user.
+pub function switch_user(c: Client, uuid: string, pin: string): Request {
+  let u = CLIENTS + "/api/v2/home/users/" + url.encode(uuid) + "/switch";
+  if (pin.len() > 0) {
+    u = u + "?" + url.query_encode([("pin", pin)]);
+  }
+  return post(c, u);
+}
+
+// The token in the reply of a switch, or "".
+pub function parse_switch(body: string): string {
+  let Ok(d) = json.parse_document(body) else {
+    return "";
+  };
+  return str(d, d.root(), "authToken");
+}
+
 pub function parse_account(body: string): Account {
   let Ok(d) = json.parse_document(body) else {
     return Account { name: "", email: "" };
@@ -227,7 +270,9 @@ pub function parse_account(body: string): Account {
 
 // --- plex.tv: the servers of the account
 
-pub struct Connection { uri: string, local: boolean, relay: boolean }
+// A connection of a server. `address` and `port` are the IP address and
+// the port that `uri` names, and `protocol` is "https" or "http".
+pub struct Connection { uri: string, local: boolean, relay: boolean, address: string, port: i32, protocol: string, ipv6: boolean }
 
 pub struct Server { name: string, id: string, token: string, owned: boolean, connections: Connection[] }
 
@@ -253,37 +298,133 @@ function server_of(d: json.Document, n: i32): Server {
   for c in elements(d, n, "connections") {
     let uri = str(d, c, "uri");
     if (uri.len() > 0) {
-      conns = conns.append(Connection { uri: uri, local: flag(d, c, "local"), relay: flag(d, c, "relay") });
+      conns = conns.append(Connection { uri: uri, local: flag(d, c, "local"), relay: flag(d, c, "relay"), address: str(d, c, "address"), port: int(d, c, "port") as i32, protocol: str(d, c, "protocol"), ipv6: flag(d, c, "IPv6") });
     }
   }
   return Server { name: str(d, n, "name"), id: str(d, n, "clientIdentifier"), token: str(d, n, "accessToken"), owned: flag(d, n, "owned"), connections: conns };
 }
 
-// The addresses of a server in the order to try them: local, then remote,
-// then the relay of plex.tv, which is slow and limited.
+// The addresses of a server in the order to try them: local, then the
+// plain HTTP address of each local one on a private network, then remote,
+// then the relay of plex.tv, which is slow and limited. IPv4 comes before
+// IPv6 in each group.
+//
+// The HTTP address needs no name lookup. A resolver can refuse a
+// plex.direct name with a private address, as a VPN such as Tailscale can.
+// Plezy does the same, and only for a private address, because each
+// request carries the token.
 pub function connection_order(s: Server): string[] {
   let out: string[] = [];
-  for c in s.connections {
-    if (c.local && !c.relay) {
-      out = out.append(c.uri);
+  for v6 in [false, true] {
+    for c in s.connections {
+      if (c.local && !c.relay && c.ipv6 == v6) {
+        out = add_new(out, c.uri);
+      }
     }
   }
-  for c in s.connections {
-    if (!c.local && !c.relay) {
-      out = out.append(c.uri);
+  for v6 in [false, true] {
+    for c in s.connections {
+      if (c.ipv6 == v6) {
+        out = add_new(out, http_fallback(c));
+      }
+    }
+  }
+  for v6 in [false, true] {
+    for c in s.connections {
+      if (!c.local && !c.relay && c.ipv6 == v6) {
+        out = add_new(out, c.uri);
+      }
     }
   }
   for c in s.connections {
     if (c.relay) {
-      out = out.append(c.uri);
+      out = add_new(out, c.uri);
     }
   }
   return out;
 }
 
+function add_new(own out: string[], uri: string): string[] {
+  if (uri.len() == 0) {
+    return out;
+  }
+  for u in out {
+    if (u == uri) {
+      return out;
+    }
+  }
+  return out.append(uri);
+}
+
+// The plain HTTP address of a local HTTPS connection on a private network,
+// as "http://address:port", or "".
+pub function http_fallback(c: Connection): string {
+  if (!c.local || c.relay || c.protocol != "https" || c.port <= 0 || !private_host(c.address)) {
+    return "";
+  }
+  if (!c.uri.contains(".plex.direct") && !ip_literal(c.address)) {
+    return "";
+  }
+  let host = c.address;
+  if (host.contains(":") && !host.starts_with("[")) {
+    host = "[" + host + "]";
+  }
+  return "http://" + host + ":" + c.port.to_string();
+}
+
+// The four numbers of an IPv4 address, or None.
+function ipv4_parts(host: string): Option[i32[]] {
+  let parts = host.split(".");
+  if (parts.len() != 4) {
+    return None;
+  }
+  let out: i32[] = [];
+  for p in parts {
+    if (p.len() == 0 || p.len() > 3 || digits(p) > 255i64) {
+      return None;
+    }
+    for b in p.bytes() {
+      if (b < 48u8 || b > 57u8) {
+        return None;
+      }
+    }
+    out = out.append(digits(p) as i32);
+  }
+  return Some(out);
+}
+
+function ip_literal(host: string): boolean {
+  if let Some(_) = ipv4_parts(host) {
+    return true;
+  }
+  return host.contains(":");
+}
+
+// Whether `host` is on a private network: an IPv4 address of 10/8,
+// 172.16/12, 192.168/16, 100.64/10 (the carrier-grade NAT range that
+// Tailscale uses), 127/8 or 169.254/16, a unique local IPv6 address
+// (fc00::/7), or a name of a local network such as "nas.local" or a
+// Tailscale name "nas.tail1234.ts.net".
+pub function private_host(host: string): boolean {
+  if let Some(a) = ipv4_parts(host) {
+    return a[0] == 10 || a[0] == 127 || a[0] == 172 && a[1] >= 16 && a[1] <= 31 || a[0] == 192 && a[1] == 168 || a[0] == 100 && a[1] >= 64 && a[1] <= 127 || a[0] == 169 && a[1] == 254;
+  }
+  let h = host.to_ascii_lower();
+  if (h.starts_with("[") && h.ends_with("]")) {
+    h = h.split_at(h.len() - 1).0.split_at(1).1;
+  }
+  if (h.contains(":")) {
+    return h.starts_with("fc") || h.starts_with("fd") || h == "::1";
+  }
+  if (h == "localhost" || h.len() > 0 && !h.contains(".")) {
+    return true;
+  }
+  return h.ends_with(".local") || h.ends_with(".lan") || h.ends_with(".home.arpa") || h.ends_with(".internal") || h.ends_with(".ts.net");
+}
+
 // A server that the user typed, with a token of their own.
 pub function manual_server(uri: string, token: string): Server {
-  return Server { name: uri, id: "", token: token, owned: true, connections: [Connection { uri: trim_slash(uri), local: true, relay: false }] };
+  return Server { name: uri, id: "", token: token, owned: true, connections: [Connection { uri: trim_slash(uri), local: true, relay: false, address: "", port: 0, protocol: "", ipv6: false }] };
 }
 
 function trim_slash(s: string): string {
@@ -306,10 +447,68 @@ pub function sections(c: Client, b: Base): Request {
   return get(c.with_token(b.token), b.uri + "/library/sections");
 }
 
-// The first `size` items of library `key` from `start`, in `sort` order.
-pub function section_items(c: Client, b: Base, key: string, start: i32, size: i32, sort: string): Request {
-  let q = url.query_encode([("X-Plex-Container-Start", start.to_string()), ("X-Plex-Container-Size", size.to_string()), ("sort", sort), ("includeGuids", "0")]);
+// An order of a library: the word on its chip and the `sort` value of the
+// server.
+pub struct Sort { name: string, param: string }
+
+pub function sorts(): Sort[] {
+  return [Sort { name: "TITLE", param: "titleSort" }, Sort { name: "YEAR", param: "year:desc" }, Sort { name: "ADDED", param: "addedAt:desc" }, Sort { name: "RATING", param: "rating:desc" }];
+}
+
+// The `size` items of library `key` from `start`, in `sort` order, and only
+// those not watched when `unwatched` is true.
+pub function section_items(c: Client, b: Base, key: string, start: i32, size: i32, sort: string, unwatched: boolean): Request {
+  let q = url.query_encode(unwatched_filter([("X-Plex-Container-Start", start.to_string()), ("X-Plex-Container-Size", size.to_string()), ("sort", sort), ("includeGuids", "0")], unwatched));
   return get(c.with_token(b.token), b.uri + "/library/sections/" + key + "/all?" + q);
+}
+
+function unwatched_filter(own q: (string, string)[], unwatched: boolean): (string, string)[] {
+  if (unwatched) {
+    return q.append(("unwatched", "1"));
+  }
+  return q;
+}
+
+// The first letters of the titles of library `key`, in the order of the
+// title sort, with the number of items of each.
+pub function first_letters(c: Client, b: Base, key: string, unwatched: boolean): Request {
+  let q = url.query_encode(unwatched_filter([], unwatched));
+  let path = b.uri + "/library/sections/" + key + "/firstCharacter";
+  if (q.len() > 0) {
+    path = path + "?" + q;
+  }
+  return get(c.with_token(b.token), path);
+}
+
+// A first letter of the titles of a library, such as "A" or "#", and the
+// number of items whose title starts with it.
+pub struct Letter { key: string, size: i32 }
+
+pub function parse_letters(body: string): Letter[] {
+  let out: Letter[] = [];
+  let Ok(d) = json.parse_document(body) else {
+    return out;
+  };
+  for n in elements(d, container(d), "Directory") {
+    let key = str(d, n, "title");
+    if (key.len() == 0) {
+      key = str(d, n, "key");
+    }
+    let size = int(d, n, "size") as i32;
+    if (key.len() > 0 && size > 0) {
+      out = out.append(Letter { key: key, size: size });
+    }
+  }
+  return out;
+}
+
+// The index in the title sort of the first item of letter `i`.
+pub function letter_offset(letters: Letter[], i: i32): i32 {
+  let at = 0;
+  for k in 0..i.min(letters.len()) {
+    at += letters[k].size;
+  }
+  return at;
 }
 
 pub function hubs(c: Client, b: Base): Request {
@@ -317,7 +516,7 @@ pub function hubs(c: Client, b: Base): Request {
 }
 
 pub function metadata(c: Client, b: Base, key: string): Request {
-  return get(c.with_token(b.token), b.uri + "/library/metadata/" + key);
+  return get(c.with_token(b.token), b.uri + "/library/metadata/" + key + "?includeMarkers=1");
 }
 
 pub function children(c: Client, b: Base, key: string): Request {
@@ -381,7 +580,14 @@ pub function parse_sections(body: string): Section[] {
 }
 
 // The file of a version of an item. `key` is its address on the server.
-pub struct Part { key: string, container: string, size: i64 }
+// A sound or subtitle track of a file. `kind` is 2 for sound and 3 for
+// subtitles. `selected` is true for the track that the server remembers,
+// and `external` is true for a subtitle file beside the video.
+pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean }
+
+// A file of a version of an item. `indexes` is "sd" when the server holds
+// preview thumbnails of it.
+pub struct Part { id: string, key: string, container: string, size: i64, indexes: string, tracks: Track[] }
 
 pub struct Media { container: string, video: string, audio: string, resolution: string, bitrate: i32, width: i32, height: i32, parts: Part[] }
 
@@ -393,6 +599,8 @@ pub struct Item {
   title: string,
   parent: string,
   grandparent: string,
+  // The key of the show of an episode, or "".
+  grandparent_key: string,
   year: i32,
   index: i32,
   parent_index: i32,
@@ -412,10 +620,24 @@ pub struct Item {
   studio: string,
   genres: string[],
   media: Media[],
+  markers: Marker[],
+}
+
+// A part of a video that a viewer can skip: "intro" or "credits", from
+// `start_ms` up to `end_ms`.
+pub struct Marker { kind: string, start_ms: i64, end_ms: i64 }
+
+// The item as the server sees it after it is marked watched, or not
+// watched when `seen` is false.
+pub function marked(it: Item, seen: boolean): Item {
+  if (seen) {
+    return Item { ...it, views: 1, offset_ms: 0i64, viewed_leaves: it.leaves };
+  }
+  return Item { ...it, views: 0, viewed_leaves: 0 };
 }
 
 pub function no_item(): Item {
-  return Item { key: "", kind: "", title: "", parent: "", grandparent: "", year: 0, index: 0, parent_index: 0, summary: "", thumb: "", art: "", parent_thumb: "", grandparent_thumb: "", duration_ms: 0i64, offset_ms: 0i64, views: 0, leaves: 0, viewed_leaves: 0, children: 0, rating: "", content_rating: "", studio: "", genres: [], media: [] };
+  return Item { key: "", kind: "", title: "", parent: "", grandparent: "", grandparent_key: "", year: 0, index: 0, parent_index: 0, summary: "", thumb: "", art: "", parent_thumb: "", grandparent_thumb: "", duration_ms: 0i64, offset_ms: 0i64, views: 0, leaves: 0, viewed_leaves: 0, children: 0, rating: "", content_rating: "", studio: "", genres: [], media: [], markers: [] };
 }
 
 function tags(d: json.Document, n: i32, key: string): string[] {
@@ -434,7 +656,7 @@ function media_of(d: json.Document, n: i32): Media[] {
   for m in elements(d, n, "Media") {
     let parts: Part[] = [];
     for p in elements(d, m, "Part") {
-      parts = parts.append(Part { key: str(d, p, "key"), container: str(d, p, "container"), size: int(d, p, "size") });
+      parts = parts.append(Part { id: int(d, p, "id").to_string(), key: str(d, p, "key"), container: str(d, p, "container"), size: int(d, p, "size"), indexes: str(d, p, "indexes"), tracks: tracks_of(d, p) });
     }
     out = out.append(Media { container: str(d, m, "container"), video: str(d, m, "videoCodec"), audio: str(d, m, "audioCodec"), resolution: str(d, m, "videoResolution"), bitrate: int(d, m, "bitrate") as i32, width: int(d, m, "width") as i32, height: int(d, m, "height") as i32, parts: parts });
   }
@@ -456,6 +678,7 @@ pub function item_of(d: json.Document, n: i32): Item {
     title: str(d, n, "title"),
     parent: str(d, n, "parentTitle"),
     grandparent: str(d, n, "grandparentTitle"),
+    grandparent_key: str(d, n, "grandparentRatingKey"),
     year: int(d, n, "year") as i32,
     index: int(d, n, "index") as i32,
     parent_index: int(d, n, "parentIndex") as i32,
@@ -475,7 +698,29 @@ pub function item_of(d: json.Document, n: i32): Item {
     studio: str(d, n, "studio"),
     genres: tags(d, n, "Genre"),
     media: media_of(d, n),
+    markers: markers_of(d, n),
   };
+}
+
+function markers_of(d: json.Document, n: i32): Marker[] {
+  let out: Marker[] = [];
+  for m in elements(d, n, "Marker") {
+    let kind = str(d, m, "type");
+    if (kind == "intro" || kind == "credits") {
+      out = out.append(Marker { kind: kind, start_ms: int(d, m, "startTimeOffset"), end_ms: int(d, m, "endTimeOffset") });
+    }
+  }
+  return out;
+}
+
+// The marker that `ms` is in, or None.
+pub function marker_at(it: Item, ms: i64): Option[Marker] {
+  for m in it.markers {
+    if (m.start_ms <= ms && ms < m.end_ms) {
+      return Some(m);
+    }
+  }
+  return None;
 }
 
 // A page of a library: the items, and the count of all its items.
@@ -749,11 +994,16 @@ function decodes(decoders: string[], codec: string): boolean {
 // Whether the phone, with the decoder types `decoders`, can play the first
 // version of the item as it is.
 pub function direct_playable(it: Item, decoders: string[]): boolean {
+  return direct_with(it, decoders, no_choice());
+}
+
+// As direct_playable, with the sound of `choice`.
+function direct_with(it: Item, decoders: string[], choice: Choice): boolean {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return false;
   }
   let m = it.media[0];
-  return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, m.audio);
+  return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, audio_codec(it, choice));
 }
 
 // The address of the file of the item, which the player reads as it is.
@@ -782,7 +1032,7 @@ pub function profile_extra(q: Quality): string {
 // segments at the seek: an offset at the start can leave the first segment
 // open with no data. `session` names the transcode. The client is Generic,
 // the one platform that the transcoder takes with no targets of its own.
-pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string): string {
+pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string, choice: Choice): string {
   let copy = "0";
   if (q.kbps == 0) {
     copy = "1";
@@ -818,6 +1068,15 @@ pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string):
     pairs = pairs.append(("videoResolution", q.resolution));
     pairs = pairs.append(("videoQuality", q.video_quality.to_string()));
   }
+  if (choice.audio.len() > 0) {
+    pairs = pairs.append(("audioStreamID", choice.audio));
+  }
+  // The server burns the subtitles that the client selected on the part.
+  let subtitles = "none";
+  if (choice.subtitle.len() > 0) {
+    subtitles = "burn";
+  }
+  pairs = pairs.append(("subtitles", subtitles));
   return b.uri + "/video/:/transcode/universal/start.m3u8?" + url.query_encode(pairs);
 }
 
@@ -830,22 +1089,221 @@ pub function stop_transcode(c: Client, b: Base, session: string): Request {
 // to when it is ready.
 pub struct Stream { url: string, transcode: boolean, offset_ms: i64 }
 
-pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[]): Stream {
-  if (q.kbps == 0 && direct_playable(it, decoders)) {
+// The phone plays the file as it is with no subtitles, at Original quality,
+// when it decodes the video and the chosen sound. Subtitles burn in a
+// transcode.
+pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[], choice: Choice): Stream {
+  if (q.kbps == 0 && choice.subtitle.len() == 0 && direct_with(it, decoders, choice)) {
     return Stream { url: direct_url(b, it, session), transcode: false, offset_ms: offset_ms };
   }
-  return transcode_for(c, b, it, q, offset_ms, session, decoders);
+  return transcode_for(c, b, it, q, offset_ms, session, decoders, choice);
 }
 
 // A transcode of the item at quality `q`. At Original quality the server
 // copies H.264 video that the phone decodes, and converts the rest.
-pub function transcode_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[]): Stream {
+pub function transcode_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[], choice: Choice): Stream {
   let chosen = q;
   if (chosen.kbps == 0 && !(it.media.len() > 0 && it.media[0].video == "h264" && decodes(decoders, "h264"))) {
     // The stream copies only H.264. Other video is encoded.
     chosen = qualities()[2];
   }
-  return Stream { url: hls_url(c, b, it, chosen, session), transcode: true, offset_ms: offset_ms };
+  return Stream { url: hls_url(c, b, it, chosen, session, choice), transcode: true, offset_ms: offset_ms };
+}
+
+// The sound and subtitle tracks of the part at `n`.
+function tracks_of(d: json.Document, n: i32): Track[] {
+  let out: Track[] = [];
+  for t in elements(d, n, "Stream") {
+    let kind = int(d, t, "streamType") as i32;
+    if (kind == 2 || kind == 3) {
+      let title = str(d, t, "displayTitle");
+      if (title.len() == 0) {
+        title = str(d, t, "language");
+      }
+      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0 });
+    }
+  }
+  return out;
+}
+
+function tracks_of_kind(it: Item, kind: i32): Track[] {
+  if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
+    return [];
+  }
+  return it.media[0].parts[0].tracks.filter((t: Track): boolean => t.kind == kind);
+}
+
+// The sound tracks of the first version of an item, in the order of the
+// file.
+pub function audio_tracks(it: Item): Track[] {
+  return tracks_of_kind(it, 2);
+}
+
+pub function subtitle_tracks(it: Item): Track[] {
+  return tracks_of_kind(it, 3);
+}
+
+// The id of the track of `ts` that the server remembers, or "".
+pub function selected_id(ts: Track[]): string {
+  for t in ts {
+    if (t.selected) {
+      return t.id;
+    }
+  }
+  return "";
+}
+
+// The sound and the subtitles that the user chose: track ids, "" for the
+// sound of the file and for no subtitles.
+pub struct Choice { audio: string, subtitle: string }
+
+pub function no_choice(): Choice {
+  return Choice { audio: "", subtitle: "" };
+}
+
+// The choice that the server remembers for an item.
+pub function remembered(it: Item): Choice {
+  return Choice { audio: selected_id(audio_tracks(it)), subtitle: selected_id(subtitle_tracks(it)) };
+}
+
+// Makes the server remember a choice for each part of the item. A
+// subtitle id of "0" turns subtitles off.
+pub function select_tracks(c: Client, b: Base, part_id: string, choice: Choice): Request {
+  let pairs: (string, string)[] = [];
+  if (choice.audio.len() > 0) {
+    pairs = pairs.append(("audioStreamID", choice.audio));
+  }
+  let sub = choice.subtitle;
+  if (sub.len() == 0) {
+    sub = "0";
+  }
+  pairs = pairs.append(("subtitleStreamID", sub)).append(("allParts", "1"));
+  return put(c.with_token(b.token), b.uri + "/library/parts/" + part_id + "?" + url.query_encode(pairs));
+}
+
+// The codec of the sound that plays with `choice`.
+function audio_codec(it: Item, choice: Choice): string {
+  for t in audio_tracks(it) {
+    if (t.id == choice.audio) {
+      return t.codec;
+    }
+  }
+  if (it.media.len() == 0) {
+    return "";
+  }
+  return it.media[0].audio;
+}
+
+// The address `u` with no X-Plex-Token in its query.
+function without_token(u: string): string {
+  let parts = u.split("?");
+  if (parts.len() < 2) {
+    return u;
+  }
+  let kept: string[] = [];
+  for pair in parts[1].split("&") {
+    if (!pair.starts_with("X-Plex-Token=")) {
+      kept = kept.append(pair);
+    }
+  }
+  return parts[0] + "?" + kept.join("&");
+}
+
+// The name of the file that keeps the image at `u` on the phone. It comes
+// from the address with no token, so a new token keeps the files.
+pub function cache_name(u: string): string {
+  let plain = without_token(u);
+  return (plain.hash_fnv32() as i64).to_string() + "-" + plain.len().to_string() + ".img";
+}
+
+// The preview thumbnails of the part `id`, a BIF file.
+pub function bif_request(c: Client, b: Base, id: string): Request {
+  return get(c.with_token(b.token), b.uri + "/library/parts/" + id + "/indexes/sd");
+}
+
+// The part of the first version of an item that has preview thumbnails,
+// or None.
+pub function thumbnail_part(it: Item): Option[Part] {
+  if (it.media.len() == 0 || it.media[0].parts.len() == 0 || it.media[0].parts[0].indexes != "sd") {
+    return None;
+  }
+  return Some(it.media[0].parts[0]);
+}
+
+// The preview thumbnails of a BIF file: the time of each frame in
+// milliseconds, and where its JPEG starts and ends in `data`.
+pub struct Bif { times_ms: i64[], starts: i32[], ends: i32[], data: u8[] }
+
+function u32_le(b: u8[], at: i32): i64 {
+  return b[at] as i64 | b[at + 1] as i64 << 8i64 | b[at + 2] as i64 << 16i64 | b[at + 3] as i64 << 24i64;
+}
+
+const BIF_MAGIC: u8[] = [137u8, 66u8, 73u8, 70u8, 13u8, 10u8, 26u8, 10u8];
+
+// The frames of a BIF file, or None when `b` is not one. The header holds
+// the count of frames at byte 12 and the milliseconds of one unit of time
+// at byte 16, where 0 means 1000. The index at byte 64 holds a time and an
+// offset for each frame, and an end entry after the last.
+pub function parse_bif(b: u8[]): Option[Bif] {
+  if (b.len() < 64) {
+    return None;
+  }
+  for i in 0..8 {
+    if (b[i] != BIF_MAGIC[i]) {
+      return None;
+    }
+  }
+  let count = u32_le(b, 12);
+  let unit = u32_le(b, 16);
+  if (unit == 0i64) {
+    unit = 1000i64;
+  }
+  if (count < 0i64 || 64i64 + (count + 1i64) * 8i64 > b.len() as i64) {
+    return None;
+  }
+  let n = count as i32;
+  let times: i64[] = [];
+  let starts: i32[] = [];
+  let ends: i32[] = [];
+  for i in 0..n {
+    let at = 64 + i * 8;
+    let start = u32_le(b, at + 4);
+    let end = u32_le(b, at + 12);
+    if (start < 0i64 || end < start || end > b.len() as i64) {
+      return None;
+    }
+    times = times.append(u32_le(b, at) * unit);
+    starts = starts.append(start as i32);
+    ends = ends.append(end as i32);
+  }
+  return Some(Bif { times_ms: times, starts: starts, ends: ends, data: b });
+}
+
+// The frame for `ms`: the last one at or before it, or -1 when there is
+// none.
+pub function bif_frame(f: Bif, ms: i64): i32 {
+  let lo = 0;
+  let hi = f.times_ms.len() - 1;
+  let found = -1;
+  while (lo <= hi) {
+    let mid = (lo + hi) / 2;
+    if (f.times_ms[mid] <= ms) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found;
+}
+
+// The JPEG bytes of frame `i`.
+pub function bif_jpeg(f: Bif, i: i32): u8[] {
+  let out: u8[] = [];
+  for k in f.starts[i]..f.ends[i] {
+    out = out.append(f.data[k]);
+  }
+  return out;
 }
 
 // The next episode after `key` in `episodes`, or None at the end.

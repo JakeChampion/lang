@@ -1,0 +1,23 @@
+import "std/hex";
+
+// 64 KiB of bytes that take each value.
+function body(): u8[] {
+  let n = 65536;
+  let bs = __alloc_u8(n);
+  let s = 12345;
+  for i in 0..n {
+    s = s * 1103515245 + 12345 & 2147483647;
+    bs = bs.with(i, (s >> 16 & 255) as u8);
+  }
+  return bs;
+}
+
+function main(): i32 {
+  let bs = body();
+  let acc = 0;
+  for r in 0..256 {
+    let digits = hex.encode(bs);
+    acc += digits[r * 500] as i32 + digits[digits.len() - 1 - r] as i32;
+  }
+  return acc % 97;
+}

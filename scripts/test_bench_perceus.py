@@ -78,5 +78,32 @@ class MeasurementTests(unittest.TestCase):
             self.assertEqual(record["pid"], 123)
 
 
+class LanguageTests(unittest.TestCase):
+    def test_each_language_builds_its_own_source(self):
+        root, out = Path("/r"), Path("/o")
+        tools = {name: Path("/t") / name for name in ("fern", "koka", "lean", "roc")}
+        want = {"fern": "/r/bench/perceus/fern/run_rbtree_ck.fern", "koka": "/r/bench/perceus/koka/rbtree-ck.kk",
+                "lean": "/r/bench/perceus/lean/rbtree-ck.lean", "roc": "/r/bench/perceus/roc/rbtree-ck.roc"}
+        for language, source in want.items():
+            with self.subTest(language=language):
+                commands = bench.build_commands(language, "rbtree-ck", tools, root, out, "x86-64-linux")
+                self.assertIn(source, commands[0])
+                self.assertIn(f"/o/{language}-rbtree-ck", commands[-1])
+        roc = bench.build_commands("roc", "nqueens", tools, root, out, "x86-64-linux")
+        self.assertEqual(roc, [["/t/roc", "build", "--optimize", "--output", "/o/roc-nqueens", "/r/bench/perceus/roc/nqueens.roc"]])
+
+    def test_turns_rotate_through_every_language(self):
+        languages = ("fern", "koka", "lean", "roc")
+        firsts = [bench.turn_order(languages, repeat)[0] for repeat in range(4)]
+        self.assertEqual(firsts, list(languages))
+        self.assertEqual(bench.turn_order(("fern", "koka", "lean"), 4), ("koka", "lean", "fern"))
+
+    def test_every_workload_has_a_roc_twin(self):
+        roc = Path(__file__).resolve().parent.parent / "bench/perceus/roc"
+        for name in bench.NAMES:
+            with self.subTest(name=name):
+                self.assertTrue((roc / f"{name}.roc").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

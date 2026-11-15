@@ -34,11 +34,15 @@ pub struct Config {
   sunrays_resolution: i32,
   sunrays_weight: f64,
   max_pixel_ratio: f64,
+  touch_prediction: f64,
 }
 
 // The dye resolution is the one that the web page gives a phone. The GPU
 // draws at most `max_pixel_ratio` pixels across one dp. More pixels cost
 // power, and the soft picture of the fluid does not show them.
+// `touch_prediction` is the part of the time from a frame to the display
+// that the speed of a finger tells its place for: 0 puts the dye where the
+// finger was, and 1 puts it where the finger is when the display shows it.
 pub function defaults(): Config {
   return Config {
     sim_resolution: 128,
@@ -67,6 +71,7 @@ pub function defaults(): Config {
     sunrays_resolution: 196,
     sunrays_weight: 0.5,
     max_pixel_ratio: 2.0,
+    touch_prediction: 1.0,
   };
 }
 
@@ -112,6 +117,7 @@ function specs(): Spec[] {
     Spec { key: "sunrays_resolution", kind: INT, min: 32.0, max: 1024.0 },
     Spec { key: "sunrays_weight", kind: NUMBER, min: 0.0, max: 2.0 },
     Spec { key: "max_pixel_ratio", kind: NUMBER, min: 0.5, max: 4.0 },
+    Spec { key: "touch_prediction", kind: NUMBER, min: 0.0, max: 2.0 },
   ];
 }
 
@@ -299,7 +305,10 @@ function with_number(c: Config, key: string, v: f64): Config {
   if (key == "sunrays_weight") {
     return Config { ...c, sunrays_weight: v };
   }
-  return Config { ...c, max_pixel_ratio: v };
+  if (key == "max_pixel_ratio") {
+    return Config { ...c, max_pixel_ratio: v };
+  }
+  return Config { ...c, touch_prediction: v };
 }
 
 function with_flag(c: Config, key: string, v: boolean): Config {
