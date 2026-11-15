@@ -25,7 +25,8 @@ pub function category_name(category: string): string {
 }
 
 // Whether the locale reads text as UTF-8: the codeset of LC_CTYPE is UTF-8
-// and each category loads.
+// and each category loads. The libc of WASI and of Android reads no files
+// for a locale, so there the codeset decides.
 pub function utf8(): boolean {
   let ctype = category_name("LC_CTYPE");
   let parts = explode(ctype);
@@ -35,7 +36,10 @@ pub function utf8(): boolean {
   if (target_os() == "darwin") {
     return all_load_darwin();
   }
-  return all_load_glibc();
+  if (target_os() == "linux") {
+    return all_load_glibc();
+  }
+  return true;
 }
 
 // The parts of a locale name of the form language_territory.codeset@modifier.

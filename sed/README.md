@@ -70,6 +70,8 @@ port finds a locale as the libc does:
   `UTF8`, in upper or lower case.
 - Darwin looks for the name as it is, in PATH_LOCALE or
   `/usr/share/locale`.
+- On WASI and on Android, the libc reads no files for a locale. There the
+  codeset of the name decides.
 
 In a UTF-8 locale:
 
