@@ -201,11 +201,10 @@ The hash tables `head` and `prev` are `u16[]`, as in zlib, so they use
 4.70 s of CPU at `-6 -p 1` and 9.45 s at `-9 -p 1`. So the 2-byte tables
 take 13% and 16% less CPU time there.
 
-The compiler makes three loops into calls to its kernels (#15974): the
-copy of the input into the window, the slide of the window, and the clear
-of `head`. The slide of `head` and `prev` subtracts a distance from each
-element, so it is not a fill or a move. It runs a copy of its loop with no
-checks (#15975).
+The compiler makes four loops into calls to its kernels (#15974): the
+copy of the input into the window, the slide of the window, the clear of
+`head`, and the slide of `head` and `prev` (`docs/BYTE-COPY-LOOPS.md`). The
+runs of the table are older than the slide kernel.
 
 Most of the time of a compression is in `longest`, the port of
 `longest_match`. Its loop waits for the loads of the window and of the hash
