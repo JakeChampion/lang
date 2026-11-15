@@ -1,0 +1,215 @@
+import "std/video/av1/annex_b/input";
+import "std/video/av1/annex_b";
+import "std/video/frame";
+import "std/audio/source";
+import "std/hex";
+import "std/test";
+import "video_av1_annex_b_input_check" as check;
+
+function limits(): input.Limits {
+  return input.Limits { ...input.default_limits(), input: source.Limits { chunk_size: 31, max_buffer_bytes: 4096 } };
+}
+
+function fields(packet: input.Packet, offset: i64, text: string): boolean {
+  return packet.offset == offset && hex.encode(packet.bytes) == text && packet.unit.next_offset == packet.bytes.len();
+}
+
+function source_bounds(summary: check.Summary): boolean {
+  return summary.packets.len() == 3 && summary.offset == 27i64 && summary.largest <= 31;
+}
+
+function packet_values(packets: input.Packet[]): boolean {
+  return fields(packets[0], 0i64, "06050110027855") && fields(packets[1], 7i64, "0807021200037a0166") && fields(packets[2], 16i64, "0a05011002787703027888");
+}
+
+function retained_fields(packets: input.Packet[]): boolean {
+  let first = packets[0].unit.frames[0].units[1];
+  return first.offset == 6 && first.size == 1 && packets[0].bytes[first.offset] == 85u8 && packets[2].unit.frames.len() == 2 && packets[2].unit.frames[1].offset == 8;
+}
+
+function reference(): test.TestOutcome {
+  let Ok(bytes) = hex.decode("060501100278550807021200037a01660a05011002787703027888") else {
+    return test.fail("hex");
+  };
+  for short in [1, 3, 0] {
+    let Ok(summary) = check.collect(bytes, short, limits()) else {
+      return test.fail("short source");
+    };
+    if (!source_bounds(summary)) {
+      return test.fail("source and event bounds");
+    }
+    let packets = summary.packets;
+    if (!packet_values(packets)) {
+      return test.fail("independent temporal offsets and retained bytes");
+    }
+    if (!retained_fields(packets)) {
+      return test.fail("retained scalar payload range");
+    }
+  }
+  return test.pass();
+}
+
+function empty_and_prefetch(): test.TestOutcome {
+  let Ok(empty) = check.collect([], 1, limits()) else {
+    return test.fail("empty source");
+  };
+  if (empty.packets.len() != 0 || empty.reads != 1) {
+    return test.fail("empty EOF read");
+  }
+  let Ok(bytes) = hex.decode("0302011003020110") else {
+    return test.fail("hex");
+  };
+  let configured = input.Limits { ...limits(), max_temporal_units: 2, max_operations: 2 };
+  let Ok(summary) = check.collect(bytes, 0, configured) else {
+    return test.fail("prefetched temporal unit");
+  };
+  return test.assert_true(summary.packets.len() == 2 && summary.reads == 2 && summary.offset == 8i64);
+}
+
+function append(own bytes: u8[], more: [u8]): u8[] {
+  for byte in more {
+    bytes = bytes.append(byte);
+  }
+  return bytes;
+}
+
+function widths(): test.TestOutcome {
+  for width in 1..9 {
+    let bytes: u8[] = [if (width == 1) { 3u8 } else { 131u8 }];
+    for i in 1..width {
+      bytes = bytes.append(if (i + 1 == width) { 0u8 } else { 128u8 });
+    }
+    bytes = append(bytes, [2u8, 1u8, 16u8]);
+    for short in [1, 3, 0] {
+      let Ok(result) = check.collect(bytes, short, limits()) else {
+        return test.fail("nonminimal temporal size");
+      };
+      let packet = result.packets[0];
+      if (packet.bytes != bytes || packet.unit.offset != width || packet.unit.frames[0].offset != width + 1) {
+        return test.fail("size-field preservation");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for text in ["06050110027855", "0807021200037a0166", "8380808080808000020110"] {
+    let Ok(bytes) = hex.decode(text) else {
+      return test.fail("hex");
+    };
+    for cut in 1..bytes.len() {
+      if let Err(input.ReadVideo(frame.Truncated)) = check.collect(check.piece(bytes, 0, cut), 1, limits()) {} else {
+        return test.fail("truncated length or body");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  for text in ["00", "0100", "03020178", "050402120100", "0706011003120055", "8080808080808080", "8080808010"] {
+    let Ok(bytes) = hex.decode(text) else {
+      return test.fail("hex");
+    };
+    for short in [1, 3, 0] {
+      if let Err(input.ReadVideo(frame.Header)) = check.collect(bytes, short, limits()) {} else {
+        return test.fail("native header category " + text);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function constructor(): test.TestOutcome {
+  let base = limits();
+  for configured in [input.Limits { ...base, max_temporal_units: -1 }, input.Limits { ...base, max_operations: 0 }, input.Limits { ...base, annex: annex_b.Limits { ...base.annex, max_frame_units: -1 } }, input.Limits { ...base, annex: annex_b.Limits { ...base.annex, max_obus: -1 } }, input.Limits { ...base, annex: annex_b.Limits { ...base.annex, video: frame.Limits { max_pixels: -1, max_packet_bytes: 4096 } } }, input.Limits { ...base, input: source.Limits { chunk_size: 0, max_buffer_bytes: 4096 } }, input.Limits { ...base, input: source.Limits { chunk_size: 1, max_buffer_bytes: 0 } }] {
+    if let Err(input.ReadVideo(frame.Limit)) = input.create(configured) {} else {
+      return test.fail("constructor limit");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let base = limits();
+  let Ok(bytes) = hex.decode("0605011002785506050110027866") else {
+    return test.fail("hex");
+  };
+  for configured in [input.Limits { ...base, max_temporal_units: 0 }, input.Limits { ...base, max_temporal_units: 1 }, input.Limits { ...base, max_operations: 1 }, input.Limits { ...base, input: source.Limits { chunk_size: 31, max_buffer_bytes: 6 } }, input.Limits { ...base, annex: annex_b.Limits { ...base.annex, max_frame_units: 0 } }, input.Limits { ...base, annex: annex_b.Limits { ...base.annex, max_obus: 1 } }, input.Limits { ...base, annex: annex_b.Limits { ...base.annex, video: frame.Limits { ...base.annex.video, max_packet_bytes: 6 } } }] {
+    if let Err(input.ReadVideo(frame.Limit)) = check.collect(bytes, 0, configured) {} else {
+      return test.fail("stream or nested record budget");
+    }
+  }
+  let Ok(tiny) = hex.decode("03020110") else {
+    return test.fail("hex");
+  };
+  let tight = input.Limits { ...base, input: source.Limits { chunk_size: 31, max_buffer_bytes: 4 }, max_temporal_units: 1 };
+  let Ok(result) = check.collect(tiny, 0, tight) else {
+    return test.fail("inclusive small window");
+  };
+  return test.assert_true(result.packets.len() == 1);
+}
+
+function source_errors(): test.TestOutcome {
+  let Ok(stream) = input.create(limits()) else {
+    return test.fail("create");
+  };
+  if let Err(input.ReadIo(IoError.Interrupted)) = stream.step_with((_: i32): Result[u8[], IoError] => Err(IoError.Interrupted)) {} else {
+    return test.fail("I/O category");
+  }
+  let configured = input.Limits { ...limits(), input: source.Limits { chunk_size: 1, max_buffer_bytes: 4096 } };
+  let Ok(stream) = input.create(configured) else {
+    return test.fail("create");
+  };
+  if let Err(input.ReadVideo(frame.Limit)) = stream.step_with((_: i32): Result[u8[], IoError] => Ok([0u8, 0u8])) {} else {
+    return test.fail("oversized source callback");
+  }
+  return test.pass();
+}
+
+function early_bounds(): test.TestOutcome {
+  let calls = cell_new(0);
+  let Ok(stream) = input.create(limits()) else {
+    return test.fail("create");
+  };
+  let result = stream.step_with((_: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    return Ok([255u8, 255u8, 255u8, 255u8, 15u8]);
+  });
+  if let Err(input.ReadVideo(frame.Limit)) = result {} else {
+    return test.fail("oversized body before allocation");
+  }
+  if (calls.get() != 1) {
+    return test.fail("bounded header read");
+  }
+  let Ok(stream) = input.create(limits()) else {
+    return test.fail("create");
+  };
+  let stream = input.Stream { ...stream, offset: 9223372036854775805i64 };
+  if let Err(input.ReadVideo(frame.Limit)) = stream.step_with((_: i32): Result[u8[], IoError] => Ok([3u8, 2u8, 1u8, 16u8])) {} else {
+    return test.fail("64-bit source offset overflow");
+  }
+  let Ok(bytes) = hex.decode("80808080") else {
+    return test.fail("hex");
+  };
+  let small = input.Limits { ...limits(), input: source.Limits { chunk_size: 31, max_buffer_bytes: 4 } };
+  if let Err(input.ReadVideo(frame.Limit)) = check.collect(bytes, 0, small) {} else {
+    return test.fail("partial header fills the window");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("bounded AV1 Annex B input");
+  r = r.it("temporal and frame ranges through short reads", reference);
+  r = r.it("empty input, prefetch, and permanent EOF", empty_and_prefetch);
+  r = r.it("all temporal length widths", widths);
+  r = r.it("all temporal and length prefixes", prefixes);
+  r = r.it("native framing errors retain categories", malformed);
+  r = r.it("constructor limits", constructor);
+  r = r.it("packet, window, count, operation, and record budgets", budgets);
+  r = r.it("I/O errors and oversized callbacks", source_errors);
+  r = r.it("oversized lengths and offset arithmetic", early_bounds);
+  return r.finish();
+}

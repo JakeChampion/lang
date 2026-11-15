@@ -6842,7 +6842,6 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   }
   let rt = lambda_ret_type(lm, s);
   let body_scope = lambda_body_scope(lm, s);
-  check_block(lm.body, body_scope);
   if (lm.ret_type.len() == 0 && is_unknown(rt)) {
     let (returned, at) = first_returned(lm.body, body_scope);
     if (!parser.bare_return(returned)) {
@@ -9915,10 +9914,10 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
   return (false, false, out);
 }
 
-// The arms of an if-let are the arms of the source. The statements after a
-// let-else continue its first arm, so the walk does not read its arms.
+// The arms of an if-let are the arms of the source. The first arm of a
+// let-else holds the statements after it, and its other arm is the else.
 function mc_reads_arms(origin: string): boolean {
-  return ordinary_match_origin(origin) || origin == "if_let";
+  return ordinary_match_origin(origin) || origin == "if_let" || origin == "let_else";
 }
 
 function mc_check_binding(stmts: ast.Stmt[], from: i32, name: string, tname: string, bline: i32, bcol: i32, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
@@ -9970,7 +9969,9 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
     let st = stmts[i];
     match (st) {
       ast.StmtVar(v) => {
-        let tn = mc_var_type_name(v, cur, structs, enums);
+        // A match on a struct pattern consumes its subject. The local that
+        // holds the subject is not a binding of the program.
+        let tn = if (parser.is_struct_match_subject(v.name)) { "" } else { mc_var_type_name(v, cur, structs, enums) };
         if (tn.len() > 0) {
           out = util.append_diags(out, mc_check_binding(stmts, i + 1, v.name, tn, v.line, v.col, structs, enums));
         }
@@ -23726,9 +23727,26 @@ function lu_binding_level(frames: LuFrame[], name: string): i32 {
   return -1;
 }
 
+// The name is the binding of a for-each, and no let declares it again. A
+// binding of a borrowed array is not fresh: lu_loose_tag gives its use the
+// tag of a read out of a borrowed structure.
+function lu_each_binding(fx: LuFn, site: LuSite, name: string): boolean {
+  if (util.has_str(fx.params, name) || lu_decl_count(fx, name) > 0) {
+    return false;
+  }
+  let l = lu_binding_level(site.frames, name);
+  if (l < 0) {
+    return false;
+  }
+  if let ast.StmtFor(fo) = site.frames[l].head {
+    return fo.var_name == name;
+  }
+  return false;
+}
+
 function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name = aid.name;
-  let elem = lu_elem_fresh(fx, site, name);
+  let elem = lu_elem_fresh(fx, site, name) || lu_each_binding(fx, site, name);
   if (!lu_is_local(fx, name) && !elem && !lu_owned_field_payload(fx, name)) {
     return false;
   }
@@ -25835,10 +25853,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         ri = ru_expr(fr.iter, moved, ctx);
       }
       let fctx = ow_bind_ctx(ctx, fr.var_name);
-      if (!takes && !util.contains(fr.var_name, ",")) {
+      let inner = for_body_scope(fr, ctx.scope);
+      // A loop over a borrowed array lends each element. An element that
+      // holds no handle is a copy, so the body can give it away.
+      if (!takes && !util.contains(fr.var_name, ",") && !ow_holds_no_handle(typeinfo.spelling(inner.lookup(fr.var_name)), ctx.decls)) {
         fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
       }
-      let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
+      let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: inner });
       return OwnWalk { moved: ld.moved, diags: util.append_diags(ri.diags, ld.diags) };
     },
     ast.StmtMatch(m) => {
