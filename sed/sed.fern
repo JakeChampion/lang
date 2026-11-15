@@ -1856,11 +1856,10 @@ function open_next(p: Prog, own r: Run): Run {
   }
   match (open_reader(path)) {
     Ok(reader) => {
-      let opened = Run { ...fresh, inp: Inp { ...inp, r: reader, open: true } };
       if (p.o.in_place) {
-        return start_edit(p, reset_file_state(p, opened), path);
+        return start_edit(p, reset_file_state(p, Run { ...fresh, inp: Inp { ...inp, r: reader, open: true } }), path);
       }
-      return reset_file_state(p, opened);
+      return reset_file_state(p, Run { ...fresh, inp: Inp { ...inp, r: reader, open: true } });
     },
     Err(e) => {
       say(("can't read " + name + ": " + gnu.io_error_text(e)).bytes());

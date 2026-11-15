@@ -20,6 +20,7 @@ import "./overlay";
 import "./pace";
 import "./screen";
 import "./sim";
+import "./trail";
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   android.start(activity, app_main_entry());
@@ -29,17 +30,25 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 function app_main_entry(): usize;
 
 // What the touches of the last seconds were: the count of the events and
-// of their places, the shortest and the longest time from the time of an
-// event to the step that read it, and the count of the frames whose newest
-// place was older than each one before it in the drag.
-struct Touches { events: i32, places: i32, soonest_ns: i64, latest_ns: i64, starved: i32 }
+// of the places of their first pointer, the shortest and the longest time
+// from the time of an event to the step that read it, the count of the
+// frames that came after the lag of the fingers got longer, and the largest
+// count of the pointers of one event.
+struct Touches { events: i32, places: i32, soonest_ns: i64, latest_ns: i64, starved: i32, most: i32 }
 
 function no_touches(): Touches {
-  return Touches { events: 0, places: 0, soonest_ns: 0i64, latest_ns: 0i64, starved: 0 };
+  return Touches { events: 0, places: 0, soonest_ns: 0i64, latest_ns: 0i64, starved: 0, most: 0 };
 }
 
+// A frame that the app gave the display: its number for the times of
+// `std/android/gl`, and the time of its refresh.
+struct Sent { frame: i64, vsync_ns: i64 }
+
 // `unfit` tells that the GPU cannot run the simulation. `spoken` names the
-// items that the accessibility service has.
+// items that the accessibility service has. `sent` has the frames whose
+// times the system did not tell yet, from the oldest, and `done_ns` is the
+// longest time from a refresh to the time that the GPU completed its frame,
+// in the second that runs.
 struct App {
   ctx: usize,
   model: fluid.Model,
@@ -53,6 +62,8 @@ struct App {
   spoken: string,
   pace: pace.Pace,
   touches: Touches,
+  sent: Sent[],
+  done_ns: i64,
 }
 
 function now_ms(): i64 {
@@ -88,6 +99,7 @@ function system_fonts(ctx: usize): text.Fonts {
 }
 
 function app_main(ctx: usize): usize {
+  device.draw_priority();
   let still = device.still(ctx);
   log.info("fluid: still " + still.to_string());
   let first = App {
@@ -103,6 +115,8 @@ function app_main(ctx: usize): usize {
     spoken: "",
     pace: pace.new(),
     touches: no_touches(),
+    sent: [],
+    done_ns: 0i64,
   };
   let last = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => -1);
   closed(last);
@@ -151,6 +165,10 @@ function step(own s: App, e: android.Event): App {
 function on_event(own s: App, e: android.Event): App {
   match (e) {
     android.WindowCreated(w) => {
+      // Android gives each place of a finger at once, and the display
+      // runs at its fastest rate, while the window shows.
+      android.unbatched_touch(s.ctx, true);
+      android.prefer_fast_display(s.ctx);
       return on_window(s, w);
     },
     android.WindowResized(w) => {
@@ -171,15 +189,19 @@ function on_event(own s: App, e: android.Event): App {
       if (s.model.animating(ns / 1000000i64)) {
         android.request_frame(s.ctx);
       }
+      let started = monotonic_ns();
       let (paced, due) = s.pace.vsync(ns);
       if (!due) {
         return App { ...s, pace: paced };
       }
-      return frame(App { ...s, pace: paced }, ns);
+      return frame(App { ...s, pace: paced }, ns, started);
     },
     android.Touch(action, x, y) => {
-      let samples = android.touch_samples(s.ctx);
-      return App { ...s, model: touched(s.model, samples, action, x as f64, y as f64), touches: s.touches.read(samples) };
+      let pointers = android.touch_pointers(s.ctx);
+      if (pointers.len() == 0) {
+        return App { ...s, model: s.model.touched(action, x as f64, y as f64, monotonic_ns()) };
+      }
+      return App { ...s, model: s.model.touch_event(action, android.touch_index(s.ctx), contacts(pointers)), touches: s.touches.read(pointers) };
     },
     android.Key(code, action) => {
       // The back key and the Escape key, when they go up.
@@ -210,8 +232,9 @@ function on_event(own s: App, e: android.Event): App {
   }
 }
 
-// The touches with one more event, which has the places `samples`.
-function (t: Touches) read(samples: android.TouchSample[]): Touches {
+// The touches with one more event, which has the pointers `pointers`.
+function (t: Touches) read(pointers: android.TouchPointer[]): Touches {
+  let samples = pointers[0].samples;
   if (samples.len() == 0) {
     return t;
   }
@@ -220,7 +243,7 @@ function (t: Touches) read(samples: android.TouchSample[]): Touches {
   if (t.events > 0) {
     soonest = t.soonest_ns.min(wait);
   }
-  return Touches { ...t, events: t.events + 1, places: t.places + samples.len(), soonest_ns: soonest, latest_ns: t.latest_ns.max(wait) };
+  return Touches { ...t, events: t.events + 1, places: t.places + samples.len(), soonest_ns: soonest, latest_ns: t.latest_ns.max(wait), most: t.most.max(pointers.len()) };
 }
 
 // Writes the frame rate `speed` to the log each fifth second, with what
@@ -232,25 +255,22 @@ function logged(t: Touches, speed: string, seconds: i32): Touches {
   }
   log.info("fluid: " + speed);
   if (t.events > 0) {
-    log.info("fluid: touch " + t.events.to_string() + " events, " + t.places.to_string() + " places, read " + (t.soonest_ns / 1000i64).to_string() + " to " + (t.latest_ns / 1000i64).to_string() + " us after their time, " + t.starved.to_string() + " frames with an old place");
+    log.info("fluid: touch " + t.events.to_string() + " events, " + t.places.to_string() + " places, read " + (t.soonest_ns / 1000i64).to_string() + " to " + (t.latest_ns / 1000i64).to_string() + " us after their time, " + t.starved.to_string() + " frames with an old place, " + t.most.to_string() + " fingers at most");
   }
   return no_touches();
 }
 
-// The model after a touch event with the places `samples`. The last place
-// is the place of the event, and the places before it are the ones that
-// Android collected for a move since the event before it.
-function touched(m: fluid.Model, samples: android.TouchSample[], action: i32, x: f64, y: f64): fluid.Model {
-  if (samples.len() == 0) {
-    return m.touched(action, x, y, monotonic_ns());
-  }
-  let out = m;
-  if (action == 2) {
-    for i in 0..samples.len() - 1 {
-      out = out.traced(samples[i].x as f64, samples[i].y as f64, samples[i].ns);
+// The pointers of an Android touch event, for the model.
+function contacts(pointers: android.TouchPointer[]): fluid.Contact[] {
+  let out: fluid.Contact[] = [];
+  for p in pointers {
+    let places: trail.Sample[] = [];
+    for s in p.samples {
+      places = places.append(trail.Sample { ns: s.ns, x: s.x as f64, y: s.y as f64 });
     }
+    out = out.append(fluid.Contact { id: p.id, tool: p.tool, places: places });
   }
-  return out.touched(action, x, y, samples[samples.len() - 1].ns);
+  return out;
 }
 
 // The model after a click of an accessibility service on the item `id`.
@@ -366,8 +386,8 @@ function saved(own s: App): App {
 
 // The app after the frame at `ns`: the fluid takes its splats and its
 // steps, and the canvas shows it with the controls over it.
-function frame(own s: App, ns: i64): App {
-  let (m, fr) = s.model.frame(ns);
+function frame(own s: App, ns: i64, started_ns: i64): App {
+  let (m, fr) = s.model.with_ahead(s.pace.ahead_ns()).frame(ns);
   let touches = s.touches;
   if (fr.starved) {
     touches = Touches { ...touches, starved: touches.starved + 1 };
@@ -386,27 +406,76 @@ function frame(own s: App, ns: i64): App {
     return plain(out);
   };
   if let Some(f) = out.fluid {
-    f.show(m.cfg);
+    f.show(m.cfg, fr.effects);
     c.resume();
   } else {
     c.clear(draw.rgb(0, 0, 0));
   }
   let painted = App { ...out, art: screen.paint(out.art, c, out.fs, out.mt, m, ns / 1000000i64, out.unfit) };
+  let number = c.next_frame();
   match (c.present()) {
     gl.Lost => {
       return lost(painted);
     },
     _ => {
-      let (paced, speed) = painted.pace.drew(ns);
-      let model = painted.model;
-      let touches = painted.touches;
+      let told = heard(App { ...painted, sent: painted.sent.append(Sent { frame: number, vsync_ns: ns }) }, c, ns);
+      let (paced, speed) = told.pace.drew(ns, started_ns);
+      let model = told.model;
+      let touches = told.touches;
+      let done = told.done_ns;
       if (speed.len() > 0) {
-        model = model.with_speed(speed);
-        touches = logged(touches, speed, paced.seconds);
+        let text = speed;
+        if (done > 0i64) {
+          text += ", drawn in " + (done / 1000000i64).to_string() + " ms";
+        }
+        model = model.with_speed(text);
+        touches = logged(touches, text, paced.seconds);
+        done = 0i64;
       }
-      return spoken(App { ...painted, pace: paced, model: model, touches: touches }, ns / 1000000i64);
+      return spoken(App { ...told, pace: paced, model: model, touches: touches, done_ns: done }, ns / 1000000i64);
     }
   }
+}
+
+// The app after it asked the system for the times of the frames that it
+// gave the display, at the refresh `now_ns`. The pace gets the time that
+// the display showed each frame.
+function heard(own s: App, c: gl.Canvas, now_ns: i64): App {
+  let paced = s.pace;
+  let done = s.done_ns;
+  let at = 0;
+  while (at < s.sent.len()) {
+    let one = s.sent[at];
+    let old = s.sent.len() - at > 8;
+    // The display shows a frame 2 refreshes after its refresh, or later.
+    // The system does not know the times of a newer frame, and each
+    // question about them is a call to another process.
+    if (!old && now_ns - one.vsync_ns < 2i64 * paced.period_ns - paced.period_ns / 4i64) {
+      break;
+    }
+    let t = c.frame_times(one.frame);
+    // The system does not know the times yet. The app waits for at most 8
+    // frames.
+    if (!old && one.frame >= 0i64 && (t.shown_ns == 0i64 || t.shown_ns < 0i64 && t.taken_ns == 0i64)) {
+      break;
+    }
+    if (t.done_ns > one.vsync_ns) {
+      done = done.max(t.done_ns - one.vsync_ns);
+    }
+    if (t.shown_ns > 0i64) {
+      paced = paced.told_shown(one.vsync_ns, t.shown_ns);
+    } else if (t.taken_ns > 0i64 && paced.period_ns > 0i64) {
+      // The system does not tell when the display showed the frame: that is
+      // one refresh after the system took it.
+      paced = paced.told_shown(one.vsync_ns, t.taken_ns + paced.period_ns);
+    }
+    at += 1;
+  }
+  let rest: Sent[] = [];
+  for i in at..s.sent.len() {
+    rest = rest.append(s.sent[i]);
+  }
+  return App { ...s, pace: paced, sent: rest, done_ns: done };
 }
 
 // The app with a new context of the GPU, after the device lost the one
@@ -417,7 +486,7 @@ function lost(own s: App): App {
     gl.close(c);
   }
   let window = android.Window { ptr: s.window };
-  return on_window(App { ...s, canvas: None, fluid: None, art: screen.no_art() }, window);
+  return on_window(App { ...s, canvas: None, fluid: None, art: screen.no_art(), sent: [] }, window);
 }
 
 // Shows the text of a device with no OpenGL ES, on the pixels of the window.

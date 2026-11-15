@@ -44,12 +44,16 @@ function drain(own s: app.App): i32 {
   return close(s, 75);
 }
 
-pub function run(own sound: audio_path.State, io: audio_content.Input, reads: Cell[i32], pause_first: boolean): i32 {
-  let state = app.App { ctx: 0 as usize, playback: None, fd: -1, content: None, sound: Some(sound), audio_reader: None, content_audio: Some(io), stage: 0, resume_ns: 0i64, started_ns: 1000000000i64, done: false, lifecycle_pause_ns: None, lifecycle_was_playing: false };
+// The app with the sound of a content source, and with no window.
+function with_sound(own sound: audio_path.State, own io: audio_content.Input): app.App {
+  return app.App { ctx: 0 as usize, playback: None, fd: -1, content: None, sound: Some(sound), audio_reader: None, content_audio: Some(io), stage: 0, resume_ns: 0i64, started_ns: 1000000000i64, done: false, lifecycle_pause_ns: None, lifecycle_was_playing: false };
+}
+
+pub function run(own sound: audio_path.State, own io: audio_content.Input, reads: Cell[i32], pause_first: boolean): i32 {
   if (pause_first) {
-    let next = match (paused(state, reads)) { Ok(value) => value, Err(code) => { return code; } };
+    let next = match (paused(with_sound(sound, io), reads)) { Ok(value) => value, Err(code) => { return code; } };
     let checked = match (app_lifecycle_check.run(next, reads)) { Ok(value) => value, Err(code) => { return code; } };
     return drain(checked);
   }
-  return drain(state);
+  return drain(with_sound(sound, io));
 }

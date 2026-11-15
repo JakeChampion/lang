@@ -134,6 +134,10 @@ struct Play {
   // tracks shows.
   choice: plex.Choice,
   sheet: boolean,
+  // The time that the card of the next item came, or 0, and whether the
+  // user turned the next item off.
+  up_next_at: i64,
+  next_off: boolean,
 }
 
 pub struct App {
@@ -153,13 +157,11 @@ pub struct App {
   states: string[],
   // The server whose connections the app probes, or -1, the state of each
   // connection (0 waits, 1 answered, 2 failed), the time the probes
-  // started, the workers that run with the connection of each, and the
-  // workers of a race that ended.
+  // started, the probes that run, and the workers of a race that ended.
   probing: i32,
   probe_states: i32[],
   probe_at: i64,
-  probes: worker.Worker[plex.Reply[]][],
-  probe_conns: i32[],
+  probes: Probe[],
   left: worker.Worker[plex.Reply[]][],
   pin: plex.Pin,
   pin_at: i64,
@@ -229,7 +231,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, choice: plex.no_choice(), sheet: false };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, choice: plex.no_choice(), sheet: false, up_next_at: 0i64, next_off: false };
 }
 
 function no_press(): Press {
@@ -314,7 +316,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     dev: dev, dir: dir, window: 0 as usize, w: 0, h: 0, top: 0, bottom: 0, shown: false,
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
-    servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], probe_conns: [], left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
+    servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
     account: setting(text, "account"), quality: num(setting(text, "quality")),
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, item: plex.no_item(), children: [],
@@ -804,35 +806,38 @@ function connect(own s: App, i: i32): App {
   }
   let sv = s.servers[i];
   let order = plex.connection_order(sv);
-  let left = s.left;
-  for w in s.probes {
-    left = left.append(w);
-  }
-  let probes: worker.Worker[plex.Reply[]][] = [];
-  let conns: i32[] = [];
+  let left = probe_workers(s.probes, s.left);
+  let probes: Probe[] = [];
   let states: i32[] = [];
   for k in 0..order.len() {
-    probes = probes.append(s.dev.fetch([plex.identity(s.client, plex.Base { uri: order[k], token: sv.token })]));
-    conns = conns.append(k);
+    probes = probes.append(Probe { conn: k, w: s.dev.fetch([plex.identity(s.client, plex.Base { uri: order[k], token: sv.token })]) });
     states = states.append(0);
   }
-  let t = App { ...s, probing: i, probe_states: states, probe_at: s.dev.mono_ms(), probes: probes, probe_conns: conns, left: left, states: s.states.with(i, "connecting"), dirty: true };
+  let t = App { ...s, probing: i, probe_states: states, probe_at: s.dev.mono_ms(), probes: probes, left: left, states: s.states.with(i, "connecting"), dirty: true };
   if (order.len() == 0) {
     return App { ...t, probing: -1, states: t.states.with(i, "unreachable") };
   }
   return t;
 }
 
-// The probes that still run with the connection of each, and the state
-// of each connection.
-function poll_probe_list(own ws: worker.Worker[plex.Reply[]][], conns: i32[], states: i32[]): (worker.Worker[plex.Reply[]][], i32[], i32[]) {
-  let running: worker.Worker[plex.Reply[]][] = [];
-  let still: i32[] = [];
+// A worker that asks connection `conn` of a server for its identity.
+struct Probe { conn: i32, w: worker.Worker[plex.Reply[]] }
+
+// The workers of `ps` after those of `left`.
+function probe_workers(own ps: Probe[], own left: worker.Worker[plex.Reply[]][]): worker.Worker[plex.Reply[]][] {
+  for p in ps {
+    let Probe { conn, w } = p;
+    left = left.append(w);
+  }
+  return left;
+}
+
+// The probes that still run, and the state of each connection.
+function poll_probe_list(own ps: Probe[], states: i32[]): (Probe[], i32[]) {
+  let running: Probe[] = [];
   let out = states;
-  let k = 0;
-  for w in ws {
-    let conn = conns[k];
-    k += 1;
+  for p in ps {
+    let Probe { conn, w } = p;
     let polled = w.poll();
     match (polled) {
       worker.Finished(rs) => {
@@ -843,12 +848,11 @@ function poll_probe_list(own ws: worker.Worker[plex.Reply[]][], conns: i32[], st
         }
       },
       worker.Running(again) => {
-        running = running.append(again);
-        still = still.append(conn);
+        running = running.append(Probe { conn: conn, w: again });
       }
     }
   }
-  return (running, still, out);
+  return (running, out);
 }
 
 // The workers of a race that ended, less those that finished.
@@ -883,27 +887,24 @@ pub function winner(states: i32[], expired: boolean): i32 {
 
 function poll_probes(own s: App): App {
   let left = poll_left(s.left);
-  let (probes, conns, states) = poll_probe_list(s.probes, s.probe_conns, s.probe_states);
+  let (probes, states) = poll_probe_list(s.probes, s.probe_states);
   let i = s.probing;
   if (i < 0 || i >= s.servers.len()) {
-    return App { ...s, probes: probes, probe_conns: conns, probe_states: states, left: left };
+    return App { ...s, probes: probes, probe_states: states, left: left };
   }
   let expired = s.dev.mono_ms() - s.probe_at >= PROBE_MS;
   let k = winner(states, expired);
   if (k < 0 && probes.len() == 0) {
     log.info("plex: no answer from " + s.servers[i].name);
-    return App { ...s, probes: probes, probe_conns: conns, probe_states: states, left: left, probing: -1, states: s.states.with(i, "unreachable"), dirty: true };
+    return App { ...s, probes: probes, probe_states: states, left: left, probing: -1, states: s.states.with(i, "unreachable"), dirty: true };
   }
   if (k < 0) {
-    return App { ...s, probes: probes, probe_conns: conns, probe_states: states, left: left };
+    return App { ...s, probes: probes, probe_states: states, left: left };
   }
   let sv = s.servers[i];
   let order = plex.connection_order(sv);
-  let rest = left;
-  for w in probes {
-    rest = rest.append(w);
-  }
-  let u = App { ...s, probing: -1, probes: [], probe_conns: [], probe_states: states, left: rest, server: sv, base: plex.Base { uri: order[k], token: sv.token }, states: s.states.with(i, "connected"), error: "" };
+  let rest = probe_workers(probes, left);
+  let u = App { ...s, probing: -1, probes: [], probe_states: states, left: rest, server: sv, base: plex.Base { uri: order[k], token: sv.token }, states: s.states.with(i, "connected"), error: "" };
   save(u);
   log.info("plex: connected to " + sv.name + " at connection " + k.to_string());
   return open_home(u);
@@ -1310,8 +1311,9 @@ function refresh_detail(own s: App): App {
 
 function completed(own s: App): App {
   let queue = s.play.queue;
+  let off = s.play.next_off;
   let t = stop_play(s, true);
-  if (queue.len() > 0) {
+  if (queue.len() > 0 && !off) {
     return start_play(t, queue[0], queue.drop(1));
   }
   return t;
@@ -1395,10 +1397,17 @@ function play_tick(own s: App, now: i64): App {
     t = App { ...t, play: Play { ...t.play, overlay: false }, dirty: true };
   }
   if (now - p.updated_at >= 500i64) {
-    let before = skip_label(t.play);
+    let before = skip_label(t.play) + "|" + up_next_secs(t.play, now - 500i64).to_string();
     let moved = Play { ...t.play, position: t.dev.position(), updated_at: now };
-    let after = skip_label(moved);
+    let from = up_next_from(moved);
+    if (moved.up_next_at == 0i64 && from >= 0i64 && moved.position >= from) {
+      moved = Play { ...moved, up_next_at: now };
+    }
+    let after = skip_label(moved) + "|" + up_next_secs(moved, now).to_string();
     t = App { ...t, play: moved, dirty: t.dirty || t.play.overlay || before != after };
+    if (moved.up_next_at > 0i64 && now - moved.up_next_at >= UP_NEXT_MS) {
+      return play_next(t);
+    }
   }
   if (now - t.play.reported_at >= REPORT_MS) {
     t = App { ...t, play: Play { ...t.play, reported_at: now } };
@@ -1428,6 +1437,46 @@ function got_play_meta(own t: App, key: string, r: plex.Reply): App {
     }
   }
   return u;
+}
+
+// How long the card of the next item counts down, and how long before the
+// end it comes when the video has no credits marker.
+const UP_NEXT_MS: i64 = 10000i64;
+
+const UP_NEXT_LEAD_MS: i64 = 20000i64;
+
+// The time of the video where the card of the next item comes: the start
+// of the credits, else UP_NEXT_LEAD_MS before the end. -1 when there is no
+// next item.
+function up_next_from(p: Play): i64 {
+  if (p.queue.len() == 0 || p.next_off || audio(p) || p.duration <= 0i64) {
+    return -1i64;
+  }
+  for m in p.item.markers {
+    if (m.kind == "credits") {
+      return m.start_ms;
+    }
+  }
+  return p.duration - UP_NEXT_LEAD_MS;
+}
+
+// The seconds that the card of the next item shows, or -1 with no card.
+function up_next_secs(p: Play, now: i64): i32 {
+  if (p.up_next_at == 0i64) {
+    return -1;
+  }
+  let left = UP_NEXT_MS - (now - p.up_next_at);
+  if (left < 0i64) {
+    return 0;
+  }
+  return ((left + 999i64) / 1000i64) as i32;
+}
+
+// Plays the next item now. The item that plays counts as watched.
+function play_next(own s: App): App {
+  let queue = s.play.queue;
+  let t = stop_play(s, true);
+  return start_play(t, queue[0], queue.drop(1));
 }
 
 // The words of the skip button at the place of the playback, or "".
@@ -1536,6 +1585,12 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
       return resume(s);
     }
     return pause_play(s);
+  }
+  if (act == "next_now" && p.queue.len() > 0) {
+    return play_next(s);
+  }
+  if (act == "next_cancel") {
+    return App { ...s, play: Play { ...p, next_off: true, up_next_at: 0i64 }, dirty: true };
   }
   if (act == "skip") {
     if let Some(m) = plex.marker_at(p.item, p.position) {
@@ -1937,7 +1992,7 @@ pub function view(s: App): ui.View {
     hubs = s.results;
   }
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: skip_label(p), sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: p.status };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: skip_label(p), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: p.status };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
@@ -1959,6 +2014,18 @@ function mode_text(p: Play): string {
     return " · Transcode";
   }
   return " · Direct play";
+}
+
+// The words of the next item on its card, or "".
+function next_title(p: Play): string {
+  if (p.queue.len() == 0) {
+    return "";
+  }
+  let it = p.queue[0];
+  if (it.kind == "episode") {
+    return plex.episode_code(it) + " · " + it.title;
+  }
+  return it.title;
 }
 
 function player_subtitle(it: plex.Item): string {
@@ -2129,7 +2196,7 @@ function frame(own s: App, ns: i64): App {
   if (t.gpu && t.window != 0 as usize) {
     if (t.play.video) {
       let over: scene.Node[] = [];
-      if (t.play.overlay || skip_label(t.play).len() > 0) {
+      if (t.play.overlay || skip_label(t.play).len() > 0 || t.play.up_next_at > 0i64) {
         over = t.nodes;
       }
       if (t.dev.present(t.window, over, true)) {
@@ -2165,7 +2232,8 @@ pub function close(own s: App): void {
   if (s.play.active) {
     s.dev.stop();
   }
-  for w in s.probes {
+  for p in s.probes {
+    let Probe { conn, w } = p;
     let rs = w.join();
   }
   for w in s.left {

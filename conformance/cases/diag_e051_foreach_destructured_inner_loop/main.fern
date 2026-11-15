@@ -1,0 +1,6 @@
+// An inner loop gives the field to an own receiver on each of its rounds.
+struct Handle { fd: i32, name: string }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct Pair { k: i32, h: Handle }
+function bad(own ps: Pair[]): i32 { let t = 0; for p in ps { let Pair { k, h } = p; for i in 0..2 { t += k + h.close(); } } return t; }
+function main(): i32 { return 0; }

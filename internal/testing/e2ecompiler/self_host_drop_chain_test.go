@@ -106,10 +106,13 @@ func TestSelfHostDropReadsTheNextNodeFirst(t *testing.T) {
 	if end := strings.Index(body, ".cfi_endproc"); end >= 0 {
 		body = body[:end]
 	}
-	count := regexp.MustCompile(`cmpl \$1, -8\(%r\w+\)`).FindStringIndex(body)
-	release := strings.Index(body, "call __fn___sem_release_")
-	if count == nil || release < 0 || count[0] > release {
-		t.Errorf("the drop of Tree releases a field before it reads the count of the next node:\n%s", body)
+	next := regexp.MustCompile(`movq 16\(%r\w+\), %r\w+`).FindStringIndex(body)
+	down := strings.Index(body, "call __fn___sem_drop_")
+	if next == nil || down < 0 || next[0] > down {
+		t.Errorf("the drop of Tree goes down a field before it reads the next node:\n%s", body)
+	}
+	if regexp.MustCompile(`call __fn___sem_release_\w*Tree`).MatchString(body) {
+		t.Errorf("the drop of Tree releases a Tree field through the release helper, which is a second call for each level:\n%s", body)
 	}
 
 	for _, tg := range h.targets {
