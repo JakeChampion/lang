@@ -68,8 +68,9 @@ port finds a locale as the libc does:
   modifier, so `C_XX.UTF-8@euro` finds `C.utf8`.
 - For glibc, the codeset must be a name of UTF-8 for gconv: `UTF-8` or
   `UTF8`, in upper or lower case.
-- Darwin looks for the name as it is, in PATH_LOCALE or
-  `/usr/share/locale`.
+- Darwin looks for the name as it is, in PATH_LOCALE, `/usr/share/locale`
+  and `/usr/local/share/locale`. A name that starts with `C.` needs only
+  its file of LC_CTYPE, such as `C.UTF-8/LC_CTYPE`.
 - On WASI and on Android, the libc reads no files for a locale. There the
   codeset of the name decides.
 

@@ -13,7 +13,7 @@ import (
 func breBytesFixture(t *testing.T, fixture string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lib/bre.fern", "lib/glibc_ctype.fern", "testdata/" + fixture} {
+	for _, name := range []string{"lib/bre.fern", "lib/glibc_ctype.fern", "lib/locale.fern", "testdata/" + fixture} {
 		src, err := os.ReadFile(filepath.Join("../../../coreutils", name))
 		if err != nil {
 			t.Fatal(err)
@@ -49,6 +49,10 @@ func TestSelfHostBRESedSyntax(t *testing.T) {
 	testSelfHostBREBytes(t, "bre_sed.fern")
 }
 
+func TestSelfHostLocaleDarwinRules(t *testing.T) {
+	testSelfHostBREBytes(t, "locale_darwin.fern")
+}
+
 func testSelfHostBREBytes(t *testing.T, fixture string) {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
@@ -82,6 +86,10 @@ func TestSelfHostArm64DarwinBREDFA(t *testing.T) {
 
 func TestSelfHostArm64DarwinBRESedSyntax(t *testing.T) {
 	testSelfHostArm64DarwinBREBytes(t, "bre_sed.fern")
+}
+
+func TestSelfHostArm64DarwinLocaleDarwinRules(t *testing.T) {
+	testSelfHostArm64DarwinBREBytes(t, "locale_darwin.fern")
 }
 
 func testSelfHostArm64DarwinBREBytes(t *testing.T, fixture string) {

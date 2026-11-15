@@ -1,0 +1,102 @@
+import "../lib/locale";
+
+// The rules of setlocale in the libc of Darwin, on each target: what each
+// category of a name needs, and where Darwin looks for the files.
+
+function need(name: string, category: string): string {
+  let n = locale.darwin_need(name, category);
+  if (n.refused) {
+    return "refused";
+  }
+  if (n.file.len() == 0) {
+    return "none";
+  }
+  return n.file;
+}
+
+// C.UTF-8 needs only the file of LC_CTYPE. The other categories take a name
+// that starts with "C." as the C locale.
+function check_c_dot(): i32 {
+  if (need("C.UTF-8", "LC_CTYPE") != "C.UTF-8/LC_CTYPE") {
+    return 11;
+  }
+  for category in ["LC_COLLATE", "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "LC_MESSAGES"] {
+    if (need("C.UTF-8", category) != "none" || need("C.utf8", category) != "none" || need("C.UTF-8@euro", category) != "none") {
+      return 12;
+    }
+  }
+  if (need("C.utf8", "LC_CTYPE") != "C.utf8/LC_CTYPE" || need("C.UTF8", "LC_CTYPE") != "C.UTF8/LC_CTYPE" || need("C.UTF-8@euro", "LC_CTYPE") != "C.UTF-8@euro/LC_CTYPE") {
+    return 13;
+  }
+  return 0;
+}
+
+// A name that does not start with "C." needs a file in each category.
+// LC_MESSAGES keeps its file in a directory of the same name.
+function check_files(): i32 {
+  if (need("c.utf8", "LC_TIME") != "c.utf8/LC_TIME" || need("C_XX.UTF-8", "LC_NUMERIC") != "C_XX.UTF-8/LC_NUMERIC" || need("C_XX.UTF-8", "LC_CTYPE") != "C_XX.UTF-8/LC_CTYPE") {
+    return 21;
+  }
+  if (need("xx_YY.UTF-8", "LC_COLLATE") != "xx_YY.UTF-8/LC_COLLATE" || need("xx_YY", "LC_MESSAGES") != "xx_YY/LC_MESSAGES/LC_MESSAGES") {
+    return 22;
+  }
+  return 0;
+}
+
+// "C" and "POSIX" load with no file in each category. A name with a slash,
+// "." and "..", and a name of more than 31 bytes do not load.
+function check_builtin(): i32 {
+  for category in ["LC_COLLATE", "LC_CTYPE", "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "LC_MESSAGES"] {
+    if (need("C", category) != "none" || need("POSIX", category) != "none") {
+      return 31;
+    }
+    if (need("../C.utf8", category) != "refused" || need(".", category) != "refused" || need("..", category) != "refused") {
+      return 32;
+    }
+  }
+  if (need("C.01234567890123456789012345678", "LC_CTYPE") != "C.01234567890123456789012345678/LC_CTYPE" || need("C.012345678901234567890123456789", "LC_TIME") != "refused") {
+    return 33;
+  }
+  return 0;
+}
+
+// Darwin opens a file in PATH_LOCALE or /usr/share/locale, then in
+// /usr/share/locale and /usr/local/share/locale.
+function check_dirs(): i32 {
+  let base = locale.darwin_dirs(None);
+  if (base.len() != 3 || base[0] != "/usr/share/locale" || base[1] != "/usr/share/locale" || base[2] != "/usr/local/share/locale") {
+    return 41;
+  }
+  let own = locale.darwin_dirs(Some("/opt/locale"));
+  if (own.len() != 3 || own[0] != "/opt/locale" || own[1] != "/usr/share/locale") {
+    return 42;
+  }
+  let empty = locale.darwin_dirs(Some(""));
+  if (empty.len() != 3 || empty[0] != "") {
+    return 43;
+  }
+  let long = "";
+  for _ in 0..979 {
+    long = long + "/";
+  }
+  if (locale.darwin_dirs(Some(long)).len() != 3 || locale.darwin_dirs(Some(long + "/")).len() != 0) {
+    return 44;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let r = check_c_dot();
+  if (r != 0) {
+    return r;
+  }
+  r = check_files();
+  if (r != 0) {
+    return r;
+  }
+  r = check_builtin();
+  if (r != 0) {
+    return r;
+  }
+  return check_dirs();
+}
