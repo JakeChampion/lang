@@ -180,13 +180,19 @@ function explain_error[T: error.Error](e: T): string {
 }
 
 function compile_error(): pcre.CompileError {
-  let Err(e) = pcre.compile("(", pcre.options()) else { exit(91); };
+  let Err(e) = pcre.compile("(", pcre.options()) else {
+    exit(91);
+  };
   return e;
 }
 
 function match_error(): pcre.MatchError {
-  let Ok(re) = pcre.compile("(a+)+$", pcre.Options { ...pcre.options(), match_limit: 1 }) else { exit(92); };
-  let Err(e) = re.find_at("aaaaac", 0) else { exit(93); };
+  let Ok(re) = pcre.compile("(a+)+$", pcre.Options { ...pcre.options(), match_limit: 1 }) else {
+    exit(92);
+  };
+  let Err(e) = re.find_at("aaaaac", 0) else {
+    exit(93);
+  };
   return e;
 }
 
@@ -218,7 +224,9 @@ function test_compile_error_contracts(): test.TestOutcome {
     return test.fail("compile error fields");
   }
   let (a, b) = compile_interfaces();
-  if (error_heap_churn() != 10960) { return test.fail("heap churn"); }
+  if (error_heap_churn() != 10960) {
+    return test.fail("heap churn");
+  }
   let want = "PCRE2: error compiling pattern at offset 1: missing closing parenthesis";
   return test.assert_eq_array([e.message(), display_error(e), explain_error(e), a.message(), b.to_string()], [want, want, want, want, want]);
 }
@@ -226,7 +234,9 @@ function test_compile_error_contracts(): test.TestOutcome {
 function test_match_error_contracts(): test.TestOutcome {
   let e = match_error();
   let (a, b) = match_interfaces();
-  if (error_heap_churn() != 10960) { return test.fail("heap churn"); }
+  if (error_heap_churn() != 10960) {
+    return test.fail("heap churn");
+  }
   let want = "PCRE2: error matching: match limit exceeded";
   return test.assert_eq_array([e.message(), display_error(e), explain_error(e), a.message(), b.to_string()], [want, want, want, want, want]);
 }
