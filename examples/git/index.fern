@@ -4,6 +4,7 @@ import "std/deflate";
 import "std/hex";
 import "std/hash/crc32";
 import "std/i64";
+import "std/option";
 import "core/cmp";
 import "core/map";
 import "./objects";
@@ -15,12 +16,12 @@ import "./pack";
 pub struct Built { idx: u8[], rev: u8[], name: string, data: string, input_count: i32 }
 
 // How to write the index: the version, and the largest offset that the
-// table of 4-byte offsets of version 2 holds. `algo` is the hash of the
-// names.
-pub struct Options { width: i32, version: i32, limit: i64 }
+// table of 4-byte offsets of version 2 holds. `width` is the width of the
+// names. `level` is the zlib level of the bases that complete a thin pack.
+pub struct Options { width: i32, version: i32, limit: i64, level: i32 }
 
 pub function options(a: i32): Options {
-  return Options { width: a, version: 2, limit: 2147483647 };
+  return Options { width: a, version: 2, limit: 2147483647, level: 1 };
 }
 
 function be32(out: u8[], n: i64): u8[] {
@@ -287,8 +288,9 @@ function resolved(data: string, offsets: i64[], own names: string[], raw: i32): 
 }
 
 // The bytes of an object of the packfile with its header: the kind, the
-// size, and the zlib stream of the body.
-function packed_object(o: objects.Object, kind: i32): u8[] {
+// size, and the zlib stream of the body at the level `level`. git gives
+// zlib 4096 bytes of space at each call, which sets the blocks of level 0.
+function packed_object(o: objects.Object, kind: i32, level: i32): u8[] {
   let size = o.body.len() as i64;
   let c = kind << 4 | (size & 15) as i32;
   size >>= 4;
@@ -298,9 +300,7 @@ function packed_object(o: objects.Object, kind: i32): u8[] {
     c = (size & 127) as i32;
     size >>= 7;
   }
-  out = out.append(c as u8).append(120).append(156).concat(deflate.deflate(o.body));
-  let sum = deflate.adler32(o.body) as i64;
-  return be32(out, sum);
+  return out.append(c as u8).concat(deflate.zlib_compress_in(o.body, level, 4096));
 }
 
 function kind_number(kind: string): i32 {
@@ -312,30 +312,151 @@ function kind_number(kind: string): i32 {
   };
 }
 
-// The packfile with each base that a delta by name needs and that it does
-// not have, from `local`, at its end. The bases come in the order of the
-// deltas in the packfile.
-function completed(data: string, offsets: i64[], names: string[], a: i32, local: (string) => Option[objects.Object]): (string, i64[]) {
+// The packfile with the objects `bases` at its end, and the offsets of
+// all its objects.
+function completed(data: string, offsets: i64[], bases: objects.Object[], o: Options): (string, i64[]) {
   let count = offsets.len() - 1;
   let body = objects.part(data, 0, offsets[count] as i32).bytes();
   let ends = offsets;
-  let added: string[] = [];
-  for i in 0..count {
-    if (names[i].len() == 0) {
-      let e = pack.entry_in(pack.whole(data, a), offsets[i]);
-      let base = hex.encode(e.base_name);
-      if (e.kind == pack.REF_DELTA && !names.contains(base) && !added.contains(base)) {
-        if let Some(o) = local(base) {
-          body = body.concat(packed_object(o, kind_number(o.kind)));
-          added = added.append(base);
-          ends = ends.append(body.len() as i64);
-        }
-      }
-    }
+  for b in bases {
+    body = body.concat(packed_object(b, kind_number(b.kind), o.level));
+    ends = ends.append(body.len() as i64);
   }
   let n = (ends.len() - 1) as i64;
   body = body.with(8, (n >> 24 & 255) as u8).with(9, (n >> 16 & 255) as u8).with(10, (n >> 8 & 255) as u8).with(11, (n & 255) as u8);
-  return (unsafe { string_from_bytes_unchecked(body.concat(objects.digest(a, body))) }, ends);
+  return (unsafe { string_from_bytes_unchecked(body.concat(objects.digest(o.width, body))) }, ends);
+}
+
+// The place of the object at the offset `at`, or -1.
+function place_of(offsets: i64[], at: i64): i32 {
+  let lo = 0;
+  let hi = offsets.len() - 1;
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    if (offsets[mid] < at) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return if (lo < offsets.len() - 1 && offsets[lo] == at) { lo } else { -1 };
+}
+
+// The deltas of a thin pack before its bases are known: the names of the
+// objects that have a name, the names that all objects get when each base
+// is there, and the place of the base of each delta in the packfile, or
+// the name of its base.
+struct Thin { data: string, offsets: i64[], before: string[], after: string[], a: i32 }
+
+// True if the delta at `place` gets its name from the bases `added` and
+// the objects of the packfile.
+function resolves(t: Thin, place: i32, added: string[]): boolean {
+  let at = place;
+  for step in 0..t.offsets.len() {
+    if (t.before[at].len() > 0) {
+      return true;
+    }
+    let e = pack.entry_in(pack.whole(t.data, t.a), t.offsets[at]);
+    if (e.kind == pack.OFS_DELTA) {
+      at = place_of(t.offsets, e.base_offset);
+    } else if (e.kind == pack.REF_DELTA) {
+      let base = hex.encode(e.base_name);
+      if (added.contains(base)) {
+        return true;
+      }
+      at = t.after.index_of(base).unwrap_or(-1);
+    } else {
+      return true;
+    }
+    if (at < 0 || at >= t.before.len()) {
+      return false;
+    }
+  }
+  return false;
+}
+
+// The objects of the repository that `fix_unresolved_deltas` of git adds
+// to a thin pack, in order. Git takes the deltas by name in the order of
+// the packfile, and adds the base of each one that does not have a name
+// from the bases that it added before.
+function thin_bases(data: string, offsets: i64[], names: string[], o: Options, local: (string) => Option[objects.Object]): objects.Object[] {
+  let count = offsets.len() - 1;
+  let wanted: i32[] = [];
+  for i in 0..count {
+    if (names[i].len() == 0 && pack.entry_in(pack.whole(data, o.width), offsets[i]).kind == pack.REF_DELTA) {
+      wanted = wanted.append(i);
+    }
+  }
+  let (all, all_names) = local_bases(data, offsets, wanted, o.width, local);
+  if (all.len() == 0) {
+    return all;
+  }
+  let (whole, ends) = completed(data, offsets, all, o);
+  let more = names;
+  for i in count..ends.len() - 1 {
+    more = more.concat(names_part(whole, ends, i, i + 1, o.width));
+  }
+  let t = Thin { data: data, offsets: offsets, before: names, after: resolved(whole, ends, more, o.width).names, a: o.width };
+  let out: objects.Object[] = [];
+  let added: string[] = [];
+  for i in wanted {
+    let base = hex.encode(pack.entry_in(pack.whole(data, o.width), offsets[i]).base_name);
+    if (!resolves(t, i, added)) {
+      if let Some(k) = all_names.index_of(base) {
+        out = out.append(all[k]);
+        added = added.append(base);
+      }
+    }
+  }
+  return out;
+}
+
+// The objects of the repository that are the bases of the deltas by name
+// at `wanted`, once each, with their names.
+function local_bases(data: string, offsets: i64[], wanted: i32[], a: i32, local: (string) => Option[objects.Object]): (objects.Object[], string[]) {
+  let all: objects.Object[] = [];
+  let all_names: string[] = [];
+  for i in wanted {
+    let base = hex.encode(pack.entry_in(pack.whole(data, a), offsets[i]).base_name);
+    if (!all_names.contains(base)) {
+      if let Some(b) = local(base) {
+        all = all.append(b);
+        all_names = all_names.append(base);
+      }
+    }
+  }
+  return (all, all_names);
+}
+
+// The message of git for a delta by name whose base is in the packfile two
+// times, or "". git takes the delta from the first copy of the base, and
+// stops at the second copy, whose delta has a name already.
+function duplicate_base(data: string, offsets: i64[], names: string[], raw: i32): string {
+  let count = offsets.len() - 1;
+  let first: Map[string, i32] = Map { };
+  let second: Map[string, i32] = Map { };
+  for i in 0..count {
+    let n = names[i];
+    if (n.len() > 0 && first.get_or(n, -1) >= 0 && second.get_or(n, -1) < 0) {
+      second = second.insert(n, i);
+    } else if (n.len() > 0 && first.get_or(n, -1) < 0) {
+      first = first.insert(n, i);
+    }
+  }
+  let soonest = count;
+  let message = "";
+  for i in 0..count {
+    let e = pack.entry_in(pack.whole(data, raw), offsets[i]);
+    if (e.kind == pack.REF_DELTA) {
+      let base = hex.encode(e.base_name);
+      let at = second.get_or(base, count);
+      if (at < soonest) {
+        soonest = at;
+        message = "fatal: REF_DELTA at offset " + offsets[i].to_string() + " already resolved (duplicate base " + base + "?)";
+      }
+    }
+  }
+  return message;
 }
 
 // The index of the packfile `data`. `first` gives the names of the objects
@@ -379,8 +500,9 @@ pub function build_with(data: string, o: Options, first: (string, i64[]) => stri
   let whole = data;
   let ends = offsets;
   if (named.left > 0) {
-    let (fixed, more) = completed(data, offsets, named.names, o.width, local);
-    if (more.len() > offsets.len()) {
+    let bases = thin_bases(data, offsets, named.names, o, local);
+    if (bases.len() > 0) {
+      let (fixed, more) = completed(data, offsets, bases, o);
       whole = fixed;
       ends = more;
       let names = named.names;
@@ -389,6 +511,10 @@ pub function build_with(data: string, o: Options, first: (string, i64[]) => stri
       }
       named = resolved(whole, more, names, raw);
     }
+  }
+  let twice = duplicate_base(whole, ends, named.names, raw);
+  if (twice.len() > 0) {
+    return Err(twice);
   }
   if (named.left > 0) {
     return Err("fatal: pack has " + named.left.to_string() + " unresolved delta" + (if (named.left == 1) { "" } else { "s" }));

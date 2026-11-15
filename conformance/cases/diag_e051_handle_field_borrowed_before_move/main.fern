@@ -1,0 +1,8 @@
+// The enclosing call borrows a field that holds a handle while an inner call takes the local.
+import "std/worker";
+struct Out { on: boolean, a: Option[worker.Worker[i32]] }
+function take(own o: Out): boolean { return o.on; }
+function same(x: boolean): boolean { return x; }
+function pair(w: Option[worker.Worker[i32]], x: boolean): boolean { return x; }
+function bad(own o: Out): boolean { let t = Out { ...o, on: true }; return pair(t.a, same(take(t))); }
+function main(): i32 { return 0; }

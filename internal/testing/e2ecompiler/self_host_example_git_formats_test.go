@@ -81,9 +81,43 @@ func gitIndexPackCases(t *testing.T, oracle, port gitTool, pack []byte, format s
 		{"index-pack", "--object-format=bogus", "p.pack"},
 		{"index-pack", f, "--fix-thin", "p.pack"},
 		{"index-pack", f},
+		// The progress of -v, which one thread of git gives in a fixed order.
+		{"index-pack", f, "-v", "--threads=1", "p.pack"},
+		{"index-pack", f, "-v", "--threads=1", "--strict", "-o", "s.idx", "p.pack"},
+		{"index-pack", f, "--threads=2", "p.pack"},
+		{"index-pack", f, "--verify", "p.pack"},
+		{"index-pack", f, "--verify", "--stdin"},
 	} {
 		compare(pack, false, false, args...)
 	}
+	// --verify compares the index of git with the index that it makes: the
+	// same index, a changed byte, a short index, junk at its end, and no
+	// index.
+	verify := func(change func([]byte) []byte, args ...string) {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "p.pack"), pack, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, stderr, code := oracle.run(t, dir, "", "index-pack", f, "p.pack"); code != 0 {
+			t.Fatalf("git index-pack: %s", stderr)
+		}
+		idx := filepath.Join(dir, "p.idx")
+		if change != nil {
+			if err := os.WriteFile(idx, change(fileBytes(t, idx)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		gitCompare(t, oracle, port, dir, "", append([]string{"index-pack", f}, args...)...)
+	}
+	verify(nil, "--verify", "p.pack")
+	verify(nil, "--verify", "-v", "--threads=1", "p.pack")
+	verify(nil, "--verify", "--strict", "p.pack")
+	verify(nil, "--verify", "--fsck-objects", "p.pack")
+	verify(nil, "--verify", "-o", "nosuch.idx", "p.pack")
+	verify(func(b []byte) []byte { b[len(b)-30] ^= 1; return b }, "--verify", "p.pack")
+	verify(func(b []byte) []byte { return b[:1000] }, "--verify", "p.pack")
+	verify(func(b []byte) []byte { return append(b, "junk"...) }, "--verify", "p.pack")
 	for _, args := range [][]string{{"index-pack", "--stdin"}, {"index-pack", "--stdin", "--keep=why"}, {"index-pack", "--stdin", "--index-version=1"}, {"index-pack", "--stdin", f}} {
 		compare(pack, true, true, args...)
 	}

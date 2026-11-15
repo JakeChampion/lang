@@ -59,7 +59,27 @@ const fillMoveLoopFunctions = `@noinline function fill8(own a: u8[], at: i32, n:
   for i in 0..n { c = c.with(i, 'y'); }
   return (a, c);
 }
+@noinline function fill16(own a: u16[], at: i32, n: i32, v: u16): u16[] {
+  for i in at..at + n { a = a.with(i, v); }
+  return a;
+}
+@noinline function filli16(own a: i16[], at: i32, n: i32, v: i16): i16[] {
+  let i = 0;
+  while (i < n) { a = a.with(at + i, v); i = i + 1; }
+  return a;
+}
+@noinline function move16(own w: u16[], at: i32, from: i32, n: i32): u16[] {
+  let i = 0;
+  while (i < n) { w = w.with(at + i, w[from + i]); i += 1; }
+  return w;
+}
+@noinline function movei16(own w: i16[], at: i32, from: i32, n: i32): i16[] {
+  for i in 0..n { w = w.with(at + i, w[from + i]); }
+  return w;
+}
 @noinline function set8(own a: u8[], i: i32, v: u8): u8[] { return a.with(i, v); }
+@noinline function set16(own a: u16[], i: i32, v: u16): u16[] { return a.with(i, v); }
+@noinline function seti16(own a: i16[], i: i32, v: i16): i16[] { return a.with(i, v); }
 @noinline function set32(own a: i32[], i: i32, v: i32): i32[] { return a.with(i, v); }
 @noinline function setf(own a: f64[], i: i32, v: f64): f64[] { return a.with(i, v); }
 @noinline function rmove8(own w: u8[], at: i32, from: i32, n: i32): u8[] {
@@ -76,6 +96,34 @@ const fillMoveLoopFunctions = `@noinline function fill8(own a: u8[], at: i32, n:
   let i = 0;
   while (i < n) { let x = w[from + i]; w = setf(w, at + i, x); i += 1; }
   return w;
+}
+@noinline function rmove16(own w: u16[], at: i32, from: i32, n: i32): u16[] {
+  let i = 0;
+  while (i < n) { let x = w[from + i]; w = set16(w, at + i, x); i += 1; }
+  return w;
+}
+@noinline function rmovei16(own w: i16[], at: i32, from: i32, n: i32): i16[] {
+  let i = 0;
+  while (i < n) { let x = w[from + i]; w = seti16(w, at + i, x); i += 1; }
+  return w;
+}
+@noinline function rfill16(own a: u16[], at: i32, n: i32, v: u16): u16[] {
+  for i in at..at + n { a = set16(a, i, v); }
+  return a;
+}
+@noinline function rfilli16(own a: i16[], at: i32, n: i32, v: i16): i16[] {
+  for i in at..at + n { a = seti16(a, i, v); }
+  return a;
+}
+@noinline function seq16(n: i32): u16[] {
+  let a: u16[] = [];
+  for i in 0..n { a = a.append((i * 653 + 3) as u16); }
+  return a;
+}
+@noinline function seqi16(n: i32): i16[] {
+  let a: i16[] = [];
+  for i in 0..n { a = a.append((i * 601 - 30000) as i16); }
+  return a;
 }
 @noinline function seq8(n: i32): u8[] {
   let a: u8[] = [];
@@ -102,6 +150,16 @@ const fillMoveLoopFunctions = `@noinline function fill8(own a: u8[], at: i32, n:
   for i in 0..a.len() { if (a[i] != b[i]) { return false; } }
   return true;
 }
+@noinline function same16(a: u16[], b: u16[]): boolean {
+  if (a.len() != b.len()) { return false; }
+  for i in 0..a.len() { if (a[i] != b[i]) { return false; } }
+  return true;
+}
+@noinline function samei16(a: i16[], b: i16[]): boolean {
+  if (a.len() != b.len()) { return false; }
+  for i in 0..a.len() { if (a[i] != b[i]) { return false; } }
+  return true;
+}
 @noinline function same32(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) { return false; }
   for i in 0..a.len() { if (a[i] != b[i]) { return false; } }
@@ -124,6 +182,8 @@ const fillMoveLoopMain = `function main(): i32 {
         if (!same8(move8(seq8(100), at, from, n), rmove8(seq8(100), at, from, n))) { return 1; }
         if (!same32(move32(seq32(100), at, from, n), rmove32(seq32(100), at, from, n))) { return 2; }
         if (!samef(move64(seqf(100), at, from, n), rmovef(seqf(100), at, from, n))) { return 3; }
+        if (!same16(move16(seq16(100), at, from, n), rmove16(seq16(100), at, from, n))) { return 12; }
+        if (!samei16(movei16(seqi16(100), at, from, n), rmovei16(seqi16(100), at, from, n))) { return 13; }
       }
     }
   }
@@ -150,6 +210,13 @@ const fillMoveLoopMain = `function main(): i32 {
   if (__heap_alloc_count() - before2 != 1i64 || kept[0] != 1u8 || kept[10] != 1u8 || changed[0] != 9u8 || changed[14] != 9u8) { return 10; }
   let none = move8(fill8(seq8(4), 0 - 2147483647, 0 - 1, 3u8), 2147483647, 0 - 2147483647, 0);
   if (!same8(none, seq8(4))) { return 11; }
+  for at in [0, 1, 3] {
+    for n in [0, 1, 2, 3, 4, 5, 7, 9, 33, 60] {
+      if (!same16(fill16(seq16(64), at, n, 40000 as u16), rfill16(seq16(64), at, n, 40000 as u16))) { return 14; }
+      if (!same16(fill16(seq16(64), at, n, 0 as u16), rfill16(seq16(64), at, n, 0 as u16))) { return 15; }
+      if (!samei16(filli16(seqi16(64), at, n, (0 - 7) as i16), rfilli16(seqi16(64), at, n, (0 - 7) as i16))) { return 16; }
+    }
+  }
   return 0;
 }`
 
@@ -160,7 +227,7 @@ func TestSelfHostFillMoveLoops(t *testing.T) {
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	kernels := []string{"__fern_arr_fill_u8", "__fern_arr_fill_u32", "__fern_arr_fill_u64", "__fern_arr_move_u8", "__fern_arr_move_u32", "__fern_arr_move_u64"}
+	kernels := []string{"__fern_arr_fill_u8", "__fern_arr_fill_u16", "__fern_arr_fill_u32", "__fern_arr_fill_u64", "__fern_arr_move_u8", "__fern_arr_move_u16", "__fern_arr_move_u32", "__fern_arr_move_u64"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
@@ -209,6 +276,8 @@ func TestSelfHostFillMoveLoopBounds(t *testing.T) {
 		"move-write": "move8(seq8(10), 5, 0, 6)",
 		"fill-wide":  "fill32(seq32(10), 9, 2, 3)",
 		"move-wide":  "move32(seq32(10), 0, 9, 2)",
+		"fill-half":  "fill16(seq16(10), 9, 2, 1 as u16)",
+		"move-half":  "movei16(seqi16(10), 0, 9, 2)",
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		for name, call := range calls {
@@ -229,7 +298,7 @@ func TestSelfHostFillMoveLoopBounds(t *testing.T) {
 	}
 }
 
-// An element that is not 1, 4 or 8 bytes on each target, or that has a
+// An element that is not 1, 2, 4 or 8 bytes on each target, or that has a
 // reference count, has no kernel. The append lets the pass see the function.
 const fillMoveOtherElements = `@noinline function fillz(own a: usize[], n: i32, v: usize): usize[] {
   for i in 0..n { a = a.with(i, v); }

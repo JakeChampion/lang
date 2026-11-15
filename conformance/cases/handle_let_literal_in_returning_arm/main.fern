@@ -1,0 +1,38 @@
+// A literal that spreads an own parameter inside an arm that ends in a
+// return takes the parameter: the read after the if runs only when the arm
+// does not.
+import "std/worker";
+
+struct Out { k: i32, w: Option[worker.Worker[i32]] }
+
+function bump(own o: Out, d: i32): Out {
+  return Out { ...o, k: o.k + d };
+}
+
+function then_arm(own o: Out, x: i32): Out {
+  if (x > 0) {
+    let t = Out { ...o, k: 10 };
+    return bump(t, 1);
+  }
+  return o;
+}
+
+function match_arm(own o: Out, x: i32): Out {
+  match (x) {
+    0 => {
+      let t = Out { ...o, k: 20 };
+      return bump(t, 2);
+    },
+    _ => {}
+  }
+  return bump(o, 3);
+}
+
+function main(): i32 {
+  let a = then_arm(Out { k: 0, w: None }, 1);
+  let b = then_arm(Out { k: 0, w: None }, 0);
+  let c = match_arm(Out { k: 0, w: None }, 0);
+  let d = match_arm(Out { k: 0, w: None }, 1);
+  print(a.k.to_string() + " " + b.k.to_string() + " " + c.k.to_string() + " " + d.k.to_string());
+  return 0;
+}

@@ -1,0 +1,36 @@
+// A call takes an array at its last use and a view of that array. The
+// callee updates the array, and the view still reads the old elements.
+
+import "std/i32";
+
+@noinline
+function update_and_read(xs: i32[], v: [i32]): i32 {
+    let ws: i32[] = xs.with(0, 5);
+    return v[0] * 10 + ws[0];
+}
+
+@noinline
+function grow_and_read(xs: i32[], v: [i32]): i32 {
+    let ws: i32[] = xs.append(9);
+    return v[0] * 100 + ws.len();
+}
+
+function build(n: i32): i32[] {
+    let r: i32[] = [];
+    let i: i32 = 0;
+    while (i < n) {
+        r = r.append(i * 3 + 1);
+        i = i + 1;
+    }
+    return r;
+}
+
+function main(): i32 {
+    let xs: i32[] = build(1);
+    let v: [i32] = xs[0:1];
+    print(update_and_read(xs, v).to_string());
+    let ys: i32[] = build(2);
+    let w: [i32] = ys[1:2];
+    print(grow_and_read(ys, w).to_string());
+    return 0;
+}

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -194,64 +195,79 @@ func TestSelfHostExampleGitIndexValidation(t *testing.T) {
 	}
 }
 
-// A literal delta isolates validation from the choice of compression.
-func gitValidationRefPack(t *testing.T, format string, base, result gitValidationObject, includeBase bool, extra []gitValidationObject) []byte {
-	t.Helper()
-	delta := binary.AppendUvarint(nil, uint64(len(base.body)))
-	delta = binary.AppendUvarint(delta, uint64(len(result.body)))
-	for at := 0; at < len(result.body); {
-		end := at + 127
-		if end > len(result.body) {
-			end = len(result.body)
-		}
+// gitLiteralDelta is a delta from base to result that inserts each byte
+// of result. It does not depend on the choice of compression.
+func gitLiteralDelta(base, result string) []byte {
+	delta := binary.AppendUvarint(nil, uint64(len(base)))
+	delta = binary.AppendUvarint(delta, uint64(len(result)))
+	for at := 0; at < len(result); {
+		end := min(at+127, len(result))
 		delta = append(delta, byte(end-at))
-		delta = append(delta, result.body[at:end]...)
+		delta = append(delta, result[at:end]...)
 		at = end
 	}
-	count := 1 + len(extra)
-	if includeBase {
-		count++
+	return delta
+}
+
+// gitPackEntry appends to data one object of a packfile: the header of
+// kind and of the size of body, then prefix, then the zlib stream of body.
+func gitPackEntry(t *testing.T, data []byte, kind int, prefix, body []byte) []byte {
+	t.Helper()
+	n := len(body)
+	b := byte(kind<<4 | n&15)
+	n >>= 4
+	if n != 0 {
+		b |= 128
 	}
-	data := binary.BigEndian.AppendUint32([]byte("PACK\x00\x00\x00\x02"), uint32(count))
-	appendEntry := func(kind int, prefix, body []byte) {
-		n := len(body)
-		b := byte(kind<<4 | n&15)
-		n >>= 4
+	data = append(data, b)
+	for n != 0 {
+		b = byte(n & 127)
+		n >>= 7
 		if n != 0 {
 			b |= 128
 		}
 		data = append(data, b)
-		for n != 0 {
-			b = byte(n & 127)
-			n >>= 7
-			if n != 0 {
-				b |= 128
-			}
-			data = append(data, b)
-		}
-		data = append(data, prefix...)
-		var compressed bytes.Buffer
-		w := zlib.NewWriter(&compressed)
-		if _, err := w.Write(body); err != nil {
-			t.Fatal(err)
-		}
-		if err := w.Close(); err != nil {
-			t.Fatal(err)
-		}
-		data = append(data, compressed.Bytes()...)
 	}
-	raw, err := hex.DecodeString(gitValidationName(format, base))
-	if err != nil {
+	data = append(data, prefix...)
+	var compressed bytes.Buffer
+	w := zlib.NewWriter(&compressed)
+	if _, err := w.Write(body); err != nil {
 		t.Fatal(err)
 	}
-	appendEntry(7, raw, delta)
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return append(data, compressed.Bytes()...)
+}
+
+// gitRefDelta is a delta by name in a packfile: the base, and the object
+// that the delta makes.
+type gitRefDelta struct{ base, result gitValidationObject }
+
+// gitRefDeltaPack is a packfile with the deltas by name and then the
+// objects extra.
+func gitRefDeltaPack(t *testing.T, format string, deltas []gitRefDelta, extra []gitValidationObject) []byte {
+	t.Helper()
+	data := binary.BigEndian.AppendUint32([]byte("PACK\x00\x00\x00\x02"), uint32(len(deltas)+len(extra)))
+	for _, d := range deltas {
+		raw, err := hex.DecodeString(gitValidationName(format, d.base))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = gitPackEntry(t, data, 7, raw, gitLiteralDelta(d.base.body, d.result.body))
+	}
+	for _, o := range extra {
+		data = gitPackEntry(t, data, map[string]int{"commit": 1, "tree": 2, "blob": 3, "tag": 4}[o.kind], nil, []byte(o.body))
+	}
+	return append(data, gitValidationHash(format, data)...)
+}
+
+func gitValidationRefPack(t *testing.T, format string, base, result gitValidationObject, includeBase bool, extra []gitValidationObject) []byte {
+	t.Helper()
 	if includeBase {
 		extra = append([]gitValidationObject{base}, extra...)
 	}
-	for _, o := range extra {
-		appendEntry(map[string]int{"commit": 1, "tree": 2, "blob": 3, "tag": 4}[o.kind], nil, []byte(o.body))
-	}
-	return append(data, gitValidationHash(format, data)...)
+	return gitRefDeltaPack(t, format, []gitRefDelta{{base, result}}, extra)
 }
 
 func TestSelfHostExampleGitThinValidation(t *testing.T) {
@@ -286,6 +302,7 @@ func TestSelfHostExampleGitThinValidation(t *testing.T) {
 						out, stderr string
 						code        int
 						objects     string
+						files       map[string]string
 					}
 					execute := func(tool gitTool) outcome {
 						t.Helper()
@@ -298,29 +315,6 @@ func TestSelfHostExampleGitThinValidation(t *testing.T) {
 						out, stderr, code := tool.run(t, dir, string(raw), "index-pack", "--stdin", "--fix-thin", "--no-rev-index", flag)
 						listing := ""
 						if code == 0 {
-							// A repaired thin pack can use a different valid compression stream.
-							// Check each exact output against its own pack checksum and contents.
-							names, _ := filepath.Glob(filepath.Join(dir, ".git/objects/pack/*.pack"))
-							if len(names) != 1 {
-								t.Fatalf("%s: %d final packfiles", c.name, len(names))
-							}
-							data := fileBytes(t, names[0])
-							width := run.digits / 2
-							if len(data) < width {
-								t.Fatal("short repaired pack")
-							}
-							sum := gitValidationHash(run.format, data[:len(data)-width])
-							if !bytes.Equal(sum, data[len(data)-width:]) {
-								t.Fatal("repaired pack checksum")
-							}
-							name := hex.EncodeToString(sum)
-							if out != "pack\t"+name+"\n" || filepath.Base(names[0]) != "pack-"+name+".pack" {
-								t.Errorf("%s: exact output %q does not name its pack", c.name, out)
-							}
-							idx := strings.TrimSuffix(names[0], ".pack") + ".idx"
-							if _, err, status := oracle.run(t, dir, "", "verify-pack", idx); status != 0 {
-								t.Fatalf("verify-pack: %s", err)
-							}
 							var status int
 							var err string
 							listing, err, status = oracle.run(t, dir, "", "cat-file", "--batch-all-objects", "--batch")
@@ -336,18 +330,145 @@ func TestSelfHostExampleGitThinValidation(t *testing.T) {
 								}
 							}
 						}
-						return outcome{out, stderr, code, listing}
+						return outcome{out, stderr, code, listing, gitPackFiles(t, dir)}
 					}
 					want := execute(oracle)
 					got := execute(port)
-					if got.code != want.code || got.stderr != want.stderr || got.objects != want.objects {
-						t.Errorf("%s %s: got exit %d, stderr %q, objects %q. Want exit %d, stderr %q, objects %q", c.name, flag, got.code, got.stderr, got.objects, want.code, want.stderr, want.objects)
-					}
-					if want.code != 0 && got.out != want.out {
-						t.Errorf("%s %s: exact error stdout %q, want %q", c.name, flag, got.out, want.out)
+					if !reflect.DeepEqual(got, want) {
+						t.Errorf("%s %s: got exit %d, stdout %q, stderr %q, objects %q. Want exit %d, stdout %q, stderr %q, objects %q", c.name, flag, got.code, got.out, got.stderr, got.objects, want.code, want.out, want.stderr, want.objects)
 					}
 				}
 			}
+		})
+	}
+}
+
+// gitPackFiles is the bytes of each final file in the pack directory of the
+// repository dir, by name. The temporary files of git are not in it.
+func gitPackFiles(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	found, _ := filepath.Glob(filepath.Join(dir, ".git/objects/pack/pack-*"))
+	for _, f := range found {
+		files[filepath.Base(f)] = hex.EncodeToString(fileBytes(t, f))
+	}
+	return files
+}
+
+// index-pack --fix-thin writes the packfile, the index and the reverse
+// index of git: the bases that git adds, in its order, with its zlib
+// streams at each level that core.compression and core.loosecompression
+// give, and the messages of git for a level that is not one. One thin
+// pack comes from pack-objects --thin. Others have deltas by name whose
+// bases are deltas of the same packfile, where git adds a base only for a
+// delta that the bases before it do not complete. A base that is in the
+// packfile two times stops git.
+func TestSelfHostExampleGitFixThin(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
+	for _, run := range gitRuns() {
+		port := gitPort(t, cli, run.target)
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			must := func(dir, stdin string, args ...string) string {
+				t.Helper()
+				out, stderr, code := oracle.run(t, dir, stdin, args...)
+				if code != 0 {
+					t.Fatalf("git %v: exit %d\n%s", args, code, stderr)
+				}
+				return out
+			}
+			src := t.TempDir()
+			gitInit(t, oracle, src, run)
+			var text, numbers strings.Builder
+			for i := 0; i < 4000; i++ {
+				fmt.Fprintf(&text, "line %d of the text with the word %d\n", i, i*i%97)
+				fmt.Fprintf(&numbers, "%d\n", i)
+			}
+			write := func(name, body string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			id := []string{"-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}
+			write("text.txt", text.String())
+			write("numbers.txt", numbers.String())
+			must(src, "", "add", "-A")
+			must(src, "", append(id, "commit", "-q", "-m", "one")...)
+			write("text.txt", strings.ReplaceAll(text.String(), "word 5", "word five"))
+			write("numbers.txt", numbers.String()+"4000\n")
+			write("new.txt", "new\n")
+			must(src, "", "add", "-A")
+			must(src, "", append(id, "commit", "-q", "-m", "two")...)
+			fetched := must(src, "HEAD\n^HEAD~1\n", "pack-objects", "--thin", "--stdout", "--revs", "-q")
+			older := must(src, "HEAD~1\n", "pack-objects", "--stdout", "--revs", "-q")
+
+			type outcome struct {
+				out, stderr string
+				code        int
+				files       map[string]string
+			}
+			// The repository gets the objects of the packfile `have` and the
+			// objects `loose`.
+			execute := func(tool gitTool, config, have string, loose []gitValidationObject, thin string) outcome {
+				t.Helper()
+				dir := t.TempDir()
+				gitInit(t, oracle, dir, run)
+				if have != "" {
+					must(dir, have, "unpack-objects", "-q")
+				}
+				for _, o := range loose {
+					must(dir, o.body, "hash-object", "-w", "-t", o.kind, "--stdin")
+				}
+				f, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.WriteString(config); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
+				out, stderr, code := tool.run(t, dir, thin, "index-pack", "--stdin", "--fix-thin")
+				return outcome{out, stderr, code, gitPackFiles(t, dir)}
+			}
+			compare := func(name, config, have string, loose []gitValidationObject, thin string) {
+				t.Helper()
+				want := execute(oracle, config, have, loose, thin)
+				got := execute(port, config, have, loose, thin)
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("%s: got exit %d, stdout %q, stderr %q, files %d\nwant exit %d, stdout %q, stderr %q, files %d", name, got.code, got.out, got.stderr, len(got.files), want.code, want.out, want.stderr, len(want.files))
+					for file, w := range want.files {
+						if got.files[file] != w {
+							t.Errorf("  %s differs", file)
+						}
+					}
+				}
+			}
+			for _, config := range []string{
+				"",
+				"[core]\n\tcompression = 0\n",
+				"[core]\n\tcompression = 6\n",
+				"[core]\n\tcompression = 9\n",
+				"[core]\n\tcompression = -1\n",
+				"[core]\n\tloosecompression = 3\n\tcompression = 9\n",
+				"[core]\n\tcompression = 4\n\tcompression = 2\n",
+				"[core]\n\tcompression = 12\n",
+				"[core]\n\tloosecompression = -2\n",
+				"[core]\n\tcompression = x\n",
+			} {
+				compare("pack-objects --thin with "+strconv.Quote(config), config, older, nil, fetched)
+			}
+			base := gitValidationObject{"blob", "hello\n"}
+			middle := gitValidationObject{"blob", "hello again\n"}
+			last := gitValidationObject{"blob", "hello at the end\n"}
+			local := []gitValidationObject{base, middle}
+			compare("the base of the second delta is the first delta", "", "", local, string(gitRefDeltaPack(t, run.format, []gitRefDelta{{base, middle}, {middle, last}}, nil)))
+			compare("the base of the first delta is the second delta", "", "", local, string(gitRefDeltaPack(t, run.format, []gitRefDelta{{middle, last}, {base, middle}}, nil)))
+			compare("two deltas with one base", "", "", local, string(gitRefDeltaPack(t, run.format, []gitRefDelta{{base, last}, {base, middle}}, nil)))
+			compare("a base that is not in the repository", "", "", []gitValidationObject{middle}, string(gitRefDeltaPack(t, run.format, []gitRefDelta{{base, middle}, {middle, last}}, nil)))
+			compare("a base that the packfile has two times", "", "", nil, string(gitRefDeltaPack(t, run.format, []gitRefDelta{{base, middle}}, []gitValidationObject{base, last, base})))
 		})
 	}
 }

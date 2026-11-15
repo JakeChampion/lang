@@ -25,7 +25,7 @@ func TestSelfHostExampleGitCommitGraph(t *testing.T) {
 	for i, run := range gitRuns() {
 		port := gitPort(t, cli, run.target)
 		t.Run(run.target+"-"+run.format, func(t *testing.T) {
-			for k, kind := range []string{"bloom", "chain", "v1"} {
+			for k, kind := range []string{"bloom", "chain", "v1", "bloom2"} {
 				dir := t.TempDir()
 				gitRandomHistory(t, oracle, dir, int64(100+10*i+k), 70, run)
 				must := func(args ...string) string {
@@ -55,6 +55,12 @@ func TestSelfHostExampleGitCommitGraph(t *testing.T) {
 					}
 				case "v1":
 					must("-c", "commitGraph.generationVersion=1", "commit-graph", "write", "--reachable", "--changed-paths")
+				case "bloom2":
+					// The filters of version 2 differ from those of version 1
+					// only for a path with a byte above 127, and these paths
+					// have none.
+					must("commit-graph", "write", "--reachable", "--changed-paths")
+					setBloomVersion(t, filepath.Join(dir, ".git/objects/info/commit-graph"), 2)
 				}
 				refs := strings.Fields(must("for-each-ref", "--format=%(refname:short)"))
 				rnd := rand.New(rand.NewSource(int64(k)))
@@ -66,6 +72,16 @@ func TestSelfHostExampleGitCommitGraph(t *testing.T) {
 				}
 				for _, args := range cases {
 					gitCompare(t, oracle, port, dir, "", args...)
+				}
+				if kind == "bloom2" {
+					for _, v := range []string{"1", "2", "0", "-1"} {
+						must("config", "commitGraph.changedPathsVersion", v)
+						for _, args := range [][]string{{"log", "--oneline", "--", "dir/sub/e"}, {"log", "--oneline", "--all", "--", "a"}, {"log", "--stat", "-n", "10", "--", "dir"}} {
+							gitCompare(t, oracle, port, dir, "", args...)
+						}
+					}
+					must("config", "commitGraph.readChangedPaths", "false")
+					gitCompare(t, oracle, port, dir, "", "log", "--oneline", "--", "dir/sub/e")
 				}
 				if kind != "bloom" {
 					continue
@@ -122,4 +138,25 @@ func setCommitGraphDate(t *testing.T, path, name string, date uint64) {
 		}
 	}
 	t.Fatalf("the commit graph has no commit %s", name)
+}
+
+// setBloomVersion sets the version of the Bloom filters of the commit
+// graph `path` to `version`.
+func setBloomVersion(t *testing.T, path string, version uint32) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 8; i+12 <= len(b); i += 12 {
+		if string(b[i:i+4]) == "BDAT" {
+			at := binary.BigEndian.Uint64(b[i+4 : i+12])
+			binary.BigEndian.PutUint32(b[at:at+4], version)
+			if err := os.WriteFile(path, b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
+	t.Fatal("the commit graph has no Bloom filters")
 }

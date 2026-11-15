@@ -59,7 +59,10 @@ unchanged.
 compile commands, executable hashes, raw output and per-run measurements.
 Koka uses `-O2`; Lean emits C and links with `leanc -O3`; Fern uses its primary
 compiler's normal native output. A verified warm-up process for each case and
-language precedes repeated timing. Execution order rotates between repeats.
+language precedes repeated timing. The order of the languages in a repeat is
+a row of a balanced Latin square. Thus each language runs directly after each
+other language equally often. Use a multiple of the number of rows as the count
+of repeats: four rows for four languages, six for three.
 Wall time, CPU time and peak RSS cover startup, output and teardown. Fern
 allocations come from a separate binary compiled with `FERN_LEAKCHECK=1`, with
 balanced frees and zero live bytes required. Instrumented runs are excluded

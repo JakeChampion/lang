@@ -1,4 +1,5 @@
 """Failure records must survive both ordinary timeouts and an unreapable child."""
+import collections
 import importlib.util
 import json
 from pathlib import Path
@@ -92,11 +93,18 @@ class LanguageTests(unittest.TestCase):
         roc = bench.build_commands("roc", "nqueens", tools, root, out, "x86-64-linux")
         self.assertEqual(roc, [["/t/roc", "build", "--optimize", "--output", "/o/roc-nqueens", "/r/bench/perceus/roc/nqueens.roc"]])
 
-    def test_turns_rotate_through_every_language(self):
-        languages = ("fern", "koka", "lean", "roc")
-        firsts = [bench.turn_order(languages, repeat)[0] for repeat in range(4)]
-        self.assertEqual(firsts, list(languages))
-        self.assertEqual(bench.turn_order(("fern", "koka", "lean"), 4), ("koka", "lean", "fern"))
+    def test_turns_balance_positions_and_neighbours(self):
+        for languages, rows in ((("fern", "koka", "lean", "roc"), 4), (("fern", "koka", "lean"), 6)):
+            with self.subTest(languages=languages):
+                orders = [bench.turn_order(languages, repeat) for repeat in range(rows)]
+                self.assertEqual(orders[0], bench.turn_order(languages, rows))
+                for order in orders:
+                    self.assertEqual(sorted(order), sorted(languages))
+                for position in range(len(languages)):
+                    self.assertEqual(sorted(order[position] for order in orders), sorted(languages * (rows // len(languages))))
+                pairs = collections.Counter((order[i], order[i + 1]) for order in orders for i in range(len(order) - 1))
+                self.assertEqual(len(pairs), len(languages) * (len(languages) - 1))
+                self.assertEqual(len(set(pairs.values())), 1)
 
     def test_every_workload_has_a_roc_twin(self):
         roc = Path(__file__).resolve().parent.parent / "bench/perceus/roc"

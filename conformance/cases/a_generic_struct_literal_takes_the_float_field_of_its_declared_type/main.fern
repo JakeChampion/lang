@@ -1,0 +1,29 @@
+// An integer literal in a generic struct literal takes the field type of the
+// instance that a let, an assignment, a return or a parameter declares.
+
+struct Box[T] { v: T }
+
+struct Two[A, B] { a: A, b: B }
+
+function half(b: Box[f64]): f64 {
+  return b.v / 2.0;
+}
+
+function make(): Box[f32] {
+  return Box { v: 3 };
+}
+
+function main(): i32 {
+  let fs: Box[f32][] = [Box { v: 1 }, Box { v: 2.5 }];
+  print(fs[0].v + fs[1].v);
+  let b: Box[f64] = Box { v: 1 };
+  print(b.v + 0.5);
+  b = Box { v: 4 };
+  print(b.v + 0.25);
+  print(half(Box { v: 5 }));
+  print(make().v + 0.5);
+  let t: Two[i64, f64] = Two { a: 3, b: 4 };
+  print(t.b + 0.5);
+  print(t.a + 9223372036854775800);
+  return 0;
+}
