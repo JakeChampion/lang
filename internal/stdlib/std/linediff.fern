@@ -75,8 +75,8 @@ function abs_i64(v: i64): i64 {
 
 // The midpoint of a shortest edit script for the box [xoff, xlim) x
 // [yoff, ylim): `diag` of GNU diff and `xdl_split` of xdiff.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
+// It follows the C line for line, so that the output stays that of GNU
+// diff and of git.
 // fern-lint: allow cyclomatic-complexity
 function diag(own v: i32[], sp: Space, xv: i32[], yv: i32[], xoff: i32, xlim: i32, yoff: i32, ylim: i32, find_minimal: boolean): i32[] {
   let fo = sp.fo;
@@ -306,14 +306,37 @@ function push5(own s: i32[], top: i32, a: i32, b: i32, c: i32, d: i32, e: i32): 
   return s;
 }
 
+// The box [xoff, xlim) x [yoff, ylim) without the snakes at its two ends.
+function without_snakes(xv: i32[], yv: i32[], xoff_in: i32, xlim_in: i32, yoff_in: i32, ylim_in: i32): (i32, i32, i32, i32) {
+  let xoff = xoff_in;
+  let xlim = xlim_in;
+  let yoff = yoff_in;
+  let ylim = ylim_in;
+  while (xoff < xlim && yoff < ylim && xv[xoff] == yv[yoff]) {
+    xoff += 1;
+    yoff += 1;
+  }
+  while (xoff < xlim && yoff < ylim && xv[xlim - 1] == yv[ylim - 1]) {
+    xlim -= 1;
+    ylim -= 1;
+  }
+  return (xoff, xlim, yoff, ylim);
+}
+
+// Marks the lines [from, to) of one sequence: the line `k` at
+// `flags[base + real[k]]`.
+function mark_all(own flags: u8[], real: i32[], base: i32, from: i32, to: i32): u8[] {
+  for k in from..to {
+    flags = flags.with(base + real[k], 1 as u8);
+  }
+  return flags;
+}
+
 // Marks the lines that a shortest edit script of `xv` and `yv` deletes and
 // inserts: the line `k` of `xv` at `flags[base0 + xreal[k]]`, and the line
 // `k` of `yv` at `flags[base1 + yreal[k]]`. The two sequences hold the
 // class of each line. A stack holds the halves that wait, which gives the
 // marks of the recursion of GNU diff and xdiff.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
-// fern-lint: allow cyclomatic-complexity
 pub function compareseq(own flags: u8[], xv: i32[], xreal: i32[], yv: i32[], yreal: i32[], base0: i32, base1: i32, minimal: boolean, s: Search): u8[] {
   let n = xv.len();
   let m = yv.len();
@@ -330,24 +353,17 @@ pub function compareseq(own flags: u8[], xv: i32[], xreal: i32[], yv: i32[], yre
     let ylim = stack[top + 3];
     let find_minimal = stack[top + 4] != 0;
     while (true) {
-      while (xoff < xlim && yoff < ylim && xv[xoff] == yv[yoff]) {
-        xoff += 1;
-        yoff += 1;
-      }
-      while (xoff < xlim && yoff < ylim && xv[xlim - 1] == yv[ylim - 1]) {
-        xlim -= 1;
-        ylim -= 1;
-      }
+      let (x0, x1, y0, y1) = without_snakes(xv, yv, xoff, xlim, yoff, ylim);
+      xoff = x0;
+      xlim = x1;
+      yoff = y0;
+      ylim = y1;
       if (xoff == xlim) {
-        for k in yoff..ylim {
-          flags = flags.with(base1 + yreal[k], 1 as u8);
-        }
+        flags = mark_all(flags, yreal, base1, yoff, ylim);
         break;
       }
       if (yoff == ylim) {
-        for k in xoff..xlim {
-          flags = flags.with(base0 + xreal[k], 1 as u8);
-        }
+        flags = mark_all(flags, xreal, base0, xoff, xlim);
         break;
       }
       v = diag(v, sp, xv, yv, xoff, xlim, yoff, ylim, find_minimal);
@@ -505,8 +521,7 @@ const SIMSCAN_WINDOW: i32 = 100;
 
 // True when the line `i`, which has many matches, is in a run of lines
 // with no match: `xdl_clean_mmatch`.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
+// It follows the C line for line, so that the output stays that of git.
 // fern-lint: allow cyclomatic-complexity
 function clean_mmatch(dis: u8[], i: i32, s_in: i32, e_in: i32): boolean {
   let s = if (i - s_in > SIMSCAN_WINDOW) { i - SIMSCAN_WINDOW } else { s_in };
@@ -550,13 +565,55 @@ function clean_mmatch(dis: u8[], i: i32, s_in: i32, e_in: i32): boolean {
   return rpdis1 * KPDIS_RUN < rpdis1 + rdis1;
 }
 
+// The counts of the lines at the start and at the end of the two parts
+// that are the same: `xdl_trim_ends`.
+function trim_ends(e: Env, lo1: i32, hi1: i32, lo2: i32, hi2: i32): (i32, i32) {
+  let start = 0;
+  let lim = (hi1 - lo1).min(hi2 - lo2);
+  while (start < lim && e.ha[lo1 + start] == e.hb[lo2 + start]) {
+    start += 1;
+  }
+  let tail = 0;
+  while (tail < lim - start && e.ha[hi1 - 1 - tail] == e.hb[hi2 - 1 - tail]) {
+    tail += 1;
+  }
+  return (start, tail);
+}
+
+// For each line [dstart, dend) of one part, whose classes are `h`, from
+// the count `other` of its class in the other part: 0 for no match, 2 for
+// `mlim` matches or more, and 1 for some (`dis` of `xdl_cleanup_records`).
+function discards(h: i32[], other: i32[], lo: i32, dstart: i32, dend: i32, nrec: i32, mlim: i32): u8[] {
+  let dis = __alloc_u8(nrec + 1);
+  for i in dstart..dend {
+    let nm = other[h[i]];
+    dis = dis.with(i - lo, if (nm == 0) { 0 as u8 } else if (nm >= mlim) { 2 as u8 } else { 1 as u8 });
+  }
+  return dis;
+}
+
+// The lines [dstart, dend) of one part that go to the search, as classes
+// and as lines, with the marks of the other lines from `base`: the
+// `rindex` of `xdl_cleanup_records`.
+function kept_records(own rchg: u8[], h: i32[], dis: u8[], lo: i32, dstart: i32, dend: i32, base: i32): (u8[], i32[], i32[]) {
+  let v: i32[] = [];
+  let real: i32[] = [];
+  for i in dstart..dend {
+    let d = dis[i - lo];
+    if (d == 1 as u8 || d == 2 as u8 && !clean_mmatch(dis, i - lo, dstart - lo, dend - 1 - lo)) {
+      v = v.append(h[i]);
+      real = real.append(i);
+    } else {
+      rchg = rchg.with(base + i, 1 as u8);
+    }
+  }
+  return (rchg, v, real);
+}
+
 // The Myers diff of the lines [lo1, hi1) of the old text and [lo2, hi2)
 // of the new text, as `xdl_do_diff` makes it of those lines alone: the
 // common ends are trimmed, the lines with no match and the lines in a run
 // of such lines are changed, and the search finds the rest.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
-// fern-lint: allow cyclomatic-complexity
 function myers(own e: Env, lo1: i32, hi1: i32, lo2: i32, hi2: i32): Env {
   let nrec1 = hi1 - lo1;
   let nrec2 = hi2 - lo2;
@@ -569,62 +626,25 @@ function myers(own e: Env, lo1: i32, hi1: i32, lo2: i32, hi2: i32): Env {
   for j in lo2..hi2 {
     c2 = c2.with(e.hb[j], c2[e.hb[j]] + 1);
   }
-  let start = 0;
-  let lim = nrec1.min(nrec2);
-  while (start < lim && e.ha[lo1 + start] == e.hb[lo2 + start]) {
-    start += 1;
-  }
-  let tail = 0;
-  while (tail < lim - start && e.ha[hi1 - 1 - tail] == e.hb[hi2 - 1 - tail]) {
-    tail += 1;
-  }
+  let (start, tail) = trim_ends(e, lo1, hi1, lo2, hi2);
   let dstart1 = lo1 + start;
   let dend1 = hi1 - tail;
   let dstart2 = lo2 + start;
   let dend2 = hi2 - tail;
   let mlim1 = bogosqrt(nrec1).min(MAX_EQLIMIT);
   let mlim2 = bogosqrt(nrec2).min(MAX_EQLIMIT);
-  let dis1 = __alloc_u8(nrec1 + 1);
-  let dis2 = __alloc_u8(nrec2 + 1);
-  for i in dstart1..dend1 {
-    let nm = c2[e.ha[i]];
-    dis1 = dis1.with(i - lo1, if (nm == 0) { 0 as u8 } else if (nm >= mlim1) { 2 as u8 } else { 1 as u8 });
-  }
-  for j in dstart2..dend2 {
-    let nm = c1[e.hb[j]];
-    dis2 = dis2.with(j - lo2, if (nm == 0) { 0 as u8 } else if (nm >= mlim2) { 2 as u8 } else { 1 as u8 });
-  }
+  let dis1 = discards(e.ha, c2, lo1, dstart1, dend1, nrec1, mlim1);
+  let dis2 = discards(e.hb, c1, lo2, dstart2, dend2, nrec2, mlim2);
   for i in lo1..hi1 {
     c1 = c1.with(e.ha[i], 0);
   }
   for j in lo2..hi2 {
     c2 = c2.with(e.hb[j], 0);
   }
-  let xv: i32[] = [];
-  let xr: i32[] = [];
-  let rchg = e.rchg;
   let b0 = base0(e);
   let b1 = base1(e);
-  for i in dstart1..dend1 {
-    let d = dis1[i - lo1];
-    if (d == 1 as u8 || d == 2 as u8 && !clean_mmatch(dis1, i - lo1, dstart1 - lo1, dend1 - 1 - lo1)) {
-      xv = xv.append(e.ha[i]);
-      xr = xr.append(i);
-    } else {
-      rchg = rchg.with(b0 + i, 1 as u8);
-    }
-  }
-  let yv: i32[] = [];
-  let yr: i32[] = [];
-  for j in dstart2..dend2 {
-    let d = dis2[j - lo2];
-    if (d == 1 as u8 || d == 2 as u8 && !clean_mmatch(dis2, j - lo2, dstart2 - lo2, dend2 - 1 - lo2)) {
-      yv = yv.append(e.hb[j]);
-      yr = yr.append(j);
-    } else {
-      rchg = rchg.with(b1 + j, 1 as u8);
-    }
-  }
+  let (rchg1, xv, xr) = kept_records(e.rchg, e.ha, dis1, lo1, dstart1, dend1, b0);
+  let (rchg, yv, yr) = kept_records(rchg1, e.hb, dis2, lo2, dstart2, dend2, b1);
   rchg = compareseq(rchg, xv, xr, yv, yr, b0, b1, e.minimal, xdiff_search(xv.len(), yv.len(), e.minimal));
   return Env { ...e, rchg: rchg, scratch1: c1, scratch2: c2 };
 }
@@ -643,18 +663,10 @@ function mark(own e: Env, side: i32, line: i32, count: i32): Env {
 
 const NON_UNIQUE: i32 = -1;
 
-// The patience diff of the lines from `line1` (`count1` of them) and from
-// `line2`, counted from 1.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
-// fern-lint: allow cyclomatic-complexity
-function patience(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32): Env {
-  if (count1 == 0) {
-    return mark(e, 1, line2, count2);
-  }
-  if (count2 == 0) {
-    return mark(e, 0, line1, count1);
-  }
+// The pairs of lines (entry1, entry2) of the classes that are once in
+// each part, in the order of their lines in the old part, and true when a
+// line of the old part has a match: `fill_hashmap`.
+function fill_hashmap(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32): (Env, i32[], i32[], boolean) {
   // The first line in the old part of each class (0 for none), and its
   // line in the new part: 0 for none and NON_UNIQUE for many. `order`
   // holds the classes in the order of their first line.
@@ -678,8 +690,20 @@ function patience(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32):
       other = other.with(c, if (other[c] != 0) { NON_UNIQUE } else { line2 + k });
     }
   }
-  // The longest common sequence of the unique lines, by their lines in
-  // the new part.
+  let (entry1, entry2) = unique_pairs(first, other, order);
+  for c in order {
+    first = first.with(c, 0);
+    other = other.with(c, 0);
+  }
+  for k in 0..count2 {
+    other = other.with(e.hb[line2 - 1 + k], 0);
+  }
+  return (Env { ...e, scratch1: first, scratch2: other }, entry1, entry2, has_matches);
+}
+
+// The lines (entry1, entry2) of each class in `order` with one line in
+// each part: the entries that `find_longest_common_sequence` takes.
+function unique_pairs(first: i32[], other: i32[], order: i32[]): (i32[], i32[]) {
   let entry1: i32[] = [];
   let entry2: i32[] = [];
   for c in order {
@@ -689,21 +713,16 @@ function patience(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32):
       entry2 = entry2.append(l2);
     }
   }
-  for c in order {
-    first = first.with(c, 0);
-    other = other.with(c, 0);
-  }
-  for k in 0..count2 {
-    other = other.with(e.hb[line2 - 1 + k], 0);
-  }
-  e = Env { ...e, scratch1: first, scratch2: other };
-  if (!has_matches) {
-    return mark(mark(e, 0, line1, count1), 1, line2, count2);
-  }
-  let seq = __alloc_i32(entry1.len());
-  let previous = __alloc_i32(entry1.len());
+  return (entry1, entry2);
+}
+
+// The longest sequence of the pairs whose lines in the new part `entry2`
+// go up, as the indices of the pairs: `find_longest_common_sequence`.
+function longest_sequence(entry2: i32[]): i32[] {
+  let seq = __alloc_i32(entry2.len());
+  let previous = __alloc_i32(entry2.len());
   let longest = 0;
-  for k in 0..entry1.len() {
+  for k in 0..entry2.len() {
     let left = -1;
     let right = longest;
     while (left + 1 < right) {
@@ -721,23 +740,41 @@ function patience(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32):
       longest += 1;
     }
   }
-  if (longest == 0) {
-    return myers(e, line1 - 1, line1 - 1 + count1, line2 - 1, line2 - 1 + count2);
-  }
   let chain: i32[] = [];
+  if (longest == 0) {
+    return chain;
+  }
   let at = seq[longest - 1];
   while (at >= 0) {
     chain = chain.append(at);
     at = previous[at];
   }
-  chain = chain.reverse();
-  return walk_common(e, entry1, entry2, chain, line1, count1, line2, count2);
+  return chain.reverse();
+}
+
+// The patience diff of the lines from `line1` (`count1` of them) and from
+// `line2`, counted from 1.
+function patience(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32): Env {
+  if (count1 == 0) {
+    return mark(e, 1, line2, count2);
+  }
+  if (count2 == 0) {
+    return mark(e, 0, line1, count1);
+  }
+  let (e1, entry1, entry2, has_matches) = fill_hashmap(e, line1, count1, line2, count2);
+  if (!has_matches) {
+    return mark(mark(e1, 0, line1, count1), 1, line2, count2);
+  }
+  let chain = longest_sequence(entry2);
+  if (chain.len() == 0) {
+    return myers(e1, line1 - 1, line1 - 1 + count1, line2 - 1, line2 - 1 + count2);
+  }
+  return walk_common(e1, entry1, entry2, chain, line1, count1, line2, count2);
 }
 
 // The diff of the parts between the lines of the common sequence `chain`:
 // `walk_common_sequence`.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
+// It follows the C line for line, so that the output stays that of git.
 // fern-lint: allow cyclomatic-complexity
 function walk_common(own e: Env, entry1: i32[], entry2: i32[], chain: i32[], line1_in: i32, count1: i32, line2_in: i32, count2: i32): Env {
   let line1 = line1_in;
@@ -780,22 +817,16 @@ function walk_common(own e: Env, entry1: i32[], entry2: i32[], chain: i32[], lin
 
 const MAX_CHAIN_LENGTH: i32 = 64;
 
-// The longest common region of the two parts with the fewest repeats:
-// `find_lcs`. It gives 1 when the search must fall back to Myers, 0
-// otherwise, and the region (begin1, end1, begin2, end2), all 0 when
-// there is none.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
-// fern-lint: allow cyclomatic-complexity
-function find_lcs(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32): (Env, i32, i32[]) {
-  let end1 = line1 + count1 - 1;
-  let end2 = line2 + count2 - 1;
-  // For each class of the old part: its first line and its count. For
-  // each line of the old part: the next line of its class.
+// The index of the old part, from line `line1` to `end1`: for each class,
+// its first line and its count, and for each line, the next line of its
+// class (`scanA`).
+struct HistIndex { rptr: i32[], rcnt: i32[], next: i32[] }
+
+function scan_a(own e: Env, line1: i32, count1: i32): (Env, HistIndex) {
   let rptr = e.scratch1;
   let rcnt = e.scratch2;
   let next = __alloc_i32(count1);
-  let ptr = end1;
+  let ptr = line1 + count1 - 1;
   while (line1 <= ptr) {
     let c = e.ha[ptr - 1];
     if (rcnt[c] > 0) {
@@ -805,72 +836,99 @@ function find_lcs(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32):
     rcnt = rcnt.with(c, rcnt[c] + 1);
     ptr -= 1;
   }
-  let cnt = MAX_CHAIN_LENGTH + 1;
-  let has_common = false;
-  let lcs = [0, 0, 0, 0];
-  let b_ptr = line2;
-  while (b_ptr <= end2) {
-    let b_next = b_ptr + 1;
-    let c = e.hb[b_ptr - 1];
-    if (rcnt[c] > 0) {
-      if (rcnt[c] > cnt) {
-        has_common = true;
-      } else {
-        has_common = true;
-        let a_s = rptr[c];
-        while (true) {
-          let np = next[a_s - line1];
-          let bs = b_ptr;
-          let ae = a_s;
-          let be = bs;
-          let rc = rcnt[c];
-          while (line1 < a_s && line2 < bs && e.ha[a_s - 2] == e.hb[bs - 2]) {
-            a_s -= 1;
-            bs -= 1;
-            if (1 < rc) {
-              rc = rc.min(rcnt[e.ha[a_s - 1]]);
-            }
-          }
-          while (ae < end1 && be < end2 && e.ha[ae] == e.hb[be]) {
-            ae += 1;
-            be += 1;
-            if (1 < rc) {
-              rc = rc.min(rcnt[e.ha[ae - 1]]);
-            }
-          }
-          if (b_next <= be) {
-            b_next = be + 1;
-          }
-          if (lcs[1] - lcs[0] < ae - a_s || rc < cnt) {
-            lcs = [a_s, ae, bs, be];
-            cnt = rc;
-          }
-          if (np == 0) {
-            break;
-          }
-          let stop = false;
-          while (np <= ae) {
-            np = next[np - line1];
-            if (np == 0) {
-              stop = true;
-              break;
-            }
-          }
-          if (stop) {
-            break;
-          }
-          a_s = np;
-        }
+  return (Env { ...e, scratch1: [], scratch2: [] }, HistIndex { rptr: rptr, rcnt: rcnt, next: next });
+}
+
+// The best region of the search until now: (begin1, end1, begin2, end2)
+// in `lcs`, its count of repeats `cnt`, and true when a line of the new
+// part has a match in the old part.
+struct HistBest { lcs: i32[], cnt: i32, has_common: boolean }
+
+// Grows each match of the line `b_ptr` of the new part to a region, and
+// keeps the region with the fewest repeats. It gives the line after the
+// longest region: `try_lcs`.
+// It follows the C line for line, so that the output stays that of git.
+// fern-lint: allow cyclomatic-complexity
+function try_lcs(e: Env, ix: HistIndex, best_in: HistBest, b_ptr: i32, line1: i32, end1: i32, line2: i32, end2: i32): (HistBest, i32) {
+  let best = best_in;
+  let b_next = b_ptr + 1;
+  let c = e.hb[b_ptr - 1];
+  if (ix.rcnt[c] == 0) {
+    return (best, b_next);
+  }
+  best = HistBest { ...best, has_common: true };
+  if (ix.rcnt[c] > best.cnt) {
+    return (best, b_next);
+  }
+  let a_s = ix.rptr[c];
+  while (true) {
+    let np = ix.next[a_s - line1];
+    let bs = b_ptr;
+    let ae = a_s;
+    let be = bs;
+    let rc = ix.rcnt[c];
+    while (line1 < a_s && line2 < bs && e.ha[a_s - 2] == e.hb[bs - 2]) {
+      a_s -= 1;
+      bs -= 1;
+      if (1 < rc) {
+        rc = rc.min(ix.rcnt[e.ha[a_s - 1]]);
       }
     }
+    while (ae < end1 && be < end2 && e.ha[ae] == e.hb[be]) {
+      ae += 1;
+      be += 1;
+      if (1 < rc) {
+        rc = rc.min(ix.rcnt[e.ha[ae - 1]]);
+      }
+    }
+    if (b_next <= be) {
+      b_next = be + 1;
+    }
+    if (best.lcs[1] - best.lcs[0] < ae - a_s || rc < best.cnt) {
+      best = HistBest { ...best, lcs: [a_s, ae, bs, be], cnt: rc };
+    }
+    if (np == 0) {
+      break;
+    }
+    let stop = false;
+    while (np <= ae) {
+      np = ix.next[np - line1];
+      if (np == 0) {
+        stop = true;
+        break;
+      }
+    }
+    if (stop) {
+      break;
+    }
+    a_s = np;
+  }
+  return (best, b_next);
+}
+
+// The longest common region of the two parts with the fewest repeats:
+// `find_lcs`. It gives 1 when the search must fall back to Myers, 0
+// otherwise, and the region (begin1, end1, begin2, end2), all 0 when
+// there is none.
+function find_lcs(own e: Env, line1: i32, count1: i32, line2: i32, count2: i32): (Env, i32, i32[]) {
+  let end1 = line1 + count1 - 1;
+  let end2 = line2 + count2 - 1;
+  let (e1, ix) = scan_a(e, line1, count1);
+  let best = HistBest { lcs: [0, 0, 0, 0], cnt: MAX_CHAIN_LENGTH + 1, has_common: false };
+  let b_ptr = line2;
+  while (b_ptr <= end2) {
+    let (b1, b_next) = try_lcs(e1, ix, best, b_ptr, line1, end1, line2, end2);
+    best = b1;
     b_ptr = b_next;
   }
+  let rptr = ix.rptr;
+  let rcnt = ix.rcnt;
   for k in line1..end1 + 1 {
-    rptr = rptr.with(e.ha[k - 1], 0);
-    rcnt = rcnt.with(e.ha[k - 1], 0);
+    rptr = rptr.with(e1.ha[k - 1], 0);
+    rcnt = rcnt.with(e1.ha[k - 1], 0);
   }
-  let fall_back = if (has_common && MAX_CHAIN_LENGTH < cnt) { 1 } else { 0 };
-  return (Env { ...e, scratch1: rptr, scratch2: rcnt }, fall_back, lcs);
+  let fall_back = if (best.has_common && MAX_CHAIN_LENGTH < best.cnt) { 1 } else { 0 };
+  return (Env { ...e1, scratch1: rptr, scratch2: rcnt }, fall_back, best.lcs);
 }
 
 function histogram(own e: Env, line1_in: i32, count1_in: i32, line2_in: i32, count2_in: i32): Env {
@@ -937,16 +995,24 @@ const INDENT_WEIGHT: i32 = 60;
 
 const INDENT_HEURISTIC_MAX_SLIDING: i32 = 100;
 
+// `XDL_ISSPACE`: the `isspace` of git, which has no vertical tab and no
+// form feed.
+function is_space(c: u8): boolean {
+  return c == b' ' || c == b'\t' || c == b'\n' || c == b'\r';
+}
+
+// The `isalpha` of git: an ASCII letter.
+function is_alpha(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
+}
+
 // The indent of the line `i`, a tab to the next multiple of 8, or -1 for
 // a line of white space only.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
-// fern-lint: allow cyclomatic-complexity
 function get_indent(l: Lines, i: i32): i32 {
   let ret = 0;
   for k in l.starts[i]..l.starts[i + 1] {
     let c = l.data[k];
-    if (!(c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' || c == 11 || c == 12)) {
+    if (!is_space(c)) {
       return ret;
     }
     if (c == b' ') {
@@ -961,12 +1027,12 @@ function get_indent(l: Lines, i: i32): i32 {
   return -1;
 }
 
-// The score of the split before line `split`: (effective indent,
-// penalty), added to `score`.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
-// fern-lint: allow cyclomatic-complexity
-function score_split(l: Lines, split: i32, score: (i32, i32)): (i32, i32) {
+// The lines around the split before a line: the indent of that line, and
+// the blank lines and the indent before it and after it.
+struct Measure { end_of_file: boolean, indent: i32, pre_blank: i32, pre_indent: i32, post_blank: i32, post_indent: i32 }
+
+// The measure of the split before line `split`: `measure_split`.
+function measure_split(l: Lines, split: i32): Measure {
   let nrec = l.count();
   let end_of_file = split >= nrec;
   let indent = if (end_of_file) { -1 } else { get_indent(l, split) };
@@ -1000,27 +1066,35 @@ function score_split(l: Lines, split: i32, score: (i32, i32)): (i32, i32) {
     }
     i += 1;
   }
+  return Measure { end_of_file: end_of_file, indent: indent, pre_blank: pre_blank, pre_indent: pre_indent, post_blank: post_blank, post_indent: post_indent };
+}
+
+// The score of the measure `m`, (effective indent, penalty), added to
+// `score`: `score_add_split`.
+// It follows the C line for line, so that the output stays that of git.
+// fern-lint: allow cyclomatic-complexity
+function score_add_split(m: Measure, score: (i32, i32)): (i32, i32) {
   let (effective, penalty_in) = score;
   let penalty = penalty_in;
-  if (pre_indent == -1 && pre_blank == 0) {
+  if (m.pre_indent == -1 && m.pre_blank == 0) {
     penalty += START_OF_FILE_PENALTY;
   }
-  if (end_of_file) {
+  if (m.end_of_file) {
     penalty += END_OF_FILE_PENALTY;
   }
-  let post = if (indent == -1) { 1 + post_blank } else { 0 };
-  let total_blank = pre_blank + post;
+  let post = if (m.indent == -1) { 1 + m.post_blank } else { 0 };
+  let total_blank = m.pre_blank + post;
   penalty += TOTAL_BLANK_WEIGHT * total_blank;
   penalty += POST_BLANK_WEIGHT * post;
-  let ind = if (indent != -1) { indent } else { post_indent };
+  let ind = if (m.indent != -1) { m.indent } else { m.post_indent };
   let any_blanks = total_blank != 0;
-  if (ind == -1 || pre_indent == -1) {
+  if (ind == -1 || m.pre_indent == -1) {
     // No adjustment.
-  } else if (ind > pre_indent) {
+  } else if (ind > m.pre_indent) {
     penalty += if (any_blanks) { RELATIVE_INDENT_WITH_BLANK_PENALTY } else { RELATIVE_INDENT_PENALTY };
-  } else if (ind == pre_indent) {
+  } else if (ind == m.pre_indent) {
     // No adjustment.
-  } else if (post_indent != -1 && post_indent > ind) {
+  } else if (m.post_indent != -1 && m.post_indent > ind) {
     penalty += if (any_blanks) { RELATIVE_OUTDENT_WITH_BLANK_PENALTY } else { RELATIVE_OUTDENT_PENALTY };
   } else {
     penalty += if (any_blanks) { RELATIVE_DEDENT_WITH_BLANK_PENALTY } else { RELATIVE_DEDENT_PENALTY };
@@ -1101,8 +1175,7 @@ function slide_up(own r: u8[], s: Side, g: Group): (u8[], Group, boolean) {
 // Moves each group of changes of `xs` up and down to merge it with the
 // groups next to it, then to the place that matches a group of `os`, or
 // to the best place for the indent heuristic.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
+// It follows the C line for line, so that the output stays that of git.
 // fern-lint: allow cyclomatic-complexity
 function compact(own r: u8[], l: Lines, xs: Side, os: Side, indent: boolean): u8[] {
   let g = group_init(r, xs);
@@ -1167,7 +1240,7 @@ function compact(own r: u8[], l: Lines, xs: Side, os: Side, indent: boolean): u8
         let best_shift = -1;
         let best = (0, 0);
         while (shift <= g.end) {
-          let score = score_split(l, shift - groupsize, score_split(l, shift, (0, 0)));
+          let score = score_add_split(measure_split(l, shift - groupsize), score_add_split(measure_split(l, shift), (0, 0)));
           if (best_shift == -1 || score_cmp(score, best) <= 0) {
             best = score;
             best_shift = shift;
@@ -1300,9 +1373,6 @@ function hunk_end(script: Change[], k: i32, em: Emit): i32 {
 // The function line at line `i` of the old text, as `def_ff` of xdiff
 // finds it: a line that starts with a letter, `_` or `$`, its first 80
 // bytes with no white space at their end. None for another line.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
-// fern-lint: allow cyclomatic-complexity
 function func_line(l: Lines, i: i32): Option[(i32, i32)] {
   let s = l.starts[i];
   let len = l.starts[i + 1] - s;
@@ -1310,18 +1380,43 @@ function func_line(l: Lines, i: i32): Option[(i32, i32)] {
     return None;
   }
   let c = l.data[s];
-  if (!(c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c == b'_' || c == b'$')) {
+  if (!(is_alpha(c) || c == b'_' || c == b'$')) {
     return None;
   }
   let n = len.min(80);
   while (n > 0) {
-    let t = l.data[s + n - 1];
-    if (!(t == b' ' || t == b'\t' || t == b'\n' || t == b'\r' || t == 11 || t == 12)) {
+    if (!is_space(l.data[s + n - 1])) {
       break;
     }
     n -= 1;
   }
   return Some((s, s + n));
+}
+
+// The function line at or above the line `start` of the old text, down
+// to the line after `limit`: `get_func_line`.
+function get_func_line(a: Lines, start: i32, limit: i32): Option[(i32, i32)] {
+  let l = start;
+  while (l != limit && 0 <= l && l < a.count()) {
+    if let Some(span) = func_line(a, l) {
+      return Some(span);
+    }
+    l -= 1;
+  }
+  return None;
+}
+
+// Writes the header `@@ -s1,c1 +s2,c2 @@` of a hunk, with the bytes
+// [func_s, func_e) of `a` as its function line: `xdl_emit_hunk_hdr`.
+function emit_hunk_hdr(out: usize, s1: i32, c1: i32, s2: i32, c2: i32, a: Lines, func_s: i32, func_e: i32): void {
+  let head = "@@ -" + (if (c1 != 0) { s1 } else { s1 - 1 }).to_string() + (if (c1 != 1) { "," + c1.to_string() } else { "" }) + " +" + (if (c2 != 0) { s2 } else { s2 - 1 }).to_string() + (if (c2 != 1) { "," + c2.to_string() } else { "" }) + " @@";
+  buf_push(out, head);
+  if (func_e > func_s) {
+    // The header of xdiff has 128 bytes with its line end.
+    buf_push_byte(out, b' ' as i32);
+    buf_push_bytes_range(out, a.data, func_s, func_e.min(func_s + 126 - head.len()));
+  }
+  buf_push_byte(out, b'\n' as i32);
 }
 
 function put_line(out: usize, l: Lines, i: i32, prefix: i32): void {
@@ -1337,8 +1432,7 @@ function put_line(out: usize, l: Lines, i: i32, prefix: i32): void {
 // Writes the hunks of the changes `script` from `a` to `b` to the buffer
 // `out`, as `xdl_emit_diff` of xdiff writes them: `@@ -A,B +C,D @@ FUNC`
 // and the lines with ` `, `-` and `+`.
-// Its branches follow the C of xdiff and GNU diff, so that the output
-// stays the same as theirs.
+// It follows the C line for line, so that the output stays that of git.
 // fern-lint: allow cyclomatic-complexity
 pub function unified(out: usize, a: Lines, b: Lines, script: Change[], em: Emit): void {
   let n1 = a.count();
@@ -1357,27 +1451,13 @@ pub function unified(out: usize, a: Lines, b: Lines, script: Change[], em: Emit)
     let e1 = end.i1 + end.del + lctx;
     let e2 = end.i2 + end.ins + lctx;
     if (em.funcnames) {
-      let l = s1 - 1;
-      while (l != funclineprev && 0 <= l && l < n1) {
-        if let Some(span) = func_line(a, l) {
-          func_s = span.0;
-          func_e = span.1;
-          break;
-        }
-        l -= 1;
+      if let Some(span) = get_func_line(a, s1 - 1, funclineprev) {
+        func_s = span.0;
+        func_e = span.1;
       }
       funclineprev = s1 - 1;
     }
-    let c1 = e1 - s1;
-    let c2 = e2 - s2;
-    let head = "@@ -" + (if (c1 != 0) { s1 + 1 } else { s1 }).to_string() + (if (c1 != 1) { "," + c1.to_string() } else { "" }) + " +" + (if (c2 != 0) { s2 + 1 } else { s2 }).to_string() + (if (c2 != 1) { "," + c2.to_string() } else { "" }) + " @@";
-    buf_push(out, head);
-    if (func_e > func_s) {
-      // The header of xdiff has 128 bytes with its line end.
-      buf_push_byte(out, b' ' as i32);
-      buf_push_bytes_range(out, a.data, func_s, func_e.min(func_s + 126 - head.len()));
-    }
-    buf_push_byte(out, b'\n' as i32);
+    emit_hunk_hdr(out, s1 + 1, e1 - s1, s2 + 1, e2 - s2, a, func_s, func_e);
     let j2 = s2;
     while (j2 < first.i2) {
       put_line(out, b, j2, b' ' as i32);

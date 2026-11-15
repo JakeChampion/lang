@@ -56,6 +56,13 @@ function test_function_line(): test.TestOutcome {
   return test.assert_eq(hunks(a, b, myers(), 0), "@@ -6 +6 @@ int f(void)\n-\tint d;\n+\tint e;\n");
 }
 
+// A vertical tab and a form feed at the end of the function line stay:
+// they are not white space for git.
+function test_function_line_space(): test.TestOutcome {
+  let got = hunks("f()\x0b\x0c\n a\n b\n c\n d\n e\n", "f()\x0b\x0c\n a\n b\n c\n d\n E\n", myers(), 1);
+  return test.assert_eq(got, "@@ -5,2 +5,2 @@ f()\x0b\x0c\n  d\n- e\n+ E\n");
+}
+
 function test_no_newline(): test.TestOutcome {
   return test.assert_eq(hunks("one\ntwo", "one\ntwo\nthree", myers(), 3), "@@ -1,2 +1,3 @@\n one\n-two\n\\ No newline at end of file\n+two\n+three\n\\ No newline at end of file\n");
 }
@@ -118,6 +125,7 @@ function main(): i32 {
   r = r.it("lines", test_lines);
   r = r.it("script", test_script);
   r = r.it("function line", test_function_line);
+  r = r.it("function line with a form feed", test_function_line_space);
   r = r.it("no newline", test_no_newline);
   r = r.it("two hunks", test_two_hunks);
   r = r.it("indent heuristic", test_indent_heuristic);
