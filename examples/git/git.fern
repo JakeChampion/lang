@@ -6,7 +6,7 @@
 //   $ git cat-file (--batch | --batch-check)       # names on the standard input
 //   $ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
 //   $ git verify-pack [-v] FILE.idx...
-//   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE [PATH...]
+//   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
 //
 // The port reads loose objects and packfiles, and writes loose objects.
 import "std/array";
@@ -16,16 +16,24 @@ import "std/string";
 import "std/worker";
 import "core/cmp";
 import "core/map";
+import "std/crypto";
 import "std/hex";
+import "./fsck";
+import "./graph";
 import "./index";
 import "./log";
 import "./objects";
 import "./pack";
 import "./refs";
 import "./rev";
+import "./revwalk";
+import "./treediff";
+import "./date";
+import "../../coreutils/lib/bre";
 import "./store";
+import "./walk";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE [PATH...]\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -71,21 +79,12 @@ function repo_or_fail(): (refs.Repo[], i32) {
   };
 }
 
-// The width of the names for a command that needs no repository: that of
-// the repository of the current directory, or SHA-1 with no repository.
-function width_here(): i32 {
-  return match (refs.find()) {
-    Ok(r) => r.width,
-    Err(_) => objects.SHA1,
-  };
-}
-
 // ---- hash-object ----
 
-struct HashArgs { write: boolean, stdin: boolean, kind: string, files: string[], bad: string }
+struct HashArgs { write: boolean, stdin: boolean, literally: boolean, kind: string, files: string[], bad: string }
 
 function hash_args(argv: string[]): HashArgs {
-  let a = HashArgs { write: false, stdin: false, kind: "blob", files: [], bad: "" };
+  let a = HashArgs { write: false, stdin: false, literally: false, kind: "blob", files: [], bad: "" };
   let i = 0;
   let flags = true;
   while (i < argv.len()) {
@@ -96,9 +95,13 @@ function hash_args(argv: string[]): HashArgs {
       a = HashArgs { ...a, write: true };
     } else if (flags && x == "--stdin") {
       a = HashArgs { ...a, stdin: true };
+    } else if (flags && x == "--literally") {
+      a = HashArgs { ...a, literally: true };
     } else if (flags && x == "-t" && i + 1 < argv.len()) {
       a = HashArgs { ...a, kind: argv[i + 1] };
       i += 1;
+    } else if (flags && x.starts_with("-t") && x.len() > 2) {
+      a = HashArgs { ...a, kind: objects.part(x, 2, x.len()) };
     } else if (flags && x.starts_with("-") && x.len() > 1) {
       return HashArgs { ...a, bad: x };
     } else {
@@ -110,24 +113,27 @@ function hash_args(argv: string[]): HashArgs {
 }
 
 // Prints the name of the object with `body`, and writes it when `-w` is set.
-function hash_one(a: HashArgs, body: u8[]): i32 {
+// The kind is one of the four. Without `--literally`, a commit, a tree or
+// a tag has the form that fsck checks.
+function hash_one(a: HashArgs, repo: refs.Repo[], body: u8[]): i32 {
+  let algo = if (repo.len() > 0) { repo[0].width } else { objects.SHA1 };
   if (!objects.is_kind(a.kind)) {
     return fatal("invalid object type \"" + a.kind + "\"");
   }
-  // git checks the form of a commit, a tree and a tag before it writes one.
-  // The port does not have that check, so it writes blobs only.
-  if (a.write && a.kind != "blob") {
-    return fatal("this port writes blobs only: it does not check the form of a " + a.kind);
+  if (!a.literally) {
+    let found = fsck.check(algo, a.kind, body);
+    if (found.len() > 0) {
+      for line in found {
+        eprint(line);
+      }
+      return fatal("refusing to create malformed object");
+    }
   }
   if (!a.write) {
-    put_line(objects.hash_of(width_here(), a.kind, body));
+    put_line(objects.hash_of(algo, a.kind, body));
     return 0;
   }
-  let (repo, status) = repo_or_fail();
-  if (status != 0) {
-    return status;
-  }
-  return match (objects.write_loose(repo[0].objects(), repo[0].width, a.kind, body)) {
+  return match (objects.write_loose(repo[0].objects(), algo, a.kind, body)) {
     Ok(name) => {
       put_line(name);
       0
@@ -141,6 +147,16 @@ function hash_object(argv: string[]): i32 {
   if (a.bad.len() > 0) {
     return usage();
   }
+  let repo: refs.Repo[] = [];
+  if (a.write) {
+    let (found, status) = repo_or_fail();
+    if (status != 0) {
+      return status;
+    }
+    repo = found;
+  } else if let Ok(r) = refs.find() {
+    repo = [r];
+  }
   if (a.stdin) {
     let body = match (io.read_all_stdin_bytes()) {
       Ok(bytes) => bytes,
@@ -148,7 +164,7 @@ function hash_object(argv: string[]): i32 {
         return fatal("unable to read the standard input: " + e.message());
       },
     };
-    let status = hash_one(a, body);
+    let status = hash_one(a, repo, body);
     if (status != 0) {
       return status;
     }
@@ -160,7 +176,7 @@ function hash_object(argv: string[]): i32 {
         return fatal("could not open '" + shown_path(file) + "' for reading: " + why(e));
       },
     };
-    let status = hash_one(a, body);
+    let status = hash_one(a, repo, body);
     if (status != 0) {
       return status;
     }
@@ -183,16 +199,20 @@ function shown_path(file: string): string {
 
 // The text of `cat-file -p`: the lines of a tree, or the body of each other
 // kind.
-function pretty(o: objects.Object, width: i32): Result[u8[], string] {
+function pretty(raw: i32, o: objects.Object): Result[u8[], string] {
   if (o.kind == "tree") {
-    return objects.tree_text(o.body, width);
+    return objects.tree_text(o.body, raw);
   }
   return Ok(o.body);
 }
 
 function cat_one(r: refs.Repo, mode: string, name: string): i32 {
-  let found = rev.parse(r, r.store(), name);
+  let found = rev.parse_to_die(r, r.store(), name);
+  print_errors(found.errors);
   let hash = found.hash;
+  if (found.died.len() > 0) {
+    return fatal(found.died);
+  }
   if (hash.len() == 0) {
     return fatal(if (found.message.len() > 0) { found.message } else { "Not a valid object name " + name });
   }
@@ -216,7 +236,7 @@ function cat_one(r: refs.Repo, mode: string, name: string): i32 {
   } else if (mode == "-s") {
     put_line(o.body.len().to_string());
   } else if (mode == "-p") {
-    match (pretty(o, r.width)) {
+    match (pretty(r.width, o)) {
       Ok(text) => {
         put(text);
       },
@@ -322,102 +342,292 @@ function short_length(s: store.Store, flag: string): i32 {
   return n.min(2 * s.width);
 }
 
+// Prints the lines that git prints while it reads a revision.
+function print_errors(lines: string[]): void {
+  for line in lines {
+    eprint(line);
+  }
+}
+
+// The lines of a second read of a revision: git reads it again to tell why
+// it names nothing, and that read is quiet about refs and short hashes.
+function second_errors(lines: string[]): string[] {
+  return lines.filter((line: string): boolean => !line.starts_with("warning:") && !line.starts_with("hint:") && !line.starts_with("error: short object ID"));
+}
+
+// True if git reads `arg` as a pattern of paths: it has a wildcard or a
+// magic word.
+function looks_like_pathspec(arg: string): boolean {
+  return arg.contains("*") || arg.contains("?") || arg.contains("[") || arg.contains("\\") || arg.starts_with(":(");
+}
+
+// True if the path `arg` exists, from the current directory or, after
+// `:/`, from the top of the worktree.
+function path_exists(r: refs.Repo, arg: string): boolean {
+  let path = arg;
+  if (arg.starts_with(":/")) {
+    if (arg.len() == 2) {
+      return true;
+    }
+    path = r.top + "/" + objects.part(arg, 2, arg.len());
+  } else if (arg.starts_with(":!") || arg.starts_with(":^")) {
+    if (arg.len() == 2) {
+      return true;
+    }
+    path = objects.part(arg, 2, arg.len());
+  }
+  return match (stat(path)) {
+    Ok(_) => true,
+    Err(_) => false,
+  };
+}
+
+// The status of git for an argument that is no revision and no path, after
+// its messages: the reasons of a second read, or the message of an
+// argument that is ambiguous.
+function no_such_name(r: refs.Repo, arg: string, named: rev.Rev): i32 {
+  if (arg.starts_with("-")) {
+    return fatal("option '" + arg + "' must come before non-option arguments");
+  }
+  if (!(arg.starts_with(":") && arg.len() > 1 && !is_alnum(arg[1]))) {
+    print_errors(second_errors(named.errors));
+    if (named.message.len() > 0) {
+      return fatal(named.message);
+    }
+  }
+  return fatal("ambiguous argument '" + arg + AMBIGUOUS);
+}
+
+function is_alnum(b: u8): boolean {
+  return b >= b'0' && b <= b'9' || b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z';
+}
+
+// The options of rev-parse and the store after the reads.
+struct RevParse { store: store.Store, short: i32, verify: boolean, quiet: boolean, count: i32, last: string }
+
+// Prints a revision: the hash, or the short hash, with `^` before an
+// excluded one.
+function show_rev(p: RevParse, hash: string, excluded: boolean): void {
+  let shown = if (p.short > 0) { refs.short_of(p.store, hash, p.short) } else { hash };
+  put_line(if (excluded) { "^" + shown } else { shown });
+}
+
+// The commit that `name` names, for a range: the hash, or "" after the
+// errors of git.
+function committish(r: refs.Repo, p: RevParse, name: string): (RevParse, string, boolean) {
+  let named = rev.parse_with(r, p.store, name, rev.COMMITTISH);
+  print_errors(named.errors);
+  return (RevParse { ...p, store: named.store }, named.hash, named.died.len() > 0);
+}
+
+// `A..B`, `A...B`, `..B` and `A..`: true when `arg` is such a range of
+// two revisions, which it prints.
+function try_range(r: refs.Repo, p_in: RevParse, arg: string): (RevParse, boolean) {
+  let p = p_in;
+  let Some(dots) = arg.index_of("..") else {
+    return (p, false);
+  };
+  let symmetric = dots + 2 < arg.len() && arg[dots + 2] == b'.';
+  let start = objects.part(arg, 0, dots);
+  let end = objects.part(arg, dots + (if (symmetric) { 3 } else { 2 }), arg.len());
+  if (start.len() == 0 && end.len() == 0 && !symmetric) {
+    return (p, false);
+  }
+  let (p1, a, _) = committish(r, p, if (start.len() == 0) { "HEAD" } else { start });
+  if (a.len() == 0) {
+    return (p1, false);
+  }
+  let (p2, b, _) = committish(r, p1, if (end.len() == 0) { "HEAD" } else { end });
+  p = p2;
+  if (b.len() == 0) {
+    return (p, false);
+  }
+  show_rev(p, b, false);
+  show_rev(p, a, !symmetric);
+  if (!symmetric) {
+    return (p, true);
+  }
+  let ca = rev.commit_of(p.store, a);
+  print_errors(ca.errors);
+  let cb = rev.commit_of(ca.store, b);
+  print_errors(cb.errors);
+  p = RevParse { ...p, store: cb.store };
+  if (ca.hash.len() == 0 || cb.hash.len() == 0) {
+    return (p, false);
+  }
+  let (g, bases) = walk.merge_bases(walk.graph_of(p.store), ca.hash, [cb.hash]);
+  p = RevParse { ...p, store: g.store };
+  for base in bases {
+    show_rev(p, base, true);
+  }
+  return (p, true);
+}
+
+// `A^@`, `A^!` and `A^-N`: true when `arg` is such a revision, which it
+// prints.
+function try_parents(r: refs.Repo, p_in: RevParse, arg: string): (RevParse, boolean) {
+  let p = p_in;
+  let at = -1;
+  let mode = "";
+  let exclude = 0;
+  if let Some(i) = arg.index_of("^!") {
+    at = i;
+    mode = "!";
+    if (i + 2 != arg.len()) {
+      return (p, false);
+    }
+  } else if let Some(i) = arg.index_of("^@") {
+    at = i;
+    mode = "@";
+    if (i + 2 != arg.len()) {
+      return (p, false);
+    }
+  } else if let Some(i) = arg.index_of("^-") {
+    at = i;
+    mode = "-";
+    exclude = 1;
+    if (i + 2 < arg.len()) {
+      let n = log_number(objects.part(arg, i + 2, arg.len()));
+      if (n <= 0) {
+        return (p, false);
+      }
+      exclude = n;
+    }
+  } else {
+    return (p, false);
+  }
+  let (p1, h, _) = committish(r, p, objects.part(arg, 0, at));
+  p = p1;
+  if (h.len() == 0) {
+    return (p, false);
+  }
+  let c = rev.commit_of(p.store, h);
+  print_errors(c.errors);
+  p = RevParse { ...p, store: c.store };
+  if (c.hash.len() == 0) {
+    return (p, false);
+  }
+  let (g, node) = walk.node(walk.graph_of(p.store), c.hash);
+  p = RevParse { ...p, store: g.store };
+  if (exclude > node.parents.len()) {
+    return (p, false);
+  }
+  if (mode != "@") {
+    show_rev(p, h, false);
+  }
+  for i in 0..node.parents.len() {
+    if (exclude == 0 || i + 1 == exclude) {
+      show_rev(p, node.parents[i], mode != "@");
+    }
+  }
+  return (p, true);
+}
+
 function rev_parse(argv: string[]): i32 {
   let (repo, status) = repo_or_fail();
   if (status != 0) {
     return status;
   }
   let r = repo[0];
-  let s = r.store();
-  let verify = false;
-  let short = 0;
+  let p = RevParse { store: r.store(), short: 0, verify: false, quiet: false, count: 0, last: "" };
+  let dashdash = argv.contains("--");
+  let as_is = 0;
   for x in argv {
-    if (x == "--verify") {
-      verify = true;
-    } else if (x == "--short" || x.starts_with("--short=")) {
-      short = short_length(s, x);
-    } else if (x == "--git-dir") {
-      put_line(r.shown);
-    } else {
-      let named = rev.parse(r, s, x);
-      s = named.store;
-      let hash = named.hash;
-      if (hash.len() == 0 && verify) {
-        return fatal("Needed a single revision");
+    if (as_is > 0) {
+      put_line(x);
+      if (as_is < 2 && !looks_like_pathspec(x) && !path_exists(r, x)) {
+        if (x.starts_with("-")) {
+          return fatal("option '" + x + "' must come before non-option arguments");
+        }
+        return fatal(x + ": no such path in the working tree.\nUse 'git <command> -- <path>...' to specify paths that do not exist locally.");
       }
-      if (hash.len() == 0) {
-        put_line(x);
-        return fatal(if (named.message.len() > 0) { named.message } else { "ambiguous argument '" + x + AMBIGUOUS });
-      }
-      put_line(if (short > 0) { refs.short_of(s, hash, short) } else { hash });
+      continue;
     }
+    if (x == "--") {
+      as_is = 2;
+      put_line(x);
+      continue;
+    }
+    if (x.starts_with("-")) {
+      if (x == "--verify") {
+        p = RevParse { ...p, verify: true };
+      } else if (x == "-q" || x == "--quiet") {
+        p = RevParse { ...p, quiet: true };
+      } else if (x == "--short" || x.starts_with("--short=")) {
+        p = RevParse { ...p, short: short_length(p.store, x), verify: true };
+      } else if (x == "--git-dir") {
+        put_line(r.shown);
+      } else {
+        put_line(x);
+        if (p.verify) {
+          return no_single(p);
+        }
+      }
+      continue;
+    }
+    let (p1, ranged) = try_range(r, p, x);
+    p = p1;
+    if (ranged) {
+      continue;
+    }
+    let (p2, parented) = try_parents(r, p, x);
+    p = p2;
+    if (parented) {
+      continue;
+    }
+    let excluded = x.starts_with("^");
+    let name = if (excluded) { objects.part(x, 1, x.len()) } else { x };
+    let named = rev.parse(r, p.store, name);
+    p = RevParse { ...p, store: named.store };
+    print_errors(named.errors);
+    if (named.died.len() > 0) {
+      return fatal(named.died);
+    }
+    if (named.hash.len() > 0) {
+      if (p.verify) {
+        p = RevParse { ...p, count: p.count + 1, last: if (excluded) { "^" + named.hash } else { named.hash } };
+      } else {
+        show_rev(p, named.hash, excluded);
+      }
+      continue;
+    }
+    if (p.verify) {
+      return no_single(p);
+    }
+    if (dashdash) {
+      return fatal("bad revision '" + x + "'");
+    }
+    as_is = 1;
+    put_line(x);
+    if (!looks_like_pathspec(x) && !path_exists(r, x)) {
+      return no_such_name(r, x, named);
+    }
+  }
+  if (p.verify) {
+    if (p.count == 1) {
+      let excluded = p.last.starts_with("^");
+      show_rev(p, if (excluded) { objects.part(p.last, 1, p.last.len()) } else { p.last }, excluded);
+      return 0;
+    }
+    return no_single(p);
   }
   return 0;
 }
 
+// The end of `--verify` with no single revision: quiet with `-q`.
+function no_single(p: RevParse): i32 {
+  if (p.quiet) {
+    return 1;
+  }
+  return fatal("Needed a single revision");
+}
+
 // ---- ls-tree ----
 
-// `paths` holds the paths after the tree, with no `/` at the end. `dirs`
-// tells for each one that it had a `/` at the end.
-struct LsOpts { recurse: boolean, trees: boolean, only_trees: boolean, long: boolean, names: boolean, full: boolean, paths: string[], dirs: boolean[] }
-
-// True when `path` and a `/` start the text `spec`.
-function below(spec: string, path: u8[]): boolean {
-  if (spec.len() <= path.len() || spec[path.len()] != b'/') {
-    return false;
-  }
-  for i in 0..path.len() {
-    if (spec[i] != path[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// True when `path` is `spec` or is in the directory `spec`.
-function within(spec: string, path: u8[]): boolean {
-  if (path.len() < spec.len() || path.len() > spec.len() && path[spec.len()] != b'/') {
-    return false;
-  }
-  for i in 0..spec.len() {
-    if (spec[i] != path[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// True when a path after the tree goes into the directory `path`.
-function ls_reaches(o: LsOpts, path: u8[]): boolean {
-  for i in 0..o.paths.len() {
-    if (below(o.paths[i], path) || o.dirs[i] && o.paths[i].len() == path.len() && within(o.paths[i], path)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// True when the entry `path` is one that the paths after the tree ask for.
-// A path with a `/` at the end names a directory only.
-function ls_asked(o: LsOpts, path: u8[], is_tree: boolean): boolean {
-  if (o.paths.len() == 0) {
-    return true;
-  }
-  for i in 0..o.paths.len() {
-    let spec = o.paths[i];
-    // The current directory asks for each entry.
-    if (spec.len() == 0) {
-      return true;
-    }
-    if (is_tree && below(spec, path)) {
-      return true;
-    }
-    if (within(spec, path) && (is_tree || !o.dirs[i] || path.len() > spec.len())) {
-      return true;
-    }
-  }
-  return false;
-}
+// The options of ls-tree. `mode` is "", "long", "name" or "object".
+// `prefix` is the directory that the names are relative to, and `items`
+// are the paths from the top of the worktree that the listing keeps.
+struct LsOpts { recurse: boolean, trees: boolean, only_trees: boolean, mode: string, zero: boolean, abbrev: i32, items: string[], prefix: string }
 
 // The lines of a tree so far, and the store after the reads.
 struct Listing { store: store.Store, out: u8[], ok: boolean }
@@ -434,19 +644,19 @@ function size_column(st: store.Store, e: objects.TreeEntry): (store.Store, strin
 }
 
 // The lines that wait, with one more: `line`, a tab when `line` has text,
-// and the path. A long text goes to
-// the standard output, so the lines that wait stay short.
-function ls_out(own out: u8[], line: string, path: u8[]): u8[] {
+// and the path, and the end of the line. A long text goes to the standard
+// output, so the lines that wait stay short.
+function ls_out(own out: u8[], line: string, path: u8[], end: u8): u8[] {
   for b in line.bytes() {
     out = out.append(b);
   }
-  if (line.len() > 0) {
+  if (line.len() > 0 && path.len() > 0) {
     out = out.append(b'\t');
   }
   for b in path {
     out = out.append(b);
   }
-  out = out.append(b'\n');
+  out = out.append(end);
   if (out.len() < 4096) {
     return out;
   }
@@ -454,28 +664,164 @@ function ls_out(own out: u8[], line: string, path: u8[]): u8[] {
   return [];
 }
 
-// Adds the line of the entry `e`, whose path from the start is `path`.
-// A path that is not `plain` goes in quotes.
-function ls_line(own l: Listing, e: objects.TreeEntry, path: u8[], plain: boolean, o: LsOpts): Listing {
+// The path `path` from the directory `prefix`, as `relative_path` of git
+// gives it: `../` for each directory of the prefix that the path is not in.
+function relative_to(path: u8[], prefix: string): u8[] {
+  let n = path.len();
+  let m = prefix.len();
+  if (n == 0) {
+    return "./".bytes();
+  }
+  if (m == 0) {
+    return path;
+  }
+  let i = 0;
+  let j = 0;
+  let prefix_off = 0;
+  let in_off = 0;
+  while (i < m && j < n && prefix[i] == path[j]) {
+    if (prefix[i] == b'/') {
+      while (i < m && prefix[i] == b'/') {
+        i += 1;
+      }
+      while (j < n && path[j] == b'/') {
+        j += 1;
+      }
+      prefix_off = i;
+      in_off = j;
+    } else {
+      i += 1;
+      j += 1;
+    }
+  }
+  if (i >= m && prefix_off < m) {
+    if (j >= n) {
+      in_off = n;
+    } else if (path[j] == b'/') {
+      while (j < n && path[j] == b'/') {
+        j += 1;
+      }
+      in_off = j;
+    } else {
+      i = prefix_off;
+    }
+  } else if (j >= n && in_off < n) {
+    if (i < m && prefix[i] == b'/') {
+      while (i < m && prefix[i] == b'/') {
+        i += 1;
+      }
+      in_off = n;
+    }
+  }
+  let rest = array.slice(path, in_off, n);
+  if (i >= m) {
+    return if (rest.len() == 0) { "./".bytes() } else { rest };
+  }
+  let out: u8[] = [];
+  while (i < m) {
+    if (prefix[i] == b'/') {
+      out = out.concat("../".bytes());
+      while (i < m && prefix[i] == b'/') {
+        i += 1;
+      }
+    } else {
+      i += 1;
+    }
+  }
+  if (prefix[m - 1] != b'/') {
+    out = out.concat("../".bytes());
+  }
+  return out.concat(rest);
+}
+
+// Adds the line of the entry `e`, whose path from the top is `path`.
+function ls_line(own l: Listing, e: objects.TreeEntry, path: u8[], o: LsOpts): Listing {
   let out = l.out;
   let st = l.store;
   let ok = l.ok;
-  let shown = if (plain) { path } else { objects.quoted(path) };
-  if (o.names) {
-    return Listing { store: st, out: ls_out(out, "", shown), ok: ok };
+  let name = relative_to(path, o.prefix);
+  let shown = if (o.zero) { name } else { objects.quoted(name) };
+  let end: u8 = if (o.zero) { 0 } else { b'\n' };
+  let hash = if (o.abbrev > 0) { refs.short_of(st, e.hash, o.abbrev) } else { e.hash };
+  if (o.mode == "name") {
+    return Listing { store: st, out: ls_out(out, "", shown, end), ok: ok };
   }
-  let head = objects.entry_head(e);
-  if (o.long) {
+  if (o.mode == "object") {
+    return Listing { store: st, out: ls_out(out, hash, [], end), ok: ok };
+  }
+  let head = objects.entry_head(objects.TreeEntry { ...e, hash: hash });
+  if (o.mode == "long") {
     let (after, column) = size_column(st, e);
     st = after;
     head += column;
   }
-  return Listing { store: st, out: ls_out(out, head, shown), ok: ok };
+  return Listing { store: st, out: ls_out(out, head, shown, end), ok: ok };
 }
 
-// Adds the lines of the tree `hash`, whose path from the start is `prefix`.
-// `plain` tells that the prefix needs no quotes.
-function ls_walk(own l: Listing, hash: string, prefix: u8[], plain: boolean, o: LsOpts): Listing {
+// True if one of `items` is the path `path`, or is below the directory
+// `path` when the entry is a tree: `match_entry` of git.
+function item_matches(items: string[], path: u8[], is_tree: boolean): boolean {
+  for item in items {
+    if (item.len() >= path.len() && prefix_bytes(item, path)) {
+      if (item.len() == path.len()) {
+        return true;
+      }
+      if (item[path.len()] == b'/' && is_tree) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// True if the directory `base` (with its `/`) is in a directory of one of
+// `items`: then each entry below it is in the listing.
+function inside_item(items: string[], base: u8[]): boolean {
+  for item in items {
+    if (base.len() >= item.len() && prefix_of(base, item)) {
+      if (item.len() == 0 || base.len() > item.len() && base[item.len()] == b'/' || item[item.len() - 1] == b'/') {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function prefix_bytes(text: string, bytes: u8[]): boolean {
+  for i in 0..bytes.len() {
+    if (text[i] != bytes[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function prefix_of(bytes: u8[], text: string): boolean {
+  for i in 0..text.len() {
+    if (bytes[i] != text[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True if the listing goes into the tree `path`: with `-r`, or when an
+// item is below it: `show_recursive` of git.
+function goes_into(o: LsOpts, path: u8[]): boolean {
+  if (o.recurse) {
+    return true;
+  }
+  for item in o.items {
+    if (item.len() > path.len() && prefix_bytes(item, path) && item[path.len()] == b'/') {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Adds the lines of the tree `hash`, whose path from the top is `base`.
+// `all` tells that each entry is in the listing.
+function ls_walk(own l: Listing, hash: string, base: u8[], all_in: boolean, o: LsOpts): Listing {
   let out = l.out;
   let ok = l.ok;
   let got = store.read(l.store, hash);
@@ -486,56 +832,95 @@ function ls_walk(own l: Listing, hash: string, prefix: u8[], plain: boolean, o: 
   let Ok(list) = entries else {
     return Listing { store: got.store, out: out, ok: false };
   };
+  let all = all_in || o.items.len() == 0 || inside_item(o.items, base);
   let now = Listing { store: got.store, out: out, ok: ok };
   for e in list {
-    let path = prefix.concat(e.name);
-    let path_plain = plain && objects.plain_name(e.name);
+    let path = base.concat(e.name);
     let is_tree = e.mode == "40000";
-    if (!ls_asked(o, path, is_tree)) {
-      continue;
-    }
-    let into = is_tree && (o.recurse || ls_reaches(o, path));
-    if (is_tree && (!into || o.trees || o.only_trees && o.recurse) || !is_tree && !o.only_trees) {
-      now = ls_line(now, e, path, path_plain, o);
-    }
-    if (into) {
-      now = ls_walk(now, e.hash, path.append(b'/'), path_plain, o);
+    if (all || item_matches(o.items, path, is_tree)) {
+      let into = is_tree && goes_into(o, path);
+      let shown = if (is_tree) { !into || o.trees } else { !o.only_trees };
+      if (shown) {
+        now = ls_line(now, e, path, o);
+      }
+      if (into) {
+        now = ls_walk(now, e.hash, path.append(b'/'), all, o);
+      }
     }
   }
   return now;
 }
 
-// A path after the tree with no `./` at the start and no `/` at the end,
-// the fact that it had a `/` at the end, and the cause when the port does
-// not take it.
-function ls_path(text: string): (string, boolean, string) {
-  if (text.len() == 0) {
-    return ("", false, "empty string is not a valid pathspec. please use . instead if you meant to match all paths");
+// The path `arg` from the directory `prefix`, with `.`, `..` and the
+// doubled slashes taken out, as a pathspec of git holds it. A `/` at the
+// end stays. A path above the top of the worktree `top` is the message of
+// git.
+function item_of(prefix: string, arg: string, top: string): Result[string, string] {
+  if (arg.len() == 0) {
+    return Err("empty string is not a valid pathspec. please use . instead if you meant to match all paths");
   }
-  let parts = text.split("/").filter((p: string): boolean => p.len() > 0 && p != ".");
-  if (parts.contains("..") || text.starts_with("/") || text.starts_with(":")) {
-    return ("", false, "this port takes a path below the current directory only: " + text);
+  let parts: string[] = [];
+  for p in (prefix + arg).split("/") {
+    if (p == "..") {
+      if (parts.len() == 0) {
+        return Err(arg + ": '" + arg + "' is outside repository at '" + top + "'");
+      }
+      parts = array.slice(parts, 0, parts.len() - 1);
+    } else if (p.len() > 0 && p != ".") {
+      parts = parts.append(p);
+    }
   }
-  return (parts.join("/"), text.ends_with("/") || text.ends_with("/."), "");
+  let path = parts.join("/");
+  let dir = arg.ends_with("/") || arg == "." || arg.ends_with("/.") || arg == ".." || arg.ends_with("/..");
+  return Ok(if (dir && path.len() > 0) { path + "/" } else { path });
 }
 
 function ls_tree(argv: string[]): i32 {
-  let o = LsOpts { recurse: false, trees: false, only_trees: false, long: false, names: false, full: false, paths: [], dirs: [] };
+  let (repo, status) = repo_or_fail();
+  if (status != 0) {
+    return status;
+  }
+  let r = repo[0];
+  let o = LsOpts { recurse: false, trees: false, only_trees: false, mode: "", zero: false, abbrev: 0, items: [], prefix: "" };
+  let full_name = r.prefix.len() == 0;
+  let full_tree = false;
   let names: string[] = [];
+  let flags = true;
   for x in argv {
-    if (x == "-r") {
-      o = LsOpts { ...o, recurse: true };
-    } else if (x == "-t") {
-      o = LsOpts { ...o, trees: true };
-    } else if (x == "-d") {
-      o = LsOpts { ...o, only_trees: true };
-    } else if (x == "-l" || x == "--long") {
-      o = LsOpts { ...o, long: true };
-    } else if (x == "--name-only" || x == "--name-status") {
-      o = LsOpts { ...o, names: true };
-    } else if (x == "--full-tree") {
-      o = LsOpts { ...o, full: true };
-    } else if (x.starts_with("-")) {
+    if (flags && x == "--") {
+      flags = false;
+    } else if (flags && x.starts_with("-") && x.len() > 1 && !x.starts_with("--")) {
+      for i in 1..x.len() {
+        let c = x[i];
+        if (c == b'r') {
+          o = LsOpts { ...o, recurse: true };
+        } else if (c == b't') {
+          o = LsOpts { ...o, trees: true };
+        } else if (c == b'd') {
+          o = LsOpts { ...o, only_trees: true };
+        } else if (c == b'l') {
+          o = LsOpts { ...o, mode: "long" };
+        } else if (c == b'z') {
+          o = LsOpts { ...o, zero: true };
+        } else {
+          return usage();
+        }
+      }
+    } else if (flags && x == "--long") {
+      o = LsOpts { ...o, mode: "long" };
+    } else if (flags && (x == "--name-only" || x == "--name-status")) {
+      o = LsOpts { ...o, mode: "name" };
+    } else if (flags && x == "--object-only") {
+      o = LsOpts { ...o, mode: "object" };
+    } else if (flags && x == "--full-name") {
+      full_name = true;
+    } else if (flags && x == "--full-tree") {
+      full_tree = true;
+    } else if (flags && x == "--abbrev") {
+      o = LsOpts { ...o, abbrev: store.short_length(r.store()) };
+    } else if (flags && x.starts_with("--abbrev=")) {
+      o = LsOpts { ...o, abbrev: log_number(objects.part(x, 9, x.len())).max(4).min(2 * r.width) };
+    } else if (flags && x.starts_with("-") && x.len() > 1) {
       return usage();
     } else {
       names = names.append(x);
@@ -544,19 +929,31 @@ function ls_tree(argv: string[]): i32 {
   if (names.len() == 0) {
     return usage();
   }
+  if (o.only_trees && o.recurse) {
+    o = LsOpts { ...o, trees: true };
+  }
+  let prefix = if (full_tree) { "" } else { r.prefix };
+  o = LsOpts { ...o, prefix: if (full_name || full_tree) { "" } else { prefix } };
+  let items: string[] = [];
   for i in 1..names.len() {
-    let (path, dir, why) = ls_path(names[i]);
-    if (why.len() > 0) {
-      return fatal(why);
+    match (item_of(prefix, names[i], r.top)) {
+      Ok(item) => {
+        items = items.append(item);
+      },
+      Err(message) => {
+        return fatal(message);
+      }
     }
-    o = LsOpts { ...o, paths: o.paths.append(path), dirs: o.dirs.append(dir) };
   }
-  let (repo, status) = repo_or_fail();
-  if (status != 0) {
-    return status;
+  if (names.len() == 1 && prefix.len() > 0) {
+    items = [prefix];
   }
-  let r = repo[0];
+  o = LsOpts { ...o, items: items };
   let named = rev.parse(r, r.store(), names[0]);
+  print_errors(named.errors);
+  if (named.died.len() > 0) {
+    return fatal(named.died);
+  }
   if (named.hash.len() == 0) {
     return fatal("Not a valid object name " + names[0]);
   }
@@ -564,27 +961,7 @@ function ls_tree(argv: string[]): i32 {
   if (top.hash.len() == 0) {
     return fatal("not a tree object");
   }
-  // Below the top of the worktree, git lists the tree of the current
-  // directory. With the trees shown, each directory on the way has a line.
-  let from = Listing { store: top.store, out: [], ok: true };
-  let hash = top.hash;
-  if (!o.full) {
-    let parts = r.prefix.split("/").filter((p: string): boolean => p.len() > 0);
-    for i in 0..parts.len() {
-      let next = rev.at_path(from.store, hash, parts[i]);
-      if (next.hash.len() == 0) {
-        return 0;
-      }
-      hash = next.hash;
-      from = Listing { ...from, store: next.store };
-      if (o.trees || o.only_trees && o.recurse) {
-        let up = parts.len() - 1 - i;
-        let name = if (up == 0) { "./" } else { "../".repeat(up) };
-        from = ls_line(from, objects.TreeEntry { mode: "40000", name: [], hash: hash }, name.bytes(), true, o);
-      }
-    }
-  }
-  let listed = ls_walk(from, hash, [], true, o);
+  let listed = ls_walk(Listing { store: top.store, out: [], ok: true }, top.hash, [], false, o);
   put(listed.out);
   if (!listed.ok) {
     return fatal("unable to read a tree of " + names[0]);
@@ -593,10 +970,6 @@ function ls_tree(argv: string[]): i32 {
 }
 
 // ---- log ----
-
-// The form of each commit: the default form, one line, or a format. With
-// `separated`, a line end is between two commits and not after each one.
-struct LogOpts { limit: i32, oneline: boolean, format: string, has_format: boolean, separated: boolean, name: string, bad: string }
 
 // The count in `text`, or -1 when it is not a count.
 function log_number(text: string): i32 {
@@ -615,145 +988,766 @@ function log_limit(text: string): i32 {
   return log_number(text).max(0);
 }
 
-function log_format(o: LogOpts, x: string): LogOpts {
-  if (x.starts_with("--format=")) {
-    return LogOpts { ...o, format: objects.part(x, 9, x.len()), has_format: true };
-  }
-  if (x.starts_with("--pretty=tformat:")) {
-    return LogOpts { ...o, format: objects.part(x, 17, x.len()), has_format: true };
-  }
-  if (x.starts_with("--pretty=format:")) {
-    return LogOpts { ...o, format: objects.part(x, 16, x.len()), has_format: true, separated: true };
-  }
-  return LogOpts { ...o, bad: x };
-}
+// The options of log. `form` is a built-in form or "format", and `format`
+// is the text of the format. `terminator` puts a line end after each
+// commit, and its absence puts one between two commits. `diff` is "",
+// "name-only" or "name-status".
+struct LogOpts { limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, decorate: boolean, walk: revwalk.Opts, bad: string }
 
-function log_args(argv: string[]): LogOpts {
-  let o = LogOpts { limit: -1, oneline: false, format: "", has_format: false, separated: false, name: "HEAD", bad: "" };
-  let i = 0;
-  while (i < argv.len()) {
-    let x = argv[i];
-    if (x == "--oneline") {
-      o = LogOpts { ...o, oneline: true };
-    } else if (x == "-n" && i + 1 < argv.len()) {
-      i += 1;
-      o = LogOpts { ...o, limit: log_limit(argv[i]) };
-    } else if (x.starts_with("--max-count=")) {
-      o = LogOpts { ...o, limit: log_limit(objects.part(x, 12, x.len())) };
-    } else if (x.starts_with("-") && log_number(objects.part(x, 1, x.len())) >= 0) {
-      o = LogOpts { ...o, limit: log_number(objects.part(x, 1, x.len())) };
-    } else if (x.starts_with("-")) {
-      o = log_format(o, x);
-    } else {
-      o = LogOpts { ...o, name: x };
+// The patterns of grep as the options give them.
+struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
+
+// A form of `--pretty=` or `--format=`.
+function log_form(o: LogOpts, text: string, from_format: boolean): LogOpts {
+  for f in ["oneline", "short", "medium", "full", "fuller", "raw", "reference"] {
+    if (text == f && !from_format || text == f && from_format) {
+      return LogOpts { ...o, form: f, terminator: f == "oneline" || f == "reference", format: "" };
     }
-    i += 1;
   }
-  return o;
+  if (text.starts_with("format:")) {
+    return LogOpts { ...o, form: "format", format: objects.part(text, 7, text.len()), terminator: false };
+  }
+  if (text.starts_with("tformat:")) {
+    return LogOpts { ...o, form: "format", format: objects.part(text, 8, text.len()), terminator: true };
+  }
+  if (text.contains("%") || from_format) {
+    return LogOpts { ...o, form: "format", format: text, terminator: true };
+  }
+  return LogOpts { ...o, bad: "invalid --pretty format: " + text };
 }
 
-// The commits that wait for their turn. git shows the commit with the
-// latest committer date first, and the first found of two equal dates.
-struct Waiting { commits: log.Commit[], store: store.Store }
+// The value of an option `--NAME=VALUE` or `--NAME VALUE`, and the count
+// of arguments that it takes, or ("", 0).
+function option_value(argv: string[], i: i32, name: string): (string, i32) {
+  let x = argv[i];
+  if (x.starts_with(name + "=")) {
+    return (objects.part(x, name.len() + 1, x.len()), 1);
+  }
+  if (x == name && i + 1 < argv.len()) {
+    return (argv[i + 1], 2);
+  }
+  return ("", 0);
+}
 
-// Adds the commit `hash`, which the caller has not seen before.
-function log_push(w: Waiting, hash: string): Waiting {
-  let got = store.read(w.store, hash);
-  return match (got.object) {
-    Ok(o) => {
-      let c = log.commit_of(hash, o.body);
-      let kept = if (store.at_edge(got.store, hash)) { log.Commit { ...c, parents: [] } } else { c };
-      Waiting { commits: w.commits.append(kept), store: got.store }
-    },
-    Err(_) => Waiting { commits: w.commits, store: got.store },
+// A time of `--since` and `--until`: the date that approxidate reads.
+function log_time(text: string): i64 {
+  let (t, _) = date.approxidate(text);
+  return t;
+}
+
+// Reads the option at `i`, and gives the count of arguments that it takes,
+// or 0 when it is not an option of log.
+function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (LogOpts, GrepArgs, i32) {
+  let o = o_in;
+  let g = g_in;
+  let w = o.walk;
+  let x = argv[i];
+  let flags = ["--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no"];
+  if (flags.contains(x)) {
+    if (x == "--oneline") {
+      o = LogOpts { ...log_form(o, "oneline", false), abbrev_commit: true };
+    } else if (x == "--pretty") {
+      o = log_form(o, "medium", false);
+    } else if (x == "--reverse") {
+      o = LogOpts { ...o, reverse: true };
+    } else if (x == "--parents") {
+      o = LogOpts { ...o, parents: true, walk: revwalk.Opts { ...w, rewrite: true } };
+    } else if (x == "--graph") {
+      o = LogOpts { ...o, graph: true, walk: revwalk.Opts { ...w, rewrite: true, topo: true } };
+    } else if (x == "--name-only" || x == "--name-status") {
+      o = LogOpts { ...o, diff: objects.part(x, 2, x.len()) };
+    } else if (x == "--first-parent") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, first_parent: true } };
+    } else if (x == "--topo-order") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, topo: true, order: revwalk.BY_GRAPH } };
+    } else if (x == "--date-order") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, topo: true, order: revwalk.BY_DATE } };
+    } else if (x == "--author-date-order") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, topo: true, order: revwalk.BY_AUTHOR } };
+    } else if (x == "--merges") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, min_parents: 2 } };
+    } else if (x == "--no-merges") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, max_parents: 1 } };
+    } else if (x == "--no-min-parents") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, min_parents: 0 } };
+    } else if (x == "--no-max-parents") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, max_parents: -1 } };
+    } else if (x == "--full-history") {
+      o = LogOpts { ...o, walk: revwalk.Opts { ...w, full_history: true } };
+    } else if (x == "--all-match") {
+      g = GrepArgs { ...g, all_match: true };
+    } else if (x == "--invert-grep") {
+      g = GrepArgs { ...g, invert: true };
+    } else if (x == "-i" || x == "--regexp-ignore-case") {
+      g = GrepArgs { ...g, icase: true };
+    } else if (x == "-E" || x == "--extended-regexp") {
+      g = GrepArgs { ...g, kind: "extended" };
+    } else if (x == "-F" || x == "--fixed-strings") {
+      g = GrepArgs { ...g, kind: "fixed" };
+    } else if (x == "--basic-regexp") {
+      g = GrepArgs { ...g, kind: "basic" };
+    } else if (x == "--abbrev-commit") {
+      o = LogOpts { ...o, abbrev_commit: true };
+    } else if (x == "--no-abbrev-commit") {
+      o = LogOpts { ...o, abbrev_commit: false };
+    } else if (x == "--relative-date") {
+      o = LogOpts { ...o, dates: date.Mode { kind: date.RELATIVE, local: false, format: "" } };
+    } else if (x == "--decorate" || x == "--decorate=short") {
+      o = LogOpts { ...o, decorate: true };
+    } else if (x == "--no-decorate" || x == "--decorate=no") {
+      o = LogOpts { ...o, decorate: false };
+    }
+    return (o, g, 1);
+  }
+  if (x == "-n" && i + 1 < argv.len()) {
+    return (LogOpts { ...o, limit: log_limit(argv[i + 1]) }, g, 2);
+  }
+  if (x.starts_with("-n") && log_number(objects.part(x, 2, x.len())) >= 0) {
+    return (LogOpts { ...o, limit: log_number(objects.part(x, 2, x.len())) }, g, 1);
+  }
+  if (x.starts_with("-") && !x.starts_with("--") && log_number(objects.part(x, 1, x.len())) >= 0) {
+    return (LogOpts { ...o, limit: log_number(objects.part(x, 1, x.len())) }, g, 1);
+  }
+  let valued = ["--max-count", "--skip", "--format", "--pretty", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep", "--min-parents", "--max-parents", "--abbrev"];
+  for name in valued {
+    let (v, taken) = option_value(argv, i, name);
+    if (taken > 0 && !(name == "--pretty" && taken == 2) && !(name == "--abbrev" && taken == 2)) {
+      if (name == "--max-count") {
+        o = LogOpts { ...o, limit: log_limit(v) };
+      } else if (name == "--skip") {
+        o = LogOpts { ...o, skip: log_limit(v) };
+      } else if (name == "--format") {
+        o = log_form(o, v, true);
+      } else if (name == "--pretty") {
+        o = log_form(o, v, false);
+      } else if (name == "--date") {
+        o = match (date.parse_mode(v)) {
+          Ok(m) => LogOpts { ...o, dates: m },
+          Err(message) => LogOpts { ...o, bad: message },
+        };
+      } else if (name == "--since" || name == "--after") {
+        o = LogOpts { ...o, walk: revwalk.Opts { ...w, max_age: log_time(v) } };
+      } else if (name == "--until" || name == "--before") {
+        o = LogOpts { ...o, walk: revwalk.Opts { ...w, min_age: log_time(v) } };
+      } else if (name == "--max-age") {
+        o = LogOpts { ...o, walk: revwalk.Opts { ...w, max_age: log_limit(v) as i64 } };
+      } else if (name == "--min-age") {
+        o = LogOpts { ...o, walk: revwalk.Opts { ...w, min_age: log_limit(v) as i64 } };
+      } else if (name == "--author") {
+        g = GrepArgs { ...g, authors: g.authors.append(v) };
+      } else if (name == "--committer") {
+        g = GrepArgs { ...g, committers: g.committers.append(v) };
+      } else if (name == "--grep") {
+        g = GrepArgs { ...g, body: g.body.append(v) };
+      } else if (name == "--min-parents") {
+        o = LogOpts { ...o, walk: revwalk.Opts { ...w, min_parents: log_limit(v) } };
+      } else if (name == "--max-parents") {
+        o = LogOpts { ...o, walk: revwalk.Opts { ...w, max_parents: log_number(v) } };
+      }
+      return (o, g, taken);
+    }
+  }
+  return (o, g, 0);
+}
+
+// The compiled patterns of grep, or the message of git for a pattern that
+// is not sound.
+function grep_of(g: GrepArgs): Result[revwalk.Grep, string] {
+  let compile = (text: string): Result[revwalk.Pattern, string] => {
+    let syntax = bre.Syntax { ...bre.posix_basic(), extended: g.kind == "extended", icase: g.icase };
+    if (g.kind == "fixed") {
+      return Ok(revwalk.Pattern { re: bre.bre_compile_syntax("", syntax), fixed: text, is_fixed: true, icase: g.icase });
+    }
+    let re = bre.bre_compile_syntax(text, syntax);
+    if (re.err.len() > 0) {
+      return Err("command line, '" + text + "': " + re.err);
+    }
+    return Ok(revwalk.Pattern { re: re, fixed: "", is_fixed: false, icase: g.icase });
+  };
+  let out = revwalk.Grep { ...revwalk.no_grep(), all_match: g.all_match, invert: g.invert };
+  for a in g.authors {
+    out = revwalk.Grep { ...out, authors: out.authors.append(compile(a)?) };
+  }
+  for c in g.committers {
+    out = revwalk.Grep { ...out, committers: out.committers.append(compile(c)?) };
+  }
+  for b in g.body {
+    out = revwalk.Grep { ...out, body: out.body.append(compile(b)?) };
+  }
+  return Ok(out);
+}
+
+// The decorations of each commit: the refs that name it, as `git log`
+// shows them, with `HEAD -> BRANCH` when HEAD names a branch of the
+// commit.
+function decorations_of(r: refs.Repo, s: store.Store): (store.Store, Map[string, string[]]) {
+  let by: Map[string, string[]] = Map { };
+  let st = s;
+  let add = (m: Map[string, string[]], hash: string, name: string): Map[string, string[]] => m.insert(hash, [name].concat(m.get_or(hash, [])));
+  for e in refs.all_refs(r) {
+    if (!e.name.starts_with("refs/notes/")) {
+      let shown = if (e.name.starts_with("refs/heads/")) { objects.part(e.name, 11, e.name.len()) } else if (e.name.starts_with("refs/remotes/")) { objects.part(e.name, 13, e.name.len()) } else if (e.name.starts_with("refs/tags/")) { "tag: " + objects.part(e.name, 10, e.name.len()) } else { e.name };
+      let at = e.hash;
+      by = add(by, at, shown);
+      for step in 0..16 {
+        let got = store.read(st, at);
+        st = got.store;
+        if let Ok(o) = got.object {
+          if (o.kind == "tag") {
+            let next = objects.header_values(o.body, "object");
+            if (next.len() > 0 && e.name.starts_with("refs/tags/")) {
+              at = next[0];
+              by = add(by, at, shown);
+            }
+          }
+        }
+      }
+    }
+  }
+  let head = refs.resolve_ref(r, "HEAD");
+  if (head.hash.len() > 0) {
+    let branch = refs.head_branch(r);
+    let list = by.get_or(head.hash, []);
+    let short = if (branch.starts_with("refs/heads/")) { objects.part(branch, 11, branch.len()) } else { "" };
+    if (short.len() > 0 && list.contains(short)) {
+      by = by.insert(head.hash, ["HEAD -> " + short].concat(list.filter((n: string): boolean => n != short)));
+    } else {
+      by = by.insert(head.hash, ["HEAD"].concat(list));
+    }
+  }
+  return (st, by);
+}
+
+// The lines of `--name-only` or `--name-status` for the commit `c`
+// against its first parent: no lines for a merge, unless the walk follows
+// the first parents only.
+function name_lines(st: store.Store, c: log.Commit, parents: string[], o: LogOpts): (store.Store, string) {
+  if (parents.len() > 1 && !o.walk.first_parent) {
+    return (st, "");
+  }
+  let s = st;
+  let base = "";
+  if (parents.len() >= 1) {
+    let got = store.read(s, parents[0]);
+    s = got.store;
+    if let Ok(p) = got.object {
+      base = log.commit_of(parents[0], p.body).tree;
+    }
+  }
+  let (after, found) = treediff.changes(s, base, c.tree, o.walk.items);
+  let (renamed, changes) = treediff.renames(after, found);
+  let out = "";
+  for ch in changes {
+    let path = unsafe { string_from_bytes_unchecked(objects.quoted(ch.path)) };
+    let status = unsafe { string_from_bytes_unchecked([ch.status]) };
+    if (o.diff == "name-only") {
+      out += path + "\n";
+    } else if (ch.status == b'R') {
+      let old = unsafe { string_from_bytes_unchecked(objects.quoted(ch.old_path)) };
+      out += "R" + (ch.score * 100 / 60000).to_string().pad_start_str(3, "0") + "\t" + old + "\t" + path + "\n";
+    } else {
+      out += status + "\t" + path + "\n";
+    }
+  }
+  return (renamed, out);
+}
+
+// The pathspec of the paths `args`, from the current directory, or the
+// message of git.
+function log_items(r: refs.Repo, args: string[]): Result[string[], string] {
+  let items: string[] = [];
+  for a in args {
+    if (a.starts_with(":/")) {
+      items = items.append(objects.part(a, 2, a.len()));
+    } else {
+      items = items.append(item_of(r.prefix, a, r.top)?);
+    }
+  }
+  return Ok(items);
+}
+
+// Adds the commits that `name` gives to the walk: a range, the shorthands
+// for parents, an excluded commit, or one commit. The second value is
+// false when `name` is no revision, and the third is the message of git
+// when it stops.
+// The commit that `text` names, or "", and the message of git when it
+// stops.
+function log_commit(r: refs.Repo, w: revwalk.Walk, text: string): (revwalk.Walk, string, string) {
+  let named = rev.parse_with(r, w.g.store, text, rev.COMMITTISH);
+  print_errors(named.errors);
+  if (named.hash.len() == 0) {
+    return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: named.store } }, "", named.died);
+  }
+  let c = rev.commit_of(named.store, named.hash);
+  print_errors(c.errors);
+  return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: c.store } }, c.hash, "");
+}
+
+function log_rev(r: refs.Repo, w_in: revwalk.Walk, name: string, excluded: boolean, dashdash: boolean): (revwalk.Walk, boolean, string) {
+  let w = w_in;
+  let off = if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 };
+  let on = if (excluded) { 0 } else { revwalk.UNINTERESTING | revwalk.BOTTOM };
+  if let Some(dots) = name.index_of("..") {
+    let symmetric = dots + 2 < name.len() && name[dots + 2] == b'.';
+    let a = objects.part(name, 0, dots);
+    let b = objects.part(name, dots + (if (symmetric) { 3 } else { 2 }), name.len());
+    if (a.len() > 0 || b.len() > 0 || symmetric) {
+      let (w1, ha, da) = log_commit(r, w, if (a.len() == 0) { "HEAD" } else { a });
+      w = w1;
+      if (da.len() > 0) {
+        return (w, false, da);
+      }
+      let (w2, hb, db) = log_commit(r, w, if (b.len() == 0) { "HEAD" } else { b });
+      w = w2;
+      if (db.len() > 0) {
+        return (w, false, db);
+      }
+      if (ha.len() > 0 && hb.len() > 0) {
+        if (symmetric) {
+          let (g, bases) = walk.merge_bases(w.g, ha, [hb]);
+          w = revwalk.Walk { ...w, g: g };
+          for base in bases {
+            w = revwalk.add(w, base, revwalk.UNINTERESTING | revwalk.BOTTOM);
+          }
+          w = revwalk.add(w, ha, off | revwalk.LEFT);
+          w = revwalk.add(w, hb, off);
+        } else {
+          w = revwalk.add(w, ha, on);
+          w = revwalk.add(w, hb, off);
+        }
+        return (w, true, "");
+      }
+    }
+  }
+  for mark in ["^@", "^!", "^-"] {
+    if let Some(at) = name.index_of(mark) {
+      let tail = objects.part(name, at + 2, name.len());
+      let exclude = if (mark == "^-") { if (tail.len() == 0) { 1 } else { log_number(tail) } } else { 0 };
+      if (tail.len() == 0 || mark == "^-" && exclude > 0) {
+        let (w1, h, d) = log_commit(r, w, objects.part(name, 0, at));
+        w = w1;
+        if (d.len() > 0) {
+          return (w, false, d);
+        }
+        if (h.len() > 0) {
+          let (w2, ps) = revwalk.parents(w, h);
+          w = w2;
+          if (mark != "^-" || exclude <= ps.len()) {
+            for i in 0..ps.len() {
+              if (mark != "^-" || i + 1 == exclude) {
+                w = revwalk.add(w, ps[i], if (mark == "^@") { off } else { on });
+              }
+            }
+            if (mark != "^@") {
+              w = revwalk.add(w, h, off);
+            }
+            return (w, true, "");
+          }
+        }
+      }
+    }
+  }
+  let not = name.starts_with("^");
+  let plain = if (not) { objects.part(name, 1, name.len()) } else { name };
+  let named = rev.parse_with(r, w.g.store, plain, rev.COMMITTISH);
+  print_errors(named.errors);
+  w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: named.store } };
+  if (named.died.len() > 0) {
+    return (w, false, named.died);
+  }
+  if (named.hash.len() == 0) {
+    return (w, false, "");
+  }
+  if (!dashdash && !looks_like_pathspec(name) && path_exists(r, name)) {
+    return (w, true, "ambiguous argument '" + name + "': both revision and filename\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'");
+  }
+  // A tag that names no commit, a tree and a blob add nothing to the walk.
+  let (s, at, kind) = peel_commit(w.g.store, named.hash);
+  w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s } };
+  if (kind == "commit") {
+    w = revwalk.add(w, at, if (not) { on } else { off });
+  }
+  return (w, true, "");
+}
+
+// The object after the tags of `hash`, and its kind.
+function peel_commit(s: store.Store, hash: string): (store.Store, string, string) {
+  let st = s;
+  let at = hash;
+  for step in 0..64 {
+    let got = store.read(st, at);
+    st = got.store;
+    let Ok(o) = got.object else {
+      return (st, "", "");
+    };
+    if (o.kind != "tag") {
+      return (st, at, o.kind);
+    }
+    let next = objects.header_values(o.body, "object");
+    if (next.len() == 0) {
+      return (st, "", "");
+    }
+    at = next[0];
+  }
+  return (st, "", "");
+}
+
+// The refs of `--all`, `--branches`, `--tags` and `--remotes`.
+function ref_option(x: string): string {
+  return match (x) {
+    "--all" => "refs/",
+    "--branches" => "refs/heads/",
+    "--tags" => "refs/tags/",
+    "--remotes" => "refs/remotes/",
+    _ => "",
   };
 }
 
-// The place of the commit to show next.
-function log_next(commits: log.Commit[]): i32 {
-  let best = 0;
-  for i in 1..commits.len() {
-    if (commits[i].committer.time > commits[best].committer.time) {
-      best = i;
-    }
+// The state of the output of log: the graph, and whether a commit is shown
+// and its text had no line end at its end.
+struct Shown { graph: graph.Graph, any: boolean, missing: boolean }
+
+// The padding of the graph before a line, or "" with no graph.
+function graph_pad(o: LogOpts, sh: Shown): (Shown, string) {
+  if (!o.graph) {
+    return (sh, "");
   }
-  return best;
+  let (g, line) = graph.padding_line(sh.graph);
+  return (Shown { ...sh, graph: g }, line);
 }
 
-// True if the form of the options prints a short name.
-function log_shorts(o: LogOpts): boolean {
-  if (o.has_format) {
-    return o.format.contains("%h") || o.format.contains("%t") || o.format.contains("%p");
+// The text of one commit, as `show_log` of git prints it, and its diff.
+function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context, sh_in: Shown): (store.Store, string, Shown) {
+  let s = st;
+  let sh = sh_in;
+  let out = "";
+  if (sh.any && !o.terminator) {
+    if (!sh.missing) {
+      let (sh1, p) = graph_pad(o, sh);
+      sh = sh1;
+      out += p;
+    }
+    out += "\n";
   }
-  return true;
-}
-
-function log_text(w: Waiting, c: log.Commit, o: LogOpts): string {
-  let shorts = log.Shorts { hash: "", tree: "", parents: [] };
-  if (log_shorts(o)) {
-    let least = store.short_length(w.store);
-    shorts = log.Shorts { hash: refs.short_of(w.store, c.hash, least), tree: refs.short_of(w.store, c.tree, least), parents: [] };
-    for p in c.parents {
-      shorts = log.Shorts { ...shorts, parents: shorts.parents.append(refs.short_of(w.store, p, least)) };
+  sh = Shown { ...sh, any: true };
+  if (o.graph) {
+    let (g, lines) = graph.show_commit(sh.graph);
+    sh = Shown { ...sh, graph: g };
+    out += lines;
+  }
+  let user = o.form == "format" || o.form == "reference";
+  if (!user) {
+    out += log.first_line(c, ctx, o.form, o.parents);
+    if (o.form == "oneline") {
+      out += " ";
+    } else {
+      out += "\n";
+      if (o.graph) {
+        let (g, line, _) = graph.next_line(sh.graph);
+        sh = Shown { ...sh, graph: g };
+        out += line;
+      }
     }
   }
-  if (o.has_format) {
-    return log.formatted(c, shorts, o.format);
+  let msg = if (o.form == "format") { log.formatted(c, ctx, o.format) } else if (o.form == "reference") { log.reference(c, ctx) } else { log.pretty(c, ctx, o.form) };
+  let missing = msg.len() == 0 || msg[msg.len() - 1] != b'\n';
+  if (o.graph) {
+    let (g, text) = graph.show_msg(sh.graph, msg);
+    sh = Shown { ...sh, graph: g };
+    out += text;
+  } else {
+    out += msg;
   }
-  if (o.oneline) {
-    return shorts.hash + " " + log.subject(c.message);
+  let empty = o.form == "format" && o.format.len() == 0;
+  if (o.terminator && !empty) {
+    if (!missing) {
+      let (sh2, p) = graph_pad(o, sh);
+      sh = sh2;
+      out += p;
+    }
+    out += "\n";
   }
-  return log.medium(c, shorts);
+  sh = Shown { ...sh, missing: missing };
+  if (o.diff.len() > 0) {
+    let (after, names) = name_lines(s, c, ctx.parents, o);
+    s = after;
+    if (names.len() > 0) {
+      if (o.form != "oneline" && !empty) {
+        let (sh3, p) = graph_pad(o, sh);
+        sh = sh3;
+        out += p + "\n";
+      }
+      for line in names.split("\n") {
+        if (line.len() > 0) {
+          let (sh4, p) = graph_pad(o, sh);
+          sh = sh4;
+          out += p + line + "\n";
+        }
+      }
+    }
+  }
+  return (s, out, sh);
+}
+
+// The parents of `h` that the graph draws: the first parent that the walk
+// shows, and then each other parent that it shows, unless the walk
+// follows the first parents only.
+function graph_parents(w_in: revwalk.Walk, h: string, first_parent: boolean): (revwalk.Walk, string[]) {
+  let (w1, ps) = revwalk.parents(w_in, h);
+  let w = w1;
+  let out: string[] = [];
+  for i in 0..ps.len() {
+    let (w2, yes) = revwalk.interesting(w, ps[i]);
+    w = w2;
+    if (yes) {
+      out = out.append(ps[i]);
+    }
+    if (first_parent && (i == 0 || out.len() > 0)) {
+      return (w, out);
+    }
+  }
+  return (w, out);
+}
+
+struct LogItem { hash: string, parents: string[] }
+
+function log_next(w_in: revwalk.Walk, o: LogOpts): (revwalk.Walk, LogItem) {
+  let (w, h) = revwalk.next(w_in);
+  if (!o.graph || h.len() == 0) {
+    return (w, LogItem { hash: h, parents: [] });
+  }
+  // Capture graph parents before lookahead marks later commits as shown.
+  let (after, parents) = graph_parents(w, h, o.walk.first_parent);
+  return (after, LogItem { hash: h, parents: parents });
+}
+
+// The text of a commit, with the graph.
+function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Map[string, string[]], least: i32, sh_in: Shown, following: LogItem[]): (revwalk.Walk, string, Shown) {
+  let h = item.hash;
+  let w = w_in;
+  let sh = sh_in;
+  let (g, n) = walk.node(w.g, h);
+  w = revwalk.Walk { ...w, g: g };
+  if (!n.ok) {
+    return (w, "", sh);
+  }
+  let c = n.commit;
+  if (o.graph) {
+    let next = if (following.len() > 0) { following[0].hash } else { "" };
+    let next_root = following.len() > 1 && following[0].parents.len() == 0;
+    sh = Shown { ...sh, graph: graph.update(sh.graph, h, item.parents, next, next_root) };
+  }
+  let (w2, ps) = revwalk.parents(w, h);
+  w = w2;
+  let st = w.g.store;
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []) };
+  let (s3, text, after) = log_entry(w.g.store, c, o, ctx, sh);
+  return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s3 } }, text, after);
 }
 
 function log_command(argv: string[]): i32 {
-  let o = log_args(argv);
   let (repo, status) = repo_or_fail();
   if (status != 0) {
     return status;
   }
-  if (o.bad.len() > 0) {
-    return fatal("unrecognized argument: " + o.bad);
-  }
   let r = repo[0];
-  let named = rev.parse(r, r.store(), o.name);
-  if (named.hash.len() == 0) {
-    return fatal(if (named.message.len() > 0) { named.message } else { "ambiguous argument '" + o.name + AMBIGUOUS });
+  let o = LogOpts { limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", decorate: false, walk: revwalk.options(), bad: "" };
+  let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
+  let dashdash = -1;
+  for k in 0..argv.len() {
+    if (dashdash < 0 && argv[k] == "--") {
+      dashdash = k;
+    }
   }
-  // git shows no commit for a tree or a blob.
-  let start = rev.parse(r, r.store(), o.name + "^{commit}");
-  if (start.hash.len() == 0) {
-    return 0;
+  let paths: string[] = [];
+  let args = argv;
+  if (dashdash >= 0) {
+    paths = array.slice(argv, dashdash + 1, argv.len());
+    args = array.slice(argv, 0, dashdash);
   }
-  let first = if (log_shorts(o)) { store.listed(start.store) } else { start.store };
-  let w = log_push(Waiting { commits: [], store: first }, start.hash);
-  let seen: Map[string, boolean] = Map { };
-  seen = seen.insert(start.hash, true);
+  let w = revwalk.walk_of(walk.graph_of(r.store()), o.walk);
+  let excluded = false;
+  let named = 0;
+  let i = 0;
+  while (i < args.len()) {
+    let x = args[i];
+    if (x.starts_with("-") && x.len() > 1) {
+      if (x == "--not") {
+        excluded = !excluded;
+        i += 1;
+        continue;
+      }
+      let prefix = ref_option(x);
+      if (prefix.len() > 0) {
+        for e in refs.all_refs(r) {
+          if (e.name.starts_with(prefix)) {
+            let (s, at, kind) = peel_commit(w.g.store, e.hash);
+            w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s } };
+            if (kind == "commit") {
+              w = revwalk.add(w, at, if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 });
+            }
+          }
+        }
+        if (x == "--all") {
+          let head = refs.resolve_ref(r, "HEAD");
+          if (head.hash.len() > 0) {
+            w = revwalk.add(w, head.hash, if (excluded) { revwalk.UNINTERESTING | revwalk.BOTTOM } else { 0 });
+          }
+        }
+        named += 1;
+        i += 1;
+        continue;
+      }
+      let (o1, g1, taken) = log_option(o, g, args, i);
+      if (taken == 0) {
+        return fatal("unrecognized argument: " + x);
+      }
+      o = o1;
+      g = g1;
+      if (o.bad.len() > 0) {
+        return fatal(o.bad);
+      }
+      i += taken;
+      continue;
+    }
+    let (w1, ok, message) = log_rev(r, w, x, excluded, dashdash >= 0);
+    w = w1;
+    if (message.len() > 0) {
+      return fatal(message);
+    }
+    if (!ok) {
+      if (dashdash >= 0 || x.starts_with("^")) {
+        return fatal("bad revision '" + x + "'");
+      }
+      for j in i..args.len() {
+        let y = args[j];
+        if (y.starts_with("-")) {
+          return fatal("option '" + y + "' must come before non-option arguments");
+        }
+        if (!looks_like_pathspec(y) && !path_exists(r, y)) {
+          if (j == i) {
+            let again = rev.parse(r, w.g.store, y);
+            return no_such_name(r, y, again);
+          }
+          return fatal(y + ": no such path in the working tree.\nUse 'git <command> -- <path>...' to specify paths that do not exist locally.");
+        }
+      }
+      paths = array.slice(args, i, args.len()).concat(paths);
+      break;
+    }
+    named += 1;
+    i += 1;
+  }
+  let items = match (log_items(r, paths)) {
+    Ok(list) => list,
+    Err(message) => {
+      return fatal(message);
+    },
+  };
+  let compiled = match (grep_of(g)) {
+    Ok(c) => c,
+    Err(message) => {
+      return fatal(message);
+    },
+  };
+  o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, items: items, grep: compiled } };
+  w = revwalk.Walk { ...w, opts: o.walk };
+  if (named == 0) {
+    let head = refs.resolve_ref(r, "HEAD");
+    if (head.hash.len() == 0) {
+      let branch = refs.head_branch(r);
+      if (branch.starts_with("refs/heads/")) {
+        return fatal("your current branch '" + objects.part(branch, 11, branch.len()) + "' does not have any commits yet");
+      }
+      return fatal("ambiguous argument 'HEAD'" + AMBIGUOUS);
+    }
+    let (s, at, kind) = peel_commit(w.g.store, head.hash);
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s } };
+    if (kind == "commit") {
+      w = revwalk.add(w, at, 0);
+    }
+  }
+  w = revwalk.prepare(w);
+  if (w.failed.len() > 0) {
+    return fatal("Failed to traverse parents of commit " + w.failed);
+  }
+  if (o.reverse && o.graph) {
+    return fatal("options '--graph' and '--reverse' cannot be used together");
+  }
+  let needs_shorts = o.abbrev_commit || o.form != "raw" && o.form != "oneline";
+  if (needs_shorts) {
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: store.listed(w.g.store) } };
+  }
+  let least = store.short_length(w.g.store);
+  let decorations: Map[string, string[]] = Map { };
+  if (o.decorate || o.form == "format" && (o.format.contains("%d") || o.format.contains("%D"))) {
+    let (s2, by) = decorations_of(r, w.g.store);
+    w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s2 } };
+    decorations = by;
+  }
+  let shown: string[] = [];
+  let count = 0;
+  let skipped = 0;
   let buf: u8[] = [];
-  let shown = 0;
-  let plain = !o.has_format && !o.oneline;
-  while (w.commits.len() > 0 && shown != o.limit) {
-    let at = log_next(w.commits);
-    let c = w.commits[at];
-    w = Waiting { ...w, commits: array.concat(array.slice(w.commits, 0, at), array.slice(w.commits, at + 1, w.commits.len())) };
-    let text = log_text(w, c, o);
-    if (shown > 0 && (plain || o.separated)) {
-      buf = buf.append(b'\n');
+  let sh = Shown { graph: graph.graph_new(), any: false, missing: false };
+  let following: LogItem[] = [];
+  while (o.limit < 0 || count < o.limit) {
+    let item = LogItem { hash: "", parents: [] };
+    if (following.len() > 0) {
+      item = following[0];
+      following = array.slice(following, 1, following.len());
+    } else {
+      let (w1, next) = log_next(w, o);
+      w = w1;
+      item = next;
     }
+    if (w.failed.len() > 0) {
+      put(buf);
+      return fatal("Failed to traverse parents of commit " + w.failed);
+    }
+    let h = item.hash;
+    if (h.len() == 0) {
+      break;
+    }
+    if (skipped < o.skip) {
+      skipped += 1;
+      continue;
+    }
+    count += 1;
+    if (o.reverse) {
+      shown = shown.append(h);
+      continue;
+    }
+    let room = if (o.limit < 0) { 2 } else { (o.limit - count).min(2) };
+    while (o.graph && following.len() < room) {
+      let (w1, next) = log_next(w, o);
+      w = w1;
+      if (w.failed.len() > 0) {
+        put(buf);
+        return fatal("Failed to traverse parents of commit " + w.failed);
+      }
+      if (next.hash.len() == 0) {
+        break;
+      }
+      following = following.append(next);
+    }
+    let (w2, text, after) = log_show(w, item, o, decorations, least, sh, following);
+    w = w2;
+    sh = after;
     buf = buf.concat(text.bytes());
-    if (!plain && !o.separated && !(o.has_format && o.format.len() == 0)) {
-      buf = buf.append(b'\n');
-    }
     if (buf.len() > 65536) {
       put(buf);
       buf = [];
     }
-    shown += 1;
-    for p in c.parents {
-      if (!seen.contains(p)) {
-        seen = seen.insert(p, true);
-        w = log_push(w, p);
-      }
+  }
+  for h in shown.reverse() {
+    let (w3, text, after) = log_show(w, LogItem { hash: h, parents: [] }, o, decorations, least, sh, []);
+    w = w3;
+    sh = after;
+    buf = buf.concat(text.bytes());
+    if (buf.len() > 65536) {
+      put(buf);
+      buf = [];
     }
   }
   put(buf);
@@ -767,68 +1761,235 @@ const MIN_PARALLEL: i32 = 32;
 
 // The names of the parts from `part`, in order. A worker makes the names
 // of each part but the last, which this process makes.
-function index_parts(data: pack.Window, offsets: i32[], cuts: i32[], part: i32): string[][] {
+function index_parts(data: u8[], offsets: i64[], cuts: i32[], part: i32, raw: i32): string[][] {
   let first = cuts[part];
   let end = cuts[part + 1];
   if (part + 2 >= cuts.len()) {
-    return [index.names_part(data, offsets, first, end)];
+    return [index.names_part(data, offsets, first, end, raw)];
   }
-  let w = worker.spawn((): string[] => index.names_part(data, offsets, first, end));
-  let rest = index_parts(data, offsets, cuts, part + 1);
+  let w = worker.spawn((): string[] => index.names_part(data, offsets, first, end, raw));
+  let rest = index_parts(data, offsets, cuts, part + 1, raw);
   return [w.join()].concat(rest);
 }
 
 // The names of the objects of a packfile: one part for each CPU.
-function index_names(data: pack.Window, offsets: i32[]): string[][] {
+function index_names(data: u8[], offsets: i64[], raw: i32): string[][] {
   let count = offsets.len() - 1;
   let parts = if (worker.parallel() && count >= MIN_PARALLEL) { (cpu_count() as i32).max(1).min(16) } else { 1 };
-  return index_parts(data, offsets, index.parts_of(offsets, parts), 0);
+  return index_parts(data, offsets, index.parts_of(offsets, parts), 0, raw);
 }
 
-function index_pack(argv: string[]): i32 {
-  let out = "";
-  let file = "";
+const INDEX_PACK_USAGE: string = "usage: git index-pack [-v] [-o <index-file>] [--keep | --keep=<msg>] [--[no-]rev-index] [--verify] [--strict] (<pack-file> | --stdin [--fix-thin] [<pack-file>])";
+
+struct PackArgs { stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, format: string, bad: string }
+
+// The number at the start of `text` in base 10, or in the base that the C
+// function `strtoul` gives for base 0 when `c` is true: 0x for 16 and 0
+// for 8. The second value is the place after the digits.
+function number_of(text: string, c: boolean): (i64, i32) {
+  let base: i64 = 10;
+  let i = 0;
+  if (c && (text.starts_with("0x") || text.starts_with("0X"))) {
+    base = 16;
+    i = 2;
+  } else if (c && text.starts_with("0")) {
+    base = 8;
+  }
+  let n: i64 = 0;
+  while (i < text.len()) {
+    let b = text[i];
+    let d: i64 = if (b >= b'0' && b <= b'9') { (b - b'0') as i64 } else if (b >= b'a' && b <= b'f') { (b - b'a') as i64 + 10 } else if (b >= b'A' && b <= b'F') { (b - b'A') as i64 + 10 } else { 99 };
+    if (d >= base) {
+      break;
+    }
+    n = n * base + d;
+    i += 1;
+  }
+  return (n, i);
+}
+
+function pack_args(argv: string[]): PackArgs {
+  let a = PackArgs { stdin: false, thin: false, rev: true, out: "", file: "", keep: "", keeps: false, version: 2, limit: 2147483647, format: "", bad: "" };
   let i = 0;
   while (i < argv.len()) {
-    if (argv[i] == "-o" && i + 1 < argv.len()) {
+    let x = argv[i];
+    if (x == "--stdin") {
+      a = PackArgs { ...a, stdin: true };
+    } else if (x == "--fix-thin") {
+      a = PackArgs { ...a, thin: true };
+    } else if (x == "--rev-index") {
+      a = PackArgs { ...a, rev: true };
+    } else if (x == "--no-rev-index") {
+      a = PackArgs { ...a, rev: false };
+    } else if (x == "--keep" || x.starts_with("--keep=")) {
+      a = PackArgs { ...a, keeps: true, keep: if (x.len() > 7) { objects.part(x, 7, x.len()) } else { "" } };
+    } else if (x == "-o" && i + 1 < argv.len() && a.out.len() == 0) {
       i += 1;
-      out = argv[i];
-    } else if (argv[i].starts_with("-") || file.len() > 0) {
-      return usage();
+      a = PackArgs { ...a, out: argv[i] };
+    } else if (x.starts_with("--index-version=")) {
+      let text = objects.part(x, 16, x.len());
+      let (v, after) = number_of(text, false);
+      if (v > 2) {
+        return PackArgs { ...a, bad: x };
+      }
+      a = PackArgs { ...a, version: v as i32 };
+      let rest = objects.part(text, after, text.len());
+      if (rest.starts_with(",")) {
+        let (limit, used) = number_of(objects.part(rest, 1, rest.len()), true);
+        a = PackArgs { ...a, limit: limit };
+        rest = objects.part(rest, used + 1, rest.len());
+      }
+      if (rest.len() > 0 || (a.limit & 2147483648) != 0) {
+        return PackArgs { ...a, bad: x };
+      }
+    } else if (x.starts_with("--object-format=")) {
+      a = PackArgs { ...a, format: objects.part(x, 16, x.len()) };
+    } else if (x.starts_with("-") || a.file.len() > 0) {
+      return PackArgs { ...a, bad: "usage" };
     } else {
-      file = argv[i];
+      a = PackArgs { ...a, file: x };
     }
     i += 1;
   }
-  if (file.len() == 0) {
-    return usage();
+  return a;
+}
+
+// The file name `name` with the extension `to` in place of `from`, or the
+// message of git.
+function derived(name: string, from: string, to: string): Result[string, string] {
+  if (!name.ends_with("." + from) || name.len() == from.len() + 1) {
+    return Err("packfile name '" + name + "' does not end with '." + from + "'");
   }
-  let data = match (read_file_bytes(file)) {
-    Ok(bytes) => bytes,
+  return Ok(objects.part(name, 0, name.len() - from.len()) + to);
+}
+
+// Writes `bytes` to the file `path`, with the mode 0444 as git gives it.
+function write_fixed(path: string, bytes: u8[]): Result[void, string] {
+  if let Err(e) = write_file_bytes(path, bytes) {
+    return Err("unable to create '" + path + "': " + why(e));
+  }
+  let _ = chmod_at(path, 292, true);
+  return Ok(());
+}
+
+// The objects of the repository that a thin pack does not have, or none.
+function local_objects(repo: refs.Repo[], thin: boolean): (string) => Option[objects.Object] {
+  if (!thin) {
+    return (name: string): Option[objects.Object] => None;
+  }
+  let s = repo[0].store();
+  return (name: string): Option[objects.Object] => match (store.read(s, name).object) {
+    Ok(o) => Some(o),
+    Err(_) => None,
+  };
+}
+
+// The names of the index and of the reverse index of the packfile `file`,
+// or of the index `out`, or the message of git.
+function index_names_of(a: PackArgs): Result[(string, string), string] {
+  let idx_name = a.out;
+  if (idx_name.len() == 0 && a.file.len() > 0) {
+    idx_name = derived(a.file, "pack", "idx")?;
+  }
+  let rev_name = "";
+  if (a.rev && idx_name.len() > 0) {
+    rev_name = derived(idx_name, "idx", "rev")?;
+  }
+  return Ok((idx_name, rev_name));
+}
+
+// Writes the `.keep` file of the packfile, and gives what `--stdin` reports:
+// "keep" when it wrote the file, or "pack".
+function kept(a: PackArgs, stem: string): Result[string, string] {
+  if (!a.keeps) {
+    return Ok("pack");
+  }
+  let keep_name = if (a.file.len() > 0) { objects.part(a.file, 0, a.file.len() - 4) + "keep" } else { stem + ".keep" };
+  if let Ok(_) = stat(keep_name) {
+    return Ok("pack");
+  }
+  let text = if (a.keep.len() > 0) { a.keep + "\n" } else { "" };
+  if let Err(e) = write_file(keep_name, text) {
+    return Err("cannot write keep file '" + keep_name + "': " + why(e));
+  }
+  return Ok("keep");
+}
+
+function index_pack(argv: string[]): i32 {
+  let a = pack_args(argv);
+  if (a.bad.len() > 0 && a.bad != "usage") {
+    return fatal("bad " + a.bad);
+  }
+  if (a.bad == "usage" || a.file.len() == 0 && !a.stdin) {
+    eprint(INDEX_PACK_USAGE);
+    return 129;
+  }
+  let algo = objects.SHA1;
+  if (a.format.len() > 0) {
+    algo = objects.width_of(a.format);
+    if (algo == 0) {
+      return fatal("unknown hash algorithm '" + a.format + "'");
+    }
+  }
+  let repo: refs.Repo[] = [];
+  if let Ok(r) = refs.find() {
+    repo = [r];
+    if (a.format.len() == 0) {
+      algo = r.width;
+    }
+  }
+  if (a.thin && !a.stdin) {
+    return fatal("the option '--fix-thin' requires '--stdin'");
+  }
+  if (a.stdin && repo.len() == 0) {
+    return fatal("--stdin requires a git repository");
+  }
+  if (a.stdin && a.format.len() > 0) {
+    return fatal("options '--object-format' and '--stdin' cannot be used together");
+  }
+  let (idx_name, rev_name) = match (index_names_of(a)) {
+    Ok(names) => names,
+    Err(message) => { return fatal(message); },
+  };
+  let data = if (a.stdin) { io.read_all_stdin_bytes() } else { read_file_bytes(a.file) };
+  let bytes = match (data) {
+    Ok(b) => b,
     Err(e) => {
-      return fatal("could not open '" + file + "' for reading: " + why(e));
+      return fatal("could not open '" + a.file + "' for reading: " + why(e));
     },
   };
-  if (out.len() == 0 && !file.ends_with(".pack")) {
-    return fatal("packfile name '" + file + "' does not end with '.pack'");
-  }
-  if (out.len() > 0 && !out.ends_with(".idx")) {
-    return fatal("packfile name '" + out + "' does not end with '.idx'");
-  }
-  let stem = if (out.len() > 0) { objects.part(out, 0, out.len() - 4) } else { objects.part(file, 0, file.len() - 5) };
-  let built = match (index.build_with(pack.whole(data, width_here()), index_names)) {
+  let raw = algo;
+  let o = index.Options { width: algo, version: a.version, limit: a.limit };
+  let built = match (index.build_with(bytes, o, (d: u8[], offsets: i64[]): string[][] => index_names(d, offsets, raw), local_objects(repo, a.thin))) {
     Ok(b) => b,
+    Err(messages) => {
+      eprint(messages);
+      return 128;
+    },
+  };
+  let stem = if (repo.len() > 0) { repo[0].objects() + "/pack/pack-" + built.name } else { "" };
+  let report = match (kept(a, stem)) {
+    Ok(r) => r,
     Err(message) => {
       return fatal(message);
     },
   };
-  if let Err(e) = write_file_bytes(stem + ".idx", built.idx) {
-    return fatal("unable to create '" + stem + ".idx': " + why(e));
+  if (a.stdin) {
+    let pack_name = if (a.file.len() > 0) { a.file } else { stem + ".pack" };
+    if let Err(message) = write_fixed(pack_name, built.data) {
+      return fatal(message);
+    }
   }
-  if let Err(e) = write_file_bytes(stem + ".rev", built.rev) {
-    return fatal("unable to create '" + stem + ".rev': " + why(e));
+  let rev_out = if (a.stdin && a.rev && rev_name.len() == 0) { stem + ".rev" } else { rev_name };
+  if (rev_out.len() > 0) {
+    if let Err(message) = write_fixed(rev_out, built.rev) {
+      return fatal(message);
+    }
   }
-  put_line(built.name);
+  if let Err(message) = write_fixed(if (idx_name.len() > 0) { idx_name } else { stem + ".idx" }, built.idx) {
+    return fatal(message);
+  }
+  put_line(if (a.stdin) { report + "\t" + built.name } else { built.name });
   return 0;
 }
 
@@ -847,26 +2008,21 @@ function pack_path(file: string): string {
 }
 
 // The places of the index in the order of the offsets in the packfile.
-function by_offset(idx: pack.Index): i32[] {
-  let keys: i64[] = [];
-  for i in 0..pack.count(idx) {
-    keys = keys.append(pack.offset_at(idx, i) as i64 << 32 | i as i64);
-  }
-  let sorted = cmp.sort_by(keys, (a: i64, b: i64): i32 => if (a < b) { -1 } else if (a > b) { 1 } else { 0 });
+function by_offset(ix: pack.Index): i32[] {
   let order: i32[] = [];
-  for k in sorted {
-    order = order.append((k & 4294967295) as i32);
+  for i in 0..ix.count {
+    order = order.append(i);
   }
-  return order;
+  return cmp.sort_by(order, (a: i32, b: i32): i32 => pack.offset_at(ix, a).cmp(pack.offset_at(ix, b)));
 }
 
 // The place in `order` of the object at `offset`, or -1.
-function at_offset(idx: pack.Index, order: i32[], offset: i32): i32 {
+function at_offset(ix: pack.Index, order: i32[], offset: i64): i32 {
   let lo = 0;
   let hi = order.len();
   while (lo < hi) {
     let mid = lo + (hi - lo) / 2;
-    let o = pack.offset_at(idx, order[mid]);
+    let o = pack.offset_at(ix, order[mid]);
     if (o == offset) {
       return order[mid];
     }
@@ -881,52 +2037,57 @@ function at_offset(idx: pack.Index, order: i32[], offset: i32): i32 {
 
 // True if the two checksums of the files hold: the hash of the packfile at
 // its end and in the index, and the hash of the index at its end.
-function checksums_ok(data: u8[], index: pack.Index): boolean {
-  let idx = index.bytes;
-  let width = index.width;
+function checksums_ok(a: i32, data: u8[], idx: u8[]): boolean {
   let n = data.len();
   let m = idx.len();
-  if (n < 12 + width || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
+  let raw = a;
+  if (n < 12 + raw || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
     return false;
   }
-  let sum = hex.encode(objects.digest(width, array.slice(data, 0, n - width)));
-  if (sum != hex.encode(array.slice(data, n - width, n)) || sum != hex.encode(array.slice(idx, m - 2 * width, m - width))) {
+  let sum = hex.encode(objects.digest(a, array.slice(data, 0, n - raw)));
+  if (sum != hex.encode(array.slice(data, n - raw, n)) || sum != hex.encode(array.slice(idx, m - 2 * raw, m - raw))) {
     return false;
   }
-  return hex.encode(objects.digest(width, array.slice(idx, 0, m - width))) == hex.encode(array.slice(idx, m - width, m));
+  return hex.encode(objects.digest(a, array.slice(idx, 0, m - raw))) == hex.encode(array.slice(idx, m - raw, m));
 }
 
 // Checks each object of one packfile: its chain of deltas gives an object
 // with the name that the index has. With `verbose`, it prints a line for
 // each object in the order of the packfile, and the lengths of the chains.
-function verify_one(file: string, verbose: boolean): boolean {
+function verify_one(a: i32, file: string, verbose: boolean): boolean {
   let path = pack_path(file);
   let Ok(data) = read_file_bytes(path) else {
     eprint("fatal: Cannot open existing pack file '" + file + "'");
     return false;
   };
-  let Ok(bytes) = read_file_bytes(objects.part(path, 0, path.len() - 5) + ".idx") else {
-    eprint("fatal: Cannot open existing pack file '" + file + "'");
+  let idx_path = objects.part(path, 0, path.len() - 5) + ".idx";
+  let Ok(idx) = read_file_bytes(idx_path) else {
+    eprint("fatal: Cannot open existing pack idx file for '" + file + "'");
     return false;
   };
-  let idx = pack.Index { bytes: bytes, width: width_here() };
-  let whole = pack.whole(data, idx.width);
-  if (!pack.index_ok(idx) || !checksums_ok(data, idx)) {
+  let Ok(ix) = pack.index_of(idx, a, idx_path) else {
+    return false;
+  };
+  if (!checksums_ok(a, data, idx)) {
     return false;
   }
-  let order = by_offset(idx);
+  let order = by_offset(ix);
+  let src = pack.memory(data, (name: u8[]): i64 => pack.offset_of(ix, name), a);
+  let cache = pack.cache_new();
   let chains: i32[] = [];
   let out: u8[] = [];
   for k in 0..order.len() {
-    let name = pack.hex_name_at(idx, order[k]);
-    let offset = pack.offset_at(idx, order[k]);
-    let Ok(chain) = pack.chain_in((at: i32): pack.Window => whole, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
+    let name = pack.hex_name_at(ix, order[k]);
+    let offset = pack.offset_at(ix, order[k]);
+    let Ok(chain) = pack.chain_in(src, offset) else {
       return false;
     };
-    let Ok(o) = pack.object_at(whole, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
+    let (made, kept) = pack.object_cached(src, offset, cache);
+    cache = kept;
+    let Ok(o) = made else {
       return false;
     };
-    if (objects.hash_of(idx.width, o.kind, o.body) != name) {
+    if (objects.hash_of(a, o.kind, o.body) != name) {
       return false;
     }
     let depth = chain.len() - 1;
@@ -934,11 +2095,11 @@ function verify_one(file: string, verbose: boolean): boolean {
       chains = chains.append(0);
     }
     chains = chains.with(depth, chains[depth] + 1);
-    let end = if (k + 1 < order.len()) { pack.offset_at(idx, order[k + 1]) } else { data.len() - idx.width };
-    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_in(whole, offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
+    let end = if (k + 1 < order.len()) { pack.offset_at(ix, order[k + 1]) } else { (data.len() - a) as i64 };
+    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_in(pack.whole(data, a), offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
     if (depth > 0) {
-      let base = at_offset(idx, order, chain[1]);
-      line = line + " " + depth.to_string() + " " + pack.hex_name_at(idx, base);
+      let base = at_offset(ix, order, chain[1]);
+      line = line + " " + depth.to_string() + " " + pack.hex_name_at(ix, base);
     }
     out = out.concat((line + "\n").bytes());
   }
@@ -971,9 +2132,13 @@ function verify_pack(argv: string[]): i32 {
   if (files.len() == 0) {
     return usage();
   }
+  let algo = match (refs.find()) {
+    Ok(r) => r.width,
+    Err(_) => objects.SHA1,
+  };
   let status = 0;
   for file in files {
-    if (!verify_one(file, verbose)) {
+    if (!verify_one(algo, file, verbose)) {
       if (verbose) {
         put_line(pack_path(file) + ": bad");
       }

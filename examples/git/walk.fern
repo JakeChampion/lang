@@ -1,0 +1,203 @@
+// The commits of a repository as a graph: the parents, the tree and the
+// committer date of each commit, and the merge bases of commits
+// (commit-reach.c of git).
+import "std/array";
+import "core/cmp";
+import "core/map";
+import "./log";
+import "./objects";
+import "./store";
+
+// One commit of the graph, with the commit as `log.commit_of` reads it.
+// `ok` is false for a commit that the store does not have.
+pub struct Node { parents: string[], tree: string, time: i64, ok: boolean, commit: log.Commit }
+
+// The commits read so far.
+pub struct Graph { store: store.Store, nodes: Map[string, Node] }
+
+pub function graph_of(s: store.Store): Graph {
+  return Graph { store: s, nodes: Map { } };
+}
+
+// The node of the commit `hash`, read from the store the first time.
+pub function node(g: Graph, hash: string): (Graph, Node) {
+  if let Some(n) = g.nodes.get(hash) {
+    return (g, n);
+  }
+  let got = store.read(g.store, hash);
+  let n = match (got.object) {
+    Ok(o) => if (o.kind == "commit") { node_of(got.store, hash, o.body) } else { missing(hash) },
+    Err(_) => missing(hash),
+  };
+  return (Graph { store: got.store, nodes: g.nodes.insert(hash, n) }, n);
+}
+
+// The node of the commit `hash` with the content `body`.
+pub function node_of(s: store.Store, hash: string, body: u8[]): Node {
+  let c = log.commit_of(hash, body);
+  let parents = if (store.at_edge(s, hash)) { [] } else { c.parents };
+  return Node { parents: parents, tree: c.tree, time: c.committer.time, ok: true, commit: c };
+}
+
+function missing(hash: string): Node {
+  return Node { parents: [], tree: "", time: 0, ok: false, commit: log.commit_of(hash, []) };
+}
+
+// A commit in a queue, with its flags.
+struct Queued { hash: string, time: i64, order: i32 }
+
+// The flags of the walk of the merge bases.
+const PARENT1: i32 = 1;
+
+const PARENT2: i32 = 2;
+
+const STALE: i32 = 4;
+
+const RESULT: i32 = 8;
+
+// The queue with `c` in its place: the latest date first, and the first
+// put of two equal dates first.
+function put(q: Queued[], c: Queued): Queued[] {
+  let lo = 0;
+  let hi = q.len();
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    if (q[mid].time > c.time || q[mid].time == c.time && q[mid].order < c.order) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return array.slice(q, 0, lo).append(c).concat(array.slice(q, lo, q.len()));
+}
+
+function flag(flags: Map[string, i32], hash: string): i32 {
+  return flags.get_or(hash, 0);
+}
+
+// The commits that both `one` and one of `twos` reach and that no other
+// such commit reaches first, the latest first: `paint_down_to_common` of
+// git. Each has the flags PARENT1 and PARENT2 and not STALE.
+function paint(g_in: Graph, one: string, twos: string[]): (Graph, string[], Map[string, i32]) {
+  let g = g_in;
+  let flags: Map[string, i32] = Map { };
+  let q: Queued[] = [];
+  let counter = 0;
+  let (g1, n1) = node(g, one);
+  g = g1;
+  flags = flags.insert(one, PARENT1);
+  q = put(q, Queued { hash: one, time: n1.time, order: counter });
+  counter += 1;
+  for t in twos {
+    let (g2, n2) = node(g, t);
+    g = g2;
+    flags = flags.insert(t, flag(flags, t) | PARENT2);
+    q = put(q, Queued { hash: t, time: n2.time, order: counter });
+    counter += 1;
+  }
+  let found: Queued[] = [];
+  while (q.any((c: Queued): boolean => (flag(flags, c.hash) & STALE) == 0)) {
+    let c = q[0];
+    q = array.slice(q, 1, q.len());
+    let f = flag(flags, c.hash) & (PARENT1 | PARENT2 | STALE);
+    if (f == (PARENT1 | PARENT2)) {
+      if ((flag(flags, c.hash) & RESULT) == 0) {
+        flags = flags.insert(c.hash, flag(flags, c.hash) | RESULT);
+        found = put(found, c);
+      }
+      f |= STALE;
+    }
+    let (g3, n) = node(g, c.hash);
+    g = g3;
+    for p in n.parents {
+      if ((flag(flags, p) & f) != f) {
+        let (g4, pn) = node(g, p);
+        g = g4;
+        if (pn.ok) {
+          flags = flags.insert(p, flag(flags, p) | f);
+          q = put(q, Queued { hash: p, time: pn.time, order: counter });
+          counter += 1;
+        }
+      }
+    }
+  }
+  let out: string[] = [];
+  for c in found {
+    out = out.append(c.hash);
+  }
+  return (g, out, flags);
+}
+
+// True if `a` reaches `b`.
+pub function reaches(g_in: Graph, a: string, b: string): (Graph, boolean) {
+  if (a == b) {
+    return (g_in, true);
+  }
+  let g = g_in;
+  let seen: Map[string, boolean] = Map { };
+  let todo: string[] = [a];
+  let (gb, nb) = node(g, b);
+  g = gb;
+  while (todo.len() > 0) {
+    let h = todo[todo.len() - 1];
+    todo = array.slice(todo, 0, todo.len() - 1);
+    let (g2, n) = node(g, h);
+    g = g2;
+    for p in n.parents {
+      if (p == b) {
+        return (g, true);
+      }
+      if (!seen.contains(p)) {
+        seen = seen.insert(p, true);
+        let (g3, pn) = node(g, p);
+        g = g3;
+        if (pn.time >= nb.time - 86400) {
+          todo = todo.append(p);
+        } else {
+          todo = [p].concat(todo);
+        }
+      }
+    }
+  }
+  return (g, false);
+}
+
+// The merge bases of `one` and the commits `twos`, the latest first:
+// `get_merge_bases_many` of git.
+pub function merge_bases(g_in: Graph, one: string, twos: string[]): (Graph, string[]) {
+  let g = g_in;
+  for t in twos {
+    if (t == one) {
+      return (g, [one]);
+    }
+  }
+  let (g1, painted, flags) = paint(g, one, twos);
+  g = g1;
+  let result: Queued[] = [];
+  for h in painted {
+    if ((flag(flags, h) & STALE) == 0) {
+      let (g2, n) = node(g, h);
+      g = g2;
+      result = put(result, Queued { hash: h, time: n.time, order: result.len() });
+    }
+  }
+  if (result.len() <= 1) {
+    return (g, result.map((c: Queued): string => c.hash));
+  }
+  // A base that another base reaches is not a merge base.
+  let kept: Queued[] = [];
+  for i in 0..result.len() {
+    let redundant = false;
+    for j in 0..result.len() {
+      if (i != j && !redundant) {
+        let (g3, r) = reaches(g, result[j].hash, result[i].hash);
+        g = g3;
+        redundant = r;
+      }
+    }
+    if (!redundant) {
+      kept = put(kept, result[i]);
+    }
+  }
+  return (g, kept.map((c: Queued): string => c.hash));
+}

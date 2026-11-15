@@ -1,0 +1,477 @@
+// The module system of jq 1.7: `import`, `include`, data imports,
+// `modulemeta` and the search path of `-L`.
+//
+// A module gives its own definitions to the program that imports it, as
+// `NAME::f` for an import and as `f` for an include. Its own imports stay
+// inside it. A path is clean, and absolute from `$PWD`, but a symbolic link
+// in it is not followed.
+import "std/io";
+import "std/json";
+import "std/path";
+import "std/string";
+import "./filter";
+import "./input";
+
+// A dependency of a module: an import or an include of the module at the
+// index `module`, or the value `data` of a data import.
+pub struct Dep { alias: string, include: boolean, is_data: boolean, module: i32, data: json.JsonValue }
+
+// A module: its definitions before `.`, the functions that they give, and
+// its dependencies.
+pub struct Module { path: string, defs: filter.Ast, names: string[], deps: Dep[] }
+
+// A program and the modules that it uses. Each module comes after its own
+// dependencies. `errors` holds the messages of jq, and `count` the number of
+// compile errors.
+pub struct Compiled { modules: Module[], deps: Dep[], ast: filter.Ast, errors: string[], count: i32, search: json.JsonValue }
+
+// The default search path of jq.
+pub function default_search(): string[] {
+  return ["~/.jq", "$ORIGIN/../lib/jq", "$ORIGIN/../lib"];
+}
+
+// `p` with no `.` and `..` parts, and absolute from `$PWD` when it is
+// relative. A WASI program has no current directory to ask for.
+pub function absolute(p: string): string {
+  if (path.is_absolute(p)) {
+    return path.clean(p);
+  }
+  if let Some(cwd) = env("PWD") {
+    if (path.is_absolute(cwd)) {
+      return path.clean(cwd + "/" + p);
+    }
+  }
+  return path.clean(p);
+}
+
+// The directory part of `p`, as C `dirname` gives it.
+pub function dirname(p: string): string {
+  let i = p.len() - 1;
+  while (i > 0 && p[i] == b'/') {
+    i -= 1;
+  }
+  while (i >= 0 && p[i] != b'/') {
+    i -= 1;
+  }
+  if (i < 0) {
+    return ".";
+  }
+  if (i == 0) {
+    return "/";
+  }
+  return slice_unchecked(p, 0, i).to_owned();
+}
+
+// The search path that `get_search_list` gives: each `-L` directory, or the
+// default search path.
+pub function search_list(library: string[]): string[] {
+  if (library.len() == 0) {
+    return default_search();
+  }
+  let out: string[] = [];
+  for d in library {
+    out = out.append(absolute(d));
+  }
+  return out;
+}
+
+function home(): string {
+  return match (env("HOME")) {
+    Some(h) => h,
+    None => "",
+  };
+}
+
+// The directories of a search path, with `~/`, `$ORIGIN/` and the relative
+// paths from `origin` expanded.
+function expanded(search: string[], jq_origin: string, origin: string): string[] {
+  let out: string[] = [];
+  for p in search {
+    let q = p;
+    if (q == "~" || q.starts_with("~/")) {
+      q = home() + slice_unchecked(q, 1, q.len()).to_owned();
+    }
+    if (q == ".") {
+      out = out.append(q);
+    } else if (q.starts_with("$ORIGIN/")) {
+      out = out.append(jq_origin + "/" + slice_unchecked(q, 8, q.len()).to_owned());
+    } else if (origin.len() > 0 && !q.starts_with("/")) {
+      out = out.append(origin + "/" + q);
+    } else {
+      out = out.append(q);
+    }
+  }
+  return out;
+}
+
+// The error of a module path that jq does not take, or "".
+function relpath_error(rel: string): string {
+  if (rel.contains("\\")) {
+    return "Modules must be named by relative paths using '/', not '\\' (" + rel + ")";
+  }
+  let parts = rel.split("/");
+  for i in 0..parts.len() {
+    if (parts[i] == "..") {
+      return "Relative paths to modules may not traverse to parent directories (" + rel + ")";
+    }
+    if (i > 0 && parts[i] == parts[i - 1]) {
+      return "module names must not have equal consecutive components: " + rel;
+    }
+  }
+  return "";
+}
+
+function exists(p: string): boolean {
+  return match (stat(p)) {
+    Ok(_) => true,
+    Err(_) => false,
+  };
+}
+
+// The file of the module `rel`: `D/rel.jq`, `D/rel/jq/main.jq` or
+// `D/rel/BASE.jq` for each directory D, or "" when there is none.
+function find_module(rel: string, dirs: string[], suffix: string): string {
+  let parts = rel.split("/");
+  let base = parts[parts.len() - 1];
+  for d in dirs {
+    if (d.len() == 0) {
+      continue;
+    }
+    for candidate in [d + "/" + rel + suffix, d + "/" + rel + "/jq/main" + suffix, d + "/" + rel + "/" + base + suffix] {
+      let full = absolute(candidate);
+      if (exists(full)) {
+        return full;
+      }
+    }
+  }
+  return "";
+}
+
+// The search path of a directive: the `search` key of its metadata, or `.`
+// and the library directories.
+function directive_search(d: filter.Directive, library: string[]): string[] {
+  if let json.JObject(o) = d.meta {
+    match (o.get_or("search", json.JNull)) {
+      json.JString(s) => {
+        return [s];
+      },
+      json.JArray(items) => {
+        let out: string[] = [];
+        for x in items {
+          if let json.JString(s) = x {
+            out = out.append(s);
+          }
+        }
+        return out;
+      },
+      json.JNull => {},
+      _ => {
+        return [];
+      }
+    }
+  }
+  return ["."].concat(library);
+}
+
+function is_raw(d: filter.Directive): boolean {
+  if let json.JObject(o) = d.meta {
+    if let json.JBool(b) = o.get_or("raw", json.JNull) {
+      return b;
+    }
+  }
+  return false;
+}
+
+function is_optional(d: filter.Directive): boolean {
+  if let json.JObject(o) = d.meta {
+    if let json.JBool(b) = o.get_or("optional", json.JNull) {
+      return b;
+    }
+  }
+  return false;
+}
+
+// The state of a compile: the modules so far, and the errors.
+struct Loading { modules: Module[], errors: string[], count: i32, library: string[], jq_origin: string }
+
+// A compile error at the byte `at` of `text`: the message, the file and the
+// line, then the line itself up to the place of the error.
+pub function located(text_of_error: string, file: string, text: string, at: i32): string {
+  let message = text_of_error;
+  if (message.starts_with("syntax error")) {
+    message += filter.QUOTING;
+  }
+  let line = 1;
+  let start = 0;
+  let stop = at;
+  if (stop > text.len()) {
+    stop = text.len();
+  }
+  for i in 0..stop {
+    if (text[i] == b'\n') {
+      line += 1;
+      start = i + 1;
+    }
+  }
+  let end = start;
+  while (end < text.len() && text[end] != b'\n') {
+    end += 1;
+  }
+  let pad = "";
+  for i in start..stop {
+    pad += " ";
+  }
+  return "jq: error: " + message + " at " + file + ", line " + line.to_string() + ":\n" + slice_unchecked(text, start, end).to_owned() + pad;
+}
+
+function (l: Loading) failing(message: string): Loading {
+  return Loading { ...l, errors: l.errors.append(message), count: l.count + 1 };
+}
+
+// The dependency of the directive `d` of a module in the directory `origin`.
+function load_dep(own l: Loading, d: filter.Directive, origin: string): (Loading, Dep[]) {
+  let bad = relpath_error(d.path);
+  if (bad.len() > 0) {
+    return (l.failing("jq: error: " + bad + "\n"), []);
+  }
+  let suffix = if (d.is_data) { ".json" } else { ".jq" };
+  let found = find_module(d.path, expanded(directive_search(d, l.library), l.jq_origin, origin), suffix);
+  if (found.len() == 0) {
+    if (is_optional(d)) {
+      return (l, []);
+    }
+    return (l.failing("jq: error: module not found: " + d.path + "\n"), []);
+  }
+  let dep = Dep { alias: d.alias, include: d.include, is_data: d.is_data, module: -1, data: json.JNull };
+  if (d.is_data) {
+    let text = match (io.read_input_bytes(found)) {
+      Ok(b) => unsafe { string_from_bytes_unchecked(b) },
+      Err(e) => {
+        return (l.failing("jq: error loading data file " + found + ": " + e.message() + "\n"), []);
+      },
+    };
+    if (is_raw(d)) {
+      return (l, [Dep { ...dep, data: json.JString(text) }]);
+    }
+    let parsed = input.values_of(text);
+    if (parsed.error.len() > 0) {
+      return (l.failing("jq: error loading data file " + found + ": " + parsed.error + "\n"), []);
+    }
+    let all: json.JsonValue[] = [];
+    for t in parsed.texts {
+      all = all.append(t.value);
+    }
+    return (l, [Dep { ...dep, data: json.JArray(all) }]);
+  }
+  for i in 0..l.modules.len() {
+    if (l.modules[i].path == found) {
+      return (l, [Dep { ...dep, module: i }]);
+    }
+  }
+  let text = match (io.read_input_bytes(found)) {
+    Ok(b) => unsafe { string_from_bytes_unchecked(b) },
+    Err(e) => {
+      if (is_optional(d)) {
+        return (l, []);
+      }
+      return (l.failing("jq: error: " + found + ": " + e.message() + "\n"), []);
+    },
+  };
+  let (after, m) = load_module(l, found, text);
+  if (m.len() == 0) {
+    return (after, []);
+  }
+  let index = after.modules.len();
+  return (Loading { ...after, modules: after.modules.append(m[0]) }, [Dep { ...dep, module: index }]);
+}
+
+// The dependencies of the directives `ds`, in their order.
+function load_deps(own l: Loading, ds: filter.Directive[], origin: string): (Loading, Dep[]) {
+  let s = l;
+  let deps: Dep[] = [];
+  for d in ds {
+    let (after, found) = load_dep(s, d, origin);
+    s = after;
+    if (s.count > 0) {
+      return (s, deps);
+    }
+    deps = deps.concat(found);
+  }
+  return (s, deps);
+}
+
+// The functions that `deps` give to the module that has them, as
+// "name/arguments", and the variables of its data imports.
+function given(l: Loading, deps: Dep[]): (string[], string[]) {
+  let funcs: string[] = [];
+  let vars: string[] = [];
+  for d in deps {
+    if (d.is_data) {
+      vars = vars.append(d.alias).append(d.alias + "::" + d.alias);
+      continue;
+    }
+    for n in l.modules[d.module].names {
+      funcs = funcs.append(if (d.include) { n } else { d.alias + "::" + n });
+    }
+  }
+  return (funcs, vars);
+}
+
+// The module in the file `file`, with each of its dependencies.
+function load_module(own l: Loading, file: string, text: string): (Loading, Module[]) {
+  let ds = filter.directives(text);
+  if (ds.error.len() > 0) {
+    return (l.failing(located(ds.error, file, text, ds.at)), []);
+  }
+  let (after, deps) = load_deps(l, ds.deps, dirname(file));
+  if (after.count > 0) {
+    return (after, []);
+  }
+  let (funcs, vars) = given(after, deps);
+  let parsed = filter.parse_in(text, funcs, file, true, ds.next);
+  if (parsed.error.len() > 0) {
+    return (after.failing(located(parsed.error, file, text, parsed.at)), []);
+  }
+  let undefined = undefined_names(parsed, vars.append("ENV"), file, text);
+  if (undefined.len() > 0) {
+    return (Loading { ...after, errors: after.errors.concat(undefined), count: after.count + undefined.len() }, []);
+  }
+  return (after, [Module { path: file, defs: parsed.ast, names: parsed.defs, deps: deps }]);
+}
+
+// The message of each function and each variable that `parsed` uses and
+// that is not defined, in the order of their places in `text`, as jq gives
+// them.
+function undefined_names(parsed: filter.Parsed, vars: string[], file: string, text: string): string[] {
+  let messages = parsed.undefined;
+  let ats = parsed.undefined_at;
+  let after = 0;
+  for name in filter.undefined_vars(parsed.ast, vars) {
+    let at = var_at(text, name, after);
+    after = at + 1;
+    messages = messages.append("$" + name + " is not defined");
+    ats = ats.append(at);
+  }
+  let out: string[] = [];
+  let used: boolean[] = [];
+  for i in 0..ats.len() {
+    used = used.append(false);
+  }
+  for n in 0..ats.len() {
+    let best = -1;
+    for i in 0..ats.len() {
+      if (!used[i] && (best < 0 || ats[i] < ats[best])) {
+        best = i;
+      }
+    }
+    used = used.with(best, true);
+    out = out.append(located(messages[best], file, text, ats[best]));
+  }
+  return out;
+}
+
+// The offset of the first `$name` in `text` from `from`.
+function var_at(text: string, name: string, from: i32): i32 {
+  let want = "$" + name;
+  let i = from;
+  while (i + want.len() <= text.len()) {
+    if (text[i] == b'$' && slice_unchecked(text, i, i + want.len()).to_owned() == want) {
+      let after = i + want.len();
+      if (after >= text.len() || !(text[after] >= b'a' && text[after] <= b'z' || text[after] >= b'A' && text[after] <= b'Z' || text[after] >= b'0' && text[after] <= b'9' || text[after] == b'_')) {
+        return i;
+      }
+    }
+    i += 1;
+  }
+  return 0;
+}
+
+// The program `text` and the modules that it uses. `names` holds the
+// variables that the command line gives. `origin` is the directory of the
+// program, for the relative paths of its imports.
+pub function compile(text: string, library: string[], names: string[], origin: string, jq_origin: string): Compiled {
+  let search = search_list(library);
+  let l = Loading { modules: [], errors: [], count: 0, library: search, jq_origin: jq_origin };
+  let search_json: json.JsonValue[] = [];
+  for s in search {
+    search_json = search_json.append(json.JString(s));
+  }
+  let ds = filter.directives(text);
+  if (ds.error.len() > 0) {
+    return Compiled { modules: [], deps: [], ast: filter.Identity, errors: [located(ds.error, "<top-level>", text, ds.at)], count: 1, search: json.JArray(search_json) };
+  }
+  let directives = ds.deps;
+  let h = home();
+  if (h.len() > 0) {
+    let rc = match (stat(h + "/.jq")) {
+      Ok(st) => st.is_file,
+      Err(_) => false,
+    };
+    if (rc) {
+      directives = [filter.Directive { include: true, path: "", alias: "", is_data: false, meta: json.JObject(json.object().insert("optional", json.JBool(true)).insert("search", json.JString(h))) }].concat(directives);
+    }
+  }
+  let (after, deps) = load_deps(l, directives, absolute(origin));
+  if (after.count > 0) {
+    return Compiled { modules: [], deps: [], ast: filter.Identity, errors: after.errors, count: after.count, search: json.JArray(search_json) };
+  }
+  let (funcs, vars) = given(after, deps);
+  let parsed = filter.parse_in(text, funcs, "<top-level>", false, ds.next);
+  if (parsed.error.len() > 0) {
+    return Compiled { modules: [], deps: [], ast: filter.Identity, errors: [located(parsed.error, "<top-level>", text, parsed.at)], count: 1, search: json.JArray(search_json) };
+  }
+  let undefined = undefined_names(parsed, names.concat(vars), "<top-level>", text);
+  if (undefined.len() > 0) {
+    return Compiled { modules: [], deps: [], ast: filter.Identity, errors: undefined, count: undefined.len(), search: json.JArray(search_json) };
+  }
+  return Compiled { modules: after.modules, deps: deps, ast: parsed.ast, errors: [], count: 0, search: json.JArray(search_json) };
+}
+
+// `modulemeta` of the module `rel`: the metadata of its `module` directive,
+// with its dependencies and its functions. jq looks for the module in the
+// library directories only.
+pub function meta(rel: string, search: string[], jq_origin: string): Result[json.JsonValue, string] {
+  let bad = relpath_error(rel);
+  if (bad.len() > 0) {
+    return Err(bad);
+  }
+  let found = find_module(rel, expanded(search, jq_origin, ""), ".jq");
+  if (found.len() == 0) {
+    return Err("module not found: " + rel);
+  }
+  let text = match (io.read_input_bytes(found)) {
+    Ok(b) => unsafe { string_from_bytes_unchecked(b) },
+    Err(_) => {
+      return Ok(json.JNull);
+    },
+  };
+  let ds = filter.directives(text);
+  if (ds.error.len() > 0) {
+    return Ok(json.JNull);
+  }
+  let parsed = filter.parse_unchecked(text, found, ds.next);
+  if (parsed.error.len() > 0) {
+    return Ok(json.JNull);
+  }
+  let o = json.object();
+  if let json.JObject(m) = ds.meta {
+    o = m;
+  }
+  let deps: json.JsonValue[] = [];
+  for d in ds.deps {
+    let entry = json.object();
+    if let json.JObject(m) = d.meta {
+      entry = m;
+    }
+    if (!d.include) {
+      entry = entry.insert("as", json.JString(d.alias));
+    }
+    entry = entry.insert("is_data", json.JBool(d.is_data)).insert("relpath", json.JString(d.path));
+    deps = deps.append(json.JObject(entry));
+  }
+  let defs: json.JsonValue[] = [];
+  for n in parsed.defs {
+    defs = defs.append(json.JString(n));
+  }
+  return Ok(json.JObject(o.insert("deps", json.JArray(deps)).insert("defs", json.JArray(defs))));
+}

@@ -145,9 +145,6 @@ func (c *checker) mcSeq(stmts []ast.Stmt, name, typeName string) (bool, bool) {
 			if c.mcIsBinding(x.Tag, name) {
 				return true, false
 			}
-			if x.Origin != "" {
-				break
-			}
 			all := len(x.Arms) > 0
 			for _, arm := range x.Arms {
 				ac, av := c.mcSeq(arm.Body.Stmts, name, typeName)

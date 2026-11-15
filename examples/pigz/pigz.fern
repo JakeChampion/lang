@@ -17,6 +17,7 @@ import "std/array";
 import "std/errno";
 import "std/hash/crc32";
 import "std/deflate" as deflate;
+import "std/worker";
 import "./gz";
 import "./layout";
 
@@ -104,20 +105,13 @@ function procs(o: gz.Options): i32 {
   return n;
 }
 
-// The input bytes of one read of a compression: a block for one process.
-// For more, a round of parallel_compress: about 4 MiB of whole blocks for
-// each process, and no more than 64 MiB.
-function round_size(o: gz.Options, procs: i32): i32 {
-  if (procs <= 1) {
-    return o.block;
+// The input bytes of one job of parallel_compress: whole blocks, about
+// 1 MiB, so that the start of a worker is a small part of the time of a job.
+function job_size(block: i32): i32 {
+  if (block >= 1048576) {
+    return block;
   }
-  let per = if (o.block >= 4194304) { o.block as i64 } else { (4194304 / o.block * o.block) as i64 };
-  let size = per * (procs as i64);
-  let cap = if (o.block as i64 > 67108864i64) { o.block as i64 } else { 67108864i64 / (o.block as i64) * (o.block as i64) };
-  if (size > cap) {
-    size = cap;
-  }
-  return size as i32;
+  return 1048576 / block * block;
 }
 
 // readn(): up to `n` bytes, fewer only at the end of the input.
@@ -145,17 +139,34 @@ function settings(o: gz.Options): layout.Settings {
 
 // The check of the input so far: CRC-32, or Adler-32 for zlib.
 struct Check {
-  crc: crc32.Crc32,
+  crc: u32,
   adler: u32,
   zlib: boolean,
   ulen: i64,
 }
 
-function check_of(c: Check, chunk: u8[]): Check {
-  if (c.zlib) {
-    return Check { ...c, adler: gz.crc_combine(c.adler, deflate.adler32(chunk), chunk.len() as i64, true), ulen: c.ulen + chunk.len() as i64 };
+function new_check(zlib: boolean): Check {
+  return Check { crc: 0u32, adler: 1u32, zlib: zlib, ulen: 0i64 };
+}
+
+// The check of one chunk of the input alone.
+function chunk_check(zlib: boolean, chunk: u8[]): u32 {
+  if (zlib) {
+    return deflate.adler32(chunk);
   }
-  return Check { ...c, crc: c.crc.update(chunk), ulen: c.ulen + chunk.len() as i64 };
+  return crc32.new().update(chunk).finish();
+}
+
+// The check of the input so far, then `len` bytes whose own check is `value`.
+function check_add(c: Check, value: u32, len: i32): Check {
+  if (c.zlib) {
+    return Check { ...c, adler: gz.crc_combine(c.adler, value, len as i64, true), ulen: c.ulen + len as i64 };
+  }
+  return Check { ...c, crc: gz.crc_combine(c.crc, value, len as i64, false), ulen: c.ulen + len as i64 };
+}
+
+function check_of(c: Check, chunk: u8[]): Check {
+  return check_add(c, chunk_check(c.zlib, chunk), chunk.len());
 }
 
 function header(r: Run, name: Option[string], mtime: i64): (Run, u8[]) {
@@ -177,7 +188,7 @@ function trailer(r: Run, name: Option[string], mtime: i64, c: Check, clen: i64, 
   if (o.form == 1) {
     return gz.zlib_trailer(c.adler);
   }
-  let crc = c.crc.finish();
+  let crc = c.crc;
   if (o.form == 2) {
     return gz.zip_trailer(zip_name(o, name), mtime, gz.time2dos(mtime, r.now), o.comment, crc, c.ulen, clen, head);
   }
@@ -196,24 +207,153 @@ function put(w: Writer, bytes: u8[], outf: string): Result[void, Fatal] {
   return Ok(());
 }
 
-// What a compression keeps from one read of the input to the next: the
-// stream of single_compress, or the last 32 KiB for parallel_compress.
-struct Pass {
-  st: layout.Single,
-  dict: u8[],
+// What a compression has written: the check of the input and the length of
+// the deflate data.
+struct Written {
+  check: Check,
+  clen: i64,
 }
 
-// The deflate data of one read of the input: a round of parallel_compress
-// for more than one process, else a block of single_compress.
-function pass(s: layout.Settings, n: i32, own p: Pass, cur: u8[], more: boolean): (Pass, u8[]) {
-  if (n > 1) {
-    let data = p.dict.concat(cur);
-    let bytes = layout.round(s, data, p.dict.len(), more, n);
-    let from = if (data.len() > 32768) { data.len() - 32768 } else { 0 };
-    return (Pass { ...p, dict: array.slice(data, from, data.len()) }, bytes);
+// single_compress: one deflate stream, a block at a time.
+function single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, Fatal] {
+  let c = c0;
+  let clen = 0i64;
+  let st = layout.single_start(s);
+  let cur = readn(rd, s.block, path)?;
+  loop {
+    let next = readn(rd, s.block, path)?;
+    let more = next.len() > 0;
+    let (after, bytes) = layout.single_block(s, st, cur, 0, cur.len(), more);
+    st = after;
+    c = check_of(c, cur);
+    put(w, bytes, outf)?;
+    clen += bytes.len() as i64;
+    if (!more) {
+      break;
+    }
+    cur = next;
   }
-  let (st, bytes) = layout.single_block(s, p.st, cur, 0, cur.len(), more);
-  return (Pass { ...p, st: st }, bytes);
+  return Ok(Written { check: c, clen: clen });
+}
+
+// The input of parallel_compress that no job has yet: the next job, read
+// ahead to know if more input follows it, and the 32 KiB before it.
+struct Feed {
+  next: u8[],
+  dict: u8[],
+  ended: boolean,
+  failed: Option[Fatal],
+}
+
+// The input of one job, with the 32 KiB before it.
+struct Taken {
+  feed: Feed,
+  dict: u8[],
+  cur: u8[],
+  more: boolean,
+}
+
+// What a job gives back: its deflate data, and the length and the check of
+// its input, which the parent combines in order, as the write thread of pigz
+// does.
+struct JobOut {
+  bytes: u8[],
+  len: i32,
+  check: u32,
+}
+
+// The next job of the feed. A read that fails ends the feed, and the job
+// before it does not start, as a read error stops a compression.
+function take(own f: Feed, rd: Reader, size: i32, path: string): Taken {
+  let cur = f.next;
+  let next: u8[] = [];
+  let failed = f.failed;
+  match (readn(rd, size, path)) {
+    Ok(bytes) => {
+      next = bytes;
+    },
+    Err(e) => {
+      failed = Some(e);
+    }
+  }
+  let more = next.len() > 0;
+  let dict = if (cur.len() >= layout.DICT) { array.slice(cur, cur.len() - layout.DICT, cur.len()) } else { last_dict(f.dict.concat(cur)) };
+  let feed = Feed { next: next, dict: dict, ended: !more || failed.is_some(), failed: failed };
+  return Taken { feed: feed, dict: f.dict, cur: cur, more: more };
+}
+
+function last_dict(data: u8[]): u8[] {
+  let from = if (data.len() > layout.DICT) { data.len() - layout.DICT } else { 0 };
+  return array.slice(data, from, data.len());
+}
+
+// A worker compresses the job and takes the check of its input, so the
+// parent only reads, starts, joins and writes.
+function start_job(s: layout.Settings, zlib: boolean, t: Taken): worker.Worker[JobOut] {
+  let dict = t.dict;
+  let cur = t.cur;
+  let more = t.more;
+  return worker.spawn((): JobOut => JobOut { bytes: layout.blocks(s, dict.concat(cur), dict.len(), more), len: cur.len(), check: chunk_check(zlib, cur) });
+}
+
+function drain(own jobs: worker.Worker[JobOut][]): void {
+  for job in jobs {
+    let _ = job.join();
+  }
+}
+
+// parallel_compress: a job for each `job_size` bytes of the input, each with
+// the 32 KiB before it as its dictionary. Up to `procs` jobs run in workers
+// at a time. The parent reads the input, starts a job when one ends, and
+// writes the output of the jobs in order, as pigz does.
+function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, Fatal] {
+  let size = job_size(s.block);
+  let first = readn(rd, size, path)?;
+  let none: Option[Fatal] = None;
+  let feed = Feed { next: first, dict: [], ended: false, failed: none };
+  let check = c0;
+  let clen = 0i64;
+  let failed: Option[Fatal] = None;
+  let queue: worker.Worker[JobOut][] = [];
+  while (!feed.ended && queue.len() < procs) {
+    let t = take(feed, rd, size, path);
+    feed = t.feed;
+    if (feed.failed.is_none()) {
+      queue = queue.append(start_job(s, c0.zlib, t));
+    }
+  }
+  loop {
+    let later: worker.Worker[JobOut][] = [];
+    for job in queue {
+      let out = job.join();
+      check = check_add(check, out.check, out.len);
+      if (failed.is_none()) {
+        if let Err(e) = put(w, out.bytes, outf) {
+          failed = Some(e);
+        }
+        clen += out.bytes.len() as i64;
+      }
+      if (!feed.ended && failed.is_none()) {
+        let t = take(feed, rd, size, path);
+        feed = t.feed;
+        if (feed.failed.is_none()) {
+          later = later.append(start_job(s, c0.zlib, t));
+        }
+      }
+    }
+    if (later.len() == 0) {
+      drain(later);
+      break;
+    }
+    queue = later;
+  }
+  if let Some(e) = failed {
+    return Err(e);
+  }
+  if let Some(e) = feed.failed {
+    return Err(e);
+  }
+  return Ok(Written { check: check, clen: clen });
 }
 
 // The name in the header: the name of a file without its directory, for -N
@@ -235,26 +375,9 @@ function compress_to(r0: Run, src: Source, rd: Reader, w: Writer, outf: string):
   put(w, head, outf)?;
   let s = settings(o);
   let n = procs(o);
-  let c = Check { crc: crc32.new(), adler: 1u32, zlib: o.form == 1, ulen: 0i64 };
-  let clen = 0i64;
-  let size = round_size(o, n);
-  let dict: u8[] = [];
-  let p = Pass { st: layout.single_start(s), dict: dict };
-  let cur = readn(rd, size, src.path)?;
-  loop {
-    let next = readn(rd, size, src.path)?;
-    let more = next.len() > 0;
-    let (after, bytes) = pass(s, n, p, cur, more);
-    p = after;
-    c = check_of(c, cur);
-    put(w, bytes, outf)?;
-    clen += bytes.len() as i64;
-    if (!more) {
-      break;
-    }
-    cur = next;
-  }
-  put(w, trailer(r, name, src.mtime, c, clen, head.len() as i64), outf)?;
+  let c = new_check(o.form == 1);
+  let done = if (n > 1) { parallel_to(s, n, rd, w, src.path, outf, c)? } else { single_to(s, rd, w, src.path, outf, c)? };
+  put(w, trailer(r, name, src.mtime, done.check, done.clen, head.len() as i64), outf)?;
   return Ok(r);
 }
 
@@ -301,7 +424,7 @@ function compressed(r0: Run, data: u8[], name: Option[string], mtime: i64): (Run
   let s = settings(o);
   let n = procs(o);
   let body = if (n > 1) { layout.parallel(s, data, layout.jobs(s, data), n) } else { layout.single(s, data) };
-  let c = check_of(Check { crc: crc32.new(), adler: 1u32, zlib: o.form == 1, ulen: 0i64 }, data);
+  let c = check_of(new_check(o.form == 1), data);
   let tail = trailer(r, name, mtime, c, body.len() as i64, head.len() as i64);
   return (r, head.concat(body).concat(tail));
 }

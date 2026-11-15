@@ -514,3 +514,5 @@ viwidenhiu=564
 vinarrows=565
 vinarrowu=566
 viswizzle=567
+map_file=568
+scan_masks=569

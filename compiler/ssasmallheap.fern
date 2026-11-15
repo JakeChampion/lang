@@ -14,10 +14,9 @@ struct Next { heap: Heap, ok: boolean }
 pub struct Transition { heap: Heap, address: i64, generation: i32, ok: boolean }
 
 // The capacity of the block of a box of `words` words. The block has the
-// capacity and two more words, and a box of one word has the block of a box
-// of two.
+// capacity and two more words: one more word than the box.
 pub function capacity_of(words: i32): i32 {
-  return if (words < 2) { 1 } else { words - 1 };
+  return words - 1;
 }
 
 pub function construct(capacity: i32, h: Heap): Transition {
@@ -56,7 +55,7 @@ function find(blocks: Block[], address: i64): i32 {
 }
 
 function bounds(capacity: i32, h: Heap): boolean {
-  if (capacity != 1 && capacity != 2 || h.base < 65536 || h.base % 8 != 0) {
+  if (capacity < 0 || capacity > 2 || h.base < 65536 || h.base % 8 != 0) {
     return false;
   }
   if (h.end <= h.base || h.end >= 140737488355328 as i64) {

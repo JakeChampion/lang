@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**151 of 154** claims are pinned by a conformance case. The remaining
+**157 of 160** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -162,6 +162,11 @@ of them.
 | `MC-03` | `docs/MUST-CONSUME.md` | A consuming call inside a `match` scrutinee is a consuming use | `must_consume_in_match_tag` |
 | `MC-04` | `docs/MUST-CONSUME.md` | A method call passes its receiver, so it is a consuming use of a `@must_consume` receiver | `must_consume_method_receiver` |
 | `MC-05` | `docs/MUST-CONSUME.md` | A consuming call inside an `if` condition, or in the scrutinee of a match on literals, is a consuming use | `must_consume_in_if_condition` |
+| `MC-06` | `docs/MUST-CONSUME.md` | A value that each arm of an `if let` with an `else` consumes is consumed | `must_consume_if_let_arms` |
+| `MC-07` | `docs/MUST-CONSUME.md` | A `for` loop binding of a `@must_consume` element that the body does not consume is rejected (`E067`) | `diag_e067_for_binding` |
+| `MC-08` | `docs/MUST-CONSUME.md` | A value that the statements after a `let ... else` consume, and that its else arm consumes, is consumed | `must_consume_let_else` |
+| `MC-09` | `docs/MUST-CONSUME.md` | An else arm of a `let ... else` that leaves the function before it consumes a `@must_consume` value is rejected (`E067`) | `diag_e067_let_else_return` |
+| `MC-10` | `docs/MUST-CONSUME.md` | A match on a struct pattern consumes its subject | `must_consume_struct_pattern` |
 | `WK-01` | `docs/WORKERS.md` | A `send` parameter admits only a send-safe argument; a closure written at the call crosses with send-safe captures and result, and a function value does not (`E100`) | `diag_e100` |
 | `WK-02` | `docs/WORKERS.md` | `worker.spawn` runs its closure once and `join` returns the result, with the same contents on every engine | `worker_spawn_join` |
 | `WK-03` | `docs/WORKERS.md` | A `Worker` is `@must_consume`, so a spawned worker that is not joined is rejected (`E067`) | `diag_e067_worker_unjoined` |
@@ -226,6 +231,7 @@ of them.
 | `RH-36` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a fresh value or an `own` parameter is an owned name that moves once when its type can hold a handle, and a fresh local when it cannot | `payload_binding_is_a_local` |
 | `RH-37` | `docs/security/HANDLE-AUDIT.md` | A fresh local that an assignment gives a borrowed handle, and an alias of a borrowed parameter, cannot pass to an `own` parameter or to a consuming method (`E051`) | `diag_e051_fresh_local_reassigned_from_a_borrow` |
 | `RH-38` | `docs/security/HANDLE-AUDIT.md` | A local holder and a global callee with the same name keep separate identities in the ownership analysis | `field_holder_shadows_callee` |
+| `RH-39` | `docs/security/HANDLE-AUDIT.md` | A for-each binding of a borrowed array passes to an `own` parameter at its last use when its type cannot hold a handle, and the array keeps its elements | `own_for_element_of_borrowed_array` |
 | `RH-40` | `docs/security/HANDLE-AUDIT.md` | An empty None is fresh, so a match that consumes an owned source can retain its owned result as a field of an owned literal | `owned_match_results_rebuild_literal` |
 
 | `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through generic callbacks, function-valued fields, and nested fields of named locals. `checked_owned_nested_results` covers scalar copies before a field transfer | `checked_owned_results` |

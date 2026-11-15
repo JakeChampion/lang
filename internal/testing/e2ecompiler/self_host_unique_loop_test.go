@@ -62,6 +62,19 @@ struct Tally { xs: i64[], n: i32 }
   while (r < k) { t = bump(t); r = r + 1; }
   return t;
 }
+@noinline function peek(xs: i64[], i: i32): i64 { return xs[i]; }
+@noinline function lend_loop(own xs: i64[], n: i32): i64[] {
+  let i: i32 = 0;
+  while (i < n) { xs = xs.with(i, peek(xs, i) * 2i64); i = i + 1; }
+  return xs;
+}
+@noinline function hold(xs: i64[]): i64[] { return xs; }
+@noinline function keep_loop(own xs: i64[], n: i32): i64 {
+  let i: i32 = 0;
+  let held: i64 = 0i64;
+  while (i < n) { let h: i64[] = hold(xs); xs = xs.with(i, 7i64); held = held + h[i]; i = i + 1; }
+  return held + xs[0];
+}
 @noinline function exercise(): i32 {
   let base: u8[] = [1u8, 2u8, 3u8];
   let kept: u8[] = base;
@@ -98,6 +111,12 @@ struct Tally { xs: i64[], n: i32 }
   let bumped: Tally = rounds(Tally { xs: counts, n: 3 }, 4);
   if (kept_counts[0] != 1i64 || kept_counts[2] != 3i64) { return 14; }
   if (bumped.xs[0] != 5i64 || bumped.xs[2] != 7i64) { return 15; }
+  let ds: i64[] = [1i64, 2i64, 3i64];
+  let kept_ds: i64[] = ds;
+  let doubled: i64[] = lend_loop(ds, 3);
+  if (kept_ds[1] != 2i64 || doubled[0] != 2i64 || doubled[2] != 6i64) { return 16; }
+  if (lend_loop([5i64], 1)[0] != 10i64) { return 17; }
+  if (keep_loop([1i64, 2i64, 3i64], 3) != 13i64) { return 18; }
   return 0;
 }
 function main(): i32 {
@@ -113,12 +132,14 @@ var uniqueLoopLoad = regexp.MustCompile(`movq 8\(%r\w+,%r\w+,8\), %r\w+`)
 // A loop that writes an array it owns checks the count once before the loop,
 // not at each push or with, and a shared array is copied, not written. That
 // includes an array that an outer loop carries, as in rounds, where the
-// inlined bump reads it from the loop's struct. A loop over a borrowed array,
-// or over a push onto one, keeps the push's own check, which writes a sole
-// borrowed array in place.
+// inlined bump reads it from the loop's struct, and an array that the loop
+// lends to a call that keeps no reference, as in lend_loop (#15929). A loop
+// over a borrowed array, or over a push onto one, keeps the push's own check,
+// which writes a sole borrowed array in place. A callee that can return the
+// array, as hold can, leaves the check after the call.
 func TestSelfHostUniqueLoop(t *testing.T) {
 	runSemanticProgram(t, "unique-loop", uniqueLoopProgram,
-		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "rounds", "exercise"}, semInlineWants("ok\n"))
+		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "rounds", "lend_loop", "keep_loop", "exercise"}, semInlineWants("ok\n"))
 
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -141,7 +162,7 @@ func TestSelfHostUniqueLoop(t *testing.T) {
 	if !strings.Contains(grow, "call __fn___fern_bytes_owned") {
 		t.Errorf("grow does not copy a shared array before its loop:\n%s", grow)
 	}
-	for _, fn := range []string{"scale", "shout"} {
+	for _, fn := range []string{"scale", "shout", "lend_loop"} {
 		body := condBranchBody(t, string(asm), fn)
 		if n := strings.Count(body, "_uq"); n != 3 {
 			t.Errorf("%s has %d count-test labels, want the 3 of the one check before its loop:\n%s", fn, n, body)
@@ -160,6 +181,13 @@ func TestSelfHostUniqueLoop(t *testing.T) {
 		if uniqueLoopLoad.MatchString(block) && strings.Contains(block, "cmpl $1, -8(") {
 			t.Errorf("the inner loop of rounds tests the count of its array:\n%s", block)
 		}
+	}
+	if lend := condBranchBody(t, string(asm), "lend_loop"); !strings.Contains(lend, "call __fn_peek") {
+		t.Errorf("lend_loop does not lend its array to peek:\n%s", lend)
+	}
+	keep := condBranchBody(t, string(asm), "keep_loop")
+	if at := strings.Index(keep, "call __fn_hold"); at < 0 || !strings.Contains(keep[at:], "_uq") {
+		t.Errorf("keep_loop does not test the count of its array after hold, which can return it:\n%s", keep)
 	}
 	if lent := condBranchBody(t, string(asm), "lent"); strings.Contains(lent, "__fern_bytes_owned") {
 		t.Errorf("lent copies the array it borrows before its loop:\n%s", lent)

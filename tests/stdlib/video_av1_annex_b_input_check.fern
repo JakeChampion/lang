@@ -1,0 +1,74 @@
+import "std/video/av1/annex_b/input";
+import "std/video/frame";
+
+pub struct Summary { packets: input.Packet[], offset: i64, reads: i32, largest: i32 }
+
+pub function piece(bytes: [u8], at: i32, count: i32): u8[] {
+  let out: u8[] = [];
+  for byte in bytes[at:at + count] {
+    out = out.append(byte);
+  }
+  return out;
+}
+
+function stable(own stream: input.Stream): boolean {
+  let operations = stream.operations;
+  for _ in 0..3 {
+    let Ok(step) = stream.step_with((_: i32): Result[u8[], IoError] => Err(IoError.Interrupted)) else {
+      return false;
+    };
+    stream = step.stream;
+    if let input.End = step.event {} else {
+      return false;
+    }
+    if (stream.operations != operations) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function amount(count: i32, left: i32, short: i32): i32 {
+  let take = if (count < left) { count } else { left };
+  return if (short > 0 && short < take) { short } else { take };
+}
+
+pub function collect(bytes: u8[], short: i32, configured: input.Limits): Result[Summary, input.ReadError] {
+  let cursor = cell_new(0);
+  let reads = cell_new(0);
+  let largest = cell_new(0);
+  let read = (count: i32): Result[u8[], IoError] => {
+    reads.set(reads.get() + 1);
+    if (count > largest.get()) {
+      largest.set(count);
+    }
+    let left = bytes.len() - cursor.get();
+    let take = amount(count, left, short);
+    let out = piece(bytes, cursor.get(), take);
+    cursor.set(cursor.get() + take);
+    return Ok(out);
+  };
+  let stream = input.create(configured)?;
+  let packets: input.Packet[] = [];
+  for _ in 0..bytes.len() * 4 + 100 {
+    let before = reads.get();
+    let step = stream.step_with(read)?;
+    stream = step.stream;
+    if (reads.get() > before + 1) {
+      return Err(input.ReadVideo(frame.State));
+    }
+    match (step.event) {
+      input.Waiting => {},
+      input.PacketReady(packet) => {
+        packets = packets.append(packet);
+      },
+      input.End => {
+        if (!stable(stream)) {
+          return Err(input.ReadVideo(frame.State));
+        }
+        return Ok(Summary { packets: packets, offset: cursor.get() as i64, reads: reads.get(), largest: largest.get() });
+      }
+    }
+  }
+  return Err(input.ReadVideo(frame.State));
+}

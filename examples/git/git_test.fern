@@ -2,8 +2,15 @@
 // object file, the lines of a tree, the deltas, and the text of a commit.
 import "std/test";
 import "std/array";
+import "std/crypto";
 import "std/deflate";
 import "std/hex";
+import "std/result";
+import "./config";
+import "./date";
+import "./width";
+import "./fsck";
+import "./graph";
 import "./index";
 import "./log";
 import "./objects";
@@ -16,29 +23,30 @@ function unhex(s: string): u8[] {
   return b;
 }
 
-// The name of the blob "hello\n" with SHA-1 and with SHA-256.
 const HELLO: string = "ce013625030ba8dba906f756967f9e9ca394464a";
 
 const HELLO_256: string = "2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4";
 
 function test_names(): test.TestOutcome {
-  if (objects.hash_of(20, "blob", "".bytes()) != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391") {
+  if (objects.hash_of(objects.SHA1, "blob", "".bytes()) != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391") {
     return test.fail("the empty blob");
   }
-  if (objects.hash_of(20, "blob", "hello\n".bytes()) != HELLO) {
+  if (objects.hash_of(objects.SHA1, "blob", "hello\n".bytes()) != "ce013625030ba8dba906f756967f9e9ca394464a") {
     return test.fail("the blob of hello");
   }
-  if (objects.hash_of(20, "tree", "".bytes()) != "4b825dc642cb6eb9a060e54bf8d69288fbee4904") {
+  if (objects.hash_of(objects.SHA1, "tree", "".bytes()) != "4b825dc642cb6eb9a060e54bf8d69288fbee4904") {
     return test.fail("the empty tree");
   }
-  if (objects.hash_of(32, "blob", "".bytes()) != "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813") {
-    return test.fail("the empty blob with SHA-256");
+  // The same objects in a repository with SHA-256 names.
+  let sha256 = objects.SHA256;
+  if (objects.hash_of(sha256, "blob", "".bytes()) != "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813") {
+    return test.fail("the empty blob of SHA-256");
   }
-  if (objects.hash_of(32, "blob", "hello\n".bytes()) != HELLO_256) {
-    return test.fail("the blob of hello with SHA-256");
+  if (objects.hash_of(sha256, "tree", "".bytes()) != "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321") {
+    return test.fail("the empty tree of SHA-256");
   }
-  if (objects.hash_of(32, "tree", "".bytes()) != "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321") {
-    return test.fail("the empty tree with SHA-256");
+  if (2 * sha256 != 64 || "0".repeat(2 * objects.SHA1) != "0".repeat(40) || !objects.is_name(sha256, "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813")) {
+    return test.fail("the lengths of the names");
   }
   return test.assert_eq(hex.encode(objects.header("blob", 1234)), "626c6f62203132333400");
 }
@@ -233,38 +241,131 @@ function test_commit_fields(): test.TestOutcome {
 }
 
 // The subject, the body, the default text and the placeholders of a format.
+// The short names of a test: the first two digits of a name.
+function shorts(name: string): string {
+  return objects.part(name, 0, 2);
+}
+
+function context_of(c: log.Commit): log.Context {
+  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [] };
+}
+
+// The subject, the body, the built-in forms and the placeholders of a
+// format.
 function test_commit_text(): test.TestOutcome {
   let c = log.commit_of("abc", COMMIT.bytes());
-  let s = log.Shorts { hash: "ab", tree: "4b", parents: ["ce", "e6"] };
+  let ctx = context_of(c);
   if (log.subject(c.message) != "first line second line") {
     return test.fail("the subject: " + log.subject(c.message));
   }
-  if (log.body_of(c.message) != "body\twith a tab\n\nlast\n" || log.body_of("one\n") != "" || log.body_of("one\n\ntwo") != "two") {
+  if (log.body_of(c.message) != "body\twith a tab\n\nlast\n" || log.body_of("one\n") != "" || log.body_of("one\n\ntwo") != "two" || log.subject("\n\n  a  \nb\t\n\nc") != "  a b") {
     return test.fail("the body");
   }
   let want = "commit abc\nMerge: ce e6\nAuthor: A B <a@example.com>\nDate:   Wed Mar 4 05:16:07 2026 +0530\n\n    first line\n    second line\n    \n    body    with a tab\n    \n    last\n";
-  if (log.medium(c, s) != want) {
-    return test.fail("the default text: " + log.medium(c, s));
+  let medium = log.first_line(c, ctx, "medium", false) + "\n" + log.pretty(c, ctx, "medium");
+  if (medium != want) {
+    return test.fail("the default text: " + medium);
   }
-  let got = log.formatted(c, s, "%H %h %T %t|%P|%p|%an %ae %at|%cn %ce %ct|%s%n%%|%x %");
-  let wanted = "abc ab 4b825dc642cb6eb9a060e54bf8d69288fbee4904 4b|ce013625030ba8dba906f756967f9e9ca394464a e69de29bb2d1d6434b8b29ae775ad8c2e48c5391|ce e6|A B a@example.com 1772581567|C D c@example.com 1772629567|first line second line\n%|%x %";
+  let short = log.pretty(c, ctx, "short");
+  if (short != "Merge: ce e6\nAuthor: A B <a@example.com>\n\n    first line\n    second line\n") {
+    return test.fail("the short form: " + short);
+  }
+  if (log.pretty(c, ctx, "oneline") != "first line second line" || log.reference(c, ctx) != "ab (first line second line, 2026-03-04)") {
+    return test.fail("the forms of one line");
+  }
+  let got = log.formatted(c, ctx, "%H %h %T %t|%P|%p|%an %ae %at|%cn %ce %ct|%s%n%%|%x %|%x41%Cred%C(blue)|%al|%f|%m");
+  let wanted = "abc ab 4b825dc642cb6eb9a060e54bf8d69288fbee4904 4b|ce013625030ba8dba906f756967f9e9ca394464a e69de29bb2d1d6434b8b29ae775ad8c2e48c5391|ce e6|A B a@example.com 1772581567|C D c@example.com 1772629567|first line second line\n%|%x %|A|a|first-line|>";
   if (got != wanted) {
     return test.fail("the placeholders: " + got);
   }
-  if (log.formatted(c, s, "%B") != c.message || log.formatted(c, s, "") != "") {
-    return test.fail("the raw message");
+  if (log.formatted(c, ctx, "%B") != c.message || log.formatted(c, ctx, "") != "" || log.formatted(c, ctx, "a\n%-d") != "a" || log.formatted(c, ctx, "a%+s") != "a\nfirst line second line" || log.formatted(c, ctx, "a% d.") != "a.") {
+    return test.fail("the raw message and the magic of placeholders");
+  }
+  return test.pass();
+}
+
+// Tabs in the default form: a wide character has two columns, a joining
+// character none, and a control character stops the expansion.
+function test_tabs(): test.TestOutcome {
+  let cases: string[][] = [
+    ["a\tb", "a       b"],
+    ["中\t|", "中      |"],
+    ["é\t|", "é       |"],
+    ["1234567\t8\t9", "1234567 8       9"],
+    ["x\x01\ty", "x\x01\ty"],
+  ];
+  for c in cases {
+    let got = log.tabs_expanded(c[0], 0, c[0].len());
+    if (got != c[1]) {
+      return test.fail("the tabs of " + c[0] + ": " + got);
+    }
+  }
+  if (width.wcwidth(0x4e2d) != 2 || width.wcwidth(0x301) != 0 || width.wcwidth(7) != -1 || width.wcwidth(65) != 1) {
+    return test.fail("the widths of characters");
+  }
+  return test.pass();
+}
+
+// The forms of `--date=`, and the dates that approxidate reads.
+function test_dates(): test.TestOutcome {
+  let t: i64 = 1772581567;
+  let mode = (text: string): date.Mode => date.parse_mode(text).unwrap_or(date.normal_mode());
+  let cases: string[][] = [
+    ["iso", "2026-03-04 05:16:07 +0530"],
+    ["iso-strict", "2026-03-04T05:16:07+05:30"],
+    ["rfc", "Wed, 4 Mar 2026 05:16:07 +0530"],
+    ["short", "2026-03-04"],
+    ["raw", "1772581567 +0530"],
+    ["unix", "1772581567"],
+    ["default", "Wed Mar 4 05:16:07 2026 +0530"],
+    ["format:%Y/%m/%d %H:%M %z", "2026/03/04 05:16 +0530"],
+  ];
+  for c in cases {
+    let got = date.show(t, 530, mode(c[0]));
+    if (got != c[1]) {
+      return test.fail("--date=" + c[0] + ": " + got);
+    }
+  }
+  let message = (text: string): string => match (date.parse_mode(text)) {
+    Ok(_) => "",
+    Err(why) => why,
+  };
+  if (message("bogus") != "unknown date format bogus" || message("format") != "date format missing colon separator: format") {
+    return test.fail("the messages for a form of date");
+  }
+  if (date.relative(t - 3 * 86400, t) != "3 days ago" || date.relative(t - 400 * 86400, t) != "1 year, 1 month ago" || date.relative(t + 10, t) != "in the future" || date.relative(t - 89, t) != "89 seconds ago") {
+    return test.fail("the relative dates");
+  }
+  let reads: string[] = ["2026-03-04 05:16:07 +0530", "Wed, 4 Mar 2026 05:16:07 +0530", "@1772581567 +0530", "1772581567", "2026-03-03T23:46:07Z"];
+  for text in reads {
+    let (got, bad) = date.approxidate(text);
+    if (bad || got != t) {
+      return test.fail("approxidate of " + text + ": " + got.to_string());
+    }
+  }
+  let (_, bad) = date.approxidate("no date at all");
+  if (!bad) {
+    return test.fail("a text with no date is a date");
   }
   return test.pass();
 }
 
 // A packfile of one blob with the content `body`, which is shorter than
-// 16 bytes. Its checksum has `width` bytes.
+// 16 bytes.
 function tiny_pack(body: u8[], width: i32): u8[] {
   let sum = deflate.adler32(body);
   let data: u8[] = [b'P', b'A', b'C', b'K', 0, 0, 0, 2, 0, 0, 0, 1, (48 + body.len()) as u8, 120, 156];
   data = data.concat(deflate.deflate(body));
   data = data.append((sum >> 24) as u8).append((sum >> 16 & 255) as u8).append((sum >> 8 & 255) as u8).append((sum & 255) as u8);
   return data.concat(objects.digest(width, data));
+}
+
+// A packfile of two blobs, each shorter than 16 bytes.
+function two_blobs(a: u8[], b: u8[]): u8[] {
+  let data: u8[] = [b'P', b'A', b'C', b'K', 0, 0, 0, 2, 0, 0, 0, 2];
+  data = data.append((48 + a.len()) as u8).concat(zlib_of(a));
+  data = data.append((48 + b.len()) as u8).concat(zlib_of(b));
+  return data.concat(crypto.sha1(data));
 }
 
 // The bytes of a zlib stream of `body`.
@@ -285,91 +386,95 @@ function test_info(): test.TestOutcome {
   data = data.concat(base);
   let second = data.len();
   data = data.append((96 + delta.len()) as u8).append((second - 12) as u8).concat(zlib_of(delta));
-  let whole = (at: i32): pack.Window => pack.whole(data, 20);
-  let none = (name: u8[]): i32 => -1;
-  let Ok((kind, size)) = pack.info_in(whole, whole, none, 12) else {
+  let whole = pack.memory(data, (name: u8[]): i64 => -1, 20);
+  let Ok((kind, size)) = pack.info_in(whole, 12) else {
     return test.fail("no kind and size for a blob");
   };
   if (kind != "blob" || size != 6) {
     return test.fail("the kind and the size of a blob: " + kind + " " + size.to_string());
   }
-  let Ok((dkind, dsize)) = pack.info_in(whole, whole, none, second) else {
+  let Ok((dkind, dsize)) = pack.info_in(whole, second) else {
     return test.fail("no kind and size for a delta");
   };
   if (dkind != "blob" || dsize != 9) {
     return test.fail("the kind and the size of a delta: " + dkind + " " + dsize.to_string());
   }
-  let (made, _) = pack.object_cached(whole, none, second, pack.cache_new());
+  let (made, _) = pack.object_cached(whole, second, pack.cache_new());
   let Ok(o) = made else {
     return test.fail("the delta is not applied");
   };
   if (o.body.len() != 9 || o.body[6] != b'a' || o.body[0] != b'h') {
     return test.fail("the object of the delta");
   }
-  if let Ok(_) = pack.info_in(whole, whole, none, 11) {
+  if let Ok(_) = pack.info_in(whole, 11) {
     return test.fail("an offset in the header is accepted");
   }
   return test.pass();
 }
 
-// The index that the port makes for a packfile with SHA-1 names.
+// The index that the port makes for a packfile.
 function test_index(): test.TestOutcome {
-  return index_case(20, HELLO);
+  return index_case(objects.SHA1, HELLO);
 }
 
 function test_index_256(): test.TestOutcome {
-  return index_case(32, HELLO_256);
+  return index_case(objects.SHA256, HELLO_256);
 }
 
 // The index of a packfile of the blob "hello\n", whose name is `hello` in
 // a repository with names of `width` bytes.
 function index_case(width: i32, hello: string): test.TestOutcome {
   let data = tiny_pack("hello\n".bytes(), width);
-  let Ok(built) = index.build(pack.whole(data, width)) else {
+  let Ok(built) = index.build(data, index.options(width)) else {
     return test.fail("a packfile of one blob is refused");
   };
-  let idx = pack.Index { bytes: built.idx, width: width };
   let name = unhex(hello);
-  if (!pack.index_ok(idx) || pack.count(idx) != 1 || pack.offset_of(idx, name) != 12 || pack.hex_name_at(idx, 0) != hello) {
+  let Ok(ix) = pack.index_of(built.idx, width, "x.idx") else {
+    return test.fail("the index of one blob is refused");
+  };
+  if (ix.version != 2 || ix.count != 1 || pack.offset_of(ix, name) != 12 || pack.hex_name_at(ix, 0) != hello) {
     return test.fail("the index of one blob");
   }
   // An index is not sound for the other width, and has no name of a
   // different length.
-  let other = pack.Index { bytes: built.idx, width: 52 - width };
-  if (pack.index_ok(other) || pack.find(other, name) != -1 || pack.find(idx, array.slice(name, 0, 12)) != -1) {
-    return test.fail("the index with the other width");
+  if let Ok(_) = pack.index_of(built.idx, 52 - width, "x.idx") {
+    return test.fail("the index with the other width is accepted");
+  }
+  if (pack.find(ix, array.slice(name, 0, 12)) != -1) {
+    return test.fail("a short name is found");
   }
   if (built.name != hex.encode(array.slice(data, data.len() - width, data.len())) || built.rev.len() != 12 + 4 + 2 * width) {
     return test.fail("the checksum and the reverse index");
   }
   // The reverse index names its hash, and each file ends with its checksum.
-  if (built.rev[11] != (if (width == 32) { 2 } else { 1 }) as u8) {
+  if (built.rev[11] != (if (width == objects.SHA256) { 2 } else { 1 }) as u8) {
     return test.fail("the hash of the reverse index");
   }
   let end = built.idx.len() - width;
   if (hex.encode(objects.digest(width, array.slice(built.idx, 0, end))) != hex.encode(array.slice(built.idx, end, end + width))) {
     return test.fail("the checksum of the index");
   }
-  let Ok(o) = pack.object_at(pack.whole(data, width), (base: u8[]): i32 => pack.offset_of(idx, base), 12) else {
+  let (read, _) = pack.object_cached(pack.memory(data, (base: u8[]): i64 => pack.offset_of(ix, base), width), 12, pack.cache_new());
+  let Ok(o) = read else {
     return test.fail("the object is not read with the index");
   };
   if (o.kind != "blob" || o.body.len() != 6) {
     return test.fail("the object of the index");
   }
   // A short name finds the object, and digits that no name has find none.
-  let names = pack.with_prefix(idx, objects.part(hello, 0, 4), 2);
+  let names = pack.with_prefix(ix, objects.part(hello, 0, 4), 2);
   if (names.len() != 1 || names[0] != hello) {
     return test.fail("the name for the first four digits");
   }
-  if (pack.with_prefix(idx, objects.part(hello, 0, 9).to_ascii_upper(), 2).len() != 1 || pack.with_prefix(idx, hello, 2).len() != 1 || pack.with_prefix(idx, hello + "0", 2).len() != 0) {
+  if (pack.with_prefix(ix, objects.part(hello, 0, 9).to_ascii_upper(), 2).len() != 1 || pack.with_prefix(ix, hello, 2).len() != 1 || pack.with_prefix(ix, hello + "0", 2).len() != 0) {
     return test.fail("the names for capital digits, for each digit, and for one digit more");
   }
-  if (pack.with_prefix(idx, objects.part(hello, 0, 3) + "f", 2).len() != 0 || pack.with_prefix(idx, "cd", 2).len() != 0) {
+  if (pack.with_prefix(ix, objects.part(hello, 0, 3) + "f", 2).len() != 0 || pack.with_prefix(ix, "cd", 2).len() != 0) {
     return test.fail("the names for other digits");
   }
   // A part of the packfile that starts at the object gives the same object.
   let tail = array.slice(data, 12, data.len());
-  let (part, cache) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: tail, shift: 12, width: width }, (base: u8[]): i32 => -1, 12, pack.cache_new());
+  let (part, cache) = pack.object_cached(pack.Source { part: (at: i64, most: i32): pack.Window => pack.Window { bytes: tail, shift: 12, width: width }, base: (base: u8[]): i64 => -1 }, 12, pack.cache_new());
   let Ok(same) = part else {
     return test.fail("the object is not read from a part of the packfile");
   };
@@ -380,14 +485,202 @@ function index_case(width: i32, hello: string): test.TestOutcome {
     return test.fail("an offset out of the part is accepted");
   }
   let bad = data.with(14, data[14] ^ 1);
-  if let Ok(_) = index.build(pack.whole(bad, width)) {
+  if let Ok(_) = index.build(bad, index.options(width)) {
     return test.fail("a packfile with a changed byte is accepted");
   }
-  if let Ok(_) = index.build(pack.whole(data, 52 - width)) {
+  if let Ok(_) = index.build(data, index.options(52 - width)) {
     return test.fail("a packfile with a checksum of the other hash is accepted");
   }
-  if let Ok(_) = index.build(pack.whole(array.slice(data, 0, 20), width)) {
+  if let Ok(_) = index.build(array.slice(data, 0, 20), index.options(width)) {
     return test.fail("a short packfile is accepted");
+  }
+  return test.pass();
+}
+
+// The index of version 1, and the index of version 2 with each offset in
+// its table of 8-byte offsets, as `--index-version=1` and
+// `--index-version=2,0` make them. A packfile with SHA-256 names has an
+// index with names of 32 bytes.
+function test_index_versions(): test.TestOutcome {
+  let data = tiny_pack("hello\n".bytes(), objects.SHA1);
+  let name = unhex("ce013625030ba8dba906f756967f9e9ca394464a");
+  let sha1 = objects.SHA1;
+  let Ok(v1) = index.build(data, index.Options { width: sha1, version: 1, limit: 2147483647 }) else {
+    return test.fail("no index of version 1");
+  };
+  let Ok(ix1) = pack.index_of(v1.idx, 20, "v1.idx") else {
+    return test.fail("the index of version 1 is refused");
+  };
+  if (ix1.version != 1 || ix1.count != 1 || v1.idx.len() != 1024 + 24 + 40 || pack.offset_of(ix1, name) != 12 || pack.hex_name_at(ix1, 0) != hex.encode(name)) {
+    return test.fail("the index of version 1");
+  }
+  // git refuses an index whose every offset is in the table of 8-byte
+  // offsets, which `--index-version=2,0` makes for one object.
+  let Ok(all) = index.build(data, index.Options { width: sha1, version: 2, limit: 0 }) else {
+    return test.fail("no index with large offsets");
+  };
+  match (pack.index_of(all.idx, 20, "all.idx")) {
+    Ok(_) => {
+      return test.fail("an index with each offset large is accepted");
+    },
+    Err(why) => {
+      if (why != "wrong index v2 file size in all.idx") {
+        return test.fail("the message for an index with each offset large: " + why);
+      }
+    }
+  }
+  // Two blobs, and the second is past the limit of 12.
+  let two = two_blobs("hello\n".bytes(), "world\n".bytes());
+  let Ok(wide) = index.build(two, index.Options { width: sha1, version: 2, limit: 12 }) else {
+    return test.fail("no index with a large offset");
+  };
+  let Ok(ix2) = pack.index_of(wide.idx, 20, "wide.idx") else {
+    return test.fail("the index with a large offset is refused");
+  };
+  let world = unhex(objects.hash_of(sha1, "blob", "world\n".bytes()));
+  let second = pack.offset_of(ix2, world);
+  if (wide.idx.len() != 1032 + 2 * 28 + 8 + 40 || second <= 12 || pack.offset_of(ix2, name) != 12) {
+    return test.fail("the index with a large offset: " + hex.encode(wide.idx));
+  }
+  // The 4-byte offset of the second name is 0x80000000, the first entry of
+  // the table of large offsets. An offset of 2^32 + 5 in that table.
+  let place = pack.find(ix2, world);
+  let at = 1032 + 2 * 24 + 4 * place;
+  let large = 1032 + 2 * 28;
+  if (wide.idx[at] != 128 || wide.idx[at + 3] != 0) {
+    return test.fail("the 4-byte offset of a large offset");
+  }
+  let big = wide.idx.with(large + 3, 1).with(large + 7, 5);
+  let Ok(ix3) = pack.index_of(big, 20, "big.idx") else {
+    return test.fail("the index with an offset past 4 GiB is refused");
+  };
+  if (pack.offset_at(ix3, place) != 4294967301) {
+    return test.fail("an offset past 4 GiB: " + pack.offset_at(ix3, place).to_string());
+  }
+  if let Ok(_) = pack.index_of(array.slice(wide.idx, 0, wide.idx.len() - 9), 20, "short.idx") {
+    return test.fail("an index with a wrong size is accepted");
+  }
+  let other = v1.idx.with(4, 9);
+  match (pack.index_of(array.slice(other, 0, 1000), 20, "p.idx")) {
+    Ok(_) => {
+      return test.fail("a short index is accepted");
+    },
+    Err(why) => {
+      if (why != "index file p.idx is too small") {
+        return test.fail("the message for a short index: " + why);
+      }
+    }
+  }
+  // A packfile with SHA-256 names: its trailer is the SHA-256 of its bytes.
+  let sha256 = objects.SHA256;
+  let body = array.slice(data, 0, data.len() - 20);
+  let long = body.concat(crypto.sha256(body));
+  let Ok(b256) = index.build(long, index.options(sha256)) else {
+    return test.fail("no index for SHA-256");
+  };
+  let Ok(ix4) = pack.index_of(b256.idx, 32, "s.idx") else {
+    return test.fail("the index for SHA-256 is refused");
+  };
+  let name256 = objects.hash_of(sha256, "blob", "hello\n".bytes());
+  if (ix4.count != 1 || pack.hex_name_at(ix4, 0) != name256 || b256.idx.len() != 1032 + 40 + 64 || b256.rev[11] != 2) {
+    return test.fail("the index for SHA-256");
+  }
+  return test.pass();
+}
+
+function fsck_text(kind: string, body: string): string {
+  return fsck.check(objects.SHA1, kind, body.bytes()).join("\n");
+}
+
+// The checks of `hash-object` for a commit, a tag and a tree, with the
+// messages of git.
+function test_fsck(): test.TestOutcome {
+  let tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+  let good = "tree " + tree + "\nauthor A <a@b> 1 +0000\ncommitter A <a@b> 1 +0000\n\nm\n";
+  if (fsck_text("commit", good) != "") {
+    return test.fail("a sound commit: " + fsck_text("commit", good));
+  }
+  let cases: string[][] = [
+    ["commit", "tree " + tree + "\n\nm\n", "missingAuthor: invalid format - expected 'author' line"],
+    ["commit", "tree 4b82\nauthor A <a@b> 1 +0000\n", "badTreeSha1: invalid 'tree' line format - bad sha1"],
+    ["commit", "tree " + tree + "\nauthor A <a@b> 1 +000\ncommitter A <a@b> 1 +0000\n\n", "badTimezone: invalid author/committer line - bad time zone"],
+    ["commit", "tree " + tree + "\nauthor A<a@b> 1 +0000\n", "missingSpaceBeforeEmail: invalid author/committer line - missing space before email"],
+    ["commit", "tree " + tree + "\nauthor A <a@b> 01 +0000\n", "zeroPaddedDate: invalid author/committer line - zero-padded date"],
+    ["commit", "no line end", "unterminatedHeader: unterminated header"],
+    ["tag", "object " + tree + "\ntype tree\ntag v1\n\nm\n", "missingTaggerEntry: invalid format - expected 'tagger' line"],
+    ["tag", "object " + tree + "\ntype bogus\ntag v1\ntagger A <a@b> 1 +0000\n\nm\n", "badType: invalid 'type' value"],
+    ["tag", "object " + tree + "\ntype tree\ntag a..b\ntagger A <a@b> 1 +0000\n\nm\n", "badTagName: invalid 'tag' name: a..b"],
+  ];
+  for c in cases {
+    let want = "error: object fails fsck: " + c[2];
+    if (fsck_text(c[0], c[1]) != want) {
+      return test.fail(c[0] + " " + c[1] + ": " + fsck_text(c[0], c[1]));
+    }
+  }
+  let id = unhex(tree);
+  let unsorted = entry("100644", "b".bytes(), tree).concat(entry("100644", "a".bytes(), tree));
+  let found = fsck.check(objects.SHA1, "tree", unsorted);
+  if (found.len() != 1 || found[0] != "error: object fails fsck: treeNotSorted: not properly sorted") {
+    return test.fail("an unsorted tree: " + found.join("|"));
+  }
+  let odd = entry("100664", ".git".bytes(), tree).concat(entry("40000", "x".bytes(), tree)).concat(entry("100644", "x".bytes(), tree));
+  let all = fsck.check(objects.SHA1, "tree", odd).join("|");
+  if (all != "error: object fails fsck: hasDotgit: contains '.git'|error: object fails fsck: badFilemode: contains bad file modes|error: object fails fsck: duplicateEntries: contains duplicate file entries") {
+    return test.fail("a tree with three faults: " + all);
+  }
+  let short = fsck.check(objects.SHA1, "tree", array.slice(odd, 0, 10)).join("|");
+  if (short != "error: too-short tree object|error: object fails fsck: badTree: cannot be parsed as a tree" || id.len() != 20) {
+    return test.fail("a short tree: " + short);
+  }
+  if (!fsck.ref_name_ok("refs/tags/v1.0".bytes()) || fsck.ref_name_ok("refs/tags/x.lock".bytes()) || fsck.ref_name_ok("refs/tags/@{x".bytes()) || fsck.ref_name_ok("refs/tags/.x".bytes())) {
+    return test.fail("the names of refs");
+  }
+  return test.pass();
+}
+
+// The values of a configuration file, with sections, subsections, quotes
+// and comments.
+function test_config(): test.TestOutcome {
+  let c = config.parse("[core]\n\tBare = false ; a comment\n[Extensions]\n\tobjectFormat = sha256\n[branch \"Main\"]\n\tremote = \"or igin\" # x\n\tflag\n[a.b]\nk = one \\\n two\n");
+  if (c.get("core.bare") != Some("false") || c.get("extensions.objectformat") != Some("sha256") || c.get("branch.Main.remote") != Some("or igin")) {
+    return test.fail("the values of a configuration");
+  }
+  if (!c.flag("branch.Main.flag", false) || c.flag("core.bare", true) || c.get("a.b.k") != Some("one  two") || c.get("core.none") != None) {
+    return test.fail("the flags of a configuration: " + c.get("a.b.k").unwrap_or("?"));
+  }
+  return test.pass();
+}
+
+function graph_roots_text(names: string[], parents: string[][]): string {
+  let g = graph.graph_new();
+  let out = "";
+  for i in 0..names.len() {
+    let next = if (i + 1 < names.len()) { names[i + 1] } else { "" };
+    let next_root = i + 2 < names.len() && parents[i + 1].len() == 0;
+    g = graph.update(g, names[i], parents[i], next, next_root);
+    let (g1, prefix) = graph.show_commit(g);
+    let (g2, message) = graph.show_msg(g1, names[i] + "\n");
+    g = g2;
+    out += prefix + message;
+  }
+  return out;
+}
+
+function test_graph_roots(): test.TestOutcome {
+  if (graph_roots_text(["child", "root", "other"], [["root"], [], []]) != "* child\n \\ \n  * root\n* other\n") {
+    return test.fail("chain-root");
+  }
+  if (graph_roots_text(["root"], [[]]) != "* root\n") {
+    return test.fail("single");
+  }
+  if (graph_roots_text(["r0", "r1"], [[], []]) != "  * r0\n* r1\n") {
+    return test.fail("two-roots");
+  }
+  if (graph_roots_text(["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"], [[], [], [], [], [], [], [], [], [], []]) != "* r0\n  * r1\n    * r2\n      * r3\n* r4\n  * r5\n    * r6\n      * r7\n  * r8\n* r9\n") {
+    return test.fail("ten-roots");
+  }
+  if (graph_roots_text(["merge", "side", "child", "root", "other"], [["child", "side"], [], ["root"], [], []]) != "*   merge\n|\\  \n| * side\n* child\n \\ \n  * root\n* other\n") {
+    return test.fail("merge-root");
   }
   return test.pass();
 }
@@ -406,5 +699,11 @@ function main(): i32 {
   r = r.it("the index of a packfile", test_index);
   r = r.it("the index of a packfile with SHA-256 names", test_index_256);
   r = r.it("the kind and the size of a packed object", test_info);
+  r = r.it("the versions of an index", test_index_versions);
+  r = r.it("the checks of hash-object", test_fsck);
+  r = r.it("a configuration file", test_config);
+  r = r.it("the tabs of a message", test_tabs);
+  r = r.it("the forms of a date", test_dates);
+  r = r.it("the visual roots of a graph", test_graph_roots);
   return r.finish();
 }

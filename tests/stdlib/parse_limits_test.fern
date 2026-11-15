@@ -116,6 +116,40 @@ function test_json_lower_depth_limit(): test.TestOutcome {
   return test.pass();
 }
 
+@derive(json.FromJson)
+struct Row { xs: i32[] }
+
+@derive(json.FromJson)
+struct Batch { rows: Row[] }
+
+// The typed readers take the same lower limit as the parsers.
+function test_json_typed_readers_take_a_depth_limit(): test.TestOutcome {
+  let text = "{\"rows\": [{\"xs\": [1, 2]}, {\"xs\": [3]}]}";
+  match (json.decode_with_depth[Batch](text, 4)) {
+    Ok(b) => {
+      if (b.rows.len() != 2 || b.rows[0].xs.len() != 2) {
+        return test.fail("the record at limit 4 has the wrong rows");
+      }
+    },
+    Err(e) => {
+      return test.fail("the record refused at limit 4: " + e.message());
+    }
+  }
+  if (json.decode_with_depth[Batch](text, 3).is_ok()) {
+    return test.fail("the record accepted at limit 3");
+  }
+  if (!json.decode[Batch](text).is_ok()) {
+    return test.fail("decode refused the record");
+  }
+  if (!json.decode_array_with_depth[i32]("[1, 2, 3]", 1).is_ok()) {
+    return test.fail("an array refused at limit 1");
+  }
+  if (json.decode_array_with_depth[i32]("[1, 2, 3]", 0).is_ok()) {
+    return test.fail("an array accepted at limit 0");
+  }
+  return test.pass();
+}
+
 // A caller lowers the depth limit of a PEG match, and cannot raise it.
 function test_peg_lower_depth_limit(): test.TestOutcome {
   let rules: Map[string, peg.Pattern] = map_new(2);
@@ -246,6 +280,7 @@ function main(): i32 {
   r = r.it("peg depth limit", test_peg_depth_limit);
   r = r.it("json lower depth limit", test_json_lower_depth_limit);
   r = r.it("peg lower depth limit", test_peg_lower_depth_limit);
+  r = r.it("json typed readers take a depth limit", test_json_typed_readers_take_a_depth_limit);
   r = r.it("invalid utf8 is refused", test_invalid_utf8_is_refused);
   r = r.it("number parse is bounded", test_number_parse_is_bounded);
   r = r.it("format width is bounded", test_format_width_is_bounded);

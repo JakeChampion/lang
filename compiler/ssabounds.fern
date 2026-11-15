@@ -1394,7 +1394,7 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
 struct Load { insts: ssa.SInst[], values: typeinfo.Type[] }
 
 function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i32, view_words: string[], swaps: string[]): Load {
-  let wide: typeinfo.Type = typeinfo.TypeI32 { width: w.bytes * 8, unsigned: false, is_char: false, polymorphic: false };
+  let wide: typeinfo.Type = typeinfo.TypeI32 { width: if (w.bytes == 8) { 64 } else { 32 }, unsigned: false, is_char: false, polymorphic: false };
   let addr_t: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
   let insts = l.insts;
   let values = l.values;
@@ -1419,7 +1419,7 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
     let at = values.len();
     insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: at, args: [first], imm: 0, str: "" });
     insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: at + 1, args: [base, at], imm: 0, str: "+" });
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: at + 2, args: [at + 1], imm: 0, str: ["__load_i32", "__load_i64"][w.bytes / 8] });
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: at + 2, args: [at + 1], imm: 0, str: word_loader(w.bytes) });
     values = values.append(addr_t).append(addr_t);
     word = at + 2;
   }
@@ -1429,6 +1429,13 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
     values = values.append(wide);
   }
   return Load { insts: insts, values: values };
+}
+
+function word_loader(bytes: i32): string {
+  if (bytes == 2) {
+    return "__load_u16";
+  }
+  return if (bytes == 8) { "__load_i64" } else { "__load_i32" };
 }
 
 function text_data(own l: Load, t: typeinfo.Type, arr: i32, addr_t: typeinfo.Type): Load {
@@ -1464,7 +1471,7 @@ function word_parts(defs: ssa.SInst[], args: i32[], w: Word, acc: i32[]): i32[] 
     }
     let d = defs[v];
     let part: boolean = d.kind_tag == ssa.CONST_INT || d.kind_tag == ssasem.cast() || d.kind_tag == ssa.BINARY && (d.str == "|" || d.str == "<<" || d.str == "+")
-      || d.kind_tag == ssasem.array_get() && d.imm == 1;
+      || (d.kind_tag == ssasem.array_get() || d.kind_tag == ssasem.str_index()) && d.imm == 1;
     if (part) {
       acc = word_parts(defs, d.args, w, acc.append(v));
     }
@@ -1538,12 +1545,12 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word
     return None;
   }
   let t = f.values[ins.result];
-  let n = word_width(t);
-  if (n == 0) {
+  if (word_width(t) == 0) {
     return None;
   }
   let terms = or_terms(defs, f.values, ins.result, t, []);
-  if (terms.len() != n) {
+  let n = terms.len();
+  if (!word_terms(t, n)) {
     return None;
   }
   let parts: WordByte[] = [];
@@ -1578,10 +1585,21 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word
     be = be && p.shift == (n - 1 - at) * 8;
     seen = seen.with(at, true);
   }
-  if (!le && !be) {
+  if (!le && !be || n == 2 && !two_byte_word(f, parts[0].arr, le)) {
     return None;
   }
   return Some(Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo, big: !le });
+}
+
+// Whether n byte reads fill a word of type t: all of its bytes, or two in a 32-bit type.
+function word_terms(t: typeinfo.Type, n: i32): boolean {
+  let w = word_width(t);
+  return n == w || w == 4 && n == 2;
+}
+
+// A two-byte word is a 16-bit load, which only an array or a string has, in little-endian order.
+function two_byte_word(f: ssasem.Func, arr: i32, le: boolean): boolean {
+  return le && !ssasem.is_byte_view(f.values[arr]);
 }
 
 // The bytes in a word an OR of byte reads can build, or 0.
