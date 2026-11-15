@@ -8,11 +8,11 @@ import "std/jni";
 function c_setpriority(which: i32, who: i32, priority: i32): i32;
 
 // Gives the thread that calls it the priority of the threads that draw for
-// the display, so another thread of the phone does not delay a frame. The
-// priority is the nice value -4.
-pub function draw_priority(): void {
+// the display, so another thread of the phone does not delay a frame, and
+// tells whether the phone allowed it. The priority is the nice value -4.
+pub function draw_priority(): boolean {
   // PRIO_PROCESS with the id 0 is the thread that calls, on Linux.
-  let set = c_setpriority(0, 0, -4);
+  return c_setpriority(0, 0, -4) == 0;
 }
 
 // True when the last JNI call threw. It clears the exception.

@@ -4,10 +4,14 @@ pub function is_helper(name: string): boolean {
   return name == "__fern_bytes_append_range" || name == "__fern_bytes_write_range" || name == "__fern_bytes_append_back" || util.has_str(kernel_names(), name);
 }
 
-// The fill and move kernels for elements of 1, 2, 4 and 8 bytes. A shift is
-// the log2 of the bytes of an element.
+// The fill and move kernels for elements of 1, 2, 4 and 8 bytes, and the
+// slide of u16 elements. A shift is the log2 of the bytes of an element.
 pub function kernel_names(): string[] {
-  return ["__fern_arr_fill_u8", "__fern_arr_fill_u16", "__fern_arr_fill_u32", "__fern_arr_fill_u64", "__fern_arr_move_u8", "__fern_arr_move_u16", "__fern_arr_move_u32", "__fern_arr_move_u64"];
+  return ["__fern_arr_fill_u8", "__fern_arr_fill_u16", "__fern_arr_fill_u32", "__fern_arr_fill_u64", "__fern_arr_move_u8", "__fern_arr_move_u16", "__fern_arr_move_u32", "__fern_arr_move_u64", slide_name()];
+}
+
+pub function slide_name(): string {
+  return "__fern_arr_slide_u16";
 }
 
 pub function fill_name(shift: i32): string {
@@ -50,6 +54,8 @@ pub function wasm_source(append: boolean, write: boolean, back: boolean, kernels
     if (name.starts_with("__fern_arr_fill")) {
       out += wasm_fill(name);
       fill = true;
+    } else if (name == slide_name()) {
+      out += wasm_slide();
     } else {
       out += "  (func $" + name + " (param $n i32) (param $from i32) (param $at i32) (param $a i32) (result i32)\n"
         + "    (call $__fern_arr_move (local.get $a) (local.get $at) (local.get $from) (local.get $n) (i32.const " + util.i32_to_string(1 << kernel_shift(name)) + ")))\n";
@@ -131,6 +137,28 @@ function wasm_fill(name: string): string {
     + "    (if " + zero + " (then (memory.fill (local.get $p) (i32.const 0) (i32.sub (local.get $end) (local.get $p))) (return (local.get $r))))\n"
     + "    (block $done (loop $store (br_if $done (i32.ge_u (local.get $p) (local.get $end)))\n"
     + "      (" + store + " (local.get $p) (local.get $v)) (local.set $p (i32.add (local.get $p) (i32.const " + size + "))) (br $store)))\n"
+    + "    (local.get $r))\n";
+}
+
+// Eight lanes at a time when k is from 1 to 65535: i16x8.sub_sat_u is
+// a[i] - k, or 0 when a[i] < k.
+function wasm_slide(): string {
+  return "  (func $" + slide_name() + " (param $k i32) (param $n i32) (param $at i32) (param $a i32) (result i32)\n"
+    + "    (local $r i32) (local $p i32) (local $end i32) (local $lanes v128) (local $m i32)\n"
+    + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return (local.get $a))))\n"
+    + "    (call $__fern_bytes_copy_bounds (local.get $a) (local.get $at) (local.get $n))\n"
+    + "    (local.set $r (call $__fern_arr_sole (local.get $a) (i32.const 2)))\n"
+    + "    (local.set $p (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $at) (i32.const 2))))\n"
+    + "    (local.set $end (i32.add (local.get $p) (i32.mul (local.get $n) (i32.const 2))))\n"
+    + "    (if (i32.and (i32.gt_s (local.get $k) (i32.const 0)) (i32.lt_s (local.get $k) (i32.const 65536))) (then\n"
+    + "      (local.set $lanes (i16x8.splat (local.get $k)))\n"
+    + "      (block $wide_done (loop $wide (br_if $wide_done (i32.gt_u (i32.add (local.get $p) (i32.const 16)) (local.get $end)))\n"
+    + "        (v128.store (local.get $p) (i16x8.sub_sat_u (v128.load (local.get $p)) (local.get $lanes)))\n"
+    + "        (local.set $p (i32.add (local.get $p) (i32.const 16))) (br $wide)))))\n"
+    + "    (block $done (loop $each (br_if $done (i32.ge_u (local.get $p) (local.get $end)))\n"
+    + "      (local.set $m (i32.load16_u (local.get $p)))\n"
+    + "      (i32.store16 (local.get $p) (select (i32.sub (local.get $m) (local.get $k)) (i32.const 0) (i32.ge_s (local.get $m) (local.get $k))))\n"
+    + "      (local.set $p (i32.add (local.get $p) (i32.const 2))) (br $each)))\n"
     + "    (local.get $r))\n";
 }
 

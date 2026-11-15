@@ -1,0 +1,45 @@
+// An arm that ends in an if or a match whose every arm returns ends the run,
+// so a read after it is not a later use of the base of a literal in it.
+import "std/worker";
+
+struct Out { k: i32, w: Option[worker.Worker[i32]] }
+
+function bump(own o: Out, d: i32): Out {
+  return Out { ...o, k: o.k + d };
+}
+
+function nested_returns(own o: Out, x: i32, y: i32): Out {
+  if (x > 0) {
+    let t = Out { ...o, k: 1 };
+    if (y > 0) {
+      return bump(t, 1);
+    } else {
+      return bump(t, 2);
+    }
+  }
+  return o;
+}
+
+function arm_nested(own o: Out, x: i32, y: i32): Out {
+  match (x) {
+    0 => {
+      let t = Out { ...o, k: 5 };
+      if (y > 0) {
+        return bump(t, 1);
+      } else {
+        return bump(t, 2);
+      }
+    },
+    _ => {}
+  }
+  return bump(o, 3);
+}
+
+function main(): i32 {
+  let a = nested_returns(Out { k: 0, w: None }, 1, 1);
+  let b = nested_returns(Out { k: 0, w: None }, 0, 1);
+  let c = arm_nested(Out { k: 0, w: None }, 0, 0);
+  let d = arm_nested(Out { k: 0, w: None }, 1, 0);
+  print(a.k.to_string() + " " + b.k.to_string() + " " + c.k.to_string() + " " + d.k.to_string());
+  return 0;
+}

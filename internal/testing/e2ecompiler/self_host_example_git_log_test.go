@@ -45,6 +45,8 @@ var gitLogCases = []string{
 	"log --graph --oneline --all", "log --graph --oneline --name-status", "log --graph --name-only", "log --graph --oneline -- s",
 	"log --graph --oneline -- a", "log --graph --oneline --first-parent", "log --graph --parents --oneline", "log --graph --oneline side..main",
 	"log --graph --oneline --date-order", "log --graph --pretty=raw -2", "log --graph --format=",
+	// An option of revision.c with its value in the next argument needs one.
+	"log --grep", "log --oneline --author", "log --since", "log --max-count", "log --skip", "log --date",
 }
 
 // TestSelfHostExampleGitLog runs log with git and with the port in the

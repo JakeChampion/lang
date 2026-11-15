@@ -29,6 +29,31 @@ const MOST: i32 = 4;
 // again. The time is two times as long after each try that fails.
 const CALM: i32 = 10;
 
+// What the system told about the times of the frames: nothing yet, that it
+// does not tell them, or the time that the display showed a frame.
+pub const TIMES_UNKNOWN: i32 = 0;
+
+pub const TIMES_NONE: i32 = 1;
+
+pub const TIMES_TOLD: i32 = 2;
+
+// A frame that the app gave the display: its number for the times of the
+// system, or -1 when the system gives no numbers, and the time of its
+// refresh.
+pub struct Sent { frame: i64, vsync_ns: i64 }
+
+// The times of a frame: the GPU completed it, the system took it, and the
+// display showed it. A time that the system does not know yet is 0, and a
+// time that it does not tell is -1.
+pub struct Times { done_ns: i64, taken_ns: i64, shown_ns: i64 }
+
+// The frames of one second: the frames in a second, the longest time
+// between two, the refreshes for one frame, the time from a frame to the
+// display or 0, the time between two refreshes, the longest time from a
+// refresh to the time that the GPU completed its frame or 0, and what the
+// system told about the times.
+pub struct Second { fps: i64, longest_ns: i64, every: i32, shown_ns: i64, period_ns: i64, done_ns: i64, times: i32 }
+
 // The time from a frame to the display before the system told one: two
 // refreshes of a display of 60 Hz.
 const FIRST_AHEAD_NS: i64 = 33000000i64;
@@ -52,6 +77,11 @@ const FIRST_AHEAD_NS: i64 = 33000000i64;
 // refresh gets no frame, `since_skip` counts the frames since the last
 // such refresh, and `skips` counts those refreshes. `fresh` tells that no
 // frame showed in good time since the last such refresh.
+//
+// `sent` has the frames whose times the system did not tell yet, from the
+// oldest. `done_ns` is the longest time from a refresh to the time that the
+// GPU completed its frame, in the second that runs. `times` is what the
+// system told about the times.
 pub struct Pace {
   vsync_ns: i64,
   period_ns: i64,
@@ -77,6 +107,9 @@ pub struct Pace {
   since_skip: i32,
   skips: i32,
   fresh: boolean,
+  sent: Sent[],
+  done_ns: i64,
+  times: i32,
 }
 
 pub function new(): Pace {
@@ -105,6 +138,9 @@ pub function new(): Pace {
     since_skip: 0,
     skips: 0,
     fresh: false,
+    sent: [],
+    done_ns: 0i64,
+    times: TIMES_UNKNOWN,
   };
 }
 
@@ -205,18 +241,75 @@ pub function (p: Pace) told_shown(vsync_ns: i64, shown_ns: i64): Pace {
   return Pace { ...out, least_ns: least, skip: true, over: 0 };
 }
 
+// The pace after the app gave the display the frame `frame` of the refresh
+// at `vsync_ns`.
+pub function (p: Pace) sent_frame(frame: i64, vsync_ns: i64): Pace {
+  return Pace { ...p, sent: p.sent.append(Sent { frame: frame, vsync_ns: vsync_ns }) };
+}
+
+// The pace after it asked the system for the times of the frames that the
+// app gave the display, at the refresh `now_ns`. `ask` gives the times of a
+// frame. The display shows a frame 2 refreshes after its refresh or later,
+// so the pace does not ask about a newer frame: each question is a call to
+// another process. It waits for the times of a frame for at most 8 frames.
+pub function (p: Pace) heard(now_ns: i64, ask: (i64) => Times): Pace {
+  let out = p;
+  let at = 0;
+  while (at < p.sent.len()) {
+    let one = p.sent[at];
+    let old = p.sent.len() - at > 8;
+    if (one.frame < 0i64) {
+      out = out.untold();
+      at += 1;
+      continue;
+    }
+    if (!old && now_ns - one.vsync_ns < 2i64 * out.period_ns - out.period_ns / 4i64) {
+      break;
+    }
+    let t = ask(one.frame);
+    if (!old && (t.shown_ns == 0i64 || t.shown_ns < 0i64 && t.taken_ns == 0i64)) {
+      break;
+    }
+    if (t.done_ns > one.vsync_ns) {
+      out = Pace { ...out, done_ns: out.done_ns.max(t.done_ns - one.vsync_ns) };
+    }
+    if (t.shown_ns > 0i64) {
+      out = Pace { ...out.told_shown(one.vsync_ns, t.shown_ns), times: TIMES_TOLD };
+    } else if (t.taken_ns > 0i64 && out.period_ns > 0i64) {
+      // The display shows a frame one refresh after the system took it.
+      out = Pace { ...out.told_shown(one.vsync_ns, t.taken_ns + out.period_ns), times: TIMES_TOLD };
+    } else {
+      out = out.untold();
+    }
+    at += 1;
+  }
+  let rest: Sent[] = [];
+  for i in at..p.sent.len() {
+    rest = rest.append(p.sent[i]);
+  }
+  return Pace { ...out, sent: rest };
+}
+
+// The pace after a frame whose times the system does not tell.
+function (p: Pace) untold(): Pace {
+  if (p.times == TIMES_TOLD) {
+    return p;
+  }
+  return Pace { ...p, times: TIMES_NONE };
+}
+
 // The pace after the app drew the frame of the refresh at `ns`, and the
-// text of the frame rate when one second of frames ends, or "". The app
+// frames of the second when one second of frames ends. The app
 // started the frame at `started_ns`. A frame is late when it follows the
 // frame before it after more than one and a half times the refreshes of a
 // frame, or when the app started it more than half a refresh after its
 // refresh: the app then did not complete the frame before it in time. A
 // time of more than 1 second between two frames is a pause, and starts the
 // count again.
-pub function (p: Pace) drew(ns: i64, started_ns: i64): (Pace, string) {
+pub function (p: Pace) drew(ns: i64, started_ns: i64): (Pace, Option[Second]) {
   let gap = ns - p.last_ns;
   if (p.frames == 0 || gap > 1000000000i64) {
-    return (Pace { ...p, from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64, late: 0 }, "");
+    return (Pace { ...p, from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64, late: 0 }, None);
   }
   let late = p.late;
   if (p.period_ns > 0i64 && (gap * 2i64 > p.period_ns * (p.every() as i64) * 3i64 || (started_ns - ns) * 2i64 > p.period_ns)) {
@@ -225,23 +318,32 @@ pub function (p: Pace) drew(ns: i64, started_ns: i64): (Pace, string) {
   let next = Pace { ...p, last_ns: ns, frames: p.frames + 1, longest_ns: p.longest_ns.max(gap), late: late };
   let ms = (ns - p.from_ns) / 1000000i64;
   if (ms < 1000i64) {
-    return (next, "");
+    return (next, None);
   }
   let drawn = next.frames - 1;
-  let rate = (drawn as i64 * 1000i64 + ms / 2i64) / ms;
-  let text = rate.to_string() + " fps, longest " + (next.longest_ns / 1000000i64).to_string() + " ms";
-  if (next.every() > 1) {
-    text += ", 1 of " + next.every().to_string();
-  }
+  let shown = 0i64;
   if (next.shown.len() >= 4) {
-    text += ", shown after " + (steady(next.shown) / 1000000i64).to_string() + " ms";
+    shown = steady(next.shown);
   }
+  let second = Second { fps: (drawn as i64 * 1000i64 + ms / 2i64) / ms, longest_ns: next.longest_ns, every: next.every(), shown_ns: shown, period_ns: next.period_ns, done_ns: next.done_ns, times: next.times };
   let period = next.period_ns;
   if (next.seen >= 8) {
     period = next.shortest_ns;
   }
   let paced = next.judged(drawn);
-  return (Pace { ...paced, period_ns: period, seen: 0, from_ns: ns, frames: 1, longest_ns: 0i64, late: 0, seconds: next.seconds + 1 }, text);
+  return (Pace { ...paced, period_ns: period, seen: 0, from_ns: ns, frames: 1, longest_ns: 0i64, late: 0, done_ns: 0i64, seconds: next.seconds + 1 }, Some(second));
+}
+
+// The frame rate of the second, as the log and the dialog show it.
+pub function (s: Second) text(): string {
+  let text = s.fps.to_string() + " fps, longest " + (s.longest_ns / 1000000i64).to_string() + " ms";
+  if (s.every > 1) {
+    text += ", 1 of " + s.every.to_string();
+  }
+  if (s.shown_ns > 0i64) {
+    text += ", shown after " + (s.shown_ns / 1000000i64).to_string() + " ms";
+  }
+  return text;
 }
 
 // The pace after one second with `drawn` frames: slower after two seconds

@@ -170,6 +170,24 @@ function intro_px(mt: Metrics): i32 {
   return mt.sp(15.0);
 }
 
+// The details at the end of the list: their title, and at most DETAILS
+// lines of text, which a narrow window wraps into at most DETAIL_LINES
+// lines.
+const DETAILS: i32 = 5;
+
+const DETAIL_LINES: i32 = 8;
+
+pub const DETAILS_TITLE: string = "Details";
+
+function detail_px(mt: Metrics): i32 {
+  return mt.sp(12.0);
+}
+
+// The height of the details, below the last row.
+function details_height(fs: text.Fonts, mt: Metrics): i32 {
+  return mt.dp(16.0) + text.line(fs, BOLD, intro_px(mt)) + mt.dp(4.0) + DETAIL_LINES * text.line(fs, REGULAR, detail_px(mt));
+}
+
 // The place of each control on the window of `mt`.
 pub function layout(fs: text.Fonts, mt: Metrics): fluid.Layout {
   let edge = mt.dp(16.0);
@@ -189,7 +207,7 @@ pub function layout(fs: text.Fonts, mt: Metrics): fluid.Layout {
     rows = rows.append(fluid.Rect { x: 0, y: y, w: list_w, h: h });
     y += h + mt.dp(8.0);
   }
-  let content = y - mt.dp(8.0);
+  let content = y - mt.dp(8.0) + details_height(fs, mt);
   let room = mt.height - mt.top - mt.bottom - 2 * edge;
   let above = pad + header + mt.dp(8.0);
   let list_h = content.min(room - above - pad).max(0);
@@ -362,6 +380,23 @@ pub function list_frame(fs: text.Fonts, mt: Metrics, l: fluid.Layout, m: fluid.M
       }
       let wx = r.x + r.w - s.pad_x - text.width(fs, BOLD, s.desc_px, word);
       cache = text.text(cache, f, fs, BOLD, s.desc_px, 0, wx, r.y + (r.h - desc_h) / 2 + text.ascent(fs, BOLD, s.desc_px), word, ink);
+    }
+  }
+  let last = l.rows[l.rows.len() - 1];
+  y = last.y + last.h + mt.dp(16.0);
+  let tpx = intro_px(mt);
+  cache = text.text(cache, f, fs, BOLD, tpx, 0, 0, y + text.ascent(fs, BOLD, tpx), DETAILS_TITLE, ink());
+  y += text.line(fs, BOLD, tpx) + mt.dp(4.0);
+  let dpx = detail_px(mt);
+  let dh = text.line(fs, REGULAR, dpx);
+  let room = DETAIL_LINES;
+  for i in 0..m.details.len().min(DETAILS) {
+    for line in text.wrap(fs, REGULAR, dpx, m.details[i], l.list.w) {
+      if (room > 0) {
+        cache = text.text(cache, f, fs, REGULAR, dpx, 0, 0, y + text.ascent(fs, REGULAR, dpx), line, muted());
+        y += dh;
+        room -= 1;
+      }
     }
   }
   return f;

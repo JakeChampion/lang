@@ -98,7 +98,8 @@ const MAX_BURSTS: i32 = 8;
 // dialog. The display shows a frame `ahead_ns` after the frame starts, and
 // the app made the bloom and the sun rays at `effects_ns`. `hold_ms` is the time that
 // the hold on the exit button started, or -1. `note` shows until `note_ms`.
-// `speed` is the text of the frame rate, which the dialog shows.
+// `speed` is the frame rate at the top of the dialog, and `details` has the
+// lines of what the app measured, at the end of the dialog.
 // `redraw` asks for a draw of a paused fluid.
 pub struct Model {
   cfg: config.Config,
@@ -123,6 +124,7 @@ pub struct Model {
   full: boolean,
   note: string,
   speed: string,
+  details: string[],
   note_ms: i64,
   redraw: boolean,
   wants: Want[],
@@ -159,6 +161,7 @@ pub function new(cfg: config.Config, still: boolean, seed: i64, now_ns: i64): Mo
     full: false,
     note: "",
     speed: "",
+    details: [],
     note_ms: 0i64,
     redraw: true,
     wants: [],
@@ -174,9 +177,10 @@ pub function (m: Model) laid_out(layout: Layout): Model {
   return Model { ...m, layout: layout, redraw: true }.scrolled(m.scroll);
 }
 
-// The model with the text `text` for the frame rate. The dialog shows it.
-pub function (m: Model) with_speed(text: string): Model {
-  return Model { ...m, speed: text, redraw: m.redraw || m.open };
+// The model with the frame rate `speed` and the lines `details` of what
+// the app measured. The dialog shows them.
+pub function (m: Model) with_report(speed: string, details: string[]): Model {
+  return Model { ...m, speed: speed, details: details, redraw: m.redraw || m.open };
 }
 
 // The model for a display that shows a frame `ns` after the frame starts.
