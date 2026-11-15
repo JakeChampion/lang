@@ -2979,7 +2979,7 @@ function log_command(argv: string[]): i32 {
     return fatal("options '--name-only', '--name-status', '--check', and '-s' cannot be used together");
   }
   if (o.word_regex.len() > 0 && o.patch.word_diff != patch.WORDS_NONE) {
-    let re = bre.bre_compile_syntax(o.word_regex, bre.Syntax { ...bre.posix_basic(), extended: true, newline_anchor: true });
+    let re = bre.bre_compile_syntax(o.word_regex, bre.Syntax { ...bre.posix_basic(), extended: true, newline_anchor: true, multiline: true });
     let d = if (re.err.len() > 0) { patch.Opts { ...o.patch, word_regex_error: o.word_regex } } else { patch.Opts { ...o.patch, word_regex: [re] } };
     o = LogOpts { ...o, patch: d };
   }
@@ -3025,7 +3025,7 @@ function log_command(argv: string[]): i32 {
   }
   o = LogOpts { ...o, pick: patch.Pickaxe { ...o.pick, icase: g.icase } };
   if (o.pick.kind == 2 || o.pick.kind == 1 && o.pick.regex) {
-    let syntax = bre.Syntax { ...bre.posix_basic(), extended: true, icase: g.icase, newline_anchor: true };
+    let syntax = bre.Syntax { ...bre.posix_basic(), extended: true, icase: g.icase, newline_anchor: true, multiline: true };
     let re = bre.bre_compile_syntax(o.pick.needle, syntax);
     if (re.err.len() > 0) {
       return fatal("invalid regex: " + re.err);
