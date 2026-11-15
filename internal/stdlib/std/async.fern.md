@@ -95,7 +95,8 @@ pub enum Future[T] {
 }
 
 // `set` holds (fd, interest) pairs. `until` is an instant on the clock of
-// whatever waits for the set.
+// whatever waits for the set. An interest from `counted` also holds the
+// close count of its descriptor number.
 pub struct Wait { set: i32[], until: Option[Instant] }
 
 // `Woke` holds the index of the pair that became ready.
@@ -186,6 +187,34 @@ pub const WATCHED: i32 = 64;
 <<6 pub function interest_bits(interest: i32): i32>>=
 pub function interest_bits(interest: i32): i32 {
   return interest & 31;
+}
+
+// The bit of an interest that holds a close count in its bits from 8 up.
+pub const COUNTED: i32 = 128;
+
+// `interest` with the close count of the descriptor number `fd` as it is
+// now. A wait on the pair then ends when the number closes, also when a new
+// descriptor gets the number.
+pub function counted(fd: i32, interest: i32): i32 {
+  return interest & 127 | COUNTED | __closes(fd) << 8;
+}
+
+// The index of the first pair of `set` whose number closed after `counted`
+// read its count, or -1.
+pub function stale(set: i32[]): i32 {
+  let i = 0;
+  while (i + 1 < set.len()) {
+    let interest = set[i + 1];
+    if ((interest & COUNTED) != 0 && interest >> 8 != __closes(set[i]) << 8 >> 8) {
+      return i / 2;
+    }
+    i += 2;
+  }
+  return -1;
+}
+
+function __closes(fd: i32): i32 {
+  return unsafe { __task_fd_gen(fd) };
 }
 ```
 
@@ -1317,6 +1346,10 @@ function __ms_until(ns: i64): i32 {
 }
 
 function __block(set: i32[], timeout_ms: i32): i32 {
+  let gone = stale(set);
+  if (gone >= 0) {
+    return gone;
+  }
   let n = set.len() / 2;
   if (n <= 0) {
     if (timeout_ms > 0) {
