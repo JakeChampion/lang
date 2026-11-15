@@ -4762,148 +4762,193 @@ const EVAL_BINARY_ARITH_SET2: string[] = ["<", "<=", ">", ">="];
 
 const EVAL_BINARY_ARITH_SET3: string[] = ["&", "|", "^", "<<", ">>"];
 
+function eval_binary_arith_sub_mul_div(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VInt(li) => {
+      match (rv) {
+        VInt(ri) => {
+          if (op == "-") {
+            return v_int(li.v - ri.v);
+          }
+          if (op == "*") {
+            return v_int(li.v * ri.v);
+          }
+          if (op == "/") {
+            if (ri.v == 0) {
+              return v_int(0);
+            }
+            return v_int(li.v / ri.v);
+          }
+          if (ri.v == 0) {
+            return v_int(li.v);
+          }
+          return v_int(li.v % ri.v);
+        },
+        _ => {
+          return v_err("arithmetic rhs not i32");
+        }
+      }
+    },
+    VFloat(lf) => {
+      match (rv) {
+        VFloat(rf) => {
+          return match (op) {
+            "-" => v_float(lf.v - rf.v),
+            "*" => v_float(lf.v * rf.v),
+            "/" => v_float(lf.v / rf.v),
+            _ => v_err("`%` on f64 is unsupported"),
+          };
+        },
+        _ => {
+          return v_err("arithmetic rhs not f64");
+        }
+      }
+    },
+    _ => {
+      return v_err("arithmetic lhs not i32 or f64");
+    }
+  }
+  return eval_binary_arith_after_sub_mul_div(op, lv, rv);
+}
+
+function eval_binary_arith_after_sub_mul_div(op: string, lv: Value, rv: Value): Value {
+  if (util.has_str(EVAL_BINARY_ARITH_SET2, op)) {
+    return eval_binary_arith_compare(op, lv, rv);
+  }
+  return eval_binary_arith_after_compare(op, lv, rv);
+}
+
+function eval_binary_arith_compare(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VInt(li) => {
+      match (rv) {
+        VInt(ri) => {
+          return match (op) {
+            "<" => v_bool(li.v < ri.v),
+            "<=" => v_bool(li.v <= ri.v),
+            ">" => v_bool(li.v > ri.v),
+            _ => v_bool(li.v >= ri.v),
+          };
+        },
+        _ => {
+          return v_err("comparison rhs not i32");
+        }
+      }
+    },
+    VFloat(lf) => {
+      match (rv) {
+        VFloat(rf) => {
+          return match (op) {
+            "<" => v_bool(lf.v < rf.v),
+            "<=" => v_bool(lf.v <= rf.v),
+            ">" => v_bool(lf.v > rf.v),
+            _ => v_bool(lf.v >= rf.v),
+          };
+        },
+        _ => {
+          return v_err("comparison rhs not f64");
+        }
+      }
+    },
+    VString(ls) => {
+      if let VString(rs) = rv {
+        return v_bool(strings_ordered(op, ls.v, rs.v));
+      }
+      return v_err("comparison rhs not a string");
+    },
+    _ => {
+      return v_err("comparison lhs not i32, f64 or string");
+    }
+  }
+  return eval_binary_arith_after_compare(op, lv, rv);
+}
+
+function eval_binary_arith_after_compare(op: string, lv: Value, rv: Value): Value {
+  if (op == "==" || op == "!=") {
+    return eval_binary_arith_equal(op, lv, rv);
+  }
+  return eval_binary_arith_after_equal(op, lv, rv);
+}
+
+function eval_binary_arith_equal(op: string, lv: Value, rv: Value): Value {
+  let eq = value_eq(lv, rv);
+  if (op == "==") {
+    return v_bool(eq);
+  }
+  return v_bool(!eq);
+  return eval_binary_arith_after_equal(op, lv, rv);
+}
+
+function eval_binary_arith_after_equal(op: string, lv: Value, rv: Value): Value {
+  if (op == "&&" || op == "||") {
+    return eval_binary_arith_logic(op, lv, rv);
+  }
+  return eval_binary_arith_after_logic(op, lv, rv);
+}
+
+function eval_binary_arith_logic(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VBool(lb) => {
+      match (rv) {
+        VBool(rb) => {
+          if (op == "&&") {
+            return v_bool(lb.v && rb.v);
+          }
+          return v_bool(lb.v || rb.v);
+        },
+        _ => {
+          return v_err("logical rhs not bool");
+        }
+      }
+    },
+    _ => {
+      return v_err("logical lhs not bool");
+    }
+  }
+  return eval_binary_arith_after_logic(op, lv, rv);
+}
+
+function eval_binary_arith_after_logic(op: string, lv: Value, rv: Value): Value {
+  if (util.has_str(EVAL_BINARY_ARITH_SET3, op)) {
+    return eval_binary_arith_bits(op, lv, rv);
+  }
+  return eval_binary_arith_after_bits(op, lv, rv);
+}
+
+function eval_binary_arith_bits(op: string, lv: Value, rv: Value): Value {
+  match (lv) {
+    VInt(li) => {
+      match (rv) {
+        VInt(ri) => {
+          return match (op) {
+            "&" => v_int(li.v & ri.v),
+            "|" => v_int(li.v | ri.v),
+            "^" => v_int(li.v ^ ri.v),
+            "<<" => v_int(li.v << ri.v),
+            _ => v_int(li.v >> ri.v),
+          };
+        },
+        _ => {
+          return v_err("bitwise rhs not i32");
+        }
+      }
+    },
+    _ => {
+      return v_err("bitwise lhs not i32");
+    }
+  }
+  return eval_binary_arith_after_bits(op, lv, rv);
+}
+
+function eval_binary_arith_after_bits(op: string, lv: Value, rv: Value): Value {
+  return v_err("unknown binary op: " + op);
+}
+
 function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
   if (util.has_str(EVAL_BINARY_ARITH_SET, op)) {
-    match (lv) {
-      VInt(li) => {
-        match (rv) {
-          VInt(ri) => {
-            if (op == "-") {
-              return v_int(li.v - ri.v);
-            }
-            if (op == "*") {
-              return v_int(li.v * ri.v);
-            }
-            if (op == "/") {
-              if (ri.v == 0) {
-                return v_int(0);
-              }
-              return v_int(li.v / ri.v);
-            }
-            if (ri.v == 0) {
-              return v_int(li.v);
-            }
-            return v_int(li.v % ri.v);
-          },
-          _ => {
-            return v_err("arithmetic rhs not i32");
-          }
-        }
-      },
-      VFloat(lf) => {
-        match (rv) {
-          VFloat(rf) => {
-            return match (op) {
-              "-" => v_float(lf.v - rf.v),
-              "*" => v_float(lf.v * rf.v),
-              "/" => v_float(lf.v / rf.v),
-              _ => v_err("`%` on f64 is unsupported"),
-            };
-          },
-          _ => {
-            return v_err("arithmetic rhs not f64");
-          }
-        }
-      },
-      _ => {
-        return v_err("arithmetic lhs not i32 or f64");
-      }
-    }
+    return eval_binary_arith_sub_mul_div(op, lv, rv);
   }
-  if (util.has_str(EVAL_BINARY_ARITH_SET2, op)) {
-    match (lv) {
-      VInt(li) => {
-        match (rv) {
-          VInt(ri) => {
-            return match (op) {
-              "<" => v_bool(li.v < ri.v),
-              "<=" => v_bool(li.v <= ri.v),
-              ">" => v_bool(li.v > ri.v),
-              _ => v_bool(li.v >= ri.v),
-            };
-          },
-          _ => {
-            return v_err("comparison rhs not i32");
-          }
-        }
-      },
-      VFloat(lf) => {
-        match (rv) {
-          VFloat(rf) => {
-            return match (op) {
-              "<" => v_bool(lf.v < rf.v),
-              "<=" => v_bool(lf.v <= rf.v),
-              ">" => v_bool(lf.v > rf.v),
-              _ => v_bool(lf.v >= rf.v),
-            };
-          },
-          _ => {
-            return v_err("comparison rhs not f64");
-          }
-        }
-      },
-      VString(ls) => {
-        if let VString(rs) = rv {
-          return v_bool(strings_ordered(op, ls.v, rs.v));
-        }
-        return v_err("comparison rhs not a string");
-      },
-      _ => {
-        return v_err("comparison lhs not i32, f64 or string");
-      }
-    }
-  }
-  if (op == "==" || op == "!=") {
-    let eq = value_eq(lv, rv);
-    if (op == "==") {
-      return v_bool(eq);
-    }
-    return v_bool(!eq);
-  }
-  if (op == "&&" || op == "||") {
-    match (lv) {
-      VBool(lb) => {
-        match (rv) {
-          VBool(rb) => {
-            if (op == "&&") {
-              return v_bool(lb.v && rb.v);
-            }
-            return v_bool(lb.v || rb.v);
-          },
-          _ => {
-            return v_err("logical rhs not bool");
-          }
-        }
-      },
-      _ => {
-        return v_err("logical lhs not bool");
-      }
-    }
-  }
-  if (util.has_str(EVAL_BINARY_ARITH_SET3, op)) {
-    match (lv) {
-      VInt(li) => {
-        match (rv) {
-          VInt(ri) => {
-            return match (op) {
-              "&" => v_int(li.v & ri.v),
-              "|" => v_int(li.v | ri.v),
-              "^" => v_int(li.v ^ ri.v),
-              "<<" => v_int(li.v << ri.v),
-              _ => v_int(li.v >> ri.v),
-            };
-          },
-          _ => {
-            return v_err("bitwise rhs not i32");
-          }
-        }
-      },
-      _ => {
-        return v_err("bitwise lhs not i32");
-      }
-    }
-  }
-  return v_err("unknown binary op: " + op);
+  return eval_binary_arith_after_sub_mul_div(op, lv, rv);
 }
 
 function f64_trunc_u32(v: f64): i32 {
