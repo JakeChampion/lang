@@ -2980,10 +2980,11 @@ function sizes_of(funcs: ssasem.Func[]): i32[] {
 // step reads, do not count: the read of the field counts once.
 function count_insts(g: ssa.SFunc): i32 {
   let read = read_outside_steps(g);
+  let stepped = read_by_steps(g);
   let n = 0;
   for b in g.blocks {
     for ins in b.insts {
-      let step_constant = ins.kind_tag == ssa.CONST_INT && ins.result >= 0 && ins.result < read.len() && !read[ins.result];
+      let step_constant = ins.kind_tag == ssa.CONST_INT && ins.result >= 0 && ins.result < read.len() && stepped[ins.result] && !read[ins.result];
       if (!line_mark(ins.kind_tag) && !ssasem.is_field_step(ins) && !step_constant) {
         n += 1;
       }
@@ -3003,6 +3004,19 @@ function read_outside_steps(g: ssa.SFunc): boolean[] {
       }
     }
     read = marked_all(read, [b.term.cond, b.term.value]);
+  }
+  return read;
+}
+
+// The values that a field step reads.
+function read_by_steps(g: ssa.SFunc): boolean[] {
+  let read = __alloc_bool(g.nvals);
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ssasem.is_field_step(ins)) {
+        read = marked_all(read, ins.args);
+      }
+    }
   }
   return read;
 }
