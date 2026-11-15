@@ -12,7 +12,7 @@ After each event, the simulator draws a frame, as the display does at the next v
 
 `themed` sets the dark theme, and `scaled` sets the font size of the system.
 
-`texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `finished` tells whether the program closed the app, and `keyboard` gives the text that the keyboard of the system shows. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
+`texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `says` also finds an element by what an accessibility service reads for it, such as a button of icons. `finished` tells whether the program closed the app, and `keyboard` gives the text that the keyboard of the system shows. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
 
 The simulator keeps the clock. A touch, a frame and a wait each take the time that they take on a phone: a frame is 16 ms.
 
@@ -385,6 +385,12 @@ pub function texts[S, M](s: Sim[S, M]): string[] {
 // The screen shows the text `t`.
 pub function shows[S, M](s: Sim[S, M], t: string): boolean {
   return texts(s).contains(t);
+}
+
+// The screen shows the text `label`, or an element says it, as a button
+// of icons does for an accessibility service.
+pub function says[S, M](s: Sim[S, M], label: string): boolean {
+  return place_of(s, label, 0).is_some();
 }
 
 // The program closed the app.

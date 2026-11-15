@@ -235,11 +235,6 @@ function saved(s: sim.Sim[player.Player, tune.Msg], name: string): void {
   }
 }
 
-// The screen shows `label`, or has an icon that says it.
-function says(s: sim.Sim[player.Player, tune.Msg], label: string): boolean {
-  return sim.place_of(s, label, 0).is_some();
-}
-
 function near(got: i64, want: i64, by: i64): boolean {
   return got >= want - by && got <= want + by;
 }
@@ -299,7 +294,7 @@ function test_a_tap_plays_a_track(): test.TestOutcome {
   s = sim.after(s, 1000i64);
   saved(s, "tune-library");
   let at = s.shell.app.model.at_ms;
-  return test.assert_eq(first + " " + near(at, 1000i64, 250i64).to_string() + " " + says(s, "Pause").to_string(), "3 true 44100 2 true true true");
+  return test.assert_eq(first + " " + near(at, 1000i64, 250i64).to_string() + " " + sim.says(s, "Pause").to_string(), "3 true 44100 2 true true true");
 }
 
 function test_pause_and_seek(): test.TestOutcome {
@@ -548,7 +543,7 @@ function test_playlists(): test.TestOutcome {
   s = sim.tap(sim.send(s, tune.Named(" Road ")), "Create");
   let made = lists(s.shell.app.model);
   s = sim.tap(sim.tap(sim.tap(s, "Quick Light"), "Now playing, Quick Light"), "Favorite off");
-  let liked = lists(s.shell.app.model) + " " + says(s, "Favorite on").to_string();
+  let liked = lists(s.shell.app.model) + " " + sim.says(s, "Favorite on").to_string();
   s = sim.tap(sim.tap(sim.tap(s, "Queue"), "Save"), "Road");
   let kept = lists(s.shell.app.model);
   s = sim.tap(sim.tap(sim.tap(s, "Library"), "Lists"), "mix");
@@ -662,28 +657,28 @@ function test_the_speed_and_the_pitch(): test.TestOutcome {
 // its end.
 function test_the_sleep_timer(): test.TestOutcome {
   let s = sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "Sleep off");
-  let set = says(s, "Sleep 15 min");
+  let set = sim.says(s, "Sleep 15 min");
   s = sim.after(s, 2000i64);
   let left = near(s.shell.app.model.sleep_us / 1000i64, 898000i64, 400i64);
-  let shown = says(s, "Sleep 15 min") && s.shell.app.model.playing;
+  let shown = sim.says(s, "Sleep 15 min") && s.shell.app.model.playing;
   s = sim.send(s, tune.Slept(897000000i64));
-  let last = says(s, "Sleep 1 min");
+  let last = sim.says(s, "Sleep 1 min");
   s = sim.after(s, 1500i64);
   let m = s.shell.app.model;
-  return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, says(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
+  return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, sim.says(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
 }
 
 // A track with an LRC file shows its lyrics, and the line that the track
 // is at changes with the time. A track with no lyrics has no button.
 function test_the_lyrics_of_a_track(): test.TestOutcome {
   let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
-  let none = says(s, "Lyrics off");
+  let none = sim.says(s, "Lyrics off");
   s = sim.tap(sim.tap(sim.tap(sim.tap(s, "Library"), "Slow Water"), "Now playing, Slow Water"), "Lyrics off");
   let first = tune.line_at(s.shell.app.model.lyrics, s.shell.app.model.at_ms);
   s = sim.after(s, 1500i64);
   saved(s, "tune-lyrics");
   let m = s.shell.app.model;
-  let shown = sim.shows(s, "Under the fern") && sim.shows(s, "Into the light") && says(s, "Lyrics on");
+  let shown = sim.shows(s, "Under the fern") && sim.shows(s, "Into the light") && sim.says(s, "Lyrics on");
   return test.assert_eq([none.to_string(), m.lyrics.len().to_string(), first.to_string(), tune.line_at(m.lyrics, m.at_ms).to_string(), shown.to_string()].join(" "), "false 3 0 1 true");
 }
 

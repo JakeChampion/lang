@@ -11,7 +11,7 @@ corners. Red marks what is on: the tab that shows, the bar of the time,
 and a button that is on. The albums are a grid of two columns.
 
 The screen of the track shows its cover as the label of a record. Its buttons are
-icons that `icons.fern` draws, and a bar of tools holds the sleep timer,
+icons of `std/android/icons`, and a bar of tools holds the sleep timer,
 the lyrics, the queue, and more: the speed and the pitch.
 
 The player reads WAV, FLAC, MP3, M4A (AAC or ALAC), Ogg Vorbis and Opus files in
