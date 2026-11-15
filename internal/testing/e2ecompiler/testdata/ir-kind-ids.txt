@@ -516,3 +516,4 @@ vinarrowu=566
 viswizzle=567
 map_file=568
 scan_masks=569
+vsock_connect=570

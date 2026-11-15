@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestArm64DarwinTz(t *testing.T) {
@@ -21,7 +23,8 @@ func TestArm64DarwinTz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, got)
 	}
-	for _, w := range []string{"# Suite: tz-darwin", "1..12", "# pass 12", "# fail 0"} {
+	e2eharness.CheckTAPPlan(t, string(got))
+	for _, w := range []string{"# Suite: tz-darwin", "# fail 0"} {
 		if !strings.Contains(string(got), w) {
 			t.Errorf("output missing %q\n%s", w, got)
 		}
