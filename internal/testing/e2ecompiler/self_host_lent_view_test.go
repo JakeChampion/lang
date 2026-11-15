@@ -2,8 +2,11 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -221,6 +224,67 @@ func TestSelfHostLentWindowConsumers(t *testing.T) {
 			for _, sanitize := range []bool{false, true} {
 				if got, _ := runLentView(t, cli, lentWindowProg, target, sanitize); got != lentWindowOut {
 					t.Errorf("sanitize=%v: got\n%s\nwant\n%s", sanitize, got, lentWindowOut)
+				}
+			}
+		})
+	}
+}
+
+// A function whose parameter is a byte view is spliced into its one caller,
+// as one whose parameter is a str is. skip rebinds the view in a loop. After
+// the spliced loop, main reads its own view, and each view that the loop
+// made is released.
+const byteViewSpliceProg = `import "std/i32";
+
+function skip(s: [u8], n: i32): i32 {
+  let v = s;
+  let k = 0;
+  while (k < n && v.len() > 0) {
+    v = v[1:v.len()];
+    k += 1;
+  }
+  return v.len() * 1000 + v[0] as i32;
+}
+
+function main(): i32 {
+  let held: u8[] = ("abcde" + "fghij").bytes();
+  let part: [u8] = held[2:9];
+  let r = skip(part, 3);
+  let churn: string[] = [];
+  for i in 0..200 {
+    churn = churn.append("c" + i.to_string());
+  }
+  print(r.to_string() + " " + part.len().to_string() + " " + (part[0] as i32).to_string() + " " + churn.len().to_string());
+  return 0;
+}
+`
+
+func TestSelfHostByteViewParamIsSpliced(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "splice.fern")
+	if err := os.WriteFile(src, []byte(byteViewSpliceProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		out := filepath.Join(dir, target+".s")
+		if combined, err := exec.Command(h.cli, "-target", target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+			t.Fatalf("%s: emitting: %v\n%s", target, err, combined)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(asm), "__fn_skip:") {
+			t.Errorf("%s: skip, which takes a [u8], is not spliced into its one caller", target)
+		}
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			for _, sanitize := range []bool{false, true} {
+				if got, _ := runLentView(t, cli, byteViewSpliceProg, target, sanitize); got != "4102 7 99 200\n" {
+					t.Errorf("sanitize=%v: got %q, want %q", sanitize, got, "4102 7 99 200\n")
 				}
 			}
 		})

@@ -1268,18 +1268,22 @@ function split_all(prev: Inlined, rewrite: boolean[], modes: i32[][]): Inlined {
   return Inlined { ...prev, funcs: funcs, rewritten: rewritten };
 }
 
+// A parameter that holds a view keeps the function out of splicing. A `str`
+// or a `[T]` is a view itself, not a value that holds one.
 function lends_view(f: ssasem.Func): boolean {
   for p in f.params {
-    if (ssasem.holds_view(f, p) && !ssasem.is_view(p)) {
+    if (ssasem.holds_view(f, p) && !ssasem.is_view(p) && !typeinfo.is_array_view(p)) {
       return true;
     }
   }
   return ssasem.holds_view(f, f.result) || loops_view(f);
 }
 
-// A loop that rebinds a view starts from a fresh box of the caller's view on
+// A loop that rebinds a `str` starts from a fresh box of the caller's view on
 // the function's entry edge. Spliced into the caller, the loop would start
-// from the caller's own view, which the plan cannot retain.
+// from the caller's own view, which the plan cannot retain. A loop that
+// rebinds a `[T]` can be spliced: the caller's view stays valid, and each
+// view that the loop makes is released.
 function loops_view(f: ssasem.Func): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
