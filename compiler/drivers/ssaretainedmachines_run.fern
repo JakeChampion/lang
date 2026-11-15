@@ -1,4 +1,6 @@
 import "../asmcore";
+import "../ssafreelinks" as freelinks;
+import "./ssafreelinkcontrols" as freelinkcontrols;
 import "./ssaretainedprogram" as retained;
 import "./ssadecrementtexts" as decrementtexts;
 import "./ssadecrementisas" as decrementisas;
@@ -30,7 +32,9 @@ function main(): i32 {
     return 1;
   }
   let g = retained.program(mod);
-  let text = retained.emit(g, g.cache, g.physical, false, true, true, 0, -1).text;
+  let real = retained.emit(g, g.cache, g.physical, false, true, true, 0, -1).text;
+  freelinkcontrols.same_routines(real);
+  let text = freelinks.plain_text(real);
   decrementtexts.run(text);
   decrementisas.run(text);
   decrementmachines.run(text);

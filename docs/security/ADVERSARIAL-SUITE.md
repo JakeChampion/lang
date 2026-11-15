@@ -41,7 +41,7 @@ QEMU establishes emulated behaviour only.
 | A raw read through a dangling pointer | `TestSelfHostQuarantinePolicy` | the poison pattern, not the stale bytes, under `-sanitize` | x86, arm64 |
 | A raw free of an address outside the arena | `TestSelfHostRawFreeOutsideHeap` | abort with the out-of-heap cause | x86, arm64 |
 | A second raw free of one block after other frees of its class | `TestSelfHostHardenRawInterleavedDoubleFree` | abort with the double-free cause under `-harden`, for a small and a large class | x86, arm64 |
-| A forged free list link in a released block | `TestSelfHostFreeListLinkForgery` | abort with the corrupt-link cause under `-harden`; the control recycles twelve blocks | x86, arm64 |
+| A forged free list link in a released block | `TestSelfHostFreeListLinkForgery` | abort with the corrupt-link cause in a release build and under `-harden`; the control recycles twelve blocks | x86, arm64 |
 | A secret left in a released block | `TestSelfHostEraseZeroesStorage` | `crypto.erase` zeroes it; the control reads it back | x86, arm64 |
 | Key material a primitive copied and released | `TestSelfHostPrimitivesEraseKeyMaterial` | no copy in the arena after the call; the planted control is found | x86, arm64 |
 | A leak at exit | `TestX86_64SanitizeLeakVerdict`, `TestArm64SanitizeLeakVerdict`, `TestSelfHostWasmSanitizeLeakVerdict` | `-sanitize` verdict | x86, arm64, wasm |

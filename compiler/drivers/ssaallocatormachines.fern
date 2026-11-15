@@ -1,3 +1,4 @@
+import "../ssafreelinks" as links;
 import "../ssaallocatormachine" as machine;
 import "../ssadecrementtext" as text;
 import "../ssainlineuniqueisa" as registers;
@@ -179,7 +180,7 @@ function actual_mutations(output: string): void {
 
 pub function run(output: string): void {
   require(machine.check(output), "actual complete primary output");
-  actual_mutations(output);
+  actual_mutations(links.plain_text(output));
   mutation(output, "__fern_heap_ptr: .quad 0", "__fern_heap_ptr: .long 0", false);
   mutation(output, "__fern_freelist: .skip 524288", "__fern_freelist: .skip 8", false);
   mutation(output, "__fern_alloc:", "missing_allocator:", false);

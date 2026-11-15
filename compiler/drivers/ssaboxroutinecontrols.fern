@@ -1,3 +1,5 @@
+import "./ssafreelinkcontrols" as links;
+import "../ssafreelinks" as plainlinks;
 import "../ssaboxroutines" as routines;
 import "../ssaprepare";
 import "std/string";
@@ -36,6 +38,8 @@ function release(text: string): void {
 
 pub function run(output: ssaprepare.Output): void {
   require(routines.allocation(output.text) && routines.release(output.text), "actual routines");
-  allocation(output.text);
-  release(output.text);
+  links.run(output.text);
+  let plain = plainlinks.plain_text(output.text);
+  allocation(plain);
+  release(plain);
 }

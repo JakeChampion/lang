@@ -6595,6 +6595,16 @@ function emit_ir_reloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   return s;
 }
 
+// The key of the free list links is 8 of the 16 random bytes that the kernel
+// gives each process at AT_RANDOM (25). -harden then takes the canary.
+function emit_link_key_seed(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    ldr x0, [sp]\n    lsl x0, x0, #3\n    add x0, x0, #16\n    add x0, sp, x0\n");
+  s = s.write(".Lfern_key_env:\n    ldr x1, [x0], #8\n    cbnz x1, .Lfern_key_env\n");
+  s = s.write(".Lfern_key_scan:\n    ldp x1, x2, [x0], #16\n    cbz x1, .Lfern_key_done\n    cmp x1, #25\n    b.ne .Lfern_key_scan\n");
+  s = s.write("    ldr x2, [x2, #8]\n    adrp x1, __fern_link_key\n    add x1, x1, :lo12:__fern_link_key\n    str x2, [x1]\n");
+  return s.write(".Lfern_key_done:\n");
+}
+
 function emit_vdso_scan(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr x0, [sp]\n");
   s = s.write("    lsl x0, x0, #3\n");
@@ -6678,6 +6688,9 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     s = emit_start_args_linux(s);
   }
   if (!s.shared) {
+    if (!darwin) {
+      s = emit_link_key_seed(s);
+    }
     s = emit_stack_switch(s, darwin);
     if (s.harden) {
       s = emit_canary_init(s);
@@ -6985,6 +6998,7 @@ function emit_harden_start(s: asmcore.EmitState): asmcore.EmitState {
 function emit_canary_init(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x0, __fern_canary\n    add x0, x0, :lo12:__fern_canary\n    mov x1, #16\n    mov x2, #0\n    mov x8, #278\n").svc(278);
   s = s.write("    cmp x0, #16\n    b.ne .Lfern_canary_read_failed\n");
+  s = s.write(quar_addr("x0", "__fern_canary") + "    ldr x1, [x0]\n" + quar_addr("x0", "__fern_link_key") + "    str x1, [x0]\n");
   s = s.write(quar_addr("x0", "__fern_rng_state"));
   return s.write("    ldr x1, [x0]\n    orr x1, x1, #1\n    str x1, [x0]\n");
 }
@@ -8189,20 +8203,16 @@ function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
-// The key of a free block's link under -harden: the process canary mixed
-// with the block's page, so a link copied from another block fails too.
-// The key lands in `into`.
-// Under -harden, XORs the key of `block` into the link in `link`, with x16
-// as scratch.
+// XORs the key of `block` into the link in `link`, with x16 as scratch.
 function freelist_encode(s: asmcore.EmitState, block: string, link: string): asmcore.EmitState {
-  if (!s.harden) {
-    return s;
-  }
   return s.write(freelist_key(block, "x16") + "    eor " + link + ", " + link + ", x16\n");
 }
 
+// The key of a free block's link: the process link key mixed with the
+// block's page, so a link copied from another block fails too. The key lands
+// in `into`.
 function freelist_key(block: string, into: string): string {
-  return quar_addr(into, "__fern_canary") + "    ldr " + into + ", [" + into + "]\n    eor " + into + ", " + into + ", " + block + ", lsr #12\n";
+  return quar_addr(into, "__fern_link_key") + "    ldr " + into + ", [" + into + "]\n    eor " + into + ", " + into + ", " + block + ", lsr #12\n";
 }
 
 // Decodes the link of the free block in `block` into `out` and checks it: zero
@@ -8313,7 +8323,7 @@ function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
   } else {
     s = s.write("    ldr x3, [x1]\n");
     s = s.write("    cbz x3, .Lapo_miss\n");
-    s = s.write("    ldr x4, [x3]\n");
+    s = freelist_next(s, "x3", "x4");
     s = s.write("    str x4, [x1]\n");
   }
   s = s.write(".Lapo_box:\n");
@@ -8450,7 +8460,7 @@ function arr_push_empty(s: asmcore.EmitState, nonempty: string, frame: string, f
   } else {
     s = s.write("    ldr x3, [x2, #56]\n");
     s = s.write("    cbz x3, " + fresh + "\n");
-    s = s.write("    ldr x4, [x3]\n");
+    s = freelist_next(s, "x3", "x4");
     s = s.write("    str x4, [x2, #56]\n");
   }
   s = s.write("    mov x2, #4\n");
@@ -9505,6 +9515,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_stack_top: .quad 0\n");
   s = s.write("    .align 3\n");
   s = s.write("__fern_bt_floor: .quad 0\n");
+  s = s.write("__fern_link_key: .quad 0\n");
   if (s.harden) {
     s = s.write("    .globl __fern_canary\n");
     s = s.write("__fern_canary: .quad 0\n");
@@ -9825,9 +9836,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
   s = abort_trap(s, "__fern_free_range_abort", ".Lmsg_free_range", aborts.free_range(), 134);
   s = abort_trap(s, "__fern_double_free_abort", ".Lmsg_double_free", aborts.double_free(), 134);
-  if (s.harden) {
-    s = abort_trap(s, "__fern_free_link_abort", ".Lmsg_free_link", aborts.free_link(), 134);
-  }
+  s = abort_trap(s, "__fern_free_link_abort", ".Lmsg_free_link", aborts.free_link(), 134);
 
   s = s.write("__fern_arr_box:\n");
   s = s.write("    movz x1, #65535\n    movk x1, #4095, lsl #16\n    cmp x0, x1\n    b.ls .Larrbox_sized\n    b __fern_alloc_size_abort_leaf\n.Larrbox_sized:\n");
@@ -9849,7 +9858,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     } else {
       s = s.write("    ldr x2, [x1]\n");
       s = s.write("    cbz x2, .Larrbox_miss\n");
-      s = s.write("    ldr x3, [x2]\n");
+      s = freelist_next(s, "x2", "x3");
       s = s.write("    str x3, [x1]\n");
     }
     s = s.write("    str x0, [x2]\n");
@@ -10727,8 +10736,10 @@ function alloc_take(s: asmcore.EmitState, cls: string): asmcore.EmitState {
   }
   s = s.write("    ldr x2, [x1, " + cls + ", lsl #3]\n");
   s = s.write("    cbz x2, .Lalloc_nofl\n");
-  s = s.write("    ldr x0, [x2]\n");
+  s = freelist_next(s, "x2", "x0");
   s = s.write("    str x0, [x1, " + cls + ", lsl #3]\n");
+  // The link of the last block of a list is the key itself.
+  s = s.write("    str xzr, [x2]\n");
   return s.write("    mov x0, x2\n");
 }
 
@@ -13593,7 +13604,9 @@ function emit_box_routines(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_rec_box:\n");
   if (direct_boxes(s)) {
     s = s.write("    sub x1, x0, #1\n    cmp x1, #254\n    b.hi .Lrecbox_far\n    adrp x2, __fern_freelist\n    add x2, x2, :lo12:__fern_freelist\n    add x2, x2, x0, lsl #3\n    add x2, x2, #8\n");
-    s = s.write("    ldr x1, [x2]\n    cbz x1, .Lrecbox_bump\n    ldr x3, [x1]\n    str x3, [x2]\n");
+    s = s.write("    ldr x1, [x2]\n    cbz x1, .Lrecbox_bump\n");
+    s = freelist_next(s, "x1", "x3");
+    s = s.write("    str x3, [x2]\n");
     s = s.write(".Lrecbox_hdr:\n    lsl x3, x0, #32\n    orr x3, x3, #1\n    str x3, [x1]\n    add x0, x1, #8\n    ret\n");
     // An unmapped heap has a pointer and an end of zero, so the end test sends it on.
     s = s.write(".Lrecbox_bump:\n    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    ldr x1, [x2]\n    add x3, x1, x0, lsl #3\n    add x3, x3, #8\n");
@@ -13617,7 +13630,9 @@ function emit_box_routines(s: asmcore.EmitState): asmcore.EmitState {
     if (direct_boxes(s)) {
       // A box of n words, 1 to 255, goes on the free list of a block of n + 1 words.
       s = s.write("    sub x2, x1, #1\n    cmp x2, #254\n    b.hi .Lboxdec_far\n    sub x2, x0, #8\n    adrp x3, __fern_freelist\n    add x3, x3, :lo12:__fern_freelist\n    add x3, x3, x1, lsl #3\n");
-      s = s.write("    ldr x9, [x3, #8]\n    str x9, [x2]\n    str x2, [x3, #8]\n    ret\n.Lboxdec_far:\n");
+      s = s.write("    ldr x9, [x3, #8]\n");
+      s = freelist_encode(s, "x2", "x9");
+      s = s.write("    str x9, [x2]\n    str x2, [x3, #8]\n    ret\n.Lboxdec_far:\n");
     }
     s = s.write("    subs x1, x1, #2\n    csel x1, x1, xzr, hs\n    stur x1, [x0, #-8]\n    mov x2, #1\n    str x2, [x0]\n    add x0, x0, #8\n");
   }
