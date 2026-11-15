@@ -16,6 +16,7 @@ import "std/crypto/ecdsa";
 import "std/crypto/sha2";
 import "std/hash/crc32";
 import "std/rand";
+import "./androidxml";
 import "./util";
 
 // `activity` is the Java class of the activity, and `dex` holds the classes
@@ -99,16 +100,8 @@ pub const TARGET_SDK: i32 = 36;
 
 // Byte encodings, little-endian.
 
-function put16(out: u8[], v: i32): u8[] {
-  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8);
-}
-
-function put32(out: u8[], v: i32): u8[] {
-  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 24 & 255) as u8);
-}
-
 function put64(out: u8[], v: i64): u8[] {
-  return put32(put32(out, (v & 4294967295i64) as i32), (v >> 32) as i32);
+  return androidxml.put32(androidxml.put32(out, (v & 4294967295i64) as i32), (v >> 32) as i32);
 }
 
 function text(s: string): u8[] {
@@ -121,24 +114,29 @@ function text(s: string): u8[] {
 
 // A field with a 32-bit length in front of it.
 function prefixed(b: [u8]): u8[] {
-  return util.append_bytes(put32([], b.len()), b);
+  return util.append_bytes(androidxml.put32([], b.len()), b);
 }
 
-// The binary manifest. The pool starts with the names of the framework
-// attributes, in the order of their resource IDs, and the resource map
-// gives those IDs. The rest of the pool follows `pool_strings`.
+// The framework attributes of the files of an app, and their resource IDs.
+const ATTR_NAMES: string[] = ["theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "minWidth", "minHeight", "text", "maxLines", "layout_weight", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "updatePeriodMillis", "initialLayout", "targetSdkVersion", "required", "resizeMode", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType", "enableOnBackInvokedCallback"];
 
-// android:theme, label, icon, name, permission, hasCode, debuggable,
-// exported, taskAffinity, clearTaskOnLaunch, stateNotNeeded,
-// excludeFromRecents, launchMode,
-// configChanges, value, minSdkVersion, versionCode, versionName,
-// resource, windowSoftInputMode, targetSdkVersion, resumeWhilePausing,
-// extractNativeLibs, usesCleartextTraffic, foregroundServiceType and
-// enableOnBackInvokedCallback. Android
-// finds the attributes of an element by a search in the order of their IDs,
-// so each element lists its attributes in that order too.
-function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16843276, 16843291, 16843292, 16843307, 16843376, 16843406, 16843762, 16843954, 16844010, 16844012, 16844185, 16844396];
+const ATTR_IDS: i32[] = [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843071, 16843072, 16843087, 16843091, 16843137, 16843276, 16843291, 16843292, 16843307, 16843344, 16843345, 16843376, 16843406, 16843619, 16843762, 16843954, 16844010, 16844012, 16844185, 16844396];
+
+// An attribute of the android namespace.
+function attr(name: string, kind: i32, data: i32): androidxml.Attr {
+  return androidxml.int_attr(name, ATTR_IDS[util.index_of_str(ATTR_NAMES, name)], kind, data);
+}
+
+function text_attr(name: string, text: string): androidxml.Attr {
+  return androidxml.text_attr(name, ATTR_IDS[util.index_of_str(ATTR_NAMES, name)], text);
+}
+
+function flag(name: string, on: boolean): androidxml.Attr {
+  return attr(name, androidxml.BOOLEAN, if (on) { -1 } else { 0 });
+}
+
+function named(tag: string, name: string): androidxml.Element {
+  return androidxml.element(tag, [text_attr("name", name)], []);
 }
 
 // The features and the launcher category of an app for Android TV.
@@ -148,120 +146,20 @@ const TOUCHSCREEN: string = "android.hardware.touchscreen";
 
 const LEANBACK_LAUNCHER: string = "android.intent.category.LEANBACK_LAUNCHER";
 
-const S_THEME: i32 = 0;
-
-const S_LABEL: i32 = 1;
-
-const S_ICON: i32 = 2;
-
-const S_NAME: i32 = 3;
-
-const S_PERMISSION: i32 = 4;
-
-const S_HAS_CODE: i32 = 5;
-
-const S_DEBUGGABLE: i32 = 6;
-
-const S_EXPORTED: i32 = 7;
-
-const S_TASK_AFFINITY: i32 = 8;
-
-const S_CLEAR_TASK: i32 = 9;
-
-const S_STATE_NOT_NEEDED: i32 = 10;
-
-const S_EXCLUDE_RECENTS: i32 = 11;
-
-const S_LAUNCH_MODE: i32 = 12;
-
-const S_CONFIG_CHANGES: i32 = 13;
-
-const S_VALUE: i32 = 14;
-
-const S_RESOURCE: i32 = 15;
-
-const S_MIN_SDK: i32 = 16;
-
-const S_VERSION_CODE: i32 = 17;
-
-const S_VERSION_NAME: i32 = 18;
-
-const S_SOFT_INPUT: i32 = 19;
-
-const S_TARGET_SDK: i32 = 20;
-
-const S_REQUIRED: i32 = 21;
-
-const S_BANNER: i32 = 22;
-
-const S_RESUME_WHILE_PAUSING: i32 = 23;
-
-const S_EXTRACT_NATIVE_LIBS: i32 = 24;
-
-const S_CLEARTEXT: i32 = 25;
-
-const S_FOREGROUND_TYPE: i32 = 26;
-
-const S_BACK_CALLBACK: i32 = 27;
-
-const S_PREFIX: i32 = 28;
-
-const S_URI: i32 = 29;
-
-const S_PACKAGE: i32 = 30;
-
-function pool_strings(app: App): string[] {
-  let out: string[] = [
-    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "required", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType", "enableOnBackInvokedCallback",
-    "android", "http://schemas.android.com/apk/res/android", "package",
-    "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
-    app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
-    "android.intent.action.MAIN", "android.intent.category.LAUNCHER", "uses-permission",
-  ];
-  for p in app.permissions {
-    out = out.append(p);
-  }
-  for sv in app.services {
-    out = out.append(sv.name);
-    if (sv.permission.len() > 0) {
-      out = out.append(sv.permission).append(sv.action);
-    }
-  }
-  if (app.home) {
-    out = out.append("android.intent.category.HOME").append("android.intent.category.DEFAULT").append("");
-  }
-  if (app.tv) {
-    out = out.append("uses-feature").append(LEANBACK).append(TOUCHSCREEN).append(LEANBACK_LAUNCHER);
-  }
-  if (app.widget.provider.len() > 0) {
-    out = out.append("receiver").append(app.widget.provider).append(WIDGET_UPDATE).append(WIDGET_META);
-  }
-  return out;
-}
-
-// The pool index of `v`. Two equal strings share their first index.
-function at(pool: string[], v: string): i32 {
-  return util.index_of_str(pool, v);
-}
-
-function service_element(out: u8[], line: i32, pool: string[], sv: Service): u8[] {
-  let attrs: Attr[] = [attr_str(S_NAME, at(pool, sv.name))];
+function service_element(sv: Service): androidxml.Element {
+  let attrs: androidxml.Attr[] = [text_attr("name", sv.name)];
   if (sv.permission.len() > 0) {
-    attrs = attrs.append(attr_str(S_PERMISSION, at(pool, sv.permission)));
+    attrs = attrs.append(text_attr("permission", sv.permission));
   }
-  attrs = attrs.append(attr_int(S_EXPORTED, 18, 0));
+  attrs = attrs.append(flag("exported", false));
   if (sv.types != 0) {
-    attrs = attrs.append(attr_int(S_FOREGROUND_TYPE, 17, sv.types));
+    attrs = attrs.append(attr("foregroundServiceType", androidxml.INT_HEX, sv.types));
   }
-  let tag = at(pool, "service");
-  out = start(out, line, tag, attrs);
+  let kids: androidxml.Element[] = [];
   if (sv.action.len() > 0) {
-    let filter = at(pool, "intent-filter");
-    out = start(out, line, filter, []);
-    out = end(start(out, line, at(pool, "action"), [attr_str(S_NAME, at(pool, sv.action))]), line, at(pool, "action"));
-    out = end(out, line, filter);
+    kids = [androidxml.element("intent-filter", [], [named("action", sv.action)])];
   }
-  return end(out, line, tag);
+  return androidxml.element("service", attrs, kids);
 }
 
 const WIDGET_UPDATE: string = "android.appwidget.action.APPWIDGET_UPDATE";
@@ -270,248 +168,95 @@ const WIDGET_META: string = "android.appwidget.provider";
 
 // The receiver of the widget: Android sends it the update action, and
 // finds the provider file of the widget in its meta-data.
-function receiver_element(out: u8[], line: i32, pool: string[], w: Widget): u8[] {
-  let tag = at(pool, "receiver");
-  let filter = at(pool, "intent-filter");
-  let meta = at(pool, "meta-data");
-  out = start(out, line, tag, [attr_str(S_NAME, at(pool, w.provider)), attr_int(S_EXPORTED, 18, -1)]);
-  out = start(out, line, filter, []);
-  out = end(start(out, line, at(pool, "action"), [attr_str(S_NAME, at(pool, WIDGET_UPDATE))]), line, at(pool, "action"));
-  out = end(out, line, filter);
-  out = end(start(out, line, meta, [attr_str(S_NAME, at(pool, WIDGET_META)), attr_int(S_RESOURCE, 1, WIDGET_INFO_ID)]), line, meta);
-  return end(out, line, tag);
+function receiver_element(w: Widget): androidxml.Element {
+  let filter = androidxml.element("intent-filter", [], [named("action", WIDGET_UPDATE)]);
+  let meta = androidxml.element("meta-data", [text_attr("name", WIDGET_META), attr("resource", androidxml.REFERENCE, WIDGET_INFO_ID)], []);
+  return androidxml.element("receiver", [text_attr("name", w.provider), flag("exported", true)], [filter, meta]);
 }
 
-// The attributes of the activity of a home screen, after its name and before
-// its launchMode: one task, which Android does not keep in the recents and
-// starts again with no saved state.
-function home_activity_attrs(pool: string[]): Attr[] {
-  return [attr_str(S_TASK_AFFINITY, at(pool, "")), attr_int(S_CLEAR_TASK, 18, -1), attr_int(S_STATE_NOT_NEEDED, 18, -1), attr_int(S_EXCLUDE_RECENTS, 18, -1)];
-}
-
-function category(out: u8[], line: i32, pool: string[], name: string): u8[] {
-  return end(start(out, line, at(pool, "category"), [attr_str(S_NAME, at(pool, name))]), line, at(pool, "category"));
-}
-
-// The UTF-16 code units of `s`.
-function utf16(s: string): i32[] {
-  let out: i32[] = [];
-  let i = 0;
-  while (i < s.len()) {
-    let c = s[i] as i32;
-    let n = 1;
-    if (c >= 240) {
-      c = c & 7;
-      n = 4;
-    } else if (c >= 224) {
-      c = c & 15;
-      n = 3;
-    } else if (c >= 192) {
-      c = c & 31;
-      n = 2;
-    }
-    for k in 1..n {
-      if (i + k < s.len()) {
-        c = c << 6 | s[i + k] as i32 & 63;
-      }
-    }
-    if (c >= 65536) {
-      out = out.append(55296 + (c - 65536 >> 10)).append(56320 + (c - 65536 & 1023));
-    } else {
-      out = out.append(c);
-    }
-    i += n;
-  }
-  return out;
-}
-
-function string_pool(strings: string[]): u8[] {
-  let offs: u8[] = [];
-  let data: u8[] = [];
-  for s in strings {
-    offs = put32(offs, data.len());
-    let units = utf16(s);
-    data = put16(data, units.len());
-    for u in units {
-      data = put16(data, u);
-    }
-    data = put16(data, 0);
-  }
-  while (data.len() % 4 != 0) {
-    data = data.append(0 as u8);
-  }
-  let head = put16(put16([], 1), 28);
-  head = put32(head, 28 + offs.len() + data.len());
-  head = put32(put32(put32(put32(put32(head, strings.len()), 0), 0), 28 + offs.len()), 0);
-  return util.append_bytes(util.append_bytes(head, offs), data);
-}
-
-function resource_map(): u8[] {
-  return id_map(attr_ids());
-}
-
-// The resource map of a binary XML file: the ID of each framework
-// attribute, in the order of the names at the start of the pool.
-function id_map(ids: i32[]): u8[] {
-  let out = put32(put16(put16([], 384), 8), 8 + 4 * ids.len());
-  for id in ids {
-    out = put32(out, id);
-  }
-  return out;
-}
-
-struct Attr { android: boolean, name: i32, kind: i32, data: i32 }
-
-function attr_str(name: i32, s: i32): Attr {
-  return Attr { android: true, name: name, kind: 3, data: s };
-}
-
-function attr_int(name: i32, kind: i32, v: i32): Attr {
-  return Attr { android: true, name: name, kind: kind, data: v };
-}
-
-function node(out: u8[], kind: i32, size: i32, line: i32): u8[] {
-  return put32(put32(put32(put16(put16(out, kind), 16), size), line), -1);
-}
-
-function start(out: u8[], line: i32, name: i32, attrs: Attr[]): u8[] {
-  return start_in(out, line, name, attrs, S_URI);
-}
-
-// The start of an element in a file whose pool has the URI of the android
-// namespace at `uri`.
-function start_in(out: u8[], line: i32, name: i32, attrs: Attr[], uri: i32): u8[] {
-  out = node(out, 258, 36 + 20 * attrs.len(), line);
-  out = put32(put32(out, -1), name);
-  out = put16(put16(put16(put16(put16(put16(out, 20), 20), attrs.len()), 0), 0), 0);
-  for a in attrs {
-    let ns: i32 = -1;
-    if (a.android) {
-      ns = uri;
-    }
-    let raw: i32 = -1;
-    if (a.kind == 3) {
-      raw = a.data;
-    }
-    out = put32(put32(put32(out, ns), a.name), raw);
-    out = put32(util.put_u8(util.put_u8(put16(out, 8), 0), a.kind), a.data);
-  }
-  return out;
-}
-
-function end(out: u8[], line: i32, name: i32): u8[] {
-  return put32(put32(node(out, 259, 24, line), -1), name);
-}
-
-// The binary AndroidManifest.xml of `app`: one NativeActivity that loads
+// The AndroidManifest.xml of `app`: one NativeActivity that loads
 // lib<app.lib>.so, with the launcher intent filter. A home screen also has
 // the home categories, so Android offers it as the home app. An app for a
 // TV also has the launcher category of Android TV, and needs no touch
 // screen.
-pub function manifest(app: App): u8[] {
-  let s = pool_strings(app);
-  let body = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
-  let manifest_tag = at(s, "manifest");
-  body = start(body, 1, manifest_tag, [attr_int(S_VERSION_CODE, 16, app.version_code), attr_str(S_VERSION_NAME, at(s, app.version_name)), Attr { android: false, name: S_PACKAGE, kind: 3, data: at(s, app.package) }]);
-  let sdk_tag = at(s, "uses-sdk");
-  body = end(start(body, 2, sdk_tag, [attr_int(S_MIN_SDK, 16, app.min_sdk), attr_int(S_TARGET_SDK, 16, TARGET_SDK)]), 2, sdk_tag);
-  let uses = at(s, "uses-permission");
+pub function manifest_tree(app: App): androidxml.Element {
+  let top: androidxml.Element[] = [androidxml.element("uses-sdk", [attr("minSdkVersion", androidxml.INT_DEC, app.min_sdk), attr("targetSdkVersion", androidxml.INT_DEC, TARGET_SDK)], [])];
   for p in app.permissions {
-    body = end(start(body, 2, uses, [attr_str(S_NAME, at(s, p))]), 2, uses);
+    top = top.append(named("uses-permission", p));
   }
   if (app.tv) {
     // An app for a TV runs on a phone too, so neither feature is required.
-    let feature = at(s, "uses-feature");
     for f in [LEANBACK, TOUCHSCREEN] {
-      body = end(start(body, 2, feature, [attr_str(S_NAME, at(s, f)), attr_int(S_REQUIRED, 18, 0)]), 2, feature);
+      top = top.append(androidxml.element("uses-feature", [text_attr("name", f), flag("required", false)], []));
     }
   }
-  let has_code = 0;
-  if (app.dex.len() > 0) {
-    has_code = -1;
-  }
-  let application = at(s, "application");
-  let activity = at(s, "activity");
   let theme = APP_THEME;
   if (app.home) {
     theme = HOME_THEME;
   }
-  let app_attrs: Attr[] = [attr_int(S_THEME, 1, theme), attr_str(S_LABEL, at(s, app.label))];
-  let activity_attrs: Attr[] = [attr_str(S_LABEL, at(s, app.label))];
+  let app_attrs: androidxml.Attr[] = [attr("theme", androidxml.REFERENCE, theme), text_attr("label", app.label)];
+  let activity_attrs: androidxml.Attr[] = [text_attr("label", app.label)];
   if (app.icon.len() > 0) {
-    app_attrs = app_attrs.append(attr_int(S_ICON, 1, ICON_ID));
-    activity_attrs = activity_attrs.append(attr_int(S_ICON, 1, ICON_ID));
+    app_attrs = app_attrs.append(attr("icon", androidxml.REFERENCE, ICON_ID));
+    activity_attrs = activity_attrs.append(attr("icon", androidxml.REFERENCE, ICON_ID));
   }
-  let extract = 0;
-  if (app.compress) {
-    extract = -1;
-  }
-  app_attrs = app_attrs.append(attr_int(S_HAS_CODE, 18, has_code));
+  app_attrs = app_attrs.append(flag("hasCode", app.dex.len() > 0));
   if (app.debuggable) {
-    app_attrs = app_attrs.append(attr_int(S_DEBUGGABLE, 18, -1));
+    app_attrs = app_attrs.append(flag("debuggable", true));
   }
   if (app.banner.len() > 0) {
-    app_attrs = app_attrs.append(attr_int(S_BANNER, 1, banner_id(app)));
+    app_attrs = app_attrs.append(attr("banner", androidxml.REFERENCE, banner_id(app)));
   }
-  app_attrs = app_attrs.append(attr_int(S_EXTRACT_NATIVE_LIBS, 18, extract));
+  app_attrs = app_attrs.append(flag("extractNativeLibs", app.compress));
   if (app.cleartext) {
-    app_attrs = app_attrs.append(attr_int(S_CLEARTEXT, 18, -1));
+    app_attrs = app_attrs.append(flag("usesCleartextTraffic", true));
   }
   // The back key goes to the OnBackInvokedCallback of std/android from
   // Android 13, as it must for an app that targets Android 16.
-  app_attrs = app_attrs.append(attr_int(S_BACK_CALLBACK, 18, -1));
-  body = start(body, 3, application, app_attrs);
-  activity_attrs = activity_attrs.append(attr_str(S_NAME, at(s, app.activity))).append(attr_int(S_EXPORTED, 18, -1));
+  app_attrs = app_attrs.append(flag("enableOnBackInvokedCallback", true));
+  activity_attrs = activity_attrs.append(text_attr("name", app.activity)).append(flag("exported", true));
   if (app.home) {
-    for a in home_activity_attrs(s) {
-      activity_attrs = activity_attrs.append(a);
-    }
+    // One task, which Android does not keep in the recents and starts again
+    // with no saved state.
+    activity_attrs = activity_attrs.append(text_attr("taskAffinity", "")).append(flag("clearTaskOnLaunch", true)).append(flag("stateNotNeeded", true)).append(flag("excludeFromRecents", true));
   }
   // singleTask, so a start of the app that runs gives its intent to the
   // activity, and the process has one activity and one loop.
   // SOFT_INPUT_ADJUST_RESIZE, so the content rectangle leaves out the
   // keyboard before Android 15. From Android 15 the window goes under the
   // bars and the keyboard, and std/android reads their insets.
-  activity_attrs = activity_attrs.append(attr_int(S_LAUNCH_MODE, 16, 2)).append(attr_int(S_CONFIG_CHANGES, 17, 1184)).append(attr_int(S_SOFT_INPUT, 17, 16));
+  activity_attrs = activity_attrs.append(attr("launchMode", androidxml.INT_DEC, 2)).append(attr("configChanges", androidxml.INT_HEX, 1184)).append(attr("windowSoftInputMode", androidxml.INT_HEX, 16));
   if (app.home) {
     // resumeWhilePausing, so home shows at once.
-    activity_attrs = activity_attrs.append(attr_int(S_RESUME_WHILE_PAUSING, 18, -1));
+    activity_attrs = activity_attrs.append(flag("resumeWhilePausing", true));
   }
-  body = start(body, 4, activity, activity_attrs);
-  body = end(start(body, 5, at(s, "meta-data"), [attr_str(S_NAME, at(s, "android.app.lib_name")), attr_str(S_VALUE, at(s, app.lib))]), 5, at(s, "meta-data"));
-  body = start(body, 6, at(s, "intent-filter"), []);
-  body = end(start(body, 7, at(s, "action"), [attr_str(S_NAME, at(s, "android.intent.action.MAIN"))]), 7, at(s, "action"));
-  body = category(body, 8, s, "android.intent.category.LAUNCHER");
+  let filter: androidxml.Element[] = [named("action", "android.intent.action.MAIN"), named("category", "android.intent.category.LAUNCHER")];
   if (app.tv) {
-    body = category(body, 8, s, LEANBACK_LAUNCHER);
+    filter = filter.append(named("category", LEANBACK_LAUNCHER));
   }
   if (app.home) {
-    body = category(category(body, 8, s, "android.intent.category.HOME"), 8, s, "android.intent.category.DEFAULT");
+    filter = filter.append(named("category", "android.intent.category.HOME")).append(named("category", "android.intent.category.DEFAULT"));
   }
-  body = end(end(body, 9, at(s, "intent-filter")), 10, activity);
+  let meta = androidxml.element("meta-data", [text_attr("name", "android.app.lib_name"), text_attr("value", app.lib)], []);
+  let parts: androidxml.Element[] = [androidxml.element("activity", activity_attrs, [meta, androidxml.element("intent-filter", [], filter)])];
   for sv in app.services {
-    body = service_element(body, 11, s, sv);
+    parts = parts.append(service_element(sv));
   }
   if (app.widget.provider.len() > 0) {
-    body = receiver_element(body, 11, s, app.widget);
+    parts = parts.append(receiver_element(app.widget));
   }
-  body = end(end(body, 11, application), 12, manifest_tag);
-  body = put32(put32(node(body, 257, 24, 12), S_PREFIX), S_URI);
-  let rest = util.append_bytes(util.append_bytes(string_pool(s), resource_map()), body);
-  return util.append_bytes(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
+  top = top.append(androidxml.element("application", app_attrs, parts));
+  let package = androidxml.Attr { name: "package", id: 0, kind: androidxml.STRING, data: 0, text: app.package };
+  return androidxml.element("manifest", [attr("versionCode", androidxml.INT_DEC, app.version_code), text_attr("versionName", app.version_name), package], top);
 }
 
-// The resource table of the images: one package 0x7f with one type,
-// "drawable", with the entries "icon" and "banner" in the default
-// configuration, in that order, each when the app has it. The value of each
-// is the path of its PNG in the archive. So the ID of the icon is
-// 0x7f010000, and the banner, the image of the app on the launcher of
-// Android TV, comes after it.
+// The binary AndroidManifest.xml of `app`.
+pub function manifest(app: App): u8[] {
+  return androidxml.binary(manifest_tree(app));
+}
 
-const ICON_PATH: string = "res/drawable/icon.png";
-
-const BANNER_PATH: string = "res/drawable/banner.png";
-
+// The ID of the icon is 0x7f010000, and the banner, the image of the app on
+// the launcher of Android TV, comes after it.
 const ICON_ID: i32 = 2130771968;
 
 function banner_id(app: App): i32 {
@@ -521,124 +266,131 @@ function banner_id(app: App): i32 {
   return ICON_ID;
 }
 
-// The entries of the drawable type, and the paths of their PNG files.
-function drawables(app: App): (Res[], string[]) {
-  let entries: Res[] = [];
-  let paths: string[] = [];
-  if (app.icon.len() > 0) {
-    entries = entries.append(Res { key: "icon", kind: 3, data: paths.len() });
-    paths = paths.append(ICON_PATH);
-  }
-  if (app.banner.len() > 0) {
-    entries = entries.append(Res { key: "banner", kind: 3, data: paths.len() });
-    paths = paths.append(BANNER_PATH);
-  }
-  return (entries, paths);
-}
-
 // A chunk: its type, the size of its header, and the header and body.
 function chunk(kind: i32, header: [u8], body: [u8]): u8[] {
-  let out = put32(put16(put16([], kind), 8 + header.len()), 8 + header.len() + body.len());
+  let out = androidxml.put32(androidxml.put16(androidxml.put16([], kind), 8 + header.len()), 8 + header.len() + body.len());
   return util.append_bytes(util.append_bytes(out, header), body);
 }
 
 // The 128 UTF-16 units of a package name, padded with zeros.
 function package_name(name: string): u8[] {
   let out: u8[] = [];
-  let units = utf16(name);
+  let units = androidxml.utf16(name);
   for k in 0..128 {
     if (k < units.len()) {
-      out = put16(out, units[k]);
+      out = androidxml.put16(out, units[k]);
     } else {
-      out = put16(out, 0);
+      out = androidxml.put16(out, 0);
     }
   }
   return out;
 }
 
-// An entry of the resource table: the name of its key, and its value as
-// the type and the data of a Res_value. The data of a file is the index of
-// its path in the strings of the table.
-struct Res { key: string, kind: i32, data: i32 }
+// An entry of the resource table: its name, and the path of its file in
+// the archive, or "" for an ID.
+pub struct Res { key: string, path: string }
 
-// The spec chunk and the type chunk of the type `id` in the default
-// configuration. `first` is the index of the key of its first entry.
-function type_chunks(id: i32, entries: Res[], first: i32): u8[] {
-  let n = entries.len();
+// A type of the resource table: its ID in the package, its name, and its
+// entries in the default configuration.
+pub struct ResType { id: i32, name: string, entries: Res[] }
+
+pub const ICON_PATH: string = "res/drawable/icon.png";
+
+pub const BANNER_PATH: string = "res/drawable/banner.png";
+
+pub const WIDGET_LAYOUT_PATH: string = "res/layout/widget.xml";
+
+pub const WIDGET_INFO_PATH: string = "res/xml/widget.xml";
+
+// The types of the resource table, of package 0x7f. The type 1, drawable,
+// has the icon and the banner, each when the app has it. With a widget, the
+// type 2 has its layout, the type 3 has its provider file, and the type 4
+// has the IDs of its items.
+pub function res_types(app: App): ResType[] {
+  let images: Res[] = [];
+  if (app.icon.len() > 0) {
+    images = images.append(Res { key: "icon", path: ICON_PATH });
+  }
+  if (app.banner.len() > 0) {
+    images = images.append(Res { key: "banner", path: BANNER_PATH });
+  }
+  let out: ResType[] = [ResType { id: 1, name: "drawable", entries: images }];
+  if (app.widget.provider.len() > 0) {
+    let ids: Res[] = [];
+    for item in app.widget.items {
+      ids = ids.append(Res { key: item.name, path: "" });
+    }
+    out = out.append(ResType { id: 2, name: "layout", entries: [Res { key: "widget", path: WIDGET_LAYOUT_PATH }] }).append(ResType { id: 3, name: "xml", entries: [Res { key: "widget_info", path: WIDGET_INFO_PATH }] }).append(ResType { id: 4, name: "id", entries: ids });
+  }
+  return out;
+}
+
+// True when the app has a resource.
+pub function has_resources(app: App): boolean {
+  return app.icon.len() > 0 || app.banner.len() > 0 || app.widget.provider.len() > 0;
+}
+
+// The spec chunk and the type chunk of `t` in the default configuration.
+// `first` is the index of the key of its first entry. The value of a file
+// is the index of its path in `paths`, and an ID is the boolean false.
+function type_chunks(t: ResType, first: i32, paths: string[]): u8[] {
+  let n = t.entries.len();
   let flags: u8[] = [];
   for k in 0..n {
-    flags = put32(flags, 0);
+    flags = androidxml.put32(flags, 0);
   }
-  let spec = chunk(514, put32(put16(util.put_u8(util.put_u8([], id), 0), 0), n), flags);
-  let config: u8[] = put32([], 64);
+  let spec = chunk(514, androidxml.put32(androidxml.put16(util.put_u8(util.put_u8([], t.id), 0), 0), n), flags);
+  let config: u8[] = androidxml.put32([], 64);
   while (config.len() < 64) {
     config = config.append(0 as u8);
   }
-  let header = util.append_bytes(put32(put32(put16(util.put_u8(util.put_u8([], id), 0), 0), n), 8 + 12 + config.len() + 4 * n), config);
+  let header = util.append_bytes(androidxml.put32(androidxml.put32(androidxml.put16(util.put_u8(util.put_u8([], t.id), 0), 0), n), 8 + 12 + config.len() + 4 * n), config);
   let offsets: u8[] = [];
   let body: u8[] = [];
   for k in 0..n {
-    offsets = put32(offsets, body.len());
-    body = put32(put16(put16(body, 8), 0), first + k);
-    body = put32(util.put_u8(util.put_u8(put16(body, 8), 0), entries[k].kind), entries[k].data);
+    let r = t.entries[k];
+    let kind = androidxml.STRING;
+    let data = util.index_of_str(paths, r.path);
+    if (r.path.len() == 0) {
+      kind = androidxml.BOOLEAN;
+      data = 0;
+    }
+    offsets = androidxml.put32(offsets, body.len());
+    body = androidxml.put32(androidxml.put16(androidxml.put16(body, 8), 0), first + k);
+    body = androidxml.put32(util.put_u8(util.put_u8(androidxml.put16(body, 8), 0), kind), data);
   }
   return util.append_bytes(spec, chunk(513, header, util.append_bytes(offsets, body)));
 }
 
-const WIDGET_LAYOUT_PATH: string = "res/layout/widget.xml";
-
-const WIDGET_INFO_PATH: string = "res/xml/widget.xml";
-
-// The resource table: one package 0x7f. The type 1 has the icon and the
-// banner. With a widget, the type 2 has its layout, the type 3 has its
-// provider file, and the type 4 has the IDs of its items. A type with no
-// entry has no chunk.
+// The resources.arsc of the app. A type with no entry has no chunk.
 function resource_table(app: App): u8[] {
-  let (images, paths) = drawables(app);
-  let kinds = ["drawable"];
+  let types = res_types(app);
+  let kinds: string[] = [];
   let keys: string[] = [];
+  let paths: string[] = [];
+  for t in types {
+    kinds = kinds.append(t.name);
+    for r in t.entries {
+      if (r.path.len() > 0) {
+        paths = paths.append(r.path);
+      }
+    }
+  }
   let body: u8[] = [];
-  if (images.len() > 0) {
-    body = type_chunks(1, images, 0);
-    for r in images {
-      keys = keys.append(r.key);
+  for t in types {
+    if (t.entries.len() > 0) {
+      body = util.append_bytes(body, type_chunks(t, keys.len(), paths));
+      for r in t.entries {
+        keys = keys.append(r.key);
+      }
     }
   }
-  if (app.widget.provider.len() > 0) {
-    kinds = ["drawable", "layout", "xml", "id"];
-    body = util.append_bytes(body, type_chunks(2, [Res { key: "widget", kind: 3, data: paths.len() }], keys.len()));
-    body = util.append_bytes(body, type_chunks(3, [Res { key: "widget_info", kind: 3, data: paths.len() + 1 }], keys.len() + 1));
-    paths = paths.append(WIDGET_LAYOUT_PATH).append(WIDGET_INFO_PATH);
-    keys = keys.append("widget").append("widget_info");
-    let ids: Res[] = [];
-    for item in app.widget.items {
-      ids = ids.append(Res { key: item.name, kind: 18, data: 0 });
-    }
-    body = util.append_bytes(body, type_chunks(4, ids, keys.len()));
-    for item in app.widget.items {
-      keys = keys.append(item.name);
-    }
-  }
-  let types = string_pool(kinds);
-  let pkg_header = util.append_bytes(put32([], 127), package_name(app.package));
-  pkg_header = put32(put32(put32(put32(put32(pkg_header, 288), kinds.len()), 288 + types.len()), keys.len()), 0);
-  let pkg = chunk(512, pkg_header, util.append_bytes(util.append_bytes(types, string_pool(keys)), body));
-  return chunk(2, put32([], 1), util.append_bytes(string_pool(paths), pkg));
+  let type_pool = androidxml.string_pool(kinds);
+  let pkg_header = util.append_bytes(androidxml.put32([], 127), package_name(app.package));
+  pkg_header = androidxml.put32(androidxml.put32(androidxml.put32(androidxml.put32(androidxml.put32(pkg_header, 288), kinds.len()), 288 + type_pool.len()), keys.len()), 0);
+  let pkg = chunk(512, pkg_header, util.append_bytes(util.append_bytes(type_pool, androidxml.string_pool(keys)), body));
+  return chunk(2, androidxml.put32([], 1), util.append_bytes(androidxml.string_pool(paths), pkg));
 }
-
-// A binary XML file of resources. `ids` has the IDs of its framework
-// attributes in rising order, and `strings` starts with their names, then
-// has `android` and the URI of its namespace.
-function xml_file(ids: i32[], strings: string[], body: u8[]): u8[] {
-  let prefix = ids.len();
-  let all = put32(put32(node([], 256, 24, 1), prefix), prefix + 1);
-  all = util.append_bytes(all, body);
-  all = put32(put32(node(all, 257, 24, 1), prefix), prefix + 1);
-  let rest = util.append_bytes(util.append_bytes(string_pool(strings), id_map(ids)), all);
-  return util.append_bytes(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
-}
-
-const ANDROID_URI: string = "http://schemas.android.com/apk/res/android";
 
 // A size in dp or in sp as the data of a dimension value.
 function dp(n: i32): i32 {
@@ -650,41 +402,24 @@ function sp(n: i32): i32 {
 }
 
 // The layout of the widget: a row on a dark ground. A text takes the room
-// that is left, on one line, and a button has the size of its label. The
-// attributes of each element are in the order of their IDs: textSize,
-// textColor, gravity, orientation, id, background, padding, layout_width,
-// layout_height, text, maxLines and layout_weight.
-function widget_layout(w: Widget): u8[] {
-  let ids = [16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843087, 16843091, 16843137];
-  let strings = ["textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "text", "maxLines", "layout_weight", "android", ANDROID_URI, "LinearLayout", "TextView"];
-  for item in w.items {
-    strings = strings.append(item.label);
-  }
-  let uri = ids.len() + 1;
-  let row = at(strings, "LinearLayout");
-  let view = at(strings, "TextView");
-  let body = start_in([], 2, row, [attr_int(2, 17, 16), attr_int(3, 16, 0), attr_int(5, 28, -434101980), attr_int(6, 5, dp(8)), attr_int(7, 16, -1), attr_int(8, 16, -1)], uri);
+// that is left, on one line, and a button has the size of its label.
+pub function widget_layout(w: Widget): androidxml.Element {
+  let kids: androidxml.Element[] = [];
   for k in 0..w.items.len() {
     let item = w.items[k];
-    let label = 16 + k;
-    let attrs: Attr[] = [attr_int(0, 5, sp(14)), attr_int(1, 28, -1), attr_int(4, 1, WIDGET_ITEM_ID + k), attr_int(7, 5, dp(0)), attr_int(8, 16, -2), attr_str(9, label), attr_int(10, 16, 1), attr_int(11, 4, 1065353216)];
+    let attrs: androidxml.Attr[] = [attr("textSize", androidxml.DIMENSION, sp(14)), attr("textColor", androidxml.COLOR_ARGB8, -1), attr("id", androidxml.REFERENCE, WIDGET_ITEM_ID + k), attr("layout_width", androidxml.DIMENSION, dp(0)), attr("layout_height", androidxml.INT_DEC, -2), text_attr("text", item.label), attr("maxLines", androidxml.INT_DEC, 1), attr("layout_weight", androidxml.FLOAT, 1065353216)];
     if (item.button) {
-      attrs = [attr_int(0, 5, sp(16)), attr_int(1, 28, -1), attr_int(2, 17, 17), attr_int(4, 1, WIDGET_ITEM_ID + k), attr_int(6, 5, dp(12)), attr_int(7, 16, -2), attr_int(8, 16, -2), attr_str(9, label)];
+      attrs = [attr("textSize", androidxml.DIMENSION, sp(16)), attr("textColor", androidxml.COLOR_ARGB8, -1), attr("gravity", androidxml.INT_HEX, 17), attr("id", androidxml.REFERENCE, WIDGET_ITEM_ID + k), attr("padding", androidxml.DIMENSION, dp(12)), attr("layout_width", androidxml.INT_DEC, -2), attr("layout_height", androidxml.INT_DEC, -2), text_attr("text", item.label)];
     }
-    body = end(start_in(body, 3 + k, view, attrs, uri), 3 + k, view);
+    kids = kids.append(androidxml.element("TextView", attrs, []));
   }
-  return xml_file(ids, strings, end(body, 3 + w.items.len(), row));
+  return androidxml.element("LinearLayout", [attr("gravity", androidxml.INT_HEX, 16), attr("orientation", androidxml.INT_DEC, 0), attr("background", androidxml.COLOR_ARGB8, -434101980), attr("padding", androidxml.DIMENSION, dp(8)), attr("layout_width", androidxml.INT_DEC, -1), attr("layout_height", androidxml.INT_DEC, -1)], kids);
 }
 
 // The provider file of the widget: its smallest size, its layout, and no
-// update by the clock. Its attributes are minWidth, minHeight,
-// updatePeriodMillis, initialLayout and resizeMode.
-function widget_info(): u8[] {
-  let ids = [16843071, 16843072, 16843344, 16843345, 16843619];
-  let strings = ["minWidth", "minHeight", "updatePeriodMillis", "initialLayout", "resizeMode", "android", ANDROID_URI, "appwidget-provider"];
-  let tag = 7;
-  let body = start_in([], 2, tag, [attr_int(0, 5, dp(250)), attr_int(1, 5, dp(40)), attr_int(2, 16, 0), attr_int(3, 1, WIDGET_LAYOUT_ID), attr_int(4, 17, 1)], ids.len() + 1);
-  return xml_file(ids, strings, end(body, 2, tag));
+// update by the clock.
+pub function widget_info(): androidxml.Element {
+  return androidxml.element("appwidget-provider", [attr("minWidth", androidxml.DIMENSION, dp(250)), attr("minHeight", androidxml.DIMENSION, dp(40)), attr("updatePeriodMillis", androidxml.INT_DEC, 0), attr("initialLayout", androidxml.REFERENCE, WIDGET_LAYOUT_ID), attr("resizeMode", androidxml.INT_HEX, 1)], []);
 }
 
 // The zip archive. The data of each entry starts at a multiple of its
@@ -714,15 +449,15 @@ function add_entry(z: Zip, e: Entry): Zip {
     data = deflate.deflate(e.data);
   }
   let pad = (align - (off + 36 + e.name.len()) % align) % align;
-  let head = put16(put16(put16(put16(put16(put32([], 67324752), 10), 0), method), 0), 33);
-  head = put16(put16(put32(put32(put32(head, crc), data.len()), e.data.len()), e.name.len()), 6 + pad);
-  head = put16(put16(put16(util.append_bytes(head, text(e.name)), 55605), 2 + pad), align);
+  let head = androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put32([], 67324752), 10), 0), method), 0), 33);
+  head = androidxml.put16(androidxml.put16(androidxml.put32(androidxml.put32(androidxml.put32(head, crc), data.len()), e.data.len()), e.name.len()), 6 + pad);
+  head = androidxml.put16(androidxml.put16(androidxml.put16(util.append_bytes(head, text(e.name)), 55605), 2 + pad), align);
   for k in 0..pad {
     head = head.append(0 as u8);
   }
-  let cd = put16(put16(put16(put16(put16(put16(put32(z.central, 33639248), 20), 10), 0), method), 0), 33);
-  cd = put16(put16(put16(put16(put32(put32(put32(cd, crc), data.len()), e.data.len()), e.name.len()), 0), 0), 0);
-  cd = util.append_bytes(put32(put32(put16(cd, 0), 0), off), text(e.name));
+  let cd = androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put32(z.central, 33639248), 20), 10), 0), method), 0), 33);
+  cd = androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put32(androidxml.put32(androidxml.put32(cd, crc), data.len()), e.data.len()), e.name.len()), 0), 0), 0);
+  cd = util.append_bytes(androidxml.put32(androidxml.put32(androidxml.put16(cd, 0), 0), off), text(e.name));
   return Zip { body: util.append_bytes(util.append_bytes(z.body, head), data), central: cd, count: z.count + 1 };
 }
 
@@ -745,12 +480,12 @@ pub function zip(entries: Entry[]): Zip {
 // The end of central directory record, for a central directory of `size`
 // bytes at `offset`.
 pub function eocd(count: i32, size: i32, offset: i32): u8[] {
-  return put16(put32(put32(put16(put16(put16(put16(put32([], 101010256), 0), 0), count), count), size), offset), 0);
+  return androidxml.put16(androidxml.put32(androidxml.put32(androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put16(androidxml.put32([], 101010256), 0), 0), count), count), size), offset), 0);
 }
 
 // The DER encoding of the certificate, the key, and the signatures.
 
-function der(tag: i32, content: [u8]): u8[] {
+pub function der(tag: i32, content: [u8]): u8[] {
   let out = util.put_u8([], tag);
   let n = content.len();
   if (n < 128) {
@@ -763,7 +498,7 @@ function der(tag: i32, content: [u8]): u8[] {
   return util.append_bytes(out, content);
 }
 
-function seq(parts: u8[][]): u8[] {
+pub function seq(parts: u8[][]): u8[] {
   let out: u8[] = [];
   for p in parts {
     out = util.append_bytes(out, p);
@@ -771,7 +506,7 @@ function seq(parts: u8[][]): u8[] {
   return der(48, out);
 }
 
-function oid(bytes: u8[]): u8[] {
+pub function oid(bytes: u8[]): u8[] {
   return der(6, bytes);
 }
 
@@ -783,7 +518,7 @@ function oid_p256(): u8[] {
   return oid([42 as u8, 134 as u8, 72 as u8, 206 as u8, 61 as u8, 3 as u8, 1 as u8, 7 as u8]);
 }
 
-function ecdsa_sha256(): u8[] {
+pub function ecdsa_sha256(): u8[] {
   return seq([oid([42 as u8, 134 as u8, 72 as u8, 206 as u8, 61 as u8, 4 as u8, 3 as u8, 2 as u8])]);
 }
 
@@ -796,24 +531,33 @@ pub function public_key_info(point: [u8]): u8[] {
   return seq([seq([oid_ec_public_key(), oid_p256()]), bit_string(point)]);
 }
 
-function name(cn: string): u8[] {
+pub function name(cn: string): u8[] {
   return seq([der(49, seq([oid([85 as u8, 4 as u8, 3 as u8]), der(12, text(cn))]))]);
+}
+
+// The common name of the issuer and of the subject of the certificate.
+pub const SUBJECT: string = "Fern";
+
+// The serial number of the certificate of `key`: from its public point, so
+// the same key gives the same number.
+pub function serial(key: ecdsa.PrivateKey): u8[] {
+  let out: u8[] = [1 as u8];
+  for b in crypto.sha256(key.public_point())[0:8] {
+    out = out.append(b);
+  }
+  return out;
 }
 
 // A version 1 certificate for `key`, signed by itself. The dates are fixed,
 // so the same key gives the same certificate.
 pub function certificate(key: ecdsa.PrivateKey): u8[] {
   let point = key.public_point();
-  let serial: u8[] = [1 as u8];
-  for b in crypto.sha256(point)[0:8] {
-    serial = serial.append(b);
-  }
   let validity = seq([der(23, text("260101000000Z")), der(24, text("20991231235959Z"))]);
-  let tbs = seq([der(2, serial), ecdsa_sha256(), name("Fern"), validity, name("Fern"), public_key_info(point)]);
+  let tbs = seq([der(2, serial(key)), ecdsa_sha256(), name(SUBJECT), validity, name(SUBJECT), public_key_info(point)]);
   return seq([tbs, ecdsa_sha256(), bit_string(sign(key, tbs))]);
 }
 
-function sign(key: ecdsa.PrivateKey, msg: [u8]): u8[] {
+pub function sign(key: ecdsa.PrivateKey, msg: [u8]): u8[] {
   match (key.sign(sha2.Sha256, msg)) {
     Ok(sig) => {
       return sig;
@@ -939,7 +683,7 @@ function chunk_digests(out: u8[], b: [u8]): (u8[], i32) {
     if (to > b.len()) {
       to = b.len();
     }
-    out = util.append_bytes(out, crypto.sha256(util.append_bytes(put32([165 as u8], to - at), b[at:to])));
+    out = util.append_bytes(out, crypto.sha256(util.append_bytes(androidxml.put32([165 as u8], to - at), b[at:to])));
   }
   return (out, n);
 }
@@ -949,7 +693,7 @@ pub function content_digest(entries: [u8], central: [u8], end_record: [u8]): u8[
   let (d1, n1) = chunk_digests([], entries);
   let (d2, n2) = chunk_digests(d1, central);
   let (d3, n3) = chunk_digests(d2, end_record);
-  return crypto.sha256(util.append_bytes(put32([90 as u8], n1 + n2 + n3), d3));
+  return crypto.sha256(util.append_bytes(androidxml.put32([90 as u8], n1 + n2 + n3), d3));
 }
 
 const ECDSA_SHA256: i32 = 513;
@@ -958,12 +702,12 @@ const V2_BLOCK_ID: i32 = 1896449818;
 
 // The APK Signing Block with one v2 signer.
 pub function signing_block(key: ecdsa.PrivateKey, cert: [u8], digest: [u8]): u8[] {
-  let digests = prefixed(prefixed(util.append_bytes(put32([], ECDSA_SHA256), prefixed(digest))));
-  let signed = util.append_bytes(util.append_bytes(digests, prefixed(prefixed(cert))), put32([], 0));
-  let sigs = prefixed(prefixed(util.append_bytes(put32([], ECDSA_SHA256), prefixed(sign(key, signed)))));
+  let digests = prefixed(prefixed(util.append_bytes(androidxml.put32([], ECDSA_SHA256), prefixed(digest))));
+  let signed = util.append_bytes(util.append_bytes(digests, prefixed(prefixed(cert))), androidxml.put32([], 0));
+  let sigs = prefixed(prefixed(util.append_bytes(androidxml.put32([], ECDSA_SHA256), prefixed(sign(key, signed)))));
   let signer = util.append_bytes(util.append_bytes(prefixed(signed), sigs), prefixed(public_key_info(key.public_point())));
   let value = prefixed(prefixed(signer));
-  let pair = util.append_bytes(put32(put64([], (4 + value.len()) as i64), V2_BLOCK_ID), value);
+  let pair = util.append_bytes(androidxml.put32(put64([], (4 + value.len()) as i64), V2_BLOCK_ID), value);
   let size = (pair.len() + 24) as i64;
   return util.append_bytes(put64(util.append_bytes(put64([], size), pair), size), text("APK Sig Block 42"));
 }
@@ -986,7 +730,7 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   if (app.dex.len() > 0) {
     entries = entries.append(Entry { name: "classes.dex", data: app.dex, deflated: false });
   }
-  if (app.icon.len() > 0 || app.banner.len() > 0 || app.widget.provider.len() > 0) {
+  if (has_resources(app)) {
     entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app), deflated: false });
   }
   if (app.icon.len() > 0) {
@@ -996,7 +740,7 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
     entries = entries.append(Entry { name: BANNER_PATH, data: app.banner, deflated: false });
   }
   if (app.widget.provider.len() > 0) {
-    entries = entries.append(Entry { name: WIDGET_LAYOUT_PATH, data: widget_layout(app.widget), deflated: false }).append(Entry { name: WIDGET_INFO_PATH, data: widget_info(), deflated: false });
+    entries = entries.append(Entry { name: WIDGET_LAYOUT_PATH, data: androidxml.binary(widget_layout(app.widget)), deflated: false }).append(Entry { name: WIDGET_INFO_PATH, data: androidxml.binary(widget_info()), deflated: false });
   }
   for a in app.assets {
     entries = entries.append(Entry { name: "assets/" + a.name, data: a.data, deflated: false });

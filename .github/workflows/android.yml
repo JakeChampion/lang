@@ -112,6 +112,18 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-plex.apk examples/android/plex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie.apk examples/android/walkie/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie2.apk -apk-package dev.fern.walkie2 -apk-label "Fern Walkie 2" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
+      # bundletool makes the APKs of each device from a bundle, as Google
+      # Play does. It checks the bundle of the counter and makes the
+      # universal APK of it, which the emulator runs.
+      - name: Make the APK of the counter from its bundle with bundletool
+        run: |
+          ./bin/fern -apk build/android-stopwatch/fern-counter.aab examples/android/counter/app.fern
+          curl -sSfL -o build/bundletool.jar https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar
+          echo "2d4ad908faea64047c1cc9cb747e6aa667c6ab192e09607bd16b67246a8cd6ae  build/bundletool.jar" | sha256sum -c
+          java -jar build/bundletool.jar validate --bundle=build/android-stopwatch/fern-counter.aab
+          keytool -genkeypair -keystore build/bundle.p12 -storetype PKCS12 -storepass android -alias bundle -keyalg EC -groupname secp256r1 -dname CN=bundle -validity 3650
+          java -jar build/bundletool.jar build-apks --bundle=build/android-stopwatch/fern-counter.aab --output=build/counter.apks --mode=universal --ks=build/bundle.p12 --ks-pass=pass:android --ks-key-alias=bundle --key-pass=pass:android
+          unzip -p build/counter.apks universal.apk > build/android-stopwatch/fern-counter-bundle.apk
       - name: Check native video packets and the QTRLE comparison harness
         run: |
           sudo apt-get update
@@ -158,6 +170,7 @@ jobs:
             build/android-stopwatch/fern-jnibindtest.apk
             build/android-stopwatch/jnibind
             build/android-stopwatch/fern-counter.apk
+            build/android-stopwatch/fern-counter-bundle.apk
             build/android-stopwatch/fern-todo.apk
             build/android-stopwatch/fern-fluid.apk
             build/android-stopwatch/fern-tune.apk
@@ -218,6 +231,8 @@ jobs:
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" tests/android/jnibind/bindings.spec | diff -u tests/android/jnibind/bindings.fern - || echo "bindings of tests/android/jnibind" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" examples/android/paper/bindings.spec | diff -u examples/android/paper/bindings.fern - || echo "bindings of examples/android/paper" >> build/android-stopwatch/emulator/failed
             python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter || echo "examples/android/counter" >> build/android-stopwatch/emulator/failed
+            adb uninstall dev.fern.counter || true
+            python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter-bundle.apk build/android-stopwatch/emulator/counter-bundle || echo "examples/android/counter from its bundle" >> build/android-stopwatch/emulator/failed
             python3 examples/android/todo/emulator_check.py build/android-stopwatch/fern-todo.apk build/android-stopwatch/emulator/todo || echo "examples/android/todo" >> build/android-stopwatch/emulator/failed
             python3 examples/android/fluid/emulator_check.py build/android-stopwatch/fern-fluid.apk build/android-stopwatch/emulator/fluid || echo "examples/android/fluid" >> build/android-stopwatch/emulator/failed
             python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune || echo "examples/android/tune" >> build/android-stopwatch/emulator/failed

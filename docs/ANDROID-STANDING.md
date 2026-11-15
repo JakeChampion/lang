@@ -45,13 +45,13 @@ Fern is strong where the others are weak:
   focus and decoders written in Fern. The Tune example plays MP3, FLAC,
   M4A, Ogg Vorbis and Opus with no codec of the system.
 
-Fern is behind in six areas, and the first two stop a release on Google
-Play today:
+Fern is behind in six areas. The first two stopped a release on Google
+Play, and the first is now fixed:
 
 1. **Play Store packaging.** Play needs an AAB, a version code that goes
    up, and a target API level of 36 for new apps and updates since
-   31 August 2026. `fern -apk` writes an APK only. Its target API level
-   was 34, and it is now 36.
+   31 August 2026. `fern -apk` wrote an APK only, with a target API level
+   of 34. It now writes an AAB too, and it targets API level 36.
 
 2. **No Java or Kotlin libraries.** The APK path cannot include a JAR or
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
@@ -100,7 +100,7 @@ compressed.
 | Area | Fern | Kotlin + Compose | Flutter | React Native |
 |---|---|---|---|---|
 | Toolchain to install | None | Android Studio, Gradle, JDK | Flutter SDK, Android SDK | Node, Android SDK, Gradle |
-| Release format | Signed APK | AAB with R8 | AAB | AAB through EAS |
+| Release format | Signed APK or AAB | AAB with R8 | AAB | AAB through EAS |
 | Target API 36 | Yes | Yes | Yes | Yes |
 | Download size of a small app | About 0.1 to 1 MB | About 2 MB | Several MB per ABI | About 16 MB |
 | Use of Android and Java libraries | JNI and generated bindings, no JAR or AAR | Direct | Plugins and channels | Native modules |
@@ -129,8 +129,9 @@ The order puts first what stops a release, then what most apps need.
    - Target API 36, done. An app that targets API 36 does not get the back key
      as a key event, so it needs a back callback. Its window goes under
      the system bars, so it needs the insets of the bars. `std/android/launch` registers both.
-   - An AAB, with the manifest and the resources in the protocol buffer
-     format of aapt2.
+   - An AAB, done. With an OUT that ends in `.aab`, `fern -apk` writes the
+     manifest and the resources in the protocol buffer format of aapt2,
+     and signs the bundle with a JAR signature.
 
 2. **A key-value store and the state after the death of the process.**
    Small, and each app needs them.

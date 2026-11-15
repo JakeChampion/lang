@@ -133,6 +133,17 @@ Google Play takes a new release of an app only when its `version_code`
 is larger than that of the last release. `version_name` is the version
 that the app shows to people.
 
+Google Play takes an Android App Bundle, not an APK. When OUT ends in
+`.aab`, `fern -apk` writes a bundle with the same settings:
+
+```sh
+fern -apk counter.aab app.fern
+```
+
+Upload the bundle to Google Play. Sign each release with the same key,
+`counter.key.pem` next to the bundle, or the file that `-apk-key` gives.
+Google Play keeps that key as the upload key of the app.
+
 The app targets Android 16 (API level 36), as Google Play asks for each
 new app and each update. So from Android 15 the window goes under the
 status bar, the navigation bar and the keyboard. `std/android/ui` keeps

@@ -950,7 +950,7 @@ func TestApkManifest(t *testing.T) {
 	if got := string(readZipEntry(t, zr, "assets/data.txt")); got != "fern" {
 		t.Errorf("assets/data.txt = %q, want the file next to fern.toml", got)
 	}
-	if got := versionCode(man); got != 7 || !bytes.Contains(man, utf16le("2.1")) {
+	if got := versionCode(t, man); got != 7 || !bytes.Contains(man, utf16le("2.1")) {
 		t.Errorf("version_code and version_name of fern.toml: versionCode %d, want 7 and the name 2.1", got)
 	}
 	raw, err = build("-apk-version-code", "9", "-apk-version-name", "3.0")
@@ -958,7 +958,7 @@ func TestApkManifest(t *testing.T) {
 		t.Fatalf("fern -apk -apk-version-code: %v\n%s", err, raw)
 	}
 	man = readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
-	if got := versionCode(man); got != 9 || !bytes.Contains(man, utf16le("3.0")) || bytes.Contains(man, utf16le("2.1")) {
+	if got := versionCode(t, man); got != 9 || !bytes.Contains(man, utf16le("3.0")) || bytes.Contains(man, utf16le("2.1")) {
 		t.Errorf("the version flags did not take priority over fern.toml: versionCode %d", got)
 	}
 	for _, bad := range []string{"0", "5K"} {
@@ -974,17 +974,16 @@ func TestApkManifest(t *testing.T) {
 	}
 }
 
-// versionCode is the android:versionCode of a binary manifest of fern -apk:
-// the value of the attribute whose name is entry 17 of the string pool, or
-// -1.
-func versionCode(man []byte) int {
-	head := []byte{17, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 8, 0, 0, 0x10}
-	i := bytes.Index(man, head)
-	if i < 0 || i+len(head)+4 > len(man) {
+// versionCode is the android:versionCode of a binary manifest, or -1.
+func versionCode(t *testing.T, man []byte) int {
+	v, ok := elementAttr(t, man, versionCodeID, versionCodeID)
+	if !ok {
 		return -1
 	}
-	return int(binary.LittleEndian.Uint32(man[i+len(head):]))
+	return int(v)
 }
+
+const versionCodeID = 0x0101021b
 
 // fakeAdb records each call in $FAKE_ADB_LOG and answers as a device with
 // the ABI x86_64 and an app with the process 4242.
