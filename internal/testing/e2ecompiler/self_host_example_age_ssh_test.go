@@ -472,11 +472,7 @@ func ageKeygen(t *testing.T, oracle, keygen, port ageTool, dir string) {
 		os.Remove(filepath.Join(dir, "y-out"))
 		gotOut, got, gotCode := port.run(t, dir, nil, args...)
 		gotFile, _ := os.ReadFile(filepath.Join(dir, "y-out"))
-		if wantCode != 0 {
-			want = strings.SplitN(strings.ReplaceAll(want, "age-keygen: report unexpected or unhelpful errors at https://filippo.io/age/report\n", ""), "\n", 2)[0]
-			got = strings.SplitN(got, "\n", 2)[0]
-		}
-		if gotCode != wantCode || got != want && args[0] != "-h" || !bytes.Equal(gotOut, wantOut) || !bytes.Equal(gotFile, wantFile) {
+		if gotCode != wantCode || got != want || !bytes.Equal(gotOut, wantOut) || !bytes.Equal(gotFile, wantFile) {
 			t.Errorf("age-keygen %v: exit %d %q %q; fern age-keygen exit %d %q %q", args, wantCode, want, wantOut, gotCode, got, gotOut)
 		}
 	}

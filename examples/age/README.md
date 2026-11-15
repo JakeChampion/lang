@@ -245,15 +245,15 @@ encrypts decrypt with age. The messages and the exit codes are those of
 age 1.3.2:
 
 - `age: error: ...` and exit 1 for a failure. A hint follows on lines that
-  start with `age: hint: `.
+  start with `age: hint: `. The last line tells the user where to report
+  the error, as in age.
 
 - A bad flag gives the message of the Go `flag` package, the usage and
   exit 2.
 
-age adds a last line to each error, which tells the user to report the
-error to the age project. The port does not write that line. The usage
-text is the text of the port. `--version` prints `v1.3.2-fern`. The same
-rules apply to `age-keygen`, `age-inspect` and the plugins.
+- The usage text and the `--version` text are those of age 1.3.2.
+
+The same rules apply to `age-keygen`, `age-inspect` and the plugins.
 
 ### Differences from age 1.3.2
 

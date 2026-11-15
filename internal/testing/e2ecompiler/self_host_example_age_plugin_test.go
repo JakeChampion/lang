@@ -181,7 +181,6 @@ func agePluginPrograms(t *testing.T, dir, ours, release string) {
 	for _, name := range []string{"pq", "batchpass", "tag", "tagpq"} {
 		cases = append(cases, []string{name}, []string{name, "--age-plugin=identity-v2"}, []string{name, "-x"}, []string{name, "-h"}, []string{name, "--age-plugin"})
 	}
-	reportLine := regexp.MustCompile(`age-plugin-pq: report unexpected or unhelpful errors at https://filippo.io/age/report\n`)
 	run := func(path string, args []string) ([]byte, string, int) {
 		cmd := exec.Command("age-plugin-"+args[0], args[1:]...)
 		cmd.Dir = dir
@@ -195,7 +194,7 @@ func agePluginPrograms(t *testing.T, dir, ours, release string) {
 		}
 		cmd.Path = lp
 		_ = cmd.Run()
-		return stdout.Bytes(), reportLine.ReplaceAllString(stderr.String(), ""), cmd.ProcessState.ExitCode()
+		return stdout.Bytes(), stderr.String(), cmd.ProcessState.ExitCode()
 	}
 	for _, args := range cases {
 		wantOut, want, wantCode := run(release, args)
