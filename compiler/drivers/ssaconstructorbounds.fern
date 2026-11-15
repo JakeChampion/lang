@@ -46,19 +46,21 @@ function coherent(output: ssaprepare.Output, row: ssaprepare.Emitted, from: stri
 function declarations(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
   let tag = check(output, true, "actual tag").tag;
   require(tag >= 65536i64 && tag % 65536i64 == 2i64, "tag has the number of words");
-  let mov = "movl $" + util.i64_to_string(tag) + ", %esi";
-  let store = "movl %esi, -4(%rax)";
-  let other = coherent(output, row, mov, "movl $" + util.i64_to_string(tag + 65536i64) + ", %esi");
+  let store = tag_store("movl", tag, -4);
+  let other = coherent(output, row, store, tag_store("movl", tag + 65536i64, -4));
   require(check(other, true, "the tag of the text").tag == tag + 65536i64, "derived tag");
-  check(coherent(output, row, mov, ""), false, "missing tag");
-  check(coherent(output, row, mov, "movl $" + util.i64_to_string(tag + 1i64) + ", %esi"), false, "tag of another number of words");
-  check(coherent(output, row, mov, "movl $2, %esi"), false, "tag with no shape");
-  check(coherent(output, row, mov, "movq $" + util.i64_to_string(tag) + ", %rsi"), false, "tag is not a 32-bit constant");
   check(coherent(output, row, store, ""), false, "missing tag store");
+  check(coherent(output, row, store, tag_store("movl", tag + 1i64, -4)), false, "tag of another number of words");
+  check(coherent(output, row, store, tag_store("movl", 2i64, -4)), false, "tag with no shape");
+  check(coherent(output, row, store, tag_store("movq", tag, -4)), false, "tag is not a 32-bit constant");
   check(coherent(output, row, store, store + "\n" + store), false, "ambiguous tag store");
-  check(coherent(output, row, store, "movl %esi, -8(%rax)"), false, "tag store at the count");
+  check(coherent(output, row, store, tag_store("movl", tag, -8)), false, "tag store at the count");
   check(coherent(output, row, "movq $2, %rdi", "unknown_instruction"), true, "not a machine certificate");
-  check(ssaprepare.Output { ...output, text: output.text.split(mov).join("") }, false, "capture mismatch");
+  check(ssaprepare.Output { ...output, text: output.text.split(store).join("") }, false, "capture mismatch");
+}
+
+function tag_store(name: string, tag: i64, offset: i32): string {
+  return name + " $" + util.i64_to_string(tag) + ", " + util.i32_to_string(offset) + "(%rax)";
 }
 
 function schemas(output: ssaprepare.Output, row: ssaprepare.Emitted): void {

@@ -69,12 +69,12 @@ function actual_operations(p: isa.ArrayProgram, body: text.Body): void {
       require(op.symbol == "__fern_rec_box", "actual dependency name");
       calls += 1;
     }
-    if (op.kind == 4) {
+    if (op.kind == 4 || op.kind == 22) {
       actual_store(op, stores);
       stores += 1;
     }
-    if (op.kind == 5 && op.width == 32) {
-      require(op.destination == 6 && op.immediate >= 65536 && op.immediate % 65536 == 2, "actual shape tag");
+    if (op.kind == 22 && op.width == 32) {
+      require(op.immediate >= 65536 && op.immediate % 65536 == 2, "actual shape tag");
       shapes += 1;
     }
     if (op.kind == 31) {

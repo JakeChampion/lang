@@ -1,11 +1,14 @@
 # load
 
 An HTTP load generator with the command line of
-[oha](https://github.com/hatoo/oha). It sends requests to one URL at a fixed
-concurrency or at a fixed rate. It gives the latency distribution as text or
-as JSON. It speaks HTTP/1.1 with keep-alive, over TCP or over TLS, and it can
-use all CPUs, with a reactor for each CPU. This version is slices 1, 2 and 3
-of #15592.
+[oha](https://github.com/hatoo/oha) 1.16. It sends requests at a fixed
+concurrency or at a fixed rate. It gives the latency distribution as text,
+JSON, CSV or a SQLite database. It speaks HTTP/1.0, HTTP/1.1, HTTP/2 and
+HTTP/3. It connects over TCP, TLS, QUIC, a Unix socket or VSOCK, directly or
+through a proxy.
+
+It can use all CPUs, with a reactor for each CPU. On a terminal, it shows the
+live display of oha. It has every option of oha 1.16 (#15592).
 
 ```
 $ load -n 2000 -c 10 http://127.0.0.1:8080/
@@ -61,6 +64,9 @@ $ fern -O -target x86-64-linux -o load examples/load/load.fern   # or arm64-linu
 $ load -z 10s -c 50 http://127.0.0.1:8080/
 $ load -q 1000 -z 10s -c 50 --latency-correction --output-format json http://127.0.0.1:8080/
 $ load -n 10k -c 20 --insecure https://127.0.0.1:8443/
+$ load -z 10s -c 10 -p 8 --http2 --insecure https://127.0.0.1:8443/
+$ load -n 1000 --rand-regex-url 'http://127.0.0.1:8080/[a-z]{2}/[0-9]+'
+$ load -n 100 -x http://127.0.0.1:3128 --proxy-http2 https://example.test/
 ```
 
 ## Options
@@ -71,63 +77,72 @@ $ load -n 10k -c 20 --insecure https://127.0.0.1:8443/
 | `-z DURATION` | Send requests for DURATION instead of a count, for example `10s`, `500ms`, `1m` or `1m 30s`. |
 | `-w`, `--wait-ongoing-requests-after-deadline` | At the end of `-z`, wait for the requests in flight. It needs `-z`. |
 | `-c CONNECTIONS` | Use CONNECTIONS connections at the same time. The default is 50. |
-| `-q RATE` | Send RATE requests each second, across all connections and all reactors, for example `1000` or `0.5`. The maximum is 1,000,000,000. See [The rate of -q](#the-rate-of--q). |
-| `--latency-correction` | With `-q` or a burst, start the latency of a request at the time that it is due. See [The rate of -q](#the-rate-of--q). |
+| `-p COUNT` | Keep COUNT requests in flight on each connection of HTTP/2 or HTTP/3. The default is 1. |
+| `-q RATE` | Send RATE requests each second, across all connections and all reactors, for example `1000` or `0.5`. `0` is no rate. See [The rate of -q](#the-rate-of--q). |
+| `--latency-correction` | With `-q` or a burst, start the latency of a request at the time that it is due. |
 | `--burst-delay DURATION`, `--burst-rate COUNT` | Send COUNT requests at the start of each DURATION. Give the two options together, and not with `-q`. |
 | `--worker-threads COUNT` | Use COUNT reactors. The default is one for each 64 connections, and not more than one for each CPU. See [Reactors](#reactors). |
+| `--rand-regex-url` | The URL is a regular expression. Each request goes to a URL that the expression generates. See [Generated URLs](#generated-urls). |
+| `--max-repeat COUNT` | The largest count of extra repeats of `*`, `+` and `{n,}` in `--rand-regex-url`. The default is 4. |
+| `--urls-from-file` | The operand is a file with one URL on each line. Each request goes to a line that the tool selects at random. |
+| `--dump-urls COUNT` | Write COUNT URLs of `--rand-regex-url` or `--urls-from-file`, one on each line, and stop. |
 | `-m METHOD`, `--method METHOD` | The method. The default is `GET`. |
-| `-H "Name: value"` | Add a header field. Give `-H` again for each field. A field replaces an earlier field of the same name. |
-| `-d BODY` | Send BODY as the request body, with a `Content-Length` field. |
+| `-H "Name: value"` | Add a header field. Give `-H` again for each field. A field replaces an earlier field of the same name. A `Content-Length` or `Transfer-Encoding: chunked` field frames the body, as in oha. |
+| `-d BODY` | Send BODY as the request body. |
 | `-D FILE` | Send the bytes of FILE as the request body. |
+| `-Z FILE` | Send one line of FILE as the body of each request. The tool selects the line at random. |
+| `-F NAME=VALUE`, `--form NAME=VALUE` | Send a `multipart/form-data` body, as curl does. `NAME=@PATH` sends the file PATH. Give `-F` again for each part. |
 | `-A ACCEPT` | The value of the `Accept` field. The default is `*/*`. |
 | `-T TYPE` | The value of the `Content-Type` field. |
 | `-a USER:PASSWORD` | Send an `Authorization` field for Basic authentication. |
+| `--aws-sigv4 aws:amz:REGION:SERVICE` | Sign each request with AWS Signature Version 4. The key comes from `-a ACCESS_KEY:SECRET_KEY`. |
+| `--aws-session TOKEN` | Send TOKEN as the `X-Amz-Security-Token` of the signature. |
 | `--host HOST` | The value of the `Host` field. |
 | `--disable-compression` | Do not send the `Accept-Encoding: gzip, compress, deflate, br` field of oha. |
 | `-t TIMEOUT` | Stop a request that takes longer than TIMEOUT, and count the error `timeout`. The default is no timeout. |
-| `--connect-timeout TIMEOUT` | Stop a connect, and the TLS handshake after it, that takes longer than TIMEOUT. The error is `timeout`. The default is 5s. |
+| `--connect-timeout TIMEOUT` | Stop a connect, and the handshakes after it, that takes longer than TIMEOUT. The default is 5s. |
 | `--disable-keepalive` | Open a new connection for each request, and send `Connection: close`. |
-| `-r COUNT`, `--redirect COUNT` | Follow up to COUNT redirects of a request. The default is 0, which counts the redirect response. See [Redirects](#redirects). |
+| `-r COUNT`, `--redirect COUNT` | Follow up to COUNT redirects of a request. The default is 0. See [Redirects](#redirects). |
+| `--http-version VERSION` | `1.0`, `1.1` (the default), `2` or `3`. See [HTTP/2 and HTTP/3](#http2-and-http3). |
+| `--http2` | The same as `--http-version 2`. |
+| `-x PROXY` | Send the requests through the `http` or `https` proxy PROXY. See [Proxies](#proxies). |
+| `--proxy-header "Name: value"` | Add a header field to the requests to the proxy. |
+| `--proxy-http-version VERSION`, `--proxy-http2` | Speak `1.0`, `1.1` or `2` to the proxy. |
 | `--insecure` | Accept the certificate of an `https` server without a check of its chain or its name. |
 | `--cacert FILE` | Also trust the certificates in the PEM file FILE. |
-| `--connect-to HOST:PORT:TARGET_HOST:TARGET_PORT` | Connect to TARGET_HOST:TARGET_PORT when the URL is HOST:PORT. The `Host` field and the TLS server name stay those of the URL. Put an IPv6 address in brackets. |
+| `--cert FILE`, `--key FILE` | Send the client certificate chain of the PEM file FILE, with its private key. See [HTTPS](#https). |
+| `--connect-to HOST:PORT:TARGET_HOST:TARGET_PORT` | Connect to TARGET_HOST:TARGET_PORT when the URL is HOST:PORT. Give it again for more targets, and the tool selects one at random. The `Host` field and the TLS server name stay those of the URL. |
 | `--ipv4`, `--ipv6` | Use only an address of that family. |
-| `--output-format FORMAT` | `text` (the default), `json` or `quiet`. See [The JSON summary](#the-json-summary). `quiet` writes no summary. |
-| `-o FILE`, `--output FILE` | Write the summary to FILE instead of to the standard output. |
+| `--unix-socket PATH` | Connect to the Unix socket PATH for an `http` URL. |
+| `--vsock-addr CID:PORT` | Connect to PORT of the VSOCK context CID for an `http` URL. Linux only. |
+| `--output-format FORMAT` | `text` (the default), `json`, `csv` or `quiet`. See [Outputs](#outputs). |
+| `-o FILE`, `--output FILE` | Write the output to FILE instead of to the standard output. |
 | `-u UNIT`, `--time-unit UNIT` | Give the times of the text summary in `ns`, `us`, `ms`, `s`, `m` or `h`. |
+| `--stats-success-breakdown` | Also give the latencies of the responses with a status of 2xx and of the other responses. |
+| `--db-url FILE` | Write each response to the SQLite database FILE. See [Outputs](#outputs). |
+| `--debug` | Send one request, write the request and the response, and stop. |
+| `--no-tui`, `--fps COUNT`, `--no-color` | Do not show the live display, show it COUNT times each second (the default is 16), or show it with no colors. See [The live display](#the-live-display). |
+| `--no-pre-lookup` | Accepted, as in oha. The tool always looks up the names once, before the run. |
 | `-V`, `--version` | Write the version and stop. |
-| `--no-tui`, `--no-color`, `--fps COUNT` | Accepted for compatibility with oha. The tool has no TUI and no colors. |
-| `--no-pre-lookup` | Accepted for compatibility with oha. The tool always looks up the name once, before the run. |
-| `-p COUNT`, `--http-version 1.1` | Accepted for compatibility with oha. `-p` applies only to HTTP/2. |
 
-The URL is the only operand. Its scheme is `http` or `https`, and its host is
-an IP address or a name. The tool uses the first address of the name. An
-option value can follow its option, as in `-n 200`. A short option can have
-its value in the same argument, as in `-n200`, and a long option after `=`, as
-in `--redirect=2`.
+The URL is the only operand. An option value can follow its option, as in
+`-n 200`. A short option can have its value in the same argument, as in
+`-n200`, and a long option after `=`, as in `--redirect=2`.
 
-An option that is not valid gives a message, the usage, and exit code 2.
-These conditions give a message and exit code 1: a host with no address, a
-`-D` file that the tool cannot read, and a `--cacert` file with no
-certificate. A run
-gives exit code 0, also when requests fail, as oha does.
+The exit codes are those of oha. These conditions give a message, the usage,
+and exit code 2:
 
-### Options that the tool refuses
+- an option that is not valid
+- an option that is given twice
+- two options that conflict
 
-These oha options give a message and exit code 2:
+These conditions give a message and exit code 1:
 
-- `--http2`, and `--http-version` with a value that is not `1.1`: the tool uses HTTP/1.1.
-- `-x`, `--proxy-header`, `--proxy-http-version` and `--proxy-http2`: there are no proxies.
-- `--rand-regex-url`, `--urls-from-file`, `--max-repeat` and `--dump-urls`: the tool sends requests to one URL.
-- `-Z` and `-F`, `--form`: use `-d` or `-D`, with `-T` for the type.
+- a URL that is not valid, or a host with no address
+- a file that the tool cannot read, or a `--cacert` file with no certificate
+- a header value that is not valid
 
-These oha options also give a message and exit code 2:
-
-- `--aws-session` and `--aws-sigv4`: there are no AWS signatures.
-- `--cert` and `--key`: there are no client certificates.
-- `--unix-socket` and `--vsock-addr`: the tool connects only over TCP.
-- `--db-url`, `--debug` and `--stats-success-breakdown`.
-- `--output-format csv`: the tool does not keep a record of each request.
+A run gives exit code 0, also when requests fail, as oha does.
 
 ## The summary
 
@@ -233,12 +248,19 @@ Thus the default gives each reactor at least 64 connections. See
 ## HTTPS
 
 An `https` URL connects over TLS 1.3 or TLS 1.2 with `std/tls`. The client
-sends the host of the URL as the server name (SNI), except for an IP address,
-and offers the ALPN protocol `http/1.1`. It verifies the certificate chain and
-the host name against the system roots, and the roots of `--cacert`. A
-`SSL_CERT_FILE` variable names a different root file. With `--insecure`, the
+sends the host of the URL as the server name (SNI), except for an IP address.
+It offers the ALPN protocol `h2` for HTTP/2, and no protocol for HTTP/1, as
+oha does.
+
+The client verifies the certificate chain and the host name against the
+system roots, and the roots of `--cacert`. A `SSL_CERT_FILE` variable names a
+different root file. With `--insecure`, the
 client accepts any certificate chain for any name. It still checks that the
 server signed the handshake with the key of its certificate.
+
+With `--cert` and `--key`, the client sends its certificate chain when the
+server asks for one, over TLS 1.3 and over TLS 1.2. The key is an ECDSA P-256 or
+P-384 key, an Ed25519 key or an RSA key, in a PEM file of `std/tls/identity`.
 
 A TLS connection stays open between requests, as a TCP connection does. A
 redirect to another host opens a TLS connection to that host. The TLS records
@@ -256,6 +278,84 @@ open connection uses that connection when the response keeps it open. A
 location on another host opens a connection to that host. When the request
 gets more than COUNT redirects, it fails with this error of oha:
 `Redirection limit has reached`.
+
+## HTTP/2 and HTTP/3
+
+With `--http2`, each connection of `-c` is one connection of HTTP/2 with up
+to `-p` requests in flight, as in oha. An `https` URL negotiates `h2` with
+ALPN. An `http` URL sends the preface of HTTP/2 with no upgrade (prior
+knowledge). The windows of a connection and of a stream are 2^30 - 1 bytes,
+as in oha.
+
+With `--http-version 3`, each connection of `-c` is one QUIC connection on a
+UDP socket of its own, with up to `-p` requests in flight. The URL must be
+`https`, and a proxy is refused. oha 1.16 has HTTP/3 only when it is built
+with its `http3` feature. The oha of `mise.toml` does not have it, so the
+tests compare HTTP/3 only with a `std/serve` server.
+
+## Proxies
+
+With `-x PROXY`, an `http` URL goes to the proxy in absolute form, as in
+`GET http://host/path HTTP/1.1`. An `https` URL goes through a tunnel: the tool
+sends `CONNECT host:port` to the proxy, and then speaks TLS to the host in the
+tunnel. The fields of `--proxy-header` go to the proxy only.
+
+With `--proxy-http2`, the tool speaks HTTP/2 to the proxy. For an `http` URL,
+the requests are streams of HTTP/2 to the proxy, with the host of the URL in
+`:authority`. For an `https` URL, the tunnel is a CONNECT stream of HTTP/2
+(RFC 9113 section 8.5), and the requests in the tunnel use the version of
+`--http-version`. An `https` proxy gets TLS first.
+
+## Generated URLs
+
+With `--rand-regex-url`, the URL is a regular expression of `std/regex`, and
+the dots of the URL match only a dot, as in oha. Each request goes to a URL
+that the expression generates. The distribution is that of the `rand_regex`
+crate of oha. Each repeat count of a repetition has the same chance. Each
+branch of an alternation, and each character of a class, also has the same
+chance.
+
+`*`, `+` and `{n,}` have up to `--max-repeat` extra repeats.
+`--dump-urls COUNT` writes COUNT URLs and stops.
+
+A URL with a different host opens a new connection. Like oha, the tool keeps
+a connection open when the next URL has the same host and port.
+
+## Outputs
+
+`--output-format csv` writes one line for each request, as oha does, under
+the header `request-start,DNS,DNS+dialup,Response-delay,request-duration,bytes,status`.
+The times are in seconds. The tool keeps the record of
+each request only for `csv` and `--db-url`.
+
+`--db-url FILE` writes one row for each response to the table
+`oha` of the SQLite database FILE, with the schema of oha. The tool writes the
+file format of SQLite itself. When FILE is a database of oha or of the tool,
+the tool adds its rows to the rows that are there.
+
+The tool refuses a
+database with a `-wal` or a `-journal` file, and a database that is not of
+this table.
+
+`--debug` sends one request. It writes the request and the response in the
+form of the Rust debug output of oha, and stops.
+
+`--stats-success-breakdown` adds two histograms and two distributions to the
+text and JSON summaries. They are for the responses with a status of 2xx,
+and for the other responses.
+
+## The live display
+
+On a terminal, without `--no-tui`, the tool shows the live display of oha on
+the alternative screen. It has the progress and the requests in each time
+scale. It also has the status codes, the errors, the requests of the past,
+and a histogram of the latencies. The keys `+` and `-` change the time scale, `a` selects it from the
+time of the run, and `q` or Ctrl-C stops the run. When the run ends, the
+tool restores the terminal and writes the summary. The summary on a terminal
+has the colors of oha, except with `--no-color`.
+
+The live display needs the responses as they come, so a run with the live
+display uses one reactor.
 
 ## The JSON summary
 
@@ -282,17 +382,24 @@ these keys as text.
 
 ## Differences from oha
 
+The tool and oha give the same exit codes and the same keys in each output.
+Their requests have the same bytes, except for the user agent and the
+boundary of a form. These differences remain.
+
+The histograms and the samples are approximate:
+
 - A percentile is the highest value of its histogram bucket, with three
   significant digits. oha gives the exact value. The rank of a percentile is
   the rank of oha: floor(p / 100 × N) + 1 of N responses.
 
-The histograms and the samples are approximate:
-
 - A histogram bin counts each latency at the lowest value of its histogram
   bucket. A latency less than 0.1% above a bin edge can go in the next bin.
+
 - oha measures the first byte at the first data of the body. The tool
   measures it at the first byte of the response, so a response with no body
-  also has a first byte.
+  also has a first byte. For HTTP/2 and HTTP/3, the first byte is the time of
+  the read that completes the head of the response.
+
 - `rps` has a sample for each full 10 ms of the run. oha makes a sample for
   each group of responses that end within 10 ms of the first of the group.
 
@@ -300,22 +407,32 @@ These differences are in what the tool does:
 
 - A request that is due waits only for the connections of its reactor. oha
   has one queue for all connections.
+
 - `--worker-threads` has a default of one reactor for each 64 connections,
   and not more than one for each CPU. oha uses a thread for each core.
 
-Some options and fields are not the same:
+- DNS-lookup is zero: the tool looks up the names once, before the run, and
+  `--no-pre-lookup` does not change that. With a proxy, the tool looks up only
+  the proxy.
 
-- DNS-lookup is zero: the tool looks up the name once, before the run.
-- The tool refuses a `Content-Length` or `Transfer-Encoding` field from `-H`,
-  because the tool frames the body itself.
-- A run with no responses gives no latency rows and no histogram rows. oha
-  gives `NaN` rows.
-- The options in [Options that the tool refuses](#options-that-the-tool-refuses)
-  are not there.
+- The live display is near the layout of oha, but it is not the same cell
+  for cell. It forces one reactor.
+
+- `--http-version 0.9` and `--proxy-http-version 0.9` give exit code 2. oha
+  accepts them.
+
+- An error that `std/net` has no name for, such as ENODEV, has the text
+  `Network error (errno 19) (os error 19)`. oha gives the text of the system,
+  `No such device (os error 19)`.
+
+- The user agent is `fern-load/0.4`. The boundary of a form is
+  `----formdata-load-` and 32 hex digits. oha uses `oha/1.16.0` and
+  `----formdata-oha-`.
 
 As oha does, the tool counts a request in flight at the end of `-z` as
 `aborted due to deadline`. This error is not in the success rate. With `-w`,
-the tool waits for the response.
+the tool waits for the response. A run with no response gives the `NaN` rows
+of oha.
 
 ## How it works
 
@@ -346,61 +463,68 @@ the reactors is exact.
 
 ## Measurement
 
-The table compares the tool with oha 1.16.0 for 5 seconds (`-z 5s`). The
-server was the `std/serve` hello server of
-`internal/testing/e2e/load_example_test.go`, on the same host, with
-`max_connections` and `max_connections_per_ip` set to 4096. With the default
-of 100 connections for each address, the server closes connections at
-`-c 200`, for both tools. The https server was a Go `net/http` server with a
-P-256 certificate, and both tools used `--insecure`.
+The table compares the tool with oha 1.16.0 on the same host, with the
+servers on that host too. The runs of the tools alternated, three times, for
+5 seconds each (`-z 5s`). Each row gives the mean of three runs, and the
+lowest and the highest run.
 
-The runs of the tools alternated, three times. Each row gives the mean of
-three runs, and the lowest and the highest run.
+- http: the `std/serve` hello server of
+  `internal/testing/e2e/load_example_test.go`, `-c 50`.
+- https, h2c and h2: a Go `net/http` server with a P-256 certificate, HTTP/2
+  in clear text for h2c, and `--insecure` for both tools. HTTP/2 runs used
+  `-c 10 -p 10`.
 
 | Target | Tool | Requests/sec | CPU time for each request |
 | --- | --- | --: | --: |
-| http, `-c 50` | oha 1.16.0, 4 threads | 133,101 (130,256 to 137,285) | 9.3 µs |
-| http, `-c 50` | this tool, 1 reactor (the default) | 155,493 (118,108 to 184,371) | 5.7 µs |
-| http, `-c 50` | this tool, `--worker-threads 4` | 139,812 (128,156 to 146,348) | 6.4 µs |
-| http, `-c 200` | oha 1.16.0, 4 threads | 149,674 (134,826 to 168,682) | 9.8 µs |
-| http, `-c 200` | this tool, 4 reactors (the default) | 151,118 (130,511 to 166,545) | 6.6 µs |
-| https, `-c 50` | oha 1.16.0, 4 threads | 99,672 (89,234 to 114,127) | 13.7 µs |
-| https, `-c 50` | this tool, 1 reactor (the default) | 115,230 (103,419 to 123,630) | 7.4 µs |
+| http | oha 1.16.0 | 121,188 (117,762 to 124,672) | 9.8 µs |
+| http | this tool | 110,951 (105,898 to 118,908) | 5.5 µs |
+| https | oha 1.16.0 | 46,786 (42,956 to 53,751) | 13.4 µs |
+| https | this tool | 33,441 (32,043 to 35,172) | 10.8 µs |
+| h2c | oha 1.16.0 | 36,628 (33,216 to 41,504) | 13.3 µs |
+| h2c | this tool | 34,007 (31,284 to 36,721) | 7.3 µs |
+| h2 | oha 1.16.0 | 38,679 (36,741 to 42,392) | 13.3 µs |
+| h2 | this tool | 32,821 (32,018 to 33,235) | 8.7 µs |
 
 The CPU time is the user time and the system time of the tool and its
-reactors, divided by its responses. The server was the limit of each run: it
-used one CPU for http. Thus a lower CPU time for each request is the clearer
-result.
+reactors, divided by its responses. The tool uses 20% to 45% less CPU time
+for each request than oha on each target.
 
-Most of the CPU time of the tool is in the kernel: one `sendto` and
-one `read` for each request, and one `epoll_pwait` for about seven requests.
-
-With one reactor at `-c 200`, the tool gave 164,194 to 192,796 requests/sec
-in five runs. Thus on this host, fewer reactors give more requests/sec,
-because the reactors and the server share the 4 CPUs.
+The requests/sec of a run depend on the load of the host more than on the
+tool. In a later set of three alternating runs against the http server, the
+tool gave 128,746 requests/sec and oha 95,518. For https at `-c 50`, the
+default of one reactor is a limit: in four alternating runs, oha gave 60,497
+requests/sec, the tool 53,002 with one reactor and 64,818 with
+`--worker-threads 3`. For h2, one reactor gave 37,219 and oha 34,889.
 
 The host was a 4-core x86-64 container (Intel Xeon at 2.1 GHz, Linux 6.18) on
-2026-11-14. Two other jobs used about two of the CPUs during the runs. The
-load average was 3.5 to 5, and the runs vary by up to 30%.
+2026-11-14. Other jobs ran on the host, with a load average of 5 to 17, and
+the runs vary by up to 40%.
 
 ## Files
 
 | File | Contents |
 | --- | --- |
-| `load.fern` | The command: the reactors, the connections, TLS and the event loop |
-| `options.fern` | The command line, the URL of a redirect, and the request bytes |
+| `load.fern` | The command: the reactors, the connections, TLS, proxies, HTTP/2, HTTP/3 and the event loop |
+| `options.fern` | The command line, its checks, the URL of a redirect, and the request bytes |
+| `fields.fern` | The header map, with the order and the replace rules of oha |
+| `body.fern` | The bodies of `-Z` and `-F` |
+| `urls.fern` | The URLs of `--rand-regex-url` and `--urls-from-file` |
+| `sigv4.fern` | AWS Signature Version 4 |
 | `schedule.fern` | The timetable of `-q` and of bursts, and the part of each reactor |
-| `report.fern` | The framing of a response, the tally, and the text and JSON summaries |
+| `report.fern` | The framing of a response, the tally, and the text, JSON and CSV outputs |
 | `histogram.fern` | The latency histogram, its merge and its bins |
+| `sqlite.fern` | The SQLite file of `--db-url` |
+| `debug.fern` | The output of `--debug` |
+| `tui.fern` | The live display |
 | `load_test.fern` | The unit tests |
 
 ## Tests
 
 - `TestSelfHostExampleLoadUnit` runs `load_test.fern` on x86-64, arm64 and
   wasm32-wasi, with a balanced leak census. It tests the options, the URL of a
-  redirect, the request, and the timetable of `-q` and of bursts. It also
-  tests the histogram, the response ends, the merge of tallies, the `rps`
-  samples and the summaries.
+  redirect, the request, the AWS signature, the bodies and the timetable of
+  `-q` and of bursts. It also tests the histogram, the response ends, the
+  merge of tallies, the `rps` samples and the outputs.
 - `TestSelfHostExampleLoadHTTP` runs the command on x86-64 and arm64 against a
   Go `net/http` server that counts its requests and connections. It checks
   that the count of the server is the count of the tool with `-n`, `-z` and
@@ -411,14 +535,34 @@ load average was 3.5 to 5, and the runs vary by up to 30%.
 - keep-alive, chunked bodies, a body of many reads, and a body that ends at
   the close
 - an incomplete response, a refused connection, and the usage errors
-- `-m`, `-H`, `-d`, `-D`, `-A`, `-T`, `-a`, `--host` and `--disable-keepalive`
+- `-m`, `-H`, `-d`, `-D`, `-Z`, `-F`, `-A`, `-T`, `-a`, `--host` and
+  `--disable-keepalive`
 - exact `-n` and `-c` with several `--worker-threads`, and the rate of `-q`
   over four reactors
 - HTTPS with `--insecure`, with `--cacert` and `-r`, and with no trusted root
+- client certificates over TLS 1.3 and TLS 1.2
+- HTTP/2 over TLS and in clear text, HTTP/1.0, and HTTP/3 against a
+  `std/serve` server of HTTP/3
+- proxies for `http` and `https`, over HTTP/1.1 and HTTP/2, with
+  `--proxy-header`
+- Unix sockets, VSOCK, `--rand-regex-url`, `--urls-from-file`, AWS
+  signatures, CSV, `--db-url` (read back with Python `sqlite3`),
+  `--stats-success-breakdown` and `--debug`
+- the live display in a pseudo-terminal
 - each JSON key, `-t`, `-r`, `--connect-to`, bursts, `-o`, `-u`,
   `--output-format quiet`, `-V` and `--ipv6`
 
-Both are in `internal/testing/e2ecompiler/self_host_example_load_test.go`.
+On x86-64, the `oha` cases run oha 1.16.0 next to the tool. They compare
+these results:
+
+- the exit code of each usage error
+- the bytes of each request, and the distribution of `--dump-urls`
+- the shape of the CSV and JSON outputs, and a run with no response
+- the `--debug` output, and the error of VSOCK
+
+The cases are in
+`internal/testing/e2ecompiler/self_host_example_load_test.go` and
+`internal/testing/e2ecompiler/self_host_example_load_features_test.go`.
 
 In the `rate json` case of `TestSelfHostExampleLoadHTTP`, the server stops for
 50 ms on each 20th request. The tool sends at `-q 200 -c 1` with

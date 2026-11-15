@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -2267,7 +2268,7 @@ func jumpsOf(info *Info, st ast.Stmt) stmtJumps {
 			case *ast.Return:
 				out.returns = true
 			case *ast.Call:
-				if info != nil && info.IntrinsicCalls[x].Kind == IntrinsicExit {
+				if info.callNeverReturns(x, nil) {
 					out.returns = true
 				}
 			case *ast.Break:
@@ -2311,33 +2312,48 @@ func jumpsOf(info *Info, st ast.Stmt) stmtJumps {
 	return out
 }
 
-// neverReturns reports a statement that calls exit or a function which
-// never returns.
+// neverReturns reports a statement that calls a function which never
+// returns.
 func neverReturns(info *Info, st ast.Stmt) bool {
 	es, ok := st.(*ast.ExprStmt)
+	return ok && info != nil && info.callNeverReturns(es.Expr, info.NoReturn)
+}
+
+// callNeverReturns reports a call that never returns: one that resolved to
+// the builtin exit, or a direct call of a name noReturn holds that no local
+// takes.
+func (info *Info) callNeverReturns(e ast.Expr, noReturn map[string]bool) bool {
+	call, ok := e.(*ast.Call)
 	if !ok || info == nil {
 		return false
 	}
-	if call, ok := es.Expr.(*ast.Call); ok && info.IntrinsicCalls[call].Kind == IntrinsicExit {
+	if info.IntrinsicCalls[call].Kind == IntrinsicExit {
 		return true
 	}
-	return callNeverReturns(es.Expr, info.NoReturn, true)
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && !id.Builtin && !info.LocalCallees[call] && noReturn[id.Name]
 }
 
-// NoReturnFuncs names the plain functions whose body never returns: on every
-// path it ends in a call to exit, in a call to another such function, or in
-// a loop that never breaks.
+// NoReturnFuncs names the calls that never return: the builtin exit, and each
+// plain function whose body never returns. Such a body ends on every path in a
+// call to one of these names, or in a loop that never breaks. A function of
+// the program named exit takes the name from the builtin.
 func NoReturnFuncs(prog *ast.Program) map[string]bool {
-	out := map[string]bool{}
+	out := map[string]bool{"exit": true}
+	for _, fn := range prog.Funcs {
+		if fn.Name == "exit" && fn.Receiver == nil && fn.MethodRecv == "" {
+			delete(out, "exit")
+		}
+	}
 	for changed := true; changed; {
 		changed = false
 		for _, fn := range prog.Funcs {
 			if fn.Body == nil || fn.Receiver != nil || fn.MethodRecv != "" || out[fn.Name] {
 				continue
 			}
-			bound := false
+			bound := map[string]bool{}
 			for _, p := range fn.Params {
-				bound = bound || p.Name == "exit"
+				bound[p.Name] = true
 			}
 			if stmtsExit(fn.Body.Stmts, out, bound) {
 				out[fn.Name] = true
@@ -2348,21 +2364,45 @@ func NoReturnFuncs(prog *ast.Program) map[string]bool {
 	return out
 }
 
-func stmtsExit(stmts []ast.Stmt, noReturn map[string]bool, bound bool) bool {
-	return len(stmts) > 0 && stmtExits(stmts[len(stmts)-1], noReturn, bound)
+// bound holds the locals in scope, as the checker has not resolved the body.
+func stmtsExit(stmts []ast.Stmt, noReturn, bound map[string]bool) bool {
+	if len(stmts) == 0 {
+		return false
+	}
+	var lets []string
+	for _, st := range stmts {
+		switch x := st.(type) {
+		case *ast.Var:
+			lets = append(lets, x.Name)
+		case *ast.Destructure:
+			lets = append(append(lets, x.Names...), x.AtName)
+		}
+	}
+	return stmtExits(stmts[len(stmts)-1], noReturn, withNames(bound, lets))
 }
 
-func stmtExits(st ast.Stmt, noReturn map[string]bool, bound bool) bool {
+func withNames(bound map[string]bool, names []string) map[string]bool {
+	if len(names) == 0 {
+		return bound
+	}
+	out := maps.Clone(bound)
+	for _, name := range names {
+		out[name] = true
+	}
+	return out
+}
+
+func stmtExits(st ast.Stmt, noReturn, bound map[string]bool) bool {
 	switch x := st.(type) {
 	case *ast.ExprStmt:
-		return callNeverReturns(x.Expr, noReturn, bound)
+		return callExits(x.Expr, noReturn, bound)
 	case *ast.Block:
 		return stmtsExit(x.Stmts, noReturn, bound)
 	case *ast.If:
 		return x.Else != nil && stmtExits(x.Then, noReturn, bound) && stmtExits(x.Else, noReturn, bound)
 	case *ast.Match:
 		for _, arm := range x.Arms {
-			if arm.Body == nil || !stmtsExit(arm.Body.Stmts, noReturn, bound) {
+			if arm.Body == nil || !stmtsExit(arm.Body.Stmts, noReturn, withNames(bound, arm.Binders())) {
 				return false
 			}
 		}
@@ -2376,9 +2416,9 @@ func stmtExits(st ast.Stmt, noReturn map[string]bool, bound bool) bool {
 	return false
 }
 
-// bound: a parameter named exit hides the builtin, so the check names only
-// the functions noReturn holds.
-func callNeverReturns(e ast.Expr, noReturn map[string]bool, bound bool) bool {
+// callExits is callNeverReturns for a callee the checker has not resolved. A
+// desugar's call names the builtin itself.
+func callExits(e ast.Expr, noReturn, bound map[string]bool) bool {
 	c, ok := e.(*ast.Call)
 	if !ok {
 		return false
@@ -2387,10 +2427,10 @@ func callNeverReturns(e ast.Expr, noReturn map[string]bool, bound bool) bool {
 	if !ok {
 		return false
 	}
-	if id.Name == "exit" && !bound {
-		return true
+	if id.Builtin {
+		return id.Name == "exit"
 	}
-	return noReturn[id.Name]
+	return noReturn[id.Name] && !bound[id.Name]
 }
 
 // divergesStmt reports a statement that leaves on every path.
@@ -2399,8 +2439,7 @@ func divergesStmt(info *Info, st ast.Stmt) bool {
 	case *ast.Return, *ast.Break, *ast.Continue:
 		return true
 	case *ast.ExprStmt:
-		call, ok := x.Expr.(*ast.Call)
-		return ok && info != nil && info.IntrinsicCalls[call].Kind == IntrinsicExit
+		return info.callNeverReturns(x.Expr, nil)
 	case *ast.Loop:
 		return !loopCanBreak(x.Body, x.Label)
 	case *ast.While:

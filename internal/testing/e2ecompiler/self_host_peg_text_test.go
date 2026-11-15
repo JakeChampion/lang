@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -70,9 +69,10 @@ func TestSelfHostPegExample(t *testing.T) {
 			}
 			output, err := cmd.CombinedOutput()
 			out := string(output)
-			if err != nil || !strings.Contains(out, "# pass 19") || !strings.Contains(out, "# fail 0") || !strings.Contains(out, "1..19") {
+			if err != nil {
 				t.Fatalf("existing PEG suite: %v\n%s", err, out)
 			}
+			e2eharness.CheckTAPPlan(t, out)
 		})
 	}
 }

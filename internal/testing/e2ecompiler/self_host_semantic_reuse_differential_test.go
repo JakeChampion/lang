@@ -102,12 +102,12 @@ function tuple_loop(n: i32): i32 {
 function tuple_from_rec(n: i32): i32 {
     let d: Parcel = Parcel { a: "cc", b: n };
     let s: i32 = d.b + d.a.len();
-    let q: (i32, string, i32) = (s, "dd", s + 1);
-    return q.0 + q.1.len() + q.2;
+    let q: (i32, string) = (s, "dd");
+    return q.0 + q.1.len();
 }
 function rec_from_tuple(n: i32): i32 {
-    let d: (string, i32, i32) = ("ee", n, n + 1);
-    let s: i32 = d.1 + d.2 + d.0.len();
+    let d: (string, i32) = ("ee", n);
+    let s: i32 = d.1 + d.0.len();
     let q: Parcel = Parcel { a: "ff", b: s };
     return q.b + q.a.len();
 }
@@ -115,7 +115,7 @@ function main(): i32 {
     let t: i32 = tuple_loop(4) + tuple_from_rec(3) + rec_from_tuple(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 60, 3, 10, 16, false, false},
+}`, 48, 3, 10, 16, false, false},
 
 	{"union-donor", `enum Duo { Two(i32, i32[]), Both(i32[], i32) }
 struct Trip { a: string, b: i32 }

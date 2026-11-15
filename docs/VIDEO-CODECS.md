@@ -188,6 +188,9 @@ Both markers remain in that picture's access unit. Sequence end requires IDR in 
 Stream end permits no subsequent NAL unit in the same reader. A separate bitstream requires a new reader.
 These checks follow H.264 clauses 7.3.2.5, 7.3.2.6, 7.4.1.2.2, and 7.4.1.2.3.
 
+An IDR slice requires a zero frame number, as specified in clause 7.4.3.
+The existing SPS context supplies its width. Non-IDR frame numbers retain their full supported range.
+
 The supported path requires matching parameter sets before each slice.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
@@ -197,6 +200,10 @@ The caller retains and closes the source. Blocking I/O must run outside the Andr
 It reuses bounded NAL input and the native SPS and PPS validators.
 The first-slice flag separates pictures. Subsequent slices retain the same PPS, NAL type, and temporal identifier.
 AUD and prefix parameter or SEI NAL units belong to the next picture. Suffix SEI and filler remain with the current picture.
+
+AUD and filler temporal identifiers must equal the coded picture's temporal identifier.
+One optional scalar retains the pending AUD identifier. Each packet clears that state, including pictures without another AUD.
+These checks follow H.265 clause 7.4.2.2, without a complete non-VCL syntax or stream-conformance claim.
 
 EOS and EOB have empty payloads and end the current picture. EOS requires IRAP in the next access unit.
 EOB permits no subsequent NAL unit.
@@ -631,17 +638,28 @@ Six synthetic headers cover scaling lists, separate color planes, 255 picture-or
 FFmpeg's coded bitstream reader independently accepts those synthetic headers.
 
 The AVC access-unit comparison also uses this reader to check incompatible SPS and cached PPS pairs.
+
+Nine IDR frame-number controls use fresh Baseline, Main, and High 10 slices.
+Independent CBS traces confirm the changed fields. Native refusal follows H.264 clause 7.4.3, without an external-refusal claim.
+
 That comparison requires a C compiler, the FFmpeg development headers, and `pkg-config`.
 Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
-`scripts/check-video-hevc-input-interop` compares thirteen cases with 252 coded pictures from fresh x265 streams.
+`scripts/check-video-hevc-input-interop` compares fourteen cases with 270 coded pictures from fresh x265 streams.
 Native and real WASI output match FFprobe picture positions, canonical payloads, and all FFmpeg decoded planes.
 FFprobe versions can report the three-byte suffix of a four-byte start prefix as the packet position.
 The comparison resolves the complete prefix from source bytes and verifies every payload byte.
 
 A two-layer stream replaces PPS headers at temporal identifiers zero and one.
 CBS confirms those headers. All decoded planes also match the original stream before PPS replacement.
+The fixture also corrects x265 AUD temporal headers to match their coded pictures.
+CBS confirms the corrected headers. Native packet offsets and bytes still match the corrected source exactly.
+
+A temporal-layer stream also carries AUD and filler units with matching identifiers.
+Twenty-four header mutations cover both unit types, pictures at layers zero and one, and all six mismatched identifiers.
+CBS traces confirm the AUD and picture identifiers. FFmpeg's unit filter independently preserves every filler header and payload.
+Native refusal follows the specification, without an external-refusal claim.
 
 For terminal EOS/EOB, FFprobe emits a separate control-only packet.
 The comparison joins only the exact empty EOS/EOB pair to the preceding picture and verifies every byte.

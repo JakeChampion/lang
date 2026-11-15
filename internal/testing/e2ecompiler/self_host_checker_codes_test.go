@@ -15,6 +15,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/oracle/monomorph"
 	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
@@ -47,7 +48,11 @@ func goCheckerDiagCodes(t *testing.T, dir, src string) []string {
 		return nil
 	}
 	if err = constfold.Fold(prog, nil); err == nil {
-		_, err = checker.Check(prog)
+		var info *checker.Info
+		if info, err = checker.Check(prog); err == nil {
+			// The oracle checks the program again when each generic has its instances.
+			err = monomorph.Run(prog, info)
+		}
 	}
 	if err == nil {
 		return nil
@@ -229,6 +234,30 @@ var tupleProjectionCases = []struct {
 	{"tuple-projection-lent-call-result", tupleProjection(`function f(t: (boolean, R)): i32 { return eat(same(t).1); }`), []string{"E051"}},
 	{"tuple-projection-lent-call-result-local", tupleProjection(`function f(t: (boolean, R)): i32 { let r = same(t).1; return eat(r); }`), []string{"E051"}},
 	{"tuple-projection-nested-lent-call-result", tupleProjection(`function f(t: (i32, (boolean, R))): i32 { return eat(same(t).1.1); }`), []string{"E051"}},
+}
+
+const exitPrelude = "struct W { d: i32[], n: i32 }\nfunction eat(own w: W): i32 { return w.n + w.d.len(); }\n"
+
+// A call never returns only when it reaches the builtin exit or a function
+// that never returns. A local or a function of the module can take the name.
+var exitResolutionCases = []struct {
+	name string
+	src  string
+	want []string
+}{
+	{"own-move-into-module-exit", exitPrelude + "function exit(code: i32): i32 { return code; }\nfunction main(): i32 { let w: W = W { d: [1], n: 1 }; if (w.n > 5) { exit(eat(w)); } return w.n; }\n", []string{"E051"}},
+	{"own-move-into-helper-with-local-exit", exitPrelude + "function stop(code: i32): void { let exit = (k: i32): void => {}; exit(code); }\nfunction main(): i32 { let w: W = W { d: [1], n: 1 }; if (w.n > 5) { stop(eat(w)); } return w.n; }\n", []string{"E051"}},
+	{"own-move-into-local-hiding-no-return", exitPrelude + "function die(code: i32): void { exit(code); }\nfunction main(): i32 { let w: W = W { d: [1], n: 1 }; let die = (k: i32): void => {}; if (w.n > 5) { die(eat(w)); } return w.n; }\n", []string{"E051"}},
+	{"own-move-into-helper-with-builtin-exit", exitPrelude + "function stop(code: i32): void { exit(code); }\nfunction main(): i32 { let w: W = W { d: [1], n: 1 }; if (w.n > 5) { stop(eat(w)); } return w.n; }\n", nil},
+	{"missing-return-module-exit", "function exit(code: i32): void { print(\"x\"); }\nfunction f(): i32 { exit(4); }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+	{"let-else-module-exit", "enum Opt { Has(i32), Nil }\nfunction exit(code: i32): void { print(\"x\"); }\nfunction f(o: Opt): i32 { let Has(v) = o else { exit(1); }; return v; }\nfunction main(): i32 { return 0; }\n", []string{"E022"}},
+	{"todo-beside-module-exit", "function exit(code: i32): void { print(\"x\"); }\nfunction f(): i32 { todo; }\nfunction main(): i32 { return 0; }\n", nil},
+	{"value-branch-module-exit", "function exit(c: i32): void {}\nfunction main(): i32 { let c = true; let x: i32 = if (c) { exit(1); } else { 5 }; return x; }\n", []string{"E061"}},
+	{"value-branch-local-exit", "function main(): i32 { let exit = (k: i32): void => {}; let x: i32 = if (true) { 1 } else { exit(2); }; return x; }\n", []string{"E061"}},
+	{"match-arm-param-exit", "enum Opt { Has(i32), Nil }\nfunction f(o: Opt, exit: (i32) => void): i32 { return match (o) { Has(v) => v, Nil => { exit(3); } }; }\nfunction main(): i32 { return 0; }\n", []string{"E061"}},
+	{"value-branch-builtin-exit", "function main(): i32 { let c = true; let x: i32 = if (c) { 5 } else { exit(1); }; return x; }\n", nil},
+	{"value-branch-nested-builtin-exit", "function f(n: i32): i32 { let v: i32 = if (n >= 0) { n } else { if (n < -10) { exit(2); } else { exit(3); } }; return v; }\nfunction main(): i32 { return f(1); }\n", nil},
+	{"value-branch-nested-module-exit", "function exit(c: i32): void {}\nfunction f(n: i32): i32 { let v: i32 = if (n >= 0) { n } else { if (n < -10) { exit(2); } else { return 3; } }; return v; }\nfunction main(): i32 { return f(1); }\n", []string{"E061"}},
 }
 
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
@@ -2949,6 +2978,13 @@ function main(): i32 { return 0; }
 		{"builtin-method-name-string-len", "function __method_string_len(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"builtin-method-name-reader-close", "function __method_Reader_close(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"intrinsic-family-prefix-name", "function __port_text(x: i32): i32 { return x; }\nfunction main(): i32 { return __port_text(0); }\n", nil},
+		{"e107-struct-nests-itself-in-its-argument", "struct Nest[T] { head: T, tail: Nest[Nest[T]] }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-enum-gives-itself-an-array-of-its-parameter", "enum Nest[T] { Leaf(T), More(Nest[T[]]) }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-through-a-second-struct", "struct A[T] { head: T, b: Option[B[T[]]] }\nstruct B[T] { a: Option[A[T]] }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-in-a-function-type-field", "struct Call[T] { f: (Call[T[]]) => i32 }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-recursive-struct-same-argument-ok", "struct List[T] { head: T, tail: Option[List[T]] }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e107-recursive-struct-exchanged-arguments-ok", "struct Pair[A, B] { a: A, b: B, next: Option[Pair[B, A]] }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e107-larger-argument-with-no-loop-ok", "struct Box[T] { v: T }\nstruct Rows[T] { rows: Box[T[]] }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	// The symbol of each generic builtin method (#15210).
 	for _, name := range []string{"Array_len", "Array_push", "Array_set", "Array_truncate", "Cell_get", "Cell_set", "Map_clear", "Map_contains", "Map_get", "Map_get_or", "Map_keys", "Map_len", "Map_remove", "Map_set", "Map_values", "slice_len"} {
@@ -2960,6 +2996,7 @@ function main(): i32 { return 0; }
 		}{"generic-builtin-method-name-" + name, "function " + fn + "(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}})
 	}
 	cases = append(cases, tupleProjectionCases...)
+	cases = append(cases, exitResolutionCases...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
@@ -3362,6 +3399,9 @@ function main(): i32 { return 0; }`},
 		{"proc-wait-any", "function main(): i32 { let r: i64 = proc_wait_any(); return (r >> 32) as i32; }\n"},
 		{"proc-wait-any-arity", "function main(): i32 { let r: i64 = proc_wait_any(0 - 1); return 0; }\n"},
 		{"proc-wait-any-result", "function main(): i32 { let r: i32 = proc_wait_any(); return r; }\n"},
+		{"vsock-connect", "function main(): i32 { let s: Socket = vsock_connect(2, 1); return s.fd; }\n"},
+		{"vsock-connect-arity", "function main(): i32 { let s: Socket = vsock_connect(2); return s.fd; }\n"},
+		{"vsock-connect-wrong-arg", "function main(): i32 { let s: Socket = vsock_connect(\"2\", 1); return s.fd; }\n"},
 		{"sha256-hw-kernel", "function main(): i32 { let s: u8[] = __alloc_u8(32); let d: [u8] = s[0:16]; let out: u8[] = __sha256_hw_blocks(s, d); if (__sha256_hw()) { return out.len(); } return 0; }\n"},
 		{"sha256-hw-arity", "function main(): i32 { let s: u8[] = __alloc_u8(32); let out: u8[] = __sha256_hw_blocks(s); return 0; }\n"},
 		{"sha256-hw-wrong-element", "function main(): i32 { let s: i32[] = [1, 2]; let out: u8[] = __sha256_hw_blocks(s, s); return 0; }\n"},
@@ -3727,6 +3767,9 @@ function main(): i32 { return 0; }`},
 		{"e065-string-of-field-of-local", strFieldPrelude + "function text_of(t: T): string { return t.text; }\nfunction f(k: i32): str { let t = mk(); return slice_unchecked(text_of(t), 0, k); }\nfunction main(): i32 { return 0; }\n"},
 	}
 	for _, tc := range tupleProjectionCases {
+		progs = append(progs, struct{ name, src string }{tc.name, tc.src})
+	}
+	for _, tc := range exitResolutionCases {
 		progs = append(progs, struct{ name, src string }{tc.name, tc.src})
 	}
 

@@ -1679,7 +1679,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	}
 	switch x := (*slot).(type) {
 	case *ast.Ident:
-		if r.localVars[x.Name] {
+		if x.Builtin || r.localVars[x.Name] {
 			return
 		}
 		if r.ownFuncs[x.Name] || r.ownConsts[x.Name] {

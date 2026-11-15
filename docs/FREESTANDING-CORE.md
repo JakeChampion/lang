@@ -75,9 +75,10 @@ costs a silent failure on the first target that lacks it.
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_*` | a network stack |
 | `unix` | `unix_listen`, `unix_connect` | Unix-domain sockets: a filesystem namespace for socket endpoints, which no WASI world has |
+| `vsock` | `vsock_connect` | VSOCK stream sockets between a virtual machine and its host (`AF_VSOCK`). Granted by `hosted-linux` and `hosted-android`. std/net reaches it under a `target_os()` branch |
 | `reactor` | `reactor_new`, `reactor_ctl`, `reactor_wait` | a readiness set the host keeps between waits: epoll, kqueue, or on wasm a table of wasi:io pollables |
 | `uring` | `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | an io_uring: Linux's submission and completion rings. Granted by `hosted-linux` alone; std/async reaches it under a `target_os()` branch |
-| `ktls` | `tcp_ktls` | the kernel's TLS record layer under a socket: Linux's `tls` ULP. Granted by `hosted-linux` alone; std/tls/ktls reaches it under a `target_os()` branch |
+| `ktls` | `tcp_ktls` | the kernel's TLS record layer under a socket: Linux's `tls` ULP. Granted by `hosted-linux` and `hosted-android`. std/tls/ktls reaches it under a `target_os()` branch |
 | `mmsg` | `udp_sendmmsg`, `udp_recvmmsg` | many datagrams in one system call: Linux's `sendmmsg`, with `UDP_SEGMENT` for a run of datagrams of one size to one peer, and `recvmmsg`, with `UDP_GRO` reporting the segment size of a run the kernel coalesced. Granted by `hosted-linux` and `hosted-android`; std/net reaches it under a `target_os()` branch |
 | `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `proc_wait_any`, `__worker_region`, `__worker_exit`, `__worker_reap`, `__worker_unmap`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile`, `disable_core_dumps` | a kernel that enforces ceilings on this process's resources |

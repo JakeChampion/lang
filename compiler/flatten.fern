@@ -862,7 +862,7 @@ function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
 pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
   match (e) {
     ast.ExprIdent(id) => {
-      if (is_in(id.name, ctx.locals)) {
+      if (id.builtin || is_in(id.name, ctx.locals)) {
         return ast.ExprIdent { ...id };
       }
       return ast.ExprIdent { ...id, name: mangle_bare_value(id.name, ctx) };
