@@ -231,6 +231,8 @@ pub struct App {
   reports: plex.Request[],
   play: Play,
   press: Press,
+  // The item of the menu that a held finger on a poster opened, or no_item.
+  menu: plex.Item,
   nodes: scene.Node[],
   dirty: boolean,
   // The painter draws on the window, and `paint` is true when the nodes
@@ -358,7 +360,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
-    play: no_play(), press: no_press(), nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
+    play: no_play(), press: no_press(), menu: plex.no_item(), nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
   };
   s = App { ...s, server: plex.Server { ...no_server(), name: setting(text, "server_name"), id: setting(text, "server_id"), token: s.base.token } };
   if (s.quality < 0 || s.quality >= plex.qualities().len()) {
@@ -1236,16 +1238,80 @@ function play_first(own s: App, items: plex.Item[]): App {
 function toggle_watched(own s: App): App {
   let it = s.item;
   let now = !plex.watched(it);
-  let views = 0;
-  let offset = it.offset_ms;
-  let seen = 0;
-  if (now) {
-    views = 1;
-    offset = 0i64;
-    seen = it.leaves;
+  return ask(App { ...s, item: plex.marked(it, now), dirty: true }, "scrobble", Scrobble(it.key, now));
+}
+
+// How long a finger rests on a poster before its menu opens.
+const HOLD_MS: i64 = 500i64;
+
+// The time that the finger of a press that may hold came down, or -1.
+function hold_from(s: App): i64 {
+  let p = s.press;
+  if (!p.active || p.axis != 0 || p.caught || p.xs.len() == 0 || s.menu.key.len() > 0 || s.screen == ui.PLAYER) {
+    return -1i64;
   }
-  let changed = plex.Item { ...it, views: views, offset_ms: offset, viewed_leaves: seen };
-  return ask(App { ...s, item: changed, dirty: true }, "scrobble", Scrobble(it.key, now));
+  return p.xs[0].t / 1000000i64;
+}
+
+// Opens the menu of the poster under a finger that rests there for
+// HOLD_MS. The press ends, so the lift of the finger opens nothing.
+function hold_tick(own s: App, now: i64): App {
+  let from = hold_from(s);
+  if (from < 0i64 || now - from < HOLD_MS) {
+    return s;
+  }
+  let Some(n) = scene.hit(s.nodes, s.press.x0 as i32, s.press.y0 as i32) else {
+    return s;
+  };
+  let Some(it) = item_at(s, n.tap.name) else {
+    return s;
+  };
+  if (it.key.len() == 0) {
+    return s;
+  }
+  return App { ...s, press: no_press(), menu: it, dirty: true };
+}
+
+// Puts the item `it` in place of the item with its key, in each list that
+// shows it.
+function replace_item(own s: App, it: plex.Item): App {
+  function swap(list: plex.Item[]): plex.Item[] {
+    let out: plex.Item[] = [];
+    for x in list {
+      if (x.key == it.key) {
+        out = out.append(it);
+      } else {
+        out = out.append(x);
+      }
+    }
+    return out;
+  }
+  let hubs: plex.Hub[] = [];
+  for h in s.hubs {
+    hubs = hubs.append(plex.Hub { ...h, items: swap(h.items) });
+  }
+  let results: plex.Hub[] = [];
+  for h in s.results {
+    results = results.append(plex.Hub { ...h, items: swap(h.items) });
+  }
+  return App { ...s, hubs: hubs, results: results, items: swap(s.items), children: swap(s.children), dirty: true };
+}
+
+// Runs an action of the menu of a poster. Each action closes it.
+function menu_act(own s: App, a: string): App {
+  let it = s.menu;
+  let t = App { ...s, menu: plex.no_item(), dirty: true };
+  if (a == "menu:play" && plex.playable_kind(it.kind)) {
+    return start_play(t, it, []);
+  }
+  if (a == "menu:mark") {
+    let now = !plex.watched(it);
+    return ask(replace_item(t, plex.marked(it, now)), "scrobble", Scrobble(it.key, now));
+  }
+  if (a == "menu:show" && it.grandparent_key.len() > 0) {
+    return open_item(t, plex.Item { ...plex.no_item(), key: it.grandparent_key, kind: "show", title: it.grandparent });
+  }
+  return t;
 }
 
 function sign_out(own s: App): App {
@@ -2136,6 +2202,9 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (s.screen == ui.PLAYER) {
     return player_act(s, a, n, x);
   }
+  if (s.menu.key.len() > 0) {
+    return menu_act(s, a);
+  }
   let t = App { ...s, error: "" };
   if (a == "signin") {
     return ask(t, "pin", NewPin);
@@ -2316,7 +2385,7 @@ pub function view(s: App): ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, item: s.item, children: s.children,
     pin_code: s.pin.code, error: s.error, servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
@@ -2396,6 +2465,10 @@ pub function timeout(s: App, now: i64): i32 {
       return clamp((s.play.reported_at + REPORT_MS - now) as i32, 1, REPORT_MS as i32);
     }
     return 500;
+  }
+  let held = hold_from(s);
+  if (held >= 0i64) {
+    return clamp((held + HOLD_MS - now) as i32, 1, HOLD_MS as i32);
   }
   if (s.search_at > 0i64) {
     return clamp((s.search_at - now) as i32, 1, 1000);
@@ -2539,7 +2612,7 @@ function frame(own s: App, ns: i64): App {
 // the next requests and draws the screen when it changed.
 pub function step(own s: App, e: android.Event): App {
   let now = s.dev.mono_ms();
-  let t = search_tick(pin_tick(play_tick(event(s, e), now), now), now);
+  let t = hold_tick(search_tick(pin_tick(play_tick(event(s, e), now), now), now), now);
   t = poll_probes(poll_report(poll_images(poll_api(t))));
   t = start_report(start_api(t));
   t = draw_screen(t);

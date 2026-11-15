@@ -76,6 +76,8 @@ pub struct View {
   sort: i32,
   unwatched: boolean,
   letters: plex.Letter[],
+  // The item of the menu of a held poster, or no_item.
+  menu: plex.Item,
   item: plex.Item,
   children: plex.Item[],
   pin_code: string,
@@ -96,7 +98,7 @@ pub struct View {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
 }
 
 // --- metrics
@@ -1167,7 +1169,47 @@ pub function nodes(v: View): scene.Node[] {
     body = settings(m, v);
   }
   let back = v.screen == LIBRARY || v.screen == DETAIL;
-  return util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
+  let out = util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
+  if (v.menu.key.len() > 0) {
+    out = util_append(out, poster_menu(m, v.menu));
+  }
+  return out;
+}
+
+// The menu of a held poster, at the bottom over a dark veil: its title,
+// Play, Mark watched or Mark unwatched, Go to show for an episode, and
+// Cancel. A tap on the veil closes it.
+function poster_menu(m: Metrics, it: plex.Item): scene.Node[] {
+  let rows: (string, string)[] = [];
+  if (plex.playable_kind(it.kind)) {
+    rows = rows.append(("Play", "menu:play"));
+  }
+  if (plex.watched(it)) {
+    rows = rows.append(("Mark unwatched", "menu:mark"));
+  } else {
+    rows = rows.append(("Mark watched", "menu:mark"));
+  }
+  if (it.kind == "episode" && it.grandparent_key.len() > 0) {
+    rows = rows.append(("Go to show", "menu:show"));
+  }
+  rows = rows.append(("Cancel", "menu:close"));
+  let row = 52 * m.u;
+  let head = 48 * m.u;
+  let x = 16 * m.u;
+  let w = m.w - 32 * m.u;
+  let h = head + rows.len() * row + 16 * m.u;
+  let y = m.h - m.bottom - h - 16 * m.u;
+  let out: scene.Node[] = [scene.Node { ...mk(0, 0, m.w, m.h, scene.Fill(draw.rgba(0, 0, 0, 160), 0), "menu:close", ""), barrier: true }, panel(m, x, y, w, h)];
+  let cells = (w - 32 * m.u) / m.cw;
+  out = out.append(label(m, x + 16 * m.u, y + (head - m.th) / 2, fit(plex.card_title(it), cells), m.ts, look.muted()));
+  let at = y + head;
+  for r in rows {
+    let (text, act) = r;
+    out = out.append(mk(x, at, w, row, scene.Blank, act, ""));
+    out = out.append(label(m, x + 16 * m.u, at + (row - m.th) / 2, text, m.ts, look.ink()));
+    at += row;
+  }
+  return out;
 }
 
 // The key of the image that the node `n` shows, or "".

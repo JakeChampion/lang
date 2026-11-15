@@ -560,6 +560,8 @@ pub struct Item {
   title: string,
   parent: string,
   grandparent: string,
+  // The key of the show of an episode, or "".
+  grandparent_key: string,
   year: i32,
   index: i32,
   parent_index: i32,
@@ -586,8 +588,17 @@ pub struct Item {
 // `start_ms` up to `end_ms`.
 pub struct Marker { kind: string, start_ms: i64, end_ms: i64 }
 
+// The item as the server sees it after it is marked watched, or not
+// watched when `seen` is false.
+pub function marked(it: Item, seen: boolean): Item {
+  if (seen) {
+    return Item { ...it, views: 1, offset_ms: 0i64, viewed_leaves: it.leaves };
+  }
+  return Item { ...it, views: 0, viewed_leaves: 0 };
+}
+
 pub function no_item(): Item {
-  return Item { key: "", kind: "", title: "", parent: "", grandparent: "", year: 0, index: 0, parent_index: 0, summary: "", thumb: "", art: "", parent_thumb: "", grandparent_thumb: "", duration_ms: 0i64, offset_ms: 0i64, views: 0, leaves: 0, viewed_leaves: 0, children: 0, rating: "", content_rating: "", studio: "", genres: [], media: [], markers: [] };
+  return Item { key: "", kind: "", title: "", parent: "", grandparent: "", grandparent_key: "", year: 0, index: 0, parent_index: 0, summary: "", thumb: "", art: "", parent_thumb: "", grandparent_thumb: "", duration_ms: 0i64, offset_ms: 0i64, views: 0, leaves: 0, viewed_leaves: 0, children: 0, rating: "", content_rating: "", studio: "", genres: [], media: [], markers: [] };
 }
 
 function tags(d: json.Document, n: i32, key: string): string[] {
@@ -628,6 +639,7 @@ pub function item_of(d: json.Document, n: i32): Item {
     title: str(d, n, "title"),
     parent: str(d, n, "parentTitle"),
     grandparent: str(d, n, "grandparentTitle"),
+    grandparent_key: str(d, n, "grandparentRatingKey"),
     year: int(d, n, "year") as i32,
     index: int(d, n, "index") as i32,
     parent_index: int(d, n, "parentIndex") as i32,

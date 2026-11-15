@@ -34,7 +34,7 @@ function free_frame(own f: draw.Frame): void {
 
 const RESOURCES: string = "[{\"name\":\"Den\",\"provides\":\"server\",\"clientIdentifier\":\"abc\",\"accessToken\":\"srv\",\"owned\":true,\"connections\":[{\"uri\":\"https://down.example:32400\",\"local\":true,\"relay\":false},{\"uri\":\"https://up.example:32400\",\"local\":false,\"relay\":false}]}]";
 
-const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentThumb\":\"/library/metadata/70/thumb\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"thumb\":\"/library/metadata/501/thumb\"},{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Amélie\",\"year\":2001,\"thumb\":\"/library/metadata/502/thumb\"}]}]}}";
+const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentRatingKey\":\"70\",\"grandparentThumb\":\"/library/metadata/70/thumb\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"thumb\":\"/library/metadata/501/thumb\"},{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Amélie\",\"year\":2001,\"thumb\":\"/library/metadata/502/thumb\"}]}]}}";
 
 const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"}]}}";
 
@@ -435,6 +435,50 @@ function test_saved_server_recheck_is_quiet(): test.TestOutcome {
     return test.fail("the race again loaded the home screen " + sections.to_string() + " times");
   }
   return test.assert_eq((node(s, "hub:0:0").is_some() && s.base.uri == "https://up.example:32400").to_string(), "true");
+}
+
+// A finger that rests on a poster for half a second opens its menu, and
+// its lift opens nothing. Mark watched tells the server and changes the
+// poster. Go to show opens the show of an episode. A drag opens no menu.
+function test_poster_menu(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let Some(p) = node(home, "hub:0:0") else {
+    return test.fail("no poster");
+  };
+  let (x, y) = centre(p);
+  let down = at(home, log, 1000i64, f, android.Touch(0, x as f32, y as f32));
+  if (control.timeout(down, 1000i64) > 500) {
+    return test.fail("no wake-up for the hold");
+  }
+  let early = at(down, log, 1300i64, f, android.Tick);
+  if (node(early, "menu:mark").is_some()) {
+    return test.fail("the menu opened before the hold ended");
+  }
+  let held = at(early, log, 1550i64, f, android.Tick);
+  if (node(held, "menu:play").is_none() || node(held, "menu:mark").is_none() || node(held, "menu:show").is_none() || node(held, "menu:close").is_none()) {
+    return test.fail("no menu after the hold");
+  }
+  save_png(f, "menu");
+  let lifted = settle(at(held, log, 1600i64, f, android.Touch(1, x as f32, y as f32)), log, 1600i64, f);
+  if (lifted.screen != ui.HOME || node(lifted, "menu:mark").is_none() || has_url(log, "/library/metadata/77")) {
+    return test.fail("the lift of the finger opened the poster");
+  }
+  let marked = tap(lifted, log, 1700i64, f, "menu:mark");
+  if (!has_url(log, "/:/scrobble?identifier=com.plexapp.plugins.library&key=77") || node(marked, "menu:mark").is_some() || !plex.watched(marked.hubs[0].items[0])) {
+    return test.fail("mark watched did not reach the server and the poster: " + log.urls.get().join(" | "));
+  }
+  let again = at(at(marked, log, 2000i64, f, android.Touch(0, x as f32, y as f32)), log, 2550i64, f, android.Tick);
+  let show = tap(settle(at(again, log, 2600i64, f, android.Touch(1, x as f32, y as f32)), log, 2600i64, f), log, 2700i64, f, "menu:show");
+  if (show.screen != ui.DETAIL || show.item.key != "70") {
+    return test.fail("go to show did not open the show");
+  }
+  let back = tap(show, log, 2800i64, f, "back");
+  let drag = at(at(back, log, 3000i64, f, android.Touch(0, x as f32, y as f32)), log, 3050i64, f, android.Touch(2, x as f32 + 60.0, y as f32));
+  let after = at(drag, log, 3600i64, f, android.Tick);
+  return test.assert_eq(node(after, "menu:close").is_none().to_string(), "true");
 }
 
 function count_calls(log: Log, call: string): i32 {
@@ -1101,6 +1145,7 @@ function main(): i32 {
   r = r.it("a library loads the pages near the screen", test_library_pages);
   r = r.it("the letter strip jumps to the first item of a letter", test_library_letters);
   r = r.it("the chips change the order and the filter of a library", test_library_sort_and_filter);
+  r = r.it("a held poster opens a menu of its actions", test_poster_menu);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);

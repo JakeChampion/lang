@@ -27,6 +27,9 @@ Browsing:
   and summary, the seasons of a show and the episodes of a season. Mark an
   item watched or unwatched there.
 
+A finger that rests on a poster for half a second opens its menu: Play,
+Mark watched or Mark unwatched, Go to show for an episode, and Cancel.
+
 A chip at the top of a library sets its order: title, year, date added or
 rating. A tap moves it to the next order. The Unwatched chip shows only the
 items not watched. In the title order, a strip at the right shows the
