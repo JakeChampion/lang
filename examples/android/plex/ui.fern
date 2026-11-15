@@ -44,10 +44,14 @@ pub function tab_screens(): i32[] {
 // --- what a screen shows
 
 // `over_video` is true when the controls draw over the video as it plays.
-pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, art: string, audio: boolean, status: string }
+// `sheet` is true when the sheet of the sound and subtitle tracks shows,
+// with `choice` marked. `scrub_ms` is the time under a finger on the seek
+// bar, or -1, and `thumb` the preview thumbnail of that time, by
+// `thumb_key`.
+pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string }
 
 pub function no_player(): PlayerView {
-  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, art: "", audio: false, status: "" };
+  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "" };
 }
 
 pub struct View {
@@ -860,7 +864,13 @@ function settings(m: Metrics, v: View): scene.Node[] {
 
 // The progress bar of the player, as a node whose tap seeks.
 pub function seek_bar(m: Metrics): scene.Node {
-  return mk(24 * m.u, m.h - m.bottom - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "");
+  return mk(24 * m.u, m.h - m.bottom - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "seek");
+}
+
+// The size of a preview thumbnail over the seek bar.
+pub function thumb_size(m: Metrics): (i32, i32) {
+  let w = 128 * m.u;
+  return (w, w * 9 / 16);
 }
 
 function player(m: Metrics, v: View): scene.Node[] {
@@ -913,18 +923,84 @@ function player(m: Metrics, v: View): scene.Node[] {
     out = out.append(label(m, (m.w - draw.text_width(p.status, m.ts)) / 2, cy + r + 16 * m.u, fit(p.status, m.w / m.cw), m.ts, look.muted()));
   }
   let bar = seek_bar(m);
+  let shown_ms = p.position_ms;
+  if (p.scrub_ms >= 0i64) {
+    shown_ms = p.scrub_ms;
+  }
   let permille = 0;
   if (p.duration_ms > 0i64) {
-    permille = (p.position_ms * 1000i64 / p.duration_ms) as i32;
+    permille = (shown_ms * 1000i64 / p.duration_ms) as i32;
+  }
+  if (p.scrub_ms >= 0i64) {
+    if let Some(image) = p.thumb {
+      let (tw, th) = thumb_size(m);
+      let cx = bar.x + bar.w * permille / 1000;
+      let tx = (cx - tw / 2).min(m.w - 8 * m.u - tw).max(8 * m.u);
+      let ty = bar.y - th - 16 * m.u;
+      out = out.append(fill(tx - 2 * m.u, ty - 2 * m.u, tw + 4 * m.u, th + 4 * m.u, look.ink(), 10 * m.u));
+      out = out.append(scene.node(tx, ty, tw, th, scene.Picture(p.thumb_key, image, 8 * m.u)));
+    }
   }
   out = out.append(bar);
   let dot = m.u;
   let bkey = "seek|" + dot.to_string() + "|" + permille.to_string();
   out = out.append(scene.node(bar.x, bar.y, bar.w, bar.h, scene.Custom(bkey, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => seek_dots(f, look.Rect { x: bx, y: by, w: bw, h: bh }, permille, dot))));
-  let at = plex.clock_text(p.position_ms);
+  let at = plex.clock_text(shown_ms);
   out = out.append(dots(bar.x, bar.y + bar.h + 6 * m.u, at, sp, look.ink()));
   let total = plex.clock_text(p.duration_ms);
   out = out.append(dots(bar.x + bar.w - matrix.width(total, sp), bar.y + bar.h + 6 * m.u, total, sp, look.muted()));
+  if (p.sounds.len() > 1 || p.subtitles.len() > 0) {
+    out = util_append(out, button(m, m.w - 16 * m.u - button_width(m, "Tracks"), m.top + 12 * m.u, "Tracks", false, "tracks"));
+  }
+  if (p.sheet) {
+    out = util_append(out, track_sheet(m, p));
+  }
+  return out;
+}
+
+// The sheet of tracks over the controls: the sound tracks, then "Off" and
+// the subtitle tracks, each a row that chooses it. The track that plays
+// has a red dot. A tap outside the sheet closes it.
+function track_sheet(m: Metrics, p: PlayerView): scene.Node[] {
+  let row = 44 * m.u;
+  let head = 32 * m.u;
+  let rows = p.sounds.len() + 1 + p.subtitles.len();
+  let h = 2 * head + rows * row + 16 * m.u;
+  let x = 16 * m.u;
+  let w = m.w - 32 * m.u;
+  let y = (m.h - m.bottom - h - 16 * m.u).max(m.top + 16 * m.u);
+  let sp = small_pitch(m);
+  let out: scene.Node[] = [mk(0, 0, m.w, m.h, scene.Blank, "tracks_close", ""), panel(m, x, y, w, h)];
+  let at = y + 8 * m.u;
+  out = out.append(dots(x + 16 * m.u, at + (head - matrix.height(sp)) / 2, "SOUND", sp, look.muted()));
+  at += head;
+  let first = true;
+  for t in p.sounds {
+    let on = t.id == p.choice.audio || p.choice.audio.len() == 0 && first;
+    out = util_append(out, track_row(m, x, at, w, row, t.title, on, "audio:" + t.id));
+    at += row;
+    first = false;
+  }
+  out = out.append(dots(x + 16 * m.u, at + (head - matrix.height(sp)) / 2, "SUBTITLES", sp, look.muted()));
+  at += head;
+  out = util_append(out, track_row(m, x, at, w, row, "Off", p.choice.subtitle.len() == 0, "sub:"));
+  at += row;
+  for t in p.subtitles {
+    out = util_append(out, track_row(m, x, at, w, row, t.title, t.id == p.choice.subtitle, "sub:" + t.id));
+    at += row;
+  }
+  return out;
+}
+
+function track_row(m: Metrics, x: i32, y: i32, w: i32, h: i32, title: string, on: boolean, act: string): scene.Node[] {
+  let color = look.muted();
+  let out: scene.Node[] = [tap(fill(x, y, w, h, look.surface(), 0), act)];
+  if (on) {
+    color = look.ink();
+    out = out.append(live_dot(m, x + 20 * m.u, y + h / 2));
+  }
+  let tx = x + 36 * m.u;
+  out = out.append(label(m, tx, y + (h - m.th) / 2, fit(title, (w - tx + x - 16 * m.u) / m.cw), m.ts, color));
   return out;
 }
 

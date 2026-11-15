@@ -34,10 +34,14 @@ Playback:
   at its end. The next episode of a season plays after the end of an
   episode.
 - A tap on the video shows the controls over it for 4 seconds while the
-  video plays on: back 10 seconds, play, forward 30 seconds, and a bar to
-  seek. A tap outside them hides them, and the play button pauses.
+  video plays on: back 10 seconds, play, forward 30 seconds, and a bar that
+  seeks as a finger drags along it, with a preview thumbnail of the time. A tap outside them hides them, and the play button pauses.
 
 Music plays with the controls on the screen.
+
+The Tracks button of the player chooses the sound and the subtitles, and
+the server remembers the choice. A file that plays as it is changes its
+sound in place. Subtitles burn into a transcode.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
@@ -141,7 +145,9 @@ pattern that ffmpeg writes. The check requires:
 
 - The home screen shows the posters.
 - A link plays the track to its end, reports it, and marks it watched.
-- A link shows the video on the window. A tap shows the controls over the
-  video with no pause, and a tap on play pauses it. A tap on play shows the
-  video on the window again. The back key stops it.
+- A link shows the video on a texture that the app draws. The 4:3 test
+  pattern fills the width with black bars above and below it, and it is
+  upright. A tap shows the controls over the video with no pause, and a tap
+  on play pauses it. A tap on play shows the video again, upright. The back
+  key stops it.
 - logcat shows no crash.
