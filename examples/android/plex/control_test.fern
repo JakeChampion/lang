@@ -40,6 +40,12 @@ const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"t
 
 const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
 
+// Episode 503, with credits from 100 s, and the episodes of its season:
+// 503, then the movie 501, which the test plays as the next item.
+const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Marker\":[{\"type\":\"credits\",\"startTimeOffset\":100000,\"endTimeOffset\":200000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]}]}}";
+
+const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]},{\"ratingKey\":\"501\",\"type\":\"episode\",\"title\":\"Second\",\"index\":2,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
+
 // The movie of the second poster: the movie above, with an intro marker.
 const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
 
@@ -105,6 +111,9 @@ function reply_to(r: plex.Request): plex.Reply {
   }
   if (u.contains("/library/sections")) {
     return ok(SECTIONS);
+  }
+  if (u.contains("/library/metadata/503")) {
+    return ok(CREDITS);
   }
   if (u.contains("/library/metadata/502")) {
     return ok(INTRO);
@@ -628,6 +637,53 @@ function test_skip_intro(): test.TestOutcome {
   return test.assert_eq(has_call(log, "seek 130000").to_string(), "true");
 }
 
+// The detail screen of a season that plays its first episode, with the
+// rest as the next items.
+function season_playing(log: Log, f: draw.Frame): control.App {
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let season = plex.Item { ...plex.no_item(), key: "600", kind: "season", title: "Season 1" };
+  let detail = settle(control.App { ...home, screen: ui.DETAIL, item: season, children: plex.parse_items(EPISODES).items, dirty: true }, log, 100i64, f);
+  let playing = tap(detail, log, 200i64, f, "play");
+  return settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+}
+
+// In the credits, a card shows the next episode and counts down from 10
+// seconds, and then the next episode plays. The app reports the episode
+// that ended as stopped at its end.
+function test_up_next_plays(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let ready = season_playing(log, f);
+  let carded = settle(ready, log, 1000i64, f);
+  if (node(carded, "next_now").is_none() || node(carded, "next_cancel").is_none()) {
+    return test.fail("no card of the next item: " + log.calls.get().join(" | "));
+  }
+  let plays = count_plays(log);
+  let next = settle(carded, log, 11500i64, f);
+  if (count_plays(log) != plays + 1 || !has_call(log, "play https://up.example:32400/library/parts/11/file.mp4")) {
+    return test.fail("the next episode did not play after the countdown: " + log.calls.get().join(" | "));
+  }
+  let reported = settle(next, log, 12000i64, f);
+  let stops = log.urls.get().filter((u: string): boolean => u.contains("ratingKey=503") && u.contains("state=stopped"));
+  return test.assert_eq((stops.len() == 1 && stops[0].contains("&time=8880000&duration=8880000")).to_string(), "true");
+}
+
+// Cancel on the card hides it, and the next episode does not play.
+function test_up_next_cancel(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let carded = settle(season_playing(log, f), log, 1000i64, f);
+  let plays = count_plays(log);
+  let off = tap(carded, log, 1100i64, f, "next_cancel");
+  if (node(off, "next_now").is_some()) {
+    return test.fail("the card stayed");
+  }
+  let later = settle(off, log, 20000i64, f);
+  return test.assert_eq((count_plays(log) - plays).to_string(), "0");
+}
+
 function test_library_pages(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -867,6 +923,8 @@ function main(): i32 {
   r = r.it("the sheet of tracks changes the sound and burns subtitles", test_tracks_sheet);
   r = r.it("the connections of a server race", test_connection_race);
   r = r.it("a skip button skips the intro", test_skip_intro);
+  r = r.it("the card of the next episode counts down and plays it", test_up_next_plays);
+  r = r.it("cancel on the card of the next episode keeps it from playing", test_up_next_cancel);
   r = r.it("a library loads its next page at its end", test_library_pages);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);

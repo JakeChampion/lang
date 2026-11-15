@@ -32,13 +32,17 @@ Playback:
 - Play resumes from the position on the server, and a seek goes to the
   nearest sync frame.
 - The app reports the position every 10 seconds, and marks an item watched
-  at its end. The next episode of a season plays after the end of an
-  episode.
+  at its end.
 - A tap on the video shows the controls over it for 4 seconds while the
   video plays on: back 10 seconds, play, forward 30 seconds, and a bar that
   seeks as a finger drags along it, with a preview thumbnail of the time. A tap outside them hides them, and the play button pauses.
 
 Music plays with the controls on the screen.
+
+In the credits of an episode, or 20 seconds before its end, a card shows
+the next episode of the season. It counts down from 10 seconds, and then
+the next episode plays. Play on the card starts it at once. Cancel hides
+the card, and the episode plays to its end.
 
 In the intro or the credits of a video, a Skip button shows over it. The
 app asks the server for the markers of the item when it starts to play.
