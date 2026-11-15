@@ -34,7 +34,7 @@ A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY
 
 An element gives the messages of `on_tap`, `on_long`, `on_slide`, `on_edit` and `on_submit`, and a list gives the messages of `on_move` and `on_swipe`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
 
-`with_close` takes the final state during Destroy and returns its closed state. The callback runs before Android frees the context or detaches the loop thread from the JVM.
+`with_close` takes the final state during the Destroy that ends the loop, and returns its closed state. The callback runs before Android frees the context or detaches the loop thread from the JVM. A Destroy that `android.keep_alive` keeps the loop through does not close the state: the app runs on with no window, and a later Destroy closes it.
 
 `with_theme` gives the colors for the light system and for the dark system. `with_theme_of` gives them for the state of the program also.
 
@@ -2100,8 +2100,10 @@ pub function (p: Program[S, M]) with_effects(effects: (S) => S): Program[S, M] {
   return Program { ...p, effects: effects };
 }
 
-// Takes the final state during Destroy and returns its closed state before
-// Android frees the context and detaches the loop thread from the JVM.
+// Takes the final state during the Destroy that ends the loop, and returns
+// its closed state before Android frees the context and detaches the loop
+// thread from the JVM. A Destroy that the loop runs on after does not
+// close the state.
 pub function (p: Program[S, M]) with_close(close: (own S) => own S): Program[S, M] {
   return Program { ...p, close: close };
 }
@@ -2154,8 +2156,9 @@ A change asks for a frame, and the frame draws at the next vsync. So many change
 
 ```fern
 <<shell>>=
-// What the shell does on the device. `size` gives the width and the height
-// of a window. `density` gives the pixels of one dp. `font_scale` gives
+// What the shell does on the device. `stays` tells, during a Destroy
+// event, that the loop runs on after it. `size` gives the width and the
+// height of a window. `density` gives the pixels of one dp. `font_scale` gives
 // the scale of the text of the system. `now` gives the time
 // on the monotonic clock in ns. `present` draws the nodes on the window
 // over a background color. `show_keyboard` shows the keyboard of the system
@@ -2163,6 +2166,7 @@ A change asks for a frame, and the frame draws at the next vsync. So many change
 // `set_keyboard` gives it another text, with the cursor before a
 // character. `hide_keyboard` takes it away.
 pub struct Device {
+  stays: () => boolean,
   size: (usize) => (i32, i32),
   density: () => f64,
   dark: () => boolean,
@@ -2676,8 +2680,11 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
     },
     android.Destroy => {
       let t = told_maybe(s, p, p.system(e));
-      let closed = p.close(t.app);
-      return Shell { app: closed, host: Host { ...t.host, paint: t.host.dev.close(t.host.paint), window: 0 as usize }, said: t.said };
+      let paint = t.host.dev.close(t.host.paint);
+      if (t.host.dev.stays()) {
+        return Shell { app: t.app, host: Host { ...t.host, paint: paint, window: 0 as usize }, said: t.said };
+      }
+      return Shell { app: p.close(t.app), host: Host { ...t.host, paint: paint, window: 0 as usize }, said: t.said };
     },
     _ => {
       return told_maybe(s, p, p.system(e));

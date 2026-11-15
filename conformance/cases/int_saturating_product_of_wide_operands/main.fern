@@ -1,0 +1,19 @@
+// spec: IS-08
+// A saturating product holds at the largest number of its type when the
+// exact product is above it, also when the exact product of two numbers of
+// 32 bits is above the range of 64 signed bits.
+
+function u(n: u32): u32 { return n; }
+function w(n: u64): u64 { return n; }
+function s(n: i64): i64 { return n; }
+
+function main(): i32 {
+  let max = u(4294967295 as u32);
+  print(f"{max *| max} {max *| u(4294967294 as u32)} {u(65536 as u32) *| u(65536 as u32)} {u(65535 as u32) *| u(65537 as u32)}");
+  print(f"{u(2147483648 as u32) *| u(2 as u32)} {u(2147483647 as u32) *| u(2 as u32)} {max *| u(1 as u32)} {max *| u(0 as u32)}");
+  let wide = w(18446744073709551615 as u64);
+  print(f"{wide *| wide} {wide *| w(2 as u64)} {w(4294967296 as u64) *| w(4294967296 as u64)} {w(4294967295 as u64) *| w(4294967297 as u64)}");
+  let least = s(0i64 - 9223372036854775807i64 - 1i64);
+  print(f"{least *| s(0i64 - 1i64)} {least *| s(2i64)} {s(9223372036854775807i64) *| s(0i64 - 2i64)} {s(3037000500i64) *| s(3037000500i64)}");
+  return 0;
+}

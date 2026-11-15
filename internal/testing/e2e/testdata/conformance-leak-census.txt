@@ -469,6 +469,8 @@ handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
 handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
+handle_foreach_destructured_field_own                0
+handle_foreach_field_local_own                       0
 handle_nested_fields_close_from_owned_root           0
 handle_payload_closes_from_local_match               0
 handle_payload_closes_in_loop_from_unpack            0
@@ -547,6 +549,7 @@ int_div_rem_by_zero                                  0
 int_extend_signedness                                0
 int_min_arithmetic                                   0
 int_saturating_ops                                   0
+int_saturating_product_of_wide_operands              0
 int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
@@ -742,6 +745,8 @@ oob_index_wrapped                                    0
 oob_index_wrapped_guard                              0
 # The program stops through exit(134), which does not unwind. The copy that `.with` makes before its bounds check is live.
 oob_index_write                                      1
+oob_lane_load_past_length                            0
+oob_lane_store_past_length                           1
 oob_loop_guard_past_length                           0
 oob_slice_negative_start                             0
 oob_slice_range                                      0
@@ -1245,6 +1250,7 @@ slice_unchecked_oob                                  0
 slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
+socket_close_wakes_a_parked_task                     4
 socket_copy_refused_after_close                      0
 socket_from_fd                                       0
 socket_handle_keeps_its_close_count                  0

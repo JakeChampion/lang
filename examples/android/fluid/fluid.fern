@@ -7,6 +7,7 @@ import "std/rand";
 import "./clock";
 import "./color";
 import "./config";
+import "./fingers";
 import "./trail";
 
 pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
@@ -35,32 +36,29 @@ pub function actions(): Action[] {
 // screen, so the Home key and the Overview key do not leave it.
 pub enum Want { Save, Keywords, Immersive(boolean), Awake(boolean), Pin(boolean) }
 
-// The finger on the fluid. `x` and `y` are the place that the last frame
-// gave it, from 0 to 1 with y up. `moved` tells that its path has a place
-// that no frame reached yet.
-pub struct Pointer { down: boolean, moved: boolean, x: f64, y: f64, color: config.Rgb }
-
-// A frame takes the place of the finger at a time before the frame, so
-// that the path has a place after that time, and the frame does not wait
-// for a place. The time before the frame is the longest time that the
-// newest place was old at a frame of the drag, and this margin. It starts
-// at FIRST_LAG_NS.
-pub const MARGIN_NS: i64 = 1000000i64;
-
-pub const FIRST_LAG_NS: i64 = 6000000i64;
-
 // A splat for the GPU: its place, its velocity and its colour.
 pub struct Splat { x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
 
 // What one frame does on the GPU: a burst of `burst` random splats, the
-// splat of the finger, `steps` steps of the simulation of `step` seconds
-// each, and a draw. `starved` tells that the newest place of the finger
-// was older than each one before it in the drag.
-pub struct Frame { burst: i32, splat: Option[Splat], steps: i32, step: f64, draw: boolean, starved: boolean }
+// splat of each finger that moved, `steps` steps of the simulation of
+// `step` seconds each, and a draw. `effects` tells that the draw makes the
+// bloom and the sun rays again. `starved` tells that the newest place of a
+// finger was older than at each frame before it.
+pub struct Frame { burst: i32, splats: Splat[], steps: i32, step: f64, draw: boolean, effects: boolean, starved: boolean }
+
+// A pointer of an Android touch event: the number that Android gives it,
+// its tool, and its places in pixels of the window, from the oldest. The
+// last place is the place of the event.
+pub struct Contact { id: i32, tool: i32, places: trail.Sample[] }
+
+// The tool of a pointer that is a mouse.
+pub const MOUSE: i32 = 3;
+
+// The bloom and the sun rays are soft, so the app makes them at most 60
+// times in a second. This is the shortest time between two.
+const EFFECTS_NS: i64 = 15500000i64;
 
 const NONE: i32 = 0;
-
-const ON_FLUID: i32 = 1;
 
 const ON_BUTTON: i32 = 2;
 
@@ -93,10 +91,12 @@ const MAX_BURST: i32 = 24;
 const MAX_BURSTS: i32 = 8;
 
 // `still` tells that the system asks for no animation, and that the person
-// did not touch the fluid yet. `open` tells that the dialog shows. `trail` is the path of the
-// finger on the fluid, and `lag_ns` is the longest time that its newest
-// place was old at a frame of the drag. `touch` is what the finger went down on, with the row of the dialog in `row`, and
-// `dragged` tells that it scrolls the dialog. `hold_ms` is the time that
+// did not touch the fluid yet. `open` tells that the dialog shows.
+// `fingers` has the fingers on the fluid. `ui` is the id of the pointer on
+// a control, or -1, and `touch` is the control that it went down on, with
+// the row of the dialog in `row`. `dragged` tells that it scrolls the
+// dialog. The display shows a frame `ahead_ns` after the frame starts, and
+// the app made the bloom and the sun rays at `effects_ns`. `hold_ms` is the time that
 // the hold on the exit button started, or -1. `note` shows until `note_ms`.
 // `speed` is the text of the frame rate, which the dialog shows.
 // `redraw` asks for a draw of a paused fluid.
@@ -105,9 +105,10 @@ pub struct Model {
   clock: clock.Clock,
   rng: i64,
   layout: Layout,
-  pointer: Pointer,
-  trail: trail.Trail,
-  lag_ns: i64,
+  fingers: fingers.Fingers,
+  ui: i32,
+  ahead_ns: i64,
+  effects_ns: i64,
   bursts: i32[],
   color_timer: f64,
   still: boolean,
@@ -135,15 +136,15 @@ function no_layout(): Layout {
 // The model at the start of the app. `still` tells that the system asks for
 // no animation: the fluid then starts paused, with no burst.
 pub function new(cfg: config.Config, still: boolean, seed: i64, now_ns: i64): Model {
-  let (rng, first) = color.generate(rand.rng_seed(seed));
   let m = Model {
     cfg: config.Config { ...cfg, paused: cfg.paused || still },
     clock: clock.new(now_ns),
-    rng: rng,
+    rng: rand.rng_seed(seed),
     layout: no_layout(),
-    pointer: Pointer { down: false, moved: false, x: 0.0, y: 0.0, color: first },
-    trail: trail.start(trail.Sample { ns: now_ns, x: 0.0, y: 0.0 }),
-    lag_ns: FIRST_LAG_NS,
+    fingers: fingers.none(),
+    ui: -1,
+    ahead_ns: 0i64,
+    effects_ns: 0i64,
     bursts: [],
     color_timer: 0.0,
     still: still,
@@ -176,6 +177,12 @@ pub function (m: Model) laid_out(layout: Layout): Model {
 // The model with the text `text` for the frame rate. The dialog shows it.
 pub function (m: Model) with_speed(text: string): Model {
   return Model { ...m, speed: text, redraw: m.redraw || m.open };
+}
+
+// The model for a display that shows a frame `ns` after the frame starts.
+// The push of a finger goes where the finger is at that time.
+pub function (m: Model) with_ahead(ns: i64): Model {
+  return Model { ...m, ahead_ns: ns };
 }
 
 // The model with no wants, after the app did them.
@@ -218,7 +225,7 @@ function (m: Model) noting(now_ms: i64): boolean {
 // The app must draw frames: the fluid moves, or a part of the screen changes
 // with the time.
 pub function (m: Model) animating(now_ms: i64): boolean {
-  return !m.cfg.paused || m.redraw || m.bursts.len() > 0 || m.pointer.moved || m.hold_ms >= 0i64 || m.noting(now_ms);
+  return !m.cfg.paused || m.redraw || m.bursts.len() > 0 || m.fingers.pending() || m.hold_ms >= 0i64 || m.noting(now_ms);
 }
 
 // The fluid moves again after a touch on it, when the system asked for no
@@ -309,12 +316,12 @@ pub function (m: Model) act(a: Action, now_ns: i64): Model {
 // Kid mode takes the controls away, fills the screen, keeps the screen on
 // and pins the app.
 function (m: Model) enter_kid(now_ms: i64): Model {
-  let on = Model { ...m, kid: true, open: false, hold_ms: -1i64, touch: NONE };
+  let on = Model { ...m, kid: true, open: false, hold_ms: -1i64, touch: NONE, ui: -1 };
   return on.noted(KID_NOTE, now_ms, KID_NOTE_MS).want(Awake(true)).want(Immersive(true)).want(Pin(true));
 }
 
 function (m: Model) leave_kid(): Model {
-  let off = Model { ...m, kid: false, hold_ms: -1i64, note_ms: 0i64, touch: NONE };
+  let off = Model { ...m, kid: false, hold_ms: -1i64, note_ms: 0i64, touch: NONE, ui: -1 };
   return off.want(Pin(false)).want(Awake(false)).want(Immersive(m.full));
 }
 
@@ -329,7 +336,7 @@ pub function (m: Model) leave_by_service(): Model {
 }
 
 function (m: Model) opened(open: boolean): Model {
-  return Model { ...m, open: open, scroll: 0, touch: NONE, redraw: true };
+  return Model { ...m, open: open, scroll: 0, touch: NONE, ui: -1, redraw: true };
 }
 
 // The model with the dialog open, or closed.
@@ -340,30 +347,16 @@ pub function (m: Model) toggle_dialog(): Model {
   return m.opened(!m.open);
 }
 
-// The model with the place x and y of the finger at the time `ns` at the
-// end of its path on the fluid. x and y are in pixels of the window.
-function (m: Model) moved_to(x: f64, y: f64, ns: i64): Model {
-  let s = trail.Sample { ns: ns, x: x / (m.layout.width as f64), y: 1.0 - y / (m.layout.height as f64) };
-  return Model { ...m, trail: m.trail.add(s), pointer: Pointer { ...m.pointer, moved: true } };
+// The place x and y of the window, in pixels, from 0 to 1 with y up.
+function (m: Model) place(x: f64, y: f64): (f64, f64) {
+  return (x / (m.layout.width as f64), 1.0 - y / (m.layout.height as f64));
 }
 
-// The model with a place that the finger had before the place of a move
-// event, at the time `ns`. Android collects the places of a finger between
-// two frames, and gives them with one event. Give each of them to the model
-// before the event, from the oldest.
-pub function (m: Model) traced(x: f64, y: f64, ns: i64): Model {
-  if (m.touch != ON_FLUID) {
-    return m;
-  }
-  return m.moved_to(x, y, ns);
-}
-
-function (m: Model) pressed(x: f64, y: f64, now_ns: i64): Model {
+// The model with the pointer `id` as a new finger on the fluid.
+function (m: Model) pressed(id: i32, x: f64, y: f64, now_ns: i64): Model {
   let (rng, c) = color.generate(m.rng);
-  let tx = x / (m.layout.width as f64);
-  let ty = 1.0 - y / (m.layout.height as f64);
-  let on = Model { ...m, rng: rng, touch: ON_FLUID, trail: trail.start(trail.Sample { ns: now_ns, x: tx, y: ty }), lag_ns: FIRST_LAG_NS, pointer: Pointer { down: true, moved: false, x: tx, y: ty, color: c } };
-  return on.moving(now_ns);
+  let (tx, ty) = m.place(x, y);
+  return Model { ...m, rng: rng, fingers: m.fingers.down(id, tx, ty, now_ns, c) }.moving(now_ns);
 }
 
 // The row of the dialog at x and y, or -1.
@@ -381,16 +374,23 @@ function (m: Model) row_at(x: f64, y: f64): i32 {
   return -1;
 }
 
-function (m: Model) down(x: f64, y: f64, now_ns: i64): Model {
+// The model after the pointer `id` went down at x and y, in pixels of the
+// window, at the time `now_ns`. One pointer at a time is on a control. Each
+// other pointer is a finger on the fluid, and no pointer reaches the fluid
+// below the dialog.
+pub function (m: Model) pointer_down(id: i32, x: f64, y: f64, now_ns: i64): Model {
   let l = m.layout;
   if (m.kid) {
-    if (l.exit.contains(x, y)) {
-      return Model { ...m, touch: ON_EXIT, hold_ms: now_ns / 1000000i64, redraw: true };
+    if (m.ui < 0 && l.exit.contains(x, y)) {
+      return Model { ...m, ui: id, touch: ON_EXIT, hold_ms: now_ns / 1000000i64, redraw: true };
     }
-    return m.pressed(x, y, now_ns);
+    return m.pressed(id, x, y, now_ns);
   }
   if (m.open) {
-    let on = Model { ...m, row: -1, dragged: false, touch_y: y };
+    if (m.ui >= 0) {
+      return m;
+    }
+    let on = Model { ...m, ui: id, row: -1, dragged: false, touch_y: y };
     if (l.close.contains(x, y)) {
       return Model { ...on, touch: ON_CLOSE };
     }
@@ -402,15 +402,19 @@ function (m: Model) down(x: f64, y: f64, now_ns: i64): Model {
     }
     return Model { ...on, touch: ON_PANEL };
   }
-  if (l.button.contains(x, y)) {
-    return Model { ...m, touch: ON_BUTTON, redraw: true };
+  if (m.ui < 0 && l.button.contains(x, y)) {
+    return Model { ...m, ui: id, touch: ON_BUTTON, redraw: true };
   }
-  return m.pressed(x, y, now_ns);
+  return m.pressed(id, x, y, now_ns);
 }
 
-function (m: Model) move(x: f64, y: f64, now_ns: i64): Model {
-  if (m.touch == ON_FLUID) {
-    return m.moved_to(x, y, now_ns);
+// The model with one more place of the pointer `id`, at the time `ns`.
+// Android collects the places of a pointer between two frames, and gives
+// them with one event. Give each of them to the model, from the oldest.
+pub function (m: Model) pointer_moved(id: i32, x: f64, y: f64, ns: i64): Model {
+  if (id != m.ui) {
+    let (tx, ty) = m.place(x, y);
+    return Model { ...m, fingers: m.fingers.moved(id, tx, ty, ns) };
   }
   if (m.touch == ON_LIST) {
     let far = (y - m.touch_y).abs() > m.layout.slop as f64;
@@ -421,9 +425,13 @@ function (m: Model) move(x: f64, y: f64, now_ns: i64): Model {
   return m;
 }
 
-function (m: Model) up(x: f64, y: f64, now_ns: i64): Model {
+// The model after the pointer `id` went up at x and y.
+pub function (m: Model) pointer_up(id: i32, x: f64, y: f64, now_ns: i64): Model {
+  if (id != m.ui) {
+    return Model { ...m, fingers: m.fingers.up(id) };
+  }
   let l = m.layout;
-  let off = Model { ...m, touch: NONE, row: -1, dragged: false, pointer: Pointer { ...m.pointer, down: false }, redraw: true };
+  let off = Model { ...m, ui: -1, touch: NONE, row: -1, dragged: false, redraw: true };
   if (m.touch == ON_EXIT) {
     return Model { ...off, hold_ms: -1i64 };
   }
@@ -442,28 +450,114 @@ function (m: Model) up(x: f64, y: f64, now_ns: i64): Model {
   return off;
 }
 
-// The model after a touch event of `android.Touch`: 0 is down, 1 is up, 2
-// is a move and 3 is a cancel. x and y are in pixels of the window, and
-// `now_ns` is the time of the event.
+// The model after Android took each pointer away from the app.
+pub function (m: Model) pointers_cancelled(): Model {
+  return Model { ...m, ui: -1, touch: NONE, row: -1, dragged: false, hold_ms: -1i64, fingers: m.fingers.all_up(), redraw: true };
+}
+
+// The model after a mouse moved to x and y with no button down. The mouse
+// pushes the fluid as a finger does. It does not push while the system
+// asks for no animation, below the dialog, or on the button.
+pub function (m: Model) hovered(x: f64, y: f64, ns: i64): Model {
+  if (m.still || m.open || !m.kid && m.layout.button.contains(x, y)) {
+    return m.hover_left();
+  }
+  let (tx, ty) = m.place(x, y);
+  if (m.fingers.has(fingers.HOVER)) {
+    return Model { ...m, fingers: m.fingers.moved(fingers.HOVER, tx, ty, ns) };
+  }
+  // The first place of the mouse gives no push: the mouse did not move to
+  // it from a place that the app knows.
+  let (rng, c) = color.generate(m.rng);
+  return Model { ...m, rng: rng, fingers: m.fingers.down(fingers.HOVER, tx, ty, ns, c) };
+}
+
+// The model after the mouse left the window, or its button went down.
+pub function (m: Model) hover_left(): Model {
+  return Model { ...m, fingers: m.fingers.without(fingers.HOVER) };
+}
+
+// The model after a touch event of one pointer, which has the id 0: the
+// action 0 is down, 1 is up, 2 is a move and 3 is a cancel. x and y are in
+// pixels of the window, and `now_ns` is the time of the event.
 pub function (m: Model) touched(action: i32, x: f64, y: f64, now_ns: i64): Model {
   if (action == 0) {
-    return m.down(x, y, now_ns);
+    return m.pointer_down(0, x, y, now_ns);
   }
   if (action == 2) {
-    return m.move(x, y, now_ns);
+    return m.pointer_moved(0, x, y, now_ns);
   }
   if (action == 1) {
-    return m.up(x, y, now_ns);
+    return m.pointer_up(0, x, y, now_ns);
   }
   if (action == 3) {
-    return Model { ...m, touch: NONE, row: -1, dragged: false, hold_ms: -1i64, pointer: Pointer { ...m.pointer, down: false }, redraw: true };
+    return m.pointers_cancelled();
+  }
+  return m;
+}
+
+// The model with each place of each pointer of `contacts` but the pointer
+// at the index `skip`.
+function (m: Model) traced(contacts: Contact[], skip: i32): Model {
+  let out = m;
+  for i in 0..contacts.len() {
+    if (i != skip) {
+      for p in contacts[i].places {
+        out = out.pointer_moved(contacts[i].id, p.x, p.y, p.ns);
+      }
+    }
+  }
+  return out;
+}
+
+// The model after an Android touch event with the pointers `contacts`.
+// `action` is the action of `android.Touch`, and `index` is the index in
+// `contacts` of the pointer of the actions 5 and 6: one more pointer went
+// down, or a pointer went up while others stay. The actions 7, 9 and 10
+// are of a pointer that is not down: a mouse that moves, comes and goes.
+pub function (m: Model) touch_event(action: i32, index: i32, contacts: Contact[]): Model {
+  if (action == 3) {
+    return m.pointers_cancelled();
+  }
+  if (action == 10) {
+    return m.hover_left();
+  }
+  if (contacts.len() == 0) {
+    return m;
+  }
+  let at = 0;
+  if ((action == 5 || action == 6) && index >= 0 && index < contacts.len()) {
+    at = index;
+  }
+  let c = contacts[at];
+  let last = c.places[c.places.len() - 1];
+  if (action == 0) {
+    // A touch starts with one pointer, so each pointer of the touch before
+    // it is off the screen.
+    return m.pointers_cancelled().hover_left().pointer_down(c.id, last.x, last.y, last.ns);
+  }
+  if (action == 5) {
+    return m.traced(contacts, at).hover_left().pointer_down(c.id, last.x, last.y, last.ns);
+  }
+  if (action == 1 || action == 6) {
+    return m.traced(contacts, -1).pointer_up(c.id, last.x, last.y, last.ns);
+  }
+  if (action == 2) {
+    return m.traced(contacts, -1);
+  }
+  if ((action == 7 || action == 9) && c.tool == MOUSE) {
+    let out = m;
+    for p in c.places {
+      out = out.hovered(p.x, p.y, p.ns);
+    }
+    return out;
   }
   return m;
 }
 
 // The row of the dialog that the finger is on, or -1.
 pub function (m: Model) pressed_row(): i32 {
-  if (m.touch == ON_LIST && !m.dragged) {
+  if (m.ui >= 0 && m.touch == ON_LIST && !m.dragged) {
     return m.row;
   }
   return -1;
@@ -471,7 +565,7 @@ pub function (m: Model) pressed_row(): i32 {
 
 // The finger is on the button that opens the dialog.
 pub function (m: Model) pressed_button(): boolean {
-  return m.touch == ON_BUTTON;
+  return m.ui >= 0 && m.touch == ON_BUTTON;
 }
 
 // The model after a keyboard typed the character `c`. Kid mode keeps the
@@ -542,15 +636,15 @@ pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
   }
   let (ticked, dt) = out.clock.frame(now_ns);
   let rng = out.rng;
-  let p = out.pointer;
+  let hands = out.fingers;
   let timer = out.color_timer;
   if (out.cfg.colorful) {
     timer += dt * out.cfg.color_update_speed;
     if (timer >= 1.0) {
       timer = wrap01(timer);
-      let (next, c) = color.generate(rng);
+      let (recolored, next) = hands.recolored(rng);
+      hands = recolored;
       rng = next;
-      p = Pointer { ...p, color: c };
     }
   }
   let burst = 0;
@@ -559,43 +653,21 @@ pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
     burst = bursts[bursts.len() - 1];
     bursts = bursts.truncate(bursts.len() - 1);
   }
-  let splat: Option[Splat] = None;
-  let splatted = false;
-  let path = out.trail;
-  let lag = out.lag_ns;
-  let starved = false;
-  if (p.moved) {
-    // The newest place is this old now. An older place than a frame and
-    // 12 ms is from a finger that does not move, and it does not count.
-    let age = now_ns - path.end_ns();
-    if (age > lag && age as f64 < dt * 1.0e9 + 12.0e6) {
-      lag = age;
-      starved = true;
-    }
-    let at = now_ns - lag - MARGIN_NS;
-    // A finger that went up has no more places, so the frame takes the end
-    // of its path.
-    if (!p.down) {
-      at = path.end_ns();
-    }
-    // A move of the same number of pixels pushes the same fluid on a window
-    // of each shape.
-    let to = path.at(at);
-    let aspect = out.layout.width as f64 / (out.layout.height as f64);
-    let dx = to.x - p.x;
-    let dy = to.y - p.y;
+  let (after, pushes, starved) = hands.frame(now_ns, dt, out.ahead_ns, out.cfg.touch_prediction);
+  // A move of the same number of pixels pushes the same fluid on a window
+  // of each shape.
+  let aspect = out.layout.width as f64 / (out.layout.height as f64);
+  let splats: Splat[] = [];
+  for p in pushes {
+    let dx = p.dx;
+    let dy = p.dy;
     if (aspect < 1.0) {
       dx *= aspect;
     }
     if (aspect > 1.0) {
       dy /= aspect;
     }
-    if (dx != 0.0 || dy != 0.0) {
-      splat = Some(Splat { x: to.x, y: to.y, dx: dx * out.cfg.splat_force, dy: dy * out.cfg.splat_force, color: p.color });
-      splatted = true;
-    }
-    p = Pointer { ...p, x: to.x, y: to.y, moved: to.ns < path.end_ns() };
-    path = path.since(to.ns);
+    splats = splats.append(Splat { x: p.x, y: p.y, dx: dx * out.cfg.splat_force, dy: dy * out.cfg.splat_force, color: p.color });
   }
   let steps = 0;
   let step = 0.0;
@@ -604,6 +676,13 @@ pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
     steps = n;
     step = size;
   }
-  let draw = !out.cfg.paused || out.redraw || burst > 0 || splatted || p.moved || out.hold_ms >= 0i64 || out.noting(now_ms);
-  return (Model { ...out, clock: ticked, rng: rng, pointer: p, trail: path, lag_ns: lag, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splat: splat, steps: steps, step: step, draw: draw, starved: starved });
+  let draw = !out.cfg.paused || out.redraw || burst > 0 || splats.len() > 0 || after.pending() || out.hold_ms >= 0i64 || out.noting(now_ms);
+  // A draw of a paused fluid follows a change, so it makes the bloom and
+  // the sun rays again.
+  let effects = draw && (out.redraw || now_ns - out.effects_ns >= EFFECTS_NS);
+  let made = out.effects_ns;
+  if (effects) {
+    made = now_ns;
+  }
+  return (Model { ...out, clock: ticked, rng: rng, fingers: after, effects_ns: made, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splats: splats, steps: steps, step: step, draw: draw, effects: effects, starved: starved });
 }

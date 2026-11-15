@@ -36,8 +36,33 @@ The second row is a raw intrinsic that [the inventory](UNSAFE-INVENTORY.md) reco
 Both checkers refuse `__arr_set_len` outside an `unsafe` block as `E095`, and the `arr-set-len-outside-block` row of `TestSelfHostCheckerCodesX86_64` pins the refusal.
 Its obligation, a length within the capacity, has no runtime check, so the `unsafe` block carries it.
 
+## Differential sweep of check elimination
+
+`TestSelfHostBoundsGuardSweep` (`internal/testing/e2ecompiler`) makes programs from a seed.
+Each program has one function of guards, loops and index arithmetic over two arrays, one byte array and two views.
+The accesses are index reads, `with` writes, slices, runs of byte reads that the compiler groups, and lane loads and stores.
+About half of the guards are sufficient for their access.
+The others bound a different expression, a different array, or a sum that wraps.
+The main function calls the function with indexes at the ends of the arrays and at the ends of `i32`.
+
+The interpreter of the compiler checks each access, so it is the reference.
+x86-64, arm64 under QEMU and wasm under wasmtime must print the same lines and abort with the same cause line, or not abort.
+Each pull request runs 32 programs from fixed seeds.
+`FERN_BOUNDS_SWEEP` sets a different number, and `FERN_BOUNDS_SWEEP_BASE` sets the seed before the first.
+The `bounds-guard-sweep` job of `nightly-fuzz.yml` runs 400 new seeds each night.
+
+Sweeps of more than 2500 programs on 2026-11-15 found no access that an optimized target let through.
+It found three defects of other types, and each has a repair and a test:
+
+| Defect | Test |
+|---|---|
+| The allocator gave one register to two parameters, and the compiler did not end. | `TestSelfHostParametersDoNotShareARegister` |
+| The two interpreters stopped with an internal error for a lane load or store that is not in its array. | `oob_lane_load_past_length`, `oob_lane_store_past_length` |
+| The certifier of reference counts refused a function whose release is behind a comparison of a value with itself. | `TestSelfHostSelfComparedReleaseCertifies` |
+
 ## Limits
 
 These probes exercise the checked paths the language exposes and one raw path.
-They do not prove that every elided check in `ssabounds.fern` is sound.
-A translation-validation or differential sweep of check elimination belongs to SEC-012 and SEC-017.
+The sweep is a sample. It does not prove that every elided check in `ssabounds.fern` is sound.
+A translation validation of check elimination belongs to SEC-012 and SEC-017.
+The arm64 results are QEMU results.

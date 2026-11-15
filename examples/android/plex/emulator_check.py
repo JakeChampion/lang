@@ -13,11 +13,12 @@ its intent, so it needs no sign-in at plex.tv. The check requires:
   decoder of Android;
 - a link plays the track to its end, reports the playback to the server
   and marks the track watched;
-- with VIDEO.mp4, a link shows the video on the window. When the app draws
-  the video, a tap shows the controls over it with no pause, and a tap on
-  the play button pauses it. Otherwise a tap pauses it. Paused, the app
-  draws the controls on the window, and a tap on the play button shows the
-  video on the window again, then the back key stops it;
+- with VIDEO.mp4, a link shows the video on a texture that the app draws.
+  The 4:3 pattern fills the width with black bars above and below it, and
+  it is upright. A tap shows the controls over it with no pause, and a tap
+  on the play button pauses it. Paused, the app draws the controls, and a
+  tap on the play button shows the video again, upright, then the back key
+  stops it;
 - logcat shows no crash.
 
 OUT_DIR gets logcat, the screens and the requests that the server saw.
@@ -203,6 +204,45 @@ def video_colors(width, height, px):
                                         width * 19 // 20, height * 19 // 20))
 
 
+def lit_rows(width, height, px):
+    """The first and the last row with picture, or None for a black screen."""
+    need = max(1, width // 4 // 10)
+    rows = []
+    for y in range(height):
+        lit = 0
+        for x in range(0, width, 4):
+            at = (y * width + x) * 4
+            if px[at] + px[at + 1] + px[at + 2] > 60:
+                lit += 1
+        if lit >= need:
+            rows.append(y)
+    if not rows:
+        return None
+    return rows[0], rows[-1] + 1
+
+
+def frame_fault(width, height, px):
+    """What is wrong with a screen of the 4:3 test pattern, or "".
+
+    On a portrait screen the pattern fills the width, with black bars above
+    and below it. Its rainbow band is in its lower half, so that half has
+    more colours than the upper half when the video is upright.
+    """
+    rows = lit_rows(width, height, px)
+    if rows is None:
+        return "the screen is black"
+    top, bottom = rows
+    shape = (bottom - top) / width
+    if not 0.65 <= shape <= 0.85 or top < height // 20:
+        return f"the video is rows {top} to {bottom} of {height} on {width} columns, not 4:3 with bars"
+    mid = (top + bottom) // 2
+    upper = colors_in(width, height, px, (0, top, width, mid))
+    lower = colors_in(width, height, px, (0, mid, width, bottom))
+    if lower <= upper:
+        return f"the rainbow of the pattern is not in its lower half ({upper} colours above, {lower} below), so the video is upside down"
+    return ""
+
+
 def start(port, play=""):
     adb("shell", "am", "force-stop", PACKAGE)
     args = ["shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity",
@@ -240,27 +280,31 @@ def check_video(out, port):
     start(port, "901")
     if not wait_for(lambda: count_log(r"plex: video on the window") >= 1):
         return fail("the video did not go on the window: " + " | ".join(l for l in logcat().splitlines() if "plex" in l))
+    if "plex: video on a texture" not in logcat():
+        return fail("the video is not on a texture, so the app does not draw it: " + " | ".join(l for l in logcat().splitlines() if "plex" in l))
     time.sleep(2)
     width, height, px = screen(out, "video")
     colors = video_colors(width, height, px)
     print(f"video: {colors} colours inside the screen edges", flush=True)
     if colors < 12:
         fail(f"the video shows {colors} colours")
+    fault = frame_fault(width, height, px)
+    if fault:
+        fail("video: " + fault)
+    # A tap shows the controls over the video, and the video plays on. The
+    # play button is in the middle.
     adb("shell", "input", "tap", str(width // 2), str(height // 2))
-    if "plex: video on a texture" in logcat():
-        # The app draws the video, so a tap shows the controls over it and
-        # the video plays on. The play button is in the middle.
-        if not wait_for(lambda: "plex: controls over the video" in logcat()):
-            return fail("a tap did not show the controls over the video")
-        time.sleep(1)
-        _, _, px = screen(out, "controls")
-        button = count_color(px, PLAY)
-        print(f"controls: {button} pixels of the play button over the video", flush=True)
-        if button < 500:
-            fail(f"the controls over the video show {button} pixels of the play button")
-        if "plex: paused at" in logcat():
-            return fail("a tap on the video paused it")
-        adb("shell", "input", "tap", str(width // 2), str(height // 2))
+    if not wait_for(lambda: "plex: controls over the video" in logcat()):
+        return fail("a tap did not show the controls over the video")
+    time.sleep(1)
+    _, _, px = screen(out, "controls")
+    button = count_color(px, PLAY)
+    print(f"controls: {button} pixels of the play button over the video", flush=True)
+    if button < 500:
+        fail(f"the controls over the video show {button} pixels of the play button")
+    if "plex: paused at" in logcat():
+        return fail("a tap on the video paused it")
+    adb("shell", "input", "tap", str(width // 2), str(height // 2))
     if not wait_for(lambda: "plex: paused at" in logcat()):
         return fail("the play button did not pause the video")
     time.sleep(1.5)
@@ -272,8 +316,12 @@ def check_video(out, port):
     adb("shell", "input", "tap", str(width // 2), str(height // 2))
     if not wait_for(lambda: count_log(r"plex: video on the window") >= 2):
         return fail("the video did not go back on the window after the pause")
-    time.sleep(1.5)
-    screen(out, "resumed")
+    # A new texture after the pause must not show an old frame turned over.
+    time.sleep(2)
+    _, _, px = screen(out, "resumed")
+    fault = frame_fault(width, height, px)
+    if fault:
+        fail("resumed: " + fault)
     adb("shell", "input", "keyevent", "4")
     if not wait_for(lambda: seen("ratingKey=901&key=%2Flibrary%2Fmetadata%2F901&state=stopped")):
         fail("no report that the video stopped")

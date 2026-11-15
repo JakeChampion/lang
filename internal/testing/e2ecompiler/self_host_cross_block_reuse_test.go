@@ -105,23 +105,23 @@ function main(): i32 { return f(5) + f(1); }`, 41, 6},
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function f(n: i32): i32 { let a: P = P { x: n, xs: id([n, 1]) }; let s: i32 = 0; if (n > 3) { s = a.x; } else if (n > 1) { s = a.xs[1]; return s; } else { s = a.xs[0] + 1; } let b: P = P { x: n * 3, xs: id([4]) }; return s + b.x + b.xs[0]; }
 function main(): i32 { return f(5) + f(2) + f(0); }`, 30, 6},
-		{"arms-of-different-counts", `enum S { One(i32), Two(i32, i32) }
+		{"arms-of-different-counts", `enum S { One(i32), Two(i32, i64) }
 struct M { tag: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 @noinline function mk(n: i32): S { if (n % 2 == 0) { return One(n); } return Two(n, 1); }
-function f(n: i32): i32 { let s: S = mk(n); let t: i32 = 0; match (s) { One(v) => { t = v; }, Two(v, w) => { t = v + w; } } let m: M = M { tag: t, xs: id([n]) }; return m.tag + m.xs[0]; }
+function f(n: i32): i32 { let s: S = mk(n); let t: i32 = 0; match (s) { One(v) => { t = v; }, Two(v, w) => { t = v + w as i32; } } let m: M = M { tag: t, xs: id([n]) }; return m.tag + m.xs[0]; }
 function main(): i32 { return f(2) + f(3); }`, 11, 5},
-		{"three-arms-two-fit", `enum S { One(i32), Two(i32, i32), Three(i32, i32) }
+		{"three-arms-two-fit", `enum S { One(i32), Two(i32, i64), Three(i32, i64) }
 struct M { tag: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 @noinline function mk(n: i32): S { if (n % 3 == 0) { return One(n); } if (n % 3 == 1) { return Two(n, 1); } return Three(n, 2); }
-function f(n: i32): i32 { let s: S = mk(n); let t: i32 = 0; match (s) { One(v) => { t = v; }, Two(v, w) => { t = v + w; }, Three(v, w) => { t = v + w; } } let m: M = M { tag: t, xs: id([n]) }; return m.tag + m.xs[0]; }
+function f(n: i32): i32 { let s: S = mk(n); let t: i32 = 0; match (s) { One(v) => { t = v; }, Two(v, w) => { t = v + w as i32; }, Three(v, w) => { t = v + w as i32; } } let m: M = M { tag: t, xs: id([n]) }; return m.tag + m.xs[0]; }
 function main(): i32 { return f(3) + f(4) + f(5); }`, 27, 7},
-		{"arms-of-different-counts-churn", `enum S { One(i32), Two(i32, i32) }
+		{"arms-of-different-counts-churn", `enum S { One(i32), Two(i32, i64) }
 struct M { tag: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 @noinline function mk(n: i32): S { if (n % 2 == 0) { return One(n); } return Two(n, 1); }
-function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let s: S = mk(i); let t: i32 = 0; match (s) { One(v) => { t = v; }, Two(v, w) => { t = v + w; } } let m: M = M { tag: t, xs: id([i]) }; sum = (sum + m.tag + m.xs[0]) % 1000; i = i + 1; } return sum % 100; }`, 0, 2500000},
+function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let s: S = mk(i); let t: i32 = 0; match (s) { One(v) => { t = v; }, Two(v, w) => { t = v + w as i32; } } let m: M = M { tag: t, xs: id([i]) }; sum = (sum + m.tag + m.xs[0]) % 1000; i = i + 1; } return sum % 100; }`, 0, 2500000},
 		{"held-across-the-loop-edge", `enum L { C(i32, L), N(i32, L), E }
 function build(n: i32): L { let acc: L = E; let i: i32 = 0; while (i < n) { if (i % 3 == 1) { acc = N(i, acc); } else { acc = C(i - 2, acc); } i = i + 1; } return acc; }
 @noinline function drop_neg(xs: L): L { match (xs) { C(h, t) => { if (h < 0) { return drop_neg(t); } return C(h, drop_neg(t)); }, N(h, t) => { return drop_neg(t); }, E => { return E; } } }

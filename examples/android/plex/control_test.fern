@@ -34,24 +34,34 @@ function free_frame(own f: draw.Frame): void {
 
 const RESOURCES: string = "[{\"name\":\"Den\",\"provides\":\"server\",\"clientIdentifier\":\"abc\",\"accessToken\":\"srv\",\"owned\":true,\"connections\":[{\"uri\":\"https://down.example:32400\",\"local\":true,\"relay\":false},{\"uri\":\"https://up.example:32400\",\"local\":false,\"relay\":false}]}]";
 
-const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentThumb\":\"/library/metadata/70/thumb\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"thumb\":\"/library/metadata/501/thumb\"},{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Amélie\",\"year\":2001,\"thumb\":\"/library/metadata/502/thumb\"}]}]}}";
+const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentRatingKey\":\"70\",\"grandparentThumb\":\"/library/metadata/70/thumb\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"thumb\":\"/library/metadata/501/thumb\"},{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Amélie\",\"year\":2001,\"thumb\":\"/library/metadata/502/thumb\"}]}]}}";
 
 const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"}]}}";
 
-const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
+const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
+
+// A track of an album, with its artist.
+const SONG: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"601\",\"type\":\"track\",\"title\":\"Song\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":61,\"key\":\"/library/parts/61/file.m4a\"}]}]}]}}";
+
+// Episode 503, with credits from 100 s, and the episodes of its season:
+// 503, then the movie 501, which the test plays as the next item.
+const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Marker\":[{\"type\":\"credits\",\"startTimeOffset\":100000,\"endTimeOffset\":200000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]}]}}";
+
+const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]},{\"ratingKey\":\"501\",\"type\":\"episode\",\"title\":\"Second\",\"index\":2,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
+
+// The movie of the second poster: the movie above, with an intro marker.
+const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
 
 // A page of a library of 63 movies from `start`.
+// A page of the movie library of 400 items, from `start`.
 function page(start: i32): string {
-  let n = 60;
-  if (start >= 60) {
-    n = 3;
-  }
+  let n = 60.min(400 - start).max(0);
   let items: string[] = [];
   for i in 0..n {
     let k = (1000 + start + i).to_string();
     items = items.append("{\"ratingKey\":\"" + k + "\",\"type\":\"movie\",\"title\":\"Movie " + k + "\",\"year\":1999}");
   }
-  return "{\"MediaContainer\":{\"size\":" + n.to_string() + ",\"totalSize\":63,\"Metadata\":[" + items.join(",") + "]}}";
+  return "{\"MediaContainer\":{\"size\":" + n.to_string() + ",\"totalSize\":400,\"Metadata\":[" + items.join(",") + "]}}";
 }
 
 function ok(body: string): plex.Reply {
@@ -82,6 +92,18 @@ function reply_to(r: plex.Request): plex.Reply {
   if (u.contains("/api/v2/pins")) {
     return ok("{\"id\":7,\"code\":\"ABCD\",\"authToken\":null}");
   }
+  if (r.method == "POST" && u.contains("/api/v2/home/users/kid/switch")) {
+    if (u.ends_with("?pin=1234")) {
+      return ok("{\"authToken\":\"kid-tok\"}");
+    }
+    return plex.Reply { status: 403, body: [], error: "" };
+  }
+  if (r.method == "POST" && u.contains("/api/v2/home/users/guest/switch")) {
+    return ok("{\"authToken\":\"guest-tok\"}");
+  }
+  if (u.contains("/api/v2/home/users")) {
+    return ok("{\"id\":1,\"users\":[{\"uuid\":\"ada\",\"title\":\"Ada\",\"admin\":true},{\"uuid\":\"kid\",\"title\":\"Kid\",\"protected\":true},{\"uuid\":\"guest\",\"title\":\"Guest\"}]}");
+  }
   if (u.contains("/api/v2/user")) {
     return ok("{\"friendlyName\":\"Ada\"}");
   }
@@ -97,14 +119,32 @@ function reply_to(r: plex.Request): plex.Reply {
   if (u.contains("/hubs")) {
     return ok(HUBS);
   }
+  if (u.contains("/library/sections/1/firstCharacter")) {
+    return ok("{\"MediaContainer\":{\"Directory\":[{\"size\":100,\"key\":\"A\",\"title\":\"A\"},{\"size\":50,\"key\":\"B\",\"title\":\"B\"},{\"size\":250,\"key\":\"C\",\"title\":\"C\"}]}}");
+  }
   if (u.contains("/library/sections/1/all")) {
     return ok(page(control.num(query_value(u, "X-Plex-Container-Start"))));
   }
   if (u.contains("/library/sections")) {
     return ok(SECTIONS);
   }
+  if (u.contains("/library/metadata/601")) {
+    return ok(SONG);
+  }
+  if (u.contains("/library/metadata/503")) {
+    return ok(CREDITS);
+  }
+  if (u.contains("/library/metadata/502")) {
+    return ok(INTRO);
+  }
   if (u.contains("/library/metadata/501")) {
     return ok(MOVIE);
+  }
+  if (r.method == "PUT" && u.contains("/library/parts/11?")) {
+    return ok("");
+  }
+  if (u.contains("/library/parts/11/indexes/sd")) {
+    return plex.Reply { status: 200, body: bif_bytes(), error: "" };
   }
   if (u.contains("/photo/:/transcode")) {
     return ok("img");
@@ -113,6 +153,33 @@ function reply_to(r: plex.Request): plex.Reply {
     return ok("");
   }
   return plex.Reply { status: 404, body: [], error: "" };
+}
+
+function le32(v: i64): u8[] {
+  return [(v & 255i64) as u8, (v >> 8i64 & 255i64) as u8, (v >> 16i64 & 255i64) as u8, (v >> 24i64 & 255i64) as u8];
+}
+
+// A BIF file of three thumbnails, one each hour.
+function bif_bytes(): u8[] {
+  let out: u8[] = [137u8, 66u8, 73u8, 70u8, 13u8, 10u8, 26u8, 10u8];
+  for part in [le32(0i64), le32(3i64), le32(0i64)] {
+    for x in part {
+      out = out.append(x);
+    }
+  }
+  while (out.len() < 64) {
+    out = out.append(0u8);
+  }
+  let data = 64 + 4 * 8;
+  for v in [0i64, data as i64, 3600i64, (data + 3) as i64, 7200i64, (data + 5) as i64, 4294967295i64, (data + 6) as i64] {
+    for x in le32(v) {
+      out = out.append(x);
+    }
+  }
+  for c in "AAABBC".as_bytes() {
+    out = out.append(c);
+  }
+  return out;
 }
 
 function reply_all(rs: plex.Request[]): plex.Reply[] {
@@ -180,6 +247,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     set_field: (q: string): void => note(log.calls, "field set [" + q + "]"),
     hide_field: (): void => note(log.calls, "field hide"),
     fetch: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch(log, rs),
+    fetch_images: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch(log, rs),
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => fake_image(w, h),
     play: (uri: string): boolean => {
       note(log.calls, "play " + uri);
@@ -210,6 +278,17 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     duration: (): i64 => 8880000i64,
     stop: (): void => note(log.calls, "stop"),
     has_audio: (): boolean => log.sound.get(),
+    audio_tracks: (): i32[] => [1, 2],
+    select_track: (i: i32): boolean => {
+      note(log.calls, "track " + i.to_string());
+      return true;
+    },
+    brightness: (level: f32): void => note(log.calls, "light " + ((level * 1000.0f32) as i32).to_string()),
+    system_brightness: (): f32 => 0.5f32,
+    volume: (): (i32, i32) => (7, 15),
+    set_volume: (level: i32): void => note(log.calls, "volume " + level.to_string()),
+    now_playing: (title: string, artist: string, album: string, length_ms: i64, playing: boolean, at_ms: i64): void => note(log.calls, "media " + title + " by " + artist + " on " + album + " playing=" + playing.to_string()),
+    media_end: (): void => note(log.calls, "media end"),
     random: (): i32 => 5,
     decoders: log.decoders.get(),
   };
@@ -345,6 +424,221 @@ function test_saved_server_opens_home(): test.TestOutcome {
   return test.assert_eq((node(s, "hub:0:0").is_some() && node(s, "tab:3").is_some()).to_string(), "true");
 }
 
+// A saved address that this network cannot reach: the app opens the home
+// screen at once, races the connections of the server again, and changes
+// to the address that answers.
+function test_saved_server_moves_to_working_address(): test.TestOutcome {
+  let log = new_log();
+  note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_id=abc\nserver_uri=https://down.example:32400\nserver_token=srv\n");
+  let f = frame();
+  defer free_frame(f);
+  let s = settle(shown(log, f, "", ""), log, 100i64, f);
+  if (!has_url(log, "/api/v2/resources") || !has_url(log, "https://up.example:32400/identity")) {
+    return test.fail("no race of the connections: " + log.urls.get().join(" | "));
+  }
+  if (!has_url(log, "https://up.example:32400/library/sections") || s.error.len() > 0 || node(s, "hub:0:0").is_none()) {
+    return test.fail("the home screen did not load from the address that answered: " + s.error);
+  }
+  return test.assert_eq(file_of(log, "/data/settings").contains("server_uri=https://up.example:32400").to_string(), "true");
+}
+
+// A saved address that works: the race again keeps the home screen, and
+// asks for it once.
+function test_saved_server_recheck_is_quiet(): test.TestOutcome {
+  let log = new_log();
+  note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_id=abc\nserver_uri=https://up.example:32400\nserver_token=srv\n");
+  let f = frame();
+  defer free_frame(f);
+  let s = settle(shown(log, f, "", ""), log, 100i64, f);
+  let sections = log.urls.get().filter((u: string): boolean => u.contains("/library/sections")).len();
+  if (!has_url(log, "/api/v2/resources") || sections != 1) {
+    return test.fail("the race again loaded the home screen " + sections.to_string() + " times");
+  }
+  return test.assert_eq((node(s, "hub:0:0").is_some() && s.base.uri == "https://up.example:32400").to_string(), "true");
+}
+
+// A finger that rests on a poster for half a second opens its menu, and
+// its lift opens nothing. Mark watched tells the server and changes the
+// poster. Go to show opens the show of an episode. A drag opens no menu.
+function test_poster_menu(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let Some(p) = node(home, "hub:0:0") else {
+    return test.fail("no poster");
+  };
+  let (x, y) = centre(p);
+  let down = at(home, log, 1000i64, f, android.Touch(0, x as f32, y as f32));
+  if (control.timeout(down, 1000i64) > 500) {
+    return test.fail("no wake-up for the hold");
+  }
+  let early = at(down, log, 1300i64, f, android.Tick);
+  if (node(early, "menu:mark").is_some()) {
+    return test.fail("the menu opened before the hold ended");
+  }
+  let held = at(early, log, 1550i64, f, android.Tick);
+  if (node(held, "menu:play").is_none() || node(held, "menu:mark").is_none() || node(held, "menu:show").is_none() || node(held, "menu:close").is_none()) {
+    return test.fail("no menu after the hold");
+  }
+  save_png(f, "menu");
+  let lifted = settle(at(held, log, 1600i64, f, android.Touch(1, x as f32, y as f32)), log, 1600i64, f);
+  if (lifted.screen != ui.HOME || node(lifted, "menu:mark").is_none() || has_url(log, "/library/metadata/77")) {
+    return test.fail("the lift of the finger opened the poster");
+  }
+  let marked = tap(lifted, log, 1700i64, f, "menu:mark");
+  if (!has_url(log, "/:/scrobble?identifier=com.plexapp.plugins.library&key=77") || node(marked, "menu:mark").is_some() || !plex.watched(marked.hubs[0].items[0])) {
+    return test.fail("mark watched did not reach the server and the poster: " + log.urls.get().join(" | "));
+  }
+  let again = at(at(marked, log, 2000i64, f, android.Touch(0, x as f32, y as f32)), log, 2550i64, f, android.Tick);
+  let show = tap(settle(at(again, log, 2600i64, f, android.Touch(1, x as f32, y as f32)), log, 2600i64, f), log, 2700i64, f, "menu:show");
+  if (show.screen != ui.DETAIL || show.item.key != "70") {
+    return test.fail("go to show did not open the show");
+  }
+  let back = tap(show, log, 2800i64, f, "back");
+  let drag = at(at(back, log, 3000i64, f, android.Touch(0, x as f32, y as f32)), log, 3050i64, f, android.Touch(2, x as f32 + 60.0, y as f32));
+  let after = at(drag, log, 3600i64, f, android.Tick);
+  return test.assert_eq(node(after, "menu:close").is_none().to_string(), "true");
+}
+
+// The User row of the settings lists the users of the Plex Home. A user
+// with a PIN gets the keypad: a wrong PIN shows an error, and the right one
+// switches. The app then uses the token of that user, and connects again.
+function test_switch_home_user(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = signed_in(log, f);
+  let list = tap(tap(home, log, 3000i64, f, "tab:3"), log, 3100i64, f, "users");
+  if (list.screen != ui.USERS || node(list, "user:1").is_none()) {
+    return test.fail("no list of the users: " + log.urls.get().join(" | "));
+  }
+  let pad = tap(list, log, 3200i64, f, "user:1");
+  if (node(pad, "pinkey:5").is_none()) {
+    return test.fail("no keypad for a user with a PIN");
+  }
+  save_png(f, "pin");
+  let wrong = pad;
+  for d in ["1", "1", "1", "1"] {
+    wrong = tap(wrong, log, 3300i64, f, "pinkey:" + d);
+  }
+  if (wrong.error != "Wrong PIN" || wrong.client.token != "tok-1" || node(wrong, "pinkey:5").is_none()) {
+    return test.fail("a wrong PIN did not show its error: " + wrong.error);
+  }
+  let right = wrong;
+  for d in ["1", "2", "3", "del", "3", "4"] {
+    right = tap(right, log, 3400i64, f, "pinkey:" + d);
+  }
+  let done = settle(right, log, 6000i64, f);
+  if (done.client.token != "kid-tok" || done.account != "Kid" || done.screen != ui.HOME) {
+    return test.fail("the right PIN did not switch: " + done.client.token + " " + done.account + " " + done.screen.to_string());
+  }
+  return test.assert_eq(file_of(log, "/data/settings").contains("token=kid-tok").to_string(), "true");
+}
+
+// A track plays on when the app goes away, and the media controls of
+// Android pause it, play it and stop it. Each change reaches them.
+function test_music_media_controls(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "601"), log, 0i64, f, android.Start);
+  let t = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  let ready = settle(at(t, log, 100i64, f, android.Posted(19, 0 as usize)), log, 100i64, f);
+  if (!has_call(log, "play https://up.example:32400/library/parts/61/file.m4a") || !has_call(log, "media Song by Band on Album playing=true")) {
+    return test.fail("the track did not reach the media controls: " + log.calls.get().join(" | "));
+  }
+  let away = settle(at(ready, log, 200i64, f, android.Pause), log, 200i64, f);
+  if (has_call(log, "pause")) {
+    return test.fail("the track paused when the app went away");
+  }
+  let held = settle(at(away, log, 300i64, f, android.Posted(29, 0 as usize)), log, 300i64, f);
+  if (!has_call(log, "pause") || !has_call(log, "media Song by Band on Album playing=false")) {
+    return test.fail("the pause of the media controls did not pause: " + log.calls.get().join(" | "));
+  }
+  let starts = count_calls(log, "start");
+  let again = settle(at(held, log, 400i64, f, android.Posted(28, 0 as usize)), log, 400i64, f);
+  if (count_calls(log, "start") != starts + 1) {
+    return test.fail("the play of the media controls did not play");
+  }
+  let ended = settle(at(again, log, 500i64, f, android.Posted(32, 0 as usize)), log, 500i64, f);
+  return test.assert_eq((has_call(log, "stop") && has_call(log, "media end") && !ended.play.active).to_string(), "true");
+}
+
+// A key that goes down and up at time `now`, then ticks.
+function press(own s: control.App, log: Log, now: i64, f: draw.Frame, code: i32): control.App {
+  return settle(at(at(s, log, now, f, android.Key(code, 0)), log, now, f, android.Key(code, 1)), log, now, f);
+}
+
+function ringed(s: control.App): boolean {
+  let last = s.nodes[s.nodes.len() - 1];
+  return match (last.paint) {
+    scene.Outline(_, _, _) => s.focus.len() > 0,
+    _ => false,
+  };
+}
+
+// The D-pad of a TV remote: the first key focuses the poster at the top
+// left, down moves to the row below, the centre opens the focused poster,
+// and a touch hides the focus.
+function test_remote_moves_focus(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let first = press(home, log, 100i64, f, 20);
+  if (first.focus != "hub:0:0" || !ringed(first)) {
+    return test.fail("the first key did not focus the first poster: " + first.focus);
+  }
+  let below = press(first, log, 200i64, f, 20);
+  if (below.focus != "hub:1:0") {
+    return test.fail("down did not move to the row below: " + below.focus);
+  }
+  let right = press(below, log, 300i64, f, 22);
+  if (right.focus != "hub:1:1") {
+    return test.fail("right did not move along the row: " + right.focus);
+  }
+  let left = press(right, log, 400i64, f, 21);
+  let opened = press(left, log, 500i64, f, 23);
+  if (opened.screen != ui.DETAIL || !has_url(log, "/library/metadata/501")) {
+    return test.fail("the centre did not open the poster");
+  }
+  let touched = at(opened, log, 600i64, f, android.Touch(0, 10.0, 600.0));
+  let cleared = touched.focus == "";
+  let lifted = draw_now(touched, log, f);
+  return test.assert_eq((cleared && !ringed(lifted)).to_string(), "true");
+}
+
+function draw_now(own s: control.App, log: Log, f: draw.Frame): control.App {
+  return at(s, log, 700i64, f, android.Touch(1, 10.0, 600.0));
+}
+
+// On the video, left and right seek as the buttons do, the centre shows
+// the controls with the focus on play, and the centre then pauses. The
+// play and pause key of a remote plays again.
+function test_remote_on_the_video(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let drawn = settle(video_drawn(log, f), log, 900i64, f);
+  let ahead = press(drawn, log, 1000i64, f, 22);
+  let back = press(ahead, log, 1100i64, f, 21);
+  if (!has_call(log, "seek 150000") || !has_call(log, "seek 110000")) {
+    return test.fail("left and right did not seek: " + log.calls.get().join(" | "));
+  }
+  let shown = press(back, log, 1200i64, f, 23);
+  if (shown.focus != "toggle" || node(shown, "toggle").is_none() || has_call(log, "pause")) {
+    return test.fail("the centre did not show the controls with the focus on play");
+  }
+  let paused = press(shown, log, 1300i64, f, 23);
+  if (!has_call(log, "pause") || !paused.play.paused) {
+    return test.fail("the centre on play did not pause");
+  }
+  let starts = count_calls(log, "start");
+  let again = press(paused, log, 1400i64, f, 85);
+  return test.assert_eq((count_calls(log, "start") == starts + 1 && !again.play.paused).to_string(), "true");
+}
+
 function count_calls(log: Log, call: string): i32 {
   return log.calls.get().filter((c: string): boolean => c == call).len();
 }
@@ -468,6 +762,254 @@ function test_lost_sound_transcodes(): test.TestOutcome {
   return test.assert_eq(has_call(log2, "play https://up.example:32400/video/:/transcode/universal/start.m3u8?").to_string(), "true");
 }
 
+// A drag along the seek bar shows the time and the thumbnail under the
+// finger, seeks at most every 200 ms on the way, and seeks to the end of
+// the drag when the finger leaves.
+function test_drag_scrubs_with_thumbnails(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
+  if (!has_url(log, "/library/parts/11/indexes/sd")) {
+    return test.fail("no request of the thumbnails: " + log.urls.get().join(" | "));
+  }
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  let paused = tap(ready, log, 400i64, f, "overlay");
+  let Some(bar) = node(paused, "seek") else {
+    return test.fail("no seek bar");
+  };
+  let y = (bar.y + bar.h / 2) as f32;
+  let x1 = (bar.x + bar.w / 2) as f32;
+  let x2 = (bar.x + bar.w * 3 / 4) as f32;
+  let seeks = count_seeks(log);
+  let down = at(paused, log, 1000i64, f, android.Touch(0, x1, y));
+  let near = at(down, log, 1050i64, f, android.Touch(2, x1 + 4.0, y));
+  if (count_seeks(log) != seeks + 1) {
+    return test.fail("the drag did not seek once in its first 200 ms: " + log.calls.get().join(" | "));
+  }
+  let thumbs = near.nodes.filter((n: scene.Node): boolean => match (n.paint) {
+    scene.Picture(key, _, _) => key.starts_with("bif|"),
+    _ => false,
+  });
+  if (thumbs.len() != 1) {
+    return test.fail("no thumbnail over the seek bar");
+  }
+  let far = at(near, log, 1300i64, f, android.Touch(2, x2, y));
+  if (count_seeks(log) != seeks + 2) {
+    return test.fail("the drag did not seek again after 200 ms");
+  }
+  let up = settle(at(far, log, 1310i64, f, android.Touch(1, x2, y)), log, 1310i64, f);
+  if (count_seeks(log) != seeks + 3 || !has_call(log, "seek 6660000")) {
+    return test.fail("no seek to the end of the drag: " + log.calls.get().join(" | "));
+  }
+  let left = up.nodes.filter((n: scene.Node): boolean => match (n.paint) {
+    scene.Picture(key, _, _) => key.starts_with("bif|"),
+    _ => false,
+  });
+  return test.assert_eq(left.len().to_string(), "0");
+}
+
+// A video that plays on the GPU, with its first frame drawn.
+function video_drawn(log: Log, f: draw.Frame): control.App {
+  log.gpu.set(true);
+  let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  return settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
+}
+
+// A tap at (x, y) at time `now`, then ticks.
+function tap_at(own s: control.App, log: Log, now: i64, f: draw.Frame, x: f32, y: f32): control.App {
+  let t = at(s, log, now, f, android.Touch(0, x, y));
+  return settle(at(t, log, now + 30i64, f, android.Touch(1, x, y)), log, now + 30i64, f);
+}
+
+function says(s: control.App, text: string): boolean {
+  return s.nodes.filter((n: scene.Node): boolean => n.say == text).len() > 0;
+}
+
+// A second tap soon after the first at the left of the video seeks back 10
+// seconds, and at the right forward 10 seconds. The controls stay as they
+// were before the first tap. Two taps in the middle, or far apart, do not
+// seek.
+function test_double_tap_seeks(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let drawn = settle(video_drawn(log, f), log, 900i64, f);
+  if (node(drawn, "overlay").is_none()) {
+    return test.fail("the controls showed before the taps");
+  }
+  let y = (H / 2) as f32;
+  let seeks = count_seeks(log);
+  let back = tap_at(tap_at(drawn, log, 1000i64, f, (W / 5) as f32, y), log, 1200i64, f, (W / 5) as f32, y);
+  if (count_seeks(log) != seeks + 1 || !has_call(log, "seek 110000") || !says(back, "-10")) {
+    return test.fail("a double tap at the left did not seek back: " + log.calls.get().join(" | "));
+  }
+  if (node(back, "overlay").is_none() || node(back, "toggle").is_some()) {
+    return test.fail("the controls of the first tap stayed");
+  }
+  let ahead = tap_at(tap_at(back, log, 2000i64, f, (W * 4 / 5) as f32, y), log, 2200i64, f, (W * 4 / 5) as f32, y);
+  if (count_seeks(log) != seeks + 2 || !has_call(log, "seek 130000") || !says(ahead, "+10")) {
+    return test.fail("a double tap at the right did not seek forward: " + log.calls.get().join(" | "));
+  }
+  let gone = settle(ahead, log, 3100i64, f);
+  if (says(gone, "+10")) {
+    return test.fail("the badge stayed");
+  }
+  // Above the buttons, so that a second tap that is not a double tap hits
+  // no control.
+  let high = (H / 4) as f32;
+  let middle = tap_at(tap_at(gone, log, 4000i64, f, (W / 2) as f32, high), log, 4200i64, f, (W / 2) as f32, high);
+  let slow = tap_at(tap_at(middle, log, 9000i64, f, (W / 5) as f32, high), log, 9600i64, f, (W / 5) as f32, high);
+  return test.assert_eq((count_seeks(log) - seeks).to_string(), "2");
+}
+
+// A drag up the left half of the video makes the window brighter, and a
+// drag down the right half makes the sound quieter. Each shows its level,
+// and the brightness of the system comes back when the video stops.
+function test_drag_sets_light_and_volume(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let drawn = video_drawn(log, f);
+  let x = (W / 5) as f32;
+  let y0 = (H / 2) as f32;
+  let down = at(drawn, log, 1000i64, f, android.Touch(0, x, y0));
+  let up = at(down, log, 1050i64, f, android.Touch(2, x, y0 - (H * 3 / 10) as f32));
+  if (!has_call(log, "light 1000") || !says(up, "LIGHT 100%")) {
+    return test.fail("the drag did not set the brightness: " + log.calls.get().join(" | "));
+  }
+  let lifted = settle(at(up, log, 1100i64, f, android.Touch(1, x, y0 - (H * 3 / 10) as f32)), log, 1100i64, f);
+  if (has_call(log, "pause") || node(lifted, "toggle").is_some()) {
+    return test.fail("the drag counted as a tap");
+  }
+  let rx = (W * 4 / 5) as f32;
+  let press = at(lifted, log, 2000i64, f, android.Touch(0, rx, y0));
+  let lower = at(press, log, 2050i64, f, android.Touch(2, rx, y0 + (H / 5) as f32));
+  if (!has_call(log, "volume 2") || !says(lower, "VOLUME 2")) {
+    return test.fail("the drag did not set the volume: " + log.calls.get().join(" | "));
+  }
+  let done = settle(at(lower, log, 2100i64, f, android.Touch(1, rx, y0 + (H / 5) as f32)), log, 2100i64, f);
+  let shown = tap(done, log, 3000i64, f, "overlay");
+  let back = tap(shown, log, 3100i64, f, "back");
+  return test.assert_eq(has_call(log, "light -1000").to_string(), "true");
+}
+
+function count_seeks(log: Log): i32 {
+  return log.calls.get().filter((c: string): boolean => c.starts_with("seek ")).len();
+}
+
+// The sheet of tracks: a second sound track of a file that plays as it is
+// changes in place, and the server remembers it. A subtitle starts the
+// stream again as a transcode that burns it.
+function test_tracks_sheet(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  if (!has_call(log, "track 1")) {
+    return test.fail("the remembered sound did not play: " + log.calls.get().join(" | "));
+  }
+  let sheet = tap(tap(ready, log, 400i64, f, "overlay"), log, 500i64, f, "tracks");
+  if (node(sheet, "audio:22").is_none() || node(sheet, "sub:31").is_none() || node(sheet, "sub:").is_none()) {
+    return test.fail("no sheet of tracks");
+  }
+  let plays = count_plays(log);
+  let commentary = tap(sheet, log, 600i64, f, "audio:22");
+  if (!has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=0&allParts=1") || !has_call(log, "track 2") || count_plays(log) != plays) {
+    return test.fail("the commentary did not play in place: " + log.calls.get().join(" | "));
+  }
+  let subs = tap(tap(commentary, log, 700i64, f, "tracks"), log, 800i64, f, "sub:31");
+  if (count_plays(log) != plays + 1 || !has_call(log, "subtitles=burn") || !has_call(log, "audioStreamID=22")) {
+    return test.fail("the subtitle did not burn in a new transcode: " + log.calls.get().join(" | "));
+  }
+  return test.assert_eq(has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=31&allParts=1").to_string(), "true");
+}
+
+function count_plays(log: Log): i32 {
+  return log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len();
+}
+
+// The first connection that answered wins, unless a better one still
+// waits and the wait is not over. A failed connection does not hold up a
+// worse one that answered.
+function test_connection_race(): test.TestOutcome {
+  let got = [control.winner([0, 1], false), control.winner([0, 1], true), control.winner([2, 1], false), control.winner([1, 0], false), control.winner([2, 2], false), control.winner([0, 0], true)];
+  return test.assert_eq(got.map((k: i32): string => k.to_string()).join(" "), "-1 1 1 0 -1 -1");
+}
+
+// In an intro, a Skip intro button shows over the video with no controls,
+// and a tap on it seeks to the end of the intro.
+function test_skip_intro(): test.TestOutcome {
+  let log = new_log();
+  log.gpu.set(true);
+  let f = frame();
+  defer free_frame(f);
+  let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:1"), log, 200i64, f, "play");
+  if (!has_url(log, "/library/metadata/502?includeMarkers=1")) {
+    return test.fail("no metadata of the item that plays");
+  }
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  let ticked = settle(ready, log, 1000i64, f);
+  if (node(ticked, "skip").is_none() || node(ticked, "overlay").is_none()) {
+    return test.fail("no skip button over the video");
+  }
+  let drawn = at(ticked, log, 1010i64, f, android.Vsync(1000000000i64));
+  if (count_calls(log, "draw video with controls") == 0) {
+    return test.fail("the skip button did not draw over the video");
+  }
+  let skipped = tap(drawn, log, 1100i64, f, "skip");
+  return test.assert_eq(has_call(log, "seek 130000").to_string(), "true");
+}
+
+// The detail screen of a season that plays its first episode, with the
+// rest as the next items.
+function season_playing(log: Log, f: draw.Frame): control.App {
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let season = plex.Item { ...plex.no_item(), key: "600", kind: "season", title: "Season 1" };
+  let detail = settle(control.App { ...home, screen: ui.DETAIL, item: season, children: plex.parse_items(EPISODES).items, dirty: true }, log, 100i64, f);
+  let playing = tap(detail, log, 200i64, f, "play");
+  return settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+}
+
+// In the credits, a card shows the next episode and counts down from 10
+// seconds, and then the next episode plays. The app reports the episode
+// that ended as stopped at its end.
+function test_up_next_plays(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let ready = season_playing(log, f);
+  let carded = settle(ready, log, 1000i64, f);
+  if (node(carded, "next_now").is_none() || node(carded, "next_cancel").is_none()) {
+    return test.fail("no card of the next item: " + log.calls.get().join(" | "));
+  }
+  let plays = count_plays(log);
+  let next = settle(carded, log, 11500i64, f);
+  if (count_plays(log) != plays + 1 || !has_call(log, "play https://up.example:32400/library/parts/11/file.mp4")) {
+    return test.fail("the next episode did not play after the countdown: " + log.calls.get().join(" | "));
+  }
+  let reported = settle(next, log, 12000i64, f);
+  let stops = log.urls.get().filter((u: string): boolean => u.contains("ratingKey=503") && u.contains("state=stopped"));
+  return test.assert_eq((stops.len() == 1 && stops[0].contains("&time=8880000&duration=8880000")).to_string(), "true");
+}
+
+// Cancel on the card hides it, and the next episode does not play.
+function test_up_next_cancel(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let carded = settle(season_playing(log, f), log, 1000i64, f);
+  let plays = count_plays(log);
+  let off = tap(carded, log, 1100i64, f, "next_cancel");
+  if (node(off, "next_now").is_some()) {
+    return test.fail("the card stayed");
+  }
+  let later = settle(off, log, 20000i64, f);
+  return test.assert_eq((count_plays(log) - plays).to_string(), "0");
+}
+
 function test_library_pages(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -479,15 +1021,60 @@ function test_library_pages(): test.TestOutcome {
     return test.fail("no first page");
   }
   save_png(f, "library");
-  // Drag up far, to the end of the grid.
-  let t = at(lib, log, 300i64, f, android.Touch(0, 270.0, 900.0));
+  if (has_url(log, "X-Plex-Container-Start=60&")) {
+    return test.fail("a page far below the screen came at once");
+  }
+  // Drag up five screens.
+  let t = at(lib, log, 300i64, f, android.Touch(0, 270.0, 1000.0));
   let i = 0;
   while (i < 40) {
-    t = at(t, log, 300i64 + i as i64, f, android.Touch(2, 270.0, 900.0 - (i * 400) as f32));
+    t = at(t, log, 300i64 + i as i64, f, android.Touch(2, 270.0, 1000.0 - (i * 120) as f32));
     i += 1;
   }
-  t = settle(at(t, log, 400i64, f, android.Touch(1, 270.0, -15000.0)), log, 400i64, f);
-  return test.assert_eq(has_url(log, "X-Plex-Container-Start=60&").to_string(), "true");
+  t = settle(at(t, log, 400i64, f, android.Touch(1, 270.0, -3680.0)), log, 400i64, f);
+  return test.assert_eq((has_url(log, "X-Plex-Container-Start=60&") && !has_url(log, "X-Plex-Container-Start=180&")).to_string(), "true");
+}
+
+// The title order shows a strip of the first letters. A drag along it and
+// a tap on a letter scroll to the first item of the letter, and ask for its
+// page with no page before it.
+function test_library_letters(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let lib = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "tab:1"), log, 200i64, f, "section:0");
+  let (Some(a), Some(b)) = (node(lib, "letter:0"), node(lib, "letter:1")) else {
+    return test.fail("no letter strip: " + log.urls.get().join(" | "));
+  };
+  save_png(f, "letters");
+  let (ax, ay) = centre(a);
+  let (bx, by) = centre(b);
+  let down = at(lib, log, 300i64, f, android.Touch(0, ax as f32, ay as f32));
+  let slid = settle(at(at(down, log, 320i64, f, android.Touch(2, ax as f32, by as f32)), log, 340i64, f, android.Touch(1, ax as f32, by as f32)), log, 340i64, f);
+  if (!has_url(log, "X-Plex-Container-Start=60&") || has_url(log, "X-Plex-Container-Start=120&") || node(slid, "grid:100").is_none()) {
+    return test.fail("the drag to B did not show its first item: " + log.urls.get().join(" | "));
+  }
+  let c = tap(slid, log, 400i64, f, "letter:2");
+  return test.assert_eq((has_url(log, "X-Plex-Container-Start=120&") && node(c, "grid:150").is_some() && !has_url(log, "X-Plex-Container-Start=240&")).to_string(), "true");
+}
+
+// The chip of the order moves to the next order and loads the library again
+// in it. The year order has no letter strip. The filter chip asks for the
+// items not watched.
+function test_library_sort_and_filter(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let lib = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "tab:1"), log, 200i64, f, "section:0");
+  let year = tap(lib, log, 300i64, f, "sort:1");
+  if (!has_url(log, "sort=year%3Adesc") || node(year, "letter:0").is_some() || node(year, "grid:0").is_none()) {
+    return test.fail("no library in the year order: " + log.urls.get().join(" | "));
+  }
+  let fresh = tap(year, log, 400i64, f, "unwatched:1");
+  if (!has_url(log, "sort=year%3Adesc&includeGuids=0&unwatched=1") || node(fresh, "unwatched:0").is_none()) {
+    return test.fail("no filter of the items not watched: " + log.urls.get().join(" | "));
+  }
+  return test.assert_eq(node(fresh, "sort:2").is_some().to_string(), "true");
 }
 
 // A quick swipe up the library lets the grid move on after the finger
@@ -700,10 +1287,27 @@ function main(): i32 {
   let r = test.new("plex control");
   r = r.it("a sign-in with a PIN reaches the home screen", test_sign_in_reaches_home);
   r = r.it("a saved server opens the home screen", test_saved_server_opens_home);
+  r = r.it("a saved address that fails moves to one that answers", test_saved_server_moves_to_working_address);
+  r = r.it("a saved address that works stays, with no reload", test_saved_server_recheck_is_quiet);
   r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
   r = r.it("a transcode seeks in its stream and stays alive while paused", test_transcode_seeks_in_its_stream);
   r = r.it("a file with no sound plays again as a transcode", test_lost_sound_transcodes);
-  r = r.it("a library loads its next page at its end", test_library_pages);
+  r = r.it("a drag on the seek bar scrubs with thumbnails", test_drag_scrubs_with_thumbnails);
+  r = r.it("the sheet of tracks changes the sound and burns subtitles", test_tracks_sheet);
+  r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
+  r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
+  r = r.it("the connections of a server race", test_connection_race);
+  r = r.it("a skip button skips the intro", test_skip_intro);
+  r = r.it("the card of the next episode counts down and plays it", test_up_next_plays);
+  r = r.it("cancel on the card of the next episode keeps it from playing", test_up_next_cancel);
+  r = r.it("a library loads the pages near the screen", test_library_pages);
+  r = r.it("the letter strip jumps to the first item of a letter", test_library_letters);
+  r = r.it("the chips change the order and the filter of a library", test_library_sort_and_filter);
+  r = r.it("a held poster opens a menu of its actions", test_poster_menu);
+  r = r.it("a user of the Plex Home takes over with a PIN", test_switch_home_user);
+  r = r.it("music plays on in the background with the media controls", test_music_media_controls);
+  r = r.it("the D-pad of a TV remote moves the focus and presses it", test_remote_moves_focus);
+  r = r.it("the keys of a TV remote seek, show the controls and pause", test_remote_on_the_video);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);

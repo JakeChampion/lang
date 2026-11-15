@@ -356,6 +356,17 @@ function level_corpus(): u8[] {
   return out;
 }
 
+function test_offset_below_zero(): test.TestOutcome {
+  let packed = deflate.deflate_fast("abc".bytes());
+  if (deflate.inflate_from(packed, -1, 16).is_ok() || deflate.gzip_member(packed, -1, 16).is_ok()) {
+    return test.fail("an offset below zero read a stream");
+  }
+  if (deflate.gzip_member_data(packed, -1, 16).is_ok() || deflate.inflate_from(packed, packed.len() + 1, 16).is_ok()) {
+    return test.fail("an offset outside the input read a stream");
+  }
+  return test.pass();
+}
+
 function test_deflate_levels(): test.TestOutcome {
   let input = level_corpus();
   let sizes: i32[] = [];
@@ -517,6 +528,7 @@ function main(): i32 {
   r = r.it("blocks of each kind in one stream", test_deflate_blocks);
   r = r.it("gzip reads back", test_gzip_round_trip);
   r = r.it("each level reads back", test_deflate_levels);
+  r = r.it("an offset outside the input is an error", test_offset_below_zero);
   r = r.it("gzip marks the fastest and the smallest levels", test_gzip_levels);
   r = r.it("blocks with a dictionary join into one stream", test_deflate_blocks_with_a_dictionary);
   r = r.it("zlib_compress writes the bytes of zlib", test_zlib_compress);

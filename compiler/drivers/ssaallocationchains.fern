@@ -48,8 +48,10 @@ function coherent(output: ssaprepare.Output, from: string, to: string): ssaprepa
 
 function frames(output: ssaprepare.Output): void {
   for amount in ["8", "16"] {
-    let changed = coherent(output, "call __fern_rec_box", "subq $" + amount + ", %rsp\ncall __fern_rec_box\nmovq -16(%rsp), %rdi\naddq $" + amount + ", %rsp");
+    let changed = coherent(output, "call __fern_rec_box", "subq $" + amount + ", %rsp\ncall __fern_rec_box\naddq $" + amount + ", %rsp");
     require(chain.record(changed, "parent"), "derived alternate frame " + amount);
+    let scratch = coherent(output, "call __fern_rec_box", "subq $" + amount + ", %rsp\ncall __fern_rec_box\nmovq -16(%rsp), %rdi\naddq $" + amount + ", %rsp");
+    require(!chain.record(scratch, "parent"), "helper scratch is not known " + amount);
   }
   let outside = coherent(output, "call __fern_rec_box", "subq $40, %rsp\ncall __fern_rec_box\naddq $40, %rsp");
   require(!chain.record(outside, "parent"), "outside derived frame bound");
@@ -70,11 +72,22 @@ function tag_store(text: string): string {
   return "";
 }
 
+// The store of the field at offset `at` of the box of `parent`.
+function field_store(text: string, at: string): string {
+  for raw in text.split("\n") {
+    let line = raw.trim();
+    if (line.starts_with("movq %") && line.ends_with(", " + at + "(%rax)")) {
+      return line;
+    }
+  }
+  return "";
+}
+
 function caller_dependencies(output: ssaprepare.Output): void {
   let bad_box = change(output.text, "leaq 24(,%rdi,8), %rdi", "leaq 16(,%rdi,8), %rdi");
   require(chain.allocator(bad_box) && !chain.array_box(bad_box), "allocator cannot certify helper request");
   require(!chain.record(ssaprepare.Output { ...output, text: bad_box }, "parent"), "constructor binds helper");
-  let bad_store = coherent(output, "movq %rbx, 0(%rax)", "");
+  let bad_store = coherent(output, field_store(output.text, "0"), "");
   require(chain.array_box(bad_store.text) && !chain.record(bad_store, "parent"), "helper cannot certify constructor store");
   require(!chain.record(ssaprepare.Output { ...output, bodies: [] }, "parent"), "same retained graph required");
   let bad_shape = coherent(output, tag_store(output.text), tag_store(output.text) + "\nmovl $2, -4(%rax)");
