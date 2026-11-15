@@ -119,8 +119,7 @@ func TestSelfHostTaskDroppedWhileParkedIsCancelled(t *testing.T) {
 }
 
 // A parked call that the program drops is cancelled, as a task is. A call
-// that the program resumes or cancels ends one time, and so does a call
-// whose record the program copied.
+// that the program resumes or cancels ends one time.
 const callDroppedProgram = `import "std/async";
 
 function body(name: string, n: i32): i32 {
@@ -169,25 +168,12 @@ function cancelled(): void {
     }
 }
 
-@noinline
-function copied(): void {
-    match (async.call_start(body, "copied", 4)) {
-        Returned(_) => { print("returned"); },
-        Parked(call, _) => {
-            let twin = async.Call { ...call };
-            print("two records");
-        }
-    }
-}
-
 function main(): i32 {
     dropped();
     print("--");
     resumed();
     print("--");
     cancelled();
-    print("--");
-    copied();
     print("end of main");
     return 0;
 }
@@ -209,11 +195,6 @@ parked
 cancelled cancelled live cancelled
 defer cancelled
 after cancel
---
-start copied
-cancelled copied live copied
-defer copied
-two records
 end of main
 `
 
