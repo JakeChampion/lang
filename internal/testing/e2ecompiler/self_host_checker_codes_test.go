@@ -2962,6 +2962,13 @@ function main(): i32 { return 0; }
 		{"builtin-method-name-string-len", "function __method_string_len(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"builtin-method-name-reader-close", "function __method_Reader_close(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"intrinsic-family-prefix-name", "function __port_text(x: i32): i32 { return x; }\nfunction main(): i32 { return __port_text(0); }\n", nil},
+		{"e107-struct-nests-itself-in-its-argument", "struct Nest[T] { head: T, tail: Nest[Nest[T]] }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-enum-gives-itself-an-array-of-its-parameter", "enum Nest[T] { Leaf(T), More(Nest[T[]]) }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-through-a-second-struct", "struct A[T] { head: T, b: Option[B[T[]]] }\nstruct B[T] { a: Option[A[T]] }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-in-a-function-type-field", "struct Call[T] { f: (Call[T[]]) => i32 }\nfunction main(): i32 { return 0; }\n", []string{"E107"}},
+		{"e107-recursive-struct-same-argument-ok", "struct List[T] { head: T, tail: Option[List[T]] }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e107-recursive-struct-exchanged-arguments-ok", "struct Pair[A, B] { a: A, b: B, next: Option[Pair[B, A]] }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e107-larger-argument-with-no-loop-ok", "struct Box[T] { v: T }\nstruct Rows[T] { rows: Box[T[]] }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	// The symbol of each generic builtin method (#15210).
 	for _, name := range []string{"Array_len", "Array_push", "Array_set", "Array_truncate", "Cell_get", "Cell_set", "Map_clear", "Map_contains", "Map_get", "Map_get_or", "Map_keys", "Map_len", "Map_remove", "Map_set", "Map_values", "slice_len"} {

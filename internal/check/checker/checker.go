@@ -778,6 +778,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	prog.Unions = nil
 
+	c.reportExpandingTypes(prog)
+
 	for _, ed := range prog.Enums {
 		if _, dup := c.info.Enums[ed.Name]; dup {
 			c.report(ed.SourceModule, ed.P, "E006", fmt.Sprintf("enum %q redeclared", ed.Name))

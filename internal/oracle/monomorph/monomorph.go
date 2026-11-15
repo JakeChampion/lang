@@ -296,7 +296,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 	}
 	if !converged {
-		return fmt.Errorf("monomorph: generic struct instantiation did not terminate after %d rounds — a generic type appears to be infinitely (polymorphically) recursive, e.g. a field typed `T[T]`-style that nests the struct inside its own type argument; such types can't be monomorphised", maxStructInstRounds)
+		return fmt.Errorf("monomorph: the generic struct instances did not converge in %d rounds", maxStructInstRounds)
 	}
 
 	existingFunc := func(name string) bool {
