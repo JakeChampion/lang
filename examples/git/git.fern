@@ -3230,6 +3230,40 @@ function local_objects(repo: refs.Repo[], thin: boolean): (string) => Option[obj
   };
 }
 
+// The zlib level of the objects that git writes, from `core.loosecompression`
+// or else `core.compression`, or the message of git for a level that is
+// not one. The default is 1, and -1 is the default level of zlib.
+function zlib_level(r: refs.Repo): Result[i32, string] {
+  // git reads the configuration from the top of the work tree.
+  let file = if (r.top.len() > 0 && r.dir == r.top + "/.git") { ".git/config" } else { r.common + "/config" };
+  let level = 1;
+  let loose = false;
+  for e in r.config.entries {
+    if (e.name == "core.compression" || e.name == "core.loosecompression") {
+      let v = compression_of(e, file)?;
+      if (e.name == "core.loosecompression" || !loose) {
+        level = v;
+      }
+      loose = loose || e.name == "core.loosecompression";
+    }
+  }
+  return Ok(level);
+}
+
+// The zlib level of one entry of the configuration in `file`.
+function compression_of(e: config.Entry, file: string): Result[i32, string] {
+  let negative = e.value.len() > 1 && e.value[0] == b'-';
+  let n = log_number(if (negative) { objects.part(e.value, 1, e.value.len()) } else { e.value });
+  if (n < 0) {
+    return Err("bad numeric config value '" + e.value + "' for '" + e.name + "' in file " + file + ": invalid unit");
+  }
+  let v = if (negative) { -n } else { n };
+  if (v < -1 || v > 9) {
+    return Err("bad zlib compression level " + v.to_string());
+  }
+  return Ok(if (v == -1) { 6 } else { v });
+}
+
 // The names of the index and of the reverse index of the packfile `file`,
 // or of the index `out`, or the message of git.
 function index_names_of(a: PackArgs): Result[(string, string), string] {
@@ -3263,6 +3297,24 @@ function kept(a: PackArgs, stem: string): Result[string, string] {
 
 function index_pack(argv: string[]): i32 {
   let a = pack_args(argv);
+  if (argv.len() == 1 && argv[0] == "-h") {
+    eprint(INDEX_PACK_USAGE);
+    return 129;
+  }
+  // git reads the configuration before the options.
+  let repo: refs.Repo[] = [];
+  let level = 1;
+  if let Ok(r) = refs.find() {
+    repo = [r];
+    match (zlib_level(r)) {
+      Ok(v) => {
+        level = v;
+      },
+      Err(message) => {
+        return fatal(message);
+      }
+    }
+  }
   if (a.failure.len() > 0) {
     return fatal(a.failure);
   }
@@ -3280,12 +3332,8 @@ function index_pack(argv: string[]): i32 {
       return fatal("unknown hash algorithm '" + a.format + "'");
     }
   }
-  let repo: refs.Repo[] = [];
-  if let Ok(r) = refs.find() {
-    repo = [r];
-    if (a.format.len() == 0) {
-      algo = r.width;
-    }
+  if (repo.len() > 0 && a.format.len() == 0) {
+    algo = repo[0].width;
   }
   if (a.thin && !a.stdin) {
     return fatal("the option '--fix-thin' requires '--stdin'");
@@ -3345,7 +3393,7 @@ function index_pack(argv: string[]): i32 {
   };
   let raw = algo;
   let started = monotonic_ns();
-  let o = index.Options { width: algo, version: a.version, limit: a.limit };
+  let o = index.Options { width: algo, version: a.version, limit: a.limit, level: level };
   let built = match (index.build_with(bytes, o, (d: string, offsets: i64[]): string[][] => index_names(d, offsets, raw), local_objects(repo, a.thin))) {
     Ok(b) => b,
     Err(messages) => {

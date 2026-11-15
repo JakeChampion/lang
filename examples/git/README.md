@@ -74,10 +74,11 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
 
   The formats are `--oneline`, `--pretty=` with each named format and
   `format:`, and `--format=`, with the placeholders of git. `%<(N)`,
-  `%>(N)`, `%><(N)` and `%>>(N)`, with `|` and with `trunc`, `ltrunc`
-  and `mtrunc`, set the columns of the next placeholder. `%w()` wraps
-  the text. `--date=` has
-  each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,
+  `%>(N)`, `%><(N)` and `%>>(N)` set the columns of the next placeholder.
+  They also have the forms with `|`, `trunc`, `ltrunc` and `mtrunc`.
+  `%w()` wraps the text.
+
+  `--date=` has each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,
   `--name-only` and `--name-status` add to the text. `--decorate=full`,
   `--decorate-refs=`, `--decorate-refs-exclude=`, `--clear-decorations`
   and `log.excludeDecoration` select the refs of the decorations, with
@@ -90,7 +91,7 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
 
   `--show-signature`, `log.showSignature` and the placeholders `%GG`,
   `%G?`, `%GS`, `%GK`, `%GF`, `%GP` and `%GT` check the signature of a
-  commit with gpg, as git runs it, with `gpg.program`.
+  commit. They run gpg as git runs it, with `gpg.program`.
 
   The mailmap of `.mailmap`, `mailmap.blob` and
   `mailmap.file` gives the names of the header lines, of `%aN` and of
@@ -103,7 +104,7 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   The diff of each commit is `-p`, `--raw`, `--stat`, `--numstat`,
   `--shortstat`, `--summary` or `--patch-with-stat`, with the bytes of
   git. `--check` shows the errors of white space of the added lines, with
-  the rules of `core.whitespace`, and gives the exit status 2 for an
+  the rules of `core.whitespace`. It gives the exit status 2 for an
   error, as git does. `--abbrev=N` and `--no-abbrev` set the length of the
   short names.
 
@@ -141,14 +142,19 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
 
 - `index-pack` makes the index of a packfile (version 1 or 2) and its
   reverse index, and prints the checksum of the packfile. It reads the
-  packfile from a file or from the standard input. `--fix-thin` adds the
-  bases of a thin pack from the store. For a packfile that is not sound,
-  the message and the exit status are those of git. `--strict` and
-  `--fsck-objects` check the objects as git does. `--verify` writes no
-  file: it compares the index and the reverse index of git with those
-  that it makes. `-v` writes the progress of git: the lines of the deltas
-  are those of git with `--threads=1`, and the rate of the bytes from the
-  standard input is that of the port.
+  packfile from a file or from the standard input. For a packfile that is
+  not sound, the message and the exit status are those of git.
+
+  `--fix-thin` adds the bases of a thin pack from the store, in the order
+  of git. The zlib streams of the bases are those of git at the level of
+  `core.loosecompression` or `core.compression`. Thus the packfile, its
+  name and its index have the bytes of git.
+
+  `--strict` and `--fsck-objects` check the objects as git does.
+  `--verify` writes no file: it compares the index and the reverse index
+  of git with those that it makes. `-v` writes the progress of git. Its
+  lines of the deltas are those of git with `--threads=1`. Its rate of
+  the bytes from the standard input is that of the port.
 
 The port reads and writes repositories with SHA-1 names and with SHA-256
 names (`git init --object-format=sha256`). The key
@@ -215,6 +221,9 @@ the git of the machine. With git 2.43, four things are different:
 - `index.fern`: the index of a packfile, made from the packfile.
 - `config.fern`: the configuration files.
 - `fsck.fern`: the checks of a commit, a tree and a tag.
+- `checkblob.fern`: the checks of the `.gitmodules` blobs.
+- `checkpack.fern`: the checks of `--strict` and `--fsck-objects`.
+- `color.fern`: the colors and the color slots of the output.
 - `refs.fern`: the repository, the refs and the reflogs.
 - `dircache.fern`: the index of the worktree (versions 2 to 4).
 - `rev.fern`: the revisions and their operators.
@@ -226,7 +235,13 @@ the git of the machine. With git 2.43, four things are different:
 - `treediff.fern`: the changes between two trees, and the renames.
 - `graph.fern`: the graph of `--graph`.
 - `patch.fern`: the diff of a commit: the patch, `--stat`, `--numstat`,
-  `--shortstat` and `--summary`.
+  `--shortstat` and `--summary`, `--raw`, `--check` and `--word-diff`.
+- `combine.fern`: the combined diff of a merge (`-c` and `--cc`).
+- `moved.fern`: the colors of the moved lines (`--color-moved`).
+- `ws.fern`: the rules of `core.whitespace` and their errors.
+- `attr.fern`: the attributes of `.gitattributes`.
+- `notes.fern`: the notes of the commits.
+- `sig.fern`: the check of a signature with gpg, and `%G?`.
 - `log.fern`: the fields of a commit and the text that `log` prints.
 - `date.fern`: the dates that `log` prints and reads.
 - `width.fern`: the column width of a character (from `unicode-width.h`).
@@ -244,9 +259,6 @@ the git of the machine. With git 2.43, four things are different:
 - `rev-parse --short=N` with N above 40 in a repository with SHA-256
   names. The port gives the full name, and git 2.43 stops at 40 digits.
 
-- `--fix-thin` with a thin pack. The port adds the bases with the deflate
-  of `std/deflate`, so the packfile, its name and its index do not have
-  the bytes that git writes.
 
 
 ## Speed
@@ -370,11 +382,15 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   forms of `log` with colors.
 
 - `TestSelfHostExampleGitForms` runs the placeholders that change the
-  columns of a format, the wrap of `%w()`, `--raw`, `--check` with
-  each rule of `core.whitespace`, the diffs of merges, also in a random
-  history of merges with conflicts, the diffs of words, the moved lines,
-  also of random edits, the copies, also in a random history, the notes,
-  and the signatures of two keys of gpg.
+  columns of a format, the wrap of `%w()`, `--raw`, and `--check` with
+  each rule of `core.whitespace`. It runs the diffs of merges, also in a
+  random history of merges with conflicts. It runs the diffs of words
+  and the moved lines, also of random edits. It runs the copies, also in
+  a random history, the notes, and the signatures of two keys of gpg.
+
+- `TestSelfHostExampleGitFixThin` runs `index-pack --fix-thin` on a thin
+  pack of `pack-objects` at each level of zlib, and on deltas whose bases
+  are deltas.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

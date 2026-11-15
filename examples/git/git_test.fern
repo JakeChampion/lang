@@ -632,7 +632,7 @@ function test_index_versions(): test.TestOutcome {
   let data = tiny_pack("hello\n".bytes(), objects.SHA1);
   let name = unhex("ce013625030ba8dba906f756967f9e9ca394464a");
   let sha1 = objects.SHA1;
-  let Ok(v1) = index.build(pack.text_of(data), index.Options { width: sha1, version: 1, limit: 2147483647 }) else {
+  let Ok(v1) = index.build(pack.text_of(data), index.Options { width: sha1, version: 1, limit: 2147483647, level: 1 }) else {
     return test.fail("no index of version 1");
   };
   let Ok(ix1) = pack.index_of(v1.idx, 20, "v1.idx") else {
@@ -643,7 +643,7 @@ function test_index_versions(): test.TestOutcome {
   }
   // git refuses an index whose every offset is in the table of 8-byte
   // offsets, which `--index-version=2,0` makes for one object.
-  let Ok(all) = index.build(pack.text_of(data), index.Options { width: sha1, version: 2, limit: 0 }) else {
+  let Ok(all) = index.build(pack.text_of(data), index.Options { width: sha1, version: 2, limit: 0, level: 1 }) else {
     return test.fail("no index with large offsets");
   };
   match (pack.index_of(all.idx, 20, "all.idx")) {
@@ -658,7 +658,7 @@ function test_index_versions(): test.TestOutcome {
   }
   // Two blobs, and the second is past the limit of 12.
   let two = two_blobs("hello\n".bytes(), "world\n".bytes());
-  let Ok(wide) = index.build(pack.text_of(two), index.Options { width: sha1, version: 2, limit: 12 }) else {
+  let Ok(wide) = index.build(pack.text_of(two), index.Options { width: sha1, version: 2, limit: 12, level: 1 }) else {
     return test.fail("no index with a large offset");
   };
   let Ok(ix2) = pack.index_of(wide.idx, 20, "wide.idx") else {
