@@ -21,6 +21,7 @@ import "./util";
 import "./rtbytecopy";
 import "./semunique";
 import "./sembytecopy";
+import "./semversion";
 import "./byteconst";
 import "./seminline";
 import "./semspecial";
@@ -9008,7 +9009,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let inlined = inline_leaves(sp.all, names, mod, opts, sp.roots);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
-    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins);
+    all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size);
   }
   decls = [];
   instances = [];
@@ -9124,6 +9125,26 @@ function unique_loops(all: Produced[]): Produced[] {
       let h = semunique.hoisted(p.func, p.modes);
       if (h.changed && optbisect.allowed_by(sw, "unique-loops", p.func.graph.name)) {
         p = Produced { ...p, func: h.func, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
+// A build for size keeps one version of each loop.
+function version_loops(all: Produced[], size: boolean): Produced[] {
+  if (size) {
+    return all;
+  }
+  let sw = optbisect.switches();
+  let out: Produced[] = [];
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template && !p.bodyless && optbisect.allowed_by(sw, "version", p.func.graph.name)) {
+      let v = semversion.version(p.func);
+      if (v.loops > 0) {
+        p = Produced { ...p, func: v.f, analysis: None };
       }
     }
     out = out.append(p);
