@@ -226,7 +226,13 @@ function rtrim(text: string): string {
 // `mark` goes before the name of the commit on its first line, as
 // `--left-right`, `--boundary` and `--cherry-mark` give it, and `side` is
 // the mark of `%m`.
-pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: string[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string }
+//
+// `reflog` holds the entry of the reflog of a walk of `--walk-reflogs`.
+pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: string[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string, reflog: ReflogLine[] }
+
+// An entry of a reflog: its selector (`HEAD@{1}`), the selector with a
+// short ref name, the message, and the person `NAME <EMAIL>`.
+pub struct ReflogLine { selector: string, short: string, message: string, who: string }
 
 // The person of a header line, with the mailmap when the log uses it.
 function shown(p: Person, ctx: Context): Person {
@@ -288,6 +294,13 @@ function header(c: Commit, ctx: Context, form: string): string {
 // the other forms end with a line end.
 pub function pretty(c: Commit, ctx: Context, form: string): string {
   let m = c.message;
+  if (ctx.reflog.len() > 0) {
+    let e = ctx.reflog[0];
+    if (form == "oneline") {
+      return e.selector + ": " + e.message;
+    }
+    return "Reflog: " + e.selector + " (" + e.who + ")\nReflog message: " + e.message + "\n" + pretty(c, Context { ...ctx, reflog: [] }, form);
+  }
   if (form == "oneline") {
     let (s, _) = subject_from(m, skip_blank(m, 0), " ");
     return rtrim(s);
@@ -421,6 +434,34 @@ function placeholder(c: Commit, ctx: Context, format: string, at: i32): (string,
     return match (person_field(p, format[at + 1], ctx)) {
       Some(text) => (text, 2),
       None => ("", 0),
+    };
+  }
+  if (letter == b'g' && at + 1 < format.len()) {
+    if (ctx.reflog.len() == 0) {
+      let known = match (format[at + 1]) {
+        b'd' => true,
+        b'D' => true,
+        b's' => true,
+        b'n' => true,
+        b'e' => true,
+        b'N' => true,
+        b'E' => true,
+        _ => false,
+      };
+      return ("", if (known) { 2 } else { 0 });
+    }
+    let e = ctx.reflog[0];
+    let p = person(e.who + " 0 +0000");
+    let m = mapped(p, ctx);
+    return match (format[at + 1]) {
+      b'd' => (e.short, 2),
+      b'D' => (e.selector, 2),
+      b's' => (e.message, 2),
+      b'n' => (p.name, 2),
+      b'e' => (p.email, 2),
+      b'N' => (m.name, 2),
+      b'E' => (m.email, 2),
+      _ => ("", 0),
     };
   }
   if (letter == b'x') {

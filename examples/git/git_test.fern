@@ -248,7 +248,7 @@ function shorts(name: string): string {
 }
 
 function context_of(c: log.Commit): log.Context {
-  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">" };
+  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [] };
 }
 
 // The subject, the body, the built-in forms and the placeholders of a

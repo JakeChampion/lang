@@ -63,6 +63,12 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `--cherry`, with the patch ids of git. `--boundary` shows the excluded
   parents of the shown commits.
 
+  `-S`, `-G`, `--pickaxe-regex` and `--pickaxe-all` select the commits
+  whose diff adds or removes a string or a line that matches. `--follow`
+  follows the renames and the copies of one file. `-g` walks the reflogs,
+  with the `Reflog:` lines of git and the placeholders `%gd`, `%gD`,
+  `%gs`, `%gn`, `%ge`, `%gN` and `%gE`.
+
   The formats are `--oneline`, `--pretty=` with each named format and
   `format:`, and `--format=`, with the placeholders of git. `--date=` has
   each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,

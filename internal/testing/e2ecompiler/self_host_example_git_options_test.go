@@ -37,6 +37,19 @@ var gitOptionCases = []string{
 	"log --oneline --simplify-by-decoration --decorate", "log --oneline --simplify-by-decoration -- s",
 	"log --oneline --simplify-by-decoration --graph", "log --oneline --simplify-by-decoration --graph --all",
 	"log --oneline --simplify-merges -- s", "log --oneline --graph --simplify-merges --all -- f",
+	"log -g --graph", "log -g HEAD~1..HEAD", "log -g ^HEAD~1 HEAD", "log -g HEAD~1", "log --oneline -g main@{2}",
+	"log --oneline -g HEAD@{1}", "log -g nosuch", "log --oneline -g main side", "log --oneline -g --all",
+	"log -g --topo-order", "log --oneline -g -- f", "log -g --reverse", "log --oneline -g --no-merges",
+	"log --oneline -g --since=1700010000", "log --oneline -g -p -1", "log --oneline -g --stat -2",
+	"log -g --format=%gd%x09%gD%x09%gs -3 refs/heads/main", "log --oneline -g @{1}", "log -g --date=relative -2",
+	"log -g -1 --pretty=raw", "log -g --decorate --oneline -2", "log -g side..main", "log -g --left-right --oneline -2",
+	"log -g -3", "log -g --pretty=fuller -2", "log -g --format=%h|%gn|%ge|%gN|%gE|%gs", "log -g --oneline --author=New",
+	"log -g --oneline --grep=side", "log -g --oneline -n 3 --skip=2", "log --oneline --walk-reflogs side",
+	"log -g --date=iso --format=%gd -3", "log --oneline -S2", "log --oneline -G2", "log --oneline -S2 -- f", "log -p -S3",
+	"log --oneline -S2 -n1", "log --oneline -S 4", "log --oneline -G [0-9]", "log --oneline -S x --pickaxe-regex",
+	"log --oneline -S [34] --pickaxe-regex", "log --stat -S s", "log --stat -S s --pickaxe-all", "log --oneline -G S -i",
+	"log --oneline -S S -i", "log --oneline --graph -S2", "log --oneline --follow -- f", "log --oneline --follow -- s",
+	"log --oneline --follow f s", "log --name-status --follow -- s",
 }
 
 // gitOptionsFixture makes a repository with a mailmap, branches, tags, a

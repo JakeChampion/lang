@@ -77,10 +77,10 @@ pub const BY_AUTHOR: i32 = 2;
 // `A...B`. `ancestry` is `--ancestry-path`, with the commits that it names
 // in `ancestry_of`. With `by_decoration`, the commits of `decorated` are
 // the ones that change.
-pub struct Opts { max_age: i64, min_age: i64, first_parent: boolean, topo: boolean, order: i32, items: string[], bloom: i64[][], rewrite: boolean, min_parents: i32, max_parents: i32, grep: Grep, full_history: boolean, simplify_merges: boolean, left_only: boolean, right_only: boolean, cherry_pick: boolean, cherry_mark: boolean, ancestry: boolean, ancestry_of: string[], boundary: boolean, by_decoration: boolean, decorated: Map[string, boolean] }
+pub struct Opts { reflog_walk: boolean, max_age: i64, min_age: i64, first_parent: boolean, topo: boolean, order: i32, items: string[], bloom: i64[][], rewrite: boolean, min_parents: i32, max_parents: i32, grep: Grep, full_history: boolean, simplify_merges: boolean, left_only: boolean, right_only: boolean, cherry_pick: boolean, cherry_mark: boolean, ancestry: boolean, ancestry_of: string[], boundary: boolean, by_decoration: boolean, decorated: Map[string, boolean] }
 
 pub function options(): Opts {
-  return Opts { max_age: -1, min_age: -1, first_parent: false, topo: false, order: BY_GRAPH, items: [], bloom: [], rewrite: false, min_parents: 0, max_parents: -1, grep: no_grep(), full_history: false, simplify_merges: false, left_only: false, right_only: false, cherry_pick: false, cherry_mark: false, ancestry: false, ancestry_of: [], boundary: false, by_decoration: false, decorated: Map { } };
+  return Opts { reflog_walk: false, max_age: -1, min_age: -1, first_parent: false, topo: false, order: BY_GRAPH, items: [], bloom: [], rewrite: false, min_parents: 0, max_parents: -1, grep: no_grep(), full_history: false, simplify_merges: false, left_only: false, right_only: false, cherry_pick: false, cherry_mark: false, ancestry: false, ancestry_of: [], boundary: false, by_decoration: false, decorated: Map { } };
 }
 
 // True when the walk drops the commits that change nothing it looks at:
@@ -456,6 +456,18 @@ pub function interesting(w: Walk, c: string): (Walk, boolean) {
   if (w.opts.boundary && (flag(w, c) & CHILD_SHOWN) != 0) {
     return (w, true);
   }
+  return wanted(w, c);
+}
+
+// True if a walk of `--walk-reflogs` shows the commit `c`: the commit
+// comes again with no flags of the walk, and the pathspec and the filters
+// apply to it.
+pub function reflog_wanted(w_in: Walk, c: string): (Walk, boolean) {
+  let (w1, n) = node(unset(w_in, c, SHOWN | ADDED | SEEN), c);
+  if (!n.ok) {
+    return (w1, false);
+  }
+  let w = simplify(w1, c);
   return wanted(w, c);
 }
 

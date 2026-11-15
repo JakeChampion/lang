@@ -28,6 +28,11 @@ var gitDiffCases = []string{
 	"log -p -U0 --inter-hunk-context=1", "log -p --reverse", "log -p --format=", "log --stat --format=", "log -p --pretty=format:%h",
 	"log --stat --pretty=format:%h", "log -p --pretty=tformat:%h", "log -p --pretty=raw", "log -p --pretty=fuller",
 	"log -p --pretty=reference", "log -p side", "log -p -U",
+	"log --oneline --follow -- long2.txt", "log --name-status --follow -- long2.txt", "log -p --follow -- long2.txt",
+	"log --stat --follow -- dir/moved", "log --oneline --follow -- dir/moved", "log --oneline --follow -- a.txt",
+	"log --oneline --follow -- big.txt", "log --oneline -S twenty", "log -p -S twenty", "log --oneline -G x{9}",
+	"log --oneline -S bin", "log --oneline -G ary", "log --oneline --follow --all -- side.txt",
+	"log --oneline --first-parent -S side", "log --oneline --follow -- nosuch",
 }
 
 // gitDiffFixture makes a repository with each kind of change: text with

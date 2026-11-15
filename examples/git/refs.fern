@@ -256,9 +256,9 @@ pub function dwim_log(r: Repo, name: string): Dwim {
   return found;
 }
 
-// One line of a reflog: the old and the new hash, the time, the zone and
-// the message.
-pub struct LogEntry { old: string, new: string, time: i64, zone: i32, message: string }
+// One line of a reflog: the old and the new hash, the person, the time,
+// the zone and the message.
+pub struct LogEntry { old: string, new: string, who: string, time: i64, zone: i32, message: string }
 
 // The entries of the reflog of the ref `name`, the oldest first.
 pub function reflog(r: Repo, name: string): LogEntry[] {
@@ -280,7 +280,8 @@ pub function reflog(r: Repo, name: string): LogEntry[] {
       let zone_text = if (space < rest.len()) { objects.part(rest, space + 1, rest.len()) } else { "+0000" };
       let z = digits(zone_text) as i32;
       let message = if (tab < line.len()) { objects.part(line, tab + 1, line.len()) } else { "" };
-      out = out.append(LogEntry { old: objects.part(line, 0, n), new: objects.part(line, n + 1, 2 * n + 1), time: time, zone: if (zone_text.starts_with("-")) { -z } else { z }, message: message });
+      let who = if (close > 2 * n + 2) { objects.part(line, 2 * n + 2, close + 1) } else { "" };
+      out = out.append(LogEntry { old: objects.part(line, 0, n), new: objects.part(line, n + 1, 2 * n + 1), who: who, time: time, zone: if (zone_text.starts_with("-")) { -z } else { z }, message: message });
     }
   }
   return out;
