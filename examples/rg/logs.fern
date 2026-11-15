@@ -1,0 +1,327 @@
+// The lines of --debug and --trace, as ripgrep 14.1.0 writes them on the
+// standard error: the level, the module of Rust, the source file and its
+// line, and the message. The paths of the crates are those of the build of
+// Debian, which /usr/bin/rg is.
+import "std/i32";
+import "std/string";
+
+pub const DEBUG: i32 = 1;
+
+pub const TRACE: i32 = 2;
+
+const REGISTRY: string = "/usr/share/cargo/registry/";
+
+// Writes a line of DEBUG when the level is DEBUG or TRACE.
+pub function debug(level: i32, module: string, file: string, line: i32, message: string): void {
+  if (level >= DEBUG) {
+    eprint(f"rg: DEBUG|{module}|{file}:{line}: {message}");
+  }
+}
+
+// Writes a line of TRACE when the level is TRACE.
+pub function trace(level: i32, module: string, file: string, line: i32, message: string): void {
+  if (level >= TRACE) {
+    eprint(f"rg: TRACE|{module}|{file}:{line}: {message}");
+  }
+}
+
+// The path of a source file of a crate of the registry.
+pub function source(name: string, file: string): string {
+  return REGISTRY + name + "/src/" + file;
+}
+
+// `s` in quotes, as Rust writes a str with {:?}.
+pub function quoted(s: string): string {
+  let out = "\"";
+  for k in 0..s.len() {
+    let c = s[k] as i32;
+    out += match (c) {
+      34 => "\\\"",
+      92 => "\\\\",
+      10 => "\\n",
+      13 => "\\r",
+      9 => "\\t",
+      0 => "\\0",
+      _ => if (c < 32 || c == 127) { "\\u{" + c.to_string_radix(16) + "}" } else { slice_unchecked(s, k, k + 1).to_owned() },
+    };
+  }
+  return out + "\"";
+}
+
+// The count of the characters of UTF-8 in `s`.
+pub function chars(s: string): i32 {
+  let n = 0;
+  for k in 0..s.len() {
+    if ((s[k] as i32 & 192) != 128) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+// A list of strings, as Rust writes a Vec of strings with {:?}.
+pub function quoted_list(items: string[]): string {
+  let parts: string[] = [];
+  for s in items {
+    parts = parts.append(quoted(s));
+  }
+  return "[" + parts.join(", ") + "]";
+}
+
+// The tokens of a glob, as globset 0.4.14 reads one with the escapes of a
+// backslash: a literal character, `?`, `*`, `**/` at the start, `/**` at
+// the end, `/**/` in the middle, a class, or a set of alternatives.
+const T_LIT: i32 = 0;
+
+const T_ANY: i32 = 1;
+
+const T_STAR: i32 = 2;
+
+const T_RPREFIX: i32 = 3;
+
+const T_RSUFFIX: i32 = 4;
+
+const T_RMIDDLE: i32 = 5;
+
+const T_OTHER: i32 = 6;
+
+// The tokens of `glob`: each kind, and for a literal the character.
+// Each branch reads one form of the syntax of globset.
+// fern-lint: allow cyclomatic-complexity
+function tokens(glob: string): (i32[], string[]) {
+  let kinds: i32[] = [];
+  let chars: string[] = [];
+  let i = 0;
+  let n = glob.len();
+  while (i < n) {
+    let c = glob[i];
+    if (c == b'\\' && i + 1 < n) {
+      kinds = kinds.append(T_LIT);
+      chars = chars.append(slice_unchecked(glob, i + 1, i + 2).to_owned());
+      i += 2;
+    } else if (c == b'*' && i + 1 < n && glob[i + 1] == b'*') {
+      let at_start = i == 0;
+      let after_sep = i + 2 >= n || glob[i + 2] == b'/';
+      if (at_start && after_sep) {
+        kinds = kinds.append(if (i + 2 >= n) { T_STAR } else { T_RPREFIX });
+        chars = chars.append("");
+        i += if (i + 2 >= n) { 2 } else { 3 };
+      } else if (kinds.len() > 0 && kinds[kinds.len() - 1] == T_LIT && chars[chars.len() - 1] == "/" && after_sep) {
+        kinds = kinds.with(kinds.len() - 1, if (i + 2 >= n) { T_RSUFFIX } else { T_RMIDDLE });
+        chars = chars.with(chars.len() - 1, "");
+        i += if (i + 2 >= n) { 2 } else { 3 };
+      } else {
+        kinds = kinds.append(T_STAR);
+        chars = chars.append("");
+        i += 2;
+      }
+    } else if (c == b'*' || c == b'?') {
+      kinds = kinds.append(if (c == b'*') { T_STAR } else { T_ANY });
+      chars = chars.append("");
+      i += 1;
+    } else if (c == b'[' || c == b'{') {
+      let close = __memchr(glob, if (c == b'[') { 93 } else { 125 }, i + 2);
+      kinds = kinds.append(T_OTHER);
+      chars = chars.append("");
+      i = if (close < 0) { n } else { close + 1 };
+    } else {
+      let w = utf8_width(c);
+      kinds = kinds.append(T_LIT);
+      chars = chars.append(slice_unchecked(glob, i, if (i + w > n) { n } else { i + w }).to_owned());
+      i += w;
+    }
+  }
+  return (kinds, chars);
+}
+
+function utf8_width(b: u8): i32 {
+  return if (b < 128u8) { 1 } else if (b >= 240u8) { 4 } else if (b >= 224u8) { 3 } else { 2 };
+}
+
+// The literal of the tokens from `from` to `to`, or "" when one is not a
+// literal.
+function literal_of(kinds: i32[], chars: string[], from: i32, to: i32): string {
+  let out = "";
+  for k in from..to {
+    if (kinds[k] != T_LIT) {
+      return "";
+    }
+    out += chars[k];
+  }
+  return out;
+}
+
+// The strategy of a glob of globset: "lit", "base", "ext", "prefix",
+// "suffix", "component" for a suffix that is also a literal, "required" or
+// "regex", and the key that the strategy counts.
+// Each branch is one strategy, in the order that globset tries them.
+// fern-lint: allow cyclomatic-complexity
+function strategy(glob: string, sep: boolean, ci: boolean): (string, string) {
+  if (ci) {
+    return ("regex", glob);
+  }
+  let (kinds, chars) = tokens(glob);
+  let n = kinds.len();
+  if (n > 1 && kinds[0] == T_RPREFIX) {
+    let ok = true;
+    for k in 1..n {
+      if (kinds[k] == T_LIT && chars[k] == "/" || kinds[k] != T_LIT && !((kinds[k] == T_ANY || kinds[k] == T_STAR) && sep)) {
+        ok = false;
+      }
+    }
+    let lit = literal_of(kinds, chars, 1, n);
+    if (ok && lit != "") {
+      return ("base", lit);
+    }
+  }
+  let lit = literal_of(kinds, chars, 0, n);
+  if (n > 0 && lit != "") {
+    return ("lit", lit);
+  }
+  let start = if (n > 0 && kinds[0] == T_RPREFIX) { 1 } else { 0 };
+  if (start + 1 < n && kinds[start] == T_STAR && !(start == 0 && sep) && kinds[start + 1] == T_LIT && chars[start + 1] == ".") {
+    let ext = ".";
+    let ok = true;
+    for k in start + 2..n {
+      if (kinds[k] != T_LIT || chars[k] == "." || chars[k] == "/") {
+        ok = false;
+      } else {
+        ext += chars[k];
+      }
+    }
+    if (ok) {
+      return ("ext", ext);
+    }
+  }
+  let pre = prefix_of(kinds, chars, sep);
+  if (pre != "") {
+    return ("prefix", pre);
+  }
+  let (suffix, entire) = suffix_of(kinds, chars, sep);
+  if (suffix != "") {
+    return (if (entire) { "component" } else { "suffix" }, suffix);
+  }
+  let ext: string[] = [];
+  let k = n - 1;
+  while (k >= 0) {
+    if (kinds[k] != T_LIT || chars[k] == "/") {
+      return ("regex", glob);
+    }
+    ext = ext.append(chars[k]);
+    if (chars[k] == ".") {
+      let out = "";
+      let j = ext.len() - 1;
+      while (j >= 0) {
+        out += ext[j];
+        j -= 1;
+      }
+      return ("required", out);
+    }
+    k -= 1;
+  }
+  return ("regex", glob);
+}
+
+// The literal prefix of a glob that ends with `*` or `/**`, or "".
+function prefix_of(kinds: i32[], chars: string[], sep: boolean): string {
+  let n = kinds.len();
+  if (n == 0 || kinds[n - 1] == T_STAR && sep || kinds[n - 1] != T_STAR && kinds[n - 1] != T_RSUFFIX) {
+    return "";
+  }
+  let lit = literal_of(kinds, chars, 0, n - 1);
+  return if (lit == "") { "" } else if (kinds[n - 1] == T_RSUFFIX) { lit + "/" } else { lit };
+}
+
+// The literal suffix of a glob that starts with `**/` or `*`, or "", and
+// whether it follows a `/`.
+function suffix_of(kinds: i32[], chars: string[], sep: boolean): (string, boolean) {
+  let n = kinds.len();
+  if (n == 0) {
+    return ("", false);
+  }
+  let entire = kinds[0] == T_RPREFIX && n > 1 && kinds[1] == T_LIT;
+  let start = if (kinds[0] == T_RPREFIX) { 1 } else { 0 };
+  if (start >= n) {
+    return ("", false);
+  }
+  if (kinds[start] == T_STAR) {
+    if (sep) {
+      return ("", false);
+    }
+    start += 1;
+  }
+  let lit = if (start == n) { "" } else { literal_of(kinds, chars, start, n) };
+  if (start < n && lit == "") {
+    return ("", false);
+  }
+  let out = (if (entire) { "/" } else { "" }) + lit;
+  return if (out == "" || out == "/") { ("", false) } else { (out, entire) };
+}
+
+// The message of globset when it builds a set of the globs `globs`.
+// `ci` says for each glob whether it ignores the case.
+pub function glob_set_message(globs: string[], sep: boolean, ci: boolean[]): string {
+  let lits: string[] = [];
+  let bases: string[] = [];
+  let exts: string[] = [];
+  let required: string[] = [];
+  let prefixes = 0;
+  let suffixes = 0;
+  let regexes = 0;
+  for i in 0..globs.len() {
+    let (kind, key) = strategy(globs[i], sep, ci[i]);
+    if (kind == "lit" && !lits.contains(key)) {
+      lits = lits.append(key);
+    } else if (kind == "base" && !bases.contains(key)) {
+      bases = bases.append(key);
+    } else if (kind == "ext" && !exts.contains(key)) {
+      exts = exts.append(key);
+    } else if (kind == "prefix") {
+      prefixes += 1;
+    } else if (kind == "suffix" || kind == "component") {
+      suffixes += 1;
+      if (kind == "component" && !lits.contains(key.drop(1))) {
+        lits = lits.append(key.drop(1));
+      }
+    } else if (kind == "required" && !required.contains(key)) {
+      required = required.append(key);
+    } else if (kind == "regex") {
+      regexes += 1;
+    }
+  }
+  return f"built glob set; {lits.len()} literals, {bases.len()} basenames, {exts.len()} extensions, {prefixes} prefixes, {suffixes} suffixes, {required.len()} required extensions, {regexes} regexes";
+}
+
+// The glob that the ignore crate builds for a line of a gitignore file or
+// of -g: without `!`, a leading `/` and a trailing `/`, and with `**/` in
+// front when it has no `/`.
+pub function gitignore_actual(line0: string): string {
+  let line = line0;
+  let absolute = false;
+  if (line.starts_with("\\!") || line.starts_with("\\#")) {
+    line = line.drop(1);
+    absolute = line.starts_with("/");
+  } else {
+    if (line.starts_with("!")) {
+      line = line.drop(1);
+    }
+    if (line.starts_with("/")) {
+      line = line.drop(1);
+      absolute = true;
+    }
+  }
+  if (line.ends_with("/")) {
+    line = line.take(line.len() - 1);
+    if (line.ends_with("\\")) {
+      line = line.take(line.len() - 1);
+    }
+  }
+  let actual = line;
+  if (!absolute && !line.contains("/") && !actual.starts_with("**/") && actual != "**") {
+    actual = "**/" + actual;
+  }
+  if (actual.ends_with("/**")) {
+    actual += "/*";
+  }
+  return actual;
+}

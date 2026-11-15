@@ -92,6 +92,8 @@ pub struct Options {
   // A mode that writes text before any other check: "help", "help-long",
   // "version", "version-long" or "pcre2-version", or "".
   special: string,
+  // The level of the logs: 0, logs.DEBUG or logs.TRACE.
+  log: i32,
   // The kind of --generate for the mode Generate.
   generate: string,
 }
@@ -271,7 +273,7 @@ pub function defaults(): Options {
     context_separator: Some("--"), pattern_files: [], pattern_file_at: [], replace: None, encoding: "",
     max_columns: 0, eol: "\n", colors: colors.defaults(), hyperlink: hyperlink.none(), hostname_bin: "",
     field_context: "-", field_match: ":", pre: "", pre_globs: [], engine: "default", dfa_size_limit: -1i64,
-    regex_size_limit: -1i64, buffer: 0, special: "", generate: "",
+    regex_size_limit: -1i64, buffer: 0, special: "", generate: "", log: 0,
   };
 }
 
@@ -408,13 +410,14 @@ function set_late_switch(o: Options, name: string): Options {
   };
 }
 
-// The switches of the buffers of the output, and those of the logs, which
-// the port accepts and does not use.
+// The switches of the buffers of the output and of the logs.
 function set_buffer_switch(o: Options, name: string): Options {
   return match (name) {
     "line-buffered" => Options { ...o, buffer: 1 },
     "block-buffered" => Options { ...o, buffer: 2 },
     "no-line-buffered" | "no-block-buffered" => Options { ...o, buffer: 0 },
+    "debug" => Options { ...o, log: 1 },
+    "trace" => Options { ...o, log: 2 },
     _ => o,
   };
 }

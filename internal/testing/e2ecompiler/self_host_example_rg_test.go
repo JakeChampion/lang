@@ -309,6 +309,7 @@ func rgCases(dir string) []rgCase {
 	cases = append(cases, rgFlagCases()...)
 	cases = append(cases, rgLateCases()...)
 	cases = append(cases, rgPcreCases()...)
+	cases = append(cases, rgLogCases()...)
 	return append(cases, rgWalkCases()...)
 }
 
@@ -490,6 +491,30 @@ func rgPcreCases() []rgCase {
 		cases = append(cases, rgCase{args: rgArgs(l)})
 	}
 	return cases
+}
+
+// rgLogCases give --debug and --trace: the settings, the matcher of a
+// pattern of literals and of PCRE2, the search of each file, binary files,
+// and the decisions of a walk. Each walk has one thread, as ripgrep writes
+// the lines of more threads in the order that they end.
+func rgLogCases() []rgCase {
+	lines := []string{
+		"--debug foo a.txt", "--trace foo a.txt", "--trace -c foo a.txt", "--trace --json foo a.txt", "--trace -l foo a.txt",
+		"--trace -e foo -e bar a.txt", "--trace -e ab -e cd a.txt", "--trace -e a -e bcd a.txt", "--trace -F a.b a.txt",
+		"--trace -w foo a.txt", "--trace -x -e foo -e bar a.txt", "--trace -x -e ab -e cd a.txt", "--trace -U foo a.txt",
+		"--trace -P foo a.txt", "--trace -U -P foo a.txt", "--trace --no-mmap foo a.txt", "--trace -j1 foo a.txt w.txt",
+		"--trace foo bin.dat", "--trace -a foo bin.dat", "--debug -c foo bin.dat", "--trace --passthru foo a.txt",
+		"--trace --null-data foo a.txt", "--trace --crlf foo crlf.txt", "--debug --no-config foo a.txt",
+		"--debug --hyperlink-format vscode foo a.txt", "--debug --hostname-bin /bin/false foo a.txt", "--debug -g *.txt foo a.txt",
+		"--debug --trace foo a.txt", "--trace --debug foo a.txt", "--debug --files a.txt", "--debug --engine auto (?<=f)oo a.txt",
+		"--trace -", "--debug -j1 foo tree", "--trace -j1 foo tree", "--debug -j1 --hidden foo tree", "--debug -j1 -uu foo tree",
+		"--debug -j1 --max-filesize 10 foo tree",
+	}
+	var cases []rgCase
+	for _, l := range lines {
+		cases = append(cases, rgCase{args: rgArgs(l), stdin: "foo\n"})
+	}
+	return append(cases, rgCase{args: rgArgs("--debug -j1 foo"), dir: "tree", noStdin: true})
 }
 
 // rgTimes match the times of --stats and --json, which differ from run to

@@ -22,6 +22,7 @@ import "./encoding";
 import "./flags";
 import "./help";
 import "./hyperlink";
+import "./logs";
 import "./ignore";
 import "./jsonl";
 import "./matcher";
@@ -125,7 +126,10 @@ function engine_error(o: flags.Options, text: string, pcre_error: string): strin
 function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matcher.Matcher)] {
   if (o.engine == "pcre2") {
     return match (pcre_matcher(ctx)) {
-      Ok(m) => Some((Ctx { ...ctx, pcre: true }, m)),
+      Ok(m) => {
+        pcre_logs(ctx, o);
+        return Some((Ctx { ...ctx, pcre: true }, m));
+      },
       Err(e) => {
         eprint("rg: " + e);
         return None;
@@ -137,11 +141,15 @@ function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matche
     let Ok(re) = regex.compile(ctx.pattern) else {
       return None;
     };
+    regex_logs(o);
+    decompress_log(o);
     return Some((ctx, matcher.of_regex(re)));
   }
   if (o.engine == "auto") {
+    logs.debug(o.log, "rg::flags::hiargs", "crates/core/flags/hiargs.rs", 380, "error building Rust regex in hybrid mode:\n" + why);
     match (pcre_matcher(ctx)) {
       Ok(m) => {
+        pcre_logs(ctx, o);
         return Some((Ctx { ...ctx, pcre: true }, m));
       },
       Err(e) => {
@@ -152,6 +160,92 @@ function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matche
   }
   eprint("rg: " + engine_error(o, why, ""));
   return None;
+}
+
+// The host name of the links, and the logs of a --hostname-bin that fails,
+// as ripgrep writes them.
+function host_log(o: flags.Options): string {
+  let platform = hyperlink.with_host(hyperlink.none(), "").host;
+  let bin = o.hostname_bin;
+  if (bin == "") {
+    return platform;
+  }
+  let module = "rg::flags::hiargs";
+  let file = "crates/core/flags/hiargs.rs";
+  let named = logs.quoted(bin);
+  let r = subprocess(bin, [], "");
+  if (r.exit_code == 127 && r.stdout == "" && r.stderr == "") {
+    logs.debug(o.log, module, file, 1324, f"failed to spawn command '{named}' to get hostname (falling back to platform hostname): No such file or directory (os error 2)");
+    return platform;
+  }
+  if (r.exit_code != 0) {
+    let why = if (r.stderr.trim() == "") { "<stderr is empty>" } else { r.stderr.trim() };
+    logs.debug(o.log, module, file, 1334, f"failed to read output from command '{named}' to get hostname (falling back to platform hostname): {why}");
+    return platform;
+  }
+  let out = r.stdout.trim();
+  if (out == "") {
+    logs.debug(o.log, module, file, 1343, f"output from command '{named}' is empty after trimming leading and trailing whitespace (falling back to platform hostname)");
+    return platform;
+  }
+  return out;
+}
+
+// The logs of the matcher of PCRE2: the pattern that it compiles.
+function pcre_logs(ctx: Ctx, o: flags.Options): void {
+  logs.trace(o.log, "grep_pcre2::matcher", logs.source("grep-pcre2-0.1.7", "matcher.rs"), 70, "final regex: " + logs.quoted(ctx.pcre_pattern));
+  decompress_log(o);
+}
+
+// The logs of the search of a file, before it: the binary detection and
+// how the searcher of ripgrep reads the file.
+function file_logs(ctx: Ctx, re: matcher.Matcher, path: string, explicit: boolean, hay: Haystack, decoded: boolean): void {
+  let level = ctx.p.log;
+  if (level < logs.TRACE) {
+    return;
+  }
+  let p = ctx.p;
+  let shown = display_name(ctx, path);
+  let src = source(ctx, walk.Item { path: path, explicit: explicit, message: "", error: false, log: false }, 0, false);
+  let kind = if (src.detect == search.DETECT_NONE) { "None" } else if (src.detect == search.DETECT_CONVERT) { "Convert(0)" } else { "Quit(0)" };
+  logs.trace(level, "rg::search", "crates/core/search.rs", 254, shown + ": binary detection: BinaryDetection(" + kind + ")");
+  let module = "grep_searcher::searcher";
+  let file = logs.source("grep-searcher-0.1.13", "searcher/mod.rs");
+  let whole = p.multiline && (ctx.pcre || re.can_match_byte(p.term as u8));
+  let named = "Some(" + logs.quoted(shown) + ")";
+  let generic = path == "-" || hay.piped;
+  if (!generic && ctx.mmap && !decoded) {
+    logs.trace(level, module, file, 671, named + ": searching via memory map");
+    logs.trace(level, module, file, if (whole) { 770 } else { 773 }, if (whole) { "slice reader: searching via multiline strategy" } else { "slice reader: searching via slice-by-line strategy" });
+  } else if (!generic && whole) {
+    logs.trace(level, module, file, 678, named + ": reading entire file on to heap for mulitline");
+    logs.trace(level, module, file, 683, named + ": searching via multiline strategy");
+  } else {
+    if (!generic && ctx.mmap) {
+      logs.trace(level, module, file, 671, named + ": searching via memory map");
+      logs.trace(level, module, file, 764, "slice reader: needs transcoding, using generic reader");
+    } else if (!generic) {
+      logs.trace(level, module, file, 692, named + ": searching using generic reader");
+    }
+    if (whole) {
+      logs.trace(level, module, file, 728, "generic reader: reading everything to heap for multiline");
+      logs.trace(level, module, file, 732, "generic reader: searching via multiline strategy");
+    } else {
+      logs.trace(level, module, file, 743, "generic reader: searching via roll buffer strategy");
+    }
+  }
+  if (!whole) {
+    let fast = !p.passthru && !ctx.pcre && p.term != 0 && !(p.multiline && re.can_match_byte(10u8));
+    logs.trace(level, "grep_searcher::searcher::core", logs.source("grep-searcher-0.1.13", "searcher/core.rs"), if (fast) { 65 } else { 67 }, if (fast) { "searcher core: will use fast line searcher" } else { "searcher core: will use slow line searcher" });
+  }
+}
+
+// The log of a binary file that the search stopped at, from the printer
+// of the mode.
+function binary_log(ctx: Ctx, name: string, at: i32): void {
+  let p = ctx.p;
+  let (module, file, line) = if (p.json) { ("grep_printer::json", "json.rs", 765) } else if (p.mode == flags.Lines && !p.quiet) { ("grep_printer::standard", "standard.rs", 892) } else { ("grep_printer::summary", "summary.rs", 698) };
+  logs.debug(p.log, module, logs.source("grep-printer-0.2.1", file), line, f"ignoring {name}: found binary data at offset {at}");
 }
 
 // The error of the default engine, or "".
@@ -276,7 +370,7 @@ function search_items(ctx: Ctx, re: matcher.Matcher, items: walk.Item[], h: usiz
   let cap = search.BUFFER;
   for it in items {
     if (it.path == "") {
-      r = note(ctx, r, it.message, it.error);
+      r = noted(ctx, r, it);
       continue;
     }
     r = Part { ...r, searched: true };
@@ -326,7 +420,11 @@ function search_file(ctx: Ctx, re: matcher.Matcher, it: walk.Item, cap: i32, h: 
   }
   let t0 = monotonic_ns();
   let (text, decoded) = encoding.decode(hay.text, ctx.encoding, ctx.decoder);
+  file_logs(ctx, re, it.path, it.explicit, hay, decoded);
   let out = search.search(linked(ctx, it.path), re, text, name, source(ctx, it, cap, decoded || hay.piped), h, written);
+  if (out.binary_at >= 0) {
+    binary_log(ctx, name, out.binary_at);
+  }
   let prefix = if (p.mode == flags.Files && out.matched) { "" } else { hay.prefix };
   let errors = if (hay.late == "") { none } else { [name + ": " + prefix + hay.late] };
   let failure = re.take_error();
@@ -415,6 +513,15 @@ function empty_part(): Part {
 }
 
 // Writes a message now, and records an error.
+// A message of the walk: a log line as it is, else the message of rg.
+function noted(ctx: Ctx, r: Part, it: walk.Item): Part {
+  if (it.log) {
+    eprint(it.message);
+    return r;
+  }
+  return note(ctx, r, it.message, it.error);
+}
+
 function note(ctx: Ctx, r: Part, text: string, error: boolean): Part {
   if (ctx.messages && (error || ctx.ignore_messages)) {
     eprint("rg: " + text);
@@ -492,7 +599,7 @@ function search_parallel(ctx: Ctx, items: walk.Item[], threads: i32): Part {
   let files: walk.Item[] = [];
   for it in items {
     if (it.path == "") {
-      r = note(ctx, r, it.message, it.error);
+      r = noted(ctx, r, it);
     } else {
       files = files.append(it);
     }
@@ -708,7 +815,7 @@ function list_files(ctx: Ctx, items: walk.Item[], o: flags.Options): i32 {
   let term = if (o.has(flags.NULL)) { "\x00" } else { "\n" };
   for it in items {
     if (it.path == "") {
-      r = note(ctx, r, it.message, it.error);
+      r = noted(ctx, r, it);
       continue;
     }
     r = Part { ...r, matched: true };
@@ -770,7 +877,178 @@ function paths_of(o: flags.Options): string[] {
   if (o.paths.len() > 0) {
     return o.paths;
   }
-  return if (o.searches() && stdin_readable()) { ["-"] } else { ["./"] };
+  let readable = stdin_readable();
+  let consumed = o.pattern_files.contains("-");
+  let module = "rg::flags::hiargs";
+  let file = "crates/core/flags/hiargs.rs";
+  logs.debug(o.log, module, file, 1099, f"using heuristics to determine whether to read from stdin or search ./ (is_readable_stdin={readable}, stdin_consumed={consumed}, mode={mode_name(o)})");
+  if (!readable || consumed || !o.searches()) {
+    logs.debug(o.log, module, file, 1109, "heuristic chose to search ./");
+    return ["./"];
+  }
+  logs.debug(o.log, module, file, 1112, "heuristic chose to search stdin");
+  return ["-"];
+}
+
+// The mode of ripgrep, as it writes it with {:?}.
+function mode_name(o: flags.Options): string {
+  return match (o.mode) {
+    flags.Lines => if (o.has(flags.JSON)) { "Search(JSON)" } else { "Search(Standard)" },
+    flags.Count => "Search(Count)",
+    flags.CountMatches => "Search(CountMatches)",
+    flags.Files => "Search(FilesWithMatches)",
+    flags.Without => "Search(FilesWithoutMatch)",
+    flags.List => "Files",
+    flags.TypeList => "Types",
+    flags.Generate => "Generate",
+  };
+}
+
+// The logs of the settings: the host name and the format of the links, and
+// the count of the threads.
+function setting_logs(o: flags.Options, paths: string[]): void {
+  if (o.log == 0) {
+    return;
+  }
+  let module = "rg::flags::hiargs";
+  let file = "crates/core/flags/hiargs.rs";
+  logs.debug(o.log, module, file, 1260, "found hostname for hyperlink configuration: " + host_log(o));
+  if let Some(d) = env("WSL_DISTRO_NAME") {
+    logs.debug(o.log, module, file, 1264, "found wsl_prefix for hyperlink configuration: wsl$/" + d);
+  }
+  logs.debug(o.log, module, file, 1270, "hyperlink format: " + logs.quoted(o.hyperlink.text()));
+  if (o.globs.len() + o.iglobs.len() > 0) {
+    let all: string[] = [];
+    let ci: boolean[] = [];
+    for g in o.globs {
+      all = all.append(logs.gitignore_actual(g));
+      ci = ci.append(o.has(flags.GLOB_CASE));
+    }
+    for g in o.iglobs {
+      all = all.append(logs.gitignore_actual(g));
+      ci = ci.append(true);
+    }
+    let message = logs.glob_set_message(all, true, ci);
+    logs.debug(o.log, "globset", logs.source("globset-0.4.14", "lib.rs"), 453, message);
+  }
+  let one_file = paths.len() == 1 && (paths[0] == "-" || is_file(paths[0]));
+  logs.debug(o.log, module, file, 174, f"using {threads_of(o, one_file)} thread(s)");
+}
+
+// The logs of the matcher of std/regex for a pattern of fixed strings,
+// which ripgrep gives as an alternation of literals. ripgrep finds the
+// final regex and the inner literals of other patterns with regex-syntax,
+// and the port writes no line for them.
+// Each branch is one form of the final regex or of the literals.
+// fern-lint: allow cyclomatic-complexity
+function regex_logs(o: flags.Options): void {
+  if (o.log == 0 || o.case != 0 || o.patterns.len() == 0) {
+    return;
+  }
+  let lits: string[] = [];
+  let singles = 0;
+  let fixed = true;
+  for p in o.patterns {
+    if (p.contains("\n") || p == "" || !o.has(flags.FIXED) && has_special(p)) {
+      return;
+    }
+    fixed = fixed && (o.has(flags.FIXED) || !has_meta(p));
+    if (!lits.contains(p)) {
+      lits = lits.append(p);
+      singles += if (logs.chars(p) == 1) { 1 } else { 0 };
+    }
+  }
+  if (lits.len() > 1 && singles == lits.len()) {
+    return;
+  }
+  if (fixed) {
+    logs.debug(o.log, "grep_regex::config", logs.source("grep-regex-0.1.12", "config.rs"), 175, f"assembling HIR from {o.patterns.len()} fixed string literals");
+  }
+  let parts: string[] = [];
+  for p in lits {
+    parts = parts.append(if (logs.chars(p) == 1) { hir_literal(p) } else { "(?:" + hir_literal(p) + ")" });
+  }
+  let core = if (parts.len() == 1) { parts[0] } else { "(?:" + parts.join("|") + ")" };
+  let word = o.has(flags.WORD);
+  let line = o.has(flags.LINE);
+  let final = if (word) { "(?:\\b{start-half}" + core + "\\b{end-half})" } else if (line) { "(?:(?m:^)" + core + "(?m:$))" } else { core };
+  logs.trace(o.log, "grep_regex::matcher", logs.source("grep-regex-0.1.12", "matcher.rs"), 66, "final regex: " + logs.quoted(final));
+  let module = "grep_regex::literal";
+  let file = logs.source("grep-regex-0.1.12", "literal.rs");
+  if (o.has(flags.MULTILINE)) {
+    logs.trace(o.log, module, file, 59, "skipping inner literal extraction, no line terminator is set");
+  } else if (!word && accelerated(lits)) {
+    logs.trace(o.log, module, file, 75, "skipping inner literal extraction, existing regex is believed to already be accelerated");
+  } else if (!word && !line) {
+    logs.trace(o.log, module, file, 85, "skipping inner literal extraction, found alternation of literals, deferring to regex engine");
+  } else {
+    let seq = "Seq[" + lits.map((l: string): string => "E(" + logs.quoted(l) + ")").join(", ") + "]";
+    logs.trace(o.log, module, file, 154, "extracted inner literals: " + seq);
+    logs.trace(o.log, module, file, 156, "extracted inner literals after optimization: " + seq);
+    logs.debug(o.log, module, file, 117, "extracted fast line regex: " + logs.quoted(core));
+  }
+}
+
+// Whether regex-automata finds a fast search for the literals: one
+// literal after it drops each literal that an earlier one starts, or each
+// literal of three bytes or more.
+function accelerated(lits: string[]): boolean {
+  let kept: string[] = [];
+  let shortest = 1000000;
+  for l in lits {
+    let dropped = false;
+    for k in kept {
+      if (l.starts_with(k)) {
+        dropped = true;
+      }
+    }
+    if (!dropped) {
+      kept = kept.append(l);
+      shortest = if (l.len() < shortest) { l.len() } else { shortest };
+    }
+  }
+  return kept.len() == 1 || shortest >= 3;
+}
+
+// Whether a pattern has a character that regex-syntax calls a meta
+// character.
+function has_meta(p: string): boolean {
+  for k in 0..p.len() {
+    if (__memchr("\\.+*?()|[]{}^$#&-~", p[k] as i32, 0) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether a pattern has a character that is not a literal in the syntax of
+// regex-syntax. `#`, `&`, `-` and `~` are literals outside a class.
+function has_special(p: string): boolean {
+  for k in 0..p.len() {
+    if (__memchr("\\.+*?()|[]{}^$", p[k] as i32, 0) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A literal as the printer of regex-syntax writes it: each meta character
+// after a backslash.
+function hir_literal(p: string): string {
+  let out = "";
+  for k in 0..p.len() {
+    if (__memchr("\\.+*?()|[]{}^$#&-~", p[k] as i32, 0) >= 0) {
+      out += "\\";
+    }
+    out += slice_unchecked(p, k, k + 1).to_owned();
+  }
+  return out;
+}
+
+// The log of the glob set of the extensions of compressed files, which
+// ripgrep builds for each search.
+function decompress_log(o: flags.Options): void {
+  logs.debug(o.log, "globset", logs.source("globset-0.4.14", "lib.rs"), 453, "built glob set; 0 literals, 0 basenames, 12 extensions, 0 prefixes, 0 suffixes, 0 required extensions, 0 regexes");
 }
 
 function context_of(o: flags.Options, paths: string[]): Ctx {
@@ -838,7 +1116,7 @@ function items_of(ctx: Ctx, o: flags.Options, cfg: ignore.Config, paths: string[
   let w = walk.Walk {
     cfg: cfg, max_filesize: o.max_filesize, follow: o.has(flags.FOLLOW), max_depth: o.max_depth, sorted: o.sort == "path" && !o.sort_reverse,
     threads: ctx.threads, stdout_ino: if (o.searches()) { ino } else { 0i64 }, stdout_dev: dev,
-    same_fs: o.has(flags.ONE_FILE_SYSTEM), root_dev: 0i64,
+    same_fs: o.has(flags.ONE_FILE_SYSTEM), root_dev: 0i64, log: o.log,
   };
   let items = walk.walk(w, paths);
   if (o.sort != "" && (o.sort_reverse || o.sort != "path")) {
@@ -849,6 +1127,7 @@ function items_of(ctx: Ctx, o: flags.Options, cfg: ignore.Config, paths: string[
 
 function run(o: flags.Options, t0: i64): i32 {
   let paths = paths_of(o);
+  setting_logs(o, paths);
   let ctx = context_of(o, paths);
   let cfg = match (config(o)) {
     Ok(c) => c,
@@ -989,7 +1268,7 @@ function generate(kind: string): i32 {
 // The arguments of the file that RIPGREP_CONFIG_PATH names: each line that
 // is not empty and does not start with `#`, without the white space around
 // it.
-function config_args(messages: boolean): string[] {
+function config_args(messages: boolean, log: i32): string[] {
   let none: string[] = [];
   let Some(path) = env("RIPGREP_CONFIG_PATH") else {
     return none;
@@ -1013,6 +1292,7 @@ function config_args(messages: boolean): string[] {
       out = out.append(line);
     }
   }
+  logs.debug(log, "rg::flags::config", "crates/core/flags/config.rs", 41, path + ": arguments loaded from config file: " + logs.quoted_list(out));
   return out;
 }
 
@@ -1020,11 +1300,16 @@ function config_args(messages: boolean): string[] {
 // unless --no-config.
 function options_of(cli: string[]): Result[flags.Options, string] {
   let low = flags.parse_flags(cli)?;
-  if (low.special != "" || low.has(flags.NO_CONFIG)) {
+  if (low.special != "") {
     return flags.finish(low);
   }
-  let extra = config_args(!low.has(flags.NO_MESSAGES));
+  if (low.has(flags.NO_CONFIG)) {
+    logs.debug(low.log, "rg::flags::parse", "crates/core/flags/parse.rs", 89, "not reading config files because --no-config is present");
+    return flags.finish(low);
+  }
+  let extra = config_args(!low.has(flags.NO_MESSAGES), low.log);
   if (extra.len() == 0) {
+    logs.debug(low.log, "rg::flags::parse", "crates/core/flags/parse.rs", 97, "no extra arguments found from configuration file");
     return flags.finish(low);
   }
   return flags.finish(flags.parse_flags(extra.concat(cli))?);

@@ -243,7 +243,20 @@ order of the walk.
 - **Times.** `--stats` and `--json` write times, and the times of two runs
   are not the same.
 
-- **Logs.** `--debug` and `--trace` write no messages.
+- **Logs.** `--debug` and `--trace` write the lines of ripgrep 14.1.0 in
+  its format, with the paths of the crates of the Debian build. The lines of
+  the config file, the paths, the host name, the links and the threads are
+  the same. The glob sets of the ignore files and of `-g` are the same.
+  The decisions of a walk, the binary files and the strategy of each
+  search are also the same. For a pattern of literals, the lines of the
+  matcher are the same.
+
+  These lines are not written. For another pattern, ripgrep writes the
+  regex that regex-syntax makes and its inner literals, and the port has
+  no regex-syntax. ripgrep writes `glob converted to regex` with the parts
+  of a glob of globset. It writes the match of a glob of `-g` or of a type
+  for each entry of a walk. With more than one thread, ripgrep writes the
+  lines of the searches in the order that the threads run them.
 
 - **Decompression.** ripgrep 14.1.0 runs the programs `gzip`, `bzip2`,
   `xz`, `lz4`, `brotli`, `zstd` and `uncompress` for `-z`, and the port
@@ -293,7 +306,7 @@ order of the walk.
   with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 627 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 665 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
@@ -310,6 +323,9 @@ order of the walk.
   106 cases give `-P`, `--engine pcre2` or `--engine auto`: the syntax of
   PCRE2, its verbs, calls and callouts, its errors, and a search that goes
   above the match limit.
+
+  38 cases give `--debug` or `--trace`: the settings, the matchers, binary
+  files and walks with each kind of ignore file.
 
   The test makes the times of `--stats` and `--json` the same before it
   compares them. 8 cases run with the standard output on a terminal, with
