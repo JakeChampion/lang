@@ -7552,14 +7552,15 @@ function ssa_mov_ir(s: asmcore.EmitState, size: i32, imm: i64, text: string, dst
   return s.write("    movq $" + text + ", " + dst + "\n");
 }
 
-function ssa_mov_im(s: asmcore.EmitState, imm: i64, base: string, disp: i32): asmcore.EmitState {
+function ssa_mov_im(s: asmcore.EmitState, bits: i32, imm: i64, base: string, disp: i32): asmcore.EmitState {
   if (s.records() && imm >= -2147483648i64 && imm <= 2147483647i64) {
     let b = ssa_xreg(base);
     if (b >= 0) {
-      return s.bytes(x86_native.x86_rec_mov_im(64, imm as i32, b, disp));
+      return s.bytes(x86_native.x86_rec_mov_im(bits, imm as i32, b, disp));
     }
   }
-  return s.write("    movq $" + util.i64_to_string(imm) + ", " + ssa_mem(base, disp, false) + "\n");
+  let op = if (bits == 32) { "    movl $" } else { "    movq $" };
+  return s.write(op + util.i64_to_string(imm) + ", " + ssa_mem(base, disp, false) + "\n");
 }
 
 function ssa_zero(s: asmcore.EmitState, d: string): asmcore.EmitState {
@@ -9381,6 +9382,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k >= ssa.ARR_AT && imm.is_imm[ins.args[1]]) {
     return ssa_mem_at(ins, reg_of, imm.value[ins.args[1]] as i32, a, d, s);
   }
+  if (k == ssa.ST_AT && imm.is_imm[ins.args[1]]) {
+    return ssa_mov_im(s, ssa_elem_bits(ins.str), imm.value[ins.args[1]], a, ins.imm);
+  }
   let b = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
   if (k == ssa.ST_AT && ins.str == "i32" && ins.imm == 0) {
@@ -10914,7 +10918,7 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
 function ssa_zero_slots(slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (slots.len() < 2) {
     for v in slots {
-      s = ssa_mov_im(s, 0 as i64, "%rbp", ssa_slot_disp(v, s.ssa_save));
+      s = ssa_mov_im(s, 64, 0 as i64, "%rbp", ssa_slot_disp(v, s.ssa_save));
     }
     return s;
   }
@@ -10940,7 +10944,7 @@ function ssa_zero_slots(slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    movups %xmm2, " + ssa_mem("%rbp", ssa_slot_disp(v + 1, s.ssa_save), false) + "\n");
       step = 2;
     } else if (want[v]) {
-      s = ssa_mov_im(s, 0 as i64, "%rbp", ssa_slot_disp(v, s.ssa_save));
+      s = ssa_mov_im(s, 64, 0 as i64, "%rbp", ssa_slot_disp(v, s.ssa_save));
     }
     v += step;
   }
@@ -10955,7 +10959,7 @@ function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (loc >= 0) {
     return ssa_const_reg(util.i64_to_string(c), false, ssa_reg(loc), s);
   }
-  return ssa_mov_im(s, c, "%rbp", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
+  return ssa_mov_im(s, 64, c, "%rbp", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
 }
 
 function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -11462,7 +11466,7 @@ function ssa_shape_plan(f: ssa.SFunc, imm: ssa.Imms, shared: boolean): ShapePlan
     for ins in blk.insts {
       for a in 0..ins.args.len() {
         let v = ins.args[a];
-        if (v >= 0 && v < shape.len() && shape[v] && !ssa_shape_compare(ins, 1 - a, imm, shape)) {
+        if (v >= 0 && v < shape.len() && shape[v] && !ssa.stored_value(ins, a) && !ssa_shape_compare(ins, 1 - a, imm, shape)) {
           shape = shape.with(v, false);
         }
       }
@@ -11509,7 +11513,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = asmcore.EmitState { ...s, dw_first: true, dw_pos: 0 };
   let formed = prepared.formed;
   let f = formed.f;
-  let imm = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
+  let imm = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left(), true);
   let shapes = ssa_shape_plan(f, imm, false);
   for si in 0..shapes.vals.len() {
     imm = ssa.with_value(imm, shapes.vals[si], asmcore.shape_tag(s, shapes.names[si]));

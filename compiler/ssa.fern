@@ -2954,7 +2954,8 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
   return Imms { ...imm, is_imm: imm.is_imm.with(v, true), sym_at: imm.sym_at.with(v, syms.len()), syms: syms };
 }
 
-pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
+// `stores` says the target stores an immediate to memory with one instruction.
+pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[], stores: boolean): Imms {
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -2979,7 +2980,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
     for ins in blk.insts {
       for a in 0..ins.args.len() {
         let v = ins.args[a];
-        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !imm_use(ins, a, konst, value[v], right, left)) {
+        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !(stores && stored_value(ins, a)) && !imm_use(ins, a, konst, value[v], right, left)) {
           is_imm = is_imm.with(v, false);
         }
       }
@@ -2990,6 +2991,11 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
     }
   }
   return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [] };
+}
+
+// Operand `a` is the value of a store of 4 or 8 bytes.
+pub function stored_value(ins: SInst, a: i32): boolean {
+  return ins.kind_tag == ST_AT && a == 1 && ins.str != "u8";
 }
 
 function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], left: string[]): boolean {

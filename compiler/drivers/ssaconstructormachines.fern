@@ -58,8 +58,20 @@ function boundary_only(output: ssaprepare.Output, capacity: string): void {
   }
 }
 
+// The store of the shape tag in the header of the box of `parent`.
+function tag_store(text: string): string {
+  for raw in text.split("\n") {
+    let line = raw.trim();
+    if (line.starts_with("movl $") && line.ends_with(", -4(%rax)")) {
+      return line;
+    }
+  }
+  return "";
+}
+
 function stores(output: ssaprepare.Output, single: boolean): void {
-  let tag = "movl %esi, -4(%rax)";
+  let tag = tag_store(output.text);
+  let value = slice_unchecked(tag, 5, tag.len() - 10).to_owned();
   let stores = [tag, "movq %rbx, 0(%rax)"];
   if (!single) {
     stores = stores.append("movq %r12, 8(%rax)");
@@ -68,13 +80,13 @@ function stores(output: ssaprepare.Output, single: boolean): void {
     altered(output, store, "", false);
     altered(output, store, store + "\n" + store, false);
   }
-  for to in ["movl %esi, 0(%rax)", "movl %esi, -8(%rax)", "movq %rsi, -4(%rax)", "movl %eax, -4(%rax)", "movl %esi, 4(%rax)"] {
+  for to in ["movl " + value + ", 0(%rax)", "movl " + value + ", -8(%rax)", "movq " + value + ", -4(%rax)", "movl %eax, -4(%rax)", "movl " + value + ", 4(%rax)"] {
     altered(output, tag, to, false);
   }
   for to in ["movq %rsi, 0(%rax)", "movl %ebx, 0(%rax)", "movq %rbx, 4(%rax)", "movq %rbx, 16(%rax)"] {
     altered(output, "movq %rbx, 0(%rax)", to, false);
   }
-  altered(output, tag, tag + "\nmovl -4(%rax), %esi", true);
+  altered(output, tag, tag + "\nmovl -4(%rax), %esi", false);
   altered(output, tag, tag + "\nmovq 0(%rax), %rsi", false);
   altered(output, "movq %rbx, 0(%rax)", "movq 0(%rax), %rbx\nmovq %rbx, 0(%rax)", false);
   altered(output, "movq %rbx, 0(%rax)", "movq %rbx, 0(%rax)\nmovq 0(%rax), %rbx", true);
@@ -115,7 +127,7 @@ function identities(output: ssaprepare.Output): void {
   let i = 0;
   for reg in wide {
     altered(output, "ret\n", "movq " + reg + ", " + reg + "\nret\n", true);
-    altered(output, "ret\n", "movl " + narrow[i] + ", " + narrow[i] + "\nret\n", i == 6 || i == 7);
+    altered(output, "ret\n", "movl " + narrow[i] + ", " + narrow[i] + "\nret\n", i == 7);
     i += 1;
   }
 }
@@ -149,7 +161,7 @@ function control(output: ssaprepare.Output, capacity: string): void {
   altered(output, "call __fern_rec_box", "jmp absent\ncall __fern_rec_box", false);
   require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, "__fern_rec_box:", "__fern_missing_box:") }, "parent"), "missing same-output helper");
   require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, "leaq 24(,%rdi,8), %rdi", "leaq 16(,%rdi,8), %rdi") }, "parent"), "wrong helper request");
-  altered(output, "movl %esi, -4(%rax)", "movl %esi, -4(%rax)\nmovl $2, -4(%rax)", false);
+  altered(output, tag_store(output.text), tag_store(output.text) + "\nmovl $2, -4(%rax)", false);
   require(!machine.check(ssaprepare.Output { ...output, bodies: [] }, "parent"), "missing retained graph");
 }
 

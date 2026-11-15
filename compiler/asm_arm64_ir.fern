@@ -5144,7 +5144,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let formed = prepared.formed;
   let f = formed.f;
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f) };
-  let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
+  let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds), call_kinds, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
