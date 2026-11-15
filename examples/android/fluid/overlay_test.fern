@@ -1,0 +1,192 @@
+// Checks the places of the controls and their pictures, on the host. With
+// FLUID_PNG set to a directory, it writes the pictures there as PNG files,
+// over a dark background.
+import "std/android";
+import "std/android/draw";
+import "std/android/fonts";
+import "std/android/testkit";
+import "std/android/text";
+import "std/test";
+import "./config";
+import "./fluid";
+import "./overlay";
+
+// The directory of the Roboto files of the Paper tests: the tests run from
+// the root of the repository or from the directory of this file.
+function font_dir(): string {
+  if let Ok(_) = read_file_bytes("examples/android/paper/testfonts/Roboto-Regular.ttf") {
+    return "examples/android/paper/testfonts";
+  }
+  return "../paper/testfonts";
+}
+
+pub function test_fonts(): text.Fonts {
+  let found: Option[fonts.Found][] = [];
+  for w in overlay.weights() {
+    found = found.append(fonts.find_in(font_dir(), "Roboto", w));
+  }
+  return text.load(found, overlay.weights(), (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+// A phone of 1080 by 2400 pixels at 2.75 pixels to the dp, with a status
+// bar of 80 pixels and a navigation bar of 60 pixels.
+function phone(): overlay.Metrics {
+  return overlay.Metrics { width: 1080, height: 2400, top: 80, bottom: 60, scale: 2.75, font: 2.75 };
+}
+
+// The same phone on its side.
+function turned(): overlay.Metrics {
+  return overlay.Metrics { width: 2400, height: 1080, top: 80, bottom: 0, scale: 2.75, font: 2.75 };
+}
+
+function model(mt: overlay.Metrics): fluid.Model {
+  return fluid.new(config.defaults(), false, 1i64, 0i64).laid_out(overlay.layout(test_fonts(), mt));
+}
+
+function inside(inner: fluid.Rect, outer: fluid.Rect): boolean {
+  return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+}
+
+// Draws the premultiplied frame `src` over the opaque frame `f`.
+function over(f: draw.Frame, src: draw.Frame, x: i32, y: i32, clip0: i32, clip1: i32): void {
+  for row in 0..src.height {
+    if (y + row >= clip0 && y + row < clip1) {
+      for col in 0..src.width {
+        let p = src.pixel(col, row);
+        let a = p >> 24 & 255;
+        if (a > 0) {
+          let under = f.pixel(x + col, y + row);
+          let out = -16777216;
+          for shift in [0, 8, 16] {
+            let v = (p >> shift & 255) + (under >> shift & 255) * (255 - a) / 255;
+            out |= v.min(255) << shift;
+          }
+          f.store(x + col, y + row, 1, 1, out);
+        }
+      }
+    }
+  }
+}
+
+// The screen of `m` over a dark background, as the app draws it.
+function screen(mt: overlay.Metrics, m: fluid.Model, now_ms: i64): draw.Frame {
+  let fs = test_fonts();
+  let l = m.layout;
+  let f = draw.offscreen(mt.width, mt.height);
+  f.store(0, 0, mt.width, mt.height, draw.rgb(20, 8, 60));
+  if (m.kid) {
+    let e = overlay.exit_frame(mt, m.held(now_ms));
+    over(f, e, l.exit.x, l.exit.y, 0, mt.height);
+    draw.release(e);
+  } else {
+    let b = overlay.button_frame(mt, m.pressed_button());
+    over(f, b, l.button.x, l.button.y, 0, mt.height);
+    draw.release(b);
+  }
+  if (m.open) {
+    f.fill(0, 0, mt.width, mt.height, draw.rgba(0, 0, 0, 115));
+    let p = overlay.panel_frame(fs, mt, l);
+    over(f, p, l.panel.x, l.panel.y, 0, mt.height);
+    draw.release(p);
+    let rows = overlay.list_frame(fs, mt, l, m, m.pressed_row());
+    over(f, rows, l.list.x, l.list.y - m.scroll, l.list.y, l.list.y + l.list.h);
+    draw.release(rows);
+  }
+  let note = m.note_at(now_ms);
+  if (note.len() > 0) {
+    let n = overlay.note_frame(fs, mt, note);
+    over(f, n, (mt.width - n.width) / 2, mt.height - mt.bottom - n.height - 55, 0, mt.height);
+    draw.release(n);
+  }
+  return f;
+}
+
+function saved(f: draw.Frame, name: string): void {
+  if let Some(out) = env("FLUID_PNG") {
+    let ok = testkit.save_png(f, out + "/" + name + ".png");
+  }
+  draw.release(f);
+}
+
+function test_button_is_in_the_top_right_corner(): test.TestOutcome {
+  let mt = phone();
+  let l = overlay.layout(test_fonts(), mt);
+  let b = l.button;
+  saved(screen(mt, model(mt), 0i64), "overlay-1-button");
+  return test.assert_true(b.w == 121 && b.h == 121 && b.x + b.w == 1080 - 44 && b.y == 80 + 22 && l.exit.x + l.exit.w == b.x + b.w && l.exit.w == 154);
+}
+
+function test_dialog_is_in_the_window(): test.TestOutcome {
+  let mt = phone();
+  let l = overlay.layout(test_fonts(), mt);
+  let free = fluid.Rect { x: 0, y: mt.top, w: mt.width, h: mt.height - mt.top - mt.bottom };
+  let ok = inside(l.panel, free) && inside(l.close, l.panel) && inside(l.list, l.panel) && l.rows.len() == 8 && l.content == l.list.h;
+  for i in 1..l.rows.len() {
+    ok = ok && l.rows[i].y >= l.rows[i - 1].y + l.rows[i - 1].h;
+  }
+  let last = l.rows[l.rows.len() - 1];
+  let m = model(mt).touched(0, 1000.0, 150.0, 0i64).touched(1, 1000.0, 150.0, 0i64);
+  saved(screen(mt, m, 0i64), "overlay-2-dialog");
+  return test.assert_true(ok && last.y + last.h == l.content && m.open);
+}
+
+function test_dialog_scrolls_on_a_low_window(): test.TestOutcome {
+  let mt = turned();
+  let l = overlay.layout(test_fonts(), mt);
+  let free = fluid.Rect { x: 0, y: mt.top, w: mt.width, h: mt.height - mt.top - mt.bottom };
+  let m = fluid.Model { ...model(mt), open: true };
+  // A drag up by 300 pixels in the list.
+  let x = (l.list.x + 50) as f64;
+  let y = (l.list.y + l.list.h - 10) as f64;
+  m = m.touched(0, x, y, 0i64).touched(2, x, y - 150.0, 0i64).touched(2, x, y - 300.0, 0i64).touched(1, x, y - 300.0, 0i64);
+  saved(screen(mt, m, 0i64), "overlay-3-scrolled");
+  return test.assert_true(inside(l.panel, free) && l.content > l.list.h && m.scroll == 300 && m.open && !m.cfg.paused);
+}
+
+function test_kid_mode_shows_the_exit_and_the_note(): test.TestOutcome {
+  let mt = phone();
+  let m = model(mt).act(fluid.Kid, 0i64);
+  let l = m.layout;
+  let m2 = m.touched(0, (l.exit.x + 20) as f64, (l.exit.y + 20) as f64, 1000000000i64);
+  let part = m2.held(2500i64);
+  let ring = overlay.exit_frame(mt, part);
+  let c = ring.width / 2;
+  // The ring is 18 dp from the middle. At half of the hold, its right
+  // side and its bottom have the accent colour, and its left side has not.
+  let r = 50;
+  let accent = draw.rgb(74, 217, 255);
+  let ok = testkit.near(ring.pixel(c + r, c), accent, 2) && !testkit.near(ring.pixel(c - r, c), accent, 60) && (ring.pixel(c, c) & 16777215) == (draw.rgb(230, 237, 242) & 16777215);
+  draw.release(ring);
+  saved(screen(mt, m2, 2500i64), "overlay-4-kid");
+  return test.assert_true(ok && part == 0.5 && m.note_at(100i64) == fluid.KID_NOTE && m.note_at(6000i64) == "");
+}
+
+function texts(items: android.AccessItem[]): string {
+  let out = "";
+  for it in items {
+    if (out.len() > 0) {
+      out += "|";
+    }
+    out += it.id.to_string() + ":" + it.text.split(".")[0];
+  }
+  return out;
+}
+
+function test_accessibility_items(): test.TestOutcome {
+  let mt = phone();
+  let m = model(mt);
+  let closed = texts(overlay.items(m, 0i64));
+  let open = texts(overlay.items(fluid.Model { ...m, open: true }, 0i64));
+  let kid = texts(overlay.items(m.act(fluid.Kid, 0i64), 0i64));
+  return test.assert_eq(closed + " / " + open + " / " + kid, "0:An animated fluid simulation that swirls coloured dye where a finger drags|1:Controls / 3:Close controls|10:Pause|11:Add a splat burst|12:Save this frame|13:Kid mode|14:Full screen, off|15:Bloom, on|16:Sun rays, on|17:Colour cycling, on / 2:Leave kid mode|0:Kid mode: hold the corner button for 3 seconds to leave");
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/fluid overlay");
+  r = r.it("the button is in the top right corner, below the status bar", test_button_is_in_the_top_right_corner);
+  r = r.it("the dialog and its rows are in the window", test_dialog_is_in_the_window);
+  r = r.it("the dialog scrolls on a window that is too low for it", test_dialog_scrolls_on_a_low_window);
+  r = r.it("kid mode shows the exit button, the ring of the hold and the note", test_kid_mode_shows_the_exit_and_the_note);
+  r = r.it("an accessibility service reads the controls", test_accessibility_items);
+  return r.finish();
+}

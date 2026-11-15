@@ -276,6 +276,11 @@ the scheduler keeps the wait. An interpreter does not park a task, so it
 has nothing to cancel. A parked `Call` has no finalizer: `call_cancel`
 ends it.
 
+**A call that ended.** A task record has a generation, and the runtime
+changes it when the record is released. A `Call` holds the generation of
+its record. `call_resume` stops the program with status 134 when the
+generations differ, so a call that ended does not resume a different task.
+
 **A handle that names no task.** `Task` is an opaque struct, so only
 `std/async` builds a handle or reads its fields. A program that writes one
 gets E021. `task_id` and `task_entry` read the id and the entry.

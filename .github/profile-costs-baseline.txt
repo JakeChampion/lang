@@ -120,7 +120,7 @@ profile/x86-64-linux/deflate_decode.diagnostic.bytes	115280
 profile/x86-64-linux/deflate_decode.diagnostic.emit	14082
 profile/x86-64-linux/deflate_decode.diagnostic.ir	40834614
 profile/x86-64-linux/deflate_decode.hardened.bytes	58416
-profile/x86-64-linux/deflate_decode.hardened.emit	14292
+profile/x86-64-linux/deflate_decode.hardened.emit	14109
 profile/x86-64-linux/deflate_decode.hardened.ir	32341499
 profile/x86-64-linux/deflate_decode.minimal.bytes	50320
 profile/x86-64-linux/deflate_decode.minimal.emit	12603
@@ -148,7 +148,7 @@ profile/x86-64-linux/http_hello.hardened.emit	16432
 profile/x86-64-linux/http_hello.hardened.ir	30548218
 profile/x86-64-linux/http_hello.minimal.bytes	56960
 profile/x86-64-linux/http_hello.minimal.emit	13588
-profile/x86-64-linux/http_hello.minimal.ir	23776415
+profile/x86-64-linux/http_hello.minimal.ir	23488377
 profile/x86-64-linux/http_hello.safe.bytes	67328
 profile/x86-64-linux/http_hello.safe.emit	15877
 profile/x86-64-linux/http_hello.safe.ir	21980386

@@ -20,11 +20,13 @@ A frame of the app has these steps:
 
 `begin_layer` sends the draws that follow to a layer of the size of the window, and `end_layer` sends them to the window again. `draw_layer` then draws the layer with one alpha. A group of images that overlap fades as one image in this way, with no image showing through the images over it.
 
+An app can draw with its own OpenGL ES calls on the context of the canvas, for example a simulation that runs in its own shaders. The context is OpenGL ES 3 where the device has it, and OpenGL ES 2 on other devices. The app makes its calls between two draws of the canvas, and then calls `resume`. `resume` gives the canvas the OpenGL ES state that its draws need. `examples/android/fluid` draws in this way.
+
 Positions are in pixels, from the top left corner of the window. Each texture pixel goes on one window pixel, so an image at a whole pixel position keeps its sharp edges.
 
 ## Contracts
 
-Call each function on the loop thread, between `open_context` and `close`. Detach the canvas from its window before the `WindowDestroyed` event of the window returns. Free each texture with `free` before `close`. A texture comes from a frame of `draw.offscreen`, whose stride is its width.
+Call each function on the loop thread, between `open_context` and `close`. After OpenGL ES calls of the app, call `resume` before the next draw of the canvas. The calls of the app must not delete the objects of the canvas, and must leave no buffer bound to `GL_ARRAY_BUFFER`. Detach the canvas from its window before the `WindowDestroyed` event of the window returns. Free each texture with `free` before `close`. A texture comes from a frame of `draw.offscreen`, whose stride is its width.
 
 ## Module assembly
 
@@ -176,6 +178,9 @@ function gl_delete_textures(n: i32, ids: usize): void;
 
 @import("libGLESv2.so", "glBindTexture")
 function gl_bind_texture(target: i32, id: i32): void;
+
+@import("libGLESv2.so", "glActiveTexture")
+function gl_active_texture(unit: i32): void;
 
 @import("libGLESv2.so", "glTexParameteri")
 function gl_tex_parameter(target: i32, name: i32, value: i32): void;
@@ -332,7 +337,7 @@ function uniform(program: i32, name: string): i32 {
 
 ### `canvas`
 
-`open_context` chooses an EGL configuration that can draw on a window and on a pbuffer with OpenGL ES 2. It has 8 bits for each of red, green, blue and alpha. Where no configuration can draw on a window, as on Mesa with no display server, it takes one for pbuffers only, and `attach` then fails. `attach` gives the window the pixel format of the configuration first. The swap interval of 1 makes `present` keep to the vsync of the display.
+`open_context` chooses an EGL configuration that can draw on a window and on a pbuffer with OpenGL ES 2. It asks for an OpenGL ES 3 context first, which runs each OpenGL ES 2 call and shader of this module, and for an OpenGL ES 2 context when the device has no OpenGL ES 3. It has 8 bits for each of red, green, blue and alpha. Where no configuration can draw on a window, as on Mesa with no display server, it takes one for pbuffers only, and `attach` then fails. `attach` gives the window the pixel format of the configuration first. The swap interval of 1 makes `present` keep to the vsync of the display.
 
 `Places` holds the locations of the uniforms. `quad` is 8 floats in C memory, the corners of the unit square in the order of a triangle strip. The layer is a texture of the size of the window with a framebuffer that draws into it.
 
@@ -375,6 +380,8 @@ const EGL_NATIVE_VISUAL_ID: i32 = 12334;
 const EGL_CONTEXT_CLIENT_VERSION: i32 = 12440;
 
 const GL_TEXTURE_2D: i32 = 3553;
+
+const GL_TEXTURE0: i32 = 33984;
 
 const GL_FLOAT: i32 = 5126;
 
@@ -517,15 +524,25 @@ function pbuffer_of(d: usize, config: usize, width: i32, height: i32): usize {
   }
 }
 
-// An OpenGL ES 2 context of the configuration, or 0.
+// An OpenGL ES 3 context of the configuration, or an OpenGL ES 2 context on
+// a device with no OpenGL ES 3, or 0.
 function context(d: usize, config: usize): usize {
   if (config == 0 as usize) {
     return 0 as usize;
   }
+  let ctx = context_of(d, config, 3);
+  if (ctx == 0 as usize) {
+    return context_of(d, config, 2);
+  }
+  return ctx;
+}
+
+// A context of the OpenGL ES version `version`, or 0.
+function context_of(d: usize, config: usize, version: i32): usize {
   unsafe {
     let attrs: usize = __alloc(16);
     __store_i32(attrs, EGL_CONTEXT_CLIENT_VERSION);
-    __store_i32(attrs + 4 as usize, 2);
+    __store_i32(attrs + 4 as usize, version);
     __store_i32(attrs + 8 as usize, EGL_NONE);
     let ctx = egl_create_context(d, config, 0 as usize, attrs);
     __free(attrs, 16);
@@ -652,6 +669,22 @@ function delete_framebuffer(fb: i32): void {
     gl_delete_framebuffers(1, ids);
     __free(ids, 8);
   }
+}
+
+// Gives the canvas its OpenGL ES state again, after OpenGL ES calls of the
+// app. The draws that follow go to the window.
+pub function (c: Canvas) resume(): void {
+  gl_bind_framebuffer(GL_FRAMEBUFFER, 0);
+  gl_viewport(0, 0, c.width, c.height);
+  gl_active_texture(GL_TEXTURE0);
+  gl_use_program(c.program);
+  gl_attrib_pointer(0, 2, GL_FLOAT, 0, 0, c.quad);
+  gl_enable_attrib(0);
+  gl_disable_attrib(1);
+  gl_pixel_store(3317, 4);
+  gl_enable(GL_BLEND);
+  gl_blend_func(1, GL_ONE_MINUS_SRC_ALPHA);
+  gl_enable(GL_SCISSOR_TEST);
 }
 
 // Shows the frame that the canvas drew on its window.

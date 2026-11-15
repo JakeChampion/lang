@@ -92,7 +92,16 @@ struct State {
   narrowings: Narrowing[],
   dbg_vals: i32[],
   dbg_names: string[],
+  // The narrow fields of a variant share one word of its box.
+  packs: boolean,
+  // The receiver of each `drop` of the module.
+  finalized: string[],
+  // The values that this body read from a shared word.
+  word_reads: WordRead[],
 }
+
+// Value `id` is the bits at `shift` of `word`, a shared word of a variant.
+struct WordRead { id: i32, word: i32, shift: i32, bits: i32 }
 
 struct Value { s: State, id: i32 }
 
@@ -1470,7 +1479,7 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
     s = v.s;
     ids = ids.append(v.id);
   }
-  return define(s, ssasem.variant_new(), ids, 0, name, whole);
+  return variant_built(s, ids, shape.types, name, whole, layout);
 }
 
 function width_bearing(e: ast.Expr): boolean {
@@ -4016,8 +4025,8 @@ function completing_variant(from: typeinfo.Type, to: typeinfo.Type, s: State): i
   if (!semtypes.concrete(to, false) || !completes_enum(enum_origin(from, s), enum_origin(to, s))) {
     return -1;
   }
-  let source = typed_variants(s, from);
-  let dest = typed_variants(s, to);
+  let source = declared_variants(s, from);
+  let dest = declared_variants(s, to);
   if (source.len() != dest.len()) {
     return -1;
   }
@@ -4048,10 +4057,11 @@ function completable_payloads(a: semrecords.Field[], b: semrecords.Field[]): boo
 function complete_variant(v: Value, expected: typeinfo.Type, index: i32): Value {
   let ids: i32[] = [];
   let s = v.s;
-  let shape = typed_variants(s, s.values[v.id])[index];
-  let dest = typed_variants(s, expected)[index];
+  let from_layout = union_layout(s, typeinfo.union_name(s.values[v.id]));
+  let shape = declared_variants(s, s.values[v.id])[index];
+  let dest = declared_variants(s, expected)[index];
   for i in 0..shape.fields.len() {
-    let part = define(s, ssasem.variant_get(), [v.id], i, shape.name, shape.fields[i].ty);
+    let part = payload_read(s, v.id, field_types(shape.fields), i, shape.name, from_layout);
     part = kept_view(unaliased_view(part));
     if (typeinfo.lossless_widen(shape.fields[i].ty, dest.fields[i].ty)) {
       part = define(part.s, ssasem.cast(), [part.id], 0, "", dest.fields[i].ty);
@@ -4059,7 +4069,7 @@ function complete_variant(v: Value, expected: typeinfo.Type, index: i32): Value 
     s = part.s;
     ids = ids.append(part.id);
   }
-  return define(s, ssasem.variant_new(), ids, 0, dest.name, expected);
+  return variant_built(s, ids, field_types(dest.fields), dest.name, expected, union_layout(s, typeinfo.union_name(expected)));
 }
 
 function widen(v: Value, expected: typeinfo.Type): Value {
@@ -4735,7 +4745,7 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
   }
   for k in 0..names.len() {
     if (names[k] != "_") {
-      let v = define(s, ssasem.variant_get(), [scrut], k, pv.type_name, fields[k]);
+      let v = payload_read(s, scrut, fields, k, pv.type_name, layout);
       if (util.index_of_str(v.s.names, names[k]) >= 0) {
         s = replace(v.s, names[k], v.id);
       } else {
@@ -5981,14 +5991,25 @@ function refuse(why: string): Produced {
   return Produced { ok: false, why: why, func: ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false, shape_slot: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
+// What a body takes from the options of the build and from the module.
+struct Layout { debug_lines: boolean, packs: boolean, finalized: string[] }
+
+function layout_of(opts: BuildOpts, finalizers: ssasem.Finalizer[]): Layout {
+  let finalized: string[] = [];
+  for row in finalizers {
+    finalized = finalized.append(row.receiver);
+  }
+  return Layout { debug_lines: opts.debug_lines, packs: opts.pack_fields, finalized: finalized };
+}
+
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], layout: Layout): State {
   let entry = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
   return State {
     ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
     names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts.list), loops: [], contracts: contracts, calls: [],
     template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
     name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: parser.try_cleanup(fd.body), replaying: false, armed: 0, escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
-    narrowings: [], debug_lines: debug_lines, dbg_vals: [], dbg_names: [],
+    narrowings: [], debug_lines: layout.debug_lines, dbg_vals: [], dbg_names: [], packs: layout.packs, finalized: layout.finalized, word_reads: [],
   };
 }
 
@@ -6530,7 +6551,358 @@ function typed_variants(s: State, whole: typeinfo.Type): semrecords.Variant[] {
   return laid_variants(s, whole, union_layout(s, typeinfo.union_name(whole)));
 }
 
+// The variants with the fields that their boxes hold.
 function laid_variants(s: State, whole: typeinfo.Type, layout: i32): semrecords.Variant[] {
+  let declared = declared_layout(s, whole, layout);
+  if (!s.packs || layout != semrecords.layout_variant()) {
+    return declared;
+  }
+  let out: semrecords.Variant[] = [];
+  for v in declared {
+    out = out.append(semrecords.Variant { ...v, fields: held_fields(v.fields, packing(s, field_types(v.fields), layout)) });
+  }
+  return out;
+}
+
+// The variants with the fields that the source declares.
+function declared_variants(s: State, whole: typeinfo.Type): semrecords.Variant[] {
+  return declared_layout(s, whole, union_layout(s, typeinfo.union_name(whole)));
+}
+
+function field_types(fields: semrecords.Field[]): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for fl in fields {
+    out = out.append(fl.ty);
+  }
+  return out;
+}
+
+// Where each declared field of a variant is in its box. A field with 0 bits
+// has the word `at`. Each other field has that number of bits of the word
+// `word`, from the bit `shift`. `word` is -1 when no field shares a word.
+struct Packing { at: i32[], shift: i32[], bits: i32[], word: i32 }
+
+// The narrow fields of a variant share one word when two or more of them
+// fit in 64 bits. The fields of one byte come first, so their masks are
+// small constants. A field of 32 bits starts at bit 0 or at bit 32.
+function packing(s: State, types: typeinfo.Type[], layout: i32): Packing {
+  let bits: i32[] = [];
+  for t in types {
+    bits = bits.append(if (s.packs && layout == semrecords.layout_variant()) { narrow_bits(s, t) } else { 0 });
+  }
+  let shift = packed_shifts(bits);
+  if (!two_narrow(bits) || shift.len() == 0) {
+    return whole_words(types.len());
+  }
+  return held_places(bits, shift);
+}
+
+function two_narrow(bits: i32[]): boolean {
+  let one = false;
+  for b in bits {
+    if (b > 0 && one) {
+      return true;
+    }
+    one = one || b > 0;
+  }
+  return false;
+}
+
+// The word of each field: the narrow fields have the word of the first of
+// them.
+function held_places(bits: i32[], shift: i32[]): Packing {
+  let at: i32[] = [];
+  let word = -1;
+  // The fields that have a word of their own so far.
+  let own_word: i32[] = [];
+  for b in bits {
+    if (b > 0 && word >= 0) {
+      at = at.append(word);
+    } else {
+      if (b > 0) {
+        word = own_word.len();
+      }
+      at = at.append(own_word.len());
+      own_word = own_word.append(b);
+    }
+  }
+  return Packing { at: at, shift: shift, bits: bits, word: word };
+}
+
+function whole_words(n: i32): Packing {
+  let at: i32[] = [];
+  for i in 0..n {
+    at = at.append(i);
+  }
+  return Packing { at: at, shift: __alloc_i32(n), bits: __alloc_i32(n), word: -1 };
+}
+
+// The first bit of each narrow field, or no list when the fields do not fit
+// in 64 bits.
+function packed_shifts(bits: i32[]): i32[] {
+  let shift = __alloc_i32(bits.len());
+  let next = 0;
+  for size in [8, 32] {
+    if (size == 32 && next > 0) {
+      next = (next + 31) / 32 * 32;
+    }
+    for i in 0..bits.len() {
+      if (bits[i] == size) {
+        shift = shift.with(i, next);
+        next += size;
+      }
+    }
+  }
+  return if (next > 64) { [] } else { shift };
+}
+
+// The number of bits that a field of this type takes in a shared word, or 0
+// for a field that keeps its own word.
+function narrow_bits(s: State, t: typeinfo.Type): i32 {
+  if (is_bool(t) || ssasem.is_u8(t) || index_enum(s, t)) {
+    return 8;
+  }
+  return if (is_i32(t) || ssasem.is_u32(t)) { 32 } else { 0 };
+}
+
+// A value of the enum is the index of its variant, and the index fits a
+// byte: no variant holds a field, and the enum has no `drop`.
+function index_enum(s: State, t: typeinfo.Type): boolean {
+  let name = typeinfo.union_name(t);
+  if (name == "" || typeinfo.spelling(t) != name || util.index_of_str(s.finalized, name) >= 0) {
+    return false;
+  }
+  let variants = union_variants(s, name);
+  if (variants.len() == 0 || variants.len() > 256 || union_layout(s, name) != semrecords.layout_variant()) {
+    return false;
+  }
+  for v in variants {
+    let Some(shape) = checker.variant_shape_sig(s.scope, v, name) else {
+      return false;
+    };
+    if (shape.field_names.len() > 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function packed_name(): string {
+  return "$packed";
+}
+
+// The narrow fields of the variant share one word of its box.
+pub function shares_word(v: semrecords.Variant): boolean {
+  for fl in v.fields {
+    if (fl.name == packed_name()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function held_fields(declared: semrecords.Field[], p: Packing): semrecords.Field[] {
+  if (p.word < 0) {
+    return declared;
+  }
+  let out: semrecords.Field[] = [];
+  for i in 0..declared.len() {
+    if (p.bits[i] == 0) {
+      out = out.append(declared[i]);
+    } else if (out.len() == p.word) {
+      out = out.append(semrecords.Field { name: packed_name(), ty: typeinfo.t_i64() });
+    }
+  }
+  return out;
+}
+
+function word_const(s: State, v: i64): Value {
+  return define(s, ssa.CONST_INT, [], 0, util.i64_to_string(v), typeinfo.t_i64());
+}
+
+// A variant from one value for each declared field.
+function variant_built(s: State, ids: i32[], types: typeinfo.Type[], name: string, whole: typeinfo.Type, layout: i32): Value {
+  let p = packing(s, types, layout);
+  if (p.word < 0) {
+    return define(s, ssasem.variant_new(), ids, 0, name, whole);
+  }
+  let w = packed_word(s, ids, types, p);
+  let held: i32[] = [];
+  for i in 0..ids.len() {
+    if (p.bits[i] == 0) {
+      held = held.append(ids[i]);
+    } else if (held.len() == p.word) {
+      held = held.append(w.id);
+    }
+  }
+  return define(w.s, ssasem.variant_new(), held, 0, name, whole);
+}
+
+function packed_word(s: State, ids: i32[], types: typeinfo.Type[], p: Packing): Value {
+  let kept = kept_bits(s, ids, p);
+  let acc = Value { s: s, id: -1 };
+  if (kept.word >= 0 && kept.all) {
+    return Value { s: s, id: kept.word };
+  }
+  if (kept.word >= 0) {
+    let mask = word_const(s, kept.mask);
+    acc = define(mask.s, ssa.BINARY, [kept.word, mask.id], ssasem.field_step(), "&", typeinfo.t_i64());
+  }
+  let fixed = 0i64;
+  for i in 0..ids.len() {
+    if (p.bits[i] == 0 || kept.fields[i]) {
+      continue;
+    }
+    if let Some(v) = constant_field(acc.s, ids[i], types[i]) {
+      fixed = fixed | (v & field_mask(p.bits[i])) << p.shift[i] as i64;
+    } else {
+      acc = joined(acc, shifted_part(acc.s, ids[i], types[i], p.shift[i]));
+    }
+  }
+  if (fixed != 0i64 || acc.id < 0) {
+    acc = joined(acc, word_const(acc.s, fixed));
+  }
+  return acc;
+}
+
+// `part` alone, or the bits of `acc` and of `part`. `part` has the state.
+function joined(acc: Value, part: Value): Value {
+  if (acc.id < 0) {
+    return part;
+  }
+  return define(part.s, ssa.BINARY, [acc.id, part.id], ssasem.field_step(), "|", typeinfo.t_i64());
+}
+
+function field_mask(bits: i32): i64 {
+  return if (bits == 32) { 4294967295i64 } else { 255i64 };
+}
+
+// The fields that the constructor takes from one shared word at the place
+// that they have in the new word. `mask` has each bit of the word but the
+// bits of the other narrow fields, so it is a small constant when those are
+// bytes.
+struct KeptBits { word: i32, mask: i64, fields: boolean[], all: boolean }
+
+function kept_bits(s: State, ids: i32[], p: Packing): KeptBits {
+  let out = KeptBits { word: -1, mask: 0i64, fields: __alloc_bool(ids.len()), all: true };
+  for i in 0..ids.len() {
+    if (p.bits[i] == 0) {
+      continue;
+    }
+    let from = same_place(s, ids[i], p.shift[i], p.bits[i], out.word);
+    if (from < 0) {
+      out = KeptBits { ...out, all: false, mask: out.mask | field_mask(p.bits[i]) << p.shift[i] as i64 };
+    } else {
+      out = KeptBits { ...out, word: from, fields: out.fields.with(i, true) };
+    }
+  }
+  return KeptBits { ...out, mask: 0i64 - 1i64 ^ out.mask };
+}
+
+// The shared word that value `id` came from, when it has these bits there and
+// the word is `want` or `want` is -1. Two reads of one box give two values
+// for its word, so the base of the read decides.
+function same_place(s: State, id: i32, shift: i32, bits: i32, want: i32): i32 {
+  for r in s.word_reads {
+    if (r.id == id && r.shift == shift && r.bits == bits && (want < 0 || same_word(s, r.word, want))) {
+      return if (want < 0) { r.word } else { want };
+    }
+  }
+  return -1;
+}
+
+function same_word(s: State, a: i32, b: i32): boolean {
+  if (a == b) {
+    return true;
+  }
+  let x = word_source(s, a);
+  let y = word_source(s, b);
+  return x.result >= 0 && y.result >= 0 && x.args.len() == 1 && y.args.len() == 1 && x.args[0] == y.args[0] && x.str == y.str && x.imm == y.imm;
+}
+
+// The read that made the shared word `id`.
+function word_source(s: State, id: i32): ssa.SInst {
+  for ins in s.cur.insts {
+    if (ins.result == id && ins.kind_tag == ssasem.variant_get()) {
+      return ins;
+    }
+  }
+  for b in s.blocks {
+    for ins in b.insts {
+      if (ins.result == id && ins.kind_tag == ssasem.variant_get()) {
+        return ins;
+      }
+    }
+  }
+  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+}
+
+// The value as a word with its bits at `shift` and zero in each other bit.
+function shifted_part(s: State, id: i32, ty: typeinfo.Type, shift: i32): Value {
+  let part = Value { s: s, id: id };
+  if (typeinfo.union_name(ty) != "") {
+    part = define(s, ssasem.cast(), [id], ssasem.field_step(), "", typeinfo.t_usize());
+  }
+  part = define(part.s, ssasem.cast(), [part.id], ssasem.field_step(), "", typeinfo.t_i64());
+  if (is_i32(ty)) {
+    let mask = word_const(part.s, 4294967295i64);
+    part = define(mask.s, ssa.BINARY, [part.id, mask.id], ssasem.field_step(), "&", typeinfo.t_i64());
+  }
+  if (shift == 0) {
+    return part;
+  }
+  let by = word_const(part.s, shift as i64);
+  return define(by.s, ssa.BINARY, [part.id, by.id], ssasem.field_step(), "<<", typeinfo.t_i64());
+}
+
+function constant_field(s: State, id: i32, ty: typeinfo.Type): Option[i64] {
+  for ins in s.cur.insts {
+    if (ins.result == id) {
+      return constant_bits(s, ins, ty);
+    }
+  }
+  return None;
+}
+
+function constant_bits(s: State, ins: ssa.SInst, ty: typeinfo.Type): Option[i64] {
+  if (ins.kind_tag == ssa.CONST_INT && ins.str == "" || ins.kind_tag == ssa.CONST_BOOL) {
+    return Some(ins.imm as i64);
+  }
+  if (ins.kind_tag == ssa.CONST_INT) {
+    return Some(util.lit_to_i64(ins.str));
+  }
+  if (ins.kind_tag != ssasem.variant_new() || ins.args.len() != 0) {
+    return None;
+  }
+  let at = util.index_of_str(union_variants(s, typeinfo.union_name(ty)), ins.str);
+  return if (at >= 0) { Some(at as i64) } else { None };
+}
+
+// Field `k` of the payload of variant `name` of the box `base`.
+function payload_read(s: State, base: i32, types: typeinfo.Type[], k: i32, name: string, layout: i32): Value {
+  let p = packing(s, types, layout);
+  if (p.bits[k] == 0) {
+    return define(s, ssasem.variant_get(), [base], p.at[k], name, types[k]);
+  }
+  let whole = define(s, ssasem.variant_get(), [base], p.word, name, typeinfo.t_i64());
+  let word = whole;
+  if (p.shift[k] > 0) {
+    let by = word_const(word.s, p.shift[k] as i64);
+    word = define(by.s, ssa.BINARY, [word.id, by.id], ssasem.field_step(), ">>", typeinfo.t_i64());
+  }
+  if (p.bits[k] == 8) {
+    let mask = word_const(word.s, 255i64);
+    word = define(mask.s, ssa.BINARY, [word.id, mask.id], ssasem.field_step(), "&", typeinfo.t_i64());
+  }
+  if (typeinfo.union_name(types[k]) != "") {
+    word = define(word.s, ssasem.cast(), [word.id], ssasem.field_step(), "", typeinfo.t_usize());
+  }
+  let out = define(word.s, ssasem.cast(), [word.id], ssasem.field_step(), "", types[k]);
+  let read = WordRead { id: out.id, word: whole.id, shift: p.shift[k], bits: p.bits[k] };
+  return Value { s: State { ...out.s, word_reads: out.s.word_reads.append(read) }, id: out.id };
+}
+
+function declared_layout(s: State, whole: typeinfo.Type, layout: i32): semrecords.Variant[] {
   if (layout == semrecords.layout_option()) {
     return builtin_variants(whole);
   }
@@ -6981,11 +7353,11 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
   return "inferred from the first returned value";
 }
 
-function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], finalizers: ssasem.Finalizer[], memo: SchemaMemo, debug_lines: boolean): Made {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], finalizers: ssasem.Finalizer[], memo: SchemaMemo, layout: Layout): Made {
   if (fd.import_iface.len() > 0) {
     return Made { p: external_entry(), memo: memo };
   }
-  let s = initial(fd, scope, contracts, binding, name, handers, shadows, views, funcs, impls, debug_lines);
+  let s = initial(fd, scope, contracts, binding, name, handers, shadows, views, funcs, impls, layout);
   if (!semtypes.concrete(s.result, true)) {
     return Made { p: refuse("unresolved result type: " + unresolved_result_spelling(fd, s)), memo: memo };
   }
@@ -8072,6 +8444,7 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__task_set_ready", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__task_set_cancelled", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__task_fd_gen", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_gen", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__task_inline", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__task_cancelled", params: [], modes: [], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__memcpy", params: [typeinfo.t_usize(), typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v, v], result: typeinfo.t_void() },
@@ -8966,10 +9339,11 @@ pub function env_passes(): PassSwitches {
 }
 
 // shape_slot says a record of the target keeps its shape in a slot of its box.
-pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32, stack_phi_joins: boolean, shape_slot: boolean, passes: PassSwitches }
+// pack_fields says the narrow fields of a variant share one word of its box.
+pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32, stack_phi_joins: boolean, shape_slot: boolean, pack_fields: boolean, passes: PassSwitches }
 
 pub function plain_build(): BuildOpts {
-  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off(), stack_phi_joins: false, shape_slot: false, passes: env_passes() };
+  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off(), stack_phi_joins: false, shape_slot: false, pack_fields: false, passes: env_passes() };
 }
 
 pub function build_module(mod: parser.Module): Built {
@@ -9003,7 +9377,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let fd = mod.funcs[i];
     let p = template_entry(parser.decl_key(fd), false, "uninstantiated generic", true);
     if (!generic_decl(fd)) {
-      let made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, opts.debug_lines);
+      let made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, layout_of(opts, finalizers));
       p = made.p;
       memo = made.memo;
     }
@@ -9020,7 +9394,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let di = decl_index.find(r.key);
     let p = refuse("unbounded instantiation");
     if (at < instance_limit()) {
-      let made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, opts.debug_lines);
+      let made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, layout_of(opts, finalizers));
       p = made.p;
       memo = made.memo;
     }

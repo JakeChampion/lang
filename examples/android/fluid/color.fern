@@ -1,0 +1,42 @@
+// The colours of the dye. They are dim, because the bloom adds light to
+// them, and a full colour would show as white.
+import "std/rand";
+import "./config";
+
+pub function hsv(h: f64, s: f64, v: f64): config.Rgb {
+  let i = (h * 6.0).floor();
+  let f = h * 6.0 - i;
+  let p = v * (1.0 - s);
+  let q = v * (1.0 - f * s);
+  let t = v * (1.0 - (1.0 - f) * s);
+  let k = i as i32 % 6;
+  if (k == 0) {
+    return config.Rgb { r: v, g: t, b: p };
+  }
+  if (k == 1) {
+    return config.Rgb { r: q, g: v, b: p };
+  }
+  if (k == 2) {
+    return config.Rgb { r: p, g: v, b: t };
+  }
+  if (k == 3) {
+    return config.Rgb { r: p, g: q, b: v };
+  }
+  if (k == 4) {
+    return config.Rgb { r: t, g: p, b: v };
+  }
+  return config.Rgb { r: v, g: p, b: q };
+}
+
+// The next state of the generator `rng`, and a number from 0 up to 1.
+pub function unit(rng: i64): (i64, f64) {
+  let (next, n) = rand.rng_below(rng, 1 << 24);
+  return (next, n as f64 / 16777216.0);
+}
+
+// The next state of the generator `rng`, and a dye colour of a random hue.
+pub function generate(rng: i64): (i64, config.Rgb) {
+  let (next, h) = unit(rng);
+  let c = hsv(h, 1.0, 1.0);
+  return (next, config.Rgb { r: c.r * 0.15, g: c.g * 0.15, b: c.b * 0.15 });
+}
