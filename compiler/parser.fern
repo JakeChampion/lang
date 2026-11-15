@@ -7130,6 +7130,9 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   }
   if (is_fn && !top_comma && !(top_arrow && p.peek_punct() == "=>")) {
     if (p.verbatim) {
+      if (p.peek_punct() != "[") {
+        return (ungrouped(tbuf), "", p);
+      }
       return consume_array_suffix(p, tbuf);
     }
     let (gname, gunused, gp) = consume_array_suffix(p, "fn");
@@ -7162,6 +7165,26 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
     return consume_array_suffix(p, unwrap_grouping_parens(tbuf));
   }
   return consume_array_suffix(p, tbuf);
+}
+
+// The function type `s` with no pair of parentheses around the whole of it,
+// and none around the whole of its result.
+function ungrouped(s: string): string {
+  let t = s;
+  while (t.len() > 2 && t[0] == b'(' && matching_close(t, 0) == Some(t.len() - 1) && !group_has_top_comma(t, 0, t.len() - 1)) {
+    t = slice_unchecked(t, 1, t.len() - 1).to_owned();
+  }
+  let arrow = top_arrow_at(t);
+  if (arrow < 0) {
+    return t;
+  }
+  let head = slice_unchecked(t, 0, arrow + 3).to_owned();
+  let result = slice_unchecked(t, arrow + 3, t.len()).to_owned();
+  if (result.starts_with("own ")) {
+    head += "own ";
+    result = slice_unchecked(result, 4, result.len()).to_owned();
+  }
+  return head + ungrouped(result);
 }
 
 function unwrap_grouping_parens(s: string): string {
