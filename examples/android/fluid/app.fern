@@ -27,24 +27,34 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 function app_main_entry(): usize;
 
 // The frames that the app drew since `from_ns`, the time of the last one,
-// and the longest time from one frame to the next.
-struct Pace { from_ns: i64, last_ns: i64, frames: i32, longest_ns: i64 }
+// the longest time from one frame to the next, and the count of the seconds
+// that the pace measured.
+struct Pace { from_ns: i64, last_ns: i64, frames: i32, longest_ns: i64, seconds: i32 }
 
-// The pace after a frame at `ns`. Each 5 seconds of frames, it writes the
-// number of frames and the longest frame to the log, and starts again. A
-// time of more than 1 second between two frames is a pause, and starts the
-// pace again with no line.
-function (p: Pace) drew(ns: i64): Pace {
+function no_pace(): Pace {
+  return Pace { from_ns: 0i64, last_ns: 0i64, frames: 0, longest_ns: 0i64, seconds: 0 };
+}
+
+// The pace after a frame at `ns`, and the text of the frame rate when one
+// second of frames ends, or "". Each fifth second, the text goes to the log
+// also. A time of more than 1 second between two frames is a pause, and
+// starts the pace again.
+function (p: Pace) drew(ns: i64): (Pace, string) {
   let gap = ns - p.last_ns;
   if (p.frames == 0 || gap > 1000000000i64) {
-    return Pace { from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64 };
+    return (Pace { ...p, from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64 }, "");
   }
   let next = Pace { ...p, last_ns: ns, frames: p.frames + 1, longest_ns: p.longest_ns.max(gap) };
-  if (ns - p.from_ns < 5000000000i64) {
-    return next;
+  let ms = (ns - p.from_ns) / 1000000i64;
+  if (ms < 1000i64) {
+    return (next, "");
   }
-  log.info("fluid: " + (next.frames - 1).to_string() + " frames in " + ((ns - p.from_ns) / 1000000i64).to_string() + " ms, the longest " + (next.longest_ns / 1000000i64).to_string() + " ms");
-  return Pace { from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64 };
+  let rate = ((next.frames - 1) as i64 * 1000i64 + ms / 2i64) / ms;
+  let text = rate.to_string() + " fps, longest " + (next.longest_ns / 1000000i64).to_string() + " ms";
+  if (p.seconds % 5 == 4) {
+    log.info("fluid: " + text);
+  }
+  return (Pace { from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64, seconds: p.seconds + 1 }, text);
 }
 
 // `unfit` tells that the GPU cannot run the simulation. `spoken` names the
@@ -109,7 +119,7 @@ function app_main(ctx: usize): usize {
     mt: overlay.Metrics { width: 1, height: 1, top: 0, bottom: 0, scale: 1.0, font: 1.0 },
     art: screen.no_art(),
     spoken: "",
-    pace: Pace { from_ns: 0i64, last_ns: 0i64, frames: 0, longest_ns: 0i64 },
+    pace: no_pace(),
   };
   let last = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => -1);
   closed(last);
@@ -173,6 +183,11 @@ function on_event(own s: App, e: android.Event): App {
       return laid_out(App { ...s, mt: overlay.Metrics { ...s.mt, top: top.max(0), bottom: (s.mt.height - bottom).max(0) } });
     },
     android.Vsync(ns) => {
+      // The next frame is asked for before this one draws. A frame that
+      // draws for a long time thus does not make the next one late.
+      if (s.model.animating(ns / 1000000i64)) {
+        android.request_frame(s.ctx);
+      }
       return frame(s, ns);
     },
     android.Touch(action, x, y) => {
@@ -347,7 +362,12 @@ function frame(own s: App, ns: i64): App {
       return lost(painted);
     },
     _ => {
-      return spoken(App { ...painted, pace: painted.pace.drew(ns) }, ns / 1000000i64);
+      let (pace, speed) = painted.pace.drew(ns);
+      let model = painted.model;
+      if (speed.len() > 0) {
+        model = model.with_speed(speed);
+      }
+      return spoken(App { ...painted, pace: pace, model: model }, ns / 1000000i64);
     }
   }
 }
