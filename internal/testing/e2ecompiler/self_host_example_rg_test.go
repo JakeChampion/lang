@@ -438,7 +438,7 @@ func rgLateCases() []rgCase {
 		"--pre ./pre.sh foo nosuch.txt", "--pre ./pre.sh --no-pre pre a.txt", "--pre= pre a.txt", "--pre ./pre.sh -z pre a.txt",
 		"-z foo z/t.gz", "-z -c foo z/t.bz2", "-z -n foo z/t.xz", "-z foo z/t.lzma", "-z foo z/t.Z", "-z foo z/trunc.xz",
 		"-z foo z/bad.gz", "-z foo z/bad.bz2", "-z foo z/bad.xz", "-z -j1 --sort path foo z", "--search-zip -l foo z/t.gz",
-		"-z --no-search-zip foo z/t.xz", "-z foo a.txt", "-z foo z/raw.lz4", "-z -c foo z/raw.zst z/raw.br",
+		"-z --no-search-zip foo z/t.xz", "-z foo a.txt", "-z foo z/raw.lz4", "-z -c -j1 foo z/raw.zst z/raw.br",
 	}
 	var cases []rgCase
 	for _, l := range lines {
