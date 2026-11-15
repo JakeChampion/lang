@@ -97,7 +97,7 @@ selfhost/wasm32-wasi/map_probe_chain.emit	13521
 selfhost/wasm32-wasi/map_string.emit	14287
 selfhost/wasm32-wasi/ordmap_insert.emit	6680
 selfhost/wasm32-wasi/pmap_insert.emit	3470
-selfhost/wasm32-wasi/pvec_with.emit	2763
+selfhost/wasm32-wasi/pvec_with.emit	2793
 selfhost/wasm32-wasi/record_update.emit	581
 selfhost/wasm32-wasi/sort_inplace.emit	1013
 selfhost/wasm32-wasi/sort_ints.emit	2381
@@ -124,7 +124,7 @@ selfhost/x86-64-linux/closure_call.emit	1065
 selfhost/x86-64-linux/deflate_decode.emit	15095
 selfhost/x86-64-linux/deflate_encode.emit	7763
 selfhost/x86-64-linux/enum_match.emit	1036
-selfhost/x86-64-linux/http_hello.emit	16059
+selfhost/x86-64-linux/http_hello.emit	16222
 selfhost/x86-64-linux/int_loop.emit	298
 selfhost/x86-64-linux/map_int.emit	8891
 selfhost/x86-64-linux/map_probe_chain.emit	8895
@@ -151,10 +151,10 @@ selfhost/arm64-linux/perceus_cfold.emit	2351
 selfhost/wasm32-wasi/perceus_cfold.emit	1823
 selfhost/x86-64-linux/perceus_deriv.emit	2888
 selfhost/arm64-linux/perceus_deriv.emit	3122
-selfhost/wasm32-wasi/perceus_deriv.emit	2862
-selfhost/x86-64-linux/perceus_nqueens.emit	1661
-selfhost/arm64-linux/perceus_nqueens.emit	1891
-selfhost/wasm32-wasi/perceus_nqueens.emit	1267
+selfhost/wasm32-wasi/perceus_deriv.emit	2897
+selfhost/x86-64-linux/perceus_nqueens.emit	1683
+selfhost/arm64-linux/perceus_nqueens.emit	1913
+selfhost/wasm32-wasi/perceus_nqueens.emit	1291
 selfhost/x86-64-linux/perceus_rbtree.emit	2860
 selfhost/arm64-linux/perceus_rbtree.emit	3154
 selfhost/wasm32-wasi/perceus_rbtree.emit	3688
@@ -176,3 +176,6 @@ selfhost/wasm32-wasi/hex_decode.emit	2949
 selfhost/x86-64-linux/base64_decode.emit	3858
 selfhost/arm64-linux/base64_decode.emit	3960
 selfhost/wasm32-wasi/base64_decode.emit	4708
+selfhost/x86-64-linux/gather_many.emit	5540
+selfhost/arm64-linux/gather_many.emit	6053
+selfhost/wasm32-wasi/gather_many.emit	6557
