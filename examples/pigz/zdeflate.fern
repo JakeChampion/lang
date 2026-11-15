@@ -886,7 +886,8 @@ function deflate_lz(own z: Z, flush: i32, fast: boolean): (Z, i32) {
 }
 
 // longest_match: the length of the best match at strstart and its start.
-// It keeps the branches of longest_match() of zlib in their order, to check against it.
+// It keeps the branches of longest_match() of zlib in their order, to check
+// against it. It compares two bytes at a time, as zlib does with UNALIGNED_OK.
 // fern-lint: allow cyclomatic-complexity
 function longest(win: u8[], prev: i32[], strstart: i32, cur_match: i32, prev_length: i32, lookahead: i32, good: i32, nice_match: i32, max_chain: i32, match_start: i32): (i32, i32) {
   let chain = max_chain;
@@ -901,12 +902,10 @@ function longest(win: u8[], prev: i32[], strstart: i32, cur_match: i32, prev_len
   if (nice > lookahead) {
     nice = lookahead;
   }
-  let end1 = win[strstart + best - 1];
-  let end0 = win[strstart + best];
-  let s0 = win[strstart];
-  let s1 = win[strstart + 1];
+  let scan_end = le16(win, strstart + best - 1);
+  let scan_start = le16(win, strstart);
   loop {
-    if (win[cur + best] == end0 && win[cur + best - 1] == end1 && win[cur] == s0 && win[cur + 1] == s1) {
+    if (le16(win, cur + best - 1) == scan_end && le16(win, cur) == scan_start) {
       let len = extend(win, cur, strstart);
       if (len > best) {
         start = cur;
@@ -914,8 +913,7 @@ function longest(win: u8[], prev: i32[], strstart: i32, cur_match: i32, prev_len
         if (len >= nice) {
           break;
         }
-        end1 = win[strstart + best - 1];
-        end0 = win[strstart + best];
+        scan_end = le16(win, strstart + best - 1);
       }
     }
     cur = prev[cur & WMASK];
@@ -950,6 +948,11 @@ function extend(win: u8[], cur: i32, strstart: i32): i32 {
     len += 1;
   }
   return len;
+}
+
+@inline
+function le16(data: u8[], at: i32): i32 {
+  return data[at] as i32 | data[at + 1] as i32 << 8;
 }
 
 @inline

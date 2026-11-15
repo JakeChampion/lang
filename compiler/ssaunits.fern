@@ -3368,7 +3368,7 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       let ins = f.graph.blocks[at[st.block]].insts[st.point];
       for i in 0..ins.args.len() {
         let a = ins.args[i];
-        if (a >= 0 && !only_reads(ins, i) && !moved_at(st, a, i)) {
+        if (a >= 0 && !only_reads(f, ins, i) && !moved_at(st, a, i)) {
           sole = sole.with(a, false);
         }
       }
@@ -3381,14 +3381,54 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
 }
 
 // Whether `ins` only reads its operand at `i`, so the operand stays sole.
-function only_reads(ins: ssa.SInst, i: i32): boolean {
-  if (i == 0) {
-    return ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length() || ins.kind_tag == ssasem.call() && ssasem.holds_no_argument(ins.str);
+function only_reads(f: ssasem.Func, ins: ssa.SInst, i: i32): boolean {
+  if (ins.kind_tag == ssasem.call() && (ssasem.holds_no_argument(ins.str) || keeps_no_loan(f, ins, i))) {
+    return true;
   }
-  return ins.kind_tag == ssasem.arr_concat() || ins.kind_tag == ssasem.call() && ssasem.holds_no_argument(ins.str);
+  if (i == 0) {
+    return ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length();
+  }
+  return ins.kind_tag == ssasem.arr_concat();
 }
 
 struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }
+
+// A callee keeps a reference to an array argument only in its result or in
+// another argument. It keeps none when its result is made of scalars and each
+// other argument is made of scalars or is an array of scalars.
+function keeps_no_loan(f: ssasem.Func, call: ssa.SInst, i: i32): boolean {
+  let c = ssasem.find_contract_in(f.calls, call.str);
+  let a = call.args[i];
+  if (c < 0 || a < 0 || !typeinfo.is_owned_array(f.values[a]) || !scalars_only(f.calls[c].result)) {
+    return false;
+  }
+  for j in 0..call.args.len() {
+    let b = call.args[j];
+    if (j != i && (b < 0 || !scalars_only(f.values[b]) && !scalar_array(f.values[b]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function scalars_only(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(tup) = t {
+    for e in tup.elements {
+      if (!scalars_only(e)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return ssasem.is_scalar(t) || typeinfo.is_void(t);
+}
+
+function scalar_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(arr) = t {
+    return !arr.view && ssasem.is_scalar(arr.elem);
+  }
+  return false;
+}
 
 function lent_withs(f: ssasem.Func, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): boolean[] {
   let out = __alloc_bool(f.graph.nvals);

@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// A bare variant of an enum of the module that names it is not ambiguous,
-// also when a module that it reaches through an import declares the same
-// name. The reference is in a block arm of a match expression, where the
-// checker looks for ambiguous variants.
-func TestSelfHostOwnModuleVariantIsNotAmbiguous(t *testing.T) {
+// A `return` in a block arm of a match expression leaves the function, so
+// a bare variant in it takes the enum of the return type of the function,
+// as the Go checker does. The module reaches a second enum with the same
+// variant through an import.
+func TestSelfHostReturnInAMatchArmTakesTheFunctionType(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
 	files := map[string]string{

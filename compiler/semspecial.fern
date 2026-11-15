@@ -193,7 +193,7 @@ function bound(g: ssasem.Func, j: i32, target: string): ssasem.Func {
     let params: ssa.SInst[] = [];
     let rest: ssa.SInst[] = [];
     for ins in b.insts {
-      let moved = ssa.SInst { ...ins, result: ssasem.mapped(map, ins.result), args: ssasem.mapped_list(map, ins.args) };
+      let moved = ssasem.mapped_inst(map, ssa.SInst { ...ins, result: ssasem.mapped(map, ins.result) });
       if (ins.kind_tag == ssasem.param() && ins.imm == j) {
         rest = [ssa.SInst { kind_tag: ssasem.closure_new(), result: last, args: [], imm: 0, str: target }].concat(rest);
       } else if (ins.kind_tag == ssasem.param()) {
@@ -212,7 +212,7 @@ function bound(g: ssasem.Func, j: i32, target: string): ssasem.Func {
     }
   }
   let dbg_vals = ssasem.mapped_list(map, g.dbg_vals);
-  let pruned = ssa.prune_trivial_phis(ssa.SFunc { ...g.graph, blocks: blocks, nparams: last });
+  let pruned = ssasem.pruned_phis(ssa.SFunc { ...g.graph, blocks: blocks, nparams: last });
   if (pruned.repl.len() > 0) {
     dbg_vals = ssasem.mapped_list(pruned.repl, dbg_vals);
   }

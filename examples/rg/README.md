@@ -1,9 +1,9 @@
 # rg
 
 A port of [ripgrep](https://github.com/BurntSushi/ripgrep) 14.1.0 to Fern
-(#15590). It searches files for a regular expression with `std/regex`. The
-port implements the behaviour that ripgrep shows. It does not copy source
-code from ripgrep.
+(#15590). It searches files for a regular expression with `std/regex`, or
+with `-P` with `std/pcre`, which follows PCRE2 10.42. The port implements the
+behaviour that ripgrep shows. It does not copy source code from ripgrep.
 
 ```
 $ fern -O -target x86-64-linux -o rg examples/rg/rg.fern    # or arm64-linux
@@ -28,6 +28,9 @@ searches the current directory, and it writes each name without the leading
 | `-i`, `-s`, `-S` | `--ignore-case`, `--case-sensitive`, `--smart-case` | The case rule. The last one wins. `-S` ignores the case when no pattern has a capital letter. |
 | `-v` | `--invert-match` | Select the lines that do not match. |
 | `-w` | `--word-regexp` | Match only between `\b{start-half}` and `\b{end-half}`. |
+| `-P` | `--pcre2`, `--no-pcre2` | Search with `std/pcre`, which has the syntax and the matches of PCRE2: look-ahead and look-behind, back references, atomic groups, possessive repetitions, `\K`, named groups, calls of groups and conditions. |
+| | `--engine E` | `default`, `pcre2`, or `auto`: PCRE2 only for a pattern that `std/regex` refuses. |
+| | `--no-pcre2-unicode`, `--pcre2-unicode` | As `--no-unicode` and `--unicode`. |
 | `-x` | `--line-regexp` | Match only a whole line. |
 | `-F` | `--fixed-strings` | Each pattern is a literal. |
 | `-m N` | `--max-count N` | Stop the search of a file after N selected lines. |
@@ -108,7 +111,7 @@ searches the current directory, and it writes each name without the leading
 | --- | --- | --- |
 | `-h` | `--help` | The short or the long help of ripgrep 14.1.0. |
 | `-V` | `--version` | The version, or with `--version` the features too. |
-| | `--pcre2-version` | The version of PCRE2 that `-P` follows. |
+| | `--pcre2-version` | The version of PCRE2 that `-P` follows, 10.42. |
 | | `--generate K` | The man page, or the completions of `complete-bash`, `complete-zsh`, `complete-fish` or `complete-powershell`. |
 | | `--no-config` | Do not read the file that `RIPGREP_CONFIG_PATH` names. Else each line of that file that is not empty and does not start with `#` is an argument before those of the command line. |
 | | `--debug`, `--trace` | Accepted. The port does not write the messages of the logs. |
@@ -224,7 +227,8 @@ order of the walk.
   tables are also not there, such as ID_Start, XID_Start and Bidi_Mirrored.
 
 - **Pattern errors.** `regex.check` reports each error of regex-syntax
-  0.8.2 with its text and its span, and ripgrep's hint about PCRE2. A
+  0.8.2 with its text and its span, and ripgrep's hint about PCRE2. `-P`
+  reports the errors of PCRE2 10.42 with their text and their offset. A
   pattern that regex-syntax accepts can go above a limit of `std/regex`:
   a count of a repetition above 1000, groups nested more than 128 deep, or
   a program of more than 100,000 instructions. Then the message is that of
@@ -250,13 +254,18 @@ order of the walk.
   programs. For data that ends early, the count of the bytes before the
   error can differ from that of the program.
 
-- **PCRE2.** The port does not have PCRE2. It behaves as ripgrep 14.1.0
-  that was built without the feature `pcre2`. `-P` and `--engine pcre2`
-  give the message `PCRE2 is not available in this build of ripgrep.`
-  `--engine auto` uses PCRE2 only after the default engine fails. And
-  `--version` and `--pcre2-version` say that PCRE2 is not there. Thus the
-  hint about PCRE2 after an error of backreferences or of look-around is
-  not there.
+- **PCRE2.** `std/pcre` is a backtracking engine in Fern, and ripgrep links
+  the C library of PCRE2 with its JIT. Thus `--pcre2-version` and
+  `--version` say `JIT is unavailable`. The match limit of `std/pcre` counts
+  the choices of a search, ten million, and PCRE2 counts the calls of its
+  match function. A search that goes far above the limit gives the error of
+  PCRE2 in each, but near the limit the two can differ.
+
+- **Calls and verbs of PCRE2.** A call of a group,
+  such as `(?1)` or `(?R)`, is atomic in `std/pcre`, as it was in PCRE2
+  before 10.30. Some items of PCRE2 give the error of a verb that is not
+  known: the verbs (*COMMIT), (*PRUNE), (*SKIP) and (*THEN), the callouts,
+  and the options at the start of a pattern, such as (*UTF).
 
 - **Size limits.** `--dfa-size-limit` does not change the output of
   ripgrep, and the port accepts it. `--regex-size-limit` is not a limit of
@@ -268,12 +277,12 @@ order of the walk.
   the separators, the counts, the colors, the links and the binary files.
   It tests the ignore rules, the globs and the types. It tests `-m`,
   `--heading`, `--null`, `-r`, `--trim`, `-M`, `--passthru`, `-U`, the
-  line terminators, the encodings and `--json`.
+  line terminators, the encodings, `--json` and `-P`.
   `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and wasm32-wasi
   with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 521 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 595 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
@@ -287,10 +296,8 @@ order of the walk.
   cases of `--pre` run scripts that pass, that fail and that write no
   error.
 
-- `TestSelfHostExampleRgWithoutPcre2` compares the port with the output of
-  ripgrep 14.1.0 that was built without PCRE2: `-P`, `--engine pcre2`,
-  `--engine auto`, `--pcre2-version` and `--version`. `/usr/bin/rg` has
-  PCRE2, so the test holds the expected output.
+  74 cases give `-P`, `--engine pcre2` or `--engine auto`: the syntax of
+  PCRE2, its errors, and a search that goes above the match limit.
 
   The test makes the times of `--stats` and `--json` the same before it
   compares them. 8 cases run with the standard output on a terminal, with
@@ -300,6 +307,14 @@ order of the walk.
   than one file gives `-j1` or `--sort`. With more threads, ripgrep writes
   the files in the order that their searches end. Four cases use
   more threads and compare the lines in sorted order.
+
+- `TestSelfHostExampleRgPcre2Version` checks the text of `--pcre2-version`
+  and `--version`, which say that the port has no JIT.
+
+- The stdlib suite of `std/pcre`, `tests/stdlib/pcre_test.fern`, holds
+  matches and errors of PCRE2 10.42. A differential test outside the tree
+  compared `std/pcre` with `libpcre2-8` on 17,099 pairs of a pattern and a
+  text. Each pair gave the same matches, groups and errors.
 
 - `TestSelfHostExampleRgVendoredCases` runs the cases of the integration
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
@@ -454,98 +469,91 @@ The compile of `std/regex` costs more than on main for some patterns. A
 full table for the five names costs 1.1 million instructions, about
 0.4 ms.
 
-### Why the port is slower on literals
+### Literal searches
 
-1. **The read of the file.** For `rg -c 'Sherlock Holmes'`, about 110 ms
-   of the 163 ms is the input. `read_file_bytes` reads the file into the
-   storage of the array with one `read`. `string_from_bytes_unchecked` takes
-   over that array with no copy (#15723).
+A search for a literal had three costs that ripgrep does not have. Each one
+is gone now.
 
-   ripgrep maps the file into memory and does not copy it. The fix that
-   remains is in the runtime: map the file.
+1. **The read of the file.** The port read each file into memory, and for
+   `rg -c xyzzy` the read took 24.5 of 25 ms. Now the port maps a file
+   when ripgrep maps it, with the builtin `map_file_unchecked`: at most ten
+   paths on the command line, each a file, or `--mmap`. A mapped file is
+   examined for a NUL byte only in its first 64 KiB, as ripgrep does. Thus
+   `-l` reads only the first pages of a file.
 
-2. **The scan for a start.** When more than one byte can start a match,
-   `__scan_set` reads four bytes in each turn with a table. `-i` scans for
-   `s` and `S`, and the alternation scans for `S`, `J`, `I` and `P`. ripgrep
-   uses SIMD kernels for two and three bytes and for small sets of literals.
-   The fix is a SIMD kernel for a small byte set, or a scan for the least
-   frequent byte of the literal.
+2. **The scan for a start.** A scan for one byte found each place of the
+   rarest byte of a literal. When text holds that byte often, each place
+   was a candidate. Now the kernel `__scan_masks` tests two bytes of the
+   literal at once, with AVX2 on x86-64 and with Advanced SIMD on arm64. It
+   looks up the two halves of each byte in a table of 16 bytes, as the
+   shufti and Teddy searches do.
 
-3. **The matcher is not the cause.** `std/regex` finds each span with two
-   DFAs, and a step of a DFA is one lookup in a table. With `\w+`, where
-   the search is most of the work, the port is faster than ripgrep. The
-   code that the compiler makes for the loop of a DFA can use fewer
-   instructions: it keeps each `i32` of the table in 8 bytes, and it
-   checks the bounds of each lookup.
+   A literal with a rare byte keeps the scan
+   for that byte, which is faster. A pattern that starts with alternatives
+   of literals tests the first two bytes of each. Thus a capital letter is
+   not a candidate of the five names.
 
-The line loop is not the cause. Without `-v`, the port goes from one
-candidate to the line of the next with `next_candidate`, and counts the
-lines that it skips with `__count_byte`. The lines without a candidate cost
-nothing more.
+3. **A literal under `-i`.** It was not an inner literal. Now a run of
+   ASCII letters under `(?i)` is an inner literal, and each letter matches
+   in either case. Under Unicode, `k` and `s` also match a character outside
+   ASCII, so they end the run.
 
-### Literals inside a pattern
+`-c` also counted the lines before each candidate, which a count does not
+need. Now the line loop counts them only for line numbers, context and
+`--json`.
 
-A pattern such as `\w+ing` has no literal prefix, and each word byte can
-start a match. Thus each line was a candidate, and the port ran the DFA on
-each line. Now `std/regex` finds the longest run of literal bytes that each
-match holds, and `Regex.next_inner` finds the next copy of it. The line
-loop goes to the line of that copy, and skips the lines before it. The
-search for a literal prefix now starts from its least frequent byte, from
-a table of the frequency of each byte in text.
+The text is `corpus 50`: 52,428,815 bytes. Each command gets `-j1`, and its
+output goes to a pipe. The time is the fastest CPU time of 9 runs, in
+milliseconds. Other jobs used the 4 CPUs of the host. Thus the CPU time is a
+better measure than the time on the clock.
 
-The text is `corpus 50`: 52,428,815 bytes. Each command gets `-j1`. The
-time is the best of 5 runs, in milliseconds, with the output to a pipe.
-"Before" is the port without the two changes. The output of each command
-is the same in the three programs.
+"Before" is the port at the start of this work. The three programs give the
+same output for each command.
 
 | Command | ripgrep | Before | Port | Ratio |
 | --- | ---: | ---: | ---: | ---: |
-| `rg 'Sherlock Holmes'` | 24 | 32 | 32 | 1.3 |
-| `rg -c 'Sherlock Holmes'` | 14 | 41 | 38 | 2.6 |
-| `rg -i 'sherlock holmes'` | 26 | 110 | 120 | 4.6 |
-| `rg 'Sherlock Holmes\|...'` (five names) | 28 | 64 | 62 | 2.2 |
-| `rg -c '\w+'` | 140 | 107 | 109 | 0.8 |
-| `rg -c '\w+ing'` | 23 | 586 | 43 | 1.9 |
-| `rg -c '[a-z]+ Holmes'` | 20 | 265 | 42 | 2.1 |
-| `rg -cw Holmes` | 14 | 29 | 28 | 2.1 |
-| `rg -c xyzzy` | 12 | 35 | 35 | 3.0 |
+| `rg 'Sherlock Holmes'` | 11.1 | 26.8 | 10.2 | 0.92 |
+| `rg -c 'Sherlock Holmes'` | 10.8 | 27.9 | 8.4 | 0.78 |
+| `rg -i 'sherlock holmes'` | 21.4 | 94.0 | 21.9 | 1.02 |
+| `rg -ic 'sherlock holmes'` | 19.9 | 89.0 | 16.8 | 0.84 |
+| `rg 'Sherlock Holmes\|...'` (five names) | 22.1 | 48.5 | 24.4 | 1.10 |
+| `rg -c 'Sherlock Holmes\|...'` | 20.0 | 41.2 | 16.7 | 0.84 |
+| `rg -c '\w+'` | 119.4 | 92.0 | 64.2 | 0.54 |
+| `rg -c '\w+ing'` | 16.7 | 31.8 | 11.9 | 0.71 |
+| `rg -c '[a-z]+ Holmes'` | 11.8 | 28.4 | 9.2 | 0.78 |
+| `rg -cw Holmes` | 11.6 | 29.2 | 8.2 | 0.71 |
+| `rg -c xyzzy` | 10.0 | 26.6 | 6.7 | 0.67 |
+| `rg -l Sherlock` | 2.8 | 18.3 | 0.4 | 0.14 |
+| `rg -n Holmes` | 13.5 | 30.3 | 11.6 | 0.86 |
 
-`rg -c xyzzy` finds no line, and its time is the read of the file and one
-scan. The causes above stay: the read copies the file, and the scans for
-a set of bytes and for a pair of bytes do not use SIMD kernels. A literal
-under `-i` is not an inner literal.
+Two rows stay above ripgrep. A line that the five names select costs more
+in the printer than in ripgrep: `-c` is faster, and the output of 53,013
+lines is not. The fold of `-i` costs the same as in ripgrep.
 
 ### A tree of files
 
-Each command searches a checkout of this repository with its ignore rules:
-26,272 files to search, in the page cache. The time is the best of 5 runs,
-in milliseconds. The two programs ran one after the other in the same
-session, on a host that other jobs also used. The output of the port is
-the same as that of ripgrep, but for the order of the files with more than
-one thread.
+Each command searches this repository with its ignore rules: 26,515 files
+to search, in the page cache. The time is the fastest CPU time of 5 runs,
+in milliseconds, and the CPU time of the workers counts. Other jobs used
+the host, and with more than one thread the time on the clock was not
+stable. The output of the port is the same as that of ripgrep, but for the
+order of the files with more than one thread.
 
-| Command | ripgrep | Port | Ratio |
-| --- | ---: | ---: | ---: |
-| `rg -j1 --files` | 57 | 51 | 0.9 |
-| `rg -j4 --files` | 53 | 61 | 1.2 |
-| `rg -j1 -c fn` | 266 | 431 | 1.6 |
-| `rg -c fn` (4 threads) | 156 | 271 | 1.7 |
-| `rg -j1 -ci sherlock` | 252 | 539 | 2.1 |
-| `rg -j1 -n --sort path TODO` | 272 | 322 | 1.2 |
+| Command | ripgrep | Before | Port | Ratio |
+| --- | ---: | ---: | ---: | ---: |
+| `rg -j1 --files` | 78.8 | 66.9 | 65.5 | 0.83 |
+| `rg -j1 -c fn` | 288.8 | 506.5 | 334.8 | 1.16 |
+| `rg -j1 -ci sherlock` | 315.6 | 636.5 | 338.4 | 1.07 |
+| `rg -j1 -n --sort path TODO` | 301.9 | 324.8 | 329.6 | 1.09 |
+| `rg -l PCRE2` | 282.0 | 425.9 | 368.6 | 1.31 |
+| `rg -c -P '(?<=fn )main'` | 665.4 | error | 1750.5 | 2.63 |
 
-With one thread, the walk is faster than that of ripgrep. Before two changes to `std/glob`,
-the walk took 816 ms, and 95% of the time was in the automaton of a glob.
-Now the automaton stops at the first byte that leaves no state, and it
-keeps its states in the bits of a u64.
+With one thread, the walk is faster than that of ripgrep. Before two changes
+to `std/glob`, the walk took 816 ms, and 95% of the time was in the
+automaton of a glob. Now the automaton stops at the first byte that leaves
+no state, and it keeps its states in the bits of a u64.
 
-In a search of the files, the port is slower because of the scan for a
-candidate. Half of the instructions of `rg -j1 -c fn` are in
-`Regex.next_candidate`. It finds each `f` with `__memchr`, and then it
-compares the literal prefix. ripgrep looks for the rarest byte with SIMD
-kernels. The string of each file takes over the array that
-`read_file_bytes` returns, with no copy (#15723).
-
-With 4 threads, ripgrep is 1.7 times as fast as with one, and the port is
-1.6 times as fast. Each worker process of the port searches every fourth
-file. The port walks the tree with one thread, and so `--files` is not
-faster with more threads.
+The files of a walk are small, and the port reads them, as ripgrep does.
+The rest of the cost is for each file: the open, the read, and the start of
+each search. ripgrep runs PCRE2 with its JIT, and `std/pcre` runs a program
+of instructions, so `-P` is 2.6 times slower.
