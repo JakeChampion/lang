@@ -141,7 +141,9 @@ pattern that ffmpeg writes. The check requires:
 
 - The home screen shows the posters.
 - A link plays the track to its end, reports it, and marks it watched.
-- A link shows the video on the window. A tap shows the controls over the
-  video with no pause, and a tap on play pauses it. A tap on play shows the
-  video on the window again. The back key stops it.
+- A link shows the video on a texture that the app draws. The 4:3 test
+  pattern fills the width with black bars above and below it, and it is
+  upright. A tap shows the controls over the video with no pause, and a tap
+  on play pauses it. A tap on play shows the video again, upright. The back
+  key stops it.
 - logcat shows no crash.
