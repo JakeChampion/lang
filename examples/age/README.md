@@ -120,7 +120,9 @@ A plugin is a program `age-plugin-NAME` on the `PATH`. The port starts it
 with pipes for its standard input and output, as age does, with the
 argument `--age-plugin=recipient-v1` or `--age-plugin=identity-v1`. The
 plugin runs in the temporary directory, and its standard error goes to
-`/dev/null` unless `AGEDEBUG=plugin` is set. The two sides exchange
+`/dev/null` unless `AGEDEBUG=plugin` is set. Then, as in age, each byte
+that the port reads from the plugin or writes to it also goes to the
+standard error. The two sides exchange
 stanzas in the format of the header, in the state machines of the age
 plugin specification. The client side is in `plugin.fern`.
 
@@ -130,7 +132,8 @@ plugin specification. The client side is in `plugin.fern`.
 
 - A plugin can ask the user through the terminal: `msg` shows a message,
   `request-secret` and `request-public` ask for a value, and `confirm`
-  asks for a choice. After 5 seconds with no answer from the plugin, the
+  asks for a choice. `tty.fern` has the line editor of x/term for
+  `request-public`, with its keys and its echo. After 5 seconds with no answer from the plugin, the
   port writes `age: waiting on NAME plugin...`, as age does.
 
 - A plugin that is not on the `PATH` gets the message and the hints of
@@ -289,13 +292,11 @@ parsers. One message of Go can hold bytes that are not UTF-8: the type of
 a public key in `ssh: unknown key algorithm:`. A Fern string is UTF-8, so
 the port writes the type only when it is UTF-8.
 
-**Plugins.** The `request-public` line editor has the keys of a simple
-line: the printable bytes, Backspace, Enter, Ctrl-C and Ctrl-D. x/term
-also has the arrow keys and the history. With `AGEDEBUG=plugin`, the port
-copies each stanza to the standard error as it marshals it, where age
-copies the bytes. `age-plugin-batchpass` opens `/dev/fd/N` for
-`AGE_PASSPHRASE_FD`, where Go reads the descriptor itself, so a regular
-file is read from its start.
+**Plugins.** `age-plugin-batchpass` opens `/dev/fd/N` for
+`AGE_PASSPHRASE_FD`, where Go reads the descriptor itself. Fern has no
+builtin that makes a reader of a descriptor that the process gets from its
+parent. For a pipe the result is the same. A regular file is read from its
+start and not from its offset, and a socket cannot be opened.
 
 ## Security
 
@@ -346,8 +347,10 @@ The secret values go through the constant-time gate of the repository:
   Go does. It reads the exponents with masks, and then it checks that m^e
   is c again. That check and the OAEP check make only their verdicts
   public. The base64 of a PEM file and the checks of an RSA key are not
-  constant-time, as in Go: the port marks the key secret after them. Blowfish, for an OpenSSH key with a
-  passphrase, reads its tables at secret indexes, as OpenSSH does.
+  constant-time, as in Go: the port marks the key secret after them.
+
+- Blowfish, for an OpenSSH key with a passphrase, reads its tables at
+  secret indexes, as OpenSSH does.
 
 - The seed of a hybrid key, the ML-KEM-768 decapsulation key, the X25519
   scalars, the HPKE randomness and the HPKE shared secret are secret. The

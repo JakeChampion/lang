@@ -152,16 +152,52 @@ pub function conn_of(r: Reader, w: Writer, name: string): Conn {
   return Conn { w: w, r: r, src: source.plain(source.open_raw(r, "|0")), fd: r.fd, pid: 0, name: name, debug: false };
 }
 
-// Writes one stanza. The error is the message of the failed write.
-pub function send(c: Conn, st: format.Stanza): Option[string] {
-  let s = format.marshal_stanza(st);
-  if (c.debug) {
-    stderr().write(s);
+// The writes of Go's Stanza.Marshal: the prefix, the type, each argument,
+// the newline, each output of the base64 encoder, and the last newline. The
+// encoder gives 1024 characters for each 768 bytes, then the characters of
+// the other whole groups, and at Close the last part group. A line of the
+// body ends after 64 characters.
+pub function marshal_writes(st: format.Stanza): string[] {
+  let out = ["->", " " + st.kind];
+  for a in st.args {
+    out = out.append(" " + a);
   }
-  return match (c.w.write(s)) {
-    Ok(_) => None,
-    Err(e) => Some("write |1: " + text.errno_text(e)),
-  };
+  out = out.append("\n");
+  let body = text.b64_raw(st.body);
+  let whole = st.body.len() / 3 * 4;
+  let at = 0;
+  while (at < body.len()) {
+    let end = if (at + 1024 <= whole) { at + 1024 } else if (at < whole) { whole } else { body.len() };
+    let piece = "";
+    let col = at;
+    while (col < end) {
+      let next = (col / 64 + 1) * 64;
+      let stop = if (next < end) { next } else { end };
+      piece += body[col:stop].unwrap_or("");
+      if (stop == next) {
+        piece += "\n";
+      }
+      col = stop;
+    }
+    out = out.append(piece);
+    at = end;
+  }
+  return out.append("\n");
+}
+
+// Writes one stanza with the writes of Go. With AGEDEBUG, each write that
+// the plugin takes also goes to the standard error, as Go's io.MultiWriter
+// copies it. The error is the message of the failed write.
+pub function send(c: Conn, st: format.Stanza): Option[string] {
+  for piece in marshal_writes(st) {
+    if let Err(e) = c.w.write(piece) {
+      return Some("write |1: " + text.errno_text(e));
+    }
+    if (c.debug) {
+      let _ = stderr().write(piece);
+    }
+  }
+  return None;
 }
 
 pub function send_plain(c: Conn, kind: string, args: string[]): Option[string] {
@@ -177,12 +213,7 @@ pub function receive(own c: Conn): (Conn, Result[format.Stanza, string]) {
   let (s, got) = format.read_stanza(c.src, 0);
   let c2 = Conn { ...c, src: s };
   return match (got) {
-    Ok(p) => {
-      if (c2.debug) {
-        stderr().write(format.marshal_stanza(p.stanza));
-      }
-      (c2, Ok(p.stanza))
-    },
+    Ok(p) => (c2, Ok(p.stanza)),
     Err(why) => (c2, Err(why)),
   };
 }
@@ -299,7 +330,12 @@ pub function start(name: string, protocol: string): Result[Conn, StartFailure] {
       return Err(StartFailure { msg: f"fork/exec {path}: {errno_message(b[0] as i32)}", missing: false });
     }
   }
-  return Ok(Conn { ...conn_of(from_plugin.r, to_plugin.w, name), pid: pid, debug: debug });
+  let raw = source.open_raw(from_plugin.r, "|0");
+  if (debug) {
+    raw = source.teed(raw);
+  }
+  let src = source.plain(raw);
+  return Ok(Conn { ...conn_of(from_plugin.r, to_plugin.w, name), src: src, pid: pid, debug: debug });
 }
 
 // age's clientConnection.Close: close the pipes, interrupt the plugin and

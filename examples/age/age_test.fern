@@ -1131,6 +1131,33 @@ function test_quote_rune(): test.TestOutcome {
   return test.assert_eq_array(got, ["'3'", "'\\''", "'\\\\'", "'\\x1b'", "'\\n'", "'é'", "'\\u0085'", "a�b�c", "a�"]);
 }
 
+// The writes of a stanza to a plugin are those of Go's Stanza.Marshal, and
+// together they are the marshaled stanza.
+function test_marshal_writes(): test.TestOutcome {
+  let body: u8[] = [];
+  for i in 0..800 {
+    body = body.append((i * 7) as u8);
+  }
+  let st = format.Stanza { kind: "x", args: ["a", "b"], body: body };
+  let w = plugin.marshal_writes(st);
+  let all = "";
+  for p in w {
+    all += p;
+  }
+  if (all != format.marshal_stanza(st)) {
+    return test.fail("the writes are not the marshaled stanza");
+  }
+  let sizes: i32[] = [];
+  for p in w {
+    sizes = sizes.append(p.len());
+  }
+  let empty = plugin.marshal_writes(format.Stanza { kind: "done", args: [], body: [] });
+  if (empty.len() != 4 || empty[2] != "\n" || empty[3] != "\n") {
+    return test.fail("an empty body is not two newlines");
+  }
+  return test.assert_eq_array(sizes, [2, 2, 2, 2, 1, 1040, 40, 3, 1]);
+}
+
 function main(): i32 {
   let r = test.new("age");
   r = r.it("plugin recipients and identities", test_plugin_encodings);
@@ -1166,5 +1193,6 @@ function main(): i32 {
   r = r.it("Ed25519 keys whose encoding is not canonical", test_ed25519_encodings);
   r = r.it("bcrypt_pbkdf and AES-256-CTR", test_bcrypt);
   r = r.it("identity files as age-keygen -y reads them", test_library_identities);
+  r = r.it("the writes of a stanza to a plugin", test_marshal_writes);
   return r.finish();
 }

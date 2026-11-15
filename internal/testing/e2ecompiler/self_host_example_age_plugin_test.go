@@ -113,7 +113,7 @@ func ageBech32(hrp string, data []byte) string {
 // others.
 func ageEnv(t *testing.T, vars ...string) {
 	t.Helper()
-	set := map[string]string{"AGE_TEST_PLUGIN": "", "AGE_PASSPHRASE": "", "AGE_PASSPHRASE_FD": "", "AGE_PASSPHRASE_WORK_FACTOR": "", "AGE_PASSPHRASE_MAX_WORK_FACTOR": ""}
+	set := map[string]string{"AGEDEBUG": "", "AGE_TEST_PLUGIN": "", "AGE_PASSPHRASE": "", "AGE_PASSPHRASE_FD": "", "AGE_PASSPHRASE_WORK_FACTOR": "", "AGE_PASSPHRASE_MAX_WORK_FACTOR": ""}
 	for _, v := range vars {
 		k, val, _ := strings.Cut(v, "=")
 		set[k] = val
@@ -121,6 +121,16 @@ func ageEnv(t *testing.T, vars ...string) {
 	for k, v := range set {
 		os.Setenv(k, v)
 	}
+}
+
+// ageGrease is a grease stanza, which each side of the plugin protocol
+// makes at random, and the answer of age to one from the plugin.
+var ageGrease = regexp.MustCompile(`-> grease-[^\n]*\n(?:[A-Za-z0-9+/]{64}\n)*[A-Za-z0-9+/]{0,63}\n(?:-> unsupported\n\n)?`)
+
+// ageWithoutGrease is the AGEDEBUG output of a conversation with its grease
+// stanzas taken out.
+func ageWithoutGrease(s string) string {
+	return ageGrease.ReplaceAllString(s, "")
 }
 
 // ageScryptLabel is the random label of an scrypt recipient in age's
@@ -336,6 +346,21 @@ func agePluginMessages(t *testing.T, oracle, port ageTool, dir, r1 string) {
 			t.Errorf("%v age %s: age exit %d %q; fern age exit %d %q", c.env, strings.Join(c.args, " "), wantCode, want, gotCode, got)
 		}
 	}
+	for _, c := range []pcase{
+		{[]string{"AGE_PASSPHRASE=password"}, []string{"-d", "-j", "batchpass", "batch.age"}},
+		{nil, []string{"-d", "-i", "key.txt", "test.age"}},
+		{[]string{"AGE_TEST_PLUGIN=msg"}, []string{"-d", "-i", "key.txt", "test.age"}},
+		{[]string{"AGE_TEST_PLUGIN=short"}, []string{"-d", "-i", "key.txt", "test.age"}},
+		{[]string{"AGE_TEST_PLUGIN=error"}, []string{"-d", "-i", "key.txt", "test.age"}},
+	} {
+		ageEnv(t, append(c.env, "AGEDEBUG=plugin")...)
+		_, want, wantCode := oracle.run(t, dir, nil, c.args...)
+		_, got, gotCode := port.run(t, dir, nil, c.args...)
+		want, got = ageWithoutGrease(want), ageWithoutGrease(got)
+		if gotCode != wantCode || got != want {
+			t.Errorf("AGEDEBUG=plugin %v age %s: age exit %d %q; fern age exit %d %q", c.env, strings.Join(c.args, " "), wantCode, want, gotCode, got)
+		}
+	}
 	ageEnv(t)
 	for _, f := range []string{"t1.age"} {
 		if ageExists(filepath.Join(dir, f)) {
@@ -429,6 +454,19 @@ func agePluginTerminal(t *testing.T, oracle, port ageTool, dir string) {
 		{"secret", []string{"wrong\n"}},
 		{"public", []string{"sesame\n"}},
 		{"public", []string{"sesam\x7fme\n"}},
+		{"public", []string{"ab\x1b[Dc\n"}},
+		{"public", []string{"abc\x01X\x05Y\n"}},
+		{"public", []string{"hello world\x17x\n"}},
+		{"public", []string{"abc\x1b[D\x1b[D\x0b\n"}},
+		{"public", []string{"abc\x15d\x14\n"}},
+		{"public", []string{"ab\x14c\x1b[D\x1b[3~\x1b[H\x04\n"}},
+		{"public", []string{"one two\x1b[1;3D\x1b[1;3DX\x1b[1;3C\x1b[FY\n"}},
+		{"public", []string{strings.Repeat("x", 100) + "\x1b[H\x7f\x1b[Cy\x7f\x7f\n"}},
+		{"public", []string{"\u00e9\u20ac\U0001f600\x1b[D!\n"}},
+		{"public", []string{"\x1b[Aup\x1b[B\x0c\n"}},
+		{"public", []string{"\x1b[200~pasted\x1b[201~\n"}},
+		{"public", []string{"ab\x03"}},
+		{"public", []string{"\x04"}},
 		{"confirm", []string{"1"}},
 		{"confirm", []string{"2"}},
 		{"confirm", []string{"3", "1"}},
