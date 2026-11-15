@@ -7119,7 +7119,6 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let have_entry = o.have_entry;
   let target_given = o.target_given;
 
-
   let st = diag_style(tf.color_mode, tf.ascii, tf.diag_format);
 
   if (profile_name == "hardened") {
