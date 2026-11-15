@@ -407,6 +407,69 @@ func TestApkIcon(t *testing.T) {
 	}
 }
 
+// -apk-banner puts the banner of the launcher of Android TV beside the icon:
+// a second drawable entry and android:banner on the application. Without an
+// icon, the banner is the first drawable.
+func TestApkBanner(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, w, h int) (string, []byte) {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.Set(x, y, color.RGBA{215, 25, 33, 255})
+			}
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path, buf.Bytes()
+	}
+	icon, _ := write("icon.png", 48, 48)
+	banner, bannerPNG := write("banner.png", 320, 180)
+	for _, tc := range []struct {
+		name    string
+		flags   []string
+		entries string
+		id      string
+	}{
+		{"with an icon", []string{"-apk-icon", icon, "-apk-banner", banner}, "AndroidManifest.xml resources.arsc res/drawable/icon.png res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010001"},
+		{"alone", []string{"-apk-banner", banner}, "AndroidManifest.xml resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, raw := buildApk(t, dir, tc.flags...)
+			zr := zipOf(t, raw)
+			var names []string
+			for _, f := range zr.File {
+				names = append(names, f.Name)
+			}
+			if got := strings.Join(names, " "); got != tc.entries {
+				t.Errorf("entries = %s", got)
+			}
+			if got := readZipEntry(t, zr, "res/drawable/banner.png"); !bytes.Equal(got, bannerPNG) {
+				t.Error("the banner in the APK is not the PNG of -apk-banner")
+			}
+			verifyApkV2(t, raw)
+			aapt, err := exec.LookPath("aapt")
+			if err != nil {
+				t.Skip("aapt is not on PATH, so the manifest tree and the resource table are not parsed")
+			}
+			o, err := exec.Command(aapt, "dump", "xmltree", path, "AndroidManifest.xml").CombinedOutput()
+			if err != nil || !strings.Contains(string(o), "A: android:banner(0x010103f2)=@"+tc.id) {
+				t.Errorf("aapt dump xmltree: %v\n%s", err, o)
+			}
+			o, err = exec.Command(aapt, "dump", "resources", path).CombinedOutput()
+			if err != nil || !strings.Contains(string(o), "resource "+tc.id+" dev.fern.app:drawable/banner") {
+				t.Errorf("aapt dump resources: %v\n%s", err, o)
+			}
+		})
+	}
+}
+
 func readZipEntry(t *testing.T, zr *zip.Reader, name string) []byte {
 	t.Helper()
 	f, err := zr.Open(name)

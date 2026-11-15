@@ -2339,6 +2339,7 @@ function flag_groups(): FlagGroup[] {
       sub_flag("-apk-label", "TEXT", ["-apk"], "with -apk: the name of the app on the launcher (default LIB)"),
       sub_flag("-apk-permission", "NAMES", ["-apk"], "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
       sub_flag("-apk-icon", "FILE", ["-apk"], "with -apk: the PNG of the launcher icon (default: the icon of the system)"),
+      sub_flag("-apk-banner", "FILE", ["-apk"], "with -apk: the PNG of the banner on the launcher of Android TV, 320 by 180 pixels"),
       sub_flag("-apk-min-sdk", "LEVEL", ["-apk"], "with -apk: the lowest Android API level the app runs on (default 24)"),
       sub_flag("-apk-compress", "", ["-apk"], "with -apk: deflate the libraries, so the APK is smaller, and Android extracts them at install (default: store them, so Android maps them from the APK)"),
       sub_flag("-apk-cleartext", "", ["-apk"], "with -apk: let the app's Java networking, such as the media player, use http:// with no TLS (android:usesCleartextTraffic); the Fern sockets of the app do not need it"),
@@ -6103,10 +6104,10 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label, icon and key
 // file of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, assets: string, widget: string, run: boolean }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, banner: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, assets: string, widget: string, run: boolean }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-asset", "-apk-widget", "-apk-run"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-banner", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-asset", "-apk-widget", "-apk-run"], name);
 }
 
 // The -apk flags that take no value.
@@ -6122,6 +6123,7 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
     "-apk-package" => ApkOpts { ...o, package: f.value },
     "-apk-label" => ApkOpts { ...o, label: f.value },
     "-apk-icon" => ApkOpts { ...o, icon: f.value },
+    "-apk-banner" => ApkOpts { ...o, banner: f.value },
     "-apk-key" => ApkOpts { ...o, key: f.value },
     "-apk-permission" => ApkOpts { ...o, permissions: f.value },
     "-apk-min-sdk" => ApkOpts { ...o, min_sdk: f.value },
@@ -6323,7 +6325,7 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   for name in dex.subclasses_of(classes, apk.LISTENER_ACTION) {
     services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION });
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, tv: o.tv, assets: [], widget: apk.no_widget() };
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], banner: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, tv: o.tv, assets: [], widget: apk.no_widget() };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
@@ -6434,9 +6436,10 @@ function apk_assets(list: string): (apk.Asset[], string) {
   return (out, "");
 }
 
-// The PNG at `path`, or no bytes when `path` is "". The second value is the
-// error when the file cannot be read or is not a PNG.
-function apk_icon(path: string): (u8[], string) {
+// The PNG at `path` that the flag `flag` names, or no bytes when `path` is
+// "". The second value is the error when the file cannot be read or is not
+// a PNG.
+function apk_png(path: string, flag: string): (u8[], string) {
   if (path.len() == 0) {
     return ([], "");
   }
@@ -6450,12 +6453,12 @@ function apk_icon(path: string): (u8[], string) {
         }
       }
       if (!png) {
-        return ([], "fern: -apk-icon takes a PNG file, and " + path + " is not one");
+        return ([], "fern: " + flag + " takes a PNG file, and " + path + " is not one");
       }
       return (b, "");
     },
     Err(e) => {
-      return ([], "fern: cannot read the -apk-icon file " + path + ": " + e.message());
+      return ([], "fern: cannot read the " + flag + " file " + path + ": " + e.message());
     }
   }
 }
@@ -6491,6 +6494,7 @@ function apk_with_manifest(o: ApkOpts, entry_path: string): (ApkOpts, string) {
     package: or_text(o.package, fern_toml.android(m, "package")),
     label: or_text(o.label, fern_toml.android(m, "label")),
     icon: or_text(o.icon, android_path(g.dir, fern_toml.android(m, "icon"))),
+    banner: or_text(o.banner, android_path(g.dir, fern_toml.android(m, "banner"))),
     key: or_text(o.key, android_path(g.dir, fern_toml.android(m, "key"))),
     permissions: or_text(o.permissions, fern_toml.android(m, "permissions")),
     min_sdk: or_text(o.min_sdk, fern_toml.android(m, "min_sdk")),
@@ -6537,9 +6541,14 @@ function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root
     eprint("fern: -apk-min-sdk takes an API level from " + util.i32_to_string(apk.MIN_SDK) + " to " + util.i32_to_string(apk.TARGET_SDK) + " (got \"" + o.min_sdk + "\")");
     return 2;
   }
-  let (icon, icon_bad) = apk_icon(o.icon);
+  let (icon, icon_bad) = apk_png(o.icon, "-apk-icon");
   if (icon_bad.len() > 0) {
     eprint(icon_bad);
+    return 2;
+  }
+  let (banner, banner_bad) = apk_png(o.banner, "-apk-banner");
+  if (banner_bad.len() > 0) {
+    eprint(banner_bad);
     return 2;
   }
   let (assets, assets_bad) = apk_assets(o.assets);
@@ -6577,7 +6586,7 @@ function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root
     eprint(widget_bad);
     return 2;
   }
-  let app = apk.App { ...apk_app(o, lib, classes), icon: icon, assets: assets, widget: widget };
+  let app = apk.App { ...apk_app(o, lib, classes), icon: icon, banner: banner, assets: assets, widget: widget };
   if let Err(e) = write_file_bytes(o.out, apk.write(app, libs, d)) {
     eprint("fern: cannot write " + o.out + ": " + e.message());
     return 1;
@@ -6974,7 +6983,7 @@ function parse_cli_flags(av: string[], embedded_root: string): CliFlags {
     sanitize_flag: false,
     shared: false,
     export_list: "",
-    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, tv: false, assets: "", widget: "", run: false },
+    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", banner: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, tv: false, assets: "", widget: "", run: false },
     harden: false,
     heap_limit_text: "",
     cpu_limit_text: "",
