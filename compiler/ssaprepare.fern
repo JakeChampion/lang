@@ -42,6 +42,12 @@ pub struct Fusion {
   unique: boolean,
   aligned: boolean,
   test: boolean,
+  // load_bits is not 0 when the compare reads one operand from memory, with
+  // a load of that many bits at offset load_at. The base of the load is then
+  // in `b` when load_right is set, and in `a` when it is not.
+  load_bits: i32,
+  load_at: i32,
+  load_right: boolean,
 }
 
 pub struct Allocation {

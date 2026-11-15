@@ -4,14 +4,17 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const simFetchSuite = "tests/stdlib/sim_fetch_test.fern"
 
-var simFetchWant = []string{"# Suite: std/sim_fetch", "# pass 60", "# fail 0", "1..60"}
+var simFetchWant = []string{"# Suite: std/sim_fetch", "# fail 0"}
 
 func checkSimFetchOutput(t *testing.T, leg, out string) {
 	t.Helper()
+	e2eharness.CheckTAPPlan(t, out)
 	for _, w := range simFetchWant {
 		if !strings.Contains(out, w) {
 			t.Errorf("%s: output missing %q\nfull output:\n%s", leg, w, out)

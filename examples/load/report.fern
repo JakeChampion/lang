@@ -11,6 +11,10 @@ import "./histogram";
 // The error of a request that was in flight when the -z time ended.
 pub const ABORTED: string = "aborted due to deadline";
 
+// The error of a response that the server ends before it is complete, as
+// hyper writes it.
+pub const INCOMPLETE: string = "connection closed before message completed";
+
 // The percentiles of the summaries in hundredths of a percent, and their
 // names in the JSON summary.
 const PERCENTS: i64[] = [1000, 2500, 5000, 7500, 9000, 9500, 9900, 9990, 9999];
@@ -39,10 +43,7 @@ pub function frame(buf: u8[], method: string, eof: boolean): Framed {
     },
     http.Incomplete => {
       if (eof) {
-        if (buf.len() == 0) {
-          return Bad("connection closed");
-        }
-        return Bad("connection closed before the response was complete");
+        return Bad(INCOMPLETE);
       }
       return Partial;
     },
@@ -57,6 +58,33 @@ pub function frame(buf: u8[], method: string, eof: boolean): Framed {
     }
   }
   return Partial;
+}
+
+// The offset after the blank line that ends the head of a response, or -1.
+pub function head_end(buf: u8[]): i32 {
+  for k in 3..buf.len() {
+    if (buf[k] == 10 as u8 && buf[k - 1] == 13 as u8 && buf[k - 2] == 10 as u8 && buf[k - 3] == 13 as u8) {
+      return k + 1;
+    }
+  }
+  return -1;
+}
+
+// The status code of the status line `HTTP/1.x NNN ...` at the start of
+// `buf`, or 0.
+pub function status_of(buf: u8[]): i32 {
+  if (buf.len() < 12 || buf[8] != 32 as u8) {
+    return 0;
+  }
+  let n = 0;
+  for k in 9..12 {
+    let d = buf[k];
+    if (d < 48 as u8 || d > 57 as u8) {
+      return 0;
+    }
+    n = n * 10 + (d - 48 as u8) as i32;
+  }
+  return n;
 }
 
 // The count, the sum and the extremes of a set of times in nanoseconds.
@@ -85,13 +113,23 @@ pub function (s: Stat) merge(o: Stat): Stat {
 }
 
 // A response that the tally counts. `first_byte` is the time from the start
-// of the request to the first byte of the response, and `dialup` the time to
-// open the connection, or -1 when the request used an open connection.
-// `ended` is the time from the start of the run to the end of the response.
-pub struct Response { status: i32, latency: i64, first_byte: i64, bytes: i64, dialup: i64, ended: i64 }
+// of the request to the first byte of its body, or -1 when the body is
+// empty. `dialup` is the time to open the connection, or -1 when the
+// request used an open connection. `sent` is the time from the start of the
+// run to the start of the request, `due` the time at which it was due with
+// --latency-correction, or -1, and `ended` the time to the end of the
+// response. `url` is the URL of the request.
+pub struct Response { status: i32, latency: i64, first_byte: i64, bytes: i64, dialup: i64, sent: i64, due: i64, ended: i64, url: string }
+
+// The words of a record of a response: `sent`, `due`, `ended`, `latency`,
+// `dialup`, `first_byte`, `bytes` and `status`.
+pub const RECORD: i32 = 8;
 
 // `slots` counts the responses that ended in each SLOT_NS from the start of
-// the run.
+// the run. With `split` (--stats-success-breakdown), `ok` and `not_ok` hold
+// the latencies of the responses with a status of 2xx and of the others.
+// With `keep` (--output-format csv and --db-url), `records` holds a record
+// of each response and `urls` its URL.
 pub struct Tally {
   latency: histogram.Histogram,
   first_byte: histogram.Histogram,
@@ -101,9 +139,19 @@ pub struct Tally {
   bytes: i64,
   dialup: Stat,
   slots: i64[],
+  split: boolean,
+  ok: histogram.Histogram,
+  not_ok: histogram.Histogram,
+  keep: boolean,
+  records: i64[],
+  urls: string[],
 }
 
 pub function tally(): Tally {
+  return tally_for(false, false);
+}
+
+pub function tally_for(split: boolean, keep: boolean): Tally {
   let statuses: i64[] = [];
   for _ in 0..1000 {
     statuses = statuses.append(0);
@@ -111,7 +159,8 @@ pub function tally(): Tally {
   let none: string[] = [];
   let counts: i64[] = [];
   let slots: i64[] = [];
-  return Tally { latency: histogram.new(), first_byte: histogram.new(), statuses: statuses, errors: none, error_counts: counts, bytes: 0, dialup: stat(), slots: slots };
+  let records: i64[] = [];
+  return Tally { latency: histogram.new(), first_byte: histogram.new(), statuses: statuses, errors: none, error_counts: counts, bytes: 0, dialup: stat(), slots: slots, split: split, ok: histogram.empty(), not_ok: histogram.empty(), keep: keep, records: records, urls: none };
 }
 
 pub function (t: Tally) response(r: Response): Tally {
@@ -121,16 +170,23 @@ pub function (t: Tally) response(r: Response): Tally {
   while (slots.len() <= slot) {
     slots = slots.append(0);
   }
-  return Tally {
+  let out = Tally {
+    ...t,
     latency: t.latency.record(r.latency),
-    first_byte: t.first_byte.record(r.first_byte),
+    first_byte: if (r.first_byte >= 0) { t.first_byte.record(r.first_byte) } else { t.first_byte },
     statuses: t.statuses.with(r.status, t.statuses[r.status] + 1),
-    errors: t.errors,
-    error_counts: t.error_counts,
     bytes: t.bytes + r.bytes,
     dialup: dialup,
     slots: slots.with(slot, slots[slot] + 1),
   };
+  if (out.split) {
+    out = if (r.status >= 200 && r.status < 300) { Tally { ...out, ok: out.ok.record(r.latency) } } else { Tally { ...out, not_ok: out.not_ok.record(r.latency) } };
+  }
+  if (out.keep) {
+    let words: i64[] = [r.sent, r.due, r.ended, r.latency, r.dialup, r.first_byte, r.bytes, r.status as i64];
+    out = Tally { ...out, records: out.records.concat(words), urls: out.urls.append(r.url) };
+  }
+  return out;
 }
 
 pub function (t: Tally) error(message: string): Tally {
@@ -163,14 +219,17 @@ pub function (t: Tally) merge(o: Tally): Tally {
     }
   }
   let out = Tally {
+    ...t,
     latency: t.latency.merge(o.latency),
     first_byte: t.first_byte.merge(o.first_byte),
     statuses: statuses,
-    errors: t.errors,
-    error_counts: t.error_counts,
     bytes: t.bytes + o.bytes,
     dialup: t.dialup.merge(o.dialup),
     slots: slots,
+    ok: t.ok.merge(o.ok),
+    not_ok: t.not_ok.merge(o.not_ok),
+    records: t.records.concat(o.records),
+    urls: t.urls.concat(o.urls),
   };
   for i in 0..o.errors.len() {
     out = out.errors_of(o.errors[i], o.error_counts[i]);
@@ -239,23 +298,82 @@ function ranked(labels: string[], counts: i64[]): (i64, string)[] {
 // The summary of a run that took `elapsed_ns`. `unit_name` is the unit of
 // -u, or "" to select the unit from the slowest response.
 pub function (t: Tally) summary(elapsed_ns: i64, unit_name: string): string {
+  return t.styled_summary(elapsed_ns, unit_name, Style { on: false });
+}
+
+// The colors of the summary of oha on a terminal, or none when `on` is
+// false.
+pub struct Style { on: boolean }
+
+const GREEN: string = "10";
+
+const YELLOW: string = "11";
+
+const RED: string = "9";
+
+const CYAN: string = "14";
+
+const WHITE: string = "15";
+
+function (s: Style) heading(text: string): string {
+  return if (s.on) { "\x1b[1m\x1b[4m" + text + "\x1b[0m" } else { text };
+}
+
+function (s: Style) color(code: string, text: string): string {
+  return if (s.on) { f"\x1b[38;5;{code}m" + text + "\x1b[39m" } else { text };
+}
+
+function (s: Style) bold(code: string, text: string): string {
+  return if (s.on) { f"\x1b[38;5;{code}m\x1b[1m" + text + "\x1b[0m" } else { text };
+}
+
+// The color of a latency of `seconds`, as oha selects it.
+function latency_color(seconds: f64): string {
+  if (seconds <= 0.1) {
+    return GREEN;
+  }
+  if (seconds <= 0.4) {
+    return YELLOW;
+  }
+  return RED;
+}
+
+function status_color(code: i32): string {
+  if (code >= 200 && code < 300) {
+    return GREEN;
+  }
+  if (code >= 400 && code < 500) {
+    return YELLOW;
+  }
+  if (code >= 500 && code < 600) {
+    return RED;
+  }
+  return WHITE;
+}
+
+// The summary, with the colors of oha when `style` is on.
+pub function (t: Tally) styled_summary(elapsed_ns: i64, unit_name: string, style: Style): string {
   let h = t.latency;
   let u = if (unit_name.len() > 0) { unit_named(unit_name) } else { unit(h.max) };
-  let out = t.totals(elapsed_ns, u) + "\n" + t.sizes(elapsed_ns);
-  if (h.total > 0) {
-    out += "\nResponse time histogram:\n" + bars(h, u);
-    out += "\nResponse time distribution:\n";
-    for p in PERCENTS {
-      let percent = (p as f64 / 100.0).to_string_prec(2);
-      out += f"  {percent}% in " + in_unit(h.at(p), u) + "\n";
-    }
+  let out = t.totals(elapsed_ns, u, style) + "\n" + t.sizes(elapsed_ns);
+  out += "\n" + style.heading("Response time histogram:") + "\n" + bars(h, u, style);
+  out += "\n" + style.heading("Response time distribution:") + "\n" + distribution(h, u, style);
+  if (t.split) {
+    out += "\n" + style.heading("Response time histogram (2xx only):") + "\n" + bars(t.ok, u, style);
+    out += "\n" + style.heading("Response time distribution (2xx only):") + "\n" + distribution(t.ok, u, style);
+    out += "\n" + style.heading("Response time histogram (4xx + 5xx only):") + "\n" + bars(t.not_ok, u, style);
+    out += "\n" + style.heading("Response time distribution (4xx + 5xx only):") + "\n" + distribution(t.not_ok, u, style);
   }
-  out += "\n\nDetails (average, fastest, slowest):\n";
+  out += "\n\n" + style.heading("Details (average, fastest, slowest):") + "\n";
   out += "  DNS+dialup:\t" + triple(t.dialup, u) + "\n";
   out += "  DNS-lookup:\t" + triple(t.lookup(), u) + "\n";
-  out += "\nStatus code distribution:\n";
+  out += "\n" + style.heading("Status code distribution:") + "\n";
   for row in t.codes() {
-    out += f"  [{row.1}] {row.0} responses\n";
+    let code = match (i32.parse_i32(row.1)) {
+      Ok(n) => n,
+      Err(_) => 0,
+    };
+    out += style.color(status_color(code), f"  [{row.1}] {row.0} responses") + "\n";
   }
   if (t.errors.len() > 0) {
     out += "\nError distribution:\n";
@@ -272,16 +390,33 @@ function (t: Tally) lookup(): Stat {
   return Stat { n: t.dialup.n, sum: 0, min: 0, max: 0 };
 }
 
+// The mean, the fastest and the slowest of `s`. With no values they are NaN,
+// inf and -inf, as oha writes them.
 function triple(s: Stat, u: (string, f64)): string {
   if (s.n == 0) {
-    return f"NaN {u.0}, NaN {u.0}, NaN {u.0}";
+    return f"NaN {u.0}, inf {u.0}, -inf {u.0}";
   }
   return in_unit(s.sum / s.n, u) + ", " + in_unit(s.min, u) + ", " + in_unit(s.max, u);
 }
 
+// The latency at each percentile of the summary.
+function distribution(h: histogram.Histogram, u: (string, f64), style: Style): string {
+  let out = "";
+  for p in PERCENTS {
+    let percent = (p as f64 / 100.0).to_string_prec(2);
+    let at = if (h.total == 0) { f"NaN {u.0}" } else { in_unit(h.at(p), u) };
+    let seconds = if (h.total == 0) { f64.NAN } else { h.at(p) as f64 / 1000000000.0 };
+    out += style.color(latency_color(seconds), f"  {percent}% in {at}") + "\n";
+  }
+  return out;
+}
+
 // The response time histogram of oha: each bin, its count and a bar of up to
-// 32 squares.
-function bars(h: histogram.Histogram, u: (string, f64)): string {
+// 32 squares. With no values, each bin has the label NaN.
+function bars(h: histogram.Histogram, u: (string, f64), style: Style): string {
+  if (h.total == 0) {
+    return (style.color(RED, f"    NaN {u.0} [0] |") + "\n").repeat(BINS);
+  }
   let counts = h.bins(BINS);
   let labels = bin_labels(h);
   let most: i64 = 1;
@@ -300,7 +435,8 @@ function bars(h: histogram.Histogram, u: (string, f64)): string {
   for i in 0..BINS {
     let label = (labels[i] / (u.1 / 1000000000.0)).to_string_prec(3);
     let count = counts[i].to_string();
-    out += "  " + " ".repeat(wide + 4 - label.len()) + label + f" {u.0} [{count}]" + " ".repeat(digits - count.len()) + " |" + "■".repeat((counts[i] * 32 / most) as i32) + "\n";
+    let tone = latency_color(labels[i]);
+    out += style.color(tone, "  " + " ".repeat(wide + 4 - label.len()) + label + f" {u.0} [{count}]" + " ".repeat(digits - count.len()) + " |") + style.color(tone, "■").repeat((counts[i] * 32 / most) as i32) + "\n";
   }
   return out;
 }
@@ -317,7 +453,7 @@ function bin_labels(h: histogram.Histogram): f64[] {
 }
 
 // The count of each status code, the largest first: (count, code).
-function (t: Tally) codes(): (i64, string)[] {
+pub function (t: Tally) codes(): (i64, string)[] {
   let codes: string[] = [];
   let counts: i64[] = [];
   for code in 0..t.statuses.len() {
@@ -330,16 +466,19 @@ function (t: Tally) codes(): (i64, string)[] {
 }
 
 // The first block of the summary.
-function (t: Tally) totals(elapsed_ns: i64, u: (string, f64)): string {
+function (t: Tally) totals(elapsed_ns: i64, u: (string, f64), style: Style): string {
   let h = t.latency;
-  let out = "Summary:\n";
-  out += "  Success rate:\t" + (t.success() * 100.0).to_string_prec(2) + "%\n";
+  let out = style.heading("Summary:") + "\n";
+  let rate = t.success() * 100.0;
+  let tone = if (rate >= 100.0) { GREEN } else if (rate >= 99.0) { YELLOW } else { RED };
+  out += style.bold(tone, "  Success rate:\t" + (if (rate.is_nan()) { "NaN" } else { rate.to_string_prec(2) }) + "%") + "\n";
   out += "  Total:\t" + in_unit(elapsed_ns, u) + "\n";
-  if (h.total > 0) {
-    out += "  Slowest:\t" + in_unit(h.max, u) + "\n";
-    out += "  Fastest:\t" + in_unit(h.min, u) + "\n";
-    out += "  Average:\t" + in_unit(h.mean(), u) + "\n";
-  }
+  let slowest = if (h.total > 0) { in_unit(h.max, u) } else { f"-inf {u.0}" };
+  let fastest = if (h.total > 0) { in_unit(h.min, u) } else { f"inf {u.0}" };
+  let average = if (h.total > 0) { in_unit(h.mean(), u) } else { f"NaN {u.0}" };
+  out += style.color(YELLOW, "  Slowest:\t" + slowest) + "\n";
+  out += style.color(GREEN, "  Fastest:\t" + fastest) + "\n";
+  out += style.color(CYAN, "  Average:\t" + average) + "\n";
   return out + "  Requests/sec:\t" + t.rps(elapsed_ns).to_string_prec(4) + "\n";
 }
 
@@ -373,15 +512,21 @@ function seconds_of(ns: i64): f64 {
   if (ns <= 0) {
     return 1.0e-9;
   }
-  return ns as f64 / 1000000000.0;
+  return secs_f64(ns);
+}
+
+// Nanoseconds in seconds, as Rust's Duration::as_secs_f64 computes them: the
+// whole seconds and the fraction, each rounded once.
+pub function secs_f64(ns: i64): f64 {
+  return (ns / 1000000000) as f64 + (ns % 1000000000) as f64 / 1000000000.0;
 }
 
 // The responses divided by the requests that ended. A request aborted at the
-// end of -z is not in it.
+// end of -z is not in it. With no request that ended, it is NaN, as in oha.
 function (t: Tally) success(): f64 {
   let counted = t.latency.total + t.failed() - t.aborted();
   if (counted == 0) {
-    return 0.0;
+    return f64.NAN;
   }
   return t.latency.total as f64 / (counted as f64);
 }
@@ -465,7 +610,7 @@ pub function plain(x: f64): string {
 }
 
 function seconds(ns: i64): json.JsonValue {
-  return number(ns as f64 / 1000000000.0);
+  return number(secs_f64(ns));
 }
 
 // A time in seconds, or null when `none` is true.
@@ -495,11 +640,12 @@ function counts(rows: (i64, string)[]): json.JsonValue {
 
 // The histogram of oha as JSON: the label of each bin in seconds and its
 // count, in the order of the labels as text, as a BTreeMap of strings has
-// them.
+// them. Bins with the same label keep the count of the last, as the map of
+// oha does, so with no values the one key is NaN.
 function histogram_json(h: histogram.Histogram): json.JsonValue {
   let o = json.object();
   if (h.total == 0) {
-    return json.JObject(o);
+    return json.JObject(o.insert("NaN", json.JNumber("0")));
   }
   let labels = bin_labels(h);
   let bins = h.bins(BINS);
@@ -509,7 +655,7 @@ function histogram_json(h: histogram.Histogram): json.JsonValue {
     let found = false;
     for j in 0..rows.len() {
       if (rows[j].0 == key) {
-        rows = rows.with(j, (key, rows[j].1 + bins[i]));
+        rows = rows.with(j, (key, bins[i]));
         found = true;
       }
     }
@@ -596,17 +742,67 @@ pub function (t: Tally) json(elapsed_ns: i64): string {
   let fb = t.first_byte;
   let first_byte = Stat { n: fb.total, sum: fb.sum, min: fb.min, max: fb.max };
   let details = json.from([("DNSDialup", triple_json(t.dialup)), ("DNSLookup", triple_json(t.lookup())), ("firstByte", triple_json(first_byte))]);
-  let doc = json.from([
+  let parts: (string, json.JsonValue)[] = [
     ("summary", json.JObject(summary)),
     ("metrics", json.JObject(metrics)),
     ("responseTimeHistogram", histogram_json(h)),
     ("latencyPercentiles", percentiles_json(h)),
     ("firstByteHistogram", histogram_json(fb)),
     ("firstBytePercentiles", percentiles_json(fb)),
+  ];
+  if (t.split) {
+    parts = parts.concat([
+      ("responseTimeHistogramSuccessful", histogram_json(t.ok)),
+      ("latencyPercentilesSuccessful", percentiles_json(t.ok)),
+      ("responseTimeHistogramNotSuccessful", histogram_json(t.not_ok)),
+      ("latencyPercentilesNotSuccessful", percentiles_json(t.not_ok)),
+    ]);
+  }
+  parts = parts.concat([
     ("rps", rps_json(t.rates(elapsed_ns))),
     ("details", json.JObject(details)),
-    ("statusCodeDistribution", counts(t.codes())),
-    ("errorDistribution", counts(ranked(t.errors, t.error_counts))),
+    ("statusCodeDistribution", counts(cmp.sort_by(t.codes(), (a: (i64, string), b: (i64, string)): i32 => a.1.cmp(b.1)))),
+    ("errorDistribution", counts(errors_by_name(t))),
   ]);
-  return json.encode_pretty(json.JObject(doc), 2);
+  return json.encode_pretty(json.JObject(json.from(parts)), 2);
+}
+
+// The errors, the largest count first: (count, message).
+pub function ranked_errors(t: Tally): (i64, string)[] {
+  return ranked(t.errors, t.error_counts);
+}
+
+// The errors in the order of their messages, as the BTreeMap of oha has
+// them: (count, message).
+function errors_by_name(t: Tally): (i64, string)[] {
+  let rows = ranked(t.errors, t.error_counts);
+  return cmp.sort_by(rows, (a: (i64, string), b: (i64, string)): i32 => a.1.cmp(b.1));
+}
+
+// The record of each response as `--output-format csv` of oha writes it: the
+// time from the start of the run to the start of the request, the lookup of
+// the host, the time to open the connection, the time to the first byte of
+// the body, the latency, the length of the body and the status. The times
+// are in seconds, and the rows are in the order of their start.
+pub function (t: Tally) csv(): string {
+  let n = t.records.len() / RECORD;
+  let order: (i64, i32)[] = [];
+  for i in 0..n {
+    order = order.append((t.records[i * RECORD], i));
+  }
+  order = cmp.sort_by(order, (a: (i64, i32), b: (i64, i32)): i32 => if (a.0 < b.0) { -1 } else if (a.0 > b.0) { 1 } else { a.1 - b.1 });
+  let out = "request-start,DNS,DNS+dialup,Response-delay,request-duration,bytes,status\n";
+  for row in order {
+    let at = row.1 * RECORD;
+    let r = t.records;
+    let dialup = if (r[at + 4] >= 0) { plain_seconds(r[at + 4]) } else { "0" };
+    let first = if (r[at + 5] >= 0) { plain_seconds(r[at + 5]) } else { "0" };
+    out += plain_seconds(r[at]) + ",0," + dialup + "," + first + "," + plain_seconds(r[at + 3]) + "," + r[at + 6].to_string() + "," + r[at + 7].to_string() + "\n";
+  }
+  return out;
+}
+
+// Nanoseconds as Rust writes the seconds of a Duration as f64.
+pub function plain_seconds(ns: i64): string {
+  return plain(secs_f64(ns));
 }

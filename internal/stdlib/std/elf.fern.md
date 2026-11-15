@@ -20,6 +20,8 @@ A kernel that starts a process needs to read the image of the program (#14264, m
 
 <<pub struct Image>>
 
+<<pub function (i: Image) layout_fault>>
+
 <<pub function parse>>
 ```
 
@@ -102,6 +104,11 @@ pub function (s: Segment) is_load(): boolean {
   return s.kind == PT_LOAD;
 }
 
+// Reports whether a loader gives the segment memory.
+pub function (s: Segment) occupies(): boolean {
+  return s.kind == PT_LOAD && s.memory_size != 0 as u64;
+}
+
 pub function (s: Segment) readable(): boolean {
   return (s.flags & PF_R) != 0 as u32;
 }
@@ -140,7 +147,7 @@ pub function (s: Segment) bytes(image: [u8]): Result[u8[], ElfError] {
 
 ```fern
 <<pub struct Image>>=
-pub struct Image { kind: u32, machine: u32, entry: u64, segments: Segment[] }
+pub struct Image { kind: u32, machine: u32, entry: u64, table: i32, segments: Segment[] }
 
 // The segments a loader maps, in the order of the program headers.
 pub function (i: Image) loads(): Segment[] {
@@ -151,6 +158,51 @@ pub function (i: Image) loads(): Segment[] {
     }
   }
   return out;
+}
+```
+
+### `pub function (i: Image) layout_fault`
+
+`parse` reads an image of each kind, and a shared object has no entry. A loader that runs the image as a program has more rules, and `layout_fault` checks them. The memory of a load segment must not wrap the address space. Two load segments must not share a byte of memory, although they can share a page. The entry must be in the file bytes of an executable load segment. A load segment with no memory is ignored.
+
+```fern
+<<pub function (i: Image) layout_fault>>=
+// The fault that stops a loader from running the image as a program, or
+// None. The offset is that of the program header at fault, or 24 for the entry.
+pub function (i: Image) layout_fault(): Option[ElfError] {
+  let n = 0;
+  while (n < i.segments.len()) {
+    let s = i.segments[n];
+    if (s.occupies()) {
+      if (s.address + s.memory_size < s.address) {
+        return Some(ElfError { offset: i.table + n * PROGRAM_HEADER_BYTES, reason: "a load segment wraps the address space" });
+      }
+      if (i.overlaps_earlier(n)) {
+        return Some(ElfError { offset: i.table + n * PROGRAM_HEADER_BYTES, reason: "two load segments share memory" });
+      }
+    }
+    n += 1;
+  }
+  for s in i.segments {
+    if (s.occupies() && s.executable() && i.entry >= s.address && i.entry - s.address < s.file_size) {
+      return None;
+    }
+  }
+  return Some(ElfError { offset: 24, reason: "the entry is not in the file bytes of an executable load segment" });
+}
+
+// Reports whether segment n shares a byte of memory with a load segment before it.
+function (i: Image) overlaps_earlier(n: i32): boolean {
+  let s = i.segments[n];
+  let k = 0;
+  while (k < n) {
+    let e = i.segments[k];
+    if (e.occupies() && s.address < e.address + e.memory_size && e.address < s.address + s.memory_size) {
+      return true;
+    }
+    k += 1;
+  }
+  return false;
 }
 ```
 
@@ -190,7 +242,7 @@ pub function parse(image: [u8]): Result[Image, ElfError] {
     segments = segments.append(segment(image, offset as i32 + n * PROGRAM_HEADER_BYTES));
     n += 1;
   }
-  return Ok(Image { kind: kind, machine: machine, entry: entry, segments: segments });
+  return Ok(Image { kind: kind, machine: machine, entry: entry, table: offset as i32, segments: segments });
 }
 
 // The fault of the first 16 bytes of the image, the ELF identification, or

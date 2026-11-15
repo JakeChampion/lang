@@ -41,6 +41,62 @@ def decoded(path):
                                     "-pix_fmt", "yuv444p16le", "-f", "rawvideo", "-"])
 
 
+def reject(path, data):
+    path.write_bytes(data)
+    native = subprocess.run([str(binary), str(path)], capture_output=True, text=True)
+    wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                          cwd=path.parent, capture_output=True, text=True)
+    assert native.returncode == wasi.returncode == 1, (path.name, native, wasi)
+    assert native.stdout == wasi.stdout, path.name
+    assert "invalid video header or packet" in native.stderr and "invalid video header or packet" in wasi.stderr
+    assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
+
+
+def frame_number(path):
+    run = subprocess.run(["ffmpeg", "-v", "trace", "-i", str(path), "-c:v", "copy", "-bsf:v", "trace_headers",
+                          "-f", "null", "-"], capture_output=True, text=True)
+    fields = re.findall(r"\[trace_headers[^\]]*\]\s+(\d+)\s+frame_num\s+([01]+)\s+=\s+(\d+)", run.stderr)
+    assert fields, (path.name, run.stderr[-3000:])
+    at, bits, number = fields[0]
+    assert int(bits, 2) == int(number)
+    return int(at), bits, int(number)
+
+
+def escaped(raw):
+    output = bytearray()
+    zeros = 0
+    for byte in raw:
+        if zeros == 2 and byte <= 3:
+            output.append(3)
+            zeros = 0
+        output.append(byte)
+        zeros = zeros + 1 if byte == 0 else 0
+    return bytes(output)
+
+
+def idr_frame_numbers(directory, source):
+    source_units = units(source.read_bytes())
+    index = next(i for i, unit in enumerate(source_units) if unit[0] & 31 == 5)
+    prefix = b"".join(b"\0\0\0\1" + unit for unit in source_units[:index])
+    original = source_units[index]
+    raw = re.sub(b"\0\0\x03", b"\0\0", original)
+    assert escaped(raw) == original
+    path = directory / ("idr-frame-" + source.name)
+    path.write_bytes(prefix + b"\0\0\0\1" + original)
+    at, field, number = frame_number(path)
+    bits = "".join(f"{byte:08b}" for byte in raw)
+    assert number == 0 and bits[at:at + len(field)] == field
+    for value in sorted({1, 1 << (len(field) - 1), (1 << len(field)) - 1}):
+        changed = bits[:at] + f"{value:0{len(field)}b}" + bits[at + len(field):]
+        nal = escaped(bytes(int(changed[i:i + 8], 2) for i in range(0, len(changed), 8)))
+        data = prefix + b"\0\0\0\1" + nal
+        path.write_bytes(data)
+        traced_at, traced_bits, traced_number = frame_number(path)
+        assert (traced_at, len(traced_bits), traced_number) == (at, len(field), value)
+        reject(path, data)
+        print(f"{source.name}: CBS traces IDR frame_num={value}; native/WASI refusal follows H.264 7.4.3", flush=True)
+
+
 def compare(path, frames, expected_planes=None):
     data = path.read_bytes()
     metadata = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets",
@@ -92,14 +148,7 @@ def end_markers(directory, baseline, reordered):
     }
     for name, data in bad.items():
         path = directory / (name + ".h264")
-        path.write_bytes(data)
-        native = subprocess.run([str(binary), str(path)], capture_output=True, text=True)
-        wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
-                              cwd=directory, capture_output=True, text=True)
-        assert native.returncode == wasi.returncode == 1, (name, native, wasi)
-        assert native.stdout == wasi.stdout, name
-        assert "invalid video header or packet" in native.stderr and "invalid video header or packet" in wasi.stderr
-        assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
+        reject(path, data)
         print(f"{name}: native/WASI refusal follows the H.264 end-marker rules", flush=True)
 
 
@@ -152,4 +201,6 @@ with tempfile.TemporaryDirectory() as temporary:
     joined.write_bytes(paths[3].read_bytes() + paths[5].read_bytes())
     compare(joined, 36)
     end_markers(directory, paths[0], paths[3])
+    for source in (paths[0], paths[3], paths[5]):
+        idr_frame_numbers(directory, source)
     parameter_reuse(directory)

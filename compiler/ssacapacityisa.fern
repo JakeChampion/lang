@@ -495,7 +495,10 @@ function constructor_decode(line: string): Op {
     return Op { ...empty(25), symbol: rest };
   }
   let args = operands(rest);
-  return if (name == "leaq" && args.len() == 2) { constructor_address(args[0], args[1]) } else { empty(0) };
+  if (args.len() != 2) {
+    return empty(0);
+  }
+  return if (name == "leaq") { constructor_address(args[0], args[1]) } else { immediate_store(name, args[0], args[1]) };
 }
 
 function constructor_address(address: string, destination: string): Op {
