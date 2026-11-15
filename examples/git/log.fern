@@ -94,10 +94,6 @@ pub function date_text(p: Person): string {
 
 // ---- Lines of a message ----
 
-function is_space(b: u8): boolean {
-  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == 11 || b == 12;
-}
-
 // The end of the line at `at`, after its line end, or the end of `text`.
 function line_end(text: string, at: i32): i32 {
   let i = at;
@@ -111,7 +107,7 @@ function line_end(text: string, at: i32): i32 {
 // at its end.
 function trim_end(text: string, at: i32, end: i32): i32 {
   let e = end;
-  while (e > at && is_space(text[e - 1])) {
+  while (e > at && objects.is_space(text[e - 1])) {
     e -= 1;
   }
   return e;

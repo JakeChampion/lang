@@ -50,6 +50,8 @@ var gitOptionCases = []string{
 	"log --oneline -S [34] --pickaxe-regex", "log --stat -S s", "log --stat -S s --pickaxe-all", "log --oneline -G S -i",
 	"log --oneline -S S -i", "log --oneline --graph -S2", "log --oneline --follow -- f", "log --oneline --follow -- s",
 	"log --oneline --follow f s", "log --name-status --follow -- s",
+	// A vertical tab and a form feed are not white space for git.
+	"log --format=%s|%b|%aN| -1 vt", "log --oneline --cherry-mark main...vt",
 }
 
 // gitOptionsFixture makes a repository with a mailmap, branches, tags, a
@@ -113,9 +115,16 @@ func gitOptionsFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
 	run("checkout", "-q", "-b", "pick", "topic")
 	write("f", "4\n")
 	commit("four again")
+	// A branch with the change of "four" and a vertical tab, which is not
+	// white space for the patch id.
+	run("checkout", "-q", "-b", "vt", "topic")
+	who = []string{"Tab", "tab@example.com", "Tab", "tab@example.com"}
+	write("f", "4\v\n")
+	commit("four\f\v\n\nbody\f\v")
 	run("checkout", "-q", "main")
 	write(".mailmap", "# comment line\nNew Name <new@example.com> Old Name <old@example.com>\nCommitter Proper <c@example.com>\n"+
-		"Joe Real <joe@home.com>\n<other-new@example.com> <other@example.com>\nSide Person <side@new.com> <side@example.com>\n")
+		"Joe Real <joe@home.com>\n<other-new@example.com> <other@example.com>\nSide Person <side@new.com> <side@example.com>\n"+
+		"\vTab Name\f <tab@example.com>\n")
 }
 
 // TestSelfHostExampleGitOptions runs the options of log with git and

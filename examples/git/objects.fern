@@ -128,6 +128,12 @@ function hex_value(c: u8): i32 {
   return -1;
 }
 
+// The white space of git: `isspace` of its `sane_ctype`. A vertical tab
+// and a form feed are not white space.
+pub function is_space(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
+}
+
 pub function part(s: string, from: i32, to: i32): string {
   return slice_unchecked(s, from, to).to_owned();
 }

@@ -206,13 +206,9 @@ function meta_lines(o: Opts, lines: string): string {
   return out;
 }
 
-function is_space(b: u8): boolean {
-  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
-}
-
 function blank(data: u8[], from: i32, to: i32): boolean {
   for i in from..to {
-    if (!is_space(data[i])) {
+    if (!objects.is_space(data[i])) {
       return false;
     }
   }
@@ -283,7 +279,7 @@ function line0(set: string, first: string, text: string): string {
 // space-before-tab.
 function checked(text: string): string {
   let trailing = text.len();
-  while (trailing > 0 && is_space(text[trailing - 1])) {
+  while (trailing > 0 && objects.is_space(text[trailing - 1])) {
     trailing -= 1;
   }
   let out = "";
@@ -839,7 +835,7 @@ pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, leas
 function without_space(b: u8[]): u8[] {
   let out: u8[] = [];
   for c in b {
-    if (!(c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' || c == 11 || c == 12)) {
+    if (!objects.is_space(c)) {
       out = out.append(c);
     }
   }
