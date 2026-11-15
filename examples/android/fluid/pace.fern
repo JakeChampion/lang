@@ -1,0 +1,117 @@
+// The pace of the frames. The display tells the app each of its refreshes.
+// The app draws a frame at each refresh of a display of 60 or 90 Hz, and at
+// each second refresh of a display of 120 Hz, as the web page of the fluid
+// simulates 60 steps in a second. A frame that the GPU does not complete in
+// its time comes one refresh late, and a fluid with some late frames looks
+// worse than a fluid with a lower rate. So when many frames are late, the
+// pace takes one more refresh for each frame. It makes no Android call, so
+// the host tests it.
+import "std/i32";
+import "std/i64";
+
+// The time of a step of the web page: 1/60 second.
+const STEP_NS: i64 = 16666667i64;
+
+// The most refreshes for one frame.
+const MOST: i32 = 4;
+
+// `vsync_ns` is the time of the last refresh, and `period_ns` is the time
+// from one refresh to the next, or 0 before the pace knows it. `shortest_ns`
+// and `seen` measure the period. `tick` counts the refreshes since the last
+// frame, and `slower` is the refreshes that late frames added to each
+// frame. The other fields are of the frames since `from_ns`: their count,
+// the time of the last one, the longest time between two, the count of the
+// late ones, and the count of seconds in a row with many late frames.
+pub struct Pace {
+  vsync_ns: i64,
+  period_ns: i64,
+  shortest_ns: i64,
+  seen: i32,
+  tick: i32,
+  slower: i32,
+  from_ns: i64,
+  last_ns: i64,
+  frames: i32,
+  longest_ns: i64,
+  late: i32,
+  strikes: i32,
+  seconds: i32,
+}
+
+pub function new(): Pace {
+  return Pace { vsync_ns: 0i64, period_ns: 0i64, shortest_ns: 0i64, seen: 0, tick: 0, slower: 0, from_ns: 0i64, last_ns: 0i64, frames: 0, longest_ns: 0i64, late: 0, strikes: 0, seconds: 0 };
+}
+
+// The refreshes of the display for one frame.
+pub function (p: Pace) every(): i32 {
+  if (p.period_ns <= 0i64) {
+    return 1;
+  }
+  // The steps of the web page in one refresh, to the nearest whole number
+  // with a quarter added: 1 at 60 and 90 Hz, and 2 at 120 and 144 Hz.
+  let base = ((STEP_NS * 4i64 + p.period_ns) / (p.period_ns * 4i64)) as i32;
+  return (base.max(1) + p.slower).min(MOST);
+}
+
+// The pace after the refresh of the display at `ns`, and whether the app
+// draws a frame at this refresh.
+pub function (p: Pace) vsync(ns: i64): (Pace, boolean) {
+  let delta = ns - p.vsync_ns;
+  let out = Pace { ...p, vsync_ns: ns };
+  // A longer time is a pause of the app, and a frame is due after it.
+  if (delta <= 2000000i64 || delta >= 50000000i64) {
+    return (Pace { ...out, tick: 0 }, true);
+  }
+  let shortest = delta;
+  if (out.seen > 0 && out.shortest_ns < delta) {
+    shortest = out.shortest_ns;
+  }
+  out = Pace { ...out, shortest_ns: shortest, seen: out.seen + 1 };
+  if (out.period_ns == 0i64 && out.seen >= 8) {
+    out = Pace { ...out, period_ns: shortest };
+  }
+  if (out.tick + 1 >= out.every()) {
+    return (Pace { ...out, tick: 0 }, true);
+  }
+  return (Pace { ...out, tick: out.tick + 1 }, false);
+}
+
+// The pace after the app drew a frame at `ns`, and the text of the frame
+// rate when one second of frames ends, or "". A time of more than 1 second
+// between two frames is a pause, and starts the count again.
+pub function (p: Pace) drew(ns: i64): (Pace, string) {
+  let gap = ns - p.last_ns;
+  if (p.frames == 0 || gap > 1000000000i64) {
+    return (Pace { ...p, from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64, late: 0 }, "");
+  }
+  let late = p.late;
+  if (p.period_ns > 0i64 && gap * 2i64 > p.period_ns * (p.every() as i64) * 3i64) {
+    late += 1;
+  }
+  let next = Pace { ...p, last_ns: ns, frames: p.frames + 1, longest_ns: p.longest_ns.max(gap), late: late };
+  let ms = (ns - p.from_ns) / 1000000i64;
+  if (ms < 1000i64) {
+    return (next, "");
+  }
+  let drawn = next.frames - 1;
+  let rate = (drawn as i64 * 1000i64 + ms / 2i64) / ms;
+  let text = rate.to_string() + " fps, longest " + (next.longest_ns / 1000000i64).to_string() + " ms";
+  if (next.every() > 1) {
+    text += ", 1 of " + next.every().to_string();
+  }
+  // More than 15 late frames in 100, for 2 seconds in a row, is too many.
+  let strikes = 0;
+  if (late * 100 > drawn * 15) {
+    strikes = next.strikes + 1;
+  }
+  let slower = next.slower;
+  if (strikes >= 2 && next.every() < MOST) {
+    slower += 1;
+    strikes = 0;
+  }
+  let period = next.period_ns;
+  if (next.seen >= 8) {
+    period = next.shortest_ns;
+  }
+  return (Pace { ...next, period_ns: period, seen: 0, slower: slower, from_ns: ns, frames: 1, longest_ns: 0i64, late: 0, strikes: strikes, seconds: next.seconds + 1 }, text);
+}

@@ -375,10 +375,20 @@ pub function (f: Fluid) window(): Target {
   return Target { texture: 0, fbo: 0, width: f.width, height: f.height };
 }
 
-// Draws the square into `t` with the program in use.
+// Draws the square into `t` with the program in use, over the pixels that
+// `t` has. A pass with a blend uses it.
 function blit(t: Target): void {
   gles.viewport(0, 0, t.width, t.height);
   gles.bind_framebuffer(gles.FRAMEBUFFER, t.fbo);
+  gles.draw_arrays(gles.TRIANGLE_STRIP, 0, 4);
+}
+
+// Draws the square into `t` with the program in use, in the place of each
+// pixel that `t` has. A pass with no blend uses it.
+function fill(t: Target): void {
+  gles.viewport(0, 0, t.width, t.height);
+  gles.bind_framebuffer(gles.FRAMEBUFFER, t.fbo);
+  gles.discard(t.fbo);
   gles.draw_arrays(gles.TRIANGLE_STRIP, 0, 4);
 }
 
@@ -405,7 +415,7 @@ function (f: Fluid) pair_sized(p: Pair, width: i32, height: i32, format: Format,
   let read = float_target(width, height, format, filter);
   gles.use_program(f.programs.copy.id);
   gles.uniform1i(f.programs.copy.at[TEXTURE], attach(p.read, 0));
-  blit(read);
+  fill(read);
   free_pair(p);
   return Pair { read: read, write: float_target(width, height, format, filter) };
 }
@@ -513,7 +523,7 @@ pub function (f: Fluid) step(cfg: config.Config, dt: f64): Fluid {
   gles.use_program(ps.curl.id);
   texel(ps.curl, velocity.read);
   gles.uniform1i(ps.curl.at[VELOCITY], attach(velocity.read, 0));
-  blit(t.curl);
+  fill(t.curl);
 
   gles.use_program(ps.vorticity.id);
   texel(ps.vorticity, velocity.read);
@@ -521,18 +531,18 @@ pub function (f: Fluid) step(cfg: config.Config, dt: f64): Fluid {
   gles.uniform1i(ps.vorticity.at[CURL_TEXTURE], attach(t.curl, 1));
   gles.uniform1f(ps.vorticity.at[CURL], cfg.curl as f32);
   gles.uniform1f(ps.vorticity.at[DT], step);
-  blit(velocity.write);
+  fill(velocity.write);
   velocity = velocity.swap();
 
   gles.use_program(ps.divergence.id);
   texel(ps.divergence, velocity.read);
   gles.uniform1i(ps.divergence.at[VELOCITY], attach(velocity.read, 0));
-  blit(t.divergence);
+  fill(t.divergence);
 
   gles.use_program(ps.clear.id);
   gles.uniform1i(ps.clear.at[TEXTURE], attach(pressure.read, 0));
   gles.uniform1f(ps.clear.at[VALUE], cfg.pressure as f32);
-  blit(pressure.write);
+  fill(pressure.write);
   pressure = pressure.swap();
 
   gles.use_program(ps.pressure.id);
@@ -540,7 +550,7 @@ pub function (f: Fluid) step(cfg: config.Config, dt: f64): Fluid {
   gles.uniform1i(ps.pressure.at[DIVERGENCE], attach(t.divergence, 0));
   for i in 0..cfg.pressure_iterations {
     gles.uniform1i(ps.pressure.at[PRESSURE], attach(pressure.read, 1));
-    blit(pressure.write);
+    fill(pressure.write);
     pressure = pressure.swap();
   }
 
@@ -548,7 +558,7 @@ pub function (f: Fluid) step(cfg: config.Config, dt: f64): Fluid {
   texel(ps.gradient_subtract, velocity.read);
   gles.uniform1i(ps.gradient_subtract.at[PRESSURE], attach(pressure.read, 0));
   gles.uniform1i(ps.gradient_subtract.at[VELOCITY], attach(velocity.read, 1));
-  blit(velocity.write);
+  fill(velocity.write);
   velocity = velocity.swap();
 
   gles.use_program(ps.advection.id);
@@ -558,13 +568,13 @@ pub function (f: Fluid) step(cfg: config.Config, dt: f64): Fluid {
   gles.uniform1i(ps.advection.at[SOURCE], unit);
   gles.uniform1f(ps.advection.at[DT], step);
   gles.uniform1f(ps.advection.at[DISSIPATION], cfg.velocity_dissipation as f32);
-  blit(velocity.write);
+  fill(velocity.write);
   velocity = velocity.swap();
 
   gles.uniform1i(ps.advection.at[VELOCITY], attach(velocity.read, 0));
   gles.uniform1i(ps.advection.at[SOURCE], attach(t.dye.read, 1));
   gles.uniform1f(ps.advection.at[DISSIPATION], cfg.density_dissipation as f32);
-  blit(t.dye.write);
+  fill(t.dye.write);
 
   return Fluid { ...f, targets: Targets { ...t, dye: t.dye.swap(), velocity: velocity, pressure: pressure } };
 }
@@ -618,7 +628,7 @@ pub function (f: Fluid) show(cfg: config.Config): void {
   let p = f.programs.copy;
   gles.use_program(p.id);
   gles.uniform1i(p.at[TEXTURE], attach(f.view, 0));
-  blit(f.window());
+  fill(f.window());
 }
 
 // Draws the bloom of `source` into `to`: the bright part of the dye, made
@@ -636,13 +646,13 @@ function (f: Fluid) bloom(cfg: config.Config, source: Target, to: Target): void 
   gles.uniform3f(ps.bloom_prefilter.at[CURVE], (cfg.bloom_threshold - knee) as f32, (knee * 2.0) as f32, (0.25 / knee) as f32);
   gles.uniform1f(ps.bloom_prefilter.at[THRESHOLD], cfg.bloom_threshold as f32);
   gles.uniform1i(ps.bloom_prefilter.at[TEXTURE], attach(source, 0));
-  blit(last);
+  fill(last);
 
   gles.use_program(ps.bloom_blur.id);
   for dest in chain {
     texel(ps.bloom_blur, last);
     gles.uniform1i(ps.bloom_blur.at[TEXTURE], attach(last, 0));
-    blit(dest);
+    fill(dest);
     last = dest;
   }
 
@@ -663,7 +673,7 @@ function (f: Fluid) bloom(cfg: config.Config, source: Target, to: Target): void 
   texel(ps.bloom_final, last);
   gles.uniform1i(ps.bloom_final.at[TEXTURE], attach(last, 0));
   gles.uniform1f(ps.bloom_final.at[INTENSITY], cfg.bloom_intensity as f32);
-  blit(to);
+  fill(to);
 }
 
 // Draws the sun rays of `source` into `to`. `mask` takes the mask of the
@@ -673,12 +683,12 @@ function (f: Fluid) sunrays(cfg: config.Config, source: Target, mask: Target, to
   gles.disable(gles.BLEND);
   gles.use_program(ps.sunrays_mask.id);
   gles.uniform1i(ps.sunrays_mask.at[TEXTURE], attach(source, 0));
-  blit(mask);
+  fill(mask);
 
   gles.use_program(ps.sunrays.id);
   gles.uniform1f(ps.sunrays.at[WEIGHT], cfg.sunrays_weight as f32);
   gles.uniform1i(ps.sunrays.at[TEXTURE], attach(mask, 0));
-  blit(to);
+  fill(to);
 }
 
 // Blurs `t` across and then down, through `temp`.
@@ -687,10 +697,10 @@ function (f: Fluid) blur(t: Target, temp: Target): void {
   gles.use_program(p.id);
   gles.uniform2f(p.at[TEXEL_SIZE], (1.0 / (t.width as f64)) as f32, 0.0 as f32);
   gles.uniform1i(p.at[TEXTURE], attach(t, 0));
-  blit(temp);
+  fill(temp);
   gles.uniform2f(p.at[TEXEL_SIZE], 0.0 as f32, (1.0 / (t.height as f64)) as f32);
   gles.uniform1i(p.at[TEXTURE], attach(temp, 0));
-  blit(t);
+  fill(t);
 }
 
 // The fluid with a splat at x and y, each from 0 to 1 with y up: the
@@ -711,11 +721,11 @@ pub function (f: Fluid) splat(cfg: config.Config, x: f64, y: f64, dx: f64, dy: f
   gles.uniform2f(p.at[POINT], x as f32, y as f32);
   gles.uniform3f(p.at[COLOR], dx as f32, dy as f32, 0.0 as f32);
   gles.uniform1f(p.at[RADIUS], radius as f32);
-  blit(t.velocity.write);
+  fill(t.velocity.write);
 
   gles.uniform1i(p.at[TARGET], attach(t.dye.read, 0));
   gles.uniform3f(p.at[COLOR], c.r as f32, c.g as f32, c.b as f32);
-  blit(t.dye.write);
+  fill(t.dye.write);
   return Fluid { ...f, targets: Targets { ...t, velocity: t.velocity.swap(), dye: t.dye.swap() } };
 }
 

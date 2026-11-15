@@ -71,10 +71,12 @@ A paused fluid uses no power: the app draws a frame only after a change.
 Android gives the places of a finger at times that are not the times of
 the frames of the display. A frame can thus get no place, and the next
 frame two. So each frame asks the path of the finger for its place at a
-fixed time before the frame, between two places of the path. A finger with
-a constant speed pushes the fluid by the same amount in each frame.
-`trail.fern` has the path, and `std/android` gives the places and their
-times with `touch_samples`.
+time before the frame, between two places of the path. A finger with a
+constant speed pushes the fluid by the same amount in each frame.
+
+The time before the frame is the longest time that the newest place was
+old at a frame of the drag, and 1 ms. `trail.fern` has the path, and
+`std/android` gives the places and their times with `touch_samples`.
 
 ## Speed
 
@@ -82,9 +84,19 @@ The fluid draws at most 2 pixels across one dp, as the page does, and the
 GPU makes that picture as large as the window. The controls draw at the
 resolution of the window. The `max_pixel_ratio` setting changes the limit.
 
+The app draws a frame at each refresh of a display of 60 or 90 Hz. On a
+display of 120 Hz, it draws a frame at each second refresh. The page simulates 60 steps in
+a second, so the app does the same work as the page. When more than 15
+frames in 100 are late for 2 seconds, the app takes one more refresh for
+each frame: a lower rate with no late frame looks better than a higher
+rate with late frames. `pace.fern` has these rules.
+
+Each pass that writes each pixel of its target tells the GPU so. A phone
+GPU draws in tiles, and it then does not load the old pixels of the target.
+
 The dialog shows the frame rate of the last second, and the longest time
 from one frame to the next, next to its close button. Each 5 seconds, the app
-writes the same text to its log. `adb logcat -s fern` shows the lines.
+writes the same text to its log, and what the touches were. `adb logcat -s fern` shows the lines.
 
 ## Settings
 
@@ -152,6 +164,7 @@ to its log, and ignores it.
 | `config.fern` | The values of the simulation and the reader of the settings |
 | `clock.fern` | The time step of each frame |
 | `trail.fern` | The path of the finger, and its place at one time |
+| `pace.fern` | The refreshes of the display for one frame |
 | `color.fern` | The colours of the dye |
 | `sim.fern` | The passes of the simulation and of the display |
 | `shaders.fern` | The GLSL source of each pass |
@@ -169,6 +182,8 @@ to its log, and ignores it.
 - `TestAndroidFluidRules` runs `fluid_test.fern` on the host: the settings,
   the clock, and the rules of the touches, the keys, the dialog and kid
   mode.
+- `TestAndroidFluidPace` runs `pace_test.fern` on the host: the pace of the
+  frames at each display rate, and the slower pace after late frames.
 - `TestAndroidFluidOverlay` runs `overlay_test.fern` on the host: the
   places of the controls and what TalkBack reads.
 - `TestAndroidFluidGPU` runs `gpu_test.fern` with Mesa's OpenGL ES on the

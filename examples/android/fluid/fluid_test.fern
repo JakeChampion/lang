@@ -191,37 +191,41 @@ const MS: i64 = 1000000i64;
 
 function test_a_frame_takes_the_place_of_the_finger_at_its_time(): test.TestOutcome {
   // The finger goes down at 1 second, and it is 200 pixels higher 20 ms
-  // later. Each frame takes the place of the finger 5 ms before the frame
-  // before it.
+  // later. The frame 7 ms after that takes the place of the finger 8 ms
+  // before the frame: the 7 ms that the newest place is old, and the margin
+  // of 1 ms.
   let m = started(false).touched(0, 500.0, 1000.0, SECOND);
   let (down, none) = m.frame(SECOND + 10i64 * MS);
   let dragged = down.touched(2, 500.0, 800.0, SECOND + 20i64 * MS);
   let (a, first) = dragged.frame(SECOND + 27i64 * MS);
+  // The finger does not move. The frame after that waits, because the
+  // next place can come late. The frame after it takes the end of the path.
   let (b, second) = a.frame(SECOND + 44i64 * MS);
   let (c, third) = b.frame(SECOND + 61i64 * MS);
+  let (d, fourth) = c.frame(SECOND + 78i64 * MS);
   let Some(one) = first.splat else {
     return test.fail("the first frame after a move has no splat");
   };
-  let Some(two) = second.splat else {
-    return test.fail("the second frame after a move has no splat");
+  let Some(rest) = third.splat else {
+    return test.fail("no frame takes the end of the path");
   };
-  // 5 ms of the 20 ms is 50 pixels of the 2000 of the height, and the rest
-  // is 150 pixels. The splat is at the finger, with y up.
-  let quarter = (one.dy - 150.0).abs() < 0.001 && (one.y - 0.525).abs() < 0.000001 && one.dx == 0.0 && a.pointer.moved;
-  let rest = (two.dy - 450.0).abs() < 0.001 && (two.y - 0.6).abs() < 0.000001 && !b.pointer.moved;
-  return test.assert_true(none.splat.is_none() && quarter && rest && third.splat.is_none() && !c.animating(2000i64) == c.cfg.paused);
+  // 19 ms of the 20 ms is 190 pixels of the 2000 of the height, and the
+  // rest is 10 pixels. The splat is at the finger, with y up.
+  let most = (one.dy - 570.0).abs() < 0.001 && (one.y - 0.595).abs() < 0.000001 && one.dx == 0.0 && first.starved && a.pointer.moved;
+  let end = (rest.dy - 30.0).abs() < 0.001 && (rest.y - 0.6).abs() < 0.000001 && !c.pointer.moved;
+  return test.assert_true(none.splat.is_none() && most && second.splat.is_none() && b.pointer.moved && end && fourth.splat.is_none());
 }
 
-function test_a_move_across_counts_for_less_on_a_tall_window(): test.TestOutcome {
-  let m = started(false).touched(0, 500.0, 1000.0, SECOND).touched(2, 600.0, 1000.0, SECOND + 10i64 * MS);
-  let (a, first) = m.frame(SECOND + 20i64 * MS);
-  let (b, second) = a.frame(SECOND + 40i64 * MS);
-  let Some(sp) = second.splat else {
-    return test.fail("the frame after a move across has no splat");
+function test_a_finger_that_goes_up_gives_the_rest_of_its_path(): test.TestOutcome {
+  let m = started(false).touched(0, 500.0, 1000.0, SECOND).touched(2, 600.0, 1000.0, SECOND + 10i64 * MS).touched(1, 600.0, 1000.0, SECOND + 12i64 * MS);
+  let (a, first) = m.frame(SECOND + 13i64 * MS);
+  let (b, second) = a.frame(SECOND + 30i64 * MS);
+  let Some(sp) = first.splat else {
+    return test.fail("the frame after the finger went up has no splat");
   };
   // 100 pixels are a tenth of the width, and the window is half as wide as
-  // it is high.
-  return test.assert_true(first.splat.is_none() && (sp.dx - 300.0).abs() < 0.001 && sp.dy == 0.0 && sp.x == 0.6);
+  // it is high, so a move across counts for half.
+  return test.assert_true((sp.dx - 300.0).abs() < 0.001 && sp.dy == 0.0 && sp.x == 0.6 && second.splat.is_none() && !a.pointer.moved);
 }
 
 // What Android does with the places of a finger. BATCHED gives one event
@@ -326,7 +330,8 @@ function test_a_steady_drag_pushes_the_same_in_each_frame(): test.TestOutcome {
       }
     }
   }
-  if (worst > 0.000001) {
+  // The times are whole nanoseconds, which gives a few parts in a million.
+  if (worst > 0.0001) {
     return test.fail("a frame of a steady drag differs from the others by the part " + worst.to_string());
   }
   return test.assert_true(lost < 0.001);
@@ -503,8 +508,8 @@ function main(): i32 {
   r = r.it("the app starts with a burst", test_app_starts_with_a_burst);
   r = r.it("with no animations, the app starts still until a touch", test_no_animation_starts_still_until_a_touch);
   r = r.it("a pause that the person chose stays after a touch", test_a_pause_of_the_person_stays_after_a_touch);
-  r = r.it("a frame takes the place of the finger at a fixed time before it", test_a_frame_takes_the_place_of_the_finger_at_its_time);
-  r = r.it("a move across counts for less on a tall window", test_a_move_across_counts_for_less_on_a_tall_window);
+  r = r.it("a frame takes the place of the finger at a time before it, by the age of the newest place", test_a_frame_takes_the_place_of_the_finger_at_its_time);
+  r = r.it("a finger that goes up gives the rest of its path, and a move across counts for half", test_a_finger_that_goes_up_gives_the_rest_of_its_path);
   r = r.it("a steady drag pushes the same amount in each frame, at each display rate and event timing", test_a_steady_drag_pushes_the_same_in_each_frame);
   r = r.it("the button opens the dialog and gives no splat", test_the_button_opens_the_dialog_and_gives_no_splat);
   r = r.it("the close button, the backdrop and the back key close the dialog", test_the_dialog_closes);
