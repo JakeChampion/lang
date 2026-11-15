@@ -62,7 +62,7 @@ x86_64/deflate_encode.ir	40047522
 x86_64/deflate_encode.text	7220
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
-x86_64/http_hello.text	16057
+x86_64/http_hello.text	16219
 x86_64/http_hello.ir	21776386
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
@@ -72,12 +72,12 @@ x86_64/map_probe_chain.text	8895
 x86_64/map_probe_chain.ir	235291505
 x86_64/map_string.text	9772
 x86_64/map_string.ir	50691579	2
-x86_64/ordmap_insert.text	5909
-x86_64/ordmap_insert.ir	71328152
-x86_64/pmap_insert.text	3434
-x86_64/pmap_insert.ir	47881009
-x86_64/pvec_with.text	3415
-x86_64/pvec_with.ir	49585250
+x86_64/ordmap_insert.text	6028
+x86_64/ordmap_insert.ir	70411041
+x86_64/pmap_insert.text	3550
+x86_64/pmap_insert.ir	49902426
+x86_64/pvec_with.text	3471
+x86_64/pvec_with.ir	48447093
 x86_64/record_update.ir	31137597
 x86_64/record_update.text	1109
 x86_64/sort_inplace.text	1650
@@ -98,7 +98,7 @@ x86_64/string_scan.text	2326
 x86_64/string_scan.ir	50903521
 x86_64/string_slice.text	1043
 x86_64/string_slice.ir	22440112
-x86_64/struct_drop.text	2681
+x86_64/struct_drop.text	2776
 x86_64/struct_drop.ir	199020504
 x86_64/tokenize.text	1294
 x86_64/tokenize.ir	31710112
@@ -185,16 +185,16 @@ aarch64/utf8_ingest_unchecked.text	8861
 aarch64/utf8_ingest_unchecked.ir	2615131
 aarch64/utf8_ingest_validated.text	9542
 aarch64/utf8_ingest_validated.ir	6128531
-x86_64/perceus_cfold.text	2024
+x86_64/perceus_cfold.text	2125
 x86_64/perceus_cfold.ir	45609714
 x86_64/perceus_deriv.text	2740
-x86_64/perceus_deriv.ir	63492718
+x86_64/perceus_deriv.ir	64642318
 x86_64/perceus_nqueens.text	1661
 x86_64/perceus_nqueens.ir	73868052
 x86_64/perceus_rbtree.text	2719
-x86_64/perceus_rbtree.ir	25106531
+x86_64/perceus_rbtree.ir	26049411
 x86_64/perceus_rbtree_ck.text	3051
-x86_64/perceus_rbtree_ck.ir	35899541
+x86_64/perceus_rbtree_ck.ir	36502101
 aarch64/perceus_cfold.text	2324
 aarch64/perceus_cfold.ir	54305826
 aarch64/perceus_deriv.text	3122
