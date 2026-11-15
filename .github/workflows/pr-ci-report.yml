@@ -8,8 +8,11 @@ name: PR CI report
 #
 # One comment for each pull request. A later run changes that comment, and a
 # run that passes says so there, so a report of an old failure does not stay.
-# A run that was cancelled, or whose head is not the head of the pull request
-# now, changes nothing.
+# A run whose head is not the head of the pull request now changes nothing.
+#
+# One failed lane cancels the rest of the run (cancel-on-failure.yml), so a red
+# run concludes `cancelled`. The script reports a cancelled run that has a
+# failed job, and says nothing for one that a push or a person stopped.
 #
 # `workflow_run` runs the script of main with a token of its own, so the test
 # jobs keep a read-only token and a pull request from a fork gets a report
@@ -29,7 +32,8 @@ jobs:
     name: Report the result on the pull request
     if: >-
       ${{ github.event.workflow_run.event == 'pull_request'
-          && (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success') }}
+          && (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success'
+              || github.event.workflow_run.conclusion == 'cancelled') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

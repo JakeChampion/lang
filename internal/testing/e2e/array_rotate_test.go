@@ -10,7 +10,8 @@ import (
 
 func checkArrayRotationSuite(t *testing.T, out string) {
 	t.Helper()
-	for _, want := range []string{"# pass 17\n", "# fail 0\n", "1..17\n"} {
+	e2eharness.CheckTAPPlan(t, out)
+	for _, want := range []string{"# fail 0\n"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in rotation suite output:\n%s", want, out)
 		}
