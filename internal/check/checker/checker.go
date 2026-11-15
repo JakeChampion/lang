@@ -12115,6 +12115,10 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 // checkBlockExprAt checks a block whose value is expected to be of the union
 // type want; a nil want expects nothing of it.
 func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Type) ast.Type {
+	if n.Unsafe {
+		c.unsafeDepth++
+		defer func() { c.unsafeDepth-- }()
+	}
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
@@ -16937,10 +16941,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return paramSig(n.Params, n.ReturnType, n.ReturnOwn)
 	case *ast.BlockExpr:
-		if n.Unsafe {
-			c.unsafeDepth++
-			defer func() { c.unsafeDepth-- }()
-		}
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:
 		want := c.expectedType
