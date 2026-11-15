@@ -206,47 +206,67 @@ The standard output, the messages and the exit status are those of git
 
 ## Speed
 
-The times are the CPU time (user and system) of the best of three runs on
-x86-64, on a clone of the repository of Fern: 112,789 objects, 7,343
-commits, and a packfile of 300 MB. The port is built with `-O`. git 2.43
-has its threads for `index-pack`, and the port has a worker for each CPU.
+The times are the CPU time (user and system) of the best of three runs.
+The machine is x86-64 with 4 CPUs, and the repository is a clone of
+Fern: 292,676 objects, 24,135 commits, and a packfile of 430 MB. The port is built with
+`-O`. git is version 2.43.
 
 | Command | git | The port |
 |---|---|---|
-| `cat-file --batch` (all objects) | 22.7 s | 29.4 s |
-| `cat-file --batch-check` (all objects) | 0.30 s | 0.93 s |
-| `log` | 0.12 s | 0.16 s |
-| `log --oneline` | 0.11 s | 0.14 s |
-| `log --oneline -- examples/pigz` | 0.04 s | 0.12 s |
-| `log --graph --oneline` | 0.12 s | 0.16 s |
-| `log --name-status -200` | 0.03 s | 0.08 s |
-| `log --oneline --author=Claude --grep=fix` | 0.11 s | 0.23 s |
-| `log --oneline HEAD~500..HEAD` | 0.03 s | 0.04 s |
-| `log --oneline --topo-order` | 0.11 s | 0.15 s |
-| `rev-parse HEAD~100 HEAD^{tree} HEAD:README.md` | 0.003 s | 0.005 s |
-| `ls-tree -r HEAD` | 0.02 s | 0.03 s |
-| `ls-tree -r -l HEAD` | 0.06 s | 0.12 s |
-| `index-pack` (3.3 MB) | 0.014 s | 0.016 s |
-| `index-pack` (300 MB) | 19.9 s | 17.4 s |
+| `cat-file --batch` (all objects) | 164.7 s | 165.6 s |
+| `cat-file --batch-check` (all objects) | 0.69 s | 1.15 s |
+| `log` | 0.52 s | 0.66 s |
+| `log --oneline` | 0.43 s | 0.51 s |
+| `log --oneline -- examples/pigz` | 0.35 s | 0.38 s |
+| `log --graph --oneline` | 0.48 s | 0.62 s |
+| `log --name-status -200` | 0.028 s | 0.042 s |
+| `log --oneline --author=Claude --grep=fix` | 0.50 s | 0.93 s |
+| `log --oneline HEAD~500..HEAD` | 0.030 s | 0.044 s |
+| `log --oneline --topo-order` | 0.48 s | 0.54 s |
+| `log -p -200` | 0.57 s | 0.71 s |
+| `log --stat -200` | 0.55 s | 0.67 s |
+| `rev-parse HEAD~100 HEAD^{tree} HEAD:README.md` | 0.004 s | 0.006 s |
+| `ls-tree -r HEAD` | 0.021 s | 0.026 s |
+| `ls-tree -r -l HEAD` | 0.063 s | 0.091 s |
+| `index-pack` (430 MB) | 72.0 s | 51.2 s |
+| `verify-pack -v` (430 MB) | 72.5 s | 45.7 s |
 
-The port is not yet faster than git, except for `index-pack` of a large
-packfile. The inflate of `std/deflate` is most of the gap. For
-`log --oneline`, it is two thirds of the 960 million instructions of the port, and git runs
-500 million instructions in all. For each small stream, the decoder
-fills a table of 1,024 entries for the literals and 256 for the
-distances. zlib fills fewer entries.
+With a commit graph that has Bloom filters
+(`git commit-graph write --reachable --changed-paths`):
+
+| Command | git | The port |
+|---|---|---|
+| `log --oneline -- examples/pigz` | 0.020 s | 0.046 s |
+| `log --graph --oneline` | 0.56 s | 0.63 s |
+| `log --oneline --topo-order` | 0.43 s | 0.57 s |
+| `log --oneline --author=Claude --grep=fix` | 0.54 s | 0.57 s |
+
+git has a thread for each CPU in `index-pack` and `verify-pack`. The
+port has a worker for each CPU in `index-pack`, and one thread in
+`verify-pack`. The real time of `index-pack` is 29.3 s for git and
+32.3 s for the port. For `verify-pack`, it is 29.6 s and 46.0 s.
+At its peak, git uses 248 MB and the port uses 1.7 GB.
+
+The port uses less CPU time than git only in `index-pack` and
+`verify-pack`. The inflate of `std/deflate` is most of the gap in the
+other commands: it is half of the instructions of
+`cat-file --batch-check`. For each small stream, the decoder fills a
+table of 1,024 entries for the literals and 256 for the distances. zlib
+fills fewer entries.
 
 The port inflates each commit one time: the graph of the walk keeps the
 commit for the text of `log`. It does not inflate a packed object for its
 kind and its size. They come from the header of the object and from the
-start of its delta.
+start of its delta. `cat-file --batch-check` with full names does not
+parse a name as a revision.
 
 The port keeps the bases of the deltas in a cache of 96 MB, which each
-copy of the store shares. For a packfile above 1 GiB, it reads the bytes
-of one object from the file. The reverse index of git (`.rev`) gives the
+copy of the store shares. The reverse index of git (`.rev`) gives the
 end of each object. Without that file, the port sorts the offsets of the
 index. A diff of trees reads the entries of a tree in place, and keeps the
-last trees that it read.
+last trees that it read. With a commit graph, the walk reads the parents
+and the dates from the graph. A Bloom filter of the graph skips a commit
+that does not change the paths.
 
 `index-pack` gives each CPU one part of the packfile, with about the same
 count of bytes. A worker of `std/worker` makes the names of its part.
@@ -287,7 +307,7 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   `TestSelfHostExampleGitLogRandom` runs them on a random history with
   merges and renames.
 
-- `TestSelfHostExampleGitDiff` runs 64 forms of the diff of `log` on a
+- `TestSelfHostExampleGitDiff` runs 78 forms of the diff of `log` on a
   repository with each kind of change, and the patches of random edits
   of code with each search of xdiff.
 
