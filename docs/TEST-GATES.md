@@ -121,7 +121,8 @@ comment on the pull request (`scripts/ci-failure-report.mjs`). For a run that
 failed, the comment names each failed job, its failed step and its failed
 tests. Each test has the lines of its output, and a failure that is not a Go
 test has the lines before the first error. A later run changes the same
-comment, and a run that passes says so there. The merge queue puts the same
+comment, and a run that passes says so there. One failed lane cancels the rest
+of a run, so the report also takes a cancelled run that has a failed job. The merge queue puts the same
 report in its comment on a pull request that it removes.
 
 ## The merge queue
