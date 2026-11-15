@@ -79,7 +79,7 @@ In a UTF-8 locale:
   character. A byte that starts no character matches only itself, outside a
   bracket expression.
 - The classes and the case conversions of `s` and `I` come from the tables
-  of glibc 2.39 in C.UTF-8. `scripts/gen-glibc-ctype.py` writes them to
+  of glibc 2.39 in C.UTF-8. `scripts/gen-libc-ctype.c` writes them to
   `coreutils/lib/glibc_ctype.fern` from the libc of the host. For example,
   `[[:alpha:]]` holds the decimal digits outside ASCII, and U+0363 is in
   `[[:punct:]]`.
