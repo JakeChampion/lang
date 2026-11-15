@@ -273,8 +273,7 @@ is released. A task that was not started only releases its record.
 A compiled program drops a value after its last use. A handle that nothing
 reads after `task_start` cancels the task at once, so keep the handle where
 the scheduler keeps the wait. An interpreter does not park a task, so it
-has nothing to cancel. A parked `Call` has no finalizer: `call_cancel`
-ends it.
+has nothing to cancel. A parked `Call` has the same finalizer.
 
 **A handle that names no task.** `Task` is an opaque struct, so only
 `std/async` builds a handle or reads its fields. A program that writes one

@@ -21,8 +21,7 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	}
 	registered := len(strings.Split(strings.TrimSpace(string(ids)), "\n"))
 
-	want := "load pops=-1 pushes=1\n" +
-		"store pops=-1 pushes=1\n" +
+	want := "store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
 		"admitted mmio_load pops=1 pushes=1\n" +
 		"admitted mmio_store pops=2 pushes=1\n" +
@@ -34,7 +33,7 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 		"admitted send_adopt pops=1 pushes=1\n" +
 		"admitted worker_unmap pops=3 pushes=1\n" +
 		"admitted send_root pops=1 pushes=1\n" +
-		fmt.Sprintf("registered=%d declined=3\n", registered)
+		fmt.Sprintf("registered=%d declined=2\n", registered)
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

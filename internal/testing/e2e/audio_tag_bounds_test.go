@@ -10,7 +10,7 @@ import (
 
 func checkAudioTagBoundsSuite(t *testing.T, out string) {
 	t.Helper()
-	for _, want := range []string{"# pass 25\n", "# fail 0\n", "1..25\n"} {
+	for _, want := range []string{"# pass 27\n", "# fail 0\n", "1..27\n"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in audio tag bounds suite output:\n%s", want, out)
 		}
