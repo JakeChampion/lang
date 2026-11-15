@@ -1662,7 +1662,8 @@ function emit_rt_scans(s: asmcore.EmitState): asmcore.EmitState {
 // the start, r8 the length and rdx the masks. Byte 0 of the masks is the count
 // of probes, bytes 1 to 3 their offsets, and probe j has a table for the low
 // half of a byte at 4 + 32j and for the high half 16 bytes after it. Each loop
-// tests 32 starts with AVX2. The index goes in rcx, or -1.
+// tests 32 starts with AVX2, and the tail 16 with AVX. The index goes in rcx,
+// or -1.
 function x86_scan_masks(): string {
   let low: u8[] = [];
   for k in 0..32 {
@@ -1682,9 +1683,11 @@ function x86_scan_masks(): string {
 
 // The loops for `k` probes. r9, rdi and rcx hold the offsets, rsi the next
 // start, r10 the end of the starts and r11 the last start of a block of 32.
+// After the blocks of 32, one block of 16 tests the next starts, and a block
+// of 16 that ends at the last start tests the rest: its bits for the starts
+// before rsi go. Only fewer than 16 starts in all go one at a time.
 function x86_scan_masks_probes(k: i32): string {
   let id = util.i32_to_string(k);
-  let offs = ["%r9", "%rdi", "%rcx"];
   let offs32 = ["%r9d", "%edi", "%ecx"];
   let r = ".Lsm_k" + id + ":\n    movzbl 9(%rdx), %r9d\n    movq %r9, %rdi\n";
   for j in 1..k {
@@ -1700,20 +1703,17 @@ function x86_scan_masks_probes(k: i32): string {
   }
   r += "    vmovdqu __fern_scan_masks_low(%rip), %ymm8\n    vpxor %ymm9, %ymm9, %ymm9\n";
   r = r + ".Lsm_v" + id + ":\n    cmpq %r11, %rsi\n    jg .Lsm_t" + id + "\n";
-  for j in 0..k {
-    let lo = "%ymm" + util.i32_to_string(2 + 2 * j);
-    let hi = "%ymm" + util.i32_to_string(3 + 2 * j);
-    let acc = if (j == 0) { "%ymm10" } else { "%ymm11" };
-    r = r + "    vmovdqu (%rsi," + offs[j] + "), %ymm0\n    vpsrlw $4, %ymm0, %ymm1\n    vpand %ymm8, %ymm0, %ymm0\n    vpand %ymm8, %ymm1, %ymm1\n";
-    r = r + "    vpshufb %ymm0, " + lo + ", %ymm0\n    vpshufb %ymm1, " + hi + ", %ymm1\n    vpand %ymm1, %ymm0, " + acc + "\n";
-    if (j > 0) {
-      r += "    vpand %ymm11, %ymm10, %ymm10\n";
-    }
-  }
-  r += "    vpcmpeqb %ymm9, %ymm10, %ymm10\n    vpmovmskb %ymm10, %r8d\n    notl %r8d\n    testl %r8d, %r8d\n";
+  r = r + x86_scan_masks_block(k, "%rsi", "ymm") + "    notl %r8d\n    testl %r8d, %r8d\n";
   r = r + "    jnz .Lsm_h" + id + "\n    addq $32, %rsi\n    jmp .Lsm_v" + id + "\n";
   r = r + ".Lsm_h" + id + ":\n    vzeroupper\n    bsfl %r8d, %r8d\n    subq %rax, %rsi\n    leaq (%rsi,%r8), %rcx\n    ret\n";
-  r = r + ".Lsm_t" + id + ":\n    vzeroupper\n    pushq %rbx\n.Lsm_s" + id + ":\n    cmpq %r10, %rsi\n    jge .Lsm_end" + id + "\n    movl $255, %r8d\n";
+  r = r + ".Lsm_t" + id + ":\n    leaq -16(%r10), %r11\n    cmpq %r11, %rsi\n    jg .Lsm_o" + id + "\n";
+  r = r + x86_scan_masks_block(k, "%rsi", "xmm") + "    xorl $65535, %r8d\n    jnz .Lsm_h" + id + "\n    addq $16, %rsi\n";
+  r = r + ".Lsm_o" + id + ":\n    cmpq %r10, %rsi\n    jge .Lsm_n" + id + "\n    leaq -16(%r10), %r11\n    cmpq %rax, %r11\n    jl .Lsm_p" + id + "\n";
+  r = r + x86_scan_masks_block(k, "%r11", "xmm") + "    xorl $65535, %r8d\n";
+  r = r + "    movq %rsi, %rcx\n    subq %r11, %rcx\n    shrl %cl, %r8d\n    jnz .Lsm_h" + id + "\n";
+  r = r + ".Lsm_n" + id + ":\n    vzeroupper\n    movq $-1, %rcx\n    ret\n";
+  r = r + ".Lsm_p" + id + ":\n    vzeroupper\n    pushq %rbx\n.Lsm_s" + id + ":\n    cmpq %r10, %rsi\n    jge .Lsm_end" + id + "\n    movl $255, %r8d\n";
+  let offs = ["%r9", "%rdi", "%rcx"];
   for j in 0..k {
     let base = util.i32_to_string(12 + 32 * j);
     let high = util.i32_to_string(28 + 32 * j);
@@ -1723,6 +1723,25 @@ function x86_scan_masks_probes(k: i32): string {
   r = r + "    testl %r8d, %r8d\n    jnz .Lsm_f" + id + "\n    addq $1, %rsi\n    jmp .Lsm_s" + id + "\n";
   r = r + ".Lsm_f" + id + ":\n    popq %rbx\n    subq %rax, %rsi\n    movq %rsi, %rcx\n    ret\n";
   return r + ".Lsm_end" + id + ":\n    popq %rbx\n    movq $-1, %rcx\n    ret\n";
+}
+
+// One block of the probes at `base`, 32 starts in ymm registers or 16 in
+// xmm registers. The bits of the starts that no probe rejects go in r8d,
+// inverted: a set bit is a start that a probe rejects.
+function x86_scan_masks_block(k: i32, base: string, w: string): string {
+  let offs = ["%r9", "%rdi", "%rcx"];
+  let r = "";
+  for j in 0..k {
+    let lo = "%" + w + util.i32_to_string(2 + 2 * j);
+    let hi = "%" + w + util.i32_to_string(3 + 2 * j);
+    let acc = if (j == 0) { "%" + w + "10" } else { "%" + w + "11" };
+    r = r + "    vmovdqu (" + base + "," + offs[j] + "), %" + w + "0\n    vpsrlw $4, %" + w + "0, %" + w + "1\n    vpand %" + w + "8, %" + w + "0, %" + w + "0\n    vpand %" + w + "8, %" + w + "1, %" + w + "1\n";
+    r = r + "    vpshufb %" + w + "0, " + lo + ", %" + w + "0\n    vpshufb %" + w + "1, " + hi + ", %" + w + "1\n    vpand %" + w + "1, %" + w + "0, " + acc + "\n";
+    if (j > 0) {
+      r = r + "    vpand %" + w + "11, %" + w + "10, %" + w + "10\n";
+    }
+  }
+  return r + "    vpcmpeqb %" + w + "9, %" + w + "10, %" + w + "10\n    vpmovmskb %" + w + "10, %r8d\n";
 }
 
 // __fern_scan_set scans with a set that is not a constant: rax holds the bytes,
@@ -6060,7 +6079,7 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
 
 function scan_set_operands(o: ir.Op): string {
   let r = "    popq %rdx\n    popq %rcx\n    popq %rax\n";
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES || o.kind_tag == ir.K_SCAN_MASKS_BYTES) {
     return r + "    movq (%rax), %r8\n    addq $8, %rax\n";
   }
   return r + "    movq 8(%rax), %r8\n    movq (%rax), %rax\n";
@@ -6597,7 +6616,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == ir.K_SCAN_SET || o.kind_tag == ir.K_SCAN_SET_BYTES) {
     return emit_scan_set(o, s);
   }
-  if (o.kind_tag == ir.K_SCAN_MASKS) {
+  if (o.kind_tag == ir.K_SCAN_MASKS || o.kind_tag == ir.K_SCAN_MASKS_BYTES) {
     return s.write(scan_set_operands(o) + "    call __fern_scan_masks\n    pushq %rcx\n").need("scan_masks");
   }
   if (o.kind_tag == ir.K_STR_HASH) {
