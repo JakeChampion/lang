@@ -1085,7 +1085,7 @@ wait costs no closure and no handle.
 <<21 pub struct Call[A, B, T]>>=
 // `gen` is the generation of the task record when the call parked. The
 // runtime changes the generation when the record is released.
-pub struct Call[A, B, T] { id: i32, gen: i32, f: (A, B) => T, a: A, b: B }
+pub opaque struct Call[A, B, T] { id: i32, gen: i32, f: (A, B) => T, a: A, b: B }
 
 @must_consume
 pub enum CallStatus[A, B, T] { Returned(T), Parked(Call[A, B, T], Wait) }

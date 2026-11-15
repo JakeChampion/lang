@@ -1,0 +1,40 @@
+function __fern_arr_concat_slow(pa: usize, src: usize, count: i32, width: i32): i32[] {
+  // __fern_arr_concat copies into a unique receiver with room. Here the
+  // result is a new box, or the receiver itself when there is nothing to copy.
+  let nb = count;
+  if (nb < 0) {
+    nb = 0;
+  }
+  let na = __load_i32(pa);
+  let m = na + nb;
+  let want = m;
+  if (__fern_rc_is_unique(pa) != 0) {
+    if (nb == 0) {
+      return __raw_array(pa);
+    }
+    if (na <= 536870912 && na * 2 > want) {
+      want = na * 2;
+    }
+  }
+  // A copy onto an empty array gets the room that appends of the same
+  // elements give it, so an append after the copy does not grow it again.
+  if (na == 0 && width != 8) {
+    want = 4;
+    while (want < m && want <= 536870912) {
+      want *= 2;
+    }
+    if (want < m) {
+      want = m;
+    }
+  }
+  let size = width >> 3;
+  let q = __raw_arr_box(((want as i64 * (size as i64) + 7) / 8) as i32);
+  __store_i64(q, m as i64);
+  let tail = q + 8 + na as usize * (size as usize);
+  __fern_arr_copy_elems(q + 8, pa + 8, na, size);
+  __fern_arr_copy_elems(tail, src, nb, size);
+  if ((width & 1) != 0) {
+    __fern_arr_inc_words(tail, nb);
+  }
+  return __raw_array(q);
+}

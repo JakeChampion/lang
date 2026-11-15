@@ -1,5 +1,6 @@
 import "std/string";
 import "std/rand";
+import "std/unicode";
 import "../coreutils/lib/gnu";
 import "../coreutils/lib/bre";
 
@@ -134,7 +135,7 @@ function help_text(): string {
   out += "Run a sed script on each line of the input files, or of standard input.\n";
   out += "\n";
   out += "  -n, --quiet, --silent    do not print the pattern space at the end of a cycle\n";
-  out += "      --debug              not in this port: sed stops with an error\n";
+  out += "      --debug              print the program, and a trace of each cycle\n";
   out += "  -e SCRIPT, --expression=SCRIPT\n";
   out += "                           add the commands in SCRIPT to the script\n";
   out += "  -f FILE, --file=FILE     add the commands in FILE to the script\n";
@@ -164,22 +165,28 @@ function usage(status: i32): void {
   exit(status);
 }
 
-struct Opts { quiet: boolean, extended: boolean, separate: boolean, in_place: boolean, suffix: string, posix: i32, zero: boolean, unbuffered: boolean, line_len: i32, follow: boolean, sandbox: boolean }
+// `utf8` is set when the locale reads text as UTF-8.
+struct Opts { debug: boolean, quiet: boolean, extended: boolean, separate: boolean, in_place: boolean, suffix: string, posix: i32, zero: boolean, unbuffered: boolean, line_len: i32, follow: boolean, sandbox: boolean, utf8: boolean }
 
 struct Addr { kind: i32, n: i64, step: i64, rx: i32 }
 
 // A command. `jump` is the target of b, t and T, and the index of the
 // closing brace of {. `out` is the output of w, W and the w flag of s.
-struct Cmd { a1: Addr, a2: Addr, bang: boolean, op: u8, text: u8[], name: string, num: i64, jump: i32, sub: i32, out: i32, table: u8[] }
+// In a UTF-8 locale `ymap` holds the characters of y in pairs, and `table`
+// is empty unless each pair maps a byte of ASCII to one byte.
+struct Cmd { a1: Addr, a2: Addr, bang: boolean, op: u8, text: u8[], name: string, num: i64, jump: i32, sub: i32, out: i32, table: u8[], ymap: u8[][] }
 
 // An empty regex stands for the last regex that ran. `nosub` marks a regex of
 // an address: GNU sed compiles it without groups, and checks the groups when
-// an s command first uses it through an empty regex.
-struct Rx { re: bre.Bre, empty: boolean, nosub: boolean }
+// an s command first uses it through an empty regex. `src` and the flags are
+// the regex as --debug prints it.
+struct Rx { re: bre.Bre, empty: boolean, nosub: boolean, src: u8[], icase: boolean, multi: boolean }
 
 struct ROp { kind: i32, text: u8[], n: i32 }
 
-struct Sub { rx: i32, ops: ROp[], global: boolean, nth: i64, print: i32, eval: boolean, out: i32, cased: boolean, refs: i32 }
+// `text` is the replacement and `numb` the number flag, 0 when absent, as
+// --debug prints them.
+struct Sub { rx: i32, ops: ROp[], global: boolean, nth: i64, print: i32, eval: boolean, out: i32, cased: boolean, refs: i32, text: u8[], numb: i64 }
 
 // Where the script reader is: a file and its line, or an -e expression.
 struct Loc { is_file: boolean, fname: string, line: i32, expr: i32 }
@@ -574,10 +581,10 @@ function compile_rx(c: Comp, pat: u8[], icase: boolean, multi: boolean, refs: i3
       bad_prog(c, "cannot specify modifiers on empty regexp");
     }
     let empty = bre.bre_compile_bytes("".bytes());
-    return (Comp { ...c, rxs: c.rxs.append(Rx { re: empty, empty: true, nosub: false }) }, idx);
+    return (Comp { ...c, rxs: c.rxs.append(Rx { re: empty, empty: true, nosub: false, src: [], icase: false, multi: false }) }, idx);
   }
   let text = normalize(c, pat, TEXT_REGEX);
-  let syntax = bre.sed_syntax(c.o.extended, icase, multi, c.o.posix == POSIX_BASIC);
+  let syntax = bre.Syntax { ...bre.sed_syntax(c.o.extended, icase, multi, c.o.posix == POSIX_BASIC), utf8: c.o.utf8 };
   let re = bre.bre_compile_bytes_syntax(text, syntax);
   if (re.err.len() > 0) {
     bad_prog(c, re.err);
@@ -585,7 +592,7 @@ function compile_rx(c: Comp, pat: u8[], icase: boolean, multi: boolean, refs: i3
   if (refs > re.ngroups && c.o.posix == POSIX_EXTENDED) {
     bad_prog(c, f"invalid reference \\{refs} on `s' command's RHS");
   }
-  return (Comp { ...c, rxs: c.rxs.append(Rx { re: re, empty: false, nosub: !subst }) }, idx);
+  return (Comp { ...c, rxs: c.rxs.append(Rx { re: re, empty: false, nosub: !subst, src: text, icase: icase, multi: multi }) }, idx);
 }
 
 function compile_address(c0: Comp, ch: i32): (Comp, Addr, boolean) {
@@ -647,7 +654,7 @@ function compile_address(c0: Comp, ch: i32): (Comp, Addr, boolean) {
 }
 
 function new_cmd(a1: Addr, a2: Addr, bang: boolean, op: i32): Cmd {
-  return Cmd { a1: a1, a2: a2, bang: bang, op: op as u8, text: [], name: "", num: -1, jump: -1, sub: -1, out: -1, table: [] };
+  return Cmd { a1: a1, a2: a2, bang: bang, op: op as u8, text: [], name: "", num: -1, jump: -1, sub: -1, out: -1, table: [], ymap: [] };
 }
 
 function push_cmd(c: Comp, cmd: Cmd): Comp {
@@ -1058,8 +1065,9 @@ function compile_subst(c0: Comp, cmd: Cmd): Comp {
   if (!m2.2) {
     bad_prog(c, "unterminated `s' command");
   }
-  let rp: (ROp[], i32, boolean) = parse_replacement(c, normalize(c, m2.1, TEXT_REPLACEMENT));
-  let sub = Sub { rx: -1, ops: rp.0, global: false, nth: 0, print: 0, eval: false, out: -1, cased: rp.2, refs: rp.1 };
+  let rtext = normalize(c, m2.1, TEXT_REPLACEMENT);
+  let rp: (ROp[], i32, boolean) = parse_replacement(c, rtext);
+  let sub = Sub { rx: -1, ops: rp.0, global: false, nth: 0, print: 0, eval: false, out: -1, cased: rp.2, refs: rp.1, text: rtext, numb: 0 };
   let fl: (Comp, Sub, boolean, boolean) = subst_flags(c, sub);
   c = fl.0;
   sub = fl.1;
@@ -1068,6 +1076,7 @@ function compile_subst(c0: Comp, cmd: Cmd): Comp {
   if (sub.eval && c.o.sandbox) {
     bad_prog(c, "e/r/w commands disabled in sandbox mode");
   }
+  sub = Sub { ...sub, numb: sub.nth };
   if (sub.nth == 0) {
     sub = Sub { ...sub, nth: 1 };
   }
@@ -1247,6 +1256,9 @@ function compile_translate(c0: Comp, cmd: Cmd): Comp {
   }
   let src = y_text(c, m1.1);
   let dst = y_text(c, m2.1);
+  if (c.o.utf8) {
+    return compile_translate_utf8(read_end_of_cmd(c), cmd, chars_of(src), chars_of(dst));
+  }
   if (src.len() != dst.len()) {
     bad_prog(c, "strings for `y' command are different lengths");
   }
@@ -1260,8 +1272,88 @@ function compile_translate(c0: Comp, cmd: Cmd): Comp {
   return push_cmd(read_end_of_cmd(c), Cmd { ...cmd, table: table });
 }
 
+// In a UTF-8 locale y maps characters, and the first pair of a character
+// counts. A byte that starts no character maps only that byte.
+function compile_translate_utf8(c: Comp, cmd: Cmd, src: u8[][], dst: u8[][]): Comp {
+  if (src.len() != dst.len()) {
+    bad_prog(c, "strings for `y' command are different lengths");
+  }
+  let pairs: u8[][] = [];
+  let single = true;
+  for k in 0..src.len() {
+    pairs = pairs.append(src[k]).append(dst[k]);
+    single = single && src[k].len() == 1 && src[k][0] < 128u8 && dst[k].len() == 1;
+  }
+  let table: u8[] = [];
+  if (single) {
+    table = __alloc_u8(256);
+    for b in 0..256 {
+      table = table.with(b, b as u8);
+    }
+    let k = src.len() - 1;
+    while (k >= 0) {
+      table = table.with(src[k][0] as i32, dst[k][0]);
+      k -= 1;
+    }
+  }
+  return push_cmd(c, Cmd { ...cmd, table: table, ymap: pairs });
+}
+
+// chars_of splits UTF-8 text into its characters. A byte that starts no
+// character is one of its own.
+function chars_of(t: u8[]): u8[][] {
+  let out: u8[][] = [];
+  let k = 0;
+  while (k < t.len()) {
+    let n = bre.utf8_decode(t, k).1;
+    out = out.append(__bytes_range(t, k, k + n));
+    k += n;
+  }
+  return out;
+}
+
+function translate_chars(ps: u8[], pairs: u8[][]): u8[] {
+  let h = buf_new(ps.len() + 1);
+  let k = 0;
+  while (k < ps.len()) {
+    let n = bre.utf8_decode(ps, k).1;
+    let j = 0;
+    while (j < pairs.len() && !same_bytes(pairs[j], ps, k, n)) {
+      j += 2;
+    }
+    if (j < pairs.len()) {
+      buf_push_bytes_range(h, pairs[j + 1], 0, pairs[j + 1].len());
+    } else {
+      buf_push_bytes_range(h, ps, k, k + n);
+    }
+    k += n;
+  }
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// A pair of y matches a character of the text when its first n bytes are
+// the n bytes of that character, as in GNU sed. Thus a byte that starts no
+// character takes the first pair whose character starts with it.
+function same_bytes(a: u8[], t: u8[], at: i32, n: i32): boolean {
+  if (a.len() < n) {
+    return false;
+  }
+  for k in 0..n {
+    if (a[k] != t[at + k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // The script after every chunk: the program the run executes.
-struct Prog { cmds: Cmd[], rxs: Rx[], subs: Sub[], o: Opts, wfiles: WFile[], rnames: string[], where: string, delim: i32 }
+// The state of --debug: each command as it prints it, the depth of the
+// blocks in the trace, and a mark for each e command that ran.
+struct Debug { cmds: u8[][], level: Cell[i32], ran: Cell[boolean[]] }
+
+struct Prog { cmds: Cmd[], rxs: Rx[], subs: Sub[], o: Opts, wfiles: WFile[], rnames: string[], where: string, delim: i32, debug: boolean, dbg: Debug }
 
 function finish_program(c0: Comp): Prog {
   let c = c0;
@@ -1288,7 +1380,13 @@ function finish_program(c0: Comp): Prog {
     o = Opts { ...o, quiet: true };
   }
   let delim = if (o.zero) { 0 } else { 10 };
-  return Prog { cmds: cmds, rxs: c.rxs, subs: c.subs, o: o, wfiles: c.wfiles, rnames: c.rnames, where: where, delim: delim };
+  let none: u8[][] = [];
+  let p = Prog { cmds: cmds, rxs: c.rxs, subs: c.subs, o: o, wfiles: c.wfiles, rnames: c.rnames, where: where, delim: delim, debug: o.debug, dbg: Debug { cmds: none, level: cell_new(0), ran: cell_new(falses(0)) } };
+  if (!o.debug) {
+    return p;
+  }
+  let dbg = Debug { cmds: p.cmds.map((cmd: Cmd) => debug_command(p, cmd)), level: cell_new(0), ran: cell_new(falses(cmds.len())) };
+  return Prog { ...p, dbg: dbg };
 }
 
 // find_label gives the command of the last label with this name.
@@ -2132,6 +2230,37 @@ function run_script(p: Prog, own r0: Run): Run {
   return Run { ...r, end: END_CYCLE };
 }
 
+// run_script_traced is run_script with the trace of --debug.
+function run_script_traced(p: Prog, own r0: Run): Run {
+  let r = Run { ...r0, end: END_NONE };
+  let pc = 0;
+  let n = p.cmds.len();
+  while (pc < n) {
+    let cmd = p.cmds[pc];
+    trace_command(p, r, pc, cmd);
+    if (cmd.a1.kind != A_NONE) {
+      let (matched_r, hit) = match_address(p, r, pc, cmd);
+      r = matched_r;
+      if (hit == cmd.bang) {
+        pc = if (cmd.op == b'{') { cmd.jump } else { pc + 1 };
+        continue;
+      }
+    } else if (cmd.bang) {
+      pc = if (cmd.op == b'{') { cmd.jump } else { pc + 1 };
+      continue;
+    }
+    let (ran, next) = exec_cmd(p, r, pc, cmd);
+    r = ran;
+    trace_after(p, r, pc, cmd);
+    if (r.end != END_NONE) {
+      return r;
+    }
+    pc = next;
+  }
+  trace_text(p, r, "END-OF-CYCLE:\n");
+  return Run { ...r, end: END_CYCLE };
+}
+
 // One arm for each command of sed.
 // fern-lint: allow cyclomatic-complexity
 function exec_cmd(p: Prog, own r: Run, pc: i32, cmd: Cmd): (Run, i32) {
@@ -2173,7 +2302,7 @@ function exec_cmd(p: Prog, own r: Run, pc: i32, cmd: Cmd): (Run, i32) {
     b'w' => (output_ps(p, r, cmd.out + 3), next),
     b'W' => (output_first(p, r, cmd.out + 3), next),
     b'x' => (Run { ...r, ps: r.hold, chomped: r.hchomped, hold: r.ps, hchomped: r.chomped }, next),
-    b'y' => (Run { ...r, ps: translate(r.ps, cmd.table) }, next),
+    b'y' => (Run { ...r, ps: if (cmd.table.len() > 0 || !p.o.utf8) { translate(r.ps, cmd.table) } else { translate_chars(r.ps, cmd.ymap) } }, next),
     b'z' => (Run { ...r, ps: [] }, next),
     _ => (r, next),
   };
@@ -2218,11 +2347,17 @@ function exec_delete_first(p: Prog, own r: Run): Run {
   return Run { ...r, ps: __bytes_range(r.ps, k + 1, r.ps.len()), end: END_RESTART };
 }
 
+// At the end of the input, n writes the pattern space itself, and the cycle
+// then ends without a write.
 function exec_next(p: Prog, own r0: Run): Run {
   let e: (Run, boolean) = at_eof(p, r0);
   let r = e.0;
   if (e.1) {
-    return Run { ...r, end: END_CYCLE };
+    if (!p.o.quiet) {
+      let cur = r.cur;
+      r = output_ps(p, r, cur);
+    }
+    return Run { ...r, end: END_DELETE };
   }
   if (!p.o.quiet) {
     let cur = r.cur;
@@ -2384,7 +2519,7 @@ function run_shell(r: Run, cmd: u8[]): u8[] {
 function exec_command(p: Prog, own r: Run, cmd: Cmd): Run {
   if (cmd.text.len() == 0) {
     let out = shell(p, r, r.ps);
-    return Run { ...r, ps: chop(p, out) };
+    return Run { ...r, ps: chop(p, out), chomped: true };
   }
   let out = shell(p, r, cmd.text);
   let cur = r.cur;
@@ -2416,15 +2551,15 @@ function push_cased(h: usize, t: u8[], lo: i32, hi: i32, cs: Cased): Cased {
   let k = lo;
   if (cs.once != CASE_ASIS) {
     let b = t[k] as i32;
-    buf_push_byte(h, if (cs.once == CASE_UPPER_FIRST) { upper_byte(b) } else { lower_byte(b) });
+    buf_push_byte(h, if (cs.once == CASE_UPPER_FIRST) { upper_char(b) } else { lower_char(b) });
     k += 1;
   }
   while (k < hi) {
     let b = t[k] as i32;
     if (cs.mode == CASE_UPPER) {
-      b = upper_byte(b);
+      b = upper_char(b);
     } else if (cs.mode == CASE_LOWER) {
-      b = lower_byte(b);
+      b = lower_char(b);
     }
     buf_push_byte(h, b);
     k += 1;
@@ -2432,11 +2567,75 @@ function push_cased(h: usize, t: u8[], lo: i32, hi: i32, cs: Cased): Cased {
   return Cased { ...cs, once: CASE_ASIS };
 }
 
+// In the C locale a byte above 127 is not a character. GNU sed converts it
+// to WEOF and back, and so writes the byte 255.
+function upper_char(b: i32): i32 {
+  if (b >= 128) {
+    return 255;
+  }
+  return upper_byte(b);
+}
+
+function lower_char(b: i32): i32 {
+  if (b >= 128) {
+    return 255;
+  }
+  return lower_byte(b);
+}
+
 function apply_case(cs: Cased, n: i32): Cased {
   if (n == CASE_UPPER_FIRST || n == CASE_LOWER_FIRST) {
     return Cased { ...cs, once: n };
   }
   return Cased { mode: n, once: CASE_ASIS };
+}
+
+// push_text_utf8 adds text in the case of `cs`, a character at a time. A
+// byte that starts no character goes as it is, and ends a \u or \l.
+function push_text_utf8(h: usize, t: u8[], lo: i32, hi: i32, cs0: Cased): Cased {
+  let cs = cs0;
+  let k = lo;
+  while (k < hi) {
+    let d = bre.utf8_decode(t, k);
+    if (d.0 < 0 || k + d.1 > hi) {
+      buf_push_byte(h, t[k] as i32);
+      cs = Cased { ...cs, once: CASE_ASIS };
+      k += 1;
+      continue;
+    }
+    let mode = if (cs.once != CASE_ASIS) { cs.once } else { cs.mode };
+    let cp = d.0;
+    if (mode == CASE_UPPER || mode == CASE_UPPER_FIRST) {
+      cp = (cp as char).to_upper() as i32;
+    } else if (mode == CASE_LOWER || mode == CASE_LOWER_FIRST) {
+      cp = (cp as char).to_lower() as i32;
+    }
+    for b in bre.utf8_bytes(cp) {
+      buf_push_byte(h, b);
+    }
+    cs = Cased { ...cs, once: CASE_ASIS };
+    k += d.1;
+  }
+  return cs;
+}
+
+// In a UTF-8 locale each piece of a replacement changes its case a
+// character at a time.
+function append_replacement_utf8(h: usize, sub: Sub, ps: u8[], m: bre.BreMatch, ms: i32, me: i32): void {
+  let cs = Cased { mode: CASE_ASIS, once: CASE_ASIS };
+  for op in sub.ops {
+    if (op.kind == R_TEXT) {
+      cs = push_text_utf8(h, op.text, 0, op.text.len(), cs);
+    } else if (op.kind == R_GROUP && op.n == 0) {
+      cs = push_text_utf8(h, ps, ms, me, cs);
+    } else if (op.kind == R_GROUP) {
+      if (op.n < m.starts.len() && m.starts[op.n] >= 0) {
+        cs = push_text_utf8(h, ps, m.starts[op.n], m.ends[op.n], cs);
+      }
+    } else {
+      cs = apply_case(cs, op.n);
+    }
+  }
 }
 
 // append_replacement writes the replacement of the match from `ms` to `me`.
@@ -2501,6 +2700,9 @@ function exec_subst(p: Prog, own r0: Run, sub: Sub): Run {
     if (ms < 0) {
       break;
     }
+    if (p.debug && prev == -1) {
+      trace_registers(p, r, re, ps, ms, me);
+    }
     if (ms == me && ms == prev) {
       start = ms + 1;
       continue;
@@ -2513,7 +2715,11 @@ function exec_subst(p: Prog, own r0: Run, sub: Sub): Run {
         did = true;
       }
       buf_push_bytes_range(h, ps, copy, ms);
-      append_replacement(h, sub, ps, m, ms, me);
+      if (p.o.utf8) {
+        append_replacement_utf8(h, sub, ps, m, ms, me);
+      } else {
+        append_replacement(h, sub, ps, m, ms, me);
+      }
       copy = me;
       if (!sub.global) {
         break;
@@ -2540,7 +2746,7 @@ function after_subst(p: Prog, own r0: Run, sub: Sub): Run {
   }
   if (sub.eval) {
     let out = shell(p, r, r.ps);
-    r = Run { ...r, ps: chop(p, out) };
+    r = Run { ...r, ps: chop(p, out), chomped: true };
   }
   if (sub.print == 2) {
     r = output_ps(p, r, cur);
@@ -2549,6 +2755,404 @@ function after_subst(p: Prog, own r0: Run, sub: Sub): Run {
     r = output_ps(p, r, sub.out + 3);
   }
   return r;
+}
+
+// ---------------------------------------------------------------------------
+// --debug
+
+// The case conversions of a piece of a replacement, as GNU sed records them.
+const REPL_UPPER: i32 = 1;
+
+const REPL_LOWER: i32 = 2;
+
+const REPL_UPPER_FIRST: i32 = 4;
+
+const REPL_LOWER_FIRST: i32 = 8;
+
+// debug_char writes a byte as --debug does: a printable byte as it is, a
+// control byte as an escape, and another byte as the octal number of the
+// signed char that holds it.
+function debug_char(h: usize, b: i32): void {
+  if (b >= 32 && b < 127 && b != 92) {
+    buf_push_byte(h, b);
+    return;
+  }
+  buf_push_byte(h, 92);
+  let e = match (b) {
+    7 => 97,
+    12 => 102,
+    13 => 114,
+    9 => 116,
+    11 => 118,
+    10 => 110,
+    92 => 92,
+    _ => 0,
+  };
+  if (e != 0) {
+    buf_push_byte(h, e);
+    return;
+  }
+  buf_push_byte(h, 111);
+  if (b >= 128) {
+    buf_push(h, "37777777" + octal3(b + 256));
+  } else {
+    buf_push(h, octal3(b));
+  }
+}
+
+function debug_bytes(h: usize, t: u8[]): void {
+  for b in t {
+    debug_char(h, b as i32);
+  }
+}
+
+function debug_regex(h: usize, rx: Rx): void {
+  buf_push_byte(h, 47);
+  debug_bytes(h, rx.src);
+  buf_push_byte(h, 47);
+}
+
+function debug_addr(h: usize, p: Prog, a: Addr): void {
+  if (a.kind == A_LINE) {
+    buf_push(h, f"{a.n}");
+  } else if (a.kind == A_LAST) {
+    buf_push_byte(h, 36);
+  } else if (a.kind == A_RE) {
+    let rx = p.rxs[a.rx];
+    debug_regex(h, rx);
+    if (rx.icase) {
+      buf_push_byte(h, 73);
+    }
+    if (rx.multi) {
+      buf_push_byte(h, 77);
+    }
+  } else if (a.kind == A_STEP) {
+    buf_push(h, f"{a.n}~{a.step}");
+  } else if (a.kind == A_PLUS) {
+    buf_push(h, f"+{a.n}");
+  } else if (a.kind == A_MULT) {
+    buf_push(h, f"~{a.n}");
+  }
+}
+
+// debug_piece writes one piece of a replacement: the mark of its case
+// conversion when that differs from the piece before, its text, the byte
+// that an escape added to the text, and its group. It gives the case
+// conversion of the piece.
+function debug_piece(h: usize, last: i32, kind: i32, t: u8[], lo: i32, hi: i32, extra: i32, group: i32): i32 {
+  if (kind != last) {
+    buf_push_byte(h, 92);
+    let mods = kind & (REPL_UPPER_FIRST | REPL_LOWER_FIRST);
+    if (kind == 0) {
+      buf_push_byte(h, 69);
+    } else if (kind == REPL_UPPER) {
+      buf_push_byte(h, 85);
+    } else if (kind == REPL_LOWER) {
+      buf_push_byte(h, 76);
+    } else if (mods == REPL_UPPER_FIRST) {
+      buf_push_byte(h, 117);
+    } else if (mods == REPL_LOWER_FIRST) {
+      buf_push_byte(h, 108);
+    }
+  }
+  buf_push_bytes_range(h, t, lo, hi);
+  if (extra >= 0) {
+    buf_push_byte(h, extra);
+  }
+  if (group == 0) {
+    buf_push_byte(h, 38);
+  } else if (group > 0) {
+    buf_push(h, f"\\{group}");
+  }
+  return kind;
+}
+
+// debug_replacement writes a replacement as GNU sed prints it: in the pieces
+// that GNU sed splits it into, at each backslash and each &.
+function debug_replacement(h: usize, t: u8[], basic: boolean): void {
+  let last = 0;
+  let kind = 0;
+  let base = 0;
+  let k = 0;
+  let n = t.len();
+  while (k < n) {
+    let ch = t[k] as i32;
+    if (ch == 38) {
+      last = debug_piece(h, last, kind, t, base, k, -1, 0);
+      kind &= REPL_UPPER | REPL_LOWER;
+      base = k + 1;
+    } else if (ch == 92) {
+      let piece = kind;
+      kind &= REPL_UPPER | REPL_LOWER;
+      let extra = -1;
+      let group = -1;
+      if (k + 1 == n) {
+        extra = 92;
+      } else {
+        let e = t[k + 1] as i32;
+        if (is_digit(e)) {
+          group = e - 48;
+        } else if (basic) {
+          extra = e;
+        } else if (e == 76) {
+          kind = REPL_LOWER;
+        } else if (e == 85) {
+          kind = REPL_UPPER;
+        } else if (e == 69) {
+          kind = 0;
+        } else if (e == 108) {
+          kind |= REPL_LOWER_FIRST;
+        } else if (e == 117) {
+          kind |= REPL_UPPER_FIRST;
+        } else {
+          extra = e;
+        }
+      }
+      last = debug_piece(h, last, piece, t, base, k, extra, group);
+      k += 1;
+      base = k + 1;
+    }
+    k += 1;
+  }
+  if (base < n) {
+    debug_piece(h, last, kind, t, base, n, -1, -1);
+  }
+}
+
+function debug_subst(h: usize, p: Prog, sub: Sub): void {
+  let rx = p.rxs[sub.rx];
+  debug_regex(h, rx);
+  debug_replacement(h, sub.text, p.o.posix == POSIX_BASIC);
+  buf_push_byte(h, 47);
+  if (rx.icase) {
+    buf_push_byte(h, 105);
+  }
+  if (rx.multi) {
+    buf_push_byte(h, 109);
+  }
+  if (sub.global) {
+    buf_push_byte(h, 103);
+  }
+  if (sub.eval) {
+    buf_push_byte(h, 101);
+  }
+  if (sub.print != 0) {
+    buf_push_byte(h, 112);
+  }
+  if (sub.numb != 0) {
+    buf_push(h, f"{sub.numb}");
+  }
+  if (sub.out >= 0) {
+    buf_push_byte(h, 119);
+    buf_push(h, p.wfiles[sub.out].name);
+  }
+}
+
+// debug_command gives a command as --debug prints it: its addresses, its
+// letter and its arguments.
+// One arm for each kind of argument.
+// fern-lint: allow cyclomatic-complexity
+function debug_command(p: Prog, cmd: Cmd): u8[] {
+  let h = buf_new(64);
+  debug_addr(h, p, cmd.a1);
+  if (cmd.a2.kind != A_NONE) {
+    buf_push_byte(h, 44);
+    debug_addr(h, p, cmd.a2);
+  }
+  if (cmd.bang) {
+    buf_push_byte(h, 33);
+  }
+  if (cmd.a1.kind != A_NONE) {
+    buf_push_byte(h, 32);
+  }
+  let op = cmd.op;
+  buf_push_byte(h, op as i32);
+  if (op == b':') {
+    buf_push(h, cmd.name);
+  } else if (op == b'a' || op == b'i' || op == b'c') {
+    buf_push_byte(h, 92);
+    buf_push_bytes_range(h, cmd.text, 0, cmd.text.len());
+  } else if ((op == b'b' || op == b't' || op == b'T') && cmd.name.len() > 0) {
+    buf_push(h, " " + cmd.name);
+  } else if (op == b'e') {
+    buf_push_byte(h, 32);
+    buf_push_bytes_range(h, cmd.text, 0, cmd.text.len());
+  } else if ((op == b'l' || op == b'L' || op == b'q' || op == b'Q') && cmd.num >= 0) {
+    buf_push(h, f" {cmd.num}");
+  } else if (op == b'r' || op == b'R') {
+    buf_push(h, " " + cmd.name);
+  } else if (op == b's') {
+    debug_subst(h, p, p.subs[cmd.sub]);
+  } else if (op == b'w' || op == b'W') {
+    buf_push(h, p.wfiles[cmd.out].name);
+  } else if (op == b'y') {
+    if (p.o.utf8) {
+      debug_pairs(h, cmd.ymap);
+    } else {
+      debug_translation(h, cmd.table);
+    }
+  }
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// debug_translation writes the table of y in the order of the bytes, with
+// the bytes that the table does not change left out.
+function debug_translation(h: usize, table: u8[]): void {
+  buf_push_byte(h, 47);
+  for b in 0..256 {
+    if (table[b] as i32 != b) {
+      buf_push_byte(h, b);
+    }
+  }
+  buf_push_byte(h, 47);
+  for b in 0..256 {
+    if (table[b] as i32 != b) {
+      buf_push_byte(h, table[b] as i32);
+    }
+  }
+  buf_push_byte(h, 47);
+}
+
+// In a UTF-8 locale GNU sed prints the pairs of y in their order, as bytes.
+function debug_pairs(h: usize, pairs: u8[][]): void {
+  for half in 0..2 {
+    buf_push_byte(h, 47);
+    let k = half;
+    while (k < pairs.len()) {
+      buf_push_bytes_range(h, pairs[k], 0, pairs[k].len());
+      k += 2;
+    }
+  }
+  buf_push_byte(h, 47);
+}
+
+// debug_program gives the program as --debug prints it before the run, with
+// two spaces of indent for each block.
+function debug_program(p: Prog): u8[] {
+  let h = buf_new(256);
+  buf_push(h, "SED PROGRAM:\n");
+  let level = 1;
+  for k in 0..p.cmds.len() {
+    if (p.cmds[k].op == b'}') {
+      level -= 1;
+    }
+    for _ in 0..level {
+      buf_push(h, "  ");
+    }
+    let t = p.dbg.cmds[k];
+    buf_push_bytes_range(h, t, 0, t.len());
+    buf_push_byte(h, 10);
+    if (p.cmds[k].op == b'{') {
+      level += 1;
+    }
+  }
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// The trace goes to standard output past the missing newline of the output,
+// as GNU sed writes it with stdio.
+function trace_text(p: Prog, r: Run, text: string): void {
+  buf_push(r.outs[OUT_STDOUT].h, text);
+  settle(p, r, OUT_STDOUT);
+}
+
+function trace_space(p: Prog, r: Run, hold: boolean): void {
+  let h = r.outs[OUT_STDOUT].h;
+  if (hold) {
+    buf_push(h, "HOLD:    ");
+    debug_bytes(h, r.hold);
+  } else {
+    buf_push(h, "PATTERN: ");
+    debug_bytes(h, r.ps);
+  }
+  buf_push_byte(h, 10);
+  settle(p, r, OUT_STDOUT);
+}
+
+function trace_input(p: Prog, r: Run): void {
+  let name = if (r.inp.name == "-" && !p.o.in_place) { "STDIN" } else { r.inp.name };
+  trace_text(p, r, f"INPUT:   '{name}' line {r.line}\n");
+  trace_space(p, r, false);
+}
+
+// trace_command writes the command that the run reaches. The depth of the
+// blocks goes on from one cycle to the next, and a jump out of a block does
+// not change it, as in GNU sed. The newline at the end of the text of e
+// becomes a NUL after the first run, as GNU sed runs that text.
+function trace_command(p: Prog, r: Run, pc: i32, cmd: Cmd): void {
+  let level = p.dbg.level.get();
+  if (cmd.op == b'}') {
+    level -= 1;
+  }
+  let h = r.outs[OUT_STDOUT].h;
+  buf_push(h, "COMMAND: ");
+  for _ in 0..level {
+    buf_push(h, "  ");
+  }
+  let t = p.dbg.cmds[pc];
+  if (cmd.op == b'e' && p.dbg.ran.get()[pc] && t.len() > 0 && t[t.len() - 1] == 10) {
+    buf_push_bytes_range(h, t, 0, t.len() - 1);
+    buf_push_byte(h, 0);
+  } else {
+    buf_push_bytes_range(h, t, 0, t.len());
+  }
+  buf_push_byte(h, 10);
+  if (cmd.op == b'{') {
+    level += 1;
+  }
+  p.dbg.level.set(level);
+  settle(p, r, OUT_STDOUT);
+}
+
+// trace_after writes what a command changed: the pattern space or the hold
+// space, or the end of the cycle.
+// One arm for each command that the trace follows.
+// fern-lint: allow cyclomatic-complexity
+function trace_after(p: Prog, r: Run, pc: i32, cmd: Cmd): void {
+  let op = cmd.op;
+  if (op == b'g' || op == b'h' || op == b'H') {
+    trace_space(p, r, true);
+  } else if (op == b'x') {
+    trace_space(p, r, false);
+    trace_space(p, r, true);
+  } else if (op == b'G' || op == b'y' || op == b'z' || op == b's') {
+    trace_space(p, r, false);
+  } else if (op == b'd' || op == b'c') {
+    trace_text(p, r, "END-OF-CYCLE:\n");
+  } else if (op == b'D' && r.end == END_RESTART) {
+    trace_space(p, r, false);
+  } else if (op == b'n' || op == b'N') {
+    if (r.end == END_NONE) {
+      trace_space(p, r, false);
+    } else {
+      trace_text(p, r, "END-OF-CYCLE:\n");
+    }
+  } else if (op == b'e' && cmd.text.len() > 0) {
+    p.dbg.ran.set(p.dbg.ran.get().with(pc, true));
+  }
+}
+
+// trace_registers writes the groups of the first match of s, up to the
+// first group that did not take part.
+function trace_registers(p: Prog, r: Run, re: bre.Bre, ps: u8[], ms: i32, me: i32): void {
+  let m = re.search_groups_bytes(ps, 0, ps.len());
+  let h = r.outs[OUT_STDOUT].h;
+  buf_push(h, "MATCHED REGEX REGISTERS\n");
+  for g in 0..re.ngroups + 1 {
+    let lo = if (g == 0) { ms } else if (g < m.starts.len()) { m.starts[g] } else { -1 };
+    if (lo < 0) {
+      break;
+    }
+    let hi = if (g == 0) { me } else { m.ends[g] };
+    buf_push(h, f"  regex[{g}] = {lo}-{hi} '");
+    buf_push_bytes_range(h, ps, lo, hi);
+    buf_push(h, "'\n");
+  }
+  settle(p, r, OUT_STDOUT);
 }
 
 // ---------------------------------------------------------------------------
@@ -2569,8 +3173,11 @@ function process(p: Prog, own r0: Run): Run {
     if (!r.got) {
       return r;
     }
+    if (p.debug) {
+      trace_input(p, r);
+    }
     while (true) {
-      r = run_script(p, r);
+      r = if (p.debug) { run_script_traced(p, r) } else { run_script(p, r) };
       let end = r.end;
       if (end == END_RESTART) {
         continue;
@@ -2641,10 +3248,7 @@ function apply_option(c: Comp, m: gnu.OptMatch): Comp {
     OPT_SEPARATE => Comp { ...c, o: Opts { ...o, separate: true } },
     OPT_UNBUFFERED => Comp { ...c, o: Opts { ...o, unbuffered: true } },
     OPT_FOLLOW => Comp { ...c, o: Opts { ...o, follow: true } },
-    OPT_DEBUG => {
-      gnu.error("this port does not have the option '--debug'");
-      exit(EXIT_BAD_USAGE);
-    },
+    OPT_DEBUG => Comp { ...c, o: Opts { ...o, debug: true } },
     OPT_USAGE => {
       usage(EXIT_BAD_USAGE);
       c
@@ -2653,13 +3257,48 @@ function apply_option(c: Comp, m: gnu.OptMatch): Comp {
   };
 }
 
+// locale_utf8 tells whether the locale reads text as UTF-8: the first of
+// LC_ALL, LC_CTYPE and LANG that is not empty names the codeset UTF-8.
+function locale_utf8(): boolean {
+  for name in ["LC_ALL", "LC_CTYPE", "LANG"] {
+    if let Some(v) = env(name) {
+      if (v.len() > 0) {
+        return codeset_utf8(v);
+      }
+    }
+  }
+  return false;
+}
+
+// The codeset is the part after the dot, before any @modifier. Case and
+// hyphens do not count.
+function codeset_utf8(locale: string): boolean {
+  let dot = __memchr(locale, 46, 0);
+  if (dot < 0) {
+    return false;
+  }
+  let h = buf_new(8);
+  for k in dot + 1..locale.len() {
+    let c = locale[k] as i32;
+    if (c == 64) {
+      break;
+    }
+    if (c != 45) {
+      buf_push_byte(h, lower_byte(c));
+    }
+  }
+  let code = buf_take(h);
+  buf_free(h);
+  return code == "utf8";
+}
+
 function main(): i32 {
   let argv = args();
   let posix = POSIX_EXTENDED;
   if let Some(_) = env("POSIXLY_CORRECT") {
     posix = POSIX_CORRECT;
   }
-  let o = Opts { quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false };
+  let o = Opts { debug: false, quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false, utf8: locale_utf8() };
   let c = comp_new(o);
   let g = gnu.getopt_new(argv, options(), "sed", help_text(), EXIT_BAD_USAGE).in_package("sed");
   let have_script = false;
@@ -2684,6 +3323,9 @@ function main(): i32 {
   }
   let p = finish_program(c);
   if (p.o.in_place && ops.len() == 0) {
+    if (p.o.debug) {
+      if let Err(_) = stdout().write_bytes(debug_program(p)) {}
+    }
     panic("no input files");
   }
   if (ops.len() == 0) {
@@ -2691,6 +3333,10 @@ function main(): i32 {
   }
   let inp = Inp { files: ops, next: 0, r: stdin(), open: false, name: "-", edit: no_edit() };
   let outs = make_outs(p);
+  if (p.o.debug) {
+    let prog = debug_program(p);
+    buf_push_bytes_range(outs[OUT_STDOUT].h, prog, 0, prog.len());
+  }
   let r = Run { ps: [], chomped: true, hold: [], hchomped: true, replaced: false, line: 0, end: END_NONE, code: 0, got: false, ibuf: [], ipos: 0, ieof: false, apps: [], ranges: initial_ranges(p), rend: zeros_i64(p.cmds.len()), last_rx: -1, nosub: p.rxs.map((x: Rx) => x.nosub), outs: outs, missing: falses(outs.len()), cur: OUT_STDOUT, rfiles: make_rfiles(p), inp: inp, bad: false };
   r = process(p, r);
   close_all(r);
