@@ -50,17 +50,15 @@ const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"50
 const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
 
 // A page of a library of 63 movies from `start`.
+// A page of the movie library of 400 items, from `start`.
 function page(start: i32): string {
-  let n = 60;
-  if (start >= 60) {
-    n = 3;
-  }
+  let n = 60.min(400 - start).max(0);
   let items: string[] = [];
   for i in 0..n {
     let k = (1000 + start + i).to_string();
     items = items.append("{\"ratingKey\":\"" + k + "\",\"type\":\"movie\",\"title\":\"Movie " + k + "\",\"year\":1999}");
   }
-  return "{\"MediaContainer\":{\"size\":" + n.to_string() + ",\"totalSize\":63,\"Metadata\":[" + items.join(",") + "]}}";
+  return "{\"MediaContainer\":{\"size\":" + n.to_string() + ",\"totalSize\":400,\"Metadata\":[" + items.join(",") + "]}}";
 }
 
 function ok(body: string): plex.Reply {
@@ -105,6 +103,9 @@ function reply_to(r: plex.Request): plex.Reply {
   }
   if (u.contains("/hubs")) {
     return ok(HUBS);
+  }
+  if (u.contains("/library/sections/1/firstCharacter")) {
+    return ok("{\"MediaContainer\":{\"Directory\":[{\"size\":100,\"key\":\"A\",\"title\":\"A\"},{\"size\":50,\"key\":\"B\",\"title\":\"B\"},{\"size\":250,\"key\":\"C\",\"title\":\"C\"}]}}");
   }
   if (u.contains("/library/sections/1/all")) {
     return ok(page(control.num(query_value(u, "X-Plex-Container-Start"))));
@@ -818,15 +819,60 @@ function test_library_pages(): test.TestOutcome {
     return test.fail("no first page");
   }
   save_png(f, "library");
-  // Drag up far, to the end of the grid.
-  let t = at(lib, log, 300i64, f, android.Touch(0, 270.0, 900.0));
+  if (has_url(log, "X-Plex-Container-Start=60&")) {
+    return test.fail("a page far below the screen came at once");
+  }
+  // Drag up five screens.
+  let t = at(lib, log, 300i64, f, android.Touch(0, 270.0, 1000.0));
   let i = 0;
   while (i < 40) {
-    t = at(t, log, 300i64 + i as i64, f, android.Touch(2, 270.0, 900.0 - (i * 400) as f32));
+    t = at(t, log, 300i64 + i as i64, f, android.Touch(2, 270.0, 1000.0 - (i * 120) as f32));
     i += 1;
   }
-  t = settle(at(t, log, 400i64, f, android.Touch(1, 270.0, -15000.0)), log, 400i64, f);
-  return test.assert_eq(has_url(log, "X-Plex-Container-Start=60&").to_string(), "true");
+  t = settle(at(t, log, 400i64, f, android.Touch(1, 270.0, -3680.0)), log, 400i64, f);
+  return test.assert_eq((has_url(log, "X-Plex-Container-Start=60&") && !has_url(log, "X-Plex-Container-Start=180&")).to_string(), "true");
+}
+
+// The title order shows a strip of the first letters. A drag along it and
+// a tap on a letter scroll to the first item of the letter, and ask for its
+// page with no page before it.
+function test_library_letters(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let lib = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "tab:1"), log, 200i64, f, "section:0");
+  let (Some(a), Some(b)) = (node(lib, "letter:0"), node(lib, "letter:1")) else {
+    return test.fail("no letter strip: " + log.urls.get().join(" | "));
+  };
+  save_png(f, "letters");
+  let (ax, ay) = centre(a);
+  let (bx, by) = centre(b);
+  let down = at(lib, log, 300i64, f, android.Touch(0, ax as f32, ay as f32));
+  let slid = settle(at(at(down, log, 320i64, f, android.Touch(2, ax as f32, by as f32)), log, 340i64, f, android.Touch(1, ax as f32, by as f32)), log, 340i64, f);
+  if (!has_url(log, "X-Plex-Container-Start=60&") || has_url(log, "X-Plex-Container-Start=120&") || node(slid, "grid:100").is_none()) {
+    return test.fail("the drag to B did not show its first item: " + log.urls.get().join(" | "));
+  }
+  let c = tap(slid, log, 400i64, f, "letter:2");
+  return test.assert_eq((has_url(log, "X-Plex-Container-Start=120&") && node(c, "grid:150").is_some() && !has_url(log, "X-Plex-Container-Start=240&")).to_string(), "true");
+}
+
+// The chip of the order moves to the next order and loads the library again
+// in it. The year order has no letter strip. The filter chip asks for the
+// items not watched.
+function test_library_sort_and_filter(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let lib = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "tab:1"), log, 200i64, f, "section:0");
+  let year = tap(lib, log, 300i64, f, "sort:1");
+  if (!has_url(log, "sort=year%3Adesc") || node(year, "letter:0").is_some() || node(year, "grid:0").is_none()) {
+    return test.fail("no library in the year order: " + log.urls.get().join(" | "));
+  }
+  let fresh = tap(year, log, 400i64, f, "unwatched:1");
+  if (!has_url(log, "sort=year%3Adesc&includeGuids=0&unwatched=1") || node(fresh, "unwatched:0").is_none()) {
+    return test.fail("no filter of the items not watched: " + log.urls.get().join(" | "));
+  }
+  return test.assert_eq(node(fresh, "sort:2").is_some().to_string(), "true");
 }
 
 // A quick swipe up the library lets the grid move on after the finger
@@ -1052,7 +1098,9 @@ function main(): i32 {
   r = r.it("a skip button skips the intro", test_skip_intro);
   r = r.it("the card of the next episode counts down and plays it", test_up_next_plays);
   r = r.it("cancel on the card of the next episode keeps it from playing", test_up_next_cancel);
-  r = r.it("a library loads its next page at its end", test_library_pages);
+  r = r.it("a library loads the pages near the screen", test_library_pages);
+  r = r.it("the letter strip jumps to the first item of a letter", test_library_letters);
+  r = r.it("the chips change the order and the filter of a library", test_library_sort_and_filter);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);

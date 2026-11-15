@@ -408,10 +408,68 @@ pub function sections(c: Client, b: Base): Request {
   return get(c.with_token(b.token), b.uri + "/library/sections");
 }
 
-// The first `size` items of library `key` from `start`, in `sort` order.
-pub function section_items(c: Client, b: Base, key: string, start: i32, size: i32, sort: string): Request {
-  let q = url.query_encode([("X-Plex-Container-Start", start.to_string()), ("X-Plex-Container-Size", size.to_string()), ("sort", sort), ("includeGuids", "0")]);
+// An order of a library: the word on its chip and the `sort` value of the
+// server.
+pub struct Sort { name: string, param: string }
+
+pub function sorts(): Sort[] {
+  return [Sort { name: "TITLE", param: "titleSort" }, Sort { name: "YEAR", param: "year:desc" }, Sort { name: "ADDED", param: "addedAt:desc" }, Sort { name: "RATING", param: "rating:desc" }];
+}
+
+// The `size` items of library `key` from `start`, in `sort` order, and only
+// those not watched when `unwatched` is true.
+pub function section_items(c: Client, b: Base, key: string, start: i32, size: i32, sort: string, unwatched: boolean): Request {
+  let q = url.query_encode(unwatched_filter([("X-Plex-Container-Start", start.to_string()), ("X-Plex-Container-Size", size.to_string()), ("sort", sort), ("includeGuids", "0")], unwatched));
   return get(c.with_token(b.token), b.uri + "/library/sections/" + key + "/all?" + q);
+}
+
+function unwatched_filter(own q: (string, string)[], unwatched: boolean): (string, string)[] {
+  if (unwatched) {
+    return q.append(("unwatched", "1"));
+  }
+  return q;
+}
+
+// The first letters of the titles of library `key`, in the order of the
+// title sort, with the number of items of each.
+pub function first_letters(c: Client, b: Base, key: string, unwatched: boolean): Request {
+  let q = url.query_encode(unwatched_filter([], unwatched));
+  let path = b.uri + "/library/sections/" + key + "/firstCharacter";
+  if (q.len() > 0) {
+    path = path + "?" + q;
+  }
+  return get(c.with_token(b.token), path);
+}
+
+// A first letter of the titles of a library, such as "A" or "#", and the
+// number of items whose title starts with it.
+pub struct Letter { key: string, size: i32 }
+
+pub function parse_letters(body: string): Letter[] {
+  let out: Letter[] = [];
+  let Ok(d) = json.parse_document(body) else {
+    return out;
+  };
+  for n in elements(d, container(d), "Directory") {
+    let key = str(d, n, "title");
+    if (key.len() == 0) {
+      key = str(d, n, "key");
+    }
+    let size = int(d, n, "size") as i32;
+    if (key.len() > 0 && size > 0) {
+      out = out.append(Letter { key: key, size: size });
+    }
+  }
+  return out;
+}
+
+// The index in the title sort of the first item of letter `i`.
+pub function letter_offset(letters: Letter[], i: i32): i32 {
+  let at = 0;
+  for k in 0..i.min(letters.len()) {
+    at += letters[k].size;
+  }
+  return at;
 }
 
 pub function hubs(c: Client, b: Base): Request {

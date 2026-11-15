@@ -22,10 +22,16 @@ Browsing:
 - The home screen shows the hubs of the server, such as Continue Watching
   and Recently Added, as rows of posters that scroll across.
 - The Libraries tab shows the movie, show and music libraries. A library is
-  a grid of posters that loads 60 items at a time as you scroll.
+  a grid of posters that loads the pages of 60 items near the screen.
 - The detail screen of an item shows its backdrop, poster, facts, genres
   and summary, the seasons of a show and the episodes of a season. Mark an
   item watched or unwatched there.
+
+A chip at the top of a library sets its order: title, year, date added or
+rating. A tap moves it to the next order. The Unwatched chip shows only the
+items not watched. In the title order, a strip at the right shows the
+first letters of the titles. A tap or a drag on a letter shows its first
+item, and the app asks only for that page.
 
 A local address on a private network also gets a plain HTTP address, such
 as `http://100.101.102.103:32400`. It needs no name lookup. Thus it works

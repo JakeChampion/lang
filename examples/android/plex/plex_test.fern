@@ -88,6 +88,16 @@ function test_private_hosts(): test.TestOutcome {
   return test.assert_eq(hosts.map((h: string): string => plex.private_host(h).to_string()).join(" "), "true true false true true false true true false true false true true true false false");
 }
 
+function test_library_requests(): test.TestOutcome {
+  let c = plex.Client { id: "id", device: "Android", token: "t" };
+  let b = plex.Base { uri: "https://s:32400", token: "srv" };
+  let items = plex.section_items(c, b, "3", 120, 60, "year:desc", true);
+  let letters = plex.first_letters(c, b, "3", false);
+  let got = plex.parse_letters("{\"MediaContainer\":{\"Directory\":[{\"size\":4,\"key\":\"%23\",\"title\":\"#\"},{\"size\":0,\"title\":\"A\"},{\"size\":7,\"title\":\"B\"}]}}");
+  let words = [items.url, letters.url, got.map((l: plex.Letter): string => l.key + "=" + l.size.to_string()).join(","), plex.letter_offset(got, 1).to_string()];
+  return test.assert_eq(words.join(" "), "https://s:32400/library/sections/3/all?X-Plex-Container-Start=120&X-Plex-Container-Size=60&sort=year%3Adesc&includeGuids=0&unwatched=1 https://s:32400/library/sections/3/firstCharacter #=4,B=7 4");
+}
+
 function test_manual_server(): test.TestOutcome {
   let s = plex.manual_server("http://192.168.1.4:32400/", "t");
   return test.assert_eq(plex.connection_order(s).join(" ") + " " + s.token, "http://192.168.1.4:32400 t");
@@ -353,6 +363,7 @@ function main(): i32 {
   r = r.it("servers are read and their connections ordered", test_servers_and_connection_order);
   r = r.it("a private local connection gets a plain HTTP address", test_private_connections_get_http);
   r = r.it("private hosts are told from public ones", test_private_hosts);
+  r = r.it("a library page asks in its order and filter, and the letters count", test_library_requests);
   r = r.it("a typed server has one connection", test_manual_server);
   r = r.it("the libraries of video and music are kept", test_sections_keep_video_and_music);
   r = r.it("an item is read with its media", test_item_fields);

@@ -205,8 +205,16 @@ pub struct App {
   results: plex.Hub[],
   sections: plex.Section[],
   section: plex.Section,
+  // The items of the library in order, with no_item in each place that no
+  // page has filled yet, and the number of items on the server.
   items: plex.Item[],
   total: i32,
+  // The order of the libraries as an index of plex.sorts, whether they
+  // show only the items not watched, and the first letters of the titles
+  // of the library that shows.
+  sort: i32,
+  unwatched: boolean,
+  letters: plex.Letter[],
   item: plex.Item,
   children: plex.Item[],
   query: string,
@@ -347,7 +355,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
     account: setting(text, "account"), quality: num(setting(text, "quality")),
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
-    hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, item: plex.no_item(), children: [],
+    hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
     play: no_play(), press: no_press(), nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
@@ -383,7 +391,8 @@ enum Want {
   Resources,
   Sections,
   Hubs,
-  Items(string, i32),
+  Items(string, i32, i32, boolean),
+  Letters(string, boolean),
   Meta(string),
   Children(string),
   Leaves(string),
@@ -416,8 +425,11 @@ function request_of(c: plex.Client, b: plex.Base, w: Want): plex.Request {
     Hubs => {
       return plex.hubs(c, b);
     },
-    Items(key, start) => {
-      return plex.section_items(c, b, key, start, PAGE_SIZE, "titleSort");
+    Items(key, start, sort, unwatched) => {
+      return plex.section_items(c, b, key, start, PAGE_SIZE, plex.sorts()[sort].param, unwatched);
+    },
+    Letters(key, unwatched) => {
+      return plex.first_letters(c, b, key, unwatched);
     },
     Meta(key) => {
       return plex.metadata(c, b, key);
@@ -730,6 +742,12 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   if (verb == "bif") {
     return got_bif(t, rest, r);
   }
+  if (verb == "letters") {
+    if (r.ok() && t.screen == ui.LIBRARY && rest == library_tag(t)) {
+      return App { ...t, letters: plex.parse_letters(r.text()) };
+    }
+    return t;
+  }
   if (r.status == 401 && t.client.token.len() > 0 && t.screen != ui.SERVERS) {
     return open_servers(App { ...t, error: "The server refused the sign-in. Choose a server again." });
   }
@@ -795,16 +813,34 @@ function split_purpose(p: string): (string, string) {
   return (p, "");
 }
 
+// The words of a request of the library that shows, in its order and with
+// its filter: a reply to an older one is dropped.
+function library_tag(s: App): string {
+  let tag = s.section.key + ":" + s.sort.to_string();
+  if (s.unwatched) {
+    tag += "u";
+  }
+  return tag;
+}
+
+// Puts a page of the library at its place. The first page gives the total,
+// and each place that no page has filled yet holds no_item.
 function got_items(own t: App, rest: string, r: plex.Reply): App {
-  if (t.screen != ui.LIBRARY || !rest.starts_with(t.section.key + ":")) {
+  let tag = library_tag(t) + ":";
+  if (t.screen != ui.LIBRARY || !rest.starts_with(tag)) {
     return t;
   }
+  let start = num(rest.split_at(tag.len()).1);
   let page = plex.parse_items(r.text());
   let items = t.items;
-  for it in page.items {
-    items = items.append(it);
+  let total = page.total.max(start + page.items.len());
+  while (items.len() < total) {
+    items = items.append(plex.no_item());
   }
-  return App { ...t, items: items, total: page.total };
+  for k in 0..page.items.len() {
+    items = items.with(start + k, page.items[k]);
+  }
+  return more_items(App { ...t, items: items, total: total });
 }
 
 // --- sign-in and servers
@@ -1046,15 +1082,58 @@ function open_section(own s: App, i: i32): App {
     return s;
   }
   let sec = s.sections[i];
-  return more_items(App { ...push(s), screen: ui.LIBRARY, title: sec.title, section: sec, items: [], total: 0, scroll: 0, dirty: true });
+  return reload_library(App { ...push(s), screen: ui.LIBRARY, title: sec.title, section: sec });
 }
 
-// Asks for the next page of the library when the screen nears its end.
+// Shows the library from its start in the order and with the filter of
+// the state. The title order also asks for the first letters of the
+// titles, for the letter strip.
+function reload_library(own s: App): App {
+  let t = more_items(App { ...s, items: [], total: 0, letters: [], scroll: 0, dirty: true });
+  if (t.sort != 0) {
+    return t;
+  }
+  let key = t.section.key;
+  let unwatched = t.unwatched;
+  let purpose = "letters:" + library_tag(t);
+  return ask(t, purpose, Letters(key, unwatched));
+}
+
+// The places of the items that the screen shows, from one screen above it
+// to one screen below it.
+function visible_items(s: App): (i32, i32) {
+  let m = ui.metrics(s.w, s.h, s.top, s.bottom);
+  let (cols, w) = ui.grid(m);
+  let ch = ui.card_height(m, w) + 12 * m.u;
+  let screen = (ui.content_bottom(m, s.screen) - ui.content_top(m)).max(ch);
+  let first = (s.scroll - screen).max(0) / ch * cols;
+  let last = ((s.scroll + 2 * screen) / ch + 1) * cols;
+  return (first, last);
+}
+
+// Asks for the page of the first place near the screen that no page has
+// filled, unless a request for it waits.
 function more_items(own s: App): App {
-  if (s.screen != ui.LIBRARY || s.total > 0 && s.items.len() >= s.total) {
+  if (s.screen != ui.LIBRARY) {
     return s;
   }
-  let purpose = "items:" + s.section.key + ":" + s.items.len().to_string();
+  let start = -1;
+  if (s.total == 0 && s.items.len() == 0) {
+    start = 0;
+  } else {
+    let (first, last) = visible_items(s);
+    let k = first;
+    while (k < last.min(s.total) && start < 0) {
+      if (k >= s.items.len() || s.items[k].key.len() == 0) {
+        start = k / PAGE_SIZE * PAGE_SIZE;
+      }
+      k += 1;
+    }
+  }
+  if (start < 0) {
+    return s;
+  }
+  let purpose = "items:" + library_tag(s) + ":" + start.to_string();
   for a in s.asks {
     if (a.purpose == purpose) {
       return s;
@@ -1064,8 +1143,22 @@ function more_items(own s: App): App {
     return s;
   }
   let key = s.section.key;
-  let start = s.items.len();
-  return ask(s, purpose, Items(key, start));
+  let sort = s.sort;
+  let unwatched = s.unwatched;
+  return ask(s, purpose, Items(key, start, sort, unwatched));
+}
+
+// Scrolls the library to the first item of letter `i` of the strip.
+function jump_to_letter(own s: App, i: i32): App {
+  if (i < 0 || i >= s.letters.len()) {
+    return s;
+  }
+  let m = ui.metrics(s.w, s.h, s.top, s.bottom);
+  let (cols, w) = ui.grid(m);
+  let ch = ui.card_height(m, w) + 12 * m.u;
+  let at = plex.letter_offset(s.letters, i);
+  let next = clamp(at / cols * ch, 0, scroll_limit(s, m));
+  return more_items(App { ...s, scroll: next, fling: no_fling(), dirty: true });
 }
 
 function has_call(c: Option[Call], purpose: string): boolean {
@@ -1769,7 +1862,7 @@ function scroll_limit(s: App, m: ui.Metrics): i32 {
   } else if (s.screen == ui.SEARCH) {
     h = ui.home_height(m, v) + 72 * m.u;
   } else if (s.screen == ui.LIBRARY) {
-    h = ui.grid_height(m, s.items.len());
+    h = ui.grid_height(m, s.items.len()) + ui.chips_height(m);
   } else if (s.screen == ui.DETAIL) {
     h = ui.detail_height(m, v);
   } else if (s.screen == ui.SECTIONS) {
@@ -1840,6 +1933,9 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
     if (group == "seek" && s.screen == ui.PLAYER) {
       return scrub(App { ...s, fling: no_fling(), press: pressed }, x as i32, false);
     }
+    if (group == "az" && s.screen == ui.LIBRARY) {
+      return jump_to_letter(App { ...s, fling: no_fling(), press: pressed }, letter_under(s.nodes, y as i32));
+    }
     return App { ...s, fling: no_fling(), press: pressed };
   }
   if (p.active && p.group == "seek") {
@@ -1847,6 +1943,14 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
       return scrub(s, x as i32, false);
     }
     return scrub(App { ...s, press: no_press() }, x as i32, action == 1);
+  }
+  if (p.active && p.group == "az") {
+    // A finger that slides along the letter strip jumps to each letter.
+    let i = letter_under(s.nodes, y as i32);
+    if (action == 2) {
+      return jump_to_letter(s, i);
+    }
+    return jump_to_letter(App { ...s, press: no_press() }, i);
   }
   if (!p.active) {
     return s;
@@ -1936,6 +2040,22 @@ function player_drag(own s: App, vertical: boolean): App {
     s.dev.set_volume(level);
   }
   return App { ...s, play: Play { ...p, gesture_level: level, badge: "VOLUME " + level.to_string(), badge_until: now + BADGE_MS }, dirty: true };
+}
+
+// The letter of the strip at height `y`, or -1. Above the strip it is the
+// first letter, and below it the last.
+function letter_under(nodes: scene.Node[], y: i32): i32 {
+  let last = -1;
+  for n in nodes {
+    if (n.group == "az" && n.tap.name.starts_with("letter:")) {
+      let i = num(n.tap.name.split_at(7).1);
+      if (y < n.y + n.h && (i == 0 || y >= n.y)) {
+        return i;
+      }
+      last = last.max(i);
+    }
+  }
+  return last;
 }
 
 // Starts a fling of the list that the finger moved, at the speed of the
@@ -2034,6 +2154,19 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   }
   if (a.starts_with("section:")) {
     return open_section(t, num(a.split_at(8).1));
+  }
+  if (a.starts_with("sort:")) {
+    let k = num(a.split_at(5).1);
+    if (k == t.sort || k < 0 || k >= plex.sorts().len()) {
+      return t;
+    }
+    return reload_library(App { ...t, sort: k });
+  }
+  if (a.starts_with("unwatched:")) {
+    return reload_library(App { ...t, unwatched: a == "unwatched:1" });
+  }
+  if (a.starts_with("letter:")) {
+    return jump_to_letter(t, num(a.split_at(7).1));
   }
   if (a == "back") {
     return pop(t);
@@ -2183,7 +2316,7 @@ pub function view(s: App): ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, item: s.item, children: s.children,
     pin_code: s.pin.code, error: s.error, servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,

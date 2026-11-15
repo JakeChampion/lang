@@ -73,6 +73,9 @@ pub struct View {
   sections: plex.Section[],
   items: plex.Item[],
   total: i32,
+  sort: i32,
+  unwatched: boolean,
+  letters: plex.Letter[],
   item: plex.Item,
   children: plex.Item[],
   pin_code: string,
@@ -93,7 +96,7 @@ pub struct View {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
 }
 
 // --- metrics
@@ -606,15 +609,53 @@ function grid_nodes(m: Metrics, v: View, items: plex.Item[], top: i32, prefix: s
   return out;
 }
 
+// The height of the row of chips under the top bar of a library.
+pub function chips_height(m: Metrics): i32 {
+  return button_height(m) + 16 * m.u;
+}
+
+// A library: the chip of its order, which a tap moves to the next order,
+// the chip of the filter of the items not watched, the grid of posters,
+// and in the title order a strip of the first letters at the right.
 function library(m: Metrics, v: View): scene.Node[] {
   let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
-  out = util_append(out, grid_nodes(m, v, v.items, top_height(m) + 12 * m.u, "grid:"));
+  let top = top_height(m) + chips_height(m);
+  out = util_append(out, grid_nodes(m, v, v.items, top, "grid:"));
   if (v.items.len() == 0) {
     let msg = "This library is empty";
     if (v.loading) {
       msg = "Loading";
     }
-    out = out.append(note(m, top_height(m) + 24 * m.u, msg));
+    out = out.append(note(m, top + 12 * m.u, msg));
+  }
+  out = out.append(scene.Node { ...fill(0, top_height(m), m.w, chips_height(m), look.bg(), 0), barrier: true });
+  let sorts = plex.sorts();
+  let k = v.sort.max(0).min(sorts.len() - 1);
+  let first = "BY " + sorts[k].name;
+  let y = top_height(m) + 8 * m.u;
+  out = util_append(out, button(m, 16 * m.u, y, first, false, "sort:" + ((k + 1) % sorts.len()).to_string()));
+  out = util_append(out, button(m, 16 * m.u + button_width(m, first) + 10 * m.u, y, "UNWATCHED", v.unwatched, "unwatched:" + (if (v.unwatched) { "0" } else { "1" })));
+  if (k == 0 && v.letters.len() > 1) {
+    out = util_append(out, letter_strip(m, v.letters, top, content_bottom(m, v.screen)));
+  }
+  return out;
+}
+
+// The first letters of the titles, from `top` to `bottom` at the right
+// edge. Each is a node of group "az": a tap or a drag along them jumps.
+function letter_strip(m: Metrics, letters: plex.Letter[], top: i32, bottom: i32): scene.Node[] {
+  let w = 16 * m.u;
+  let x = m.w - w;
+  let cell = ((bottom - top - 16 * m.u) / letters.len()).min(22 * m.u).max(1);
+  let y0 = top + 8 * m.u;
+  let p = m.u;
+  let out: scene.Node[] = [scene.Node { ...fill(x, y0, w, cell * letters.len(), draw.rgba(0, 0, 0, 140), w / 2), barrier: true }];
+  for i in 0..letters.len() {
+    let key = letters[i].key.take(1).to_ascii_upper();
+    out = out.append(mk(x, y0 + i * cell, w, cell, scene.Blank, "letter:" + i.to_string(), "az"));
+    if (cell >= matrix.height(p)) {
+      out = out.append(dots(x + (w - matrix.width(key, p)) / 2, y0 + i * cell + (cell - matrix.height(p)) / 2, key, p, look.muted()));
+    }
   }
   return out;
 }
