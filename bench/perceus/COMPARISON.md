@@ -24,6 +24,17 @@ balancing helpers retain their upstream inline attributes and Nat keys. All
 workload keys are nonnegative; Fern/Koka ordinary-tree keys are int32, and
 checkpoint keys use Fern i64 and Koka arbitrary-precision Int.
 
+`roc/` translates the Koka inputs to Roc. The harness builds them only when
+`--roc` names a `roc` executable, with `roc build --optimize`. The sources use
+the `basic-cli` 0.20.0 platform, and the build downloads it on first use. They
+were checked with the Roc nightly of commit `ea210f57` (2025-10-28).
+
+Each program keeps the Koka data types, recursion and rewrite order. The ordinary
+tree has `I32` keys, as Fern and Koka do. The checkpoint tree, the derivative
+and constant folding use `I64`. Constant folding and the derivative use the
+wrapping `add_wrap` and `mul_wrap`, as Fern does, because the checked Roc
+operators stop the program on an overflow.
+
 The pinned source has no Lean n-queens or constant-fold implementation.
 Those two files directly translate the Koka algorithms. N-queens materializes
 the same breadth-wise lists of partial solutions, without a bitset solver.
