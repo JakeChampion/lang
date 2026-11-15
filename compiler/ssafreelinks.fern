@@ -1,0 +1,186 @@
+import "std/string";
+
+// The runtime keeps the link of each free block XORed with a key of that
+// block, and checks each link that it decodes (SEC-023). The models of the
+// allocator read the link as a plain word. Each write of a link goes through
+// the encode with the key of its block, and each read through the decode with
+// the same key, so the decoded word is the word that the encode took. A failed
+// check ends the program. The models thus read the decode as a load of the
+// link and the encode as no operation.
+//
+// A collapse also drops the flags that the two sequences write. It is made
+// only when each path from the sequence writes the flags again, or leaves,
+// before an instruction reads them. Otherwise the lines stay as they are, and
+// a model refuses them.
+
+// The lines after the collapse. `at` gives for each line before it the index
+// of the line after it, or -1 for a line that the collapse removed. `from`
+// gives for each line after it the line before it, or -1 for a new line.
+pub struct Plain { lines: string[], at: i32[], from: i32[] }
+
+// `text` with each decode and encode of a link collapsed, for the controls of
+// the models. A line that the collapse makes has the indent of an instruction.
+pub function plain_text(text: string): string {
+  let raw = text.split("\n");
+  let trimmed: string[] = [];
+  for line in raw {
+    trimmed = trimmed.append(line.trim());
+  }
+  let p = plain(trimmed);
+  let out: string[] = [];
+  for k in 0..p.lines.len() {
+    out = out.append(if (p.from[k] >= 0) { raw[p.from[k]] } else { "    " + p.lines[k] });
+  }
+  return out.join("\n");
+}
+
+pub function plain(lines: [string]): Plain {
+  let out: string[] = [];
+  let at: i32[] = [];
+  let from: i32[] = [];
+  // The lines before `next` are in a sequence that a collapse took.
+  let next = 0;
+  for i in 0..lines.len() {
+    if (i < next) {
+      continue;
+    }
+    let d = decode_end(lines, i);
+    if (d > 0 && flags_dead(lines, d + 1)) {
+      let block = operand(lines[i], 0);
+      let scratch = operand(lines[i], 1);
+      let slot = operand(lines[d], 1);
+      let wrapped = out.len() > 0 && out[out.len() - 1] == "pushq " + scratch && d + 1 < lines.len() && lines[d + 1] == "popq " + scratch;
+      if (wrapped) {
+        out = out.with(out.len() - 1, "pushq (" + block + ")");
+        from = from.with(from.len() - 1, -1);
+        at = mark(at, d - i + 1, -1);
+        out = out.append("popq " + slot);
+        from = from.append(-1);
+        at = at.append(out.len() - 1);
+        next = d + 2;
+        continue;
+      }
+      out = out.append("movq (" + block + "), " + scratch).append("movq " + scratch + ", " + slot);
+      from = from.append(-1).append(-1);
+      at = mark(at, d - i - 1, -1).append(out.len() - 2).append(out.len() - 1);
+      next = d + 1;
+      continue;
+    }
+    if (encode(lines, i) && flags_dead(lines, i + 6)) {
+      at = mark(at, 6, -1);
+      next = i + 6;
+      continue;
+    }
+    out = out.append(lines[i]);
+    from = from.append(i);
+    at = at.append(out.len() - 1);
+  }
+  return Plain { lines: out, at: at, from: from };
+}
+
+function mark(own at: i32[], n: i32, v: i32): i32[] {
+  for _ in 0..n {
+    at = at.append(v);
+  }
+  return at;
+}
+
+// Operand `n` of an instruction with two operands, or "".
+function operand(line: string, n: i32): string {
+  let words = line.split(" ");
+  if (words.len() < 2) {
+    return "";
+  }
+  let rest: string[] = [];
+  for k in 1..words.len() {
+    rest = rest.append(words[k]);
+  }
+  let parts = rest.join(" ").split(", ");
+  if (parts.len() != 2) {
+    return "";
+  }
+  return parts[n];
+}
+
+// `s` without its last character.
+function chop(s: string): string {
+  let parts = s.split(":");
+  return parts[0];
+}
+
+// The index of the last line of the decode of a link that starts at `i`, or
+// -1. The lines are those of link_take in compiler/asm_ir.fern.
+function decode_end(lines: [string], i: i32): i32 {
+  if (i + 13 >= lines.len() || !lines[i].starts_with("movq ")) {
+    return -1;
+  }
+  let b = operand(lines[i], 0);
+  let s = operand(lines[i], 1);
+  let label = lines[i + 12];
+  if (b == "" || s == "" || !label.starts_with(".") || !label.ends_with(":")) {
+    return -1;
+  }
+  let want = [
+    "shrq $12, " + s, "xorq __fern_link_key(%rip), " + s, "xorq (" + b + "), " + s, "testq " + s + ", " + s, "jz " + chop(label),
+    "testq $7, " + s, "jnz __fern_free_link_abort", "cmpq __fern_heap_base(%rip), " + s, "jb __fern_free_link_abort", "cmpq __fern_heap_end(%rip), " + s, "jae __fern_free_link_abort",
+  ];
+  for k in 0..want.len() {
+    if (lines[i + 1 + k] != want[k]) {
+      return -1;
+    }
+  }
+  if (!lines[i + 13].starts_with("movq " + s + ", ") || operand(lines[i + 13], 0) != s) {
+    return -1;
+  }
+  return i + 13;
+}
+
+// Whether the encode of a link starts at `i`: the lines of freelist_encode in
+// compiler/asm_ir.fern, and then the store of the link into its block, so the
+// encoded word is not read as anything else.
+function encode(lines: [string], i: i32): boolean {
+  if (i + 6 >= lines.len() || !lines[i].starts_with("pushq ")) {
+    return false;
+  }
+  let c = operand("x " + lines[i].split(" ")[1] + ", x", 0);
+  let b = operand(lines[i + 1], 0);
+  let k = operand(lines[i + 4], 1);
+  return lines[i + 1] == "movq " + b + ", " + c && lines[i + 2] == "shrq $12, " + c && lines[i + 3] == "xorq __fern_link_key(%rip), " + c
+    && lines[i + 4] == "xorq " + c + ", " + k && lines[i + 5] == "popq " + c && lines[i + 6] == "movq " + k + ", (" + b + ")" && b != "" && k != "" && k != c;
+}
+
+// Whether no line from `i` reads the flags before a line writes them, a
+// branch leaves or the body ends. A label does not stop the scan.
+function flags_dead(lines: [string], i: i32): boolean {
+  for at in i..lines.len() {
+    let line = lines[at];
+    let name = line.split(" ")[0];
+    if (reads_flags(name)) {
+      return false;
+    }
+    if (writes_flags(name) || name == "ret" || name == "jmp" || name == "call") {
+      return true;
+    }
+    if (!line.ends_with(":") && !neutral(name)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function reads_flags(name: string): boolean {
+  return name.starts_with("j") && name != "jmp" || name.starts_with("cmov") || name.starts_with("set") || name.starts_with("adc") || name.starts_with("sbb");
+}
+
+function writes_flags(name: string): boolean {
+  for p in ["cmp", "test", "add", "sub", "and", "or", "xor", "inc", "dec", "neg", "shl", "shr", "sar", "bsr", "bsf"] {
+    if (name.starts_with(p)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function neutral(name: string): boolean {
+  return name.starts_with("mov") || name == "leaq" || name == "pushq" || name == "popq";
+}

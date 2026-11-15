@@ -12,10 +12,10 @@ The owner chose all three options, with these numbers:
 |---|---|---|
 | Bounded quarantine | `-sanitize` | a byte budget, 64 MiB unless `-quarantine SIZE` gives another, `0` for no bound |
 | Randomized placement | `-harden` | a free list hands out one of its first eight blocks |
-| Encoded links | `-harden` | a free block's link is keyed by the canary and the block's page, and a bad link aborts |
+| Encoded links | every build | a free block's link is keyed by the link key and the block's page, and a bad link aborts |
 | Sampled guard pages | `-harden` on Linux | every 64th large block the bump hands out gets a page after it that the process cannot touch |
 
-The release build is unchanged. Its allocator recycles a released block at once, hands out the head of a free list, and maps no guard page.
+The release build recycles a released block at once, hands out the head of a free list, and maps no guard page. It encodes the links as `-harden` does.
 The leak census, the allocation lane and the perf lane pin that behaviour, and this change moves none of their rows.
 
 ## The quarantine
@@ -59,7 +59,7 @@ It steps a xorshift generator over the seed, walks up to seven links from the li
 The cost is one generator step and at most eight loads per allocation that a free list serves.
 A bump allocation pays nothing.
 
-The link inside a free block is encoded with the process canary and the block's page. A write through a dangling pointer cannot steer the list.
+The link inside a free block is encoded with the link key and the block's page. A write through a dangling pointer cannot steer the list.
 A decoded link must be zero, or aligned and inside the arena, or the take aborts with `fern: corrupt free list link`.
 The record is the metadata section of [ALLOCATOR-AUDIT.md](ALLOCATOR-AUDIT.md).
 

@@ -312,3 +312,24 @@ function merge_sort(order: i32[], names: string[]): i32[] {
   }
   return out;
 }
+
+pub function type_name(v: json.JsonValue): string {
+  return match (v) {
+    json.JNull => "null",
+    json.JBool(_) => "boolean",
+    json.JNumber(_) => "number",
+    json.JString(_) => "string",
+    json.JArray(_) => "array",
+    json.JObject(_) => "object",
+  };
+}
+
+// The value as an error message shows it: compact, and cut to 11 bytes and
+// "..." when it is longer than 14.
+pub function shown(v: json.JsonValue): string {
+  let s = compact(v);
+  if (s.len() > 14) {
+    return slice_unchecked(s, 0, 11).to_owned() + "...";
+  }
+  return s;
+}

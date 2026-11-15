@@ -21,8 +21,11 @@ function q(s: string): string {
   return text.quote(s.as_bytes());
 }
 
+// age-inspect's errorf: the error, and the line that tells the user where
+// to report it.
 function fail(msg: string): i32 {
   eprint("age-inspect: error: " + msg);
+  eprint("age-inspect: report unexpected or unhelpful errors at https://filippo.io/age/report");
   return 1;
 }
 
@@ -242,7 +245,7 @@ function main(): i32 {
       for f in flags {
         if let goflag.BoolFlag(n, v) = f {
           if (n == "version" && v) {
-            print("v1.3.2-fern");
+            print("v1.3.2");
             return 0;
           }
           if (n == "json") {

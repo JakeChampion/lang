@@ -120,7 +120,9 @@ A plugin is a program `age-plugin-NAME` on the `PATH`. The port starts it
 with pipes for its standard input and output, as age does, with the
 argument `--age-plugin=recipient-v1` or `--age-plugin=identity-v1`. The
 plugin runs in the temporary directory, and its standard error goes to
-`/dev/null` unless `AGEDEBUG=plugin` is set. The two sides exchange
+`/dev/null` unless `AGEDEBUG=plugin` is set. Then, as in age, each byte
+that the port reads from the plugin or writes to it also goes to the
+standard error. The two sides exchange
 stanzas in the format of the header, in the state machines of the age
 plugin specification. The client side is in `plugin.fern`.
 
@@ -130,7 +132,8 @@ plugin specification. The client side is in `plugin.fern`.
 
 - A plugin can ask the user through the terminal: `msg` shows a message,
   `request-secret` and `request-public` ask for a value, and `confirm`
-  asks for a choice. After 5 seconds with no answer from the plugin, the
+  asks for a choice. `tty.fern` has the line editor of x/term for
+  `request-public`, with its keys and its echo. After 5 seconds with no answer from the plugin, the
   port writes `age: waiting on NAME plugin...`, as age does.
 
 - A plugin that is not on the `PATH` gets the message and the hints of
@@ -222,6 +225,7 @@ key gets the message of age for a type that it does not use.
 | `bech32.fern` | Bech32, and a constant-time decoder for a secret key line. |
 | `format.fern` | The header, its MAC, the X25519, hybrid and scrypt stanzas and the STREAM chunks. |
 | `ssh.fern` | SSH keys: the wire format, `authorized_keys` lines, private key files, and the `ssh-ed25519` and `ssh-rsa` stanzas. |
+| `goasn1.fern` | Go's `encoding/asn1` Unmarshal for the structures of private keys, with the errors of Go. |
 | `bcrypt.fern` | Blowfish, `bcrypt_pbkdf`, AES-256-CTR and AES-256-CBC, for an OpenSSH key with a passphrase. |
 | `tty.fern` | The terminal: prompts with no echo, and the messages for the user at the terminal. |
 | `wordlist.fern` | The BIP 39 word list, for the passphrases that age makes. |
@@ -245,15 +249,15 @@ encrypts decrypt with age. The messages and the exit codes are those of
 age 1.3.2:
 
 - `age: error: ...` and exit 1 for a failure. A hint follows on lines that
-  start with `age: hint: `.
+  start with `age: hint: `. The last line tells the user where to report
+  the error, as in age.
 
 - A bad flag gives the message of the Go `flag` package, the usage and
   exit 2.
 
-age adds a last line to each error, which tells the user to report the
-error to the age project. The port does not write that line. The usage
-text is the text of the port. `--version` prints `v1.3.2-fern`. The same
-rules apply to `age-keygen`, `age-inspect` and the plugins.
+- The usage text and the `--version` text are those of age 1.3.2.
+
+The same rules apply to `age-keygen`, `age-inspect` and the plugins.
 
 ### Differences from age 1.3.2
 
@@ -279,25 +283,20 @@ complete. Use `-o` for no partial plaintext.
 age 1.3.2 tries the other stanzas when `-i` names identities. The CCTV
 vector `scrypt_and_x25519` tests this.
 
-**SSH keys.** Go's parsers of EC, DSA and PKCS#1 keys give the text of an
-`encoding/asn1` error for some malformed keys. The port gives
-`asn1: structure error` with no detail. The same holds for a malformed
-ECDSA, security-key or certificate public key: the port gives
-`unknown SSH recipient type` where age gives the message of Go's parser
-for that type. Go's edwards25519 accepts an Ed25519 public key with a y value that is
-not canonical, and the port refuses it.
+**SSH keys.** `std/crypto/rsa` refuses an RSA key of less than 1024 bits
+and a key of more than two primes, as a security rule. Go parses such a
+key, so age can give another message for it.
 
-After an encrypted PEM key decrypts with valid padding, a key that does
-not parse gives `x509: decryption password incorrect`. Go gives the
-message of its parser when the error is not a structure error.
+The port gives the errors of Go's `x509`, `asn1` and `x/crypto/ssh`
+parsers. One message of Go can hold bytes that are not UTF-8: the type of
+a public key in `ssh: unknown key algorithm:`. A Fern string is UTF-8, so
+the port writes the type only when it is UTF-8.
 
-**Plugins.** The `request-public` line editor has the keys of a simple
-line: the printable bytes, Backspace, Enter, Ctrl-C and Ctrl-D. x/term
-also has the arrow keys and the history. With `AGEDEBUG=plugin`, the port
-copies each stanza to the standard error as it marshals it, where age
-copies the bytes. `age-plugin-batchpass` opens `/dev/fd/N` for
-`AGE_PASSPHRASE_FD`, where Go reads the descriptor itself, so a regular
-file is read from its start.
+**Plugins.** `age-plugin-batchpass` opens `/dev/fd/N` for
+`AGE_PASSPHRASE_FD`, where Go reads the descriptor itself. Fern has no
+builtin that makes a reader of a descriptor that the process gets from its
+parent. For a pipe the result is the same. A regular file is read from its
+start and not from its offset, and a socket cannot be opened.
 
 ## Security
 
@@ -348,8 +347,10 @@ The secret values go through the constant-time gate of the repository:
   Go does. It reads the exponents with masks, and then it checks that m^e
   is c again. That check and the OAEP check make only their verdicts
   public. The base64 of a PEM file and the checks of an RSA key are not
-  constant-time, as in Go: the port marks the key secret after them. Blowfish, for an OpenSSH key with a
-  passphrase, reads its tables at secret indexes, as OpenSSH does.
+  constant-time, as in Go: the port marks the key secret after them.
+
+- Blowfish, for an OpenSSH key with a passphrase, reads its tables at
+  secret indexes, as OpenSSH does.
 
 - The seed of a hybrid key, the ML-KEM-768 decapsulation key, the X25519
   scalars, the HPKE randomness and the HPKE shared secret are secret. The

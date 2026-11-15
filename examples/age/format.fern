@@ -20,6 +20,9 @@ pub const CHUNK: i32 = 65536;
 // The bytes of a sealed chunk: the text and the 16-byte tag.
 pub const SEALED: i32 = 65552;
 
+// The error of Go's crypto/ecdh for an X25519 share of low order.
+pub const LOW_ORDER: string = "crypto/ecdh: bad X25519 remote ECDH input: low order point";
+
 const X25519_LABEL: string = "age-encryption.org/v1/X25519";
 
 const SCRYPT_LABEL: string = "age-encryption.org/v1/scrypt";
@@ -400,8 +403,8 @@ pub function wrap(file_key: [u8], recipient: [u8], ephemeral: [u8]): Result[Stan
   __ct_public(share);
   let shared = match (x25519.x25519(ephemeral, recipient)) {
     Ok(p) => p,
-    Err(e) => {
-      return Err(e.message());
+    Err(_) => {
+      return Err(LOW_ORDER);
     },
   };
   let wrapped = wrap_key(shared, share, recipient);
@@ -463,7 +466,7 @@ pub function unwrap(st: Stanza, scalar: [u8], public: [u8]): Unwrapped {
   let shared = match (x25519.x25519(scalar, share)) {
     Ok(p) => p,
     Err(_) => {
-      return Invalid("invalid X25519 recipient: crypto/ecdh: bad X25519 remote ECDH input: low order point");
+      return Invalid("invalid X25519 recipient: " + LOW_ORDER);
     },
   };
   let key = wrap_key(shared, share, public);
@@ -530,7 +533,7 @@ pub function unwrap_hybrid(st: Stanza, k: hpke.HybridKey): Unwrapped {
   let c = match (hpke.setup_recipient(k, enc, PQ_LABEL.as_bytes())) {
     Ok(c) => c,
     Err(hpke.LowOrder) => {
-      return Invalid("invalid mlkem768x25519 recipient: crypto/ecdh: bad X25519 remote ECDH input: low order point");
+      return Invalid("invalid mlkem768x25519 recipient: " + LOW_ORDER);
     },
     Err(_) => {
       return Invalid("invalid mlkem768x25519 recipient: invalid encapsulated key size");
