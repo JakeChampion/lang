@@ -2,7 +2,9 @@ package coreutils
 
 import (
 	"bytes"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,6 +54,9 @@ func headCases(t *testing.T) []invocation {
 	seekNonl := headFile(t, dir, "seeknonl", seekText[:len(seekText)-1])
 	seekNul := headFile(t, dir, "seeknul", strings.ReplaceAll(seekText, "\n", "\x00"))
 	straddle := headFile(t, dir, "straddle", strings.Repeat("a", 99999)+"\n"+strings.Repeat("b", 10)+"\n")
+	blockLines := headFile(t, dir, "block-lines", strings.Repeat("x\n", 131073))
+	blockNonl := headFile(t, dir, "block-nonl", strings.Repeat("x\n", 131072)+"x")
+	blockNul := headFile(t, dir, "block-nul", strings.Repeat("x\x00", 131073))
 
 	return []invocation{
 		{name: "default ten lines", args: []string{s20}},
@@ -74,6 +79,15 @@ func headCases(t *testing.T) []invocation {
 		{name: "lines then bytes", args: []string{"-n", "2", "-c", "3", s20}},
 
 		{name: "elide lines", args: []string{"-n", "-3", s20}},
+		{name: "elide an exact block of lines", args: []string{"-n", "-32768", blockLines}},
+		{name: "elide two blocks of lines", args: []string{"-n", "-65536", blockLines}},
+		{name: "elide all lines across blocks", args: []string{"-n", "-131073", blockLines}},
+		{name: "elide an unterminated tail across blocks", args: []string{"-n", "-32769", blockNonl}},
+		{name: "elide NUL records across blocks", args: []string{"-z", "-n", "-65537", blockNul}},
+		{name: "elide across blocks before a missing file", args: []string{"-n", "-65536", blockLines, missing}},
+		{name: "elide the largest line count from a directory", args: []string{"-n", "-18446744073709551615", d}},
+		{name: "elide the largest line count from a missing file", args: []string{"-n", "-18446744073709551615", missing}},
+		{name: "elide the largest line count from stdin", args: []string{"-n", "-18446744073709551615"}, stdin: "a\nb\n"},
 		{name: "elide zero lines", args: []string{"-n", "-0", s20}},
 		{name: "elide bytes", args: []string{"-c", "-5", s20}},
 		{name: "elide zero bytes", args: []string{"-c", "-0", s20}},
@@ -304,6 +318,48 @@ func itoa(n int) string {
 
 func TestHeadParity(t *testing.T) {
 	requireParity(t, "head", headCases(t))
+}
+
+func TestHeadElideStdinOffset(t *testing.T) {
+	gnu, _ := gnuDir(t)
+	bins := []string{filepath.Join(gnu, "head"), fernBin(t, "head")}
+	dir := t.TempDir()
+	for _, content := range []string{seqLines(5000), strings.Repeat("x\n", 131073), strings.Repeat("x", 9000)} {
+		path := headFile(t, dir, "offset", content)
+		for _, start := range []int64{0, 13} {
+			for _, count := range []string{"-0", "-1", "-5000", "-65536", "-999999", "-18446744073709551615"} {
+				var wantOut, wantErr []byte
+				var wantPos int64
+				for i, bin := range bins {
+					f, err := os.Open(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := f.Seek(start, io.SeekStart); err != nil {
+						f.Close()
+						t.Fatal(err)
+					}
+					cmd := exec.Command(bin, "-n", count)
+					cmd.Args[0] = "head"
+					cmd.Env = append(os.Environ(), "LC_ALL=C")
+					cmd.Stdin = f
+					var out, diagnostic bytes.Buffer
+					cmd.Stdout, cmd.Stderr = &out, &diagnostic
+					runErr := cmd.Run()
+					pos, seekErr := f.Seek(0, io.SeekCurrent)
+					f.Close()
+					if runErr != nil || seekErr != nil {
+						t.Fatalf("head -n %s: run=%v seek=%v stderr=%q", count, runErr, seekErr, diagnostic.Bytes())
+					}
+					if i == 0 {
+						wantOut, wantErr, wantPos = out.Bytes(), diagnostic.Bytes(), pos
+					} else if !bytes.Equal(out.Bytes(), wantOut) || !bytes.Equal(diagnostic.Bytes(), wantErr) || pos != wantPos {
+						t.Errorf("head -n %s from %d: stdout equal=%t stderr equal=%t offset=%d, GNU offset=%d", count, start, bytes.Equal(out.Bytes(), wantOut), bytes.Equal(diagnostic.Bytes(), wantErr), pos, wantPos)
+					}
+				}
+			}
+		}
+	}
 }
 
 func TestHeadSeekableMatchesStreaming(t *testing.T) {
