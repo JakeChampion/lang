@@ -2909,6 +2909,12 @@ function converts_as_integer(t: typeinfo.Type): boolean {
   return is_integer(t) || is_char(t);
 }
 
+// A boolean is one bit of a word of 64 bits, which a packed field reads and
+// writes. The source has no such cast.
+function bit_of_word(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  return is_bool(from) && is_wide(to) || is_wide(from) && is_bool(to);
+}
+
 function reinterprets(from: typeinfo.Type, to: typeinfo.Type): boolean {
   return is_usize(from) && reference(to) || reference(from) && is_usize(to);
 }
@@ -2934,7 +2940,7 @@ function casts_descriptor(from: typeinfo.Type, to: typeinfo.Type): boolean {
 }
 
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
-  if (reinterprets(from, to)) {
+  if (reinterprets(from, to) || bit_of_word(from, to)) {
     return true;
   }
   if (casts_descriptor(from, to)) {
@@ -2968,7 +2974,7 @@ function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "cast arity";
   }
-  if (!converts_as_integer(result) && !is_float(result) && !reference(result) && !semtypes.is_resource_handle(result) && !semtypes.is_socket(result)) {
+  if (!converts_as_integer(result) && !is_bool(result) && !is_float(result) && !reference(result) && !semtypes.is_resource_handle(result) && !semtypes.is_socket(result)) {
     return "cast result type";
   }
   if (!cast_admits(f.values[ins.args[0]], result)) {
@@ -2986,6 +2992,17 @@ function unary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "unary operator contract";
   }
   return "";
+}
+
+// The mark in `imm` of an operation that takes a field out of a shared word,
+// or puts one in. The read of the field is one instruction for a count of
+// the size of a body.
+pub function field_step(): i32 {
+  return 1;
+}
+
+pub function is_field_step(ins: ssa.SInst): boolean {
+  return (ins.kind_tag == ssa.BINARY || ins.kind_tag == cast()) && ins.imm == field_step();
 }
 
 pub function scalar_op(kind: i32): boolean {
