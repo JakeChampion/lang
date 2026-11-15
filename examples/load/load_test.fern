@@ -6,10 +6,15 @@ import "std/json";
 import "std/test";
 import "std/time";
 import "std/utf8";
+import "./body";
+import "./debug";
+import "./fields";
 import "./histogram";
 import "./options";
 import "./report";
 import "./schedule";
+import "./sigv4";
+import "./urls";
 
 function shown(args: string[]): string {
   match (options.parse(args)) {
@@ -18,7 +23,11 @@ function shown(args: string[]): string {
         Some(d) => d.as_millis().to_string() + "ms",
         None => "none",
       };
-      return f"{o.host}:{o.port}{o.target} n={o.requests} c={o.connections} z={z} w={o.wait} m={o.method} H=[" + o.headers.join("|") + "] d=" + text(o.body);
+      let named: string[] = [];
+      for h in o.headers {
+        named = named.append(f"{h.name}: {h.value}");
+      }
+      return f"{o.host}:{o.port}{o.target} n={o.requests} c={o.connections} z={z} w={o.wait} m={o.method} H=[" + named.join("|") + "] d=" + text(o.body);
     },
     options.Help => {
       return "help";
@@ -28,6 +37,9 @@ function shown(args: string[]): string {
     },
     options.Refused(why) => {
       return "refused: " + why;
+    },
+    options.Failed(why) => {
+      return "failed: " + why;
     }
   }
   return "";
@@ -57,9 +69,9 @@ function test_options(): test.TestOutcome {
   return test.assert_eq_array(got, [
     "127.0.0.1:8080/ n=200 c=50 z=none w=false m=GET H=[] d=",
     "localhost:80/a/b?x=1 n=10000 c=8 z=none w=false m=GET H=[] d=",
-    "h:9/ n=200 c=3 z=none w=false m=POST H=[A: 1|B: 2] d=hi",
+    "h:9/ n=200 c=3 z=none w=false m=POST H=[a: 1|b: 2  ] d=hi",
     "h:80/ n=200 c=50 z=90000ms w=true m=HEAD H=[] d=",
-    "h:80/ n=2000000 c=50 z=500ms w=false m=GET H=[] d=",
+    "refused: give -n or -z, not both",
     "help",
   ]);
 }
@@ -72,62 +84,90 @@ function test_refusals(): test.TestOutcome {
     shown(["http://a/", "-n"]),
     shown(["-n", "0", "http://a/"]),
     shown(["-n", "12x", "http://a/"]),
-    shown(["-c", "70000", "http://a/"]),
-    shown(["--worker-threads", "2000", "http://a/"]),
+    shown(["-n", "-5", "http://a/"]),
+    shown(["-c", "x", "http://a/"]),
+    shown(["--worker-threads", "0", "http://a/"]),
     shown(["-z", "10", "http://a/"]),
-    shown(["-z", "0s", "http://a/"]),
+    shown(["-z", "5 parsecs", "http://a/"]),
     shown(["-m", "GE T", "http://a/"]),
     shown(["-H", "no colon", "http://a/"]),
     shown(["-H", "Bad Name: x", "http://a/"]),
-    shown(["-H", "Content-Length: 3", "http://a/"]),
-    shown(["ftp://a/"]),
+    shown(["--proxy-header", "x", "http://a/"]),
+    shown(["gopher://a/"]),
     shown(["-w", "http://a/"]),
-    shown(["--http2", "http://a/"]),
-    shown(["--http-version", "2", "http://a/"]),
-    shown(["-x", "http://proxy/", "http://a/"]),
-    shown(["-Zlines.txt", "http://a/"]),
-    shown(["--form=a=b", "http://a/"]),
-    shown(["--unix-socket", "/tmp/s", "http://a/"]),
+    shown(["--http2", "--http-version", "2", "http://a/"]),
+    shown(["--http-version", "4", "http://a/"]),
+    shown(["--http-version", "0.9", "http://a/"]),
+    shown(["-x", "notaurl", "http://a/"]),
+    shown(["-d", "x", "-Zlines.txt", "http://a/"]),
+    shown(["--form=a=b", "-D", "f", "http://a/"]),
+    shown(["--unix-socket", "/s", "--vsock-addr", "1:2", "http://a/"]),
+    shown(["--vsock-addr", "1", "http://a/"]),
     shown(["--insecure=yes", "http://a/"]),
     shown(["--burst-delay", "1s", "http://a/"]),
     shown(["--burst-delay", "1s", "--burst-rate", "2", "-q", "5", "http://a/"]),
+    shown(["--burst-delay", "1s", "--burst-rate", "0", "http://a/"]),
     shown(["-r", "x", "http://a/"]),
     shown(["-u", "days", "http://a/"]),
     shown(["-a", "nocolon", "http://a/"]),
     shown(["--connect-to", "a:80:b", "http://a/"]),
     shown(["-t", "soon", "http://a/"]),
+    shown(["-n", "1", "-n", "2", "http://a/"]),
+    shown(["--insecure", "--insecure", "http://a/"]),
+    shown(["--max-repeat", "3", "http://a/"]),
+    shown(["--cert", "c.pem", "http://a/"]),
+    shown(["--aws-sigv4", "aws:amz:r:s", "http://a/"]),
+    shown(["--aws-sigv4", "bad", "-a", "a:b", "http://a/"]),
+    shown(["--aws-sigv4", "aws:amz:r:s", "-a", "a:b:c", "http://a/"]),
+    shown(["-A", "a\x01", "http://a/"]),
+    shown(["-p", "0", "http://a/"]),
+    shown(["--output-format", "xml", "http://a/"]),
   ];
   return test.assert_eq_array(got, [
     "refused: give one URL",
     "refused: give one URL",
     "refused: unknown option -y",
     "refused: -n needs a value",
-    "refused: -n 0 must be more than 0",
+    "a:80/ n=0 c=50 z=none w=false m=GET H=[] d=",
     "refused: -n 12x is not a count",
-    "refused: -c 70000 is more than 65536",
-    "refused: --worker-threads 2000 is more than 1024",
+    "refused: -n needs a value",
+    "refused: -c x is not a count",
+    "refused: --worker-threads 0 must be more than 0",
     "refused: -z 10 is not a duration such as 10s, 500ms or 1m",
-    "refused: -z 0s must be longer than 0",
+    "refused: -z 5 parsecs is not a duration such as 10s, 500ms or 1m",
     "refused: -m GE T is not a method",
     "refused: -H no colon is not a field such as \"Name: value\"",
     "refused: -H Bad Name: x has no valid field name",
-    "refused: -H Content-Length is not allowed: the tool frames the body of -d itself",
-    "refused: ftp://a/ is not an http or https URL",
+    "refused: --proxy-header x is not a field such as \"Name: value\"",
+    "failed: gopher://a/ has no port",
     "refused: -w needs -z",
-    "refused: --http2: HTTP/2 is not supported: the tool uses HTTP/1.1",
-    "refused: --http-version 2 is not supported: the tool uses HTTP/1.1",
-    "refused: -x: proxies are not supported",
-    "refused: -Z: a body for each line is not supported: use -d or -D",
-    "refused: --form: multipart forms are not supported: use -D with -T",
-    "refused: --unix-socket: Unix sockets are not supported: give a TCP URL",
+    "failed: give --http2 or --http-version, not both",
+    "failed: HTTP version 4 is not known: use 1.0, 1.1, 2 or 3",
+    "failed: HTTP/0.9 is not supported: use 1.0, 1.1, 2 or 3",
+    "refused: -x notaurl is not a URL",
+    "refused: give -d or -Z, not both",
+    "refused: give -D or -F, not both",
+    "refused: give --unix-socket or --vsock-addr, not both",
+    "refused: --vsock-addr 1 is not CID:PORT",
     "refused: --insecure takes no value",
-    "refused: --burst-delay and --burst-rate go together",
+    "refused: --burst-delay needs --burst-rate",
     "refused: give -q or --burst-delay, not both",
+    "refused: --burst-rate 0 must be more than 0",
     "refused: -r x is not a count",
     "refused: -u days is not a unit: use ns, us, ms, s, m or h",
-    "refused: -a nocolon is not USER:PASSWORD",
+    "failed: -a nocolon is not USER:PASSWORD",
     "refused: --connect-to a:80:b is not HOST:PORT:TARGET_HOST:TARGET_PORT",
     "refused: -t soon is not a duration such as 10s, 500ms or 1m",
+    "refused: give -n once",
+    "refused: give --insecure once",
+    "refused: --max-repeat needs --rand-regex-url",
+    "refused: --cert needs --key",
+    "failed: --aws-sigv4 needs the AWS keys in -a ACCESS_KEY:SECRET_KEY",
+    "failed: --aws-sigv4 bad is not aws:amz:REGION:SERVICE",
+    "failed: -a must be ACCESS_KEY:SECRET_KEY for --aws-sigv4",
+    "failed: -A has a control character in its value",
+    "refused: -p 0 must be more than 0",
+    "refused: --output-format xml is not a format: use text, json, csv or quiet",
   ]);
 }
 
@@ -140,11 +180,12 @@ function more_shown(args: string[]): string {
         Some(d) => d.as_millis().to_string() + "ms",
         None => "none",
       };
-      let to = match (o.connect_to) {
-        Some(c) => f"{c.from_host}:{c.from_port}>{c.to_host}:{c.to_port}",
-        None => "none",
-      };
-      let place = o.address(o.origin());
+      let entries: string[] = [];
+      for c in o.connect_to {
+        entries = entries.append(f"{c.from_host}:{c.from_port}>{c.to_host}:{c.to_port}");
+      }
+      let to = if (entries.len() == 0) { "none" } else { entries.join(",") };
+      let place = o.address(o.origin(), 1);
       return f"tls={o.tls} port={o.port} j={o.threads} t={t} ct={o.connect_timeout.as_millis()}ms keep={o.keep_alive} r={o.redirects} insecure={o.insecure} cacert={o.cacert} family={o.family} to={to} at={place.0}:{place.1} gzip={o.compression} correct={o.correct} format={o.format} out={o.output} u={o.unit} D={o.body_file}";
     },
     options.Help => {
@@ -155,6 +196,9 @@ function more_shown(args: string[]): string {
     },
     options.Refused(why) => {
       return "refused: " + why;
+    },
+    options.Failed(why) => {
+      return "failed: " + why;
     }
   }
   return "";
@@ -167,6 +211,7 @@ function test_more_options(): test.TestOutcome {
     more_shown(["--redirect=2", "--cacert", "ca.pem", "--ipv6", "--disable-compression", "--latency-correction", "--output-format", "quiet", "-o", "out.txt", "-u", "ms", "-D", "body.bin", "http://h/"]),
     more_shown(["--connect-to", "h:80:127.0.0.1:9000", "--no-tui", "--no-color", "--fps", "30", "-p", "4", "--http-version", "1.1", "--no-pre-lookup", "http://h/"]),
     more_shown(["--connect-to", "[::1]:443:localhost:9443", "https://h/"]),
+    more_shown(["--connect-to", "h:80:a:1", "--connect-to", "h:80:[::1]:2", "--connect-to", "x:80:b:3", "http://h/"]),
     more_shown(["-V"]),
     more_shown(["--version", "-n", "x"]),
   ];
@@ -176,6 +221,7 @@ function test_more_options(): test.TestOutcome {
     "tls=false port=80 j=0 t=none ct=5000ms keep=true r=2 insecure=false cacert=ca.pem family=6 to=none at=h:80 gzip=false correct=true format=quiet out=out.txt u=ms D=body.bin",
     "tls=false port=80 j=0 t=none ct=5000ms keep=true r=0 insecure=false cacert= family=0 to=h:80>127.0.0.1:9000 at=127.0.0.1:9000 gzip=true correct=false format=text out= u= D=",
     "tls=true port=443 j=0 t=none ct=5000ms keep=true r=0 insecure=false cacert= family=0 to=::1:443>localhost:9443 at=h:443 gzip=true correct=false format=text out= u= D=",
+    "tls=false port=80 j=0 t=none ct=5000ms keep=true r=0 insecure=false cacert= family=0 to=h:80>a:1,h:80>::1:2,x:80>b:3 at=::1:2 gzip=true correct=false format=text out= u= D=",
     "version",
     "version",
   ]);
@@ -184,9 +230,9 @@ function test_more_options(): test.TestOutcome {
 // A redirect can name an absolute URL, an absolute path, a path relative to
 // the request, or a URL without its scheme.
 function test_redirect_locations(): test.TestOutcome {
-  let base = options.Origin { tls: false, host: "h", port: 8080, target: "/a/b?q=1" };
+  let base = options.Origin { scheme: "http", tls: false, host: "h", port: 8080, target: "/a/b?q=1" };
   let got: string[] = [];
-  for raw in ["/next", "next", "http://other/x?y", "https://h:8443", "//cdn:81/p", "ftp://x/", "http://"] {
+  for raw in ["/next", "next", "http://other/x?y", "https://h:8443", "//cdn:81/p", "ftp://x/", "http://", "HTTP://Other/a/../b c#frag", "/q?x=\"y\""] {
     match (options.origin(raw, base)) {
       Ok(o) => {
         got = got.append(f"{o.tls} {o.host}:{o.port}{o.target}");
@@ -202,8 +248,10 @@ function test_redirect_locations(): test.TestOutcome {
     "false other:80/x?y",
     "true h:8443/",
     "false cdn:81/p",
-    "refused: ftp://x/ is not an http or https URL",
+    "false x:21/",
     "refused: http:// has no host",
+    "false other:80/b%20c",
+    "false h:8080/q?x=%22y%22",
   ]);
 }
 
@@ -224,6 +272,9 @@ function rate_shown(args: string[]): string {
     },
     options.Refused(why) => {
       return "refused: " + why;
+    },
+    options.Failed(why) => {
+      return "failed: " + why;
     }
   }
   return "";
@@ -250,14 +301,14 @@ function test_rate_options(): test.TestOutcome {
     "q=100 format=text",
     "q=0.5 format=json",
     "q=2000 format=text",
-    "refused: -q 0 must be more than 0 and not more than 1000000000",
-    "refused: -q -5 must be more than 0 and not more than 1000000000",
-    "refused: -q nan must be more than 0 and not more than 1000000000",
-    "refused: -q 1e10 must be more than 0 and not more than 1000000000",
+    "q=none format=text",
+    "refused: -q needs a value",
+    "refused: -q nan must be 0 or more",
+    "q=10000000000 format=text",
     "refused: -q fast is not a rate such as 100 or 0.5",
     "refused: -q needs a value",
-    "refused: --output-format csv is not supported: use text, json or quiet",
-    "refused: --output-format yaml is not supported: use text, json or quiet",
+    "q=none format=csv",
+    "refused: --output-format yaml is not a format: use text, json, csv or quiet",
     "refused: --output-format needs a value",
   ]);
 }
@@ -341,6 +392,10 @@ function request_of(args: string[]): string {
   return "";
 }
 
+// The request bytes as oha's hyper writes them, from the captures of a test
+// server: the fields in the order of oha's header map and in lower case, a
+// Content-Length of -H that limits the body, a Transfer-Encoding of -H that
+// makes it chunked, HTTP/1.0, and the absolute URL of a proxy.
 function test_request(): test.TestOutcome {
   let got = [
     request_of(["http://127.0.0.1/"]),
@@ -348,13 +403,23 @@ function test_request(): test.TestOutcome {
     request_of(["-m", "PUT", "-H", "host: other", "-H", "user-agent: me", "--disable-compression", "http://h/"]),
     request_of(["-A", "text/plain", "-T", "a/b", "--host", "virt", "-a", "user:pass", "--disable-keepalive", "--disable-compression", "https://h:443/"]),
     request_of(["-H", "X: 1", "-H", "x: 2", "-A", "a/a", "-H", "Accept: b/b", "-a", "u:", "--disable-compression", "https://h:8443/"]),
+    request_of(["-d", "abcdef", "-H", "Content-Length: 3", "http://h/"]),
+    request_of(["-d", "abcdef", "-H", "Transfer-Encoding: chunked", "--disable-compression", "http://h/"]),
+    request_of(["--http-version", "1.0", "--disable-keepalive", "--disable-compression", "http://h/"]),
+    request_of(["-x", "http://p:3128", "--proxy-header", "Proxy-Authorization: Basic eA==", "--disable-compression", "http://example.test:8080/q"]),
+    request_of(["-x", "http://p", "--connect-to", "example.test:80:127.0.0.9:81", "--disable-compression", "http://example.test/r"]),
   ];
   return test.assert_eq_array(got, [
-    "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUser-Agent: fern-load/0.3\r\nAccept: */*\r\nAccept-Encoding: gzip, compress, deflate, br\r\n\r\n",
-    "POST /p?q HTTP/1.1\r\nHost: h:8080\r\nUser-Agent: fern-load/0.3\r\nAccept: */*\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
-    "PUT / HTTP/1.1\r\nhost: other\r\nuser-agent: me\r\nAccept: */*\r\nContent-Length: 0\r\n\r\n",
-    "GET / HTTP/1.1\r\nHost: virt\r\nUser-Agent: fern-load/0.3\r\nAccept: text/plain\r\nContent-Type: a/b\r\nAuthorization: Basic dXNlcjpwYXNz\r\nConnection: close\r\n\r\n",
-    "GET / HTTP/1.1\r\nHost: h:8443\r\nUser-Agent: fern-load/0.3\r\nAccept: b/b\r\nAuthorization: Basic dTo=\r\nx: 2\r\n\r\n",
+    "GET / HTTP/1.1\r\naccept: */*\r\naccept-encoding: gzip, compress, deflate, br\r\nuser-agent: fern-load/0.4\r\nhost: 127.0.0.1\r\n\r\n",
+    "POST /p?q HTTP/1.1\r\naccept: */*\r\nuser-agent: fern-load/0.4\r\ncontent-type: application/json\r\nhost: h:8080\r\ncontent-length: 2\r\n\r\n{}",
+    "PUT / HTTP/1.1\r\naccept: */*\r\nuser-agent: me\r\nhost: other\r\n\r\n",
+    "GET / HTTP/1.1\r\naccept: text/plain\r\nuser-agent: fern-load/0.4\r\ncontent-type: a/b\r\nhost: virt\r\nauthorization: Basic dXNlcjpwYXNz\r\nconnection: close\r\n\r\n",
+    "GET / HTTP/1.1\r\naccept: b/b\r\nuser-agent: fern-load/0.4\r\nauthorization: Basic dTo=\r\nx: 2\r\nhost: h:8443\r\n\r\n",
+    "GET / HTTP/1.1\r\naccept: */*\r\naccept-encoding: gzip, compress, deflate, br\r\nuser-agent: fern-load/0.4\r\ncontent-length: 3\r\nhost: h\r\n\r\nabc",
+    "GET / HTTP/1.1\r\naccept: */*\r\nuser-agent: fern-load/0.4\r\ntransfer-encoding: chunked\r\nhost: h\r\n\r\n6\r\nabcdef\r\n0\r\n\r\n",
+    "GET / HTTP/1.0\r\naccept: */*\r\nuser-agent: fern-load/0.4\r\nhost: h\r\n\r\n",
+    "GET http://example.test:8080/q HTTP/1.1\r\naccept: */*\r\nuser-agent: fern-load/0.4\r\nproxy-authorization: Basic eA==\r\nhost: example.test:8080\r\n\r\n",
+    "GET http://127.0.0.9:81/r HTTP/1.1\r\naccept: */*\r\nuser-agent: fern-load/0.4\r\nhost: example.test\r\n\r\n",
   ]);
 }
 
@@ -364,11 +429,11 @@ function test_redirect_request(): test.TestOutcome {
   let Ok(o) = run_options(["-H", "Host: mine", "--disable-compression", "http://h/"]) else {
     return test.fail("not parsed");
   };
-  let other = options.Origin { tls: true, host: "cdn", port: 8443, target: "/x" };
-  let same = options.Origin { tls: false, host: "h", port: 80, target: "/y" };
+  let other = options.Origin { scheme: "https", tls: true, host: "cdn", port: 8443, target: "/x" };
+  let same = options.Origin { scheme: "http", tls: false, host: "h", port: 80, target: "/y" };
   return test.assert_eq_array([text(options.request(o, other)), text(options.request(o, same))], [
-    "GET /x HTTP/1.1\r\nHost: cdn:8443\r\nUser-Agent: fern-load/0.3\r\nAccept: */*\r\n\r\n",
-    "GET /y HTTP/1.1\r\nHost: mine\r\nUser-Agent: fern-load/0.3\r\nAccept: */*\r\n\r\n",
+    "GET /x HTTP/1.1\r\naccept: */*\r\nuser-agent: fern-load/0.4\r\nhost: cdn:8443\r\n\r\n",
+    "GET /y HTTP/1.1\r\naccept: */*\r\nuser-agent: fern-load/0.4\r\nhost: mine\r\n\r\n",
   ]);
 }
 
@@ -474,8 +539,8 @@ function test_framing(): test.TestOutcome {
     "done 200 29 false",
     "done 200 38 true",
     "done 204 27 true",
-    "bad: connection closed",
-    "bad: connection closed before the response was complete",
+    "bad: connection closed before message completed",
+    "bad: connection closed before message completed",
     "bad: malformed response",
   ]);
 }
@@ -483,7 +548,7 @@ function test_framing(): test.TestOutcome {
 // A response with `latency`, whose first byte came 100 us after the start of
 // the request, with a body of 5 bytes, that ended `ended` ns into the run.
 function reply(status: i32, latency: i64, dialup: i64, ended: i64): report.Response {
-  return report.Response { status: status, latency: latency, first_byte: latency - 100000, bytes: 5, dialup: dialup, ended: ended };
+  return report.Response { status: status, latency: latency, first_byte: latency - 100000, bytes: 5, dialup: dialup, sent: ended - latency, due: -1, ended: ended, url: "" };
 }
 
 function three(): report.Tally {
@@ -498,7 +563,7 @@ function test_summary(): test.TestOutcome {
 
 function test_summary_without_responses(): test.TestOutcome {
   let t = report.tally().error("Connection refused").error("Connection refused");
-  let want = "Summary:\n  Success rate:\t0.00%\n  Total:\t0.5000 us\n  Requests/sec:\t4000000.0000\n\n  Total data:\t0 B\n  Size/request:\tNaN\n  Size/sec:\t0 B\n\n\nDetails (average, fastest, slowest):\n  DNS+dialup:\tNaN us, NaN us, NaN us\n  DNS-lookup:\tNaN us, NaN us, NaN us\n\nStatus code distribution:\n\nError distribution:\n  [2] Connection refused\n";
+  let want = "Summary:\n  Success rate:\t0.00%\n  Total:\t0.5000 us\n  Slowest:\t-inf us\n  Fastest:\tinf us\n  Average:\tNaN us\n  Requests/sec:\t4000000.0000\n\n  Total data:\t0 B\n  Size/request:\tNaN\n  Size/sec:\t0 B\n\nResponse time histogram:\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n    NaN us [0] |\n\nResponse time distribution:\n  10.00% in NaN us\n  25.00% in NaN us\n  50.00% in NaN us\n  75.00% in NaN us\n  90.00% in NaN us\n  95.00% in NaN us\n  99.00% in NaN us\n  99.90% in NaN us\n  99.99% in NaN us\n\n\nDetails (average, fastest, slowest):\n  DNS+dialup:\tNaN us, inf us, -inf us\n  DNS-lookup:\tNaN us, inf us, -inf us\n\nStatus code distribution:\n\nError distribution:\n  [2] Connection refused\n";
   return test.assert_eq(t.summary(500, "us"), want);
 }
 
@@ -510,7 +575,7 @@ function test_json(): test.TestOutcome {
 
 function test_json_without_responses(): test.TestOutcome {
   let t = report.tally().error("Connection refused").error("Connection refused");
-  let want = "{\n  \"summary\": {\n    \"successRate\": 0.0,\n    \"total\": 5e-7,\n    \"slowest\": null,\n    \"fastest\": null,\n    \"average\": null,\n    \"requestsPerSec\": 4000000.0,\n    \"totalData\": 0,\n    \"sizePerRequest\": null,\n    \"sizePerSec\": 0.0\n  },\n  \"metrics\": {\n    \"success_rate\": 0.0,\n    \"requests_per_sec\": 4000000.0,\n    \"latency_ms\": {\n      \"min\": null,\n      \"mean\": null,\n      \"p50\": null,\n      \"p95\": null,\n      \"p99\": null,\n      \"max\": null\n    }\n  },\n  \"responseTimeHistogram\": {},\n  \"latencyPercentiles\": {\n    \"p10\": null,\n    \"p25\": null,\n    \"p50\": null,\n    \"p75\": null,\n    \"p90\": null,\n    \"p95\": null,\n    \"p99\": null,\n    \"p99.9\": null,\n    \"p99.99\": null\n  },\n  \"firstByteHistogram\": {},\n  \"firstBytePercentiles\": {\n    \"p10\": null,\n    \"p25\": null,\n    \"p50\": null,\n    \"p75\": null,\n    \"p90\": null,\n    \"p95\": null,\n    \"p99\": null,\n    \"p99.9\": null,\n    \"p99.99\": null\n  },\n  \"rps\": {\n    \"mean\": null,\n    \"stddev\": null,\n    \"max\": null,\n    \"min\": null,\n    \"percentiles\": {\n      \"p10\": null,\n      \"p25\": null,\n      \"p50\": null,\n      \"p75\": null,\n      \"p90\": null,\n      \"p95\": null,\n      \"p99\": null,\n      \"p99.9\": null,\n      \"p99.99\": null\n    }\n  },\n  \"details\": {\n    \"DNSDialup\": {\n      \"average\": null,\n      \"fastest\": null,\n      \"slowest\": null\n    },\n    \"DNSLookup\": {\n      \"average\": null,\n      \"fastest\": null,\n      \"slowest\": null\n    },\n    \"firstByte\": {\n      \"average\": null,\n      \"fastest\": null,\n      \"slowest\": null\n    }\n  },\n  \"statusCodeDistribution\": {},\n  \"errorDistribution\": {\n    \"Connection refused\": 2\n  }\n}";
+  let want = "{\n  \"summary\": {\n    \"successRate\": 0.0,\n    \"total\": 5e-7,\n    \"slowest\": null,\n    \"fastest\": null,\n    \"average\": null,\n    \"requestsPerSec\": 4000000.0,\n    \"totalData\": 0,\n    \"sizePerRequest\": null,\n    \"sizePerSec\": 0.0\n  },\n  \"metrics\": {\n    \"success_rate\": 0.0,\n    \"requests_per_sec\": 4000000.0,\n    \"latency_ms\": {\n      \"min\": null,\n      \"mean\": null,\n      \"p50\": null,\n      \"p95\": null,\n      \"p99\": null,\n      \"max\": null\n    }\n  },\n  \"responseTimeHistogram\": {\n    \"NaN\": 0\n  },\n  \"latencyPercentiles\": {\n    \"p10\": null,\n    \"p25\": null,\n    \"p50\": null,\n    \"p75\": null,\n    \"p90\": null,\n    \"p95\": null,\n    \"p99\": null,\n    \"p99.9\": null,\n    \"p99.99\": null\n  },\n  \"firstByteHistogram\": {\n    \"NaN\": 0\n  },\n  \"firstBytePercentiles\": {\n    \"p10\": null,\n    \"p25\": null,\n    \"p50\": null,\n    \"p75\": null,\n    \"p90\": null,\n    \"p95\": null,\n    \"p99\": null,\n    \"p99.9\": null,\n    \"p99.99\": null\n  },\n  \"rps\": {\n    \"mean\": null,\n    \"stddev\": null,\n    \"max\": null,\n    \"min\": null,\n    \"percentiles\": {\n      \"p10\": null,\n      \"p25\": null,\n      \"p50\": null,\n      \"p75\": null,\n      \"p90\": null,\n      \"p95\": null,\n      \"p99\": null,\n      \"p99.9\": null,\n      \"p99.99\": null\n    }\n  },\n  \"details\": {\n    \"DNSDialup\": {\n      \"average\": null,\n      \"fastest\": null,\n      \"slowest\": null\n    },\n    \"DNSLookup\": {\n      \"average\": null,\n      \"fastest\": null,\n      \"slowest\": null\n    },\n    \"firstByte\": {\n      \"average\": null,\n      \"fastest\": null,\n      \"slowest\": null\n    }\n  },\n  \"statusCodeDistribution\": {},\n  \"errorDistribution\": {\n    \"Connection refused\": 2\n  }\n}";
   return test.assert_eq(t.json(500), want);
 }
 
@@ -613,6 +678,151 @@ function test_rates(): test.TestOutcome {
   return test.assert_eq_array(texts.concat([j, nulls]), ["100", "100", "300", "1200", want_j, want_nulls]);
 }
 
+// The signature of a request that oha 1.16 sent to a test server at
+// 2026-11-14T16:31:26Z, with the same keys, fields and body.
+function test_sigv4(): test.TestOutcome {
+  let Ok(o) = run_options(["-a", "AK:SK", "--aws-session", "TOK", "--aws-sigv4", "aws:amz:us-east-1:s3", "-H", "X-Custom: 1", "-d", "body", "http://127.0.0.1:18555/p/a?b=2&a=1"]) else {
+    return test.fail("not parsed");
+  };
+  let Some(aws) = o.aws else {
+    return test.fail("no AWS keys");
+  };
+  let f = sigv4.sign(aws, o.method, options.base_fields(o), o.origin(), o.body, time.timestamp_from_unix(1794673886));
+  let got: string[] = [];
+  for name in ["x-amz-date", "host", "x-amz-security-token", "content-length", "x-custom", "authorization"] {
+    got = got.append(name + "=" + fields.get(f, name).unwrap_or("-"));
+  }
+  return test.assert_eq_array(got.append(sigv4.canonical_query("b=2&a=1&c=x+y&d")), [
+    "x-amz-date=20261114T163126Z",
+    "host=127.0.0.1",
+    "x-amz-security-token=TOK",
+    "content-length=4",
+    "x-custom=1",
+    "authorization=AWS4-HMAC-SHA256 Credential=AK/20261114/us-east-1/s3/aws4_request,SignedHeaders=content-length;host;x-amz-date;x-amz-security-token;x-custom,Signature=1524e13e5dc21da4a7c28b95de1f61dfe437508a129da80a3bfd9c6aa5d76166",
+    "a=1&b=2&c=x%20y&d=",
+  ]);
+}
+
+// The body of -F as oha writes it, and the lines of -Z as Rust reads them.
+function test_bodies(): test.TestOutcome {
+  let parts: body.Part[] = [];
+  for raw in ["a=b", "up=data;filename=x.txt;type=text/plain", "k=v;other=1"] {
+    match (body.part(raw)) {
+      Ok(p) => {
+        parts = parts.append(p);
+      },
+      Err(why) => {
+        return test.fail(why);
+      }
+    }
+  }
+  let form = text(body.form(parts, "B"));
+  let lines: string[] = [];
+  for l in body.lines("one\r\ntwo\n\nfour\nfive\r".bytes()) {
+    lines = lines.append("[" + text(l) + "]");
+  }
+  let bad = body.part("novalue").err().unwrap_or("");
+  return test.assert_eq_array([form, lines.join(""), bad, body.form_type("B")], [
+    "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n--B\r\nContent-Disposition: form-data; name=\"up\"; filename=\"x.txt\"\r\nContent-Type: text/plain\r\n\r\ndata\r\n--B\r\nContent-Disposition: form-data; name=\"k\"\r\n\r\nv\r\n--B--\r\n",
+    "[one][two][][four][five\r]",
+    "-F novalue has no '='",
+    "multipart/form-data; boundary=B",
+  ]);
+}
+
+// --output-format csv: the record of each response, in the order of their
+// start, in seconds as Rust writes them.
+function test_csv(): test.TestOutcome {
+  let t = report.tally_for(false, true).response(reply(200, 1000000, 400000, 3000000)).response(reply(404, 1500000, -1, 1600000)).error("timeout");
+  let more = report.tally_for(false, true).response(reply(201, 250000, 50000, 260000));
+  return test.assert_eq(t.merge(more).csv(), "request-start,DNS,DNS+dialup,Response-delay,request-duration,bytes,status\n0.00001,0,0.00005,0.00015,0.00025,5,201\n0.0001,0,0,0.0014,0.0015,5,404\n0.002,0,0.0004,0.0009,0.001,5,200\n");
+}
+
+// --stats-success-breakdown: the latencies of the 2xx responses and of the
+// others, in the text and the JSON summary.
+function test_breakdown(): test.TestOutcome {
+  let t = report.tally_for(true, false).response(reply(200, 1000000, 400000, 1000000)).response(reply(500, 3000000, -1, 3000000));
+  let text_summary = t.summary(10000000, "ms");
+  let doc = t.json(10000000);
+  let got: string[] = [];
+  for h in ["Response time histogram (2xx only):\n  1.000 ms [1] |", "Response time distribution (2xx only):\n  10.00% in 1.0000 ms", "Response time histogram (4xx + 5xx only):\n  3.000 ms [1] |", "Response time distribution (4xx + 5xx only):\n  10.00% in 3.0000 ms"] {
+    got = got.append(text_summary.index_of(h).is_some().to_string());
+  }
+  let keys = ["\"firstBytePercentiles\"", "\"responseTimeHistogramSuccessful\"", "\"latencyPercentilesSuccessful\"", "\"responseTimeHistogramNotSuccessful\"", "\"latencyPercentilesNotSuccessful\"", "\"rps\""];
+  let last = -1;
+  for k in keys {
+    let at = doc.index_of(k).unwrap_or(-1);
+    got = got.append((at > last).to_string());
+    last = at;
+  }
+  let plain = report.tally().response(reply(200, 1000000, 400000, 1000000));
+  got = got.append(plain.summary(10000000, "ms").index_of("2xx only").is_none().to_string());
+  got = got.append(plain.json(10000000).index_of("Successful").is_none().to_string());
+  return test.assert_eq_array(got, ["true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true"]);
+}
+
+// The colors of the summary on a terminal, as oha 1.16 wrote them in a
+// pseudo-terminal.
+function test_styled_summary(): test.TestOutcome {
+  let t = report.tally().response(reply(200, 1000000, 400000, 1000000)).response(reply(503, 500000000, -1, 600000000));
+  let lines = t.styled_summary(1000000000, "ms", report.Style { on: true }).split("\n");
+  let want = [
+    "\x1b[1m\x1b[4mSummary:\x1b[0m",
+    "\x1b[38;5;10m\x1b[1m  Success rate:\t100.00%\x1b[0m",
+    "\x1b[38;5;11m  Slowest:\t500.0000 ms\x1b[39m",
+    "\x1b[38;5;10m  Fastest:\t1.0000 ms\x1b[39m",
+    "\x1b[38;5;14m  Average:\t250.5000 ms\x1b[39m",
+    "\x1b[38;5;10m    1.000 ms [1] |\x1b[39m" + "\x1b[38;5;10m■\x1b[39m".repeat(32),
+    "\x1b[38;5;9m  500.000 ms [1] |\x1b[39m" + "\x1b[38;5;9m■\x1b[39m".repeat(32),
+    "\x1b[38;5;9m  99.99% in 500.0000 ms\x1b[39m",
+    "\x1b[38;5;9m  [503] 1 responses\x1b[39m",
+  ];
+  let got: string[] = [];
+  for w in want {
+    got = got.append(lines.contains(w).to_string());
+  }
+  return test.assert_eq_array(got, ["true", "true", "true", "true", "true", "true", "true", "true", "true"]);
+}
+
+// A run with no request that ended has a success rate of NaN, as in oha.
+function test_no_requests(): test.TestOutcome {
+  let s = report.tally().summary(1000, "");
+  return test.assert_true(s.starts_with("Summary:\n  Success rate:\tNaN%\n  Total:\t1000.0000 ns\n  Slowest:\t-inf ns\n"));
+}
+
+// The request and the response of --debug, as oha 1.16 wrote them for the
+// same request to a test server.
+function test_debug_text(): test.TestOutcome {
+  let f = [fields.Field { name: "accept", value: "*/*" }, fields.Field { name: "x-q", value: "é\"" }, fields.Field { name: "host", value: "127.0.0.1:18558" }];
+  let got = debug.request_text("GET", "/d", options.HTTP_11, f, "a\"b\\n\x01ÿ".bytes()) + debug.request_text("GET", "http://h/", options.HTTP_2, [], []);
+  got += debug.response_text(200, options.HTTP_11, [fields.Field { name: "content-length", value: "2" }], "ok".bytes());
+  return test.assert_eq(got, "Request {\n    method: GET,\n    uri: /d,\n    version: HTTP/1.1,\n    headers: {\n        \"accept\": \"*/*\",\n        \"x-q\": \"\\xc3\\xa9\\\"\",\n        \"host\": \"127.0.0.1:18558\",\n    },\n    body: Full {\n        data: Some(\n            b\"a\\\"b\\\\n\\x01\\xc3\\xbf\",\n        ),\n    },\n}\nRequest {\n    method: GET,\n    uri: http://h/,\n    version: HTTP/2.0,\n    headers: {\n    },\n    body: Full {\n        data: None,\n    },\n}\nResponse {\n    status: 200,\n    version: HTTP/1.1,\n    headers: {\n        \"content-length\": \"2\",\n    },\n    body: b\"ok\",\n}\n");
+}
+
+// The durations of humantime, the counts of -n, and the pattern of
+// --rand-regex-url.
+function test_values(): test.TestOutcome {
+  let got: string[] = [];
+  for v in ["10s", "1m 30s", "2min", "500ms", "3us", "7ns", "1h1m", "1week", "1day", "1M", "0s"] {
+    match (options.duration("-z", v)) {
+      Ok(d) => {
+        got = got.append(d.as_nanos().to_string());
+      },
+      Err(why) => {
+        got = got.append(why);
+      }
+    }
+  }
+  for v in ["10", "10k", "1.5k", "2M", " 7 ", "+3", "0.0001k"] {
+    got = got.append(options.requests(v).unwrap_or(-1).to_string());
+  }
+  return test.assert_eq_array(got.append(urls.pattern("http://a.b/[a-z]{2}.x")), [
+    "10000000000", "90000000000", "120000000000", "500000000", "3000", "7", "3660000000000", "604800000000000", "86400000000000", "2630016000000000", "0",
+    "10", "10000", "1500", "2000000", "7", "3", "0",
+    "http://a\\.b/[a-z]{2}\\.x",
+  ]);
+}
+
 function main(): i32 {
   let r = test.new("load");
   r = r.it("the options of oha, in any order", test_options);
@@ -638,5 +848,13 @@ function main(): i32 {
   r = r.it("a histogram key has no exponent", test_plain);
   r = r.it("the sizes have binary units", test_sizes);
   r = r.it("rps has a sample for each full 10 ms", test_rates);
+  r = r.it("--aws-sigv4 signs as oha signs", test_sigv4);
+  r = r.it("-F and -Z make the bodies of oha", test_bodies);
+  r = r.it("--output-format csv has a record of each response", test_csv);
+  r = r.it("--stats-success-breakdown splits the latencies", test_breakdown);
+  r = r.it("a run with no request has a success rate of NaN", test_no_requests);
+  r = r.it("the summary on a terminal has the colors of oha", test_styled_summary);
+  r = r.it("--debug writes the request and the response as oha does", test_debug_text);
+  r = r.it("durations, counts and URL patterns as oha reads them", test_values);
   return r.finish();
 }

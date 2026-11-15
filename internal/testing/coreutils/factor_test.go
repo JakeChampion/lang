@@ -14,6 +14,17 @@ func factorCases(t *testing.T) []invocation {
 	t.Helper()
 	return []invocation{
 		{name: "twelve", args: []string{"12"}},
+		{name: "wide rho product", args: []string{"18446744400127067027"}},
+		{name: "wide rho repeated small factor", args: []string{"1094626902466003411517"}},
+		{name: "wide rho repeated small factor with exponents", args: []string{"-h", "1094626902466003411517"}},
+		{name: "wide rho square", args: []string{"18446744202558570721"}},
+		{name: "wide rho square with exponents", args: []string{"-h", "18446744202558570721"}},
+		{name: "wide rho products among small operands", args: []string{"12", "18446744400127067027", "18446744202558570721", "15"}},
+		{name: "wide rho products from stdin", stdin: "18446744400127067027\n18446744202558570721\n"},
+		{name: "wide rho product after an invalid operand", args: []string{"x", "18446744400127067027"}},
+		{name: "wide rho product before an invalid operand", args: []string{"18446744400127067027", "x"}},
+		{name: "wide rho product with full stdout", args: []string{"18446744400127067027"}, stdout: stdoutFull},
+		{name: "wide rho product with closed stdout", args: []string{"18446744400127067027"}, stdout: stdoutClosed},
 		{name: "zero", args: []string{"0"}},
 		{name: "one", args: []string{"1"}},
 		{name: "two", args: []string{"2"}},

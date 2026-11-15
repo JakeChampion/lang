@@ -33,6 +33,14 @@ function main(): i32 {
   if (small.exit_code != 7 || small.stdout != "piped") {
     return 5;
   }
+  let first = subprocess("sh", ["-c", "head -c 1048576 /dev/zero; cat"], input);
+  if (first.exit_code != 0 || first.stdout.len() != 2097152 || !first.stdout.ends_with(input)) {
+    return 6;
+  }
+  let piped = subprocess("sh", ["-c", "kill -PIPE $$; exit 7"], "");
+  if (piped.exit_code != 141) {
+    return 7;
+  }
   return 0;
 }
 `
@@ -47,7 +55,8 @@ func writeSubprocessPipesSrc(t *testing.T) string {
 }
 
 // Output past 64 KiB, a child that writes before it reads all of its input,
-// a full standard error pipe, and a child that reads no input.
+// a full standard error pipe, a child that reads no input, and a child that
+// gets the default action for SIGPIPE.
 func TestSelfHostSubprocessPipesX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeSubprocessPipesSrc(t)

@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func simdSuiteSrc(t *testing.T) string {
@@ -17,7 +19,8 @@ func simdSuiteSrc(t *testing.T) string {
 
 func wantSimdSuitePassed(t *testing.T, leg, out string) {
 	t.Helper()
-	for _, w := range []string{"1..30", "# fail 0"} {
+	e2eharness.CheckTAPPlan(t, out)
+	for _, w := range []string{"# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("%s: stdout missing %q\n%s", leg, w, out)
 		}

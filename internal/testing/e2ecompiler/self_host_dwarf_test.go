@@ -619,7 +619,7 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 	if err := os.WriteFile(src, []byte(dwarfStructsSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	point := [][3]string{{"x", "8", "i32"}, {"y", "16", "i32"}, {"a", "24", "i32"}, {"b", "32", "i32"}, {"c", "40", "i32"}}
+	point := [][3]string{{"x", "0", "i32"}, {"y", "8", "i32"}, {"a", "16", "i32"}, {"b", "24", "i32"}, {"c", "32", "i32"}}
 	bins := map[string]string{}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
@@ -629,13 +629,13 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 				t.Fatalf("-g build: %v\n%s", err, o)
 			}
 			bins[target] = out
-			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 48, point)
-			checkDwarfStruct(t, dwarfVarStruct(t, out, "describe", "p"), "Person", 32, [][3]string{{"age", "16", "i32"}, {"score", "24", "i32"}})
+			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 40, point)
+			checkDwarfStruct(t, dwarfVarStruct(t, out, "describe", "p"), "Person", 24, [][3]string{{"age", "8", "i32"}, {"score", "16", "i32"}})
 			rect := dwarfVarStruct(t, out, "area", "r")
-			checkDwarfStruct(t, rect, "Rect", 32, [][3]string{{"origin", "8", "*struct Point"}, {"w", "16", "i32"}, {"h", "24", "i32"}})
+			checkDwarfStruct(t, rect, "Rect", 24, [][3]string{{"origin", "0", "*struct Point"}, {"w", "8", "i32"}, {"h", "16", "i32"}})
 			if p, ok := rect.Field[0].Type.(*dwarf.PtrType); ok {
 				if st, ok := p.Type.(*dwarf.StructType); ok {
-					checkDwarfStruct(t, st, "Point", 48, point)
+					checkDwarfStruct(t, st, "Point", 40, point)
 				}
 			}
 		})
@@ -733,13 +733,10 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ptr, ok := dwarfVarType(t, d, "turn", "d").(*dwarf.PtrType)
+			// A value of an enum with no field is the index of its variant.
+			et, ok := dwarfVarType(t, d, "turn", "d").(*dwarf.EnumType)
 			if !ok {
-				t.Fatalf("turn.d is not a pointer to its box")
-			}
-			et, ok := ptr.Type.(*dwarf.EnumType)
-			if !ok {
-				t.Fatalf("turn.d points to a %T, want an enum", ptr.Type)
+				t.Fatalf("turn.d is a %T, want an enum", dwarfVarType(t, d, "turn", "d"))
 			}
 			if et.EnumName != "Direction" || et.ByteSize != 8 || len(et.Val) != len(names) {
 				t.Fatalf("enum %s of %d bytes with %v, want Direction of 8 with %v", et.EnumName, et.ByteSize, et.Val, names)
@@ -748,9 +745,8 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 				if v.Name != names[i] {
 					t.Errorf("enumerator %d is %s, want %s", i, v.Name, names[i])
 				}
-				shape := et.EnumName + "$" + v.Name
-				if got := imageBytes(f, uint64(v.Val), len(shape)); string(got) != shape {
-					t.Errorf("%s = %#x, where the image holds %q, not its shape %q", v.Name, v.Val, got, shape)
+				if v.Val != int64(i) {
+					t.Errorf("%s = %d, want its index %d", v.Name, v.Val, i)
 				}
 			}
 			heading, ok := dwarfVarType(t, d, "pace", "h").(*dwarf.PtrType)
@@ -758,11 +754,11 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 				t.Fatalf("pace.h is not a pointer to its box")
 			}
 			st, ok := heading.Type.(*dwarf.StructType)
-			if !ok || len(st.Field) != 2 || st.Field[0].Name != "dir" || st.Field[0].ByteOffset != 8 {
-				t.Fatalf("pace.h = %v, want a Heading whose dir is at 8", heading.Type)
+			if !ok || len(st.Field) != 2 || st.Field[0].Name != "dir" || st.Field[0].ByteOffset != 0 {
+				t.Fatalf("pace.h = %v, want a Heading whose dir is at 0", heading.Type)
 			}
-			if p, ok := st.Field[0].Type.(*dwarf.PtrType); !ok || p.Type != dwarf.Type(et) {
-				t.Errorf("Heading.dir is a %v, want a pointer to the same Direction", st.Field[0].Type)
+			if st.Field[0].Type != dwarf.Type(et) {
+				t.Errorf("Heading.dir is a %v, want the same Direction", st.Field[0].Type)
 			}
 		})
 	}
@@ -771,7 +767,7 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 	if err != nil || runtime.GOARCH != "amd64" || bins["x86-64-linux"] == "" {
 		t.Skip("gdb on an amd64 host reads the x86-64 binary's enum; none here")
 	}
-	o, err := exec.Command(gdb, "-batch", "-ex", "break enums.fern:16", "-ex", "run", "-ex", "print *d", "-ex", "print *h.dir", bins["x86-64-linux"]).CombinedOutput()
+	o, err := exec.Command(gdb, "-batch", "-ex", "break enums.fern:4", "-ex", "run", "-ex", "print d", "-ex", "up", "-ex", "print h.dir", bins["x86-64-linux"]).CombinedOutput()
 	if err != nil {
 		t.Fatalf("gdb: %v\n%s", err, o)
 	}
@@ -780,19 +776,6 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 			t.Errorf("gdb did not read %q\n%s", want, o)
 		}
 	}
-}
-
-func imageBytes(f *goelf.File, vaddr uint64, n int) []byte {
-	for _, p := range f.Progs {
-		if p.Type == goelf.PT_LOAD && vaddr >= p.Vaddr && vaddr+uint64(n) <= p.Vaddr+p.Filesz {
-			b := make([]byte, n)
-			if _, err := p.ReadAt(b, int64(vaddr-p.Vaddr)); err != nil {
-				return nil
-			}
-			return b
-		}
-	}
-	return nil
 }
 
 // A literate module's line rows name document lines, not the tangled ones.

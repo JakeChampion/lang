@@ -756,7 +756,8 @@ function jpeg_summary(raw: u8[]): string {
 
 // The offset of the refusal, or the header fields and then, for each
 // program header, its kind with the length and a sum of the bytes of its
-// segment, or `cut` for a segment that the reader refuses.
+// segment, or `cut` for a segment that the reader refuses. The offset of the
+// layout fault, or `ok`, is last.
 function elf_summary(raw: u8[]): string {
   let image = raw[0:raw.len()];
   match (elf.parse(image)) {
@@ -779,7 +780,15 @@ function elf_summary(raw: u8[]): string {
           }
         }
       }
-      return out + " loads " + img.loads().len().to_string();
+      out = out + " loads " + img.loads().len().to_string();
+      match (img.layout_fault()) {
+        Some(e) => {
+          return out + " layout " + e.offset.to_string();
+        },
+        None => {
+          return out + " layout ok";
+        }
+      }
     }
   }
 }

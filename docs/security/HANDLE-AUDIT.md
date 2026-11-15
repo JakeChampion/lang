@@ -22,7 +22,7 @@ A built-in handle is a descriptor.
 The reference-count lowering treats them as scalars (`semtypes.is_handle` in `compiler/ssarc.fern`).
 Each one exposes its descriptor as the field `fd`, and `close` consumes its receiver.
 
-`Socket` is the built-in handle of the socket API. `tcp_listen`, `tcp_listen_with`, `tcp_accept`, `tcp_connect_with`, `udp_bind`, `udp_bind_with`, `unix_listen` and `unix_connect` return one. The other `tcp_*` and `udp_*` builtins borrow it, and `tcp_close` consumes it.
+`Socket` is the built-in handle of the socket API. `tcp_listen`, `tcp_listen_with`, `tcp_accept`, `tcp_connect_with`, `udp_bind`, `udp_bind_with`, `unix_listen`, `unix_connect` and `vsock_connect` return one. The other `tcp_*` and `udp_*` builtins borrow it, and `tcp_close` consumes it.
 A descriptor with no handle type, such as a reactor or a timer, closes through `__fd_close`, which only an unsafe block can call.
 A failed open returns a `Socket` whose `fd` is the negative error number.
 At run time a `Socket` is a 64-bit word in compiled code and in the compiler's interpreter.
@@ -179,6 +179,7 @@ A pattern binding of a borrowed scrutinee lends its payload, and no field of it 
 A for-each over an owned array binds each element owned.
 The array is a fresh local or a field path at its last use, an `own` parameter, or a fresh call.
 A for-each over a borrowed array lends each element.
+An element whose type cannot hold a handle is a copy, so its binding passes to an `own` parameter at its last use.
 A loop deeper than the binding of an owner runs a consuming call again on the same value, so the call is refused there.
 
 A call to a function that never returns ends the path.
@@ -213,6 +214,7 @@ The proof uses an unchanged parameter, no whole-owner read, and one read of that
 | A match that is not the local's last use, with the payload closed | `E051` | `diag_e051_handle_matched_after_payload_closed` |
 | A field of a payload bound from a borrowed scrutinee closed | `E051` | `diag_e051_handle_payload_field_of_borrowed` |
 | An element of a borrowed array closed in a for-each | `E051` | `diag_e051_handle_elements_closed_from_borrowed_array` |
+| An element of a borrowed array with no handle, passed to an `own` parameter in a for-each | accepted | `own_for_element_of_borrowed_array` |
 | A close in a loop by a call to a function that never returns, and a read after it on another path | accepted | `handle_consumed_before_a_call_that_never_returns` |
 | A payload taken in a loop from a field of an unpacked local | accepted | `handle_payload_closes_in_loop_from_unpack` |
 | A field closed by a call that reads other fields of its owner | accepted | `handle_field_closes_beside_other_field_reads` |

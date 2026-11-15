@@ -10,6 +10,9 @@
 //                                          run changes the same comment, and a
 //                                          run that passes says so there.
 //
+// A run of a pull request that was cancelled with no failed job changes
+// nothing.
+//
 // A red pull request showed one `failure` among many `cancelled` checks, and
 // the reason was some hundred lines into the log of a job. pr-ci-report.yml
 // runs `comment` when a CI run of a pull request ends. The merge queue runs
@@ -107,6 +110,18 @@ export function render(jobs) {
   return out.join("\n").trimEnd();
 }
 
+// outcome says what a run tells its pull request. When one lane fails, the
+// rest of the run is cancelled (cancel-on-failure.yml), so a red run concludes
+// `cancelled`, not `failure`: a cancelled run with a failed job is a failure.
+// A cancelled run with no failed job was stopped by a push or a person, and
+// says nothing.
+export function outcome(conclusion, failedJobs) {
+  if (conclusion === "success") return "success";
+  if (conclusion === "failure") return "failure";
+  if (conclusion === "cancelled" && failedJobs > 0) return "failure";
+  return null;
+}
+
 // body gives the whole comment for a run that concluded `conclusion`.
 export function body({ conclusion, sha, runUrl, jobs }) {
   const head = `\`${sha.slice(0, 8)}\``;
@@ -156,8 +171,10 @@ async function failedJobs(runId) {
 
 async function comment(runId) {
   const run = await api(`actions/runs/${runId}`);
-  if (!["success", "failure"].includes(run.conclusion)) {
-    console.log(`the run concluded ${run.conclusion}: no comment`);
+  const jobs = run.conclusion === "success" ? [] : await failedJobs(runId);
+  const result = outcome(run.conclusion, jobs.length);
+  if (result === null) {
+    console.log(`the run concluded ${run.conclusion} with ${jobs.length} failed job(s): no comment`);
     return;
   }
   let prs = run.pull_requests || [];
@@ -170,16 +187,11 @@ async function comment(runId) {
     }
     const comments = await api(`issues/${number}/comments?per_page=100`);
     const mine = comments.find((c) => c.body.startsWith(MARKER));
-    if (run.conclusion === "success" && !mine) continue;
-    const text = body({
-      conclusion: run.conclusion,
-      sha: run.head_sha,
-      runUrl: run.html_url,
-      jobs: run.conclusion === "failure" ? await failedJobs(runId) : [],
-    });
+    if (result === "success" && !mine) continue;
+    const text = body({ conclusion: result, sha: run.head_sha, runUrl: run.html_url, jobs });
     if (mine) await api(`issues/comments/${mine.id}`, { method: "PATCH", data: { body: text } });
     else await api(`issues/${number}/comments`, { method: "POST", data: { body: text } });
-    console.log(`#${number}: the comment says that CI concluded ${run.conclusion}`);
+    console.log(`#${number}: the comment says that CI concluded ${result}`);
   }
 }
 

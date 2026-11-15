@@ -14,6 +14,9 @@ With `utf`, the pattern and the text are UTF-8, and each item matches a characte
 
 A pattern that PCRE2 refuses gives a `CompileError` with the text and the offset of PCRE2's error. A search that takes more choices than the match limit gives `MatchLimit`, as PCRE2 does. The default limit is ten million, as in PCRE2. Its text is that of PCRE2.
 
+Both error types implement `core/error.Error` and `core/cmp.Display`.
+Their `message()` methods return the same text as `to_string()`.
+
 A search gives the leftmost match. `find_at` starts at a byte offset, and the assertions see the whole text. `captures_at` gives the start and the end of each group, or -1 for a group that did not match.
 
 ## Executable example
@@ -53,6 +56,8 @@ function main(): i32 {
 <<types>>=
 import "std/option";
 import "std/unicode";
+import "core/error";
+import "core/cmp";
 
 // The options of PCRE2 that a search can set: PCRE2_CASELESS,
 // PCRE2_MULTILINE, PCRE2_DOTALL, PCRE2_EXTENDED, PCRE2_UTF with PCRE2_UCP, the
@@ -72,12 +77,28 @@ pub function (e: CompileError) to_string(): string {
   return "PCRE2: error compiling pattern at offset " + e.offset.to_string() + ": " + e.message;
 }
 
+pub function (e: CompileError) message(): string {
+  return e.to_string();
+}
+
+impl error.Error for CompileError {}
+
+impl cmp.Display for CompileError {}
+
 // The error of a search that takes too many steps.
 pub enum MatchError { MatchLimit }
 
 pub function (e: MatchError) to_string(): string {
   return "PCRE2: error matching: match limit exceeded";
 }
+
+pub function (e: MatchError) message(): string {
+  return e.to_string();
+}
+
+impl error.Error for MatchError {}
+
+impl cmp.Display for MatchError {}
 
 pub struct Match { start: i32, end: i32 }
 
