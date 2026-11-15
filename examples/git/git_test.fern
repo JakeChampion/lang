@@ -7,19 +7,23 @@ import "std/deflate";
 import "std/hex";
 import "std/result";
 import "./color";
+import "./commitgraph";
 import "./config";
 import "./checkpack";
 import "./checkblob";
 import "./date";
 import "./width";
+import "./ws";
 import "./fsck";
 import "./graph";
 import "./index";
 import "./log";
 import "./mailmap";
+import "./moved";
 import "./objects";
 import "./pack";
 import "./patch";
+import "./sig";
 
 function unhex(s: string): u8[] {
   let Ok(b) = hex.decode(s) else {
@@ -252,7 +256,7 @@ function shorts(name: string): string {
 }
 
 function context_of(c: log.Commit): log.Context {
-  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false };
+  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false, pal: color.palette_default(), hi: log.no_highlight(), from: "", graph_width: 0, notes: "", notes_shown: false, sig: sig.unsigned() };
 }
 
 // The subject, the body, the built-in forms and the placeholders of a
@@ -285,6 +289,124 @@ function test_commit_text(): test.TestOutcome {
   }
   if (log.formatted(c, ctx, "%B") != c.message || log.formatted(c, ctx, "") != "" || log.formatted(c, ctx, "a\n%-d") != "a" || log.formatted(c, ctx, "a%+s") != "a\nfirst line second line" || log.formatted(c, ctx, "a% d.") != "a.") {
     return test.fail("the raw message and the magic of placeholders");
+  }
+  return test.pass();
+}
+
+// The placeholders that change the columns of the next placeholder, and
+// the wrap of `%w()`, with the outputs of git 2.56.1.
+function test_format_columns(): test.TestOutcome {
+  let c = log.commit_of("abc", COMMIT.bytes());
+  let ctx = context_of(c);
+  let cases: string[][] = [
+    ["%<(8)%an|", "A B     |"],
+    ["%>(8)%an|", "     A B|"],
+    ["%><(8)%an|", "  A B   |"],
+    ["%<(12,trunc)%s|", "first line..|"],
+    ["%<(12,ltrunc)%s|", "..econd line|"],
+    ["%<(12,mtrunc)%s|", "first.. line|"],
+    ["%<(1,trunc)%s|", "..|"],
+    ["%h%<|(6)%an|", "abA B |"],
+    ["%h  %>>(5)%an|", "ab    A B|"],
+    ["%h      %>>(2)%an|", "ab     A B|"],
+    ["%<(0)%an|", "%<(0)A B|"],
+    ["%<(6,bad)x%an|", "%<(6,bad)xA B   |"],
+    ["%<(4)%Z|", "    %Z|"],
+    ["%-<(4)%an", "A B "],
+    ["%w(10,1,3)%s", " first\n   line\n   second\n   line"],
+    ["%w(0,2,4)%b", "  body\twith a tab\n    \n    last\n"],
+    ["%+w(4)%s", "%+w(4)first line second line"],
+    ["%w(-1)%s", "%w(-1)first line second line"],
+    ["a%n%-", "a"],
+  ];
+  for k in cases {
+    let got = log.formatted(c, ctx, k[0]);
+    if (got != k[1]) {
+      return test.fail("the format " + k[0] + ": " + got);
+    }
+  }
+  if (width.text_width("\x1b[31m中x\x1b[m".bytes()) != 3 || width.text_width([255, 65]) != 2) {
+    return test.fail("the columns of a text");
+  }
+  return test.pass();
+}
+
+// The rules of `core.whitespace` and the errors that they find.
+function test_whitespace(): test.TestOutcome {
+  let (rule, warnings, failure) = ws.parse("-trail,indent-with-non-tab,tabwidth=4");
+  if (rule != (ws.SPACE_BEFORE_TAB | ws.INDENT_WITH_NON_TAB | 4) || warnings.len() != 0 || failure != "") {
+    return test.fail("the rule: " + rule.to_string());
+  }
+  let (_, w2, _) = ws.parse("tabwidth=99");
+  let (_, _, f3) = ws.parse("tab-in-indent,indent-with-non-tab");
+  if (w2 != ["warning: tabwidth 99 out of range"] || f3 != "cannot enforce both tab-in-indent and indent-with-non-tab") {
+    return test.fail("the warnings and the errors of a rule");
+  }
+  let (bad, shown) = ws.check_emit(" \tx  \n", ws.DEFAULT_RULE, "<", ">", "!");
+  if (bad != (ws.SPACE_BEFORE_TAB | ws.BLANK_AT_EOL) || shown != "! >\t<x>!  >\n" || ws.error_string(bad) != "trailing whitespace, space before tab in indent") {
+    return test.fail("the errors of a line: " + shown);
+  }
+  if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7)) {
+    return test.fail("the conflict markers");
+  }
+  return test.pass();
+}
+
+// The moved blocks of `--color-moved`: a block of enough letters that a
+// commit removes and adds again, in the two colors of the zebra.
+function test_moved(): test.TestOutcome {
+  if (moved.parse("dimmed_zebra") != moved.DIMMED_ZEBRA || moved.parse("true") != moved.ZEBRA || moved.parse("off") != moved.NO || moved.parse("x") != -1) {
+    return test.fail("the forms of --color-moved");
+  }
+  let a = "a line with enough letters\n";
+  let b = "another line with letters\n";
+  let kinds = [moved.MINUS, moved.MINUS, moved.OTHER, moved.PLUS, moved.PLUS, moved.PLUS];
+  let texts = [a, b, "", b, a, "x\n"];
+  let marks = moved.mark(kinds, texts, [8, 8, 8, 8, 8, 8], moved.ZEBRA, 0);
+  if (marks != [moved.MOVED, moved.MOVED | moved.ALT, 0, moved.MOVED, moved.MOVED | moved.ALT, 0]) {
+    return test.fail("the marks of the zebra");
+  }
+  let (mode, errors) = moved.parse_ws("allow-indentation-change,ignore-all-space");
+  if (mode != (moved.WS_ALLOW_INDENT | moved.WS_IGNORE_ALL) || errors.len() != 1) {
+    return test.fail("the modes of --color-moved-ws");
+  }
+  return test.pass();
+}
+
+// The payload and the signature of a signed commit, and the result of
+// the lines of the status of gpg.
+function test_signatures(): test.TestOutcome {
+  let body = "tree t\ngpgsig -----BEGIN-----\n line\n -----END-----\ngpgsig-sha256 other\n more\nauthor a\n\nmessage\n";
+  let (payload, signature, signed) = sig.split(body.bytes(), objects.SHA1);
+  if (!signed || payload != "tree t\nauthor a\n\nmessage\n".bytes() || signature != "-----BEGIN-----\nline\n-----END-----\n".bytes()) {
+    return test.fail("the payload of a signed commit");
+  }
+  let status = "[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG ABCD Signer <s@example.com>\n[GNUPG:] VALIDSIG F1 2026 1 0 4 0 22 8 00 P1\n[GNUPG:] TRUST_ULTIMATE 0 pgp\n";
+  let c = sig.parse(status, "out\n", true);
+  if (c.failed || sig.placeholder(c, b'?').unwrap_or("") != "G" || c.key != "ABCD" || c.signer != "Signer <s@example.com>" || c.fingerprint != "F1" || c.primary != "P1" || sig.placeholder(c, b'T').unwrap_or("") != "ultimate") {
+    return test.fail("the result of a good signature");
+  }
+  let twice = sig.parse(status + "[GNUPG:] BADSIG X Y\n", "", true);
+  if (twice.result != b'E' || !twice.failed || sig.placeholder(sig.unsigned(), b'?').unwrap_or("") != "N") {
+    return test.fail("two results and no signature");
+  }
+  return test.pass();
+}
+
+// The keys of the Bloom filters of version 2 hash each byte as unsigned;
+// the filters of version 1 do not take a path with a byte above 127.
+function test_bloom_keys(): test.TestOutcome {
+  let g = commitgraph.Graph { layers: [], width: 20, v2: false, hashes: 3, bloom: 2 };
+  let k = commitgraph.keys(g, "éx");
+  if (k.len() != 1 || k[0] != [1577287697, 1225892902, 874498107]) {
+    return test.fail("the keys of version 2");
+  }
+  let d = commitgraph.keys(g, "café/d");
+  if (d.len() != 2 || d[0] != [409610376, 1024026324, 1638442272]) {
+    return test.fail("the keys of a path in a directory");
+  }
+  if (commitgraph.keys(commitgraph.Graph { ...g, bloom: 1 }, "éx").len() != 0) {
+    return test.fail("a high byte with version 1");
   }
   return test.pass();
 }
@@ -510,7 +632,7 @@ function test_index_versions(): test.TestOutcome {
   let data = tiny_pack("hello\n".bytes(), objects.SHA1);
   let name = unhex("ce013625030ba8dba906f756967f9e9ca394464a");
   let sha1 = objects.SHA1;
-  let Ok(v1) = index.build(pack.text_of(data), index.Options { width: sha1, version: 1, limit: 2147483647 }) else {
+  let Ok(v1) = index.build(pack.text_of(data), index.Options { width: sha1, version: 1, limit: 2147483647, level: 1 }) else {
     return test.fail("no index of version 1");
   };
   let Ok(ix1) = pack.index_of(v1.idx, 20, "v1.idx") else {
@@ -521,7 +643,7 @@ function test_index_versions(): test.TestOutcome {
   }
   // git refuses an index whose every offset is in the table of 8-byte
   // offsets, which `--index-version=2,0` makes for one object.
-  let Ok(all) = index.build(pack.text_of(data), index.Options { width: sha1, version: 2, limit: 0 }) else {
+  let Ok(all) = index.build(pack.text_of(data), index.Options { width: sha1, version: 2, limit: 0, level: 1 }) else {
     return test.fail("no index with large offsets");
   };
   match (pack.index_of(all.idx, 20, "all.idx")) {
@@ -536,7 +658,7 @@ function test_index_versions(): test.TestOutcome {
   }
   // Two blobs, and the second is past the limit of 12.
   let two = two_blobs("hello\n".bytes(), "world\n".bytes());
-  let Ok(wide) = index.build(pack.text_of(two), index.Options { width: sha1, version: 2, limit: 12 }) else {
+  let Ok(wide) = index.build(pack.text_of(two), index.Options { width: sha1, version: 2, limit: 12, level: 1 }) else {
     return test.fail("no index with a large offset");
   };
   let Ok(ix2) = pack.index_of(wide.idx, 20, "wide.idx") else {
@@ -929,6 +1051,11 @@ function main(): i32 {
   r = r.it("the checks of hash-object", test_fsck);
   r = r.it("a configuration file", test_config);
   r = r.it("the tabs of a message", test_tabs);
+  r = r.it("the columns of the placeholders of a format", test_format_columns);
+  r = r.it("the rules of white space", test_whitespace);
+  r = r.it("the moved blocks of a patch", test_moved);
+  r = r.it("the signatures of commits", test_signatures);
+  r = r.it("the keys of the Bloom filters", test_bloom_keys);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);
   r = r.it("the specs of colors", test_colors);

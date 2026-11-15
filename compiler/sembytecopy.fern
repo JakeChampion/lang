@@ -48,7 +48,7 @@ function concat_array(t: typeinfo.Type): boolean {
 }
 
 // The log2 of the bytes of an element of an owned array, or -1. The element
-// must have 1, 4 or 8 bytes on every target.
+// must have 1, 2, 4 or 8 bytes on every target.
 function elem_shift(t: typeinfo.Type): i32 {
   if let typeinfo.TypeArray(a) = t {
     if (a.view) {
@@ -56,6 +56,9 @@ function elem_shift(t: typeinfo.Type): i32 {
     }
     if (ssasem.is_u8(a.elem)) {
       return 0;
+    }
+    if (ssasem.is_u16(a.elem) || ssasem.is_i16(a.elem)) {
+      return 1;
     }
     if (ssasem.is_i32(a.elem) || ssasem.is_u32(a.elem) || ssasem.is_char(a.elem) || ssasem.is_f32(a.elem)) {
       return 2;

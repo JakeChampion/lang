@@ -16,6 +16,7 @@
 a_binding_arm_can_follow_a_literal_arm               0
 a_branch_that_returns_gives_its_if_expression_no_type 0
 a_builtin_method_does_not_see_the_programs_variants  0
+a_cast_of_a_literal_expression_computes_at_its_own_type 0
 a_const_in_a_tuple_or_payload_pattern_matches_its_value 0
 a_deep_type_argument_that_does_not_grow_is_accepted  0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0
@@ -27,6 +28,7 @@ a_generic_call_takes_its_type_arguments_from_its_first_use 0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
+a_generic_struct_literal_takes_the_float_field_of_its_declared_type 0
 a_handler_fans_out_on_its_scheduler                  2
 a_literal_handed_to_reactor_wait_is_fresh            0
 a_literal_local_takes_the_type_of_an_index_read      0
@@ -472,6 +474,8 @@ handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
 handle_foreach_destructured_field_own                0
 handle_foreach_field_local_own                       0
+handle_let_literal_in_returning_arm                  0
+handle_literal_reads_scalar_field_of_base            0
 handle_nested_fields_close_from_owned_root           0
 handle_payload_closes_from_local_match               0
 handle_payload_closes_in_loop_from_unpack            0
@@ -1445,6 +1449,7 @@ variant_payload_expected_type                        0
 variant_payload_from_array_field                     0
 vec_generic_impls                                    0
 vec_lane_kernels                                     0
+view_beside_its_array_in_a_call                      0
 view_of_branch_value                                 0
 view_param_returned_after_loop                       0
 views_in_aggregates_stay_local                       0

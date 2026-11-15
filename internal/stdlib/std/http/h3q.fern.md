@@ -148,6 +148,17 @@ pub function (c: Conn) events_taken(): Conn {
   return Conn { ...c, events: c.events.truncate(0) };
 }
 
+// received is the count of the body bytes of stream `id` that the connection
+// holds: for a client, the body of the response so far. It is 0 before the
+// first byte and after the response event.
+pub function (c: Conn) received(id: i64): i32 {
+  let i = __find(c.partials, id);
+  if (i < 0) {
+    return 0;
+  }
+  return c.partials[i].body.len();
+}
+
 // Parked is a connection between requests, without its events, so a client
 // pool can keep it in a cell. The events are read before it is parked.
 pub struct Parked { quic: conn.Conn, session: h3.Session, started: boolean, stopping: boolean, max_body: i64, partials: Partial[], next: i64, parked: i64[], date: string, date_line: u8[] }

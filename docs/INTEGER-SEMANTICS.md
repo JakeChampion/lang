@@ -36,6 +36,10 @@ For example, an `i32` addition still wraps at 32 bits before its result converts
 Stored arrays and other containers retain their element types.
 A new array literal can convert each element before storage.
 
+A cast converts in the same way.
+A literal expression computes as `i32`, or as `i64` when one of its literals does not fit `i32`.
+Thus `(65536 * 65536) as u64` is 0, and `(300 + 1) as u8` is 45.
+
 ## Wrapping arithmetic
 
 `+`, `-`, `*`, and `<<` **wrap** (two's-complement modular arithmetic)

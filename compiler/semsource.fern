@@ -2321,8 +2321,9 @@ function cast_ascribes(u: ast.ExprUnary, ty: typeinfo.Type): boolean {
   if (ssasem.cast_ascribes(ty)) {
     return true;
   }
+  // constfold makes `300 + 1` the literal 301, which the cast then wraps.
   if let ast.ExprNumber(n) = u.operand {
-    return !n.is_float && n.suffix == "" && ssasem.is_integer(ty) && !ssasem.is_usize(ty);
+    return !n.is_float && n.suffix == "" && ssasem.is_integer(ty) && !ssasem.is_usize(ty) && ssasem.narrow_holds(ty, util.lit_to_i64(n.text));
   }
   return false;
 }

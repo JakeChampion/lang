@@ -1,0 +1,371 @@
+// The locale that setlocale (LC_ALL, "") of the libc gives a program. The
+// libc loads each category from the files of the system, and when one
+// category does not load, the whole call fails and the C locale stays.
+
+// The categories of glibc, in the order that setlocale loads them.
+function glibc_categories(): string[] {
+  return ["LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE", "LC_MONETARY", "LC_MESSAGES", "LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION"];
+}
+
+function darwin_categories(): string[] {
+  return ["LC_COLLATE", "LC_CTYPE", "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "LC_MESSAGES"];
+}
+
+// The name of the locale of a category: the first of LC_ALL, the variable
+// of the category and LANG that is not empty.
+pub function category_name(category: string): string {
+  for name in ["LC_ALL", category, "LANG"] {
+    if let Some(v) = env(name) {
+      if (v.len() > 0) {
+        return v;
+      }
+    }
+  }
+  return "C";
+}
+
+// Whether the locale reads text as UTF-8: the codeset of LC_CTYPE is UTF-8
+// and each category loads. The libc of WASI and of Android reads no files
+// for a locale, so there the codeset decides.
+pub function utf8(): boolean {
+  let ctype = category_name("LC_CTYPE");
+  let parts = explode(ctype);
+  if (!parts.has_codeset || !utf8_codeset(parts.codeset)) {
+    return false;
+  }
+  if (target_os() == "darwin") {
+    return all_load_darwin();
+  }
+  if (target_os() == "linux") {
+    return all_load_glibc();
+  }
+  return true;
+}
+
+// The parts of a locale name of the form language_territory.codeset@modifier.
+struct Parts {
+  language: string,
+  territory: string,
+  has_territory: boolean,
+  codeset: string,
+  has_codeset: boolean,
+  modifier: string,
+  has_modifier: boolean,
+}
+
+function upto(s: string, from: i32, stops: string): i32 {
+  let i = from;
+  while (i < s.len()) {
+    if (__memchr(stops, s[i] as i32, 0) >= 0) {
+      return i;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+function part(s: string, lo: i32, hi: i32): string {
+  return slice_unchecked(s, lo, hi) + "";
+}
+
+// The parts as glibc's _nl_explode_name finds them. A name without a
+// language is one part.
+function explode(name: string): Parts {
+  let none = Parts { language: name, territory: "", has_territory: false, codeset: "", has_codeset: false, modifier: "", has_modifier: false };
+  let end = upto(name, 0, "_.@");
+  if (end == 0) {
+    return none;
+  }
+  let p = Parts { ...none, language: part(name, 0, end) };
+  let i = end;
+  if (i < name.len() && name[i] == b'_') {
+    let e = upto(name, i + 1, ".@");
+    p = Parts { ...p, territory: part(name, i + 1, e), has_territory: true };
+    i = e;
+  }
+  if (i < name.len() && name[i] == b'.') {
+    let e2 = upto(name, i + 1, "@");
+    p = Parts { ...p, codeset: part(name, i + 1, e2), has_codeset: true };
+    i = e2;
+  }
+  if (i < name.len() && name[i] == b'@' && i + 1 < name.len()) {
+    p = Parts { ...p, modifier: part(name, i + 1, name.len()), has_modifier: true };
+  }
+  return p;
+}
+
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+function is_alpha(c: i32): boolean {
+  return c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+// glibc's _nl_normalize_codeset: the letters in lower case and the digits.
+// A codeset of digits only gets the prefix "iso".
+function normalize(codeset: string): string {
+  let h = buf_new(codeset.len() + 3);
+  let letters = false;
+  for k in 0..codeset.len() {
+    if (is_alpha(codeset[k] as i32)) {
+      letters = true;
+    }
+  }
+  if (!letters) {
+    buf_push(h, "iso");
+  }
+  for j in 0..codeset.len() {
+    let c = codeset[j] as i32;
+    if (is_alpha(c)) {
+      buf_push_byte(h, if (c <= 90) { c + 32 } else { c });
+    } else if (is_digit(c)) {
+      buf_push_byte(h, c);
+    }
+  }
+  let out = buf_take(h);
+  buf_free(h);
+  return out;
+}
+
+// Whether glibc's gconv takes the codeset for UTF-8. The comparison keeps
+// the letters in upper case, the digits and the bytes "_-.,:".
+function utf8_codeset(codeset: string): boolean {
+  let h = buf_new(codeset.len());
+  for k in 0..codeset.len() {
+    let c = codeset[k] as i32;
+    if (is_alpha(c)) {
+      buf_push_byte(h, if (c >= 97) { c - 32 } else { c });
+    } else if (is_digit(c) || __memchr("_-.,:", c, 0) >= 0) {
+      buf_push_byte(h, c);
+    }
+  }
+  let up = buf_take(h);
+  buf_free(h);
+  return up == "UTF-8" || up == "UTF8";
+}
+
+// The names that glibc's _nl_make_l10nflist tries, from the most exact,
+// with whether each one names a codeset. A name never has both the codeset
+// and its normalized form.
+function variants(p: Parts): (string[], boolean[]) {
+  let norm = if (p.has_codeset) { normalize(p.codeset) } else { "" };
+  let has_norm = p.has_codeset && norm != p.codeset;
+  let names: string[] = [];
+  let coded: boolean[] = [];
+  let mask = 15;
+  while (mask >= 0) {
+    let want_mod = (mask & 8) != 0;
+    let want_terr = (mask & 4) != 0;
+    let want_code = (mask & 2) != 0;
+    let want_norm = (mask & 1) != 0;
+    let fits = !(want_code && want_norm) && (!want_mod || p.has_modifier) && (!want_terr || p.has_territory) && (!want_code || p.has_codeset) && (!want_norm || has_norm);
+    if (fits) {
+      let s = p.language;
+      if (want_terr) {
+        s = s + "_" + p.territory;
+      }
+      if (want_code) {
+        s = s + "." + p.codeset;
+      } else if (want_norm) {
+        s = s + "." + norm;
+      }
+      if (want_mod) {
+        s = s + "@" + p.modifier;
+      }
+      names = names.append(s);
+      coded = coded.append(want_code || want_norm);
+    }
+    mask -= 1;
+  }
+  return (names, coded);
+}
+
+// glibc's valid_locale_name, and a name with a slash, which this module
+// does not look up.
+function plain_name(name: string): boolean {
+  return name.len() <= 255 && __memchr(name, 47, 0) < 0 && name != "..";
+}
+
+// The directories of the locale files: those of LOCPATH, then the default.
+function glibc_dirs(): (string[], boolean) {
+  let dirs: string[] = [];
+  let from_env = false;
+  if let Some(lp) = env("LOCPATH") {
+    if (lp.len() > 0) {
+      from_env = true;
+      let start = 0;
+      let i = 0;
+      while (i <= lp.len()) {
+        if (i == lp.len() || lp[i] == b':') {
+          if (i > start) {
+            dirs = dirs.append(part(lp, start, i));
+          }
+          start = i + 1;
+        }
+        i += 1;
+      }
+    }
+  }
+  return (dirs.append("/usr/lib/locale"), from_env);
+}
+
+// Whether the file of a category is in a directory of a locale. A directory
+// in place of the file holds the file SYS_ and the name of the category.
+function category_file(dir: string, category: string): boolean {
+  let path = dir + "/" + category;
+  match (stat(path)) {
+    Ok(st) => {
+      if (!st.is_dir) {
+        return true;
+      }
+      if let Ok(_) = stat(path + "/SYS_" + category) {
+        return true;
+      }
+      return false;
+    },
+    Err(_) => {}
+  }
+  return false;
+}
+
+// Whether glibc loads a category of the locale `name` from the files. The
+// first name that it finds must name a codeset, so that its codeset is the
+// one that was asked for.
+function loads_glibc(name: string, category: string, dirs: string[], archive: string[]): boolean {
+  if (name == "C" || name == "POSIX") {
+    return true;
+  }
+  if (!plain_name(name)) {
+    return false;
+  }
+  let p = explode(name);
+  if (archive.len() > 0) {
+    let key = name;
+    if (p.has_codeset) {
+      let dot = __memchr(name, 46, 0);
+      let at = upto(name, dot + 1, "@");
+      key = part(name, 0, dot + 1) + normalize(p.codeset) + part(name, at, name.len());
+    }
+    for a in archive {
+      if (a == key) {
+        return true;
+      }
+    }
+  }
+  let (names, coded) = variants(p);
+  let k = 0;
+  while (k < names.len()) {
+    for d in dirs {
+      if (category_file(d + "/" + names[k], category)) {
+        return coded[k] || !p.has_codeset;
+      }
+    }
+    k += 1;
+  }
+  return false;
+}
+
+function all_load_glibc(): boolean {
+  let (dirs, from_env) = glibc_dirs();
+  let archive: string[] = [];
+  if (!from_env) {
+    archive = archive_names("/usr/lib/locale/locale-archive");
+  }
+  for category in glibc_categories() {
+    if (!loads_glibc(category_name(category), category, dirs, archive)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Darwin takes a name as it is, from PATH_LOCALE or /usr/share/locale.
+function all_load_darwin(): boolean {
+  let base = "/usr/share/locale";
+  if let Some(pl) = env("PATH_LOCALE") {
+    if (pl.len() > 0) {
+      base = pl;
+    }
+  }
+  for category in darwin_categories() {
+    let name = category_name(category);
+    if (name != "C" && name != "POSIX") {
+      if (!plain_name(name)) {
+        return false;
+      }
+      if let Err(_) = stat(base + "/" + name + "/" + category) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function u32_at(b: u8[], at: i32): i64 {
+  if (at < 0 || at + 4 > b.len()) {
+    return -1i64;
+  }
+  return b[at] as i64 | b[at + 1] as i64 << 8i64 | b[at + 2] as i64 << 16i64 | b[at + 3] as i64 << 24i64;
+}
+
+// `n` bytes of the reader from the offset `at`, or fewer at the end.
+function read_at(rd: Reader, at: i64, n: i64): u8[] {
+  let out: u8[] = [];
+  if (n <= 0i64 || n > 67108864i64) {
+    return out;
+  }
+  let Ok(_) = rd.seek(at, 0) else {
+    return out;
+  };
+  while (out.len() as i64 < n) {
+    let want = n - out.len() as i64;
+    let chunk = if (want > 65536i64) { 65536 } else { want as i32 };
+    let Ok(got) = rd.read_chunk_bytes(chunk) else {
+      return out;
+    };
+    if (got.len() == 0) {
+      return out;
+    }
+    for b in got {
+      out = out.append(b);
+    }
+  }
+  return out;
+}
+
+// The names of the locales in glibc's locale archive. The header holds the
+// offsets of the table of names and of the strings, and each entry of the
+// table holds the offset of its name in the file.
+function archive_names(path: string): string[] {
+  let names: string[] = [];
+  let Ok(rd) = open_reader(path) else {
+    return names;
+  };
+  let head = read_at(rd, 0i64, 56i64);
+  if (u32_at(head, 0) == 3724673289i64) {
+    let table_at = u32_at(head, 8);
+    let table_size = u32_at(head, 16);
+    let strings_at = u32_at(head, 20);
+    let strings_used = u32_at(head, 24);
+    let table = read_at(rd, table_at, table_size * 12i64);
+    let strings = read_at(rd, strings_at, strings_used);
+    let i = 0;
+    while (i + 12 <= table.len()) {
+      let at = u32_at(table, i + 4);
+      if (at > 0i64) {
+        let lo = (at - strings_at) as i32;
+        let hi = lo;
+        while (hi >= 0 && hi < strings.len() && strings[hi] != 0u8) {
+          hi += 1;
+        }
+        if (lo >= 0 && hi < strings.len()) {
+          names = names.append(unsafe { string_from_bytes_range_unchecked(strings, lo, hi) });
+        }
+      }
+      i += 12;
+    }
+  }
+  let _ = rd.close();
+  return names;
+}

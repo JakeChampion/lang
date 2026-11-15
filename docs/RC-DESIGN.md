@@ -331,7 +331,9 @@ reads (`units_of`):
   brackets the call (`ssarc.bracket_take` / `bracket_give`): it takes the
   buffer's unit before the call and gives it back after, so the callee's
   append finds a unique buffer. A caller whose read ends at the call hands the
-  buffer unbracketed (`Step.hand_roots`). The table is a fixpoint over the
+  buffer unbracketed (`Step.hand_roots`). A view of the buffer in another
+  argument of the same call reads the buffer during the call, so that call
+  brackets it (`ssaunits.lends_view_of`, `view_beside_its_array_in_a_call`). The table is a fixpoint over the
   module. A call through a function value or a dyn receiver names no body:
   its rows are every closure body's (under `indirect_callee`) or every arm's
   (under the dyn call's name), and it holds the whole box of each lent
