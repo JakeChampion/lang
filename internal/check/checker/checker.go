@@ -1121,6 +1121,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	c.info.FuncSigs["__scan_masks"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	c.info.FuncSigs["__scan_set_bytes"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
@@ -1878,6 +1886,17 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.EnumType{Name: "IoError"}}},
 	}
 	c.info.FuncSigs["read_link"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// map_file_unchecked(path): Result[string, IoError] — the bytes of the
+	// file with no UTF-8 check, so a call must be inside `unsafe`. A
+	// regular file with bytes is mapped read-only on a native target, and
+	// the last release of the string unmaps it. Another file is read.
+	c.info.FuncSigs["map_file_unchecked"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.StringType{},
@@ -9112,7 +9131,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__mismatch_bytes": true, "__mismatch_bytes_str": true, "__count_byte_bytes": true, "__count_below_u64": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_masks": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
 	"__crc32_cksum": true, "__crc32_cksum_array": true, "__crc32_ieee_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true, "__mulhi_u64": true,
@@ -9550,7 +9569,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__atomic_load_acquire": true, "__atomic_store_release": true, "__atomic_fetch_add": true, "__atomic_cas": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__bytes_data": true, "__account_entry": true,
-	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true, "share_unchecked": true,
+	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true, "share_unchecked": true, "map_file_unchecked": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
@@ -10296,6 +10315,59 @@ func (c *checker) aggregateCallRoots(e *ast.Call, env *escapeEnv, sums map[strin
 // one: a view inside it, or a type parameter a view can instantiate.
 func (c *checker) holdsViewAggregate(t ast.Type) bool {
 	return !isViewReturn(t) && (c.typeHoldsView(t, map[string]bool{}) || mentionsTypeParam(t))
+}
+
+// fitsOpen reports whether `open` has a type parameter that nothing in
+// scope declares, and has the shape of `known` with each such parameter
+// in the place of any part. A call gives such a type when nothing infers
+// its type parameter yet, as for `row([text("a")])`.
+func fitsOpen(open, known ast.Type, inScope map[string]bool) bool {
+	if _, escaped := paramTypeNotIn(open, inScope); !escaped {
+		return false
+	}
+	return fitsShape(open, known, inScope)
+}
+
+func fitsShape(open, known ast.Type, inScope map[string]bool) bool {
+	switch o := open.(type) {
+	case ast.ParamType:
+		if !inScope[o.Name] {
+			return true
+		}
+	case ast.ArrayType:
+		if k, ok := known.(ast.ArrayType); ok {
+			return fitsShape(o.Elem, k.Elem, inScope)
+		}
+	case ast.SliceType:
+		if k, ok := known.(ast.SliceType); ok {
+			return fitsShape(o.Elem, k.Elem, inScope)
+		}
+	case ast.TupleType:
+		if k, ok := known.(ast.TupleType); ok {
+			return fitsAll(o.Elems, k.Elems, inScope)
+		}
+	case ast.StructType:
+		if k, ok := known.(ast.StructType); ok && k.Name == o.Name {
+			return fitsAll(o.Args, k.Args, inScope)
+		}
+	case ast.EnumType:
+		if k, ok := known.(ast.EnumType); ok && k.Name == o.Name {
+			return fitsAll(o.Args, k.Args, inScope)
+		}
+	}
+	return ast.Equal(open, known)
+}
+
+func fitsAll(open, known []ast.Type, inScope map[string]bool) bool {
+	if len(open) != len(known) {
+		return false
+	}
+	for i := range open {
+		if !fitsShape(open[i], known[i], inScope) {
+			return false
+		}
+	}
+	return true
 }
 
 func mentionsTypeParam(t ast.Type) bool {
@@ -15362,6 +15434,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 			if unified := unifyIfArms(elemT, t); unified != nil {
 				elemT = unified
+				continue
+			}
+			inScope := c.typeParamsInScope()
+			if fitsOpen(t, elemT, inScope) {
+				continue
+			}
+			if fitsOpen(elemT, t, inScope) {
+				elemT = t
 				continue
 			}
 			c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", elemT, t)

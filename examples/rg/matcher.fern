@@ -1,0 +1,122 @@
+// The matcher of the rg port: std/regex, or with -P the engine of
+// std/pcre, which follows PCRE2. A search calls the same methods for
+// each engine. A search of PCRE2 can fail when it takes too many steps.
+// Then the method records the error, and the search of the file stops.
+import "std/option";
+import "std/pcre";
+import "std/regex";
+
+pub struct Matcher { rx: regex.Regex, pc: Option[pcre.Pcre], error: Cell[string] }
+
+pub function of_regex(rx: regex.Regex): Matcher {
+  return Matcher { rx: rx, pc: None, error: cell_new("") };
+}
+
+// A matcher of PCRE2. `none` is a regex that matches nothing, and no
+// method uses it.
+pub function of_pcre(pc: pcre.Pcre, none: regex.Regex): Matcher {
+  return Matcher { rx: none, pc: Some(pc), error: cell_new("") };
+}
+
+// The error of the last search, or "", and then no error.
+pub function (m: Matcher) take_error(): string {
+  let e = m.error.get();
+  m.error.set("");
+  return e;
+}
+
+pub function (m: Matcher) failed(): boolean {
+  return m.error.get() != "";
+}
+
+function fail(m: Matcher, e: pcre.MatchError): void {
+  m.error.set(e.to_string());
+}
+
+pub function (m: Matcher) is_match(text: string): boolean {
+  let Some(pc) = m.pc else {
+    return m.rx.is_match(text);
+  };
+  return match (pc.is_match(text)) {
+    Ok(yes) => yes,
+    Err(e) => {
+      fail(m, e);
+      return false;
+    },
+  };
+}
+
+pub function (m: Matcher) find_at(text: string, at: i32): Option[regex.Match] {
+  let Some(pc) = m.pc else {
+    return m.rx.find_at(text, at);
+  };
+  return match (pc.find_at(text, at)) {
+    Ok(Some(x)) => Some(regex.Match { start: x.start, end: x.end }),
+    Ok(None()) => None,
+    Err(e) => {
+      fail(m, e);
+      return None;
+    },
+  };
+}
+
+pub function (m: Matcher) captures_at(text: string, at: i32): Option[regex.Captures] {
+  let Some(pc) = m.pc else {
+    return m.rx.captures_at(text, at);
+  };
+  let slots = match (pc.captures_at(text, at)) {
+    Ok(Some(s)) => s,
+    Ok(None()) => {
+      return None;
+    },
+    Err(e) => {
+      fail(m, e);
+      return None;
+    },
+  };
+  let starts: i32[] = [];
+  let ends: i32[] = [];
+  for k in 0..slots.len() / 2 {
+    starts = starts.append(slots[2 * k]);
+    ends = ends.append(slots[2 * k + 1]);
+  }
+  return Some(regex.Captures { text: text, starts: starts, ends: ends, names: group_names(pc) });
+}
+
+// The name of each group from group 1, or "", as regex.Captures holds them.
+function group_names(pc: pcre.Pcre): string[] {
+  let out: string[] = [];
+  for k in 0..pc.group_count() {
+    out = out.append("");
+  }
+  for name in pc.group_names() {
+    let g = pc.group_index(name);
+    if (g >= 1 && g <= out.len()) {
+      out = out.with(g - 1, name);
+    }
+  }
+  return out;
+}
+
+// The first offset at or after `from` where a match can start. PCRE2 gives
+// no such offset, and each offset can start a match.
+pub function (m: Matcher) next_candidate(text: string, from: i32): i32 {
+  if (m.pc.is_some()) {
+    return if (from > text.len()) { -1 } else { from };
+  }
+  return m.rx.next_candidate(text, from);
+}
+
+pub function (m: Matcher) next_inner(text: string, from: i32): i32 {
+  if (m.pc.is_some()) {
+    return from;
+  }
+  return m.rx.next_inner(text, from);
+}
+
+pub function (m: Matcher) can_match_byte(b: u8): boolean {
+  if (m.pc.is_some()) {
+    return true;
+  }
+  return m.rx.can_match_byte(b);
+}

@@ -1,0 +1,57 @@
+import "std/json";
+import "std/test";
+
+// The values of a stream, read with parse_at one at a time.
+function stream_of(s: string): string {
+  let parts: string[] = [];
+  let at = 0;
+  while (true) {
+    while (at < s.len() && (s[at] == b' ' || s[at] == b'\n')) {
+      at += 1;
+    }
+    if (at >= s.len()) {
+      return parts.join(" ");
+    }
+    match (json.parse_at(s, at)) {
+      Ok(found) => {
+        let (v, end) = found;
+        parts = parts.append(json.encode(v) + "@" + end.to_string());
+        at = end;
+      },
+      Err(e) => {
+        return parts.append("error " + e.offset.to_string()).join(" ");
+      }
+    }
+  }
+  return "";
+}
+
+function test_stream(): test.TestOutcome {
+  return test.assert_eq(stream_of("1 [2,{\"a\":null}]\n\"x\" true"), "1@1 [2,{\"a\":null}]@16 \"x\"@20 true@25");
+}
+
+function test_stops_after_the_value(): test.TestOutcome {
+  return test.assert_eq(stream_of("{\"a\":1}} 2"), "{\"a\":1}@7 error 7");
+}
+
+function test_offset_of_an_error(): test.TestOutcome {
+  return test.assert_eq(stream_of("[1, ]"), "error 4");
+}
+
+// A high surrogate with no low surrogate after it is U+FFFD, and the escape
+// after it is read again: here it starts a pair of its own.
+function test_unpaired_high_surrogate(): test.TestOutcome {
+  let Ok(json.JString(s)) = json.parse("\"\\ud800\\ud83d\\ude00\\ud800\\u0041\"") else {
+    return test.fail("no string");
+  };
+  return test.assert_eq(s, "�😀�A");
+}
+
+function main(): i32 {
+  let r = test.new("json parse_at");
+  r = r.it("reads a stream one value at a time", test_stream);
+  r = r.it("does not read the text after the value", test_stops_after_the_value);
+  r = r.it("gives the offset of an error", test_offset_of_an_error);
+  r = r.it("reads the escape after an unpaired high surrogate again", test_unpaired_high_surrogate);
+  return r.finish();
+}

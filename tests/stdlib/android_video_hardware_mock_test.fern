@@ -131,6 +131,28 @@ function discovery(): i32 {
   return 0;
 }
 
+function decoders(): i32 {
+  let env = jni_env();
+  jni_mode(0);
+  let Ok(types) = capabilities.decoder_types(env, capabilities.default_limits()) else {
+    return 151;
+  };
+  if (types != ["video/avc", "video/hevc"] || jni_frames() != 0 || jni_pending() != 0) {
+    return 152;
+  }
+  jni_mode(5);
+  match (capabilities.decoder_types(env, capabilities.default_limits())) {
+    Err(_) => {},
+    _ => {
+      return 153;
+    }
+  }
+  if (jni_pending() != 0 || jni_frames() != 0) {
+    return 154;
+  }
+  return 0;
+}
+
 function fallback(): i32 {
   let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 64 };
   mode(0);
@@ -841,6 +863,10 @@ function recovery_after_frame(): i32 {
 
 function main(): i32 {
   let result = discovery();
+  if (result != 0) {
+    return result;
+  }
+  result = decoders();
   if (result != 0) {
     return result;
   }

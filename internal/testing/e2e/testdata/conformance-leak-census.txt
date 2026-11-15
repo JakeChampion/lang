@@ -38,6 +38,7 @@ a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
 a_returned_value_match_returns_from_each_arm         0
+a_specialised_callee_keeps_its_record_update_donor                      0
 a_struct_literal_from_a_module_takes_its_type_arguments_from_its_fields 0
 a_struct_name_call_wraps_a_union_member_across_modules 0
 a_three_trait_bound_in_an_imported_module            0
@@ -675,6 +676,7 @@ multi_hop_alias                                      0
 multiline_stdin                                      0
 must_consume_destructure_in_one_arm_moves            0
 must_consume_destructure_of_a_moved_payload          0
+must_consume_if_let_arms                             0
 must_consume_in_a_loop_that_always_runs              0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
