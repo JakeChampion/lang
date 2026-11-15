@@ -152,7 +152,7 @@ profile/x86-64-linux/http_hello.minimal.bytes	56960
 profile/x86-64-linux/http_hello.minimal.emit	13588
 profile/x86-64-linux/http_hello.minimal.ir	23488377
 profile/x86-64-linux/http_hello.safe.bytes	67328
-profile/x86-64-linux/http_hello.safe.emit	16059
+profile/x86-64-linux/http_hello.safe.emit	16222
 profile/x86-64-linux/http_hello.safe.ir	21720386
 profile/x86-64-linux/int_loop.diagnostic.bytes	5640
 profile/x86-64-linux/int_loop.diagnostic.emit	531

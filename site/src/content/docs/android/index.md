@@ -123,8 +123,14 @@ package = "dev.example.counter"
 label = "Counter"
 icon = "icon.png"
 min_sdk = 26
+version_code = 3
+version_name = "1.2"
 permissions = ["INTERNET"]
 ```
+
+Google Play takes a new release of an app only when its `version_code`
+is larger than that of the last release. `version_name` is the version
+that the app shows to people.
 
 ## Where to go next
 
