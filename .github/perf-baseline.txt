@@ -202,9 +202,9 @@ aarch64/perceus_deriv.ir	76299934
 aarch64/perceus_nqueens.text	1891
 aarch64/perceus_nqueens.ir	87641471
 aarch64/perceus_rbtree.text	2908
-aarch64/perceus_rbtree.ir	35121178
+aarch64/perceus_rbtree.ir	29565816
 aarch64/perceus_rbtree_ck.text	3330
-aarch64/perceus_rbtree_ck.ir	47688585
+aarch64/perceus_rbtree_ck.ir	42101863
 x86_64/video_qtrle.text 5204
 x86_64/video_qtrle.ir 1717224731
 aarch64/video_qtrle.text 5549
