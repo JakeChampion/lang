@@ -173,7 +173,7 @@ function any_of(ts: Type[], p: (Type) => boolean): boolean {
 }
 
 // The types that t holds directly.
-function children(t: Type): Type[] {
+pub function children(t: Type): Type[] {
   match (t) {
     TypeArray(a) => {
       return [a.elem];
@@ -213,6 +213,19 @@ pub function nodes(t: Type, limit: i32): i32 {
     n += nodes(c, limit - n);
   }
   return n;
+}
+
+// depth is the levels of nesting in t: `i32` has one and `Option[i32][]`
+// has three. The count stops above limit.
+pub function depth(t: Type, limit: i32): i32 {
+  if (limit <= 0) {
+    return 1;
+  }
+  let most = 0;
+  for c in children(t) {
+    most = most.max(depth(c, limit - 1));
+  }
+  return most + 1;
 }
 
 pub function unchecked(): Type {

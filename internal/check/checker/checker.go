@@ -5960,8 +5960,10 @@ type checker struct {
 	entryModule string
 	// Retain source types until contextual settlement selects conversions.
 	// Apply the casts after checking so every consumer sees the same AST.
-	numericTypes   map[ast.Expr]ast.Type
-	numericCasts   map[ast.Expr]*ast.CastExpr
+	numericTypes map[ast.Expr]ast.Type
+	numericCasts map[ast.Expr]*ast.CastExpr
+	// overLimit holds each call, tuple and array literal that has an E106, or that holds one.
+	overLimit      map[ast.Expr]bool
 	noRCIdentTypes map[*ast.Ident]ast.Type
 	// litTypes holds the type each struct literal checked to.
 	litTypes    map[*ast.StructLit]ast.Type
@@ -6674,6 +6676,10 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 }
 
 func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Position) {
+	if typeDepth(t, maxTypeDepth) > maxTypeDepth {
+		c.errfCode(pos, "E106", "type nests deeper than %d levels", maxTypeDepth)
+		return
+	}
 	switch x := t.(type) {
 	case ast.StructType:
 		if c.isBuiltinVec(x.Name, x.Args) {

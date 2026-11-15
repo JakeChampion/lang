@@ -6214,9 +6214,23 @@ function projected_ret(ret_name: string, bn: string[], bt: typeinfo.Type[], s: S
 // that holds its argument two times doubles the type at each level of nesting.
 pub const MAX_TYPE_NODES: i32 = 4096;
 
+// The limit of the levels of nesting in a written type, and in the type of a
+// call, of a tuple or of an array literal. The work on a type grows faster
+// than its depth.
+pub const MAX_TYPE_DEPTH: i32 = 64;
+
 const TYPE_TOO_LARGE: string = "type has too many parts";
 
+const TYPE_TOO_DEEP: string = "type nests too deeply";
+
 function bounded_type(t: typeinfo.Type): typeinfo.Type {
+  let part = too_large_part(t);
+  if (type_too_large(part)) {
+    return part;
+  }
+  if (typeinfo.depth(t, MAX_TYPE_DEPTH) > MAX_TYPE_DEPTH) {
+    return t_unknown(TYPE_TOO_DEEP);
+  }
   if (typeinfo.nodes(t, MAX_TYPE_NODES) > MAX_TYPE_NODES) {
     return t_unknown(TYPE_TOO_LARGE);
   }
@@ -6225,12 +6239,33 @@ function bounded_type(t: typeinfo.Type): typeinfo.Type {
 
 function type_too_large(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(u) = t {
-    return u.reason == TYPE_TOO_LARGE;
+    return u.reason == TYPE_TOO_LARGE || u.reason == TYPE_TOO_DEEP;
   }
   return false;
 }
 
-// The E106 of a call or of a tuple whose type is over the limit. The result
+// The part of t that was over a limit, or t when it has none. A type that
+// holds such a part is over the limit too, and has no second diagnostic.
+function too_large_part(t: typeinfo.Type): typeinfo.Type {
+  for c in typeinfo.children(t) {
+    let part = too_large_part(c);
+    if (type_too_large(part)) {
+      return part;
+    }
+  }
+  return t;
+}
+
+function too_large_message(t: typeinfo.Type): string {
+  if let typeinfo.TypeUnknown(u) = t {
+    if (u.reason == TYPE_TOO_DEEP) {
+      return "type nests deeper than " + util.i32_to_string(MAX_TYPE_DEPTH) + " levels";
+    }
+  }
+  return "type has more than " + util.i32_to_string(MAX_TYPE_NODES) + " parts";
+}
+
+// The E106 of a call, of a tuple or of an array whose type is over a limit. The result
 // is found when an operand or the value is over the limit, and the diagnostic
 // is on the first value that is over it.
 function too_large_diags(value: typeinfo.Type, operands: ast.Expr[], line: i32, col: i32, s: Scope, out: util.Diag[]): (util.Diag[], boolean) {
@@ -6245,7 +6280,7 @@ function too_large_diags(value: typeinfo.Type, operands: ast.Expr[], line: i32, 
     out = util.append_diags(out, call_diags(operand, s));
   }
   if (!inner) {
-    out = out.append(dg_at("E106", "type has more than " + util.i32_to_string(MAX_TYPE_NODES) + " parts", line, col));
+    out = out.append(dg_at("E106", too_large_message(value), line, col));
   }
   return (out, true);
 }
@@ -6281,7 +6316,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       return bounded_type(t_tuple(elems));
     },
     ast.ExprArray(a) => {
-      return check_array_expr(a, s);
+      return bounded_type(check_array_expr(a, s));
     },
     ast.ExprBytes(_) => {
       return t_array(typeinfo.t_u8());
@@ -6580,6 +6615,9 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     return t_array(t_unknown("empty array literal"));
   }
   let first = check_expr(a.elements[0], s);
+  if (type_too_large(first)) {
+    return first;
+  }
   let gives = !reads_lit_local(a, s);
   let first_lit = element_literal_kind(a.elements[0], gives);
   let first_expr = a.elements[0];
@@ -14306,6 +14344,10 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
       out = diags;
     },
     ast.ExprArray(a) => {
+      let (large, found) = too_large_diags(check_expr(e, s), a.elements, a.line, a.col, s, out);
+      if (found) {
+        return large;
+      }
       out = call_diags_array(a, s, out);
       out = util.append_diags(out, lanes_inside_diags(check_expr(e, s), a.line, a.col));
     },
@@ -16717,6 +16759,10 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
     }
   }
   if let ast.ExprTuple(tup) = e {
+    let (large, found) = too_large_diags(check_expr(e, s), tup.elements, tup.line, tup.col, s, []);
+    if (found) {
+      return large;
+    }
     if let typeinfo.TypeTuple(dt) = dest {
       if (dt.elements.len() == tup.elements.len()) {
         let out: util.Diag[] = [];
@@ -16725,6 +16771,12 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
         }
         return out;
       }
+    }
+  }
+  if let ast.ExprArray(la) = e {
+    let (large, found) = too_large_diags(check_expr(e, s), la.elements, la.line, la.col, s, []);
+    if (found) {
+      return large;
     }
   }
   let elem = array_elem_type_of(dest);
@@ -28631,14 +28683,51 @@ function plain_ident(name: string): boolean {
 // unknown_type_diag reports a type spelling that names nothing: E096 for a
 // `Vec[N, T]` with no lane type on the portable tier, E064 otherwise.
 function unknown_type_diag(name: string, traits: string[], line: i32, col: i32): util.Diag {
+  if (name == TYPE_TOO_DEEP) {
+    return dg_at("E106", "type nests deeper than " + util.i32_to_string(MAX_TYPE_DEPTH) + " levels", line, col);
+  }
   if (name.starts_with("Vec[")) {
     return dg_at("E096", name + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", line, col);
   }
   return dg_at("E064", "cannot find type \"" + util.demangle(name) + "\" in this scope" + unknown_type_hint(name, traits), line, col);
 }
 
+// The name that a written type does not resolve, or TYPE_TOO_DEEP for a type
+// over the limit of nesting.
 function e064_unknown_name(type_name: string, tn: TypeNames, extra_known: string[], tparams: string[]): string {
-  return e064_unknown_name_tref(parser.parse_type_ref(type_name), tn, extra_known, tparams);
+  let tr = parser.parse_type_ref(type_name);
+  if (type_ref_depth(tr, MAX_TYPE_DEPTH) > MAX_TYPE_DEPTH) {
+    return TYPE_TOO_DEEP;
+  }
+  return e064_unknown_name_tref(tr, tn, extra_known, tparams);
+}
+
+// The E106 of each type that a statement or a lambda of the source writes
+// with more levels than the limit. The module is the source before the
+// checker gives a local the type of its value: the type of a value has its
+// E106 on the value.
+function written_depth_diags(source: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for fd in source.funcs {
+    for an in collect_annots(fd.body) {
+      if (type_ref_depth(parser.parse_type_ref(an.type_name), MAX_TYPE_DEPTH) > MAX_TYPE_DEPTH) {
+        out = out.append(unknown_type_diag(TYPE_TOO_DEEP, [], an.line, an.col));
+      }
+    }
+  }
+  return out;
+}
+
+// The levels of nesting in a written type. The count stops above limit.
+function type_ref_depth(tr: parser.TypeRef, limit: i32): i32 {
+  if (limit <= 0) {
+    return 1;
+  }
+  let most = 0;
+  for arg in tr.args {
+    most = most.max(type_ref_depth(arg, limit - 1 - tr.array_depth));
+  }
+  return most + 1 + tr.array_depth;
 }
 
 function e064_decl_spelling(type_name: string, fn_ret: string, fn_params: string): string {
@@ -29025,7 +29114,7 @@ function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], tpa
   let out: util.Diag[] = [];
   for elem in an {
     let vu = e064_unknown_name(elem.type_name, tn, extra_known, tparams);
-    if (vu.len() > 0) {
+    if (vu.len() > 0 && vu != TYPE_TOO_DEEP) {
       out = out.append(unknown_type_diag(vu, traits, elem.line, elem.col));
     }
   }
@@ -31596,7 +31685,7 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
   let env = admission_env(mod, entry_file, raw_floor);
   mod = qualify_variants_in(mod, env, whole_focus(mod));
   let typed = annotate_prepared(mod, module_env(mod), whole_focus(mod));
-  let mt = ModuleTypes { ...check_module_pass(mod, env, fda_diags, [], typed.funcs), typed: typed };
+  let mt = ModuleTypes { ...check_module_pass(mod, env, util.append_diags(fda_diags, written_depth_diags(filled)), [], typed.funcs), typed: typed };
   if (mt.diags.len() > 0) {
     return mt;
   }

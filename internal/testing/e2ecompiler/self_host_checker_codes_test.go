@@ -2984,6 +2984,33 @@ function main(): i32 { return 0; }
 			want []string
 		}{"generic-builtin-method-name-" + name, "function " + fn + "(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}})
 	}
+	// The limit of the levels of nesting in a type (#15999).
+	deep := func(open, core, shut string, depth int) string {
+		return strings.Repeat(open, depth) + core + strings.Repeat(shut, depth)
+	}
+	for _, d := range []struct {
+		name  string
+		make  func(depth int) string
+		limit int
+	}{
+		{"constructor", func(n int) string { return "let x = " + deep("Some(", "1", ")", n) + ";" }, 63},
+		{"array-literal", func(n int) string { return "let x = " + deep("[", "1", "]", n) + ";" }, 63},
+		{"tuple", func(n int) string { return "let x = " + deep("(1, ", "2", ")", n) + ";" }, 63},
+		{"written-type", func(n int) string { return "let x: " + deep("Option[", "i32", "]", n) + " = None;" }, 63},
+		{"written-array-type", func(n int) string { return "let x: i32" + strings.Repeat("[]", n) + " = [];" }, 63},
+	} {
+		for _, at := range []struct {
+			label string
+			depth int
+			want  []string
+		}{{"at-the-limit-ok", d.limit, nil}, {"over-the-limit", d.limit + 1, []string{"E106"}}, {"far-over-the-limit", 2000, []string{"E106"}}} {
+			cases = append(cases, struct {
+				name string
+				src  string
+				want []string
+			}{"e106-depth-" + d.name + "-" + at.label, "function main(): i32 { " + d.make(at.depth) + " return 0; }\n", at.want})
+		}
+	}
 	cases = append(cases, tupleProjectionCases...)
 	cases = append(cases, exitResolutionCases...)
 	for _, tc := range cases {
