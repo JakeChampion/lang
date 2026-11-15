@@ -5488,6 +5488,13 @@ pub function is_byte_view(t: typeinfo.Type): boolean {
   return false;
 }
 
+pub function is_byte_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view && is_u8(a.elem);
+  }
+  return false;
+}
+
 pub function with_contract(calls: Contract[], c: Contract): Contract[] {
   if (find_contract_in(calls, c.name) >= 0) {
     return calls;

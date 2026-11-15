@@ -624,6 +624,9 @@ pub function lane_builtin_params(name: string): Type[] {
   if (v == "load") {
     return [arr, i];
   }
+  if (v == "load_view") {
+    return [TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: true }, i];
+  }
   if (v == "with") {
     return [arr, i, lt];
   }
