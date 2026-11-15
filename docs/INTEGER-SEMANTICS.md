@@ -426,3 +426,13 @@ the whole integer matrix (every width × signedness × operator,
 including the division edges above) and asserts the interpreter and
 every codegen backend agree. `TestNumericProperty_Regressions` pins
 the specific edge programs; `FuzzNumericProperty` is the deeper search.
+
+`TestSelfHostIntegerEdgeMatrix` (`internal/testing/e2ecompiler`) is the
+deterministic half. For each integer type it takes the numbers at the two
+ends of the type, the numbers next to them, and the shift counts at and next
+to the width. It applies each operator to each pair: the wrapping
+operators, the saturating operators, the checked operators, `as` and `as?`.
+The compiler's interpreter, x86-64, arm64 and wasm must print the same
+results. Each result is computed two times, from operands that the compiler
+cannot see and from operands that it can fold, and the two must be equal.
+The lines of `usize` are compared only between the targets of 64 bits.

@@ -1,0 +1,5 @@
+waiver: harness-limit
+reason: the two interpreters run a spawned task to its end at the spawn. The
+  task then waits to its deadline before the parent closes the connection,
+  so no task is parked across the close and the case has nothing to show
+  there.

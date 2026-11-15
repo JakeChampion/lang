@@ -6572,6 +6572,36 @@ function unsigned_narrow_site(own r: irtables.LowerState, ins: ssa.SInst, w: i32
   return emit(r, ir.op_lane("vinarrowu", w));
 }
 
+// The 16 bytes of an `of` whose arguments are all constants, as four words
+// of 32 bits. The first argument is the low lane. The result is empty when
+// an argument is not a constant. A value of four words takes at most four
+// steps to make, where a value of 16 lanes takes 16.
+function constant_lane_words(f: ssasem.Func, ins: ssa.SInst, w: i32): i32[] {
+  let per = 32 / w;
+  let words: i32[] = [];
+  let word = 0i64;
+  for k in 0..ins.args.len() {
+    let d = defining(f, ins.args[k]);
+    if (d.kind_tag != ssa.CONST_INT) {
+      return [];
+    }
+    // A constant of type u32 has its text and no number.
+    let lane = d.imm as i64;
+    if (ssasem.is_u32(f.values[ins.args[k]])) {
+      lane = util.lit_to_i64(d.str);
+    }
+    word = word | (lane & (1i64 << w as i64) - 1i64) << (k % per * w) as i64;
+    if (k % per == per - 1) {
+      if (word >= 2147483648i64) {
+        word -= 4294967296i64;
+      }
+      words = words.append(word as i32);
+      word = 0i64;
+    }
+  }
+  return words;
+}
+
 // A builtin of an integer lane type. Its arguments are on the stack.
 function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, verb: string): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
@@ -6583,6 +6613,18 @@ function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.
   if (verb == "of") {
     for a in ins.args {
       r = emit(r, ir.op_drop());
+    }
+    let words = constant_lane_words(f, ins, w);
+    if (words.len() == 4) {
+      r = emit(r, ir.op_const_i32(words[0]));
+      r = emit(r, ir.op_lane("visplat", 32));
+      for k in 1..4 {
+        if (words[k] != words[0]) {
+          r = emit(r, ir.op_const_i32(words[k]));
+          r = emit(r, ir.op_lane_at("vireplace", 32, k));
+        }
+      }
+      return r;
     }
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_lane("visplat", w));

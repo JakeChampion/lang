@@ -547,6 +547,7 @@ int_div_rem_by_zero                                  0
 int_extend_signedness                                0
 int_min_arithmetic                                   0
 int_saturating_ops                                   0
+int_saturating_product_of_wide_operands              0
 int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
@@ -1245,6 +1246,7 @@ slice_unchecked_oob                                  0
 slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
+socket_close_wakes_a_parked_task                     4
 socket_copy_refused_after_close                      0
 socket_from_fd                                       0
 socket_handle_keeps_its_close_count                  0
