@@ -11,11 +11,11 @@ whole program. The scalar counts are from the compiler of main at 3bdd72da.
 
 | Program | Bytes encoded | Scalar | Lanes | Ratio |
 | --- | --: | --: | --: | --: |
-| `hex_encode` | 16 MiB | 492,114,730 | 84,262,703 | 5.8 |
-| `base64_encode` | 12 MiB | 311,247,402 | 117,717,039 | 2.6 |
+| `hex_encode` | 16 MiB | 492,114,730 | 70,631,215 | 7.0 |
+| `base64_encode` | 12 MiB | 311,247,402 | 93,474,351 | 3.3 |
 
-For each byte, the hex encoder runs 5.0 instructions in place of 29.3.
-The base64 encoder runs 9.3 in place of 24.7.
+For each byte, the hex encoder runs 4.2 instructions in place of 29.3.
+The base64 encoder runs 7.4 in place of 24.7.
 
 Time on a 4-core x86-64 container, for 220 MiB of input to the hex encoder:
 0.33 s with the scalar encoder and 0.08 s with lanes.
