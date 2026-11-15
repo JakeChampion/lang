@@ -10551,40 +10551,13 @@ function ssa_int_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse
   return if (narrow.narrow) { narrow } else { ssa_test_fuse(fv, blk, fu) };
 }
 
-// A compare of two values of 32 bits or less reads only their low 32 bits
-// with `cmpl`. A wrap to 32 bits next to the compare, which gives its value
-// to no other instruction, then has no effect, and the compare takes the
-// value before the wrap.
 function ssa_wrap_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
-  if (cmp.imm != 0 || !ssa_signed_order(fu.tag) || fv.imm.is_imm[fu.b] && ssa.imm_sym(fv.imm, fu.b) != "") {
-    return fu;
-  }
-  let k = ssa_before_immediates(fv, blk, blk.insts.len() - fu.n - 1, -1);
-  if (k < 0 || !ssa_lone_wrap(fv, blk.insts[k])) {
-    return fu;
-  }
-  let wrap = blk.insts[k];
-  if (wrap.result == fu.a) {
-    return SsaFuse { ...fu, n: blk.insts.len() - k, a: wrap.args[0], narrow: true };
-  }
-  return if (wrap.result == fu.b) { SsaFuse { ...fu, n: blk.insts.len() - k, b: wrap.args[0], narrow: true } } else { fu };
-}
-
-// A wrap to 32 bits with the sign, of a value that is not an immediate, that
-// gives its value to one instruction.
-function ssa_lone_wrap(fv: FuseView, ins: ssa.SInst): boolean {
-  if (ins.kind_tag != ssa.UNARY || ins.args.len() != 1 || ins.imm != 0 || fv.uses[ins.result] != 1) {
-    return false;
-  }
-  return (ins.str == "int_cast:i32" || ins.str == "int_wrap") && !fv.imm.is_imm[ins.args[0]];
+  let c = asmcore.narrow_compare(fv.uses, fv.imm, blk, cmp, fu.tag, asmcore.FusedCompare { n: fu.n, a: fu.a, b: fu.b, narrow: false });
+  return SsaFuse { ...fu, n: c.n, a: c.a, b: c.b, narrow: c.narrow };
 }
 
 function ssa_compare_bits(fu: SsaFuse): i32 {
   return if (fu.narrow) { 32 } else { 64 };
-}
-
-function ssa_signed_order(tag: i32): boolean {
-  return tag == ir.K_EQ || tag == ir.K_NE || tag == ir.K_LT_S || tag == ir.K_LE_S || tag == ir.K_GT_S || tag == ir.K_GE_S;
 }
 
 // `(x & mask) == 0` and `!= 0` read the flags of one `test` of x.
@@ -10592,7 +10565,7 @@ function ssa_test_fuse(fv: FuseView, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
   if (!ssa_zero_compare(fv, fu)) {
     return ssa_load_fuse(fv, blk, fu);
   }
-  let k = ssa_before_immediates(fv, blk, blk.insts.len() - fu.n - 1, fu.a);
+  let k = asmcore.before_immediates(fv.imm, blk, blk.insts.len() - fu.n - 1, fu.a);
   if (k < 0 || !ssa_single_and(fv, blk.insts[k], fu.a)) {
     return ssa_load_fuse(fv, blk, fu);
   }
@@ -10607,7 +10580,7 @@ function ssa_test_fuse(fv: FuseView, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
 // A compare reads an operand from memory when a load next to it gives the
 // operand to no other instruction.
 function ssa_load_fuse(fv: FuseView, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
-  let k = ssa_before_immediates(fv, blk, blk.insts.len() - fu.n - 1, fu.a);
+  let k = asmcore.before_immediates(fv.imm, blk, blk.insts.len() - fu.n - 1, fu.a);
   if (k < 0) {
     return fu;
   }
@@ -10672,18 +10645,6 @@ function ssa_bits_if(ok: boolean, bits: i32): i32 {
 
 function ssa_zero_compare(fv: FuseView, fu: SsaFuse): boolean {
   return (fu.tag == ir.K_EQ || fu.tag == ir.K_NE) && fv.imm.is_imm[fu.b] && fv.imm.value[fu.b] == 0i64 && ssa.imm_sym(fv.imm, fu.b) == "";
-}
-
-function ssa_immediate_inst(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssa.CONST_INT || ins.kind_tag == ssa.CONST_I64 || ins.kind_tag == ssa.SHAPE_ADDR;
-}
-
-// The position at or before `k` past the immediates, which emit nothing.
-function ssa_before_immediates(fv: FuseView, blk: ssa.SBlock, k: i32, stop: i32): i32 {
-  while (k >= 0 && blk.insts[k].result != stop && ssa_immediate_inst(blk.insts[k]) && fv.imm.is_imm[blk.insts[k].result]) {
-    k -= 1;
-  }
-  return k;
 }
 
 function ssa_single_and(fv: FuseView, ins: ssa.SInst, v: i32): boolean {
@@ -11528,7 +11489,7 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   let tail = h.insts.len() - ssa_fuse(ssa_fuse_view(fr), h).n;
   for k in 0..tail {
     let ins = h.insts[k];
-    let imm = ssa_immediate_inst(ins) && fr.imm.is_imm[ins.result];
+    let imm = asmcore.immediate_inst(ins) && fr.imm.is_imm[ins.result];
     if (ins.kind_tag != ssa.PHI && !imm) {
       return false;
     }

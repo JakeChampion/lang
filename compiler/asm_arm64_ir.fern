@@ -4242,7 +4242,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 
 struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean }
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, narrow: boolean }
 
 // What deciding a fusion reads: the use counts and the immediates. The
 // allocator decides with it before a frame exists.
@@ -4253,14 +4253,14 @@ function ssa_fuse_view(fr: SsaFrame): FuseView {
 }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, narrow: false };
 }
 
 function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boolean): ssaprepare.Fusion[] {
   if (!retain) {
     return rows;
   }
-  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: fu.narrow });
 }
 
 function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
@@ -4276,7 +4276,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let n = 1;
   let inverted = false;
   if (last.kind_tag == ssa.UNARY && last.str == "!") {
-    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false };
+    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, narrow: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -4291,18 +4291,23 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa.unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
+    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4, narrow: false };
   }
   if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
   }
   if (ssa.float_cmp(cmp.str)) {
-    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false };
   }
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+    return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false });
   }
-  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+  return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false });
+}
+
+function ssa_narrow_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
+  let c = asmcore.narrow_compare(fv.uses, fv.imm, blk, cmp, fu.tag, asmcore.FusedCompare { n: fu.n, a: fu.a, b: fu.b, narrow: false });
+  return SsaFuse { ...fu, n: c.n, a: c.a, b: c.b, narrow: c.narrow };
 }
 
 function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
@@ -4368,9 +4373,9 @@ function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
 
 function ssa_cmp_flags(fv: FuseView, cmp: ssa.SInst): SsaFuse {
   if (!ssa.float_cmp(cmp.str) && fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false };
   }
-  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false };
 }
 
 function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
@@ -4974,6 +4979,9 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   s = ssa_read(reg_of, fu.a, "x4", s);
   let bx = ssa_rhs_scratch(reg_of, fu.b, s);
   s = ssa_read_rhs(fr, reg_of, fu.b, bx, s);
+  if (fu.narrow) {
+    return s.write("    cmp " + ssa_wreg(ssa_src(reg_of, fu.a, "x4")) + ", " + ssa_rhs32(ssa_rhs(fr, reg_of, fu.b, bx)) + "\n");
+  }
   if (s.records()) {
     let w = ssa_addsub_word(true, "", ssa_src(reg_of, fu.a, "x4"), fr, reg_of, fu.b, bx);
     if (w >= 0) {
@@ -5018,14 +5026,14 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   if (ssa.has_phis(f, fr.blk_pos, h.term.t) || ssa.has_phis(f, fr.blk_pos, h.term.f)) {
     return false;
   }
-  let n = 0;
-  for ins in h.insts {
-    let imm = (ins.kind_tag == ssa.CONST_INT || ins.kind_tag == ssa.CONST_I64) && fr.imm.is_imm[ins.result];
-    if (ins.kind_tag != ssa.PHI && !imm) {
-      n += 1;
+  let tail = h.insts.len() - ssa_fuse(ssa_fuse_view(fr), h).n;
+  for k in 0..tail {
+    let ins = h.insts[k];
+    if (ins.kind_tag != ssa.PHI && !(asmcore.immediate_inst(ins) && fr.imm.is_imm[ins.result])) {
+      return false;
     }
   }
-  return n == ssa_fuse(ssa_fuse_view(fr), h).n;
+  return true;
 }
 
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
