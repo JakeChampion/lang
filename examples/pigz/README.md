@@ -149,6 +149,12 @@ The hash tables `head` and `prev` are `u16[]`, as in zlib, so they use
 4.70 s of CPU at `-6 -p 1` and 8.97 s at `-9 -p 1`. So the 2-byte tables
 take 14% and 17% less CPU time there.
 
+The compiler makes two kinds of loop into calls to its kernels (#15974):
+the copy of the input into the window, and the slide of the window. The
+kernels have no 2-byte form, so the clear of `head` stays a loop. The slide
+of `head` and `prev` runs a copy of its loop with no checks (#15975). The
+runs of the table are older than these two changes.
+
 Most of the time of a compression is in `longest`, the port of
 `longest_match`. Its loop waits for the loads of the window and of the hash
 chain, and for compares that the processor predicts wrong. So the count of
@@ -157,13 +163,12 @@ its instructions has a small effect on the time.
 Changes to the assembly by hand show this. With no bounds checks, the loop
 took the same time. With all of its values in registers, it took 1.5% less
 time. Two-byte compares, as zlib makes them, took 7% less time, and the port
-now makes them.
+now makes them. A check and a two-byte read in five instructions, as #15976
+gives them, took the same time.
 
-This cause of the rest of the difference is not measured:
-
-- `longest` takes ten arguments, and some of them go on the stack. The
-  values of the loop of `deflate_slow` that live across the call are in
-  stack slots, because x86-64 has five callee-saved registers.
+This cause is not measured: `longest` takes ten arguments, and some of them
+go on the stack. The values of the loop of `deflate_slow` that live across
+the call are in stack slots, because x86-64 has five callee-saved registers.
 
 ## Messages and exit codes
 
@@ -179,11 +184,7 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
 ## What remains
 
 - Speed: compression is not yet as fast as pigz (see the table). The
-  causes that "Speed" gives are not fixed. Also, the port has a loop for
-  each element where zlib calls memcpy or memset, and the compiler does not
-  make these loops one call: the copy of the input into the window, the
-  slide of the window, and the clear of `head`. Each job of a parallel
-  compression does these again for its dictionary.
+  causes that "Speed" gives are not fixed.
 
 - Level 11 (zopfli). `-11` aborts with exit code 22 and the message
   `level 11 (zopfli) is not available in this port`.

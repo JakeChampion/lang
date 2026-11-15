@@ -1,0 +1,20 @@
+// The n elements of 2^shift bytes at src to dst, first to last, each read
+// after the writes before it.
+function __fern_arr_move_each(dst: usize, src: usize, n: i32, shift: i32): void {
+  let size: usize = 1;
+  size = size << shift as usize;
+  let end = dst + (n as usize << shift as usize);
+  let d = dst;
+  let s = src;
+  while (d < end) {
+    if (shift == 0) {
+      __store_u8(d, __load_u8(s));
+    } else if (shift == 2) {
+      __store_i32(d, __load_i32(s));
+    } else {
+      __store_i64(d, __load_i64(s));
+    }
+    d += size;
+    s += size;
+  }
+}
