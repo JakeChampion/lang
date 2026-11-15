@@ -39,15 +39,15 @@ function loaded_link(row: ssaprepare.Emitted): void {
     for op in block.insts {
       if (op.kind_tag == 11 && op.str == "__fern_rc_is_unique") {
         require(op.args.len() == 1, 203);
-        let joined = false;
+        let loaded = false;
         for definer in row.body.formed.f.blocks {
-          for phi in definer.insts {
-            if (phi.result == op.args[0] && phi.kind_tag == 8) {
-              joined = true;
+          for load in definer.insts {
+            if (load.result == op.args[0] && load.kind_tag == 40) {
+              loaded = true;
             }
           }
         }
-        require(joined, 204);
+        require(loaded, 204);
         calls += 1;
       }
     }

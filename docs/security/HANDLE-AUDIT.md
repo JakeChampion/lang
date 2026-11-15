@@ -32,6 +32,7 @@ The close kernel of each target increments the count of a number.
 Each builtin that borrows a `Socket`, and each read of `fd`, compares the two counts.
 When they differ, the builtin gets the number -1 and returns the error of a bad descriptor, and `fd` reads as -1.
 Thus a copy of a handle is refused after the descriptor closes, also when a new connection has the same number (#15049).
+A task that waits on a socket puts the close count in its wait: `async.counted` writes the low 24 bits of the count in the interest word of the pair, and each driver ends the wait of a pair whose number closed before it blocks. `socket_close_wakes_a_parked_task` checks that the wait does not last to its deadline.
 The Go interpreter gives each socket a number that it does not use again, so it needs no count.
 
 A `Socket` does not convert to or from an `i32`.
