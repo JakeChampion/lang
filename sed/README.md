@@ -56,21 +56,57 @@ POSIXLY_CORRECT as GNU sed does.
 
 In a UTF-8 locale the port reads characters of UTF-8, as GNU sed does. The
 locale is the first of LC_ALL, LC_CTYPE and LANG that is set, and its
-codeset must be UTF-8, as in `C.UTF-8`. Then:
+codeset must be UTF-8, as in `C.UTF-8`.
+
+The locale must also be on the system. Each category of the locale comes
+from LC_ALL, its own variable or LANG, and each one must load. When one
+category does not load, the port uses the C locale, as GNU sed does. The
+port finds a locale as the libc does:
+
+- glibc looks in the locale archive, and then in the directories of
+  LOCPATH and in `/usr/lib/locale`. A name can lose its territory and its
+  modifier, so `C_XX.UTF-8@euro` finds `C.utf8`.
+- For glibc, the codeset must be a name of UTF-8 for gconv: `UTF-8` or
+  `UTF8`, in upper or lower case.
+- Darwin looks for the name as it is, in PATH_LOCALE or
+  `/usr/share/locale`.
+- On WASI and on Android, the libc reads no files for a locale. There the
+  codeset of the name decides.
+
+In a UTF-8 locale:
 
 - `.`, a bracket expression, `\w`, `\W`, `\s` and `\S` match one
   character. A byte that starts no character matches only itself, outside a
   bracket expression.
-- The classes, the case conversions of `s` and the `I` flag follow the
-  rules of glibc in C.UTF-8. For example, `[[:alpha:]]` holds the decimal
-  digits outside ASCII. Two characters are equal under `I` when they have
-  the same upper case.
+- The classes and the case conversions of `s` and `I` come from the tables
+  of glibc 2.39 in C.UTF-8. `scripts/gen-glibc-ctype.py` writes them to
+  `coreutils/lib/glibc_ctype.fern` from the libc of the host. For example,
+  `[[:alpha:]]` holds the decimal digits outside ASCII, and U+0363 is in
+  `[[:punct:]]`.
 - A range in a bracket expression takes two ASCII ends, as in C.UTF-8.
 - `y` maps characters, and `--debug` prints its pairs in their order.
 - The word assertions read the character before and after each position.
 - `l` and the trace of `--debug` still show bytes.
 
 In the C locale each byte is a character.
+
+Under the `I` flag, the port matches in the two steps of GNU sed:
+
+- When a search starts at the first byte, the dfa of GNU sed reads the
+  whole text first. The dfa takes each character with its counterparts
+  from gnulib: its upper case, the lower case of that, and a list of lone
+  lower cases. A line that the dfa rejects has no match.
+- Then the regex of glibc finds the match. It compares the upper case of
+  the text with the pattern in upper case.
+
+The escaped bytes and the names of classes keep their case in the regex.
+Thus `\q` matches nothing, and `[Z-a]` is an invalid range.
+
+The two steps disagree only for some characters and ranges. In a UTF-8
+locale, the counterparts leave out U+1C80 to U+1C88. Thus `s/т/X/I` changes
+`ᲄ т` to `X т`, but it does not change `ᲄ`. In the C locale, the dfa reads
+a range before the upper case, so `[a-C]` matches nothing. The port runs
+the dfa step only for a regex that has such a character or range.
 
 The regular expressions are the BRE and ERE of GNU sed, with character
 classes and back references. The GNU operators are `\+`, `\?`, `\|`, `\w`,
@@ -84,30 +120,45 @@ The exit status is the code of `q` or `Q`, or one of these:
 - 2 when sed cannot read an input file.
 - 4 for an error in the run.
 
+The port writes standard output in blocks of 64 KiB. GNU sed writes it
+through stdio, in blocks of the block size of the file, at most 8 KiB. The
+port keeps a record of the calls of GNU sed to stdio after its last block:
+the length of each call, and whether GNU sed checks it for an error.
+
+After a failed write, the port finds the call that filled the block of
+stdio at the failed byte. It gives the message of that call, with the same
+count of items. After a call that GNU sed does not check, the port drops
+the bytes that stdio drops, and continues. The port writes each block at
+once, as GNU sed does, when the record cannot show the same result: with
+`--debug`, `-i` or `-u`, with more than one input, with a w file that is
+not standard output, and with `e`, `=` or `F`.
+
 ## What the port does not do
 
-These differences remain in a UTF-8 locale:
+This difference remains in a UTF-8 locale:
 
-- The port does not check that the locale is on the system. When it is
-  not, GNU sed uses the C locale.
-- The tables of Unicode are those of version 17. glibc 2.39 has an older
-  version, so some characters that came later are in different classes.
-  An example is U+0363 COMBINING LATIN SMALL LETTER A, which is in
-  `[[:alpha:]]` in the port and in `[[:punct:]]` in GNU sed.
-- In a UTF-8 locale, a byte that continues a character but follows a
-  complete one can move a match that has a word assertion. Then GNU sed
-  can start the match inside the character before it.
+- The port does not read the aliases of `locale.alias`, and it does not
+  read the codeset in the files of a locale. It takes the codeset from the
+  name.
+
+These differences come from the regex of glibc:
+
+- A byte that continues a character but follows a complete one can move a
+  match that has a word assertion. Then GNU sed can start the match inside
+  the character before it. For example, `printf '\xbf b' | sed
+  's/\W*\B/[&]/g'` gives `[]\xbf []b` in GNU sed and `[]\xbf[] b` in the
+  port.
+- The cause is a step of glibc that the port does not copy. glibc builds
+  the context of a search again when the search starts inside a character.
+- Under `I`, the same step of glibc can put a match inside a character
+  whose upper case has a different length. For example, `echo ı | sed
+  's/\>/X/I'` writes the `X` between the two bytes of `ı` in GNU sed.
 
 These differences come from the output and from WASI:
 
-- The port writes standard output in blocks of 64 KiB, and GNU sed writes
-  it in blocks of 4 KiB. Thus a write error on standard output after the
-  first 4 KiB gives a different message. The port names the bytes of its
-  block, and GNU sed names the bytes of its last write. The blocks of GNU
-  sed cost 4% of the instructions of `y` and 8% of `p`, so the port keeps
-  its blocks.
-- A w file and the file of `-i` use the blocks of GNU sed, and give the
-  same messages.
+- With `--debug`, a write error on standard output can give a different
+  message. GNU sed writes the trace in many small calls to stdio. The record
+  of the port takes each byte of the trace as one call.
 - On wasm32-wasi, the `e` command and the `e` flag stop with an error,
   because WASI has no processes.
 

@@ -48,6 +48,7 @@ func TestWasmSmoke(t *testing.T) {
 		stdin   string
 		preopen bool
 		wasm    string
+		env     []string
 	}{
 		{util: "true", args: []string{"--version"}},
 		{util: "true", args: []string{"--", "--version"}},
@@ -70,6 +71,9 @@ func TestWasmSmoke(t *testing.T) {
 		{util: "sed", args: []string{"s/x/X/;$="}, stdin: "x\ny\n"},
 		{util: "sed", args: []string{"-n", "-E", "s/(y)/[\\1]/p", "in.txt"}, preopen: true},
 		{util: "sed", args: []string{"y/xy/XY/;l", "in.txt", "nosuch"}, preopen: true},
+		// The libc of WASI reads no files for a locale: the codeset decides.
+		{util: "sed", args: []string{"s/./X/;s/[[:alpha:]]/Y/"}, stdin: "éé\n", env: []string{"LC_ALL=C.UTF-8"}},
+		{util: "sed", args: []string{"s/./X/"}, stdin: "é\n", env: []string{"LC_ALL=C"}},
 		{util: "find", args: []string{".", "-name", "in*", "-printf", "%f %s %y %d\n"}, preopen: true},
 		{util: "find", args: []string{".", "-type", "f", "-size", "-1k", "-o", "-type", "d", "-print"}, preopen: true},
 		{util: "find", args: []string{"in.txt", "nosuch", "-print0"}, preopen: true},
@@ -91,12 +95,15 @@ func TestWasmSmoke(t *testing.T) {
 	for _, c := range cases {
 		name := c.util + " " + strings.Join(c.args, " ")
 		t.Run(name, func(t *testing.T) {
-			inv := invocation{args: c.args, stdin: c.stdin, dir: dir}
+			inv := invocation{args: c.args, stdin: c.stdin, dir: dir, env: c.env}
 			want := inv.run(t, fernBin(t, c.util), c.util)
 
 			argv := []string{"run", "--argv0", c.util}
 			if c.preopen {
 				argv = append(argv, "--dir="+dir)
+			}
+			for _, e := range c.env {
+				argv = append(argv, "--env", e)
 			}
 			argv = append(append(argv, wasmBin(c.util)), c.args...)
 			cmd := exec.Command(wasmtime, argv...)

@@ -43,9 +43,17 @@ function test_input_and_large_output(): test.TestOutcome {
   return test.assert_eq_array([small, big], ["one\ntwo\nend\n||0", "208890 228890"]);
 }
 
+// The argument 0 of the child is the program as the caller names it, as
+// `sh -c` shows in $0, and the child has the environment of the caller.
+function test_argument_zero_and_environment(): test.TestOutcome {
+  let path = env("PATH").unwrap_or("");
+  return test.assert_eq_array([ran("sh", ["-c", "printf %s \"$0\""], ""), ran("sh", ["-c", "printf %s \"$PATH\""], "")], ["sh||0", path + "||0"]);
+}
+
 function main(): i32 {
   let r = test.new("process");
   r = r.it("output and status", test_output_and_status);
   r = r.it("input and large output", test_input_and_large_output);
+  r = r.it("argument 0 and the environment", test_argument_zero_and_environment);
   return r.finish();
 }
