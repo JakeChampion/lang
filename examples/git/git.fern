@@ -1338,6 +1338,82 @@ function verify_signature(width: i32, body: u8[], programs: sig.Programs): sig.C
   return sig.check(programs, payload, signature, "committer");
 }
 
+// The object and the name of the tag `value`, or none for a tag that is
+// not sound (`parse_tag_buffer` of git). The lines `object`, `type` and
+// `tag` come first, in that order.
+function tag_fields(value: u8[], width: i32): string[] {
+  let text = unsafe { string_from_bytes_unchecked(value) };
+  let hex = 2 * width;
+  if (value.len() < hex + 24 || !text.starts_with("object ") || value[7 + hex] != b'\n') {
+    return [];
+  }
+  let object = objects.part(text, 7, 7 + hex).to_ascii_lower();
+  for i in 0..hex {
+    if (!(object[i] >= b'0' && object[i] <= b'9' || object[i] >= b'a' && object[i] <= b'f')) {
+      return [];
+    }
+  }
+  let at = 8 + hex;
+  if (!objects.part(text, at, text.len()).starts_with("type ")) {
+    return [];
+  }
+  let Some(nl) = objects.part(text, at + 5, text.len()).index_of("\n") else {
+    return [];
+  };
+  let kind = objects.part(text, at + 5, at + 5 + nl);
+  if (kind.len() >= 20) {
+    return [];
+  }
+  if (kind != "blob" && kind != "tree" && kind != "commit" && kind != "tag") {
+    eprint("error: unknown tag type '" + kind + "' in " + objects.hash_of(width, "tag", value));
+    return [];
+  }
+  at = at + 6 + nl;
+  if (at + 4 >= text.len() || !objects.part(text, at, text.len()).starts_with("tag ")) {
+    return [];
+  }
+  let Some(end) = objects.part(text, at + 4, text.len()).index_of("\n") else {
+    return [];
+  };
+  return [object, objects.part(text, at + 4, at + 4 + end)];
+}
+
+// The lines of the signed tags of the merge `c` with `parents` in
+// `--show-signature`: the tag and its parent, and the check of its
+// signature (`show_one_mergetag` of git).
+function mergetag_lines(o: LogOpts, sh_in: Shown, c: log.Commit, parents: string[], width: i32): (Shown, string) {
+  let sh = sh_in;
+  let out = "";
+  for value in objects.extra_headers(c.body, "mergetag") {
+    let text = "";
+    let fields = tag_fields(value, width);
+    if (fields.len() == 0) {
+      text = "malformed mergetag\n";
+    } else if (parents.len() == 2 && fields[0] == parents[1]) {
+      text = "merged tag '" + fields[1] + "'\n";
+    } else {
+      text = match (parents.index_of(fields[0])) {
+        Some(k) => "parent #" + (k + 1).to_string() + ", tagged '" + fields[1] + "'\n",
+        None => "tag " + fields[1] + " names a non-parent " + fields[0] + "\n",
+      };
+    }
+    let failed = true;
+    let (payload, signature, signed) = sig.split_tag(value, width);
+    if (signed) {
+      let checked = sig.check(o.gpg, payload, signature, "tagger");
+      if (checked.died.len() > 0) {
+        return (Shown { ...sh, fatal: checked.died }, out);
+      }
+      text += if (checked.has_output) { checked.output } else { "No signature\n" };
+      failed = checked.failed;
+    }
+    let (sh1, lines) = signature_lines(o, sh, text, failed);
+    sh = sh1;
+    out += lines;
+  }
+  return (sh, out);
+}
+
 // The lines of the check of a signature in `--show-signature`, each in the
 // color of a good or a bad signature with the graph after it
 // (`show_sig_lines` of git).
@@ -2215,6 +2291,12 @@ function entry_text(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context
       let (sh_sig, text) = signature_lines(o, sh, if (checked.has_output) { checked.output } else { "No signature\n" }, checked.failed);
       sh = sh_sig;
       out += text;
+    }
+    let (sh_tag, tags) = mergetag_lines(o, sh, c, ctx.parents, s.width);
+    sh = sh_tag;
+    out += tags;
+    if (sh.fatal.len() > 0) {
+      return (s, out, sh);
     }
   }
   if (o.form == "format" && log.uses_signature(o.format)) {

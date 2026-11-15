@@ -400,6 +400,15 @@ function test_signature_formats(): test.TestOutcome {
   if (sig.trust_of("Fully") != sig.TRUST_FULLY || sig.trust_of("never") != sig.TRUST_NEVER || sig.trust_of("bogus") != -1) {
     return test.fail("the names of gpg.minTrustLevel");
   }
+  let tag = "object o\ntype commit\ntag t\n\n-----BEGIN PGP SIGNATURE-----\nmessage\n-----BEGIN SSH SIGNATURE-----\nsig\n";
+  let (payload, signature, signed) = sig.split_tag(tag.bytes(), objects.SHA1);
+  if (!signed || payload != "object o\ntype commit\ntag t\n\n-----BEGIN PGP SIGNATURE-----\nmessage\n".bytes() || signature != "-----BEGIN SSH SIGNATURE-----\nsig\n".bytes()) {
+    return test.fail("the signature of a tag starts at its last line of a signature");
+  }
+  let (_, _, none) = sig.split_tag("object o\n\nno signature\n".bytes(), objects.SHA1);
+  if (none) {
+    return test.fail("a tag with no signature");
+  }
   let good = sig.parse_ssh("Good \"git\" signature for a with b with ED25519 key SHA256:K\nmore\n", true);
   if (good.failed || good.result != b'G' || good.trust != sig.TRUST_FULLY || good.signer != "a with b" || good.key != "SHA256:K" || good.fingerprint != "SHA256:K") {
     return test.fail("a good signature of a principal that holds \" with \"");
@@ -417,6 +426,11 @@ function test_signature_formats(): test.TestOutcome {
   let expired = sig.parse("[GNUPG:] NEWSIG\n[GNUPG:] EXPKEYSIG ABCD Old <o@example.com>\n", "", true);
   if (expired.failed || expired.result != b'Y') {
     return test.fail("an expired key gives a good signature in git 2.56.1");
+  }
+  let merge = "tree t\nparent p\nmergetag object a\n type commit\n tag one\n \n sig\nmergetag object b\nauthor x\nmergetagx y\n\nmergetag body\n";
+  let tags = objects.extra_headers(merge.bytes(), "mergetag");
+  if (tags.len() != 2 || tags[0] != "object a\ntype commit\ntag one\n\nsig\n".bytes() || tags[1] != "object b\n".bytes()) {
+    return test.fail("the mergetag headers of a merge");
   }
   if (!log.uses_signature("%h %G?") || !log.uses_signature("%<(5)%-GS") || log.uses_signature("%%G %h") || log.uses_signature("G%") || !log.uses_signature("%Gx")) {
     return test.fail("the placeholders that check a signature");
@@ -1086,7 +1100,7 @@ function main(): i32 {
   r = r.it("the rules of white space", test_whitespace);
   r = r.it("the moved blocks of a patch", test_moved);
   r = r.it("the signatures of commits", test_signatures);
-  r = r.it("the formats of signatures and ssh-keygen", test_signature_formats);
+  r = r.it("the formats of signatures, ssh-keygen and mergetag", test_signature_formats);
   r = r.it("the keys of the Bloom filters", test_bloom_keys);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);

@@ -74,6 +74,27 @@ pub function format_of(signature: u8[]): i32 {
   return -1;
 }
 
+// The payload and the signature of a signed tag: the text before the last
+// line that starts a signature, and the text from that line, or no
+// signature (`parse_signature` of git). The payload has no signature lines
+// in its header.
+pub function split_tag(body: u8[], width: i32): (u8[], u8[], boolean) {
+  let at = 0;
+  let found = -1;
+  while (at < body.len()) {
+    if (format_of(array.slice(body, at, (at + 32).min(body.len()))) >= 0) {
+      found = at;
+    }
+    let nl = __memchr_bytes(body, 10, at);
+    at = if (nl < 0) { body.len() } else { nl + 1 };
+  }
+  if (found < 0) {
+    return ([], [], false);
+  }
+  let (payload, _, _) = split(array.slice(body, 0, found), width);
+  return (payload, array.slice(body, found, body.len()), true);
+}
+
 // The payload and the signature of a commit: the commit without the lines
 // of its signatures, and the text of the signature of the hash of the
 // repository (`gpgsig`, or `gpgsig-sha256` for SHA-256 names), with the

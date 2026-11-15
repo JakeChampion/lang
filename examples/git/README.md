@@ -96,7 +96,8 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   ssh-keygen for ssh (`gpg.ssh.program`). ssh-keygen finds the principal
   in `gpg.ssh.allowedSignersFile` at the date of the commit, and
   `gpg.ssh.revocationFile` holds the revoked keys. `gpg.minTrustLevel`
-  sets the least trust of a good signature.
+  sets the least trust of a good signature. `--show-signature` also
+  checks the signed tags of a merge (`mergetag`).
 
   The mailmap of `.mailmap`, `mailmap.blob` and
   `mailmap.file` gives the names of the header lines, of `%aN` and of
@@ -259,8 +260,7 @@ the git of the machine. With git 2.43, six things are different:
 
 ## What it does not have yet
 
-- These options of `log`: `--remerge-diff`, and `-L`. The signed tags
-  of a merge (`mergetag`) that `--show-signature` shows.
+- These options of `log`: `--remerge-diff`, and `-L`.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.
@@ -398,8 +398,8 @@ count of bytes. A worker of `std/worker` makes the names of its part.
 - `TestSelfHostExampleGitSignatures` runs the signatures of ssh-keygen,
   gpgsm and gpg: the keys of the allowed signers, an unknown key, a
   revoked key, a key that is not valid at the date of its commit, an
-  expired key of gpg, a bad signature, and a signature of no known
-  format.
+  expired key of gpg, a bad signature, the signed tags of merges, and a
+  signature of no known format.
 
 - `TestSelfHostExampleGitFixThin` runs `index-pack --fix-thin` on a thin
   pack of `pack-objects` at each level of zlib, and on deltas whose bases
