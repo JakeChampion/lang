@@ -1,0 +1,96 @@
+// Checks the pace of the frames on the host: the refreshes of a display
+// for one frame, and the slower pace after late frames.
+import "std/test";
+import "./pace";
+
+const SECOND: i64 = 1000000000i64;
+
+// The pace after `seconds` of a display of `hz` refreshes in a second, the
+// count of the frames, and the last text of the frame rate. The GPU needs
+// `cost_ns` for a frame: a frame that is not complete at the next refresh
+// that is due comes at the refresh after it.
+function ran(start: pace.Pace, hz: i32, seconds: i32, cost_ns: i64): (pace.Pace, i32, string) {
+  let p = start;
+  let period = SECOND / (hz as i64);
+  let frames = 0;
+  let text = "";
+  let busy_until = 0i64;
+  let from = p.vsync_ns / period + 1i64;
+  for k in 0..hz * seconds {
+    let ns = (from + k as i64) * period;
+    let (next, due) = p.vsync(ns);
+    p = next;
+    if (due) {
+      if (ns < busy_until) {
+        // The GPU has the frame before this one: the frame waits one refresh.
+        p = pace.Pace { ...p, tick: p.every() };
+      } else {
+        busy_until = ns + cost_ns;
+        let (after, said) = p.drew(ns);
+        p = after;
+        frames += 1;
+        if (said.len() > 0) {
+          text = said;
+        }
+      }
+    }
+  }
+  return (p, frames, text);
+}
+
+function test_a_frame_for_each_refresh_at_60_and_90_hz(): test.TestOutcome {
+  let (a, at_60, text_60) = ran(pace.new(), 60, 3, 1000000i64);
+  let (b, at_90, text_90) = ran(pace.new(), 90, 3, 1000000i64);
+  return test.assert_eq(a.every().to_string() + " " + at_60.to_string() + " " + text_60 + " / " + b.every().to_string() + " " + at_90.to_string() + " " + text_90, "1 180 60 fps, longest 16 ms / 1 270 90 fps, longest 11 ms");
+}
+
+function test_a_frame_for_each_second_refresh_at_120_hz(): test.TestOutcome {
+  let (p, frames, text) = ran(pace.new(), 120, 3, 1000000i64);
+  let (q, more, fast) = ran(pace.new(), 144, 3, 1000000i64);
+  // The first 8 refreshes measure the display, with a frame for each.
+  return test.assert_eq(p.every().to_string() + " " + frames.to_string() + " " + text + " / " + q.every().to_string() + " " + fast, "2 183 60 fps, longest 16 ms, 1 of 2 / 2 72 fps, longest 13 ms, 1 of 2");
+}
+
+function test_late_frames_make_the_pace_slower(): test.TestOutcome {
+  // A frame costs 20 ms on a display of 60 Hz: each frame is one refresh
+  // late. After 2 seconds, the pace takes 2 refreshes for a frame, and
+  // then no frame is late.
+  let (p, frames, text) = ran(pace.new(), 60, 6, 20000000i64);
+  // A frame costs 12 ms at 120 Hz, which the pace of 60 frames has room for.
+  let (q, steady, fast) = ran(pace.new(), 120, 6, 12000000i64);
+  return test.assert_eq(p.every().to_string() + " " + p.slower.to_string() + " " + text + " / " + q.every().to_string() + " " + q.slower.to_string() + " " + fast, "2 1 30 fps, longest 33 ms, 1 of 2 / 2 0 60 fps, longest 16 ms, 1 of 2");
+}
+
+function test_a_few_late_frames_change_nothing(): test.TestOutcome {
+  let p = pace.new();
+  let period = SECOND / 60i64;
+  let ns = 0i64;
+  // One frame in 10 is one refresh late.
+  for k in 0..600 {
+    ns += period;
+    let (next, due) = p.vsync(ns);
+    p = next;
+    if (due && k % 10 != 3) {
+      let (after, said) = p.drew(ns);
+      p = after;
+    }
+  }
+  return test.assert_true(p.every() == 1 && p.slower == 0);
+}
+
+function test_a_pause_does_not_count_as_a_late_frame(): test.TestOutcome {
+  let (p, frames, text) = ran(pace.new(), 60, 2, 1000000i64);
+  let (after, due) = p.vsync(p.vsync_ns + 30i64 * SECOND);
+  let (drew, said) = after.drew(after.vsync_ns);
+  return test.assert_true(due && said == "" && drew.late == 0 && drew.every() == 1 && drew.period_ns == p.period_ns);
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/fluid pace");
+  r = r.it("a display of 60 or 90 Hz has a frame for each refresh", test_a_frame_for_each_refresh_at_60_and_90_hz);
+  r = r.it("a display of 120 or 144 Hz has a frame for each second refresh", test_a_frame_for_each_second_refresh_at_120_hz);
+  r = r.it("many late frames make the pace slower, until no frame is late", test_late_frames_make_the_pace_slower);
+  r = r.it("a few late frames change nothing", test_a_few_late_frames_change_nothing);
+  r = r.it("a pause is not a late frame", test_a_pause_does_not_count_as_a_late_frame);
+  return r.finish();
+}

@@ -115,8 +115,10 @@ pub struct Z {
   nice: i32,
   chain: i32,
   window: u8[],
-  head: i32[],
-  prev: i32[],
+  // The positions in the window are below 65536, so the hash chains are
+  // 2 bytes for each entry, as in zlib.
+  head: u16[],
+  prev: u16[],
   strstart: i32,
   block_start: i32,
   lookahead: i32,
@@ -268,8 +270,8 @@ pub function new(): Z {
     nice: 128,
     chain: 128,
     window: __alloc_u8(WINDOW_SIZE),
-    head: filled(HASH_SIZE, 0),
-    prev: filled(WSIZE, 0),
+    head: __alloc_u16(HASH_SIZE),
+    prev: __alloc_u16(WSIZE),
     strstart: 0,
     block_start: 0,
     lookahead: 0,
@@ -451,12 +453,12 @@ function slide_hash(own z: Z): Z {
   let head = z.head;
   for n in 0..HASH_SIZE {
     let m = head[n];
-    head = head.with(n, if (m >= WSIZE) { m - WSIZE } else { 0 });
+    head = head.with(n, if (m >= WSIZE) { (m - WSIZE) as u16 } else { 0 });
   }
   let prev = z.prev;
   for n in 0..WSIZE {
     let m = prev[n];
-    prev = prev.with(n, if (m >= WSIZE) { m - WSIZE } else { 0 });
+    prev = prev.with(n, if (m >= WSIZE) { (m - WSIZE) as u16 } else { 0 });
   }
   return Z { ...z, head: head, prev: prev };
 }
@@ -539,7 +541,7 @@ function insert_pending(own z: Z): Z {
   while (insert > 0) {
     h = upd(h, w[str + 2]);
     prev = prev.with(str & WMASK, head[h]);
-    head = head.with(h, str);
+    head = head.with(h, str as u16);
     str += 1;
     insert -= 1;
     if (z.lookahead + insert < MIN_MATCH) {
@@ -601,7 +603,7 @@ pub function set_dictionary(own z: Z, dict: u8[], from: i32, len: i32): Z {
     while (n > 0) {
       h = upd(h, w[str + 2]);
       prev = prev.with(str & WMASK, head[h]);
-      head = head.with(h, str);
+      head = head.with(h, str as u16);
       str += 1;
       n -= 1;
     }
@@ -889,7 +891,7 @@ function deflate_lz(own z: Z, flush: i32, fast: boolean): (Z, i32) {
 // It keeps the branches of longest_match() of zlib in their order, to check
 // against it. It compares two bytes at a time, as zlib does with UNALIGNED_OK.
 // fern-lint: allow cyclomatic-complexity
-function longest(win: u8[], prev: i32[], strstart: i32, cur_match: i32, prev_length: i32, lookahead: i32, good: i32, nice_match: i32, max_chain: i32, match_start: i32): (i32, i32) {
+function longest(win: u8[], prev: u16[], strstart: i32, cur_match: i32, prev_length: i32, lookahead: i32, good: i32, nice_match: i32, max_chain: i32, match_start: i32): (i32, i32) {
   let chain = max_chain;
   let best = prev_length;
   let nice = nice_match;
@@ -998,8 +1000,8 @@ function slow_run(own z: Z, one: boolean): (Z, i32) {
     if (lookahead >= MIN_MATCH) {
       h = (h << 5 ^ win[strstart + 2] as i32) & HASH_MASK;
       hash_head = head[h];
-      prev = prev.with(strstart & WMASK, hash_head);
-      head = head.with(h, strstart);
+      prev = prev.with(strstart & WMASK, hash_head as u16);
+      head = head.with(h, strstart as u16);
     }
     prev_length = match_length;
     prev_match = match_start;
@@ -1030,7 +1032,7 @@ function slow_run(own z: Z, one: boolean): (Z, i32) {
         if (strstart <= max_insert) {
           h = (h << 5 ^ win[strstart + 2] as i32) & HASH_MASK;
           prev = prev.with(strstart & WMASK, head[h]);
-          head = head.with(h, strstart);
+          head = head.with(h, strstart as u16);
         }
         n -= 1;
       }
@@ -1115,8 +1117,8 @@ function fast_run(own z: Z, one: boolean): (Z, i32) {
     if (lookahead >= MIN_MATCH) {
       h = (h << 5 ^ win[strstart + 2] as i32) & HASH_MASK;
       hash_head = head[h];
-      prev = prev.with(strstart & WMASK, hash_head);
-      head = head.with(h, strstart);
+      prev = prev.with(strstart & WMASK, hash_head as u16);
+      head = head.with(h, strstart as u16);
     }
     if (hash_head != 0 && strstart - hash_head <= MAX_DIST) {
       let (len, at) = longest(win, prev, strstart, hash_head, prev_length, lookahead, good, nice, chain, match_start);
@@ -1140,7 +1142,7 @@ function fast_run(own z: Z, one: boolean): (Z, i32) {
           strstart += 1;
           h = (h << 5 ^ win[strstart + 2] as i32) & HASH_MASK;
           prev = prev.with(strstart & WMASK, head[h]);
-          head = head.with(h, strstart);
+          head = head.with(h, strstart as u16);
           match_length -= 1;
         }
         strstart += 1;

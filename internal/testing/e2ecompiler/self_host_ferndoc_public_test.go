@@ -28,3 +28,19 @@ func TestSelfHostFernDocTypeFunctions(t *testing.T) {
 		t.Errorf("a signature has an empty receiver:\n%s", got)
 	}
 }
+
+// A page shows the 16-bit integer types as the source writes them.
+func TestSelfHostFernDocSixteenBitTypes(t *testing.T) {
+	fernBin := buildFernDocCLI(t)
+	want, err := os.ReadFile(filepath.Join("testdata", "ferndoc", "samples.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := exec.Command(fernBin, "-doc", filepath.Join("testdata", "ferndoc", "std", "samples.fern")).Output()
+	if err != nil {
+		t.Fatalf("fern -doc: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("page differs from testdata/ferndoc/samples.md\n%s", firstPageDiff(string(want), string(got)))
+	}
+}

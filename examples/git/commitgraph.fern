@@ -1,0 +1,378 @@
+// The commit graph of git (`objects/info/commit-graph`, or the chain of
+// `objects/info/commit-graphs/`): the parents, the tree, the date and the
+// generation number of each commit, and its changed-path Bloom filter
+// (commit-graph.c and bloom.c of git).
+//
+// A file is `CGPH`, a version, the hash, the count of chunks, the count of
+// base files, and a table of the chunks. OIDF and OIDL are a fan-out table
+// and the sorted names. CDAT holds the tree, two parents and the date of
+// each commit, with its topological level. GDA2 and GDO2 give the
+// corrected commit dates, EDGE the parents after the second of an octopus
+// merge, and BIDX and BDAT the Bloom filters. A file of a chain has BASE,
+// the names of the files below it, and a commit has the place of its
+// file plus the count of the commits below it.
+import "std/hex";
+import "./objects";
+import "./pack";
+
+// One file of the graph. The places of the chunks are -1 when the file has
+// no such chunk. `base` is the count of commits in the files below it.
+pub struct Layer { ix: pack.Index, base: i32, cdat: i32, gda2: i32, gdo2: i32, gdo2_end: i32, edge: i32, edge_end: i32, bidx: i32, bdat: i32, bdat_end: i32, hashes: i32 }
+
+// The files of the graph, the lowest first. `v2` is true when each file
+// has the corrected commit dates. `hashes` is the count of the hashes of a
+// Bloom filter, 0 when no file has filters.
+pub struct Graph { layers: Layer[], width: i32, v2: boolean, hashes: i32 }
+
+// The generation of a commit that the graph does not have.
+pub const INFINITY: i64 = 9223372036854775807;
+
+// A parent that does not exist (GRAPH_PARENT_NONE).
+const PARENT_NONE: i64 = 1879048192;
+
+const EXTRA_EDGES: i64 = 2147483648;
+
+pub function none(): Graph {
+  return Graph { layers: [], width: 0, v2: false, hashes: 0 };
+}
+
+pub function (g: Graph) enabled(): boolean {
+  return g.layers.len() > 0;
+}
+
+function be32(b: u8[], at: i32): i64 {
+  return b[at] as i64 << 24 | b[at + 1] as i64 << 16 | b[at + 2] as i64 << 8 | b[at + 3] as i64;
+}
+
+// The chunk `id` of the table of chunks of `b`: its start and its end,
+// or -1.
+function chunk(b: u8[], chunks: i32, id: string): (i32, i32) {
+  for k in 0..chunks {
+    let at = 8 + 12 * k;
+    if (b[at] == id[0] && b[at + 1] == id[1] && b[at + 2] == id[2] && b[at + 3] == id[3]) {
+      let start = be32(b, at + 4) << 32 | be32(b, at + 8);
+      let end = be32(b, at + 16) << 32 | be32(b, at + 20);
+      if (start > end || end > b.len() as i64) {
+        return (-1, -1);
+      }
+      return (start as i32, end as i32);
+    }
+  }
+  return (-1, -1);
+}
+
+// The file in `b` with names of `a` bytes and `base` commits below it, or
+// None for a file that git does not take. `bases` are the names of the
+// files below it, the lowest first.
+function layer_of(b: u8[], a: i32, base: i32, bases: string[]): Option[Layer] {
+  if (b.len() < 8 + 12 + a || b[0] != b'C' || b[1] != b'G' || b[2] != b'P' || b[3] != b'H' || b[4] != 1) {
+    return None;
+  }
+  if (b[5] as i32 != (if (a == 20) { 1 } else { 2 })) {
+    return None;
+  }
+  let chunks = b[6] as i32;
+  if (b[7] as i32 != bases.len() || 8 + 12 * (chunks + 1) > b.len()) {
+    return None;
+  }
+  let (fanout, fanout_end) = chunk(b, chunks, "OIDF");
+  let (lookup, lookup_end) = chunk(b, chunks, "OIDL");
+  let (cdat, cdat_end) = chunk(b, chunks, "CDAT");
+  if (fanout < 0 || lookup < 0 || cdat < 0 || fanout_end - fanout != 1024) {
+    return None;
+  }
+  let count = be32(b, fanout + 1020);
+  if (count * (a as i64) > (lookup_end - lookup) as i64 || count * ((a + 16) as i64) > (cdat_end - cdat) as i64) {
+    return None;
+  }
+  if (bases.len() > 0) {
+    let (base_at, base_end) = chunk(b, chunks, "BASE");
+    if (base_at < 0 || base_end - base_at < a * bases.len()) {
+      return None;
+    }
+    for k in 0..bases.len() {
+      if (pack.compare_digits(b, base_at + k * a, bases[k]) != 0) {
+        return None;
+      }
+    }
+  }
+  let (gda2, _) = chunk(b, chunks, "GDA2");
+  let (gdo2, gdo2_end) = chunk(b, chunks, "GDO2");
+  let (edge, edge_end) = chunk(b, chunks, "EDGE");
+  let (bidx, bidx_end) = chunk(b, chunks, "BIDX");
+  let (bdat, bdat_end) = chunk(b, chunks, "BDAT");
+  let hashes = 0;
+  if (bidx >= 0 && bdat >= 0 && bidx_end - bidx >= 4 * (count as i32) && bdat_end - bdat >= 12 && be32(b, bdat) == 1) {
+    hashes = be32(b, bdat + 4) as i32;
+  } else {
+    bidx = -1;
+    bdat = -1;
+  }
+  let ix = pack.Index { bytes: b, version: 2, width: a, count: count as i32, fanout: fanout, names: lookup, stride: a, offsets: -1, large: -1 };
+  return Some(Layer { ix: ix, base: base, cdat: cdat, gda2: gda2, gdo2: gdo2, gdo2_end: gdo2_end, edge: edge, edge_end: edge_end, bidx: bidx, bdat: bdat, bdat_end: bdat_end, hashes: hashes });
+}
+
+// The graph of the directory of objects `dir` with names of `a` bytes:
+// the file `info/commit-graph`, or the chain of `info/commit-graphs/`. A
+// file of the chain that git does not take ends the chain.
+pub function open(dir: string, a: i32): Graph {
+  let layers: Layer[] = [];
+  if let Ok(b) = read_file_bytes(dir + "/info/commit-graph") {
+    if let Some(l) = layer_of(b, a, 0, []) {
+      layers = [l];
+    }
+  } else if let Ok(text) = read_file(dir + "/info/commit-graphs/commit-graph-chain") {
+    let names: string[] = [];
+    let base = 0;
+    for line in text.split("\n") {
+      if (line.len() == 2 * a && layers.len() == names.len()) {
+        if let Ok(b) = read_file_bytes(dir + "/info/commit-graphs/graph-" + line + ".graph") {
+          if let Some(l) = layer_of(b, a, base, names) {
+            layers = layers.append(l);
+            base += l.ix.count;
+          }
+        }
+        names = names.append(line);
+      }
+    }
+  }
+  if (layers.len() == 0) {
+    return none();
+  }
+  let v2 = true;
+  let hashes = 0;
+  for l in layers {
+    v2 = v2 && l.gda2 >= 0;
+    if (l.hashes > 0) {
+      hashes = l.hashes;
+    }
+  }
+  return Graph { layers: layers, width: a, v2: v2, hashes: hashes };
+}
+
+// True when the graph has generation numbers: the first commit of the top
+// file has a level above 0 (`generation_numbers_enabled`).
+pub function generation_numbers(g: Graph): boolean {
+  if (g.layers.len() == 0) {
+    return false;
+  }
+  let top = g.layers[g.layers.len() - 1];
+  return top.ix.count > 0 && be32(top.ix.bytes, top.cdat + g.width + 8) >> 2 != 0;
+}
+
+// The place of the commit `hash` in the graph, or -1.
+pub function position(g: Graph, hash: string): i32 {
+  if (g.layers.len() == 0) {
+    return -1;
+  }
+  let Some(raw) = objects.raw_name(hash) else {
+    return -1;
+  };
+  let k = g.layers.len() - 1;
+  while (k >= 0) {
+    let l = g.layers[k];
+    let i = pack.find(l.ix, raw);
+    if (i >= 0) {
+      return l.base + i;
+    }
+    k -= 1;
+  }
+  return -1;
+}
+
+function layer_at(g: Graph, pos: i32): Layer {
+  let k = g.layers.len() - 1;
+  while (k > 0 && g.layers[k].base > pos) {
+    k -= 1;
+  }
+  return g.layers[k];
+}
+
+function name_at(g: Graph, pos: i32): string {
+  let l = layer_at(g, pos);
+  return pack.hex_name_at(l.ix, pos - l.base);
+}
+
+// The fields of one commit of the graph.
+pub struct Entry { tree: string, parents: string[], time: i64, generation: i64 }
+
+function parent_name(g: Graph, v: i64): string {
+  if (v as i32 >= 0 && v as i32 < total(g)) {
+    return name_at(g, v as i32);
+  }
+  return "";
+}
+
+function total(g: Graph): i32 {
+  let top = g.layers[g.layers.len() - 1];
+  return top.base + top.ix.count;
+}
+
+// The commit at the place `pos`.
+pub function entry(g: Graph, pos: i32): Entry {
+  let l = layer_at(g, pos);
+  let i = pos - l.base;
+  let b = l.ix.bytes;
+  let a = g.width;
+  let at = l.cdat + i * (a + 16);
+  let tree = hex.encode(objects_part(b, at, at + a));
+  let p1 = be32(b, at + a);
+  let p2 = be32(b, at + a + 4);
+  let parents: string[] = [];
+  if (p1 != PARENT_NONE) {
+    parents = parents.append(parent_name(g, p1));
+  }
+  if (p2 != PARENT_NONE) {
+    if ((p2 & EXTRA_EDGES) == 0) {
+      parents = parents.append(parent_name(g, p2));
+    } else if (l.edge >= 0) {
+      let e = l.edge + 4 * ((p2 & 2147483647) as i32);
+      while (e + 4 <= l.edge_end) {
+        let v = be32(b, e);
+        parents = parents.append(parent_name(g, v & 2147483647));
+        if ((v & EXTRA_EDGES) != 0) {
+          break;
+        }
+        e += 4;
+      }
+    }
+  }
+  let word = be32(b, at + a + 8);
+  let time = (word & 3) << 32 | be32(b, at + a + 12);
+  let generation = word >> 2;
+  if (g.v2) {
+    let offset = be32(b, l.gda2 + 4 * i);
+    if ((offset & EXTRA_EDGES) != 0) {
+      let k = l.gdo2 + 8 * ((offset & 2147483647) as i32);
+      generation = if (k + 8 <= l.gdo2_end) { time + (be32(b, k) << 32 | be32(b, k + 4)) } else { time };
+    } else {
+      generation = time + offset;
+    }
+  }
+  return Entry { tree: tree, parents: parents, time: time, generation: generation };
+}
+
+function objects_part(b: u8[], from: i32, to: i32): u8[] {
+  let out = __alloc_u8(to - from);
+  for k in from..to {
+    out = out.with(k - from, b[k]);
+  }
+  return out;
+}
+
+// ---- The Bloom filters (bloom.c) ----
+
+const MASK32: i64 = 4294967295;
+
+function rotl(k: i64, r: i64): i64 {
+  return (k << r | k >> 32 - r) & MASK32;
+}
+
+function mul32(a: i64, b: i64): i64 {
+  return a * b & MASK32;
+}
+
+// The hash `murmur3_seeded` of git of the bytes `data`.
+function murmur3(seed_in: i64, data: u8[]): i64 {
+  let c1: i64 = 3432918353;
+  let c2: i64 = 461845907;
+  let seed = seed_in;
+  let len4 = data.len() / 4;
+  for i in 0..len4 {
+    let k = data[4 * i] as i64 | data[4 * i + 1] as i64 << 8 | data[4 * i + 2] as i64 << 16 | data[4 * i + 3] as i64 << 24;
+    k = mul32(k, c1);
+    k = rotl(k, 15);
+    k = mul32(k, c2);
+    seed ^= k;
+    seed = rotl(seed, 13) * 5 + 3864292196 & MASK32;
+  }
+  let tail = 4 * len4;
+  let k1: i64 = 0;
+  let rest = data.len() - tail;
+  if (rest == 3) {
+    k1 ^= data[tail + 2] as i64 << 16;
+  }
+  if (rest >= 2) {
+    k1 ^= data[tail + 1] as i64 << 8;
+  }
+  if (rest >= 1) {
+    k1 ^= data[tail] as i64;
+    k1 = mul32(k1, c1);
+    k1 = rotl(k1, 15);
+    k1 = mul32(k1, c2);
+    seed ^= k1;
+  }
+  seed ^= data.len() as i64 & MASK32;
+  seed ^= seed >> 16;
+  seed = mul32(seed, 2246822507);
+  seed ^= seed >> 13;
+  seed = mul32(seed, 3266489909);
+  seed ^= seed >> 16;
+  return seed;
+}
+
+// The hashes of the key of one path in a filter (`fill_bloom_key`).
+function key_of(g: Graph, path: u8[]): i64[] {
+  let h0 = murmur3(691726191, path);
+  let h1 = murmur3(2120511020, path);
+  let out: i64[] = [];
+  for i in 0..g.hashes {
+    out = out.append(h0 + i as i64 * h1 & MASK32);
+  }
+  return out;
+}
+
+// The keys of the path `item` of a pathspec and of each directory above
+// it, as `prepare_to_use_bloom_filter` makes them, or none when the
+// filters cannot tell: no filters, an empty path, or a path with a byte
+// above 127, which the filters of version 1 hash as a signed byte.
+pub function keys(g: Graph, item: string): i64[][] {
+  let path = if (item.ends_with("/")) { objects.part(item, 0, item.len() - 1) } else { item };
+  if (g.hashes == 0 || path.len() == 0) {
+    return [];
+  }
+  let b = path.bytes();
+  for c in b {
+    if (c >= 128) {
+      return [];
+    }
+  }
+  let out: i64[][] = [key_of(g, b)];
+  let i = b.len() - 1;
+  while (i > 0) {
+    if (b[i] == b'/') {
+      out = out.append(key_of(g, objects_part(b, 0, i)));
+    }
+    i -= 1;
+  }
+  return out;
+}
+
+// What the filter of the commit at `pos` says of the keys: 0 when no path
+// of them changed, 1 when one may have changed, and -1 when there is no
+// filter (`check_maybe_different_in_bloom_filter`).
+pub function maybe_changed(g: Graph, pos: i32, keys: i64[][]): i32 {
+  let l = layer_at(g, pos);
+  if (l.bidx < 0) {
+    return -1;
+  }
+  let i = pos - l.base;
+  let b = l.ix.bytes;
+  let start = if (i == 0) { 0 } else { be32(b, l.bidx + 4 * (i - 1)) as i32 };
+  let end = be32(b, l.bidx + 4 * i) as i32;
+  let from = l.bdat + 12 + start;
+  let len = end - start;
+  if (len <= 0 || from + len > l.bdat_end) {
+    return -1;
+  }
+  let bits = len as i64 * 8;
+  for key in keys {
+    for h in key {
+      let bit = h % bits;
+      if ((b[from + (bit / 8) as i32] as i32 >> (bit % 8) as i32 & 1) == 0) {
+        return 0;
+      }
+    }
+  }
+  return 1;
+}

@@ -1,0 +1,17 @@
+// A copy of `n` bytes between ranges that do not overlap. __memcpy takes an
+// i32 count, so a larger copy goes in parts.
+function __fern_arr_copy_bytes(dst: usize, src: usize, n: usize): void {
+  let d = dst;
+  let s = src;
+  let left = n;
+  while (left > 0) {
+    let k = left;
+    if (k > 1073741824) {
+      k = 1073741824;
+    }
+    __memcpy(d, s, k as i32);
+    d += k;
+    s += k;
+    left -= k;
+  }
+}

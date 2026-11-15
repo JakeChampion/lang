@@ -457,6 +457,14 @@ function f(p: P): i32 { return p.x + p.y; }`,
 	}
 }
 
+func TestFormatSixteenBitIntegers(t *testing.T) {
+	src := "function f(a: u16, b: i16): u16[] {\n  let xs: i16[] = [b, -2i16];\n  return [a, 65535u16, xs.len() as u16];\n}\n"
+	got := formatSrc(t, src)
+	if got != src {
+		t.Errorf("format changed the 16-bit types or suffixes:\n%s", got)
+	}
+}
+
 func TestFormatResourceHandle(t *testing.T) {
 	src := `@import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;

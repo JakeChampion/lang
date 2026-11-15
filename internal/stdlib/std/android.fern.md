@@ -107,6 +107,21 @@ function c_motion_x(event: usize, pointer: usize): f32;
 @import("libandroid.so", "AMotionEvent_getY")
 function c_motion_y(event: usize, pointer: usize): f32;
 
+@import("libandroid.so", "AMotionEvent_getEventTime")
+function c_motion_time(event: usize): i64;
+
+@import("libandroid.so", "AMotionEvent_getHistorySize")
+function c_motion_history_size(event: usize): usize;
+
+@import("libandroid.so", "AMotionEvent_getHistoricalEventTime")
+function c_motion_historical_time(event: usize, at: usize): i64;
+
+@import("libandroid.so", "AMotionEvent_getHistoricalX")
+function c_motion_historical_x(event: usize, pointer: usize, at: usize): f32;
+
+@import("libandroid.so", "AMotionEvent_getHistoricalY")
+function c_motion_historical_y(event: usize, pointer: usize, at: usize): f32;
+
 @import("libandroid.so", "AKeyEvent_getKeyCode")
 function c_key_code(event: usize): i32;
 
@@ -206,7 +221,7 @@ function c_mutex_unlock(mutex: usize): i32;
 
 ### `events`
 
-`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. The headset hook and the media keys (79, 85 to 90, 126 and 127) come as `Key` events too, and then the system gives them to the media session that plays.
+`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. Android can give one `Touch` event for more than one place of a finger that moves: it collects the places between two frames of the display. `touch_samples` gives each place of the event with its time, for an app that draws a path or needs the speed of the finger. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. The headset hook and the media keys (79, 85 to 90, 126 and 127) come as `Key` events too, and then the system gives them to the media session that plays.
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. A hardware keyboard types through these events.
 
@@ -341,7 +356,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 ### `the UI thread`
 
-The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, and the Choreographer of the loop thread. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
+The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, the Choreographer of the loop thread, and the motion event of the `Touch` step that runs. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
 
 Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it.
 
@@ -351,7 +366,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32 }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -551,7 +566,7 @@ function ui_env(activity: usize): usize {
 function new_context(activity: usize): usize {
   unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0 }.c_store(ctx);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize }.c_store(ctx);
     let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
     if (ok != 0) {
       __free(ctx, Context.c_size() as i32);
@@ -962,6 +977,29 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
   return state;
 }
 
+// A place of the first pointer of a touch, and its time on the monotonic
+// clock in nanoseconds.
+pub struct TouchSample { ns: i64, x: f32, y: f32 }
+
+// The places of the `Touch` event of the step that runs now, from the
+// oldest: the places that Android collected since the event before it, and
+// then the place of the event. It is empty outside the step of a `Touch`
+// event. Call it on the loop thread.
+pub function touch_samples(ctx: usize): TouchSample[] {
+  let out: TouchSample[] = [];
+  unsafe {
+    let ev: usize = Context.c_load_motion(ctx);
+    if (ev == 0 as usize) {
+      return out;
+    }
+    let n = c_motion_history_size(ev) as i32;
+    for i in 0..n {
+      out = out.append(TouchSample { ns: c_motion_historical_time(ev, i as usize), x: c_motion_historical_x(ev, 0 as usize, i as usize), y: c_motion_historical_y(ev, 0 as usize, i as usize) });
+    }
+    return out.append(TouchSample { ns: c_motion_time(ev), x: c_motion_x(ev, 0 as usize), y: c_motion_y(ev, 0 as usize) });
+  }
+}
+
 // Reads one message from the UI thread, handles it, and replies.
 function message[S](lp: Loop, own state: S, step: (own S, Event) => S): (Loop, S) {
   unsafe {
@@ -1021,7 +1059,9 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
           let x: f32 = c_motion_x(ev, 0 as usize);
           let y: f32 = c_motion_y(ev, 0 as usize);
           hover(lp.ctx, action, x as i32, y as i32);
+          Context.c_store_motion(lp.ctx, ev);
           state = step(state, Touch(action, x, y));
+          Context.c_store_motion(lp.ctx, 0 as usize);
           handled = 1;
         } else if (kind == 1) {
           let code: i32 = c_key_code(ev);

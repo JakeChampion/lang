@@ -75,10 +75,10 @@ function is_keyword(name: string): boolean {
     return name == "function" || name == "for" || name == "false" || name == "f32" || name == "f64" || name == "f32x4" || name == "f64x2";
   }
   if (c == b'i') {
-    return name == "if" || name == "i32" || name == "i64" || name == "import" || name == "impl" || name == "i8x16" || name == "i16x8" || name == "i32x4";
+    return name == "if" || name == "i16" || name == "i32" || name == "i64" || name == "import" || name == "impl" || name == "i8x16" || name == "i16x8" || name == "i32x4";
   }
   if (c == b'u') {
-    return name == "use" || name == "u8" || name == "u32" || name == "u64" || name == "usize" || name == "u8x16" || name == "u16x8" || name == "u32x4";
+    return name == "use" || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" || name == "u8x16" || name == "u16x8" || name == "u32x4";
   }
   if (c == b'e') {
     return name == "else" || name == "enum" || name == "errdefer";
@@ -123,10 +123,10 @@ function is_keyword(name: string): boolean {
 }
 
 pub function keywords(): string[] {
-  return ["as", "boolean", "break", "const", "continue", "defer", "dyn", "else", "enum", "errdefer", "f32", "f32x4", "f64", "f64x2", "false", "for", "function", "i16x8", "i32", "i32x4", "i64", "i8x16", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u16x8", "u32", "u32x4", "u64", "u8", "u8x16", "use", "usize", "void", "when", "while"];
+  return ["as", "boolean", "break", "const", "continue", "defer", "dyn", "else", "enum", "errdefer", "f32", "f32x4", "f64", "f64x2", "false", "for", "function", "i16", "i16x8", "i32", "i32x4", "i64", "i8x16", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u16", "u16x8", "u32", "u32x4", "u64", "u8", "u8x16", "use", "usize", "void", "when", "while"];
 }
 
-const NUMERIC_SUFFIXES: string[] = ["", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char"];
+const NUMERIC_SUFFIXES: string[] = ["", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "u16", "i16"];
 
 function numeric_suffix_tag(s: string): u8 {
   return match (s) {
@@ -139,6 +139,8 @@ function numeric_suffix_tag(s: string): u8 {
     "f32" => 7u8,
     "f64" => 8u8,
     "char" => 9u8,
+    "u16" => 10u8,
+    "i16" => 11u8,
     _ => 0u8,
   };
 }

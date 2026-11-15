@@ -2183,6 +2183,12 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "u8":
 		p.advance()
 		base = ast.NumberType{Width: 8, Signed: false, Spelling: t.Text}
+	case t.Kind == lexer.Keyword && t.Text == "u16":
+		p.advance()
+		base = ast.NumberType{Width: 16, Signed: false, Spelling: t.Text}
+	case t.Kind == lexer.Keyword && t.Text == "i16":
+		p.advance()
+		base = ast.NumberType{Width: 16, Signed: true, Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "usize":
 		p.advance()
 		base = ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: t.Text}
@@ -3455,7 +3461,7 @@ func integerLanes(s string) bool {
 
 func isTypeKeyword(s string) bool {
 	switch s {
-	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "u8x16", "i8x16", "u16x8", "i16x8", "u32x4", "i32x4", "string", "boolean", "void":
+	case "i32", "i64", "u8", "u16", "i16", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "u8x16", "i8x16", "u16x8", "i16x8", "u32x4", "i32x4", "string", "boolean", "void":
 		return true
 	}
 	return false
@@ -5467,6 +5473,11 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		case "u8":
 			lit.Width = 8
 			lit.IsUnsigned = true
+		case "u16":
+			lit.Width = 16
+			lit.IsUnsigned = true
+		case "i16":
+			lit.Width = 16
 		case "u32":
 			lit.Width = 32
 			lit.IsUnsigned = true

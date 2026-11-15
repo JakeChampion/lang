@@ -489,6 +489,8 @@ hotp_digits_out_of_range_stops                       1
 http_content_type                                    0
 http_cookies                                         0
 hyperbolic_boundaries                                0
+i16_array_elements_extend_the_sign                   0
+i16_wraps_at_16_bits                                 0
 i32_methods                                          0
 i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0
@@ -1379,6 +1381,11 @@ two_nones_share_sentinel                             0
 type_args_trailing_comma                             0
 type_param_name_collision                            0
 typed_json_protobuf_errors                           0
+u16_and_i16_checked_and_saturating_ops               0
+u16_and_i16_narrow_with_as                           0
+u16_and_i16_widen_without_a_cast                     0
+u16_array_elements_take_two_bytes                    0
+u16_wraps_at_16_bits                                 0
 u32_large_to_f64_back                                0
 u32_literal_suffix_width                             0
 u32_literal_unsigned_ops                             0

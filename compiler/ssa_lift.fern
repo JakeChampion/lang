@@ -451,8 +451,8 @@ function packed_suffix(op: ir.Op): string {
     return "_u8";
   }
   let t = op.kind_tag;
-  if (ir.is_compact(op) && (t == ir.K_ARR_PUSH || t == ir.K_ARR_PUSH_OWNED || t == ir.K_ALLOC_U8 || t == ir.K_ARR_SLICE)) {
-    return "_u32";
+  if (t == ir.K_ARR_PUSH || t == ir.K_ARR_PUSH_OWNED || t == ir.K_ALLOC_U8 || t == ir.K_ARR_SLICE) {
+    return ir.shift_suffix(ir.elem_shift(op));
   }
   return "";
 }
@@ -464,11 +464,18 @@ function counted_mark(op: ir.Op): string {
   return "";
 }
 
-// The element of an access: "u8" for a byte, "i32" or "u32" for 4 bytes that a
-// read extends with or without the sign, and "" for 8 bytes.
+// The element of an access: "u8" for a byte, "i16" or "u16" for 2 bytes and
+// "i32" or "u32" for 4 bytes that a read extends with or without the sign, and
+// "" for 8 bytes.
 function packed_mark(op: ir.Op): string {
   if (ir.is_packed(op)) {
     return "u8";
+  }
+  if (ir.is_half(op) && op.unsigned) {
+    return "u16";
+  }
+  if (ir.is_half(op)) {
+    return "i16";
   }
   if (ir.is_compact(op) && op.unsigned) {
     return "u32";

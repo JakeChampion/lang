@@ -97,6 +97,12 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
     ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_u", 0, false)]);
     ops = abort_if(ops);
   }
+  // A lane read takes 16 bytes from the index. The index is below the
+  // length here, so the sum does not wrap.
+  if (op.str == element_name() && op.i32_imm == 0 && op.kind_tag == ir.kind_id("vget")) {
+    ops = joined(ops, [ir.op_load_local(index), ir.op_const_i32(16), ir.op_bin("add", 0, false), ir.op_load_local(base + 1), ir.op_bin("gt_u", 0, false)]);
+    ops = abort_if(ops);
+  }
   if (op.str == element_name()) {
     let slot = ir.Op { ...op, str: "", decl: -1, i32_imm: 1 };
     return joined(ops, [ir.op_load_local(base), ir.op_const_i32(-8), ir.op_raw_addr(), ir.op_load_local(index), slot]);
@@ -164,12 +170,15 @@ pub function lower_state_reads(own r: irtables.LowerState): irtables.LowerState 
   return irtables.LowerState { ...r, ops: ops, n_locals: next + 1 };
 }
 
-// `width` is the element width the array lowering uses: 8 for bytes, 32 for
-// 4-byte integers, 64 for eight-byte slots, and ir.width_ptr() for
-// pointer-width slots.
+// `width` is the element width the array lowering uses: 8 for bytes, 16 and
+// 32 for 2-byte and 4-byte integers, 64 for eight-byte slots, and
+// ir.width_ptr() for pointer-width slots.
 pub function slice_name(width: i32): string {
   if (width == 8) {
     return "__sem_byte_view_slice";
+  }
+  if (width == 16) {
+    return "__sem_view_slice_16";
   }
   if (width == 32) {
     return "__sem_view_slice_32";
@@ -186,11 +195,8 @@ pub function scaled(width: i32): ir.Op[] {
     return [];
   }
   let stride: ir.Op[] = [ir.op_ptr_width(), ir.op_int_extend(true)];
-  if (width == 32) {
-    stride = [ir.op_const_i64(4i64)];
-  }
-  if (width == 64) {
-    stride = [ir.op_const_i64(8i64)];
+  if (width == 16 || width == 32 || width == 64) {
+    stride = [ir.op_const_i64((width / 8) as i64)];
   }
   let ops = joined([ir.op_int_extend(true)], stride);
   return joined(ops, [ir.op_bin("mul", 64, false), ir.op_int_wrap_ptr()]);
@@ -383,7 +389,7 @@ pub function served_builtin(helper: string): string {
 }
 
 pub function state_helpers(): irtables.LowerState[] {
-  return [length(), data(), slice(8), slice(32), slice(ir.width_ptr()), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd()];
+  return [length(), data(), slice(8), slice(16), slice(32), slice(ir.width_ptr()), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd()];
 }
 
 pub function helpers(): Result[irtables.Lowered, irtables.LowerState][] {

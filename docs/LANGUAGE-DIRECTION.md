@@ -203,15 +203,15 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 - Replace `number` with sized integer types: `i8`, `i16`, `i32`,
   `i64`, `u8`, `u16`, `u32`, `u64`. `isize` / `usize` are aliases
   (`i32` / `u32` on wasm32, `i64` / `u64` on arm64).
-  **Update (#4408):** `isize` (zero uses) and `i8`/`i16`/`u16`
-  (38 uses total, full per-stride backend cost) were retired —
-  the surviving set is `i32`/`i64`/`u8`/`u32`/`u64`/`f32`/`f64`/`usize`.
-  The status notes below describe the shipped-then-retired
-  sub-i32 machinery as historical record.
+  **Update:** `isize` and `i8` are retired (#4408). `i16` and `u16`
+  are back (#15977), with 2-byte array elements on the packed-element
+  path of `u8[]` and `i32[]`, so they add no per-stride backend code.
+  The set is `i16`/`i32`/`i64`/`u8`/`u16`/`u32`/`u64`/`f32`/`f64`/`usize`.
 - Default literal type stays `i32`. Literals are polymorphic in
   expected-type context: `let x: i64 = 1` works without a cast.
 - Lossless numeric conversions are implicit (#12696).
-  `i32` converts to `i64`, `u8` to `u32`/`u64`/`i32`/`i64`,
+  `i32` converts to `i64`, `u8` to `u16`/`i16`/`u32`/`u64`/`i32`/`i64`,
+  `u16` to `u32`/`u64`/`i32`/`i64`, `i16` to `i32`/`i64`,
   `u32` to `u64`/`i64`, and `f32` to `f64`.
   Assignments, arguments, returns, constructor payloads, fields,
   array literal elements, and operators use these conversions.

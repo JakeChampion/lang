@@ -13,14 +13,20 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
     return f;
   }
   let g = graph_of(f);
+  let seen = accesses(f, g);
+  let dom = ssadeps.dominates(f.graph);
   let blocks: ssa.SBlock[] = [];
   let changed = false;
   for b in 0..f.graph.blocks.len() {
     let blk = f.graph.blocks[b];
     let insts: ssa.SInst[] = [];
     let marked = false;
-    for ins in blk.insts {
+    for k in 0..blk.insts.len() {
+      let ins = blk.insts[k];
       let proof = proof_of(g, b, ins);
+      if (proof == PROOF_NONE && checked_write(ins) && accessed_before(g, seen, dom, b, k, ins)) {
+        proof = PROOF_UNCHECKED;
+      }
       if (proof == PROOF_UNCHECKED) {
         insts = insts.append(ssa.SInst { ...ins, imm: 1 });
       } else if (proof == PROOF_LANE_SPAN) {
@@ -40,6 +46,59 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
     return f;
   }
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
+}
+
+// The element accesses of a function, chained by the root of their index.
+// An access that completes leaves its index in range. A `with` keeps the
+// length, so the root of a chain of `with` names the array. Only a
+// write uses these proofs: semhoist moves a read above a write, but it does
+// not move a write, and an access that it moves runs earlier.
+struct Seen { arr: i32[], block: i32[], pos: i32[], next: i32[], head: i32[] }
+
+function accesses(f: ssasem.Func, g: Graph): Seen {
+  let s = Seen { arr: [], block: [], pos: [], next: [], head: util.minus_ones(f.values.len()) };
+  for b in 0..f.graph.blocks.len() {
+    let insts = f.graph.blocks[b].insts;
+    for k in 0..insts.len() {
+      let ins = insts[k];
+      if (element_access(ins)) {
+        let idx = ssa.copy_root(g.defs, ins.args[1]);
+        s = Seen { arr: s.arr.append(array_root(g, ins.args[0])), block: s.block.append(b), pos: s.pos.append(k), next: s.next.append(s.head[idx]), head: s.head.with(idx, s.arr.len()) };
+      }
+    }
+  }
+  return s;
+}
+
+function element_access(ins: ssa.SInst): boolean {
+  let read = index_read(ins) && (ins.imm == 0 || ins.imm == 1);
+  return read || ins.kind_tag == ssasem.with() && ins.args.len() == 3 && (ins.imm == 0 || ins.imm == 1);
+}
+
+function array_root(g: Graph, v: i32): i32 {
+  let r = ssa.copy_root(g.defs, v);
+  for steps in 0..64 {
+    let d = g.defs[r];
+    if (d.kind_tag != ssasem.with() || d.args.len() != 3) {
+      return r;
+    }
+    r = ssa.copy_root(g.defs, d.args[0]);
+  }
+  return r;
+}
+
+// An access of the same index of the same array ran before the access at
+// position k of block b: earlier in b, or in a block that dominates b.
+function accessed_before(g: Graph, s: Seen, dom: ssadeps.Dom, b: i32, k: i32, ins: ssa.SInst): boolean {
+  let arr = array_root(g, ins.args[0]);
+  let e = s.head[ssa.copy_root(g.defs, ins.args[1])];
+  while (e >= 0) {
+    if (s.arr[e] == arr && (s.block[e] == b && s.pos[e] < k || s.block[e] != b && ssadeps.dom_holds(dom, b, s.block[e]))) {
+      return true;
+    }
+    e = s.next[e];
+  }
+  return false;
 }
 
 const PROOF_NONE: i32 = 0;
@@ -235,6 +294,9 @@ function graph_of(f: ssasem.Func): Graph {
       }
       if (t.unsigned && t.width == 8) {
         upper = 255i64;
+      }
+      if (t.unsigned && t.width == 16) {
+        upper = 65535i64;
       }
     }
     unsigned_max = unsigned_max.append(upper);
@@ -538,7 +600,7 @@ function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
 }
 
 function sized_alloc(name: string): boolean {
-  return name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool";
+  return name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_u16" || name == "__alloc_i16" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool";
 }
 
 function binary(d: ssa.SInst, op: string): boolean {

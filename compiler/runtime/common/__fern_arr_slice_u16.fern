@@ -1,0 +1,3 @@
+function __fern_arr_slice_u16(a: i32[], start: i32, end: i32): i32[] {
+  return __fern_arr_slice_packed(a, start, end, 2);
+}

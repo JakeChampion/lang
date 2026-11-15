@@ -10,8 +10,11 @@ import "std/array";
 import "core/cmp";
 import "core/map";
 import "../../coreutils/lib/bre";
+import "./commitgraph";
 import "./log";
+import "./mailmap";
 import "./objects";
+import "./patch";
 import "./store";
 import "./treediff";
 import "./walk";
@@ -32,6 +35,16 @@ pub const LEFT: i32 = 64;
 
 const PULL_MERGE: i32 = 128;
 
+// A commit whose patch is also on the other side of `A...B`.
+pub const PATCHSAME: i32 = 256;
+
+// A commit of `--boundary`: an excluded parent of a shown commit.
+pub const BOUNDARY: i32 = 512;
+
+pub const CHILD_SHOWN: i32 = 1024;
+
+const TMP_MARK: i32 = 2048;
+
 // The count of extra commits that a limited walk reads after each commit
 // that it still has is UNINTERESTING: SLOP of git.
 const SLOP: i32 = 5;
@@ -40,10 +53,12 @@ const SLOP: i32 = 5;
 // expression, or a fixed string with `-F`.
 pub struct Pattern { re: bre.Bre, fixed: string, is_fixed: boolean, icase: boolean }
 
-pub struct Grep { authors: Pattern[], committers: Pattern[], body: Pattern[], all_match: boolean, invert: boolean }
+// `mailmap` gives the names and emails that `--author` and `--committer`
+// match.
+pub struct Grep { authors: Pattern[], committers: Pattern[], body: Pattern[], all_match: boolean, invert: boolean, mailmap: mailmap.Mailmap }
 
 pub function no_grep(): Grep {
-  return Grep { authors: [], committers: [], body: [], all_match: false, invert: false };
+  return Grep { authors: [], committers: [], body: [], all_match: false, invert: false, mailmap: mailmap.empty() };
 }
 
 // The sorts of the topological order: the order of the graph, the
@@ -55,12 +70,28 @@ pub const BY_DATE: i32 = 1;
 pub const BY_AUTHOR: i32 = 2;
 
 // The options of a walk. `max_age` and `min_age` are `--since` and
-// `--until`, or -1. `items` is the pathspec. `rewrite` keeps the parents
-// that link the shown commits, as `--graph` needs.
-pub struct Opts { max_age: i64, min_age: i64, first_parent: boolean, topo: boolean, order: i32, items: string[], rewrite: boolean, min_parents: i32, max_parents: i32, grep: Grep, full_history: boolean }
+// `--until`, or -1. `items` is the pathspec, and `bloom` holds its keys
+// in the Bloom filters of the commit graph. `rewrite` keeps the parents
+// that link the shown commits, as `--graph` needs. `left_only`,
+// `right_only`, `cherry_pick` and `cherry_mark` select the sides of
+// `A...B`. `ancestry` is `--ancestry-path`, with the commits that it names
+// in `ancestry_of`. With `by_decoration`, the commits of `decorated` are
+// the ones that change.
+pub struct Opts { reflog_walk: boolean, max_age: i64, min_age: i64, first_parent: boolean, topo: boolean, order: i32, items: string[], bloom: i64[][], rewrite: boolean, min_parents: i32, max_parents: i32, grep: Grep, full_history: boolean, simplify_merges: boolean, left_only: boolean, right_only: boolean, cherry_pick: boolean, cherry_mark: boolean, ancestry: boolean, ancestry_of: string[], boundary: boolean, by_decoration: boolean, decorated: Map[string, boolean] }
 
 pub function options(): Opts {
-  return Opts { max_age: -1, min_age: -1, first_parent: false, topo: false, order: BY_GRAPH, items: [], rewrite: false, min_parents: 0, max_parents: -1, grep: no_grep(), full_history: false };
+  return Opts { reflog_walk: false, max_age: -1, min_age: -1, first_parent: false, topo: false, order: BY_GRAPH, items: [], bloom: [], rewrite: false, min_parents: 0, max_parents: -1, grep: no_grep(), full_history: false, simplify_merges: false, left_only: false, right_only: false, cherry_pick: false, cherry_mark: false, ancestry: false, ancestry_of: [], boundary: false, by_decoration: false, decorated: Map { } };
+}
+
+// True when the walk drops the commits that change nothing it looks at:
+// `prune` of git.
+function prunes(o: Opts): boolean {
+  return o.items.len() > 0 || o.by_decoration;
+}
+
+// True when the walk must find each commit before it shows one.
+pub function must_limit(o: Opts): boolean {
+  return o.cherry_pick || o.cherry_mark || o.ancestry || o.by_decoration || o.simplify_merges;
 }
 
 // A commit of the list, with its committer date.
@@ -68,11 +99,14 @@ struct Item { hash: string, time: i64 }
 
 // The state of a walk. `parents` holds the parents of the commits whose
 // parents the simplification changed. The list of commits to walk is
-// `list` from `head` on.
-pub struct Walk { g: walk.Graph, flags: Map[string, i32], parents: Map[string, string[]], list: Item[], head: i32, pending: string[], opts: Opts, limited: boolean, failed: string }
+// `list` from `head` on. A topological walk with the generation numbers
+// of the commit graph has `topo` instead. With `--full-history`,
+// `treesame` holds for a merge whether its tree is the tree of each
+// parent.
+pub struct Walk { g: walk.Graph, flags: Map[string, i32], parents: Map[string, string[]], list: Item[], head: i32, pending: string[], opts: Opts, limited: boolean, failed: string, topo: Topo[], treesame: Map[string, boolean[]] }
 
 pub function walk_of(g: walk.Graph, o: Opts): Walk {
-  return Walk { g: g, flags: Map { }, parents: Map { }, list: [], head: 0, pending: [], opts: o, limited: false, failed: "" };
+  return Walk { g: g, flags: Map { }, parents: Map { }, list: [], head: 0, pending: [], opts: o, limited: false, failed: "", topo: [], treesame: Map { } };
 }
 
 pub function flag(w: Walk, h: string): i32 {
@@ -120,6 +154,9 @@ function by_date(list: Item[], head: i32, c: Item): Item[] {
 }
 
 function insert(w: Walk, h: string): Walk {
+  if (w.topo.len() > 0) {
+    return w;
+  }
   let (now, n) = node(w, h);
   let c = Item { hash: h, time: n.time };
   if (now.head < now.list.len() / 2 && (now.list.len() == now.head || now.list[now.list.len() - 1].time >= c.time)) {
@@ -216,10 +253,29 @@ function differ(w: Walk, a: string, b: string): (Walk, boolean) {
   return (Walk { ...w, g: walk.Graph { ...w.g, store: s } }, d);
 }
 
+// True if the commit `c` differs from its parent `nth` in the pathspec:
+// `rev_compare_tree` of git. With `--simplify-by-decoration`, a decorated
+// commit differs, and with no pathspec another commit does not. The Bloom
+// filter of the commit graph tells a first parent with no change.
+function compare(w: Walk, c: string, n: walk.Node, pn: walk.Node, nth: i32): (Walk, boolean) {
+  if (w.opts.by_decoration) {
+    if (w.opts.decorated.contains(c)) {
+      return (w, true);
+    }
+    if (w.opts.items.len() == 0) {
+      return (w, false);
+    }
+  }
+  if (nth == 0 && w.opts.bloom.len() > 0 && n.pos >= 0 && pn.ok && commitgraph.maybe_changed(w.g.cg, n.pos, w.opts.bloom) == 0) {
+    return (w, false);
+  }
+  return differ(w, pn.tree, n.tree);
+}
+
 // Marks `c` TREESAME when its tree is the tree of a parent in the
 // pathspec, and keeps only that parent: `try_to_simplify_commit` of git.
 function simplify(w_in: Walk, c: string): Walk {
-  if (w_in.opts.items.len() == 0) {
+  if (!prunes(w_in.opts)) {
     return w_in;
   }
   let (w1, n) = node(w_in, c);
@@ -233,6 +289,7 @@ function simplify(w_in: Walk, c: string): Walk {
   let relevant_parents = 0;
   let relevant_change = false;
   let irrelevant_change = false;
+  let ts: boolean[] = [];
   for nth in 0..ps.len() {
     let p = ps[nth];
     if (relevant(w, p)) {
@@ -241,11 +298,18 @@ function simplify(w_in: Walk, c: string): Walk {
     if (nth == 1 && w.opts.first_parent) {
       break;
     }
+    if (nth == 1 && w.opts.full_history && (flag(w, c) & UNINTERESTING) == 0) {
+      ts = __alloc_i32(ps.len()).map((v: i32): boolean => false).with(0, !(irrelevant_change || relevant_change));
+    }
     let (w4, pn) = node(w, p);
-    let (w5, d) = differ(w4, pn.tree, n.tree);
+    let (w5, d) = compare(w4, c, n, pn, nth);
     w = w5;
     if (!d) {
       if (w.opts.full_history || !relevant(w, p)) {
+        if (ts.len() > 0) {
+          ts = ts.with(nth, true);
+          w = Walk { ...w, treesame: w.treesame.insert(c, ts) };
+        }
         continue;
       }
       w = Walk { ...w, parents: w.parents.insert(c, [p]) };
@@ -259,6 +323,9 @@ function simplify(w_in: Walk, c: string): Walk {
     if (nth == 0) {
       w = set(w, c, PULL_MERGE);
     }
+  }
+  if (ts.len() > 0) {
+    w = Walk { ...w, treesame: w.treesame.insert(c, ts) };
   }
   if (if (relevant_parents > 0) { !relevant_change } else { !irrelevant_change }) {
     w = set(w, c, TREESAME);
@@ -298,6 +365,22 @@ function lower(b: u8): u8 {
   return if (b >= b'A' && b <= b'Z') { b + 32 } else { b };
 }
 
+// The text `NAME <EMAIL>` of a header line from `from` to `stop`, with the
+// mailmap, and its bounds.
+function person_text(g: Grep, body: u8[], from: i32, stop: i32): (u8[], i32, i32) {
+  if (g.mailmap.is_empty() || g.authors.len() + g.committers.len() == 0) {
+    return (body, from, stop);
+  }
+  let text = objects.part_bytes(body, from, stop);
+  let p = log.person(text);
+  if (p.email.len() == 0 && !text.contains("<")) {
+    return (body, from, stop);
+  }
+  let (name, email) = mailmap.map_user(g.mailmap, p.name, p.email);
+  let out = (name + " <" + email + ">").bytes();
+  return (out, 0, out.len());
+}
+
 // True if the commit with the content `body` matches the patterns of
 // `--author`, `--committer` and `--grep`, as `commit_match` of git tells.
 function commit_match(g: Grep, body: u8[]): boolean {
@@ -328,8 +411,9 @@ function commit_match(g: Grep, body: u8[]): boolean {
           k -= 1;
         }
         let list = if (is_author) { g.authors } else { g.committers };
+        let (line, lf, lt) = person_text(g, body, from, stop);
         for p in list {
-          if (pattern_matches(p, body, from, stop)) {
+          if (pattern_matches(p, line, lf, lt)) {
             if (is_author) {
               author_hit = true;
             } else {
@@ -369,7 +453,27 @@ function commit_match(g: Grep, body: u8[]): boolean {
 
 // True if the walk shows `c` now: `get_commit_action` of git.
 pub function interesting(w: Walk, c: string): (Walk, boolean) {
+  if (w.opts.boundary && (flag(w, c) & CHILD_SHOWN) != 0) {
+    return (w, true);
+  }
   return wanted(w, c);
+}
+
+// True if a walk of `--walk-reflogs` shows the commit `c`: the commit
+// comes again with no flags of the walk, and the pathspec and the filters
+// apply to it.
+pub function reflog_wanted(w_in: Walk, c: string): (Walk, boolean) {
+  let (w1, n) = node(unset(w_in, c, SHOWN | ADDED | SEEN), c);
+  if (!n.ok) {
+    return (w1, false);
+  }
+  let w = simplify(w1, c);
+  return wanted(w, c);
+}
+
+// The walk with the flags `f` of the commit `h` set.
+pub function with_flag(w: Walk, h: string, f: i32): Walk {
+  return set(w, h, f);
 }
 
 // True if the walk shows `c`: `get_commit_action` of git.
@@ -401,7 +505,7 @@ function wanted(w_in: Walk, c: string): (Walk, boolean) {
       return (w, false);
     }
   }
-  if (w.opts.items.len() > 0 && (f & TREESAME) != 0) {
+  if (prunes(w.opts) && (f & TREESAME) != 0) {
     if (!w.opts.rewrite) {
       return (w, false);
     }
@@ -523,7 +627,157 @@ function limit_list(w_in: Walk): Walk {
     date = c.time;
     out = out.append(c);
   }
-  return Walk { ...w, list: out, head: 0 };
+  w = Walk { ...w, list: out, head: 0 };
+  // A parent that the range makes UNINTERESTING can make a merge TREESAME
+  // (`limiting_can_increase_treesame` of git).
+  if (prunes(w.opts) && w.opts.full_history && !w.opts.first_parent) {
+    for c in w.list {
+      if ((flag(w, c.hash) & (UNINTERESTING | TREESAME)) == 0) {
+        w = update_treesame(w, c.hash);
+      }
+    }
+  }
+  if (w.opts.cherry_pick || w.opts.cherry_mark) {
+    w = cherry_pick_list(w);
+  }
+  if (w.opts.left_only || w.opts.right_only) {
+    for c in w.list {
+      let left = (flag(w, c.hash) & LEFT) != 0;
+      if (w.opts.right_only && left || w.opts.left_only && !left) {
+        w = set(w, c.hash, SHOWN);
+      }
+    }
+  }
+  if (w.opts.ancestry) {
+    w = limit_to_ancestry(w);
+  }
+  return w;
+}
+
+// The patch id of the commit `c` against its first parent, or "" for a
+// merge: `commit_patch_id` of git, with the pathspec and no renames.
+function patch_id(w_in: Walk, c: string): (Walk, string) {
+  let (w1, n) = node(w_in, c);
+  let w = w1;
+  if (n.parents.len() > 1) {
+    return (w, "");
+  }
+  let base = "";
+  if (n.parents.len() == 1) {
+    let (w2, pn) = node(w, n.parents[0]);
+    w = w2;
+    base = pn.tree;
+  }
+  let (s1, changes) = treediff.changes(w.g.store, base, n.tree, w.opts.items);
+  let (s2, text) = patch.patch_id_text(s1, changes);
+  return (Walk { ...w, g: walk.Graph { ...w.g, store: s2 } }, objects.hash_of(w.g.store.width, "blob", text));
+}
+
+// Marks the commits of each side of `A...B` whose patch is on the other
+// side: hidden for `--cherry-pick`, PATCHSAME for `--cherry-mark`
+// (`cherry_pick_list` of git).
+function cherry_pick_list(w_in: Walk): Walk {
+  let w = w_in;
+  let left_count = 0;
+  let right_count = 0;
+  for c in w.list {
+    let f = flag(w, c.hash);
+    if ((f & BOUNDARY) == 0) {
+      if ((f & LEFT) != 0) {
+        left_count += 1;
+      } else {
+        right_count += 1;
+      }
+    }
+  }
+  if (left_count == 0 || right_count == 0) {
+    return w;
+  }
+  let left_first = left_count < right_count;
+  let ids: Map[string, string[]] = Map { };
+  for c in w.list {
+    let f = flag(w, c.hash);
+    if ((f & BOUNDARY) == 0 && left_first == ((f & LEFT) != 0)) {
+      let (w1, id) = patch_id(w, c.hash);
+      w = w1;
+      if (id.len() > 0) {
+        ids = ids.insert(id, ids.get_or(id, []).append(c.hash));
+      }
+    }
+  }
+  let mark = if (w.opts.cherry_mark) { PATCHSAME } else { SHOWN };
+  for c in w.list {
+    let f = flag(w, c.hash);
+    if ((f & BOUNDARY) == 0 && left_first != ((f & LEFT) != 0)) {
+      let (w2, id) = patch_id(w, c.hash);
+      w = w2;
+      if (id.len() > 0 && ids.contains(id)) {
+        w = set(w, c.hash, mark);
+        for other in ids.get_or(id, []) {
+          w = set(w, other, mark);
+        }
+      }
+    }
+  }
+  return w;
+}
+
+// Keeps the commits of the list that are on a path of the history through
+// a commit of `--ancestry-path`: its descendants, and its ancestors when
+// the option names it (`limit_to_ancestry` of git).
+function limit_to_ancestry(w_in: Walk): Walk {
+  let w = w_in;
+  let marks: Map[string, boolean] = Map { };
+  let bottoms = w.opts.ancestry_of;
+  if (bottoms.len() == 0) {
+    for h in w.pending {
+      if ((flag(w, h) & BOTTOM) != 0) {
+        bottoms = bottoms.append(h);
+      }
+    }
+  }
+  for b in bottoms {
+    marks = marks.insert(b, true);
+  }
+  let progress = true;
+  while (progress) {
+    progress = false;
+    let k = w.list.len() - 1;
+    while (k >= 0) {
+      let h = w.list[k].hash;
+      if (!marks.contains(h) && (flag(w, h) & UNINTERESTING) == 0) {
+        let (w1, ps) = parents(w, h);
+        w = w1;
+        for p in ps {
+          if (!marks.contains(h) && marks.contains(p)) {
+            marks = marks.insert(h, true);
+            progress = true;
+          }
+        }
+      }
+      k -= 1;
+    }
+  }
+  // The ancestors of the commits that the option names.
+  let todo = w.opts.ancestry_of;
+  while (todo.len() > 0) {
+    let h = todo[todo.len() - 1];
+    todo = array.slice(todo, 0, todo.len() - 1);
+    let (w2, ps) = parents(w, h);
+    w = w2;
+    for p in ps {
+      if (!marks.contains(p)) {
+        marks = marks.insert(p, true);
+        todo = todo.append(p);
+      }
+    }
+  }
+  for c in w.list {
+    if (!marks.contains(c.hash)) {
+      w = set(w, c.hash, UNINTERESTING);
+    }
+  }
+  return w;
 }
 
 // A commit of the queue of the topological sort, with its date and the
@@ -560,6 +814,20 @@ function sort_time(w: Walk, h: string): (Walk, i64) {
     Ok(o) => (now, log.commit_of(h, o.body).author.time),
     Err(_) => (now, 0),
   };
+}
+
+// The commits `hashes` in a topological order: `sort_in_topological_order`
+// of git on a list of its own.
+pub function sorted_topo(w_in: Walk, hashes: string[]): (Walk, string[]) {
+  let items: Item[] = [];
+  let w = w_in;
+  for h in hashes {
+    let (w1, n) = node(w, h);
+    w = w1;
+    items = items.append(Item { hash: h, time: n.time });
+  }
+  let sorted = topo_sort(Walk { ...w, list: items, head: 0 });
+  return (Walk { ...sorted, list: w.list, head: w.head }, sorted.list.map((c: Item): string => c.hash));
 }
 
 // The list in a topological order: each commit before its parents, as
@@ -624,9 +892,12 @@ function topo_sort(w_in: Walk): Walk {
 // the order of their dates, and the whole walk when it is limited.
 pub function prepare(w_in: Walk): Walk {
   let w = w_in;
+  // An excluded commit limits the walk, unless the walk is topological
+  // and has generation numbers (`handle_commit` of git).
+  let incremental = w.opts.topo && commitgraph.generation_numbers(w.g.cg);
   for h in w.pending {
     if ((flag(w, h) & UNINTERESTING) != 0) {
-      w = Walk { ...mark_parents_uninteresting(w, h), limited: true };
+      w = Walk { ...mark_parents_uninteresting(w, h), limited: w.limited || !incremental };
     }
     if ((flag(w, h) & SEEN) == 0) {
       let (w1, n) = node(set(w, h, SEEN), h);
@@ -644,13 +915,19 @@ pub function prepare(w_in: Walk): Walk {
     sorted = sorted.append(list[i]);
   }
   w = Walk { ...w, list: sorted, head: 0 };
-  if (w.opts.topo) {
+  if (incremental && !w.limited && !must_limit(w.opts)) {
+    return init_topo(w);
+  }
+  if (w.opts.topo || must_limit(w.opts)) {
     w = Walk { ...w, limited: true };
   }
   if (w.limited) {
     w = limit_list(w);
     if (w.opts.topo && w.failed.len() == 0) {
       w = topo_sort(w);
+    }
+    if (w.opts.simplify_merges && prunes(w.opts) && w.failed.len() == 0) {
+      w = simplify_merges(w);
     }
   }
   return w;
@@ -659,14 +936,27 @@ pub function prepare(w_in: Walk): Walk {
 // The next commit that the walk shows, or "": `get_revision_1` of git.
 pub function next(w_in: Walk): (Walk, string) {
   let w = w_in;
-  while (w.head < w.list.len()) {
-    let (w0, c) = popped(w);
-    w = w0;
+  while (w.head < w.list.len() || w.topo.len() > 0) {
+    let c = Item { hash: "", time: 0 };
+    if (w.topo.len() > 0) {
+      let (w1, h) = next_topo(w);
+      w = w1;
+      if (h.len() == 0) {
+        return (w, "");
+      }
+      let (w2, n) = node(w, h);
+      w = w2;
+      c = Item { hash: h, time: n.time };
+    } else {
+      let (w0, item) = popped(w);
+      w = w0;
+      c = item;
+    }
     if (!w.limited) {
       if (w.opts.max_age != -1 && c.time < w.opts.max_age) {
         continue;
       }
-      w = process_parents(w, c.hash);
+      w = if (w.topo.len() > 0) { expand_topo(w, c.hash) } else { process_parents(w, c.hash) };
       if (w.failed.len() > 0) {
         return (w, "");
       }
@@ -674,11 +964,582 @@ pub function next(w_in: Walk): (Walk, string) {
     let (w1, show) = wanted(w, c.hash);
     w = w1;
     if (show) {
-      if (w.opts.items.len() > 0 && w.opts.rewrite) {
+      if (prunes(w.opts) && w.opts.rewrite) {
         w = rewrite(w, c.hash);
       }
       return (set(w, c.hash, SHOWN), c.hash);
     }
   }
   return (w, "");
+}
+
+// ---- The topological walk with generation numbers (revision.c) ----
+
+// A queue of commits: by generation and then by date (GEN_DATE), by date
+// (DATE), or the last put first (STACK). Two equal commits come out in
+// the order of their puts.
+const GEN_DATE: i32 = 0;
+
+const DATE: i32 = 1;
+
+const STACK: i32 = 2;
+
+struct Heap { kind: i32, hashes: string[], gens: i64[], dates: i64[], ctrs: i32[], ctr: i32 }
+
+function heap_new(kind: i32): Heap {
+  return Heap { kind: kind, hashes: [], gens: [], dates: [], ctrs: [], ctr: 0 };
+}
+
+// True when the entry `i` comes out before the entry `j`.
+function before(q: Heap, i: i32, j: i32): boolean {
+  if (q.kind == GEN_DATE && q.gens[i] != q.gens[j]) {
+    return q.gens[i] > q.gens[j];
+  }
+  if (q.dates[i] != q.dates[j]) {
+    return q.dates[i] > q.dates[j];
+  }
+  return q.ctrs[i] < q.ctrs[j];
+}
+
+function swap(own q: Heap, i: i32, j: i32): Heap {
+  let h = q.hashes[i];
+  let g = q.gens[i];
+  let d = q.dates[i];
+  let c = q.ctrs[i];
+  q = Heap { ...q, hashes: q.hashes.with(i, q.hashes[j]), gens: q.gens.with(i, q.gens[j]), dates: q.dates.with(i, q.dates[j]), ctrs: q.ctrs.with(i, q.ctrs[j]) };
+  return Heap { ...q, hashes: q.hashes.with(j, h), gens: q.gens.with(j, g), dates: q.dates.with(j, d), ctrs: q.ctrs.with(j, c) };
+}
+
+function heap_put(own q: Heap, h: string, generation: i64, date: i64): Heap {
+  q = Heap { ...q, hashes: q.hashes.append(h), gens: q.gens.append(generation), dates: q.dates.append(date), ctrs: q.ctrs.append(q.ctr), ctr: q.ctr + 1 };
+  if (q.kind == STACK) {
+    return q;
+  }
+  let i = q.hashes.len() - 1;
+  while (i > 0) {
+    let parent = (i - 1) / 2;
+    if (!before(q, i, parent)) {
+      break;
+    }
+    q = swap(q, i, parent);
+    i = parent;
+  }
+  return q;
+}
+
+// The first commit of the queue, or "".
+function heap_peek(q: Heap): string {
+  if (q.hashes.len() == 0) {
+    return "";
+  }
+  return if (q.kind == STACK) { q.hashes[q.hashes.len() - 1] } else { q.hashes[0] };
+}
+
+function heap_drop_last(own q: Heap): Heap {
+  let n = q.hashes.len() - 1;
+  return Heap { ...q, hashes: q.hashes.truncate(n), gens: q.gens.truncate(n), dates: q.dates.truncate(n), ctrs: q.ctrs.truncate(n) };
+}
+
+function heap_get(own q: Heap): (Heap, string) {
+  let n = q.hashes.len();
+  if (n == 0) {
+    return (q, "");
+  }
+  if (q.kind == STACK) {
+    let h = q.hashes[n - 1];
+    return (heap_drop_last(q), h);
+  }
+  let h = q.hashes[0];
+  q = heap_drop_last(swap(q, 0, n - 1));
+  let i = 0;
+  let m = n - 1;
+  while (true) {
+    let l = 2 * i + 1;
+    if (l >= m) {
+      break;
+    }
+    let best = l;
+    if (l + 1 < m && before(q, l + 1, l)) {
+      best = l + 1;
+    }
+    if (!before(q, best, i)) {
+      break;
+    }
+    q = swap(q, i, best);
+    i = best;
+  }
+  return (q, h);
+}
+
+// The state of the walk: the queues of the exploration, of the counts of
+// children and of the output, the count of the children of each commit
+// that the walk has yet to show plus one, and the least generation that
+// the counts are known for. The cells let an update change the queues and
+// the maps in place, as no copy of the walk holds them.
+struct Topo { explore: Cell[Heap], indegree: Cell[Heap], out: Cell[Heap], degree: Cell[Map[string, i32]], explored: Cell[Map[string, boolean]], counted: Cell[Map[string, boolean]], min_generation: i64 }
+
+const TOPO_EXPLORED: i32 = 1;
+
+const TOPO_INDEGREE: i32 = 2;
+
+function topo_of(w: Walk): Topo {
+  return w.topo[0];
+}
+
+function with_topo(w: Walk, t: Topo): Walk {
+  return Walk { ...w, topo: [t] };
+}
+
+// The queue of the cell `c`, which the cell gives away until `c.set`.
+function take_heap(c: Cell[Heap]): Heap {
+  let q = c.get();
+  c.set(heap_new(q.kind));
+  return q;
+}
+
+function put_heap(c: Cell[Heap], h: string, generation: i64, date: i64): void {
+  c.set(heap_put(take_heap(c), h, generation, date));
+}
+
+function get_heap(c: Cell[Heap]): string {
+  let (q, h) = heap_get(take_heap(c));
+  c.set(q);
+  return h;
+}
+
+function set_degree(t: Topo, h: string, d: i32): void {
+  let m = t.degree.get();
+  t.degree.set(Map { });
+  t.degree.set(m.insert(h, d));
+}
+
+// Marks `h` in the set of the cell `c`, and gives false when it was in
+// the set.
+function mark_new(c: Cell[Map[string, boolean]], h: string): boolean {
+  let m = c.get();
+  if (m.contains(h)) {
+    return false;
+  }
+  c.set(Map { });
+  c.set(m.insert(h, true));
+  return true;
+}
+
+function put_queue(w_in: Walk, which: i32, h: string): Walk {
+  let (w, n) = node(w_in, h);
+  let t = topo_of(w);
+  if (which == TOPO_EXPLORED) {
+    if (mark_new(t.explored, h)) {
+      put_heap(t.explore, h, n.generation, n.time);
+    }
+    return w;
+  }
+  if (mark_new(t.counted, h)) {
+    put_heap(t.indegree, h, n.generation, n.time);
+  }
+  return w;
+}
+
+// One step of the exploration: `explore_walk_step`.
+function explore_step(w_in: Walk): Walk {
+  let c = get_heap(topo_of(w_in).explore);
+  let w = w_in;
+  if (c.len() == 0) {
+    return w;
+  }
+  let (w1, n) = node(w, c);
+  w = w1;
+  if (!n.ok) {
+    return w;
+  }
+  if (w.opts.max_age != -1 && n.time < w.opts.max_age) {
+    w = set(w, c, UNINTERESTING);
+  }
+  w = process_parents(w, c);
+  if ((flag(w, c) & UNINTERESTING) != 0) {
+    w = mark_parents_uninteresting(w, c);
+  }
+  let (w2, ps) = parents(w, c);
+  w = w2;
+  for p in ps {
+    w = put_queue(w, TOPO_EXPLORED, p);
+  }
+  return w;
+}
+
+function explore_to_depth(w_in: Walk, cutoff: i64): Walk {
+  let w = w_in;
+  while (true) {
+    let h = heap_peek(topo_of(w).explore.get());
+    if (h.len() == 0) {
+      return w;
+    }
+    let (w1, n) = node(w, h);
+    w = w1;
+    if (n.generation < cutoff) {
+      return w;
+    }
+    w = explore_step(w);
+  }
+  return w;
+}
+
+// One step of the counts of the children: `indegree_walk_step`.
+function indegree_step(w_in: Walk): Walk {
+  let c = get_heap(topo_of(w_in).indegree);
+  let w = w_in;
+  if (c.len() == 0) {
+    return w;
+  }
+  let (w1, n) = node(w, c);
+  w = w1;
+  if (!n.ok) {
+    return w;
+  }
+  w = explore_to_depth(w, n.generation);
+  let (w2, ps) = parents(w, c);
+  w = w2;
+  for p in ps {
+    let (w3, pn) = node(w, p);
+    w = w3;
+    if (!pn.ok) {
+      return w;
+    }
+    let t1 = topo_of(w);
+    let d = t1.degree.get().get_or(p, 0);
+    set_degree(t1, p, if (d != 0) { d + 1 } else { 2 });
+    w = put_queue(w, TOPO_INDEGREE, p);
+    if (w.opts.first_parent) {
+      return w;
+    }
+  }
+  return w;
+}
+
+function indegrees_to_depth(w_in: Walk, cutoff: i64): Walk {
+  let w = w_in;
+  while (true) {
+    let h = heap_peek(topo_of(w).indegree.get());
+    if (h.len() == 0) {
+      return w;
+    }
+    let (w1, n) = node(w, h);
+    w = w1;
+    if (n.generation < cutoff) {
+      return w;
+    }
+    w = indegree_step(w);
+  }
+  return w;
+}
+
+// Puts `h` in the output queue.
+function put_out(w_in: Walk, h: string): Walk {
+  let (w, date) = sort_time(w_in, h);
+  put_heap(topo_of(w).out, h, 0, date);
+  return w;
+}
+
+// The walk ready for its first commit, with the commits of the command
+// line in `list`: `init_topo_walk`.
+function init_topo(w_in: Walk): Walk {
+  let kind = if (w_in.opts.order == BY_GRAPH) { STACK } else { DATE };
+  let t = Topo { explore: cell_new(heap_new(GEN_DATE)), indegree: cell_new(heap_new(GEN_DATE)), out: cell_new(heap_new(kind)), degree: cell_new(Map { }), explored: cell_new(Map { }), counted: cell_new(Map { }), min_generation: commitgraph.INFINITY };
+  let w = Walk { ...w_in, topo: [t] };
+  let starts = w.list;
+  w = Walk { ...w, list: [], head: 0 };
+  let min_gen = commitgraph.INFINITY;
+  for c in starts {
+    let (w1, n) = node(w, c.hash);
+    w = w1;
+    if (n.ok) {
+      w = put_queue(put_queue(w, TOPO_EXPLORED, c.hash), TOPO_INDEGREE, c.hash);
+      if (n.generation < min_gen) {
+        min_gen = n.generation;
+      }
+      set_degree(topo_of(w), c.hash, 1);
+    }
+  }
+  w = with_topo(w, Topo { ...topo_of(w), min_generation: min_gen });
+  w = indegrees_to_depth(w, min_gen);
+  for c in starts {
+    if (topo_of(w).degree.get().get_or(c.hash, 0) == 1) {
+      w = put_out(w, c.hash);
+    }
+  }
+  if (kind == STACK) {
+    let cell = topo_of(w).out;
+    let out = take_heap(cell);
+    cell.set(Heap { ...out, hashes: out.hashes.reverse(), gens: out.gens.reverse(), dates: out.dates.reverse(), ctrs: out.ctrs.reverse() });
+  }
+  return w;
+}
+
+// The next commit of the topological walk, or "": `next_topo_commit`.
+function next_topo(w: Walk): (Walk, string) {
+  let t = topo_of(w);
+  let h = get_heap(t.out);
+  if (h.len() == 0) {
+    return (Walk { ...w, topo: [] }, "");
+  }
+  set_degree(t, h, 0);
+  return (w, h);
+}
+
+// Puts each parent of the shown commit `c` in the output when `c` was its
+// last child to show: `expand_topo_walk`.
+function expand_topo(w_in: Walk, c: string): Walk {
+  let w = process_parents(w_in, c);
+  if (w.failed.len() > 0) {
+    return w;
+  }
+  let (w1, ps) = parents(w, c);
+  w = w1;
+  for p in ps {
+    if ((flag(w, p) & UNINTERESTING) == 0) {
+      let (w2, pn) = node(w, p);
+      w = w2;
+      if (pn.ok) {
+        if (pn.generation < topo_of(w).min_generation) {
+          w = with_topo(w, Topo { ...topo_of(w), min_generation: pn.generation });
+          w = indegrees_to_depth(w, pn.generation);
+        }
+        let t = topo_of(w);
+        let d = t.degree.get().get_or(p, 0) - 1;
+        set_degree(t, p, d);
+        if (d == 1) {
+          w = put_out(w, p);
+        }
+      }
+    }
+    if (w.opts.first_parent) {
+      return w;
+    }
+  }
+  return w;
+}
+
+// ---- The simplification of merges (simplify_merges of revision.c) ----
+
+function unset(w: Walk, h: string, f: i32): Walk {
+  return Walk { ...w, flags: w.flags.insert(h, flag(w, h) & ~f) };
+}
+
+// The TREESAME flag of the merge `c` from its parents and the array of
+// TREESAME parents: `update_treesame` of git.
+function update_treesame(w_in: Walk, c: string): Walk {
+  let (w, ps) = parents(w_in, c);
+  if (ps.len() < 2) {
+    return w;
+  }
+  let Some(ts) = w.treesame.get(c) else {
+    return w;
+  };
+  let relevant_parents = 0;
+  let relevant_change = false;
+  let irrelevant_change = false;
+  for n in 0..ps.len() {
+    let same = n < ts.len() && ts[n];
+    if (relevant(w, ps[n])) {
+      relevant_change = relevant_change || !same;
+      relevant_parents += 1;
+    } else {
+      irrelevant_change = irrelevant_change || !same;
+    }
+  }
+  if (if (relevant_parents > 0) { relevant_change } else { irrelevant_change }) {
+    return unset(w, c, TREESAME);
+  }
+  return set(w, c, TREESAME);
+}
+
+// The parents of `c` without the parent `nth`, with its entry of the
+// TREESAME array: `compact_treesame` of git.
+function drop_parent(w_in: Walk, c: string, nth: i32): Walk {
+  let (w1, ps) = parents(w_in, c);
+  let kept: string[] = [];
+  for i in 0..ps.len() {
+    if (i != nth) {
+      kept = kept.append(ps[i]);
+    }
+  }
+  let w = Walk { ...w1, parents: w1.parents.insert(c, kept) };
+  let Some(ts) = w.treesame.get(c) else {
+    if (kept.len() == 0) {
+      let (w2, n) = node(w, c);
+      let (w3, d) = differ(w2, "", n.tree);
+      return if (d) { unset(w3, c, TREESAME) } else { set(w3, c, TREESAME) };
+    }
+    return w;
+  };
+  let left: boolean[] = [];
+  for i in 0..ts.len() {
+    if (i != nth) {
+      left = left.append(ts[i]);
+    }
+  }
+  if (left.len() == 1) {
+    w = Walk { ...w, treesame: w.treesame.remove(c) };
+    return if (left[0]) { set(w, c, TREESAME) } else { unset(w, c, TREESAME) };
+  }
+  return Walk { ...w, treesame: w.treesame.insert(c, left) };
+}
+
+// What each commit simplifies to, as `simplify_one` finds it.
+struct Simplified { to: Map[string, string] }
+
+function simplify_one(w_in: Walk, st_in: Simplified, c: string, todo_in: string[]): (Walk, Simplified, string[]) {
+  let w = w_in;
+  let st = st_in;
+  let todo = todo_in;
+  if (st.to.contains(c)) {
+    return (w, st, todo);
+  }
+  let (w0, ps0) = parents(w, c);
+  w = w0;
+  if ((flag(w, c) & UNINTERESTING) != 0 || ps0.len() == 0) {
+    return (w, Simplified { to: st.to.insert(c, c) }, todo);
+  }
+  let waiting = 0;
+  for p in ps0 {
+    if (!st.to.contains(p)) {
+      todo = todo.append(p);
+      waiting += 1;
+    }
+    if (w.opts.first_parent) {
+      break;
+    }
+  }
+  if (waiting > 0) {
+    return (w, st, todo.append(c));
+  }
+  // Each parent becomes what it simplifies to, and a parent that comes
+  // twice goes.
+  let ps: string[] = [];
+  for i in 0..ps0.len() {
+    if (w.opts.first_parent && i > 0) {
+      ps = ps.append(ps0[i]);
+    } else {
+      ps = ps.append(st.to.get_or(ps0[i], ps0[i]));
+    }
+  }
+  w = Walk { ...w, parents: w.parents.insert(c, ps) };
+  let cnt = ps.len();
+  if (w.opts.first_parent) {
+    cnt = 1;
+  } else {
+    let seen: Map[string, boolean] = Map { };
+    let i = 0;
+    let k = 0;
+    while (i < ps.len()) {
+      if (seen.contains(ps[i])) {
+        w = drop_parent(w, c, k);
+      } else {
+        seen = seen.insert(ps[i], true);
+        k += 1;
+      }
+      i += 1;
+    }
+    let (w1, kept) = parents(w, c);
+    w = w1;
+    cnt = kept.len();
+  }
+  if (cnt > 1) {
+    let (w2, kept) = parents(w, c);
+    w = w2;
+    // A parent that another parent reaches, and a TREESAME root parent,
+    // go: `mark_redundant_parents` and `mark_treesame_root_parents`.
+    let marked: boolean[] = [];
+    let count = 0;
+    for i in 0..kept.len() {
+      let redundant = false;
+      for j in 0..kept.len() {
+        if (i != j && !redundant) {
+          let (g, r) = walk.reaches(w.g, kept[j], kept[i]);
+          w = Walk { ...w, g: g };
+          redundant = r;
+        }
+      }
+      let (w3, pps) = parents(w, kept[i]);
+      w = w3;
+      if (!redundant && pps.len() == 0 && (flag(w, kept[i]) & TREESAME) != 0) {
+        redundant = true;
+      }
+      marked = marked.append(redundant);
+      if (redundant) {
+        count += 1;
+      }
+    }
+    if (count > 0) {
+      // `leave_one_treesame_to_parent`: keep the first TREESAME parent
+      // when no kept parent is TREESAME.
+      let ts = w.treesame.get_or(c, []);
+      let first_marked = -1;
+      let unmarked = false;
+      for i in 0..kept.len() {
+        if (i < ts.len() && ts[i] && !unmarked) {
+          if (marked[i]) {
+            if (first_marked < 0) {
+              first_marked = i;
+            }
+          } else {
+            unmarked = true;
+          }
+        }
+      }
+      if (!unmarked && first_marked >= 0) {
+        marked = marked.with(first_marked, false);
+        count -= 1;
+      }
+    }
+    if (count > 0) {
+      let removed = false;
+      let k = kept.len() - 1;
+      while (k >= 0) {
+        if (marked[k]) {
+          w = drop_parent(w, c, k);
+          removed = true;
+        }
+        k -= 1;
+      }
+      if (removed && (flag(w, c) & TREESAME) == 0) {
+        w = update_treesame(w, c);
+      }
+      let (w4, left) = parents(w, c);
+      w = w4;
+      cnt = left.len();
+    }
+  }
+  let (w5, now) = parents(w, c);
+  w = w5;
+  let one = one_relevant_parent(w, now);
+  if (cnt == 0 || (flag(w, c) & (UNINTERESTING | TREESAME)) != TREESAME || one.len() == 0) {
+    return (w, Simplified { to: st.to.insert(c, c) }, todo);
+  }
+  return (w, Simplified { to: st.to.insert(c, st.to.get_or(one, one)) }, todo);
+}
+
+// The list without the commits that simplify to another commit, and with
+// the parents of each commit rewritten: `simplify_merges` of git.
+function simplify_merges(w_in: Walk): Walk {
+  let w = w_in;
+  let st = Simplified { to: Map { } };
+  let todo: string[] = w.list.map((c: Item): string => c.hash).reverse();
+  while (todo.len() > 0) {
+    let list = todo;
+    todo = [];
+    for c in list {
+      let (w1, st1, t1) = simplify_one(w, st, c, todo);
+      w = w1;
+      st = st1;
+      todo = t1;
+    }
+  }
+  let out: Item[] = [];
+  for c in w.list {
+    if (st.to.get_or(c.hash, "") == c.hash) {
+      out = out.append(c);
+    }
+  }
+  return Walk { ...w, list: out, head: 0 };
 }

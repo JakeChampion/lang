@@ -40,7 +40,7 @@ function turned(): overlay.Metrics {
 }
 
 function model(mt: overlay.Metrics): fluid.Model {
-  return fluid.new(config.defaults(), false, 1i64, 0i64).laid_out(overlay.layout(test_fonts(), mt));
+  return fluid.new(config.defaults(), false, 1i64, 0i64).laid_out(overlay.layout(test_fonts(), mt)).with_speed("120 fps, longest 9 ms");
 }
 
 function inside(inner: fluid.Rect, outer: fluid.Rect): boolean {
@@ -85,7 +85,7 @@ function screen(mt: overlay.Metrics, m: fluid.Model, now_ms: i64): draw.Frame {
   }
   if (m.open) {
     f.fill(0, 0, mt.width, mt.height, draw.rgba(0, 0, 0, 115));
-    let p = overlay.panel_frame(fs, mt, l);
+    let p = overlay.panel_frame(fs, mt, l, m.speed);
     over(f, p, l.panel.x, l.panel.y, 0, mt.height);
     draw.release(p);
     let rows = overlay.list_frame(fs, mt, l, m, m.pressed_row());

@@ -7,6 +7,7 @@ import "std/rand";
 import "./clock";
 import "./color";
 import "./config";
+import "./trail";
 
 pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
 
@@ -34,17 +35,28 @@ pub function actions(): Action[] {
 // screen, so the Home key and the Overview key do not leave it.
 pub enum Want { Save, Keywords, Immersive(boolean), Awake(boolean), Pin(boolean) }
 
-// The finger on the fluid. `x` and `y` go from 0 to 1 with y up, and `dx`
-// and `dy` are the last move.
-pub struct Pointer { down: boolean, moved: boolean, x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
+// The finger on the fluid. `x` and `y` are the place that the last frame
+// gave it, from 0 to 1 with y up. `moved` tells that its path has a place
+// that no frame reached yet.
+pub struct Pointer { down: boolean, moved: boolean, x: f64, y: f64, color: config.Rgb }
+
+// A frame takes the place of the finger at a time before the frame, so
+// that the path has a place after that time, and the frame does not wait
+// for a place. The time before the frame is the longest time that the
+// newest place was old at a frame of the drag, and this margin. It starts
+// at FIRST_LAG_NS.
+pub const MARGIN_NS: i64 = 1000000i64;
+
+pub const FIRST_LAG_NS: i64 = 6000000i64;
 
 // A splat for the GPU: its place, its velocity and its colour.
 pub struct Splat { x: f64, y: f64, dx: f64, dy: f64, color: config.Rgb }
 
 // What one frame does on the GPU: a burst of `burst` random splats, the
 // splat of the finger, `steps` steps of the simulation of `step` seconds
-// each, and a draw.
-pub struct Frame { burst: i32, splat: Option[Splat], steps: i32, step: f64, draw: boolean }
+// each, and a draw. `starved` tells that the newest place of the finger
+// was older than each one before it in the drag.
+pub struct Frame { burst: i32, splat: Option[Splat], steps: i32, step: f64, draw: boolean, starved: boolean }
 
 const NONE: i32 = 0;
 
@@ -81,10 +93,12 @@ const MAX_BURST: i32 = 24;
 const MAX_BURSTS: i32 = 8;
 
 // `still` tells that the system asks for no animation, and that the person
-// did not touch the fluid yet. `open` tells that the dialog shows. `touch`
-// is what the finger went down on, with the row of the dialog in `row`, and
+// did not touch the fluid yet. `open` tells that the dialog shows. `trail` is the path of the
+// finger on the fluid, and `lag_ns` is the longest time that its newest
+// place was old at a frame of the drag. `touch` is what the finger went down on, with the row of the dialog in `row`, and
 // `dragged` tells that it scrolls the dialog. `hold_ms` is the time that
 // the hold on the exit button started, or -1. `note` shows until `note_ms`.
+// `speed` is the text of the frame rate, which the dialog shows.
 // `redraw` asks for a draw of a paused fluid.
 pub struct Model {
   cfg: config.Config,
@@ -92,6 +106,8 @@ pub struct Model {
   rng: i64,
   layout: Layout,
   pointer: Pointer,
+  trail: trail.Trail,
+  lag_ns: i64,
   bursts: i32[],
   color_timer: f64,
   still: boolean,
@@ -105,6 +121,7 @@ pub struct Model {
   hold_ms: i64,
   full: boolean,
   note: string,
+  speed: string,
   note_ms: i64,
   redraw: boolean,
   wants: Want[],
@@ -124,7 +141,9 @@ pub function new(cfg: config.Config, still: boolean, seed: i64, now_ns: i64): Mo
     clock: clock.new(now_ns),
     rng: rng,
     layout: no_layout(),
-    pointer: Pointer { down: false, moved: false, x: 0.0, y: 0.0, dx: 0.0, dy: 0.0, color: first },
+    pointer: Pointer { down: false, moved: false, x: 0.0, y: 0.0, color: first },
+    trail: trail.start(trail.Sample { ns: now_ns, x: 0.0, y: 0.0 }),
+    lag_ns: FIRST_LAG_NS,
     bursts: [],
     color_timer: 0.0,
     still: still,
@@ -138,6 +157,7 @@ pub function new(cfg: config.Config, still: boolean, seed: i64, now_ns: i64): Mo
     hold_ms: -1i64,
     full: false,
     note: "",
+    speed: "",
     note_ms: 0i64,
     redraw: true,
     wants: [],
@@ -151,6 +171,11 @@ pub function new(cfg: config.Config, still: boolean, seed: i64, now_ns: i64): Mo
 // The model on the window that `layout` describes.
 pub function (m: Model) laid_out(layout: Layout): Model {
   return Model { ...m, layout: layout, redraw: true }.scrolled(m.scroll);
+}
+
+// The model with the text `text` for the frame rate. The dialog shows it.
+pub function (m: Model) with_speed(text: string): Model {
+  return Model { ...m, speed: text, redraw: m.redraw || m.open };
 }
 
 // The model with no wants, after the app did them.
@@ -315,29 +340,29 @@ pub function (m: Model) toggle_dialog(): Model {
   return m.opened(!m.open);
 }
 
-// A move of the same number of pixels pushes the same fluid on a window of
-// each shape.
-function (m: Model) moved_to(x: f64, y: f64): Model {
-  let p = m.pointer;
-  let tx = x / (m.layout.width as f64);
-  let ty = 1.0 - y / (m.layout.height as f64);
-  let aspect = m.layout.width as f64 / (m.layout.height as f64);
-  let dx = tx - p.x;
-  let dy = ty - p.y;
-  if (aspect < 1.0) {
-    dx *= aspect;
+// The model with the place x and y of the finger at the time `ns` at the
+// end of its path on the fluid. x and y are in pixels of the window.
+function (m: Model) moved_to(x: f64, y: f64, ns: i64): Model {
+  let s = trail.Sample { ns: ns, x: x / (m.layout.width as f64), y: 1.0 - y / (m.layout.height as f64) };
+  return Model { ...m, trail: m.trail.add(s), pointer: Pointer { ...m.pointer, moved: true } };
+}
+
+// The model with a place that the finger had before the place of a move
+// event, at the time `ns`. Android collects the places of a finger between
+// two frames, and gives them with one event. Give each of them to the model
+// before the event, from the oldest.
+pub function (m: Model) traced(x: f64, y: f64, ns: i64): Model {
+  if (m.touch != ON_FLUID) {
+    return m;
   }
-  if (aspect > 1.0) {
-    dy /= aspect;
-  }
-  return Model { ...m, pointer: Pointer { ...p, x: tx, y: ty, dx: dx, dy: dy, moved: dx != 0.0 || dy != 0.0 } };
+  return m.moved_to(x, y, ns);
 }
 
 function (m: Model) pressed(x: f64, y: f64, now_ns: i64): Model {
   let (rng, c) = color.generate(m.rng);
   let tx = x / (m.layout.width as f64);
   let ty = 1.0 - y / (m.layout.height as f64);
-  let on = Model { ...m, rng: rng, touch: ON_FLUID, pointer: Pointer { down: true, moved: false, x: tx, y: ty, dx: 0.0, dy: 0.0, color: c } };
+  let on = Model { ...m, rng: rng, touch: ON_FLUID, trail: trail.start(trail.Sample { ns: now_ns, x: tx, y: ty }), lag_ns: FIRST_LAG_NS, pointer: Pointer { down: true, moved: false, x: tx, y: ty, color: c } };
   return on.moving(now_ns);
 }
 
@@ -383,9 +408,9 @@ function (m: Model) down(x: f64, y: f64, now_ns: i64): Model {
   return m.pressed(x, y, now_ns);
 }
 
-function (m: Model) move(x: f64, y: f64): Model {
+function (m: Model) move(x: f64, y: f64, now_ns: i64): Model {
   if (m.touch == ON_FLUID) {
-    return m.moved_to(x, y);
+    return m.moved_to(x, y, now_ns);
   }
   if (m.touch == ON_LIST) {
     let far = (y - m.touch_y).abs() > m.layout.slop as f64;
@@ -418,13 +443,14 @@ function (m: Model) up(x: f64, y: f64, now_ns: i64): Model {
 }
 
 // The model after a touch event of `android.Touch`: 0 is down, 1 is up, 2
-// is a move and 3 is a cancel. x and y are in pixels of the window.
+// is a move and 3 is a cancel. x and y are in pixels of the window, and
+// `now_ns` is the time of the event.
 pub function (m: Model) touched(action: i32, x: f64, y: f64, now_ns: i64): Model {
   if (action == 0) {
     return m.down(x, y, now_ns);
   }
   if (action == 2) {
-    return m.move(x, y);
+    return m.move(x, y, now_ns);
   }
   if (action == 1) {
     return m.up(x, y, now_ns);
@@ -534,10 +560,42 @@ pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
     bursts = bursts.truncate(bursts.len() - 1);
   }
   let splat: Option[Splat] = None;
-  let splatted = p.moved;
+  let splatted = false;
+  let path = out.trail;
+  let lag = out.lag_ns;
+  let starved = false;
   if (p.moved) {
-    splat = Some(Splat { x: p.x, y: p.y, dx: p.dx * out.cfg.splat_force, dy: p.dy * out.cfg.splat_force, color: p.color });
-    p = Pointer { ...p, moved: false };
+    // The newest place is this old now. An older place than a frame and
+    // 12 ms is from a finger that does not move, and it does not count.
+    let age = now_ns - path.end_ns();
+    if (age > lag && age as f64 < dt * 1.0e9 + 12.0e6) {
+      lag = age;
+      starved = true;
+    }
+    let at = now_ns - lag - MARGIN_NS;
+    // A finger that went up has no more places, so the frame takes the end
+    // of its path.
+    if (!p.down) {
+      at = path.end_ns();
+    }
+    // A move of the same number of pixels pushes the same fluid on a window
+    // of each shape.
+    let to = path.at(at);
+    let aspect = out.layout.width as f64 / (out.layout.height as f64);
+    let dx = to.x - p.x;
+    let dy = to.y - p.y;
+    if (aspect < 1.0) {
+      dx *= aspect;
+    }
+    if (aspect > 1.0) {
+      dy /= aspect;
+    }
+    if (dx != 0.0 || dy != 0.0) {
+      splat = Some(Splat { x: to.x, y: to.y, dx: dx * out.cfg.splat_force, dy: dy * out.cfg.splat_force, color: p.color });
+      splatted = true;
+    }
+    p = Pointer { ...p, x: to.x, y: to.y, moved: to.ns < path.end_ns() };
+    path = path.since(to.ns);
   }
   let steps = 0;
   let step = 0.0;
@@ -546,6 +604,6 @@ pub function (m: Model) frame(now_ns: i64): (Model, Frame) {
     steps = n;
     step = size;
   }
-  let draw = !out.cfg.paused || out.redraw || burst > 0 || splatted || out.hold_ms >= 0i64 || out.noting(now_ms);
-  return (Model { ...out, clock: ticked, rng: rng, pointer: p, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splat: splat, steps: steps, step: step, draw: draw });
+  let draw = !out.cfg.paused || out.redraw || burst > 0 || splatted || p.moved || out.hold_ms >= 0i64 || out.noting(now_ms);
+  return (Model { ...out, clock: ticked, rng: rng, pointer: p, trail: path, lag_ns: lag, color_timer: timer, bursts: bursts, redraw: false }, Frame { burst: burst, splat: splat, steps: steps, step: step, draw: draw, starved: starved });
 }

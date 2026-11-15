@@ -499,6 +499,7 @@ lanes of `u8`.
 | `__u8x16_lane(v, k)` | lane `k`, where `k` is an integer literal from 0 to 15 |
 | `__u8x16_bitmask(v)` | an `i32` with the top bit of lane `k` in bit `k` |
 | `__u8x16_load(xs, i)`, `__u8x16_with(xs, i, v)` | 16 bytes of a `u8[]` from index `i` |
+| `__u8x16_load_view(xs, i)` | 16 bytes of a `[u8]` from index `i`: an array, a part of an array, or the bytes of a string |
 
 The operators `*` and `/` and the unary `-` are E009 for `u8x16`. The
 other rules are the rules of the float lanes. A compare operator is E041.

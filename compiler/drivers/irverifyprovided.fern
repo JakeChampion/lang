@@ -60,6 +60,12 @@ pub function provided_names(): string[] {
     "__fern_bytes_append_range",
     "__fern_bytes_write_range",
     "__fern_bytes_append_back",
+    "__fern_arr_fill_u8",
+    "__fern_arr_fill_u32",
+    "__fern_arr_fill_u64",
+    "__fern_arr_move_u8",
+    "__fern_arr_move_u32",
+    "__fern_arr_move_u64",
   ];
 }
 

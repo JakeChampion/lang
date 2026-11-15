@@ -161,11 +161,10 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   let ops = need_ops();
   for oi in 0..ops.len() {
     if (ops[oi] == "arr_push" || ops[oi] == "arr_push_owned") {
-      if (module_emits_push(cache, ops[oi], false)) {
-        out = out.append(ops[oi]);
-      }
-      if (module_emits_push(cache, ops[oi], true)) {
-        out = out.append(ops[oi] + "_u8");
+      for sfx in ["", "_u8", "_u16"] {
+        if (module_emits_push(cache, ops[oi], sfx)) {
+          out = out.append(ops[oi] + sfx);
+        }
       }
     } else if (has_kind(kinds, ops[oi])) {
       out = out.append(ops[oi]);
@@ -203,8 +202,10 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_arr_slice8(cache)) {
     out = out.append("@uses_arr_slice8");
   }
-  if (module_uses_arr_slice_u8(cache)) {
-    out = out.append("@uses_arr_slice_u8");
+  for sfx in ["_u8", "_u16"] {
+    if (module_uses_arr_slice_packed(cache, sfx)) {
+      out = out.append("@uses_arr_slice" + sfx);
+    }
   }
   out = array_helper_needs(cache, out);
   if (module_uses_divrem(cache)) {
@@ -557,6 +558,9 @@ pub function const_agg_block_bytes(packed: string): i32 {
   }
   if (ir.const_struct_is_wide_array(packed)) {
     return 16 + ir.const_struct_values(packed).len() * 8;
+  }
+  if (ir.const_struct_is_half_array(packed)) {
+    return 16 + (ir.const_struct_values(packed).len() * 2 + 7) / 8 * 8;
   }
   if (ir.const_struct_is_array(packed)) {
     return 16 + (ir.const_struct_values(packed).len() + 1) / 2 * 8;
@@ -1114,19 +1118,49 @@ pub function module_emits_op_cached(cache: irtables.LowerResult[], kind: string)
   return any_op(cache, is_kind);
 }
 
-function module_emits_push(cache: irtables.LowerResult[], kind: string, packed: boolean): boolean {
+function module_emits_push(cache: irtables.LowerResult[], kind: string, sfx: string): boolean {
   let ktag = ir.kind_id(kind);
   function is_push(o: ir.Op): boolean {
-    return o.kind_tag == ktag && ir.is_packed(o) == packed;
+    return o.kind_tag == ktag && packed_suffix(o) == sfx;
   }
   return any_op(cache, is_push);
 }
 
+// A wasm word holds a 4-byte element, so only bytes and 2-byte elements pack.
 function packed_suffix(o: ir.Op): string {
   if (ir.is_packed(o)) {
     return "_u8";
   }
+  if (ir.is_half(o)) {
+    return "_u16";
+  }
   return "";
+}
+
+// The bytes of an i32 element of the array op `o`, with the load that reads
+// it and the store that writes it.
+struct NarrowElem { size: i32, load: string, store: string }
+
+function narrow_elem(o: ir.Op): NarrowElem {
+  if (ir.is_packed(o)) {
+    return NarrowElem { size: 1, load: "i32.load8_u", store: "i32.store8" };
+  }
+  if (ir.is_half(o) && o.unsigned) {
+    return NarrowElem { size: 2, load: "i32.load16_u", store: "i32.store16" };
+  }
+  if (ir.is_half(o)) {
+    return NarrowElem { size: 2, load: "i32.load16_s", store: "i32.store16" };
+  }
+  return NarrowElem { size: 4, load: "i32.load", store: "i32.store" };
+}
+
+// The address of element `index` on the stack: the scaled index plus the
+// array and its 8-byte header.
+function elem_offset(size: i32): string {
+  if (size == 1) {
+    return "    i32.const 8\n    i32.add\n    i32.add\n";
+  }
+  return "    i32.const " + util.i32_to_string(size) + "\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n";
 }
 
 pub function module_uses_str_case(cache: irtables.LowerResult[]): boolean {
@@ -1431,6 +1465,11 @@ function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): s
   if (module_calls_direct(cache, "__fern_bytes_append_back")) {
     out = out.append("@uses_byte_back");
   }
+  for name in rtbytecopy.kernel_names() {
+    if (module_calls_direct(cache, name)) {
+      out = out.append("@uses" + name);
+    }
+  }
   if (module_calls_direct(cache, "__fern_bytes_range")) {
     out = out.append("@uses_bytes_range");
   }
@@ -1466,8 +1505,14 @@ function array_helper_parts(needs: string[], mod: parser.Module, own parts: stri
   let append = byte_copy_need(needs, "@uses_byte_append", "__fern_bytes_append_range", mod);
   let write = byte_copy_need(needs, "@uses_byte_write", "__fern_bytes_write_range", mod);
   let back = byte_copy_need(needs, "@uses_byte_back", "__fern_bytes_append_back", mod);
-  if (append || write || back) {
-    parts = parts.append(rtbytecopy.wasm_source(append, write, back));
+  let kernels: string[] = [];
+  for name in rtbytecopy.kernel_names() {
+    if (byte_copy_need(needs, "@uses" + name, name, mod)) {
+      kernels = kernels.append(name);
+    }
+  }
+  if (append || write || back || kernels.len() > 0) {
+    parts = parts.append(rtbytecopy.wasm_source(append, write, back, kernels));
   }
   if (need(needs, "@uses_bytes_range")) {
     parts = parts.append(bytes_range_helper(empty));
@@ -1506,16 +1551,17 @@ pub function module_uses_divrem(cache: irtables.LowerResult[]): boolean {
 
 pub function module_uses_arr_slice(cache: irtables.LowerResult[]): boolean {
   function is_arr_slice(o: ir.Op): boolean {
-    return o.kind_tag == ir.K_ARR_SLICE && o.width != 64 && !ir.is_packed(o);
+    return o.kind_tag == ir.K_ARR_SLICE && o.width != 64 && packed_suffix(o) == "";
   }
   return any_op(cache, is_arr_slice);
 }
 
-pub function module_uses_arr_slice_u8(cache: irtables.LowerResult[]): boolean {
-  function is_arr_slice_u8(o: ir.Op): boolean {
-    return o.kind_tag == ir.K_ARR_SLICE && ir.is_packed(o);
+// The module slices an array whose elements pack with the suffix `sfx`.
+function module_uses_arr_slice_packed(cache: irtables.LowerResult[], sfx: string): boolean {
+  function is_arr_slice_packed(o: ir.Op): boolean {
+    return o.kind_tag == ir.K_ARR_SLICE && packed_suffix(o) == sfx;
   }
-  return any_op(cache, is_arr_slice_u8);
+  return any_op(cache, is_arr_slice_packed);
 }
 
 pub function module_uses_arr_slice8(cache: irtables.LowerResult[]): boolean {
@@ -1647,7 +1693,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
     }
     if (n == "arr_reserve" || n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
       || n == "arr_push_f64" || n == "arr_push_owned_i64" || n == "arr_push_owned_f64"
-      || n == "arr_push_u8" || n == "arr_push_owned_u8"
+      || n == "arr_push_u8" || n == "arr_push_owned_u8" || n == "arr_push_u16" || n == "arr_push_owned_u16"
       || n == "str_split"
       || n == "buf_take_bytes" || n == "buf_push_bytes_range"
       || n == "buf_new" || n == "buf_push" || n == "buf_push_range"
@@ -4969,6 +5015,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == ir.K_U32_WRAP) {} else if (o.kind_tag == ir.K_INT_CAST) {
     if (o.str == "u8") {
       parts = parts.append("    i32.const 255\n    i32.and\n");
+    } else if (o.str == "u16") {
+      parts = parts.append("    i32.const 65535\n    i32.and\n");
+    } else if (o.str == "i16") {
+      parts = parts.append("    i32.extend16_s\n");
     }
   } else if (o.kind_tag == ir.K_ARR_PUSH) {
     parts = parts.append("    call $__fern_arr_push" + packed_suffix(o) + "\n");
@@ -5112,10 +5162,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == ir.K_ARR_SLICE) {
     if (o.width == 64) {
       parts = parts.append("    call $__fern_arr_slice8\n");
-    } else if (ir.is_packed(o)) {
-      parts = parts.append("    call $__fern_arr_slice_u8\n");
     } else {
-      parts = parts.append("    call $__fern_arr_slice\n");
+      parts = parts.append("    call $__fern_arr_slice" + packed_suffix(o) + "\n");
     }
   } else if (o.kind_tag == ir.K_RANDOM_BYTES) {
     parts = parts.append("    call $__fern_random_bytes\n");
@@ -5229,10 +5277,8 @@ function emit_str_op_wat(o: ir.Op): string {
     return "    global.set " + name + "\n    i32.const 0\n";
   }
   if (o.kind_tag == ir.K_ARR_RESERVE) {
-    let stride = 4;
-    if (o.width == 8) {
-      stride = 1;
-    } else if (o.width == 64) {
+    let stride = narrow_elem(o).size;
+    if (o.width == 64) {
       stride = 8;
     }
     return "    i32.const " + util.i32_to_string(stride) + "\n    call $__fern_arr_reserve\n";
@@ -9543,17 +9589,19 @@ pub function arr_concat_helper(): string {
   return o;
 }
 
-pub function arr_slice_u8_helper(): string {
+// The slice of an array of `stride`-byte elements whose runtime names end in `sfx`.
+pub function arr_slice_packed_helper(sfx: string, stride: i32): string {
+  let st = util.i32_to_string(stride);
   let o = "";
-  o += "  (func $__fern_arr_slice_u8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
+  o = o + "  (func $__fern_arr_slice" + sfx + " (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
   o += "    (local $n i32) (local $na i32)\n";
   o += "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (call $__fern_abort_slice) (unreachable)))\n";
   o += "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (call $__fern_abort_slice) (unreachable)))\n";
   o += "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-  o += "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
+  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const " + st + ")))\n";
   o += "    (i32.store (local.get $na) (local.get $n))\n";
   o += "    (i32.store offset=4 (local.get $na) (local.get $n))\n";
-  o += "    (memory.copy (i32.add (local.get $na) (i32.const 8)) (i32.add (i32.add (local.get $a) (i32.const 8)) (local.get $start)) (local.get $n))\n";
+  o = o + "    (memory.copy (i32.add (local.get $na) (i32.const 8)) (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $start) (i32.const " + st + "))) (i32.mul (local.get $n) (i32.const " + st + ")))\n";
   o += "    (local.get $na))\n";
   return o;
 }
@@ -9654,6 +9702,15 @@ function const_agg_data(strs: Placed, caggs: Placed, structs: irtables.StructTab
         + le32_escape(util.index_of_str(fn_table, fnbody)) + le32_escape(0);
     } else if (ir.const_struct_is_option(cv[i])) {
       body = body + le32_escape(util.lit_to_i32(vals[0])) + le32_escape(0);
+    } else if (ir.const_struct_is_half_array(cv[i])) {
+      body = body + le32_escape(vals.len()) + le32_escape(vals.len());
+      for v in vals {
+        let h = util.lit_to_i32(v);
+        body = body + byte_escape(h & 255) + byte_escape(h >> 8 & 255);
+      }
+      for _ in 0..(8 - vals.len() * 2 % 8) % 8 {
+        body += byte_escape(0);
+      }
     } else if (ir.const_struct_is_wide_array(cv[i])) {
       body = body + le32_escape(vals.len()) + le32_escape(vals.len());
       for v in vals {
@@ -9740,6 +9797,10 @@ pub function arr_push_u8_helper(): string {
   return arr_push_strided("_u8", "i32", "i32.store8", 1);
 }
 
+pub function arr_push_u16_helper(): string {
+  return arr_push_strided("_u16", "i32", "i32.store16", 2);
+}
+
 pub function arr_push_strided(suffix: string, vty: string, sop: string, stride: i32): string {
   let st = util.i32_to_string(stride);
   let o = "";
@@ -9811,9 +9872,17 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "@uses_random")) {
     parts = parts.append(random_get_import());
   }
+  return preview1_imports_part_1(needs, lc, parts);
+}
+
+function preview1_imports_part_1(needs: string[], lc: boolean, parts: string[]): string {
   if (lc || needs_abort(needs) || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || (need(needs, "write_file") || need(needs, "write_file_bytes")) || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes"))) {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $__fern_fd_write (param i32 i32 i32 i32) (result i32)))\n");
   }
+  return preview1_imports_part_2(needs, lc, parts);
+}
+
+function preview1_imports_part_2(needs: string[], lc: boolean, parts: string[]): string {
   if (p1_file_io(needs)) {
     parts = parts.append(file_imports());
   }
@@ -9829,6 +9898,10 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "reader_close") && !p1_file_io(needs)) {
     parts = parts.append(reader_fd_close_import());
   }
+  return preview1_imports_part_3(needs, lc, parts);
+}
+
+function preview1_imports_part_3(needs: string[], lc: boolean, parts: string[]): string {
   if (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns")) {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $__fern_clock_time_get (param i32 i64 i32) (result i32)))\n");
   }
@@ -9845,6 +9918,10 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "remove_file") || need(needs, "remove_dir_all")) {
     parts = parts.append(remove_file_import());
   }
+  return preview1_imports_part_4(needs, lc, parts);
+}
+
+function preview1_imports_part_4(needs: string[], lc: boolean, parts: string[]): string {
   if (need(needs, "remove_dir_all")) {
     parts = parts.append(remove_dir_import());
   }
@@ -9863,6 +9940,10 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "rename")) {
     parts = parts.append(rename_import());
   }
+  return preview1_imports_part_5(needs, lc, parts);
+}
+
+function preview1_imports_part_5(needs: string[], lc: boolean, parts: string[]): string {
   if (need(needs, "read_link")) {
     parts = parts.append(readlink_import());
   }
@@ -10601,7 +10682,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(arr_slice8_helper());
   }
   if (need(needs, "@uses_arr_slice_u8")) {
-    parts = parts.append(arr_slice_u8_helper());
+    parts = parts.append(arr_slice_packed_helper("_u8", 1));
+  }
+  if (need(needs, "@uses_arr_slice_u16")) {
+    parts = parts.append(arr_slice_packed_helper("_u16", 2));
   }
   let needs_arr_push = need(needs, "arr_push") || need(needs, "arr_push_owned") || need_dir_list(needs);
   let split_emits_push = need(needs, "str_split") || need(needs, "@uses_str_lines");
@@ -10628,6 +10712,12 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "arr_push_owned_u8")) {
     parts = parts.append(arr_push_owned_wide_helper("u8", "i32", heap_base_for_strs(sv, cv, shadow)));
+  }
+  if (need(needs, "arr_push_u16") || need(needs, "arr_push_owned_u16")) {
+    parts = parts.append(arr_push_u16_helper());
+  }
+  if (need(needs, "arr_push_owned_u16")) {
+    parts = parts.append(arr_push_owned_wide_helper("u16", "i32", heap_base_for_strs(sv, cv, shadow)));
   }
   if (mode != 2 && need(needs, "random_bytes")) {
     parts = parts.append(random_bytes_ir_func());
@@ -13419,10 +13509,8 @@ function empty_bytes_const(): string {
 }
 
 function emit_wasm_alloc_u8(caggs: Placed, ns: string, arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {
-  let stride = 4;
-  if (ir.is_packed(o)) {
-    stride = 1;
-  } else if (o.width == 64) {
+  let stride = narrow_elem(o).size;
+  if (o.width == 64) {
     stride = 8;
   }
   let n = "    local.get " + util.i32_to_string(eltmp) + "\n";
@@ -13457,11 +13545,9 @@ function emit_wasm_raw_store_ptr(arrtmp: i32, eltmp: i32, parts: string[]): stri
 
 function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, parts: string[]): string[] {
   let n = o.i32_imm;
-  let esz = 4;
+  let esz = narrow_elem(o).size;
   if (o.width == 64) {
     esz = 8;
-  } else if (ir.is_packed(o)) {
-    esz = 1;
   }
   let cap = n;
   let bytes = n * esz;
@@ -13480,12 +13566,9 @@ function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o
     } else if (o.width == 64) {
       parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
-    } else if (ir.is_packed(o)) {
-      parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
-      parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
     } else {
       parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
-      parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+      parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * esz) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    " + narrow_elem(o).store + "\n");
     }
     em -= 1;
   }
@@ -13515,10 +13598,9 @@ function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): 
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n");
   } else if (o.width == 64) {
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    f64.load\n");
-  } else if (ir.is_packed(o)) {
-    parts = parts.append("    i32.const 8\n    i32.add\n    i32.add\n    i32.load8_u\n");
   } else {
-    parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n");
+    let el = narrow_elem(o);
+    parts = parts.append(elem_offset(el.size) + "    " + el.load + "\n");
   }
 
   return parts;
@@ -13545,16 +13627,12 @@ function emit_wasm_arr_set(arrtmp: i32, bctmp: i32, eltmp: i32, f64tmp: i32, i64
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
     parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
-  } else if (ir.is_packed(o)) {
-    parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
-    parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
-    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
-    parts = parts.append("    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
   } else {
+    let el = narrow_elem(o);
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
     parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
-    parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+    parts = parts.append(elem_offset(el.size) + "    local.get " + util.i32_to_string(eltmp) + "\n    " + el.store + "\n");
   }
 
   return parts;

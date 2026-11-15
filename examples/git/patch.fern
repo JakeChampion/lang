@@ -1,0 +1,1034 @@
+// The diff of a commit as `git log` prints it (diff.c of git): the patch
+// of each pair of files, and `--stat`, `--numstat`, `--shortstat` and
+// `--summary`. The hunks come from the xdiff engine of std/linediff.
+import "std/array";
+import "std/linediff";
+import "./color";
+import "./objects";
+import "./store";
+import "./treediff";
+import "../../coreutils/lib/bre";
+
+// The forms of the output and their options. `stat_width` is -1 for the
+// width of the terminal. `stat_name_width`, `stat_graph_width` and
+// `stat_count` are 0 for no limit. `src` and `dst` are the prefixes of
+// the two paths. `color` gives the output the colors of git.
+pub struct Opts { patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
+
+pub function defaults(): Opts {
+  return Opts { patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
+}
+
+// True when the options print a diff.
+pub function any(o: Opts): boolean {
+  return o.patch || o.stat || o.numstat || o.shortstat || o.summary;
+}
+
+// The lines of a diff. A line of the graph goes before each line: the
+// line `i` takes the graph line of the call `uses[i]`, and `calls` is the
+// count of graph lines that the diff asks for, as git asks for one with
+// each `diff_line_prefix`.
+pub struct Text { lines: string[], uses: i32[], calls: i32 }
+
+function call(t: Text): (Text, i32) {
+  return (Text { ...t, calls: t.calls + 1 }, t.calls);
+}
+
+// Adds each line of `text` with the graph line of the call `at_call`.
+function add(t: Text, at_call: i32, text: string): Text {
+  let lines = t.lines;
+  let uses = t.uses;
+  let at = 0;
+  while (at < text.len()) {
+    let nl = __memchr_bytes(text.bytes(), 10, at);
+    let end = if (nl < 0) { text.len() } else { nl };
+    lines = lines.append(objects.part(text, at, end));
+    uses = uses.append(at_call);
+    at = end + 1;
+  }
+  return Text { lines: lines, uses: uses, calls: t.calls };
+}
+
+// Adds each line of `text`, each with a call of its own.
+function add_each(t_in: Text, text: string): Text {
+  let t = t_in;
+  let at = 0;
+  while (at < text.len()) {
+    let nl = __memchr_bytes(text.bytes(), 10, at);
+    let end = if (nl < 0) { text.len() } else { nl };
+    let (t1, at_call) = call(t);
+    t = Text { lines: t1.lines.append(objects.part(text, at, end)), uses: t1.uses.append(at_call), calls: t1.calls };
+    at = end + 1;
+  }
+  return t;
+}
+
+// One side of a pair: no side when `valid` is false.
+struct Side { valid: boolean, path: u8[], mode: string, hash: string }
+
+// A pair of files, as `diff_filepair` of git: the change, the old side
+// and the new side.
+struct Pair { status: u8, score: i32, one: Side, two: Side }
+
+function pair_of(c: treediff.Change): Pair {
+  let none = Side { valid: false, path: c.path, mode: "", hash: c.old_hash };
+  let old_side = Side { valid: true, path: c.old_path, mode: c.old_mode, hash: c.old_hash };
+  let new_side = Side { valid: true, path: c.path, mode: c.new_mode, hash: c.new_hash };
+  if (c.status == b'A') {
+    return Pair { status: c.status, score: 0, one: Side { ...none, hash: c.old_hash }, two: new_side };
+  }
+  if (c.status == b'D') {
+    return Pair { status: c.status, score: 0, one: old_side, two: Side { ...none, hash: c.new_hash } };
+  }
+  return Pair { status: c.status, score: c.score, one: old_side, two: new_side };
+}
+
+function mode6(mode: string): string {
+  return mode.pad_start_str(6, "0");
+}
+
+function text(b: u8[]): string {
+  return unsafe { string_from_bytes_unchecked(b) };
+}
+
+function quoted(path: u8[]): string {
+  return text(objects.quoted(path));
+}
+
+// The prefix and the path as one name, in quotes when one of them needs
+// them: `quote_two` of git.
+function quote_two(prefix: string, path: u8[]): string {
+  let joined = prefix.bytes().concat(path);
+  if (objects.plain_name(joined)) {
+    return text(joined);
+  }
+  let q = objects.quoted(joined);
+  return text(q);
+}
+
+// The content of a side, and the store after the read.
+function content(s: store.Store, side: Side): (store.Store, u8[]) {
+  if (!side.valid) {
+    return (s, []);
+  }
+  if (side.mode == "160000") {
+    return (s, ("Subproject commit " + side.hash + "\n").bytes());
+  }
+  let got = store.read(s, side.hash);
+  return match (got.object) {
+    Ok(o) => (got.store, o.body),
+    Err(_) => (got.store, []),
+  };
+}
+
+// True when the content is binary for git: a NUL in its first 8000 bytes.
+function is_binary(data: u8[]): boolean {
+  let n = data.len().min(8000);
+  for i in 0..n {
+    if (data[i] == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function is_regular(mode: string): boolean {
+  return mode == "100644" || mode == "100755";
+}
+
+function kind_of(mode: string): i32 {
+  if (mode == "120000") {
+    return 1;
+  }
+  if (mode == "160000") {
+    return 2;
+  }
+  return 0;
+}
+
+// The short name of `hash` for the index line. A name of zeros has the
+// length that no object shares.
+function abbrev_of(s: store.Store, hash: string, least: i32, full: boolean): string {
+  if (full) {
+    return hash;
+  }
+  if (hash == "0".repeat(hash.len())) {
+    let n = least;
+    while (n < hash.len() && store.with_prefix(s, objects.part(hash, 0, n)).len() > 0) {
+      n += 1;
+    }
+    return objects.part(hash, 0, n);
+  }
+  let n = least;
+  while (n < hash.len() && store.with_prefix(s, objects.part(hash, 0, n)).len() > 1) {
+    n += 1;
+  }
+  return objects.part(hash, 0, n);
+}
+
+// The lines of the change in one pair, after its header: the hunks, or
+// the line for a binary file. Each line ends with a line end.
+function hunks(o: Opts, a: u8[], b: u8[]): u8[] {
+  let ab = a;
+  let bb = b;
+  if (o.context == 0) {
+    let t = linediff.common_tail(a, b);
+    ab = array.slice(a, 0, a.len() - t);
+    bb = array.slice(b, 0, b.len() - t);
+  }
+  let la = linediff.lines_of(ab);
+  let lb = linediff.lines_of(bb);
+  let script = linediff.diff(la, lb, o.algo);
+  let out = buf_new(4096);
+  linediff.unified(out, la, lb, script, linediff.Emit { context: o.context, interhunk: o.interhunk, funcnames: true });
+  return buf_take_bytes(out);
+}
+
+// ---- The colors of a patch ----
+
+// The line `text` of the header, with its line end.
+function meta_line(o: Opts, text: string): string {
+  return if (o.color) { color.BOLD + text + color.RESET + "\n" } else { text + "\n" };
+}
+
+// Each line of `lines`, which end with a line end, as a line of the
+// header.
+function meta_lines(o: Opts, lines: string): string {
+  if (!o.color) {
+    return lines;
+  }
+  let out = "";
+  for line in lines.split("\n") {
+    if (line.len() > 0) {
+      out += meta_line(o, line);
+    }
+  }
+  return out;
+}
+
+function blank(data: u8[], from: i32, to: i32): boolean {
+  for i in from..to {
+    if (!objects.is_space(data[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The count of the blank lines at the end of `data`:
+// `count_trailing_blank` of git.
+function trailing_blank(data: u8[]): i32 {
+  if (data.len() == 0) {
+    return 0;
+  }
+  let at = data.len() - 1;
+  if (data[at] == b'\n') {
+    at -= 1;
+  }
+  let n = 0;
+  while (0 < at) {
+    let eol = at;
+    while (eol >= 0 && data[eol] != b'\n') {
+      eol -= 1;
+    }
+    if (!blank(data, eol + 1, at + 1)) {
+      break;
+    }
+    n += 1;
+    at = eol - 1;
+  }
+  return n;
+}
+
+function line_count(data: u8[]): i32 {
+  if (data.len() == 0) {
+    return 0;
+  }
+  let n = 0;
+  for b in data {
+    if (b == b'\n') {
+      n += 1;
+    }
+  }
+  return if (data[data.len() - 1] == b'\n') { n } else { n + 1 };
+}
+
+// The first line of each side that is in the blank lines that the change
+// adds at the end of the file, or 0 for each when it adds none:
+// `check_blank_at_eof` of git.
+function blank_at_eof(a: u8[], b: u8[]): (i32, i32) {
+  let l1 = trailing_blank(a);
+  let l2 = trailing_blank(b);
+  if (l2 <= l1) {
+    return (0, 0);
+  }
+  return (line_count(a) - l1 + 1, line_count(b) - l2 + 1);
+}
+
+// The line `first` and `text` in the color `set`, with a carriage return
+// at the end after the color: `emit_line_0` of git.
+function line0(set: string, first: string, text: string): string {
+  if (text.len() > 0 && text[text.len() - 1] == b'\r') {
+    return set + first + objects.part(text, 0, text.len() - 1) + color.RESET + "\r";
+  }
+  return set + first + text + color.RESET;
+}
+
+// The text of an added line with its errors of white space in their
+// color: `ws_check_emit` of git with the rules blank-at-eol and
+// space-before-tab.
+function checked(text: string): string {
+  let trailing = text.len();
+  while (trailing > 0 && objects.is_space(text[trailing - 1])) {
+    trailing -= 1;
+  }
+  let out = "";
+  let written = 0;
+  let i = 0;
+  while (i < trailing && (text[i] == b' ' || text[i] == b'\t')) {
+    if (text[i] == b'\t') {
+      if (written < i) {
+        out += color.BG_RED + objects.part(text, written, i) + color.RESET + "\t";
+      } else {
+        out += objects.part(text, written, i + 1);
+      }
+      written = i + 1;
+    }
+    i += 1;
+  }
+  if (trailing > written) {
+    out += color.GREEN + objects.part(text, written, trailing) + color.RESET;
+  }
+  if (trailing < text.len()) {
+    out += color.BG_RED + objects.part(text, trailing, text.len()) + color.RESET;
+  }
+  return out;
+}
+
+// The number after `sign` in a hunk header.
+function hunk_start(line: string, sign: u8): i32 {
+  let at = 0;
+  while (at < line.len() && line[at] != sign) {
+    at += 1;
+  }
+  let n = 0;
+  at += 1;
+  while (at < line.len() && line[at] >= b'0' && line[at] <= b'9') {
+    n = n * 10 + (line[at] - b'0') as i32;
+    at += 1;
+  }
+  return n;
+}
+
+// The hunk header `line` in its colors: `emit_hunk_header` of git.
+function hunk_header(line: string): string {
+  let ep = 2;
+  while (ep + 1 < line.len() && !(line[ep] == b'@' && line[ep + 1] == b'@')) {
+    ep += 1;
+  }
+  ep += 2;
+  let out = color.CYAN + objects.part(line, 0, ep.min(line.len())) + color.RESET;
+  let cp = ep;
+  while (ep < line.len() && (line[ep] == b' ' || line[ep] == b'\t')) {
+    ep += 1;
+  }
+  if (ep > cp) {
+    out += objects.part(line, cp, ep) + color.RESET;
+  }
+  if (ep < line.len()) {
+    out += objects.part(line, ep, line.len()) + color.RESET;
+  }
+  return out;
+}
+
+// The lines of the hunks of `a` and `b` in the colors of git, with the
+// errors of white space of the added lines (`fn_out_consume` and
+// `emit_diff_symbol` of git, with the default `core.whitespace`).
+function painted(body: string, a: u8[], b: u8[]): string {
+  let (pre_eof, post_eof) = blank_at_eof(a, b);
+  let pre = 0;
+  let post = 0;
+  let out = "";
+  let at = 0;
+  while (at < body.len()) {
+    let end = at;
+    while (end < body.len() && body[end] != b'\n') {
+      end += 1;
+    }
+    let line = objects.part(body, at, end);
+    let first = if (line.len() > 0) { line[0] } else { b' ' };
+    let rest = objects.part(line, 1.min(line.len()), line.len());
+    if (first == b'@') {
+      pre = hunk_start(line, b'-');
+      post = hunk_start(line, b'+');
+      out += hunk_header(line);
+    } else if (first == b'+') {
+      post += 1;
+      if (pre_eof > 0 && post_eof > 0 && pre_eof <= pre && post_eof <= post && blank(rest.bytes(), 0, rest.len())) {
+        out += line0(color.BG_RED, "+", rest);
+      } else {
+        out += line0(color.GREEN, "+", "") + checked(rest);
+      }
+    } else if (first == b'-') {
+      pre += 1;
+      out += line0(color.RED, "-", rest);
+    } else if (first == b' ') {
+      pre += 1;
+      post += 1;
+      out += line0("", " ", rest);
+    } else {
+      pre += 1;
+      out += line0("", "", line);
+    }
+    out += "\n";
+    at = end + 1;
+  }
+  return out;
+}
+
+// The header and the patch of one pair, without a split of a change of
+// kind: `fill_metainfo` and `builtin_diff` of git, with their calls for
+// the lines of the graph.
+function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, least: i32, t_in: Text): (store.Store, Text) {
+  let s = s_in;
+  let (t0, meta_use) = call(t_in);
+  let (t, head_use) = call(t0);
+  let name_a = p.one.path;
+  let name_b = p.two.path;
+  let a_one = quote_two(o.src, name_a);
+  let b_two = quote_two(o.dst, name_b);
+  let lbl0 = if (one.valid) { a_one } else { "/dev/null" };
+  let lbl1 = if (two.valid) { b_two } else { "/dev/null" };
+  let meta = "";
+  if (p.status == b'R') {
+    meta += "similarity index " + (p.score * 100 / 60000).to_string() + "%\n";
+    meta += "rename from " + quoted(name_a) + "\n";
+    meta += "rename to " + quoted(name_b) + "\n";
+  }
+  if (one.hash != two.hash) {
+    let full = o.full_index;
+    meta += "index " + abbrev_of(s, one.hash, least, full) + ".." + abbrev_of(s, two.hash, least, full);
+    if (one.valid && two.valid && one.mode == two.mode) {
+      meta += " " + mode6(one.mode);
+    }
+    meta += "\n";
+  }
+  meta = meta_lines(o, meta);
+  t = add(t, head_use, meta_line(o, "diff --git " + a_one + " " + b_two));
+  if (!one.valid) {
+    t = add(add(t, head_use, meta_line(o, "new file mode " + mode6(two.mode))), meta_use, meta);
+  } else if (!two.valid) {
+    t = add(add(t, head_use, meta_line(o, "deleted file mode " + mode6(one.mode))), meta_use, meta);
+  } else {
+    if (one.mode != two.mode) {
+      t = add(t, head_use, meta_line(o, "old mode " + mode6(one.mode)) + meta_line(o, "new mode " + mode6(two.mode)));
+    }
+    t = add(t, meta_use, meta);
+    if (kind_of(one.mode) != kind_of(two.mode)) {
+      return (s, t);
+    }
+  }
+  let (s3, a) = content(s, one);
+  let (s4, b) = content(s3, two);
+  s = s4;
+  if (!o.text && (is_binary(a) || is_binary(b))) {
+    if (one.hash == two.hash && one.valid && two.valid) {
+      return (s, t);
+    }
+    let (t1, at_call) = call(t);
+    return (s, add(t1, at_call, "Binary files " + lbl0 + " and " + lbl1 + " differ\n"));
+  }
+  let body = hunks(o, a, b);
+  if (body.len() == 0) {
+    return (s, t);
+  }
+  let tab0 = if (lbl0.contains(" ")) { "\t" } else { "" };
+  let tab1 = if (lbl1.contains(" ")) { "\t" } else { "" };
+  if (o.color) {
+    let labels = color.BOLD + "--- " + lbl0 + color.RESET + tab0 + "\n" + color.BOLD + "+++ " + lbl1 + color.RESET + tab1 + "\n";
+    t = add_each(t, labels + painted(text(body), a, b));
+    return (s, t);
+  }
+  t = add_each(t, "--- " + lbl0 + tab0 + "\n+++ " + lbl1 + tab1 + "\n" + text(body));
+  return (s, t);
+}
+
+// The patch of one pair. A change between a file and a link is a deletion
+// and an addition.
+function patch_pair(s: store.Store, o: Opts, p: Pair, least: i32, t: Text): (store.Store, Text) {
+  if (p.one.valid && p.two.valid && kind_of(p.one.mode) != kind_of(p.two.mode)) {
+    let zero = "0".repeat(p.one.hash.len());
+    let none_two = Side { valid: false, path: p.two.path, mode: "", hash: zero };
+    let none_one = Side { valid: false, path: p.one.path, mode: "", hash: zero };
+    let (s1, t1) = patch_one(s, o, Pair { ...p, status: b'D' }, p.one, none_two, least, t);
+    return patch_one(s1, o, Pair { ...p, status: b'A' }, none_one, p.two, least, t1);
+  }
+  return patch_one(s, o, p, p.one, p.two, least, t);
+}
+
+// ---- The stat ----
+
+// The counts of one pair for the stat.
+struct Stat { name: string, print_name: string, added: i64, deleted: i64, binary: boolean, renamed: boolean }
+
+function count_lines(o: Opts, a: u8[], b: u8[]): (i64, i64) {
+  let ab = a;
+  let bb = b;
+  if (o.context == 0) {
+    let t = linediff.common_tail(a, b);
+    ab = array.slice(a, 0, a.len() - t);
+    bb = array.slice(b, 0, b.len() - t);
+  }
+  let script = linediff.diff(linediff.lines_of(ab), linediff.lines_of(bb), o.algo);
+  let added: i64 = 0;
+  let deleted: i64 = 0;
+  for c in script {
+    added += c.ins as i64;
+    deleted += c.del as i64;
+  }
+  return (added, deleted);
+}
+
+// The name of a rename in the stat: the common prefix and suffix of the
+// two paths around `{OLD => NEW}`, as `pprint_rename` of git writes it.
+pub function pprint_rename(a: u8[], b: u8[]): string {
+  if (!objects.plain_name(a) || !objects.plain_name(b)) {
+    return quoted(a) + " => " + quoted(b);
+  }
+  let len_a = a.len();
+  let len_b = b.len();
+  let pfx = 0;
+  let i = 0;
+  while (i < len_a && i < len_b && a[i] == b[i]) {
+    if (a[i] == b'/') {
+      pfx = i + 1;
+    }
+    i += 1;
+  }
+  let sfx = 0;
+  let adjust = if (pfx > 0) { 1 } else { 0 };
+  let oa = len_a;
+  let ob = len_b;
+  // `oa` and `ob` point at the byte that the loop compares, with the end
+  // of each path as a NUL.
+  while (pfx - adjust <= oa && pfx - adjust <= ob) {
+    let ca = if (oa < len_a) { a[oa] } else { 0 as u8 };
+    let cb = if (ob < len_b) { b[ob] } else { 0 as u8 };
+    if (ca != cb) {
+      break;
+    }
+    if (ca == b'/') {
+      sfx = len_a - oa;
+    }
+    oa -= 1;
+    ob -= 1;
+  }
+  let a_mid = (len_a - pfx - sfx).max(0);
+  let b_mid = (len_b - pfx - sfx).max(0);
+  let out = "";
+  if (pfx + sfx > 0) {
+    out += text(array.slice(a, 0, pfx)) + "{";
+  }
+  out += text(array.slice(a, pfx, pfx + a_mid)) + " => " + text(array.slice(b, pfx, pfx + b_mid));
+  if (pfx + sfx > 0) {
+    out += "}" + text(array.slice(a, len_a - sfx, len_a));
+  }
+  return out;
+}
+
+function stat_of(s_in: store.Store, o: Opts, p: Pair): (store.Store, Stat) {
+  let (s1, a) = content(s_in, p.one);
+  let (s2, b) = content(s1, p.two);
+  let renamed = p.status == b'R';
+  let name = if (renamed) { pprint_rename(p.one.path, p.two.path) } else { quoted(p.two.path) };
+  let st = Stat { name: quoted(p.two.path), print_name: name, added: 0, deleted: 0, binary: false, renamed: renamed };
+  let same = p.one.valid && p.two.valid && p.one.hash == p.two.hash;
+  if (!o.text && (is_binary(a) || is_binary(b))) {
+    if (same) {
+      return (s2, Stat { ...st, binary: true });
+    }
+    return (s2, Stat { ...st, binary: true, added: b.len() as i64, deleted: a.len() as i64 });
+  }
+  if (same) {
+    return (s2, st);
+  }
+  let (added, deleted) = count_lines(o, a, b);
+  return (s2, Stat { ...st, added: added, deleted: deleted });
+}
+
+function decimal_width(n: i64): i32 {
+  let w = 1;
+  let v = n;
+  while (v >= 10) {
+    v /= 10;
+    w += 1;
+  }
+  return w;
+}
+
+function scale_linear(it: i64, width: i64, max_change: i64): i64 {
+  if (it == 0) {
+    return 0;
+  }
+  return 1 + it * (width - 1) / max_change;
+}
+
+function spaces(n: i64): string {
+  return if (n > 0) { " ".repeat(n as i32) } else { "" };
+}
+
+function pad_left(text: string, width: i32): string {
+  return spaces((width - text.len()) as i64) + text;
+}
+
+// The width of the terminal: `COLUMNS`, or 80.
+function term_columns(): i32 {
+  if let Some(text) = env("COLUMNS") {
+    let n = 0;
+    let ok = text.len() > 0;
+    let i = 0;
+    while (i < text.len() && text[i] >= b'0' && text[i] <= b'9') {
+      n = n * 10 + (text[i] - b'0') as i32;
+      i += 1;
+    }
+    if (ok && i > 0 && n > 0) {
+      return n;
+    }
+  }
+  return 80;
+}
+
+// The summary line: ` N files changed, N insertions(+), N deletions(-)`.
+function summary_line(files: i32, adds: i64, dels: i64): string {
+  if (files == 0) {
+    return " 0 files changed\n";
+  }
+  let out = " " + files.to_string() + (if (files == 1) { " file changed" } else { " files changed" });
+  if (adds != 0 || dels == 0) {
+    out += ", " + adds.to_string() + (if (adds == 1) { " insertion(+)" } else { " insertions(+)" });
+  }
+  if (dels != 0 || adds == 0) {
+    out += ", " + dels.to_string() + (if (dels == 1) { " deletion(-)" } else { " deletions(-)" });
+  }
+  return out + "\n";
+}
+
+function paint(o: Opts, set: string, text: string): string {
+  return if (o.color) { set + text + color.RESET } else { text };
+}
+
+// The `count` characters `c` of the graph of a stat: `show_graph` of git.
+function bar(o: Opts, set: string, c: string, count: i64): string {
+  return if (count > 0) { paint(o, set, c.repeat(count as i32)) } else { "" };
+}
+
+// The lines of `--stat`: `show_stats` of git. `prefix_width` is the width
+// of the graph before each line.
+function show_stats(stats: Stat[], o: Opts, prefix_width: i32): string {
+  if (stats.len() == 0) {
+    return "";
+  }
+  let count = if (o.stat_count > 0) { o.stat_count.min(stats.len()) } else { stats.len() };
+  let max_len: i64 = 0;
+  let max_change: i64 = 0;
+  let number_width = 0;
+  let bin_width = 0;
+  for i in 0..count {
+    let f = stats[i];
+    max_len = max_len.max(f.print_name.len() as i64);
+    if (f.binary) {
+      let w = 14 + decimal_width(f.added) + decimal_width(f.deleted);
+      bin_width = bin_width.max(w);
+      number_width = 3;
+    } else {
+      max_change = max_change.max(f.added + f.deleted);
+    }
+  }
+  number_width = number_width.max(decimal_width(max_change));
+  let width = if (o.stat_width == -1) { term_columns() - prefix_width } else if (o.stat_width == 0) { 80 } else { o.stat_width };
+  if (width < 16 + 6 + number_width) {
+    width = 16 + 6 + number_width;
+  }
+  let graph_width: i64 = if (max_change + 4 > bin_width as i64) { max_change } else { (bin_width - 4) as i64 };
+  if (o.stat_graph_width > 0 && o.stat_graph_width as i64 < graph_width) {
+    graph_width = o.stat_graph_width as i64;
+  }
+  let name_width: i64 = if (o.stat_name_width > 0 && o.stat_name_width as i64 < max_len) { o.stat_name_width as i64 } else { max_len };
+  let w = width as i64;
+  let nw = number_width as i64;
+  if (name_width + nw + 6 + graph_width > w) {
+    if (graph_width > w * 3 / 8 - nw - 6) {
+      graph_width = w * 3 / 8 - nw - 6;
+      if (graph_width < 6) {
+        graph_width = 6;
+      }
+    }
+    if (o.stat_graph_width > 0 && graph_width > o.stat_graph_width as i64) {
+      graph_width = o.stat_graph_width as i64;
+    }
+    if (name_width > w - nw - 6 - graph_width) {
+      name_width = w - nw - 6 - graph_width;
+    } else {
+      graph_width = w - nw - 6 - name_width;
+    }
+  }
+  let out = "";
+  for i in 0..count {
+    let f = stats[i];
+    let name = f.print_name;
+    let prefix = "";
+    let len = name_width;
+    if (name_width < name.len() as i64) {
+      prefix = "...";
+      len = (len - 3).max(0);
+      let cut = name.len() as i64 - len;
+      name = objects.part(name, cut as i32, name.len());
+      if let Some(slash) = name.index_of("/") {
+        name = objects.part(name, slash, name.len());
+      }
+    }
+    let padding = (len - name.len() as i64).max(0);
+    if (f.binary) {
+      out += " " + prefix + name + spaces(padding) + " | " + pad_left("Bin", number_width);
+      if (f.added == 0 && f.deleted == 0) {
+        out += "\n";
+      } else {
+        out += " " + paint(o, color.RED, f.deleted.to_string()) + " -> " + paint(o, color.GREEN, f.added.to_string()) + " bytes\n";
+      }
+      continue;
+    }
+    let add = f.added;
+    let del = f.deleted;
+    if (graph_width <= max_change) {
+      let total = scale_linear(add + del, graph_width, max_change);
+      if (total < 2 && add > 0 && del > 0) {
+        total = 2;
+      }
+      if (add < del) {
+        add = scale_linear(add, graph_width, max_change);
+        del = total - add;
+      } else {
+        del = scale_linear(del, graph_width, max_change);
+        add = total - del;
+      }
+    }
+    out += " " + prefix + name + spaces(padding) + " | " + pad_left((f.added + f.deleted).to_string(), number_width) + (if (f.added + f.deleted > 0) { " " } else { "" });
+    out += bar(o, color.GREEN, "+", add) + bar(o, color.RED, "-", del) + "\n";
+  }
+  let adds: i64 = 0;
+  let dels: i64 = 0;
+  for f in stats {
+    if (!f.binary) {
+      adds += f.added;
+      dels += f.deleted;
+    }
+  }
+  if (count < stats.len()) {
+    out += " ...\n";
+  }
+  return out + summary_line(stats.len(), adds, dels);
+}
+
+function show_numstat(stats: Stat[]): string {
+  let out = "";
+  for f in stats {
+    if (f.binary) {
+      out += "-\t-\t";
+    } else {
+      out += f.added.to_string() + "\t" + f.deleted.to_string() + "\t";
+    }
+    out += (if (f.renamed) { f.print_name } else { f.name }) + "\n";
+  }
+  return out;
+}
+
+function show_shortstat(stats: Stat[]): string {
+  if (stats.len() == 0) {
+    return "";
+  }
+  let adds: i64 = 0;
+  let dels: i64 = 0;
+  for f in stats {
+    if (!f.binary) {
+      adds += f.added;
+      dels += f.deleted;
+    }
+  }
+  return summary_line(stats.len(), adds, dels);
+}
+
+// The lines of `--summary` for one pair: `diff_summary` of git.
+function summary_of(p: Pair): string {
+  if (p.status == b'D') {
+    return " delete mode " + mode6(p.one.mode) + " " + quoted(p.one.path) + "\n";
+  }
+  if (p.status == b'A') {
+    return " create mode " + mode6(p.two.mode) + " " + quoted(p.two.path) + "\n";
+  }
+  let out = "";
+  if (p.status == b'R') {
+    out += " rename " + pprint_rename(p.one.path, p.two.path) + " (" + (p.score * 100 / 60000).to_string() + "%)\n";
+  }
+  if (p.one.mode != p.two.mode) {
+    out += " mode change " + mode6(p.one.mode) + " => " + mode6(p.two.mode) + (if (p.status == b'R') { "" } else { " " + quoted(p.two.path) }) + "\n";
+  }
+  return out;
+}
+
+// The diff of the changes: the stats, the summary, a line end, and the
+// patch, as `diff_flush` of git prints them. `least` is the least length
+// of a short name, and `prefix_width` gives the width of the graph line
+// of a call. There are no lines when there are no changes.
+pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, least: i32, prefix_width: (i32) => i32): (store.Store, Text) {
+  let s = s_in;
+  let t = Text { lines: [], uses: [], calls: 0 };
+  if (changes.len() == 0) {
+    return (s, t);
+  }
+  let pairs = changes.map((c: treediff.Change): Pair => pair_of(c));
+  let separator = false;
+  if (o.stat || o.numstat || o.shortstat) {
+    let stats: Stat[] = [];
+    for p in pairs {
+      let (s1, st) = stat_of(s, o, p);
+      s = s1;
+      stats = stats.append(st);
+    }
+    if (o.numstat) {
+      t = add_each(t, show_numstat(stats));
+    }
+    if (o.stat) {
+      let (t1, at_call) = call(t);
+      t = add_each(t1, show_stats(stats, o, prefix_width(at_call)));
+    }
+    if (o.shortstat) {
+      t = add_each(t, show_shortstat(stats));
+    }
+    separator = true;
+  }
+  if (o.summary) {
+    let lines = "";
+    for p in pairs {
+      lines += summary_of(p);
+    }
+    if (lines.len() > 0) {
+      t = add_each(t, lines);
+      separator = true;
+    }
+  }
+  if (o.patch) {
+    if (separator) {
+      let (t2, at_call) = call(t);
+      t = Text { lines: t2.lines.append(""), uses: t2.uses.append(at_call), calls: t2.calls };
+    }
+    for p in pairs {
+      let (s2, t3) = patch_pair(s, o, p, least, t);
+      s = s2;
+      t = t3;
+    }
+  }
+  return (s, t);
+}
+
+// ---- Patch ids (diff_get_patch_id of git) ----
+
+function without_space(b: u8[]): u8[] {
+  let out: u8[] = [];
+  for c in b {
+    if (!objects.is_space(c)) {
+      out = out.append(c);
+    }
+  }
+  return out;
+}
+
+// The text that the patch id of the changes hashes: the names, the
+// modes, and the lines of the patch with three lines of context and no
+// white space, or the names of the objects of a binary file. Two commits
+// with the same text have the same patch id.
+pub function patch_id_text(s_in: store.Store, changes: treediff.Change[]): (store.Store, u8[]) {
+  let s = s_in;
+  let out = buf_new(1024);
+  for c in changes {
+    let p = pair_of(c);
+    let one = without_space(p.one.path);
+    let two = without_space(p.two.path);
+    buf_push(out, "diff--gita/");
+    buf_push_bytes_range(out, one, 0, one.len());
+    buf_push(out, "b/");
+    buf_push_bytes_range(out, two, 0, two.len());
+    if (!p.one.valid) {
+      buf_push(out, "newfilemode" + mode6(p.two.mode));
+    } else if (!p.two.valid) {
+      buf_push(out, "deletedfilemode" + mode6(p.one.mode));
+    } else if (p.one.mode != p.two.mode) {
+      buf_push(out, "oldmode" + mode6(p.one.mode) + "newmode" + mode6(p.two.mode));
+    }
+    let (s1, a) = content(s, p.one);
+    let (s2, b) = content(s1, p.two);
+    s = s2;
+    if (is_binary(a) || is_binary(b)) {
+      buf_push(out, p.one.hash + p.two.hash);
+      continue;
+    }
+    if (!p.one.valid) {
+      buf_push(out, "---/dev/null+++b/");
+      buf_push_bytes_range(out, two, 0, two.len());
+    } else if (!p.two.valid) {
+      buf_push(out, "---a/");
+      buf_push_bytes_range(out, one, 0, one.len());
+      buf_push(out, "+++/dev/null");
+    } else {
+      buf_push(out, "---a/");
+      buf_push_bytes_range(out, one, 0, one.len());
+      buf_push(out, "+++b/");
+      buf_push_bytes_range(out, two, 0, two.len());
+    }
+    let la = linediff.lines_of(a);
+    let lb = linediff.lines_of(b);
+    let plain = linediff.Options { algorithm: linediff.MYERS, minimal: false, indent_heuristic: false };
+    let script = linediff.diff(la, lb, plain);
+    let hunk = buf_new(1024);
+    linediff.unified(hunk, la, lb, script, linediff.Emit { context: 3, interhunk: 0, funcnames: false });
+    let text = buf_take_bytes(hunk);
+    // The lines without the hunk headers and the lines that say that a
+    // file has no line end at its end.
+    let at = 0;
+    while (at < text.len()) {
+      let nl = __memchr_bytes(text, 10, at);
+      let end = if (nl < 0) { text.len() } else { nl + 1 };
+      let skip = text[at] == b'@' || end - at > 12 && text[at] == b'\\' && text[at + 1] == b' ';
+      if (!skip) {
+        let line = without_space(array.slice(text, at, end));
+        buf_push_bytes_range(out, line, 0, line.len());
+      }
+      at = end;
+    }
+  }
+  return (s, buf_take_bytes(out));
+}
+
+// ---- Pickaxe (diffcore-pickaxe.c) ----
+
+// The pickaxe of `-S` (kind 1) and `-G` (kind 2), or kind 0 for none.
+// `regex` is `--pickaxe-regex`, `all` is `--pickaxe-all`, and `re` holds
+// the compiled pattern when the pickaxe has one.
+pub struct Pickaxe { kind: i32, needle: string, regex: boolean, all: boolean, icase: boolean, re: bre.Bre[] }
+
+pub function no_pickaxe(): Pickaxe {
+  return Pickaxe { kind: 0, needle: "", regex: false, all: false, icase: false, re: [] };
+}
+
+function lower(b: u8): u8 {
+  return if (b >= b'A' && b <= b'Z') { b + 32 } else { b };
+}
+
+// The count of the matches of the pickaxe in `data`, which stops at
+// `limit` when it is above 0: `contains` of git.
+function count_matches(p: Pickaxe, data: u8[], limit: i32): i32 {
+  let cnt = 0;
+  if (p.re.len() > 0) {
+    let at = 0;
+    while (at < data.len()) {
+      let (start, end) = p.re[0].search_from_bytes(data, at, data.len());
+      if (start < 0) {
+        break;
+      }
+      at = if (end == start) { end + 1 } else { end };
+      cnt += 1;
+      if (limit > 0 && cnt == limit) {
+        return cnt;
+      }
+    }
+    return cnt;
+  }
+  let n = p.needle.len();
+  if (n == 0) {
+    return 0;
+  }
+  let i = 0;
+  while (i + n <= data.len()) {
+    let same = true;
+    let k = 0;
+    while (same && k < n) {
+      let a = data[i + k];
+      let b = p.needle[k];
+      same = a == b || p.icase && lower(a) == lower(b);
+      k += 1;
+    }
+    if (same) {
+      cnt += 1;
+      if (limit > 0 && cnt == limit) {
+        return cnt;
+      }
+      i += n;
+    } else {
+      i += 1;
+    }
+  }
+  return cnt;
+}
+
+// True if a deleted or an added line of the diff of `a` and `b` matches
+// the pattern of `-G`: `diff_grep` of git.
+function grep_lines(p: Pickaxe, o: Opts, a: u8[], b: u8[]): boolean {
+  let la = linediff.lines_of(a);
+  let lb = linediff.lines_of(b);
+  let script = linediff.diff(la, lb, linediff.Options { ...o.algo, indent_heuristic: false });
+  let line_matches = (l: linediff.Lines, i: i32): boolean => {
+    let from = l.starts[i];
+    let to = l.starts[i + 1];
+    let end = if (to > from && l.data[to - 1] == b'\n') { to - 1 } else { to };
+    return p.re[0].search_range_bytes(l.data, from, end);
+  };
+  for c in script {
+    for i in c.i1..c.i1 + c.del {
+      if (line_matches(la, i)) {
+        return true;
+      }
+    }
+    for j in c.i2..c.i2 + c.ins {
+      if (line_matches(lb, j)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// True if the pair matches the pickaxe: `pickaxe_match` of git.
+function pickaxe_match(s_in: store.Store, p: Pickaxe, o: Opts, c: treediff.Change): (store.Store, boolean) {
+  let pair = pair_of(c);
+  if (pair.one.valid && pair.two.valid && pair.one.hash == pair.two.hash) {
+    return (s_in, false);
+  }
+  let (s1, a) = content(s_in, pair.one);
+  let (s2, b) = content(s1, pair.two);
+  if (p.kind == 2) {
+    if (!o.text && (is_binary(a) || is_binary(b))) {
+      return (s2, false);
+    }
+    return (s2, grep_lines(p, o, a, b));
+  }
+  let c1 = count_matches(p, a, 0);
+  let c2 = count_matches(p, b, c1 + 1);
+  return (s2, c1 != c2);
+}
+
+// The changes that the pickaxe keeps: the pairs that match, or each pair
+// with `--pickaxe-all` when one matches.
+pub function pickaxe(s_in: store.Store, changes: treediff.Change[], p: Pickaxe, o: Opts): (store.Store, treediff.Change[]) {
+  let s = s_in;
+  let kept: treediff.Change[] = [];
+  for c in changes {
+    let (s1, yes) = pickaxe_match(s, p, o, c);
+    s = s1;
+    if (yes) {
+      if (p.all) {
+        return (s, changes);
+      }
+      kept = kept.append(c);
+    }
+  }
+  return (s, if (p.all) { [] } else { kept });
+}
