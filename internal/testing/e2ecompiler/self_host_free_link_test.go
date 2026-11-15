@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// The link inside a free block is encoded with the process canary and the
-// block's page, and a decoded link must be aligned and inside the arena
-// (SEC-023). A raw write through a dangling pointer that forges the link of
-// the head block aborts at the next allocation of its class, in each build.
+// Under -harden the link inside a free block is encoded with the process
+// canary and the block's page, and a decoded link must be aligned and inside
+// the arena (SEC-023). A raw write through a dangling pointer that forges the
+// link of the head block aborts at the next allocation of its class.
 func freeLinkForgeSrc(size string) string {
 	return `function main(): i32 {
   unsafe {
@@ -82,19 +82,13 @@ func TestSelfHostFreeListLinkForgery(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		for _, size := range []string{"64", "1048576"} {
-			for _, build := range [][]string{nil, {"-harden"}} {
-				name := target + "/" + size + "/release"
-				if build != nil {
-					name = target + "/" + size + "/harden"
+			t.Run(target+"/"+size, func(t *testing.T) {
+				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, freeLinkForgeSrc(size), "-harden")
+				want := "freed two blocks\n"
+				if code != 134 || stdout != want || !strings.HasPrefix(stderr, "fern: corrupt free list link\n") {
+					t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the corrupt-link cause", code, stdout, stderr, want)
 				}
-				t.Run(name, func(t *testing.T) {
-					stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, freeLinkForgeSrc(size), build...)
-					want := "freed two blocks\n"
-					if code != 134 || stdout != want || !strings.HasPrefix(stderr, "fern: corrupt free list link\n") {
-						t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the corrupt-link cause", code, stdout, stderr, want)
-					}
-				})
-			}
+			})
 		}
 	}
 }

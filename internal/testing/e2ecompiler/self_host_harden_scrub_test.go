@@ -14,7 +14,7 @@ import (
 // "small" is a 48-byte array (a 72-byte block) and "large" a 600000-byte
 // array, which goes to the large free lists. "link" frees two raw blocks of
 // one class and reads the first word of the block it takes back, which held
-// the encoded free list link. Each build clears that word, so "link" reads 0
+// the free list link. Each build clears that word, so "link" reads 0
 // in both. "rewind" writes a raw block, rewinds the bump past it
 // with __heap_release_to, and reads the block that the bump hands out again.
 const scrubSrc = `function secret(n: i32): u8[] {
