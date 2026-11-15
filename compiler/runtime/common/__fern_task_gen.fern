@@ -1,0 +1,12 @@
+function __fern_task_gen(id: i32): i32 {
+  let st = __raw_task_state();
+  let tab = __fern_task_tab();
+  if (id < 1 || id >= __raw_load_ptr(st, 2) as i32) {
+    return -1;
+  }
+  let rec = __raw_load_ptr(tab, id);
+  if (rec == 0 as usize || __raw_load_ptr(rec, 7) != 0 as usize) {
+    return -1;
+  }
+  return __raw_load_ptr(rec, 12) as i32;
+}

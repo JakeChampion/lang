@@ -115,11 +115,21 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > array/map core should follow. (`xs.reverse()` and `xs.concat(ys)` moved with
 > it and were later deleted outright — #7451: their lowering intercepts fired
 > only for a program that imports nothing, which E043 rejects, so nothing the
-> compiler accepts could reach them.) `xs.concat(ys)` over scalar elements is
-> a runtime helper again, `asmcore.rt_src_arr_concat`, keyed this time on the
-> call std/array's method folds to (`__arrm_concat__<elem>`), so it is what an
+> compiler accepts could reach them.) `xs.concat(ys)` and
+> `array.concat(xs, ys)` are a runtime helper again,
+> `compiler/runtime/common/__fern_arr_concat.fern`, keyed this time on the
+> calls that std/array's method and function fold to, so it is what an
 > importing program reaches: one box sized for both operands and two copies,
-> where the std/array body grew its result an element at a time.
+> where the std/array body grew its result an element at a time. Any element
+> type but a string view takes the helper. The width it takes is eight times
+> the size of an element in bytes. For a pointer-sized element, `ssarc`
+> computes that width from `ir.op_ptr_width`, so it is 64 on the native
+> targets and 32 on wasm. An odd width marks counted
+> elements: the helper then increments the count of each element that it
+> copies from `ys`. The caller increments the elements that a copy shares
+> with a shared `xs`, as an `append` does. The helper copies into a unique
+> `xs` with room itself, and calls `__fern_arr_concat_slow` for a new box, so
+> a short copy does not pay for the whole body.
 >
 > Two properties make one `i32[]`-typed body serve every element type. The copy
 > is a raw copy at the element width the caller passes, so a `string[]`'s box pointers ride through

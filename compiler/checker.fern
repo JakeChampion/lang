@@ -701,7 +701,7 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_set_cancelled") {
     return typeinfo.t_void();
   }
-  if (argc == 1 && (name == "__task_fd_gen" || name == "__task_inline")) {
+  if (argc == 1 && util.has_str(["__task_fd_gen", "__task_gen", "__task_inline"], name)) {
     return typeinfo.t_i32();
   }
   if (argc == 0 && name == "__task_cancelled") {
@@ -919,7 +919,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__task_set_ready") {
     return ([typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
-  if (util.has_str(["__task_set_cancelled", "__task_fd_gen", "__task_inline"], name)) {
+  if (util.has_str(["__task_set_cancelled", "__task_fd_gen", "__task_gen", "__task_inline"], name)) {
     return ([typeinfo.t_i32()], true);
   }
   if (name == "__task_cancelled") {
@@ -6126,11 +6126,16 @@ function widened_field_type(sig: StructSig, j: i32, largs: typeinfo.Type[], s: S
 }
 
 function reads_i64(t: typeinfo.Type): boolean {
-  if (type_to_irtag(t) == "i64") {
+  return reads_scalar(t, false);
+}
+
+// reads_scalar is true when t holds an i64, or a float when float is set.
+function reads_scalar(t: typeinfo.Type, float: boolean): boolean {
+  if (float && is_float(t) || !float && type_to_irtag(t) == "i64") {
     return true;
   }
   if let typeinfo.TypeArray(at) = t {
-    return reads_i64(at.elem);
+    return reads_scalar(at.elem, float);
   }
   let parts: typeinfo.Type[] = [];
   if let typeinfo.TypeStruct(st) = t {
@@ -6140,7 +6145,7 @@ function reads_i64(t: typeinfo.Type): boolean {
     parts = tt.elements;
   }
   for p in parts {
-    if (reads_i64(p)) {
+    if (reads_scalar(p, float)) {
       return true;
     }
   }
@@ -10390,7 +10395,7 @@ pub function unsafe_intrinsics(): string[] {
     "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv",
     "__task_new", "__task_free", "__task_enter", "__task_leave",
     "__task_park", "__task_park_until", "__task_wait", "__task_set_ready", "__task_set_cancelled",
-    "__task_fd_gen", "__task_inline",
+    "__task_fd_gen", "__task_gen", "__task_inline",
     "__task_cancelled", "__task_timeout", "__task_until", "__task_cur",
     "__syscall3", "__syscall4", "__syscall5", "__syscall6",
     "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
@@ -18868,7 +18873,7 @@ function is_registered_intrinsic(name: string): boolean {
 
 const REGISTERED_INTRINSICS: string[] = [
   "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-  "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_inline", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
+  "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_gen", "__task_inline", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
   "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
   "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u16", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
   "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
@@ -31344,6 +31349,125 @@ function inst_stmt(st: ast.Stmt, cur: Scope, gens: parser.FuncDecl[], depth: i32
   return out;
 }
 
+// One edge of the graph of type parameters. A member of the generic type
+// `owner` names a generic type, and the argument that it gives to the
+// parameter `to` holds the parameter `from`. The edge grows when the
+// argument is larger than the parameter alone.
+struct ParamEdge { from: string, to: string, grows: boolean, owner: string, member: string, param: string }
+
+function param_node(decl: string, index: i32): string {
+  return decl + "#" + util.i32_to_string(index);
+}
+
+function member_edges(edges: ParamEdge[], owner: string, oparams: string[], member: string, ty: string, gnames: string[], gparams: string[][]): ParamEdge[] {
+  let out = edges;
+  let start = -1;
+  for i in 0..ty.len() {
+    if (parser.ident_byte(ty[i] as i32)) {
+      if (start < 0) {
+        start = i;
+      }
+      continue;
+    }
+    let from = start;
+    start = -1;
+    if (ty[i] != b'[' || from < 0) {
+      continue;
+    }
+    let gi = util.index_of_str(gnames, slice_unchecked(ty, from, i).to_owned());
+    let close = parser.matching_bracket(ty, i);
+    if (gi < 0 || close <= i + 1) {
+      continue;
+    }
+    let args = parser.split_top_commas(slice_unchecked(ty, i + 1, close).to_owned());
+    for j in 0..args.len().min(gparams[gi].len()) {
+      for pi in 0..oparams.len() {
+        if (parser.type_mentions_var(args[j], oparams[pi])) {
+          out = out.append(ParamEdge { from: param_node(owner, pi), to: param_node(gnames[gi], j), grows: args[j] != oparams[pi], owner: owner, member: member, param: oparams[pi] });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function param_reaches(edges: ParamEdge[], from: string, to: string): boolean {
+  let seen: string[] = [from];
+  for round in 0..edges.len() {
+    let before = seen.len();
+    for e in edges {
+      if (util.has_str(seen, e.from) && !util.has_str(seen, e.to)) {
+        seen = seen.append(e.to);
+      }
+    }
+    if (seen.len() == before) {
+      break;
+    }
+  }
+  return util.has_str(seen, to);
+}
+
+// An E107 for each generic struct or enum that has no last instance: a
+// member gives one of its type parameters a larger type, and that type comes
+// back to the same parameter.
+function expanding_type_diags(mod: parser.Module): util.Diag[] {
+  let gnames: string[] = [];
+  let gparams: string[][] = [];
+  for sd in mod.structs {
+    if (sd.type_params.len() > 0) {
+      gnames = gnames.append(sd.name);
+      gparams = gparams.append(sd.type_params);
+    }
+  }
+  for ed in mod.enums {
+    if (ed.type_params.len() > 0) {
+      gnames = gnames.append(ed.name);
+      gparams = gparams.append(ed.type_params);
+    }
+  }
+  let edges: ParamEdge[] = [];
+  for sd in mod.structs {
+    let owner = sd.name;
+    if (sd.enum_owner.len() > 0) {
+      owner = sd.enum_owner;
+    }
+    let gi = util.index_of_str(gnames, owner);
+    if (gi >= 0) {
+      for field in sd.fields {
+        let member = field.name;
+        if (sd.enum_owner.len() > 0) {
+          member = sd.name;
+        }
+        edges = member_edges(edges, owner, gparams[gi], member, field.type_name + " " + field.fn_ret + " " + field.fn_param_types, gnames, gparams);
+      }
+    }
+  }
+  let out: util.Diag[] = [];
+  let reported: string[] = [];
+  for e in edges {
+    if (e.grows && !util.has_str(reported, e.owner) && param_reaches(edges, e.to, e.from)) {
+      reported = reported.append(e.owner);
+      out = out.append(expanding_type_diag(mod, e));
+    }
+  }
+  return out;
+}
+
+function expanding_type_diag(mod: parser.Module, e: ParamEdge): util.Diag {
+  let tail = " gives the type parameter \"" + e.param + "\" a larger type each time";
+  for ed in mod.enums {
+    if (ed.name == e.owner) {
+      return dg_at("E107", "generic enum \"" + e.owner + "\" has no last instance: variant \"" + e.member + "\"" + tail, ed.line, ed.col);
+    }
+  }
+  for sd in mod.structs {
+    if (sd.name == e.owner) {
+      return dg_at("E107", "generic struct \"" + e.owner + "\" has no last instance: field \"" + e.member + "\"" + tail, sd.line, sd.col);
+    }
+  }
+  return dg_at("E107", "generic type \"" + e.owner + "\" has no last instance", 0, 0);
+}
+
 // The instances of the generic functions that the module calls, and an E107
 // for each generic function whose chain of instances reaches the limit.
 struct Clones { funcs: parser.FuncDecl[], diags: util.Diag[] }
@@ -31877,6 +32001,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let decl_diags: util.Diag[] = [];
   if (focus_names.len() == 0) {
     decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
+    decl_diags = util.append_diags(decl_diags, expanding_type_diags(mod));
   }
   let leading = util.append_diags(fda_diags, decl_diags);
   leading = util.append_diags(leading, signature_diags);
@@ -33240,7 +33365,7 @@ function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
       if (typeinfo.is_tuple(at.elem)) {
         settled = settle_float_literals(settled, at.elem);
       }
-      if (reads_i64(at.elem)) {
+      if (reads_i64(at.elem) || reads_scalar(at.elem, true)) {
         settled = settle_struct_lit_wide(settle_wide_literals(settled, at.elem), at.elem, s);
       }
       els = els.append(settled);
@@ -33278,6 +33403,13 @@ function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Ex
         if (fi >= 0 && fi < sig.field_type_names.len()) {
           let ft = type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[fi]), sig.type_params, ts.args, s.type_names());
           v = settle_struct_lit_wide(settle_wide_literals(v, ft), ft, s);
+          if (is_float(ft) && int_literal_tree(v)) {
+            let width = "f64";
+            if (settled_number(ft)) {
+              width = typeinfo.spelling(ft);
+            }
+            v = lit_float_read(v, parser.parse_type_ref(width));
+          }
         }
         nv = nv.append(v);
       }
@@ -38113,9 +38245,9 @@ function scalar_numeric_join(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type 
 }
 
 function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
-  return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(e, t, first, s)
+  return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_yields(e, t, first, s, true)
     && (type_eq(t, first) || literal_gives_way(first_lit, t))
-    || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
+    || struct_lit_yields(first_expr, first, t, s, true) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
 }
 
 // literal_array_takes is true when the array literal e holds only integer literals, and each one takes the innermost element type of to.

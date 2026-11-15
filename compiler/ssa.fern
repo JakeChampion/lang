@@ -5011,7 +5011,7 @@ pub function form(f: SFunc, owned_frame_views: boolean): Formed {
   let merged = merge_duplicates(folded.f);
   let plain = fold_identities(merged.f);
   let shared = share_shape_loads(plain.f);
-  let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(shared.f)))));
+  let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(narrow_field_loads(shared.f))))));
   let extended = fold_extensions(unwrapped.f);
   let g = extended.f;
   let bytes = fold_byte_access(g);
@@ -5033,6 +5033,239 @@ pub function form(f: SFunc, owned_frame_views: boolean): Formed {
   }
   g = sink_loads(combine_byte_stores(zero_extended_indices(drop_inert_counts(g, owned_frame_views))));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
+}
+
+// A byte or a half of a loaded word is a narrow load. A variant keeps its
+// narrow fields in one word, and the code takes a field out with a shift and
+// a mask. The narrow load is next to the load of the word, so it reads the
+// same memory. Each target stores a word with its low byte first.
+function narrow_field_loads(f: SFunc): SFunc {
+  let defs = inst_defs(f);
+  let n = narrow_parts(f, defs);
+  if (!n.found) {
+    return f;
+  }
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let insts: SInst[] = [];
+    for ins in blk.insts {
+      if (ins.result >= 0 && n.gone[ins.result]) {
+        continue;
+      }
+      insts = insts.append(ins);
+      if (ins.result >= 0 && ins.kind_tag == LD_AT) {
+        insts = with_insts(insts, n.after[ins.result]);
+      }
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  return rejoined_words(SFunc { ...f, blocks: blocks }, defs, n.parts);
+}
+
+// `after[w]` has the narrow loads that follow the load of word w. `gone[v]`
+// says a narrow load gives value v in place of its instruction.
+struct Narrowed { after: SInst[][], gone: boolean[], parts: Parts, found: boolean }
+
+function narrow_parts(f: SFunc, defs: SInst[]): Narrowed {
+  let n = Narrowed { after: [], gone: [], parts: no_parts(0), found: false };
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let part = narrow_part(defs, ins);
+      if (part.kind_tag != LD_AT) {
+        continue;
+      }
+      if (!n.found) {
+        n = Narrowed { after: no_insts(f.nvals), gone: __alloc_bool(f.nvals), parts: no_parts(f.nvals), found: true };
+      }
+      let word = part.result;
+      n = Narrowed {
+        ...n,
+        after: n.after.with(word, n.after[word].append(SInst { ...part, result: ins.result })),
+        gone: n.gone.with(ins.result, true),
+        parts: with_part(n.parts, ins.result, part, def_of(defs, word)),
+      };
+    }
+  }
+  return n;
+}
+
+// What a value is of a loaded word, by value. `raw[v]` is the word when v is
+// its bits from `shift[v]` under the mask `low[v]`, moved down to bit 0.
+// `half[v]` is the word when v is its high half with the sign. `placed[v]`
+// is the word when v is its bits `mask[v]`, each at its own place.
+struct Parts { raw: i32[], shift: i32[], low: i64[], half: i32[], placed: i32[], mask: i64[] }
+
+function no_parts(n: i32): Parts {
+  return Parts { raw: util.minus_ones(n), shift: __alloc_i32(n), low: __alloc_i64(n), half: util.minus_ones(n), placed: util.minus_ones(n), mask: __alloc_i64(n) };
+}
+
+// The narrow load `part` of the word `word` gives value v.
+function with_part(own p: Parts, v: i32, part: SInst, word: SInst): Parts {
+  let at = part.imm - word.imm;
+  if (part.str == "i32") {
+    return Parts { ...p, half: p.half.with(v, word.result) };
+  }
+  p = Parts { ...p, raw: p.raw.with(v, word.result), shift: p.shift.with(v, at * 8), low: p.low.with(v, 255i64) };
+  return if (at == 0) { with_placed(p, v, word.result, 255i64) } else { p };
+}
+
+function with_placed(own p: Parts, v: i32, word: i32, mask: i64): Parts {
+  return Parts { ...p, placed: p.placed.with(v, word), mask: p.mask.with(v, mask) };
+}
+
+// A constructor that takes fields of one box puts them back in one word: a
+// shift of each part to its place, and an `or`. The same bits are a mask of
+// the loaded word.
+function rejoined_words(f: SFunc, defs: SInst[], parts0: Parts): SFunc {
+  let parts = parts0;
+  // The masks that the new constants hold. Each takes the next value id.
+  let masks: i64[] = [];
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let insts: SInst[] = [];
+    for ins in blk.insts {
+      parts = with_low_half(with_extended(parts, ins), defs, ins);
+      let j = joined_part(defs, parts, ins);
+      if (j.word < 0) {
+        insts = insts.append(ins);
+        continue;
+      }
+      parts = with_placed(parts, ins.result, j.word, j.mask);
+      let mask = f.nvals + masks.len();
+      masks = masks.append(j.mask);
+      insts = insts.append(SInst { kind_tag: CONST_I64, result: mask, args: [], imm: 0, str: util.i64_to_string(j.mask) });
+      insts = insts.append(SInst { kind_tag: BINARY, result: ins.result, args: [j.word, mask], imm: 0, str: "and" });
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  return if (masks.len() > 0) { SFunc { ...f, blocks: blocks, nvals: f.nvals + masks.len() } } else { f };
+}
+
+// An extension gives the same value for a byte, and a signed extension from
+// 32 bits gives the same value for a signed half.
+function with_extended(own p: Parts, ins: SInst): Parts {
+  let signed = signed_extension(ins);
+  if (!signed && !unsigned_extension(ins) || !in_parts(p, ins.result) || !in_parts(p, ins.args[0])) {
+    return p;
+  }
+  let v = ins.args[0];
+  if (signed && p.half[v] >= 0) {
+    p = Parts { ...p, half: p.half.with(ins.result, p.half[v]) };
+  }
+  return with_byte(p, ins.result, v);
+}
+
+function in_parts(p: Parts, v: i32): boolean {
+  return v >= 0 && v < p.raw.len();
+}
+
+// Value r is the byte that value v is.
+function with_byte(own p: Parts, r: i32, v: i32): Parts {
+  if (p.raw[v] < 0 || p.low[v] != 255i64) {
+    return p;
+  }
+  let word = p.placed[v];
+  let mask = p.mask[v];
+  p = Parts { ...p, raw: p.raw.with(r, p.raw[v]), shift: p.shift.with(r, p.shift[v]), low: p.low.with(r, 255i64) };
+  return if (word >= 0) { with_placed(p, r, word, mask) } else { p };
+}
+
+// The low half of the signed high half of a word is its high 32 bits, moved
+// down to bit 0.
+function with_low_half(own p: Parts, defs: SInst[], ins: SInst): Parts {
+  let r = ins.result;
+  if (ins.kind_tag != BINARY || ins.str != "and" || ins.args.len() != 2 || r < 0 || r >= p.raw.len()) {
+    return p;
+  }
+  let v = ins.args[0];
+  if (v < 0 || v >= p.half.len() || p.half[v] < 0 || word_constant(defs, ins.args[1]) != 4294967295i64) {
+    return p;
+  }
+  return Parts { ...p, raw: p.raw.with(r, p.half[v]), shift: p.shift.with(r, 32), low: p.low.with(r, 4294967295i64) };
+}
+
+struct Joined { word: i32, mask: i64 }
+
+// The word and the bits that `ins` gives at their place, or the word -1.
+function joined_part(defs: SInst[], parts: Parts, ins: SInst): Joined {
+  if (ins.kind_tag != BINARY || ins.args.len() != 2 || !in_parts(parts, ins.result) || !in_parts(parts, ins.args[0])) {
+    return no_join();
+  }
+  if (ins.str == "shl") {
+    return shifted_back(parts, ins.args[0], word_constant(defs, ins.args[1]));
+  }
+  return if (ins.str == "or") { joined_or(parts, ins.args[0], ins.args[1]) } else { no_join() };
+}
+
+function no_join(): Joined {
+  return Joined { word: -1, mask: 0i64 };
+}
+
+// A part that a shift by `by` puts back at its own place.
+function shifted_back(parts: Parts, a: i32, by: i64): Joined {
+  if (parts.raw[a] < 0 || parts.shift[a] <= 0 || by != parts.shift[a] as i64) {
+    return no_join();
+  }
+  return Joined { word: parts.raw[a], mask: parts.low[a] << parts.shift[a] as i64 };
+}
+
+// The bits of two values that have bits of one word at their place.
+function joined_or(parts: Parts, a: i32, b: i32): Joined {
+  if (!in_parts(parts, b) || parts.placed[a] < 0 || parts.placed[a] != parts.placed[b]) {
+    return no_join();
+  }
+  return Joined { word: parts.placed[a], mask: parts.mask[a] | parts.mask[b] };
+}
+
+function no_insts(n: i32): SInst[][] {
+  let out: SInst[][] = [];
+  for i in 0..n {
+    out = out.append([]);
+  }
+  return out;
+}
+
+// The narrow load that gives the value of `ins`, with the word that `ins`
+// takes it from as its result, or no_inst().
+function narrow_part(defs: SInst[], ins: SInst): SInst {
+  if (ins.kind_tag != BINARY || ins.args.len() != 2) {
+    return no_inst();
+  }
+  let by = word_constant(defs, ins.args[1]);
+  let from = def_of(defs, ins.args[0]);
+  if (ins.str == "shr_s" && by == 32i64) {
+    return part_of(from, 4, "i32");
+  }
+  return if (ins.str == "and" && by == 255i64) { narrow_byte(defs, from) } else { no_inst() };
+}
+
+// The load of the byte that the low byte of `from` is.
+function narrow_byte(defs: SInst[], from: SInst): SInst {
+  if (from.kind_tag != BINARY || from.str != "shr_s" || from.args.len() != 2) {
+    return part_of(from, 0, "u8");
+  }
+  let shift = word_constant(defs, from.args[1]);
+  if (shift <= 0i64 || shift >= 64i64 || shift % 8i64 != 0i64) {
+    return no_inst();
+  }
+  return part_of(def_of(defs, from.args[0]), (shift / 8i64) as i32, "u8");
+}
+
+// The load of `mark` at byte `at` of the word that `word` loads.
+function part_of(word: SInst, at: i32, mark: string): SInst {
+  if (word.kind_tag != LD_AT || word.str != "" || word.imm < 0) {
+    return no_inst();
+  }
+  return SInst { kind_tag: LD_AT, result: word.result, args: word.args, imm: word.imm + at, str: mark };
+}
+
+// The value of a constant, or -1 for a value that is not a constant.
+function word_constant(defs: SInst[], v: i32): i64 {
+  let d = def_of(defs, v);
+  if (d.kind_tag == CONST_INT) {
+    return d.imm as i64;
+  }
+  return if (d.kind_tag == CONST_I64) { util.lit_to_i64(d.str) } else { 0i64 - 1i64 };
 }
 
 // A load at the end of a block, which only one side of the branch reads,
@@ -6061,6 +6294,9 @@ function source_facts(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): i32 {
   }
   if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
     return if (ins.imm == 2) { 0 } else { elem_facts(ins) };
+  }
+  if (ins.kind_tag == LD_AT) {
+    return elem_facts(ins);
   }
   if (ins.kind_tag == BINARY && ins.str == "and" && ins.args.len() == 2 && (const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64))) {
     return EXT_BYTE;

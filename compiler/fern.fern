@@ -6679,216 +6679,445 @@ function interpret_bundle(st: DiagStyle, b: Bundle, entry_path: string, target: 
   return status;
 }
 
-function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => checker.GateResult): i32 {
-  let entry_path = "";
-  let out_path = "";
-  let root = embedded_root;
-  let embedded = embedded_root.len() > 0;
-  let have_root = embedded;
-  let prog_args: string[] = [];
-  let target = target_arch() + "-" + target_os();
-  let emit = "";
-  let mode_check = false;
-  let mode_interp = false;
-  let no_strs: string[] = [];
-  let tf = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, diag_format: diag_format_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false };
-  let mode_fmt = false;
-  let fmt_write = false;
-  let fmt_diff = false;
-  let mode_caps = false;
-  let mode_manifest = false;
-  let mode_sign_index = false;
-  let mode_index_keygen = false;
-  let sign_key = "";
-  let profile_name = "";
-  let mode_effects = false;
-  let mode_targets = false;
-  let mode_resolve = false;
-  let mode_tangle = false;
-  let chunk = "";
-  let grant = "";
-  let mode_doc = false;
-  let doc_links = "";
-  let mode_add = false;
-  let mode_vendor = false;
-  let mode_fetch = false;
-  let mode_lsp = false;
-  let mode_repl = false;
-  let pos: string[] = [];
-  let backend = "";
-  let embed_dir = "";
-  let optimize = false;
-  let emit_syms = false;
-  let backtrace = asmcore.backtrace_on();
-  let backtrace_set = false;
-  let size = asmcore.size_on();
-  let sanitize_flag = false;
-  let shared = false;
-  let export_list = "";
-  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, assets: "", widget: "", run: false };
-  let harden = false;
-  let heap_limit_text = "";
-  let cpu_limit_text = "";
-  let ram_text = "";
-  let quarantine_text = "";
-  let pie = false;
-  let remap_specs: string[] = [];
-  let cover_on = envflag.on("FERN_COVER");
-  let array_report = semarrayreport.from_env();
-  let have_entry = false;
-  let target_given = false;
+// The values that the flag loop of the command line sets. `status` is the
+// exit code of an argument that ends the run, or -1.
+struct CliFlags {
+  entry_path: string,
+  out_path: string,
+  root: string,
+  have_root: boolean,
+  prog_args: string[],
+  target: string,
+  emit: string,
+  mode_check: boolean,
+  mode_interp: boolean,
+  tf: ToolFlags,
+  mode_fmt: boolean,
+  fmt_write: boolean,
+  fmt_diff: boolean,
+  mode_caps: boolean,
+  mode_manifest: boolean,
+  mode_sign_index: boolean,
+  mode_index_keygen: boolean,
+  sign_key: string,
+  profile_name: string,
+  mode_effects: boolean,
+  mode_targets: boolean,
+  mode_resolve: boolean,
+  mode_tangle: boolean,
+  chunk: string,
+  grant: string,
+  mode_doc: boolean,
+  doc_links: string,
+  mode_add: boolean,
+  mode_vendor: boolean,
+  mode_fetch: boolean,
+  mode_lsp: boolean,
+  mode_repl: boolean,
+  pos: string[],
+  backend: string,
+  embed_dir: string,
+  optimize: boolean,
+  emit_syms: boolean,
+  backtrace: boolean,
+  backtrace_set: boolean,
+  size: boolean,
+  sanitize_flag: boolean,
+  shared: boolean,
+  export_list: string,
+  apk_opts: ApkOpts,
+  harden: boolean,
+  heap_limit_text: string,
+  cpu_limit_text: string,
+  ram_text: string,
+  quarantine_text: string,
+  pie: boolean,
+  remap_specs: string[],
+  cover_on: boolean,
+  array_report: i32,
+  have_entry: boolean,
+  target_given: boolean,
+  prog_sep: boolean,
+  status: i32,
+}
 
+const CLI_FLAGS_1: string[] = ["-check"];
+
+const CLI_FLAGS_2: string[] = ["-interp", "-repl", "-fmt", "-w", "-d", "-backend", "-cover", "-g", "-backtrace"];
+
+const CLI_FLAGS_3: string[] = ["-size", "-sanitize", "-harden", "-heap-limit", "-cpu-limit", "-ram", "-quarantine", "-pie", "-remap-path-prefix"];
+
+const CLI_FLAGS_4: string[] = ["-profile", "-manifest", "-sign-index", "-index-keygen", "-key", "-shared", "-export"];
+
+const CLI_FLAGS_5: string[] = ["-capabilities", "-effects", "-array-report", "-tangle", "-doc", "-doc-source", "-add", "-fetch", "-vendor"];
+
+const CLI_FLAGS_6: string[] = ["-lsp", "-resolve", "-targets", "-chunk", "-grant", "-emit", "-O", "-target", "-embed"];
+
+const CLI_FLAGS_7: string[] = ["-o", "-stdlib"];
+
+function cli_flags_1(o: CliFlags, f: CliArg): CliFlags {
+  if (f.name == "-check") {
+    return CliFlags { ...o, mode_check: f.on };
+  }
+  return o;
+}
+
+function cli_flags_2(o: CliFlags, f: CliArg): CliFlags {
+  if (f.name == "-interp") {
+    return CliFlags { ...o, mode_interp: f.on };
+  }
+  if (f.name == "-repl") {
+    return CliFlags { ...o, mode_repl: f.on };
+  }
+  if (f.name == "-fmt") {
+    return CliFlags { ...o, mode_fmt: f.on };
+  }
+  if (f.name == "-w") {
+    return CliFlags { ...o, fmt_write: f.on };
+  }
+  if (f.name == "-d") {
+    return CliFlags { ...o, fmt_diff: f.on };
+  }
+  if (f.name == "-backend") {
+    return CliFlags { ...o, backend: f.value };
+  }
+  if (f.name == "-cover") {
+    return CliFlags { ...o, cover_on: f.on };
+  }
+  if (f.name == "-g") {
+    return CliFlags { ...o, emit_syms: f.on };
+  }
+  if (f.name == "-backtrace") {
+    return CliFlags { ...o, backtrace: f.on, backtrace_set: true };
+  }
+  return o;
+}
+
+function cli_flags_3(o: CliFlags, f: CliArg): CliFlags {
+  if (f.name == "-size") {
+    return CliFlags { ...o, size: f.on };
+  }
+  if (f.name == "-sanitize") {
+    return CliFlags { ...o, sanitize_flag: f.on };
+  }
+  if (f.name == "-harden") {
+    return CliFlags { ...o, harden: f.on };
+  }
+  if (f.name == "-heap-limit") {
+    return CliFlags { ...o, heap_limit_text: f.value };
+  }
+  if (f.name == "-cpu-limit") {
+    return CliFlags { ...o, cpu_limit_text: f.value };
+  }
+  if (f.name == "-ram") {
+    return CliFlags { ...o, ram_text: f.value };
+  }
+  if (f.name == "-quarantine") {
+    return CliFlags { ...o, quarantine_text: f.value };
+  }
+  if (f.name == "-pie") {
+    return CliFlags { ...o, pie: f.on };
+  }
+  if (f.name == "-remap-path-prefix") {
+    return CliFlags { ...o, remap_specs: o.remap_specs.append(f.value) };
+  }
+  return o;
+}
+
+function cli_flags_4(o: CliFlags, f: CliArg): CliFlags {
+  if (f.name == "-profile") {
+    return CliFlags { ...o, profile_name: f.value };
+  }
+  if (f.name == "-manifest") {
+    return CliFlags { ...o, mode_manifest: f.on };
+  }
+  if (f.name == "-sign-index") {
+    return CliFlags { ...o, mode_sign_index: f.on };
+  }
+  if (f.name == "-index-keygen") {
+    return CliFlags { ...o, mode_index_keygen: f.on };
+  }
+  if (f.name == "-key") {
+    return CliFlags { ...o, sign_key: f.value };
+  }
+  if (f.name == "-shared") {
+    return CliFlags { ...o, shared: f.on };
+  }
+  if (f.name == "-export") {
+    return CliFlags { ...o, export_list: f.value };
+  }
+  return o;
+}
+
+function cli_flags_5(o: CliFlags, f: CliArg): CliFlags {
+  if (f.name == "-capabilities") {
+    return CliFlags { ...o, mode_caps: f.on };
+  }
+  if (f.name == "-effects") {
+    return CliFlags { ...o, mode_effects: f.on };
+  }
+  if (f.name == "-array-report") {
+    if (f.on) {
+      return CliFlags { ...o, array_report: semarrayreport.to_stdout() };
+    }
+    return o;
+  }
+  if (f.name == "-tangle") {
+    return CliFlags { ...o, mode_tangle: f.on };
+  }
+  if (f.name == "-doc") {
+    return CliFlags { ...o, mode_doc: f.on };
+  }
+  if (f.name == "-doc-source") {
+    return CliFlags { ...o, doc_links: f.value };
+  }
+  if (f.name == "-add") {
+    return CliFlags { ...o, mode_add: f.on };
+  }
+  if (f.name == "-fetch") {
+    return CliFlags { ...o, mode_fetch: f.on };
+  }
+  if (f.name == "-vendor") {
+    return CliFlags { ...o, mode_vendor: f.on };
+  }
+  return o;
+}
+
+function cli_flags_6(o: CliFlags, f: CliArg): CliFlags {
+  if (f.name == "-lsp") {
+    return CliFlags { ...o, mode_lsp: f.on };
+  }
+  if (f.name == "-resolve") {
+    return CliFlags { ...o, mode_resolve: f.on };
+  }
+  if (f.name == "-targets") {
+    return CliFlags { ...o, mode_targets: f.on };
+  }
+  if (f.name == "-chunk") {
+    return CliFlags { ...o, chunk: f.value };
+  }
+  if (f.name == "-grant") {
+    return CliFlags { ...o, grant: f.value };
+  }
+  if (f.name == "-emit") {
+    return CliFlags { ...o, emit: f.value };
+  }
+  if (f.name == "-O") {
+    return CliFlags { ...o, optimize: f.on };
+  }
+  if (f.name == "-target") {
+    return CliFlags { ...o, target: f.value, target_given: true };
+  }
+  if (f.name == "-embed") {
+    return CliFlags { ...o, embed_dir: f.value };
+  }
+  return o;
+}
+
+function cli_flags_7(o: CliFlags, f: CliArg): CliFlags {
+  if (f.name == "-o") {
+    return CliFlags { ...o, out_path: f.value };
+  }
+  if (f.name == "-stdlib") {
+    return CliFlags { ...o, root: util.clean_path(f.value), have_root: true };
+  }
+  return o;
+}
+
+function parse_cli_flags(av: string[], embedded_root: string): CliFlags {
+  let embedded = embedded_root.len() > 0;
+  let no_strs: string[] = [];
+  let o = CliFlags {
+    entry_path: "",
+    out_path: "",
+    root: embedded_root,
+    have_root: embedded,
+    prog_args: [],
+    target: target_arch() + "-" + target_os(),
+    emit: "",
+    mode_check: false,
+    mode_interp: false,
+    tf: ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, diag_format: diag_format_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false },
+    mode_fmt: false,
+    fmt_write: false,
+    fmt_diff: false,
+    mode_caps: false,
+    mode_manifest: false,
+    mode_sign_index: false,
+    mode_index_keygen: false,
+    sign_key: "",
+    profile_name: "",
+    mode_effects: false,
+    mode_targets: false,
+    mode_resolve: false,
+    mode_tangle: false,
+    chunk: "",
+    grant: "",
+    mode_doc: false,
+    doc_links: "",
+    mode_add: false,
+    mode_vendor: false,
+    mode_fetch: false,
+    mode_lsp: false,
+    mode_repl: false,
+    pos: [],
+    backend: "",
+    embed_dir: "",
+    optimize: false,
+    emit_syms: false,
+    backtrace: asmcore.backtrace_on(),
+    backtrace_set: false,
+    size: asmcore.size_on(),
+    sanitize_flag: false,
+    shared: false,
+    export_list: "",
+    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, assets: "", widget: "", run: false },
+    harden: false,
+    heap_limit_text: "",
+    cpu_limit_text: "",
+    ram_text: "",
+    quarantine_text: "",
+    pie: false,
+    remap_specs: [],
+    cover_on: envflag.on("FERN_COVER"),
+    array_report: semarrayreport.from_env(),
+    have_entry: false,
+    target_given: false,
+    prog_sep: false,
+    status: -1,
+  };
   if let Some(given) = given_flags(av) {
     if let Some(why) = flag_combination_error(given) {
       eprint("fern: " + why);
-      return 2;
+      return CliFlags { ...o, status: 2 };
     }
   }
   let i = 1;
-  let prog_sep = false;
   while (i < av.len()) {
     let a = av[i];
     let f = CliArg { name: "", value: "", on: false, last: i, err: "" };
-    if (!have_entry && is_flag(a)) {
+    if (!o.have_entry && is_flag(a)) {
       f = read_flag(av, i);
       if (f.err.len() > 0) {
         eprint("fern: " + f.err);
-        return 2;
+        return CliFlags { ...o, status: 2 };
       }
       i = f.last;
     }
-    if (have_entry) {
-      if (!have_root) {
+    if (o.have_entry) {
+      if (!o.have_root) {
         if (is_flag(a)) {
-          return flag_after_entry(a, embedded);
+          return CliFlags { ...o, status: flag_after_entry(a, embedded) };
         }
-        pos = pos.append(a);
-        root = util.clean_path(a);
-        have_root = true;
-      } else if (prog_args.len() == 0 && !prog_sep && a == "--") {
-        prog_sep = true;
-      } else if (prog_args.len() == 0 && !prog_sep && is_flag(a)) {
-        return flag_after_entry(a, embedded);
+        o = CliFlags { ...o, pos: o.pos.append(a) };
+        o = CliFlags { ...o, root: util.clean_path(a) };
+        o = CliFlags { ...o, have_root: true };
+      } else if (o.prog_args.len() == 0 && !o.prog_sep && a == "--") {
+        o = CliFlags { ...o, prog_sep: true };
+      } else if (o.prog_args.len() == 0 && !o.prog_sep && is_flag(a)) {
+        return CliFlags { ...o, status: flag_after_entry(a, embedded) };
       } else {
-        pos = pos.append(a);
-        prog_args = prog_args.append(a);
+        o = CliFlags { ...o, pos: o.pos.append(a) };
+        o = CliFlags { ...o, prog_args: o.prog_args.append(a) };
       }
     } else if (f.name.len() == 0) {
-      pos = pos.append(a);
-      entry_path = a;
-      have_entry = true;
+      o = CliFlags { ...o, pos: o.pos.append(a) };
+      o = CliFlags { ...o, entry_path: a };
+      o = CliFlags { ...o, have_entry: true };
     } else if (f.name == "-h") {
       if (f.on) {
-        return help(embedded);
+        return CliFlags { ...o, status: help(embedded) };
       }
-    } else if (f.name == "-check") {
-      mode_check = f.on;
+    } else if (util.has_str(CLI_FLAGS_1, f.name)) {
+      o = cli_flags_1(o, f);
     } else if (tool_flag(f)) {
-      let (ntf, bad) = parse_tool_flag(tf, f);
+      let (ntf, bad) = parse_tool_flag(o.tf, f);
       if (bad != 0) {
-        return bad;
+        return CliFlags { ...o, status: bad };
       }
-      tf = ntf;
-    } else if (f.name == "-interp") {
-      mode_interp = f.on;
-    } else if (f.name == "-repl") {
-      mode_repl = f.on;
-    } else if (f.name == "-fmt") {
-      mode_fmt = f.on;
-    } else if (f.name == "-w") {
-      fmt_write = f.on;
-    } else if (f.name == "-d") {
-      fmt_diff = f.on;
-    } else if (f.name == "-backend") {
-      backend = f.value;
-    } else if (f.name == "-cover") {
-      cover_on = f.on;
-    } else if (f.name == "-g") {
-      emit_syms = f.on;
-    } else if (f.name == "-backtrace") {
-      backtrace = f.on;
-      backtrace_set = true;
-    } else if (f.name == "-size") {
-      size = f.on;
-    } else if (f.name == "-sanitize") {
-      sanitize_flag = f.on;
-    } else if (f.name == "-harden") {
-      harden = f.on;
-    } else if (f.name == "-heap-limit") {
-      heap_limit_text = f.value;
-    } else if (f.name == "-cpu-limit") {
-      cpu_limit_text = f.value;
-    } else if (f.name == "-ram") {
-      ram_text = f.value;
-    } else if (f.name == "-quarantine") {
-      quarantine_text = f.value;
-    } else if (f.name == "-pie") {
-      pie = f.on;
-    } else if (f.name == "-remap-path-prefix") {
-      remap_specs = remap_specs.append(f.value);
-    } else if (f.name == "-profile") {
-      profile_name = f.value;
-    } else if (f.name == "-manifest") {
-      mode_manifest = f.on;
-    } else if (f.name == "-sign-index") {
-      mode_sign_index = f.on;
-    } else if (f.name == "-index-keygen") {
-      mode_index_keygen = f.on;
-    } else if (f.name == "-key") {
-      sign_key = f.value;
-    } else if (f.name == "-shared") {
-      shared = f.on;
-    } else if (f.name == "-export") {
-      export_list = f.value;
+      o = CliFlags { ...o, tf: ntf };
+    } else if (util.has_str(CLI_FLAGS_2, f.name)) {
+      o = cli_flags_2(o, f);
+    } else if (util.has_str(CLI_FLAGS_3, f.name)) {
+      o = cli_flags_3(o, f);
+    } else if (util.has_str(CLI_FLAGS_4, f.name)) {
+      o = cli_flags_4(o, f);
     } else if (is_android_flag(f.name)) {
-      apk_opts = android_flag(apk_opts, f);
-    } else if (f.name == "-capabilities") {
-      mode_caps = f.on;
-    } else if (f.name == "-effects") {
-      mode_effects = f.on;
-    } else if (f.name == "-array-report") {
-      if (f.on) {
-        array_report = semarrayreport.to_stdout();
-      }
-    } else if (f.name == "-tangle") {
-      mode_tangle = f.on;
-    } else if (f.name == "-doc") {
-      mode_doc = f.on;
-    } else if (f.name == "-doc-source") {
-      doc_links = f.value;
-    } else if (f.name == "-add") {
-      mode_add = f.on;
-    } else if (f.name == "-fetch") {
-      mode_fetch = f.on;
-    } else if (f.name == "-vendor") {
-      mode_vendor = f.on;
-    } else if (f.name == "-lsp") {
-      mode_lsp = f.on;
-    } else if (f.name == "-resolve") {
-      mode_resolve = f.on;
-    } else if (f.name == "-targets") {
-      mode_targets = f.on;
-    } else if (f.name == "-chunk") {
-      chunk = f.value;
-    } else if (f.name == "-grant") {
-      grant = f.value;
-    } else if (f.name == "-emit") {
-      emit = f.value;
-    } else if (f.name == "-O") {
-      optimize = f.on;
-    } else if (f.name == "-target") {
-      target = f.value;
-      target_given = true;
-    } else if (f.name == "-embed") {
-      embed_dir = f.value;
-    } else if (f.name == "-o") {
-      out_path = f.value;
-    } else if (f.name == "-stdlib") {
-      root = util.clean_path(f.value);
-      have_root = true;
+      o = CliFlags { ...o, apk_opts: android_flag(o.apk_opts, f) };
+    } else if (util.has_str(CLI_FLAGS_5, f.name)) {
+      o = cli_flags_5(o, f);
+    } else if (util.has_str(CLI_FLAGS_6, f.name)) {
+      o = cli_flags_6(o, f);
+    } else if (util.has_str(CLI_FLAGS_7, f.name)) {
+      o = cli_flags_7(o, f);
     }
     i += 1;
   }
+  return o;
+}
+
+function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => checker.GateResult): i32 {
+  let o = parse_cli_flags(av, embedded_root);
+  if (o.status >= 0) {
+    return o.status;
+  }
+  let entry_path = o.entry_path;
+  let out_path = o.out_path;
+  let root = o.root;
+  let embedded = embedded_root.len() > 0;
+  let have_root = o.have_root;
+  let prog_args = o.prog_args;
+  let target = o.target;
+  let emit = o.emit;
+  let mode_check = o.mode_check;
+  let mode_interp = o.mode_interp;
+  let no_strs: string[] = [];
+  let tf = o.tf;
+  let mode_fmt = o.mode_fmt;
+  let fmt_write = o.fmt_write;
+  let fmt_diff = o.fmt_diff;
+  let mode_caps = o.mode_caps;
+  let mode_manifest = o.mode_manifest;
+  let mode_sign_index = o.mode_sign_index;
+  let mode_index_keygen = o.mode_index_keygen;
+  let sign_key = o.sign_key;
+  let profile_name = o.profile_name;
+  let mode_effects = o.mode_effects;
+  let mode_targets = o.mode_targets;
+  let mode_resolve = o.mode_resolve;
+  let mode_tangle = o.mode_tangle;
+  let chunk = o.chunk;
+  let grant = o.grant;
+  let mode_doc = o.mode_doc;
+  let doc_links = o.doc_links;
+  let mode_add = o.mode_add;
+  let mode_vendor = o.mode_vendor;
+  let mode_fetch = o.mode_fetch;
+  let mode_lsp = o.mode_lsp;
+  let mode_repl = o.mode_repl;
+  let pos = o.pos;
+  let backend = o.backend;
+  let embed_dir = o.embed_dir;
+  let optimize = o.optimize;
+  let emit_syms = o.emit_syms;
+  let backtrace = o.backtrace;
+  let backtrace_set = o.backtrace_set;
+  let size = o.size;
+  let sanitize_flag = o.sanitize_flag;
+  let shared = o.shared;
+  let export_list = o.export_list;
+  let apk_opts = o.apk_opts;
+  let harden = o.harden;
+  let heap_limit_text = o.heap_limit_text;
+  let cpu_limit_text = o.cpu_limit_text;
+  let ram_text = o.ram_text;
+  let quarantine_text = o.quarantine_text;
+  let pie = o.pie;
+  let remap_specs = o.remap_specs;
+  let cover_on = o.cover_on;
+  let array_report = o.array_report;
+  let have_entry = o.have_entry;
+  let target_given = o.target_given;
 
   let st = diag_style(tf.color_mode, tf.ascii, tf.diag_format);
 

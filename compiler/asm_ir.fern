@@ -14,7 +14,6 @@ import "./ir";
 import "./irtables";
 import "./irverifygate";
 import "./ircore";
-import "./rtbytecopy";
 import "./ssa";
 import "./ssalive";
 import "./ssadeps";
@@ -9329,7 +9328,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (s.ssa_trap_suffix != "" && ins.args.len() == 0 && util.has_str(ssa_called_traps(), ins.str)) {
     return ssa_call_sym(helper_call_needs(ins.str, s.need(ins.str + ".c")), ins.str + ".c");
   }
-  if (ircore.is_runtime_helper_call(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || rtbytecopy.is_helper(ins.str))) {
+  if (ircore.is_runtime_helper_call(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || ircore.register_helper(ins.str))) {
     return ssa_helper_call(ins, reg_of, s);
   }
   if (ssa_reg_call(ins, s)) {
@@ -9432,14 +9431,24 @@ function ssa_release_entry(entry: ssaprepare.ReleaseEntry, lp: string, s: asmcor
   return s.lab_def(bn.lab);
 }
 
+// A load of a word, of a tag, of a byte, or of 32 bits with the sign.
+function ssa_load_at(ins: ssa.SInst, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str == "u8") {
+    return s.write("    movzbl " + ssa_mem(a, ins.imm, false) + ", " + ssa_r32(d) + "\n");
+  }
+  if (ins.str == "i32") {
+    return s.write("    movslq " + ssa_mem(a, ins.imm, false) + ", " + d + "\n");
+  }
+  return ssa_mov_rm(s, if (ins.str == "u32") { 32 } else { 64 }, true, d, a, ins.imm);
+}
+
 function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let k = ins.kind_tag;
   let a = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_load(reg_of, ins.args[0], a, s);
   let d = ssa_dst(reg_of, ins.result);
   if (k == ssa.LD_AT) {
-    s = ssa_mov_rm(s, if (ins.str == "u32") { 32 } else { 64 }, true, d, a, ins.imm);
-    return ssa_store(reg_of, ins.result, d, s);
+    return ssa_store(reg_of, ins.result, d, ssa_load_at(ins, a, d, s));
   }
   if (k >= ssa.ARR_AT && imm.is_imm[ins.args[1]]) {
     return ssa_mem_at(ins, reg_of, imm.value[ins.args[1]] as i32, a, d, s);
@@ -10481,6 +10490,9 @@ function ssa_load_fuse(fv: FuseView, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
 // The operand size of the compare that reads `ld` from memory, or 0 when one
 // instruction cannot give the flags of the compare of 64 bits.
 function ssa_load_compare_bits(fv: FuseView, ld: ssa.SInst, fu: SsaFuse): i32 {
+  if (ld.str == "u8" || ld.str == "i32") {
+    return ssa_narrow_compare_bits(fv, ld, fu);
+  }
   let wide = ld.str != "u32";
   if (ld.result == fu.b) {
     return ssa_bits_if(wide && !fv.imm.is_imm[fu.a], 64);
@@ -10499,6 +10511,20 @@ function ssa_load_compare_bits(fv: FuseView, ld: ssa.SInst, fu: SsaFuse): i32 {
     return ssa_bits_if(v >= -2147483648i64, 64);
   }
   return ssa_bits_if((fu.tag == ir.K_EQ || fu.tag == ir.K_NE) && v >= 0i64, 32);
+}
+
+// A byte or a signed half that the left operand loads, against an immediate
+// that the narrow compare gives the same answer for.
+function ssa_narrow_compare_bits(fv: FuseView, ld: ssa.SInst, fu: SsaFuse): i32 {
+  let equality = fu.tag == ir.K_EQ || fu.tag == ir.K_NE;
+  if (ld.result != fu.a || !equality || !fv.imm.is_imm[fu.b] || ssa.imm_sym(fv.imm, fu.b) != "") {
+    return 0;
+  }
+  let v = fv.imm.value[fu.b];
+  if (ld.str == "u8") {
+    return ssa_bits_if(v >= 0i64 && v <= 127i64, 8);
+  }
+  return ssa_bits_if(v >= -2147483648i64 && v <= 2147483647i64, 32);
 }
 
 function ssa_bits_if(ok: boolean, bits: i32): i32 {
@@ -11304,11 +11330,17 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
 function ssa_load_compare(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_read(reg_of, fu.a, "%r11", s);
   let a = ssa_src(reg_of, fu.a, "%r11");
+  if (!fu.load_right && fr.imm.is_imm[fu.b] && fu.load_bits == 8) {
+    return s.write("    cmpb $" + util.i64_to_string(fr.imm.value[fu.b]) + ", " + ssa_mem(a, fu.load_at, false) + "\n");
+  }
   if (!fu.load_right && fr.imm.is_imm[fu.b]) {
     return ssa_alu_im(s, 7, fu.load_bits, fr.imm.value[fu.b] as i32, a, fu.load_at);
   }
-  s = ssa_read(reg_of, fu.b, "%rcx", s);
-  let b = ssa_src(reg_of, fu.b, "%rcx");
+  // The base of the load can be in %rcx: the fixed table keeps only %r11
+  // free at a load. No value is in %rdx at the compare.
+  let scratch = if (a == "%rcx") { "%rdx" } else { "%rcx" };
+  s = ssa_read(reg_of, fu.b, scratch, s);
+  let b = ssa_src(reg_of, fu.b, scratch);
   if (fu.load_right) {
     return ssa_alu_rm(s, 7, 64, true, a, b, fu.load_at);
   }

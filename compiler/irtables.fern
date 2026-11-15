@@ -184,14 +184,14 @@ pub function struct_tab(decls: parser.StructDecl[]): StructTab {
 pub function replaced_decls(decls: parser.StructDecl[], extra: parser.StructDecl[]): parser.StructDecl[] {
   let names: string[] = [];
   for d in extra {
-    names = names.append(d.name);
+    names = names.append(decl_shape(d));
   }
   let ix = util.name_index(names);
   let used = __alloc_bool(extra.len());
   let out: parser.StructDecl[] = [];
   for d in decls {
-    let at = ix.find(d.name);
-    if (at >= 0 && d.enum_owner == "" && extra[at].enum_owner == "") {
+    let at = ix.find(decl_shape(d));
+    if (at >= 0 && d.enum_owner == extra[at].enum_owner) {
       out = out.append(extra[at]);
       used = used.with(at, true);
     } else {

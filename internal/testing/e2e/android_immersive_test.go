@@ -21,12 +21,23 @@ func TestAndroidImmersiveRestoresBars(t *testing.T) {
 	src += `
 pub function focus(activity: usize): void { apply_system_bars(activity); }
 pub function mode(ctx: usize, on: boolean): void { immersive(ctx, on); }
+pub function context_size(): i32 { return Context.c_size() as i32; }
+pub function wire(ctx: usize, activity: usize, read: i32, write: i32): void {
+  unsafe {
+    Context.c_store_activity(ctx, activity);
+    Context.c_store_ui_read(ctx, read);
+    Context.c_store_ui_write(ctx, write);
+  }
+}
+pub function requests(ctx: usize, read: i32): i32 { return on_ui_request(read, 0, ctx); }
 `
 	const check = `#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 static int locals, calls, ui = 77, flags = 1024 | 128;
 static void require(int ok) { if (!ok) { fprintf(stderr, "bars: locals=%d calls=%d ui=%d flags=%d\n", locals, calls, ui, flags); exit(1); } }
@@ -55,8 +66,15 @@ int main(int argc, char **argv) {
   if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 2; }
   void (*focus)(uintptr_t) = dlsym(lib, "focus");
   void (*mode)(uintptr_t, int) = dlsym(lib, "mode");
-  require(focus && mode);
-  uintptr_t table[64] = {0}, activity[8] = {0}, ctx[8] = {0};
+  int (*context_size)(void) = dlsym(lib, "context_size");
+  void (*wire)(uintptr_t, uintptr_t, int, int) = dlsym(lib, "wire");
+  int (*requests)(uintptr_t, int) = dlsym(lib, "requests");
+  require(focus && mode && context_size && wire && requests);
+  uintptr_t table[64] = {0}, activity[8] = {0};
+  uintptr_t *ctx = calloc(1, context_size());
+  int fds[2];
+  require(pipe(fds) == 0 && fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+  wire((uintptr_t)ctx, (uintptr_t)activity, fds[0], fds[1]);
   table[31] = (uintptr_t)get_class;
   table[33] = (uintptr_t)method;
   table[36] = (uintptr_t)object;
@@ -72,14 +90,17 @@ int main(int argc, char **argv) {
   for (int i = 0; i < 4; i++) {
     int on = i % 2 == 0;
     mode((uintptr_t)ctx, on);
+    // The request of the mode changes the bars with no focus change.
+    require(requests((uintptr_t)ctx, fds[0]) == 1);
+    require(ui == (on ? 5894 : 0) && flags == (128 | (on ? 1024 : 0)) && locals == 0);
     for (int again = 0; again < 2; again++) {
       focus((uintptr_t)activity);
       require(ui == (on ? 5894 : 0) && flags == (128 | (on ? 1024 : 0)) && locals == 0);
     }
   }
-  require(calls == 16);
+  require(calls == 24);
   return 0;
 }
 `
-	androidJNIMockCheck(t, src, "focus,mode", check)
+	androidJNIMockCheck(t, src, "focus,mode,context_size,wire,requests", check)
 }

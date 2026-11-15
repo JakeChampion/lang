@@ -76,7 +76,13 @@ func parserFlags(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
-	for _, fn := range []string{"function run_with_gate(", "function tool_flag(", "function parse_tool_flag(", "function android_flag("} {
+	fns := []string{"function parse_cli_flags(", "function tool_flag(", "function parse_tool_flag(", "function android_flag("}
+	// parse_cli_flags gives a flag that only sets values to a group function.
+	groups := regexp.MustCompile(`(?m)^function cli_flags_\d+\(`).FindAllString(string(src), -1)
+	if len(groups) == 0 {
+		t.Fatal("compiler/fern.fern has no cli_flags group function")
+	}
+	for _, fn := range append(fns, groups...) {
 		start := strings.Index(string(src), "\n"+fn)
 		if start < 0 {
 			t.Fatalf("compiler/fern.fern has no %s...", fn)

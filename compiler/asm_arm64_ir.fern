@@ -14,7 +14,6 @@ import "./irtables";
 import "./irverifygate";
 import "./lexer";
 import "./ircore";
-import "./rtbytecopy";
 import "./ssa";
 import "./ssalive";
 import "./ssadeps";
@@ -3313,7 +3312,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
     return ssa_rc_dec(ins, reg_of, lp, 0, 0, s);
   }
-  if (ircore.is_runtime_helper_call(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || rtbytecopy.is_helper(ins.str))) {
+  if (ircore.is_runtime_helper_call(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || ircore.register_helper(ins.str))) {
     return ssa_helper_call(ins, reg_of, s);
   }
   let rr = "x0";
@@ -3436,6 +3435,12 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   let d = ssa_dst(reg_of, ins.result);
   if (ins.result >= 0 && ssa_fhome(reg_of, ins.result) != "") {
     d = ssa_fhome(reg_of, ins.result);
+  }
+  if (k == ssa.LD_AT && ins.str == "u8") {
+    return ssa_store(reg_of, ins.result, d, s.write("    ldrb " + ssa_wreg(d) + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n"));
+  }
+  if (k == ssa.LD_AT && ins.str == "i32") {
+    return ssa_store(reg_of, ins.result, d, s.write("    ldrsw " + d + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n"));
   }
   if (k == ssa.LD_AT) {
     s = ssa_ldst(s, true, if (ins.str == "u32") { ssa_wreg(d) } else { d }, a, ins.imm);

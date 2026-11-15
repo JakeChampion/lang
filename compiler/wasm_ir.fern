@@ -161,10 +161,11 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   let ops = need_ops();
   for oi in 0..ops.len() {
     if (ops[oi] == "arr_push" || ops[oi] == "arr_push_owned") {
-      for sfx in ["", "_u8", "_u16"] {
-        if (module_emits_push(cache, ops[oi], sfx)) {
-          out = out.append(ops[oi] + sfx);
-        }
+      if (module_emits_push(cache, ops[oi], false)) {
+        out = out.append(ops[oi]);
+      }
+      if (module_emits_push(cache, ops[oi], true)) {
+        out = out.append(ops[oi] + "_u8");
       }
     } else if (has_kind(kinds, ops[oi])) {
       out = out.append(ops[oi]);
@@ -202,10 +203,8 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_arr_slice8(cache)) {
     out = out.append("@uses_arr_slice8");
   }
-  for sfx in ["_u8", "_u16"] {
-    if (module_uses_arr_slice_packed(cache, sfx)) {
-      out = out.append("@uses_arr_slice" + sfx);
-    }
+  if (module_uses_arr_slice_u8(cache)) {
+    out = out.append("@uses_arr_slice_u8");
   }
   out = array_helper_needs(cache, out);
   if (module_uses_divrem(cache)) {
@@ -555,9 +554,6 @@ pub function const_agg_block_bytes(packed: string): i32 {
   }
   if (ir.const_struct_is_wide_array(packed)) {
     return 16 + ir.const_struct_values(packed).len() * 8;
-  }
-  if (ir.const_struct_is_half_array(packed)) {
-    return 16 + (ir.const_struct_values(packed).len() * 2 + 7) / 8 * 8;
   }
   if (ir.const_struct_is_array(packed)) {
     return 16 + (ir.const_struct_values(packed).len() + 1) / 2 * 8;
@@ -1111,49 +1107,19 @@ pub function module_emits_op_cached(cache: irtables.LowerResult[], kind: string)
   return any_op(cache, is_kind);
 }
 
-function module_emits_push(cache: irtables.LowerResult[], kind: string, sfx: string): boolean {
+function module_emits_push(cache: irtables.LowerResult[], kind: string, packed: boolean): boolean {
   let ktag = ir.kind_id(kind);
   function is_push(o: ir.Op): boolean {
-    return o.kind_tag == ktag && packed_suffix(o) == sfx;
+    return o.kind_tag == ktag && ir.is_packed(o) == packed;
   }
   return any_op(cache, is_push);
 }
 
-// A wasm word holds a 4-byte element, so only bytes and 2-byte elements pack.
 function packed_suffix(o: ir.Op): string {
   if (ir.is_packed(o)) {
     return "_u8";
   }
-  if (ir.is_half(o)) {
-    return "_u16";
-  }
   return "";
-}
-
-// The bytes of an i32 element of the array op `o`, with the load that reads
-// it and the store that writes it.
-struct NarrowElem { size: i32, load: string, store: string }
-
-function narrow_elem(o: ir.Op): NarrowElem {
-  if (ir.is_packed(o)) {
-    return NarrowElem { size: 1, load: "i32.load8_u", store: "i32.store8" };
-  }
-  if (ir.is_half(o) && o.unsigned) {
-    return NarrowElem { size: 2, load: "i32.load16_u", store: "i32.store16" };
-  }
-  if (ir.is_half(o)) {
-    return NarrowElem { size: 2, load: "i32.load16_s", store: "i32.store16" };
-  }
-  return NarrowElem { size: 4, load: "i32.load", store: "i32.store" };
-}
-
-// The address of element `index` on the stack: the scaled index plus the
-// array and its 8-byte header.
-function elem_offset(size: i32): string {
-  if (size == 1) {
-    return "    i32.const 8\n    i32.add\n    i32.add\n";
-  }
-  return "    i32.const " + util.i32_to_string(size) + "\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n";
 }
 
 pub function module_uses_str_case(cache: irtables.LowerResult[]): boolean {
@@ -1252,18 +1218,19 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "    (local.set $id (global.get $__fern_task_fresh_g))\n"
     + "    (global.set $__fern_task_fresh_g (i32.add (local.get $id) (i32.const 1)))\n"
     + "    (if (i32.lt_s (local.get $id) (local.get $cap)) (then\n"
-    + "      (i64.store (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 96))))\n"
+    + "      (i64.store (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 104))))\n"
     + "      (return (local.get $id))))\n"
     + "    (local.set $nt (call $__fern_task_zalloc (i32.shl (local.get $cap) (i32.const 4))))\n"
     + "    (memory.copy (local.get $nt) (global.get $__fern_task_tab) (i32.shl (local.get $cap) (i32.const 3)))\n"
     + "    (global.set $__fern_task_tab (local.get $nt))\n"
     + "    (global.set $__fern_task_cap (i32.shl (local.get $cap) (i32.const 1)))\n"
-    + "    (i64.store (i32.add (local.get $nt) (i32.shl (local.get $cap) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 96))))\n"
+    + "    (i64.store (i32.add (local.get $nt) (i32.shl (local.get $cap) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 104))))\n"
     + "    (local.get $cap))\n"
     + "  (func $__fern_task_free (param $id i32) (result i32) (local $r i32)\n"
     + "    (local.set $r (call $__fern_task_slot (local.get $id)))\n"
     + "    (if (local.get $r) (then (if (i64.eqz (i64.load offset=56 (local.get $r))) (then\n"
     + "      (i64.store offset=56 (local.get $r) (i64.extend_i32_u (i32.add (global.get $__fern_task_free_g) (i32.const 1))))\n"
+    + "      (i64.store offset=96 (local.get $r) (i64.add (i64.load offset=96 (local.get $r)) (i64.const 1)))\n"
     + "      (global.set $__fern_task_free_g (local.get $id))))))\n"
     + "    (i32.const 0))\n"
     + "  (func $__fern_task_cur (result i32) (global.get $__fern_task_cur_g))\n"
@@ -1321,6 +1288,12 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n"
     + "      (br $copy)))\n"
     + "    (local.get $out))\n"
+    + "  (func $__fern_task_gen (param $id i32) (result i32) (local $r i32)\n"
+    + "    (if (i32.or (i32.lt_s (local.get $id) (i32.const 1)) (i32.ge_s (local.get $id) (global.get $__fern_task_cap))) (then (return (i32.const -1))))\n"
+    + "    (local.set $r (i32.wrap_i64 (i64.load (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))))))\n"
+    + "    (if (i32.eqz (local.get $r)) (then (return (i32.const -1))))\n"
+    + "    (if (i64.ne (i64.load offset=56 (local.get $r)) (i64.const 0)) (then (return (i32.const -1))))\n"
+    + "    (i32.wrap_i64 (i64.load offset=96 (local.get $r))))\n"
     + "  (func $__fern_task_timeout (param $id i32) (result i32)\n"
     + "    (i32.wrap_i64 (i64.load offset=8 (call $__fern_task_rec (local.get $id)))))\n"
     + "  (func $__fern_task_until (param $id i32) (result i64)\n"
@@ -1526,17 +1499,16 @@ pub function module_uses_divrem(cache: irtables.LowerResult[]): boolean {
 
 pub function module_uses_arr_slice(cache: irtables.LowerResult[]): boolean {
   function is_arr_slice(o: ir.Op): boolean {
-    return o.kind_tag == ir.K_ARR_SLICE && o.width != 64 && packed_suffix(o) == "";
+    return o.kind_tag == ir.K_ARR_SLICE && o.width != 64 && !ir.is_packed(o);
   }
   return any_op(cache, is_arr_slice);
 }
 
-// The module slices an array whose elements pack with the suffix `sfx`.
-function module_uses_arr_slice_packed(cache: irtables.LowerResult[], sfx: string): boolean {
-  function is_arr_slice_packed(o: ir.Op): boolean {
-    return o.kind_tag == ir.K_ARR_SLICE && packed_suffix(o) == sfx;
+pub function module_uses_arr_slice_u8(cache: irtables.LowerResult[]): boolean {
+  function is_arr_slice_u8(o: ir.Op): boolean {
+    return o.kind_tag == ir.K_ARR_SLICE && ir.is_packed(o);
   }
-  return any_op(cache, is_arr_slice_packed);
+  return any_op(cache, is_arr_slice_u8);
 }
 
 pub function module_uses_arr_slice8(cache: irtables.LowerResult[]): boolean {
@@ -1668,7 +1640,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
     }
     if (n == "arr_reserve" || n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
       || n == "arr_push_f64" || n == "arr_push_owned_i64" || n == "arr_push_owned_f64"
-      || n == "arr_push_u8" || n == "arr_push_owned_u8" || n == "arr_push_u16" || n == "arr_push_owned_u16"
+      || n == "arr_push_u8" || n == "arr_push_owned_u8"
       || n == "str_split"
       || n == "buf_take_bytes" || n == "buf_push_bytes_range"
       || n == "buf_new" || n == "buf_push" || n == "buf_push_range"
@@ -4990,10 +4962,6 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == ir.K_U32_WRAP) {} else if (o.kind_tag == ir.K_INT_CAST) {
     if (o.str == "u8") {
       parts = parts.append("    i32.const 255\n    i32.and\n");
-    } else if (o.str == "u16") {
-      parts = parts.append("    i32.const 65535\n    i32.and\n");
-    } else if (o.str == "i16") {
-      parts = parts.append("    i32.extend16_s\n");
     }
   } else if (o.kind_tag == ir.K_ARR_PUSH) {
     parts = parts.append("    call $__fern_arr_push" + packed_suffix(o) + "\n");
@@ -5137,8 +5105,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == ir.K_ARR_SLICE) {
     if (o.width == 64) {
       parts = parts.append("    call $__fern_arr_slice8\n");
+    } else if (ir.is_packed(o)) {
+      parts = parts.append("    call $__fern_arr_slice_u8\n");
     } else {
-      parts = parts.append("    call $__fern_arr_slice" + packed_suffix(o) + "\n");
+      parts = parts.append("    call $__fern_arr_slice\n");
     }
   } else if (o.kind_tag == ir.K_RANDOM_BYTES) {
     parts = parts.append("    call $__fern_random_bytes\n");
@@ -5252,8 +5222,10 @@ function emit_str_op_wat(o: ir.Op): string {
     return "    global.set " + name + "\n    i32.const 0\n";
   }
   if (o.kind_tag == ir.K_ARR_RESERVE) {
-    let stride = narrow_elem(o).size;
-    if (o.width == 64) {
+    let stride = 4;
+    if (o.width == 8) {
+      stride = 1;
+    } else if (o.width == 64) {
       stride = 8;
     }
     return "    i32.const " + util.i32_to_string(stride) + "\n    call $__fern_arr_reserve\n";
@@ -9527,10 +9499,10 @@ pub function arr_concat_helper(): string {
   let o = "";
   o += "  (func $__fern_arr_concat (param $width i32) (param $nb i32) (param $src i32) (param $a i32) (result i32)\n";
   o += "    (local $na i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
-  o += "    (local.set $stride (i32.const 4))\n";
-  o += "    (if (i32.eq (local.get $width) (i32.const 8)) (then (local.set $stride (i32.const 1))))\n";
-  o += "    (if (i32.eq (local.get $width) (i32.const 16)) (then (local.set $stride (i32.const 2))))\n";
-  o += "    (if (i32.eq (local.get $width) (i32.const 64)) (then (local.set $stride (i32.const 8))))\n";
+  // memory.copy checks its source address even when it copies no byte, and an
+  // empty range can point anywhere.
+  o += "    (if (i32.le_s (local.get $nb) (i32.const 0)) (then (local.set $nb (i32.const 0)) (local.set $src (local.get $a))))\n";
+  o += "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
   o += "    (local.set $na (i32.load (local.get $a)))\n";
   o += "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
   o += "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
@@ -9539,6 +9511,7 @@ pub function arr_concat_helper(): string {
   o += "    (if (i32.and (local.get $sole) (i32.le_s (local.get $n) (local.get $cap))) (then\n";
   o += "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o += "      (i32.store (local.get $a) (local.get $n))\n";
+  o += "      (call $__fern_arr_concat_retain (local.get $width) (local.get $a) (local.get $na) (local.get $n))\n";
   o += "      (return (local.get $a))))\n";
   o += "    (local.set $ncap (local.get $n))\n";
   o += "    (if (local.get $sole) (then\n";
@@ -9548,23 +9521,29 @@ pub function arr_concat_helper(): string {
   o += "    (i32.store offset=4 (local.get $r) (local.get $ncap))\n";
   o += "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride)))\n";
   o += "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o += "    (call $__fern_arr_concat_retain (local.get $width) (local.get $r) (local.get $na) (local.get $n))\n";
   o += "    (local.get $r))\n";
+  // An odd width marks counted elements: the slots [from, to) copied from src each take a count.
+  o += "  (func $__fern_arr_concat_retain (param $width i32) (param $r i32) (param $from i32) (param $to i32)\n";
+  o += "    (if (i32.eqz (i32.and (local.get $width) (i32.const 1))) (then (return)))\n";
+  o += "    (block $done (loop $next (br_if $done (i32.ge_s (local.get $from) (local.get $to)))\n";
+  o += "      (drop (call $__fern_rc_inc (i32.load (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.shl (local.get $from) (i32.const 2))))))\n";
+  o += "      (local.set $from (i32.add (local.get $from) (i32.const 1))) (br $next)))\n";
+  o += "  )\n";
   return o;
 }
 
-// The slice of an array of `stride`-byte elements whose runtime names end in `sfx`.
-pub function arr_slice_packed_helper(sfx: string, stride: i32): string {
-  let st = util.i32_to_string(stride);
+pub function arr_slice_u8_helper(): string {
   let o = "";
-  o = o + "  (func $__fern_arr_slice" + sfx + " (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
+  o += "  (func $__fern_arr_slice_u8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
   o += "    (local $n i32) (local $na i32)\n";
   o += "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (call $__fern_abort_slice) (unreachable)))\n";
   o += "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (call $__fern_abort_slice) (unreachable)))\n";
   o += "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const " + st + ")))\n";
+  o += "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o += "    (i32.store (local.get $na) (local.get $n))\n";
   o += "    (i32.store offset=4 (local.get $na) (local.get $n))\n";
-  o = o + "    (memory.copy (i32.add (local.get $na) (i32.const 8)) (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $start) (i32.const " + st + "))) (i32.mul (local.get $n) (i32.const " + st + ")))\n";
+  o += "    (memory.copy (i32.add (local.get $na) (i32.const 8)) (i32.add (i32.add (local.get $a) (i32.const 8)) (local.get $start)) (local.get $n))\n";
   o += "    (local.get $na))\n";
   return o;
 }
@@ -9665,15 +9644,6 @@ function const_agg_data(strs: Placed, caggs: Placed, structs: irtables.StructTab
         + le32_escape(util.index_of_str(fn_table, fnbody)) + le32_escape(0);
     } else if (ir.const_struct_is_option(cv[i])) {
       body = body + le32_escape(util.lit_to_i32(vals[0])) + le32_escape(0);
-    } else if (ir.const_struct_is_half_array(cv[i])) {
-      body = body + le32_escape(vals.len()) + le32_escape(vals.len());
-      for v in vals {
-        let h = util.lit_to_i32(v);
-        body = body + byte_escape(h & 255) + byte_escape(h >> 8 & 255);
-      }
-      for _ in 0..(8 - vals.len() * 2 % 8) % 8 {
-        body += byte_escape(0);
-      }
     } else if (ir.const_struct_is_wide_array(cv[i])) {
       body = body + le32_escape(vals.len()) + le32_escape(vals.len());
       for v in vals {
@@ -9758,10 +9728,6 @@ pub function arr_push_f64_helper(): string {
 
 pub function arr_push_u8_helper(): string {
   return arr_push_strided("_u8", "i32", "i32.store8", 1);
-}
-
-pub function arr_push_u16_helper(): string {
-  return arr_push_strided("_u16", "i32", "i32.store16", 2);
 }
 
 pub function arr_push_strided(suffix: string, vty: string, sop: string, stride: i32): string {
@@ -10622,10 +10588,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(arr_slice8_helper());
   }
   if (need(needs, "@uses_arr_slice_u8")) {
-    parts = parts.append(arr_slice_packed_helper("_u8", 1));
-  }
-  if (need(needs, "@uses_arr_slice_u16")) {
-    parts = parts.append(arr_slice_packed_helper("_u16", 2));
+    parts = parts.append(arr_slice_u8_helper());
   }
   let needs_arr_push = need(needs, "arr_push") || need(needs, "arr_push_owned") || need_dir_list(needs);
   let split_emits_push = need(needs, "str_split") || need(needs, "@uses_str_lines");
@@ -10652,12 +10615,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "arr_push_owned_u8")) {
     parts = parts.append(arr_push_owned_wide_helper("u8", "i32", heap_base_for_strs(sv, cv, shadow)));
-  }
-  if (need(needs, "arr_push_u16") || need(needs, "arr_push_owned_u16")) {
-    parts = parts.append(arr_push_u16_helper());
-  }
-  if (need(needs, "arr_push_owned_u16")) {
-    parts = parts.append(arr_push_owned_wide_helper("u16", "i32", heap_base_for_strs(sv, cv, shadow)));
   }
   if (mode != 2 && need(needs, "random_bytes")) {
     parts = parts.append(random_bytes_ir_func());
@@ -13449,8 +13406,10 @@ function empty_bytes_const(): string {
 }
 
 function emit_wasm_alloc_u8(caggs: Placed, ns: string, arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {
-  let stride = narrow_elem(o).size;
-  if (o.width == 64) {
+  let stride = 4;
+  if (ir.is_packed(o)) {
+    stride = 1;
+  } else if (o.width == 64) {
     stride = 8;
   }
   let n = "    local.get " + util.i32_to_string(eltmp) + "\n";
@@ -13485,9 +13444,11 @@ function emit_wasm_raw_store_ptr(arrtmp: i32, eltmp: i32, parts: string[]): stri
 
 function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, parts: string[]): string[] {
   let n = o.i32_imm;
-  let esz = narrow_elem(o).size;
+  let esz = 4;
   if (o.width == 64) {
     esz = 8;
+  } else if (ir.is_packed(o)) {
+    esz = 1;
   }
   let cap = n;
   let bytes = n * esz;
@@ -13506,9 +13467,12 @@ function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o
     } else if (o.width == 64) {
       parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
+    } else if (ir.is_packed(o)) {
+      parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+      parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
     } else {
       parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
-      parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * esz) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    " + narrow_elem(o).store + "\n");
+      parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
     }
     em -= 1;
   }
@@ -13538,9 +13502,10 @@ function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): 
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n");
   } else if (o.width == 64) {
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    f64.load\n");
+  } else if (ir.is_packed(o)) {
+    parts = parts.append("    i32.const 8\n    i32.add\n    i32.add\n    i32.load8_u\n");
   } else {
-    let el = narrow_elem(o);
-    parts = parts.append(elem_offset(el.size) + "    " + el.load + "\n");
+    parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n");
   }
 
   return parts;
@@ -13567,12 +13532,16 @@ function emit_wasm_arr_set(arrtmp: i32, bctmp: i32, eltmp: i32, f64tmp: i32, i64
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
     parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
-  } else {
-    let el = narrow_elem(o);
+  } else if (ir.is_packed(o)) {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
     parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
-    parts = parts.append(elem_offset(el.size) + "    local.get " + util.i32_to_string(eltmp) + "\n    " + el.store + "\n");
+    parts = parts.append("    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
+  } else {
+    parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+    parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
+    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
+    parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   }
 
   return parts;

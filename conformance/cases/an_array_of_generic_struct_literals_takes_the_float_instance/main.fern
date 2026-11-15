@@ -1,0 +1,28 @@
+struct Box[T] { v: T }
+
+struct Two[A, B] { a: A, b: B }
+
+function sum(xs: Box[f64][]): f64 {
+  let t = 0.0;
+  for x in xs {
+    t += x.v;
+  }
+  return t;
+}
+
+function main(): i32 {
+  let xs = [Box { v: 1.5 }, Box { v: 2 }];
+  print(xs[0].v + xs[1].v);
+  let ys = [Box { v: 2 }, Box { v: 1.5 }];
+  print(ys[0].v + ys[1].v);
+  let zs = [Box { v: 1 }, Box { v: 2 }, Box { v: 0.5 }];
+  print(sum(zs));
+  let ts = [Two { a: 1, b: 2.5 }, Two { a: 7, b: 3 }];
+  print(ts[1].b + ts[0].b);
+  print(ts[1].a + ts[0].a);
+  let ns = [[Box { v: 1 }], [Box { v: 2.25 }]];
+  print(ns[0][0].v + ns[1][0].v);
+  let fs: Box[f32][] = [Box { v: 1 }, Box { v: 2.5 }];
+  print(fs[0].v + fs[1].v);
+  return 0;
+}
