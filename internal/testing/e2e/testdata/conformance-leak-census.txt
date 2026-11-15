@@ -1320,7 +1320,7 @@ task_handle_with_a_made_up_id                        5
 # The program stops through exit(134), which does not unwind. The task handle and its strings are live.
 task_resumed_after_it_ended                          6
 # The program stops through exit(134), which does not unwind. The task is live.
-task_resumed_with_another_function                   10
+task_resumed_with_another_function                    8
 # The program stops through exit(134), which does not unwind. The task handle and its strings are live.
 task_started_two_times                               6
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
