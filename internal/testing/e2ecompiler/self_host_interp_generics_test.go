@@ -114,7 +114,8 @@ func TestSelfHostInterpSimdSuite(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := runSelfHostInterp(t, "simd_test.fern", string(src))
-	for _, w := range []string{"1..31", "# fail 0"} {
+	e2eharness.CheckTAPPlan(t, out)
+	for _, w := range []string{"# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\n%s", w, out)
 		}

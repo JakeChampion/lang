@@ -98,8 +98,9 @@ var gatedBuiltins = map[string]string{
 	"tcp_addr_into":         "tcp",
 	"tcp_connect_with":      "tcp",
 
-	"unix_listen":  "unix",
-	"unix_connect": "unix",
+	"unix_listen":   "unix",
+	"unix_connect":  "unix",
+	"vsock_connect": "vsock",
 
 	"reactor_new":   "reactor",
 	"reactor_ctl":   "reactor",

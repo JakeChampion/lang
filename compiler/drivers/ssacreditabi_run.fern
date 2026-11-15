@@ -750,7 +750,7 @@ function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): irc
           }
           let index = 0;
           if (mode == 2) {
-            index = 2147483647;
+            index = 5;
           }
           ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_struct_get(index, 0)).append(ir.op_drop());
           if (mode == 1) {
@@ -947,9 +947,9 @@ function producer_checks(target: string): void {
   let mode = 0;
   for why in reasons {
     let sub = semlower.driven(boxed.parsed(producer_source(mode), ["leaf", "parent"]), target).sub;
-    producer_expect(sub, "parent", if (mode < 3) { 3 } else { 0 }, why, 210 + mode);
+    producer_expect(sub, "parent", if (mode < 3) { 2 } else { 0 }, why, 210 + mode);
     if (mode < 3) {
-      producer_expect(sub, "leaf", 2, "", 218);
+      producer_expect(sub, "leaf", 1, "", 218);
     }
     if (mode == 0) {
       let selected: ssasem.Contract[] = [];
@@ -996,8 +996,8 @@ function producer_checks(target: string): void {
         ops = ops.append(op);
       }
       producer_expect(ircore.Sub { ...sub, bodies: [irtables.LowerResult { ...body, ops: ops }], extra: [] }, "parent", 0, "unsupported allocation producer effect", 231);
-      producer_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, name: "renamed_producer" }], bodies: [irtables.LowerResult { ...body, name: "renamed_producer" }], extra: [] }, "renamed_producer", 3, "", 232);
-      producer_expect(sub, "parent", 3, "", 233);
+      producer_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, name: "renamed_producer" }], bodies: [irtables.LowerResult { ...body, name: "renamed_producer" }], extra: [] }, "renamed_producer", 2, "", 232);
+      producer_expect(sub, "parent", 2, "", 233);
     }
     mode += 1;
   }
@@ -1006,7 +1006,7 @@ function producer_checks(target: string): void {
 function origin_caller_expect(sub: ircore.Sub, name: string, why: string): void {
   let p = abi.check_origin_caller(sub, name);
   let ok = why == "";
-  if (p.proof.ok != ok || p.words != (if (ok) { 3 } else { 0 }) || p.proof.function_name != name || p.proof.message != (if (ok) { "proved caller allocation origin" } else { why })) {
+  if (p.proof.ok != ok || p.words != (if (ok) { 2 } else { 0 }) || p.proof.function_name != name || p.proof.message != (if (ok) { "proved caller allocation origin" } else { why })) {
     print(p.proof.function_name + ": " + p.proof.message);
     exit(234);
   }

@@ -47,7 +47,16 @@ The seeds have each fault of the identification, and a count of 65535 program he
 They have a table offset and a segment offset of 2^31, of 2^32 and of 2^64 - 1.
 They also have sizes that wrap a sum of 64 bits.
 
-The reader does not read section headers, symbols, relocations or notes. It does not check that the entry address is in an executable segment. It does not check that two load segments are apart. A loader has those duties.
+`parse` reads an image of each kind, and a shared object has no entry. So the rules of a program are a second step, `layout_fault`, which the loader of `std/user_process` calls before it maps a page:
+
+- The memory of a load segment must not wrap the address space.
+- Two load segments must not share a byte of memory. They can share a page.
+- The entry must be in the file bytes of an executable load segment.
+
+The fuzz target and its second reader compare the offset of this fault also. The seeds have an entry at each edge of the file bytes. They also have segments that share one byte, that touch and that wrap.
+
+A page that two segments share gets the access of both. A hostile image can thus make a page of its own writable and executable.
+The reader does not read section headers, symbols, relocations or notes.
 
 ## The manifest reader
 

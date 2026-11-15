@@ -1048,6 +1048,8 @@ const C12_WAIT_HELLO_DONE: i32 = 13;
 
 const C12_WAIT_FINISHED: i32 = 14;
 
+const C12_WAIT_SIGNATURE: i32 = 15;
+
 pub struct Client {
   conn: Conn,
   state: i32,
@@ -1922,7 +1924,7 @@ function __client_after(c: Client, kind: i32, m: message.Message, out: Out): Res
 }
 
 function __client_parked(state: i32): boolean {
-  return state == C_WAIT_VERDICT || state == C12_WAIT_VERDICT || state == C_WAIT_SIGNATURE || state == C_CLOSED;
+  return state == C_WAIT_VERDICT || state == C12_WAIT_VERDICT || state == C_WAIT_SIGNATURE || state == C12_WAIT_SIGNATURE || state == C_CLOSED;
 }
 
 function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] {
@@ -1942,7 +1944,7 @@ function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] 
 
 ### `40a the TLS 1.2 client`
 
-A client whose configuration sets `tls12` offers TLS 1.2 beside TLS 1.3. A ServerHello with no `supported_versions` picks TLS 1.2, and the client then follows RFC 5246 §7.3 with an ECDHE suite. The certificate chain and the signature of the ServerKeyExchange go to the caller in one `VerifyServer` event, marked `tls12`. The client answers a CertificateRequest with an empty certificate, and it ignores a HelloRequest after the handshake, so it does not renegotiate.
+A client whose configuration sets `tls12` offers TLS 1.2 beside TLS 1.3. A ServerHello with no `supported_versions` picks TLS 1.2, and the client then follows RFC 5246 §7.3 with an ECDHE suite. The certificate chain and the signature of the ServerKeyExchange go to the caller in one `VerifyServer` event, marked `tls12`. The client answers a CertificateRequest with its certificate and a CertificateVerify when its identity has a scheme that the request names, and with an empty certificate otherwise. It ignores a HelloRequest after the handshake, so it does not renegotiate.
 
 ```fern
 <<40a the TLS 1.2 client>>=
@@ -2032,7 +2034,14 @@ function __client_message12(c: Client, raw: message.Raw, out: Out): Result[Clien
     return __key_exchange12(next, raw, out);
   }
   if (c.state == C12_WAIT_HELLO_DONE && raw.kind == message.CERTIFICATE_REQUEST && !c.requested) {
-    return Ok(ClientRun { client: Client { ...next, requested: true }, out: out });
+    match (tls12.request_schemes(raw.bytes)) {
+      Ok(schemes) => {
+        return Ok(ClientRun { client: Client { ...next, requested: true, request_schemes: schemes }, out: out });
+      },
+      Err(e) => {
+        return Err(Message(e));
+      }
+    }
   }
   if (c.state == C12_WAIT_HELLO_DONE && raw.kind == message.SERVER_HELLO_DONE) {
     if (!tls12.empty(raw.bytes)) {
@@ -2094,8 +2103,10 @@ function __share12(c: Client): Result[keyshare.ClientShare, HandshakeError] {
   return Err(Illegal("named_curve"));
 }
 
-// After the ServerHelloDone: an empty certificate when the server asked for one, the ClientKeyExchange, the
-// ChangeCipherSpec, and the Finished under the client's key. The server's key waits for its ChangeCipherSpec.
+// After the ServerHelloDone: the client's certificate when the server asked for one, the ClientKeyExchange, a
+// CertificateVerify for a certificate that is not empty, the ChangeCipherSpec, and the Finished under the
+// client's key. The certificate is empty when the client has no identity with a scheme that the server takes.
+// The master secret comes before the CertificateVerify, because its session hash ends at the ClientKeyExchange.
 function __client_flight12(c: Client, out: Out): Result[ClientRun, HandshakeError] {
   let share = __share12(c)?;
   let pre_master: u8[] = [];
@@ -2107,22 +2118,35 @@ function __client_flight12(c: Client, out: Out): Result[ClientRun, HandshakeErro
       return Err(KeyShare(e));
     }
   }
+  let scheme = if (c.requested) { __own_scheme(c) } else { 0 };
   let flight: u8[] = [];
   if (c.requested) {
-    flight = tls12.handshake_message(message.CERTIFICATE, [0 as u8, 0 as u8, 0 as u8]);
+    flight = if (scheme != 0) { tls12.certificate(c.own_chain) } else { tls12.handshake_message(message.CERTIFICATE, [0 as u8, 0 as u8, 0 as u8]) };
   }
   flight = __cat(flight, tls12.client_key_exchange(share.public));
   let conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, flight) };
+  let master = tls12.master_secret(conn.suite.hash(), pre_master, c.extended, __hash(conn), c.hello.random, c.server_random);
+  let keyed = Client { ...c, conn: conn, master12: master };
+  if (scheme == 0) {
+    return __client_finish12(keyed, flight, out);
+  }
+  let ev = SignNeeded(Signing { scheme: scheme, signed: __copy(conn.transcript) });
+  return Ok(ClientRun { client: Client { ...keyed, state: C12_WAIT_SIGNATURE, own_scheme: scheme, flight: flight }, out: Out { ...out, events: out.events.append(ev) } });
+}
+
+// The handshake messages `flight` of the client in plain records, the ChangeCipherSpec, and the Finished over
+// the transcript under the client's key. The server's key waits for its ChangeCipherSpec.
+function __client_finish12(c: Client, flight: u8[], out: Out): Result[ClientRun, HandshakeError] {
+  let conn = c.conn;
   let h = conn.suite.hash();
-  let master = tls12.master_secret(h, pre_master, c.extended, __hash(conn), c.hello.random, c.server_random);
-  let keys = tls12.keys(conn.suite, master, c.hello.random, c.server_random);
-  let fin = tls12.handshake_message(message.FINISHED, tls12.verify_data(h, master, "client finished", __hash(conn)));
+  let keys = tls12.keys(conn.suite, c.master12, c.hello.random, c.server_random);
+  let fin = tls12.handshake_message(message.FINISHED, tls12.verify_data(h, c.master12, "client finished", __hash(conn)));
   let plain = __write(conn, record.Handshake, flight)?;
   let ccs = __write(plain.conn, record.ChangeCipherSpec, [1 as u8])?;
   let sealed = __write(Conn { ...ccs.conn, write: keys.client, writing: 2, transcript: __join(ccs.conn.transcript, fin) }, record.Handshake, fin)?;
   let bytes = __cat(__cat(plain.bytes, ccs.bytes), sealed.bytes);
   let armed = Conn { ...sealed.conn, next_read: Some(keys.server) };
-  return Ok(ClientRun { client: Client { ...c, conn: armed, state: C12_WAIT_FINISHED, master12: master }, out: Out { ...out, output: __join(out.output, bytes) } });
+  return Ok(ClientRun { client: Client { ...c, conn: armed, state: C12_WAIT_FINISHED, flight: [] }, out: Out { ...out, output: __join(out.output, bytes) } });
 }
 
 // The server's Finished, which must come under its key, over the transcript through the client's Finished.
@@ -2296,6 +2320,12 @@ pub function (c: Client) verdict(ok: boolean): Result[ClientStep, HandshakeError
 }
 
 pub function (c: Client) signature(sig: [u8]): Result[ClientStep, HandshakeError] {
+  if (c.state == C12_WAIT_SIGNATURE) {
+    let cv = tls12.certificate_verify(c.own_scheme, sig);
+    let signed = Client { ...c, conn: Conn { ...c.conn, transcript: __join(c.conn.transcript, cv) } };
+    let r12 = __client_finish12(signed, __cat(__copy(c.flight), cv), __out())?;
+    return __client_run(r12.client, [], r12.out);
+  }
   if (c.state != C_WAIT_SIGNATURE) {
     return Err(Misuse("signature"));
   }

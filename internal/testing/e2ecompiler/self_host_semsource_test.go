@@ -3575,13 +3575,12 @@ struct Trio { a: string, b: i32[], c: i32 }
     let w: Trio = Trio { a: "qq", b: [s], c: s };
     return w.c + w.b[0] + w.a.len();
 }
-// A tuple box is one word per element and no shape word, so it is storage a
-// donor of any of the three forms can be, and storage any of them can take:
-// tuple_step pairs a tuple with a tuple, tuple_from_rec a record's box with a
-// tuple, and rec_from_tuple a tuple's with a record's. The two cross-form ones
-// are a two-field record against a three-element tuple because the pairing
-// matches SLOTS: a record box carries a shape word the tuple's does not, so
-// the two agree at three slots and not at two.
+// A tuple box is one word per element, so it is storage a donor of any of
+// the three forms can be, and storage any of them can take. tuple_step pairs
+// a tuple with a tuple. tuple_from_rec and rec_from_tuple put a record of two
+// fields against a tuple of three elements. Wasm keeps the shape of a record
+// in a slot, so the two pair there at three slots. A native target keeps the
+// shape in the header and does not pair them.
 struct Parcel { a: string, b: i32 }
 @noinline function tuple_step(seed: i32): (i32, string) {
     let a: (string, i32[]) = ("aa", [seed, seed + 1]);

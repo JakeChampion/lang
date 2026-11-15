@@ -2954,7 +2954,8 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
   return Imms { ...imm, is_imm: imm.is_imm.with(v, true), sym_at: imm.sym_at.with(v, syms.len()), syms: syms };
 }
 
-pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
+// `stores` says the target stores an immediate to memory with one instruction.
+pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[], stores: boolean): Imms {
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -2979,7 +2980,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
     for ins in blk.insts {
       for a in 0..ins.args.len() {
         let v = ins.args[a];
-        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !imm_use(ins, a, konst, value[v], right, left)) {
+        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !(stores && stored_value(ins, a)) && !imm_use(ins, a, konst, value[v], right, left)) {
           is_imm = is_imm.with(v, false);
         }
       }
@@ -2990,6 +2991,11 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
     }
   }
   return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [] };
+}
+
+// Operand `a` is the value of a store of 4 or 8 bytes.
+pub function stored_value(ins: SInst, a: i32): boolean {
+  return ins.kind_tag == ST_AT && a == 1 && ins.str != "u8";
 }
 
 function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], left: string[]): boolean {
@@ -5013,8 +5019,180 @@ pub function form(f: SFunc, owned_frame_views: boolean): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = combine_byte_stores(zero_extended_indices(drop_inert_counts(g, owned_frame_views)));
+  g = sink_loads(combine_byte_stores(zero_extended_indices(drop_inert_counts(g, owned_frame_views))));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
+}
+
+// A load at the end of a block, which only one side of the branch reads,
+// moves to that side. A match loads each binding of a pattern before it
+// tests the nested patterns, and the side that fails reads none of them.
+function sink_loads(f: SFunc): SFunc {
+  let g = f;
+  for round in 0..8 {
+    let next = sink_round(g);
+    if (!next.changed) {
+      return g;
+    }
+    g = next.f;
+  }
+  return g;
+}
+
+struct Sunk { f: SFunc, changed: boolean }
+
+struct Readers { blocks: i32[][], pinned: boolean[] }
+
+function sink_round(f: SFunc): Sunk {
+  let at = block_positions(f);
+  let idom = immediate_dominators(f, at);
+  let entries = entry_counts(f, at);
+  let readers = value_readers(f);
+  let moved: SInst[][] = [];
+  for blk in f.blocks {
+    moved = moved.append([]);
+  }
+  let blocks = f.blocks;
+  let changed = false;
+  for bi in 0..f.blocks.len() {
+    let blk = f.blocks[bi];
+    let kept: SInst[] = [];
+    let tail = pure_tail(blk);
+    for k in 0..blk.insts.len() {
+      let to = -1;
+      if (k >= tail) {
+        to = sink_target(blk.insts[k], bi, Flow { at: at, idom: idom, entries: entries, term: blk.term }, readers);
+      }
+      if (to < 0) {
+        kept = kept.append(blk.insts[k]);
+      } else {
+        moved = moved.with(to, moved[to].append(blk.insts[k]));
+        changed = true;
+      }
+    }
+    blocks = blocks.with(bi, SBlock { ...blk, insts: kept });
+  }
+  if (!changed) {
+    return Sunk { f: f, changed: false };
+  }
+  for bi in 0..blocks.len() {
+    if (moved[bi].len() > 0) {
+      blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: after_phis(blocks[bi].insts, moved[bi]) });
+    }
+  }
+  return Sunk { f: SFunc { ...f, blocks: blocks }, changed: true };
+}
+
+struct Flow { at: i32[], idom: i32[], entries: i32[], term: STerm }
+
+// The position of the successor that `ins` can move to, or -1.
+function sink_target(ins: SInst, bi: i32, fl: Flow, readers: Readers): i32 {
+  if (ins.kind_tag != LD_AT || fl.term.kind_tag != TERM_BRIF || readers.pinned[ins.result]) {
+    return -1;
+  }
+  let read = readers.blocks[ins.result];
+  let s0 = distinct_successor_position(fl.at, fl.term, 0);
+  let s1 = distinct_successor_position(fl.at, fl.term, 1);
+  if (read.len() == 0 || util.index_of_i32(read, bi) >= 0 || s0 < 0 || s1 < 0) {
+    return -1;
+  }
+  if (sole_reader(fl, bi, s0, read)) {
+    return s0;
+  }
+  return if (sole_reader(fl, bi, s1, read)) { s1 } else { -1 };
+}
+
+// Block `s` has one edge into it, and each block of `read` runs after it.
+function sole_reader(fl: Flow, bi: i32, s: i32, read: i32[]): boolean {
+  return s != bi && fl.entries[s] == 1 && dominates_each(fl.idom, s, read);
+}
+
+function dominates_each(idom: i32[], s: i32, blocks: i32[]): boolean {
+  for b in blocks {
+    if (!dominates(idom, s, b)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The first position of the run of instructions at the end of the block
+// that write no memory and call nothing.
+function pure_tail(blk: SBlock): i32 {
+  let k = blk.insts.len();
+  while (k > 0 && reads_only(blk.insts[k - 1])) {
+    k -= 1;
+  }
+  return k;
+}
+
+function reads_only(ins: SInst): boolean {
+  let k = ins.kind_tag;
+  return k == LD_AT || k == CONST_INT || k == CONST_BOOL || k == CONST_I64 || k == SHAPE_ADDR || k == BINARY || k == UNARY || unique_test(ins);
+}
+
+// The number of edges into each block position.
+function entry_counts(f: SFunc, at: i32[]): i32[] {
+  let out = __alloc_i32(f.blocks.len());
+  for blk in f.blocks {
+    for which in 0..2 {
+      let s = distinct_successor_position(at, blk.term, which);
+      if (s >= 0) {
+        out = out.with(s, out[s] + 1);
+      }
+    }
+  }
+  return out;
+}
+
+// The block positions that read each value. A value that a phi reads is
+// pinned: the phi reads it at the end of another block.
+function value_readers(f: SFunc): Readers {
+  let blocks: i32[][] = [];
+  for v in 0..f.nvals {
+    blocks = blocks.append([]);
+  }
+  let pinned = __alloc_bool(f.nvals);
+  for bi in 0..f.blocks.len() {
+    let blk = f.blocks[bi];
+    for ins in blk.insts {
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals && ins.kind_tag == PHI) {
+          pinned = pinned.with(a, true);
+        } else if (a >= 0 && a < f.nvals) {
+          blocks = read_in(blocks, a, bi);
+        }
+      }
+    }
+    blocks = read_in(read_in(blocks, blk.term.cond, bi), blk.term.value, bi);
+  }
+  return Readers { blocks: blocks, pinned: pinned };
+}
+
+function read_in(own blocks: i32[][], v: i32, bi: i32): i32[][] {
+  if (v < 0 || v >= blocks.len() || blocks[v].len() > 0 && blocks[v][blocks[v].len() - 1] == bi) {
+    return blocks;
+  }
+  return blocks.with(v, blocks[v].append(bi));
+}
+
+function after_phis(insts: SInst[], moved: SInst[]): SInst[] {
+  let out: SInst[] = [];
+  let head = true;
+  for ins in insts {
+    if (head && ins.kind_tag != PHI) {
+      out = with_insts(out, moved);
+      head = false;
+    }
+    out = out.append(ins);
+  }
+  return if (head) { with_insts(out, moved) } else { out };
+}
+
+function with_insts(own out: SInst[], more: SInst[]): SInst[] {
+  for ins in more {
+    out = out.append(ins);
+  }
+  return out;
 }
 
 // A count taken or given back on a constant null does nothing: the runtime

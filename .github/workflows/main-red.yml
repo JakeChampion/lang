@@ -153,7 +153,7 @@ jobs:
                 await github.rest.issues.createComment({
                   owner, repo, issue_number: existing.number,
                   body: proved
-                    ? `\`${lane}\` passed on #${proof.pr}'s [run](${context.serverUrl}/${owner}/${repo}/actions/runs/${proof.run}) at the tree main has at \`${short}\`, ` +
+                    ? `\`${lane}\` passed on ${proof.pr === null ? "the merge queue batch" : `#${proof.pr}`}'s [run](${context.serverUrl}/${owner}/${repo}/actions/runs/${proof.run}) at the tree main has at \`${short}\`, ` +
                       `so main's [run](${run.html_url}) skipped it · closing.`
                     : `\`${lane}\` is green on main again at \`${short}\`.\n\n` +
                       `[Run](${run.html_url}) · closing.`,
