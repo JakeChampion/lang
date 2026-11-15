@@ -6,6 +6,7 @@ import "./color";
 import "./date";
 import "./mailmap";
 import "./objects";
+import "./sig";
 import "./width";
 
 // A name, an address, the seconds since 1970 and the zone, as `+0100`.
@@ -228,8 +229,9 @@ function rtrim(text: string): string {
 // `color` is true when the output has colors, `from` is the parent of the
 // diff of `-m` or "", and `graph_width` is the width of the graph before
 // the text, which `%<|(N)` counts. `notes` is the text of the notes of
-// the commit when `notes_shown` is true, which `%N` gives.
-pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: Decoration[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string, reflog: ReflogLine[], color: boolean, from: string, graph_width: i32, notes: string, notes_shown: boolean }
+// the commit when `notes_shown` is true, which `%N` gives. `sig` is the
+// check of the signature of the commit, which `%G?` and the others give.
+pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: Decoration[], mailmap: mailmap.Mailmap, use_mailmap: boolean, mark: string, side: string, reflog: ReflogLine[], color: boolean, from: string, graph_width: i32, notes: string, notes_shown: boolean, sig: sig.Check }
 
 // A ref that names a commit, with its kind (`color.DECORATION_LOCAL` and
 // the others). A decoration of `HEAD` that names a branch of the commit
@@ -557,6 +559,12 @@ function placeholder(c: Commit, ctx: Context, format: string, at: i32, auto: boo
       b'N' => (m.name, 2),
       b'E' => (m.email, 2),
       _ => ("", 0),
+    };
+  }
+  if (letter == b'G' && at + 1 < format.len()) {
+    return match (sig.placeholder(ctx.sig, format[at + 1])) {
+      Some(text) => (text, 2),
+      None => ("", 0),
     };
   }
   if (letter == b'x') {

@@ -573,6 +573,75 @@ func gitNotesFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
 	run("notes", "add", "-F", "nn", "HEAD")
 }
 
+// gitSignatureCases are the forms of the signatures for the repository of
+// gitSignedFixture.
+var gitSignatureCases = []string{
+	"log --show-signature", "log --show-signature --oneline", "log --show-signature --graph", "log --show-signature --color",
+	"log --show-signature --format=%h", "log --show-signature -p", "log --no-show-signature", "log --format=%G?|%GS|%GK|%GF|%GP|%GT",
+	"log --format=%GG|", "log --format=%Gx|%G", "log --graph --format=%G?%n%GG",
+}
+
+// gitSignedFixture makes two keys of gpg and a repository with an
+// unsigned commit, a good signature, the signature of a key that is not
+// in the keyring, and a bad signature. It gives the directory of the
+// keyring. A missing gpg fails the test.
+func gitSignedFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) string {
+	t.Helper()
+	gpg, err := exec.LookPath("gpg")
+	if err != nil {
+		t.Fatal("gpg is required for the signatures of the git example")
+	}
+	// The socket of gpg-agent needs a short path.
+	var homes []string
+	for range 2 {
+		home, err := os.MkdirTemp("", "gpg")
+		if err != nil {
+			t.Fatal(err)
+		}
+		homes = append(homes, home)
+		t.Cleanup(func() {
+			exec.Command("gpgconf", "--homedir", home, "--kill", "gpg-agent").Run()
+			os.RemoveAll(home)
+		})
+	}
+	for i, who := range []string{"Signer <s@example.com>", "Stranger <x@example.com>"} {
+		cmd := exec.Command(gpg, "--homedir", homes[i], "--batch", "--pinentry-mode", "loopback", "--passphrase", "", "--quick-gen-key", who, "ed25519", "sign", "never")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("gpg --quick-gen-key: %v\n%s", err, out)
+		}
+	}
+	when := 1700000000
+	run := func(home string, args ...string) string {
+		t.Helper()
+		when += 3600
+		cmd := oracle.cmd(args...)
+		cmd.Dir = dir
+		stamp := fmt.Sprintf("%d +0000", when)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "LC_ALL=C", "GNUPGHOME="+home,
+			"GIT_AUTHOR_NAME=A", "GIT_AUTHOR_EMAIL=a@example.com", "GIT_COMMITTER_NAME=C", "GIT_COMMITTER_EMAIL=c@example.com",
+			"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(homes[0], "init", "-q", "-b", "main", "--object-format="+hash.format, ".")
+	run(homes[0], "commit", "-q", "--allow-empty", "-m", "unsigned")
+	run(homes[0], "commit", "-q", "--allow-empty", "-Ss@example.com", "-m", "signed")
+	run(homes[1], "commit", "-q", "--allow-empty", "-Sx@example.com", "-m", "stranger")
+	run(homes[0], "commit", "-q", "--allow-empty", "-Ss@example.com", "-m", "to break")
+	body := strings.Replace(run(homes[0], "cat-file", "commit", "HEAD")+"\n", "\nto break\n", "\nbroken\n", 1)
+	if err := os.WriteFile(filepath.Join(dir, "bad"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(homes[0], "update-ref", "refs/heads/main", run(homes[0], "hash-object", "-t", "commit", "-w", "bad"))
+	os.Remove(filepath.Join(dir, "bad"))
+	// gpg checks the trust database once, with a message of its own.
+	exec.Command(gpg, "--homedir", homes[0], "--check-trustdb").Run()
+	return homes[0]
+}
+
 // gitMergeCases are the diffs of merges for the repositories of
 // gitFormsFixture and gitMergeFixture.
 var gitMergeCases = []string{
@@ -844,6 +913,19 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 			gitMergeFixture(t, oracle, fixed, run)
 			for _, c := range gitMergeCases {
 				gitCompare(t, oracle, port, fixed, "", strings.Fields(c)...)
+			}
+			signedDir := t.TempDir()
+			keys := gitSignedFixture(t, oracle, signedDir, run)
+			for _, c := range gitSignatureCases {
+				gitCompareEnv(t, oracle, port, signedDir, []string{"GNUPGHOME=" + keys, "TZ=UTC"}, strings.Fields(c)...)
+			}
+			for _, setting := range [][]string{{"log.showSignature", "true"}, {"gpg.program", "false"}} {
+				if _, stderr, code := oracle.run(t, signedDir, "", "config", setting[0], setting[1]); code != 0 {
+					t.Fatalf("git config %v: %s", setting, stderr)
+				}
+				for _, c := range []string{"log --oneline", "log --oneline --no-show-signature", "log --format=%G?"} {
+					gitCompareEnv(t, oracle, port, signedDir, []string{"GNUPGHOME=" + keys, "TZ=UTC"}, strings.Fields(c)...)
+				}
 			}
 			notesDir := t.TempDir()
 			gitNotesFixture(t, oracle, notesDir, run)

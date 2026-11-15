@@ -1,0 +1,170 @@
+// The signatures of commits (gpg-interface.c of git): the payload and the
+// signature of a signed commit, and the result of `gpg --verify` from the
+// lines of its status.
+import "std/array";
+import "std/string";
+import "./objects";
+
+// The trust of a key, as gpg gives it in a line `TRUST_...`.
+pub const TRUST_UNDEFINED: i32 = 0;
+
+pub const TRUST_NEVER: i32 = 1;
+
+pub const TRUST_MARGINAL: i32 = 2;
+
+pub const TRUST_FULLY: i32 = 3;
+
+pub const TRUST_ULTIMATE: i32 = 4;
+
+const TRUST_NAMES: string[] = ["UNDEFINED", "NEVER", "MARGINAL", "FULLY", "ULTIMATE"];
+
+// The result of the check of a signature (`struct signature_check`): the
+// letter of `%G?` before the trust, the trust, the text that gpg writes
+// for a person, the key, the signer, the fingerprint and the fingerprint
+// of the primary key. `has_output` is false when gpg did not run, `signed`
+// is false for a commit with no signature,
+// and `failed` is the status of `check_signature`.
+pub struct Check { has_output: boolean, signed: boolean, result: u8, trust: i32, output: string, key: string, signer: string, fingerprint: string, primary: string, failed: boolean }
+
+pub function unsigned(): Check {
+  return Check { has_output: false, signed: false, result: b'N', trust: TRUST_UNDEFINED, output: "", key: "", signer: "", fingerprint: "", primary: "", failed: true };
+}
+
+// The payload and the signature of a commit: the commit without the lines
+// of its signatures, and the text of the signature of the hash of the
+// repository (`gpgsig`, or `gpgsig-sha256` for SHA-256 names), with the
+// space at the start of each continued line taken off. There is no
+// signature when the commit has none (`parse_buffer_signed_by_header`).
+pub function split(body: u8[], width: i32): (u8[], u8[], boolean) {
+  let header = if (width == objects.SHA1) { "gpgsig" } else { "gpgsig-sha256" };
+  let payload = buf_new(body.len());
+  let signature = buf_new(256);
+  let in_signature = false;
+  let saw = false;
+  let other = false;
+  let line = 0;
+  while (line < body.len()) {
+    let nl = __memchr_bytes(body, 10, line);
+    let next = if (nl < 0) { body.len() } else { nl + 1 };
+    let sig = -1;
+    if (in_signature && body[line] == b' ') {
+      sig = line + 1;
+    } else if (starts(body, line, header + " ")) {
+      sig = line + header.len() + 1;
+      other = false;
+    } else if (starts(body, line, "gpgsig")) {
+      other = true;
+    } else if (other && body[line] != b' ') {
+      other = false;
+    }
+    if (sig >= 0) {
+      buf_push_bytes_range(signature, body, sig, next);
+      saw = true;
+      in_signature = true;
+    } else {
+      if (body[line] == b'\n') {
+        next = body.len();
+      }
+      if (!other) {
+        buf_push_bytes_range(payload, body, line, next);
+      }
+      in_signature = false;
+    }
+    line = next;
+  }
+  let p = buf_take_bytes(payload);
+  let s = buf_take_bytes(signature);
+  buf_free(payload);
+  buf_free(signature);
+  return (p, s, saw);
+}
+
+function starts(body: u8[], at: i32, text: string): boolean {
+  if (at + text.len() > body.len()) {
+    return false;
+  }
+  for i in 0..text.len() {
+    if (body[at + i] != text[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The field of `line` from `at` to the next space or line end.
+function field(line: string, at: i32): string {
+  let end = at;
+  while (end < line.len() && line[end] != b' ' && line[end] != b'\n') {
+    end += 1;
+  }
+  return objects.part(line, at, end);
+}
+
+// The check after gpg: the lines `[GNUPG:] ...` of `status`, and the text
+// `output` that gpg writes for a person (`parse_gpg_output` of git). A
+// second result line of one kind is an error.
+pub function parse(status: string, output: string, ran_ok: boolean): Check {
+  let c = Check { ...unsigned(), has_output: true, signed: true, output: output };
+  let seen = 0;
+  let codes = ["GOODSIG ", "BADSIG ", "ERRSIG ", "EXPSIG ", "EXPKEYSIG ", "REVKEYSIG "];
+  let letters = [b'G', b'B', b'E', b'X', b'Y', b'R'];
+  for raw in status.split("\n") {
+    if (!raw.starts_with("[GNUPG:] ")) {
+      continue;
+    }
+    let line = objects.part(raw, 9, raw.len());
+    let matched = false;
+    for i in 0..codes.len() {
+      if (!matched && line.starts_with(codes[i])) {
+        matched = true;
+        seen += 1;
+        if (seen > 1) {
+          return Check { ...unsigned(), has_output: true, signed: true, result: b'E', output: output, failed: true };
+        }
+        c = Check { ...c, result: letters[i] };
+        let rest = objects.part(line, codes[i].len(), line.len());
+        let key = field(rest, 0);
+        c = Check { ...c, key: key };
+        if (letters[i] != b'E' && key.len() < rest.len()) {
+          c = Check { ...c, signer: objects.part(rest, key.len() + 1, rest.len()) };
+        }
+      }
+    }
+    if (matched) {
+      continue;
+    }
+    if (line.starts_with("VALIDSIG ")) {
+      let fields = objects.part(line, 9, line.len()).split(" ");
+      c = Check { ...c, fingerprint: fields[0], primary: if (fields.len() > 9) { fields[9] } else { "" } };
+    } else if (line.starts_with("TRUST_")) {
+      let name = field(line, 6);
+      let level = -1;
+      for k in 0..TRUST_NAMES.len() {
+        if (TRUST_NAMES[k] == name) {
+          level = k;
+        }
+      }
+      if (level < 0) {
+        return Check { ...unsigned(), has_output: true, signed: true, result: b'E', output: output, failed: true };
+      }
+      c = Check { ...c, trust: level };
+    }
+  }
+  let good = ran_ok && status.contains("\n[GNUPG:] GOODSIG ");
+  return Check { ...c, failed: !good || c.result != b'G' };
+}
+
+// The text of the placeholder `%G` and `letter`, or None for a letter
+// that git does not know.
+pub function placeholder(c: Check, letter: u8): Option[string] {
+  return match (letter) {
+    b'G' => Some(c.output),
+    b'?' => Some(if (c.result == b'G') { if (c.trust <= TRUST_NEVER) { "U" } else { "G" } } else { unsafe { string_from_bytes_unchecked([c.result]) } }),
+    b'S' => Some(c.signer),
+    b'K' => Some(c.key),
+    b'F' => Some(c.fingerprint),
+    b'P' => Some(c.primary),
+    b'T' => Some(TRUST_NAMES[c.trust].to_ascii_lower()),
+    _ => None,
+  };
+}

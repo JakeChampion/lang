@@ -10,6 +10,7 @@
 //
 // The port reads loose objects and packfiles, and writes loose objects.
 import "std/array";
+import "std/process";
 import "std/errno";
 import "std/io";
 import "std/string";
@@ -37,6 +38,7 @@ import "./patch";
 import "./refs";
 import "./rev";
 import "./revwalk";
+import "./sig";
 import "./treediff";
 import "./date";
 import "../../coreutils/lib/bre";
@@ -1025,7 +1027,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { notes: notes.Tree[], notes_given: boolean, show_notes: boolean, notes_default: i32, notes_extra: string[], find: treediff.Detect, moved_default: i32, word_regex: string, merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
+struct LogOpts { gpg_program: string, show_signature: boolean, notes: notes.Tree[], notes_given: boolean, show_notes: boolean, notes_default: i32, notes_extra: string[], find: treediff.Detect, moved_default: i32, word_regex: string, merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1164,6 +1166,9 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
     let name = notes.expand(objects.part(x, eq + 1, x.len()));
     return (LogOpts { ...o, notes_given: true, show_notes: true, notes_extra: o.notes_extra.append(name) }, 1);
   }
+  if (x == "--show-signature" || x == "--no-show-signature") {
+    return (LogOpts { ...o, show_signature: x == "--show-signature" }, 1);
+  }
   if (x == "--raw") {
     return (with_form(o, patch.Opts { ...d, raw: true }), 1);
   }
@@ -1284,6 +1289,60 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
     }
   }
   return (o, 0);
+}
+
+// The check of the signature of the commit `body` with gpg, as
+// `check_commit_signature` of git runs it: the signature in a temporary
+// file and the payload on the standard input of
+// `gpg --keyid-format=long --status-fd=1 --verify FILE -`.
+function verify_signature(width: i32, body: u8[], program: string): sig.Check {
+  let (payload, signature, signed) = sig.split(body, width);
+  if (!signed) {
+    return sig.unsigned();
+  }
+  let dir = env("TMPDIR").unwrap_or("/tmp");
+  let stem = dir + "/.git_vtag_tmp" + objects.part(objects.hash_of(objects.SHA1, "blob", body), 0, 12);
+  let sig_file = stem + "s";
+  let payload_file = stem + "p";
+  let failed = sig.Check { ...sig.unsigned(), signed: true };
+  if let Err(_) = write_file_bytes(sig_file, signature) {
+    return failed;
+  }
+  if let Err(_) = write_file_bytes(payload_file, payload) {
+    let _ = remove_file(sig_file);
+    return failed;
+  }
+  let ran = process.run(program, ["--keyid-format=long", "--status-fd=1", "--verify", sig_file, "-"], payload_file);
+  let _ = remove_file(sig_file);
+  let _ = remove_file(payload_file);
+  return match (ran) {
+    Ok(out) => sig.parse(unsafe { string_from_bytes_unchecked(out.stdout) }, unsafe { string_from_bytes_unchecked(out.stderr) }, out.status == 0),
+    Err(_) => sig.Check { ...failed, has_output: true },
+  };
+}
+
+// The lines of the check of a signature in `--show-signature`, each in the
+// color of a good or a bad signature with the graph after it
+// (`show_sig_lines` of git).
+function signature_lines(o: LogOpts, sh_in: Shown, c: sig.Check): (Shown, string) {
+  let sh = sh_in;
+  let text = if (c.failed && !c.has_output) { "No signature\n" } else { c.output };
+  let set = if (!o.patch.color) { "" } else if (c.failed) { color.BG_RED } else { color.CYAN };
+  let reset = if (o.patch.color) { color.RESET } else { "" };
+  let out = "";
+  let at = 0;
+  while (at < text.len()) {
+    let nl = __memchr_bytes(text.bytes(), 10, at);
+    let end = if (nl < 0) { text.len() } else { nl };
+    out += set + objects.part(text, at, end) + reset + (if (nl >= 0) { "\n" } else { "" });
+    if (o.graph) {
+      let (g, line, _) = graph.next_line(sh.graph);
+      sh = Shown { ...sh, graph: g };
+      out += line;
+    }
+    at = if (nl < 0) { text.len() } else { nl + 1 };
+  }
+  return (sh, out);
 }
 
 // The trees of the notes that log shows (`load_display_notes` of git):
@@ -2106,6 +2165,11 @@ function entry_text(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context
       }
     }
   }
+  if (o.show_signature && ctx.sig.signed) {
+    let (sh_sig, text) = signature_lines(o, sh, ctx.sig);
+    sh = sh_sig;
+    out += text;
+  }
   let msg = if (o.form == "format") { log.formatted(c, ctx, o.format) } else if (o.form == "reference") { log.reference(c, ctx) } else { log.pretty(c, ctx, o.form) + ctx.notes };
   let missing = msg.len() == 0 || msg[msg.len() - 1] != b'\n';
   if (o.graph) {
@@ -2555,9 +2619,11 @@ function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Ma
   let st = w.g.store;
   let side = if ((f & revwalk.BOUNDARY) != 0) { "-" } else if ((f & revwalk.UNINTERESTING) != 0) { "^" } else if ((f & revwalk.PATCHSAME) != 0) { "=" } else if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
   let commit_least = if (o.patch.abbrev == 0) { 2 * st.width } else if (o.patch.abbrev > 0) { o.patch.abbrev } else { least };
+  let wants_sig = o.show_signature || o.form == "format" && o.format.contains("%G");
+  let checked = if (wants_sig) { verify_signature(w.g.store.width, c.body, o.gpg_program) } else { sig.unsigned() };
   let (st2, note_text) = if (o.show_notes) { notes.text_of(st, o.notes, h, o.form == "format" || o.form == "reference") } else { (st, "") };
   w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: st2 } };
-  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, commit_least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, from: "", notes: note_text, notes_shown: o.show_notes, graph_width: if (o.graph) { sh.graph.width } else { 0 } };
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, commit_least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, from: "", notes: note_text, notes_shown: o.show_notes, sig: checked, graph_width: if (o.graph) { sh.graph.width } else { 0 } };
   // With the pickaxe and with --follow, a commit with no changes is not
   // shown, but the graph still takes it.
   if (o.pick.kind != 0 || o.follow) {
@@ -2639,7 +2705,7 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { gpg_program: r.config.get("gpg.openpgp.program").unwrap_or(r.config.get("gpg.program").unwrap_or("gpg")), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   let renames_value = r.config.get("diff.renames").unwrap_or("true").to_ascii_lower();
   let copies = renames_value == "copies" || renames_value == "copy";

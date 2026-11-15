@@ -22,6 +22,7 @@ import "./moved";
 import "./objects";
 import "./pack";
 import "./patch";
+import "./sig";
 
 function unhex(s: string): u8[] {
   let Ok(b) = hex.decode(s) else {
@@ -254,7 +255,7 @@ function shorts(name: string): string {
 }
 
 function context_of(c: log.Commit): log.Context {
-  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false, from: "", graph_width: 0, notes: "", notes_shown: false };
+  return log.Context { abbrev: shorts, abbrev_commit: false, parents: c.parents, dates: date.normal_mode(), decorations: [], mailmap: mailmap.empty(), use_mailmap: false, mark: "", side: ">", reflog: [], color: false, from: "", graph_width: 0, notes: "", notes_shown: false, sig: sig.unsigned() };
 }
 
 // The subject, the body, the built-in forms and the placeholders of a
@@ -367,6 +368,26 @@ function test_moved(): test.TestOutcome {
   let (mode, errors) = moved.parse_ws("allow-indentation-change,ignore-all-space");
   if (mode != (moved.WS_ALLOW_INDENT | moved.WS_IGNORE_ALL) || errors.len() != 1) {
     return test.fail("the modes of --color-moved-ws");
+  }
+  return test.pass();
+}
+
+// The payload and the signature of a signed commit, and the result of
+// the lines of the status of gpg.
+function test_signatures(): test.TestOutcome {
+  let body = "tree t\ngpgsig -----BEGIN-----\n line\n -----END-----\ngpgsig-sha256 other\n more\nauthor a\n\nmessage\n";
+  let (payload, signature, signed) = sig.split(body.bytes(), objects.SHA1);
+  if (!signed || payload != "tree t\nauthor a\n\nmessage\n".bytes() || signature != "-----BEGIN-----\nline\n-----END-----\n".bytes()) {
+    return test.fail("the payload of a signed commit");
+  }
+  let status = "[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG ABCD Signer <s@example.com>\n[GNUPG:] VALIDSIG F1 2026 1 0 4 0 22 8 00 P1\n[GNUPG:] TRUST_ULTIMATE 0 pgp\n";
+  let c = sig.parse(status, "out\n", true);
+  if (c.failed || sig.placeholder(c, b'?').unwrap_or("") != "G" || c.key != "ABCD" || c.signer != "Signer <s@example.com>" || c.fingerprint != "F1" || c.primary != "P1" || sig.placeholder(c, b'T').unwrap_or("") != "ultimate") {
+    return test.fail("the result of a good signature");
+  }
+  let twice = sig.parse(status + "[GNUPG:] BADSIG X Y\n", "", true);
+  if (twice.result != b'E' || !twice.failed || sig.placeholder(sig.unsigned(), b'?').unwrap_or("") != "N") {
+    return test.fail("two results and no signature");
   }
   return test.pass();
 }
@@ -1014,6 +1035,7 @@ function main(): i32 {
   r = r.it("the columns of the placeholders of a format", test_format_columns);
   r = r.it("the rules of white space", test_whitespace);
   r = r.it("the moved blocks of a patch", test_moved);
+  r = r.it("the signatures of commits", test_signatures);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);
   r = r.it("the specs of colors", test_colors);
