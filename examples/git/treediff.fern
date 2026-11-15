@@ -13,9 +13,9 @@ import "./objects";
 import "./store";
 
 // One difference: `status` is `A` (added), `D` (deleted), `M` (changed),
-// `T` (a change of the kind of file) or `R` (a rename from `old_path` with
-// the score `score`). A mode is "" and a hash is the zero name for a side
-// that has no entry.
+// `T` (a change of the kind of file), `R` (a rename from `old_path` with
+// the score `score`) or `C` (a copy from `old_path`). A mode is "" and a
+// hash is the zero name for a side that has no entry.
 pub struct Change { status: u8, path: u8[], old_mode: string, new_mode: string, old_hash: string, new_hash: string, old_path: u8[], score: i32 }
 
 pub function has_wildcard(item: string): boolean {
@@ -413,17 +413,219 @@ function candidate_cmp(a: Candidate, b: Candidate): i32 {
 // with the same or a similar content become one change `R` at the place
 // of the added file, with the score of the rename.
 pub function renames(s: store.Store, changes: Change[]): (store.Store, Change[]) {
-  return find_renames(s, changes, true);
+  return find_renames(s, changes, true, MIN_SCORE);
 }
 
 // The renames and copies of `changes` for `--follow`: the sources may be
 // files that stay, so the search of the same last part of a path does not
 // run, as in git when it finds copies.
 pub function copies(s: store.Store, changes: Change[]): (store.Store, Change[]) {
-  return find_renames(s, changes, false);
+  return find_renames(s, changes, false, MIN_SCORE);
 }
 
-function find_renames(s: store.Store, changes: Change[], basenames: boolean): (store.Store, Change[]) {
+// The search of renames and copies that the options select: `-M`, `-C`,
+// `--find-copies-harder`, and the least score of a pair.
+pub struct Detect { copies: boolean, harder: boolean, min_score: i32 }
+
+pub function detect_default(): Detect {
+  return Detect { copies: false, harder: false, min_score: MIN_SCORE };
+}
+
+// The score of `-M<n>` and `-C<n>`: a fraction of the digits, or a
+// percent, as `parse_rename_score` of git reads it, and the rest of
+// the text after it.
+pub function parse_score(text: string): (i32, string) {
+  let num: i64 = 0;
+  let scale: i64 = 1;
+  let dot = false;
+  let i = 0;
+  while (i < text.len()) {
+    let ch = text[i];
+    if (!dot && ch == b'.') {
+      scale = 1;
+      dot = true;
+    } else if (ch == b'%') {
+      scale = if (dot) { scale * 100 } else { 100 };
+      i += 1;
+      break;
+    } else if (ch >= b'0' && ch <= b'9') {
+      if (scale < 100000) {
+        scale *= 10;
+        num = num * 10 + (ch - b'0') as i64;
+      }
+    } else {
+      break;
+    }
+    i += 1;
+  }
+  let score = if (num >= scale) { MAX_SCORE } else { (MAX_SCORE as i64 * num / scale) as i32 };
+  return (score, unsafe { string_from_bytes_unchecked(array.slice(text.bytes(), i, text.len())) });
+}
+
+// The changes from the tree `base` with the renames, or with the renames
+// and the copies of `d`. With `harder`, each file of `base` that does not
+// change is also a source of a copy.
+pub function detect(s_in: store.Store, found: Change[], d: Detect, base: string, items: string[]): (store.Store, Change[]) {
+  if (!d.copies) {
+    return find_renames(s_in, found, true, d.min_score);
+  }
+  let s = s_in;
+  let queue = found;
+  if (d.harder && base.len() > 0) {
+    let (s1, all) = changes(s, "", base, items);
+    s = s1;
+    let changed: Map[string, boolean] = Map { };
+    for c in found {
+      if (c.status != b'A') {
+        changed = changed.insert(unsafe { string_from_bytes_unchecked(c.path) }, true);
+      }
+    }
+    let same: Change[] = [];
+    for c in all {
+      if (!changed.contains(unsafe { string_from_bytes_unchecked(c.path) })) {
+        same = same.append(Change { ...c, status: b'=', old_mode: c.new_mode, old_hash: c.new_hash, old_path: c.path });
+      }
+    }
+    queue = merged(found, same);
+  }
+  return find_copies(s, queue, d.min_score);
+}
+
+function path_less(a: u8[], b: u8[]): boolean {
+  let n = a.len().min(b.len());
+  for i in 0..n {
+    if (a[i] != b[i]) {
+      return a[i] < b[i];
+    }
+  }
+  return a.len() < b.len();
+}
+
+// The changes of `a` and of `b` in the order of their paths.
+function merged(a: Change[], b: Change[]): Change[] {
+  let out: Change[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.len() || j < b.len()) {
+    if (j >= b.len() || i < a.len() && path_less(a[i].path, b[j].path)) {
+      out = out.append(a[i]);
+      i += 1;
+    } else {
+      out = out.append(b[j]);
+      j += 1;
+    }
+  }
+  return out;
+}
+
+// The renames and the copies of `queue`, whose changes of status `=` are
+// files that stay the same: `diffcore_rename` of git with
+// `DIFF_DETECT_COPY`. Each file that stays or changes is a source of a
+// copy, and a deleted file is the source of a rename for its last
+// destination and of a copy for the others.
+function find_copies(s: store.Store, queue: Change[], min_score: i32): (store.Store, Change[]) {
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let used = __alloc_i32(queue.len());
+  for i in 0..queue.len() {
+    let c = queue[i];
+    if (c.status == b'A') {
+      dsts = dsts.append(i);
+    } else {
+      srcs = srcs.append(i);
+      if (c.status != b'D') {
+        used = used.with(i, 1);
+      }
+    }
+  }
+  let source_of = __alloc_i32(queue.len()).map((v: i32): i32 => -1);
+  let score_of = __alloc_i32(queue.len());
+  let r = Renames { store: s, blobs: Map { } };
+  if (srcs.len() > 0 && dsts.len() > 0) {
+    // Exact copies: the same blob, a source not used yet first.
+    for d in dsts {
+      let dst = queue[d];
+      let best = -1;
+      let best_score = -1;
+      for k in srcs {
+        let src = queue[k];
+        let modes_ok = is_regular(src.old_mode) && is_regular(dst.new_mode) || src.old_mode == dst.new_mode;
+        if (best_score < 2 && src.old_hash == dst.new_hash && modes_ok) {
+          let sc = (if (used[k] == 0) { 1 } else { 0 }) + (if (basename_same(src.path, dst.path)) { 1 } else { 0 });
+          if (sc > best_score) {
+            best = k;
+            best_score = sc;
+          }
+        }
+      }
+      if (best >= 0) {
+        source_of = source_of.with(d, best);
+        score_of = score_of.with(d, MAX_SCORE);
+        used = used.with(best, used[best] + 1);
+      }
+    }
+    let left = dsts.filter((d: i32): boolean => source_of[d] < 0);
+    if (left.len() > 0 && left.len() as i64 * (srcs.len() as i64) <= RENAME_LIMIT) {
+      let all: Candidate[] = [];
+      for d in left {
+        let best: Candidate[] = [Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }];
+        for k in srcs {
+          let (r2, sc) = similarity(r, queue[k], queue[d], min_score);
+          r = r2;
+          let c = Candidate { dst: d, src: k, score: sc, name: if (basename_same(queue[k].path, queue[d].path)) { 1 } else { 0 } };
+          let worst = 0;
+          for i in 1..4 {
+            if (candidate_cmp(best[i], best[worst]) > 0) {
+              worst = i;
+            }
+          }
+          if (candidate_cmp(best[worst], c) > 0) {
+            best = best.with(worst, c);
+          }
+        }
+        all = all.concat(best);
+      }
+      let places: i32[] = [];
+      for i in 0..all.len() {
+        places = places.append(i);
+      }
+      let order = cmp.sort_by(places, (a: i32, b: i32): i32 => if (candidate_cmp(all[a], all[b]) != 0) { candidate_cmp(all[a], all[b]) } else { a - b });
+      // The first pass takes the sources that no pair uses, the second
+      // pass any source.
+      for pass in 0..2 {
+        for i in order {
+          let c = all[i];
+          if (c.dst < 0 || c.score < min_score) {
+            break;
+          }
+          if (source_of[c.dst] < 0 && (pass == 1 || used[c.src] == 0)) {
+            source_of = source_of.with(c.dst, c.src);
+            score_of = score_of.with(c.dst, c.score);
+            used = used.with(c.src, used[c.src] + 1);
+          }
+        }
+      }
+    }
+  }
+  // The status of a pair comes after the pairs: each use of a source
+  // but the last is a copy (`diff_resolve_rename_copy` of git).
+  let left_uses = used;
+  let out: Change[] = [];
+  for i in 0..queue.len() {
+    let c = queue[i];
+    if (c.status == b'A' && source_of[i] >= 0) {
+      let k = source_of[i];
+      let src = queue[k];
+      left_uses = left_uses.with(k, left_uses[k] - 1);
+      out = out.append(Change { ...c, status: if (left_uses[k] > 0) { b'C' } else { b'R' }, old_path: src.path, old_mode: src.old_mode, old_hash: src.old_hash, score: score_of[i] });
+    } else if (c.status != b'=' && !(c.status == b'D' && used[i] != 0)) {
+      out = out.append(c);
+    }
+  }
+  return (r.store, out);
+}
+
+function find_renames(s: store.Store, changes: Change[], basenames: boolean, min_score: i32): (store.Store, Change[]) {
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   for i in 0..changes.len() {
@@ -477,7 +679,7 @@ function find_renames(s: store.Store, changes: Change[], basenames: boolean): (s
       dst_names = dst_names.insert(base, if (dst_names.contains(base)) { -1 } else { d });
     }
   }
-  let min_basename = MIN_SCORE + (0.5 * ((MAX_SCORE - MIN_SCORE) as f64)) as i32;
+  let min_basename = min_score + (0.5 * ((MAX_SCORE - min_score) as f64)) as i32;
   for k in srcs {
     let base = basename(changes[k].path);
     if (basenames && dst_names.contains(base)) {
@@ -500,7 +702,7 @@ function find_renames(s: store.Store, changes: Change[], basenames: boolean): (s
     for d in left {
       let best: Candidate[] = [Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }];
       for k in srcs {
-        let (r2, sc) = similarity(r, changes[k], changes[d], MIN_SCORE);
+        let (r2, sc) = similarity(r, changes[k], changes[d], min_score);
         r = r2;
         let c = Candidate { dst: d, src: k, score: sc, name: if (basename_same(changes[k].path, changes[d].path)) { 1 } else { 0 } };
         let worst = 0;
@@ -524,7 +726,7 @@ function find_renames(s: store.Store, changes: Change[], basenames: boolean): (s
     for i in order {
       let c = all[i];
       if (!stop) {
-        if (c.dst < 0 || c.score < MIN_SCORE) {
+        if (c.dst < 0 || c.score < min_score) {
           stop = true;
         } else if (source_of[c.dst] < 0 && used[c.src] == 0) {
           source_of = source_of.with(c.dst, c.src);

@@ -1,0 +1,380 @@
+// The moved lines of a patch (`--color-moved`, diff.c of git): the added
+// and the removed lines that make the same block of lines in another
+// place of the diff of a commit.
+import "core/map";
+import "./objects";
+
+// The forms of `--color-moved`.
+pub const NO: i32 = 0;
+
+pub const PLAIN: i32 = 1;
+
+pub const BLOCKS: i32 = 2;
+
+pub const ZEBRA: i32 = 3;
+
+pub const DIMMED_ZEBRA: i32 = 4;
+
+// The modes of `--color-moved-ws`.
+pub const WS_IGNORE_AT_EOL: i32 = 1;
+
+pub const WS_IGNORE_CHANGE: i32 = 2;
+
+pub const WS_IGNORE_ALL: i32 = 4;
+
+pub const WS_ALLOW_INDENT: i32 = 8;
+
+// The kinds of a line of the diff.
+pub const OTHER: i32 = 0;
+
+pub const PLUS: i32 = 1;
+
+pub const MINUS: i32 = 2;
+
+// The marks of a line: moved, in the second color of the zebra, and dim.
+pub const MOVED: i32 = 1;
+
+pub const ALT: i32 = 2;
+
+pub const DIM: i32 = 4;
+
+// The fewest letters and digits that a moved block holds.
+const MIN_ALNUM: i32 = 20;
+
+// The width of the indent of a blank line, as `INDENT_BLANKLINE` of git.
+const BLANK: i32 = -2147483648;
+
+// The form of `--color-moved` that a value names, or -1: `parse_color_moved`
+// of git, where a boolean is no or the default.
+pub function parse(v: string): i32 {
+  let low = v.to_ascii_lower();
+  let number = v.len() > 0 && v.bytes().all((b: u8): boolean => b >= b'0' && b <= b'9');
+  if (low == "" || low == "false" || low == "no" || low == "off" || number && v.bytes().all((b: u8): boolean => b == b'0')) {
+    return NO;
+  }
+  if (low == "true" || low == "yes" || low == "on" || number || v == "default" || v == "zebra") {
+    return ZEBRA;
+  }
+  if (v == "plain") {
+    return PLAIN;
+  }
+  if (v == "blocks") {
+    return BLOCKS;
+  }
+  if (v == "dimmed-zebra" || v == "dimmed_zebra") {
+    return DIMMED_ZEBRA;
+  }
+  return -1;
+}
+
+// The modes of a value of `--color-moved-ws`, and the errors of git:
+// `parse_color_moved_ws`.
+pub function parse_ws(v: string): (i32, string[]) {
+  let mode = 0;
+  let errors: string[] = [];
+  for part in v.split(",") {
+    let w = part.trim();
+    if (w == "no") {
+      mode = 0;
+    } else if (w == "ignore-space-change") {
+      mode |= WS_IGNORE_CHANGE;
+    } else if (w == "ignore-space-at-eol") {
+      mode |= WS_IGNORE_AT_EOL;
+    } else if (w == "ignore-all-space") {
+      mode |= WS_IGNORE_ALL;
+    } else if (w == "allow-indentation-change") {
+      mode |= WS_ALLOW_INDENT;
+    } else {
+      errors = errors.append("error: unknown color-moved-ws mode '" + w + "', possible values are 'ignore-space-change', 'ignore-space-at-eol', 'ignore-all-space', 'allow-indentation-change'");
+    }
+  }
+  if ((mode & WS_ALLOW_INDENT) != 0 && (mode & (WS_IGNORE_CHANGE | WS_IGNORE_AT_EOL | WS_IGNORE_ALL)) != 0) {
+    errors = errors.append("error: color-moved-ws: allow-indentation-change cannot be combined with other whitespace modes");
+  }
+  return (mode, errors);
+}
+
+// The text that two lines share when they are the same for the modes of
+// white space, as `xdl_recmatch` of git compares them.
+function key_of(line: string, mode: i32): string {
+  if ((mode & WS_IGNORE_ALL) != 0) {
+    let out: u8[] = [];
+    for b in line.bytes() {
+      if (!objects.is_space(b)) {
+        out = out.append(b);
+      }
+    }
+    return unsafe { string_from_bytes_unchecked(out) };
+  }
+  let end = line.len();
+  if ((mode & (WS_IGNORE_CHANGE | WS_IGNORE_AT_EOL)) != 0) {
+    while (end > 0 && objects.is_space(line[end - 1])) {
+      end -= 1;
+    }
+  }
+  if ((mode & WS_IGNORE_CHANGE) == 0) {
+    return objects.part(line, 0, end);
+  }
+  let out: u8[] = [];
+  let i = 0;
+  while (i < end) {
+    if (objects.is_space(line[i])) {
+      while (i < end && objects.is_space(line[i])) {
+        i += 1;
+      }
+      out = out.append(b' ');
+    } else {
+      out = out.append(line[i]);
+      i += 1;
+    }
+  }
+  return unsafe { string_from_bytes_unchecked(out) };
+}
+
+// The visual width of the indent of `line` and the end of the indent, or a
+// width of BLANK for a blank line: `fill_es_indent_data` of git.
+function indent_of(line: string, tab_width: i32): (i32, i32) {
+  let len = line.len();
+  let off = 0;
+  while (off < len && (line[off] == 12 || line[off] == 11 || off < len - 1 && line[off] == b'\r')) {
+    off += 1;
+  }
+  let width = 0;
+  while (off < len) {
+    if (line[off] == b' ') {
+      width += 1;
+      off += 1;
+    } else if (line[off] == b'\t') {
+      width += tab_width - width % tab_width;
+      off += 1;
+      while (off < len && line[off] == b'\t') {
+        width += tab_width;
+        off += 1;
+      }
+    } else {
+      break;
+    }
+  }
+  let i = off;
+  while (i < len && objects.is_space(line[i])) {
+    i += 1;
+  }
+  if (i == len) {
+    return (BLANK, len);
+  }
+  return (width, off);
+}
+
+// The lines of the diff of a commit for the search of moved blocks, and
+// what the search knows of each.
+struct Lines { kinds: i32[], texts: string[], ids: i32[], next_line: i32[], next_match: i32[], adds: i32[], dels: i32[], widths: i32[] }
+
+function lines_of(kinds: i32[], texts: string[], tab_widths: i32[], mode: i32): Lines {
+  let n = kinds.len();
+  let ids = __alloc_i32(n).map((v: i32): i32 => -1);
+  let next_line = __alloc_i32(n).map((v: i32): i32 => -1);
+  let next_match = __alloc_i32(n).map((v: i32): i32 => -1);
+  let widths = __alloc_i32(n);
+  let interned: Map[string, i32] = Map { };
+  let adds: i32[] = [];
+  let dels: i32[] = [];
+  let prev = -1;
+  for k in 0..n {
+    if (kinds[k] == OTHER) {
+      prev = -1;
+      continue;
+    }
+    let key = texts[k];
+    if ((mode & WS_ALLOW_INDENT) != 0) {
+      let (w, off) = indent_of(texts[k], tab_widths[k]);
+      widths = widths.with(k, w);
+      key = objects.part(key, off, key.len());
+    } else {
+      key = key_of(key, mode);
+    }
+    let id = interned.get_or(key, -1);
+    if (id < 0) {
+      id = adds.len();
+      interned = interned.insert(key, id);
+      adds = adds.append(-1);
+      dels = dels.append(-1);
+    }
+    ids = ids.with(k, id);
+    if (prev >= 0 && kinds[prev] == kinds[k]) {
+      next_line = next_line.with(prev, k);
+    }
+    prev = k;
+    if (kinds[k] == PLUS) {
+      next_match = next_match.with(k, adds[id]);
+      adds = adds.with(id, k);
+    } else {
+      next_match = next_match.with(k, dels[id]);
+      dels = dels.with(id, k);
+    }
+  }
+  return Lines { kinds: kinds, texts: texts, ids: ids, next_line: next_line, next_match: next_match, adds: adds, dels: dels, widths: widths };
+}
+
+// The marks with the block of `length` lines before line `n` unmarked when
+// it holds fewer than MIN_ALNUM letters and digits, and true when the
+// block stays: `adjust_last_block` of git.
+function adjust_last(flags_in: i32[], l: Lines, n: i32, length: i32, form: i32): (i32[], boolean) {
+  if (form == PLAIN) {
+    return (flags_in, length > 0);
+  }
+  let count = 0;
+  for i in 1..length + 1 {
+    for b in l.texts[n - i].bytes() {
+      if (b >= b'0' && b <= b'9' || b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z') {
+        count += 1;
+        if (count >= MIN_ALNUM) {
+          return (flags_in, true);
+        }
+      }
+    }
+  }
+  let flags = flags_in;
+  for i in 1..length + 1 {
+    flags = flags.with(n - i, flags[n - i] & ~MOVED);
+  }
+  return (flags, false);
+}
+
+// The difference of the indents of a block: that of its lines, or BLANK
+// while its lines are blank.
+function delta_of(l: Lines, a: i32, b: i32): i32 {
+  if (l.widths[a] == BLANK && l.widths[b] == BLANK) {
+    return BLANK;
+  }
+  return l.widths[a] - l.widths[b];
+}
+
+// The blocks that go on with the line `k`, with the difference of their
+// indents: `pmb_advance_or_null` of git.
+function advance(l: Lines, blocks: i32[], deltas: i32[], k: i32, mode: i32): (i32[], i32[]) {
+  let out: i32[] = [];
+  let out_deltas: i32[] = [];
+  for i in 0..blocks.len() {
+    let cur = l.next_line[blocks[i]];
+    if (cur < 0 || l.ids[cur] != l.ids[k]) {
+      continue;
+    }
+    let delta = deltas[i];
+    if ((mode & WS_ALLOW_INDENT) != 0 && l.widths[cur] != BLANK) {
+      let d = l.widths[k] - l.widths[cur];
+      if (delta == BLANK) {
+        delta = d;
+      }
+      if (d != delta) {
+        continue;
+      }
+    }
+    out = out.append(cur);
+    out_deltas = out_deltas.append(delta);
+  }
+  return (out, out_deltas);
+}
+
+// The marks of each line: `mark_color_as_moved` of git, and
+// `dim_moved_lines` for the dimmed zebra. `tab_widths` holds the width of
+// a tab for each line, for `allow-indentation-change`.
+pub function mark(kinds: i32[], texts: string[], tab_widths: i32[], form: i32, mode: i32): i32[] {
+  let l = lines_of(kinds, texts, tab_widths, mode);
+  let n = kinds.len();
+  let flags = __alloc_i32(n);
+  let blocks: i32[] = [];
+  let deltas: i32[] = [];
+  let flipped = 0;
+  let length = 0;
+  let moved_kind = -1;
+  let k = 0;
+  while (k < n) {
+    let found = -1;
+    if (kinds[k] == PLUS) {
+      found = l.dels[l.ids[k]];
+    } else if (kinds[k] == MINUS) {
+      found = l.adds[l.ids[k]];
+    } else {
+      flipped = 0;
+    }
+    if (blocks.len() > 0 && (found < 0 || kinds[k] != moved_kind)) {
+      let (f1, kept) = adjust_last(flags, l, k, length, form);
+      flags = f1;
+      if (!kept && length > 1) {
+        found = -1;
+        k -= length;
+      }
+      blocks = [];
+      deltas = [];
+      length = 0;
+      flipped = 0;
+    }
+    if (found < 0) {
+      moved_kind = -1;
+      k += 1;
+      continue;
+    }
+    if (form == PLAIN) {
+      flags = flags.with(k, flags[k] | MOVED);
+      k += 1;
+      continue;
+    }
+    let (b1, d1) = advance(l, blocks, deltas, k, mode);
+    blocks = b1;
+    deltas = d1;
+    if (blocks.len() == 0) {
+      let (f2, contiguous) = adjust_last(flags, l, k, length, form);
+      flags = f2;
+      if (!contiguous && length > 1) {
+        k -= length;
+      } else {
+        let m = found;
+        while (m >= 0) {
+          blocks = blocks.append(m);
+          deltas = deltas.append(if ((mode & WS_ALLOW_INDENT) != 0) { delta_of(l, k, m) } else { 0 });
+          m = l.next_match[m];
+        }
+      }
+      flipped = if (contiguous && blocks.len() > 0 && moved_kind == kinds[k]) { (flipped + 1) % 2 } else { 0 };
+      moved_kind = if (blocks.len() > 0) { kinds[k] } else { -1 };
+      length = 0;
+    }
+    if (blocks.len() > 0) {
+      length += 1;
+      let f = flags[k] | MOVED | (if (flipped == 1 && form != BLOCKS) { ALT } else { 0 });
+      flags = flags.with(k, f);
+    }
+    k += 1;
+  }
+  let (f3, _) = adjust_last(flags, l, n, length, form);
+  flags = f3;
+  if (form == DIMMED_ZEBRA) {
+    flags = dimmed(kinds, flags);
+  }
+  return flags;
+}
+
+// The marks with DIM on the moved lines inside a block, and on the moved
+// lines at an edge that is not between two blocks: `dim_moved_lines`.
+function dimmed(kinds: i32[], flags_in: i32[]): i32[] {
+  let flags = flags_in;
+  let zebra = MOVED | ALT;
+  for k in 0..kinds.len() {
+    if (kinds[k] == OTHER || (flags[k] & MOVED) == 0) {
+      continue;
+    }
+    let prev = if (k > 0 && kinds[k - 1] != OTHER) { k - 1 } else { -1 };
+    let next = if (k + 1 < kinds.len() && kinds[k + 1] != OTHER) { k + 1 } else { -1 };
+    let inside = prev >= 0 && (flags[prev] & zebra) == (flags[k] & zebra) && next >= 0 && (flags[next] & zebra) == (flags[k] & zebra);
+    if (!inside) {
+      if (prev >= 0 && (flags[prev] & MOVED) != 0 && (flags[prev] & ALT) != (flags[k] & ALT)) {
+        continue;
+      }
+      if (next >= 0 && (flags[next] & MOVED) != 0 && (flags[next] & ALT) != (flags[k] & ALT)) {
+        continue;
+      }
+    }
+    flags = flags.with(k, flags[k] | DIM);
+  }
+  return flags;
+}

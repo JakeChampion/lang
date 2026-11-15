@@ -100,8 +100,6 @@ func gitInit(t *testing.T, oracle gitTool, dir string, run gitRun) {
 
 // gitFixture makes a repository with one commit, a tree in a tree, a path
 // that git quotes, a branch, a light tag and a tag object. Each object is
-// gitFixture makes a repository with one commit, a tree in a tree, a path
-// that git quotes, a branch, a light tag and a tag object. Each object is
 // loose, and its name is of the hash of run. It gives the names of the
 // commit, of its tree and of one blob.
 func gitFixture(t *testing.T, oracle gitTool, dir string, run gitRun) (commit, tree, blob string) {

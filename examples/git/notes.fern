@@ -1,0 +1,144 @@
+// The notes of commits (notes.c of git): the trees of `refs/notes/`, whose
+// paths are the names of the objects, with fan-out directories of two
+// digits, and the text that `log` shows for a note.
+import "std/array";
+import "std/string";
+import "core/map";
+import "../../coreutils/lib/fnmatch";
+import "./log";
+import "./objects";
+import "./refs";
+import "./store";
+import "./treediff";
+
+// The notes of one ref: the ref, and the blob of the note of each object.
+pub struct Tree { name: string, blobs: Map[string, string] }
+
+// The default ref of the notes: `GIT_NOTES_REF`, `core.notesRef`, or
+// `refs/notes/commits` (`default_notes_ref` of git).
+pub function default_ref(r: refs.Repo): string {
+  if let Some(v) = env("GIT_NOTES_REF") {
+    return v;
+  }
+  return r.config.get("core.notesref").unwrap_or("refs/notes/commits");
+}
+
+// The ref of the notes that `--notes=NAME` names: `expand_notes_ref`.
+pub function expand(name: string): string {
+  if (name.starts_with("refs/notes/")) {
+    return name;
+  }
+  if (name.starts_with("notes/")) {
+    return "refs/" + name;
+  }
+  return "refs/notes/" + name;
+}
+
+function has_glob(text: string): boolean {
+  return text.contains("*") || text.contains("?") || text.contains("[") || text.contains("\\");
+}
+
+// Adds the refs that `glob` names to `list`, each one time, and gives the
+// warning of git for a ref that does not exist:
+// `string_list_add_refs_by_glob`.
+pub function add_refs(r: refs.Repo, s: store.Store, list: string[], glob: string): (string[], string[]) {
+  let out = list;
+  let warnings: string[] = [];
+  if (has_glob(glob)) {
+    for e in refs.all_refs(r) {
+      if (fnmatch.fnmatch(glob, e.name) && !out.contains(e.name)) {
+        out = out.append(e.name);
+      }
+    }
+    return (out, warnings);
+  }
+  if (refs.resolve_ref(r, glob).hash.len() == 0) {
+    warnings = warnings.append("warning: notes ref " + glob + " is invalid");
+  }
+  if (!out.contains(glob)) {
+    out = out.append(glob);
+  }
+  return (out, warnings);
+}
+
+// Adds the notes of the tree `hash`, whose paths start with `prefix`.
+function add_tree(s_in: store.Store, blobs_in: Map[string, string], hash: string, prefix: string, width: i32): (store.Store, Map[string, string]) {
+  let (s, t) = treediff.entries_of(s_in, hash);
+  let out = s;
+  let blobs = blobs_in;
+  for k in 0..t.count() {
+    let name = prefix + unsafe { string_from_bytes_unchecked(t.entry_name(k)) };
+    if (t.is_tree(k)) {
+      if (name.len() < 2 * width) {
+        let (s2, b2) = add_tree(out, blobs, t.hash_hex(k), name, width);
+        out = s2;
+        blobs = b2;
+      }
+    } else if (objects.is_name(width, name.to_ascii_lower())) {
+      blobs = blobs.insert(name.to_ascii_lower(), t.hash_hex(k));
+    }
+  }
+  return (out, blobs);
+}
+
+// The notes of the ref `name`, or none when the ref does not exist.
+pub function load(r: refs.Repo, s_in: store.Store, name: string): (store.Store, Tree) {
+  let empty = Tree { name: name, blobs: Map { } };
+  let hash = refs.resolve_ref(r, name).hash;
+  if (hash.len() == 0) {
+    return (s_in, empty);
+  }
+  let got = store.read(s_in, hash);
+  let s = got.store;
+  let Ok(o) = got.object else {
+    return (s, empty);
+  };
+  let tree = if (o.kind == "commit") { log.commit_of(hash, o.body).tree } else if (o.kind == "tree") { hash } else { "" };
+  if (tree.len() == 0) {
+    return (s, empty);
+  }
+  let (s2, blobs) = add_tree(s, Map { }, tree, "", r.width);
+  return (s2, Tree { name: name, blobs: blobs });
+}
+
+// The notes of the object `hash` in each tree, as `format_note` of git
+// gives them: with `raw`, the text of each note; otherwise a header
+// `Notes:` or `Notes (NAME):` and the lines of each note after four
+// spaces, all after a line end.
+pub function text_of(s_in: store.Store, trees: Tree[], hash: string, raw: boolean): (store.Store, string) {
+  let s = s_in;
+  let out = "";
+  for t in trees {
+    let blob = t.blobs.get_or(hash, "");
+    if (blob.len() == 0) {
+      continue;
+    }
+    let got = store.read(s, blob);
+    s = got.store;
+    let Ok(o) = got.object else {
+      continue;
+    };
+    if (o.kind != "blob") {
+      continue;
+    }
+    let msg = o.body;
+    let len = if (msg.len() > 0 && msg[msg.len() - 1] == b'\n') { msg.len() - 1 } else { msg.len() };
+    if (!raw) {
+      if (t.name == "refs/notes/commits") {
+        out += "\nNotes:\n";
+      } else {
+        let short = if (t.name.starts_with("refs/")) { objects.part(t.name, 5, t.name.len()) } else { t.name };
+        short = if (short.starts_with("notes/")) { objects.part(short, 6, short.len()) } else { short };
+        out += "\nNotes (" + short + "):\n";
+      }
+    }
+    let at = 0;
+    while (at < len) {
+      let nl = __memchr_bytes(msg, 10, at);
+      let end = if (nl < 0 || nl > len) { len } else { nl };
+      out += (if (raw) { "" } else { "    " }) + objects.part_bytes(msg, at, end) + "\n";
+      at = end + 1;
+    }
+  }
+  return (s, out);
+}
