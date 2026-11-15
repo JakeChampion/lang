@@ -3398,12 +3398,13 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
 struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }
 
 // A callee keeps a reference to an array argument only in its result or in
-// another argument. It keeps none when its result is made of scalars and each
-// other argument is made of scalars or is an array of scalars.
+// another argument, or in the process state for a builtin that
+// ssasem.keeps_argument names. It keeps none when its result is made of
+// scalars and each other argument is made of scalars or is an array of scalars.
 function keeps_no_loan(f: ssasem.Func, call: ssa.SInst, i: i32): boolean {
   let c = ssasem.find_contract_in(f.calls, call.str);
   let a = call.args[i];
-  if (c < 0 || a < 0 || !typeinfo.is_owned_array(f.values[a]) || !scalars_only(f.calls[c].result)) {
+  if (c < 0 || a < 0 || ssasem.keeps_argument(call.str) || !typeinfo.is_owned_array(f.values[a]) || !scalars_only(f.calls[c].result)) {
     return false;
   }
   for j in 0..call.args.len() {
