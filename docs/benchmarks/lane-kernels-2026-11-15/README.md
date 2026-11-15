@@ -22,6 +22,15 @@ The scalar count is from the compiler of main at 79104f89.
 | --- | --: | --: | --: | --: |
 | `hex_decode` | 32 MiB | 1,077,375,161 | 263,820,985 | 4.1 |
 
+`bench/base64_decode.fern` decodes the 128 KiB text of 96 KiB of bytes 256 times.
+The decoder reads 16 characters in one step and writes 12 bytes.
+A step that holds a pad or a byte outside the alphabet stops, and the scalar decoder goes on from that step.
+The scalar count is from the compiler of main at 79104f89.
+
+| Program | Characters decoded | Scalar | Lanes | Ratio |
+| --- | --: | --: | --: | --: |
+| `base64_decode` | 32 MiB | 1,700,509,514 | 551,372,106 | 3.1 |
+
 For each byte, the hex encoder runs 4.2 instructions in place of 29.3.
 The base64 encoder runs 7.4 in place of 24.7.
 

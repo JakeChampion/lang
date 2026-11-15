@@ -220,3 +220,7 @@ aarch64/base64_encode.ir	74873689
 x86_64/hex_decode.text	2927
 x86_64/hex_decode.ir	263820985
 aarch64/hex_decode.text	3101
+x86_64/base64_decode.text	3858
+x86_64/base64_decode.ir	551372106
+aarch64/base64_decode.text	3960
+aarch64/base64_decode.ir	355710617
