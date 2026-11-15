@@ -3,8 +3,8 @@ package coreutils
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -39,6 +39,8 @@ func findCases(t *testing.T) []invocation {
 	cases = append(cases, findLines(shared, findExecLines)...)
 	cases = append(cases, findLines(shared, findSyntaxLines)...)
 	cases = append(cases, findLines(shared, findStartLines)...)
+	cases = append(cases, findLines(shared, findDebugLines)...)
+	cases = append(cases, findMaskedCases(shared)...)
 	cases = append(cases, findInodeCases(shared)...)
 	cases = append(cases, findOkCases(shared)...)
 	cases = append(cases, findChangeCases()...)
@@ -119,7 +121,7 @@ var findDarwinDefects = map[string]string{
 // marks nothing.
 func TestFindDarwinDefectsNameCorpusLines(t *testing.T) {
 	all := map[string]bool{}
-	for _, lines := range [][]string{findTestLines, findPrintfLines, findTimeLines, findSymlinkLines, findExecLines, findSyntaxLines, findStartLines, findManyLines} {
+	for _, lines := range [][]string{findTestLines, findPrintfLines, findTimeLines, findSymlinkLines, findExecLines, findSyntaxLines, findStartLines, findDebugLines, findManyLines} {
 		for _, line := range lines {
 			all[line] = true
 		}
@@ -235,10 +237,17 @@ func findSharedTree(t *testing.T) string {
 		_ = os.Chown(filepath.Join(dir, "mid"), 0, 54322)
 		_ = syscall.Mknod(filepath.Join(dir, "cdev"), syscall.S_IFCHR|0o644, 1<<8|3)
 	}
+	fileWith(t, dir, "unsearchable/f", 3, 0o644)
 	if err := os.Chmod(filepath.Join(dir, "locked"), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "locked"), 0o755) })
+	if err := os.Chmod(filepath.Join(dir, "unsearchable"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Join(dir, "locked"), 0o755)
+		_ = os.Chmod(filepath.Join(dir, "unsearchable"), 0o755)
+	})
 	pinDirAtimes(t, dir, now.Add(time.Hour))
 	return dir
 }
@@ -877,6 +886,121 @@ var findStartLines = []string{
 	`./-dash`,
 }
 
+// findDebugLines exercise -D and -O. The optimiser of GNU find changes the
+// order of the tests, so the order of the stat calls and the errors of a
+// stat that fails show the order. unsearchable/f can be listed but not
+// examined, as the corpus runs unprivileged. The traces of -D search and
+// -D stat do not walk the top directory: it holds a name that is not
+// UTF-8, and the port reads the type of no entry there.
+var findDebugLines = []string{
+	`-D help`,
+	`-D help,tree -maxdepth 0`,
+	`-D tree,help -maxdepth 0`,
+	`-D '' -maxdepth 0`,
+	`-D , -maxdepth 0`,
+	`-D`,
+	`-D bogus -maxdepth 0`,
+	`-D stat,bogus,x -maxdepth 0`,
+	`-D ,bogus,stat -maxdepth 0`,
+	`-D stat -D search -maxdepth 0`,
+	`-Dstat -maxdepth 0`,
+	`-D tree -maxdepth 0`,
+	`-D tree`,
+	`-D tree -maxdepth 0 -daystart`,
+	`-D tree -name sub -o -size +1 , -print`,
+	`-D tree '(' -name a -o ! -name b -or -not -type f ')' -and -size 1 , -printf '%s\n' -o -exec true ';'`,
+	`-D tree -name x -o`,
+	`-D tree '(' -name x`,
+	`-D tree -name x ')'`,
+	`-D tree -o -name x`,
+	`-D tree '(' ')'`,
+	`-D tree -name x !`,
+	`-D tree ! ')'`,
+	`-D tree -print -a`,
+	`-D tree -name x '('`,
+	`-D tree -o -foo`,
+	`-o -foo`,
+	`-D tree -delete -prune`,
+	`-D tree -newer small -daystart -ctime +1000`,
+	`-D tree '(' -daystart ')'`,
+	`-D tree -name x -o -daystart -name y`,
+	`-D tree ! -daystart -name y`,
+	`-D tree -maxdepth 0 -printf 'x\101y\n' -printf '\t%p\\' -printf 'a\cb%s' -printf 'q\777z\0r'`,
+	`-D tree -maxdepth 0 -size +1k -newermt 2001-01-01 -fprintf /dev/null '%i%y%s'`,
+	`-D tree -maxdepth 0 -perm /000 -group root -user nobody -uid 100 -links 2 -inum 5 -gid -5`,
+	`-D tree -maxdepth 0 -type f,d,l -xtype p -iname 'A*' -ipath x -lname 'a?' -iregex 'a\.' -used 3`,
+	`-D tree -maxdepth 0 -nouser -nogroup -empty -readable -writable -executable -true -false -samefile small`,
+	`-D tree -maxdepth 0 -print0 -ls -fls /dev/null -fprint /dev/null -fprint0 /dev/null -prune -quit`,
+	`-D tree -maxdepth 0 -exec true '{}' + -execdir true '{}' + -ok true ';' -okdir true ';' -delete`,
+	`-D opt -size +1 -name a -type f -name 'b*' -print`,
+	`-O0 -D opt -size +1 -name a -type f -inum 3 -readable -fstype nosuchfs -regex x -true`,
+	`-O1 -D opt -size +1 -name a -type f -inum 3 -readable -fstype nosuchfs -regex x -true`,
+	`-O2 -D opt -size +1 -name a -type f -inum 3 -readable -fstype nosuchfs -regex x -true`,
+	`-O3 -D opt -size +1 -name a -type f -inum 3 -readable -fstype nosuchfs -regex x -true`,
+	`-O3 -D opt -maxdepth 0 -true -false -used 3 -name a -o -name 'b*' -o -name c`,
+	`-D opt -readable -a -size +1`,
+	`-D opt -print -a -name 'a*' -o -name b -o -size +1 , -name c , -empty`,
+	`-D opt '(' -size +1 -o -name b ')' -o -empty -o -readable`,
+	`-D opt -path './sub/*' -prune -a -prune , -writable -fstype nosuchfs -and -printf '%p %s\n' '(' -links 2 ')' -type l,f -or -mtime -1`,
+	`-D rates -name small -o -size +1 -print`,
+	`-D rates -name small -quit`,
+	`-O3 -D rates,opt -empty -o -readable -name '*' , ! -type d`,
+	`-D search sub -maxdepth 2`,
+	`-D search sub -depth -mindepth 1 -maxdepth 2`,
+	`-D search,stat sub -name deep -prune -o -size +0`,
+	`-D search,stat -L lsub lsmall dangling selfloop -maxdepth 1 -size +0`,
+	`-D search,stat -H . selfloop dangling lsub lsmall fifo -maxdepth 0 -size +0`,
+	`-D search,stat -L selfloop dangling lsub lsmall fifo -maxdepth 0 -size +0`,
+	`-D search nosuch small/ . -maxdepth 0`,
+	`-D search locked`,
+	`-D search -depth locked`,
+	`-D search,stat unsearchable`,
+	`-D stat sub -size +1`,
+	`-D stat sub -samefile small`,
+	`-D stat sub -newer small -anewer sub -newermm small`,
+	`-D stat -L sub/deep -newer dangling`,
+	`-D stat sub -inum 1 -printf '%i\n'`,
+	`-D stat sub lsmall dangling -xtype l`,
+	`-D stat sub -mindepth 1 -prune`,
+	`-D stat sub -depth -mindepth 1 -prune`,
+	`-D stat sub -lname '*' -o -ls`,
+	`unsearchable -size +0 -name x`,
+	`-O0 unsearchable -size +0 -name x`,
+	`unsearchable -size +0 -o -name f`,
+	`-O3 unsearchable -empty -o -type f`,
+	`unsearchable -empty , -name x`,
+	`unsearchable -prune -name x`,
+	`-depth unsearchable -prune -name x`,
+	`-D all sub -maxdepth 1 -name 's*'`,
+}
+
+// findMaskedCases print the process of a command or the time of the run,
+// which the mask writes as one word on both sides.
+func findMaskedCases(dir string) []invocation {
+	pid := regexp.MustCompile(`PID=[0-9]+`)
+	day := regexp.MustCompile(`(?m)^cur_day_start = .*$`)
+	when := regexp.MustCompile(`(?m)^(    type: |                 <  )([a-z]+ +[<>=]+  )?[0-9]+ .*$`)
+	mask := func(s string) string {
+		s = pid.ReplaceAllString(s, "PID=N")
+		s = day.ReplaceAllString(s, "cur_day_start = T")
+		return when.ReplaceAllString(s, "${1}T")
+	}
+	var cases []invocation
+	for _, line := range []string{
+		`-D exec sub -name a.c -exec echo hi '{}' ';' -exec echo b '{}' + -execdir echo c '{}' ';'`,
+		`-D exec sub -name a.c -exec sh -c 'kill -9 $$' ';' -o -name b.h -execdir echo '{}' +`,
+		`-D exec sub -name a.c -exec nosuchcmd ';' -exec nosuchcmd '{}' +`,
+		`-D exec,rates sub -name '*.c' -exec echo X '{}' + -o -name b.h -exec true ';'`,
+		`-D time -maxdepth 0`,
+		`-D time,tree -maxdepth 0 -mtime 1 -mtime -1 -mtime +3 -mmin 5 -atime 0.5 -daystart -ctime 0`,
+		`-D all sub -maxdepth 1 -name 'b*' -exec echo '{}' ';'`,
+	} {
+		cases = append(cases, invocation{name: "find " + line, args: shellWords(line), dir: dir, stderrMask: mask})
+	}
+	cases = append(cases, invocation{name: "find -D exec -ok", args: []string{"-D", "exec", "-name", "old", "-ok", "echo", "it's", "{}", ";"}, stdin: "y\n", dir: dir, stderrMask: mask})
+	return cases
+}
+
 var findManyLines = []string{
 	`many -maxdepth 1 -name 'f0000*'`,
 	`many -name 'f1004*'`,
@@ -985,21 +1109,4 @@ func TestFindHelpVersion(t *testing.T) {
 	requireHelp(t, "find", []string{"-help"}, 0)
 	requireVersion(t, "find", []string{"--version"}, 0)
 	requireVersion(t, "find", []string{"-version"}, 0)
-}
-
-// -D writes GNU find's own trace of its work. The port does not have it,
-// and says so instead of running without the trace.
-func TestFindDebugIsRefused(t *testing.T) {
-	cmd := exec.Command(fernBin(t, "find"), "-D", "stat", ".")
-	cmd.Dir = t.TempDir()
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	exit, ok := err.(*exec.ExitError)
-	if !ok || exit.ExitCode() != 1 {
-		t.Fatalf("find -D stat: want exit 1, got %v", err)
-	}
-	if len(out) != 0 || !strings.HasSuffix(stderr.String(), ": this port does not have the option '-D'\n") {
-		t.Fatalf("find -D stat: stdout %q, stderr %q", out, stderr.String())
-	}
 }

@@ -103,7 +103,7 @@ x86_64/struct_drop.ir	199020504
 x86_64/tokenize.text	1294
 x86_64/tokenize.ir	31710112
 x86_64/utf8_ingest_unchecked.text	8363
-x86_64/utf8_ingest_unchecked.ir	2113479
+x86_64/utf8_ingest_unchecked.ir	2138278
 x86_64/utf8_ingest_validated.text	9061
 x86_64/utf8_ingest_validated.ir	5122278
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -153,7 +153,7 @@ aarch64/map_string.text	9871
 aarch64/map_string.ir	49757676	2
 aarch64/ordmap_insert.text	6330
 aarch64/ordmap_insert.ir	87214511
-aarch64/pmap_insert.text	3736
+aarch64/pmap_insert.text	3775
 aarch64/pmap_insert.ir	61874108
 aarch64/pvec_with.text	3681
 aarch64/pvec_with.ir	53923954
@@ -186,17 +186,17 @@ aarch64/utf8_ingest_unchecked.ir	2615131
 aarch64/utf8_ingest_validated.text	9542
 aarch64/utf8_ingest_validated.ir	6128531
 x86_64/perceus_cfold.text	2125
-x86_64/perceus_cfold.ir	45609714
+x86_64/perceus_cfold.ir	43864514
 x86_64/perceus_deriv.text	2888
 x86_64/perceus_deriv.ir	64642318
 x86_64/perceus_nqueens.text	1661
-x86_64/perceus_nqueens.ir	73868052
+x86_64/perceus_nqueens.ir	72249652
 x86_64/perceus_rbtree.text	2860
 x86_64/perceus_rbtree.ir	26049411
 x86_64/perceus_rbtree_ck.text	3329
 x86_64/perceus_rbtree_ck.ir	36502101
-aarch64/perceus_cfold.text	2324
-aarch64/perceus_cfold.ir	54305826
+aarch64/perceus_cfold.text	2351
+aarch64/perceus_cfold.ir	51834626
 aarch64/perceus_deriv.text	3122
 aarch64/perceus_deriv.ir	76878334
 aarch64/perceus_nqueens.text	1891

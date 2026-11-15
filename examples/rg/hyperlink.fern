@@ -20,6 +20,16 @@ pub function none(): Format {
   return Format { parts: [], host: "", wsl: "" };
 }
 
+// The text of the format, as ripgrep writes it: each brace of a text
+// doubled.
+pub function (f: Format) text(): string {
+  let out = "";
+  for p in f.parts {
+    out += if (p.starts_with("=")) { p.drop(1).replace("{", "{{").replace("}", "}}") } else { p };
+  }
+  return out;
+}
+
 pub function (f: Format) is_empty(): boolean {
   return f.parts.len() == 0;
 }
