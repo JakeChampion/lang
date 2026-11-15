@@ -778,19 +778,6 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 	}
 }
 
-func imageBytes(f *goelf.File, vaddr uint64, n int) []byte {
-	for _, p := range f.Progs {
-		if p.Type == goelf.PT_LOAD && vaddr >= p.Vaddr && vaddr+uint64(n) <= p.Vaddr+p.Filesz {
-			b := make([]byte, n)
-			if _, err := p.ReadAt(b, int64(vaddr-p.Vaddr)); err != nil {
-				return nil
-			}
-			return b
-		}
-	}
-	return nil
-}
-
 // A literate module's line rows name document lines, not the tangled ones.
 func TestSelfHostDWARFLiterateLines(t *testing.T) {
 	cli := newStrictCLI(t)
