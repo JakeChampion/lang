@@ -23728,9 +23728,26 @@ function lu_binding_level(frames: LuFrame[], name: string): i32 {
   return -1;
 }
 
+// The name is the binding of a for-each, and no let declares it again. A
+// binding of a borrowed array is not fresh: lu_loose_tag gives its use the
+// tag of a read out of a borrowed structure.
+function lu_each_binding(fx: LuFn, site: LuSite, name: string): boolean {
+  if (util.has_str(fx.params, name) || lu_decl_count(fx, name) > 0) {
+    return false;
+  }
+  let l = lu_binding_level(site.frames, name);
+  if (l < 0) {
+    return false;
+  }
+  if let ast.StmtFor(fo) = site.frames[l].head {
+    return fo.var_name == name;
+  }
+  return false;
+}
+
 function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name = aid.name;
-  let elem = lu_elem_fresh(fx, site, name);
+  let elem = lu_elem_fresh(fx, site, name) || lu_each_binding(fx, site, name);
   if (!lu_is_local(fx, name) && !elem && !lu_owned_field_payload(fx, name)) {
     return false;
   }
@@ -25837,10 +25854,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         ri = ru_expr(fr.iter, moved, ctx);
       }
       let fctx = ow_bind_ctx(ctx, fr.var_name);
-      if (!takes && !util.contains(fr.var_name, ",")) {
+      let inner = for_body_scope(fr, ctx.scope);
+      // A loop over a borrowed array lends each element. An element that
+      // holds no handle is a copy, so the body can give it away.
+      if (!takes && !util.contains(fr.var_name, ",") && !ow_holds_no_handle(typeinfo.spelling(inner.lookup(fr.var_name)), ctx.decls)) {
         fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
       }
-      let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
+      let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: inner });
       return OwnWalk { moved: ld.moved, diags: util.append_diags(ri.diags, ld.diags) };
     },
     ast.StmtMatch(m) => {

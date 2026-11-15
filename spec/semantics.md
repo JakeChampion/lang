@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**156 of 159** claims are pinned by a conformance case. The remaining
+**157 of 160** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -231,6 +231,7 @@ of them.
 | `RH-36` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a fresh value or an `own` parameter is an owned name that moves once when its type can hold a handle, and a fresh local when it cannot | `payload_binding_is_a_local` |
 | `RH-37` | `docs/security/HANDLE-AUDIT.md` | A fresh local that an assignment gives a borrowed handle, and an alias of a borrowed parameter, cannot pass to an `own` parameter or to a consuming method (`E051`) | `diag_e051_fresh_local_reassigned_from_a_borrow` |
 | `RH-38` | `docs/security/HANDLE-AUDIT.md` | A local holder and a global callee with the same name keep separate identities in the ownership analysis | `field_holder_shadows_callee` |
+| `RH-39` | `docs/security/HANDLE-AUDIT.md` | A for-each binding of a borrowed array passes to an `own` parameter at its last use when its type cannot hold a handle, and the array keeps its elements | `own_for_element_of_borrowed_array` |
 | `RH-40` | `docs/security/HANDLE-AUDIT.md` | An empty None is fresh, so a match that consumes an owned source can retain its owned result as a field of an owned literal | `owned_match_results_rebuild_literal` |
 
 | `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through generic callbacks, function-valued fields, and nested fields of named locals. `checked_owned_nested_results` covers scalar copies before a field transfer | `checked_owned_results` |
