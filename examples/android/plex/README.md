@@ -56,7 +56,10 @@ Playback:
   video plays on: back 10 seconds, play, forward 30 seconds, and a bar that
   seeks as a finger drags along it, with a preview thumbnail of the time. A tap outside them hides them, and the play button pauses.
 
-Music plays with the controls on the screen.
+Music plays with the controls on the screen. It plays on while the app is
+away, with the media controls of Android in the notification panel and on
+the lock screen. A foreground service and a wake lock keep the stream at
+work while the screen is off. A video pauses when the app goes away.
 
 Gestures on the video:
 
@@ -150,7 +153,9 @@ window, which stretches it, and a tap there pauses.
 ```sh
 make build
 ./bin/fern -apk fern-plex.apk -apk-package dev.fern.plex -apk-label "Fern for Plex" \
-     -apk-min-sdk 30 -apk-permission INTERNET -apk-cleartext examples/android/plex/app.fern
+     -apk-min-sdk 30 -apk-cleartext \
+     -apk-permission INTERNET,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK,POST_NOTIFICATIONS,WAKE_LOCK \
+     examples/android/plex/app.fern
 adb install -r fern-plex.apk
 ```
 

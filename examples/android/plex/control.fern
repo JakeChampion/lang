@@ -11,6 +11,7 @@ import "std/android";
 import "std/android/draw";
 import "std/android/motion";
 import "std/android/player";
+import "std/android/session";
 import "std/android/text";
 import "std/android/ui/scene";
 import "std/log";
@@ -74,6 +75,12 @@ pub struct Device {
   // The volume of the music and its greatest value, and a new volume.
   volume: () => (i32, i32),
   set_volume: (i32) => void,
+  // Tells the media controls of Android the track that plays: its title,
+  // artist and album, its length, whether it plays, and where. The system
+  // then keeps the app at work while its window is away.
+  now_playing: (string, string, string, i64, boolean, i64) => void,
+  // Ends the media controls, and lets the app stop with its window.
+  media_end: () => void,
   random: () => i32,
   // The MIME types that the decoders of the phone take.
   decoders: string[],
@@ -1565,7 +1572,9 @@ function resume(own s: App): App {
     s.dev.request_frame();
   }
   let at = s.dev.mono_ms();
-  return timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at }, dirty: true }, "playing");
+  let t = timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at }, dirty: true }, "playing");
+  announce(t);
+  return t;
 }
 
 // Pauses and takes the video off the window, so the overlay can show.
@@ -1581,7 +1590,9 @@ function pause_play(own s: App): App {
   log.info("plex: paused at " + pos.to_string());
   let at = s.dev.mono_ms();
   let t = App { ...s, play: Play { ...p, paused: true, video: false, overlay: true, position: pos, reported_at: at }, dirty: true };
-  return timeline(t, "paused");
+  let u = timeline(t, "paused");
+  announce(u);
+  return u;
 }
 
 function seek_by(own s: App, delta: i64): App {
@@ -1599,7 +1610,55 @@ function seek_by(own s: App, delta: i64): App {
 // at the seek.
 function seek_to(own s: App, ms: i64): App {
   s.dev.seek(ms);
-  return App { ...s, play: Play { ...s.play, position: ms }, dirty: true };
+  let t = App { ...s, play: Play { ...s.play, position: ms }, dirty: true };
+  announce(t);
+  return t;
+}
+
+// Tells the media controls of Android the state of a track.
+function announce(s: App): void {
+  let p = s.play;
+  if (p.active && audio(p)) {
+    s.dev.now_playing(p.item.title, p.item.grandparent, p.item.parent, p.duration, !p.paused, p.position);
+  }
+}
+
+// A command of the media controls of Android: from the notification, the
+// lock screen, a headset or a watch.
+function media_command(own s: App, c: session.Command): App {
+  let p = s.play;
+  if (!p.active) {
+    return s;
+  }
+  match (c) {
+    session.Play => {
+      if (p.paused) {
+        return resume(s);
+      }
+      return s;
+    },
+    session.Hold => {
+      if (!p.paused && p.prepared) {
+        return pause_play(s);
+      }
+      return s;
+    },
+    session.Next => {
+      if (p.queue.len() > 0) {
+        return play_next(s);
+      }
+      return s;
+    },
+    session.Previous => {
+      return seek_to(s, 0i64);
+    },
+    session.End => {
+      return stop_play(s, false);
+    },
+    session.SeekTo(ms) => {
+      return seek_to(s, ms);
+    }
+  }
 }
 
 // Ends the playback and goes back. A watched item is marked so.
@@ -1612,6 +1671,9 @@ function stop_play(own s: App, completed: boolean): App {
   s.dev.stop();
   s.dev.keep_screen_on(false);
   s.dev.immersive(false);
+  if (audio(p)) {
+    s.dev.media_end();
+  }
   if (p.light >= 0) {
     s.dev.brightness(-1.0f32);
   }
@@ -2577,6 +2639,9 @@ function event(own s: App, e: android.Event): App {
   if let Some(c) = player.event(e) {
     return player_event(s, c);
   }
+  if let Some(c) = session.event(e) {
+    return media_command(s, c);
+  }
   match (e) {
     android.Start => {
       return App { ...s, shown: true, dirty: true };
@@ -2585,7 +2650,8 @@ function event(own s: App, e: android.Event): App {
       return App { ...s, shown: false };
     },
     android.Pause => {
-      if (s.play.active && s.play.prepared && !s.play.paused) {
+      // Music plays on while the app is away. A video pauses.
+      if (s.play.active && s.play.prepared && !s.play.paused && !audio(s.play)) {
         return pause_play(s);
       }
       return s;
