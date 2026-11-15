@@ -1442,6 +1442,27 @@ func litFieldsOwned(info *Info, sl *ast.StructLit, owned func(ast.Expr) bool) bo
 	return info.StructLitOwned(sl, func(v ast.Expr) bool { return v == sl.Base || owned(v) })
 }
 
+// litOwned reports a struct literal that a local can take as owned, on the
+// terms of Info.StructLitOwned, as for a literal argument. The base is owned
+// when it is a source that named finds owned at its last use. A field value
+// is owned when owned says so, or when it is such a literal itself.
+func litOwned(info *Info, scalar map[ast.Expr]bool, sl *ast.StructLit, named func(*ast.Ident) bool, owned func(ast.Expr) bool) bool {
+	baseOwned := func() bool {
+		src, ok := spreadSource(info, scalar, sl)
+		return sl.Base == nil || ok && named(src)
+	}
+	if info == nil || info.StructLitOwned == nil {
+		return baseOwned()
+	}
+	return info.StructLitOwned(sl, func(v ast.Expr) bool {
+		if v == sl.Base {
+			return baseOwned()
+		}
+		inner, isLit := v.(*ast.StructLit)
+		return owned(v) || isLit && litOwned(info, scalar, inner, named, owned)
+	})
+}
+
 // tupleProjection reports an element read `t.0`. A struct field cannot have
 // a numeric name.
 func tupleProjection(fa *ast.FieldAccess) bool {
@@ -1615,9 +1636,8 @@ func freshLocalReplacement(info *Info, bf *bodyFrames, holder ast.Node, value as
 // admitted local is one. Another local is one when it is declared once
 // outside a loop and given only owned values after that. Its initializer is
 // an alias `let a = b` that takes an owned b at its last use, or a struct
-// literal. The literal sets only owned values or values that hold no handle,
-// and its base is such a b. An owned value is a fresh value, an unpack, an
-// owned name, or a self-update `T { ...a, f: v }`.
+// literal that litOwned accepts with such names. An owned value is a fresh
+// value, an unpack, an owned name, or a self-update `T { ...a, f: v }`.
 func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isParam, ownParam map[string]bool, declCount, occurrences map[string]int, order IdentOrder, admitted func(string) bool, unpack func(ast.Expr) bool, payloadOwned func(string) bool) map[string]bool {
 	looped := loopedDecls(body)
 	aliasOf := map[string]*ast.Ident{}
@@ -1629,16 +1649,10 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 			if declCount[x.Name] != 1 || looped[x.Name] {
 				break
 			}
-			src, ok := x.Init.(*ast.Ident)
-			sl, isLit := x.Init.(*ast.StructLit)
-			if isLit {
-				src, ok = spreadSource(info, scalar, sl)
-			}
-			if ok && order.IsLast(src) {
-				aliasOf[x.Name] = src
-			}
-			if isLit && (sl.Base == nil || aliasOf[x.Name] != nil) {
+			if sl, isLit := x.Init.(*ast.StructLit); isLit {
 				litOf[x.Name] = sl
+			} else if src, ok := x.Init.(*ast.Ident); ok && order.IsLast(src) {
+				aliasOf[x.Name] = src
 			}
 		case *ast.Assign:
 			if t, ok := x.Target.(*ast.Ident); ok {
@@ -1670,9 +1684,12 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 		}
 		return false
 	}
+	named := func(id *ast.Ident) bool {
+		return owned(id.Name) && order.IsLast(id)
+	}
 	fieldOwned := func(v ast.Expr) bool {
 		id, ok := v.(*ast.Ident)
-		return freshInit(info, v) || unpack(v) || ok && owned(id.Name) && order.IsLast(id)
+		return freshInit(info, v) || unpack(v) || ok && named(id)
 	}
 	for changed := true; changed; {
 		changed = false
@@ -1680,10 +1697,7 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 			if admitted(name) {
 				continue
 			}
-			keep := aliasOf[name] != nil && owned(aliasOf[name].Name) || aliasOf[name] == nil && litOf[name] != nil
-			if sl := litOf[name]; sl != nil {
-				keep = keep && litFieldsOwned(info, sl, fieldOwned)
-			}
+			keep := aliasOf[name] != nil && owned(aliasOf[name].Name) || litOf[name] != nil && litOwned(info, scalar, litOf[name], named, fieldOwned)
 			for _, v := range assigns[name] {
 				keep = keep && valueOwned(name, v)
 			}
@@ -1925,8 +1939,8 @@ func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.E
 // ownedAliases names the locals declared once, outside a loop, from an own
 // parameter or a payload that a match took, at its last use, and given only
 // owned values after that (stale names the locals given another value). A
-// struct literal takes its base and the names that it sets: it sets only
-// such names, fresh values, unpacks or values that hold no handle.
+// struct literal takes its base and the names that it sets. litOwned decides
+// it with such names, fresh values and unpacks as its owned parts.
 func ownedAliases(info *Info, scalar map[ast.Expr]bool, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool, stale map[string]bool, payloadOwned func(string) bool, unpack func(ast.Expr) bool) map[string]bool {
 	looped := loopedDecls(body)
 	sole := func(name string) bool {
@@ -1944,6 +1958,9 @@ func ownedAliases(info *Info, scalar map[ast.Expr]bool, body *ast.Block, ownPara
 	movedPayload := movedPayloads(body, ownParam, declCount, order, func(name string) bool {
 		return ownParam[name] && declCount[name] == 0 || payloadOwned(name) || freshLocal[name] && sole(name) || out[name]
 	})
+	named := func(id *ast.Ident) bool {
+		return ownedAtLastUse(id) || freshAtLastUse(id)
+	}
 	fieldOwned := func(v ast.Expr) bool {
 		return freshInit(info, v) || unpack(v) || ownedAtLastUse(v) || freshAtLastUse(v)
 	}
@@ -1953,16 +1970,13 @@ func ownedAliases(info *Info, scalar map[ast.Expr]bool, body *ast.Block, ownPara
 			if !sole(x.Name) {
 				break
 			}
-			source := x.Init
-			if sl, ok := source.(*ast.StructLit); ok && litFieldsOwned(info, sl, fieldOwned) {
-				if sl.Base == nil {
+			if sl, ok := x.Init.(*ast.StructLit); ok {
+				if litOwned(info, scalar, sl, named, fieldOwned) {
 					out[x.Name] = true
-					break
 				}
-				if base, ok := spreadSource(info, scalar, sl); ok {
-					source = base
-				}
+				break
 			}
+			source := x.Init
 			if ownedAtLastUse(source) || freshAtLastUse(source) {
 				out[x.Name] = true
 			} else if m, ok := source.(*ast.MatchExpr); ok && ownedMatchValue(info, m, ownedAtLastUse, freshAtLastUse) {

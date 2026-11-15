@@ -21387,7 +21387,7 @@ struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns:
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
-struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, flow: LuFlow }
+struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params: string[], param_types: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, flow: LuFlow }
 
 // A match or an if outside every loop, with the occurrences in each arm. One
 // run takes one arm, so an occurrence in one arm is not after one in another.
@@ -22497,35 +22497,57 @@ function lu_owned_alias_in(fx: LuFn, name: string, seen: string[]): boolean {
     return lu_own_param(fx, src.name) && lu_is_last(fx, src);
   }
   if let ast.ExprStructLit(sl) = init {
-    return lu_owned_lit(fx, init, sl);
+    return lu_owned_lit(fx, init, sl, false, seen);
   }
   return false;
 }
 
-// A struct literal takes its base and the names that it sets. It owns them
-// when each is an own parameter, a payload that a match took or a fresh
-// local, at its last use. Each other field value that can hold a handle must
-// be fresh or an unpack.
-function lu_owned_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit): boolean {
+// A struct literal that a local takes as owned, on the terms of a literal
+// argument. Each field value that can hold a handle is an owned part. The
+// base is an owned name at its last use, or each field that the literal
+// keeps from the base holds no handle. With admit, an owned name is a name
+// that lu_owned_name finds. Without it, an owned name is an own parameter,
+// a payload that a match took or a fresh local.
+function lu_owned_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit, admit: boolean, seen: string[]): boolean {
   for v in lu_handle_values(fx, sl) {
-    if (!lu_fresh_value(fx, v) && !lu_unpack_expr(fx, v) && !lu_owned_source(fx, v)) {
+    if (!lu_owned_part(fx, v, admit, seen)) {
       return false;
     }
   }
   if (!sl.has_base) {
     return true;
   }
-  let Some(src) = lu_spread_source(fx, init) else {
-    return false;
-  };
-  return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
+  if let Some(src) = lu_spread_source(fx, init) {
+    if (lu_part_name(fx, src, admit, seen)) {
+      return true;
+    }
+  }
+  return ow_kept_fields_no_handle(fx.lenders.decls, sl, lu_known_type(fx, sl.base));
 }
 
-function lu_owned_source(fx: LuFn, e: ast.Expr): boolean {
-  let ast.ExprIdent(src) = e else {
+// A field value of a literal that lu_owned_lit accepts: a fresh value, an
+// unpack, an owned name at its last use, or such a literal itself.
+function lu_owned_part(fx: LuFn, v: ast.Expr, admit: boolean, seen: string[]): boolean {
+  if (lu_fresh_value(fx, v) || lu_unpack_expr(fx, v)) {
+    return true;
+  }
+  if let ast.ExprStructLit(sl) = v {
+    return lu_owned_lit(fx, v, sl, admit, seen);
+  }
+  let ast.ExprIdent(src) = v else {
     return false;
   };
-  return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
+  return lu_part_name(fx, src, admit, seen);
+}
+
+function lu_part_name(fx: LuFn, src: ast.ExprIdent, admit: boolean, seen: string[]): boolean {
+  if (!lu_is_last(fx, src)) {
+    return false;
+  }
+  if (admit) {
+    return lu_owned_name(fx, src.name, seen);
+  }
+  return lu_unpack_source_owned(fx, src.name);
 }
 
 // A named source at its last use transfers its payload to every yielding arm.
@@ -22879,34 +22901,9 @@ function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
     return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
   }
   if let ast.ExprStructLit(sl) = init {
-    return lu_admitted_lit(fx, init, sl, seen);
+    return lu_owned_lit(fx, init, sl, true, seen);
   }
   return false;
-}
-
-// A struct literal takes its base and the names that it sets. Each must be
-// an owned name at its last use. Each other field value that can hold a
-// handle must be fresh or an unpack.
-function lu_admitted_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit, seen: string[]): boolean {
-  for v in lu_handle_values(fx, sl) {
-    if (!lu_fresh_value(fx, v) && !lu_unpack_expr(fx, v) && !lu_owned_last(fx, v, seen)) {
-      return false;
-    }
-  }
-  if (!sl.has_base) {
-    return true;
-  }
-  let Some(src) = lu_spread_source(fx, init) else {
-    return false;
-  };
-  return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
-}
-
-function lu_owned_last(fx: LuFn, e: ast.Expr, seen: string[]): boolean {
-  let ast.ExprIdent(src) = e else {
-    return false;
-  };
-  return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
 }
 
 // The base of a struct literal `T { ...src, f: v }`. The literal takes the
@@ -25235,6 +25232,33 @@ function lu_param_names(fn: parser.FuncDecl): string[] {
   return out;
 }
 
+// The declared types of the names that lu_param_names gives, in its order.
+function lu_param_types(fn: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  for p in fn.params {
+    out = out.append(p.type_name.trim());
+  }
+  if (fn.receiver_name.len() > 0) {
+    out = out.append(fn.receiver_type.trim());
+  }
+  return out;
+}
+
+// The type of e when it is known: the declared type of a parameter, or the
+// type that the expression holds.
+function lu_known_type(fx: LuFn, e: ast.Expr): string {
+  if let ast.ExprIdent(id) = e {
+    if (lu_decl_count(fx, id.name) == 0) {
+      for i in 0..fx.params.len() {
+        if (fx.params[i] == id.name && i < fx.param_types.len()) {
+          return fx.param_types[i];
+        }
+      }
+    }
+  }
+  return ast.expr_ty(e);
+}
+
 function lu_own_names(fn: parser.FuncDecl): string[] {
   let out = ow_own_param_names(fn);
   if (fn.receiver_name.len() > 0 && fn.receiver_own) {
@@ -25382,7 +25406,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
   facts = lu_ended_callback_loans(fn.body, facts);
-  let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
+  let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), param_types: lu_param_types(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
@@ -27482,6 +27506,35 @@ function ow_named_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): b
     return false;
   }
   return ow_decl_holds_no_handle(name, dx, seen.append(name));
+}
+
+// Each field of the struct literal `sl` that it does not set holds no
+// handle. The type arguments of `ty`, the type of its base, apply. A struct
+// with no declaration can hold one.
+function ow_kept_fields_no_handle(dx: OwnDecls, sl: ast.ExprStructLit, ty: string): boolean {
+  let args: string[] = [];
+  let open = util.index_of_sub(ty, "[");
+  if (open > 0 && ty.ends_with("]")) {
+    args = parser.split_top_commas(slice_unchecked(ty, open + 1, ty.len() - 1).to_owned());
+  }
+  let i = dx.snames.chain(sl.type_name);
+  while (i >= 0) {
+    let sd = dx.structs[i];
+    if (sd.name == sl.type_name && sd.enum_owner == "") {
+      for f in sd.fields {
+        let ft = f.type_name.trim();
+        if (args.len() == sd.type_params.len()) {
+          ft = parser.subst_ty(ft, sd.type_params, args);
+        }
+        if (!util.has_str(sl.field_names, f.name) && !ow_holds_no_handle(ft, dx)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    i = dx.snames.next[i];
+  }
+  return false;
 }
 
 // The declared type of a field of the struct `name`, or "".

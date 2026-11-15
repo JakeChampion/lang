@@ -1,0 +1,64 @@
+// A literal local goes to an own parameter, with the verdict that the same
+// literal gets as the argument. A field value is a literal itself, or the
+// base is borrowed and keeps no handle.
+struct H { w: Writer, alt: Writer, n: i32, name: string }
+struct K { h: H, n: i32 }
+struct P { w: Writer, n: i32, name: string }
+
+function takek(own k: K): i32 {
+  return k.n + k.h.n + k.h.name.len() as i32;
+}
+
+function takep(own p: P): i32 {
+  return p.n + p.name.len() as i32;
+}
+
+function writer(some: boolean): Option[Writer] {
+  if (some) {
+    return Some(stdout());
+  }
+  return None;
+}
+
+function nested(own u: K, own x: H): i32 {
+  let v = K { ...u, h: H { ...x, n: x.n + 1 } };
+  return takek(v);
+}
+
+function opened(own u: K, own x: H, again: boolean): i32 {
+  let h = H { ...x, name: x.name + "!" };
+  let fresh = K { ...u, n: u.n + 1 };
+  match (writer(true)) {
+    Some(w) => {
+      let v = K { ...fresh, h: H { ...h, w: w } };
+      if (again) {
+        return takek(v) + 100;
+      }
+      return takek(v);
+    },
+    None => {
+      return takek(fresh);
+    }
+  }
+}
+
+function kept(b: P, own w: Writer): i32 {
+  let v = P { ...b, w: w };
+  return takep(v);
+}
+
+function mk(n: i32, name: string): H {
+  return H { w: stdout(), alt: stdout(), n: n, name: name };
+}
+
+function main(): i32 {
+  let b = P { w: stdout(), n: 3, name: "cde" };
+  let total = 0;
+  for i in 0..4 {
+    total += nested(K { h: mk(i, "a"), n: 2 }, mk(4, "xy"));
+    total += opened(K { h: mk(1, "b"), n: 5 }, mk(6, "pq"), i % 2 == 0);
+    total += kept(b, stdout());
+  }
+  print((total + b.n).to_string());
+  return 0;
+}

@@ -96,7 +96,7 @@ func TestLiteralLocalFieldValuesOwned(t *testing.T) {
 }`)
 	wantE051(t, "spread own handle read later", litFieldPrefix+`function f(own u: H, own w: Writer): i32 {
   let v = H { ...u, alt: w };
-  w.write_str("x");
+  let _ = w.write("x");
   return take(v);
 }`)
 	wantE051(t, "spread borrowed struct holding a handle", litFieldPrefix+`function f(own u: K, b: H): i32 {
@@ -136,5 +136,74 @@ func TestLiteralLocalFieldValuesOwned(t *testing.T) {
 	wantE051(t, "plain nested literal holding a borrow", litFieldPrefix+`function f(b: H): i32 {
   let v = K { h: H { w: b.w, alt: b.alt, n: 0, name: "" }, n: 1 };
   return takek(v);
+}`)
+}
+
+const litPartPrefix = litFieldPrefix + `struct P { w: Writer, n: i32, name: string }
+struct Q { p: P, n: i32 }
+struct G[T] { v: T, w: Writer, n: i32 }
+function takep(own p: P): i32 { return p.n; }
+function takeq(own q: Q): i32 { return q.n; }
+function takeg(own g: G[i32]): i32 { return g.n; }
+function takegw(own g: G[Writer]): i32 { return g.n; }
+`
+
+// A struct literal gets one verdict as the argument of an own parameter and
+// as a local that goes there at its last use. A literal in a field value, and
+// a base that is not owned, are decided in the same way for both.
+func TestLiteralLocalMatchesLiteralArgument(t *testing.T) {
+	for _, c := range []struct {
+		name, params, lit, callee string
+		ok                        bool
+	}{
+		{"nested literal from an own parameter", `own u: K, own x: H`, `K { ...u, h: H { ...x, n: 1 } }`, "takek", true},
+		{"nested literal that reads its base", `own u: K, own x: H`, `K { ...u, h: H { ...x, n: x.n + 1 } }`, "takek", true},
+		{"nested literal of own parameters", `own u: K, own w: Writer, own a: Writer`, `K { ...u, h: H { w: w, alt: a, n: 0, name: "" } }`, "takek", true},
+		{"nested literal with no base", `own x: Writer, own y: Writer`, `K { h: H { w: x, alt: y, n: 0, name: "" }, n: 1 }`, "takek", true},
+		{"borrowed base that keeps no handle", `b: P, own w: Writer`, `P { ...b, w: w }`, "takep", true},
+		{"nested borrowed base that keeps no handle", `own u: Q, b: P, own w: Writer`, `Q { ...u, p: P { ...b, w: w } }`, "takeq", true},
+		{"generic borrowed base that keeps no handle", `b: G[i32], own w: Writer`, `G { ...b, w: w }`, "takeg", true},
+		{"generic borrowed base that keeps a handle", `b: G[Writer], own w: Writer`, `G { ...b, w: w }`, "takegw", false},
+		{"nested literal from a borrowed parameter", `own u: K, x: H`, `K { ...u, h: H { ...x, n: 1 } }`, "takek", false},
+		{"nested borrowed base that keeps a handle", `own u: K, b: H, own w: Writer`, `K { ...u, h: H { ...b, w: w } }`, "takek", false},
+		{"borrowed base that keeps a handle", `b: H, own w: Writer`, `H { ...b, w: w }`, "take", false},
+		{"nested borrowed handle field", `own u: K, b: H`, `K { ...u, h: H { w: b.w, alt: stdout(), n: 0, name: "" } }`, "takek", false},
+	} {
+		local := litPartPrefix + `function f(` + c.params + `): i32 {
+  let v = ` + c.lit + `;
+  return ` + c.callee + `(v);
+}`
+		inline := litPartPrefix + `function f(` + c.params + `): i32 {
+  return ` + c.callee + `(` + c.lit + `);
+}`
+		if c.ok {
+			wantOK(t, c.name+" (local)", local)
+			wantOK(t, c.name+" (argument)", inline)
+		} else {
+			wantE051(t, c.name+" (local)", local)
+			wantE051(t, c.name+" (argument)", inline)
+		}
+	}
+	wantE051(t, "nested base read after the literal", litPartPrefix+`function f(own u: K, own x: H): i32 {
+  let v = K { ...u, h: H { ...x, n: 1 } };
+  let _ = x.w.write("x");
+  return takek(v);
+}`)
+	wantOK(t, "nested literal of a payload and two locals", `struct I { r: Reader, open: boolean, n: i32 }
+struct R { inp: I, n: i32 }
+function reset(own r: R): R { return r; }
+function g(own r: R, again: boolean): R {
+  let inp = I { ...r.inp, n: r.inp.n + 1 };
+  let fresh = R { ...r, n: 0 };
+  match (open_reader("/dev/null")) {
+    Ok(reader) => {
+      let opened = R { ...fresh, inp: I { ...inp, r: reader, open: true } };
+      if (again) {
+        return reset(reset(opened));
+      }
+      return reset(opened);
+    },
+    Err(_) => { return fresh; }
+  }
 }`)
 }

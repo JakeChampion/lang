@@ -1,0 +1,19 @@
+// A literal local sets a field to a literal whose base is a borrowed
+// parameter. The inner literal keeps the handles of that base, so the local
+// does not own them and cannot go to an own parameter.
+struct H { w: Writer, alt: Writer, n: i32 }
+struct K { h: H, n: i32 }
+
+function takek(own k: K): i32 {
+  return k.n;
+}
+
+function f(own u: K, x: H): i32 {
+  let v = K { ...u, h: H { ...x, n: 1 } };
+  return takek(v);
+}
+
+function main(): i32 {
+  let x = H { w: stdout(), alt: stdout(), n: 2 };
+  return f(K { h: H { w: stdout(), alt: stdout(), n: 0 }, n: 1 }, x);
+}

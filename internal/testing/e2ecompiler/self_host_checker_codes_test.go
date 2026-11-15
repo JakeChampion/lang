@@ -2305,6 +2305,18 @@ function main(): i32 { return 0; }
 		{"own-arg-literal-borrowed-handle-fields", literalFieldPrelude + "function f(b: H): i32 {\n  let v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-literal-reassigned-borrow", literalFieldPrelude + "function f(own x: Writer, own y: Writer, b: H): i32 {\n  let v = H { w: x, alt: y, n: 0, name: \"\" };\n  v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-literal-own-param-fields", literalFieldPrelude + "function f(own x: Writer, own y: Writer): i32 {\n  let z = y;\n  let v = H { w: x, alt: z, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-local-nested-own-base", literalPartLocal("own u: K, own x: H", "K { ...u, h: H { ...x, n: 1 } }", "takek"), nil},
+		{"own-arg-local-nested-base-read", literalPartLocal("own u: K, own x: H", "K { ...u, h: H { ...x, n: x.n + 1 } }", "takek"), nil},
+		{"own-arg-local-nested-no-base", literalPartLocal("own x: Writer, own y: Writer", "K { h: H { w: x, alt: y, n: 0, name: \"\" }, n: 1 }", "takek"), nil},
+		{"own-arg-local-borrowed-base-keeps-no-handle", literalPartLocal("b: P, own w: Writer", "P { ...b, w: w }", "takep"), nil},
+		{"own-arg-local-nested-borrowed-base-keeps-no-handle", literalPartLocal("own u: Q, b: P, own w: Writer", "Q { ...u, p: P { ...b, w: w } }", "takeq"), nil},
+		{"own-arg-local-nested-payload-and-locals", literalPartsOpened, nil},
+		{"own-arg-local-generic-borrowed-base-keeps-no-handle", literalPartLocal("b: G[i32], own w: Writer", "G { ...b, w: w }", "takeg"), nil},
+		{"own-arg-local-generic-borrowed-base-keeps-handle", literalPartLocal("b: G[Writer], own w: Writer", "G { ...b, w: w }", "takegw"), []string{"E051"}},
+		{"own-arg-local-nested-borrowed-base", literalPartLocal("own u: K, x: H", "K { ...u, h: H { ...x, n: 1 } }", "takek"), []string{"E051"}},
+		{"own-arg-local-nested-borrowed-base-keeps-handle", literalPartLocal("own u: K, b: H, own w: Writer", "K { ...u, h: H { ...b, w: w } }", "takek"), []string{"E051"}},
+		{"own-arg-local-borrowed-base-keeps-handle", literalPartLocal("b: H, own w: Writer", "H { ...b, w: w }", "take"), []string{"E051"}},
+		{"own-arg-local-nested-base-read-later", literalFieldPrelude + "function f(own u: K, own x: H): i32 {\n  let v = K { ...u, h: H { ...x, n: 1 } };\n  let _ = x.w.write(\"x\");\n  return takek(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
@@ -3183,6 +3195,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"spread-scalar-and-string-fields", literalFieldValue("b: H", "n: b.n, name: b.name")},
 		{"literal-borrowed-handle-fields", literalFieldPrelude + "function f(b: H): i32 {\n  let v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n"},
 		{"literal-nested-borrow", literalFieldPrelude + "function f(b: H): i32 {\n  let v = K { h: H { w: b.w, alt: b.alt, n: 0, name: \"\" }, n: 1 };\n  return takek(v);\n}\nfunction main(): i32 { return 0; }\n"},
+		{"local-nested-own-base", literalPartLocal("own u: K, own x: H", "K { ...u, h: H { ...x, n: 1 } }", "takek")},
+		{"local-nested-borrowed-base", literalPartLocal("own u: K, x: H", "K { ...u, h: H { ...x, n: 1 } }", "takek")},
+		{"local-borrowed-base-keeps-no-handle", literalPartLocal("b: P, own w: Writer", "P { ...b, w: w }", "takep")},
+		{"local-borrowed-base-keeps-handle", literalPartLocal("b: H, own w: Writer", "H { ...b, w: w }", "take")},
+		{"local-nested-payload-and-locals", literalPartsOpened},
+		{"local-generic-borrowed-base-keeps-no-handle", literalPartLocal("b: G[i32], own w: Writer", "G { ...b, w: w }", "takeg")},
 		{"bytes-data-inside-block", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b)); } return v - 7; }`},
 		{"bytes-data-kept-in-local", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { let p: usize = __bytes_data(b); v = __load_u8(p); } return v - 7; }`},
 		{"bytes-data-with-offset", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b) + 0 as usize); } return v - 7; }`},
@@ -4146,8 +4164,6 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 	}
 }
 
-// spreadSourceRead is a program that passes `S { ...u, value }` to an own
-// parameter, where u is an own parameter.
 const literalFieldPrelude = `struct H { w: Writer, alt: Writer, n: i32, name: string }
 struct K { h: H, n: i32 }
 function take(own h: H): i32 { return h.n; }
@@ -4163,6 +4179,48 @@ function main(): i32 { return 0; }
 `
 }
 
+// literalPartLocal is a program that keeps lit in a local and gives the
+// local to the own parameter of callee at its last use.
+func literalPartLocal(params, lit, callee string) string {
+	return literalFieldPrelude + `struct P { w: Writer, n: i32, name: string }
+struct Q { p: P, n: i32 }
+struct G[T] { v: T, w: Writer, n: i32 }
+function takep(own p: P): i32 { return p.n; }
+function takeq(own q: Q): i32 { return q.n; }
+function takeg(own g: G[i32]): i32 { return g.n; }
+function takegw(own g: G[Writer]): i32 { return g.n; }
+function f(` + params + `): i32 {
+  let v = ` + lit + `;
+  return ` + callee + `(v);
+}
+function main(): i32 { return 0; }
+`
+}
+
+// literalPartsOpened keeps a literal of a match payload and two locals in a
+// local, as sed's open_next does, and gives it to an own parameter.
+const literalPartsOpened = `struct I { r: Reader, open: boolean, n: i32 }
+struct R { inp: I, n: i32 }
+function reset(own r: R): R { return r; }
+function g(own r: R, again: boolean): R {
+  let inp = I { ...r.inp, n: r.inp.n + 1 };
+  let fresh = R { ...r, n: 0 };
+  match (open_reader("/dev/null")) {
+    Ok(reader) => {
+      let opened = R { ...fresh, inp: I { ...inp, r: reader, open: true } };
+      if (again) {
+        return reset(reset(opened));
+      }
+      return reset(opened);
+    },
+    Err(_) => { return fresh; }
+  }
+}
+function main(): i32 { return 0; }
+`
+
+// spreadSourceRead is a program that passes `S { ...u, value }` to an own
+// parameter, where u is an own parameter.
 func spreadSourceRead(value string) string {
 	return `struct S { got: string[], label: string, tag: string, n: i32, m: i32, other: string[], r: Option[Reader] }
 function take(own s: S): i32 { return s.n + s.m; }
