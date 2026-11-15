@@ -60,14 +60,12 @@ struct H { r: Option[Reader], alt: Option[Reader], name: string, n: i32 }
 
 function main(): i32 {
   let t = 0;
-  let i = 0;
-  while (i < 20) {
+  for i in 0..20 {
     let b = mk(i);
     t += spread_fresh(mk(i), i) + spread_own_param(mk(i), handle(i)) + spread_local(mk(i), handle(i));
     t += spread_scalar(mk(i), b) + spread_string(mk(i), b);
     t += plain_own(handle(i), handle(i), b) + plain_fresh(i, b);
     t += b.n;
-    i += 1;
   }
   return t % 256;
 }
