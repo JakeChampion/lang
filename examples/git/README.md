@@ -87,8 +87,12 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `--name-status` find renames as git does. A tab and a wide character in
   a message take the columns that git gives them.
 
-  The diff of each commit is `-p`, `--stat`, `--numstat`, `--shortstat`,
-  `--summary` or `--patch-with-stat`, with the bytes of git. The patch
+  The diff of each commit is `-p`, `--raw`, `--stat`, `--numstat`,
+  `--shortstat`, `--summary` or `--patch-with-stat`, with the bytes of
+  git. `--check` shows the errors of white space of the added lines, with
+  the rules of `core.whitespace`, and gives the exit status 2 for an
+  error, as git does. `--abbrev=N` and `--no-abbrev` set the length of the
+  short names. The patch
   has the header lines of git, the renames with their similarity, the
   changes of mode, and the line for a binary file. The hunks come from
   `std/linediff`. It has the Myers diff of xdiff with its heuristics and
@@ -194,12 +198,13 @@ the git of the machine. With git 2.43, four things are different:
 
 - These options of `log`: `--notes`, the signatures (`--show-signature`,
   `%G?`), `-C` and `--find-copies` (`--follow` finds copies),
-  `--word-diff`, `--color-moved`, `--check`, `--raw`, `--cc` and `-m`
-  for the diff of a merge, and `-L`.
+  `--word-diff`, `--color-moved`, `--cc` and `-m` for the diff of a
+  merge, and `-L`.
 
 - The colors of `color.diff.SLOT`, `color.decorate.SLOT` and
-  `color.grep`, and the rules of `core.whitespace` and of the
-  `whitespace` attribute. The port uses the default colors and rules.
+  `color.grep`, and the rules of the `whitespace` attribute. The port
+  uses the default colors, and the rules of `core.whitespace` for each
+  path.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.
@@ -338,7 +343,8 @@ count of bytes. A worker of `std/worker` makes the names of its part.
   forms of `log` with colors.
 
 - `TestSelfHostExampleGitForms` runs the placeholders that change the
-  columns of a format, and the wrap of `%w()`.
+  columns of a format, the wrap of `%w()`, `--raw`, and `--check` with
+  each rule of `core.whitespace`.
 
 - `TestSelfHostExampleGitPush` reads `@{push}` with each value of
   `push.default` and the other settings of a push.

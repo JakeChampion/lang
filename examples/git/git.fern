@@ -40,6 +40,7 @@ import "../../coreutils/lib/bre";
 import "../../coreutils/lib/fnmatch";
 import "./store";
 import "./walk";
+import "./ws";
 
 const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
 
@@ -999,6 +1000,17 @@ function log_number(text: string): i32 {
   return if (text.len() == 0) { -1 } else { n };
 }
 
+// The digits at the start of `text` as `strtoul` of C reads them, or 0.
+function log_digits(text: string): i32 {
+  let n = 0;
+  let i = 0;
+  while (i < text.len() && text[i] >= b'0' && text[i] <= b'9' && n < 100000000) {
+    n = n * 10 + (text[i] - b'0') as i32;
+    i += 1;
+  }
+  return n;
+}
+
 // git 2.43 reads a limit that is not a count as 0.
 function log_limit(text: string): i32 {
   return log_number(text).max(0);
@@ -1087,11 +1099,18 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
     }
     return (LogOpts { ...o, patch: patch.Opts { ...d, color: wants_color(choice) } }, 1);
   }
+  if (x == "--abbrev" || x == "--no-abbrev" || x.starts_with("--abbrev=")) {
+    let n = if (x == "--abbrev") { -1 } else if (x == "--no-abbrev") { 0 } else { log_digits(objects.part(x, 9, x.len())).max(4) };
+    return (LogOpts { ...o, patch: patch.Opts { ...d, abbrev: n } }, 1);
+  }
+  if (x == "--raw") {
+    return (with_form(o, patch.Opts { ...d, raw: true }), 1);
+  }
   if (x == "-p" || x == "-u" || x == "--patch") {
     return (with_form(o, patch.Opts { ...d, patch: true }), 1);
   }
   if (x == "-s" || x == "--no-patch") {
-    return (LogOpts { ...o, patch: patch.Opts { ...d, patch: false, stat: false, numstat: false, shortstat: false, summary: false }, diff: "", no_output: true }, 1);
+    return (LogOpts { ...o, patch: patch.Opts { ...d, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false }, diff: "", no_output: true }, 1);
   }
   if (x == "--stat") {
     return (with_form(o, patch.Opts { ...d, stat: true }), 1);
@@ -1279,7 +1298,7 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
   let g = g_in;
   let w = o.walk;
   let x = argv[i];
-  let flags = ["--follow", "--pickaxe-all", "--pickaxe-regex", "-g", "--walk-reflogs", "--left-right", "--left-only", "--right-only", "--cherry-pick", "--cherry-mark", "--cherry", "--boundary", "--ancestry-path", "--simplify-by-decoration", "--simplify-merges", "--use-mailmap", "--mailmap", "--no-use-mailmap", "--no-mailmap", "--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no", "--decorate=full", "--decorate=auto", "--clear-decorations"];
+  let flags = ["--follow", "--pickaxe-all", "--pickaxe-regex", "-g", "--walk-reflogs", "--left-right", "--left-only", "--right-only", "--cherry-pick", "--cherry-mark", "--cherry", "--boundary", "--ancestry-path", "--simplify-by-decoration", "--simplify-merges", "--use-mailmap", "--mailmap", "--no-use-mailmap", "--no-mailmap", "--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--check", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no", "--decorate=full", "--decorate=auto", "--clear-decorations"];
   if (flags.contains(x)) {
     if (x == "--follow") {
       o = LogOpts { ...o, follow: true };
@@ -1321,7 +1340,7 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
       o = LogOpts { ...o, parents: true, walk: revwalk.Opts { ...w, rewrite: true } };
     } else if (x == "--graph") {
       o = LogOpts { ...o, graph: true, walk: revwalk.Opts { ...w, rewrite: true, topo: true } };
-    } else if (x == "--name-only" || x == "--name-status") {
+    } else if (x == "--name-only" || x == "--name-status" || x == "--check") {
       o = LogOpts { ...o, diff: objects.part(x, 2, x.len()), names_twice: o.names_twice || o.diff.len() > 0 && o.diff != objects.part(x, 2, x.len()) || o.no_output };
     } else if (x == "--first-parent") {
       o = LogOpts { ...o, walk: revwalk.Opts { ...w, first_parent: true } };
@@ -1404,10 +1423,10 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
       return (LogOpts { ...o, decorate_filter: nf }, g, taken);
     }
   }
-  let valued = ["--max-count", "--skip", "--format", "--pretty", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep", "--min-parents", "--max-parents", "--abbrev"];
+  let valued = ["--max-count", "--skip", "--format", "--pretty", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep", "--min-parents", "--max-parents"];
   for name in valued {
     let (v, taken) = option_value(argv, i, name);
-    if (taken > 0 && !(name == "--pretty" && taken == 2) && !(name == "--abbrev" && taken == 2)) {
+    if (taken > 0 && !(name == "--pretty" && taken == 2)) {
       if (name == "--max-count") {
         o = LogOpts { ...o, limit: log_limit(v) };
       } else if (name == "--skip") {
@@ -1871,7 +1890,7 @@ function ref_option(x: string): string {
 // and its text had no line end at its end.
 // `follow` is the path that `--follow` follows now.
 // `hidden` is true when the last commit gave no text.
-struct Shown { graph: graph.Graph, any: boolean, missing: boolean, follow: string, hidden: boolean }
+struct Shown { graph: graph.Graph, any: boolean, missing: boolean, follow: string, hidden: boolean, failed: boolean }
 
 // The padding of the graph before a line, or "" with no graph.
 function graph_pad(o: LogOpts, sh: Shown): (Shown, string) {
@@ -1955,6 +1974,21 @@ function log_entry(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context,
     sh = sh3;
     let dashes = o.diff.len() == 0 && o.patch.patch && o.patch.stat;
     out += p + (if (dashes) { "---" } else { "" }) + "\n";
+  }
+  if (o.diff == "check") {
+    let (s7, checked, failed) = patch.check(s, changes, o.patch);
+    s = s7;
+    sh = Shown { ...sh, failed: sh.failed || failed };
+    for k in 0..checked.lines.len() {
+      let pad = "";
+      if (checked.uses[k] >= 0) {
+        let (sh8, p) = graph_pad(o, sh);
+        sh = sh8;
+        pad = p;
+      }
+      out += pad + checked.lines[k] + "\n";
+    }
+    return (s, out, sh);
   }
   if (o.diff.len() > 0) {
     for line in name_lines(changes, o).split("\n") {
@@ -2160,7 +2194,7 @@ function reflog_walk(r: refs.Repo, w_in: revwalk.Walk, o: LogOpts, names: string
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s2 } };
     decorations = by;
   }
-  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: "", hidden: false };
+  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: "", hidden: false, failed: false };
   let buf: u8[] = [];
   let count = 0;
   let skipped = 0;
@@ -2218,7 +2252,7 @@ function reflog_walk(r: refs.Repo, w_in: revwalk.Walk, o: LogOpts, names: string
     }
   }
   put(buf);
-  return 0;
+  return if (sh.failed) { 2 } else { 0 };
 }
 
 // The text of a commit, with the graph. `following` holds the commits
@@ -2246,7 +2280,8 @@ function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Ma
   w = w2;
   let st = w.g.store;
   let side = if ((f & revwalk.BOUNDARY) != 0) { "-" } else if ((f & revwalk.UNINTERESTING) != 0) { "^" } else if ((f & revwalk.PATCHSAME) != 0) { "=" } else if ((f & revwalk.LEFT) != 0) { "<" } else { ">" };
-  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, graph_width: if (o.graph) { sh.graph.width } else { 0 } };
+  let commit_least = if (o.patch.abbrev == 0) { 2 * st.width } else if (o.patch.abbrev > 0) { o.patch.abbrev } else { least };
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, commit_least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap, mark: if (o.graph) { "" } else { mark }, side: side, reflog: reflog, color: o.patch.color, graph_width: if (o.graph) { sh.graph.width } else { 0 } };
   // With the pickaxe and with --follow, a commit with no changes is not
   // shown, but the graph still takes it.
   if (o.pick.kind != 0 || o.follow) {
@@ -2331,6 +2366,16 @@ function log_command(argv: string[]): i32 {
   let o = LogOpts { pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: r.config.flag("diff.renames", true), walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
+  if let Some(v) = r.config.get("core.whitespace") {
+    let (rule, warnings, failure) = ws.parse(v);
+    for line in warnings {
+      eprint(line);
+    }
+    if (failure.len() > 0) {
+      return fatal(failure);
+    }
+    o = LogOpts { ...o, patch: patch.Opts { ...o.patch, ws_rule: rule } };
+  }
   let dashdash = -1;
   for k in 0..argv.len() {
     if (dashdash < 0 && argv[k] == "--") {
@@ -2438,6 +2483,7 @@ function log_command(argv: string[]): i32 {
   if (o.names_twice) {
     return fatal("options '--name-only', '--name-status', '--check', and '-s' cannot be used together");
   }
+  o = LogOpts { ...o, patch: patch.Opts { ...o.patch, abbrev: o.patch.abbrev.min(2 * st0.width) } };
   let bad_color = if (o.form == "format") { log.bad_color(o.format, o.patch.color) } else { "" };
   if (bad_color.len() > 0) {
     eprint("error: invalid color value: " + bad_color);
@@ -2542,7 +2588,7 @@ function log_command(argv: string[]): i32 {
   }
   let shown: string[] = [];
   let buf: u8[] = [];
-  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: if (o.follow) { items[0] } else { "" }, hidden: false };
+  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: if (o.follow) { items[0] } else { "" }, hidden: false, failed: false };
   let p = Pull { w: w, skipped: 0, count: 0, candidates: [] };
   // The boundary commits to show after the walk (`get_revision_internal`),
   // and the commits after the current one, for the visual roots of the
@@ -2624,7 +2670,7 @@ function log_command(argv: string[]): i32 {
     }
   }
   put(buf);
-  return 0;
+  return if (sh.failed) { 2 } else { 0 };
 }
 
 // ---- index-pack ----

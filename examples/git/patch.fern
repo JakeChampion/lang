@@ -8,21 +8,25 @@ import "./objects";
 import "./store";
 import "./treediff";
 import "./width";
+import "./ws";
 import "../../coreutils/lib/bre";
 
 // The forms of the output and their options. `stat_width` is -1 for the
 // width of the terminal. `stat_name_width`, `stat_graph_width` and
 // `stat_count` are 0 for no limit. `src` and `dst` are the prefixes of
-// the two paths. `color` gives the output the colors of git.
-pub struct Opts { patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
+// the two paths. `color` gives the output the colors of git. `raw` is the
+// form of `--raw`. `abbrev` is the length of a short name that `--abbrev`
+// sets: -1 for the length of git, and 0 for full names. `ws_rule` holds
+// the rules of white space of `core.whitespace`.
+pub struct Opts { ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
 
 pub function defaults(): Opts {
-  return Opts { patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
+  return Opts { ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
 }
 
 // True when the options print a diff.
 pub function any(o: Opts): boolean {
-  return o.patch || o.stat || o.numstat || o.shortstat || o.summary;
+  return o.raw || o.patch || o.stat || o.numstat || o.shortstat || o.summary;
 }
 
 // The lines of a diff. A line of the graph goes before each line: the
@@ -207,15 +211,6 @@ function meta_lines(o: Opts, lines: string): string {
   return out;
 }
 
-function blank(data: u8[], from: i32, to: i32): boolean {
-  for i in from..to {
-    if (!objects.is_space(data[i])) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // The count of the blank lines at the end of `data`:
 // `count_trailing_blank` of git.
 function trailing_blank(data: u8[]): i32 {
@@ -232,7 +227,7 @@ function trailing_blank(data: u8[]): i32 {
     while (eol >= 0 && data[eol] != b'\n') {
       eol -= 1;
     }
-    if (!blank(data, eol + 1, at + 1)) {
+    if (!ws.blank(data, eol + 1, at + 1)) {
       break;
     }
     n += 1;
@@ -275,37 +270,6 @@ function line0(set: string, first: string, text: string): string {
   return set + first + text + color.RESET;
 }
 
-// The text of an added line with its errors of white space in their
-// color: `ws_check_emit` of git with the rules blank-at-eol and
-// space-before-tab.
-function checked(text: string): string {
-  let trailing = text.len();
-  while (trailing > 0 && objects.is_space(text[trailing - 1])) {
-    trailing -= 1;
-  }
-  let out = "";
-  let written = 0;
-  let i = 0;
-  while (i < trailing && (text[i] == b' ' || text[i] == b'\t')) {
-    if (text[i] == b'\t') {
-      if (written < i) {
-        out += color.BG_RED + objects.part(text, written, i) + color.RESET + "\t";
-      } else {
-        out += objects.part(text, written, i + 1);
-      }
-      written = i + 1;
-    }
-    i += 1;
-  }
-  if (trailing > written) {
-    out += color.GREEN + objects.part(text, written, trailing) + color.RESET;
-  }
-  if (trailing < text.len()) {
-    out += color.BG_RED + objects.part(text, trailing, text.len()) + color.RESET;
-  }
-  return out;
-}
-
 // The number after `sign` in a hunk header.
 function hunk_start(line: string, sign: u8): i32 {
   let at = 0;
@@ -345,8 +309,8 @@ function hunk_header(line: string): string {
 // The lines of the hunks of `a` and `b` in the colors of git, with the
 // errors of white space of the added lines (`fn_out_consume` and
 // `emit_diff_symbol` of git, with the default `core.whitespace`).
-function painted(body: string, a: u8[], b: u8[]): string {
-  let (pre_eof, post_eof) = blank_at_eof(a, b);
+function painted(o: Opts, body: string, a: u8[], b: u8[]): string {
+  let (pre_eof, post_eof) = if ((o.ws_rule & ws.BLANK_AT_EOF) != 0) { blank_at_eof(a, b) } else { (0, 0) };
   let pre = 0;
   let post = 0;
   let out = "";
@@ -365,10 +329,11 @@ function painted(body: string, a: u8[], b: u8[]): string {
       out += hunk_header(line);
     } else if (first == b'+') {
       post += 1;
-      if (pre_eof > 0 && post_eof > 0 && pre_eof <= pre && post_eof <= post && blank(rest.bytes(), 0, rest.len())) {
+      if (pre_eof > 0 && post_eof > 0 && pre_eof <= pre && post_eof <= post && ws.blank(rest.bytes(), 0, rest.len())) {
         out += line0(color.BG_RED, "+", rest);
       } else {
-        out += line0(color.GREEN, "+", "") + checked(rest);
+        let (_, text) = ws.check_emit(rest, o.ws_rule, color.GREEN, color.RESET, color.BG_RED);
+        out += line0(color.GREEN, "+", "") + text;
       }
     } else if (first == b'-') {
       pre += 1;
@@ -408,7 +373,8 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   if (one.hash != two.hash) {
     let full = o.full_index;
-    meta += "index " + abbrev_of(s, one.hash, least, full) + ".." + abbrev_of(s, two.hash, least, full);
+    let n = if (o.abbrev > 0) { o.abbrev } else { least };
+    meta += "index " + abbrev_of(s, one.hash, n, full) + ".." + abbrev_of(s, two.hash, n, full);
     if (one.valid && two.valid && one.mode == two.mode) {
       meta += " " + mode6(one.mode);
     }
@@ -447,7 +413,7 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   let tab1 = if (lbl1.contains(" ")) { "\t" } else { "" };
   if (o.color) {
     let labels = color.BOLD + "--- " + lbl0 + color.RESET + tab0 + "\n" + color.BOLD + "+++ " + lbl1 + color.RESET + tab1 + "\n";
-    t = add_each(t, labels + painted(text(body), a, b));
+    t = add_each(t, labels + painted(o, text(body), a, b));
     return (s, t);
   }
   t = add_each(t, "--- " + lbl0 + tab0 + "\n+++ " + lbl1 + tab1 + "\n" + text(body));
@@ -759,7 +725,73 @@ function summary_of(p: Pair): string {
   return out;
 }
 
-// The diff of the changes: the stats, the summary, a line end, and the
+// The lines of `--check` for the changes, and true when a line has an
+// error: `builtin_checkdiff` of git. The line of a blank line at the end
+// of a file has no line of the graph before it, as in git.
+pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (store.Store, Text, boolean) {
+  let s = s_in;
+  let t = Text { lines: [], uses: [], calls: 0 };
+  let failed = false;
+  let set = if (o.color) { color.GREEN } else { "" };
+  let reset = if (o.color) { color.RESET } else { "" };
+  let bad_color = if (o.color) { color.BG_RED } else { "" };
+  for c in changes {
+    let p = pair_of(c);
+    let name = text(if (p.one.path != p.two.path) { p.two.path } else { p.one.path });
+    let (s1, a) = content(s, p.one);
+    let (s2, b) = content(s1, p.two);
+    s = s2;
+    if (is_binary(b)) {
+      continue;
+    }
+    let rule = o.ws_rule;
+    let la = linediff.lines_of(a);
+    let lb = linediff.lines_of(b);
+    let plain = linediff.Options { algorithm: linediff.MYERS, minimal: false, indent_heuristic: false };
+    for ch in linediff.diff(la, lb, plain) {
+      for j in ch.i2..ch.i2 + ch.ins {
+        let line = objects.part_bytes(lb.data, lb.starts[j], lb.starts[j + 1]);
+        let at = name + ":" + (j + 1).to_string() + ": ";
+        if (ws.conflict_marker(line, 7)) {
+          failed = true;
+          t = add_each(t, at + "leftover conflict marker\n");
+        }
+        let (bad, shown) = ws.check_emit(line, rule, set, reset, bad_color);
+        if (bad != 0) {
+          failed = true;
+          t = add_each(t, at + ws.error_string(bad) + ".\n");
+          t = add_each(t, set + "+" + reset + shown + (if (shown.ends_with("\n")) { "" } else { "\n" }));
+        }
+      }
+    }
+    if ((rule & ws.BLANK_AT_EOF) != 0) {
+      let (_, post) = blank_at_eof(a, b);
+      if (post > 0) {
+        failed = true;
+        t = Text { lines: t.lines.append(name + ":" + post.to_string() + ": " + ws.error_string(ws.BLANK_AT_EOF) + "."), uses: t.uses.append(-1), calls: t.calls };
+      }
+    }
+  }
+  return (s, t, failed);
+}
+
+// The line of `--raw` for one pair: `diff_flush_raw` of git.
+function raw_line(s: store.Store, o: Opts, p: Pair, least: i32): string {
+  let n = if (o.abbrev > 0) { o.abbrev } else { least };
+  let full = o.abbrev == 0;
+  let out = ":" + mode6(p.one.mode) + " " + mode6(p.two.mode) + " " + abbrev_of(s, p.one.hash, n, full) + " " + abbrev_of(s, p.two.hash, n, full) + " ";
+  out += unsafe { string_from_bytes_unchecked([p.status]) };
+  if (p.score > 0) {
+    out += (p.score * 100 / 60000).to_string().pad_start_str(3, "0");
+  }
+  if (p.status == b'R' || p.status == b'C') {
+    return out + "\t" + quoted(p.one.path) + "\t" + quoted(p.two.path) + "\n";
+  }
+  return out + "\t" + quoted(if (p.one.valid) { p.one.path } else { p.two.path }) + "\n";
+}
+
+// The diff of the changes: the raw lines, the stats, the summary, a line
+// end, and the
 // patch, as `diff_flush` of git prints them. `least` is the least length
 // of a short name, and `prefix_width` gives the width of the graph line
 // of a call. There are no lines when there are no changes.
@@ -771,6 +803,14 @@ pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, leas
   }
   let pairs = changes.map((c: treediff.Change): Pair => pair_of(c));
   let separator = false;
+  if (o.raw) {
+    let lines = "";
+    for p in pairs {
+      lines += raw_line(s, o, p, least);
+    }
+    t = add_each(t, lines);
+    separator = true;
+  }
   if (o.stat || o.numstat || o.shortstat) {
     let stats: Stat[] = [];
     for p in pairs {

@@ -279,6 +279,27 @@ var gitFormCases = []string{
 	"log --format=%w(12)ab%x0acd%x0a%x0aef%x0a-gh%s", "log --format=%w(8)%x00%s", "log --format=%w(20)%b", "log --format=%w(21,1,2)%b",
 	"log --color --format=%w(15)%C(red)%s%Creset", "log --format=%w(\\s10\\s,\\s2)%s", "log --format=%w(25,0,4)%s%n%w(25,2,2)%b",
 	"log --format=%n%-", "log --format=a%n%-Zb", "log --format=a%n%+", "log --format=%", "log --format=x%",
+	// --raw and the lengths of the short names.
+	"log --raw", "log --raw --oneline", "log --raw -p", "log --raw --stat", "log --raw --numstat --summary", "log --raw --name-status",
+	"log --raw --name-only", "log --raw -s", "log -s --raw", "log --raw --graph", "log --raw --graph --oneline", "log --raw --full-index -1",
+	"log --raw --no-abbrev -1", "log --raw --abbrev=12 -1", "log --raw --format=%h", "log --raw --format=", "log --raw --first-parent",
+	"log --raw --no-renames", "log --oneline --abbrev=12 -1", "log --oneline --no-abbrev -1", "log --abbrev=5 -p -1", "log --no-abbrev -p -1",
+	"log --abbrev=50 --raw -1", "log --abbrev=2 --raw -1", "log --abbrev --raw -1", "log --abbrev=0 --raw -1", "log --abbrev=x --raw -1",
+	"log --format=%h%x20%p --abbrev=9 -1", "log --abbrev=12 -2", "log --oneline --parents --abbrev=9", "log --graph --oneline --abbrev=10",
+	"log --pretty=raw --abbrev=8 -2", "log --pretty=reference --abbrev=11 -2",
+	// --check and the errors of white space.
+	"log --check", "log --check --oneline", "log --check --graph --oneline", "log --check --graph", "log --check --color",
+	"log --check --format=%h", "log --check --format=", "log --check -p", "log --check --stat", "log --check --raw", "log --check --name-only",
+	"log --name-only --check", "log --check -s", "log -s --check", "log --check --first-parent", "log --check -- code.c", "log -p --color",
+	"log -p --color --graph",
+}
+
+// gitWhitespaceRules are values of core.whitespace for the errors of
+// white space of gitFormsFixture.
+var gitWhitespaceRules = []string{
+	"indent-with-non-tab", "tab-in-indent", "-trailing-space", "cr-at-eol", "trailing-space,-space-before-tab,tabwidth=4,indent-with-non-tab",
+	"tabwidth=99", "tab-in-indent,indent-with-non-tab", "blank-at-eol", "-blank-at-eof", "trail", "-,,space", "tabwidth=2,indent-with-non-tab",
+	"-blank-at-eol",
 }
 
 // gitFormsFixture makes a repository for gitFormCases: long messages with
@@ -351,6 +372,16 @@ func gitFormsFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
 	commit("merge side")
 	write("num.txt", seq(1, 35))
 	commit("fourth: num", "Short body.")
+	// Each error of white space, a conflict marker, a rename, a file with
+	// no line end at its end, and a binary file.
+	write("f.txt", "a\n\tTab\n        eight spaces\n    four\n  \tmix\n=======\n<<<<<<< ours\n>>>>>>>\n|||||||x\ntrail \r\ncr\r\nlast\t\n\n\n")
+	run("mv", "num.txt", "renamed.txt")
+	write("renamed.txt", seq(1, 35)+"y \n")
+	write("nonl.txt", "no newline \t")
+	write("bin.dat", "bin\x00ary \n")
+	commit("fifth: white space")
+	write("f.txt", "a\n\n  \n")
+	commit("sixth: blank lines")
 }
 
 // TestSelfHostExampleGitForms runs each case of gitFormCases with git and
@@ -369,6 +400,14 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 					args[i] = strings.ReplaceAll(args[i], "\\s", " ")
 				}
 				gitCompare(t, oracle, port, dir, "", args...)
+			}
+			for _, rule := range gitWhitespaceRules {
+				if _, stderr, code := oracle.run(t, dir, "", "config", "core.whitespace", rule); code != 0 {
+					t.Fatalf("git config core.whitespace %s: %s", rule, stderr)
+				}
+				for _, c := range []string{"log --check", "log -p --color", "log --check --color --graph"} {
+					gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
+				}
 			}
 		})
 	}

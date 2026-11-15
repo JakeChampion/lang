@@ -12,6 +12,7 @@ import "./checkpack";
 import "./checkblob";
 import "./date";
 import "./width";
+import "./ws";
 import "./fsck";
 import "./graph";
 import "./index";
@@ -323,6 +324,27 @@ function test_format_columns(): test.TestOutcome {
   }
   if (width.text_width("\x1b[31m中x\x1b[m".bytes()) != 3 || width.text_width([255, 65]) != 2) {
     return test.fail("the columns of a text");
+  }
+  return test.pass();
+}
+
+// The rules of `core.whitespace` and the errors that they find.
+function test_whitespace(): test.TestOutcome {
+  let (rule, warnings, failure) = ws.parse("-trail,indent-with-non-tab,tabwidth=4");
+  if (rule != (ws.SPACE_BEFORE_TAB | ws.INDENT_WITH_NON_TAB | 4) || warnings.len() != 0 || failure != "") {
+    return test.fail("the rule: " + rule.to_string());
+  }
+  let (_, w2, _) = ws.parse("tabwidth=99");
+  let (_, _, f3) = ws.parse("tab-in-indent,indent-with-non-tab");
+  if (w2 != ["warning: tabwidth 99 out of range"] || f3 != "cannot enforce both tab-in-indent and indent-with-non-tab") {
+    return test.fail("the warnings and the errors of a rule");
+  }
+  let (bad, shown) = ws.check_emit(" \tx  \n", ws.DEFAULT_RULE, "<", ">", "!");
+  if (bad != (ws.SPACE_BEFORE_TAB | ws.BLANK_AT_EOL) || shown != "! >\t<x>!  >\n" || ws.error_string(bad) != "trailing whitespace, space before tab in indent") {
+    return test.fail("the errors of a line: " + shown);
+  }
+  if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7)) {
+    return test.fail("the conflict markers");
   }
   return test.pass();
 }
@@ -968,6 +990,7 @@ function main(): i32 {
   r = r.it("a configuration file", test_config);
   r = r.it("the tabs of a message", test_tabs);
   r = r.it("the columns of the placeholders of a format", test_format_columns);
+  r = r.it("the rules of white space", test_whitespace);
   r = r.it("the forms of a date", test_dates);
   r = r.it("the names of renames in a stat", test_rename_names);
   r = r.it("the specs of colors", test_colors);

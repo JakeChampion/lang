@@ -1,0 +1,241 @@
+// The rules of white space of git (ws.c): the errors that `--check` finds
+// in an added line, and the colors that a patch gives them.
+import "./objects";
+
+// The bits of a rule. The low 6 bits are the width of a tab.
+pub const BLANK_AT_EOL: i32 = 64;
+
+pub const SPACE_BEFORE_TAB: i32 = 128;
+
+pub const INDENT_WITH_NON_TAB: i32 = 256;
+
+pub const CR_AT_EOL: i32 = 512;
+
+pub const BLANK_AT_EOF: i32 = 1024;
+
+pub const TAB_IN_INDENT: i32 = 2048;
+
+pub const TRAILING_SPACE: i32 = BLANK_AT_EOL | BLANK_AT_EOF;
+
+const TAB_WIDTH_MASK: i32 = 63;
+
+// The rule of git when `core.whitespace` is not set.
+pub const DEFAULT_RULE: i32 = TRAILING_SPACE | SPACE_BEFORE_TAB | 8;
+
+// The names of the rules, their bits, and whether `whitespace` set to
+// true leaves them out: a rule that makes fewer errors, or one that the
+// default does not have.
+const NAMES: string[] = ["trailing-space", "space-before-tab", "indent-with-non-tab", "cr-at-eol", "blank-at-eol", "blank-at-eof", "tab-in-indent"];
+
+const BITS: i32[] = [TRAILING_SPACE, SPACE_BEFORE_TAB, INDENT_WITH_NON_TAB, CR_AT_EOL, BLANK_AT_EOL, BLANK_AT_EOF, TAB_IN_INDENT];
+
+const NOT_IN_ALL: boolean[] = [false, false, false, true, false, false, true];
+
+// The width of a tab in `rule`.
+pub function tab_width(rule: i32): i32 {
+  return rule & TAB_WIDTH_MASK;
+}
+
+// The rule of each rule name of git, as `parse_whitespace_rule` reads
+// them: names that a comma separates, `-` before a name to take it off,
+// and `tabwidth=N`. A name can be the start of the name of a rule. It
+// gives the rule, the warnings, and the message of a fatal error or "".
+pub function parse(text: string): (i32, string[], string) {
+  let rule = DEFAULT_RULE;
+  let warnings: string[] = [];
+  let at = 0;
+  while (true) {
+    while (at < text.len() && (text[at] == b',' || text[at] == b' ' || text[at] == b'\t' || text[at] == b'\n' || text[at] == b'\r')) {
+      at += 1;
+    }
+    let ep = at;
+    while (ep < text.len() && text[ep] != b',') {
+      ep += 1;
+    }
+    let start = at;
+    let negated = start < text.len() && text[start] == b'-';
+    if (negated) {
+      start += 1;
+    }
+    if (ep - start <= 0) {
+      break;
+    }
+    let word = objects.part(text, start, ep);
+    for i in 0..NAMES.len() {
+      if (NAMES[i].starts_with(word)) {
+        rule = if (negated) { rule & ~BITS[i] } else { rule | BITS[i] };
+        break;
+      }
+    }
+    if (word.starts_with("tabwidth=")) {
+      let v = objects.part(word, 9, word.len());
+      let n = atoi(v);
+      if (0 < n && n < 64) {
+        rule = rule & ~TAB_WIDTH_MASK | n;
+      } else {
+        warnings = warnings.append("warning: tabwidth " + v + " out of range");
+      }
+    }
+    if (ep >= text.len()) {
+      break;
+    }
+    at = ep;
+  }
+  if ((rule & TAB_IN_INDENT) != 0 && (rule & INDENT_WITH_NON_TAB) != 0) {
+    return (rule, warnings, "cannot enforce both tab-in-indent and indent-with-non-tab");
+  }
+  return (rule, warnings, "");
+}
+
+// The number at the start of `text` as `atoi` of C reads it.
+function atoi(text: string): i32 {
+  let i = 0;
+  while (i < text.len() && (text[i] == b' ' || text[i] >= 9 && text[i] <= 13)) {
+    i += 1;
+  }
+  let negative = i < text.len() && text[i] == b'-';
+  if (i < text.len() && (text[i] == b'-' || text[i] == b'+')) {
+    i += 1;
+  }
+  let n = 0;
+  while (i < text.len() && text[i] >= b'0' && text[i] <= b'9' && n < 100000000) {
+    n = n * 10 + (text[i] - b'0') as i32;
+    i += 1;
+  }
+  return if (negative) { -n } else { n };
+}
+
+// The rule of the attribute `whitespace` set to true: each rule but those
+// of NOT_IN_ALL, with the width of a tab of `base`.
+pub function all_rules(base: i32): i32 {
+  let rule = tab_width(base);
+  for i in 0..NAMES.len() {
+    if (!NOT_IN_ALL[i]) {
+      rule = rule | BITS[i];
+    }
+  }
+  return rule;
+}
+
+// The text of the errors `bits`: `whitespace_error_string` of git.
+pub function error_string(bits: i32): string {
+  let parts: string[] = [];
+  if ((bits & TRAILING_SPACE) == TRAILING_SPACE) {
+    parts = parts.append("trailing whitespace");
+  } else {
+    if ((bits & BLANK_AT_EOL) != 0) {
+      parts = parts.append("trailing whitespace");
+    }
+    if ((bits & BLANK_AT_EOF) != 0) {
+      parts = parts.append("new blank line at EOF");
+    }
+  }
+  if ((bits & SPACE_BEFORE_TAB) != 0) {
+    parts = parts.append("space before tab in indent");
+  }
+  if ((bits & INDENT_WITH_NON_TAB) != 0) {
+    parts = parts.append("indent with spaces");
+  }
+  if ((bits & TAB_IN_INDENT) != 0) {
+    parts = parts.append("tab in indent");
+  }
+  return parts.join(", ");
+}
+
+// The errors of the line `line` of an added line (without its sign), and
+// its text with the errors in the color `ws` and the rest in `set`:
+// `ws_check_emit_1` of git. A line end at the end of `line` stays at the
+// end of the text.
+pub function check_emit(line: string, rule: i32, set: string, reset: string, ws: string): (i32, string) {
+  let len = line.len();
+  let newline = len > 0 && line[len - 1] == b'\n';
+  if (newline) {
+    len -= 1;
+  }
+  let cr = (rule & CR_AT_EOL) != 0 && len > 0 && line[len - 1] == b'\r';
+  if (cr) {
+    len -= 1;
+  }
+  let result = 0;
+  let trailing = -1;
+  if ((rule & BLANK_AT_EOL) != 0) {
+    let i = len - 1;
+    while (i >= 0 && objects.is_space(line[i])) {
+      trailing = i;
+      result = result | BLANK_AT_EOL;
+      i -= 1;
+    }
+  }
+  if (trailing == -1) {
+    trailing = len;
+  }
+  let out = "";
+  let written = 0;
+  let i = 0;
+  while (i < trailing) {
+    if (line[i] == b' ') {
+      i += 1;
+      continue;
+    }
+    if (line[i] != b'\t') {
+      break;
+    }
+    if ((rule & SPACE_BEFORE_TAB) != 0 && written < i) {
+      result = result | SPACE_BEFORE_TAB;
+      out += ws + objects.part(line, written, i) + reset + "\t";
+    } else if ((rule & TAB_IN_INDENT) != 0) {
+      result = result | TAB_IN_INDENT;
+      out += objects.part(line, written, i) + ws + "\t" + reset;
+    } else {
+      out += objects.part(line, written, i + 1);
+    }
+    written = i + 1;
+    i += 1;
+  }
+  if ((rule & INDENT_WITH_NON_TAB) != 0 && i - written >= tab_width(rule)) {
+    result = result | INDENT_WITH_NON_TAB;
+    out += ws + objects.part(line, written, i) + reset;
+    written = i;
+  }
+  if (trailing - written > 0) {
+    out += set + objects.part(line, written, trailing) + reset;
+  }
+  if (trailing != len) {
+    out += ws + objects.part(line, trailing, len) + reset;
+  }
+  if (cr) {
+    out += "\r";
+  }
+  if (newline) {
+    out += "\n";
+  }
+  return (result, out);
+}
+
+// True when the line is all white space: `ws_blank_line` of git.
+pub function blank(data: u8[], from: i32, to: i32): boolean {
+  for i in from..to {
+    if (!objects.is_space(data[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True when the line `line`, with its line end, is a conflict marker of
+// `size` bytes: `is_conflict_marker` of git.
+pub function conflict_marker(line: string, size: i32): boolean {
+  if (line.len() < size + 1) {
+    return false;
+  }
+  let first = line[0];
+  if (first != b'=' && first != b'>' && first != b'<' && first != b'|') {
+    return false;
+  }
+  for k in 1..size {
+    if (line[k] != first) {
+      return false;
+    }
+  }
+  return objects.is_space(line[size]);
+}
