@@ -177,7 +177,7 @@ language does not have. It is deleted.
 | `E103` | an `@interrupt` handler of the wrong shape, or for a target without a vector table | — |
 | `E104` | an `@early` hook of the wrong shape, a second hook, or a target without a reset entry | — |
 | `E105` | a `@secondary` entry of the wrong shape, a second entry, or a target without a secondary entry | — |
-| `E106` | the type of a call or of a tuple has more than 4096 parts | `diag_e106` |
+| `E106` | a type has more than 4096 parts or more than 64 levels of nesting | `diag_e106` |
 | `E107` | a generic function, struct or enum has no last instance | `diag_e107` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |

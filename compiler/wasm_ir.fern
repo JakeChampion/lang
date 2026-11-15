@@ -319,6 +319,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (any_op(cache, is_scan_masks)) {
     out = out.append("@uses_scan_masks");
   }
+  if (any_op(cache, is_scan_masks_bytes)) {
+    out = out.append("@uses_scan_masks_bytes");
+  }
   if (module_uses_count_runs(cache)) {
     out = out.append("@uses_count_runs");
   }
@@ -678,6 +681,10 @@ pub function module_uses_count_byte(cache: irtables.LowerResult[]): boolean {
 
 function is_scan_masks(o: ir.Op): boolean {
   return o.kind_tag == ir.K_SCAN_MASKS;
+}
+
+function is_scan_masks_bytes(o: ir.Op): boolean {
+  return o.kind_tag == ir.K_SCAN_MASKS_BYTES;
 }
 
 pub function module_uses_scan_set(cache: irtables.LowerResult[]): boolean {
@@ -5327,6 +5334,9 @@ function emit_str_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == ir.K_SCAN_MASKS) {
     return "    call $__fern_scan_masks\n";
+  }
+  if (o.kind_tag == ir.K_SCAN_MASKS_BYTES) {
+    return "    call $__fern_scan_masks_bytes\n";
   }
   if (o.kind_tag == ir.K_COUNT_RUNS) {
     return "    call $__fern_count_runs\n";
@@ -10048,6 +10058,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   }
   if (need(needs, "@uses_scan_masks")) {
     roots += " __fern_scan_masks";
+  }
+  if (need(needs, "@uses_scan_masks_bytes")) {
+    roots += " __fern_scan_masks_bytes";
   }
   if (need(needs, "@uses_scan_set_bytes")) {
     roots += " __fern_scan_set_bytes";

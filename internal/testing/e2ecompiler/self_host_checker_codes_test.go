@@ -2294,6 +2294,17 @@ function main(): i32 { return 0; }
 		{"own-arg-spread-whole-own-arg", spreadSourceRead("n: eat_s(u)"), []string{"E051"}},
 		{"own-arg-spread-whole-in-array", spreadSourceRead("n: [u].len() as i32"), []string{"E051"}},
 		{"own-arg-spread-source-in-lambda", spreadSourceRead("n: (() => u.n)()"), []string{"E051"}},
+		{"own-arg-spread-borrowed-handle-field", literalFieldValue("b: H", "alt: b.w"), []string{"E051"}},
+		{"own-arg-spread-borrowed-handle-param", literalFieldValue("w: Writer", "alt: w"), []string{"E051"}},
+		{"own-arg-spread-borrowed-struct-field", literalFieldPrelude + "function f(own u: K, b: H): i32 {\n  let v = K { ...u, h: b };\n  return takek(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-self-update-borrowed", literalFieldPrelude + "function f(own u: H, b: H): i32 {\n  let v = H { ...u, n: 1 };\n  v = H { ...v, alt: b.alt };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-fresh-handle-field", literalFieldValue("b: H", "alt: stdout()"), nil},
+		{"own-arg-spread-own-param-handle-field", literalFieldValue("own w: Writer", "alt: w"), nil},
+		{"own-arg-spread-scalar-field", literalFieldValue("b: H", "n: b.n"), nil},
+		{"own-arg-spread-string-copy-field", literalFieldValue("b: H", "name: b.name"), nil},
+		{"own-arg-literal-borrowed-handle-fields", literalFieldPrelude + "function f(b: H): i32 {\n  let v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-literal-reassigned-borrow", literalFieldPrelude + "function f(own x: Writer, own y: Writer, b: H): i32 {\n  let v = H { w: x, alt: y, n: 0, name: \"\" };\n  v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-literal-own-param-fields", literalFieldPrelude + "function f(own x: Writer, own y: Writer): i32 {\n  let z = y;\n  let v = H { w: x, alt: z, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
@@ -2995,6 +3006,33 @@ function main(): i32 { return 0; }
 			want []string
 		}{"generic-builtin-method-name-" + name, "function " + fn + "(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}})
 	}
+	// The limit of the levels of nesting in a type (#15999).
+	deep := func(open, core, shut string, depth int) string {
+		return strings.Repeat(open, depth) + core + strings.Repeat(shut, depth)
+	}
+	for _, d := range []struct {
+		name  string
+		make  func(depth int) string
+		limit int
+	}{
+		{"constructor", func(n int) string { return "let x = " + deep("Some(", "1", ")", n) + ";" }, 63},
+		{"array-literal", func(n int) string { return "let x = " + deep("[", "1", "]", n) + ";" }, 63},
+		{"tuple", func(n int) string { return "let x = " + deep("(1, ", "2", ")", n) + ";" }, 63},
+		{"written-type", func(n int) string { return "let x: " + deep("Option[", "i32", "]", n) + " = None;" }, 63},
+		{"written-array-type", func(n int) string { return "let x: i32" + strings.Repeat("[]", n) + " = [];" }, 63},
+	} {
+		for _, at := range []struct {
+			label string
+			depth int
+			want  []string
+		}{{"at-the-limit-ok", d.limit, nil}, {"over-the-limit", d.limit + 1, []string{"E106"}}, {"far-over-the-limit", 2000, []string{"E106"}}} {
+			cases = append(cases, struct {
+				name string
+				src  string
+				want []string
+			}{"e106-depth-" + d.name + "-" + at.label, "function main(): i32 { " + d.make(at.depth) + " return 0; }\n", at.want})
+		}
+	}
 	cases = append(cases, tupleProjectionCases...)
 	cases = append(cases, exitResolutionCases...)
 	for _, tc := range cases {
@@ -3138,6 +3176,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"sixteen-bit-mismatched-operands", `function f(a: u16, b: u32): u16 { return a + b; } function main(): i32 { return 0; }`},
 		{"sixteen-bit-arrays", `function f(xs: u16[], ys: [i16]): i64 { let t: i64 = 0; for x in xs { t += x; } for y in ys { t += y; } return t; } function main(): i32 { let xs: u16[] = [1, 65535]; let ys: i16[] = [-1, 32767]; return f(xs, ys[0:1]) as i32; }`},
 		{"sixteen-bit-array-is-not-a-u32-array", `function f(xs: u16[]): u32[] { return xs; } function main(): i32 { return 0; }`},
+		{"spread-borrowed-handle-field", literalFieldValue("b: H", "alt: b.w")},
+		{"spread-borrowed-handle-param", literalFieldValue("w: Writer", "alt: w")},
+		{"spread-own-param-handle-field", literalFieldValue("own w: Writer", "alt: w")},
+		{"spread-fresh-handle-field", literalFieldValue("b: H", "alt: stdout()")},
+		{"spread-scalar-and-string-fields", literalFieldValue("b: H", "n: b.n, name: b.name")},
+		{"literal-borrowed-handle-fields", literalFieldPrelude + "function f(b: H): i32 {\n  let v = H { w: b.w, alt: b.alt, n: 0, name: \"\" };\n  return take(v);\n}\nfunction main(): i32 { return 0; }\n"},
+		{"literal-nested-borrow", literalFieldPrelude + "function f(b: H): i32 {\n  let v = K { h: H { w: b.w, alt: b.alt, n: 0, name: \"\" }, n: 1 };\n  return takek(v);\n}\nfunction main(): i32 { return 0; }\n"},
 		{"bytes-data-inside-block", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b)); } return v - 7; }`},
 		{"bytes-data-kept-in-local", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { let p: usize = __bytes_data(b); v = __load_u8(p); } return v - 7; }`},
 		{"bytes-data-with-offset", `function main(): i32 { let b: u8[] = [7u8]; let v: i32 = 0; unsafe { v = __load_u8(__bytes_data(b) + 0 as usize); } return v - 7; }`},
@@ -4099,6 +4144,21 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 
 // spreadSourceRead is a program that passes `S { ...u, value }` to an own
 // parameter, where u is an own parameter.
+const literalFieldPrelude = `struct H { w: Writer, alt: Writer, n: i32, name: string }
+struct K { h: H, n: i32 }
+function take(own h: H): i32 { return h.n; }
+function takek(own k: K): i32 { return k.n; }
+`
+
+func literalFieldValue(params, value string) string {
+	return literalFieldPrelude + `function f(own u: H, ` + params + `): i32 {
+  let v = H { ...u, ` + value + ` };
+  return take(v);
+}
+function main(): i32 { return 0; }
+`
+}
+
 func spreadSourceRead(value string) string {
 	return `struct S { got: string[], label: string, tag: string, n: i32, m: i32, other: string[], r: Option[Reader] }
 function take(own s: S): i32 { return s.n + s.m; }

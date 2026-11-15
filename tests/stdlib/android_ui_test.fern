@@ -530,9 +530,9 @@ function test_wait_gives_ticks(): test.TestOutcome {
 function test_events_do_not_move_a_tick(): test.TestOutcome {
   let p = counter().with_tick((m: Counter): i32 => 100, Beat);
   let s = sim.drag(sim.start(new_counter(), p, fonts(), 200, 400, 1.0), 20, 300, 20, 310, 250i64);
-  let due = ui.wait(s.shell, p);
+  let due = ui.wait(s.shell, s.p);
   let t = sim.event(s, android.Tick);
-  return test.assert_eq(due.to_string() + " " + t.shell.app.ticks.to_string() + " " + ui.wait(t.shell, p).to_string(), "0 1 100");
+  return test.assert_eq(due.to_string() + " " + t.shell.app.ticks.to_string() + " " + ui.wait(t.shell, t.p).to_string(), "0 1 100");
 }
 
 struct Feed { picked: i32, frames: i32 }

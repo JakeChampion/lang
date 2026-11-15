@@ -49,7 +49,7 @@ def controls():
     yield "multiple slices and repeated first flags", [[s, p, slice_nal(), slice_nal(first=False)], [slice_nal()]]
     yield "IRAP differs from IDR", [[s, p, slice_nal(kind=16), slice_nal(kind=16, first=False)]] + [
         [slice_nal(kind=kind)] for kind in range(17, 22)]
-    yield "VCL types and temporal layers", [[sequence(sub=2), p, slice_nal(kind=0, temporal=2),
+    yield "VCL types and temporal layers", [[sequence(sub=2), p, slice_nal()], [slice_nal(kind=0, temporal=2),
                                             slice_nal(kind=0, temporal=2, first=False)],
                                            [slice_nal(temporal=1)], [slice_nal(kind=6)], [slice_nal(kind=8, temporal=1)]]
     yield "PPS temporal identifiers follow their pictures", [[sequence(sub=6), p, slice_nal()]] + [
@@ -57,10 +57,10 @@ def controls():
     yield "unused higher PPS does not reject a lower picture", [
         [sequence(sub=6), p, temporal_pps(5, id=1), slice_nal()], [slice_nal(temporal=5, parameter=1)]]
     yield "stale PPS retains its temporal identifier", [
-        [sequence(sub=6), temporal_pps(3), pps.make(id=1), slice_nal(temporal=3)],
+        [sequence(sub=6), p, pps.make(id=1), slice_nal()], [temporal_pps(3), slice_nal(temporal=3)],
         [sequence(sub=4), slice_nal(parameter=1)], [slice_nal(temporal=3)]]
     yield "PPS replacement updates its temporal identifier", [
-        [sequence(sub=6), temporal_pps(3), slice_nal(temporal=3)],
+        [sequence(sub=6), p, slice_nal()], [temporal_pps(3), slice_nal(temporal=3)],
         [temporal_pps(1), slice_nal(temporal=1)], [p, slice_nal()]]
     for temporal in range(7):
         yield f"AUD and filler follow temporal layer {temporal} then reset", [
@@ -68,6 +68,18 @@ def controls():
             [opaque(35, b"\x50", temporal=temporal), slice_nal(temporal=temporal),
              opaque(38, b"\xff\x80", temporal=temporal)],
             [slice_nal(temporal=(temporal + 1) % 7)]]
+    for kind in range(2, 6):
+        for temporal in range(1, 7):
+            yield f"TSA or STSA {kind} permits layer {temporal}", [
+                [sequence(sub=6), p, slice_nal()], [slice_nal(kind=kind, temporal=temporal)]]
+    for picture in range(7):
+        for header in range(picture, 7):
+            first = [sequence(sub=6), p, slice_nal()]
+            following = [slice_nal(temporal=6)]
+            yield f"unused contained PPS layer {header} permits picture {picture} then reset", [first,
+                [temporal_pps(header, id=1), slice_nal(temporal=picture)], following]
+            yield f"SEI layer {header} permits picture {picture} then reset", [first,
+                [opaque(39, temporal=header), slice_nal(temporal=picture), opaque(40, temporal=header)], following]
     aud = opaque(35, b"\x50")
     yield "AUD and leading metadata", [[aud, hevc.vps(), s, p, opaque(39), slice_nal(kind=19)],
                                        [aud, opaque(39), slice_nal()]]
@@ -116,6 +128,23 @@ def invalid():
     for kind in (10, 22, 41, 48):
         yield f"reserved NAL type {kind}", [opaque(kind)], "Unsupported"
     yield "IRAP temporal layer must be zero", [s, p, slice_nal(kind=19, temporal=1)], "Header"
+    for kind in range(2, 6):
+        yield f"TSA or STSA {kind} rejects layer zero", [s, p, slice_nal(kind=kind)], "Header"
+    for low, high in ((opaque(39), temporal_pps(6, id=1)), (temporal_pps(0, id=1), opaque(39, temporal=6))):
+        yield f"prefix minimum survives later header {high[0] >> 1}", [
+            sequence(sub=6), p, slice_nal(), low, high, slice_nal(temporal=1)], "Header"
+    for picture in range(1, 7):
+        before = [sequence(sub=6), p, slice_nal()]
+        for kind, unit in ((32, hevc.vps()), (33, sequence(sub=6))):
+            yield f"parameter NAL {kind} requires containing layer zero, not {picture}", before + [
+                unit, slice_nal(temporal=picture)], "Header"
+        for header in range(picture):
+            yield f"unused contained PPS layer {header} precedes higher picture {picture}", before + [
+                temporal_pps(header, id=1), slice_nal(temporal=picture)], "Header"
+            yield f"prefix SEI layer {header} precedes higher picture {picture}", before + [
+                opaque(39, temporal=header), slice_nal(temporal=picture)], "Header"
+            yield f"suffix SEI layer {header} follows higher picture {picture}", before + [
+                slice_nal(temporal=picture), opaque(40, temporal=header)], "Header"
     yield "temporal layer must fit its SPS", [s, p, slice_nal(temporal=1)], "Header"
     yield "VPS temporal identifier must be zero", [opaque(32, temporal=1)], "Header"
     higher_sps = sequence(sub=6)

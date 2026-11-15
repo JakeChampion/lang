@@ -12,6 +12,8 @@ pub function names(): string[] {
     "__fern_mulhi_u64",
     "__fern_rmemchr_bytes",
     "__fern_scan_masks",
+    "__fern_scan_masks_bytes",
+    "__fern_scan_masks_in",
     "__fern_scan_set",
     "__fern_scan_set_bytes",
     "__fern_strcmp",
@@ -34,6 +36,8 @@ pub function paths(): string[] {
     "compiler/runtime/wasm/__fern_mulhi_u64.fern",
     "compiler/runtime/wasm/__fern_rmemchr_bytes.fern",
     "compiler/runtime/wasm/__fern_scan_masks.fern",
+    "compiler/runtime/wasm/__fern_scan_masks_bytes.fern",
+    "compiler/runtime/wasm/__fern_scan_masks_in.fern",
     "compiler/runtime/wasm/__fern_scan_set.fern",
     "compiler/runtime/wasm/__fern_scan_set_bytes.fern",
     "compiler/runtime/wasm/__fern_strcmp.fern",
@@ -55,7 +59,9 @@ pub function contents(): string[] {
     "function __fern_mulhi_s64(a: u64, b: u64): u64 {\n  let h = __fern_mulhi_u64(a, b);\n  if (a >> 63 != 0 as u64) {\n    h -= b;\n  }\n  if (b >> 63 != 0 as u64) {\n    h -= a;\n  }\n  return h;\n}\n",
     "function __fern_mulhi_u64(a: u64, b: u64): u64 {\n  let mask = 4294967295 as u64;\n  let al = a & mask;\n  let ah = a >> 32;\n  let bl = b & mask;\n  let bh = b >> 32;\n  let mid = ah * bl + (al * bl >> 32);\n  return ah * bh + (mid >> 32) + ((mid & mask) + al * bh >> 32);\n}\n",
     "function __fern_rmemchr_bytes(a: usize, byte: i32, from: i32): i32 {\n  if (byte as u32 > 255 as u32) {\n    return -1;\n  }\n  let n: i32 = __load_i32(a);\n  let i: i32 = from;\n  if (i >= n) {\n    i = n - 1;\n  }\n  while (i >= 0) {\n    if (__load_u8(a + 8 + i as usize) == byte) {\n      return i;\n    }\n    i = i - 1;\n  }\n  return -1;\n}\n",
-    "// The checks of the masks, and the loop of the kernel.\n// fern-lint: allow cyclomatic-complexity\nfunction __fern_scan_masks(s: usize, from: i32, m: usize): i32 {\n  let len = __load_i32(s);\n  let n = __load_i32(m);\n  if (n < 4) {\n    return -1;\n  }\n  let probes = __load_u8(m + 8) as i32;\n  if (probes < 1 || probes > 3 || n < 4 + 32 * probes) {\n    return -1;\n  }\n  let reach = 0;\n  let j = 0;\n  while (j < probes) {\n    let o = __load_u8(m + 9 + j as usize) as i32;\n    if (o > reach) {\n      reach = o;\n    }\n    j += 1;\n  }\n  let at = from;\n  if (at < 0) {\n    at = 0;\n  }\n  while (at + reach < len) {\n    let acc = 255;\n    j = 0;\n    while (j < probes) {\n      let c = __load_u8(s + 4 + (at + __load_u8(m + 9 + j as usize) as i32) as usize) as i32;\n      let t = m + 12 + (32 * j) as usize;\n      acc = acc & __load_u8(t + (c & 15) as usize) as i32 & __load_u8(t + 16 + (c >> 4) as usize) as i32;\n      j += 1;\n    }\n    if (acc != 0) {\n      return at;\n    }\n    at += 1;\n  }\n  return -1;\n}\n",
+    "function __fern_scan_masks(s: usize, from: i32, m: usize): i32 {\n  return __fern_scan_masks_in(s + 4, __load_i32(s), from, m);\n}\n",
+    "function __fern_scan_masks_bytes(s: usize, from: i32, m: usize): i32 {\n  return __fern_scan_masks_in(s + 8, __load_i32(s), from, m);\n}\n",
+    "// __fern_scan_masks_in runs the probes of the masks `m` over `len` bytes at\n// `data`, from `from`. It gives the first start that each probe accepts, or -1.\n// The checks of the masks, and the loop of the kernel.\n// fern-lint: allow cyclomatic-complexity\nfunction __fern_scan_masks_in(data: usize, len: i32, from: i32, m: usize): i32 {\n  let n = __load_i32(m);\n  if (n < 4) {\n    return -1;\n  }\n  let probes = __load_u8(m + 8) as i32;\n  if (probes < 1 || probes > 3 || n < 4 + 32 * probes) {\n    return -1;\n  }\n  let reach = 0;\n  let j = 0;\n  while (j < probes) {\n    let o = __load_u8(m + 9 + j as usize) as i32;\n    if (o > reach) {\n      reach = o;\n    }\n    j += 1;\n  }\n  let at = from;\n  if (at < 0) {\n    at = 0;\n  }\n  while (at + reach < len) {\n    let acc = 255;\n    j = 0;\n    while (j < probes) {\n      let c = __load_u8(data + (at + __load_u8(m + 9 + j as usize) as i32) as usize) as i32;\n      let t = m + 12 + (32 * j) as usize;\n      acc = acc & __load_u8(t + (c & 15) as usize) as i32 & __load_u8(t + 16 + (c >> 4) as usize) as i32;\n      j += 1;\n    }\n    if (acc != 0) {\n      return at;\n    }\n    at += 1;\n  }\n  return -1;\n}\n",
     "function __fern_scan_set(s: usize, state: i32, set: usize): i32 {\n  let len = __load_i32(s);\n  let n = __load_i32(set) as u32;\n  let i = state;\n  if (i < 0) {\n    i = 0;\n  }\n  while (i < len) {\n    let b = __load_u8(s + 4 + i as usize) as u32;\n    if (b < n) {\n      if (__load_u8(set + 8 + b) == 0) {\n        i += 1;\n        continue;\n      }\n      return i;\n    }\n    i += 1;\n  }\n  return len;\n}\n",
     "function __fern_scan_set_bytes(s: usize, state: i32, set: usize): i32 {\n  let len = __load_i32(s);\n  let n = __load_i32(set) as u32;\n  let i = state;\n  if (i < 0) {\n    i = 0;\n  }\n  while (i < len) {\n    let b = __load_u8(s + 8 + i as usize) as u32;\n    if (b < n) {\n      if (__load_u8(set + 8 + b) == 0) {\n        i += 1;\n        continue;\n      }\n      return i;\n    }\n    i += 1;\n  }\n  return len;\n}\n",
     "function __fern_strcmp(a: usize, b: usize): i32 {\n  let la = __load_i32(a) as u32;\n  let lb = __load_i32(b) as u32;\n  let n = la;\n  if (lb < n) {\n    n = lb;\n  }\n  let i: u32 = 0;\n  while (i < n) {\n    let ca = __load_u8(a + 4 + i);\n    let cb = __load_u8(b + 4 + i);\n    if (ca < cb) {\n      return -1;\n    }\n    if (ca > cb) {\n      return 1;\n    }\n    i += 1;\n  }\n  if (la < lb) {\n    return -1;\n  }\n  if (la > lb) {\n    return 1;\n  }\n  return 0;\n}\n",
@@ -68,11 +74,11 @@ pub function contents(): string[] {
 
 pub function indices(target: string): i32[] {
   if (target == "wasm32-wasi") {
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
   }
 
   if (target == "wasm32-wasi-http") {
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
   }
 
   return [];

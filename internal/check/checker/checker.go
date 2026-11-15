@@ -74,6 +74,9 @@ type Info struct {
 	CallBorrowsBeside func(*ast.Call, string) bool
 	// CallOwnFlags reports which arguments of a call go to own parameters.
 	CallOwnFlags func(*ast.Call) []bool
+	// StructLitOwned reports a struct literal whose field values are each
+	// owned, as owned decides, or hold no handle.
+	StructLitOwned func(*ast.StructLit, func(ast.Expr) bool) bool
 	// NoReturn names the calls that never return: the builtin exit, and each
 	// function whose body never returns.
 	NoReturn map[string]bool
@@ -1126,6 +1129,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__scan_masks"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__scan_masks_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 			ast.NumberType{Width: 32, Signed: true},
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 		},
@@ -3161,6 +3172,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.CallScopedFresh = c.scopedCallFresh
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.CallOwnFlags = c.ownFlagsOf
+	c.info.StructLitOwned = c.structLitOwned
 	c.info.NoReturn = NoReturnFuncs(prog)
 
 	c.rewriteAssocConstReads(prog)
@@ -5972,8 +5984,10 @@ type checker struct {
 	entryModule string
 	// Retain source types until contextual settlement selects conversions.
 	// Apply the casts after checking so every consumer sees the same AST.
-	numericTypes   map[ast.Expr]ast.Type
-	numericCasts   map[ast.Expr]*ast.CastExpr
+	numericTypes map[ast.Expr]ast.Type
+	numericCasts map[ast.Expr]*ast.CastExpr
+	// overLimit holds each call, tuple and array literal that has an E106, or that holds one.
+	overLimit      map[ast.Expr]bool
 	noRCIdentTypes map[*ast.Ident]ast.Type
 	// litTypes holds the type each struct literal checked to.
 	litTypes    map[*ast.StructLit]ast.Type
@@ -6686,6 +6700,10 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 }
 
 func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Position) {
+	if typeDepth(t, maxTypeDepth) > maxTypeDepth {
+		c.errfCode(pos, "E106", "type nests deeper than %d levels", maxTypeDepth)
+		return
+	}
 	switch x := t.(type) {
 	case ast.StructType:
 		if c.isBuiltinVec(x.Name, x.Args) {
@@ -9147,7 +9165,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__mismatch_bytes": true, "__mismatch_bytes_str": true, "__count_byte_bytes": true, "__count_below_u64": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__scan_masks": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_masks": true, "__scan_masks_bytes": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
 	"__crc32_cksum": true, "__crc32_cksum_array": true, "__crc32_ieee_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true, "__mulhi_u64": true,

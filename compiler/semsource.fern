@@ -8640,6 +8640,7 @@ function byte_scan_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__ascii_run", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__scan_set", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__scan_masks", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__scan_masks_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__scan_set_bytes", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [lent, value, lent], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__bsd_sum", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__str_hash", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [lent, value], result: typeinfo.t_i32() },
