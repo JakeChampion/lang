@@ -168,6 +168,36 @@ func sedUTF8Cases() []invocation {
 		{"ﬀ\n", []string{"s/.*/\\U&/"}},
 		{"é\n", []string{"--posix", "s/./X/"}},
 		{"a é\n", []string{"s/\\s/X/;s/\\S\\S*/Y/"}},
+		// The tables of glibc 2.39: U+0363 is punctuation there, and
+		// U+1C89 of Unicode 16 is no letter.
+		{"\u0363\n", []string{"s/[[:punct:]]/X/"}},
+		{"\u1c89\u1c8a\n", []string{"s/[[:alpha:]]/X/g;s/.*/\\U&\\L&/"}},
+		// Under I the regex compares upper cases, and the pattern is in
+		// upper case but for its escaped bytes and class names. The dfa
+		// takes the counterparts of gnulib, which leave out U+1C80 to
+		// U+1C88, and rejects the line first when a search starts at 0.
+		{"ᲄТт\n", []string{"s/т/X/Ig"}},
+		{"ᲄ т\n", []string{"s/т/X/I"}},
+		{"ᲄ т\n", []string{"s/т/X/2I"}},
+		{"ᲄ\n", []string{"s/т*$/X/I"}},
+		{"ᲄ\nᲄ т\n", []string{"/т/Id"}},
+		{"ᲄт\n", []string{"s/\\(ᲄ\\)\\1/X/I"}},
+		{"ᲄ т\n", []string{"s/\\bт/X/I;s/[т]/Y/I"}},
+		{"ᲄ т\n", []string{"s/[[:digit:]т]/X/I"}},
+		{"qQ\n", []string{"s/\\q/X/Ig;s/\\Q/Y/I"}},
+		{"qQ\n", []string{"s/[[=q=]]/X/I;s/[[.q.]]/Y/I"}},
+		{"x\n", []string{"s/[Z-a]/X/I"}},
+		{"ab\n", []string{"s/[a-Z]/X/Ig"}},
+		{"xy\n", []string{"s/[ſ-x]/X/Ig"}},
+		{"aA\n", []string{"s/[[:lower:]]/X/Ig"}},
+		{"éÉ ıI Iı ſs\n", []string{"s/\\(.\\)\\1/X/Ig"}},
+		{"ᲄТт\n", []string{"s/ᲄ/X/Ig"}},
+		{"ᲄᲅТт\n", []string{"s/[^ᲄ]/X/Ig"}},
+		{"\u212akK\n", []string{"s/k/X/Ig"}},
+		{"ıiI\n", []string{"s/i/X/Ig;s/ı/Y/Ig"}},
+		{"ſsS\n", []string{"s/[s]/X/Ig"}},
+		{"ẞß\n", []string{"s/ß/X/Ig;s/.*/\\U&/"}},
+		{"ǅǄǆ\n", []string{"s/.*/\\u&\\l&/"}},
 	} {
 		for _, locale := range []string{"C.UTF-8", "C"} {
 			cases = append(cases, invocation{name: "locale " + locale + " " + strings.Join(c.args, " ") + " " + strconv.Quote(c.in), args: c.args, stdin: c.in, env: []string{"LC_ALL=" + locale}})
