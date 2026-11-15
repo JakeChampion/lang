@@ -97,7 +97,7 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, n
 // A simulator of the program `p` from the state `state`, on a window of
 // w by h pixels with `d` pixels to the dp, in the light theme. It draws
 // the first frame.
-pub function start[S, M](own state: S, p: ui.Program[S, M], fonts: text.Fonts, w: i32, h: i32, d: f64): Sim[S, M] {
+pub function start[S, M](own state: S, own p: ui.Program[S, M], fonts: text.Fonts, w: i32, h: i32, d: f64): Sim[S, M] {
   let dir = temp_dir("fern-ui-sim").unwrap_or(".");
   let s = Sim { p: p, shell: ui.shell(state, fonts, device(dir, w, h, d, false, 1.0, 0i64)), dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, now: 0i64 };
   return event(event(s, android.Start), android.WindowCreated(android.Window { ptr: 1 as usize }));

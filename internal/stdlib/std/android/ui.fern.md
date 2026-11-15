@@ -1369,9 +1369,8 @@ function place_row[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: 
   }
   if (scrolls) {
     let limit = (total - w).max(0);
-    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1 }), taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
     let inner = Clip { ...clip, group: e.list, left: clip.left.max(x), right: clip.right.min(x + w) };
-    return place_along(env, e, ss, x - offset_of(env, e.list, limit, w), y, h, gap, inner, o);
+    return place_along(env, e, ss, x - offset_of(env, e.list, limit, w), y, h, gap, inner, Built { ...out, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1 }) });
   }
   if (e.justify == BETWEEN && n > 1) {
     return place_along(env, e, ss, x, y, h, gap + (w - total).max(0) / (n - 1), clip, out);
@@ -1415,9 +1414,8 @@ function place_column[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, cli
   }
   if (scrolls) {
     let limit = (total - h).max(0);
-    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1 }), taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
     let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
-    return place_down(env, e, ss, x, y - offset_of(env, e.list, limit, h), w, gap, inner, o);
+    return place_down(env, e, ss, x, y - offset_of(env, e.list, limit, h), w, gap, inner, Built { ...out, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1 }) });
   }
   if (e.justify == BETWEEN && n > 1) {
     return place_down(env, e, ss, x, y, w, gap + (h - total).max(0) / (n - 1), clip, out);

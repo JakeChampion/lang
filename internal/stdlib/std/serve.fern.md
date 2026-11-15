@@ -100,7 +100,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<42 function __h2_stream_reset(c: __Conns, fd: i32, sid: i32): __Conns>>
 
-<<43 function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights, fl: __Flight, t: async.Ta...>>
+<<43 function __h2_producer_wake[D: async.Driver](drv: D, own c: __Conns, own fls: __Flights, fl: __Flight, t: ...>>
 
 <<44 function __holds_request(buf: u8[]): boolean>>
 
@@ -2811,11 +2811,11 @@ function __h2_producer_failed(own a: __H2Answered, at: i32, pi: i32): own __H2An
 }
 ```
 
-### `43 function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights, fl: __Flight, t: async.Ta...`
+### `43 function __h2_producer_wake[D: async.Driver](drv: D, own c: __Conns, own fls: __Flights, fl: __Flight, t: ...`
 
 ```fern
-<<43 function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights, fl: __Flight, t: async.Ta...>>=
-function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights, fl: __Flight, t: async.Task[Option[u8[]]], wake: async.Wake, opts: Config): (__Conns, __Flights) {
+<<43 function __h2_producer_wake[D: async.Driver](drv: D, own c: __Conns, own fls: __Flights, fl: __Flight, t: ...>>=
+function __h2_producer_wake[D: async.Driver](drv: D, own c: __Conns, own fls: __Flights, fl: __Flight, t: async.Task[Option[u8[]]], wake: async.Wake, opts: Config): (__Conns, __Flights) {
   let at = __conns_index(c, fl.fd);
   let pi = __producer_at(c, fl.fd, fl.stream);
   if (at < 0 || pi < 0) {
@@ -2824,11 +2824,10 @@ function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights,
   }
   match (c.framing[at]) {
     Http2(conn) => {
-      let a = __H2Answered { conn: conn, conns: c, fls: fls, out: [] };
       match (async.task_resume(t, wake)) {
         Done(chunk) => {
-          let stepped = __h2_chunk(a, at, pi, chunk);
-          a = stepped.0;
+          let stepped = __h2_chunk(__H2Answered { conn: conn, conns: c, fls: fls, out: [] }, at, pi, chunk);
+          let a = stepped.0;
           if (!stepped.1) {
             a = __h2_produce(drv, a, at, fl.stream);
           }
