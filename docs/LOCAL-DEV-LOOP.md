@@ -49,8 +49,9 @@ lane reads the wasm pins from mise.toml directly. qemu and the cross gcc are
 not mise tools: apt (the session hook, on Linux) or `scripts/devbox` (on a
 Mac) supply them.
 
-The `std/android/gl` tests (`TestAndroidGLCanvas`, `TestAndroidPaperGPU`)
-draw with Mesa's EGL and OpenGL ES 2 on the host, with no display server.
+The `std/android/gl` tests (`TestAndroidGLCanvas`, `TestAndroidPaperGPU`,
+`TestAndroidUIPainter`, `TestAndroidFluidGPU`) draw with Mesa's EGL and
+OpenGL ES on the host, with no display server.
 Install them with `apt-get install libegl1 libgles2 libegl-mesa0`. Without
 them the tests skip, and the e2e "other" lane sets `FERN_REQUIRE_HOST_GL=1`
 so that they fail there instead.

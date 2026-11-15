@@ -4,7 +4,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -27,9 +26,10 @@ func TestSelfHostUtf8ValidityProperty(t *testing.T) {
 			}
 			output, err := cmd.CombinedOutput()
 			out := string(output)
-			if err != nil || !strings.Contains(out, "# pass 5") || !strings.Contains(out, "# fail 0") || !strings.Contains(out, "1..5") {
+			if err != nil {
 				t.Fatalf("string validity property: %v\n%s", err, out)
 			}
+			e2eharness.CheckTAPPlan(t, out)
 		})
 	}
 }
@@ -48,7 +48,8 @@ func TestSelfHostArm64DarwinUtf8ValidityProperty(t *testing.T) {
 	}
 	output, err := exec.Command(bin).CombinedOutput()
 	out := string(output)
-	if err != nil || !strings.Contains(out, "# pass 5") || !strings.Contains(out, "# fail 0") || !strings.Contains(out, "1..5") {
+	if err != nil {
 		t.Fatalf("string validity property: %v\n%s", err, out)
 	}
+	e2eharness.CheckTAPPlan(t, out)
 }

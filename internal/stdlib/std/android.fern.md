@@ -343,7 +343,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, and the Choreographer of the loop thread. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
 
-Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request. The focus callback applies the request through the JNIEnv of the UI thread, which the activity holds. The window gets the focus after it shows, and again each time the user returns to it.
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it.
 
 `NativeActivity` and `Callbacks` have the fields of `ANativeActivity` and `ANativeActivityCallbacks` in `android/native_activity.h`, in their order. `@derive(ffi.CLayout)` gives each field its C offset.
 
@@ -1275,9 +1275,8 @@ pub function keep_screen_on(ctx: usize, on: boolean): void {
   }
 }
 
-// Hides the status bar and the navigation bar while the window has the
-// focus, or shows them again the next time the window gets the focus. A
-// swipe from the edge shows the bars for a short time.
+// Hides the status bar and the navigation bar, or shows them again. A
+// swipe from the edge shows hidden bars for a short time.
 pub function immersive(ctx: usize, on: boolean): void {
   unsafe {
     let flags: i32 = Context.c_load_flags(ctx) | FLAG_IMMERSIVE_SET;
@@ -1287,6 +1286,7 @@ pub function immersive(ctx: usize, on: boolean): void {
       Context.c_store_flags(ctx, flags & ~FLAG_IMMERSIVE);
     }
   }
+  ui_request(ctx, UiRequest { op: SYSTEM_BARS, a: 0, b: 0, data: 0 as usize });
 }
 
 // The audio stream that the volume keys change while the window shows, as
@@ -1455,6 +1455,9 @@ const FIELD_SET: i32 = 2;
 
 const FIELD_HIDE: i32 = 3;
 
+// The request of `immersive`: apply the bar visibility now.
+const SYSTEM_BARS: i32 = 7;
+
 // InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
 pub const INPUT_TEXT: i32 = 1;
 
@@ -1561,6 +1564,12 @@ function on_ui_request(fd: i32, events: i32, data: usize): i32 {
 // Does the request `r` on the UI thread. It is true when the request keeps
 // its buffer.
 function do_request(ctx: usize, r: UiRequest): boolean {
+  if (r.op == SYSTEM_BARS) {
+    unsafe {
+      apply_system_bars(Context.c_load_activity(ctx));
+    }
+    return false;
+  }
   if (r.op > FIELD_HIDE) {
     return access_request(ctx, r);
   }

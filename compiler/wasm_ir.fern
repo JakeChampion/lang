@@ -1218,18 +1218,19 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "    (local.set $id (global.get $__fern_task_fresh_g))\n"
     + "    (global.set $__fern_task_fresh_g (i32.add (local.get $id) (i32.const 1)))\n"
     + "    (if (i32.lt_s (local.get $id) (local.get $cap)) (then\n"
-    + "      (i64.store (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 96))))\n"
+    + "      (i64.store (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 104))))\n"
     + "      (return (local.get $id))))\n"
     + "    (local.set $nt (call $__fern_task_zalloc (i32.shl (local.get $cap) (i32.const 4))))\n"
     + "    (memory.copy (local.get $nt) (global.get $__fern_task_tab) (i32.shl (local.get $cap) (i32.const 3)))\n"
     + "    (global.set $__fern_task_tab (local.get $nt))\n"
     + "    (global.set $__fern_task_cap (i32.shl (local.get $cap) (i32.const 1)))\n"
-    + "    (i64.store (i32.add (local.get $nt) (i32.shl (local.get $cap) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 96))))\n"
+    + "    (i64.store (i32.add (local.get $nt) (i32.shl (local.get $cap) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 104))))\n"
     + "    (local.get $cap))\n"
     + "  (func $__fern_task_free (param $id i32) (result i32) (local $r i32)\n"
     + "    (local.set $r (call $__fern_task_slot (local.get $id)))\n"
     + "    (if (local.get $r) (then (if (i64.eqz (i64.load offset=56 (local.get $r))) (then\n"
     + "      (i64.store offset=56 (local.get $r) (i64.extend_i32_u (i32.add (global.get $__fern_task_free_g) (i32.const 1))))\n"
+    + "      (i64.store offset=96 (local.get $r) (i64.add (i64.load offset=96 (local.get $r)) (i64.const 1)))\n"
     + "      (global.set $__fern_task_free_g (local.get $id))))))\n"
     + "    (i32.const 0))\n"
     + "  (func $__fern_task_cur (result i32) (global.get $__fern_task_cur_g))\n"
@@ -1287,6 +1288,12 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n"
     + "      (br $copy)))\n"
     + "    (local.get $out))\n"
+    + "  (func $__fern_task_gen (param $id i32) (result i32) (local $r i32)\n"
+    + "    (if (i32.or (i32.lt_s (local.get $id) (i32.const 1)) (i32.ge_s (local.get $id) (global.get $__fern_task_cap))) (then (return (i32.const -1))))\n"
+    + "    (local.set $r (i32.wrap_i64 (i64.load (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))))))\n"
+    + "    (if (i32.eqz (local.get $r)) (then (return (i32.const -1))))\n"
+    + "    (if (i64.ne (i64.load offset=56 (local.get $r)) (i64.const 0)) (then (return (i32.const -1))))\n"
+    + "    (i32.wrap_i64 (i64.load offset=96 (local.get $r))))\n"
     + "  (func $__fern_task_timeout (param $id i32) (result i32)\n"
     + "    (i32.wrap_i64 (i64.load offset=8 (call $__fern_task_rec (local.get $id)))))\n"
     + "  (func $__fern_task_until (param $id i32) (result i64)\n"
@@ -4527,6 +4534,9 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irtables.StructTab, funcs: par
       parts = parts.append("    if (result " + drt + ")\n");
       for dek in 0..dargc {
         parts = parts.append("    local.get " + util.i32_to_string(dbase + dek) + "\n");
+        if (dek == 0 && irtables.enum_immediate(structs, funcs, dbn)) {
+          parts = parts.append("    i32.const 8\n    i32.add\n    i32.load\n");
+        }
       }
       parts = parts.append("    call $" + dbn + "." + funcs[dfi].name + "\n");
       parts = parts.append("    else\n");
@@ -11349,6 +11359,9 @@ function extern_variant_string_arm_test(arms: i32[]): string {
 
 pub function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string): string {
   let stab = irtables.struct_tab(mod.structs);
+  if (irtables.enum_immediate(stab, mod.funcs, t)) {
+    return "(local.get " + eploc + ")";
+  }
   for ei in 0..mod.enums.len() {
     if (mod.enums[ei].name == t) {
       let n = mod.enums[ei].variant_names.len();
@@ -12805,9 +12818,13 @@ pub function extern_wrappers(mod: parser.Module): string {
         parts = parts.append(" " + extern_core_arg(f.params[ena].type_name, "$ep" + util.i32_to_string(ena)));
       }
       parts = parts.append("))\n");
-      parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(0)) + ")\n");
-      parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
-      parts = parts.append("    (local.get $s))\n");
+      if (irtables.enum_immediate(irtables.struct_tab(mod.structs), mod.funcs, f.ret_type)) {
+        parts = parts.append("    (local.get $d))\n");
+      } else {
+        parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(0)) + ")\n");
+        parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
+        parts = parts.append("    (local.get $s))\n");
+      }
     } else if (is_sync_extern(f) && extern_variant_string_arms(mod, f.ret_type).len() > 0) {
       let sarms = extern_variant_string_arms(mod, f.ret_type);
       parts = parts.append("  (func $" + f.name);

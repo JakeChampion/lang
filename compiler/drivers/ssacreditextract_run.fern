@@ -22,7 +22,7 @@ function lift(r: irtables.LowerResult): ssa.SFunc {
 }
 
 function expect(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, ok: boolean, id: i32): void {
-  let p = extract.check(f, drop, release, helper.FlatChild { offset: 8 });
+  let p = extract.check(f, drop, release, helper.FlatChild { offset: 0 });
   if (p.ok != ok || p.function_name != f.name || p.message == "") {
     print(p.function_name + ": " + p.message);
     exit(id);
@@ -92,13 +92,13 @@ function target_checks(target: string): void {
   let r = lift(releases[0]);
   let f = lift(body);
   expect(f, d, r, true, 10);
-  let absent = extract.check_selected(f, d, r, helper.FlatChildren { offsets: [8] }, 16);
+  let absent = extract.check_selected(f, d, r, helper.FlatChildren { offsets: [0] }, 8);
   require(!absent.ok && absent.function_name == f.name && absent.message == "selected child slot absent from layout", 33);
   let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "uniqueness token compared with a nonzero value", "unsupported containment operation", "return without child credit", "freeing a shared parent"];
   for mode in 0..7 {
     let mutated = lift(mutate(body, mode));
     expect(mutated, d, r, false, 11 + mode);
-    let rejected = extract.check(mutated, d, r, helper.FlatChild { offset: 8 });
+    let rejected = extract.check(mutated, d, r, helper.FlatChild { offset: 0 });
     if (!util.contains(rejected.message, reasons[mode])) {
       print(rejected.message);
       exit(40 + mode);
@@ -156,9 +156,9 @@ function target_checks(target: string): void {
   expect(ssa.SFunc { ...f, blocks: missing_pred }, d, r, false, 26);
   expect(ssa.SFunc { ...f, name: d.name }, d, r, false, 27);
   expect(ssa.SFunc { ...f, name: r.name }, d, r, false, 28);
-  let reserved_release = extract.check(f, d, ssa.SFunc { ...r, name: "__fern_rc_dec" }, helper.FlatChild { offset: 8 });
+  let reserved_release = extract.check(f, d, ssa.SFunc { ...r, name: "__fern_rc_dec" }, helper.FlatChild { offset: 0 });
   require(!reserved_release.ok && reserved_release.function_name == "__fern_rc_dec", 29);
-  let reserved_drop = extract.check(f, ssa.SFunc { ...d, name: "__fern_rc_dec" }, r, helper.FlatChild { offset: 8 });
+  let reserved_drop = extract.check(f, ssa.SFunc { ...d, name: "__fern_rc_dec" }, r, helper.FlatChild { offset: 0 });
   require(!reserved_drop.ok && reserved_drop.function_name == "__fern_rc_dec", 30);
   let free_use: ssa.SBlock[] = [];
   let frees = 0;
@@ -176,7 +176,7 @@ function target_checks(target: string): void {
   require(frees == 1, 34);
   let unreadable = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: free_use };
   expect(unreadable, d, r, false, 31);
-  require(extract.check(unreadable, d, r, helper.FlatChild { offset: 8 }).message == "undefined physical operand", 32);
+  require(extract.check(unreadable, d, r, helper.FlatChild { offset: 0 }).message == "undefined physical operand", 32);
 }
 
 function sibling_mutated(f: ssa.SFunc, other: i32, mode: i32, release: string): ssa.SFunc {
@@ -240,20 +240,20 @@ function sibling_checks(target: string): void {
   require(drops.len() == 1 && releases.len() == 1, 60);
   let d = lift(drops[0]);
   let r = lift(releases[0]);
-  let layout = helper.FlatChildren { offsets: [8, 24] };
+  let layout = helper.FlatChildren { offsets: [0, 16] };
   let checked = 0;
   for body in sub.bodies {
     if (body.name == "left" || body.name == "right") {
-      let offset = 8;
+      let offset = 0;
       if (body.name == "right") {
-        offset = 24;
+        offset = 16;
       }
       let f = lift(body);
       let valid = extract.check_selected(f, d, r, layout, offset);
       require(valid.ok && valid.function_name == f.name, 61);
-      let other = 24;
-      if (offset == 24) {
-        other = 8;
+      let other = 16;
+      if (offset == 16) {
+        other = 0;
       }
       let sibling_reasons: string[] = ["sibling slot left in a freed parent", "sibling released twice", "load from released sibling slot", "uniqueness token joins a nonzero value"];
       for sm in 0..sibling_reasons.len() {
@@ -291,7 +291,7 @@ function sibling_checks(target: string): void {
       let hits = 0;
       for op in drops[0].ops {
         if (op.kind_tag == ir.kind_id("struct_get")) {
-          slot = (op.i32_imm + 1) * 8;
+          slot = op.i32_imm * 8;
         }
         if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec" && slot != offset) {
           ops = ops.append(ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -303,7 +303,7 @@ function sibling_checks(target: string): void {
       require(hits == 1, 72);
       let corrupt = extract.check_selected(f, lift(irtables.LowerResult { ...drops[0], ops: ops }), r, layout, offset);
       require(!corrupt.ok && corrupt.function_name == d.name && corrupt.message == "child release mismatch", 73);
-      require(extract.check_selected(f, d, r, helper.FlatChildren { offsets: [24, 8] }, offset).ok, 74);
+      require(extract.check_selected(f, d, r, helper.FlatChildren { offsets: [16, 0] }, offset).ok, 74);
       checked += 1;
     }
   }

@@ -1529,6 +1529,7 @@ func New() *Interp {
 	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
 	// A handle of this interpreter is not reused, so no count can change.
 	i.Builtins["__task_fd_gen"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_gen"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	// __task_inline adds its argument to the number of worker bodies that run
 	// in this process, and gives the new number.
 	i.Builtins["__task_inline"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) {
@@ -1653,6 +1654,7 @@ func New() *Interp {
 	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
 	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
 	i.Builtins["unix_connect"] = &Builtin{Fn: builtinUnixConnect}
+	i.Builtins["vsock_connect"] = &Builtin{Fn: builtinKtlsUnsupported}
 	i.Builtins["reactor_new"] = &Builtin{Fn: builtinReactorNew}
 	i.Builtins["reactor_ctl"] = &Builtin{Fn: builtinReactorCtl}
 	i.Builtins["reactor_wait"] = &Builtin{Fn: builtinReactorWait}

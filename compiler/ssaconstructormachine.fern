@@ -278,8 +278,8 @@ function finished(s: State, words: i32, tag: i64, register_entry: boolean): bool
     if (i == 0) {
       expected = token(3, 8);
     }
-    if (i == 6) {
-      expected = number(tag);
+    if (i == 6 && words == 2) {
+      expected = token(9, 1);
     }
     if (i == 7) {
       expected = number(words as i64);

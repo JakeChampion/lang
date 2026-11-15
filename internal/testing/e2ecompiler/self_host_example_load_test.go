@@ -215,16 +215,24 @@ func parseLoadJSON(t *testing.T, out string) loadJSON {
 		t.Fatalf("%d percentiles, %d latency_ms values, %d first byte percentiles and %d rps percentiles, want 9, 6, 9 and 9\n%s", len(got.LatencyPercentiles), len(got.Metrics.LatencyMs), len(got.FirstBytePercentiles), len(got.Rps.Percentiles), out)
 	}
 	n := got.responses()
-	if n > 0 && (len(got.ResponseTimeHistogram) == 0 || len(got.ResponseTimeHistogram) > 11 || sum(got.ResponseTimeHistogram) != n || sum(got.FirstByteHistogram) != n) {
+	// oha keeps the count of the last bin of each label, so the counts of a
+	// histogram sum to the responses only when the labels differ.
+	if n > 0 && (len(got.ResponseTimeHistogram) == 0 || len(got.ResponseTimeHistogram) > 11 || sum(got.ResponseTimeHistogram) > n || sum(got.FirstByteHistogram) > n) {
 		t.Fatalf("the histograms do not count the %d responses\n%s", n, out)
 	}
-	if n == 0 && (len(got.ResponseTimeHistogram) != 0 || got.Summary.SizePerRequest != nil || got.Rps.Mean != nil || got.Details.FirstByte.Average != nil) {
-		t.Fatalf("a run with no response has histogram rows, a size per request, rps or a first byte\n%s", out)
+	if n == 0 && (!nanOnly(got.ResponseTimeHistogram) || !nanOnly(got.FirstByteHistogram) || got.Summary.SizePerRequest != nil || got.Rps.Mean != nil || got.Details.FirstByte.Average != nil) {
+		t.Fatalf("a run with no response has histogram rows other than NaN, a size per request, rps or a first byte\n%s", out)
 	}
 	if n > 0 && (got.Rps.Mean == nil || got.Details.FirstByte.Average == nil || *got.Details.FirstByte.Fastest > *got.Details.FirstByte.Slowest || *got.Details.FirstByte.Slowest > *got.Summary.Slowest) {
 		t.Fatalf("no rps, or first byte times that are not ordered or not before the response\n%s", out)
 	}
 	return got
+}
+
+// nanOnly says that a histogram is the one row of oha for no values.
+func nanOnly(m map[string]int) bool {
+	c, ok := m["NaN"]
+	return len(m) == 1 && ok && c == 0
 }
 
 func sum(m map[string]int) int64 {
@@ -291,9 +299,6 @@ func parseLoadSummary(t *testing.T, out string) loadSummary {
 		}
 	}
 	want := []string{"Summary:", "Response time histogram:", "Response time distribution:", "Details (average, fastest, slowest):", "Status code distribution:"}
-	if len(s.statuses) == 0 {
-		want = []string{"Summary:", "Details (average, fastest, slowest):", "Status code distribution:"}
-	}
 	if len(s.errors) > 0 {
 		want = append(want, "Error distribution:")
 	}
@@ -308,11 +313,9 @@ func parseLoadSummary(t *testing.T, out string) loadSummary {
 			t.Fatalf("no %s row\n%s", row, out)
 		}
 	}
-	if len(s.statuses) > 0 {
-		for _, p := range []string{"10.00", "25.00", "50.00", "75.00", "90.00", "95.00", "99.00", "99.90", "99.99"} {
-			if !strings.Contains(out, "\n  "+p+"% in ") {
-				t.Fatalf("no %s%% row\n%s", p, out)
-			}
+	for _, p := range []string{"10.00", "25.00", "50.00", "75.00", "90.00", "95.00", "99.00", "99.90", "99.99"} {
+		if !strings.Contains(out, "\n  "+p+"% in ") {
+			t.Fatalf("no %s%% row\n%s", p, out)
 		}
 	}
 	return s
@@ -324,6 +327,12 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h3dir := t.TempDir()
+	h3src := filepath.Join(h3dir, "h3_server.fern")
+	if err := os.WriteFile(h3src, []byte(loadH3Server), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h3server := cli.x86Binary(t, h3src)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			var load func(args ...string) *exec.Cmd
@@ -353,6 +362,13 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 					t.Fatalf("load %v: exit %d\n%s%s", args, code, out, stderr)
 				}
 				return parseLoadSummary(t, out)
+			}
+
+			t.Run("features", func(t *testing.T) { loadFeatureTests(t, run) })
+			t.Run("http3", func(t *testing.T) { loadH3Tests(t, run, h3server) })
+			t.Run("terminal", func(t *testing.T) { loadTerminalTests(t, load().Args) })
+			if target == "x86-64-linux" {
+				t.Run("oha", func(t *testing.T) { loadOhaTests(t, run) })
 			}
 
 			t.Run("count", func(t *testing.T) {
@@ -431,7 +447,7 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 			t.Run("incomplete", func(t *testing.T) {
 				s := newLoadServer(t)
 				got := summary(t, "-n", "6", "-c", "2", s.URL+"/cut")
-				if len(got.statuses) != 0 || got.errors["connection closed before the response was complete"] != 6 || s.requests.Load() != 6 {
+				if len(got.statuses) != 0 || got.errors["connection closed before message completed"] != 6 || s.requests.Load() != 6 {
 					t.Errorf("statuses %v, errors %v; want 6 incomplete responses\n%s", got.statuses, got.errors, got.text)
 				}
 				if !strings.Contains(got.text, "  Success rate:\t0.00%\n") {
@@ -447,7 +463,7 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 				addr := l.Addr().String()
 				l.Close()
 				got := summary(t, "-n", "5", "-c", "2", "http://"+addr+"/")
-				if got.errors["Connection refused"] != 5 || len(got.statuses) != 0 {
+				if got.errors["Connection refused (os error 111)"] != 5 || len(got.statuses) != 0 {
 					t.Errorf("errors %v; want 5 refused connections\n%s", got.errors, got.text)
 				}
 				out, stderr, code := run(t, "-n", "3", "-c", "1", "--output-format", "json", "http://"+addr+"/")
@@ -455,7 +471,7 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 					t.Fatalf("exit %d\n%s%s", code, out, stderr)
 				}
 				j := parseLoadJSON(t, out)
-				if j.ErrorDistribution["Connection refused"] != 3 || j.responses() != 0 || j.Summary.Slowest != nil || j.LatencyPercentiles["p99"] != nil || j.Summary.SuccessRate != 0 {
+				if j.ErrorDistribution["Connection refused (os error 111)"] != 3 || j.responses() != 0 || j.Summary.Slowest != nil || j.LatencyPercentiles["p99"] != nil || j.Summary.SuccessRate != 0 {
 					t.Errorf("want 3 refused connections and null latencies\n%s", out)
 				}
 			})
@@ -660,12 +676,12 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 					args []string
 					want string
 				}{
-					{[]string{"--http2", "https://127.0.0.1/"}, "load: --http2: HTTP/2 is not supported: the tool uses HTTP/1.1\n"},
+					{[]string{"-n", "1", "-n", "2", "https://127.0.0.1/"}, "load: give -n once\n"},
 					{[]string{"-w", "http://127.0.0.1/"}, "load: -w needs -z\n"},
 					{[]string{"-z", "10", "http://127.0.0.1/"}, "load: -z 10 is not a duration such as 10s, 500ms or 1m\n"},
 					{[]string{}, "load: give one URL\n"},
-					{[]string{"-q", "0", "http://127.0.0.1/"}, "load: -q 0 must be more than 0 and not more than 1000000000\n"},
-					{[]string{"--output-format", "csv", "http://127.0.0.1/"}, "load: --output-format csv is not supported: use text, json or quiet\n"},
+					{[]string{"-q", "x", "http://127.0.0.1/"}, "load: -q x is not a rate such as 100 or 0.5\n"},
+					{[]string{"--output-format", "xml", "http://127.0.0.1/"}, "load: --output-format xml is not a format: use text, json, csv or quiet\n"},
 				} {
 					out, stderr, code := run(t, tc.args...)
 					if code != 2 || out != "" || !strings.HasPrefix(stderr, tc.want) || !strings.Contains(stderr, "Usage: load ") {

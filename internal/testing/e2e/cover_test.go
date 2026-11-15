@@ -200,6 +200,30 @@ func TestCoverReportRunsAtTheExitBuiltinArm64(t *testing.T) {
 	}
 }
 
+// A local named exit is an ordinary callable, so the report runs once, when
+// main returns, and counts the lines after the call.
+const coverLocalExitSrc = `function main(): i32 {
+    let exit = (k: i32): void => { print("local"); };
+    exit(3);
+    print("after");
+    return 0;
+}
+`
+
+func TestCoverReportRunsOnceBesideALocalExitX86_64(t *testing.T) {
+	stdout, stderr, code, srcPath := runCoverX86_64(t, coverLocalExitSrc)
+	if stdout != "local\nafter\n" {
+		t.Errorf("stdout = %q, want %q", stdout, "local\nafter\n")
+	}
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	hits := parseCoverLines(t, stderr, srcPath)
+	if got := hits[4]; got != 1 {
+		t.Errorf("line 4 (past the local exit) reports %d hits, want 1; stderr:\n%s", got, stderr)
+	}
+}
+
 func TestCoverFlagOffEmitsNoCoverageSymbols(t *testing.T) {
 	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux} {
 		asm, _ := emitCover(t, target, coverSrc, false)

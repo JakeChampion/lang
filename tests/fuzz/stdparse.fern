@@ -1,4 +1,5 @@
 import "std/brotli";
+import "std/bzip2";
 import "std/classfile";
 import "std/cpio";
 import "std/csv";
@@ -15,6 +16,8 @@ import "std/http/h2/frame";
 import "std/http/hpack";
 import "std/http/qpack";
 import "std/json";
+import "std/lz4";
+import "std/lzw";
 import "std/protobuf";
 import "std/quic/frames";
 import "std/quic/packet";
@@ -30,6 +33,8 @@ import "std/tls/verify";
 import "std/tls/x509";
 import "std/url";
 import "std/utf8";
+import "std/xz";
+import "std/zip";
 import "std/zstd";
 
 // Feeds a file to one network-facing parser of the standard library: the
@@ -510,6 +515,10 @@ function x509_summary(raw: u8[]): string {
 // The output limit of each decoder, 1 MiB.
 const DECODE_LIMIT: i32 = 1048576;
 
+// The output limit of the `-limit` form of a reader, which a test of the
+// limit runs.
+const SMALL_LIMIT: i32 = 100;
+
 // The length and CRC-32 of decoded bytes, which a test compares with the
 // output of another decoder.
 function digest(out: [u8]): string {
@@ -568,6 +577,69 @@ function zlib_summary(raw: u8[]): string {
     },
     Err(e) => {
       return "zlib refused " + inflate_refusal(e);
+    }
+  }
+}
+
+// The summary of one of the decoders that give the bytes before an error:
+// the digest of the output, or `refused` and the count of those bytes.
+function partial_summary(reader: string, out: [u8], refused: boolean): string {
+  if (refused) {
+    return reader + " refused partial " + out.len().to_string();
+  }
+  return reader + " ok " + digest(out);
+}
+
+function bzip2_summary(reader: string, raw: u8[], limit: i32): string {
+  let d = bzip2.decode_with_limit(raw, limit);
+  return partial_summary(reader, d.out, d.error.is_some());
+}
+
+function lz4_summary(reader: string, raw: u8[], limit: i32): string {
+  let d = lz4.decode_with_limit(raw, limit);
+  return partial_summary(reader, d.out, d.error.is_some());
+}
+
+function lzw_summary(reader: string, raw: u8[], limit: i32): string {
+  let d = lzw.decode_with_limit(raw, limit);
+  return partial_summary(reader, d.out, d.error.is_some());
+}
+
+function xz_summary(reader: string, raw: u8[], limit: i32): string {
+  let d = xz.decode_xz_with_limit(raw, limit);
+  return partial_summary(reader, d.out, d.error.is_some());
+}
+
+function lzma_summary(reader: string, raw: u8[], limit: i32): string {
+  let d = xz.decode_lzma_with_limit(raw, limit);
+  return partial_summary(reader, d.out, d.error.is_some());
+}
+
+// The count of the entries of the archive, and for each entry the digest of
+// its bytes, `refused`, or `large` for a size above the limit.
+function zip_summary(raw: u8[]): string {
+  let image = raw[0:raw.len()];
+  match (zip.parse(image)) {
+    Err(e) => {
+      return "zip refused " + e.offset.to_string();
+    },
+    Ok(a) => {
+      let out = "zip ok " + a.entries.len().to_string();
+      for e in a.entries {
+        if (e.size > DECODE_LIMIT) {
+          out = out + " large";
+          continue;
+        }
+        match (zip.read(image, e)) {
+          Ok(bytes) => {
+            out = out + " " + digest(bytes);
+          },
+          Err(_) => {
+            out = out + " refused";
+          }
+        }
+      }
+      return out;
     }
   }
 }
@@ -756,7 +828,8 @@ function jpeg_summary(raw: u8[]): string {
 
 // The offset of the refusal, or the header fields and then, for each
 // program header, its kind with the length and a sum of the bytes of its
-// segment, or `cut` for a segment that the reader refuses.
+// segment, or `cut` for a segment that the reader refuses. The offset of the
+// layout fault, or `ok`, is last.
 function elf_summary(raw: u8[]): string {
   let image = raw[0:raw.len()];
   match (elf.parse(image)) {
@@ -779,7 +852,15 @@ function elf_summary(raw: u8[]): string {
           }
         }
       }
-      return out + " loads " + img.loads().len().to_string();
+      out = out + " loads " + img.loads().len().to_string();
+      match (img.layout_fault()) {
+        Some(e) => {
+          return out + " layout " + e.offset.to_string();
+        },
+        None => {
+          return out + " layout ok";
+        }
+      }
     }
   }
 }
@@ -1000,7 +1081,7 @@ function utf8_summary(raw: u8[]): string {
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|dns|protobuf|jpeg|elf|cpio|classfile|fdt|truetype|tzif|csv|json|url|utf8 FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|bzip2|lz4|lzw|xz|lzma|zip|dns|protobuf|jpeg|elf|cpio|classfile|fdt|truetype|tzif|csv|json|url|utf8 FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -1075,6 +1156,30 @@ function main(): i32 {
   }
   if (av[1] == "brotli") {
     print(brotli_summary(raw));
+    return 0;
+  }
+  if (av[1] == "bzip2" || av[1] == "bzip2-limit") {
+    print(bzip2_summary(av[1], raw, if (av[1] == "bzip2") { DECODE_LIMIT } else { SMALL_LIMIT }));
+    return 0;
+  }
+  if (av[1] == "lz4" || av[1] == "lz4-limit") {
+    print(lz4_summary(av[1], raw, if (av[1] == "lz4") { DECODE_LIMIT } else { SMALL_LIMIT }));
+    return 0;
+  }
+  if (av[1] == "lzw" || av[1] == "lzw-limit") {
+    print(lzw_summary(av[1], raw, if (av[1] == "lzw") { DECODE_LIMIT } else { SMALL_LIMIT }));
+    return 0;
+  }
+  if (av[1] == "xz" || av[1] == "xz-limit") {
+    print(xz_summary(av[1], raw, if (av[1] == "xz") { DECODE_LIMIT } else { SMALL_LIMIT }));
+    return 0;
+  }
+  if (av[1] == "lzma" || av[1] == "lzma-limit") {
+    print(lzma_summary(av[1], raw, if (av[1] == "lzma") { DECODE_LIMIT } else { SMALL_LIMIT }));
+    return 0;
+  }
+  if (av[1] == "zip") {
+    print(zip_summary(raw));
     return 0;
   }
   if (av[1] == "dns") {
