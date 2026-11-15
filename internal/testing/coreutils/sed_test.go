@@ -173,7 +173,17 @@ func sedUTF8Cases() []invocation {
 			cases = append(cases, invocation{name: "locale " + locale + " " + strings.Join(c.args, " ") + " " + strconv.Quote(c.in), args: c.args, stdin: c.in, env: []string{"LC_ALL=" + locale}})
 		}
 	}
-	for _, env := range [][]string{{"LC_ALL=C.utf8"}, {"LC_ALL=", "LC_CTYPE=C.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8"}, {"LC_ALL=", "LC_CTYPE=C", "LANG=C.UTF-8"}, {"LC_ALL=C", "LC_CTYPE=C.UTF-8"}} {
+	for _, env := range [][]string{
+		{"LC_ALL=C.utf8"}, {"LC_ALL=", "LC_CTYPE=C.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8"}, {"LC_ALL=", "LC_CTYPE=C", "LANG=C.UTF-8"}, {"LC_ALL=C", "LC_CTYPE=C.UTF-8"},
+		// A locale that is not on the system gives the C locale, and so
+		// does a category of the locale that does not load.
+		{"LC_ALL=xx_YY.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8", "LC_TIME=xx_YY.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8", "LC_MESSAGES=xx_YY"},
+		{"LC_ALL=", "LANG=C.UTF-8", "LC_TIME=POSIX", "LC_NUMERIC=C"}, {"LC_ALL=", "LC_CTYPE=xx_YY.UTF-8", "LANG=C.UTF-8"},
+		// glibc drops the territory and the modifier to find a locale, and
+		// compares the codeset by its aliases.
+		{"LC_ALL=C_XX.UTF-8"}, {"LC_ALL=C.UTF-8@euro"}, {"LC_ALL=C.UTF8"}, {"LC_ALL=C.u-t-f-8"}, {"LC_ALL=c.utf8"},
+		{"LC_ALL=../C.utf8"}, {"LC_ALL=C.UTF-8", "LOCPATH=/nonexistent"},
+	} {
 		cases = append(cases, invocation{name: "locale from " + strings.Join(env, " "), args: []string{"s/./X/g;y/é/e/"}, stdin: "aé\xff\n", env: env})
 	}
 	return cases

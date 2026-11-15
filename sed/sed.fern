@@ -3,6 +3,7 @@ import "std/rand";
 import "std/unicode";
 import "../coreutils/lib/gnu";
 import "../coreutils/lib/bre";
+import "../coreutils/lib/locale";
 
 const EXIT_BAD_USAGE: i32 = 1;
 
@@ -3256,48 +3257,13 @@ function apply_option(c: Comp, m: gnu.OptMatch): Comp {
   };
 }
 
-// locale_utf8 tells whether the locale reads text as UTF-8: the first of
-// LC_ALL, LC_CTYPE and LANG that is not empty names the codeset UTF-8.
-function locale_utf8(): boolean {
-  for name in ["LC_ALL", "LC_CTYPE", "LANG"] {
-    if let Some(v) = env(name) {
-      if (v.len() > 0) {
-        return codeset_utf8(v);
-      }
-    }
-  }
-  return false;
-}
-
-// The codeset is the part after the dot, before any @modifier. Case and
-// hyphens do not count.
-function codeset_utf8(locale: string): boolean {
-  let dot = __memchr(locale, 46, 0);
-  if (dot < 0) {
-    return false;
-  }
-  let h = buf_new(8);
-  for k in dot + 1..locale.len() {
-    let c = locale[k] as i32;
-    if (c == 64) {
-      break;
-    }
-    if (c != 45) {
-      buf_push_byte(h, lower_byte(c));
-    }
-  }
-  let code = buf_take(h);
-  buf_free(h);
-  return code == "utf8";
-}
-
 function main(): i32 {
   let argv = args();
   let posix = POSIX_EXTENDED;
   if let Some(_) = env("POSIXLY_CORRECT") {
     posix = POSIX_CORRECT;
   }
-  let o = Opts { debug: false, quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false, utf8: locale_utf8() };
+  let o = Opts { debug: false, quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false, utf8: locale.utf8() };
   let c = comp_new(o);
   let g = gnu.getopt_new(argv, options(), "sed", help_text(), EXIT_BAD_USAGE).in_package("sed");
   let have_script = false;

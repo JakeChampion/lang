@@ -56,7 +56,22 @@ POSIXLY_CORRECT as GNU sed does.
 
 In a UTF-8 locale the port reads characters of UTF-8, as GNU sed does. The
 locale is the first of LC_ALL, LC_CTYPE and LANG that is set, and its
-codeset must be UTF-8, as in `C.UTF-8`. Then:
+codeset must be UTF-8, as in `C.UTF-8`.
+
+The locale must also be on the system. Each category of the locale comes
+from LC_ALL, its own variable or LANG, and each one must load. When one
+category does not load, the port uses the C locale, as GNU sed does. The
+port finds a locale as the libc does:
+
+- glibc looks in the locale archive, and then in the directories of
+  LOCPATH and in `/usr/lib/locale`. A name can lose its territory and its
+  modifier, so `C_XX.UTF-8@euro` finds `C.utf8`.
+- For glibc, the codeset must be a name of UTF-8 for gconv: `UTF-8` or
+  `UTF8`, in upper or lower case.
+- Darwin looks for the name as it is, in PATH_LOCALE or
+  `/usr/share/locale`.
+
+In a UTF-8 locale:
 
 - `.`, a bracket expression, `\w`, `\W`, `\s` and `\S` match one
   character. A byte that starts no character matches only itself, outside a
@@ -88,8 +103,9 @@ The exit status is the code of `q` or `Q`, or one of these:
 
 These differences remain in a UTF-8 locale:
 
-- The port does not check that the locale is on the system. When it is
-  not, GNU sed uses the C locale.
+- The port does not read the aliases of `locale.alias`, and it does not
+  read the codeset in the files of a locale. It takes the codeset from the
+  name.
 - The tables of Unicode are those of version 17. glibc 2.39 has an older
   version, so some characters that came later are in different classes.
   An example is U+0363 COMBINING LATIN SMALL LETTER A, which is in
