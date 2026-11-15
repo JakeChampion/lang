@@ -18,7 +18,7 @@ import "./store";
 // that has no entry.
 pub struct Change { status: u8, path: u8[], old_mode: string, new_mode: string, old_hash: string, new_hash: string, old_path: u8[], score: i32 }
 
-function has_wildcard(item: string): boolean {
+pub function has_wildcard(item: string): boolean {
   for i in 0..item.len() {
     let b = item[i];
     if (b == b'*' || b == b'?' || b == b'[' || b == b'\\') {

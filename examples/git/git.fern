@@ -19,10 +19,12 @@ import "core/map";
 import "std/crypto";
 import "std/hex";
 import "std/linediff";
+import "./commitgraph";
 import "./fsck";
 import "./graph";
 import "./index";
 import "./log";
+import "./mailmap";
 import "./objects";
 import "./pack";
 import "./patch";
@@ -32,6 +34,7 @@ import "./revwalk";
 import "./treediff";
 import "./date";
 import "../../coreutils/lib/bre";
+import "../../coreutils/lib/fnmatch";
 import "./store";
 import "./walk";
 
@@ -996,7 +999,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: boolean, walk: revwalk.Opts, bad: string }
+struct LogOpts { mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1226,9 +1229,11 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
   let g = g_in;
   let w = o.walk;
   let x = argv[i];
-  let flags = ["--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no"];
+  let flags = ["--use-mailmap", "--mailmap", "--no-use-mailmap", "--no-mailmap", "--oneline", "--reverse", "--parents", "--graph", "--name-only", "--name-status", "--first-parent", "--topo-order", "--date-order", "--author-date-order", "--merges", "--no-merges", "--no-min-parents", "--no-max-parents", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case", "-E", "--extended-regexp", "-F", "--fixed-strings", "--basic-regexp", "--abbrev-commit", "--no-abbrev-commit", "--relative-date", "--decorate", "--no-decorate", "--full-history", "--pretty", "--decorate=short", "--decorate=no", "--decorate=full", "--decorate=auto", "--clear-decorations"];
   if (flags.contains(x)) {
-    if (x == "--oneline") {
+    if (x == "--use-mailmap" || x == "--mailmap" || x == "--no-use-mailmap" || x == "--no-mailmap") {
+      o = LogOpts { ...o, use_mailmap: !x.starts_with("--no-") };
+    } else if (x == "--oneline") {
       o = LogOpts { ...log_form(o, "oneline", false), abbrev_commit: true };
     } else if (x == "--pretty") {
       o = log_form(o, "medium", false);
@@ -1277,9 +1282,13 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
     } else if (x == "--relative-date") {
       o = LogOpts { ...o, dates: date.Mode { kind: date.RELATIVE, local: false, format: "" } };
     } else if (x == "--decorate" || x == "--decorate=short") {
-      o = LogOpts { ...o, decorate: true };
-    } else if (x == "--no-decorate" || x == "--decorate=no") {
-      o = LogOpts { ...o, decorate: false };
+      o = LogOpts { ...o, decorate: 1 };
+    } else if (x == "--decorate=full") {
+      o = LogOpts { ...o, decorate: 2 };
+    } else if (x == "--no-decorate" || x == "--decorate=no" || x == "--decorate=auto") {
+      o = LogOpts { ...o, decorate: 0 };
+    } else if (x == "--clear-decorations") {
+      o = LogOpts { ...o, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: [], clear: true } };
     }
     return (o, g, 1);
   }
@@ -1295,6 +1304,15 @@ function log_option(o_in: LogOpts, g_in: GrepArgs, argv: string[], i: i32): (Log
   }
   if (x.starts_with("-") && !x.starts_with("--") && log_number(objects.part(x, 1, x.len())) >= 0) {
     return (LogOpts { ...o, limit: log_number(objects.part(x, 1, x.len())) }, g, 1);
+  }
+  for name in ["--decorate-refs", "--decorate-refs-exclude"] {
+    let (v, taken) = option_value(argv, i, name);
+    if (taken > 0) {
+      let f = o.decorate_filter;
+      let p = ref_pattern(v);
+      let nf = if (name == "--decorate-refs") { DecorationFilter { ...f, include: f.include.append(p) } } else { DecorationFilter { ...f, exclude: f.exclude.append(p) } };
+      return (LogOpts { ...o, decorate_filter: nf }, g, taken);
+    }
   }
   let valued = ["--max-count", "--skip", "--format", "--pretty", "--date", "--since", "--after", "--until", "--before", "--max-age", "--min-age", "--author", "--committer", "--grep", "--min-parents", "--max-parents", "--abbrev"];
   for name in valued {
@@ -1365,16 +1383,69 @@ function grep_of(g: GrepArgs): Result[revwalk.Grep, string] {
   return Ok(out);
 }
 
+// A pattern of `--decorate-refs`: a full ref name with `refs/` before
+// it, and with no `/` at its end. A pattern with no wildcard matches the
+// refs below it (`normalize_glob_ref` of git).
+function ref_pattern(text: string): string {
+  let p = if (!text.starts_with("refs/") && text != "HEAD") { "refs/" + text } else { text };
+  return if (p.ends_with("/")) { objects.part(p, 0, p.len() - 1) } else { p };
+}
+
+function pattern_matches(pattern: string, name: string): boolean {
+  if (treediff.has_wildcard(pattern)) {
+    return fnmatch.fnmatch(pattern, name);
+  }
+  return name.starts_with(pattern) && (name.len() == pattern.len() || name[pattern.len()] == b'/');
+}
+
+// The filter of the decorations: the patterns of `--decorate-refs`, of
+// `--decorate-refs-exclude` and of `log.excludeDecoration`, and whether
+// `--clear-decorations` turns off the default set.
+struct DecorationFilter { include: string[], exclude: string[], config_exclude: string[], clear: boolean }
+
+// True when the filter shows the ref `name`: `ref_filter_match` of git,
+// with the default set of git 2.43 when no pattern is given.
+function decorates(f: DecorationFilter, name: string): boolean {
+  for p in f.exclude {
+    if (pattern_matches(p, name)) {
+      return false;
+    }
+  }
+  if (f.include.len() > 0) {
+    for p in f.include {
+      if (pattern_matches(p, name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  for p in f.config_exclude {
+    if (pattern_matches(p, name)) {
+      return false;
+    }
+  }
+  if (f.clear || f.exclude.len() > 0 || f.config_exclude.len() > 0) {
+    return true;
+  }
+  for p in ["refs/heads/", "refs/tags/", "refs/remotes/", "refs/replace/"] {
+    if (name.starts_with(p)) {
+      return true;
+    }
+  }
+  return name == "HEAD" || name == "refs/stash";
+}
+
 // The decorations of each commit: the refs that name it, as `git log`
 // shows them, with `HEAD -> BRANCH` when HEAD names a branch of the
-// commit.
-function decorations_of(r: refs.Repo, s: store.Store): (store.Store, Map[string, string[]]) {
+// commit. `full` keeps the whole names of the refs.
+function decorations_of(r: refs.Repo, s: store.Store, full: boolean, f: DecorationFilter): (store.Store, Map[string, string[]]) {
   let by: Map[string, string[]] = Map { };
   let st = s;
   let add = (m: Map[string, string[]], hash: string, name: string): Map[string, string[]] => m.insert(hash, [name].concat(m.get_or(hash, [])));
   for e in refs.all_refs(r) {
-    if (!e.name.starts_with("refs/notes/")) {
-      let shown = if (e.name.starts_with("refs/heads/")) { objects.part(e.name, 11, e.name.len()) } else if (e.name.starts_with("refs/remotes/")) { objects.part(e.name, 13, e.name.len()) } else if (e.name.starts_with("refs/tags/")) { "tag: " + objects.part(e.name, 10, e.name.len()) } else { e.name };
+    if (decorates(f, e.name)) {
+      let short = if (full) { e.name } else if (e.name.starts_with("refs/heads/")) { objects.part(e.name, 11, e.name.len()) } else if (e.name.starts_with("refs/remotes/")) { objects.part(e.name, 13, e.name.len()) } else if (e.name.starts_with("refs/tags/")) { objects.part(e.name, 10, e.name.len()) } else { e.name };
+      let shown = if (e.name.starts_with("refs/tags/")) { "tag: " + short } else { short };
       let at = e.hash;
       by = add(by, at, shown);
       for step in 0..16 {
@@ -1393,11 +1464,11 @@ function decorations_of(r: refs.Repo, s: store.Store): (store.Store, Map[string,
     }
   }
   let head = refs.resolve_ref(r, "HEAD");
-  if (head.hash.len() > 0) {
+  if (head.hash.len() > 0 && decorates(f, "HEAD")) {
     let branch = refs.head_branch(r);
     let list = by.get_or(head.hash, []);
-    let short = if (branch.starts_with("refs/heads/")) { objects.part(branch, 11, branch.len()) } else { "" };
-    if (short.len() > 0 && list.contains(short)) {
+    let short = if (full) { branch } else if (branch.starts_with("refs/heads/")) { objects.part(branch, 11, branch.len()) } else { "" };
+    if (branch.starts_with("refs/heads/") && list.contains(short)) {
       by = by.insert(head.hash, ["HEAD -> " + short].concat(list.filter((n: string): boolean => n != short)));
     } else {
       by = by.insert(head.hash, ["HEAD"].concat(list));
@@ -1741,7 +1812,8 @@ function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[st
   if (!n.ok) {
     return (w, "", sh);
   }
-  let c = n.commit;
+  let (g1, c) = walk.commit(w.g, h);
+  w = revwalk.Walk { ...w, g: g1 };
   if (o.graph) {
     let (w1, ips) = graph_parents(w, h, o.walk.first_parent);
     w = w1;
@@ -1750,9 +1822,68 @@ function log_show(w_in: revwalk.Walk, h: string, o: LogOpts, decorations: Map[st
   let (w2, ps) = revwalk.parents(w, h);
   w = w2;
   let st = w.g.store;
-  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []) };
+  let ctx = log.Context { abbrev: (name: string): string => refs.short_of(st, name, least), abbrev_commit: o.abbrev_commit, parents: ps, dates: o.dates, decorations: decorations.get_or(h, []), mailmap: o.mm, use_mailmap: o.use_mailmap };
   let (s3, text, after) = log_entry(w.g.store, c, o, ctx, least, sh);
   return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s3 } }, text, after);
+}
+
+// The mailmap of the repository: `.mailmap` at the top of the worktree,
+// unless it is a link, the blob of `mailmap.blob` (`HEAD:.mailmap` in a
+// bare repository), and the file of `mailmap.file`.
+function read_mailmap(r: refs.Repo, s: store.Store): mailmap.Mailmap {
+  let m = mailmap.empty();
+  if (r.top.len() > 0) {
+    let path = r.top + "/.mailmap";
+    let link = match (lstat(path)) {
+      Ok(st) => (st.mode & 61440) == 40960,
+      Err(_) => true,
+    };
+    if (!link) {
+      if let Ok(text) = read_file(path) {
+        m = mailmap.add_text(m, text);
+      }
+    }
+  }
+  let blob = match (r.config.get("mailmap.blob")) {
+    Some(v) => v,
+    None => if (r.top.len() == 0) { "HEAD:.mailmap" } else { "" },
+  };
+  if (blob.len() > 0) {
+    let named = rev.parse(r, s, blob);
+    if (named.hash.len() > 0) {
+      let got = store.read(named.store, named.hash);
+      if let Ok(o) = got.object {
+        if (o.kind == "blob") {
+          m = mailmap.add_text(m, unsafe { string_from_bytes_unchecked(o.body) });
+        }
+      }
+    }
+  }
+  if let Some(file) = r.config.get("mailmap.file") {
+    let path = if (file.starts_with("~/")) { env("HOME").unwrap_or("") + objects.part(file, 1, file.len()) } else if (file.starts_with("/") || r.top.len() == 0) { file } else { r.top + "/" + file };
+    if let Ok(text) = read_file(path) {
+      m = mailmap.add_text(m, text);
+    }
+  }
+  return m;
+}
+
+// The commit graph of the repository, or none when the configuration
+// turns it off or the history of the store is not that of its objects:
+// a shallow clone, grafts, or replace refs (`commit_graph_compatible`).
+function commit_graph(r: refs.Repo, s: store.Store): commitgraph.Graph {
+  if (!r.config.flag("core.commitgraph", true) || s.shallow.len() > 0) {
+    return commitgraph.none();
+  }
+  if let Ok(_) = stat(r.common + "/info/grafts") {
+    return commitgraph.none();
+  }
+  for e in refs.all_refs(r) {
+    if (e.name.starts_with("refs/replace/")) {
+      return commitgraph.none();
+    }
+  }
+  return commitgraph.open(r.objects(), r.width);
 }
 
 function log_command(argv: string[]): i32 {
@@ -1761,7 +1892,7 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let o = LogOpts { limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: false, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: r.config.flag("diff.renames", true) };
   let dashdash = -1;
@@ -1776,7 +1907,9 @@ function log_command(argv: string[]): i32 {
     paths = array.slice(argv, dashdash + 1, argv.len());
     args = array.slice(argv, 0, dashdash);
   }
-  let w = revwalk.walk_of(walk.graph_of(r.store()), o.walk);
+  let st0 = r.store();
+  let cg = commit_graph(r, st0);
+  let w = revwalk.walk_of(walk.graph_with(st0, cg), o.walk);
   let excluded = false;
   let named = 0;
   let i = 0;
@@ -1864,7 +1997,12 @@ function log_command(argv: string[]): i32 {
       return fatal(message);
     },
   };
-  o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, items: items, grep: compiled } };
+  o = LogOpts { ...o, mm: read_mailmap(r, w.g.store) };
+  if (o.use_mailmap) {
+    compiled = revwalk.Grep { ...compiled, mailmap: o.mm };
+  }
+  let bloom = if (items.len() == 1 && !treediff.has_wildcard(items[0])) { commitgraph.keys(cg, items[0]) } else { [] };
+  o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, items: items, bloom: bloom, grep: compiled } };
   w = revwalk.Walk { ...w, opts: o.walk };
   if (named == 0) {
     let head = refs.resolve_ref(r, "HEAD");
@@ -1894,8 +2032,8 @@ function log_command(argv: string[]): i32 {
   }
   let least = store.short_length(w.g.store);
   let decorations: Map[string, string[]] = Map { };
-  if (o.decorate || o.form == "format" && (o.format.contains("%d") || o.format.contains("%D"))) {
-    let (s2, by) = decorations_of(r, w.g.store);
+  if (o.decorate > 0 || o.form == "format" && (o.format.contains("%d") || o.format.contains("%D"))) {
+    let (s2, by) = decorations_of(r, w.g.store, o.decorate == 2, o.decorate_filter);
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s2 } };
     decorations = by;
   }

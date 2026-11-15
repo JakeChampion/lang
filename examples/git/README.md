@@ -59,7 +59,14 @@ git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   The formats are `--oneline`, `--pretty=` with each named format and
   `format:`, and `--format=`, with the placeholders of git. `--date=` has
   each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,
-  `--name-only` and `--name-status` add to the text. The changes of
+  `--name-only` and `--name-status` add to the text. `--decorate=full`,
+  `--decorate-refs=`, `--decorate-refs-exclude=`, `--clear-decorations`
+  and `log.excludeDecoration` select the refs of the decorations, with
+  the default set of git.
+
+  The mailmap of `.mailmap`, `mailmap.blob` and
+  `mailmap.file` gives the names of the header lines, of `%aN` and of
+  `--author`, as `log.mailmap` and `--use-mailmap` select. The changes of
   `--name-status` find renames as git does. A tab and a wide character in
   a message take the columns that git gives them.
 
@@ -102,6 +109,18 @@ index. `:/TEXT` is the latest commit whose message matches TEXT.
 A short name has the length that git gives it. In a shallow clone, a
 commit at the edge has no parent.
 
+The port reads the commit graph of git: the file
+`objects/info/commit-graph`, or the chain of files in
+`objects/info/commit-graphs/`. It takes the parents, the tree and the date
+of a commit from the graph, and reads the commit only for its text.
+
+With generation numbers (the levels of version 1 or the corrected dates
+of version 2), `--topo-order`, `--date-order` and `--graph` walk as git
+does: they show the first commits before they read the whole history. The
+changed-path Bloom filters tell `log -- PATH` which commits do not change
+PATH. `core.commitGraph=false`, a shallow clone, grafts and replace refs
+turn the graph off, as in git.
+
 The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
 current directory or of a directory above it. A `.git` file of a linked
 worktree gives the git directory.
@@ -123,6 +142,9 @@ The standard output, the messages and the exit status are those of git
 - `refs.fern`: the repository, the refs and the reflogs.
 - `dircache.fern`: the index of the worktree (versions 2 to 4).
 - `rev.fern`: the revisions and their operators.
+- `commitgraph.fern`: the commit graph, its generation numbers and its
+  Bloom filters.
+- `mailmap.fern`: the mailmap.
 - `walk.fern`: the graph of the commits and the merge bases.
 - `revwalk.fern`: the walk of `log`, with its limits and its orders.
 - `treediff.fern`: the changes between two trees, and the renames.
@@ -135,11 +157,6 @@ The standard output, the messages and the exit status are those of git
 - `git.fern`: the command line.
 
 ## What it does not have yet
-
-- The commit graph (`objects/info/commit-graph` and the chain in
-  `commit-graphs/`) and its changed-path filters. The port reads each
-  commit from the store. git walks with the generation numbers of a
-  commit graph, and the port does not.
 
 - These options of `log`: `--follow`, `-S` and `-G`, `--cherry-pick`,
   `--left-right`, `--boundary`, `--ancestry-path`,
@@ -244,6 +261,14 @@ count of bytes. A worker of `std/worker` makes the names of its part.
 - `TestSelfHostExampleGitDiff` runs 64 forms of the diff of `log` on a
   repository with each kind of change, and the patches of random edits
   of code with each search of xdiff.
+
+- `TestSelfHostExampleGitCommitGraph` runs random forms of `log` in
+  random histories with a commit graph: one file with Bloom filters, a
+  chain of two files, and one file with the generation numbers of
+  version 1. Then it changes a date in the graph, and the port must use
+  that date as git does, and not when `core.commitGraph` is false.
+
+- `TestSelfHostExampleGitOptions` runs the mailmap and the decorations.
 
 - `TestSelfHostExampleGitMultiPackIndex` changes the multi-pack index, and
   the port must read the objects through it as git does.

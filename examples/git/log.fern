@@ -3,6 +3,7 @@
 import "std/array";
 import "std/string";
 import "./date";
+import "./mailmap";
 import "./objects";
 import "./width";
 
@@ -219,8 +220,23 @@ function rtrim(text: string): string {
 
 // What a form needs besides the commit: the short form of a hash, the
 // parents to show (after the simplification of the history), the form of
-// the dates, and the decorations.
-pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: string[] }
+// the dates, the decorations, and the mailmap, which `%aN` uses and the
+// header lines use with `use_mailmap`.
+pub struct Context { abbrev: (string) => string, abbrev_commit: boolean, parents: string[], dates: date.Mode, decorations: string[], mailmap: mailmap.Mailmap, use_mailmap: boolean }
+
+// The person of a header line, with the mailmap when the log uses it.
+function shown(p: Person, ctx: Context): Person {
+  return if (ctx.use_mailmap) { mapped(p, ctx) } else { p };
+}
+
+// The person with the proper name and email of the mailmap.
+function mapped(p: Person, ctx: Context): Person {
+  if (ctx.mailmap.is_empty()) {
+    return p;
+  }
+  let (name, email) = mailmap.map_user(ctx.mailmap, p.name, p.email);
+  return Person { ...p, name: name, email: email };
+}
 
 function shown_parents(ctx: Context, names: string[]): string {
   let abbrev = ctx.abbrev;
@@ -248,14 +264,14 @@ function header(c: Commit, ctx: Context, form: string): string {
   if (ctx.parents.len() > 1) {
     out += "Merge:" + shown_parents(ctx, ctx.parents) + "\n";
   }
-  out += user_line("Author", c.author, form == "fuller");
+  out += user_line("Author", shown(c.author, ctx), form == "fuller");
   if (form == "medium") {
     out += "Date:   " + date.show(c.author.time, c.author.zone_number(), ctx.dates) + "\n";
   } else if (form == "fuller") {
     out += "AuthorDate: " + date.show(c.author.time, c.author.zone_number(), ctx.dates) + "\n";
   }
   if (form == "full" || form == "fuller") {
-    out += user_line("Commit", c.committer, form == "fuller");
+    out += user_line("Commit", shown(c.committer, ctx), form == "fuller");
     if (form == "fuller") {
       out += "CommitDate: " + date.show(c.committer.time, c.committer.zone_number(), ctx.dates) + "\n";
     }
@@ -348,7 +364,8 @@ function hex_value(b: u8): i32 {
 }
 
 // The text for the two letters after `%a` or `%c`, or None.
-function person_field(p: Person, letter: u8, ctx: Context): Option[string] {
+function person_field(raw: Person, letter: u8, ctx: Context): Option[string] {
+  let p = if (letter == b'N' || letter == b'E' || letter == b'L') { mapped(raw, ctx) } else { raw };
   let z = p.zone_number();
   let mode = (kind: i32): date.Mode => date.Mode { kind: kind, local: false, format: "" };
   return match (letter) {

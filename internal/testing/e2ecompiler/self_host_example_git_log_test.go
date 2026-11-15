@@ -197,18 +197,51 @@ func gitRandomHistory(t *testing.T, oracle gitTool, dir string, seed int64, n in
 	must(nil, "checkout", "-q", "main")
 }
 
-// TestSelfHostExampleGitLogRandom makes random histories and runs random
-// log commands on them with git and with the port: each form, walk and
-// range, with and without paths, and the graph.
-func TestSelfHostExampleGitLogRandom(t *testing.T) {
-	oracle := gitOracle(t)
-	cli := buildSelfHostCLI(t)
+// gitRandomLog gives random log commands for a repository with the refs
+// `refs`: each form, walk and range, with and without paths, and the graph.
+func gitRandomLog(rnd *rand.Rand, refs []string, count int) [][]string {
 	forms := [][]string{{"--oneline"}, {"--format=%h %p %s"}, {}, {"--pretty=raw"}, {"--parents", "--oneline"}, {"--name-status", "--oneline"},
 		{"--name-only", "--format=%s"}, {"--graph", "--oneline"}, {"--graph"}, {"--graph", "--format=%h%n%s"}, {"--graph", "--name-status", "--oneline"},
 		{"--graph", "--parents", "--format=%h %p"}}
 	walks := [][]string{{}, {"--topo-order"}, {"--date-order"}, {"--first-parent"}, {"--reverse"}, {"--no-merges"}, {"--merges"}, {"-n", "5"},
 		{"--author=Ann"}, {"--grep=fix"}, {"--since=1700100000"}, {"--until=1700100000"}, {"--author-date-order"}, {"--full-history"}}
 	paths := []string{"a", "b", "dir", "dir/c", "dir/sub", "other", "x.txt", "dir/sub/e", "nosuch", "*.txt", "dir/*", "moved"}
+	var out [][]string
+	for k := 0; k < count; k++ {
+		args := append(append([]string{"log"}, forms[rnd.Intn(len(forms))]...), walks[rnd.Intn(len(walks))]...)
+		switch r := rnd.Float64(); {
+		case r < 0.3 && len(refs) > 1:
+			a, b := refs[rnd.Intn(len(refs))], refs[rnd.Intn(len(refs))]
+			switch rnd.Intn(3) {
+			case 0:
+				args = append(args, a+".."+b)
+			case 1:
+				args = append(args, a+"..."+b)
+			default:
+				args = append(args, "^"+a, b)
+			}
+		case r < 0.5:
+			args = append(args, refs[rnd.Intn(len(refs))])
+		case r < 0.55:
+			args = append(args, "--all")
+		}
+		if rnd.Intn(5) < 2 {
+			args = append(args, "--", paths[rnd.Intn(len(paths))])
+			if rnd.Intn(3) == 0 {
+				args = append(args, paths[rnd.Intn(len(paths))])
+			}
+		}
+		out = append(out, args)
+	}
+	return out
+}
+
+// TestSelfHostExampleGitLogRandom makes random histories and runs random
+// log commands on them with git and with the port: each form, walk and
+// range, with and without paths, and the graph.
+func TestSelfHostExampleGitLogRandom(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
 	for i, run := range gitRuns() {
 		port := gitPort(t, cli, run.target)
 		t.Run(run.target+"-"+run.format, func(t *testing.T) {
@@ -216,32 +249,7 @@ func TestSelfHostExampleGitLogRandom(t *testing.T) {
 				dir := t.TempDir()
 				gitRandomHistory(t, oracle, dir, seed+int64(10*i), 70, run)
 				list, _, _ := oracle.run(t, dir, "", "for-each-ref", "--format=%(refname:short)")
-				refs := strings.Fields(list)
-				rnd := rand.New(rand.NewSource(seed))
-				for k := 0; k < 60; k++ {
-					args := append(append([]string{"log"}, forms[rnd.Intn(len(forms))]...), walks[rnd.Intn(len(walks))]...)
-					switch r := rnd.Float64(); {
-					case r < 0.3 && len(refs) > 1:
-						a, b := refs[rnd.Intn(len(refs))], refs[rnd.Intn(len(refs))]
-						switch rnd.Intn(3) {
-						case 0:
-							args = append(args, a+".."+b)
-						case 1:
-							args = append(args, a+"..."+b)
-						default:
-							args = append(args, "^"+a, b)
-						}
-					case r < 0.5:
-						args = append(args, refs[rnd.Intn(len(refs))])
-					case r < 0.55:
-						args = append(args, "--all")
-					}
-					if rnd.Intn(5) < 2 {
-						args = append(args, "--", paths[rnd.Intn(len(paths))])
-						if rnd.Intn(3) == 0 {
-							args = append(args, paths[rnd.Intn(len(paths))])
-						}
-					}
+				for _, args := range gitRandomLog(rand.New(rand.NewSource(seed)), strings.Fields(list), 60) {
 					gitCompare(t, oracle, port, dir, "", args...)
 				}
 			}

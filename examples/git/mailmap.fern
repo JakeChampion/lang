@@ -1,0 +1,131 @@
+// The mailmap of git (mailmap.c): the proper name and email of each
+// person of the history, from `.mailmap`, `mailmap.blob` and
+// `mailmap.file`.
+//
+// A line maps an email, or an email and a name, to a new name, a new
+// email or both. git compares the emails and the names with no regard
+// to the case of ASCII letters.
+import "core/map";
+import "./objects";
+
+// A mapping: a new name and a new email, each "" when the line does not
+// give one.
+struct Info { name: string, email: string }
+
+// The mappings of one old email: the mapping for any name, and the
+// mappings of each old name, by its lower case.
+struct Entry { simple: Info, names: Map[string, Info] }
+
+pub struct Mailmap { entries: Map[string, Entry] }
+
+pub function empty(): Mailmap {
+  return Mailmap { entries: Map { } };
+}
+
+pub function (m: Mailmap) is_empty(): boolean {
+  return m.entries.len() == 0;
+}
+
+function lower(s: string): string {
+  let b = s.bytes();
+  let changed = false;
+  for c in b {
+    if (c >= b'A' && c <= b'Z') {
+      changed = true;
+    }
+  }
+  if (!changed) {
+    return s;
+  }
+  let out = b;
+  for i in 0..out.len() {
+    if (out[i] >= b'A' && out[i] <= b'Z') {
+      out = out.with(i, out[i] + 32);
+    }
+  }
+  return unsafe { string_from_bytes_unchecked(out) };
+}
+
+function is_space(c: u8): boolean {
+  return c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' || c == 11 || c == 12;
+}
+
+// The name and the email of the part of `line` from `at`, and the place
+// after the `>`, as `parse_name_and_email` reads them: (name, email, end),
+// with an end of -1 when there is no email.
+function name_and_email(line: string, at: i32, allow_empty: boolean): (string, string, i32) {
+  let left = at;
+  while (left < line.len() && line[left] != b'<') {
+    left += 1;
+  }
+  if (left >= line.len()) {
+    return ("", "", -1);
+  }
+  let right = left + 1;
+  while (right < line.len() && line[right] != b'>') {
+    right += 1;
+  }
+  if (right >= line.len() || !allow_empty && right == left + 1) {
+    return ("", "", -1);
+  }
+  let start = at;
+  while (start < left && is_space(line[start])) {
+    start += 1;
+  }
+  let end = left;
+  while (end > start && is_space(line[end - 1])) {
+    end -= 1;
+  }
+  return (objects.part(line, start, end), objects.part(line, left + 1, right), right + 1);
+}
+
+// The mailmap with the lines of `text` added: `read_mailmap_line`.
+pub function add_text(m_in: Mailmap, text: string): Mailmap {
+  let m = m_in;
+  for line in text.split("\n") {
+    if (line.len() == 0 || line[0] == b'#') {
+      continue;
+    }
+    let (name1, email1, end1) = name_and_email(line, 0, false);
+    if (end1 < 0) {
+      continue;
+    }
+    let name2 = "";
+    let email2 = "";
+    let two = false;
+    if (end1 < line.len()) {
+      let (n2, e2, end2) = name_and_email(line, end1, true);
+      if (end2 >= 0) {
+        name2 = n2;
+        email2 = e2;
+        two = true;
+      }
+    }
+    m = add(m, name1, email1, if (two) { name2 } else { "" }, two, email2);
+  }
+  return m;
+}
+
+// Adds one mapping: `add_mapping` of git. With no old email, the email of
+// the line is the old one.
+function add(m: Mailmap, new_name: string, new_email_in: string, old_name: string, has_old: boolean, old_email_in: string): Mailmap {
+  let old_email = if (has_old) { old_email_in } else { new_email_in };
+  let new_email = if (has_old) { new_email_in } else { "" };
+  let key = lower(old_email);
+  let e = m.entries.get_or(key, Entry { simple: Info { name: "", email: "" }, names: Map { } });
+  if (old_name.len() == 0) {
+    let simple = Info { name: if (new_name.len() > 0) { new_name } else { e.simple.name }, email: if (new_email.len() > 0) { new_email } else { e.simple.email } };
+    return Mailmap { entries: m.entries.insert(key, Entry { ...e, simple: simple }) };
+  }
+  return Mailmap { entries: m.entries.insert(key, Entry { ...e, names: e.names.insert(lower(old_name), Info { name: new_name, email: new_email }) }) };
+}
+
+// The proper name and email of the person with `name` and `email`:
+// `map_user` of git.
+pub function map_user(m: Mailmap, name: string, email: string): (string, string) {
+  let Some(e) = m.entries.get(lower(email)) else {
+    return (name, email);
+  };
+  let info = e.names.get_or(lower(name), e.simple);
+  return (if (info.name.len() > 0) { info.name } else { name }, if (info.email.len() > 0) { info.email } else { email });
+}
