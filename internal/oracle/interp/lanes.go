@@ -527,7 +527,7 @@ var intLaneBinary = map[string]func(l Lanes, x, y int64) int64{
 // intLaneVerbs are the verbs of the builtins of the integer lane type of
 // `like`.
 func intLaneVerbs(like Lanes) []string {
-	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "with", "shl", "shr"}
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "load_view", "with", "shl", "shr"}
 	if like.Width <= 16 {
 		verbs = append(verbs, "add_sat", "sub_sat")
 		if !like.Signed {
@@ -728,6 +728,8 @@ func (i *Interp) registerIntegerLanes(like Lanes) {
 		}
 		return out, nil
 	}
+	// An array holds the bytes of a view also.
+	builtins["load_view"] = builtins["load"]
 	builtins["with"] = func(args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("%swith: expected 3 args, got %d", p, len(args))

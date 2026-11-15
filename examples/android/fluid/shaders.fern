@@ -98,18 +98,6 @@ pub function clear(): string {
   ].join("\n") + "\n";
 }
 
-pub function color(): string {
-  return [
-    "precision mediump float;",
-    "",
-    "uniform vec4 color;",
-    "",
-    "void main () {",
-    "    gl_FragColor = color;",
-    "}",
-  ].join("\n") + "\n";
-}
-
 // The pass that shows the dye. The keywords SHADING, BLOOM and SUNRAYS
 // turn its parts on.
 pub function display(): string {

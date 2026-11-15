@@ -6040,6 +6040,10 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == K_TEE_LOCAL) {
     return "tee_local " + util.i32_to_string(o.i32_imm);
   }
+  return render_op_part_1(o);
+}
+
+function render_op_part_1(o: Op): string {
   if (o.kind_tag == K_CALL_DIRECT) {
     return "call_direct " + o.str + "/" + util.i32_to_string(o.i32_imm);
   }
@@ -6067,6 +6071,10 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == K_STR_EQ) {
     return "str_eq";
   }
+  return render_op_part_2(o);
+}
+
+function render_op_part_2(o: Op): string {
   if (o.kind_tag == K_STR_CMP) {
     return "str_cmp";
   }
@@ -6091,6 +6099,10 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == K_OPT_TAG) {
     return "opt_tag";
   }
+  return render_op_part_3(o);
+}
+
+function render_op_part_3(o: Op): string {
   if (o.kind_tag == K_OPT_PAYLOAD) {
     return "opt_payload";
   }
@@ -6119,6 +6131,10 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == K_TUPLE_MAKE) {
     return "tuple_make " + util.i32_to_string(o.i32_imm);
   }
+  return render_op_part_4(o);
+}
+
+function render_op_part_4(o: Op): string {
   if (o.kind_tag == K_TUPLE_GET) {
     return "tuple_get " + util.i32_to_string(o.i32_imm);
   }

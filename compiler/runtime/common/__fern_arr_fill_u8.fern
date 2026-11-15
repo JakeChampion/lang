@@ -1,0 +1,3 @@
+function __fern_arr_fill_u8(own a: i32[], at: i32, n: i32, v: i32): i32[] {
+  return __fern_arr_fill(a, at, n, v as i64, 0);
+}

@@ -1033,6 +1033,9 @@ A compare gives a mask: each lane is 255 where the compare holds, and 0 where it
 
 `load_u8x16` reads 16 bytes of an array from an index. `with_u8x16` writes 16 bytes and gives the new array.
 The 16 bytes must be inside the array, or the program stops.
+`load_view_u8x16` reads 16 bytes of a view of bytes: a part of an array, or the bytes of a string.
+A function that takes `[u8]` uses it, and a caller gives that function an array with no copy.
+Each integer lane type has the two loads.
 
 The builtin `__u8x16_lane(v, k)` reads one lane. Its index `k` is an integer literal from 0 to 15.
 The builtin `__u8x16_of` makes a value from 16 bytes.
@@ -1047,6 +1050,11 @@ pub function splat_u8x16(x: u8): u8x16 {
 // The 16 bytes of `bytes` from `offset`.
 pub function load_u8x16(bytes: u8[], offset: i32): u8x16 {
   return __u8x16_load(bytes, offset);
+}
+
+// The 16 bytes of the view `bytes` from `offset`.
+pub function load_view_u8x16(bytes: [u8], offset: i32): u8x16 {
+  return __u8x16_load_view(bytes, offset);
 }
 
 // `bytes` with the 16 lanes of `value` from `offset`.
@@ -1159,6 +1167,11 @@ pub function load_i8x16(bytes: u8[], offset: i32): i8x16 {
   return __i8x16_load(bytes, offset);
 }
 
+// The 16 bytes of the view `bytes` from `offset`, as 16 lanes.
+pub function load_view_i8x16(bytes: [u8], offset: i32): i8x16 {
+  return __i8x16_load_view(bytes, offset);
+}
+
 // `bytes` with the 16 bytes of `value` from `offset`.
 pub function with_i8x16(own bytes: u8[], offset: i32, value: i8x16): u8[] {
   return __i8x16_with(bytes, offset, value);
@@ -1248,6 +1261,11 @@ pub function splat_u16x8(x: i32): u16x8 {
 // The 16 bytes of `bytes` from `offset`, as 8 lanes.
 pub function load_u16x8(bytes: u8[], offset: i32): u16x8 {
   return __u16x8_load(bytes, offset);
+}
+
+// The 16 bytes of the view `bytes` from `offset`, as 8 lanes.
+pub function load_view_u16x8(bytes: [u8], offset: i32): u16x8 {
+  return __u16x8_load_view(bytes, offset);
 }
 
 // `bytes` with the 16 bytes of `value` from `offset`.
@@ -1341,6 +1359,11 @@ pub function load_i16x8(bytes: u8[], offset: i32): i16x8 {
   return __i16x8_load(bytes, offset);
 }
 
+// The 16 bytes of the view `bytes` from `offset`, as 8 lanes.
+pub function load_view_i16x8(bytes: [u8], offset: i32): i16x8 {
+  return __i16x8_load_view(bytes, offset);
+}
+
 // `bytes` with the 16 bytes of `value` from `offset`.
 pub function with_i16x8(own bytes: u8[], offset: i32, value: i16x8): u8[] {
   return __i16x8_with(bytes, offset, value);
@@ -1432,6 +1455,11 @@ pub function load_u32x4(bytes: u8[], offset: i32): u32x4 {
   return __u32x4_load(bytes, offset);
 }
 
+// The 16 bytes of the view `bytes` from `offset`, as 4 lanes.
+pub function load_view_u32x4(bytes: [u8], offset: i32): u32x4 {
+  return __u32x4_load_view(bytes, offset);
+}
+
 // `bytes` with the 16 bytes of `value` from `offset`.
 pub function with_u32x4(own bytes: u8[], offset: i32, value: u32x4): u8[] {
   return __u32x4_with(bytes, offset, value);
@@ -1506,6 +1534,11 @@ pub function splat_i32x4(x: i32): i32x4 {
 // The 16 bytes of `bytes` from `offset`, as 4 lanes.
 pub function load_i32x4(bytes: u8[], offset: i32): i32x4 {
   return __i32x4_load(bytes, offset);
+}
+
+// The 16 bytes of the view `bytes` from `offset`, as 4 lanes.
+pub function load_view_i32x4(bytes: [u8], offset: i32): i32x4 {
+  return __i32x4_load_view(bytes, offset);
 }
 
 // `bytes` with the 16 bytes of `value` from `offset`.

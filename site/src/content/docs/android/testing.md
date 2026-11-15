@@ -88,6 +88,7 @@ Each function takes the simulator and returns the next one.
 | `sim.after(s, ms)` | Lets time go by, with each tick of `with_tick` on the way |
 | `sim.themed(s, dark)` | The dark theme or the light theme |
 | `sim.scaled(s, font)` | The font size of the system: 1 is the default |
+| `sim.kept(s, on)` | Keeps the loop alive after a Destroy, as `android.keep_alive` does |
 | `sim.event(s, e)` | Any `android.Event` |
 
 ## What a test can read
@@ -97,6 +98,7 @@ Each function takes the simulator and returns the next one.
 | `s.shell.app` | The state of the app |
 | `sim.texts(s)` | The texts on the screen, in order |
 | `sim.shows(s, text)` | Whether the screen shows a text |
+| `sim.says(s, label)` | Whether the screen shows a text, or an element says it, as a button of icons does |
 | `sim.spoken(s)` | What TalkBack reads |
 | `sim.keyboard(s)` | The text of the keyboard, or `None` while it does not show |
 | `sim.finished(s)` | Whether the app closed |

@@ -158,6 +158,10 @@ function framebuffer_texture(target: i32, attachment: i32, textarget: i32, textu
 @import("libGLESv2.so", "glCheckFramebufferStatus")
 function framebuffer_status(target: i32): i32;
 
+// An OpenGL ES 3 function, which libGLESv3.so has on each Android version.
+@import("libGLESv3.so", "glInvalidateFramebuffer")
+function invalidate_framebuffer(target: i32, count: i32, attachments: usize): void;
+
 @import("libGLESv2.so", "glViewport")
 pub function viewport(x: i32, y: i32, width: i32, height: i32): void;
 
@@ -309,6 +313,24 @@ pub function framebuffer(texture: i32): (i32, boolean) {
   bind_framebuffer(FRAMEBUFFER, id);
   framebuffer_texture(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, texture, 0);
   return (id, framebuffer_status(FRAMEBUFFER) == FRAMEBUFFER_COMPLETE);
+}
+
+// Tells the GPU that the next draw writes each pixel of the bound
+// framebuffer `id`, so the GPU does not read the pixels that the
+// framebuffer has. A phone GPU draws in tiles, and without this call it
+// loads the old pixels of each tile first.
+pub function discard(id: i32): void {
+  unsafe {
+    let list: usize = __alloc(8);
+    // GL_COLOR for the framebuffer of the window, else GL_COLOR_ATTACHMENT0.
+    if (id == 0) {
+      __store_i32(list, 6144);
+    } else {
+      __store_i32(list, COLOR_ATTACHMENT0);
+    }
+    invalidate_framebuffer(FRAMEBUFFER, 1, list);
+    __free(list, 8);
+  }
 }
 
 pub function delete_framebuffer(id: i32): void {

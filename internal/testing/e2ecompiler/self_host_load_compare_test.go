@@ -146,7 +146,9 @@ function main(): i32 {
   let o = Outer { inner: Inner { used: 1i64, limit: 5i64, a: 0i64, b: 0i64, c: 0i64, d: 0i64 }, pad: 0i64 };
   let x = over(o, 1i64, 2i64, 3i64, 4i64, 5i64);
   let y = over(o, 9i64, 2i64, 3i64, 4i64, 5i64);
-  print(x.to_string() + " " + y.to_string());
+  if (x != 365i64 || y != 69i64) {
+    return 1;
+  }
   return 0;
 }
 `
@@ -167,9 +169,9 @@ func TestSelfHostCompareFromMemoryKeepsItsBase(t *testing.T) {
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		for _, env := range []string{"", "FERN_SANITIZE=1"} {
-			stdout, code := cli.exitOf(t, loadCompareSpilledProg, target, env)
+			stderr, code := cli.exitOf(t, loadCompareSpilledProg, target, env)
 			if code != 0 {
-				t.Errorf("%s %s: exit %d, want 0\n%s", target, env, code, stdout)
+				t.Errorf("%s %s: exit %d, want 0\n%s", target, env, code, stderr)
 			}
 		}
 	}

@@ -4,6 +4,17 @@ import "std/android";
 import "std/f64";
 import "std/jni";
 
+@import("libc.so", "setpriority")
+function c_setpriority(which: i32, who: i32, priority: i32): i32;
+
+// Gives the thread that calls it the priority of the threads that draw for
+// the display, so another thread of the phone does not delay a frame. The
+// priority is the nice value -4.
+pub function draw_priority(): void {
+  // PRIO_PROCESS with the id 0 is the thread that calls, on Linux.
+  let set = c_setpriority(0, 0, -4);
+}
+
 // True when the last JNI call threw. It clears the exception.
 function threw(e: usize): boolean {
   if (jni.exception_occurred(e) == 0 as usize) {

@@ -115,7 +115,6 @@ The emitted runtime retains its no-libc contract.
 
 ## Remaining limits
 
-This change does not complete SEC-015.
 Fern has no dynamic frames, so the probes cover every frame the compiler emits.
 
 The hand-written runtime frames, leaf functions and bare frames hold no canary.

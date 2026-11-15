@@ -1,0 +1,162 @@
+// The path of a finger: its places with their times. Android gives the
+// places of a finger at times that are not the times of the frames of the
+// display. `at` gives the place at one time, between two places of the
+// path. A frame that asks for the place at a fixed time before it thus gets
+// places that are the same time apart, and a finger with a constant speed
+// moves by the same amount in each frame. `ahead` tells where the finger
+// is some time after its last place.
+// It makes no Android call, so the host tests it.
+import "std/f64";
+
+// A place at the time `ns` on the monotonic clock, in nanoseconds.
+pub struct Sample { ns: i64, x: f64, y: f64 }
+
+// The places of a path, from the oldest. A path has one place or more.
+pub struct Trail { samples: Sample[] }
+
+// A path that starts at `s`.
+pub function start(s: Sample): Trail {
+  return Trail { samples: [s] };
+}
+
+// The path with the place `s` at its end. A place that is not later than
+// the end of the path has the time of the end, and takes its place.
+pub function (t: Trail) add(s: Sample): Trail {
+  let last = t.samples[t.samples.len() - 1];
+  if (s.ns <= last.ns) {
+    return Trail { samples: t.samples.truncate(t.samples.len() - 1).append(Sample { ...s, ns: last.ns }) };
+  }
+  return Trail { samples: t.samples.append(s) };
+}
+
+// The time of the last place of the path.
+pub function (t: Trail) end_ns(): i64 {
+  return t.samples[t.samples.len() - 1].ns;
+}
+
+// The place of the finger at the time `ns`: on the line between the two
+// places around that time. Before the path it is the first place, and after
+// the path it is the last place.
+pub function (t: Trail) at(ns: i64): Sample {
+  let first = t.samples[0];
+  if (ns <= first.ns) {
+    return Sample { ...first, ns: ns };
+  }
+  for i in 1..t.samples.len() {
+    let b = t.samples[i];
+    if (ns < b.ns) {
+      let a = t.samples[i - 1];
+      let part = (ns - a.ns) as f64 / ((b.ns - a.ns) as f64);
+      return Sample { ns: ns, x: a.x + (b.x - a.x) * part, y: a.y + (b.y - a.y) * part };
+    }
+  }
+  let last = t.samples[t.samples.len() - 1];
+  return Sample { ...last, ns: ns };
+}
+
+// The estimate of the move of the finger uses the places of this time
+// before the end of the path, and at most this number of places.
+const FIT_NS: i64 = 50000000i64;
+
+const FIT_PLACES: i32 = 12;
+
+function det3(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, i: f64): f64 {
+  return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+}
+
+// The move after `lead` seconds of a finger that has the speed `v` for each
+// second, and that changes its speed by `2 * c` in each second. A finger
+// that gets slower stops, and does not go back. A finger that gets faster
+// keeps its speed: the noise of the places then does not move the estimate
+// away from the finger.
+function reach(v: f64, c: f64, lead: f64): f64 {
+  if (v * c >= 0.0) {
+    return v * lead;
+  }
+  let stop = -v / (2.0 * c);
+  if (lead >= stop) {
+    return v * stop / 2.0;
+  }
+  return v * lead + c * lead * lead;
+}
+
+// The move of the finger, across and up, in the `lead` seconds after the
+// end of the path. It is 0 when the path has one place.
+pub function (t: Trail) ahead(lead: f64): (f64, f64) {
+  let n = t.samples.len();
+  let last = t.samples[n - 1];
+  let from = n - 1;
+  while (from > 0 && n - from < FIT_PLACES && last.ns - t.samples[from - 1].ns <= FIT_NS) {
+    from -= 1;
+  }
+  let count = n - from;
+  let span = (last.ns - t.samples[from].ns) as f64 / 1.0e9;
+  if (count < 2 || span <= 0.0) {
+    return (0.0, 0.0);
+  }
+  // The sums of the curve that fits the places best. The times are parts
+  // of `span`, and the places are from the last place.
+  let s1 = 0.0;
+  let s2 = 0.0;
+  let s3 = 0.0;
+  let s4 = 0.0;
+  let x0 = 0.0;
+  let x1 = 0.0;
+  let x2 = 0.0;
+  let y0 = 0.0;
+  let y1 = 0.0;
+  let y2 = 0.0;
+  for i in from..n {
+    let u = (t.samples[i].ns - last.ns) as f64 / 1.0e9 / span;
+    let dx = t.samples[i].x - last.x;
+    let dy = t.samples[i].y - last.y;
+    s1 += u;
+    s2 += u * u;
+    s3 += u * u * u;
+    s4 += u * u * u * u;
+    x0 += dx;
+    x1 += u * dx;
+    x2 += u * u * dx;
+    y0 += dy;
+    y1 += u * dy;
+    y2 += u * u * dy;
+  }
+  let s0 = count as f64;
+  let l = lead / span;
+  if (count < 4) {
+    // A line through the places.
+    let d = s0 * s2 - s1 * s1;
+    if (d <= 0.0) {
+      return (0.0, 0.0);
+    }
+    return ((s0 * x1 - s1 * x0) / d * l, (s0 * y1 - s1 * y0) / d * l);
+  }
+  let d = det3(s0, s1, s2, s1, s2, s3, s2, s3, s4);
+  if (d.abs() < 1.0e-12) {
+    return (0.0, 0.0);
+  }
+  let vx = det3(s0, x0, s2, s1, x1, s3, s2, x2, s4) / d;
+  let cx = det3(s0, s1, x0, s1, s2, x1, s2, s3, x2) / d;
+  let vy = det3(s0, y0, s2, s1, y1, s3, s2, y2, s4) / d;
+  let cy = det3(s0, s1, y0, s1, s2, y1, s2, s3, y2) / d;
+  return (reach(vx, cx, l), reach(vy, cy, l));
+}
+
+// The path with no place that a time from `ns` does not need. It keeps the
+// last place that is not after `ns`, and the places that `ahead` uses.
+pub function (t: Trail) since(ns: i64): Trail {
+  let from = 0;
+  for i in 1..t.samples.len() {
+    if (t.samples[i].ns <= ns - FIT_NS) {
+      from = i;
+    }
+  }
+  if (from == 0) {
+    return t;
+  }
+  let out: Sample[] = [];
+  for i in from..t.samples.len() {
+    out = out.append(t.samples[i]);
+  }
+  return Trail { samples: out };
+}

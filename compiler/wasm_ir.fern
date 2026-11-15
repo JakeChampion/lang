@@ -1465,6 +1465,11 @@ function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): s
   if (module_calls_direct(cache, "__fern_bytes_append_back")) {
     out = out.append("@uses_byte_back");
   }
+  for name in rtbytecopy.kernel_names() {
+    if (module_calls_direct(cache, name)) {
+      out = out.append("@uses" + name);
+    }
+  }
   if (module_calls_direct(cache, "__fern_bytes_range")) {
     out = out.append("@uses_bytes_range");
   }
@@ -1500,8 +1505,14 @@ function array_helper_parts(needs: string[], mod: parser.Module, own parts: stri
   let append = byte_copy_need(needs, "@uses_byte_append", "__fern_bytes_append_range", mod);
   let write = byte_copy_need(needs, "@uses_byte_write", "__fern_bytes_write_range", mod);
   let back = byte_copy_need(needs, "@uses_byte_back", "__fern_bytes_append_back", mod);
-  if (append || write || back) {
-    parts = parts.append(rtbytecopy.wasm_source(append, write, back));
+  let kernels: string[] = [];
+  for name in rtbytecopy.kernel_names() {
+    if (byte_copy_need(needs, "@uses" + name, name, mod)) {
+      kernels = kernels.append(name);
+    }
+  }
+  if (append || write || back || kernels.len() > 0) {
+    parts = parts.append(rtbytecopy.wasm_source(append, write, back, kernels));
   }
   if (need(needs, "@uses_bytes_range")) {
     parts = parts.append(bytes_range_helper(empty));
@@ -9861,9 +9872,17 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "@uses_random")) {
     parts = parts.append(random_get_import());
   }
+  return preview1_imports_part_1(needs, lc, parts);
+}
+
+function preview1_imports_part_1(needs: string[], lc: boolean, parts: string[]): string {
   if (lc || needs_abort(needs) || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || (need(needs, "write_file") || need(needs, "write_file_bytes")) || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes"))) {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $__fern_fd_write (param i32 i32 i32 i32) (result i32)))\n");
   }
+  return preview1_imports_part_2(needs, lc, parts);
+}
+
+function preview1_imports_part_2(needs: string[], lc: boolean, parts: string[]): string {
   if (p1_file_io(needs)) {
     parts = parts.append(file_imports());
   }
@@ -9879,6 +9898,10 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "reader_close") && !p1_file_io(needs)) {
     parts = parts.append(reader_fd_close_import());
   }
+  return preview1_imports_part_3(needs, lc, parts);
+}
+
+function preview1_imports_part_3(needs: string[], lc: boolean, parts: string[]): string {
   if (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns")) {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $__fern_clock_time_get (param i32 i64 i32) (result i32)))\n");
   }
@@ -9895,6 +9918,10 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "remove_file") || need(needs, "remove_dir_all")) {
     parts = parts.append(remove_file_import());
   }
+  return preview1_imports_part_4(needs, lc, parts);
+}
+
+function preview1_imports_part_4(needs: string[], lc: boolean, parts: string[]): string {
   if (need(needs, "remove_dir_all")) {
     parts = parts.append(remove_dir_import());
   }
@@ -9913,6 +9940,10 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "rename")) {
     parts = parts.append(rename_import());
   }
+  return preview1_imports_part_5(needs, lc, parts);
+}
+
+function preview1_imports_part_5(needs: string[], lc: boolean, parts: string[]): string {
   if (need(needs, "read_link")) {
     parts = parts.append(readlink_import());
   }

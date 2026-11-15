@@ -2802,7 +2802,7 @@ function call_integer_lane_builtin(heap: interpheap.Heap, name: string, args: Va
   if (verb == "splat" || verb == "of") {
     return integer_lanes_of(width, kind, args);
   }
-  if (verb == "load" || verb == "with") {
+  if (verb == "load" || verb == "load_view" || verb == "with") {
     return integer_lanes_memory(heap, verb, width, kind, args);
   }
   if (util.has_str(["widen_lo", "widen_hi", "narrow", "narrow_u", "swizzle"], verb)) {
@@ -4116,6 +4116,10 @@ function sat_exact(op: string, a: i64, b: i64): i64 {
       return sat_shl_oor(a);
     }
     return a << b;
+  }
+  // The product of two numbers of type u32 can be above the range of i64.
+  if (a > 0 && b > 0 && a > 9223372036854775807 / b) {
+    return 9223372036854775807;
   }
   return a * b;
 }

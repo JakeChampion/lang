@@ -1,0 +1,273 @@
+// The pace of the frames. The display tells the app each of its refreshes,
+// and the app draws a frame at each one. Three things can make that worse,
+// and the pace has a rule for each.
+//
+// A frame that the GPU does not complete in its time comes one refresh
+// late, and a fluid with some late frames looks worse than a fluid with a
+// lower rate. So when many frames are late, the pace takes one more refresh
+// for each frame. After some seconds with no late frame, it tries the
+// faster pace again.
+//
+// After a late frame, Android can keep one frame more in its queue than it
+// needs. Each frame then shows one refresh later, for as long as the app
+// draws a frame at each refresh. The system tells the app when it showed
+// each frame. When frames show later than the best that the pace measured,
+// the pace leaves one refresh with no frame, and the queue has one frame
+// less.
+//
+// The dye goes where the finger is at the time that the display shows the
+// frame, so the pace gives the time from a frame to the display.
+//
+// It makes no Android call, so the host tests it.
+import "std/i32";
+import "std/i64";
+
+// The most refreshes for one frame.
+const MOST: i32 = 4;
+
+// The seconds with no late frame before the pace tries the faster pace
+// again. The time is two times as long after each try that fails.
+const CALM: i32 = 10;
+
+// The time from a frame to the display before the system told one: two
+// refreshes of a display of 60 Hz.
+const FIRST_AHEAD_NS: i64 = 33000000i64;
+
+// `vsync_ns` is the time of the last refresh, and `period_ns` is the time
+// from one refresh to the next, or 0 before the pace knows it. `shortest_ns`
+// and `seen` measure the period. `tick` counts the refreshes since the last
+// frame, and `slower` is the refreshes that late frames added to each
+// frame. `calm` counts the seconds with no late frame at a slower pace,
+// `wait` is the seconds before the next try of the faster pace, and `tried`
+// tells that the pace is in such a try.
+//
+// The next fields are of the frames since `from_ns`: their count, the time
+// of the last one, the longest time between two, the count of the late
+// ones, and the count of seconds in a row with many late frames.
+//
+// The last fields are of the time from a frame to the display. `shown`
+// has the last four that the system told, and `told` counts them. `least_ns`
+// is the shortest that four frames in a row had, or 0. `over` counts the
+// frames in a row that showed later than that, `skip` tells that the next
+// refresh gets no frame, `since_skip` counts the frames since the last
+// such refresh, and `skips` counts those refreshes. `fresh` tells that no
+// frame showed in good time since the last such refresh.
+pub struct Pace {
+  vsync_ns: i64,
+  period_ns: i64,
+  shortest_ns: i64,
+  seen: i32,
+  tick: i32,
+  slower: i32,
+  calm: i32,
+  wait: i32,
+  tried: boolean,
+  from_ns: i64,
+  last_ns: i64,
+  frames: i32,
+  longest_ns: i64,
+  late: i32,
+  strikes: i32,
+  seconds: i32,
+  shown: i64[],
+  told: i32,
+  least_ns: i64,
+  over: i32,
+  skip: boolean,
+  since_skip: i32,
+  skips: i32,
+  fresh: boolean,
+}
+
+pub function new(): Pace {
+  return Pace {
+    vsync_ns: 0i64,
+    period_ns: 0i64,
+    shortest_ns: 0i64,
+    seen: 0,
+    tick: 0,
+    slower: 0,
+    calm: 0,
+    wait: CALM,
+    tried: false,
+    from_ns: 0i64,
+    last_ns: 0i64,
+    frames: 0,
+    longest_ns: 0i64,
+    late: 0,
+    strikes: 0,
+    seconds: 0,
+    shown: [],
+    told: 0,
+    least_ns: 0i64,
+    over: 0,
+    skip: false,
+    since_skip: 0,
+    skips: 0,
+    fresh: false,
+  };
+}
+
+// The refreshes of the display for one frame.
+pub function (p: Pace) every(): i32 {
+  return (1 + p.slower).min(MOST);
+}
+
+// The pace after the refresh of the display at `ns`, and whether the app
+// draws a frame at this refresh.
+pub function (p: Pace) vsync(ns: i64): (Pace, boolean) {
+  let delta = ns - p.vsync_ns;
+  let out = Pace { ...p, vsync_ns: ns };
+  // A longer time is a pause of the app, and a frame is due after it.
+  if (delta <= 2000000i64 || delta >= 50000000i64) {
+    return (Pace { ...out, tick: 0, skip: false }, true);
+  }
+  let shortest = delta;
+  if (out.seen > 0 && out.shortest_ns < delta) {
+    shortest = out.shortest_ns;
+  }
+  out = Pace { ...out, shortest_ns: shortest, seen: out.seen + 1 };
+  if (out.period_ns == 0i64 && out.seen >= 8) {
+    out = Pace { ...out, period_ns: shortest };
+  }
+  if (out.tick + 1 < out.every()) {
+    return (Pace { ...out, tick: out.tick + 1 }, false);
+  }
+  if (out.skip) {
+    return (Pace { ...out, skip: false, since_skip: 0, skips: out.skips + 1, fresh: true }, false);
+  }
+  return (Pace { ...out, tick: 0 }, true);
+}
+
+// The time from a frame to the display: the middle of the last times that
+// the system told, or a first value before it told four.
+pub function (p: Pace) ahead_ns(): i64 {
+  if (p.shown.len() < 4) {
+    if (p.period_ns > 0i64) {
+      return 2i64 * p.period_ns;
+    }
+    return FIRST_AHEAD_NS;
+  }
+  return steady(p.shown);
+}
+
+// The shortest of the times `shown`: one late frame does not change it.
+function steady(shown: i64[]): i64 {
+  let least = shown[0];
+  for ns in shown {
+    least = least.min(ns);
+  }
+  return least;
+}
+
+// The pace after the system told that the display showed the frame of the
+// refresh at `vsync_ns` at the time `shown_ns`.
+pub function (p: Pace) told_shown(vsync_ns: i64, shown_ns: i64): Pace {
+  let took = shown_ns - vsync_ns;
+  if (took <= 0i64 || took > 250000000i64) {
+    return p;
+  }
+  let shown: i64[] = [];
+  let from = 0;
+  if (p.shown.len() >= 4) {
+    from = p.shown.len() - 3;
+  }
+  for i in from..p.shown.len() {
+    shown = shown.append(p.shown[i]);
+  }
+  shown = shown.append(took);
+  let out = Pace { ...p, shown: shown, told: p.told + 1, since_skip: p.since_skip + 1 };
+  if (shown.len() < 4 || out.period_ns <= 0i64) {
+    return out;
+  }
+  let now = steady(shown);
+  let least = out.least_ns;
+  if (least == 0i64 || now < least) {
+    least = now;
+  }
+  // One refresh with no frame, 60 frames after the first time, finds a
+  // queue that had one frame more than it needs from the start.
+  if (out.skips == 0 && out.told >= 60 && !out.skip) {
+    return Pace { ...out, least_ns: least, skip: true, over: 0 };
+  }
+  // Frames show more than 7 tenths of a refresh later than the best.
+  if (now * 10i64 < least * 10i64 + out.period_ns * 7i64) {
+    return Pace { ...out, least_ns: least, over: 0, fresh: false };
+  }
+  if (out.over + 1 < 8 || out.since_skip < 30) {
+    return Pace { ...out, least_ns: least, over: out.over + 1 };
+  }
+  // The refresh with no frame changed nothing: the frames need this time
+  // now, so it is the best.
+  if (out.fresh) {
+    return Pace { ...out, least_ns: now, over: 0, fresh: false };
+  }
+  return Pace { ...out, least_ns: least, skip: true, over: 0 };
+}
+
+// The pace after the app drew the frame of the refresh at `ns`, and the
+// text of the frame rate when one second of frames ends, or "". The app
+// started the frame at `started_ns`. A frame is late when it follows the
+// frame before it after more than one and a half times the refreshes of a
+// frame, or when the app started it more than half a refresh after its
+// refresh: the app then did not complete the frame before it in time. A
+// time of more than 1 second between two frames is a pause, and starts the
+// count again.
+pub function (p: Pace) drew(ns: i64, started_ns: i64): (Pace, string) {
+  let gap = ns - p.last_ns;
+  if (p.frames == 0 || gap > 1000000000i64) {
+    return (Pace { ...p, from_ns: ns, last_ns: ns, frames: 1, longest_ns: 0i64, late: 0 }, "");
+  }
+  let late = p.late;
+  if (p.period_ns > 0i64 && (gap * 2i64 > p.period_ns * (p.every() as i64) * 3i64 || (started_ns - ns) * 2i64 > p.period_ns)) {
+    late += 1;
+  }
+  let next = Pace { ...p, last_ns: ns, frames: p.frames + 1, longest_ns: p.longest_ns.max(gap), late: late };
+  let ms = (ns - p.from_ns) / 1000000i64;
+  if (ms < 1000i64) {
+    return (next, "");
+  }
+  let drawn = next.frames - 1;
+  let rate = (drawn as i64 * 1000i64 + ms / 2i64) / ms;
+  let text = rate.to_string() + " fps, longest " + (next.longest_ns / 1000000i64).to_string() + " ms";
+  if (next.every() > 1) {
+    text += ", 1 of " + next.every().to_string();
+  }
+  if (next.shown.len() >= 4) {
+    text += ", shown after " + (steady(next.shown) / 1000000i64).to_string() + " ms";
+  }
+  let period = next.period_ns;
+  if (next.seen >= 8) {
+    period = next.shortest_ns;
+  }
+  let paced = next.judged(drawn);
+  return (Pace { ...paced, period_ns: period, seen: 0, from_ns: ns, frames: 1, longest_ns: 0i64, late: 0, seconds: next.seconds + 1 }, text);
+}
+
+// The pace after one second with `drawn` frames: slower after two seconds
+// in a row with more than 15 late frames in 100, and faster again after
+// `wait` seconds with no more than 2 in 100.
+function (p: Pace) judged(drawn: i32): Pace {
+  if (p.late * 100 > drawn * 15) {
+    // A try of the faster pace fails at its first second with many late
+    // frames, and the next try comes after two times as long.
+    if (p.tried && p.every() < MOST) {
+      return Pace { ...p, slower: p.slower + 1, strikes: 0, calm: 0, tried: false, wait: (p.wait * 2).min(320) };
+    }
+    if (p.strikes + 1 >= 2 && p.every() < MOST) {
+      return Pace { ...p, slower: p.slower + 1, strikes: 0, calm: 0 };
+    }
+    return Pace { ...p, strikes: p.strikes + 1, calm: 0 };
+  }
+  if (p.late * 100 > drawn * 2) {
+    return Pace { ...p, strikes: 0, calm: 0 };
+  }
+  // Three good seconds at the faster pace: the try is done.
+  if (p.tried && p.calm + 1 >= 3) {
+    return Pace { ...p, strikes: 0, calm: 0, tried: false, wait: CALM };
+  }
+  if (!p.tried && p.slower > 0 && p.calm + 1 >= p.wait) {
+    return Pace { ...p, slower: p.slower - 1, strikes: 0, calm: 0, tried: true };
+  }
+  return Pace { ...p, strikes: 0, calm: p.calm + 1 };
+}

@@ -1,0 +1,68 @@
+import "std/android/draw";
+import "std/android/icons";
+import "std/test";
+
+// The pixels of `paint` on a frame of 48 by 48 with a white background:
+// the count that are not white, and the count of those in the border of
+// 4 pixels, which an icon leaves free.
+function drawn(paint: (draw.Frame, i32, i32, i32, i32) => void): (i32, i32) {
+  let f = draw.offscreen(48, 48);
+  let white = draw.rgb(255, 255, 255);
+  f.fill(0, 0, 48, 48, white);
+  paint(f, 0, 0, 48, 48);
+  let ink = 0;
+  let edge = 0;
+  for y in 0..48 {
+    for x in 0..48 {
+      if (f.pixel(x, y) != white) {
+        ink += 1;
+        if (x < 4 || y < 4 || x >= 44 || y >= 44) {
+          edge += 1;
+        }
+      }
+    }
+  }
+  draw.release(f);
+  return (ink, edge);
+}
+
+function black(): i32 {
+  return draw.rgb(0, 0, 0);
+}
+
+function white(): i32 {
+  return draw.rgb(255, 255, 255);
+}
+
+// Each icon draws in the middle of its box, and leaves its border free.
+function test_each_icon_draws_in_its_box(): test.TestOutcome {
+  let c = black();
+  let all = [icons.play(c), icons.pause(c), icons.skip(c, true), icons.skip(c, false), icons.shuffle(c), icons.repeat(c, false), icons.repeat(c, true), icons.heart(c, true, white()), icons.heart(c, false, white()), icons.dots(c, true), icons.dots(c, false), icons.timer(c), icons.lyrics(c), icons.queue(c, white()), icons.gear(c, white()), icons.search(c), icons.chevron(c, true), icons.chevron(c, false)];
+  for i in 0..all.len() {
+    let (ink, edge) = drawn(all[i]);
+    if (ink < 20 || edge > 0) {
+      return test.fail("icon " + i.to_string() + " has " + ink.to_string() + " pixels, " + edge.to_string() + " of them in its border");
+    }
+  }
+  return test.pass();
+}
+
+// The variants of an icon differ: an edge of a heart has fewer pixels than
+// a filled heart, and the repeat of one track adds its 1.
+function test_variants_differ(): test.TestOutcome {
+  let c = black();
+  let (filled, _) = drawn(icons.heart(c, true, white()));
+  let (edge, _) = drawn(icons.heart(c, false, white()));
+  let (circle, _) = drawn(icons.repeat(c, false));
+  let (one, _) = drawn(icons.repeat(c, true));
+  let (back, _) = drawn(icons.chevron(c, true));
+  let (down, _) = drawn(icons.chevron(c, false));
+  return test.assert_eq([edge < filled, one > circle, back > 0 && down > 0].map((b: boolean): string => b.to_string()).join(" "), "true true true");
+}
+
+function main(): i32 {
+  let r = test.new("std/android/icons");
+  r = r.it("each icon draws in the middle of its box", test_each_icon_draws_in_its_box);
+  r = r.it("the variants of an icon differ", test_variants_differ);
+  return r.finish();
+}

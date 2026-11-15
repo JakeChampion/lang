@@ -5,6 +5,7 @@
 // there as PNG files.
 import "core/cmp";
 import "std/array";
+import "std/android";
 import "std/android/draw";
 import "std/android/fonts";
 import "std/android/testkit";
@@ -235,11 +236,6 @@ function saved(s: sim.Sim[player.Player, tune.Msg], name: string): void {
   }
 }
 
-// The screen shows `label`, or has an icon that says it.
-function says(s: sim.Sim[player.Player, tune.Msg], label: string): boolean {
-  return sim.place_of(s, label, 0).is_some();
-}
-
 function near(got: i64, want: i64, by: i64): boolean {
   return got >= want - by && got <= want + by;
 }
@@ -299,7 +295,7 @@ function test_a_tap_plays_a_track(): test.TestOutcome {
   s = sim.after(s, 1000i64);
   saved(s, "tune-library");
   let at = s.shell.app.model.at_ms;
-  return test.assert_eq(first + " " + near(at, 1000i64, 250i64).to_string() + " " + says(s, "Pause").to_string(), "3 true 44100 2 true true true");
+  return test.assert_eq(first + " " + near(at, 1000i64, 250i64).to_string() + " " + sim.says(s, "Pause").to_string(), "3 true 44100 2 true true true");
 }
 
 function test_pause_and_seek(): test.TestOutcome {
@@ -496,24 +492,17 @@ function held(s: sim.Sim[player.Player, tune.Msg]): string {
   return (m.sound.ptr != 0 as usize).to_string() + " " + (m.awake.wake != 0 as usize).to_string() + " " + s.shell.app.deck.is_some().to_string();
 }
 
-// When Android destroys the activity, a track that plays goes on: the
-// player keeps the device. A player that does not play gives the device
-// back, and so does `closed` at the end of a loop with no window.
+// When Android destroys the activity, a track that plays keeps the loop
+// alive, and the player keeps the device. The Destroy that ends the loop
+// gives the device back, also when no track played.
 function test_the_player_gives_the_device_back(): test.TestOutcome {
   let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
   let before = held(s);
-  let t = sim.after(sim.send(s, tune.Closing), 100i64);
+  let t = sim.after(sim.event(sim.kept(s, true), android.Destroy), 100i64);
   let on = held(t) + " " + t.shell.app.model.current.to_string() + " " + t.shell.app.model.playing.to_string();
-  let u = sim.after(sim.send(sim.send(t, tune.Play(false)), tune.Closing), 100i64);
-  let after = held(u);
-  let w = sim.after(sim.tap(started(), "Slow Water"), 100i64);
-  let ended = player.closed(device(), tune.Model { ...w.shell.app.model });
-  let freed = (ended.sound.ptr == 0 as usize && ended.awake.wake == 0 as usize).to_string();
-  // A player that played no track gives back what it holds of Android too,
-  // one time.
-  let fresh = player.closed(device(), tune.start(paths()));
-  let again = player.closed(device(), tune.Model { ...fresh });
-  return test.assert_eq([before, on, after, freed, fresh.gone.to_string() + " " + again.gone.to_string()].join(" | "), "true true true | true true true 2 true | false false false | true | true true");
+  let u = sim.event(sim.kept(sim.send(t, tune.Play(false)), false), android.Destroy);
+  let fresh = sim.event(started(), android.Destroy);
+  return test.assert_eq([before, on, held(u), held(fresh)].join(" | "), "true true true | true true true 2 true | false false false | false false false");
 }
 
 // The player starts with the library that it saved. A track whose file is
@@ -548,7 +537,7 @@ function test_playlists(): test.TestOutcome {
   s = sim.tap(sim.send(s, tune.Named(" Road ")), "Create");
   let made = lists(s.shell.app.model);
   s = sim.tap(sim.tap(sim.tap(s, "Quick Light"), "Now playing, Quick Light"), "Favorite off");
-  let liked = lists(s.shell.app.model) + " " + says(s, "Favorite on").to_string();
+  let liked = lists(s.shell.app.model) + " " + sim.says(s, "Favorite on").to_string();
   s = sim.tap(sim.tap(sim.tap(s, "Queue"), "Save"), "Road");
   let kept = lists(s.shell.app.model);
   s = sim.tap(sim.tap(sim.tap(s, "Library"), "Lists"), "mix");
@@ -662,28 +651,28 @@ function test_the_speed_and_the_pitch(): test.TestOutcome {
 // its end.
 function test_the_sleep_timer(): test.TestOutcome {
   let s = sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "Sleep off");
-  let set = says(s, "Sleep 15 min");
+  let set = sim.says(s, "Sleep 15 min");
   s = sim.after(s, 2000i64);
   let left = near(s.shell.app.model.sleep_us / 1000i64, 898000i64, 400i64);
-  let shown = says(s, "Sleep 15 min") && s.shell.app.model.playing;
+  let shown = sim.says(s, "Sleep 15 min") && s.shell.app.model.playing;
   s = sim.send(s, tune.Slept(897000000i64));
-  let last = says(s, "Sleep 1 min");
+  let last = sim.says(s, "Sleep 1 min");
   s = sim.after(s, 1500i64);
   let m = s.shell.app.model;
-  return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, says(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
+  return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, sim.says(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
 }
 
 // A track with an LRC file shows its lyrics, and the line that the track
 // is at changes with the time. A track with no lyrics has no button.
 function test_the_lyrics_of_a_track(): test.TestOutcome {
   let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
-  let none = says(s, "Lyrics off");
+  let none = sim.says(s, "Lyrics off");
   s = sim.tap(sim.tap(sim.tap(sim.tap(s, "Library"), "Slow Water"), "Now playing, Slow Water"), "Lyrics off");
   let first = tune.line_at(s.shell.app.model.lyrics, s.shell.app.model.at_ms);
   s = sim.after(s, 1500i64);
   saved(s, "tune-lyrics");
   let m = s.shell.app.model;
-  let shown = sim.shows(s, "Under the fern") && sim.shows(s, "Into the light") && says(s, "Lyrics on");
+  let shown = sim.shows(s, "Under the fern") && sim.shows(s, "Into the light") && sim.says(s, "Lyrics on");
   return test.assert_eq([none.to_string(), m.lyrics.len().to_string(), first.to_string(), tune.line_at(m.lyrics, m.at_ms).to_string(), shown.to_string()].join(" "), "false 3 0 1 true");
 }
 
@@ -972,7 +961,7 @@ function test_the_spectrum(): test.TestOutcome {
 function wants_of(m: tune.Model): string {
   let out: string[] = [];
   for w in m.wants {
-    out = out.append(match (w) { tune.KeepPlace => "place", tune.Quit => "quit", tune.Hold => "hold", tune.Load(i) => "load " + i.to_string(), tune.Seek(_) => "seek", _ => "other" });
+    out = out.append(match (w) { tune.KeepPlace => "place", tune.Hold => "hold", tune.Load(i) => "load " + i.to_string(), tune.Seek(_) => "seek", _ => "other" });
   }
   return out.join(",");
 }
@@ -998,7 +987,7 @@ function test_the_player_keeps_its_place(): test.TestOutcome {
   let plays = sim.send(back, tune.Play(true)).shell.app.model.playing;
   let missing = tune.update(tune.Model { ...started().shell.app.model, wants: [] }, tune.Restore(tune.Place { ...kept, paths: ["/nowhere.mp3"], spot: 0 })).current;
   let lost = tune.update(tune.Model { ...started().shell.app.model, wants: [] }, tune.Restore(tune.Place { ...kept, paths: ["/nowhere.mp3", track], spot: 0, at_ms: 9000i64 }));
-  return test.assert_eq([stops, away, closes, same.to_string(), at, plays.to_string(), missing.to_string(), (lost.tracks[lost.current].path == track).to_string() + " " + lost.at_ms.to_string()].join(" | "), "hold,place | place | place place,quit | true | true false | true | -1 | true 0");
+  return test.assert_eq([stops, away, closes, same.to_string(), at, plays.to_string(), missing.to_string(), (lost.tracks[lost.current].path == track).to_string() + " " + lost.at_ms.to_string()].join(" | "), "hold,place | place | place place | true | true false | true | -1 | true 0");
 }
 
 // "Edit tags" of the details of a song shows its tags. Save writes them to

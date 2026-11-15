@@ -3,6 +3,7 @@ import "./lexer";
 import "./parser";
 import "./astwalk";
 import "./util";
+import "./rtbytecopy";
 import "./sourcepos";
 import "./rtprofile";
 import "./platforms";
@@ -119,6 +120,8 @@ pub struct EmitState {
   leak_check: boolean,
   backtrace: boolean,
   profile: i32,
+  // The bit of each register that the SSA allocator does not use.
+  ssa_deny: i64,
   cover: boolean,
   symbols: boolean,
   optimize: boolean,
@@ -667,6 +670,7 @@ pub function new_state(): EmitState {
     leak_check: false,
     backtrace: false,
     profile: rtprofile.mode(),
+    ssa_deny: ssa_deny_env(),
     cover: false,
     symbols: false,
     optimize: false,
@@ -687,6 +691,19 @@ pub function new_state(): EmitState {
     raw_syscall: "",
   };
   return with_switches(s, env_switches());
+}
+
+// FERN_SSA_DENY=<mask> keeps the SSA allocator off each register whose bit
+// is set. A test uses it to run a program with few registers, or with none.
+function ssa_deny_env(): i64 {
+  match (env("FERN_SSA_DENY")) {
+    Some(v) => {
+      return util.digits_to_i64(v);
+    },
+    None => {
+      return 0i64;
+    }
+  }
 }
 
 pub function sanitize_on(): boolean {
@@ -1767,6 +1784,9 @@ function statfsoff_darwin(name: string): string {
 }
 
 pub function (s: EmitState) need_array_helper(name: string): EmitState {
+  if (util.has_str(rtbytecopy.kernel_names(), name)) {
+    return s.need(name);
+  }
   return match (name) {
     "__fern_bytes_append_range" => s.need("byte_append"),
     "__fern_bytes_write_range" => s.need("byte_write"),
@@ -1781,25 +1801,24 @@ pub function (s: EmitState) need_array_helper(name: string): EmitState {
 }
 
 function array_helper_need(name: string): boolean {
-  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "bytes_range" || name == "bytes_into" || name == "byte_append" || name == "byte_write" || name == "byte_back";
+  return util.has_str(rtbytecopy.kernel_names(), name) || name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "bytes_range" || name == "bytes_into" || name == "byte_append" || name == "byte_write" || name == "byte_back";
 }
 
 // The empty string means the module calls no byte-copy helper.
 pub function (s: EmitState) byte_copy_roots(): string {
-  let append = s.has_need("byte_append");
-  let write = s.has_need("byte_write");
-  let back = s.has_need("byte_back");
-  if (!append && !write && !back) {
-    return "";
-  }
   let roots = "";
-  if (append) {
+  for name in rtbytecopy.kernel_names() {
+    if (s.has_need(name)) {
+      roots += " " + name;
+    }
+  }
+  if (s.has_need("byte_append")) {
     roots += " __fern_bytes_append_range";
   }
-  if (write) {
+  if (s.has_need("byte_write")) {
     roots += " __fern_bytes_write_range";
   }
-  if (back) {
+  if (s.has_need("byte_back")) {
     roots += " __fern_bytes_append_back";
   }
   return roots;

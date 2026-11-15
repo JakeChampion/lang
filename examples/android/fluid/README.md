@@ -1,7 +1,7 @@
 # Fluid
 
-Fluid is a fluid simulation that fills the screen, and nothing else. A drag
-of a finger pushes coloured dye through the fluid.
+Fluid is a fluid simulation that fills the screen, and nothing else. Each
+finger that moves on the screen pushes coloured dye through the fluid.
 
 It is the Android app of the web page
 [JakeChampion/neo](https://github.com/JakeChampion/neo). It is a
@@ -66,15 +66,89 @@ chose stays.
 
 A paused fluid uses no power: the app draws a frame only after a change.
 
+## Touch
+
+Each finger pushes the dye, and each finger has its own colour. A mouse
+pushes the dye when it moves, with no button down. One finger at a time
+uses the button or the dialog. The other fingers stay on the fluid.
+
+Android collects the places of a finger, and gives them at the next frame
+of the display. On Android 11 and later, the app asks for each place at
+once, with `unbatched_touch` of `std/android`. `touch_pointers` gives the
+places of each finger of an event, with their times.
+
+The places come at times that are not the times of the frames of the
+display. A frame can thus get no place, and the next frame two. So each
+frame asks the path of each finger for its place at a time before the
+frame, between two places of the path. A finger with a constant speed
+pushes the fluid by the same amount in each frame.
+
+The time before the frame is the lag, and 1 ms. The lag is the longest
+time that the newest place was old at a frame, while the finger moved. A
+finger that stops does not make the lag longer. The lag gets shorter again
+when the places come sooner.
+
+### Where the dye goes
+
+The display shows a frame some time after the app starts it: 2 refreshes
+on most phones, which is 33 ms at 60 Hz. A finger that moves 1500 pixels in
+a second is 50 pixels away by then. The page puts the dye at the last place
+of the finger that it knows, so the dye is behind the finger.
+
+The app puts the dye where the finger is at the time of the display.
+Android tells the app when it showed each frame, with `frame_times` of
+`std/android/gl`, so the app knows that time. The app estimates the place
+of the finger from the curve that fits its last places best. In the
+estimate, a finger that gets slower stops, and does not go back.
+
+`fingers_test.fern` moves a finger along a line, two waves, a circle and a
+reach, on displays of 60 and 120 Hz. It measures the distance from the dye
+to the finger at the time of the display, on a window of 2000 pixels. For
+the slow wave at 60 Hz, the usual distance is 110 pixels with no estimate.
+With the estimate, it is 11 pixels. The test requires that the estimate brings the dye
+3 times nearer or more for each motion.
+
+The `touch_prediction` setting is the part of the estimate that the app
+uses. With 0, the dye goes to the place that the frame took.
+
+`fingers.fern` has these rules, and `trail.fern` has the path of a finger.
+
 ## Speed
 
 The fluid draws at most 2 pixels across one dp, as the page does, and the
 GPU makes that picture as large as the window. The controls draw at the
 resolution of the window. The `max_pixel_ratio` setting changes the limit.
 
-The dialog shows the frame rate of the last second, and the longest time
-from one frame to the next, next to its close button. Each 5 seconds, the app
-writes the same text to its log. `adb logcat -s fern` shows the lines.
+The app asks for the fastest mode of the display, and draws a frame at each
+refresh: 60, 90 or 120 frames in a second. Each frame does one step of the
+simulation, of the time of the frame. The work of the GPU for one second
+is almost the same at each rate:
+
+- A frame of 120 Hz does half of the pressure passes of a frame of 60 Hz.
+- The app makes the bloom and the sun rays at most 60 times in a second.
+- The background colour is a clear of the frame, not a pass.
+
+When more than 15 frames in 100 are late for 2 seconds, the app takes one
+more refresh for each frame: a lower rate with no late frame looks better
+than a higher rate with late frames. After 10 seconds with no late frame,
+the app tries the faster pace again.
+
+After a late frame, Android can keep one frame more in its queue than it
+needs. Each frame then shows one refresh later. The app measures the time
+from a frame to the display. When that time is longer than the best that
+the app measured, the app leaves one refresh with no frame. The queue then
+has one frame less. `pace.fern` has these rules.
+
+The loop of the app has the priority of a thread that draws for the
+display.
+
+Each pass that writes each pixel of its target tells the GPU so. A phone
+GPU draws in tiles, and it then does not load the old pixels of the target.
+
+The dialog shows the frame rate of the last second next to its close
+button. It also shows the longest time from one frame to the next, and the
+time from a frame to the display. Each 5 seconds, the app writes the same text to its log,
+and what the touches were. `adb logcat -s fern` shows the lines.
 
 ## Settings
 
@@ -120,6 +194,7 @@ to its log, and ignores it.
 | `sunrays_resolution` | 196 | 32 to 1024 |
 | `sunrays_weight` | 0.5 | 0 to 2 |
 | `max_pixel_ratio` | 2 | 0.5 to 4 |
+| `touch_prediction` | 1 | 0 to 2 |
 
 ## What is not the same as the page
 
@@ -127,10 +202,11 @@ to its log, and ignores it.
 |---|---|
 | Two backends, WebGPU and WebGL, and a `backend` setting | One backend, OpenGL ES 3 |
 | A step of 1/60 second, and a frame with no step or with two steps on some displays | One step for each frame, of the time of the frame, so the fluid moves by the same amount in each frame at 60, 90 and 120 Hz |
+| The dye at the last place of the finger that the page knows | The dye at the place of the finger at the time that the display shows the frame |
+| The move of the finger since the last frame, which is not the same in each frame | The move of the finger in the time of one frame, from its path |
+| One colour for each touch | One colour for each finger |
 | A default `dye_resolution` of 1024, and 512 on a phone | A default of 512 |
 | A slower advection shader for a GPU that does not filter float textures | No such shader: each OpenGL ES 3 GPU filters half-float textures |
-| Each finger pushes the dye | One finger pushes the dye: `std/android` gives an app the first pointer of a touch only |
-| A mouse pushes the dye with no button down | A mouse pushes the dye while its button is down |
 | A text for a browser with no WebGPU and no WebGL | A text for a device with no OpenGL ES 3, or with no half-float texture that it can draw into |
 
 ## Files
@@ -140,14 +216,17 @@ to its log, and ignores it.
 | `app.fern` | The activity: the window, the GPU context, the events and the system calls |
 | `fluid.fern` | The behaviour: what a touch, a key and a frame do |
 | `config.fern` | The values of the simulation and the reader of the settings |
-| `clock.fern` | The fixed time step of the simulation |
+| `clock.fern` | The time step of each frame |
+| `fingers.fern` | The fingers on the fluid, the push of each one in a frame, and the place of its dye |
+| `trail.fern` | The path of a finger, its place at one time, and the estimate of its place after the path |
+| `pace.fern` | The refreshes of the display for one frame |
 | `color.fern` | The colours of the dye |
 | `sim.fern` | The passes of the simulation and of the display |
 | `shaders.fern` | The GLSL source of each pass |
 | `gles.fern` | The OpenGL ES functions that the passes call |
 | `overlay.fern` | The places and the pictures of the controls |
 | `screen.fern` | The frame: the fluid and the controls over it |
-| `device.fern` | The JNI calls: the animation setting, the pin, the gallery |
+| `device.fern` | The JNI calls: the animation setting, the pin, the gallery. The priority of the loop |
 
 `std/android/gl` makes the OpenGL ES context and draws the controls.
 `sim.fern` draws the fluid with its own OpenGL ES calls on that context, and
@@ -155,16 +234,27 @@ to its log, and ignores it.
 
 ## Tests
 
+These tests run on the host:
+
 - `TestAndroidFluidRules` runs `fluid_test.fern` on the host: the settings,
   the clock, and the rules of the touches, the keys, the dialog and kid
   mode.
+- `TestAndroidFluidFingers` runs `fingers_test.fern` on the host: the
+  estimate of the place of a finger, the lag, and the distance from the dye
+  to a finger that moves.
+- `TestAndroidFluidPace` runs `pace_test.fern` on the host: the pace of the
+  frames at each display rate, the slower pace after late frames, and the
+  queue of the frames.
 - `TestAndroidFluidOverlay` runs `overlay_test.fern` on the host: the
   places of the controls and what TalkBack reads.
 - `TestAndroidFluidGPU` runs `gpu_test.fern` with Mesa's OpenGL ES on the
   host: the simulation, and the controls over it.
+
+These tests use the APK:
+
 - `TestAndroidFluidApk` builds the APK and checks its entries.
 - `emulator_check.py` drives the APK on an emulator in the Android lane of
-  CI.
+  CI. It swipes with one finger and with two fingers.
 
 With `FLUID_PNG` set to a directory, `overlay_test.fern` and `gpu_test.fern`
 write their pictures there as PNG files.

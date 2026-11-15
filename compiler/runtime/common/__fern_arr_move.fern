@@ -1,0 +1,33 @@
+// for i in 0..n { a = a.with(at + i, a[from + i]) } for elements of 2^shift
+// bytes. A chunk is not longer than the distance of the two ranges. Thus it
+// reads only elements that hold their final values, as the loop reads them.
+// Below 32 bytes of distance, the chunks are too short for __memcpy, so the
+// kernel copies one element at a time.
+function __fern_arr_move(own a: i32[], at: i32, from: i32, n: i32, shift: i32): i32[] {
+  if (n <= 0) {
+    return a;
+  }
+  if (from as u32 > a.len() as u32 || n > a.len() - from) {
+    __fern_oob_abort();
+  }
+  if (at as u32 > a.len() as u32 || n > a.len() - at) {
+    __fern_oob_abort();
+  }
+  let out = __fern_arr_sole(a, shift);
+  let base = __raw_arr_ptr(out) + 8;
+  let d = if (at > from) { at - from } else { from - at };
+  if (d == 0) {
+    return out;
+  }
+  if (d << shift < 32) {
+    __fern_arr_move_each(base + (at as usize << shift as usize), base + (from as usize << shift as usize), n, shift);
+    return out;
+  }
+  let k = 0;
+  while (k < n) {
+    let c = if (d < n - k) { d } else { n - k };
+    __fern_arr_copy_bytes(base + ((at + k) as usize << shift as usize), base + ((from + k) as usize << shift as usize), c as usize << shift as usize);
+    k += c;
+  }
+  return out;
+}
