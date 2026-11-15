@@ -74,6 +74,9 @@ type Info struct {
 	CallBorrowsBeside func(*ast.Call, string) bool
 	// CallOwnFlags reports which arguments of a call go to own parameters.
 	CallOwnFlags func(*ast.Call) []bool
+	// StructLitOwned reports a struct literal whose field values are each
+	// owned, as owned decides, or hold no handle.
+	StructLitOwned func(*ast.StructLit, func(ast.Expr) bool) bool
 	// NoReturn names the functions whose body never returns.
 	NoReturn        map[string]bool
 	Structs         map[string]*ast.StructDecl
@@ -3143,6 +3146,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.CallScopedFresh = c.scopedCallFresh
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.CallOwnFlags = c.ownFlagsOf
+	c.info.StructLitOwned = c.structLitOwned
 	c.info.NoReturn = NoReturnFuncs(prog)
 
 	c.rewriteAssocConstReads(prog)
