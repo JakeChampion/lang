@@ -1,0 +1,38 @@
+import "std/deflate";
+import "std/i32";
+import "std/result";
+
+function le32(b: [u8], at: i32): i32 {
+  return b[at] as i32 | b[at + 1] as i32 << 8 | b[at + 2] as i32 << 16 | b[at + 3] as i32 << 24;
+}
+
+// fbench FILE ROUNDS: zlib_decode every record of FILE ROUNDS times, and
+// print the count of decoded bytes.
+function main(): i32 {
+  let argv = args();
+  let Ok(data) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let rounds = i32.parse_i32(argv[2]).unwrap_or(1);
+  let total = 0;
+  for r in 0..rounds {
+    let at = 0;
+    while (at + 8 <= data.len()) {
+      let zlen = le32(data, at);
+      let size = le32(data, at + 4);
+      let z = data[at + 8:at + 8 + zlen];
+      match (deflate.zlib_decode(z, size)) {
+        Ok(out) => {
+          total += out.len();
+        },
+        Err(e) => {
+          print("error at " + at.to_string() + ": " + e.message() + "\n");
+          return 3;
+        }
+      }
+      at += 8 + zlen;
+    }
+  }
+  print(total.to_string() + "\n");
+  return 0;
+}
