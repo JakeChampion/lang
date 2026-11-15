@@ -1,0 +1,32 @@
+import "../ir";
+import "../ssa";
+import "../ssa_lift";
+import "../util";
+
+// The lift of a read of `slot`: the offset of its load, or a refusal.
+function slot_read(kind: string, slot: i32): string {
+  let read = ir.Op { ...ir.op_struct_get(slot, 0), kind_tag: ir.kind_id(kind) };
+  let ops = [ir.op_load_local(0), read, ir.op_return()];
+  let name = kind + " " + util.i32_to_string(slot);
+  let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "read", 1, 1, ops, false)) { Ok(l) => l, Err(_) => { return name + " refused\n"; } };
+  let out = "";
+  for b in lifted.func.blocks {
+    for i in b.insts {
+      if (i.kind_tag == ssa.LD_AT) {
+        out = out + name + " load at " + util.i32_to_string(i.imm) + "\n";
+      }
+    }
+  }
+  return if (out == "") { name + " lifted with no load\n" } else { out };
+}
+
+function main(): i32 {
+  let out = "";
+  for kind in ["struct_get", "tuple_get"] {
+    for slot in [0, 1, 268435455, 268435456, 2147483647, -1] {
+      out = out + slot_read(kind, slot);
+    }
+  }
+  write(out);
+  return 0;
+}
