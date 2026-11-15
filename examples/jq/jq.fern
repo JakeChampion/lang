@@ -1,6 +1,7 @@
 // A jq command line with the options of jq 1.7. It reads a stream of JSON
 // values from the files, or from stdin when there is none, and writes the
 // outputs of the filter for each value.
+import "std/array";
 import "std/io";
 import "std/json";
 import "std/string";
@@ -9,6 +10,7 @@ import "./filter";
 import "./input";
 import "./modules";
 import "./output";
+import "./runtests";
 
 // The parts of the command line.
 //
@@ -45,6 +47,9 @@ struct Options {
   files: string[],
   fail: string,
   exit: i32,
+  // `--run-tests` and the arguments after it.
+  run_tests: boolean,
+  test_args: string[],
 }
 
 const VERSION: string = "1.7";
@@ -81,6 +86,8 @@ function new_options(progname: string): Options {
     files: [],
     fail: "",
     exit: -1,
+    run_tests: false,
+    test_args: [],
   };
 }
 
@@ -190,19 +197,21 @@ function options(argv: string[]): Options {
   let done = false;
   let mode = 0;
   let i = 1;
-  while (i < argv.len() && o.exit < 0) {
+  while (i < argv.len() && o.exit < 0 && !o.run_tests) {
     let a = argv[i];
-    if (done || !optish(a)) {
+    if (!done && a == "--run-tests") {
+      o = Options { ...o, run_tests: true, test_args: array.slice(argv, i + 1, argv.len()) };
+    } else if (done || !optish(a)) {
       o = o.operand(a, mode);
     } else if (a == "--") {
       done = true;
     } else if (a[1] == b'L') {
       if (a.len() > 2) {
-        o = Options { ...o, library: o.library.append(slice_unchecked(a, 2, a.len()).to_owned()) };
+        o = Options { ...o, library: o.library.append(modules.realpath(slice_unchecked(a, 2, a.len()).to_owned())) };
       } else if (i >= argv.len() - 1) {
         o = Options { ...o, fail: "-L takes a parameter: (e.g. -L /search/path or -L/search/path)\n" + die_text(o.progname), exit: 2 };
       } else {
-        o = Options { ...o, library: o.library.append(argv[i + 1]) };
+        o = Options { ...o, library: o.library.append(modules.realpath(argv[i + 1])) };
         i += 1;
       }
     } else {
@@ -509,6 +518,9 @@ function main(): i32 {
     }
     return o.exit;
   }
+  if (o.run_tests) {
+    return runtests.run(o.library, o.test_args);
+  }
   if (!o.have_program) {
     if (isatty(0) && isatty(1)) {
       eprint_raw(usage(o.progname, true));
@@ -526,7 +538,7 @@ function main(): i32 {
       return 2;
     }
   }
-  let origin = if (o.from_file) { modules.dirname(o.program) } else { "." };
+  let origin = modules.realpath(if (o.from_file) { modules.dirname(o.program) } else { "." });
   let jq_origin = modules.dirname(o.progname);
   let vars = o.variables();
   let compiled = modules.compile(skip_shebang(text), o.library, vars.names, origin, jq_origin);
@@ -537,7 +549,7 @@ function main(): i32 {
     eprint("jq: " + compiled.count.to_string() + " compile error" + (if (compiled.count == 1) { "" } else { "s" }));
     return 3;
   }
-  vars = vars.with("*search", compiled.search).with("*jq_origin", json.JString(jq_origin)).with("*prog_origin", json.JString(modules.absolute(origin)));
+  vars = vars.with("*search", compiled.search).with("*jq_origin", json.JString(jq_origin)).with("*prog_origin", json.JString(origin));
   let env = eval.load(compiled, vars);
   let f = compiled.ast;
   let src = input.source(o.files, o.raw_input, o.seq);

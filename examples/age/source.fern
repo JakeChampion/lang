@@ -45,15 +45,20 @@ pub function (f: Fail) is_end(): boolean {
 }
 
 // The bytes of a file. With no reader, the bytes in buf are all there is.
-// read counts the bytes of the reads from the file.
-pub struct Raw { r: Option[Reader], name: string, buf: u8[], pos: i32, fail: Option[Fail], read: i64 }
+// read counts the bytes of the reads from the file. With tee, each read also
+// goes to the standard error, as Go's io.TeeReader copies it.
+pub struct Raw { r: Option[Reader], name: string, buf: u8[], pos: i32, fail: Option[Fail], read: i64, tee: boolean }
 
 pub function open_raw(r: Reader, name: string): Raw {
-  return Raw { r: Some(r), name: name, buf: [], pos: 0, fail: None, read: 0i64 };
+  return Raw { r: Some(r), name: name, buf: [], pos: 0, fail: None, read: 0i64, tee: false };
 }
 
 pub function raw_bytes(b: u8[]): Raw {
-  return Raw { r: None, name: "", buf: b, pos: 0, fail: None, read: b.len() as i64 };
+  return Raw { r: None, name: "", buf: b, pos: 0, fail: None, read: b.len() as i64, tee: false };
+}
+
+pub function teed(own s: Raw): Raw {
+  return Raw { ...s, tee: true };
 }
 
 // One read of up to n bytes. An empty result is the end of the file.
@@ -63,6 +68,9 @@ function read_some(s: Raw, n: i32): Result[u8[], Fail] {
   };
   match (r.read_chunk_bytes(n)) {
     Ok(b) => {
+      if (s.tee && b.len() > 0) {
+        let _ = stderr().write_bytes(b);
+      }
       return Ok(b);
     },
     Err(e) => {

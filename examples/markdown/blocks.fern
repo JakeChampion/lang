@@ -55,6 +55,9 @@ const F_LOOSE: i32 = 256;
 
 const F_PARA: i32 = 512;
 
+// A list where the last line that reached it was blank.
+const F_LIST_BLANK: i32 = 2048;
+
 // The fields of an open block on the stack. S_A is the marker of a list or
 // the fence character of a code block. It is the kind of an HTML block or
 // the level of a heading too. S_B is the start number of a list or the
@@ -870,6 +873,13 @@ function process_line(p0: P, src: string, ls: i32, le: i32, line: i32): P {
   let i = 1;
   let all = true;
   while (i < p.depth) {
+    if (skind(p, i) == LIST) {
+      let (q, stop) = list_line(p, src, le, i, off, col, partial);
+      if (stop) {
+        return q;
+      }
+      p = q;
+    }
     let (verdict, o, c, t) = continues(p, src, le, i, off, col, partial);
     if (verdict == ENDS) {
       return close_top(p, src);
@@ -908,6 +918,26 @@ function process_line(p0: P, src: string, ls: i32, le: i32, line: i32): P {
     }
   }
   return add_text(p, src, le, line, cd, matched, off, col, partial, fns, fnscol);
+}
+
+// Keeps in the list at `i` whether the line is blank from the cursor. As in
+// cmark 0.31, a second blank line with no indent at a list stops the line
+// there, and only an open code block or HTML block gets the line. Thus a
+// blank line does not visit each block of a deep list. Gives true when the
+// line stops.
+function list_line(p: P, src: string, le: i32, i: i32, off: i32, col: i32, partial: boolean): (P, boolean) {
+  let (fns, fnscol) = first_nonspace(src, le, off, col);
+  if (fns != le) {
+    return (set_flag(p, i, F_LIST_BLANK, false), false);
+  }
+  if (!has_flag(p, i, F_LIST_BLANK) || fnscol != col) {
+    return (set_flag(p, i, F_LIST_BLANK, true), false);
+  }
+  let k = skind(p, p.depth - 1);
+  if (k == CODE || k == HTML) {
+    return (add_line(p, off, col, partial, le), true);
+  }
+  return (p, true);
 }
 
 // The verdicts of `continues`.

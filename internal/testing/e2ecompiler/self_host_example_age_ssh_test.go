@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -10,13 +11,16 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // ageSSHKeys copies the SSH keys of examples/age/testdata/ssh into dir. The
@@ -113,6 +117,8 @@ func ageSSH(t *testing.T, oracle, port ageTool, dir string) {
 	}
 	ageSSHEncrypted(t, oracle, port, dir, plain)
 	ageSSHMessages(t, oracle, port, dir)
+	ageSSHDER(t, oracle, port, dir)
+	ageSSHPublicKeys(t, oracle, port, dir)
 }
 
 // ageSSHEncrypted checks the keys that need a passphrase: age asks for it
@@ -472,11 +478,7 @@ func ageKeygen(t *testing.T, oracle, keygen, port ageTool, dir string) {
 		os.Remove(filepath.Join(dir, "y-out"))
 		gotOut, got, gotCode := port.run(t, dir, nil, args...)
 		gotFile, _ := os.ReadFile(filepath.Join(dir, "y-out"))
-		if wantCode != 0 {
-			want = strings.SplitN(strings.ReplaceAll(want, "age-keygen: report unexpected or unhelpful errors at https://filippo.io/age/report\n", ""), "\n", 2)[0]
-			got = strings.SplitN(got, "\n", 2)[0]
-		}
-		if gotCode != wantCode || got != want && args[0] != "-h" || !bytes.Equal(gotOut, wantOut) || !bytes.Equal(gotFile, wantFile) {
+		if gotCode != wantCode || got != want || !bytes.Equal(gotOut, wantOut) || !bytes.Equal(gotFile, wantFile) {
 			t.Errorf("age-keygen %v: exit %d %q %q; fern age-keygen exit %d %q %q", args, wantCode, want, wantOut, gotCode, got, gotOut)
 		}
 	}
@@ -498,4 +500,179 @@ func ageKeygen(t *testing.T, oracle, keygen, port ageTool, dir string) {
 	if err := cmd.Run(); err != nil || !strings.HasPrefix(stderr.String(), "age-keygen: warning: writing secret key to a world-readable file\nPublic key: ") {
 		t.Errorf("fern age-keygen to a world-readable file: %v %q", err, &stderr)
 	}
+}
+
+// ageCompareMany runs age and the port on each command line in dir, four at
+// a time, and compares the exit code and the standard error. A message of
+// age that is not UTF-8 holds the raw bytes of a key type, which the port
+// cannot write (see examples/age/README.md), so the case is skipped.
+func ageCompareMany(t *testing.T, oracle, port ageTool, dir string, cases [][]string) {
+	t.Helper()
+	next := make(chan []string)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for args := range next {
+				_, want, wantCode := oracle.run(t, dir, nil, args...)
+				if !utf8.ValidString(want) {
+					continue
+				}
+				_, got, gotCode := port.run(t, dir, nil, args...)
+				if gotCode != wantCode || got != want {
+					t.Errorf("age %q: age exit %d %q; fern age exit %d %q", args, wantCode, want, gotCode, got)
+				}
+			}
+		}()
+	}
+	for _, c := range cases {
+		next <- c
+	}
+	close(next)
+	wg.Wait()
+}
+
+// ageSSHDER checks the messages of Go's x509 and asn1 parsers for each kind
+// of DER private key that ssh.ParseRawPrivateKey reads: the key, the key cut
+// short, with a byte changed, and with a byte after it, also under the PEM
+// type of another kind.
+func ageSSHDER(t *testing.T, oracle, port ageTool, dir string) {
+	rk, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ec256, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ec384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	_, ed, _ := ed25519.GenerateKey(rand.Reader)
+	ecDER, _ := x509.MarshalECPrivateKey(ec256)
+	p8rsa, _ := x509.MarshalPKCS8PrivateKey(rk)
+	p8ed, _ := x509.MarshalPKCS8PrivateKey(ed)
+	p8ec, _ := x509.MarshalPKCS8PrivateKey(ec384)
+	rsaDER := x509.MarshalPKCS1PrivateKey(rk)
+	dsaDER := []byte{0x30, 18, 2, 1, 0, 2, 1, 1, 2, 1, 2, 2, 1, 3, 2, 1, 4, 2, 1, 5}
+	sealed, stderr, code := oracle.run(t, dir, []byte("hello"), "-R", "ed25519.pub")
+	if code != 0 {
+		t.Fatalf("age -R ed25519.pub: exit %d %s", code, stderr)
+	}
+	ageWrite(t, filepath.Join(dir, "der.age"), sealed)
+	var cases [][]string
+	write := func(typ string, der []byte) {
+		name := fmt.Sprintf("der-%d", len(cases))
+		ageWrite(t, filepath.Join(dir, name), pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: der}))
+		cases = append(cases, []string{"-d", "-i", name, "der.age"})
+	}
+	for _, b := range []struct {
+		typ string
+		der []byte
+	}{
+		{"RSA PRIVATE KEY", rsaDER}, {"EC PRIVATE KEY", ecDER}, {"PRIVATE KEY", p8rsa}, {"PRIVATE KEY", p8ed},
+		{"PRIVATE KEY", p8ec}, {"DSA PRIVATE KEY", dsaDER}, {"RSA PRIVATE KEY", ecDER}, {"EC PRIVATE KEY", p8ed},
+		{"PRIVATE KEY", rsaDER},
+	} {
+		write(b.typ, b.der)
+		write(b.typ, append(append([]byte{}, b.der...), 0))
+		for _, cut := range []int{0, 1, 2, 3, 5, 8, 13, len(b.der) / 2, len(b.der) - 1} {
+			if cut < len(b.der) {
+				write(b.typ, b.der[:cut])
+			}
+		}
+		for i := 0; i < len(b.der) && i < 24; i++ {
+			for _, v := range []byte{0x00, 0x80, 0xff} {
+				if b.der[i] != v {
+					d := append([]byte{}, b.der...)
+					d[i] = v
+					write(b.typ, d)
+				}
+			}
+		}
+	}
+	ageCompareMany(t, oracle, port, dir, cases)
+}
+
+// ageSSHPublicKeys checks the messages of x/crypto/ssh for public keys of
+// the types that age does not use: ECDSA keys of each curve, security-key
+// keys and certificates, cut short or with a byte changed. It also checks
+// Ed25519 keys whose encoding is not canonical, which edwards25519 takes.
+func ageSSHPublicKeys(t *testing.T, oracle, port ageTool, dir string) {
+	var cases [][]string
+	add := func(kind string, blob []byte) {
+		cases = append(cases, []string{"-r", kind + " " + base64.StdEncoding.EncodeToString(blob), "plain"})
+	}
+	mutate := func(kind string, blob []byte, deep int) {
+		add(kind, blob)
+		add(kind, append(append([]byte{}, blob...), 0, 1))
+		for cut := 0; cut < len(blob); cut += 1 + cut/4 {
+			add(kind, blob[:cut])
+		}
+		for i := 0; i < len(blob) && i < deep; i++ {
+			for _, v := range []byte{0x00, 0x01, 0x04} {
+				if blob[i] != v {
+					d := append([]byte{}, blob...)
+					d[i] = v
+					add(kind, d)
+				}
+			}
+		}
+	}
+	cat := func(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+	u64 := func(v uint64) []byte { return binary.BigEndian.AppendUint64(nil, v) }
+	for _, c := range []struct {
+		curve elliptic.Curve
+		name  string
+	}{{elliptic.P256(), "nistp256"}, {elliptic.P384(), "nistp384"}, {elliptic.P521(), "nistp521"}} {
+		k, err := ecdsa.GenerateKey(c.curve, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		point, err := k.PublicKey.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		kind := "ecdsa-sha2-" + c.name
+		mutate(kind, cat(ageSSHString([]byte(kind)), ageSSHString([]byte(c.name)), ageSSHString(point)), 40)
+		off := append([]byte{}, point...)
+		off[len(off)-1] ^= 1
+		add(kind, cat(ageSSHString([]byte(kind)), ageSSHString([]byte(c.name)), ageSSHString(off)))
+		add(kind, cat(ageSSHString([]byte(kind)), ageSSHString([]byte("nistp224")), ageSSHString(point)))
+	}
+	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	point, _ := ec.PublicKey.Bytes()
+	skType := "sk-ecdsa-sha2-nistp256@openssh.com"
+	mutate(skType, cat(ageSSHString([]byte(skType)), ageSSHString([]byte("nistp256")), ageSSHString(point), ageSSHString([]byte("ssh:"))), 50)
+	edPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	sigPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	skEd := "sk-ssh-ed25519@openssh.com"
+	mutate(skEd, cat(ageSSHString([]byte(skEd)), ageSSHString(edPub), ageSSHString([]byte("ssh:"))), 40)
+	rk, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fields of a certificate after its key: serial, type, key ID,
+	// principals, validity, critical options, extensions, reserved, the
+	// signature key and the signature.
+	tail := cat(u64(7), []byte{0, 0, 0, 1}, ageSSHString([]byte("id")), ageSSHString(cat(ageSSHString([]byte("a")), ageSSHString([]byte("b")))),
+		u64(0), u64(1<<64-1), ageSSHString(cat(ageSSHString([]byte("force-command")), ageSSHString(ageSSHString([]byte("x"))))),
+		ageSSHString(cat(ageSSHString([]byte("permit-pty")), ageSSHString(nil), ageSSHString([]byte("permit-x11")), ageSSHString(nil))), ageSSHString(nil),
+		ageSSHString(cat(ageSSHString([]byte("ssh-ed25519")), ageSSHString(sigPub))), ageSSHString(cat(ageSSHString([]byte("ssh-ed25519")), ageSSHString(make([]byte, 64)))))
+	nonce := ageSSHString(make([]byte, 32))
+	edCert := "ssh-ed25519-cert-v01@openssh.com"
+	mutate(edCert, cat(ageSSHString([]byte(edCert)), nonce, ageSSHString(edPub), tail), 90)
+	rsaCert := "ssh-rsa-cert-v01@openssh.com"
+	mutate(rsaCert, cat(ageSSHString([]byte(rsaCert)), nonce, ageSSHString(ageBigEndian(rk.E)), ageSSHString(append([]byte{0}, rk.N.Bytes()...)), tail), 50)
+	// y = p, p + 1 and so on to 2^255 - 1, with each sign bit, and y = 1
+	// and y = -1 with the sign bit set.
+	for _, low := range []byte{0xec, 0xed, 0xee, 0xf0, 0xff} {
+		for _, top := range []byte{0x7f, 0xff} {
+			y := bytes.Repeat([]byte{0xff}, 32)
+			y[0], y[31] = low, top
+			add("ssh-ed25519", cat(ageSSHString([]byte("ssh-ed25519")), ageSSHString(y)))
+		}
+	}
+	for _, top := range []byte{0x00, 0x80} {
+		y := make([]byte, 32)
+		y[0], y[31] = 1, top
+		add("ssh-ed25519", cat(ageSSHString([]byte("ssh-ed25519")), ageSSHString(y)))
+	}
+	ageCompareMany(t, oracle, port, dir, cases)
 }

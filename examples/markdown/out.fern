@@ -104,15 +104,11 @@ pub function (r: R) ascii(s: string): R {
   return R { ...q, column: q.column + s.len() };
 }
 
-// Writes the code point `c` as UTF-8, as cmark_render_code_point does. As
-// in cmark, U+FFFE and U+FFFF are the bytes 0xFE and 0xFF, which are not
-// UTF-8.
+// Writes the code point `c` as UTF-8, as cmark_render_code_point does.
 pub function (r: R) code_point(c: i32): R {
   let q = r;
   if (c < 0x80) {
     q = put(q, c);
-  } else if (c == 0xFFFE || c == 0xFFFF) {
-    q = put(q, c & 0xFF);
   } else if (c < 0x800) {
     q = put(put(q, 0xC0 | c >> 6), 0x80 | c & 63);
   } else if (c < 0x10000) {
@@ -257,8 +253,8 @@ function run(r: R, s: string, i: i32, j: i32): R {
     len += 1;
     if ((c as i32 & 0xC0) != 0x80) {
       column += 1;
+      digits = digits && is_digit(low_byte(s, k));
     }
-    digits = digits && c >= b'0' && c <= b'9';
   }
   return R { ...r, b: b, len: len, column: column, begin_line: false, begin_content: digits };
 }
@@ -298,7 +294,24 @@ function one(r: R, s: string, next: i32, c: i32, escape: i32): R {
     }
     q = outc(q, escape, c, nextc);
   }
-  return R { ...q, begin_line: false, begin_content: q.begin_content && is_digit(c) };
+  return R { ...q, begin_line: false, begin_content: q.begin_content && is_digit(c & 0xFF) };
+}
+
+// The low byte of the code point that starts at `k`. cmark tests a code
+// point with the `char` tests of C, which see only its low byte. Thus
+// U+0130 is a digit for cmark, as `0` is.
+function low_byte(s: string, k: i32): i32 {
+  let c = s[k] as i32;
+  if (c < 0x80) {
+    return c;
+  }
+  let n = 2;
+  if (c >= 0xF0) {
+    n = 4;
+  } else if (c >= 0xE0) {
+    n = 3;
+  }
+  return (s[k + n - 2] as i32 & 3) << 6 | s[k + n - 1] as i32 & 0x3F;
 }
 
 // Moves the text after the last place to break to a new line. As in cmark,
@@ -385,7 +398,7 @@ function commonmark_escapes(r: R, escape: i32, c: i32, nextc: i32): boolean {
 
 // The characters that the CommonMark renderer escapes in normal text.
 function normal_escapes(r: R, c: i32, nextc: i32): boolean {
-  if (c < 32 || in_set(c, "*_[]#<>\\`!") || c == 38 && is_alpha(nextc)) {
+  if (c < 32 || in_set(c, "*_[]#<>\\`") || c == 33 && (nextc == 0 || nextc == 91) || c == 38 && is_alpha(nextc)) {
     return true;
   }
   return r.o.smart && smart_char(c, nextc) || r.begin_content && starts_block(r, c, nextc);
