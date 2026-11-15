@@ -128,19 +128,31 @@ function wasm_fill(name: string): string {
     + "    (local.get $r))\n";
 }
 
-// A chunk is not longer than the distance of the two ranges. Thus it reads
-// only elements that hold their final values, as the loop reads them.
+// A move down has the result of memmove, so one memory.copy does it. A move
+// up copies chunks that are not longer than the distance of the two ranges.
+// Thus a chunk reads only elements that hold their final values, as the loop
+// reads them. Below 32 bytes of distance, it copies one element at a time.
 function wasm_move(): string {
   return "  (func $__fern_arr_move (param $a i32) (param $at i32) (param $from i32) (param $n i32) (param $size i32) (result i32)\n"
-    + "    (local $r i32) (local $base i32) (local $d i32) (local $k i32) (local $c i32)\n"
+    + "    (local $r i32) (local $base i32) (local $d i32) (local $k i32) (local $c i32) (local $p i32) (local $q i32)\n"
     + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return (local.get $a))))\n"
     + "    (call $__fern_bytes_copy_bounds (local.get $a) (local.get $from) (local.get $n))\n"
     + "    (call $__fern_bytes_copy_bounds (local.get $a) (local.get $at) (local.get $n))\n"
     + "    (local.set $r (call $__fern_arr_sole (local.get $a) (local.get $size)))\n"
     + "    (local.set $base (i32.add (local.get $r) (i32.const 8)))\n"
+    + "    (local.set $p (i32.add (local.get $base) (i32.mul (local.get $at) (local.get $size))))\n"
+    + "    (local.set $q (i32.add (local.get $base) (i32.mul (local.get $from) (local.get $size))))\n"
+    + "    (if (i32.le_s (local.get $at) (local.get $from)) (then\n"
+    + "      (memory.copy (local.get $p) (local.get $q) (i32.mul (local.get $n) (local.get $size))) (return (local.get $r))))\n"
     + "    (local.set $d (i32.sub (local.get $at) (local.get $from)))\n"
-    + "    (if (i32.lt_s (local.get $d) (i32.const 0)) (then (local.set $d (i32.sub (i32.const 0) (local.get $d)))))\n"
-    + "    (if (i32.eqz (local.get $d)) (then (return (local.get $r))))\n"
+    + "    (if (i32.lt_u (i32.mul (local.get $d) (local.get $size)) (i32.const 32)) (then\n"
+    + "      (block $each_done (loop $each (br_if $each_done (i32.ge_s (local.get $k) (local.get $n)))\n"
+    + "        (if (i32.eq (local.get $size) (i32.const 1)) (then (i32.store8 (local.get $p) (i32.load8_u (local.get $q))))\n"
+    + "          (else (if (i32.eq (local.get $size) (i32.const 4)) (then (i32.store (local.get $p) (i32.load (local.get $q))))\n"
+    + "            (else (i64.store (local.get $p) (i64.load (local.get $q)))))))\n"
+    + "        (local.set $p (i32.add (local.get $p) (local.get $size))) (local.set $q (i32.add (local.get $q) (local.get $size)))\n"
+    + "        (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $each)))\n"
+    + "      (return (local.get $r))))\n"
     + "    (block $done (loop $copy (br_if $done (i32.ge_s (local.get $k) (local.get $n)))\n"
     + "      (local.set $c (local.get $d))\n"
     + "      (if (i32.gt_s (local.get $c) (i32.sub (local.get $n) (local.get $k))) (then (local.set $c (i32.sub (local.get $n) (local.get $k)))))\n"

@@ -89,6 +89,11 @@ copies it first.
 A fill of zero, or a fill of bytes, uses `memset`. A move
 copies in parts that are not longer than the distance between the two
 ranges. Thus each part reads only elements that hold their final values.
+Below 32 bytes of distance, a move copies one element at a time, because
+such parts are too short for a call to `memcpy`. On WASM, a move to lower
+indices is one `memory.copy`, because the loop then has the result of
+`memmove`.
+
 Arrays of two element types of one size share a kernel, so a function that
 fills both keeps the loop of the second type. WASM uses `memory.fill` and
 `memory.copy`.

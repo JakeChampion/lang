@@ -1,6 +1,8 @@
 // for i in 0..n { a = a.with(at + i, a[from + i]) } for elements of 2^shift
 // bytes. A chunk is not longer than the distance of the two ranges. Thus it
 // reads only elements that hold their final values, as the loop reads them.
+// Below 32 bytes of distance, the chunks are too short for __memcpy, so the
+// kernel copies one element at a time.
 function __fern_arr_move(own a: i32[], at: i32, from: i32, n: i32, shift: i32): i32[] {
   if (n <= 0) {
     return a;
@@ -15,6 +17,10 @@ function __fern_arr_move(own a: i32[], at: i32, from: i32, n: i32, shift: i32): 
   let base = __raw_arr_ptr(out) + 8;
   let d = if (at > from) { at - from } else { from - at };
   if (d == 0) {
+    return out;
+  }
+  if (d << shift < 32) {
+    __fern_arr_move_each(base + (at as usize << shift as usize), base + (from as usize << shift as usize), n, shift);
     return out;
   }
   let k = 0;
