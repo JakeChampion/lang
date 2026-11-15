@@ -384,6 +384,11 @@ def main(apk, out, video=None):
         log = logcat()
         with open(f"{out}/logcat.txt", "w") as f:
             f.write(log)
+        if failures:
+            # Each tag, so a failure also shows the errors of the media
+            # framework and of the codecs.
+            with open(f"{out}/logcat-all.txt", "w") as f:
+                f.write(adb("logcat", "-d", "-v", "threadtime", check=False))
         with open(f"{out}/requests.txt", "w") as f:
             f.write("\n".join(requests) + "\n")
         print("\n".join(line for line in log.splitlines() if "plex" in line), flush=True)
