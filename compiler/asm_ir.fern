@@ -11286,8 +11286,11 @@ function ssa_load_compare(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, s: asmcore.E
   if (!fu.load_right && fr.imm.is_imm[fu.b]) {
     return ssa_alu_im(s, 7, fu.load_bits, fr.imm.value[fu.b] as i32, a, fu.load_at);
   }
-  s = ssa_read(reg_of, fu.b, "%rcx", s);
-  let b = ssa_src(reg_of, fu.b, "%rcx");
+  // The base of the load can be in %rcx: the fixed table keeps only %r11
+  // free at a load. No value is in %rdx at the compare.
+  let scratch = if (a == "%rcx") { "%rdx" } else { "%rcx" };
+  s = ssa_read(reg_of, fu.b, scratch, s);
+  let b = ssa_src(reg_of, fu.b, scratch);
   if (fu.load_right) {
     return ssa_alu_rm(s, 7, 64, true, a, b, fu.load_at);
   }
