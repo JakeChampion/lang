@@ -504,6 +504,14 @@ function test_program_taps(): test.TestOutcome {
   return test.assert_eq(got, "true 2 true 2");
 }
 
+// `says` finds a text that shows, and an element that only an
+// accessibility service reads.
+function test_program_says(): test.TestOutcome {
+  let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
+  let got = [sim.says(s, "reset"), sim.shows(s, "reset"), sim.says(s, "V"), sim.says(s, "missing")];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true false true false");
+}
+
 function test_program_long_press_and_toggle(): test.TestOutcome {
   let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
   s = sim.tap(sim.tap(s, "V"), "switch, off");
@@ -1122,6 +1130,7 @@ function main(): i32 {
   r = r.it("an area shows the lines at the caret", test_an_area_shows_the_lines_at_the_caret);
   r = r.it("a slider has a track and a thumb", test_slider_layout);
   r = r.it("a finger moves a slider and scrolls no list", test_a_finger_moves_a_slider);
+  r = r.it("says finds an element by what it says", test_program_says);
   r = r.it("the effects run after each message", test_effects_run_after_each_message);
   r = r.it("the meter shows the cost of a frame", test_the_meter_shows_the_cost_of_a_frame);
   r = r.it("events between two ticks do not move the next tick", test_events_do_not_move_a_tick);

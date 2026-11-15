@@ -13,7 +13,8 @@ import "std/option";
 import "std/unicode";
 import "std/string";
 import "../look";
-import "./icons";
+import "std/android/icons";
+import "./art";
 
 // A file of the library: its title, its artist, its album and its number
 // on the album, from its tags or from its path. `by` is the artist that
@@ -1107,7 +1108,7 @@ function grey(): i32 {
 
 // A tile for `name`, which has no picture, at `side` dp.
 function tile(name: string, side: f64): ui.El[Msg] {
-  return ui.canvas("tile:" + name, icons.tile(name, tile_grey(), grey())).width(side).height(side);
+  return ui.canvas("tile:" + name, art.tile(name, tile_grey(), grey())).width(side).height(side);
 }
 
 // The picture of the album of the key `key` at `side` dp, or a tile with
@@ -1316,10 +1317,10 @@ function artist_of(m: Model): string {
 // red line for the time.
 function mini(m: Model, theme: ui.Theme): ui.El[Msg] {
   let t = m.tracks[m.current];
-  let cover: ui.El[Msg] = ui.canvas("mini:" + album_key(t.by, t.album) + ":" + theme.surface.to_string(), icons.round_cover(m.art, t.album, tile_grey(), grey(), theme.surface)).width(48.0).height(48.0);
+  let cover: ui.El[Msg] = ui.canvas("mini:" + album_key(t.by, t.album) + ":" + theme.surface.to_string(), art.round_cover(m.art, t.album, tile_grey(), grey(), theme.surface)).width(48.0).height(48.0);
   let sound = if (m.playing) { icons.pause(theme.primary) } else { icons.play(theme.primary) };
   let button: ui.El[Msg] = ui.canvas("sound:" + m.playing.to_string(), sound).width(48.0).height(48.0).on_tap(Toggle).described(play_label(m));
-  let line: ui.El[Msg] = ui.progress(part(m)).padding_xy(36.0, 0.0);
+  let line: ui.El[Msg] = ui.column([ui.progress(part(m))]).padding_xy(36.0, 0.0);
   let card = ui.row([cover, ui.column([ui.text(title(m)).sized(15.0).weighted(500).clamped(1), ui.text(artist_of(m)).sized(13.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide(), button]).spaced(12.0).aligned(ui.CENTER).padding_xy(8.0, 8.0);
   return ui.column([card, line]).spaced(2.0).padding_xy(0.0, 4.0).background(ui.SURFACE).rounded(32.0).on_tap(Opened).described("Now playing, " + title(m));
 }
@@ -1721,7 +1722,7 @@ function now_playing(m: Model, s: ui.Screen): ui.El[Msg] {
   let shade = theme.background.to_string();
   // The record or the lyrics take the height that the rest of the screen
   // leaves.
-  let big: ui.El[Msg] = ui.canvas("record:" + artist + "/" + album + ":" + shade, icons.record(m.art, draw.rgb(30, 30, 30), draw.rgb(52, 52, 52), draw.rgb(72, 72, 72), draw.rgb(232, 232, 232))).width(340.0).tall().square();
+  let big: ui.El[Msg] = ui.canvas("record:" + artist + "/" + album + ":" + shade, art.record(m.art, draw.rgb(30, 30, 30), draw.rgb(52, 52, 52), draw.rgb(72, 72, 72), draw.rgb(232, 232, 232))).width(340.0).tall().square();
   if (m.sung) {
     big = words(m);
   }
