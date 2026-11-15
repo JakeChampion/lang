@@ -48,6 +48,8 @@ pub struct Fusion {
   load_bits: i32,
   load_at: i32,
   load_right: boolean,
+  // The compare reads the low 32 bits of each operand.
+  narrow: boolean,
 }
 
 pub struct Allocation {
