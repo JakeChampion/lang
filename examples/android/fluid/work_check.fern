@@ -1,0 +1,138 @@
+// Measures the work of the GPU in one second of the app, and in one second
+// of the web page, on a phone of 1080 by 2400 pixels with 2.625 pixels for
+// each dp. The simulation runs in its shaders on Mesa's OpenGL ES, and its
+// meter counts the pixels that each pass writes and the texels that it
+// reads. It is a shared object: check() gives one digit for each check that
+// passes. With FLUID_WORK set, it writes the counts.
+import "std/android/gl";
+import "std/rand";
+import "./config";
+import "./fluid";
+import "./sim";
+
+const W: i32 = 1080;
+
+const H: i32 = 2400;
+
+const RATIO: f64 = 2.625;
+
+const SECOND: i64 = 1000000000i64;
+
+// A count of work as one number: a pixel that a pass writes costs as much
+// as a texel that it reads.
+function units(w: sim.Work): i64 {
+  return w.pixels + w.texels;
+}
+
+// The work of `make`, which draws with the fluid `f`.
+function cost(f: sim.Fluid, make: () => sim.Fluid): i64 {
+  let before = units(f.work());
+  let after = make();
+  return units(after.work()) - before;
+}
+
+function layout(): fluid.Layout {
+  let none = fluid.Rect { x: 0, y: 0, w: 0, h: 0 };
+  return fluid.Layout { width: W, height: H, button: fluid.Rect { x: W - 160, y: 60, w: 120, h: 120 }, exit: none, panel: none, close: none, list: none, rows: [], content: 0, slop: 20 };
+}
+
+// What the app does on a display of `hz` refreshes in a second, in the
+// second after one second of the app: the steps with their time, and the
+// frames with and without new bloom and sun rays.
+struct Plan { steps: f64[], effects: i32, plain: i32 }
+
+function planned(hz: i32): Plan {
+  let m = fluid.new(config.defaults(), false, 5i64, 0i64).laid_out(layout());
+  let period = SECOND / (hz as i64);
+  let plan = Plan { steps: [], effects: 0, plain: 0 };
+  let k = 1i64;
+  while (k * period < 2i64 * SECOND) {
+    let (next, fr) = m.frame(k * period);
+    m = next;
+    if (k * period >= SECOND) {
+      let steps = plan.steps;
+      for i in 0..fr.steps {
+        steps = steps.append(fr.step);
+      }
+      if (fr.effects) {
+        plan = Plan { ...plan, steps: steps, effects: plan.effects + 1 };
+      } else if (fr.draw) {
+        plan = Plan { ...plan, steps: steps, plain: plan.plain + 1 };
+      } else {
+        plan = Plan { ...plan, steps: steps };
+      }
+    }
+    k += 1i64;
+  }
+  return plan;
+}
+
+// The work of the app and of the page in one second at `hz`. The page
+// takes a step of 1/60 second for each 1/60 second, and it makes the bloom
+// and the sun rays at each frame.
+struct Second { hz: i32, app: i64, page: i64 }
+
+function second(f: sim.Fluid, cfg: config.Config, hz: i32): Second {
+  let plan = planned(hz);
+  let shown = cost(f, (): sim.Fluid => {
+    f.show(cfg, true);
+    return f;
+  });
+  let kept = cost(f, (): sim.Fluid => {
+    f.show(cfg, false);
+    return f;
+  });
+  let app = shown * (plan.effects as i64) + kept * (plan.plain as i64);
+  let g = f;
+  for dt in plan.steps {
+    app += cost(g, (): sim.Fluid => g.step(cfg, dt));
+  }
+  let page = shown * (hz as i64) + 60i64 * cost(f, (): sim.Fluid => f.step(cfg, 1.0 / 60.0));
+  return Second { hz: hz, app: app, page: page };
+}
+
+// Each check is a digit of the result:
+// 1. At 60 Hz, the app does no more work in a second than the page.
+// 2. At 90 Hz, the app does less work in a second than the page.
+// 3. At 120 Hz, the app does less work in a second than the page, and it
+//    shows a new picture at each refresh where the page shows one at each
+//    second refresh.
+// 4. A second at 120 Hz costs the app less than 1.75 times a second at
+//    60 Hz: the pressure passes and the bloom and the sun rays do not grow
+//    with the rate.
+pub function check(): i32 {
+  let Some(c) = gl.open_offscreen(W, H) else {
+    return 0;
+  };
+  let cfg = config.defaults();
+  let Some(f) = sim.open(cfg, W, H, RATIO, rand.rng_seed(3i64)) else {
+    gl.close(c);
+    return 0;
+  };
+  let n = 0;
+  let text = "";
+  let at60 = second(f, cfg, 60);
+  let at90 = second(f, cfg, 90);
+  let at120 = second(f, cfg, 120);
+  if (at60.app <= at60.page) {
+    n += 1;
+  }
+  if (at90.app < at90.page) {
+    n += 10;
+  }
+  if (at120.app < at120.page) {
+    n += 100;
+  }
+  if (at120.app * 4i64 < at60.app * 7i64) {
+    n += 1000;
+  }
+  for s in [at60, at90, at120] {
+    text += s.hz.to_string() + " Hz: app " + (s.app / 1000000i64).to_string() + " M, page " + (s.page / 1000000i64).to_string() + " M\n";
+  }
+  if let Some(_) = env("FLUID_WORK") {
+    print(text);
+  }
+  sim.close(f);
+  gl.close(c);
+  return n;
+}
