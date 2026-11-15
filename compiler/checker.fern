@@ -10177,13 +10177,13 @@ function lambda_body_diags(lm: ast.ExprLambda, lsc: Scope, rt: typeinfo.Type, un
   }
   if (lm.ret_type.len() > 0 || lm.origin == parser.ORIGIN_USE && !is_unknown(rt)) {
     let out = ret_diags(lm.body, lsc, rt, unions);
-    if (lm.ret_type.len() > 0 && parser.is_written_lambda_origin(lm.origin) && !block_exits(lm.body, lsc.defines("exit"))) {
+    if (lm.ret_type.len() > 0 && parser.is_written_lambda_origin(lm.origin) && !block_exits(lm.body, lsc)) {
       out = out.append(lambda_missing_return(lm, self_name, lm.ret_type));
     }
     return out;
   }
   let out = lambda_exit_diags(lm, lsc);
-  if (out.len() == 0 && parser.is_written_lambda_origin(lm.origin) && !block_exits(lm.body, lsc.defines("exit"))) {
+  if (out.len() == 0 && parser.is_written_lambda_origin(lm.origin) && !block_exits(lm.body, lsc)) {
     let inferred = exit_result(lm.body, lsc.with_ret_type(lambda_ret_type(lm, lsc)));
     if (!is_unknown(inferred) && !is_void(inferred)) {
       out = out.append(lambda_missing_return(lm, self_name, type_label(inferred)));
@@ -11810,21 +11810,23 @@ function sugar_arm_bodies(sugar: ast.MatchSugar): ast.Stmt[][] {
   return out;
 }
 
+// A body that ends in a return or in a call to the builtin exit, for the scope s
+// that holds the body.
+function block_exits(stmts: ast.Stmt[], s: Scope): boolean {
+  return block_leaves(stmts, false, s.defines("exit"), s.no_return_builtins());
+}
+
+function block_diverges(stmts: ast.Stmt[], s: Scope): boolean {
+  return block_leaves(stmts, true, s.defines("exit"), s.no_return_builtins());
+}
+
+// ow_block_diverges is block_diverges for a resolved body, where a call to a
+// function noret names also leaves.
+function ow_block_diverges(stmts: ast.Stmt[], noret: util.NameIndex): boolean {
+  return block_leaves(stmts, true, false, noret);
+}
+
 // exit_bound: a local named `exit` is in scope, so a call to `exit` is not the builtin.
-function block_exits(stmts: ast.Stmt[], exit_bound: boolean): boolean {
-  return block_leaves(stmts, false, exit_bound, util.name_index([]));
-}
-
-function block_diverges(stmts: ast.Stmt[], exit_bound: boolean): boolean {
-  return block_leaves(stmts, true, exit_bound, util.name_index([]));
-}
-
-// ow_block_diverges is block_diverges where a call to a function noret names
-// also leaves.
-function ow_block_diverges(stmts: ast.Stmt[], exit_bound: boolean, noret: util.NameIndex): boolean {
-  return block_leaves(stmts, true, exit_bound, noret);
-}
-
 function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean, noret: util.NameIndex): boolean {
   if (stmts.len() == 0) {
     return false;
@@ -11833,7 +11835,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean, no
   let bound = exit_bound || lets_bind_exit(stmts);
   match (last) {
     ast.StmtExpr(x) => {
-      return parser.calls_exit(x.value, bound) || lu_call_never_returns(x.value, noret, true);
+      return lu_call_never_returns(x.value, noret, bound);
     },
     ast.StmtBreak(_) => {
       return jumps;
@@ -17800,7 +17802,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             out = out.append(dg_at("E022", kind_label + " source must be an enum value, got " + type_label(mst), expr_line(m.scrutinee), expr_col(m.scrutinee)));
           } else if (m.origin == "let_else" && src_is_enum && !src_unknown_enum) {
             let le_last = m.arms.len() - 1;
-            if (le_last >= 0 && !block_diverges(m.arms[le_last].body, cur.defines("exit"))) {
+            if (le_last >= 0 && !block_diverges(m.arms[le_last].body, cur)) {
               out = out.append(dg_at("E022", "let-else: else branch must diverge (return / break / continue / exit)", m.line, m.col));
             }
           }
@@ -23338,7 +23340,7 @@ function lu_stmts_settle(reach: LuReach, stmts: ast.Stmt[], name: string): i32 {
       return LU_LIVE;
     }
     let one: ast.Stmt[] = [st];
-    if (block_diverges(one, false) || lu_never_returns(reach.noret, st)) {
+    if (ow_block_diverges(one, reach.noret)) {
       return LU_SETTLED;
     }
   }
@@ -23564,8 +23566,8 @@ function lu_if_always_runs(f: ast.StmtIf): boolean {
   return f.origin == "block" || f.origin == "unsafe";
 }
 
-// A statement that calls exit or a function which never returns. The
-// function is resolved, so no local binds `exit`.
+// A statement that calls a function which never returns. The function is
+// resolved, so no local keeps the name of a function.
 function lu_never_returns(noret: util.NameIndex, st: ast.Stmt): boolean {
   if let ast.StmtExpr(x) = st {
     return lu_call_never_returns(x.value, noret, false);
@@ -23573,11 +23575,30 @@ function lu_never_returns(noret: util.NameIndex, st: ast.Stmt): boolean {
   return false;
 }
 
-// The plain functions whose body never returns: on every path it ends in a
-// call to exit, in a call to another such function, or in a loop that never
-// breaks.
+// The builtin exit never returns. A plain function of the module with the
+// same name takes the name from the builtin.
+function builtin_no_return(exit_declared: boolean): string[] {
+  let names: string[] = [];
+  if (!exit_declared) {
+    names = names.append("exit");
+  }
+  return names;
+}
+
+function (s: Scope) no_return_builtins(): util.NameIndex {
+  let i = s.sig_at("exit");
+  return util.name_index(builtin_no_return(i >= 0 && s.sigs.sigs[i].receiver.len() == 0));
+}
+
+// The names whose call never returns: the builtin exit, and each plain
+// function whose body never returns. Such a body ends on every path in a call
+// to one of these names, or in a loop that never breaks.
 function lu_no_return_funcs(mod: parser.Module): util.NameIndex {
-  let out: string[] = [];
+  let declared = false;
+  for fn in mod.funcs {
+    declared = declared || fn.receiver_name.len() == 0 && fn.name == "exit";
+  }
+  let out = builtin_no_return(declared);
   let changed = true;
   while (changed) {
     changed = false;
@@ -23586,7 +23607,8 @@ function lu_no_return_funcs(mod: parser.Module): util.NameIndex {
       if (fn.receiver_name.len() > 0 || idx.has(fn.name) || util.has_str(out, fn.name)) {
         continue;
       }
-      if (lu_stmts_exit(fn.body, idx, util.has_str(ow_param_names(fn), "exit"))) {
+      // A local can take the name of a function. Only the resolved body tells.
+      if (lu_stmts_exit(fn.body, idx) && lu_stmts_exit(lexical.resolve_func(fn).func.body, idx)) {
         out = out.append(fn.name);
         changed = true;
       }
@@ -23595,24 +23617,24 @@ function lu_no_return_funcs(mod: parser.Module): util.NameIndex {
   return util.name_index(out);
 }
 
-function lu_stmts_exit(stmts: ast.Stmt[], noret: util.NameIndex, bound: boolean): boolean {
-  return stmts.len() > 0 && lu_stmt_exits(stmts[stmts.len() - 1], noret, bound);
+function lu_stmts_exit(stmts: ast.Stmt[], noret: util.NameIndex): boolean {
+  return stmts.len() > 0 && lu_stmt_exits(stmts[stmts.len() - 1], noret);
 }
 
-function lu_stmt_exits(st: ast.Stmt, noret: util.NameIndex, bound: boolean): boolean {
+function lu_stmt_exits(st: ast.Stmt, noret: util.NameIndex): boolean {
   match (st) {
     ast.StmtExpr(x) => {
-      return lu_call_never_returns(x.value, noret, bound);
+      return lu_call_never_returns(x.value, noret, false);
     },
     ast.StmtIf(f) => {
       if (f.origin == "block" || f.origin == "unsafe") {
-        return lu_stmts_exit(f.then_body, noret, bound);
+        return lu_stmts_exit(f.then_body, noret);
       }
-      return f.else_body.len() > 0 && lu_stmts_exit(f.then_body, noret, bound) && lu_stmts_exit(f.else_body, noret, bound);
+      return f.else_body.len() > 0 && lu_stmts_exit(f.then_body, noret) && lu_stmts_exit(f.else_body, noret);
     },
     ast.StmtMatch(m) => {
       for arm in m.arms {
-        if (!lu_stmts_exit(arm.body, noret, bound)) {
+        if (!lu_stmts_exit(arm.body, noret)) {
           return false;
         }
       }
@@ -23630,15 +23652,15 @@ function lu_stmt_exits(st: ast.Stmt, noret: util.NameIndex, bound: boolean): boo
   }
 }
 
-// bound: a parameter named exit hides the builtin, so the check names only
-// the functions noret holds.
-function lu_call_never_returns(e: ast.Expr, noret: util.NameIndex, bound: boolean): boolean {
+// A call of a name that noret holds, which no local takes. exit_bound: a local
+// named exit is in scope. A desugar's call names the builtin itself.
+function lu_call_never_returns(e: ast.Expr, noret: util.NameIndex, exit_bound: boolean): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(id) = c.callee {
-      if (id.name == "exit" && !bound) {
-        return true;
+      if (id.builtin) {
+        return id.name == "exit";
       }
-      return noret.has(id.name);
+      return noret.has(id.name) && !(exit_bound && id.name == "exit");
     }
   }
   return false;
@@ -25519,7 +25541,7 @@ function ow_loop(label: string, body: ast.Stmt[], moved: MovedEntry[], ctx: OwnC
   let lctx = OwnCtx { ...ctx, in_loop: true, loops: ctx.loops.append(label), jumps: ow_fresh_jumps() };
   let r = ow_stmts(body, moved, lctx);
   let back = r.moved;
-  let any = !ow_block_diverges(body, util.has_str(ctx.bound, "exit"), ctx.noret);
+  let any = !ow_block_diverges(body, ctx.noret);
   let after = moved;
   let outer = ctx.jumps.get();
   for j in lctx.jumps.get() {
@@ -25828,8 +25850,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let rc = ru_expr(f.cond, moved, ctx);
       let rt = ow_stmts(f.then_body, rc.moved, ctx);
       let re = ow_stmts(f.else_body, rc.moved, ctx);
-      let then_on = !ow_block_diverges(f.then_body, util.has_str(ctx.bound, "exit"), ctx.noret);
-      let else_on = f.else_body.len() == 0 || !ow_block_diverges(f.else_body, util.has_str(ctx.bound, "exit"), ctx.noret);
+      let then_on = !ow_block_diverges(f.then_body, ctx.noret);
+      let else_on = f.else_body.len() == 0 || !ow_block_diverges(f.else_body, ctx.noret);
       // The parser uses constant tests for the first lowered tuple arm.
       // Its unreachable branch cannot keep a consumed outer value moved.
       if let ast.ExprBool(b) = f.cond {
@@ -25972,7 +25994,7 @@ function ow_match_stmt(m: ast.StmtMatch, moved: MovedEntry[], ctx: OwnCtx): OwnW
     ow_arm_finish_ctx(actx, ctx, names, rs.moved);
     d = util.append_diags(d, ra.diags);
     branches = branches.append(ow_scope_moves(ra.moved, rs.moved, names));
-    runs_on = runs_on.append(!ow_block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern), ctx.noret));
+    runs_on = runs_on.append(!ow_block_diverges(arm.body, ctx.noret));
   }
   return OwnWalk { moved: ow_settle(rs.moved, branches, runs_on), diags: d };
 }
@@ -26044,10 +26066,6 @@ function ow_own_param_names(fn: parser.FuncDecl): string[] {
     }
   }
   return out;
-}
-
-function ow_exit_bound(ctx: OwnCtx, pat: ast.Pattern): boolean {
-  return util.has_str(ctx.bound, "exit") || pattern_binds_exit(pat);
 }
 
 function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
@@ -31529,13 +31547,13 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       } else {
         function_diags = util.append_diags(function_diags, ret_diags(dbody, fsc, rty, unions));
       }
-      if (mod.funcs[i].import_iface.len() == 0 && !block_exits(mod.funcs[i].body, fsc.defines("exit"))) {
+      if (mod.funcs[i].import_iface.len() == 0 && !block_exits(mod.funcs[i].body, fsc)) {
         function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
       }
     }
     if (mod.funcs[i].ret_type.len() == 0 && mod.funcs[i].receiver_type.len() == 0
       && mod.funcs[i].all_type_params.len() == 0 && !mod.funcs[i].is_const
-      && mod.funcs[i].import_iface.len() == 0 && !block_exits(dbody, fsc.defines("exit"))) {
+      && mod.funcs[i].import_iface.len() == 0 && !block_exits(dbody, fsc)) {
       let inferred = exit_result(dbody, fsc);
       if (!is_unknown(inferred) && !is_void(inferred)) {
         function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + type_label(inferred) + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
