@@ -240,6 +240,9 @@ pub struct App {
   press: Press,
   // The item of the menu that a held finger on a poster opened, or no_item.
   menu: plex.Item,
+  // The action of the node that the D-pad of a TV remote has focused, or
+  // "" while the app takes touches.
+  focus: string,
   // The users of the Plex Home of the account, the user whose PIN the
   // keypad asks for, or "", and the digits typed so far.
   users: plex.HomeUser[],
@@ -372,7 +375,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
-    play: no_play(), press: no_press(), menu: plex.no_item(), users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
+    play: no_play(), press: no_press(), menu: plex.no_item(), focus: "", users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
   };
   s = App { ...s, server: plex.Server { ...no_server(), name: setting(text, "server_name"), id: setting(text, "server_id"), token: s.base.token } };
   if (s.quality < 0 || s.quality >= plex.qualities().len()) {
@@ -2133,6 +2136,9 @@ function row_items(s: App, i: i32): i32 {
 }
 
 function touch(own s: App, action: i32, x: f32, y: f32): App {
+  if (s.focus.len() > 0) {
+    s = App { ...s, focus: "", dirty: true };
+  }
   let m = ui.metrics(s.w, s.h, s.top, s.bottom);
   let slop = (8 * m.u) as f32;
   let p = s.press;
@@ -2446,6 +2452,9 @@ function back(own s: App): App {
 }
 
 function key(own s: App, code: i32, action: i32): App {
+  if (action == 0 && !s.typing) {
+    return remote_key(s, code);
+  }
   if (action != 1) {
     return s;
   }
@@ -2463,6 +2472,196 @@ function key(own s: App, code: i32, action: i32): App {
     return search_now(s);
   }
   return s;
+}
+
+// The keys of a TV remote, a game pad or a keyboard that move the focus
+// and press the focused node, and the media keys.
+const KEY_UP: i32 = 19;
+
+const KEY_DOWN: i32 = 20;
+
+const KEY_LEFT: i32 = 21;
+
+const KEY_RIGHT: i32 = 22;
+
+const KEY_CENTER: i32 = 23;
+
+const KEY_BUTTON_A: i32 = 96;
+
+const KEY_PLAY_PAUSE: i32 = 85;
+
+const KEY_REWIND: i32 = 89;
+
+const KEY_FAST_FORWARD: i32 = 90;
+
+const KEY_MEDIA_PLAY: i32 = 126;
+
+const KEY_MEDIA_PAUSE: i32 = 127;
+
+// A key that went down. On the video with no controls, left and right
+// seek as the buttons do, and the other keys of the D-pad show the
+// controls. Elsewhere the D-pad moves the focus, and the centre presses it.
+function remote_key(own s: App, code: i32): App {
+  let p = s.play;
+  if (s.screen == ui.PLAYER && p.active) {
+    if (code == KEY_PLAY_PAUSE || code == KEY_MEDIA_PLAY && p.paused || code == KEY_MEDIA_PAUSE && !p.paused) {
+      return player_control(s, "toggle", scene.node(0, 0, 0, 0, scene.Blank), 0);
+    }
+    if (code == KEY_REWIND) {
+      return seek_by(s, -10000i64);
+    }
+    if (code == KEY_FAST_FORWARD) {
+      return seek_by(s, 30000i64);
+    }
+    if (p.video && !p.overlay && p.drawn) {
+      if (code == KEY_LEFT) {
+        return seek_by(s, -10000i64);
+      }
+      if (code == KEY_RIGHT) {
+        return seek_by(s, 30000i64);
+      }
+      if (code == KEY_UP || code == KEY_DOWN || code == KEY_CENTER || code == KEY_ENTER || code == KEY_BUTTON_A) {
+        let until = s.dev.mono_ms() + CONTROLS_MS;
+        return App { ...s, play: Play { ...p, overlay: true, controls_until: until }, focus: "toggle", dirty: true };
+      }
+    }
+  }
+  if (code == KEY_UP) {
+    return move_focus(s, 0, -1);
+  }
+  if (code == KEY_DOWN) {
+    return move_focus(s, 0, 1);
+  }
+  if (code == KEY_LEFT) {
+    return move_focus(s, -1, 0);
+  }
+  if (code == KEY_RIGHT) {
+    return move_focus(s, 1, 0);
+  }
+  if (code == KEY_CENTER || code == KEY_ENTER || code == KEY_BUTTON_A) {
+    return press_focus(s);
+  }
+  return s;
+}
+
+// Whether node `n` can take the focus: it acts, and it is not a veil over
+// most of the screen. The seek bar takes the left and right keys instead.
+function focusable(n: scene.Node, w: i32, h: i32): boolean {
+  return n.acts() && n.w * n.h * 2 < w * h && n.tap.name != "seek";
+}
+
+// The node of the focus, or -1.
+function focus_index(s: App): i32 {
+  if (s.focus.len() == 0) {
+    return -1;
+  }
+  for k in 0..s.nodes.len() {
+    if (s.nodes[k].tap.name == s.focus && focusable(s.nodes[k], s.w, s.h)) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// The node that the focus moves to from node `k` in the direction (dx, dy):
+// the nearest whose centre is that way, with a side offset counting three
+// times as much as the distance along the direction. With no focus, the
+// node at the top left.
+function next_focus(s: App, k: i32, dx: i32, dy: i32): i32 {
+  let best = -1;
+  let best_score = 0;
+  for j in 0..s.nodes.len() {
+    let n = s.nodes[j];
+    if (j == k || !focusable(n, s.w, s.h) || k >= 0 && n.tap.name == s.nodes[k].tap.name) {
+      continue;
+    }
+    let cx = n.x + n.w / 2;
+    let cy = n.y + n.h / 2;
+    let score = cy * 4 + cx;
+    if (k >= 0) {
+      let f = s.nodes[k];
+      let ox = cx - (f.x + f.w / 2);
+      let oy = cy - (f.y + f.h / 2);
+      let along = ox * dx + oy * dy;
+      if (along <= 0) {
+        continue;
+      }
+      score = along + 3 * (ox * dy + oy * dx).abs();
+    }
+    if (best < 0 || score < best_score) {
+      best = j;
+      best_score = score;
+    }
+  }
+  return best;
+}
+
+function move_focus(own s: App, dx: i32, dy: i32): App {
+  let j = next_focus(s, focus_index(s), dx, dy);
+  if (j < 0) {
+    return s;
+  }
+  let n = s.nodes[j];
+  let t = App { ...s, focus: n.tap.name, dirty: true };
+  if (t.screen == ui.PLAYER) {
+    let until = t.dev.mono_ms() + CONTROLS_MS;
+    return App { ...t, play: Play { ...t.play, controls_until: until } };
+  }
+  return show_focus(t, n);
+}
+
+// Scrolls the list that holds the focused node `n` until all of it shows.
+function show_focus(own s: App, n: scene.Node): App {
+  let m = ui.metrics(s.w, s.h, s.top, s.bottom);
+  let pad = 16 * m.u;
+  let i = row_index(n.group);
+  if (i >= 0) {
+    let at = row_offset(s.rows, i);
+    let max = (ui.hub_row_width(m, row_items(s, i)) - m.w).max(0);
+    if (n.x < pad) {
+      at -= pad - n.x;
+    } else if (n.x + n.w > m.w - pad) {
+      at += n.x + n.w - (m.w - pad);
+    }
+    s = App { ...s, rows: set_row(s.rows, i, clamp(at, 0, max)) };
+  }
+  let top = ui.content_top(m);
+  if (s.screen == ui.LIBRARY) {
+    top += ui.chips_height(m);
+  }
+  let bottom = ui.content_bottom(m, s.screen);
+  let next = s.scroll;
+  if (n.y < top && n.y + n.h <= bottom) {
+    next -= top - n.y + pad;
+  } else if (n.y + n.h > bottom && n.y >= top) {
+    next += n.y + n.h - bottom + pad;
+  }
+  return more_items(App { ...s, scroll: clamp(next, 0, scroll_limit(s, m)), fling: no_fling() });
+}
+
+// Presses the focused node, as a tap at its centre does.
+function press_focus(own s: App): App {
+  let k = focus_index(s);
+  if (k < 0) {
+    return move_focus(s, 0, 1);
+  }
+  let n = s.nodes[k];
+  return act(s, n.tap.name, n, n.x + n.w / 2);
+}
+
+// The nodes of the screen with a ring around the focused node.
+function with_focus(own nodes: scene.Node[], focus: string, u: i32): scene.Node[] {
+  if (focus.len() == 0) {
+    return nodes;
+  }
+  for n in nodes {
+    if (n.tap.name == focus && n.acts()) {
+      let g = 3 * u;
+      let ring = scene.node(n.x - g, n.y - g, n.w + 2 * g, n.h + 2 * g, scene.Outline(draw.rgba(255, 255, 255, 255), 12 * u, 2 * u));
+      return nodes.append(ring);
+    }
+  }
+  return nodes;
 }
 
 function drop_last(q: string): string {
@@ -2724,7 +2923,8 @@ function draw_screen(own s: App): App {
   if (!s.dirty || s.window == 0 as usize || s.w == 0) {
     return s;
   }
-  let t = App { ...s, nodes: ui.nodes(view(s)), dirty: false };
+  let m = ui.metrics(s.w, s.h, s.top, s.bottom);
+  let t = App { ...s, nodes: with_focus(ui.nodes(view(s)), s.focus, m.u), dirty: false };
   if (t.gpu) {
     t.dev.request_frame();
     return App { ...t, paint: true };

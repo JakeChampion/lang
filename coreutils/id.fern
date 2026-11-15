@@ -171,10 +171,6 @@ function name_or_number(o: Out, id: i64, name: Option[string], kind: string): Ou
   }
 }
 
-function failed(o: Out, msg: string): Out {
-  return Out { w: gnu.error_out(o.w, msg), ok: false };
-}
-
 function print_user(o: Out, uid: i64, use_name: boolean): Out {
   if (!use_name) {
     return Out { w: gnu.put(o.w, uid.to_string()), ok: o.ok };
