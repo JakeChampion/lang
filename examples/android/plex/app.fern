@@ -99,6 +99,37 @@ function fetch_all(rs: plex.Request[]): worker.Worker[plex.Reply[]] {
   return worker.spawn((): plex.Reply[] => send_all(rs));
 }
 
+// Sends the requests for images. An image that `dir` holds comes from
+// there, and a new one goes there. Android deletes the files of its cache
+// directory when storage runs low.
+function fetch_images(dir: string, rs: plex.Request[]): worker.Worker[plex.Reply[]] {
+  return worker.spawn((): plex.Reply[] => cached_all(dir, rs));
+}
+
+function cached_all(dir: string, rs: plex.Request[]): plex.Reply[] {
+  let out: plex.Reply[] = [];
+  let made = dir.len() > 0 && create_dir_all(dir).is_ok();
+  for r in rs {
+    let path = dir + "/" + plex.cache_name(r.url);
+    let kept: u8[] = [];
+    if (made) {
+      if let Ok(b) = read_file_bytes(path) {
+        kept = b;
+      }
+    }
+    if (kept.len() > 0) {
+      out = out.append(plex.Reply { status: 200, body: kept, error: "" });
+    } else {
+      let reply = send_one(r);
+      if (made && reply.ok() && reply.body.len() > 0) {
+        let written = write_file_bytes(path, reply.body);
+      }
+      out = out.append(reply);
+    }
+  }
+  return out;
+}
+
 function window_size(window: usize): (i32, i32) {
   let w = android.Window { ptr: window };
   return (w.width(), w.height());
@@ -263,6 +294,7 @@ function close_gpu(gpu: Cell[Option[Gpu]]): void {
 // when Android gave none, and then nothing plays.
 function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]]): control.Device {
   let has = p.obj != 0 as usize;
+  let posters = android.cache_dir(ctx) + "/posters";
   return control.Device {
     mono_ms: (): i64 => mono_ms(),
     read: (path: string): string => read_text(path),
@@ -277,6 +309,7 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]]): control.D
     set_field: (q: string): void => keyboard.set_text(ctx, q),
     hide_field: (): void => keyboard.hide(ctx),
     fetch: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch_all(rs),
+    fetch_images: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch_images(posters, rs),
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
     play: (uri: string): boolean => has && player.open(ctx, p, uri),
     show_video: (window: usize): boolean => show_video(ctx, p, has, gpu, window),
