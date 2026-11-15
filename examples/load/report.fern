@@ -24,8 +24,9 @@ const PERCENT_NAMES: string[] = ["p10", "p25", "p50", "p75", "p90", "p95", "p99"
 // The bins of the response time histogram.
 const BINS: i32 = 11;
 
-// The interval of the samples of `rps`.
-pub const SLOT_NS: i64 = 10000000;
+// The interval of the groups of responses of the samples of `rps`, in
+// seconds.
+const INTERVAL: f64 = 0.01;
 
 // `body` is the length of the body after the transfer coding is removed.
 pub struct Reply { status: i32, len: i32, keep_alive: boolean, body: i64, location: string }
@@ -114,19 +115,19 @@ pub function (s: Stat) merge(o: Stat): Stat {
 
 // A response that the tally counts. `first_byte` is the time from the start
 // of the request to the first byte of its body, or -1 when the body is
-// empty. `dialup` is the time to open the connection, or -1 when the
-// request used an open connection. `sent` is the time from the start of the
+// empty. `dialup` is the time to open the connection, and `lookup` the time
+// to the address of the host, each -1 when the request used an open
+// connection. `sent` is the time from the start of the
 // run to the start of the request, `due` the time at which it was due with
 // --latency-correction, or -1, and `ended` the time to the end of the
 // response. `url` is the URL of the request.
-pub struct Response { status: i32, latency: i64, first_byte: i64, bytes: i64, dialup: i64, sent: i64, due: i64, ended: i64, url: string }
+pub struct Response { status: i32, latency: i64, first_byte: i64, bytes: i64, dialup: i64, lookup: i64, sent: i64, due: i64, ended: i64, url: string }
 
 // The words of a record of a response: `sent`, `due`, `ended`, `latency`,
-// `dialup`, `first_byte`, `bytes` and `status`.
-pub const RECORD: i32 = 8;
+// `dialup`, `first_byte`, `bytes`, `status` and `lookup`.
+pub const RECORD: i32 = 9;
 
-// `slots` counts the responses that ended in each SLOT_NS from the start of
-// the run. With `split` (--stats-success-breakdown), `ok` and `not_ok` hold
+// `ends` holds the end of each response from the start of the run. With `split` (--stats-success-breakdown), `ok` and `not_ok` hold
 // the latencies of the responses with a status of 2xx and of the others.
 // With `keep` (--output-format csv and --db-url), `records` holds a record
 // of each response and `urls` its URL.
@@ -138,7 +139,8 @@ pub struct Tally {
   error_counts: i64[],
   bytes: i64,
   dialup: Stat,
-  slots: i64[],
+  lookup: Stat,
+  ends: i64[],
   split: boolean,
   ok: histogram.Histogram,
   not_ok: histogram.Histogram,
@@ -158,18 +160,14 @@ pub function tally_for(split: boolean, keep: boolean): Tally {
   }
   let none: string[] = [];
   let counts: i64[] = [];
-  let slots: i64[] = [];
+  let ends: i64[] = [];
   let records: i64[] = [];
-  return Tally { latency: histogram.new(), first_byte: histogram.new(), statuses: statuses, errors: none, error_counts: counts, bytes: 0, dialup: stat(), slots: slots, split: split, ok: histogram.empty(), not_ok: histogram.empty(), keep: keep, records: records, urls: none };
+  return Tally { latency: histogram.new(), first_byte: histogram.new(), statuses: statuses, errors: none, error_counts: counts, bytes: 0, dialup: stat(), lookup: stat(), ends: ends, split: split, ok: histogram.new(), not_ok: histogram.new(), keep: keep, records: records, urls: none };
 }
 
 pub function (t: Tally) response(r: Response): Tally {
   let dialup = if (r.dialup >= 0) { t.dialup.add(r.dialup) } else { t.dialup };
-  let slot = (r.ended / SLOT_NS) as i32;
-  let slots = t.slots;
-  while (slots.len() <= slot) {
-    slots = slots.append(0);
-  }
+  let lookup = if (r.lookup >= 0) { t.lookup.add(r.lookup) } else { t.lookup };
   let out = Tally {
     ...t,
     latency: t.latency.record(r.latency),
@@ -177,13 +175,14 @@ pub function (t: Tally) response(r: Response): Tally {
     statuses: t.statuses.with(r.status, t.statuses[r.status] + 1),
     bytes: t.bytes + r.bytes,
     dialup: dialup,
-    slots: slots.with(slot, slots[slot] + 1),
+    lookup: lookup,
+    ends: t.ends.append(r.ended),
   };
   if (out.split) {
     out = if (r.status >= 200 && r.status < 300) { Tally { ...out, ok: out.ok.record(r.latency) } } else { Tally { ...out, not_ok: out.not_ok.record(r.latency) } };
   }
   if (out.keep) {
-    let words: i64[] = [r.sent, r.due, r.ended, r.latency, r.dialup, r.first_byte, r.bytes, r.status as i64];
+    let words: i64[] = [r.sent, r.due, r.ended, r.latency, r.dialup, r.first_byte, r.bytes, r.status as i64, r.lookup];
     out = Tally { ...out, records: out.records.concat(words), urls: out.urls.append(r.url) };
   }
   return out;
@@ -210,14 +209,6 @@ pub function (t: Tally) merge(o: Tally): Tally {
       statuses = statuses.with(code, statuses[code] + o.statuses[code]);
     }
   }
-  let slots = t.slots;
-  for i in 0..o.slots.len() {
-    if (i < slots.len()) {
-      slots = slots.with(i, slots[i] + o.slots[i]);
-    } else {
-      slots = slots.append(o.slots[i]);
-    }
-  }
   let out = Tally {
     ...t,
     latency: t.latency.merge(o.latency),
@@ -225,7 +216,8 @@ pub function (t: Tally) merge(o: Tally): Tally {
     statuses: statuses,
     bytes: t.bytes + o.bytes,
     dialup: t.dialup.merge(o.dialup),
-    slots: slots,
+    lookup: t.lookup.merge(o.lookup),
+    ends: t.ends.concat(o.ends),
     ok: t.ok.merge(o.ok),
     not_ok: t.not_ok.merge(o.not_ok),
     records: t.records.concat(o.records),
@@ -366,7 +358,7 @@ pub function (t: Tally) styled_summary(elapsed_ns: i64, unit_name: string, style
   }
   out += "\n\n" + style.heading("Details (average, fastest, slowest):") + "\n";
   out += "  DNS+dialup:\t" + triple(t.dialup, u) + "\n";
-  out += "  DNS-lookup:\t" + triple(t.lookup(), u) + "\n";
+  out += "  DNS-lookup:\t" + triple(t.lookup, u) + "\n";
   out += "\n" + style.heading("Status code distribution:") + "\n";
   for row in t.codes() {
     let code = match (i32.parse_i32(row.1)) {
@@ -384,12 +376,6 @@ pub function (t: Tally) styled_summary(elapsed_ns: i64, unit_name: string, style
   return out;
 }
 
-// The tool looks up the name of the host once, before the run, so no
-// connection waits for a lookup.
-function (t: Tally) lookup(): Stat {
-  return Stat { n: t.dialup.n, sum: 0, min: 0, max: 0 };
-}
-
 // The mean, the fastest and the slowest of `s`. With no values they are NaN,
 // inf and -inf, as oha writes them.
 function triple(s: Stat, u: (string, f64)): string {
@@ -402,10 +388,11 @@ function triple(s: Stat, u: (string, f64)): string {
 // The latency at each percentile of the summary.
 function distribution(h: histogram.Histogram, u: (string, f64), style: Style): string {
   let out = "";
-  for p in PERCENTS {
-    let percent = (p as f64 / 100.0).to_string_prec(2);
-    let at = if (h.total == 0) { f"NaN {u.0}" } else { in_unit(h.at(p), u) };
-    let seconds = if (h.total == 0) { f64.NAN } else { h.at(p) as f64 / 1000000000.0 };
+  let values = h.percentiles(PERCENTS);
+  for i in 0..PERCENTS.len() {
+    let percent = (PERCENTS[i] as f64 / 100.0).to_string_prec(2);
+    let at = if (h.total == 0) { f"NaN {u.0}" } else { in_unit(values[i], u) };
+    let seconds = if (h.total == 0) { f64.NAN } else { histogram.secs_f64(values[i]) };
     out += style.color(latency_color(seconds), f"  {percent}% in {at}") + "\n";
   }
   return out;
@@ -512,13 +499,7 @@ function seconds_of(ns: i64): f64 {
   if (ns <= 0) {
     return 1.0e-9;
   }
-  return secs_f64(ns);
-}
-
-// Nanoseconds in seconds, as Rust's Duration::as_secs_f64 computes them: the
-// whole seconds and the fraction, each rounded once.
-pub function secs_f64(ns: i64): f64 {
-  return (ns / 1000000000) as f64 + (ns % 1000000000) as f64 / 1000000000.0;
+  return histogram.secs_f64(ns);
 }
 
 // The responses divided by the requests that ended. A request aborted at the
@@ -540,24 +521,30 @@ function (t: Tally) rps(elapsed_ns: i64): f64 {
   return (t.latency.total + t.failed()) as f64 * 1000000000.0 / (elapsed_ns as f64);
 }
 
-// The responses for each second in each SLOT_NS of the run, sorted. The last
-// slot is left out when the run ends before it is full. A run shorter than
-// one slot has one sample over the whole run.
-pub function (t: Tally) rates(elapsed_ns: i64): f64[] {
-  let full = (elapsed_ns / SLOT_NS) as i32;
+// The samples of `rps`, sorted, as oha makes them from the ends of the
+// responses in seconds and a 0 for the start: from the first end that is
+// not in a group, a group has the next end and each end after it that is
+// less than INTERVAL after that first end. A sample is the ends of the group
+// divided by the time from that first end to the last end of the group.
+pub function (t: Tally) rates(): f64[] {
+  let ends: f64[] = [0.0];
+  for e in cmp.sort(t.ends) {
+    ends = ends.append(histogram.secs_f64(e));
+  }
   let out: f64[] = [];
-  if (full == 0) {
-    if (t.responses() > 0) {
-      out = out.append(t.responses() as f64 / seconds_of(elapsed_ns));
+  let r = 0;
+  while (true) {
+    let prev = r;
+    if (r + 1 < ends.len()) {
+      r += 1;
     }
-    return out;
-  }
-  if (t.responses() == 0) {
-    return out;
-  }
-  for i in 0..full {
-    let n = if (i < t.slots.len()) { t.slots[i] } else { 0 };
-    out = out.append(n as f64 * 1000000000.0 / (SLOT_NS as f64));
+    while (r + 1 < ends.len() && ends[prev] + INTERVAL > ends[r + 1]) {
+      r += 1;
+    }
+    if (r == prev) {
+      break;
+    }
+    out = out.append((r - prev) as f64 / (ends[r] - ends[prev]));
   }
   return cmp.sort_by(out, (a: f64, b: f64): i32 => if (a < b) { -1 } else if (a > b) { 1 } else { 0 });
 }
@@ -610,7 +597,7 @@ pub function plain(x: f64): string {
 }
 
 function seconds(ns: i64): json.JsonValue {
-  return number(secs_f64(ns));
+  return number(histogram.secs_f64(ns));
 }
 
 // A time in seconds, or null when `none` is true.
@@ -672,8 +659,9 @@ function histogram_json(h: histogram.Histogram): json.JsonValue {
 
 function percentiles_json(h: histogram.Histogram): json.JsonValue {
   let o = json.object();
+  let values = h.percentiles(PERCENTS);
   for i in 0..PERCENTS.len() {
-    o = o.insert(PERCENT_NAMES[i], maybe_seconds(h.at(PERCENTS[i]), h.total == 0));
+    o = o.insert(PERCENT_NAMES[i], maybe_seconds(values[i], h.total == 0));
   }
   return json.JObject(o);
 }
@@ -685,28 +673,28 @@ function triple_json(s: Stat): json.JsonValue {
 }
 
 // The `rps` object of oha: the mean, the sample standard deviation and the
-// percentiles of the samples of `rates`.
+// percentiles of the samples of `rates`. The mean and the deviation are
+// those of the Variance of the `average` crate, which adds each sample with
+// the method of Welford. With fewer than two samples, the deviation is NaN.
 pub function rps_json(rates: f64[]): json.JsonValue {
   let n = rates.len();
-  let mean = f64.NAN;
-  let deviation = f64.NAN;
-  if (n > 0) {
-    let sum = 0.0;
-    for x in rates {
-      sum += x;
-    }
-    mean = sum / (n as f64);
-    let squares = 0.0;
-    for x in rates {
-      squares += (x - mean) * (x - mean);
-    }
-    deviation = if (n > 1) { (squares / ((n - 1) as f64)).sqrt() } else { 0.0 };
+  let mean = 0.0;
+  let sum_2 = 0.0;
+  for k in 0..n {
+    let seen = (k + 1) as f64;
+    let delta = (rates[k] - mean) / seen;
+    mean += delta;
+    sum_2 += delta * delta * seen * (seen - 1.0);
   }
+  if (n == 0) {
+    mean = f64.NAN;
+  }
+  let deviation = if (n < 2) { f64.NAN } else { (sum_2 / ((n - 1) as f64)).sqrt() };
   let low = if (n > 0) { rates[0] } else { f64.NAN };
   let high = if (n > 0) { rates[n - 1] } else { f64.NAN };
   let p = json.object();
   for i in 0..PERCENTS.len() {
-    let at = (PERCENTS[i] * (n as i64) / 10000) as i32;
+    let at = histogram.index_at(PERCENTS[i], n as i64) as i32;
     let v = if (at < n) { rates[at] } else { f64.NAN };
     p = p.insert(PERCENT_NAMES[i], number(v));
   }
@@ -730,18 +718,19 @@ pub function (t: Tally) json(elapsed_ns: i64): string {
     ("sizePerRequest", per_request),
     ("sizePerSec", number(t.bytes as f64 / seconds_of(elapsed_ns))),
   ]);
+  let tails = h.percentiles([5000, 9500, 9900]);
   let latency_ms = json.from([
     ("min", t.in_millis(h.min)),
     ("mean", t.in_millis(h.mean())),
-    ("p50", t.in_millis(h.at(5000))),
-    ("p95", t.in_millis(h.at(9500))),
-    ("p99", t.in_millis(h.at(9900))),
+    ("p50", t.in_millis(tails[0])),
+    ("p95", t.in_millis(tails[1])),
+    ("p99", t.in_millis(tails[2])),
     ("max", t.in_millis(h.max)),
   ]);
   let metrics = json.from([("success_rate", number(t.success())), ("requests_per_sec", number(t.rps(elapsed_ns))), ("latency_ms", json.JObject(latency_ms))]);
   let fb = t.first_byte;
   let first_byte = Stat { n: fb.total, sum: fb.sum, min: fb.min, max: fb.max };
-  let details = json.from([("DNSDialup", triple_json(t.dialup)), ("DNSLookup", triple_json(t.lookup())), ("firstByte", triple_json(first_byte))]);
+  let details = json.from([("DNSDialup", triple_json(t.dialup)), ("DNSLookup", triple_json(t.lookup)), ("firstByte", triple_json(first_byte))]);
   let parts: (string, json.JsonValue)[] = [
     ("summary", json.JObject(summary)),
     ("metrics", json.JObject(metrics)),
@@ -759,7 +748,7 @@ pub function (t: Tally) json(elapsed_ns: i64): string {
     ]);
   }
   parts = parts.concat([
-    ("rps", rps_json(t.rates(elapsed_ns))),
+    ("rps", rps_json(t.rates())),
     ("details", json.JObject(details)),
     ("statusCodeDistribution", counts(cmp.sort_by(t.codes(), (a: (i64, string), b: (i64, string)): i32 => a.1.cmp(b.1)))),
     ("errorDistribution", counts(errors_by_name(t))),
@@ -797,12 +786,13 @@ pub function (t: Tally) csv(): string {
     let r = t.records;
     let dialup = if (r[at + 4] >= 0) { plain_seconds(r[at + 4]) } else { "0" };
     let first = if (r[at + 5] >= 0) { plain_seconds(r[at + 5]) } else { "0" };
-    out += plain_seconds(r[at]) + ",0," + dialup + "," + first + "," + plain_seconds(r[at + 3]) + "," + r[at + 6].to_string() + "," + r[at + 7].to_string() + "\n";
+    let lookup = if (r[at + 8] >= 0) { plain_seconds(r[at + 8]) } else { "0" };
+    out += plain_seconds(r[at]) + "," + lookup + "," + dialup + "," + first + "," + plain_seconds(r[at + 3]) + "," + r[at + 6].to_string() + "," + r[at + 7].to_string() + "\n";
   }
   return out;
 }
 
 // Nanoseconds as Rust writes the seconds of a Duration as f64.
 pub function plain_seconds(ns: i64): string {
-  return plain(secs_f64(ns));
+  return plain(histogram.secs_f64(ns));
 }

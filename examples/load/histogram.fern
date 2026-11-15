@@ -1,77 +1,23 @@
-// A histogram of latencies in nanoseconds, with the log-linear buckets of
-// HdrHistogram. Values below 2^SUB_BITS have a bucket each. Above, each power
-// of two has HALF buckets, so a bucket is at most 1/HALF of its lowest value
-// wide: three significant digits.
+// The latencies of a run in nanoseconds, each value kept, as oha keeps them.
+// The percentiles and the bins come from the values themselves.
+import "core/cmp";
+import "std/array";
 import "std/f64";
 import "std/i64";
 
-const SUB_BITS: i32 = 11;
-
-const SUB: i32 = 2048;
-
-const HALF: i32 = 1024;
-
-// The last power of two with buckets: 2^47 ns is 39 hours. Longer values go
-// in the last bucket.
-const TOP_BITS: i32 = 47;
-
-pub const BUCKETS: i32 = SUB + (TOP_BITS - SUB_BITS) * HALF;
-
-pub struct Histogram { counts: i64[], total: i64, min: i64, max: i64, sum: i64 }
+// `sorted` says that `values` is in ascending order.
+pub struct Histogram { values: i64[], total: i64, min: i64, max: i64, sum: i64, sorted: boolean }
 
 pub function new(): Histogram {
-  let counts: i64[] = [];
-  for _ in 0..BUCKETS {
-    counts = counts.append(0);
-  }
-  return Histogram { counts: counts, total: 0, min: 0, max: 0, sum: 0 };
-}
-
-// A histogram that holds no buckets until its first value.
-pub function empty(): Histogram {
-  let counts: i64[] = [];
-  return Histogram { counts: counts, total: 0, min: 0, max: 0, sum: 0 };
-}
-
-pub function index_of(v: i64): i32 {
-  if (v < SUB as i64) {
-    if (v < 0) {
-      return 0;
-    }
-    return v as i32;
-  }
-  let shift = 64 - v.leading_zeros() - SUB_BITS;
-  let index = SUB + (shift - 1) * HALF + (v >> shift as i64) as i32 - HALF;
-  if (index >= BUCKETS) {
-    return BUCKETS - 1;
-  }
-  return index;
-}
-
-pub function lowest(index: i32): i64 {
-  if (index < SUB) {
-    return index as i64;
-  }
-  let shift = (index - SUB) / HALF + 1;
-  return ((index - SUB) % HALF + HALF) as i64 << shift as i64;
-}
-
-pub function highest(index: i32): i64 {
-  if (index < SUB) {
-    return index as i64;
-  }
-  let shift = (index - SUB) / HALF + 1;
-  return lowest(index) + (1 as i64 << shift as i64) - 1;
+  let values: i64[] = [];
+  return Histogram { values: values, total: 0, min: 0, max: 0, sum: 0, sorted: true };
 }
 
 pub function (h: Histogram) record(v: i64): Histogram {
-  if (h.counts.len() == 0) {
-    return new().record(v);
-  }
-  let i = index_of(v);
   let min = if (h.total == 0 || v < h.min) { v } else { h.min };
-  let max = if (v > h.max) { v } else { h.max };
-  return Histogram { counts: h.counts.with(i, h.counts[i] + 1), total: h.total + 1, min: min, max: max, sum: h.sum + v };
+  let max = if (h.total == 0 || v > h.max) { v } else { h.max };
+  let sorted = h.sorted && (h.total == 0 || v >= h.max);
+  return Histogram { values: h.values.append(v), total: h.total + 1, min: min, max: max, sum: h.sum + v, sorted: sorted };
 }
 
 pub function (h: Histogram) mean(): i64 {
@@ -81,32 +27,101 @@ pub function (h: Histogram) mean(): i64 {
   return h.sum / h.total;
 }
 
-// The value at `hundredths` of a percent, 9999 for 99.99%: the highest value
-// of the bucket that holds that rank, but not past the extremes recorded. As
-// in oha, the rank of p percent of N values is floor(p / 100 * N) + 1.
+// The value at `hundredths` of a percent, 9999 for 99.99%, as oha takes it:
+// the value at index floor(p / 100 * N) of the N values in order. It is -1
+// when that index is past the last value.
 pub function (h: Histogram) at(hundredths: i64): i64 {
-  if (h.total == 0) {
-    return 0;
+  return h.percentiles([hundredths])[0];
+}
+
+// The value at each of `hundredths`, as `at` gives it. A count of the values
+// in buckets of three significant digits gives the bucket of each index, and
+// only the values in those buckets are sorted.
+pub function (h: Histogram) percentiles(hundredths: i64[]): i64[] {
+  let out: i64[] = [];
+  if (h.sorted) {
+    for p in hundredths {
+      let i = index_at(p, h.total);
+      out = out.append(if (i < h.total) { h.values[i as i32] } else { -1 });
+    }
+    return out;
   }
-  let rank = h.total * hundredths / 10000 + 1;
-  if (rank > h.total) {
-    rank = h.total;
+  let counts: i64[] = [];
+  let marked: boolean[] = [];
+  for _ in 0..BUCKETS {
+    counts = counts.append(0);
+    marked = marked.append(false);
   }
-  let seen: i64 = 0;
-  for i in 0..BUCKETS {
-    seen += h.counts[i];
-    if (seen >= rank) {
-      let v = highest(i);
-      if (v > h.max) {
-        return h.max;
-      }
-      if (v < h.min) {
-        return h.min;
-      }
-      return v;
+  for v in h.values {
+    let b = bucket_of(v);
+    counts = counts.with(b, counts[b] + 1);
+  }
+  let buckets: i32[] = [];
+  let offsets: i64[] = [];
+  for p in hundredths {
+    let i = index_at(p, h.total);
+    let b = 0;
+    let before: i64 = 0;
+    while (i < h.total && before + counts[b] <= i) {
+      before += counts[b];
+      b += 1;
+    }
+    buckets = buckets.append(if (i < h.total) { b } else { -1 });
+    offsets = offsets.append(i - before);
+    if (i < h.total) {
+      marked = marked.with(b, true);
     }
   }
-  return h.max;
+  let picked: i64[] = [];
+  for v in h.values {
+    if (marked[bucket_of(v)]) {
+      picked = picked.append(v);
+    }
+  }
+  picked = cmp.sort(picked);
+  for k in 0..buckets.len() {
+    let b = buckets[k];
+    if (b < 0) {
+      out = out.append(-1);
+      continue;
+    }
+    let before: i64 = 0;
+    for j in 0..b {
+      if (marked[j]) {
+        before += counts[j];
+      }
+    }
+    out = out.append(picked[(before + offsets[k]) as i32]);
+  }
+  return out;
+}
+
+// The buckets of `percentiles`: a bucket for each value below 2^SUB_BITS,
+// and HALF buckets for each power of two above, up to 2^TOP_BITS ns, which
+// is 39 hours. A longer value is in the last bucket.
+const SUB_BITS: i32 = 11;
+
+const SUB: i32 = 2048;
+
+const HALF: i32 = 1024;
+
+const TOP_BITS: i32 = 47;
+
+const BUCKETS: i32 = SUB + (TOP_BITS - SUB_BITS) * HALF;
+
+function bucket_of(v: i64): i32 {
+  if (v < SUB as i64) {
+    return if (v < 0) { 0 } else { v as i32 };
+  }
+  let shift = 64 - v.leading_zeros() - SUB_BITS;
+  let index = SUB + (shift - 1) * HALF + (v >> shift as i64) as i32 - HALF;
+  return if (index >= BUCKETS) { BUCKETS - 1 } else { index };
+}
+
+// The index of the value at `hundredths` of a percent of `n` values in
+// order, computed in f64 as oha computes it.
+pub function index_at(hundredths: i64, n: i64): i64 {
+  return (hundredths as f64 / 100.0 / 100.0 * (n as f64)) as i64;
 }
 
 // The histogram of the values of both `h` and `o`.
@@ -117,21 +132,20 @@ pub function (h: Histogram) merge(o: Histogram): Histogram {
   if (h.total == 0) {
     return o;
   }
-  let counts = h.counts;
-  for i in 0..BUCKETS {
-    if (o.counts[i] != 0) {
-      counts = counts.with(i, counts[i] + o.counts[i]);
-    }
-  }
   let min = if (o.min < h.min) { o.min } else { h.min };
   let max = if (o.max > h.max) { o.max } else { h.max };
-  return Histogram { counts: counts, total: h.total + o.total, min: min, max: max, sum: h.sum + o.sum };
+  return Histogram { values: h.values.concat(o.values), total: h.total + o.total, min: min, max: max, sum: h.sum + o.sum, sorted: false };
 }
 
-// The count of each of `bins` bins from the lowest value to the highest, as
-// the histogram of oha has them: bin k holds the values above bin k - 1 and
-// not above `min + k * (max - min) / (bins - 1)`. A bucket goes in the bin of
-// its lowest value, but not below the lowest value recorded.
+// Nanoseconds in seconds, as Rust's Duration::as_secs_f64 computes them: the
+// whole seconds and the fraction, each rounded once.
+pub function secs_f64(ns: i64): f64 {
+  return (ns / 1000000000) as f64 + (ns % 1000000000) as f64 / 1000000000.0;
+}
+
+// The count of each of `bins` bins, as the histogram of oha computes them in
+// seconds: the step is (max - min) / (bins - 1), and a value v goes in bin
+// ceil((v - min) / step), but not past the last bin.
 pub function (h: Histogram) bins(bins: i32): i64[] {
   let out: i64[] = [];
   for _ in 0..bins {
@@ -140,24 +154,12 @@ pub function (h: Histogram) bins(bins: i32): i64[] {
   if (h.total == 0) {
     return out;
   }
-  let span = (h.max - h.min) as f64;
-  for i in 0..BUCKETS {
-    let n = h.counts[i];
-    if (n == 0) {
-      continue;
-    }
-    let v = lowest(i);
-    if (v < h.min) {
-      v = h.min;
-    }
-    let k = 0;
-    if (span > 0.0) {
-      k = ((v - h.min) as f64 * ((bins - 1) as f64) / span).ceil() as i32;
-      if (k >= bins) {
-        k = bins - 1;
-      }
-    }
-    out = out.with(k, out[k] + n);
+  let min = secs_f64(h.min);
+  let step = (secs_f64(h.max) - min) / ((bins - 1) as f64);
+  for v in h.values {
+    let at = ((secs_f64(v) - min) / step).ceil();
+    let k = if (at.is_nan() || at < 0.0) { 0 } else if (at >= (bins - 1) as f64) { bins - 1 } else { at as i32 };
+    out = out.with(k, out[k] + 1);
   }
   return out;
 }
