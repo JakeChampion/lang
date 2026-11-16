@@ -76,7 +76,7 @@ selfhost/arm64-linux/string_scan.emit	2660
 selfhost/arm64-linux/string_slice.emit	1291
 selfhost/arm64-linux/struct_drop.emit	2937
 selfhost/arm64-linux/tokenize.emit	1531
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	8861
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	9170
 selfhost/arm64-linux/utf8_ingest_validated.emit	9484
 selfhost/wasm32-wasi/array_append.emit	476
 selfhost/wasm32-wasi/array_index.emit	481
@@ -144,7 +144,7 @@ selfhost/x86-64-linux/string_scan.emit	2326
 selfhost/x86-64-linux/string_slice.emit	1043
 selfhost/x86-64-linux/struct_drop.emit	2776
 selfhost/x86-64-linux/tokenize.emit	1294
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8363
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8715
 selfhost/x86-64-linux/utf8_ingest_validated.emit	8980
 selfhost/x86-64-linux/perceus_cfold.emit	2257
 selfhost/arm64-linux/perceus_cfold.emit	2506
