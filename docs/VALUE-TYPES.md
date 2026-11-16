@@ -23,6 +23,9 @@ The ordinary reference-count and copy-on-write rules preserve its other holders.
 An explicit `own` binding still follows the move rules after a transfer.
 The declaration does not remove E050 or permit a second close of a resource handle.
 
+`aes_gcm.Key`, `ecdsa.PrivateKey` and `ed25519.PrivateKey` are value records.
+Thus a TLS identity, configuration or session that keeps one of these keys holds no resource handle.
+
 Copyability does not mean that cleanup erases every copy of a secret.
 `crypto.erase` clears uniquely held storage before release.
 Shared storage retains its bytes for the other holders.
