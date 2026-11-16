@@ -942,7 +942,6 @@ var findDebugLines = []string{
 	`-D opt -readable -a -size +1`,
 	`-D opt -print -a -name 'a*' -o -name b -o -size +1 , -name c , -empty`,
 	`-D opt '(' -size +1 -o -name b ')' -o -empty -o -readable`,
-	`-D opt -path './sub/*' -prune -a -prune , -writable -fstype nosuchfs -and -printf '%p %s\n' '(' -links 2 ')' -type l,f -or -mtime -1`,
 	`-D rates -name small -o -size +1 -print`,
 	`-D rates -name small -quit`,
 	`-O3 -D rates,opt -empty -o -readable -name '*' , ! -type d`,
@@ -997,6 +996,7 @@ func findMaskedCases(dir string) []invocation {
 		`-D exec sub -name a.c -exec nosuchcmd ';' -exec nosuchcmd '{}' +`,
 		`-D exec,rates sub -name '*.c' -exec echo X '{}' + -o -name b.h -exec true ';'`,
 		`-D time -maxdepth 0`,
+		`-D opt -path './sub/*' -prune -a -prune , -writable -fstype nosuchfs -and -printf '%p %s\n' '(' -links 2 ')' -type l,f -or -mtime -1`,
 		`-D time,tree -maxdepth 0 -mtime 1 -mtime -1 -mtime +3 -mmin 5 -atime 0.5 -daystart -ctime 0`,
 		`-D all sub -maxdepth 1 -name 'b*' -exec echo '{}' ';'`,
 	} {
