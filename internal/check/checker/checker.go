@@ -6061,6 +6061,8 @@ type checker struct {
 	callbackResultCalls  map[*ast.Call]bool
 	callbackValues       map[ast.Expr]bool
 	resultBorrows        map[string]bool
+	resultLendsOf        map[string][]bool
+	resultDecls          map[string]*ast.FuncDecl
 	resultAnalysed       map[string]bool
 	// declaredMethods names the methods the program declares.
 	declaredMethods map[string]bool
@@ -11314,7 +11316,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return true
 				}
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && mayRetainBorrow(sig.Result) {
-					if !c.calleeResultBorrows(x) || c.callbacksReturnOwned(x) {
+					if !c.calleeResultBorrows(x) || c.callbacksReturnOwned(x) || c.lendingArgsOwned(x, isOwnedExpr) {
 						return true
 					}
 				}
