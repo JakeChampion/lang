@@ -263,8 +263,8 @@ function poly32(x: f32, c0: f32, c1: f32, c2: f32, c3: f32): f32 {
   let a = __fma_f32(c3, x, c2);
   a = __fma_f32(a, x, c1);
   a = __fma_f32(x, a, c0);
-  let b = __fma_f32(a, a, x);
-  return __fma_f32(b, x, a) + __fma_f32(c0, c1, b);
+  let b = a.mul_add(a, x);
+  return __fma_f32(b, x, a) + c0.mul_add(c1, b);
 }
 
 @noinline
@@ -280,8 +280,8 @@ function main(): i32 {
 }
 `
 
-// Each native backend gives __fma_f32 one fused instruction in single
-// precision, and f32x4.mul_add one fused lane instruction. Wasm calls
+// Each native backend gives __fma_f32 and f32.mul_add one fused instruction in
+// single precision, and f32x4.mul_add one fused lane instruction. Wasm calls
 // the software form of the runtime.
 func TestSelfHostFmaF32Emission(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "main.fern")
