@@ -12706,6 +12706,27 @@ function ref_bind(pattern: TypeRef, actual: TypeRef, vars: string[], names: stri
   return (ns, ts);
 }
 
+// instance_impls gives each implementation for the generic `base` that the
+// instance `base[cts]` matches, written for the clone `mang`.
+function instance_impls(impls: ImplInfo[], base: string, cts: string[], mang: string): ImplInfo[] {
+  let out: ImplInfo[] = [];
+  let actual = base + "[" + subst_ty_join(cts, ",", [], []) + "]";
+  for im in impls {
+    if (im.trait_name.len() == 0 || receiver_base(im.impl_type) != base) {
+      continue;
+    }
+    let (ns, ts) = ref_bind(parse_type_ref(im.impl_type), parse_type_ref(actual), im.all_type_params, [], []);
+    if (render_type_ref(parse_type_ref(subst_ty(im.impl_type, ns, ts))) != render_type_ref(parse_type_ref(actual))) {
+      continue;
+    }
+    out = out.append(ImplInfo {
+      ...im, impl_type: mang, type_params: [], all_type_params: [], bounds: [],
+      trait_ref: subst_ty(im.trait_ref, ns, ts), assoc_values: rename_ty_list(im.assoc_values, ns, ts),
+    });
+  }
+  return out;
+}
+
 pub function split_plus_bounds(bound: string): string[] {
   let out: string[] = [];
   if (is_const_bound(bound)) {
@@ -15375,6 +15396,7 @@ function ms_module(mod: Module): Module {
   let tr = ms_stmts(mod.top_stmts, topenv, gstructs, sfns, ins, "");
   ins = tr.rins3;
 
+  let nimpls = mod.impls;
   let done = Insts { inames: [], itypes: [], iargs: [] };
   let wi = 0;
   while (wi < ins.inames.len()) {
@@ -15424,11 +15446,12 @@ function ms_module(mod: Module): Module {
       let cms = ms_clone_methods(nfuncs, mod, base, key, gstructs, sfns, ins);
       ins = cms.ins;
       nfuncs = cms.fns;
+      nimpls = util.append_all(nimpls, instance_impls(mod.impls, base, cts, mang));
     }
     wi += 1;
   }
 
-  return Module { ...mod, funcs: nfuncs, structs: nstructs, top_stmts: tr.rstmts };
+  return Module { ...mod, funcs: nfuncs, structs: nstructs, top_stmts: tr.rstmts, impls: nimpls };
 }
 
 function genum_index(enums: EnumDecl[], name: string): i32 {
@@ -17040,6 +17063,7 @@ pub function monomorphize_enums(mod: Module): Module {
 
   let cl_enums: EnumDecl[] = [];
   let cl_structs: StructDecl[] = [];
+  let nimpls = mod.impls;
   let instantiated: string[] = [];
   let wi = 0;
   while (wi < ins.inames.len()) {
@@ -17103,6 +17127,7 @@ pub function monomorphize_enums(mod: Module): Module {
           nfuncs = nfuncs.append(cm.ffn);
         }
       }
+      nimpls = util.append_all(nimpls, instance_impls(mod.impls, base, cts, mname));
       if (!util.has_str(instantiated, base)) {
         instantiated = instantiated.append(base);
       }
@@ -17140,7 +17165,7 @@ pub function monomorphize_enums(mod: Module): Module {
     nfuncs = nfuncs.append(held[hi]);
   }
 
-  return Module { ...mod, funcs: nfuncs, structs: out_structs, top_stmts: tr.rstmts, enums: out_enums };
+  return Module { ...mod, funcs: nfuncs, structs: out_structs, top_stmts: tr.rstmts, enums: out_enums, impls: nimpls };
 }
 
 function dl_itoa(n: i32): string {

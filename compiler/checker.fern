@@ -3027,12 +3027,41 @@ function derives_trait(s: Scope, tyname: string, tr: string): boolean {
 
 function conforms_to_dyn_trait(s: Scope, from: typeinfo.Type, tyname: string, tr: string): boolean {
   let key = util.base_type_name(tr);
+  let implemented = false;
   for imp in s.impls {
     if (parser.impl_trait_key(imp) == key && parser.receiver_base(imp.impl_type) == parser.receiver_base(tyname)) {
-      return impl_bounds_hold(s, imp, from);
+      if (impl_bounds_hold(s, imp, from) && impl_pins(s, imp, from, tr)) {
+        return true;
+      }
+      implemented = true;
     }
   }
-  return derives_trait(s, tyname, parser.derive_simple_name(key));
+  return !implemented && derives_trait(s, tyname, parser.derive_simple_name(key));
+}
+
+// impl_pins reports whether the implementation gives the trait, for the type
+// `from`, the arguments that the dyn trait `tr` pins.
+function impl_pins(s: Scope, imp: parser.ImplInfo, from: typeinfo.Type, tr: string): boolean {
+  let want: parser.TypeRef[] = [];
+  for a in parser.parse_type_ref(tr).args {
+    if (!util.contains(parser.render_type_ref(a), "=")) {
+      want = want.append(a);
+    }
+  }
+  let got = parser.parse_type_ref(imp.trait_ref).args;
+  if (want.len() == 0 || got.len() != want.len()) {
+    return true;
+  }
+  let tn = s.type_names();
+  let (names, types) = gc_bind_param(parser.parse_type_ref(imp.impl_type), from, imp.all_type_params, tn, [], []);
+  for i in 0..want.len() {
+    let w = type_from_ref_subst(want[i], [], [], tn);
+    let g = type_from_ref_subst(got[i], names, types, tn);
+    if (!type_contains_unknown(w) && !type_contains_unknown(g) && !type_eq(g, w)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
@@ -7918,6 +7947,9 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
       }
     }
   }
+  if (r.base.len() >= 5 && r.base.starts_with("dyn ")) {
+    return dyn_type_subst(parser.render_type_ref(r), tparams, targs, tn);
+  }
   if (parser.ref_is_fn_value(r)) {
     let f = parser.ref_ungroup(r);
     let pts: typeinfo.Type[] = [];
@@ -8059,10 +8091,35 @@ function type_from_name_erasing_tparams(name: string, tparams: string[], tn: Typ
 }
 
 function type_from_name_subst(name: string, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
-  if (tparams.len() == 0 || name.len() == 0 || name.len() >= 5 && name.starts_with("dyn ")) {
+  if (tparams.len() == 0 || name.len() == 0) {
     return type_from_spelling(name, tn);
   }
+  if (name.len() >= 5 && name.starts_with("dyn ")) {
+    return dyn_type_subst(name, tparams, subst, tn);
+  }
   return type_from_ref_subst(parser.parse_type_ref(name), tparams, subst, tn);
+}
+
+// dyn_type_subst is the dyn type `name` with each type parameter that its
+// pinned arguments name replaced. With a parameter that has no binding, the
+// whole spelling is a type parameter of its own, as in vec_type.
+function dyn_type_subst(name: string, tparams: string[], targs: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
+  let names: string[] = [];
+  let labels: string[] = [];
+  for i in 0..tparams.len() {
+    if (i >= targs.len() || !parser.type_mentions_var(name, tparams[i])) {
+      continue;
+    }
+    if (type_contains_unknown(targs[i])) {
+      return t_unknown(TPARAM_MARK + name);
+    }
+    names = names.append(tparams[i]);
+    labels = labels.append(type_label(targs[i]));
+  }
+  if (names.len() == 0) {
+    return type_from_spelling(name, tn);
+  }
+  return type_from_spelling(parser.subst_ty(name, names, labels), tn);
 }
 
 function erased_tparams(tparams: string[]): typeinfo.Type[] {
@@ -8163,6 +8220,29 @@ function gc_is_typevar_name(n: string, tparams: string[], tn: TypeNames): boolea
   return type_contains_unknown(type_from_spelling(n, tn));
 }
 
+// A dyn parameter binds each type parameter that its pinned arguments name
+// from the argument at the same place of the same trait of the dyn value.
+function gc_bind_dyn(r: parser.TypeRef, traits: string, tparams: string[], tn: TypeNames, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
+  let ns = names;
+  let ts = types;
+  let actual = parser.dyn_trait_set("dyn " + traits);
+  for want in parser.dyn_trait_set(parser.render_type_ref(r)) {
+    let wr = parser.parse_type_ref(want);
+    for got in actual {
+      let gr = parser.parse_type_ref(got);
+      if (gr.base != wr.base || gr.args.len() != wr.args.len()) {
+        continue;
+      }
+      for i in 0..wr.args.len() {
+        let (n2, t2) = gc_bind_param(wr.args[i], type_from_ref_names(gr.args[i], tn), tparams, tn, ns, ts);
+        ns = n2;
+        ts = t2;
+      }
+    }
+  }
+  return (ns, ts);
+}
+
 function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], tn: TypeNames, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   let ns = names;
   let ts = types;
@@ -8178,6 +8258,12 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
         return (ns, ts);
       }
     }
+  }
+  if (r.base.len() >= 5 && r.base.starts_with("dyn ")) {
+    if let typeinfo.TypeDyn(d) = at {
+      return gc_bind_dyn(r, d.traits, tparams, tn, ns, ts);
+    }
+    return (ns, ts);
   }
   if (parser.ref_is_fn_value(r)) {
     if let typeinfo.TypeFunc(f) = at {

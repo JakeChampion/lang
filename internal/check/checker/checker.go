@@ -6573,6 +6573,11 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			c.resolveType(&t.Params[i], params, pos)
 		}
 		c.resolveType(&t.Result, params, pos)
+	case ast.DynTraitType:
+		*slot = t.MapArgs(func(a ast.Type) ast.Type {
+			c.resolveType(&a, params, pos)
+			return a
+		})
 	}
 }
 
@@ -7488,6 +7493,8 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		return out
 	case ast.ProjType:
 		return ast.ProjType{Base: substByName(x.Base, sub), Name: x.Name}
+	case ast.DynTraitType:
+		return x.MapArgs(func(a ast.Type) ast.Type { return substByName(a, sub) })
 	}
 	return t
 }
@@ -7873,6 +7880,8 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		return out
 	case ast.ProjType:
 		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
+	case ast.DynTraitType:
+		return x.MapArgs(func(a ast.Type) ast.Type { return substituteType(a, sub) })
 	}
 	return t
 }
@@ -7998,6 +8007,34 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			}
 		}
 		return c.unifyType(e.Result, a.Result, sub) && (!e.ResultOwn || a.ResultOwn)
+	}
+	if e, ok := expected.(ast.DynTraitType); ok {
+		a, ok := actual.(ast.DynTraitType)
+		if !ok || !slices.Equal(e.Traits, a.Traits) || len(e.Args) != len(a.Args) || len(e.AssocBindings) != len(a.AssocBindings) {
+			return false
+		}
+		for i := range e.Args {
+			if len(e.Args[i]) != len(a.Args[i]) {
+				return false
+			}
+			for j := range e.Args[i] {
+				if !c.unifyType(e.Args[i][j], a.Args[i][j], sub) {
+					return false
+				}
+			}
+		}
+		for i := range e.AssocBindings {
+			if len(e.AssocBindings[i]) != len(a.AssocBindings[i]) {
+				return false
+			}
+			for j, eb := range e.AssocBindings[i] {
+				ab := a.AssocBindings[i][j]
+				if eb.Name != ab.Name || !c.unifyType(eb.Type, ab.Type, sub) {
+					return false
+				}
+			}
+		}
+		return true
 	}
 	return ast.Equal(expected, actual)
 }
@@ -8282,13 +8319,13 @@ func (c *checker) inStdlibContext() bool {
 	return c.current != nil && strings.HasPrefix(c.current.BodyModule(), "stdlib://")
 }
 
-func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
+func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string, src ast.Type) bool {
 	for i, tr := range dt.Traits {
 		if !c.info.Impls[tr][tn] {
 			return false
 		}
 		if want := dt.ArgsFor(i); len(want) > 0 {
-			if !typeArgsEqual(c.info.ImplTraitArgs[tr][tn], want) {
+			if !typeArgsEqual(c.implTraitArgsFor(tr, tn, src), want) {
 				return false
 			}
 		}
@@ -8306,7 +8343,7 @@ func (c *checker) canBoxInto(dt ast.DynTraitType, src ast.Type) bool {
 	param, isParam := src.(ast.ParamType)
 	if !isParam {
 		tn, ok := methodTypeName(src)
-		return ok && c.implementsAllDynTraits(dt, tn)
+		return ok && c.implementsAllDynTraits(dt, tn, src)
 	}
 	decl := c.typeParamDecl(param.Name)
 	if decl == nil {
@@ -15167,7 +15204,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
-		if !c.implementsAllDynTraits(dt, tn) {
+		if !c.implementsAllDynTraits(dt, tn, n.Target) {
 			c.errfCode(n.P, "E060", "%s does not implement %s, so a '%s' cannot downcast to it", n.Target, c.missingDynTraits(dt, n.Target), dt.String())
 		}
 		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}

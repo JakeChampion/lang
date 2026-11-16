@@ -5289,6 +5289,38 @@ function main(): i32 {
     return t - 40;
 }
 `},
+	{name: "an-owned-dyn-value-over-a-generic-implementation-of-a-generic-trait", atLeast: 3, want: "0|", src: `
+import "std/i32";
+
+trait Source[M] { function next(self: Self): M; }
+struct Fixed[M] { v: M }
+impl[M] Source[M] for Fixed[M] { function next(self: Fixed[M]): M { return self.v; } }
+struct Twice { s: string }
+impl Source[string] for Twice { function next(self: Twice): string { return self.s + self.s; } }
+enum Hold[M] { One(M, string), Zero }
+impl[M] Source[Option[M]] for Hold[M] {
+    function next(self: Hold[M]): Option[M] { return match (self) { One(m, _) => Some(m), Zero => None }; }
+}
+function make[M](v: M): dyn Source[M] { return Fixed { v: v }; }
+function pull[M](s: dyn Source[M]): M { return s.next(); }
+function total(all: dyn Source[string][]): i32 { let n: i32 = 0; for s in all { n = n + s.next().len(); } return n; }
+
+function main(): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 10) {
+        let a: dyn Source[i32] = Fixed { v: i };
+        let b = make("ab" + i.to_string());
+        let all: dyn Source[string][] = [Fixed { v: "x" + i.to_string() }, Twice { s: "q" + i.to_string() }];
+        let h: Hold[string] = One("h" + i.to_string(), "pad" + i.to_string());
+        let c: dyn Source[Option[string]] = h;
+        let got = match (c.next()) { Some(s) => s.len(), None => 0 };
+        t = t + pull(a) + pull(b).len() + total(all) + got;
+        i = i + 1;
+    }
+    return t - 155;
+}
+`},
 	{name: "a-borrowed-dyn-value-over-a-generic-implementation", atLeast: 2, want: "0|", src: `
 import "std/i32";
 
