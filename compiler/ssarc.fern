@@ -375,18 +375,26 @@ function shell_release(own r: irtables.LowerState): irtables.LowerState {
   return mark_release(r, ir.shell);
 }
 
-function sole_release(own r: irtables.LowerState): irtables.LowerState {
-  return mark_release(r, ir.sole);
-}
-
 // The sole release of a value of `t`. When each box of `t` has 1 to 255
-// words, the release needs no test of the size.
+// words, the release needs no test of the size. Such a type is a record, or
+// an enum whose variants are boxes.
 function sole_release_of(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   return mark_release(r, if (small_boxes(t, f)) { ir.sole_box } else { ir.sole });
 }
 
 function small_boxes(t: typeinfo.Type, f: ssasem.Func): boolean {
-  if (typeinfo.union_name(t) == "" || enum_layout(f, t) != semrecords.layout_variant() || ssasem.has_finalizer(f, t)) {
+  if (ssasem.has_finalizer(f, t)) {
+    return false;
+  }
+  if (typeinfo.is_record(t)) {
+    let at = semrecords.find(f.records, t);
+    if (at < 0 || semtypes.is_handle(t) || semtypes.is_env(t)) {
+      return false;
+    }
+    let n = f.records.list[at].fields.len();
+    return n >= 1 && n <= 255;
+  }
+  if (typeinfo.union_name(t) == "" || enum_layout(f, t) != semrecords.layout_variant()) {
     return false;
   }
   for v in variants_of(t, f) {
@@ -1601,7 +1609,7 @@ function classified_death(own r: irtables.LowerState, f: ssasem.Func, k: ssaunit
     r = drop_children(r, donor, f.values[donor], scratch_start, f);
   }
   if (!held) {
-    r = sole_release(release(r, donor, f.values[donor], f));
+    r = sole_release_of(release(r, donor, f.values[donor], f), f.values[donor], f);
   }
   r = emit(r, ir.op_else());
   r = drop_value(r, donor, f.values[donor], scratch_start, f);
