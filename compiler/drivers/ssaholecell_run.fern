@@ -1,0 +1,153 @@
+import "../ssa";
+import "../ssaholecell";
+import "../util";
+
+function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.SInst {
+  return ssa.SInst { kind_tag: kind, result: result, args: args, imm: imm, str: str };
+}
+
+function zero(result: i32): ssa.SInst {
+  return inst(ssa.CONST_INT, result, [], 0, "");
+}
+
+function call(result: i32, name: string, args: i32[]): ssa.SInst {
+  return inst(ssa.CALL, result, args, 0, name);
+}
+
+function phi(result: i32, args: i32[]): ssa.SInst {
+  return inst(ssa.PHI, result, args, 0, "");
+}
+
+function branch(cond: i32, t: i32, f: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
+}
+
+function back(v: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: v };
+}
+
+function block(id: i32, preds: i32[], insts: ssa.SInst[], term: ssa.STerm): ssa.SBlock {
+  return ssa.SBlock { id: id, insts: insts, term: term, preds: preds };
+}
+
+// The blocks of a fill of the hole `h` with the value `v`, from block `at`:
+// `at` tests h, `at + 1` is the null side, `at + 2` stores at offset 8, and
+// both jump to `join`. `v0` is the first of the two values the test needs.
+function fill_test(at: i32, preds: i32[], before: ssa.SInst[], h: i32, v0: i32): ssa.SBlock {
+  let insts = before.append(zero(v0)).append(inst(ssa.BINARY, v0 + 1, [h, v0], 64, "eq"));
+  return block(at, preds, insts, branch(v0 + 1, at + 1, at + 2));
+}
+
+function null_side(at: i32, join: i32): ssa.SBlock {
+  return block(at + 1, [at], [], ssa.t_br(join));
+}
+
+function store_side(at: i32, join: i32, h: i32, v: i32, result: i32): ssa.SBlock {
+  return block(at + 2, [at], [inst(ssa.ST_AT, result, [h, v], 8, "")], ssa.t_br(join));
+}
+
+// A loop that fills its hole at each turn, and one more time before it
+// returns. Value 0 is the parameter, 3 the hole and 4 the carrier of the
+// result. `leak` gives the result of the first fill to a call. `early`
+// returns the carrier with no fill.
+function loop_of(leak: boolean, early: boolean): ssa.SFunc {
+  let b0 = block(0, [], [inst(ssa.PARAM, 0, [], 0, ""), zero(1), zero(2)], ssa.t_br(1));
+  let b1 = block(1, [0, 5], [phi(3, [1, 8]), phi(4, [2, 10])], branch(0, 2, 6));
+  let b2 = fill_test(2, [1], [call(8, "make", [])], 3, 5);
+  let join: ssa.SInst[] = [phi(10, [8, 4])];
+  if (leak) {
+    join = join.append(call(16, "use", [10]));
+  }
+  let b5 = block(5, [3, 4], join, ssa.t_br(1));
+  let blocks = [b0, b1, b2, null_side(2, 5), store_side(2, 5, 3, 8, 9), b5];
+  if (early) {
+    blocks = blocks.append(block(6, [1], [], back(4)));
+    return ssa.SFunc { name: "hole", nparams: 1, nvals: 17, blocks: blocks, entry: 0, takes_env: false };
+  }
+  blocks = blocks.append(fill_test(6, [1], [call(11, "last", [])], 3, 12));
+  blocks = blocks.append(null_side(6, 9)).append(store_side(6, 9, 3, 11, 14));
+  blocks = blocks.append(block(9, [7, 8], [phi(15, [11, 4])], back(15)));
+  return ssa.SFunc { name: "hole", nparams: 1, nvals: 17, blocks: blocks, entry: 0, takes_env: false };
+}
+
+function find(f: ssa.SFunc, id: i32): ssa.SBlock {
+  for b in f.blocks {
+    if (b.id == id) {
+      return b;
+    }
+  }
+  return block(-1, [], [], back(-1));
+}
+
+function def(f: ssa.SFunc, v: i32): ssa.SInst {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result == v) {
+        return ins;
+      }
+    }
+  }
+  return inst(ssa.NONE, -1, [], 0, "");
+}
+
+function count(f: ssa.SFunc, kind: i32): i32 {
+  let n = 0;
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == kind) {
+        n += 1;
+      }
+    }
+  }
+  return n;
+}
+
+function last(b: ssa.SBlock): ssa.SInst {
+  if (b.insts.len() == 0) {
+    return inst(ssa.NONE, -1, [], 0, "");
+  }
+  return b.insts[b.insts.len() - 1];
+}
+
+function check(cond: boolean, what: string, failures: i32): i32 {
+  if (cond) {
+    return failures;
+  }
+  eprint("FAIL: " + what);
+  return failures + 1;
+}
+
+// A loop with a fill at each turn and before its return.
+function filled(failures0: i32): i32 {
+  let failures = failures0;
+  let a = ssaholecell.cells(loop_of(false, false));
+  let start = def(a, def(a, 3).args[0]);
+  let fill = last(find(a, 2));
+  let read = def(a, find(a, 9).term.value);
+  let sides_gone = find(a, 3).id < 0 && find(a, 4).id < 0 && find(a, 7).id < 0 && find(a, 8).id < 0;
+  failures = check(count(a, ssa.BINARY) == 0 && sides_gone, "each fill loses its test and its two sides", failures);
+  let at_cell = start.kind_tag == ssa.FRAME_CELL && ssa.cell_offset(start) == 8;
+  failures = check(at_cell && last(find(a, 0)).result == start.result, "the hole starts at the cell, less the offset of the store", failures);
+  let stores = fill.kind_tag == ssa.ST_AT && fill.args[0] == 3 && fill.args[1] == 8 && fill.imm == 8;
+  failures = check(stores && find(a, 2).term.kind_tag == ssa.TERM_BR && find(a, 2).term.target == 5, "the test block stores to the hole and jumps to the join", failures);
+  let same_cell = def(a, read.args[0]).kind_tag == ssa.FRAME_CELL && ssa.cell_number(def(a, read.args[0])) == ssa.cell_number(start);
+  failures = check(read.kind_tag == ssa.LD_AT && read.imm == 8 && same_cell, "the return reads the cell", failures);
+  return check(count(a, ssa.PHI) == 1 && count(a, ssa.ST_AT) == 2, "the phis of the result are gone, and no store sets the cell to null", failures);
+}
+
+// A return with no fill before it.
+function early(failures: i32): i32 {
+  let c = ssaholecell.cells(loop_of(false, true));
+  let init = last(find(c, 0));
+  let nulls = init.kind_tag == ssa.ST_AT && init.imm == 8 && def(c, init.args[0]).kind_tag == ssa.FRAME_CELL && def(c, init.args[1]).kind_tag == ssa.CONST_INT;
+  return check(count(c, ssa.FRAME_CELL) == 2 && nulls, "a return with no fill before it reads a cell that starts null", failures);
+}
+
+function main(): i32 {
+  let failures = filled(0);
+  let b = ssaholecell.cells(loop_of(true, false));
+  failures = check(count(b, ssa.FRAME_CELL) == 0 && count(b, ssa.BINARY) == 2, "a result that a call reads keeps the loop as it is", failures);
+  failures = early(failures);
+  print("failures=" + util.i32_to_string(failures));
+  return 0;
+}

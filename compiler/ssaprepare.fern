@@ -5,7 +5,9 @@ import "./physicalbody";
 import "./ssa";
 import "./ssa_lift";
 import "./ssatokenkeep";
+import "./ssasame";
 import "./ssaholeaddr";
+import "./ssaholecell";
 
 pub struct Body {
   lowered: irtables.Lowered,
@@ -102,7 +104,7 @@ pub function finish_formed(lowered: irtables.Lowered, selected: physicalbody.Sel
 }
 
 pub function with_selects(b: Body): Body {
-  let picked = ssa.select_branches(ssa.fresh_boxes(ssaholeaddr.addresses(ssatokenkeep.keeps(ssa.split_tokens(b.formed.f)))));
+  let picked = ssa.select_branches(ssa.fresh_boxes(ssaholecell.cells(ssaholeaddr.addresses(ssasame.decided(ssatokenkeep.keeps(ssa.split_tokens(b.formed.f)))))));
   let returned = ssa.return_calls(picked.f);
   let from = util.append_all(picked.from, returned.from);
   let to = util.append_all(picked.to, returned.to);
