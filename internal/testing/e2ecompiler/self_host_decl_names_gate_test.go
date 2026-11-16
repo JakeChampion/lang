@@ -200,7 +200,6 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			{"pathless-import", "import;\nfunction main(): i32 { return 0; }\n", "malformed import: its path could not be read (1:7)"},
 			{"keyword-alias", "type match = i32;\nfunction main(): i32 { return 0; }\n", "expected a name, got \"match\" (1:6)"},
 			{"numeric-alias-name", "type 123 = i32;\nfunction main(): i32 { return 0; }\n", "expected a name, got \"123\" (1:6)"},
-			{"valueless-block", "function side(): i32 { return 1; }\nfunction main(): i32 {\n    let x: i32 = { side(); };\n    return x;\n}\n", "E061"},
 		} {
 			mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
 			for _, args := range ld.modes {
@@ -216,8 +215,38 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 				})
 			}
 		}
+		// A block with no trailing value parses. The checker reports E061, and a
+		// path with no checker must refuse it in the lowering with the same code.
+		t.Run(ld.name+"/valueless-block", func(t *testing.T) {
+			mainPath := writeTemp(t, stage, "valueless_block.fern", []byte(valuelessBlock))
+			cmd := exec.Command(ld.bin, append([]string{mainPath}, ld.modes[0]...)...)
+			combined, _ := cmd.CombinedOutput()
+			if cmd.ProcessState.ExitCode() == 0 {
+				t.Fatalf("driver emitted a block with no trailing value:\n%.2000s", combined)
+			}
+			if !strings.Contains(string(combined), "E061") {
+				t.Errorf("refusal did not name E061:\n%.2000s", combined)
+			}
+		})
+	}
+	for _, mode := range []string{"-ir-probe", "-decide"} {
+		t.Run("asm_load_run/valueless-block/"+mode, func(t *testing.T) {
+			mainPath := writeTemp(t, stage, "valueless_block.fern", []byte(valuelessBlock))
+			out, err := exec.Command(loaders[0].bin, mainPath, mode).CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", mode, err, out)
+			}
+			if !strings.Contains(string(out), "refused") {
+				t.Errorf("%s did not refuse a block with no trailing value:\n%s", mode, out)
+			}
+			if mode == "-ir-probe" && !strings.Contains(string(out), "E061") {
+				t.Errorf("-ir-probe did not name E061:\n%s", out)
+			}
+		})
 	}
 }
+
+const valuelessBlock = "function side(): i32 { return 1; }\nfunction main(): i32 {\n    let x: i32 = { side(); };\n    return x;\n}\n"
 
 func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
