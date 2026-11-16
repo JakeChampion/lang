@@ -194,11 +194,10 @@ them on; until then `ldexp` and `round` cover the argument reductions.
 `mul_add` on `f64x2` rounds `self * b + c` one time in each lane, as
 `__fma_f64` does. It lowers to the fused IR form `vfma`: `vfmadd` on x86-64,
 `fmla` on arm64, and a call of the software form `$__fern_fma_f64` for each
-lane on wasm. On `f32x4` and on the scalar types it is `self * b + c` with
-two roundings. `std/f64` cannot call `__fma_f64` before the stage0 pin knows
-it, and no engine has a fused f32 form yet. So `horner` on `f64x2` can
-differ in the last bit from `horner` on `f64`, but each engine gives the
-same answer for each type.
+lane on wasm. `mul_add` on `f64` is a call of `__fma_f64`, so it also rounds
+one time. Thus `horner` on `f64x2` gives the bits of `horner` on `f64` in each
+lane. On `f32x4` and on `f32` it is `self * b + c` with two roundings,
+because no engine has a fused f32 form yet.
 
 - **Scalar impls**: `impl Lanes for f64` and `impl Lanes for f32`, one lane,
   delegating to `std/f64`. Every generic kernel runs today through these.
