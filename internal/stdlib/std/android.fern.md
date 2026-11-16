@@ -58,7 +58,6 @@ import "std/android/draw";
 import "std/android/trace";
 import "std/ffi";
 import "std/jni";
-import "std/log";
 import "std/utf8";
 ```
 
@@ -1146,12 +1145,11 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
           state = step(state, Touch(action, x, y));
           Context.c_store_motion(lp.ctx, 0 as usize);
           handled = 1;
+        } else if (kind == 1 && back_by_callback(lp.ctx, c_key_code(ev))) {
+          handled = 1;
         } else if (kind == 1) {
           let code: i32 = c_key_code(ev);
           let action: i32 = c_key_action(ev);
-          if (code == KEY_BACK) {
-            log.info("android: back from the input queue, action " + action.to_string());
-          }
           state = step(state, Key(code, action));
           if (action == 0 && !system_key(code)) {
             let c: i32 = key_char(lp.ctx, c_event_device(ev), code, c_key_meta(ev));
@@ -1169,6 +1167,14 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
     __free(slot, 8);
   }
   return state;
+}
+
+// True for the back key while the back callback of the activity gives each
+// back: the input queue of Android 16 still gives the key too.
+function back_by_callback(ctx: usize, code: i32): boolean {
+  unsafe {
+    return code == KEY_BACK && Context.c_load_back_class(ctx) != 0 as usize;
+  }
 }
 
 // The character that key `code` types with the shift state `meta` on the
@@ -2177,7 +2183,7 @@ function text_of_buffer(buf: usize): string {
 
 ### `back and insets`
 
-An app that targets Android 16 does not get the back key as a key event from Android 13. The system gives it to the `OnBackInvokedCallback` of the activity, and the manifest of `fern -apk` asks for that from Android 13. `hook_views` registers the class `dev.fern.android.Back` of `std/android/launch` as that callback. Its callback calls `back_invoked`, which sends `BACK` to the loop thread.
+An app that targets Android 16 does not get the back key as a key event from Android 13. The system gives it to the `OnBackInvokedCallback` of the activity, and the manifest of `fern -apk` asks for that from Android 13. `hook_views` registers the class `dev.fern.android.Back` of `std/android/launch` as that callback. Its callback calls `back_invoked`, which sends `BACK` to the loop thread. On Android 16 the input queue still gives the back key too, and a key of the keyboard that hides itself comes there also. So while the callback is registered, the loop drops the back key of the input queue and marks it handled.
 
 From Android 15 the window of an app that targets API 35 or later goes under the system bars, the keyboard and the display cutout. The content view of NativeActivity then covers the whole window, and so does its content rectangle. `hook_views` sets the class `dev.fern.android.Insets` of `std/android/launch` as the listener of the insets of the decor view. Its callback calls `insets_applied`, which sends the part of the window that the insets leave free as `CONTENT_RECT`. `on_content_rect` then sends nothing. The listener then calls the method of the view, so the view handles the insets as before.
 
@@ -2271,7 +2277,6 @@ function insets_listener(e: usize, obj: usize, ctx: usize): usize {
 
 // The back callback, on the UI thread.
 pub(package) function back_invoked(env: usize, thiz: usize): void {
-  log.info("android: back from the callback");
   let ctx = static_context(env, thiz);
   if (ctx != 0 as usize) {
     let got = deliver(ctx, BACK, 0 as usize);
