@@ -5569,7 +5569,8 @@ pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physica
 pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let body = ircore.body_for_emit(label_name, r);
   if (weak) {
-    s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".k\n");
+    let sym = "__fn_" + asmcore.sanitize_label(label_name);
+    s = s.write(".weak " + sym + "\n.weak " + sym + ".k\n.weak " + sym + ".r\n");
   }
   irverifygate.verify_or_refuse(label_name, body.ops, body.n_params, body.n_locals, vgate);
   return emit_ssa_function(body, selected, pre, label_name, s, vgate);

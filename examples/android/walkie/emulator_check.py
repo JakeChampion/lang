@@ -92,8 +92,13 @@ def disable_freezer():
         state = adb("shell", "dumpsys", "activity", "settings")
         if re.search(r"(?m)^\s*use_freezer=false\s*$", state):
             return
+        # Android 16 no longer prints use_freezer, so the setting itself is
+        # the state that the check can read.
+        if not re.search(r"(?m)^\s*use_freezer=", state) and adb("shell", "settings", "get", "global", "cached_apps_freezer").strip() == "disabled":
+            return
         time.sleep(0.5)
-    raise Failure("Android did not disable the cached-app freezer")
+    lines = [line.strip() for line in state.splitlines() if "freez" in line.lower()]
+    raise Failure("Android did not disable the cached-app freezer: " + " | ".join(lines[:8]))
 
 
 def to_front(package):

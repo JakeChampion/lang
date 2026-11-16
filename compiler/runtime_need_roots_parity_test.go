@@ -80,6 +80,10 @@ func TestAllRuntimeNeedRootsCoversEveryLiteralNeed(t *testing.T) {
 	if len(listed) == 0 {
 		t.Fatal("all_runtime_need_roots parsed as empty — the extraction is broken, not the list")
 	}
+	// asmcore marks each byte-copy kernel by its name, which no literal shows.
+	if !strings.Contains(allRuntimeNeedRootsBody(t), "rtbytecopy.kernel_names()") {
+		t.Error("all_runtime_need_roots does not list rtbytecopy.kernel_names(), so a per-module build that calls a kernel has no definition of it")
+	}
 
 	ignored := map[string]bool{
 		"x": true,

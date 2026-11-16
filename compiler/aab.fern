@@ -1,0 +1,201 @@
+// Android App Bundles, the format that Google Play takes for a new app and
+// for each update. Google Play makes the APKs for each device from the
+// bundle with bundletool.
+import "std/base64";
+import "std/crypto";
+import "std/crypto/ecdsa";
+import "std/protobuf";
+import "./androidxml";
+import "./apk";
+import "./util";
+
+// The version of bundletool whose format the bundle follows.
+pub const BUNDLETOOL_VERSION: string = "1.17.2";
+
+// The bundle has one module, base.
+const BASE: string = "base/";
+
+// The FileReference types of Resources.proto.
+const FILE_PNG: i64 = 1i64;
+
+const FILE_PROTO_XML: i64 = 3i64;
+
+function message(number: i32, body: [u8]): u8[] {
+  return protobuf.bytes_field(number, body);
+}
+
+function join(parts: u8[][]): u8[] {
+  let out: u8[] = [];
+  for p in parts {
+    out = util.append_bytes(out, p);
+  }
+  return out;
+}
+
+// The Item of an entry: the file at `path`, or an ID for "".
+function entry_item(path: string): u8[] {
+  if (path.len() == 0) {
+    return message(6, []);
+  }
+  let kind = FILE_PROTO_XML;
+  if (path.ends_with(".png")) {
+    kind = FILE_PNG;
+  }
+  return message(5, join([protobuf.string_field(1, path), protobuf.varint_field(2, kind)]));
+}
+
+// The resources.pb of the module: the ResourceTable message of aapt2, with
+// the same types and IDs as the resources.arsc of the APK. Each value is in
+// the default configuration.
+pub function resource_table(app: apk.App): u8[] {
+  let types: u8[] = [];
+  for t in apk.res_types(app) {
+    if (t.entries.len() > 0) {
+      let ty = join([message(1, protobuf.varint_field(1, t.id as i64)), protobuf.string_field(2, t.name)]);
+      for k in 0..t.entries.len() {
+        let r = t.entries[k];
+        let value = message(2, message(4, entry_item(r.path)));
+        let entry = join([message(1, protobuf.varint_field(1, k as i64)), protobuf.string_field(2, r.key), message(6, join([message(1, []), value]))]);
+        ty = util.append_bytes(ty, message(3, entry));
+      }
+      types = util.append_bytes(types, message(3, ty));
+    }
+  }
+  return message(2, join([message(1, protobuf.varint_field(1, 127i64)), protobuf.string_field(2, app.package), types]));
+}
+
+// The BundleConfig.pb of the bundle: the version of bundletool.
+pub function bundle_config(): u8[] {
+  return message(1, protobuf.string_field(2, BUNDLETOOL_VERSION));
+}
+
+function entry(name: string, data: u8[]): apk.Entry {
+  return apk.Entry { name: name, data: data, deflated: true };
+}
+
+// The files of the bundle, with no signature.
+pub function files(app: apk.App, libs: apk.Lib[]): apk.Entry[] {
+  let out: apk.Entry[] = [entry("BundleConfig.pb", bundle_config()), entry(BASE + "manifest/AndroidManifest.xml", androidxml.proto(apk.manifest_tree(app)))];
+  if (app.dex.len() > 0) {
+    out = out.append(entry(BASE + "dex/classes.dex", app.dex));
+  }
+  if (apk.has_resources(app)) {
+    out = out.append(entry(BASE + "resources.pb", resource_table(app)));
+  }
+  if (app.icon.len() > 0) {
+    out = out.append(entry(BASE + apk.ICON_PATH, app.icon));
+  }
+  if (app.banner.len() > 0) {
+    out = out.append(entry(BASE + apk.BANNER_PATH, app.banner));
+  }
+  if (app.widget.provider.len() > 0) {
+    out = out.append(entry(BASE + apk.WIDGET_LAYOUT_PATH, androidxml.proto(apk.widget_layout(app.widget)))).append(entry(BASE + apk.WIDGET_INFO_PATH, androidxml.proto(apk.widget_info())));
+  }
+  for a in app.assets {
+    out = out.append(entry(BASE + "assets/" + a.name, a.data));
+  }
+  for l in libs {
+    out = out.append(entry(BASE + "lib/" + l.abi + "/lib" + app.lib + ".so", l.image));
+  }
+  return out;
+}
+
+// The JAR signature of the bundle, which Google Play checks with the upload
+// key: META-INF/MANIFEST.MF has the digest of each file, FERN.SF has the
+// digest of the manifest and of each of its sections, and FERN.EC has the
+// signature of FERN.SF in a PKCS #7 SignedData.
+
+// A header line of a JAR manifest. A line has at most 72 bytes, and a
+// longer header goes on in lines that start with a space.
+function header(out: u8[], key: string, value: string): u8[] {
+  let line: u8[] = [];
+  line = util.append_bytes(util.append_bytes(util.append_bytes(line, key.as_bytes()), ": ".as_bytes()), value.as_bytes());
+  let k = 0;
+  let room = 72;
+  while (k < line.len()) {
+    let end = k + room;
+    if (end > line.len()) {
+      end = line.len();
+    }
+    if (k > 0) {
+      out = out.append(32 as u8);
+    }
+    for i in k..end {
+      out = out.append(line[i]);
+    }
+    out = util.append_bytes(out, "\r\n".as_bytes());
+    k = end;
+    room = 71;
+  }
+  return out;
+}
+
+function digest(data: [u8]): string {
+  return base64.encode(crypto.sha256(data));
+}
+
+function blank(out: u8[]): u8[] {
+  return util.append_bytes(out, "\r\n".as_bytes());
+}
+
+// The manifest, and the section of each file in it.
+function jar_manifest(entries: apk.Entry[]): (u8[], u8[][]) {
+  let main = blank(header(header([], "Manifest-Version", "1.0"), "Created-By", "fern"));
+  let sections: u8[][] = [];
+  let all = main;
+  for e in entries {
+    let section = blank(header(header([], "Name", e.name), "SHA-256-Digest", digest(e.data)));
+    sections = sections.append(section);
+    all = util.append_bytes(all, section);
+  }
+  return (all, sections);
+}
+
+function signature_file(entries: apk.Entry[], manifest: [u8], sections: u8[][]): u8[] {
+  let out = blank(header(header(header([], "Signature-Version", "1.0"), "Created-By", "fern"), "SHA-256-Digest-Manifest", digest(manifest)));
+  for k in 0..entries.len() {
+    out = blank(header(header(out, "Name", entries[k].name), "SHA-256-Digest", digest(sections[k])));
+  }
+  return out;
+}
+
+// The object identifiers of SHA-256, of PKCS #7 data, and of PKCS #7
+// signedData.
+function sha256_algorithm(): u8[] {
+  return apk.seq([apk.oid([96 as u8, 134 as u8, 72 as u8, 1 as u8, 101 as u8, 3 as u8, 4 as u8, 2 as u8, 1 as u8])]);
+}
+
+function pkcs7(last: u8): u8[] {
+  return apk.oid([42 as u8, 134 as u8, 72 as u8, 134 as u8, 247 as u8, 13 as u8, 1 as u8, 7 as u8, last]);
+}
+
+// The PKCS #7 SignedData of `sf`, with no content and with the certificate
+// of `key`.
+pub function signature_block(key: ecdsa.PrivateKey, sf: [u8]): u8[] {
+  let version: u8[] = apk.der(2, [1 as u8]);
+  let issuer = apk.seq([apk.name(apk.SUBJECT), apk.der(2, apk.serial(key))]);
+  let signer = apk.seq([version, issuer, sha256_algorithm(), apk.ecdsa_sha256(), apk.der(4, apk.sign(key, sf))]);
+  let signed = apk.seq([version, apk.der(49, sha256_algorithm()), apk.seq([pkcs7(1 as u8)]), apk.der(160, apk.certificate(key)), apk.der(49, signer)]);
+  return apk.seq([pkcs7(2 as u8), apk.der(160, signed)]);
+}
+
+// The bundle of `app` and `libs`, signed with the P-256 scalar `d`, or no
+// bytes when `d` is not a key.
+pub function write(app: apk.App, libs: apk.Lib[], d: [u8]): u8[] {
+  match (ecdsa.private_key(ecdsa.P256, d)) {
+    Ok(key) => {
+      let body = files(app, libs);
+      let (mf, sections) = jar_manifest(body);
+      let sf = signature_file(body, mf, sections);
+      let all: apk.Entry[] = [entry("META-INF/MANIFEST.MF", mf), entry("META-INF/FERN.SF", sf), entry("META-INF/FERN.EC", signature_block(key, sf))];
+      for e in body {
+        all = all.append(e);
+      }
+      let z = apk.zip(all);
+      return util.append_bytes(util.append_bytes(z.body, z.central), apk.eocd(z.count, z.central.len(), z.body.len()));
+    },
+    Err(_) => {
+      return [];
+    }
+  }
+}
