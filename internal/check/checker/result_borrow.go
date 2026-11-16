@@ -721,6 +721,12 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 	return inferred(tag)
 }
 
+// isOnceFunc reports a `once` function type.
+func isOnceFunc(t ast.Type) bool {
+	ft, ok := t.(*ast.FuncType)
+	return ok && ft.Once
+}
+
 // holdsNoHandle reports a type that cannot hold a handle: a number, a
 // boolean, a char, a string, a function, or an array, slice, tuple, option,
 // result, struct or enum whose parts are all such types. Reader, Writer and

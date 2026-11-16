@@ -26054,15 +26054,27 @@ function send_unsafe_reason_list(ts: typeinfo.Type[], s: Scope, seen: string[]):
   return "";
 }
 
-function ow_call_capture_diags(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx, prior: util.Diag[]): util.Diag[] {
+// `once_diags` holds the diagnostics of the `once` lambda arguments. Each
+// one takes the moves before the lambda: its captures move into it, so a
+// move that its own body makes is not a use after a move.
+function ow_call_capture_diags(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx, prior: util.Diag[], once_diags: util.Diag[]): util.Diag[] {
   if (prior.len() > 0) {
     return prior;
   }
   let out = ow_callback_capture_diags(c.callee, moved, ctx);
   for arg in c.args {
-    out = util.append_diags(out, ow_callback_capture_diags(arg, moved, ctx));
+    if (!ow_once_lambda(arg)) {
+      out = util.append_diags(out, ow_callback_capture_diags(arg, moved, ctx));
+    }
   }
-  return out;
+  return util.append_diags(out, once_diags);
+}
+
+function ow_once_lambda(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return lm.once;
+  }
+  return false;
 }
 
 function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
@@ -26081,7 +26093,11 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
     m = rc.moved;
     d = util.append_diags(d, rc.diags);
   }
+  let once_diags: util.Diag[] = [];
   for i in 0..oc.args.len() {
+    if (ow_once_lambda(oc.args[i])) {
+      once_diags = util.append_diags(once_diags, ow_callback_capture_diags(oc.args[i], m, ctx));
+    }
     let ra = ru_borrow(oc.args[i], m, ctx);
     if (i < oc.flags.len() && oc.flags[i]) {
       ra = ow_consume_arg(oc.args[i], m, ctx);
@@ -26089,7 +26105,7 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
     m = ra.moved;
     d = util.append_diags(d, ra.diags);
   }
-  d = ow_call_capture_diags(c, m, ctx, d);
+  d = ow_call_capture_diags(c, m, ctx, d, once_diags);
   if let ast.ExprLambda(lm) = c.callee {
     let lctx = ow_nested_ctx(ctx, lm, false);
     let inner = ow_stmts(lm.body, ow_nested_moved(m, lm.params), lctx);
