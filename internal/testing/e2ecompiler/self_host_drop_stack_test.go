@@ -127,6 +127,30 @@ func TestSelfHostDropKeepsAStackInItsNodes(t *testing.T) {
 	if sole < 3 {
 		t.Errorf("the drop of Tree frees %d unique boxes with no count test, want 3 or more:\n%s", sole, body)
 	}
+	// A value of Tree is never an odd address, so its tests skip bit 0.
+	if strings.Contains(body, "testb $1,") {
+		t.Errorf("the drop of Tree tests bit 0 of a Tree:\n%s", body)
+	}
+	armOut := filepath.Join(dir, "stack-arm64.s")
+	cmd = exec.Command(h.cli, "-target", "arm64-linux", "-emit", "asm", "-o", armOut, src, h.stdlib)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("emitting arm64: %v\n%s", err, combined)
+	}
+	armAsm, err := os.ReadFile(armOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	armLoc := regexp.MustCompile(`(?m)^__fn___sem_drop_\w*Tree\.r:\n`).FindIndex(armAsm)
+	if armLoc == nil {
+		t.Fatal("no arm64 drop helper for Tree in the listing")
+	}
+	armBody := string(armAsm[armLoc[1]:])
+	if end := strings.Index(armBody, ".ltorg"); end >= 0 {
+		armBody = armBody[:end]
+	}
+	if regexp.MustCompile(`(?m)tbnz x\d+, #0,|tst x\d+, #1$`).MatchString(armBody) {
+		t.Errorf("the arm64 drop of Tree tests bit 0 of a Tree:\n%s", armBody)
+	}
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")
 		h.compileWith(t, tg, src, bin)

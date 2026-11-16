@@ -853,7 +853,7 @@ function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
 function drop_value_inline(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
   if (has_children(t, f)) {
     r = emit(r, ir.op_load_local(slot));
-    r = emit(r, aligned_unique());
+    r = emit(r, aligned_unique_of(t, f));
     r = emit(r, ir.op_if(0));
     r = drop_children(r, slot, t, scratch, f);
     r = emit(r, ir.op_end());
@@ -864,6 +864,24 @@ function drop_value_inline(own r: irtables.LowerState, slot: i32, t: typeinfo.Ty
 function aligned_unique(): ir.Op {
   let op = ir.op_call_direct("__fern_rc_is_unique", 1);
   return ir.Op { ...op, i64_imm: 4 };
+}
+
+// The uniqueness test of a value of `t`.
+function aligned_unique_of(t: typeinfo.Type, f: ssasem.Func): ir.Op {
+  return if (never_odd(t, f)) { ir.boxed_count(aligned_unique()) } else { aligned_unique() };
+}
+
+// A value of a record or of an enum of boxes has no tag, so it is never an
+// odd address.
+function never_odd(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if (!ssasem.box_shape(t)) {
+    return false;
+  }
+  if (typeinfo.is_record(t)) {
+    return true;
+  }
+  let layout = enum_layout(f, t);
+  return layout == semrecords.layout_variant() || layout == semrecords.layout_member();
 }
 
 function drop_payload(own r: irtables.LowerState, slot: i32, e: semrecords.Enum, scratch: i32, f: ssasem.Func): irtables.LowerState {
@@ -943,12 +961,12 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
 
 // The count of the next node is read before the other fields drop, so the
 // read of its header does not wait for them.
-function chain_link(own r: irtables.LowerState, tail: i32): irtables.LowerState {
+function chain_link(own r: irtables.LowerState, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   r = emit(r, ir.op_load_local(1));
   r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
   r = emit(r, ir.op_store_local(3));
   r = emit(r, ir.op_load_local(3));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(t, f));
   return emit(r, ir.op_store_local(4));
 }
 
@@ -964,7 +982,7 @@ function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t:
   let tail = self_tail_field(v, t);
   let linked = tail >= 0 && semtypes.equal(v.fields[tail].ty, t);
   if (linked) {
-    r = chain_link(r, tail);
+    r = chain_link(r, tail, t, f);
   }
   let waits = waiting_field(v, t, f);
   for i in 0..v.fields.len() {
@@ -1013,7 +1031,7 @@ function waiting_field(v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func):
 function pushed_field(own r: irtables.LowerState, i: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   let leaves = childless_shapes(t, f);
   r = emit(r, ir.op_load_local(5));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_if(0));
   for shape in leaves {
     r = emit(r, ir.op_load_local(5));
@@ -1054,7 +1072,7 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
   r = emit(r, ir.op_load_local(CHAIN_PENDING));
   r = emit(r, ir.op_store_local(CHAIN_CELL));
   r = emit(r, ir.op_load_local(CHAIN_CELL));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_if(0));
   let opened: string[] = [];
   for v in e.variants {
@@ -1082,7 +1100,7 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
   r = sole_release(release(r, CHAIN_CELL, t, f));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(1));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(2));
@@ -1160,7 +1178,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
   r = emit(r, ir.op_load_local(next));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_store_local(unique));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(unique));
@@ -1234,7 +1252,7 @@ function drop_variant_stack(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
   r = emit(r, ir.op_load_local(next));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_store_local(unique));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(unique));
@@ -1291,7 +1309,7 @@ function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array:
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(3));
   r = emit(r, ir.op_load_local(3));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(elem, f));
   r = emit(r, ir.op_store_local(4));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
@@ -1406,7 +1424,7 @@ function drop_known(own r: irtables.LowerState, value: i32, links: i32[], f: ssa
   }
   if (walked_rest(fields, [], f) > 0) {
     r = emit(r, ir.op_load_local(value));
-    r = emit(r, aligned_unique());
+    r = emit(r, aligned_unique_of(f.values[value], f));
     r = emit(r, ir.op_if(0));
     r = drop_fields_except(r, value, fields, [], scratch_start, f);
     r = emit(r, ir.op_end());
@@ -7847,7 +7865,8 @@ function aligned_rc(own r: irtables.LowerState, f: ssasem.Func): irtables.LowerS
       && before.kind_tag == load_local && before.i32_imm < f.values.len()) {
       let t = f.values[before.i32_imm];
       if (ssasem.counted(f, t) && !typeinfo.is_array_view(t)) {
-        ops = ops.with(i, ir.Op { ...op, i64_imm: 4 });
+        let aligned = ir.Op { ...op, i64_imm: 4 };
+        ops = ops.with(i, if (never_odd(t, f)) { ir.boxed_count(aligned) } else { aligned });
       }
     }
     i += 1;

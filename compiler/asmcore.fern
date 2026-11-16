@@ -97,6 +97,7 @@ pub struct EmitState {
   slot_load_reg: string,
   slot_load_disp: i32,
   ssa_boxed: boolean[],
+  ssa_even: boolean[],
   reg_entries: irtables.SigReg,
   float_abi: irtables.SigReg,
   float_abi_masks: string[],
@@ -647,6 +648,7 @@ pub function new_state(): EmitState {
     slot_load_reg: "",
     slot_load_disp: 0,
     ssa_boxed: [],
+    ssa_even: [],
     reg_entries: irtables.sig_reg_of([]),
     float_abi: irtables.sig_reg_of([]),
     float_abi_masks: [],
@@ -6280,6 +6282,12 @@ pub function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: 
 // A sanitizer build keeps the test.
 pub function ssa_is_boxed(s: EmitState, v: i32): boolean {
   return !s.rc_free_debug && v >= 0 && v < s.ssa_boxed.len() && s.ssa_boxed[v];
+}
+
+// Whether v is never an odd address (ssadeps.even_values), so a count of it
+// needs no test of bit 0. A sanitizer build keeps the test.
+pub function ssa_is_even(s: EmitState, v: i32): boolean {
+  return !s.rc_free_debug && v >= 0 && v < s.ssa_even.len() && s.ssa_even[v];
 }
 
 pub function ssa_x0_forget(s: EmitState): EmitState {
