@@ -1406,6 +1406,9 @@ function ssa_emit_unwind(saved: i32[], canary: i32, s: asmcore.EmitState, tail: 
 }
 
 function ssa_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcore.EmitState {
+  if (fr.frameless && tail == "") {
+    return ssa_ret(s);
+  }
   if (fr.leaf) {
     return s.write(ssa_exit_mark() + tail + "\n");
   }
@@ -4293,7 +4296,9 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
 }
 
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
+// frameless says the block runs before the function makes its frame
+// (ssa.frame_split), so its return takes no frame down.
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32, frameless: boolean }
 
 // `shape` names the shape whose tag `b` is, when the fused test covers the
 // instruction that makes `b`.
@@ -5424,9 +5429,6 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   if (leaf) {
     body = buf_new(4096);
     s = asmcore.EmitState { ...s, capture: body };
-  } else {
-    s = ssa_frame_record(s);
-    s = ssa_save(saved, s);
   }
   let fn_label = "__fn_" + asmcore.sanitize_label(label_name);
   let dbg = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
@@ -5435,7 +5437,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
   let cold = ssa_cold_saves(f, alloc);
-  let fr = SsaFrame { nspill: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary };
+  let fr = SsaFrame { nspill: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary, frameless: false };
   let fusions: ssaprepare.Fusion[] = [];
   let frame: i32 = (fr.nspill + 3 * ssa.view_count(views)) * 8;
   if (cold.any) {
@@ -5448,6 +5450,15 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   if (canary > 0) {
     drop = frame + 16;
   }
+  let early_homes = ssa_early_homes(f, fr, reg_of, s);
+  let split = if (!leaf && drop == 0 && s.profile == 0) { ssa_frame_split(f, fr, reg_of, early_homes) } else { ssa.FrameSplit { early: [], sites: [] } };
+  let fr_early = SsaFrame { ...fr, frameless: true };
+  let cfi_framed = false;
+  if (split.early.len() > 0) {
+    s = ssa_cfi(s, 7, "", 0);
+  } else if (!leaf) {
+    s = ssa_save(saved, ssa_frame_record(s));
+  }
   if (drop > 0) {
     s = ssa_frame_drop(s, drop);
   }
@@ -5456,7 +5467,8 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = fr_str(s, "x17", -canary);
   }
   s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes) };
-  s = ssa_load_params(f, reg_of, fr.fmask, s);
+  s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, fr.fmask, s);
+  let frame_homes = reg_of;
   let pos = 0;
   let pool_insts = 0;
   for bi in 0..f.blocks.len() {
@@ -5467,6 +5479,18 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     }
     s = asmcore.ssa_x0_forget(s);
     s = s.lab_def(ssa_blab(fr, lp, blk.id));
+    let early = split.early.len() > 0 && split.early[bi];
+    let reg_of = if (early) { early_homes.homes } else { frame_homes };
+    if (split.early.len() > 0 && split.sites[bi]) {
+      if (cfi_framed) {
+        s = ssa_cfi_no_frame(s);
+      }
+      s = ssa_late_params(frame_homes, early_homes, ssa_save(saved, ssa_frame_record(s)));
+      cfi_framed = true;
+    } else if (split.early.len() > 0 && early == cfi_framed) {
+      s = if (early) { ssa_cfi_no_frame(s) } else { ssa_cfi_frame_record(s) };
+      cfi_framed = !early;
+    }
     let fu = ssa_fuse(ssa_fuse_view(fr), blk);
     fusions = ssa_retain_fusion(fusions, fu, s.retain_prepared);
     let ii = 0;
@@ -5497,11 +5521,14 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = ssa_fused_test(fr, reg_of, fu, asmcore.ssa_join(lp, blk.id), s);
     s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
     if (!tailed) {
-      s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
+      s = ssa_term(f, if (early) { fr_early } else { fr }, blk, reg_of, lp, next, fu, s);
     }
     pos = pos + blk.insts.len() + 1;
   }
   s = asmcore.dbg_label(s, dbg, fn_label, pos);
+  if (split.early.len() > 0) {
+    s = ssa_cfi(s, 8, "", 0);
+  }
   let framed = !leaf;
   if (leaf) {
     let text = buf_take(body);
@@ -5532,6 +5559,144 @@ function ssa_frame_drop(s: asmcore.EmitState, frame: i32): asmcore.EmitState {
   }
   s = s.write(lo.name + ":\n    sub sp, sp, #4096\n    str xzr, [sp, #0]\n    sub x16, x16, #4096\n    cmp x16, #4095\n    b.hi " + lo.name + "\n");
   return s.write("    sub sp, sp, x16\n");
+}
+
+// The blocks of a function with no slot that run before the frame, and the
+// blocks that make it (ssa.frame_split).
+function ssa_frame_split(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], early: EarlyHomes): ssa.FrameSplit {
+  let none = ssa.FrameSplit { early: [], sites: [] };
+  if (fr.canary > 0 || f.nparams > ssa_reg_params(f) || early.homes.len() == 0) {
+    return none;
+  }
+  let ok: boolean[] = [];
+  let tied: i32[] = [];
+  for bi in 0..f.blocks.len() {
+    let blk = f.blocks[bi];
+    ok = ok.append(ssa_frameless(f, fr, reg_of, early, blk));
+    let to: i32 = -1;
+    if (blk.term.kind_tag == ssa.TERM_BR && ssa_rotates(f, fr, bi, blk.term.target)) {
+      to = ssa.block_index(fr.blk_pos, blk.term.target);
+    }
+    tied = tied.append(to);
+  }
+  // A jump goes to the end of a chain of blocks that only pass it on. The
+  // chain can depend on the homes, and the split needs one answer.
+  let fwd: i32[] = [];
+  for blk in f.blocks {
+    let to = ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, blk.id);
+    if (to != ssa.forward_target(f, fr.blk_pos, fr.imm, early.homes, blk.id)) {
+      return ssa.FrameSplit { early: [], sites: [] };
+    }
+    fwd = fwd.append(ssa.block_index(fr.blk_pos, to));
+  }
+  return ssa.frame_split(f, fr.blk_pos, ok, tied, fwd);
+}
+
+// The homes of the early blocks of `f`, or no homes when a parameter cannot
+// wait in the register of its argument: another parameter has that register
+// as its home, or the parameter is a float or a lane.
+function ssa_early_homes(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], s: asmcore.EmitState): EarlyHomes {
+  let none = EarlyHomes { late: [], homes: [], entry: [] };
+  let late: i32[] = [];
+  let homes = reg_of;
+  let entry = reg_of;
+  for p in 0..f.nparams {
+    if (ssa_frame_home(reg_of[p])) {
+      if (ssa_arg_loc(fr.fmask, p) != p || p >= ssa_reg_params(f) || s.var_rows) {
+        return none;
+      }
+      late = late.append(p);
+      homes = homes.with(p, p);
+      entry = entry.with(p, -1);
+    }
+  }
+  for p in 0..f.nparams {
+    if (util.index_of_i32(late, p) < 0 && reg_of[p] >= 0 && util.index_of_i32(late, reg_of[p]) >= 0) {
+      return none;
+    }
+  }
+  return EarlyHomes { late: late, homes: homes, entry: entry };
+}
+
+// Moves each late parameter from the register of its argument to its home.
+function ssa_late_params(reg_of: i32[], early: EarlyHomes, s: asmcore.EmitState): asmcore.EmitState {
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  for p in early.late {
+    srcs = srcs.append(early.homes[p]);
+    dsts = dsts.append(reg_of[p]);
+  }
+  return ssa_parallel_moves(srcs, dsts, s);
+}
+
+// A home that the frame saves, or the link register, which a call changes.
+function ssa_frame_home(h: i32): boolean {
+  let fs = ssa_fbase() + ssa_nfregs();
+  return h < -1 || h == 12 || h >= ssa_nregs() && h < ssa_nregs() + ssa_nsaved() || h >= fs && h < fs + ssa_nfsaved();
+}
+
+// A block that can run with no frame. Each instruction is a move, a load, a
+// constant or an integer operation that cannot trap. No value of the block
+// has a home that the frame saves, and no instruction writes the register
+// that holds a late parameter. A phi of a successor is written on the edge,
+// so its home counts too.
+function ssa_frameless(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], early: EarlyHomes, blk: ssa.SBlock): boolean {
+  let t = blk.term;
+  if (t.kind_tag != ssa.TERM_RET && t.kind_tag != ssa.TERM_BR && t.kind_tag != ssa.TERM_BRIF) {
+    return false;
+  }
+  for ins in blk.insts {
+    let k = ins.kind_tag;
+    let plain = k == ssa.PARAM || k == ssa.CONST_INT || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LD_AT || k == ssa.SHAPE_ADDR || k == ssa.LINE;
+    if (!plain && !(k == ssa.BINARY && util.has_str(["add", "sub", "and", "or", "xor", "eq", "ne", "lt_s", "lt_u", "le_s", "le_u", "gt_s", "gt_u", "ge_s", "ge_u"], ins.str))) {
+      return false;
+    }
+    if (k != ssa.PARAM && ins.result >= 0 && ssa_taken_home(early.late, reg_of[ins.result])) {
+      return false;
+    }
+    for a in ins.args {
+      if (a >= 0 && a < early.homes.len() && ssa_frame_home(early.homes[a])) {
+        return false;
+      }
+    }
+  }
+  for to in [t.target, t.t, t.f] {
+    let ti = if (t.kind_tag == ssa.TERM_RET) { -1 } else { ssa.block_index(fr.blk_pos, to) };
+    if (ti >= 0) {
+      for ins in f.blocks[ti].insts {
+        if (ins.kind_tag == ssa.PHI && ssa_taken_home(early.late, reg_of[ins.result])) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// The homes of the early blocks. A parameter whose home the frame saves
+// stays in the register of its argument until the frame exists. `late` has
+// each such parameter. The register of argument p has the home index p, so
+// `late` names those registers too. `homes` has that register in place of
+// the home, and `entry` has no home for a late parameter, so the entry does
+// not move it.
+struct EarlyHomes { late: i32[], homes: i32[], entry: i32[] }
+
+// A home that an early block must not write: one that the frame saves, or
+// the register of the argument of a late parameter.
+function ssa_taken_home(late: i32[], h: i32): boolean {
+  return ssa_frame_home(h) || h >= 0 && util.index_of_i32(late, h) >= 0;
+}
+
+
+// The CFI rows of the frame record, for a block that follows text with no
+// frame.
+function ssa_cfi_frame_record(s: asmcore.EmitState): asmcore.EmitState {
+  return ssa_cfi(ssa_cfi(ssa_cfi(s, 5, "x29", 16), 6, "x29", -16), 6, "x30", -8);
+}
+
+// The CFI rows of the entry, which the emitter remembered there.
+function ssa_cfi_no_frame(s: asmcore.EmitState): asmcore.EmitState {
+  return ssa_cfi(ssa_cfi(s, 8, "", 0), 7, "", 0);
 }
 
 function ssa_frame_record(s: asmcore.EmitState): asmcore.EmitState {

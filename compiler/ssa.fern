@@ -552,6 +552,100 @@ pub function hard_call_positions(f: SFunc, cold: i32[]): boolean[] {
   return out;
 }
 
+// `early` has each block that runs before the function makes its frame, and
+// `sites` has each block that makes the frame when control enters it. The two
+// are empty when the frame is made at the entry.
+pub struct FrameSplit { early: boolean[], sites: boolean[] }
+
+// The positions that the jumps of `t` reach. The emitter sends a jump to a
+// block that only passes it on to the end of that chain (`forward_target`),
+// and `fwd` has that end for each position.
+function block_successors(at: i32[], fwd: i32[], t: STerm): i32[] {
+  let ids: i32[] = [];
+  if (t.kind_tag == TERM_BR) {
+    ids = [t.target];
+  } else if (t.kind_tag == TERM_BRIF && t.t == t.f) {
+    ids = [t.t];
+  } else if (t.kind_tag == TERM_BRIF) {
+    ids = [t.t, t.f];
+  }
+  let out: i32[] = [];
+  for id in ids {
+    let to = block_index(at, id);
+    out = out.append(if (to >= 0) { fwd[to] } else { to });
+  }
+  return out;
+}
+
+// Splits a function whose frame only saves registers. `ok[b]` says the block
+// at position b needs no frame: it makes no call and no trap, and it reads
+// and writes no register that the frame saves. `tied[b]` is the position of a
+// block that the emitter copies to the end of b, or -1. `fwd[b]` is the
+// position that a jump to b reaches.
+//
+// A block is early when it is ok, each of its predecessors is early, and a
+// block tied to it is early. The predecessors of a block that is not early
+// are all early or all not early, so the frame is made one time on each path.
+// The split is empty unless an early block returns.
+pub function frame_split(f: SFunc, at: i32[], ok: boolean[], tied: i32[], fwd: i32[]): FrameSplit {
+  let none = FrameSplit { early: [], sites: [] };
+  let n = f.blocks.len();
+  if (n == 0 || f.blocks[0].id != f.entry || !ok[0]) {
+    return none;
+  }
+  let preds: i32[][] = [];
+  for b in f.blocks {
+    preds = preds.append([]);
+  }
+  for b in 0..n {
+    for to in block_successors(at, fwd, f.blocks[b].term) {
+      if (to < 0) {
+        return none;
+      }
+      preds = preds.with(to, preds[to].append(b));
+    }
+  }
+  let early = ok;
+  let changed = true;
+  while (changed && early[0]) {
+    changed = false;
+    for b in 0..n {
+      let before = 0;
+      let after = 0;
+      for p in preds[b] {
+        if (early[p]) {
+          before = before + 1;
+        } else {
+          after = after + 1;
+        }
+      }
+      if (early[b] && (after > 0 || tied[b] >= 0 && !early[tied[b]])) {
+        early = early.with(b, false);
+        changed = true;
+      } else if (!early[b] && before > 0 && after > 0) {
+        for p in preds[b] {
+          early = early.with(p, false);
+        }
+        changed = true;
+      }
+    }
+  }
+  let returns = false;
+  let sites = __alloc_bool(n);
+  for b in 0..n {
+    returns = returns || early[b] && f.blocks[b].term.kind_tag == TERM_RET;
+    for p in preds[b] {
+      if (!early[b] && early[p]) {
+        sites = sites.with(b, true);
+      }
+    }
+  }
+  if (!early[0] || !returns) {
+    return none;
+  }
+  return FrameSplit { early: early, sites: sites };
+}
+
 pub const COLD_NONE: i32 = 0;
 
 pub const COLD_SLOW: i32 = 1;
