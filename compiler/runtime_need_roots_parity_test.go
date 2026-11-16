@@ -40,10 +40,42 @@ func allRuntimeNeedRootsBody(t *testing.T) string {
 	return body
 }
 
+// byteCopyKernels is the list that rtbytecopy.kernel_names returns.
+// asmcore.need_array_helper marks each name as a need through a variable,
+// which marksNeed cannot see.
+func byteCopyKernels(t *testing.T) []string {
+	t.Helper()
+	src, err := os.ReadFile("rtbytecopy.fern")
+	if err != nil {
+		t.Fatalf("read rtbytecopy.fern: %v", err)
+	}
+	const decl = "pub function kernel_names(): string[] {"
+	i := strings.Index(string(src), decl)
+	if i < 0 {
+		t.Fatal("rtbytecopy.fern: kernel_names not found — did it move or get renamed?")
+	}
+	body, _, _ := strings.Cut(string(src)[i:], "\n}")
+	var out []string
+	for _, m := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(body, -1) {
+		out = append(out, m[1])
+	}
+	if len(out) == 0 {
+		t.Fatal("kernel_names parsed as empty — the extraction is broken, not the list")
+	}
+	return out
+}
+
 func TestAllRuntimeNeedRootsCoversEveryLiteralNeed(t *testing.T) {
 	listed := map[string]bool{}
-	for _, m := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(allRuntimeNeedRootsBody(t), -1) {
+	body := allRuntimeNeedRootsBody(t)
+	for _, m := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(body, -1) {
 		listed[m[1]] = true
+	}
+	kernels := byteCopyKernels(t)
+	if strings.Contains(body, "rtbytecopy.kernel_names()") {
+		for _, name := range kernels {
+			listed[name] = true
+		}
 	}
 	if len(listed) == 0 {
 		t.Fatal("all_runtime_need_roots parsed as empty — the extraction is broken, not the list")
@@ -75,6 +107,9 @@ func TestAllRuntimeNeedRootsCoversEveryLiteralNeed(t *testing.T) {
 	}
 	if len(marked) == 0 {
 		t.Fatal("no .need(\"…\") sites found — the extraction is broken, not the sources")
+	}
+	for _, name := range kernels {
+		marked[name] = append(marked[name], "asmcore.fern")
 	}
 
 	var missing []string

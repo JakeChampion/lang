@@ -74,6 +74,25 @@ function main(): i32 {
     if (args().len() != 2 || args()[1] != "b-b") { return 1; }
     return 42;
 }`, nil, 42},
+	{"lent-through-two-calls-in-loop", `@noinline function keep(a: string[]): void { set_args(a); }
+@noinline function save(a: string[]): void { keep(a); }
+function twice(s: string): string { return s + "-" + s; }
+@noinline function mark(own xs: string[], n: i32): string[] {
+    let i: i32 = 0;
+    while (i < n) {
+        save(xs);
+        xs = xs.with(i, twice(xs[i]));
+        i = i + 1;
+    }
+    return xs;
+}
+function main(): i32 {
+    let got: string[] = mark([twice("a"), twice("b")], 2);
+    if (got[0] != "a-a-a-a" || got[1] != "b-b-b-b") { return 1; }
+    let now: string[] = args();
+    if (now.len() != 2 || now[0] != "a-a-a-a" || now[1] != "b-b") { return 2; }
+    return 42;
+}`, nil, 42},
 }
 
 func TestSelfHostSetArgs(t *testing.T) {

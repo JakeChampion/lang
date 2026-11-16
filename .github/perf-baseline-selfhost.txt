@@ -53,7 +53,7 @@ selfhost/arm64-linux/byte_copy_append.emit	1608
 selfhost/arm64-linux/byte_copy_with.emit	1559
 selfhost/arm64-linux/call_overhead.emit	434
 selfhost/arm64-linux/closure_call.emit	1309
-selfhost/arm64-linux/deflate_decode.emit	16972
+selfhost/arm64-linux/deflate_decode.emit	16782
 selfhost/arm64-linux/deflate_encode.emit	8251
 selfhost/arm64-linux/enum_match.emit	1273
 selfhost/arm64-linux/http_hello.emit	16947
@@ -121,7 +121,7 @@ selfhost/x86-64-linux/byte_copy_append.emit	1357
 selfhost/x86-64-linux/byte_copy_with.emit	1319
 selfhost/x86-64-linux/call_overhead.emit	353
 selfhost/x86-64-linux/closure_call.emit	1065
-selfhost/x86-64-linux/deflate_decode.emit	15095
+selfhost/x86-64-linux/deflate_decode.emit	14941
 selfhost/x86-64-linux/deflate_encode.emit	7763
 selfhost/x86-64-linux/enum_match.emit	1036
 selfhost/x86-64-linux/http_hello.emit	16222
