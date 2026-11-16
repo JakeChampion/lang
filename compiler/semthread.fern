@@ -64,7 +64,7 @@ function decidable(g: ssa.SFunc): boolean {
       let k = ins.kind_tag;
       if (k == ssa.CONST_BOOL) {
         constant = constant.with(ins.result, true);
-      } else if (ins.args.len() == 1 && (k == ssa.COPY || k == ssasem.variant_get() || k == ssasem.record_get() || k == ssasem.tuple_get())) {
+      } else if (ins.args.len() == 1 && (k == ssa.COPY || k == ssasem.variant_get() || k == ssasem.record_get() || k == ssasem.tuple_get()) || ins.args.len() >= 1 && ssasem.is_field_step(ins)) {
         up = up.with(ins.result, ins.args[0]);
       } else if (k == ssasem.variant_is() && ins.args.len() == 1) {
         tested = tested.append(ins.args[0]);
@@ -246,6 +246,19 @@ struct Key { root: i32, path: string }
 function key_of(defs: ssa.SInst[], v: i32): Key {
   let d = through_copies(defs, v);
   let k = d.kind_tag;
+  // A narrow field packed in a word is read by shifts, masks and casts of that word.
+  if (ssasem.is_field_step(d) && d.args.len() >= 1 && d.args[0] >= 0) {
+    let by = "";
+    if (d.args.len() == 2) {
+      let c = through_copies(defs, d.args[1]);
+      if (d.args[1] < 0 || c.kind_tag != ssa.CONST_INT && c.kind_tag != ssa.CONST_I64) {
+        return Key { root: d.result, path: "" };
+      }
+      by = c.str + "/" + util.i32_to_string(c.imm);
+    }
+    let from = key_of(defs, d.args[0]);
+    return Key { root: from.root, path: from.path + "." + util.i32_to_string(k) + ":" + d.str + ":" + by };
+  }
   let reads = k == ssasem.variant_get() || k == ssasem.record_get() || k == ssasem.tuple_get();
   if (!reads || d.args.len() != 1 || d.args[0] < 0) {
     return Key { root: d.result, path: "" };
