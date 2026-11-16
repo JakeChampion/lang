@@ -38,6 +38,7 @@ import "./elf";
 import "./elfimage";
 import "./imagemanifest";
 import "./indexsign";
+import "./aab";
 import "./apk";
 import "./dex";
 import "./ircore";
@@ -2334,7 +2335,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-export", "NAMES", "with -shared or a freestanding -target: the comma-separated functions to export, besides the @jni ones (default main)"),
       sub_flag("-jni-java", "DIR", ["-shared"], "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
       sub_flag("-jni-dex", "FILE", ["-shared"], "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
-      mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT; the [android] table of the fern.toml of FILE gives the -apk- settings that no flag gives"),
+      mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT, or an Android App Bundle for Google Play when OUT ends in .aab; the [android] table of the fern.toml of FILE gives the -apk- settings that no flag gives"),
       sub_flag("-apk-package", "NAME", ["-apk"], "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
       sub_flag("-apk-label", "TEXT", ["-apk"], "with -apk: the name of the app on the launcher (default LIB)"),
       sub_flag("-apk-permission", "NAMES", ["-apk"], "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
@@ -2346,7 +2347,7 @@ function flag_groups(): FlagGroup[] {
       sub_flag("-apk-compress", "", ["-apk"], "with -apk: deflate the libraries, so the APK is smaller, and Android extracts them at install (default: store them, so Android maps them from the APK)"),
       sub_flag("-apk-cleartext", "", ["-apk"], "with -apk: let the app's Java networking, such as the media player, use http:// with no TLS (android:usesCleartextTraffic); the Fern sockets of the app do not need it"),
       sub_flag("-apk-debuggable", "", ["-apk"], "with -apk: mark the app debuggable (android:debuggable), so adb run-as can read its files; do not ship such an APK"),
-      sub_flag("-apk-key", "FILE", ["-apk"], "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
+      sub_flag("-apk-key", "FILE", ["-apk"], "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk or .aab); sign each release of a bundle with the same key, the upload key of Google Play"),
       sub_flag("-apk-home", "", ["-apk"], "with -apk: make the app a home screen: Android offers it as the home app, keeps one task of it, and shows the wallpaper behind it"),
       sub_flag("-apk-tv", "", ["-apk"], "with -apk: put the app on the launcher of Android TV too; it then needs no touch screen"),
       sub_flag("-apk-widget", "ITEMS", ["-apk"], "with -apk: the comma-separated items of the row of the app widget of the home screen, each text:NAME:LABEL or button:NAME:LABEL; the app has one @jni class that extends android.appwidget.AppWidgetProvider"),
@@ -6284,7 +6285,7 @@ function apk_key_path(o: ApkOpts): string {
   if (o.key.len() > 0) {
     return o.key;
   }
-  if (o.out.ends_with(".apk")) {
+  if (o.out.ends_with(".apk") || o.out.ends_with(".aab")) {
     return slice_unchecked(o.out, 0, o.out.len() - 4) + ".key.pem";
   }
   return o.out + ".key.pem";
@@ -6586,6 +6587,11 @@ function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root
     eprint(assets_bad);
     return 2;
   }
+  let bundle = o.out.ends_with(".aab");
+  if (bundle && o.run) {
+    eprint("fern: -apk-run installs an APK, so OUT cannot end in .aab");
+    return 2;
+  }
   let lib = apk_lib_name(entry_path);
   let abis = apk_abis();
   let adb = "";
@@ -6617,7 +6623,11 @@ function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root
     return 2;
   }
   let app = apk.App { ...apk_app(o, lib, classes), icon: icon, banner: banner, assets: assets, widget: widget };
-  if let Err(e) = write_file_bytes(o.out, apk.write(app, libs, d)) {
+  let package = apk.write(app, libs, d);
+  if (bundle) {
+    package = aab.write(app, libs, d);
+  }
+  if let Err(e) = write_file_bytes(o.out, package) {
     eprint("fern: cannot write " + o.out + ": " + e.message());
     return 1;
   }

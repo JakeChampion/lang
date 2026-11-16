@@ -699,7 +699,7 @@ Native AAC and AVC packet checks cover asset offsets above 8 GiB.
 The host controls combine normal and sanitized Fern libraries with normal and UBSan C mocks.
 These mocks do not decode video.
 
-The Android workflow builds `tests/android/video/app.fern` and runs it on the API 34 emulator.
+The Android workflow builds `tests/android/video/app.fern` and runs it on the API 36 emulator.
 It requires AVC exports through both byte-buffer input and an EGL surface producer.
 FFmpeg independently decodes all exported frames and checks their dimensions, count, and gray pixels.
 The test requires surface playback, pause, resume, seek, and a gray screenshot.

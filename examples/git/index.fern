@@ -428,37 +428,6 @@ function local_bases(data: string, offsets: i64[], wanted: i32[], a: i32, local:
   return (all, all_names);
 }
 
-// The message of git for a delta by name whose base is in the packfile two
-// times, or "". git takes the delta from the first copy of the base, and
-// stops at the second copy, whose delta has a name already.
-function duplicate_base(data: string, offsets: i64[], names: string[], raw: i32): string {
-  let count = offsets.len() - 1;
-  let first: Map[string, i32] = Map { };
-  let second: Map[string, i32] = Map { };
-  for i in 0..count {
-    let n = names[i];
-    if (n.len() > 0 && first.get_or(n, -1) >= 0 && second.get_or(n, -1) < 0) {
-      second = second.insert(n, i);
-    } else if (n.len() > 0 && first.get_or(n, -1) < 0) {
-      first = first.insert(n, i);
-    }
-  }
-  let soonest = count;
-  let message = "";
-  for i in 0..count {
-    let e = pack.entry_in(pack.whole(data, raw), offsets[i]);
-    if (e.kind == pack.REF_DELTA) {
-      let base = hex.encode(e.base_name);
-      let at = second.get_or(base, count);
-      if (at < soonest) {
-        soonest = at;
-        message = "fatal: REF_DELTA at offset " + offsets[i].to_string() + " already resolved (duplicate base " + base + "?)";
-      }
-    }
-  }
-  return message;
-}
-
 // The index of the packfile `data`. `first` gives the names of the objects
 // in parts that are in order and that cover the packfile: a caller with
 // workers gives each part to one worker. `local` gives an object of the
@@ -511,10 +480,6 @@ pub function build_with(data: string, o: Options, first: (string, i64[]) => stri
       }
       named = resolved(whole, more, names, raw);
     }
-  }
-  let twice = duplicate_base(whole, ends, named.names, raw);
-  if (twice.len() > 0) {
-    return Err(twice);
   }
   if (named.left > 0) {
     return Err("fatal: pack has " + named.left.to_string() + " unresolved delta" + (if (named.left == 1) { "" } else { "s" }));

@@ -714,6 +714,16 @@ function hunks_of(a: u8[], b: u8[]): (i32[], i32[]) {
 // the count of the changes that touch a range (`process_all_files`).
 pub struct Step { store: store.Store, parent: Entry[], range: Entry[], changed: i32 }
 
+// The pair that a range keeps for its diff. As `diff_filepair_dup` of git,
+// it has the two sides and no status of a rename, so the diff shows a
+// rename as a change.
+function kept_pair(p: treediff.Change): treediff.Change {
+  if (p.status == b'R' || p.status == b'C') {
+    return treediff.Change { ...p, status: b'M', score: 0 };
+  }
+  return p;
+}
+
 // Maps the ranges of the commit with the tree `tree` to the parent with
 // the tree `base` ("" for none) across the diff of each file.
 pub function step(s_in: store.Store, range: Entry[], base: string, tree: string, r: Renames): Step {
@@ -738,7 +748,7 @@ pub function step(s_in: store.Store, range: Entry[], base: string, tree: string,
     if (tp.len() > 0) {
       changed += 1;
       let k = find(input, two);
-      input = input.with(k, Entry { ...input[k], pair: [p] });
+      input = input.with(k, Entry { ...input[k], pair: [kept_pair(p)] });
     }
   }
   return Step { store: s, parent: out, range: input, changed: changed };

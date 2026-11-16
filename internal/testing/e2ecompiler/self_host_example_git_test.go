@@ -602,12 +602,7 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				t.Fatal(err)
 			}
 			data[len(data)/2] ^= 0x40
-			if err := os.Chmod(packed, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(packed, data, 0o644); err != nil {
-				t.Fatal(err)
-			}
+			rewriteFile(t, packed, data)
 			_, _, wantCode := oracle.run(t, top, "", "verify-pack", idx)
 			if _, _, gotCode := port.run(t, top, "", "verify-pack", idx); wantCode == 0 || gotCode != wantCode {
 				t.Errorf("verify-pack of a changed packfile: the port gives exit %d and git gives %d", gotCode, wantCode)
@@ -617,6 +612,17 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 }
 
 // fileBytes gives the bytes of a file.
+// rewriteFile writes data to path, a file that git can make read-only.
+func rewriteFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func fileBytes(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

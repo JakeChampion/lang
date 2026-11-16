@@ -399,7 +399,7 @@ func (i *Interp) registerLaneBuiltins() {
 			}
 			return out, nil
 		}}
-		i.Builtins[p+"with_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		i.Builtins[p+"with_bytes"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
 			a, at, err := laneWindow(p+"with_bytes", args[0], args[1], 16)
 			if err != nil {
 				return nil, err
@@ -408,14 +408,14 @@ func (i *Interp) registerLaneBuiltins() {
 			if !ok || l.Width != width {
 				return nil, fmt.Errorf("packed lane store requires matching lanes")
 			}
-			e := append([]Value(nil), a.Elems()...)
-			for k := 0; k < 16; k++ {
-				e[at+k] = Number(uint8(l.Bits[k/(width/8)] >> ((k % (width / 8)) * 8)))
+			var e [16]Value
+			for k := range e {
+				e[k] = Number(uint8(l.Bits[k/(width/8)] >> ((k % (width / 8)) * 8)))
 			}
-			return arrayOf(e...), nil
+			return ip.writeElems(a, at, e[:]...)
 		}}
 
-		i.Builtins[p+"with"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		i.Builtins[p+"with"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
 			if len(args) != 3 {
 				return nil, fmt.Errorf("%swith: expected 3 args, got %d", p, len(args))
 			}
@@ -427,12 +427,11 @@ func (i *Interp) registerLaneBuiltins() {
 			if !ok {
 				return nil, fmt.Errorf("%swith: expected a lane value, got %T", p, args[2])
 			}
-			e := make([]Value, len(a.Elems()))
-			copy(e, a.Elems())
-			for k := range l.Bits {
-				e[at+k] = l.lane(k)
+			e := make([]Value, len(l.Bits))
+			for k := range e {
+				e[k] = l.lane(k)
 			}
-			return arrayOf(e...), nil
+			return ip.writeElems(a, at, e...)
 		}}
 	}
 	i.Builtins["__f64x2_load_f32_ptr"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
@@ -747,11 +746,11 @@ func (i *Interp) registerIntegerLanes(like Lanes) {
 		if err != nil {
 			return nil, err
 		}
-		e := append([]Value(nil), a.Elems()...)
-		for k := range 16 {
-			e[at+k] = Number(uint8(ls[0].Bits[k/size] >> (8 * (k % size))))
+		var e [16]Value
+		for k := range e {
+			e[k] = Number(uint8(ls[0].Bits[k/size] >> (8 * (k % size))))
 		}
-		return arrayOf(e...), nil
+		return i.writeElems(a, at, e[:]...)
 	}
 	for _, verb := range intLaneVerbs(like) {
 		name := p + verb

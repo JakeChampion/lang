@@ -1871,7 +1871,7 @@ struct SchemaSeen {
 
 struct ViewStep { seen: SchemaSeen, view: ssaunits.SchemaView }
 
-pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits.WriteRows): ssaunits.SchemaView[] {
+pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits.WriteRows, loans: ssaunits.LoanRows): ssaunits.SchemaView[] {
   let none: string[] = [];
   let seen = SchemaSeen { recs: [], rec_names: util.name_index(none), rec_unit: [], rec_walk: [], enums: [], enum_names: util.name_index(none), enum_unit: [], enum_walk: [] };
   let out: ssaunits.SchemaView[] = [];
@@ -1883,7 +1883,7 @@ pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits
     if (row >= 0) {
       raw = writes.raw[row];
     }
-    out = out.append(ssaunits.SchemaView { ...step.view, writes: writes, raw_result: writes.results.has(keys[i]), raw_values: raw, raw_known: row >= 0 });
+    out = out.append(ssaunits.SchemaView { ...step.view, writes: writes, loans: loans, raw_result: writes.results.has(keys[i]), raw_values: raw, raw_known: row >= 0 });
   }
   return out;
 }

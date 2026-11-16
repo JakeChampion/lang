@@ -2047,7 +2047,7 @@ function name_lines(changes: treediff.Change[], o: LogOpts): string {
       let old = unsafe { string_from_bytes_unchecked(objects.quoted(ch.old_path)) };
       out += status + (ch.score * 100 / 60000).to_string().pad_start_str(3, "0") + "\t" + old + "\t" + path + "\n";
     } else {
-      out += status + "\t" + path + "\n";
+      out += status + "\t" + unsafe { string_from_bytes_unchecked(objects.quoted(ch.old_path)) } + "\n";
     }
   }
   return out;
