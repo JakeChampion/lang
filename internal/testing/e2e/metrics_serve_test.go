@@ -97,6 +97,19 @@ func TestMetricsSupervisedServeX86_64(t *testing.T) {
 	}
 }
 
+// freeLoopbackPort gives a port that no socket holds now. Another socket can
+// take it before the server binds it (#16213).
+func freeLoopbackPort(t *testing.T) int {
+	t.Helper()
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no free TCP port: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+	return port
+}
+
 func checkMetricsServe(t *testing.T, addr, metricsAddr string, workers int) {
 	t.Helper()
 	e2eharness.WaitServerReady(t, addr)
