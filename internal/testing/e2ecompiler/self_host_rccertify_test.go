@@ -253,6 +253,24 @@ function pick(name: string): Case {
         let b4: ssa.SBlock = block(4, [2, 3], [const_int(4, 0)], ret(4));
         return Case { f: func(1, 5, [b0, b1, b2, b3, b4]), modes: [borrow], returns_unit: false };
     }
+    if (name == "literal-phi-released" || name == "literal-phi-returned" || name == "literal-phi-leaked" || name == "literal-phi-released-twice" || name == "borrow-phi-released") {
+        // v4 is a literal on one path and a fresh box on the other.
+        let lit: ssa.SInst = inst(47, 3, [], 0, "x");
+        if (name == "literal-phi-returned") { lit = inst(57, 3, [], 0, "&arr|"); }
+        let phi_args: i32[] = [2, 3];
+        if (name == "borrow-phi-released") { phi_args = [2, 0]; }
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [fresh_box(2)], br(3));
+        let b2: ssa.SBlock = block(2, [0], [lit], br(3));
+        let tail: ssa.SInst[] = [inst(8, 4, phi_args, 0, "")];
+        if (name == "literal-phi-released" || name == "borrow-phi-released") { tail = tail.append(call(5, "__fern_str_free", [4])); }
+        if (name == "literal-phi-released-twice") { tail = tail.append(call(5, "__fern_str_free", [4])).append(call(6, "__fern_str_free", [4])); }
+        tail = tail.append(const_int(7, 0));
+        let r: i32 = 7;
+        if (name == "literal-phi-returned") { r = 4; }
+        let b3: ssa.SBlock = block(3, [1, 2], tail, ret(r));
+        return Case { f: func(2, 8, [b0, b1, b2, b3]), modes: [borrow, rccertify.value_mode()], returns_unit: name == "literal-phi-returned" };
+    }
     if (name == "pair-word-released-on-each-payload-tag") {
         // A paired callee whose payload is a reference under tags 0 and 1:
         // the word is released on each, and the arm the two compares leave
@@ -643,6 +661,11 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"take-for-the-load-read-after", nil, 0, ""},
 		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0, ""},
 		{"retained-on-one-arm-released-on-another", nil, 1, ""},
+		{"literal-phi-released", nil, 0, ""},
+		{"literal-phi-returned", nil, 0, ""},
+		{"literal-phi-leaked", []string{"leaked at return of v4"}, 0, ""},
+		{"literal-phi-released-twice", []string{"spent without a unit of v4"}, 0, ""},
+		{"borrow-phi-released", nil, 1, ""},
 		{"resumed-frame-not-certified", nil, 0, "resumes from a task frame"},
 		{"pair-word-released-on-each-payload-tag", nil, 0, ""},
 		{"pair-word-unreleased-on-a-payload-tag", []string{"leaked where it dies of v1"}, 0, ""},

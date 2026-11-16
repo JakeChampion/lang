@@ -286,7 +286,8 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
     return;
   }
   let line: string = "FERN_RC_CERTIFY: census " + fn_name + " tracked=" + util.i32_to_string(r.tracked)
-    + " unproved=" + util.i32_to_string(r.unproved) + " findings=" + util.i32_to_string(r.findings.len());
+    + " unproved=" + util.i32_to_string(r.unproved) + " findings=" + util.i32_to_string(r.findings.len())
+    + " rounds=" + util.i32_to_string(r.rounds);
   if (r.skipped != "") {
     line = line + " skipped=" + r.skipped;
   }

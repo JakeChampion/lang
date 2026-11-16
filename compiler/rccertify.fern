@@ -104,14 +104,15 @@ pub function render(fn_name: string, x: Finding): string {
 
 // `skipped` names a function the design leaves uncertified. `failed` names
 // one the certifier could not decide, which the gate refuses.
-pub struct Report { findings: Finding[], tracked: i32, unproved: i32, opaque: string[], skipped: string, failed: string }
+// `rounds`: the most rounds one walk of the function took to settle.
+pub struct Report { findings: Finding[], tracked: i32, unproved: i32, opaque: string[], skipped: string, failed: string, rounds: i32 }
 
 function skipped(why: string): Report {
-  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: why, failed: "" };
+  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: why, failed: "", rounds: 0 };
 }
 
 function failed(why: string): Report {
-  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: "", failed: why };
+  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: "", failed: why, rounds: 0 };
 }
 
 function org_none(): i32 {
@@ -190,12 +191,62 @@ function cap(): i32 {
   return 8;
 }
 
+// A literal holds no unit, and every retain and release skips it.
+function free(): i32 {
+  return -4;
+}
+
+// `c` units on some paths, and a literal on the others.
+function free_or(c: i32): i32 {
+  return 64 + c;
+}
+
+function is_free(s: i32): boolean {
+  return s == free() || s >= free_or(0);
+}
+
+// The units a state holds on the paths that are not a literal, or -1.
+function units(s: i32): i32 {
+  if (s >= free_or(0)) {
+    return s - free_or(0);
+  }
+  if (s >= 0) {
+    return s;
+  }
+  return -1;
+}
+
+// The state with `c` units, or `c` units on some paths when `freed`.
+function holding(c: i32, freed: boolean): i32 {
+  if (c < 0) {
+    return free();
+  }
+  if (c > cap()) {
+    return maybe();
+  }
+  if (freed) {
+    return free_or(c);
+  }
+  return c;
+}
+
 function meet(a: i32, b: i32): i32 {
   if (a == b || b == absent()) {
     return a;
   }
   if (a == absent()) {
     return b;
+  }
+  if ((is_free(a) || is_free(b)) && (a >= 0 || a == free()) && (b >= 0 || b == free())) {
+    let ca = units(a);
+    let cb = units(b);
+    if (ca >= 0 && cb >= 0 && ca != cb) {
+      return maybe();
+    }
+    if (ca < 0) {
+      ca = cb;
+    }
+    return holding(ca, true);
   }
   return maybe();
 }
@@ -2250,11 +2301,20 @@ function spend(own p: Progress, w: Walk, v: i32, block: i32, what: string): Prog
     return p;
   }
   let s = p.state[k];
-  if (s == maybe()) {
+  if (s == maybe() || s == free()) {
     return p;
   }
   if (s == absent()) {
     return Progress { ...p, state: p.state.with(k, maybe()) };
+  }
+  if (s >= free_or(0)) {
+    if (s > free_or(0)) {
+      return Progress { ...p, state: p.state.with(k, s - 1) };
+    }
+    if (in_debt(w, r)) {
+      return Progress { ...p, state: p.state.with(k, maybe()) };
+    }
+    return found(p, w, "spent without a unit", r, block, what);
   }
   if (s == 0 && in_debt(w, r)) {
     return Progress { ...p, state: p.state.with(k, owed()) };
@@ -2278,7 +2338,7 @@ function spend_counted(own p: Progress, w: Walk, v: i32, block: i32, what: strin
 
 function spend_if_held(own p: Progress, w: Walk, v: i32): Progress {
   let k = w.idx[w.root[v]];
-  if (k < 0 || p.state[k] <= 0) {
+  if (k < 0 || units(p.state[k]) <= 0) {
     return p;
   }
   return Progress { ...p, state: p.state.with(k, p.state[k] - 1) };
@@ -2294,11 +2354,14 @@ function retain(own p: Progress, w: Walk, v: i32, result: i32): Progress {
     return p;
   }
   let s = p.state[k];
-  if (s == maybe()) {
+  if (s == maybe() || s == free()) {
     return p;
   }
   if (s == owed()) {
     return Progress { ...p, state: p.state.with(k, 0) };
+  }
+  if (s >= free_or(0)) {
+    return Progress { ...p, state: p.state.with(k, holding(units(s) + 1, true)) };
   }
   if (s == absent() || s + 1 > cap()) {
     return Progress { ...p, state: p.state.with(k, maybe()) };
@@ -2338,7 +2401,7 @@ function define(own p: Progress, w: Walk, v: i32, block: i32): Progress {
   if (k < 0) {
     return p;
   }
-  if (p.state[k] > 0) {
+  if (units(p.state[k]) > 0) {
     p = found(p, w, "redefined while held", v, block, "the previous value's unit was never spent");
   }
   return Progress { ...p, state: p.state.with(k, initial_count(w.origin[v])) };
@@ -2457,7 +2520,7 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
         let s = p.state[k];
         if (s == owed()) {
           p = Progress { ...p, state: p.state.with(k, 0) };
-        } else if (s == absent() || s + 1 > cap()) {
+        } else if (s == absent() || is_free(s) || s + 1 > cap()) {
           p = Progress { ...p, state: p.state.with(k, maybe()) };
         } else {
           p = Progress { ...p, state: p.state.with(k, s + 1) };
@@ -2667,7 +2730,7 @@ function enter_phis(own p: Progress, w: Walk, bi: i32): Progress {
     if (k < 0) {
       continue;
     }
-    if (p.state[k] > 0) {
+    if (units(p.state[k]) > 0) {
       p = found(p, w, "redefined while held", ins.result, b.id, "the previous value's unit was never spent");
     }
     let at = p.phi_at[ins.result];
@@ -2790,17 +2853,36 @@ function excluded_on(w: Walk, bi: i32, d: i32, sid: i32, word: i32): i32 {
 
 struct Fed { p: Progress, input: i32 }
 
+// A string or an aggregate literal: an immortal box.
+function literal(w: Walk, v: i32): boolean {
+  let k = def_at(w, v).kind_tag;
+  return k == ssa.STR_LIT || k == ssa.AGG_LIT;
+}
+
 function phi_input(own p: Progress, w: Walk, a: i32): Fed {
   if (a < 0 || w.derived[a]) {
     return Fed { p: p, input: 0 };
   }
   let k = w.idx[w.root[a]];
   if (k < 0) {
+    if (literal(w, w.root[a])) {
+      return Fed { p: p, input: free() };
+    }
     return Fed { p: p, input: 0 };
   }
   let st = p.state[k];
   if (st == maybe() || st == absent() || st == owed()) {
     return Fed { p: p, input: maybe() };
+  }
+  if (st == free()) {
+    return Fed { p: p, input: free() };
+  }
+  if (st >= free_or(0)) {
+    if (st > free_or(0)) {
+      p = Progress { ...p, state: p.state.with(k, st - 1) };
+      return Fed { p: p, input: free_or(1) };
+    }
+    return Fed { p: p, input: free_or(0) };
   }
   if (st > 0) {
     p = Progress { ...p, state: p.state.with(k, st - 1) };
@@ -2856,8 +2938,8 @@ function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32,
   for j in 0..n {
     let k = lv.slots[at + j];
     let held = p.state[k];
-    if (held > 0) {
-      p = found(p, w, kind, root_at(w, k), block, util.i32_to_string(held) + " unit(s) still held");
+    if (units(held) > 0) {
+      p = found(p, w, kind, root_at(w, k), block, util.i32_to_string(units(held)) + " unit(s) still held");
     } else if (held == owed()) {
       p = found(p, w, "spent without a unit", root_at(w, k), block, "its slot was not emptied on this path");
     } else if (held == maybe()) {
@@ -3235,7 +3317,7 @@ function progress_of(w: Walk, lv: Live): Progress {
   return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked), ulog: [], mlog: [] };
 }
 
-struct Settled { p: Progress, changed: boolean }
+struct Settled { p: Progress, changed: boolean, rounds: i32 }
 
 function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean[], takes: Takes): Settled {
   let rounds = 0;
@@ -3271,7 +3353,7 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
       changed = false;
     }
   }
-  return Settled { p: p, changed: changed };
+  return Settled { p: p, changed: changed, rounds: rounds };
 }
 
 struct Memo { ran: boolean, inputs: i32[], findings: Finding[], opaque: string[], unproved: i32[], maybe: i32[] }
@@ -3748,13 +3830,13 @@ function without_dropped_preds(w: Walk, b: ssa.SBlock, dropped: i32[], reach: bo
   return ssa.SBlock { ...b, preds: preds, insts: insts };
 }
 
-struct Assumed { ok: boolean, w: Walk, p: Progress }
+struct Assumed { ok: boolean, w: Walk, p: Progress, rounds: i32 }
 
 function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean): Assumed {
   let pf = prune_token(w, tok, hold);
   let from = w.defs.block[tok];
   if (!ssadeps.reachable_blocks(pf.f)[from]) {
-    return Assumed { ok: true, w: w, p: progress_of(w, lv) };
+    return Assumed { ok: true, w: w, p: progress_of(w, lv), rounds: 0 };
   }
   let sub = extracted(pf.f, w.at, from);
   let at = ssa.block_positions(sub);
@@ -3763,11 +3845,11 @@ function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean)
   let wa = walk_of(sub, w.irops, w.self_abi, w.abis, w.sigs, w.ops, at, dom, reach, pf.hold, base_of(w));
   let lva = live_of(wa, wa.takes);
   if (!lva.ok) {
-    return Assumed { ok: false, w: wa, p: progress_of(wa, lva) };
+    return Assumed { ok: false, w: wa, p: progress_of(wa, lva), rounds: 0 };
   }
   let pa = seeded(progress_of(wa, lva), wa, lva, reach, w, lv, p0);
   let done = settle(pa, wa, lva, ssa.reverse_postorder(sub, at), reach, wa.takes);
-  return Assumed { ok: !done.changed, w: wa, p: done.p };
+  return Assumed { ok: !done.changed, w: wa, p: done.p, rounds: done.rounds };
 }
 
 function extracted(f: ssa.SFunc, at: i32[], from: i32): ssa.SFunc {
@@ -3899,6 +3981,17 @@ function add_counts(a: i32, b: i32): i32 {
   if (a == maybe() || b == maybe() || a == owed() || b == owed()) {
     return maybe();
   }
+  if (is_free(a) || is_free(b)) {
+    let ca = units(a);
+    let cb = units(b);
+    if (ca < 0) {
+      return holding(cb, true);
+    }
+    if (cb < 0) {
+      return holding(ca, true);
+    }
+    return holding(ca + cb, true);
+  }
   if (a + b > cap()) {
     return maybe();
   }
@@ -3962,6 +4055,10 @@ function decided_by(w: Walk, tok: i32, unproved: boolean[], maybe_at: i32[]): bo
   return out;
 }
 
+function most(a: i32, b: i32): i32 {
+  return if (a > b) { a } else { b };
+}
+
 function count_true(flags: boolean[]): i32 {
   let n = 0;
   for u in flags {
@@ -3986,7 +4083,7 @@ pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, si
     }
     findings = findings.append(Finding { kind: x.kind, value: value, block: x.block, defined: x.defined, message: x.message });
   }
-  return Report { findings: findings, tracked: report.tracked, unproved: report.unproved, opaque: report.opaque, skipped: report.skipped, failed: report.failed };
+  return Report { ...report, findings: findings };
 }
 
 function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
@@ -4014,6 +4111,7 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
   }
   let findings = done.p.findings;
   let unproved = done.p.unproved;
+  let rounds = done.rounds;
   if (count_true(unproved) > 0) {
     let roots = slot_roots(w);
     for tok in tested_tokens(w, reach) {
@@ -4023,6 +4121,7 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
       }
       let held = walk_assuming(w, lv, done.p, tok, true);
       let null_tok = walk_assuming(w, lv, done.p, tok, false);
+      rounds = most(rounds, most(held.rounds, null_tok.rounds));
       if (held.ok && null_tok.ok) {
         findings = with_findings(findings, held.p.findings);
         findings = with_findings(findings, null_tok.p.findings);
@@ -4030,5 +4129,5 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
       }
     }
   }
-  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), opaque: done.p.opaque, skipped: "", failed: "" };
+  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), opaque: done.p.opaque, skipped: "", failed: "", rounds: rounds };
 }
