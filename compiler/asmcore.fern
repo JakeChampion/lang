@@ -1888,7 +1888,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if (id.name == "read_dir" || id.name == "read_dir_all") {
             return ty_array_string();
           }
-          if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
+          if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all" || id.name == "read_dir_ino_bytes") {
             return ty_array();
           }
           let fi = 0;
@@ -3449,7 +3449,7 @@ function infer_call_named_type_part_6(id: ast.ExprIdent, c: ast.ExprCall, s: Emi
   if (id.name == "read_dir" || id.name == "read_dir_all") {
     return ty_result(ty_array_string());
   }
-  if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
+  if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all" || id.name == "read_dir_ino_bytes") {
     return ty_result(ty_array());
   }
   if (id.name == "environ") {
@@ -3511,6 +3511,9 @@ function infer_call_named_type_part_9(id: ast.ExprIdent, c: ast.ExprCall, s: Emi
   }
   if (id.name == "__raw_array") {
     return ty_array_i32();
+  }
+  if (id.name == "__raw_bytes") {
+    return ty_array();
   }
   if (id.name == "__fern_str_eq") {
     return ty_bool();
@@ -4149,7 +4152,7 @@ function direct_need_deps(name: string): string[] {
     let d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
     return d8;
   }
-  if (name == "read_dir_bytes" || name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all") {
+  if (name == "read_dir_bytes" || name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all" || name == "read_dir_ino_bytes") {
     let d9: string[] = ["heap", "arr_push", "arr_push_owned"];
     return d9;
   }
@@ -6079,6 +6082,9 @@ pub function runtime_dir_roots(s: EmitState): string {
   if (s.has_need("dir_entries_ino")) {
     out = out + " " + "__fern_dir_entries_ino";
   }
+  if (s.has_need("dir_entries_ino_bytes")) {
+    out = out + " " + "__fern_dir_entries_ino_bytes";
+  }
   if (s.has_need("dir_stat")) {
     out = out + " " + "__fern_dir_stat";
   }
@@ -6169,7 +6175,7 @@ pub function ssa_host_need(op: string): string {
   }
   let fs: string[] = [
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
-    "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "env", "stat", "lstat", "subprocess", "writer_write",
+    "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_dir_ino_bytes", "env", "stat", "lstat", "subprocess", "writer_write",
   ];
   for x in fs {
     if (x == op) {

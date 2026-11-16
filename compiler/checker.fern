@@ -1271,6 +1271,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__raw_string", params: [p, n], result: typeinfo.t_string() },
     RawFloorSig { name: "__raw_mapped_string", params: [p, n], result: typeinfo.t_string() },
     RawFloorSig { name: "__raw_array", params: [p], result: typeinfo.TypeArray { elem: n, view: false } },
+    RawFloorSig { name: "__raw_bytes", params: [p], result: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false } },
     RawFloorSig { name: "__raw_arr_ptr", params: [typeinfo.TypeArray { elem: n, view: false }], result: p },
     RawFloorSig { name: "__raw_data", params: [typeinfo.t_string()], result: p },
     RawFloorSig { name: "__raw_arr_box", params: [n], result: p },

@@ -443,7 +443,7 @@ function counted_bit(op: ir.Op): i32 {
 }
 
 function packed_suffix(op: ir.Op): string {
-  if (op.kind_tag == ir.K_READ_DIR && op.i32_imm != 0) {
+  if ((op.kind_tag == ir.K_READ_DIR || op.kind_tag == ir.K_READ_DIR_INO) && op.i32_imm != 0) {
     return "_bytes";
   }
   if (ir.is_packed(op)) {
