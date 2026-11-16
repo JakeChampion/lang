@@ -43,6 +43,9 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 	if sd.ValueType {
 		b.WriteString("@value\n")
 	}
+	if sd.Secret {
+		b.WriteString("@secret\n")
+	}
 	if len(sd.Derives) > 0 {
 		b.WriteString("@derive(")
 		for i, d := range sd.Derives {

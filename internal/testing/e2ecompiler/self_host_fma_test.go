@@ -75,6 +75,53 @@ func TestSelfHostFmaF64Emission(t *testing.T) {
 	}
 }
 
+// std/f64 calls __fma_f64 for fma, mul_add and the seven fused
+// multiply-adds of the table path of log. f64_special and
+// float_clamp01_absdiff_muladd check the values.
+const stdF64FmaSrc = `import "std/f64";
+
+@noinline
+function fused(x: f64, y: f64, z: f64): f64 {
+  return x.fma(y, z) + y.mul_add(z, x);
+}
+
+function main(): i32 {
+  print(fused(0.1, 10.0, -1.0).to_string());
+  print(3.0.log().to_string());
+  return 0;
+}
+`
+
+func TestSelfHostStdF64FmaEmission(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(stdF64FmaSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target, fusedStart, logStart, end, fma, separate string
+	}{
+		{e2eharness.TargetX86_64Linux, "__fn_fused:", "__fn_f64___fd_log_main:", ".cfi_endproc", "vfmadd", "mulsd"},
+		{e2eharness.TargetArm64Linux, "__fn_fused:", "__fn_f64___fd_log_main:", ".cfi_endproc", "fmadd d", "fmul"},
+		{e2eharness.TargetWasm32Wasi, "(func $fused ", "(func $f64___fd_log_main ", "(func ", "call $__fern_fma_f64", "f64.mul"},
+	}
+	for _, c := range cases {
+		t.Run(c.target, func(t *testing.T) {
+			asm := e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), c.target, src)
+			body := fmaSection(t, asm, c.fusedStart, c.end)
+			if n := strings.Count(body, c.fma); n != 2 {
+				t.Fatalf("fused has %d of %q, want 2:\n%s", n, c.fma, body)
+			}
+			if strings.Contains(body, c.separate) {
+				t.Fatalf("fused rounds a product with %q:\n%s", c.separate, body)
+			}
+			body = fmaSection(t, asm, c.logStart, c.end)
+			if n := strings.Count(body, c.fma); n != 7 {
+				t.Fatalf("_fd_log_main has %d of %q, want 7:\n%s", n, c.fma, body)
+			}
+		})
+	}
+}
+
 // In chain, each sum stays across the loop in the register of the first
 // factor, of the second factor and of the addend. In pick, the result of a
 // select stays in the register of its first choice. The conformance cases

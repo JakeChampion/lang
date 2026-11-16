@@ -75,6 +75,17 @@ struct Tally { xs: i64[], n: i32 }
   while (i < n) { xs = xs.with(i, outer(xs, i) * 2i64); i = i + 1; }
   return xs;
 }
+@noinline function rescale(own xs: i64[], k: i32, n: i32): i64[] {
+  let r: i32 = 0;
+  while (r < k) {
+    if (n > 0) {
+      let i: i32 = 0;
+      while (i < n) { xs = xs.with(i, xs[i] * 3i64); i = i + 1; }
+    }
+    r = r + 1;
+  }
+  return xs;
+}
 @noinline function stash(a: string[]): void { set_args(a); }
 @noinline function pass(a: string[]): void { stash(a); }
 @noinline function stash_loop(own names: string[], n: i32): string[] {
@@ -138,6 +149,11 @@ struct Tally { xs: i64[], n: i32 }
   let stashed: string[] = stash_loop(["a", "b"], 2);
   if (stashed[0] != "a?" || stashed[1] != "b?") { return 20; }
   if (args().len() != 2 || args()[0] != "a?" || args()[1] != "b") { return 21; }
+  let rs: i64[] = [1i64, 2i64];
+  let kept_rs: i64[] = rs;
+  let tripled: i64[] = rescale(rs, 2, 2);
+  if (kept_rs[0] != 1i64 || kept_rs[1] != 2i64 || tripled[0] != 9i64 || tripled[1] != 18i64) { return 22; }
+  if (rescale([4i64], 3, 0)[0] != 4i64) { return 23; }
   return 0;
 }
 function main(): i32 {
@@ -162,7 +178,7 @@ var uniqueLoopLoad = regexp.MustCompile(`movq 8\(%r\w+,%r\w+,8\), %r\w+`)
 // array, as hold can, leaves the check after the call.
 func TestSelfHostUniqueLoop(t *testing.T) {
 	runSemanticProgram(t, "unique-loop", uniqueLoopProgram,
-		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "rounds", "lend_loop", "lend_deep", "stash_loop", "keep_loop", "exercise"}, semInlineWants("ok\n"))
+		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "rounds", "lend_loop", "lend_deep", "rescale", "stash_loop", "keep_loop", "exercise"}, semInlineWants("ok\n"))
 
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -185,7 +201,7 @@ func TestSelfHostUniqueLoop(t *testing.T) {
 	if !strings.Contains(grow, "call __fn___fern_bytes_owned") {
 		t.Errorf("grow does not copy a shared array before its loop:\n%s", grow)
 	}
-	for _, fn := range []string{"scale", "shout", "lend_loop", "lend_deep"} {
+	for _, fn := range []string{"scale", "shout", "lend_loop", "lend_deep", "rescale"} {
 		body := condBranchBody(t, string(asm), fn)
 		if n := strings.Count(body, "_uq"); n != 3 {
 			t.Errorf("%s has %d count-test labels, want the 3 of the one check before its loop:\n%s", fn, n, body)

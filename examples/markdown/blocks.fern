@@ -10,7 +10,6 @@
 // record when it closes. A leaf block keeps no copy of its text: it holds a
 // range of line segments, and each segment is a range of the source.
 import "core/map";
-import "std/string";
 import "./refs";
 import "./tags";
 
@@ -111,7 +110,7 @@ const L_DEEP_BLANK: i32 = 4;
 // block starts, the line and the column where it ends, and the column
 // before the first byte of its inline text. `lines` is the number of lines,
 // and `last` is the length of the last line.
-pub struct Doc { src: string, log: i64[], segs: i64[], refs: Map[string, refs.Ref], pos: i32[], lines: i32, last: i32 }
+pub struct Doc { src: u8[], log: i64[], segs: i64[], refs: Map[string, refs.Ref], pos: i32[], lines: i32, last: i32 }
 
 pub const POS_FIELDS: i32 = 5;
 
@@ -215,7 +214,7 @@ function set_flag(p: P, d: i32, flag: i32, on: boolean): P {
 // The byte at `i` on the line that ends at `le`. The parser sees a line feed
 // at the end of every line, and nothing after it.
 @inline
-function at(src: string, le: i32, i: i32): i32 {
+function at(src: u8[], le: i32, i: i32): i32 {
   if (i < le) {
     return src[i] as i32;
   }
@@ -244,7 +243,7 @@ function accepts_lines(k: i32): boolean {
 
 // The first byte after the spaces and tabs at `off`, and its column.
 @inline
-function first_nonspace(src: string, le: i32, off: i32, col: i32): (i32, i32) {
+function first_nonspace(src: u8[], le: i32, off: i32, col: i32): (i32, i32) {
   let i = off;
   let c = col;
   while (i < le) {
@@ -264,7 +263,7 @@ function first_nonspace(src: string, le: i32, off: i32, col: i32): (i32, i32) {
 // The cursor `off`, `col` and `partial` moved on by `count` bytes, or by
 // `count` columns when `columns` is true. A tab that is wider than the
 // columns that are left is used only in part, and then `partial` is true.
-function advance(src: string, le: i32, off0: i32, col0: i32, partial0: boolean, count: i32, columns: boolean): (i32, i32, boolean) {
+function advance(src: u8[], le: i32, off0: i32, col0: i32, partial0: boolean, count: i32, columns: boolean): (i32, i32, boolean) {
   let off = off0;
   let col = col0;
   let partial = partial0;
@@ -315,7 +314,7 @@ function add_line(p: P, off: i32, col: i32, partial: boolean, end: i32): P {
 }
 
 // Closes open blocks until the block at `depth` is the deepest open block.
-function close_below(p: P, src: string, depth: i32): P {
+function close_below(p: P, src: u8[], depth: i32): P {
   let q = p;
   while (q.depth - 1 > depth) {
     q = close_top(q, src);
@@ -368,7 +367,7 @@ function check_loose(p: P, parent: i32, last: i32): P {
   return p;
 }
 
-function close_top(p0: P, src: string): P {
+function close_top(p0: P, src: u8[]): P {
   let d = p0.depth - 1;
   let k = skind(p0, d);
   let p = P { ...p0, depth: d };
@@ -393,7 +392,7 @@ function close_top(p0: P, src: string): P {
 // block ends at the end of the line before the line that closes it. A
 // fenced code block and a setext heading end at the end of that line, and
 // each block ends at the end of the last line when the source ends.
-function place(p: P, src: string, d: i32, k: i32): P {
+function place(p: P, src: u8[], d: i32, k: i32): P {
   let line = p.kept.line;
   let el = line - 1;
   let ec = p.kept.prev;
@@ -430,7 +429,7 @@ function record(rec0: i32[], r: i32, sl: i32, sc: i32, el: i32, ec: i32, off: i3
 
 // The column of the byte `i`: 1 for the first byte of its line. As in
 // cmark, the first line starts after a byte order mark.
-function column(src: string, i: i32): i32 {
+function column(src: u8[], i: i32): i32 {
   let j = i;
   while (j > 0 && src[j - 1] != b'\n' && src[j - 1] != b'\r') {
     j -= 1;
@@ -444,7 +443,7 @@ function column(src: string, i: i32): i32 {
 // The width of the `#` marks of an ATX heading at `i` and of the spaces
 // after them, or 0 for a setext heading. The first line of a setext heading
 // cannot start an ATX heading.
-function atx_width(src: string, i: i32): i32 {
+function atx_width(src: u8[], i: i32): i32 {
   let le = i;
   while (le < src.len() && src[le] != b'\n' && src[le] != b'\r') {
     le += 1;
@@ -464,7 +463,7 @@ function next_line(p: P, line: i32, ls: i32, le: i32): P {
 }
 
 // Writes the record of the block at `d`, which closes.
-function write_record(p: P, src: string, d: i32, k: i32): P {
+function write_record(p: P, src: u8[], d: i32, k: i32): P {
   let to = p.nseg;
   let from = sget(p, d, S_FROM);
   if (k == PARAGRAPH || k == HTML || k == RULE) {
@@ -483,7 +482,7 @@ function write_record(p: P, src: string, d: i32, k: i32): P {
 }
 
 // An indented code block has no blank lines at its end.
-function write_code(p: P, src: string, d: i32, from: i32, end: i32): P {
+function write_code(p: P, src: u8[], d: i32, from: i32, end: i32): P {
   if (has_flag(p, d, F_FENCED)) {
     return P { ...p, log: p.log.append(head(CODE | F_FENCED, 0)).append(span(from, end)) };
   }
@@ -513,7 +512,7 @@ function write_list(p: P, d: i32): P {
 // of the nearest open block above it that can hold it. Each open block below
 // the parent closes. The new block is the deepest open block. It starts at
 // the byte `start` of the line.
-function add_child(p0: P, src: string, depth: i32, k: i32, line: i32, start: i32): P {
+function add_child(p0: P, src: u8[], depth: i32, k: i32, line: i32, start: i32): P {
   let p = close_below(p0, src, depth);
   while (!can_contain(skind(p, p.depth - 1), k)) {
     p = close_top(p, src);
@@ -549,17 +548,17 @@ function grow(st: i32[]): i32[] {
 }
 
 // The text of the segments `from` to `to`, a line feed after each line.
-pub function seg_text(src: string, segs: i64[], from: i32, to: i32): string {
+pub function seg_text(src: u8[], segs: i64[], from: i32, to: i32): u8[] {
   let b = buf_new(64);
   for k in from..to {
     let s = segs[k];
     for _ in 0..seg_pad(s) {
       buf_push_byte(b, 32);
     }
-    buf_push_range(b, src, seg_start(s), seg_end(s));
+    buf_push_bytes_range(b, src, seg_start(s), seg_end(s));
     buf_push_byte(b, 10);
   }
-  let out = buf_take(b);
+  let out = buf_take_bytes(b);
   buf_free(b);
   return out;
 }
@@ -567,7 +566,7 @@ pub function seg_text(src: string, segs: i64[], from: i32, to: i32): string {
 // The end of the segments `from` to `to` in the source, after the line feed
 // of the last one, or -1. The segments are a part of the source when only a
 // line feed is between two of them.
-function source_end(src: string, segs: i64[], from: i32, to: i32): i32 {
+function source_end(src: u8[], segs: i64[], from: i32, to: i32): i32 {
   let next = seg_start(segs[from]);
   for k in from..to {
     let s = segs[k];
@@ -581,17 +580,20 @@ function source_end(src: string, segs: i64[], from: i32, to: i32): i32 {
 
 // Adds the definitions at the start of the segments `from` to `to` to
 // `found`. Gives the end of the definitions in the text of the segments.
-function read_defs(src: string, segs: i64[], from: i32, to: i32, found: Map[string, refs.Ref]): (i32, Map[string, refs.Ref]) {
+function read_defs(src: u8[], segs: i64[], from: i32, to: i32, found: Map[string, refs.Ref]): (i32, Map[string, refs.Ref]) {
   let stop = source_end(src, segs, from, to);
   if (stop >= 0) {
-    return refs.take_defs(slice_unchecked(src, seg_start(segs[from]), stop), found);
+    let start = seg_start(segs[from]);
+    let (end, defs) = refs.take_defs(src, start, stop, found);
+    return (end - start, defs);
   }
-  return refs.take_defs(seg_text(src, segs, from, to), found);
+  let text = seg_text(src, segs, from, to);
+  return refs.take_defs(text, 0, text.len(), found);
 }
 
 // Takes the link reference definitions at the start of the paragraph at `d`
 // out of its lines. Gives false when no text is left.
-function take_defs(p: P, src: string, d: i32): (P, boolean) {
+function take_defs(p: P, src: u8[], d: i32): (P, boolean) {
   let from = sget(p, d, S_FROM);
   let to = p.nseg;
   if (from == to) {
@@ -613,7 +615,7 @@ function take_defs(p: P, src: string, d: i32): (P, boolean) {
   return (q, k < to);
 }
 
-function blank_segment(src: string, s: i64): boolean {
+function blank_segment(src: u8[], s: i64): boolean {
   for i in seg_start(s)..seg_end(s) {
     if (!is_space_or_tab(src[i] as i32)) {
       return false;
@@ -623,7 +625,7 @@ function blank_segment(src: string, s: i64): boolean {
 }
 
 // The length of a closing code fence of `fence` at `i`, or 0.
-function closing_fence(src: string, le: i32, i: i32, fence: i32): i32 {
+function closing_fence(src: u8[], le: i32, i: i32, fence: i32): i32 {
   let j = i;
   while (at(src, le, j) == fence) {
     j += 1;
@@ -643,7 +645,7 @@ function closing_fence(src: string, le: i32, i: i32, fence: i32): i32 {
 
 // The length of an opening code fence at `i`, or 0. The info string of a
 // backtick fence has no backtick.
-function opening_fence(src: string, le: i32, i: i32): i32 {
+function opening_fence(src: u8[], le: i32, i: i32): i32 {
   let fence = at(src, le, i);
   let j = i;
   while (at(src, le, j) == fence) {
@@ -666,7 +668,7 @@ function opening_fence(src: string, le: i32, i: i32): i32 {
 // The length of the start of an ATX heading at `i`: one to six `#`, then
 // spaces and tabs or the end of the line. Gives 0 when there is none.
 @inline
-function atx_start(src: string, le: i32, i: i32): i32 {
+function atx_start(src: u8[], le: i32, i: i32): i32 {
   let j = i;
   while (at(src, le, j) == 35 && j - i < 7) {
     j += 1;
@@ -690,7 +692,7 @@ function atx_start(src: string, le: i32, i: i32): i32 {
 
 // 1 for a line of `=` and 2 for a line of `-`, with optional spaces and tabs
 // after it, or 0.
-function setext_level(src: string, le: i32, i: i32): i32 {
+function setext_level(src: u8[], le: i32, i: i32): i32 {
   let c = at(src, le, i);
   let j = i;
   while (at(src, le, j) == c) {
@@ -710,7 +712,7 @@ function setext_level(src: string, le: i32, i: i32): i32 {
 
 // True for three or more `*`, `-` or `_` of one kind, with only spaces and
 // tabs between them.
-function is_rule(src: string, le: i32, i: i32): boolean {
+function is_rule(src: u8[], le: i32, i: i32): boolean {
   let c = at(src, le, i);
   if (c != 42 && c != 45 && c != 95) {
     return false;
@@ -730,7 +732,7 @@ function is_rule(src: string, le: i32, i: i32): boolean {
 
 // The end of the text of an ATX heading: the line without a closing
 // sequence of `#` and without the spaces at its end.
-function atx_text_end(src: string, start: i32, le: i32): i32 {
+function atx_text_end(src: u8[], start: i32, le: i32): i32 {
   let (e, k) = trailing_hashes(src, start, le);
   if (k != e - 1 && k >= start && is_space_or_tab(src[k] as i32)) {
     return rtrim(src, start, k);
@@ -745,7 +747,7 @@ function atx_text_end(src: string, start: i32, le: i32): i32 {
 // its end, and without a closing sequence of `#` after a space or a tab.
 // cmark takes the length of the line from this end. Unlike the text of the
 // heading, a line of only `#` keeps them.
-function chopped_end(src: string, ls: i32, le: i32): i32 {
+function chopped_end(src: u8[], ls: i32, le: i32): i32 {
   let (e, k) = trailing_hashes(src, ls, le);
   if (k != e - 1 && k >= ls && is_space_or_tab(src[k] as i32)) {
     return rtrim(src, ls, k);
@@ -756,7 +758,7 @@ function chopped_end(src: string, ls: i32, le: i32): i32 {
 // The end of `src[start:end]` without the spaces at its end, and the index
 // before the `#` marks at the end of that text.
 @inline
-function trailing_hashes(src: string, start: i32, end: i32): (i32, i32) {
+function trailing_hashes(src: u8[], start: i32, end: i32): (i32, i32) {
   let e = rtrim(src, start, end);
   let k = e - 1;
   while (k >= start && src[k] == b'#') {
@@ -765,7 +767,7 @@ function trailing_hashes(src: string, start: i32, end: i32): (i32, i32) {
   return (e, k);
 }
 
-function rtrim(src: string, start: i32, end: i32): i32 {
+function rtrim(src: u8[], start: i32, end: i32): i32 {
   let e = end;
   while (e > start && refs.is_space(src[e - 1] as i32)) {
     e -= 1;
@@ -775,15 +777,15 @@ function rtrim(src: string, start: i32, end: i32): i32 {
 
 // The document `source`, with the source positions of its blocks when
 // `positions` is true.
-pub function parse(source: string, positions: boolean): Doc {
+pub function parse(source: u8[], positions: boolean): Doc {
   let src = without_nul(source);
   let n = src.len();
   let ends = __alloc_u8(14).with(10, 1 as u8).with(13, 1 as u8);
-  let lines = __count_byte(src, 10) + 1;
-  if (__memchr(src, 13, 0) < 0) {
+  let lines = __count_byte_bytes(src, 10) + 1;
+  if (__memchr_bytes(src, 13, 0) < 0) {
     ends = [];
   } else {
-    lines += __count_byte(src, 13);
+    lines += __count_byte_bytes(src, 13);
   }
   let st: i32[] = __alloc_i32(SS * 8).with(S_LAST, NONE);
   let kept = Kept { refs: Map { }, on: positions, line: 0, ls: 0, cur: 0, prev: 0, end: false };
@@ -823,7 +825,7 @@ pub function (d: Doc) text_base(r: i32): (i32, i32) {
 }
 
 // 3 when the source starts with a UTF-8 byte order mark, and 0 otherwise.
-function bom_length(s: string): i32 {
+function bom_length(s: u8[]): i32 {
   if (s.len() >= 3 && s[0] == 0xEF as u8 && s[1] == 0xBB as u8 && s[2] == 0xBF as u8) {
     return 3;
   }
@@ -833,11 +835,11 @@ function bom_length(s: string): i32 {
 // The index of the line ending after `pos`, or the length of the source. A
 // source with a carriage return gives the table of line ending bytes `ends`,
 // and other sources give an empty table.
-function line_end(src: string, pos: i32, ends: u8[]): i32 {
+function line_end(src: u8[], pos: i32, ends: u8[]): i32 {
   if (ends.len() > 0) {
-    return __scan_set(src, pos, ends);
+    return __scan_set_bytes(src, pos, ends);
   }
-  let le = __memchr(src, 10, pos);
+  let le = __memchr_bytes(src, 10, pos);
   if (le < 0) {
     return src.len();
   }
@@ -845,27 +847,27 @@ function line_end(src: string, pos: i32, ends: u8[]): i32 {
 }
 
 // The source with each NUL byte replaced by U+FFFD.
-function without_nul(s: string): string {
-  if (__memchr(s, 0, 0) < 0) {
+function without_nul(s: u8[]): u8[] {
+  if (__memchr_bytes(s, 0, 0) < 0) {
     return s;
   }
   let b = buf_new(s.len() + 16);
   let from = 0;
-  let i = __memchr(s, 0, 0);
+  let i = __memchr_bytes(s, 0, 0);
   while (i >= 0) {
-    buf_push_range(b, s, from, i);
+    buf_push_bytes_range(b, s, from, i);
     buf_push(b, "�");
     from = i + 1;
-    i = __memchr(s, 0, from);
+    i = __memchr_bytes(s, 0, from);
   }
-  buf_push_range(b, s, from, s.len());
-  let out = buf_take(b);
+  buf_push_bytes_range(b, s, from, s.len());
+  let out = buf_take_bytes(b);
   buf_free(b);
   return out;
 }
 
 // Reads the line `src[ls:le]`, which is line number `line`.
-function process_line(p0: P, src: string, ls: i32, le: i32, line: i32): P {
+function process_line(p0: P, src: u8[], ls: i32, le: i32, line: i32): P {
   let p = p0;
   let off = ls;
   let col = 0;
@@ -925,7 +927,7 @@ function process_line(p0: P, src: string, ls: i32, le: i32, line: i32): P {
 // there, and only an open code block or HTML block gets the line. Thus a
 // blank line does not visit each block of a deep list. Gives true when the
 // line stops.
-function list_line(p: P, src: string, le: i32, i: i32, off: i32, col: i32, partial: boolean): (P, boolean) {
+function list_line(p: P, src: u8[], le: i32, i: i32, off: i32, col: i32, partial: boolean): (P, boolean) {
   let (fns, fnscol) = first_nonspace(src, le, off, col);
   if (fns != le) {
     return (set_flag(p, i, F_LIST_BLANK, false), false);
@@ -952,7 +954,7 @@ const ENDS: i32 = 2;
 // line closes the block and ends there. Gives the cursor after the marks of
 // the block on the line.
 @inline
-function continues(p: P, src: string, le: i32, i: i32, off: i32, col: i32, partial: boolean): (i32, i32, i32, boolean) {
+function continues(p: P, src: u8[], le: i32, i: i32, off: i32, col: i32, partial: boolean): (i32, i32, i32, boolean) {
   let (fns, fnscol) = first_nonspace(src, le, off, col);
   let k = skind(p, i);
   if (k == QUOTE) {
@@ -971,7 +973,7 @@ function continues(p: P, src: string, le: i32, i: i32, off: i32, col: i32, parti
   return (GOES_ON, off, col, partial);
 }
 
-function quote_continues(src: string, le: i32, off: i32, col: i32, partial: boolean, fns: i32, indent: i32): (i32, i32, i32, boolean) {
+function quote_continues(src: u8[], le: i32, off: i32, col: i32, partial: boolean, fns: i32, indent: i32): (i32, i32, i32, boolean) {
   if (indent <= 3 && fns < le && src[fns] == b'>') {
     let (o, c, t) = advance(src, le, off, col, partial, indent + 1, true);
     let (o2, c2, t2) = after_quote_marker(src, le, o, c, t);
@@ -982,7 +984,7 @@ function quote_continues(src: string, le: i32, off: i32, col: i32, partial: bool
 
 // An item goes on at a line with the indent of its content, and at a blank
 // line when the item is not empty.
-function item_continues(p: P, src: string, le: i32, i: i32, off: i32, col: i32, partial: boolean, fns: i32, fnscol: i32): (i32, i32, i32, boolean) {
+function item_continues(p: P, src: u8[], le: i32, i: i32, off: i32, col: i32, partial: boolean, fns: i32, fnscol: i32): (i32, i32, i32, boolean) {
   let width = sget(p, i, S_C) + sget(p, i, S_D);
   if (fnscol - col >= width) {
     let (o, c, t) = advance(src, le, off, col, partial, width, true);
@@ -994,7 +996,7 @@ function item_continues(p: P, src: string, le: i32, i: i32, off: i32, col: i32, 
   return (STOPS, off, col, partial);
 }
 
-function code_continues(p: P, src: string, le: i32, i: i32, off: i32, col: i32, partial: boolean, fns: i32, fnscol: i32): (i32, i32, i32, boolean) {
+function code_continues(p: P, src: u8[], le: i32, i: i32, off: i32, col: i32, partial: boolean, fns: i32, fnscol: i32): (i32, i32, i32, boolean) {
   let indent = fnscol - col;
   if (!has_flag(p, i, F_FENCED)) {
     if (indent >= 4) {
@@ -1011,7 +1013,7 @@ function code_continues(p: P, src: string, le: i32, i: i32, off: i32, col: i32, 
 
 // A fenced code block ends at a closing fence. Else the line goes on in the
 // block without the indent of the opening fence.
-function fence_continues(p: P, src: string, le: i32, i: i32, off: i32, col: i32, partial: boolean, fns: i32, indent: i32): (i32, i32, i32, boolean) {
+function fence_continues(p: P, src: u8[], le: i32, i: i32, off: i32, col: i32, partial: boolean, fns: i32, indent: i32): (i32, i32, i32, boolean) {
   let fence = sget(p, i, S_A);
   if (indent <= 3 && fns < le && src[fns] as i32 == fence && closing_fence(src, le, fns, fence) >= sget(p, i, S_B)) {
     return (ENDS, off, col, partial);
@@ -1032,7 +1034,7 @@ function fence_continues(p: P, src: string, le: i32, i: i32, off: i32, col: i32,
 
 // Moves the cursor over the space or tab after a `>`, if there is one.
 @inline
-function after_quote_marker(src: string, le: i32, off: i32, col: i32, partial: boolean): (i32, i32, boolean) {
+function after_quote_marker(src: u8[], le: i32, off: i32, col: i32, partial: boolean): (i32, i32, boolean) {
   if (off < le && is_space_or_tab(src[off] as i32)) {
     return advance(src, le, off, col, partial, 1, true);
   }
@@ -1053,7 +1055,7 @@ function can_start(c: i32): boolean {
 // False when no block can start at `fns`, after an indent of `indent`
 // columns.
 @inline
-function may_open(src: string, le: i32, fns: i32, indent: i32, maybe_lazy: boolean): boolean {
+function may_open(src: u8[], le: i32, fns: i32, indent: i32, maybe_lazy: boolean): boolean {
   if (indent >= 4) {
     return !maybe_lazy && fns < le;
   }
@@ -1063,7 +1065,7 @@ function may_open(src: string, le: i32, fns: i32, indent: i32, maybe_lazy: boole
 // Opens the block that starts at `fns`, the first byte after the indent, if
 // one does. The new block is the deepest open block. Gives the cursor after
 // the start of the block.
-function open_block(p: P, src: string, le: i32, line: i32, cd: i32, all: boolean, maybe_lazy: boolean, off: i32, col: i32, partial: boolean, fns: i32, fnscol: i32): (P, boolean, i32, i32, boolean) {
+function open_block(p: P, src: u8[], le: i32, line: i32, cd: i32, all: boolean, maybe_lazy: boolean, off: i32, col: i32, partial: boolean, fns: i32, fnscol: i32): (P, boolean, i32, i32, boolean) {
   let indent = fnscol - col;
   if (indent >= 4) {
     let (o, c, t) = advance(src, le, off, col, partial, 4, true);
@@ -1084,7 +1086,7 @@ function open_block(p: P, src: string, le: i32, line: i32, cd: i32, all: boolean
 
 // The blocks that start with `=`, `-`, `*`, `_`, `+` or a digit: a setext
 // heading line, a thematic break and a list item.
-function open_line_block(p: P, src: string, le: i32, line: i32, cd: i32, all: boolean, c: i32, ck: i32, fns: i32, indent: i32, off: i32, col: i32, partial: boolean): (P, boolean, i32, i32, boolean) {
+function open_line_block(p: P, src: u8[], le: i32, line: i32, cd: i32, all: boolean, c: i32, ck: i32, fns: i32, indent: i32, off: i32, col: i32, partial: boolean): (P, boolean, i32, i32, boolean) {
   if (ck == PARAGRAPH && (c == 61 || c == 45)) {
     let level = setext_level(src, le, fns);
     if (level > 0) {
@@ -1105,7 +1107,7 @@ function open_line_block(p: P, src: string, le: i32, line: i32, cd: i32, all: bo
 
 // The blocks that start with `#`, a code fence or `<`: an ATX heading, a
 // fenced code block and an HTML block. Gives the cursor after the start.
-function open_leaf(p: P, src: string, le: i32, line: i32, cd: i32, c: i32, fns: i32, off: i32, col: i32, partial: boolean, in_paragraph: boolean): (P, boolean, i32, i32, boolean) {
+function open_leaf(p: P, src: u8[], le: i32, line: i32, cd: i32, c: i32, fns: i32, off: i32, col: i32, partial: boolean, in_paragraph: boolean): (P, boolean, i32, i32, boolean) {
   if (c == 35) {
     let len = atx_start(src, le, fns);
     if (len > 0) {
@@ -1141,7 +1143,7 @@ function open_leaf(p: P, src: string, le: i32, line: i32, cd: i32, c: i32, fns: 
 // Makes the paragraph at `d` a setext heading, unless it holds only link
 // reference definitions. Then the line is text of the paragraph, and the
 // result is false.
-function setext(p: P, src: string, d: i32, level: i32): (P, boolean) {
+function setext(p: P, src: u8[], d: i32, level: i32): (P, boolean) {
   let (q, has_text) = take_defs(p, src, d);
   if (!has_text) {
     return (q, false);
@@ -1151,7 +1153,7 @@ function setext(p: P, src: string, d: i32, level: i32): (P, boolean) {
 
 // A list item, and the list around it when the item does not continue the
 // open list.
-function open_item(p: P, src: string, le: i32, line: i32, cd: i32, c: i32, ck: i32, fns: i32, indent: i32, off: i32, col: i32, partial: boolean): (P, boolean, i32, i32, boolean) {
+function open_item(p: P, src: u8[], le: i32, line: i32, cd: i32, c: i32, ck: i32, fns: i32, indent: i32, off: i32, col: i32, partial: boolean): (P, boolean, i32, i32, boolean) {
   let (len, ordered, mark, start) = list_marker(src, le, fns, c);
   if (len == 0 || !refs.is_space(at(src, le, fns + len))) {
     return (p, false, off, col, partial);
@@ -1176,7 +1178,7 @@ function open_item(p: P, src: string, le: i32, line: i32, cd: i32, c: i32, ck: i
 // A list marker at `fns` that starts with `c`: `-`, `+` or `*`, or one to
 // nine digits and `.` or `)`. Gives its length, true when it is ordered, the
 // byte that ends it, and the start number. A length of 0 is no marker.
-function list_marker(src: string, le: i32, fns: i32, c: i32): (i32, boolean, i32, i32) {
+function list_marker(src: u8[], le: i32, fns: i32, c: i32): (i32, boolean, i32, i32) {
   if (c == 42 || c == 45 || c == 43) {
     return (1, false, c, 0);
   }
@@ -1195,7 +1197,7 @@ function list_marker(src: string, le: i32, fns: i32, c: i32): (i32, boolean, i32
 
 // The width of a list marker of `len` bytes at `fns` and the spaces after
 // it, and the cursor at the content of the item.
-function item_content(src: string, le: i32, len: i32, fns: i32, off: i32, col: i32, partial: boolean): (i32, i32, i32, boolean) {
+function item_content(src: u8[], le: i32, len: i32, fns: i32, off: i32, col: i32, partial: boolean): (i32, i32, i32, boolean) {
   let (o0, c0, t0) = advance(src, le, off, col, partial, fns + len - off, false);
   let o = o0;
   let c = c0;
@@ -1222,7 +1224,7 @@ function is_digit(c: i32): boolean {
 }
 
 // True when only spaces and tabs are after `i` on the line.
-function rest_is_blank(src: string, le: i32, i: i32): boolean {
+function rest_is_blank(src: u8[], le: i32, i: i32): boolean {
   let j = i;
   while (j < le && is_space_or_tab(src[j] as i32)) {
     j += 1;
@@ -1233,7 +1235,7 @@ function rest_is_blank(src: string, le: i32, i: i32): boolean {
 // Adds the text that is left on the line to the right block: a lazy line to
 // the open paragraph, or a line to the deepest open block, or a line to a new
 // paragraph.
-function add_text(p0: P, src: string, le: i32, line: i32, cd: i32, matched: i32, off: i32, col: i32, partial: boolean, fns: i32, fnscol: i32): P {
+function add_text(p0: P, src: u8[], le: i32, line: i32, cd: i32, matched: i32, off: i32, col: i32, partial: boolean, fns: i32, fnscol: i32): P {
   let blank = fns == le;
   let p = mark_blank(p0, cd, blank, line);
   let top = p.depth - 1;
@@ -1273,7 +1275,7 @@ function is_lazy(p: P, top: i32, cd: i32, matched: i32, blank: boolean): boolean
 
 // Adds the line from the cursor to the code block or the HTML block at `cd`.
 // The line can be the end of an HTML block.
-function add_verbatim(p: P, src: string, le: i32, cd: i32, ck: i32, off: i32, col: i32, partial: boolean, fns: i32): P {
+function add_verbatim(p: P, src: u8[], le: i32, cd: i32, ck: i32, off: i32, col: i32, partial: boolean, fns: i32): P {
   let q = add_line(p, off, col, partial, le);
   if (ck == HTML && tags.block_end(sget(q, cd, S_A), src, fns, le)) {
     return close_top(q, src);

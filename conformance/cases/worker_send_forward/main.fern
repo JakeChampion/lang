@@ -1,0 +1,25 @@
+// spec: WK-01
+// A `send` parameter holds an argument that its own call checked. So a
+// function gives it to another `send` parameter, as the argument or as a
+// capture of the closure that it writes there.
+
+import "std/worker";
+
+function start[T: worker.Send](send body: () => T): worker.Worker[T] {
+    return worker.spawn(body);
+}
+
+function twice(send body: () => string): worker.Worker[string] {
+    return worker.spawn((): string => body() + body());
+}
+
+function main(): i32 {
+    let n = 41;
+    let name = "ab";
+    let a = start((): i32 => n + 1).join();
+    let b = twice((): string => name + "c").join();
+    if (a == 42) {
+        print(b);
+    }
+    return 0;
+}

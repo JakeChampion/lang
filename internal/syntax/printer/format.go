@@ -571,6 +571,9 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	if sd.ValueType {
 		f.b.WriteString("@value\n")
 	}
+	if sd.Secret {
+		f.b.WriteString("@secret\n")
+	}
 	f.writeDeriveAttr(sd.Derives)
 	f.writeMustConsumeAttr(sd.MustConsume)
 	if sd.PackageScoped {

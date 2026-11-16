@@ -1,0 +1,58 @@
+// A merge sort of a list of pseudo-random integers.
+pub enum List { Nil, Cons(i64, List) }
+
+// n values of the generator x' = (1103515245 x + 12345) mod 2^31, from seed 42,
+// each reduced mod 1,000,000.
+pub function make(n: i64, seed: i64): List {
+  if (n <= 0i64) {
+    return Nil;
+  }
+  let next = (1103515245i64 * seed + 12345i64) % 2147483648i64;
+  return Cons(next % 1000000i64, make(n - 1i64, next));
+}
+
+// The elements of `xs` go to `a` and `b` in turn.
+function split(xs: List, a: List, b: List): (List, List) {
+  return match (xs) { Cons(x, rest) => split(rest, b, Cons(x, a)), Nil => (a, b) };
+}
+
+function merge(xs: List, ys: List): List {
+  match (xs) {
+    Nil => {
+      return ys;
+    },
+    Cons(x, xt) => {
+      match (ys) {
+        Nil => {
+          return Cons(x, xt);
+        },
+        Cons(y, yt) => {
+          if (x <= y) {
+            return Cons(x, merge(xt, Cons(y, yt)));
+          }
+          return Cons(y, merge(Cons(x, xt), yt));
+        }
+      }
+    }
+  }
+}
+
+pub function sort(xs: List): List {
+  match (xs) {
+    Nil => {
+      return Nil;
+    },
+    Cons(x, Nil()) => {
+      return Cons(x, Nil);
+    },
+    _ => {
+      let (a, b) = split(xs, Nil, Nil);
+      return merge(sort(a), sort(b));
+    }
+  }
+}
+
+// The count of the elements and the sum of each element times its position from 1.
+pub function digest(xs: List, i: i64, total: i64): (i64, i64) {
+  return match (xs) { Cons(x, rest) => digest(rest, i + 1i64, total + (i + 1i64) * x), Nil => (i, total) };
+}

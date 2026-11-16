@@ -1,0 +1,4 @@
+key 3 holds 4 bytes and 2 words
+the shared array still reads 65 65
+sum 16
+the copy 10 sums 16

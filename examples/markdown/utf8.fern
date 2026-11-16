@@ -1,0 +1,66 @@
+// The UTF-8 rules of cmark 0.31.2. A sequence is valid when it is the
+// shortest form of a code point that is not a surrogate and is not above
+// U+10FFFF. The port keeps the bytes of the document as they are. Only the
+// tests that need a code point decode one, and an invalid sequence is not a
+// code point for them.
+
+// The length of the UTF-8 sequence at `i` of `b`, which has a byte of 0x80
+// or more there. When the sequence is not valid, it is minus the number of
+// bytes that one U+FFFD replaces with `--validate-utf8`. `n` is the end of
+// the bytes that the sequence can use.
+pub function length(b: [u8], i: i32, n: i32): i32 {
+  let c = b[i] as i32;
+  let len = 0;
+  if (c >= 0xC0 && c < 0xF8) {
+    len = LENGTHS[c >> 3 & 7];
+  }
+  if (len == 0) {
+    return -1;
+  }
+  if (len > n - i) {
+    return i - n;
+  }
+  for k in 1..len {
+    if ((b[i + k] as i32 & 0xC0) != 0x80) {
+      return -k;
+    }
+  }
+  if (out_of_range(c, b[i + 1] as i32)) {
+    return -len;
+  }
+  return len;
+}
+
+// The length of a UTF-8 sequence for the bits 3 to 5 of a lead byte from
+// 0xC0 to 0xF7.
+const LENGTHS: i32[] = [2, 2, 2, 2, 3, 3, 4, 0];
+
+// True for the lead byte `c` and the byte `c1` after it of an overlong
+// form, a surrogate, or a code point above U+10FFFF.
+function out_of_range(c: i32, c1: i32): boolean {
+  if (c < 0xE0) {
+    return c < 0xC2;
+  }
+  if (c < 0xF0) {
+    return c == 0xE0 && c1 < 0xA0 || c == 0xED && c1 >= 0xA0;
+  }
+  return c == 0xF0 && c1 < 0x90 || c > 0xF4 || c == 0xF4 && c1 >= 0x90;
+}
+
+// The code point at `i` of `b`, which ends at `n`, or -1 when the bytes at
+// `i` are not valid UTF-8.
+pub function code_point(b: [u8], i: i32, n: i32): i32 {
+  let c = b[i] as i32;
+  if (c < 0x80) {
+    return c;
+  }
+  let len = length(b, i, n);
+  if (len < 0) {
+    return -1;
+  }
+  let cp = c & 0x7F >> len;
+  for k in 1..len {
+    cp = cp << 6 | b[i + k] as i32 & 0x3F;
+  }
+  return cp;
+}
