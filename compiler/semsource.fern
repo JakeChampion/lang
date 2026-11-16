@@ -3319,6 +3319,9 @@ function block_stmt_kind(st: ast.Stmt): string {
       return "for";
     },
     _ => {
+      if (parser.is_missing_tail(st)) {
+        return "no trailing value (E061)";
+      }
       return "other";
     }
   }
@@ -9267,6 +9270,12 @@ function kernel_named(p: Produced, name: string, lowered: util.NameIndex): boole
   return lowered.has(name) && !util.has_str(p.func.shadows, name);
 }
 
+// Whether a direct call of the row named `name` runs its graph, and not an
+// extern or the kernel of a builtin with that name.
+pub function body_runs(p: Produced, name: string, lowered: util.NameIndex): boolean {
+  return p.ok && !p.template && !p.bodyless && p.func.graph.blocks.len() > 0 && !kernel_named(p, name, lowered);
+}
+
 function row_bits(p: Produced, escapes: boolean[], kernel: boolean): boolean[] {
   if (kernel) {
     return mode_bits(p, __alloc_bool(p.func.params.len()));
@@ -9951,7 +9960,7 @@ function inlinable_decl(fd: parser.FuncDecl): boolean {
 // The lowering replaces a call to a contract's name with the contract's op,
 // such as string.to_ascii_upper with the runtime kernel. Splicing the
 // function's own body would replace that call before the lowering sees it.
-function lowered_names(): util.NameIndex {
+pub function lowered_names(): util.NameIndex {
   return util.name_index(contract_names(builtin_contracts()));
 }
 

@@ -1,7 +1,7 @@
 package e2ecompiler
 
 import (
-	"strings"
+	"regexp"
 	"testing"
 )
 
@@ -91,6 +91,9 @@ function main(): i32 {
 // consumes the record. It holds no count on the list, and so tests no
 // uniqueness to take the element out of it. The one test left is the reuse
 // of the element's box for the rebuilt element.
+// The compare can read the state from the element's memory.
+var stateTestRe = regexp.MustCompile(`cmpq \$1, (8\()?%`)
+
 func TestSelfHostScanHoldShapeX86_64(t *testing.T) {
 	emit, run := x86ShapeHarness(t)
 	asm := emit(t, scanHoldSrc)
@@ -101,7 +104,10 @@ func TestSelfHostScanHoldShapeX86_64(t *testing.T) {
 	if got := rcIncSites(text); got != 2 {
 		t.Errorf("scan: %d retains, want 2 (the element, and its name in the rebuilt element)", got)
 	}
-	state := strings.Index(text, "cmpq $1, %")
+	state := -1
+	if loc := stateTestRe.FindStringIndex(text); loc != nil {
+		state = loc[0]
+	}
 	if state < 0 {
 		t.Fatalf("scan: no test of the element's state in:\n%s", text)
 	}

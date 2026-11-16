@@ -280,23 +280,66 @@ function all_load_glibc(): boolean {
   return true;
 }
 
-// Darwin takes a name as it is, from PATH_LOCALE or /usr/share/locale.
-function all_load_darwin(): boolean {
-  let base = "/usr/share/locale";
-  if let Some(pl) = env("PATH_LOCALE") {
-    if (pl.len() > 0) {
-      base = pl;
+// What the libc of Darwin needs to load a category of the locale `name`.
+// `refused` tells that the name cannot load. Otherwise `file` is the path
+// of the file of the category in a directory of locales, or "" when the
+// category loads with no file.
+pub struct DarwinNeed { refused: boolean, file: string }
+
+// The rules of setlocale in the libc of Darwin. A name has at most 31
+// bytes, and it is not "." or ".." and has no slash. "C" and "POSIX" load
+// with no file. LC_CTYPE reads the file of the name. The other categories
+// take a name that starts with "C." as the C locale, so C.UTF-8 needs only
+// the file of LC_CTYPE.
+pub function darwin_need(name: string, category: string): DarwinNeed {
+  if (name.len() > 31 || name == "." || name == ".." || __memchr(name, 47, 0) >= 0) {
+    return DarwinNeed { refused: true, file: "" };
+  }
+  let c_dot = name.len() >= 2 && name[0] == b'C' && name[1] == b'.';
+  if (name == "C" || name == "POSIX" || category != "LC_CTYPE" && c_dot) {
+    return DarwinNeed { refused: false, file: "" };
+  }
+  if (category == "LC_MESSAGES") {
+    return DarwinNeed { refused: false, file: name + "/LC_MESSAGES/LC_MESSAGES" };
+  }
+  return DarwinNeed { refused: false, file: name + "/" + category };
+}
+
+// The directories where Darwin opens the file of a locale, in order:
+// PATH_LOCALE when it is set, else /usr/share/locale, then /usr/share/locale
+// and /usr/local/share/locale. A PATH_LOCALE that is too long for a path
+// makes each category fail, and this gives no directory.
+pub function darwin_dirs(path_locale: Option[string]): string[] {
+  let first = "/usr/share/locale";
+  if let Some(pl) = path_locale {
+    if (pl.len() + 44 >= 1024) {
+      return [];
+    }
+    first = pl;
+  }
+  return [first, "/usr/share/locale", "/usr/local/share/locale"];
+}
+
+function darwin_file(dirs: string[], file: string): boolean {
+  for d in dirs {
+    if let Ok(st) = stat(d + "/" + file) {
+      if (!st.is_dir) {
+        return true;
+      }
     }
   }
+  return false;
+}
+
+function all_load_darwin(): boolean {
+  let dirs = darwin_dirs(env("PATH_LOCALE"));
   for category in darwin_categories() {
-    let name = category_name(category);
-    if (name != "C" && name != "POSIX") {
-      if (!plain_name(name)) {
-        return false;
-      }
-      if let Err(_) = stat(base + "/" + name + "/" + category) {
-        return false;
-      }
+    let need = darwin_need(category_name(category), category);
+    if (need.refused || dirs.len() == 0) {
+      return false;
+    }
+    if (need.file.len() > 0 && !darwin_file(dirs, need.file)) {
+      return false;
     }
   }
   return true;

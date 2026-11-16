@@ -762,7 +762,7 @@ function oneline(st: Rev, pattern_in: string, starts: string[]): Rev {
       return fail(st);
     }
   }
-  let re = bre.bre_compile_syntax(pattern, bre.Syntax { emacs: false, newline_anchor: false, extended: true, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: true, dot_not_null: true, utf8: false });
+  let re = bre.bre_compile_syntax(pattern, bre.Syntax { ...bre.posix_basic(), extended: true, no_empty_ranges: true });
   if (re.err.len() > 0) {
     return fail(st);
   }

@@ -68,6 +68,20 @@ struct Tally { xs: i64[], n: i32 }
   while (i < n) { xs = xs.with(i, peek(xs, i) * 2i64); i = i + 1; }
   return xs;
 }
+@noinline function inner(xs: i64[], i: i32): i64 { return xs[i]; }
+@noinline function outer(xs: i64[], i: i32): i64 { return inner(xs, i) + 1i64; }
+@noinline function lend_deep(own xs: i64[], n: i32): i64[] {
+  let i: i32 = 0;
+  while (i < n) { xs = xs.with(i, outer(xs, i) * 2i64); i = i + 1; }
+  return xs;
+}
+@noinline function stash(a: string[]): void { set_args(a); }
+@noinline function pass(a: string[]): void { stash(a); }
+@noinline function stash_loop(own names: string[], n: i32): string[] {
+  let i: i32 = 0;
+  while (i < n) { pass(names); names = names.with(i, names[i] + "?"); i = i + 1; }
+  return names;
+}
 @noinline function hold(xs: i64[]): i64[] { return xs; }
 @noinline function keep_loop(own xs: i64[], n: i32): i64 {
   let i: i32 = 0;
@@ -117,6 +131,13 @@ struct Tally { xs: i64[], n: i32 }
   if (kept_ds[1] != 2i64 || doubled[0] != 2i64 || doubled[2] != 6i64) { return 16; }
   if (lend_loop([5i64], 1)[0] != 10i64) { return 17; }
   if (keep_loop([1i64, 2i64, 3i64], 3) != 13i64) { return 18; }
+  let es: i64[] = [1i64, 2i64, 3i64];
+  let kept_es: i64[] = es;
+  let deep: i64[] = lend_deep(es, 3);
+  if (kept_es[1] != 2i64 || deep[0] != 4i64 || deep[2] != 8i64) { return 19; }
+  let stashed: string[] = stash_loop(["a", "b"], 2);
+  if (stashed[0] != "a?" || stashed[1] != "b?") { return 20; }
+  if (args().len() != 2 || args()[0] != "a?" || args()[1] != "b") { return 21; }
   return 0;
 }
 function main(): i32 {
@@ -133,13 +154,15 @@ var uniqueLoopLoad = regexp.MustCompile(`movq 8\(%r\w+,%r\w+,8\), %r\w+`)
 // not at each push or with, and a shared array is copied, not written. That
 // includes an array that an outer loop carries, as in rounds, where the
 // inlined bump reads it from the loop's struct, and an array that the loop
-// lends to a call that keeps no reference, as in lend_loop (#15929). A loop
+// lends to a call that keeps no reference, as in lend_loop and lend_deep
+// (#15929). A callee that gives the array to set_args, as pass does through
+// stash, keeps a reference, so stash_loop tests the count after the call. A loop
 // over a borrowed array, or over a push onto one, keeps the push's own check,
 // which writes a sole borrowed array in place. A callee that can return the
 // array, as hold can, leaves the check after the call.
 func TestSelfHostUniqueLoop(t *testing.T) {
 	runSemanticProgram(t, "unique-loop", uniqueLoopProgram,
-		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "rounds", "lend_loop", "keep_loop", "exercise"}, semInlineWants("ok\n"))
+		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "rounds", "lend_loop", "lend_deep", "stash_loop", "keep_loop", "exercise"}, semInlineWants("ok\n"))
 
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -162,7 +185,7 @@ func TestSelfHostUniqueLoop(t *testing.T) {
 	if !strings.Contains(grow, "call __fn___fern_bytes_owned") {
 		t.Errorf("grow does not copy a shared array before its loop:\n%s", grow)
 	}
-	for _, fn := range []string{"scale", "shout", "lend_loop"} {
+	for _, fn := range []string{"scale", "shout", "lend_loop", "lend_deep"} {
 		body := condBranchBody(t, string(asm), fn)
 		if n := strings.Count(body, "_uq"); n != 3 {
 			t.Errorf("%s has %d count-test labels, want the 3 of the one check before its loop:\n%s", fn, n, body)
@@ -184,6 +207,13 @@ func TestSelfHostUniqueLoop(t *testing.T) {
 	}
 	if lend := condBranchBody(t, string(asm), "lend_loop"); !strings.Contains(lend, "call __fn_peek") {
 		t.Errorf("lend_loop does not lend its array to peek:\n%s", lend)
+	}
+	if deep := condBranchBody(t, string(asm), "lend_deep"); !strings.Contains(deep, "call __fn_outer") {
+		t.Errorf("lend_deep does not lend its array to outer:\n%s", deep)
+	}
+	stash := condBranchBody(t, string(asm), "stash_loop")
+	if at := strings.Index(stash, "call __fn_pass"); at < 0 || !strings.Contains(stash[at:], "_uq") {
+		t.Errorf("stash_loop does not test the count of its array after pass, which keeps it through set_args:\n%s", stash)
 	}
 	keep := condBranchBody(t, string(asm), "keep_loop")
 	if at := strings.Index(keep, "call __fn_hold"); at < 0 || !strings.Contains(keep[at:], "_uq") {
