@@ -131,3 +131,37 @@ function main(): i32 {
 		t.Fatalf("want E082 on the str instance, got %v", err)
 	}
 }
+
+func TestCheckOfALibraryRootsOnlyTheEntryModule(t *testing.T) {
+	const src = `import "std/async";
+pub function f(): i32 {
+  return 0;
+}
+`
+	for how, ld := range load(t, src) {
+		t.Run("unused/"+how, func(t *testing.T) {
+			entry, prog := ld()
+			if _, err := Check(entry, prog, "x86-64-linux", nil); err != nil {
+				t.Fatalf("a library that calls no kernel function: %v", err)
+			}
+		})
+	}
+	const uses = `import "std/async";
+pub function f(): async.Future[i32] {
+  return async.irq(1);
+}
+`
+	for how, ld := range load(t, uses) {
+		t.Run("used/"+how, func(t *testing.T) {
+			entry, prog := ld()
+			_, err := Check(entry, prog, "x86-64-linux", nil)
+			es, ok := err.(diag.Errors)
+			if !ok || len(es) == 0 {
+				t.Fatalf("want E066, got %v", err)
+			}
+			if cd, ok := es[0].(diag.Coded); !ok || cd.Code() != "E066" {
+				t.Fatalf("want E066, got %v", es[0])
+			}
+		})
+	}
+}
