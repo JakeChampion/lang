@@ -194,10 +194,6 @@ function head_for(q: u64): string {
   return unsafe { string_from_bytes_unchecked(out) };
 }
 
-function held_cr(s: State): State {
-  return State { ...s, w: gnu.put(s.w, "\r") };
-}
-
 function drain(s: State): State {
   return State { ...s, w: gnu.flush(s.w) };
 }
@@ -424,6 +420,10 @@ function copy_all(r: Reader, out: Writer): Result[boolean, IoError] {
   }
 }
 
+function put_text(s: State, text: string): State {
+  return State { ...s, w: gnu.put(s.w, text) };
+}
+
 function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
   let s = st;
   let stdin_input = path == "-";
@@ -582,7 +582,7 @@ pub function main(): i32 {
     i += 1;
   }
   if (st.pending_cr) {
-    st = held_cr(st);
+    st = put_text(st, "\r");
   }
   gnu.finish(st.w);
   if (!st.ok) {

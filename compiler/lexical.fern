@@ -203,7 +203,8 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
       let (cond, cs) = expr(f.cond, s);
       let (tb, ts) = body(f.then_body, cs);
       let (eb, es) = body(f.else_body, leave(ts, cs));
-      return (ast.StmtIf { ...f, cond: cond, then_body: tb, else_body: eb }, leave(es, s), true);
+      let out = leave(es, s);
+      return (ast.StmtIf { ...f, cond: cond, then_body: tb, else_body: eb, sugar: written_literals(f.sugar, out) }, out, true);
     },
     ast.StmtWhile(w) => {
       let (cond, cs) = expr(w.cond, s);
@@ -245,6 +246,30 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
       return (st, s, false);
     }
   }
+}
+
+// The arms of a match on literals as written, which the sugar of its if chain
+// keeps. The chain holds the bindings of the function, so the bindings of
+// these copies are not kept.
+function written_literals(sugar: ast.MatchSugar, s: Scope): ast.MatchSugar {
+  if (sugar.lits.len() == 0) {
+    return sugar;
+  }
+  let (scrut, cur) = expr(sugar.scrut, s);
+  let lits: ast.LitArm[] = [];
+  for arm in sugar.lits {
+    let inner = bind_names(cur, arm.at_binding, arm.line, arm.col);
+    let guard = arm.guard;
+    if (arm.has_guard) {
+      let (g, gs) = expr(guard, inner);
+      guard = g;
+      inner = gs;
+    }
+    let (bs, tail) = body(arm.body, inner);
+    lits = lits.append(ast.LitArm { ...arm, at_binding: names(inner, arm.at_binding), guard: guard, body: bs });
+    cur = leave(tail, cur);
+  }
+  return ast.MatchSugar { ...sugar, scrut: scrut, lits: lits };
 }
 
 function reserve(name: string, own acc: string[]): string[] {
