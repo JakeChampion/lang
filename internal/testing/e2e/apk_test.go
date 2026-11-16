@@ -680,6 +680,38 @@ func TestApkNestedInterface(t *testing.T) {
 	}
 }
 
+// The test app of std/android/notify builds for both ABIs, and its
+// manifest declares the permission that Android 13 needs to show a
+// notification. The emulator lane runs it.
+func TestApkNotify(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "notifytest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.notifytest", "-apk-permission", "POST_NOTIFICATIONS",
+		e2eharness.RepoPath("tests/android/notify", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if !bytes.Contains(man, utf16le("android.permission.POST_NOTIFICATIONS")) {
+		t.Error("the manifest has no permission POST_NOTIFICATIONS")
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		if lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so"); !bytes.Contains(lib, []byte("areNotificationsEnabled")) {
+			t.Errorf("the library of %s does not call areNotificationsEnabled", abi)
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
 // A @jni class that extends Service is a service in the manifest. It is not
 // exported, and its foreground service types are those of the
 // FOREGROUND_SERVICE_<TYPE> permissions: MICROPHONE and CONNECTED_DEVICE

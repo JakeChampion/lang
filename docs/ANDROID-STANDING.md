@@ -144,8 +144,10 @@ The order puts first what stops a release, then what most apps need.
    worker is a message to `update`. `sim.jobs_done` tests that on the
    computer.
 
-4. **Notifications and device features.** Notifications with channels,
-   sensors through the NDK, then location and the camera.
+4. **Notifications and device features.** Notifications with channels
+   are done: `std/android/notify` makes channels, and posts, changes and
+   cancels notifications, with a progress bar. Sensors through the NDK,
+   location and the camera come next.
 
 5. **Components.** Checkbox, radio button, menu, snackbar, tabs, app bar
    and a navigation stack in `std/android/ui`.

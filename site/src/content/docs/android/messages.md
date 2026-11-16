@@ -283,6 +283,26 @@ reads the file, `set`, `set_int` and `set_flag` change the store, and
 the disk, and renames it. So after a crash the file has the old values
 or the new values.
 
+## Notifications
+
+`std/android/notify` shows notifications in the status bar. Make a
+channel for each kind of notification, and post on it. A post with the
+ID of a notification that shows changes that notification.
+
+```fern
+import "std/android/notify";
+
+notify.channel(ctx, notify.Channel { id: "downloads", name: "Downloads", importance: notify.LOW });
+let n = notify.note(1, "downloads", "Album", "Downloading");
+let shown = notify.post(ctx, notify.Note { ...n, progress: 40, ongoing: true });
+```
+
+From Android 13 the app needs the permission `POST_NOTIFICATIONS`.
+Declare it with `-apk-permission POST_NOTIFICATIONS`. `notify.ask(ctx)`
+shows the dialog of the permission, and `notify.allowed(ctx)` tells
+whether the app can show notifications. `post` gives false when it
+cannot.
+
 Other modules of `std/android` reach more of the phone: `audio`,
 `player`, `video`, `service`, `image`, `fonts` and `p2p`. The standard
 library reference lists them.
