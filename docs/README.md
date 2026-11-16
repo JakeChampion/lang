@@ -101,8 +101,7 @@ which ones.
 | `COMPILER-PERFORMANCE.md` | [plan] | Controlled compiler measurements, current profiles, and priorities for parser and compiler performance. |
 | `MULTICORE-RESEARCH.md` | [research] | Survey of parallelism: share-nothing workers with per-worker heaps, given non-atomic refcounts (#5366). |
 | `PERFORMANCE-RESEARCH.md` | [research] | Survey of compiler and runtime performance techniques from Zig, Rust, OCaml, APL, LuaJIT, SBCL and others. |
-| `PLATFORM-RESEARCH.md` | [research] | Historical survey of the handler and host interfaces, with platform proposals tracked in #4414. |
-| `PLATFORM-IMPLEMENTATION-STATUS.md` | [tracker] | Current handler, init, mock and target registry baseline, with remaining platform acceptance criteria (#4414). |
+| `PLATFORM-RESEARCH.md` | [research] | Historical survey of the handler and host interfaces. `PLATFORM-IMPLEMENTATION-STATUS.md` records the state of its proposals. |
 | `ADVERSARIAL-REVIEW-2026-06.md` | [record] | A June 2026 adversarial review hunting correctness, soundness and backend-parity bugs; all 17 findings fixed, each with a regression test. |
 | `ARRAY-PIPELINE-BASELINE-2026-09.md` | [record] | Pre-fusion measurements of the array pipeline programs (#9728), and what array fusion (#9731) changed in allocations and instructions. |
 | `CODEGEN-QUALITY-AUDIT-2026-09.md` | [record] | A September 2026 audit of emitted machine code: 42.6% wasted instructions; Tier A of its fixes landed. |
@@ -115,6 +114,7 @@ which ones.
 | `NATIVE-FREEZE.md` | [record] | The 2026-09-28 native compiler freeze: the gate's state on the day and what moved to the self-host compiler. |
 | `NATIVE-RETIREMENT.md` | [record] | The retirement of the Go native backends: what was measured, how each test was handled, and the order of the deletions; done by 2026-10-05. |
 | `PACKED-OPERAND-STACK-PLAN.md` | [record] | 8-byte operand-stack slots on the Go native backends; x86-64 done, arm64 never, and the backends deleted. |
+| `PLATFORM-IMPLEMENTATION-STATUS.md` | [record] | Source evidence for the platform proposals of #4414 (closed), and the issue of each remaining item. |
 | `PR-326-REVIEW.md` | [record] | Six-lens review of PR #326 (pair-form register returns for Result); fix-now items landed. |
 | `RESEARCH-ROADMAP.md` | [record] | The reading-order index for the eight *-RESEARCH.md surveys; its recommendations became #4412–#4416. |
 | `SSA-CLOSURE-DISPATCH.md` | [record] | Closure and function-value dispatch on the Go SSA native path (#4112); that backend was deleted. |
