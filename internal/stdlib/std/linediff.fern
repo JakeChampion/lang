@@ -1376,8 +1376,12 @@ pub function common_tail(a: u8[], b: u8[]): i32 {
 
 // The form of the hunks: the lines of context, the most lines between two
 // changes of one hunk beyond twice the context, and the function line in
-// each hunk header.
-pub struct Emit { context: i32, interhunk: i32, funcnames: boolean }
+// each hunk header. `find_func` finds the function line as `find_func` of
+// xdiff does: it gets the bytes of the text and the range of one line
+// with its line end, and gives the range of the name in those bytes, or
+// (-1, -1) for a line that is not a function line. None is the rule of
+// `def_ff`.
+pub struct Emit { context: i32, interhunk: i32, funcnames: boolean, find_func: Option[(u8[], i32, i32) => (i32, i32)] }
 
 // The last change of the hunk that starts at change `k`: `xdl_get_hunk`.
 function hunk_end(script: Change[], k: i32, em: Emit): i32 {
@@ -1420,11 +1424,21 @@ function func_line(l: Lines, i: i32): Option[(i32, i32)] {
 
 // The function line at or above the line `start` of the old text, down
 // to the line after `limit`: `get_func_line`.
-function get_func_line(a: Lines, start: i32, limit: i32): Option[(i32, i32)] {
+function get_func_line(a: Lines, start: i32, limit: i32, em: Emit): Option[(i32, i32)] {
   let l = start;
   while (l != limit && 0 <= l && l < a.count()) {
-    if let Some(span) = func_line(a, l) {
-      return Some(span);
+    match (em.find_func) {
+      Some(find) => {
+        let span = find(a.data, a.starts[l], a.starts[l + 1]);
+        if (span.0 >= 0) {
+          return Some(span);
+        }
+      },
+      None => {
+        if let Some(span) = func_line(a, l) {
+          return Some(span);
+        }
+      }
     }
     l -= 1;
   }
@@ -1476,7 +1490,7 @@ pub function unified(out: usize, a: Lines, b: Lines, script: Change[], em: Emit)
     let e1 = end.i1 + end.del + lctx;
     let e2 = end.i2 + end.ins + lctx;
     if (em.funcnames) {
-      if let Some(span) = get_func_line(a, s1 - 1, funclineprev) {
+      if let Some(span) = get_func_line(a, s1 - 1, funclineprev, em) {
         func_s = span.0;
         func_e = span.1;
       }

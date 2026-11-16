@@ -14,7 +14,7 @@ function hunks(a: string, b: string, o: linediff.Options, context: i32): string 
   let la = linediff.lines_of(ab);
   let lb = linediff.lines_of(bb);
   let out = buf_new(256);
-  linediff.unified(out, la, lb, linediff.diff(la, lb, o), linediff.Emit { context: context, interhunk: 0, funcnames: true });
+  linediff.unified(out, la, lb, linediff.diff(la, lb, o), linediff.Emit { context: context, interhunk: 0, funcnames: true, find_func: None });
   return buf_take(out);
 }
 
@@ -138,6 +138,27 @@ function test_gnu_search(): test.TestOutcome {
   return test.assert_eq(flags[8] as i32, 1);
 }
 
+// A `find_func` takes the place of the default rule: here a function line
+// starts with `#`, and its name is the text after it. A line that it
+// refuses is not a function line, although it starts with a letter.
+function test_find_func(): test.TestOutcome {
+  let a = "# one\nplain\nx\ny\nz\nold\n".bytes();
+  let b = "# one\nplain\nx\ny\nz\nnew\n".bytes();
+  let la = linediff.lines_of(a);
+  let lb = linediff.lines_of(b);
+  let find = (data: u8[], s: i32, e: i32): (i32, i32) => if (data[s] == b'#') { (s + 2, e - 1) } else { (-1, -1) };
+  let out = buf_new(256);
+  linediff.unified(out, la, lb, linediff.diff(la, lb, myers()), linediff.Emit { context: 1, interhunk: 0, funcnames: true, find_func: Some(find) });
+  let named = buf_take(out);
+  if (named != "@@ -5,2 +5,2 @@ one\n z\n-old\n+new\n") {
+    return test.fail("the name of find_func: " + named);
+  }
+  let none = (data: u8[], s: i32, e: i32): (i32, i32) => (-1, -1);
+  let bare = buf_new(256);
+  linediff.unified(bare, la, lb, linediff.diff(la, lb, myers()), linediff.Emit { context: 1, interhunk: 0, funcnames: true, find_func: Some(none) });
+  return test.assert_eq(buf_take(bare), "@@ -5,2 +5,2 @@\n z\n-old\n+new\n");
+}
+
 function test_common_tail(): test.TestOutcome {
   let tail = "line\n".repeat(600);
   let a = ("one\n" + tail).bytes();
@@ -158,6 +179,7 @@ function main(): i32 {
   r = r.it("histogram", test_histogram);
   r = r.it("histogram re-diff", test_histogram_rediff);
   r = r.it("gnu search", test_gnu_search);
+  r = r.it("a function line from find_func", test_find_func);
   r = r.it("common tail", test_common_tail);
   return r.finish();
 }

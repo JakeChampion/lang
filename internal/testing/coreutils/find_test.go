@@ -248,22 +248,35 @@ func findSharedTree(t *testing.T) string {
 		_ = os.Chmod(filepath.Join(dir, "locked"), 0o755)
 		_ = os.Chmod(filepath.Join(dir, "unsearchable"), 0o755)
 	})
-	pinDirAtimes(t, dir, now.Add(time.Hour))
+	pinReadAtimes(t, dir, now.Add(time.Hour))
 	return dir
 }
 
-// pinDirAtimes sets the access time of each directory a little after now.
-// A walk reads each directory, and a later access time keeps relatime from
-// changing it, so %A and -used of a directory are the same on both sides.
-func pinDirAtimes(t *testing.T, dir string, at time.Time) {
+// pinReadAtimes sets the access time of each directory and each symbolic
+// link a little after now. A walk reads each directory and a case can read
+// each link, and a later access time keeps relatime from changing it. Thus
+// %A and -used of a directory or a link are the same on both sides.
+func pinReadAtimes(t *testing.T, dir string, at time.Time) {
 	t.Helper()
-	var dirs []string
+	var dirs, links []string
 	_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
 		if err == nil && info.IsDir() {
 			dirs = append(dirs, p)
 		}
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			links = append(links, p)
+		}
 		return nil
 	})
+	for _, l := range links {
+		info, err := os.Lstat(l)
+		if err != nil {
+			continue
+		}
+		if err := pinLinkAtime(l, at, info.ModTime()); err != nil {
+			t.Fatalf("set the times of the link %s: %v", l, err)
+		}
+	}
 	for _, d := range dirs {
 		info, err := os.Lstat(d)
 		if err != nil {
@@ -285,7 +298,7 @@ func findManyTree(t *testing.T) string {
 	for i := 0; i < 50; i++ {
 		writeFile(t, filepath.Join(dir, "few"), fmt.Sprintf("g%02d", i), "")
 	}
-	pinDirAtimes(t, dir, time.Now().Add(time.Hour))
+	pinReadAtimes(t, dir, time.Now().Add(time.Hour))
 	return dir
 }
 

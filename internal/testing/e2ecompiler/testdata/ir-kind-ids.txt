@@ -519,3 +519,5 @@ scan_masks=569
 vsock_connect=570
 scan_masks_bytes=571
 ffma=572
+reader_from_fd=573
+ffma32=574

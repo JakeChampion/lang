@@ -14,12 +14,13 @@ The icons are drawn with the discs, the rings, the rounded rectangles and the fi
 - `dots` is three dots in a row, or in a column for the menu of a row.
 - `timer`, `lyrics`, `queue`, `gear` and `search` are the tools of a player. `queue` and `gear` take the background `bg` for their holes.
 - `chevron` is the head of an arrow, down or to the left.
+- `check` is the mark of a checkbox, and `back` is an arrow to the left, for the back button of an app bar.
 
 A button of icons has no text, so give each canvas a text that an accessibility service reads: `.described("Play")`. The simulator of `std/android/ui/sim` finds the button by that text.
 
 ## Contracts
 
-The paint draws only in its box. A color is a color of `std/android/draw`, not a role of a theme.
+The paint draws only in its box. A color is a color of `std/android/draw`, not a role of a theme. `ui.tinted` gives an icon the color of a role of the theme.
 
 ## Module assembly
 
@@ -259,6 +260,27 @@ pub function chevron(color: i32, left: boolean): (draw.Frame, i32, i32, i32, i32
       stroke(f, l, t + s / 4, l + s / 2, t + s * 3 / 4, lw, color);
       stroke(f, l + s / 2, t + s * 3 / 4, l + s, t + s / 4, lw, color);
     }
+  };
+}
+
+// A check mark.
+pub function check(color: i32): (draw.Frame, i32, i32, i32, i32) => void {
+  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let (s, l, t) = square(x, y, w, h, 60);
+    let lw = (s / 6).max(2);
+    stroke(f, l + s / 10, t + s / 2, l + s * 2 / 5, t + s * 4 / 5, lw, color);
+    stroke(f, l + s * 2 / 5, t + s * 4 / 5, l + s * 9 / 10, t + s / 5, lw, color);
+  };
+}
+
+// An arrow to the left.
+pub function back(color: i32): (draw.Frame, i32, i32, i32, i32) => void {
+  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let (s, l, t) = square(x, y, w, h, 40);
+    let lw = line_width(s) * 3 / 2;
+    stroke(f, l, t + s / 2, l + s, t + s / 2, lw, color);
+    stroke(f, l, t + s / 2, l + s / 2, t, lw, color);
+    stroke(f, l, t + s / 2, l + s / 2, t + s, lw, color);
   };
 }
 ```

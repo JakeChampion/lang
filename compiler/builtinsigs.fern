@@ -206,6 +206,7 @@ pub function builtin_sigs(): string[] {
     "read_file_bytes(string): Result[u8[], IoError]",
     "read_link(string): Result[string, IoError]",
     "read_link_bytes(string): Result[u8[], IoError]",
+    "reader_from_fd(i32): Result[Reader, IoError]",
     "remove_dir(string): Result[void, IoError]",
     "remove_dir_all(string): Result[void, IoError]",
     "remove_file(string): Result[void, IoError]",

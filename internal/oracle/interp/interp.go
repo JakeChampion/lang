@@ -666,6 +666,7 @@ func New() *Interp {
 	i.Builtins["open_exclusive"] = &Builtin{Fn: builtinOpenExclusive}
 	i.Builtins["open_reader_with"] = &Builtin{Fn: builtinOpenReaderWith}
 	i.Builtins["open_writer_with"] = &Builtin{Fn: builtinOpenWriterWith}
+	i.Builtins["reader_from_fd"] = &Builtin{Fn: builtinReaderFromFd}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_read_chunk_bytes"] = &Builtin{Fn: builtinReaderReadChunkBytes}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
@@ -1572,7 +1573,8 @@ func New() *Interp {
 	i.Builtins["__round_f64"] = mkUnaryF64Builtin("__round_f64", math.Round)
 	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
 	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
-	i.Builtins["__fma_f64"] = &Builtin{Fn: builtinFmaF64}
+	i.Builtins["__fma_f64"] = &Builtin{Fn: builtinFma("__fma_f64", 64, math.FMA)}
+	i.Builtins["__fma_f32"] = &Builtin{Fn: builtinFma("__fma_f32", 32, fma32)}
 	i.registerLaneBuiltins()
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
@@ -2403,20 +2405,22 @@ func mkUnaryF64Builtin(name string, fn func(float64) float64) *Builtin {
 	}}
 }
 
-// builtinFmaF64 gives a*b + c with one rounding.
-func builtinFmaF64(_ *Interp, args []Value) (Value, error) {
-	if len(args) != 3 {
-		return nil, fmt.Errorf("__fma_f64: expected 3 args, got %d", len(args))
-	}
-	var xs [3]float64
-	for k, a := range args {
-		f, ok := a.(Float)
-		if !ok {
-			return nil, fmt.Errorf("__fma_f64: expected float arg, got %T", a)
+// builtinFma gives a*b + c with one rounding, at the width of the builtin.
+func builtinFma(name string, width int, fma func(a, b, c float64) float64) func(*Interp, []Value) (Value, error) {
+	return func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
 		}
-		xs[k] = f.V
+		var xs [3]float64
+		for k, a := range args {
+			f, ok := a.(Float)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected float arg, got %T", name, a)
+			}
+			xs[k] = f.V
+		}
+		return Float{V: fma(xs[0], xs[1], xs[2]), Width: width}, nil
 	}
-	return Float{V: math.FMA(xs[0], xs[1], xs[2]), Width: 64}, nil
 }
 
 func builtinIntToString(_ *Interp, args []Value) (Value, error) {
@@ -4748,6 +4752,30 @@ func builtinOpenWriterWith(i *Interp, args []Value) (Value, error) {
 	return openWithHelper(i, args, "Writer", os.O_WRONLY)
 }
 
+// builtinReaderFromFd makes a Reader of a descriptor that the process holds.
+// It does not open the file again, so a read starts at the offset of the
+// descriptor. Descriptor 0 is the stdin of the interpreter.
+func builtinReaderFromFd(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("reader_from_fd: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("reader_from_fd: expected number fd, got %T", args[0])
+	}
+	if n == 0 {
+		return resultOk(&Struct{TypeName: "Reader", Fields: map[string]Value{"fd": Number(0)}}), nil
+	}
+	const fGetfd = 1
+	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(int(n)), fGetfd, 0); errno != 0 {
+		return resultErr(classifyIoError("", errno)), nil
+	}
+	id := i.nextFd
+	i.nextFd++
+	i.openFiles[id] = os.NewFile(uintptr(int(n)), fmt.Sprintf("fd %d", int(n)))
+	return resultOk(&Struct{TypeName: "Reader", Fields: map[string]Value{"fd": Number(id)}}), nil
+}
+
 func openWithHelper(i *Interp, args []Value, structName string, access int) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("open_*_with: expected 2 args, got %d", len(args))
@@ -6334,6 +6362,9 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	if err := i.tooDeep(); err != nil {
 		return nil, err
+	}
+	if fn.Body == nil && fn.ImportIface != "" && fn.ImportIface != ast.CallbackIface {
+		return nil, fmt.Errorf("the interpreter cannot call `%s`: it imports %s from %s", fn.Name, fn.ImportWITName, fn.ImportIface)
 	}
 	i.callDepth++
 	defer func() { i.callDepth-- }()

@@ -26,7 +26,7 @@ function body(name: string, params: typeinfo.Type[], types: typeinfo.Type[], ops
 }
 function callback(captured: boolean, reads_env: boolean, size: i32): ssasem.Func {
   let env: typeinfo.Type = typeinfo.TypeArray { elem: word(), view: false };
-  if (captured) { env = ssasem.env_type("cb", [word()]); }
+  if (captured) { env = ssasem.env_type("cb", [word()], false); }
   let ops = [inst(ssasem.param(), 0, [], 0, ""), inst(ssasem.param(), 1, [], 1, "")];
   let types = [env, word()];
   if (reads_env) {

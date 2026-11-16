@@ -3481,7 +3481,7 @@ function infer_call_named_type_part_8(id: ast.ExprIdent, c: ast.ExprCall, s: Emi
   if (id.name == "env" || id.name == "config_get") {
     return ty_option(ty_string());
   }
-  if (id.name == "open_reader" || id.name == "open_reader_with") {
+  if (id.name == "open_reader" || id.name == "open_reader_with" || id.name == "reader_from_fd") {
     return ty_result(ty_named("Reader"));
   }
   if (id.name == "open_writer_with") {
@@ -3579,7 +3579,7 @@ function infer_call_named_type_part_12(id: ast.ExprIdent, c: ast.ExprCall, s: Em
 function infer_call_named_type_part_13(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
     || id.name == "__floor_f64" || id.name == "__ceil_f64"
-    || id.name == "__trunc_f64" || id.name == "__round_f64" || id.name == "__fma_f64") {
+    || id.name == "__trunc_f64" || id.name == "__round_f64" || id.name == "__fma_f64" || id.name == "__fma_f32") {
     return ty_f64();
   }
   if (id.name == "str_split") {

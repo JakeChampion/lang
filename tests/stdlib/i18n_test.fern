@@ -1,0 +1,65 @@
+import "std/i18n";
+import "std/kv";
+import "std/test";
+
+function lookups(): test.TestOutcome {
+  let have = ["en", "de", "zh-Hant", "zh", "pt-BR"];
+  let got = [
+    i18n.lookup(have, ["fr-CA", "de-AT"], "en"),
+    i18n.lookup(have, ["zh-Hant-TW"], "en"),
+    i18n.lookup(have, ["ZH_hans_CN"], "en"),
+    i18n.lookup(have, ["pt-br"], "en"),
+    i18n.lookup(have, ["pt-PT"], "en"),
+    i18n.lookup(have, ["x-pig-latin", "ja"], "en"),
+    i18n.lookup(have, [], "de"),
+  ];
+  return test.assert_eq(got.join(" "), "de zh-Hant zh pt-BR en en de");
+}
+
+function texts(): test.TestOutcome {
+  let en = kv.empty("en.kv").set("hello", "Hello, {0} and {1}").set("bye", "Bye");
+  let de = kv.empty("de.kv").set("hello", "Hallo, {1} und {0}");
+  let s = i18n.strings("de", de, en);
+  return test.assert_eq(s.format("hello", ["A", "B"]) + "|" + s.text("bye") + "|" + s.text("none") + "|" + s.format("hello", ["A"]), "Hallo, B und A|Bye|none|Hallo, {1} und A");
+}
+
+function forms(lang: string, ns: i64[]): string {
+  let out: string[] = [];
+  for n in ns {
+    out = out.append(i18n.plural_form(lang, n));
+  }
+  return lang + ":" + out.join(",");
+}
+
+function plural_forms(): test.TestOutcome {
+  let ns = [0i64, 1i64, 2i64, 5i64, 11i64, 21i64, 22i64, 101i64, 112i64];
+  let got = [forms("en", ns), forms("fr", ns), forms("ja", ns), forms("ru-RU", ns), forms("pl", ns), forms("cs", ns), forms("ar", ns), forms("ro", ns)];
+  let want = [
+    "en:other,one,other,other,other,other,other,other,other",
+    "fr:one,one,other,other,other,other,other,other,other",
+    "ja:other,other,other,other,other,other,other,other,other",
+    "ru-RU:many,one,few,many,many,one,few,one,many",
+    "pl:many,one,few,many,many,many,few,many,many",
+    "cs:other,one,few,other,other,other,other,other,other",
+    "ar:zero,one,two,few,many,many,many,other,many",
+    "ro:few,one,few,few,few,other,other,few,few",
+  ];
+  return test.assert_eq(got.join(" "), want.join(" "));
+}
+
+function plurals(): test.TestOutcome {
+  let en = kv.empty("en.kv").set("files.one", "{n} file").set("files.other", "{n} files");
+  let ru = kv.empty("ru.kv").set("files.one", "{n} файл").set("files.few", "{n} файла").set("files.many", "{n} файлов");
+  let r = i18n.strings("ru", ru, en);
+  let e = i18n.strings("en", en, en);
+  return test.assert_eq([r.plural("files", 1i64), r.plural("files", 3i64), r.plural("files", 7i64), e.plural("files", 1i64), e.plural("files", 0i64)].join("|"), "1 файл|3 файла|7 файлов|1 file|0 files");
+}
+
+function main(): i32 {
+  let runner = test.new("std/i18n");
+  runner = runner.it("lookup takes the first tag that a language matches", lookups);
+  runner = runner.it("a text comes from the language, then the base, then the key", texts);
+  runner = runner.it("the plural forms of CLDR for whole numbers", plural_forms);
+  runner = runner.it("plural takes the text of the form of a count", plurals);
+  return runner.finish();
+}

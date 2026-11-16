@@ -2292,7 +2292,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
     return ssa_unary_known(ins.str);
   }
   if (k == ssa.TERNARY) {
-    return ins.str == "ffma";
+    return ins.str == "ffma" || ins.str == "ffma32";
   }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
@@ -3074,6 +3074,15 @@ function ssa_ffma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   s = ssa_fread(reg_of, ins.args[1], "d2", s);
   s = ssa_fread(reg_of, ins.args[2], "d3", s);
   let d = ssa_fdst(reg_of, ins.result);
+  // Each operand of ffma32 is an f64 that holds an f32 value.
+  if (ins.str == "ffma32") {
+    for k in 0..3 {
+      let n = util.i32_to_string(k + 1);
+      s = s.write("    fcvt s" + n + ", " + ssa_fsrc(reg_of, ins.args[k], "d" + n) + "\n");
+    }
+    s = s.write("    fmadd s1, s1, s2, s3\n    fcvt " + d + ", s1\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   s = s.write("    fmadd " + d + ", " + ssa_fsrc(reg_of, ins.args[0], "d1") + ", " + ssa_fsrc(reg_of, ins.args[1], "d2") + ", " + ssa_fsrc(reg_of, ins.args[2], "d3") + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
@@ -6084,6 +6093,11 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("reader");
     s = s.need("fd_flags");
     s = s.write("    bl __fn___fern_fd_flags\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == ir.K_READER_FROM_FD) {
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("reader_from_fd");
+    s = s.write("    bl __fn___fern_reader_from_fd\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_READER_SEEK) {
     s = s.need("heap");
     s = s.need("reader");
@@ -11988,6 +12002,9 @@ function emit_rt_collections_and_proc_part_5(s: asmcore.EmitState, darwin: boole
     }
     if (s.has_need("fd_flags")) {
       fs_roots = fs_roots + " " + "__fern_fd_flags";
+    }
+    if (s.has_need("reader_from_fd")) {
+      fs_roots = fs_roots + " " + "__fern_reader_from_fd";
     }
     if (s.has_need("fd_dup_onto")) {
       fs_roots = fs_roots + " " + "__fern_fd_dup_onto";

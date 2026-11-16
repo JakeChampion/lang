@@ -1312,6 +1312,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.FloatType{Width: 64}, ast.FloatType{Width: 64}, ast.FloatType{Width: 64}},
 		Result: ast.FloatType{Width: 64},
 	}
+	c.info.FuncSigs["__fma_f32"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 32}, ast.FloatType{Width: 32}, ast.FloatType{Width: 32}},
+		Result: ast.FloatType{Width: 32},
+	}
 	c.registerLaneBuiltins()
 	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 64}},
@@ -1576,6 +1580,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["open_writer_with"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	c.info.FuncSigs["reader_from_fd"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
 	}
 	c.info.FuncSigs["now_unix_ms"] = &ast.FuncType{
 		Params: []ast.Type{},

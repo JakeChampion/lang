@@ -1083,8 +1083,14 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
   }
   let bd: ast.Stmt[] = [];
   for cj in 0..caps.len() {
-    let idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "", builtin: false }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-    bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
+    let env: ast.Expr = ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "", builtin: false };
+    let at: ast.Expr = ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 };
+    let read: ast.Expr = ast.ExprIndex { array: env, index: at, unchecked: false, ty: "", line: 0, col: 0 };
+    // The body of a `once` lambda takes its captures out of the environment.
+    if (lam.once) {
+      read = ast.ExprCall { callee: ast.ExprIdent { name: "__env_take", line: 0, col: 0, ty: "", builtin: true }, args: [env, at], line: 0, col: 0, type_args: [], ty: ctys[cj] };
+    }
+    bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: read, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
   }
   for bk in 0..lam.body.len() {
     bd = bd.append(lam.body[bk]);
