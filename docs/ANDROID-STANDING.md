@@ -58,8 +58,8 @@ Play, and the first is now fixed:
    the SDKs of other vendors are out of reach.
 
 3. **Text and languages.** There is no text shaping, no right-to-left
-   text, no CFF fonts (most CJK fonts), no color emoji, no font fallback
-   and no localized strings.
+   text, no CFF fonts (most CJK fonts), no color emoji and no font
+   fallback. `std/i18n` now gives localized strings.
 
 4. **A thin set of components.** There was no checkbox, radio button,
    menu, snackbar, tab bar, app bar or navigation stack. `std/android/ui`
@@ -158,8 +158,10 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** Shaping, right-to-left text, CFF and color glyphs, fallback
-   fonts, and localized strings.
+7. **Text.** Shaping, right-to-left text, CFF and color glyphs, and
+   fallback fonts. Localized strings are done: `android.languages` gives
+   the languages of the person, and `std/i18n` chooses the texts and
+   their plural forms.
 
 8. **Developer tools.** A debugger workflow with lldb, and then a reload
    of the view and update code with the model kept. `-apk-run` already

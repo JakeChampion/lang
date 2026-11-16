@@ -381,6 +381,28 @@ The app needs the permission `CAMERA`, and `camera.ask(ctx)` shows its
 dialog. Stop the camera at each Pause with `camera.stop`, because an open
 camera uses power and other apps cannot use it.
 
+## Languages
+
+`android.languages(ctx)` gives the languages of the person, the first
+one the best. `std/i18n` chooses the texts of the app from them. Keep
+the texts of each language in a store of `std/kv`, for example in an
+asset of the APK.
+
+```fern
+import "std/i18n";
+
+let lang = i18n.lookup(["en", "de"], android.languages(ctx), "en");
+let texts = i18n.strings(lang, german, english);
+
+texts.text("title");
+texts.format("hello", [name]);
+texts.plural("files", count);
+```
+
+A text that the language does not have comes from the base language.
+`plural` takes the key `files.one`, `files.few` or another form of the
+count, as the plural rules of the language give it.
+
 Other modules of `std/android` reach more of the phone: `audio`,
 `player`, `video`, `service`, `image`, `fonts` and `p2p`. The standard
 library reference lists them.

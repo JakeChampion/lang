@@ -1736,6 +1736,24 @@ pub function night_mode(ctx: usize): boolean {
   }
 }
 
+// The languages of the person, the first one the best, as tags of BCP 47
+// such as "en-US". `std/i18n` chooses the texts of a language from them.
+pub function languages(ctx: usize): string[] {
+  let e = env(ctx);
+  let res: usize = jni.call_object(e, activity_object(ctx), "getResources", "()Landroid/content/res/Resources;", []);
+  let config: usize = jni.call_object(e, res, "getConfiguration", "()Landroid/content/res/Configuration;", []);
+  let list: usize = jni.call_object(e, config, "getLocales", "()Landroid/os/LocaleList;", []);
+  let tags: usize = jni.call_object(e, list, "toLanguageTags", "()Ljava/lang/String;", []);
+  if (tags == 0 as usize) {
+    return [];
+  }
+  let text = jni.string_of(e, tags);
+  if (text.len() == 0) {
+    return [];
+  }
+  return text.split(",");
+}
+
 // Moves the task of the activity behind the other apps, as the home key
 // does. The activity and its foreground service keep running.
 pub function to_background(ctx: usize): void {
