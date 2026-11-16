@@ -1,3 +1,4 @@
+import "./asmcore";
 import "./ssadecrementtext" as text;
 import "./ssainlineuniqueisa" as registers;
 import "./ssaproofnames" as names;
@@ -491,7 +492,7 @@ function constructor_decode(line: string): Op {
   }
   let name = slice_unchecked(line, 0, at).to_owned();
   let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
-  if (name == "call" && (rest == "__fern_arr_box" || rest == "__fern_rec_box")) {
+  if (name == "call" && (rest == "__fern_arr_box" || rest == "__fern_rec_box" || sized_box_routine(rest))) {
     return Op { ...empty(25), symbol: rest };
   }
   let args = operands(rest);
@@ -499,6 +500,20 @@ function constructor_decode(line: string): Op {
     return empty(0);
   }
   return if (name == "leaq") { constructor_address(args[0], args[1]) } else { immediate_store(name, args[0], args[1]) };
+}
+
+// __fern_rec_box_N for a box of N words, 1 to 255, with N in decimal and no
+// leading zero.
+function sized_box_routine(name: string): boolean {
+  if (!name.starts_with("__fern_rec_box_") || name.len() > 18) {
+    return false;
+  }
+  for words in 1..256 {
+    if (name == asmcore.sized_rec_box(words)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function constructor_address(address: string, destination: string): Op {

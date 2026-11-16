@@ -1,0 +1,32 @@
+// A generic implementation of a generic trait gives each instance the
+// trait at the instance's arguments, so the instance boxes into a dyn
+// value pinned at those arguments. A generic function can return such a
+// value, and the pinned argument of its result is the argument of the call.
+
+trait Source[M] {
+    function next(self: Self): M;
+}
+
+struct Fixed[M] { v: M }
+
+impl[M] Source[M] for Fixed[M] {
+    function next(self: Fixed[M]): M {
+        return self.v;
+    }
+}
+
+enum Msg { Got(i32) }
+
+function make[M](v: M): dyn Source[M] {
+    return Fixed { v: v };
+}
+
+function main(): i32 {
+    let n: dyn Source[i32] = Fixed { v: 7 };
+    let s = make(Got(35));
+    let total = match (s.next()) {
+        Got(k) => k + n.next(),
+    };
+    print(total.to_string());
+    return 0;
+}

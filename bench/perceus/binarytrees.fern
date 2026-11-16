@@ -1,0 +1,27 @@
+// The binary-trees workload of the Computer Language Benchmarks Game, in the
+// form where each node holds an item. The two children of a node take different
+// items, so no compiler can make one tree share a subtree.
+pub enum Tree { Nil, Node(i64, Tree, Tree) }
+
+pub function make(item: i64, depth: i32): Tree {
+  if (depth == 0) {
+    return Node(item, Nil, Nil);
+  }
+  return Node(item, make(2i64 * item - 1i64, depth - 1), make(2i64 * item, depth - 1));
+}
+
+pub function check(t: Tree): i64 {
+  return match (t) { Node(item, l, r) => item + check(l) - check(r), Nil => 0i64 };
+}
+
+// The sum of the checks of the trees with the items 1 to `iterations` and their
+// negatives, each made and dropped in turn.
+pub function sweep(iterations: i64, depth: i32): i64 {
+  let total = 0i64;
+  let i = 1i64;
+  while (i <= iterations) {
+    total += check(make(i, depth)) + check(make(0i64 - i, depth));
+    i += 1i64;
+  }
+  return total;
+}

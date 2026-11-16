@@ -151,7 +151,7 @@ function line_break(r: out.R, hard: boolean): out.R {
   if (hard || !r.no_linebreaks && r.width == 0 && !r.o.nobreaks) {
     return r.cr();
   }
-  return r.out(" ", allow_wrap(r), out.LITERAL);
+  return r.out(" ".as_bytes(), allow_wrap(r), out.LITERAL);
 }
 
 // A link or an image. An autolink is written as one, and the walk skips its
@@ -162,10 +162,10 @@ function link(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (out.
       return (r, false);
     }
     let url = t.lit(x);
-    if (url.starts_with("mailto:")) {
-      url = slice_unchecked(url, 7, url.len());
+    if (is_mailto(url)) {
+      url = url[7:url.len()];
     }
-    return (r.lit("<").lit(url).lit(">"), true);
+    return (r.lit("<").out(url, false, out.LITERAL).lit(">"), true);
   }
   if (entering && k == nodes.LINK) {
     return (r.lit("["), false);
@@ -181,7 +181,7 @@ function link_end(r0: out.R, t: nodes.Tree, x: i32, k: i32): out.R {
   let title = t.extra(x);
   if (title.len() > 0) {
     if (k == nodes.IMAGE) {
-      r = r.out(" \"", allow_wrap(r), out.LITERAL);
+      r = r.out(" \"".as_bytes(), allow_wrap(r), out.LITERAL);
     } else {
       r = r.lit(" \"");
     }
@@ -207,15 +207,25 @@ function is_autolink(t: nodes.Tree, x: i32): boolean {
     return false;
   }
   let bare = url;
-  if (url.starts_with("mailto:")) {
-    bare = slice_unchecked(url, 7, url.len());
+  if (is_mailto(url)) {
+    bare = url[7:url.len()];
   }
-  return bare == t.lit(first);
+  return same(bare, t.lit(first));
+}
+
+// True when the destination `url` starts with `mailto:`.
+pub function is_mailto(url: [u8]): boolean {
+  return url.len() >= 7 && __mismatch_bytes(url, 0, "mailto:".as_bytes(), 0, 7) == 7;
+}
+
+// True when `a` and `b` hold the same bytes.
+pub function same(a: [u8], b: [u8]): boolean {
+  return a.len() == b.len() && __mismatch_bytes(a, 0, b, 0, a.len()) == a.len();
 }
 
 // The length of a scheme and its `:` at the start of `s`, or 0: a letter,
 // then 1 to 31 letters, digits, `.`, `+` and `-`.
-pub function scheme_length(s: string): i32 {
+pub function scheme_length(s: [u8]): i32 {
   if (s.len() == 0 || !is_letter(s[0] as i32)) {
     return 0;
   }
@@ -296,7 +306,7 @@ function code_block(r0: out.R, t: nodes.Tree, x: i32): out.R {
   }
   let info = t.extra(x);
   let fence = "`";
-  if (__memchr(info, 96, 0) >= 0) {
+  if (__memchr_bytes(info, 96, 0) >= 0) {
     fence = "~";
   }
   let text = t.lit(x);
@@ -314,7 +324,7 @@ function code_block(r0: out.R, t: nodes.Tree, x: i32): out.R {
   return r.blankline();
 }
 
-function longest_ticks(s: string): i32 {
+function longest_ticks(s: [u8]): i32 {
   let longest = 0;
   let cur = 0;
   for i in 0..s.len() {
@@ -331,7 +341,7 @@ function longest_ticks(s: string): i32 {
 }
 
 // The shortest string of backticks that is not in `s`, or 32.
-function shortest_unused_ticks(s: string): i32 {
+function shortest_unused_ticks(s: [u8]): i32 {
   let used = 1;
   let cur = 0;
   for i in 0..s.len() + 1 {
@@ -353,7 +363,7 @@ function shortest_unused_ticks(s: string): i32 {
 
 // True when a code span needs a space at each end: its text is empty,
 // starts or ends with a backtick, or has spaces at both ends and other text.
-function padded(s: string): boolean {
+function padded(s: [u8]): boolean {
   let len = s.len();
   if (len == 0 || s[0] == b'`' || s[len - 1] == b'`') {
     return true;
@@ -370,7 +380,7 @@ function padded(s: string): boolean {
 }
 
 // A code span, with a string of backticks that its text does not have.
-function code(r0: out.R, s: string): out.R {
+function code(r0: out.R, s: [u8]): out.R {
   let n = shortest_unused_ticks(s);
   let extra = padded(s);
   let r = r0;

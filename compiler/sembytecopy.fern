@@ -50,34 +50,11 @@ function concat_array(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The log2 of the bytes of an element of an owned array, or -1. The element
-// must have 1, 2, 4 or 8 bytes on every target.
-function elem_shift(t: typeinfo.Type): i32 {
-  if let typeinfo.TypeArray(a) = t {
-    if (a.view) {
-      return -1;
-    }
-    if (ssasem.is_u8(a.elem)) {
-      return 0;
-    }
-    if (ssasem.is_u16(a.elem) || ssasem.is_i16(a.elem)) {
-      return 1;
-    }
-    if (ssasem.is_i32(a.elem) || ssasem.is_u32(a.elem) || ssasem.is_char(a.elem) || ssasem.is_f32(a.elem)) {
-      return 2;
-    }
-    if (ssasem.is_i64(a.elem) || ssasem.is_u64(a.elem) || ssasem.is_f64(a.elem)) {
-      return 3;
-    }
-  }
-  return -1;
-}
-
 // An append can become a range concat, and a with a fill, a move or a byte copy.
 function any_copy_update(f: ssasem.Func): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == ssasem.append() && concat_array(f.values[ins.result]) || ins.kind_tag == ssasem.with() && elem_shift(f.values[ins.result]) >= 0) {
+      if (ins.kind_tag == ssasem.append() && concat_array(f.values[ins.result]) || ins.kind_tag == ssasem.with() && ssasem.elem_shift(f.values[ins.result]) >= 0) {
         return true;
       }
     }
@@ -178,7 +155,7 @@ function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
   let counter = ssa.no_inst();
   for ins in h.insts {
     if (ins.kind_tag == ssa.PHI && ins.args.len() == 2) {
-      if ((concat_array(f.values[ins.result]) || elem_shift(f.values[ins.result]) >= 0) && array.result < 0) {
+      if ((concat_array(f.values[ins.result]) || ssasem.elem_shift(f.values[ins.result]) >= 0) && array.result < 0) {
         array = ins;
       } else if (ssasem.is_i32(f.values[ins.result]) && counter.result < 0) {
         counter = ins;
@@ -189,7 +166,7 @@ function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
       return no_loop();
     }
   }
-  return Loop { ...no_loop(), ok: array.result >= 0 && counter.result >= 0, array: array, counter: counter, shift: if (array.result >= 0) { elem_shift(f.values[array.result]) } else { -1 } };
+  return Loop { ...no_loop(), ok: array.result >= 0 && counter.result >= 0, array: array, counter: counter, shift: if (array.result >= 0) { ssasem.elem_shift(f.values[array.result]) } else { -1 } };
 }
 
 function loop_compare(ins: ssa.SInst): boolean {
@@ -288,7 +265,8 @@ function source_read(f: ssasem.Func, ix: Index, update: ssa.SInst, l: Loop): ssa
   return read;
 }
 
-// The byte helpers take owned u8[] sources: kind 0. Any other append of a
+// The byte helpers are kind 0. The append helper takes an owned u8[] source,
+// and the write helper takes a u8[] or a [u8] view. Any other append of a
 // range is a range concat, kind 1, which reads a view in place. Its source
 // must not be the receiver that the loop starts from. Kind -1 keeps the loop,
 // as it does when there is no such read.
@@ -297,7 +275,7 @@ function copy_kind(f: ssasem.Func, l: Loop, read: ssa.SInst, write: boolean): i3
     return -1;
   }
   let src = read.args[0];
-  if (bytes(f.values[l.array.result]) && bytes(f.values[src])) {
+  if (bytes(f.values[l.array.result]) && (bytes(f.values[src]) || write && ssasem.is_byte_view(f.values[src]))) {
     return 0;
   }
   if (write || src == l.array.args[l.outer]) {
@@ -828,7 +806,13 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
   } else if (l.kind == MOVE) {
     args = [receiver, at, from, sp.count];
   } else if (l.update.kind_tag == ssasem.with()) {
-    args = [receiver, at, l.src, from, sp.count];
+    let src = l.src;
+    if (!ssasem.is_byte_view(values[src])) {
+      src = values.len();
+      values = values.append(contracts[1].params[2]);
+      distance = distance.append(ssa.SInst { kind_tag: ssasem.array_lend(), result: src, args: [l.src], imm: 0, str: "" });
+    }
+    args = [receiver, at, src, from, sp.count];
     ci = 1;
   }
   let contract = contracts[ci];

@@ -59,8 +59,8 @@ function main(): i32 {
   failures = check(lens[0] == 21, "v0 is live up to its last read: " + util.i32_to_string(lens[0]), failures);
   failures = check(lens[4] == 4 && lens[9] == 3 && lens[13] == 2, "a value is live from its definition to its last read", failures);
   failures = check(lens[7] == 5, "a loop phi is live up to its last read, not to the back edge: " + util.i32_to_string(lens[7]), failures);
-  let by_live = ssa.regalloc_linear_fixed_costs(f, 4, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], live.crossing, lens, ssa.SpillCosts { fold_alu_rhs: false });
-  let by_span = ssa.regalloc_linear_fixed_costs(f, 4, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], live.crossing, [], ssa.SpillCosts { fold_alu_rhs: false });
+  let by_live = ssa.regalloc_linear_fixed_costs(f, 4, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], live.crossing, live.crossing_all, lens, ssa.SpillCosts { fold_alu_rhs: false });
+  let by_span = ssa.regalloc_linear_fixed_costs(f, 4, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], live.crossing, live.crossing_all, [], ssa.SpillCosts { fold_alu_rhs: false });
   failures = check(by_live.reg_of[1] >= 0 && by_live.reg_of[0] < 0, "with live lengths the value dead in the second loop keeps its register", failures);
   failures = check(by_span.reg_of[1] < 0 && by_span.reg_of[0] >= 0, "with interval spans the value dead in the second loop is spilled", failures);
   print("failures=" + util.i32_to_string(failures));

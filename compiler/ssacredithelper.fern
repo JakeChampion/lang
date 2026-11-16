@@ -118,7 +118,7 @@ pub function release_body_many(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChildr
   }
   let p = entry.insts[0];
   let test = entry.insts[1];
-  if (!parameter(p) || !unary(test, 11, p.result, "__fern_rc_is_unique") || test.imm != 4 || entry.term.cond != test.result) {
+  if (!parameter(p) || !unary(test, 11, p.result, "__fern_rc_is_unique") || !ssa.aligned_count(test) || entry.term.cond != test.result) {
     return refused(f, "uniqueness subject mismatch");
   }
   return release_edges(f, drop, entry, p);

@@ -1,0 +1,8 @@
+// A plain function type can be called many times, so a `once` function
+// cannot go where one is expected.
+
+function main(): i32 {
+  let k: once (i32) => i32 = once (i: i32): i32 => i + 1;
+  let r: (i32) => i32 = k;
+  return r(1);
+}

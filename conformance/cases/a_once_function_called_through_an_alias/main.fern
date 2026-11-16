@@ -1,0 +1,35 @@
+// A copy of a `once` function shares its environment. Each copy can be
+// called one time, and each call sees the captures as they were made.
+
+function bump(own xs: i32[]): i32[] {
+  return xs.with(0, xs[0] + 1);
+}
+
+function step(own xs: i32[]): once () => i32 {
+  return once (): i32 => bump(xs)[0];
+}
+
+struct Holder { k: once () => i32 }
+
+function alias(): i32 {
+  let k = step([5, 6]);
+  let k2 = k;
+  let a = k();
+  let b = k2();
+  return a * 10 + b;
+}
+
+function held(): i32 {
+  let k = step([5, 6]);
+  let h = Holder { k: k };
+  let a = k();
+  let p = h.k;
+  let b = p();
+  return a * 10 + b;
+}
+
+function main(): i32 {
+  print(alias());
+  print(held());
+  return 0;
+}

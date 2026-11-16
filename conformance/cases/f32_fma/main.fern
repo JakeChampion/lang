@@ -1,0 +1,94 @@
+import "std/i32";
+
+// __fma_f32(a, b, c) rounds a * b + c one time. The plain a * b + c rounds
+// the product first. An f64 fused multiply-add that then rounds to f32 also
+// rounds two times, and the case "tie" gives a third result for it. The last
+// line hashes the results of a fixed set of random cases, so that each
+// backend must give the bits of a hardware fused multiply-add.
+
+function bits(x: f32): string {
+  if (x != x) {
+    return "nan";
+  }
+  return f32_bits(x).to_string();
+}
+
+function show(name: string, a: f32, b: f32, c: f32): void {
+  let v = __f32x4_mul_add(__f32x4_of(a, a, c, b), __f32x4_of(b, b, a, a), __f32x4_of(c, c, b, c));
+  print(name + " " + bits(__fma_f32(a, b, c)) + " " + bits(__f32x4_lane(v, 0)) + " " + bits(__f32x4_lane(v, 3)) + " " + bits(a * b + c));
+}
+
+// Each sum is held in a register across the loop: in the first factor, in
+// the second factor, and in the addend.
+function chains(x: f32): void {
+  let a = 1.0 as f32;
+  let b = 1.0 as f32;
+  let c = 1.0 as f32;
+  let tenth = 0.1 as f32;
+  let i = 0;
+  while (i < 20) {
+    a = __fma_f32(a, x, tenth);
+    b = __fma_f32(x, b, tenth);
+    c = __fma_f32(x, tenth, c);
+    i += 1;
+  }
+  print("chains " + bits(a) + " " + bits(b) + " " + bits(c));
+}
+
+function step(s: i32): i32 {
+  return s * 1664525 + 1013904223;
+}
+
+// A value with random bits. One in eight is near 1.0, so that the product
+// and the addend often cancel.
+function pick(r: i32): f32 {
+  if ((r & 7) == 0) {
+    return f32_from_bits(1065353216 + (r >> 3 & 255) - 128);
+  }
+  return f32_from_bits(r);
+}
+
+function random_cases(n: i32): void {
+  let s = 12345;
+  let h = 17;
+  let lanes = 23;
+  let i = 0;
+  while (i < n) {
+    s = step(s);
+    let x = pick(s);
+    s = step(s);
+    let y = pick(s);
+    s = step(s);
+    let z = pick(s);
+    if ((s >> 20 & 3) == 0) {
+      z = 0.0 as f32 - x * y;
+    }
+    let r = __fma_f32(x, y, z);
+    let v = __f32x4_mul_add(__f32x4_splat(x), __f32x4_of(y, y, y, y), __f32x4_of(z, z, z, z));
+    let l = __f32x4_lane(v, 2);
+    if (r == r) {
+      h = (h ^ f32_bits(r)) * 16777619;
+    }
+    if (l == l) {
+      lanes = (lanes ^ f32_bits(l)) * 16777619;
+    }
+    i += 1;
+  }
+  print("random " + n.to_string() + " " + h.to_string() + " " + lanes.to_string());
+}
+
+function main(): i32 {
+  let one_up = f32_from_bits(1065353217);
+  let one_down = f32_from_bits(1065353214);
+  show("tie", one_up, one_down, 16777218.0 as f32);
+  show("tenth", 0.1 as f32, 10.0 as f32, -1.0 as f32);
+  show("square", one_up, one_up, -1.0 as f32);
+  show("cancel", 4097.0 as f32, 4095.0 as f32, -16777216.0 as f32);
+  show("overflow", 3.0e38 as f32, 2.0 as f32, -3.0e38 as f32);
+  show("infinity", 1.0e38 as f32, 10.0 as f32, (-1.0 / 0.0) as f32);
+  show("zero", -1.0e-30 as f32, 1.0e-30 as f32, 0.0 as f32);
+  show("subnormal", f32_from_bits(8388609), 0.5 as f32, f32_from_bits(1));
+  chains(1.0000001 as f32);
+  random_cases(4096);
+  return 0;
+}

@@ -192,6 +192,24 @@ it, the caller hands over its last unit. The sink then updates or adopts the
 box and does not copy it. The callee releases the parameter on each other
 path. A view, a cell, a handle and a closure environment stay borrowed.
 
+A `once` closure is the one exception for an environment (#16170). A call
+of a `once` function consumes the callee: the plan supplies it
+(`ssaunits.call_value_supplied`), and the caller drops it after the call,
+because the body still borrows the environment. So during the call the
+count of the environment is the number of its holders.
+
+The prelude of the body reads each capture with `__env_take`, and its
+environment type has the prefix `__env$$` (`semtypes.env_takes`). The
+lowering of the take (`ssarc.env_take`) has two paths:
+
+- When the environment has one reference, the slot is cleared, and the
+  reference moves to the result.
+- When it has more, the capture gets a new reference.
+
+The result is owned but not fresh, because a shared capture keeps its other
+holders. The drop of a taking environment loads each field without the
+counted mark, so the release of a cleared slot keeps its test for 0.
+
 A string box changes in place only where it grows. A concatenation consumes
 its left operand at the last use of that operand, and the lowering then grows
 the buffer in place (`ssarc.grow_or_concat`). Thus the inference counts a
@@ -558,7 +576,11 @@ pointer that flows through the program points past the header.
   constant. An array has zero in that half, and `__fn___fern_box_dec` reads
   it to tell a box from an array. In a build that counts no allocation, a
   box of 1 to 255 words has a block of n + 1 words, which the two routines
-  take from and give to its free list directly. A build with the sanitizer, the
+  take from and give to its free list directly. On the native targets, a
+  call that knows n calls `__fern_rec_box_n` (`asmcore.sized_rec_box`). That
+  routine has the address of the free list and the size of the block as
+  constants, and goes to `__fern_rec_box` only when the bump leaves its
+  64 KiB line. The output has a routine only for each n that a call names. A build with the sanitizer, the
   quarantine, `-harden` or an allocation profile gives each box the header
   of an array and keeps the tag in the same half. A program can have 32,766
   shapes, and a record can have 65,535 fields. On wasm32 a record keeps its
@@ -594,6 +616,12 @@ pointer that flows through the program points past the header.
   `__fern_rc_is_unique(p)` is 1 only for a live
   heap box with count exactly 1; null and anything below the low-address
   guard answer 0, so it is safe on a slot that may hold a scalar.
+- An inline count or uniqueness test skips an odd address, which is a
+  tagged view, and an address below the guard. The mark 4 (`aligned_rc`)
+  says the value has no tag in bit 1. The mark 8 (`ir.boxed_count`) adds
+  that it is a value of a record or of an enum of boxes. Such a value is
+  never an odd address, so the emitters test only the guard
+  (`ssadeps.even_values`).
 - Releases free at the last count through a size-classed freelist
   (`__fern_arr_dec`, `__fern_rc_dec`); `__fern_alloc_reuse(token, slots)`
   hands a dead box of the right class back as the new allocation and files a

@@ -65,6 +65,9 @@ pub struct EmitState {
   funcs: parser.FuncDecl[],
   local_types: Ty[],
   str_ns: string,
+  // The output is one unit of several, and another unit can have the runtime.
+  // A unit cannot ask that runtime for a routine that only some programs use.
+  split_units: boolean,
   sym_addrs: string[],
   cfi_stubs: string[],
   cfi_sigs: i32[],
@@ -97,6 +100,7 @@ pub struct EmitState {
   slot_load_reg: string,
   slot_load_disp: i32,
   ssa_boxed: boolean[],
+  ssa_even: boolean[],
   reg_entries: irtables.SigReg,
   float_abi: irtables.SigReg,
   float_abi_masks: string[],
@@ -621,6 +625,7 @@ pub function new_state(): EmitState {
     funcs: fns,
     local_types: lts,
     str_ns: "",
+    split_units: false,
     sym_addrs: [],
     cfi_stubs: [],
     cfi_sigs: [],
@@ -647,6 +652,7 @@ pub function new_state(): EmitState {
     slot_load_reg: "",
     slot_load_disp: 0,
     ssa_boxed: [],
+    ssa_even: [],
     reg_entries: irtables.sig_reg_of([]),
     float_abi: irtables.sig_reg_of([]),
     float_abi_masks: [],
@@ -1882,7 +1888,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if (id.name == "read_dir" || id.name == "read_dir_all") {
             return ty_array_string();
           }
-          if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
+          if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all" || id.name == "read_dir_ino_bytes") {
             return ty_array();
           }
           let fi = 0;
@@ -2775,6 +2781,9 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
     return ty_unknown();
   }
   if (t.args.len() > 0) {
+    if (t.base.starts_with("dyn ")) {
+      return ty_unknown();
+    }
     // Map[V] / Result[T] with only ONE arg (no comma in the
     if (t.base == "Map") {
       if (t.args.len() >= 2 && ty_is_i32(ty_from_ref(t.args[0]))) {
@@ -3440,7 +3449,7 @@ function infer_call_named_type_part_6(id: ast.ExprIdent, c: ast.ExprCall, s: Emi
   if (id.name == "read_dir" || id.name == "read_dir_all") {
     return ty_result(ty_array_string());
   }
-  if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
+  if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all" || id.name == "read_dir_ino_bytes") {
     return ty_result(ty_array());
   }
   if (id.name == "environ") {
@@ -3478,7 +3487,7 @@ function infer_call_named_type_part_8(id: ast.ExprIdent, c: ast.ExprCall, s: Emi
   if (id.name == "env" || id.name == "config_get") {
     return ty_option(ty_string());
   }
-  if (id.name == "open_reader" || id.name == "open_reader_with") {
+  if (id.name == "open_reader" || id.name == "open_reader_with" || id.name == "reader_from_fd") {
     return ty_result(ty_named("Reader"));
   }
   if (id.name == "open_writer_with") {
@@ -3502,6 +3511,9 @@ function infer_call_named_type_part_9(id: ast.ExprIdent, c: ast.ExprCall, s: Emi
   }
   if (id.name == "__raw_array") {
     return ty_array_i32();
+  }
+  if (id.name == "__raw_bytes") {
+    return ty_array();
   }
   if (id.name == "__fern_str_eq") {
     return ty_bool();
@@ -3573,7 +3585,7 @@ function infer_call_named_type_part_12(id: ast.ExprIdent, c: ast.ExprCall, s: Em
 function infer_call_named_type_part_13(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
     || id.name == "__floor_f64" || id.name == "__ceil_f64"
-    || id.name == "__trunc_f64" || id.name == "__round_f64" || id.name == "__fma_f64") {
+    || id.name == "__trunc_f64" || id.name == "__round_f64" || id.name == "__fma_f64" || id.name == "__fma_f32") {
     return ty_f64();
   }
   if (id.name == "str_split") {
@@ -4140,7 +4152,7 @@ function direct_need_deps(name: string): string[] {
     let d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
     return d8;
   }
-  if (name == "read_dir_bytes" || name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all") {
+  if (name == "read_dir_bytes" || name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all" || name == "read_dir_ino_bytes") {
     let d9: string[] = ["heap", "arr_push", "arr_push_owned"];
     return d9;
   }
@@ -5835,6 +5847,17 @@ pub struct ShapeRefOut { state: EmitState, label: string }
 
 pub struct DynArg { reg: string, off: i32 }
 
+// The routine that makes the block of a box of `words` words, when a call
+// can name that number. It takes no argument.
+pub function sized_rec_box(words: i32): string {
+  return "__fern_rec_box_" + util.i32_to_string(words);
+}
+
+// A box of 1 to 255 words has a free list of its own block size.
+pub function sized_rec_box_words(words: i64): boolean {
+  return words >= 1i64 && words <= 255i64;
+}
+
 // The tag of a box with the shape `name`: the high half of its header word.
 // The low 16 bits are the number of words of the box. The bits above them
 // are one more than the index of the shape in the declarations of the
@@ -6059,6 +6082,9 @@ pub function runtime_dir_roots(s: EmitState): string {
   if (s.has_need("dir_entries_ino")) {
     out = out + " " + "__fern_dir_entries_ino";
   }
+  if (s.has_need("dir_entries_ino_bytes")) {
+    out = out + " " + "__fern_dir_entries_ino_bytes";
+  }
   if (s.has_need("dir_stat")) {
     out = out + " " + "__fern_dir_stat";
   }
@@ -6149,7 +6175,7 @@ pub function ssa_host_need(op: string): string {
   }
   let fs: string[] = [
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
-    "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "env", "stat", "lstat", "subprocess", "writer_write",
+    "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_dir_ino_bytes", "env", "stat", "lstat", "subprocess", "writer_write",
   ];
   for x in fs {
     if (x == op) {
@@ -6262,6 +6288,12 @@ pub function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: 
 // A sanitizer build keeps the test.
 pub function ssa_is_boxed(s: EmitState, v: i32): boolean {
   return !s.rc_free_debug && v >= 0 && v < s.ssa_boxed.len() && s.ssa_boxed[v];
+}
+
+// Whether v is never an odd address (ssadeps.even_values), so a count of it
+// needs no test of bit 0. A sanitizer build keeps the test.
+pub function ssa_is_even(s: EmitState, v: i32): boolean {
+  return !s.rc_free_debug && v >= 0 && v < s.ssa_even.len() && s.ssa_even[v];
 }
 
 pub function ssa_x0_forget(s: EmitState): EmitState {

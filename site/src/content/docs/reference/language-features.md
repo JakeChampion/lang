@@ -420,6 +420,33 @@ A named function is a value too: pass `make_adder` where a
 `(i32) => (i32) => i32` is expected. A function declared inside another
 function's body is a closure in the same sense.
 
+### One-shot closures — `once`
+
+A lambda with the word `once` before its parameters is a one-shot closure.
+Its type is `once (A) => B`. A call consumes it, and its body owns what it
+captures, so the body can move a capture into an `own` parameter.
+
+```fern
+function first_to_seven(own xs: i32[]): i32[] {
+    return xs.with(0, 7);
+}
+
+function make(own xs: i32[]): once () => i32[] {
+    return once (): i32[] => first_to_seven(xs);
+}
+
+function run(own k: once () => i32[]): i32[] {
+    return k();
+}
+```
+
+A call of a `once` function must give an owned value: an `own` parameter,
+or a local at its last use. A second call is a use after the move
+(`E050`), and a call of a borrowed one is `E051`. A plain function can go
+where a `once` function is expected, but a `once` function cannot go where
+a plain one is expected (`E003`). `once` marks only a lambda or a function
+type, so it is still a valid name everywhere else.
+
 ## The pipe operator — `|>`
 
 `x |> f` is exactly `f(x)`, and `x |> f(a, b)` is `f(x, a, b)` — the left

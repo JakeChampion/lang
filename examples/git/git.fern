@@ -42,6 +42,7 @@ import "./rev";
 import "./revwalk";
 import "./sig";
 import "./treediff";
+import "./userdiff";
 import "./date";
 import "../../coreutils/lib/bre";
 import "../../coreutils/lib/fnmatch";
@@ -323,6 +324,17 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   return 0;
 }
 
+// The status of git when the configuration has a key of a driver of the
+// attribute `diff` with no value, after its two lines. 0 for a sound
+// configuration.
+function driver_config_status(r: refs.Repo): i32 {
+  if let Some(e) = userdiff.bad_entry(r.config) {
+    eprint("error: " + config.missing_value(e));
+    return fatal(r.config.bad(e));
+  }
+  return 0;
+}
+
 function cat_file(argv: string[]): i32 {
   if (argv.len() == 0) {
     return usage();
@@ -336,6 +348,9 @@ function cat_file(argv: string[]): i32 {
   let (repo, status) = repo_or_fail();
   if (status != 0) {
     return status;
+  }
+  if (driver_config_status(repo[0]) != 0) {
+    return 128;
   }
   if (batch) {
     return cat_batch(repo[0], mode == "--batch");
@@ -1323,10 +1338,11 @@ function gpg_programs(r: refs.Repo): sig.Programs {
       openpgp = e.value;
     }
   }
+  let fault = sig.config_fault(r.config);
   if (openpgp.starts_with("~/")) {
     openpgp = env("HOME").unwrap_or("") + objects.part(openpgp, 1, openpgp.len());
   }
-  return sig.Programs { dir: if (r.prefix.len() > 0) { r.top } else { "" }, openpgp: openpgp, x509: config_path(r, "gpg.x509.program", "gpgsm"), ssh: config_path(r, "gpg.ssh.program", "ssh-keygen"), allowed: config_path(r, "gpg.ssh.allowedsignersfile", ""), revocation: config_path(r, "gpg.ssh.revocationfile", ""), min_trust: sig.trust_of(r.config.get("gpg.mintrustlevel").unwrap_or("undefined")).max(0) };
+  return sig.Programs { dir: if (r.prefix.len() > 0) { r.top } else { "" }, openpgp: openpgp, x509: config_path(r, "gpg.x509.program", "gpgsm"), ssh: config_path(r, "gpg.ssh.program", "ssh-keygen"), allowed: config_path(r, "gpg.ssh.allowedsignersfile", ""), revocation: config_path(r, "gpg.ssh.revocationfile", ""), min_trust: sig.trust_of(r.config.get("gpg.mintrustlevel").unwrap_or("undefined")).max(0), config_error: fault.0, config_died: fault.1 };
 }
 
 // The check of the signature of the commit `body`
@@ -2253,7 +2269,7 @@ function line_log_init(r: refs.Repo, w_in: revwalk.Walk, args: string[]): (revwa
     return (w, "No commit specified?");
   }
   let (g, n) = walk.node(w.g, start);
-  let (s, entries, died) = linelog.parse(g.store, n.tree, r.prefix, r.top, args);
+  let (s, entries, died) = linelog.parse(g.store, n.tree, r.prefix, r.top, args, userdiff.from_config(r.config), [attr.load(r)]);
   w = revwalk.Walk { ...w, g: walk.Graph { ...g, store: s } };
   if (died.len() > 0) {
     return (w, died);
@@ -2905,6 +2921,9 @@ function log_command(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
+  if (driver_config_status(r) != 0) {
+    return 128;
+  }
   let o = LogOpts { lines: [], hi: log.no_highlight(), gpg: gpg_programs(r), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   let renames_value = r.config.get("diff.renames").unwrap_or("true").to_ascii_lower();
@@ -3073,11 +3092,11 @@ function log_command(argv: string[]): i32 {
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s6 } };
     o = LogOpts { ...o, notes: trees };
   }
-  if (o.patch.color || o.diff == "check") {
-    o = LogOpts { ...o, patch: patch.Opts { ...o.patch, ws_attrs: [attr.load(r)] } };
-  }
   if (o.imply_patch && o.diff.len() == 0 && !o.no_output && !patch.any(o.patch)) {
     o = LogOpts { ...o, patch: patch.Opts { ...o.patch, patch: true } };
+  }
+  if (o.patch.patch || o.patch.color || o.diff == "check" || o.lines.len() > 0) {
+    o = LogOpts { ...o, patch: patch.Opts { ...o.patch, attrs: [attr.load(r)], drivers: userdiff.from_config(r.config) } };
   }
   o = LogOpts { ...o, patch: patch.Opts { ...o.patch, abbrev: o.patch.abbrev.min(2 * st0.width) } };
   let bad_color = if (o.form == "format") { log.bad_color(o.format, o.patch.color) } else { "" };
@@ -3451,13 +3470,11 @@ function local_objects(repo: refs.Repo[], thin: boolean): (string) => Option[obj
 // or else `core.compression`, or the message of git for a level that is
 // not one. The default is 1, and -1 is the default level of zlib.
 function zlib_level(r: refs.Repo): Result[i32, string] {
-  // git reads the configuration from the top of the work tree.
-  let file = if (r.top.len() > 0 && r.dir == r.top + "/.git") { ".git/config" } else { r.common + "/config" };
   let level = 1;
   let loose = false;
   for e in r.config.entries {
     if (e.name == "core.compression" || e.name == "core.loosecompression") {
-      let v = compression_of(e, file)?;
+      let v = compression_of(e, r.config.file)?;
       if (e.name == "core.loosecompression" || !loose) {
         level = v;
       }

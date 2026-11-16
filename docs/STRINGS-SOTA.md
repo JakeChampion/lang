@@ -533,6 +533,8 @@ promises `InvalidUtf8` must validate raw bytes before any lossy extraction.
 The table-based pushes also accept raw arrays:
 `buf_push_bytes_mapped`, `buf_push_bytes_filtered`, and
 `buf_push_bytes_expanded` borrow both their input and lookup table.
+The input of `buf_push_bytes_expanded` is a `[u8]` view, so it can push a
+range of an array or the bytes of a string.
 `BufWriter.write_bytes_mapped`, `.write_bytes_filtered`, and
 `.write_bytes_expanded` add the same operations with buffered output and
 write-error handling. Missing map entries preserve the byte, nonzero filter
@@ -958,14 +960,15 @@ and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
 returns `u8[]` (#7467). Builder and Reader text boundaries are covered in
 the migration audit above.
 
-`__memchr_bytes(bytes, byte, from)` searches a borrowed `u8[]` without
-allocating or constructing a string. It returns the first matching byte index
+`__memchr_bytes(bytes, byte, from)` searches a borrowed `[u8]` view without
+allocating or constructing a string. The view can be an array, a range of an
+array, or the bytes of a string. It returns the first matching byte index
 at or after `from`, or `-1`. Negative starts clamp to zero; starts at or past
 the end and byte values outside 0..255 return `-1`. Packed native arrays use
 the existing vector scan kernels. Unpacked native arrays use bounded slot
 reads; the primary WebAssembly implementation reads packed byte payloads.
 
-`__rmemchr_bytes(bytes, byte, from)` searches backward in a borrowed array.
+`__rmemchr_bytes(bytes, byte, from)` searches backward in a borrowed view.
 Oversized starts clamp to the final index; negative starts and invalid
 needles return `-1`. It shares the packed native vector kernels and uses
 bounded slot scans for unpacked arrays.
@@ -976,7 +979,8 @@ Packed native arrays reuse vector kernels; unpacked arrays use bounded
 element-slot scans.
 
 `__scan_set_bytes(bytes, from, set)` returns the first index at or after
-`from` whose byte has a nonzero entry in `set`, or the input length.
+`from` whose byte has a nonzero entry in `set`, or the input length. Its
+input is a `[u8]` view, as is the input of `__scan_masks_bytes`.
 Negative starts clamp to zero; bytes beyond the table are not members.
 On x86-64 and arm64 the scan sorts 32 or 16 bytes at a time with two nibble
 tables. A constant set gets its tables at compile time, in static data. Any

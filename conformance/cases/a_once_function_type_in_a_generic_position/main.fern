@@ -1,0 +1,42 @@
+// A `once` function type can be an enum payload, an array element, an
+// argument of Option, and a type with a type parameter.
+
+enum Step[T] {
+  Done(T),
+  More(i32, once (i32) => own Step[T]),
+}
+
+function count(own s: Step[i32], n: i32): i32 {
+  match (s) {
+    Done(v) => {
+      return v + n;
+    },
+    More(x, k) => {
+      return count(k(x), n + 1);
+    }
+  }
+  return 0;
+}
+
+function down(own xs: i32[], i: i32): own Step[i32] {
+  if (i == 0) {
+    return Done(xs.len());
+  }
+  return More(i - 1, once (j: i32): own Step[i32] => down(xs.append(j), j));
+}
+
+function apply[T](own k: once (T) => T, v: T): T {
+  return k(v);
+}
+
+function main(): i32 {
+  let ks: (once (i32) => i32)[] = [once (i: i32): i32 => i * 2];
+  let maybe: Option[once (i32) => i32] = Some(once (i: i32): i32 => i + 100);
+  print(count(down([], 4), 0));
+  print(apply(once (s: string): string => s + "!", "hi"));
+  print(ks.len());
+  if let Some(f) = maybe {
+    print(f(1));
+  }
+  return 0;
+}

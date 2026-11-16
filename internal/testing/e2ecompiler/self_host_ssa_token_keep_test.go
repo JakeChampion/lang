@@ -125,6 +125,7 @@ func TestSelfHostSSATokenKeep(t *testing.T) {
 		})
 	}
 	size := map[string]string{"x86-64-linux": "cmpw %si, -4(%rax)", "arm64-linux": "ldurh w30, [x0, #-4]"}
+	box := map[string]string{"x86-64-linux": "call __fern_rec_box_3\n", "arm64-linux": "bl __fern_rec_box_3\n"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			asm, err := os.ReadFile(cli.emit(t, src, target))
@@ -132,8 +133,8 @@ func TestSelfHostSSATokenKeep(t *testing.T) {
 				t.Fatal(err)
 			}
 			grow := tailCallBody(t, string(asm), "grow")
-			if !strings.Contains(grow, "__fn___fern_alloc_reuse.f") || strings.Contains(grow, size[target]) {
-				t.Fatalf("grow does not call the fresh entry only:\n%s", grow)
+			if !strings.Contains(grow, box[target]) || strings.Contains(grow, "__fn___fern_alloc_reuse") || strings.Contains(grow, size[target]) {
+				t.Fatalf("grow does not make boxes of three words only:\n%s", grow)
 			}
 			sink := tailCallBody(t, string(asm), "sink")
 			if !strings.Contains(sink, size[target]) {

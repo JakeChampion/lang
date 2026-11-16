@@ -73,17 +73,6 @@ The environment does not transfer a source program's borrowed handle to an own p
 A serialized value keeps its managed roots in its edge array.
 Copies of that array share the root boxes until the last native holder releases them.
 
-The TLS identity constructor shares only its `PrivateKey` value.
-`EcdsaKey` contains a curve tag and a scalar byte array.
-`Ed25519Seed` contains a seed byte array.
-Neither variant holds a descriptor, a connection, a record counter, or a mutable external resource.
-Key reads do not invalidate another holder.
-Erase uses copy-on-write and preserves every other holder's bytes.
-
-The identity probe erases the source holder, then signs and verifies with the identity.
-The unique-key storage scans and stale-secret controls establish a separate erase obligation.
-This assertion does not authorize shared TLS session state or a shared-cell ownership transfer.
-
 The Go oracle runs `__alloc`, `__free`, the loads, the stores, `__memcpy` and `__memset` on a byte arena (`internal/oracle/interp/rawmem.go`).
 The arena checks each obligation above, and a broken obligation stops the run with an error.
 The arena holds only `__alloc` blocks, so it cannot read the layout of a value.
@@ -142,7 +131,7 @@ The audit of their internal range checks belongs to SEC-005 and SEC-035.
 - Scan and count kernels: `__memchr`, `__rmemchr`, `__memchr_bytes`, `__rmemchr_bytes`, `__mismatch`, `__mismatch_bytes`, `__mismatch_bytes_str`, `__count_byte`, `__count_byte_bytes`, `__count_runs`, `__count_runs_bytes`, `__count_below_u64`, `__scan_set`, `__scan_set_bytes`, `__ascii_run`, `__sum_bytes`, `__sum_bytes_array`, `__bsd_sum`, `__bsd_sum_bytes`, `__crc32_cksum`, `__crc32_cksum_array`, `__crc32_ieee_array`, `__str_hash`.
 - Byte views: `__bytes_into`, `__bytes_owned`, `__bytes_range`.
 - Typed allocations: `__alloc_bool`, `__alloc_i32`, `__alloc_i64`, `__alloc_f64`, `__alloc_u8`. Every payload word is zero at allocation ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)), so a fresh array carries no obligation.
-- Arithmetic and text conversion: `__abs_f64`, `__ceil_f64`, `__floor_f64`, `__fma_f64`, `__round_f64`, `__sqrt_f64`, `__trunc_f64`, `__scale_f64`, `__outer_mul_f64`, `__inner_mul_add_f64`, `__clz32`, `__clz64`, `__ctz32`, `__ctz64`, `__popcount32`, `__popcount64`, `__mulhi_u64`, `__ptr_width`, the `__primitive_*_to_string` family.
+- Arithmetic and text conversion: `__abs_f64`, `__ceil_f64`, `__floor_f64`, `__fma_f32`, `__fma_f64`, `__round_f64`, `__sqrt_f64`, `__trunc_f64`, `__scale_f64`, `__outer_mul_f64`, `__inner_mul_add_f64`, `__clz32`, `__clz64`, `__ctz32`, `__ctz64`, `__popcount32`, `__popcount64`, `__mulhi_u64`, `__ptr_width`, the `__primitive_*_to_string` family.
 - Lanes: the `__f64x2_*` and `__f32x4_*` families.
 - Cryptographic kernels: `__aes_expand_key`, `__aes_ctr32`, `__aes_gcm_seal_into`, `__aes_gcm_open_into`, `__ghash`, `__sha1_hw`, `__sha1_hw_blocks`, `__sha1x8_hw`, `__sha1x8_hw_blocks`, `__sha256_hw`, `__sha256_hw_blocks`, `__chacha20_xor_into`, `__poly1305_blocks`, `__chacha20_poly1305_seal_into`, `__chacha20_poly1305_open_into`, `__mont_mul`, `__scrypt_block_mix`. Their buffer contracts belong to SEC-037.
 - Diagnostics: `__ct_secret`, `__ct_public`, `__heap_alloc_count`, `__heap_bump_bytes`, `__rc_underflow_count`, `__map_hash_seed`.

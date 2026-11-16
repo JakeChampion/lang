@@ -152,6 +152,16 @@ func TestSelfHostExampleGitOptions(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "other.map"), []byte("File Name <file@example.com> <old@example.com>\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			// With GIT_DIR, the current directory is the worktree, unless
+			// the repository is bare.
+			gitDir := []string{"GIT_DIR=.git"}
+			for _, c := range []string{"log --format=%aN|%aE|%cN", "log --oneline -1 -- ./f", "log --oneline -1 -- ../f", "rev-parse HEAD:./f"} {
+				gitCompareEnv(t, oracle, port, dir, gitDir, strings.Fields(c)...)
+			}
+			must("config", "core.bare", "true")
+			gitCompareEnv(t, oracle, port, dir, gitDir, "log", "--format=%aN|%aE|%cN")
+			gitCompareEnv(t, oracle, port, dir, gitDir, "rev-parse", "HEAD:./f")
+			must("config", "core.bare", "false")
 			must("config", "mailmap.file", "other.map")
 			gitCompare(t, oracle, port, dir, "", "log", "--format=%aN <%aE>")
 			must("config", "mailmap.blob", "HEAD:f")

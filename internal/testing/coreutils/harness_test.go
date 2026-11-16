@@ -978,6 +978,18 @@ func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 	return opened
 }
 
+// openNoAtime opens rel for reading and keeps its access time, so a read of
+// the tree between two runs does not change what `find -printf %A` gives.
+// O_NOATIME is for the owner of the file alone, so another file opens
+// without it.
+func openNoAtime(r *os.Root, rel string) (*os.File, error) {
+	f, err := r.OpenFile(rel, os.O_RDONLY|noAtime, 0)
+	if errors.Is(err, syscall.EPERM) {
+		return r.Open(rel)
+	}
+	return f, err
+}
+
 func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, opts treeOpts) []treeEntry {
 	t.Helper()
 	opened := openTreeForWalk(t, root)
@@ -989,7 +1001,7 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 	var out []treeEntry
 	var walk func(dir string) error
 	walk = func(dir string) error {
-		d, err := r.Open(dir)
+		d, err := openNoAtime(r, dir)
 		if err != nil {
 			return err
 		}
@@ -1038,7 +1050,12 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 				if info.Size() > 1<<22 {
 					e.content = fmt.Sprintf("<%d bytes>", info.Size())
 				} else {
-					b, err := r.ReadFile(rel)
+					f, err := openNoAtime(r, rel)
+					if err != nil {
+						return err
+					}
+					b, err := io.ReadAll(f)
+					f.Close()
 					if err != nil {
 						return err
 					}
