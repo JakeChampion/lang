@@ -215,9 +215,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Check the Plex video screen assertion
         run: python3 -B -m unittest discover -s examples/android/plex -p 'test_*.py'
-      # The Plex check plays an H.264 test pattern, which ffmpeg writes.
+      # The Plex check plays an H.264 test pattern, which ffmpeg writes. Each
+      # second starts with a keyframe and no frame is a B-frame. When a paused
+      # video starts again, the decoder of the emulator can lose its reference
+      # frames. It then shows no picture until the next keyframe.
       - name: Write the test video of the Plex check
-        run: ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -pix_fmt yuv420p -movflags +faststart build/android-stopwatch/pattern.mp4
+        run: ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -g 25 -bf 0 -pix_fmt yuv420p -movflags +faststart build/android-stopwatch/pattern.mp4
       - name: Let the emulator use KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
