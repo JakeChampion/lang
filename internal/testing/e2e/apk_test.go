@@ -680,6 +680,142 @@ func TestApkNestedInterface(t *testing.T) {
 	}
 }
 
+// The test app of std/android/notify builds for both ABIs, and its
+// manifest declares the permission that Android 13 needs to show a
+// notification. The emulator lane runs it.
+func TestApkNotify(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "notifytest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.notifytest", "-apk-permission", "POST_NOTIFICATIONS",
+		e2eharness.RepoPath("tests/android/notify", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if !bytes.Contains(man, utf16le("android.permission.POST_NOTIFICATIONS")) {
+		t.Error("the manifest has no permission POST_NOTIFICATIONS")
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		if lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so"); !bytes.Contains(lib, []byte("areNotificationsEnabled")) {
+			t.Errorf("the library of %s does not call areNotificationsEnabled", abi)
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
+// The test app of std/android/sensors builds for both ABIs, and its library
+// imports the event queue of the sensor manager. The emulator lane runs it.
+func TestApkSensors(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "sensortest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.sensortest",
+		e2eharness.RepoPath("tests/android/sensors", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so")
+		for _, sym := range []string{"ASensorManager_createEventQueue", "ASensorEventQueue_getEvents"} {
+			if !bytes.Contains(lib, []byte(sym)) {
+				t.Errorf("the library of %s does not import %s", abi, sym)
+			}
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
+// The test app of std/android/location declares both permissions, and its
+// @jni class implements each method of LocationListener, as Android below
+// API level 30 calls each one.
+func TestApkLocation(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "locationtest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.locationtest",
+		"-apk-permission", "ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION",
+		e2eharness.RepoPath("tests/android/location", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	for _, p := range []string{"ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"} {
+		if !bytes.Contains(man, utf16le("android.permission."+p)) {
+			t.Errorf("the manifest has no permission %s", p)
+		}
+	}
+	dex := readZipEntry(t, zr, "classes.dex")
+	for _, name := range []string{"Landroid/location/LocationListener;", "onLocationChanged", "onProviderEnabled", "onProviderDisabled", "onStatusChanged"} {
+		if !bytes.Contains(dex, []byte(name)) {
+			t.Errorf("classes.dex has no %s", name)
+		}
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		if lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so"); !bytes.Contains(lib, []byte("requestLocationUpdates")) {
+			t.Errorf("the library of %s does not call requestLocationUpdates", abi)
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
+// The test app of std/android/camera declares the permission, and its
+// library imports the camera and the image reader of the NDK.
+func TestApkCamera(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "cameratest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.cameratest", "-apk-permission", "CAMERA",
+		e2eharness.RepoPath("tests/android/camera", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if man := readZipEntry(t, zr, "AndroidManifest.xml"); !bytes.Contains(man, utf16le("android.permission.CAMERA")) {
+		t.Error("the manifest has no permission CAMERA")
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so")
+		for _, sym := range []string{"libcamera2ndk.so", "ACameraManager_openCamera", "AImageReader_setImageListener"} {
+			if !bytes.Contains(lib, []byte(sym)) {
+				t.Errorf("the library of %s does not import %s", abi, sym)
+			}
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
 // A @jni class that extends Service is a service in the manifest. It is not
 // exported, and its foreground service types are those of the
 // FOREGROUND_SERVICE_<TYPE> permissions: MICROPHONE and CONNECTED_DEVICE
