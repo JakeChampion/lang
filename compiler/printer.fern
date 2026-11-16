@@ -3202,6 +3202,9 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
   if (sd.value_type) {
     out += "@value\n";
   }
+  if (sd.secret) {
+    out += "@secret\n";
+  }
   if (sd.derives.len() > 0) {
     out += "@derive(";
     for di in 0..sd.derives.len() {

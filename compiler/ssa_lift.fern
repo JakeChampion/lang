@@ -202,7 +202,7 @@ function kind_facts(): KindFacts {
     "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "secondary_entry", "port_in", "port_out",
   ];
   let f64_ops: string[] = [
-    "const_f64", "ffma", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
+    "const_f64", "ffma", "ffma32", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
     "i32_to_f64", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
   ];
   let f = KindFacts { ix: util.name_index([]), bits: [], argc: [], host: [] };
@@ -443,7 +443,7 @@ function counted_bit(op: ir.Op): i32 {
 }
 
 function packed_suffix(op: ir.Op): string {
-  if (op.kind_tag == ir.K_READ_DIR && op.i32_imm != 0) {
+  if ((op.kind_tag == ir.K_READ_DIR || op.kind_tag == ir.K_READ_DIR_INO) && op.i32_imm != 0) {
     return "_bytes";
   }
   if (ir.is_packed(op)) {
@@ -1906,8 +1906,8 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
 const BOX_RELEASE: i32 = 7;
 
 function call_mark(op: ir.Op): i32 {
-  if (op.i64_imm == 4 && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")) {
-    return 4;
+  if ((op.i64_imm == 4 || op.i64_imm == 8) && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")) {
+    return op.i64_imm as i32;
   }
   if (ir.is_sole(op) && op.str == "__fern_rc_dec") {
     return 5;

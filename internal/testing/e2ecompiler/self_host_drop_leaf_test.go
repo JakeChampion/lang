@@ -10,11 +10,12 @@ import (
 )
 
 // Num has no field that holds a count, so the drop of E does not call the
-// drop helper for a unique Num. F has a drop, and its drop of each node runs
+// drop helper for a unique Num. Pair has two waiting fields of its own type,
+// so the drop of E calls itself for one of them. F has a drop, and its drop of each node runs
 // it, the next node of the chain too.
 const dropLeafProg = `import "core/mem";
 
-enum E { Num(i64), Pair(E, E), Name(string, E), Nil }
+enum E { Num(i64), Pair(E, E, E), Name(string, E), Nil }
 
 enum F { Leaf(i64), Two(F, F) }
 
@@ -34,11 +35,11 @@ impl mem.Drop for F {
     if (n % 3i64 == 0i64) {
         return Name("n" + n.to_string(), build(n - 1i64));
     }
-    return Pair(Num(n), build(n - 1i64));
+    return Pair(Num(n), Nil, build(n - 1i64));
 }
 
 @noinline function sum(e: E): i64 {
-    return match (e) { Num(n) => n, Pair(a, b) => sum(a) + sum(b), Name(_, b) => sum(b) + 1i64, Nil => 0i64 };
+    return match (e) { Num(n) => n, Pair(a, b, c) => sum(a) + sum(b) + sum(c), Name(_, b) => sum(b) + 1i64, Nil => 0i64 };
 }
 
 @noinline function grow(n: i64): F {
@@ -53,7 +54,7 @@ function main(): i32 {
     for i in 0..50 {
         let e = build(30i64);
         let kept = build(4i64);
-        let both = Pair(kept, Pair(kept, Num(1i64)));
+        let both = Pair(kept, Nil, Pair(kept, Num(1i64), Nil));
         total += sum(e) + sum(both);
     }
     let f = grow(2i64);

@@ -182,8 +182,8 @@ func TestSelfHostNarrowFieldsShareAWord(t *testing.T) {
 		t.Fatal(err)
 	}
 	words := map[string][2]string{
-		"x86-64-linux": {"movq $3, %rdi\n    call __fern_rec_box", "movq $2, %rdi\n    call __fern_rec_box"},
-		"arm64-linux":  {"mov x0, #3\n    bl __fern_rec_box", "mov x0, #2\n    bl __fern_rec_box"},
+		"x86-64-linux": {"call __fern_rec_box_3\n", "call __fern_rec_box_2\n"},
+		"arm64-linux":  {"bl __fern_rec_box_3\n", "bl __fern_rec_box_2\n"},
 	}
 	keyLoad := map[string]*regexp.Regexp{
 		"x86-64-linux": regexp.MustCompile(`movslq 4\(%r\w+\), %r\w+`),

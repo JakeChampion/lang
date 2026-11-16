@@ -8,7 +8,7 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-func TestFmaF64BuiltinSignature(t *testing.T) {
+func TestFmaBuiltinSignatures(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
@@ -18,6 +18,10 @@ func TestFmaF64BuiltinSignature(t *testing.T) {
 		{"two arguments", `function main(): i32 { let r: f64 = __fma_f64(0.1, 10.0); return 0; }`, "argument"},
 		{"a string argument is refused", `function main(): i32 { let s: string = "x"; let r: f64 = __fma_f64(s, 10.0, -1.0); return 0; }`, "string"},
 		{"the result is an f64", `function main(): i32 { let r: i32 = __fma_f64(0.1, 10.0, -1.0); return r; }`, "f64"},
+		{"three f32 values", `function main(): i32 { let a: f32 = 0.5 as f32; let r: f32 = __fma_f32(a, a, a); return r as i32; }`, ""},
+		{"two f32 arguments", `function main(): i32 { let a: f32 = 0.5 as f32; let r: f32 = __fma_f32(a, a); return 0; }`, "argument"},
+		{"an f64 argument is refused", `function main(): i32 { let a: f32 = 0.5 as f32; let d: f64 = 0.5; let r: f32 = __fma_f32(d, a, a); return 0; }`, "f64"},
+		{"the result is an f32", `function main(): i32 { let a: f32 = 0.5 as f32; let r: i32 = __fma_f32(a, a, a); return r; }`, "f32"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

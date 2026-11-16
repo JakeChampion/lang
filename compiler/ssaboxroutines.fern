@@ -1,6 +1,8 @@
+import "./asmcore";
 import "./ssadecrementtext" as text;
 import "./ssaarrayboxmachine" as box;
 import "./ssasmallarraymachine" as arrays;
+import "./util";
 
 // The two routines of a box with a header of one word are short and have no
 // loop. Each check below takes the routine only when its lines are exactly
@@ -25,6 +27,21 @@ import "./ssasmallarraymachine" as arrays;
 pub function allocation(output: string): boolean {
   let lines = ["leaq -1(%rdi), %rax", "cmpq $254, %rax", "ja .Lrecbox_far", "pushq %rcx", "leaq __fern_freelist+8(%rip), %rcx", "leaq (%rcx,%rdi,8), %rcx", "movq (%rcx), %rax", "testq %rax, %rax", "jz .Lrecbox_bump", "pushq (%rax)", "popq (%rcx)", ".Lrecbox_hdr:", "popq %rcx", "movl $1, (%rax)", "movl %edi, 4(%rax)", "addq $8, %rax", "ret", ".Lrecbox_bump:", "movq __fern_heap_ptr(%rip), %rax", "leaq 8(%rax,%rdi,8), %rcx", "cmpq __fern_heap_end(%rip), %rcx", "ja .Lrecbox_slow", "cmpw %ax, %cx", "jb .Lrecbox_slow", "movq %rcx, __fern_heap_ptr(%rip)", "jmp .Lrecbox_hdr", ".Lrecbox_slow:", "popq %rcx", "pushq %rdi", "leaq 8(,%rdi,8), %rdi", "call __fern_alloc", "popq %rdi", "movl $1, (%rax)", "movl %edi, 4(%rax)", "addq $8, %rax", "ret", ".Lrecbox_far:", "cmpq $65535, %rdi", "ja .Lrecbox_wide", "pushq %rdi", "subq $2, %rdi", "jae .Lrecbox_sized", "xorl %edi, %edi", ".Lrecbox_sized:", "call __fern_arr_box", "popq %rdi", "subq $8, %rax", "movl $1, -8(%rax)", "movl %edi, -4(%rax)", "ret", ".Lrecbox_wide:", "subq $1, %rdi", "jmp __fern_arr_box"];
   return exact(output, "__fern_rec_box", lines) && box.check(output);
+}
+
+// __fern_rec_box_N, the routine of a box of N words when the caller names N.
+// It takes the head of the free list at __fern_freelist + 8 * (N + 1), or
+// moves the bump pointer by N + 1 words when that list is empty. It writes
+// the same header as __fern_rec_box and returns the address of the second
+// word. A bump that crosses a 64 KiB line or the end of the heap, and a heap
+// that is not mapped, go to __fern_rec_box with N in %rdi. Only %rax and %rdi
+// change.
+pub function sized_allocation(output: string, words: i32): boolean {
+  let n = util.i32_to_string(words);
+  let at = util.i32_to_string(8 * (words + 1));
+  let lab = ".Lrecbox" + n;
+  let lines = ["movq __fern_freelist+" + at + "(%rip), %rax", "testq %rax, %rax", "jz " + lab + "_bump", "movq (%rax), %rdi", "movq %rdi, __fern_freelist+" + at + "(%rip)", lab + "_hdr:", "movl $1, (%rax)", "movl $" + n + ", 4(%rax)", "addq $8, %rax", "ret", lab + "_bump:", "movq __fern_heap_ptr(%rip), %rax", "leaq " + at + "(%rax), %rdi", "cmpq __fern_heap_end(%rip), %rdi", "ja " + lab + "_slow", "cmpw %ax, %di", "jb " + lab + "_slow", "movq %rdi, __fern_heap_ptr(%rip)", "jmp " + lab + "_hdr", lab + "_slow:", "movl $" + n + ", %edi", "jmp __fern_rec_box"];
+  return asmcore.sized_rec_box_words(words as i64) && exact(output, asmcore.sized_rec_box(words), lines) && allocation(output);
 }
 
 // __fn___fern_box_dec, with the box in %rax at its .r and .u entries. The

@@ -148,13 +148,29 @@ lives only in the `ast.DynTraitType.Args` carried alongside `Traits`
 (parallel slices, normalised together by `ast.NewDynTraitTypeArgs`), and is
 consulted by the checker at two points:
 
-- **Coercion gate** (`implementsAllDynTraits`): the concrete type's recorded
-  impl arguments (`Info.ImplTraitArgs[trait][type]`) must equal the pinned
-  arguments. A `Container[string]` impl does not satisfy `dyn Container[i32]`.
+- **Coercion gate** (`implementsAllDynTraits`): the impl arguments of the
+  concrete type (`implTraitArgsFor`) must equal the pinned arguments. A
+  `Container[string]` impl does not satisfy `dyn Container[i32]`. For a
+  generic impl, the checker puts the arguments of the concrete type into the
+  impl arguments first. With `impl[M] Source[M] for Fixed[M]`, a `Fixed[i32]`
+  coerces to `dyn Source[i32]` and not to `dyn Source[string]`. The compiler
+  has the same gate in `checker.impl_pins`.
 - **Method resolution** (`checkDynMethodCall`): the owner trait's type
   parameters are substituted with the pinned arguments before the signature
   is read, so a method returning the trait param `T` types as the pinned
   type. `Self` is still substituted to the `dyn` type itself.
+
+A pinned argument can name a type parameter of the enclosing function.
+A call replaces the parameter in the result type, and a `dyn` parameter
+binds it from the `dyn` argument:
+
+```fern
+function make[M](v: M): dyn Source[M] { return Fixed { v: v }; }
+function pull[M](s: dyn Source[M]): M { return s.next(); }
+
+let s = make("ab");          // dyn Source[string]
+let n: i32 = pull(s).len();  // M = string
+```
 
 ### 2.2 Associated-type objects — `dyn Producer[Item = i32]`
 
@@ -627,7 +643,9 @@ calling that concrete's drop (`ssasem.Func.dyns`). A scalar or a string
 is boxed (`ssasem.dyn_box`, lowered to `op_dyn_box`) into a cell laid out
 as a one-field record, the value stored at its own width. The release
 frees a boxed string. A generic declaration's instances are the clones
-monomorphisation made of it, each a concrete of its own. See
+monomorphisation made of it, each a concrete of its own. Each clone has its
+own implementation records (`parser.instance_impls`), with the trait arguments
+of that instance, so `Fixed__i32` implements `Source[i32]` only. See
 `docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`,
 `docs/rc-log/2026-09-23-g-a-dyn-value-is-counted.md` and
 `docs/rc-log/2026-09-25-w-a-generic-implementations-dyn-instances.md`.

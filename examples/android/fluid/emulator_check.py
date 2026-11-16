@@ -62,7 +62,7 @@ def main(apk, out):
     m = wait_for(r"fluid: window (\d+)x(\d+)")
     if not m:
         fail("no window line from the app in logcat")
-        finish()
+        finish(out)
     width, height = int(m.group(1)), int(m.group(2))
     gpu = wait_for(r"fluid: gpu (true|false)")
     if not gpu or gpu.group(1) != "true":
@@ -71,7 +71,7 @@ def main(apk, out):
     place = wait_for(r"fluid: button (\d+),(\d+) row (\d+),(\d+)")
     if not still or not place:
         fail("no still line or no button line from the app in logcat")
-        finish()
+        finish(out)
     time.sleep(2)
 
     part, _ = background(out, "1-start")
@@ -179,7 +179,7 @@ def main(apk, out):
         f.write(log)
     for line in crashes(log):
         fail("logcat: " + line)
-    finish()
+    finish(out)
 
 
 if __name__ == "__main__":

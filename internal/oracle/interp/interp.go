@@ -572,6 +572,9 @@ type Interp struct {
 	callAt ast.Position
 	moving []Value
 	raw    rawMemory
+
+	// returnMovable holds movableNames of each return expression.
+	returnMovable map[ast.Expr][]string
 }
 
 type arrayCOWMode int
@@ -663,6 +666,7 @@ func New() *Interp {
 	i.Builtins["open_exclusive"] = &Builtin{Fn: builtinOpenExclusive}
 	i.Builtins["open_reader_with"] = &Builtin{Fn: builtinOpenReaderWith}
 	i.Builtins["open_writer_with"] = &Builtin{Fn: builtinOpenWriterWith}
+	i.Builtins["reader_from_fd"] = &Builtin{Fn: builtinReaderFromFd}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_read_chunk_bytes"] = &Builtin{Fn: builtinReaderReadChunkBytes}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
@@ -676,6 +680,7 @@ func New() *Interp {
 	i.Builtins["__method_Dir_entries"] = &Builtin{Fn: builtinDirEntries}
 	i.Builtins["__method_Dir_entries_bytes"] = &Builtin{Fn: builtinDirEntriesBytes}
 	i.Builtins["__method_Dir_entries_ino"] = &Builtin{Fn: builtinDirEntriesIno}
+	i.Builtins["__method_Dir_entries_ino_bytes"] = &Builtin{Fn: builtinDirEntriesInoBytes}
 	i.Builtins["__method_Dir_stat"] = &Builtin{Fn: builtinDirStat(true)}
 	i.Builtins["__method_Dir_lstat"] = &Builtin{Fn: builtinDirStat(false)}
 	i.Builtins["__method_Dir_access"] = &Builtin{Fn: builtinDirAccess}
@@ -1568,7 +1573,8 @@ func New() *Interp {
 	i.Builtins["__round_f64"] = mkUnaryF64Builtin("__round_f64", math.Round)
 	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
 	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
-	i.Builtins["__fma_f64"] = &Builtin{Fn: builtinFmaF64}
+	i.Builtins["__fma_f64"] = &Builtin{Fn: builtinFma("__fma_f64", 64, math.FMA)}
+	i.Builtins["__fma_f32"] = &Builtin{Fn: builtinFma("__fma_f32", 32, fma32)}
 	i.registerLaneBuiltins()
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
@@ -1599,6 +1605,7 @@ func New() *Interp {
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["read_dir_all"] = &Builtin{Fn: builtinReadDirAll}
 	i.Builtins["read_dir_ino"] = &Builtin{Fn: builtinReadDirIno}
+	i.Builtins["read_dir_ino_bytes"] = &Builtin{Fn: builtinReadDirInoBytes}
 	i.Builtins["read_dir_ino_all"] = &Builtin{Fn: builtinReadDirInoAll}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
 	i.Builtins["lstat"] = &Builtin{Fn: builtinLstat}
@@ -2398,20 +2405,22 @@ func mkUnaryF64Builtin(name string, fn func(float64) float64) *Builtin {
 	}}
 }
 
-// builtinFmaF64 gives a*b + c with one rounding.
-func builtinFmaF64(_ *Interp, args []Value) (Value, error) {
-	if len(args) != 3 {
-		return nil, fmt.Errorf("__fma_f64: expected 3 args, got %d", len(args))
-	}
-	var xs [3]float64
-	for k, a := range args {
-		f, ok := a.(Float)
-		if !ok {
-			return nil, fmt.Errorf("__fma_f64: expected float arg, got %T", a)
+// builtinFma gives a*b + c with one rounding, at the width of the builtin.
+func builtinFma(name string, width int, fma func(a, b, c float64) float64) func(*Interp, []Value) (Value, error) {
+	return func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
 		}
-		xs[k] = f.V
+		var xs [3]float64
+		for k, a := range args {
+			f, ok := a.(Float)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected float arg, got %T", name, a)
+			}
+			xs[k] = f.V
+		}
+		return Float{V: fma(xs[0], xs[1], xs[2]), Width: width}, nil
 	}
-	return Float{V: math.FMA(xs[0], xs[1], xs[2]), Width: 64}, nil
 }
 
 func builtinIntToString(_ *Interp, args []Value) (Value, error) {
@@ -2473,18 +2482,32 @@ func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Array_push: receiver must be array, got %T", args[0])
 	}
 	storeArray(args[1])
+	maps := pushedMaps(arr, args[1])
 	e := arr.Elems()
 	n := len(e)
 	if arr.n == wholeBox && n < cap(e) && e[:n+1][n] == unclaimedSlot {
 		e = e[:n+1]
 		e[n] = args[1]
 		arr.b.st.boxes++
-		return Array{b: &arrBox{e: e, st: arr.b.st, held: n + 1}, n: wholeBox}, nil
+		return Array{b: &arrBox{e: e, st: arr.b.st, held: n + 1, maps: maps}, n: wholeBox}, nil
 	}
 	out := growArray(arr)
 	out.Elems()[n] = args[1]
+	out.b.maps = maps
 	ip.arrayGrowCopies += n
 	return out, nil
+}
+
+// pushedMaps is the holdsMap answer for arr with v appended, when it is known
+// without a scan of the elements.
+func pushedMaps(arr Array, v Value) uint8 {
+	if holdsMap(v) {
+		return mapsSome
+	}
+	if arr.b.maps == mapsNone {
+		return mapsNone
+	}
+	return 0
 }
 
 func builtinArrSetLen(_ *Interp, args []Value) (Value, error) {
@@ -2534,20 +2557,28 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 	if idx < 0 || int(idx) >= len(arr.Elems()) {
 		return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.Elems()))
 	}
-	storeArray(args[2])
-	if !holdsMap(arr) && !holdsMap(args[2]) {
+	return ip.writeElems(arr, int(idx), args[2])
+}
+
+// writeElems gives arr with vs from index at on. It writes in place when arr
+// owns its storage alone, and otherwise writes a copy.
+func (ip *Interp) writeElems(arr Array, at int, vs ...Value) (Array, error) {
+	for _, v := range vs {
+		storeArray(v)
+	}
+	if !holdsMap(arr) && mapsIn(vs) != mapsSome {
 		inPlace, err := ip.arrayWriteInPlace(arr)
 		if err != nil {
-			return nil, err
+			return Array{}, err
 		}
 		if inPlace {
-			arr.Elems()[int(idx)] = args[2]
+			copy(arr.Elems()[at:], vs)
 			return arr, nil
 		}
 	}
 	out := newArray(len(arr.Elems()))
 	copy(out.Elems(), arr.Elems())
-	out.Elems()[int(idx)] = args[2]
+	copy(out.Elems()[at:], vs)
 	ip.arraySetCopies += len(arr.Elems())
 	return out, nil
 }
@@ -3305,6 +3336,21 @@ func builtinReadDirIno(_ *Interp, args []Value) (Value, error) {
 
 func builtinReadDirInoAll(_ *Interp, args []Value) (Value, error) {
 	return readDirInoLike("read_dir_ino_all", false, args)
+}
+
+func builtinReadDirInoBytes(_ *Interp, args []Value) (Value, error) {
+	entries, res, err := readDirEntriesMode("read_dir_ino_bytes", true, args, true)
+	if entries == nil {
+		return res, err
+	}
+	out := newArray(len(entries))
+	for k, e := range entries {
+		out.Elems()[k] = &Struct{
+			TypeName: "DirEntryBytes",
+			Fields:   map[string]Value{"name": byteArray([]byte(e.name)), "ino": Number(int64(e.ino)), "kind": Number(int64(e.kind))},
+		}
+	}
+	return resultOk(out), nil
 }
 
 func readDirInoLike(name string, skipDots bool, args []Value) (Value, error) {
@@ -4704,6 +4750,30 @@ func builtinOpenReaderWith(i *Interp, args []Value) (Value, error) {
 
 func builtinOpenWriterWith(i *Interp, args []Value) (Value, error) {
 	return openWithHelper(i, args, "Writer", os.O_WRONLY)
+}
+
+// builtinReaderFromFd makes a Reader of a descriptor that the process holds.
+// It does not open the file again, so a read starts at the offset of the
+// descriptor. Descriptor 0 is the stdin of the interpreter.
+func builtinReaderFromFd(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("reader_from_fd: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("reader_from_fd: expected number fd, got %T", args[0])
+	}
+	if n == 0 {
+		return resultOk(&Struct{TypeName: "Reader", Fields: map[string]Value{"fd": Number(0)}}), nil
+	}
+	const fGetfd = 1
+	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(int(n)), fGetfd, 0); errno != 0 {
+		return resultErr(classifyIoError("", errno)), nil
+	}
+	id := i.nextFd
+	i.nextFd++
+	i.openFiles[id] = os.NewFile(uintptr(int(n)), fmt.Sprintf("fd %d", int(n)))
+	return resultOk(&Struct{TypeName: "Reader", Fields: map[string]Value{"fd": Number(id)}}), nil
 }
 
 func openWithHelper(i *Interp, args []Value, structName string, access int) (Value, error) {
@@ -6292,6 +6362,9 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	if err := i.tooDeep(); err != nil {
 		return nil, err
+	}
+	if fn.Body == nil && fn.ImportIface != "" && fn.ImportIface != ast.CallbackIface {
+		return nil, fmt.Errorf("the interpreter cannot call `%s`: it imports %s from %s", fn.Name, fn.ImportWITName, fn.ImportIface)
 	}
 	i.callDepth++
 	defer func() { i.callDepth-- }()
@@ -8311,7 +8384,30 @@ func (i *Interp) returnMoves(rhs ast.Expr, e *env) []Value {
 	if n := len(i.deferStack); n > 0 && len(i.deferStack[n-1]) > 0 {
 		return nil
 	}
+	names, ok := i.returnMovable[rhs]
+	if !ok {
+		if i.returnMovable == nil {
+			i.returnMovable = map[ast.Expr][]string{}
+		}
+		names = movableNames(rhs)
+		i.returnMovable[rhs] = names
+	}
 	var moved []Value
+	for _, name := range names {
+		v := e.slot(name)
+		if _, isArray := v.(Array); isArray {
+			arrDisown(v)
+			i.moving = append(i.moving, v)
+			moved = append(moved, v)
+		}
+	}
+	return moved
+}
+
+// movableNames gives each name that rhs reads and that rhs can move, once
+// each, in the order of their first reads.
+func movableNames(rhs ast.Expr) []string {
+	var names []string
 	seen := map[string]bool{}
 	ast.Walk(rhs, func(n ast.Node) bool {
 		id, ok := n.(*ast.Ident)
@@ -8319,15 +8415,12 @@ func (i *Interp) returnMoves(rhs ast.Expr, e *env) []Value {
 			return true
 		}
 		seen[id.Name] = true
-		v := e.slot(id.Name)
-		if _, isArray := v.(Array); isArray && movesFirst(rhs, id.Name) {
-			arrDisown(v)
-			i.moving = append(i.moving, v)
-			moved = append(moved, v)
+		if movesFirst(rhs, id.Name) {
+			names = append(names, id.Name)
 		}
 		return true
 	})
-	return moved
+	return names
 }
 
 func movesFirst(rhs ast.Expr, name string) bool {

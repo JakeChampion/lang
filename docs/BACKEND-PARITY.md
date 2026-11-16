@@ -74,7 +74,9 @@ exec (`proc_fork`, `proc_exec` and `proc_exec_as` answer -ENOSYS and the
 waits -ECHILD), no chroot or change of ids (-ENOSYS), no io_uring or kTLS
 (`ring_*` and `tcp_ktls` -ENOSYS), no splice (Unsupported), no arena rewind
 (`__heap_mark` answers 0), and no address space to hand the raw floor
-(`__syscall*`, `__c_call*` and the gated `__raw_*` are refused at run time). Both interpreters
+(`__syscall*`, `__c_call*` and the gated `__raw_*` are refused at run time).
+`reader_from_fd` gives the `IoError` of ENOSYS in this interpreter only: the
+stage0 pin that builds `fern` does not know the builtin yet. Both interpreters
 stop an index or slice out of range with the same message and exit status 134
 (docs/ARRAY-BOUNDS.md). `fern-oracle -interp` is the Go interpreter
 (`internal/oracle/interp`), the differential oracle; the `fern-oracle -interp`

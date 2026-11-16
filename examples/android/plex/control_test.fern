@@ -270,6 +270,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       return true;
     },
     hide_video: (): void => note(log.calls, "hide"),
+    pause_video: (): void => note(log.calls, "pause video"),
     request_frame: (): void => note(log.calls, "frame"),
     start: (): void => note(log.calls, "start"),
     pause: (): void => note(log.calls, "pause"),
@@ -698,7 +699,7 @@ function test_play_pause_and_stop(): test.TestOutcome {
   let again = tap(gone, log, 4600i64, f, "overlay");
   let paused = tap(again, log, 4700i64, f, "toggle");
   save_png(f, "paused");
-  if (!has_call(log, "pause") || !has_call(log, "hide") || !has_url(log, "state=paused") || node(paused, "toggle").is_none()) {
+  if (!has_call(log, "pause") || !has_call(log, "pause video") || !has_url(log, "state=paused") || node(paused, "toggle").is_none()) {
     return test.fail("the play button did not pause");
   }
   let drew = count_calls(log, "draw video") + count_calls(log, "draw video with controls");

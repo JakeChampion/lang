@@ -25,6 +25,7 @@ import "./objects";
 import "./pack";
 import "./patch";
 import "./sig";
+import "./userdiff";
 
 function unhex(s: string): u8[] {
   let Ok(b) = hex.decode(s) else {
@@ -347,8 +348,12 @@ function test_whitespace(): test.TestOutcome {
   if (bad != (ws.SPACE_BEFORE_TAB | ws.BLANK_AT_EOL) || shown != "! >\t<x>!  >\n" || ws.error_string(bad) != "trailing whitespace, space before tab in indent") {
     return test.fail("the errors of a line: " + shown);
   }
-  if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7)) {
+  if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7) || !ws.conflict_marker("<<<<<<< ours\n", 7) || ws.conflict_marker(">>>>>>>\n", 7) || ws.conflict_marker("<<<<<<<\tx\n", 7)) {
     return test.fail("the conflict markers");
+  }
+  let (incomplete, _, _) = ws.parse("incomplete");
+  if (incomplete != (ws.DEFAULT_RULE | ws.INCOMPLETE_LINE) || (ws.all_rules(8) & ws.INCOMPLETE_LINE) == 0 || ws.error_string(ws.INCOMPLETE_LINE | ws.TAB_IN_INDENT) != "tab in indent, no newline at the end of file") {
+    return test.fail("the rule incomplete-line");
   }
   return test.pass();
 }
@@ -460,22 +465,22 @@ function test_line_ranges(): test.TestOutcome {
     return test.fail("the merge of the ranges of two commits");
   }
   let data = "#include <x>\n\nint f(void)\n{\n\treturn 1;\n}\n\nint main(void)\n{\n}".bytes();
-  let (s1, e1, ok1, _) = linelog.range_in(":f", data, 1);
-  let (s2, e2, ok2, _) = linelog.range_in("/return/,+1", data, 1);
-  let (s3, e3, ok3, _) = linelog.range_in("5,-3", data, 1);
-  let (s4, _, ok4, _) = linelog.range_in(":.*", data, 1);
+  let (s1, e1, ok1, _) = linelog.range_in(":f", data, 1, None);
+  let (s2, e2, ok2, _) = linelog.range_in("/return/,+1", data, 1, None);
+  let (s3, e3, ok3, _) = linelog.range_in("5,-3", data, 1, None);
+  let (s4, _, ok4, _) = linelog.range_in(":.*", data, 1, None);
   if (!ok1 || s1 != 3 || e1 != 7 || !ok2 || s2 != 5 || e2 != 5 || !ok3 || s3 != 3 || e3 != 5 || !ok4 || s4 != 3) {
     return test.fail("the forms of a range");
   }
-  let (_, _, _, died) = linelog.range_in(":zz", data, 1);
-  let (_, _, sound, _) = linelog.range_in("1,x", data, 1);
+  let (_, _, _, died) = linelog.range_in(":zz", data, 1, None);
+  let (_, _, sound, _) = linelog.range_in("1,x", data, 1, None);
   if (died != "-L parameter 'zz' starting at line 1: no match" || sound) {
     return test.fail("a range that is not sound");
   }
   let o = patch.defaults();
   let old = "a\nb\nc\nd\ne\nf\ng\nh\n".bytes();
   let new = "a\nB\nc\nd\ne\nF\ng\nh\n".bytes();
-  if (patch.in_ranges(o, old, new, [4, 7]) != "@@ -5,3 +5,3 @@\n e\n-f\n+F\n g\n".bytes() || patch.in_ranges(o, old, new, [2, 4]).len() != 0) {
+  if (patch.in_ranges(o, old, new, [4, 7], None) != "@@ -5,3 +5,3 @@\n e\n-f\n+F\n g\n".bytes() || patch.in_ranges(o, old, new, [2, 4], None).len() != 0) {
     return test.fail("the hunks in the ranges of -L");
   }
   return test.pass();
@@ -866,6 +871,94 @@ function test_config(): test.TestOutcome {
   return test.pass();
 }
 
+// The line of each entry of a configuration file, the keys with no value,
+// and the messages of git for an entry that it refuses.
+function test_config_lines(): test.TestOutcome {
+  let c = config.Config { ...config.parse("[gpg]\n\t# c\n\tformat = bogus\n\n[diff \"Mine\"]\n\txfuncname\n\tfuncname = a\\\n b\n\tlast = z"), file: ".git/config" };
+  let lines = c.entries.map((e: config.Entry): i32 => e.line);
+  let bare = c.entries.map((e: config.Entry): boolean => e.bare);
+  if (lines != [3, 6, 8, 9] || bare != [false, true, false, false]) {
+    return test.fail("the lines of the entries");
+  }
+  if (c.bad(c.entries[1]) != "bad config variable 'diff.Mine.xfuncname' in file '.git/config' at line 6" || config.missing_value(c.entries[1]) != "missing value for 'diff.Mine.xfuncname'") {
+    return test.fail("the message of a key with no value: " + c.bad(c.entries[1]));
+  }
+  let fault = sig.config_fault(c);
+  if (fault.0 != "invalid value for 'gpg.format': 'bogus'" || fault.1 != "bad config variable 'gpg.format' in file '.git/config' at line 3") {
+    return test.fail("a format that is not known: " + fault.0 + " / " + fault.1);
+  }
+  let trust = sig.config_fault(config.parse("[gpg]\n\tformat = ssh\n\tminTrustLevel = Fully\n\tminTrustLevel = wat\n"));
+  if (trust.0 != "invalid value for 'gpg.mintrustlevel': 'wat'" || sig.config_fault(config.parse("[gpg]\n\tprogram = gpg\n")).1 != "") {
+    return test.fail("a trust that is not known: " + trust.0);
+  }
+  let Some(e) = userdiff.bad_entry(c) else {
+    return test.fail("a key of a driver with no value");
+  };
+  if (e.name != "diff.Mine.xfuncname" || userdiff.bad_entry(config.parse("[diff \"q\"]\n\tbinary\n[diff]\n\tfuncname\n")).is_some()) {
+    return test.fail("the keys of a driver that need a value");
+  }
+  return test.pass();
+}
+
+// The regex of a driver: the built-in drivers, the drivers of the
+// configuration, the lines that refuse, the first group, and the messages
+// of git for a regex that is not sound.
+function test_drivers(): test.TestOutcome {
+  let d = userdiff.from_config(config.parse("[diff \"mine\"]\n\tfuncname = x\n\txfuncname = \"^(BEGIN|begin) (.*)$\"\n[diff \"cpp\"]\n\twordRegex = x\n[diff \"empty\"]\n\tbinary = true\n[diff \"default\"]\n\txfuncname = ^KEEP\n"));
+  let Some(mine) = d.by_name("mine") else {
+    return test.fail("a driver of the configuration");
+  };
+  let Some(cpp) = d.by_name("cpp") else {
+    return test.fail("a built-in driver with a key in the configuration");
+  };
+  let Some(empty) = d.by_name("empty") else {
+    return test.fail("a driver with no regex");
+  };
+  if (mine.pattern != "^(BEGIN|begin) (.*)$" || !mine.extended || !cpp.given || !cpp.extended || empty.given || d.by_name("nosuch").is_some()) {
+    return test.fail("the regex of the drivers");
+  }
+  if (d.for_hunks([], "a.txt").map((f: userdiff.Funcname): string => f.pattern) != Some("^KEEP") || d.for_range([], "a.txt").is_some()) {
+    return test.fail("the driver `default`");
+  }
+  let line = "begin lower   \t \n".bytes();
+  let f = userdiff.finder_of(mine);
+  if (f.died != "" || f.find(line, 0, line.len(), 80) != (0, 5) || f.find(line, 0, line.len(), 3) != (0, 3) || f.find("other\n".bytes(), 0, 6, 80) != (-1, -1)) {
+    return test.fail("the first group of a match");
+  }
+  let whole = userdiff.finder_of(userdiff.Funcname { given: true, pattern: "!^BEGIN\n^[A-Za-z]+ [a-z]+", extended: true, icase: false });
+  let text = "BEGIN block one\r\nKEEP not this\n".bytes();
+  if (whole.find(text, 0, 17, 80) != (-1, -1) || whole.find(text, 17, text.len(), 80) != (17, 25)) {
+    return test.fail("a line that refuses, and a match with no group");
+  }
+  let Some(ada_regex) = userdiff.none().by_name("ada") else {
+    return test.fail("the built-in driver ada");
+  };
+  let ada = userdiff.finder_of(ada_regex);
+  let unit = "  PROCEDURE Run (X : Integer) is\n".bytes();
+  if (ada.find(unit, 0, unit.len(), 80) != (2, unit.len() - 1) || ada.find("  with Ada.Text_IO;\n".bytes(), 0, 20, 80) != (-1, -1)) {
+    return test.fail("a built-in driver that ignores the case of the letters");
+  }
+  if (userdiff.finder_of(userdiff.Funcname { ...mine, pattern: "^(BEGIN" }).died != "Invalid regexp to look for hunk header: ^(BEGIN" || userdiff.finder_of(userdiff.Funcname { ...mine, pattern: "^x\n!^BEGIN" }).died != "Last expression must not be negated: !^BEGIN") {
+    return test.fail("a regex that is not sound");
+  }
+  for name in userdiff.builtin_names() {
+    let Some(regex) = userdiff.none().by_name(name) else {
+      return test.fail("the built-in driver " + name);
+    };
+    if (userdiff.finder_of(regex).died != "") {
+      return test.fail("the regex of the built-in driver " + name);
+    }
+  }
+  let data = "BEGIN one\n  a\nKEEP two\n  b\nBEGIN three\n  c\n".bytes();
+  let (s1, e1, ok1, _) = linelog.range_in(":KEEP", data, 1, None);
+  let (s2, e2, ok2, _) = linelog.range_in(":one", data, 1, Some(userdiff.Funcname { ...mine, pattern: "^BEGIN" }));
+  let (_, _, _, died) = linelog.range_in(":KEEP", data, 1, Some(userdiff.Funcname { ...mine, pattern: "^(" }));
+  if (!ok1 || s1 != 3 || e1 != 4 || !ok2 || s2 != 1 || e2 != 4 || died != "Invalid regexp to look for hunk header: ^(") {
+    return test.fail("the range of -L :FUNCNAME with a driver");
+  }
+  return test.pass();
+}
+
 // The name of a rename in the stat: the common parts of the two paths
 // stay outside the braces.
 function test_rename_names(): test.TestOutcome {
@@ -1138,6 +1231,8 @@ function main(): i32 {
   r = r.it("the versions of an index", test_index_versions);
   r = r.it("the checks of hash-object", test_fsck);
   r = r.it("a configuration file", test_config);
+  r = r.it("the lines and the faults of a configuration", test_config_lines);
+  r = r.it("the drivers of the attribute diff", test_drivers);
   r = r.it("the tabs of a message", test_tabs);
   r = r.it("the columns of the placeholders of a format", test_format_columns);
   r = r.it("the rules of white space", test_whitespace);

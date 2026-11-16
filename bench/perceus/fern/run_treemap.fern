@@ -1,0 +1,16 @@
+import "../treemap";
+import "./scale";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  let Some(n) = scale.read(20) else {
+    return 2;
+  };
+  let t = treemap.make(1i64, n);
+  for round in 0..20 {
+    t = treemap.bump(t);
+  }
+  print(f"{treemap.total(t)}");
+  return 0;
+}

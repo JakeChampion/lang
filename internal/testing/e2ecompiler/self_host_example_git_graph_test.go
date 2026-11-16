@@ -131,9 +131,7 @@ func setCommitGraphDate(t *testing.T, path, name string, date uint64) {
 			level := binary.BigEndian.Uint32(b[at:]) &^ 3
 			binary.BigEndian.PutUint32(b[at:], level|uint32(date>>32)&3)
 			binary.BigEndian.PutUint32(b[at+4:], uint32(date))
-			if err := os.WriteFile(path, b, 0o644); err != nil {
-				t.Fatal(err)
-			}
+			rewriteFile(t, path, b)
 			return
 		}
 	}
@@ -152,9 +150,7 @@ func setBloomVersion(t *testing.T, path string, version uint32) {
 		if string(b[i:i+4]) == "BDAT" {
 			at := binary.BigEndian.Uint64(b[i+4 : i+12])
 			binary.BigEndian.PutUint32(b[at:at+4], version)
-			if err := os.WriteFile(path, b, 0o644); err != nil {
-				t.Fatal(err)
-			}
+			rewriteFile(t, path, b)
 			return
 		}
 	}

@@ -153,6 +153,12 @@ pub function plain_str(ins: SInst): string {
   return ins.str;
 }
 
+// A count or a uniqueness test of a value with no tag in bit 1. The mark 8
+// adds that the value is never an odd address (ir.boxed_count).
+pub function aligned_count(ins: SInst): boolean {
+  return ins.imm == 4 || ins.imm == 8;
+}
+
 pub function plain_imm(ins: SInst): i32 {
   if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7)) {
     return 0;
@@ -559,6 +565,22 @@ pub const COLD_INLINE: i32 = 3;
 // call saves nothing.
 pub const COLD_LIGHT: i32 = 4;
 
+// An inline kernel. It calls nothing, and it changes only the registers that
+// the emitter names for its position. A value that lives across it keeps any
+// other register.
+pub const COLD_KERNEL: i32 = 5;
+
+// `cold` with COLD_KERNEL at each position that has a mask in `clobbers`.
+// A kernel in a cold block is a kernel: it saves nothing.
+pub function with_kernels(cold: i32[], clobbers: i32[]): i32[] {
+  for pos in 0..cold.len() {
+    if (clobbers[pos] != 0) {
+      cold = cold.with(pos, COLD_KERNEL);
+    }
+  }
+  return cold;
+}
+
 // `light` says the box routines of the build change only the result and
 // their arguments.
 pub function cold_positions(f: SFunc, size: boolean, back: boolean, light: boolean): i32[] {
@@ -874,9 +896,14 @@ function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
   return out;
 }
 
-function spans_hard(hard: boolean[], integer: boolean, cum: i32[], lo: i32, hi: i32, v: i32): boolean {
+// The emitter saves no float register around a cold call, so a float value
+// counts each call it is live after.
+function spans_hard(hard: boolean[], crossing_all: boolean[], integer: boolean, cum: i32[], lo: i32, hi: i32, v: i32): boolean {
   if (integer) {
     return hard[v];
+  }
+  if (v < crossing_all.len()) {
+    return crossing_all[v];
   }
   return spans_call(cum, lo, hi);
 }
@@ -1450,7 +1477,7 @@ function float_def(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str.starts_with("i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
   }
-  return k == TERNARY && ins.str == "ffma";
+  return k == TERNARY && (ins.str == "ffma" || ins.str == "ffma32");
 }
 
 function float_load(ins: SInst): boolean {
@@ -1477,7 +1504,7 @@ function float_use(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits" || ins.str == "vsplat";
   }
-  return k == TERNARY && ins.str == "ffma";
+  return k == TERNARY && (ins.str == "ffma" || ins.str == "ffma32");
 }
 
 pub function float_arith(op: string): boolean {
@@ -1539,7 +1566,7 @@ function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
 }
 
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
-  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], SpillCosts { fold_alu_rhs: false });
+  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], [], SpillCosts { fold_alu_rhs: false });
 }
 
 // A spill definition or normal read needs an extra transfer instruction.
@@ -1547,7 +1574,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
 // The model discounts those reads and keeps the squared-use protection.
 pub struct SpillCosts { fold_alu_rhs: boolean }
 
-pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[], lens: i32[], costs: SpillCosts): Alloc {
+pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[], crossing_all: boolean[], lens: i32[], costs: SpillCosts): Alloc {
   no_home = unhomed_call_results(f, no_home);
   let cold_calls = cold.len() > 0;
   let wish = return_prefs(f, pref, abi_reg);
@@ -1827,7 +1854,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     }
     let abi_ok = !spans_call(cum_abi, lo[v], hi[v]);
     let soft = cold_calls && oi < split && spans_call(cum_soft, lo[v], hi[v]) && free_s.len() > 0;
-    let keep_caller = spans_hard(hard, oi < split, cum, lo[v], hi[v], v) || soft;
+    let keep_caller = spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v) || soft;
     let placed = false;
     let ci = 0;
     while (ci < 5 && !placed) {
@@ -1914,7 +1941,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       continue;
     }
     let pick = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
-    let from_caller = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
+    let from_caller = !spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
     from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
     // A save around a call restores its holder, so a lent interval holds none.
     if (!from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1)) {
@@ -1939,7 +1966,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       }
     }
     if (!from_caller && free_s.len() == 0) {
-      let need_saved = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
+      let need_saved = spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v);
       let fa = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lens, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
       let cmp = 0;
       if (fa >= 0) {

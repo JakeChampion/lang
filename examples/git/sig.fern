@@ -4,6 +4,7 @@
 import "std/array";
 import "std/process";
 import "std/string";
+import "./config";
 import "./date";
 import "./objects";
 
@@ -24,8 +25,35 @@ const FORMAT_OF_START: i32[] = [0, 0, 1, 2];
 // program of each format (`gpg.program`, `gpg.x509.program` and
 // `gpg.ssh.program`), the files of `gpg.ssh.allowedSignersFile` and
 // `gpg.ssh.revocationFile` ("" when they are not set), and the least trust
-// of `gpg.minTrustLevel`. A relative path is from the directory.
-pub struct Programs { dir: string, openpgp: string, x509: string, ssh: string, allowed: string, revocation: string, min_trust: i32 }
+// of `gpg.minTrustLevel`. A relative path is from the directory. For a
+// configuration that git refuses, `config_error` and `config_died` are
+// the two lines that git writes at the first check, or "".
+pub struct Programs { dir: string, openpgp: string, x509: string, ssh: string, allowed: string, revocation: string, min_trust: i32, config_error: string, config_died: string }
+
+// The two lines of git for the first entry of `c` that the check of a
+// signature refuses (`git_gpg_config`): a key with no value, a format that
+// is not known, or a trust that is not known. ("", "") for a sound
+// configuration.
+pub function config_fault(c: config.Config): (string, string) {
+  for e in c.entries {
+    let text = e.name == "user.signingkey" || e.name == "gpg.format" || e.name == "gpg.mintrustlevel" || e.name == "gpg.ssh.defaultkeycommand" || e.name == "gpg.ssh.allowedsignersfile" || e.name == "gpg.ssh.revocationfile" || e.name == "gpg.program" || e.name == "gpg.openpgp.program" || e.name == "gpg.x509.program" || e.name == "gpg.ssh.program";
+    if (!text) {
+      continue;
+    }
+    if (e.bare) {
+      return (config.missing_value(e), c.bad(e));
+    }
+    let known = match (e.name) {
+      "gpg.format" => e.value == "openpgp" || e.value == "x509" || e.value == "ssh",
+      "gpg.mintrustlevel" => trust_of(e.value) >= 0,
+      _ => true,
+    };
+    if (!known) {
+      return ("invalid value for '" + e.name + "': '" + e.value + "'", c.bad(e));
+    }
+  }
+  return ("", "");
+}
 
 // The trust of a key, as gpg gives it in a line `TRUST_...`.
 pub const TRUST_UNDEFINED: i32 = 0;
@@ -399,6 +427,10 @@ function check_ssh(p: Programs, file: string, payload_file: string, time: i64): 
 // the payload is the standard input of the program.
 pub function check(p: Programs, payload: u8[], signature: u8[], signer: string): Check {
   let none = Check { ...unsigned(), signed: true };
+  if (p.config_died.len() > 0) {
+    eprint("error: " + p.config_error);
+    return Check { ...none, died: p.config_died };
+  }
   let fmt = format_of(signature);
   if (fmt < 0) {
     return Check { ...none, died: "bad/incompatible signature '" + unsafe { string_from_bytes_unchecked(signature) } + "'" };

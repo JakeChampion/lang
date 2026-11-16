@@ -75,6 +75,53 @@ func TestSelfHostFmaF64Emission(t *testing.T) {
 	}
 }
 
+// std/f64 calls __fma_f64 for fma, mul_add and the seven fused
+// multiply-adds of the table path of log. f64_special and
+// float_clamp01_absdiff_muladd check the values.
+const stdF64FmaSrc = `import "std/f64";
+
+@noinline
+function fused(x: f64, y: f64, z: f64): f64 {
+  return x.fma(y, z) + y.mul_add(z, x);
+}
+
+function main(): i32 {
+  print(fused(0.1, 10.0, -1.0).to_string());
+  print(3.0.log().to_string());
+  return 0;
+}
+`
+
+func TestSelfHostStdF64FmaEmission(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(stdF64FmaSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target, fusedStart, logStart, end, fma, separate string
+	}{
+		{e2eharness.TargetX86_64Linux, "__fn_fused:", "__fn_f64___fd_log_main:", ".cfi_endproc", "vfmadd", "mulsd"},
+		{e2eharness.TargetArm64Linux, "__fn_fused:", "__fn_f64___fd_log_main:", ".cfi_endproc", "fmadd d", "fmul"},
+		{e2eharness.TargetWasm32Wasi, "(func $fused ", "(func $f64___fd_log_main ", "(func ", "call $__fern_fma_f64", "f64.mul"},
+	}
+	for _, c := range cases {
+		t.Run(c.target, func(t *testing.T) {
+			asm := e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), c.target, src)
+			body := fmaSection(t, asm, c.fusedStart, c.end)
+			if n := strings.Count(body, c.fma); n != 2 {
+				t.Fatalf("fused has %d of %q, want 2:\n%s", n, c.fma, body)
+			}
+			if strings.Contains(body, c.separate) {
+				t.Fatalf("fused rounds a product with %q:\n%s", c.separate, body)
+			}
+			body = fmaSection(t, asm, c.logStart, c.end)
+			if n := strings.Count(body, c.fma); n != 7 {
+				t.Fatalf("_fd_log_main has %d of %q, want 7:\n%s", n, c.fma, body)
+			}
+		})
+	}
+}
+
 // In chain, each sum stays across the loop in the register of the first
 // factor, of the second factor and of the addend. In pick, the result of a
 // select stays in the register of its first choice. The conformance cases
@@ -205,4 +252,74 @@ func TestSelfHostLaneFmaEmission(t *testing.T) {
 			t.Errorf("chain rounds a product with f64x2.mul:\n%s", body)
 		}
 	})
+}
+
+// poly32 makes six fused multiply-adds of f32 values, and lanes makes one of
+// f32x4. The conformance case f32_fma checks their values on each backend.
+const fma32PolySrc = `import "std/f32";
+
+@noinline
+function poly32(x: f32, c0: f32, c1: f32, c2: f32, c3: f32): f32 {
+  let a = __fma_f32(c3, x, c2);
+  a = __fma_f32(a, x, c1);
+  a = __fma_f32(x, a, c0);
+  let b = __fma_f32(a, a, x);
+  return __fma_f32(b, x, a) + __fma_f32(c0, c1, b);
+}
+
+@noinline
+function lanes(x: f32, y: f32, z: f32): f32 {
+  return __f32x4_lane(__f32x4_mul_add(__f32x4_splat(x), __f32x4_splat(y), __f32x4_splat(z)), 1);
+}
+
+function main(): i32 {
+  let t = 0.1 as f32;
+  print(poly32(1.0000001 as f32, t, t + t, t * (3.0 as f32), t * (4.0 as f32)).to_string());
+  print(lanes(t, t, t).to_string());
+  return 0;
+}
+`
+
+// Each native backend gives __fma_f32 one fused instruction in single
+// precision, and f32x4.mul_add one fused lane instruction. Wasm calls
+// the software form of the runtime.
+func TestSelfHostFmaF32Emission(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(fma32PolySrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target, prefix, end, fused, lane, separate string
+		lanes                                      int
+	}{
+		{e2eharness.TargetX86_64Linux, "__fn_", ".cfi_endproc", "vfmadd231ss", "ps %", "mulss", 1},
+		{e2eharness.TargetArm64Linux, "__fn_", ".cfi_endproc", "fmadd s", "fmla ", "fmul", 1},
+		{e2eharness.TargetWasm32Wasi, "(func $", "(func ", "call $__fern_fma_f32", "call $__fern_fma_f32", "f32x4.mul", 4},
+	}
+	for _, c := range cases {
+		t.Run(c.target, func(t *testing.T) {
+			asm := e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), c.target, src)
+			suffix := ":"
+			if c.prefix == "(func $" {
+				suffix = " "
+			}
+			poly := fmaSection(t, asm, c.prefix+"poly32"+suffix, c.end)
+			if n := strings.Count(poly, c.fused); n != 6 {
+				t.Fatalf("poly32 has %d of %q, want 6:\n%s", n, c.fused, poly)
+			}
+			lanes := fmaSection(t, asm, c.prefix+"lanes"+suffix, c.end)
+			fusedLanes := 0
+			for _, ln := range strings.Split(lanes, "\n") {
+				if strings.Contains(ln, "fm") && strings.Contains(ln, c.lane) {
+					fusedLanes++
+				}
+			}
+			if n := fusedLanes; n != c.lanes {
+				t.Fatalf("lanes has %d of %q, want %d:\n%s", n, c.lane, c.lanes, lanes)
+			}
+			if strings.Contains(poly+lanes, c.separate) {
+				t.Fatalf("a product is rounded with %q:\n%s\n%s", c.separate, poly, lanes)
+			}
+		})
+	}
 }

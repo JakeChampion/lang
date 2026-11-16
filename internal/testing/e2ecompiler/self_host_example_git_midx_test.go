@@ -110,10 +110,5 @@ func swapMultiPackIndex(t *testing.T, path, a, b string) {
 	entry := append([]byte(nil), data[x:x+8]...)
 	copy(data[x:x+8], data[y:y+8])
 	copy(data[y:y+8], entry)
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	rewriteFile(t, path, data)
 }

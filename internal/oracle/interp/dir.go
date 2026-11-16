@@ -153,6 +153,20 @@ func builtinDirEntriesIno(i *Interp, args []Value) (Value, error) {
 	return readDirInoLike("Dir.entries_ino", true, []Value{String(f.Name())})
 }
 
+func builtinDirEntriesInoBytes(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Dir.entries_ino_bytes: expected 1 arg, got %d", len(args))
+	}
+	f, err := dirFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return closedDir(), nil
+	}
+	return builtinReadDirInoBytes(i, []Value{String(f.Name())})
+}
+
 func dirEntriesValue(i *Interp, args []Value, raw bool) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("Dir.entries: expected 1 arg, got %d", len(args))

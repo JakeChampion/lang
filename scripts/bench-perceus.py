@@ -16,11 +16,12 @@ import re
 import resource
 import shutil
 import signal
+import statistics
 import subprocess
 import time
 
-NAMES = ("rbtree", "rbtree-ck", "deriv", "nqueens", "cfold")
-MAXIMUM = dict(zip(NAMES, (4200000, 4200000, 10, 13, 20)))
+NAMES = ("rbtree", "rbtree-ck", "deriv", "nqueens", "cfold", "binarytrees", "msort", "qsort", "treemap", "pmap")
+MAXIMUM = dict(zip(NAMES, (4200000, 4200000, 10, 13, 20, 21, 1000000, 1000000, 20, 1000000)))
 
 
 def sha(path):
@@ -44,7 +45,74 @@ def queens(n):
     return visit(0, 0, 0)
 
 
+def binarytrees(n):
+    """The output of binary trees with items.
+
+    A tree of depth 0 with item i checks to i. A deeper one checks to
+    i + (2i - 1 - 1) - (2i - 1) = i - 1, by induction on the depth.
+    """
+    tree = lambda item, depth: item if depth == 0 else item - 1
+    low = 4
+    high = max(n, low + 2)
+    lines = [f"stretch tree of depth {high + 1} check: {tree(0, high + 1)}"]
+    for depth in range(low, high + 1, 2):
+        iterations = 1 << (high - depth + low)
+        total = sum(tree(i, depth) + tree(-i, depth) for i in range(1, iterations + 1))
+        lines.append(f"{2 * iterations} trees of depth {depth} check: {total}")
+    lines.append(f"long lived tree of depth {high} check: {tree(0, high)}")
+    return "\n".join(lines) + "\n"
+
+
+def generated(n, seed):
+    """The values x' = (1103515245 x + 12345) mod 2^31 after `seed`."""
+    out = []
+    x = seed
+    for _ in range(n):
+        x = (1103515245 * x + 12345) % 2147483648
+        out.append(x)
+    return out
+
+
+def sorted_digest(n):
+    """The count and the position-weighted sum of the sorted list of msort and qsort."""
+    values = sorted(x % 1000000 for x in generated(n, 42))
+    return f"{len(values)} {sum((i + 1) * v for i, v in enumerate(values))}\n"
+
+
+def treemap(n, rounds=20):
+    """The sum of the items of make(1, n) after `rounds` bumps.
+
+    The sum for make(i, d) is a_d i + b_d, with a_0 = 1, b_0 = 0,
+    a_d = 1 + 4 a_(d-1) and b_d = 2 b_(d-1) - a_(d-1). Each bump adds one to
+    each of the 2^(n+1) - 1 nodes.
+    """
+    a, b = 1, 0
+    for _ in range(n):
+        a, b = 1 + 4 * a, 2 * b - a
+    return f"{a + b + rounds * ((1 << (n + 1)) - 1)}\n"
+
+
+def pmap(n):
+    """The hits and the sums of the lookups of pmap, from a dictionary."""
+    key = lambda x: (x % 1024, x // 1024)
+    m = {key(x): i for i, x in enumerate(generated(n, 42))}
+
+    def look(seed):
+        found = [m[key(x)] for x in generated(n, seed) if key(x) in m]
+        return f"{len(found)} {sum(found)}"
+
+    return f"{look(42)} {look(7)}\n"
+
+
 def expected(name, n, root):
+    if name == "binarytrees":
+        return binarytrees(n)
+    if name in ("msort", "qsort"):
+        return sorted_digest(n)
+    if name == "treemap":
+        return treemap(n)
+    if name == "pmap":
+        return pmap(n)
     if name == "rbtree":
         return f"{(n + 9) // 10}\n"
     if name == "rbtree-ck":
@@ -148,6 +216,30 @@ def build_commands(language, name, tools, root, out, target):
     cfile = out / f"{name}.c"
     return [[str(tools["lean"].resolve()), "-c", str(cfile), str(root / f"bench/perceus/lean/{name}.lean")],
             [str(tools["lean"].with_name("leanc").resolve()), "-O3", "-o", str(binary), str(cfile)]]
+
+
+def summary(results):
+    """A Markdown table of the processor time and the peak memory of each run.
+
+    Each time cell is the median in milliseconds, with the best run in
+    brackets. Each memory cell is the largest peak resident set in MB.
+    """
+    languages = [language for language in ("fern", "koka", "lean", "roc") if any(row["language"] == language for row in results)]
+    cases = list(dict.fromkeys((row["workload"], row["size"]) for row in results))
+    times, peaks = {}, {}
+    for row in results:
+        key = row["workload"], row["size"], row["language"]
+        times.setdefault(key, []).append(1000 * (row["user_seconds"] + row["system_seconds"]))
+        peaks.setdefault(key, []).append(row["peak_rss_bytes"] / 2**20)
+    head = "| workload | size | " + " | ".join(languages) + " |\n|---|---|" + "---|" * len(languages) + "\n"
+    time_rows = memory_rows = ""
+    for name, size in cases:
+        cells = [times.get((name, size, language)) for language in languages]
+        time_rows += f"| {name} | {size} | " + " | ".join(f"{statistics.median(v):.0f} ({min(v):.0f})" if v else "-" for v in cells) + " |\n"
+        cells = [peaks.get((name, size, language)) for language in languages]
+        memory_rows += f"| {name} | {size} | " + " | ".join(f"{max(v):.0f}" if v else "-" for v in cells) + " |\n"
+    return ("Processor time in ms, the median with the best run in brackets:\n\n" + head + time_rows +
+            "\nPeak resident memory in MB:\n\n" + head + memory_rows)
 
 
 def turn_order(languages, repeat):
@@ -300,6 +392,7 @@ def main():
                 result.update(language=language, workload=name, size=size, repeat=repeat)
                 results.append(result)
                 (out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+                (out / "summary.md").write_text(summary(results))
         prefix = out / f"census-{name}-{size}"
         measure([binaries["fern-census", name], str(size)], prefix, args.timeout, unlimited_stack=args.unlimited_stack)
         if prefix.with_suffix(".stdout").read_text() != answer:

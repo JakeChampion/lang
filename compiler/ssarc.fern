@@ -853,7 +853,7 @@ function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
 function drop_value_inline(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
   if (has_children(t, f)) {
     r = emit(r, ir.op_load_local(slot));
-    r = emit(r, aligned_unique());
+    r = emit(r, aligned_unique_of(t, f));
     r = emit(r, ir.op_if(0));
     r = drop_children(r, slot, t, scratch, f);
     r = emit(r, ir.op_end());
@@ -864,6 +864,24 @@ function drop_value_inline(own r: irtables.LowerState, slot: i32, t: typeinfo.Ty
 function aligned_unique(): ir.Op {
   let op = ir.op_call_direct("__fern_rc_is_unique", 1);
   return ir.Op { ...op, i64_imm: 4 };
+}
+
+// The uniqueness test of a value of `t`.
+function aligned_unique_of(t: typeinfo.Type, f: ssasem.Func): ir.Op {
+  return if (never_odd(t, f)) { ir.boxed_count(aligned_unique()) } else { aligned_unique() };
+}
+
+// A value of a record or of an enum of boxes has no tag, so it is never an
+// odd address.
+function never_odd(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if (!ssasem.box_shape(t)) {
+    return false;
+  }
+  if (typeinfo.is_record(t)) {
+    return true;
+  }
+  let layout = enum_layout(f, t);
+  return layout == semrecords.layout_variant() || layout == semrecords.layout_member();
 }
 
 function drop_payload(own r: irtables.LowerState, slot: i32, e: semrecords.Enum, scratch: i32, f: ssasem.Func): irtables.LowerState {
@@ -899,7 +917,7 @@ function drop_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
       r = emit(r, ir.op_if(0));
-      r = drop_record_fields(r, slot, v.fields, scratch, f, false, false);
+      r = drop_record_fields(r, slot, v.fields, scratch, f, false, false, false);
       open += 1;
     }
   }
@@ -943,21 +961,30 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
 
 // The count of the next node is read before the other fields drop, so the
 // read of its header does not wait for them.
-function chain_link(own r: irtables.LowerState, tail: i32): irtables.LowerState {
+function chain_link(own r: irtables.LowerState, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   r = emit(r, ir.op_load_local(1));
   r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
   r = emit(r, ir.op_store_local(3));
   r = emit(r, ir.op_load_local(3));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(t, f));
   return emit(r, ir.op_store_local(4));
 }
+
+// The slots of the chain drop: the stack of nodes whose field waits, and
+// whether the current node is on it.
+const CHAIN_PENDING: i32 = 30;
+
+const CHAIN_PUSHED: i32 = 31;
+
+const CHAIN_CELL: i32 = 32;
 
 function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   let tail = self_tail_field(v, t);
   let linked = tail >= 0 && semtypes.equal(v.fields[tail].ty, t);
   if (linked) {
-    r = chain_link(r, tail);
+    r = chain_link(r, tail, t, f);
   }
+  let waits = waiting_field(v, t, f);
   for i in 0..v.fields.len() {
     if (ssasem.counted(f, v.fields[i].ty) && !(linked && i == tail)) {
       r = emit(r, ir.op_load_local(1));
@@ -965,6 +992,8 @@ function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t:
       r = emit(r, ir.op_store_local(5));
       if (i == tail) {
         r = drop_tail_array(r, t, v.fields[i].ty, f);
+      } else if (i == waits) {
+        r = pushed_field(r, i, tail, t, f);
       } else if (semtypes.equal(v.fields[i].ty, t)) {
         // A call of the release helper here makes two calls for each level, and the return predictor holds few levels.
         r = drop_value_inline(r, 5, t, 6, f);
@@ -976,7 +1005,132 @@ function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t:
   return r;
 }
 
+// The field of the type of the chain that waits for the next node, when the
+// variant links its next node and has one such field. Its node is a cell of
+// the stack of the drop: the field keeps the child, and the next field keeps
+// the cell below it. A node then needs no call for its child.
+function waiting_field(v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): i32 {
+  let tail = self_tail_field(v, t);
+  if (tail < 0 || !semtypes.equal(v.fields[tail].ty, t)) {
+    return -1;
+  }
+  let at = -1;
+  for i in 0..v.fields.len() {
+    if (i != tail && semtypes.equal(v.fields[i].ty, t)) {
+      if (at >= 0) {
+        return -1;
+      }
+      at = i;
+    }
+  }
+  return at;
+}
+
+// A child with one count goes on the stack in its node, unless it holds no
+// count. A shared child gives back its count.
+function pushed_field(own r: irtables.LowerState, i: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let leaves = childless_shapes(t, f);
+  r = emit(r, ir.op_load_local(5));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  for shape in leaves {
+    r = emit(r, ir.op_load_local(5));
+    r = emit(r, ir.op_variant_is(shape));
+    r = emit(r, ir.op_if(0));
+    r = sole_release(release(r, 5, t, f));
+    r = emit(r, ir.op_else());
+  }
+  r = emit(r, ir.op_load_local(1));
+  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_struct_set(i, 0));
+  r = emit(r, ir.op_load_local(1));
+  r = emit(r, ir.op_load_local(CHAIN_PENDING));
+  r = emit(r, ir.op_struct_set(tail, 0));
+  r = emit(r, ir.op_load_local(1));
+  r = emit(r, ir.op_store_local(CHAIN_PENDING));
+  r = emit(r, ir.op_const_i32(1));
+  r = emit(r, ir.op_store_local(CHAIN_PUSHED));
+  for shape in leaves {
+    r = emit(r, ir.op_end());
+  }
+  r = emit(r, ir.op_else());
+  r = release(r, 5, t, f);
+  return emit(r, ir.op_end());
+}
+
+// The cell on top of the stack gives its child as the next node, and the cell
+// below it as the top. A cell that is not the node of the call is freed. A
+// cell and its child each have one count, and the tests prove it to the
+// certifier. When a test fails, the shared box gives back its count.
+function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let e = f.enums[semrecords.find_enum(f.enums, t)];
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_load_local(CHAIN_PENDING));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+  r = emit(r, ir.op_brif(2));
+  r = emit(r, ir.op_load_local(CHAIN_PENDING));
+  r = emit(r, ir.op_store_local(CHAIN_CELL));
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  let opened: string[] = [];
+  for v in e.variants {
+    let waits = waiting_field(v, t, f);
+    if (!semrecords.inhabited(v) || waits < 0) {
+      continue;
+    }
+    r = else_if_open(r, opened.len());
+    r = emit(r, ir.op_load_local(CHAIN_CELL));
+    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(CHAIN_CELL));
+    r = emit(r, ir.counted(ir.op_struct_get(waits, 0)));
+    r = emit(r, ir.op_store_local(1));
+    r = emit(r, ir.op_load_local(CHAIN_CELL));
+    r = emit(r, ir.counted(ir.op_struct_get(self_tail_field(v, t), 0)));
+    r = emit(r, ir.op_store_local(CHAIN_PENDING));
+    opened = opened.append(v.name);
+  }
+  r = close_ifs(r, opened.len());
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = sole_release(release(r, CHAIN_CELL, t, f));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(1));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(2));
+  r = emit(r, ir.op_br(3));
+  r = emit(r, ir.op_else());
+  r = release(r, 1, t, f);
+  r = emit(r, ir.op_br(2));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_else());
+  r = release(r, CHAIN_CELL, t, f);
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(CHAIN_PENDING));
+  r = emit(r, ir.op_br(1));
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_end());
+}
+
+function chain_waits(t: typeinfo.Type, f: ssasem.Func): boolean {
+  for v in f.enums[semrecords.find_enum(f.enums, t)].variants {
+    if (semrecords.inhabited(v) && waiting_field(v, t, f) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  if (chain_waits(t, f)) {
+    return drop_variant_stack(r, t, f);
+  }
   let e = f.enums[semrecords.find_enum(f.enums, t)];
   let node = 1;
   let first = 2;
@@ -1010,7 +1164,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", 0, false));
   r = emit(r, ir.op_if(0));
-  r = release(r, node, t, f);
+  r = sole_release(release(r, node, t, f));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(first));
@@ -1024,7 +1178,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
   r = emit(r, ir.op_load_local(next));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_store_local(unique));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(unique));
@@ -1036,6 +1190,82 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_load_local(next));
   r = emit(r, ir.op_store_local(node));
   r = emit(r, ir.op_br(0));
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_end());
+}
+
+// The chain drop with a stack of waiting nodes in place of a call for each
+// child. The loop drops a node, goes on to its next node while that node has
+// one count, and then takes the next node from the top of the stack.
+function drop_variant_stack(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let e = f.enums[semrecords.find_enum(f.enums, t)];
+  let node = 1;
+  let first = 2;
+  let next = 3;
+  let unique = 4;
+  r = reserve(r, CHAIN_CELL + 1);
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_store_local(node));
+  r = emit(r, ir.op_const_i32(1));
+  r = emit(r, ir.op_store_local(first));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(CHAIN_PENDING));
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(next));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(unique));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(CHAIN_PUSHED));
+  let opened: string[] = [];
+  for v in e.variants {
+    if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f)) {
+      continue;
+    }
+    r = else_if_open(r, opened.len());
+    r = emit(r, ir.op_load_local(node));
+    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+    r = emit(r, ir.op_if(0));
+    r = drop_chain_fields(r, v, t, f);
+    opened = opened.append(v.name);
+  }
+  r = close_ifs(r, opened.len());
+  r = emit(r, ir.op_load_local(first));
+  r = emit(r, ir.op_load_local(CHAIN_PUSHED));
+  r = emit(r, ir.op_bin("or", 0, false));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("eq", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = sole_release(release(r, node, t, f));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(first));
+  r = emit(r, ir.op_load_local(next));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+  r = emit(r, ir.op_brif(0));
+  // Another field can hold the next node too, and its drop can lower the count
+  // to one after the first test. A node that was shared is tested again.
+  r = emit(r, ir.op_load_local(unique));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_load_local(next));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_store_local(unique));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(unique));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_else());
+  r = release(r, next, t, f);
+  r = emit(r, ir.op_br(1));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(next));
+  r = emit(r, ir.op_store_local(node));
+  r = emit(r, ir.op_br(1));
+  r = emit(r, ir.op_end());
+  r = popped(r, t, f);
   r = emit(r, ir.op_end());
   return emit(r, ir.op_end());
 }
@@ -1079,7 +1309,7 @@ function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array:
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(3));
   r = emit(r, ir.op_load_local(3));
-  r = emit(r, aligned_unique());
+  r = emit(r, aligned_unique_of(elem, f));
   r = emit(r, ir.op_store_local(4));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
@@ -1128,7 +1358,9 @@ function drop_tuple_fields(own r: irtables.LowerState, slot: i32, tup: typeinfo.
 }
 
 // A field of a taking environment can be 0, so its load is not marked counted.
-function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean, takes: boolean): irtables.LowerState {
+// A record of a `@secret` struct zeroes each numeric array that it holds
+// alone before the array goes back to the allocator.
+function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean, takes: boolean, secret: boolean): irtables.LowerState {
   let child = scratch;
   r = reserve(r, child + 1);
   for i in 0..fields.len() {
@@ -1144,10 +1376,33 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
       r = emit(r, ir.op_store_local(child));
+      let shift = ssasem.elem_shift(fields[i].ty);
+      if (secret && shift >= 0) {
+        r = wipe_sole(r, child, shift);
+      }
       r = drop_value(r, child, fields[i].ty, child + 1, f);
     }
   }
   return r;
+}
+
+// Zeroes the elements of the array in `slot` when no other value holds it.
+// The elements of an array start one word after its box.
+function wipe_sole(own r: irtables.LowerState, slot: i32, shift: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_const_i32(8));
+  r = emit(r, ir.op_raw_addr());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_const_i32(shift));
+  r = emit(r, ir.op_bin("shl", 0, false));
+  r = emit(r, ir.op_memset());
+  r = emit(r, ir.op_drop());
+  return emit(r, ir.op_end());
 }
 
 function drops(own r: irtables.LowerState, step: ssaunits.Step, f: ssasem.Func, p: ssaunits.Plan, links: i32[]): irtables.LowerState {
@@ -1198,7 +1453,7 @@ function drop_known(own r: irtables.LowerState, value: i32, links: i32[], f: ssa
   }
   if (walked_rest(fields, [], f) > 0) {
     r = emit(r, ir.op_load_local(value));
-    r = emit(r, aligned_unique());
+    r = emit(r, aligned_unique_of(f.values[value], f));
     r = emit(r, ir.op_if(0));
     r = drop_fields_except(r, value, fields, [], scratch_start, f);
     r = emit(r, ir.op_end());
@@ -1645,7 +1900,7 @@ struct SchemaSeen {
 
 struct ViewStep { seen: SchemaSeen, view: ssaunits.SchemaView }
 
-pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits.WriteRows): ssaunits.SchemaView[] {
+pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits.WriteRows, loans: ssaunits.LoanRows): ssaunits.SchemaView[] {
   let none: string[] = [];
   let seen = SchemaSeen { recs: [], rec_names: util.name_index(none), rec_unit: [], rec_walk: [], enums: [], enum_names: util.name_index(none), enum_unit: [], enum_walk: [] };
   let out: ssaunits.SchemaView[] = [];
@@ -1657,7 +1912,7 @@ pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits
     if (row >= 0) {
       raw = writes.raw[row];
     }
-    out = out.append(ssaunits.SchemaView { ...step.view, writes: writes, raw_result: writes.results.has(keys[i]), raw_values: raw, raw_known: row >= 0 });
+    out = out.append(ssaunits.SchemaView { ...step.view, writes: writes, loans: loans, raw_result: writes.results.has(keys[i]), raw_values: raw, raw_known: row >= 0 });
   }
   return out;
 }
@@ -1976,7 +2231,7 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
     r = helper(r, 0, finalizer);
   }
   if let typeinfo.TypeStruct(_) = t {
-    r = drop_record_fields(r, 0, ssasem.record_fields(t, f), 1, f, semtypes.is_env(t), semtypes.env_takes(t));
+    r = drop_record_fields(r, 0, ssasem.record_fields(t, f), 1, f, semtypes.is_env(t), semtypes.env_takes(t), ssasem.secret_record(t, f));
   }
   if let typeinfo.TypeUnion(_) = t {
     if (self_tail_enum(t, f)) {
@@ -2027,15 +2282,27 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
 
 struct Fresh { rows: irtables.LowerState[], types: HelperType[], seen: util.NameIndex }
 
-// A kernel helper comes in only when the function calls its builtin.
+// A kernel helper comes in only when the function calls its builtin with a
+// view that the array kernel in place cannot take.
 function view_helpers(f: ssasem.Func, done: util.NameIndex, own rows: irtables.LowerState[]): irtables.LowerState[] {
   for h in ssabytes.state_helpers() {
     let served = ssabytes.served_builtin(h.name);
-    if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0)) {
+    if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0 && wrapped_call(f, served))) {
       rows = rows.append(h);
     }
   }
   return rows;
+}
+
+function wrapped_call(f: ssasem.Func, name: string): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call() && ins.str == name && !(lent_views(f, ins) && dynamic_kernel_count(f, ins))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex, contracts: ssasem.Contracts): Fresh {
@@ -5754,7 +6021,7 @@ function lent_kernel_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.S
   let kernel = array_kernel(ins.str);
   if let Some(op) = kernel {
     if (lent_views(f, ins) && dynamic_kernel_count(f, ins)) {
-      return Lowered { found: true, r: emit(r, ir.packed(op)) };
+      return Lowered { found: true, r: emit(r, op) };
     }
   }
   return Lowered { found: false, r: r };
@@ -5770,11 +6037,16 @@ function dynamic_kernel_count(f: ssasem.Func, ins: ssa.SInst): boolean {
 
 function array_kernel(name: string): Option[ir.Op] {
   return match (name) {
-    "__mismatch_bytes" => Some(ir.op_mismatch_bytes()),
-    "__sum_bytes_array" => Some(ir.op_sum_bytes_array()),
-    "__bsd_sum_bytes" => Some(ir.op_bsd_sum_bytes()),
-    "__crc32_cksum_array" => Some(ir.op_crc32_cksum_array()),
-    "__crc32_ieee_array" => Some(ir.op_crc32_ieee_array()),
+    "__mismatch_bytes" => Some(ir.packed(ir.op_mismatch_bytes())),
+    "__sum_bytes_array" => Some(ir.packed(ir.op_sum_bytes_array())),
+    "__bsd_sum_bytes" => Some(ir.packed(ir.op_bsd_sum_bytes())),
+    "__crc32_cksum_array" => Some(ir.packed(ir.op_crc32_cksum_array())),
+    "__crc32_ieee_array" => Some(ir.packed(ir.op_crc32_ieee_array())),
+    "__memchr_bytes" => Some(ir.packed(ir.op_memchr_bytes())),
+    "__rmemchr_bytes" => Some(ir.packed(ir.op_rmemchr_bytes())),
+    "__scan_set_bytes" => Some(ir.packed(ir.op_scan_set_bytes())),
+    "__scan_masks_bytes" => Some(ir.packed(ir.op_scan_masks_bytes())),
+    "buf_push_bytes_expanded" => Some(ir.op_buf_push_bytes_expanded()),
     _ => None,
   };
 }
@@ -5853,10 +6125,10 @@ function call_ops(name: string): ir.Op[] {
       return [ir.op_call_direct(ssabytes.bsd_name(), 2)];
     },
     "__memchr_bytes" => {
-      return [ir.packed(ir.op_memchr_bytes())];
+      return [ir.op_call_direct(ssabytes.memchr_name(), 3)];
     },
     "__rmemchr_bytes" => {
-      return [ir.packed(ir.op_rmemchr_bytes())];
+      return [ir.op_call_direct(ssabytes.rmemchr_name(), 3)];
     },
     "string_from_bytes_unchecked" => {
       return [ir.packed(ir.op_str_from_bytes())];
@@ -6016,6 +6288,9 @@ function dir_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (m == "Dir.entries_ino") {
     return Lowered { found: true, r: emit(r, ir.entry_payload(ir.op_dir_entries())) };
   }
+  if (m == "Dir.entries_ino_bytes") {
+    return Lowered { found: true, r: emit(r, ir.entry_bytes_payload(ir.op_dir_entries())) };
+  }
   if (m == "Dir.entries") {
     return Lowered { found: true, r: emit(r, ir.op_dir_entries()) };
   }
@@ -6094,6 +6369,9 @@ function handle_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "open_writer_with") {
     return Lowered { found: true, r: emit(r, ir.op_open_writer_with()) };
+  }
+  if (ins.str == "reader_from_fd") {
+    return Lowered { found: true, r: emit(r, ir.op_reader_from_fd()) };
   }
   if (ins.str == "Reader.read_chunk") {
     return Lowered { found: true, r: emit(r, ir.op_read_chunk()) };
@@ -6196,6 +6474,9 @@ function union_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered
   }
   if (ins.str == "read_dir_ino") {
     return Lowered { found: true, r: emit(r, ir.op_read_dir_ino()) };
+  }
+  if (ins.str == "read_dir_ino_bytes") {
+    return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_dir_ino())) };
   }
   if (ins.str == "read_dir_ino_all") {
     return Lowered { found: true, r: emit(r, ir.op_read_dir_ino_all()) };
@@ -6580,7 +6861,7 @@ function builder_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lower
     "buf_push_mapped" => Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) },
     "buf_push_bytes_filtered" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_filtered()) },
     "buf_push_filtered" => Lowered { found: true, r: emit(r, ir.op_buf_push_filtered()) },
-    "buf_push_bytes_expanded" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_expanded()) },
+    "buf_push_bytes_expanded" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.expanded_name(), 3)) },
     "buf_push_expanded" => Lowered { found: true, r: emit(r, ir.op_buf_push_expanded()) },
     "buf_push_byte" => Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) },
     "buf_push_u64" => Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) },
@@ -6782,17 +7063,10 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
     ins = ssa.SInst { ...ins, args: inputs };
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
-  if (verb == "mul_add" && w == 64) {
+  if (verb == "mul_add") {
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_load_local(ins.args[2]));
     return emit(r, ir.op_lane("vfma", w));
-  }
-  // The f32 lanes round two times: no engine has a fused f32 form yet.
-  if (verb == "mul_add") {
-    r = emit(r, ir.op_load_local(ins.args[1]));
-    r = emit(r, ir.op_lane("vmul", w));
-    r = emit(r, ir.op_load_local(ins.args[2]));
-    return emit(r, ir.op_lane("vadd", w));
   }
   if (verb == "of" && w == 32) {
     r = emit(r, ir.op_lane("vsplat", 64));
@@ -7087,6 +7361,7 @@ function raw_floor_ops(): RawOps[] {
     RawOps { name: "__raw_string", ops: [ir.op_raw_string()] },
     RawOps { name: "__raw_mapped_string", ops: [ir.op_raw_mapped_string()] },
     RawOps { name: "__raw_array", ops: [] },
+    RawOps { name: "__raw_bytes", ops: [] },
     RawOps { name: "__raw_arr_ptr", ops: [] },
     RawOps { name: "__raw_data", ops: [ir.op_str_data()] },
     RawOps { name: "__raw_arr_box", ops: [ir.op_raw_arr_box()] },
@@ -7147,8 +7422,8 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_masks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks())) },
-    "__scan_masks_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks_bytes())) },
-    "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
+    "__scan_masks_bytes" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.scan_masks_name(), 3)) },
+    "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.scan_set_name(), 3)) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },
     "__count_runs_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs_bytes())) },
     "__bsd_sum" => Lowered { found: true, r: emit(r, ir.op_bsd_sum()) },
@@ -7678,7 +7953,8 @@ function aligned_rc(own r: irtables.LowerState, f: ssasem.Func): irtables.LowerS
       && before.kind_tag == load_local && before.i32_imm < f.values.len()) {
       let t = f.values[before.i32_imm];
       if (ssasem.counted(f, t) && !typeinfo.is_array_view(t)) {
-        ops = ops.with(i, ir.Op { ...op, i64_imm: 4 });
+        let aligned = ir.Op { ...op, i64_imm: 4 };
+        ops = ops.with(i, if (never_odd(t, f)) { ir.boxed_count(aligned) } else { aligned });
       }
     }
     i += 1;

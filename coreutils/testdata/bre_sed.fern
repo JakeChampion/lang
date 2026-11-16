@@ -145,6 +145,204 @@ function check_icase(): i32 {
   return 0;
 }
 
+function utf8_span(pat: string, subj: string, gnulib: boolean): string {
+  let re = bre.bre_compile_syntax(pat, bre.Syntax { ...bre.sed_syntax(false, false, false, false), utf8: true, gnulib: gnulib });
+  if (re.err.len() > 0) {
+    return "error " + re.err;
+  }
+  let m = re.search_groups_bytes(subj.bytes(), 0, subj.len());
+  if (!m.matched) {
+    return "none";
+  }
+  return f"{m.starts[0]},{m.ends[0]};";
+}
+
+// In UTF-8 the regex of glibc refuses a range end outside ASCII. The regex
+// of gnulib compares the code points of the ends, and refuses a byte that
+// starts no character.
+function check_ranges(): i32 {
+  let ecollate = "error Invalid collation character";
+  if (utf8_span("[à-ê]", "aéz", false) != ecollate || utf8_span("[a-é]", "x", false) != ecollate || utf8_span("[a-z]", "éx", false) != "2,3;") {
+    return 81;
+  }
+  if (utf8_span("[à-ê]", "aéz", true) != "1,3;" || utf8_span("[a-é]", "x", true) != "0,1;" || utf8_span("[α-ω]", "x", true) != "none") {
+    return 82;
+  }
+  if (utf8_span("[α-ω]", "aβ", true) != "1,3;" || utf8_span("[^à-ê]", "éz", true) != "2,3;" || utf8_span("x[à-ê]*y", "xéày", true) != "0,6;") {
+    return 83;
+  }
+  let lone: u8[] = [91, 97, 45, 195, 93];
+  let byte_end = bre.bre_compile_bytes_syntax(lone, bre.Syntax { ...bre.sed_syntax(false, false, false, false), utf8: true, gnulib: true });
+  if (utf8_span("[ê-à]", "x", true) != "error Invalid range end" || byte_end.err != "Invalid collation character") {
+    return 84;
+  }
+  return 0;
+}
+
+// The classes come from the libc of GNU sed on the target. Darwin puts
+// U+0663 in [[:digit:]], and glibc puts it in [[:alpha:]].
+function check_classes(): i32 {
+  let three = "٣";
+  let darwin = target_os() == "darwin";
+  let digit = utf8_span("[[:digit:]]", three, true);
+  let alpha = utf8_span("[[:alpha:]]", three, true);
+  if (darwin && (digit != "0,2;" || alpha != "none")) {
+    return 85;
+  }
+  if (!darwin && (digit != "none" || alpha != "0,2;")) {
+    return 86;
+  }
+  return 0;
+}
+
+// The length of the character of UTF-8 at `i`, or 1 for a byte that starts
+// no character.
+function char_len(b: u8[], i: i32): i32 {
+  if (i >= b.len()) {
+    return 1;
+  }
+  let c = b[i] as i32;
+  let n = if (c >= 194 && c <= 223) { 2 } else if (c >= 224 && c <= 239) { 3 } else if (c >= 240 && c <= 244) { 4 } else { 1 };
+  if (n == 1 || i + n > b.len()) {
+    return 1;
+  }
+  let lo = if (c == 224) { 160 } else if (c == 240) { 144 } else { 128 };
+  let hi = if (c == 237) { 159 } else if (c == 244) { 143 } else { 191 };
+  if ((b[i + 1] as i32) < lo || (b[i + 1] as i32) > hi) {
+    return 1;
+  }
+  for k in 2..n {
+    if ((b[i + k] as i32) < 128 || (b[i + k] as i32) > 191) {
+      return 1;
+    }
+  }
+  return n;
+}
+
+// The matches that s///g of GNU sed replaces: each search starts where the
+// last match ends, and an empty match at the end of the last match does not
+// count.
+function utf8_all(pat: string, subj: u8[], icase: boolean, gnulib: boolean): string {
+  let re = bre.bre_compile_syntax(pat, bre.Syntax { ...bre.sed_syntax(false, icase, false, false), utf8: true, gnulib: gnulib });
+  if (re.err.len() > 0) {
+    return "error " + re.err;
+  }
+  let out = "";
+  let from = 0;
+  let last = -1;
+  while (from <= subj.len()) {
+    let m = re.search_groups_bytes(subj, from, subj.len());
+    if (!m.matched) {
+      break;
+    }
+    let s = m.starts[0];
+    let e = m.ends[0];
+    if (s != e || s != last) {
+      out += f"{s},{e};";
+    }
+    last = e;
+    from = if (e > s) { e } else { e + char_len(subj, e) };
+  }
+  if (out.len() == 0) {
+    return "none";
+  }
+  return out;
+}
+
+// The bytes of UTF-8 in C.UTF-8 under the regex of glibc and of gnulib, as
+// GNU sed on Linux and on Darwin gives them. A byte that starts no character
+// is the character with the value of the byte for \b and \w, so \xff is a
+// letter there. `.` and a bracket do not match it. Surrogates, overlong forms
+// and code points above U+10FFFF start no character.
+function check_invalid(gnulib: boolean): i32 {
+  let ff: u8[] = [97, 255, 98];
+  let ffb: u8[] = [255, 98];
+  let c3: u8[] = [97, 195];
+  let sp: u8[] = [32, 255, 32];
+  let e282: u8[] = [97, 226, 130, 98];
+  if (utf8_all("\\B", ff, false, gnulib) != "1,1;2,2;" || utf8_all("\\B", ffb, false, gnulib) != "1,1;" || utf8_all("\\b", ffb, false, gnulib) != "0,0;2,2;") {
+    return 91;
+  }
+  if (utf8_all("\\B", c3, false, gnulib) != "1,1;" || utf8_all("\\B", sp, false, gnulib) != "0,0;3,3;" || utf8_all("\\B", e282, false, gnulib) != "1,1;") {
+    return 92;
+  }
+  let ee = "éé".bytes();
+  if (utf8_all("\\B", ee, false, gnulib) != "2,2;" || utf8_all("x*\\B", ee, false, gnulib) != "2,2;" || utf8_all("\\>", ee, false, gnulib) != "4,4;" || utf8_all("\\B\\|x", "éa".bytes(), false, gnulib) != "2,2;") {
+    return 93;
+  }
+  let a3b: u8[] = [97, 195, 98];
+  if (utf8_all(".", "aéb".bytes(), false, gnulib) != "0,1;1,3;3,4;" || utf8_all(".", ff, false, gnulib) != "0,1;2,3;" || utf8_all(".", a3b, false, gnulib) != "0,1;2,3;") {
+    return 94;
+  }
+  if (utf8_all("\\w", "éa".bytes(), false, gnulib) != "0,2;2,3;" || utf8_all("a.b", ff, false, gnulib) != "none" || utf8_all("a[^x]b", ff, false, gnulib) != "none") {
+    return 95;
+  }
+  let surrogate: u8[] = [237, 160, 128];
+  let overlong: u8[] = [192, 128];
+  let top: u8[] = [244, 143, 191, 191];
+  let above: u8[] = [244, 144, 128, 128];
+  if (utf8_all(".", surrogate, false, gnulib) != "none" || utf8_all(".", overlong, false, gnulib) != "none" || utf8_all(".", top, false, gnulib) != "0,4;" || utf8_all(".", above, false, gnulib) != "none") {
+    return 96;
+  }
+  let e_c3: u8[] = [195, 169, 195];
+  let e_ff_b: u8[] = [195, 169, 255, 98];
+  if (utf8_all("é*", "éééa".bytes(), false, gnulib) != "0,6;7,7;" || utf8_all("[é]", e_c3, false, gnulib) != "0,2;" || utf8_all("[^a]", e_ff_b, false, gnulib) != "0,2;3,4;" || utf8_all("é", "éÉ".bytes(), true, gnulib) != "0,2;2,4;") {
+    return 97;
+  }
+  return 0;
+}
+
+// from_of gives the match and the groups of a search that starts at `from`.
+function from_of(pat: string, subj: string, from: i32, icase: boolean, utf8: boolean): string {
+  let re = bre.bre_compile_syntax(pat, bre.Syntax { ...bre.sed_syntax(false, icase, false, false), utf8: utf8 });
+  let m = re.search_groups_bytes(subj.bytes(), from, subj.len());
+  if (!m.matched) {
+    return "none";
+  }
+  let out = "";
+  for g in 0..m.starts.len() {
+    out += f"{m.starts[g]},{m.ends[g]};";
+  }
+  return out;
+}
+
+// glibc moves the start of a search past each character that leaves its
+// DFA in the initial state. An empty match at the first position keeps the
+// move.
+function check_start_shift(): i32 {
+  if (from_of("\\W*\\B", ". b", 1, false, false) != "2,2;" || from_of("\\W*\\B", ". b", 0, false, false) != "0,1;") {
+    return 51;
+  }
+  if (from_of("\\W*\\(\\B\\)", ". b", 1, false, false) != "2,2;2,2;" || from_of("\\(\\W\\)*\\B", ". b", 1, false, false) != "1,1;-1,-1;") {
+    return 52;
+  }
+  if (from_of("x*\\W*\\B", ". b", 1, false, false) != "1,1;" || from_of("\\W*\\B\\|z", ". b", 1, false, false) != "1,1;") {
+    return 53;
+  }
+  if (from_of("\\w*\\B", "ab c", 1, false, false) != "2,2;" || from_of("\\W\\{0,\\}\\B", ". b", 1, false, false) != "2,2;") {
+    return 54;
+  }
+  if (from_of("\\W*\\B", "a.é- b", 5, false, true) != "6,6;" || from_of("\\W*\\B", "a.é- b", 1, false, true) != "4,5;" || from_of("\\W*\\B", "¿ b", 2, false, true) != "3,3;") {
+    return 55;
+  }
+  return 0;
+}
+
+// Under icase in UTF-8, glibc tries a match inside the last character of
+// the text when the upper case of that character has fewer bytes.
+function check_fold_tail(): i32 {
+  if (from_of("\\>", "ı", 0, true, true) != "1,1;" || from_of("\\>", "ıa", 0, true, true) != "3,3;") {
+    return 61;
+  }
+  if (from_of("\\>", "ı", 0, false, true) != "2,2;" || from_of("\\B", "ı", 0, true, true) != "none") {
+    return 62;
+  }
+  if (from_of("\\>", "ɐ", 0, true, true) != "2,2;" || from_of("\\>", "ⱥ", 0, true, true) != "2,2;") {
+    return 63;
+  }
+  return 0;
+}
+
 function check_search_from(): i32 {
   let re = bre.bre_compile_syntax("^a\\|\\<b", bre.sed_syntax(false, false, false, false));
   let text = "aab b".bytes();
@@ -268,6 +466,30 @@ function main(): i32 {
     return r;
   }
   r = check_icase();
+  if (r != 0) {
+    return r;
+  }
+  r = check_ranges();
+  if (r != 0) {
+    return r;
+  }
+  r = check_classes();
+  if (r != 0) {
+    return r;
+  }
+  r = check_invalid(false);
+  if (r != 0) {
+    return r;
+  }
+  r = check_invalid(true);
+  if (r != 0) {
+    return r + 10;
+  }
+  r = check_start_shift();
+  if (r != 0) {
+    return r;
+  }
+  r = check_fold_tail();
   if (r != 0) {
     return r;
   }

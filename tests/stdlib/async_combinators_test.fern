@@ -312,6 +312,17 @@ function woken(own f: async.Future[i32[]], at: i32): async.Future[i32[]] {
   return async.Future.Cancelled;
 }
 
+// A mail of std/fetch waits on a negative id, and a stale socket on -1 with
+// an interest. A wait keeps both.
+function test_only_the_hole_pair_is_a_hole(): test.TestOutcome {
+  let set: i32[] = [-3, 4, async.HOLE, 0, async.HOLE, 1, 7, 2];
+  let c = async.compact(set);
+  if (!async.has_hole(set) || async.has_hole(c.set)) {
+    return test.fail("has_hole does not find the one hole");
+  }
+  return test.assert_eq(c.set.len() * 100 + c.at[0] * 10 + c.at[1] + c.at[2] * 1000, 3602);
+}
+
 function test_wake_reaches_the_owner_of_its_pair(): test.TestOutcome {
   let a = cell_new(0);
   let b = cell_new(0);
@@ -452,6 +463,7 @@ function main(): i32 {
   r = r.it("a cancelled task cancels its children", test_cancel_reaches_the_children);
   r = r.it("sim: with_deadline is exact", test_sim_deadline_is_exact);
   r = r.it("a wake reaches the owner of its pair", test_wake_reaches_the_owner_of_its_pair);
+  r = r.it("only the pair (HOLE, 0) is a hole", test_only_the_hole_pair_is_a_hole);
   r = r.it("gather of many keeps input order", test_gather_of_many_keeps_input_order);
   r = r.it("race of many answers the lowest ready index", test_race_of_many_answers_the_lowest_ready_index);
   r = r.it("sim: gather and race", test_sim_gather_and_race);

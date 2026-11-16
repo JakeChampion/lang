@@ -646,6 +646,17 @@ Two rules stop the saves from costing more than they save:
   saves run on the cold paths, and a spill loads and stores on every one.
   x86-64 has five callee-saved registers, so its loops reach this case.
 
+On x86-64 an inline byte kernel is a fifth kind (`COLD_KERNEL`,
+`ssa_inline_kernel`): `__ascii_run`, `__memchr`, `__rmemchr`, `__count_byte`,
+`__count_below_u64`, `__str_hash`, `__bsd_sum` and `__count_runs`. A kernel
+calls nothing. The emitter writes the text of the kernel one time before the
+allocation, and reads from it the caller registers that the kernel names
+(`ssa_text_clobbers`). The fixed table keeps a value that lives across the
+kernel off those registers only, and the emitter saves nothing. A kernel in
+a cold block has this kind too, not `COLD_BRANCH`. A kernel
+stays a call when its text names a saved register, or has an instruction
+with an operand that the text does not name (`call`, `rep`, `mul`, `div`).
+
 With `cold_calls`, a phi can be read far more than its entry operand
 (`weight` more than 4 times). Such a phi takes a register even when that
 operand is spilled, and loads it on the entry edge.

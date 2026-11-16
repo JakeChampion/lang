@@ -56,6 +56,16 @@ readdir. A test of the name or of the type thus needs no stat. Each test
 gets the stat that it needs before it runs, as in GNU find. When the stat
 fails, the test is false.
 
+GNU find runs the commands of `-execdir` and `-okdir` with `+` when the
+depth of the walk changes. It also runs them at the first entry of each
+start point. The port does the same, so the order of readdir decides when
+they run.
+
+On Darwin, GNU find has the `getfilecon` of gnulib, which fails with ENOTSUP.
+For an entry below a start point, gnulib first goes into the directory of
+the entry. That needs search permission. Thus `%Z` and `-context` give the
+error of that permission first, as GNU find on Darwin does.
+
 ### The optimiser and -D
 
 The port changes the order of the tests as the optimiser of GNU find 4.9.0
@@ -71,12 +81,19 @@ The optimiser does these steps:
 - It swaps the operands of an operator when the right one is cheaper, or
   by their rates when the two have the same cost.
 
+The order of the lists can put a new node above a chain in a chain. GNU find
+then sets the flag of side effects on the old node when GCC compiled it, as
+on Linux. It sets the flag on the new node when Clang compiled it, as on
+Darwin. The port does the same on each target, and so the trace of `-D opt`
+is the same.
+
 The tests that move at each level:
 
 - At `-O0`, the tests of the name and `-regex`.
 - From `-O1`, each test that needs no data.
 - From `-O2`, also the tests of the type and the inode number, after them.
-  `-fstype` of a type that no mount has is false and needs no stat.
+  `-fstype` of a type that no mount has is false and needs no stat. The
+  type `afs` stays a test, and so does each type when find reads no mounts.
 - At `-O3`, each test, by its cost.
 
 `-D` takes the flags of GNU find 4.9.0: `exec`, `opt`, `rates`, `search`,
@@ -130,10 +147,6 @@ that exits with 255 there gives 124, also after a command that failed.
 
 ## What is not in the ports
 
-- In a directory with a name that is not UTF-8, the port reads the names
-  without their types, so the walk takes the stat of each entry. The
-  output is the same, but not the trace of `-D search` and `-D stat`. The
-  runtime has no read of the names as bytes with their types.
 - On wasm32-wasi there are no processes. `-exec` and its kin stop find with
   an error, and xargs stops at once. `-fstype` names each file system
   `unknown`, `-readable` and its kin are false, and `%Z` has no context.

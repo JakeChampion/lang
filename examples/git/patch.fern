@@ -10,6 +10,7 @@ import "./moved";
 import "./objects";
 import "./store";
 import "./treediff";
+import "./userdiff";
 import "./width";
 import "./ws";
 import "../../coreutils/lib/bre";
@@ -24,15 +25,16 @@ import "../../coreutils/lib/bre";
 // `--word-diff`, and `word_regex` holds the regex of its words, or none.
 // `word_regex_error` is a regex of words that is not sound, or "".
 // `color_moved` and `color_moved_ws` are the form and the modes of
-// `--color-moved` and `--color-moved-ws`. `ws_attrs` holds the
-// attributes of the worktree for the attribute `whitespace`, or none.
+// `--color-moved` and `--color-moved-ws`. `attrs` holds the
+// attributes of the worktree, or none. `drivers` holds the drivers of the
+// attribute `diff`.
 // `pal` holds the colors of `color.diff.SLOT`. `line_ranges` holds the
 // ranges of lines of `-L` of each path of the new side: the patch of such
 // a path shows only the lines in its ranges.
-pub struct Opts { line_ranges: Map[string, i32[]], pal: color.Palette, ws_attrs: attr.Attrs[], color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
+pub struct Opts { line_ranges: Map[string, i32[]], pal: color.Palette, attrs: attr.Attrs[], drivers: userdiff.Drivers, color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
 
 pub function defaults(): Opts {
-  return Opts { line_ranges: Map { }, pal: color.palette_default(), ws_attrs: [], color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
+  return Opts { line_ranges: Map { }, pal: color.palette_default(), attrs: [], drivers: userdiff.none(), color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
 }
 
 // True when the options print a diff.
@@ -220,12 +222,37 @@ pub function abbrev_of(s: store.Store, hash: string, least: i32, full: boolean):
   return objects.part(hash, 0, n);
 }
 
+// The finder of the function lines of a pair with the paths `one` and
+// `two`, or None for the default rule of git. The driver of the old path
+// comes first, as in `builtin_diff`.
+function finder_of(o: Opts, one: string, two: string): Option[userdiff.Finder] {
+  let f = match (o.drivers.for_hunks(o.attrs, one)) {
+    Some(f) => f,
+    None => match (o.drivers.for_hunks(o.attrs, two)) {
+      Some(f) => f,
+      None => {
+        return None;
+      },
+    },
+  };
+  return Some(userdiff.finder_of(f));
+}
+
 // The lines of the change in one pair, after its header: the hunks, or
 // the line for a binary file. Each line ends with a line end. With ranges
-// of `-L` for the path `path`, the hunks have the lines of the ranges.
-function hunks(o: Opts, a: u8[], b: u8[], path: u8[]): u8[] {
-  if let Some(ranges) = o.line_ranges.get(unsafe { string_from_bytes_unchecked(path) }) {
-    return in_ranges(o, a, b, ranges);
+// of `-L` for the path `two`, the hunks have the lines of the ranges. The
+// text is the message of git when the regex of a driver is not sound.
+function hunks(o: Opts, a: u8[], b: u8[], one: u8[], two: u8[]): (u8[], string) {
+  let find: Option[(u8[], i32, i32) => (i32, i32)] = None;
+  if let Some(finder) = finder_of(o, text(one), text(two)) {
+    if (finder.died.len() > 0) {
+      return ([], finder.died);
+    }
+    // The buffer of xdiff for a function line has 80 bytes.
+    find = Some((data: u8[], s: i32, e: i32): (i32, i32) => finder.find(data, s, e, 80));
+  }
+  if let Some(ranges) = o.line_ranges.get(unsafe { string_from_bytes_unchecked(two) }) {
+    return (in_ranges(o, a, b, ranges, find), "");
   }
   let ab = a;
   let bb = b;
@@ -238,29 +265,40 @@ function hunks(o: Opts, a: u8[], b: u8[], path: u8[]): u8[] {
   let lb = linediff.lines_of(bb);
   let script = linediff.diff(la, lb, o.algo);
   let out = buf_new(4096);
-  linediff.unified(out, la, lb, script, linediff.Emit { context: o.context, interhunk: o.interhunk, funcnames: true });
-  return taken(out);
+  linediff.unified(out, la, lb, script, linediff.Emit { context: o.context, interhunk: o.interhunk, funcnames: true, find_func: find });
+  return (taken(out), "");
 }
 
 // ---- The hunks in the ranges of `-L` (`line_range_callback` of git) ----
 
 // The function line of the old side at or above the line `start`, down to
-// the line after `limit`, as xdiff finds it for a hunk header: the first
-// 80 bytes of a line that starts with a letter, `_` or `$`, with no white
-// space at their end. The third value is false when there is none.
-function func_above(a: linediff.Lines, start: i32, limit: i32): (i32, i32, boolean) {
+// the line after `limit`, as xdiff finds it for a hunk header: the name
+// that `find` gives, or, with no `find`, the first 80 bytes of a line that
+// starts with a letter, `_` or `$`, with no white space at their end. The
+// third value is false when there is none.
+function func_above(a: linediff.Lines, start: i32, limit: i32, find: Option[(u8[], i32, i32) => (i32, i32)]): (i32, i32, boolean) {
   let l = start;
   while (l != limit && 0 <= l && l < a.count()) {
     let s = a.starts[l];
     let len = a.starts[l + 1] - s;
-    if (len > 0) {
-      let c = a.data[s];
-      if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c == b'_' || c == b'$') {
-        let n = len.min(80);
-        while (n > 0 && objects.is_space(a.data[s + n - 1])) {
-          n -= 1;
+    match (find) {
+      Some(f) => {
+        let span = f(a.data, s, s + len);
+        if (span.0 >= 0) {
+          return (span.0, span.1, true);
         }
-        return (s, s + n, true);
+      },
+      None => {
+        if (len > 0) {
+          let c = a.data[s];
+          if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c == b'_' || c == b'$') {
+            let n = len.min(80);
+            while (n > 0 && objects.is_space(a.data[s + n - 1])) {
+              n -= 1;
+            }
+            return (s, s + n, true);
+          }
+        }
       }
     }
     l -= 1;
@@ -324,7 +362,7 @@ function flush_range(out: usize, h_in: RangeHunk): RangeHunk {
 // cut at the ends of the ranges, each with a header of its own. A hunk
 // of a range with no change does not show.
 // fern-lint: allow cyclomatic-complexity
-pub function in_ranges(o: Opts, a: u8[], b: u8[], ranges: i32[]): u8[] {
+pub function in_ranges(o: Opts, a: u8[], b: u8[], ranges: i32[], find: Option[(u8[], i32, i32) => (i32, i32)]): u8[] {
   let span = 0;
   let k = 0;
   while (k < ranges.len()) {
@@ -335,7 +373,7 @@ pub function in_ranges(o: Opts, a: u8[], b: u8[], ranges: i32[]): u8[] {
   let lb = linediff.lines_of(b);
   let script = linediff.diff(la, lb, o.algo);
   let full = buf_new(4096);
-  linediff.unified(full, la, lb, script, linediff.Emit { context: o.context.max(span), interhunk: o.interhunk, funcnames: false });
+  linediff.unified(full, la, lb, script, linediff.Emit { context: o.context.max(span), interhunk: o.interhunk, funcnames: false, find_func: None });
   let text = taken(full);
   let out = buf_new(4096);
   let h = RangeHunk { cur: 0, post: 0, pre: 0, func: [], active: false, changes: false, old_begin: 0, old_count: 0, new_begin: 0, new_count: 0, lines: [], pending: [], pending_count: 0, pending_begin: 0 };
@@ -350,7 +388,7 @@ pub function in_ranges(o: Opts, a: u8[], b: u8[], ranges: i32[]): u8[] {
     if (first == b'@') {
       let (old_begin, old_count, new_begin, _) = hunk_numbers(unsafe { string_from_bytes_unchecked(line) });
       let s1 = if (old_count != 0) { old_begin - 1 } else { old_begin };
-      let (fs, fe, found) = func_above(la, s1 - 1, funclineprev);
+      let (fs, fe, found) = func_above(la, s1 - 1, funclineprev, find);
       funclineprev = s1 - 1;
       h = RangeHunk { ...h, post: new_begin, pre: old_begin, func: if (found) { array.slice(la.data, fs, fe) } else { h.func } };
       continue;
@@ -551,6 +589,7 @@ function painted(t_in: Text, o: Opts, body: string, a: u8[], b: u8[]): Text {
   let pre = 0;
   let post = 0;
   let at = 0;
+  let last = b' ';
   while (at < body.len()) {
     let end = at;
     while (end < body.len() && body[end] != b'\n') {
@@ -581,8 +620,11 @@ function painted(t_in: Text, o: Opts, body: string, a: u8[], b: u8[]): Text {
       out = line0(o.pal.get(color.CONTEXT), " ", rest);
     } else {
       pre += 1;
-      out = line0(o.pal.get(color.CONTEXT), "", line);
+      // The line end that an added line does not have is an error.
+      let slot = if (last == b'+' && (o.ws_rule & ws.INCOMPLETE_LINE) != 0) { color.WHITESPACE } else { color.CONTEXT };
+      out = line0(o.pal.get(slot), "", line);
     }
+    last = first;
     let (t1, k) = call(t);
     t = push(t1, k, out, true);
     if (kind != moved.OTHER) {
@@ -685,7 +727,10 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
     let (t1, at_call) = call(t);
     return (s, add(t1, at_call, "Binary files " + lbl0 + " and " + lbl1 + " differ\n"));
   }
-  let body = hunks(o, a, b, p.two.path);
+  let (body, died) = hunks(o, a, b, p.one.path, p.two.path);
+  if (died.len() > 0) {
+    return (s, Text { ...t_in, fatal: died });
+  }
   if (body.len() == 0) {
     // git writes the header of a change of content with its first line
     // of the patch, and the ranges of `-L` can leave no line.
@@ -703,7 +748,7 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   if (o.color) {
     let labels = o.pal.get(color.META) + "--- " + lbl0 + color.RESET + tab0 + "\n" + o.pal.get(color.META) + "+++ " + lbl1 + color.RESET + tab1 + "\n";
-    return (s, painted(add_each(t, labels), Opts { ...o, ws_rule: rule_of(o, p.one.path) }, text(body), a, b));
+    return (s, painted(add_each(t, labels), Opts { ...o, ws_rule: link_rule(rule_of(o, p.one.path), p.two.mode) }, text(body), a, b));
   }
   t = add_each(t, "--- " + lbl0 + tab0 + "\n+++ " + lbl1 + tab1 + "\n" + text(body));
   return (s, t);
@@ -1266,7 +1311,8 @@ pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (sto
     if (is_binary(b)) {
       continue;
     }
-    let rule = rule_of(o, if (p.one.path != p.two.path) { p.two.path } else { p.one.path });
+    let rule = link_rule(rule_of(o, if (p.one.path != p.two.path) { p.two.path } else { p.one.path }), p.two.mode);
+    let incomplete = (rule & ws.INCOMPLETE_LINE) != 0 && b.len() > 0 && b[b.len() - 1] != b'\n';
     let la = linediff.lines_of(a);
     let lb = linediff.lines_of(b);
     let plain = linediff.Options { algorithm: linediff.MYERS, minimal: false, indent_heuristic: false };
@@ -1284,6 +1330,10 @@ pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (sto
           t = add_each(t, at + ws.error_string(bad) + ".\n");
           t = add_each(t, set + "+" + reset + shown + (if (shown.ends_with("\n")) { "" } else { "\n" }));
         }
+        if (incomplete && j == lb.count() - 1) {
+          failed = true;
+          t = add_each(t, at + ws.error_string(ws.INCOMPLETE_LINE) + ".\n");
+        }
       }
     }
     if ((rule & ws.BLANK_AT_EOF) != 0) {
@@ -1297,13 +1347,19 @@ pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (sto
   return (s, t, failed);
 }
 
+// The rule `rule` of a file of mode `mode`. A symbolic link has no line end
+// at its end, and that is not an error.
+function link_rule(rule: i32, mode: string): i32 {
+  return if (mode == "120000") { rule & ~ws.INCOMPLETE_LINE } else { rule };
+}
+
 // The rules of white space of the file `path`: those of the attribute
 // `whitespace`, or those of `core.whitespace` (`whitespace_rule` of git).
 pub function rule_of(o: Opts, path: u8[]): i32 {
-  if (o.ws_attrs.len() == 0) {
+  if (o.attrs.len() == 0) {
     return o.ws_rule;
   }
-  let v = attr.value_of(o.ws_attrs[0], text(path), "whitespace");
+  let v = attr.value_of(o.attrs[0], text(path), "whitespace");
   if (v == attr.SET) {
     return ws.all_rules(o.ws_rule);
   }
@@ -1461,7 +1517,7 @@ pub function patch_id_text(s_in: store.Store, changes: treediff.Change[]): (stor
     let plain = linediff.Options { algorithm: linediff.MYERS, minimal: false, indent_heuristic: false };
     let script = linediff.diff(la, lb, plain);
     let hunk = buf_new(1024);
-    linediff.unified(hunk, la, lb, script, linediff.Emit { context: 3, interhunk: 0, funcnames: false });
+    linediff.unified(hunk, la, lb, script, linediff.Emit { context: 3, interhunk: 0, funcnames: false, find_func: None });
     let text = taken(hunk);
     // The lines without the hunk headers and the lines that say that a
     // file has no line end at its end.

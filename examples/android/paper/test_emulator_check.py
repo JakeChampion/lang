@@ -89,7 +89,7 @@ class BackNavigationTests(unittest.TestCase):
                             keyboard_shown=lambda timeout=5.0: device.keyboard,
                             wait_for_keyboard=lambda shown, timeout=5.0: device.keyboard == shown,
                             wait_for=device.wait_for, paper_part=device.frame,
-                            open_clock=lambda: None, finish=lambda: None,
+                            open_clock=lambda: None, finish=lambda out=None: None,
                             check_filter=lambda out, width, height: None,
                             fail=device.failures.append), patch.object(check.time, "sleep"):
             check.main("paper.apk", out)

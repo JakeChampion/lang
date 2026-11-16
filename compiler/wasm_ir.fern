@@ -244,6 +244,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (has_kind(kinds, "ffma") || has_kind(kinds, "vfma")) {
     out = out.append("@uses_fma");
   }
+  if (has_kind(kinds, "ffma32") || has_kind(kinds, "vfma")) {
+    out = out.append("@uses_fma32");
+  }
   if (module_uses_random(cache)) {
     out = out.append("@uses_random");
   }
@@ -435,7 +438,7 @@ pub function tid_get(name: string): string {
 }
 
 pub function tid_named(): string[] {
-  return ["FileStat", "DirEntry", io_error_shape("NotFound"), io_error_shape("PermissionDenied"), io_error_shape("AlreadyExists"), io_error_shape("Interrupted"), io_error_shape("Unsupported"), io_error_shape("InvalidUtf8"), io_error_shape("Other")];
+  return ["FileStat", "DirEntry", "DirEntryBytes", io_error_shape("NotFound"), io_error_shape("PermissionDenied"), io_error_shape("AlreadyExists"), io_error_shape("Interrupted"), io_error_shape("Unsupported"), io_error_shape("InvalidUtf8"), io_error_shape("Other")];
 }
 
 function io_error_shape(variant: string): string {
@@ -1515,7 +1518,7 @@ function array_helper_parts(needs: string[], mod: parser.Module, own parts: stri
     }
   }
   if (append || write || back || kernels.len() > 0) {
-    parts = parts.append(rtbytecopy.wasm_source(append, write, back, kernels));
+    parts = parts.append(rtbytecopy.wasm_source(append, write, back, kernels, byte_view_decode("$src", "$p", "$sn")));
   }
   if (need(needs, "@uses_bytes_range")) {
     parts = parts.append(bytes_range_helper(empty));
@@ -2617,11 +2620,12 @@ function truncate_body(mode: i32): string {
 }
 
 function read_dir_body(fname: string, mode: i32): string {
-  if (fname == "__fern_read_dir_ino" || fname == "__fern_read_dir_ino_all") {
+  if (fname == "__fern_read_dir_ino" || fname == "__fern_read_dir_ino_all" || fname == "__fern_read_dir_ino_bytes") {
+    let raw = fname == "__fern_read_dir_ino_bytes";
     if (mode == 2) {
-      return read_dir_ino_func_p2(fname);
+      return read_dir_ino_func_p2(fname, raw);
     }
-    return read_dir_func_like(fname, fname == "__fern_read_dir_ino", true, false);
+    return read_dir_func_like(fname, fname != "__fern_read_dir_ino_all", true, raw);
   }
   if (mode == 2) {
     return read_dir_func_p2(fname);
@@ -2645,9 +2649,10 @@ function wasi_kind_func(): string {
   return o;
 }
 
-function read_dir_ino_func_p2(fname: string): string {
+// With raw, the name of each entry is a byte array with the bytes of the name.
+function read_dir_ino_func_p2(fname: string, raw: boolean): string {
   let o = "  (func $" + fname + " (param $path i32) (param $tid i32) (result i32)\n";
-  o += "    (local $r i32) (local $res i32) (local $arr i32) (local $ent i32) (local $i i32) (local $n i32)\n";
+  o += "    (local $r i32) (local $res i32) (local $arr i32) (local $ent i32) (local $i i32) (local $n i32) (local $s i32) (local $b i32) (local $len i32)\n";
   o += "    (local.set $r (call $__fern_dir_names_p2 (local.get $path)))\n";
   o += "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "    (if (i32.lt_s (local.get $r) (i32.const 0)) (then\n";
@@ -2663,7 +2668,16 @@ function read_dir_ino_func_p2(fname: string): string {
   o += "      (br_if $wd (i32.ge_u (local.get $i) (local.get $n)))\n";
   o += "      (local.set $ent (call $__fern_str_box (i32.const 32)))\n";
   o += "      (i32.store (local.get $ent) (local.get $tid))\n";
-  o += "      (i32.store offset=8 (local.get $ent) (i32.load (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+  o += "      (local.set $s (i32.load (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+  if (raw) {
+    o += "      (local.set $len (i32.load (local.get $s)))\n";
+    o += "      (local.set $b (call $__fern_arr_elems (local.get $len) (i32.const 1)))\n";
+    o += "      (i32.store (local.get $b) (local.get $len)) (i32.store offset=4 (local.get $b) (local.get $len))\n";
+    o += "      (memory.copy (i32.add (local.get $b) (i32.const 8)) (i32.add (local.get $s) (i32.const 4)) (local.get $len))\n";
+    o += "      (drop (call $__fern_arr_dec (local.get $s)))\n";
+    o += "      (local.set $s (local.get $b))\n";
+  }
+  o += "      (i32.store offset=8 (local.get $ent) (local.get $s))\n";
   o += "      (i64.store offset=16 (local.get $ent) (i64.const 0))\n";
   o += "      (i64.store offset=24 (local.get $ent) (i64.const 0))\n";
   o += "      (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $ent)))\n";
@@ -4515,6 +4529,9 @@ function emit_host_op_wat(o: ir.Op): string {
     return "    call $__fern_read_dir_all\n";
   }
   if (o.kind_tag == ir.K_READ_DIR_INO) {
+    if (o.i32_imm != 0) {
+      return tid_get("DirEntryBytes") + "    call $__fern_read_dir_ino_bytes\n";
+    }
     return tid_get("DirEntry") + "    call $__fern_read_dir_ino\n";
   }
   if (o.kind_tag == ir.K_READ_DIR_INO_ALL) {
@@ -4748,11 +4765,8 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
     }
     return pre + "    " + sh + ".replace_lane " + util.i32_to_string(o.i32_imm) + "\n";
   }
-  if (k == "vfma" && o.width == 64) {
-    return emit_wasm_lane_fma(cx.base + 5);
-  }
   if (k == "vfma") {
-    return "    local.set " + vtmp + "\n    " + sh + ".mul\n    local.get " + vtmp + "\n    " + sh + ".add\n";
+    return emit_wasm_lane_fma(cx.base + 5, o.width);
   }
   if (k == "vround") {
     return emit_wasm_lane_round(o.width, sh, vtmp);
@@ -4807,17 +4821,22 @@ function wasm_lane_verb(k: string, sh: string): string {
 
 // wasm has no fused multiply-add, so each f64 lane calls the runtime form. The
 // three operands go to the v128 scratch locals first.
-function emit_wasm_lane_fma(first: i32): string {
+// Each lane calls the runtime function of its width. An f32 lane goes to the
+// function and comes back as an f64 that holds an f32 value.
+function emit_wasm_lane_fma(first: i32, width: i32): string {
   let out = "";
   for k in 0..3 {
     out = out + "    local.set " + util.i32_to_string(first + 2 - k) + "\n";
   }
-  for lane in 0..2 {
+  let sh = if (width == 32) { "f32x4" } else { "f64x2" };
+  let wide = if (width == 32) { "    f64.promote_f32\n" } else { "" };
+  let narrow = if (width == 32) { "    f32.demote_f64\n" } else { "" };
+  for lane in 0..128 / width {
     for k in 0..3 {
-      out = out + "    local.get " + util.i32_to_string(first + k) + "\n    f64x2.extract_lane " + util.i32_to_string(lane) + "\n";
+      out = out + "    local.get " + util.i32_to_string(first + k) + "\n    " + sh + ".extract_lane " + util.i32_to_string(lane) + "\n" + wide;
     }
-    out += "    call $__fern_fma_f64\n";
-    out += if (lane == 0) { "    f64x2.splat\n" } else { "    f64x2.replace_lane 1\n" };
+    out += "    call $__fern_fma_f" + util.i32_to_string(width) + "\n" + narrow;
+    out += if (lane == 0) { "    " + sh + ".splat\n" } else { "    " + sh + ".replace_lane " + util.i32_to_string(lane) + "\n" };
   }
   return out;
 }
@@ -5280,6 +5299,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_mulhi_s64\n");
   } else if (o.kind_tag == ir.K_FFMA) {
     parts = parts.append("    call $__fern_fma_f64\n");
+  } else if (o.kind_tag == ir.K_FFMA32) {
+    parts = parts.append("    call $__fern_fma_f32\n");
   } else if (o.kind_tag >= ir.K_DIR_OPEN && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     parts = parts.append("    unreachable\n");
   } else {
@@ -6969,21 +6990,21 @@ pub function mismatch_bytes_str_helper(): string {
 pub function memchr_helper(): string {
   let o = "";
   o += "  (func $__fern_memchr (param $s i32) (param $byte i32) (param $from i32) (result i32)\n";
-  o += "    (local $len i32) (local $i i32) (local $m i32) (local $splat v128)\n";
+  o += "    (local $len i32) (local $i i32) (local $m i32) (local $p i32) (local $splat v128)\n";
   o += "    (if (i32.or (i32.lt_s (local.get $byte) (i32.const 0)) (i32.gt_s (local.get $byte) (i32.const 255))) (then (return (i32.const -1))))\n";
-  o += "    (local.set $len (i32.load (local.get $s)))\n";
+  o += view_string_decode("$s", "$p", "$len");
   o += "    (local.set $i (local.get $from))\n";
   o += "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
   o += "    (local.set $splat (i8x16.splat (local.get $byte)))\n";
   o += "    (block $vd (loop $vc\n";
   o += "      (br_if $vd (i32.lt_s (i32.sub (local.get $len) (local.get $i)) (i32.const 16)))\n";
-  o += "      (local.set $m (i8x16.bitmask (i8x16.eq (v128.load (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (local.get $splat))))\n";
+  o += "      (local.set $m (i8x16.bitmask (i8x16.eq (v128.load (i32.add (local.get $p) (local.get $i))) (local.get $splat))))\n";
   o += "      (if (i32.ne (local.get $m) (i32.const 0)) (then (return (i32.add (local.get $i) (i32.ctz (local.get $m))))))\n";
   o += "      (local.set $i (i32.add (local.get $i) (i32.const 16)))\n";
   o += "      (br $vc)))\n";
   o += "    (block $d (loop $c\n";
   o += "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o += "      (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (local.get $byte)) (then (return (local.get $i))))\n";
+  o += "      (if (i32.eq (i32.load8_u (i32.add (local.get $p) (local.get $i))) (local.get $byte)) (then (return (local.get $i))))\n";
   o += "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o += "      (br $c)))\n";
   o += "    (i32.const -1))\n";
@@ -7036,16 +7057,16 @@ function mismatch_kernel(name: string, a_data: i32, b_data: i32): string {
 pub function rmemchr_helper(): string {
   let o = "";
   o += "  (func $__fern_rmemchr (param $s i32) (param $byte i32) (param $from i32) (result i32)\n";
-  o += "    (local $len i32) (local $i i32) (local $b i32) (local $m i32) (local $splat v128)\n";
+  o += "    (local $len i32) (local $i i32) (local $b i32) (local $m i32) (local $p i32) (local $splat v128)\n";
   o += "    (if (i32.or (i32.lt_s (local.get $byte) (i32.const 0)) (i32.gt_s (local.get $byte) (i32.const 255))) (then (return (i32.const -1))))\n";
-  o += "    (local.set $len (i32.load (local.get $s)))\n";
+  o += view_string_decode("$s", "$p", "$len");
   o += "    (local.set $i (local.get $from))\n";
   o += "    (if (i32.gt_s (local.get $i) (i32.sub (local.get $len) (i32.const 1))) (then (local.set $i (i32.sub (local.get $len) (i32.const 1)))))\n";
   o += "    (local.set $splat (i8x16.splat (local.get $byte)))\n";
   o += "    (if (i32.ge_s (local.get $i) (i32.const 15)) (then\n";
   o += "      (local.set $b (i32.sub (local.get $i) (i32.const 15)))\n";
   o += "      (block $vd (loop $vc\n";
-  o += "        (local.set $m (i8x16.bitmask (i8x16.eq (v128.load (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $b))) (local.get $splat))))\n";
+  o += "        (local.set $m (i8x16.bitmask (i8x16.eq (v128.load (i32.add (local.get $p) (local.get $b))) (local.get $splat))))\n";
   o += "        (if (i32.ne (local.get $m) (i32.const 0)) (then (return (i32.add (local.get $b) (i32.sub (i32.const 31) (i32.clz (local.get $m)))))))\n";
   o += "        (local.set $b (i32.sub (local.get $b) (i32.const 16)))\n";
   o += "        (br_if $vd (i32.lt_s (local.get $b) (i32.const 0)))\n";
@@ -7054,7 +7075,7 @@ pub function rmemchr_helper(): string {
   o += "    ))\n";
   o += "    (block $d (loop $c\n";
   o += "      (br_if $d (i32.lt_s (local.get $i) (i32.const 0)))\n";
-  o += "      (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (local.get $byte)) (then (return (local.get $i))))\n";
+  o += "      (if (i32.eq (i32.load8_u (i32.add (local.get $p) (local.get $i))) (local.get $byte)) (then (return (local.get $i))))\n";
   o += "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
   o += "      (br $c)))\n";
   o += "    (i32.const -1))\n";
@@ -7966,8 +7987,12 @@ function buf_table_helpers(needs: string[], raw: boolean): string {
   }
   if (need(needs, "buf_push_" + variant + "expanded")) {
     o = o + "  (func $__fern_buf_push_" + variant + "expanded (param $h i32) (param $s i32) (param $t i32)\n";
-    o += "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32) (local $r i32) (local $l i32) (local $k i32)\n";
-    o += "    (local.set $n (i32.load (local.get $s)))\n";
+    o += "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32) (local $r i32) (local $l i32) (local $k i32) (local $p i32)\n";
+    if (raw) {
+      o += "    (local.set $n (i32.load (local.get $s)))\n    (local.set $p (i32.add (local.get $s) (i32.const 8)))\n";
+    } else {
+      o += view_string_decode("$s", "$p", "$n");
+    }
     o += "    (if (i32.eqz (local.get $n)) (then (return)))\n";
     o += "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
     o += "    (if (i32.gt_u (i32.add (local.get $len) (i32.mul (local.get $n) (i32.const 7))) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
@@ -7975,7 +8000,7 @@ function buf_table_helpers(needs: string[], raw: boolean): string {
     o += "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
     o += "    (local.set $m (i32.shr_u (i32.load (local.get $t)) (i32.const 3)))\n";
     o += "    (block $ed (loop $el (br_if $ed (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const " + offset + ")) (local.get $i))))\n";
+    o += "      (local.set $c (i32.load8_u (i32.add (local.get $p) (local.get $i))))\n";
     o += "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o += "      (if (i32.lt_u (local.get $c) (local.get $m))\n";
     o += "        (then\n";
@@ -10097,6 +10122,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   if (need(needs, "@uses_fma")) {
     roots += " __fern_fma_f64";
   }
+  if (need(needs, "@uses_fma32")) {
+    roots += " __fern_fma_f32";
+  }
   if (need(needs, "@uses_count_byte_bytes")) {
     roots += " __fern_count_byte_bytes";
   }
@@ -10306,6 +10334,9 @@ function path_fs_directory_bodies(parts: string[], needs: string[], mode: i32): 
         } else {
           parts = parts.append(read_dir_func_like("__fern_read_dir_bytes", true, false, true));
         }
+      }
+      if (name == "read_dir_ino") {
+        parts = parts.append(read_dir_body("__fern_read_dir_ino_bytes", mode));
       }
     }
   }

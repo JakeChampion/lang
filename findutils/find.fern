@@ -177,6 +177,9 @@ const DAY: i64 = 86400i64;
 // The directive of a piece that \c ends the format with.
 const STOP_DIR: i32 = -1;
 
+// The level of the walk before the first entry of a start point.
+const NO_LEVEL: i32 = -2147483648;
+
 // gnulib's fts sorts the entries of a large directory by inode number on
 // most file systems, and reads at most this many entries at a time.
 const SORT_THRESHOLD: i32 = 10000;
@@ -372,6 +375,8 @@ struct Ent {
 }
 
 // The state of a run. `ok` is the value of the node that was evaluated last.
+// `level` is the depth of the entry that the walk gave last, from the start
+// point that it walks now.
 struct Run {
   e: Ent,
   ok: boolean,
@@ -387,6 +392,7 @@ struct Run {
   user_width: i32,
   group_width: i32,
   pd: Option[Dir],
+  level: i32,
 }
 
 // What -D search and -D rates keep across the walk: the depth of the last
@@ -1698,13 +1704,7 @@ function edited_format(f: string): string {
 // a test that is false in its place.
 function fstype_test(own ps0: Parser, name: string): Parser {
   let (a, ps) = arg_of(ps0, name);
-  let used = false;
-  for t in mount_types() {
-    if (t == a) {
-      used = true;
-    }
-  }
-  if (ps.o.level >= 2 && !used) {
+  if (ps.o.level >= 2 && !used_fs_type(a)) {
     if ((ps.o.dbg & D_OPT) != 0) {
       dbg_out("-fstype " + a + " can never succeed, substituting -false\n");
     }
@@ -1723,12 +1723,22 @@ function mount_list(): MountEntry[] {
   return [];
 }
 
-function mount_types(): string[] {
-  let out: string[] = [];
-  for m in mount_list() {
-    out = out.append(m.fstype);
+// GNU's is_used_fs_type. AFS can be in use with no mount. When GNU cannot
+// read the mounts, or reads none, each type can be in use.
+function used_fs_type(fstype: string): boolean {
+  if (fstype == "afs") {
+    return true;
   }
-  return out;
+  let ms = mount_list();
+  if (ms.len() == 0) {
+    return true;
+  }
+  for m in ms {
+    if (m.fstype == fstype) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The type of the file system of "/", which GNU takes for the most common.
@@ -2657,6 +2667,16 @@ function merge_lists(own o: Opt, own ls: Lists, last: i32): (Opt, Lists) {
   return (o, ls);
 }
 
+// GNU's opt_expr sets the flag of side effects with
+// `curr->pred_right->side_effects = opt_expr (&curr->pred_right)`, and the
+// call can replace the right operand. C does not tell which operand the flag
+// goes to. GCC builds GNU find on Linux, and it reads the operand before the
+// call. Clang builds it on the other targets, and it reads the operand after
+// the call.
+function flag_before_call(): boolean {
+  return target_os() == "linux";
+}
+
 // GNU's opt_expr on the subtree in `slot`: the tree as a chain of operators
 // down the left, then the predicates of each run between two side effects
 // in order of cost. The result tells whether the subtree has side effects.
@@ -2704,10 +2724,9 @@ function opt_expr(own o: Opt, slot: i32): (Opt, boolean) {
       let (o4, s4) = opt_expr(o, 2 * right + 1);
       o = Opt { ...o4, nodes: o4.nodes.with(right, Pred { ...o4.nodes[right], side: s4 }) };
     } else if (is_binary(rn.kind)) {
-      // GNU reads the right operand before the call that can replace it,
-      // so the flag goes to the operand that was there before.
       let (o5, s5) = opt_expr(o, 2 * curr + 1);
-      o = Opt { ...o5, nodes: o5.nodes.with(right, Pred { ...o5.nodes[right], side: s5 }) };
+      let flagged = if (flag_before_call()) { right } else { o5.nodes[curr].r };
+      o = Opt { ...o5, nodes: o5.nodes.with(flagged, Pred { ...o5.nodes[flagged], side: s5 }) };
     } else if (!rn.side && o.nodes[curr].kind != N_COMMA) {
       let k = -1;
       let cheap = if (o.level == 0) { rn.kind == P_NAME || rn.kind == P_PATH } else { rn.cost == C_NOTHING };
@@ -3449,12 +3468,21 @@ function group_name(own r: Run, gid: u32): (string, Run) {
   return (name, Run { ...r, names: names });
 }
 
-// The SELinux context of a file. WASI has no extended attributes.
-function file_context(path: string, follow: boolean): Result[string, IoError] {
+// The SELinux context of an entry. WASI has no extended attributes. On
+// Darwin, GNU find has the getfilecon of gnulib, which fails with ENOTSUP.
+// For an entry below a start point, gnulib first changes the working
+// directory to the directory of the entry. Darwin has no /proc to name the
+// entry through, and the change needs search permission on that directory.
+function file_context(e: Ent, follow: boolean): Result[string, IoError] {
   if (target_os() == "wasi") {
     return Err(Unsupported);
   } else {
-    return selinux.file_context(path, follow);
+    if (target_os() == "darwin" && !e.is_top) {
+      if let Err(err) = access(slice_unchecked(e.path, 0, e.base) + "", 1) {
+        return Err(err);
+      }
+    }
+    return selinux.file_context(e.path, follow);
   }
 }
 
@@ -3566,7 +3594,7 @@ function name_dir(p: Prog, own r: Run, d: Piece): (string, Run) {
     return (pad_text(d, ""), r4);
   }
   if (c == 90) {
-    match (file_context(e.path, follows(p, e))) {
+    match (file_context(e, follows(p, e))) {
       Ok(ctx) => {
         return (pad_text(d, ctx), r);
       },
@@ -4236,7 +4264,7 @@ function eval_test(p: Prog, n: Node, own r: Run): Run {
   }
   if (k == P_CONTEXT) {
     let ok2 = false;
-    if let Ok(ctx) = file_context(r.e.path, follows(p, r.e)) {
+    if let Ok(ctx) = file_context(r.e, follows(p, r.e)) {
       ok2 = fnmatch.fnmatch(n.s, ctx);
     }
     return set_ok(r, ok2);
@@ -4407,7 +4435,7 @@ function exit_trace(p: Prog, res: cmdline.Outcome): void {
 function add_to_batch(p: Prog, own r0: Run, x: i32, dir: string, arg: string): Run {
   let r = r0;
   let b = r.batches[x];
-  if (b.args.len() > 0 && (b.dir != dir || !cmdline.fits(b, arg))) {
+  if (b.args.len() > 0 && !cmdline.fits(b, arg)) {
     r = run_batch(p, r, x);
     b = r.batches[x];
   }
@@ -4439,6 +4467,23 @@ function run_batches(p: Prog, own r0: Run): Run {
   }
 }
 
+// The batches of -execdir ... + and -okdir ... +.
+function run_execdir_batches(p: Prog, own r0: Run): Run {
+  if (target_os() == "wasi") {
+    return r0;
+  } else {
+    let r = r0;
+    let x = 0;
+    while (x < p.execs.len()) {
+      if (p.execs[x].plus && p.execs[x].dir) {
+        r = run_batch(p, r, x);
+      }
+      x += 1;
+    }
+    return r;
+  }
+}
+
 function run_batches_here(p: Prog, own r0: Run): Run {
   let r = r0;
   let x = 0;
@@ -4464,7 +4509,7 @@ function eval_entry(p: Prog, own r: Run, own e: Ent): Run {
 }
 
 // The entries of a directory in the order of the walk. Names that are not
-// UTF-8 come from the byte listing, without their type.
+// UTF-8 come from the byte listing.
 function list_dir(path: string): Result[DirEntry[], IoError] {
   match (read_dir_ino(path)) {
     Ok(es) => {
@@ -4481,12 +4526,16 @@ function list_dir(path: string): Result[DirEntry[], IoError] {
       }
     }
   }
-  let names = read_dir_bytes(path)?;
+  return Ok(unchecked_entries(read_dir_ino_bytes(path)?));
+}
+
+// The entries with their names as strings that can hold bytes that are not UTF-8.
+function unchecked_entries(raw: DirEntryBytes[]): DirEntry[] {
   let out: DirEntry[] = [];
-  for b in names {
-    out = out.append(DirEntry { name: unsafe { string_from_bytes_unchecked(b) }, ino: 0i64, kind: 0u32 });
+  for e in raw {
+    out = out.append(DirEntry { name: unsafe { string_from_bytes_unchecked(e.name) }, ino: e.ino, kind: e.kind });
   }
-  return Ok(out);
+  return out;
 }
 
 // gnulib's fts sorts each batch of more than SORT_THRESHOLD entries by inode
@@ -4595,7 +4644,7 @@ function open_entry(r: Run, dir: Ent): Result[Dir, IoError] {
 }
 
 // The entries of an open directory. Names that are not UTF-8 come from the
-// byte listing, without their type.
+// byte listing.
 function entries_of(d: Dir): Result[DirEntry[], IoError] {
   match (d.entries_ino()) {
     Ok(es) => {
@@ -4612,12 +4661,7 @@ function entries_of(d: Dir): Result[DirEntry[], IoError] {
       }
     }
   }
-  let names = d.entries_bytes()?;
-  let out: DirEntry[] = [];
-  for b in names {
-    out = out.append(DirEntry { name: unsafe { string_from_bytes_unchecked(b) }, ino: 0i64, kind: 0u32 });
-  }
-  return Ok(out);
+  return Ok(unchecked_entries(d.entries_ino_bytes()?));
 }
 
 function walk_children_in(p: Prog, own r0: Run, w: Walker, dir: Ent): (Run, boolean) {
@@ -4713,8 +4757,15 @@ function pad_info(info: string): string {
   return info;
 }
 
-// The first line of -D search for an entry. fts_level is the depth.
-function early(p: Prog, own r: Run, e: Ent, info: string): Run {
+// Each entry that fts gives. When the depth changes, GNU runs the commands
+// of -execdir ... + that wait for files. Then -D search prints its first
+// line, where fts_level is the depth.
+function early(p: Prog, own r0: Run, e: Ent, info: string): Run {
+  let r = r0;
+  if (e.depth != r.level) {
+    r = run_execdir_batches(p, r);
+  }
+  r = Run { ...r, level: e.depth };
   if ((p.o.dbg & D_SEARCH) == 0) {
     return r;
   }
@@ -4751,8 +4802,8 @@ function loop_trace(p: Prog, e: Ent): void {
   debug_stat(p.o.dbg, name, dangling(stat(e.path)));
 }
 
-// An entry that fts gives without a stat, under -D search.
-function nsok_traced(p: Prog, own r0: Run, own e: Ent, shallow: boolean): Run {
+// An entry that fts gives without a stat.
+function nsok_entry(p: Prog, own r0: Run, own e: Ent, shallow: boolean): Run {
   let r = early(p, r0, e, "FTS_NSOK");
   late(p, e, "FTS_NSOK", false, shallow);
   if (shallow) {
@@ -4765,13 +4816,7 @@ function nsok_traced(p: Prog, own r0: Run, own e: Ent, shallow: boolean): Run {
 function visit(p: Prog, own r0: Run, w: Walker, own e0: Ent): Run {
   if (e0.dtype != 0u32 && e0.dtype != S_IFDIR && (e0.dtype != S_IFLNK || !follows(p, e0))) {
     let shallow = e0.depth < p.o.mindepth;
-    if ((p.o.dbg & D_SEARCH) != 0) {
-      return nsok_traced(p, r0, e0, shallow);
-    }
-    if (shallow) {
-      return r0;
-    }
-    return eval_entry(p, r0, e0);
+    return nsok_entry(p, r0, e0, shallow);
   }
   let (r1, failed) = fts_stat(p, r0, e0);
   let e = r1.e;
@@ -4852,7 +4897,8 @@ function top_ent(path: string): Ent {
   return Ent { path: path, base: base, depth: 0, dtype: 0u32, st: zero_stat(), have: ST_NONE, lst: zero_stat(), lhave: ST_NONE, top: path, is_top: true, rel: false, name: path, ino: 0i64 };
 }
 
-function walk_top(p: Prog, own r0: Run, path: string): Run {
+function walk_top(p: Prog, own r1: Run, path: string): Run {
+  let r0 = Run { ...r1, level: NO_LEVEL };
   let e = top_ent(path);
   let got = stat_entry(follows(p, e), path);
   let Ok(st) = got else {
@@ -5113,7 +5159,7 @@ function main(): i32 {
   for s in execs {
     batches = batches.append(cmdline.batch_new(s));
   }
-  let r = Run { e: top_ent("."), ok: false, outs: writers, status: 0, prune: false, quit: false, names: pwdb.names_new(needs_names, needs_names), mounts: [], have_mounts: false, batches: batches, stdout_tty: false, user_width: 8, group_width: 8, pd: None };
+  let r = Run { e: top_ent("."), ok: false, outs: writers, status: 0, prune: false, quit: false, names: pwdb.names_new(needs_names, needs_names), mounts: [], have_mounts: false, batches: batches, stdout_tty: false, user_width: 8, group_width: 8, pd: None, level: NO_LEVEL };
   for path in paths {
     r = walk_top(p, r, path);
     if (r.quit) {
