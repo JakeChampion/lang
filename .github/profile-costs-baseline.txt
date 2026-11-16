@@ -37,11 +37,11 @@ profile/arm64-linux/closure_call.safe.emit	1309
 profile/arm64-linux/deflate_decode.diagnostic.bytes	144376
 profile/arm64-linux/deflate_decode.diagnostic.emit	17466
 profile/arm64-linux/deflate_decode.hardened.bytes	79384
-profile/arm64-linux/deflate_decode.hardened.emit	18469
+profile/arm64-linux/deflate_decode.hardened.emit	18277
 profile/arm64-linux/deflate_decode.minimal.bytes	65672
 profile/arm64-linux/deflate_decode.minimal.emit	14974
-profile/arm64-linux/deflate_decode.safe.bytes	73448
-profile/arm64-linux/deflate_decode.safe.emit	16972
+profile/arm64-linux/deflate_decode.safe.bytes	72696
+profile/arm64-linux/deflate_decode.safe.emit	16782
 profile/arm64-linux/enum_match.diagnostic.bytes	13848
 profile/arm64-linux/enum_match.diagnostic.emit	1725
 profile/arm64-linux/enum_match.hardened.bytes	7848
@@ -127,8 +127,8 @@ profile/x86-64-linux/deflate_decode.hardened.ir	28149598
 profile/x86-64-linux/deflate_decode.minimal.bytes	54848
 profile/x86-64-linux/deflate_decode.minimal.emit	13280
 profile/x86-64-linux/deflate_decode.minimal.ir	30822133
-profile/x86-64-linux/deflate_decode.safe.bytes	62464
-profile/x86-64-linux/deflate_decode.safe.emit	15095
+profile/x86-64-linux/deflate_decode.safe.bytes	61600
+profile/x86-64-linux/deflate_decode.safe.emit	14941
 profile/x86-64-linux/deflate_decode.safe.ir	27683030
 profile/x86-64-linux/enum_match.diagnostic.bytes	11344
 profile/x86-64-linux/enum_match.diagnostic.emit	1369

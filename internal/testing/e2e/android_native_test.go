@@ -74,8 +74,8 @@ func TestAndroidNativeLibrary(t *testing.T) {
 					exports = append(exports, s.Name)
 				}
 			}
-			if strings.Join(exports, " ") != "ANativeActivity_onCreate" {
-				t.Errorf("exports = %v, want ANativeActivity_onCreate alone", exports)
+			if strings.Join(exports, " ") != "ANativeActivity_onCreate Java_dev_fern_android_Back_onBackInvoked Java_dev_fern_android_Insets_onApplyWindowInsets" {
+				t.Errorf("exports = %v, want ANativeActivity_onCreate and the methods of the back callback and the insets listener", exports)
 			}
 		})
 	}

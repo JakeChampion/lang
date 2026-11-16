@@ -1,5 +1,6 @@
 // This app checks platform A/V playback, pause, seek, EOS, and reuse.
 import "std/android";
+import "std/android/launch";
 import "std/android/player";
 import "std/log";
 
@@ -8,7 +9,7 @@ const CLASS: string = "dev.fern.playertest.Listener";
 struct App { ctx: usize, media: Option[player.Player], window: Option[android.Window], uri: string, error_uri: string, phase: i32, round: i32, paused_ms: i64, wait_ns: i64, deadline_ns: i64, timestamps: i32, rendered: boolean, done: boolean }
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
-  android.start(activity, app_main_entry());
+  launch.start(activity, app_main_entry());
 }
 
 @callback("app_main")

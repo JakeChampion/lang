@@ -1,0 +1,39 @@
+import "./glibc_ctype";
+import "./darwin_ctype";
+
+// The character classes and the case mappings of a UTF-8 locale, from the
+// libc of GNU sed on the target. The darwin targets have the tables of
+// Darwin, and the other targets have the tables of glibc.
+
+// The code points of a class, as pairs of the first and the last of each
+// range.
+pub function class_ranges(name: string): i32[] {
+  if (target_os() == "darwin") {
+    return darwin_ctype.class_ranges(name);
+  }
+  return glibc_ctype.class_ranges(name);
+}
+
+// Each code point that towupper or towlower changes or gives, in order.
+pub function case_points(): i32[] {
+  if (target_os() == "darwin") {
+    return darwin_ctype.case_points();
+  }
+  return glibc_ctype.case_points();
+}
+
+// The towupper of the libc.
+pub function upper(cp: i32): i32 {
+  if (target_os() == "darwin") {
+    return darwin_ctype.upper(cp);
+  }
+  return glibc_ctype.upper(cp);
+}
+
+// The towlower of the libc.
+pub function lower(cp: i32): i32 {
+  if (target_os() == "darwin") {
+    return darwin_ctype.lower(cp);
+  }
+  return glibc_ctype.lower(cp);
+}

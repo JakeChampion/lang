@@ -267,9 +267,9 @@ function alias(n: i32): i32 {
 function main(): i32 {
     return alias(5);
 }`},
-	// A callee that borrows an array can keep a reference to it, so neither
-	// lent nor the caller of keep proves its array sole after the call.
-	{"lent-to-call", "lent", false, `@noinline
+	// total only reads the array it borrows, so it keeps no reference to it
+	// (#15929). keep returns the array, so its caller can hold it.
+	{"lent-to-call", "lent", true, `@noinline
 function total(xs: i32[]): i32 {
     let t: i32 = 0;
     for x in xs { t = t + x; }
@@ -286,6 +286,34 @@ function lent(n: i32): i32 {
         i = i + 1;
     }
     return t % 101;
+}
+function main(): i32 {
+    return lent(12);
+}`},
+	// first takes keep as a value, so ownership inference leaves the array
+	// parameter of keep borrowed. keep returns it, so lent must test the
+	// count after the call.
+	{"lent-to-taken-keeper", "lent", false, `@noinline
+function keep(xs: i32[]): i32[] {
+    return xs;
+}
+@noinline
+function first(g: (i32[]) => i32[], xs: i32[]): i32 {
+    return g(xs)[0];
+}
+@noinline
+function lent(n: i32): i32 {
+    let out: i32[] = __alloc_i32(n);
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) {
+        out = out.with(i, i);
+        let kept: i32[] = keep(out);
+        out = out.with(i, i + 1);
+        t = t + kept[i];
+        i = i + 1;
+    }
+    return (t + first(keep, out)) % 101;
 }
 function main(): i32 {
     return lent(12);
