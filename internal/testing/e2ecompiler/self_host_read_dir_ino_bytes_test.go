@@ -142,7 +142,8 @@ func TestSelfHostArm64DarwinReadDirInoBytes(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
-	src := writeReadDirInoBytesSource(t, true, true, true)
+	// APFS refuses a file name that is not UTF-8.
+	src := writeReadDirInoBytesSource(t, false, true, true)
 	bin := filepath.Join(t.TempDir(), "read_dir_ino_bytes")
 	compile := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, e2eharness.SelfHostStdlibRoot(t))
 	compile.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
