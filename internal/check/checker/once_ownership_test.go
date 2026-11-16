@@ -61,8 +61,9 @@ function resume[T](s: Slot[T]): i32 {
 }`)
 }
 
-// A variant whose payloads are scalars holds nothing to lend, so a local that
-// a loop sets from a continuation call stays fresh.
+// A variant with no payload holds nothing to lend, and a variant lends only
+// through a payload that can hold a handle. So a local that a loop sets from
+// a continuation call stays fresh.
 func TestOnceContinuationResumedFromAFreshLocal(t *testing.T) {
 	const prelude = `enum Wake { Woke(i32), TimedOut }
 enum Fut { Done(i32), Wait(i32, once (Wake) => Fut) }

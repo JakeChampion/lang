@@ -1,7 +1,7 @@
 // A loop resumes a continuation from a fresh local. The arm stores the result
 // in the local, so the match takes the payloads and the continuation is
-// owned at its last use. A variant whose payloads are scalars holds nothing
-// to lend.
+// owned at its last use. A variant with no payload holds nothing to lend,
+// and a variant lends only through a payload that can hold a handle.
 
 enum Wake { Woke(i32), TimedOut }
 
