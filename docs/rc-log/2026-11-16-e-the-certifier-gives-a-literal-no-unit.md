@@ -79,6 +79,10 @@ immortal box.
 
 ## Measured after
 
+The measurements are on the tree of a33b2fea with this change. After a merge
+of main at 720cebd7, `scripts/certify-census` gives 17,423 unproved values
+over `fern_main`, and 528 missed mutants of 5,586 over `checker.fern`.
+
 Over `fern_main` on x86-64, on the same set of functions as before, 17,641
 values are unproved (from 33,273), with 0 findings. With the runtime unit in
 the report:

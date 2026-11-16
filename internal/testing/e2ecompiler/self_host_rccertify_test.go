@@ -689,7 +689,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"retained-on-one-arm-released-on-another", nil, 1, ""},
 		{"literal-phi-released", nil, 0, ""},
 		{"literal-phi-returned", nil, 0, ""},
-		{"literal-phi-leaked", []string{"leaked at return of v4"}, 0, ""},
+		{"literal-phi-leaked", []string{"leaked where it dies of v2"}, 0, ""},
 		{"literal-phi-released-twice", []string{"spent without a unit of v4"}, 0, ""},
 		{"borrow-phi-released", nil, 1, ""},
 		{"resumed-frame-not-certified", nil, 0, "resumes from a task frame"},
