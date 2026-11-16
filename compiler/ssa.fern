@@ -565,10 +565,10 @@ pub const COLD_LIGHT: i32 = 4;
 pub const COLD_KERNEL: i32 = 5;
 
 // `cold` with COLD_KERNEL at each position that has a mask in `clobbers`.
-// A position that already has a kind keeps it.
+// A kernel in a cold block is a kernel: it saves nothing.
 pub function with_kernels(cold: i32[], clobbers: i32[]): i32[] {
   for pos in 0..cold.len() {
-    if (cold[pos] == COLD_NONE && clobbers[pos] != 0) {
+    if (clobbers[pos] != 0) {
       cold = cold.with(pos, COLD_KERNEL);
     }
   }

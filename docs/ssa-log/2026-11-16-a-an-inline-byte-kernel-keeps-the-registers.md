@@ -17,6 +17,13 @@ register. A value that lived across a kernel took a saved register. When
 the five saved registers were in use, it took a frame slot, and each pass of
 the loop read and wrote the frame.
 
+A kernel in a cold block was a cold-branch call. The emitter saved each
+live caller register to the frame before the kernel and loaded it after
+(`ssa_cold_save`). It did that for a register that the kernel does not
+change too. In
+`bench/utf8_ingest_validated.fern`, `%r8` and `%r9` held the loop index and
+the byte, and each ASCII run executed four more instructions.
+
 ## The change
 
 A new kind of position, `ssa.COLD_KERNEL`. `ssa_kernel_clobbers` in
@@ -24,7 +31,7 @@ A new kind of position, `ssa.COLD_KERNEL`. `ssa_kernel_clobbers` in
 registers that the kernel changes. The mask goes into the clobber rows of
 the fixed table (`ssafixed.with_clobbers`). A value that lives across the
 kernel keeps each caller register that is not in the mask. The emitter saves
-nothing.
+nothing. A kernel in a cold block has the same kind.
 
 No table holds the masks. The emitter writes the text of the kernel one time
 before the allocation, and `ssa_text_clobbers` reads the register names from
@@ -40,19 +47,21 @@ vector registers, and the emitter saves no float register.
 
 ## Measured
 
-x86-64, Cachegrind, against `4e126826`. The program has one loop with six
-loop values and a string that live across `__ascii_run`. It makes 800,000
-passes of the loop.
+x86-64, Cachegrind, against `7511021c`.
 
-| | before | after | change |
+| program | Ir before | Ir after | change |
 | --- | ---: | ---: | ---: |
-| Ir | 28,249,468 | 26,647,068 | -5.7% |
-| values of the loop in frame slots | 3 | 0 | |
+| `bench/utf8_ingest_validated.fern` | 5,272,866 | 5,137,666 | -2.6% |
+| `bench/string_find_byte.fern` | 43,525,436 | 43,501,436 | -0.1% |
+| `bench/string_scan.fern` | 50,911,535 | 50,911,535 | 0 |
+| `bench/utf8_ingest_unchecked.fern` | 2,143,665 | 2,143,665 | 0 |
 
-The bench corpus does not move. `string_count_byte` goes from 41,173,389 to
-41,173,385 Ir. `utf8_ingest_validated`, `utf8_ingest_unchecked`,
-`string_find_byte`, `string_rfind_byte` and `string_scan` build to equal
-binaries.
+The 135,200 instructions of `utf8_ingest_validated` are the saves and loads
+of the issue.
+
+A program with one loop, six loop values and a string that live across
+`__ascii_run`, 800,000 passes, against `4e126826`: 28,249,468 to 26,647,068
+Ir (-5.7%). Three values of the loop were in frame slots, and now none is.
 
 ## Traps
 
