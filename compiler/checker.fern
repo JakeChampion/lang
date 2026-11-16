@@ -19956,7 +19956,10 @@ function ocl_lambda(lm: ast.ExprLambda, facts: OclFacts): OclCapture[] {
   let places = ocl_place_scope(lm, facts.factories.decls);
   for capture in lm.captures {
     if (ocl_unique(facts.names, capture.name)) {
-      out = ocl_merge(out, [ocl_capture(capture.name, typeinfo.spelling(capture.ty), true)]);
+      // A `once` lambda moves its captures in, so it holds no loan on them.
+      if (!lm.once) {
+        out = ocl_merge(out, [ocl_capture(capture.name, typeinfo.spelling(capture.ty), true)]);
+      }
       for path in ocl_capture_paths(lm, capture.name, places) {
         out = ocl_merge(out, ocl_flatten(ocl_select(ocl_lookup(facts, capture.name), path)));
       }
@@ -21780,7 +21783,7 @@ function lu_primitive_array_copy(ty: string): boolean {
   while (leaf.ends_with("[]")) {
     leaf = slice_unchecked(leaf, 0, leaf.len() - 2).to_owned();
   }
-  return util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "void"], leaf);
+  return ow_scalar_spelling(leaf);
 }
 
 function lu_occ_count(fx: LuFn, name: string): i32 {
@@ -21997,12 +22000,17 @@ function lu_scoped_fresh(fx: LuFn, body: ast.Stmt[], e: ast.Expr): boolean {
 }
 
 function lu_safe_constructor(fx: LuFn, e: ast.Expr): boolean {
+  return lu_constructor_in(fx, e, fx.lenders.constructors);
+}
+
+// Whether e names a constructor in `names`, not a local or a function.
+function lu_constructor_in(fx: LuFn, e: ast.Expr, names: util.NameIndex): boolean {
   if let ast.ExprIdent(id) = e {
-    return fx.lenders.constructors.has(id.name) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0;
+    return names.has(id.name) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0;
   }
   if let ast.ExprFieldAccess(field) = e {
     if let ast.ExprIdent(owner) = field.obj {
-      return !fx.ofuncs.funcs.has(owner.name) && !util.has_str(fx.params, owner.name) && lu_decl_count(fx, owner.name) == 0 && fx.lenders.constructors.has(owner.name + "." + field.field);
+      return !fx.ofuncs.funcs.has(owner.name) && !util.has_str(fx.params, owner.name) && lu_decl_count(fx, owner.name) == 0 && names.has(owner.name + "." + field.field);
     }
   }
   return false;
@@ -22825,9 +22833,14 @@ function lu_lends(row: OwnLend, i: i32): boolean {
 }
 
 function lu_arg_may_borrow(fx: LuFn, e: ast.Expr): boolean {
-  // A variant with no payload holds nothing to lend.
-  if (lu_safe_constructor(fx, e)) {
+  // A variant whose payloads are scalars has nothing to lend.
+  if (lu_constructor_in(fx, e, fx.lenders.scalar_ctors)) {
     return false;
+  }
+  if let ast.ExprCall(c) = e {
+    if (lu_constructor_in(fx, c.callee, fx.lenders.scalar_ctors)) {
+      return false;
+    }
   }
   match (e) {
     ast.ExprLambda(lm) => {
@@ -27817,7 +27830,9 @@ function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnD
 // module does not declare has no row, and every argument of it can lend.
 struct OwnLend { name: string, receiver: string, lend: boolean[], callbacks: boolean[] }
 
-struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: string[], constructors: util.NameIndex, decls: OwnDecls }
+// constructors names each struct or variant whose fields hold no handle, and
+// scalar_ctors each one whose fields are all scalars.
+struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: string[], constructors: util.NameIndex, scalar_ctors: util.NameIndex, decls: OwnDecls }
 
 function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLenders {
   let rows: OwnLend[] = [];
@@ -27845,21 +27860,38 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
     names = names.append(fn.name);
   }
   let constructors: string[] = [];
+  let scalar_ctors: string[] = [];
   for declaration in mod.structs {
     let safe = true;
+    let scalar = true;
     for field in declaration.fields {
       if (!ow_holds_no_handle(field.type_name, dx)) {
         safe = false;
       }
-    }
-    if (safe) {
-      constructors = constructors.append(declaration.name);
-      if (declaration.enum_owner.len() > 0) {
-        constructors = constructors.append(declaration.enum_owner + "." + declaration.name);
+      if (!ow_scalar_spelling(field.type_name)) {
+        scalar = false;
       }
     }
+    if (safe) {
+      constructors = ow_append_ctor(constructors, declaration);
+    }
+    if (scalar) {
+      scalar_ctors = ow_append_ctor(scalar_ctors, declaration);
+    }
   }
-  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: [], constructors: util.name_index(constructors), decls: dx };
+  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: [], constructors: util.name_index(constructors), scalar_ctors: util.name_index(scalar_ctors), decls: dx };
+}
+
+function ow_append_ctor(own names: string[], declaration: parser.StructDecl): string[] {
+  let out = names.append(declaration.name);
+  if (declaration.enum_owner.len() > 0) {
+    out = out.append(declaration.enum_owner + "." + declaration.name);
+  }
+  return out;
+}
+
+function ow_scalar_spelling(tn: string): boolean {
+  return util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "void"], tn);
 }
 
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {

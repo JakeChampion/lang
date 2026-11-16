@@ -399,6 +399,15 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	return c.signatureResultBorrows(id.Name)
 }
 
+func allScalar(ts []ast.Type) bool {
+	for _, t := range ts {
+		if !definitelyScalar(t) {
+			return false
+		}
+	}
+	return true
+}
+
 // ownFlagsOf reports which arguments of x go to own parameters.
 func (c *checker) ownFlagsOf(x *ast.Call) []bool {
 	flags := c.callOwnFlags[x]
@@ -572,8 +581,8 @@ func (c *checker) callbacksReturnOwned(call *ast.Call) bool {
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
-	// A variant with no payload holds nothing to lend.
-	if v, ok := c.info.EnumConstructions[e]; ok && len(v.Payloads) == 0 {
+	// A variant whose payloads are scalars has nothing to lend.
+	if v, ok := c.info.EnumConstructions[e]; ok && allScalar(v.Payloads) {
 		return false
 	}
 	switch x := e.(type) {

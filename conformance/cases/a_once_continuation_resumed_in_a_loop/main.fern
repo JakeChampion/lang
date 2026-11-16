@@ -1,6 +1,7 @@
 // A loop resumes a continuation from a fresh local. The arm stores the result
 // in the local, so the match takes the payloads and the continuation is
-// owned at its last use. A variant with no payload holds nothing to lend.
+// owned at its last use. A variant whose payloads are scalars holds nothing
+// to lend.
 
 enum Wake { Woke(i32), TimedOut }
 
@@ -22,7 +23,11 @@ function drive(): i32 {
         return v + steps * 100;
       },
       Wait(n, k) => {
-        f = k(Wake.TimedOut);
+        if (n % 2 == 0) {
+          f = k(Wake.Woke(steps));
+        } else {
+          f = k(Wake.TimedOut);
+        }
       }
     }
     steps += 1;
