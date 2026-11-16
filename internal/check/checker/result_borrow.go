@@ -572,6 +572,10 @@ func (c *checker) callbacksReturnOwned(call *ast.Call) bool {
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
+	// A variant with no payload holds nothing to lend.
+	if v, ok := c.info.EnumConstructions[e]; ok && len(v.Payloads) == 0 {
+		return false
+	}
 	switch x := e.(type) {
 	case *ast.Lambda:
 		return c.lambdaResultBorrows(x, borrowScope{borrowed: lambdaFreeNames(x)})

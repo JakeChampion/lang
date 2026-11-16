@@ -1,0 +1,36 @@
+// A `once` lambda moves its captures in, so it holds no loan on them. An
+// argument before the lambda can borrow a capture.
+
+struct Box[T] { xs: T[] }
+
+enum Step[T] { Done(T), Wait(i32, once (i32) => Step[T]) }
+
+function count[T](b: Box[T]): i32 {
+  return b.xs.len();
+}
+
+function last[T](own b: Box[T], at: i32): Step[T] {
+  return Done(b.xs[at]);
+}
+
+function suspend[T](own b: Box[T]): Step[T] {
+  return Wait(count(b), once (at: i32): Step[T] => last(b, at - 1));
+}
+
+function main(): i32 {
+  let xs: i32[] = [4, 5, 6];
+  match (suspend(Box { xs: xs })) {
+    Wait(n, k) => {
+      match (k(n)) {
+        Done(v) => {
+          print(v);
+        },
+        _ => {}
+      }
+    },
+    Done(v) => {
+      print(v);
+    }
+  }
+  return 0;
+}

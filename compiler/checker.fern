@@ -22825,6 +22825,10 @@ function lu_lends(row: OwnLend, i: i32): boolean {
 }
 
 function lu_arg_may_borrow(fx: LuFn, e: ast.Expr): boolean {
+  // A variant with no payload holds nothing to lend.
+  if (lu_safe_constructor(fx, e)) {
+    return false;
+  }
   match (e) {
     ast.ExprLambda(lm) => {
       return ow_lambda_result_borrows(lm, fx.ofuncs, astwalk.collect_lambda_idents(lm, []), [], [], fx.borrows, fx.builtins, borrow_context(fx.lenders));

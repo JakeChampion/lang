@@ -1,0 +1,39 @@
+// A loop resumes a continuation from a fresh local. The arm stores the result
+// in the local, so the match takes the payloads and the continuation is
+// owned at its last use. A variant with no payload holds nothing to lend.
+
+enum Wake { Woke(i32), TimedOut }
+
+enum Step { Done(i32), Wait(i32, once (Wake) => Step) }
+
+function count_down(n: i32): Step {
+  if (n == 0) {
+    return Done(7);
+  }
+  return Wait(n, once (w: Wake): Step => count_down(n - 1));
+}
+
+function drive(): i32 {
+  let f = count_down(3);
+  let steps = 0;
+  while (steps < 10) {
+    match (f) {
+      Done(v) => {
+        return v + steps * 100;
+      },
+      Wait(n, k) => {
+        f = k(Wake.TimedOut);
+      }
+    }
+    steps += 1;
+  }
+  match (f) {
+    _ => {}
+  }
+  return -1;
+}
+
+function main(): i32 {
+  print(drive());
+  return 0;
+}
