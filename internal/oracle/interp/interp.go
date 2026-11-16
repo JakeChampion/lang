@@ -2476,18 +2476,32 @@ func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Array_push: receiver must be array, got %T", args[0])
 	}
 	storeArray(args[1])
+	maps := pushedMaps(arr, args[1])
 	e := arr.Elems()
 	n := len(e)
 	if arr.n == wholeBox && n < cap(e) && e[:n+1][n] == unclaimedSlot {
 		e = e[:n+1]
 		e[n] = args[1]
 		arr.b.st.boxes++
-		return Array{b: &arrBox{e: e, st: arr.b.st, held: n + 1}, n: wholeBox}, nil
+		return Array{b: &arrBox{e: e, st: arr.b.st, held: n + 1, maps: maps}, n: wholeBox}, nil
 	}
 	out := growArray(arr)
 	out.Elems()[n] = args[1]
+	out.b.maps = maps
 	ip.arrayGrowCopies += n
 	return out, nil
+}
+
+// pushedMaps is the holdsMap answer for arr with v appended, when it is known
+// without a scan of the elements.
+func pushedMaps(arr Array, v Value) uint8 {
+	if holdsMap(v) {
+		return mapsSome
+	}
+	if arr.b.maps == mapsNone {
+		return mapsNone
+	}
+	return 0
 }
 
 func builtinArrSetLen(_ *Interp, args []Value) (Value, error) {
