@@ -1,0 +1,25 @@
+# The compilers of the Perceus comparison (scripts/bench-perceus.py) beside
+# mise.toml's tools: Koka, Lean and Roc. In its own env file
+# (MISE_ENV=perceus) so the lanes that install everything mise.toml lists do
+# not fetch three compilers that only perceus-compare.yml runs.
+[tools."http:koka"]
+version = "3.2.9"
+bin_path = "bin"
+platforms.linux-x64 = { url = "https://github.com/koka-lang/koka/releases/download/v{{ version }}/koka-v{{ version }}-linux-x64.tar.gz" }
+platforms.linux-arm64 = { url = "https://github.com/koka-lang/koka/releases/download/v{{ version }}/koka-v{{ version }}-linux-arm64.tar.gz" }
+
+[tools."http:lean"]
+version = "4.34.1"
+bin_path = "bin"
+strip_components = 1
+platforms.linux-x64 = { url = "https://github.com/leanprover/lean4/releases/download/v{{ version }}/lean-{{ version }}-linux.zip" }
+platforms.linux-arm64 = { url = "https://github.com/leanprover/lean4/releases/download/v{{ version }}/lean-{{ version }}-linux_aarch64.zip" }
+
+# Roc publishes its nightly only under a name that moves. The lock holds the
+# checksum of the build of 2025-10-28 (commit ea210f57), which the twins in
+# bench/perceus/roc/ were checked with, so a new build fails the install.
+[tools."http:roc"]
+version = "nightly-2025-10-28"
+strip_components = 1
+platforms.linux-x64 = { url = "https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-linux_x86_64-latest.tar.gz" }
+platforms.linux-arm64 = { url = "https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-linux_arm64-latest.tar.gz" }
