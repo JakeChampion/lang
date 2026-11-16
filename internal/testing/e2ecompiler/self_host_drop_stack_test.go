@@ -11,7 +11,8 @@ import (
 
 // Node has a waiting field and a next field of its own type. The trees share
 // subtrees, one node holds the same subtree twice, and one left spine is
-// 200,000 nodes deep.
+// 200,000 nodes deep. A drop that calls itself for each level of that spine
+// runs out of stack on wasm32.
 const dropStackProg = `enum Tree { Leaf, Node(Tree, i64, Tree), Tip(i64) }
 
 @noinline function spine(n: i64, right: Tree): Tree {
@@ -39,6 +40,23 @@ const dropStackProg = `enum Tree { Leaf, Node(Tree, i64, Tree), Tip(i64) }
     return Node(t, 7i64, t);
 }
 
+@noinline function left_depth(t: Tree): i64 {
+    let n = 0i64;
+    let cur = t;
+    while (true) {
+        match (cur) {
+            Node(l, _, _) => {
+                n += 1i64;
+                cur = l;
+            },
+            _ => {
+                return n;
+            }
+        }
+    }
+    return n;
+}
+
 @noinline function size(t: Tree, acc: i64): i64 {
     return match (t) { Leaf => acc, Tip(_) => acc + 1i64, Node(l, _, r) => size(r, size(l, acc + 1i64)) };
 }
@@ -55,8 +73,8 @@ function main(): i32 {
         total += size(a, 0i64) + size(b, 0i64) + size(both, 0i64) + size(c, 0i64) + size(kept, 0i64);
     }
     let deep = spine(200000i64, Leaf);
-    total += size(deep, 0i64) % 7i64;
-    return if (total == 10i64 * (2000i64 + 500i64 * 1i64 + 1500i64 * 15i64 + 300i64 + 75i64 + 225i64 * 15i64 + 1i64 + 62i64 + 1i64 + 63i64 + 1i64 + 63i64) + (200000i64 + 50000i64) % 7i64) { 42 } else { 1 };
+    total += left_depth(deep) % 7i64;
+    return if (total == 10i64 * (2000i64 + 500i64 * 1i64 + 1500i64 * 15i64 + 300i64 + 75i64 + 225i64 * 15i64 + 1i64 + 62i64 + 1i64 + 63i64 + 1i64 + 63i64) + 200000i64 % 7i64) { 42 } else { 1 };
 }
 `
 
