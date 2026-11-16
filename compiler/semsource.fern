@@ -8469,6 +8469,7 @@ function float_primitive_contracts(): ssasem.Contract[] {
     out = out.append(ssasem.Contract { name: n, params: [typeinfo.t_f64()], modes: value, result: typeinfo.t_f64() });
   }
   let v = ssaunits.value_mode();
+  out = out.append(ssasem.Contract { name: "__fma_f32", params: [typeinfo.t_f32(), typeinfo.t_f32(), typeinfo.t_f32()], modes: [v, v, v], result: typeinfo.t_f32() });
   return out.append(ssasem.Contract { name: "__fma_f64", params: [typeinfo.t_f64(), typeinfo.t_f64(), typeinfo.t_f64()], modes: [v, v, v], result: typeinfo.t_f64() });
 }
 

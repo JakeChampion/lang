@@ -598,6 +598,7 @@ is the number of slots it leaves.
 | `vsock_connect` | 570 | 2 | 1 |
 | `scan_masks_bytes` | 571 | 3 | 1 |
 | `ffma` | 572 | 3 | 1 |
+| `ffma32` | 573 | 3 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

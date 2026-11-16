@@ -244,6 +244,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (has_kind(kinds, "ffma") || has_kind(kinds, "vfma")) {
     out = out.append("@uses_fma");
   }
+  if (has_kind(kinds, "ffma32") || has_kind(kinds, "vfma")) {
+    out = out.append("@uses_fma32");
+  }
   if (module_uses_random(cache)) {
     out = out.append("@uses_random");
   }
@@ -4748,11 +4751,8 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
     }
     return pre + "    " + sh + ".replace_lane " + util.i32_to_string(o.i32_imm) + "\n";
   }
-  if (k == "vfma" && o.width == 64) {
-    return emit_wasm_lane_fma(cx.base + 5);
-  }
   if (k == "vfma") {
-    return "    local.set " + vtmp + "\n    " + sh + ".mul\n    local.get " + vtmp + "\n    " + sh + ".add\n";
+    return emit_wasm_lane_fma(cx.base + 5, o.width);
   }
   if (k == "vround") {
     return emit_wasm_lane_round(o.width, sh, vtmp);
@@ -4807,17 +4807,22 @@ function wasm_lane_verb(k: string, sh: string): string {
 
 // wasm has no fused multiply-add, so each f64 lane calls the runtime form. The
 // three operands go to the v128 scratch locals first.
-function emit_wasm_lane_fma(first: i32): string {
+// Each lane calls the runtime function of its width. An f32 lane goes to the
+// function and comes back as an f64 that holds an f32 value.
+function emit_wasm_lane_fma(first: i32, width: i32): string {
   let out = "";
   for k in 0..3 {
     out = out + "    local.set " + util.i32_to_string(first + 2 - k) + "\n";
   }
-  for lane in 0..2 {
+  let sh = if (width == 32) { "f32x4" } else { "f64x2" };
+  let wide = if (width == 32) { "    f64.promote_f32\n" } else { "" };
+  let narrow = if (width == 32) { "    f32.demote_f64\n" } else { "" };
+  for lane in 0..128 / width {
     for k in 0..3 {
-      out = out + "    local.get " + util.i32_to_string(first + k) + "\n    f64x2.extract_lane " + util.i32_to_string(lane) + "\n";
+      out = out + "    local.get " + util.i32_to_string(first + k) + "\n    " + sh + ".extract_lane " + util.i32_to_string(lane) + "\n" + wide;
     }
-    out += "    call $__fern_fma_f64\n";
-    out += if (lane == 0) { "    f64x2.splat\n" } else { "    f64x2.replace_lane 1\n" };
+    out += "    call $__fern_fma_f" + util.i32_to_string(width) + "\n" + narrow;
+    out += if (lane == 0) { "    " + sh + ".splat\n" } else { "    " + sh + ".replace_lane " + util.i32_to_string(lane) + "\n" };
   }
   return out;
 }
@@ -5280,6 +5285,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_mulhi_s64\n");
   } else if (o.kind_tag == ir.K_FFMA) {
     parts = parts.append("    call $__fern_fma_f64\n");
+  } else if (o.kind_tag == ir.K_FFMA32) {
+    parts = parts.append("    call $__fern_fma_f32\n");
   } else if (o.kind_tag >= ir.K_DIR_OPEN && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     parts = parts.append("    unreachable\n");
   } else {
@@ -10100,6 +10107,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   }
   if (need(needs, "@uses_fma")) {
     roots += " __fern_fma_f64";
+  }
+  if (need(needs, "@uses_fma32")) {
+    roots += " __fern_fma_f32";
   }
   if (need(needs, "@uses_count_byte_bytes")) {
     roots += " __fern_count_byte_bytes";

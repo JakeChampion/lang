@@ -6781,17 +6781,10 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
     ins = ssa.SInst { ...ins, args: inputs };
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
-  if (verb == "mul_add" && w == 64) {
+  if (verb == "mul_add") {
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_load_local(ins.args[2]));
     return emit(r, ir.op_lane("vfma", w));
-  }
-  // The f32 lanes round two times: no engine has a fused f32 form yet.
-  if (verb == "mul_add") {
-    r = emit(r, ir.op_load_local(ins.args[1]));
-    r = emit(r, ir.op_lane("vmul", w));
-    r = emit(r, ir.op_load_local(ins.args[2]));
-    return emit(r, ir.op_lane("vadd", w));
   }
   if (verb == "of" && w == 32) {
     r = emit(r, ir.op_lane("vsplat", 64));
