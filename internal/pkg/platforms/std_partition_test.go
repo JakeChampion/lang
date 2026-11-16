@@ -59,6 +59,7 @@ var stdModuleReach = map[string]string{
 	"std/jni":           "cabi",
 	"std/jpeg":          "",
 	"std/json":          "",
+	"std/kv":            "fs",
 	"std/linediff":      "",
 	"std/log":           "log",
 	"std/lz4":           "",

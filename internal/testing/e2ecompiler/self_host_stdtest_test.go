@@ -640,6 +640,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"array_prefix_suffix_subseq", langSrcAbs(t, "tests/stdlib/array_prefix_suffix_subseq_test.fern"), ""},
 		{"batch7", langSrcAbs(t, "tests/stdlib/batch7_test.fern"), ""},
 		{"io_buffered", langSrcAbs(t, "tests/stdlib/io_buffered_test.fern"), ""},
+		{"kv", langSrcAbs(t, "tests/stdlib/kv_test.fern"), ""},
 		{"iter", langSrcAbs(t, "tests/stdlib/iter_test.fern"), ""},
 		{"ci_string_and_log_kv", langSrcAbs(t, "tests/stdlib/ci_string_and_log_kv_test.fern"), ""},
 		{"env_unreachable", langSrcAbs(t, "tests/stdlib/env_unreachable_test.fern"), ""},

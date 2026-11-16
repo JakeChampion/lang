@@ -90,6 +90,7 @@ Each function takes the simulator and returns the next one.
 | `sim.scaled(s, font)` | The font size of the system: 1 is the default |
 | `sim.kept(s, on)` | Keeps the loop alive after a Destroy, as `android.keep_alive` does |
 | `sim.event(s, e)` | Any `android.Event` |
+| `sim.relaunch(s, state)` | Android ends the process, and the app starts again from `state` with what the last Pause kept |
 
 ## What a test can read
 

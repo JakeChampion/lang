@@ -133,6 +133,7 @@ import "std/android/text";
 import "std/android/ui/painter";
 import "std/android/ui/scene";
 import "std/f64";
+import "std/kv";
 import "std/option";
 ```
 
@@ -2082,6 +2083,8 @@ pub struct Program[S, M] {
   system: (android.Event) => Option[M],
   effects: (S) => S,
   close: (own S) => own S,
+  save: (S, kv.Store) => kv.Store,
+  restore: (own S, kv.Store) => own S,
   theme: (S, boolean) => Theme,
   meter: boolean,
 }
@@ -2089,7 +2092,7 @@ pub struct Program[S, M] {
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, save: (s: S, k: kv.Store): kv.Store => k, restore: (own s: S, k: kv.Store): own S => s, theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
 }
 
 // After each message, the shell gives the state to `effects`, which does
@@ -2106,6 +2109,15 @@ pub function (p: Program[S, M]) with_effects(effects: (S) => S): Program[S, M] {
 // close the state.
 pub function (p: Program[S, M]) with_close(close: (own S) => own S): Program[S, M] {
   return Program { ...p, close: close };
+}
+
+// Keeps a part of the state when Android ends the process of the app. At
+// each Pause, the shell writes the store that `save` gives for the state
+// to the state file of the device. When the app starts, `restored` gives
+// the first state and that store to `restore`. The store is empty at the
+// first start, and when the file is not valid.
+pub function (p: Program[S, M]) with_state(save: (S, kv.Store) => kv.Store, restore: (own S, kv.Store) => own S): Program[S, M] {
+  return Program { ...p, save: save, restore: restore };
 }
 
 // `update` gets the message `m` each time the milliseconds of `wait` go by.
@@ -2182,6 +2194,7 @@ pub struct Device {
   show_keyboard: (string, boolean) => void,
   set_keyboard: (string, i32) => void,
   hide_keyboard: () => void,
+  state_file: () => string,
 }
 
 // What the shell keeps for the app. `lay` is the layout of the last frame.
@@ -2678,6 +2691,11 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
       let sc = h.screen;
       return Shell { app: s.app, host: changed(Host { ...h, screen: Screen { ...sc, left: left.max(0), top: top.max(0), right: (sc.w - right).max(0), bottom: (sc.h - bottom).max(0) } }), said: s.said };
     },
+    android.Pause => {
+      let t = told_maybe(s, p, p.system(e));
+      kept(t.app, p, t.host.dev);
+      return t;
+    },
     android.Destroy => {
       let t = told_maybe(s, p, p.system(e));
       let paint = t.host.dev.close(t.host.paint);
@@ -2689,6 +2707,32 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
     _ => {
       return told_maybe(s, p, p.system(e));
     }
+  }
+}
+
+// `state` with what `p` restores from the state file of `dev`.
+pub function restored[S, M](own state: S, p: Program[S, M], dev: Device): own S {
+  let path = dev.state_file();
+  if (path.len() == 0) {
+    return state;
+  }
+  return match (kv.open(path)) {
+    Ok(store) => p.restore(state, store),
+    Err(_) => p.restore(state, kv.empty(path)),
+  };
+}
+
+// Writes the store that `p` saves for `state` to the state file of `dev`,
+// when it differs from the file.
+function kept[S, M](state: S, p: Program[S, M], dev: Device): void {
+  let path = dev.state_file();
+  if (path.len() == 0) {
+    return;
+  }
+  let store = p.save(state, kv.empty(path));
+  let old = read_file(path).unwrap_or(kv.empty(path).encode());
+  if (old != store.encode()) {
+    let saved = store.save();
   }
 }
 

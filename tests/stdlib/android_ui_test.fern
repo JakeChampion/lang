@@ -9,6 +9,7 @@ import "std/android/text";
 import "std/android/ui";
 import "std/android/ui/scene";
 import "std/android/ui/sim";
+import "std/kv";
 import "std/test";
 import "std/truetype";
 import "std/unicode";
@@ -522,6 +523,22 @@ function test_program_long_press_and_toggle(): test.TestOutcome {
   let on = s.shell.app.on;
   s = sim.hold(s, "reset");
   return test.assert_eq(on.to_string() + " " + s.shell.app.count.to_string() + " " + sim.spoken(s).join("|"), "true 0 V|switch, on|reset");
+}
+
+// A Pause keeps what `save` gives, and a relaunch restores it into the
+// first state. A program with no `with_state` keeps nothing.
+function test_state_survives_a_relaunch(): test.TestOutcome {
+  let p = counter().with_state((m: Counter, k: kv.Store): kv.Store => k.set_int("count", m.count as i64).set_flag("on", m.on), (own m: Counter, k: kv.Store): own Counter => Counter { ...m, count: k.int("count", 0i64) as i32, on: k.flag("on", m.on) });
+  let s = sim.start(new_counter(), p, fonts(), 200, 400, 1.0);
+  s = sim.tap(sim.tap(sim.tap(s, "V"), "V"), "switch, off");
+  s = sim.event(s, android.Pause);
+  let back = sim.relaunch(s, new_counter());
+  let plain = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
+  plain = sim.relaunch(sim.event(sim.tap(plain, "V"), android.Pause), new_counter());
+  let restored = back.shell.app.count.to_string() + " " + back.shell.app.on.to_string() + " " + sim.shows(back, "AA").to_string();
+  let unpaused = sim.relaunch(sim.tap(sim.relaunch(back, new_counter()), "V"), new_counter());
+  let got = restored + " " + plain.shell.app.count.to_string() + " " + unpaused.shell.app.count.to_string();
+  return test.assert_eq(got, "2 true true 0 2");
 }
 
 function test_back_closes_or_tells(): test.TestOutcome {
@@ -1115,6 +1132,7 @@ function main(): i32 {
   r = r.it("a program takes taps", test_program_taps);
   r = r.it("a program takes a long press and a switch", test_program_long_press_and_toggle);
   r = r.it("the back key closes the app or tells it", test_back_closes_or_tells);
+  r = r.it("a Pause keeps the state that a relaunch restores", test_state_survives_a_relaunch);
   r = r.it("a program that waits gets ticks", test_wait_gives_ticks);
   r = r.it("a program scrolls and flings its list", test_program_scrolls_and_flings);
   r = r.it("a program that animates gets frames", test_animating_gives_frames);

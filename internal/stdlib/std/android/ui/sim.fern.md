@@ -92,6 +92,7 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, n
     show_keyboard: (text: string, lines: boolean): void => note(dir, "calls", "keyboard " + text.replace("\n", "↵")),
     set_keyboard: (text: string, caret: i32): void => note(dir, "calls", "keyboard " + text.replace("\n", "↵")),
     hide_keyboard: (): void => note(dir, "calls", "no keyboard"),
+    state_file: (): string => dir + "/state.kv",
   };
 }
 
@@ -100,8 +101,20 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, n
 // the first frame.
 pub function start[S, M](own state: S, own p: ui.Program[S, M], fonts: text.Fonts, w: i32, h: i32, d: f64): Sim[S, M] {
   let dir = temp_dir("fern-ui-sim").unwrap_or(".");
-  let s = Sim { p: p, shell: ui.shell(state, fonts, device(dir, w, h, d, false, 1.0, 0i64)), dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, now: 0i64 };
+  return started(state, p, fonts, dir, w, h, d);
+}
+
+function started[S, M](own state: S, own p: ui.Program[S, M], fonts: text.Fonts, dir: string, w: i32, h: i32, d: f64): Sim[S, M] {
+  let dev = device(dir, w, h, d, false, 1.0, 0i64);
+  let first = ui.restored(state, p, dev);
+  let s = Sim { p: p, shell: ui.shell(first, fonts, dev), dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, now: 0i64 };
   return event(event(s, android.Start), android.WindowCreated(android.Window { ptr: 1 as usize }));
+}
+
+// The simulator after Android ended the process of the app and started
+// it again from `state`. The program restores what the last Pause kept.
+pub function relaunch[S, M](own s: Sim[S, M], own state: S): Sim[S, M] {
+  return started(state, s.p, s.shell.host.fonts, s.dir, s.w, s.h, s.d);
 }
 
 // The simulator with the text of the system at the scale `font`: 1 is the

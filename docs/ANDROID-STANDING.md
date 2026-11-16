@@ -134,7 +134,10 @@ The order puts first what stops a release, then what most apps need.
      and signs the bundle with a JAR signature.
 
 2. **A key-value store and the state after the death of the process.**
-   Small, and each app needs them.
+   Done. `std/kv` keeps named values in a file, and a save replaces the
+   file in one step. `with_state` of `std/android/ui` writes a part of
+   the state at each Pause and restores it when the app starts again.
+   `sim.relaunch` tests that on the computer.
 
 3. **Effects that do not block the loop.** A task that runs on a worker
    and gives a message when it ends.

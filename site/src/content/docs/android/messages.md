@@ -224,6 +224,32 @@ has no JNIEnv then.
 ui.program(view, update).with_close((own m: Model): own Model => released(m))
 ```
 
+## Keep the state when Android ends the app
+
+Android can end the process of an app that is not on the screen, to
+free memory. When the person comes back, the app starts again from its
+first state. `with_state` keeps a part of the state through that.
+
+At each Pause, the shell gives the state to `save`, which puts values
+in a `kv.Store`. The shell writes the store to `state.kv` in the files
+directory of the app, when it changed. When the app starts, `restore`
+gets the first state and that store. At the first start the store is
+empty, so give each value a default.
+
+```fern
+import "std/kv";
+
+ui.program(view, update).with_state(
+  (m: Model, k: kv.Store): kv.Store => k.set_int("count", m.count as i64),
+  (own m: Model, k: kv.Store): own Model => Model { ...m, count: k.int("count", 0i64) as i32 })
+```
+
+`std/kv` also keeps settings in a file of their own. `kv.open(path)`
+reads the file, `set`, `set_int` and `set_flag` change the store, and
+`save` writes the file. A save writes a temporary file, flushes it to
+the disk, and renames it. So after a crash the file has the old values
+or the new values.
+
 Other modules of `std/android` reach more of the phone: `audio`,
 `player`, `video`, `service`, `image`, `fonts` and `p2p`. The standard
 library reference lists them.
