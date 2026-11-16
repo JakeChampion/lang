@@ -79,11 +79,13 @@ In a UTF-8 locale:
 - `.`, a bracket expression, `\w`, `\W`, `\s` and `\S` match one
   character. A byte that starts no character matches only itself, outside a
   bracket expression.
-- The classes and the case conversions of `s` and `I` come from the tables
-  of glibc 2.39 in C.UTF-8. `scripts/gen-glibc-ctype.py` writes them to
-  `coreutils/lib/glibc_ctype.fern` from the libc of the host. For example,
-  `[[:alpha:]]` holds the decimal digits outside ASCII, and U+0363 is in
-  `[[:punct:]]`.
+- The classes and the case conversions of `s` and `I` come from the
+  tables of the libc of GNU sed on the target, in C.UTF-8. The darwin
+  targets have `coreutils/lib/darwin_ctype.fern`, and the other targets
+  have `coreutils/lib/glibc_ctype.fern`, from glibc 2.39.
+  `scripts/gen-libc-ctype.c` writes each module from the libc of the host.
+  For example, U+0663 is in `[[:alpha:]]` in glibc and in `[[:digit:]]` on
+  Darwin.
 - `y` maps characters, and `--debug` prints its pairs in their order.
 - The word assertions read the character before and after each position.
 - `l` and the trace of `--debug` still show bytes.
@@ -142,14 +144,11 @@ not standard output, and with `e`, `=` or `F`.
 
 ## What the port does not do
 
-These differences remain in a UTF-8 locale:
+This difference remains in a UTF-8 locale:
 
 - The port does not read the aliases of `locale.alias`, and it does not
   read the codeset in the files of a locale. It takes the codeset from the
   name.
-- On Darwin, GNU sed takes the classes from the libc of Darwin. The port
-  has the tables of glibc on each target. For example, U+0663 is in
-  `[[:digit:]]` on Darwin and in `[[:alpha:]]` in glibc.
 
 These differences come from the regex of glibc:
 

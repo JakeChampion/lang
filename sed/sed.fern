@@ -3,7 +3,7 @@ import "std/rand";
 import "../coreutils/lib/gnu";
 import "../coreutils/lib/bre";
 import "../coreutils/lib/locale";
-import "../coreutils/lib/glibc_ctype";
+import "../coreutils/lib/libc_ctype";
 
 const EXIT_BAD_USAGE: i32 = 1;
 
@@ -2905,9 +2905,9 @@ function push_text_utf8(h: usize, t: u8[], lo: i32, hi: i32, cs0: Cased): Cased 
     let mode = if (cs.once != CASE_ASIS) { cs.once } else { cs.mode };
     let cp = d.0;
     if (mode == CASE_UPPER || mode == CASE_UPPER_FIRST) {
-      cp = glibc_ctype.upper(cp);
+      cp = libc_ctype.upper(cp);
     } else if (mode == CASE_LOWER || mode == CASE_LOWER_FIRST) {
-      cp = glibc_ctype.lower(cp);
+      cp = libc_ctype.lower(cp);
     }
     for b in bre.utf8_bytes(cp) {
       buf_push_byte(h, b);

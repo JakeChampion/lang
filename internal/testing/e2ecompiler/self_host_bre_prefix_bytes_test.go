@@ -13,7 +13,7 @@ import (
 func breBytesFixture(t *testing.T, fixture string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lib/bre.fern", "lib/glibc_ctype.fern", "lib/locale.fern", "testdata/" + fixture} {
+	for _, name := range []string{"lib/bre.fern", "lib/libc_ctype.fern", "lib/glibc_ctype.fern", "lib/darwin_ctype.fern", "lib/locale.fern", "testdata/" + fixture} {
 		src, err := os.ReadFile(filepath.Join("../../../coreutils", name))
 		if err != nil {
 			t.Fatal(err)
