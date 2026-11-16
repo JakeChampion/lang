@@ -21263,6 +21263,17 @@ function ow_value_cell_new(c: ast.ExprCall, ctx: OwnCtx): boolean {
   return false;
 }
 
+// A variant construction owns what it holds: each argument is owned or holds
+// no handle.
+function ow_variant_args_owned(c: ast.ExprCall, ctx: OwnCtx): boolean {
+  for a in c.args {
+    if (!ow_is_owned_expr(a, ctx) && !ow_expr_holds_no_handle(a, ctx)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_expr_is_scalar(e, ctx)) {
     return true;
@@ -21339,7 +21350,10 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       }
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return cid.name == "share_unchecked" || ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name) || !ow_name_bound(ctx, cid.name) && util.has_str(ctx.fresh, cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
+          if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
+            return ow_variant_args_owned(c, ctx);
+          }
+          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && util.has_str(ctx.fresh, cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
         },
         ast.ExprFieldAccess(mfa) => {
           // An associated call with no arguments has no source for a loan.
@@ -21350,7 +21364,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
             return true;
           }
           if (ow_qualified_ctor(c.callee, ctx)) {
-            return true;
+            return ow_variant_args_owned(c, ctx);
           }
           for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
             if (util.has_str(ctx.fresh_methods, ns + "." + mfa.field)) {
@@ -22499,7 +22513,7 @@ function lu_owned_alias_in(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprStructLit(sl) = init {
     return lu_owned_lit(fx, init, sl);
   }
-  return false;
+  return lu_owned_variant(fx, init);
 }
 
 // A struct literal takes its base and the names that it sets. It owns them
@@ -22508,7 +22522,7 @@ function lu_owned_alias_in(fx: LuFn, name: string, seen: string[]): boolean {
 // be fresh or an unpack.
 function lu_owned_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit): boolean {
   for v in lu_handle_values(fx, sl) {
-    if (!lu_fresh_value(fx, v) && !lu_unpack_expr(fx, v) && !lu_owned_source(fx, v)) {
+    if (!lu_owned_value(fx, v)) {
       return false;
     }
   }
@@ -22519,6 +22533,32 @@ function lu_owned_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit): boolean 
     return false;
   };
   return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
+}
+
+function lu_owned_value(fx: LuFn, v: ast.Expr): boolean {
+  return lu_fresh_value(fx, v) || lu_unpack_expr(fx, v) || lu_owned_source(fx, v) || lu_owned_variant(fx, v);
+}
+
+// A variant construction owns what it holds: each argument is owned or holds
+// no handle.
+function lu_owned_variant(fx: LuFn, e: ast.Expr): boolean {
+  let ast.ExprCall(c) = e else {
+    return false;
+  };
+  let ast.ExprIdent(id) = c.callee else {
+    return false;
+  };
+  if (!lu_variant_constructor(fx, id.name) || util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) > 0) {
+    return false;
+  }
+  for a in c.args {
+    let ty = ast.expr_ty(a);
+    let no_handle = ow_scalar_literal(a) || ty.len() > 0 && ow_holds_no_handle(ty, fx.lenders.decls);
+    if (!no_handle && !lu_owned_value(fx, a)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function lu_owned_source(fx: LuFn, e: ast.Expr): boolean {

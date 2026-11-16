@@ -11255,7 +11255,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return true
 				}
 				if _, isVariant := c.info.EnumConstructions[x]; isVariant {
-					return true
+					return variantOwned(c.info, x, isOwnedExpr)
 				}
 				if id.Name == "share_unchecked" {
 					return true

@@ -1442,6 +1442,25 @@ func litFieldsOwned(info *Info, sl *ast.StructLit, owned func(ast.Expr) bool) bo
 	return info.StructLitOwned(sl, func(v ast.Expr) bool { return v == sl.Base || owned(v) })
 }
 
+// variantOwned reports a variant construction that owns what it holds: each
+// argument is owned, as owned decides, or its payload holds no handle.
+func variantOwned(info *Info, v ast.Expr, owned func(ast.Expr) bool) bool {
+	call, ok := v.(*ast.Call)
+	if !ok || info == nil {
+		return false
+	}
+	variant, ok := info.EnumConstructions[call]
+	if !ok || len(variant.Payloads) != len(call.Args) {
+		return false
+	}
+	for i, arg := range call.Args {
+		if !owned(arg) && (info.TypeHoldsNoHandle == nil || !info.TypeHoldsNoHandle(variant.Payloads[i])) {
+			return false
+		}
+	}
+	return true
+}
+
 // tupleProjection reports an element read `t.0`. A struct field cannot have
 // a numeric name.
 func tupleProjection(fa *ast.FieldAccess) bool {
@@ -1944,8 +1963,9 @@ func ownedAliases(info *Info, scalar map[ast.Expr]bool, body *ast.Block, ownPara
 	movedPayload := movedPayloads(body, ownParam, declCount, order, func(name string) bool {
 		return ownParam[name] && declCount[name] == 0 || payloadOwned(name) || freshLocal[name] && sole(name) || out[name]
 	})
-	fieldOwned := func(v ast.Expr) bool {
-		return freshInit(info, v) || unpack(v) || ownedAtLastUse(v) || freshAtLastUse(v)
+	var fieldOwned func(v ast.Expr) bool
+	fieldOwned = func(v ast.Expr) bool {
+		return freshInit(info, v) || unpack(v) || ownedAtLastUse(v) || freshAtLastUse(v) || variantOwned(info, v, fieldOwned)
 	}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -1963,7 +1983,7 @@ func ownedAliases(info *Info, scalar map[ast.Expr]bool, body *ast.Block, ownPara
 					source = base
 				}
 			}
-			if ownedAtLastUse(source) || freshAtLastUse(source) {
+			if ownedAtLastUse(source) || freshAtLastUse(source) || variantOwned(info, source, fieldOwned) {
 				out[x.Name] = true
 			} else if m, ok := source.(*ast.MatchExpr); ok && ownedMatchValue(info, m, ownedAtLastUse, freshAtLastUse) {
 				out[x.Name] = true
