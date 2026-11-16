@@ -14,6 +14,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -30,6 +31,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -120,6 +122,28 @@ func startFeatureServer(t *testing.T, tls bool) *featureServer {
 	}
 	t.Cleanup(s.Close)
 	return s
+}
+
+// alsoOnIPv6Loopback serves s on [::1] at the port of s as well. The
+// resolver sorts ::1 before 127.0.0.1 on a host with an IPv6 loopback, so
+// "localhost" then goes to ::1. A host with no IPv6 loopback keeps only
+// 127.0.0.1 for "localhost", and it gets no second listener.
+func (s *featureServer) alsoOnIPv6Loopback(t *testing.T) {
+	t.Helper()
+	_, port, err := net.SplitHostPort(s.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp6", net.JoinHostPort("::1", port))
+	if errors.Is(err, syscall.EADDRINUSE) {
+		t.Fatalf("listen on [::1]:%s: %v", port, err)
+	}
+	if err != nil {
+		return
+	}
+	srv := &http.Server{Handler: s.Config.Handler, Protocols: s.Config.Protocols, ConnState: s.Config.ConnState}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
 }
 
 // startUnixServer serves the handler of a feature server on a Unix socket.
@@ -329,12 +353,13 @@ func loadFeatureTests(t *testing.T, run loadRun) {
 	// of its own with --no-pre-lookup.
 	t.Run("dns lookup", func(t *testing.T) {
 		s := startFeatureServer(t, false)
+		s.alsoOnIPv6Loopback(t)
 		local := strings.Replace(s.URL, "127.0.0.1", "localhost", 1)
 		for _, args := range [][]string{{"-n", "4", "-c", "2"}, {"-n", "4", "-c", "2", "--no-pre-lookup"}} {
 			j := summaryOf(t, run, append(args, local+"/")...)
 			l, d := j.Details.DNSLookup, j.Details.DNSDialup
 			if j.responses() != 4 || l.Fastest == nil || d.Slowest == nil || *l.Fastest <= 0 || *l.Slowest > *d.Slowest {
-				t.Errorf("%v: %d responses, DNS lookup %v to %v, dialup to %v", args, j.responses(), l.Fastest, l.Slowest, d.Slowest)
+				t.Errorf("%v: %d responses, DNS lookup %v to %v, dialup to %v, errors %v", args, j.responses(), l.Fastest, l.Slowest, d.Slowest, j.ErrorDistribution)
 			}
 		}
 	})
