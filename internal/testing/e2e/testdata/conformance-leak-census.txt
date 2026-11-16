@@ -34,7 +34,6 @@ a_generic_call_takes_its_type_arguments_from_its_first_use 0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
 a_generic_implementation_of_a_generic_trait_is_a_dyn_value 0
-# The blocks are the pool of the task runtime (asmcore.rt_src_task).
 a_generic_struct_literal_takes_the_float_field_of_its_declared_type 0
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
 a_handler_fans_out_on_its_scheduler                  2
