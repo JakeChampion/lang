@@ -1019,7 +1019,7 @@ function pushed_field(own r: irtables.LowerState, i: i32, tail: i32, t: typeinfo
     r = emit(r, ir.op_load_local(5));
     r = emit(r, ir.op_variant_is(shape));
     r = emit(r, ir.op_if(0));
-    r = release(r, 5, t, f);
+    r = sole_release(release(r, 5, t, f));
     r = emit(r, ir.op_else());
   }
   r = emit(r, ir.op_load_local(1));
@@ -1079,7 +1079,7 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
   r = emit(r, ir.op_if(0));
-  r = release(r, CHAIN_CELL, t, f);
+  r = sole_release(release(r, CHAIN_CELL, t, f));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(1));
   r = emit(r, aligned_unique());
@@ -1146,7 +1146,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", 0, false));
   r = emit(r, ir.op_if(0));
-  r = release(r, node, t, f);
+  r = sole_release(release(r, node, t, f));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(first));
@@ -1220,7 +1220,7 @@ function drop_variant_stack(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", 0, false));
   r = emit(r, ir.op_if(0));
-  r = release(r, node, t, f);
+  r = sole_release(release(r, node, t, f));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(first));

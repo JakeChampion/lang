@@ -107,6 +107,26 @@ func TestSelfHostDropKeepsAStackInItsNodes(t *testing.T) {
 	if strings.Contains(body, "call __fn___sem_drop_") {
 		t.Errorf("the drop of Tree calls a drop helper:\n%s", body)
 	}
+	// A box that a test of the drop proved unique is freed with no test of
+	// its count: the childless child, the cell that the drop pops and the node
+	// of the loop.
+	lines := strings.Split(body, "\n")
+	sole := 0
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "call __fn___fern_box_dec.u" {
+			continue
+		}
+		tested := false
+		for j := i - 1; j >= 0 && j >= i-4; j-- {
+			tested = tested || strings.HasPrefix(strings.TrimSpace(lines[j]), "js ")
+		}
+		if !tested {
+			sole++
+		}
+	}
+	if sole < 3 {
+		t.Errorf("the drop of Tree frees %d unique boxes with no count test, want 3 or more:\n%s", sole, body)
+	}
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")
 		h.compileWith(t, tg, src, bin)
