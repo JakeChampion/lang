@@ -49,6 +49,7 @@ import "std/android/ui/painter";
 import "std/android/ui/scene";
 import "std/option";
 import "std/result";
+import "std/worker";
 ```
 
 ### `device`
@@ -145,7 +146,7 @@ pub function themed[S, M](own s: Sim[S, M], dark: boolean): Sim[S, M] {
 // The shell with the device of the time of the simulator.
 function at_now[S, M](own s: Sim[S, M]): Sim[S, M] {
   let dev = device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now);
-  return Sim { p: s.p, shell: ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: dev }, said: s.shell.said }, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now };
+  return Sim { p: s.p, shell: ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: dev }, said: s.shell.said, jobs: s.shell.jobs }, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now };
 }
 
 function stepped[S, M](own s: Sim[S, M], e: android.Event): Sim[S, M] {
@@ -167,6 +168,18 @@ function told[S, M](own s: Sim[S, M], m: M): Sim[S, M] {
 // Gives `update` the message `m`, and draws a frame.
 pub function send[S, M](own s: Sim[S, M], m: M): Sim[S, M] {
   return frame(told(s, m));
+}
+
+// The simulator after each job of the shell ended: it waits for each
+// worker, `update` gets each result, and a frame draws. A job can end in
+// the step of a frame, after that frame drew, so the frame comes also when
+// no job runs.
+pub function jobs_done[S, M: worker.Send](own s: Sim[S, M]): Sim[S, M] {
+  return frame(joined(s));
+}
+
+function joined[S, M: worker.Send](own s: Sim[S, M]): Sim[S, M] {
+  return Sim { p: s.p, shell: ui.joined_jobs(s.shell, s.p), dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now };
 }
 
 // Gives the program the event `e`, and draws a frame.
@@ -198,7 +211,7 @@ pub function after[S, M](own s: Sim[S, M], ms: i64): Sim[S, M] {
 
 // The shell of `s` with the device of its time, to read only.
 function at_now_view[S, M](s: Sim[S, M]): ui.Shell[S, M] {
-  return ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now) }, said: s.shell.said };
+  return ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now) }, said: s.shell.said, jobs: s.shell.jobs };
 }
 
 // Draws frames until no list flings, for at most 10 seconds.

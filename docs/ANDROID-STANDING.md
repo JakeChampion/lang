@@ -139,8 +139,10 @@ The order puts first what stops a release, then what most apps need.
    the state at each Pause and restores it when the app starts again.
    `sim.relaunch` tests that on the computer.
 
-3. **Effects that do not block the loop.** A task that runs on a worker
-   and gives a message when it ends.
+3. **Effects that do not block the loop.** Done. `with_jobs` of
+   `std/android/ui` starts workers for a message, and the result of each
+   worker is a message to `update`. `sim.jobs_done` tests that on the
+   computer.
 
 4. **Notifications and device features.** Notifications with channels,
    sensors through the NDK, then location and the camera.

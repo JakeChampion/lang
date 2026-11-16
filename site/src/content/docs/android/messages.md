@@ -117,6 +117,39 @@ whole of `update` runs on your computer.
 [`examples/android/tune`](https://github.com/JakeChampion/lang/tree/main/examples/android/tune)
 is a music player that works this way.
 
+## Jobs
+
+An effect runs on the loop, so the screen waits while it runs. A request
+to a server, the decode of a big file or a search of a library belongs in
+a job. `with_jobs` takes a function that gets the new state and the
+message after each message. It gives the workers that the message starts,
+with `worker.spawn`. The result of a worker is a message to `update`, when
+the worker ends.
+
+```fern
+import "std/worker";
+
+enum Msg { Refresh, Loaded(string) }
+
+ui.program(view, update).with_jobs((m: Model, msg: Msg): own worker.Worker[Msg][] => {
+  match (msg) {
+    Refresh => {
+      let url = m.url;
+      return [worker.spawn((): Msg => Loaded(fetch_text(url)))];
+    },
+    _ => {
+      return [];
+    }
+  }
+})
+```
+
+A worker gets a copy of what its closure captures, so it cannot change the
+state. The message type must be able to cross to a worker: scalars,
+strings, and records, enums and arrays of them. While a job runs, the loop
+looks for its end each 16 ms. In a test, `sim.jobs_done(s)` waits for each
+job and gives its message to `update`.
+
 ## Timers
 
 `with_tick` takes a function that gives the milliseconds to the next

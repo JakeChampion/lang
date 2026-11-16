@@ -12,6 +12,7 @@ import "std/android/ui/sim";
 import "std/kv";
 import "std/test";
 import "std/truetype";
+import "std/worker";
 import "std/unicode";
 import "./image_vectors";
 
@@ -539,6 +540,59 @@ function test_state_survives_a_relaunch(): test.TestOutcome {
   let unpaused = sim.relaunch(sim.tap(sim.relaunch(back, new_counter()), "V"), new_counter());
   let got = restored + " " + plain.shell.app.count.to_string() + " " + unpaused.shell.app.count.to_string();
   return test.assert_eq(got, "2 true true 0 2");
+}
+
+enum Job { Fetch, Got(i32) }
+
+struct Fetched { n: i32, asked: i32 }
+
+function fetched_view(m: Fetched, s: ui.Screen): ui.El[Job] {
+  return ui.column([ui.text("n " + m.n.to_string()), ui.button("fetch", Fetch)]);
+}
+
+function fetched_update(own m: Fetched, j: Job): Fetched {
+  return match (j) {
+    Fetch => Fetched { ...m, asked: m.asked + 1 },
+    Got(v) => Fetched { ...m, n: v },
+  };
+}
+
+function joined_jobs(own ws: worker.Worker[Job][]): i32 {
+  let n = 0;
+  for w in ws {
+    match (w.join()) {
+      Got(_) => {
+        n += 1;
+      },
+      Fetch => {}
+    }
+  }
+  return n;
+}
+
+// A tap starts a worker. Its result is the message Got, and `update` gets
+// it. A step that comes before the worker ends polls it again, so the
+// number of steps it takes depends on the schedule, and the test reads only
+// the state after jobs_done.
+function test_a_job_gives_a_message(): test.TestOutcome {
+  let p = ui.program(fetched_view, fetched_update).with_jobs((m: Fetched, j: Job): own worker.Worker[Job][] => {
+    match (j) {
+      Fetch => {
+        let asked = m.asked;
+        return [worker.spawn((): Job => Got(40 + asked + 1))];
+      },
+      _ => {
+        return [];
+      }
+    }
+  });
+  let s = sim.jobs_done(sim.tap(sim.start(Fetched { n: 0, asked: 0 }, p, fonts(), 200, 400, 1.0), "fetch"));
+  let got = s.shell.app.n.to_string() + " " + sim.shows(s, "n 42").to_string() + " " + s.shell.jobs.len().to_string() + " " + ui.wait(s.shell, s.p).to_string();
+  // While a job runs, the loop wakes in 16 ms at most to poll it.
+  let sh = s.shell;
+  let running = ui.Shell { app: sh.app, host: sh.host, said: sh.said, jobs: [worker.spawn((): Job => Got(1))] };
+  got += " " + ui.wait(running, s.p).to_string() + " " + joined_jobs(running.jobs).to_string();
+  return test.assert_eq(got, "42 true 0 -1 16 1");
 }
 
 function test_back_closes_or_tells(): test.TestOutcome {
@@ -1133,6 +1187,7 @@ function main(): i32 {
   r = r.it("a program takes a long press and a switch", test_program_long_press_and_toggle);
   r = r.it("the back key closes the app or tells it", test_back_closes_or_tells);
   r = r.it("a Pause keeps the state that a relaunch restores", test_state_survives_a_relaunch);
+  r = r.it("a job runs beside the loop and gives a message", test_a_job_gives_a_message);
   r = r.it("a program that waits gets ticks", test_wait_gives_ticks);
   r = r.it("a program scrolls and flings its list", test_program_scrolls_and_flings);
   r = r.it("a program that animates gets frames", test_animating_gives_frames);
