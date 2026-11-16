@@ -572,6 +572,9 @@ type Interp struct {
 	callAt ast.Position
 	moving []Value
 	raw    rawMemory
+
+	// returnMovable holds movableNames of each return expression.
+	returnMovable map[ast.Expr][]string
 }
 
 type arrayCOWMode int
@@ -2473,18 +2476,32 @@ func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Array_push: receiver must be array, got %T", args[0])
 	}
 	storeArray(args[1])
+	maps := pushedMaps(arr, args[1])
 	e := arr.Elems()
 	n := len(e)
 	if arr.n == wholeBox && n < cap(e) && e[:n+1][n] == unclaimedSlot {
 		e = e[:n+1]
 		e[n] = args[1]
 		arr.b.st.boxes++
-		return Array{b: &arrBox{e: e, st: arr.b.st, held: n + 1}, n: wholeBox}, nil
+		return Array{b: &arrBox{e: e, st: arr.b.st, held: n + 1, maps: maps}, n: wholeBox}, nil
 	}
 	out := growArray(arr)
 	out.Elems()[n] = args[1]
+	out.b.maps = maps
 	ip.arrayGrowCopies += n
 	return out, nil
+}
+
+// pushedMaps is the holdsMap answer for arr with v appended, when it is known
+// without a scan of the elements.
+func pushedMaps(arr Array, v Value) uint8 {
+	if holdsMap(v) {
+		return mapsSome
+	}
+	if arr.b.maps == mapsNone {
+		return mapsNone
+	}
+	return 0
 }
 
 func builtinArrSetLen(_ *Interp, args []Value) (Value, error) {
@@ -2534,20 +2551,28 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 	if idx < 0 || int(idx) >= len(arr.Elems()) {
 		return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.Elems()))
 	}
-	storeArray(args[2])
-	if !holdsMap(arr) && !holdsMap(args[2]) {
+	return ip.writeElems(arr, int(idx), args[2])
+}
+
+// writeElems gives arr with vs from index at on. It writes in place when arr
+// owns its storage alone, and otherwise writes a copy.
+func (ip *Interp) writeElems(arr Array, at int, vs ...Value) (Array, error) {
+	for _, v := range vs {
+		storeArray(v)
+	}
+	if !holdsMap(arr) && mapsIn(vs) != mapsSome {
 		inPlace, err := ip.arrayWriteInPlace(arr)
 		if err != nil {
-			return nil, err
+			return Array{}, err
 		}
 		if inPlace {
-			arr.Elems()[int(idx)] = args[2]
+			copy(arr.Elems()[at:], vs)
 			return arr, nil
 		}
 	}
 	out := newArray(len(arr.Elems()))
 	copy(out.Elems(), arr.Elems())
-	out.Elems()[int(idx)] = args[2]
+	copy(out.Elems()[at:], vs)
 	ip.arraySetCopies += len(arr.Elems())
 	return out, nil
 }
@@ -8311,7 +8336,30 @@ func (i *Interp) returnMoves(rhs ast.Expr, e *env) []Value {
 	if n := len(i.deferStack); n > 0 && len(i.deferStack[n-1]) > 0 {
 		return nil
 	}
+	names, ok := i.returnMovable[rhs]
+	if !ok {
+		if i.returnMovable == nil {
+			i.returnMovable = map[ast.Expr][]string{}
+		}
+		names = movableNames(rhs)
+		i.returnMovable[rhs] = names
+	}
 	var moved []Value
+	for _, name := range names {
+		v := e.slot(name)
+		if _, isArray := v.(Array); isArray {
+			arrDisown(v)
+			i.moving = append(i.moving, v)
+			moved = append(moved, v)
+		}
+	}
+	return moved
+}
+
+// movableNames gives each name that rhs reads and that rhs can move, once
+// each, in the order of their first reads.
+func movableNames(rhs ast.Expr) []string {
+	var names []string
 	seen := map[string]bool{}
 	ast.Walk(rhs, func(n ast.Node) bool {
 		id, ok := n.(*ast.Ident)
@@ -8319,15 +8367,12 @@ func (i *Interp) returnMoves(rhs ast.Expr, e *env) []Value {
 			return true
 		}
 		seen[id.Name] = true
-		v := e.slot(id.Name)
-		if _, isArray := v.(Array); isArray && movesFirst(rhs, id.Name) {
-			arrDisown(v)
-			i.moving = append(i.moving, v)
-			moved = append(moved, v)
+		if movesFirst(rhs, id.Name) {
+			names = append(names, id.Name)
 		}
 		return true
 	})
-	return moved
+	return names
 }
 
 func movesFirst(rhs ast.Expr, name string) bool {
