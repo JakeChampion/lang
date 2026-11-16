@@ -2607,6 +2607,27 @@ function count(n: i32, acc: i32): i32 {
 
 function main(): i32 { return count(1000000, 0) % 7; }
 `},
+	{name: "self-tail-recursion-on-a-slice-of-an-array-view", atLeast: 3, want: "0|", src: `
+import "std/string";
+
+function count(s: [u8], n: i32): i32 {
+    if (s.len() == 0) { return n; }
+    return count(s[1:s.len()], n + 1);
+}
+
+function widths(xs: [string], n: i32): i32 {
+    if (xs.len() == 0) { return n; }
+    return widths(xs[1:xs.len()], n + xs[0].len());
+}
+
+function main(): i32 {
+    let big = "x".repeat(30000000);
+    let words: string[] = [];
+    let i: i32 = 0;
+    while (i < 50) { words = words.append("w" + "x".repeat(i % 5)); i = i + 1; }
+    return (count(big.as_bytes(), 0) - 30000000) + (widths(words[0:words.len()], 0) - 150);
+}
+`},
 	{name: "an-array-of-capturing-closures", atLeast: 4, want: "2|", src: `
 function build(n: i32): ((i32) => i32)[] {
     let caps: i32[] = [n, n + 1, n + 2];
