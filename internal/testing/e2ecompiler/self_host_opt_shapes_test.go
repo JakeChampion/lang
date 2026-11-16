@@ -504,10 +504,10 @@ function main(): i32 { return area(Line(7)) + area(Tri(4)); }
 `,
 		want: map[string][]string{
 			"x86-64-linux": {`\.Lssa_area_\d+:\n\s+movl -4\(%r\w+\), %\w+\n\s+cmpq \$65537, %r\w+`},
-			"arm64-linux":  {`\.Lssa_area_\d+:\n\s+ldr w\d+, \[x\d+, #-4\]`, `movz w\d+, #1\n\s+movk w\d+, #1, lsl #16`}},
+			"arm64-linux":  {`\.Lssa_area_\d+:\n\s+ldr w\d+, \[x\d+, #-4\]`, `sub x(\d+), x\d+, #16, lsl #12\n\s+cmp x(\d+), #1\b`}},
 		forbid: map[string][]string{
 			"x86-64-linux": {`(?s)movl -4\(%r\w+\), %\w+.*movl -4\(%r\w+\), %\w+`, `\$\.S\d+`, `leaq \.S\d+\(%rip\)`},
-			"arm64-linux":  {`(?s)ldr w\d+, \[x\d+, #-4\].*ldr w\d+, \[x\d+, #-4\]`, `adrp x\d+, \.S\d+`}}},
+			"arm64-linux":  {`(?s)ldr w\d+, \[x\d+, #-4\].*ldr w\d+, \[x\d+, #-4\]`, `adrp x\d+, \.S\d+`, `movk w\d+, #\d+, lsl #16`}}},
 }
 
 func TestSelfHostOptimisationShapes(t *testing.T) {
