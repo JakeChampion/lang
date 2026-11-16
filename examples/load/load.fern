@@ -1394,6 +1394,9 @@ function proxy_shaken(own r: Run, i: i32, step: client.Step): Run {
   }
   if (step.output.len() > 0) {
     r = send(r, i, step.output, CONNECTING);
+    if (r.conns[i].sock.is_none()) {
+      return r;
+    }
   }
   return advance(r, i);
 }
@@ -1552,8 +1555,13 @@ function decrypt(own r: Run, i: i32, sock: Socket, got: u8[]): Run {
       return r;
     },
     Err(f) => {
-      let then = phase_after(r.conns[i]);
-      r = wire(r, i, f.alert, then);
+      if (f.alert.len() > 0) {
+        let then = phase_after(r.conns[i]);
+        r = wire(r, i, f.alert, then);
+        if (r.conns[i].sock.is_none()) {
+          return r;
+        }
+      }
       return lost(r, i, f.message());
     }
   }

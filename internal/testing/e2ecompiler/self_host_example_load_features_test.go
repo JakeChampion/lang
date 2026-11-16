@@ -1278,3 +1278,84 @@ func textShape(out string) string {
 	}
 	return regexp.MustCompile(`[0-9]+\.[0-9]+`).ReplaceAllString(out, "N")
 }
+
+// resetAfterAlertConn is a server connection that resets after its alert.
+// The tool is stopped while the alert and the reset go to it, so that it
+// reads the alert and then writes to a connection that is reset.
+type resetAfterAlertConn struct {
+	*net.TCPConn
+	client func() *os.Process
+	writes atomic.Int32
+}
+
+// The first write is the flight of the handshake, and the second write is
+// the alert that refuses the client.
+func (c *resetAfterAlertConn) Write(b []byte) (int, error) {
+	if c.writes.Add(1) == 2 {
+		if p := c.client(); p != nil {
+			_ = p.Signal(syscall.SIGSTOP)
+		}
+	}
+	return c.TCPConn.Write(b)
+}
+
+func (c *resetAfterAlertConn) Close() error {
+	_ = c.TCPConn.SetLinger(0)
+	err := c.TCPConn.Close()
+	if c.writes.Load() >= 2 {
+		if p := c.client(); p != nil {
+			_ = p.Signal(syscall.SIGCONT)
+		}
+	}
+	return err
+}
+
+type resetAfterAlertListener struct {
+	net.Listener
+	client func() *os.Process
+}
+
+func (l resetAfterAlertListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &resetAfterAlertConn{TCPConn: c.(*net.TCPConn), client: l.client}, nil
+}
+
+// loadResetAfterAlertTest refuses the connection of the tool with a TLS
+// alert after the handshake, and resets it. The tool counts the request as
+// failed once and exits.
+func loadResetAfterAlertTest(t *testing.T, load func(args ...string) *exec.Cmd) {
+	var client atomic.Pointer[os.Process]
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Listener = resetAfterAlertListener{Listener: srv.Listener, client: client.Load}
+	srv.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	srv.StartTLS()
+	defer srv.Close()
+	cmd := load("-n", "1", "-c", "1", "--insecure", "--output-format", "json", srv.URL+"/")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	client.Store(cmd.Process)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(time.Minute):
+		_ = cmd.Process.Signal(syscall.SIGCONT)
+		_ = cmd.Process.Kill()
+		<-done
+		t.Fatalf("load did not exit in 1 minute after a TLS alert and a reset\n%s", &stderr)
+	}
+	client.Store(nil)
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("load: exit %d\n%s%s", code, &stdout, &stderr)
+	}
+	j := parseLoadJSON(t, stdout.String())
+	if j.responses() != 0 || sum(j.ErrorDistribution) != 1 {
+		t.Errorf("%d responses and errors %v; want 0 responses and 1 error", j.responses(), j.ErrorDistribution)
+	}
+}
