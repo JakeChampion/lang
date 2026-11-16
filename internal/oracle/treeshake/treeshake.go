@@ -159,7 +159,9 @@ func Run(prog *ast.Program, info *checker.Info, extras ...string) {
 	hasEntry := reachable["main"] || reachable[checker.WasiHandleName]
 	if !hasEntry {
 		for _, fn := range prog.Funcs {
-			enqueue(fn.Name)
+			if prog.EntryModule == "" || fn.SourceModule == "" || fn.SourceModule == prog.EntryModule {
+				enqueue(fn.Name)
+			}
 		}
 	}
 	for len(queue) > 0 {
