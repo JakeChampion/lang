@@ -147,10 +147,6 @@ that exits with 255 there gives 124, also after a command that failed.
 
 ## What is not in the ports
 
-- In a directory with a name that is not UTF-8, the port reads the names
-  without their types, so the walk takes the stat of each entry. The
-  output is the same, but not the trace of `-D search` and `-D stat`. The
-  runtime has no read of the names as bytes with their types.
 - On wasm32-wasi there are no processes. `-exec` and its kin stop find with
   an error, and xargs stops at once. `-fstype` names each file system
   `unknown`, `-readable` and its kin are false, and `%Z` has no context.

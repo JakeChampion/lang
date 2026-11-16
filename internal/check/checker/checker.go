@@ -463,6 +463,14 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		{
+			Name: "DirEntryBytes",
+			Fields: []ast.Param{
+				{Name: "name", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+				{Name: "ino", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "kind", Type: ast.NumberType{Width: 32, Signed: false}},
+			},
+		},
+		{
 			Name: "FsStat",
 			Fields: []ast.Param{
 				{Name: "block_size", Type: ast.NumberType{Width: 64, Signed: true}},
@@ -1731,6 +1739,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	c.info.FuncSigs["read_dir_ino_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StructType{Name: "DirEntryBytes"}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	c.info.FuncSigs["stat"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
@@ -2163,6 +2178,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	registerStructMethod("Dir", "open_writer_with", []ast.Type{ast.StringType{}, openFlags}, writerResult)
 	registerStructMethod("Dir", "entries_bytes", nil, ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: u8s}, ioErrType}})
 	registerStructMethod("Dir", "entries_ino", nil, ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StructType{Name: "DirEntry"}}, ioErrType}})
+	registerStructMethod("Dir", "entries_ino_bytes", nil, ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StructType{Name: "DirEntryBytes"}}, ioErrType}})
 	registerStructMethod("Dir", "entries", nil,
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, ioErrType}})
 	registerStructMethod("Dir", "stat", []ast.Type{ast.StringType{}}, fileStatResult)

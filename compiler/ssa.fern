@@ -153,6 +153,12 @@ pub function plain_str(ins: SInst): string {
   return ins.str;
 }
 
+// A count or a uniqueness test of a value with no tag in bit 1. The mark 8
+// adds that the value is never an odd address (ir.boxed_count).
+pub function aligned_count(ins: SInst): boolean {
+  return ins.imm == 4 || ins.imm == 8;
+}
+
 pub function plain_imm(ins: SInst): i32 {
   if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7)) {
     return 0;
@@ -565,10 +571,10 @@ pub const COLD_LIGHT: i32 = 4;
 pub const COLD_KERNEL: i32 = 5;
 
 // `cold` with COLD_KERNEL at each position that has a mask in `clobbers`.
-// A position that already has a kind keeps it.
+// A kernel in a cold block is a kernel: it saves nothing.
 pub function with_kernels(cold: i32[], clobbers: i32[]): i32[] {
   for pos in 0..cold.len() {
-    if (cold[pos] == COLD_NONE && clobbers[pos] != 0) {
+    if (clobbers[pos] != 0) {
       cold = cold.with(pos, COLD_KERNEL);
     }
   }

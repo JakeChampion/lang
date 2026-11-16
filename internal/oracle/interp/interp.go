@@ -680,6 +680,7 @@ func New() *Interp {
 	i.Builtins["__method_Dir_entries"] = &Builtin{Fn: builtinDirEntries}
 	i.Builtins["__method_Dir_entries_bytes"] = &Builtin{Fn: builtinDirEntriesBytes}
 	i.Builtins["__method_Dir_entries_ino"] = &Builtin{Fn: builtinDirEntriesIno}
+	i.Builtins["__method_Dir_entries_ino_bytes"] = &Builtin{Fn: builtinDirEntriesInoBytes}
 	i.Builtins["__method_Dir_stat"] = &Builtin{Fn: builtinDirStat(true)}
 	i.Builtins["__method_Dir_lstat"] = &Builtin{Fn: builtinDirStat(false)}
 	i.Builtins["__method_Dir_access"] = &Builtin{Fn: builtinDirAccess}
@@ -1604,6 +1605,7 @@ func New() *Interp {
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["read_dir_all"] = &Builtin{Fn: builtinReadDirAll}
 	i.Builtins["read_dir_ino"] = &Builtin{Fn: builtinReadDirIno}
+	i.Builtins["read_dir_ino_bytes"] = &Builtin{Fn: builtinReadDirInoBytes}
 	i.Builtins["read_dir_ino_all"] = &Builtin{Fn: builtinReadDirInoAll}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
 	i.Builtins["lstat"] = &Builtin{Fn: builtinLstat}
@@ -3334,6 +3336,21 @@ func builtinReadDirIno(_ *Interp, args []Value) (Value, error) {
 
 func builtinReadDirInoAll(_ *Interp, args []Value) (Value, error) {
 	return readDirInoLike("read_dir_ino_all", false, args)
+}
+
+func builtinReadDirInoBytes(_ *Interp, args []Value) (Value, error) {
+	entries, res, err := readDirEntriesMode("read_dir_ino_bytes", true, args, true)
+	if entries == nil {
+		return res, err
+	}
+	out := newArray(len(entries))
+	for k, e := range entries {
+		out.Elems()[k] = &Struct{
+			TypeName: "DirEntryBytes",
+			Fields:   map[string]Value{"name": byteArray([]byte(e.name)), "ino": Number(int64(e.ino)), "kind": Number(int64(e.kind))},
+		}
+	}
+	return resultOk(out), nil
 }
 
 func readDirInoLike(name string, skipDots bool, args []Value) (Value, error) {

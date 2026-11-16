@@ -324,6 +324,13 @@ pub function is_box_release(op: Op): boolean {
   return op.i64_imm == 7;
 }
 
+// The count or the uniqueness test of a value of a record or of an enum of
+// variant boxes. Such a value has no tag, so it is never an odd address: it is
+// a box, a static box, the index of a variant or null.
+pub function boxed_count(op: Op): Op {
+  return Op { ...op, i64_imm: 8 };
+}
+
 pub function op_arr_set(width: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: K_ARR_SET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
@@ -391,6 +398,11 @@ pub function bytes_payload(o: Op): Op {
 // The variant of op_dir_entries that gives DirEntry records.
 pub function entry_payload(o: Op): Op {
   return Op { ...o, i32_imm: 2 };
+}
+
+// The variant of op_dir_entries that gives DirEntryBytes records.
+pub function entry_bytes_payload(o: Op): Op {
+  return Op { ...o, i32_imm: 3 };
 }
 
 // The width of an array op is the width of its element: 8 for a byte, 16 for a

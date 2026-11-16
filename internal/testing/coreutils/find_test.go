@@ -902,9 +902,8 @@ var findStartLines = []string{
 // findDebugLines exercise -D and -O. The optimiser of GNU find changes the
 // order of the tests, so the order of the stat calls and the errors of a
 // stat that fails show the order. unsearchable/f can be listed but not
-// examined, as the corpus runs unprivileged. The traces of -D search and
-// -D stat do not walk the top directory: it holds a name that is not
-// UTF-8, and the port reads the type of no entry there.
+// examined, as the corpus runs unprivileged. The top directory holds a name
+// that is not UTF-8.
 var findDebugLines = []string{
 	`-D help`,
 	`-D help,tree -maxdepth 0`,
@@ -958,6 +957,9 @@ var findDebugLines = []string{
 	`-D rates -name small -o -size +1 -print`,
 	`-D rates -name small -quit`,
 	`-O3 -D rates,opt -empty -o -readable -name '*' , ! -type d`,
+	`-D search -maxdepth 1`,
+	`-D search,stat -maxdepth 1 -type f`,
+	`-D stat -maxdepth 1 -size +0`,
 	`-D search sub -maxdepth 2`,
 	`-D search sub -depth -mindepth 1 -maxdepth 2`,
 	`-D search,stat sub -name deep -prune -o -size +0`,

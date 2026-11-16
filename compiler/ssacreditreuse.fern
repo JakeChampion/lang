@@ -437,7 +437,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     identity = out.temp;
   } else if (op.kind_tag == ssa.CALL && op.args.len() == 1) {
     let v = out.values[op.args[0]];
-    if (op.str == "__fern_rc_is_unique" && (op.imm == 0 || op.imm == 4)) {
+    if (op.str == "__fern_rc_is_unique" && (op.imm == 0 || ssa.aligned_count(op))) {
       out = parent(out, v);
       out = equal(out, out.state.path, v.identity, 1, "only old-parent uniqueness admitted");
       kind = 0;
@@ -466,7 +466,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
       kind = 1;
       identity = v.identity;
-    } else if (op.str == "__fern_rc_inc" && (op.imm == 0 || op.imm == 4) || op.str == "__fern_rc_dec" && op.imm == 0) {
+    } else if (op.str == "__fern_rc_inc" && (op.imm == 0 || ssa.aligned_count(op)) || op.str == "__fern_rc_dec" && op.imm == 0) {
       out = child(out, v);
       kind = 1;
       identity = v.identity;

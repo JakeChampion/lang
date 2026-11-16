@@ -196,9 +196,12 @@ function stack_step(s: State, op: isa.Op): State {
 // a count of 1 in the low half and the number of words in the high half. The
 // body then stores the tag of the shape over that high half. The helper
 // leaves the return address below the stack pointer. The words below it are
-// not known: a push of %rcx or of %rdi.
-function allocation(s: State, words: i32, pc: i32, op: isa.Op): State {
-  if (op.symbol != "__fern_rec_box" || s.calls != 0 || !equal(s.regs[7], number(words as i64))) {
+// not known: a push of %rcx or of %rdi. __fern_rec_box takes the number of
+// words in %rdi and keeps it. The routine of the size takes no argument, and
+// %rdi is not known after it.
+function allocation(s: State, words: i32, sized: boolean, pc: i32, op: isa.Op): State {
+  let named = sized && op.symbol == asmcore.sized_rec_box(words);
+  if (s.calls != 0 || !named && (op.symbol != "__fern_rec_box" || !equal(s.regs[7], number(words as i64)))) {
     return State { ...s, ok: false };
   }
   let sp = s.regs[4];
@@ -207,7 +210,8 @@ function allocation(s: State, words: i32, pc: i32, op: isa.Op): State {
   }
   let called = store_at(s, cell(s, sp, -8, 64), 64, token(8, (pc + 1) as i64));
   called = store_at(called, cell(called, sp, -16, 64), 64, token(11, 0));
-  return write(State { ...called, memory: helper_memory(called.memory, sp, words), calls: 1 }, 0, token(3, 8));
+  let made = write(State { ...called, memory: helper_memory(called.memory, sp, words), calls: 1 }, 0, token(3, 8));
+  return if (named) { write(made, 7, token(11, 7)) } else { made };
 }
 
 function helper_memory(memory: Half[], sp: Word, words: i32): Half[] {
@@ -244,7 +248,7 @@ function simple(s: State, op: isa.Op): State {
   return State { ...s, ok: false };
 }
 
-function step(s: State, words: i32, pc: i32, op: isa.Op): State {
+function step(s: State, words: i32, sized: boolean, pc: i32, op: isa.Op): State {
   if (op.kind == 3 || op.kind == 4 || op.kind == 22) {
     return memory_step(s, op);
   }
@@ -254,7 +258,7 @@ function step(s: State, words: i32, pc: i32, op: isa.Op): State {
   if (op.kind == 15) {
     return lea(s, op);
   }
-  return if (op.kind == 25) { allocation(s, words, pc, op) } else { simple(s, op) };
+  return if (op.kind == 25) { allocation(s, words, sized, pc, op) } else { simple(s, op) };
 }
 
 function expected_memory(original: State, tag: i64, i: i32): Half {
@@ -298,7 +302,7 @@ function finished_memory(s: State, original: State, tag: i64): boolean {
   return true;
 }
 
-function path(p: isa.ArrayProgram, words: i32, tag: i64, register_entry: boolean): boolean {
+function path(p: isa.ArrayProgram, words: i32, sized: boolean, tag: i64, register_entry: boolean): boolean {
   let s = initial(words, register_entry);
   let visited: boolean[] = [];
   for op in p.ops {
@@ -320,7 +324,7 @@ function path(p: isa.ArrayProgram, words: i32, tag: i64, register_entry: boolean
       }
       pc = op.target;
     } else {
-      s = step(s, words, pc, op);
+      s = step(s, words, sized, pc, op);
       if (!s.ok) {
         return false;
       }
@@ -336,5 +340,6 @@ pub function check(output: ssaprepare.Output, name: string): boolean {
     return false;
   }
   let p = isa.constructor_program(output.text, "__fn_" + asmcore.sanitize_label(name));
-  return p.error == "" && path(p, bound.words, bound.tag, false) && path(p, bound.words, bound.tag, true);
+  let sized = recbox.sized_allocation(output.text, bound.words);
+  return p.error == "" && path(p, bound.words, sized, bound.tag, false) && path(p, bound.words, sized, bound.tag, true);
 }

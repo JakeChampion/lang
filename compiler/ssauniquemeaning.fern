@@ -108,7 +108,7 @@ function operation(op: ssa.SInst, b: ssa.SBlock, entry: i32): boolean {
   if (op.kind_tag == ssa.CONST_INT || op.kind_tag == ssa.CONST_BOOL) {
     return constant(op);
   }
-  if (ssa.plain_imm(op) != 0 && !(op.imm == 4 && op.kind_tag == ssa.CALL && op.str == "__fern_rc_is_unique")) {
+  if (ssa.plain_imm(op) != 0 && !(ssa.aligned_count(op) && op.kind_tag == ssa.CALL && op.str == "__fern_rc_is_unique")) {
     return false;
   }
   if (op.kind_tag == ssa.PHI) {

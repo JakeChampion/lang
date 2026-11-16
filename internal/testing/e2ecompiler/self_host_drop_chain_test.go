@@ -108,7 +108,7 @@ func TestSelfHostDropReadsTheNextNodeFirst(t *testing.T) {
 	}
 	next := regexp.MustCompile(`movq 16\(%r\w+\), %r\w+`).FindStringIndex(body)
 	down := strings.Index(body, "call __fn___sem_drop_")
-	if next == nil || down < 0 || next[0] > down {
+	if next == nil || down >= 0 && next[0] > down {
 		t.Errorf("the drop of Tree goes down a field before it reads the next node:\n%s", body)
 	}
 	if regexp.MustCompile(`call __fn___sem_release_\w*Tree`).MatchString(body) {

@@ -23,6 +23,8 @@ struct FileStat { is_file: boolean, is_dir: boolean, size: i64, mode: u32, nlink
 
 struct DirEntry { name: string, ino: i64, kind: u32 }
 
+struct DirEntryBytes { name: u8[], ino: i64, kind: u32 }
+
 struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
 
 struct HeaderMap { names: string[], values: string[] }

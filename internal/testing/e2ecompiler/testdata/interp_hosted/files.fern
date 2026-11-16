@@ -122,6 +122,32 @@ function main(): i32 {
     Ok(es) => { print(f"read_dir_ino_all: {es.len()}"); },
     Err(e) => { print("read_dir_ino_all: " + kind(e)); }
   }
+  match (read_dir_ino_bytes(d + "/deep")) {
+    Ok(es) => {
+      for de in es {
+        print(f"read_dir_ino_bytes: {de.name.len()} kind={de.kind} ino>0={de.ino > 0i64}");
+      }
+    },
+    Err(e) => { print("read_dir_ino_bytes: " + kind(e)); }
+  }
+  match (open_dir(d + "/deep")) {
+    Ok(h) => {
+      match (h.entries_ino()) {
+        Ok(es) => { print(f"entries_ino: {es.len()}"); },
+        Err(e) => { print("entries_ino: " + kind(e)); }
+      }
+      match (h.entries_ino_bytes()) {
+        Ok(es) => {
+          for de in es {
+            print(f"entries_ino_bytes: {de.name.len()} kind={de.kind} ino>0={de.ino > 0i64}");
+          }
+        },
+        Err(e) => { print("entries_ino_bytes: " + kind(e)); }
+      }
+      h.close();
+    },
+    Err(e) => { print("open_dir: " + kind(e)); }
+  }
   match (open_writer(d + "/w.txt")) {
     Ok(w) => {
       done("write", w.write("one\n"));

@@ -46,11 +46,15 @@ function main(): i32 {
 `
 
 // A box has a header of one word, which holds its count and the tag of its
-// shape. A box of two fields has two words, and asks __fern_rec_box for two.
-// A box of one field asks for one. __fern_rec_box asks __fern_arr_box for
-// two words less, and for no word for a box of one. So the block of two
-// fields has 24 bytes. Each constructor stores a tag in the high half of
-// the header, and the low 16 bits of the tag are the number of words.
+// shape. A box of two fields has two words, and calls the routine of a box of
+// two words. A box of one field calls the routine of one word. Each of those
+// routines takes the free list of a block of one word more, at
+// __fern_freelist + 8 * (n + 1), writes the header with n in its high half,
+// and goes to __fern_rec_box with n when the bump leaves its 64 KiB line.
+// __fern_rec_box asks __fern_arr_box for two words less, and for no word for
+// a box of one. So the block of two fields has 24 bytes. Each constructor
+// stores a tag in the high half of the header, and the low 16 bits of the tag
+// are the number of words.
 // A 32-bit store to the high half of the header word of a box. On x86-64 the
 // store takes the tag as an immediate.
 var tagStore = map[string]*regexp.Regexp{
@@ -65,8 +69,24 @@ func TestSelfHostBoxHasAHeaderOfOneWord(t *testing.T) {
 		t.Fatal(err)
 	}
 	asked := map[string][2]string{
-		"x86-64-linux": {"movq $2, %rdi\n    call __fern_rec_box", "movq $1, %rdi\n    call __fern_rec_box"},
-		"arm64-linux":  {"mov x0, #2\n    bl __fern_rec_box", "mov x0, #1\n    bl __fern_rec_box"},
+		"x86-64-linux": {"call __fern_rec_box_2\n", "call __fern_rec_box_1\n"},
+		"arm64-linux":  {"bl __fern_rec_box_2\n", "bl __fern_rec_box_1\n"},
+	}
+	sized := map[string][]string{
+		"x86-64-linux": {
+			"__fern_rec_box_2:\n    movq __fern_freelist+24(%rip), %rax\n",
+			"    movl $1, (%rax)\n    movl $2, 4(%rax)\n    addq $8, %rax\n    ret\n",
+			"    leaq 24(%rax), %rdi\n",
+			".Lrecbox2_slow:\n    movl $2, %edi\n    jmp __fern_rec_box\n",
+			"__fern_rec_box_1:\n    movq __fern_freelist+16(%rip), %rax\n",
+		},
+		"arm64-linux": {
+			"__fern_rec_box_2:\n    adrp x2, __fern_freelist\n    add x2, x2, :lo12:__fern_freelist\n    ldr x1, [x2, #24]\n",
+			"    mov x3, #1\n    movk x3, #2, lsl #32\n    str x3, [x1]\n    add x0, x1, #8\n    ret\n",
+			"    add x3, x1, #24\n",
+			".Lrecbox2_slow:\n    mov x0, #2\n    b __fern_rec_box\n",
+			"__fern_rec_box_1:\n    adrp x2, __fern_freelist\n    add x2, x2, :lo12:__fern_freelist\n    ldr x1, [x2, #16]\n",
+		},
 	}
 	routine := map[string]string{
 		"x86-64-linux": "    pushq %rdi\n    subq $2, %rdi\n    jae .Lrecbox_sized\n    xorl %edi, %edi\n.Lrecbox_sized:\n    call __fern_arr_box\n",
@@ -81,6 +101,14 @@ func TestSelfHostBoxHasAHeaderOfOneWord(t *testing.T) {
 			text := string(asm)
 			if !strings.Contains(text, routine[target]) {
 				t.Fatalf("__fern_rec_box does not ask for two words less: no %q", routine[target])
+			}
+			for _, part := range sized[target] {
+				if !strings.Contains(text, part) {
+					t.Fatalf("the routine of a size has no %q", part)
+				}
+			}
+			if strings.Contains(text, "__fern_rec_box_3:") {
+				t.Fatal("a routine of a size that no call names is in the output")
 			}
 			// A store of 32 bits leaves the last bytes of a block from a
 			// free list in the half that marks a box.
