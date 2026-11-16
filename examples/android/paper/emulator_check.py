@@ -25,7 +25,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests" / "android"))
-from emulator import adb, count, crashes, fail, finish, logcat, screen, wait_for  # noqa: E402
+from emulator import adb, count, crashes, fail, finish, logcat, save_log, screen, wait_for  # noqa: E402
 
 PACKAGE = "dev.fern.paper"
 ACTIVITY = PACKAGE + "/.Home"
@@ -89,7 +89,7 @@ def hide_keyboard():
     return True
 
 
-def check_keyboard(width):
+def check_keyboard(width, out):
     """The app list opens with the keyboard. After Back hides it, a tap on
     the search field shows it again. The field is 36 dp below the status
     bar, so a tap 74 dp from the top is on it."""
@@ -100,6 +100,7 @@ def check_keyboard(width):
     adb("shell", "input", "tap", str(width // 2), str(int(74 * scale)))
     if not keyboard_shown():
         fail("a tap on the search field did not show the keyboard")
+        save_log(out, "logcat-keyboard.txt")
 
 
 def check_access(out):
@@ -413,7 +414,7 @@ def main(apk, out):
     Path(out, "input-method-drawer.txt").write_text(adb("shell", "dumpsys", "input_method", check=False))
     if part < 0.6:
         fail(f"the app list has {part:.3f} of the paper colour")
-    check_keyboard(width)
+    check_keyboard(width, out)
 
     adb("shell", "input", "text", "pap")
     if not wait_for(r"paper: launch dev\.fern\.paper/dev\.fern\.paper\.Home"):

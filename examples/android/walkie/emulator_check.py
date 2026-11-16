@@ -93,7 +93,8 @@ def disable_freezer():
         if re.search(r"(?m)^\s*use_freezer=false\s*$", state):
             return
         time.sleep(0.5)
-    raise Failure("Android did not disable the cached-app freezer")
+    lines = [line.strip() for line in state.splitlines() if "freez" in line.lower()]
+    raise Failure("Android did not disable the cached-app freezer: " + " | ".join(lines[:8]))
 
 
 def to_front(package):

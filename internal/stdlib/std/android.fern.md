@@ -246,7 +246,7 @@ From Android 13 the system gives the back key and the back gesture to a callback
 
 `ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens.
 
-Before Android 15, the keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it. From Android 15 the window goes under the bars and the keyboard, and the rectangle comes from their insets and from the cutout of the display.
+Before Android 15, the keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it. From Android 15 the window goes under the bars and the keyboard. Then the rectangle comes from their insets and from the cutout of the display.
 
 `Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12, from 24 to 27, and 35 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 28 to 33 belong to `std/android/session`, and kind 34 belongs to `std/android/noisy`. The kinds from 100 are free for the app.
 
@@ -383,7 +383,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32 }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -583,7 +583,7 @@ function ui_env(activity: usize): usize {
 function new_context(activity: usize): usize {
   unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize }.c_store(ctx);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0 }.c_store(ctx);
     let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
     if (ok != 0) {
       __free(ctx, Context.c_size() as i32);
@@ -611,7 +611,7 @@ function taken_over(activity: usize, ctx: usize): boolean {
     if (c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS) != 0) {
       return false;
     }
-    Context { ...Context.c_load(ctx), activity: activity, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sdk: NativeActivity.c_load_sdk_version(activity), back_class: 0 as usize, insets_class: 0 as usize }.c_store(ctx);
+    Context { ...Context.c_load(ctx), activity: activity, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sdk: NativeActivity.c_load_sdk_version(activity), back_class: 0 as usize, insets_class: 0 as usize, windowed: 0 }.c_store(ctx);
   }
   hook(activity, ctx);
   hook_views(activity, ctx);
@@ -786,8 +786,19 @@ function apply_system_bars(activity: usize): void {
   }
 }
 
+// From Android 15 the insets ask again once the window is there, so the
+// ContentRect of the insets comes after WindowCreated.
 function on_window_created(activity: usize, window: usize): void {
   send(activity, WINDOW_CREATED, window);
+  unsafe {
+    let ctx: usize = NativeActivity.c_load_instance(activity);
+    if (ctx != 0 as usize) {
+      Context.c_store_windowed(ctx, 1);
+      if (Context.c_load_insets_class(ctx) != 0 as usize) {
+        ask_insets(ui_env(activity), NativeActivity.c_load_clazz(activity));
+      }
+    }
+  }
 }
 
 function on_window_resized(activity: usize, window: usize): void {
@@ -799,6 +810,12 @@ function on_window_redraw(activity: usize, window: usize): void {
 }
 
 function on_window_destroyed(activity: usize, window: usize): void {
+  unsafe {
+    let ctx: usize = NativeActivity.c_load_instance(activity);
+    if (ctx != 0 as usize) {
+      Context.c_store_windowed(ctx, 0);
+    }
+  }
   send(activity, WINDOW_DESTROYED, window);
 }
 
@@ -2158,7 +2175,9 @@ function text_of_buffer(buf: usize): string {
 
 An app that targets Android 16 does not get the back key as a key event from Android 13. The system gives it to the `OnBackInvokedCallback` of the activity, and the manifest of `fern -apk` asks for that from Android 13. `hook_views` registers the class `dev.fern.android.Back` of `std/android/launch` as that callback. Its callback calls `back_invoked`, which sends `BACK` to the loop thread.
 
-From Android 15 the window of an app that targets Android 15 or later goes under the system bars, the keyboard and the cutout of the display, and the content view of NativeActivity covers the whole window. So the content rectangle of NativeActivity is the whole window. `hook_views` sets the class `dev.fern.android.Insets` of `std/android/launch` as the listener of the insets of the decor view. Its callback calls `insets_applied`, which sends the part of the window that the insets leave free as `CONTENT_RECT`, and `on_content_rect` then sends nothing. The first insets come before the layout of the view, so the size comes from the metrics of the window. The listener then calls the method of the view, so the view handles the insets as before.
+From Android 15 the window of an app that targets API 35 or later goes under the system bars, the keyboard and the display cutout. The content view of NativeActivity then covers the whole window, and so does its content rectangle. `hook_views` sets the class `dev.fern.android.Insets` of `std/android/launch` as the listener of the insets of the decor view. Its callback calls `insets_applied`, which sends the part of the window that the insets leave free as `CONTENT_RECT`. `on_content_rect` then sends nothing. The listener then calls the method of the view, so the view handles the insets as before.
+
+The first insets come before the window, so `insets_applied` sends nothing while the activity has no window. After `WindowCreated`, `on_window_created` asks for the insets again. The size comes from the metrics of the window, because the insets can come before the layout of the view.
 
 `hook_views` runs on the UI thread after the loop thread starts, because a callback waits for the reply of the loop thread.
 
@@ -2235,7 +2254,6 @@ function insets_listener(e: usize, obj: usize, ctx: usize): usize {
   let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
   let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
   let set = decor != 0 as usize && jni.call_void(e, decor, "setOnApplyWindowInsetsListener", "(Landroid/view/View$OnApplyWindowInsetsListener;)V", [listener]);
-  let asked = set && jni.call_void(e, decor, "requestApplyInsets", "()V", []);
   let cleared: usize = jni.exception_clear(e);
   for r in [decor, window, listener] {
     let d: usize = jni.delete_local_ref(e, r);
@@ -2270,8 +2288,25 @@ pub(package) function insets_applied(env: usize, thiz: usize, view: usize, inset
   return out;
 }
 
-// Sends the part of the window that `insets` leave free to the loop thread.
+// Asks the decor view of the activity `obj` for its insets again.
+function ask_insets(e: usize, obj: usize): void {
+  let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
+  let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
+  let asked = decor != 0 as usize && jni.call_void(e, decor, "requestApplyInsets", "()V", []);
+  let cleared: usize = jni.exception_clear(e);
+  for r in [decor, window] {
+    let d: usize = jni.delete_local_ref(e, r);
+  }
+}
+
+// Sends the part of the window that `insets` leave free to the loop thread,
+// while the activity has a window.
 function send_insets(e: usize, ctx: usize, insets: usize): void {
+  unsafe {
+    if (Context.c_load_windowed(ctx) == 0) {
+      return;
+    }
+  }
   let type_class: usize = jni.find_class(e, "android/view/WindowInsets$Type");
   let none: usize = jni.jvalue_alloc(0);
   let types = 0;
