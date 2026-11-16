@@ -1675,7 +1675,7 @@ function signal_bandwidth(st: Encoder, equiv_rate: i32): i32 {
   return max_i(st.analysis.bandwidth, min_bandwidth);
 }
 
-function encoding_of(own c: range.Coder): range.Encoder {
+function encoding_of(c: range.Coder): range.Encoder {
   match (c) {
     range.Encoding(e) => {
       return e;

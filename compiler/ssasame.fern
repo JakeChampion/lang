@@ -1,0 +1,366 @@
+import "./util";
+import "./ssa";
+import "./ssadeps";
+
+// A branch tests a value against zero, and a branch below it tests the same
+// value again. The lowering of a reuse token does this for each thing that
+// the token decides. `decided` removes the second test in two shapes, and it
+// copies no block.
+//
+// - The second branch ends a block that one side of the first branch
+//   dominates. It becomes a jump to the side that the first test picked. A
+//   reuse allocation of the value on its zero side takes the constant zero.
+// - The second branch ends the join of the two sides. The join holds only
+//   phis and the test, and one target of the branch only jumps to the other
+//   target. Each side then goes to its own target, and the phis of the join
+//   move to the second target.
+
+// value is -1 when the condition is not a test against zero.
+struct Test { value: i32, eq: boolean, width: i32 }
+
+function no_test(): Test {
+  return Test { value: -1, eq: false, width: 0 };
+}
+
+function is_zero(defs: ssa.SInst[], v: i32): boolean {
+  return v >= 0 && v < defs.len() && defs[v].kind_tag == ssa.CONST_INT && defs[v].imm == 0 && defs[v].str == "";
+}
+
+function test_of(defs: ssa.SInst[], term: ssa.STerm): Test {
+  if (term.kind_tag != ssa.TERM_BRIF || term.t == term.f || term.cond < 0 || term.cond >= defs.len()) {
+    return no_test();
+  }
+  let c = defs[term.cond];
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+    return no_test();
+  }
+  if (is_zero(defs, c.args[1]) && !is_zero(defs, c.args[0])) {
+    return Test { value: c.args[0], eq: c.str == "eq", width: c.imm };
+  }
+  return no_test();
+}
+
+// p ends in the first test. yes and no are the positions of its targets, and
+// each has p as its one predecessor.
+struct First { p: i32, yes: i32, no: i32, test: Test }
+
+function first_at(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], p: i32): First {
+  let none = First { p: -1, yes: -1, no: -1, test: no_test() };
+  let test = test_of(defs, f.blocks[p].term);
+  if (test.value < 0) {
+    return none;
+  }
+  let yes = ssa.position_of(at, f.blocks[p].term.t);
+  let no = ssa.position_of(at, f.blocks[p].term.f);
+  if (yes < 0 || no < 0 || f.blocks[yes].preds.len() != 1 || f.blocks[no].preds.len() != 1) {
+    return none;
+  }
+  return First { p: p, yes: yes, no: no, test: test };
+}
+
+// 1 when the block at b is on the side of `first` where its test is true, 0
+// on the other side, and -1 on neither.
+function side_of(dom: ssadeps.Dom, first: First, b: i32): i32 {
+  if (ssadeps.dom_holds(dom, b, first.yes)) {
+    return 1;
+  }
+  if (ssadeps.dom_holds(dom, b, first.no)) {
+    return 0;
+  }
+  return -1;
+}
+
+// The target that the test `again` picks on the side `side` of `first`.
+function picked(first: First, again: Test, term: ssa.STerm, side: i32): i32 {
+  let zero = first.test.eq == (side == 1);
+  if (zero == again.eq) {
+    return term.t;
+  }
+  return term.f;
+}
+
+function same_value(a: Test, b: Test): boolean {
+  return a.value >= 0 && a.value == b.value && a.width == b.width;
+}
+
+pub function decided(f: ssa.SFunc): ssa.SFunc {
+  if (!tested_twice(f)) {
+    return f;
+  }
+  let g = f;
+  for rounds in 0..64 {
+    let next = round(g);
+    if (!next.changed) {
+      return g;
+    }
+    g = next.f;
+  }
+  return g;
+}
+
+// The compare that decides the branch of b, when b holds it. -1 when it does
+// not.
+function own_test(b: ssa.SBlock): i32 {
+  if (b.term.kind_tag != ssa.TERM_BRIF || b.term.t == b.term.f) {
+    return -1;
+  }
+  for k in 0..b.insts.len() {
+    let ins = b.insts[k];
+    if (ins.result == b.term.cond && ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.str == "eq" || ins.str == "ne")) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// Whether two branches of f test one value against zero. It reads each test
+// in the block of its branch. A function with fewer than two such blocks
+// costs one read of its blocks and no array.
+function tested_twice(f: ssa.SFunc): boolean {
+  let one = false;
+  let two = false;
+  for b in f.blocks {
+    if (own_test(b) >= 0) {
+      two = one;
+      one = true;
+    }
+  }
+  if (!two) {
+    return false;
+  }
+  let zeros = __alloc_bool(f.nvals);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.CONST_INT && ins.imm == 0 && ins.str == "" && ins.result >= 0) {
+        zeros = zeros.with(ins.result, true);
+      }
+    }
+  }
+  let seen: i32[] = [];
+  for b in f.blocks {
+    let k = own_test(b);
+    if (k < 0) {
+      continue;
+    }
+    let v = b.insts[k].args[0];
+    if (v < 0 || zeros[v] || !zeros[b.insts[k].args[1]]) {
+      continue;
+    }
+    if (util.index_of_i32(seen, v) >= 0) {
+      return true;
+    }
+    seen = seen.append(v);
+  }
+  return false;
+}
+
+function round(f: ssa.SFunc): ssa.Threading {
+  let at = ssa.block_positions(f);
+  let defs = ssa.inst_defs(f);
+  let tests: i32[] = [];
+  for k in 0..f.blocks.len() {
+    if (test_of(defs, f.blocks[k].term).value >= 0) {
+      tests = tests.append(k);
+    }
+  }
+  let dom = ssadeps.dominates_at(f, at);
+  for p in tests {
+    let first = first_at(f, at, defs, p);
+    if (first.p < 0) {
+      continue;
+    }
+    for b in tests {
+      let again = test_of(defs, f.blocks[b].term);
+      if (b == p || !same_value(first.test, again)) {
+        continue;
+      }
+      let side = side_of(dom, first, b);
+      if (side >= 0) {
+        return ssa.Threading { f: reachable(below(f, dom, first, b, picked(first, again, f.blocks[b].term, side))), changed: true };
+      }
+      let joined = at_join(f, at, defs, dom, first, b, again);
+      if (joined.changed) {
+        return joined;
+      }
+    }
+  }
+  return ssa.Threading { f: f, changed: false };
+}
+
+// The block at b jumps to `target`. On the zero side of `first`, each reuse
+// allocation of the tested value below b takes a zero of its own, so that it
+// is still known to be fresh when no test is left above it.
+function below(f: ssa.SFunc, dom: ssadeps.Dom, first: First, b: i32, target: i32): ssa.SFunc {
+  let blocks = f.blocks.with(b, ssa.SBlock { ...f.blocks[b], term: ssa.t_br(target) });
+  let zero_side = if (first.test.eq) { first.yes } else { first.no };
+  for k in 0..blocks.len() {
+    if (!ssadeps.dom_holds(dom, k, zero_side)) {
+      continue;
+    }
+    // The block at k has the zero f.nvals + k for its allocations.
+    let insts: ssa.SInst[] = [];
+    let changed = false;
+    for ins in blocks[k].insts {
+      if (ssa.reuse_alloc_call(ins) && ins.args[0] == first.test.value) {
+        if (!changed) {
+          insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: f.nvals + k, args: [], imm: 0, str: "" });
+        }
+        insts = insts.append(ssa.SInst { ...ins, args: [f.nvals + k, ins.args[1]] });
+        changed = true;
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    if (changed) {
+      blocks = blocks.with(k, ssa.SBlock { ...blocks[k], insts: insts });
+    }
+  }
+  return ssa.SFunc { ...f, nvals: f.nvals + blocks.len(), blocks: blocks };
+}
+
+// f with no block that the entry does not reach.
+function reachable(f: ssa.SFunc): ssa.SFunc {
+  let live = ssadeps.reachable_blocks(f);
+  let kept: ssa.SBlock[] = [];
+  for k in 0..f.blocks.len() {
+    if (live[k]) {
+      kept = kept.append(f.blocks[k]);
+    }
+  }
+  let g = ssa.SFunc { ...f, blocks: kept };
+  return ssa.SFunc { ...g, blocks: ssa.refreshed_preds(g) };
+}
+
+// Whether the join holds only phis, zeros and its test, and nothing but the
+// join reads a zero or the test.
+function only_tests(b: ssa.SBlock, uses: i32[]): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag == ssa.PHI || ins.kind_tag == ssa.LINE) {
+      continue;
+    }
+    let pure = ins.kind_tag == ssa.CONST_INT || ins.kind_tag == ssa.BINARY && ins.result == b.term.cond;
+    if (!pure || ins.result < 0 || uses[ins.result] != 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The join at j ends in the test `again`. Its two predecessors are on the two
+// sides of `first`. `side` is the position of the target that only jumps to
+// `rest`, the other target.
+function at_join(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], dom: ssadeps.Dom, first: First, j: i32, again: Test): ssa.Threading {
+  let same = ssa.Threading { f: f, changed: false };
+  let jb = f.blocks[j];
+  if (jb.preds.len() != 2 || jb.id == f.entry || !only_tests(jb, ssa.use_counts(f))) {
+    return same;
+  }
+  let a = ssa.position_of(at, jb.preds[0]);
+  let b = ssa.position_of(at, jb.preds[1]);
+  if (a < 0 || b < 0 || a == b) {
+    return same;
+  }
+  let sa = side_of(dom, first, a);
+  let sb = side_of(dom, first, b);
+  if (sa < 0 || sb < 0 || sa == sb) {
+    return same;
+  }
+  let ta = ssa.position_of(at, picked(first, again, jb.term, sa));
+  let tb = ssa.position_of(at, picked(first, again, jb.term, sb));
+  if (ta < 0 || tb < 0 || ta == tb) {
+    return same;
+  }
+  if (only_jumps(f, ta, jb.id, f.blocks[tb].id) && two_preds(f.blocks[tb], jb.id, f.blocks[ta].id)) {
+    return ssa.Threading { f: threaded(f, j, a, b, ta, tb), changed: true };
+  }
+  if (only_jumps(f, tb, jb.id, f.blocks[ta].id) && two_preds(f.blocks[ta], jb.id, f.blocks[tb].id)) {
+    return ssa.Threading { f: threaded(f, j, b, a, tb, ta), changed: true };
+  }
+  return same;
+}
+
+// The block at s has the block `from` as its one predecessor, has no phi, and
+// ends in a jump to `to`.
+function only_jumps(f: ssa.SFunc, s: i32, from: i32, to: i32): boolean {
+  let b = f.blocks[s];
+  return b.preds.len() == 1 && b.preds[0] == from && b.term.kind_tag == ssa.TERM_BR && b.term.target == to;
+}
+
+function two_preds(b: ssa.SBlock, x: i32, y: i32): boolean {
+  return b.preds.len() == 2 && x != y && util.index_of_i32(b.preds, x) >= 0 && util.index_of_i32(b.preds, y) >= 0;
+}
+
+function retargeted(t: ssa.STerm, from: i32, to: i32): ssa.STerm {
+  if (t.kind_tag == ssa.TERM_BR && t.target == from) {
+    return ssa.t_br(to);
+  }
+  if (t.kind_tag == ssa.TERM_BRIF) {
+    return ssa.STerm { ...t, t: if (t.t == from) { to } else { t.t }, f: if (t.f == from) { to } else { t.f } };
+  }
+  return t;
+}
+
+// The value that the phi `v` of the join takes from its predecessor in
+// `slot`, or `v` when it is not such a phi.
+function from_slot(phis: ssa.SInst[], v: i32, slot: i32): i32 {
+  for phi in phis {
+    if (phi.result == v) {
+      return phi.args[slot];
+    }
+  }
+  return v;
+}
+
+// The predecessor at x goes to the side block at s, and the predecessor at y
+// goes to the rest block at r. The side block reads what the join took from
+// x. The rest block gets the phis of the join: from y in the place of the
+// join, and from x through the side block.
+function threaded(f: ssa.SFunc, j: i32, x: i32, y: i32, s: i32, r: i32): ssa.SFunc {
+  let jb = f.blocks[j];
+  let xs = ssa.pred_slot(jb, f.blocks[x].id);
+  let ys = ssa.pred_slot(jb, f.blocks[y].id);
+  let phis: ssa.SInst[] = [];
+  for ins in jb.insts {
+    if (ins.kind_tag == ssa.PHI) {
+      phis = phis.append(ins);
+    }
+  }
+  let sb = f.blocks[s];
+  let rb = f.blocks[r];
+  let blocks = f.blocks;
+  blocks = blocks.with(x, ssa.SBlock { ...blocks[x], term: retargeted(blocks[x].term, jb.id, sb.id) });
+  blocks = blocks.with(y, ssa.SBlock { ...blocks[y], term: retargeted(blocks[y].term, jb.id, rb.id) });
+  let side_insts: ssa.SInst[] = [];
+  for ins in sb.insts {
+    let args: i32[] = [];
+    for arg in ins.args {
+      args = args.append(from_slot(phis, arg, xs));
+    }
+    side_insts = side_insts.append(ssa.SInst { ...ins, args: args });
+  }
+  blocks = blocks.with(s, ssa.SBlock { ...sb, insts: side_insts, preds: [f.blocks[x].id] });
+  let via_join = ssa.pred_slot(rb, jb.id);
+  let via_side = ssa.pred_slot(rb, sb.id);
+  let rest_insts: ssa.SInst[] = [];
+  for phi in phis {
+    let args = [0, 0].with(via_join, phi.args[ys]).with(via_side, phi.args[xs]);
+    rest_insts = rest_insts.append(ssa.SInst { ...phi, args: args });
+  }
+  for ins in rb.insts {
+    if (ins.kind_tag != ssa.PHI) {
+      rest_insts = rest_insts.append(ins);
+      continue;
+    }
+    let args = ins.args.with(via_join, from_slot(phis, ins.args[via_join], ys)).with(via_side, from_slot(phis, ins.args[via_side], xs));
+    rest_insts = rest_insts.append(ssa.SInst { ...ins, args: args });
+  }
+  let rest_preds = rb.preds.with(via_join, f.blocks[y].id);
+  blocks = blocks.with(r, ssa.SBlock { ...rb, insts: rest_insts, preds: rest_preds });
+  let kept: ssa.SBlock[] = [];
+  for k in 0..blocks.len() {
+    if (k != j) {
+      kept = kept.append(blocks[k]);
+    }
+  }
+  return ssa.SFunc { ...f, blocks: kept };
+}
