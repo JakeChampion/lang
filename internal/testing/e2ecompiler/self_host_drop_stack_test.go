@@ -113,7 +113,7 @@ func TestSelfHostDropKeepsAStackInItsNodes(t *testing.T) {
 	lines := strings.Split(body, "\n")
 	sole := 0
 	for i, line := range lines {
-		if strings.TrimSpace(line) != "call __fn___fern_box_dec.u" {
+		if call := strings.TrimSpace(line); call != "call __fn___fern_box_dec.u" && call != "call __fn___fern_box_free.u" {
 			continue
 		}
 		tested := false
@@ -126,6 +126,15 @@ func TestSelfHostDropKeepsAStackInItsNodes(t *testing.T) {
 	}
 	if sole < 3 {
 		t.Errorf("the drop of Tree frees %d unique boxes with no count test, want 3 or more:\n%s", sole, body)
+	}
+	// Each box of Tree has 1 to 255 words, so such a free gives the block to
+	// its free list with no test of the size.
+	if !strings.Contains(body, "call __fn___fern_box_free.u\n") {
+		t.Errorf("the drop of Tree does not call the direct free:\n%s", body)
+	}
+	direct := "__fn___fern_box_free.u:\n    movzwl -4(%rax), %ecx\n    leaq -8(%rax), %rdx\n    leaq __fern_freelist+8(%rip), %r8\n    movq (%r8,%rcx,8), %rdi\n    movq %rdi, (%rdx)\n    movq %rdx, (%r8,%rcx,8)\n    ret\n"
+	if !strings.Contains(string(asm), direct) {
+		t.Errorf("the listing has no direct free routine:\n%s", direct)
 	}
 	// A value of Tree is never an odd address, so its tests skip bit 0.
 	if strings.Contains(body, "testb $1,") {

@@ -602,11 +602,22 @@ pub function light_call(ins: SInst): boolean {
   return ins.kind_tag == ARR_BOX && ins.str == "box" || fresh_alloc_call(ins);
 }
 
+// The imm of a release of a box that its frame proved unique (ir.sole).
+pub const SOLE: i32 = 5;
+
+// The imm of such a release of a box of 1 to 255 words (ir.sole_box).
+pub const SOLE_BOX: i32 = 9;
+
+// A release with no test of the count.
+pub function sole_release(ins: SInst): boolean {
+  return ins.imm == SOLE || ins.imm == SOLE_BOX;
+}
+
 // A release that the emitters test inline: the count of a shared box goes
 // down by one, and only a unique box calls the routine. The helper release
 // of a record or a variant has the mark 7 (`ir.box_release`).
 pub function inline_release(ins: SInst): boolean {
-  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && ins.imm != 5 || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && !sole_release(ins) || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
 }
 
 function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean, light: boolean): i32 {

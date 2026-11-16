@@ -3336,7 +3336,11 @@ function ssa_box_release(ins: ssa.SInst, s: asmcore.EmitState): boolean {
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base: i32, s: asmcore.EmitState): asmcore.EmitState {
-  if (ins.imm == 5) {
+  if (ins.imm == ssa.SOLE_BOX && fast_box_calls(s)) {
+    s = ssa_bl_sym(helper_arg_moves(ins, reg_of, s).need("box_free"), "__fn___fern_box_free.u");
+    return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
+  }
+  if (ssa.sole_release(ins)) {
     return ssa_helper_entry(ins, reg_of, ".u", s);
   }
   s = helper_call_needs(ins.str, s);
@@ -13816,7 +13820,18 @@ function emit_box_routines(s: asmcore.EmitState): asmcore.EmitState {
     }
     s = s.write("    subs x1, x1, #2\n    csel x1, x1, xzr, hs\n    stur x1, [x0, #-8]\n    mov x2, #1\n    str x2, [x0]\n    add x0, x0, #8\n");
   }
-  return s.write(".Lboxdec_array:\n    b __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
+  s = s.write(".Lboxdec_array:\n    b __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
+  if (!s.has_need("box_free")) {
+    return s;
+  }
+  // __fn___fern_box_free.u frees a box in x0 that its caller proved unique,
+  // of 1 to 255 words and not an array, with no test.
+  s = s.write("__fn___fern_box_free.u:\n");
+  if (!direct_boxes(s)) {
+    return s.write("    b __fn___fern_box_dec.u\n");
+  }
+  s = s.write("    ldurh w1, [x0, #-4]\n    sub x2, x0, #8\n    adrp x3, __fern_freelist\n    add x3, x3, :lo12:__fern_freelist\n    add x3, x3, x1, lsl #3\n");
+  return s.write("    ldr x9, [x3, #8]\n    str x9, [x2]\n    str x2, [x3, #8]\n    ret\n");
 }
 
 // __fern_rec_box_N is __fern_rec_box for a box of N words. It knows the free
@@ -13842,7 +13857,12 @@ function emit_sized_rec_box(own s: asmcore.EmitState, words: i32): asmcore.EmitS
 // and nothing counts or profiles each allocation. A unit of several keeps the
 // general routine, because the unit with the runtime does not see its calls.
 function sized_box_call(s: asmcore.EmitState, words: i64): boolean {
-  return compact_boxes(s) && !s.leak_check && !rtprofile.allocation(s.profile) && !s.split_units && asmcore.sized_rec_box_words(words);
+  return fast_box_calls(s) && asmcore.sized_rec_box_words(words);
+}
+
+// The calls of a unit can name a box routine that only some programs use.
+function fast_box_calls(s: asmcore.EmitState): boolean {
+  return compact_boxes(s) && !s.leak_check && !rtprofile.allocation(s.profile) && !s.split_units;
 }
 
 function profile_alloc_fast(s: asmcore.EmitState): boolean {

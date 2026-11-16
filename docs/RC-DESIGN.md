@@ -580,7 +580,10 @@ pointer that flows through the program points past the header.
   call that knows n calls `__fern_rec_box_n` (`asmcore.sized_rec_box`). That
   routine has the address of the free list and the size of the block as
   constants, and goes to `__fern_rec_box` only when the bump leaves its
-  64 KiB line. The output has a routine only for each n that a call names. A build with the sanitizer, the
+  64 KiB line. The output has a routine only for each n that a call names.
+  A drop that proved such a box unique frees it through
+  `__fn___fern_box_free.u` (`ir.sole_box`), which puts the block on its free
+  list with no test. A build with the sanitizer, the
   quarantine, `-harden` or an allocation profile gives each box the header
   of an array and keeps the tag in the same half. A program can have 32,766
   shapes, and a record can have 65,535 fields. On wasm32 a record keeps its

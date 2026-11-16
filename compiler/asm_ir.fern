@@ -601,6 +601,22 @@ function emit_box_dec(own s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    jmp __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
 }
 
+// __fn___fern_box_free.u frees a box in %rax that its caller proved unique,
+// of 1 to 255 words and not an array. The block of n + 1 words goes on its
+// free list with no test. A build whose box routines are not direct gives the
+// box to __fn___fern_box_dec.u.
+function emit_box_free(own s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.has_need("box_free")) {
+    return s;
+  }
+  s = s.write("__fn___fern_box_free.u:\n");
+  if (!direct_boxes(s)) {
+    return s.write("    jmp __fn___fern_box_dec.u\n");
+  }
+  s = s.write("    movzwl -4(%rax), %ecx\n    leaq -8(%rax), %rdx\n    leaq __fern_freelist+8(%rip), %r8\n");
+  return s.write("    movq (%r8,%rcx,8), %rdi\n    movq %rdi, (%rdx)\n    movq %rdx, (%r8,%rcx,8)\n    ret\n");
+}
+
 // %rax holds the block that the bump allocator made and %rdi its end. When
 // the block crosses a 64 KiB line, the bump pointer moves forward by 0 to 960
 // bytes, so blocks of one size do not stay a constant distance apart. Boxes
@@ -4717,6 +4733,7 @@ function emit_ir_runtime_part_5(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    ret\n");
   s = emit_box_dec(s);
+  s = emit_box_free(s);
   s = s.write("__fn___fern_str_free:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("__fn___fern_str_free.r:\n");
@@ -9595,7 +9612,11 @@ function ssa_box_release(ins: ssa.SInst, s: asmcore.EmitState): boolean {
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
-  if (ins.imm == 5) {
+  if (ins.imm == ssa.SOLE_BOX && compact_boxes(s) && !hev_on(s) && !s.split_units) {
+    s = ssa_call_sym(helper_arg_moves(ins, reg_of, s).need("box_free"), "__fn___fern_box_free.u");
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+  }
+  if (ssa.sole_release(ins)) {
     return ssa_helper_entry(ins, reg_of, ".u", s);
   }
   s = helper_call_needs(ins.str, s);
