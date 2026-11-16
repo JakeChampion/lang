@@ -1,0 +1,177 @@
+import "../ssa";
+import "../ssasame";
+import "../util";
+
+function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.SInst {
+  return ssa.SInst { kind_tag: kind, result: result, args: args, imm: imm, str: str };
+}
+
+function param(i: i32): ssa.SInst {
+  return inst(ssa.PARAM, i, [], i, "");
+}
+
+function zero(result: i32): ssa.SInst {
+  return inst(ssa.CONST_INT, result, [], 0, "");
+}
+
+function test(result: i32, op: string, value: i32, against: i32, width: i32): ssa.SInst {
+  return inst(ssa.BINARY, result, [value, against], width, op);
+}
+
+function call(result: i32, name: string, args: i32[]): ssa.SInst {
+  return inst(ssa.CALL, result, args, 0, name);
+}
+
+function phi(result: i32, args: i32[]): ssa.SInst {
+  return inst(ssa.PHI, result, args, 0, "");
+}
+
+function jump(to: i32): ssa.STerm {
+  return ssa.t_br(to);
+}
+
+function branch(cond: i32, t: i32, f: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
+}
+
+function back(v: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: v };
+}
+
+function block(id: i32, preds: i32[], insts: ssa.SInst[], term: ssa.STerm): ssa.SBlock {
+  return ssa.SBlock { id: id, insts: insts, term: term, preds: preds };
+}
+
+function func(nvals: i32, blocks: ssa.SBlock[]): ssa.SFunc {
+  return ssa.SFunc { name: "same", nparams: 1, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
+}
+
+function find(f: ssa.SFunc, id: i32): ssa.SBlock {
+  for b in f.blocks {
+    if (b.id == id) {
+      return b;
+    }
+  }
+  return block(-1, [], [], back(-1));
+}
+
+function jumps_to(f: ssa.SFunc, id: i32, to: i32): boolean {
+  let b = find(f, id);
+  return b.id == id && b.term.kind_tag == ssa.TERM_BR && b.term.target == to;
+}
+
+function branches(f: ssa.SFunc, id: i32): boolean {
+  return find(f, id).term.kind_tag == ssa.TERM_BRIF;
+}
+
+function gone(f: ssa.SFunc, id: i32): boolean {
+  return find(f, id).id < 0;
+}
+
+// The test of value 0 in block 0 goes to 1 or 2. Block 1 tests the value
+// again with `op` and `width`, and goes to 3 or 4. Each of 2, 3 and 4 returns.
+function nested(first: string, op: string, width: i32): ssa.SFunc {
+  let b0 = block(0, [], [param(0), zero(1), test(2, first, 0, 1, 64)], branch(2, 1, 2));
+  let b1 = block(1, [0], [zero(3), test(4, op, 0, 3, width)], branch(4, 3, 4));
+  let b2 = block(2, [0], [], back(0));
+  let b3 = block(3, [1], [zero(5)], back(5));
+  let b4 = block(4, [1], [], back(0));
+  return func(6, [b0, b1, b2, b3, b4]);
+}
+
+// Block 1 is the zero side of the test in block 0. It tests again, and its
+// zero side, block 3, has a reuse allocation of the tested value.
+function reuse(): ssa.SFunc {
+  let b0 = block(0, [], [param(0), zero(1), test(2, "eq", 0, 1, 64)], branch(2, 1, 2));
+  let b1 = block(1, [0], [zero(3), test(4, "eq", 0, 3, 64)], branch(4, 3, 4));
+  let b2 = block(2, [0], [], back(0));
+  let b3 = block(3, [1], [zero(5), call(6, "__fern_alloc_reuse", [0, 5])], back(6));
+  let b4 = block(4, [1], [], back(0));
+  return func(7, [b0, b1, b2, b3, b4]);
+}
+
+// The two sides of the test in block 0 meet in block 3, which tests again
+// with `op`. Block 4 only jumps to block 5. With `extra`, the join holds a
+// call too.
+function joined(op: string, extra: boolean): ssa.SFunc {
+  let b0 = block(0, [], [param(0), zero(1), test(2, "eq", 0, 1, 64)], branch(2, 1, 2));
+  let b1 = block(1, [0], [zero(3), call(4, "__fern_alloc_reuse", [3, 3])], jump(3));
+  let b2 = block(2, [0], [], jump(3));
+  let join = [phi(5, [4, 0]), zero(6), test(7, op, 0, 6, 64)];
+  if (extra) {
+    join = join.append(call(10, "print_i32", [5]));
+  }
+  let b3 = block(3, [1, 2], join, if (op == "ne") { branch(7, 5, 4) } else { branch(7, 4, 5) });
+  let b4 = block(4, [3], [call(8, "__fern_rc_dec", [5])], jump(5));
+  let b5 = block(5, [3, 4], [call(9, "print_i32", [5])], back(5));
+  return func(11, [b0, b1, b2, b3, b4, b5]);
+}
+
+function phi_args(f: ssa.SFunc, id: i32, result: i32): i32[] {
+  for ins in find(f, id).insts {
+    if (ins.kind_tag == ssa.PHI && ins.result == result) {
+      return ins.args;
+    }
+  }
+  return [];
+}
+
+function arg_of(f: ssa.SFunc, id: i32, result: i32, at: i32): i32 {
+  for ins in find(f, id).insts {
+    if (ins.result == result && at < ins.args.len()) {
+      return ins.args[at];
+    }
+  }
+  return -1;
+}
+
+function is_zero(f: ssa.SFunc, v: i32): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result == v) {
+        return ins.kind_tag == ssa.CONST_INT && ins.imm == 0;
+      }
+    }
+  }
+  return false;
+}
+
+function check(cond: boolean, what: string, failures: i32): i32 {
+  if (cond) {
+    return failures;
+  }
+  eprint("FAIL: " + what);
+  return failures + 1;
+}
+
+function main(): i32 {
+  let failures = 0;
+  let a = ssasame.decided(nested("eq", "eq", 64));
+  failures = check(jumps_to(a, 1, 3) && gone(a, 4), "the true side of `eq` takes the true side of a second `eq`", failures);
+  let b = ssasame.decided(nested("eq", "ne", 64));
+  failures = check(jumps_to(b, 1, 4) && gone(b, 3), "the true side of `eq` takes the false side of `ne`", failures);
+  let c = ssasame.decided(nested("ne", "eq", 64));
+  failures = check(jumps_to(c, 1, 4) && gone(c, 3), "the true side of `ne` takes the false side of `eq`", failures);
+  let d = ssasame.decided(nested("eq", "eq", 32));
+  failures = check(branches(d, 1), "a test of another width stays", failures);
+  let e = ssasame.decided(reuse());
+  failures = check(jumps_to(e, 1, 3) && is_zero(e, arg_of(e, 3, 6, 0)) && arg_of(e, 3, 6, 0) != 0, "a reuse allocation on the zero side takes a zero", failures);
+  // From block 1 the value is zero, so `ne` is false there: 1 goes to the
+  // side block 4, and 2 goes to block 5.
+  let g = ssasame.decided(joined("ne", false));
+  let moved = phi_args(g, 5, 5);
+  let rest = find(g, 5);
+  let ok = gone(g, 3) && jumps_to(g, 1, 4) && jumps_to(g, 2, 5) && moved.len() == 2 && rest.preds.len() == 2;
+  if (ok) {
+    let from_two = moved[ssa.pred_slot(rest, 2)];
+    let from_side = moved[ssa.pred_slot(rest, 4)];
+    ok = from_two == 0 && from_side == 4 && arg_of(g, 4, 8, 0) == 4;
+  }
+  failures = check(ok, "a join that only tests again gives each side its target, and its phi moves down", failures);
+  let h = ssasame.decided(joined("eq", false));
+  failures = check(gone(h, 3) && jumps_to(h, 1, 4) && jumps_to(h, 2, 5), "the join with `eq` gives the zero side the side block", failures);
+  let k = ssasame.decided(joined("ne", true));
+  failures = check(branches(k, 3), "a join that holds a call stays", failures);
+  print("failures=" + util.i32_to_string(failures));
+  return 0;
+}

@@ -74,8 +74,14 @@ lowered function it:
    each of those tests decided (`ssa.split_tokens`), gives each other reuse
    allocation of such a token a branch on the token, so that the side with
    the box writes neither the shape nor a word that the box already has
-   (`ssatokenkeep.keeps`), gives a cons-tail loop with two hole positions
-   one phi for the address of its hole (`ssaholeaddr.addresses`), marks each
+   (`ssatokenkeep.keeps`), turns a branch into a jump when a branch above
+   it tested the same value against zero, below one side of that branch or
+   at the join of its two sides (`ssasame.decided`), gives a cons-tail loop with two hole positions
+   one phi for the address of its hole (`ssaholeaddr.addresses`), gives a
+   cons-tail loop a cell in the frame for its result and starts its hole at
+   the address of that cell, so that a fill is one store with no null test
+   and a return reads the cell (`ssaholecell.cells`, `ssa.FRAME_CELL`), marks
+   each
    reuse
    allocation whose token is null so that it calls the fresh entry of the
    helper with no test (`ssa.fresh_boxes`), then turns each branch whose two arms
@@ -597,6 +603,33 @@ not register pressure. The order to take that in:
    subset that worked on the lifted function saved 1.2-1.9% of instructions
    for 20-22% more compile time
    (`docs/ssa-log/2026-09-17-the-optimiser-costs-more-than-it-saves.md`).
+
+### The frame split
+
+A function whose frame only saves registers makes that frame on the paths
+that need it (`ssa.frame_split`). On x86-64 that is a function with a bare
+frame. On arm64 it is a function with no slot. A profile build and a build
+with the canary make the frame at the entry.
+
+- An early block runs before the frame. It has only moves, loads, constants
+  and integer operations that cannot trap, and no value of the block has a
+  home that the frame saves. Each predecessor of an early block is early.
+- A site is a block that is not early and has an early predecessor. Each
+  predecessor of a site is early. The emitter writes the saves at the start
+  of a site, so each path makes the frame one time.
+- A return in an early block is a `ret` alone.
+- A parameter whose home the frame saves is a late parameter. In the early
+  blocks it stays in the register of its argument, and each site moves it to
+  its home (`EarlyHomes`). No early block writes that register.
+- The split is empty unless an early block returns. The CFI rows follow the
+  text: the entry state is remembered, and each block restores it or states
+  the rows of the frame.
+
+- The edges are the edges that the emitter writes: a jump to a block that
+  only passes it on goes to the end of that chain (`ssa.forward_target`).
+
+`TestSelfHostFrameSplit` pins the shape on the two ISAs, and
+`TestSelfHostSSAFrameSplit` checks the split of graphs made by hand.
 
 ### Cold calls
 
