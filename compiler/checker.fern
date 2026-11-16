@@ -20658,7 +20658,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[], lends: OwnResultLends }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -20933,7 +20933,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): Ow
       bound = bound.append(p.name);
     }
   }
-  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced, sends: ctx.sends };
+  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced, sends: ctx.sends, lends: ctx.lends };
   return nested;
 }
 
@@ -21459,7 +21459,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
             return ow_variant_args_owned(c, ctx);
           }
-          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && util.has_str(ctx.fresh, cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
+          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && util.has_str(ctx.fresh, cid.name) || ow_callback_args_owned(c, ctx.last_use.get()) || ow_lending_args_owned(c, cid.name, ctx);
         },
         ast.ExprFieldAccess(mfa) => {
           // An associated call with no arguments has no source for a loan.
@@ -21996,13 +21996,41 @@ function lu_scoped_fresh(fx: LuFn, body: ast.Stmt[], e: ast.Expr): boolean {
   return lu_fresh_value(fx, e);
 }
 
+function lu_plain_name_free(fx: LuFn, name: string): boolean {
+  return !fx.ofuncs.funcs.has(name) && !util.has_str(fx.params, name) && lu_decl_count(fx, name) == 0;
+}
+
+// The lender row of the variant constructor that the callee names, plain or
+// with its enum. A plain name that two enums declare has no row.
+function lu_variant_row(fx: LuFn, callee: ast.Expr): Option[OwnLend] {
+  let variants = fx.lenders.variants;
+  let key = "";
+  if let ast.ExprIdent(id) = callee {
+    if (lu_plain_name_free(fx, id.name) && !variants.shared.has(id.name)) {
+      key = id.name;
+    }
+  }
+  if let ast.ExprFieldAccess(field) = callee {
+    if let ast.ExprIdent(owner) = field.obj {
+      if (lu_plain_name_free(fx, owner.name)) {
+        key = owner.name + "." + field.field;
+      }
+    }
+  }
+  let at = variants.keys.find(key);
+  if (key.len() == 0 || at < 0) {
+    return None;
+  }
+  return Some(variants.rows[at / 2]);
+}
+
 function lu_safe_constructor(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprIdent(id) = e {
-    return fx.lenders.constructors.has(id.name) && !fx.ofuncs.funcs.has(id.name) && !util.has_str(fx.params, id.name) && lu_decl_count(fx, id.name) == 0;
+    return fx.lenders.constructors.has(id.name) && lu_plain_name_free(fx, id.name);
   }
   if let ast.ExprFieldAccess(field) = e {
     if let ast.ExprIdent(owner) = field.obj {
-      return !fx.ofuncs.funcs.has(owner.name) && !util.has_str(fx.params, owner.name) && lu_decl_count(fx, owner.name) == 0 && fx.lenders.constructors.has(owner.name + "." + field.field);
+      return lu_plain_name_free(fx, owner.name) && fx.lenders.constructors.has(owner.name + "." + field.field);
     }
   }
   return false;
@@ -22503,6 +22531,9 @@ function lu_rebind_argument(e: ast.Expr, target: string): boolean {
 
 // A call of a named function, or of a method that the program declares.
 function lu_plain_or_declared(fx: LuFn, c: ast.ExprCall): boolean {
+  if let Some(_) = lu_variant_row(fx, c.callee) {
+    return true;
+  }
   match (c.callee) {
     ast.ExprIdent(_) => {
       return true;
@@ -22763,6 +22794,14 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
   if (!ow_call_may_borrow(c, fx.ofuncs, fx.borrows, fx.builtins)) {
     return false;
   }
+  if let Some(variant) = lu_variant_row(fx, c.callee) {
+    for i in 0..c.args.len() {
+      if (lu_lends(variant, i) && lu_arg_borrows_beside(fx, c.args[i], except)) {
+        return true;
+      }
+    }
+    return false;
+  }
   if let ast.ExprFieldAccess(field) = c.callee {
     let key = ow_receiver_ns(ast.receiver_tag(field.obj)) + "." + field.field;
     if (util.has_str(fx.lenders.fresh_methods, key)) {
@@ -22867,6 +22906,9 @@ function lu_arg_may_borrow(fx: LuFn, e: ast.Expr): boolean {
     },
     ast.ExprCall(c) => {
       if let ast.ExprIdent(_) = c.callee {
+        return lu_call_site_borrows(fx, c);
+      }
+      if let Some(_) = lu_variant_row(fx, c.callee) {
         return lu_call_site_borrows(fx, c);
       }
       return true;
@@ -27813,7 +27855,53 @@ function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnD
 // module does not declare has no row, and every argument of it can lend.
 struct OwnLend { name: string, receiver: string, lend: boolean[], callbacks: boolean[] }
 
-struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: string[], constructors: util.NameIndex, decls: OwnDecls }
+struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: string[], constructors: util.NameIndex, variants: OwnVariants, decls: OwnDecls }
+
+// The payloads of each variant constructor that can lend a handle to the
+// value that it makes. keys holds two names for row k: the name with its enum
+// at 2k and the plain name at 2k + 1. shared holds each plain name that two
+// enums declare.
+struct OwnVariants { rows: OwnLend[], keys: util.NameIndex, shared: util.NameIndex }
+
+function ow_variants(mod: parser.Module, dx: OwnDecls): OwnVariants {
+  let rows: OwnLend[] = [];
+  let keys: string[] = [];
+  let plain: string[] = [];
+  for declaration in mod.structs {
+    if (declaration.enum_owner.len() == 0) {
+      continue;
+    }
+    let lend: boolean[] = [];
+    let callbacks: boolean[] = [];
+    for field in declaration.fields {
+      lend = lend.append(ow_payload_can_lend(field.type_name, dx));
+      callbacks = callbacks.append(false);
+    }
+    rows = rows.append(OwnLend { name: declaration.name, receiver: declaration.enum_owner, lend: lend, callbacks: callbacks });
+    keys = keys.append(declaration.enum_owner + "." + declaration.name);
+    keys = keys.append(declaration.name);
+    plain = plain.append(declaration.name);
+  }
+  let first = util.name_index(plain);
+  let shared: string[] = [];
+  for k in 0..plain.len() {
+    if (first.find(plain[k]) != k) {
+      shared = shared.append(plain[k]);
+    }
+  }
+  return OwnVariants { rows: rows, keys: util.name_index(keys), shared: util.name_index(shared) };
+}
+
+// A payload that is a callback lends when its result can, as a callback
+// parameter does.
+function ow_payload_can_lend(tn: string, dx: OwnDecls): boolean {
+  let arrow = parser.top_arrow_at(tn);
+  if (arrow >= 0) {
+    let result = slice_unchecked(tn, arrow + 2, tn.len()).to_owned().trim();
+    return !parser.spelling_is_own(result) && ow_payload_can_lend(result, dx);
+  }
+  return !ow_holds_no_handle(tn, dx);
+}
 
 function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLenders {
   let rows: OwnLend[] = [];
@@ -27855,7 +27943,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
       }
     }
   }
-  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: [], constructors: util.name_index(constructors), decls: dx };
+  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: [], constructors: util.name_index(constructors), variants: ow_variants(mod, dx), decls: dx };
 }
 
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
@@ -28415,6 +28503,24 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
           init = f.iter;
         }
       }
+      // The binders of an arm come from the scrutinee.
+      if let ast.StmtMatch(m) = st {
+        let binders: string[] = [];
+        for arm in m.arms {
+          binders = astwalk.pattern_binders(arm.pattern, binders);
+        }
+        let fresh_binders: string[] = [];
+        for binder in binders {
+          if (!util.has_str(locals, binder) && !util.has_str(fresh_binders, binder)) {
+            fresh_binders = fresh_binders.append(binder);
+          }
+        }
+        if (fresh_binders.len() > 0 && ow_expr_borrows(m.scrutinee, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
+          locals = util.append_all(locals, fresh_binders);
+          changed = true;
+        }
+        continue;
+      }
       if (name.len() == 0 || util.has_str(locals, name)) {
         continue;
       }
@@ -28428,8 +28534,21 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
 }
 
 function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext): boolean {
+  return ow_func_result_borrows_from(fn, mod, ofuncs, borrows, builtins, lenders, -1);
+}
+
+// The result borrow of fn from the parameter at `only`, or from each
+// parameter when `only` is negative.
+function ow_func_result_borrows_from(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, only: i32): boolean {
   let handles_only = fn.ret_type.len() > 0 && !ow_holds_no_handle(fn.ret_type, lenders.lenders.decls);
   let borrowed = ow_borrowed_params(fn, mod, ofuncs);
+  if (only >= 0) {
+    let one: string[] = [];
+    if (only < fn.params.len() && util.has_str(borrowed, fn.params[only].name)) {
+      one = [fn.params[only].name];
+    }
+    borrowed = one;
+  }
   if (borrowed.len() == 0) {
     return false;
   }
@@ -28500,7 +28619,7 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.
       continue;
     }
     if (ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs)) {
-      pending = pending.append(fn);
+      pending = pending.append(lexical.resolve_func(fn).func);
       pnames = pnames.append(fn.name);
     }
   }
@@ -28531,6 +28650,65 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.
     calls = unmarked_calls;
   }
   return borrows;
+}
+
+// For each function whose result borrows, the parameters that the result
+// can borrow from.
+struct OwnResultLends { names: util.NameIndex, rows: boolean[][] }
+
+function ow_result_lends(mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, lenders: OwnLenders): OwnResultLends {
+  let names: string[] = [];
+  let rows: boolean[][] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() > 0 || !borrows.has(fn.name)) {
+      continue;
+    }
+    let resolved = lexical.resolve_func(fn).func;
+    let row: boolean[] = [];
+    for i in 0..resolved.params.len() {
+      row = row.append(ow_func_result_borrows_from(resolved, mod, ofuncs, borrows, builtins, borrow_context(lenders), i));
+    }
+    names = names.append(fn.name);
+    rows = rows.append(row);
+  }
+  return OwnResultLends { names: util.name_index(names), rows: rows };
+}
+
+// A literal that builds a value, or a call.
+function ow_fresh_construction(e: ast.Expr): boolean {
+  if let ast.ExprCall(_) = e {
+    return true;
+  }
+  if let ast.ExprStructLit(_) = e {
+    return true;
+  }
+  if let ast.ExprArray(_) = e {
+    return true;
+  }
+  if let ast.ExprTuple(_) = e {
+    return true;
+  }
+  if let ast.ExprMapLit(_) = e {
+    return true;
+  }
+  return false;
+}
+
+// A plain call where each argument that the result can borrow from is a
+// fresh construction that is owned. Only the result holds such an argument
+// after the call.
+function ow_lending_args_owned(c: ast.ExprCall, name: string, ctx: OwnCtx): boolean {
+  let at = ctx.lends.names.find(name);
+  if (at < 0 || ow_name_bound(ctx, name) || c.args.len() > ctx.lends.rows[at].len()) {
+    return false;
+  }
+  let row = ctx.lends.rows[at];
+  for i in 0..c.args.len() {
+    if (row[i] && !(ow_fresh_construction(c.args[i]) && ow_is_owned_expr(c.args[i], ctx))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function ow_calls_to(fn: parser.FuncDecl, names: util.NameIndex): string[] {
@@ -28714,6 +28892,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let result_lenders = ow_lenders(result_mod, result_funcs, decls);
   let borrows = ow_result_borrows(result_mod, result_funcs, builtins, result_lenders);
   let fresh = ow_fresh_owners(mod, ofuncs, builtins, borrows);
+  let lends_of = ow_result_lends(result_mod, result_funcs, borrows, builtins, result_lenders);
   let fresh_methods = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let noret = lu_no_return_funcs(mod);
   let fresh_scrut = ow_signature_fresh_owners(result_mod, collect_own_funcs(result_mod), builtins, decls);
@@ -28751,7 +28930,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn) };
+    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn), lends: lends_of };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, ow_source_diags(util.append_diags(send_param_assign_diags(fn, ctx.sends), r.diags), resolved.bindings));

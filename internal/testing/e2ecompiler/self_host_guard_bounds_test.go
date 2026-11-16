@@ -239,6 +239,8 @@ function main(): i32 { return look(1); }`},
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 2); }`},
 	{"grouped_negative_base", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 0 - 1); }`},
+	{"grouped_base_at_i32_max", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 2147483647); }`},
 	{"grouped_negative_offset", `function around(xs: i32[], k: i32): i32 { return xs[k + 0 - 1] + xs[k] + xs[k + 1]; }
 function main(): i32 { return around([1, 2, 3], 0); }`},
 	{"grouped_first_not_lowest", `function word(bs: [u8], off: i32): i32 { return bs[off + 2] as i32 + bs[off] as i32 + bs[off + 1] as i32; }
