@@ -79,7 +79,7 @@ function main(): i32 {
 `
 
 // The drop of Tree keeps its waiting nodes in a stack in the dropped nodes,
-// so it does not call itself.
+// so it does not call itself. Its loop keeps no flag.
 func TestSelfHostDropKeepsAStackInItsNodes(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -140,6 +140,12 @@ func TestSelfHostDropKeepsAStackInItsNodes(t *testing.T) {
 	if strings.Contains(body, "testb $1,") {
 		t.Errorf("the drop of Tree tests bit 0 of a Tree:\n%s", body)
 	}
+	// The loop keeps no flag: each path of an arm decides and leaves. A flag
+	// was a constant 1 in a register, and the free of a node tested the `or`
+	// of two flags.
+	if m := regexp.MustCompile(`(?m)^\s+or[ql] |^\s+movl \$1, %`).FindString(body); m != "" {
+		t.Errorf("the drop of Tree keeps a flag (%q):\n%s", strings.TrimSpace(m), body)
+	}
 	armOut := filepath.Join(dir, "stack-arm64.s")
 	cmd = exec.Command(h.cli, "-target", "arm64-linux", "-emit", "asm", "-o", armOut, src, h.stdlib)
 	if combined, err := cmd.CombinedOutput(); err != nil {
@@ -159,6 +165,9 @@ func TestSelfHostDropKeepsAStackInItsNodes(t *testing.T) {
 	}
 	if regexp.MustCompile(`(?m)tbnz x\d+, #0,|tst x\d+, #1$`).MatchString(armBody) {
 		t.Errorf("the arm64 drop of Tree tests bit 0 of a Tree:\n%s", armBody)
+	}
+	if m := regexp.MustCompile(`(?m)^\s+orr |^\s+mov [xw]\d+, #1$`).FindString(armBody); m != "" {
+		t.Errorf("the arm64 drop of Tree keeps a flag (%q):\n%s", strings.TrimSpace(m), armBody)
 	}
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")

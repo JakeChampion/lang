@@ -977,51 +977,17 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   return false;
 }
 
-// The count of the next node is read before the other fields drop, so the
-// read of its header does not wait for them.
-function chain_link(own r: irtables.LowerState, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  r = emit(r, ir.op_load_local(1));
-  r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
-  r = emit(r, ir.op_store_local(3));
-  r = emit(r, ir.op_load_local(3));
-  r = emit(r, aligned_unique_of(t, f));
-  return emit(r, ir.op_store_local(4));
-}
+// The slots of the chain drop: the node, its last child, a field of the
+// node, and the stack of nodes whose first child waits.
+const CHAIN_NODE: i32 = 1;
 
-// The slots of the chain drop: the stack of nodes whose field waits, and
-// whether the current node is on it.
+const CHAIN_NEXT: i32 = 3;
+
+const CHAIN_FIELD: i32 = 5;
+
 const CHAIN_PENDING: i32 = 30;
 
-const CHAIN_PUSHED: i32 = 31;
-
 const CHAIN_CELL: i32 = 32;
-
-function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  let tail = self_tail_field(v, t);
-  let linked = tail >= 0 && semtypes.equal(v.fields[tail].ty, t);
-  if (linked) {
-    r = chain_link(r, tail, t, f);
-  }
-  let waits = waiting_field(v, t, f);
-  for i in 0..v.fields.len() {
-    if (ssasem.counted(f, v.fields[i].ty) && !(linked && i == tail)) {
-      r = emit(r, ir.op_load_local(1));
-      r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
-      r = emit(r, ir.op_store_local(5));
-      if (i == tail) {
-        r = drop_tail_array(r, t, v.fields[i].ty, f);
-      } else if (i == waits) {
-        r = pushed_field(r, i, tail, t, f);
-      } else if (semtypes.equal(v.fields[i].ty, t)) {
-        // A call of the release helper here makes two calls for each level, and the return predictor holds few levels.
-        r = drop_value_inline(r, 5, t, 6, f);
-      } else {
-        r = drop_value(r, 5, v.fields[i].ty, 6, f);
-      }
-    }
-  }
-  return r;
-}
 
 // The field of the type of the chain that waits for the next node, when the
 // variant links its next node and has one such field. Its node is a cell of
@@ -1044,98 +1010,6 @@ function waiting_field(v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func):
   return at;
 }
 
-// A child with one count goes on the stack in its node, unless it holds no
-// count. A shared child gives back its count.
-function pushed_field(own r: irtables.LowerState, i: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  let leaves = childless_shapes(t, f);
-  r = emit(r, ir.op_load_local(5));
-  r = emit(r, aligned_unique_of(t, f));
-  r = emit(r, ir.op_if(0));
-  for shape in leaves {
-    r = emit(r, ir.op_load_local(5));
-    r = emit(r, ir.op_variant_is(shape));
-    r = emit(r, ir.op_if(0));
-    r = sole_release_of(release(r, 5, t, f), t, f);
-    r = emit(r, ir.op_else());
-  }
-  r = emit(r, ir.op_load_local(1));
-  r = emit(r, ir.op_load_local(5));
-  r = emit(r, ir.op_struct_set(i, 0));
-  r = emit(r, ir.op_load_local(1));
-  r = emit(r, ir.op_load_local(CHAIN_PENDING));
-  r = emit(r, ir.op_struct_set(tail, 0));
-  r = emit(r, ir.op_load_local(1));
-  r = emit(r, ir.op_store_local(CHAIN_PENDING));
-  r = emit(r, ir.op_const_i32(1));
-  r = emit(r, ir.op_store_local(CHAIN_PUSHED));
-  for shape in leaves {
-    r = emit(r, ir.op_end());
-  }
-  r = emit(r, ir.op_else());
-  r = release(r, 5, t, f);
-  return emit(r, ir.op_end());
-}
-
-// The cell on top of the stack gives its child as the next node, and the cell
-// below it as the top. A cell that is not the node of the call is freed. A
-// cell and its child each have one count, and the tests prove it to the
-// certifier. When a test fails, the shared box gives back its count.
-function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  let e = f.enums[semrecords.find_enum(f.enums, t)];
-  r = emit(r, ir.op_loop(0));
-  r = emit(r, ir.op_load_local(CHAIN_PENDING));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
-  r = emit(r, ir.op_brif(2));
-  r = emit(r, ir.op_load_local(CHAIN_PENDING));
-  r = emit(r, ir.op_store_local(CHAIN_CELL));
-  r = emit(r, ir.op_load_local(CHAIN_CELL));
-  r = emit(r, aligned_unique_of(t, f));
-  r = emit(r, ir.op_if(0));
-  let opened: string[] = [];
-  for v in e.variants {
-    let waits = waiting_field(v, t, f);
-    if (!semrecords.inhabited(v) || waits < 0) {
-      continue;
-    }
-    r = else_if_open(r, opened.len());
-    r = emit(r, ir.op_load_local(CHAIN_CELL));
-    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
-    r = emit(r, ir.op_if(0));
-    r = emit(r, ir.op_load_local(CHAIN_CELL));
-    r = emit(r, ir.counted(ir.op_struct_get(waits, 0)));
-    r = emit(r, ir.op_store_local(1));
-    r = emit(r, ir.op_load_local(CHAIN_CELL));
-    r = emit(r, ir.counted(ir.op_struct_get(self_tail_field(v, t), 0)));
-    r = emit(r, ir.op_store_local(CHAIN_PENDING));
-    opened = opened.append(v.name);
-  }
-  r = close_ifs(r, opened.len());
-  r = emit(r, ir.op_load_local(CHAIN_CELL));
-  r = emit(r, ir.op_load_local(0));
-  r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
-  r = emit(r, ir.op_if(0));
-  r = sole_release_of(release(r, CHAIN_CELL, t, f), t, f);
-  r = emit(r, ir.op_end());
-  r = emit(r, ir.op_load_local(1));
-  r = emit(r, aligned_unique_of(t, f));
-  r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(2));
-  r = emit(r, ir.op_br(3));
-  r = emit(r, ir.op_else());
-  r = release(r, 1, t, f);
-  r = emit(r, ir.op_br(2));
-  r = emit(r, ir.op_end());
-  r = emit(r, ir.op_else());
-  r = release(r, CHAIN_CELL, t, f);
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(CHAIN_PENDING));
-  r = emit(r, ir.op_br(1));
-  r = emit(r, ir.op_end());
-  return emit(r, ir.op_end());
-}
-
 function chain_waits(t: typeinfo.Type, f: ssasem.Func): boolean {
   for v in f.enums[semrecords.find_enum(f.enums, t)].variants {
     if (semrecords.inhabited(v) && waiting_field(v, t, f) >= 0) {
@@ -1145,155 +1019,127 @@ function chain_waits(t: typeinfo.Type, f: ssasem.Func): boolean {
   return false;
 }
 
-function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  if (chain_waits(t, f)) {
-    return drop_variant_stack(r, t, f);
-  }
-  let e = f.enums[semrecords.find_enum(f.enums, t)];
-  let node = 1;
-  let first = 2;
-  let next = 3;
-  let unique = 4;
-  r = reserve(r, 6);
+// The node of the call stays for its caller. Each other node is freed.
+function free_node(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
   r = emit(r, ir.op_load_local(0));
-  r = emit(r, ir.op_store_local(node));
-  r = emit(r, ir.op_const_i32(1));
-  r = emit(r, ir.op_store_local(first));
-  r = emit(r, ir.op_block(0));
-  r = emit(r, ir.op_loop(0));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(next));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(unique));
-  let open = 0;
-  for v in e.variants {
-    if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f)) {
-      continue;
-    }
-    r = else_if_open(r, open);
-    r = emit(r, ir.op_load_local(node));
-    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
-    r = emit(r, ir.op_if(0));
-    r = drop_chain_fields(r, v, t, f);
-    open += 1;
-  }
-  r = close_ifs(r, open);
-  r = emit(r, ir.op_load_local(first));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_bin("eq", 0, false));
+  r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
   r = emit(r, ir.op_if(0));
-  r = sole_release_of(release(r, node, t, f), t, f);
-  r = emit(r, ir.op_end());
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(first));
-  r = emit(r, ir.op_load_local(next));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
-  r = emit(r, ir.op_brif(1));
-  // Another field can hold the next node too, and its drop can lower the count
-  // to one after the first test. A node that was shared is tested again.
-  r = emit(r, ir.op_load_local(unique));
-  r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_else());
-  r = emit(r, ir.op_load_local(next));
-  r = emit(r, aligned_unique_of(t, f));
-  r = emit(r, ir.op_store_local(unique));
-  r = emit(r, ir.op_end());
-  r = emit(r, ir.op_load_local(unique));
-  r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_else());
-  r = release(r, next, t, f);
-  r = emit(r, ir.op_br(2));
-  r = emit(r, ir.op_end());
-  r = emit(r, ir.op_load_local(next));
-  r = emit(r, ir.op_store_local(node));
-  r = emit(r, ir.op_br(0));
-  r = emit(r, ir.op_end());
+  r = sole_release_of(release(r, CHAIN_NODE, t, f), t, f);
   return emit(r, ir.op_end());
 }
 
-// The chain drop with a stack of waiting nodes in place of a call for each
-// child. The loop drops a node, goes on to its next node while that node has
-// one count, and then takes the next node from the top of the stack.
-function drop_variant_stack(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  let e = f.enums[semrecords.find_enum(f.enums, t)];
-  let node = 1;
-  let first = 2;
-  let next = 3;
-  let unique = 4;
-  r = reserve(r, CHAIN_CELL + 1);
-  r = emit(r, ir.op_load_local(0));
-  r = emit(r, ir.op_store_local(node));
-  r = emit(r, ir.op_const_i32(1));
-  r = emit(r, ir.op_store_local(first));
-  r = emit(r, ir.op_const_i32(0));
+// Leaves the open block when `slot` holds a box that has no child.
+function leaf_exits(own r: irtables.LowerState, slot: i32, leaves: string[]): irtables.LowerState {
+  for shape in leaves {
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_variant_is(shape));
+    r = emit(r, ir.op_brif(0));
+  }
+  return r;
+}
+
+// The value of `slot` is the next node. `d` labels are open in the block of
+// the dispatch.
+function chain_goes_to(own r: irtables.LowerState, slot: i32, d: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  r = free_node(r, t, f);
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_store_local(CHAIN_NODE));
+  return emit(r, ir.op_br(d + 1));
+}
+
+// The last child of the node. With one count it is the next node, or a box
+// with no child that is freed here. A shared child gives back its count.
+// Each path leaves: to the loop with the next node, or to the stack.
+function chain_last_child(own r: irtables.LowerState, d: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let leaves = childless_shapes(t, f);
+  r = emit(r, ir.op_load_local(CHAIN_NEXT));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  if (leaves.len() > 0) {
+    r = emit(r, ir.op_block(0));
+    r = leaf_exits(r, CHAIN_NEXT, leaves);
+    r = chain_goes_to(r, CHAIN_NEXT, d + 2, t, f);
+    r = emit(r, ir.op_end());
+    r = sole_release_of(release(r, CHAIN_NEXT, t, f), t, f);
+    r = free_node(r, t, f);
+    r = emit(r, ir.op_br(d + 1));
+  } else {
+    r = chain_goes_to(r, CHAIN_NEXT, d + 1, t, f);
+  }
+  r = emit(r, ir.op_else());
+  r = release(r, CHAIN_NEXT, t, f);
+  r = free_node(r, t, f);
+  r = emit(r, ir.op_br(d + 1));
+  return emit(r, ir.op_end());
+}
+
+// The two children of the node: the field `waits` in CHAIN_FIELD and the
+// field `tail` in CHAIN_NEXT. When each has one count and has children, the
+// node goes on the stack as a cell: `waits` keeps the first child and `tail`
+// keeps the cell below. The store of the first child gives its unit back to
+// the cell for the certifier. The last child is then the next node. In each
+// other case, at most one child is the next node, and the stack does not
+// change.
+function chain_two_children(own r: irtables.LowerState, d: i32, waits: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let leaves = childless_shapes(t, f);
+  let extra = if (leaves.len() > 0) { 1 } else { 0 };
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_load_local(CHAIN_FIELD));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  if (extra > 0) {
+    r = emit(r, ir.op_block(0));
+    r = leaf_exits(r, CHAIN_FIELD, leaves);
+  }
+  r = emit(r, ir.op_load_local(CHAIN_NEXT));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  if (extra > 0) {
+    r = emit(r, ir.op_block(0));
+    r = leaf_exits(r, CHAIN_NEXT, leaves);
+  }
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
+  r = emit(r, ir.op_load_local(CHAIN_FIELD));
+  r = emit(r, ir.op_struct_set(waits, 0));
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
+  r = emit(r, ir.op_load_local(CHAIN_PENDING));
+  r = emit(r, ir.op_struct_set(tail, 0));
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
   r = emit(r, ir.op_store_local(CHAIN_PENDING));
-  r = emit(r, ir.op_block(0));
-  r = emit(r, ir.op_loop(0));
-  r = emit(r, ir.op_block(0));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(next));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(unique));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(CHAIN_PUSHED));
-  let opened: string[] = [];
-  for v in e.variants {
-    if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f)) {
-      continue;
-    }
-    r = else_if_open(r, opened.len());
-    r = emit(r, ir.op_load_local(node));
-    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
-    r = emit(r, ir.op_if(0));
-    r = drop_chain_fields(r, v, t, f);
-    opened = opened.append(v.name);
+  r = emit(r, ir.op_load_local(CHAIN_NEXT));
+  r = emit(r, ir.op_store_local(CHAIN_NODE));
+  r = emit(r, ir.op_br(d + 4 + 2 * extra));
+  if (extra > 0) {
+    r = emit(r, ir.op_end());
+    r = sole_release_of(release(r, CHAIN_NEXT, t, f), t, f);
+    r = chain_goes_to(r, CHAIN_FIELD, d + 3 + extra, t, f);
   }
-  r = close_ifs(r, opened.len());
-  r = emit(r, ir.op_load_local(first));
-  r = emit(r, ir.op_load_local(CHAIN_PUSHED));
-  r = emit(r, ir.op_bin("or", 0, false));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_bin("eq", 0, false));
-  r = emit(r, ir.op_if(0));
-  r = sole_release_of(release(r, node, t, f), t, f);
-  r = emit(r, ir.op_end());
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(first));
-  r = emit(r, ir.op_load_local(next));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
-  r = emit(r, ir.op_brif(0));
-  // Another field can hold the next node too, and its drop can lower the count
-  // to one after the first test. A node that was shared is tested again.
-  r = emit(r, ir.op_load_local(unique));
-  r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
-  r = emit(r, ir.op_load_local(next));
-  r = emit(r, aligned_unique_of(t, f));
-  r = emit(r, ir.op_store_local(unique));
+  r = release(r, CHAIN_NEXT, t, f);
+  r = chain_goes_to(r, CHAIN_FIELD, d + 3 + extra, t, f);
   r = emit(r, ir.op_end());
-  r = emit(r, ir.op_load_local(unique));
-  r = emit(r, ir.op_if(0));
+  if (extra > 0) {
+    r = emit(r, ir.op_end());
+    r = sole_release_of(release(r, CHAIN_FIELD, t, f), t, f);
+    r = emit(r, ir.op_br(1));
+  }
   r = emit(r, ir.op_else());
-  r = release(r, next, t, f);
-  r = emit(r, ir.op_br(1));
+  r = release(r, CHAIN_FIELD, t, f);
   r = emit(r, ir.op_end());
-  r = emit(r, ir.op_load_local(next));
-  r = emit(r, ir.op_store_local(node));
-  r = emit(r, ir.op_br(1));
   r = emit(r, ir.op_end());
-  r = popped(r, t, f);
-  r = emit(r, ir.op_end());
-  return emit(r, ir.op_end());
+  return chain_last_child(r, d, t, f);
 }
 
-function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+// The array in CHAIN_FIELD holds the next nodes. When the array has one
+// count, each element but the last drops here, and the last element is the
+// last child of the node.
+function chain_tail_array(own r: irtables.LowerState, d: i32, elem: typeinfo.Type, array: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   r = reserve(r, 9);
-  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(CHAIN_FIELD));
   r = emit(r, aligned_unique());
   r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(CHAIN_FIELD));
   r = emit(r, ir.op_arr_len());
   r = emit(r, ir.op_store_local(7));
   r = emit(r, ir.op_load_local(7));
@@ -1310,7 +1156,7 @@ function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array:
   r = emit(r, ir.op_load_local(7));
   r = emit(r, ir.op_bin("ge_s", 0, false));
   r = emit(r, ir.op_brif(1));
-  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(CHAIN_FIELD));
   r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(8));
@@ -1322,16 +1168,186 @@ function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array:
   r = emit(r, ir.op_br(0));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
-  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_load_local(CHAIN_FIELD));
   r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
-  r = emit(r, ir.op_store_local(3));
-  r = emit(r, ir.op_load_local(3));
-  r = emit(r, aligned_unique_of(elem, f));
-  r = emit(r, ir.op_store_local(4));
+  r = emit(r, ir.op_store_local(CHAIN_NEXT));
+  r = release(r, CHAIN_FIELD, array, f);
+  r = chain_last_child(r, d + 2, elem, f);
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
-  return release(r, 5, array, f);
+  return release(r, CHAIN_FIELD, array, f);
+}
+
+// The fields of a node of variant `v`. Each path of a variant that links its
+// next node leaves from here. Another variant goes on to the code after it.
+function drop_chain_fields(own r: irtables.LowerState, d: i32, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let tail = self_tail_field(v, t);
+  let waits = waiting_field(v, t, f);
+  for i in 0..v.fields.len() {
+    if (ssasem.counted(f, v.fields[i].ty) && i != tail && i != waits) {
+      r = emit(r, ir.op_load_local(CHAIN_NODE));
+      r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
+      r = emit(r, ir.op_store_local(CHAIN_FIELD));
+      if (semtypes.equal(v.fields[i].ty, t)) {
+        // A call of the release helper here makes two calls for each level, and the return predictor holds few levels.
+        r = drop_value_inline(r, CHAIN_FIELD, t, 6, f);
+      } else {
+        r = drop_value(r, CHAIN_FIELD, v.fields[i].ty, 6, f);
+      }
+    }
+  }
+  if (tail < 0) {
+    return r;
+  }
+  if (!semtypes.equal(v.fields[tail].ty, t)) {
+    r = emit(r, ir.op_load_local(CHAIN_NODE));
+    r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
+    r = emit(r, ir.op_store_local(CHAIN_FIELD));
+    return chain_tail_array(r, d, t, v.fields[tail].ty, f);
+  }
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
+  r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
+  r = emit(r, ir.op_store_local(CHAIN_NEXT));
+  if (waits < 0) {
+    return chain_last_child(r, d, t, f);
+  }
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
+  r = emit(r, ir.counted(ir.op_struct_get(waits, 0)));
+  r = emit(r, ir.op_store_local(CHAIN_FIELD));
+  return chain_two_children(r, d, waits, tail, t, f);
+}
+
+// Each variant that can wait on the stack keeps its first child and its last
+// child in the same two fields.
+function one_cell_shape(e: semrecords.Enum, t: typeinfo.Type, f: ssasem.Func): boolean {
+  let waits = -1;
+  let tail = -1;
+  for v in e.variants {
+    let w = waiting_field(v, t, f);
+    if (!semrecords.inhabited(v) || w < 0) {
+      continue;
+    }
+    if (waits >= 0 && (w != waits || self_tail_field(v, t) != tail)) {
+      return false;
+    }
+    waits = w;
+    tail = self_tail_field(v, t);
+  }
+  return true;
+}
+
+function cell_fields(own r: irtables.LowerState, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.counted(ir.op_struct_get(waiting_field(v, t, f), 0)));
+  r = emit(r, ir.op_store_local(CHAIN_NODE));
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.counted(ir.op_struct_get(self_tail_field(v, t), 0)));
+  return emit(r, ir.op_store_local(CHAIN_PENDING));
+}
+
+// The cell on top of the stack gives its first child as the next node, and
+// the cell below it as the top. A cell that is not the node of the call is
+// freed. A cell and its child each have one count, and the tests prove it to
+// the certifier. When a test fails, the shared box gives back its count.
+function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let e = f.enums[semrecords.find_enum(f.enums, t)];
+  let same = one_cell_shape(e, t, f);
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_load_local(CHAIN_PENDING));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+  r = emit(r, ir.op_brif(2));
+  r = emit(r, ir.op_load_local(CHAIN_PENDING));
+  r = emit(r, ir.op_store_local(CHAIN_CELL));
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  let opened = 0;
+  for v in e.variants {
+    if (!semrecords.inhabited(v) || waiting_field(v, t, f) < 0 || same && opened > 0) {
+      continue;
+    }
+    if (same) {
+      r = cell_fields(r, v, t, f);
+      opened = 1;
+      continue;
+    }
+    r = else_if_open(r, opened);
+    r = emit(r, ir.op_load_local(CHAIN_CELL));
+    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+    r = emit(r, ir.op_if(0));
+    r = cell_fields(r, v, t, f);
+    opened += 1;
+  }
+  if (!same) {
+    r = close_ifs(r, opened);
+  }
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = sole_release_of(release(r, CHAIN_CELL, t, f), t, f);
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_br(3));
+  r = emit(r, ir.op_else());
+  r = release(r, CHAIN_NODE, t, f);
+  r = emit(r, ir.op_br(2));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_else());
+  r = release(r, CHAIN_CELL, t, f);
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(CHAIN_PENDING));
+  r = emit(r, ir.op_br(1));
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_end());
+}
+
+// The drop of the children of a node of an enum that links its next node.
+// The loop takes a node apart. Its last child with one count is the next
+// node, with no call. A node with two such children waits on a stack that
+// the nodes themselves hold. When no child is the next node, the loop takes
+// the next node from the top of the stack.
+function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let e = f.enums[semrecords.find_enum(f.enums, t)];
+  let stack = chain_waits(t, f);
+  r = reserve(r, CHAIN_CELL + 1);
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_store_local(CHAIN_NODE));
+  if (stack) {
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_store_local(CHAIN_PENDING));
+  }
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_block(0));
+  for v in e.variants {
+    if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f)) {
+      continue;
+    }
+    r = emit(r, ir.op_load_local(CHAIN_NODE));
+    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+    r = emit(r, ir.op_if(0));
+    r = drop_chain_fields(r, 1, v, t, f);
+    let tail = self_tail_field(v, t);
+    if (tail < 0 || !semtypes.equal(v.fields[tail].ty, t)) {
+      r = free_node(r, t, f);
+      r = emit(r, ir.op_br(1));
+    }
+    r = emit(r, ir.op_end());
+  }
+  r = free_node(r, t, f);
+  r = emit(r, ir.op_end());
+  if (stack) {
+    r = popped(r, t, f);
+  } else {
+    r = emit(r, ir.op_br(1));
+  }
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_end());
 }
 
 function drop_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
