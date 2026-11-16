@@ -42,7 +42,51 @@ function is_zero(defs: ssa.SInst[], v: i32): boolean {
   return v >= 0 && v < defs.len() && defs[v].kind_tag == ssa.CONST_INT && defs[v].imm == 0 && defs[v].str == "";
 }
 
+// Whether a phi of f takes a null and is the base of a store. A function
+// with no such phi has no hole, and the answer costs two arrays.
+function may_fill(f: ssa.SFunc): boolean {
+  let stores = false;
+  let phis = false;
+  for b in f.blocks {
+    for ins in b.insts {
+      stores = stores || ins.kind_tag == ssa.ST_AT && ins.args.len() == 2 && ins.str == "";
+      phis = phis || ins.kind_tag == ssa.PHI;
+    }
+  }
+  if (!stores || !phis) {
+    return false;
+  }
+  let zeros = __alloc_bool(f.nvals);
+  let bases = __alloc_bool(f.nvals);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.CONST_INT && ins.imm == 0 && ins.str == "" && ins.result >= 0) {
+        zeros = zeros.with(ins.result, true);
+      }
+      if (ins.kind_tag == ssa.ST_AT && ins.args.len() == 2 && ins.str == "" && ins.args[0] >= 0) {
+        bases = bases.with(ins.args[0], true);
+      }
+    }
+  }
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag != ssa.PHI || ins.result < 0 || !bases[ins.result]) {
+        continue;
+      }
+      for a in ins.args {
+        if (a >= 0 && zeros[a]) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 function find_loop(f: ssa.SFunc): Loop {
+  if (!may_fill(f)) {
+    return no_loop();
+  }
   let defs = ssa.inst_defs(f);
   let at = ssa.block_positions(f);
   let uses = ssa.use_counts(f);

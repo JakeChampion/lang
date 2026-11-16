@@ -98,19 +98,56 @@ pub function decided(f: ssa.SFunc): ssa.SFunc {
   return g;
 }
 
-// Whether two branches of f test one value against zero.
+// The compare that decides the branch of b, when b holds it. -1 when it does
+// not.
+function own_test(b: ssa.SBlock): i32 {
+  if (b.term.kind_tag != ssa.TERM_BRIF || b.term.t == b.term.f) {
+    return -1;
+  }
+  for k in 0..b.insts.len() {
+    let ins = b.insts[k];
+    if (ins.result == b.term.cond && ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.str == "eq" || ins.str == "ne")) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// Whether two branches of f test one value against zero. It reads each test
+// in the block of its branch. A function with fewer than two such blocks
+// costs one read of its blocks and no array.
 function tested_twice(f: ssa.SFunc): boolean {
-  let defs = ssa.inst_defs(f);
+  let tests = 0;
+  for b in f.blocks {
+    if (own_test(b) >= 0) {
+      tests += 1;
+    }
+  }
+  if (tests < 2) {
+    return false;
+  }
+  let zeros = __alloc_bool(f.nvals);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.CONST_INT && ins.imm == 0 && ins.str == "" && ins.result >= 0) {
+        zeros = zeros.with(ins.result, true);
+      }
+    }
+  }
   let seen: i32[] = [];
   for b in f.blocks {
-    let t = test_of(defs, b.term);
-    if (t.value < 0) {
+    let k = own_test(b);
+    if (k < 0) {
       continue;
     }
-    if (util.index_of_i32(seen, t.value) >= 0) {
+    let v = b.insts[k].args[0];
+    if (v < 0 || zeros[v] || !zeros[b.insts[k].args[1]]) {
+      continue;
+    }
+    if (util.index_of_i32(seen, v) >= 0) {
       return true;
     }
-    seen = seen.append(t.value);
+    seen = seen.append(v);
   }
   return false;
 }
