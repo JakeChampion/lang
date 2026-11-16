@@ -1,0 +1,11 @@
+// The descriptor stays as the process got it. fcntl only tells whether it is open.
+function __fern_reader_from_fd(fd: i32): Result[i32, IoError] {
+  match (__fern_fd_flags(fd)) {
+    Ok(_) => {
+      return Ok(fd);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}

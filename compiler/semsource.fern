@@ -8083,6 +8083,7 @@ function handle_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "open_exclusive", params: [typeinfo.t_string()], modes: path, result: t_io_result(writer) },
     ssasem.Contract { name: "open_reader_with", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: path_flags, result: t_io_result(reader) },
     ssasem.Contract { name: "open_writer_with", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: path_flags, result: t_io_result(writer) },
+    ssasem.Contract { name: "reader_from_fd", params: [typeinfo.t_i32()], modes: value, result: t_io_result(reader) },
     ssasem.Contract { name: "Reader.read_chunk", params: [reader, typeinfo.t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.t_string()) },
     ssasem.Contract { name: "Reader.read_chunk_bytes", params: [reader, typeinfo.t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }) },
     ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: done },

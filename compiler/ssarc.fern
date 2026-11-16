@@ -6137,6 +6137,9 @@ function handle_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "open_writer_with") {
     return Lowered { found: true, r: emit(r, ir.op_open_writer_with()) };
   }
+  if (ins.str == "reader_from_fd") {
+    return Lowered { found: true, r: emit(r, ir.op_reader_from_fd()) };
+  }
   if (ins.str == "Reader.read_chunk") {
     return Lowered { found: true, r: emit(r, ir.op_read_chunk()) };
   }

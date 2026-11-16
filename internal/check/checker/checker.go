@@ -1569,6 +1569,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
 	}
+	c.info.FuncSigs["reader_from_fd"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
+	}
 	c.info.FuncSigs["now_unix_ms"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},

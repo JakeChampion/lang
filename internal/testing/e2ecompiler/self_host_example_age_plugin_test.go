@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -168,6 +169,7 @@ func agePlugins(t *testing.T, oracle, port ageTool, cli *selfHostCLI, target, ke
 	t.Run("round trips", func(t *testing.T) { agePluginRoundTrips(t, oracle, port, dir, keygen) })
 	t.Run("release plugins", func(t *testing.T) { agePluginRoundTrips(t, release, port, dir, keygen) })
 	t.Run("messages", func(t *testing.T) { agePluginMessages(t, release, port, dir, r1) })
+	t.Run("passphrase descriptor", func(t *testing.T) { agePassphraseFd(t, release, port, dir) })
 	t.Run("tag messages", func(t *testing.T) { ageTagMessages(t, release, port, dir) })
 	t.Run("terminal", func(t *testing.T) { agePluginTerminal(t, release, port, dir) })
 	t.Run("programs", func(t *testing.T) { agePluginPrograms(t, dir, ours, orig) })
@@ -365,6 +367,95 @@ func agePluginMessages(t *testing.T, oracle, port ageTool, dir, r1 string) {
 	for _, f := range []string{"t1.age"} {
 		if ageExists(filepath.Join(dir, f)) {
 			t.Errorf("a failed encryption left %s", f)
+		}
+	}
+}
+
+// ageDescriptor gives a file for descriptor 3 of a plugin. A regular file
+// starts at offset 5, after "skip\n". A pipe and a socket hold the text and
+// then the end of the stream.
+func ageDescriptor(t *testing.T, dir, kind, text string) *os.File {
+	t.Helper()
+	switch kind {
+	case "file":
+		path := filepath.Join(dir, "passphrase-fd")
+		ageWrite(t, path, []byte("skip\n"+text))
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Seek(5, 0); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	case "pipe":
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.WriteString(text); err != nil {
+			t.Fatal(err)
+		}
+		w.Close()
+		return r
+	case "socket":
+		pair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := syscall.Write(pair[0], []byte(text)); err != nil {
+			t.Fatal(err)
+		}
+		syscall.Close(pair[0])
+		return os.NewFile(uintptr(pair[1]), "socket")
+	case "write-only":
+		f, err := os.OpenFile(filepath.Join(dir, "passphrase-fd-wo"), os.O_WRONLY|os.O_CREATE, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// agePassphraseFd encrypts through each tool with AGE_PASSPHRASE_FD=3. The
+// batchpass plugin reads descriptor 3 from its offset. Thus the passphrase
+// is the text after the offset of a regular file. Each tool then
+// decrypts with that passphrase. A descriptor that cannot be read gives the
+// same message from each tool.
+func agePassphraseFd(t *testing.T, oracle, port ageTool, dir string) {
+	defer ageEnv(t)
+	const pass = "pass word"
+	plain := []byte("test\n")
+	for _, kind := range []string{"file", "pipe", "socket"} {
+		for _, tool := range []ageTool{oracle, port} {
+			ageEnv(t, "AGE_PASSPHRASE_FD=3", "AGE_PASSPHRASE_WORK_FACTOR=5")
+			fd := ageDescriptor(t, dir, kind, pass+"\n")
+			sealed, stderr, code := tool.runFiles(t, dir, plain, []*os.File{fd}, "-e", "-j", "batchpass")
+			fd.Close()
+			if code != 0 {
+				t.Errorf("%s -e -j batchpass with a %s on descriptor 3: exit %d: %s", tool.name, kind, code, stderr)
+				continue
+			}
+			ageEnv(t, "AGE_PASSPHRASE="+pass)
+			ageDecryptsWith(t, oracle, port, dir, fmt.Sprintf("%s's file with the passphrase of a %s", tool.name, kind), sealed, plain, "-j", "batchpass")
+		}
+	}
+	ageEnv(t, "AGE_PASSPHRASE_FD=3")
+	for _, kind := range []string{"write-only", "directory"} {
+		var outs [2]string
+		var codes [2]int
+		for i, tool := range []ageTool{oracle, port} {
+			fd := ageDescriptor(t, dir, kind, "")
+			_, outs[i], codes[i] = tool.runFiles(t, dir, plain, []*os.File{fd}, "-e", "-j", "batchpass")
+			fd.Close()
+		}
+		if codes[0] == 0 || codes[1] != codes[0] || outs[1] != outs[0] {
+			t.Errorf("a %s descriptor: age exit %d %q; fern age exit %d %q", kind, codes[0], outs[0], codes[1], outs[1])
 		}
 	}
 }

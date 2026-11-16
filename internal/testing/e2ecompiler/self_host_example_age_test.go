@@ -33,9 +33,16 @@ type ageTool struct {
 
 func (a ageTool) run(t *testing.T, dir string, stdin []byte, args ...string) ([]byte, string, int) {
 	t.Helper()
+	return a.runFiles(t, dir, stdin, nil, args...)
+}
+
+// runFiles is run with files as descriptors 3 and up.
+func (a ageTool) runFiles(t *testing.T, dir string, stdin []byte, files []*os.File, args ...string) ([]byte, string, int) {
+	t.Helper()
 	cmd := a.cmd(args...)
 	cmd.Dir = dir
 	cmd.Stdin = bytes.NewReader(stdin)
+	cmd.ExtraFiles = files
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	_ = cmd.Run()

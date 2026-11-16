@@ -17,6 +17,7 @@ The handle discipline is recorded in [HANDLE-AUDIT.md](HANDLE-AUDIT.md), and the
 | `io.temp_file_in(dir, prefix)` | The same file as an entry of a `Dir` handle: one `openat` on the handle with `O_CREAT`, `O_EXCL`, `O_NOFOLLOW` and mode 0600. No path of the directory resolves a second time. The path of the result is the name of the entry |
 | `rename_noreplace`, `rename_exchange` | `renameat2` with `RENAME_NOREPLACE` and `RENAME_EXCHANGE`, so a rename cannot overwrite a file that appeared between a check and the move |
 | `pipe`, `reactor_new`, `ring_new` | Created with `O_CLOEXEC` |
+| `reader_from_fd(fd)` | No open. One `fcntl` with `F_GETFL` checks that the descriptor is open. The Reader then reads at the current offset. The descriptor keeps its flags. `close` closes it |
 | A path, a program name, an argument or an environment entry | Refused with `EINVAL` when it holds a NUL byte, before a system call sees it. A pathname unix socket follows the same rule. A Linux abstract socket name starts with a NUL byte and can hold more |
 
 ## Changes in this record
