@@ -91,6 +91,11 @@ pub function decompress_with_limit(input: [u8], limit: i32): Result[u8[], Bzip2E
   };
 }
 
+// The CRC of 32 bits at the bit `pos`.
+function __bz_crc32_at(input: [u8], pos: i64): i64 {
+  return __bz_bits(input, pos, 16) as i64 << 16i64 | __bz_bits(input, pos + 16i64, 16) as i64;
+}
+
 // The value of `n` bits at the bit `pos`, or -1 past the end.
 function __bz_bits(input: [u8], pos: i64, n: i32): i32 {
   if (pos + n as i64 > input.len() as i64 * 8i64) {
@@ -158,9 +163,12 @@ function __bz_prefix(input: [u8]): boolean {
 // error for -1.
 struct __BzRun { out: u8[], pos: i64, error: Bzip2Error }
 
-// The blocks of a stream from the bit `pos`, up to its end mark.
+// The blocks of a stream from the bit `pos`, up to its end mark. The 32
+// bits after the end mark are the CRC of the stream: each block CRC, with
+// the CRC before it turned left by one bit.
 function __bz_stream(input: [u8], pos0: i64, size: i32, own out: u8[], limit: i32): __BzRun {
   let pos = pos0;
+  let combined = 0i64;
   while (true) {
     let hi = __bz_bits(input, pos, 24);
     let lo = __bz_bits(input, pos + 24i64, 24);
@@ -168,11 +176,18 @@ function __bz_stream(input: [u8], pos0: i64, size: i32, own out: u8[], limit: i3
       return __BzRun { out: out, pos: -1i64, error: Truncated };
     }
     if (hi == 1536581 && lo == 3690640) {
-      return __BzRun { out: out, pos: if (pos + 80i64 > input.len() as i64 * 8i64) { -1i64 } else { pos + 80i64 }, error: Truncated };
+      if (pos + 80i64 > input.len() as i64 * 8i64) {
+        return __BzRun { out: out, pos: -1i64, error: Truncated };
+      }
+      if (__bz_crc32_at(input, pos + 48i64) != combined) {
+        return __BzRun { out: out, pos: -1i64, error: Corrupt };
+      }
+      return __BzRun { out: out, pos: pos + 80i64, error: Corrupt };
     }
     if (hi != 3227993 || lo != 2511705) {
       return __BzRun { out: out, pos: -1i64, error: Corrupt };
     }
+    combined = (combined << 1i64 | combined >> 31i64) & 4294967295i64 ^ __bz_crc32_at(input, pos + 48i64);
     let r = __bz_block(input, pos + 48i64, size, out, limit);
     out = r.out;
     if (r.pos < 0i64) {
@@ -215,8 +230,6 @@ function __bz_block(input: [u8], pos: i64, size: i32, own out: u8[], limit: i32)
 function __bz_head(input: [u8], pos0: i64): (__BzHead, Bzip2Error) {
   let none: i32[] = [];
   let bad = __BzHead { crc: 0i64, orig: 0, used: [], lens: [], selectors: none, pos: -1i64 };
-  let crc_hi = __bz_bits(input, pos0, 16);
-  let crc_lo = __bz_bits(input, pos0 + 16i64, 16);
   let random = __bz_bits(input, pos0 + 32i64, 1);
   let orig = __bz_bits(input, pos0 + 33i64, 24);
   let map = __bz_bits(input, pos0 + 57i64, 16);
@@ -249,7 +262,7 @@ function __bz_head(input: [u8], pos0: i64): (__BzHead, Bzip2Error) {
   if (t.pos < 0i64) {
     return (bad, t.error);
   }
-  return (__BzHead { crc: crc_hi as i64 << 16i64 | crc_lo as i64, orig: orig, used: used, lens: t.lens, selectors: t.selectors, pos: t.pos }, Corrupt);
+  return (__BzHead { crc: __bz_crc32_at(input, pos0), orig: orig, used: used, lens: t.lens, selectors: t.selectors, pos: t.pos }, Corrupt);
 }
 ```
 

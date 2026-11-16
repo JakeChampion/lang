@@ -71,14 +71,14 @@ function xz_error(d: xz.Decoded): string {
 
 function test_errors(): test.TestOutcome {
   let got = [
-    bz_error([66u8, 90u8, 105u8]), bz_error(cut(BZ2, 30)), bz_error(flipped(BZ2, 40)), bz_error(BZ2.concat([1u8, 2u8])),
+    bz_error([66u8, 90u8, 105u8]), bz_error(cut(BZ2, 30)), bz_error(flipped(BZ2, 40)), bz_error(flipped(BZ2, BZ2.len() - 2)), bz_error(BZ2.concat([1u8, 2u8])),
     xz_error(xz.decode_xz([1u8, 2u8, 3u8, 4u8, 5u8, 6u8])), xz_error(xz.decode_xz(cut(XZ, 40))), xz_error(xz.decode_xz(flipped(XZ, 56))),
     xz_error(xz.decode_lzma(cut(LZMA, 20))), match (lzw.decompress([31u8, 157u8, 144u8, 200u8, 3u8])) { Ok(_) => "ok", Err(e) => e.message() },
     match (lzw.decompress([31u8, 139u8, 8u8])) { Ok(_) => "ok", Err(e) => e.message() },
     match (lz4.decompress(cut(LZ4, 30))) { Ok(_) => "ok", Err(e) => e.message() },
   ];
   return test.assert_eq_array(got, [
-    "|not a bzip2 file", "|compressed file ends unexpectedly", HELLO + "|data integrity error when decompressing", HELLO + "|ok",
+    "|not a bzip2 file", "|compressed file ends unexpectedly", HELLO + "|data integrity error when decompressing", HELLO + "|data integrity error when decompressing", HELLO + "|ok",
     "|File format not recognized", "|Unexpected end of input", HELLO + "|Compressed data is corrupt", "hel|Unexpected end of input",
     "corrupt input", "not in compressed format", "unexpected end of input",
   ]);
