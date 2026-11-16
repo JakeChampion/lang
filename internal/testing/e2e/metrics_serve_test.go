@@ -245,10 +245,13 @@ function main(): i32 {
   }
   let text: string = reg.render();
   let drv: async.RealDriver = async.real_driver();
-  let Ok(listening) = metrics.listen(drv, port_from_env()) else {
-    return 1;
+  let ex: metrics.Exporter = match (metrics.listen(drv, port_from_env())) {
+    Ok(l) => l,
+    Err(e) => {
+      eprint("listen: " + e.message());
+      return 1;
+    }
   };
-  let ex: metrics.Exporter = listening;
   let quit: Cell[boolean] = cell_new(false);
   while (!quit.get()) {
     let events: i32[] = drv.wait(16, None);
@@ -286,19 +289,20 @@ func TestMetricsExporterLargeScrape(t *testing.T) {
 		}
 	}
 	t.Run("interp", func(t *testing.T) {
-		checkLargeScrape(t, exec.Command(buildLangBinForInterp(t), "-interp", src))
+		interp := buildLangBinForInterp(t)
+		checkLargeScrape(t, func() *exec.Cmd { return exec.Command(interp, "-interp", src) })
 	})
 	t.Run("x86_64", func(t *testing.T) {
 		qemu := x86QemuOrEmpty(t)
 		out := filepath.Join(dir, "large_scrape_x86.bin")
 		build(t, "x86-64-linux", out)
-		checkLargeScrape(t, runX86Bin(qemu, out))
+		checkLargeScrape(t, func() *exec.Cmd { return runX86Bin(qemu, out) })
 	})
 	t.Run("arm64", func(t *testing.T) {
 		qemu := arm64QemuOrEmpty(t)
 		out := filepath.Join(dir, "large_scrape_arm64.bin")
 		build(t, "arm64-linux", out)
-		checkLargeScrape(t, runArm64Bin(qemu, out))
+		checkLargeScrape(t, func() *exec.Cmd { return runArm64Bin(qemu, out) })
 	})
 	t.Run("wasm", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -306,27 +310,64 @@ func TestMetricsExporterLargeScrape(t *testing.T) {
 		}
 		out := filepath.Join(dir, "large_scrape.wasm")
 		build(t, "wasm32-wasi", out)
-		checkLargeScrape(t, exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "PORT", out))
+		checkLargeScrape(t, func() *exec.Cmd {
+			return exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "PORT", out)
+		})
 	})
 }
 
-func checkLargeScrape(t *testing.T, cmd *exec.Cmd) {
+// scrapeServer is a started exporter. Read stderr only after exited closes.
+type scrapeServer struct {
+	cmd     *exec.Cmd
+	addr    string
+	stderr  *strings.Builder
+	exited  chan struct{}
+	waitErr error
+}
+
+// stop kills the exporter and returns its stderr.
+func (s *scrapeServer) stop() string {
+	s.cmd.Process.Kill()
+	<-s.exited
+	return s.stderr.String()
+}
+
+// startLargeScrape starts the exporter on a free port. Another socket can
+// take the port after the probe closes it and before the exporter binds it.
+// Then the exporter cannot listen, and the next attempt uses a new port.
+func startLargeScrape(t *testing.T, newCmd func() *exec.Cmd) *scrapeServer {
 	t.Helper()
-	port := freeLoopbackPort(t)
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+	for attempt := 1; ; attempt++ {
+		port := freeLoopbackPort(t)
+		cmd := newCmd()
+		srv := &scrapeServer{cmd: cmd, addr: fmt.Sprintf("127.0.0.1:%d", port), stderr: &strings.Builder{}, exited: make(chan struct{})}
+		cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+		cmd.Stderr = srv.stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			srv.waitErr = cmd.Wait()
+			close(srv.exited)
+		}()
+		t.Cleanup(func() { srv.stop() })
+		err := e2eharness.AwaitServerReady(srv.addr, srv.exited)
+		if err == nil {
+			return srv
+		}
+		if err != e2eharness.ErrServerExited {
+			t.Fatal(err)
+		}
+		if attempt == 5 || !strings.Contains(srv.stderr.String(), "listen: Address already in use") {
+			t.Fatalf("exporter exited before it served on %s: %v\nstderr:\n%s", srv.addr, srv.waitErr, srv.stderr.String())
+		}
 	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
-	t.Cleanup(func() {
-		cmd.Process.Kill()
-		<-exited
-	})
-	e2eharness.WaitServerReady(t, addr)
+}
+
+func checkLargeScrape(t *testing.T, newCmd func() *exec.Cmd) {
+	t.Helper()
+	srv := startLargeScrape(t, newCmd)
+	addr := srv.addr
 
 	pad := strings.Repeat("x", metricsLargeScrapePad)
 	var want strings.Builder
@@ -347,27 +388,26 @@ func checkLargeScrape(t *testing.T, cmd *exec.Cmd) {
 	time.Sleep(300 * time.Millisecond)
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
-		t.Fatalf("read response: %v\nstderr:\n%s", err, stderr.String())
+		t.Fatalf("read response: %v\nstderr:\n%s", err, srv.stop())
 	}
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
-		t.Fatalf("body after %d of %d bytes: %v\nstderr:\n%s", len(body), resp.ContentLength, err, stderr.String())
+		t.Fatalf("body after %d of %d bytes: %v\nstderr:\n%s", len(body), resp.ContentLength, err, srv.stop())
 	}
 	if resp.StatusCode != 200 || string(body) != want.String() {
-		t.Fatalf("scrape: status %d, %d body bytes, want 200 and the %d-byte exposition\nstderr:\n%s", resp.StatusCode, len(body), want.Len(), stderr.String())
+		t.Fatalf("scrape: status %d, %d body bytes, want 200 and the %d-byte exposition\nstderr:\n%s", resp.StatusCode, len(body), want.Len(), srv.stop())
 	}
 
 	if quit := e2eharness.HTTPRoundTrip(t, addr, "/quit", 10*time.Second); !strings.Contains(quit, "HTTP/1.1 404") {
 		t.Fatalf("GET /quit: want 404, got\n%s", quit)
 	}
 	select {
-	case err := <-exited:
-		exited <- err
-		if err != nil {
-			t.Fatalf("exporter exited with %v\nstderr:\n%s", err, stderr.String())
+	case <-srv.exited:
+		if srv.waitErr != nil {
+			t.Fatalf("exporter exited with %v\nstderr:\n%s", srv.waitErr, srv.stderr.String())
 		}
 	case <-time.After(30 * time.Second):
-		t.Fatalf("exporter still running 30s after /quit\nstderr:\n%s", stderr.String())
+		t.Fatalf("exporter still running 30s after /quit")
 	}
 }
