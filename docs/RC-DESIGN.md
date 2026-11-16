@@ -199,7 +199,7 @@ because the body still borrows the environment. So during the call the
 count of the environment is the number of its holders.
 
 The prelude of the body reads each capture with `__env_take`, and its
-environment type has the prefix `__env$+` (`semtypes.env_takes`). The
+environment type has the prefix `__env$$` (`semtypes.env_takes`). The
 lowering of the take (`ssarc.env_take`) has two paths:
 
 - When the environment has one reference, the slot is cleared, and the

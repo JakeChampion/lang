@@ -1223,7 +1223,7 @@ pub function closure_env(c: Contract): boolean {
 
 pub function env_type(body: string, captures: typeinfo.Type[], takes: boolean): typeinfo.Type {
   if (takes) {
-    return typeinfo.TypeStruct { name: semtypes.env_prefix() + "+" + body, args: captures };
+    return typeinfo.TypeStruct { name: semtypes.env_take_prefix() + body, args: captures };
   }
   return typeinfo.TypeStruct { name: semtypes.env_prefix() + body, args: captures };
 }
