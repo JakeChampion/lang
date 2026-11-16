@@ -365,6 +365,7 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 			}
 
 			t.Run("features", func(t *testing.T) { loadFeatureTests(t, run) })
+			t.Run("reset after alert", func(t *testing.T) { loadResetAfterAlertTest(t, load) })
 			t.Run("http3", func(t *testing.T) { loadH3Tests(t, run, h3server) })
 			t.Run("terminal", func(t *testing.T) { loadTerminalTests(t, load().Args) })
 			if target == "x86-64-linux" {
