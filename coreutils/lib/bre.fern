@@ -285,20 +285,28 @@ pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backre
 // makes a range whose end comes before its start an error. `dot_not_null`
 // stops . from matching a NUL byte, as RE_DOT_NOT_NULL does in GNU regex.
 // `utf8` reads the pattern and the text as UTF-8, as in a UTF-8 locale.
-pub struct Syntax { emacs: boolean, newline_anchor: boolean, extended: boolean, icase: boolean, gnu_ops: boolean, invalid_dup: boolean, multiline: boolean, no_empty_ranges: boolean, dot_not_null: boolean, utf8: boolean }
+// `gnulib` selects the regex of gnulib in place of the regex of glibc. In
+// UTF-8 its range compares the code points of the two ends.
+pub struct Syntax { emacs: boolean, newline_anchor: boolean, extended: boolean, icase: boolean, gnu_ops: boolean, invalid_dup: boolean, multiline: boolean, no_empty_ranges: boolean, dot_not_null: boolean, utf8: boolean, gnulib: boolean }
+
+// A GNU program has the regex of gnulib when the libc has no GNU regex: on
+// all the targets but Linux.
+function gnulib_regex(): boolean {
+  return target_os() != "linux";
+}
 
 pub function posix_basic(): Syntax {
-  return Syntax { emacs: false, newline_anchor: false, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: true, utf8: false };
+  return Syntax { emacs: false, newline_anchor: false, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: true, utf8: false, gnulib: gnulib_regex() };
 }
 
 pub function emacs_syntax(): Syntax {
-  return Syntax { emacs: true, newline_anchor: true, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: false, utf8: false };
+  return Syntax { emacs: true, newline_anchor: true, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: false, utf8: false, gnulib: gnulib_regex() };
 }
 
 // The syntax of GNU sed: BRE or ERE, with the I and M flags. `posix` is
 // --posix, which removes the GNU operators.
 pub function sed_syntax(extended: boolean, icase: boolean, multiline: boolean, posix: boolean): Syntax {
-  return Syntax { emacs: false, newline_anchor: multiline, extended: extended, icase: icase, gnu_ops: !posix, invalid_dup: !extended, multiline: multiline, no_empty_ranges: true, dot_not_null: false, utf8: false };
+  return Syntax { emacs: false, newline_anchor: multiline, extended: extended, icase: icase, gnu_ops: !posix, invalid_dup: !extended, multiline: multiline, no_empty_ranges: true, dot_not_null: false, utf8: false, gnulib: gnulib_regex() };
 }
 
 pub struct BreMatch { matched: boolean, end: i32, starts: i32[], ends: i32[] }
@@ -415,7 +423,7 @@ function nd_assert(): i32 {
 // `gate` parses for the dfa of GNU sed, as in compile_mode. `gap` tells that
 // the dfa and the regex of GNU sed take a different set for an atom, and
 // `vague` that the dfa cannot read the bracket in parse.
-struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean, ext: boolean, icase: boolean, gnu: boolean, inv_dup: boolean, multiline: boolean, no_empty: boolean, dot_not_null: boolean, utf8: boolean, rtabs: i32[], folds: Folds, wide: i32[], gate: boolean, gap: boolean, vague: boolean }
+struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean, ext: boolean, icase: boolean, gnu: boolean, inv_dup: boolean, multiline: boolean, no_empty: boolean, dot_not_null: boolean, utf8: boolean, gnulib: boolean, rtabs: i32[], folds: Folds, wide: i32[], gate: boolean, gap: boolean, vague: boolean }
 
 function group_bit(n: i32): i32 {
   return 1 << n - 1;
@@ -1406,9 +1414,10 @@ function utf8_bracket(p0: P): (P, i32) {
   return cps_node(p, s);
 }
 
-// A range takes two ASCII ends. An end outside ASCII has no place in the
-// collation order of C.UTF-8. The flag tells whether the item makes glibc
-// read characters: a class, a range, or a byte outside ASCII.
+// In glibc a range takes two ASCII ends. An end outside ASCII has no place
+// in the collation order of C.UTF-8. In gnulib an end is any character. The
+// flag tells whether the item makes the regex read characters: a class, a
+// range, or a byte outside ASCII.
 // fern-lint: allow cyclomatic-complexity
 function utf8_bracket_one(p0: P, s: i32[]): (P, i32[], boolean) {
   let p = p0;
@@ -1441,7 +1450,7 @@ function utf8_bracket_one(p0: P, s: i32[]): (P, i32[], boolean) {
   if (hi.cp == -2 || hi.equiv) {
     return (fail(p, err_erange()), s, false);
   }
-  if (lo.cp < 0 || lo.cp >= 128 || hi.cp < 0 || hi.cp >= 128) {
+  if (lo.cp < 0 || hi.cp < 0 || !p.gnulib && (lo.cp >= 128 || hi.cp >= 128)) {
     return (fail(p, err_ecollate()), s, false);
   }
   if (p.no_empty && lo.cp > hi.cp) {
@@ -2158,7 +2167,7 @@ function compile_mode(pat: Input, syntax: Syntax, gate: boolean): Bre {
   let cls: u8[] = [];
   let no_alts: u8[][] = [];
   let no_ints: i32[] = [];
-  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs, ext: syntax.extended, icase: syntax.icase, gnu: syntax.gnu_ops, inv_dup: syntax.invalid_dup, multiline: syntax.multiline, no_empty: syntax.no_empty_ranges, dot_not_null: syntax.dot_not_null, utf8: syntax.utf8, rtabs: no_ints, folds: Folds { cps: no_ints, ups: no_ints, moved: no_ints }, wide: no_ints, gate: gate, gap: false, vague: false };
+  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs, ext: syntax.extended, icase: syntax.icase, gnu: syntax.gnu_ops, inv_dup: syntax.invalid_dup, multiline: syntax.multiline, no_empty: syntax.no_empty_ranges, dot_not_null: syntax.dot_not_null, utf8: syntax.utf8, gnulib: syntax.gnulib, rtabs: no_ints, folds: Folds { cps: no_ints, ups: no_ints, moved: no_ints }, wide: no_ints, gate: gate, gap: false, vague: false };
   let r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {

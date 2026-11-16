@@ -68,8 +68,9 @@ port finds a locale as the libc does:
   modifier, so `C_XX.UTF-8@euro` finds `C.utf8`.
 - For glibc, the codeset must be a name of UTF-8 for gconv: `UTF-8` or
   `UTF8`, in upper or lower case.
-- Darwin looks for the name as it is, in PATH_LOCALE or
-  `/usr/share/locale`.
+- Darwin looks for the name as it is, in PATH_LOCALE, `/usr/share/locale`
+  and `/usr/local/share/locale`. A name that starts with `C.` needs only
+  its file of LC_CTYPE, such as `C.UTF-8/LC_CTYPE`.
 - On WASI and on Android, the libc reads no files for a locale. There the
   codeset of the name decides.
 
@@ -83,12 +84,18 @@ In a UTF-8 locale:
   `coreutils/lib/glibc_ctype.fern` from the libc of the host. For example,
   `[[:alpha:]]` holds the decimal digits outside ASCII, and U+0363 is in
   `[[:punct:]]`.
-- A range in a bracket expression takes two ASCII ends, as in C.UTF-8.
 - `y` maps characters, and `--debug` prints its pairs in their order.
 - The word assertions read the character before and after each position.
 - `l` and the trace of `--debug` still show bytes.
 
-In the C locale each byte is a character.
+On Linux, GNU sed has the regex of glibc. There a range in a bracket
+expression takes two ASCII ends, as in C.UTF-8. On the other targets, GNU
+sed has the regex of gnulib. There an end can be any character, and the
+range holds the code points from one end to the other.
+
+In the C locale each byte is a character. In glibc, a byte above 127 has
+no case. There `\U`, `\L`, `\u` and `\l` change the byte to 255. On
+Darwin, these escapes do not change a byte above 127.
 
 Under the `I` flag, the port matches in the two steps of GNU sed:
 
@@ -135,11 +142,14 @@ not standard output, and with `e`, `=` or `F`.
 
 ## What the port does not do
 
-This difference remains in a UTF-8 locale:
+These differences remain in a UTF-8 locale:
 
 - The port does not read the aliases of `locale.alias`, and it does not
   read the codeset in the files of a locale. It takes the codeset from the
   name.
+- On Darwin, GNU sed takes the classes from the libc of Darwin. The port
+  has the tables of glibc on each target. For example, U+0663 is in
+  `[[:digit:]]` on Darwin and in `[[:alpha:]]` in glibc.
 
 These differences come from the regex of glibc:
 

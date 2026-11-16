@@ -2858,20 +2858,28 @@ function push_cased(h: usize, t: u8[], lo: i32, hi: i32, cs: Cased): Cased {
   return Cased { ...cs, once: CASE_ASIS };
 }
 
-// In the C locale a byte above 127 is not a character. GNU sed converts it
-// to WEOF and back, and so writes the byte 255.
 function upper_char(b: i32): i32 {
   if (b >= 128) {
-    return 255;
+    return high_byte_case(b);
   }
   return upper_byte(b);
 }
 
 function lower_char(b: i32): i32 {
   if (b >= 128) {
-    return 255;
+    return high_byte_case(b);
   }
   return lower_byte(b);
+}
+
+// In the C locale of glibc a byte above 127 is not a character. GNU sed
+// converts it to WEOF and back, and so writes the byte 255. In the C locale
+// of Darwin the byte is a character with no other case.
+function high_byte_case(b: i32): i32 {
+  if (target_os() == "darwin") {
+    return b;
+  }
+  return 255;
 }
 
 function apply_case(cs: Cased, n: i32): Cased {
