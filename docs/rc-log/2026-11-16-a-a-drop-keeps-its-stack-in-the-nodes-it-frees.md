@@ -44,18 +44,27 @@ unit correct.
 
 ## Measured
 
-Processor time, x86-64, best of 7 runs:
+Processor time, x86-64, 11 runs of each binary in turn on an idle machine,
+best and median:
 
 | Workload | Before | After |
 |---|---:|---:|
-| rbtree-ck 4,200,000 | 1930 ms | 1804 ms (-6.5%) |
-| deriv 10 | 1031 ms | 967 ms (-6.2%) |
-| cfold 20 | 143 ms | 142 ms |
+| rbtree-ck 4,200,000 | 1842 / 2025 ms | 1733 / 1954 ms |
+| deriv 10 | 996 / 1093 ms | 976 / 1116 ms |
+| cfold 20 | 140 / 165 ms | 149 / 173 ms |
+
+rbtree-ck, which frees trees of 22 levels, gains 5.9% at the best run. The
+times of deriv and cfold move less than the noise of the machine. A program
+that builds and frees trees of 20 levels, and left sides of 700,000 nodes,
+takes 1132 ms before and 1050 ms after (medians of 9 runs).
 
 The loop runs more instructions than the calls did. Cachegrind counts
 rbtree-ck 400,000 at +4.0%, deriv 8 at +3.4% and cfold 16 at +0.7%. The
-instruction count does not see the cost of a mispredicted return, so the
-time decides (`scripts/perf-bench`). rbtree and nqueens do not change.
+instruction count does not see the cost of a mispredicted return
+(`scripts/perf-bench`). rbtree and nqueens do not change.
+
+The drop needs no stack for a deep tree. The old drop of a left side of
+200,000 nodes runs out of the stack of wasm32.
 
 ## Tests
 
