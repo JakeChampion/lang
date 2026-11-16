@@ -35,7 +35,9 @@ The fourth shape is the for-each loop over the source. Its lowering reads the
 element at a hidden index, and increments the index in a step block between
 the body and the header. The pass takes that step block as part of the body.
 
-Each array must be an owned `u8[]` value. The source and the offsets must be
+Each array must be an owned `u8[]` value. The source of the second shape
+can also be a `[u8]` view, and the write helper reads the view in place. The
+source and the offsets must be
 invariant, and the body must be exactly the read, update and increment. A
 count can be an invariant value, an integer literal or the length of an
 invariant value. A count can also be a header computation over invariant
@@ -47,7 +49,8 @@ of the phi of the receiver keep their scalar walk. Additional effects, extra
 loop-carried state and other loop shapes also keep it.
 
 The first and fourth shapes also apply to arrays of other element types,
-and to a view source. The pass then does not call a byte helper. It writes
+and to a view source of an append. The pass then does not call a byte
+helper. It writes
 a range concat (#15829): an `arr_concat` of the receiver, the source, the
 start and the count. The source must not be the
 receiver that the loop starts from. An element that is a string view keeps

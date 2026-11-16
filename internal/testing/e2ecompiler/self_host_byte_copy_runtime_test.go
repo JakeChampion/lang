@@ -25,7 +25,7 @@ func TestSelfHostByteCopyNativeRuntime(t *testing.T) {
 			})
 			for name, call := range map[string]string{
 				"source-bound": "__fern_bytes_append_range(a, src, 2, 2)",
-				"target-bound": "__fern_bytes_write_range(a, 2, src, 0, 2)",
+				"target-bound": "__fern_bytes_write_range(a, 2, __raw_arr_ptr(src), 0, 2)",
 				"back-bound":   "__fern_bytes_append_back(a, 4, 2)",
 				"back-zero":    "__fern_bytes_append_back(a, 0, 2)",
 			} {
@@ -87,9 +87,9 @@ const byteCopyRuntimeSuccess = `function main(): i32 {
   if (__heap_alloc_count() - before3 != 1i64 || !check(grown, 43, 3, 0)) { return 3; }
   let d = packed_bytes(4); let dsrc = d;
   let before4 = __heap_alloc_count();
-  let copied = __fern_bytes_write_range(d, 1, dsrc, 0, 3);
+  let copied = __fern_bytes_write_range(d, 1, __raw_arr_ptr(dsrc), 0, 3);
   if (__heap_alloc_count() - before4 != 1i64 || !check(copied, 4, 1, 0)) { return 4; }
-  let z = __fern_bytes_write_range(b, 0 - 2147483647, src, 2147483647, 0);
+  let z = __fern_bytes_write_range(b, 0 - 2147483647, __raw_arr_ptr(src), 2147483647, 0);
   if (z.len() != 7) { return 5; }
   let unchanged = __fern_bytes_append_range(z, src, 0 - 2147483647, 0 - 1);
   if (unchanged.len() != 7) { return 6; }
