@@ -447,7 +447,7 @@ def main(apk, out):
     for line in crashes(log):
         fail("logcat: " + line)
     adb("shell", "cmd", "package", "set-home-activity", "com.android.launcher3/.uioverrides.QuickstepLauncher", check=False)
-    finish()
+    finish(out)
 
 
 if __name__ == "__main__":

@@ -215,13 +215,16 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           # Android 16 shows a notice the first time an app hides the bars,
           # hides the soft keyboard while the emulator has a hardware one,
-          # and reads the freezer setting only at boot.
+          # and reads the freezer settings only at boot. After the boot, the
+          # checks wait for the package manager too.
           script: |
             adb shell settings put secure immersive_mode_confirmations confirmed
             adb shell settings put secure show_ime_with_hard_keyboard 1
             adb shell settings put global cached_apps_freezer disabled
+            adb shell device_config set_sync_disabled_for_tests persistent
+            adb shell device_config put activity_manager_native_boot use_freezer false
             adb reboot
-            adb wait-for-device shell 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 1; done'
+            adb wait-for-device shell 'while [ "$(getprop sys.boot_completed)" != 1 ] || ! pm path android > /dev/null 2>&1; do sleep 1; done'
             mkdir -p build/android-stopwatch/emulator
             python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report || echo "examples/android/stopwatch" >> build/android-stopwatch/emulator/failed
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native mapped || echo "examples/android/native dev.fern.native" >> build/android-stopwatch/emulator/failed
