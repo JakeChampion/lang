@@ -772,10 +772,9 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		names []string
 		types []ast.Type
 	}
-	ownedPayload := map[string]bool{}
 	freshTag := func(tag ast.Expr) bool {
 		if id, ok := tag.(*ast.Ident); ok {
-			return (ownParam[id.Name] || ownedPayload[id.Name]) && declCount[id.Name] == 0
+			return ownParam[id.Name] && declCount[id.Name] == 0
 		}
 		return freshInit(info, tag) || originalOwnedFieldSource(fn, tag) != ""
 	}
@@ -824,8 +823,6 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			for i, b := range arm.names {
 				if taken || (!ownedField || !assignedNames[b]) && i < len(arm.types) && arm.types[i] != nil && handleFree(arm.types[i]) {
 					freshInitLocal[b] = true
-				} else if !ownedField && i < len(arm.types) && arm.types[i] != nil && ast.IsPointerType(arm.types[i]) {
-					ownedPayload[b] = true
 				}
 			}
 		}

@@ -168,42 +168,40 @@ function test_chain_resolves_after_resuspensions(): test.TestOutcome {
 }
 
 function test_chain_suspension_count(): test.TestOutcome {
+  let d = sim.new(1);
   let f = sim.future_chain(sim.at(time.duration_nanos(10000000)), time.duration_nanos(5000000), 3, 9);
-  return chain_steps(f, 0, [], 0);
-}
-
-// Resumes `f` with TimedOut until it ends. A continuation is `once`, so the
-// future that holds it is an owned value here.
-function chain_steps(own f: async.Future[i32], wakes: i32, toks: i64[], guard: i32): test.TestOutcome {
-  if (guard >= 10) {
-    async.cancel(f);
-    return test.fail("chain never resolved");
-  }
-  match (f) {
-    Ready(v) => {
-      if (v != 9) {
-        return test.fail("wrong resolved value");
+  let wakes = 0;
+  let toks: i64[] = [];
+  let guard = 0;
+  while (guard < 10) {
+    match (f) {
+      Ready(v) => {
+        if (v != 9) {
+          return test.fail("wrong resolved value");
+        }
+        if (wakes != 4) {
+          return test.fail("expected 4 wakes, got " + wakes.to_string());
+        }
+        if (toks[0] != 10 || toks[1] != 15 || toks[2] != 20 || toks[3] != 25) {
+          return test.fail("wrong deadline schedule");
+        }
+        return test.pass();
+      },
+      Pending(w, resume) => {
+        if let Some(at) = w.until {
+          toks = toks.append(at.since(sim.at(time.duration_nanos(0))).as_millis());
+        }
+        wakes += 1;
+        f = resume(async.Wake.TimedOut);
+      },
+      Cancelled => {
+        return test.fail("chain ended cancelled");
       }
-      if (wakes != 4) {
-        return test.fail("expected 4 wakes, got " + wakes.to_string());
-      }
-      if (toks[0] != 10 || toks[1] != 15 || toks[2] != 20 || toks[3] != 25) {
-        return test.fail("wrong deadline schedule");
-      }
-      return test.pass();
-    },
-    Pending(w, resume) => {
-      let seen = toks;
-      if let Some(at) = w.until {
-        seen = seen.append(at.since(sim.at(time.duration_nanos(0))).as_millis());
-      }
-      let next = resume(async.Wake.TimedOut);
-      return chain_steps(next, wakes + 1, seen, guard + 1);
-    },
-    Cancelled => {
-      return test.fail("chain ended cancelled");
     }
+    guard += 1;
   }
+  async.cancel(f);
+  return test.fail("chain never resolved");
 }
 
 function test_time_only_advances_when_driven(): test.TestOutcome {
