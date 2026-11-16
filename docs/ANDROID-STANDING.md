@@ -61,17 +61,17 @@ Play, and the first is now fixed:
    text, no CFF fonts (most CJK fonts), no color emoji, no font fallback
    and no localized strings.
 
-4. **A thin set of components.** There is no checkbox, radio button, menu,
-   snackbar, tab bar, app bar, navigation stack or date picker. Each app
-   builds these.
+4. **A thin set of components.** There was no checkbox, radio button,
+   menu, snackbar, tab bar, app bar or navigation stack. `std/android/ui`
+   now has each of them. A date picker is still missing.
 
-5. **Device features.** There is no camera, no sensors, no location, no
-   Bluetooth LE, no NFC, no notifications other than those of a
-   foreground service, no push, and no scheduled background work.
+5. **Device features.** Fern now has the camera, the sensors, the
+   location and notifications. There is no Bluetooth LE, no NFC, no push,
+   and no scheduled background work.
 
-6. **Developer tools.** There is no hot reload, no preview, no documented
-   debugger workflow on a phone, and each build compiles both ABIs again
-   on one thread.
+6. **Developer tools.** There is no hot reload, no preview and no
+   documented debugger workflow on a phone. A release build compiles both
+   ABIs on one thread. `-apk-run` builds the ABI of the device only.
 
 ## Measurements
 
@@ -151,8 +151,9 @@ The order puts first what stops a release, then what most apps need.
    `LocationListener`. `std/android/camera` gives the frames of a camera
    through the NDK.
 
-5. **Components.** Checkbox, radio button, menu, snackbar, tabs, app bar
-   and a navigation stack in `std/android/ui`.
+5. **Components.** Done: `std/android/ui` has a checkbox, a radio
+   button, a menu, a snackbar, tabs, an app bar and the page stack `Nav`.
+   `tinted` gives a canvas the color of a role of the theme.
 
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
@@ -160,6 +161,6 @@ The order puts first what stops a release, then what most apps need.
 7. **Text.** Shaping, right-to-left text, CFF and color glyphs, fallback
    fonts, and localized strings.
 
-8. **Developer tools.** A build of one ABI for development, a debugger
-   workflow with lldb, and then a reload of the view and update code with
-   the model kept.
+8. **Developer tools.** A debugger workflow with lldb, and then a reload
+   of the view and update code with the model kept. `-apk-run` already
+   builds the ABI of the device only.

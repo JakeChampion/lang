@@ -28,7 +28,11 @@ The methods of `El` set them, and they set the padding, the gap, the background,
 
 `on_move` lets a person move the rows of a `list`: a long press lifts a row, and the row goes with the finger. `on_swipe` lets a person drag a row across the list to take it out.
 
-A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `seeded` makes a theme from one color, for example the key color of an album cover. `button`, `outlined_button`, `card`, `toggle`, `progress` and `divider` are elements in the look of Material 3.
+A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `seeded` makes a theme from one color, for example the key color of an album cover. `button`, `outlined_button`, `card`, `toggle`, `checkbox`, `radio`, `tabs`, `menu`, `app_bar`, `snackbar`, `progress` and `divider` are elements in the look of Material 3.
+
+A canvas gives its paint a color of `std/android/draw`. `tinted` makes a canvas whose paint gets the color of a role, so an icon of `std/android/icons` follows the theme.
+
+A `Nav` is the stack of the pages of an app. `push` opens a page over the top page, and `pop` goes back to the page under it. The first page stays, so `can_pop` is false there. Give the back key to `pop` with `with_back` while `can_pop` is true, and let it close the app on the first page.
 
 ### Messages
 
@@ -128,6 +132,7 @@ function main(): i32 {
 import "core/map";
 import "std/android";
 import "std/android/draw";
+import "std/android/icons";
 import "std/android/motion";
 import "std/android/text";
 import "std/android/ui/painter";
@@ -305,6 +310,8 @@ pub struct El[M] {
   key: string,
   image: Option[draw.Image],
   paint: Option[(draw.Frame, i32, i32, i32, i32) => void],
+  // A canvas of `tinted`: the paint for the color of the role `ink`.
+  tint: Option[(i32) => (draw.Frame, i32, i32, i32, i32) => void],
   // A list of `count` rows of `row` dp, which `build` makes.
   count: i32,
   row: f64,
@@ -329,7 +336,7 @@ pub struct El[M] {
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
 }
 
 // The elements one below the other.
@@ -372,6 +379,12 @@ pub function picture[M](key: string, img: draw.Image): El[M] {
 // `key` names what it draws: a new key draws it again.
 pub function canvas[M](key: string, paint: (draw.Frame, i32, i32, i32, i32) => void): El[M] {
   return El { ...element(CANVAS, []), key: key, paint: Some(paint) };
+}
+
+// What `paint` draws in the color of the role `color`: a canvas that follows
+// the theme. The canvas draws again when the color changes.
+pub function tinted[M](key: string, color: i32, paint: (i32) => (draw.Frame, i32, i32, i32, i32) => void): El[M] {
+  return El { ...element(CANVAS, []), key: key, ink: color, tint: Some(paint) };
 }
 
 // A list with the name `name` that scrolls: `count` rows of `row` dp each.
@@ -664,6 +677,127 @@ pub function progress[M](part: f64): El[M] {
   let filled: El[M] = El { ...box(), w: Grow(done + 0.0001), h: Grow(1.0) };
   let rest: El[M] = El { ...box(), w: Grow(1.0001 - done), h: Grow(1.0) };
   return row([filled.background(PRIMARY).rounded(2.0), rest]).wide().height(4.0).background(TRACK).rounded(2.0);
+}
+
+// A box that is checked or not, with room of 40 dp for a finger. A tap
+// gives the message `m`. An accessibility service reads `say` and the
+// state of the box.
+pub function checkbox[M](on: boolean, say: string, m: M): El[M] {
+  let mark: El[M] = box().width(18.0).height(18.0).rounded(2.0).border(OUTLINE, 2.0);
+  let state = "not checked";
+  if (on) {
+    let checked: El[M] = tinted("check", ON_PRIMARY, icons.check);
+    mark = checked.width(18.0).height(18.0).rounded(2.0).background(PRIMARY);
+    state = "checked";
+  }
+  return row([mark]).centered().width(40.0).height(40.0).on_tap(m).described(say + ", " + state);
+}
+
+// A radio button: one of a group of choices, selected or not. A tap gives
+// the message `m`. An accessibility service reads `say` and the state.
+pub function radio[M](on: boolean, say: string, m: M): El[M] {
+  let ring: El[M] = box().width(20.0).height(20.0).rounded(10.0).border(OUTLINE, 2.0);
+  let state = "not selected";
+  if (on) {
+    ring = row([box().width(10.0).height(10.0).rounded(5.0).background(PRIMARY)]).centered().width(20.0).height(20.0).rounded(10.0).border(PRIMARY, 2.0);
+    state = "selected";
+  }
+  return row([ring]).centered().width(40.0).height(40.0).on_tap(m).described(say + ", " + state);
+}
+
+// A row of tabs with the labels `labels`, 48 dp high. The tab `at` is
+// selected, with a line under it. A tap on a tab gives the message that
+// `pick` makes from its index.
+pub function tabs[M](labels: string[], at: i32, pick: (i32) => M): El[M] {
+  let kids: El[M][] = [];
+  for i in 0..labels.len() {
+    let color = MUTED;
+    let line: El[M] = box().wide().height(3.0);
+    let state = "";
+    if (i == at) {
+      color = PRIMARY;
+      line = line.background(PRIMARY);
+      state = ", selected";
+    }
+    let label: El[M] = row([text(labels[i]).weighted(500).colored(color)]).centered().wide().grow(1.0);
+    let say = labels[i] + ", tab " + (i + 1).to_string() + " of " + labels.len().to_string() + state;
+    kids = kids.append(column([label, line]).grow(1.0).height(48.0).on_tap(pick(i)).described(say));
+  }
+  return row(kids).wide();
+}
+
+// The items of a menu, one below the other, 48 dp high each. A tap on an
+// item gives the message that `pick` makes from its index. The menu takes
+// the touches over it.
+pub function menu[M](items: string[], pick: (i32) => M): El[M] {
+  let kids: El[M][] = [];
+  for i in 0..items.len() {
+    kids = kids.append(row([text(items[i])]).aligned(CENTER).padding_xy(12.0, 0.0).height(48.0).on_tap(pick(i)));
+  }
+  return column(kids).aligned(STRETCH).padding_xy(0.0, 8.0).background(SURFACE).rounded(4.0).border(OUTLINE, 1.0).modal();
+}
+
+// The bar at the top of a screen, 64 dp high, with the title `title`. With
+// a message `back`, an arrow at the start gives it. The elements `actions`
+// go at the end.
+pub function app_bar[M](title: string, back: Option[M], actions: El[M][]): El[M] {
+  let kids: El[M][] = [];
+  let start = 16.0;
+  if let Some(m) = back {
+    let arrow: El[M] = tinted("back", INK, icons.back);
+    kids = kids.append(arrow.width(48.0).height(48.0).on_tap(m).described("Back"));
+    start = 4.0;
+  }
+  kids = kids.append(text(title).sized(22.0).clamped(1).wide());
+  for a in actions {
+    kids = kids.append(a);
+  }
+  let bar: El[M] = row(kids).aligned(CENTER).spaced(4.0).wide().height(64.0);
+  return El { ...bar, pad: Edges { left: start, top: 0.0, right: 4.0, bottom: 0.0 } };
+}
+
+// A short note at the bottom of a screen, in the colors of the ink. A tap on
+// `action` gives the message `m`.
+pub function snackbar[M](note: string, action: string, m: M): El[M] {
+  let act: El[M] = row([text(action).weighted(500).colored(BACKGROUND)]).centered().padding_xy(12.0, 0.0).height(40.0).rounded(20.0).on_tap(m);
+  return row([text(note).colored(BACKGROUND).clamped(2).wide(), act]).aligned(CENTER).padding_xy(16.0, 4.0).wide().background(INK).rounded(4.0);
+}
+
+// The stack of the pages of an app, with the page that shows on top.
+pub struct Nav[P] { pages: P[] }
+
+// A stack with the first page `first`.
+pub function nav[P](first: P): Nav[P] {
+  return Nav { pages: [first] };
+}
+
+// The page that shows.
+pub function (n: Nav[P]) top(): P {
+  return n.pages[n.pages.len() - 1];
+}
+
+// The stack with the page `p` over its top page.
+pub function (n: Nav[P]) push(p: P): Nav[P] {
+  return Nav { pages: n.pages.append(p) };
+}
+
+// Whether a page is under the top page.
+pub function (n: Nav[P]) can_pop(): boolean {
+  return n.pages.len() > 1;
+}
+
+// The stack without its top page. The first page stays.
+pub function (n: Nav[P]) pop(): Nav[P] {
+  let kept: P[] = [];
+  for i in 0..(n.pages.len() - 1).max(1) {
+    kept = kept.append(n.pages[i]);
+  }
+  return Nav { pages: kept };
+}
+
+// The number of pages.
+pub function (n: Nav[P]) depth(): i32 {
+  return n.pages.len();
 }
 ```
 
@@ -1032,6 +1166,10 @@ function paints[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32): scene.No
   }
   if let Some(f) = e.paint {
     ns = ns.append(scene.node(x, y, w, h, scene.Custom(e.key, 0, f)));
+  }
+  if let Some(t) = e.tint {
+    let color = env.theme.color(e.ink);
+    ns = ns.append(scene.node(x, y, w, h, scene.Custom(e.key + "#" + color.to_string(), 0, t(color))));
   }
   return ns;
 }

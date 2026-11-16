@@ -698,6 +698,88 @@ function test_text_follows_the_font_scale(): test.TestOutcome {
   return test.assert_eq(boxes(lay.nodes) + " " + s.shell.host.screen.font.to_string(), "0,0,36,20 0,20,10,10 1.5");
 }
 
+// --- components
+
+struct Prefs { agree: boolean, choice: i32, tab: i32, nav: ui.Nav[i32] }
+
+function prefs_view(m: Prefs, s: ui.Screen): ui.El[Msg] {
+  let back: Option[Msg] = None;
+  if (m.nav.can_pop()) {
+    back = Some(Go);
+  }
+  let bar: ui.El[Msg] = ui.app_bar("AV", back, []);
+  return ui.column([bar, ui.checkbox(m.agree, "agree", Agree), ui.radio(m.choice == 0, "first", Pick(0)), ui.radio(m.choice == 1, "second", Pick(1)), ui.tabs(["A", "V"], m.tab, (i: i32): Msg => Cell(i)), ui.menu(["AA", "VV"], (i: i32): Msg => Menu(i))]);
+}
+
+function prefs_update(own m: Prefs, msg: Msg): Prefs {
+  if let Agree = msg {
+    return Prefs { ...m, agree: !m.agree };
+  }
+  if let Pick(i) = msg {
+    return Prefs { ...m, choice: i };
+  }
+  if let Cell(i) = msg {
+    return Prefs { ...m, tab: i };
+  }
+  if let Menu(i) = msg {
+    return Prefs { ...m, nav: m.nav.push(i + 10) };
+  }
+  if let Go = msg {
+    return Prefs { ...m, nav: m.nav.pop() };
+  }
+  return m;
+}
+
+function prefs(): ui.Program[Prefs, Msg] {
+  return ui.program(prefs_view, prefs_update).with_back((m: Prefs): Option[Msg] => if (m.nav.can_pop()) { Some(Go) } else { None });
+}
+
+function new_prefs(): Prefs {
+  return Prefs { agree: false, choice: 0, tab: 0, nav: ui.nav(1) };
+}
+
+// A tap on a checkbox or a radio button gives its message, and each one says
+// its state.
+function test_checkbox_and_radio(): test.TestOutcome {
+  let s = sim.start(new_prefs(), prefs(), fonts(), 200, 600, 1.0);
+  let before = [sim.says(s, "agree, not checked"), sim.says(s, "first, selected"), sim.says(s, "second, not selected")];
+  s = sim.tap(sim.tap(s, "agree, not checked"), "second, not selected");
+  let after = [sim.says(s, "agree, checked"), sim.says(s, "first, not selected"), sim.says(s, "second, selected")];
+  let flags = before.append(after[0]).append(after[1]).append(after[2]).map((b: boolean): string => b.to_string()).join(" ");
+  return test.assert_eq(flags + " " + s.shell.app.agree.to_string() + " " + s.shell.app.choice.to_string(), "true true true true true true true 1");
+}
+
+// A tab says its place and whether it is selected. A menu item opens a page,
+// the app bar then has a back arrow, and the back key goes back.
+function test_tabs_menu_and_nav(): test.TestOutcome {
+  let s = sim.start(new_prefs(), prefs(), fonts(), 200, 600, 1.0);
+  s = sim.tap(s, "V, tab 2 of 2");
+  let tabbed = s.shell.app.tab.to_string() + " " + sim.says(s, "V, tab 2 of 2, selected").to_string() + " " + sim.says(s, "Back").to_string();
+  s = sim.tap(s, "VV");
+  let opened = s.shell.app.nav.depth().to_string() + " " + s.shell.app.nav.top().to_string() + " " + sim.says(s, "Back").to_string();
+  s = sim.back(s);
+  let closed = s.shell.app.nav.depth().to_string() + " " + sim.says(s, "Back").to_string() + " " + sim.finished(s).to_string();
+  s = sim.back(s);
+  return test.assert_eq(tabbed + " / " + opened + " / " + closed + " / " + sim.finished(s).to_string(), "1 true false / 2 11 true / 1 false false / true");
+}
+
+// A tinted canvas draws in the color of its role in the theme, and a theme
+// of another color draws it again.
+function test_a_tinted_canvas_follows_the_theme(): test.TestOutcome {
+  let light = ui.theme(false);
+  let dark = ui.theme(true);
+  let lay = laid(ui.column([ui.checkbox(true, "agree", Agree)]));
+  let night = laid_on(ui.column([ui.checkbox(true, "agree", Agree)]), ui.Screen { ...screen(), dark: true, theme: dark }, ui.no_focus());
+  let keys: string[] = [];
+  for n in lay.nodes.concat(night.nodes) {
+    let k = scene.paint_key(n);
+    if (k.starts_with("custom|check#")) {
+      keys = keys.append(k);
+    }
+  }
+  return test.assert_eq(keys.join(" "), "custom|check#" + light.on_primary.to_string() + "|18x18 custom|check#" + dark.on_primary.to_string() + "|18x18");
+}
+
 // --- sliders and effects
 
 struct Dial { part: f64, asked: string[], done: i32 }
@@ -1205,6 +1287,9 @@ function main(): i32 {
   r = r.it("a long text shows the part at the caret", test_a_long_text_shows_the_part_at_the_caret);
   r = r.it("an area wraps its text and takes new lines", test_an_area_wraps_and_takes_new_lines);
   r = r.it("an area shows the lines at the caret", test_an_area_shows_the_lines_at_the_caret);
+  r = r.it("a checkbox and a radio button give their messages and say their state", test_checkbox_and_radio);
+  r = r.it("tabs, a menu and the stack of pages", test_tabs_menu_and_nav);
+  r = r.it("a tinted canvas follows the theme", test_a_tinted_canvas_follows_the_theme);
   r = r.it("a slider has a track and a thumb", test_slider_layout);
   r = r.it("a finger moves a slider and scrolls no list", test_a_finger_moves_a_slider);
   r = r.it("says finds an element by what it says", test_program_says);
