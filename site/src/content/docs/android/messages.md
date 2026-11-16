@@ -303,6 +303,61 @@ shows the dialog of the permission, and `notify.allowed(ctx)` tells
 whether the app can show notifications. `post` gives false when it
 cannot.
 
+## Sensors
+
+`std/android/sensors` reads the accelerometer, the gyroscope, the light
+sensor and the other sensors of the phone. `start` turns sensors on, and
+the loop then gives the event `android.Ready(android.IDENT_SENSORS)` when
+values wait. `sensors.event` reads them.
+
+```fern
+import "std/android/sensors";
+
+let on = sensors.start(ctx, [sensors.ACCELEROMETER], 20000);
+
+// For each event of the loop:
+for r in sensors.event(s, e) {
+  // r.values holds x, y and z in m/s².
+}
+```
+
+Give each event of the loop to `sensors.event`, because the looper gives
+the event again while values wait. Stop the sensors at each Pause with
+`sensors.stop`, because a sensor that stays on uses power.
+
+## Location
+
+`std/android/location` gives the place of the phone. The app declares a
+@jni class that implements `android.location.LocationListener`, and each
+method of it calls the function of the module with the same purpose.
+Below API level 30 Android calls each of the four methods, so declare
+each one.
+
+```fern
+import "std/android/location";
+
+@jni("dev.example.Where implements android.location.LocationListener", "void onLocationChanged(android.location.Location)")
+pub function where_changed(env: usize, thiz: usize, loc: usize): void {
+  location.changed(env, thiz, loc);
+}
+
+// onProviderEnabled calls location.enabled, onProviderDisabled calls
+// location.disabled, and onStatusChanged has an empty body.
+
+let on = location.start(ctx, "dev.example.Where", true, 1000i64);
+
+// For each event of the loop:
+if let Some(location.Moved(f)) = location.event(e) {
+  // f.latitude and f.longitude are in degrees.
+}
+```
+
+A precise request needs the permission `ACCESS_FINE_LOCATION`, and other
+requests need `ACCESS_COARSE_LOCATION`. `location.ask(ctx, precise)`
+shows the dialog. `location.last(ctx, precise)` gives the last fix that
+the phone knows, at once. Stop the fixes with `location.stop` before
+Destroy.
+
 Other modules of `std/android` reach more of the phone: `audio`,
 `player`, `video`, `service`, `image`, `fonts` and `p2p`. The standard
 library reference lists them.
