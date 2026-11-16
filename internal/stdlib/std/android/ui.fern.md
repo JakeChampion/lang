@@ -2814,13 +2814,13 @@ function kept[S, M](state: S, p: Program[S, M], dev: Device): void {
 // The shell after the event `e` of android.run.
 pub function step[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {
   let t0 = s.host.dev.now();
-  let out = handled(s, p, e);
+  let out = handled(finished_jobs(s, p), p, e);
   let c = out.host.cost;
   let ms = ms_between(t0, out.host.dev.now());
   if (ms <= c.step) {
-    return finished_jobs(out, p);
+    return out;
   }
-  return finished_jobs(Shell { app: out.app, host: Host { ...out.host, cost: Cost { ...c, step: ms } }, said: out.said, jobs: out.jobs }, p);
+  return Shell { app: out.app, host: Host { ...out.host, cost: Cost { ...c, step: ms } }, said: out.said, jobs: out.jobs };
 }
 
 function handled[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {

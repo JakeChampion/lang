@@ -30358,12 +30358,47 @@ function e065_call_roots(c: ast.ExprCall, ps: E065Params, sbacked: string[], sum
   let flags = view_sum_flags(sums, vix, callee.key);
   let i = 0;
   while (i < flags.len() && i < callee.args.len()) {
-    if (flags[i]) {
+    if (flags[i] && view_owns_arg(c, i, s)) {
+      out = merge_view_roots(out, e065_moved_roots(callee.args[i], ps, sbacked, sums, vix, s));
+    } else if (flags[i]) {
       out = merge_view_roots(out, e065_arg_roots(callee.args[i], ps, sbacked, sums, vix, s));
     }
     i += 1;
   }
   return out;
+}
+
+// Whether the callee of `c` takes its argument `i` as `own`.
+function view_owns_arg(c: ast.ExprCall, i: i32, s: Scope): boolean {
+  if let ast.ExprIdent(cid) = c.callee {
+    if let Some(sig) = s.lookup_sig(cid.name) {
+      return i < sig.param_own.len() && sig.param_own[i];
+    }
+  }
+  return false;
+}
+
+// The storage that an argument to an `own` parameter lends to the result.
+// The value moves into the callee, so the fresh storage of a call result
+// and a local that holds no view of local storage go with it. A view that
+// the value holds still has its own roots.
+function e065_moved_roots(e: ast.Expr, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+  let none: string[] = [];
+  if let ast.ExprIdent(id) = e {
+    let root = e065_param_root(e, ps);
+    if (root.len() > 0) {
+      return ViewRoots { local: false, params: [root] };
+    }
+    return ViewRoots { local: e065_ident_in(id.name, sbacked), params: none };
+  }
+  if let ast.ExprCall(c) = e {
+    let callee = view_callee(c, s);
+    if (callee.key.len() == 0 || !view_sum_known(sums, vix, callee.key)) {
+      return ViewRoots { local: true, params: none };
+    }
+    return e065_call_roots(c, ps, sbacked, sums, vix, s);
+  }
+  return e065_arg_roots(e, ps, sbacked, sums, vix, s);
 }
 
 // The storage that an argument lends to a `str` that the callee returns. A
