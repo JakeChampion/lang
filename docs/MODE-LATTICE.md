@@ -165,10 +165,20 @@ construction whose arguments are owned or hold no handle
 `b.f` in the value that a literal `S { ...b, f: v }` gives `f` when
 `b` is owned and `v` names the root of `b` only there
 (`replacedReads`, `ow_replaced_reads`), `with` or `append` on an
-owned array with an owned element (`arrayUpdateOwned`), or the
+owned array with an owned element (`arrayUpdateOwned`), a call
+whose result borrows only from arguments that are fresh
+constructions and owned (`lendingArgsOwned`,
+`ow_lending_args_owned`), or the
 self-reassign move shape (`SelfReassignOwnMoveArg`
 checker.go:7388, shared verbatim with the IR so checker and rc
 agree on what moved) — else E051 (checker.go:7523).
+
+The result of a call borrows when its body can return a part of a
+borrowed parameter (`computeResultBorrows`, `ow_result_borrows`). A
+payload that a `match` arm binds from a borrowed value is such a
+part, as a field read and an element read are. Each checker also
+has the answer for each parameter (`resultLends`,
+`ow_result_lends`), which the call rule above reads.
 
 Guarantee: affine (at-most-once) consumption of owned params,
 and that nothing borrowed is laundered into an owning sink. This
