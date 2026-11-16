@@ -215,19 +215,6 @@ import "std/http";
 import "std/i32";
 import "std/metrics";
 
-function port_from_env(): i32 {
-  match (env("PORT")) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => { return n; },
-        Err(_) => {}
-      }
-    },
-    None => {}
-  }
-  return 0;
-}
-
 function main(): i32 {
   let pad: string = "x";
   let k: i32 = 0;
@@ -245,10 +232,14 @@ function main(): i32 {
   }
   let text: string = reg.render();
   let drv: async.RealDriver = async.real_driver();
-  let Ok(listening) = metrics.listen(drv, port_from_env()) else {
-    return 1;
+  let ex: metrics.Exporter = match (metrics.listen(drv, 0)) {
+    Ok(l) => l,
+    Err(e) => {
+      eprint("listen: " + e.message());
+      return 1;
+    }
   };
-  let ex: metrics.Exporter = listening;
+  print("listening on " + ex.port().to_string());
   let quit: Cell[boolean] = cell_new(false);
   while (!quit.get()) {
     let events: i32[] = drv.wait(16, None);
@@ -306,27 +297,76 @@ func TestMetricsExporterLargeScrape(t *testing.T) {
 		}
 		out := filepath.Join(dir, "large_scrape.wasm")
 		build(t, "wasm32-wasi", out)
-		checkLargeScrape(t, exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "PORT", out))
+		checkLargeScrape(t, exec.Command("wasmtime", "run", "-S", "inherit-network", out))
 	})
+}
+
+// scrapeServer is a started exporter. Read stderr only after exited closes.
+type scrapeServer struct {
+	cmd     *exec.Cmd
+	addr    string
+	stderr  *strings.Builder
+	exited  chan struct{}
+	waitErr error
+}
+
+// stop kills the exporter and returns its stderr.
+func (s *scrapeServer) stop() string {
+	s.cmd.Process.Kill()
+	<-s.exited
+	return s.stderr.String()
+}
+
+// startLargeScrape starts the exporter, which listens on a port that the
+// kernel picks and writes that port as its first line of stdout.
+func startLargeScrape(t *testing.T, cmd *exec.Cmd) *scrapeServer {
+	t.Helper()
+	srv := &scrapeServer{cmd: cmd, stderr: &strings.Builder{}, exited: make(chan struct{})}
+	out, in, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	cmd.Stdout = in
+	cmd.Stderr = srv.stderr
+	err = cmd.Start()
+	in.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		srv.waitErr = cmd.Wait()
+		close(srv.exited)
+	}()
+	t.Cleanup(func() { srv.stop() })
+	line := make(chan string, 1)
+	go func() {
+		first, _ := bufio.NewReader(out).ReadString('\n')
+		line <- first
+		io.Copy(io.Discard, out)
+	}()
+	var first string
+	select {
+	case first = <-line:
+	case <-time.After(60 * time.Second):
+		t.Fatalf("exporter wrote no port within 60s\nstderr:\n%s", srv.stop())
+	}
+	port, ok := strings.CutPrefix(strings.TrimSpace(first), "listening on ")
+	if !ok {
+		<-srv.exited
+		t.Fatalf("exporter wrote %q, not its port: %v\nstderr:\n%s", first, srv.waitErr, srv.stderr.String())
+	}
+	srv.addr = "127.0.0.1:" + port
+	if err := e2eharness.AwaitServerReady(srv.addr, srv.exited); err != nil {
+		t.Fatalf("%v: %v\nstderr:\n%s", err, srv.waitErr, srv.stop())
+	}
+	return srv
 }
 
 func checkLargeScrape(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
-	port := freeLoopbackPort(t)
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
-	t.Cleanup(func() {
-		cmd.Process.Kill()
-		<-exited
-	})
-	e2eharness.WaitServerReady(t, addr)
+	srv := startLargeScrape(t, cmd)
+	addr := srv.addr
 
 	pad := strings.Repeat("x", metricsLargeScrapePad)
 	var want strings.Builder
@@ -347,27 +387,26 @@ func checkLargeScrape(t *testing.T, cmd *exec.Cmd) {
 	time.Sleep(300 * time.Millisecond)
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
-		t.Fatalf("read response: %v\nstderr:\n%s", err, stderr.String())
+		t.Fatalf("read response: %v\nstderr:\n%s", err, srv.stop())
 	}
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
-		t.Fatalf("body after %d of %d bytes: %v\nstderr:\n%s", len(body), resp.ContentLength, err, stderr.String())
+		t.Fatalf("body after %d of %d bytes: %v\nstderr:\n%s", len(body), resp.ContentLength, err, srv.stop())
 	}
 	if resp.StatusCode != 200 || string(body) != want.String() {
-		t.Fatalf("scrape: status %d, %d body bytes, want 200 and the %d-byte exposition\nstderr:\n%s", resp.StatusCode, len(body), want.Len(), stderr.String())
+		t.Fatalf("scrape: status %d, %d body bytes, want 200 and the %d-byte exposition\nstderr:\n%s", resp.StatusCode, len(body), want.Len(), srv.stop())
 	}
 
 	if quit := e2eharness.HTTPRoundTrip(t, addr, "/quit", 10*time.Second); !strings.Contains(quit, "HTTP/1.1 404") {
 		t.Fatalf("GET /quit: want 404, got\n%s", quit)
 	}
 	select {
-	case err := <-exited:
-		exited <- err
-		if err != nil {
-			t.Fatalf("exporter exited with %v\nstderr:\n%s", err, stderr.String())
+	case <-srv.exited:
+		if srv.waitErr != nil {
+			t.Fatalf("exporter exited with %v\nstderr:\n%s", srv.waitErr, srv.stderr.String())
 		}
 	case <-time.After(30 * time.Second):
-		t.Fatalf("exporter still running 30s after /quit\nstderr:\n%s", stderr.String())
+		t.Fatalf("exporter still running 30s after /quit")
 	}
 }
