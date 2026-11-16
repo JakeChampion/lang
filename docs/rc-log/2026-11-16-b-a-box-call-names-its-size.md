@@ -43,7 +43,10 @@ Three calls take the routine when the size is a constant:
 - the allocation for a null token
 - the fresh path of a reuse
 
-A build that counts or profiles each allocation keeps the general routine. A
+A build that counts or profiles each allocation keeps the general routine.
+So does a unit of a per-module build, because the unit with the runtime does
+not see the calls of the other units
+(`TestSelfHostPerModuleReadFileBytes`). A
 later need of the build can stop the direct routines. Then the routine of a
 size only gives n to `__fern_rec_box`.
 

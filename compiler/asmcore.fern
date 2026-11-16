@@ -65,6 +65,9 @@ pub struct EmitState {
   funcs: parser.FuncDecl[],
   local_types: Ty[],
   str_ns: string,
+  // The output is one unit of several, and another unit can have the runtime.
+  // A unit cannot ask that runtime for a routine that only some programs use.
+  split_units: boolean,
   sym_addrs: string[],
   cfi_stubs: string[],
   cfi_sigs: i32[],
@@ -622,6 +625,7 @@ pub function new_state(): EmitState {
     funcs: fns,
     local_types: lts,
     str_ns: "",
+    split_units: false,
     sym_addrs: [],
     cfi_stubs: [],
     cfi_sigs: [],

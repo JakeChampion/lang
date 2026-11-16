@@ -13815,9 +13815,10 @@ function emit_sized_rec_box(own s: asmcore.EmitState, words: i32): asmcore.EmitS
 }
 
 // A call names the routine of its size when the box routines are compact
-// and nothing counts or profiles each allocation.
+// and nothing counts or profiles each allocation. A unit of several keeps the
+// general routine, because the unit with the runtime does not see its calls.
 function sized_box_call(s: asmcore.EmitState, words: i64): boolean {
-  return compact_boxes(s) && !s.leak_check && !rtprofile.allocation(s.profile) && asmcore.sized_rec_box_words(words);
+  return compact_boxes(s) && !s.leak_check && !rtprofile.allocation(s.profile) && !s.split_units && asmcore.sized_rec_box_words(words);
 }
 
 function profile_alloc_fast(s: asmcore.EmitState): boolean {
@@ -13989,7 +13990,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   mod = parser.infer_ret_types_module(mod);
   let s = asmcore.new_state();
   s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("arm64") };
-  s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, sw), mod), all_funcs);
+  s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, split_units: globl_defs, rt_lower: rt }, sw), mod), all_funcs);
   let derrs = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));
