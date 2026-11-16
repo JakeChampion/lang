@@ -1515,7 +1515,7 @@ function array_helper_parts(needs: string[], mod: parser.Module, own parts: stri
     }
   }
   if (append || write || back || kernels.len() > 0) {
-    parts = parts.append(rtbytecopy.wasm_source(append, write, back, kernels));
+    parts = parts.append(rtbytecopy.wasm_source(append, write, back, kernels, byte_view_decode("$src", "$p", "$sn")));
   }
   if (need(needs, "@uses_bytes_range")) {
     parts = parts.append(bytes_range_helper(empty));

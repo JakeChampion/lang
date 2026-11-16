@@ -8264,12 +8264,13 @@ function dir_contracts(): ssasem.Contract[] {
 
 function byte_copy_contracts(): ssasem.Contract[] {
   let bytes = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
+  let view = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true };
   let counted = ssaunits.counted_mode();
   let borrow = ssaunits.borrow_mode();
   let value = ssaunits.value_mode();
   return [
     ssasem.Contract { name: "__fern_bytes_append_range", params: [bytes, bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, borrow, value, value], result: bytes },
-    ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, typeinfo.t_i32(), bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
+    ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, typeinfo.t_i32(), view, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
     ssasem.Contract { name: "__fern_bytes_append_back", params: [bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, value, value], result: bytes },
   ];
 }
