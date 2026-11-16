@@ -890,9 +890,14 @@ function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
   return out;
 }
 
-function spans_hard(hard: boolean[], integer: boolean, cum: i32[], lo: i32, hi: i32, v: i32): boolean {
+// The emitter saves no float register around a cold call, so a float value
+// counts each call it is live after.
+function spans_hard(hard: boolean[], crossing_all: boolean[], integer: boolean, cum: i32[], lo: i32, hi: i32, v: i32): boolean {
   if (integer) {
     return hard[v];
+  }
+  if (v < crossing_all.len()) {
+    return crossing_all[v];
   }
   return spans_call(cum, lo, hi);
 }
@@ -1555,7 +1560,7 @@ function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
 }
 
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
-  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], SpillCosts { fold_alu_rhs: false });
+  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], [], SpillCosts { fold_alu_rhs: false });
 }
 
 // A spill definition or normal read needs an extra transfer instruction.
@@ -1563,7 +1568,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
 // The model discounts those reads and keeps the squared-use protection.
 pub struct SpillCosts { fold_alu_rhs: boolean }
 
-pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[], lens: i32[], costs: SpillCosts): Alloc {
+pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[], crossing_all: boolean[], lens: i32[], costs: SpillCosts): Alloc {
   no_home = unhomed_call_results(f, no_home);
   let cold_calls = cold.len() > 0;
   let wish = return_prefs(f, pref, abi_reg);
@@ -1843,7 +1848,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     }
     let abi_ok = !spans_call(cum_abi, lo[v], hi[v]);
     let soft = cold_calls && oi < split && spans_call(cum_soft, lo[v], hi[v]) && free_s.len() > 0;
-    let keep_caller = spans_hard(hard, oi < split, cum, lo[v], hi[v], v) || soft;
+    let keep_caller = spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v) || soft;
     let placed = false;
     let ci = 0;
     while (ci < 5 && !placed) {
@@ -1930,7 +1935,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       continue;
     }
     let pick = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
-    let from_caller = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
+    let from_caller = !spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
     from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
     // A save around a call restores its holder, so a lent interval holds none.
     if (!from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1)) {
@@ -1955,7 +1960,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       }
     }
     if (!from_caller && free_s.len() == 0) {
-      let need_saved = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
+      let need_saved = spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v);
       let fa = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lens, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
       let cmp = 0;
       if (fa >= 0) {

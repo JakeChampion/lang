@@ -29,14 +29,14 @@ const VERSION: string = "cmark 0.31.2 - CommonMark converter\n"
 const FORMATS: string[] = ["html", "xml", "man", "commonmark", "latex"];
 
 // The command line after its options: the output format, the options, the
-// files and whether invalid UTF-8 follows the rule of cmark. A `done` command
-// line has nothing to read, and `code` is its exit status.
-struct Command { format: string, o: markdown.Options, files: string[], cmark_utf8: boolean, done: boolean, code: i32 }
+// files and whether invalid UTF-8 becomes U+FFFD. A `done` command line has
+// nothing to read, and `code` is its exit status.
+struct Command { format: string, o: markdown.Options, files: string[], validate: boolean, done: boolean, code: i32 }
 
 // Reads the arguments in order, as cmark does. `--version` and `--help`
 // stop at once. An unknown option prints the usage and fails.
 function command(argv: string[]): Command {
-  let c = Command { format: "html", o: markdown.options(), files: [], cmark_utf8: false, done: false, code: 0 };
+  let c = Command { format: "html", o: markdown.options(), files: [], validate: false, done: false, code: 0 };
   let i = 1;
   while (i < argv.len()) {
     let (next, last) = argument(c, argv, i);
@@ -97,7 +97,7 @@ function flag(c: Command, a: string): Command {
     return Command { ...c, done: true };
   }
   if (a == "--validate-utf8") {
-    return Command { ...c, cmark_utf8: true };
+    return Command { ...c, validate: true };
   }
   let (o, known) = option(c.o, a);
   if (known) {
@@ -130,7 +130,7 @@ function option(o: markdown.Options, a: string): (markdown.Options, boolean) {
 
 function fail(message: string): Command {
   write_err(message);
-  return Command { format: "", o: markdown.options(), files: [], cmark_utf8: false, done: true, code: 1 };
+  return Command { format: "", o: markdown.options(), files: [], validate: false, done: true, code: 1 };
 }
 
 // The number at the start of `s` and the rest of `s`, as C `strtol` reads
@@ -178,17 +178,16 @@ function c_sign(s: string): (i32, boolean) {
   return (i, false);
 }
 
-// The text of the files one after the other, or of stdin when there is no
-// file. The text of one file of valid UTF-8 is not copied.
-function read_text(files: string[], cmark_rule: boolean): Result[string, string] {
-  if (files.len() == 1 && !cmark_rule) {
-    if let Ok(text) = read_file(files[0]) {
-      return Ok(text);
-    }
-  }
+// The bytes of the files one after the other, or of stdin when there is no
+// file. With `validate`, each sequence that is not UTF-8 becomes U+FFFD, as
+// `cmark --validate-utf8` replaces it. Else the bytes stay as they are.
+function read_text(files: string[], validate: boolean): Result[u8[], string] {
   match (read_input(files)) {
     Ok(b) => {
-      return Ok(markdown.text_of(b, cmark_rule));
+      if (validate) {
+        return Ok(markdown.validated(b));
+      }
+      return Ok(b);
     },
     Err(message) => {
       return Err(message);
@@ -267,8 +266,8 @@ function main(): i32 {
   if (c.done) {
     return c.code;
   }
-  let text = "";
-  match (read_text(c.files, c.cmark_utf8)) {
+  let text: u8[] = [];
+  match (read_text(c.files, c.validate)) {
     Ok(t) => {
       text = t;
     },

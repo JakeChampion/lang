@@ -554,6 +554,7 @@ func (p *parser) parseProgram() *ast.Program {
 				sd.Derives = derives
 				sd.MustConsume = mustConsume
 				sd.ValueType = attrName == "value"
+				sd.Secret = attrName == "secret"
 				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
 			}
@@ -1231,7 +1232,7 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		return declAttr{name: attr, derives: derives}, nil
 	case "must_consume":
 		return declAttr{name: attr, mustConsume: true}, nil
-	case "value":
+	case "value", "secret":
 		return declAttr{name: attr}, nil
 	case "try":
 		return declAttr{name: attr, tryMarker: true}, nil
@@ -1279,13 +1280,13 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		}
 		return declAttr{name: attr, interrupt: slot}, nil
 	default:
-		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @value, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @value, @secret, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
 func attrFits(name, kind string) bool {
 	switch name {
-	case "value":
+	case "value", "secret":
 		return kind == "struct"
 	case "":
 		return true
@@ -1301,8 +1302,8 @@ func attrFits(name, kind string) bool {
 
 func attrMisplaced(name string) string {
 	switch name {
-	case "value":
-		return "@value only applies to a `struct` declaration"
+	case "value", "secret":
+		return "@" + name + " only applies to a `struct` declaration"
 	case "derive", "must_consume":
 		return "@" + name + " only applies to a `struct` or `enum` declaration"
 	case "try":
@@ -2147,6 +2148,23 @@ func (p *parser) parseRecvTypeParam() (ast.Type, error) {
 	return ast.StructType{Name: nameTok.Text}, nil
 }
 
+// parseOnceType reads `once (A) => B`: a function type whose call consumes
+// the function.
+func (p *parser) parseOnceType(t lexer.Token) (ast.Type, error) {
+	p.advance()
+	inner, err := p.parseTypeArrow(true)
+	if err != nil {
+		return nil, err
+	}
+	ft, ok := inner.(*ast.FuncType)
+	if !ok {
+		return nil, p.errorfCode(t.Pos, "P001", "`once` marks a function type: write `once (A) => B`")
+	}
+	once := *ft
+	once.Once = true
+	return &once, nil
+}
+
 func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 	if err := p.enter(); err != nil {
 		return nil, err
@@ -2156,6 +2174,9 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 		return p.parseRecvTypeParam()
 	}
 	t := p.peek()
+	if t.Kind == lexer.Ident && t.Text == "once" && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "(" {
+		return p.parseOnceType(t)
+	}
 	var base ast.Type
 	switch {
 	case t.Kind == lexer.Punct && t.Text == "[":
@@ -5555,6 +5576,14 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		}
 	case lexer.Ident:
 		p.advance()
+		// `once` is a word only before a lambda: a name is not valid there.
+		if t.Text == "once" && p.match(lexer.Punct, "(") && p.looksLikeArrowLambda() {
+			e, err := p.parseArrowLambda()
+			if lam, ok := e.(*ast.Lambda); ok {
+				lam.Once = true
+			}
+			return e, err
+		}
 		if !p.noStructLit && p.match(lexer.Punct, "{") {
 			if t.Text == "Map" {
 				return p.parseMapLit(t.Pos)

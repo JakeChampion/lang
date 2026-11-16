@@ -7335,15 +7335,15 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, ops: ir.Op[], s: asmcore.Emit
   let cold = ssa.with_kernels(ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), direct_boxes(s)), kernels);
   let clobbers = ssa_cold_clobbers(cold, kernels);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
-  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, clobbers, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }

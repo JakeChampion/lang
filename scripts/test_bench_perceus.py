@@ -106,11 +106,35 @@ class LanguageTests(unittest.TestCase):
                 self.assertEqual(len(pairs), len(languages) * (len(languages) - 1))
                 self.assertEqual(len(set(pairs.values())), 1)
 
+    def test_binarytrees_oracle_sums_the_items(self):
+        self.assertEqual(bench.binarytrees(10), "\n".join([
+            "stretch tree of depth 11 check: -1",
+            "2048 trees of depth 4 check: -2048",
+            "512 trees of depth 6 check: -512",
+            "128 trees of depth 8 check: -128",
+            "32 trees of depth 10 check: -32",
+            "long lived tree of depth 10 check: -1",
+        ]) + "\n")
+        self.assertTrue(bench.binarytrees(0).startswith("stretch tree of depth 7 check: -1\n"))
+
+    def test_list_tree_and_map_oracles(self):
+        self.assertEqual(bench.sorted_digest(10), "10 35930340\n")
+        self.assertEqual(bench.treemap(10), "741014\n")
+        self.assertEqual(bench.pmap(1000), "1000 499500 0 0\n")
+
     def test_every_workload_has_a_roc_twin(self):
         roc = Path(__file__).resolve().parent.parent / "bench/perceus/roc"
         for name in bench.NAMES:
             with self.subTest(name=name):
                 self.assertTrue((roc / f"{name}.roc").is_file())
+
+    def test_summary_gives_median_best_and_peak(self):
+        row = lambda language, seconds, mb: {"language": language, "workload": "msort", "size": 10,
+                                            "user_seconds": seconds, "system_seconds": 0.0, "peak_rss_bytes": mb * 2**20}
+        text = bench.summary([row("fern", 0.3, 5), row("koka", 0.2, 7), row("fern", 0.1, 6), row("koka", 0.4, 7), row("fern", 0.2, 5)])
+        self.assertIn("| workload | size | fern | koka |\n", text)
+        self.assertIn("| msort | 10 | 200 (100) | 300 (200) |\n", text)
+        self.assertIn("| msort | 10 | 6 | 7 |\n", text)
 
 
 if __name__ == "__main__":

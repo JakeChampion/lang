@@ -2,13 +2,10 @@ package e2e
 
 import (
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -47,50 +44,25 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(freeLoopbackPort(t)))
-	srv := exec.Command(wasmtime, "serve", "--addr", addr, component)
-	var serr strings.Builder
-	srv.Stderr = &serr
-	if err := srv.Start(); err != nil {
-		t.Fatalf("wasmtime serve: %v", err)
+	srv, err := e2eharness.StartWasmtimeServe(wasmtime, component)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		srv.Process.Kill()
-		srv.Wait()
-	})
+	t.Cleanup(func() { srv.Stop() })
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	deadline := time.Now().Add(5 * time.Second)
 	for i, value := range []string{"first-value-long", "second"} {
-		var resp *http.Response
-		for {
-			req, _ := http.NewRequest("PROPFINDX", "http://"+addr+"/abcdefg", nil)
-			req.Header.Set("x-echo-header", value)
-			var err error
-			if resp, err = client.Do(req); err == nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("request %d: %v\nstderr:\n%s", i, err, serr.String())
-			}
-			time.Sleep(50 * time.Millisecond)
+		req, _ := http.NewRequest("PROPFINDX", "http://"+srv.Addr+"/abcdefg", nil)
+		req.Header.Set("x-echo-header", value)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("request %d: %v\nstderr:\n%s", i, err, srv.Log())
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		want := "PROPFINDX|/abcdefg|" + value + "|filler-2|more-filler-3"
 		if resp.StatusCode != 200 || string(body) != want {
-			t.Errorf("request %d: status %d body %q, want 200 %q\nstderr:\n%s", i, resp.StatusCode, body, want, serr.String())
+			t.Errorf("request %d: status %d body %q, want 200 %q\nstderr:\n%s", i, resp.StatusCode, body, want, srv.Log())
 		}
 	}
-}
-
-func freeLoopbackPort(t *testing.T) int {
-	t.Helper()
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
-	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
-	return port
 }

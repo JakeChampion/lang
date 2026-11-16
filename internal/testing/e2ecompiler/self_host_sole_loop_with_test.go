@@ -441,6 +441,50 @@ function main(): i32 {
     let c: i32[] = fill_in(a);
     return b[0] * 10 + c[3];
 }`},
+	// The join after the loop takes the shared parameter on the other path.
+	// That does not make the loop's own array shared.
+	{"joined-with-parameter", "fill_or", true, `@noinline
+function fill_or(own xs: i32[], n: i32): i32[] {
+    let out: i32[] = xs;
+    if (n > 0) {
+        let fresh: i32[] = __alloc_i32(n);
+        let i: i32 = 0;
+        while (i < n) {
+            fresh = fresh.with(i, i * 2);
+            i = i + 1;
+        }
+        out = fresh;
+    }
+    return out;
+}
+function main(): i32 {
+    let a: i32[] = __alloc_i32(4);
+    let b: i32[] = a;
+    let c: i32[] = fill_or([9, 9], 5);
+    let d: i32[] = fill_or(a, 0);
+    return c[4] * 10 + d.len() + b[0];
+}`},
+	{"write-to-join-with-parameter", "fill_or_set", false, `@noinline
+function fill_or_set(own xs: i32[], n: i32): i32[] {
+    let out: i32[] = xs;
+    if (n > 0) {
+        let fresh: i32[] = __alloc_i32(n);
+        let i: i32 = 0;
+        while (i < n) {
+            fresh = fresh.with(i, i * 2);
+            i = i + 1;
+        }
+        out = fresh;
+    }
+    return out.with(0, 7);
+}
+function main(): i32 {
+    let a: i32[] = __alloc_i32(4);
+    let b: i32[] = a;
+    let c: i32[] = fill_or_set([9, 9], 5);
+    let d: i32[] = fill_or_set(a, 0);
+    return c[4] * 10 + d[0] + b[0];
+}`},
 }
 
 func TestSelfHostSoleLoopWithX86_64(t *testing.T) {
