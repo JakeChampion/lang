@@ -248,7 +248,7 @@ From Android 13 the system gives the back key and the back gesture to a callback
 
 Before Android 15, the keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it. From Android 15 the window goes under the bars and the keyboard. Then the rectangle comes from their insets and from the cutout of the display.
 
-`Ready` has the ident of a source that another module added to the looper of the loop thread, when that source has data. The module reads the data when it gets the event, so the looper does not give the same data again. `std/android/sensors` adds its queue with the ident `IDENT_SENSORS`.
+`Ready` has the ident of a source that another module added to the looper of the loop thread, when that source has data. The module reads the data when it gets the event, so the looper does not give the same data again. `std/android/sensors` adds its queue with the ident `IDENT_SENSORS`, and `std/android/camera` adds a pipe with the ident `IDENT_CAMERA`.
 
 `Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12, from 24 to 27, and 35 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 28 to 33 belong to `std/android/session`, kind 34 belongs to `std/android/noisy`, and the kinds from 36 to 38 belong to `std/android/location`. The kinds from 100 are free for the app.
 
@@ -854,10 +854,13 @@ const IDENT_MESSAGE: i32 = 1;
 const IDENT_INPUT: i32 = 2;
 
 // The first ident of a source that another module adds to the looper of
-// the loop thread. std/android/sensors uses IDENT_SENSORS.
+// the loop thread. std/android/sensors uses IDENT_SENSORS, and
+// std/android/camera uses IDENT_CAMERA.
 const IDENT_READY: i32 = 3;
 
 pub const IDENT_SENSORS: i32 = 3;
+
+pub const IDENT_CAMERA: i32 = 4;
 
 const POLL_TIMEOUT: i32 = 0 - 3;
 

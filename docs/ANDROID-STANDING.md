@@ -148,7 +148,8 @@ The order puts first what stops a release, then what most apps need.
    channels, and posts, changes and cancels notifications.
    `std/android/sensors` reads the sensors through the NDK, with a `Ready`
    event of the loop. `std/android/location` gives fixes through a @jni
-   `LocationListener`. The camera comes next.
+   `LocationListener`. `std/android/camera` gives the frames of a camera
+   through the NDK.
 
 5. **Components.** Checkbox, radio button, menu, snackbar, tabs, app bar
    and a navigation stack in `std/android/ui`.

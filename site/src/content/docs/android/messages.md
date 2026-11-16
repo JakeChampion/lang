@@ -358,6 +358,29 @@ shows the dialog. `location.last(ctx, precise)` gives the last fix that
 the phone knows, at once. Stop the fixes with `location.stop` before
 Destroy.
 
+## Camera
+
+`std/android/camera` gives the frames of a camera of the phone. `start`
+opens a camera, and the loop then gives the event
+`android.Ready(android.IDENT_CAMERA)` when a frame waits.
+`camera.event` gives the newest frame.
+
+```fern
+import "std/android/camera";
+
+let on = camera.start(ctx, camera.BACK, 640, 480);
+
+// For each event of the loop:
+if let Some(f) = camera.event(c, e) {
+  // f.y has the luma, and f.rgba() gives a draw.Image.
+}
+```
+
+`camera.sizes(camera.BACK)` gives the sizes that the camera can give.
+The app needs the permission `CAMERA`, and `camera.ask(ctx)` shows its
+dialog. Stop the camera at each Pause with `camera.stop`, because an open
+camera uses power and other apps cannot use it.
+
 Other modules of `std/android` reach more of the phone: `audio`,
 `player`, `video`, `service`, `image`, `fonts` and `p2p`. The standard
 library reference lists them.

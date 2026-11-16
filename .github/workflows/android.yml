@@ -26,6 +26,8 @@ name: Android
 # accelerometer through the Ready event of the loop.
 # tests/android/location checks std/android/location: a fix of the place
 # that the check gives the emulator, through a @jni LocationListener.
+# tests/android/camera checks std/android/camera: frames of the emulated back
+# camera through the Ready event of the loop.
 # tests/android/worker forks two workers from the loop thread and polls
 # them, and one child resolves a name through netd.
 # tests/android/jnibind calls the typed JNI wrappers that tools/jnibind
@@ -110,6 +112,7 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-notifytest.apk -apk-package dev.fern.notifytest -apk-permission POST_NOTIFICATIONS tests/android/notify/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-sensortest.apk -apk-package dev.fern.sensortest tests/android/sensors/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-locationtest.apk -apk-package dev.fern.locationtest -apk-permission ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION tests/android/location/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-cameratest.apk -apk-package dev.fern.cameratest -apk-permission CAMERA tests/android/camera/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dnstest.apk -apk-package dev.fern.dnstest -apk-permission INTERNET tests/android/dns/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-workertest.apk -apk-package dev.fern.workertest -apk-permission INTERNET tests/android/worker/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-jnibindtest.apk -apk-package dev.fern.jnibindtest tests/android/jnibind/app.fern
@@ -178,6 +181,7 @@ jobs:
             build/android-stopwatch/fern-notifytest.apk
             build/android-stopwatch/fern-sensortest.apk
             build/android-stopwatch/fern-locationtest.apk
+            build/android-stopwatch/fern-cameratest.apk
             build/android-stopwatch/fern-dnstest.apk
             build/android-stopwatch/fern-workertest.apk
             build/android-stopwatch/fern-jnibindtest.apk
@@ -225,7 +229,7 @@ jobs:
           api-level: 36
           arch: x86_64
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back emulated
           # Android 16 shows a notice the first time an app hides the bars,
           # hides the soft keyboard while the emulator has a hardware one,
           # and reads the freezer settings only at boot. After the boot, the
@@ -251,6 +255,7 @@ jobs:
             python3 tests/android/notify/emulator_check.py build/android-stopwatch/fern-notifytest.apk build/android-stopwatch/emulator/notify || echo "tests/android/notify" >> build/android-stopwatch/emulator/failed
             python3 tests/android/sensors/emulator_check.py build/android-stopwatch/fern-sensortest.apk build/android-stopwatch/emulator/sensors || echo "tests/android/sensors" >> build/android-stopwatch/emulator/failed
             python3 tests/android/location/emulator_check.py build/android-stopwatch/fern-locationtest.apk build/android-stopwatch/emulator/location || echo "tests/android/location" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/camera/emulator_check.py build/android-stopwatch/fern-cameratest.apk build/android-stopwatch/emulator/camera || echo "tests/android/camera" >> build/android-stopwatch/emulator/failed
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns || echo "tests/android/dns" >> build/android-stopwatch/emulator/failed
             python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker || echo "tests/android/worker" >> build/android-stopwatch/emulator/failed
             python3 tests/android/jnibind/emulator_check.py build/android-stopwatch/fern-jnibindtest.apk build/android-stopwatch/emulator/jnibind || echo "tests/android/jnibind" >> build/android-stopwatch/emulator/failed

@@ -783,6 +783,39 @@ func TestApkLocation(t *testing.T) {
 	verifyApkV2(t, raw)
 }
 
+// The test app of std/android/camera declares the permission, and its
+// library imports the camera and the image reader of the NDK.
+func TestApkCamera(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "cameratest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.cameratest", "-apk-permission", "CAMERA",
+		e2eharness.RepoPath("tests/android/camera", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if man := readZipEntry(t, zr, "AndroidManifest.xml"); !bytes.Contains(man, utf16le("android.permission.CAMERA")) {
+		t.Error("the manifest has no permission CAMERA")
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so")
+		for _, sym := range []string{"libcamera2ndk.so", "ACameraManager_openCamera", "AImageReader_setImageListener"} {
+			if !bytes.Contains(lib, []byte(sym)) {
+				t.Errorf("the library of %s does not import %s", abi, sym)
+			}
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
 // A @jni class that extends Service is a service in the manifest. It is not
 // exported, and its foreground service types are those of the
 // FOREGROUND_SERVICE_<TYPE> permissions: MICROPHONE and CONNECTED_DEVICE
