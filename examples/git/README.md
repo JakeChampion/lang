@@ -218,7 +218,7 @@ worktree gives the git directory.
 
 The standard output, the messages and the exit status are those of git
 2.56.1. That is the git of the CI runners. The tests compare the port with
-the git of the machine. With git 2.43, seven things are different:
+the git of the machine. With git 2.43, these things are different:
 
 - the indent of the roots in `--graph`
 - the order of the options in the message for `--graph` with `--reverse`
@@ -232,6 +232,19 @@ the git of the machine. With git 2.43, seven things are different:
   no function names and a range with no change. It has no other forms
   of the diff and no pickaxe, and its message for `--stat` is not that
   of git 2.56.1.
+
+git 2.43 is also different in these things:
+
+- `--left-only` and `--right-only` with no symmetric range. git 2.56.1
+  shows no commit, and git 2.43 shows each commit.
+- a conflict marker of `<` or `>` with no space after it. git 2.56.1
+  does not give it to `--check`.
+- a delta by name whose base is in the packfile two times, and a delta
+  whose base is a later delta. git 2.56.1 writes the packfile, and git
+  2.43 stops.
+- the diff of `--histogram`. git 2.56.1 does a Myers diff again of a
+  group of changes that the compaction moved.
+- the rule `incomplete-line` of white space. git 2.43 does not have it.
 
 ## Files
 

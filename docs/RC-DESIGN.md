@@ -339,10 +339,21 @@ reads (`units_of`):
   frame's own ever holds, from a fresh array, a `with` whose receiver no
   borrowed parameter carries (`lent_withs`), or a fresh row, kept
   sole through passes and phis that preserve it, so a `with` on it writes in
-  place without a copy guard. A read, and a builtin that keeps no reference
-  to its argument (`ssasem.holds_no_argument`, such as `__arr_set_len`), do
-  not make a box shared. Pinned by `TestSelfHostSoleLoopWithX86_64` and
+  place without a copy guard. A read does not make a box shared
+  (`only_reads`). A builtin that keeps no reference to its argument
+  (`ssasem.holds_no_argument`, such as `__arr_set_len`) does not either. A
+  call that keeps no reference to the array it borrows does not either.
+  Pinned by `TestSelfHostSoleLoopWithX86_64`, `TestSelfHostUniqueLoop` and
   `TestSelfHostGrowSoleOccurrenceX86_64`.
+- **Loan rows** (`loan_rows`, `SchemaView.loans`): per function, the array
+  parameters it can keep after it returns. A function keeps a parameter that
+  it returns. It also keeps a parameter that it gives to an operation other
+  than a read. A parameter it lends to a call that can keep it is kept too,
+  and a phi carries the box. An extern, a builtin kernel, `set_args` and an
+  indirect call keep their arguments. So does a function that lends a
+  parameter around a cycle of calls. The rows are a greatest fixpoint over
+  the module: each flag starts set, and a pass clears it. Pinned by
+  `TestSelfHostUniqueLoop` and `TestSelfHostSetArgs`.
 - **Grow rows and brackets** (`grow_rows`, `grow_table`, `Plan.grows`): per
   callee, the borrowed parameter positions whose buffer the callee may grow or
   write in place; a caller that hands such a buffer on while it still reads it

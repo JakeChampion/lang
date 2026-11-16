@@ -54,6 +54,9 @@ pub struct Device {
   // the video when the bool is true. False when it cannot.
   present: (usize, scene.Node[], boolean) => boolean,
   hide_video: () => void,
+  // Takes the video off the window for a pause. The next show_video goes on
+  // from the same place.
+  pause_video: () => void,
   // Asks for a Vsync event at the next frame of the display.
   request_frame: () => void,
   start: () => void,
@@ -1595,7 +1598,7 @@ function pause_play(own s: App): App {
   let p = s.play;
   s.dev.pause();
   if (p.video) {
-    s.dev.hide_video();
+    s.dev.pause_video();
   }
   s.dev.keep_screen_on(false);
   s.dev.immersive(false);

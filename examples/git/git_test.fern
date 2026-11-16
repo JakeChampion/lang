@@ -347,8 +347,12 @@ function test_whitespace(): test.TestOutcome {
   if (bad != (ws.SPACE_BEFORE_TAB | ws.BLANK_AT_EOL) || shown != "! >\t<x>!  >\n" || ws.error_string(bad) != "trailing whitespace, space before tab in indent") {
     return test.fail("the errors of a line: " + shown);
   }
-  if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7)) {
+  if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7) || !ws.conflict_marker("<<<<<<< ours\n", 7) || ws.conflict_marker(">>>>>>>\n", 7) || ws.conflict_marker("<<<<<<<\tx\n", 7)) {
     return test.fail("the conflict markers");
+  }
+  let (incomplete, _, _) = ws.parse("incomplete");
+  if (incomplete != (ws.DEFAULT_RULE | ws.INCOMPLETE_LINE) || (ws.all_rules(8) & ws.INCOMPLETE_LINE) == 0 || ws.error_string(ws.INCOMPLETE_LINE | ws.TAB_IN_INDENT) != "tab in indent, no newline at the end of file") {
+    return test.fail("the rule incomplete-line");
   }
   return test.pass();
 }

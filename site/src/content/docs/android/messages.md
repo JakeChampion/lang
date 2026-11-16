@@ -159,7 +159,8 @@ Frame(ns) => {
 
 The back key closes the app. When the app has more than one screen, it
 must go back one screen. `with_back` takes a function that gives the
-message of the back key, or `None` to let the back key close the app:
+message of the back key, or `None` to let the back key close the app.
+The back gesture gives the same message as the back key:
 
 ```fern
 ui.program(view, update).with_back((m: Model): Option[Msg] => {
