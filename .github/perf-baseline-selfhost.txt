@@ -176,6 +176,6 @@ selfhost/wasm32-wasi/hex_decode.emit	2949
 selfhost/x86-64-linux/base64_decode.emit	3858
 selfhost/arm64-linux/base64_decode.emit	3960
 selfhost/wasm32-wasi/base64_decode.emit	4708
-selfhost/x86-64-linux/gather_many.emit	5540
+selfhost/x86-64-linux/gather_many.emit	5634
 selfhost/arm64-linux/gather_many.emit	6053
-selfhost/wasm32-wasi/gather_many.emit	6557
+selfhost/wasm32-wasi/gather_many.emit	6642

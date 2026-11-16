@@ -224,8 +224,8 @@ x86_64/base64_decode.text	3858
 x86_64/base64_decode.ir	551372106
 aarch64/base64_decode.text	3960
 aarch64/base64_decode.ir	355710617
-x86_64/gather_many.text	5540
-x86_64/gather_many.ir	112502557
+x86_64/gather_many.text	5634
+x86_64/gather_many.ir	114792402
 aarch64/gather_many.text	6053
 aarch64/gather_many.ir	213076746
 aarch64/hex_decode.ir	182381782
