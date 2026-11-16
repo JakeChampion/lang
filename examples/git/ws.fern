@@ -15,6 +15,8 @@ pub const BLANK_AT_EOF: i32 = 1024;
 
 pub const TAB_IN_INDENT: i32 = 2048;
 
+pub const INCOMPLETE_LINE: i32 = 4096;
+
 pub const TRAILING_SPACE: i32 = BLANK_AT_EOL | BLANK_AT_EOF;
 
 const TAB_WIDTH_MASK: i32 = 63;
@@ -25,11 +27,11 @@ pub const DEFAULT_RULE: i32 = TRAILING_SPACE | SPACE_BEFORE_TAB | 8;
 // The names of the rules, their bits, and whether `whitespace` set to
 // true leaves them out: a rule that makes fewer errors, or one that the
 // default does not have.
-const NAMES: string[] = ["trailing-space", "space-before-tab", "indent-with-non-tab", "cr-at-eol", "blank-at-eol", "blank-at-eof", "tab-in-indent"];
+const NAMES: string[] = ["trailing-space", "space-before-tab", "indent-with-non-tab", "cr-at-eol", "blank-at-eol", "blank-at-eof", "tab-in-indent", "incomplete-line"];
 
-const BITS: i32[] = [TRAILING_SPACE, SPACE_BEFORE_TAB, INDENT_WITH_NON_TAB, CR_AT_EOL, BLANK_AT_EOL, BLANK_AT_EOF, TAB_IN_INDENT];
+const BITS: i32[] = [TRAILING_SPACE, SPACE_BEFORE_TAB, INDENT_WITH_NON_TAB, CR_AT_EOL, BLANK_AT_EOL, BLANK_AT_EOF, TAB_IN_INDENT, INCOMPLETE_LINE];
 
-const NOT_IN_ALL: boolean[] = [false, false, false, true, false, false, true];
+const NOT_IN_ALL: boolean[] = [false, false, false, true, false, false, true, false];
 
 // The width of a tab in `rule`.
 pub function tab_width(rule: i32): i32 {
@@ -138,6 +140,9 @@ pub function error_string(bits: i32): string {
   }
   if ((bits & TAB_IN_INDENT) != 0) {
     parts = parts.append("tab in indent");
+  }
+  if ((bits & INCOMPLETE_LINE) != 0) {
+    parts = parts.append("no newline at the end of file");
   }
   return parts.join(", ");
 }
