@@ -196,15 +196,15 @@ x86_64/perceus_rbtree.ir	24855507
 x86_64/perceus_rbtree_ck.text	3329
 x86_64/perceus_rbtree_ck.ir	35108677
 aarch64/perceus_cfold.text	2454
-aarch64/perceus_cfold.ir	49587026
+aarch64/perceus_cfold.ir	47501284
 aarch64/perceus_deriv.text	3218
-aarch64/perceus_deriv.ir	71797534
+aarch64/perceus_deriv.ir	70455690
 aarch64/perceus_nqueens.text	1913
-aarch64/perceus_nqueens.ir	81247671
+aarch64/perceus_nqueens.ir	77271160
 aarch64/perceus_rbtree.text	3139
-aarch64/perceus_rbtree.ir	28296218
+aarch64/perceus_rbtree.ir	27969390
 aarch64/perceus_rbtree_ck.text	3739
-aarch64/perceus_rbtree_ck.ir	40162665
+aarch64/perceus_rbtree_ck.ir	39644532
 x86_64/video_qtrle.text 6209
 x86_64/video_qtrle.ir 1547169520
 aarch64/video_qtrle.text 6387
@@ -227,5 +227,5 @@ aarch64/base64_decode.ir	355710617
 x86_64/gather_many.text	5540
 x86_64/gather_many.ir	109620692
 aarch64/gather_many.text	6053
-aarch64/gather_many.ir	213076746
+aarch64/gather_many.ir	210413334
 aarch64/hex_decode.ir	182381782
