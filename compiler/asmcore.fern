@@ -5842,6 +5842,17 @@ pub struct ShapeRefOut { state: EmitState, label: string }
 
 pub struct DynArg { reg: string, off: i32 }
 
+// The routine that makes the block of a box of `words` words, when a call
+// can name that number. It takes no argument.
+pub function sized_rec_box(words: i32): string {
+  return "__fern_rec_box_" + util.i32_to_string(words);
+}
+
+// A box of 1 to 255 words has a free list of its own block size.
+pub function sized_rec_box_words(words: i64): boolean {
+  return words >= 1i64 && words <= 255i64;
+}
+
 // The tag of a box with the shape `name`: the high half of its header word.
 // The low 16 bits are the number of words of the box. The bits above them
 // are one more than the index of the shape in the declarations of the

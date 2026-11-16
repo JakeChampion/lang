@@ -547,7 +547,11 @@ pointer that flows through the program points past the header.
   constant. An array has zero in that half, and `__fn___fern_box_dec` reads
   it to tell a box from an array. In a build that counts no allocation, a
   box of 1 to 255 words has a block of n + 1 words, which the two routines
-  take from and give to its free list directly. A build with the sanitizer, the
+  take from and give to its free list directly. On the native targets, a
+  call that knows n calls `__fern_rec_box_n` (`asmcore.sized_rec_box`). That
+  routine has the address of the free list and the size of the block as
+  constants, and goes to `__fern_rec_box` only when the bump leaves its
+  64 KiB line. The output has a routine only for each n that a call names. A build with the sanitizer, the
   quarantine, `-harden` or an allocation profile gives each box the header
   of an array and keeps the tag in the same half. A program can have 32,766
   shapes, and a record can have 65,535 fields. On wasm32 a record keeps its
