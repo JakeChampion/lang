@@ -1471,7 +1471,7 @@ function float_def(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str.starts_with("i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
   }
-  return k == TERNARY && ins.str == "ffma";
+  return k == TERNARY && (ins.str == "ffma" || ins.str == "ffma32");
 }
 
 function float_load(ins: SInst): boolean {
@@ -1498,7 +1498,7 @@ function float_use(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits" || ins.str == "vsplat";
   }
-  return k == TERNARY && ins.str == "ffma";
+  return k == TERNARY && (ins.str == "ffma" || ins.str == "ffma32");
 }
 
 pub function float_arith(op: string): boolean {

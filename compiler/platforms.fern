@@ -442,6 +442,7 @@ pub function core_builtins(): string[] {
     "__outer_mul_f64",
     "__inner_mul_add_f64",
     "__fma_f64",
+    "__fma_f32",
     "exit", "isatty", "target_os", "target_arch",
     "__account_entry", "__alloc_len",
     "__ct_secret", "__ct_public",

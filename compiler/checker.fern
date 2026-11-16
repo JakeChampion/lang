@@ -571,6 +571,9 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && is_f64_primitive(name) || argc == 3 && name == "__fma_f64") {
     return typeinfo.t_f64();
   }
+  if (argc == 3 && name == "__fma_f32") {
+    return typeinfo.t_f32();
+  }
   if (is_lane_builtin(name) && argc == typeinfo.lane_builtin_params(name).len()) {
     return typeinfo.lane_builtin_result(name);
   }
@@ -889,6 +892,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (name == "__fma_f64") {
     return ([typeinfo.t_f64(), typeinfo.t_f64(), typeinfo.t_f64()], true);
+  }
+  if (name == "__fma_f32") {
+    return ([typeinfo.t_f32(), typeinfo.t_f32(), typeinfo.t_f32()], true);
   }
   if (is_lane_builtin(name)) {
     return (typeinfo.lane_builtin_params(name), true);
@@ -19170,7 +19176,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
   "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
   "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
-  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__fma_f64", "__free", "__alloc_len", "__heap_alloc_count", "__heap_bump_bytes",
+  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__fma_f32", "__fma_f64", "__free", "__alloc_len", "__heap_alloc_count", "__heap_bump_bytes",
   "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
   "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas", "__secondary_entry",
   "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",

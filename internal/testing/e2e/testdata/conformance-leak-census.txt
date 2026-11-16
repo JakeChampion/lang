@@ -372,6 +372,7 @@ exit_max                                             0
 explicit_type_argument_names_union_or_option         0
 f32_array_element                                    0
 f32_array_param                                      0
+f32_fma                                              0
 f64_elements                                         0
 f64_fma                                              0
 f64_if_expr                                          0
