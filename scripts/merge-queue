@@ -60,8 +60,8 @@ BATCH = "merge-queue/batch"
 STATE_REF = "refs/merge-queue/state"
 WORKFLOW_BATCH = "merge-queue-batch.yml"
 WORKFLOW_FORM = "merge-queue.yml"
-PIN_PREFIXES = (".github/alloc-baseline.txt", ".github/cliff-baseline.txt", ".github/perf-baseline",
-                ".github/profile-costs-baseline.txt")
+PIN_PREFIXES = (".github/alloc-baseline.txt", ".github/certify-baseline.txt", ".github/cliff-baseline.txt",
+                ".github/perf-baseline", ".github/profile-costs-baseline.txt")
 REMOTE = os.environ.get("MERGE_QUEUE_REMOTE", "origin")
 GH = os.environ.get("MERGE_QUEUE_GH", "gh")
 MAX = int(os.environ.get("MERGE_QUEUE_BATCH", "10"))

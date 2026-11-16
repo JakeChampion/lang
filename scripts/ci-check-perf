@@ -90,6 +90,11 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
     if (n >= 1000)       return sprintf("%.1fk", n / 1000)
     return sprintf("%d", n)
   }
+  # A move from a baseline of zero counts as a drift of 100%.
+  function drift(m, b) {
+    if (b == 0) return (m == 0) ? 0 : 100
+    return 100 * (m - b) / b
+  }
   BEGIN {
     while ((getline line < B) > 0) {
       if (line ~ /^[ \t]*(#|$)/) continue
@@ -122,7 +127,7 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
     for (i = 1; i <= n; i++) {
       m = order[i]
       if (m in base) {
-        delta = 100 * (measured[m] - base[m]) / base[m]
+        delta = drift(measured[m], base[m])
         printf "SUMMARY\t| %s | %s | %s | %+.2f%% |\n", m, human(measured[m]), human(base[m]), delta
       } else {
         printf "SUMMARY\t| %s | %s | none | unbaselined |\n", m, human(measured[m])
@@ -140,7 +145,7 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
         paste[m] = measured[m]
         continue
       }
-      delta = 100 * (measured[m] - base[m]) / base[m]
+      delta = drift(measured[m], base[m])
       mag = delta < 0 ? -delta : delta
       if (mag > worst) { worst = mag; worstm = m }
       t = tol[m]
