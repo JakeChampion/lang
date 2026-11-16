@@ -252,8 +252,9 @@ func gitGPGSignedMergesFixture(t *testing.T, oracle gitTool, dir string, hash gi
 		})
 	}
 	// The third key expires one day after a time in 2020, at which gpg makes
-	// it and signs with it.
-	if err := os.WriteFile(filepath.Join(homes[2], "gpg.conf"), []byte("faked-system-time 1600000000\n"), 0o644); err != nil {
+	// it and signs with it. The "!" stops that clock, so the key is not made
+	// a second after the time at which gpg signs.
+	if err := os.WriteFile(filepath.Join(homes[2], "gpg.conf"), []byte("faked-system-time 1600000000!\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for i, who := range []string{"Signer <s@example.com>", "Stranger <x@example.com>", "Old <o@example.com>"} {
