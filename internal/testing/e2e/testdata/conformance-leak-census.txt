@@ -33,6 +33,7 @@ a_function_type_argument_binds_through_its_array     0
 a_generic_call_takes_its_type_arguments_from_its_first_use 0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
+a_generic_implementation_of_a_generic_trait_is_a_dyn_value 0
 a_generic_struct_literal_takes_the_float_field_of_its_declared_type 0
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
 a_handler_fans_out_on_its_scheduler                  2
@@ -53,11 +54,13 @@ a_receiver_method_lifts_a_closure_that_captures_its_receiver 0
 a_returned_value_match_returns_from_each_arm         0
 a_specialised_callee_keeps_its_record_update_donor                      0
 a_struct_literal_from_a_module_takes_its_type_arguments_from_its_fields 0
+a_struct_literal_takes_its_type_argument_from_a_returned_function 0
 a_struct_name_call_wraps_a_union_member_across_modules 0
 a_three_trait_bound_in_an_imported_module            0
 a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_type_parameter_is_inferred_from_an_expected_type   0
 a_value_if_of_literals_takes_the_type_of_its_first_use 0
+a_value_moved_into_a_lending_call_is_not_a_view_of_a_local 0
 a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
@@ -369,6 +372,7 @@ exit_max                                             0
 explicit_type_argument_names_union_or_option         0
 f32_array_element                                    0
 f32_array_param                                      0
+f32_fma                                              0
 f64_elements                                         0
 f64_fma                                              0
 f64_if_expr                                          0

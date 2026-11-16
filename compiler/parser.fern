@@ -11052,12 +11052,14 @@ function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): 
 }
 
 function decl_call_ret_type(funcs: MFns, fd: FuncDecl, args: ast.Expr[], env: MEnv): string {
+  // A function result is spelled whole, as a lambda gives it.
+  let ret = fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
   if (fd.type_params.len() == 0) {
-    let evars = type_str_vars(fd.ret_type, []);
+    let evars = type_str_vars(ret, []);
     if (evars.len() == 0) {
-      return fd.ret_type;
+      return ret;
     }
-    return resolve_residual_ret(fd, args, env, funcs, fd.ret_type, evars);
+    return resolve_residual_ret(fd, args, env, funcs, ret, evars);
   }
   let key = infer_inst(fd, args, env, funcs);
   if (key.len() == 0) {
@@ -11067,7 +11069,7 @@ function decl_call_ret_type(funcs: MFns, fd: FuncDecl, args: ast.Expr[], env: ME
   if (fd.type_params.len() != 1) {
     cts = util.split_char(key, b';');
   }
-  let rt = resolve_proj_in_type(subst_ty(fd.ret_type, fd.type_params, cts), funcs.impls);
+  let rt = resolve_proj_in_type(subst_ty(ret, fd.type_params, cts), funcs.impls);
   let rvars = type_str_vars(rt, []);
   if (rvars.len() > 0) {
     rt = resolve_residual_ret(fd, args, env, funcs, rt, rvars);

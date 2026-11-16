@@ -8333,12 +8333,13 @@ function dir_contracts(): ssasem.Contract[] {
 
 function byte_copy_contracts(): ssasem.Contract[] {
   let bytes = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false };
+  let view = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true };
   let counted = ssaunits.counted_mode();
   let borrow = ssaunits.borrow_mode();
   let value = ssaunits.value_mode();
   return [
     ssasem.Contract { name: "__fern_bytes_append_range", params: [bytes, bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, borrow, value, value], result: bytes },
-    ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, typeinfo.t_i32(), bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
+    ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, typeinfo.t_i32(), view, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
     ssasem.Contract { name: "__fern_bytes_append_back", params: [bytes, typeinfo.t_i32(), typeinfo.t_i32()], modes: [counted, value, value], result: bytes },
   ];
 }
@@ -8538,6 +8539,7 @@ function float_primitive_contracts(): ssasem.Contract[] {
     out = out.append(ssasem.Contract { name: n, params: [typeinfo.t_f64()], modes: value, result: typeinfo.t_f64() });
   }
   let v = ssaunits.value_mode();
+  out = out.append(ssasem.Contract { name: "__fma_f32", params: [typeinfo.t_f32(), typeinfo.t_f32(), typeinfo.t_f32()], modes: [v, v, v], result: typeinfo.t_f32() });
   return out.append(ssasem.Contract { name: "__fma_f64", params: [typeinfo.t_f64(), typeinfo.t_f64(), typeinfo.t_f64()], modes: [v, v, v], result: typeinfo.t_f64() });
 }
 

@@ -1,0 +1,109 @@
+import "std/kv";
+import "std/option";
+import "std/test";
+
+function round_trip(): test.TestOutcome {
+  let s = kv.empty("x").set("a\tb", "line\nnext\r\\end").set("", "empty key").set("plain", "");
+  let Ok(back) = kv.decode("x", s.encode()) else {
+    return test.fail("decode");
+  };
+  if (back.text("a\tb", "") != "line\nnext\r\\end" || back.text("", "-") != "empty key" || back.get("plain") != Some("")) {
+    return test.fail("values: " + back.encode());
+  }
+  return test.assert_eq(s.encode(), "fern-kv 1\n\tempty key\na\\tb\tline\\nnext\\r\\\\end\nplain\t\n");
+}
+
+function typed_values(): test.TestOutcome {
+  let s = kv.empty("x").set_int("n", -42i64).set_flag("on", false).set("bad", "4x").set("maybe", "yes");
+  if (s.int("n", 0i64) != -42i64 || s.flag("on", true) || s.int("bad", 9i64) != 9i64 || !s.flag("maybe", true)) {
+    return test.fail("typed values");
+  }
+  let removed = s.remove("n");
+  return test.assert_true(!removed.has("n") && removed.int("n", 5i64) == 5i64 && removed.keys() == ["bad", "maybe", "on"]);
+}
+
+function corrupt(): test.TestOutcome {
+  let cases = ["", "fern-kv 2\n", "fern-kv 1", "fern-kv 1\nno tab\n", "fern-kv 1\nk\tv\\q\n", "fern-kv 1\nk\tv"];
+  let lines = [1, 1, 1, 2, 2, 2];
+  for i in 0..cases.len() {
+    match (kv.decode("x", cases[i])) {
+      Err(kv.Corrupt(line)) => {
+        if (line != lines[i]) {
+          return test.fail("case " + i.to_string() + ": line " + line.to_string());
+        }
+      },
+      _ => {
+        return test.fail("case " + i.to_string() + " decoded");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function files(): test.TestOutcome {
+  let Ok(dir) = temp_dir("fern-kv") else {
+    return test.fail("temp dir");
+  };
+  let path = dir + "/settings.kv";
+  let Ok(none) = kv.open(path) else {
+    return test.fail("open of a missing file");
+  };
+  if (none.keys().len() != 0) {
+    return test.fail("a missing file has values");
+  }
+  match (none.set("volume", "7").set_flag("dark", true).save()) {
+    Ok(_) => {},
+    Err(e) => {
+      return test.fail("save: " + e.message());
+    }
+  }
+  let Ok(back) = kv.open(path) else {
+    return test.fail("open after save");
+  };
+  let tmp_left = match (read_file(path + ".tmp")) { Ok(_) => true, Err(_) => false };
+  match (back.set("volume", "8").save()) {
+    Ok(_) => {},
+    Err(e) => {
+      return test.fail("second save: " + e.message());
+    }
+  }
+  let Ok(again) = kv.open(path) else {
+    return test.fail("open after the second save");
+  };
+  remove_dir_all(dir);
+  if (tmp_left) {
+    return test.fail("save left the temporary file");
+  }
+  return test.assert_true(back.text("volume", "") == "7" && back.flag("dark", false) && again.text("volume", "") == "8");
+}
+
+function bad_file(): test.TestOutcome {
+  let Ok(dir) = temp_dir("fern-kv") else {
+    return test.fail("temp dir");
+  };
+  let path = dir + "/settings.kv";
+  write_file(path, "not a store\n");
+  let got = kv.open(path);
+  let saved = kv.empty(dir + "/no/such/dir/settings.kv").save();
+  remove_dir_all(dir);
+  match (got) {
+    Err(kv.Corrupt(1)) => {},
+    _ => {
+      return test.fail("a file of another form opened");
+    }
+  }
+  return match (saved) {
+    Err(kv.Io(_)) => test.pass(),
+    _ => test.fail("a save into a missing directory did not fail"),
+  };
+}
+
+function main(): i32 {
+  let runner = test.new("std/kv");
+  runner = runner.it("encode and decode keep every byte of keys and values", round_trip);
+  runner = runner.it("integers and flags, with their defaults", typed_values);
+  runner = runner.it("a text of another form is corrupt at its line", corrupt);
+  runner = runner.it("open, save and open again", files);
+  runner = runner.it("a bad file and a failed save", bad_file);
+  return runner.finish();
+}

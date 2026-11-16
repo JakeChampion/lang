@@ -237,6 +237,7 @@ var coreBuiltins = map[string]bool{
 	"__outer_mul_f64":     true,
 	"__inner_mul_add_f64": true,
 	"__fma_f64":           true,
+	"__fma_f32":           true,
 	"exit":                true,
 	"isatty":              true,
 	"target_os":           true,

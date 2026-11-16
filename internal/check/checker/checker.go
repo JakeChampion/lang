@@ -1304,6 +1304,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.FloatType{Width: 64}, ast.FloatType{Width: 64}, ast.FloatType{Width: 64}},
 		Result: ast.FloatType{Width: 64},
 	}
+	c.info.FuncSigs["__fma_f32"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 32}, ast.FloatType{Width: 32}, ast.FloatType{Width: 32}},
+		Result: ast.FloatType{Width: 32},
+	}
 	c.registerLaneBuiltins()
 	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 64}},

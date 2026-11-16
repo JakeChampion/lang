@@ -2292,7 +2292,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
     return ssa_unary_known(ins.str);
   }
   if (k == ssa.TERNARY) {
-    return ins.str == "ffma";
+    return ins.str == "ffma" || ins.str == "ffma32";
   }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
@@ -3074,6 +3074,15 @@ function ssa_ffma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   s = ssa_fread(reg_of, ins.args[1], "d2", s);
   s = ssa_fread(reg_of, ins.args[2], "d3", s);
   let d = ssa_fdst(reg_of, ins.result);
+  // Each operand of ffma32 is an f64 that holds an f32 value.
+  if (ins.str == "ffma32") {
+    for k in 0..3 {
+      let n = util.i32_to_string(k + 1);
+      s = s.write("    fcvt s" + n + ", " + ssa_fsrc(reg_of, ins.args[k], "d" + n) + "\n");
+    }
+    s = s.write("    fmadd s1, s1, s2, s3\n    fcvt " + d + ", s1\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   s = s.write("    fmadd " + d + ", " + ssa_fsrc(reg_of, ins.args[0], "d1") + ", " + ssa_fsrc(reg_of, ins.args[1], "d2") + ", " + ssa_fsrc(reg_of, ins.args[2], "d3") + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }

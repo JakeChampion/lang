@@ -1,0 +1,240 @@
+// The drivers of the attribute `diff` (`userdiff.c` of git): the regex
+// of each driver that finds the line of a function for a hunk header and
+// for `-L :FUNCNAME:FILE`.
+//
+//   *.c diff=cpp                    in .gitattributes
+//   [diff "tex"]                    in the configuration
+//       xfuncname = "^(\\\\(sub)*section\\{.*)$"
+import "std/array";
+import "core/map";
+import "../../coreutils/lib/bre";
+import "./attr";
+import "./config";
+
+// The regex of a driver. It is extended with `xfuncname` and for a
+// built-in driver, and basic with `funcname`. `given` is false for a
+// driver with no regex.
+pub struct Funcname { given: boolean, pattern: string, extended: boolean, icase: boolean }
+
+// The drivers that the configuration names, with each `diff.NAME.KEY`.
+pub struct Drivers { user: Map[string, Funcname] }
+
+struct Builtin { name: string, icase: boolean, pattern: string }
+
+// The built-in drivers of git 2.56.1, in the order of their names.
+function builtins(): Builtin[] {
+  return [
+    Builtin { name: "ada", icase: true, pattern: "!^(.*[ \t])?(is[ \t]+new|renames|is[ \t]+separate)([ \t].*)?$\n!^[ \t]*with[ \t].*$\n^[ \t]*((procedure|function)[ \t]+.*)$\n^[ \t]*((package|protected|task)[ \t]+.*)$" },
+    Builtin { name: "bash", icase: false, pattern: "^[ \t]*((([a-zA-Z_][a-zA-Z0-9_]*[ \t]*\\([ \t]*\\))|(function[ \t]+[a-zA-Z_][a-zA-Z0-9_]*(([ \t]*\\([ \t]*\\))|([ \t]+)))).*$)" },
+    Builtin { name: "bibtex", icase: false, pattern: "(@[a-zA-Z]{1,}[ \t]*\\{{0,1}[ \t]*[^ \t\"@',\\#}{~%]*).*$" },
+    Builtin { name: "cpp", icase: false, pattern: "!^[ \t]*[A-Za-z_][A-Za-z_0-9]*:[[:space:]]*($|/[/*])\n^((::[[:space:]]*)?[A-Za-z_].*)$" },
+    Builtin { name: "csharp", icase: false, pattern: "!(^|[ \t]+)(do|while|for|foreach|if|else|new|default|return|switch|case|throw|catch|using|lock|fixed)([ \t(]+|$)\n^[ \t]*(([][[:alnum:]@_.](<[][[:alnum:]@_, \t<>]+>)?)+([ \t]+([][[:alnum:]@_.](<[][[:alnum:]@_, \t<>]+>)?)+)+[ \t]*\\([^;]*)$\n^[ \t]*(([][[:alnum:]@_.](<[][[:alnum:]@_, \t<>]+>)?)+([ \t]+([][[:alnum:]@_.](<[][[:alnum:]@_, \t<>]+>)?)+)+[^;=:,()]*)$\n^[ \t]*(((static|public|internal|private|protected|new|unsafe|sealed|abstract|partial)[ \t]+)*(class|enum|interface|struct|record)[ \t]+.*)$\n^[ \t]*(namespace[ \t]+.*)$" },
+    Builtin { name: "css", icase: true, pattern: "![:;][[:space:]]*$\n^[:[@.#]?[_a-z0-9].*$" },
+    Builtin { name: "dts", icase: false, pattern: "!;\n!=\n^[ \t]*((/[ \t]*\\{|&?[a-zA-Z_]).*)" },
+    Builtin { name: "elixir", icase: false, pattern: "^[ \t]*((def(macro|module|impl|protocol|p)?|test)[ \t].*)$" },
+    Builtin { name: "fortran", icase: true, pattern: "!^([C*]|[ \t]*!)\n!^[ \t]*MODULE[ \t]+PROCEDURE[ \t]\n^[ \t]*((END[ \t]+)?(PROGRAM|MODULE|BLOCK[ \t]+DATA|([^!'\" \t]+[ \t]+)*(SUBROUTINE|FUNCTION))[ \t]+[A-Z].*)$" },
+    Builtin { name: "fountain", icase: true, pattern: "^((\\.[^.]|(int|ext|est|int\\.?/ext|i/e)[. ]).*)$" },
+    Builtin { name: "golang", icase: false, pattern: "^[ \t]*(func[ \t]*.*(\\{[ \t]*)?)\n^[ \t]*(type[ \t].*(struct|interface)[ \t]*(\\{[ \t]*)?)" },
+    Builtin { name: "html", icase: false, pattern: "^[ \t]*(<[Hh][1-6]([ \t].*)?>.*)$" },
+    Builtin { name: "ini", icase: false, pattern: "^[ \t]*\\[[^]]+\\]" },
+    Builtin { name: "java", icase: false, pattern: "!^[ \t]*(catch|do|for|if|instanceof|new|return|switch|throw|while)\n^[ \t]*(([a-z-]+[ \t]+)*(class|enum|interface|record)[ \t]+.*)$\n^[ \t]*(([A-Za-z_<>&][][?&<>.,A-Za-z_0-9]*[ \t]+)+[A-Za-z_][A-Za-z_0-9]*[ \t]*\\([^;]*)$" },
+    Builtin { name: "kotlin", icase: false, pattern: "^[ \t]*(([a-z]+[ \t]+)*(fun|class|interface)[ \t]+.*)$" },
+    Builtin { name: "markdown", icase: false, pattern: "^ {0,3}#{1,6}[ \t].*" },
+    Builtin { name: "matlab", icase: false, pattern: "^[[:space:]]*((classdef|function)[[:space:]].*)$|^(%%%?|##)[[:space:]].*$" },
+    Builtin { name: "objc", icase: false, pattern: "!^[ \t]*(do|for|if|else|return|switch|while)\n^[ \t]*([-+][ \t]*\\([ \t]*[A-Za-z_][A-Za-z_0-9* \t]*\\)[ \t]*[A-Za-z_].*)$\n^[ \t]*(([A-Za-z_][A-Za-z_0-9]*[ \t]+)+[A-Za-z_][A-Za-z_0-9]*[ \t]*\\([^;]*)$\n^(@(implementation|interface|protocol)[ \t].*)$" },
+    Builtin { name: "pascal", icase: false, pattern: "^(((class[ \t]+)?(procedure|function)|constructor|destructor|interface|implementation|initialization|finalization)[ \t]*.*)$\n^(.*=[ \t]*(class|record).*)$" },
+    Builtin { name: "perl", icase: false, pattern: "^package .*\n^sub [[:alnum:]_':]+[ \t]*(\\([^)]*\\)[ \t]*)?(:[^;#]*)?(\\{[ \t]*)?(#.*)?$\n^(BEGIN|END|INIT|CHECK|UNITCHECK|AUTOLOAD|DESTROY)[ \t]*(\\{[ \t]*)?(#.*)?$\n^=head[0-9] .*" },
+    Builtin { name: "php", icase: false, pattern: "^[\t ]*(((public|protected|private|static|abstract|final)[\t ]+)*function.*)$\n^[\t ]*((((final|abstract)[\t ]+)?class|enum|interface|trait).*)$" },
+    Builtin { name: "python", icase: false, pattern: "^[ \t]*((class|(async[ \t]+)?def)[ \t].*)$" },
+    Builtin { name: "r", icase: false, pattern: "^[ \t]*([a-zA-z][a-zA-Z0-9_.]*[ \t]*(<-|=)[ \t]*function.*)$" },
+    Builtin { name: "ruby", icase: false, pattern: "^[ \t]*((class|module|def)[ \t].*)$" },
+    Builtin { name: "rust", icase: false, pattern: "^[\t ]*((pub(\\([^\\)]+\\))?[\t ]+)?((async|const|unsafe|extern([\t ]+\"[^\"]+\"))[\t ]+)?(struct|enum|union|mod|trait|fn|impl|macro_rules!)[< \t]+[^;]*)$" },
+    Builtin { name: "scheme", icase: false, pattern: "^(\\(.*)$\n^[\t ]*(\\(((define|def(struct|syntax|class|method|rules|record|proto|alias)?)[-*/ \t]|(library|module|struct|class)[*+ \t]).*)$\n^  ?(\\([Dd][Ee][Ff].*)$" },
+    Builtin { name: "swift", icase: false, pattern: "^[ \t]*((@[A-Za-z_][A-Za-z0-9_]*(\\([^()]*\\))?[ \t]+)*([a-z]+[ \t]+)*(func|init|deinit|subscript|class|struct|enum|protocol|extension|actor)[ \t(?!<].*)$" },
+    Builtin { name: "tex", icase: false, pattern: "^(\\\\((sub)*section|chapter|part)\\*{0,1}\\{.*)$" },
+  ];
+}
+
+pub function builtin_names(): string[] {
+  return builtins().map((b: Builtin): string => b.name);
+}
+
+function no_funcname(): Funcname {
+  return Funcname { given: false, pattern: "", extended: false, icase: false };
+}
+
+function builtin_of(name: string): Option[Funcname] {
+  for b in builtins() {
+    if (b.name == name) {
+      return Some(Funcname { given: true, pattern: b.pattern, extended: true, icase: b.icase });
+    }
+  }
+  if (name == "default") {
+    return Some(no_funcname());
+  }
+  return None;
+}
+
+// The first key of a driver that needs a text and has no value, or None.
+// git stops at it when it reads the configuration (`userdiff_config`).
+pub function bad_entry(c: config.Config): Option[config.Entry] {
+  for e in c.entries {
+    if (!e.bare || !e.name.starts_with("diff.")) {
+      continue;
+    }
+    let dot = e.name.last_index_of(".").unwrap_or(0);
+    if (dot <= 5) {
+      continue;
+    }
+    let key = slice_unchecked(e.name, dot + 1, e.name.len());
+    if (key == "funcname" || key == "xfuncname" || key == "textconv" || key == "wordregex" || key == "command" || key == "algorithm") {
+      return Some(e);
+    }
+  }
+  return None;
+}
+
+pub function none(): Drivers {
+  return Drivers { user: Map { } };
+}
+
+// The drivers of the configuration `c` (`userdiff_config`). Each key
+// `diff.NAME.KEY` makes the driver NAME. `funcname` and `xfuncname` set
+// its regex, and the last one of the file is the regex of the driver.
+pub function from_config(c: config.Config): Drivers {
+  let user: Map[string, Funcname] = Map { };
+  for e in c.entries {
+    if (!e.name.starts_with("diff.")) {
+      continue;
+    }
+    let Some(dot) = e.name.last_index_of(".") else {
+      continue;
+    };
+    if (dot <= 5) {
+      continue;
+    }
+    let name = slice_unchecked(e.name, 5, dot).to_owned();
+    let key = slice_unchecked(e.name, dot + 1, e.name.len());
+    let known = match (user.get(name)) {
+      Some(f) => f,
+      None => builtin_of(name).unwrap_or(no_funcname()),
+    };
+    if (key == "funcname") {
+      known = Funcname { given: true, pattern: e.value, extended: false, icase: false };
+    } else if (key == "xfuncname") {
+      known = Funcname { given: true, pattern: e.value, extended: true, icase: false };
+    }
+    user = user.insert(name, known);
+  }
+  return Drivers { user: user };
+}
+
+// The driver with the name `name`, or None: `userdiff_find_by_name`.
+pub function (d: Drivers) by_name(name: string): Option[Funcname] {
+  return match (d.user.get(name)) {
+    Some(f) => Some(f),
+    None => builtin_of(name),
+  };
+}
+
+// The driver of the file `path`, or None when the path has no attribute
+// `diff` or names a driver that does not exist: `userdiff_find_by_path`.
+// The attribute with no value, and `-diff`, give a driver with no regex.
+function (d: Drivers) by_path(attrs: attr.Attrs[], path: string): Option[Funcname] {
+  if (attrs.len() == 0) {
+    return None;
+  }
+  let v = attr.value_of(attrs[0], path, "diff");
+  if (v == attr.UNSPECIFIED) {
+    return None;
+  }
+  if (v == attr.SET || v == attr.UNSET) {
+    return Some(no_funcname());
+  }
+  return d.by_name(v);
+}
+
+function with_pattern(f: Option[Funcname]): Option[Funcname] {
+  return match (f) {
+    Some(found) => if (found.given) { Some(found) } else { None },
+    None => None,
+  };
+}
+
+// The regex for the hunk headers of the file `path`, or None for the
+// default rule of git: `diff_funcname_pattern`. A path with no driver has
+// the driver `default`, which the configuration can give a regex.
+pub function (d: Drivers) for_hunks(attrs: attr.Attrs[], path: string): Option[Funcname] {
+  return with_pattern(match (d.by_path(attrs, path)) {
+    Some(f) => Some(f),
+    None => d.by_name("default"),
+  });
+}
+
+// The regex for `-L :FUNCNAME` in the file `path`, or None for the
+// default rule of git. Here a path with no driver has no regex.
+pub function (d: Drivers) for_range(attrs: attr.Attrs[], path: string): Option[Funcname] {
+  return with_pattern(d.by_path(attrs, path));
+}
+
+struct Reg { re: bre.Bre, negate: boolean }
+
+// The compiled regex of a driver (`xdiff_set_find_func`): one regex for
+// each line of the pattern. A line that starts with `!` refuses the lines
+// of the file that it matches. `died` is the message of git for a pattern
+// that is not sound, or "".
+pub struct Finder { regs: Reg[], died: string }
+
+pub function finder_of(f: Funcname): Finder {
+  let regs: Reg[] = [];
+  let syntax = bre.Syntax { ...bre.posix_basic(), extended: f.extended, icase: f.icase };
+  let lines = f.pattern.split("\n");
+  for i in 0..lines.len() {
+    let line = lines[i];
+    let negate = line.starts_with("!");
+    if (negate && i == lines.len() - 1) {
+      return Finder { regs: [], died: "Last expression must not be negated: " + line };
+    }
+    let expression = if (negate) { slice_unchecked(line, 1, line.len()).to_owned() } else { line };
+    let re = bre.bre_compile_syntax(expression, syntax);
+    if (re.err.len() > 0) {
+      return Finder { regs: [], died: "Invalid regexp to look for hunk header: " + expression };
+    }
+    regs = regs.append(Reg { re: re, negate: negate });
+  }
+  return Finder { regs: regs, died: "" };
+}
+
+function is_space(b: u8): boolean {
+  return b == b' ' || b >= 9 && b <= 13;
+}
+
+// The name of the function in the line [s, e) of `data`, as `ff_regexp`
+// of git finds it: the first group of the first regex that matches, or
+// the whole match when the regex has no group, with at most `cap` bytes
+// and no white space at its end. (-1, -1) when no regex matches, or when
+// the first regex that matches refuses the line.
+pub function (f: Finder) find(data: u8[], s: i32, e_in: i32, cap: i32): (i32, i32) {
+  let e = e_in;
+  if (e > s && data[e - 1] == b'\n') {
+    e -= if (e - 1 > s && data[e - 2] == b'\r') { 2 } else { 1 };
+  }
+  let line = array.slice(data, s, e);
+  for r in f.regs {
+    let m = r.re.search_groups_bytes(line, 0, line.len());
+    if (!m.matched) {
+      continue;
+    }
+    if (r.negate) {
+      return (-1, -1);
+    }
+    let g = if (m.starts.len() > 1 && m.starts[1] >= 0) { 1 } else { 0 };
+    let from = s + m.starts[g];
+    let n = (m.ends[g] - m.starts[g]).min(cap);
+    while (n > 0 && is_space(data[from + n - 1])) {
+      n -= 1;
+    }
+    return (from, from + n);
+  }
+  return (-1, -1);
+}

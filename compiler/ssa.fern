@@ -565,10 +565,10 @@ pub const COLD_LIGHT: i32 = 4;
 pub const COLD_KERNEL: i32 = 5;
 
 // `cold` with COLD_KERNEL at each position that has a mask in `clobbers`.
-// A position that already has a kind keeps it.
+// A kernel in a cold block is a kernel: it saves nothing.
 pub function with_kernels(cold: i32[], clobbers: i32[]): i32[] {
   for pos in 0..cold.len() {
-    if (cold[pos] == COLD_NONE && clobbers[pos] != 0) {
+    if (clobbers[pos] != 0) {
       cold = cold.with(pos, COLD_KERNEL);
     }
   }
@@ -1471,7 +1471,7 @@ function float_def(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str.starts_with("i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
   }
-  return k == TERNARY && ins.str == "ffma";
+  return k == TERNARY && (ins.str == "ffma" || ins.str == "ffma32");
 }
 
 function float_load(ins: SInst): boolean {
@@ -1498,7 +1498,7 @@ function float_use(ins: SInst): boolean {
   if (k == UNARY) {
     return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits" || ins.str == "vsplat";
   }
-  return k == TERNARY && ins.str == "ffma";
+  return k == TERNARY && (ins.str == "ffma" || ins.str == "ffma32");
 }
 
 pub function float_arith(op: string): boolean {

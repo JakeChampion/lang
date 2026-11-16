@@ -92,10 +92,30 @@ ui.program(view, update).with_theme_of((s: State, dark: boolean): ui.Theme => ui
 | `ui.outlined_button(label, msg)` | A button with a border |
 | `ui.text_button(label, msg)` | A button with its text only |
 | `ui.toggle(on, say, msg)` | A switch. TalkBack reads `say` and its state |
+| `ui.checkbox(on, say, msg)` | A box that is checked or not |
+| `ui.radio(on, say, msg)` | One choice of a group |
+| `ui.tabs(labels, at, pick)` | A row of tabs, with the tab `at` selected |
+| `ui.menu(items, pick)` | The items of a menu, one below the other |
+| `ui.app_bar(title, back, actions)` | The bar at the top of a screen |
+| `ui.snackbar(note, action, msg)` | A short note with an action |
+| `ui.tinted(key, role, paint)` | A canvas in the color of a role of the theme |
 | `ui.card([...])` | A column on the surface color, with round corners |
 | `ui.progress(part)` | A bar, from 0 to 1 |
 | `ui.slider(part, slide)` | A bar with a thumb that a finger moves |
 | `ui.divider()` | A line across a column |
+
+## Pages and the back key
+
+A `ui.Nav` keeps the pages of an app, with the page that shows on top.
+`push` opens a page, and `pop` goes back to the page under it. Give the
+back key to `pop` while a page is under the top page, and let it close
+the app on the first page:
+
+```fern
+ui.program(view, update).with_back((s: State): Option[Msg] => if (s.nav.can_pop()) { Some(Back) } else { None })
+```
+
+`ui.app_bar(title, Some(Back), [])` shows an arrow that gives `Back`.
 
 ## Taps
 

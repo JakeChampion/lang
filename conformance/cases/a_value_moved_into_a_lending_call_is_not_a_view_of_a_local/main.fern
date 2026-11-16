@@ -1,0 +1,39 @@
+// handled lends its argument to its result, and the argument is the result
+// of told, which can be fresh storage from a closure. The argument moves
+// into handled because its parameter is own, so the result of step views
+// no storage of step, and the checker accepts the return of step.
+
+struct Prog[S] { update: (own S, i32) => S }
+
+struct Shell[S] { app: S, n: i32 }
+
+function send[S](own s: Shell[S], p: Prog[S], m: i32): Shell[S] {
+  let next = p.update(s.app, m);
+  return Shell { app: next, n: s.n + 1 };
+}
+
+function told[S](own s: Shell[S], p: Prog[S], m: Option[i32]): Shell[S] {
+  if let Some(v) = m {
+    return send(s, p, v);
+  }
+  return s;
+}
+
+function handled[S](own s: Shell[S], p: Prog[S], k: i32): Shell[S] {
+  if (k > 0) {
+    return send(s, p, k);
+  }
+  return s;
+}
+
+function step[S](own s: Shell[S], p: Prog[S], k: i32): Shell[S] {
+  let out = handled(told(s, p, None), p, k);
+  return out;
+}
+
+function main(): i32 {
+  let p = Prog { update: (own a: string, m: i32): string => a + m.to_string() };
+  let s = step(Shell { app: "x", n: 0 }, p, 2);
+  print(s.app + " " + s.n.to_string());
+  return 0;
+}
