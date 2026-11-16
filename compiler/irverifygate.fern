@@ -214,7 +214,7 @@ pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32,
 // with itself, sent to the side it takes, so the certifier walks no edge the
 // program cannot take. A phi that a decided branch leaves with one input can
 // make the two operands of a later comparison one value.
-function decided(f: ssa.SFunc): ssa.SFunc {
+pub function decided(f: ssa.SFunc): ssa.SFunc {
   let next = decided_once(f);
   for _ in 0..f.blocks.len() {
     if (!next.changed) {
@@ -263,22 +263,82 @@ function branch_taken(defs: ssa.SInst[], t: ssa.STerm): i32 {
     return -1;
   }
   let c = defs[t.cond];
-  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2) {
     return -1;
   }
-  let a = defs[c.args[0]];
-  let b = defs[c.args[1]];
-  let same = c.args[0] == c.args[1];
-  if (!same) {
+  let holds = -1;
+  if (c.args[0] == c.args[1]) {
+    holds = compared_with_itself(c.str);
+  } else {
+    let a = defs[c.args[0]];
+    let b = defs[c.args[1]];
     if (a.kind_tag != ssa.CONST_INT || b.kind_tag != ssa.CONST_INT || a.str != "" || b.str != "") {
       return -1;
     }
-    same = a.imm == b.imm;
+    holds = compared(c.str, c.imm, a.imm, b.imm);
   }
-  if (same == (c.str == "eq")) {
+  if (holds < 0) {
+    return -1;
+  }
+  if (holds == 1) {
     return t.t;
   }
   return t.f;
+}
+
+// 1 when the comparison `op` holds of a value and itself, 0 when it fails,
+// -1 when `op` is not a comparison.
+function compared_with_itself(op: string): i32 {
+  if (op == "eq" || op == "le_s" || op == "le_u" || op == "ge_s" || op == "ge_u") {
+    return 1;
+  }
+  if (op == "ne" || op == "lt_s" || op == "lt_u" || op == "gt_s" || op == "gt_u") {
+    return 0;
+  }
+  return -1;
+}
+
+// 1 when the comparison `op` of `width` bits holds of the constants `a` and
+// `b`, 0 when it fails, -1 when it is not a comparison of 32 or 64 bits.
+function compared(op: string, width: i32, a: i32, b: i32): i32 {
+  if (op == "eq") {
+    return if (a == b) { 1 } else { 0 };
+  }
+  if (op == "ne") {
+    return if (a != b) { 1 } else { 0 };
+  }
+  if (width != 32 && width != 64) {
+    return -1;
+  }
+  let x = a as i64;
+  let y = b as i64;
+  if (op.ends_with("_u")) {
+    if (width == 32) {
+      x = x & 4294967295i64;
+      y = y & 4294967295i64;
+    } else {
+      // The sign bit flipped orders the words as unsigned under a signed compare.
+      let sign = 0 - 9223372036854775807i64 - 1i64;
+      x = x ^ sign;
+      y = y ^ sign;
+    }
+  } else if (!op.ends_with("_s")) {
+    return -1;
+  }
+  let base = slice_unchecked(op, 0, op.len() - 2);
+  let holds = false;
+  if (base == "lt") {
+    holds = x < y;
+  } else if (base == "le") {
+    holds = x <= y;
+  } else if (base == "gt") {
+    holds = x > y;
+  } else if (base == "ge") {
+    holds = x >= y;
+  } else {
+    return -1;
+  }
+  return if (holds) { 1 } else { 0 };
 }
 
 function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
