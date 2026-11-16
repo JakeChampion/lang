@@ -11,8 +11,8 @@ import "./store";
 // `dir` is the git directory. `common` holds the objects and the refs: it is
 // `dir`, or the directory that a linked worktree names. `prefix` is the path
 // from the top of the worktree to the current directory, with a `/` at its
-// end, or "". `top` is the top of the worktree, or "" for a repository
-// that `GIT_DIR` names. `algo` is the hash of the names of the objects.
+// end, or "". `top` is the top of the worktree, or "" for a bare
+// repository that `GIT_DIR` names. `algo` is the hash of the names of the objects.
 // `packed` holds the refs of the file `packed-refs`.
 pub struct Repo { dir: string, common: string, prefix: string, shown: string, top: string, config: config.Config, width: i32, packed: Map[string, string] }
 
@@ -107,15 +107,24 @@ function repo_at(dir: string, prefix: string, shown: string, top: string): Resul
 const NOT_A_REPOSITORY: string = "fatal: not a git repository (or any of the parent directories): .git";
 
 // The repository of the current directory: `GIT_DIR`, or the `.git` of the
-// directory or of one of its parents.
+// directory or of one of its parents. The current directory is the top of
+// the worktree of a `GIT_DIR` that is not bare.
 pub function find(): Result[Repo, string] {
+  let here = getcwd();
   if let Some(dir) = env("GIT_DIR") {
     if (!is_dir(dir)) {
       return Err("fatal: not a git repository: '" + dir + "'");
     }
-    return repo_at(dir, "", dir, "");
+    let r = repo_at(dir, "", dir, "")?;
+    if (r.config.flag("core.bare", false)) {
+      return Ok(r);
+    }
+    return match (here) {
+      Ok(path) => Ok(Repo { ...r, top: path }),
+      Err(_) => Ok(r),
+    };
   }
-  let cwd = match (getcwd()) {
+  let cwd = match (here) {
     Ok(path) => path,
     Err(_) => {
       return Err(NOT_A_REPOSITORY);
