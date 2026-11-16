@@ -460,8 +460,8 @@ function fill_or(own xs: i32[], n: i32): i32[] {
 function main(): i32 {
     let a: i32[] = __alloc_i32(4);
     let b: i32[] = a;
-    let c: i32[] = fill_or(a, 5);
-    let d: i32[] = fill_or(b, 0);
+    let c: i32[] = fill_or([9, 9], 5);
+    let d: i32[] = fill_or(a, 0);
     return c[4] * 10 + d.len() + b[0];
 }`},
 	{"write-to-join-with-parameter", "fill_or_set", false, `@noinline
@@ -481,8 +481,8 @@ function fill_or_set(own xs: i32[], n: i32): i32[] {
 function main(): i32 {
     let a: i32[] = __alloc_i32(4);
     let b: i32[] = a;
-    let c: i32[] = fill_or_set(a, 5);
-    let d: i32[] = fill_or_set(b, 0);
+    let c: i32[] = fill_or_set([9, 9], 5);
+    let d: i32[] = fill_or_set(a, 0);
     return c[4] * 10 + d[0] + b[0];
 }`},
 }
