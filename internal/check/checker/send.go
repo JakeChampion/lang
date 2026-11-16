@@ -6,9 +6,13 @@ import (
 
 // A `send` parameter is a worker boundary: its argument is copied into
 // another heap, so the argument's type, and a closure argument's captures
-// and result, must be send-safe (E100). compiler/checker.fern's
-// send_guard_call holds the same rule.
-func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type) {
+// and result, must be send-safe (E100). A `send` parameter of the caller is
+// already send-safe. compiler/checker.fern's send_guard_call holds the same
+// rule.
+func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type, s *scope) {
+	if c.isSentParam(arg, s) {
+		return
+	}
 	if lam, ok := arg.(*ast.Lambda); ok {
 		for _, capture := range lam.Captures {
 			if why := c.sendUnsafeReason(capture.Type, map[string]bool{}); why != "" {
@@ -25,6 +29,52 @@ func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type) {
 	if why := c.sendUnsafeReason(at, map[string]bool{}); why != "" {
 		c.errfCode(arg.Pos(), "E100", "argument to `send` parameter %q has type %s, which cannot cross a worker boundary: %s", pname, at, why)
 	}
+}
+
+// sentParams is the `send` parameters of fn that its body does not assign.
+// Each one still holds the argument that its call checked.
+func sentParams(fn *ast.FuncDecl) map[string]bool {
+	var sent map[string]bool
+	for _, p := range fn.Params {
+		if p.Send {
+			if sent == nil {
+				sent = map[string]bool{}
+			}
+			sent[p.Name] = true
+		}
+	}
+	if sent == nil || fn.Body == nil {
+		return sent
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if asn, ok := n.(*ast.Assign); ok {
+			if id, ok := asn.Target.(*ast.Ident); ok {
+				delete(sent, id.Name)
+			}
+		}
+		return true
+	})
+	return sent
+}
+
+// isSentParam reports whether arg names a `send` parameter of the function
+// being checked, directly or as a capture.
+func (c *checker) isSentParam(arg ast.Expr, s *scope) bool {
+	id, ok := arg.(*ast.Ident)
+	if !ok || !c.sentParams[id.Name] {
+		return false
+	}
+	if b := s.binder(id.Name); b != nil {
+		return b == c.sentRoot
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		if sc := c.captureChain[i].scope; sc != nil {
+			if b := sc.binder(id.Name); b != nil {
+				return b == c.sentRoot
+			}
+		}
+	}
+	return false
 }
 
 // markSendLambdas records each closure in args that is the argument of a

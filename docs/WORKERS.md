@@ -64,7 +64,10 @@ applies to it, and one rule is added at each call:
 1. A closure written at the call crosses with its captures. The type of
    every captured variable is send-safe, and the result type of the closure
    is send-safe.
-2. Any other argument has a send-safe type. A function value is not
+2. A `send` parameter of the calling function crosses, because the call
+   that bound it applied these rules. So a library can wrap `spawn`. This
+   does not apply to a `send` parameter that the function assigns.
+3. Any other argument has a send-safe type. A function value is not
    send-safe, because its environment is not visible at the call. So a
    closure held in a variable cannot be passed.
 
@@ -100,7 +103,8 @@ function twice[T: worker.Send](x: T): (T, T) {
 The rule is `send_guard_call` in `compiler/checker.fern` and `guardSendArg`
 in `internal/check/checker/send.go`. The two checkers give one message. The
 cases are `conformance/cases/diag_e100`,
-`conformance/cases/diag_e100_closure_value`, `worker_send_bound`,
+`conformance/cases/diag_e100_closure_value`, `worker_send_forward`,
+`diag_e100_reassigned_send`, `worker_send_bound`,
 `diag_e021_send_bound` and `diag_e021_send_impl`, and the rows named `send-`
 in `TestSelfHostCheckerCodesX86_64` pin both checkers to the same codes.
 

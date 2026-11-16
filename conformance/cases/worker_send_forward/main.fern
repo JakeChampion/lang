@@ -1,0 +1,20 @@
+// spec: WK-09
+// A function gives its own send parameter to another send parameter. The
+// call that bound the parameter checked the closure, so a library can wrap
+// worker.spawn.
+
+import "std/worker";
+
+function start[T: worker.Send](send body: () => T): worker.Worker[T] {
+    return worker.spawn(body);
+}
+
+function main(): i32 {
+    let n = 41;
+    let name = "ada";
+    let w = start((): i32 => n + 1);
+    let v = start((): string => name + ":" + n.to_string());
+    print(w.join().to_string());
+    print(v.join());
+    return 0;
+}

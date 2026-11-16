@@ -1,0 +1,15 @@
+// spec: WK-09
+// A send parameter that its function assigns can hold a function value that
+// no call checked, so it does not cross a worker boundary.
+
+import "std/worker";
+
+function start(send body: () => i32, own other: () => i32): worker.Worker[i32] {
+    body = other;
+    return worker.spawn(body);
+}
+
+function main(): i32 {
+    let w = start((): i32 => 1, (): i32 => 2);
+    return w.join();
+}

@@ -6050,8 +6050,12 @@ type checker struct {
 
 	// sendFuncs holds, per function with a `send` parameter, which parameter
 	// slots are worker boundaries; sendParamNames holds their names.
-	sendFuncs            map[string][]bool
-	sendParamNames       map[string][]string
+	sendFuncs      map[string][]bool
+	sendParamNames map[string][]string
+	// sentParams holds the `send` parameters of the function being checked
+	// that its body does not assign, and sentRoot the scope that binds them.
+	sentParams           map[string]bool
+	sentRoot             *scope
 	callbackFactoryFuncs map[string]*ast.FuncDecl
 	callbackFactories    map[string][]callbackLoan
 	callbackResultCalls  map[*ast.Call]bool
@@ -9793,6 +9797,9 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		}
 		root.consts[cp] = true
 	}
+	prevSent, prevSentRoot := c.sentParams, c.sentRoot
+	c.sentParams, c.sentRoot = sentParams(fn), root
+	defer func() { c.sentParams, c.sentRoot = prevSent, prevSentRoot }()
 	c.checkBlock(fn.Body, root)
 	c.settleLitLocals(fn.Body)
 	c.finishOpenEnumLocals()
@@ -15663,7 +15670,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			at := c.checkExpr(n.Args[0], s)
-			c.guardSendArg(n.Args[0], "value", at)
+			c.guardSendArg(n.Args[0], "value", at, s)
 			return at
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
@@ -16339,7 +16346,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
 				if sends := c.sendFuncs[calleeName]; !calleeIsValue && i < len(sends) && sends[i] {
-					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at)
+					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at, s)
 				}
 				if sub == nil {
 					c.refineCallTypeArgsFromDest(n.Args[i], expected)

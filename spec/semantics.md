@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**159 of 162** claims are pinned by a conformance case. The remaining
+**160 of 163** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -177,6 +177,7 @@ of them.
 | `WK-06` | `docs/WORKERS.md` | A simulation is a worker scheduler: a worker spawned on it parks on the virtual clock, its result crosses back at the join, and the joins move the clock to the deadlines | `worker_runs_on_the_simulation` |
 | `WK-07` | `docs/WORKERS.md` | A type parameter bounded by `worker.Send` crosses the worker boundary, the bound holds only for a send-safe type argument (`E021`), and no impl declares `Send` (`E021`) | `worker_send_bound` |
 | `WK-08` | `docs/WORKERS.md` | A closure that crosses a worker boundary does not assign a variable that it captures (`E100`) | `diag_e100_assigned_capture` |
+| `WK-09` | `docs/WORKERS.md` | A function gives a `send` parameter that it does not assign to another `send` parameter, and one that it assigns is rejected (`E100`) | `worker_send_forward` |
 | `AL-01` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that reclaims what it allocates does not grow the fresh-allocation high-water mark with the round count | `alloc_flat_under_reclaim` |
 | `AL-02` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that retains what it allocates does grow it with the round count | `alloc_grows_when_retained` |
 | `AL-03` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that allocates a closure environment per round reclaims it too | `alloc_flat_closure_env` |

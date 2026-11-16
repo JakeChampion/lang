@@ -45,6 +45,15 @@ function main(): i32 { return g(1); }`,
 			`returns Cell[i32], which cannot cross a worker boundary: a Cell is shared by aliasing`},
 		{"view_argument", `function main(): i32 { let xs: i32[] = [1, 2]; return post(xs[0:1]); }`,
 			`has type [i32], which cannot cross a worker boundary: a view borrows another value's storage`},
+		{"reassigned_send_parameter", `function start(send body: () => i32, own other: () => i32): i32 { body = other; return spawn(body); }
+function main(): i32 { return start((): i32 => 1, (): i32 => 2); }`,
+			`argument to ` + "`send`" + ` parameter "body" has type () => i32, which cannot cross a worker boundary: a function value carries its environment`},
+		{"local_that_shadows_a_send_parameter", `function start(send body: () => i32, own other: () => i32): i32 { if (true) { let body: () => i32 = other; return spawn(body); } return 0; }
+function main(): i32 { return start((): i32 => 1, (): i32 => 2); }`,
+			`argument to ` + "`send`" + ` parameter "body" has type () => i32, which cannot cross a worker boundary: a function value carries its environment`},
+		{"capture_of_a_send_parameter", `function start(send body: () => i32): i32 { return spawn((): i32 => body()); }
+function main(): i32 { return start((): i32 => 1); }`,
+			`captures "body" of type () => i32, which cannot cross a worker boundary: a function value carries its environment`},
 		{"send_copy_of_cell", `function main(): i32 { let c: Cell[i32] = cell_new(1); let d: Cell[i32] = __send_copy(c); return d.get(); }`,
 			`argument to ` + "`send`" + ` parameter "value" has type Cell[i32], which cannot cross a worker boundary: a Cell is shared by aliasing`},
 	}
@@ -66,6 +75,8 @@ func TestSendParameterAdmitsSendSafeValues(t *testing.T) {
 		{"record_array_option", `function main(): i32 { let b: Box = Box { n: 1 }; let xs: i32[] = [1]; let o: Option[string] = Some("x"); return spawn((): i32 => { match (o) { Some(v) => { return b.n + xs.len() + v.len(); }, None => { return 0; } } }); }`},
 		{"tuple", `function main(): i32 { let p: (i32, string) = (1, "x"); return spawn((): i32 => p.0); }`},
 		{"generic_struct_of_scalars", `function main(): i32 { let p: Pair[i32] = Pair { a: 1, b: 2 }; return spawn((): i32 => p.a + p.b); }`},
+		{"send_parameter_to_send_parameter", `function start(send body: () => i32): i32 { return spawn(body); }
+function main(): i32 { let n: i32 = 41; return start((): i32 => n + 1); }`},
 		{"no_captures", `function main(): i32 { return spawn((): i32 => 7); }`},
 		{"send_copy_of_record_and_option", `function main(): i32 { let b: Box = Box { n: 1 }; let c: Box = __send_copy(b); let o: Option[string] = __send_copy(Some("x")); return c.n + b.n; }`},
 	}
