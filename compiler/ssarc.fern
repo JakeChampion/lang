@@ -955,7 +955,9 @@ function chain_link(own r: irtables.LowerState, tail: i32): irtables.LowerState 
 // The slots of the chain drop: the stack of nodes whose field waits, and
 // whether the current node is on it.
 const CHAIN_PENDING: i32 = 30;
+
 const CHAIN_PUSHED: i32 = 31;
+
 const CHAIN_CELL: i32 = 32;
 
 function drop_chain_fields(own r: irtables.LowerState, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
@@ -1054,13 +1056,13 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
   r = emit(r, ir.op_load_local(CHAIN_CELL));
   r = emit(r, aligned_unique());
   r = emit(r, ir.op_if(0));
-  let open = 0;
+  let opened: string[] = [];
   for v in e.variants {
     let waits = waiting_field(v, t, f);
     if (!semrecords.inhabited(v) || waits < 0) {
       continue;
     }
-    r = else_if_open(r, open);
+    r = else_if_open(r, opened.len());
     r = emit(r, ir.op_load_local(CHAIN_CELL));
     r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
     r = emit(r, ir.op_if(0));
@@ -1070,9 +1072,9 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
     r = emit(r, ir.op_load_local(CHAIN_CELL));
     r = emit(r, ir.counted(ir.op_struct_get(self_tail_field(v, t), 0)));
     r = emit(r, ir.op_store_local(CHAIN_PENDING));
-    open += 1;
+    opened = opened.append(v.name);
   }
-  r = close_ifs(r, open);
+  r = close_ifs(r, opened.len());
   r = emit(r, ir.op_load_local(CHAIN_CELL));
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
@@ -1199,19 +1201,19 @@ function drop_variant_stack(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_store_local(unique));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(CHAIN_PUSHED));
-  let open = 0;
+  let opened: string[] = [];
   for v in e.variants {
     if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f)) {
       continue;
     }
-    r = else_if_open(r, open);
+    r = else_if_open(r, opened.len());
     r = emit(r, ir.op_load_local(node));
     r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
     r = emit(r, ir.op_if(0));
     r = drop_chain_fields(r, v, t, f);
-    open += 1;
+    opened = opened.append(v.name);
   }
-  r = close_ifs(r, open);
+  r = close_ifs(r, opened.len());
   r = emit(r, ir.op_load_local(first));
   r = emit(r, ir.op_load_local(CHAIN_PUSHED));
   r = emit(r, ir.op_bin("or", 0, false));
