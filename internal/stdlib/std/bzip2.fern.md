@@ -8,7 +8,7 @@ A stream starts with `BZh` and the size of its blocks, from 1 to 9 hundred thous
 
 ## Contracts
 
-`decode` gives the bytes of the blocks before the first error, and the error, as the `bzip2` tool writes them. The decoder checks the CRC of each block. It does not decode the randomised blocks of bzip2 0.9.0, and it reports them as an error of the data. `decompress` gives the bytes, or the error. `decode_with_limit` and `decompress_with_limit` refuse output above a limit of bytes: a caller that reads data from a stranger gives one.
+`decode` gives the bytes of the blocks before the first error, and the error, as the `bzip2` tool writes them. The decoder checks the CRC of each block, and the CRC of each stream after its end mark. It does not decode the randomised blocks of bzip2 0.9.0, and it reports them as an error of the data. `decompress` gives the bytes, or the error. `decode_with_limit` and `decompress_with_limit` refuse output above a limit of bytes: a caller that reads data from a stranger gives one.
 
 ## Executable example
 
@@ -154,33 +154,45 @@ function __bz_prefix(input: [u8]): boolean {
 
 ```fern
 <<blocks>>=
-// The output after a stream or a block, the bit after it or -1, and the
-// error for -1.
-struct __BzRun { out: u8[], pos: i64, error: Bzip2Error }
+// The output after a stream or a block, the bit after it or -1, the error
+// for -1, and the CRC of a block.
+struct __BzRun { out: u8[], pos: i64, error: Bzip2Error, crc: i64 }
 
-// The blocks of a stream from the bit `pos`, up to its end mark.
+// The blocks of a stream from the bit `pos`, up to its end mark. The CRC
+// after the end mark combines the CRC of each block: the CRC so far turns
+// left by one bit, and the CRC of the block is added with xor.
 function __bz_stream(input: [u8], pos0: i64, size: i32, own out: u8[], limit: i32): __BzRun {
   let pos = pos0;
+  let combined = 0i64;
   while (true) {
     let hi = __bz_bits(input, pos, 24);
     let lo = __bz_bits(input, pos + 24i64, 24);
     if (hi < 0 || lo < 0) {
-      return __BzRun { out: out, pos: -1i64, error: Truncated };
+      return __BzRun { out: out, pos: -1i64, error: Truncated, crc: 0i64 };
     }
     if (hi == 1536581 && lo == 3690640) {
-      return __BzRun { out: out, pos: if (pos + 80i64 > input.len() as i64 * 8i64) { -1i64 } else { pos + 80i64 }, error: Truncated };
+      let crc_hi = __bz_bits(input, pos + 48i64, 16);
+      let crc_lo = __bz_bits(input, pos + 64i64, 16);
+      if (crc_hi < 0 || crc_lo < 0) {
+        return __BzRun { out: out, pos: -1i64, error: Truncated, crc: 0i64 };
+      }
+      if ((crc_hi as i64 << 16i64 | crc_lo as i64) != combined) {
+        return __BzRun { out: out, pos: -1i64, error: Corrupt, crc: 0i64 };
+      }
+      return __BzRun { out: out, pos: pos + 80i64, error: Corrupt, crc: 0i64 };
     }
     if (hi != 3227993 || lo != 2511705) {
-      return __BzRun { out: out, pos: -1i64, error: Corrupt };
+      return __BzRun { out: out, pos: -1i64, error: Corrupt, crc: 0i64 };
     }
     let r = __bz_block(input, pos + 48i64, size, out, limit);
     out = r.out;
     if (r.pos < 0i64) {
       return r;
     }
+    combined = (combined << 1i64 | combined >> 31i64) & 4294967295i64 ^ r.crc;
     pos = r.pos;
   }
-  return __BzRun { out: out, pos: -1i64, error: Corrupt };
+  return __BzRun { out: out, pos: -1i64, error: Corrupt, crc: 0i64 };
 }
 
 // The header of a block after its magic number: its CRC, the start of the
@@ -191,24 +203,24 @@ struct __BzHead { crc: i64, orig: i32, used: u8[], lens: i32[][], selectors: i32
 function __bz_block(input: [u8], pos: i64, size: i32, own out: u8[], limit: i32): __BzRun {
   let (h, error) = __bz_head(input, pos);
   if (h.pos < 0i64) {
-    return __BzRun { out: out, pos: -1i64, error: error };
+    return __BzRun { out: out, pos: -1i64, error: error, crc: 0i64 };
   }
   let (tt, n, end, err2) = __bz_symbols(input, h, size);
   if (end < 0i64) {
-    return __BzRun { out: out, pos: -1i64, error: err2 };
+    return __BzRun { out: out, pos: -1i64, error: err2, crc: 0i64 };
   }
   if (h.orig >= n && n > 0) {
-    return __BzRun { out: out, pos: -1i64, error: Corrupt };
+    return __BzRun { out: out, pos: -1i64, error: Corrupt, crc: 0i64 };
   }
   let before = out.len();
   out = __bz_untransform(tt, n, h.orig, out, limit);
   if (out.len() > limit) {
-    return __BzRun { out: out.truncate(limit), pos: -1i64, error: OutputLimit };
+    return __BzRun { out: out.truncate(limit), pos: -1i64, error: OutputLimit, crc: 0i64 };
   }
   if (__bz_crc(out, before) != h.crc) {
-    return __BzRun { out: out.truncate(before), pos: -1i64, error: Corrupt };
+    return __BzRun { out: out.truncate(before), pos: -1i64, error: Corrupt, crc: 0i64 };
   }
-  return __BzRun { out: out, pos: end, error: Corrupt };
+  return __BzRun { out: out, pos: end, error: Corrupt, crc: h.crc };
 }
 
 // The header of a block, or a header with `pos` -1 and the error.
