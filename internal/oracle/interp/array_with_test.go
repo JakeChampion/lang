@@ -481,3 +481,34 @@ func TestReturnMovesEachCall(t *testing.T) {
 		t.Errorf("analysed %d return expressions, want 2", len(ip.returnMovable))
 	}
 }
+
+// An append keeps the answer of holdsMap that its receiver has, so a loop of
+// appends does not scan the elements again after each one.
+func TestArrayPushKeepsHoldsMap(t *testing.T) {
+	ip := New()
+	push := func(a Array, v Value) Array {
+		t.Helper()
+		out, err := builtinArrayPush(ip, []Value{a, v})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.(Array)
+	}
+	a := arrayOf(Number(1))
+	if holdsMap(a) {
+		t.Fatal("an array of numbers holds a map")
+	}
+	for k := range 20 {
+		a = push(a, Number(k))
+		if a.b.maps != mapsNone {
+			t.Fatalf("after %d appends the array does not know that it holds no map", k+1)
+		}
+	}
+	m := push(a, &Map{})
+	if m.b.maps != mapsSome || !holdsMap(m) {
+		t.Errorf("an append of a map does not mark the array")
+	}
+	if unknown := push(arrayOf(Number(1)), Number(2)); unknown.b.maps != 0 || holdsMap(unknown) {
+		t.Errorf("an append to an unscanned array of numbers gives maps %d", unknown.b.maps)
+	}
+}
