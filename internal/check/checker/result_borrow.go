@@ -503,6 +503,11 @@ func (c *checker) callSiteBorrowsBeside(x *ast.Call, except string) bool {
 		sig = c.info.FuncSigs[id.Name]
 		flags = c.ownFuncs[id.Name]
 	}
+	// A variant holds its payloads, so a payload lends as a parameter of
+	// its type does.
+	if variant, ok := c.info.EnumConstructions[x]; ok && sig == nil && len(variant.Payloads) == len(x.Args) {
+		sig = &ast.FuncType{Params: variant.Payloads}
+	}
 	for i, a := range x.Args {
 		if aid, ok := a.(*ast.Ident); ok && except != "" && aid.Name == except {
 			continue

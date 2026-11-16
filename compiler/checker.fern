@@ -22796,7 +22796,7 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
   }
   if let Some(variant) = lu_variant_row(fx, c.callee) {
     for i in 0..c.args.len() {
-      if (lu_lends(variant, i) && lu_arg_borrows_beside(fx, c.args[i], except)) {
+      if (lu_lends(variant, i) && lu_payload_arg_lends(fx, c.args[i]) && lu_arg_borrows_beside(fx, c.args[i], except)) {
         return true;
       }
     }
@@ -22829,6 +22829,16 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
     }
   }
   return false;
+}
+
+// The row of a generic variant has the declared payload, which can be a type
+// parameter. The type of the argument gives the payload of this call.
+function lu_payload_arg_lends(fx: LuFn, a: ast.Expr): boolean {
+  let ty = ast.expr_ty(a);
+  if (ty.len() == 0 || ty == "fn") {
+    return !ow_scalar_literal(a);
+  }
+  return ow_payload_can_lend(ty, false, fx.lenders.decls);
 }
 
 // Direct own calls accept actual callbacks that cannot lend a capture.
@@ -27874,7 +27884,7 @@ function ow_variants(mod: parser.Module, dx: OwnDecls): OwnVariants {
     let lend: boolean[] = [];
     let callbacks: boolean[] = [];
     for field in declaration.fields {
-      lend = lend.append(ow_payload_can_lend(field.type_name, dx));
+      lend = lend.append(ow_payload_can_lend(if (field.type_name == "fn") { field.fn_ret } else { field.type_name }, field.type_name == "fn", dx));
       callbacks = callbacks.append(false);
     }
     rows = rows.append(OwnLend { name: declaration.name, receiver: declaration.enum_owner, lend: lend, callbacks: callbacks });
@@ -27894,11 +27904,13 @@ function ow_variants(mod: parser.Module, dx: OwnDecls): OwnVariants {
 
 // A payload that is a callback lends when its result can, as a callback
 // parameter does.
-function ow_payload_can_lend(tn: string, dx: OwnDecls): boolean {
+function ow_payload_can_lend(tn: string, callback_result: boolean, dx: OwnDecls): boolean {
+  if (callback_result && parser.spelling_is_own(tn)) {
+    return false;
+  }
   let arrow = parser.top_arrow_at(tn);
   if (arrow >= 0) {
-    let result = slice_unchecked(tn, arrow + 2, tn.len()).to_owned().trim();
-    return !parser.spelling_is_own(result) && ow_payload_can_lend(result, dx);
+    return ow_payload_can_lend(slice_unchecked(tn, arrow + 2, tn.len()).to_owned().trim(), true, dx);
   }
   return !ow_holds_no_handle(tn, dx);
 }
