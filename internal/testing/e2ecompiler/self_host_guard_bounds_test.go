@@ -139,6 +139,10 @@ function mix(bs: [u8]): u32 { let t: u32 = 0; let i: i32 = 0; let last: i32 = bs
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]; return (mix(xs) & 63u32) as i32; }`},
 	{"written_param_guard", `function put(own out: u8[], k: i32): u8[] { let n: i32 = 0; let room: i32 = out.len() - 4; while (n <= room && n < k) { out = out.with(n, 1u8); out = out.with(n + 3, 2u8); n = n + 1; } return out; }
 function main(): i32 { let xs: u8[] = [0, 0, 0, 0, 0, 0, 0, 0]; let ys: u8[] = put(xs, 100); return ys[0] as i32 + ys[7] as i32 * 3 + ys.len(); }`},
+	{"grouped_sum_in_range", `@noinline function le16(win: u8[], cur: i32, best: i32): i32 { let at = cur + best - 1; return win[at] as i32 | (win[at + 1] as i32) << 8; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return le16(xs, 3, 2) - 5 - 6 * 256; }`},
+	{"grouped_base_read_again", `@noinline function word(bs: u8[], at: i32): i32 { let v = bs[at] as i32 | (bs[at + 1] as i32) << 8; return v + at * 1000 + bs[at + 2] as i32; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return word(xs, 1) - 2 - 3 * 256 - 1000 - 4; }`},
 }
 
 var guardBoundsTwins = []struct{ name, proven, unproven string }{
@@ -268,6 +272,20 @@ function main(): i32 { let s: string = "abcdefghijkl"; let v: str = slice_unchec
 	{"grouped_nested_offset_far_end", `@inline function le32(bs: [u8], at: i32): u32 { return bs[at] as u32 | bs[at + 1] as u32 << 8 | bs[at + 2] as u32 << 16 | bs[at + 3] as u32 << 24; }
 function mix(bs: [u8]): u32 { let t: u32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 7; while (i <= last) { t = t ^ le32(bs, i + 4); i = i + 1; } return t; }
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8]; return mix(xs) as i32; }`},
+	{"grouped_sum_last_byte", `@noinline function le16(win: u8[], cur: i32, best: i32): i32 { let at = cur + best - 1; return win[at] as i32 | (win[at + 1] as i32) << 8; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return le16(xs, 3, 3); }`},
+	{"grouped_sum_negative", `@noinline function le16(win: u8[], cur: i32, best: i32): i32 { let at = cur + best - 1; return win[at] as i32 | (win[at + 1] as i32) << 8; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return le16(xs, 0, 0); }`},
+	{"grouped_sum_top_of_i32", `@noinline function le16(win: u8[], cur: i32, best: i32): i32 { let at = cur + best - 1; return win[at] as i32 | (win[at + 1] as i32) << 8; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return le16(xs, 2147483647, 1); }`},
+	{"grouped_sum_bottom_of_i32", `@noinline function le16(win: u8[], cur: i32, best: i32): i32 { let at = cur + best - 1; return win[at] as i32 | (win[at + 1] as i32) << 8; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return le16(xs, 0 - 2147483647, 0); }`},
+	{"grouped_sum_wraps_negative", `@noinline function le16(win: u8[], cur: i32, best: i32): i32 { let at = cur + best - 1; return win[at] as i32 | (win[at + 1] as i32) << 8; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return le16(xs, 2147483647, 2147483647); }`},
+	{"grouped_base_read_again_negative", `@noinline function word(bs: u8[], at: i32): i32 { let v = bs[at] as i32 | (bs[at + 1] as i32) << 8; return v + at * 1000; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return word(xs, 0 - 1); }`},
+	{"grouped_string_sum_top_of_i32", `@noinline function word(s: string, cur: i32, best: i32): i32 { let at = cur + best; return s[at] as i32 | (s[at + 1] as i32) << 8; }
+function main(): i32 { return word("abcdef", 2147483646, 1); }`},
 	{"lane_write_past_guard", `function put(own out: u8[]): u8[] { let v = __u8x16_splat(7u8); let n: i32 = 0; let room: i32 = out.len() - 31; while (n <= room) { out = __u8x16_with(out, n + 16, v); n = n + 1; } return out; }
 function main(): i32 { let xs: u8[] = __alloc_u8(40); return put(xs)[0] as i32; }`},
 	{"lane_read_past_guard", `function scan(bs: u8[]): i32 { let t: i32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 31; while (i <= last) { t = t + __u8x16_bitmask(__u8x16_load(bs, i + 16)); i = i + 1; } return t; }
