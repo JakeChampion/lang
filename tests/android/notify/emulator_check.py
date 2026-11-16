@@ -61,13 +61,28 @@ def check_shown(listing):
     return failures
 
 
+def wait_shown(read, seconds):
+    """Reads the listing until it shows the notification, or until the time ends.
+
+    The notification manager applies a post after notify() returns, so the
+    first listing can still hold the version without the progress bar.
+    """
+    deadline = time.time() + seconds
+    listing = read()
+    while check_shown(listing) and time.time() < deadline:
+        time.sleep(0.25)
+        listing = read()
+    return listing
+
+
 def main(apk, out):
     subprocess.run(["mkdir", "-p", out], check=True)
     adb("install", "-r", "-g", apk)
     adb("logcat", "-c")
     adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
     log = wait_for(POSTED, 40)
-    shown = adb("shell", "dumpsys", "notification", "--noredact")
+    # The app cancels the notification 5 seconds after it posts the progress.
+    shown = wait_shown(lambda: adb("shell", "dumpsys", "notification", "--noredact"), 3)
     failures = [f"no line matching {p.pattern!r}" for p in POSTED if not p.search(log)]
     if not failures:
         failures += check_shown(shown)

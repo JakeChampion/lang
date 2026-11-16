@@ -29,5 +29,17 @@ class RecordsTest(unittest.TestCase):
         self.assertIn("no notification", failures[0])
 
 
+class WaitShownTest(unittest.TestCase):
+    def test_a_late_progress_is_read_again(self):
+        stale = LISTING.replace(" android.progress=50 android.progressMax=100", "")
+        reads = iter([stale, stale, LISTING])
+        self.assertEqual(emulator_check.wait_shown(lambda: next(reads), 5), LISTING)
+
+    def test_the_last_listing_returns_when_the_time_ends(self):
+        stale = LISTING.replace("android.progress=50", "android.progress=5")
+        listing = emulator_check.wait_shown(lambda: stale, 0)
+        self.assertEqual(emulator_check.check_shown(listing), ["the notification has no progress of 50"])
+
+
 if __name__ == "__main__":
     unittest.main()
