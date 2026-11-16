@@ -50,6 +50,8 @@ a_module_names_variants_its_imports_reach            0
 a_once_closure_owns_its_captures                     0
 a_once_function_called_through_an_alias              0
 a_once_function_type_in_a_generic_position           0
+a_once_lambda_may_move_its_capture_in_its_body       0
+a_once_payload_of_an_owned_generic_value_is_called   0
 a_receiver_method_lifts_a_closure_that_captures_its_receiver 0
 a_returned_value_match_returns_from_each_arm         0
 a_specialised_callee_keeps_its_record_update_donor                      0

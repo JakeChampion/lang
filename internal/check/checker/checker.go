@@ -11376,7 +11376,15 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return false
 	}
+	// The moves before each `once` lambda. Its captures move into it, so a
+	// move that its own body makes is not a use after a move.
+	onceBefore := map[*ast.Lambda]movedSet{}
 	checkCallbackCaptures := func(value ast.Expr, moved movedSet) {
+		if lam, ok := value.(*ast.Lambda); ok && lam.Once {
+			if before, ok := onceBefore[lam]; ok {
+				moved = before
+			}
+		}
 		if value == nil || len(moved) == 0 || !c.callbackValues[value] {
 			return
 		}
@@ -11615,8 +11623,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				continue
 			}
 			// A copyable payload is a local value. A payload that can hold
-			// a handle keeps its linear ownership.
-			if (scrutOwned || ownedField && ownershipBindingUnchanged(fn, bname)) && c.holdsNoHandle(types[i]) {
+			// a handle keeps its linear ownership, and so does a `once`
+			// function, which a call consumes.
+			if (scrutOwned || ownedField && ownershipBindingUnchanged(fn, bname)) && c.holdsNoHandle(types[i]) && !isOnceFunc(types[i]) {
 				continue
 			}
 			if scrutOwned {
@@ -11806,6 +11815,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			captures := lam.Captures
 			if called || lam.Once {
 				captures = nil
+			}
+			if lam.Once {
+				before := movedSet{}
+				for name, at := range moved {
+					before[name] = at
+				}
+				onceBefore[lam] = before
 			}
 			walkNested(lam.Params, captures, lam.Body, lam.ReturnOwn, lam.ReturnType, moved)
 		}
