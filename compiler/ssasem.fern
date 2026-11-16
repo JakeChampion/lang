@@ -13,6 +13,9 @@ import "std/option";
 
 // writes is false only for a finalizer that cannot write a cell
 // (mark_cell_writers).
+// A type whose drop has an effect: a call of its finalizer `symbol`, or for
+// a `@secret` struct with no finalizer an empty symbol and the wipe of its
+// arrays. Such a type keeps its box, so its drop helper runs.
 pub struct Finalizer { receiver: string, symbol: string, writes: boolean }
 
 pub function finalizer_index(rows: Finalizer[], receiver: string): Option[i32] {
@@ -4030,7 +4033,8 @@ pub function mark_cell_writers(rows: Finalizer[], funcs: Func[], ok: boolean[], 
   let w = settled_writers(writer_graph(rows, funcs, ok, ix), rows, ix);
   let out: Finalizer[] = [];
   for r in rows {
-    out = out.append(Finalizer { ...r, writes: row_writes(w, ix.find(r.symbol)) });
+    // The row of a `@secret` struct with no finalizer names no function, and its wipe writes no cell.
+    out = out.append(Finalizer { ...r, writes: r.symbol != "" && row_writes(w, ix.find(r.symbol)) });
   }
   return out;
 }
@@ -5501,6 +5505,35 @@ pub function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
     return ssa.SInst { ...ins, args: mapped_list(map, ins.args), imm: mapped(map, base) + 1 };
   }
   return ssa.SInst { ...ins, args: mapped_list(map, ins.args) };
+}
+
+// The log2 of the bytes of an element of an owned array, or -1. The element
+// must have 1, 2, 4 or 8 bytes on every target.
+pub function elem_shift(t: typeinfo.Type): i32 {
+  if let typeinfo.TypeArray(a) = t {
+    if (a.view) {
+      return -1;
+    }
+    if (is_u8(a.elem)) {
+      return 0;
+    }
+    if (is_u16(a.elem) || is_i16(a.elem)) {
+      return 1;
+    }
+    if (is_i32(a.elem) || is_u32(a.elem) || is_char(a.elem) || is_f32(a.elem)) {
+      return 2;
+    }
+    if (is_i64(a.elem) || is_u64(a.elem) || is_f64(a.elem)) {
+      return 3;
+    }
+  }
+  return -1;
+}
+
+// Whether `t` is the record of a `@secret` struct.
+pub function secret_record(t: typeinfo.Type, f: Func): boolean {
+  let at = semrecords.find(f.records, t);
+  return at >= 0 && f.records.list[at].secret;
 }
 
 pub function record_fields(t: typeinfo.Type, f: Func): semrecords.Field[] {

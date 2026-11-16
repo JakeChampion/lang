@@ -2161,7 +2161,10 @@ type StructDecl struct {
 	Derives       []string
 	MustConsume   bool
 	ValueType     bool
-	SourceModule  string
+	// Secret marks a `@secret` struct: its drop zeroes the numeric arrays
+	// that it holds alone.
+	Secret       bool
+	SourceModule string
 }
 
 type EnumDecl struct {

@@ -2049,7 +2049,7 @@ function generic_sig_refs(all_type_params: string[], param_type_names: string[],
   return out.append(parser.parse_type_ref(ret_type_name));
 }
 
-pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], const_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string, must_consume: boolean }
+pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], const_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string, must_consume: boolean, secret: boolean }
 
 pub struct MethodSig { ret_own: boolean, name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string, is_unsafe: boolean, is_pub: boolean, is_package: boolean }
 
@@ -7674,7 +7674,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
       }
       ftnames = ftnames.append(parser.fn_tag_spelling(elem.type_name, elem.fn_ret, elem.fn_param_types));
     }
-    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, const_params: sd.const_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner, opaque: sd.opaque, module: sd.module, must_consume: sd.must_consume });
+    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, const_params: sd.const_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner, opaque: sd.opaque, module: sd.module, must_consume: sd.must_consume, secret: sd.secret });
   }
   return out;
 }
