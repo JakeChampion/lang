@@ -652,7 +652,8 @@ On x86-64 an inline byte kernel is a fifth kind (`COLD_KERNEL`,
 calls nothing. The emitter writes the text of the kernel one time before the
 allocation, and reads from it the caller registers that the kernel names
 (`ssa_text_clobbers`). The fixed table keeps a value that lives across the
-kernel off those registers only, and the emitter saves nothing. A kernel
+kernel off those registers only, and the emitter saves nothing. A kernel in
+a cold block has this kind too, not `COLD_BRANCH`. A kernel
 stays a call when its text names a saved register, or has an instruction
 with an operand that the text does not name (`call`, `rep`, `mul`, `div`).
 

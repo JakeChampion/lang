@@ -47,6 +47,23 @@ function sums(s: string, a: i32, b: i32, c: i32): i32 {
     }
     return acc + runs;
 }
+function sparse(s: string, a: i32, b: i32, c: i32): i32 {
+    let i: i32 = 0;
+    let runs: i32 = 0;
+    let acc: i32 = 0;
+    while (i < s.len()) {
+        if ((s[i] as i32) < 128) {
+            let j: i32 = __ascii_run(s, i);
+            acc = acc + (j - i) * a;
+            i = j;
+        } else {
+            runs = runs + 1;
+            acc = acc + b * runs - c;
+            i = i + 1;
+        }
+    }
+    return acc + runs;
+}
 function main(): i32 {
     let hi: string = unsafe { string_from_bytes_unchecked([195 as u8]) };
     let s: string = "hello" + hi + "world, a longer run of ascii bytes, that passes one vector block" + hi + "x";
@@ -55,6 +72,8 @@ function main(): i32 {
     if (scan(s, 3, 5, 7) != 222) { return 2; }
     let f: i32 = fields(s, 3, 5, 7) + fields(t, 1, 2, 3);
     let g: i32 = sums(s, 3, 5, 7) + sums(t, 1, 2, 3);
+    if (sparse(t, 2, 3, 5) != 10) { return 5; }
+    if (sparse(s, 3, 5, 7) != 213) { return 6; }
     if (f != 171) { return 3; }
     if (g != 12572) { return 4; }
     return ((f + g) & 63) + 64;
@@ -76,6 +95,7 @@ func TestSelfHostSSAKernelClobbers(t *testing.T) {
 	}
 	kernels := map[string][]string{
 		"scan":   {"ascii_run"},
+		"sparse": {"ascii_run"},
 		"fields": {"memchr", "rmemchr"},
 		"sums":   {"str_hash", "count_byte", "bsd_sum"},
 	}
