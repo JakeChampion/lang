@@ -3319,6 +3319,9 @@ function block_stmt_kind(st: ast.Stmt): string {
       return "for";
     },
     _ => {
+      if (parser.is_missing_tail(st)) {
+        return "no trailing value (E061)";
+      }
       return "other";
     }
   }
