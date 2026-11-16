@@ -64,9 +64,20 @@ applies to it, and one rule is added at each call:
 1. A closure written at the call crosses with its captures. The type of
    every captured variable is send-safe, and the result type of the closure
    is send-safe.
-2. Any other argument has a send-safe type. A function value is not
+2. A `send` parameter of the enclosing function crosses again. Its own call
+   checked its argument, so the function gives it to another `send`
+   parameter, or captures it in a closure that it writes there. A library
+   wraps `spawn` in this way. The function cannot assign to a `send`
+   parameter (`E100`), so the parameter always holds the checked argument.
+3. Any other argument has a send-safe type. A function value is not
    send-safe, because its environment is not visible at the call. So a
    closure held in a variable cannot be passed.
+
+```fern
+function start[T: worker.Send](send body: () => T): worker.Worker[T] {
+    return worker.spawn(body);
+}
+```
 
 A type is send-safe when every part of it is:
 
@@ -101,7 +112,8 @@ The rule is `send_guard_call` in `compiler/checker.fern` and `guardSendArg`
 in `internal/check/checker/send.go`. The two checkers give one message. The
 cases are `conformance/cases/diag_e100`,
 `conformance/cases/diag_e100_closure_value`, `worker_send_bound`,
-`diag_e021_send_bound` and `diag_e021_send_impl`, and the rows named `send-`
+`worker_send_forward`, `diag_e021_send_bound` and `diag_e021_send_impl`, and
+the rows named `send-`
 in `TestSelfHostCheckerCodesX86_64` pin both checkers to the same codes.
 
 ## Sequential degrade

@@ -5345,12 +5345,25 @@ function crosses_jump(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boo
   return k == variant_get() || k == record_get() || k == tuple_get() || k == array_get();
 }
 
+// The op that makes a view of type t from a part of a view of that type:
+// `slice` for a string view, `arr_slice` for an array view, 0 for no view.
+function view_slice_kind(t: typeinfo.Type): i32 {
+  if (is_view(t)) {
+    return slice();
+  }
+  if (typeinfo.is_array_view(t)) {
+    return arr_slice();
+  }
+  return 0;
+}
+
 function sliced_view_param(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
-  if (!is_view(f.values[a]) || defs[a].kind_tag != slice()) {
+  let kind = view_slice_kind(f.values[a]);
+  if (kind == 0 || defs[a].kind_tag != kind) {
     return false;
   }
   for p in parents[a] {
-    if (p >= f.graph.nparams || !is_view(f.values[p])) {
+    if (p >= f.graph.nparams || view_slice_kind(f.values[p]) != kind) {
       return false;
     }
   }
@@ -5645,7 +5658,7 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, sites: i32[], name: st
       let at = s.values.len();
       entry_insts = entry_insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: at, args: [], imm: 0, str: "" });
       entry_insts = entry_insts.append(ssa.SInst { kind_tag: length(), result: at + 1, args: [p], imm: 0, str: "" });
-      entry_insts = entry_insts.append(ssa.SInst { kind_tag: slice(), result: at + 2, args: [p, at, at + 1], imm: 0, str: "" });
+      entry_insts = entry_insts.append(ssa.SInst { kind_tag: view_slice_kind(f.values[p]), result: at + 2, args: [p, at, at + 1], imm: 0, str: "" });
       s = Splice { ...s, values: s.values.append(i32_type()).append(i32_type()).append(f.values[p]) };
       firsts = firsts.with(p, at + 2);
     }
@@ -5669,13 +5682,14 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, sites: i32[], name: st
 }
 
 function sliced_on_back_edge(f: Func, rows: i32[][], p: i32): boolean {
-  if (!is_view(f.values[p])) {
+  let kind = view_slice_kind(f.values[p]);
+  if (kind == 0) {
     return false;
   }
   let defs = ssa.inst_defs(f.graph);
   for row in rows {
     let v = row[p];
-    if (v >= 0 && v < defs.len() && defs[v].kind_tag == slice()) {
+    if (v >= 0 && v < defs.len() && defs[v].kind_tag == kind) {
       return true;
     }
   }

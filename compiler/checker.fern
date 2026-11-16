@@ -3027,12 +3027,41 @@ function derives_trait(s: Scope, tyname: string, tr: string): boolean {
 
 function conforms_to_dyn_trait(s: Scope, from: typeinfo.Type, tyname: string, tr: string): boolean {
   let key = util.base_type_name(tr);
+  let implemented = false;
   for imp in s.impls {
     if (parser.impl_trait_key(imp) == key && parser.receiver_base(imp.impl_type) == parser.receiver_base(tyname)) {
-      return impl_bounds_hold(s, imp, from);
+      if (impl_bounds_hold(s, imp, from) && impl_pins(s, imp, from, tr)) {
+        return true;
+      }
+      implemented = true;
     }
   }
-  return derives_trait(s, tyname, parser.derive_simple_name(key));
+  return !implemented && derives_trait(s, tyname, parser.derive_simple_name(key));
+}
+
+// impl_pins reports whether the implementation gives the trait, for the type
+// `from`, the arguments that the dyn trait `tr` pins.
+function impl_pins(s: Scope, imp: parser.ImplInfo, from: typeinfo.Type, tr: string): boolean {
+  let want: parser.TypeRef[] = [];
+  for a in parser.parse_type_ref(tr).args {
+    if (!util.contains(parser.render_type_ref(a), "=")) {
+      want = want.append(a);
+    }
+  }
+  let got = parser.parse_type_ref(imp.trait_ref).args;
+  if (want.len() == 0 || got.len() != want.len()) {
+    return true;
+  }
+  let tn = s.type_names();
+  let (names, types) = gc_bind_param(parser.parse_type_ref(imp.impl_type), from, imp.all_type_params, tn, [], []);
+  for i in 0..want.len() {
+    let w = type_from_ref_subst(want[i], [], [], tn);
+    let g = type_from_ref_subst(got[i], names, types, tn);
+    if (!type_contains_unknown(w) && !type_contains_unknown(g) && !type_eq(g, w)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
@@ -7928,6 +7957,9 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
       }
     }
   }
+  if (r.base.len() >= 5 && r.base.starts_with("dyn ")) {
+    return dyn_type_subst(parser.render_type_ref(r), tparams, targs, tn);
+  }
   if (parser.ref_is_fn_value(r)) {
     let f = parser.ref_ungroup(r);
     let pts: typeinfo.Type[] = [];
@@ -8069,10 +8101,35 @@ function type_from_name_erasing_tparams(name: string, tparams: string[], tn: Typ
 }
 
 function type_from_name_subst(name: string, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
-  if (tparams.len() == 0 || name.len() == 0 || name.len() >= 5 && name.starts_with("dyn ")) {
+  if (tparams.len() == 0 || name.len() == 0) {
     return type_from_spelling(name, tn);
   }
+  if (name.len() >= 5 && name.starts_with("dyn ")) {
+    return dyn_type_subst(name, tparams, subst, tn);
+  }
   return type_from_ref_subst(parser.parse_type_ref(name), tparams, subst, tn);
+}
+
+// dyn_type_subst is the dyn type `name` with each type parameter that its
+// pinned arguments name replaced. With a parameter that has no binding, the
+// whole spelling is a type parameter of its own, as in vec_type.
+function dyn_type_subst(name: string, tparams: string[], targs: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
+  let names: string[] = [];
+  let labels: string[] = [];
+  for i in 0..tparams.len() {
+    if (i >= targs.len() || !parser.type_mentions_var(name, tparams[i])) {
+      continue;
+    }
+    if (type_contains_unknown(targs[i])) {
+      return t_unknown(TPARAM_MARK + name);
+    }
+    names = names.append(tparams[i]);
+    labels = labels.append(type_label(targs[i]));
+  }
+  if (names.len() == 0) {
+    return type_from_spelling(name, tn);
+  }
+  return type_from_spelling(parser.subst_ty(name, names, labels), tn);
 }
 
 function erased_tparams(tparams: string[]): typeinfo.Type[] {
@@ -8173,6 +8230,29 @@ function gc_is_typevar_name(n: string, tparams: string[], tn: TypeNames): boolea
   return type_contains_unknown(type_from_spelling(n, tn));
 }
 
+// A dyn parameter binds each type parameter that its pinned arguments name
+// from the argument at the same place of the same trait of the dyn value.
+function gc_bind_dyn(r: parser.TypeRef, traits: string, tparams: string[], tn: TypeNames, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
+  let ns = names;
+  let ts = types;
+  let actual = parser.dyn_trait_set("dyn " + traits);
+  for want in parser.dyn_trait_set(parser.render_type_ref(r)) {
+    let wr = parser.parse_type_ref(want);
+    for got in actual {
+      let gr = parser.parse_type_ref(got);
+      if (gr.base != wr.base || gr.args.len() != wr.args.len()) {
+        continue;
+      }
+      for i in 0..wr.args.len() {
+        let (n2, t2) = gc_bind_param(wr.args[i], type_from_ref_names(gr.args[i], tn), tparams, tn, ns, ts);
+        ns = n2;
+        ts = t2;
+      }
+    }
+  }
+  return (ns, ts);
+}
+
 function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], tn: TypeNames, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   let ns = names;
   let ts = types;
@@ -8188,6 +8268,12 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
         return (ns, ts);
       }
     }
+  }
+  if (r.base.len() >= 5 && r.base.starts_with("dyn ")) {
+    if let typeinfo.TypeDyn(d) = at {
+      return gc_bind_dyn(r, d.traits, tparams, tn, ns, ts);
+    }
+    return (ns, ts);
   }
   if (parser.ref_is_fn_value(r)) {
     if let typeinfo.TypeFunc(f) = at {
@@ -20565,7 +20651,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -20840,7 +20926,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): Ow
       bound = bound.append(p.name);
     }
   }
-  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
+  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced, sends: ctx.sends };
   return nested;
 }
 
@@ -25697,9 +25783,14 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
     aline = c.line;
     acol = c.col;
   }
+  if let ast.ExprIdent(id) = arg {
+    if (util.has_str(ctx.sends, id.name)) {
+      return out;
+    }
+  }
   let at = check_expr(arg, s);
   if let ast.ExprLambda(lm) = arg {
-    let seen: string[] = [];
+    let seen: string[] = ctx.sends;
     for name in astwalk.collect_lambda_idents(lm, []) {
       if (s.is_bound(name) && !util.has_str(seen, name)) {
         seen = seen.append(name);
@@ -25721,6 +25812,35 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
   let why = send_unsafe_reason(at, s, []);
   if (why.len() > 0) {
     out = out.append(dg_at("E100", "argument to `send` parameter \"" + pname + "\" has type " + type_label(at) + ", which cannot cross a worker boundary: " + why, aline, acol));
+  }
+  return out;
+}
+
+function send_params(fn: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  for param in fn.params {
+    if (param.send) {
+      out = out.append(param.name);
+    }
+  }
+  return out;
+}
+
+// A `send` parameter holds an argument that its own call checked, so it
+// crosses a worker boundary again. An assignment would replace that argument.
+function send_param_assign_diags(fn: parser.FuncDecl, sends: string[]): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (sends.len() == 0) {
+    return out;
+  }
+  let found: ast.StmtAssign[] = [];
+  for st in fn.body {
+    found = astwalk.fold_stmt_nodes(st, found, send_collect_assigns, send_keep_assigns, astwalk.descend_all);
+  }
+  for a in found {
+    if (util.has_str(sends, a.target)) {
+      out = out.append(dg_at("E100", "cannot assign to `send` parameter \"" + a.target + "\": the call that gave its argument checked that argument", a.target_line, a.target_col));
+    }
   }
   return out;
 }
@@ -26766,7 +26886,7 @@ function ow_shadow_names_ctx(ctx: OwnCtx, names: string[]): OwnCtx {
   }
   let returns = ctx.returns.get();
   return OwnCtx {
-    ...c, owned: ow_names_without(ctx.owned, names), borrowed: ow_names_without(ctx.borrowed, names),
+    ...c, owned: ow_names_without(ctx.owned, names), borrowed: ow_names_without(ctx.borrowed, names), sends: ow_names_without(ctx.sends, names),
     deferred: cell_new(ow_moves_without(ctx.deferred.get(), names)),
     returns: cell_new(OwnReturns { ...returns, moved: ow_moves_without(returns.moved, names) }),
     jumps: ow_fresh_jumps(),
@@ -28624,10 +28744,10 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
+    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
-    out = util.append_diags(out, ow_source_diags(r.diags, resolved.bindings));
+    out = util.append_diags(out, ow_source_diags(util.append_diags(send_param_assign_diags(fn, ctx.sends), r.diags), resolved.bindings));
   }
   return out;
 }

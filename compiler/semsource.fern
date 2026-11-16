@@ -6371,7 +6371,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   if (typeinfo.is_dyn(t)) {
     for n in dyn_impl_names(t, impls) {
       for v in views {
-        if (v == n || v.starts_with(n + "__")) {
+        if (v == n) {
           return true;
         }
       }
@@ -7179,17 +7179,11 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
     if (n == "string") {
       out = out.append(typeinfo.t_string());
     } else if (checker.union_type_params(s.scope, n).len() > 0 || checker.struct_type_params(s.scope, n).len() > 0) {
-      for c in generic_clones(n, s) {
-        out = out.append(c);
-      }
+      continue;
     } else if (has_record_schema(n, s)) {
       out = out.append(typeinfo.TypeStruct { name: n, args: [] });
     } else if (union_layout(s, n) == semrecords.layout_variant()) {
       out = out.append(typeinfo.TypeUnion { name: n, args: [] });
-    } else if (erased_generic(n, s)) {
-      for c in generic_clones(n, s) {
-        out = out.append(c);
-      }
     }
   }
   return out;
@@ -7208,28 +7202,6 @@ function dyn_impl_names(t: typeinfo.Type, impls: parser.ImplInfo[]): string[] {
     }
     if (implements_traits(impls, n, traits)) {
       out = out.append(n);
-    }
-  }
-  return out;
-}
-
-function erased_generic(n: string, s: State): boolean {
-  return !s.scope.has_struct(n) && union_layout(s, n) == 0 && union_variants(s, n).len() == 0;
-}
-
-function generic_clones(base: string, s: State): typeinfo.Type[] {
-  let out: typeinfo.Type[] = [];
-  let prefix = base + "__";
-  for sig in s.scope.structs.structs {
-    let t: typeinfo.Type = typeinfo.TypeStruct { name: sig.name, args: [] };
-    if (sig.name.starts_with(prefix) && has_record_schema(sig.name, s) && !has_type(out, t)) {
-      out = out.append(t);
-    }
-  }
-  for u in s.scope.unions.unions {
-    let t: typeinfo.Type = typeinfo.TypeUnion { name: u.name, args: [] };
-    if (u.name.starts_with(prefix) && union_layout(s, u.name) == semrecords.layout_variant() && !has_type(out, t)) {
-      out = out.append(t);
     }
   }
   return out;
@@ -10250,7 +10222,7 @@ pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method
     if (generic_decl(fd) || n == 0 || n >= 2 && fd.receiver_type.ends_with("[]")) {
       continue;
     }
-    if (!arm_receiver_implements(impls, parser.receiver_base(fd.receiver_type), traits)) {
+    if (!implements_traits(impls, parser.receiver_base(fd.receiver_type), traits)) {
       continue;
     }
     if (parser.dyn_arm_matches(fd, traits, method)) {
@@ -10258,17 +10230,6 @@ pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method
     }
   }
   return out;
-}
-
-function arm_receiver_implements(impls: parser.ImplInfo[], n: string, traits: string[]): boolean {
-  if (implements_traits(impls, n, traits)) {
-    return true;
-  }
-  let at = 1;
-  while (at + 1 < n.len() && !(n[at] == b'_' && n[at + 1] == b'_')) {
-    at += 1;
-  }
-  return at + 1 < n.len() && implements_traits(impls, slice_unchecked(n, 0, at).to_owned(), traits);
 }
 
 // The names that the lowering calls after the splice plan is decided: the
