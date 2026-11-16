@@ -292,6 +292,57 @@ function check_invalid(gnulib: boolean): i32 {
   return 0;
 }
 
+// from_of gives the match and the groups of a search that starts at `from`.
+function from_of(pat: string, subj: string, from: i32, icase: boolean, utf8: boolean): string {
+  let re = bre.bre_compile_syntax(pat, bre.Syntax { ...bre.sed_syntax(false, icase, false, false), utf8: utf8 });
+  let m = re.search_groups_bytes(subj.bytes(), from, subj.len());
+  if (!m.matched) {
+    return "none";
+  }
+  let out = "";
+  for g in 0..m.starts.len() {
+    out += f"{m.starts[g]},{m.ends[g]};";
+  }
+  return out;
+}
+
+// glibc moves the start of a search past each character that leaves its
+// DFA in the initial state. An empty match at the first position keeps the
+// move.
+function check_start_shift(): i32 {
+  if (from_of("\\W*\\B", ". b", 1, false, false) != "2,2;" || from_of("\\W*\\B", ". b", 0, false, false) != "0,1;") {
+    return 51;
+  }
+  if (from_of("\\W*\\(\\B\\)", ". b", 1, false, false) != "2,2;2,2;" || from_of("\\(\\W\\)*\\B", ". b", 1, false, false) != "1,1;-1,-1;") {
+    return 52;
+  }
+  if (from_of("x*\\W*\\B", ". b", 1, false, false) != "1,1;" || from_of("\\W*\\B\\|z", ". b", 1, false, false) != "1,1;") {
+    return 53;
+  }
+  if (from_of("\\w*\\B", "ab c", 1, false, false) != "2,2;" || from_of("\\W\\{0,\\}\\B", ". b", 1, false, false) != "2,2;") {
+    return 54;
+  }
+  if (from_of("\\W*\\B", "a.é- b", 5, false, true) != "6,6;" || from_of("\\W*\\B", "a.é- b", 1, false, true) != "4,5;" || from_of("\\W*\\B", "¿ b", 2, false, true) != "3,3;") {
+    return 55;
+  }
+  return 0;
+}
+
+// Under icase in UTF-8, glibc tries a match inside the last character of
+// the text when the upper case of that character has fewer bytes.
+function check_fold_tail(): i32 {
+  if (from_of("\\>", "ı", 0, true, true) != "1,1;" || from_of("\\>", "ıa", 0, true, true) != "3,3;") {
+    return 61;
+  }
+  if (from_of("\\>", "ı", 0, false, true) != "2,2;" || from_of("\\B", "ı", 0, true, true) != "none") {
+    return 62;
+  }
+  if (from_of("\\>", "ɐ", 0, true, true) != "2,2;" || from_of("\\>", "ⱥ", 0, true, true) != "2,2;") {
+    return 63;
+  }
+  return 0;
+}
+
 function check_search_from(): i32 {
   let re = bre.bre_compile_syntax("^a\\|\\<b", bre.sed_syntax(false, false, false, false));
   let text = "aab b".bytes();
@@ -433,6 +484,14 @@ function main(): i32 {
   r = check_invalid(true);
   if (r != 0) {
     return r + 10;
+  }
+  r = check_start_shift();
+  if (r != 0) {
+    return r;
+  }
+  r = check_fold_tail();
+  if (r != 0) {
+    return r;
   }
   return check_search_from();
 }
