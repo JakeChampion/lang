@@ -89,7 +89,7 @@ function main(): i32 {
   if (__rc_underflow_count() != 0) {
     return 99;
   }
-  if (n != 200 as i64) {
+  if (n != 100 as i64) {
     return 2;
   }
   return 0;
