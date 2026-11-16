@@ -5,7 +5,7 @@ has no Java code and no `classes.dex`. A tap starts or pauses the stopwatch,
 and the back key closes the app. The face shows minutes and seconds in
 seven-segment digits.
 
-- `app.fern` is the app. `ANativeActivity_onCreate` calls `android.start`, and
+- `app.fern` is the app. `ANativeActivity_onCreate` calls `launch.start`, and
   the loop thread calls `android.run` with the state and the `step` function of
   the app.
 - `face.fern` lays out the digits. It has no Android code, and

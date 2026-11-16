@@ -1,0 +1,342 @@
+// The XML files of an Android app, such as AndroidManifest.xml, as a tree of
+// elements, and their two encodings: the binary XML of an APK, and the
+// protocol buffer XML of aapt2 in an Android App Bundle.
+import "std/protobuf";
+import "./util";
+
+// An element. Its attributes keep their order in the binary encoding, so a
+// builder gives the attributes of the android namespace in the order of
+// their resource IDs, which Android searches by bisection.
+pub struct Element { name: string, attrs: Attr[], kids: Element[] }
+
+// An attribute. `id` is the resource ID of a framework attribute in the
+// android namespace, or 0 for an attribute with no namespace. `kind` is the
+// type of its Res_value, and `data` its data. A string has its text in
+// `text`.
+pub struct Attr { name: string, id: i32, kind: i32, data: i32, text: string }
+
+// The types of a Res_value.
+pub const REFERENCE: i32 = 1;
+
+pub const STRING: i32 = 3;
+
+pub const FLOAT: i32 = 4;
+
+pub const DIMENSION: i32 = 5;
+
+pub const INT_DEC: i32 = 16;
+
+pub const INT_HEX: i32 = 17;
+
+pub const BOOLEAN: i32 = 18;
+
+pub const COLOR_ARGB8: i32 = 28;
+
+pub const ANDROID_URI: string = "http://schemas.android.com/apk/res/android";
+
+pub function element(name: string, attrs: Attr[], kids: Element[]): Element {
+  return Element { name: name, attrs: attrs, kids: kids };
+}
+
+// A string attribute of the android namespace.
+pub function text_attr(name: string, id: i32, text: string): Attr {
+  return Attr { name: name, id: id, kind: STRING, data: 0, text: text };
+}
+
+pub function int_attr(name: string, id: i32, kind: i32, data: i32): Attr {
+  return Attr { name: name, id: id, kind: kind, data: data, text: "" };
+}
+
+pub function bool_attr(name: string, id: i32, on: boolean): Attr {
+  return int_attr(name, id, BOOLEAN, if (on) { -1 } else { 0 });
+}
+
+// Little-endian encodings.
+pub function put16(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8);
+}
+
+pub function put32(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 24 & 255) as u8);
+}
+
+// The UTF-16 code units of `s`.
+pub function utf16(s: string): i32[] {
+  let out: i32[] = [];
+  let i = 0;
+  while (i < s.len()) {
+    let c = s[i] as i32;
+    let n = 1;
+    if (c >= 240) {
+      c = c & 7;
+      n = 4;
+    } else if (c >= 224) {
+      c = c & 15;
+      n = 3;
+    } else if (c >= 192) {
+      c = c & 31;
+      n = 2;
+    }
+    for k in 1..n {
+      if (i + k < s.len()) {
+        c = c << 6 | s[i + k] as i32 & 63;
+      }
+    }
+    if (c >= 65536) {
+      out = out.append(55296 + (c - 65536 >> 10)).append(56320 + (c - 65536 & 1023));
+    } else {
+      out = out.append(c);
+    }
+    i += n;
+  }
+  return out;
+}
+
+// A string pool chunk of UTF-16 strings.
+pub function string_pool(strings: string[]): u8[] {
+  let offs: u8[] = [];
+  let data: u8[] = [];
+  for s in strings {
+    offs = put32(offs, data.len());
+    let units = utf16(s);
+    data = put16(data, units.len());
+    for u in units {
+      data = put16(data, u);
+    }
+    data = put16(data, 0);
+  }
+  while (data.len() % 4 != 0) {
+    data = data.append(0 as u8);
+  }
+  let head = put16(put16([], 1), 28);
+  head = put32(head, 28 + offs.len() + data.len());
+  head = put32(put32(put32(put32(put32(head, strings.len()), 0), 0), 28 + offs.len()), 0);
+  return util.append_bytes(util.append_bytes(head, offs), data);
+}
+
+// The binary XML encoding. The string pool starts with the names of the
+// framework attributes, in the order of their resource IDs, and the
+// resource map gives those IDs. Then come `android`, the URI of its
+// namespace, and each other string in the order of its first use.
+
+struct Pool { ids: i32[], strings: string[] }
+
+function index_of_id(ids: i32[], id: i32): i32 {
+  for k in 0..ids.len() {
+    if (ids[k] == id) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// `ids` and `names` with the attribute `id` and `name` in the order of the
+// IDs.
+function with_id(ids: i32[], names: string[], id: i32, name: string): (i32[], string[]) {
+  let out_ids: i32[] = [];
+  let out_names: string[] = [];
+  let placed = false;
+  for k in 0..ids.len() {
+    if (!placed && id < ids[k]) {
+      out_ids = out_ids.append(id);
+      out_names = out_names.append(name);
+      placed = true;
+    }
+    out_ids = out_ids.append(ids[k]);
+    out_names = out_names.append(names[k]);
+  }
+  if (!placed) {
+    out_ids = out_ids.append(id);
+    out_names = out_names.append(name);
+  }
+  return (out_ids, out_names);
+}
+
+function framework_attrs(e: Element, ids: i32[], names: string[]): (i32[], string[]) {
+  for a in e.attrs {
+    if (a.id != 0 && index_of_id(ids, a.id) < 0) {
+      let (more_ids, more_names) = with_id(ids, names, a.id, a.name);
+      ids = more_ids;
+      names = more_names;
+    }
+  }
+  for kid in e.kids {
+    let (more_ids, more_names) = framework_attrs(kid, ids, names);
+    ids = more_ids;
+    names = more_names;
+  }
+  return (ids, names);
+}
+
+function add(strings: string[], s: string): string[] {
+  if (util.has_str(strings, s)) {
+    return strings;
+  }
+  return strings.append(s);
+}
+
+function other_strings(e: Element, strings: string[]): string[] {
+  strings = add(strings, e.name);
+  for a in e.attrs {
+    if (a.id == 0) {
+      strings = add(strings, a.name);
+    }
+    if (a.kind == STRING) {
+      strings = add(strings, a.text);
+    }
+  }
+  for kid in e.kids {
+    strings = other_strings(kid, strings);
+  }
+  return strings;
+}
+
+function pool_of(root: Element): Pool {
+  let none: i32[] = [];
+  let no_names: string[] = [];
+  let (ids, names) = framework_attrs(root, none, no_names);
+  return Pool { ids: ids, strings: other_strings(root, names.append("android").append(ANDROID_URI)) };
+}
+
+function index(p: Pool, s: string): i32 {
+  return util.index_of_str(p.strings, s);
+}
+
+function node(out: u8[], kind: i32, size: i32, line: i32): u8[] {
+  return put32(put32(put32(put16(put16(out, kind), 16), size), line), -1);
+}
+
+function attr_name(p: Pool, a: Attr): i32 {
+  if (a.id != 0) {
+    return index_of_id(p.ids, a.id);
+  }
+  return index(p, a.name);
+}
+
+function encode_element(out: u8[], p: Pool, e: Element, line: i32): (u8[], i32) {
+  let uri = p.ids.len() + 1;
+  out = node(out, 258, 36 + 20 * e.attrs.len(), line);
+  out = put32(put32(out, -1), index(p, e.name));
+  out = put16(put16(put16(put16(put16(put16(out, 20), 20), e.attrs.len()), 0), 0), 0);
+  for a in e.attrs {
+    let ns: i32 = -1;
+    if (a.id != 0) {
+      ns = uri;
+    }
+    let raw: i32 = -1;
+    let data = a.data;
+    if (a.kind == STRING) {
+      raw = index(p, a.text);
+      data = raw;
+    }
+    out = put32(put32(put32(out, ns), attr_name(p, a)), raw);
+    out = put32(util.put_u8(util.put_u8(put16(out, 8), 0), a.kind), data);
+  }
+  let next = line + 1;
+  for kid in e.kids {
+    let (after, at) = encode_element(out, p, kid, next);
+    out = after;
+    next = at;
+  }
+  out = put32(put32(node(out, 259, 24, next), -1), index(p, e.name));
+  return (out, next + 1);
+}
+
+// The binary XML file of `root`, with the android namespace on it.
+pub function binary(root: Element): u8[] {
+  let p = pool_of(root);
+  let prefix = p.ids.len();
+  let body = put32(put32(node([], 256, 24, 1), prefix), prefix + 1);
+  let (with_root, last) = encode_element(body, p, root, 1);
+  body = put32(put32(node(with_root, 257, 24, last), prefix), prefix + 1);
+  let map = put32(put16(put16([], 384), 8), 8 + 4 * p.ids.len());
+  for id in p.ids {
+    map = put32(map, id);
+  }
+  let rest = util.append_bytes(util.append_bytes(string_pool(p.strings), map), body);
+  return util.append_bytes(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
+}
+
+// The protocol buffer encoding: the XmlNode message of Resources.proto of
+// aapt2, which an Android App Bundle holds for each XML file.
+
+function message(number: i32, body: [u8]): u8[] {
+  return protobuf.bytes_field(number, body);
+}
+
+function uint32_field(number: i32, v: i32): u8[] {
+  return protobuf.varint_field(number, v as i64 & 4294967295i64);
+}
+
+function fixed32_field(number: i32, v: i32): u8[] {
+  return put32(protobuf.encode_varint((number << 3 | 5) as i64), v);
+}
+
+// The Item message of the compiled value of `a`.
+pub function item(a: Attr): u8[] {
+  if (a.kind == STRING) {
+    return message(2, protobuf.string_field(1, a.text));
+  }
+  if (a.kind == REFERENCE) {
+    return message(1, uint32_field(2, a.data));
+  }
+  let prim: u8[] = [];
+  if (a.kind == BOOLEAN) {
+    prim = protobuf.varint_field(8, if (a.data != 0) { 1i64 } else { 0i64 });
+  } else if (a.kind == INT_DEC) {
+    prim = protobuf.varint_field(6, a.data as i64);
+  } else if (a.kind == INT_HEX) {
+    prim = uint32_field(7, a.data);
+  } else if (a.kind == DIMENSION) {
+    prim = uint32_field(13, a.data);
+  } else if (a.kind == COLOR_ARGB8) {
+    prim = uint32_field(9, a.data);
+  } else if (a.kind == FLOAT) {
+    prim = fixed32_field(3, a.data);
+  }
+  return message(7, prim);
+}
+
+// The text of the value of `a`, as aapt2 keeps it beside the compiled value.
+function value_text(a: Attr): string {
+  if (a.kind == STRING) {
+    return a.text;
+  }
+  if (a.kind == BOOLEAN) {
+    return if (a.data != 0) { "true" } else { "false" };
+  }
+  return util.i32_to_string(a.data);
+}
+
+function proto_attr(a: Attr): u8[] {
+  let out: u8[] = [];
+  if (a.id != 0) {
+    out = protobuf.string_field(1, ANDROID_URI);
+  }
+  out = util.append_bytes(out, protobuf.string_field(2, a.name));
+  out = util.append_bytes(out, protobuf.string_field(3, value_text(a)));
+  if (a.id != 0) {
+    out = util.append_bytes(out, uint32_field(5, a.id));
+  }
+  return util.append_bytes(out, message(6, item(a)));
+}
+
+function proto_element(e: Element, root: boolean): u8[] {
+  let out: u8[] = [];
+  if (root) {
+    out = message(1, util.append_bytes(protobuf.string_field(1, "android"), protobuf.string_field(2, ANDROID_URI)));
+  }
+  out = util.append_bytes(out, protobuf.string_field(3, e.name));
+  for a in e.attrs {
+    out = util.append_bytes(out, message(4, proto_attr(a)));
+  }
+  for kid in e.kids {
+    out = util.append_bytes(out, message(5, message(1, proto_element(kid, false))));
+  }
+  return out;
+}
+
+// The XmlNode message of `root`, with the android namespace on it.
+pub function proto(root: Element): u8[] {
+  return message(1, proto_element(root, true));
+}

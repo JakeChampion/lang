@@ -4,15 +4,16 @@ This module runs a program of `std/android/ui` in a NativeActivity app.
 
 ## Model
 
-`run` is the loop of the app. It takes the context that `android.start` gave the loop thread, the first state, and the program. It returns the last state after Android destroys the activity.
+`run` is the loop of the app. It takes the context that `launch.start` gave the loop thread, the first state, and the program. It returns the last state after Android destroys the activity.
 
 ```fern
 import "std/android";
+import "std/android/launch";
 import "std/android/ui";
 import "std/android/ui/app";
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
-  android.start(activity, app_main_entry());
+  launch.start(activity, app_main_entry());
 }
 
 @callback("app_main")

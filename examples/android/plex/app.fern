@@ -3,6 +3,7 @@
 // phone: the clock, the files of the app, the window, the network through
 // workers, the image decoder and the media player.
 import "std/android";
+import "std/android/launch";
 import "std/android/draw";
 import "std/android/gl";
 import "std/android/image";
@@ -22,7 +23,7 @@ import "./control";
 import "./plex";
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
-  android.start(activity, app_main_entry());
+  launch.start(activity, app_main_entry());
 }
 
 @callback("app_main")
@@ -350,6 +351,11 @@ function show_video(ctx: usize, p: player.Player, has: boolean, gpu: Cell[Option
     return false;
   }
   if let Some(g) = gpu.get() {
+    if (g.target.is_some() && painter.attached(g.painter)) {
+      gpu.set(Some(Gpu { ...g, shown_ns: -1i64 }));
+      log.info("plex: video on a texture");
+      return true;
+    }
     if (painter.attached(g.painter) && g.texture.id != 0) {
       if let Some(t) = player.target(ctx, g.texture.id) {
         if (player.show_target(ctx, p, t)) {
@@ -364,6 +370,19 @@ function show_video(ctx: usize, p: player.Player, has: boolean, gpu: Cell[Option
   }
   log.warn("plex: no video texture, so the video fills the window");
   return player.show(ctx, p, android.Window { ptr: window });
+}
+
+// Pauses the video. On a texture the player keeps its surface: a player
+// with no surface shuts its video decoder down, and a new decoder after the
+// pause gets no frames. The painter keeps the window, so only the video on
+// the window itself goes.
+function pause_video(ctx: usize, p: player.Player, has: boolean, gpu: Cell[Option[Gpu]]): void {
+  if let Some(g) = gpu.get() {
+    if (g.target.is_some()) {
+      return;
+    }
+  }
+  hide_video(ctx, p, has, gpu);
 }
 
 // Takes the video off the window, and gives the window back to the
@@ -427,6 +446,7 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], media: Med
     detach: (): void => detach_gpu(gpu),
     present: (window: usize, nodes: scene.Node[], video: boolean): boolean => present(ctx, p, gpu, window, nodes, video),
     hide_video: (): void => hide_video(ctx, p, has, gpu),
+    pause_video: (): void => pause_video(ctx, p, has, gpu),
     request_frame: (): void => android.request_frame(ctx),
     start: (): void => start(ctx, p, has),
     pause: (): void => pause(ctx, p, has),

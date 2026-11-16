@@ -4,6 +4,7 @@
 // GPU, and overlay.fern draws the controls. This file gives them the window,
 // the GPU context and the system calls of the phone.
 import "std/android";
+import "std/android/launch";
 import "std/android/access";
 import "std/android/draw";
 import "std/android/gl";
@@ -24,7 +25,7 @@ import "./sim";
 import "./trail";
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
-  android.start(activity, app_main_entry());
+  launch.start(activity, app_main_entry());
 }
 
 @callback("app_main")
