@@ -80,7 +80,7 @@ costs a silent failure on the first target that lacks it.
 | `uring` | `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | an io_uring: Linux's submission and completion rings. Granted by `hosted-linux` alone; std/async reaches it under a `target_os()` branch |
 | `ktls` | `tcp_ktls` | the kernel's TLS record layer under a socket: Linux's `tls` ULP. Granted by `hosted-linux` and `hosted-android`. std/tls/ktls reaches it under a `target_os()` branch |
 | `mmsg` | `udp_sendmmsg`, `udp_recvmmsg` | many datagrams in one system call: Linux's `sendmmsg`, with `UDP_SEGMENT` for a run of datagrams of one size to one peer, and `recvmmsg`, with `UDP_GRO` reporting the segment size of a run the kernel coalesced. Granted by `hosted-linux` and `hosted-android`; std/net reaches it under a `target_os()` branch |
-| `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `proc_wait_any`, `__worker_region`, `__worker_exit`, `__worker_reap`, `__worker_unmap`, `process_alive`, `signal_send`, `set_process_group` | processes |
+| `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `reader_from_fd`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `proc_wait_any`, `__worker_region`, `__worker_exit`, `__worker_reap`, `__worker_unmap`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile`, `disable_core_dumps` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
 | `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
@@ -486,6 +486,21 @@ grant it needs, and correctly: `internal/pkg/caps` files it under
 `subprocess`, beside fork / exec / waitpid, because the pid asked about
 belongs to someone else — reaching outside this process is reach whether
 or not a process is created.
+
+**`reader_from_fd` is `proc`, not `fs`.** The builtin opens nothing. It
+reads a descriptor that the parent put in the table of the process before
+exec. `AGE_PASSPHRASE_FD` names such a descriptor. That table is part of
+the process model, as `pipe` is: `pipe` makes the descriptors that a child
+gets.
+
+A WASI component has no descriptor numbers. Its host gives it streams and
+preopened directories as resource handles, and no number names one of
+them. Thus E066 refuses the builtin on the two WASI targets. A
+freestanding target has no parent and no table, and refuses it too.
+
+`internal/pkg/caps` files it under `fs`, beside `open_reader`. The number
+can name any descriptor of the process, not only the one that the parent
+gave. That is reach into files, so a dependency needs the grant.
 
 **`sleep_ns` is `now`, like `sleep_ms`, and wasm is where it is most exact.**
 Both previews already count in nanoseconds — preview 1's `poll_oneoff`

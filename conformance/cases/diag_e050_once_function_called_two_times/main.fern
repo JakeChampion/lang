@@ -1,0 +1,11 @@
+// The first call consumes the `once` function, so a second call is a use
+// after the move.
+
+function twice(own k: once (i32) => i32): i32 {
+  let a = k(1);
+  return a + k(2);
+}
+
+function main(): i32 {
+  return twice(once (i: i32): i32 => i);
+}

@@ -105,7 +105,7 @@ function list(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): out.R {
     }
   }
   if (level >= 1 && level <= 5) {
-    r = r.lit("\\setcounter{enum" + COUNTERS[level] + "}{").out((start - 1).to_string(), false, out.NORMAL).lit("}");
+    r = r.lit("\\setcounter{enum" + COUNTERS[level] + "}{").out((start - 1).to_string().as_bytes(), false, out.NORMAL).lit("}");
   }
   return r.cr();
 }
@@ -154,7 +154,7 @@ function line_break(r: out.R, hard: boolean): out.R {
   if (r.width == 0 && !r.o.nobreaks) {
     return r.cr();
   }
-  return r.out(" ", allow_wrap(r), out.NORMAL);
+  return r.out(" ".as_bytes(), allow_wrap(r), out.NORMAL);
 }
 
 // The kinds of link.
@@ -181,7 +181,7 @@ function link(r: out.R, t: nodes.Tree, x: i32): (out.R, boolean) {
     return (r.lit("\\href{").out(url, false, out.URL).lit("}{"), false);
   }
   if (kind == INTERNAL_LINK) {
-    return (r.lit("\\protect\\hyperlink{").out(slice_unchecked(url, 1, url.len()), false, out.URL).lit("}{"), false);
+    return (r.lit("\\protect\\hyperlink{").out(url[1:url.len()], false, out.URL).lit("}{"), false);
   }
   return (r.lit("{"), false);
 }
@@ -209,18 +209,18 @@ function link_kind(t: nodes.Tree, x: i32): i32 {
 
 // URL_AUTOLINK or EMAIL_AUTOLINK when the text of the first child of a link
 // is its destination `url` without `mailto:`, and else NORMAL_LINK.
-function autolink_kind(t: nodes.Tree, url: string, first: i32): i32 {
+function autolink_kind(t: nodes.Tree, url: [u8], first: i32): i32 {
   let fk = t.kind(first);
-  let text = slice_unchecked(t.text, 0, 0);
+  let text = t.text[0:0];
   if (fk == nodes.TEXT || fk == nodes.CODE || fk == nodes.HTML) {
     text = t.lit(first);
   }
-  let email = url.starts_with("mailto:");
-  let real = slice_unchecked(url, 0, url.len());
+  let email = commonmark.is_mailto(url);
+  let real = url;
   if (email) {
-    real = slice_unchecked(url, 7, url.len());
+    real = url[7:url.len()];
   }
-  if (real != text) {
+  if (!commonmark.same(real, text)) {
     return NORMAL_LINK;
   }
   if (email) {

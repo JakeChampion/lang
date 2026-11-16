@@ -43,6 +43,9 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 	if sd.ValueType {
 		b.WriteString("@value\n")
 	}
+	if sd.Secret {
+		b.WriteString("@secret\n")
+	}
 	if len(sd.Derives) > 0 {
 		b.WriteString("@derive(")
 		for i, d := range sd.Derives {
@@ -601,6 +604,9 @@ func printType(t ast.Type) string {
 		return "Stream[" + printType(x.Elem) + "]"
 	case *ast.FuncType:
 		out := "("
+		if x.Once {
+			out = "once ("
+		}
 		for i, p := range x.Params {
 			if i > 0 {
 				out += ", "

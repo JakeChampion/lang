@@ -292,12 +292,6 @@ parsers. One message of Go can hold bytes that are not UTF-8: the type of
 a public key in `ssh: unknown key algorithm:`. A Fern string is UTF-8, so
 the port writes the type only when it is UTF-8.
 
-**Plugins.** `age-plugin-batchpass` opens `/dev/fd/N` for
-`AGE_PASSPHRASE_FD`, where Go reads the descriptor itself. Fern has no
-builtin that makes a reader of a descriptor that the process gets from its
-parent. For a pipe the result is the same. A regular file is read from its
-start and not from its offset, and a socket cannot be opened.
-
 ## Security
 
 The port refuses each malformed header:

@@ -173,6 +173,16 @@ The outer scope retains its use-after-transfer checks.
 
 The conformance cases `diag_e051_repeatable_closure_consumes_owned_capture` and `repeatable_closure_owned_inputs` cover these rules.
 
+A `once` lambda is not repeatable (#16170).
+Its type is `once (A) => B`, and a call consumes the closure.
+So its body can consume a captured resource, as a directly invoked closure literal can.
+A consuming use in the body moves the capture in the outer scope too.
+
+The callee of a call of a `once` function must be an owned value: an `own` parameter or a local at its last use.
+A borrowed callee is E051, and a second call is E050.
+A plain function type is assignable to a `once` function type, but the reverse is E003.
+The conformance cases `a_once_closure_owns_its_captures`, `a_once_function_type_in_a_generic_position`, `diag_e051_once_call_of_a_borrowed_function`, `diag_e050_once_function_called_two_times` and `diag_e003_once_function_where_a_plain_one_is_expected` cover these rules.
+
 A callback must finish its resource reads before the owner consumes the resource.
 Both checkers report E050 for direct local callbacks and simple aliases after a captured owner moves.
 The guard requires one lexical definition for each binding it follows.

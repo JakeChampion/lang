@@ -3,19 +3,21 @@
 // text of a paragraph when the paragraph closes. The inline parser looks a
 // label up with `normalize`.
 import "core/map";
-import "std/string";
 import "std/unicode";
+import "./utf8";
 
 // The destination and the title of a definition, as they are in the source.
 // Backslash escapes and entity references are not decoded yet. The title
 // keeps its quotes or parentheses, and is empty when there is no title.
-pub struct Ref { dest: string, title: string }
+pub struct Ref { dest: u8[], title: u8[] }
 
 // A definition that `parse_def` found: `end` is the index after its line, or
 // -1 when the text at the start index is not a definition.
-pub struct Def { end: i32, label: string, dest: string, title: string }
+pub struct Def { end: i32, label: string, dest: u8[], title: u8[] }
 
-const NO_DEF: Def = Def { end: -1, label: "", dest: "", title: "" };
+function no_def(): Def {
+  return Def { end: -1, label: "", dest: [], title: [] };
+}
 
 pub function is_punct(c: i32): boolean {
   return c >= 33 && c <= 47 || c >= 58 && c <= 64 || c >= 91 && c <= 96 || c >= 123 && c <= 126;
@@ -27,50 +29,43 @@ pub function is_space(c: i32): boolean {
   return c == 32 || c >= 9 && c <= 13;
 }
 
-function at(s: string, i: i32): i32 {
-  if (i < s.len()) {
-    return s[i] as i32;
-  }
-  return 0;
-}
-
 // The byte at `i` of a text that ends at `end`, or 0 after its end.
-function byte(s: string, i: i32, end: i32): i32 {
+function byte(s: u8[], i: i32, end: i32): i32 {
   if (i < end) {
     return s[i] as i32;
   }
   return 0;
 }
 
-function skip_spaces(s: string, i: i32): i32 {
+function skip_spaces(s: u8[], i: i32, end: i32): i32 {
   let j = i;
-  while (at(s, j) == 32 || at(s, j) == 9) {
+  while (byte(s, j, end) == 32 || byte(s, j, end) == 9) {
     j += 1;
   }
   return j;
 }
 
 // The index after a line ending at `i`, or `i` at the end of the text, or -1.
-function line_end(s: string, i: i32): i32 {
+function line_end(s: u8[], i: i32, end: i32): i32 {
   let j = i;
-  if (at(s, j) == 13) {
+  if (byte(s, j, end) == 13) {
     j += 1;
   }
-  if (at(s, j) == 10) {
+  if (byte(s, j, end) == 10) {
     j += 1;
   }
-  if (j > i || j >= s.len()) {
+  if (j > i || j >= end) {
     return j;
   }
   return -1;
 }
 
 // Spaces and tabs, then at most one line ending, then spaces and tabs.
-function spnl(s: string, i: i32): i32 {
-  let j = skip_spaces(s, i);
-  let k = line_end(s, j);
+function spnl(s: u8[], i: i32, end: i32): i32 {
+  let j = skip_spaces(s, i, end);
+  let k = line_end(s, j, end);
   if (k > j) {
-    return skip_spaces(s, k);
+    return skip_spaces(s, k, end);
   }
   return j;
 }
@@ -78,7 +73,7 @@ function spnl(s: string, i: i32): i32 {
 // The index after the `]` of a link label that starts at `i`, or -1. The
 // text ends at `end`. A label has no unescaped bracket. As in cmark, it has
 // at most 1000 bytes, where the spec has at most 999 characters.
-pub function label_end(s: string, i: i32, end: i32): i32 {
+pub function label_end(s: u8[], i: i32, end: i32): i32 {
   if (byte(s, i, end) != 91) {
     return -1;
   }
@@ -107,7 +102,7 @@ pub function label_end(s: string, i: i32, end: i32): i32 {
 
 // The end of a link destination that starts at `i`, or -1. The text ends
 // at `end`. A destination in pointy brackets ends after its `>`.
-pub function dest_end(s: string, i: i32, end: i32): i32 {
+pub function dest_end(s: u8[], i: i32, end: i32): i32 {
   if (byte(s, i, end) == 60) {
     let j = i + 1;
     while (j < end) {
@@ -132,7 +127,7 @@ pub function dest_end(s: string, i: i32, end: i32): i32 {
 // parenthesis balanced, at most 32 deep. As in cmark, a control character
 // other than whitespace is part of the destination.
 // fern-lint: allow cyclomatic-complexity
-function bare_dest_end(s: string, i: i32, end: i32): i32 {
+function bare_dest_end(s: u8[], i: i32, end: i32): i32 {
   let j = i;
   let depth = 0;
   while (j < end && depth <= 32) {
@@ -159,7 +154,7 @@ function bare_dest_end(s: string, i: i32, end: i32): i32 {
 // in single quotes or in parentheses. A quote in the text needs a backslash
 // before it. As in cmark, the title is the longest match. Thus a closing
 // quote after a backslash ends the title when no later quote can end it.
-pub function title_end(s: string, i: i32, end: i32): i32 {
+pub function title_end(s: u8[], i: i32, end: i32): i32 {
   let open = byte(s, i, end);
   let close = open;
   if (open == 40) {
@@ -183,8 +178,8 @@ pub function title_end(s: string, i: i32, end: i32): i32 {
   return last;
 }
 
-function has_text(s: string): boolean {
-  for i in 0..s.len() {
+function has_text(s: u8[], a: i32, b: i32): boolean {
+  for i in a..b {
     if (!is_space(s[i] as i32)) {
       return true;
     }
@@ -192,53 +187,51 @@ function has_text(s: string): boolean {
   return false;
 }
 
-// The definition that starts at `i` in the text of a paragraph.
-pub function parse_def(s: string, i: i32): Def {
-  let le = label_end(s, i, s.len());
-  if (le < 0 || at(s, le) != 58) {
-    return NO_DEF;
+// The definition that starts at `i` in the text of a paragraph, which ends
+// at `end`.
+pub function parse_def(s: u8[], i: i32, end: i32): Def {
+  let le = label_end(s, i, end);
+  if (le < 0 || byte(s, le, end) != 58 || !has_text(s, i + 1, le - 1)) {
+    return no_def();
   }
-  let raw = slice_unchecked(s, i + 1, le - 1).to_owned();
-  if (!has_text(raw)) {
-    return NO_DEF;
-  }
-  let ds = spnl(s, le + 1);
-  let de = dest_end(s, ds, s.len());
+  let ds = spnl(s, le + 1, end);
+  let de = dest_end(s, ds, end);
   if (de < 0) {
-    return NO_DEF;
+    return no_def();
   }
-  let dest = slice_unchecked(s, ds, de).to_owned();
-  if (at(s, ds) == 60) {
-    dest = slice_unchecked(s, ds + 1, de - 1).to_owned();
+  let dest = __bytes_range(s, ds, de);
+  if (byte(s, ds, end) == 60) {
+    dest = __bytes_range(s, ds + 1, de - 1);
   }
-  let ts = spnl(s, de);
-  let title = "";
+  let ts = spnl(s, de, end);
+  let title: u8[] = [];
   if (ts > de) {
-    let te = title_end(s, ts, s.len());
+    let te = title_end(s, ts, end);
     if (te > 0) {
-      title = slice_unchecked(s, ts, te).to_owned();
-      let end = line_end(s, skip_spaces(s, te));
-      if (end >= 0) {
-        return Def { end: end, label: normalize(raw), dest: dest, title: title };
+      title = __bytes_range(s, ts, te);
+      let stop = line_end(s, skip_spaces(s, te, end), end);
+      if (stop >= 0) {
+        return Def { end: stop, label: normalize(s[i + 1:le - 1]), dest: dest, title: title };
       }
     }
   }
   // When the title is not the end of its line, the definition ends after
   // the destination. As in cmark, it keeps the title.
-  let end = line_end(s, skip_spaces(s, de));
-  if (end < 0) {
-    return NO_DEF;
+  let stop = line_end(s, skip_spaces(s, de, end), end);
+  if (stop < 0) {
+    return no_def();
   }
-  return Def { end: end, label: normalize(raw), dest: dest, title: title };
+  return Def { end: stop, label: normalize(s[i + 1:le - 1]), dest: dest, title: title };
 }
 
 // The form of a label that two matching labels share: Unicode case folding,
 // with each run of whitespace made one space, and no space at either end.
-pub function normalize(label: string): string {
-  if (is_normal(label)) {
-    return label.to_owned();
+pub function normalize(label: [u8]): string {
+  let text = folded_text(label);
+  if (is_normal(text)) {
+    return text;
   }
-  let folded = label.case_fold();
+  let folded = text.case_fold();
   let b = buf_new(folded.len());
   let gap = false;
   let any = false;
@@ -253,6 +246,32 @@ pub function normalize(label: string): string {
       }
       buf_push_byte(b, c);
       any = true;
+    }
+  }
+  let out = buf_take(b);
+  buf_free(b);
+  return out;
+}
+
+// The label as the case folding of cmark reads it: each byte where no valid
+// UTF-8 sequence starts is U+FFFD.
+function folded_text(label: [u8]): string {
+  let n = label.len();
+  let b = buf_new(n);
+  let i = 0;
+  while (i < n) {
+    let len = 1;
+    if (label[i] >= 0x80 as u8) {
+      len = utf8.length(label, i, n);
+    }
+    if (len < 0) {
+      buf_push(b, "�");
+      i += 1;
+    } else {
+      for k in i..i + len {
+        buf_push_byte(b, label[k] as i32);
+      }
+      i += len;
     }
   }
   let out = buf_take(b);
@@ -281,13 +300,13 @@ function keeps(c: i32): boolean {
   return c > 32 && c < 127 && (c < 65 || c > 90);
 }
 
-// Adds each definition at the start of `s` to `refs`. The first definition of
-// a label wins. Gives the index after the last definition.
-pub function take_defs(s: string, refs: Map[string, Ref]): (i32, Map[string, Ref]) {
-  let i = 0;
+// Adds each definition at the start of `s[from:end]` to `refs`. The first
+// definition of a label wins. Gives the index after the last definition.
+pub function take_defs(s: u8[], from: i32, end: i32, refs: Map[string, Ref]): (i32, Map[string, Ref]) {
+  let i = from;
   let out = refs;
-  while (at(s, i) == 91) {
-    let d = parse_def(s, i);
+  while (byte(s, i, end) == 91) {
+    let d = parse_def(s, i, end);
     if (d.end < 0) {
       break;
     }

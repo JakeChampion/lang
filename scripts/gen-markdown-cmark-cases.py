@@ -26,6 +26,30 @@ FILES = {
     'nul.md': b'a\x00b\n\x00\n',
 }
 
+# Documents with bytes that are not UTF-8 in each place where the parser or a
+# renderer reads them. cmark copies the bytes as they are, and with
+# --validate-utf8 it replaces them as it reads each line.
+INVALID = {
+    'bad-text.md': b'a\xffb c\xe2\x82 d\xf0\x9f\x98 e\xed\xa0\x80 f\xc0\xaf g\xf4\x90\x80\x80 h\xf5\x80\x80\x80 i\xe0\x80\x80 j\x80k\n'
+                   b'\xe2A\n\xc3\xa9\x80\n\xef\xbf\xbe \xef\xbf\xbf\n',
+    'bad-labels.md': b'[a\xffb] [A\xfeB] [\xe2\x82] [\xc3\x89\xff]\n\n[a\xfeb]: /u1\n[a\xfdb]: /u2\n[\xe2\x82]: /u3 "t\xff"\n[\xc3\xa9\xfe]: /u4\n',
+    'bad-code.md': b'`a\xffb` `` \xe2\x82 `` ` \xff `\n\n    co\xffde\n\n```in\xfffo x\xfe\nc\xffd\n```\n\n~~~ \xe2\x82\n~~~\n',
+    'bad-html.md': b'<div>\na\xffb\n</div>\n\n<!-- \xfe -->\n\n<a href="\xff">x</a> <b\xff> <x y="\xfe">\n\n<pre>\n\xff\n</pre>\n',
+    'bad-entities.md': b'&\xff; &amp\xff; &#\xff; &#x\xfe; &copy;\xff &\xe2\x82; x&#65;\xffy\n\n'
+                       b'[l](/a&amp;\xff "t&quot;\xfe") <http://a\xff.b/&amp;> <a\xff@b.c>\n',
+    'bad-links.md': b'[t\xffx](/d\xffe "ti\xfetle") ![i\xffm](/s\xfe) [x](<\xff y>) [y](/\xe2\x82)\n',
+    'bad-delims.md': b'\xff*a*\xff \xe2\x82*b* *c*\xe2\x82 \xc3\xa9\x80*d* _e_\xff \xff_f_ **\xffg\xff**\n'
+                     b'\xff"a"\xff \xe2\x82\'b\' "\xffc\xff" \xff-- \xff... \xff---\n',
+    'bad-blocks.md': b'# H\xff #\n\nS\xff\n===\n\n> q\xffq\n> > \xfe\n\n- \xffa\n- b\xfe\n\n1. \xe2\x82\n\n\xff\n\n---\xff\n',
+    'bad-wrap.md': b'aaa bbb \xffccc ddd eee fff ggg\n\n> aaa bbb ccc \xe2\x82 ddd eee\n\n- x yy zzz \xff www vvv uuu\n',
+    'bad-lines.md': b'a\x00\xff\x00b\n\na\xff\r\nb\xfe\rc\xe2\x82\r\n',
+    'bad-end1.md': b'text at the end \xe2\x82',
+    'bad-end2.md': b'# heading \xff',
+    'bad-end3.md': b'*\xff',
+    'bad-end4.md': b'> quote\n> \xff',
+}
+FILES.update(INVALID)
+
 STDIN = b'stdin *text*\n<b>x</b>\n'
 
 # A document with each kind of block and inline, for the formats.
@@ -66,9 +90,15 @@ def cases():
                  ['quote.md', 'bom.md'], ['a.md', '-t', 'latex', 'b.md'], ['--sourcepos', 'bom.md', 'a.md'],
                  ['nul.md'], ['--sourcepos', '-t', 'xml', 'nul.md']):
         add(args, files=FILES)
-    # Invalid UTF-8 as cmark replaces it.
+    # Invalid UTF-8, as cmark copies it and as --validate-utf8 replaces it.
     for fmt in ('html', 'xml', 'man', 'latex', 'commonmark'):
-        add(['--validate-utf8', '-t', fmt, 'bad.md'], files=FILES)
+        for name in ['bad.md'] + list(INVALID):
+            add(['-t', fmt, name], files=FILES)
+            add(['--validate-utf8', '-t', fmt, name], files=FILES)
+    for opts in (['--smart'], ['--sourcepos', '--unsafe'], ['-t', 'xml', '--sourcepos', '--smart'],
+                 ['-t', 'commonmark', '--width', '12'], ['-t', 'man', '--width', '12'], ['-t', 'latex', '--width', '12', '--smart']):
+        for name in ('bad-delims.md', 'bad-wrap.md', 'bad-blocks.md', 'bad-html.md'):
+            add(opts + [name], files=FILES)
     # Each format with each option.
     for fmt in ('html', 'xml', 'man', 'latex', 'commonmark'):
         for opts in ([], ['--unsafe'], ['--smart'], ['--hardbreaks'], ['--nobreaks'], ['--sourcepos'],

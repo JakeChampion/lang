@@ -1,0 +1,44 @@
+// A `once` lambda owns its captures, so its body can move one into an `own`
+// parameter. A call consumes a `once` function. A plain closure can go where
+// a `once` function is expected. `once` is still a valid name.
+
+function first_to_seven(own xs: i32[]): i32[] {
+  return xs.with(0, 7);
+}
+
+function call(own k: once (i32) => i32[], arg: i32): i32[] {
+  return k(arg);
+}
+
+function make(own xs: i32[]): once (i32) => i32[] {
+  return once (i: i32): i32[] => first_to_seven(xs).append(i);
+}
+
+struct Pending { k: once (i32) => i32 }
+
+function resume(own p: Pending): i32 {
+  let k = p.k;
+  return k(40);
+}
+
+function show(xs: i32[]): string {
+  let out = "";
+  for x in xs {
+    out += x.to_string() + " ";
+  }
+  return out;
+}
+
+function main(): i32 {
+  let once = 3;
+  let got = call(make([1, 2, 3]), 9);
+  let plain = (i: i32): i32[] => [i, i];
+  let from_plain = call(plain, 5);
+  let local = once (i: i32): i32 => i + once;
+  let p = Pending { k: once (i: i32): i32 => i + 2 };
+  print(show(got));
+  print(show(from_plain));
+  print(local(1));
+  print(resume(p));
+  return 0;
+}

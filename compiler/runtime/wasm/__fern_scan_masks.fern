@@ -1,3 +1,12 @@
+// `s` is a string, a frame window at its address less 1, or a borrowed
+// descriptor, as a byte view's string arm can be.
 function __fern_scan_masks(s: usize, from: i32, m: usize): i32 {
-  return __fern_scan_masks_in(s + 4, __load_i32(s), from, m);
+  let tag = s & 1;
+  let len = __load_i32(s + tag * 3);
+  let p: usize = if (tag == 0) { s + 4 } else { (__load_i32(s - 1) as u32) as usize };
+  if (len < 0) {
+    p = (__load_i32(s + 4) as u32) as usize;
+    len = len & 2147483647;
+  }
+  return __fern_scan_masks_in(p, len, from, m);
 }

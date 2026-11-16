@@ -318,8 +318,9 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			if name == "sum_bytes_array" || name == "bsd_sum_bytes" {
 				kind = "byte"
 			}
-			// The byte-view reader retains its string arm.
-			wanted := strings.HasPrefix(tag, "fern_runtime_"+kind+"_reductions") || kind == "string" && strings.HasPrefix(tag, "fern_runtime_byte_reductions")
+			// A call that passes a u8[] takes the array kernel in place, so the
+			// byte-view reader and its string arm stay out.
+			wanted := strings.HasPrefix(tag, "fern_runtime_"+kind+"_reductions")
 			if wanted {
 				if strings.Count(string(wat), symbol) != 1 || !strings.Contains(string(wat), symbol+"(param i32)") {
 					t.Fatalf("%s does not use one ordinary Fern function", name)
