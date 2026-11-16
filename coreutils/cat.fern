@@ -420,6 +420,10 @@ function copy_all(r: Reader, out: Writer): Result[boolean, IoError] {
   }
 }
 
+function put_text(s: State, text: string): State {
+  return State { ...s, w: gnu.put(s.w, text) };
+}
+
 function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
   let s = st;
   let stdin_input = path == "-";
@@ -578,7 +582,7 @@ pub function main(): i32 {
     i += 1;
   }
   if (st.pending_cr) {
-    st = State { ...st, w: gnu.put(st.w, "\r") };
+    st = put_text(st, "\r");
   }
   gnu.finish(st.w);
   if (!st.ok) {

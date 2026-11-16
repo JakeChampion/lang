@@ -53,6 +53,7 @@ function main(): i32 {
 ```fern
 <<module introduction>>=
 // This module keeps a small set of named values in one file.
+import "core/cmp";
 import "core/error";
 import "std/i64";
 import "std/ordmap";
@@ -67,11 +68,19 @@ pub enum KvError {
   Corrupt(i32),
 }
 
+impl error.Error for KvError {}
+
+impl cmp.Display for KvError {}
+
 pub function (e: KvError) message(): string {
   return match (e) {
     Io(io) => io.message(),
     Corrupt(line) => "the key-value file is not valid at line " + line.to_string(),
   };
+}
+
+pub function (e: KvError) to_string(): string {
+  return e.message();
 }
 ```
 

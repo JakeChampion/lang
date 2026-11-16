@@ -15,13 +15,22 @@ function help_text(): string {
   return out;
 }
 
-pub struct Line { out: io_buffered.BufWriter, text: string, ok: boolean }
+struct Out { w: io_buffered.BufWriter, ok: boolean }
 
-function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
+function put_text(s: Out, text: string): Out {
+  return Out { ...s, w: gnu.put(s.w, text) };
+}
+
+function fail(s: Out, msg: string): Out {
+  return Out { w: gnu.error_out(s.w, msg), ok: false };
+}
+
+// The line of the names of the groups `gids`. A group with no name gives
+// its number, and a message.
+function names_line(st: Out, gids: i64[]): Out {
   let names = pwdb.group_names(gids);
   let text = "";
-  let ok = true;
-  let w = o;
+  let s = st;
   let i = 0;
   while (i < gids.len()) {
     if (i > 0) {
@@ -32,48 +41,38 @@ function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
         text += n;
       },
       None => {
-        w = gnu.put(w, text);
-        text = "";
-        w = gnu.error_out(w, "cannot find name for group ID " + gids[i].to_string());
+        s = put_text(s, text);
+        s = fail(s, "cannot find name for group ID " + gids[i].to_string());
         text = gids[i].to_string();
-        ok = false;
       }
     }
     i += 1;
   }
-  return Line { out: w, text: text, ok: ok };
+  return put_text(s, text + "\n");
 }
 
 pub function main(): i32 {
   let operands = gnu.parse_standard_options_only(args(), "groups", help_text(), 1);
-  let o = gnu.out_new();
-  let ok = true;
+  let st = Out { w: gnu.out_new(), ok: true };
   if (operands.len() == 0) {
-    let l = names_of(o, pwdb.process_groups());
-    o = gnu.put(l.out, l.text + "\n");
-    ok = l.ok;
+    st = names_line(st, pwdb.process_groups());
   } else {
     let i = 0;
     while (i < operands.len()) {
       match (pwdb.user_by_name(operands[i])) {
         Some(u) => {
-          o = gnu.put(o, operands[i] + " : ");
-          let ul = names_of(o, pwdb.group_list(u.name, u.gid));
-          o = gnu.put(ul.out, ul.text + "\n");
-          if (!ul.ok) {
-            ok = false;
-          }
+          st = put_text(st, operands[i] + " : ");
+          st = names_line(st, pwdb.group_list(u.name, u.gid));
         },
         None => {
-          o = gnu.error_out(o, gnu.quote(operands[i]) + ": no such user");
-          ok = false;
+          st = fail(st, gnu.quote(operands[i]) + ": no such user");
         }
       }
       i += 1;
     }
   }
-  gnu.finish(o);
-  if (ok) {
+  gnu.finish(st.w);
+  if (st.ok) {
     return 0;
   }
   return 1;
