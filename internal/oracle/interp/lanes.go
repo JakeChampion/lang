@@ -73,13 +73,6 @@ func mask(width int, hold bool) uint64 {
 	return ^uint64(0)
 }
 
-func round(width int, v float64) float64 {
-	if width == 32 {
-		return float64(float32(v))
-	}
-	return v
-}
-
 // fma32 gives a*b + c with one rounding to f32. Each argument holds an f32
 // value, so the product is exact in f64. The sum is rounded to odd, so the
 // rounding to f32 is the only one that changes the result.
