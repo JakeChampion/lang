@@ -81,6 +81,14 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   them, and `--raw`, `--name-only`, `--name-status`, `--summary`, the
   pickaxe, `--parents` and `--graph` also apply.
 
+  The attribute `diff` gives a path its driver, as in `userdiff.c` of
+  git. The driver finds the function name of a hunk header, and the
+  lines of a function for `-L :FUNCNAME:FILE`. The port has the
+  built-in drivers of git 2.56.1 (`diff=cpp`, `diff=python` and the
+  others). It also has the drivers of the configuration, with
+  `diff.NAME.xfuncname` and `diff.NAME.funcname`. A path with no driver
+  has the default rule of git, or the regex of the driver `default`.
+
   The formats are `--oneline`, `--pretty=` with each named format and
   `format:`, and `--format=`, with the placeholders of git. `%<(N)`,
   `%>(N)`, `%><(N)` and `%>>(N)` set the columns of the next placeholder.
@@ -107,6 +115,12 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `gpg.ssh.revocationFile` holds the revoked keys. `gpg.minTrustLevel`
   sets the least trust of a good signature. `--show-signature` also
   checks the signed tags of a merge (`mergetag`).
+
+  The first check of a signature stops at a value of the configuration
+  that git refuses: a `gpg.format` or a `gpg.minTrustLevel` that is not
+  known, or one of the `gpg` keys with no value. `log` and `cat-file`
+  stop at a key of a driver of the attribute `diff` with no value. The
+  message is that of git, with the file and the line of the entry.
 
   The mailmap of `.mailmap`, `mailmap.blob` and
   `mailmap.file` gives the names of the header lines, of `%aN` and of
@@ -278,6 +292,7 @@ git 2.43 is also different in these things:
 - `moved.fern`: the colors of the moved lines (`--color-moved`).
 - `ws.fern`: the rules of `core.whitespace` and their errors.
 - `attr.fern`: the attributes of `.gitattributes`.
+- `userdiff.fern`: the drivers of the attribute `diff`.
 - `notes.fern`: the notes of the commits.
 - `sig.fern`: the check of a signature with gpg, gpgsm or ssh-keygen,
   and `%G?`.
@@ -292,9 +307,9 @@ git 2.43 is also different in these things:
 
 - The option `--remerge-diff` of `log`.
 
-- The drivers of the attribute `diff`, with their `xfuncname`, for the
-  function names of the hunk headers and of `-L :FUNCNAME:FILE`. The
-  port finds a function name with the default rule of git.
+- The other parts of a driver of the attribute `diff`: `-diff` and
+  `diff.NAME.binary` for a binary file, the regex of words of a driver
+  for `--word-diff`, and `textconv`.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.

@@ -10,21 +10,36 @@
 import "std/array";
 import "std/string";
 
-pub struct Entry { name: string, value: string }
+// One entry. `line` is the line of the file where its value ends, from 1.
+// `bare` is true for a key with no `=`: its value is "true", and git
+// refuses it where it needs a text.
+pub struct Entry { name: string, value: string, line: i32, bare: boolean }
 
-pub struct Config { entries: Entry[] }
+// `file` is the name of the file as git writes it in a message.
+pub struct Config { entries: Entry[], file: string }
 
 pub function empty(): Config {
-  return Config { entries: [] };
+  return Config { entries: [], file: "" };
 }
 
-// The configuration in the file `path`. A file that does not open gives
-// no entries.
-pub function read(path: string): Config {
+// The configuration in the file `path`, which a message of git names
+// `shown`. A file that does not open gives no entries.
+pub function read(path: string, shown: string): Config {
   return match (read_file(path)) {
-    Ok(text) => parse(text),
+    Ok(text) => Config { ...parse(text), file: shown },
     Err(_) => empty(),
   };
+}
+
+// The message of git when it stops at the entry `e`, whose value the
+// caller refuses.
+pub function (c: Config) bad(e: Entry): string {
+  return "bad config variable '" + e.name + "' in file '" + c.file + "' at line " + e.line.to_string();
+}
+
+// The line of the error of git for the entry `e` with no value.
+pub function missing_value(e: Entry): string {
+  return "missing value for '" + e.name + "'";
 }
 
 // The last value of the name `name`, or None.
@@ -155,6 +170,9 @@ pub function parse(text: string): Config {
   let entries: Entry[] = [];
   let section = "";
   let i = 0;
+  // `line` is the line of the byte at `counted`.
+  let line = 1;
+  let counted = 0;
   while (i < text.len()) {
     let b = text[i];
     if (is_space(b) || b == b'\n') {
@@ -178,13 +196,17 @@ pub function parse(text: string): Config {
       }
       if (i < text.len() && text[i] == b'=') {
         let (value, next) = value_at(text, i + 1);
-        entries = entries.append(Entry { name: section + "." + key, value: value });
+        line += newlines(text, counted, next - 1);
+        counted = next - 1;
+        entries = entries.append(Entry { name: section + "." + key, value: value, line: line, bare: false });
         i = next;
       } else {
-        entries = entries.append(Entry { name: section + "." + key, value: "true" });
         while (i < text.len() && text[i] != b'\n') {
           i += 1;
         }
+        line += newlines(text, counted, i);
+        counted = i;
+        entries = entries.append(Entry { name: section + "." + key, value: "true", line: line, bare: true });
       }
     } else {
       while (i < text.len() && text[i] != b'\n') {
@@ -192,5 +214,15 @@ pub function parse(text: string): Config {
       }
     }
   }
-  return Config { entries: entries };
+  return Config { entries: entries, file: "" };
+}
+
+function newlines(text: string, from: i32, to: i32): i32 {
+  let n = 0;
+  for k in from..to.min(text.len()) {
+    if (text[k] == b'\n') {
+      n += 1;
+    }
+  }
+  return n;
 }
