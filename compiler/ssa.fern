@@ -153,6 +153,12 @@ pub function plain_str(ins: SInst): string {
   return ins.str;
 }
 
+// A count or a uniqueness test of a value with no tag in bit 1. The mark 8
+// adds that the value is never an odd address (ir.boxed_count).
+pub function aligned_count(ins: SInst): boolean {
+  return ins.imm == 4 || ins.imm == 8;
+}
+
 pub function plain_imm(ins: SInst): i32 {
   if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7)) {
     return 0;

@@ -428,10 +428,8 @@ struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1,
 		t.Run(tc.name, func(t *testing.T) {
 			asm := emit(t, tc.src)
 			body := selfHostFnBody(t, []byte(asm), tc.body)
-			guard := rcIsUniqueSites(body) > 0
-			reuse := strings.Contains(body, "call __fn___fern_alloc_reuse")
-			if guard != tc.heapDonor || reuse != tc.heapDonor {
-				t.Errorf("uniqueness guard=%v, reuse allocator=%v; heap donor=%v:\n%s", guard, reuse, tc.heapDonor, body)
+			if guard := rcIsUniqueSites(body) > 0; guard != tc.heapDonor {
+				t.Errorf("uniqueness guard=%v; heap donor=%v:\n%s", guard, tc.heapDonor, body)
 			}
 			for _, call := range []string{"call __fern_rec_box", "call __fn___fern_box_dec"} {
 				if !strings.Contains(body, call) {

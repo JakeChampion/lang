@@ -324,6 +324,13 @@ pub function is_box_release(op: Op): boolean {
   return op.i64_imm == 7;
 }
 
+// The count or the uniqueness test of a value of a record or of an enum of
+// variant boxes. Such a value has no tag, so it is never an odd address: it is
+// a box, a static box, the index of a variant or null.
+pub function boxed_count(op: Op): Op {
+  return Op { ...op, i64_imm: 8 };
+}
+
 pub function op_arr_set(width: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: K_ARR_SET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
