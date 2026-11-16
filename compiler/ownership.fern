@@ -327,6 +327,9 @@ function only_forwards(ins: ssa.SInst): boolean {
 
 function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst): boolean[] {
   let callee = f.values[ins.args[0]];
+  if (ssasem.func_once(callee)) {
+    out = carry(out, f, a, ins.args[0], true);
+  }
   for i in 1..ins.args.len() {
     if (ssasem.func_param_own(callee, i - 1) && ssasem.counted(f, f.values[ins.args[i]])) {
       out = carry(out, f, a, ins.args[i], true);

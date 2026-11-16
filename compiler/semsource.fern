@@ -1088,6 +1088,45 @@ function environment_read(ix: ast.ExprIndex, container: i32, s: State): Value {
   return Value { s: State { ...v.s, foreign: v.s.foreign.append(v.id) }, id: v.id };
 }
 
+// The prelude of a `once` body: `__env_take(__env, k)` owns capture k.
+function environment_take(c: ast.ExprCall, s: State): Value {
+  if (!takes_env_slot(c, env_slot_of(c))) {
+    return refused(s, "environment take");
+  }
+  let env = expr(c.args[0], s, typeinfo.unchecked());
+  if (!env.s.ok) {
+    return env;
+  }
+  let env_ty = env.s.values[env.id];
+  let caps = semtypes.env_captures(env_ty);
+  let slot = env_slot_of(c);
+  if (!semtypes.env_takes(env_ty) || slot < 1 || slot > caps.len()) {
+    return refused(env.s, "environment take");
+  }
+  let t = caps[slot - 1];
+  if (!ssasem.reference(t)) {
+    return define(env.s, ssasem.record_get(), [env.id], slot, "c" + util.i32_to_string(slot), t);
+  }
+  let name = ssasem.env_take_name(t);
+  let st = env.s;
+  if (ssasem.find_contract_in(st.calls, name) < 0) {
+    st = State { ...st, calls: st.calls.append(ssasem.Contract { name: name, params: [env_ty, typeinfo.t_i32()], modes: [ssasem.borrow_mode(), ssasem.value_mode()], result: t }) };
+  }
+  let k = define(st, ssa.CONST_INT, [], slot, "", typeinfo.t_i32());
+  return define(k.s, ssasem.call(), [env.id, k.id], 0, name, t);
+}
+
+function env_slot_of(c: ast.ExprCall): i32 {
+  if (c.args.len() == 2) {
+    if let ast.ExprNumber(n) = c.args[1] {
+      if (decimal(n.text)) {
+        return util.digits_to_i32(n.text);
+      }
+    }
+  }
+  return 0;
+}
+
 function index(ix: ast.ExprIndex, s: State): Value {
   let container = expr(ix.array, s, typeinfo.unchecked());
   if (container.s.ok && semtypes.is_env(container.s.values[container.id])) {
@@ -3742,6 +3781,9 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (name == "__socket_from_fd") {
     return socket_from_fd(c, s);
   }
+  if (name == "__env_take") {
+    return environment_take(c, s);
+  }
   if (name == "share_unchecked" && c.args.len() == 1) {
     return expr(c.args[0], s, expected);
   }
@@ -6000,11 +6042,37 @@ function is_closure_body(fd: parser.FuncDecl): boolean {
 
 function reads_env_slot(e: ast.Expr, slot: i32): boolean {
   if let ast.ExprIndex(ix) = e {
-    if let ast.ExprIdent(id) = ix.array {
-      if let ast.ExprNumber(n) = ix.index {
-        return id.name == "__env" && n.text == util.i32_to_string(slot);
-      }
+    return env_slot_is(ix.array, ix.index, slot);
+  }
+  return takes_env_slot(e, slot);
+}
+
+// `__env_take(__env, k)`: the prelude of a `once` body, which owns slot k.
+function takes_env_slot(e: ast.Expr, slot: i32): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(callee) = c.callee {
+      return callee.name == "__env_take" && c.args.len() == 2 && env_slot_is(c.args[0], c.args[1], slot);
     }
+  }
+  return false;
+}
+
+function env_slot_is(env: ast.Expr, index: ast.Expr, slot: i32): boolean {
+  if let ast.ExprIdent(id) = env {
+    if let ast.ExprNumber(n) = index {
+      return id.name == "__env" && n.text == util.i32_to_string(slot);
+    }
+  }
+  return false;
+}
+
+// A `once` body takes its captures, so its prelude starts with a take.
+function takes_env(fd: parser.FuncDecl): boolean {
+  for st in fd.body {
+    if let ast.StmtVar(v) = st {
+      return takes_env_slot(v.init, 1);
+    }
+    return false;
   }
   return false;
 }
@@ -6033,7 +6101,7 @@ function env_type(fd: parser.FuncDecl, scope: checker.Scope, template: boolean, 
   if (caps.len() == 0) {
     return typeinfo.TypeArray { elem: typeinfo.t_i32(), view: false };
   }
-  return ssasem.env_type(name, caps);
+  return ssasem.env_type(name, caps, takes_env(fd));
 }
 
 function parameters(fd: parser.FuncDecl, s: State): State {
