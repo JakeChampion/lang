@@ -244,6 +244,7 @@ git 2.43 is also different in these things:
   2.43 stops.
 - the diff of `--histogram`. git 2.56.1 does a Myers diff again of a
   group of changes that the compaction moved.
+- the rule `incomplete-line` of white space. git 2.43 does not have it.
 
 ## Files
 
