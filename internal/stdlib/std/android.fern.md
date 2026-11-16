@@ -58,6 +58,7 @@ import "std/android/draw";
 import "std/android/trace";
 import "std/ffi";
 import "std/jni";
+import "std/log";
 import "std/utf8";
 ```
 
@@ -1148,6 +1149,9 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
         } else if (kind == 1) {
           let code: i32 = c_key_code(ev);
           let action: i32 = c_key_action(ev);
+          if (code == KEY_BACK) {
+            log.info("android: back from the input queue, action " + action.to_string());
+          }
           state = step(state, Key(code, action));
           if (action == 0 && !system_key(code)) {
             let c: i32 = key_char(lp.ctx, c_event_device(ev), code, c_key_meta(ev));
@@ -2267,6 +2271,7 @@ function insets_listener(e: usize, obj: usize, ctx: usize): usize {
 
 // The back callback, on the UI thread.
 pub(package) function back_invoked(env: usize, thiz: usize): void {
+  log.info("android: back from the callback");
   let ctx = static_context(env, thiz);
   if (ctx != 0 as usize) {
     let got = deliver(ctx, BACK, 0 as usize);
