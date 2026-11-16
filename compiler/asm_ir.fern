@@ -8403,7 +8403,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
     return ssa_unary_known(ins.str);
   }
   if (k == ssa.TERNARY) {
-    return ins.str == "ffma";
+    return ins.str == "ffma" || ins.str == "ffma32";
   }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
@@ -9314,6 +9314,20 @@ function ssa_fma(ins: ssa.SInst, reg_of: i32[], sfx: string, s: asmcore.EmitStat
     s = ssa_mov_rr(s, d, c);
   }
   s = s.write("    vfmadd231" + sfx + " " + b + ", " + a + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// Each operand is an f64 that holds an f32 value. The three scratch registers
+// take them in single precision, and the result goes back to an f64.
+function ssa_fma32(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let scratch = ["%xmm1", "%xmm2", "%xmm0"];
+  for k in 0..3 {
+    s = ssa_fread(reg_of, ins.args[k], scratch[k], s);
+    s = s.write("    cvtsd2ss " + ssa_fsrc(reg_of, ins.args[k], scratch[k]) + ", " + scratch[k] + "\n");
+  }
+  s = s.write("    vfmadd231ss %xmm2, %xmm1, %xmm0\n");
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    cvtss2sd %xmm0, " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
@@ -11234,6 +11248,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == ssa.UNARY && ssa_fmath_op(ins.str) != "") {
     return ssa_fmath(ins, reg_of, s);
   }
+  if (k == ssa.TERNARY && ins.str == "ffma32") {
+    return ssa_fma32(ins, reg_of, s);
+  }
   if (k == ssa.TERNARY) {
     return ssa_fma(ins, reg_of, "sd", s);
   }
@@ -12876,6 +12893,11 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_flags");
+  } else if (o.kind_tag == ir.K_READER_FROM_FD) {
+    s = s.write("    call __fn___fern_reader_from_fd\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("reader_from_fd");
   } else if (o.kind_tag == ir.K_READER_SEEK) {
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_seek\n    addq $24, %rsp\n    pushq %rax\n");
@@ -14825,6 +14847,9 @@ function emit_entry_runtime_part_7(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("fd_flags")) {
       fs_roots = fs_roots + " " + "__fern_fd_flags";
+    }
+    if (s.has_need("reader_from_fd")) {
+      fs_roots = fs_roots + " " + "__fern_reader_from_fd";
     }
     if (s.has_need("fd_dup_onto")) {
       fs_roots = fs_roots + " " + "__fern_fd_dup_onto";

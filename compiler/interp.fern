@@ -2503,8 +2503,8 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
   if (name == "__map_hash_seed") {
     return v_int(__map_hash_seed());
   }
-  if (name == "__fma_f64") {
-    return call_fma_f64(args);
+  if (name == "__fma_f64" || name == "__fma_f32") {
+    return call_fma(name, args);
   }
   if (util.has_str(["__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64", "__abs_f64"], name)) {
     if (args.len() != 1 || !is_float_like(args[0])) {
@@ -2874,12 +2874,11 @@ function lane_fn(verb: string, width: i32, xs: f64[]): f64 {
   if (verb == "sqrt" || verb == "floor" || verb == "round") {
     return f64_primitive("__" + verb + "_f64", xs[0]);
   }
-  // The f64 lanes round one time. The f32 lanes round two times.
   if (verb == "mul_add" && width == 64) {
     return xs[0].fma(xs[1], xs[2]);
   }
   if (verb == "mul_add") {
-    return lane_round(width, lane_round(width, xs[0] * xs[1]) + xs[2]);
+    return fma_f32(xs[0], xs[1], xs[2]);
   }
   if (verb == "min" && xs[1] < xs[0] || verb == "max" && xs[0] < xs[1]) {
     return xs[1];
@@ -3152,11 +3151,32 @@ function call_lane_op(verb: string, width: i32, args: Value[]): Value {
   return lanes_apply(verb, ls);
 }
 
-function call_fma_f64(args: Value[]): Value {
+function call_fma(name: string, args: Value[]): Value {
   if (args.len() != 3 || !is_float_like(args[0]) || !is_float_like(args[1]) || !is_float_like(args[2])) {
-    return v_err("__fma_f64: expected 3 float args");
+    return v_err(name + ": expected 3 float args");
+  }
+  if (name == "__fma_f32") {
+    return v_float(fma_f32(vfloat_as_f64(args[0]), vfloat_as_f64(args[1]), vfloat_as_f64(args[2])));
   }
   return v_float(vfloat_as_f64(args[0]).fma(vfloat_as_f64(args[1]), vfloat_as_f64(args[2])));
+}
+
+// x * y + z with one rounding to f32. Each argument holds an f32 value, so the
+// product is exact in f64. The sum is rounded to odd, so the rounding to f32 is
+// the only one that changes the result.
+function fma_f32(x: f64, y: f64, z: f64): f64 {
+  let p = x * y;
+  let s = p + z;
+  let b = f64_bits(s);
+  if ((b >> 52 & 2047) as i32 == 2047) {
+    return s;
+  }
+  let t = s - p;
+  let e = p - (s - t) + (z - t);
+  if (e != 0.0 && (b & 1) as i32 == 0) {
+    s = f64_from_bits(if (e > 0.0 == s > 0.0) { b + 1 } else { b - 1 });
+  }
+  return (s as f32) as f64;
 }
 
 function f64_primitive(name: string, x: f64): f64 {
@@ -3765,6 +3785,10 @@ function call_host_proc(name: string, args: Value[]): Value {
   }
   if (name == "pipe") {
     return pipe_result_value(pipe());
+  }
+  // The stage0 pin does not know reader_from_fd, so the interpreter cannot call it until the pin moves.
+  if (name == "reader_from_fd") {
+    return enosys_error("");
   }
   if (name == "process_alive") {
     return v_bool(process_alive(arg_i32(args, 0)));
@@ -9502,6 +9526,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
+      if (fd.import_iface.len() > 0 && fd.import_iface != parser.CALLBACK_IFACE) {
+        return v_err(import_refusal(name, fd.import_wit, fd.import_iface));
+      }
       let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body) };
       let no_recv = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
@@ -9516,6 +9543,12 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
   }
   return call_host(heap, name, args);
+}
+
+// The interpreter has no loader, so it cannot run the function that an
+// @import names.
+function import_refusal(name: string, symbol: string, from: string): string {
+  return "the interpreter cannot call `" + name + "`: it imports " + symbol + " from " + from;
 }
 
 function value_eq(a: Value, b: Value): boolean {

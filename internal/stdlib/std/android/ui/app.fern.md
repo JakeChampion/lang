@@ -121,6 +121,7 @@ function device(ctx: usize): ui.Device {
     show_keyboard: (text: string, lines: boolean): void => show_keyboard(ctx, text, lines),
     set_keyboard: (text: string, caret: i32): void => keyboard.set_text_at(ctx, text, caret),
     hide_keyboard: (): void => keyboard.hide(ctx),
+    state_file: (): string => android.data_dir(ctx) + "/state.kv",
   };
 }
 ```
@@ -132,7 +133,8 @@ function device(ctx: usize): ui.Device {
 // Runs the program `p` from the state `state` until Android destroys the
 // activity, and gives the last state.
 pub function run[S, M](ctx: usize, own state: S, p: ui.Program[S, M]): S {
-  let first: ui.Shell[S, M] = ui.shell(state, system_fonts(ctx), device(ctx));
+  let dev = device(ctx);
+  let first: ui.Shell[S, M] = ui.shell(ui.restored(state, p, dev), system_fonts(ctx), dev);
   let last = android.run(ctx, first, (own s: ui.Shell[S, M], e: android.Event): ui.Shell[S, M] => ui.step(s, p, e), (s: ui.Shell[S, M]): i32 => ui.wait(s, p));
   return last.app;
 }

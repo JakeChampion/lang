@@ -9,6 +9,7 @@ pub function names(): string[] {
     "__fern_count_runs_bytes",
     "__fern_fma_bit",
     "__fern_fma_exp",
+    "__fern_fma_f32",
     "__fern_fma_f64",
     "__fern_fma_round",
     "__fern_fma_scale",
@@ -42,6 +43,7 @@ pub function paths(): string[] {
     "compiler/runtime/wasm/__fern_count_runs_bytes.fern",
     "compiler/runtime/wasm/__fern_fma_bit.fern",
     "compiler/runtime/wasm/__fern_fma_exp.fern",
+    "compiler/runtime/wasm/__fern_fma_f32.fern",
     "compiler/runtime/wasm/__fern_fma_f64.fern",
     "compiler/runtime/wasm/__fern_fma_round.fern",
     "compiler/runtime/wasm/__fern_fma_scale.fern",
@@ -75,6 +77,7 @@ pub function contents(): string[] {
     "function __fern_count_runs_bytes(s: usize, state: i32, set: usize): i32 {\n  let len: i32 = __load_i32(s);\n  let n: u32 = __load_i32(set) as u32;\n  let i: i32 = 0;\n  let prev: i32 = if (state != 0) { 1 } else { 0 };\n  let count: i32 = 0;\n  while (i < len) {\n    let b: u32 = __load_u8(s + 8 + i as usize) as u32;\n    let cur: i32 = 0;\n    if (b < n) {\n      cur = __load_u8(set + 8 + b) + 255 >> 8;\n    }\n    count = count + (cur & (prev ^ 1));\n    prev = cur;\n    i = i + 1;\n  }\n  return count;\n}\n",
     "// __fern_fma_bit gives 1 for true and 0 for false.\nfunction __fern_fma_bit(c: boolean): u64 {\n  return if (c) { 1 as u64 } else { 0 as u64 };\n}\n",
     "// __fern_fma_exp gives the exponent of the significand that __fern_fma_sig\n// gives, so that x is that significand times 2 to this exponent. Zero gives\n// 972, and infinity and NaN give 971.\nfunction __fern_fma_exp(x: f64): i32 {\n  let e = (f64_bits(x) >> 52 & 2047) as i32;\n  if (e == 0) {\n    let s = (f64_bits(x * 9223372036854775808.0) >> 52 & 2047) as i32;\n    e = if (s == 0) { 2048 } else { s - 63 };\n  }\n  return e - 1076;\n}\n",
+    "// __fern_fma_f32 gives x * y + z with one rounding to f32. Each argument holds\n// an f32 value, so the product is exact in f64. The sum is rounded to odd, so\n// the rounding to f32 is the only one that changes the result.\nfunction __fern_fma_f32(x: f64, y: f64, z: f64): f64 {\n  let p = x * y;\n  let s = p + z;\n  let b = f64_bits(s);\n  if ((b >> 52 & 2047) as i32 == 2047) {\n    return s;\n  }\n  let t = s - p;\n  let e = p - (s - t) + (z - t);\n  if (e != 0.0 && (b & 1) as i32 == 0) {\n    s = f64_from_bits(if (e > 0.0 == s > 0.0) { b + 1 } else { b - 1 });\n  }\n  return (s as f32) as f64;\n}\n",
     "// __fern_fma_f64 gives x * y + z with one rounding. The product of the two\n// significands is exact in 128 bits, and the addend joins it at the same\n// exponent.\nfunction __fern_fma_f64(x: f64, y: f64, z: f64): f64 {\n  let ex = __fern_fma_exp(x);\n  let ey = __fern_fma_exp(y);\n  let ez = __fern_fma_exp(z);\n  if (ex >= 971 || ey >= 971) {\n    return x * y + z;\n  }\n  if (ez >= 971) {\n    return if (ez == 971) { z } else { x * y };\n  }\n  let mx = __fern_fma_sig(x);\n  let my = __fern_fma_sig(y);\n  let mask = 4294967295 as u64;\n  let t1 = (mx & mask) * (my & mask);\n  let t2 = (mx & mask) * (my >> 32 as u64) + (mx >> 32 as u64) * (my & mask);\n  let lo = t1 + (t2 << 32 as u64);\n  let hi = (mx >> 32 as u64) * (my >> 32 as u64) + (t2 >> 32 as u64) + __fern_fma_bit(t1 > lo);\n  let mz = __fern_fma_sig(z);\n  let d = ez - ex - ey;\n  if (d <= 0) {\n    return __fern_fma_sum(hi, lo, 0 as u64, __fern_fma_shr(0 as u64, mz, -d), ex + ey, x, y, z);\n  }\n  if (d < 64) {\n    return __fern_fma_sum(hi, lo, mz >> (64 - d) as u64, mz << d as u64, ex + ey, x, y, z);\n  }\n  let k = d - 64;\n  let top = if (k < 64) { hi >> k as u64 } else { 0 as u64 };\n  return __fern_fma_sum(top, __fern_fma_shr(hi, lo, k), mz, 0 as u64, ez - 64, x, y, z);\n}\n",
     "// __fern_fma_round gives m times 2^e, rounded one time, with the sign neg. Bit\n// 62 of m is set, and bit 0 is sticky. Below the normal range, m first keeps\n// only the bits that the subnormal result can hold, so that the scale does not\n// round a second time.\nfunction __fern_fma_round(m: u64, e: i32, neg: boolean): f64 {\n  let r = __fern_fma_signed(m, neg);\n  if (e >= -1084) {\n    return __fern_fma_scale(r, e);\n  }\n  if (e < -1085) {\n    let j = (m >> 10 as u64 | __fern_fma_bit(m << 54 as u64 != 0 as u64)) << 10 as u64;\n    return __fern_fma_scale(__fern_fma_signed(j, neg), e);\n  }\n  if (m << 53 as u64 == 0 as u64) {\n    return __fern_fma_scale(r, e);\n  }\n  // At 2^-1085 the subnormal holds bits 62 to 11 of m. A top bit at 2^63\n  // moves the rounding of the conversion to bit 11, and the subtraction\n  // removes that bit again.\n  let c = if (neg) { -9223372036854775808.0 } else { 9223372036854775808.0 };\n  let j = m >> 1 as u64 | m & 1 as u64 | 4611686018427387904 as u64;\n  return __fern_fma_scale(2.0 * __fern_fma_signed(j, neg) - c, e);\n}\n",
     "// __fern_fma_scale gives r times 2^n, where |r| is in [2^62, 2^63]. Only the\n// last product rounds, because r times 2^-969 stays in the normal range.\nfunction __fern_fma_scale(r: f64, n: i32): f64 {\n  if (n > 1023) {\n    return r * f64_from_bits(9214364837600034816) * f64_from_bits(9214364837600034816);\n  }\n  if (n >= -1022) {\n    return r * f64_from_bits((n + 1023) as i64 << 52);\n  }\n  let k = n + 969;\n  if (k < -1022) {\n    k = -1022;\n  }\n  return r * f64_from_bits(243194379878006784) * f64_from_bits((k + 1023) as i64 << 52);\n}\n",
@@ -101,11 +104,11 @@ pub function contents(): string[] {
 
 pub function indices(target: string): i32[] {
   if (target == "wasm32-wasi") {
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28];
   }
 
   if (target == "wasm32-wasi-http") {
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28];
   }
 
   return [];

@@ -571,6 +571,9 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && is_f64_primitive(name) || argc == 3 && name == "__fma_f64") {
     return typeinfo.t_f64();
   }
+  if (argc == 3 && name == "__fma_f32") {
+    return typeinfo.t_f32();
+  }
   if (is_lane_builtin(name) && argc == typeinfo.lane_builtin_params(name).len()) {
     return typeinfo.lane_builtin_result(name);
   }
@@ -889,6 +892,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (name == "__fma_f64") {
     return ([typeinfo.t_f64(), typeinfo.t_f64(), typeinfo.t_f64()], true);
+  }
+  if (name == "__fma_f32") {
+    return ([typeinfo.t_f32(), typeinfo.t_f32(), typeinfo.t_f32()], true);
   }
   if (is_lane_builtin(name)) {
     return (typeinfo.lane_builtin_params(name), true);
@@ -19170,7 +19176,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
   "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
   "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
-  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__fma_f64", "__free", "__alloc_len", "__heap_alloc_count", "__heap_bump_bytes",
+  "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__fma_f32", "__fma_f64", "__free", "__alloc_len", "__heap_alloc_count", "__heap_bump_bytes",
   "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
   "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending", "__user_run", "__cache_sync_code", "__atomic_load_acquire", "__atomic_store_release", "__atomic_fetch_add", "__atomic_cas", "__secondary_entry",
   "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
@@ -28444,7 +28450,7 @@ function ow_fresh_builtins(): string[] {
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__alloc_bool", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u16", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority", "share_unchecked",
-    "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
+    "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir", "reader_from_fd",
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
@@ -30530,12 +30536,47 @@ function e065_call_roots(c: ast.ExprCall, ps: E065Params, sbacked: string[], sum
   let flags = view_sum_flags(sums, vix, callee.key);
   let i = 0;
   while (i < flags.len() && i < callee.args.len()) {
-    if (flags[i]) {
+    if (flags[i] && view_owns_arg(c, i, s)) {
+      out = merge_view_roots(out, e065_moved_roots(callee.args[i], ps, sbacked, sums, vix, s));
+    } else if (flags[i]) {
       out = merge_view_roots(out, e065_arg_roots(callee.args[i], ps, sbacked, sums, vix, s));
     }
     i += 1;
   }
   return out;
+}
+
+// Whether the callee of `c` takes its argument `i` as `own`.
+function view_owns_arg(c: ast.ExprCall, i: i32, s: Scope): boolean {
+  if let ast.ExprIdent(cid) = c.callee {
+    if let Some(sig) = s.lookup_sig(cid.name) {
+      return i < sig.param_own.len() && sig.param_own[i];
+    }
+  }
+  return false;
+}
+
+// The storage that an argument to an `own` parameter lends to the result.
+// The value moves into the callee, so the fresh storage of a call result
+// and a local that holds no view of local storage go with it. A view that
+// the value holds still has its own roots.
+function e065_moved_roots(e: ast.Expr, ps: E065Params, sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+  let none: string[] = [];
+  if let ast.ExprIdent(id) = e {
+    let root = e065_param_root(e, ps);
+    if (root.len() > 0) {
+      return ViewRoots { local: false, params: [root] };
+    }
+    return ViewRoots { local: e065_ident_in(id.name, sbacked), params: none };
+  }
+  if let ast.ExprCall(c) = e {
+    let callee = view_callee(c, s);
+    if (callee.key.len() == 0 || !view_sum_known(sums, vix, callee.key)) {
+      return ViewRoots { local: true, params: none };
+    }
+    return e065_call_roots(c, ps, sbacked, sums, vix, s);
+  }
+  return e065_arg_roots(e, ps, sbacked, sums, vix, s);
 }
 
 // The storage that an argument lends to a `str` that the callee returns. A

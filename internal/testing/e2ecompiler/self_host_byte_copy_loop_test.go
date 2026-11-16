@@ -613,3 +613,103 @@ func TestSelfHostByteCopyInvariantStart(t *testing.T) {
 		}
 	}
 }
+
+const byteCopyViewSource = `import "std/string";
+
+@noinline function bytes(n: i32): u8[] {
+  let a = __alloc_u8(n); let i = 0;
+  while (i < n) { a = a.with(i, (i + 1) as u8); i = i + 1; }
+  return a;
+}
+@noinline function put(own a: u8[], at: i32, src: [u8], from: i32, n: i32): u8[] {
+  let i = 0;
+  while (i < n) { a = a.with(at + i, src[from + i]); i = i + 1; }
+  return a;
+}
+@noinline function cat(a: [u8], b: [u8]): u8[] {
+  let out = __alloc_u8(a.len() + b.len());
+  for i in 0..a.len() { out = out.with(i, a[i]); }
+  for i in 0..b.len() { out = out.with(a.len() + i, b[i]); }
+  return out;
+}
+`
+
+// A write loop that reads a [u8] view is one call of the write kernel, as a
+// write loop that reads a u8[] is.
+func TestSelfHostByteCopyViewSource(t *testing.T) {
+	const program = byteCopyViewSource + `function main(): i32 {
+  let src = bytes(8);
+  let before = __heap_alloc_count();
+  let out = put(bytes(4), 1, src[2:6], 1, 3);
+  if (__heap_alloc_count() - before != 1i64) { return 1; }
+  if (out[0] != 1u8 || out[1] != 4u8 || out[2] != 5u8 || out[3] != 6u8) { return 2; }
+  let whole = put(out, 0, src, 4, 4);
+  if (whole[0] != 5u8 || whole[3] != 8u8) { return 3; }
+  let text = put(whole, 2, "hi".bytes(), 0, 2);
+  if (text[1] != 6u8 || text[2] != 104u8 || text[3] != 105u8) { return 4; }
+  let kept = text;
+  let shared = put(text, 0, src[0:2], 0, 2);
+  if (kept[0] != 5u8 || shared[0] != 1u8 || shared[1] != 2u8 || shared[2] != 104u8) { return 5; }
+  let none = put(shared, 0 - 2147483647, src[0:2], 2147483647, 0 - 1);
+  let both = cat(src[0:3], none);
+  if (both.len() != 7 || both[2] != 3u8 || both[3] != 1u8 || both[6] != 105u8) { return 6; }
+  return 0;
+}`
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("write loop from a view: exit %d, want 0\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			src := filepath.Join(t.TempDir(), "view.fern")
+			if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			assembly, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			start, end, call, loop := "\n__fn_put:", "\n__fn_cat:", "__fn___fern_bytes_write_range", "__fern_oob_abort"
+			if target == "wasm32-wasi" {
+				start, end, call, loop = "(func $put ", "(func $cat ", "call $__fern_bytes_write_range", "loop"
+			}
+			_, rest, found := strings.Cut(string(assembly), start)
+			body, _, closed := strings.Cut(rest, end)
+			if !found || !closed {
+				t.Fatalf("put is not in the output of %s", target)
+			}
+			if !strings.Contains(body, call) {
+				t.Errorf("put does not call the write kernel:\n%s", body)
+			}
+			if strings.Contains(body, loop) {
+				t.Errorf("put keeps its loop:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestSelfHostByteCopyViewSourceBounds(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		for name, call := range map[string]string{
+			"source":          "put(a, 0, src[1:3], 1, 2)",
+			"negative-source": "put(a, 0, src[1:3], 0 - 1, 1)",
+			"target":          "put(a, 3, src[0:4], 0, 2)",
+			"overflow-target": "put(a, 2147483647, src[0:4], 0, 2)",
+			"string-source":   "put(a, 0, \"hi\".bytes(), 1, 2)",
+		} {
+			t.Run(target+"/"+name, func(t *testing.T) {
+				program := byteCopyViewSource + "function main(): i32 { let a = bytes(4); let src = bytes(4); let out = " + call + "; return out.len(); }"
+				stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1")
+				if code == 0 {
+					t.Fatal("out-of-bounds copy returned")
+				}
+				if target != "wasm32-wasi" && (code != 134 || !strings.Contains(stderr, "fern: array index out of range")) {
+					t.Fatalf("bounds: exit %d, want array abort 134\n%s", code, stderr)
+				}
+			})
+		}
+	}
+}

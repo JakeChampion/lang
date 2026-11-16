@@ -202,7 +202,7 @@ function kind_facts(): KindFacts {
     "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "secondary_entry", "port_in", "port_out",
   ];
   let f64_ops: string[] = [
-    "const_f64", "ffma", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
+    "const_f64", "ffma", "ffma32", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
     "i32_to_f64", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
   ];
   let f = KindFacts { ix: util.name_index([]), bits: [], argc: [], host: [] };

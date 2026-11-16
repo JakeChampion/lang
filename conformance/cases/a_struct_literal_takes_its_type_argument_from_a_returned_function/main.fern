@@ -1,0 +1,27 @@
+// The only field of Prog that names M is a function, so the literal takes M
+// from the type of the call that gives the function: (i32) => i32[] from
+// maker, and (i32) => string[] from the generic repeat.
+
+struct Prog[M] { make: (i32) => M[] }
+
+function maker(v: i32): (i32) => i32[] {
+    return (n: i32): i32[] => [v + n];
+}
+
+function repeat[M](v: M): (i32) => M[] {
+    return (n: i32): M[] => {
+        let out: M[] = [];
+        for i in 0..n {
+            out = out.append(v);
+        }
+        return out;
+    };
+}
+
+function main(): i32 {
+    let a = Prog { make: maker(40) };
+    let b = Prog { make: repeat("ab") };
+    let parts = b.make(2);
+    print((a.make(2)[0] + b.make(3).len() - 3).to_string() + " " + parts[0] + parts[1]);
+    return 0;
+}

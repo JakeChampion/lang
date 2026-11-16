@@ -851,6 +851,7 @@ pub function f64_math_builtin_kind(name: string): string {
     "__abs_f64" => "fabs",
     "__round_f64" => "fround",
     "__fma_f64" => "ffma",
+    "__fma_f32" => "ffma32",
     _ => "",
   };
 }

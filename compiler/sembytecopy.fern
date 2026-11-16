@@ -265,7 +265,8 @@ function source_read(f: ssasem.Func, ix: Index, update: ssa.SInst, l: Loop): ssa
   return read;
 }
 
-// The byte helpers take owned u8[] sources: kind 0. Any other append of a
+// The byte helpers are kind 0. The append helper takes an owned u8[] source,
+// and the write helper takes a u8[] or a [u8] view. Any other append of a
 // range is a range concat, kind 1, which reads a view in place. Its source
 // must not be the receiver that the loop starts from. Kind -1 keeps the loop,
 // as it does when there is no such read.
@@ -274,7 +275,7 @@ function copy_kind(f: ssasem.Func, l: Loop, read: ssa.SInst, write: boolean): i3
     return -1;
   }
   let src = read.args[0];
-  if (bytes(f.values[l.array.result]) && bytes(f.values[src])) {
+  if (bytes(f.values[l.array.result]) && (bytes(f.values[src]) || write && ssasem.is_byte_view(f.values[src]))) {
     return 0;
   }
   if (write || src == l.array.args[l.outer]) {
@@ -805,7 +806,13 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
   } else if (l.kind == MOVE) {
     args = [receiver, at, from, sp.count];
   } else if (l.update.kind_tag == ssasem.with()) {
-    args = [receiver, at, l.src, from, sp.count];
+    let src = l.src;
+    if (!ssasem.is_byte_view(values[src])) {
+      src = values.len();
+      values = values.append(contracts[1].params[2]);
+      distance = distance.append(ssa.SInst { kind_tag: ssasem.array_lend(), result: src, args: [l.src], imm: 0, str: "" });
+    }
+    args = [receiver, at, src, from, sp.count];
     ci = 1;
   }
   let contract = contracts[ci];

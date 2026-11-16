@@ -58,20 +58,20 @@ Play, and the first is now fixed:
    the SDKs of other vendors are out of reach.
 
 3. **Text and languages.** There is no text shaping, no right-to-left
-   text, no CFF fonts (most CJK fonts), no color emoji, no font fallback
-   and no localized strings.
+   text, no CFF fonts (most CJK fonts), no color emoji and no font
+   fallback. `std/i18n` now gives localized strings.
 
-4. **A thin set of components.** There is no checkbox, radio button, menu,
-   snackbar, tab bar, app bar, navigation stack or date picker. Each app
-   builds these.
+4. **A thin set of components.** There was no checkbox, radio button,
+   menu, snackbar, tab bar, app bar or navigation stack. `std/android/ui`
+   now has each of them. A date picker is still missing.
 
-5. **Device features.** There is no camera, no sensors, no location, no
-   Bluetooth LE, no NFC, no notifications other than those of a
-   foreground service, no push, and no scheduled background work.
+5. **Device features.** Fern now has the camera, the sensors, the
+   location and notifications. There is no Bluetooth LE, no NFC, no push,
+   and no scheduled background work.
 
-6. **Developer tools.** There is no hot reload, no preview, no documented
-   debugger workflow on a phone, and each build compiles both ABIs again
-   on one thread.
+6. **Developer tools.** There is no hot reload, no preview and no
+   documented debugger workflow on a phone. A release build compiles both
+   ABIs on one thread. `-apk-run` builds the ABI of the device only.
 
 ## Measurements
 
@@ -134,23 +134,35 @@ The order puts first what stops a release, then what most apps need.
      and signs the bundle with a JAR signature.
 
 2. **A key-value store and the state after the death of the process.**
-   Small, and each app needs them.
+   Done. `std/kv` keeps named values in a file, and a save replaces the
+   file in one step. `with_state` of `std/android/ui` writes a part of
+   the state at each Pause and restores it when the app starts again.
+   `sim.relaunch` tests that on the computer.
 
-3. **Effects that do not block the loop.** A task that runs on a worker
-   and gives a message when it ends.
+3. **Effects that do not block the loop.** Done. `with_jobs` of
+   `std/android/ui` starts workers for a message, and the result of each
+   worker is a message to `update`. `sim.jobs_done` tests that on the
+   computer.
 
-4. **Notifications and device features.** Notifications with channels,
-   sensors through the NDK, then location and the camera.
+4. **Notifications and device features.** `std/android/notify` makes
+   channels, and posts, changes and cancels notifications.
+   `std/android/sensors` reads the sensors through the NDK, with a `Ready`
+   event of the loop. `std/android/location` gives fixes through a @jni
+   `LocationListener`. `std/android/camera` gives the frames of a camera
+   through the NDK.
 
-5. **Components.** Checkbox, radio button, menu, snackbar, tabs, app bar
-   and a navigation stack in `std/android/ui`.
+5. **Components.** Done: `std/android/ui` has a checkbox, a radio
+   button, a menu, a snackbar, tabs, an app bar and the page stack `Nav`.
+   `tinted` gives a canvas the color of a role of the theme.
 
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** Shaping, right-to-left text, CFF and color glyphs, fallback
-   fonts, and localized strings.
+7. **Text.** Shaping, right-to-left text, CFF and color glyphs, and
+   fallback fonts. Localized strings are done: `android.languages` gives
+   the languages of the person, and `std/i18n` chooses the texts and
+   their plural forms.
 
-8. **Developer tools.** A build of one ABI for development, a debugger
-   workflow with lldb, and then a reload of the view and update code with
-   the model kept.
+8. **Developer tools.** A debugger workflow with lldb, and then a reload
+   of the view and update code with the model kept. `-apk-run` already
+   builds the ABI of the device only.

@@ -150,19 +150,6 @@ This difference remains in a UTF-8 locale:
   read the codeset in the files of a locale. It takes the codeset from the
   name.
 
-These differences come from the regex of glibc:
-
-- A byte that continues a character but follows a complete one can move a
-  match that has a word assertion. Then GNU sed can start the match inside
-  the character before it. For example, `printf '\xbf b' | sed
-  's/\W*\B/[&]/g'` gives `[]\xbf []b` in GNU sed and `[]\xbf[] b` in the
-  port.
-- The cause is a step of glibc that the port does not copy. glibc builds
-  the context of a search again when the search starts inside a character.
-- Under `I`, the same step of glibc can put a match inside a character
-  whose upper case has a different length. For example, `echo ı | sed
-  's/\>/X/I'` writes the `X` between the two bytes of `ı` in GNU sed.
-
 These differences come from the output and from WASI:
 
 - With `--debug`, a write error on standard output can give a different

@@ -51,10 +51,10 @@ function passphrase_from_fd(fd: i32): Result[u8[], string] {
   if (fd < 0) {
     return Err(f"failed to open file descriptor {fd}");
   }
-  let r = match (open_reader(f"/dev/fd/{fd}")) {
+  let r = match (reader_from_fd(fd)) {
     Ok(r) => r,
-    Err(_) => {
-      return Err(f"failed to read passphrase from fd {fd}: read AGE_PASSPHRASE_FD: bad file descriptor");
+    Err(e) => {
+      return Err(f"failed to read passphrase from fd {fd}: read AGE_PASSPHRASE_FD: {text.errno_text(e)}");
     },
   };
   let out: u8[] = [];
