@@ -118,6 +118,23 @@ pub const TERNARY: i32 = 61;
 
 pub const LANE_STORE: i32 = 62;
 
+// The address of a cell of one word in the frame, less an offset. imm holds
+// the number of the cell and the offset (frame_cell). Each such instruction
+// of one number gives the same cell.
+pub const FRAME_CELL: i32 = 63;
+
+pub function frame_cell(result: i32, cell: i32, offset: i32): SInst {
+  return SInst { kind_tag: FRAME_CELL, result: result, args: [], imm: cell * 4096 + offset, str: "" };
+}
+
+pub function cell_number(ins: SInst): i32 {
+  return ins.imm / 4096;
+}
+
+pub function cell_offset(ins: SInst): i32 {
+  return ins.imm % 4096;
+}
+
 // The kinds of STerm.
 pub const TERM_NONE: i32 = 0;
 
@@ -290,6 +307,7 @@ const KIND_NAMES: string[] = [
   "dyn_dispatch",  // 60
   "ternary",  // 61
   "lane_store",  // 62
+  "frame_cell",  // 63
 ];
 
 // The name of each semantic kind. Semantic ids run from -1 downward, so the
@@ -7661,7 +7679,7 @@ function inst_has_effect(k: i32): boolean {
   if (k < PRINT) {
     return k == PARAM || k == CALL || k == CALL_INDIRECT || k == ALLOC || k == STORE_ELEM || k == CONCAT;
   }
-  return k != SELECT && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY;
+  return k != SELECT && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY && k != FRAME_CELL;
 }
 
 function prune_roots(f: SFunc): i32[] {
@@ -7883,19 +7901,33 @@ pub function has_phis(f: SFunc, blk_pos: i32[], id: i32): boolean {
   return false;
 }
 
+// The frame slot of each view that lives in the frame, and of each frame
+// cell. The instructions of one cell share one slot.
 pub function view_slots(f: SFunc): i32[] {
   let out: i32[] = [];
   let n = 0;
+  let cells: i32[] = [];
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == STR_VIEW) {
-        if (out.len() == 0) {
-          out = util.minus_ones(f.nvals);
+      if (ins.kind_tag != STR_VIEW && ins.kind_tag != FRAME_CELL) {
+        continue;
+      }
+      if (out.len() == 0) {
+        out = util.minus_ones(f.nvals);
+      }
+      if (ins.kind_tag == STR_VIEW && ins.imm >= 1) {
+        out = out.with(ins.result, n);
+        n += 1;
+      }
+      if (ins.kind_tag == FRAME_CELL) {
+        while (cells.len() <= cell_number(ins)) {
+          cells = cells.append(-1);
         }
-        if (ins.imm >= 1) {
-          out = out.with(ins.result, n);
+        if (cells[cell_number(ins)] < 0) {
+          cells = cells.with(cell_number(ins), n);
           n += 1;
         }
+        out = out.with(ins.result, cells[cell_number(ins)]);
       }
     }
   }

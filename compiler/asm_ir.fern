@@ -11221,6 +11221,11 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == ssa.STR_VIEW) {
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
   }
+  if (k == ssa.FRAME_CELL) {
+    let d = ssa_dst(reg_of, ins.result);
+    s = s.write("    leaq " + util.i32_to_string(ssa_view_off(fr, ins.result) - ssa.cell_offset(ins)) + "(%rbp), " + d + "\n");
+    return ssa_store(reg_of, ins.result, d, s);
+  }
   if (k >= ssa.LD_AT && k <= ssa.STR_AT) {
     return ssa_mem_inst(ins, reg_of, fr.imm, s);
   }

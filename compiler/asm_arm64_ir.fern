@@ -4752,6 +4752,11 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   if (k == ssa.STR_VIEW) {
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
   }
+  if (k == ssa.FRAME_CELL) {
+    let d = ssa_dst(reg_of, ins.result);
+    s = fr_sub_imm(s, d, "x29", ssa.cell_offset(ins) - ssa_view_off(fr, ins.result));
+    return ssa_store(reg_of, ins.result, d, s);
+  }
   if (k >= ssa.LD_AT && k <= ssa.STR_AT) {
     return ssa_mem_inst(ins, reg_of, fr.imm, s);
   }

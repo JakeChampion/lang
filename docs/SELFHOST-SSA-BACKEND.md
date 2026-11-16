@@ -77,7 +77,11 @@ lowered function it:
    (`ssatokenkeep.keeps`), turns a branch into a jump when a branch above
    it tested the same value against zero, below one side of that branch or
    at the join of its two sides (`ssasame.decided`), gives a cons-tail loop with two hole positions
-   one phi for the address of its hole (`ssaholeaddr.addresses`), marks each
+   one phi for the address of its hole (`ssaholeaddr.addresses`), gives a
+   cons-tail loop a cell in the frame for its result and starts its hole at
+   the address of that cell, so that a fill is one store with no null test
+   and a return reads the cell (`ssaholecell.cells`, `ssa.FRAME_CELL`), marks
+   each
    reuse
    allocation whose token is null so that it calls the fresh entry of the
    helper with no test (`ssa.fresh_boxes`), then turns each branch whose two arms
