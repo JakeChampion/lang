@@ -347,7 +347,7 @@ function test_whitespace(): test.TestOutcome {
   if (bad != (ws.SPACE_BEFORE_TAB | ws.BLANK_AT_EOL) || shown != "! >\t<x>!  >\n" || ws.error_string(bad) != "trailing whitespace, space before tab in indent") {
     return test.fail("the errors of a line: " + shown);
   }
-  if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7)) {
+  if (!ws.conflict_marker("=======\n", 7) || ws.conflict_marker("======\n", 7) || ws.conflict_marker("=======x", 7) || !ws.conflict_marker("<<<<<<< ours\n", 7) || ws.conflict_marker(">>>>>>>\n", 7) || ws.conflict_marker("<<<<<<<\tx\n", 7)) {
     return test.fail("the conflict markers");
   }
   return test.pass();
