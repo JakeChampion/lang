@@ -604,6 +604,9 @@ func printType(t ast.Type) string {
 		return "Stream[" + printType(x.Elem) + "]"
 	case *ast.FuncType:
 		out := "("
+		if x.Once {
+			out = "once ("
+		}
 		for i, p := range x.Params {
 			if i > 0 {
 				out += ", "

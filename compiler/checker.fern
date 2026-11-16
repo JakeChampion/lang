@@ -373,15 +373,15 @@ function no_diags(): util.Diag[] {
 }
 
 function t_func(param_types: typeinfo.Type[], ret_type: typeinfo.Type): typeinfo.Type {
-  return typeinfo.TypeFunc { param_types: param_types, param_own: [], ret_own: false, ret_type: ret_type, params_known: true };
+  return typeinfo.TypeFunc { param_types: param_types, param_own: [], ret_own: false, ret_type: ret_type, params_known: true, once: false };
 }
 
 function t_func_own(param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type): typeinfo.Type {
-  return typeinfo.TypeFunc { param_types: param_types, param_own: callable_own_flags(param_own, param_types.len()), ret_own: false, ret_type: ret_type, params_known: true };
+  return typeinfo.TypeFunc { param_types: param_types, param_own: callable_own_flags(param_own, param_types.len()), ret_own: false, ret_type: ret_type, params_known: true, once: false };
 }
 
 function t_func_result(param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, ret_own: boolean): typeinfo.Type {
-  return typeinfo.TypeFunc { param_types: param_types, param_own: callable_own_flags(param_own, param_types.len()), ret_own: ret_own, ret_type: ret_type, params_known: true };
+  return typeinfo.TypeFunc { param_types: param_types, param_own: callable_own_flags(param_own, param_types.len()), ret_own: ret_own, ret_type: ret_type, params_known: true, once: false };
 }
 
 function callable_own_flags(flags: boolean[], count: i32): boolean[] {
@@ -404,7 +404,7 @@ function lambda_owns(lm: ast.ExprLambda): boolean[] {
 }
 
 function t_func_opaque(ret_type: typeinfo.Type): typeinfo.Type {
-  return typeinfo.TypeFunc { param_types: [], param_own: [], ret_own: false, ret_type: ret_type, params_known: false };
+  return typeinfo.TypeFunc { param_types: [], param_own: [], ret_own: false, ret_type: ret_type, params_known: false, once: false };
 }
 
 function t_map(key: typeinfo.Type, value: typeinfo.Type): typeinfo.Type {
@@ -1636,7 +1636,7 @@ function type_eq_in(a: typeinfo.Type, b: typeinfo.Type, modes: boolean): boolean
           if (af.param_types.len() != bf.param_types.len()) {
             return false;
           }
-          if (af.ret_own != bf.ret_own || !type_eq_in(af.ret_type, bf.ret_type, modes)) {
+          if (af.ret_own != bf.ret_own || af.once != bf.once || !type_eq_in(af.ret_type, bf.ret_type, modes)) {
             return false;
           }
           for fi in 0..af.param_types.len() {
@@ -4835,7 +4835,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
 }
 
 function callable_assignable(from: typeinfo.TypeFunc, to: typeinfo.TypeFunc, unions: UnionSig[]): boolean {
-  if (to.ret_own && !from.ret_own) {
+  if (to.ret_own && !from.ret_own || from.once && !to.once) {
     return false;
   }
   if (!from.params_known || !to.params_known) {
@@ -7032,7 +7032,7 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
       rt = typeinfo.t_void();
     }
   }
-  return t_func_result(pts, lambda_owns(lm), rt, lm.ret_own);
+  return once_if(t_func_result(pts, lambda_owns(lm), rt, lm.ret_own), lm.once);
 }
 
 pub struct CheckResult { scope: Scope, ty: typeinfo.Type }
@@ -7309,7 +7309,7 @@ function lambda_fn_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   for param in lm.params {
     pts = pts.append(s.resolve_param(param));
   }
-  return t_func_result(pts, lambda_owns(lm), lambda_ret_type(lm, s), lm.ret_own);
+  return once_if(t_func_result(pts, lambda_owns(lm), lambda_ret_type(lm, s), lm.ret_own), lm.once);
 }
 
 function rec_local_name(v: ast.StmtVar): string {
@@ -7893,7 +7893,17 @@ function callable_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Typ
     params = params.append(type_from_ref_names(parser.ref_without_own(f.args[i]), tn));
     i += 1;
   }
-  return t_func_result(params, owns, type_from_ref_names(parser.ref_without_own(parser.ref_fn_result(r)), tn), parser.ref_is_own(parser.ref_fn_result(r)));
+  return once_if(t_func_result(params, owns, type_from_ref_names(parser.ref_without_own(parser.ref_fn_result(r)), tn), parser.ref_is_own(parser.ref_fn_result(r))), f.is_once);
+}
+
+// `t` as a function type that its call consumes, when `once`.
+function once_if(t: typeinfo.Type, once: boolean): typeinfo.Type {
+  if (once) {
+    if let typeinfo.TypeFunc(f) = t {
+      return typeinfo.TypeFunc { ...f, once: true };
+    }
+  }
+  return t;
 }
 
 function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
@@ -7934,7 +7944,7 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
       pts = pts.append(param);
       i += 1;
     }
-    return t_func_result(pts, owns, type_from_ref_subst(parser.ref_without_own(parser.ref_fn_result(r)), tparams, targs, tn), parser.ref_is_own(parser.ref_fn_result(r)));
+    return once_if(t_func_result(pts, owns, type_from_ref_subst(parser.ref_without_own(parser.ref_fn_result(r)), tparams, targs, tn), parser.ref_is_own(parser.ref_fn_result(r))), f.is_once);
   }
   if (r.is_tuple && r.args.len() >= 2) {
     let elems: typeinfo.Type[] = [];
@@ -8583,6 +8593,9 @@ function func_label(f: typeinfo.TypeFunc): string {
     return "fn";
   }
   let out = "(";
+  if (f.once) {
+    out = "once (";
+  }
   for i in 0..f.param_types.len() {
     if (i > 0) {
       out += ", ";
@@ -16555,7 +16568,7 @@ function fn_value_instance(sig: FuncSig, bn: string[], bt: typeinfo.Type[], s: S
     params = params.append(type_from_ref_subst(sig_param_ref(sig, i), bn, bt, s.type_names()));
   }
   let result = type_from_ref_subst(sig_ret_ref(sig), bn, bt, s.type_names());
-  return typeinfo.TypeFunc { param_types: params, param_own: callable_own_flags(sig.param_own, params.len()), ret_own: sig.ret_own, ret_type: result, params_known: true };
+  return typeinfo.TypeFunc { param_types: params, param_own: callable_own_flags(sig.param_own, params.len()), ret_own: sig.ret_own, ret_type: result, params_known: true, once: false };
 }
 
 function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boolean {
@@ -24971,6 +24984,10 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
     for p in lu_call_parts(c.args) {
       acc = lu_method_arg(p, e, outer, has_outer, site, fx, acc);
     }
+    // A call of a `once` function value consumes the callee.
+    if (cname.len() > 0) {
+      acc = lu_own_arg(c.callee, e, outer, has_outer, site, fx, acc);
+    }
     return acc;
   }
   let flags = ow_func_flags(fx.ofuncs, cname);
@@ -25567,8 +25584,22 @@ function ow_recv_kind(key: string): i32 {
   return RECV_METHOD;
 }
 
+// Whether `c` calls a value of a `once` function type, which the call consumes.
+function ow_once_callee(c: ast.ExprCall, ctx: OwnCtx): boolean {
+  if let ast.ExprLambda(_) = c.callee {
+    return false;
+  }
+  if let typeinfo.TypeFunc(f) = check_expr(c.callee, ctx.scope) {
+    return f.once;
+  }
+  return false;
+}
+
 function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let out: util.Diag[] = [];
+  if (ow_once_callee(c, ctx) && !ow_is_owned_expr(c.callee, ctx)) {
+    out = out.append(dg_at("E051", "a call of a `once` function consumes it: call an owned value (an `own` parameter, or a local at its last use), not a borrowed one", ast.expr_line(c.callee), ast.expr_col(c.callee)));
+  }
   let oc = ow_own_call(c, ctx);
   let i = 0;
   while (i < oc.args.len() && i < oc.flags.len()) {
@@ -25860,6 +25891,9 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
   }
   if (!immediate && oc.args.len() == c.args.len()) {
     let rc = ru_borrow(c.callee, m, ctx);
+    if (ow_once_callee(c, ctx)) {
+      rc = ow_consume_arg(c.callee, m, ctx);
+    }
     m = rc.moved;
     d = util.append_diags(d, rc.diags);
   }
@@ -26060,7 +26094,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: m, diags: d };
     },
     ast.ExprLambda(lm) => {
-      let lctx = ow_nested_ctx(ctx, lm, true);
+      let lctx = ow_nested_ctx(ctx, lm, !lm.once);
       let inner = ow_stmts(lm.body, ow_nested_moved(moved, lm.params), lctx);
       return OwnWalk { moved: ow_lambda_moved_out(moved, inner.moved, lm.params), diags: inner.diags };
     },

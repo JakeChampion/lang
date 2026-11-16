@@ -2148,6 +2148,23 @@ func (p *parser) parseRecvTypeParam() (ast.Type, error) {
 	return ast.StructType{Name: nameTok.Text}, nil
 }
 
+// parseOnceType reads `once (A) => B`: a function type whose call consumes
+// the function.
+func (p *parser) parseOnceType(t lexer.Token) (ast.Type, error) {
+	p.advance()
+	inner, err := p.parseTypeArrow(true)
+	if err != nil {
+		return nil, err
+	}
+	ft, ok := inner.(*ast.FuncType)
+	if !ok {
+		return nil, p.errorfCode(t.Pos, "P001", "`once` marks a function type: write `once (A) => B`")
+	}
+	once := *ft
+	once.Once = true
+	return &once, nil
+}
+
 func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 	if err := p.enter(); err != nil {
 		return nil, err
@@ -2157,6 +2174,9 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 		return p.parseRecvTypeParam()
 	}
 	t := p.peek()
+	if t.Kind == lexer.Ident && t.Text == "once" && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "(" {
+		return p.parseOnceType(t)
+	}
 	var base ast.Type
 	switch {
 	case t.Kind == lexer.Punct && t.Text == "[":
@@ -5556,6 +5576,14 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		}
 	case lexer.Ident:
 		p.advance()
+		// `once` is a word only before a lambda: a name is not valid there.
+		if t.Text == "once" && p.match(lexer.Punct, "(") && p.looksLikeArrowLambda() {
+			e, err := p.parseArrowLambda()
+			if lam, ok := e.(*ast.Lambda); ok {
+				lam.Once = true
+			}
+			return e, err
+		}
 		if !p.noStructLit && p.match(lexer.Punct, "{") {
 			if t.Text == "Map" {
 				return p.parseMapLit(t.Pos)

@@ -1,0 +1,10 @@
+// A call consumes a `once` function, so its callee must be an owned value.
+// `k` is a borrowed parameter.
+
+function call(k: once (i32) => i32): i32 {
+  return k(1);
+}
+
+function main(): i32 {
+  return call(once (i: i32): i32 => i);
+}
