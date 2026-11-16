@@ -500,8 +500,7 @@ hex_literal                                          0
 hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
-# The program stops through exit(134), which does not unwind. One buffer is live.
-hkdf_length_past_the_limit_stops                     1
+hkdf_length_past_the_limit_stops                     0
 # The program stops through exit(134), which does not unwind. One buffer is live.
 hotp_digits_out_of_range_stops                       1
 http_content_type                                    0
@@ -1378,8 +1377,7 @@ tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0
-# The program stops through exit(134), which does not unwind. One buffer is live.
-totp_period_below_one_stops                          1
+totp_period_below_one_stops                          0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0

@@ -14,10 +14,19 @@ function unsafe_html(): markdown.Options {
   return markdown.Options { ...markdown.options(), unsafe_html: true };
 }
 
+// The bytes `b` as text. Each case here gives UTF-8.
+function text(b: [u8]): string {
+  let h = buf_new(b.len());
+  buf_push_bytes_range(h, __bytes_owned(b), 0, b.len());
+  let s = buf_take(h);
+  buf_free(h);
+  return s;
+}
+
 function checks(cases: (string, string)[]): test.TestOutcome {
   for c in cases {
     let (md, want) = c;
-    let got = markdown.to_html(md, unsafe_html());
+    let got = text(markdown.to_html(md.bytes(), unsafe_html()));
     if (got != want) {
       return test.fail("\"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
     }
@@ -56,7 +65,7 @@ function shape(d: blocks.Doc, r0: i32): (string, i32) {
 function shapes(cases: (string, string)[]): test.TestOutcome {
   for c in cases {
     let (md, want) = c;
-    let (got, _) = shape(blocks.parse(md, false), 0);
+    let (got, _) = shape(blocks.parse(md.bytes(), false), 0);
     if (got != want) {
       return test.fail("\"" + md + "\": got " + got + ", want " + want);
     }
@@ -247,14 +256,14 @@ function test_cmark_details(): test.TestOutcome {
 // A byte order mark at the start of the source is not text.
 function test_bom(): test.TestOutcome {
   let bom = (0xFEFF as char).to_string();
-  return test.assert_eq(markdown.to_html(bom + "# a\n" + bom, markdown.options()), "<h1>a</h1>\n<p>" + bom + "</p>\n");
+  return test.assert_eq(text(markdown.to_html((bom + "# a\n" + bom).bytes(), markdown.options())), "<h1>a</h1>\n<p>" + bom + "</p>\n");
 }
 
 function ref_is(d: blocks.Doc, label: string, dest: string, title: string): string {
   match (d.refs.get(label)) {
     Some(r) => {
-      if (r.dest != dest || r.title != title) {
-        return label + ": got (" + r.dest + ", " + r.title + ")";
+      if (text(r.dest) != dest || text(r.title) != title) {
+        return label + ": got (" + text(r.dest) + ", " + text(r.title) + ")";
       }
       return "";
     },
@@ -265,7 +274,7 @@ function ref_is(d: blocks.Doc, label: string, dest: string, title: string): stri
 }
 
 function test_definitions(): test.TestOutcome {
-  let d = blocks.parse("[Foo  Bar]: /url 'the title'\n[ẞ]: <a b>\n[foo bar]: /other\n[t]:\n/u\n\"multi\nline\"\n> [q]: (x) (paren)\n[e]: <>\n[n]: /u \"no\" x\n[x]:\n", false);
+  let d = blocks.parse("[Foo  Bar]: /url 'the title'\n[ẞ]: <a b>\n[foo bar]: /other\n[t]:\n/u\n\"multi\nline\"\n> [q]: (x) (paren)\n[e]: <>\n[n]: /u \"no\" x\n[x]:\n".bytes(), false);
   let errors = [
     ref_is(d, "foo bar", "/url", "'the title'"), ref_is(d, "ss", "a b", ""), ref_is(d, "t", "/u", "\"multi\nline\""), ref_is(d, "q", "(x)", "(paren)"), ref_is(d, "e", "", ""),
   ];
@@ -295,12 +304,23 @@ function test_normalize(): test.TestOutcome {
   ];
   for c in cases {
     let (label, want) = c;
+    if (refs.normalize(label.as_bytes()) != want) {
+      return test.fail(label + ": got \"" + refs.normalize(label.as_bytes()) + "\", want \"" + want + "\"");
+    }
+  }
+  // As in the case folding of cmark, each byte where no valid UTF-8
+  // sequence starts is one U+FFFD.
+  let bad: (u8[], string)[] = [
+    ([0x41u8, 0xFFu8, 0x42u8], "a�b"), ([0xE2u8, 0x82u8], "��"), ([0xC3u8, 0x89u8, 0xFEu8], "é�"), ([0xC0u8, 0xAFu8, 0x20u8, 0x20u8, 0xC3u8, 0xA9u8, 0x80u8], "�� é�"),
+  ];
+  for c in bad {
+    let (label, want) = c;
     if (refs.normalize(label) != want) {
-      return test.fail(label + ": got \"" + refs.normalize(label) + "\", want \"" + want + "\"");
+      return test.fail(want + ": got \"" + refs.normalize(label) + "\"");
     }
   }
   let long = "[" + "x".repeat(1000) + "]";
-  if (refs.label_end("[a\\]b]", 0, 6) != 6 || refs.label_end("[a[b]", 0, 5) != -1 || refs.label_end("[a]", 0, 2) != -1 || refs.label_end(long, 0, long.len()) != 1002 || refs.label_end("[x" + long, 0, long.len() + 2) != -1) {
+  if (refs.label_end("[a\\]b]".bytes(), 0, 6) != 6 || refs.label_end("[a[b]".bytes(), 0, 5) != -1 || refs.label_end("[a]".bytes(), 0, 2) != -1 || refs.label_end(long.bytes(), 0, long.len()) != 1002 || refs.label_end(("[x" + long).bytes(), 0, long.len() + 2) != -1) {
     return test.fail("label_end");
   }
   return test.pass();
@@ -312,11 +332,11 @@ function test_titles(): test.TestOutcome {
   let cases = [("\"a\"", 3), ("\"a\\\" b", 4), ("\"a\\\" b\"", 7), ("'a\\'", 4), ("(a\\)b)", 6), ("(a(b)", -1), ("(a\\)(b)", 4), ("\"a", -1), ("x", -1)];
   for c in cases {
     let (s, want) = c;
-    if (refs.title_end(s, 0, s.len()) != want) {
-      return test.fail(s + ": got " + refs.title_end(s, 0, s.len()).to_string());
+    if (refs.title_end(s.bytes(), 0, s.len()) != want) {
+      return test.fail(s + ": got " + refs.title_end(s.bytes(), 0, s.len()).to_string());
     }
   }
-  if (refs.title_end("\"a\"", 0, 2) != -1 || refs.dest_end("a\x01b c", 0, 5) != 3 || refs.dest_end("(a)b)", 0, 5) != 4) {
+  if (refs.title_end("\"a\"".bytes(), 0, 2) != -1 || refs.dest_end("a\x01b c".bytes(), 0, 5) != 3 || refs.dest_end("(a)b)".bytes(), 0, 5) != 4) {
     return test.fail("an end of the text, or a destination");
   }
   return test.pass();
@@ -326,28 +346,28 @@ function test_tags(): test.TestOutcome {
   let opens = [("<a>", 3), ("<a/>", 4), ("<a b='c'>", 9), ("<a b=\"c\" d>", 11), ("<a b=c >", 8), ("<a b=>", -1), ("<1>", -1), ("<a-b_c>", -1), ("<a \"b\">", -1)];
   for c in opens {
     let (s, want) = c;
-    if (tags.open_tag_end(s, 0, s.len()) != want) {
-      return test.fail(s + ": got " + tags.open_tag_end(s, 0, s.len()).to_string());
+    if (tags.open_tag_end(s.bytes(), 0, s.len()) != want) {
+      return test.fail(s + ": got " + tags.open_tag_end(s.bytes(), 0, s.len()).to_string());
     }
   }
-  if (tags.closing_tag_end("</a >", 0, 5) != 5 || tags.closing_tag_end("</a b>", 0, 6) != -1) {
+  if (tags.closing_tag_end("</a >".bytes(), 0, 5) != 5 || tags.closing_tag_end("</a b>".bytes(), 0, 6) != -1) {
     return test.fail("closing_tag_end");
   }
   let starts = [("<script>", 1), ("<TEXTAREA", 1), ("<!-- x", 2), ("<?x", 3), ("<!x", 4), ("<![CDATA[", 5), ("</div>", 6), ("<td/>", 6), ("<x>", 7), ("<x> y", 0), ("<pre/>", 7)];
   for c in starts {
     let (s, want) = c;
-    if (tags.block_start(s, 0, s.len(), false) != want) {
-      return test.fail(s + ": kind " + tags.block_start(s, 0, s.len(), false).to_string());
+    if (tags.block_start(s.bytes(), 0, s.len(), false) != want) {
+      return test.fail(s + ": kind " + tags.block_start(s.bytes(), 0, s.len(), false).to_string());
     }
   }
-  if (tags.block_start("<x>", 0, 3, true) != 0 || !tags.block_end(1, "a </STYLE> b", 0, 12) || tags.block_end(2, "-- >", 0, 4)) {
+  if (tags.block_start("<x>".bytes(), 0, 3, true) != 0 || !tags.block_end(1, "a </STYLE> b".bytes(), 0, 12) || tags.block_end(2, "-- >".bytes(), 0, 4)) {
     return test.fail("a kind 7 start in a paragraph, or an end condition");
   }
   return test.pass();
 }
 
 function test_unescape(): test.TestOutcome {
-  return test.assert_eq(inlines.unescape("a\\*b\\c\\\\d\\"), "a*b\\c\\d\\");
+  return test.assert_eq(text(inlines.unescape("a\\*b\\c\\\\d\\".as_bytes())), "a*b\\c\\d\\");
 }
 
 // backslash escapes and entity references
@@ -469,7 +489,7 @@ function test_line_breaks(): test.TestOutcome {
 function checks_with(o: markdown.Options, cases: (string, string)[]): test.TestOutcome {
   for c in cases {
     let (md, want) = c;
-    let got = markdown.to_html(md, o);
+    let got = text(markdown.to_html(md.bytes(), o));
     if (got != want) {
       return test.fail("\"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
     }
@@ -518,17 +538,29 @@ function test_sourcepos(): test.TestOutcome {
   ]);
 }
 
-// cmark replaces each invalid sequence of a line with one U+FFFD: a lead
-// byte and its valid continuation bytes, all the bytes left on the line
-// when the sequence is too short for them, or the whole sequence of an
-// overlong form, a surrogate or a code point above U+10FFFF.
+// With `--validate-utf8`, cmark replaces each invalid sequence of a line
+// with one U+FFFD: a lead byte and its valid continuation bytes, all the
+// bytes left on the line when the sequence is too short for them, or the
+// whole sequence of an overlong form, a surrogate or a code point above
+// U+10FFFF. Without it, the HTML keeps the bytes, and the CommonMark stops at
+// the first invalid sequence of a text.
 function test_utf8(): test.TestOutcome {
   let b: u8[] = [0x61u8, 0xC0u8, 0xAFu8, 0x62u8, 0xEDu8, 0xA0u8, 0x80u8, 0x63u8, 0xF4u8, 0x90u8, 0x80u8, 0x80u8, 0x64u8, 0xE2u8, 0x41u8, 0x0Au8, 0xF0u8, 0x9Fu8, 0x98u8, 0x0Au8, 0xE2u8, 0x82u8, 0x20u8, 0x65u8, 0xFFu8, 0x0Au8];
-  let cmark = test.assert_eq(markdown.text_of(b, true), "a�b�c�d�\n�\n� e�\n");
+  let cmark = test.assert_eq(text(markdown.validated(b)), "a�b�c�d�\n�\n� e�\n");
   if let Fail(_) = cmark {
     return cmark;
   }
-  return test.assert_eq(markdown.text_of(b, false), "a��b���c����d�A\n�\n� e�\n");
+  let h = buf_new(64);
+  buf_push(h, "<p>");
+  buf_push_bytes_range(h, b, 0, b.len() - 1);
+  buf_push(h, "</p>\n");
+  let want = buf_take_bytes(h);
+  buf_free(h);
+  let html = markdown.to_html(b, markdown.options());
+  if (html.len() != want.len() || __mismatch_bytes(html, 0, want, 0, want.len()) != want.len()) {
+    return test.fail("the HTML of invalid UTF-8 does not keep its bytes");
+  }
+  return test.assert_eq(text(render.render(b, "commonmark", markdown.options())), "a\n");
 }
 
 // The output of cmark in its other formats.
@@ -543,7 +575,7 @@ function test_formats(): test.TestOutcome {
   ];
   for c in cases {
     let (format, opt, md, want) = c;
-    let got = markdown.text_of(render.render(md, format, opt), false);
+    let got = text(render.render(md.bytes(), format, opt));
     if (got != want) {
       return test.fail(format + " \"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
     }
@@ -598,7 +630,7 @@ function test_cmark_031_formats(): test.TestOutcome {
   ];
   for c in cases {
     let (format, opt, md, want) = c;
-    let got = markdown.text_of(render.render(md, format, opt), false);
+    let got = text(render.render(md.bytes(), format, opt));
     if (got != want) {
       return test.fail(format + " \"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
     }

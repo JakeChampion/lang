@@ -1,7 +1,7 @@
 // The node tree of cmark, for the renderers other than HTML. The kinds of
 // block have the numbers of `blocks`. Each node is a row of NF i32 fields.
 // The text of the nodes is in one byte builder while the tree grows, and
-// in one string after `finish`.
+// in one byte array after `finish`.
 
 pub const DOCUMENT: i32 = 0;
 
@@ -91,17 +91,17 @@ pub const NONE: i32 = -1;
 
 // `open` is the node that gets the next child. `b` holds the text while the
 // tree grows, and `text` holds it after `finish`.
-pub struct Tree { n: i32[], count: i32, open: i32, b: usize, text: string }
+pub struct Tree { n: i32[], count: i32, open: i32, b: usize, text: u8[] }
 
 // A tree with only the document node, which is open.
 pub function new(): Tree {
   let n: i32[] = [DOCUMENT, NONE, NONE, NONE, NONE, NONE, 0, 0, NONE, NONE, 0, 0, 0, 0, 0, 0];
-  return Tree { n: n, count: 1, open: 0, b: buf_new(4096), text: "" };
+  return Tree { n: n, count: 1, open: 0, b: buf_new(4096), text: [] };
 }
 
 // The tree with its text in `text`.
 pub function (t: Tree) finish(): Tree {
-  let text = buf_take(t.b);
+  let text = buf_take_bytes(t.b);
   buf_free(t.b);
   return Tree { ...t, b: 0 as usize, text: text };
 }
@@ -233,8 +233,8 @@ pub function (t: Tree) has(x: i32, flag: i32): boolean {
 
 // The text of a leaf, the content of a code block, or the destination of a
 // link.
-pub function (t: Tree) lit(x: i32): str {
-  return slice_unchecked(t.text, get(t, x, F_LIT), get(t, x, F_LIT_END));
+pub function (t: Tree) lit(x: i32): [u8] {
+  return t.text[get(t, x, F_LIT):get(t, x, F_LIT_END)];
 }
 
 // True when a link has a title or a code block has an info string.
@@ -243,12 +243,12 @@ pub function (t: Tree) has_extra(x: i32): boolean {
 }
 
 // The title of a link or the info string of a code block, or "".
-pub function (t: Tree) extra(x: i32): str {
+pub function (t: Tree) extra(x: i32): [u8] {
   let a = get(t, x, F_EXTRA);
   if (a == NONE) {
-    return slice_unchecked(t.text, 0, 0);
+    return t.text[0:0];
   }
-  return slice_unchecked(t.text, a, get(t, x, F_EXTRA_END));
+  return t.text[a:get(t, x, F_EXTRA_END)];
 }
 
 // The source position: the start line, the start column, the end line and

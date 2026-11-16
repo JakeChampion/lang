@@ -121,7 +121,7 @@ function line_break(r: out.R, hard: boolean): out.R {
   if (r.width == 0 && !r.o.nobreaks) {
     return r.cr();
   }
-  return r.out(" ", allow_wrap(r), out.LITERAL);
+  return r.out(" ".as_bytes(), allow_wrap(r), out.LITERAL);
 }
 
 function item(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): out.R {

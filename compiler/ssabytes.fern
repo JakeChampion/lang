@@ -368,6 +368,41 @@ function bsd(): irtables.LowerState {
   return reader(bsd_name(), [ir.op_load_local(1), ir.op_bsd_sum()], [ir.op_load_local(1), ir.packed(ir.op_bsd_sum_bytes())], 2);
 }
 
+// The byte-view forms of the scans and of the expanding push. A string view
+// takes the string kernel, and an array takes the array kernel.
+pub function memchr_name(): string {
+  return "__sem_byte_view_memchr";
+}
+
+pub function rmemchr_name(): string {
+  return "__sem_byte_view_rmemchr";
+}
+
+pub function scan_set_name(): string {
+  return "__sem_byte_view_scan_set";
+}
+
+pub function scan_masks_name(): string {
+  return "__sem_byte_view_scan_masks";
+}
+
+pub function expanded_name(): string {
+  return "__sem_byte_view_expanded";
+}
+
+function scan(name: string, string_op: ir.Op, array_op: ir.Op): irtables.LowerState {
+  let string_ops: ir.Op[] = [ir.op_load_local(1), ir.op_load_local(2), string_op];
+  let array_ops: ir.Op[] = [ir.op_load_local(1), ir.op_load_local(2), ir.packed(array_op)];
+  return reader(name, string_ops, array_ops, 3);
+}
+
+function expanded(): irtables.LowerState {
+  let ops: ir.Op[] = [ir.op_load_local(1), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0)];
+  ops = joined(ops, [ir.op_load_local(0), ir.op_load_local(1), ir.op_const_i32(-2), ir.op_raw_addr(), ir.op_load_local(2), ir.op_buf_push_expanded(), ir.op_return(), ir.op_end()]);
+  ops = joined(ops, [ir.op_load_local(0), ir.op_load_local(1), ir.op_load_local(2), ir.op_buf_push_bytes_expanded(), ir.op_return()]);
+  return body(expanded_name(), 3, 3, ops);
+}
+
 // A kernel helper serves one builtin. The view lowering calls the other helpers itself.
 pub function served_builtin(helper: string): string {
   if (helper == crc32_name()) {
@@ -385,11 +420,31 @@ pub function served_builtin(helper: string): string {
   if (helper == bsd_name()) {
     return "__bsd_sum_bytes";
   }
+  if (helper == memchr_name()) {
+    return "__memchr_bytes";
+  }
+  if (helper == rmemchr_name()) {
+    return "__rmemchr_bytes";
+  }
+  if (helper == scan_set_name()) {
+    return "__scan_set_bytes";
+  }
+  if (helper == scan_masks_name()) {
+    return "__scan_masks_bytes";
+  }
+  if (helper == expanded_name()) {
+    return "buf_push_bytes_expanded";
+  }
   return "";
 }
 
 pub function state_helpers(): irtables.LowerState[] {
-  return [length(), data(), slice(8), slice(16), slice(32), slice(ir.width_ptr()), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd()];
+  return [
+    length(), data(), slice(8), slice(16), slice(32), slice(ir.width_ptr()), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(),
+    scan(memchr_name(), ir.op_memchr(), ir.op_memchr_bytes()), scan(rmemchr_name(), ir.op_rmemchr(), ir.op_rmemchr_bytes()),
+    scan(scan_set_name(), ir.packed(ir.op_scan_set()), ir.op_scan_set_bytes()), scan(scan_masks_name(), ir.packed(ir.op_scan_masks()), ir.op_scan_masks_bytes()),
+    expanded(),
+  ];
 }
 
 pub function helpers(): Result[irtables.Lowered, irtables.LowerState][] {

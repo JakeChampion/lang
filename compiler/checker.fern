@@ -1110,7 +1110,7 @@ function intrinsic_params_part_9(name: string, t: SigTable): (typeinfo.Type[], b
     return ([typeinfo.t_string(), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
   }
   if (name == "__scan_set_bytes" || name == "__scan_masks_bytes") {
-    return ([t_array(typeinfo.t_u8()), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
+    return ([t_view(typeinfo.t_u8()), typeinfo.t_i32(), t_array(typeinfo.t_u8())], true);
   }
   return intrinsic_params_part_10(name, t);
 }
@@ -1160,7 +1160,7 @@ function intrinsic_params_part_11(name: string, t: SigTable): (typeinfo.Type[], 
     return ([t_view(typeinfo.t_u8()), typeinfo.t_i32()], true);
   }
   if (name == "__memchr_bytes" || name == "__rmemchr_bytes") {
-    return ([t_array(typeinfo.t_u8()), typeinfo.t_i32(), typeinfo.t_i32()], true);
+    return ([t_view(typeinfo.t_u8()), typeinfo.t_i32(), typeinfo.t_i32()], true);
   }
   if (name == "__fern_rc_inc") {
     return ([typeinfo.t_usize()], true);

@@ -939,7 +939,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["buf_push_bytes_expanded"] = &ast.FuncType{
-		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Params: []ast.Type{bufH, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
@@ -1096,11 +1096,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__memchr_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__rmemchr_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__mismatch_bytes"] = &ast.FuncType{
@@ -1136,7 +1136,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["__scan_masks_bytes"] = &ast.FuncType{
 		Params: []ast.Type{
-			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}},
 			ast.NumberType{Width: 32, Signed: true},
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 		},
@@ -1144,7 +1144,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["__scan_set_bytes"] = &ast.FuncType{
 		Params: []ast.Type{
-			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}},
 			ast.NumberType{Width: 32, Signed: true},
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 		},
