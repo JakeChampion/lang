@@ -435,7 +435,7 @@ pub function tid_get(name: string): string {
 }
 
 pub function tid_named(): string[] {
-  return ["FileStat", "DirEntry", io_error_shape("NotFound"), io_error_shape("PermissionDenied"), io_error_shape("AlreadyExists"), io_error_shape("Interrupted"), io_error_shape("Unsupported"), io_error_shape("InvalidUtf8"), io_error_shape("Other")];
+  return ["FileStat", "DirEntry", "DirEntryBytes", io_error_shape("NotFound"), io_error_shape("PermissionDenied"), io_error_shape("AlreadyExists"), io_error_shape("Interrupted"), io_error_shape("Unsupported"), io_error_shape("InvalidUtf8"), io_error_shape("Other")];
 }
 
 function io_error_shape(variant: string): string {
@@ -2617,11 +2617,12 @@ function truncate_body(mode: i32): string {
 }
 
 function read_dir_body(fname: string, mode: i32): string {
-  if (fname == "__fern_read_dir_ino" || fname == "__fern_read_dir_ino_all") {
+  if (fname == "__fern_read_dir_ino" || fname == "__fern_read_dir_ino_all" || fname == "__fern_read_dir_ino_bytes") {
+    let raw = fname == "__fern_read_dir_ino_bytes";
     if (mode == 2) {
-      return read_dir_ino_func_p2(fname);
+      return read_dir_ino_func_p2(fname, raw);
     }
-    return read_dir_func_like(fname, fname == "__fern_read_dir_ino", true, false);
+    return read_dir_func_like(fname, fname != "__fern_read_dir_ino_all", true, raw);
   }
   if (mode == 2) {
     return read_dir_func_p2(fname);
@@ -2645,9 +2646,10 @@ function wasi_kind_func(): string {
   return o;
 }
 
-function read_dir_ino_func_p2(fname: string): string {
+// With raw, the name of each entry is a byte array with the bytes of the name.
+function read_dir_ino_func_p2(fname: string, raw: boolean): string {
   let o = "  (func $" + fname + " (param $path i32) (param $tid i32) (result i32)\n";
-  o += "    (local $r i32) (local $res i32) (local $arr i32) (local $ent i32) (local $i i32) (local $n i32)\n";
+  o += "    (local $r i32) (local $res i32) (local $arr i32) (local $ent i32) (local $i i32) (local $n i32) (local $s i32) (local $b i32) (local $len i32)\n";
   o += "    (local.set $r (call $__fern_dir_names_p2 (local.get $path)))\n";
   o += "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "    (if (i32.lt_s (local.get $r) (i32.const 0)) (then\n";
@@ -2663,7 +2665,16 @@ function read_dir_ino_func_p2(fname: string): string {
   o += "      (br_if $wd (i32.ge_u (local.get $i) (local.get $n)))\n";
   o += "      (local.set $ent (call $__fern_str_box (i32.const 32)))\n";
   o += "      (i32.store (local.get $ent) (local.get $tid))\n";
-  o += "      (i32.store offset=8 (local.get $ent) (i32.load (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+  o += "      (local.set $s (i32.load (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+  if (raw) {
+    o += "      (local.set $len (i32.load (local.get $s)))\n";
+    o += "      (local.set $b (call $__fern_arr_elems (local.get $len) (i32.const 1)))\n";
+    o += "      (i32.store (local.get $b) (local.get $len)) (i32.store offset=4 (local.get $b) (local.get $len))\n";
+    o += "      (memory.copy (i32.add (local.get $b) (i32.const 8)) (i32.add (local.get $s) (i32.const 4)) (local.get $len))\n";
+    o += "      (drop (call $__fern_arr_dec (local.get $s)))\n";
+    o += "      (local.set $s (local.get $b))\n";
+  }
+  o += "      (i32.store offset=8 (local.get $ent) (local.get $s))\n";
   o += "      (i64.store offset=16 (local.get $ent) (i64.const 0))\n";
   o += "      (i64.store offset=24 (local.get $ent) (i64.const 0))\n";
   o += "      (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $ent)))\n";
@@ -4515,6 +4526,9 @@ function emit_host_op_wat(o: ir.Op): string {
     return "    call $__fern_read_dir_all\n";
   }
   if (o.kind_tag == ir.K_READ_DIR_INO) {
+    if (o.i32_imm != 0) {
+      return tid_get("DirEntryBytes") + "    call $__fern_read_dir_ino_bytes\n";
+    }
     return tid_get("DirEntry") + "    call $__fern_read_dir_ino\n";
   }
   if (o.kind_tag == ir.K_READ_DIR_INO_ALL) {
@@ -10310,6 +10324,9 @@ function path_fs_directory_bodies(parts: string[], needs: string[], mode: i32): 
         } else {
           parts = parts.append(read_dir_func_like("__fern_read_dir_bytes", true, false, true));
         }
+      }
+      if (name == "read_dir_ino") {
+        parts = parts.append(read_dir_body("__fern_read_dir_ino_bytes", mode));
       }
     }
   }

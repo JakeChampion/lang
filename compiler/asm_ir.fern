@@ -3345,7 +3345,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "remove_dir", "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "writer_set_times",
     "read_link", "map_file", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
-    "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all",
+    "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_dir_ino_bytes",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some", "splice_forever",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
@@ -3357,7 +3357,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "heap", "i32_to_string", "u32_to_string",
     "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
-    "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_file", "create_dir_all", "create_dir",
+    "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_dir_ino_bytes", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "writer_set_times",
     "read_link", "map_file", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups",
@@ -12197,6 +12197,10 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     name = "dir_entries_ino";
     s = s.need("dir_entries");
   }
+  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm == 3) {
+    name = "dir_entries_ino_bytes";
+    s = s.need("dir_entries");
+  }
   let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"];
   let n = ir.op_pops(o);
   let k = n - 1;
@@ -14590,6 +14594,9 @@ function emit_entry_runtime_part_7(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("read_dir_ino_all")) {
       fs_roots = fs_roots + " " + "__fern_read_dir_ino_all";
+    }
+    if (s.has_need("read_dir_ino_bytes")) {
+      fs_roots = fs_roots + " " + "__fern_read_dir_ino_bytes";
     }
     if (s.has_need("remove_dir_all")) {
       fs_roots = fs_roots + " " + "__fern_remove_dir_all";

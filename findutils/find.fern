@@ -4509,7 +4509,7 @@ function eval_entry(p: Prog, own r: Run, own e: Ent): Run {
 }
 
 // The entries of a directory in the order of the walk. Names that are not
-// UTF-8 come from the byte listing, without their type.
+// UTF-8 come from the byte listing.
 function list_dir(path: string): Result[DirEntry[], IoError] {
   match (read_dir_ino(path)) {
     Ok(es) => {
@@ -4526,12 +4526,16 @@ function list_dir(path: string): Result[DirEntry[], IoError] {
       }
     }
   }
-  let names = read_dir_bytes(path)?;
+  return Ok(unchecked_entries(read_dir_ino_bytes(path)?));
+}
+
+// The entries with their names as strings that can hold bytes that are not UTF-8.
+function unchecked_entries(raw: DirEntryBytes[]): DirEntry[] {
   let out: DirEntry[] = [];
-  for b in names {
-    out = out.append(DirEntry { name: unsafe { string_from_bytes_unchecked(b) }, ino: 0i64, kind: 0u32 });
+  for e in raw {
+    out = out.append(DirEntry { name: unsafe { string_from_bytes_unchecked(e.name) }, ino: e.ino, kind: e.kind });
   }
-  return Ok(out);
+  return out;
 }
 
 // gnulib's fts sorts each batch of more than SORT_THRESHOLD entries by inode
@@ -4640,7 +4644,7 @@ function open_entry(r: Run, dir: Ent): Result[Dir, IoError] {
 }
 
 // The entries of an open directory. Names that are not UTF-8 come from the
-// byte listing, without their type.
+// byte listing.
 function entries_of(d: Dir): Result[DirEntry[], IoError] {
   match (d.entries_ino()) {
     Ok(es) => {
@@ -4657,12 +4661,7 @@ function entries_of(d: Dir): Result[DirEntry[], IoError] {
       }
     }
   }
-  let names = d.entries_bytes()?;
-  let out: DirEntry[] = [];
-  for b in names {
-    out = out.append(DirEntry { name: unsafe { string_from_bytes_unchecked(b) }, ino: 0i64, kind: 0u32 });
-  }
-  return Ok(out);
+  return Ok(unchecked_entries(d.entries_ino_bytes()?));
 }
 
 function walk_children_in(p: Prog, own r0: Run, w: Walker, dir: Ent): (Run, boolean) {
