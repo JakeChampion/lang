@@ -5692,7 +5692,6 @@ function ssa_taken_home(late: i32[], h: i32): boolean {
   return ssa_frame_home(h) || h >= 0 && util.index_of_i32(late, h) >= 0;
 }
 
-
 // The CFI rows of the frame record, for a block that follows text with no
 // frame.
 function ssa_cfi_frame_record(s: asmcore.EmitState): asmcore.EmitState {
