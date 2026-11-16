@@ -10,9 +10,9 @@ import "./markdown";
 import "./nodes";
 import "./xml";
 
-// The document `src` in the format `format`. The output of the formats that
-// cmark writes with its text renderer can have bytes that are not UTF-8.
-pub function render(src: string, format: string, o: markdown.Options): u8[] {
+// The document `src` in the format `format`. As in cmark, the output keeps
+// the bytes of the document that are not UTF-8.
+pub function render(src: u8[], format: string, o: markdown.Options): u8[] {
   let t = tree(src, o);
   if (format == "xml") {
     return xml.render(t, o);
@@ -28,7 +28,7 @@ pub function render(src: string, format: string, o: markdown.Options): u8[] {
 
 // Writes the document `src` in the format `format` to `w`. The XML goes to
 // the writer a part at a time, as `markdown.write` writes HTML.
-pub function write(w: io_buffered.BufWriter, src: string, format: string, o: markdown.Options, part: i32): Result[io_buffered.BufWriter, IoError] {
+pub function write(w: io_buffered.BufWriter, src: u8[], format: string, o: markdown.Options, part: i32): Result[io_buffered.BufWriter, IoError] {
   if (format == "xml") {
     return xml.write(w, tree(src, o), o, part);
   }
@@ -37,7 +37,7 @@ pub function write(w: io_buffered.BufWriter, src: string, format: string, o: mar
 
 // The node tree of the document `src`, as cmark parses it with the options
 // `o`.
-pub function tree(src: string, o: markdown.Options): nodes.Tree {
+pub function tree(src: u8[], o: markdown.Options): nodes.Tree {
   let d = blocks.parse(src, o.sourcepos);
   let t = nodes.new();
   if (o.sourcepos) {
@@ -116,7 +116,8 @@ function code(t0: nodes.Tree, d: blocks.Doc, r: i32, x: i32, tables: inlines.Tab
     let s = d.segs[from];
     if (blocks.seg_end(s) > blocks.seg_start(s)) {
       let a = t.here();
-      buf_push(t.bytes(), markdown.info_string(d, from, tables));
+      let info = markdown.info_string(d, from, tables);
+      buf_push_bytes_range(t.bytes(), info, 0, info.len());
       t = t.set_extra(x, a, t.here());
     }
     from += 1;
@@ -133,7 +134,7 @@ function push_lines(out: usize, d: blocks.Doc, from: i32, to: i32): void {
     for _ in 0..blocks.seg_pad(s) {
       buf_push_byte(out, 32);
     }
-    buf_push_range(out, d.src, blocks.seg_start(s), blocks.seg_end(s));
+    buf_push_bytes_range(out, d.src, blocks.seg_start(s), blocks.seg_end(s));
     buf_push_byte(out, 10);
   }
 }

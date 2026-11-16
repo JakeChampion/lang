@@ -6,6 +6,7 @@
 // which hears the home key, a task for the UI thread that sets the system
 // bars, and the notification listener of the notification filter.
 import "std/android";
+import "std/android/launch";
 import "std/android/access";
 import "std/android/draw";
 import "std/android/fonts";
@@ -26,7 +27,7 @@ import "./paper";
 import "./ui";
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
-  android.start(activity, app_main_entry());
+  launch.start(activity, app_main_entry());
 }
 
 @callback("app_main")

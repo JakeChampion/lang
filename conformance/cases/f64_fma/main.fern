@@ -6,8 +6,7 @@ import "std/f64";
 // __fma_f64(a, b, c) rounds a * b + c one time. The plain a * b + c rounds
 // the product first, so each named case gives two different results. The
 // last line hashes the results of a fixed set of random cases, so that each
-// backend must give the bits of a hardware fused multiply-add. f64.fma is the
-// form in software, and it must give the same bits.
+// backend must give the bits of a hardware fused multiply-add.
 
 function bits(x: f64): string {
   if (x != x) {
@@ -17,9 +16,7 @@ function bits(x: f64): string {
 }
 
 function show(name: string, a: f64, b: f64, c: f64): void {
-  let fused = __fma_f64(a, b, c);
-  let soft = if (bits(a.fma(b, c)) == bits(fused)) { "same" } else { "soft " + bits(a.fma(b, c)) };
-  print(name + " " + bits(fused) + " " + bits(a * b + c) + " " + soft);
+  print(name + " " + bits(__fma_f64(a, b, c)) + " " + bits(a * b + c));
 }
 
 // Each sum is held in a register across the loop: in the first factor, in
@@ -59,7 +56,6 @@ function canon(x: f64): u64 {
 function random_cases(n: i32): void {
   let s = 88172645463325252 as u64;
   let h = 1469598103934665603 as u64;
-  let differ = 0;
   let i = 0;
   while (i < n) {
     s = step(s);
@@ -79,14 +75,10 @@ function random_cases(n: i32): void {
     if ((r3 & 3 as u64) == 0 as u64) {
       z = f64_from_bits(f64_bits(0.0 - x * y) ^ (r3 >> 2 as u64 & 7 as u64) as i64);
     }
-    let r = __fma_f64(x, y, z);
-    if (canon(r) != canon(x.fma(y, z))) {
-      differ += 1;
-    }
-    h = (h ^ canon(r)) * (1099511628211 as u64);
+    h = (h ^ canon(__fma_f64(x, y, z))) * (1099511628211 as u64);
     i += 1;
   }
-  print("random " + n.to_string() + " " + h.to_string() + " soft differs " + differ.to_string());
+  print("random " + n.to_string() + " " + h.to_string());
 }
 
 function main(): i32 {

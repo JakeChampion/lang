@@ -46,6 +46,7 @@ which ones.
 | `IDIOMS.md` | [reference] | Fern source style, with compiler bootstrap and validation limits. |
 | `LANGUAGE-DIRECTION.md` | [reference] | The language's direction: positioning, ideas adopted and rejected from other languages, and the shipping plan. |
 | `MUST-CONSUME.md` | [reference] | `@must_consume` types: structs and enums that may not be implicitly dropped, checked as E067. |
+| `SECRET-TYPES.md` | [policy] | `@secret` structs: the drop zeroes the numeric arrays that a record holds alone, in each build. |
 | `WORKERS.md` | [reference] | Share-nothing workers: `std/worker` spawn and join, the `send` parameter mode and E100, and the sequential degrade every engine runs. |
 | `NAMED-FIELD-VARIANTS.md` | [reference] | Named-field enum variants: declaring, constructing and destructuring them. |
 | `TRAITS.md` | [reference] | Traits: static ad-hoc polymorphism, bounded generics and cross-module coherence; phases 1–3 shipped. |
@@ -257,6 +258,7 @@ which ones.
 | `ATLAS-PLATFORM-PLAN.md` | [plan] | The external Atlas blueprint reconciled against Fern: SIMD, dispatch, allocator and concurrency substrate, the fused-intrinsic SIMD ABI, and a sequenced plan, partly landed. |
 | `NET-P8-HTTP3-PLAN.md` | [plan] | Networking P8: QUIC and HTTP/3, slice by slice; slices 1–7 landed, and the rest are open. |
 | `NETWORKING-RESEARCH-2026-09.md` | [research] | The survey behind the networking plan: server performance, API ergonomics, TLS/DNS/QUIC/io_uring, simulation testing, security and operations. |
+| `ANDROID-STANDING.md` | [research] | Fern for Android apps against Kotlin, Java, Flutter, React Native, KMP and MAUI: strengths, gaps, measurements and the order of the fixes. |
 | `SOTA-STDLIB-BLUEPRINT.md` | [research] | Each stdlib primitive audited against the best known algorithm, with a verdict and recommended order. |
 | `JSON-PROTOBUF-ERRORS.md` | [reference] | Typed JSON and Protocol Buffers decode errors, locations, and migration. |
 | `STDLIB-DESIGN-RESEARCH.md` | [research] | Design research on four stdlib areas: HTTP, JSON, date/time and I/O. |

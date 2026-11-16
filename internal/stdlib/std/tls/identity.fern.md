@@ -415,7 +415,7 @@ pub function pair(chain: u8[][], key: PrivateKey): Result[Identity, KeyError] {
       return Err(Certificate(e));
     }
   }
-  return Ok(Identity { chain: chain, key: unsafe { share_unchecked(key) } });
+  return Ok(Identity { chain: chain, key: key });
 }
 
 pub function from_pem(chain_text: string, key_text: string): Result[Identity, KeyError] {

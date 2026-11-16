@@ -1832,7 +1832,7 @@ function named_argument_needs_box(call: ast.ExprCall, name: string, idx: i32, fd
   if ((name == "Some" || name == "Ok" || name == "Err") && call.args.len() == 1 && lift_arg_is_fn_value(arg, mfuncs)) {
     return true;
   }
-  if (irtables.decl_is_struct(structs, name) && irtables.decl_field_type_at(structs, name, idx) == "fn" && lift_arg_is_fn_value(arg, mfuncs)) {
+  if (irtables.decl_is_struct(structs, name) && spells_fn(irtables.decl_field_type_at(structs, name, idx)) && lift_arg_is_fn_value(arg, mfuncs)) {
     return true;
   }
   return lift_callee_param_is_fn(mfuncs, name, idx) || lift_binding_param_is_fn(fd, vars, name, idx, mfuncs)
@@ -2668,7 +2668,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
       let nvals: ast.Expr[] = [];
       for i in 0..sl.field_values.len() {
         let is_fn_field: boolean = sl.type_name.len() > 0 && i < sl.field_names.len()
-          && irtables.decl_field_type(structs, sl.type_name, sl.field_names[i]) == "fn";
+          && spells_fn(irtables.decl_field_type(structs, sl.type_name, sl.field_names[i]));
         if (is_fn_field) {
           let fr = try_fn_field_value(sl.field_values[i], fd, vars, fs, ct, gfns, mfuncs, structs);
           fs = fr.funcs;
@@ -3822,7 +3822,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
   for i in 0..stmts.len() {
     let lam_ok = false;
     let bname = "";
-    let lam = ast.ExprLambda { params: [], ret_own: false, ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+    let lam = ast.ExprLambda { params: [], ret_own: false, ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", once: false };
     let nested: ast.ExprLambda[] = [];
     match (stmts[i]) {
       ast.StmtVar(v) => {

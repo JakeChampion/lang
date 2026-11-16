@@ -34,6 +34,10 @@ func TestFormatArrowLambdaBodyShapes(t *testing.T) {
 			"annotated return type", `function main(): i32 { let n: i32 = 0; let f = (x: i32): void => { n = n + x; }; f(1); return n; }`,
 			"  let f = (x: i32): void => { n = n + x; };\n",
 		},
+		{
+			"once lambda", `function main(): i32 { let f: once (i32) => i32 = once (x: i32): i32 => x * 2; return f(1); }`,
+			"  let f: once (i32) => i32 = once (x: i32): i32 => x * 2;\n",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatSrc(t, tc.in)

@@ -816,6 +816,9 @@ pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
   return EmitState { ...s, funcs: funcs, funcs_ix: util.name_index(names) };
 }
 
+// A body that other units can also emit starts with its `.weak` lines. A
+// body seen before is dropped through its `.cfi_endproc`, with the `.ltorg`
+// that follows it on arm64.
 pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): string[] {
   let seen = seen_in;
   let i = 0;
@@ -828,26 +831,16 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
     }
     let line = slice_unchecked(asm_text, i, j).to_owned();
     let drop = false;
+    if (state == 2) {
+      state = 0;
+      drop = line.trim() == ".ltorg";
+    }
     if (state == 1) {
       drop = true;
-      state = 2;
-    } else if (state == 2) {
-      let k = 0;
-      while (k < line.len() && (util.str_eq_at(line, k, " ") || util.str_eq_at(line, k, "\t"))) {
-        k += 1;
+      if (line.trim() == ".cfi_endproc") {
+        state = 2;
       }
-      let body = slice_unchecked(line, k, line.len()).to_owned();
-      if (body.len() == 0) {
-        drop = true;
-      } else if (body.len() > 2 && body.starts_with(".L")) {
-        drop = true;
-      } else if (k > 0 && !body.starts_with(".")) {
-        drop = true;
-      } else {
-        state = 0;
-      }
-    }
-    if (state == 0 && !drop && line.len() > 6 && line.starts_with(".weak ")) {
+    } else if (!drop && line.len() > 6 && line.starts_with(".weak ")) {
       let sym = slice_unchecked(line, 6, line.len()).to_owned();
       if (util.has_str(seen, sym)) {
         drop = true;
@@ -2782,6 +2775,9 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
     return ty_unknown();
   }
   if (t.args.len() > 0) {
+    if (t.base.starts_with("dyn ")) {
+      return ty_unknown();
+    }
     // Map[V] / Result[T] with only ONE arg (no comma in the
     if (t.base == "Map") {
       if (t.args.len() >= 2 && ty_is_i32(ty_from_ref(t.args[0]))) {

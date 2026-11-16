@@ -1,0 +1,13 @@
+import "../qsort";
+import "./scale";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  let Some(n) = scale.read(1000000) else {
+    return 2;
+  };
+  let (count, total) = qsort.digest(qsort.sort(qsort.make(n as i64, 42i64)), 0i64, 0i64);
+  print(f"{count} {total}");
+  return 0;
+}

@@ -1,5 +1,6 @@
 // This app verifies real Android codecs, MP4 export, surface playback, and seek.
 import "std/android";
+import "std/android/launch";
 import "std/android/video/player";
 import "std/android/video/source";
 import "std/android/video/capabilities";
@@ -14,7 +15,7 @@ import "./audio_content";
 pub struct App { ctx: usize, playback: Option[player.Player], fd: i32, content: Option[source.Source], sound: Option[audio_path.State], audio_reader: Option[Reader], content_audio: Option[audio_content.Input], stage: i32, resume_ns: i64, started_ns: i64, done: boolean, lifecycle_pause_ns: Option[i64], lifecycle_was_playing: boolean }
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
-  android.start(activity, app_main_entry());
+  launch.start(activity, app_main_entry());
 }
 
 @callback("app_main")

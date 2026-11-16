@@ -551,6 +551,7 @@ function painted(t_in: Text, o: Opts, body: string, a: u8[], b: u8[]): Text {
   let pre = 0;
   let post = 0;
   let at = 0;
+  let last = b' ';
   while (at < body.len()) {
     let end = at;
     while (end < body.len() && body[end] != b'\n') {
@@ -581,8 +582,11 @@ function painted(t_in: Text, o: Opts, body: string, a: u8[], b: u8[]): Text {
       out = line0(o.pal.get(color.CONTEXT), " ", rest);
     } else {
       pre += 1;
-      out = line0(o.pal.get(color.CONTEXT), "", line);
+      // The line end that an added line does not have is an error.
+      let slot = if (last == b'+' && (o.ws_rule & ws.INCOMPLETE_LINE) != 0) { color.WHITESPACE } else { color.CONTEXT };
+      out = line0(o.pal.get(slot), "", line);
     }
+    last = first;
     let (t1, k) = call(t);
     t = push(t1, k, out, true);
     if (kind != moved.OTHER) {
@@ -703,7 +707,7 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   if (o.color) {
     let labels = o.pal.get(color.META) + "--- " + lbl0 + color.RESET + tab0 + "\n" + o.pal.get(color.META) + "+++ " + lbl1 + color.RESET + tab1 + "\n";
-    return (s, painted(add_each(t, labels), Opts { ...o, ws_rule: rule_of(o, p.one.path) }, text(body), a, b));
+    return (s, painted(add_each(t, labels), Opts { ...o, ws_rule: link_rule(rule_of(o, p.one.path), p.two.mode) }, text(body), a, b));
   }
   t = add_each(t, "--- " + lbl0 + tab0 + "\n+++ " + lbl1 + tab1 + "\n" + text(body));
   return (s, t);
@@ -1266,7 +1270,8 @@ pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (sto
     if (is_binary(b)) {
       continue;
     }
-    let rule = rule_of(o, if (p.one.path != p.two.path) { p.two.path } else { p.one.path });
+    let rule = link_rule(rule_of(o, if (p.one.path != p.two.path) { p.two.path } else { p.one.path }), p.two.mode);
+    let incomplete = (rule & ws.INCOMPLETE_LINE) != 0 && b.len() > 0 && b[b.len() - 1] != b'\n';
     let la = linediff.lines_of(a);
     let lb = linediff.lines_of(b);
     let plain = linediff.Options { algorithm: linediff.MYERS, minimal: false, indent_heuristic: false };
@@ -1284,6 +1289,10 @@ pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (sto
           t = add_each(t, at + ws.error_string(bad) + ".\n");
           t = add_each(t, set + "+" + reset + shown + (if (shown.ends_with("\n")) { "" } else { "\n" }));
         }
+        if (incomplete && j == lb.count() - 1) {
+          failed = true;
+          t = add_each(t, at + ws.error_string(ws.INCOMPLETE_LINE) + ".\n");
+        }
       }
     }
     if ((rule & ws.BLANK_AT_EOF) != 0) {
@@ -1295,6 +1304,12 @@ pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (sto
     }
   }
   return (s, t, failed);
+}
+
+// The rule `rule` of a file of mode `mode`. A symbolic link has no line end
+// at its end, and that is not an error.
+function link_rule(rule: i32, mode: string): i32 {
+  return if (mode == "120000") { rule & ~ws.INCOMPLETE_LINE } else { rule };
 }
 
 // The rules of white space of the file `path`: those of the attribute

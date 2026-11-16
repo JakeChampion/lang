@@ -43,6 +43,15 @@ function twice(n: i32): i32 {
   return p() + 1;
 }
 
+// The clone of gated for its one call suspends, and no closure makes it.
+@noinline function gated(g: (i32) => i32): i32 {
+  return g(wait());
+}
+
+@noinline function first(fs: ((i32) => i32)[], n: i32): i32 {
+  return fs[0](n);
+}
+
 function body(): i32 {
   let total: i32 = 0;
   if (ready()) {
@@ -53,6 +62,8 @@ function body(): i32 {
   total = total + apply((x: i32): i32 => x + 1, 1000);
   let base: i32 = total * 0 + 2000;
   total = total + through((): i32 => { return wait() + base; });
+  total = total + gated((x: i32): i32 => x + 3);
+  total = total + first([twice], 4);
   return total;
 }
 
@@ -95,6 +106,7 @@ func TestSelfHostSuspendShapes(t *testing.T) {
 		{"body", true},
 		{"through", true},
 		{"apply", false},
+		{"first", false},
 	} {
 		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, cli.stdlib)
 		cmd.Env = append(os.Environ(), "FERN_SUSPEND_DUMP="+c.fn)
@@ -112,7 +124,7 @@ func TestSelfHostSuspendShapes(t *testing.T) {
 		cmd = exec.Command(cli.runner[0], append(append([]string{}, cli.runner[1:]...), bin)...)
 	}
 	out, err := cmd.CombinedOutput()
-	if want := "parks 4\ntask 3113\nplain 3113\n"; err != nil || string(out) != want {
+	if want := "parks 5\ntask 3124\nplain 3124\n"; err != nil || string(out) != want {
 		t.Errorf("%v\n--- got ---\n%s--- want ---\n%s", err, out, want)
 	}
 }

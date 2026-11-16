@@ -937,11 +937,11 @@ var findDebugLines = []string{
 	`-O1 -D opt -size +1 -name a -type f -inum 3 -readable -fstype nosuchfs -regex x -true`,
 	`-O2 -D opt -size +1 -name a -type f -inum 3 -readable -fstype nosuchfs -regex x -true`,
 	`-O3 -D opt -size +1 -name a -type f -inum 3 -readable -fstype nosuchfs -regex x -true`,
+	`-D opt -maxdepth 0 -fstype afs -print`,
 	`-O3 -D opt -maxdepth 0 -true -false -used 3 -name a -o -name 'b*' -o -name c`,
 	`-D opt -readable -a -size +1`,
 	`-D opt -print -a -name 'a*' -o -name b -o -size +1 , -name c , -empty`,
 	`-D opt '(' -size +1 -o -name b ')' -o -empty -o -readable`,
-	`-D opt -path './sub/*' -prune -a -prune , -writable -fstype nosuchfs -and -printf '%p %s\n' '(' -links 2 ')' -type l,f -or -mtime -1`,
 	`-D rates -name small -o -size +1 -print`,
 	`-D rates -name small -quit`,
 	`-O3 -D rates,opt -empty -o -readable -name '*' , ! -type d`,
@@ -989,9 +989,14 @@ func findMaskedCases(dir string) []invocation {
 	for _, line := range []string{
 		`-D exec sub -name a.c -exec echo hi '{}' ';' -exec echo b '{}' + -execdir echo c '{}' ';'`,
 		`-D exec sub -name a.c -exec sh -c 'kill -9 $$' ';' -o -name b.h -execdir echo '{}' +`,
+		// The commands of -execdir ... + run when the depth of the walk
+		// changes, and at the first entry of each starting point.
+		`-D exec sub/deep -name er -execdir echo '{}' + -o -name est.c -exec echo est ';'`,
+		`-D exec sub/b.h sub/deep -name b.h -execdir echo '{}' + -o -name est.c -exec echo est ';'`,
 		`-D exec sub -name a.c -exec nosuchcmd ';' -exec nosuchcmd '{}' +`,
 		`-D exec,rates sub -name '*.c' -exec echo X '{}' + -o -name b.h -exec true ';'`,
 		`-D time -maxdepth 0`,
+		`-D opt -path './sub/*' -prune -a -prune , -writable -fstype nosuchfs -and -printf '%p %s\n' '(' -links 2 ')' -type l,f -or -mtime -1`,
 		`-D time,tree -maxdepth 0 -mtime 1 -mtime -1 -mtime +3 -mmin 5 -atime 0.5 -daystart -ctime 0`,
 		`-D all sub -maxdepth 1 -name 'b*' -exec echo '{}' ';'`,
 	} {

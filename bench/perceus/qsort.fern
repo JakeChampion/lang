@@ -1,0 +1,48 @@
+// A quick sort of a list of pseudo-random integers, with the head as the pivot.
+pub enum List { Nil, Cons(i64, List) }
+
+// n values of the generator x' = (1103515245 x + 12345) mod 2^31, from seed 42,
+// each reduced mod 1,000,000.
+pub function make(n: i64, seed: i64): List {
+  if (n <= 0i64) {
+    return Nil;
+  }
+  let next = (1103515245i64 * seed + 12345i64) % 2147483648i64;
+  return Cons(next % 1000000i64, make(n - 1i64, next));
+}
+
+// The elements of `xs` below `p` go to `lo`, and the others go to `hi`.
+function partition(p: i64, xs: List, lo: List, hi: List): (List, List) {
+  match (xs) {
+    Nil => {
+      return (lo, hi);
+    },
+    Cons(x, rest) => {
+      if (x < p) {
+        return partition(p, rest, Cons(x, lo), hi);
+      }
+      return partition(p, rest, lo, Cons(x, hi));
+    }
+  }
+}
+
+function append(xs: List, ys: List): List {
+  return match (xs) { Cons(x, rest) => Cons(x, append(rest, ys)), Nil => ys };
+}
+
+pub function sort(xs: List): List {
+  match (xs) {
+    Nil => {
+      return Nil;
+    },
+    Cons(p, rest) => {
+      let (lo, hi) = partition(p, rest, Nil, Nil);
+      return append(sort(lo), Cons(p, sort(hi)));
+    }
+  }
+}
+
+// The count of the elements and the sum of each element times its position from 1.
+pub function digest(xs: List, i: i64, total: i64): (i64, i64) {
+  return match (xs) { Cons(x, rest) => digest(rest, i + 1i64, total + (i + 1i64) * x), Nil => (i, total) };
+}

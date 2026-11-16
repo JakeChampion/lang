@@ -6234,6 +6234,49 @@ function main(): i32 { let d: dyn Container[string] = BoxS { v: 1 }; return 0; }
 	}
 }
 
+func TestDynGenericImplChecker(t *testing.T) {
+	const prelude = `trait Source[M] { function next(self: Self): M; }
+struct Fixed[M] { v: M }
+impl[M] Source[M] for Fixed[M] { function next(self: Fixed[M]): M { return self.v; } }
+function make[M](v: M): dyn Source[M] { return Fixed { v: v }; }
+function pull[M](s: dyn Source[M]): M { return s.next(); }
+`
+	cases := []struct{ name, src, want string }{
+		{"generic impl at the pinned argument",
+			prelude + `function main(): i32 { let s: dyn Source[i32] = Fixed { v: 7 }; return s.next(); }`,
+			""},
+		{"generic impl at another argument",
+			prelude + `function main(): i32 { let s: dyn Source[string] = Fixed { v: 7 }; return 0; }`,
+			"expected dyn Source[string], got Fixed[i32]"},
+		{"generic result takes the argument",
+			prelude + `function main(): i32 { let s = make("ab"); let t: dyn Source[string] = make("cd"); return s.next().len() + t.next().len(); }`,
+			""},
+		{"generic result at another argument",
+			prelude + `function main(): i32 { let t: dyn Source[string] = make(7); return 0; }`,
+			"expected dyn Source[string], got dyn Source[i32]"},
+		{"dyn parameter binds the type parameter",
+			prelude + `function main(): i32 { let s: dyn Source[i32] = Fixed { v: 7 }; return pull(s); }`,
+			""},
+		{"dyn parameter result is typed",
+			prelude + `function main(): i32 { let s: dyn Source[i32] = Fixed { v: 7 }; let x: string = pull(s); return 0; }`,
+			"expected string, got i32"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if c.want == "" {
+				if err != nil {
+					t.Errorf("expected to type-check, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
 func TestDynAssocTypeChecker(t *testing.T) {
 	const prelude = `trait Producer { type Item; function get(self: Self): Self::Item; }
 struct IntBox { v: i32 }

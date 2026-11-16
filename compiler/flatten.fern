@@ -768,6 +768,9 @@ function rewrite_type_parsed(tn: string, tref: parser.TypeRef, ctx: RewriteCtx):
       fi += 1;
     }
     fout = fout + ") => " + rewrite_type_arg(tref.args[tref.args.len() - 1], ctx);
+    if (tref.is_once) {
+      fout = "once " + fout;
+    }
     for fd in 0..tref.array_depth {
       fout += "[]";
     }
@@ -1270,6 +1273,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       col: mod.structs[j].col,
       enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx),
       must_consume: mod.structs[j].must_consume,
+      secret: mod.structs[j].secret,
       value_type: mod.structs[j].value_type,
       variant_field_names: mod.structs[j].variant_field_names,
       is_pub: true,

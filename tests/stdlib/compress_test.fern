@@ -139,11 +139,19 @@ function test_hostile_counts(): test.TestOutcome {
   return test.assert_eq_array(got, ["|data integrity error when decompressing", "unexpected end of input", "unexpected end of input", HELLO + "|ok"]);
 }
 
+// The CRC after the end mark of a stream combines the CRC of its blocks.
+// With a changed stream CRC, the bytes of the block come, and then the error.
+function test_stream_crc(): test.TestOutcome {
+  let changed = BZ2.with(BZ2.len() - 1, 242u8);
+  return test.assert_eq_array([bz_error(changed), bz_error(BZ2.concat(changed))], [HELLO + "|data integrity error when decompressing", HELLO + HELLO + "|data integrity error when decompressing"]);
+}
+
 function main(): i32 {
   let r = test.new("compress");
   r = r.it("round trips", test_round_trips);
   r = r.it("errors", test_errors);
   r = r.it("each decoder refuses output above a limit", test_limits);
   r = r.it("counts that are not valid are refused", test_hostile_counts);
+  r = r.it("the CRC of a stream is checked", test_stream_crc);
   return r.finish();
 }
