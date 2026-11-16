@@ -215,6 +215,8 @@ turn the graph off, as in git.
 The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
 current directory or of a directory above it. A `.git` file of a linked
 worktree gives the git directory.
+With `GIT_DIR`, the current directory is the top of the worktree, unless
+`core.bare` is true.
 
 The standard output, the messages and the exit status are those of git
 2.56.1. That is the git of the CI runners. The tests compare the port with
