@@ -63,7 +63,7 @@ x86_64/deflate_encode.text	7205
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
 x86_64/http_hello.text	15973
-x86_64/http_hello.ir	21776386
+x86_64/http_hello.ir	21512372
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8891
@@ -73,7 +73,7 @@ x86_64/map_probe_chain.ir	235291505
 x86_64/map_string.text	9772
 x86_64/map_string.ir	50691579	2
 x86_64/ordmap_insert.text	6028
-x86_64/ordmap_insert.ir	70411041
+x86_64/ordmap_insert.ir	68669850
 x86_64/pmap_insert.text	3550
 x86_64/pmap_insert.ir	49902426
 x86_64/pvec_with.text	3471
