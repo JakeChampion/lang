@@ -50,7 +50,8 @@ pub function main(): i32 {
   let ok = true;
   if (operands.len() == 0) {
     let l = names_of(o, pwdb.process_groups());
-    o = gnu.put(l.out, l.text + "\n");
+    o = l.out;
+    o = gnu.put(o, l.text + "\n");
     ok = l.ok;
   } else {
     let i = 0;
@@ -59,7 +60,8 @@ pub function main(): i32 {
         Some(u) => {
           o = gnu.put(o, operands[i] + " : ");
           let ul = names_of(o, pwdb.group_list(u.name, u.gid));
-          o = gnu.put(ul.out, ul.text + "\n");
+          o = ul.out;
+          o = gnu.put(o, ul.text + "\n");
           if (!ul.ok) {
             ok = false;
           }

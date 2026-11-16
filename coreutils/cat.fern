@@ -194,6 +194,10 @@ function head_for(q: u64): string {
   return unsafe { string_from_bytes_unchecked(out) };
 }
 
+function held_cr(s: State): State {
+  return State { ...s, w: gnu.put(s.w, "\r") };
+}
+
 function drain(s: State): State {
   return State { ...s, w: gnu.flush(s.w) };
 }
@@ -578,7 +582,7 @@ pub function main(): i32 {
     i += 1;
   }
   if (st.pending_cr) {
-    st = State { ...st, w: gnu.put(st.w, "\r") };
+    st = held_cr(st);
   }
   gnu.finish(st.w);
   if (!st.ok) {
