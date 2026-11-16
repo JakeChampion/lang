@@ -305,7 +305,7 @@ function waits_on(f: async.Future[i32[]]): i32[] {
   return none;
 }
 
-function woken(f: async.Future[i32[]], at: i32): async.Future[i32[]] {
+function woken(own f: async.Future[i32[]], at: i32): async.Future[i32[]] {
   if let Pending(w, k) = f {
     return k(Woke(at));
   }
