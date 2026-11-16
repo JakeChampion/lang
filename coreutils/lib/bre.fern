@@ -1500,15 +1500,26 @@ function char_holding(text: Input, k: i32, lo: i32, hi: i32): i32 {
 // assertions of the pattern read characters of UTF-8, and the DFA reads
 // the context of one byte.
 function mb_slow(re: Bre, text: Input, lo: i32, hi: i32): boolean {
-  if (!re.mb_word) {
-    return false;
-  }
+  return re.mb_word && has_high(text, lo, hi);
+}
+
+function has_high(text: Input, lo: i32, hi: i32): boolean {
   for k in lo..hi {
     if (text.at(k) >= 128) {
       return true;
     }
   }
   return false;
+}
+
+// The first place at or after `lo` where the literal prefix of the pattern
+// is, and where a match can start, or -1.
+function find_start(re: Bre, text: Input, lo: i32, hi: i32): i32 {
+  let at = find_literal(text, re.pre, lo, hi);
+  while (at >= 0 && mb_skip(re, text, at, hi)) {
+    at = find_literal(text, re.pre, at + 1, hi);
+  }
+  return at;
 }
 
 // The width of the group, alternation and interval operators: ( in ERE, \(
@@ -3111,7 +3122,7 @@ function (re: Bre) search_from_input(text: Input, lo: i32, hi: i32): (i32, i32) 
     return (-1, -1);
   }
   if (re.literal && !re.pre_bol && !re.pre_eol) {
-    let at = find_literal(text, re.pre, lo, hi);
+    let at = find_start(re, text, lo, hi);
     if (at < 0) {
       return (-1, -1);
     }
@@ -3209,9 +3220,9 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
       return bytes_at(text, lo, re.pre);
     }
     if (re.pre_eol) {
-      return bytes_at(text, hi - n, re.pre);
+      return bytes_at(text, hi - n, re.pre) && !mb_skip(re, text, hi - n, hi);
     }
-    return find_literal(text, re.pre, lo, hi) >= 0;
+    return find_start(re, text, lo, hi) >= 0;
   }
   let from = lo;
   if (n > 0) {
@@ -3240,6 +3251,16 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
     let i = from;
     while (i <= hi) {
       if (can_start_at(re, text, i, hi) && !mb_skip(re, text, i, hi) && exec_backtrack(re, text, i, lo, hi).matched) {
+        return true;
+      }
+      i += 1;
+    }
+    return false;
+  }
+  if (re.mb_starts && has_high(text, from, hi)) {
+    let i = from;
+    while (i <= hi) {
+      if (can_start_at(re, text, i, hi) && !mb_skip(re, text, i, hi) && dfa_run(re, text, i, lo, hi, false) >= 0) {
         return true;
       }
       i += 1;
