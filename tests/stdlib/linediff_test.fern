@@ -98,7 +98,32 @@ function test_histogram(): test.TestOutcome {
     return test.fail("myers");
   }
   let h = linediff.Options { ...myers(), algorithm: linediff.HISTOGRAM };
-  return test.assert_eq(hunks(a, b, h, 3), "@@ -1,6 +1,8 @@\n }\n b() {\n }\n-d\n+a() {\n+d\n+b() {\n d\n d\n");
+  return test.assert_eq(hunks(a, b, h, 3), "@@ -1,6 +1,8 @@\n }\n b() {\n }\n+a() {\n d\n+b() {\n d\n d\n");
+}
+
+// A group that the compaction moves gets a Myers diff again with
+// histogram (t4074 of git).
+function test_histogram_rediff(): test.TestOutcome {
+  let h = linediff.Options { ...myers(), algorithm: linediff.HISTOGRAM };
+  let shifted = hunks("A\nx\nA\nA\nA\nx\nA\nA\nA\n", "A\nx\nA\nZ\nA\nx\nA\nA\nA\n", h, 3);
+  if (shifted != "@@ -1,7 +1,7 @@\n A\n x\n A\n-A\n+Z\n A\n x\n A\n") {
+    return test.fail("a shifted group: " + shifted);
+  }
+  let merged = hunks("A\nZ\nB\nx\n", "C\nD\nx\nZ\nE\nx\n", h, 3);
+  if (merged != "@@ -1,4 +1,6 @@\n-A\n+C\n+D\n+x\n Z\n-B\n+E\n x\n") {
+    return test.fail("a merged group with no shift: " + merged);
+  }
+  let plain = hunks("a\nb\nc\na\nb\nc\n", "x\n b\nz\na\nb\nc\n", h, 3);
+  if (plain != "@@ -1,6 +1,6 @@\n-a\n-b\n-c\n+x\n+ b\n+z\n a\n b\n c\n") {
+    return test.fail("no match in the group: " + plain);
+  }
+  let a = "a\nb\nc\na\nb\nc\na\nb\nc\n";
+  let b = "a\nb\nc\na1\na2\na3\nb\nc1\na\nb\nc\n";
+  let forward = hunks(a, b, h, 3);
+  if (forward != "@@ -1,9 +1,11 @@\n a\n b\n c\n-a\n+a1\n+a2\n+a3\n b\n-c\n+c1\n a\n b\n c\n") {
+    return test.fail("a shift of the old side: " + forward);
+  }
+  return test.assert_eq(hunks(b, a, h, 3), "@@ -1,11 +1,9 @@\n a\n b\n c\n-a1\n-a2\n-a3\n+a\n b\n-c1\n+c\n a\n b\n c\n");
 }
 
 // The search of GNU diff marks the same lines, with the flags of both
@@ -131,6 +156,7 @@ function main(): i32 {
   r = r.it("indent heuristic", test_indent_heuristic);
   r = r.it("patience", test_patience);
   r = r.it("histogram", test_histogram);
+  r = r.it("histogram re-diff", test_histogram_rediff);
   r = r.it("gnu search", test_gnu_search);
   r = r.it("common tail", test_common_tail);
   return r.finish();
