@@ -55,7 +55,7 @@ function declarations(output: ssaprepare.Output, row: ssaprepare.Emitted): void 
   check(coherent(output, row, store, tag_store("movq", tag, -4)), false, "tag is not a 32-bit constant");
   check(coherent(output, row, store, store + "\n" + store), false, "ambiguous tag store");
   check(coherent(output, row, store, tag_store("movl", tag, -8)), false, "tag store at the count");
-  check(coherent(output, row, "movq $2, %rdi", "unknown_instruction"), true, "not a machine certificate");
+  check(coherent(output, row, "call " + asmcore.sized_rec_box(2), "unknown_instruction"), true, "not a machine certificate");
   check(ssaprepare.Output { ...output, text: output.text.split(store).join("") }, false, "capture mismatch");
 }
 

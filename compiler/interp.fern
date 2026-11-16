@@ -2283,6 +2283,21 @@ function byte_arrays_result_value(heap: interpheap.Heap, r: Result[u8[][], IoErr
   }
 }
 
+function byte_entries_result_value(heap: interpheap.Heap, r: Result[DirEntryBytes[], IoError]): Value {
+  match (r) {
+    Ok(es) => {
+      let out: Value[] = [];
+      for de in es {
+        out = out.append(v_struct("DirEntryBytes", ["name", "ino", "kind"], [byte_array_value(heap, de.name), v_int64(de.ino), v_uint(de.kind as i32)]));
+      }
+      return ok_value(v_arr_of(heap, out, "DirEntryBytes"));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
 function dir_entries_result_value(heap: interpheap.Heap, r: Result[DirEntry[], IoError]): Value {
   match (r) {
     Ok(es) => {
@@ -3475,6 +3490,7 @@ function call_host_fs_list(heap: interpheap.Heap, name: string, path: string): V
     "read_dir_all" => strings_result_value(heap, read_dir_all(path)),
     "read_dir_ino" => dir_entries_result_value(heap, read_dir_ino(path)),
     "read_dir_ino_all" => dir_entries_result_value(heap, read_dir_ino_all(path)),
+    "read_dir_ino_bytes" => byte_entries_result_value(heap, read_dir_ino_bytes(path)),
     _ => v_err("undefined function: " + name),
   };
 }
@@ -3870,7 +3886,7 @@ function is_handle_method(kind: string, name: string): boolean {
     return true;
   }
   if (kind == "Dir") {
-    return util.has_str(["open_dir", "open_reader", "open_writer", "open_reader_with", "open_writer_with", "entries", "entries_bytes", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
+    return util.has_str(["open_dir", "open_reader", "open_writer", "open_reader_with", "open_writer_with", "entries", "entries_bytes", "entries_ino", "entries_ino_bytes", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
   }
   if (util.has_str(["seek", "flags", "isatty", "fsync", "fdatasync", "syncfs", "drop_cache", "dup_onto"], name)) {
     return true;
@@ -4029,6 +4045,12 @@ function dir_method(heap: interpheap.Heap, d: Dir, name: string, args: Value[]):
   }
   if (name == "entries_bytes") {
     return byte_arrays_result_value(heap, d.entries_bytes());
+  }
+  if (name == "entries_ino_bytes") {
+    return byte_entries_result_value(heap, d.entries_ino_bytes());
+  }
+  if (name == "entries_ino") {
+    return dir_entries_result_value(heap, d.entries_ino());
   }
   if (name == "entries") {
     return strings_result_value(heap, d.entries());

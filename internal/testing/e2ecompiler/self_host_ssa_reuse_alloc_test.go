@@ -10,8 +10,9 @@ import (
 // A reuse allocation tests its token inline (ssa.inline_reuse_call), and calls
 // the helper only for a token of another size. sink of ssaTokenKeepProg keeps
 // such an allocation for a token that is null or has another shape. bump of
-// ssaBoxedCountProg allocates on the null side of a test of its token, so it
-// calls the fresh entry of the helper with no test (ssa.fresh_boxes).
+// ssaBoxedCountProg allocates on the null side of a test of its token
+// (ssa.fresh_boxes). Its size is a constant, so bump calls the routine of a
+// box of three words and does not test a token.
 func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -24,6 +25,7 @@ func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 		t.Fatal(err)
 	}
 	size := map[string]string{"x86-64-linux": "cmpw %si, -4(%rax)", "arm64-linux": "ldurh w30, [x0, #-4]"}
+	box := map[string]string{"x86-64-linux": "call __fern_rec_box_3\n", "arm64-linux": "bl __fern_rec_box_3\n"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			asm, err := os.ReadFile(cli.emit(t, inline, target))
@@ -41,8 +43,8 @@ func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 				t.Fatal(err)
 			}
 			bump := tailCallBody(t, string(asm), "bump")
-			if !strings.Contains(bump, "__fn___fern_alloc_reuse.f") || strings.Contains(bump, size[target]) {
-				t.Fatalf("bump does not call the fresh entry only:\n%s", bump)
+			if !strings.Contains(bump, box[target]) || strings.Contains(bump, "__fn___fern_alloc_reuse") || strings.Contains(bump, size[target]) {
+				t.Fatalf("bump does not make a box of three words only:\n%s", bump)
 			}
 		})
 	}

@@ -576,7 +576,11 @@ pointer that flows through the program points past the header.
   constant. An array has zero in that half, and `__fn___fern_box_dec` reads
   it to tell a box from an array. In a build that counts no allocation, a
   box of 1 to 255 words has a block of n + 1 words, which the two routines
-  take from and give to its free list directly. A build with the sanitizer, the
+  take from and give to its free list directly. On the native targets, a
+  call that knows n calls `__fern_rec_box_n` (`asmcore.sized_rec_box`). That
+  routine has the address of the free list and the size of the block as
+  constants, and goes to `__fern_rec_box` only when the bump leaves its
+  64 KiB line. The output has a routine only for each n that a call names. A build with the sanitizer, the
   quarantine, `-harden` or an allocation profile gives each box the header
   of an array and keeps the tag in the same half. A program can have 32,766
   shapes, and a record can have 65,535 fields. On wasm32 a record keeps its
@@ -612,6 +616,12 @@ pointer that flows through the program points past the header.
   `__fern_rc_is_unique(p)` is 1 only for a live
   heap box with count exactly 1; null and anything below the low-address
   guard answer 0, so it is safe on a slot that may hold a scalar.
+- An inline count or uniqueness test skips an odd address, which is a
+  tagged view, and an address below the guard. The mark 4 (`aligned_rc`)
+  says the value has no tag in bit 1. The mark 8 (`ir.boxed_count`) adds
+  that it is a value of a record or of an enum of boxes. Such a value is
+  never an odd address, so the emitters test only the guard
+  (`ssadeps.even_values`).
 - Releases free at the last count through a size-classed freelist
   (`__fern_arr_dec`, `__fern_rc_dec`); `__fern_alloc_reuse(token, slots)`
   hands a dead box of the right class back as the new allocation and files a

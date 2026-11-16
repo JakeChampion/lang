@@ -5,6 +5,7 @@ import "../lexer";
 import "../parser";
 import "../semlower";
 import "../ssaprepare";
+import "../util";
 import "../typeinfo";
 import "../semtypes";
 import "../ssacreditbound" as bound;
@@ -45,33 +46,45 @@ function kind_of(row: ssaprepare.Emitted, v: i32): i32 {
   return -1;
 }
 
-// Whether `v` is a link loaded from a node: a load, or a phi of loads and of
+// Whether `v` is a link loaded from a node, or a cell of the drop stack: a
+// load, or a phi of loads, of other such phis, of the node of the call and of
 // the integer that a link local holds before the first load.
 function loaded_value(row: ssaprepare.Emitted, v: i32): boolean {
-  let kind = kind_of(row, v);
-  if (kind == 40) {
-    return true;
+  let loaded = false;
+  for at in reached(row, v, []) {
+    let kind = kind_of(row, at);
+    if (kind == 40) {
+      loaded = true;
+    } else if (kind != 8 && kind != 1 && !(kind == 6 && at < row.body.formed.f.nparams)) {
+      return false;
+    }
   }
-  if (kind != 8) {
-    return false;
+  return loaded;
+}
+
+// `v` and each value that a phi among them reads.
+function reached(row: ssaprepare.Emitted, v: i32, seen: i32[]): i32[] {
+  if (util.index_of_i32(seen, v) >= 0) {
+    return seen;
   }
+  let out = seen.append(v);
+  if (kind_of(row, v) == 8) {
+    for a in phi_args(row, v) {
+      out = reached(row, a, out);
+    }
+  }
+  return out;
+}
+
+function phi_args(row: ssaprepare.Emitted, v: i32): i32[] {
   for block in row.body.formed.f.blocks {
     for ins in block.insts {
       if (ins.result == v) {
-        let loaded = false;
-        for a in ins.args {
-          let k = kind_of(row, a);
-          if (k == 40) {
-            loaded = true;
-          } else if (k != 1) {
-            return false;
-          }
-        }
-        return loaded;
+        return ins.args;
       }
     }
   }
-  return false;
+  return [];
 }
 
 function loaded_link(row: ssaprepare.Emitted): void {
