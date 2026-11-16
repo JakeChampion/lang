@@ -874,9 +874,13 @@ function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
   return out;
 }
 
-function spans_hard(hard: boolean[], integer: boolean, cum: i32[], lo: i32, hi: i32, v: i32): boolean {
+// A float value has no cold-call cost: only the exact liveness counts.
+function spans_hard(hard: boolean[], crossing: boolean[], integer: boolean, cum: i32[], lo: i32, hi: i32, v: i32): boolean {
   if (integer) {
     return hard[v];
+  }
+  if (v < crossing.len()) {
+    return crossing[v];
   }
   return spans_call(cum, lo, hi);
 }
@@ -1827,7 +1831,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     }
     let abi_ok = !spans_call(cum_abi, lo[v], hi[v]);
     let soft = cold_calls && oi < split && spans_call(cum_soft, lo[v], hi[v]) && free_s.len() > 0;
-    let keep_caller = spans_hard(hard, oi < split, cum, lo[v], hi[v], v) || soft;
+    let keep_caller = spans_hard(hard, crossing, oi < split, cum, lo[v], hi[v], v) || soft;
     let placed = false;
     let ci = 0;
     while (ci < 5 && !placed) {
@@ -1914,7 +1918,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       continue;
     }
     let pick = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
-    let from_caller = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
+    let from_caller = !spans_hard(hard, crossing, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
     from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
     // A save around a call restores its holder, so a lent interval holds none.
     if (!from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1)) {
@@ -1939,7 +1943,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       }
     }
     if (!from_caller && free_s.len() == 0) {
-      let need_saved = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
+      let need_saved = spans_hard(hard, crossing, oi < split, cum, lo[v], hi[v], v);
       let fa = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lens, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
       let cmp = 0;
       if (fa >= 0) {
