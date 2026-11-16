@@ -107,6 +107,26 @@ trend. `scripts/perf-history metrics` lists what the newest note holds and
 the last 50 main commits (`show METRIC N REV` widens or moves the window). Both
 fetch the notes ref first, so they need the remote; nothing else is hosted.
 
+## The aarch64 `.ir` rows on an x86-64 machine: count with qemu
+
+The Perf lane counts the `aarch64/<name>.ir` rows with callgrind on an arm64
+runner. An x86-64 machine cannot run that. qemu gives the same count: it can
+run one instruction for each translation block and log each block that it
+runs.
+
+```
+./bin/fern -target arm64-linux -o /tmp/b.bin bench/perceus_deriv.fern
+qemu-aarch64 -one-insn-per-tb -d exec,nochain -D /dev/stdout /tmp/b.bin | grep -c '^Trace'
+```
+
+Subtract 2 from the count. On 2026-11-16 the result was the value of the Perf
+lane to the digit for the five `perceus_*` rows and for `record_update`. It
+was 17 to 20 instructions more for `call_overhead`, `enum_match` and
+`int_loop`. The tolerance of a row is 1%. qemu runs about 600,000
+instructions for each second in this mode, so a row of 60 million takes
+about two minutes. The `.text` row is the number of indented lines of
+`./bin/fern -target arm64-linux <file>`.
+
 ## Native compiler and X25519 comparisons
 
 Build two compiler snapshots with `bootstrap/bootstrap.sh distcheck`, then run

@@ -1952,13 +1952,61 @@ function tracked_root(w: Walk, touched: boolean[], v: i32): boolean {
   return o != org_none() && touched[v];
 }
 
-function grow_phis(w: Walk, own on: boolean[]): boolean[] {
+// The values that a return can spend, also when the contract of the function
+// does not say that it hands out a unit.
+function returned_roots(w: Walk): boolean[] {
+  let out = __alloc_bool(w.f.nvals);
+  for b in w.f.blocks {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && b.term.value < w.root.len()) {
+      out = out.with(w.root[b.term.value], true);
+    }
+    for ins in b.insts {
+      if (is_named_op(ins.kind_tag) && ins.str == "ret_word") {
+        for a in ins.args {
+          if (a >= 0 && a < w.root.len()) {
+            out = out.with(w.root[a], true);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// The phis that an operation touches or a return takes, and the phis that
+// feed them. Nothing can spend a unit of another phi, so that phi holds none:
+// each of its inputs keeps its units.
+function spent_phis(w: Walk, touched: boolean[]): boolean[] {
+  let out = __alloc_bool(w.f.nvals);
+  let returned = returned_roots(w);
+  for v in w.phis {
+    out = out.with(v, touched[w.root[v]] || returned[w.root[v]]);
+  }
+  let grown = true;
+  while (grown) {
+    grown = false;
+    for v in w.phis {
+      if (!out[v]) {
+        continue;
+      }
+      for a in def_at(w, v).args {
+        if (a >= 0 && !w.derived[a] && !out[w.root[a]] && def_at(w, w.root[a]).kind_tag == ssa.PHI) {
+          out = out.with(w.root[a], true);
+          grown = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function grow_phis(w: Walk, own on: boolean[], spent: boolean[]): boolean[] {
   let grown = true;
   while (grown) {
     grown = false;
     for b in w.f.blocks {
       for ins in b.insts {
-        if (ins.kind_tag == ssa.PHI && ins.result >= 0 && !on[ins.result] && any_on(w, on, ins.args)) {
+        if (ins.kind_tag == ssa.PHI && ins.result >= 0 && !on[ins.result] && spent[ins.result] && any_on(w, on, ins.args)) {
           on = on.with(ins.result, true);
           grown = true;
         }
@@ -1985,7 +2033,7 @@ function indexes(w: Walk, touched: boolean[]): i32[] {
     on = on.with(v, tracked_root(w, touched, v));
     v += 1;
   }
-  on = grow_phis(w, on);
+  on = grow_phis(w, on, spent_phis(w, touched));
   let idx = util.minus_ones(f.nvals);
   let n = 0;
   for v in 0..f.nvals {

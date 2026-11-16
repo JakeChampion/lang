@@ -576,6 +576,31 @@ function pick(name: string): Case {
         let insts: ssa.SInst[] = [param(0), inst(51, 1, [0], 1, ""), call(2, "__fern_rc_dec", [1]), const_int(3, 0)];
         return Case { f: one_block(1, 4, insts, ret(3)), modes: [borrow], returns_unit: false };
     }
+    if (name == "loop-phi-borrows-a-held-box" || name == "loop-phi-borrows-a-box-never-released" || name == "loop-phi-released-with-its-box") {
+        // The phi walks from the box to its children. Nothing spends the
+        // phi in the first two cases, so the box keeps its unit.
+        let b0 = block(0, [], [param(0), fresh_box(1)], br(1));
+        let b1 = block(1, [0, 2], [inst(8, 2, [1, 3], 0, "")], brif(0, 2, 3));
+        let b2 = block(2, [1], [counted_load(3, 2, 8)], br(1));
+        let end: ssa.SInst[] = [];
+        if (name == "loop-phi-released-with-its-box") {
+            end = end.append(call(6, "__fern_rc_dec", [2]));
+        }
+        if (name != "loop-phi-borrows-a-box-never-released") {
+            end = end.append(call(4, "__fern_rc_dec", [1]));
+        }
+        let b3 = block(3, [1], end.append(const_int(5, 0)), ret(5));
+        return Case { f: func(1, 7, [b0, b1, b2, b3]), modes: [value], returns_unit: false };
+    }
+    if (name == "unknown-contract-returns-a-phi-of-a-fresh-box") {
+        // The driver certifies this case with no contract for the function.
+        // The return can still take the unit of the phi.
+        let b0 = block(0, [], [param(0), const_int(1, 0)], brif(0, 1, 2));
+        let b1 = block(1, [0], [fresh_box(2)], br(3));
+        let b2 = block(2, [0], [], br(3));
+        let b3 = block(3, [1, 2], [inst(8, 3, [2, 1], 0, "")], ret(3));
+        return Case { f: func(1, 4, [b0, b1, b2, b3]), modes: [value], returns_unit: false };
+    }
     if (name == "leak-in-an-endless-loop") {
         let b0 = block(0, [], [], br(1));
         let b1 = block(1, [0, 1], [fresh_box(0)], br(1));
@@ -601,7 +626,8 @@ function main(): i32 {
     if (av[1] == "wasm-frame-view-kept" || av[1] == "wasm-frame-view-released") {
         ops = rcsigs.with_owned_frame_views(ops);
     }
-    let r: rccertify.Report = rccertify.certify(c.f, irops, abis.lookup("case"), abis, rcsigs.table(), ops);
+    let own_abi = if (av[1] == "unknown-contract-returns-a-phi-of-a-fresh-box") { abis.lookup("no such function") } else { abis.lookup("case") };
+    let r: rccertify.Report = rccertify.certify(c.f, irops, own_abi, abis, rcsigs.table(), ops);
     for x in r.findings {
         print(rccertify.render("case", x));
     }
@@ -678,7 +704,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"token-reuse-puts-back-and-stores-elsewhere", nil, 0, ""},
 		{"token-reuse-puts-back-and-stores-elsewhere-unretained", []string{"spent without a unit of v4"}, 0, ""},
 		{"token-reuse-through-a-phi-an-outside-arm-nulls", nil, 1, ""},
-		{"reuse-of-a-loop-box-through-its-token", nil, 1, ""},
+		{"reuse-of-a-loop-box-through-its-token", nil, 0, ""},
 		{"pair-word-settled-past-its-token-test", nil, 0, ""},
 		{"loop-box-copied-under-its-null-token", nil, 0, ""},
 		{"token-box-copied-before-its-test", nil, 0, ""},
@@ -689,6 +715,10 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"unit-held-into-an-exit", nil, 0, ""},
 		{"borrow-released-before-an-exit", []string{"spent without a unit of v0"}, 0, ""},
 		{"leak-in-an-endless-loop", []string{"leaked where it dies of v0"}, 0, ""},
+		{"unknown-contract-returns-a-phi-of-a-fresh-box", nil, 2, ""},
+		{"loop-phi-borrows-a-held-box", nil, 0, ""},
+		{"loop-phi-borrows-a-box-never-released", []string{"of v1"}, 0, ""},
+		{"loop-phi-released-with-its-box", []string{"spent without a unit of v1"}, 1, ""},
 		{"frame-view-kept", nil, 0, ""},
 		{"wasm-frame-view-kept", []string{"leaked at return of v1"}, 0, ""},
 		{"wasm-frame-view-released", nil, 0, ""},

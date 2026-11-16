@@ -116,8 +116,8 @@ pub function eager_slot(rows: Escapes[], row: i32, slot: i32): boolean {
 
 pub struct Slot { row: i32, at: i32 }
 
-// The eager slots that a call of `f` gives a value that lives on, or a value
-// that `f` does not own.
+// The eager slots that a call or a loop of `f` gives a value that lives on,
+// or a value that `f` does not own.
 pub function kept_alive(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): Slot[] {
   let out: Slot[] = [];
   let sc = Scope { rows: rows, ix: ix, me: find(rows, ix, f.graph.name), defs: ssa.inst_defs(f.graph) };
@@ -129,7 +129,7 @@ pub function kept_alive(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
         out = call_kept(out, f, a, sc, Site { block: bi, pos: pos, ins: ins });
       }
       let row = find(rows, ix, ins.str);
-      if (slot_phi(ins) && eager_slot(rows, row, ins.imm) && !phi_owned(f, sc, ins, a.ok)) {
+      if (slot_phi(ins) && eager_slot(rows, row, ins.imm) && (!phi_owned(f, sc, ins, a.ok) || enters_alive(f, a, sc, Site { block: bi, pos: pos, ins: ins }))) {
         out = out.append(Slot { row: row, at: ins.imm });
       }
     }
@@ -138,6 +138,17 @@ pub function kept_alive(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
 }
 
 struct Site { block: i32, pos: i32, ins: ssa.SInst }
+
+// The value that enters a loop slot lives on after the loop, or the frame
+// does not own it. The loop of a function that was inlined gets that value
+// from the caller, as a call does.
+function enters_alive(f: ssasem.Func, a: ssasem.Analysis, sc: Scope, site: Site): boolean {
+  if (site.ins.args.len() == 0) {
+    return false;
+  }
+  let entry = site.ins.args[0];
+  return !(a.ok && !ssasem.used_after(a, site.block, site.pos, entry) && owned_root(f, sc, entry, []));
+}
 
 function call_kept(own out: Slot[], f: ssasem.Func, a: ssasem.Analysis, sc: Scope, site: Site): Slot[] {
   let row = find(sc.rows, sc.ix, site.ins.str);
