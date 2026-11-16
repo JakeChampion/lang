@@ -1,0 +1,15 @@
+// spec: WK-01
+// A `send` parameter must keep a value that can cross a worker boundary, so
+// a function value cannot replace it.
+
+import "std/worker";
+
+function start(send body: () => i32): i32 {
+    let other: () => i32 = (): i32 => 2;
+    body = other;
+    return worker.spawn(body).join();
+}
+
+function main(): i32 {
+    return start((): i32 => 1);
+}

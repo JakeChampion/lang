@@ -47,6 +47,9 @@ function main(): i32 { return g(1); }`,
 			`has type [i32], which cannot cross a worker boundary: a view borrows another value's storage`},
 		{"send_copy_of_cell", `function main(): i32 { let c: Cell[i32] = cell_new(1); let d: Cell[i32] = __send_copy(c); return d.get(); }`,
 			`argument to ` + "`send`" + ` parameter "value" has type Cell[i32], which cannot cross a worker boundary: a Cell is shared by aliasing`},
+		{"assign_to_send_parameter", `function relay(send body: () => i32): i32 { let f: () => i32 = (): i32 => 2; body = f; return spawn(body); }
+function main(): i32 { return relay((): i32 => 1); }`,
+			`argument to ` + "`send`" + ` parameter "body" has type () => i32, which cannot cross a worker boundary: a function value carries its environment`},
 	}
 	for _, tc := range cases {
 		err := checkSource(t, spawnDecl+tc.src)
@@ -67,6 +70,8 @@ func TestSendParameterAdmitsSendSafeValues(t *testing.T) {
 		{"tuple", `function main(): i32 { let p: (i32, string) = (1, "x"); return spawn((): i32 => p.0); }`},
 		{"generic_struct_of_scalars", `function main(): i32 { let p: Pair[i32] = Pair { a: 1, b: 2 }; return spawn((): i32 => p.a + p.b); }`},
 		{"no_captures", `function main(): i32 { return spawn((): i32 => 7); }`},
+		{"forwarded_send_parameter", `function relay(send body: () => i32): i32 { return spawn(body); }
+function main(): i32 { let n: i32 = 1; return relay((): i32 => n + 1); }`},
 		{"send_copy_of_record_and_option", `function main(): i32 { let b: Box = Box { n: 1 }; let c: Box = __send_copy(b); let o: Option[string] = __send_copy(Some("x")); return c.n + b.n; }`},
 	}
 	for _, tc := range cases {

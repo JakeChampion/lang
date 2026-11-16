@@ -184,6 +184,29 @@ type AssocBinding struct {
 	Type Type
 }
 
+// MapTypes is d with f applied to its pinned arguments and to the types of
+// its associated bindings.
+func (d DynTraitType) MapTypes(f func(Type) Type) DynTraitType {
+	out := DynTraitType{Traits: d.Traits}
+	if d.Args != nil {
+		out.Args = make([][]Type, len(d.Args))
+		for i, args := range d.Args {
+			for _, a := range args {
+				out.Args[i] = append(out.Args[i], f(a))
+			}
+		}
+	}
+	if d.AssocBindings != nil {
+		out.AssocBindings = make([][]AssocBinding, len(d.AssocBindings))
+		for i, bs := range d.AssocBindings {
+			for _, b := range bs {
+				out.AssocBindings[i] = append(out.AssocBindings[i], AssocBinding{Name: b.Name, Type: f(b.Type)})
+			}
+		}
+	}
+	return out
+}
+
 func (d DynTraitType) ArgsFor(i int) []Type {
 	if i < 0 || i >= len(d.Args) {
 		return nil

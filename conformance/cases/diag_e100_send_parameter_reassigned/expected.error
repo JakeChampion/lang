@@ -1,0 +1,1 @@
+argument to `send` parameter "body" has type () => i32, which cannot cross a worker boundary: a function value carries its environment

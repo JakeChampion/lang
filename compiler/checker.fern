@@ -20552,7 +20552,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -20822,12 +20822,14 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): Ow
     }
   }
   let bound = ctx.bound;
+  let sends = ctx.sends;
   for p in params {
     if (!util.has_str(bound, p.name)) {
       bound = bound.append(p.name);
     }
+    sends = ow_names_del(sends, p.name);
   }
-  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
+  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced, sends: sends };
   return nested;
 }
 
@@ -25609,7 +25611,7 @@ function send_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
     while (i < c.args.len() && i < flags.len()) {
       if (flags[i]) {
         let pname: string = if (i < names.len()) { names[i] } else { "" };
-        out = util.append_diags(out, send_arg_diags(c.args[i], pname, c, ctx));
+        out = util.append_diags(out, send_arg_diags(c.args[i], pname, c.line, c.col, ctx));
       }
       i += 1;
     }
@@ -25617,14 +25619,19 @@ function send_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   return out;
 }
 
-function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
+function send_arg_diags(arg: ast.Expr, pname: string, line: i32, col: i32, ctx: OwnCtx): util.Diag[] {
   let out: util.Diag[] = [];
+  if let ast.ExprIdent(id) = arg {
+    if (util.has_str(ctx.sends, id.name)) {
+      return out;
+    }
+  }
   let s = ctx.scope;
   let aline = ast.expr_line(arg);
   let acol = ast.expr_col(arg);
   if (aline <= 0) {
-    aline = c.line;
-    acol = c.col;
+    aline = line;
+    acol = col;
   }
   let at = check_expr(arg, s);
   if let ast.ExprLambda(lm) = arg {
@@ -26448,6 +26455,9 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         actx = OwnCtx { ...actx, admit_fields: ow_field_move_fields(a.target, a.value, ctx) };
       }
       let rv = ru_expr(a.value, moved, actx);
+      if (util.has_str(ctx.sends, a.target)) {
+        rv = OwnWalk { ...rv, diags: util.append_diags(rv.diags, send_arg_diags(a.value, a.target, a.line, a.col, ctx)) };
+      }
       if (ow_is_owned(ctx, a.target)) {
         return OwnWalk { moved: ow_moved_del_prefix(ow_moved_del(rv.moved, a.target), a.target), diags: rv.diags };
       }
@@ -26660,6 +26670,18 @@ function ow_moved_del(m: MovedEntry[], name: string): MovedEntry[] {
   return out;
 }
 
+// The `send` parameters of `fn`. Each value of one passed the check of a
+// `send` argument, so the name is send-safe where no binding hides it.
+function ow_send_param_names(fn: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  for p in fn.params {
+    if (p.send) {
+      out = out.append(p.name);
+    }
+  }
+  return out;
+}
+
 function ow_param_names(fn: parser.FuncDecl): string[] {
   let out: string[] = [];
   for p in fn.params {
@@ -26692,7 +26714,7 @@ function ow_shadow_names_ctx(ctx: OwnCtx, names: string[]): OwnCtx {
   }
   let returns = ctx.returns.get();
   return OwnCtx {
-    ...c, owned: ow_names_without(ctx.owned, names), borrowed: ow_names_without(ctx.borrowed, names),
+    ...c, owned: ow_names_without(ctx.owned, names), borrowed: ow_names_without(ctx.borrowed, names), sends: ow_names_without(ctx.sends, names),
     deferred: cell_new(ow_moves_without(ctx.deferred.get(), names)),
     returns: cell_new(OwnReturns { ...returns, moved: ow_moves_without(returns.moved, names) }),
     jumps: ow_fresh_jumps(),
@@ -28550,7 +28572,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
+    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: ow_send_param_names(fn) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, ow_source_diags(r.diags, resolved.bindings));

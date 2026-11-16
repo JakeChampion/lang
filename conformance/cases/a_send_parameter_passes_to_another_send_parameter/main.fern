@@ -1,0 +1,16 @@
+// spec: WK-01
+// A `send` parameter holds a value that passed the check at the call, so a
+// function can give it to the `send` parameter of worker.spawn.
+
+import "std/worker";
+
+function start[T: worker.Send](send body: () => T): worker.Worker[T] {
+    return worker.spawn(body);
+}
+
+function main(): i32 {
+    let n = 41;
+    let w = start((): i32 => n + 1);
+    print(w.join().to_string());
+    return 0;
+}

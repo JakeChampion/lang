@@ -7488,6 +7488,8 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		return out
 	case ast.ProjType:
 		return ast.ProjType{Base: substByName(x.Base, sub), Name: x.Name}
+	case ast.DynTraitType:
+		return x.MapTypes(func(a ast.Type) ast.Type { return substByName(a, sub) })
 	}
 	return t
 }
@@ -7873,6 +7875,8 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		return out
 	case ast.ProjType:
 		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
+	case ast.DynTraitType:
+		return x.MapTypes(func(a ast.Type) ast.Type { return substituteType(a, sub) })
 	}
 	return t
 }
@@ -8282,13 +8286,16 @@ func (c *checker) inStdlibContext() bool {
 	return c.current != nil && strings.HasPrefix(c.current.BodyModule(), "stdlib://")
 }
 
-func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
+// implementsAllDynTraits reports whether the type ct, named tn, implements
+// each trait of dt at its pinned arguments. A generic implementation gives
+// the arguments of the instance ct.
+func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string, ct ast.Type) bool {
 	for i, tr := range dt.Traits {
 		if !c.info.Impls[tr][tn] {
 			return false
 		}
 		if want := dt.ArgsFor(i); len(want) > 0 {
-			if !typeArgsEqual(c.info.ImplTraitArgs[tr][tn], want) {
+			if !typeArgsEqual(c.implTraitArgsFor(tr, tn, ct), want) {
 				return false
 			}
 		}
@@ -8306,7 +8313,7 @@ func (c *checker) canBoxInto(dt ast.DynTraitType, src ast.Type) bool {
 	param, isParam := src.(ast.ParamType)
 	if !isParam {
 		tn, ok := methodTypeName(src)
-		return ok && c.implementsAllDynTraits(dt, tn)
+		return ok && c.implementsAllDynTraits(dt, tn, src)
 	}
 	decl := c.typeParamDecl(param.Name)
 	if decl == nil {
@@ -9488,6 +9495,8 @@ type scope struct {
 	order  []string
 	vars   map[string]*ast.Var
 	consts map[string]bool
+	// sends holds the `send` parameters that this scope binds.
+	sends map[string]bool
 	// rangeBody holds the range index whose loop body this scope is.
 	rangeBody string
 }
@@ -9503,6 +9512,22 @@ func (s *scope) binder(name string) *scope {
 
 func newScope(parent *scope) *scope {
 	return &scope{parent: parent, names: map[string]ast.Type{}}
+}
+
+func (s *scope) markSend(p ast.Param) {
+	if !p.Send {
+		return
+	}
+	if s.sends == nil {
+		s.sends = map[string]bool{}
+	}
+	s.sends[p.Name] = true
+}
+
+// sendParam reports whether name is a `send` parameter where s sees it.
+func (s *scope) sendParam(name string) bool {
+	b := s.binder(name)
+	return b != nil && b.sends[name]
 }
 
 func (s *scope) set(name string, t ast.Type) {
@@ -9781,6 +9806,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
 		root.set(p.Name, p.Type)
+		root.markSend(p)
 	}
 	for _, cp := range fn.ConstParams {
 		if _, dup := root.names[cp]; dup {
@@ -14881,6 +14907,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
 		root.set(p.Name, p.Type)
+		root.markSend(p)
 	}
 
 	captured := map[string]ast.Type{}
@@ -15158,7 +15185,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
-		if !c.implementsAllDynTraits(dt, tn) {
+		if !c.implementsAllDynTraits(dt, tn, n.Target) {
 			c.errfCode(n.P, "E060", "%s does not implement %s, so a '%s' cannot downcast to it", n.Target, c.missingDynTraits(dt, n.Target), dt.String())
 		}
 		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
@@ -15663,7 +15690,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			at := c.checkExpr(n.Args[0], s)
-			c.guardSendArg(n.Args[0], "value", at)
+			c.guardSendArg(n.Args[0], "value", at, s)
 			return at
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
@@ -16339,7 +16366,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
 				if sends := c.sendFuncs[calleeName]; !calleeIsValue && i < len(sends) && sends[i] {
-					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at)
+					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at, s)
 				}
 				if sub == nil {
 					c.refineCallTypeArgsFromDest(n.Args[i], expected)
@@ -16855,6 +16882,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		rt := c.checkExpr(n.Value, s)
 		c.expectedType = nil
 		c.elemHint = nil
+		if id, ok := n.Target.(*ast.Ident); ok && s.sendParam(id.Name) {
+			c.guardSendArg(n.Value, id.Name, rt, s)
+		}
 		if id, ok := n.Target.(*ast.Ident); ok && (c.holdsOpenEnum(lt) || c.litNestedOf[s.lookupVarDecl(id.Name)] != nil) {
 			c.linkLitNestedParts(s.lookupVarDecl(id.Name), n.Value, n.P)
 			// A use of the open local on the right side can give it its type.

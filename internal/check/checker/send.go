@@ -7,8 +7,12 @@ import (
 // A `send` parameter is a worker boundary: its argument is copied into
 // another heap, so the argument's type, and a closure argument's captures
 // and result, must be send-safe (E100). compiler/checker.fern's
-// send_guard_call holds the same rule.
-func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type) {
+// send_guard_call holds the same rule. A `send` parameter of the function
+// is send-safe already, because each value it gets passes this check.
+func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type, s *scope) {
+	if id, ok := arg.(*ast.Ident); ok && s.sendParam(id.Name) {
+		return
+	}
 	if lam, ok := arg.(*ast.Lambda); ok {
 		for _, capture := range lam.Captures {
 			if why := c.sendUnsafeReason(capture.Type, map[string]bool{}); why != "" {

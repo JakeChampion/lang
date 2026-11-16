@@ -3005,6 +3005,7 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
   if (arms.len() == 0) {
     return refused(s, "dyn method has no implementation: " + fa.field);
   }
+  arms = pinned_arms(arms, traits, checked(c, s), s);
   let shape = ssasem.Contract { name: "", params: [], modes: [], result: typeinfo.t_void() };
   for arm in arms {
     let at = ssasem.find_contract(s.contracts, arm);
@@ -3056,6 +3057,28 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
     s = State { ...s, calls: s.calls.append(contract) };
   }
   return define(s, ssasem.call(), run, 0, contract.name, contract.result);
+}
+
+// The arms of a call on a dyn value of a trait with pinned arguments. The
+// instances of a generic implementation all answer the trait. An instance
+// whose method gives another type than the call implements the trait at
+// other arguments, so it is not an arm.
+function pinned_arms(arms: string[], traits: string[], want: typeinfo.Type, s: State): string[] {
+  let pinned = false;
+  for tr in traits {
+    pinned = pinned || bracket_entries(tr).len() > 0;
+  }
+  if (!pinned) {
+    return arms;
+  }
+  let out: string[] = [];
+  for arm in arms {
+    let at = ssasem.find_contract(s.contracts, arm);
+    if (at < 0 || semtypes.equal(s.contracts.list[at].result, want)) {
+      out = out.append(arm);
+    }
+  }
+  return out;
 }
 
 function dyn_arm_error(c: ssasem.Contract, first: ssasem.Contract): string {
@@ -7338,8 +7361,11 @@ function implements_trait(imp: parser.ImplInfo, tr: string): boolean {
   if (args.len() != positional.len()) {
     return false;
   }
+  // An argument that is a type parameter of a generic implementation
+  // takes the pinned type of each instance.
   for i in 0..args.len() {
-    if (!same_modulo_spaces(args[i], positional[i])) {
+    let param = util.has_str(imp.type_params, args[i].trim()) || util.has_str(imp.all_type_params, args[i].trim());
+    if (!param && !same_modulo_spaces(args[i], positional[i])) {
       return false;
     }
   }
