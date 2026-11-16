@@ -186,6 +186,24 @@ fold releases each box while it reads it, and no second walk releases the
 tree. One call that keeps its argument clears the slot for each caller
 (`semsource.without_kept_alive`), and the walk borrows as before.
 
+A loop that `ssasem.tail_recursion` made can be inlined in its caller, and
+then no call is left. The value that enters the loop slot is then the
+argument: a value with a later use clears the slot too (`enters_alive`).
+
+The unit plan lets a loop slot borrow the value that enters it
+(`ssaunits.borrows_entry`). The slot is that of a `tail_recursion` loop or
+the cursor of a `while` loop. Each other argument of the slot is a part of
+the slot. The value that enters has a use after each read of the slot and of
+each value that borrows from the slot (the anchored table of the analysis).
+No return and no other phi takes one of these values. The walk of a list that
+the function keeps then counts nothing
+(`TestSelfHostWalkOfAKeptListBorrows`,
+`TestSelfHostWhileWalkOfAKeptListBorrows`).
+
+`tail_recursion` also takes a self call whose result returns through the phi
+of a join, as in `a && f(x)`: the block of the call returns the result itself
+(`returned_self_calls`).
+
 The inference counts a record, a variant, an owned array, a map or a string
 (`owned_shape`). When a callee gives such a parameter to a sink that consumes
 it, the caller hands over its last unit. The sink then updates or adopts the
@@ -535,7 +553,11 @@ allocation or owned call result is a fresh unit, a counted parameter a unit
 handed in, a load, a borrowed parameter or an address into a box nothing; a retain adds one; a
 release, a move into a callee or container and a return each spend one; at a
 join the counts are met per value, and a disagreement is unproved rather than
-a finding. A load inside the arm a box was proved unique in (the children
+a finding. A phi takes one unit of an input that holds one. The exception is
+a phi that no operation touches, that no return takes, and that feeds no phi
+that is touched or returned: nothing can spend a unit of it, so its inputs
+keep their units (`spent_phis`). The slot of a loop that borrows is such a
+phi. A load inside the arm a box was proved unique in (the children
 release, a reuse token's non-null arm, a `__sem_drop_<T>` body) is the frame's
 to release. A join a reuse token the function branches on decides is walked
 again under each of the token's values: the function pruned to the paths
@@ -580,7 +602,10 @@ pointer that flows through the program points past the header.
   call that knows n calls `__fern_rec_box_n` (`asmcore.sized_rec_box`). That
   routine has the address of the free list and the size of the block as
   constants, and goes to `__fern_rec_box` only when the bump leaves its
-  64 KiB line. The output has a routine only for each n that a call names. A build with the sanitizer, the
+  64 KiB line. The output has a routine only for each n that a call names.
+  A drop that proved such a box unique frees it through
+  `__fn___fern_box_free.u` (`ir.sole_box`), which puts the block on its free
+  list with no test. A build with the sanitizer, the
   quarantine, `-harden` or an allocation profile gives each box the header
   of an array and keeps the tag in the same half. A program can have 32,766
   shapes, and a record can have 65,535 fields. On wasm32 a record keeps its

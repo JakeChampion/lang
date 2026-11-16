@@ -659,7 +659,7 @@ function literals(f: ssasem.Func): boolean[] {
   return out;
 }
 
-function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[] {
+function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[], a: ssasem.Analysis): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
   let cells = ssasem.cell_borrows(f);
   for b in f.graph.blocks {
@@ -674,10 +674,54 @@ function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[
       out = out.with(ins.result, owns);
     }
   }
-  return phi_ownership(f, out, defs);
+  return phi_ownership(f, out, defs, a);
 }
 
-function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boolean[] {
+// A loop slot borrows the value that enters it when the frame holds that
+// value, or the value that it is a part of, after each read of the slot and
+// of each value that borrows from the slot. The held value is then alive for
+// the whole loop, as a parameter that the caller keeps is. Each other
+// argument of the slot is a part of the slot. No return and no other phi
+// takes the slot or a borrow of it, because the borrow would then live past
+// the reads that this function checks.
+function borrows_entry(f: ssasem.Func, defs: ssa.SInst[], a: ssasem.Analysis, owned: boolean[], phi: ssa.SInst): boolean {
+  if (phi.args.len() < 2 || phi.args[0] < 0) {
+    return false;
+  }
+  let held = lent_root(f, defs, phi.args[0]);
+  if (!owned[held]) {
+    return false;
+  }
+  for i in 1..phi.args.len() {
+    if (phi.args[i] < 0 || phi.args[i] == phi.result || lent_root(f, defs, phi.args[i]) != phi.result) {
+      return false;
+    }
+  }
+  let borrowed = __alloc_bool(f.graph.nvals).with(phi.result, true);
+  for k in a.anchored.start[phi.result]..a.anchored.start[phi.result + 1] {
+    borrowed = borrowed.with(a.anchored.at[k], true);
+  }
+  for bi in 0..f.graph.blocks.len() {
+    let b = f.graph.blocks[bi];
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && borrowed[b.term.value]) {
+      return false;
+    }
+    for pos in 0..b.insts.len() {
+      let ins = b.insts[pos];
+      if (ins.result == phi.result) {
+        continue;
+      }
+      for arg in ins.args {
+        if (arg >= 0 && arg < borrowed.len() && borrowed[arg] && (ins.kind_tag == ssa.PHI || !ssasem.used_after(a, bi, pos, held))) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[], analysis: ssasem.Analysis): boolean[] {
   let out = owned;
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -717,6 +761,17 @@ function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boo
             grown = true;
           }
         }
+      }
+    }
+  }
+  if (!analysis.ok) {
+    return out;
+  }
+  let settled = out;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.PHI && settled[ins.result] && borrows_entry(f, defs, analysis, settled, ins)) {
+        out = out.with(ins.result, false);
       }
     }
   }
@@ -3020,7 +3075,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
     return bad(why);
   }
   let defs = ssa.inst_defs(f.graph);
-  let owned = owned_values(f, modes, defs);
+  let owned = owned_values(f, modes, defs, analysis);
   let reachable = ssadeps.reachable_blocks(f.graph);
   let sup = supply_table(f);
   let units = units_of(f, owned, analysis, defs, sup, forced);
@@ -4159,7 +4214,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   }
   let owned = p.owned;
   if (whole || !util.same_i32s(modes, p.modes)) {
-    let units = units_of(f, owned_values(f, modes, defs), analysis, defs, supply_table(f), forced_of(p, f));
+    let units = units_of(f, owned_values(f, modes, defs, analysis), analysis, defs, supply_table(f), forced_of(p, f));
     owned = units.owned;
     if (!util.same_i32s(units.takes, p.takes)) {
       return "tuple take disagrees with the plan";

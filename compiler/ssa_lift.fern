@@ -1912,6 +1912,9 @@ function call_mark(op: ir.Op): i32 {
   if (ir.is_sole(op) && op.str == "__fern_rc_dec") {
     return 5;
   }
+  if (ir.is_sole_box(op) && op.str == "__fern_rc_dec") {
+    return ssa.SOLE_BOX;
+  }
   if (ir.is_shell(op)) {
     return 2;
   }
