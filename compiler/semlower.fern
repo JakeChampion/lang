@@ -38,6 +38,7 @@ struct Rows {
   grows: ssaunits.GrowTable,
   writes: ssaunits.WriteRows,
   fresh: ssaunits.FreshRows,
+  loans: ssaunits.LoanRows,
   pure: util.NameIndex,
   susp: suspend.Set,
   plans: ssaunits.Plan[],
@@ -188,7 +189,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 
 function no_reuse(): Rows {
   let no_names: string[] = [];
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), writes: ssaunits.no_writes(), fresh: ssaunits.no_fresh(), pure: util.name_index(no_names), susp: suspend.none(), plans: [], why: [] };
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), writes: ssaunits.no_writes(), fresh: ssaunits.no_fresh(), loans: ssaunits.no_loans(), pure: util.name_index(no_names), susp: suspend.none(), plans: [], why: [] };
 }
 
 function plan_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
@@ -221,7 +222,8 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
     at += 1;
   }
   let writes = ssaunits.write_rows(keys, funcs);
-  let views = ssarc.schema_views(keys, funcs, writes);
+  let loans = ssaunits.loan_rows(keys, funcs, running_bodies(mod, built, keys));
+  let views = ssarc.schema_views(keys, funcs, writes, loans);
   let plans: ssaunits.Plan[] = [];
   let tables_agree = ssaunits.write_tables_agree(prev.writes, writes);
   i = 0;
@@ -229,24 +231,33 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
     plans = plans.append(base_plan(prev, changed, i, produced_at(built, mod, i), views[i], tables_agree));
     i += 1;
   }
-  let fresh = ssaunits.fresh_rows(keys, funcs, plans);
+  let fresh = ssaunits.fresh_rows(keys, funcs, plans, loans);
   for i in 0..funcs.len() {
-    plans = plans.with(i, ssaunits.with_fresh(plans[i], funcs[i], fresh));
+    plans = plans.with(i, ssaunits.with_fresh(plans[i], funcs[i], fresh, loans));
   }
   let grows = ssaunits.grow_table(keys, funcs, plans);
   let held = false;
   for k in 0..funcs.len() {
     let forced = ssaunits.grow_holds(funcs[k], plans[k], grows);
     if (ssaunits.count_true(forced) > 0) {
-      plans = plans.with(k, ssaunits.with_fresh(held_plan(produced_at(built, mod, k), views[k], forced), funcs[k], fresh));
+      plans = plans.with(k, ssaunits.with_fresh(held_plan(produced_at(built, mod, k), views[k], forced), funcs[k], fresh, loans));
       held = true;
     }
   }
   if (held) {
     grows = ssaunits.grow_table(keys, funcs, plans);
   }
-  r = Rows { ...r, grows: grows, writes: writes, fresh: fresh, pure: pure_rows(keys, funcs), susp: suspend.classify(keys, funcs), plans: plans };
+  r = Rows { ...r, grows: grows, writes: writes, fresh: fresh, loans: loans, pure: pure_rows(keys, funcs), susp: suspend.classify(keys, funcs), plans: plans };
   return Planned { r: r, views: views };
+}
+
+function running_bodies(mod: parser.Module, built: semsource.Built, keys: string[]): boolean[] {
+  let lowered = semsource.lowered_names();
+  let out: boolean[] = [];
+  for i in 0..keys.len() {
+    out = out.append(semsource.body_runs(produced_at(built, mod, i), keys[i], lowered));
+  }
+  return out;
 }
 
 function held_plan(p: semsource.Produced, view: ssaunits.SchemaView, forced: boolean[]): ssaunits.Plan {
@@ -261,7 +272,8 @@ function held_plan(p: semsource.Produced, view: ssaunits.SchemaView, forced: boo
 }
 
 function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced, view: ssaunits.SchemaView, tables_agree: boolean): ssaunits.Plan {
-  if (plan_reusable(prev, changed, i) && tables_agree && ssaunits.written_rows_agree(prev.writes, view.writes, ssaunits.grow_callees(p.func))) {
+  let callees = ssaunits.grow_callees(p.func);
+  if (plan_reusable(prev, changed, i) && tables_agree && ssaunits.written_rows_agree(prev.writes, view.writes, callees) && ssaunits.loan_rows_agree(prev.loans, view.loans, callees)) {
     return prev.plans[i];
   }
   return produced_plan(p, view);
@@ -274,7 +286,7 @@ function relowered(built: semsource.Built, mod: parser.Module, inferred: Planned
     let p = produced_at(built, mod, i);
     let callees = ssaunits.grow_callees(p.func);
     out = out.append(!plan_reusable(prev, changed, i) || !ssaunits.grow_rows_agree(prev.grows, inferred.r.grows, callees) || !ssaunits.fresh_rows_agree(prev.fresh, inferred.r.fresh, callees)
-      || !tables_agree || !ssaunits.written_rows_agree(prev.writes, inferred.r.writes, callees));
+      || !tables_agree || !ssaunits.written_rows_agree(prev.writes, inferred.r.writes, callees) || !ssaunits.loan_rows_agree(prev.loans, inferred.r.loans, callees));
   }
   return out;
 }

@@ -92,7 +92,7 @@ function prunes(o: Opts): boolean {
 
 // True when the walk must find each commit before it shows one.
 pub function must_limit(o: Opts): boolean {
-  return o.cherry_pick || o.cherry_mark || o.ancestry || o.by_decoration || o.simplify_merges || o.line && o.rewrite;
+  return o.left_only || o.right_only || o.cherry_pick || o.cherry_mark || o.ancestry || o.by_decoration || o.simplify_merges || o.line && o.rewrite;
 }
 
 // A commit of the list, with its committer date.

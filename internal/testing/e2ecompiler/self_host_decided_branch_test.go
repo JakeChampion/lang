@@ -56,18 +56,22 @@ function main(): i32 {
   return bad;
 }`
 
-var shapeTestRe = regexp.MustCompile(`cmpq \$(\d+), `)
+var shapeTestRe = regexp.MustCompile(`cmp[lq] \$(\d+), `)
 
-func variantTests(body string) map[string]int {
-	// Shapes follow the declarations in decidedBranchShapeSrc.
+// A narrow enum field shares a word with its neighbours, so a match tests its index with a byte compare.
+var indexTestRe = regexp.MustCompile(`cmpb \$(\d+), `)
+
+func variantTests(body string, index []string) map[string]int {
+	// Shapes follow the declarations in decidedBranchShapeSrc. Color and i32
+	// share a word of Node, and Shade and i32 share the word of Patch.
 	shapes := []struct {
 		name  string
 		words int
 	}{
 		{"Color$Red", 1}, {"Color$Black", 1},
 		{"Shade$Light", 1}, {"Shade$Mid", 1}, {"Shade$Dark", 1},
-		{"Tree$Node", 4}, {"Tree$Leaf", 1},
-		{"Swatch$Patch", 2}, {"Swatch$Blank", 1},
+		{"Tree$Node", 3}, {"Tree$Leaf", 1},
+		{"Swatch$Patch", 1}, {"Swatch$Blank", 1},
 	}
 	names := map[int]string{}
 	for i, shape := range shapes {
@@ -76,7 +80,19 @@ func variantTests(body string) map[string]int {
 	out := map[string]int{}
 	for _, m := range shapeTestRe.FindAllStringSubmatch(body, -1) {
 		tag, _ := strconv.Atoi(m[1])
-		out[names[tag]]++
+		if name, ok := names[tag]; ok {
+			out[name]++
+		} else if tag >= 1<<16 {
+			out["tag "+m[1]]++
+		}
+	}
+	for _, m := range indexTestRe.FindAllStringSubmatch(body, -1) {
+		i, _ := strconv.Atoi(m[1])
+		name := "index " + m[1]
+		if i < len(index) {
+			name = index[i]
+		}
+		out[name]++
 	}
 	return out
 }
@@ -88,8 +104,12 @@ func TestSelfHostDecidedBranchShapeX86_64(t *testing.T) {
 		"kind":   {"Tree$Node": 1, "Color$Red": 1},
 		"weight": {"Swatch$Patch": 1, "Shade$Light": 1, "Shade$Mid": 1},
 	}
+	index := map[string][]string{
+		"kind":   {"Color$Red", "Color$Black"},
+		"weight": {"Shade$Light", "Shade$Mid", "Shade$Dark"},
+	}
 	for fn, w := range want {
-		got := variantTests(fnText(t, asm, fn))
+		got := variantTests(fnText(t, asm, fn), index[fn])
 		for name, n := range w {
 			if got[name] != n {
 				t.Errorf("%s tests %s %d times, want %d: %v", fn, name, got[name], n, got)

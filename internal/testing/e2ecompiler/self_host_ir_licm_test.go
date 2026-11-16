@@ -73,7 +73,7 @@ var licmPrograms = []struct {
 		3, 1, 0},
 	{"mutated-operand",
 		`function grow(a: string): i32 { let s: string = a; let i: i32 = 0; while (i < s.len()) { if (i == 0) { s = a + "x"; } i = i + 1; } return i; } function main(): i32 { return grow("ab"); }`,
-		3, 0, 1},
+		3, 1, 1},
 	{"body-only",
 		`function total(s: string, k: i32): i32 { let i: i32 = 0; let n: i32 = 0; while (i < k) { n = n + s.len(); i = i + 1; } return n; } function main(): i32 { return total("abc", 4); }`,
 		12, 0, 1},
@@ -119,7 +119,8 @@ func asmLenShape(asm string, marker func(string) bool, loopTop func(string) (str
 	return outside, inside
 }
 
-var selfHostLenRead = regexp.MustCompile(`^movq 8\(%[a-z0-9]+\), %[a-z0-9]+$`)
+// A compare can read the length from memory, so a `cmpq` with an 8(base) operand counts as a read.
+var selfHostLenRead = regexp.MustCompile(`^(movq|cmpq) 8\(%[a-z0-9]+\), %[a-z0-9]+$|^cmpq %[a-z0-9]+, 8\(%[a-z0-9]+\)$`)
 
 var selfHostJump = regexp.MustCompile(`^j[a-z]+ (\.Lssa_\S+)$`)
 

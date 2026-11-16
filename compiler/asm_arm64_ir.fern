@@ -5441,6 +5441,13 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     let ii = 0;
     let tailed = false;
     while (ii < blk.insts.len() - fu.n) {
+      // The pool goes before an instruction, so the branch over it never lands on a jump.
+      if (pool_insts >= 256) {
+        let after_pool = asmcore.lab_new(s, lp + "pool_" + util.i32_to_string(pos + ii));
+        s = ssa_b(after_pool.state, after_pool.lab).write("    .ltorg\n");
+        s = s.lab_def(after_pool.lab);
+        pool_insts = 0;
+      }
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins = blk.insts[ii];
       if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
@@ -5453,12 +5460,6 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
       }
       ii += 1;
       pool_insts += 1;
-      if (pool_insts == 256) {
-        let after_pool = asmcore.lab_new(s, lp + "pool_" + util.i32_to_string(pos + ii));
-        s = ssa_b(after_pool.state, after_pool.lab).write("    .ltorg\n");
-        s = s.lab_def(after_pool.lab);
-        pool_insts = 0;
-      }
     }
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
     s = asmcore.ssa_fused_loc(prepared.source, blk, ii, tailed, s);
@@ -5569,7 +5570,8 @@ pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physica
 pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let body = ircore.body_for_emit(label_name, r);
   if (weak) {
-    s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".k\n");
+    let sym = "__fn_" + asmcore.sanitize_label(label_name);
+    s = s.write(".weak " + sym + "\n.weak " + sym + ".k\n.weak " + sym + ".r\n");
   }
   irverifygate.verify_or_refuse(label_name, body.ops, body.n_params, body.n_locals, vgate);
   return emit_ssa_function(body, selected, pre, label_name, s, vgate);
