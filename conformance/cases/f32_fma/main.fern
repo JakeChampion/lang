@@ -1,4 +1,5 @@
 import "std/i32";
+import "std/f32";
 
 // __fma_f32(a, b, c) rounds a * b + c one time. The plain a * b + c rounds
 // the product first. An f64 fused multiply-add that then rounds to f32 also
@@ -15,7 +16,7 @@ function bits(x: f32): string {
 
 function show(name: string, a: f32, b: f32, c: f32): void {
   let v = __f32x4_mul_add(__f32x4_of(a, a, c, b), __f32x4_of(b, b, a, a), __f32x4_of(c, c, b, c));
-  print(name + " " + bits(__fma_f32(a, b, c)) + " " + bits(__f32x4_lane(v, 0)) + " " + bits(__f32x4_lane(v, 3)) + " " + bits(a * b + c));
+  print(name + " " + bits(__fma_f32(a, b, c)) + " " + bits(a.mul_add(b, c)) + " " + bits(__f32x4_lane(v, 0)) + " " + bits(__f32x4_lane(v, 3)) + " " + bits(a * b + c));
 }
 
 // Each sum is held in a register across the loop: in the first factor, in
