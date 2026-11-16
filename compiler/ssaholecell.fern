@@ -1,0 +1,459 @@
+import "./util";
+import "./ssa";
+
+// A cons-tail loop builds its result from the front. Each turn fills the
+// hole of the turn before it with a new box. The first fill has no hole: it
+// gives the result. So each fill tested that the hole is null.
+//
+// `cells` gives the loop a cell in the frame for the result. The hole starts
+// at the address of the cell, so each fill is one store with no test. A
+// return of the result reads the cell.
+
+// A fill. test, empty, store and join are block positions: test ends in the
+// null test of the hole, empty is its null side, store holds the store to
+// the hole, and join takes the result of the fill in the phi `result`. That
+// phi takes the stored value from the null side and `carrier`, the result
+// before the fill, from the other side. arms holds each block between the
+// test and the join.
+struct Fill { test: i32, empty: i32, store: i32, join: i32, result: i32, carrier: i32, arms: i32[] }
+
+function no_fill(): Fill {
+  return Fill { test: -1, empty: -1, store: -1, join: -1, result: -1, carrier: -1, arms: [] };
+}
+
+// hole is the phi of the hole and head the position of its block. offset is
+// the offset of each store. web holds each phi that carries the result.
+// starts says that a return can read the result before a fill.
+struct Loop { hole: i32, head: i32, offset: i32, fills: Fill[], web: i32[], starts: boolean }
+
+function no_loop(): Loop {
+  return Loop { hole: -1, head: -1, offset: 0, fills: [], web: [], starts: false };
+}
+
+pub function cells(f: ssa.SFunc): ssa.SFunc {
+  let g = f;
+  for number in 0..4 {
+    let site = find_loop(g);
+    if (site.hole < 0) {
+      return g;
+    }
+    g = ssa.prune_dead(with_cell(g, site, number));
+  }
+  return g;
+}
+
+function is_zero(defs: ssa.SInst[], v: i32): boolean {
+  return v >= 0 && v < defs.len() && zero_const(defs[v]);
+}
+
+function zero_const(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.CONST_INT && ins.imm == 0 && ins.str == "" && ins.result >= 0;
+}
+
+// A store of a whole word at a constant offset of a box.
+function plain_store(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.ST_AT && ins.args.len() == 2 && ins.str == "" && ins.args[0] >= 0;
+}
+
+function has_store_and_phi(f: ssa.SFunc): boolean {
+  let stores = false;
+  let phis = false;
+  for b in f.blocks {
+    for ins in b.insts {
+      stores = stores || plain_store(ins);
+      phis = phis || ins.kind_tag == ssa.PHI;
+    }
+  }
+  return stores && phis;
+}
+
+function takes_null(phi: ssa.SInst, zeros: boolean[]): boolean {
+  for a in phi.args {
+    if (a >= 0 && zeros[a]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether a phi of f takes a null and is the base of a store. A function
+// with no such phi has no hole, and the answer costs two arrays.
+function may_fill(f: ssa.SFunc): boolean {
+  if (!has_store_and_phi(f)) {
+    return false;
+  }
+  let zeros = __alloc_bool(f.nvals);
+  let bases = __alloc_bool(f.nvals);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (zero_const(ins)) {
+        zeros = zeros.with(ins.result, true);
+      }
+      if (plain_store(ins)) {
+        bases = bases.with(ins.args[0], true);
+      }
+    }
+  }
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.PHI && ins.result >= 0 && bases[ins.result] && takes_null(ins, zeros)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function find_loop(f: ssa.SFunc): Loop {
+  if (!may_fill(f)) {
+    return no_loop();
+  }
+  let defs = ssa.inst_defs(f);
+  let at = ssa.block_positions(f);
+  let uses = ssa.use_counts(f);
+  for head in 0..f.blocks.len() {
+    for ins in f.blocks[head].insts {
+      if (ins.kind_tag != ssa.PHI || !starts_null(defs, ins)) {
+        continue;
+      }
+      let site = hole_loop(f, at, defs, uses, head, ins.result);
+      if (site.hole >= 0) {
+        return site;
+      }
+    }
+  }
+  return no_loop();
+}
+
+function starts_null(defs: ssa.SInst[], phi: ssa.SInst): boolean {
+  for a in phi.args {
+    if (is_zero(defs, a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// What reads the hole h. ok is false when a use is not the null test of a
+// fill or a store. stores holds the block of each store.
+struct Reads { ok: boolean, fills: Fill[], stores: i32[], offset: i32 }
+
+function hole_reads(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], uses: i32[], h: i32): Reads {
+  let out = Reads { ok: true, fills: [], stores: [], offset: -1 };
+  let bad = Reads { ...out, ok: false };
+  for bi in 0..f.blocks.len() {
+    let b = f.blocks[bi];
+    for ins in b.insts {
+      if (ins.result == h || util.index_of_i32(ins.args, h) < 0) {
+        continue;
+      }
+      if (plain_store(ins) && ins.args[0] == h && ins.args[1] != h) {
+        if (out.offset >= 0 && ins.imm != out.offset || ins.imm < 0 || ins.imm >= 4096) {
+          return bad;
+        }
+        out = Reads { ...out, stores: out.stores.append(bi), offset: ins.imm };
+        continue;
+      }
+      let fill = fill_at(f, at, defs, uses, bi, ins, h);
+      if (fill.test < 0) {
+        return bad;
+      }
+      out = Reads { ...out, fills: out.fills.append(fill) };
+    }
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value == h) {
+      return bad;
+    }
+  }
+  return out;
+}
+
+// The loop of the hole h, when each use of h is the null test of a fill or
+// its store, and the results of the fills go only to each other and to a
+// return.
+function hole_loop(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], uses: i32[], head: i32, h: i32): Loop {
+  let none = no_loop();
+  let reads = hole_reads(f, at, defs, uses, h);
+  if (!reads.ok || reads.fills.len() == 0 || reads.stores.len() != reads.fills.len()) {
+    return none;
+  }
+  for fill in reads.fills {
+    if (f.blocks[fill.store].insts[0].imm != reads.offset) {
+      return none;
+    }
+  }
+  let web = result_web(f, defs, reads.fills);
+  if (web.len() == 0 || !edges_agree(f, at, defs, head, h, reads.fills, web)) {
+    return none;
+  }
+  return Loop { hole: h, head: head, offset: reads.offset, fills: reads.fills, web: web, starts: returns_carrier(f, reads.fills, web) };
+}
+
+// The compare `ins` tests the hole h against null, and b branches on it.
+function null_branch(defs: ssa.SInst[], uses: i32[], b: ssa.SBlock, ins: ssa.SInst, h: i32): boolean {
+  if (ins.kind_tag != ssa.BINARY || ins.str != "eq" || ins.args.len() != 2 || ins.args[0] != h || !is_zero(defs, ins.args[1])) {
+    return false;
+  }
+  return b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == ins.result && uses[ins.result] == 1 && b.term.t != b.term.f;
+}
+
+// A block with one predecessor that ends in a jump and holds `count`
+// instructions.
+function arm_of(b: ssa.SBlock, count: i32): boolean {
+  return b.preds.len() == 1 && b.insts.len() == count && b.term.kind_tag == ssa.TERM_BR;
+}
+
+// The fill that the compare `ins` of the block at bi decides: the block ends
+// in a branch on `h == 0`, its null side is empty, its other side stores to
+// h, and both sides jump to a join whose one phi takes the stored value from
+// the null side.
+function fill_at(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], uses: i32[], bi: i32, ins: ssa.SInst, h: i32): Fill {
+  let none = no_fill();
+  let b = f.blocks[bi];
+  if (!null_branch(defs, uses, b, ins, h)) {
+    return none;
+  }
+  let e = ssa.position_of(at, b.term.t);
+  let s = ssa.position_of(at, b.term.f);
+  if (e < 0 || s < 0 || !arm_of(f.blocks[e], 0) || !arm_of(f.blocks[s], 1)) {
+    return none;
+  }
+  let st = f.blocks[s].insts[0];
+  if (!plain_store(st) || st.args[0] != h) {
+    return none;
+  }
+  let arms = passed_on(f, at, [e], e);
+  let last_empty = f.blocks[arms[arms.len() - 1]];
+  arms = passed_on(f, at, arms.append(s), s);
+  let last_store = f.blocks[arms[arms.len() - 1]];
+  let j = ssa.position_of(at, last_empty.term.target);
+  if (j < 0 || last_store.term.target != last_empty.term.target || util.index_of_i32(arms, j) >= 0) {
+    return none;
+  }
+  return joined(f.blocks[j], Fill { ...none, test: bi, empty: e, store: s, join: j, arms: arms }, [last_empty.id, last_store.id], st.args[1]);
+}
+
+// `fill` with the result and the carrier that the join jb gives it. sides
+// holds the block that ends the null side and the block that ends the store
+// side. A fill with test -1 when jb is not the join of only these two, or
+// does not have one phi that takes `stored` from the null side.
+function joined(jb: ssa.SBlock, fill: Fill, sides: i32[], stored: i32): Fill {
+  let none = no_fill();
+  let es = ssa.pred_slot(jb, sides[0]);
+  let ss = ssa.pred_slot(jb, sides[1]);
+  if (jb.preds.len() != 2 || es < 0 || ss < 0 || es == ss) {
+    return none;
+  }
+  let out = fill;
+  for phi in jb.insts {
+    if (phi.kind_tag != ssa.PHI) {
+      continue;
+    }
+    if (out.result >= 0 || phi.args[es] != stored || phi.args[ss] == stored) {
+      return none;
+    }
+    out = Fill { ...out, result: phi.result, carrier: phi.args[ss] };
+  }
+  if (out.result < 0) {
+    return none;
+  }
+  return out;
+}
+
+// `arms` with each empty block that only passes the jump of the block at
+// `from` on: it has one predecessor and no instruction.
+function passed_on(f: ssa.SFunc, at: i32[], own arms: i32[], from: i32): i32[] {
+  let p = from;
+  while (arms.len() < 16) {
+    let t = ssa.position_of(at, f.blocks[p].term.target);
+    if (t < 0 || f.blocks[p].term.kind_tag != ssa.TERM_BR || !arm_of(f.blocks[t], 0) || util.index_of_i32(arms, t) >= 0) {
+      return arms;
+    }
+    arms = arms.append(t);
+    p = t;
+  }
+  return arms;
+}
+
+function is_result(fills: Fill[], v: i32): boolean {
+  for fill in fills {
+    if (fill.result == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The results of the fills and each phi that carries one of them. Empty when
+// a carrier is not a phi, or when something other than a phi of the web or a
+// return reads a value of the web.
+function result_web(f: ssa.SFunc, defs: ssa.SInst[], fills: Fill[]): i32[] {
+  let web: i32[] = [];
+  for fill in fills {
+    web = web.append(fill.result);
+  }
+  for fill in fills {
+    if (!is_zero(defs, fill.carrier) && util.index_of_i32(web, fill.carrier) < 0) {
+      web = web.append(fill.carrier);
+    }
+  }
+  for k in fills.len()..64 {
+    if (k >= web.len()) {
+      break;
+    }
+    let phi = defs[web[k]];
+    if (phi.kind_tag != ssa.PHI) {
+      return [];
+    }
+    for a in phi.args {
+      if (a >= 0 && !is_zero(defs, a) && util.index_of_i32(web, a) < 0) {
+        web = web.append(a);
+      }
+    }
+  }
+  if (web.len() >= 64 || read_outside(f, web)) {
+    return [];
+  }
+  return web;
+}
+
+// Whether something other than a phi of the web or a return reads a value of
+// the web.
+function read_outside(f: ssa.SFunc, web: i32[]): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      let inside = ins.kind_tag == ssa.PHI && util.index_of_i32(web, ins.result) >= 0;
+      for a in ins.args {
+        if (!inside && util.index_of_i32(web, a) >= 0) {
+          return true;
+        }
+      }
+    }
+    if (b.term.kind_tag == ssa.TERM_BRIF && util.index_of_i32(web, b.term.cond) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Each edge that gives the hole a null gives each carrier in the block of the
+// hole a null too, and no such edge comes from an arm of a fill.
+function edges_agree(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], head: i32, h: i32, fills: Fill[], web: i32[]): boolean {
+  let hb = f.blocks[head];
+  let hole = defs[h];
+  for s in 0..hb.preds.len() {
+    let null = is_zero(defs, hole.args[s]);
+    let p = ssa.position_of(at, hb.preds[s]);
+    if (p < 0) {
+      return false;
+    }
+    for fill in fills {
+      if (null && util.index_of_i32(fill.arms, p) >= 0) {
+        return false;
+      }
+    }
+    for ins in hb.insts {
+      if (ins.kind_tag == ssa.PHI && util.index_of_i32(web, ins.result) >= 0 && is_zero(defs, ins.args[s]) != null) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Whether a return gives a carrier and not the result of a fill. The cell
+// then gets a null where the hole starts.
+function returns_carrier(f: ssa.SFunc, fills: Fill[], web: i32[]): boolean {
+  for b in f.blocks {
+    if (b.term.kind_tag == ssa.TERM_RET && util.index_of_i32(web, b.term.value) >= 0 && !is_result(fills, b.term.value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The instructions that give the hole its start in a predecessor of its
+// block: the address of the cell in the value `id`, and a null in the cell
+// when a return can read it before a fill.
+function start_of(site: Loop, number: i32, id: i32): ssa.SInst[] {
+  let out = [ssa.frame_cell(id, number, site.offset)];
+  if (site.starts) {
+    out = out.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: id + 1, args: [], imm: 0, str: "" });
+    out = out.append(ssa.SInst { kind_tag: ssa.ST_AT, result: id + 2, args: [id, id + 1], imm: site.offset, str: "" });
+  }
+  return out;
+}
+
+// The block b with no phi of the web, and with the phi of the hole reading
+// the cell where it read a null. An edge of slot s starts the hole in the
+// value first + 3 * s.
+function without_web(b: ssa.SBlock, defs: ssa.SInst[], site: Loop, first: i32): ssa.SInst[] {
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    if (ins.kind_tag == ssa.PHI && util.index_of_i32(site.web, ins.result) >= 0) {
+      continue;
+    }
+    if (ins.result != site.hole) {
+      insts = insts.append(ins);
+      continue;
+    }
+    let args = ins.args;
+    for s in 0..args.len() {
+      if (is_zero(defs, args[s])) {
+        args = args.with(s, first + 3 * s);
+      }
+    }
+    insts = insts.append(ssa.SInst { ...ins, args: args });
+  }
+  return insts;
+}
+
+// f with the cell `number`. Each predecessor slot of the block of the hole
+// has three new values, and each block has two for the read at its return.
+function with_cell(f: ssa.SFunc, site: Loop, number: i32): ssa.SFunc {
+  let defs = ssa.inst_defs(f);
+  let gone = __alloc_bool(f.blocks.len());
+  let filled = util.minus_ones(f.blocks.len());
+  let joined_by = util.minus_ones(f.blocks.len());
+  for k in 0..site.fills.len() {
+    let fill = site.fills[k];
+    for arm in fill.arms {
+      gone = gone.with(arm, true);
+    }
+    filled = filled.with(fill.test, k);
+    joined_by = joined_by.with(fill.join, k);
+  }
+  let head = f.blocks[site.head];
+  let hole = defs[site.hole];
+  let reads = f.nvals + 3 * head.preds.len();
+  let blocks: ssa.SBlock[] = [];
+  for bi in 0..f.blocks.len() {
+    if (gone[bi]) {
+      continue;
+    }
+    let b = f.blocks[bi];
+    let insts = without_web(b, defs, site, f.nvals);
+    let term = b.term;
+    let preds = b.preds;
+    if (filled[bi] >= 0) {
+      let fill = site.fills[filled[bi]];
+      insts = insts.append(f.blocks[fill.store].insts[0]);
+      term = ssa.t_br(f.blocks[fill.join].id);
+    }
+    if (joined_by[bi] >= 0) {
+      preds = [f.blocks[site.fills[joined_by[bi]].test].id];
+    }
+    for s in 0..head.preds.len() {
+      if (head.preds[s] == b.id && is_zero(defs, hole.args[s])) {
+        insts = util.append_all(insts, start_of(site, number, f.nvals + 3 * s));
+      }
+    }
+    if (term.kind_tag == ssa.TERM_RET && util.index_of_i32(site.web, term.value) >= 0) {
+      let cell = reads + 2 * bi;
+      insts = insts.append(ssa.frame_cell(cell, number, site.offset));
+      insts = insts.append(ssa.SInst { kind_tag: ssa.LD_AT, result: cell + 1, args: [cell], imm: site.offset, str: "" });
+      term = ssa.STerm { ...term, value: cell + 1 };
+    }
+    blocks = blocks.append(ssa.SBlock { id: b.id, insts: insts, term: term, preds: preds });
+  }
+  return ssa.SFunc { ...f, nvals: reads + 2 * f.blocks.len(), blocks: blocks };
+}
