@@ -899,7 +899,7 @@ function drop_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
       r = emit(r, ir.op_if(0));
-      r = drop_record_fields(r, slot, v.fields, scratch, f, false, false);
+      r = drop_record_fields(r, slot, v.fields, scratch, f, false, false, false);
       open += 1;
     }
   }
@@ -1128,7 +1128,9 @@ function drop_tuple_fields(own r: irtables.LowerState, slot: i32, tup: typeinfo.
 }
 
 // A field of a taking environment can be 0, so its load is not marked counted.
-function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean, takes: boolean): irtables.LowerState {
+// A record of a `@secret` struct zeroes each numeric array that it holds
+// alone before the array goes back to the allocator.
+function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean, takes: boolean, secret: boolean): irtables.LowerState {
   let child = scratch;
   r = reserve(r, child + 1);
   for i in 0..fields.len() {
@@ -1144,10 +1146,33 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
       r = emit(r, ir.op_store_local(child));
+      let shift = ssasem.elem_shift(fields[i].ty);
+      if (secret && shift >= 0) {
+        r = wipe_sole(r, child, shift);
+      }
       r = drop_value(r, child, fields[i].ty, child + 1, f);
     }
   }
   return r;
+}
+
+// Zeroes the elements of the array in `slot` when no other value holds it.
+// The elements of an array start one word after its box.
+function wipe_sole(own r: irtables.LowerState, slot: i32, shift: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_const_i32(8));
+  r = emit(r, ir.op_raw_addr());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_const_i32(shift));
+  r = emit(r, ir.op_bin("shl", 0, false));
+  r = emit(r, ir.op_memset());
+  r = emit(r, ir.op_drop());
+  return emit(r, ir.op_end());
 }
 
 function drops(own r: irtables.LowerState, step: ssaunits.Step, f: ssasem.Func, p: ssaunits.Plan, links: i32[]): irtables.LowerState {
@@ -1645,7 +1670,7 @@ struct SchemaSeen {
 
 struct ViewStep { seen: SchemaSeen, view: ssaunits.SchemaView }
 
-pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits.WriteRows): ssaunits.SchemaView[] {
+pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits.WriteRows, loans: ssaunits.LoanRows): ssaunits.SchemaView[] {
   let none: string[] = [];
   let seen = SchemaSeen { recs: [], rec_names: util.name_index(none), rec_unit: [], rec_walk: [], enums: [], enum_names: util.name_index(none), enum_unit: [], enum_walk: [] };
   let out: ssaunits.SchemaView[] = [];
@@ -1657,7 +1682,7 @@ pub function schema_views(keys: string[], funcs: ssasem.Func[], writes: ssaunits
     if (row >= 0) {
       raw = writes.raw[row];
     }
-    out = out.append(ssaunits.SchemaView { ...step.view, writes: writes, raw_result: writes.results.has(keys[i]), raw_values: raw, raw_known: row >= 0 });
+    out = out.append(ssaunits.SchemaView { ...step.view, writes: writes, loans: loans, raw_result: writes.results.has(keys[i]), raw_values: raw, raw_known: row >= 0 });
   }
   return out;
 }
@@ -1976,7 +2001,7 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
     r = helper(r, 0, finalizer);
   }
   if let typeinfo.TypeStruct(_) = t {
-    r = drop_record_fields(r, 0, ssasem.record_fields(t, f), 1, f, semtypes.is_env(t), semtypes.env_takes(t));
+    r = drop_record_fields(r, 0, ssasem.record_fields(t, f), 1, f, semtypes.is_env(t), semtypes.env_takes(t), ssasem.secret_record(t, f));
   }
   if let typeinfo.TypeUnion(_) = t {
     if (self_tail_enum(t, f)) {
@@ -2027,15 +2052,27 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
 
 struct Fresh { rows: irtables.LowerState[], types: HelperType[], seen: util.NameIndex }
 
-// A kernel helper comes in only when the function calls its builtin.
+// A kernel helper comes in only when the function calls its builtin with a
+// view that the array kernel in place cannot take.
 function view_helpers(f: ssasem.Func, done: util.NameIndex, own rows: irtables.LowerState[]): irtables.LowerState[] {
   for h in ssabytes.state_helpers() {
     let served = ssabytes.served_builtin(h.name);
-    if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0)) {
+    if (!done.has(h.name) && (served == "" || ssasem.find_contract_in(f.calls, served) >= 0 && wrapped_call(f, served))) {
       rows = rows.append(h);
     }
   }
   return rows;
+}
+
+function wrapped_call(f: ssasem.Func, name: string): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call() && ins.str == name && !(lent_views(f, ins) && dynamic_kernel_count(f, ins))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex, contracts: ssasem.Contracts): Fresh {
@@ -5754,7 +5791,7 @@ function lent_kernel_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.S
   let kernel = array_kernel(ins.str);
   if let Some(op) = kernel {
     if (lent_views(f, ins) && dynamic_kernel_count(f, ins)) {
-      return Lowered { found: true, r: emit(r, ir.packed(op)) };
+      return Lowered { found: true, r: emit(r, op) };
     }
   }
   return Lowered { found: false, r: r };
@@ -5770,11 +5807,16 @@ function dynamic_kernel_count(f: ssasem.Func, ins: ssa.SInst): boolean {
 
 function array_kernel(name: string): Option[ir.Op] {
   return match (name) {
-    "__mismatch_bytes" => Some(ir.op_mismatch_bytes()),
-    "__sum_bytes_array" => Some(ir.op_sum_bytes_array()),
-    "__bsd_sum_bytes" => Some(ir.op_bsd_sum_bytes()),
-    "__crc32_cksum_array" => Some(ir.op_crc32_cksum_array()),
-    "__crc32_ieee_array" => Some(ir.op_crc32_ieee_array()),
+    "__mismatch_bytes" => Some(ir.packed(ir.op_mismatch_bytes())),
+    "__sum_bytes_array" => Some(ir.packed(ir.op_sum_bytes_array())),
+    "__bsd_sum_bytes" => Some(ir.packed(ir.op_bsd_sum_bytes())),
+    "__crc32_cksum_array" => Some(ir.packed(ir.op_crc32_cksum_array())),
+    "__crc32_ieee_array" => Some(ir.packed(ir.op_crc32_ieee_array())),
+    "__memchr_bytes" => Some(ir.packed(ir.op_memchr_bytes())),
+    "__rmemchr_bytes" => Some(ir.packed(ir.op_rmemchr_bytes())),
+    "__scan_set_bytes" => Some(ir.packed(ir.op_scan_set_bytes())),
+    "__scan_masks_bytes" => Some(ir.packed(ir.op_scan_masks_bytes())),
+    "buf_push_bytes_expanded" => Some(ir.op_buf_push_bytes_expanded()),
     _ => None,
   };
 }
@@ -5853,10 +5895,10 @@ function call_ops(name: string): ir.Op[] {
       return [ir.op_call_direct(ssabytes.bsd_name(), 2)];
     },
     "__memchr_bytes" => {
-      return [ir.packed(ir.op_memchr_bytes())];
+      return [ir.op_call_direct(ssabytes.memchr_name(), 3)];
     },
     "__rmemchr_bytes" => {
-      return [ir.packed(ir.op_rmemchr_bytes())];
+      return [ir.op_call_direct(ssabytes.rmemchr_name(), 3)];
     },
     "string_from_bytes_unchecked" => {
       return [ir.packed(ir.op_str_from_bytes())];
@@ -6094,6 +6136,9 @@ function handle_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "open_writer_with") {
     return Lowered { found: true, r: emit(r, ir.op_open_writer_with()) };
+  }
+  if (ins.str == "reader_from_fd") {
+    return Lowered { found: true, r: emit(r, ir.op_reader_from_fd()) };
   }
   if (ins.str == "Reader.read_chunk") {
     return Lowered { found: true, r: emit(r, ir.op_read_chunk()) };
@@ -6580,7 +6625,7 @@ function builder_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lower
     "buf_push_mapped" => Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) },
     "buf_push_bytes_filtered" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_filtered()) },
     "buf_push_filtered" => Lowered { found: true, r: emit(r, ir.op_buf_push_filtered()) },
-    "buf_push_bytes_expanded" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_expanded()) },
+    "buf_push_bytes_expanded" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.expanded_name(), 3)) },
     "buf_push_expanded" => Lowered { found: true, r: emit(r, ir.op_buf_push_expanded()) },
     "buf_push_byte" => Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) },
     "buf_push_u64" => Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) },
@@ -6782,17 +6827,10 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
     ins = ssa.SInst { ...ins, args: inputs };
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
-  if (verb == "mul_add" && w == 64) {
+  if (verb == "mul_add") {
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_load_local(ins.args[2]));
     return emit(r, ir.op_lane("vfma", w));
-  }
-  // The f32 lanes round two times: no engine has a fused f32 form yet.
-  if (verb == "mul_add") {
-    r = emit(r, ir.op_load_local(ins.args[1]));
-    r = emit(r, ir.op_lane("vmul", w));
-    r = emit(r, ir.op_load_local(ins.args[2]));
-    return emit(r, ir.op_lane("vadd", w));
   }
   if (verb == "of" && w == 32) {
     r = emit(r, ir.op_lane("vsplat", 64));
@@ -7147,8 +7185,8 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_masks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks())) },
-    "__scan_masks_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_masks_bytes())) },
-    "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
+    "__scan_masks_bytes" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.scan_masks_name(), 3)) },
+    "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.scan_set_name(), 3)) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },
     "__count_runs_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs_bytes())) },
     "__bsd_sum" => Lowered { found: true, r: emit(r, ir.op_bsd_sum()) },

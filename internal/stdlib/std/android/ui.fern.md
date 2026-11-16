@@ -28,7 +28,11 @@ The methods of `El` set them, and they set the padding, the gap, the background,
 
 `on_move` lets a person move the rows of a `list`: a long press lifts a row, and the row goes with the finger. `on_swipe` lets a person drag a row across the list to take it out.
 
-A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `seeded` makes a theme from one color, for example the key color of an album cover. `button`, `outlined_button`, `card`, `toggle`, `progress` and `divider` are elements in the look of Material 3.
+A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `seeded` makes a theme from one color, for example the key color of an album cover. `button`, `outlined_button`, `card`, `toggle`, `checkbox`, `radio`, `tabs`, `menu`, `app_bar`, `snackbar`, `progress` and `divider` are elements in the look of Material 3.
+
+A canvas gives its paint a color of `std/android/draw`. `tinted` makes a canvas whose paint gets the color of a role, so an icon of `std/android/icons` follows the theme.
+
+A `Nav` is the stack of the pages of an app. `push` opens a page over the top page, and `pop` goes back to the page under it. The first page stays, so `can_pop` is false there. Give the back key to `pop` with `with_back` while `can_pop` is true, and let it close the app on the first page.
 
 ### Messages
 
@@ -128,12 +132,15 @@ function main(): i32 {
 import "core/map";
 import "std/android";
 import "std/android/draw";
+import "std/android/icons";
 import "std/android/motion";
 import "std/android/text";
 import "std/android/ui/painter";
 import "std/android/ui/scene";
 import "std/f64";
+import "std/kv";
 import "std/option";
+import "std/worker";
 ```
 
 ### `theme`
@@ -303,6 +310,8 @@ pub struct El[M] {
   key: string,
   image: Option[draw.Image],
   paint: Option[(draw.Frame, i32, i32, i32, i32) => void],
+  // A canvas of `tinted`: the paint for the color of the role `ink`.
+  tint: Option[(i32) => (draw.Frame, i32, i32, i32, i32) => void],
   // A list of `count` rows of `row` dp, which `build` makes.
   count: i32,
   row: f64,
@@ -327,7 +336,7 @@ pub struct El[M] {
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
 }
 
 // The elements one below the other.
@@ -370,6 +379,12 @@ pub function picture[M](key: string, img: draw.Image): El[M] {
 // `key` names what it draws: a new key draws it again.
 pub function canvas[M](key: string, paint: (draw.Frame, i32, i32, i32, i32) => void): El[M] {
   return El { ...element(CANVAS, []), key: key, paint: Some(paint) };
+}
+
+// What `paint` draws in the color of the role `color`: a canvas that follows
+// the theme. The canvas draws again when the color changes.
+pub function tinted[M](key: string, color: i32, paint: (i32) => (draw.Frame, i32, i32, i32, i32) => void): El[M] {
+  return El { ...element(CANVAS, []), key: key, ink: color, tint: Some(paint) };
 }
 
 // A list with the name `name` that scrolls: `count` rows of `row` dp each.
@@ -662,6 +677,127 @@ pub function progress[M](part: f64): El[M] {
   let filled: El[M] = El { ...box(), w: Grow(done + 0.0001), h: Grow(1.0) };
   let rest: El[M] = El { ...box(), w: Grow(1.0001 - done), h: Grow(1.0) };
   return row([filled.background(PRIMARY).rounded(2.0), rest]).wide().height(4.0).background(TRACK).rounded(2.0);
+}
+
+// A box that is checked or not, with room of 40 dp for a finger. A tap
+// gives the message `m`. An accessibility service reads `say` and the
+// state of the box.
+pub function checkbox[M](on: boolean, say: string, m: M): El[M] {
+  let mark: El[M] = box().width(18.0).height(18.0).rounded(2.0).border(OUTLINE, 2.0);
+  let state = "not checked";
+  if (on) {
+    let checked: El[M] = tinted("check", ON_PRIMARY, icons.check);
+    mark = checked.width(18.0).height(18.0).rounded(2.0).background(PRIMARY);
+    state = "checked";
+  }
+  return row([mark]).centered().width(40.0).height(40.0).on_tap(m).described(say + ", " + state);
+}
+
+// A radio button: one of a group of choices, selected or not. A tap gives
+// the message `m`. An accessibility service reads `say` and the state.
+pub function radio[M](on: boolean, say: string, m: M): El[M] {
+  let ring: El[M] = box().width(20.0).height(20.0).rounded(10.0).border(OUTLINE, 2.0);
+  let state = "not selected";
+  if (on) {
+    ring = row([box().width(10.0).height(10.0).rounded(5.0).background(PRIMARY)]).centered().width(20.0).height(20.0).rounded(10.0).border(PRIMARY, 2.0);
+    state = "selected";
+  }
+  return row([ring]).centered().width(40.0).height(40.0).on_tap(m).described(say + ", " + state);
+}
+
+// A row of tabs with the labels `labels`, 48 dp high. The tab `at` is
+// selected, with a line under it. A tap on a tab gives the message that
+// `pick` makes from its index.
+pub function tabs[M](labels: string[], at: i32, pick: (i32) => M): El[M] {
+  let kids: El[M][] = [];
+  for i in 0..labels.len() {
+    let color = MUTED;
+    let line: El[M] = box().wide().height(3.0);
+    let state = "";
+    if (i == at) {
+      color = PRIMARY;
+      line = line.background(PRIMARY);
+      state = ", selected";
+    }
+    let label: El[M] = row([text(labels[i]).weighted(500).colored(color)]).centered().wide().grow(1.0);
+    let say = labels[i] + ", tab " + (i + 1).to_string() + " of " + labels.len().to_string() + state;
+    kids = kids.append(column([label, line]).grow(1.0).height(48.0).on_tap(pick(i)).described(say));
+  }
+  return row(kids).wide();
+}
+
+// The items of a menu, one below the other, 48 dp high each. A tap on an
+// item gives the message that `pick` makes from its index. The menu takes
+// the touches over it.
+pub function menu[M](items: string[], pick: (i32) => M): El[M] {
+  let kids: El[M][] = [];
+  for i in 0..items.len() {
+    kids = kids.append(row([text(items[i])]).aligned(CENTER).padding_xy(12.0, 0.0).height(48.0).on_tap(pick(i)));
+  }
+  return column(kids).aligned(STRETCH).padding_xy(0.0, 8.0).background(SURFACE).rounded(4.0).border(OUTLINE, 1.0).modal();
+}
+
+// The bar at the top of a screen, 64 dp high, with the title `title`. With
+// a message `back`, an arrow at the start gives it. The elements `actions`
+// go at the end.
+pub function app_bar[M](title: string, back: Option[M], actions: El[M][]): El[M] {
+  let kids: El[M][] = [];
+  let start = 16.0;
+  if let Some(m) = back {
+    let arrow: El[M] = tinted("back", INK, icons.back);
+    kids = kids.append(arrow.width(48.0).height(48.0).on_tap(m).described("Back"));
+    start = 4.0;
+  }
+  kids = kids.append(text(title).sized(22.0).clamped(1).wide());
+  for a in actions {
+    kids = kids.append(a);
+  }
+  let bar: El[M] = row(kids).aligned(CENTER).spaced(4.0).wide().height(64.0);
+  return El { ...bar, pad: Edges { left: start, top: 0.0, right: 4.0, bottom: 0.0 } };
+}
+
+// A short note at the bottom of a screen, in the colors of the ink. A tap on
+// `action` gives the message `m`.
+pub function snackbar[M](note: string, action: string, m: M): El[M] {
+  let act: El[M] = row([text(action).weighted(500).colored(BACKGROUND)]).centered().padding_xy(12.0, 0.0).height(40.0).rounded(20.0).on_tap(m);
+  return row([text(note).colored(BACKGROUND).clamped(2).wide(), act]).aligned(CENTER).padding_xy(16.0, 4.0).wide().background(INK).rounded(4.0);
+}
+
+// The stack of the pages of an app, with the page that shows on top.
+pub struct Nav[P] { pages: P[] }
+
+// A stack with the first page `first`.
+pub function nav[P](first: P): Nav[P] {
+  return Nav { pages: [first] };
+}
+
+// The page that shows.
+pub function (n: Nav[P]) top(): P {
+  return n.pages[n.pages.len() - 1];
+}
+
+// The stack with the page `p` over its top page.
+pub function (n: Nav[P]) push(p: P): Nav[P] {
+  return Nav { pages: n.pages.append(p) };
+}
+
+// Whether a page is under the top page.
+pub function (n: Nav[P]) can_pop(): boolean {
+  return n.pages.len() > 1;
+}
+
+// The stack without its top page. The first page stays.
+pub function (n: Nav[P]) pop(): Nav[P] {
+  let kept: P[] = [];
+  for i in 0..(n.pages.len() - 1).max(1) {
+    kept = kept.append(n.pages[i]);
+  }
+  return Nav { pages: kept };
+}
+
+// The number of pages.
+pub function (n: Nav[P]) depth(): i32 {
+  return n.pages.len();
 }
 ```
 
@@ -1030,6 +1166,10 @@ function paints[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32): scene.No
   }
   if let Some(f) = e.paint {
     ns = ns.append(scene.node(x, y, w, h, scene.Custom(e.key, 0, f)));
+  }
+  if let Some(t) = e.tint {
+    let color = env.theme.color(e.ink);
+    ns = ns.append(scene.node(x, y, w, h, scene.Custom(e.key + "#" + color.to_string(), 0, t(color))));
   }
   return ns;
 }
@@ -2082,6 +2222,10 @@ pub struct Program[S, M] {
   system: (android.Event) => Option[M],
   effects: (S) => S,
   close: (own S) => own S,
+  save: (S, kv.Store) => kv.Store,
+  restore: (own S, kv.Store) => own S,
+  start: (S, M) => own worker.Worker[M][],
+  poll: (own worker.Worker[M][]) => (worker.Worker[M][], M[]),
   theme: (S, boolean) => Theme,
   meter: boolean,
 }
@@ -2089,7 +2233,7 @@ pub struct Program[S, M] {
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, save: (s: S, k: kv.Store): kv.Store => k, restore: (own s: S, k: kv.Store): own S => s, start: (s: S, m: M): own worker.Worker[M][] => [], poll: (own ws: worker.Worker[M][]): (worker.Worker[M][], M[]) => (ws, []), theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
 }
 
 // After each message, the shell gives the state to `effects`, which does
@@ -2106,6 +2250,44 @@ pub function (p: Program[S, M]) with_effects(effects: (S) => S): Program[S, M] {
 // close the state.
 pub function (p: Program[S, M]) with_close(close: (own S) => own S): Program[S, M] {
   return Program { ...p, close: close };
+}
+
+// Keeps a part of the state when Android ends the process of the app. At
+// each Pause, the shell writes the store that `save` gives for the state
+// to the state file of the device. When the app starts, `restored` gives
+// the first state and that store to `restore`. The store is empty at the
+// first start, and when the file is not valid.
+// Runs work beside the loop. After `update` takes a message, the shell
+// gives the new state and the message to `start`, which gives the workers
+// that the message starts, for example with `worker.spawn`. When a worker
+// ends, its result is a message to `update`. A worker gets a copy of what
+// its closure captures, so the work cannot change the state.
+pub function (p: Program[S, M: worker.Send]) with_jobs(start: (S, M) => own worker.Worker[M][]): Program[S, M] {
+  return Program { ...p, start: start, poll: polled_workers[M]() };
+}
+
+// Polls each worker: the ones that still run, and the results of the ones
+// that ended.
+function polled_workers[M: worker.Send](): (own worker.Worker[M][]) => (worker.Worker[M][], M[]) {
+  return (own ws: worker.Worker[M][]): (worker.Worker[M][], M[]) => {
+    let running: worker.Worker[M][] = [];
+    let done: M[] = [];
+    for w in ws {
+      match (w.poll()) {
+        worker.Finished(m) => {
+          done = done.append(m);
+        },
+        worker.Running(again) => {
+          running = running.append(again);
+        }
+      }
+    }
+    return (running, done);
+  };
+}
+
+pub function (p: Program[S, M]) with_state(save: (S, kv.Store) => kv.Store, restore: (own S, kv.Store) => own S): Program[S, M] {
+  return Program { ...p, save: save, restore: restore };
 }
 
 // `update` gets the message `m` each time the milliseconds of `wait` go by.
@@ -2182,6 +2364,7 @@ pub struct Device {
   show_keyboard: (string, boolean) => void,
   set_keyboard: (string, i32) => void,
   hide_keyboard: () => void,
+  state_file: () => string,
 }
 
 // What the shell keeps for the app. `lay` is the layout of the last frame.
@@ -2216,12 +2399,12 @@ pub function meter(fonts: text.Fonts, sc: Screen, c: Cost): scene.Node[] {
 }
 
 // `said` has the messages of the layout of the last frame.
-pub struct Shell[S, M] { app: S, host: Host, said: Messages[M] }
+pub struct Shell[S, M] { app: S, host: Host, said: Messages[M], jobs: worker.Worker[M][] }
 
 // A shell for the state `state`, which draws text with `fonts`.
 pub function shell[S, M](own state: S, fonts: text.Fonts, dev: Device): Shell[S, M] {
   let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale() };
-  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false, cost: no_cost(), ticked: dev.now() }, said: no_messages() };
+  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false, cost: no_cost(), ticked: dev.now() }, said: no_messages(), jobs: [] };
 }
 
 function changed(h: Host): Host {
@@ -2242,7 +2425,48 @@ function on_window(h: Host, window: usize): Host {
 // The shell after `update` took the message `m`.
 pub function send[S, M](own s: Shell[S, M], p: Program[S, M], m: M): Shell[S, M] {
   let next = p.update(s.app, m);
-  return Shell { app: p.effects(next), host: changed(s.host), said: s.said };
+  let started = p.start(next, m);
+  return Shell { app: p.effects(next), host: changed(s.host), said: s.said, jobs: added(s.jobs, started) };
+}
+
+function added[M](own a: worker.Worker[M][], own b: worker.Worker[M][]): worker.Worker[M][] {
+  let out = a;
+  for w in b {
+    out = out.append(w);
+  }
+  return out;
+}
+
+// The shell after `update` took the result of each job that ended.
+function finished_jobs[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
+  if (s.jobs.len() == 0) {
+    return s;
+  }
+  let (running, done) = p.poll(s.jobs);
+  let t = Shell { app: s.app, host: s.host, said: s.said, jobs: running };
+  for m in done {
+    t = send(t, p, m);
+  }
+  return t;
+}
+
+// The shell after it waited for each job: `update` gets the result of
+// each one.
+pub function joined_jobs[S, M: worker.Send](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
+  let results = joined(s.jobs);
+  let t = Shell { app: s.app, host: s.host, said: s.said, jobs: [] };
+  for m in results {
+    t = send(t, p, m);
+  }
+  return t;
+}
+
+function joined[M: worker.Send](own ws: worker.Worker[M][]): M[] {
+  let out: M[] = [];
+  for w in ws {
+    out = out.append(w.join());
+  }
+  return out;
 }
 
 function told_maybe[S, M](own s: Shell[S, M], p: Program[S, M], m: Option[M]): Shell[S, M] {
@@ -2261,8 +2485,10 @@ function animated[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S,
   let Some(frame) = p.frame else {
     return s;
   };
-  let next = p.update(s.app, frame(ns));
-  return Shell { app: p.effects(next), host: s.host, said: s.said };
+  let m = frame(ns);
+  let next = p.update(s.app, m);
+  let started = p.start(next, m);
+  return Shell { app: p.effects(next), host: s.host, said: s.said, jobs: added(s.jobs, started) };
 }
 
 // The host with no field in focus and no keyboard.
@@ -2342,7 +2568,7 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   if (p.meter) {
     over = meter(host.fonts, screen, host.cost);
   }
-  return Shell { app: s.app, host: painted(host, built.layout(), over, screen, animating, cost), said: built.messages() };
+  return Shell { app: s.app, host: painted(host, built.layout(), over, screen, animating, cost), said: built.messages(), jobs: s.jobs };
 }
 
 function frame[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {
@@ -2402,7 +2628,7 @@ function slid[S, M](own s: Shell[S, M], p: Program[S, M], input: Input, n: scene
   if (down) {
     host = pressed(Host { ...s.host, input: input });
   }
-  return told_maybe(Shell { app: s.app, host: changed(host), said: s.said }, p, m);
+  return told_maybe(Shell { app: s.app, host: changed(host), said: s.said, jobs: s.jobs }, p, m);
 }
 
 // The slider node that the finger is on, while it is down or moves.
@@ -2434,21 +2660,21 @@ function touched[S, M](own s: Shell[S, M], p: Program[S, M], action: i32, x: i32
   }
   if (action == 1 && before.grab.list.len() > 0) {
     let m = dropped(s.said, h.lay, before);
-    return told_maybe(Shell { app: s.app, host: changed(host), said: s.said }, p, m);
+    return told_maybe(Shell { app: s.app, host: changed(host), said: s.said, jobs: s.jobs }, p, m);
   }
   let Some(on) = tapped else {
-    return Shell { app: s.app, host: changed(host), said: s.said };
+    return Shell { app: s.app, host: changed(host), said: s.said, jobs: s.jobs };
   };
   let name = field_of(on.tap.name);
   if (name.len() > 0) {
     let found = field_el(p.view(s.app, host.screen), name);
     if let (Some(f), Some(n)) = (found, target) {
-      return Shell { app: s.app, host: field_tapped(host, f, n, x, y), said: s.said };
+      return Shell { app: s.app, host: field_tapped(host, f, n, x, y), said: s.said, jobs: s.jobs };
     }
-    return Shell { app: s.app, host: changed(host), said: s.said };
+    return Shell { app: s.app, host: changed(host), said: s.said, jobs: s.jobs };
   }
   let m = tap_message(s.said, h.lay, on);
-  return told_maybe(Shell { app: s.app, host: changed(host), said: s.said }, p, m);
+  return told_maybe(Shell { app: s.app, host: changed(host), said: s.said, jobs: s.jobs }, p, m);
 }
 
 // The caret after the keyboard changed the text `old`, with the caret
@@ -2483,7 +2709,7 @@ function edit_told[S, M](own s: Shell[S, M], p: Program[S, M], text: string): Sh
       m = Some(edit(text));
     }
   }
-  return told_maybe(Shell { app: s.app, host: changed(s.host), said: s.said }, p, m);
+  return told_maybe(Shell { app: s.app, host: changed(s.host), said: s.said, jobs: s.jobs }, p, m);
 }
 
 // The shell after a key of a hardware keyboard changed the text of the
@@ -2492,7 +2718,7 @@ function edit_told[S, M](own s: Shell[S, M], p: Program[S, M], text: string): Sh
 function retyped[S, M](own s: Shell[S, M], p: Program[S, M], text: string, caret: i32): Shell[S, M] {
   let h = s.host;
   h.dev.set_keyboard(text, caret);
-  return edit_told(Shell { app: s.app, host: Host { ...h, typed: text, caret: caret }, said: s.said }, p, text);
+  return edit_told(Shell { app: s.app, host: Host { ...h, typed: text, caret: caret }, said: s.said, jobs: s.jobs }, p, text);
 }
 
 // The shell after a key of a hardware keyboard typed `typed` at the caret.
@@ -2519,7 +2745,7 @@ function stepped[S, M](own s: Shell[S, M], by: i32): Shell[S, M] {
   let h = s.host;
   let caret = (h.caret + by).max(0).min(text.letters(h.typed).len());
   h.dev.set_keyboard(h.typed, caret);
-  return Shell { app: s.app, host: changed(Host { ...h, caret: caret }), said: s.said };
+  return Shell { app: s.app, host: changed(Host { ...h, caret: caret }), said: s.said, jobs: s.jobs };
 }
 
 // The event is one that changes the text of a field.
@@ -2550,7 +2776,7 @@ function submitted[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
   if let Some(f) = field_messages(s.said, s.host.focus) {
     m = f.submit;
   }
-  return told_maybe(Shell { app: s.app, host: blurred(s.host), said: s.said }, p, m);
+  return told_maybe(Shell { app: s.app, host: blurred(s.host), said: s.said, jobs: s.jobs }, p, m);
 }
 
 // The shell after a key went down, while a field has the focus. Key code
@@ -2583,7 +2809,7 @@ function edited[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): S
   let h = s.host;
   match (e) {
     android.Text(t) => {
-      return edit_told(Shell { app: s.app, host: Host { ...h, typed: t, caret: caret_after(h.typed, t, h.caret) }, said: s.said }, p, t);
+      return edit_told(Shell { app: s.app, host: Host { ...h, typed: t, caret: caret_after(h.typed, t, h.caret) }, said: s.said, jobs: s.jobs }, p, t);
     },
     android.TextAction(_) => {
       return submitted(s, p);
@@ -2596,7 +2822,7 @@ function edited[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): S
     },
     android.Key(code, action) => {
       if (code == 4 && action == 1) {
-        return Shell { app: s.app, host: blurred(h), said: s.said };
+        return Shell { app: s.app, host: blurred(h), said: s.said, jobs: s.jobs };
       }
       if (action == 0) {
         return key_edited(s, p, code);
@@ -2622,9 +2848,9 @@ function ticked[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
     if let Some(n) = pressed {
       m = long_message(s.said, h.lay, n);
     }
-    return told_maybe(Shell { app: s.app, host: changed(Host { ...h, input: input }), said: s.said }, p, m);
+    return told_maybe(Shell { app: s.app, host: changed(Host { ...h, input: input }), said: s.said, jobs: s.jobs }, p, m);
   }
-  return told_maybe(Shell { app: s.app, host: Host { ...h, ticked: now }, said: s.said }, p, p.tick);
+  return told_maybe(Shell { app: s.app, host: Host { ...h, ticked: now }, said: s.said, jobs: s.jobs }, p, p.tick);
 }
 
 function accessed[S, M](own s: Shell[S, M], p: Program[S, M], id: i32, action: i32): Shell[S, M] {
@@ -2663,28 +2889,33 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
   let h = s.host;
   match (e) {
     android.WindowCreated(w) => {
-      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said };
+      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said, jobs: s.jobs };
     },
     android.WindowResized(w) => {
-      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said };
+      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said, jobs: s.jobs };
     },
     android.WindowRedraw(w) => {
-      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said };
+      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said, jobs: s.jobs };
     },
     android.WindowDestroyed(_) => {
-      return Shell { app: s.app, host: Host { ...h, paint: h.dev.detach(h.paint), window: 0 as usize }, said: s.said };
+      return Shell { app: s.app, host: Host { ...h, paint: h.dev.detach(h.paint), window: 0 as usize }, said: s.said, jobs: s.jobs };
     },
     android.ContentRect(left, top, right, bottom) => {
       let sc = h.screen;
-      return Shell { app: s.app, host: changed(Host { ...h, screen: Screen { ...sc, left: left.max(0), top: top.max(0), right: (sc.w - right).max(0), bottom: (sc.h - bottom).max(0) } }), said: s.said };
+      return Shell { app: s.app, host: changed(Host { ...h, screen: Screen { ...sc, left: left.max(0), top: top.max(0), right: (sc.w - right).max(0), bottom: (sc.h - bottom).max(0) } }), said: s.said, jobs: s.jobs };
+    },
+    android.Pause => {
+      let t = told_maybe(s, p, p.system(e));
+      kept(t.app, p, t.host.dev);
+      return t;
     },
     android.Destroy => {
       let t = told_maybe(s, p, p.system(e));
       let paint = t.host.dev.close(t.host.paint);
       if (t.host.dev.stays()) {
-        return Shell { app: t.app, host: Host { ...t.host, paint: paint, window: 0 as usize }, said: t.said };
+        return Shell { app: t.app, host: Host { ...t.host, paint: paint, window: 0 as usize }, said: t.said, jobs: t.jobs };
       }
-      return Shell { app: p.close(t.app), host: Host { ...t.host, paint: paint, window: 0 as usize }, said: t.said };
+      return Shell { app: p.close(t.app), host: Host { ...t.host, paint: paint, window: 0 as usize }, said: t.said, jobs: t.jobs };
     },
     _ => {
       return told_maybe(s, p, p.system(e));
@@ -2692,16 +2923,42 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
   }
 }
 
+// `state` with what `p` restores from the state file of `dev`.
+pub function restored[S, M](own state: S, p: Program[S, M], dev: Device): own S {
+  let path = dev.state_file();
+  if (path.len() == 0) {
+    return state;
+  }
+  return match (kv.open(path)) {
+    Ok(store) => p.restore(state, store),
+    Err(_) => p.restore(state, kv.empty(path)),
+  };
+}
+
+// Writes the store that `p` saves for `state` to the state file of `dev`,
+// when it differs from the file.
+function kept[S, M](state: S, p: Program[S, M], dev: Device): void {
+  let path = dev.state_file();
+  if (path.len() == 0) {
+    return;
+  }
+  let store = p.save(state, kv.empty(path));
+  let old = read_file(path).unwrap_or(kv.empty(path).encode());
+  if (old != store.encode()) {
+    let saved = store.save();
+  }
+}
+
 // The shell after the event `e` of android.run.
 pub function step[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {
   let t0 = s.host.dev.now();
-  let out = handled(s, p, e);
+  let out = handled(finished_jobs(s, p), p, e);
   let c = out.host.cost;
   let ms = ms_between(t0, out.host.dev.now());
   if (ms <= c.step) {
     return out;
   }
-  return Shell { app: out.app, host: Host { ...out.host, cost: Cost { ...c, step: ms } }, said: out.said };
+  return Shell { app: out.app, host: Host { ...out.host, cost: Cost { ...c, step: ms } }, said: out.said, jobs: out.jobs };
 }
 
 function handled[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {
@@ -2747,10 +3004,16 @@ function tick_left(h: Host, wait: i32, now: i64): i32 {
 
 // The milliseconds that android.run waits for the next event before a
 // Tick, or -1 for no limit.
+// The milliseconds between two polls of the jobs while one runs.
+const JOB_POLL_MS: i32 = 16;
+
 pub function wait[S, M](s: Shell[S, M], p: Program[S, M]): i32 {
   let now = s.host.dev.now();
   let long = long_wait(s.host.input, now);
   let own_wait = tick_left(s.host, p.wait(s.app), now);
+  if (s.jobs.len() > 0 && (own_wait < 0 || own_wait > JOB_POLL_MS)) {
+    own_wait = JOB_POLL_MS;
+  }
   if (long < 0) {
     return own_wait;
   }

@@ -1025,6 +1025,7 @@ func gitCompareAttributes(t *testing.T, oracle, port gitTool, run gitRun) {
 		for _, c := range []string{"log --check", "log -p --color", "log -p --color --color-moved"} {
 			gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
 		}
+		gitCompareEnv(t, oracle, port, dir, []string{"GIT_DIR=.git"}, "log", "--check")
 	}
 	os.MkdirAll(filepath.Join(dir, ".git", "info"), 0o755)
 	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("f.txt whitespace=space-before-tab\n"), 0o644); err != nil {

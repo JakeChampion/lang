@@ -1,6 +1,6 @@
 import "std/string";
 import "std/array";
-import "./glibc_ctype";
+import "./libc_ctype";
 
 enum Input { Text(string, i32), Bytes(u8[], i32) }
 
@@ -123,7 +123,7 @@ function backref_end(re: Bre, t: Input, pos: i32, s: i32, n: i32, hi: i32): i32 
       if (a.0 >= 0 || b.0 >= 0 || t.at(i) != t.at(j)) {
         return -1;
       }
-    } else if (glibc_ctype.upper(a.0) != glibc_ctype.upper(b.0)) {
+    } else if (libc_ctype.upper(a.0) != libc_ctype.upper(b.0)) {
       return -1;
     }
     i += a.1;
@@ -143,22 +143,19 @@ function fold_byte(c: i32): i32 {
 // after `from`, with its groups. Offset 0 is the start of the subject for ^,
 // \` and the word assertions, and `hi` is its end.
 pub function (re: Bre) search_groups_bytes(text: u8[], from: i32, hi: i32): BreMatch {
-  let input = byte_input(text);
-  let r: (i32, i32) = re.search_from_input(input, from, hi);
+  let f = re.find_from(byte_input(text), from, hi);
   let no: i32[] = [];
-  if (r.0 < 0) {
+  if (f.start < 0) {
     return BreMatch { matched: false, end: 0, starts: no, ends: no };
   }
   if (re.ngroups == 0) {
-    return caps_to_match(no, re, r.0, r.1);
+    return caps_to_match(no, re, f.start + f.shift, f.end + f.shift);
   }
   if (re.backref) {
-    return exec_backtrack(re, input, r.0, 0, hi);
+    return exec_backtrack(re, f.text, f.start, 0, hi);
   }
-  if (re.few_paths) {
-    return exec_backtrack_to(re, input, r.0, r.1, 0, hi);
-  }
-  return exec_threads_from(re, input, r.0, r.1, 0, hi);
+  let m = if (re.few_paths) { exec_backtrack_to(re, f.text, f.start, f.end, 0, hi) } else { exec_threads_from(re, f.text, f.start, f.end, 0, hi) };
+  return shifted_match(m, f.shift);
 }
 
 pub function (re: Bre) exec(text: string): BreMatch {
@@ -275,7 +272,7 @@ function assert_buf_end(): i32 {
   return 5;
 }
 
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean, icase: boolean, sparse: boolean, few_paths: boolean, masks: u8[], mb_word: boolean, words: i32[], mb_starts: boolean, gate: Bre[], upfold: boolean }
+pub struct Bre { shift: Shift, insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean, icase: boolean, sparse: boolean, few_paths: boolean, masks: u8[], mb_word: boolean, words: i32[], mb_starts: boolean, gate: Bre[], upfold: boolean }
 
 // The syntax of a pattern. `extended` selects ERE. `gnu_ops` gives the GNU
 // operators: \+, \? and \| in BRE, and \w, \W, \s, \S, \b, \B, \<, \>, \`
@@ -285,20 +282,28 @@ pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backre
 // makes a range whose end comes before its start an error. `dot_not_null`
 // stops . from matching a NUL byte, as RE_DOT_NOT_NULL does in GNU regex.
 // `utf8` reads the pattern and the text as UTF-8, as in a UTF-8 locale.
-pub struct Syntax { emacs: boolean, newline_anchor: boolean, extended: boolean, icase: boolean, gnu_ops: boolean, invalid_dup: boolean, multiline: boolean, no_empty_ranges: boolean, dot_not_null: boolean, utf8: boolean }
+// `gnulib` selects the regex of gnulib in place of the regex of glibc. In
+// UTF-8 its range compares the code points of the two ends.
+pub struct Syntax { emacs: boolean, newline_anchor: boolean, extended: boolean, icase: boolean, gnu_ops: boolean, invalid_dup: boolean, multiline: boolean, no_empty_ranges: boolean, dot_not_null: boolean, utf8: boolean, gnulib: boolean }
+
+// A GNU program has the regex of gnulib when the libc has no GNU regex: on
+// all the targets but Linux.
+function gnulib_regex(): boolean {
+  return target_os() != "linux";
+}
 
 pub function posix_basic(): Syntax {
-  return Syntax { emacs: false, newline_anchor: false, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: true, utf8: false };
+  return Syntax { emacs: false, newline_anchor: false, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: true, utf8: false, gnulib: gnulib_regex() };
 }
 
 pub function emacs_syntax(): Syntax {
-  return Syntax { emacs: true, newline_anchor: true, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: false, utf8: false };
+  return Syntax { emacs: true, newline_anchor: true, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: false, utf8: false, gnulib: gnulib_regex() };
 }
 
 // The syntax of GNU sed: BRE or ERE, with the I and M flags. `posix` is
 // --posix, which removes the GNU operators.
 pub function sed_syntax(extended: boolean, icase: boolean, multiline: boolean, posix: boolean): Syntax {
-  return Syntax { emacs: false, newline_anchor: multiline, extended: extended, icase: icase, gnu_ops: !posix, invalid_dup: !extended, multiline: multiline, no_empty_ranges: true, dot_not_null: false, utf8: false };
+  return Syntax { emacs: false, newline_anchor: multiline, extended: extended, icase: icase, gnu_ops: !posix, invalid_dup: !extended, multiline: multiline, no_empty_ranges: true, dot_not_null: false, utf8: false, gnulib: gnulib_regex() };
 }
 
 pub struct BreMatch { matched: boolean, end: i32, starts: i32[], ends: i32[] }
@@ -415,7 +420,7 @@ function nd_assert(): i32 {
 // `gate` parses for the dfa of GNU sed, as in compile_mode. `gap` tells that
 // the dfa and the regex of GNU sed take a different set for an atom, and
 // `vague` that the dfa cannot read the bracket in parse.
-struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean, ext: boolean, icase: boolean, gnu: boolean, inv_dup: boolean, multiline: boolean, no_empty: boolean, dot_not_null: boolean, utf8: boolean, rtabs: i32[], folds: Folds, wide: i32[], gate: boolean, gap: boolean, vague: boolean }
+struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean, ext: boolean, icase: boolean, gnu: boolean, inv_dup: boolean, multiline: boolean, no_empty: boolean, dot_not_null: boolean, utf8: boolean, gnulib: boolean, rtabs: i32[], folds: Folds, wide: i32[], gate: boolean, gap: boolean, vague: boolean, units: i32[], chains: i32[] }
 
 function group_bit(n: i32): i32 {
   return 1 << n - 1;
@@ -954,10 +959,10 @@ function cps_valid(): i32[] {
   return [0, 55295, 57344, 1114111];
 }
 
-// uc_class gives the code points of a character class as glibc gives them
-// in C.UTF-8.
+// uc_class gives the code points of a character class as the libc of GNU
+// sed on the target gives them in C.UTF-8.
 function uc_class(name: string): i32[] {
-  return glibc_ctype.class_ranges(name);
+  return libc_ctype.class_ranges(name);
 }
 
 // The characters of \w, and of the word assertions.
@@ -997,11 +1002,11 @@ function fold_index(f: Folds, cp: i32): i32 {
 }
 
 function fold_classes(): Folds {
-  let cps = glibc_ctype.case_points();
+  let cps = libc_ctype.case_points();
   let ups: i32[] = [];
   let moved: i32[] = [];
   for c in cps {
-    let u = glibc_ctype.upper(c);
+    let u = libc_ctype.upper(c);
     ups = ups.append(u);
     if (u != c) {
       moved = cps_push(moved, c, c);
@@ -1042,16 +1047,16 @@ function fold_set(f: Folds, s: i32[]): i32[] {
     if (!cps_has(s, c)) {
       continue;
     }
-    let uc = glibc_ctype.upper(c);
-    let lc = glibc_ctype.lower(uc);
+    let uc = libc_ctype.upper(c);
+    let lc = libc_ctype.lower(uc);
     if (uc != c) {
       mark = mark.with(fold_index(f, uc), 1 as u8);
     }
-    if (lc != uc && lc != c && glibc_ctype.upper(lc) == uc) {
+    if (lc != uc && lc != c && libc_ctype.upper(lc) == uc) {
       mark = mark.with(fold_index(f, lc), 1 as u8);
     }
     for li in lone_lowers() {
-      if (li != lc && li != uc && li != c && glibc_ctype.upper(li) == uc) {
+      if (li != lc && li != uc && li != c && libc_ctype.upper(li) == uc) {
         mark = mark.with(fold_index(f, li), 1 as u8);
       }
     }
@@ -1191,9 +1196,15 @@ function cps_node(p0: P, s: i32[]): (P, i32) {
   }
   let rn: (P, i32) = rows_node(p, rows, 0, 0, rows.len());
   if (node < 0) {
-    return rn;
+    return unit_node(rn);
   }
-  return add_node(rn.0, Node { kind: nd_alt(), a: node, b: rn.1, c: 0 });
+  return unit_node(add_node(rn.0, Node { kind: nd_alt(), a: node, b: rn.1, c: 0 }));
+}
+
+// unit_node marks a node that reads one whole character of UTF-8 through
+// more than one byte node. glibc has one node for it.
+function unit_node(r: (P, i32)): (P, i32) {
+  return (P { ...r.0, units: r.0.units.append(r.1) }, r.1);
 }
 
 // utf8_char_node gives a literal character. Under icase the regex matches
@@ -1202,11 +1213,15 @@ function utf8_char_node(p0: P, cp: i32): (P, i32) {
   let p = p0;
   if (p.icase) {
     let fs: (P, Folds) = folds_of(p);
-    let u = glibc_ctype.upper(cp);
+    let u = libc_ctype.upper(cp);
     let s = if (fs.0.gate) { fold_set(fs.1, [cp, cp]) } else { upper_preimage(fs.1, [u, u]) };
     p = P { ...fs.0, gap: fs.0.gap || !fs.0.gate && gap_upper(u) };
     if (s.len() != 2 || s[0] != cp || s[1] != cp) {
-      return cps_node(p, s);
+      let cn: (P, i32) = cps_node(p, s);
+      if (u < 128) {
+        return cn;
+      }
+      return (P { ...cn.0, chains: cn.0.chains.append(cn.1).append(utf8_bytes(u)[0]) }, cn.1);
     }
   }
   let bytes = utf8_bytes(cp);
@@ -1349,7 +1364,7 @@ function utf8_item(p: P, k: i32): UItem {
 // the names of classes and the escaped bytes.
 function pat_upper(p: P, cp: i32): i32 {
   if (p.icase && !p.gate && cp >= 0) {
-    return glibc_ctype.upper(cp);
+    return libc_ctype.upper(cp);
   }
   return cp;
 }
@@ -1406,9 +1421,10 @@ function utf8_bracket(p0: P): (P, i32) {
   return cps_node(p, s);
 }
 
-// A range takes two ASCII ends. An end outside ASCII has no place in the
-// collation order of C.UTF-8. The flag tells whether the item makes glibc
-// read characters: a class, a range, or a byte outside ASCII.
+// In glibc a range takes two ASCII ends. An end outside ASCII has no place
+// in the collation order of C.UTF-8. In gnulib an end is any character. The
+// flag tells whether the item makes the regex read characters: a class, a
+// range, or a byte outside ASCII.
 // fern-lint: allow cyclomatic-complexity
 function utf8_bracket_one(p0: P, s: i32[]): (P, i32[], boolean) {
   let p = p0;
@@ -1441,7 +1457,7 @@ function utf8_bracket_one(p0: P, s: i32[]): (P, i32[], boolean) {
   if (hi.cp == -2 || hi.equiv) {
     return (fail(p, err_erange()), s, false);
   }
-  if (lo.cp < 0 || lo.cp >= 128 || hi.cp < 0 || hi.cp >= 128) {
+  if (lo.cp < 0 || hi.cp < 0 || !p.gnulib && (lo.cp >= 128 || hi.cp >= 128)) {
     return (fail(p, err_ecollate()), s, false);
   }
   if (p.no_empty && lo.cp > hi.cp) {
@@ -2158,7 +2174,7 @@ function compile_mode(pat: Input, syntax: Syntax, gate: boolean): Bre {
   let cls: u8[] = [];
   let no_alts: u8[][] = [];
   let no_ints: i32[] = [];
-  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs, ext: syntax.extended, icase: syntax.icase, gnu: syntax.gnu_ops, inv_dup: syntax.invalid_dup, multiline: syntax.multiline, no_empty: syntax.no_empty_ranges, dot_not_null: syntax.dot_not_null, utf8: syntax.utf8, rtabs: no_ints, folds: Folds { cps: no_ints, ups: no_ints, moved: no_ints }, wide: no_ints, gate: gate, gap: false, vague: false };
+  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs, ext: syntax.extended, icase: syntax.icase, gnu: syntax.gnu_ops, inv_dup: syntax.invalid_dup, multiline: syntax.multiline, no_empty: syntax.no_empty_ranges, dot_not_null: syntax.dot_not_null, utf8: syntax.utf8, gnulib: syntax.gnulib, rtabs: no_ints, folds: Folds { cps: no_ints, ups: no_ints, moved: no_ints }, wide: no_ints, gate: gate, gap: false, vague: false, units: no_ints, chains: no_ints };
   let r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {
@@ -2191,7 +2207,7 @@ function compile_mode(pat: Input, syntax: Syntax, gate: boolean): Bre {
       gates = [g];
     }
   }
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word, icase: syntax.icase, sparse: !fm.1 && count_set(fm.0) <= sparse_max(), few_paths: few_paths(p.nodes), masks: set_masks(fm.0), mb_word: syntax.utf8 && cx_word, words: if (syntax.utf8 && cx_word) { uc_word() } else { no_ints }, mb_starts: syntax.utf8 && (syntax.icase || reads_chars(p.nodes, p.wide, r.1)), gate: gates, upfold: syntax.utf8 && syntax.icase };
+  return Bre { shift: shift_plan(p, r.1, syntax), insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word, icase: syntax.icase, sparse: !fm.1 && count_set(fm.0) <= sparse_max(), few_paths: few_paths(p.nodes), masks: set_masks(fm.0), mb_word: syntax.utf8 && cx_word, words: if (syntax.utf8 && cx_word) { uc_word() } else { no_ints }, mb_starts: syntax.utf8 && (syntax.icase || reads_chars(p.nodes, p.wide, r.1)), gate: gates, upfold: syntax.utf8 && syntax.icase };
 }
 
 function failed_bre(err: string, syntax: Syntax): Bre {
@@ -2200,7 +2216,7 @@ function failed_bre(err: string, syntax: Syntax): Bre {
   let no_ints: i32[] = [];
   let no_insts: Inst[] = [];
   let no_gates: Bre[] = [];
-  return Bre { insts: no_insts, classes: no_bytes, ngroups: 0, nmarks: 0, backref: false, err: err, newline_anchor: syntax.newline_anchor, first: no_bytes, empty_ok: true, pre: no_bytes, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_ints, dfa: dfa_cache(), bclass: no_bytes, reps: no_ints, cx_lo: false, cx_nl: false, cx_word: false, icase: false, sparse: false, few_paths: false, masks: no_bytes, mb_word: false, words: no_ints, mb_starts: false, gate: no_gates, upfold: false };
+  return Bre { shift: no_shift(), insts: no_insts, classes: no_bytes, ngroups: 0, nmarks: 0, backref: false, err: err, newline_anchor: syntax.newline_anchor, first: no_bytes, empty_ok: true, pre: no_bytes, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_ints, dfa: dfa_cache(), bclass: no_bytes, reps: no_ints, cx_lo: false, cx_nl: false, cx_word: false, icase: false, sparse: false, few_paths: false, masks: no_bytes, mb_word: false, words: no_ints, mb_starts: false, gate: no_gates, upfold: false };
 }
 
 function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
@@ -3098,6 +3114,71 @@ function dfa_put(re: Bre, own d: Dfa): void {
 }
 
 function (re: Bre) search_from_input(text: Input, lo: i32, hi: i32): (i32, i32) {
+  let f = re.find_from(text, lo, hi);
+  return (f.start + f.shift, f.end + f.shift);
+}
+
+// A match of glibc: the text that the match reads, and the count of bytes
+// that glibc moves it.
+struct Found { text: Input, start: i32, end: i32, shift: i32 }
+
+function (re: Bre) find_from(text: Input, lo: i32, hi: i32): Found {
+  let r: (i32, i32) = re.search_from_core(text, lo, hi);
+  let o = fold_tail(re, text, lo, hi);
+  if (o < 0 || r.0 >= 0 && r.0 < o) {
+    return Found { text: text, start: r.0, end: r.1, shift: shift_of(re, text, r.0, r.1, hi) };
+  }
+  let lone = lone_tail(re, text, o, hi);
+  let end = re.match_at(lone, o, hi);
+  if (end < 0) {
+    return Found { text: text, start: r.0, end: r.1, shift: shift_of(re, text, r.0, r.1, hi) };
+  }
+  return Found { text: lone, start: o, end: end, shift: shift_of(re, lone, o, end, hi) };
+}
+
+// Under icase in UTF-8, glibc keeps the text in upper case. When the last
+// character of the text has an upper case of fewer bytes, a search that
+// goes past the start of that character tries a match at the byte after
+// the upper case, and reads that byte as one that starts no character.
+// fold_tail gives that byte, or -1.
+function fold_tail(re: Bre, text: Input, lo: i32, hi: i32): i32 {
+  if (!re.upfold || hi < 2 || text.at(hi - 1) < 128) {
+    return -1;
+  }
+  let cs = char_holding(text, hi - 1, 0, hi);
+  if (cs < lo) {
+    return -1;
+  }
+  let d: (i32, i32) = utf8_at(text, cs, hi);
+  let o = cs + utf8_bytes(libc_ctype.upper(d.0)).len();
+  if (cs + d.1 != hi || o >= hi) {
+    return -1;
+  }
+  return o;
+}
+
+// lone_tail gives the text with the bytes before `o` of its last character
+// as ASCII bytes of the same word class. Then the bytes from `o` start no
+// character, and the context before `o` stays.
+function lone_tail(re: Bre, text: Input, o: i32, hi: i32): Input {
+  let fill = if (is_word_at(re, text, o - 1, 0, hi)) { 97 as u8 } else { 32 as u8 };
+  match (text) {
+    Text(_, _) => {
+      return text;
+    },
+    Bytes(b, _) => {
+      let out = b;
+      let k = char_holding(text, o, 0, hi);
+      while (k < o) {
+        out = out.with(k, fill);
+        k += 1;
+      }
+      return byte_input(out);
+    }
+  }
+}
+
+function (re: Bre) search_from_core(text: Input, lo: i32, hi: i32): (i32, i32) {
   if (lo == 0 && re.gate.len() > 0 && !re.gate[0].search_range_input(text, 0, hi)) {
     return (-1, -1);
   }
@@ -3186,6 +3267,9 @@ function (re: Bre) search_input(text: Input): boolean {
 function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
   if (lo == 0 && re.gate.len() > 0 && !re.gate[0].search_range_input(text, 0, hi)) {
     return false;
+  }
+  if (fold_tail(re, text, lo, hi) >= 0) {
+    return re.find_from(text, lo, hi).start >= 0;
   }
   let n = re.pre.len();
   let pinned = !re.newline_anchor;
@@ -3642,4 +3726,426 @@ function caps_to_match(caps: i32[], re: Bre, start: i32, end: i32): BreMatch {
     g += 1;
   }
   return BreMatch { matched: true, end: end, starts: starts, ends: ends };
+}
+
+// The start shift of glibc. check_matching of glibc moves the start of a
+// forward search past each character that leaves its DFA in the initial
+// state. It keeps the move when the only match is the empty one at the
+// first position, so that match comes out later in the text. A Shift holds
+// the consuming nodes of the initial state of glibc: `full` marks a node
+// whose successors are the initial state again, and `sub` one whose
+// successors are all in it.
+struct Shift { on: boolean, utf8: boolean, icase: boolean, leaves: ShiftLeaf[], nodes: Node[] }
+
+// `kind` is a gk_ value. `a` is the syntax node, or the first byte of a
+// gk_chain. `cons` holds the sc_ bits of the assertions before the node.
+struct ShiftLeaf { kind: i32, a: i32, cons: i32, full: boolean, sub: boolean }
+
+function no_shift(): Shift {
+  let no_leaves: ShiftLeaf[] = [];
+  let no_nodes: Node[] = [];
+  return Shift { on: false, utf8: false, icase: false, leaves: no_leaves, nodes: no_nodes };
+}
+
+// The node kinds of glibc: a node that reads one byte, one that reads one
+// character, the first byte of a literal character of more than one byte,
+// an assertion, and the nodes that read nothing.
+function gk_leaf(): i32 {
+  return 0;
+}
+
+function gk_unit(): i32 {
+  return 1;
+}
+
+function gk_chain(): i32 {
+  return 2;
+}
+
+function gk_anchor(): i32 {
+  return 3;
+}
+
+function gk_fork(): i32 {
+  return 4;
+}
+
+function gk_pass(): i32 {
+  return 5;
+}
+
+function gk_end(): i32 {
+  return 6;
+}
+
+// The constraints of an assertion on the context before it and after it.
+function sc_prev_word(): i32 {
+  return 1;
+}
+
+function sc_prev_notword(): i32 {
+  return 2;
+}
+
+function sc_prev_newline(): i32 {
+  return 4;
+}
+
+function sc_prev_begbuf(): i32 {
+  return 8;
+}
+
+function sc_next_word(): i32 {
+  return 16;
+}
+
+function sc_next_notword(): i32 {
+  return 32;
+}
+
+function sc_next_newline(): i32 {
+  return 64;
+}
+
+function sc_next_endbuf(): i32 {
+  return 128;
+}
+
+struct G { kind: i32[], a: i32[], e1: i32[], e2: i32[], star: i32[], bad: boolean }
+
+function g_max(): i32 {
+  return 200000;
+}
+
+function g_add(g: G, kind: i32, a: i32, e1: i32, e2: i32): (G, i32) {
+  let id = g.kind.len();
+  return (G { kind: g.kind.append(kind), a: g.a.append(a), e1: g.e1.append(e1), e2: g.e2.append(e2), star: g.star.append(0), bad: g.bad || id > g_max() }, id);
+}
+
+function chain_lead(chains: i32[], at: i32): i32 {
+  let k = 0;
+  while (k < chains.len()) {
+    if (chains[k] == at) {
+      return chains[k + 1];
+    }
+    k += 2;
+  }
+  return -1;
+}
+
+function g_anchor(g: G, cons: i32, nxt: i32): (G, i32) {
+  return g_add(g, gk_anchor(), cons, nxt, -1);
+}
+
+function g_assert(g: G, which: i32, nxt: i32): (G, i32) {
+  if (which == assert_word_start()) {
+    return g_anchor(g, sc_prev_notword() + sc_next_word(), nxt);
+  }
+  if (which == assert_word_end()) {
+    return g_anchor(g, sc_prev_word() + sc_next_notword(), nxt);
+  }
+  if (which == assert_buf_start()) {
+    return g_anchor(g, sc_prev_begbuf(), nxt);
+  }
+  if (which == assert_buf_end()) {
+    return g_anchor(g, sc_next_endbuf(), nxt);
+  }
+  let inside = which == assert_not_wordb();
+  let a: (G, i32) = g_anchor(g, if (inside) { sc_prev_word() + sc_next_word() } else { sc_prev_notword() + sc_next_word() }, nxt);
+  let b: (G, i32) = g_anchor(a.0, if (inside) { sc_prev_notword() + sc_next_notword() } else { sc_prev_word() + sc_next_notword() }, nxt);
+  return g_add(b.0, gk_fork(), 0, a.1, b.1);
+}
+
+// g_build adds the nodes of glibc for the syntax node `at`, with `nxt`
+// after them. It gives the first node.
+// fern-lint: allow cyclomatic-complexity
+function g_build(g: G, p: P, at: i32, nxt: i32): (G, i32) {
+  if (g.bad) {
+    return (g, nxt);
+  }
+  let n = p.nodes[at];
+  let lead = chain_lead(p.chains, at);
+  if (lead >= 0) {
+    return g_add(g, gk_chain(), lead, nxt, -1);
+  }
+  if (has_i32(p.units, at)) {
+    return g_add(g, gk_unit(), at, nxt, -1);
+  }
+  if (n.kind == nd_empty()) {
+    return (g, nxt);
+  }
+  if (n.kind == nd_char() || n.kind == nd_class()) {
+    return g_add(g, gk_leaf(), at, nxt, -1);
+  }
+  if (n.kind == nd_bol()) {
+    return g_anchor(g, sc_prev_newline(), nxt);
+  }
+  if (n.kind == nd_eol()) {
+    return g_anchor(g, sc_next_newline(), nxt);
+  }
+  if (n.kind == nd_assert()) {
+    return g_assert(g, n.a, nxt);
+  }
+  if (n.kind == nd_cat()) {
+    let b: (G, i32) = g_build(g, p, n.b, nxt);
+    return g_build(b.0, p, n.a, b.1);
+  }
+  if (n.kind == nd_group()) {
+    let close: (G, i32) = g_add(g, gk_pass(), 0, nxt, -1);
+    let body: (G, i32) = g_build(close.0, p, n.a, close.1);
+    return g_add(body.0, gk_pass(), 0, body.1, -1);
+  }
+  if (n.kind == nd_alt()) {
+    let a: (G, i32) = g_build(g, p, n.a, nxt);
+    let b: (G, i32) = g_build(a.0, p, n.b, nxt);
+    return g_add(b.0, gk_fork(), 0, a.1, b.1);
+  }
+  if (n.kind == nd_rep()) {
+    return g_rep(g, p, n, nxt);
+  }
+  return (G { ...g, bad: true }, nxt);
+}
+
+// glibc writes a{2,4} as a, a and then ((a)?a)?, and a{2,} as a, a and a*.
+function g_rep(g0: G, p: P, n: Node, nxt: i32): (G, i32) {
+  let min = rep_min(n);
+  let r: (G, i32) = (g0, nxt);
+  if (n.c < 0) {
+    let star: (G, i32) = g_add(g0, gk_fork(), 0, -1, nxt);
+    let body: (G, i32) = g_build(star.0, p, n.a, star.1);
+    r = (G { ...body.0, e1: body.0.e1.with(star.1, body.1), star: body.0.star.with(star.1, 1) }, star.1);
+  } else if (n.c > min) {
+    r = g_optionals(g0, p, n.a, n.c - min, nxt);
+  }
+  let k = 0;
+  while (k < min && !r.0.bad) {
+    r = g_build(r.0, p, n.a, r.1);
+    k += 1;
+  }
+  return r;
+}
+
+function g_optionals(g: G, p: P, body: i32, count: i32, nxt: i32): (G, i32) {
+  let last: (G, i32) = g_build(g, p, body, nxt);
+  if (count == 1 || last.0.bad) {
+    return g_add(last.0, gk_fork(), 0, last.1, nxt);
+  }
+  let inner: (G, i32) = g_optionals(last.0, p, body, count - 1, last.1);
+  return g_add(inner.0, gk_fork(), 0, inner.1, nxt);
+}
+
+// g_closure gives the nodes that glibc reaches from `from` with no byte
+// read, each with the constraints of the assertions on its way, in order.
+function g_closure(g: G, from: i32): i32[] {
+  let out: i32[] = [];
+  let stack = [from * 256];
+  let sp = 1;
+  while (sp > 0) {
+    sp -= 1;
+    let key = stack[sp];
+    if (has_i32(out, key)) {
+      continue;
+    }
+    out = out.append(key);
+    let node = key / 256;
+    let cons = key % 256;
+    let kind = g.kind[node];
+    if (kind == gk_fork()) {
+      stack = push_at(push_at(stack, sp, g.e1[node] * 256 + cons), sp + 1, g.e2[node] * 256 + cons);
+      sp += 2;
+    } else if (kind == gk_pass()) {
+      stack = push_at(stack, sp, g.e1[node] * 256 + cons);
+      sp += 1;
+    } else if (kind == gk_anchor()) {
+      stack = push_at(stack, sp, g.e1[node] * 256 + (cons | g.a[node]));
+      sp += 1;
+    }
+  }
+  return out;
+}
+
+function subset_i32(a: i32[], b: i32[]): boolean {
+  for x in a {
+    if (!has_i32(b, x)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// first_is_star tells whether the first node of glibc for the syntax node
+// can be a star. Only then a character leaves glibc in its initial state.
+function first_is_star(nodes: Node[], at: i32): boolean {
+  let n = nodes[at];
+  if (n.kind == nd_cat()) {
+    return first_is_star(nodes, if (nodes[n.a].kind == nd_empty()) { n.b } else { n.a });
+  }
+  if (n.kind == nd_rep()) {
+    return n.c < 0 && rep_min(n) == 0 || rep_min(n) > 0 && first_is_star(nodes, n.a);
+  }
+  return false;
+}
+
+function shift_plan(p: P, root: i32, syntax: Syntax): Shift {
+  if (p.gate || has_backref(p.nodes) || !first_is_star(p.nodes, root)) {
+    return no_shift();
+  }
+  let none: i32[] = [];
+  let end: (G, i32) = g_add(G { kind: none, a: none, e1: none, e2: none, star: none, bad: false }, gk_end(), 0, -1, -1);
+  let b: (G, i32) = g_build(end.0, p, root, end.1);
+  let g = b.0;
+  if (g.bad || g.star[b.1] == 0) {
+    return no_shift();
+  }
+  let init = g_closure(g, b.1);
+  let leaves: ShiftLeaf[] = [];
+  let anchored = false;
+  for key in init {
+    let node = key / 256;
+    let kind = g.kind[node];
+    anchored = anchored || kind == gk_anchor();
+    if (kind == gk_leaf() || kind == gk_unit() || kind == gk_chain()) {
+      let after = g_closure(g, g.e1[node]);
+      let sub = subset_i32(after, init);
+      leaves = leaves.append(ShiftLeaf { kind: kind, a: g.a[node], cons: key % 256, full: sub && has_i32(after, b.1 * 256), sub: sub });
+    }
+  }
+  if (!anchored) {
+    return no_shift();
+  }
+  return Shift { on: true, utf8: syntax.utf8, icase: syntax.icase, leaves: leaves, nodes: p.nodes };
+}
+
+function shifted_match(m: BreMatch, n: i32): BreMatch {
+  if (n == 0 || !m.matched) {
+    return m;
+  }
+  let starts: i32[] = [];
+  let ends: i32[] = [];
+  for k in 0..m.starts.len() {
+    starts = starts.append(if (m.starts[k] < 0) { m.starts[k] } else { m.starts[k] + n });
+    ends = ends.append(if (m.ends[k] < 0) { m.ends[k] } else { m.ends[k] + n });
+  }
+  return BreMatch { matched: true, end: m.end + n, starts: starts, ends: ends };
+}
+
+// shift_of gives the count of bytes that glibc moves the match start..end.
+// Only an empty match after the first byte of the subject moves.
+function shift_of(re: Bre, text: Input, start: i32, end: i32, hi: i32): i32 {
+  if (!re.shift.on || start <= 0 || end != start) {
+    return 0;
+  }
+  let c0 = 0;
+  if (re.cx_word && is_word_at(re, text, start - 1, 0, hi)) {
+    c0 = 1;
+  } else if (re.newline_anchor && text.at(start - 1) as i32 == 10) {
+    c0 = 2;
+  }
+  let n = 0;
+  let p = start;
+  let at = 0;
+  while (p < hi) {
+    let b = text.at(p) as i32;
+    let cp = -1;
+    let len = 1;
+    if (re.shift.utf8 && b >= 128) {
+      let d: (i32, i32) = utf8_at(text, p, hi);
+      if (d.0 >= 0) {
+        cp = d.0;
+        len = d.1;
+      }
+    }
+    let word = re.cx_word && is_word_at(re, text, p + len - 1, 0, hi);
+    let c1 = if (b == 10) { 2 } else if (word) { 1 } else { 0 };
+    if (c1 != c0 || !shift_step(re, text, p, len, cp, c0, word)) {
+      break;
+    }
+    n = at + 1;
+    p += len;
+    at += if (re.shift.icase && cp >= 0) { utf8_bytes(libc_ctype.upper(cp)).len() } else { len };
+  }
+  return n;
+}
+
+// shift_step tells whether the character at p leaves glibc in its initial
+// state, which has the context c0 before it.
+function shift_step(re: Bre, text: Input, p: i32, len: i32, cp: i32, c0: i32, word: boolean): boolean {
+  let b = text.at(p) as i32;
+  let lone = re.shift.utf8 && len == 1 && b >= 128;
+  let full = false;
+  for lf in re.shift.leaves {
+    if (!prev_holds(lf.cons, c0) || !next_holds(lf.cons, b, word, lone)) {
+      continue;
+    }
+    if (lf.kind == gk_chain()) {
+      if (cp >= 0 && utf8_bytes(if (re.shift.icase) { libc_ctype.upper(cp) } else { cp })[0] == lf.a) {
+        return false;
+      }
+      continue;
+    }
+    if (lf.kind == gk_leaf()) {
+      if (!unit_reads(re, lf.a, text, p, p + 1)) {
+        continue;
+      }
+      if (len > 1) {
+        return false;
+      }
+    } else if (!unit_reads(re, lf.a, text, p, p + len)) {
+      continue;
+    }
+    if (!lf.sub) {
+      return false;
+    }
+    full = full || lf.full;
+  }
+  return full;
+}
+
+function prev_holds(cons: i32, c0: i32): boolean {
+  if ((cons & sc_prev_word()) != 0 && c0 != 1) {
+    return false;
+  }
+  if ((cons & sc_prev_notword()) != 0 && c0 == 1) {
+    return false;
+  }
+  if ((cons & sc_prev_newline()) != 0 && c0 != 2) {
+    return false;
+  }
+  return (cons & sc_prev_begbuf()) == 0;
+}
+
+// A byte of UTF-8 text that starts no character passes each word
+// constraint of glibc.
+function next_holds(cons: i32, b: i32, word: boolean, lone: boolean): boolean {
+  if ((cons & sc_next_endbuf()) != 0) {
+    return false;
+  }
+  if ((cons & sc_next_newline()) != 0 && b != 10) {
+    return false;
+  }
+  if (lone) {
+    return true;
+  }
+  if ((cons & sc_next_word()) != 0 && !word) {
+    return false;
+  }
+  return (cons & sc_next_notword()) == 0 || !word;
+}
+
+// unit_reads tells whether the syntax node `at` reads the bytes p..end.
+function unit_reads(re: Bre, at: i32, text: Input, p: i32, end: i32): boolean {
+  let n = re.shift.nodes[at];
+  if (n.kind == nd_alt()) {
+    return unit_reads(re, n.a, text, p, end) || unit_reads(re, n.b, text, p, end);
+  }
+  if (n.kind == nd_cat()) {
+    return p + 1 < end && unit_reads(re, n.a, text, p, p + 1) && unit_reads(re, n.b, text, p + 1, end);
+  }
+  if (p + 1 != end) {
+    return false;
+  }
+  if (n.kind == nd_char()) {
+    return n.a == text.at(p) as i32;
+  }
+  return n.kind == nd_class() && class_has_byte(re, n.a, text.at(p) as i32);
 }

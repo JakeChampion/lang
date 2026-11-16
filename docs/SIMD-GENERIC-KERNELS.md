@@ -191,14 +191,14 @@ The bit-level primitives the vector kernels need (`to_bits`, lane-wise
 shifts) arrive with the lane type in slice 5, where there is a type to test
 them on; until then `ldexp` and `round` cover the argument reductions.
 
-`mul_add` on `f64x2` rounds `self * b + c` one time in each lane, as
-`__fma_f64` does. It lowers to the fused IR form `vfma`: `vfmadd` on x86-64,
-`fmla` on arm64, and a call of the software form `$__fern_fma_f64` for each
-lane on wasm. On `f32x4` and on the scalar types it is `self * b + c` with
-two roundings. `std/f64` cannot call `__fma_f64` before the stage0 pin knows
-it, and no engine has a fused f32 form yet. So `horner` on `f64x2` can
-differ in the last bit from `horner` on `f64`, but each engine gives the
-same answer for each type.
+`mul_add` on `f64x2` and on `f32x4` rounds `self * b + c` one time in each
+lane, as `__fma_f64` and `__fma_f32` do. It lowers to the fused IR form
+`vfma`: `vfmadd` on x86-64, `fmla` on arm64, and a call of the software form
+`$__fern_fma_f64` or `$__fern_fma_f32` for each lane on wasm. `mul_add` on
+`f64` is a call of `__fma_f64`, so it also rounds one time. Thus `horner` on
+`f64x2` gives the bits of `horner` on `f64` in each lane. On `f32` it is
+`self * b + c` with two roundings until the stage0 pin knows `__fma_f32`: the
+compiler imports `std/f32` (`BOOTSTRAP.md`).
 
 - **Scalar impls**: `impl Lanes for f64` and `impl Lanes for f32`, one lane,
   delegating to `std/f64`. Every generic kernel runs today through these.
@@ -341,8 +341,8 @@ of them. No PR leaves a type on main that a backend refuses.
   and both interpreters. The rules:
   - `+ - * /` and unary `-` take two values of one lane type. A comparison
     is E041: `lt` and `ne` give a mask, and `select` reads it.
-  - `mul_add` on `f64x2` rounds one time in each lane, on every engine. On
-    `f32x4` the product rounds before the add, in single precision.
+  - `mul_add` on `f64x2` and on `f32x4` rounds one time in each lane, on
+    every engine.
   - `lane(v, i)` takes an integer literal below the lane count (E038).
   - `load` is one array read whose result is the lane value of the group
     of elements from the index, and `with` is one `with` that writes the

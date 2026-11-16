@@ -30,22 +30,22 @@ function record(t: u8[], c: i32, s: string): u8[] {
 }
 
 // Writes `s` as XML text. U+FFFE and U+FFFF become U+FFFD.
-function escape(out: usize, s: string, table: u8[]): void {
+function escape(out: usize, s: [u8], table: u8[]): void {
   let i = 0;
   let from = 0;
   loop {
-    let j = __memchr(s, 0xEF, i);
+    let j = __memchr_bytes(s, 0xEF, i);
     if (j < 0 || j + 2 >= s.len()) {
       break;
     }
     if (s[j + 1] == 0xBF as u8 && (s[j + 2] == 0xBE as u8 || s[j + 2] == 0xBF as u8)) {
-      buf_push_expanded(out, slice_unchecked(s, from, j), table);
+      buf_push_bytes_expanded(out, s[from:j], table);
       buf_push(out, "�");
       from = j + 3;
     }
     i = j + 1;
   }
-  buf_push_expanded(out, slice_unchecked(s, from, s.len()), table);
+  buf_push_bytes_expanded(out, s[from:s.len()], table);
 }
 
 const HEAD: string = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n";

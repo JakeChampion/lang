@@ -392,3 +392,123 @@ func TestArrayWithChainOuterReadSeesTheOldValue(t *testing.T) {
 		})
 	}
 }
+
+// A lane store into an array that owns its storage alone writes in place, as
+// a.with does, so a loop of stores is linear.
+func TestLaneWithWritesInPlace(t *testing.T) {
+	ip := New()
+	call := func(name string, args ...Value) Value {
+		t.Helper()
+		v, err := ip.Builtins[name].Fn(ip, args)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return v
+	}
+	bytes := func(n int) Array {
+		a := newArray(n)
+		for k := range a.Elems() {
+			a.Elems()[k] = Number(0)
+		}
+		return a
+	}
+	floats := newArray(8)
+	for k := range floats.Elems() {
+		floats.Elems()[k] = Float{V: 0, Width: 32}
+	}
+	u8 := call("__u8x16_splat", Number(7))
+	f32 := call("__f32x4_splat", Float{V: 1, Width: 32})
+	for _, tc := range []struct {
+		name string
+		arr  Array
+		lane Value
+		want Value
+	}{
+		{"__u8x16_with", bytes(32), u8, Number(7)},
+		{"__f32x4_with", floats, f32, Float{V: 1, Width: 32}},
+		{"__f32x4_with_bytes", bytes(32), f32, Number(0x3f)},
+	} {
+		out, ok := call(tc.name, tc.arr, Number(4), tc.lane).(Array)
+		if !ok {
+			t.Fatalf("%s: not an array", tc.name)
+		}
+		if out.b != tc.arr.b {
+			t.Errorf("%s copied an array that it owns alone", tc.name)
+		}
+		if got := out.Elems()[7]; got != tc.want {
+			t.Errorf("%s: element 7 is %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A lane store into an array that another binding holds writes a copy, so
+// the other binding keeps the old elements.
+func TestLaneWithKeepsASharedArray(t *testing.T) {
+	v, _ := evalProgram(t, `function main(): i32 {
+		let a: u8[] = [];
+		let i: i32 = 0;
+		while (i < 16) { a = a.append(0 as u8); i = i + 1; }
+		let b = a;
+		a = __u8x16_with(a, 0, __u8x16_splat(7 as u8));
+		return a[15] as i32 * 10 + b[15] as i32;
+	}`)
+	if v != Number(70) {
+		t.Errorf("got %v, want 70", v)
+	}
+}
+
+// A return expression moves an array of a local each time it runs, and
+// not only the first time.
+func TestReturnMovesEachCall(t *testing.T) {
+	const n = 1000
+	src := fmt.Sprintf(`function put(own w: i32[], i: i32): i32[] { return w.with(i, i); }
+	function main(): i32 {
+		let a: i32[] = [];
+		let i: i32 = 0;
+		while (i < %d) { a = a.append(0); i = i + 1; }
+		let j: i32 = 0;
+		while (j < %d) { a = put(a, j); j = j + 1; }
+		return a[%d - 1];
+	}`, n, n, n)
+	v, ip := evalProgram(t, src)
+	if v != Number(n-1) {
+		t.Fatalf("last element %v, want %d", v, n-1)
+	}
+	if ip.arraySetCopies != 0 {
+		t.Errorf("copied %d elements, want 0", ip.arraySetCopies)
+	}
+	if len(ip.returnMovable) != 2 {
+		t.Errorf("analysed %d return expressions, want 2", len(ip.returnMovable))
+	}
+}
+
+// An append keeps the answer of holdsMap that its receiver has, so a loop of
+// appends does not scan the elements again after each one.
+func TestArrayPushKeepsHoldsMap(t *testing.T) {
+	ip := New()
+	push := func(a Array, v Value) Array {
+		t.Helper()
+		out, err := builtinArrayPush(ip, []Value{a, v})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.(Array)
+	}
+	a := arrayOf(Number(1))
+	if holdsMap(a) {
+		t.Fatal("an array of numbers holds a map")
+	}
+	for k := range 20 {
+		a = push(a, Number(k))
+		if a.b.maps != mapsNone {
+			t.Fatalf("after %d appends the array does not know that it holds no map", k+1)
+		}
+	}
+	m := push(a, &Map{})
+	if m.b.maps != mapsSome || !holdsMap(m) {
+		t.Errorf("an append of a map does not mark the array")
+	}
+	if unknown := push(arrayOf(Number(1)), Number(2)); unknown.b.maps != 0 || holdsMap(unknown) {
+		t.Errorf("an append to an unscanned array of numbers gives maps %d", unknown.b.maps)
+	}
+}

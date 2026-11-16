@@ -94,7 +94,7 @@ pub enum Future[T] {
   Cancelled,
 }
 
-// `set` holds (fd, interest) pairs. A pair whose fd is `HOLE` waits for
+// `set` holds (fd, interest) pairs. The pair (`HOLE`, 0) waits for
 // nothing. `until` is an instant on the clock of whatever waits for the set.
 // An interest from `counted` also holds the close count of its descriptor
 // number.
@@ -193,9 +193,14 @@ pub function interest_bits(interest: i32): i32 {
 // The bit of an interest that holds a close count in its bits from 8 up.
 pub const COUNTED: i32 = 128;
 
-// The descriptor of a hole: a pair of a wait set that waits for nothing and
-// never wakes. A combinator keeps the slots of a finished input as holes.
+// The descriptor of a hole. The pair (HOLE, 0) waits for nothing and never
+// wakes. A combinator keeps the slots of a finished input as holes. Other
+// negative numbers are not holes: a mail of std/fetch has a negative id.
 pub const HOLE: i32 = -1;
+
+pub function is_hole(fd: i32, interest: i32): boolean {
+  return fd == HOLE && interest == 0;
+}
 
 // The pairs of `set` that are not holes, and the index in `set` of each.
 pub struct Compact { set: i32[], at: i32[] }
@@ -205,7 +210,7 @@ pub function compact(set: i32[]): Compact {
   let at: i32[] = [];
   let i = 0;
   while (i + 1 < set.len()) {
-    if (set[i] >= 0) {
+    if (!is_hole(set[i], set[i + 1])) {
       kept = kept.append(set[i]).append(set[i + 1]);
       at = at.append(i / 2);
     }
@@ -218,7 +223,7 @@ pub function compact(set: i32[]): Compact {
 pub function has_hole(set: i32[]): boolean {
   let i = 0;
   while (i + 1 < set.len()) {
-    if (set[i] < 0) {
+    if (is_hole(set[i], set[i + 1])) {
       return true;
     }
     i += 2;
@@ -522,7 +527,7 @@ A combinator builds a new future from its inputs and waits for nothing
 itself. The wait of the combined future holds the pairs of each input, in
 input order, and the soonest deadline of the pending inputs. The slots of
 each input are at fixed positions. A slot that an input does not use is a
-hole: a pair whose fd is `HOLE`.
+hole: the pair (`HOLE`, 0).
 
 A wake goes to the input that owns the pair, and a timeout goes to each input
 whose deadline is that soonest one. So a combinator never reads a clock, and

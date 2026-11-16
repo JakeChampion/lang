@@ -2292,7 +2292,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
     return ssa_unary_known(ins.str);
   }
   if (k == ssa.TERNARY) {
-    return ins.str == "ffma";
+    return ins.str == "ffma" || ins.str == "ffma32";
   }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
@@ -3074,6 +3074,15 @@ function ssa_ffma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   s = ssa_fread(reg_of, ins.args[1], "d2", s);
   s = ssa_fread(reg_of, ins.args[2], "d3", s);
   let d = ssa_fdst(reg_of, ins.result);
+  // Each operand of ffma32 is an f64 that holds an f32 value.
+  if (ins.str == "ffma32") {
+    for k in 0..3 {
+      let n = util.i32_to_string(k + 1);
+      s = s.write("    fcvt s" + n + ", " + ssa_fsrc(reg_of, ins.args[k], "d" + n) + "\n");
+    }
+    s = s.write("    fmadd s1, s1, s2, s3\n    fcvt " + d + ", s1\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   s = s.write("    fmadd " + d + ", " + ssa_fsrc(reg_of, ins.args[0], "d1") + ", " + ssa_fsrc(reg_of, ins.args[1], "d2") + ", " + ssa_fsrc(reg_of, ins.args[2], "d3") + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
@@ -5370,7 +5379,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
-  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
+  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
   let reg_of = alloc.reg_of;
   let lp = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
@@ -5441,6 +5450,13 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     let ii = 0;
     let tailed = false;
     while (ii < blk.insts.len() - fu.n) {
+      // The pool goes before an instruction, so the branch over it never lands on a jump.
+      if (pool_insts >= 256) {
+        let after_pool = asmcore.lab_new(s, lp + "pool_" + util.i32_to_string(pos + ii));
+        s = ssa_b(after_pool.state, after_pool.lab).write("    .ltorg\n");
+        s = s.lab_def(after_pool.lab);
+        pool_insts = 0;
+      }
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins = blk.insts[ii];
       if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
@@ -5453,12 +5469,6 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
       }
       ii += 1;
       pool_insts += 1;
-      if (pool_insts == 256) {
-        let after_pool = asmcore.lab_new(s, lp + "pool_" + util.i32_to_string(pos + ii));
-        s = ssa_b(after_pool.state, after_pool.lab).write("    .ltorg\n");
-        s = s.lab_def(after_pool.lab);
-        pool_insts = 0;
-      }
     }
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
     s = asmcore.ssa_fused_loc(prepared.source, blk, ii, tailed, s);
@@ -5569,7 +5579,8 @@ pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physica
 pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let body = ircore.body_for_emit(label_name, r);
   if (weak) {
-    s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".k\n");
+    let sym = "__fn_" + asmcore.sanitize_label(label_name);
+    s = s.write(".weak " + sym + "\n.weak " + sym + ".k\n.weak " + sym + ".r\n");
   }
   irverifygate.verify_or_refuse(label_name, body.ops, body.n_params, body.n_locals, vgate);
   return emit_ssa_function(body, selected, pre, label_name, s, vgate);
@@ -6078,6 +6089,11 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("reader");
     s = s.need("fd_flags");
     s = s.write("    bl __fn___fern_fd_flags\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == ir.K_READER_FROM_FD) {
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("reader_from_fd");
+    s = s.write("    bl __fn___fern_reader_from_fd\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_READER_SEEK) {
     s = s.need("heap");
     s = s.need("reader");
@@ -11979,6 +11995,9 @@ function emit_rt_collections_and_proc_part_5(s: asmcore.EmitState, darwin: boole
     }
     if (s.has_need("fd_flags")) {
       fs_roots = fs_roots + " " + "__fern_fd_flags";
+    }
+    if (s.has_need("reader_from_fd")) {
+      fs_roots = fs_roots + " " + "__fern_reader_from_fd";
     }
     if (s.has_need("fd_dup_onto")) {
       fs_roots = fs_roots + " " + "__fern_fd_dup_onto";

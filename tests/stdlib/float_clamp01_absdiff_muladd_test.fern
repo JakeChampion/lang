@@ -25,6 +25,10 @@ function test_mul_add(): test.TestOutcome {
   if (!float_near(3.0.mul_add(4.0, 5.0), 17.0)) {
     return test.fail("3*4+5");
   }
+  // 0.1 * 10.0 rounds to 1.0, so only a single rounding keeps the error.
+  if (0.1.mul_add(10.0, -1.0) != 5.551115123125783e-17) {
+    return test.fail("mul_add rounds one time: " + 0.1.mul_add(10.0, -1.0).to_string());
+  }
   return test.assert_eq_f64_near(2.0.mul_add(0.0 - 1.5, 1.0), 0.0 - 2.0, 0.0001);
 }
 

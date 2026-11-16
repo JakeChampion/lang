@@ -7026,7 +7026,7 @@ function ssa_read_fixed_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   return 7;
 }
 
-function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean, cold: i32[], words: i32[], deny: i64): ssafixed.Table {
+function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean, clobbers: i32[], words: i32[], deny: i64): ssafixed.Table {
   let masks: i32[] = [];
   for b in f.blocks {
     for ins in b.insts {
@@ -7041,7 +7041,7 @@ function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, ex
     }
     masks = masks.append(7);
   }
-  return ssafixed.with_deny(ssafixed.with_clobbers(ssafixed.table(6, 3, masks), 0, ssa_nregs(), ssa_cold_clobbers(cold)), deny);
+  return ssafixed.with_deny(ssafixed.with_clobbers(ssafixed.table(6, 3, masks), 0, ssa_nregs(), clobbers), deny);
 }
 
 // Result word n is in rdx, rcx or r11: bit 1, 0 or 2 of the table from rcx.
@@ -7059,18 +7059,148 @@ const LIGHT_CLOBBERS: i32 = 1 | 1 << 1 | 1 << 2;
 
 const COLD_SLOTS: i32 = 4;
 
-function ssa_cold_clobbers(cold: i32[]): i32[] {
+function ssa_cold_clobbers(cold: i32[], kernels: i32[]): i32[] {
   let masks: i32[] = [];
-  for kind in cold {
+  for pos in 0..cold.len() {
+    let kind = cold[pos];
     if (kind == ssa.COLD_SLOW || kind == ssa.COLD_BRANCH) {
       masks = masks.append(COLD_CLOBBERS);
     } else if (kind == ssa.COLD_LIGHT) {
       masks = masks.append(LIGHT_CLOBBERS);
+    } else if (kind == ssa.COLD_KERNEL) {
+      masks = masks.append(kernels[pos]);
     } else {
       masks = masks.append(0);
     }
   }
   return masks;
+}
+
+// The byte kernels that emit_str_op writes inline.
+function ssa_inline_kernel(tag: i32): boolean {
+  return tag == ir.K_ASCII_RUN || tag == ir.K_MEMCHR || tag == ir.K_MEMCHR_BYTES || tag == ir.K_RMEMCHR || tag == ir.K_RMEMCHR_BYTES
+    || tag == ir.K_COUNT_BYTE || tag == ir.K_COUNT_BYTE_BYTES || tag == ir.K_COUNT_BELOW_U64 || tag == ir.K_STR_HASH
+    || tag == ir.K_BSD_SUM || tag == ir.K_BSD_SUM_BYTES || tag == ir.K_COUNT_RUNS || tag == ir.K_COUNT_RUNS_BYTES;
+}
+
+// For each position, the caller registers that an inline kernel there
+// changes, as a mask over ssa_caller_reg. The mask is 0 at each other
+// position.
+function ssa_kernel_clobbers(f: ssa.SFunc, ops: ir.Op[], s: asmcore.EmitState): i32[] {
+  let masks: i32[] = [];
+  for b in f.blocks {
+    for ins in b.insts {
+      let mask = 0;
+      if (ins.kind_tag == ssa.FLAT_OP && ssa_inline_kernel(ops[ins.imm].kind_tag)) {
+        mask = ssa_kernel_mask(ops[ins.imm], s);
+      }
+      masks = masks.append(mask);
+    }
+    masks = masks.append(0);
+  }
+  return masks;
+}
+
+// 0 when the text of the kernel is not safe to live across.
+function ssa_kernel_mask(o: ir.Op, s: asmcore.EmitState): i32 {
+  let h = buf_new(256);
+  let _ = emit_str_op(o, asmcore.EmitState { ...s, capture: h });
+  let arm = buf_take(h);
+  buf_free(h);
+  let mask = ssa_text_clobbers(arm);
+  if (mask < 0) {
+    return 0;
+  }
+  if (ssa_trailing_push(arm) == "") {
+    return mask | 1;
+  }
+  return mask;
+}
+
+// The caller registers that the text names, as a mask over ssa_caller_reg.
+// The result is -1 when the text names a saved register, or has an
+// instruction that changes a register that it does not name.
+function ssa_text_clobbers(text: string): i32 {
+  let mask = 0;
+  let at = 0;
+  while (at < text.len()) {
+    let end = util.index_of_byte(text, 10 as u8, at);
+    if (end < 0) {
+      end = text.len();
+    }
+    let line = ssa_line_clobbers(slice_unchecked(text, at, end).to_owned().trim());
+    if (line < 0) {
+      return -1;
+    }
+    mask = mask | line;
+    at = end + 1;
+  }
+  return mask;
+}
+
+function ssa_line_clobbers(line: string): i32 {
+  if (ssa_implicit_operands(line)) {
+    return -1;
+  }
+  let mask = 0;
+  let at = util.index_of_byte(line, 37 as u8, 0);
+  while (at >= 0) {
+    let reg = ssa_caller_index(ssa_name_at(line, at + 1));
+    if (reg == -2) {
+      return -1;
+    }
+    if (reg >= 0) {
+      mask = mask | 1 << reg;
+    }
+    at = util.index_of_byte(line, 37 as u8, at + 1);
+  }
+  return mask;
+}
+
+function ssa_name_at(line: string, from: i32): string {
+  for i in from..line.len() {
+    if (!(line[i] >= 97 && line[i] <= 122 || line[i] >= 48 && line[i] <= 57)) {
+      return slice_unchecked(line, from, i).to_owned();
+    }
+  }
+  return slice_unchecked(line, from, line.len()).to_owned();
+}
+
+// Whether the instruction of the line changes a register that it does not
+// name.
+function ssa_implicit_operands(line: string): boolean {
+  for prefix in ["call", "syscall", "rep", "mul", "div", "idiv", "stos", "lods", "scas", "cmps"] {
+    if (line.starts_with(prefix)) {
+      return true;
+    }
+  }
+  return util.has_str(["cqto", "cltd", "cpuid", "movsb", "movsw", "movsl", "movsq", "xgetbv", "rdtsc"], line);
+}
+
+// The index in ssa_caller_reg of the register that `name` is a part of.
+// -1 for a vector register or a frame register, which hold no integer value
+// of the allocator. -2 for each other name.
+function ssa_caller_index(name: string): i32 {
+  let parts: string[][] = [
+    ["rax", "eax", "ax", "al", "ah"],
+    ["rsi", "esi", "si", "sil"],
+    ["rdi", "edi", "di", "dil"],
+    ["r8", "r8d", "r8w", "r8b"],
+    ["r9", "r9d", "r9w", "r9b"],
+    ["r10", "r10d", "r10w", "r10b"],
+    ["rcx", "ecx", "cx", "cl", "ch"],
+    ["rdx", "edx", "dx", "dl", "dh"],
+    ["r11", "r11d", "r11w", "r11b"],
+  ];
+  for k in 0..parts.len() {
+    if (util.has_str(parts[k], name)) {
+      return k;
+    }
+  }
+  if (name.starts_with("xmm") || name.starts_with("ymm") || util.has_str(["rsp", "rbp", "rip"], name)) {
+    return -1;
+  }
+  return -2;
 }
 
 struct ColdSaves { by_pos: i32[], by_val: i32[], any: boolean }
@@ -7201,17 +7331,19 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, ops: ir.Op[], s: asmcore.Emit
   let homeless = ssa_homeless(f, imm);
   let prefs = ssa_arg_prefs(f, s);
   let floats = ssa.float_values(f, [], false);
-  let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), direct_boxes(s));
+  let kernels = ssa_kernel_clobbers(f, ops, s);
+  let cold = ssa.with_kernels(ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), direct_boxes(s)), kernels);
+  let clobbers = ssa_cold_clobbers(cold, kernels);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
-  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold, words, s.ssa_deny), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }
@@ -8239,7 +8371,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
     return ssa_unary_known(ins.str);
   }
   if (k == ssa.TERNARY) {
-    return ins.str == "ffma";
+    return ins.str == "ffma" || ins.str == "ffma32";
   }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
@@ -9150,6 +9282,20 @@ function ssa_fma(ins: ssa.SInst, reg_of: i32[], sfx: string, s: asmcore.EmitStat
     s = ssa_mov_rr(s, d, c);
   }
   s = s.write("    vfmadd231" + sfx + " " + b + ", " + a + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// Each operand is an f64 that holds an f32 value. The three scratch registers
+// take them in single precision, and the result goes back to an f64.
+function ssa_fma32(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let scratch = ["%xmm1", "%xmm2", "%xmm0"];
+  for k in 0..3 {
+    s = ssa_fread(reg_of, ins.args[k], scratch[k], s);
+    s = s.write("    cvtsd2ss " + ssa_fsrc(reg_of, ins.args[k], scratch[k]) + ", " + scratch[k] + "\n");
+  }
+  s = s.write("    vfmadd231ss %xmm2, %xmm1, %xmm0\n");
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    cvtss2sd %xmm0, " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
@@ -11055,6 +11201,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == ssa.UNARY && ssa_fmath_op(ins.str) != "") {
     return ssa_fmath(ins, reg_of, s);
   }
+  if (k == ssa.TERNARY && ins.str == "ffma32") {
+    return ssa_fma32(ins, reg_of, s);
+  }
   if (k == ssa.TERNARY) {
     return ssa_fma(ins, reg_of, "sd", s);
   }
@@ -12695,6 +12844,11 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_flags");
+  } else if (o.kind_tag == ir.K_READER_FROM_FD) {
+    s = s.write("    call __fn___fern_reader_from_fd\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("reader_from_fd");
   } else if (o.kind_tag == ir.K_READER_SEEK) {
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_seek\n    addq $24, %rsp\n    pushq %rax\n");
@@ -14644,6 +14798,9 @@ function emit_entry_runtime_part_7(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("fd_flags")) {
       fs_roots = fs_roots + " " + "__fern_fd_flags";
+    }
+    if (s.has_need("reader_from_fd")) {
+      fs_roots = fs_roots + " " + "__fern_reader_from_fd";
     }
     if (s.has_need("fd_dup_onto")) {
       fs_roots = fs_roots + " " + "__fern_fd_dup_onto";

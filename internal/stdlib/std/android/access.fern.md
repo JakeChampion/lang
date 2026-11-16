@@ -14,7 +14,7 @@ The module declares the classes `dev.fern.android.AccessDelegate` and `dev.fern.
 
 ## Contracts
 
-Call `publish` on the loop thread after each change of what the app shows. Give it the context that `android.start` gave the loop. A call with the same items as the last call sends nothing. So a call for each frame costs only the bytes of the items. The id of an item is 0 or more, and each id appears once in a tree.
+Call `publish` on the loop thread after each change of what the app shows. Give it the context that `launch.start` gave the loop. A call with the same items as the last call sends nothing. So a call for each frame costs only the bytes of the items. The id of an item is 0 or more, and each id appears once in a tree.
 
 ## Module assembly
 

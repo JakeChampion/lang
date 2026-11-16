@@ -81,6 +81,14 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   them, and `--raw`, `--name-only`, `--name-status`, `--summary`, the
   pickaxe, `--parents` and `--graph` also apply.
 
+  The attribute `diff` gives a path its driver, as in `userdiff.c` of
+  git. The driver finds the function name of a hunk header, and the
+  lines of a function for `-L :FUNCNAME:FILE`. The port has the
+  built-in drivers of git 2.56.1 (`diff=cpp`, `diff=python` and the
+  others). It also has the drivers of the configuration, with
+  `diff.NAME.xfuncname` and `diff.NAME.funcname`. A path with no driver
+  has the default rule of git, or the regex of the driver `default`.
+
   The formats are `--oneline`, `--pretty=` with each named format and
   `format:`, and `--format=`, with the placeholders of git. `%<(N)`,
   `%>(N)`, `%><(N)` and `%>>(N)` set the columns of the next placeholder.
@@ -107,6 +115,12 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `gpg.ssh.revocationFile` holds the revoked keys. `gpg.minTrustLevel`
   sets the least trust of a good signature. `--show-signature` also
   checks the signed tags of a merge (`mergetag`).
+
+  The first check of a signature stops at a value of the configuration
+  that git refuses: a `gpg.format` or a `gpg.minTrustLevel` that is not
+  known, or one of the `gpg` keys with no value. `log` and `cat-file`
+  stop at a key of a driver of the attribute `diff` with no value. The
+  message is that of git, with the file and the line of the entry.
 
   The mailmap of `.mailmap`, `mailmap.blob` and
   `mailmap.file` gives the names of the header lines, of `%aN` and of
@@ -215,10 +229,12 @@ turn the graph off, as in git.
 The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
 current directory or of a directory above it. A `.git` file of a linked
 worktree gives the git directory.
+With `GIT_DIR`, the current directory is the top of the worktree, unless
+`core.bare` is true.
 
 The standard output, the messages and the exit status are those of git
 2.56.1. That is the git of the CI runners. The tests compare the port with
-the git of the machine. With git 2.43, seven things are different:
+the git of the machine. With git 2.43, these things are different:
 
 - the indent of the roots in `--graph`
 - the order of the options in the message for `--graph` with `--reverse`
@@ -232,6 +248,19 @@ the git of the machine. With git 2.43, seven things are different:
   no function names and a range with no change. It has no other forms
   of the diff and no pickaxe, and its message for `--stat` is not that
   of git 2.56.1.
+
+git 2.43 is also different in these things:
+
+- `--left-only` and `--right-only` with no symmetric range. git 2.56.1
+  shows no commit, and git 2.43 shows each commit.
+- a conflict marker of `<` or `>` with no space after it. git 2.56.1
+  does not give it to `--check`.
+- a delta by name whose base is in the packfile two times, and a delta
+  whose base is a later delta. git 2.56.1 writes the packfile, and git
+  2.43 stops.
+- the diff of `--histogram`. git 2.56.1 does a Myers diff again of a
+  group of changes that the compaction moved.
+- the rule `incomplete-line` of white space. git 2.43 does not have it.
 
 ## Files
 
@@ -263,6 +292,7 @@ the git of the machine. With git 2.43, seven things are different:
 - `moved.fern`: the colors of the moved lines (`--color-moved`).
 - `ws.fern`: the rules of `core.whitespace` and their errors.
 - `attr.fern`: the attributes of `.gitattributes`.
+- `userdiff.fern`: the drivers of the attribute `diff`.
 - `notes.fern`: the notes of the commits.
 - `sig.fern`: the check of a signature with gpg, gpgsm or ssh-keygen,
   and `%G?`.
@@ -277,9 +307,9 @@ the git of the machine. With git 2.43, seven things are different:
 
 - The option `--remerge-diff` of `log`.
 
-- The drivers of the attribute `diff`, with their `xfuncname`, for the
-  function names of the hunk headers and of `-L :FUNCNAME:FILE`. The
-  port finds a function name with the default rule of git.
+- The other parts of a driver of the attribute `diff`: `-diff` and
+  `diff.NAME.binary` for a binary file, the regex of words of a driver
+  for `--word-diff`, and `textconv`.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.

@@ -1,0 +1,17 @@
+// __fern_fma_f32 gives x * y + z with one rounding to f32. Each argument holds
+// an f32 value, so the product is exact in f64. The sum is rounded to odd, so
+// the rounding to f32 is the only one that changes the result.
+function __fern_fma_f32(x: f64, y: f64, z: f64): f64 {
+  let p = x * y;
+  let s = p + z;
+  let b = f64_bits(s);
+  if ((b >> 52 & 2047) as i32 == 2047) {
+    return s;
+  }
+  let t = s - p;
+  let e = p - (s - t) + (z - t);
+  if (e != 0.0 && (b & 1) as i32 == 0) {
+    s = f64_from_bits(if (e > 0.0 == s > 0.0) { b + 1 } else { b - 1 });
+  }
+  return (s as f32) as f64;
+}

@@ -115,25 +115,43 @@ const serverStartBudget = 60 * time.Second
 // its backlog before the server process has started running.
 func WaitServerReady(t *testing.T, addr string) {
 	t.Helper()
+	if err := AwaitServerReady(addr, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ErrServerExited is the error of AwaitServerReady when the server exits
+// before it serves.
+var ErrServerExited = errors.New("server exited before it served")
+
+// AwaitServerReady is WaitServerReady for a caller that watches the server
+// process. It returns ErrServerExited when exited closes before the server
+// serves. A nil exited is never closed.
+func AwaitServerReady(addr string, exited <-chan struct{}) error {
 	within := serverStartBudget
 	limit := time.Now().Add(within)
 	var last error
 	for time.Now().Before(limit) {
+		select {
+		case <-exited:
+			return ErrServerExited
+		default:
+		}
 		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if err == nil {
 			err = awaitServerClose(c.(*net.TCPConn), limit)
 			if err == nil {
-				return
+				return nil
 			}
 			var ne net.Error
 			if errors.As(err, &ne) && ne.Timeout() {
-				t.Fatalf("server on %s never closed a half-closed connection within %v", addr, within)
+				return fmt.Errorf("server on %s never closed a half-closed connection within %v", addr, within)
 			}
 		}
 		last = err
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("server never served on %s within %v; last attempt: %v", addr, within, last)
+	return fmt.Errorf("server never served on %s within %v; last attempt: %v", addr, within, last)
 }
 
 func awaitServerClose(c *net.TCPConn, limit time.Time) error {

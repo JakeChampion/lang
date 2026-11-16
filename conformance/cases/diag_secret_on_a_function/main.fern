@@ -1,0 +1,9 @@
+// spec: SE-02
+@secret
+function f(): i32 {
+  return 0;
+}
+
+function main(): i32 {
+  return f();
+}

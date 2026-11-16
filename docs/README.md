@@ -46,6 +46,7 @@ which ones.
 | `IDIOMS.md` | [reference] | Fern source style, with compiler bootstrap and validation limits. |
 | `LANGUAGE-DIRECTION.md` | [reference] | The language's direction: positioning, ideas adopted and rejected from other languages, and the shipping plan. |
 | `MUST-CONSUME.md` | [reference] | `@must_consume` types: structs and enums that may not be implicitly dropped, checked as E067. |
+| `SECRET-TYPES.md` | [policy] | `@secret` structs: the drop zeroes the numeric arrays that a record holds alone, in each build. |
 | `WORKERS.md` | [reference] | Share-nothing workers: `std/worker` spawn and join, the `send` parameter mode and E100, and the sequential degrade every engine runs. |
 | `NAMED-FIELD-VARIANTS.md` | [reference] | Named-field enum variants: declaring, constructing and destructuring them. |
 | `TRAITS.md` | [reference] | Traits: static ad-hoc polymorphism, bounded generics and cross-module coherence; phases 1–3 shipped. |
@@ -91,7 +92,7 @@ which ones.
 | `ITERATOR-FUSION-CONTRACT.md` | [policy] | The contract lazy iterator chains must meet before adoption; the eager fusion pass and part of the lazy surface are built. |
 | `ARRAY-FUSION-OPERATORS.md` | [reference] | Per-operator proof behind `compiler/semfuse.fern`: what map, filter, fold, reduce, scan, take, take_while and flat_map each contribute to a fused loop. |
 | `BACKEND-PARITY.md` | [reference] | The targets, CPU baselines, syscall floor, macOS support stance and known limitations of each backend. |
-| `BYTE-COPY-LOOPS.md` | [reference] | The `compiler/sembytecopy.fern` pass: copy loops over owned `u8[]` values and append loops over other arrays and views become bulk copies and range concats, and fill and move loops over scalar arrays become kernel calls. |
+| `BYTE-COPY-LOOPS.md` | [reference] | The `compiler/sembytecopy.fern` pass: copy loops over owned `u8[]` values, write loops from `[u8]` views and append loops over other arrays and views become bulk copies and range concats, and fill and move loops over scalar arrays become kernel calls. |
 | `INTERP-ARRAY-INPLACE-WRITE.md` | [reference] | How the interpreter's arrays carry an owner count so `arr.with(i, v)` writes in place (#7287). |
 | `NATIVE-REGISTER-POOLS.md` | [reference] | Register homes, emitter temporaries and fixed clobbers of the SSA register allocator on arm64 and x86-64 (#12210). |
 | `RUNTIME-INTRINSICS.md` | [reference] | The raw-memory intrinsic floor (syscalls, scratch, environ, raw loads and stores) the Fern runtime helpers are built on. |

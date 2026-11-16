@@ -117,6 +117,39 @@ whole of `update` runs on your computer.
 [`examples/android/tune`](https://github.com/JakeChampion/lang/tree/main/examples/android/tune)
 is a music player that works this way.
 
+## Jobs
+
+An effect runs on the loop, so the screen waits while it runs. A request
+to a server, the decode of a big file or a search of a library belongs in
+a job. `with_jobs` takes a function that gets the new state and the
+message after each message. It gives the workers that the message starts,
+with `worker.spawn`. The result of a worker is a message to `update`, when
+the worker ends.
+
+```fern
+import "std/worker";
+
+enum Msg { Refresh, Loaded(string) }
+
+ui.program(view, update).with_jobs((m: Model, msg: Msg): own worker.Worker[Msg][] => {
+  match (msg) {
+    Refresh => {
+      let url = m.url;
+      return [worker.spawn((): Msg => Loaded(fetch_text(url)))];
+    },
+    _ => {
+      return [];
+    }
+  }
+})
+```
+
+A worker gets a copy of what its closure captures, so it cannot change the
+state. The message type must be able to cross to a worker: scalars,
+strings, and records, enums and arrays of them. While a job runs, the loop
+looks for its end each 16 ms. In a test, `sim.jobs_done(s)` waits for each
+job and gives its message to `update`.
+
 ## Timers
 
 `with_tick` takes a function that gives the milliseconds to the next
@@ -159,7 +192,8 @@ Frame(ns) => {
 
 The back key closes the app. When the app has more than one screen, it
 must go back one screen. `with_back` takes a function that gives the
-message of the back key, or `None` to let the back key close the app:
+message of the back key, or `None` to let the back key close the app.
+The back gesture gives the same message as the back key:
 
 ```fern
 ui.program(view, update).with_back((m: Model): Option[Msg] => {
@@ -222,6 +256,152 @@ has no JNIEnv then.
 ```fern
 ui.program(view, update).with_close((own m: Model): own Model => released(m))
 ```
+
+## Keep the state when Android ends the app
+
+Android can end the process of an app that is not on the screen, to
+free memory. When the person comes back, the app starts again from its
+first state. `with_state` keeps a part of the state through that.
+
+At each Pause, the shell gives the state to `save`, which puts values
+in a `kv.Store`. The shell writes the store to `state.kv` in the files
+directory of the app, when it changed. When the app starts, `restore`
+gets the first state and that store. At the first start the store is
+empty, so give each value a default.
+
+```fern
+import "std/kv";
+
+ui.program(view, update).with_state(
+  (m: Model, k: kv.Store): kv.Store => k.set_int("count", m.count as i64),
+  (own m: Model, k: kv.Store): own Model => Model { ...m, count: k.int("count", 0i64) as i32 })
+```
+
+`std/kv` also keeps settings in a file of their own. `kv.open(path)`
+reads the file, `set`, `set_int` and `set_flag` change the store, and
+`save` writes the file. A save writes a temporary file, flushes it to
+the disk, and renames it. So after a crash the file has the old values
+or the new values.
+
+## Notifications
+
+`std/android/notify` shows notifications in the status bar. Make a
+channel for each kind of notification, and post on it. A post with the
+ID of a notification that shows changes that notification.
+
+```fern
+import "std/android/notify";
+
+notify.channel(ctx, notify.Channel { id: "downloads", name: "Downloads", importance: notify.LOW });
+let n = notify.note(1, "downloads", "Album", "Downloading");
+let shown = notify.post(ctx, notify.Note { ...n, progress: 40, ongoing: true });
+```
+
+From Android 13 the app needs the permission `POST_NOTIFICATIONS`.
+Declare it with `-apk-permission POST_NOTIFICATIONS`. `notify.ask(ctx)`
+shows the dialog of the permission, and `notify.allowed(ctx)` tells
+whether the app can show notifications. `post` gives false when it
+cannot.
+
+## Sensors
+
+`std/android/sensors` reads the accelerometer, the gyroscope, the light
+sensor and the other sensors of the phone. `start` turns sensors on, and
+the loop then gives the event `android.Ready(android.IDENT_SENSORS)` when
+values wait. `sensors.event` reads them.
+
+```fern
+import "std/android/sensors";
+
+let on = sensors.start(ctx, [sensors.ACCELEROMETER], 20000);
+
+// For each event of the loop:
+for r in sensors.event(s, e) {
+  // r.values holds x, y and z in m/s².
+}
+```
+
+Give each event of the loop to `sensors.event`, because the looper gives
+the event again while values wait. Stop the sensors at each Pause with
+`sensors.stop`, because a sensor that stays on uses power.
+
+## Location
+
+`std/android/location` gives the place of the phone. The app declares a
+@jni class that implements `android.location.LocationListener`, and each
+method of it calls the function of the module with the same purpose.
+Below API level 30 Android calls each of the four methods, so declare
+each one.
+
+```fern
+import "std/android/location";
+
+@jni("dev.example.Where implements android.location.LocationListener", "void onLocationChanged(android.location.Location)")
+pub function where_changed(env: usize, thiz: usize, loc: usize): void {
+  location.changed(env, thiz, loc);
+}
+
+// onProviderEnabled calls location.enabled, onProviderDisabled calls
+// location.disabled, and onStatusChanged has an empty body.
+
+let on = location.start(ctx, "dev.example.Where", true, 1000i64);
+
+// For each event of the loop:
+if let Some(location.Moved(f)) = location.event(e) {
+  // f.latitude and f.longitude are in degrees.
+}
+```
+
+A precise request needs the permission `ACCESS_FINE_LOCATION`, and other
+requests need `ACCESS_COARSE_LOCATION`. `location.ask(ctx, precise)`
+shows the dialog. `location.last(ctx, precise)` gives the last fix that
+the phone knows, at once. Stop the fixes with `location.stop` before
+Destroy.
+
+## Camera
+
+`std/android/camera` gives the frames of a camera of the phone. `start`
+opens a camera, and the loop then gives the event
+`android.Ready(android.IDENT_CAMERA)` when a frame waits.
+`camera.event` gives the newest frame.
+
+```fern
+import "std/android/camera";
+
+let on = camera.start(ctx, camera.BACK, 640, 480);
+
+// For each event of the loop:
+if let Some(f) = camera.event(c, e) {
+  // f.y has the luma, and f.rgba() gives a draw.Image.
+}
+```
+
+`camera.sizes(camera.BACK)` gives the sizes that the camera can give.
+The app needs the permission `CAMERA`, and `camera.ask(ctx)` shows its
+dialog. Stop the camera at each Pause with `camera.stop`, because an open
+camera uses power and other apps cannot use it.
+
+## Languages
+
+`android.languages(ctx)` gives the languages of the person, the first
+one the best. `std/i18n` chooses the texts of the app from them. Keep
+the texts of each language in a store of `std/kv`, for example in an
+asset of the APK.
+
+```fern
+import "std/i18n";
+
+let lang = i18n.lookup(["en", "de"], android.languages(ctx), "en");
+let texts = i18n.strings(lang, german, english);
+
+texts.text("title");
+texts.format("hello", [name]);
+texts.plural("files", count);
+```
+
+A text that the language does not have comes from the base language.
+`plural` takes the key `files.one`, `files.few` or another form of the
+count, as the plural rules of the language give it.
 
 Other modules of `std/android` reach more of the phone: `audio`,
 `player`, `video`, `service`, `image`, `fonts` and `p2p`. The standard

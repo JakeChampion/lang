@@ -493,11 +493,11 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
   return mode_error(c.params, c.modes);
 }
 
-pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[], writes: WriteRows, raw_result: boolean, raw_values: i32[], raw_known: boolean }
+pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[], writes: WriteRows, loans: LoanRows, raw_result: boolean, raw_values: i32[], raw_known: boolean }
 
 pub function no_view(): SchemaView {
   let none: boolean[] = [];
-  return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none, writes: no_writes(), raw_result: false, raw_values: [], raw_known: false };
+  return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none, writes: no_writes(), loans: no_loans(), raw_result: false, raw_values: [], raw_known: false };
 }
 
 pub function view_fits(v: SchemaView, f: ssasem.Func): boolean {
@@ -3124,7 +3124,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
     return bad(why);
   }
   let consts = constants(f, defs, view);
-  let receivers = receivers_of(f, steps, consts, no_fresh(), defs, owned, kept);
+  let receivers = receivers_of(f, steps, consts, no_fresh(), view.loans, defs, owned, kept);
   return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
 }
 
@@ -3176,18 +3176,18 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
 // with counts as sole there.
 struct Receivers { unique: boolean[], linked: boolean[] }
 
-function receivers_of(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): Receivers {
+function receivers_of(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, loans: LoanRows, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): Receivers {
   let lent = lent_withs(f, defs, owned, kept);
-  let unique = unique_receivers(f, steps, consts, fresh, lent);
+  let unique = unique_receivers(f, steps, consts, fresh, loans, lent);
   if (!util.any_true(lent)) {
     return Receivers { unique: unique, linked: unique };
   }
-  return Receivers { unique: unique, linked: unique_receivers(f, steps, consts, fresh, __alloc_bool(f.graph.nvals)) };
+  return Receivers { unique: unique, linked: unique_receivers(f, steps, consts, fresh, loans, __alloc_bool(f.graph.nvals)) };
 }
 
-function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, lent: boolean[]): boolean[] {
+function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, loans: LoanRows, lent: boolean[]): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
-  let sole = sole_boxes(f, steps, consts, fresh, -1, lent);
+  let sole = sole_boxes(f, steps, consts, fresh, loans, -1, lent);
   let at = ssa.block_positions(f.graph);
   for st in steps {
     if (st.point >= 0) {
@@ -3215,23 +3215,20 @@ function fresh_through(fresh: FreshRows, name: string): i32 {
   return fresh.through[i];
 }
 
-pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): FreshRows {
+pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[], loans: LoanRows): FreshRows {
   let fresh = no_fresh();
   let named = __alloc_bool(keys.len());
   let check = __alloc_bool(keys.len());
-  let i = 0;
-  while (i < keys.len()) {
+  for i in 0..keys.len() {
     check = check.with(i, plans[i].ok && returns_arrays(funcs[i]));
-    i += 1;
   }
   let grew = true;
   while (grew) {
     grew = false;
     let added: string[] = [];
-    i = 0;
-    while (i < keys.len()) {
+    for i in 0..keys.len() {
       if (check[i] && !named[i]) {
-        let through = sole_result(funcs[i], plans[i], fresh);
+        let through = sole_result(funcs[i], plans[i], fresh, loans);
         if (through >= -1) {
           named = named.with(i, true);
           fresh = FreshRows { rows: fresh.rows.added(keys[i]), through: fresh.through.append(through) };
@@ -3239,25 +3236,24 @@ pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Fr
           grew = true;
         }
       }
-      i += 1;
     }
-    let ix = util.name_index(added);
-    i = 0;
-    while (grew && i < keys.len()) {
-      check = check.with(i, check[i] && !named[i] && calls_any(funcs[i], ix));
-      i += 1;
+    if (grew) {
+      let ix = util.name_index(added);
+      for i in 0..keys.len() {
+        check = check.with(i, check[i] && !named[i] && calls_any(funcs[i], ix));
+      }
     }
   }
   return fresh;
 }
 
-function sole_result(f: ssasem.Func, p: Plan, fresh: FreshRows): i32 {
+function sole_result(f: ssasem.Func, p: Plan, fresh: FreshRows, loans: LoanRows): i32 {
   let lent = lent_withs(f, p.defs, p.owned, p.kept);
-  if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, -1, lent))) {
+  if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, loans, -1, lent))) {
     return -1;
   }
   for k in 0..f.graph.nparams {
-    if (typeinfo.is_array(f.values[k]) && p.modes[k] == counted_mode() && returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, k, lent))) {
+    if (typeinfo.is_array(f.values[k]) && p.modes[k] == counted_mode() && returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, loans, k, lent))) {
       return k;
     }
   }
@@ -3286,7 +3282,7 @@ function returns_sole(f: ssasem.Func, sole: boolean[]): boolean {
   return true;
 }
 
-pub function with_fresh(p: Plan, f: ssasem.Func, fresh: FreshRows): Plan {
+pub function with_fresh(p: Plan, f: ssasem.Func, fresh: FreshRows, loans: LoanRows): Plan {
   if (!p.ok) {
     return p;
   }
@@ -3294,7 +3290,7 @@ pub function with_fresh(p: Plan, f: ssasem.Func, fresh: FreshRows): Plan {
   if (!seeded && !p.fresh_seeded) {
     return p;
   }
-  let receivers = receivers_of(f, p.steps, p.constants, fresh, p.defs, p.owned, p.kept);
+  let receivers = receivers_of(f, p.steps, p.constants, fresh, loans, p.defs, p.owned, p.kept);
   return Plan { ...p, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: seeded };
 }
 
@@ -3348,13 +3344,13 @@ function passed_slot(ins: ssa.SInst, fresh: FreshRows): i32 {
   return -1;
 }
 
-function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, seed: i32, lent: boolean[]): boolean[] {
+function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, loans: LoanRows, seed: i32, lent: boolean[]): boolean[] {
   let sole = __alloc_bool(f.graph.nvals);
   if (seed >= 0) {
     sole = sole.with(seed, true);
   }
   let pass = util.minus_ones(f.graph.nvals);
-  let links = SoleLinks { from: [], to: [], phi: [] };
+  let links = SoleLinks { from: [], to: [] };
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result < 0) {
@@ -3363,12 +3359,12 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       let k = passed_slot(ins, fresh);
       if (k >= 0) {
         pass = pass.with(ins.result, k);
-        links = SoleLinks { from: links.from.append(ins.args[k]), to: links.to.append(ins.result), phi: links.phi.append(false) };
+        links = SoleLinks { from: links.from.append(ins.args[k]), to: links.to.append(ins.result) };
       }
       if (ins.kind_tag == ssa.PHI) {
         for a in ins.args {
           if (a >= 0) {
-            links = SoleLinks { from: links.from.append(a), to: links.to.append(ins.result), phi: links.phi.append(true) };
+            links = SoleLinks { from: links.from.append(a), to: links.to.append(ins.result) };
           }
         }
       }
@@ -3388,7 +3384,7 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       let ins = f.graph.blocks[at[st.block]].insts[st.point];
       for i in 0..ins.args.len() {
         let a = ins.args[i];
-        if (a >= 0 && !only_reads(ins, i) && !moved_at(st, a, i)) {
+        if (a >= 0 && !only_reads(ins, i, loans) && !moved_at(st, a, i)) {
           sole = sole.with(a, false);
         }
       }
@@ -3400,10 +3396,161 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
   return settled(sole, links);
 }
 
-// Whether `ins` only reads its operand at `i`, so the operand stays sole.
-function only_reads(ins: ssa.SInst, i: i32): boolean {
-  if (ins.kind_tag == ssasem.call() && ssasem.holds_no_argument(ins.str)) {
-    return true;
+// LoanRows has one row for each function of the module, with one flag for
+// each parameter. A flag is false only when the function keeps no reference
+// to that array parameter after it returns.
+pub struct LoanRows { rows: util.NameIndex, keeps: boolean[][] }
+
+pub function no_loans(): LoanRows {
+  let none: string[] = [];
+  return LoanRows { rows: util.name_index(none), keeps: [] };
+}
+
+// Whether a call of `name` can keep a reference to its argument at `i`. A
+// callee with no row, such as an extern or a builtin that
+// ssasem.holds_no_argument does not name, can keep one.
+function keeps_loan(t: LoanRows, name: string, i: i32): boolean {
+  if (ssasem.holds_no_argument(name)) {
+    return false;
+  }
+  let row = t.rows.find(name);
+  return row < 0 || i >= t.keeps[row].len() || t.keeps[row][i];
+}
+
+// loan_rows is a greatest fixpoint. Each flag starts true, and a pass clears
+// it when no use of the parameter can keep a reference. A function in a cycle
+// of calls that lends the parameter around the cycle keeps its flag. bodies
+// is false for a function whose calls do not run its graph.
+pub function loan_rows(keys: string[], funcs: ssasem.Func[], bodies: boolean[]): LoanRows {
+  let index = util.name_index(keys);
+  let callers = write_callers(index, funcs);
+  let keeps: boolean[][] = [];
+  let pending = WriteQueue { jobs: [], queued: __alloc_bool(funcs.len()) };
+  for i in 0..funcs.len() {
+    keeps = keeps.append(all_kept(funcs[i].graph.nparams));
+    if (bodies[i]) {
+      pending = queue_write(pending, i);
+    }
+  }
+  let t = LoanRows { rows: index, keeps: keeps };
+  let cursor = 0;
+  while (cursor < pending.jobs.len()) {
+    let i = pending.jobs[cursor];
+    cursor += 1;
+    pending = WriteQueue { ...pending, queued: pending.queued.with(i, false) };
+    let flags = kept_loans(funcs[i], t);
+    if (count_true(flags) < count_true(t.keeps[i])) {
+      t = LoanRows { ...t, keeps: t.keeps.with(i, flags) };
+      for caller in callers[i] {
+        pending = queue_write(pending, caller);
+      }
+    }
+  }
+  return t;
+}
+
+// A parameter that is not an array keeps its flag, because no sole box
+// depends on it.
+function kept_loans(f: ssasem.Func, t: LoanRows): boolean[] {
+  let out = all_kept(f.graph.nparams);
+  let phis: ssa.SInst[] = [];
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.PHI) {
+        phis = phis.append(ins);
+      }
+    }
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.PARAM && ins.imm >= 0 && ins.imm < out.len() && typeinfo.is_array(f.values[ins.result])) {
+        out = out.with(ins.imm, keeps_box(f, phis, ins.result, t));
+      }
+    }
+  }
+  return out;
+}
+
+// Whether f can keep a reference to the box of v after it returns. A plain
+// phi carries the box. A return of the box, and any use that only_reads does
+// not accept, can keep it.
+function keeps_box(f: ssasem.Func, phis: ssa.SInst[], v: i32, t: LoanRows): boolean {
+  let carried = __alloc_bool(f.graph.nvals).with(v, true);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for phi in phis {
+      if (!carried[phi.result] && phi.str == "" && carries_any(carried, phi.args)) {
+        carried = carried.with(phi.result, true);
+        grew = true;
+      }
+    }
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.PHI && ins.str == "") {
+        continue;
+      }
+      for i in 0..ins.args.len() {
+        let a = ins.args[i];
+        if (a >= 0 && carried[a] && !only_reads(ins, i, t)) {
+          return true;
+        }
+      }
+    }
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && carried[b.term.value]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function all_kept(n: i32): boolean[] {
+  let out: boolean[] = [];
+  while (out.len() < n) {
+    out = out.append(true);
+  }
+  return out;
+}
+
+function carries_any(carried: boolean[], args: i32[]): boolean {
+  for a in args {
+    if (a >= 0 && carried[a]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function loan_rows_agree(a: LoanRows, b: LoanRows, callees: string[]): boolean {
+  for callee in callees {
+    let left = loan_row(a, callee);
+    let right = loan_row(b, callee);
+    if (left.len() != right.len()) {
+      return false;
+    }
+    for i in 0..left.len() {
+      if (left[i] != right[i]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function loan_row(t: LoanRows, name: string): boolean[] {
+  let i = t.rows.find(name);
+  if (i < 0) {
+    return [];
+  }
+  return t.keeps[i];
+}
+
+// Whether `ins` only reads its operand at `i` and keeps no reference to it,
+// so the operand stays sole.
+function only_reads(ins: ssa.SInst, i: i32, loans: LoanRows): boolean {
+  if (ins.kind_tag == ssasem.call()) {
+    return !keeps_loan(loans, ins.str, i);
   }
   if (i == 0) {
     return ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length();
@@ -3411,7 +3558,7 @@ function only_reads(ins: ssa.SInst, i: i32): boolean {
   return ins.kind_tag == ssasem.arr_concat();
 }
 
-struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }
+struct SoleLinks { from: i32[], to: i32[] }
 
 function lent_withs(f: ssasem.Func, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
@@ -3440,10 +3587,7 @@ function settled(own sole: boolean[], links: SoleLinks): boolean[] {
     for i in 0..links.from.len() {
       let a = links.from[i];
       let v = links.to[i];
-      if (links.phi[i] && sole[a] != sole[v]) {
-        sole = sole.with(a, false).with(v, false);
-        changed = true;
-      } else if (!links.phi[i] && sole[v] && !sole[a]) {
+      if (sole[v] && !sole[a]) {
         sole = sole.with(v, false);
         changed = true;
       }

@@ -2607,6 +2607,27 @@ function count(n: i32, acc: i32): i32 {
 
 function main(): i32 { return count(1000000, 0) % 7; }
 `},
+	{name: "self-tail-recursion-on-a-slice-of-an-array-view", atLeast: 3, want: "0|", src: `
+import "std/string";
+
+function count(s: [u8], n: i32): i32 {
+    if (s.len() == 0) { return n; }
+    return count(s[1:s.len()], n + 1);
+}
+
+function widths(xs: [string], n: i32): i32 {
+    if (xs.len() == 0) { return n; }
+    return widths(xs[1:xs.len()], n + xs[0].len());
+}
+
+function main(): i32 {
+    let big = "x".repeat(30000000);
+    let words: string[] = [];
+    let i: i32 = 0;
+    while (i < 50) { words = words.append("w" + "x".repeat(i % 5)); i = i + 1; }
+    return (count(big.as_bytes(), 0) - 30000000) + (widths(words[0:words.len()], 0) - 150);
+}
+`},
 	{name: "an-array-of-capturing-closures", atLeast: 4, want: "2|", src: `
 function build(n: i32): ((i32) => i32)[] {
     let caps: i32[] = [n, n + 1, n + 2];
@@ -5287,6 +5308,38 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 10) { let s: dyn Shape = mk(i); t = t + s.area(); i = i + 1; }
     return t - 40;
+}
+`},
+	{name: "an-owned-dyn-value-over-a-generic-implementation-of-a-generic-trait", atLeast: 3, want: "0|", src: `
+import "std/i32";
+
+trait Source[M] { function next(self: Self): M; }
+struct Fixed[M] { v: M }
+impl[M] Source[M] for Fixed[M] { function next(self: Fixed[M]): M { return self.v; } }
+struct Twice { s: string }
+impl Source[string] for Twice { function next(self: Twice): string { return self.s + self.s; } }
+enum Hold[M] { One(M, string), Zero }
+impl[M] Source[Option[M]] for Hold[M] {
+    function next(self: Hold[M]): Option[M] { return match (self) { One(m, _) => Some(m), Zero => None }; }
+}
+function make[M](v: M): dyn Source[M] { return Fixed { v: v }; }
+function pull[M](s: dyn Source[M]): M { return s.next(); }
+function total(all: dyn Source[string][]): i32 { let n: i32 = 0; for s in all { n = n + s.next().len(); } return n; }
+
+function main(): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 10) {
+        let a: dyn Source[i32] = Fixed { v: i };
+        let b = make("ab" + i.to_string());
+        let all: dyn Source[string][] = [Fixed { v: "x" + i.to_string() }, Twice { s: "q" + i.to_string() }];
+        let h: Hold[string] = One("h" + i.to_string(), "pad" + i.to_string());
+        let c: dyn Source[Option[string]] = h;
+        let got = match (c.next()) { Some(s) => s.len(), None => 0 };
+        t = t + pull(a) + pull(b).len() + total(all) + got;
+        i = i + 1;
+    }
+    return t - 155;
 }
 `},
 	{name: "a-borrowed-dyn-value-over-a-generic-implementation", atLeast: 2, want: "0|", src: `

@@ -49,7 +49,7 @@ const ogImage = `${siteUrl.replace(/\/$/, "")}/og.png`;
 // up, under "Other", so a new stdlib module is never invisible — it just
 // wants a home.
 const STDLIB_GROUPS = [
-  ["Text", ["ansi", "encoding", "encoding_indexes", "format", "glob", "linediff", "pcre", "peg", "regex", "strdist", "string",
+  ["Text", ["ansi", "encoding", "encoding_indexes", "format", "glob", "i18n", "linediff", "pcre", "peg", "regex", "strdist", "string",
     "table", "textwrap", "unicode", "utf8"]],
   ["Data & encoding", ["base32", "base64", "binary", "brotli", "brotli_dictionary", "brotli_encoder", "bzip2", "codec", "crypto", "crypto_aead", "crypto_aes", "crypto_aes_gcm", "crypto_chacha20poly1305", "crypto_des",
     "crypto_ecdsa", "crypto_ed25519", "crypto_field25519", "crypto_hpke", "crypto_mlkem768", "crypto_montgomery", "crypto_p256", "crypto_rsa", "crypto_scrypt", "crypto_sha2", "crypto_x25519", "csv", "deflate", "deflate_zlib", "fdt", "hash", "hash_bsd_sum", "hash_cksum", "hash_crc32", "hash_sysv_sum", "hex", "jpeg", "json", "lz4", "lzw", "png", "protobuf", "pvh", "semver", "truetype", "url", "uuid", "xz", "zip", "zstd"]],
@@ -60,7 +60,7 @@ const STDLIB_GROUPS = [
   ["Traits", ["cmp", "convert", "mem", "ops"]],
   ["Numbers", ["bigint", "f32", "f64", "f64_text", "i32", "i64", "math", "num", "number_parse", "rand", "simd", "u32",
     "u64", "u8", "usize"]],
-  ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "cpio", "dma", "elf", "filetime", "frames", "io", "io_buffered", "ip", "pagetable", "process", "raw", "tcp", "tcp_conn", "user_process", "virtio", "virtio_blk", "virtio_net", "virtio_rng",
+  ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "cpio", "dma", "elf", "filetime", "frames", "io", "io_buffered", "ip", "kv", "pagetable", "process", "raw", "tcp", "tcp_conn", "user_process", "virtio", "virtio_blk", "virtio_net", "virtio_rng",
     "log", "mitigations", "path", "signal", "stream", "time", "clock", "tz", "worker"]],
   ["Networking", ["dns", "fetch", "headers", "http", "http_accesslog", "http_auth", "http_cache", "http_compress", "http_cookie", "http_cors", "http_form", "http_forwarded", "http_grpc", "http_h2", "http_h2_frame", "http_h3", "http_h3q", "http_hpack", "http_huffman", "http_multipart", "http_qpack", "http_requestid", "http_router", "http_sse", "http_static", "http_testing", "http_trace", "http_websocket", "metrics", "net", "platform", "publicsuffix", "quic_conn", "quic_frames", "quic_packet", "quic_params", "quic_recovery", "quic_streams", "serve", "tcp_serve",
     "tls", "tls_client", "tls_der", "tls_handshake", "tls_identity", "tls_keyschedule", "tls_keyshare", "tls_ktls", "tls_message", "tls_mozilla", "tls_pem", "tls_record", "tls_server", "tls_tls12", "tls_verify", "tls_x509", "user_net", "wasi_http"]],
@@ -68,7 +68,7 @@ const STDLIB_GROUPS = [
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
-  ["Interop", ["android", "android_access", "android_audio", "android_draw", "android_focus", "android_font", "android_fonts", "android_gl", "android_icons", "android_image", "android_keyboard", "android_media", "android_motion", "android_noisy", "android_p2p", "android_player", "android_property", "android_service", "android_session", "android_shortcuts", "android_testkit", "android_text", "android_trace", "android_ui", "android_ui_app", "android_ui_painter", "android_ui_scene", "android_ui_sim", "android_widget", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "classfile", "ffi", "jni", "jni_bind"]],
+  ["Interop", ["android", "android_access", "android_audio", "android_camera", "android_draw", "android_focus", "android_font", "android_fonts", "android_gl", "android_icons", "android_image", "android_keyboard", "android_launch", "android_location", "android_media", "android_motion", "android_noisy", "android_notify", "android_p2p", "android_player", "android_property", "android_sensors", "android_service", "android_session", "android_shortcuts", "android_testkit", "android_text", "android_trace", "android_ui", "android_ui_app", "android_ui_painter", "android_ui_scene", "android_ui_sim", "android_widget", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "classfile", "ffi", "jni", "jni_bind"]],
 ];
 
 // Reads what `fern -doc` actually emitted rather than trusting the table

@@ -45,33 +45,33 @@ Fern is strong where the others are weak:
   focus and decoders written in Fern. The Tune example plays MP3, FLAC,
   M4A, Ogg Vorbis and Opus with no codec of the system.
 
-Fern is behind in six areas, and the first two stop a release on Google
-Play today:
+Fern is behind in six areas. The first two stopped a release on Google
+Play, and the first is now fixed:
 
 1. **Play Store packaging.** Play needs an AAB, a version code that goes
    up, and a target API level of 36 for new apps and updates since
-   31 August 2026. `fern -apk` writes an APK only, and its target API
-   level is 34.
+   31 August 2026. `fern -apk` wrote an APK only, with a target API level
+   of 34. It now writes an AAB too, and it targets API level 36.
 
 2. **No Java or Kotlin libraries.** The APK path cannot include a JAR or
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
    the SDKs of other vendors are out of reach.
 
 3. **Text and languages.** There is no text shaping, no right-to-left
-   text, no CFF fonts (most CJK fonts), no color emoji, no font fallback
-   and no localized strings.
+   text, no CFF fonts (most CJK fonts), no color emoji and no font
+   fallback. `std/i18n` now gives localized strings.
 
-4. **A thin set of components.** There is no checkbox, radio button, menu,
-   snackbar, tab bar, app bar, navigation stack or date picker. Each app
-   builds these.
+4. **A thin set of components.** There was no checkbox, radio button,
+   menu, snackbar, tab bar, app bar or navigation stack. `std/android/ui`
+   now has each of them. A date picker is still missing.
 
-5. **Device features.** There is no camera, no sensors, no location, no
-   Bluetooth LE, no NFC, no notifications other than those of a
-   foreground service, no push, and no scheduled background work.
+5. **Device features.** Fern now has the camera, the sensors, the
+   location and notifications. There is no Bluetooth LE, no NFC, no push,
+   and no scheduled background work.
 
-6. **Developer tools.** There is no hot reload, no preview, no documented
-   debugger workflow on a phone, and each build compiles both ABIs again
-   on one thread.
+6. **Developer tools.** There is no hot reload, no preview and no
+   documented debugger workflow on a phone. A release build compiles both
+   ABIs on one thread. `-apk-run` builds the ABI of the device only.
 
 ## Measurements
 
@@ -100,8 +100,8 @@ compressed.
 | Area | Fern | Kotlin + Compose | Flutter | React Native |
 |---|---|---|---|---|
 | Toolchain to install | None | Android Studio, Gradle, JDK | Flutter SDK, Android SDK | Node, Android SDK, Gradle |
-| Release format | Signed APK | AAB with R8 | AAB | AAB through EAS |
-| Target API 36 | No (34) | Yes | Yes | Yes |
+| Release format | Signed APK or AAB | AAB with R8 | AAB | AAB through EAS |
+| Target API 36 | Yes | Yes | Yes | Yes |
 | Download size of a small app | About 0.1 to 1 MB | About 2 MB | Several MB per ABI | About 16 MB |
 | Use of Android and Java libraries | JNI and generated bindings, no JAR or AAR | Direct | Plugins and channels | Native modules |
 | Hot reload | No | Live Edit, limited | Yes, stateful | Fast Refresh |
@@ -126,30 +126,43 @@ The order puts first what stops a release, then what most apps need.
    - The version code and the version name: `-apk-version-code`,
      `-apk-version-name`, and `version_code` and `version_name` in the
      `[android]` table. Done.
-   - Target API 36. An app that targets API 36 does not get the back key
+   - Target API 36, done. An app that targets API 36 does not get the back key
      as a key event, so it needs a back callback. Its window goes under
-     the system bars, so it needs the insets of the bars.
-   - An AAB, with the manifest and the resources in the protocol buffer
-     format of aapt2.
+     the system bars, so it needs the insets of the bars. `std/android/launch` registers both.
+   - An AAB, done. With an OUT that ends in `.aab`, `fern -apk` writes the
+     manifest and the resources in the protocol buffer format of aapt2,
+     and signs the bundle with a JAR signature.
 
 2. **A key-value store and the state after the death of the process.**
-   Small, and each app needs them.
+   Done. `std/kv` keeps named values in a file, and a save replaces the
+   file in one step. `with_state` of `std/android/ui` writes a part of
+   the state at each Pause and restores it when the app starts again.
+   `sim.relaunch` tests that on the computer.
 
-3. **Effects that do not block the loop.** A task that runs on a worker
-   and gives a message when it ends.
+3. **Effects that do not block the loop.** Done. `with_jobs` of
+   `std/android/ui` starts workers for a message, and the result of each
+   worker is a message to `update`. `sim.jobs_done` tests that on the
+   computer.
 
-4. **Notifications and device features.** Notifications with channels,
-   sensors through the NDK, then location and the camera.
+4. **Notifications and device features.** `std/android/notify` makes
+   channels, and posts, changes and cancels notifications.
+   `std/android/sensors` reads the sensors through the NDK, with a `Ready`
+   event of the loop. `std/android/location` gives fixes through a @jni
+   `LocationListener`. `std/android/camera` gives the frames of a camera
+   through the NDK.
 
-5. **Components.** Checkbox, radio button, menu, snackbar, tabs, app bar
-   and a navigation stack in `std/android/ui`.
+5. **Components.** Done: `std/android/ui` has a checkbox, a radio
+   button, a menu, a snackbar, tabs, an app bar and the page stack `Nav`.
+   `tinted` gives a canvas the color of a role of the theme.
 
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** Shaping, right-to-left text, CFF and color glyphs, fallback
-   fonts, and localized strings.
+7. **Text.** Shaping, right-to-left text, CFF and color glyphs, and
+   fallback fonts. Localized strings are done: `android.languages` gives
+   the languages of the person, and `std/i18n` chooses the texts and
+   their plural forms.
 
-8. **Developer tools.** A build of one ABI for development, a debugger
-   workflow with lldb, and then a reload of the view and update code with
-   the model kept.
+8. **Developer tools.** A debugger workflow with lldb, and then a reload
+   of the view and update code with the model kept. `-apk-run` already
+   builds the ABI of the device only.

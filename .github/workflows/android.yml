@@ -20,6 +20,15 @@ name: Android
 # completion, repeated playback, and error callbacks.
 # tests/android/focus checks std/android/focus: two listeners of one @jni
 # class take the audio focus from each other.
+# tests/android/notify checks std/android/notify: a channel, a notification
+# with a progress bar in the list of the notification manager, and its cancel.
+# tests/android/sensors checks std/android/sensors: readings of the
+# accelerometer through the Ready event of the loop.
+# tests/android/location checks std/android/location: a fix of the place
+# that the check gives the emulator, through a @jni LocationListener.
+# tests/android/camera checks std/android/camera: frames of the emulated back
+# camera through the Ready event of the loop.
+# tests/android/i18n checks android.languages and the choice of std/i18n.
 # tests/android/worker forks two workers from the loop thread and polls
 # them, and one child resolves a name through netd.
 # tests/android/jnibind calls the typed JNI wrappers that tools/jnibind
@@ -79,6 +88,7 @@ jobs:
         run: |
           python3 -B -m unittest discover -s tests/android/player -p 'test_*.py'
           python3 -B -m unittest discover -s tests/android/video -p 'test_*.py'
+          python3 -B -m unittest discover -s tests/android/notify -p 'test_*.py'
       - name: Check the shared emulator helpers
         run: python3 -B -m unittest discover -s tests/android -p 'test_emulator.py'
       - name: Check the Paper navigation assertions
@@ -100,6 +110,11 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-videotest.apk -apk-package dev.fern.videotest -apk-label "Fern Video Test" -apk-min-sdk 29 -apk-permission READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE -apk-debuggable tests/android/video/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-playertest.apk -apk-package dev.fern.playertest -apk-min-sdk 26 -apk-permission INTERNET,READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE -apk-cleartext tests/android/player/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-focustest.apk -apk-package dev.fern.focustest -apk-min-sdk 28 tests/android/focus/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-notifytest.apk -apk-package dev.fern.notifytest -apk-permission POST_NOTIFICATIONS tests/android/notify/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-sensortest.apk -apk-package dev.fern.sensortest tests/android/sensors/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-locationtest.apk -apk-package dev.fern.locationtest -apk-permission ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION tests/android/location/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-cameratest.apk -apk-package dev.fern.cameratest -apk-permission CAMERA tests/android/camera/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-i18ntest.apk -apk-package dev.fern.i18ntest tests/android/i18n/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dnstest.apk -apk-package dev.fern.dnstest -apk-permission INTERNET tests/android/dns/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-workertest.apk -apk-package dev.fern.workertest -apk-permission INTERNET tests/android/worker/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-jnibindtest.apk -apk-package dev.fern.jnibindtest tests/android/jnibind/app.fern
@@ -112,6 +127,18 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-plex.apk examples/android/plex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie.apk examples/android/walkie/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie2.apk -apk-package dev.fern.walkie2 -apk-label "Fern Walkie 2" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
+      # bundletool makes the APKs of each device from a bundle, as Google
+      # Play does. It checks the bundle of the counter and makes the
+      # universal APK of it, which the emulator runs.
+      - name: Make the APK of the counter from its bundle with bundletool
+        run: |
+          ./bin/fern -apk build/android-stopwatch/fern-counter.aab examples/android/counter/app.fern
+          curl -sSfL -o build/bundletool.jar https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar
+          echo "2d4ad908faea64047c1cc9cb747e6aa667c6ab192e09607bd16b67246a8cd6ae  build/bundletool.jar" | sha256sum -c
+          java -jar build/bundletool.jar validate --bundle=build/android-stopwatch/fern-counter.aab
+          keytool -genkeypair -keystore build/bundle.p12 -storetype PKCS12 -storepass android -alias bundle -keyalg EC -groupname secp256r1 -dname CN=bundle -validity 3650
+          java -jar build/bundletool.jar build-apks --bundle=build/android-stopwatch/fern-counter.aab --output=build/counter.apks --mode=universal --ks=build/bundle.p12 --ks-pass=pass:android --ks-key-alias=bundle --key-pass=pass:android
+          unzip -p build/counter.apks universal.apk > build/android-stopwatch/fern-counter-bundle.apk
       - name: Check native video packets and the QTRLE comparison harness
         run: |
           sudo apt-get update
@@ -153,11 +180,17 @@ jobs:
             build/android-stopwatch/fern-videotest.apk
             build/android-stopwatch/fern-playertest.apk
             build/android-stopwatch/fern-focustest.apk
+            build/android-stopwatch/fern-notifytest.apk
+            build/android-stopwatch/fern-sensortest.apk
+            build/android-stopwatch/fern-locationtest.apk
+            build/android-stopwatch/fern-cameratest.apk
+            build/android-stopwatch/fern-i18ntest.apk
             build/android-stopwatch/fern-dnstest.apk
             build/android-stopwatch/fern-workertest.apk
             build/android-stopwatch/fern-jnibindtest.apk
             build/android-stopwatch/jnibind
             build/android-stopwatch/fern-counter.apk
+            build/android-stopwatch/fern-counter-bundle.apk
             build/android-stopwatch/fern-todo.apk
             build/android-stopwatch/fern-fluid.apk
             build/android-stopwatch/fern-tune.apk
@@ -182,9 +215,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Check the Plex video screen assertion
         run: python3 -B -m unittest discover -s examples/android/plex -p 'test_*.py'
-      # The Plex check plays an H.264 test pattern, which ffmpeg writes.
+      # The Plex check plays an H.264 test pattern, which ffmpeg writes. Each
+      # second starts with a keyframe and no frame is a B-frame. When a paused
+      # video starts again, the decoder of the emulator can lose its reference
+      # frames. It then shows no picture until the next keyframe.
       - name: Write the test video of the Plex check
-        run: ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -pix_fmt yuv420p -movflags +faststart build/android-stopwatch/pattern.mp4
+        run: ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -g 25 -bf 0 -pix_fmt yuv420p -movflags +faststart build/android-stopwatch/pattern.mp4
       - name: Let the emulator use KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -196,11 +232,22 @@ jobs:
       - name: Run the APK on an emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 36
           arch: x86_64
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back emulated
+          # Android 16 shows a notice the first time an app hides the bars,
+          # hides the soft keyboard while the emulator has a hardware one,
+          # and reads the freezer settings only at boot. After the boot, the
+          # checks wait for the package manager too.
           script: |
+            adb shell settings put secure immersive_mode_confirmations confirmed
+            adb shell settings put secure show_ime_with_hard_keyboard 1
+            adb shell settings put global cached_apps_freezer disabled
+            adb shell device_config set_sync_disabled_for_tests persistent
+            adb shell device_config put activity_manager_native_boot use_freezer false
+            adb reboot
+            adb wait-for-device shell 'while [ "$(getprop sys.boot_completed)" != 1 ] || ! pm path android > /dev/null 2>&1; do sleep 1; done'
             mkdir -p build/android-stopwatch/emulator
             python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report || echo "examples/android/stopwatch" >> build/android-stopwatch/emulator/failed
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native mapped || echo "examples/android/native dev.fern.native" >> build/android-stopwatch/emulator/failed
@@ -211,6 +258,11 @@ jobs:
             python3 tests/android/video/emulator_check.py build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video || echo "tests/android/video" >> build/android-stopwatch/emulator/failed
             python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video/byte.mp4 || echo "tests/android/player" >> build/android-stopwatch/emulator/failed
             python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus || echo "tests/android/focus" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/notify/emulator_check.py build/android-stopwatch/fern-notifytest.apk build/android-stopwatch/emulator/notify || echo "tests/android/notify" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/sensors/emulator_check.py build/android-stopwatch/fern-sensortest.apk build/android-stopwatch/emulator/sensors || echo "tests/android/sensors" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/location/emulator_check.py build/android-stopwatch/fern-locationtest.apk build/android-stopwatch/emulator/location || echo "tests/android/location" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/camera/emulator_check.py build/android-stopwatch/fern-cameratest.apk build/android-stopwatch/emulator/camera || echo "tests/android/camera" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/i18n/emulator_check.py build/android-stopwatch/fern-i18ntest.apk build/android-stopwatch/emulator/i18n || echo "tests/android/i18n" >> build/android-stopwatch/emulator/failed
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns || echo "tests/android/dns" >> build/android-stopwatch/emulator/failed
             python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker || echo "tests/android/worker" >> build/android-stopwatch/emulator/failed
             python3 tests/android/jnibind/emulator_check.py build/android-stopwatch/fern-jnibindtest.apk build/android-stopwatch/emulator/jnibind || echo "tests/android/jnibind" >> build/android-stopwatch/emulator/failed
@@ -218,6 +270,8 @@ jobs:
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" tests/android/jnibind/bindings.spec | diff -u tests/android/jnibind/bindings.fern - || echo "bindings of tests/android/jnibind" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" examples/android/paper/bindings.spec | diff -u examples/android/paper/bindings.fern - || echo "bindings of examples/android/paper" >> build/android-stopwatch/emulator/failed
             python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter || echo "examples/android/counter" >> build/android-stopwatch/emulator/failed
+            adb uninstall dev.fern.counter || true
+            python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter-bundle.apk build/android-stopwatch/emulator/counter-bundle || echo "examples/android/counter from its bundle" >> build/android-stopwatch/emulator/failed
             python3 examples/android/todo/emulator_check.py build/android-stopwatch/fern-todo.apk build/android-stopwatch/emulator/todo || echo "examples/android/todo" >> build/android-stopwatch/emulator/failed
             python3 examples/android/fluid/emulator_check.py build/android-stopwatch/fern-fluid.apk build/android-stopwatch/emulator/fluid || echo "examples/android/fluid" >> build/android-stopwatch/emulator/failed
             python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune || echo "examples/android/tune" >> build/android-stopwatch/emulator/failed

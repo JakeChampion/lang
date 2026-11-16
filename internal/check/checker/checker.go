@@ -939,7 +939,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["buf_push_bytes_expanded"] = &ast.FuncType{
-		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Params: []ast.Type{bufH, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
@@ -1096,11 +1096,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__memchr_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__rmemchr_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__mismatch_bytes"] = &ast.FuncType{
@@ -1136,7 +1136,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["__scan_masks_bytes"] = &ast.FuncType{
 		Params: []ast.Type{
-			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}},
 			ast.NumberType{Width: 32, Signed: true},
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 		},
@@ -1144,7 +1144,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["__scan_set_bytes"] = &ast.FuncType{
 		Params: []ast.Type{
-			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}},
 			ast.NumberType{Width: 32, Signed: true},
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 		},
@@ -1303,6 +1303,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__fma_f64"] = &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 64}, ast.FloatType{Width: 64}, ast.FloatType{Width: 64}},
 		Result: ast.FloatType{Width: 64},
+	}
+	c.info.FuncSigs["__fma_f32"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 32}, ast.FloatType{Width: 32}, ast.FloatType{Width: 32}},
+		Result: ast.FloatType{Width: 32},
 	}
 	c.registerLaneBuiltins()
 	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
@@ -1568,6 +1572,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["open_writer_with"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	c.info.FuncSigs["reader_from_fd"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
 	}
 	c.info.FuncSigs["now_unix_ms"] = &ast.FuncType{
 		Params: []ast.Type{},
@@ -6576,6 +6584,11 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			c.resolveType(&t.Params[i], params, pos)
 		}
 		c.resolveType(&t.Result, params, pos)
+	case ast.DynTraitType:
+		*slot = t.MapArgs(func(a ast.Type) ast.Type {
+			c.resolveType(&a, params, pos)
+			return a
+		})
 	}
 }
 
@@ -7491,6 +7504,8 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		return out
 	case ast.ProjType:
 		return ast.ProjType{Base: substByName(x.Base, sub), Name: x.Name}
+	case ast.DynTraitType:
+		return x.MapArgs(func(a ast.Type) ast.Type { return substByName(a, sub) })
 	}
 	return t
 }
@@ -7876,6 +7891,8 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		return out
 	case ast.ProjType:
 		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
+	case ast.DynTraitType:
+		return x.MapArgs(func(a ast.Type) ast.Type { return substituteType(a, sub) })
 	}
 	return t
 }
@@ -8001,6 +8018,34 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			}
 		}
 		return c.unifyType(e.Result, a.Result, sub) && (!e.ResultOwn || a.ResultOwn)
+	}
+	if e, ok := expected.(ast.DynTraitType); ok {
+		a, ok := actual.(ast.DynTraitType)
+		if !ok || !slices.Equal(e.Traits, a.Traits) || len(e.Args) != len(a.Args) || len(e.AssocBindings) != len(a.AssocBindings) {
+			return false
+		}
+		for i := range e.Args {
+			if len(e.Args[i]) != len(a.Args[i]) {
+				return false
+			}
+			for j := range e.Args[i] {
+				if !c.unifyType(e.Args[i][j], a.Args[i][j], sub) {
+					return false
+				}
+			}
+		}
+		for i := range e.AssocBindings {
+			if len(e.AssocBindings[i]) != len(a.AssocBindings[i]) {
+				return false
+			}
+			for j, eb := range e.AssocBindings[i] {
+				ab := a.AssocBindings[i][j]
+				if eb.Name != ab.Name || !c.unifyType(eb.Type, ab.Type, sub) {
+					return false
+				}
+			}
+		}
+		return true
 	}
 	return ast.Equal(expected, actual)
 }
@@ -8285,13 +8330,13 @@ func (c *checker) inStdlibContext() bool {
 	return c.current != nil && strings.HasPrefix(c.current.BodyModule(), "stdlib://")
 }
 
-func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
+func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string, src ast.Type) bool {
 	for i, tr := range dt.Traits {
 		if !c.info.Impls[tr][tn] {
 			return false
 		}
 		if want := dt.ArgsFor(i); len(want) > 0 {
-			if !typeArgsEqual(c.info.ImplTraitArgs[tr][tn], want) {
+			if !typeArgsEqual(c.implTraitArgsFor(tr, tn, src), want) {
 				return false
 			}
 		}
@@ -8309,7 +8354,7 @@ func (c *checker) canBoxInto(dt ast.DynTraitType, src ast.Type) bool {
 	param, isParam := src.(ast.ParamType)
 	if !isParam {
 		tn, ok := methodTypeName(src)
-		return ok && c.implementsAllDynTraits(dt, tn)
+		return ok && c.implementsAllDynTraits(dt, tn, src)
 	}
 	decl := c.typeParamDecl(param.Name)
 	if decl == nil {
@@ -9491,6 +9536,8 @@ type scope struct {
 	order  []string
 	vars   map[string]*ast.Var
 	consts map[string]bool
+	// sends holds each `send` parameter that this scope binds.
+	sends map[string]bool
 	// rangeBody holds the range index whose loop body this scope is.
 	rangeBody string
 }
@@ -9513,6 +9560,7 @@ func (s *scope) set(name string, t ast.Type) {
 		s.order = append(s.order, name)
 	}
 	s.names[name] = t
+	delete(s.sends, name)
 }
 
 // boundLocally reports whether a parameter or a local binds name, so that
@@ -9784,6 +9832,12 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
 		root.set(p.Name, p.Type)
+		if p.Send {
+			if root.sends == nil {
+				root.sends = map[string]bool{}
+			}
+			root.sends[p.Name] = true
+		}
 	}
 	for _, cp := range fn.ConstParams {
 		if _, dup := root.names[cp]; dup {
@@ -11258,7 +11312,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return true
 				}
 				if _, isVariant := c.info.EnumConstructions[x]; isVariant {
-					return true
+					return variantOwned(c.info, x, isOwnedExpr)
 				}
 				if id.Name == "share_unchecked" {
 					return true
@@ -15166,7 +15220,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
-		if !c.implementsAllDynTraits(dt, tn) {
+		if !c.implementsAllDynTraits(dt, tn, n.Target) {
 			c.errfCode(n.P, "E060", "%s does not implement %s, so a '%s' cannot downcast to it", n.Target, c.missingDynTraits(dt, n.Target), dt.String())
 		}
 		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
@@ -15671,7 +15725,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			at := c.checkExpr(n.Args[0], s)
-			c.guardSendArg(n.Args[0], "value", at)
+			c.guardSendArg(n.Args[0], "value", at, s)
 			return at
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
@@ -16359,7 +16413,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
 				if sends := c.sendFuncs[calleeName]; !calleeIsValue && i < len(sends) && sends[i] {
-					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at)
+					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at, s)
 				}
 				if sub == nil {
 					c.refineCallTypeArgsFromDest(n.Args[i], expected)
@@ -16913,6 +16967,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(id.Pos(), "E091", "cannot assign to const parameter %s: it is the constant its instance is made for", id.Name)
 		} else if ok && c.isRangeIndex(id.Name, s) {
 			c.errfCode(id.Pos(), "E091", "cannot assign to range index %s: the loop sets it on each turn, so use a while loop to change it", id.Name)
+		}
+		if id, ok := n.Target.(*ast.Ident); ok && c.isSendParam(id.Name, s) {
+			c.errfCode(id.Pos(), "E100", "cannot assign to `send` parameter %q: the call that gave its argument checked that argument", id.Name)
 		}
 		if id, ok := n.Target.(*ast.Ident); ok {
 			if pname := c.capturedAcrossSend(id.Name, s); pname != "" {

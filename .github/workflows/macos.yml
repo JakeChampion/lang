@@ -73,6 +73,61 @@ jobs:
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
+  # In its own job, so that the log holds only the module and a failure does
+  # not stop a corpus shard. It takes seconds and runs beside the profile job.
+  darwin-ctype-arm64-darwin:
+    if: contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils')
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # In a UTF-8 locale, GNU sed takes its character classes and its case
+      # mappings from the libc of Darwin. scripts/gen-libc-ctype.c writes them
+      # as a Fern module. Only a Darwin host can run it, so this step makes
+      # sure that the committed module is the module of this host. It runs in
+      # C.UTF-8, the locale of the UTF-8 cases of TestSedParity. The two links
+      # show the file of character data that each locale loads.
+      - name: Check the Darwin ctype module of the sed port
+        id: darwin-ctype
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          for l in C.UTF-8 en_US.UTF-8; do
+            echo "/usr/share/locale/$l/LC_CTYPE -> $(readlink "/usr/share/locale/$l/LC_CTYPE" || echo 'no link')"
+          done
+          cc -O2 -Wall -Wextra -o "$RUNNER_TEMP/gen-libc-ctype" scripts/gen-libc-ctype.c
+          out="$RUNNER_TEMP/darwin_ctype.fern"
+          LC_ALL=C.UTF-8 "$RUNNER_TEMP/gen-libc-ctype" > "$out"
+          head -3 "$out"
+          committed=coreutils/lib/darwin_ctype.fern
+          if [ -f "$committed" ] && cmp -s "$out" "$committed"; then
+            echo "$committed is the module of this host"
+            exit 0
+          fi
+          if [ -f "$committed" ]; then
+            echo "::group::the difference from $committed to the module of this host"
+            diff -u "$committed" "$out" || true
+            echo "::endgroup::"
+          fi
+          echo "::group::the module of this host, in full"
+          cat "$out"
+          echo "::endgroup::"
+          if [ -f "$committed" ]; then
+            echo "::error::$committed is not the module of this host. Copy the module from this log or from the darwin-ctype artifact."
+          else
+            echo "::error::no committed Darwin ctype module. Copy the module from this log."
+          fi
+          exit 1
+      - name: Keep the Darwin ctype module
+        if: ${{ failure() && steps.darwin-ctype.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: darwin-ctype
+          path: ${{ runner.temp }}/darwin_ctype.fern
+          retention-days: 7
+          if-no-files-found: ignore
+          overwrite: true
+
   # The corpus still uses two shards, with the remaining native execution on
   # shard 0 and the other Darwin checks on shard 1. Both start after profiling,
   # so the lane's peak remains two concurrent macOS runners.

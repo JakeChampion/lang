@@ -5,9 +5,11 @@ import "std/array";
 import "std/linediff";
 import "std/string";
 import "../../coreutils/lib/bre";
+import "./attr";
 import "./objects";
 import "./store";
 import "./treediff";
+import "./userdiff";
 
 // ---- Sets of ranges ----
 
@@ -422,8 +424,13 @@ function parse_loc(s: string, at_in: i32, b: Blob, begin_in: i64): Loc {
 }
 
 // True when the line from `bol` to `eol` is the line of a function for
-// the hunk headers of git: it starts with a letter, `_` or `$`.
-function funcname_line(data: u8[], bol: i32, eol: i32): boolean {
+// the hunk headers of git (`match_funcname`): the regex of the driver
+// `finder` finds a name in it, or, with no driver, it starts with a
+// letter, `_` or `$`.
+function funcname_line(finder: Option[userdiff.Finder], data: u8[], bol: i32, eol: i32): boolean {
+  if let Some(f) = finder {
+    return f.find(data, bol, eol, 1).0 >= 0;
+  }
   if (bol == eol) {
     return false;
   }
@@ -433,8 +440,9 @@ function funcname_line(data: u8[], bol: i32, eol: i32): boolean {
 
 // The range of `:FUNCNAME` (`parse_range_funcname`): from the first line
 // of a function that matches the regex, from `anchor`, to the line before
-// the next line of a function.
-function parse_funcname(arg: string, b: Blob, anchor_in: i32): (i32, i64, i64, string) {
+// the next line of a function. `funcs` is the regex of the driver of the
+// file, or None.
+function parse_funcname(arg: string, b: Blob, anchor_in: i32, funcs: Option[userdiff.Funcname]): (i32, i64, i64, string) {
   let at = 0;
   let anchor = anchor_in;
   if (arg[0] == b'^') {
@@ -447,6 +455,14 @@ function parse_funcname(arg: string, b: Blob, anchor_in: i32): (i32, i64, i64, s
   }
   let pattern = objects.part(arg, at + 1, term);
   anchor -= 1;
+  let finder: Option[userdiff.Finder] = None;
+  if let Some(f) = funcs {
+    let made = userdiff.finder_of(f);
+    if (made.died.len() > 0) {
+      return (term, 0, 0, made.died);
+    }
+    finder = Some(made);
+  }
   let re = regex_of(pattern);
   if (re.err.len() > 0) {
     return (term, 0, 0, "-L parameter '" + pattern + "': " + re.err);
@@ -475,7 +491,7 @@ function parse_funcname(arg: string, b: Blob, anchor_in: i32): (i32, i64, i64, s
     if (eol < b.data.len() && b.data[eol] == b'\n') {
       eol += 1;
     }
-    if (funcname_line(b.data, bol, eol)) {
+    if (funcname_line(finder, b.data, bol, eol)) {
       found = bol;
       break;
     }
@@ -492,7 +508,7 @@ function parse_funcname(arg: string, b: Blob, anchor_in: i32): (i32, i64, i64, s
     return (term, 0, 0, "-L parameter '" + pattern + "' matches at EOF");
   }
   let end = begin + 1;
-  while (end < b.lines && !funcname_line(b.data, nth_line(b.ends, end), nth_line(b.ends, end + 1))) {
+  while (end < b.lines && !funcname_line(finder, b.data, nth_line(b.ends, end), nth_line(b.ends, end + 1))) {
     end += 1;
   }
   return (term, (begin + 1) as i64, end as i64, "");
@@ -502,13 +518,13 @@ function parse_funcname(arg: string, b: Blob, anchor_in: i32): (i32, i64, i64, s
 // place that is not given (`parse_range_arg`). The second value is false
 // for a range that is not sound, and the third is the message of git when
 // it stops.
-function parse_range(arg: string, b: Blob, anchor_in: i32): (i64, i64, boolean, string) {
+function parse_range(arg: string, b: Blob, anchor_in: i32, funcs: Option[userdiff.Funcname]): (i64, i64, boolean, string) {
   let anchor = anchor_in.max(1);
   if (anchor > b.lines) {
     anchor = b.lines + 1;
   }
   if (arg.starts_with(":") || arg.starts_with("^:")) {
-    let (term, begin, end, died) = parse_funcname(arg, b, anchor);
+    let (term, begin, end, died) = parse_funcname(arg, b, anchor, funcs);
     if (died.len() > 0) {
       return (0, 0, true, died);
     }
@@ -538,10 +554,11 @@ function parse_range(arg: string, b: Blob, anchor_in: i32): (i64, i64, boolean, 
 }
 
 // The start and the end of the range `arg` in the blob `data`, from the
-// line `anchor`, as `parse_range` gives them.
-pub function range_in(arg: string, data: u8[], anchor: i32): (i64, i64, boolean, string) {
+// line `anchor`, as `parse_range` gives them. `funcs` is the regex of the
+// driver of the file for `:FUNCNAME`, or None.
+pub function range_in(arg: string, data: u8[], anchor: i32, funcs: Option[userdiff.Funcname]): (i64, i64, boolean, string) {
   let ends = line_ends(data);
-  return parse_range(arg, Blob { data: data, ends: ends, lines: ends.len() - 1 }, anchor);
+  return parse_range(arg, Blob { data: data, ends: ends, lines: ends.len() - 1 }, anchor, funcs);
 }
 
 // The path of the name `name` of `-L` from the directory `prefix` below
@@ -600,8 +617,9 @@ function find(list: Entry[], path: string): i32 {
 
 // The ranges of the arguments `args` of `-L` in the tree `tree` of the
 // first commit (`parse_lines`), in the order of their paths, or the
-// message of git when it stops.
-pub function parse(s_in: store.Store, tree: string, prefix: string, top: string, args: string[]): (store.Store, Entry[], string) {
+// message of git when it stops. `drivers` and `attrs` give the driver of
+// the attribute `diff` of each path.
+pub function parse(s_in: store.Store, tree: string, prefix: string, top: string, args: string[], drivers: userdiff.Drivers, attrs: attr.Attrs[]): (store.Store, Entry[], string) {
   let s = s_in;
   let list: Entry[] = [];
   for arg in args {
@@ -629,7 +647,7 @@ pub function parse(s_in: store.Store, tree: string, prefix: string, top: string,
     let b = Blob { data: bytes, ends: ends, lines: ends.len() - 1 };
     let at = find(list, path);
     let anchor = if (at >= 0 && list[at].ranges.len() > 0) { list[at].ranges[list[at].ranges.len() - 1] + 1 } else { 1 };
-    let (begin_in, end_in, sound, died) = parse_range(range, b, anchor);
+    let (begin_in, end_in, sound, died) = parse_range(range, b, anchor, drivers.for_range(attrs, path));
     if (died.len() > 0) {
       return (s, [], died);
     }
@@ -714,6 +732,16 @@ function hunks_of(a: u8[], b: u8[]): (i32[], i32[]) {
 // the count of the changes that touch a range (`process_all_files`).
 pub struct Step { store: store.Store, parent: Entry[], range: Entry[], changed: i32 }
 
+// The pair that a range keeps for its diff. As `diff_filepair_dup` of git,
+// it has the two sides and no status of a rename, so the diff shows a
+// rename as a change.
+function kept_pair(p: treediff.Change): treediff.Change {
+  if (p.status == b'R' || p.status == b'C') {
+    return treediff.Change { ...p, status: b'M', score: 0 };
+  }
+  return p;
+}
+
 // Maps the ranges of the commit with the tree `tree` to the parent with
 // the tree `base` ("" for none) across the diff of each file.
 pub function step(s_in: store.Store, range: Entry[], base: string, tree: string, r: Renames): Step {
@@ -738,7 +766,7 @@ pub function step(s_in: store.Store, range: Entry[], base: string, tree: string,
     if (tp.len() > 0) {
       changed += 1;
       let k = find(input, two);
-      input = input.with(k, Entry { ...input[k], pair: [p] });
+      input = input.with(k, Entry { ...input[k], pair: [kept_pair(p)] });
     }
   }
   return Step { store: s, parent: out, range: input, changed: changed };

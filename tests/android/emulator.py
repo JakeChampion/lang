@@ -73,8 +73,17 @@ def count(pixels, rgb, step=1):
     return n
 
 
-def finish():
-    """Ends the check: exit status 1 after a failure, else "ok"."""
+def save_log(out, name):
+    """Writes the log of each tag to OUT/NAME."""
+    with open(f"{out}/{name}", "w") as f:
+        f.write(adb("logcat", "-d", "-v", "threadtime", check=False))
+
+
+def finish(out=None):
+    """Ends the check: exit status 1 after a failure, else "ok". After a
+    failure, OUT gets logcat-all.txt, the log of each tag."""
     if failures:
+        if out:
+            save_log(out, "logcat-all.txt")
         sys.exit(1)
     print("ok", flush=True)

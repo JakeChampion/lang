@@ -76,7 +76,7 @@ func TestApkWriter(t *testing.T) {
 			t.Errorf("%s: data at %d, want a multiple of %d", f.Name, off, align)
 		}
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	man := readZipEntry(t, zr, "AndroidManifest.xml")
@@ -288,11 +288,11 @@ func TestApkRefusals(t *testing.T) {
 			t.Errorf("%v: want a refusal, got %v\n%s", flag, err, o)
 		}
 	}
-	for _, level := range []string{"9", "35", "x"} {
+	for _, level := range []string{"9", "37", "x"} {
 		args := []string{"-apk", filepath.Join(dir, "z.apk"), "-apk-min-sdk", level, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
 		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
 		cmd.Env = e2eharness.ChildEnv()
-		if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "-apk-min-sdk takes an API level from 24 to 34") {
+		if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "-apk-min-sdk takes an API level from 24 to 36") {
 			t.Errorf("-apk-min-sdk %s: want a refusal, got %v\n%s", level, err, o)
 		}
 	}
@@ -380,7 +380,7 @@ func TestApkIcon(t *testing.T) {
 			t.Errorf("%s: method %d at %d, want stored at a multiple of 4 (%v)", f.Name, f.Method, off, err)
 		}
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml resources.arsc res/drawable/icon.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	if got := readZipEntry(t, zr, "res/drawable/icon.png"); !bytes.Equal(got, buf.Bytes()) {
@@ -437,8 +437,8 @@ func TestApkBanner(t *testing.T) {
 		entries string
 		id      string
 	}{
-		{"with an icon", []string{"-apk-icon", icon, "-apk-banner", banner}, "AndroidManifest.xml resources.arsc res/drawable/icon.png res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010001"},
-		{"alone", []string{"-apk-banner", banner}, "AndroidManifest.xml resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010000"},
+		{"with an icon", []string{"-apk-icon", icon, "-apk-banner", banner}, "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010001"},
+		{"alone", []string{"-apk-banner", banner}, "AndroidManifest.xml classes.dex resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path, raw := buildApk(t, dir, tc.flags...)
@@ -602,7 +602,7 @@ func v2Digest(sections ...[]byte) []byte {
 
 // An app with @jni classes: fern -apk writes them to classes.dex, the
 // manifest says hasCode, and the class that extends NativeActivity is the
-// activity. TestApkWriter's app has no @jni class, and so no classes.dex.
+// activity.
 func TestApkJniClasses(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "dextest.apk")
@@ -678,6 +678,142 @@ func TestApkNestedInterface(t *testing.T) {
 			t.Errorf("classes.dex has no string %q", s)
 		}
 	}
+}
+
+// The test app of std/android/notify builds for both ABIs, and its
+// manifest declares the permission that Android 13 needs to show a
+// notification. The emulator lane runs it.
+func TestApkNotify(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "notifytest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.notifytest", "-apk-permission", "POST_NOTIFICATIONS",
+		e2eharness.RepoPath("tests/android/notify", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if !bytes.Contains(man, utf16le("android.permission.POST_NOTIFICATIONS")) {
+		t.Error("the manifest has no permission POST_NOTIFICATIONS")
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		if lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so"); !bytes.Contains(lib, []byte("areNotificationsEnabled")) {
+			t.Errorf("the library of %s does not call areNotificationsEnabled", abi)
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
+// The test app of std/android/sensors builds for both ABIs, and its library
+// imports the event queue of the sensor manager. The emulator lane runs it.
+func TestApkSensors(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "sensortest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.sensortest",
+		e2eharness.RepoPath("tests/android/sensors", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so")
+		for _, sym := range []string{"ASensorManager_createEventQueue", "ASensorEventQueue_getEvents"} {
+			if !bytes.Contains(lib, []byte(sym)) {
+				t.Errorf("the library of %s does not import %s", abi, sym)
+			}
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
+// The test app of std/android/location declares both permissions, and its
+// @jni class implements each method of LocationListener, as Android below
+// API level 30 calls each one.
+func TestApkLocation(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "locationtest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.locationtest",
+		"-apk-permission", "ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION",
+		e2eharness.RepoPath("tests/android/location", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	for _, p := range []string{"ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"} {
+		if !bytes.Contains(man, utf16le("android.permission."+p)) {
+			t.Errorf("the manifest has no permission %s", p)
+		}
+	}
+	dex := readZipEntry(t, zr, "classes.dex")
+	for _, name := range []string{"Landroid/location/LocationListener;", "onLocationChanged", "onProviderEnabled", "onProviderDisabled", "onStatusChanged"} {
+		if !bytes.Contains(dex, []byte(name)) {
+			t.Errorf("classes.dex has no %s", name)
+		}
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		if lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so"); !bytes.Contains(lib, []byte("requestLocationUpdates")) {
+			t.Errorf("the library of %s does not call requestLocationUpdates", abi)
+		}
+	}
+	verifyApkV2(t, raw)
+}
+
+// The test app of std/android/camera declares the permission, and its
+// library imports the camera and the image reader of the NDK.
+func TestApkCamera(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "cameratest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.cameratest", "-apk-permission", "CAMERA",
+		e2eharness.RepoPath("tests/android/camera", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if man := readZipEntry(t, zr, "AndroidManifest.xml"); !bytes.Contains(man, utf16le("android.permission.CAMERA")) {
+		t.Error("the manifest has no permission CAMERA")
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so")
+		for _, sym := range []string{"libcamera2ndk.so", "ACameraManager_openCamera", "AImageReader_setImageListener"} {
+			if !bytes.Contains(lib, []byte(sym)) {
+				t.Errorf("the library of %s does not import %s", abi, sym)
+			}
+		}
+	}
+	verifyApkV2(t, raw)
 }
 
 // A @jni class that extends Service is a service in the manifest. It is not
@@ -950,7 +1086,7 @@ func TestApkManifest(t *testing.T) {
 	if got := string(readZipEntry(t, zr, "assets/data.txt")); got != "fern" {
 		t.Errorf("assets/data.txt = %q, want the file next to fern.toml", got)
 	}
-	if got := versionCode(man); got != 7 || !bytes.Contains(man, utf16le("2.1")) {
+	if got := versionCode(t, man); got != 7 || !bytes.Contains(man, utf16le("2.1")) {
 		t.Errorf("version_code and version_name of fern.toml: versionCode %d, want 7 and the name 2.1", got)
 	}
 	raw, err = build("-apk-version-code", "9", "-apk-version-name", "3.0")
@@ -958,7 +1094,7 @@ func TestApkManifest(t *testing.T) {
 		t.Fatalf("fern -apk -apk-version-code: %v\n%s", err, raw)
 	}
 	man = readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
-	if got := versionCode(man); got != 9 || !bytes.Contains(man, utf16le("3.0")) || bytes.Contains(man, utf16le("2.1")) {
+	if got := versionCode(t, man); got != 9 || !bytes.Contains(man, utf16le("3.0")) || bytes.Contains(man, utf16le("2.1")) {
 		t.Errorf("the version flags did not take priority over fern.toml: versionCode %d", got)
 	}
 	for _, bad := range []string{"0", "5K"} {
@@ -974,17 +1110,16 @@ func TestApkManifest(t *testing.T) {
 	}
 }
 
-// versionCode is the android:versionCode of a binary manifest of fern -apk:
-// the value of the attribute whose name is entry 17 of the string pool, or
-// -1.
-func versionCode(man []byte) int {
-	head := []byte{17, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 8, 0, 0, 0x10}
-	i := bytes.Index(man, head)
-	if i < 0 || i+len(head)+4 > len(man) {
+// versionCode is the android:versionCode of a binary manifest, or -1.
+func versionCode(t *testing.T, man []byte) int {
+	v, ok := elementAttr(t, man, versionCodeID, versionCodeID)
+	if !ok {
 		return -1
 	}
-	return int(binary.LittleEndian.Uint32(man[i+len(head):]))
+	return int(v)
 }
+
+const versionCodeID = 0x0101021b
 
 // fakeAdb records each call in $FAKE_ADB_LOG and answers as a device with
 // the ABI x86_64 and an app with the process 4242.

@@ -80,6 +80,29 @@ func round(width int, v float64) float64 {
 	return v
 }
 
+// fma32 gives a*b + c with one rounding to f32. Each argument holds an f32
+// value, so the product is exact in f64. The sum is rounded to odd, so the
+// rounding to f32 is the only one that changes the result.
+func fma32(a, b, c float64) float64 {
+	// The conversion stops a compiler that fuses a*b + c.
+	p := float64(a * b)
+	s := p + c
+	if math.IsInf(s, 0) || math.IsNaN(s) {
+		return s
+	}
+	t := s - p
+	e := (p - (s - t)) + (c - t)
+	if bits := math.Float64bits(s); e != 0 && bits&1 == 0 {
+		if (e > 0) == (s > 0) {
+			bits++
+		} else {
+			bits--
+		}
+		s = math.Float64frombits(bits)
+	}
+	return float64(float32(s))
+}
+
 func signBit(width int) uint64 {
 	if width == 32 {
 		return 1 << 31
@@ -277,12 +300,11 @@ func (i *Interp) registerLaneBuiltins() {
 			if err != nil {
 				return nil, err
 			}
-			// The f64 lanes round one time. The f32 lanes round two times.
 			return mapLanes(ls, func(xs []float64) float64 {
 				if width == 64 {
 					return math.FMA(xs[0], xs[1], xs[2])
 				}
-				return round(width, round(width, xs[0]*xs[1])+xs[2])
+				return fma32(xs[0], xs[1], xs[2])
 			}), nil
 		}}
 		i.Builtins[p+"min"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
@@ -399,7 +421,7 @@ func (i *Interp) registerLaneBuiltins() {
 			}
 			return out, nil
 		}}
-		i.Builtins[p+"with_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		i.Builtins[p+"with_bytes"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
 			a, at, err := laneWindow(p+"with_bytes", args[0], args[1], 16)
 			if err != nil {
 				return nil, err
@@ -408,14 +430,14 @@ func (i *Interp) registerLaneBuiltins() {
 			if !ok || l.Width != width {
 				return nil, fmt.Errorf("packed lane store requires matching lanes")
 			}
-			e := append([]Value(nil), a.Elems()...)
-			for k := 0; k < 16; k++ {
-				e[at+k] = Number(uint8(l.Bits[k/(width/8)] >> ((k % (width / 8)) * 8)))
+			var e [16]Value
+			for k := range e {
+				e[k] = Number(uint8(l.Bits[k/(width/8)] >> ((k % (width / 8)) * 8)))
 			}
-			return arrayOf(e...), nil
+			return ip.writeElems(a, at, e[:]...)
 		}}
 
-		i.Builtins[p+"with"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		i.Builtins[p+"with"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
 			if len(args) != 3 {
 				return nil, fmt.Errorf("%swith: expected 3 args, got %d", p, len(args))
 			}
@@ -427,12 +449,11 @@ func (i *Interp) registerLaneBuiltins() {
 			if !ok {
 				return nil, fmt.Errorf("%swith: expected a lane value, got %T", p, args[2])
 			}
-			e := make([]Value, len(a.Elems()))
-			copy(e, a.Elems())
-			for k := range l.Bits {
-				e[at+k] = l.lane(k)
+			e := make([]Value, len(l.Bits))
+			for k := range e {
+				e[k] = l.lane(k)
 			}
-			return arrayOf(e...), nil
+			return ip.writeElems(a, at, e...)
 		}}
 	}
 	i.Builtins["__f64x2_load_f32_ptr"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
@@ -747,11 +768,11 @@ func (i *Interp) registerIntegerLanes(like Lanes) {
 		if err != nil {
 			return nil, err
 		}
-		e := append([]Value(nil), a.Elems()...)
-		for k := range 16 {
-			e[at+k] = Number(uint8(ls[0].Bits[k/size] >> (8 * (k % size))))
+		var e [16]Value
+		for k := range e {
+			e[k] = Number(uint8(ls[0].Bits[k/size] >> (8 * (k % size))))
 		}
-		return arrayOf(e...), nil
+		return i.writeElems(a, at, e[:]...)
 	}
 	for _, verb := range intLaneVerbs(like) {
 		name := p + verb
