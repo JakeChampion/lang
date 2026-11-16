@@ -86,33 +86,23 @@ pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
   return Set { rows: util.name_index(names), classes: classes, indirect: any_closure, on: names.len() > 0 };
 }
 
+// The signatures of the closures that a suspending function is made as. A
+// function that no closure_new makes, such as a specialised clone, is only
+// called directly and gives no signature.
 function closure_sigs(keys: string[], funcs: ssasem.Func[], closed: boolean[], made: string[], made_sigs: string[]): string[] {
   let out: string[] = [];
   let i = 0;
   while (i < keys.len() && i < funcs.len()) {
-    if (closed[i] && is_lifted(keys[i])) {
-      for sig in made_as(keys[i], funcs[i].graph.name, made, made_sigs) {
-        if (!util.has_str(out, sig)) {
-          out = out.append(sig);
+    if (closed[i]) {
+      for k in 0..made.len() {
+        if ((made[k] == keys[i] || made[k] == funcs[i].graph.name) && !util.has_str(out, made_sigs[k])) {
+          out = out.append(made_sigs[k]);
         }
       }
     }
     i += 1;
   }
   return out;
-}
-
-function made_as(key: string, name: string, made: string[], made_sigs: string[]): string[] {
-  let sigs: string[] = [];
-  for k in 0..made.len() {
-    if (made[k] == key || made[k] == name) {
-      sigs = sigs.append(made_sigs[k]);
-    }
-  }
-  if (sigs.len() == 0) {
-    return [""];
-  }
-  return sigs;
 }
 
 function value_sig(f: ssasem.Func, args: i32[]): string {
@@ -165,10 +155,6 @@ function result_class(funcs: ssasem.Func[], i: i32): string {
 
 function trampoline(key: string): boolean {
   return key.starts_with("async__run_task");
-}
-
-function is_lifted(key: string): boolean {
-  return __memchr(key, 36, 0) >= 0;
 }
 
 function spread(seed: boolean[], callers: i32[][], keys: string[]): boolean[] {
