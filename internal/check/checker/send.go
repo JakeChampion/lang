@@ -8,9 +8,18 @@ import (
 // another heap, so the argument's type, and a closure argument's captures
 // and result, must be send-safe (E100). compiler/checker.fern's
 // send_guard_call holds the same rule.
-func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type) {
+//
+// A `send` parameter of the enclosing function holds an argument that its
+// own call checked, so it crosses again: as the argument, or as a capture.
+func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type, s *scope) {
+	if id, ok := arg.(*ast.Ident); ok && c.isSendParam(id.Name, s) {
+		return
+	}
 	if lam, ok := arg.(*ast.Lambda); ok {
 		for _, capture := range lam.Captures {
+			if c.isSendParam(capture.Name, s) {
+				continue
+			}
 			if why := c.sendUnsafeReason(capture.Type, map[string]bool{}); why != "" {
 				c.errfCode(arg.Pos(), "E100", "closure passed to `send` parameter %q captures %q of type %s, which cannot cross a worker boundary: %s", pname, capture.Name, capture.Type, why)
 			}
@@ -25,6 +34,22 @@ func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type) {
 	if why := c.sendUnsafeReason(at, map[string]bool{}); why != "" {
 		c.errfCode(arg.Pos(), "E100", "argument to `send` parameter %q has type %s, which cannot cross a worker boundary: %s", pname, at, why)
 	}
+}
+
+// isSendParam reports whether name is a `send` parameter of the enclosing
+// function at this place.
+func (c *checker) isSendParam(name string, s *scope) bool {
+	if b := s.binder(name); b != nil {
+		return b.sends[name]
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		if ent := c.captureChain[i]; ent.scope != nil {
+			if b := ent.scope.binder(name); b != nil {
+				return b.sends[name]
+			}
+		}
+	}
+	return false
 }
 
 // markSendLambdas records each closure in args that is the argument of a

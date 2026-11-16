@@ -20552,7 +20552,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -20827,7 +20827,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): Ow
       bound = bound.append(p.name);
     }
   }
-  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
+  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced, sends: ctx.sends };
   return nested;
 }
 
@@ -25626,9 +25626,14 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
     aline = c.line;
     acol = c.col;
   }
+  if let ast.ExprIdent(id) = arg {
+    if (util.has_str(ctx.sends, id.name)) {
+      return out;
+    }
+  }
   let at = check_expr(arg, s);
   if let ast.ExprLambda(lm) = arg {
-    let seen: string[] = [];
+    let seen: string[] = ctx.sends;
     for name in astwalk.collect_lambda_idents(lm, []) {
       if (s.is_bound(name) && !util.has_str(seen, name)) {
         seen = seen.append(name);
@@ -25650,6 +25655,35 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
   let why = send_unsafe_reason(at, s, []);
   if (why.len() > 0) {
     out = out.append(dg_at("E100", "argument to `send` parameter \"" + pname + "\" has type " + type_label(at) + ", which cannot cross a worker boundary: " + why, aline, acol));
+  }
+  return out;
+}
+
+function send_params(fn: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  for param in fn.params {
+    if (param.send) {
+      out = out.append(param.name);
+    }
+  }
+  return out;
+}
+
+// A `send` parameter holds an argument that its own call checked, so it
+// crosses a worker boundary again. An assignment would replace that argument.
+function send_param_assign_diags(fn: parser.FuncDecl, sends: string[]): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (sends.len() == 0) {
+    return out;
+  }
+  let found: ast.StmtAssign[] = [];
+  for st in fn.body {
+    found = astwalk.fold_stmt_nodes(st, found, send_collect_assigns, send_keep_assigns, astwalk.descend_all);
+  }
+  for a in found {
+    if (util.has_str(sends, a.target)) {
+      out = out.append(dg_at("E100", "cannot assign to `send` parameter \"" + a.target + "\": the call that gave its argument checked that argument", a.target_line, a.target_col));
+    }
   }
   return out;
 }
@@ -26692,7 +26726,7 @@ function ow_shadow_names_ctx(ctx: OwnCtx, names: string[]): OwnCtx {
   }
   let returns = ctx.returns.get();
   return OwnCtx {
-    ...c, owned: ow_names_without(ctx.owned, names), borrowed: ow_names_without(ctx.borrowed, names),
+    ...c, owned: ow_names_without(ctx.owned, names), borrowed: ow_names_without(ctx.borrowed, names), sends: ow_names_without(ctx.sends, names),
     deferred: cell_new(ow_moves_without(ctx.deferred.get(), names)),
     returns: cell_new(OwnReturns { ...returns, moved: ow_moves_without(returns.moved, names) }),
     jumps: ow_fresh_jumps(),
@@ -28550,10 +28584,10 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
+    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
-    out = util.append_diags(out, ow_source_diags(r.diags, resolved.bindings));
+    out = util.append_diags(out, ow_source_diags(util.append_diags(send_param_assign_diags(fn, ctx.sends), r.diags), resolved.bindings));
   }
   return out;
 }

@@ -9488,6 +9488,8 @@ type scope struct {
 	order  []string
 	vars   map[string]*ast.Var
 	consts map[string]bool
+	// sends holds each `send` parameter that this scope binds.
+	sends map[string]bool
 	// rangeBody holds the range index whose loop body this scope is.
 	rangeBody string
 }
@@ -9510,6 +9512,7 @@ func (s *scope) set(name string, t ast.Type) {
 		s.order = append(s.order, name)
 	}
 	s.names[name] = t
+	delete(s.sends, name)
 }
 
 // boundLocally reports whether a parameter or a local binds name, so that
@@ -9781,6 +9784,12 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
 		root.set(p.Name, p.Type)
+		if p.Send {
+			if root.sends == nil {
+				root.sends = map[string]bool{}
+			}
+			root.sends[p.Name] = true
+		}
 	}
 	for _, cp := range fn.ConstParams {
 		if _, dup := root.names[cp]; dup {
@@ -15663,7 +15672,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			at := c.checkExpr(n.Args[0], s)
-			c.guardSendArg(n.Args[0], "value", at)
+			c.guardSendArg(n.Args[0], "value", at, s)
 			return at
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
@@ -16339,7 +16348,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
 				if sends := c.sendFuncs[calleeName]; !calleeIsValue && i < len(sends) && sends[i] {
-					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at)
+					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at, s)
 				}
 				if sub == nil {
 					c.refineCallTypeArgsFromDest(n.Args[i], expected)
@@ -16893,6 +16902,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(id.Pos(), "E091", "cannot assign to const parameter %s: it is the constant its instance is made for", id.Name)
 		} else if ok && c.isRangeIndex(id.Name, s) {
 			c.errfCode(id.Pos(), "E091", "cannot assign to range index %s: the loop sets it on each turn, so use a while loop to change it", id.Name)
+		}
+		if id, ok := n.Target.(*ast.Ident); ok && c.isSendParam(id.Name, s) {
+			c.errfCode(id.Pos(), "E100", "cannot assign to `send` parameter %q: the call that gave its argument checked that argument", id.Name)
 		}
 		if id, ok := n.Target.(*ast.Ident); ok {
 			if pname := c.capturedAcrossSend(id.Name, s); pname != "" {
