@@ -1,0 +1,74 @@
+name: Perceus comparison
+
+# Fern, Koka, Lean and Roc on the workloads of bench/perceus, timed on a
+# native arm64 runner by scripts/bench-perceus.py. The workflow records
+# evidence and gates nothing. The x86-64 numbers come from a run on a
+# development machine, so the arm64 runner is the only host here.
+on:
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: Timed runs of each workload and language (a multiple of 4 balances the order)
+        required: false
+        default: "4"
+  schedule:
+    # 03:41 UTC on Sundays, off the hour, since scheduled runs queue at :00.
+    - cron: "41 3 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perceus-compare
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    name: perceus-compare-aarch64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    # Koka, Lean and Roc are pinned in mise.perceus.toml, which this env
+    # selects on top of mise.toml.
+    env:
+      MISE_ENV: perceus
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Install Koka, Lean and Roc (mise.perceus.toml)
+        run: mise install http:koka http:lean http:roc
+      - name: Build the compiler
+        run: make build
+      - name: Run the comparison
+        env:
+          REPEATS: ${{ inputs.repeats || '4' }}
+        run: |
+          cases=""
+          for c in rbtree:4200000 rbtree-ck:4200000 deriv:10 nqueens:13 cfold:20 \
+                   binarytrees:21 msort:1000000 qsort:1000000 treemap:20 pmap:1000000; do
+            cases="$cases --case $c"
+          done
+          # Koka fails with "invalid argument" when NODE_PATH is set.
+          # shellcheck disable=SC2086
+          env -u NODE_PATH python3 scripts/bench-perceus.py --fern bin/fern \
+            --koka "$(mise where http:koka)/bin/koka" \
+            --lean "$(mise where http:lean)/bin/lean" \
+            --roc "$(mise where http:roc)/roc" \
+            --out "${{ runner.temp }}/perceus" --repeats "$REPEATS" \
+            --unlimited-stack --environment-label "GitHub ${{ runner.arch }} runner" $cases
+      - name: Write the table to the job summary
+        if: always()
+        run: |
+          if [ -f "${{ runner.temp }}/perceus/summary.md" ]; then
+            cat "${{ runner.temp }}/perceus/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perceus-compare-aarch64
+          path: |
+            ${{ runner.temp }}/perceus/*.json
+            ${{ runner.temp }}/perceus/*.md
+            ${{ runner.temp }}/perceus/*.log
+            ${{ runner.temp }}/perceus/*.stdout
+            ${{ runner.temp }}/perceus/*.stderr
+          if-no-files-found: error

@@ -2,8 +2,9 @@ EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern examples/tests/*.fern
 BINS     := $(addprefix build/,$(EXAMPLES))
 # Every tracked .fern source but the conformance fixtures, whose expected
 # diagnostics pin line and column, and testdata inputs kept as written.
-# The list goes through xargs: one shell argument cannot hold every path.
-FERN_SRCS := git ls-files '*.fern' '*.fern.md' | grep -v -e '^conformance/' -e '/testdata/'
+# The list goes to the formatter through xargs: one shell command that holds
+# every name passes the limit of 128 KiB for one argument.
+FERN_SRC_LIST = git ls-files -z '*.fern' '*.fern.md' | grep -z -v -e '^conformance/' -e '/testdata/'
 
 .PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check walkie-emulator-check native-emulator-check
 
@@ -281,16 +282,16 @@ build/%: examples/tests/%.fern bin/fern
 run-%: build/%
 	./$<
 
-# Re-format every FERN_SRCS file in place. The formatter is idempotent,
+# Re-format each file that FERN_SRC_LIST names, in place. The formatter is idempotent,
 # so running it on already-formatted files is a no-op.
 fmt: bin/fern
-	@$(FERN_SRCS) | xargs ./bin/fern -fmt -w
+	@$(FERN_SRC_LIST) | xargs -0 ./bin/fern -fmt -w
 
 # Verify every .fern source is already formatted. Prints the
 # unified-diff hunks for any file that would change and exits
 # non-zero so CI fails on unformatted submissions.
 fmt-check: bin/fern
-	@$(FERN_SRCS) | xargs ./bin/fern -fmt -d
+	@$(FERN_SRC_LIST) | xargs -0 ./bin/fern -fmt -d
 
 # The Go-side counterpart to fmt / fmt-check. Go formatting drifted while
 # nothing gated it: gofmt's trailing-comment and map-literal alignment goes

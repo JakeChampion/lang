@@ -16,6 +16,8 @@ func TestAttributePlacement(t *testing.T) {
 	for _, tc := range []struct{ src, pos, msg string }{
 		{"@value\nfunction f(): void {}", "2:1", "@value only applies to a `struct` declaration"},
 		{"@value\nenum E { Empty }", "2:1", "@value only applies to a `struct` declaration"},
+		{"@secret\nfunction f(): void {}", "2:1", "@secret only applies to a `struct` declaration"},
+		{"@secret\nenum E { Empty }", "2:1", "@secret only applies to a `struct` declaration"},
 		{"@derive(Eq)\nconst X: i32 = 1;", "2:1", "@derive " + structOrEnum},
 		{"@must_consume\nconst X: i32 = 1;", "2:1", "@must_consume " + structOrEnum},
 		{"@try\nconst X: i32 = 1;", "2:1", enumOnly},
@@ -34,7 +36,7 @@ func TestAttributePlacement(t *testing.T) {
 		{"@derive(Eq)", "2:1", "@derive " + structOrEnum},
 		{"pub @derive(Eq) struct S { a: i32 }", "1:1", "`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`"},
 		{"pub(foo) function f(): void {}", "1:1", "`pub(...)` only supports `pub(package)`"},
-		{"@frob\nstruct S { a: i32 }", "1:1", "unknown attribute @frob (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @value, @try, @inline, and @noinline are supported)"},
+		{"@frob\nstruct S { a: i32 }", "1:1", "unknown attribute @frob (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @early, @secondary, @must_consume, @value, @secret, @try, @inline, and @noinline are supported)"},
 	} {
 		_, err := Parse(tc.src + "\n")
 		var batch diag.Errors
@@ -97,5 +99,15 @@ func TestValueAttributeDeclaration(t *testing.T) {
 	}
 	if len(prog.Structs) != 2 || !prog.Structs[0].ValueType || !prog.Structs[0].Public || !prog.Structs[0].Opaque || prog.Structs[1].ValueType {
 		t.Fatalf("value declaration lost its metadata: %+v", prog.Structs)
+	}
+}
+
+func TestSecretAttributeDeclaration(t *testing.T) {
+	prog, err := Parse("@secret\npub struct Key { bytes: u8[] }\nstruct Plain { n: i32 }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Structs) != 2 || !prog.Structs[0].Secret || !prog.Structs[0].Public || prog.Structs[1].Secret {
+		t.Fatalf("secret declaration lost its metadata: %+v", prog.Structs)
 	}
 }

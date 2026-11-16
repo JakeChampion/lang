@@ -121,6 +121,9 @@ type FuncType struct {
 	ParamOwn  []bool
 	Result    Type
 	ResultOwn bool
+	// Once marks `once (A) => B`: a call consumes the function, and the body
+	// of a `once` lambda owns its captures.
+	Once bool
 }
 
 func (f *FuncType) OwnAt(i int) bool {
@@ -182,29 +185,6 @@ type DynTraitType struct {
 type AssocBinding struct {
 	Name string
 	Type Type
-}
-
-// MapTypes is d with f applied to its pinned arguments and to the types of
-// its associated bindings.
-func (d DynTraitType) MapTypes(f func(Type) Type) DynTraitType {
-	out := DynTraitType{Traits: d.Traits}
-	if d.Args != nil {
-		out.Args = make([][]Type, len(d.Args))
-		for i, args := range d.Args {
-			for _, a := range args {
-				out.Args[i] = append(out.Args[i], f(a))
-			}
-		}
-	}
-	if d.AssocBindings != nil {
-		out.AssocBindings = make([][]AssocBinding, len(d.AssocBindings))
-		for i, bs := range d.AssocBindings {
-			for _, b := range bs {
-				out.AssocBindings[i] = append(out.AssocBindings[i], AssocBinding{Name: b.Name, Type: f(b.Type)})
-			}
-		}
-	}
-	return out
 }
 
 func (d DynTraitType) ArgsFor(i int) []Type {
@@ -286,6 +266,26 @@ func NewDynTraitTypeFull(traits []string, args [][]Type, assoc [][]AssocBinding)
 		}
 	}
 	return DynTraitType{Traits: outT, Args: outA, AssocBindings: outB}
+}
+
+// MapArgs maps each pinned argument and each associated binding through f.
+func (d DynTraitType) MapArgs(f func(Type) Type) DynTraitType {
+	if len(d.Args) == 0 && len(d.AssocBindings) == 0 {
+		return d
+	}
+	args := make([][]Type, len(d.Args))
+	for i, as := range d.Args {
+		for _, a := range as {
+			args[i] = append(args[i], f(a))
+		}
+	}
+	assoc := make([][]AssocBinding, len(d.AssocBindings))
+	for i, bs := range d.AssocBindings {
+		for _, b := range bs {
+			assoc[i] = append(assoc[i], AssocBinding{Name: b.Name, Type: f(b.Type)})
+		}
+	}
+	return NewDynTraitTypeFull(d.Traits, args, assoc)
 }
 
 func assocString(bs []AssocBinding) string {
@@ -503,7 +503,7 @@ func SubstSelf(t Type, self Type) Type {
 		for i, pt := range tt.Params {
 			params[i] = SubstSelf(pt, self)
 		}
-		return &FuncType{Params: params, ParamOwn: tt.ParamOwn, Result: SubstSelf(tt.Result, self), ResultOwn: tt.ResultOwn}
+		return &FuncType{Params: params, ParamOwn: tt.ParamOwn, Result: SubstSelf(tt.Result, self), ResultOwn: tt.ResultOwn, Once: tt.Once}
 	case ProjType:
 		return ProjType{Base: SubstSelf(tt.Base, self), Name: tt.Name}
 	default:
@@ -852,6 +852,9 @@ func CloneExpr(e Expr) Expr {
 
 func (f *FuncType) String() string {
 	out := "("
+	if f.Once {
+		out = "once ("
+	}
 	for i, p := range f.Params {
 		if i > 0 {
 			out += ", "
@@ -1087,7 +1090,7 @@ func Equal(a, b Type) bool {
 		return true
 	case *FuncType:
 		y, ok := b.(*FuncType)
-		if !ok || len(x.Params) != len(y.Params) || x.ResultOwn != y.ResultOwn || !Equal(x.Result, y.Result) {
+		if !ok || len(x.Params) != len(y.Params) || x.ResultOwn != y.ResultOwn || x.Once != y.Once || !Equal(x.Result, y.Result) {
 			return false
 		}
 		for i := range x.Params {
@@ -1433,6 +1436,8 @@ type Lambda struct {
 	Body              *Block
 	Captures          []Param
 	Synthetic         *FuncDecl
+	// Once marks a `once` lambda: its type is `once (A) => B`.
+	Once bool
 }
 
 type CaptureRef struct {
@@ -2184,7 +2189,10 @@ type StructDecl struct {
 	Derives       []string
 	MustConsume   bool
 	ValueType     bool
-	SourceModule  string
+	// Secret marks a `@secret` struct: its drop zeroes the numeric arrays
+	// that it holds alone.
+	Secret       bool
+	SourceModule string
 }
 
 type EnumDecl struct {

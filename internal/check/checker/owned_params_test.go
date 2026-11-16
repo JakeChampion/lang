@@ -3608,3 +3608,24 @@ function swap(own xs: string[], own z: string): string[] { return xs.with(0, z);
 	wantOK(t, "literal in a loop", take+`function f(): i32 { let n: i32 = 0; for i in 0..3 { n += take("z").len(); } return n; }`)
 	wantE051(t, "borrowed parameter", take+`function f(s: string): string { let t: string = take(s); return s + t; }`)
 }
+
+func TestOwnGuardVariantConstruction(t *testing.T) {
+	const decls = `struct H { fd: i32 }
+function (own h: H) close(): i32 { return h.fd; }
+struct Q { h: Option[H], n: i32 }
+function takeo(own o: Option[H]): i32 { return 1; }
+function takeoo(own o: Option[Option[H]]): i32 { return 1; }
+function takeq(own q: Q): i32 { return q.n; }
+function taken(own o: Option[i32]): i32 { return 1; }
+`
+	wantE051(t, "borrowed-payload", decls+`function f(w: H): i32 { return takeo(Some(w)); }`)
+	wantE051(t, "borrowed-payload-nested", decls+`function f(w: H): i32 { return takeoo(Some(Some(w))); }`)
+	wantE051(t, "borrowed-payload-in-field", decls+`function f(w: H): i32 { return takeq(Q { h: Some(w), n: 1 }); }`)
+	wantE051(t, "borrowed-payload-in-literal-local", decls+`function f(w: H): i32 { let q = Q { h: Some(w), n: 1 }; return takeq(q); }`)
+	wantE051(t, "owned-payload-read-again", decls+`function f(own w: H): i32 { let o = Some(w); let n = takeo(o); return n + w.close(); }`)
+	wantOK(t, "owned-payload", decls+`function f(own w: H): i32 { return takeo(Some(w)); }`)
+	wantOK(t, "no-payload", decls+`function f(): i32 { return takeo(None); }`)
+	wantOK(t, "payload-holds-no-handle", decls+`function f(n: i32): i32 { return taken(Some(n)); }`)
+	wantOK(t, "owned-payload-in-local", decls+`function f(own w: H): i32 { let o = Some(w); return takeo(o); }`)
+	wantOK(t, "owned-payload-in-literal-local", decls+`function f(own w: H): i32 { let q = Q { h: Some(w), n: 1 }; return takeq(q); }`)
+}

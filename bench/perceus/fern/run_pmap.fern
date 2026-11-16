@@ -1,0 +1,36 @@
+import "../pmap";
+import "./scale";
+import "std/i32";
+import "std/i64";
+
+// The count of the hits and the sum of their values, for `n` keys from `seed`.
+function look(m: pmap.PMap, n: i32, seed: i64): (i64, i64) {
+  let x = seed;
+  let hits = 0i64;
+  let sum = 0i64;
+  for i in 0..n {
+    x = pmap.next(x);
+    let v = pmap.find(m, pmap.key_of(x));
+    if (v >= 0i64) {
+      hits += 1i64;
+      sum += v;
+    }
+  }
+  return (hits, sum);
+}
+
+function main(): i32 {
+  let Some(n) = scale.read(1000000) else {
+    return 2;
+  };
+  let m: pmap.PMap = pmap.Leaf;
+  let x = 42i64;
+  for i in 0..n {
+    x = pmap.next(x);
+    m = pmap.insert(m, pmap.key_of(x), i as i64);
+  }
+  let (hits, sum) = look(m, n, 42i64);
+  let (other_hits, other_sum) = look(m, n, 7i64);
+  print(f"{hits} {sum} {other_hits} {other_sum}");
+  return 0;
+}

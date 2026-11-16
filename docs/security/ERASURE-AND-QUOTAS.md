@@ -63,6 +63,9 @@ Uniquely held storage contains zeroes at release.
 Shared storage uses copy-on-write, so other holders retain their bytes.
 The call consumes one holder.
 
+A struct with the attribute `@secret` erases without a call. When the last reference to such a record goes away, its drop zeroes each numeric array that the record holds alone, in each build.
+An array that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md), and `TestSelfHostSecretRecordWipesItsArrays` pins them on both native targets.
+
 The stores cannot be elided, because no pass of the compiler removes a store to an array.
 `TestSelfHostEraseZeroesStorage` pins that on both targets.
 Its control releases a 48-byte secret without erasure and reads at least 48 secret bytes back through eight raw allocations of the released class.

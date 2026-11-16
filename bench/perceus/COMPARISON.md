@@ -35,6 +35,29 @@ and constant folding use `I64`. Constant folding and the derivative use the
 wrapping `add_wrap` and `mul_wrap`, as Fern does, because the checked Roc
 operators stop the program on an overflow.
 
+`binarytrees` is not in the pinned source. It is the binary-trees workload of
+the Computer Language Benchmarks Game, in the form where each node holds an
+item. The four files translate one design. The two children of a node
+take different items, so no compiler can make the two subtrees one tree. The
+check of a tree is its item plus the check of its left child, less the check
+of its right child. The full size is depth 21.
+
+`msort`, `qsort`, `treemap` and `pmap` are not in the pinned source either.
+Their inputs come from the generator x' = (1103515245 x + 12345) mod 2^31,
+from the seed 42:
+
+- `msort` and `qsort` sort a list of a million values, each reduced mod
+  1,000,000. The merge sort splits the list into two lists in turn, and the
+  quick sort takes the head as the pivot and appends. Each prints the count and
+  the sum of each element times its position.
+
+- `treemap` builds a tree of depth 20 with items, as `binarytrees` does, and
+  adds one to each item 20 times. A tree with one count can be rebuilt in place.
+
+- `pmap` inserts a million keys into a red-black map. A key is two words, the
+  value mod 1024 and the value divided by 1024, and the compare is in that
+  order. Then it looks up the same keys, and a million keys from the seed 7.
+
 The pinned source has no Lean n-queens or constant-fold implementation.
 Those two files directly translate the Koka algorithms. N-queens materializes
 the same breadth-wise lists of partial solutions, without a bitset solver.
@@ -67,7 +90,13 @@ Wall time, CPU time and peak RSS cover startup, output and teardown. Fern
 allocations come from a separate binary compiled with `FERN_LEAKCHECK=1`, with
 balanced frees and zero live bytes required. Instrumented runs are excluded
 from timing comparisons. No allocator or ownership annotations tune the Fern
-kernels. Compiler build time is excluded.
+kernels. Compiler build time is excluded. The harness writes the table of
+times and peak memory to `summary.md` in its output directory.
+
+`.github/workflows/perceus-compare.yml` runs the comparison at full size on a
+native arm64 runner each week, and when it is started by hand. Koka, Lean and
+Roc come from `mise.perceus.toml` and its lock. The table goes to the job
+summary, and the output directory is an artifact.
 
 The workload deadline also applies to warm-ups and allocation-census runs.
 On timeout, the harness saves a failure record before sending SIGKILL and

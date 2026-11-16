@@ -267,10 +267,11 @@ function exposed(own up: i32[], def_b: i32[], def_k: i32[], bi: i32, k: i32, val
 
 // What the register allocator reads from the liveness. `crossing` gives, for
 // each value, whether it is live just after a call that `hard` marks, by
-// position. A value is not live after the call that defines it. `lengths`
-// gives the number of positions at which each value is live. Both are empty
-// when `compute` fails.
-pub struct Lives { crossing: boolean[], lengths: i32[] }
+// position. `crossing_all` gives the same for each call that the allocator
+// counts, cold or not. A value is not live after the call that defines it.
+// `lengths` gives the number of positions at which each value is live. All
+// are empty when `compute` fails.
+pub struct Lives { crossing: boolean[], crossing_all: boolean[], lengths: i32[] }
 
 pub function lives(f: ssa.SFunc, hard: boolean[]): Lives {
   let none: i32[][] = [];
@@ -279,9 +280,9 @@ pub function lives(f: ssa.SFunc, hard: boolean[]): Lives {
   }
   let fl = compute(f, none);
   if (!fl.ok) {
-    return Lives { crossing: [], lengths: [] };
+    return Lives { crossing: [], crossing_all: [], lengths: [] };
   }
-  return Lives { crossing: call_crossers(f, fl, hard), lengths: live_lengths(f, fl) };
+  return Lives { crossing: call_crossers(f, fl, hard), crossing_all: call_crossers(f, fl, ssa.hard_call_positions(f, [])), lengths: live_lengths(f, fl) };
 }
 
 function call_crossers(f: ssa.SFunc, fl: Flow, hard: boolean[]): boolean[] {

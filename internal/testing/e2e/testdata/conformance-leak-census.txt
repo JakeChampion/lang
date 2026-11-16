@@ -48,9 +48,11 @@ a_match_value_of_owned_arms_is_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
+a_once_closure_owns_its_captures                     0
+a_once_function_called_through_an_alias              0
+a_once_function_type_in_a_generic_position           0
 a_receiver_method_lifts_a_closure_that_captures_its_receiver 0
 a_returned_value_match_returns_from_each_arm         0
-a_send_parameter_passes_to_another_send_parameter    0
 a_specialised_callee_keeps_its_record_update_donor                      0
 a_struct_literal_from_a_module_takes_its_type_arguments_from_its_fields 0
 a_struct_literal_takes_its_type_argument_from_a_returned_function 0
@@ -502,8 +504,7 @@ hex_literal                                          0
 hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
-# The program stops through exit(134), which does not unwind. One buffer is live.
-hkdf_length_past_the_limit_stops                     1
+hkdf_length_past_the_limit_stops                     0
 # The program stops through exit(134), which does not unwind. One buffer is live.
 hotp_digits_out_of_range_stops                       1
 http_content_type                                    0
@@ -1245,6 +1246,7 @@ result_register_pair                                 0
 scalar_edge_cases                                    0
 scalar_match_bindings                                0
 scalar_sum_reassign                                  0
+secret_record_keeps_a_shared_array                   0
 semver_uuid_errors                                   0
 send_copy_deep                                       0
 sentinel_roundtrip                                   0
@@ -1379,8 +1381,7 @@ tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0
-# The program stops through exit(134), which does not unwind. One buffer is live.
-totp_period_below_one_stops                          1
+totp_period_below_one_stops                          0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
@@ -1485,6 +1486,7 @@ worker_runs_in_its_own_process                       0
 # The blocks are the pool of the task runtime (asmcore.rt_src_task).
 worker_runs_on_the_simulation                        4
 worker_send_bound                                    0
+worker_send_forward                                  0
 worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0

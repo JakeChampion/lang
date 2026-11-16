@@ -4,6 +4,7 @@
 // text at a width. The output is a byte array, because a wrap moves the
 // end of a line to the next line.
 import "./markdown";
+import "./utf8";
 
 // The escaping of `out`.
 pub const LITERAL: i32 = 0;
@@ -95,7 +96,7 @@ pub function (r: R) blankline(): R {
 
 // Writes `s` with no escaping and no wrap.
 pub function (r: R) lit(s: string): R {
-  return r.out(s, false, LITERAL);
+  return r.out(s.as_bytes(), false, LITERAL);
 }
 
 // Writes ASCII text that has no line feed, as cmark_render_ascii does.
@@ -127,19 +128,18 @@ pub function is_space(c: i32): boolean {
   return c == 32 || c >= 9 && c <= 13;
 }
 
-// The code point at `i` of `s`, which is valid UTF-8, and its length.
-function code_point_at(s: string, i: i32): (i32, i32) {
+// The code point at `i` of `s` and its length, or -1 when the bytes at `i`
+// are not valid UTF-8.
+function code_point_at(s: [u8], i: i32): (i32, i32) {
   let c = s[i] as i32;
   if (c < 0x80) {
     return (c, 1);
   }
-  if (c < 0xE0) {
-    return ((c & 31) << 6 | s[i + 1] as i32 & 63, 2);
+  let len = utf8.length(s, i, s.len());
+  if (len < 0) {
+    return (-1, 0);
   }
-  if (c < 0xF0) {
-    return ((c & 15) << 12 | (s[i + 1] as i32 & 63) << 6 | s[i + 2] as i32 & 63, 3);
-  }
-  return ((c & 7) << 18 | (s[i + 1] as i32 & 63) << 12 | (s[i + 2] as i32 & 63) << 6 | s[i + 3] as i32 & 63, 4);
+  return (utf8.code_point(s, i, s.len()), len);
 }
 
 // Writes the line feeds that the renderer asks for. Line feeds at the end
@@ -165,8 +165,10 @@ function line_feeds(r: R): R {
 }
 
 // Writes `s` with the escaping `escape`. With `wrap`, a space can break
-// the line when the line is wider than the width.
-pub function (r0: R) out(s: string, wrap0: boolean, escape: i32): R {
+// the line when the line is wider than the width. As in cmark, the text
+// stops at the first sequence that is not valid UTF-8. When a new line
+// starts there, its prefix is written first.
+pub function (r0: R) out(s: [u8], wrap0: boolean, escape: i32): R {
   let wrap = wrap0 && !r0.no_linebreaks;
   let r = line_feeds(r0);
   let i = 0;
@@ -180,7 +182,11 @@ pub function (r0: R) out(s: string, wrap0: boolean, escape: i32): R {
       r = run(r, s, i, j);
       i = j;
     } else {
-      let (r2, next) = one_char(r, s, i, wrap, escape);
+      let (c, len) = code_point_at(s, i);
+      if (c < 0) {
+        return r;
+      }
+      let (r2, next) = one_char(r, s, i, c, len, wrap, escape);
       r = r2;
       i = next;
     }
@@ -188,11 +194,10 @@ pub function (r0: R) out(s: string, wrap0: boolean, escape: i32): R {
   return r;
 }
 
-// Writes the character at `i`, and wraps the line when it is too wide.
-// Gives the index after the character, and after the spaces that follow a
-// space where a line can wrap.
-function one_char(r0: R, s: string, i: i32, wrap: boolean, escape: i32): (R, i32) {
-  let (c, len) = code_point_at(s, i);
+// Writes the character `c` at `i`, whose length is `len`, and wraps the
+// line when it is too wide. Gives the index after the character, and after
+// the spaces that follow a space where a line can wrap.
+function one_char(r0: R, s: [u8], i: i32, c: i32, len: i32, wrap: boolean, escape: i32): (R, i32) {
   let r = r0;
   let last = i;
   if (c == 32 && wrap) {
@@ -209,10 +214,10 @@ function one_char(r0: R, s: string, i: i32, wrap: boolean, escape: i32): (R, i32
 }
 
 // The end of the bytes from `i` that each renderer writes as they are: in
-// literal text each byte but a line feed, and else letters and digits.
-// Spaces are such bytes too when no wrap can break a line at them, except
-// in a URL.
-function plain_end(s: string, i: i32, wrap: boolean, escape: i32): i32 {
+// literal text each valid UTF-8 sequence but a line feed, and else letters
+// and digits. Spaces are such bytes too when no wrap can break a line at
+// them, except in a URL.
+function plain_end(s: [u8], i: i32, wrap: boolean, escape: i32): i32 {
   if (escape == LITERAL) {
     return literal_end(s, i, wrap);
   }
@@ -224,10 +229,19 @@ function plain_end(s: string, i: i32, wrap: boolean, escape: i32): i32 {
   return j;
 }
 
-function literal_end(s: string, i: i32, wrap: boolean): i32 {
+function literal_end(s: [u8], i: i32, wrap: boolean): i32 {
+  let n = s.len();
   let j = i;
-  while (j < s.len() && s[j] != b'\n' && (s[j] != b' ' || !wrap)) {
-    j += 1;
+  while (j < n && s[j] != b'\n' && (s[j] != b' ' || !wrap)) {
+    if (s[j] < 0x80 as u8) {
+      j += 1;
+    } else {
+      let len = utf8.length(s, j, n);
+      if (len < 0) {
+        return j;
+      }
+      j += len;
+    }
   }
   return j;
 }
@@ -238,7 +252,7 @@ function is_alnum(c: i32): boolean {
 
 // Writes the bytes `s[i:j]`, which have no line feed and need no escape. A
 // line cannot wrap in them. The column counts code points.
-function run(r: R, s: string, i: i32, j: i32): R {
+function run(r: R, s: [u8], i: i32, j: i32): R {
   let b = r.b;
   let len = r.len;
   let column = r.column;
@@ -262,7 +276,7 @@ function run(r: R, s: string, i: i32, j: i32): R {
 // A space where a wrap can break the line. As in cmark, the spaces after it
 // go, and a break cannot put a digit at the start of a line. A space at the
 // start of a line is not written. Gives the index of the last space.
-function space(r: R, s: string, i0: i32): (R, i32) {
+function space(r: R, s: [u8], i0: i32): (R, i32) {
   if (r.begin_line) {
     return (r, i0);
   }
@@ -280,7 +294,7 @@ function space(r: R, s: string, i0: i32): (R, i32) {
 }
 
 // Writes the code point `c`, which the byte at `next` of `s` follows.
-function one(r: R, s: string, next: i32, c: i32, escape: i32): R {
+function one(r: R, s: [u8], next: i32, c: i32, escape: i32): R {
   if (escape == LITERAL && c == 10) {
     return R { ...put(r, 10), column: 0, begin_line: true, begin_content: true, last_breakable: 0 };
   }
@@ -300,7 +314,7 @@ function one(r: R, s: string, next: i32, c: i32, escape: i32): R {
 // The low byte of the code point that starts at `k`. cmark tests a code
 // point with the `char` tests of C, which see only its low byte. Thus
 // U+0130 is a digit for cmark, as `0` is.
-function low_byte(s: string, k: i32): i32 {
+function low_byte(s: [u8], k: i32): i32 {
   let c = s[k] as i32;
   if (c < 0x80) {
     return c;

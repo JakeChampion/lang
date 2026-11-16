@@ -926,7 +926,7 @@ func substTypeByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substTypeByName(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
+		out := &ast.FuncType{Result: substTypeByName(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn, Once: x.Once}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substTypeByName(p, sub))
 		}
@@ -934,7 +934,7 @@ func substTypeByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 	case ast.ProjType:
 		return ast.ProjType{Base: substTypeByName(x.Base, sub), Name: x.Name}
 	case ast.DynTraitType:
-		return x.MapTypes(func(a ast.Type) ast.Type { return substTypeByName(a, sub) })
+		return x.MapArgs(func(a ast.Type) ast.Type { return substTypeByName(a, sub) })
 	}
 	return t
 }
@@ -978,7 +978,7 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
+		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn, Once: x.Once}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
@@ -986,7 +986,7 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 	case ast.ProjType:
 		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
 	case ast.DynTraitType:
-		return x.MapTypes(func(a ast.Type) ast.Type { return substituteType(a, sub) })
+		return x.MapArgs(func(a ast.Type) ast.Type { return substituteType(a, sub) })
 	}
 	return t
 }
@@ -1404,7 +1404,7 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 	case ast.ProjType:
 		return ast.ProjType{Base: rewriteType(x.Base, info, into), Name: x.Name}
 	case ast.DynTraitType:
-		return x.MapTypes(func(a ast.Type) ast.Type { return rewriteType(a, info, into) })
+		return x.MapArgs(func(a ast.Type) ast.Type { return rewriteType(a, info, into) })
 	case ast.ArrayType:
 		return ast.ArrayType{Elem: rewriteType(x.Elem, info, into)}
 	case ast.SliceType:
@@ -1416,7 +1416,7 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: rewriteType(x.Result, info, into), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn}
+		out := &ast.FuncType{Result: rewriteType(x.Result, info, into), ParamOwn: x.ParamOwn, ResultOwn: x.ResultOwn, Once: x.Once}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, rewriteType(p, info, into))
 		}

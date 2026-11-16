@@ -3,13 +3,11 @@ package e2e
 import (
 	"bytes"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -248,30 +246,19 @@ func checkSelfHostStdout(f *fixtureSpec, r selfHostRun, failf failFunc) {
 
 func serveFixtureOnce(t *testing.T, wasmtime, component string) (status int, body, log string, err error) {
 	t.Helper()
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(freeLoopbackPort(t)))
-	srv := exec.Command(wasmtime, "serve", "--addr", addr, component)
-	var slog bytes.Buffer
-	srv.Stdout, srv.Stderr = &slog, &slog
-	if err := srv.Start(); err != nil {
+	srv, err := e2eharness.StartWasmtimeServe(wasmtime, component)
+	if err != nil {
 		return 0, "", "", err
 	}
 	client := &http.Client{Timeout: selfHostRunTimeout}
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
-		var resp *http.Response
-		if resp, err = client.Get("http://" + addr + "/"); err == nil {
-			var raw []byte
-			raw, err = io.ReadAll(resp.Body)
-			resp.Body.Close()
-			status, body = resp.StatusCode, string(raw)
-			break
-		}
-		if time.Now().After(deadline) {
-			break
-		}
+	resp, err := client.Get("http://" + srv.Addr + "/")
+	if err == nil {
+		var raw []byte
+		raw, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		status, body = resp.StatusCode, string(raw)
 	}
-	_ = srv.Process.Kill()
-	_ = srv.Wait()
-	return status, body, slog.String(), err
+	return status, body, srv.Stop(), err
 }
 
 func TestFernFixturesSelfHostInterp(t *testing.T) {

@@ -179,7 +179,7 @@ is waiting on a caller.
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
 | 21 | sqrt | `std/f64` | `__sqrt_f64` builtin | Hardware sqrt | **SHIPPED** | — |
-| 22 | fma | `std/f64` | `__fma_f64` builtin: `vfmadd231sd` on x86-64, `fmadd` on arm64, a software form on wasm. `f64.fma` is a correctly rounded software form, because the stage0 pin does not know the builtin (#16116) | Hardware FMA | **PARTIAL** — `f64.fma` calls the builtin after the next pin | 4 |
+| 22 | fma | `std/f64` | `__fma_f64` builtin: `vfmadd231sd` on x86-64, `fmadd` on arm64, a software form on wasm. `f64.fma`, `f64.mul_add` and the fused multiply-adds of `log` call it | Hardware FMA | **SHIPPED** | — |
 | 23 | sin | `std/f64` | fdlibm in Fern, one source for every lane | RLibm | DECIDE:accuracy-contract | 4 |
 | 24 | cos | `std/f64` | same | RLibm | DECIDE:accuracy-contract | 4 |
 | 25 | tan | `std/f64` | **`sin(x)/cos(x)`** | Direct approximation | **GAP — accuracy bug, not a speed row** | 4 |

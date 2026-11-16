@@ -63,6 +63,68 @@ func TestWASMDynGenericTrait(t *testing.T) {
 	}
 }
 
+const dynGenericImplSrc = `trait Source[M] {
+    function next(self: Self): M;
+}
+struct Fixed[M] { v: M }
+impl[M] Source[M] for Fixed[M] {
+    function next(self: Fixed[M]): M { return self.v; }
+}
+enum Hold[M] { One(M), Zero }
+impl[M] Source[Option[M]] for Hold[M] {
+    function next(self: Hold[M]): Option[M] {
+        return match (self) { One(m) => Some(m), Zero => None };
+    }
+}
+function make[M](v: M): dyn Source[M] {
+    return Fixed { v: v };
+}
+function pull[M](s: dyn Source[M]): M {
+    return s.next();
+}
+function main(): i32 {
+    let a: dyn Source[i32] = Fixed { v: 30 };
+    let b = make("abcd");
+    let h: Hold[i32] = One(8);
+    let c: dyn Source[Option[i32]] = h;
+    let got = match (c.next()) { Some(n) => n, None => 0 };
+    return pull(a) + b.next().len() + got;
+}
+`
+
+func TestInterpDynGenericImpl(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := filepath.Join(t.TempDir(), "prog.fern")
+	if err := os.WriteFile(src, []byte(dynGenericImplSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Errorf("exit = %d, want 42\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+func TestX86_64DynGenericImpl(t *testing.T) {
+	if out, code := compileAndRunX86_64(t, dynGenericImplSrc); code != 42 {
+		t.Errorf("exit = %d, want 42\n%s", code, out)
+	}
+}
+
+func TestArm64DynGenericImpl(t *testing.T) {
+	if out, code := compileAndRunArm64(t, dynGenericImplSrc); code != 42 {
+		t.Errorf("exit = %d, want 42\n%s", code, out)
+	}
+}
+
+func TestWASMDynGenericImpl(t *testing.T) {
+	if code := runWasm(t, dynGenericImplSrc); code != 42 {
+		t.Errorf("wasm exit = %d, want 42", code)
+	}
+}
+
 const dynGenericDowncastSrc = `trait Container[T] { function get(self: Self): T; }
 struct BoxI { v: i32 }
 impl Container[i32] for BoxI { function get(self: Self): i32 { return self.v; } }

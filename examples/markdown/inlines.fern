@@ -16,6 +16,7 @@ import "./entities";
 import "./nodes";
 import "./refs";
 import "./tags";
+import "./utf8";
 
 // The kinds of token. A token has four fields: the kind, the start and the
 // end of its text, and a value.
@@ -162,10 +163,12 @@ const NO_DECL: i32 = 4;
 const NO_CDATA: i32 = 8;
 
 // The bytes that the parser stops at: a line feed, `!`, `"`, `&`, `*`, `<`,
-// `>`, `[`, a backslash, `]`, `_` and a backtick. A constant table of 256
-// entries gives the vector form of `__scan_set`.
+// `>`, `[`, a backslash, `]`, `_` and a backtick. A carriage return is in
+// the table too. It is never in the text, but it can end the line after
+// the text. A constant table of 256 entries gives the vector form of
+// `__scan_set_bytes`.
 const SPECIAL: u8[] = [
-  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 1u8, 1u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 1u8, 0u8,
@@ -185,7 +188,7 @@ const SPECIAL: u8[] = [
 
 // SPECIAL with `'`, `-` and `.`, for smart punctuation.
 const SMART_SPECIAL: u8[] = [
-  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 1u8, 1u8, 0u8, 0u8, 0u8, 1u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 1u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 1u8, 0u8,
@@ -302,16 +305,16 @@ pub function work(opt: i32): Work {
 }
 
 // Writes `s[a:b]` with `"`, `&`, `<` and `>` escaped.
-pub function escape(out: usize, s: string, a: i32, b: i32, t: Tables): void {
+pub function escape(out: usize, s: u8[], a: i32, b: i32, t: Tables): void {
   if (b > a) {
-    buf_push_expanded(out, slice_unchecked(s, a, b), t.esc);
+    buf_push_bytes_expanded(out, s[a:b], t.esc);
   }
 }
 
 // The text with each backslash escape replaced by the character it escapes.
-pub function unescape(s: string): string {
-  if (__memchr(s, 92, 0) < 0) {
-    return s;
+pub function unescape(s: [u8]): u8[] {
+  if (__memchr_bytes(s, 92, 0) < 0) {
+    return __bytes_owned(s);
   }
   let b = buf_new(s.len());
   let i = 0;
@@ -324,20 +327,20 @@ pub function unescape(s: string): string {
     buf_push_byte(b, c);
     i += 1;
   }
-  let out = buf_take(b);
+  let out = buf_take_bytes(b);
   buf_free(b);
   return out;
 }
 
 // `s[a:b]` with each entity reference replaced by the characters it gives.
-pub function decode(s: string, a: i32, b: i32, t: Tables): string {
-  let view = slice_unchecked(s, 0, b);
-  let i = __memchr(view, 38, a);
+pub function decode(s: u8[], a: i32, b: i32, t: Tables): u8[] {
+  let view: [u8] = s[0:b];
+  let i = __memchr_bytes(view, 38, a);
   if (i < 0) {
-    return slice_unchecked(s, a, b).to_owned();
+    return __bytes_range(s, a, b);
   }
   let out = buf_new(b - a);
-  buf_push_range(out, s, a, i);
+  buf_push_bytes_range(out, s, a, i);
   while (i >= 0) {
     let (next, value) = reference(s, i, b);
     if (next < 0) {
@@ -346,14 +349,14 @@ pub function decode(s: string, a: i32, b: i32, t: Tables): string {
     } else {
       push_reference(out, value, t.raw);
     }
-    i = __memchr(view, 38, next);
+    i = __memchr_bytes(view, 38, next);
     if (i < 0) {
-      buf_push_range(out, s, next, b);
+      buf_push_bytes_range(out, s, next, b);
     } else {
-      buf_push_range(out, s, next, i);
+      buf_push_bytes_range(out, s, next, i);
     }
   }
-  let r = buf_take(out);
+  let r = buf_take_bytes(out);
   buf_free(out);
   return r;
 }
@@ -361,18 +364,18 @@ pub function decode(s: string, a: i32, b: i32, t: Tables): string {
 // Writes `s[a:b]` with each byte as its record in `table`: the text of a
 // link destination, a link title or an autolink. Entity references go
 // first, then backslash escapes when `unescaped`, as in cmark.
-function push_clean(out: usize, s: string, a: i32, b: i32, unescaped: boolean, table: u8[], t: Tables): void {
-  let view = slice_unchecked(s, 0, b);
-  if (__memchr(view, 38, a) < 0 && (!unescaped || __memchr(view, 92, a) < 0)) {
-    buf_push_expanded(out, slice_unchecked(s, a, b), table);
+function push_clean(out: usize, s: u8[], a: i32, b: i32, unescaped: boolean, table: u8[], t: Tables): void {
+  let view: [u8] = s[0:b];
+  if (__memchr_bytes(view, 38, a) < 0 && (!unescaped || __memchr_bytes(view, 92, a) < 0)) {
+    buf_push_bytes_expanded(out, s[a:b], table);
   } else if (unescaped) {
-    buf_push_expanded(out, unescape(decode(s, a, b, t)), table);
+    buf_push_bytes_expanded(out, unescape(decode(s, a, b, t)), table);
   } else {
-    buf_push_expanded(out, decode(s, a, b, t), table);
+    buf_push_bytes_expanded(out, decode(s, a, b, t), table);
   }
 }
 
-function at(s: string, i: i32, e: i32): i32 {
+function at(s: u8[], i: i32, e: i32): i32 {
   if (i < e) {
     return s[i] as i32;
   }
@@ -387,7 +390,7 @@ function is_alnum(c: i32): boolean {
   return is_letter(c) || c >= 48 && c <= 57;
 }
 
-function skip_space(s: string, i: i32, e: i32): i32 {
+function skip_space(s: u8[], i: i32, e: i32): i32 {
   let j = i;
   while (j < e && refs.is_space(s[j] as i32)) {
     j += 1;
@@ -395,7 +398,7 @@ function skip_space(s: string, i: i32, e: i32): i32 {
   return j;
 }
 
-function rtrim(s: string, a: i32, b: i32): i32 {
+function rtrim(s: u8[], a: i32, b: i32): i32 {
   let e = b;
   while (e > a && refs.is_space(s[e - 1] as i32)) {
     e -= 1;
@@ -403,7 +406,7 @@ function rtrim(s: string, a: i32, b: i32): i32 {
   return e;
 }
 
-function ltrim(s: string, a: i32, b: i32): i32 {
+function ltrim(s: u8[], a: i32, b: i32): i32 {
   let i = a;
   while (i < b && refs.is_space(s[i] as i32)) {
     i += 1;
@@ -416,7 +419,7 @@ function ltrim(s: string, a: i32, b: i32): i32 {
 // The entity reference whose `&` is at `i`: the index after it and its
 // value, the code point or -1 minus the row of its name. The index is -1
 // when there is no reference at `i`.
-function reference(s: string, i: i32, e: i32): (i32, i32) {
+function reference(s: u8[], i: i32, e: i32): (i32, i32) {
   if (at(s, i + 1, e) == 35) {
     return numeric(s, i + 2, e);
   }
@@ -445,7 +448,7 @@ function push_reference(out: usize, value: i32, esc: u8[]): void {
 }
 
 // The row of the name `s[a:b]` in the table of entities, or -1.
-function find_entity(s: string, a: i32, b: i32): i32 {
+function find_entity(s: u8[], a: i32, b: i32): i32 {
   let n = b - a;
   let lo = 0;
   let hi = entities.ENTITY_NAMES.len() - 1;
@@ -456,7 +459,7 @@ function find_entity(s: string, a: i32, b: i32): i32 {
     if (name.len() < k) {
       k = name.len();
     }
-    let x = __mismatch(s, a, name, 0, k);
+    let x = __mismatch_bytes_str(s, a, name, 0, k);
     let c = n - name.len();
     if (x < k) {
       c = s[a + x] as i32 - name[x] as i32;
@@ -476,7 +479,7 @@ function find_entity(s: string, a: i32, b: i32): i32 {
 // A decimal reference of 1 to 7 digits, or a hexadecimal reference of 1 to
 // 6 digits, after `&#`. A code point that is 0, a surrogate or too large
 // gives U+FFFD.
-function numeric(s: string, i: i32, e: i32): (i32, i32) {
+function numeric(s: u8[], i: i32, e: i32): (i32, i32) {
   let (j, cp) = digits(s, i, e);
   if (j < 0 || at(s, j, e) != 59) {
     return (-1, 0);
@@ -489,7 +492,7 @@ function numeric(s: string, i: i32, e: i32): (i32, i32) {
 
 // The end of the digits of a numeric reference at `i`, or -1, and their
 // value. A value above U+10FFFF is 0x110000.
-function digits(s: string, i: i32, e: i32): (i32, i32) {
+function digits(s: u8[], i: i32, e: i32): (i32, i32) {
   let base = 10;
   let max = 7;
   let j = i;
@@ -587,61 +590,29 @@ function is_punctuation(c: i32): boolean {
 }
 
 // The code point that starts at `i`, or a line feed for a byte sequence that
-// is not UTF-8 before `e`.
-function char_at(s: string, i: i32, e: i32): i32 {
+// is not valid UTF-8 before `e`, as cmark reads it.
+function char_at(s: u8[], i: i32, e: i32): i32 {
   let c = s[i] as i32;
   if (c < 128) {
     return c;
   }
-  let n = 0;
-  let cp = 0;
-  if (c >= 0xC2 && c < 0xE0) {
-    n = 1;
-    cp = c & 31;
-  } else if (c >= 0xE0 && c < 0xF0) {
-    n = 2;
-    cp = c & 15;
-  } else if (c >= 0xF0 && c < 0xF5) {
-    n = 3;
-    cp = c & 7;
-  } else {
+  let cp = utf8.code_point(s, i, e);
+  if (cp < 0) {
     return 10;
-  }
-  for k in 1..n + 1 {
-    let b = at(s, i + k, e);
-    if ((b & 0xC0) != 0x80) {
-      return 10;
-    }
-    cp = cp << 6 | b & 63;
   }
   return cp;
 }
 
-// The code point that ends before `i`. The text starts at `a`.
+// The code point that ends before `i`. The text starts at `a`. As in cmark,
+// the sequence starts at the last byte before `i` that is not a
+// continuation byte, and it can end before `i`.
 @inline
-function char_before(s: string, i: i32, a: i32): i32 {
+function char_before(s: u8[], i: i32, a: i32): i32 {
   let j = i - 1;
   while (j > a && (s[j] as i32 & 0xC0) == 0x80) {
     j -= 1;
   }
-  let c = char_at(s, j, i);
-  if (c != 10 && j + char_width(s[j] as i32) != i) {
-    return 10;
-  }
-  return c;
-}
-
-function char_width(c: i32): i32 {
-  if (c < 0xC0) {
-    return 1;
-  }
-  if (c < 0xE0) {
-    return 2;
-  }
-  if (c < 0xF0) {
-    return 3;
-  }
-  return 4;
+  return char_at(s, j, i);
 }
 
 // True when only a line feed is between two of the lines `from` to `to` of
@@ -666,7 +637,7 @@ function in_source(d: blocks.Doc, from: i32, to: i32): boolean {
 // The text of the lines `from` to `to` of `d`, with a line feed between two
 // lines.
 @inline
-function joined(d: blocks.Doc, from: i32, to: i32): string {
+function joined(d: blocks.Doc, from: i32, to: i32): u8[] {
   let src = d.src;
   let b = buf_new(blocks.seg_end(d.segs[to - 1]) - blocks.seg_start(d.segs[from]) + 16);
   for k in from..to {
@@ -677,9 +648,9 @@ function joined(d: blocks.Doc, from: i32, to: i32): string {
     for _ in 0..blocks.seg_pad(s) {
       buf_push_byte(b, 32);
     }
-    buf_push_range(b, src, blocks.seg_start(s), blocks.seg_end(s));
+    buf_push_bytes_range(b, src, blocks.seg_start(s), blocks.seg_end(s));
   }
-  let text = buf_take(b);
+  let text = buf_take_bytes(b);
   buf_free(b);
   return text;
 }
@@ -698,7 +669,7 @@ pub function render(out: usize, d: blocks.Doc, from: i32, to: i32, w: Work): Wor
 }
 
 // Writes the text `s[a:e]`. The text has no whitespace at its end.
-function inline(out: usize, s: string, a: i32, e: i32, d: blocks.Doc, w: Work): Work {
+function inline(out: usize, s: u8[], a: i32, e: i32, d: blocks.Doc, w: Work): Work {
   let q = parse(fresh(w), s, a, e, d);
   write(out, q, s, a, e);
   return q;
@@ -742,9 +713,9 @@ function col(c: Cursor, p: i32): i32 {
 
 // Adds the text `s[a:b]` between two tokens, which is at the bytes `a` to
 // `q`.
-function between(t: nodes.Tree, s: string, a: i32, b: i32, c: Cursor, q: i32): nodes.Tree {
+function between(t: nodes.Tree, s: u8[], a: i32, b: i32, c: Cursor, q: i32): nodes.Tree {
   let start = t.here();
-  buf_push_range(t.bytes(), s, a, b);
+  buf_push_bytes_range(t.bytes(), s, a, b);
   return t.add_text(start, c.line, col(c, a), col(c, q));
 }
 
@@ -756,7 +727,7 @@ function literal(t: nodes.Tree, lit: string, c: Cursor, p: i32, q: i32): nodes.T
 }
 
 // Adds the tokens of `w` and the text between them as nodes.
-function walk(t0: nodes.Tree, w: Work, s: string, a: i32, e: i32, c0: Cursor): nodes.Tree {
+function walk(t0: nodes.Tree, w: Work, s: u8[], a: i32, e: i32, c0: Cursor): nodes.Tree {
   let t = t0;
   let c = c0;
   let i = a;
@@ -768,7 +739,7 @@ function walk(t0: nodes.Tree, w: Work, s: string, a: i32, e: i32, c0: Cursor): n
     let start = w.tk[k * TS + 1];
     let end = w.tk[k * TS + 2];
     if (kind == BREAK && s[start] != b'\\') {
-      let nl = __memchr(slice_unchecked(s, 0, end), 10, start);
+      let nl = __memchr_bytes(s[0:end], 10, start);
       if (nl > i) {
         t = between(t, s, i, start, c, nl - 1);
       }
@@ -796,7 +767,7 @@ function walk(t0: nodes.Tree, w: Work, s: string, a: i32, e: i32, c0: Cursor): n
 }
 
 // Adds the token `k`, and gives the cursor after it.
-function node(t: nodes.Tree, w: Work, s: string, k: i32, c: Cursor): (nodes.Tree, Cursor) {
+function node(t: nodes.Tree, w: Work, s: u8[], k: i32, c: Cursor): (nodes.Tree, Cursor) {
   let kind = w.tk[k * TS];
   let start = w.tk[k * TS + 1];
   let end = w.tk[k * TS + 2];
@@ -829,10 +800,10 @@ function node(t: nodes.Tree, w: Work, s: string, k: i32, c: Cursor): (nodes.Tree
 
 // A token that is text: a backslash escape, an entity reference, a byte
 // that HTML escapes, or smart punctuation.
-function text_node(t: nodes.Tree, w: Work, s: string, kind: i32, start: i32, end: i32, x: i32, c: Cursor): nodes.Tree {
+function text_node(t: nodes.Tree, w: Work, s: u8[], kind: i32, start: i32, end: i32, x: i32, c: Cursor): nodes.Tree {
   let from = t.here();
   if (kind == ESCAPED || kind == CHAR) {
-    buf_push_range(t.bytes(), s, end - 1, end);
+    buf_push_byte(t.bytes(), s[end - 1] as i32);
   } else if (kind == REF) {
     push_reference(t.bytes(), x, w.t.raw);
   } else if (kind == SMART) {
@@ -846,10 +817,10 @@ function text_node(t: nodes.Tree, w: Work, s: string, kind: i32, start: i32, end
 // A code span. As in cmark, a code span over more than one line moves the
 // cursor to its last line, and its end column does not count the column
 // before the text.
-function code_node(t0: nodes.Tree, s: string, start: i32, end: i32, n: i32, c: Cursor): (nodes.Tree, Cursor) {
+function code_node(t0: nodes.Tree, s: u8[], start: i32, end: i32, n: i32, c: Cursor): (nodes.Tree, Cursor) {
   let a = start + n;
   let b = end - n;
-  if (b - a >= 2 && __scan_set(slice_unchecked(s, 0, b), a, NONSPACE) < b && NONSPACE[s[a] as i32] == 0 as u8 && NONSPACE[s[b - 1] as i32] == 0 as u8) {
+  if (b - a >= 2 && __scan_set_bytes(s[0:b], a, NONSPACE) < b && NONSPACE[s[a] as i32] == 0 as u8 && NONSPACE[s[b - 1] as i32] == 0 as u8) {
     a += 1;
     b -= 1;
   }
@@ -868,9 +839,9 @@ function code_node(t0: nodes.Tree, s: string, start: i32, end: i32, n: i32, c: C
 }
 
 // Raw HTML, which can be over more than one line, as a code span can.
-function html_node(t0: nodes.Tree, s: string, start: i32, end: i32, c: Cursor): (nodes.Tree, Cursor) {
+function html_node(t0: nodes.Tree, s: u8[], start: i32, end: i32, c: Cursor): (nodes.Tree, Cursor) {
   let from = t0.here();
-  buf_push_range(t0.bytes(), s, start, end);
+  buf_push_bytes_range(t0.bytes(), s, start, end);
   let t = t0.add(nodes.HTML);
   let x = t.last();
   t = t.set_lit(x, from, t.here()).set_start(x, c.line, col(c, start)).set_end(x, c.line, col(c, end - 1));
@@ -879,7 +850,7 @@ function html_node(t0: nodes.Tree, s: string, start: i32, end: i32, c: Cursor): 
 
 // When `s[a:b]` holds line feeds, the node `x` ends on the line of the last
 // one, and the cursor moves to that line.
-function lines_in(t: nodes.Tree, x: i32, s: string, a: i32, b: i32, c: Cursor): (nodes.Tree, Cursor) {
+function lines_in(t: nodes.Tree, x: i32, s: u8[], a: i32, b: i32, c: Cursor): (nodes.Tree, Cursor) {
   let n = 0;
   let last = -1;
   for i in a..b {
@@ -896,7 +867,7 @@ function lines_in(t: nodes.Tree, x: i32, s: string, a: i32, b: i32, c: Cursor): 
 
 // An autolink. As in cmark, its columns do not count the column before the
 // text or the start of the line.
-function autolink_node(t0: nodes.Tree, w: Work, s: string, start: i32, end: i32, email: boolean, c: Cursor): nodes.Tree {
+function autolink_node(t0: nodes.Tree, w: Work, s: u8[], start: i32, end: i32, email: boolean, c: Cursor): nodes.Tree {
   let from = t0.here();
   if (email) {
     buf_push(t0.bytes(), "mailto:");
@@ -955,7 +926,7 @@ function run_nodes(t0: nodes.Tree, w: Work, d: i32, c: Cursor, start: i32, end: 
 
 // The start of a link or an image, with its destination and its title. Its
 // line is the line of its end, as in cmark.
-function link_node(t0: nodes.Tree, w: Work, s: string, l: i32, c: Cursor, start: i32): nodes.Tree {
+function link_node(t0: nodes.Tree, w: Work, s: u8[], l: i32, c: Cursor, start: i32): nodes.Tree {
   let image = w.ln[l * LS];
   let kind = nodes.LINK;
   if (image == 1) {
@@ -1010,18 +981,18 @@ function dset(w: Work, d: i32, field: i32, v: i32): Work {
 }
 
 // Reads the text `s[a:e]` into the token table, and finds its emphasis.
-function parse(w: Work, s: string, a: i32, e: i32, d: blocks.Doc): Work {
+function parse(w: Work, s: u8[], a: i32, e: i32, d: blocks.Doc): Work {
   let q = w;
   let i = a;
-  let view = slice_unchecked(s, 0, e);
   let smart = (w.opt & O_SMART) != 0;
   while (i < e) {
-    // A constant table gives the vector scan.
+    // A constant table gives the vector scan. The scan can pass `e`, but
+    // the line ending or the end of the source after `e` stops it.
     let j = 0;
     if (smart) {
-      j = __scan_set(view, i, SMART_SPECIAL);
+      j = __scan_set_bytes(s, i, SMART_SPECIAL);
     } else {
-      j = __scan_set(view, i, SPECIAL);
+      j = __scan_set_bytes(s, i, SPECIAL);
     }
     if (j >= e) {
       break;
@@ -1046,7 +1017,7 @@ function parse(w: Work, s: string, a: i32, e: i32, d: blocks.Doc): Work {
 }
 
 // Reads the token at `j`, and gives the index after it.
-function token(w: Work, s: string, a: i32, j: i32, e: i32, d: blocks.Doc): (Work, i32) {
+function token(w: Work, s: u8[], a: i32, j: i32, e: i32, d: blocks.Doc): (Work, i32) {
   let c = s[j];
   if (c == b'\n') {
     return line_end(w, s, a, j, e);
@@ -1078,7 +1049,7 @@ function token(w: Work, s: string, a: i32, j: i32, e: i32, d: blocks.Doc): (Work
 
 // A line break drops the whitespace before it. A soft break and a hard
 // break of two spaces drop the spaces and tabs after it too, as in cmark.
-function line_end(w: Work, s: string, a: i32, j: i32, e: i32): (Work, i32) {
+function line_end(w: Work, s: u8[], a: i32, j: i32, e: i32): (Work, i32) {
   let hard = 0;
   if (j - 2 >= a && s[j - 1] == b' ' && s[j - 2] == b' ') {
     hard = 1;
@@ -1092,7 +1063,7 @@ function line_end(w: Work, s: string, a: i32, j: i32, e: i32): (Work, i32) {
 
 // A backslash escapes a punctuation character, and makes a hard break before
 // a line feed. Other backslashes are text.
-function backslash(w: Work, s: string, j: i32, e: i32): (Work, i32) {
+function backslash(w: Work, s: u8[], j: i32, e: i32): (Work, i32) {
   let c = at(s, j + 1, e);
   if (c == 10) {
     return (add_token(w, BREAK, j, j + 2, 1), j + 2);
@@ -1110,7 +1081,7 @@ function backslash(w: Work, s: string, j: i32, e: i32): (Work, i32) {
 // backticks does not start one. `Work.ticks` keeps the start of the last
 // string of each length. After one scan to the end of the text, a string
 // with no closer costs nothing.
-function code_span(w: Work, s: string, i: i32, e: i32): (Work, i32) {
+function code_span(w: Work, s: u8[], i: i32, e: i32): (Work, i32) {
   let start = i + 1;
   while (start < e && s[start] == b'`') {
     start += 1;
@@ -1127,11 +1098,11 @@ function code_span(w: Work, s: string, i: i32, e: i32): (Work, i32) {
 }
 
 // The end of the first string of `n` backticks at or after `p`, or -1.
-function closing_ticks(w: Work, s: string, p: i32, n: i32, e: i32): (Work, i32) {
+function closing_ticks(w: Work, s: u8[], p: i32, n: i32, e: i32): (Work, i32) {
   let ticks = w.ticks;
   let i = p;
   loop {
-    let j = __memchr(slice_unchecked(s, 0, e), 96, i);
+    let j = __memchr_bytes(s[0:e], 96, i);
     if (j < 0) {
       return (Work { ...w, ticks: ticks, scanned: true }, -1);
     }
@@ -1151,7 +1122,7 @@ function closing_ticks(w: Work, s: string, p: i32, n: i32, e: i32): (Work, i32) 
 
 // Autolinks and raw HTML.
 
-function angle(w: Work, s: string, i: i32, e: i32): (Work, i32) {
+function angle(w: Work, s: u8[], i: i32, e: i32): (Work, i32) {
   let k = uri_end(s, i + 1, e);
   if (k > 0) {
     return (add_token(w, URI, i, k, 0), k);
@@ -1168,7 +1139,7 @@ function angle(w: Work, s: string, i: i32, e: i32): (Work, i32) {
 }
 
 // The end of an absolute URI and its `>`, which start at `p`, or -1.
-function uri_end(s: string, p: i32, e: i32): i32 {
+function uri_end(s: u8[], p: i32, e: i32): i32 {
   let j = scheme_end(s, p, e);
   if (j < 0) {
     return -1;
@@ -1188,7 +1159,7 @@ function uri_end(s: string, p: i32, e: i32): i32 {
 
 // The end of a scheme and its `:` at `p`, or -1. A scheme is a letter,
 // then 1 to 31 letters, digits, `+`, `.` and `-`.
-function scheme_end(s: string, p: i32, e: i32): i32 {
+function scheme_end(s: u8[], p: i32, e: i32): i32 {
   let j = p + 1;
   while (j < e && is_scheme_char(s[j] as i32)) {
     j += 1;
@@ -1208,7 +1179,7 @@ function is_email_char(c: i32): boolean {
 }
 
 // The end of an email address and its `>`, which start at `p`, or -1.
-function email_end(s: string, p: i32, e: i32): i32 {
+function email_end(s: u8[], p: i32, e: i32): i32 {
   let j = p;
   while (j < e && is_email_char(s[j] as i32)) {
     j += 1;
@@ -1234,7 +1205,7 @@ function email_end(s: string, p: i32, e: i32): i32 {
 
 // The end of a label of a domain at `a`, or -1: 1 to 63 letters, digits and
 // hyphens, with no hyphen at either end.
-function domain_label_end(s: string, a: i32, e: i32): i32 {
+function domain_label_end(s: u8[], a: i32, e: i32): i32 {
   let k = a;
   while (k < e && (is_alnum(s[k] as i32) || s[k] == b'-')) {
     k += 1;
@@ -1247,7 +1218,7 @@ function domain_label_end(s: string, a: i32, e: i32): i32 {
 
 // Gives the end of the raw HTML whose `<` is at `i`, or -1. It also gives
 // the kinds of raw HTML that have no end in the rest of the text.
-function html_end(s: string, i: i32, e: i32, skip: i32): (i32, i32) {
+function html_end(s: u8[], i: i32, e: i32, skip: i32): (i32, i32) {
   if (i + 3 > e) {
     return (-1, skip);
   }
@@ -1267,7 +1238,7 @@ function html_end(s: string, i: i32, e: i32, skip: i32): (i32, i32) {
 // A comment, a CDATA section or a declaration. As in cmark, the letters of
 // `CDATA` can be in any case. After a comment with no end, no raw HTML
 // starts with `<!` in the rest of the text.
-function bang_end(s: string, i: i32, e: i32, skip: i32): (i32, i32) {
+function bang_end(s: u8[], i: i32, e: i32, skip: i32): (i32, i32) {
   if ((skip & NO_COMMENT) != 0) {
     return (-1, skip);
   }
@@ -1291,7 +1262,7 @@ function bang_end(s: string, i: i32, e: i32, skip: i32): (i32, i32) {
 
 // True when `word`, which has no capital letters, is at `i`, with ASCII
 // letters in any case.
-function word_ci(s: string, i: i32, e: i32, word: string): boolean {
+function word_ci(s: u8[], i: i32, e: i32, word: string): boolean {
   if (i + word.len() > e) {
     return false;
   }
@@ -1321,7 +1292,7 @@ function scanned(end: i32, skip: i32, flag: i32): (i32, i32) {
 
 // The end of a comment whose text starts at `i`, after `<!--`: the end of
 // the first `-->` whose `--` starts no pair.
-function comment_end(s: string, i: i32, e: i32): i32 {
+function comment_end(s: u8[], i: i32, e: i32): i32 {
   let k = i;
   let dashes = 0;
   while (k < e) {
@@ -1343,7 +1314,7 @@ function comment_end(s: string, i: i32, e: i32): i32 {
 
 // The end of a processing instruction whose text starts at `i`, after `<?`:
 // the end of the first `?>` whose `?` starts no pair.
-function pi_end(s: string, i: i32, e: i32): i32 {
+function pi_end(s: u8[], i: i32, e: i32): i32 {
   let k = i;
   while (k < e) {
     if (s[k] == b'?') {
@@ -1362,7 +1333,7 @@ function pi_end(s: string, i: i32, e: i32): i32 {
 
 // The end of a CDATA section whose text starts at `i`, after `<![CDATA[`:
 // the end of the first `]]>` whose `]]` starts no pair.
-function cdata_end(s: string, i: i32, e: i32): i32 {
+function cdata_end(s: u8[], i: i32, e: i32): i32 {
   let k = i;
   let close = 0;
   while (k < e) {
@@ -1384,17 +1355,17 @@ function cdata_end(s: string, i: i32, e: i32): i32 {
 
 // The end of the first `word` at or after `from`. When there is none, the
 // kind `flag` joins `skip`.
-function search(s: string, from: i32, e: i32, word: string, skip: i32, flag: i32): (i32, i32) {
+function search(s: u8[], from: i32, e: i32, word: string, skip: i32, flag: i32): (i32, i32) {
   if ((skip & flag) != 0) {
     return (-1, skip);
   }
   let i = from;
   loop {
-    let j = __memchr(slice_unchecked(s, 0, e), word[0] as i32, i);
+    let j = __memchr_bytes(s[0:e], word[0] as i32, i);
     if (j < 0 || j + word.len() > e) {
       return (-1, skip | flag);
     }
-    if (__mismatch(s, j, word, 0, word.len()) == word.len()) {
+    if (__mismatch_bytes_str(s, j, word, 0, word.len()) == word.len()) {
       return (j + word.len(), skip);
     }
     i = j + 1;
@@ -1408,7 +1379,7 @@ const PUNCTUATION: i64 = 0x4000608400000000i64;
 
 // A quote, a hyphen, a period or `>`. Without smart punctuation, only `"`
 // and `>` are tokens, which HTML escapes.
-function punctuation(w: Work, s: string, a: i32, j: i32, e: i32): (Work, i32) {
+function punctuation(w: Work, s: u8[], a: i32, j: i32, e: i32): (Work, i32) {
   let c = s[j];
   if (c == b'>' || c == b'"' && (w.opt & O_SMART) == 0) {
     return (add_token(w, CHAR, j, j + 1, 0), j + 1);
@@ -1426,7 +1397,7 @@ function punctuation(w: Work, s: string, a: i32, j: i32, e: i32): (Work, i32) {
 // it cannot open after `]` or `)`, and it can open between two other
 // characters after `(` or `[`. A quote that is not a delimiter is a right
 // quote, or a left double quote when it cannot close.
-function quote(w: Work, s: string, a: i32, i: i32, e: i32, c: i32): (Work, i32) {
+function quote(w: Work, s: u8[], a: i32, i: i32, e: i32, c: i32): (Work, i32) {
   let before = 10;
   if (i > a) {
     before = char_before(s, i, a);
@@ -1462,7 +1433,7 @@ function quote_flags(before: i32, after: i32): i32 {
 }
 
 // Two or more hyphens are dashes. A single hyphen is text.
-function dashes(w: Work, s: string, i: i32, e: i32): (Work, i32) {
+function dashes(w: Work, s: u8[], i: i32, e: i32): (Work, i32) {
   let k = i + 1;
   while (k < e && s[k] == b'-') {
     k += 1;
@@ -1474,7 +1445,7 @@ function dashes(w: Work, s: string, i: i32, e: i32): (Work, i32) {
 }
 
 // Three periods are an ellipsis.
-function periods(w: Work, s: string, i: i32, e: i32): (Work, i32) {
+function periods(w: Work, s: u8[], i: i32, e: i32): (Work, i32) {
   if (at(s, i + 1, e) != 46) {
     return (w, i + 1);
   }
@@ -1515,7 +1486,7 @@ function push_dashes(out: usize, n: i32): void {
 
 // Reads the run of `*` or `_` at `i`. A run that can open or close emphasis
 // goes on the delimiter stack, and other runs are text.
-function delimiters(w: Work, s: string, a: i32, i: i32, e: i32): (Work, i32) {
+function delimiters(w: Work, s: u8[], a: i32, i: i32, e: i32): (Work, i32) {
   let c = s[i];
   let k = i + 1;
   while (k < e && s[k] == c) {
@@ -1758,7 +1729,7 @@ function pop_bracket(w: Work): Work {
 // The `]` at `j` can end a link or an image, when the last open bracket can
 // open one. An inline destination, a label of a definition, or the text
 // itself as a label must follow.
-function close_bracket(w: Work, s: string, j: i32, e: i32, d: blocks.Doc): (Work, i32) {
+function close_bracket(w: Work, s: u8[], j: i32, e: i32, d: blocks.Doc): (Work, i32) {
   if (w.nb == 0) {
     return (w, j + 1);
   }
@@ -1791,11 +1762,11 @@ function close_bracket(w: Work, s: string, j: i32, e: i32, d: blocks.Doc): (Work
 // Makes a link to the definition of the label `s[la:lb]`, which ends at
 // `stop`, when there is one. As in cmark, a label of more than 1000 bytes
 // has no definition.
-function reference_link(w: Work, s: string, la: i32, lb: i32, j: i32, stop: i32, d: blocks.Doc): (Work, i32) {
+function reference_link(w: Work, s: u8[], la: i32, lb: i32, j: i32, stop: i32, d: blocks.Doc): (Work, i32) {
   if (lb - la < 1 || lb - la > 1000 || d.refs.len() == 0) {
     return (pop_bracket(w), j + 1);
   }
-  match (d.refs.get(refs.normalize(slice_unchecked(s, la, lb)))) {
+  match (d.refs.get(refs.normalize(s[la:lb]))) {
     Some(r) => {
       let found = w.found;
       if (w.nf < found.len()) {
@@ -1813,7 +1784,7 @@ function reference_link(w: Work, s: string, la: i32, lb: i32, j: i32, stop: i32,
 
 // The end of `(destination "title")` at `p`, and the start and the end of
 // the destination and of the title, or -1.
-function inline_link(s: string, p: i32, e: i32): (i32, i32, i32, i32, i32) {
+function inline_link(s: u8[], p: i32, e: i32): (i32, i32, i32, i32, i32) {
   if (at(s, p, e) != 40) {
     return (-1, 0, 0, 0, 0);
   }
@@ -1855,21 +1826,21 @@ function link(w: Work, j: i32, end: i32, found: i32, ds: i32, de: i32, ts: i32, 
 
 // Writes the tokens of `w` and the text between them. Inside the text of an
 // image, the writer writes only text: `plain` is the depth of images.
-function write(out: usize, w: Work, s: string, a: i32, e: i32): void {
+function write(out: usize, w: Work, s: u8[], a: i32, e: i32): void {
   let i = a;
   let plain = 0;
   for k in 0..w.nt {
     if (w.tk[k * TS] > BRACKET) {
-      buf_push_range(out, s, i, w.tk[k * TS + 1]);
+      buf_push_bytes_range(out, s, i, w.tk[k * TS + 1]);
       plain = item(out, w, s, k, plain);
       i = w.tk[k * TS + 2];
     }
   }
-  buf_push_range(out, s, i, e);
+  buf_push_bytes_range(out, s, i, e);
 }
 
 // Writes the token `k`, and gives the depth of images after it.
-function item(out: usize, w: Work, s: string, k: i32, plain: i32): i32 {
+function item(out: usize, w: Work, s: u8[], k: i32, plain: i32): i32 {
   let kind = w.tk[k * TS];
   let x = w.tk[k * TS + 3];
   if (kind == END) {
@@ -1888,11 +1859,11 @@ function item(out: usize, w: Work, s: string, k: i32, plain: i32): i32 {
 
 // Writes a token that holds no other tokens: the text `s[start:end]` of the
 // kind `kind`, with the value `x`.
-function leaf(out: usize, s: string, kind: i32, start: i32, end: i32, x: i32, plain: boolean, t: Tables, opt: i32): void {
+function leaf(out: usize, s: u8[], kind: i32, start: i32, end: i32, x: i32, plain: boolean, t: Tables, opt: i32): void {
   if (kind == BREAK) {
     line_break(out, plain, x == 1, opt);
   } else if (kind == ESCAPED || kind == CHAR) {
-    escape(out, s, end - 1, end, t);
+    push_char(out, s[end - 1] as i32, t.esc);
   } else if (kind == REF) {
     push_reference(out, x, t.esc);
   } else if (kind == CODE) {
@@ -1909,11 +1880,11 @@ function leaf(out: usize, s: string, kind: i32, start: i32, end: i32, x: i32, pl
 }
 
 // Raw HTML is text in the text of an image.
-function raw_html(out: usize, s: string, start: i32, end: i32, plain: boolean, t: Tables, opt: i32): void {
+function raw_html(out: usize, s: u8[], start: i32, end: i32, plain: boolean, t: Tables, opt: i32): void {
   if (plain) {
     escape(out, s, start, end, t);
   } else if ((opt & O_UNSAFE) != 0) {
-    buf_push_range(out, s, start, end);
+    buf_push_bytes_range(out, s, start, end);
   } else {
     buf_push(out, OMITTED);
   }
@@ -1927,14 +1898,14 @@ pub const OMITTED: string = "<!-- raw HTML omitted -->";
 // any case. Without the option O_UNSAFE, such a link has an empty
 // destination. Entity references go first, then backslash escapes when
 // `unescaped`.
-function dangerous(s: string, a: i32, b: i32, unescaped: boolean, t: Tables): boolean {
+function dangerous(s: u8[], a: i32, b: i32, unescaped: boolean, t: Tables): boolean {
   // Only `d`, `j`, `v`, `f` or an entity reference can start such a URL.
   let c = at(s, a, b) | 32;
   if (c != 100 && c != 106 && c != 118 && c != 102 && c != 38) {
     return false;
   }
-  let view = slice_unchecked(s, 0, b);
-  if (__memchr(view, 38, a) >= 0 || unescaped && __memchr(view, 92, a) >= 0) {
+  let view: [u8] = s[0:b];
+  if (__memchr_bytes(view, 38, a) >= 0 || unescaped && __memchr_bytes(view, 92, a) >= 0) {
     let clean = decode(s, a, b, t);
     if (unescaped) {
       clean = unescape(clean);
@@ -1944,7 +1915,7 @@ function dangerous(s: string, a: i32, b: i32, unescaped: boolean, t: Tables): bo
   return dangerous_url(s, a, b);
 }
 
-pub function dangerous_url(s: string, a: i32, b: i32): boolean {
+pub function dangerous_url(s: u8[], a: i32, b: i32): boolean {
   if (word_ci(s, a, b, "data:")) {
     let i = a + 5;
     return !(word_ci(s, i, b, "image/png") || word_ci(s, i, b, "image/gif") || word_ci(s, i, b, "image/jpeg") || word_ci(s, i, b, "image/webp"));
@@ -1954,17 +1925,17 @@ pub function dangerous_url(s: string, a: i32, b: i32): boolean {
 
 // Writes a code span. A line feed is a space. When the text has a character
 // that is not a space, and both ends are spaces, one space at each end goes.
-function code(out: usize, s: string, p: i32, q: i32, plain: boolean, t: Tables): void {
+function code(out: usize, s: u8[], p: i32, q: i32, plain: boolean, t: Tables): void {
   let a = p;
   let b = q;
-  if (b - a >= 2 && __scan_set(slice_unchecked(s, 0, b), a, NONSPACE) < b && NONSPACE[s[a] as i32] == 0 as u8 && NONSPACE[s[b - 1] as i32] == 0 as u8) {
+  if (b - a >= 2 && __scan_set_bytes(s[0:b], a, NONSPACE) < b && NONSPACE[s[a] as i32] == 0 as u8 && NONSPACE[s[b - 1] as i32] == 0 as u8) {
     a += 1;
     b -= 1;
   }
   if (!plain) {
     buf_push(out, "<code>");
   }
-  buf_push_expanded(out, slice_unchecked(s, a, b), t.code);
+  buf_push_bytes_expanded(out, s[a:b], t.code);
   if (!plain) {
     buf_push(out, "</code>");
   }
@@ -1972,7 +1943,7 @@ function code(out: usize, s: string, p: i32, q: i32, plain: boolean, t: Tables):
 
 // Writes the autolink `s[a:b]`. As in cmark, its entity references are
 // decoded, in the destination and in the text.
-function autolink(out: usize, s: string, a: i32, b: i32, email: boolean, plain: boolean, t: Tables, opt: i32): void {
+function autolink(out: usize, s: u8[], a: i32, b: i32, email: boolean, plain: boolean, t: Tables, opt: i32): void {
   if (!plain) {
     buf_push(out, "<a href=\"");
     if (email) {
@@ -2020,7 +1991,7 @@ function run(out: usize, w: Work, d: i32, plain: boolean): void {
   }
 }
 
-function open_link(out: usize, w: Work, s: string, l: i32, plain: i32): i32 {
+function open_link(out: usize, w: Work, s: u8[], l: i32, plain: i32): i32 {
   let image = w.ln[l * LS];
   if (plain > 0) {
     return plain + image;
@@ -2038,7 +2009,7 @@ function open_link(out: usize, w: Work, s: string, l: i32, plain: i32): i32 {
   return 0;
 }
 
-function close_link(out: usize, w: Work, s: string, l: i32, plain: i32): i32 {
+function close_link(out: usize, w: Work, s: u8[], l: i32, plain: i32): i32 {
   if (w.ln[l * LS] == 0) {
     if (plain == 0) {
       buf_push(out, "</a>");
@@ -2054,7 +2025,7 @@ function close_link(out: usize, w: Work, s: string, l: i32, plain: i32): i32 {
 
 // Writes the destination of the link `l` with each byte as its record in
 // `table`. With `safe`, a dangerous destination is empty.
-function destination(out: usize, w: Work, s: string, l: i32, table: u8[], safe: boolean): void {
+function destination(out: usize, w: Work, s: u8[], l: i32, table: u8[], safe: boolean): void {
   let r = w.ln[l * LS + L_REF];
   if (r >= 0) {
     let dest = w.found[r].dest;
@@ -2075,7 +2046,7 @@ function destination(out: usize, w: Work, s: string, l: i32, table: u8[], safe: 
 // Writes the destination `s[a:b]`, which has no `<` and `>` around it and
 // no whitespace at its ends.
 @inline
-function url(out: usize, w: Work, s: string, a: i32, b: i32, table: u8[], safe: boolean): void {
+function url(out: usize, w: Work, s: u8[], a: i32, b: i32, table: u8[], safe: boolean): void {
   if (!safe || (w.opt & O_UNSAFE) != 0 || !dangerous(s, a, b, true, w.t)) {
     push_clean(out, s, a, b, true, table, w.t);
   }
@@ -2083,7 +2054,7 @@ function url(out: usize, w: Work, s: string, a: i32, b: i32, table: u8[], safe: 
 
 // Writes the title attribute of a link that has a title. The title keeps
 // its quotes or parentheses in the table.
-function title(out: usize, w: Work, s: string, l: i32): void {
+function title(out: usize, w: Work, s: u8[], l: i32): void {
   let r = w.ln[l * LS + L_REF];
   if (r >= 0) {
     let raw = w.found[r].title;
@@ -2093,7 +2064,7 @@ function title(out: usize, w: Work, s: string, l: i32): void {
   }
 }
 
-function title_text(out: usize, s: string, a: i32, b: i32, t: Tables): void {
+function title_text(out: usize, s: u8[], a: i32, b: i32, t: Tables): void {
   if (b - a < 2) {
     return;
   }

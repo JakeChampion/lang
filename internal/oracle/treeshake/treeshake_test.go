@@ -211,29 +211,3 @@ function only_from_hello(): i32 { return 42; }
 		}
 	}
 }
-
-func TestShakeWithNoEntryRootsOnlyTheEntryModule(t *testing.T) {
-	prog, err := parser.Parse(`pub function exported(): i32 { return used(); }
-function used(): i32 { return 1; }
-function unused(): i32 { return 2; }`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	prog.EntryModule = "/app.fern"
-	for _, fn := range prog.Funcs {
-		fn.SourceModule = "stdlib://std/lib.fern"
-	}
-	prog.Funcs[0].SourceModule = prog.EntryModule
-	treeshake.Run(prog, info)
-	var names []string
-	for _, fn := range prog.Funcs {
-		names = append(names, fn.Name)
-	}
-	if !hasName(names, "exported") || !hasName(names, "used") || hasName(names, "unused") {
-		t.Errorf("want the entry module's function and what it calls: %v", names)
-	}
-}

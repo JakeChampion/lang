@@ -174,32 +174,59 @@ function fresh(f: ssasem.Func, v: i32): boolean {
 
 // Whether a block reachable from the end of `from` reads v anywhere but in
 // the phi it enters: the consuming call would then need a retain, and a copy.
+// A phi reads its operand at the end of the matching predecessor, so it
+// counts only when that predecessor is `from` or reachable from it. The walk
+// stops at the block that defines v, because past it v is a new value.
 function used_after(g: ssa.SFunc, at: i32[], from: i32, v: i32, phi: i32): boolean {
   let seen = __alloc_bool(g.blocks.len());
+  let def = defining_block(g, v);
   let work: i32[] = [at[g.blocks[at[from]].term.target]];
   let next = 0;
   while (next < work.len()) {
     let bi = work[next];
     next += 1;
-    if (seen[bi]) {
-      continue;
+    if (!seen[bi] && bi != def) {
+      seen = seen.with(bi, true);
+      for t in ssa.successors(g.blocks[bi].term) {
+        work = work.append(at[t]);
+      }
     }
-    seen = seen.with(bi, true);
-    let b = g.blocks[bi];
-    if (reads(b, v, phi)) {
+  }
+  let reached = seen.with(at[from], true);
+  for bi in 0..g.blocks.len() {
+    if (seen[bi] && reads(g.blocks[bi], at, reached, v, phi)) {
       return true;
-    }
-    for t in ssa.successors(b.term) {
-      work = work.append(at[t]);
     }
   }
   return false;
 }
 
-function reads(b: ssa.SBlock, v: i32, phi: i32): boolean {
+function defining_block(g: ssa.SFunc, v: i32): i32 {
+  for bi in 0..g.blocks.len() {
+    for ins in g.blocks[bi].insts {
+      if (ins.result == v) {
+        return bi;
+      }
+    }
+  }
+  return -1;
+}
+
+function reads(b: ssa.SBlock, at: i32[], reached: boolean[], v: i32, phi: i32): boolean {
   for ins in b.insts {
-    if (ins.result != phi && util.has_i32(ins.args, v)) {
-      return true;
+    if (ins.result == phi) {
+      continue;
+    }
+    if (ins.kind_tag != ssa.PHI) {
+      if (util.has_i32(ins.args, v)) {
+        return true;
+      }
+      continue;
+    }
+    for k in 0..ins.args.len() {
+      if (ins.args[k] == v && (k >= b.preds.len() || reached[at[b.preds[k]]])) {
+        return true;
+      }
     }
   }
   return b.term.kind_tag == ssa.TERM_RET && b.term.value == v || b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == v;

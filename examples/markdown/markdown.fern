@@ -4,6 +4,7 @@ import "std/i32";
 import "std/io_buffered";
 import "./blocks";
 import "./inlines";
+import "./utf8";
 
 // The options of cmark. `sourcepos` gives each block the attribute
 // `data-sourcepos`. `hardbreaks` makes each soft line break a hard line
@@ -19,27 +20,15 @@ pub function options(): Options {
   return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, width: 0 };
 }
 
-// The bytes `b` as text. Each byte sequence that is not UTF-8 becomes
-// U+FFFD. With `cmark_rule`, the sequences are those of `cmark
-// --validate-utf8`: a lead byte and the continuation bytes after it that
-// are valid, or the bytes that are left when the sequence is too long for
-// the code point, a surrogate or above U+10FFFF. Else they are the maximal
-// parts that the Unicode standard recommends.
-pub function text_of(b: u8[], cmark_rule: boolean): string {
-  let out = buf_new(b.len() + 16);
-  if (cmark_rule) {
-    push_valid(out, b);
-  } else {
-    buf_push_bytes_range(out, b, 0, b.len());
-  }
-  let text = buf_take(out);
-  buf_free(out);
-  return text;
-}
-
-// cmark checks each line on its own, without its line ending.
-function push_valid(out: usize, b: u8[]): void {
+// The bytes `b` with each sequence that is not UTF-8 replaced by U+FFFD, as
+// `cmark --validate-utf8` replaces it. cmark checks each line on its own,
+// without its line ending. One U+FFFD replaces a lead byte and the
+// continuation bytes after it that are valid, or the bytes that are left
+// when the sequence is too long for the line, or the whole sequence of an
+// overlong form, a surrogate or a code point above U+10FFFF.
+pub function validated(b: u8[]): u8[] {
   let n = b.len();
+  let out = buf_new(n + 16);
   let i = 0;
   let from = 0;
   let le = -1;
@@ -55,7 +44,7 @@ function push_valid(out: usize, b: u8[]): void {
         le += 1;
       }
     }
-    let len = utf8_length(b, i, le);
+    let len = utf8.length(b, i, le);
     if (len > 0) {
       i += len;
       continue;
@@ -66,47 +55,9 @@ function push_valid(out: usize, b: u8[]): void {
     from = i;
   }
   buf_push_bytes_range(out, b, from, n);
-}
-
-// The length of the UTF-8 sequence at `i`, or minus the number of bytes
-// that one U+FFFD replaces, as cmark finds them.
-function utf8_length(b: u8[], i: i32, n: i32): i32 {
-  let c = b[i] as i32;
-  let len = 0;
-  if (c >= 0xC0 && c < 0xF8) {
-    len = UTF8_LENGTHS[c >> 3 & 7];
-  }
-  if (len == 0) {
-    return -1;
-  }
-  if (len > n - i) {
-    return i - n;
-  }
-  for k in 1..len {
-    if ((b[i + k] as i32 & 0xC0) != 0x80) {
-      return -k;
-    }
-  }
-  if (out_of_range(c, b[i + 1] as i32)) {
-    return -len;
-  }
-  return len;
-}
-
-// The length of a UTF-8 sequence for the bits 3 to 5 of a lead byte from
-// 0xC0 to 0xF7.
-const UTF8_LENGTHS: i32[] = [2, 2, 2, 2, 3, 3, 4, 0];
-
-// True for the lead byte `c` and the byte `c1` after it of an overlong
-// form, a surrogate, or a code point above U+10FFFF.
-function out_of_range(c: i32, c1: i32): boolean {
-  if (c < 0xE0) {
-    return c < 0xC2;
-  }
-  if (c < 0xF0) {
-    return c == 0xE0 && c1 < 0xA0 || c == 0xED && c1 >= 0xA0;
-  }
-  return c == 0xF0 && c1 < 0x90 || c > 0xF4 || c == 0xF4 && c1 >= 0x90;
+  let text = buf_take_bytes(out);
+  buf_free(out);
+  return text;
 }
 
 // The options of the inline phase, as the flags of `inlines`.
@@ -127,17 +78,18 @@ pub function inline_flags(o: Options): i32 {
   return f;
 }
 
-// The HTML of the CommonMark document `src`.
-pub function to_html(src: string, o: Options): string {
+// The HTML of the CommonMark document `src`. As in cmark, the bytes of the
+// source that are not UTF-8 stay as they are.
+pub function to_html(src: u8[], o: Options): u8[] {
   let b = buf_new(src.len() + src.len() / 4 + 64);
   render(b, src, o);
-  let out = buf_take(b);
+  let out = buf_take_bytes(b);
   buf_free(b);
   return out;
 }
 
 // Writes the HTML of the CommonMark document `src` to the byte builder `out`.
-pub function render(out: usize, src: string, o: Options): void {
+pub function render(out: usize, src: u8[], o: Options): void {
   let d = blocks.parse(src, o.sourcepos);
   let s = start(o);
   for r in 0..d.count() {
@@ -148,7 +100,7 @@ pub function render(out: usize, src: string, o: Options): void {
 // Writes the HTML of the CommonMark document `src` to `w`. The writer gets
 // the HTML of a part of the document each time its buffer holds `part`
 // bytes or more.
-pub function write(w: io_buffered.BufWriter, src: string, part: i32, o: Options): Result[io_buffered.BufWriter, IoError] {
+pub function write(w: io_buffered.BufWriter, src: u8[], part: i32, o: Options): Result[io_buffered.BufWriter, IoError] {
   let d = blocks.parse(src, o.sourcepos);
   let out = w.handle();
   let s = start(o);
@@ -312,7 +264,7 @@ function lines(out: usize, d: blocks.Doc, from: i32, to: i32): void {
     for _ in 0..blocks.seg_pad(s) {
       buf_push_byte(out, 32);
     }
-    buf_push_range(out, d.src, blocks.seg_start(s), blocks.seg_end(s));
+    buf_push_bytes_range(out, d.src, blocks.seg_start(s), blocks.seg_end(s));
     buf_push_byte(out, 10);
   }
 }
@@ -321,14 +273,14 @@ function code(out: usize, d: blocks.Doc, r: i32, st: State): void {
   let t = st.w.t;
   let from = d.from(r);
   let to = d.to(r);
-  let lang = "";
+  let lang: u8[] = [];
   if (d.has_flag(r, blocks.F_FENCED)) {
     lang = info_word(d, from, t);
     from += 1;
   }
   if (lang.len() > 0) {
     tag(out, d, r, st, "<pre><code class=\"", 4);
-    if (!lang.starts_with("language-")) {
+    if (lang.len() < 9 || __mismatch_bytes_str(lang, 0, "language-", 0, 9) < 9) {
       buf_push(out, "language-");
     }
     inlines.escape(out, lang, 0, lang.len(), t);
@@ -349,20 +301,20 @@ function code(out: usize, d: blocks.Doc, r: i32, st: State): void {
 
 // The first word of the info string of a fenced code block, which is on the
 // line `k`.
-function info_word(d: blocks.Doc, k: i32, t: inlines.Tables): string {
+function info_word(d: blocks.Doc, k: i32, t: inlines.Tables): u8[] {
   let info = info_string(d, k, t);
   let e = 0;
   while (e < info.len() && !is_space(info[e] as i32)) {
     e += 1;
   }
-  return slice_unchecked(info, 0, e).to_owned();
+  return __bytes_range(info, 0, e);
 }
 
 // The info string of a fenced code block, which is on the line `k`. As in
 // cmark, the entity references go before the whitespace at each end, and
 // the backslash escapes after it.
 @inline
-pub function info_string(d: blocks.Doc, k: i32, t: inlines.Tables): string {
+pub function info_string(d: blocks.Doc, k: i32, t: inlines.Tables): u8[] {
   let raw = inlines.decode(d.src, blocks.seg_start(d.segs[k]), blocks.seg_end(d.segs[k]), t);
   let a = 0;
   let b = raw.len();
@@ -372,7 +324,7 @@ pub function info_string(d: blocks.Doc, k: i32, t: inlines.Tables): string {
   while (b > a && is_space(raw[b - 1] as i32)) {
     b -= 1;
   }
-  return inlines.unescape(slice_unchecked(raw, a, b));
+  return inlines.unescape(raw[a:b]);
 }
 
 function is_space(c: i32): boolean {

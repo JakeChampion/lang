@@ -158,8 +158,10 @@ func Run(prog *ast.Program, info *checker.Info, extras ...string) {
 	}
 	hasEntry := reachable["main"] || reachable[checker.WasiHandleName]
 	if !hasEntry {
+		// A library roots its own functions. A function of an imported
+		// module stays only when one of them reaches it.
 		for _, fn := range prog.Funcs {
-			if prog.EntryModule == "" || fn.SourceModule == "" || fn.SourceModule == prog.EntryModule {
+			if prog.EntryModule == "" || fn.SourceModule == prog.EntryModule {
 				enqueue(fn.Name)
 			}
 		}
