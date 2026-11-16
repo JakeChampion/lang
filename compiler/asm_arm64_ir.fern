@@ -7604,6 +7604,7 @@ pub function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered
     }
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
+  irverifygate.report_census(vgate);
   s = emit_cfi_stubs_from(s, cf0);
   return asmcore.EmitState { ...s, reg_entries: previous_regs, leaves: previous_leaves, float_abi: previous_float.names, float_abi_masks: previous_float.masks };
 }
