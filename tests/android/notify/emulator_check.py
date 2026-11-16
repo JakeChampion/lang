@@ -6,7 +6,7 @@ Usage: emulator_check.py APK OUT_DIR
 It installs the app with its permissions granted and starts it. The app
 posts a notification and then the same one with a progress bar. While it
 shows, the notification manager must list it with its title and its
-progress. When the app cancels it, the list must not have it. It fails on
+progress, at most 3 seconds after the app logs the progress. When the app cancels it, the list must not have it. It fails on
 a crash. OUT_DIR gets logcat and the notification list.
 """
 
@@ -61,19 +61,39 @@ def check_shown(listing):
     return failures
 
 
+def wait_shown(read, seconds):
+    """Reads the listing until it passes check_shown, or the time ends.
+
+    The notification manager applies a post after notify() returns.
+    """
+    deadline = time.time() + seconds
+    while True:
+        listing = read()
+        failures = check_shown(listing)
+        if not failures or time.time() >= deadline:
+            return listing, failures
+        time.sleep(0.25)
+
+
+def dumpsys():
+    return adb("shell", "dumpsys", "notification", "--noredact")
+
+
 def main(apk, out):
     subprocess.run(["mkdir", "-p", out], check=True)
     adb("install", "-r", "-g", apk)
     adb("logcat", "-c")
     adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
     log = wait_for(POSTED, 40)
-    shown = adb("shell", "dumpsys", "notification", "--noredact")
     failures = [f"no line matching {p.pattern!r}" for p in POSTED if not p.search(log)]
-    if not failures:
-        failures += check_shown(shown)
+    if failures:
+        shown = dumpsys()
+    else:
+        # The app cancels 5 seconds after the progress post.
+        shown, failures = wait_shown(dumpsys, 3)
     log = wait_for((CANCELLED,), 20)
     time.sleep(1)
-    after = adb("shell", "dumpsys", "notification", "--noredact")
+    after = dumpsys()
     if not CANCELLED.search(log):
         failures.append("the app did not cancel the notification")
     elif records(after):

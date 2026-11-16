@@ -29,5 +29,23 @@ class RecordsTest(unittest.TestCase):
         self.assertIn("no notification", failures[0])
 
 
+class WaitShownTest(unittest.TestCase):
+    def listings(self, *listings):
+        left = list(listings)
+        return lambda: left.pop(0) if len(left) > 1 else left[0]
+
+    def test_a_stale_listing_is_read_again(self):
+        stale = LISTING.replace(" android.progress=50 android.progressMax=100", "")
+        listing, failures = emulator_check.wait_shown(self.listings(stale, LISTING), 3)
+        self.assertEqual(failures, [])
+        self.assertEqual(listing, LISTING)
+
+    def test_a_listing_that_stays_stale_fails(self):
+        stale = LISTING.replace(" android.progress=50 android.progressMax=100", "")
+        listing, failures = emulator_check.wait_shown(self.listings(stale), 0)
+        self.assertEqual(failures, ["the notification has no progress of 50"])
+        self.assertEqual(listing, stale)
+
+
 if __name__ == "__main__":
     unittest.main()
