@@ -117,24 +117,37 @@ function check(cond: boolean, what: string, failures: i32): i32 {
   return failures + 1;
 }
 
-function main(): i32 {
-  let failures = 0;
+// A loop with a fill at each turn and before its return.
+function filled(failures0: i32): i32 {
+  let failures = failures0;
   let a = ssaholecell.cells(loop_of(false, false));
   let start = def(a, def(a, 3).args[0]);
-  failures = check(count(a, ssa.BINARY) == 0 && find(a, 3).id < 0 && find(a, 4).id < 0 && find(a, 7).id < 0 && find(a, 8).id < 0, "each fill loses its test and its two sides", failures);
-  failures = check(start.kind_tag == ssa.FRAME_CELL && ssa.cell_offset(start) == 8 && find(a, 0).insts.len() > 0 && last(find(a, 0)).result == start.result, "the hole starts at the cell, less the offset of the store", failures);
   let fill = last(find(a, 2));
-  failures = check(fill.kind_tag == ssa.ST_AT && fill.args[0] == 3 && fill.args[1] == 8 && fill.imm == 8 && find(a, 2).term.kind_tag == ssa.TERM_BR && find(a, 2).term.target == 5, "the test block stores to the hole and jumps to the join", failures);
-  let out = find(a, 9);
-  let read = def(a, out.term.value);
-  failures = check(read.kind_tag == ssa.LD_AT && read.imm == 8 && def(a, read.args[0]).kind_tag == ssa.FRAME_CELL && ssa.cell_number(def(a, read.args[0])) == ssa.cell_number(start), "the return reads the cell", failures);
-  failures = check(count(a, ssa.PHI) == 1 && count(a, ssa.ST_AT) == 2, "the phis of the result are gone, and no store sets the cell to null", failures);
+  let read = def(a, find(a, 9).term.value);
+  let sides_gone = find(a, 3).id < 0 && find(a, 4).id < 0 && find(a, 7).id < 0 && find(a, 8).id < 0;
+  failures = check(count(a, ssa.BINARY) == 0 && sides_gone, "each fill loses its test and its two sides", failures);
+  let at_cell = start.kind_tag == ssa.FRAME_CELL && ssa.cell_offset(start) == 8;
+  failures = check(at_cell && last(find(a, 0)).result == start.result, "the hole starts at the cell, less the offset of the store", failures);
+  let stores = fill.kind_tag == ssa.ST_AT && fill.args[0] == 3 && fill.args[1] == 8 && fill.imm == 8;
+  failures = check(stores && find(a, 2).term.kind_tag == ssa.TERM_BR && find(a, 2).term.target == 5, "the test block stores to the hole and jumps to the join", failures);
+  let same_cell = def(a, read.args[0]).kind_tag == ssa.FRAME_CELL && ssa.cell_number(def(a, read.args[0])) == ssa.cell_number(start);
+  failures = check(read.kind_tag == ssa.LD_AT && read.imm == 8 && same_cell, "the return reads the cell", failures);
+  return check(count(a, ssa.PHI) == 1 && count(a, ssa.ST_AT) == 2, "the phis of the result are gone, and no store sets the cell to null", failures);
+}
+
+// A return with no fill before it.
+function early(failures: i32): i32 {
+  let c = ssaholecell.cells(loop_of(false, true));
+  let init = last(find(c, 0));
+  let nulls = init.kind_tag == ssa.ST_AT && init.imm == 8 && def(c, init.args[0]).kind_tag == ssa.FRAME_CELL && def(c, init.args[1]).kind_tag == ssa.CONST_INT;
+  return check(count(c, ssa.FRAME_CELL) == 2 && nulls, "a return with no fill before it reads a cell that starts null", failures);
+}
+
+function main(): i32 {
+  let failures = filled(0);
   let b = ssaholecell.cells(loop_of(true, false));
   failures = check(count(b, ssa.FRAME_CELL) == 0 && count(b, ssa.BINARY) == 2, "a result that a call reads keeps the loop as it is", failures);
-  let c = ssaholecell.cells(loop_of(false, true));
-  let first = find(c, 0);
-  let init = last(first);
-  failures = check(count(c, ssa.FRAME_CELL) == 2 && init.kind_tag == ssa.ST_AT && init.imm == 8 && def(c, init.args[0]).kind_tag == ssa.FRAME_CELL && def(c, init.args[1]).kind_tag == ssa.CONST_INT, "a return with no fill before it reads a cell that starts null", failures);
+  failures = early(failures);
   print("failures=" + util.i32_to_string(failures));
   return 0;
 }

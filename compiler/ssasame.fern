@@ -117,13 +117,15 @@ function own_test(b: ssa.SBlock): i32 {
 // in the block of its branch. A function with fewer than two such blocks
 // costs one read of its blocks and no array.
 function tested_twice(f: ssa.SFunc): boolean {
-  let tests = 0;
+  let one = false;
+  let two = false;
   for b in f.blocks {
     if (own_test(b) >= 0) {
-      tests += 1;
+      two = one;
+      one = true;
     }
   }
-  if (tests < 2) {
+  if (!two) {
     return false;
   }
   let zeros = __alloc_bool(f.nvals);
@@ -191,18 +193,19 @@ function round(f: ssa.SFunc): ssa.Threading {
 function below(f: ssa.SFunc, dom: ssadeps.Dom, first: First, b: i32, target: i32): ssa.SFunc {
   let blocks = f.blocks.with(b, ssa.SBlock { ...f.blocks[b], term: ssa.t_br(target) });
   let zero_side = if (first.test.eq) { first.yes } else { first.no };
-  let nvals = f.nvals;
   for k in 0..blocks.len() {
     if (!ssadeps.dom_holds(dom, k, zero_side)) {
       continue;
     }
+    // The block at k has the zero f.nvals + k for its allocations.
     let insts: ssa.SInst[] = [];
     let changed = false;
     for ins in blocks[k].insts {
       if (ssa.reuse_alloc_call(ins) && ins.args[0] == first.test.value) {
-        insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: nvals, args: [], imm: 0, str: "" });
-        insts = insts.append(ssa.SInst { ...ins, args: [nvals, ins.args[1]] });
-        nvals += 1;
+        if (!changed) {
+          insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: f.nvals + k, args: [], imm: 0, str: "" });
+        }
+        insts = insts.append(ssa.SInst { ...ins, args: [f.nvals + k, ins.args[1]] });
         changed = true;
       } else {
         insts = insts.append(ins);
@@ -212,7 +215,7 @@ function below(f: ssa.SFunc, dom: ssadeps.Dom, first: First, b: i32, target: i32
       blocks = blocks.with(k, ssa.SBlock { ...blocks[k], insts: insts });
     }
   }
-  return ssa.SFunc { ...f, nvals: nvals, blocks: blocks };
+  return ssa.SFunc { ...f, nvals: f.nvals + blocks.len(), blocks: blocks };
 }
 
 // f with no block that the entry does not reach.

@@ -628,19 +628,16 @@ pub function frame_split(f: SFunc, at: i32[], ok: boolean[], tied: i32[], fwd: i
   while (changed && early[0]) {
     changed = false;
     for b in 0..n {
-      let before = 0;
-      let after = 0;
+      let before = false;
+      let after = false;
       for p in preds[b] {
-        if (early[p]) {
-          before = before + 1;
-        } else {
-          after = after + 1;
-        }
+        before = before || early[p];
+        after = after || !early[p];
       }
-      if (early[b] && (after > 0 || tied[b] >= 0 && !early[tied[b]])) {
+      if (early[b] && (after || tied[b] >= 0 && !early[tied[b]])) {
         early = early.with(b, false);
         changed = true;
-      } else if (!early[b] && before > 0 && after > 0) {
+      } else if (!early[b] && before && after) {
         for p in preds[b] {
           early = early.with(p, false);
         }
@@ -7915,19 +7912,22 @@ pub function view_slots(f: SFunc): i32[] {
       if (out.len() == 0) {
         out = util.minus_ones(f.nvals);
       }
-      if (ins.kind_tag == STR_VIEW && ins.imm >= 1) {
-        out = out.with(ins.result, n);
-        n += 1;
-      }
+      let slot = -1;
       if (ins.kind_tag == FRAME_CELL) {
         while (cells.len() <= cell_number(ins)) {
           cells = cells.append(-1);
         }
-        if (cells[cell_number(ins)] < 0) {
-          cells = cells.with(cell_number(ins), n);
-          n += 1;
-        }
-        out = out.with(ins.result, cells[cell_number(ins)]);
+        slot = cells[cell_number(ins)];
+      }
+      if (ins.kind_tag == STR_VIEW && ins.imm >= 1 || ins.kind_tag == FRAME_CELL && slot < 0) {
+        slot = n;
+        n += 1;
+      }
+      if (ins.kind_tag == FRAME_CELL) {
+        cells = cells.with(cell_number(ins), slot);
+      }
+      if (slot >= 0) {
+        out = out.with(ins.result, slot);
       }
     }
   }

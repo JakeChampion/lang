@@ -1271,25 +1271,22 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
   r = emit(r, ir.op_load_local(CHAIN_CELL));
   r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_if(0));
-  let opened = 0;
+  let opened: string[] = [];
   for v in e.variants {
-    if (!semrecords.inhabited(v) || waiting_field(v, t, f) < 0 || same && opened > 0) {
+    if (!semrecords.inhabited(v) || waiting_field(v, t, f) < 0 || same && opened.len() > 0) {
       continue;
     }
-    if (same) {
-      r = cell_fields(r, v, t, f);
-      opened = 1;
-      continue;
+    if (!same) {
+      r = else_if_open(r, opened.len());
+      r = emit(r, ir.op_load_local(CHAIN_CELL));
+      r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+      r = emit(r, ir.op_if(0));
     }
-    r = else_if_open(r, opened);
-    r = emit(r, ir.op_load_local(CHAIN_CELL));
-    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
-    r = emit(r, ir.op_if(0));
     r = cell_fields(r, v, t, f);
-    opened += 1;
+    opened = opened.append(v.name);
   }
   if (!same) {
-    r = close_ifs(r, opened);
+    r = close_ifs(r, opened.len());
   }
   r = emit(r, ir.op_load_local(CHAIN_CELL));
   r = emit(r, ir.op_load_local(0));
