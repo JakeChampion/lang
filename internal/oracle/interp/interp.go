@@ -666,6 +666,7 @@ func New() *Interp {
 	i.Builtins["open_exclusive"] = &Builtin{Fn: builtinOpenExclusive}
 	i.Builtins["open_reader_with"] = &Builtin{Fn: builtinOpenReaderWith}
 	i.Builtins["open_writer_with"] = &Builtin{Fn: builtinOpenWriterWith}
+	i.Builtins["reader_from_fd"] = &Builtin{Fn: builtinReaderFromFd}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_read_chunk_bytes"] = &Builtin{Fn: builtinReaderReadChunkBytes}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
@@ -4732,6 +4733,30 @@ func builtinOpenReaderWith(i *Interp, args []Value) (Value, error) {
 
 func builtinOpenWriterWith(i *Interp, args []Value) (Value, error) {
 	return openWithHelper(i, args, "Writer", os.O_WRONLY)
+}
+
+// builtinReaderFromFd makes a Reader of a descriptor that the process holds.
+// It does not open the file again, so a read starts at the offset of the
+// descriptor. Descriptor 0 is the stdin of the interpreter.
+func builtinReaderFromFd(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("reader_from_fd: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("reader_from_fd: expected number fd, got %T", args[0])
+	}
+	if n == 0 {
+		return resultOk(&Struct{TypeName: "Reader", Fields: map[string]Value{"fd": Number(0)}}), nil
+	}
+	const fGetfd = 1
+	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(int(n)), fGetfd, 0); errno != 0 {
+		return resultErr(classifyIoError("", errno)), nil
+	}
+	id := i.nextFd
+	i.nextFd++
+	i.openFiles[id] = os.NewFile(uintptr(int(n)), fmt.Sprintf("fd %d", int(n)))
+	return resultOk(&Struct{TypeName: "Reader", Fields: map[string]Value{"fd": Number(id)}}), nil
 }
 
 func openWithHelper(i *Interp, args []Value, structName string, access int) (Value, error) {

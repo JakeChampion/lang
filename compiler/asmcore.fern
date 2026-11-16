@@ -3481,7 +3481,7 @@ function infer_call_named_type_part_8(id: ast.ExprIdent, c: ast.ExprCall, s: Emi
   if (id.name == "env" || id.name == "config_get") {
     return ty_option(ty_string());
   }
-  if (id.name == "open_reader" || id.name == "open_reader_with") {
+  if (id.name == "open_reader" || id.name == "open_reader_with" || id.name == "reader_from_fd") {
     return ty_result(ty_named("Reader"));
   }
   if (id.name == "open_writer_with") {

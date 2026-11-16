@@ -22,6 +22,7 @@ var gatedBuiltins = map[string]string{
 	"proc_exec":           "proc",
 	"proc_exec_as":        "proc",
 	"pipe":                "proc",
+	"reader_from_fd":      "proc",
 	"process_alive":       "proc",
 	"signal_send":         "proc",
 	"set_process_group":   "proc",

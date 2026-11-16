@@ -276,6 +276,11 @@ pub function env_prefix(): string {
   return "__env$";
 }
 
+// The environment of a `once` closure. A body name never starts with `$`.
+pub function env_take_prefix(): string {
+  return "__env$$";
+}
+
 pub function is_env(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(s) = t {
     return prefixed(s.name, env_prefix());
@@ -292,9 +297,22 @@ pub function env_captures(t: typeinfo.Type): typeinfo.Type[] {
 
 pub function env_body(t: typeinfo.Type): string {
   if let typeinfo.TypeStruct(s) = t {
-    return slice_unchecked(s.name, env_prefix().len(), s.name.len()).to_owned();
+    let prefix = env_prefix();
+    if (env_takes(t)) {
+      prefix = env_take_prefix();
+    }
+    return slice_unchecked(s.name, prefix.len(), s.name.len()).to_owned();
   }
   return "";
+}
+
+// The environment of a `once` closure. Its body takes each capture out when
+// the environment has one reference, so a slot can hold 0.
+pub function env_takes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeStruct(s) = t {
+    return prefixed(s.name, env_take_prefix());
+  }
+  return false;
 }
 
 function prefixed(name: string, prefix: string): boolean {
