@@ -14,7 +14,7 @@ The module declares the class `dev.fern.android.TextField`, which watches the fi
 
 ## Contracts
 
-Call `show`, `set_text` and `hide` on the loop thread, with the context that `android.start` gave the loop.
+Call `show`, `set_text` and `hide` on the loop thread, with the context that `launch.start` gave the loop.
 
 ## Module assembly
 

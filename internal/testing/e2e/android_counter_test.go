@@ -21,7 +21,9 @@ func TestAndroidCounterProgram(t *testing.T) {
 }
 
 // fern -apk builds the counter from its fern.toml: a library for each ABI,
-// and the classes.dex of the accessibility classes of std/android/access.
+// and the classes.dex of the accessibility classes of std/android/access and
+// of the back callback and the insets listener of std/android. The app
+// targets API 36 and takes the back key through the callback.
 func TestAndroidCounterApk(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "counter.apk")
 	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out,
@@ -47,4 +49,23 @@ func TestAndroidCounterApk(t *testing.T) {
 			t.Errorf("the APK has no %s", name)
 		}
 	}
+	classes := readZipEntry(t, zr, "classes.dex")
+	for _, c := range []string{"Ldev/fern/android/Back;", "Ldev/fern/android/Insets;", "onBackInvoked", "onApplyWindowInsets"} {
+		if !bytes.Contains(classes, []byte(c)) {
+			t.Errorf("classes.dex has no %s", c)
+		}
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, enableOnBackInvokedCallbackID); !ok || v != 0xffffffff {
+		t.Errorf("android:enableOnBackInvokedCallback = %#x (set %v), want true", v, ok)
+	}
+	if v, ok := elementAttr(t, man, minSdkVersionID, targetSdkVersionID); !ok || v != 36 {
+		t.Errorf("android:targetSdkVersion = %d (set %v), want 36", v, ok)
+	}
 }
+
+const (
+	enableOnBackInvokedCallbackID = 0x0101066c
+	minSdkVersionID               = 0x0101020c
+	targetSdkVersionID            = 0x01010270
+)

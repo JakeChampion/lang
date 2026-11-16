@@ -1,6 +1,6 @@
 // The character classes and the case mappings of the locale C.UTF-8 of
-// glibc 2.39, on x86_64. scripts/gen-glibc-ctype.py writes
-// this file from the libc of the host. Do not edit it by hand.
+// glibc 2.39. scripts/gen-libc-ctype.c writes this file from the libc of
+// the host. Do not edit it by hand.
 
 // The code points of a class, as pairs of the first and the last of each
 // range.
@@ -1341,7 +1341,6 @@ function upper_runs(): i32[] {
   ];
 }
 
-// The runs of towupper: the first and the last code point, the step
 // The runs of towlower, in the form of upper_runs.
 function lower_runs(): i32[] {
   return [

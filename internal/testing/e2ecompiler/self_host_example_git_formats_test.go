@@ -104,9 +104,7 @@ func gitIndexPackCases(t *testing.T, oracle, port gitTool, pack []byte, format s
 		}
 		idx := filepath.Join(dir, "p.idx")
 		if change != nil {
-			if err := os.WriteFile(idx, change(fileBytes(t, idx)), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			rewriteFile(t, idx, change(fileBytes(t, idx)))
 		}
 		gitCompare(t, oracle, port, dir, "", append([]string{"index-pack", f}, args...)...)
 	}

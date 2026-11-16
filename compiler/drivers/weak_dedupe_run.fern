@@ -1,0 +1,22 @@
+import "../asmcore";
+
+// Writes the units named by the arguments as one stream, as the spawned
+// per-module emit does.
+function main(): i32 {
+  let h = buf_new(4096);
+  let seen: string[] = [];
+  let argv = args();
+  for ai in 1..argv.len() {
+    match (read_file(argv[ai])) {
+      Ok(text) => {
+        seen = asmcore.dedupe_weak_into(text, seen, h);
+      },
+      Err(_) => {
+        return 1;
+      }
+    }
+  }
+  write(buf_take(h));
+  buf_free(h);
+  return 0;
+}
