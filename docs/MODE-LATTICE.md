@@ -159,7 +159,9 @@ position must be provably owned — a fresh construction, another
 `own` param, an all-pointer-params-own callee result, a struct
 literal whose field values are owned or hold no handle and whose
 base is owned or keeps only fields that hold no handle
-(`structLitOwned`, `ow_struct_lit_owned`), a read
+(`structLitOwned`, `ow_struct_lit_owned`), a variant
+construction whose arguments are owned or hold no handle
+(`variantOwned`, `ow_variant_args_owned`), a read
 `b.f` in the value that a literal `S { ...b, f: v }` gives `f` when
 `b` is owned and `v` names the root of `b` only there
 (`replacedReads`, `ow_replaced_reads`), `with` or `append` on an

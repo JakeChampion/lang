@@ -894,8 +894,8 @@ function supplied_unit(owned: boolean[], ids: i32[], v: i32): i32 {
 }
 
 function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
-  let out: boolean[] = [false];
   let callee = f.values[ins.args[0]];
+  let out: boolean[] = [ssasem.func_once(callee)];
   let params = ssasem.func_params(callee);
   for i in 0..params.len() {
     out = out.append(ssasem.func_param_own(callee, i) && ssasem.counted(f, f.values[ins.args[i + 1]]));
@@ -3350,7 +3350,7 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
     sole = sole.with(seed, true);
   }
   let pass = util.minus_ones(f.graph.nvals);
-  let links = SoleLinks { from: [], to: [], phi: [] };
+  let links = SoleLinks { from: [], to: [] };
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result < 0) {
@@ -3359,12 +3359,12 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       let k = passed_slot(ins, fresh);
       if (k >= 0) {
         pass = pass.with(ins.result, k);
-        links = SoleLinks { from: links.from.append(ins.args[k]), to: links.to.append(ins.result), phi: links.phi.append(false) };
+        links = SoleLinks { from: links.from.append(ins.args[k]), to: links.to.append(ins.result) };
       }
       if (ins.kind_tag == ssa.PHI) {
         for a in ins.args {
           if (a >= 0) {
-            links = SoleLinks { from: links.from.append(a), to: links.to.append(ins.result), phi: links.phi.append(true) };
+            links = SoleLinks { from: links.from.append(a), to: links.to.append(ins.result) };
           }
         }
       }
@@ -3558,7 +3558,7 @@ function only_reads(ins: ssa.SInst, i: i32, loans: LoanRows): boolean {
   return ins.kind_tag == ssasem.arr_concat();
 }
 
-struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }
+struct SoleLinks { from: i32[], to: i32[] }
 
 function lent_withs(f: ssasem.Func, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
@@ -3587,10 +3587,7 @@ function settled(own sole: boolean[], links: SoleLinks): boolean[] {
     for i in 0..links.from.len() {
       let a = links.from[i];
       let v = links.to[i];
-      if (links.phi[i] && sole[a] != sole[v]) {
-        sole = sole.with(a, false).with(v, false);
-        changed = true;
-      } else if (!links.phi[i] && sole[v] && !sole[a]) {
+      if (sole[v] && !sole[a]) {
         sole = sole.with(v, false);
         changed = true;
       }

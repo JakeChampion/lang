@@ -571,6 +571,9 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	if sd.ValueType {
 		f.b.WriteString("@value\n")
 	}
+	if sd.Secret {
+		f.b.WriteString("@secret\n")
+	}
 	f.writeDeriveAttr(sd.Derives)
 	f.writeMustConsumeAttr(sd.MustConsume)
 	if sd.PackageScoped {
@@ -2221,6 +2224,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte('(')
 		}
+		if x.Once {
+			f.b.WriteString("once ")
+		}
 		f.b.WriteByte('(')
 		for i, p := range x.Params {
 			if i > 0 {
@@ -2556,6 +2562,9 @@ func formatType(t ast.Type) string {
 		return out + ")"
 	case *ast.FuncType:
 		out := "("
+		if x.Once {
+			out = "once ("
+		}
 		for i, p := range x.Params {
 			if i > 0 {
 				out += ", "

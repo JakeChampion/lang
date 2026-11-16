@@ -2781,6 +2781,9 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
     return ty_unknown();
   }
   if (t.args.len() > 0) {
+    if (t.base.starts_with("dyn ")) {
+      return ty_unknown();
+    }
     // Map[V] / Result[T] with only ONE arg (no comma in the
     if (t.base == "Map") {
       if (t.args.len() >= 2 && ty_is_i32(ty_from_ref(t.args[0]))) {

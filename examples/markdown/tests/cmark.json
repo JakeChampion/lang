@@ -7,7 +7,49 @@
   "bad.md": {
    "base64": "Yf9iIOKCIPCfmCDtoIAgwK8g9JCAgCBvawriQQoqePAqCu+/vgo="
   },
-  "nul.md": "a\u0000b\n\u0000\n"
+  "nul.md": "a\u0000b\n\u0000\n",
+  "bad-text.md": {
+   "base64": "Yf9iIGPigiBk8J+YIGXtoIAgZsCvIGf0kICAIGj1gICAIGnggIAgaoBrCuJBCsOpgArvv74g77+/Cg=="
+  },
+  "bad-labels.md": {
+   "base64": "W2H/Yl0gW0H+Ql0gW+KCXSBbw4n/XQoKW2H+Yl06IC91MQpbYf1iXTogL3UyClvigl06IC91MyAidP8iClvDqf5dOiAvdTQK"
+  },
+  "bad-code.md": {
+   "base64": "YGH/YmAgYGAg4oIgYGAgYCD/IGAKCiAgICBjb/9kZQoKYGBgaW7/Zm8geP4KY/9kCmBgYAoKfn5+IOKCCn5+fgo="
+  },
+  "bad-html.md": {
+   "base64": "PGRpdj4KYf9iCjwvZGl2PgoKPCEtLSD+IC0tPgoKPGEgaHJlZj0i/yI+eDwvYT4gPGL/PiA8eCB5PSL+Ij4KCjxwcmU+Cv8KPC9wcmU+Cg=="
+  },
+  "bad-entities.md": {
+   "base64": "Jv87ICZhbXD/OyAmI/87ICYjeP47ICZjb3B5O/8gJuKCOyB4JiM2NTv/eQoKW2xdKC9hJmFtcDv/ICJ0JnF1b3Q7/iIpIDxodHRwOi8vYf8uYi8mYW1wOz4gPGH/QGIuYz4K"
+  },
+  "bad-links.md": {
+   "base64": "W3T/eF0oL2T/ZSAidGn+dGxlIikgIVtp/21dKC9z/ikgW3hdKDz/IHk+KSBbeV0oL+KCKQo="
+  },
+  "bad-delims.md": {
+   "base64": "/yphKv8g4oIqYiogKmMq4oIgw6mAKmQqIF9lX/8g/19mXyAqKv9n/yoqCv8iYSL/IOKCJ2InICL/Y/8iIP8tLSD/Li4uIP8tLS0K"
+  },
+  "bad-blocks.md": {
+   "base64": "IyBI/yAjCgpT/wo9PT0KCj4gcf9xCj4gPiD+CgotIP9hCi0gYv4KCjEuIOKCCgr/CgotLS3/Cg=="
+  },
+  "bad-wrap.md": {
+   "base64": "YWFhIGJiYiD/Y2NjIGRkZCBlZWUgZmZmIGdnZwoKPiBhYWEgYmJiIGNjYyDigiBkZGQgZWVlCgotIHggeXkgenp6IP8gd3d3IHZ2diB1dXUK"
+  },
+  "bad-lines.md": {
+   "base64": "YQD/AGIKCmH/DQpi/g1j4oINCg=="
+  },
+  "bad-end1.md": {
+   "base64": "dGV4dCBhdCB0aGUgZW5kIOKC"
+  },
+  "bad-end2.md": {
+   "base64": "IyBoZWFkaW5nIP8="
+  },
+  "bad-end3.md": {
+   "base64": "Kv8="
+  },
+  "bad-end4.md": {
+   "base64": "PiBxdW90ZQo+IP8="
+  }
  },
  "cases": [
   {
@@ -387,6 +429,19 @@
   },
   {
    "args": [
+    "-t",
+    "html",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+Yf9iIOKCIPCfmCDtoIAgwK8g9JCAgCBvawriQQoqePAqCu+/vjwvcD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
     "--validate-utf8",
     "-t",
     "html",
@@ -394,6 +449,369 @@
    ],
    "stdin": "stdin *text*\n<b>x</b>\n",
    "stdout": "<p>a�b � � � � � ok\n�\n*x�\n￾</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+Yf9iIGPigiBk8J+YIGXtoIAgZsCvIGf0kICAIGj1gICAIGnggIAgaoBrCuJBCsOpgArvv74g77+/PC9wPgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>a�b c� d� e� f� g� h� i� j�k\n�\né�\n￾ ￿</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+PGEgaHJlZj0iL3UxIj5h/2I8L2E+IDxhIGhyZWY9Ii91MSI+Qf5CPC9hPiA8YSBocmVmPSIvdTMiIHRpdGxlPSJ0/yI+4oI8L2E+IDxhIGhyZWY9Ii91NCI+w4n/PC9hPjwvcD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p><a href=\"/u1\">a�b</a> <a href=\"/u1\">A�B</a> <a href=\"/u3\" title=\"t�\">�</a> <a href=\"/u4\">É�</a></p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+PGNvZGU+Yf9iPC9jb2RlPiA8Y29kZT7igjwvY29kZT4gPGNvZGU+/zwvY29kZT48L3A+CjxwcmU+PGNvZGU+Y2//ZGUKPC9jb2RlPjwvcHJlPgo8cHJlPjxjb2RlIGNsYXNzPSJsYW5ndWFnZS1pbv9mbyI+Y/9kCjwvY29kZT48L3ByZT4KPHByZT48Y29kZSBjbGFzcz0ibGFuZ3VhZ2Ut4oIiPjwvY29kZT48L3ByZT4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p><code>a�b</code> <code>�</code> <code>�</code></p>\n<pre><code>co�de\n</code></pre>\n<pre><code class=\"language-in�fo\">c�d\n</code></pre>\n<pre><code class=\"language-�\"></code></pre>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PCEtLSByYXcgSFRNTCBvbWl0dGVkIC0tPgo8IS0tIHJhdyBIVE1MIG9taXR0ZWQgLS0+CjxwPjwhLS0gcmF3IEhUTUwgb21pdHRlZCAtLT54PCEtLSByYXcgSFRNTCBvbWl0dGVkIC0tPiAmbHQ7Yv8mZ3Q7IDwhLS0gcmF3IEhUTUwgb21pdHRlZCAtLT48L3A+CjwhLS0gcmF3IEhUTUwgb21pdHRlZCAtLT4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<!-- raw HTML omitted -->\n<!-- raw HTML omitted -->\n<p><!-- raw HTML omitted -->x<!-- raw HTML omitted --> &lt;b�&gt; <!-- raw HTML omitted --></p>\n<!-- raw HTML omitted -->\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+JmFtcDv/OyAmYW1wO2FtcP87ICZhbXA7I/87ICZhbXA7I3j+OyDCqf8gJmFtcDvigjsgeEH/eTwvcD4KPHA+PGEgaHJlZj0iL2EmYW1wOyVGRiIgdGl0bGU9InQmcXVvdDv+Ij5sPC9hPiA8YSBocmVmPSJodHRwOi8vYSVGRi5iLyZhbXA7Ij5odHRwOi8vYf8uYi8mYW1wOzwvYT4gJmx0O2H/QGIuYyZndDs8L3A+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>&amp;�; &amp;amp�; &amp;#�; &amp;#x�; ©� &amp;�; xA�y</p>\n<p><a href=\"/a&amp;%EF%BF%BD\" title=\"t&quot;�\">l</a> <a href=\"http://a%EF%BF%BD.b/&amp;\">http://a�.b/&amp;</a> &lt;a�@b.c&gt;</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+PGEgaHJlZj0iL2QlRkZlIiB0aXRsZT0idGn+dGxlIj50/3g8L2E+IDxpbWcgc3JjPSIvcyVGRSIgYWx0PSJp/20iIC8+IDxhIGhyZWY9IiVGRiUyMHkiPng8L2E+IDxhIGhyZWY9Ii8lRTIlODIiPnk8L2E+PC9wPgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p><a href=\"/d%EF%BF%BDe\" title=\"ti�tle\">t�x</a> <img src=\"/s%EF%BF%BD\" alt=\"i�m\" /> <a href=\"%EF%BF%BD%20y\">x</a> <a href=\"/%EF%BF%BD\">y</a></p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+/zxlbT5hPC9lbT7/IOKCPGVtPmI8L2VtPiA8ZW0+YzwvZW0+4oIgw6mAPGVtPmQ8L2VtPiA8ZW0+ZTwvZW0+/yD/PGVtPmY8L2VtPiAqKv9n/yoqCv8mcXVvdDthJnF1b3Q7/yDigidiJyAmcXVvdDv/Y/8mcXVvdDsg/y0tIP8uLi4g/y0tLTwvcD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>�<em>a</em>� �<em>b</em> <em>c</em>� é�<em>d</em> <em>e</em>� �<em>f</em> <strong>�g�</strong>\n�&quot;a&quot;� �'b' &quot;�c�&quot; �-- �... �---</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PGgxPkj/PC9oMT4KPGgxPlP/PC9oMT4KPGJsb2NrcXVvdGU+CjxwPnH/cTwvcD4KPGJsb2NrcXVvdGU+CjxwPv48L3A+CjwvYmxvY2txdW90ZT4KPC9ibG9ja3F1b3RlPgo8dWw+CjxsaT7/YTwvbGk+CjxsaT5i/jwvbGk+CjwvdWw+CjxvbD4KPGxpPuKCPC9saT4KPC9vbD4KPHA+/zwvcD4KPHA+LS0t/zwvcD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<h1>H�</h1>\n<h1>S�</h1>\n<blockquote>\n<p>q�q</p>\n<blockquote>\n<p>�</p>\n</blockquote>\n</blockquote>\n<ul>\n<li>�a</li>\n<li>b�</li>\n</ul>\n<ol>\n<li>�</li>\n</ol>\n<p>�</p>\n<p>---�</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+YWFhIGJiYiD/Y2NjIGRkZCBlZWUgZmZmIGdnZzwvcD4KPGJsb2NrcXVvdGU+CjxwPmFhYSBiYmIgY2NjIOKCIGRkZCBlZWU8L3A+CjwvYmxvY2txdW90ZT4KPHVsPgo8bGk+eCB5eSB6enog/yB3d3cgdnZ2IHV1dTwvbGk+CjwvdWw+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>aaa bbb �ccc ddd eee fff ggg</p>\n<blockquote>\n<p>aaa bbb ccc � ddd eee</p>\n</blockquote>\n<ul>\n<li>x yy zzz � www vvv uuu</li>\n</ul>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+Ye+/vf/vv71iPC9wPgo8cD5h/wpi/gpj4oI8L3A+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>a���b</p>\n<p>a�\nb�\nc�</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+dGV4dCBhdCB0aGUgZW5kIOKCPC9wPgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>text at the end �</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PGgxPmhlYWRpbmcg/zwvaDE+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<h1>heading �</h1>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+Kv88L3A+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>*�</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PGJsb2NrcXVvdGU+CjxwPnF1b3RlCv88L3A+CjwvYmxvY2txdW90ZT4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<blockquote>\n<p>quote\n�</p>\n</blockquote>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Yf9iIOKCIPCfmCDtoIAgwK8g9JCAgCBvazwvdGV4dD4KICAgIDxzb2Z0YnJlYWsgLz4KICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPuJBPC90ZXh0PgogICAgPHNvZnRicmVhayAvPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+KnjwKjwvdGV4dD4KICAgIDxzb2Z0YnJlYWsgLz4KICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPu+/vTwvdGV4dD4KICA8L3BhcmFncmFwaD4KPC9kb2N1bWVudD4K"
+   },
    "stderr": "",
    "exit": 0
   },
@@ -411,6 +829,367 @@
   },
   {
    "args": [
+    "-t",
+    "xml",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Yf9iIGPigiBk8J+YIGXtoIAgZsCvIGf0kICAIGj1gICAIGnggIAgaoBrPC90ZXh0PgogICAgPHNvZnRicmVhayAvPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+4kE8L3RleHQ+CiAgICA8c29mdGJyZWFrIC8+CiAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj7DqYA8L3RleHQ+CiAgICA8c29mdGJyZWFrIC8+CiAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj7vv70g77+9PC90ZXh0PgogIDwvcGFyYWdyYXBoPgo8L2RvY3VtZW50Pgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">a�b c� d� e� f� g� h� i� j�k</text>\n    <softbreak />\n    <text xml:space=\"preserve\">�</text>\n    <softbreak />\n    <text xml:space=\"preserve\">é�</text>\n    <softbreak />\n    <text xml:space=\"preserve\">� �</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPGxpbmsgZGVzdGluYXRpb249Ii91MSI+CiAgICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPmH/YjwvdGV4dD4KICAgIDwvbGluaz4KICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPiA8L3RleHQ+CiAgICA8bGluayBkZXN0aW5hdGlvbj0iL3UxIj4KICAgICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Qf5CPC90ZXh0PgogICAgPC9saW5rPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxsaW5rIGRlc3RpbmF0aW9uPSIvdTMiIHRpdGxlPSJ0/yI+CiAgICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPuKCPC90ZXh0PgogICAgPC9saW5rPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxsaW5rIGRlc3RpbmF0aW9uPSIvdTQiPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj7Dif88L3RleHQ+CiAgICA8L2xpbms+CiAgPC9wYXJhZ3JhcGg+CjwvZG9jdW1lbnQ+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <link destination=\"/u1\">\n      <text xml:space=\"preserve\">a�b</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/u1\">\n      <text xml:space=\"preserve\">A�B</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/u3\" title=\"t�\">\n      <text xml:space=\"preserve\">�</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/u4\">\n      <text xml:space=\"preserve\">É�</text>\n    </link>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPGNvZGUgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Yf9iPC9jb2RlPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxjb2RlIHhtbDpzcGFjZT0icHJlc2VydmUiPuKCPC9jb2RlPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxjb2RlIHhtbDpzcGFjZT0icHJlc2VydmUiPv88L2NvZGU+CiAgPC9wYXJhZ3JhcGg+CiAgPGNvZGVfYmxvY2sgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Y2//ZGUKPC9jb2RlX2Jsb2NrPgogIDxjb2RlX2Jsb2NrIGluZm89Imlu/2ZvIHj+IiB4bWw6c3BhY2U9InByZXNlcnZlIj5j/2QKPC9jb2RlX2Jsb2NrPgogIDxjb2RlX2Jsb2NrIGluZm89IuKCIiB4bWw6c3BhY2U9InByZXNlcnZlIj48L2NvZGVfYmxvY2s+CjwvZG9jdW1lbnQ+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <code xml:space=\"preserve\">a�b</code>\n    <text xml:space=\"preserve\"> </text>\n    <code xml:space=\"preserve\">�</code>\n    <text xml:space=\"preserve\"> </text>\n    <code xml:space=\"preserve\">�</code>\n  </paragraph>\n  <code_block xml:space=\"preserve\">co�de\n</code_block>\n  <code_block info=\"in�fo x�\" xml:space=\"preserve\">c�d\n</code_block>\n  <code_block info=\"�\" xml:space=\"preserve\"></code_block>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8aHRtbF9ibG9jayB4bWw6c3BhY2U9InByZXNlcnZlIj4mbHQ7ZGl2Jmd0Owph/2IKJmx0Oy9kaXYmZ3Q7CjwvaHRtbF9ibG9jaz4KICA8aHRtbF9ibG9jayB4bWw6c3BhY2U9InByZXNlcnZlIj4mbHQ7IS0tIP4gLS0mZ3Q7CjwvaHRtbF9ibG9jaz4KICA8cGFyYWdyYXBoPgogICAgPGh0bWxfaW5saW5lIHhtbDpzcGFjZT0icHJlc2VydmUiPiZsdDthIGhyZWY9JnF1b3Q7/yZxdW90OyZndDs8L2h0bWxfaW5saW5lPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+eDwvdGV4dD4KICAgIDxodG1sX2lubGluZSB4bWw6c3BhY2U9InByZXNlcnZlIj4mbHQ7L2EmZ3Q7PC9odG1sX2lubGluZT4KICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPiAmbHQ7Yv8mZ3Q7IDwvdGV4dD4KICAgIDxodG1sX2lubGluZSB4bWw6c3BhY2U9InByZXNlcnZlIj4mbHQ7eCB5PSZxdW90O/4mcXVvdDsmZ3Q7PC9odG1sX2lubGluZT4KICA8L3BhcmFncmFwaD4KICA8aHRtbF9ibG9jayB4bWw6c3BhY2U9InByZXNlcnZlIj4mbHQ7cHJlJmd0Owr/CiZsdDsvcHJlJmd0Owo8L2h0bWxfYmxvY2s+CjwvZG9jdW1lbnQ+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <html_block xml:space=\"preserve\">&lt;div&gt;\na�b\n&lt;/div&gt;\n</html_block>\n  <html_block xml:space=\"preserve\">&lt;!-- � --&gt;\n</html_block>\n  <paragraph>\n    <html_inline xml:space=\"preserve\">&lt;a href=&quot;�&quot;&gt;</html_inline>\n    <text xml:space=\"preserve\">x</text>\n    <html_inline xml:space=\"preserve\">&lt;/a&gt;</html_inline>\n    <text xml:space=\"preserve\"> &lt;b�&gt; </text>\n    <html_inline xml:space=\"preserve\">&lt;x y=&quot;�&quot;&gt;</html_inline>\n  </paragraph>\n  <html_block xml:space=\"preserve\">&lt;pre&gt;\n�\n&lt;/pre&gt;\n</html_block>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+JmFtcDv/OyAmYW1wO2FtcP87ICZhbXA7I/87ICZhbXA7I3j+OyDCqf8gJmFtcDvigjsgeEH/eTwvdGV4dD4KICA8L3BhcmFncmFwaD4KICA8cGFyYWdyYXBoPgogICAgPGxpbmsgZGVzdGluYXRpb249Ii9hJmFtcDv/IiB0aXRsZT0idCZxdW90O/4iPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5sPC90ZXh0PgogICAgPC9saW5rPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxsaW5rIGRlc3RpbmF0aW9uPSJodHRwOi8vYf8uYi8mYW1wOyI+CiAgICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPmh0dHA6Ly9h/y5iLyZhbXA7PC90ZXh0PgogICAgPC9saW5rPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+ICZsdDth/0BiLmMmZ3Q7PC90ZXh0PgogIDwvcGFyYWdyYXBoPgo8L2RvY3VtZW50Pgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">&amp;�; &amp;amp�; &amp;#�; &amp;#x�; ©� &amp;�; xA�y</text>\n  </paragraph>\n  <paragraph>\n    <link destination=\"/a&amp;�\" title=\"t&quot;�\">\n      <text xml:space=\"preserve\">l</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"http://a�.b/&amp;\">\n      <text xml:space=\"preserve\">http://a�.b/&amp;</text>\n    </link>\n    <text xml:space=\"preserve\"> &lt;a�@b.c&gt;</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPGxpbmsgZGVzdGluYXRpb249Ii9k/2UiIHRpdGxlPSJ0af50bGUiPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj50/3g8L3RleHQ+CiAgICA8L2xpbms+CiAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj4gPC90ZXh0PgogICAgPGltYWdlIGRlc3RpbmF0aW9uPSIvc/4iPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5p/208L3RleHQ+CiAgICA8L2ltYWdlPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxsaW5rIGRlc3RpbmF0aW9uPSL/IHkiPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj54PC90ZXh0PgogICAgPC9saW5rPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxsaW5rIGRlc3RpbmF0aW9uPSIv4oIiPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj55PC90ZXh0PgogICAgPC9saW5rPgogIDwvcGFyYWdyYXBoPgo8L2RvY3VtZW50Pgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <link destination=\"/d�e\" title=\"ti�tle\">\n      <text xml:space=\"preserve\">t�x</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <image destination=\"/s�\">\n      <text xml:space=\"preserve\">i�m</text>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"� y\">\n      <text xml:space=\"preserve\">x</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/�\">\n      <text xml:space=\"preserve\">y</text>\n    </link>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+/zwvdGV4dD4KICAgIDxlbXBoPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5hPC90ZXh0PgogICAgPC9lbXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+/yDigjwvdGV4dD4KICAgIDxlbXBoPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5iPC90ZXh0PgogICAgPC9lbXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxlbXBoPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5jPC90ZXh0PgogICAgPC9lbXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+4oIgw6mAPC90ZXh0PgogICAgPGVtcGg+CiAgICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPmQ8L3RleHQ+CiAgICA8L2VtcGg+CiAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj4gPC90ZXh0PgogICAgPGVtcGg+CiAgICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPmU8L3RleHQ+CiAgICA8L2VtcGg+CiAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj7/IP88L3RleHQ+CiAgICA8ZW1waD4KICAgICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+ZjwvdGV4dD4KICAgIDwvZW1waD4KICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPiAqKv9n/yoqPC90ZXh0PgogICAgPHNvZnRicmVhayAvPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+/yZxdW90O2EmcXVvdDv/IOKCJ2InICZxdW90O/9j/yZxdW90OyD/LS0g/y4uLiD/LS0tPC90ZXh0PgogIDwvcGFyYWdyYXBoPgo8L2RvY3VtZW50Pgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">�</text>\n    <emph>\n      <text xml:space=\"preserve\">a</text>\n    </emph>\n    <text xml:space=\"preserve\">� �</text>\n    <emph>\n      <text xml:space=\"preserve\">b</text>\n    </emph>\n    <text xml:space=\"preserve\"> </text>\n    <emph>\n      <text xml:space=\"preserve\">c</text>\n    </emph>\n    <text xml:space=\"preserve\">� é�</text>\n    <emph>\n      <text xml:space=\"preserve\">d</text>\n    </emph>\n    <text xml:space=\"preserve\"> </text>\n    <emph>\n      <text xml:space=\"preserve\">e</text>\n    </emph>\n    <text xml:space=\"preserve\">� �</text>\n    <emph>\n      <text xml:space=\"preserve\">f</text>\n    </emph>\n    <text xml:space=\"preserve\"> </text>\n    <strong>\n      <text xml:space=\"preserve\">�g�</text>\n    </strong>\n    <softbreak />\n    <text xml:space=\"preserve\">�&quot;a&quot;� �'b' &quot;�c�&quot; �-- �... �---</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8aGVhZGluZyBsZXZlbD0iMSI+CiAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5I/zwvdGV4dD4KICA8L2hlYWRpbmc+CiAgPGhlYWRpbmcgbGV2ZWw9IjEiPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+U/88L3RleHQ+CiAgPC9oZWFkaW5nPgogIDxibG9ja19xdW90ZT4KICAgIDxwYXJhZ3JhcGg+CiAgICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPnH/cTwvdGV4dD4KICAgIDwvcGFyYWdyYXBoPgogICAgPGJsb2NrX3F1b3RlPgogICAgICA8cGFyYWdyYXBoPgogICAgICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPv48L3RleHQ+CiAgICAgIDwvcGFyYWdyYXBoPgogICAgPC9ibG9ja19xdW90ZT4KICA8L2Jsb2NrX3F1b3RlPgogIDxsaXN0IHR5cGU9ImJ1bGxldCIgdGlnaHQ9InRydWUiPgogICAgPGl0ZW0+CiAgICAgIDxwYXJhZ3JhcGg+CiAgICAgICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+/2E8L3RleHQ+CiAgICAgIDwvcGFyYWdyYXBoPgogICAgPC9pdGVtPgogICAgPGl0ZW0+CiAgICAgIDxwYXJhZ3JhcGg+CiAgICAgICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Yv48L3RleHQ+CiAgICAgIDwvcGFyYWdyYXBoPgogICAgPC9pdGVtPgogIDwvbGlzdD4KICA8bGlzdCB0eXBlPSJvcmRlcmVkIiBzdGFydD0iMSIgZGVsaW09InBlcmlvZCIgdGlnaHQ9InRydWUiPgogICAgPGl0ZW0+CiAgICAgIDxwYXJhZ3JhcGg+CiAgICAgICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+4oI8L3RleHQ+CiAgICAgIDwvcGFyYWdyYXBoPgogICAgPC9pdGVtPgogIDwvbGlzdD4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+/zwvdGV4dD4KICA8L3BhcmFncmFwaD4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+LS0t/zwvdGV4dD4KICA8L3BhcmFncmFwaD4KPC9kb2N1bWVudD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">H�</text>\n  </heading>\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">S�</text>\n  </heading>\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">q�q</text>\n    </paragraph>\n    <block_quote>\n      <paragraph>\n        <text xml:space=\"preserve\">�</text>\n      </paragraph>\n    </block_quote>\n  </block_quote>\n  <list type=\"bullet\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">�a</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">b�</text>\n      </paragraph>\n    </item>\n  </list>\n  <list type=\"ordered\" start=\"1\" delim=\"period\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">�</text>\n      </paragraph>\n    </item>\n  </list>\n  <paragraph>\n    <text xml:space=\"preserve\">�</text>\n  </paragraph>\n  <paragraph>\n    <text xml:space=\"preserve\">---�</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+YWFhIGJiYiD/Y2NjIGRkZCBlZWUgZmZmIGdnZzwvdGV4dD4KICA8L3BhcmFncmFwaD4KICA8YmxvY2tfcXVvdGU+CiAgICA8cGFyYWdyYXBoPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5hYWEgYmJiIGNjYyDigiBkZGQgZWVlPC90ZXh0PgogICAgPC9wYXJhZ3JhcGg+CiAgPC9ibG9ja19xdW90ZT4KICA8bGlzdCB0eXBlPSJidWxsZXQiIHRpZ2h0PSJ0cnVlIj4KICAgIDxpdGVtPgogICAgICA8cGFyYWdyYXBoPgogICAgICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPnggeXkgenp6IP8gd3d3IHZ2diB1dXU8L3RleHQ+CiAgICAgIDwvcGFyYWdyYXBoPgogICAgPC9pdGVtPgogIDwvbGlzdD4KPC9kb2N1bWVudD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">aaa bbb �ccc ddd eee fff ggg</text>\n  </paragraph>\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">aaa bbb ccc � ddd eee</text>\n    </paragraph>\n  </block_quote>\n  <list type=\"bullet\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">x yy zzz � www vvv uuu</text>\n      </paragraph>\n    </item>\n  </list>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Ye+/vf/vv71iPC90ZXh0PgogIDwvcGFyYWdyYXBoPgogIDxwYXJhZ3JhcGg+CiAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5h/zwvdGV4dD4KICAgIDxzb2Z0YnJlYWsgLz4KICAgIDx0ZXh0IHhtbDpzcGFjZT0icHJlc2VydmUiPmL+PC90ZXh0PgogICAgPHNvZnRicmVhayAvPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Y+KCPC90ZXh0PgogIDwvcGFyYWdyYXBoPgo8L2RvY3VtZW50Pgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">a���b</text>\n  </paragraph>\n  <paragraph>\n    <text xml:space=\"preserve\">a�</text>\n    <softbreak />\n    <text xml:space=\"preserve\">b�</text>\n    <softbreak />\n    <text xml:space=\"preserve\">c�</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+dGV4dCBhdCB0aGUgZW5kIOKCPC90ZXh0PgogIDwvcGFyYWdyYXBoPgo8L2RvY3VtZW50Pgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">text at the end �</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8aGVhZGluZyBsZXZlbD0iMSI+CiAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5oZWFkaW5nIP88L3RleHQ+CiAgPC9oZWFkaW5nPgo8L2RvY3VtZW50Pgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">heading �</text>\n  </heading>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoPgogICAgPHRleHQgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Kv88L3RleHQ+CiAgPC9wYXJhZ3JhcGg+CjwvZG9jdW1lbnQ+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">*�</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8YmxvY2tfcXVvdGU+CiAgICA8cGFyYWdyYXBoPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj5xdW90ZTwvdGV4dD4KICAgICAgPHNvZnRicmVhayAvPgogICAgICA8dGV4dCB4bWw6c3BhY2U9InByZXNlcnZlIj7/PC90ZXh0PgogICAgPC9wYXJhZ3JhcGg+CiAgPC9ibG9ja19xdW90ZT4KPC9kb2N1bWVudD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">quote</text>\n      <softbreak />\n      <text xml:space=\"preserve\">�</text>\n    </paragraph>\n  </block_quote>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\na\n*x\n￾\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
     "--validate-utf8",
     "-t",
     "man",
@@ -418,6 +1197,339 @@
    ],
    "stdin": "stdin *text*\n<b>x</b>\n",
    "stdout": ".PP\na�b � � � � � ok\n�\n*x�\n￾\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\na\né\n￾ ￿\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\na�b c� d� e� f� g� h� i� j�k\n�\né�\n￾ ￿\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\na (/u1) A (/u1)  (/u3) É (/u4)\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\na�b (/u1) A�B (/u1) � (/u3) É� (/u4)\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n\\f[C]a\\f[] \\f[C]\\f[] \\f[C]\\f[]\n.IP\n.nf\n\\f[C]\nco\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nc\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\n\\f[]\n.fi\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n\\f[C]a�b\\f[] \\f[C]�\\f[] \\f[C]�\\f[]\n.IP\n.nf\n\\f[C]\nco�de\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nc�d\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\n\\f[]\n.fi\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\nx <b\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\nx <b�> \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n&\n.PP\nl (/a&) http://a (http://a) <a\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n&�; &amp�; &#�; &#x�; ©� &�; xA�y\n.PP\nl (/a&�) http://a�.b/& (http://a�.b/&) <a�@b.c>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\nt (/d) [IMAGE: i] x () y (/)\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\nt�x (/d�e) [IMAGE: i�m] x (� y) y (/�)\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n\\f[I]a\\f[]\\f[I]b\\f[] \\f[I]c\\f[]\\f[I]d\\f[] \\f[I]e\\f[]\\f[I]f\\f[] **\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n�\\f[I]a\\f[]� �\\f[I]b\\f[] \\f[I]c\\f[]� é�\\f[I]d\\f[] \\f[I]e\\f[]� �\\f[I]f\\f[] \\f[B]�g�\\f[]\n�\"a\"� �'b' \"�c�\" �\\-\\- �... �\\-\\-\\-\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".SH\nH\n.SH\nS\n.RS\n.PP\nq\n.RS\n.PP\n.RE\n.RE\n.IP \\[bu] 2\n.IP \\[bu] 2\nb\n.IP \"1.\" 4\n.PP\n.PP\n\\-\\-\\-\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".SH\nH�\n.SH\nS�\n.RS\n.PP\nq�q\n.RS\n.PP\n�\n.RE\n.RE\n.IP \\[bu] 2\n�a\n.IP \\[bu] 2\nb�\n.IP \"1.\" 4\n�\n.PP\n�\n.PP\n\\-\\-\\-�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\naaa bbb \n.RS\n.PP\naaa bbb ccc \n.RE\n.IP \\[bu] 2\nx yy zzz \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\naaa bbb �ccc ddd eee fff ggg\n.RS\n.PP\naaa bbb ccc � ddd eee\n.RE\n.IP \\[bu] 2\nx yy zzz � www vvv uuu\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\na�\n.PP\na\nb\nc\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\na���b\n.PP\na�\nb�\nc�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\ntext at the end \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\ntext at the end �\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".SH\nheading \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".SH\nheading �\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n*\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n*�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".RS\n.PP\nquote\n.RE\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".RS\n.PP\nquote\n�\n.RE\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a\n*x\n￾\n",
    "stderr": "",
    "exit": 0
   },
@@ -435,6 +1547,339 @@
   },
   {
    "args": [
+    "-t",
+    "latex",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a\né\n￾ ￿\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a�b c� d� e� f� g� h� i� j�k\n�\né�\n￾ ￿\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "{a} {A} {} {É}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "{a�b} {A�B} {�} {É�}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\texttt{a} \\texttt{} \\texttt{}\n\n\\begin{verbatim}\nco\n\\end{verbatim}\n\n\\begin{verbatim}\nc\n\\end{verbatim}\n\n\\begin{verbatim}\n\\end{verbatim}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\texttt{a�b} \\texttt{�} \\texttt{�}\n\n\\begin{verbatim}\nco�de\n\\end{verbatim}\n\n\\begin{verbatim}\nc�d\n\\end{verbatim}\n\n\\begin{verbatim}\n\\end{verbatim}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "x \\textless{}b\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "x \\textless{}b�\\textgreater{} \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\&\n\n{l} \\url{http://a} \\textless{}a\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\&�; \\&amp�; \\&\\#�; \\&\\#x�; ©� \\&�; xA�y\n\n{l} \\url{http://a�.b/\\&} \\textless{}a�@b.c\\textgreater{}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "{t} \\protect\\includegraphics{/s} {x} {y}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "{t�x} \\protect\\includegraphics{/s�} {x} {y}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\emph{a}\\emph{b} \\emph{c}\\emph{d} \\emph{e}\\emph{f} **\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "�\\emph{a}� �\\emph{b} \\emph{c}� é�\\emph{d} \\emph{e}� �\\emph{f} \\textbf{�g�}\n�\\textquotedbl{}a\\textquotedbl{}� �\\textquotesingle{}b\\textquotesingle{} \\textquotedbl{}�c�\\textquotedbl{} �-{}- �... �-{}-{}-\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\section{H}\n\n\\section{S}\n\n\\begin{quote}\nq\n\n\\begin{quote}\n\n\\end{quote}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item \n\n\\item b\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\item \n\n\\end{enumerate}\n\n-{}-{}-\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\section{H�}\n\n\\section{S�}\n\n\\begin{quote}\nq�q\n\n\\begin{quote}\n�\n\n\\end{quote}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item �a\n\n\\item b�\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\item �\n\n\\end{enumerate}\n\n�\n\n-{}-{}-�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "aaa bbb \n\n\\begin{quote}\naaa bbb ccc \n\n\\end{quote}\n\n\\begin{itemize}\n\\item x yy zzz \n\n\\end{itemize}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "aaa bbb �ccc ddd eee fff ggg\n\n\\begin{quote}\naaa bbb ccc � ddd eee\n\n\\end{quote}\n\n\\begin{itemize}\n\\item x yy zzz � www vvv uuu\n\n\\end{itemize}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a�\n\na\nb\nc\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a���b\n\na�\nb�\nc�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "text at the end \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "text at the end �\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\section{heading }\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\section{heading �}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "*\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "*�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\begin{quote}\nquote\n\n\\end{quote}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\begin{quote}\nquote\n�\n\n\\end{quote}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a\n\\*x\n￾\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
     "--validate-utf8",
     "-t",
     "commonmark",
@@ -442,6 +1887,648 @@
    ],
    "stdin": "stdin *text*\n<b>x</b>\n",
    "stdout": "a�b � � � � � ok\n�\n\\*x�\n￾\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a\né\n￾ ￿\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-text.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a�b c� d� e� f� g� h� i� j�k\n�\né�\n￾ ￿\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "[a](/u1) [A](/u1) [](/u3 \"t\") [É](/u4)\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-labels.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "[a�b](/u1) [A�B](/u1) [�](/u3 \"t�\") [É�](/u4)\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "`a` `` ``\n\n``` \nco\n```\n\n``` in\nc\n```\n\n``` \n```\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-code.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "`a�b` `�` `�`\n\n``` \nco�de\n```\n\n``` in�fo x�\nc�d\n```\n\n``` �\n```\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<div>\na\n\n<!-- \n\n<a href=\"x</a> \\<b<x y=\"\n\n<pre>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<div>\na�b\n</div>\n\n<!-- � -->\n\n<a href=\"�\">x</a> \\<b�\\> <x y=\"�\">\n\n<pre>\n�\n</pre>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "&\n\n[l](/a& \"t\\\"\") <http://a> \\<a\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-entities.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "&�; \\&amp�; &\\#�; &\\#x�; ©� &�; xA�y\n\n[l](/a&� \"t\\\"�\") <http://a�.b/&> \\<a�@b.c\\>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "[t](/d \"ti\") ![i](/s) [x]() [y](/)\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-links.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "[t�x](/d�e \"ti�tle\") ![i�m](/s�) [x](�%20y) [y](/�)\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "*a**b* *c**d* *e**f* \\*\\*\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "�*a*� �*b* *c*� é�*d* *e*� �*f* **�g�**\n�\"a\"� �'b' \"�c�\" �-- �... �---\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "# H\n\n# S\n\n> q\n> \n> > \n\n  - \n  - b\n\n<!-- end list -->\n\n1.  \n\n\\---\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "# H�\n\n# S�\n\n> q�q\n> \n> > �\n\n  - �a\n  - b�\n\n<!-- end list -->\n\n1.  �\n\n�\n\n\\---�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "aaa bbb \n\n> aaa bbb ccc \n\n  - x yy zzz \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "aaa bbb �ccc ddd eee fff ggg\n\n> aaa bbb ccc � ddd eee\n\n  - x yy zzz � www vvv uuu\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a�\n\na\nb\nc\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-lines.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "a���b\n\na�\nb�\nc�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "text at the end \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-end1.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "text at the end �\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "# heading \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-end2.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "# heading �\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\*\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-end3.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\*�\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "> quote\n> \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad-end4.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "> quote\n> �\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--smart",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+/zxlbT5hPC9lbT7/IOKCPGVtPmI8L2VtPiA8ZW0+YzwvZW0+4oIgw6mAPGVtPmQ8L2VtPiA8ZW0+ZTwvZW0+/yD/PGVtPmY8L2VtPiAqKv9n/yoqCv/igJxh4oCd/yDiguKAmGLigJkg4oCc/2P/4oCcIP/igJMg/+KApiD/4oCUPC9wPgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--smart",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHA+YWFhIGJiYiD/Y2NjIGRkZCBlZWUgZmZmIGdnZzwvcD4KPGJsb2NrcXVvdGU+CjxwPmFhYSBiYmIgY2NjIOKCIGRkZCBlZWU8L3A+CjwvYmxvY2txdW90ZT4KPHVsPgo8bGk+eCB5eSB6enog/yB3d3cgdnZ2IHV1dTwvbGk+CjwvdWw+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--smart",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PGgxPkj/PC9oMT4KPGgxPlP/PC9oMT4KPGJsb2NrcXVvdGU+CjxwPnH/cTwvcD4KPGJsb2NrcXVvdGU+CjxwPv48L3A+CjwvYmxvY2txdW90ZT4KPC9ibG9ja3F1b3RlPgo8dWw+CjxsaT7/YTwvbGk+CjxsaT5i/jwvbGk+CjwvdWw+CjxvbD4KPGxpPuKCPC9saT4KPC9vbD4KPHA+/zwvcD4KPHA+4oCU/zwvcD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--smart",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PCEtLSByYXcgSFRNTCBvbWl0dGVkIC0tPgo8IS0tIHJhdyBIVE1MIG9taXR0ZWQgLS0+CjxwPjwhLS0gcmF3IEhUTUwgb21pdHRlZCAtLT54PCEtLSByYXcgSFRNTCBvbWl0dGVkIC0tPiAmbHQ7Yv8mZ3Q7IDwhLS0gcmF3IEhUTUwgb21pdHRlZCAtLT48L3A+CjwhLS0gcmF3IEhUTUwgb21pdHRlZCAtLT4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--sourcepos",
+    "--unsafe",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHAgZGF0YS1zb3VyY2Vwb3M9IjE6MS0yOjMxIj7/PGVtPmE8L2VtPv8g4oI8ZW0+YjwvZW0+IDxlbT5jPC9lbT7igiDDqYA8ZW0+ZDwvZW0+IDxlbT5lPC9lbT7/IP88ZW0+ZjwvZW0+ICoq/2f/KioK/yZxdW90O2EmcXVvdDv/IOKCJ2InICZxdW90O/9j/yZxdW90OyD/LS0g/y4uLiD/LS0tPC9wPgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--sourcepos",
+    "--unsafe",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PHAgZGF0YS1zb3VyY2Vwb3M9IjE6MS0xOjI4Ij5hYWEgYmJiIP9jY2MgZGRkIGVlZSBmZmYgZ2dnPC9wPgo8YmxvY2txdW90ZSBkYXRhLXNvdXJjZXBvcz0iMzoxLTM6MjQiPgo8cCBkYXRhLXNvdXJjZXBvcz0iMzozLTM6MjQiPmFhYSBiYmIgY2NjIOKCIGRkZCBlZWU8L3A+CjwvYmxvY2txdW90ZT4KPHVsIGRhdGEtc291cmNlcG9zPSI1OjEtNToyNCI+CjxsaSBkYXRhLXNvdXJjZXBvcz0iNToxLTU6MjQiPnggeXkgenp6IP8gd3d3IHZ2diB1dXU8L2xpPgo8L3VsPgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--sourcepos",
+    "--unsafe",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PGgxIGRhdGEtc291cmNlcG9zPSIxOjEtMTo0Ij5I/zwvaDE+CjxoMSBkYXRhLXNvdXJjZXBvcz0iMzoxLTU6MCI+U/88L2gxPgo8YmxvY2txdW90ZSBkYXRhLXNvdXJjZXBvcz0iNjoxLTc6NSI+CjxwIGRhdGEtc291cmNlcG9zPSI2OjMtNjo1Ij5x/3E8L3A+CjxibG9ja3F1b3RlIGRhdGEtc291cmNlcG9zPSI3OjMtNzo1Ij4KPHAgZGF0YS1zb3VyY2Vwb3M9Ijc6NS03OjUiPv48L3A+CjwvYmxvY2txdW90ZT4KPC9ibG9ja3F1b3RlPgo8dWwgZGF0YS1zb3VyY2Vwb3M9Ijk6MS0xMTowIj4KPGxpIGRhdGEtc291cmNlcG9zPSI5OjEtOTo0Ij7/YTwvbGk+CjxsaSBkYXRhLXNvdXJjZXBvcz0iMTA6MS0xMTowIj5i/jwvbGk+CjwvdWw+CjxvbCBkYXRhLXNvdXJjZXBvcz0iMTI6MS0xMzowIj4KPGxpIGRhdGEtc291cmNlcG9zPSIxMjoxLTEzOjAiPuKCPC9saT4KPC9vbD4KPHAgZGF0YS1zb3VyY2Vwb3M9IjE0OjEtMTQ6MSI+/zwvcD4KPHAgZGF0YS1zb3VyY2Vwb3M9IjE2OjEtMTY6NCI+LS0t/zwvcD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--sourcepos",
+    "--unsafe",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PGRpdj4KYf9iCjwvZGl2Pgo8IS0tIP4gLS0+CjxwIGRhdGEtc291cmNlcG9zPSI3OjEtNzozMiI+PGEgaHJlZj0i/yI+eDwvYT4gJmx0O2L/Jmd0OyA8eCB5PSL+Ij48L3A+CjxwcmU+Cv8KPC9wcmU+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--sourcepos",
+    "--smart",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgc291cmNlcG9zPSIxOjEtMjozMSIgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoIHNvdXJjZXBvcz0iMToxLTI6MzEiPgogICAgPHRleHQgc291cmNlcG9zPSIxOjEtMToxIiB4bWw6c3BhY2U9InByZXNlcnZlIj7/PC90ZXh0PgogICAgPGVtcGggc291cmNlcG9zPSIxOjItMTo0Ij4KICAgICAgPHRleHQgc291cmNlcG9zPSIxOjMtMTozIiB4bWw6c3BhY2U9InByZXNlcnZlIj5hPC90ZXh0PgogICAgPC9lbXBoPgogICAgPHRleHQgc291cmNlcG9zPSIxOjUtMTo4IiB4bWw6c3BhY2U9InByZXNlcnZlIj7/IOKCPC90ZXh0PgogICAgPGVtcGggc291cmNlcG9zPSIxOjktMToxMSI+CiAgICAgIDx0ZXh0IHNvdXJjZXBvcz0iMToxMC0xOjEwIiB4bWw6c3BhY2U9InByZXNlcnZlIj5iPC90ZXh0PgogICAgPC9lbXBoPgogICAgPHRleHQgc291cmNlcG9zPSIxOjEyLTE6MTIiIHhtbDpzcGFjZT0icHJlc2VydmUiPiA8L3RleHQ+CiAgICA8ZW1waCBzb3VyY2Vwb3M9IjE6MTMtMToxNSI+CiAgICAgIDx0ZXh0IHNvdXJjZXBvcz0iMToxNC0xOjE0IiB4bWw6c3BhY2U9InByZXNlcnZlIj5jPC90ZXh0PgogICAgPC9lbXBoPgogICAgPHRleHQgc291cmNlcG9zPSIxOjE2LTE6MjEiIHhtbDpzcGFjZT0icHJlc2VydmUiPuKCIMOpgDwvdGV4dD4KICAgIDxlbXBoIHNvdXJjZXBvcz0iMToyMi0xOjI0Ij4KICAgICAgPHRleHQgc291cmNlcG9zPSIxOjIzLTE6MjMiIHhtbDpzcGFjZT0icHJlc2VydmUiPmQ8L3RleHQ+CiAgICA8L2VtcGg+CiAgICA8dGV4dCBzb3VyY2Vwb3M9IjE6MjUtMToyNSIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+IDwvdGV4dD4KICAgIDxlbXBoIHNvdXJjZXBvcz0iMToyNi0xOjI4Ij4KICAgICAgPHRleHQgc291cmNlcG9zPSIxOjI3LTE6MjciIHhtbDpzcGFjZT0icHJlc2VydmUiPmU8L3RleHQ+CiAgICA8L2VtcGg+CiAgICA8dGV4dCBzb3VyY2Vwb3M9IjE6MjktMTozMSIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+/yD/PC90ZXh0PgogICAgPGVtcGggc291cmNlcG9zPSIxOjMyLTE6MzQiPgogICAgICA8dGV4dCBzb3VyY2Vwb3M9IjE6MzMtMTozMyIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+ZjwvdGV4dD4KICAgIDwvZW1waD4KICAgIDx0ZXh0IHNvdXJjZXBvcz0iMTozNS0xOjQyIiB4bWw6c3BhY2U9InByZXNlcnZlIj4gKir/Z/8qKjwvdGV4dD4KICAgIDxzb2Z0YnJlYWsgLz4KICAgIDx0ZXh0IHNvdXJjZXBvcz0iMjoxLTI6MzEiIHhtbDpzcGFjZT0icHJlc2VydmUiPv/igJxh4oCd/yDiguKAmGLigJkg4oCc/2P/4oCcIP/igJMg/+KApiD/4oCUPC90ZXh0PgogIDwvcGFyYWdyYXBoPgo8L2RvY3VtZW50Pgo="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--sourcepos",
+    "--smart",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgc291cmNlcG9zPSIxOjEtNToyNCIgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8cGFyYWdyYXBoIHNvdXJjZXBvcz0iMToxLTE6MjgiPgogICAgPHRleHQgc291cmNlcG9zPSIxOjEtMToyOCIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+YWFhIGJiYiD/Y2NjIGRkZCBlZWUgZmZmIGdnZzwvdGV4dD4KICA8L3BhcmFncmFwaD4KICA8YmxvY2tfcXVvdGUgc291cmNlcG9zPSIzOjEtMzoyNCI+CiAgICA8cGFyYWdyYXBoIHNvdXJjZXBvcz0iMzozLTM6MjQiPgogICAgICA8dGV4dCBzb3VyY2Vwb3M9IjM6My0zOjI0IiB4bWw6c3BhY2U9InByZXNlcnZlIj5hYWEgYmJiIGNjYyDigiBkZGQgZWVlPC90ZXh0PgogICAgPC9wYXJhZ3JhcGg+CiAgPC9ibG9ja19xdW90ZT4KICA8bGlzdCBzb3VyY2Vwb3M9IjU6MS01OjI0IiB0eXBlPSJidWxsZXQiIHRpZ2h0PSJ0cnVlIj4KICAgIDxpdGVtIHNvdXJjZXBvcz0iNToxLTU6MjQiPgogICAgICA8cGFyYWdyYXBoIHNvdXJjZXBvcz0iNTozLTU6MjQiPgogICAgICAgIDx0ZXh0IHNvdXJjZXBvcz0iNTozLTU6MjQiIHhtbDpzcGFjZT0icHJlc2VydmUiPnggeXkgenp6IP8gd3d3IHZ2diB1dXU8L3RleHQ+CiAgICAgIDwvcGFyYWdyYXBoPgogICAgPC9pdGVtPgogIDwvbGlzdD4KPC9kb2N1bWVudD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--sourcepos",
+    "--smart",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgc291cmNlcG9zPSIxOjEtMTY6NCIgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8aGVhZGluZyBzb3VyY2Vwb3M9IjE6MS0xOjQiIGxldmVsPSIxIj4KICAgIDx0ZXh0IHNvdXJjZXBvcz0iMTozLTE6NCIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+SP88L3RleHQ+CiAgPC9oZWFkaW5nPgogIDxoZWFkaW5nIHNvdXJjZXBvcz0iMzoxLTU6MCIgbGV2ZWw9IjEiPgogICAgPHRleHQgc291cmNlcG9zPSIzOjEtMzoyIiB4bWw6c3BhY2U9InByZXNlcnZlIj5T/zwvdGV4dD4KICA8L2hlYWRpbmc+CiAgPGJsb2NrX3F1b3RlIHNvdXJjZXBvcz0iNjoxLTc6NSI+CiAgICA8cGFyYWdyYXBoIHNvdXJjZXBvcz0iNjozLTY6NSI+CiAgICAgIDx0ZXh0IHNvdXJjZXBvcz0iNjozLTY6NSIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+cf9xPC90ZXh0PgogICAgPC9wYXJhZ3JhcGg+CiAgICA8YmxvY2tfcXVvdGUgc291cmNlcG9zPSI3OjMtNzo1Ij4KICAgICAgPHBhcmFncmFwaCBzb3VyY2Vwb3M9Ijc6NS03OjUiPgogICAgICAgIDx0ZXh0IHNvdXJjZXBvcz0iNzo1LTc6NSIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+/jwvdGV4dD4KICAgICAgPC9wYXJhZ3JhcGg+CiAgICA8L2Jsb2NrX3F1b3RlPgogIDwvYmxvY2tfcXVvdGU+CiAgPGxpc3Qgc291cmNlcG9zPSI5OjEtMTE6MCIgdHlwZT0iYnVsbGV0IiB0aWdodD0idHJ1ZSI+CiAgICA8aXRlbSBzb3VyY2Vwb3M9Ijk6MS05OjQiPgogICAgICA8cGFyYWdyYXBoIHNvdXJjZXBvcz0iOTozLTk6NCI+CiAgICAgICAgPHRleHQgc291cmNlcG9zPSI5OjMtOTo0IiB4bWw6c3BhY2U9InByZXNlcnZlIj7/YTwvdGV4dD4KICAgICAgPC9wYXJhZ3JhcGg+CiAgICA8L2l0ZW0+CiAgICA8aXRlbSBzb3VyY2Vwb3M9IjEwOjEtMTE6MCI+CiAgICAgIDxwYXJhZ3JhcGggc291cmNlcG9zPSIxMDozLTEwOjQiPgogICAgICAgIDx0ZXh0IHNvdXJjZXBvcz0iMTA6My0xMDo0IiB4bWw6c3BhY2U9InByZXNlcnZlIj5i/jwvdGV4dD4KICAgICAgPC9wYXJhZ3JhcGg+CiAgICA8L2l0ZW0+CiAgPC9saXN0PgogIDxsaXN0IHNvdXJjZXBvcz0iMTI6MS0xMzowIiB0eXBlPSJvcmRlcmVkIiBzdGFydD0iMSIgZGVsaW09InBlcmlvZCIgdGlnaHQ9InRydWUiPgogICAgPGl0ZW0gc291cmNlcG9zPSIxMjoxLTEzOjAiPgogICAgICA8cGFyYWdyYXBoIHNvdXJjZXBvcz0iMTI6NC0xMjo1Ij4KICAgICAgICA8dGV4dCBzb3VyY2Vwb3M9IjEyOjQtMTI6NSIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+4oI8L3RleHQ+CiAgICAgIDwvcGFyYWdyYXBoPgogICAgPC9pdGVtPgogIDwvbGlzdD4KICA8cGFyYWdyYXBoIHNvdXJjZXBvcz0iMTQ6MS0xNDoxIj4KICAgIDx0ZXh0IHNvdXJjZXBvcz0iMTQ6MS0xNDoxIiB4bWw6c3BhY2U9InByZXNlcnZlIj7/PC90ZXh0PgogIDwvcGFyYWdyYXBoPgogIDxwYXJhZ3JhcGggc291cmNlcG9zPSIxNjoxLTE2OjQiPgogICAgPHRleHQgc291cmNlcG9zPSIxNjoxLTE2OjQiIHhtbDpzcGFjZT0icHJlc2VydmUiPuKAlP88L3RleHQ+CiAgPC9wYXJhZ3JhcGg+CjwvZG9jdW1lbnQ+Cg=="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--sourcepos",
+    "--smart",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIGRvY3VtZW50IFNZU1RFTSAiQ29tbW9uTWFyay5kdGQiPgo8ZG9jdW1lbnQgc291cmNlcG9zPSIxOjEtMTE6NiIgeG1sbnM9Imh0dHA6Ly9jb21tb25tYXJrLm9yZy94bWwvMS4wIj4KICA8aHRtbF9ibG9jayBzb3VyY2Vwb3M9IjE6MS0zOjYiIHhtbDpzcGFjZT0icHJlc2VydmUiPiZsdDtkaXYmZ3Q7CmH/YgombHQ7L2RpdiZndDsKPC9odG1sX2Jsb2NrPgogIDxodG1sX2Jsb2NrIHNvdXJjZXBvcz0iNToxLTQ6MCIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+Jmx0OyEtLSD+IC0tJmd0Owo8L2h0bWxfYmxvY2s+CiAgPHBhcmFncmFwaCBzb3VyY2Vwb3M9Ijc6MS03OjMyIj4KICAgIDxodG1sX2lubGluZSBzb3VyY2Vwb3M9Ijc6MS03OjEyIiB4bWw6c3BhY2U9InByZXNlcnZlIj4mbHQ7YSBocmVmPSZxdW90O/8mcXVvdDsmZ3Q7PC9odG1sX2lubGluZT4KICAgIDx0ZXh0IHNvdXJjZXBvcz0iNzoxMy03OjEzIiB4bWw6c3BhY2U9InByZXNlcnZlIj54PC90ZXh0PgogICAgPGh0bWxfaW5saW5lIHNvdXJjZXBvcz0iNzoxNC03OjE3IiB4bWw6c3BhY2U9InByZXNlcnZlIj4mbHQ7L2EmZ3Q7PC9odG1sX2lubGluZT4KICAgIDx0ZXh0IHNvdXJjZXBvcz0iNzoxOC03OjIzIiB4bWw6c3BhY2U9InByZXNlcnZlIj4gJmx0O2L/Jmd0OyA8L3RleHQ+CiAgICA8aHRtbF9pbmxpbmUgc291cmNlcG9zPSI3OjI0LTc6MzIiIHhtbDpzcGFjZT0icHJlc2VydmUiPiZsdDt4IHk9JnF1b3Q7/iZxdW90OyZndDs8L2h0bWxfaW5saW5lPgogIDwvcGFyYWdyYXBoPgogIDxodG1sX2Jsb2NrIHNvdXJjZXBvcz0iOToxLTEwOjEiIHhtbDpzcGFjZT0icHJlc2VydmUiPiZsdDtwcmUmZ3Q7Cv8KJmx0Oy9wcmUmZ3Q7CjwvaHRtbF9ibG9jaz4KPC9kb2N1bWVudD4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "12",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "*a**b*\n*c**d*\n*e**f* \\*\\* \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "12",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "aaa bbb \n\n> aaa bbb\n> ccc \n\n  - x yy zzz\n    \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "12",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "# H\n\n# S\n\n> q\n> \n> > \n\n  - \n  - b\n\n<!-- end list -->\n\n1.  \n\n\\---\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "12",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<div>\na\n\n<!-- \n\n<a href=\"x</a>\n\\<b<x y=\"\n\n<pre>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "12",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\n\\f[I]a\\f[]\\f[I]b\\f[]\n\\f[I]c\\f[]\\f[I]d\\f[]\n\\f[I]e\\f[]\\f[I]f\\f[]\n** \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "12",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\naaa bbb \n.RS\n.PP\naaa bbb ccc \n.RE\n.IP \\[bu] 2\nx yy zzz \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "12",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".SH\nH\n.SH\nS\n.RS\n.PP\nq\n.RS\n.PP\n.RE\n.RE\n.IP \\[bu] 2\n.IP \\[bu] 2\nb\n.IP \"1.\" 4\n.PP\n.PP\n\\-\\-\\-\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "12",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\nx <b\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "12",
+    "--smart",
+    "bad-delims.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\emph{a}\\emph{b}\n\\emph{c}\\emph{d}\n\\emph{e}\\emph{f}\n** \n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "12",
+    "--smart",
+    "bad-wrap.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "aaa bbb \n\n\\begin{quote}\naaa bbb ccc \n\n\\end{quote}\n\n\\begin{itemize}\n\\item x yy\nzzz \n\n\\end{itemize}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "12",
+    "--smart",
+    "bad-blocks.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\section{H}\n\n\\section{S}\n\n\\begin{quote}\nq\n\n\\begin{quote}\n\n\\end{quote}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item \n\n\\item b\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\item \n\n\\end{enumerate}\n\n---\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "12",
+    "--smart",
+    "bad-html.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "x\n\\textless{}b\n",
    "stderr": "",
    "exit": 0
   },

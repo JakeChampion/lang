@@ -241,8 +241,7 @@ func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
 			t.Errorf("md on %q: exit %d\ngot  %q\nwant %q\n%s", c, code, got, want, stderr)
 		}
 	}
-	// md writes the HTML of a long document in parts of 64 KiB. It reads a
-	// file argument with no copy when the file is valid UTF-8. A code fence
+	// md writes the HTML of a long document in parts of 64 KiB. A code fence
 	// that does not close holds the rest of a document, so that case is not
 	// in the long document.
 	var parts []string
@@ -271,14 +270,17 @@ func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
 	if got, err := exec.Command(bin, "--unsafe", file).Output(); err != nil || string(got) != string(want) {
 		t.Errorf("md on the long document as a file: %v, %d bytes, want %d", err, len(got), len(want))
 	}
-	// A file that is not valid UTF-8 gives the same HTML as stdin.
+	// As in cmark, the HTML of a file that is not valid UTF-8 keeps its bytes.
 	bad := "a\xffb *c\xe2\x82* \xf0\x9f\n"
 	if err := os.WriteFile(file, []byte(bad), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fromStdin, _, _ := runMarkdown(t, bin, bad)
-	if got, err := exec.Command(bin, file).Output(); err != nil || string(got) != fromStdin || !strings.Contains(fromStdin, "�") {
-		t.Errorf("md on a file that is not UTF-8: %v\ngot   %q\nstdin %q", err, got, fromStdin)
+	want, err = exec.Command(ref, file).Output()
+	if err != nil {
+		t.Fatalf("cmark on a file that is not UTF-8: %v", err)
+	}
+	if got, err := exec.Command(bin, file).Output(); err != nil || string(got) != string(want) {
+		t.Errorf("md on a file that is not UTF-8: %v\ngot  %q\nwant %q", err, got, want)
 	}
 }
 

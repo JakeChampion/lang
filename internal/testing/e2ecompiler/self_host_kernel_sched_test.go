@@ -313,15 +313,17 @@ function main(): i32 {
     }
     if (i >= 0) {
       next = i + 1;
+      // Core 0 posts each process, so the mailbox cannot become busy during
+      // the slice. The read after the slice depends on the speed of the host.
+      if (c.busy()) {
+        overlap += 1;
+      }
       let (q, stop) = slots[i].p.run();
       let (s, _) = answer(b, Slot { ...slots[i], p: q }, Some(stop), false);
       if (s.done) {
         live -= 1;
       }
       slots = slots.with(i, s);
-      if (c.busy()) {
-        overlap += 1;
-      }
     }
     if (posted >= 0 && (i < 0 || !c.busy())) {
       let (q, event) = slots[posted].p.collect(c);

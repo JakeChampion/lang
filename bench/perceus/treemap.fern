@@ -1,0 +1,19 @@
+// A map over a tree that rebuilds each node. A tree with one count is rebuilt
+// in place.
+pub enum Tree { Nil, Node(i64, Tree, Tree) }
+
+pub function make(item: i64, depth: i32): Tree {
+  if (depth == 0) {
+    return Node(item, Nil, Nil);
+  }
+  return Node(item, make(2i64 * item - 1i64, depth - 1), make(2i64 * item, depth - 1));
+}
+
+pub function bump(t: Tree): Tree {
+  return match (t) { Node(item, l, r) => Node(item + 1i64, bump(l), bump(r)), Nil => Nil };
+}
+
+// The sum of the items of the tree.
+pub function total(t: Tree): i64 {
+  return match (t) { Node(item, l, r) => item + total(l) + total(r), Nil => 0i64 };
+}

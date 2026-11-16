@@ -2,7 +2,7 @@
 //
 // Generator: cmd/pslgen.
 // Source: cmd/pslgen/public_suffix_list.dat, ICANN section.
-// SHA-256: dc00ceb7bb9256c41506b12a863db6a4b1c6021771eeccf5e073827750ac4b74.
+// SHA-256: fc62f83e482dd86d3c50216fcbf5bb6c3b18f13d0ffdfc462b14e36b8a97bfba.
 //
 // Use `go run ./cmd/pslgen` to regenerate this file.
 // Refresh the source list to include public suffix changes.

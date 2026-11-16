@@ -286,19 +286,21 @@ func xargsSizeCases() []invocation {
 }
 
 // xargsParallelCases: -P runs commands at once, so their output is
-// compared as a set of lines.
+// compared as a set of lines. A child that writes its line in more than one
+// write can split the line of another child, as /bin/echo of Darwin does, so
+// each child that shares the output with another child prints with printf.
 func xargsParallelCases() []invocation {
 	unordered := func(inv invocation) invocation {
 		inv.unordered = true
 		return inv
 	}
 	return []invocation{
-		unordered(xc("a b\n", `-P 2 -n 1 echo`)),
+		unordered(xc("a b\n", `-P 2 -n 1 sh -c 'printf "%s\\n" "$*"' sh`)),
 		unordered(xc("a\n", `-n 1 -P 0 echo`)),
 		unordered(xc("a b c\n", `-n 1 -P 3 sh -c 'echo $0'`)),
 		unordered(xc("a b c\n", `-n 1 -P 2 --process-slot-var=S sh -c 'echo $0 $S; if [ $0 = a ]; then sleep 1; fi'`)),
 		unordered(xc("a b c d e f\n", `-n 1 -P 2 sh -c 'exit 1'`)),
-		unordered(xc("1 2 3 4 5 6 7 8 9 10\n", `-n 2 -P 4 echo`)),
+		unordered(xc("1 2 3 4 5 6 7 8 9 10\n", `-n 2 -P 4 sh -c 'printf "%s\\n" "$*"' sh`)),
 		{
 			name:  "xargs -P 2 waits for both children with status 255",
 			args:  []string{"-n", "1", "-P", "2", "sh", "-c", `: > "$0"; while [ ! -e a ] || [ ! -e b ]; do :; done; exit 255`},

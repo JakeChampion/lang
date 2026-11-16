@@ -102,7 +102,11 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 	}
 
 	if envflag.On("FERN_LEAK_CENSUS_DUMP") {
+		_, notes := readCensus(t)
 		for _, r := range rows {
+			if note, ok := notes[r.name]; ok && r.unpaired > 0 {
+				fmt.Println(note)
+			}
 			fmt.Printf("%-52s %d\n", r.name, r.unpaired)
 		}
 		t.Skip("dumped the census; not comparing")
@@ -252,7 +256,33 @@ func pairRcTrace(stderr string) (int, string, error) {
 	return n, strings.TrimSpace(b.String()), nil
 }
 
+// TestConformanceLeakCensusNotes requires a note above each non-zero row of
+// the census and above no other row, so that each pinned leak says what
+// holds the blocks.
+func TestConformanceLeakCensusNotes(t *testing.T) {
+	loadCensus(t)
+}
+
 func loadCensus(t *testing.T) map[string]int {
+	t.Helper()
+	counts, notes := readCensus(t)
+	for name, n := range counts {
+		_, ok := notes[name]
+		if n > 0 && !ok {
+			t.Errorf("%s: pinned at %d with no note above its row — write one comment line that says "+
+				"what holds the blocks, or fix the leak", name, n)
+		}
+		if n == 0 && ok {
+			t.Errorf("%s: pinned at 0 under a note — the note belongs to another row, or to a leak "+
+				"that is gone", name)
+		}
+	}
+	return counts
+}
+
+// readCensus gives the count of each row, and the comment line just above
+// a row when it has one.
+func readCensus(t *testing.T) (map[string]int, map[string]string) {
 	t.Helper()
 	path := filepath.Join("testdata", "conformance-leak-census.txt")
 	f, err := os.Open(path)
@@ -261,10 +291,17 @@ func loadCensus(t *testing.T) map[string]int {
 	}
 	defer f.Close()
 	out := map[string]int{}
+	notes := map[string]string{}
+	note := ""
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" {
+			note = ""
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			note = line
 			continue
 		}
 		fs := strings.Fields(line)
@@ -279,6 +316,10 @@ func loadCensus(t *testing.T) map[string]int {
 			t.Fatalf("%s: %s has two rows", path, fs[0])
 		}
 		out[fs[0]] = n
+		if note != "" {
+			notes[fs[0]] = note
+		}
+		note = ""
 	}
-	return out
+	return out, notes
 }

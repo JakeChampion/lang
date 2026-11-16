@@ -1,0 +1,45 @@
+// spec: SE-01
+// A record of a `@secret` struct zeroes the numeric arrays that it holds
+// alone when it is released. An array that another value still holds keeps
+// its elements, and the record reads its fields like any other record.
+
+@secret
+struct Key { bytes: u8[], words: u64[], id: i32 }
+
+function fill(n: i32, v: u8): u8[] {
+  let b: u8[] = [];
+  for i in 0..n {
+    b = b.append(v);
+  }
+  return b;
+}
+
+@noinline
+function held(v: u8): u8[] {
+  let b = fill(4, v);
+  let k = Key { bytes: b, words: [7u64, 8u64], id: 3 };
+  print("key " + k.id.to_string() + " holds " + k.bytes.len().to_string() + " bytes and " + k.words.len().to_string() + " words");
+  return b;
+}
+
+@noinline
+function sum(k: Key): i64 {
+  let s: i64 = 0;
+  for b in k.bytes {
+    s += b as i64;
+  }
+  for w in k.words {
+    s += w as i64;
+  }
+  return s;
+}
+
+function main(): i32 {
+  let b = held(65 as u8);
+  print("the shared array still reads " + b[0].to_string() + " " + b[3].to_string());
+  let k = Key { bytes: fill(3, 2 as u8), words: [10u64], id: 9 };
+  print("sum " + sum(k).to_string());
+  let copy = Key { ...k, id: 10 };
+  print("the copy " + copy.id.to_string() + " sums " + sum(copy).to_string());
+  return 0;
+}
