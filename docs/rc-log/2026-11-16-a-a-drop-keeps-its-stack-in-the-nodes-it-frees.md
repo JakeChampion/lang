@@ -55,7 +55,7 @@ best and median:
 
 rbtree-ck, which frees trees of 22 levels, gains 5.9% at the best run. The
 times of deriv and cfold move less than the noise of the machine. A program
-that builds and frees trees of 20 levels, and left sides of 700,000 nodes,
+builds and frees trees of 20 levels and left sides of 700,000 nodes. It
 takes 1132 ms before and 1050 ms after (medians of 9 runs).
 
 The loop runs more instructions than the calls did. Cachegrind counts
