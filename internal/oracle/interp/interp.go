@@ -6318,6 +6318,9 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	if err := i.tooDeep(); err != nil {
 		return nil, err
 	}
+	if fn.Body == nil && fn.ImportIface != "" && fn.ImportIface != ast.CallbackIface {
+		return nil, fmt.Errorf("the interpreter cannot call `%s`: it imports %s from %s", fn.Name, fn.ImportWITName, fn.ImportIface)
+	}
 	i.callDepth++
 	defer func() { i.callDepth-- }()
 	e := newEnv(nil)

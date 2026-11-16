@@ -9502,6 +9502,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
+      if (fd.import_iface.len() > 0 && fd.import_iface != parser.CALLBACK_IFACE) {
+        return v_err(import_refusal(name, fd.import_wit, fd.import_iface));
+      }
       let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body) };
       let no_recv = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
@@ -9516,6 +9519,12 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
   }
   return call_host(heap, name, args);
+}
+
+// The interpreter has no loader, so it cannot run the function that an
+// @import names.
+function import_refusal(name: string, symbol: string, from: string): string {
+  return "the interpreter cannot call `" + name + "`: it imports " + symbol + " from " + from;
 }
 
 function value_eq(a: Value, b: Value): boolean {
