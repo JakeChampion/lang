@@ -1,0 +1,57 @@
+function apply(f: (i32) => boolean, n: i32): boolean {
+  return f(n);
+}
+
+function main(): i32 {
+  function is_even(n: i32): boolean {
+    if (n == 0) { return true; }
+    return is_odd(n - 1);
+  }
+  function is_odd(n: i32): boolean {
+    if (n == 0) { return false; }
+    return is_even(n - 1);
+  }
+  print(f"{is_even(4)} {is_odd(4)}");
+
+  let step = 2;
+  function down(n: i32): i32 {
+    if (n <= 0) { return 0; }
+    return 1 + up(n - step);
+  }
+  function up(n: i32): i32 {
+    if (n <= 0) { return 0; }
+    return 1 + down(n - 1);
+  }
+  print(f"{down(7)} {up(7)}");
+
+  print(f"{apply(is_odd, 3)} {apply(is_even, 3)}");
+  let held = is_even;
+  print(f"{held(10)}");
+
+  if (step == 2) {
+    function ping(n: i32): string {
+      if (n == 0) { return "ping"; }
+      return pong(n - 1);
+    }
+    function pong(n: i32): string {
+      if (n == 0) { return "pong"; }
+      return ping(n - 1);
+    }
+    print(ping(3));
+  }
+
+  function red(n: i32): string {
+    if (n == 0) { return "red"; }
+    return green(n - 1);
+  }
+  function green(n: i32): string {
+    if (n == 0) { return "green"; }
+    return blue(n - 1);
+  }
+  function blue(n: i32): string {
+    if (n == 0) { return "blue"; }
+    return red(n - 1);
+  }
+  print(f"{red(4)} {green(4)} {blue(4)}");
+  return 0;
+}
