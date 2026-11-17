@@ -132,3 +132,57 @@ func TestSelfHostDuplicateVariableRelatedLabels(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostMovedValueRelatedLabels pins the note of an E050 at the place
+// where the value moved. The message holds no line number, so the remap of a
+// literate document reaches the note too.
+func TestSelfHostMovedValueRelatedLabels(t *testing.T) {
+	s := buildLSPServers(t)
+	body := "function keep(own ys: i32[]): i32 {\n  return ys.len();\n}\nfunction twice(own xs: i32[]): i32 {\n  let a = keep(xs);\n  return a + xs.len();\n}\nfunction main(): i32 {\n  return twice([1]);\n}\n"
+	for _, c := range []struct {
+		name, file, source string
+		line, character    int
+		cli                string
+	}{
+		{"plain", "main.fern", body, 4, 15, "main.fern:5:16: note: moved here"},
+		{"literate", "doc.fern.md", "# Example\n\nProse that moves the lines.\n\n```fern\n<<*>>=\n" + body + "```\n", 10, 15, "doc.fern.md:11:16: note: moved here"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTree(t, dir, map[string]string{c.file: c.source})
+			path := filepath.Join(dir, c.file)
+			text, accepted := checkVerdict(exec.Command(s.driver, "-check", path, s.stdlib))
+			if accepted || !strings.Contains(text, c.cli) || strings.Contains(text, "at line") {
+				t.Fatalf("want the note %q and no line in the message:\n%s", c.cli, text)
+			}
+			frames, code := runLSP(t, s.selfHost(), session(lspOpen(fileURI(path), c.source)))
+			if code != 0 {
+				t.Fatalf("LSP exited %d", code)
+			}
+			var found []relatedLabel
+			for _, f := range frames {
+				if f.Method != "textDocument/publishDiagnostics" {
+					continue
+				}
+				var p struct {
+					URI         string `json:"uri"`
+					Diagnostics []struct {
+						Code    string         `json:"code"`
+						Related []relatedLabel `json:"relatedInformation"`
+					} `json:"diagnostics"`
+				}
+				if err := json.Unmarshal(f.Params, &p); err != nil {
+					t.Fatal(err)
+				}
+				for _, d := range p.Diagnostics {
+					if p.URI == fileURI(path) && d.Code == "E050" {
+						found = d.Related
+					}
+				}
+			}
+			if len(found) != 1 || found[0].Location.Range.Start != (lspPos{Line: c.line, Character: c.character}) || found[0].Message != "moved here" {
+				t.Fatalf("wrong related move: %#v", found)
+			}
+		})
+	}
+}
