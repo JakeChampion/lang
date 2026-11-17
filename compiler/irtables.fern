@@ -961,6 +961,24 @@ pub function lowered_result(r: Lowered): LowerResult {
 // with the locals they use. A function with no task frame has no ops here.
 pub struct Unsuspended { ops: ir.Op[], n_locals: i32 }
 
+// A state with no ops and no slots, for `name`. A literal of LowerState
+// outside this file spreads it, so a new field gets its value here.
+pub function empty_state(name: string): LowerState {
+  return LowerState {
+    scratch_start: 0,
+    source_positions: sourcepos.no_source(),
+    unsuspended: no_unsuspended(),
+    ok: true, why: "", ops: [], n_locals: 0, n_params: 0,
+    erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], v128_slots: [], str_slots: [],
+    name: name, result_kind: result_i32(), dbg_slots: [], dbg_names: [], dbg_types: [],
+  };
+}
+
+// The result of empty_state, for a literal of LowerResult to spread.
+pub function empty_result(name: string): LowerResult {
+  return lower_result(empty_state(name));
+}
+
 pub function no_unsuspended(): Unsuspended {
   return Unsuspended { ops: [], n_locals: 0 };
 }
