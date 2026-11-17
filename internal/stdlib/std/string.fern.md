@@ -2523,23 +2523,20 @@ pub function (s: string) remove_all(needle: string): string {
   return s.replace(needle, "");
 }
 
-pub function (s: string) before(sep: string): string {
+pub function (s: string) before(sep: string): Option[string] {
   let idx = __str_index(s, sep);
   if (idx < 0) {
-    return s;
+    return None;
   }
-  return slice_unchecked(s, 0, idx) + "";
+  return Some(slice_unchecked(s, 0, idx).to_owned());
 }
 
-pub function (s: string) after(sep: string): string {
-  if (sep.len() == 0) {
-    return s;
-  }
+pub function (s: string) after(sep: string): Option[string] {
   let idx = __str_index(s, sep);
   if (idx < 0) {
-    return "";
+    return None;
   }
-  return slice_unchecked(s, idx + sep.len(), s.len()) + "";
+  return Some(slice_unchecked(s, idx + sep.len(), s.len()).to_owned());
 }
 ```
 ### `42 pub function (s: string) between(start: string, end: string): Option[string]`
