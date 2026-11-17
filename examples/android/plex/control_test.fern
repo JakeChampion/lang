@@ -38,7 +38,7 @@ const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watchi
 
 const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"}]}}";
 
-const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
+const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
 // A track of an album, with its artist.
 const SONG: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"601\",\"type\":\"track\",\"title\":\"Song\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":61,\"key\":\"/library/parts/61/file.m4a\"}]}]}]}}";
@@ -55,7 +55,7 @@ const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503
 const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]},{\"ratingKey\":\"501\",\"type\":\"episode\",\"title\":\"Second\",\"index\":2,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
 
 // The movie of the second poster: the movie above, with an intro marker.
-const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"}]}]}]}]}}";
+const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
 // A page of a library of 63 movies from `start`.
 // A page of the movie library of 400 items, from `start`.
@@ -132,6 +132,9 @@ function reply_to(r: plex.Request): plex.Reply {
   }
   if (u.contains("/library/sections")) {
     return ok(SECTIONS);
+  }
+  if (u.contains("/library/streams/33")) {
+    return ok("1\n00:01:59,000 --> 00:02:01,000\n<b>Hello</b> from SRT\n");
   }
   if (u.contains("/library/metadata/601")) {
     return ok(SONG);
@@ -1139,6 +1142,26 @@ function test_watch_next(): test.TestOutcome {
   return test.assert_eq(has_call(log, "watch next drop 501").to_string(), "true");
 }
 
+// A SubRip file beside the video plays with the file as it is: the app
+// asks for the file and draws the line of the time over the video, with no
+// new stream.
+function test_drawn_subtitles(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = video_drawn(log, f);
+  let plays = count_plays(log);
+  let chosen = tap(tap(tap(playing, log, 400i64, f, "overlay"), log, 500i64, f, "tracks"), log, 600i64, f, "sub:33");
+  if (count_plays(log) != plays || has_call(log, "subtitles=burn")) {
+    return test.fail("a subtitle file beside the video started a new stream: " + log.calls.get().join(" | "));
+  }
+  if (!has_url(log, "https://up.example:32400/library/streams/33")) {
+    return test.fail("the app did not ask for the subtitle file: " + log.urls.get().join(" | "));
+  }
+  let shown = settle(chosen, log, 800i64, f);
+  return test.assert_eq(says(shown, "Hello from SRT").to_string(), "true");
+}
+
 function count_plays(log: Log): i32 {
   return log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len();
 }
@@ -1512,6 +1535,7 @@ function main(): i32 {
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
   r = r.it("a video plays on in a picture-in-picture window", test_picture_in_picture);
   r = r.it("a video that stops part of the way goes on Watch Next", test_watch_next);
+  r = r.it("a subtitle file beside the video is drawn by the app", test_drawn_subtitles);
   r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
   r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
   r = r.it("the connections of a server race", test_connection_race);

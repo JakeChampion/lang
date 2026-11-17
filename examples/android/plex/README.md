@@ -92,7 +92,7 @@ app asks the server for the markers of the item when it starts to play.
 
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice. A file that plays as it is changes its
-sound in place. Subtitles burn into a transcode.
+sound in place. The app draws a SubRip or WebVTT file beside the video over it, so the file plays as it is. Other subtitles burn into a transcode.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
