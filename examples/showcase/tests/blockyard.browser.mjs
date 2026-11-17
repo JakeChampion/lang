@@ -93,7 +93,11 @@ try {
     "true",
     "touch palette selection was delayed",
   );
-  await a.locator("#place").tap();
+  // The two touches arrive faster than the server accepts two edits.
+  for (const button of ["#place", "#break"]) {
+    r = await a.locator(button).boundingBox();
+    await drag(r.x + r.width / 2, r.y + r.height / 2, 0, 0);
+  }
   await b.waitForFunction(() =>
     document.querySelector("#render-stats").textContent.includes("chunks"),
   );
@@ -110,13 +114,18 @@ try {
         toast: await a.locator(".toast").allTextContents(),
       }),
   );
-  await a.locator("#break").tap();
   const removed = Date.now() + 5000;
   while (!edits.some((c) => c.material === 0) && Date.now() < removed)
     await a.waitForTimeout(50);
   assert.ok(
     edits.some((c) => c.material === 0),
-    "second player did not receive the touch block removal",
+    "second player did not receive the touch block removal: " +
+      JSON.stringify({
+        messages: messages.filter((m) => m.kind !== "welcome"),
+        edits,
+        position: await a.locator("#view").evaluate((e) => ({ ...e.dataset })),
+        toast: await a.locator(".toast").allTextContents(),
+      }),
   );
   await a.locator("#fly").tap();
   await a.waitForTimeout(100);
