@@ -1,8 +1,11 @@
 package checker
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
 func wantE050(t *testing.T, name, src string) {
@@ -1888,8 +1891,14 @@ function work(own p: Handle): i32 {
     defer p.close();
     return p.close();
 }`)
-	if err == nil || !strings.Contains(err.Error(), "is consumed twice: a deferred call at line") {
+	var errs diag.Errors
+	var ce *Error
+	if !errors.As(err, &errs) || len(errs) != 1 || !errors.As(errs[0], &ce) || ce.ErrCode != "E050" || !strings.Contains(ce.Msg, "is consumed twice: a deferred call consumes it") {
 		t.Fatalf("expected the deferred second-consumption E050, got %v", err)
+	}
+	// The note is at the deferred call, on the line before the error.
+	if len(ce.Related) != 1 || ce.Related[0].Message != "the deferred call is here" || ce.Related[0].Pos.Line != ce.Pos.Line-1 {
+		t.Fatalf("expected a note at the deferred call, got %#v", ce.Related)
 	}
 }
 

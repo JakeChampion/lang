@@ -161,7 +161,7 @@ transitive and acyclic.
 
 ### 1.2 Ownership inference
 
-`ownership.escaping` answers, per function, which reference parameters the
+`ownership.transfers` answers, per function, which reference parameters the
 frame **consumes**: a parameter whose unit leaves the frame (returned, built
 into a container or box, stored into a cell or map, handed to a callee's
 counted slot, or used as the base of a record update, which reuses its box)
@@ -494,7 +494,12 @@ locals sit above `nvals`. It emits:
   death releases only the fields nothing took (`keep_release`,
   `classified_death`), and a classified donor's box goes to the release
   helper's `.u` entry with no guard in front (`ir.sole`), since nothing
-  between the take and the death can have changed its count;
+  between the take and the death can have changed its count. On the shared
+  arm of a kept or a classified donor, the box of a record or a variant
+  loses one count inline, with no free path (`ir.shared_dec`). Each
+  instruction from the read to the death must read the donor, change no
+  count, or be the rebuild of the keep (`ssaunits.count_holds`). A release
+  of another value there can make the box unique.
 - **reuse**, as the plan's tables say (`Plan.reuse`): where a token is taken,
   `__fern_rc_is_unique(d)` selects the box or null (`reuse_token`); where it
   is spent, `__fern_alloc_reuse(token, slots)` hands back the box or a fresh

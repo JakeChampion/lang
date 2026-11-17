@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-const selfHostAppendReportSrc = `import "std/i32";
+const selfHostAppendReportSrc = `import "std/array";
+import "std/i32";
 
 struct Acc { items: i32[], n: i32 }
 
@@ -58,6 +59,23 @@ function live(n: i32): i32 {
   return xs.len();
 }
 
+// snapshot is live with the alias written as a clone: the copy is paid at the
+// clone, and the append grows the sole buffer of xs in place.
+@noinline
+function snapshot(n: i32): i32 {
+  let xs: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    let keep: i32[] = xs.clone();
+    xs = xs.append(i);
+    if (!preserved(keep, i)) {
+      return 7;
+    }
+    i = i + 1;
+  }
+  return xs.len();
+}
+
 @noinline
 function nested(xs: i32[][]): i32[] {
   return xs[0].append(1);
@@ -88,12 +106,14 @@ function main(): i32 {
   let m: i32[][] = [spare(10), [2]];
   let k: i32 = nested(m).len();
   let c3: i32 = __arr_push_shared_count();
-  if (c1 != c0 || c2 - c1 < 50 || c3 - c2 != 1) {
-    print((c1 - c0).to_string() + " " + (c2 - c1).to_string() + " " + (c3 - c2).to_string());
+  let p: i32 = snapshot(100);
+  let c4: i32 = __arr_push_shared_count();
+  if (c1 != c0 || c2 - c1 < 50 || c3 - c2 != 1 || c4 != c3) {
+    print((c1 - c0).to_string() + " " + (c2 - c1).to_string() + " " + (c3 - c2).to_string() + " " + (c4 - c3).to_string());
     return 1;
   }
   let a: Acc = Acc { items: [1], n: 0 };
-  return s + l + k + chained([2]).len() + from_field(a).len() + grow_owned(a).items.len() - 218;
+  return s + l + p + k + chained([2]).len() + from_field(a).len() + grow_owned(a).items.len() - 318;
 }
 `
 
@@ -134,6 +154,7 @@ func TestSelfHostAppendReport(t *testing.T) {
 	}{
 		{"sole", 0, "sole-owner", "in-place", "(xs)"},
 		{"live", 0, "receiver-still-live", "copy", "(xs, keep)"},
+		{"snapshot", 0, "guarded", "unique-grow/shared-copy", ""},
 		{"nested", 0, "receiver-retained", "copy", ""},
 		{"chained", 0, "receiver-borrowed", "unique-grow/shared-copy", "(xs)"},
 		{"chained", 1, "borrow-linked", "unique-grow/shared-copy", "(a)"},

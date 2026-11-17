@@ -3182,6 +3182,10 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   if (ins.str == "__fern_rc_is_unique") {
     dname = lp + "rcuniq" + util.i32_to_string(ins.result);
   }
+  let dec = ins.str == "__fern_rc_dec";
+  if (dec) {
+    dname = lp + "rcshr" + util.i32_to_string(ins.result);
+  }
   let dn = asmcore.lab_new(s, dname);
   s = dn.state;
   let done = dn.lab;
@@ -3206,7 +3210,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   s = ssa_unscaled(s, true, "w5", base, -8);
   s = s.write(san_poison_check("w5", "w6", done.text() + "sl", s.rc_free_debug));
   s = ssa_tbz(s, true, "w5", 31, done);
-  s = ssa_addsub_imm(s, false, "w5", "w5", 1);
+  s = ssa_addsub_imm(s, dec, "w5", "w5", 1);
   s = ssa_unscaled(s, false, "w5", base, -8);
   s = s.lab_def(done);
   return ssa_store(reg_of, ins.result, p, s);
@@ -3333,7 +3337,7 @@ function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
 }
 
 // The helper release of a record or a variant, which `ssa_rc_dec` tests
-// inline at a position where the call saves the caller registers.
+// inline: a shared box or a static one needs no call.
 function ssa_box_release(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   return ssa.inline_release(ins) && ins.imm == 7 && !s.rc_free_debug && !s.size;
 }
@@ -3360,7 +3364,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base
   if (ins.str == "__fern_str_free") {
     s = ssa_tbz(s, true, p, 0, kept);
   }
-  if (ins.str != "__fern_rc_dec" || !asmcore.ssa_is_boxed(s, ins.args[0])) {
+  if (ins.str != "__fern_rc_dec" && ins.imm != 7 || !asmcore.ssa_is_boxed(s, ins.args[0])) {
     s = ssa_cmp_floor(s, p);
     s = ssa_bcond(s, CC_LO, kept);
   }
@@ -3382,11 +3386,11 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base
 }
 
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (ssa.rc_inlined(ins) && !s.size) {
+  if (ssa.rc_inlined(ins) && (!s.size || ins.str == "__fern_rc_dec")) {
     return ssa_rc_prim(ins, reg_of, lp, s);
   }
   s = asmcore.ssa_x0_forget(s);
-  if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
+  if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size || ssa_box_release(ins, s)) {
     return ssa_rc_dec(ins, reg_of, lp, 0, 0, s);
   }
   if (ircore.is_runtime_helper_call(ins.str, s) && (ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len()) || ircore.register_helper(ins.str))) {

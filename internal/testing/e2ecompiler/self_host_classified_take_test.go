@@ -76,9 +76,23 @@ func soleReleaseShape(t *testing.T, body, call string) {
 	if got := strings.Count(body, call+" __fn___fern_box_free.u"); got != 1 {
 		t.Errorf("depth: %d sole frees, want 1:\n%s", got, body)
 	}
-	if strings.Contains(body, "_rcdecd") {
-		t.Errorf("depth: a release ladder reads the count the take already read:\n%s", body)
+	if !strings.Contains(body, "_rcshr") {
+		t.Errorf("depth: the shared arm does not take one from the count in place:\n%s", body)
 	}
+	// The Leaf arm releases a value that no take read.
+	if got := ladders(body); got > 1 {
+		t.Errorf("depth: %d release ladders, want at most 1: a ladder reads the count the take already read:\n%s", got, body)
+	}
+}
+
+func ladders(body string) int {
+	n := 0
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, "_rcdecd") && strings.HasSuffix(strings.TrimSpace(line), ":") {
+			n++
+		}
+	}
+	return n
 }
 
 func TestSelfHostSoleReleaseShapeX86_64(t *testing.T) {
