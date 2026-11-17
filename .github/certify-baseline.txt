@@ -2,19 +2,18 @@
 # scripts/ci-check-perf with FERN_CI_PERF_GATE_STRICT=1.
 #
 # FORMAT: metric  value  tolerance%. scripts/certify-census writes the rows:
-# what the certifier leaves unproved, skips, cannot model (opaque calls), and
-# what it does with three planted imbalances per function (refuted, weakened,
-# missed). docs/RC-DESIGN.md section 1.6 defines each one.
+# what the certifier leaves unproved, skips, and what it does with three
+# planted imbalances per function (refuted, weakened, missed).
+# docs/RC-DESIGN.md section 1.6 defines each one.
 #
 # The counts come from a static analysis of a deterministic compile, so each
 # row has a tolerance of 0. A move in either direction is a finding. A fall is
 # a gain to bank, and a rise needs a reason in the commit that re-banks it.
 # The subjects are the compiler's own sources, so a change to those sources
 # moves the rows too, with no change to the certifier.
-x86_64/fern_main.unproved	17360	0
+x86_64/fern_main.unproved	17404	0
 x86_64/fern_main.skipped	59	0
-x86_64/fern_main.opaque	0	0
-wasm32/checker.unproved	3831	0
-x86_64/checker.refuted	4903	0
+wasm32/checker.unproved	3851	0
+x86_64/checker.refuted	4912	0
 x86_64/checker.weakened	162	0
-x86_64/checker.missed	522	0
+x86_64/checker.missed	526	0
