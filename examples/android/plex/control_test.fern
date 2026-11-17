@@ -40,7 +40,7 @@ const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watchi
 
 const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"}]}}";
 
-const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
+const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
 // A track of an album, with its artist.
 const SONG: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"601\",\"type\":\"track\",\"title\":\"Song\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":61,\"key\":\"/library/parts/61/file.m4a\"}]}]}]}}";
@@ -57,7 +57,7 @@ const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503
 const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]},{\"ratingKey\":\"501\",\"type\":\"episode\",\"title\":\"Second\",\"index\":2,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
 
 // The movie of the second poster: the movie above, with an intro marker.
-const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
+const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
 // A page of a library of 63 movies from `start`.
 // A page of the movie library of 400 items, from `start`.
@@ -1246,8 +1246,9 @@ function hold(own s: control.App, log: Log, now: i64, f: draw.Frame, act: string
 // gives Android the file of its part, and the app keeps the list in its
 // files. The menu shows the progress, and a done download shows in a row
 // of the home screen. After a new start with no server, the row is still
-// there, and Play reads the file. Remove download deletes it, and an item
-// that the phone does not play as it is does not download.
+// there, and Play reads the file. Remove download deletes it. An item that
+// the phone does not play as it is downloads as one Matroska file that the
+// server transcodes.
 function test_downloads(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1281,6 +1282,10 @@ function test_downloads(): test.TestOutcome {
     return test.fail("no row of downloads");
   }
   let off = shown(log, f, "https://down.example:32400", "srv");
+  let rows_off = control.view(off).hubs;
+  if (!off.offline || rows_off.len() != 1 || rows_off[0].title != "Downloads" || control.view(off).error != "" || !says(off, "Offline: the downloads play with no server")) {
+    return test.fail("with no server, the home screen is not the row of the downloads alone: " + off.error);
+  }
   let row = poster_of(off, "501");
   let parts = row.split(":");
   if (row.len() == 0 || control.num(parts[1]) != control.view(off).hubs.len() - 1) {
@@ -1302,12 +1307,16 @@ function test_downloads(): test.TestOutcome {
   }
   log.decoders.set(["video/hevc", "audio/mp4a-latm"]);
   let online = shown(log, f, "https://up.example:32400", "srv");
-  let other = poster_of(online, "502");
-  let refused = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
-  if (log.calls.get().filter((c: string): boolean => c.starts_with("download http")).len() != 1 || !refused.error.starts_with("Only a file")) {
-    return test.fail("a file that needs a transcode downloaded");
+  if (online.offline) {
+    return test.fail("a reply of the server did not end the offline state");
   }
-  return test.pass();
+  let other = poster_of(online, "502");
+  let converted = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
+  let conversions = log.calls.get().filter((c: string): boolean => c.starts_with("download https://up.example:32400/video/:/transcode/universal/start?"));
+  if (conversions.len() != 1 || !conversions[0].contains("protocol=http&") || !conversions[0].contains("container%3Dmkv") || !conversions[0].ends_with(" 502.mkv Inception") || converted.error != "") {
+    return test.fail("a file that needs a transcode did not download as one: " + log.calls.get().join(" | "));
+  }
+  return test.assert_eq((converted.downloads.len() == 1 && converted.downloads[0].file == "502.mkv").to_string(), "true");
 }
 
 // While a track of an album plays, the second player prepares the next
@@ -1426,7 +1435,44 @@ function test_up_next_plays(): test.TestOutcome {
   return test.assert_eq((stops.len() == 1 && stops[0].contains("&time=8880000&duration=8880000")).to_string(), "true");
 }
 
-// Cancel on the card hides it, and the next episode does not play.
+// While the card shows, the second player prepares the next episode. At
+// the end of the countdown, it plays at once in place of the episode that
+// ends, and the first player does not open it again.
+function test_up_next_prepares_early(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let ready = season_playing(log, f);
+  if (has_call(log, "next https://")) {
+    return test.fail("the second player prepared the next episode before the card");
+  }
+  let carded = settle(ready, log, 1000i64, f);
+  if (!has_call(log, "next https://up.example:32400/library/parts/11/file.mp4") || carded.play.next.key != "501") {
+    return test.fail("the second player did not prepare the next episode: " + log.calls.get().join(" | "));
+  }
+  let prepared = settle(at(carded, log, 1100i64, f, android.Posted(19 | 1 << 8, 0 as usize)), log, 1100i64, f);
+  if (!prepared.play.next_ready || has_call(log, "chain true")) {
+    return test.fail("the prepared episode is not ready, or it was chained as a track");
+  }
+  let plays = count_plays(log);
+  let shows = count_calls(log, "show");
+  let starts = count_calls(log, "start");
+  let next = settle(prepared, log, 11500i64, f);
+  if (count_calls(log, "swap") != 1 || count_plays(log) != plays || next.play.item.key != "501" || !next.play.prepared) {
+    return test.fail("the second player did not take over: " + log.calls.get().join(" | "));
+  }
+  if (count_calls(log, "show") != shows + 1 || count_calls(log, "start") != starts + 1 || next.screen != ui.PLAYER) {
+    return test.fail("the next episode is not on the screen: " + log.calls.get().join(" | "));
+  }
+  if (!has_url(log, "/library/metadata/501?includeMarkers=1")) {
+    return test.fail("no metadata of the next episode");
+  }
+  let stops = log.urls.get().filter((u: string): boolean => u.contains("ratingKey=503") && u.contains("state=stopped"));
+  return test.assert_eq((stops.len() == 1 && stops[0].contains("&time=8880000&duration=8880000")).to_string(), "true");
+}
+
+// Cancel on the card hides it, the second player lets the next episode go,
+// and the next episode does not play.
 function test_up_next_cancel(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1436,6 +1482,9 @@ function test_up_next_cancel(): test.TestOutcome {
   let off = tap(carded, log, 1100i64, f, "next_cancel");
   if (node(off, "next_now").is_some()) {
     return test.fail("the card stayed");
+  }
+  if (count_calls(log, "chain false") != 1 || off.play.next.key.len() != 0) {
+    return test.fail("the second player kept the next episode: " + log.calls.get().join(" | "));
   }
   let later = settle(off, log, 20000i64, f);
   return test.assert_eq((count_plays(log) - plays).to_string(), "0");
@@ -1740,6 +1789,7 @@ function main(): i32 {
   r = r.it("the connections of a server race", test_connection_race);
   r = r.it("a skip button skips the intro", test_skip_intro);
   r = r.it("the card of the next episode counts down and plays it", test_up_next_plays);
+  r = r.it("the second player prepares the next episode while the card shows", test_up_next_prepares_early);
   r = r.it("cancel on the card of the next episode keeps it from playing", test_up_next_cancel);
   r = r.it("a library loads the pages near the screen", test_library_pages);
   r = r.it("the letter strip jumps to the first item of a letter", test_library_letters);
