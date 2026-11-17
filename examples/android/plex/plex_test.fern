@@ -345,6 +345,36 @@ function test_tracks(): test.TestOutcome {
   return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn") && burn.url.contains("audioStreamID=22")).to_string(), "true");
 }
 
+const EMBEDDED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"8\",\"type\":\"movie\",\"title\":\"Inside\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":12,\"key\":\"/library/parts/12/1/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"selected\":true},{\"id\":42,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":43,\"streamType\":3,\"codec\":\"ass\",\"displayTitle\":\"English (ASS)\"},{\"id\":44,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"}]}]}]}]}}";
+
+// The SubRip and ASS subtitles inside a file play with the file as it is,
+// because the app draws them. The app asks the server for the text of each
+// one at the address of its stream. A PGS subtitle inside the file still
+// burns in a transcode.
+function test_embedded_subtitles(): test.TestOutcome {
+  let Some(it) = plex.parse_item(EMBEDDED) else {
+    return test.fail("no item");
+  };
+  let phone = ["video/avc", "audio/mp4a-latm"];
+  let original = plex.qualities()[0];
+  for id in ["42", "43"] {
+    let choice = plex.Choice { audio: "41", subtitle: id };
+    let Some(track) = plex.text_subtitle(it, choice) else {
+      return test.fail("the app does not draw the subtitle " + id);
+    };
+    let stream = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, choice);
+    if (stream.transcode) {
+      return test.fail("the subtitle " + id + " burned in a transcode: " + stream.url);
+    }
+    let r = plex.subtitle_request(client(), base(), track);
+    if (r.url != "https://10-0-0-5.abc.plex.direct:32400/library/streams/" + id) {
+      return test.fail("the text of the subtitle " + id + " is not asked for at its stream: " + r.url);
+    }
+  }
+  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "41", subtitle: "44" });
+  return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn")).to_string(), "true");
+}
+
 // SubRip and WebVTT cues: their times with a comma or a dot and with or
 // without hours, lines up to a blank line, and no tags. A cue shows from
 // its start until its end.
@@ -361,6 +391,16 @@ function test_cues(): test.TestOutcome {
   }
   if (plex.cue_at(cues, 1499i64) != "" || plex.cue_at(cues, 1500i64) != "Hello\nthere" || plex.cue_at(cues, 3000i64) != "") {
     return test.fail("the cue at a time");
+  }
+  let ass = "[Script Info]\nTitle: x\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize\nStyle: Default,Arial,20\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,{\\i1}Yes,{\\i0} and\\Nno\nComment: 0,0:00:04.00,0:00:05.00,Default,,0,0,0,,Hidden\nDialogue: 0,1:02:03.04,1:02:04.00,Default,,0,0,0,,Top\\hline\nDialogue: 0,0:00:09.00,0:00:08.00,Default,,0,0,0,,Backwards\n";
+  let a = plex.parse_cues(ass);
+  if (a.len() != 2 || a[0].start_ms != 1500i64 || a[0].end_ms != 3000i64 || a[0].text != "Yes, and\nno" || a[1].start_ms != 3723040i64 || a[1].text != "Top line") {
+    return test.fail("ASS cues: " + a.map((c: plex.Cue): string => c.start_ms.to_string() + "-" + c.end_ms.to_string() + " " + c.text).join(" | "));
+  }
+  let ssa = "[Events]\nFormat: Marked, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: Marked=0,0:00:02.00,0:00:04.00,Default,NTP,0000,0000,0000,!Effect,Old style\n";
+  let o = plex.parse_cues(ssa);
+  if (o.len() != 1 || o[0].start_ms != 2000i64 || o[0].text != "Old style") {
+    return test.fail("SSA cues");
   }
   return test.pass();
 }
@@ -415,7 +455,8 @@ function main(): i32 {
   r = r.it("the next episode", test_next_episode);
   r = r.it("the preview thumbnails of a BIF file", test_bif);
   r = r.it("the sound and subtitle tracks of a file", test_tracks);
-  r = r.it("SubRip and WebVTT cues", test_cues);
+  r = r.it("SubRip, WebVTT, ASS and SSA cues", test_cues);
+  r = r.it("subtitles inside the file that the app draws", test_embedded_subtitles);
   r = r.it("the name of a kept image", test_cache_name);
   r = r.it("the intro and credits markers of an item", test_markers);
   r = r.it("a part with preview thumbnails", test_thumbnail_part);

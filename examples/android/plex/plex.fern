@@ -1242,37 +1242,51 @@ pub function cache_name(u: string): string {
 }
 
 // The preview thumbnails of the part `id`, a BIF file.
-// The chosen subtitle track when it is a file of text beside the video, in
-// SubRip or WebVTT, which the app draws itself.
+// The chosen subtitle track when it is text that the app draws itself:
+// SubRip, WebVTT, ASS or SSA, in a file beside the video or inside it.
 pub function text_subtitle(it: Item, choice: Choice): Option[Track] {
   if (choice.subtitle.len() == 0) {
     return None;
   }
   for t in subtitle_tracks(it) {
-    if (t.id == choice.subtitle && t.key.len() > 0 && (t.codec == "srt" || t.codec == "subrip" || t.codec == "vtt" || t.codec == "webvtt")) {
+    if (t.id == choice.subtitle && ["srt", "subrip", "vtt", "webvtt", "ass", "ssa"].contains(t.codec)) {
       return Some(t);
     }
   }
   return None;
 }
 
-// The file of a subtitle track beside the video.
+// The text of a subtitle track. The server gives a track inside the file
+// at the address that a file beside the video has.
 pub function subtitle_request(c: Client, b: Base, t: Track): Request {
-  return get(c.with_token(b.token), b.uri + t.key);
+  let at = if (t.key.len() > 0) { t.key } else { "/library/streams/" + t.id };
+  return get(c.with_token(b.token), b.uri + at);
 }
 
 // A line of subtitles: its text from `start_ms` until `end_ms`.
 pub struct Cue { start_ms: i64, end_ms: i64, text: string }
 
-// The cues of a SubRip or WebVTT file, in their order. A cue has the lines
-// after its time line, up to a blank line, with the tags such as <i> and
-// {\an8} taken out.
+// The cues of a SubRip, WebVTT, ASS or SSA file, in their order. A cue of
+// SubRip or WebVTT has the lines after its time line, up to a blank line.
+// A cue of ASS or SSA is a Dialogue line. The tags such as <i> and {\an8}
+// are taken out.
 pub function parse_cues(text: string): Cue[] {
   let out: Cue[] = [];
   let lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n");
+  let events = false;
+  let format = ["Layer", "Start", "End", "Style", "Name", "MarginL", "MarginR", "MarginV", "Effect", "Text"];
   let i = 0;
   while (i < lines.len()) {
     let line = lines[i];
+    if (line.starts_with("[")) {
+      events = line.trim() == "[Events]";
+    } else if (events && line.starts_with("Format:")) {
+      format = line.split_at(7).1.split(",").map((f: string): string => f.trim());
+    } else if (line.starts_with("Dialogue:")) {
+      if let Some(c) = dialogue_cue(line.split_at(9).1, format) {
+        out = out.append(c);
+      }
+    }
     let arrow = line.index_of(" --> ");
     if let Some(at) = arrow {
       let start = cue_time(line.split_at(at).0.trim());
@@ -1296,6 +1310,29 @@ pub function parse_cues(text: string): Cue[] {
     }
   }
   return out;
+}
+
+// The cue of the fields of a Dialogue line of ASS or SSA, in the order of
+// `format`. The text is the last field, and it can hold commas. \N is a
+// new line, and \h is a space.
+function dialogue_cue(fields: string, format: string[]): Option[Cue] {
+  let parts = fields.split(",");
+  let Some(start_at) = format.index_of("Start") else {
+    return None;
+  };
+  let Some(end_at) = format.index_of("End") else {
+    return None;
+  };
+  if (format[format.len() - 1] != "Text" || parts.len() < format.len()) {
+    return None;
+  }
+  let start = cue_time(parts[start_at].trim());
+  let end = cue_time(parts[end_at].trim());
+  let words = untagged(parts.drop(format.len() - 1).join(",")).replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ");
+  if (start < 0i64 || end <= start) {
+    return None;
+  }
+  return Some(Cue { start_ms: start, end_ms: end, text: words.trim() });
 }
 
 // The time of "hh:mm:ss,mmm" or "mm:ss.mmm" in milliseconds, or -1.

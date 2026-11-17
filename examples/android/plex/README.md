@@ -52,9 +52,12 @@ Playback:
   nearest sync frame.
 - The app reports the position every 10 seconds, and marks an item watched
   at its end.
+
 - A tap on the video shows the controls over it for 4 seconds while the
-  video plays on: back 10 seconds, play, forward 30 seconds, and a bar that
-  seeks as a finger drags along it, with a preview thumbnail of the time. A tap outside them hides them, and the play button pauses.
+  video plays on. They are back 10 seconds, play, and forward 30 seconds.
+  A bar seeks as a finger drags along it, with a preview thumbnail of the
+  time. A tap outside the controls hides them, and the play button pauses.
+
 - The speed button at the top plays at 1x, 1.25x, 1.5x, 2x, 0.5x or
   0.75x. The pitch of the sound stays the same. Each tap gives the next
   speed, and the app keeps it for the next items.
@@ -97,7 +100,11 @@ app asks the server for the markers of the item when it starts to play.
 
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice. A file that plays as it is changes its
-sound in place. The app draws a SubRip or WebVTT file beside the video over it, so the file plays as it is. Other subtitles burn into a transcode.
+sound in place. The app draws text subtitles over the video itself, so the
+file plays as it is. These are SubRip, WebVTT, ASS and SSA, in a file beside
+the video or inside it. The server gives the text of a track inside the
+file at the address of its stream. Other subtitles, such as PGS, burn into
+a transcode.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
