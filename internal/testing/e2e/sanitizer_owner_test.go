@@ -131,3 +131,33 @@ func TestSanitizeFillsFreshRawBlocks(t *testing.T) {
 		})
 	}
 }
+
+// sanBoxOverflowSrc writes the byte after the last word of a 16-byte array:
+// the first byte of the redzone at the end of its size class. OFFSET is 24 to
+// write past the box, or 23 for its last byte.
+const sanBoxOverflowSrc = `function main(): i32 {
+  unsafe {
+    let a: u8[] = __alloc_u8(16);
+    let p: usize = a as usize;
+    __store_u8(p + OFFSET as usize, 1);
+    return a.len();
+  }
+}`
+
+// A write past the end of a typed box is a finding when the box is released.
+// A write inside the box is not.
+func TestSanitizeTypedBoxOverflowReported(t *testing.T) {
+	const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
+	for name, run := range map[string]func(*testing.T, string, ...string) (string, string, int){"x86-64": runSanitizeX86_64With, "arm64": runSanitizeArm64With} {
+		t.Run(name, func(t *testing.T) {
+			_, stderr, code := run(t, strings.Replace(sanBoxOverflowSrc, "OFFSET", "24", 1), uncertified)
+			if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, report) {
+				t.Errorf("past the box: exit=%d, want %d with the report\nstderr: %s", code, e2eharness.ExitSanitizer, stderr)
+			}
+			_, stderr, code = run(t, strings.Replace(sanBoxOverflowSrc, "OFFSET", "23", 1), uncertified)
+			if code != 16 || strings.Contains(stderr, "fern-sanitizer:") {
+				t.Errorf("inside the box: exit=%d, want 16 and no finding\nstderr: %s", code, stderr)
+			}
+		})
+	}
+}

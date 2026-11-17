@@ -260,6 +260,9 @@ function quar_push(s: asmcore.EmitState, ptr: string, words: string, poison_at: 
 // evicts the oldest block to its free list after its poison is checked.
 function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_quar_push:\n");
+  if (san_redzone_on(s)) {
+    s = san_redzone_check(s);
+  }
   s = s.write("    cmpq $3, %rsi\n");
   s = s.write("    jb .Lquar_ret\n");
   // A block of a worker region the parent is forgetting does not enter the
@@ -340,31 +343,48 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
-// Under -sanitize a raw block carries a redzone: the two words after its
-// size rounded to 8 hold the poison pattern from `__alloc` to `__free`.
-// The allocation takes 16 bytes more, and the free checks the two words.
-// The census counts the block without its redzone, so a release through
-// the typed runtime, which does not know the redzone, balances it.
+// Under -sanitize a fresh raw block holds the poison pattern, so a read of a
+// byte that the program never wrote gives the same value on each run.
 function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_raw_alloc_san:\n");
-  s = s.write("    pushq %rdi\n    pushq %rdi\n    addq $16, %rdi\n    call __fern_alloc\n    popq %rdi\n    popq %rdi\n");
-  if (s.leak_check) {
-    s = s.write("    subq $16, __fern_lc_alloc_bytes(%rip)\n");
-  }
+  s = s.write("    pushq %rdi\n    pushq %rdi\n    call __fern_alloc\n    popq %rdi\n    popq %rdi\n");
   s = s.write("    addq $7, %rdi\n    andq $-8, %rdi\n    movabs $" + rc_poison64() + ", %rdx\n");
-  s = san_raw_fill(s);
-  return s.write("    movq %rdx, (%rax,%rdi)\n    movq %rdx, 8(%rax,%rdi)\n    ret\n");
+  s = s.write("    pushq %rcx\n    xorl %ecx, %ecx\n.Lraw_san_fill:\n    cmpq %rdi, %rcx\n    jae .Lraw_san_filled\n");
+  return s.write("    movq %rdx, (%rax,%rcx)\n    addq $8, %rcx\n    jmp .Lraw_san_fill\n.Lraw_san_filled:\n    popq %rcx\n    ret\n");
 }
 
-// Under -sanitize a fresh raw block holds the poison pattern, so a read of a
-// byte that the program never wrote gives the same value on each run. %rax is
-// the block, %rdi its size rounded to 8 and %rdx the pattern.
-function san_raw_fill(s: asmcore.EmitState): asmcore.EmitState {
-  if (!s.sanitize) {
-    return s;
-  }
-  s = s.write("    pushq %rcx\n    xorl %ecx, %ecx\n.Lraw_san_fill:\n    cmpq %rdi, %rcx\n    jae .Lraw_san_filled\n");
-  return s.write("    movq %rdx, (%rax,%rcx)\n    addq $8, %rcx\n    jmp .Lraw_san_fill\n.Lraw_san_filled:\n    popq %rcx\n");
+// Under -sanitize each block carries a redzone: the two words after the end
+// of its size class hold the poison pattern from its allocation to its
+// release. A block grows in place only inside its class, so the end of the
+// class does not move.
+function san_redzone_on(s: asmcore.EmitState): boolean {
+  return s.sanitize;
+}
+
+// %rsi words to the words of their size class, as the allocator rounds them.
+function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_san_class:\n    cmpq $65536, %rsi\n    jae .Lsan_class_large\n    pushq %rsi\n    call __fern_capw\n    popq %rsi\n    ret\n");
+  s = s.write(".Lsan_class_large:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    leaq 0(,%rsi,8), %rax\n");
+  s = large_class(s);
+  return s.write("    movq %rax, %rsi\n    shrq $3, %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
+}
+
+// The allocation side of the redzone: %rdi is the request in bytes. The
+// block takes its class and two words more, and the two words get the poison.
+function san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    pushq %rsi\n    leaq 7(%rdi), %rsi\n    shrq $3, %rsi\n    call __fern_san_class\n    pushq %rsi\n    leaq 16(,%rsi,8), %rdi\n");
+  s = s.write("    call __fern_alloc_inner\n    popq %rsi\n    pushq %rdx\n    movabs $" + rc_poison64() + ", %rdx\n");
+  return s.write("    movq %rdx, (%rax,%rsi,8)\n    movq %rdx, 8(%rax,%rsi,8)\n    popq %rdx\n    popq %rsi\n");
+}
+
+// The release side: %rdi is the block and %rsi its size in words. A word that
+// lost the pattern was written past the end of the block. %rsi then holds
+// the words of the whole block, the redzone too, so that the quarantine
+// hands the block to the free list that the allocation takes from.
+function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    testq %rsi, %rsi\n    jz .Lquar_redzone_ok\n    pushq %r8\n    call __fern_san_class\n    movabs $" + rc_poison64() + ", %r8\n");
+  s = s.write("    cmpq %r8, (%rdi,%rsi,8)\n    jne __fern_san_abort_hbo\n    cmpq %r8, 8(%rdi,%rsi,8)\n    jne __fern_san_abort_hbo\n");
+  return s.write("    addq $2, %rsi\n    popq %r8\n.Lquar_redzone_ok:\n");
 }
 
 // The same fill for the elements of a byte array that `__alloc_u8_uninit`
@@ -375,13 +395,6 @@ function san_uninit_fill(s: asmcore.EmitState): string {
   }
   return "    addq $7, %r12\n    shrq $3, %r12\n    movabs $" + rc_poison64() + ", %r13\n.Lfern_uninit_fill:\n    testq %r12, %r12\n    jz .Lfern_uninit_filled\n"
     + "    movq %r13, (%rax,%r12,8)\n    decq %r12\n    jmp .Lfern_uninit_fill\n.Lfern_uninit_filled:\n";
-}
-
-// The free side of the redzone: %rdi is the block and %rsi its size rounded
-// to 8. A word that lost the pattern was written past the end of the block.
-function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    movabs $" + rc_poison64() + ", %r8\n");
-  return s.write("    cmpq %r8, (%rdi,%rsi)\n    jne __fern_san_abort_hbo\n    cmpq %r8, 8(%rdi,%rsi)\n    jne __fern_san_abort_hbo\n");
 }
 
 // Under -sanitize a raw free of a block that is in the quarantine aborts as a
@@ -417,12 +430,12 @@ function quar_scan_at_exit(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_san_hbo_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
-  s = s.write(".Lsan_hbo:\n    .ascii \"fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)\\n\"\n");
+  s = s.write(".Lsan_hbo:\n    .ascii \"fern-sanitizer: heap-buffer-overflow (a block was written past its end)\\n\"\n");
   s = s.write("    .section .text\n");
   s = s.write("    .globl __fern_san_abort_hbo\n");
   s = s.write("__fern_san_abort_hbo:\n");
   s = s.write("    leaq .Lsan_hbo(%rip), %rsi\n");
-  s = s.write("    movq $76, %rdx\n");
+  s = s.write("    movq $72, %rdx\n");
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
@@ -4389,7 +4402,11 @@ function emit_ir_runtime_part_1(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    incq __fern_alloc_count(%rip)\n");
     }
     s = s.write("    pushq %rdi\n");
-    s = s.write("    call __fern_alloc_inner\n");
+    if (san_redzone_on(s)) {
+      s = san_redzone_alloc(s);
+    } else {
+      s = s.write("    call __fern_alloc_inner\n");
+    }
     s = s.write("    popq %rdi\n");
     s = s.write("    pushq %rsi\n");
     s = s.write("    movq 8(%rsp), %rsi\n");
@@ -4685,7 +4702,10 @@ function emit_ir_runtime_part_3(s: asmcore.EmitState): asmcore.EmitState {
 function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = emit_quarantine(s);
+  }
+  if (san_redzone_on(s)) {
     s = emit_raw_alloc_san(s);
+    s = emit_san_class(s);
   }
   if (s.harden) {
     s = emit_freelist_take(s);
@@ -4706,9 +4726,6 @@ function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jae .Lrawfree_bad\n");
   s = s.write("    addq $7, %rsi\n");
   s = s.write("    andq $-8, %rsi\n");
-  if (s.rc_free_debug) {
-    s = san_redzone_check(s);
-  }
   s = s.write("    cmpq $8, %rsi\n");
   s = s.write("    jb .Lrawfree_ret\n");
   if (s.rc_free_debug) {
@@ -4718,9 +4735,7 @@ function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rsi, %rcx\n");
   s = s.write("    shrq $3, %rcx\n");
   if (s.rc_free_debug) {
-    // The census counts the block, and the quarantine takes the redzone too.
     s = hev_free(s, "%rdi", "%rcx");
-    s = s.write("    addq $2, %rcx\n");
     s = quar_push(s, "%rdi", "%rcx", 0);
     s = s.write(".Lrawfree_ret:\n");
     s = s.write("    ret\n");

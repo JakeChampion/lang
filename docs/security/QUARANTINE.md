@@ -80,10 +80,12 @@ Its `-harden` keeps the canary, the indirect-call check, the signed return addre
 
 | Build | x86-64-linux | arm64-linux under QEMU |
 |---|---|---|
-| release | 152 bytes, one block recycled | 152 bytes |
-| `-sanitize`, the 64 MiB default | 8800064 bytes, 88 per release | 8800064 bytes |
-| `-sanitize -quarantine 0` | 8800064 bytes | 8800064 bytes |
-| `-sanitize -quarantine 1M` | 1048672 bytes, the budget plus one block | 1048672 bytes |
+| release | 120 bytes, one block recycled | 120 bytes |
+| `-sanitize`, the 64 MiB default | 10476848 bytes, 104 per release and the skipped bytes | 10476848 bytes |
+| `-sanitize -quarantine 0` | 10476848 bytes | 10476848 bytes |
+| `-sanitize -quarantine 1M` | 1056360 bytes, the budget plus one block | 1056360 bytes |
+
+A released block holds its box of 88 bytes and its redzone of 16 bytes.
 
 `TestSelfHostQuarantinePolicy` runs on both targets:
 

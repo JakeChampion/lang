@@ -22,7 +22,7 @@ changes the code the backend emits — so it goes on the build, not on the run.
 | --- | --- | --- |
 | rc over-release (double free) | a `dec` sees a refcount already `<= 0` | `fern-sanitizer: rc over-release (double free)` + backtrace, exit 124 |
 | use-after-free | an `inc`/`dec` touches a quarantined block | `fern-sanitizer: use-after-free (touched a quarantined block)` + backtrace, exit 124 |
-| heap-buffer-overflow | a `__free` finds the redzone after a raw block written | `fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)` + backtrace, exit 124 |
+| heap-buffer-overflow | a release finds that the redzone after a block was written | `fern-sanitizer: heap-buffer-overflow (a block was written past its end)` + backtrace, exit 124 |
 | second context | a context that does not own the heap allocates or releases a block | `fern-sanitizer: second context (a thread or stack that does not own the heap used it)` + backtrace, exit 124 |
 | leak census | `main` returns with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks` |
 
@@ -112,17 +112,19 @@ Real, and the reason this is opt-in:
   `fern-sanitizer: write-after-free` with exit 124. A loop that churns 200
   rows through one recycled block instead bumps 200 blocks' worth of arena,
   up to the budget. `TestSelfHostSanitizeQuarantineGrowth` pins the growth,
-  88 bytes per release of a 64-byte array, and `docs/security/QUARANTINE.md`
+  104 bytes per release of a 64-byte array with its redzone, and `docs/security/QUARANTINE.md`
   records the policy.
 - Every `inc`/`dec` takes the out-of-line helper (the inline rc fast path is
   bypassed, since it is the helper that carries the poison check).
-- **A raw block carries a redzone.** `__alloc(n)` takes 16 bytes more and
-  fills the two words after `n` rounded to 8 with the poison pattern. The
-  leak census counts the block without them, so a block the typed runtime
-  releases balances. `__free(p, n)` reads them
-  back, and a word that lost the pattern reports
-  `fern-sanitizer: heap-buffer-overflow` with exit 124. A write inside the
-  rounding of `n`, past the redzone, or past a typed box is not seen.
+- **Each block carries a redzone.** `__fern_alloc` takes the size class of
+  the request and two words more. It fills the two words after the end of the
+  class with the poison pattern. The release finds the class again from the
+  size it frees, in `__fern_quar_push`. A word that lost the pattern reports
+  `fern-sanitizer: heap-buffer-overflow` with exit 124
+  (`TestSanitizeTypedBoxOverflowReported`).
+- **The redzone follows the class, not the request.** A string grows in place
+  up to the end of its class. Perceus reuse pairs boxes of one class, so a
+  reused box keeps its redzone. The leak census counts the request alone.
 - **A fresh raw block holds the poison pattern.** `__alloc(n)` fills the `n`
   bytes rounded to 8, and `__alloc_u8_uninit(n)` fills its elements. Without
   the fill, a fresh block comes from new pages and reads as zero. Thus a read
@@ -296,10 +298,11 @@ whose reference outlived the count.
 - **A stale reference that never touches the block again.** The detector fires
   on the `inc`/`dec`, so a dangling pointer that is only ever *read through*
   raw-memory builtins is invisible.
-- **A write past a typed box, or far past a raw block.** The redzone sits
-  after a raw block alone, it is 16 bytes, and the free reads it. A write
-  that lands beyond it, or in the next block, is seen only when that block's
-  own release or count reports it.
+- **A write inside the slack of a class, or far past a block.** The redzone
+  is 16 bytes after the end of the size class. A write between the end of the
+  request and the end of the class is not seen. A write that lands beyond the
+  redzone, or in the next block, is seen only when that block's own release
+  or count reports it. A block that is never released is never checked.
 
 - **A second context that only counts.** The second-context check runs in
   the census of an allocation and a release. A second context that only

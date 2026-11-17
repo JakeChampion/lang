@@ -340,7 +340,7 @@ func TestSelfHostQuarantinePolicy(t *testing.T) {
 				}
 			})
 			t.Run("redzone", func(t *testing.T) {
-				const report = "fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)"
+				const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
 				for name, src := range map[string]string{"past-the-end": redzoneWriteSrc, "last-redzone-byte": redzoneLastByteSrc, "past-the-rounded-size": redzoneRoundedSrc} {
 					r := quarantineBuild(t, cli, qemu, target, src, []string{"-sanitize"})
 					if r.code != 124 || !strings.Contains(r.stderr, report) || strings.Contains(r.stdout, "survived") {
