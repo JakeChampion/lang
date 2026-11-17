@@ -100,7 +100,7 @@ func TestSelfHostTangle(t *testing.T) {
 			}
 		}
 		file := filepath.Join(dir, "one.fern")
-		if _, _, errOut, code := literateRun(t, "```fern\n<<*>>=\nfunction main(): i32 { return 9; }\n```\n", "-tangle", "-o", file); code != 0 || errOut != "wrote "+file+"\n" {
+		if _, _, errOut, code := literateRun(t, "```fern\n<<*>>=\nfunction main(): i32 { return 9; }\n```\n", "-tangle", "-o", file); code != 0 || errOut != "fern: wrote "+file+"\n" {
 			t.Fatalf("exit %d, stderr %q", code, errOut)
 		}
 		if got, _ := os.ReadFile(file); string(got) != "function main(): i32 { return 9; }\n" {
