@@ -2855,10 +2855,51 @@ function settle_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   if (null_v >= 0 && w.idx[w.root[null_v]] >= 0) {
     p = Progress { ...p, state: p.state.with(w.idx[w.root[null_v]], absent()) };
   }
+  p = same_box_on_edge(p, w, bi, sid);
   if (w.pair_words.len() > 0) {
     p = settle_pair_words(p, w, bi, sid);
   }
   return p;
+}
+
+// On the edge where a call's result is its operand (effect_kept_or_same),
+// the two are one box. The result takes the operand's units, and the fresh
+// unit of the result was never there.
+function same_box_on_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
+  let t = w.f.blocks[bi].term;
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
+    return p;
+  }
+  let c = def_of(w.f, w.defs, t.cond);
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+    return p;
+  }
+  let equal = sid == t.t;
+  if (c.str == "ne") {
+    equal = !equal;
+  }
+  if (!equal) {
+    return p;
+  }
+  p = took_operand(p, w, c.args[0], c.args[1]);
+  return took_operand(p, w, c.args[1], c.args[0]);
+}
+
+function took_operand(own p: Progress, w: Walk, result: i32, operand: i32): Progress {
+  let d = def_of(w.f, w.defs, result);
+  if (d.kind_tag != ssa.CALL || result < 0 || operand < 0) {
+    return p;
+  }
+  let s = w.sigs.lookup(d.str);
+  if (!s.known || s.effect != rcsigs.effect_kept_or_same() || s.arg < 0 || s.arg >= d.args.len() || d.args[s.arg] < 0 || w.root[d.args[s.arg]] != w.root[operand]) {
+    return p;
+  }
+  let kr = w.idx[w.root[result]];
+  let ko = w.idx[w.root[operand]];
+  if (kr < 0 || ko < 0 || kr == ko || p.state[kr] != 1) {
+    return p;
+  }
+  return Progress { ...p, state: p.state.with(kr, p.state[ko]).with(ko, 0) };
 }
 
 function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {

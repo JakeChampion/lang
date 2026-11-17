@@ -22,51 +22,80 @@ function test_join_none(): test.TestOutcome {
 }
 
 function test_parent(): test.TestOutcome {
-  return test.assert_eq(path.parent("/a/b/c").to_owned(), "/a/b");
+  return test.assert_eq(path.parent("/a/b/c").unwrap_or("?"), "/a/b");
 }
 
 function test_parent_relative(): test.TestOutcome {
-  return test.assert_eq(path.parent("a/b").to_owned(), "a");
+  return test.assert_eq(path.parent("a/b").unwrap_or("?"), "a");
 }
 
 function test_parent_no_sep(): test.TestOutcome {
-  return test.assert_eq(path.parent("foo").to_owned(), "");
+  return test.assert_true(path.parent("foo").is_none());
 }
 
 function test_parent_root(): test.TestOutcome {
-  return test.assert_eq(path.parent("/").to_owned(), "/");
+  return test.assert_true(path.parent("/").is_none());
 }
 
 function test_parent_top(): test.TestOutcome {
-  return test.assert_eq(path.parent("/a").to_owned(), "/");
+  return test.assert_eq(path.parent("/a").unwrap_or("?"), "/");
+}
+
+function test_parent_empty(): test.TestOutcome {
+  return test.assert_true(path.parent("").is_none());
+}
+
+function test_parent_repeated_separators(): test.TestOutcome {
+  if (path.parent("//").is_some()) {
+    return test.fail("a path of separators has no parent");
+  }
+  if (path.parent("//b").unwrap_or("?") != "/") {
+    return test.fail("//b");
+  }
+  return test.assert_eq(path.parent("a//b/").unwrap_or("?"), "a");
+}
+
+function test_file_name_none(): test.TestOutcome {
+  return test.assert_true(path.file_name("").is_none() && path.file_name("/").is_none());
+}
+
+function test_extension_empty(): test.TestOutcome {
+  if (path.extension("").is_some()) {
+    return test.fail("an empty path has no extension");
+  }
+  return test.assert_eq(path.extension("a.").unwrap_or("?"), "");
+}
+
+function test_stem_none(): test.TestOutcome {
+  return test.assert_true(path.stem("").is_none() && path.stem("/").is_none());
 }
 
 function test_file_name(): test.TestOutcome {
-  return test.assert_eq(path.file_name("/a/b/c").to_owned(), "c");
+  return test.assert_eq(path.file_name("/a/b/c").unwrap_or("?"), "c");
 }
 
 function test_file_name_trailing(): test.TestOutcome {
-  return test.assert_eq(path.file_name("a/b/").to_owned(), "b");
+  return test.assert_eq(path.file_name("a/b/").unwrap_or("?"), "b");
 }
 
 function test_file_name_bare(): test.TestOutcome {
-  return test.assert_eq(path.file_name("foo").to_owned(), "foo");
+  return test.assert_eq(path.file_name("foo").unwrap_or("?"), "foo");
 }
 
 function test_extension(): test.TestOutcome {
-  return test.assert_eq(path.extension("a/b/file.txt").to_owned(), "txt");
+  return test.assert_eq(path.extension("a/b/file.txt").unwrap_or("?"), "txt");
 }
 
 function test_extension_last_dot(): test.TestOutcome {
-  return test.assert_eq(path.extension("archive.tar.gz").to_owned(), "gz");
+  return test.assert_eq(path.extension("archive.tar.gz").unwrap_or("?"), "gz");
 }
 
 function test_extension_hidden(): test.TestOutcome {
-  return test.assert_eq(path.extension(".bashrc").to_owned(), "");
+  return test.assert_true(path.extension(".bashrc").is_none());
 }
 
 function test_extension_none(): test.TestOutcome {
-  return test.assert_eq(path.extension("noext").to_owned(), "");
+  return test.assert_true(path.extension("noext").is_none());
 }
 
 function test_clean_dots(): test.TestOutcome {
@@ -115,16 +144,16 @@ function test_is_absolute(): test.TestOutcome {
 }
 
 function test_stem(): test.TestOutcome {
-  if (path.stem("a/b/foo.txt").to_owned() != "foo") {
+  if (path.stem("a/b/foo.txt").unwrap_or("?") != "foo") {
     return test.fail("simple");
   }
-  if (path.stem("archive.tar.gz").to_owned() != "archive.tar") {
+  if (path.stem("archive.tar.gz").unwrap_or("?") != "archive.tar") {
     return test.fail("multi ext");
   }
-  if (path.stem(".bashrc").to_owned() != ".bashrc") {
+  if (path.stem(".bashrc").unwrap_or("?") != ".bashrc") {
     return test.fail("hidden");
   }
-  return test.assert_eq(path.stem("foo").to_owned(), "foo");
+  return test.assert_eq(path.stem("foo").unwrap_or("?"), "foo");
 }
 
 function test_with_extension(): test.TestOutcome {
@@ -158,6 +187,11 @@ function main(): i32 {
   r = r.it("parent no separator", test_parent_no_sep);
   r = r.it("parent of root", test_parent_root);
   r = r.it("parent of top-level", test_parent_top);
+  r = r.it("parent of empty", test_parent_empty);
+  r = r.it("parent with repeated separators", test_parent_repeated_separators);
+  r = r.it("file_name of no name", test_file_name_none);
+  r = r.it("extension of empty and of a trailing dot", test_extension_empty);
+  r = r.it("stem of no name", test_stem_none);
   r = r.it("file_name", test_file_name);
   r = r.it("file_name trailing slash", test_file_name_trailing);
   r = r.it("file_name bare", test_file_name_bare);

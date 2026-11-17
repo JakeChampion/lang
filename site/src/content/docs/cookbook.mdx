@@ -339,14 +339,15 @@ there too.
 
 <FernPlayground
   code={`import "std/path";
+import "std/option";
 
 function main(): i32 {
     let p: string = path.join(["build", "out", "report.txt"]);
     print(p);                                   // build/out/report.txt
-    print(path.parent(p));                 // build/out
-    print(path.file_name(p));              // report.txt
-    print(path.stem(p));                   // report
-    print(path.extension(p));              // txt
+    print(path.parent(p).unwrap_or("."));          // build/out
+    print(path.file_name(p).unwrap_or(""));        // report.txt
+    print(path.stem(p).unwrap_or(""));             // report
+    print(path.extension(p).unwrap_or(""));        // txt
     print(path.with_extension(p, "md"));   // build/out/report.md
     print(path.clean("a/./b/../c//d/"));   // a/c/d
     return 0;
