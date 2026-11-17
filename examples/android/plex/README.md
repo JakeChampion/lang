@@ -134,8 +134,9 @@ row of the home screen. The row shows its poster and its place. The row opens th
 video in the app. A video that plays to its end goes off the row.
 
 Download in the menu of a poster gives the file of the item to the
-download manager of Android. Only a file that the phone
-plays as it is can download. The menu shows the progress, and a second tap
+download manager of Android. A file that the phone does not play as it is
+downloads as a transcode at the quality of the settings. The server
+makes one Matroska file with H.264 video and AAC sound. The menu shows the progress, and a second tap
 stops the download. A done download shows in the last row of the home
 screen and plays from the phone with no server. Remove download deletes
 the file.

@@ -1246,8 +1246,9 @@ function hold(own s: control.App, log: Log, now: i64, f: draw.Frame, act: string
 // gives Android the file of its part, and the app keeps the list in its
 // files. The menu shows the progress, and a done download shows in a row
 // of the home screen. After a new start with no server, the row is still
-// there, and Play reads the file. Remove download deletes it, and an item
-// that the phone does not play as it is does not download.
+// there, and Play reads the file. Remove download deletes it. An item that
+// the phone does not play as it is downloads as one Matroska file that the
+// server transcodes.
 function test_downloads(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1310,11 +1311,12 @@ function test_downloads(): test.TestOutcome {
     return test.fail("a reply of the server did not end the offline state");
   }
   let other = poster_of(online, "502");
-  let refused = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
-  if (log.calls.get().filter((c: string): boolean => c.starts_with("download http")).len() != 1 || !refused.error.starts_with("Only a file")) {
-    return test.fail("a file that needs a transcode downloaded");
+  let converted = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
+  let conversions = log.calls.get().filter((c: string): boolean => c.starts_with("download https://up.example:32400/video/:/transcode/universal/start?"));
+  if (conversions.len() != 1 || !conversions[0].contains("protocol=http&") || !conversions[0].contains("container%3Dmkv") || !conversions[0].ends_with(" 502.mkv Inception") || converted.error != "") {
+    return test.fail("a file that needs a transcode did not download as one: " + log.calls.get().join(" | "));
   }
-  return test.pass();
+  return test.assert_eq((converted.downloads.len() == 1 && converted.downloads[0].file == "502.mkv").to_string(), "true");
 }
 
 // While a track of an album plays, the second player prepares the next

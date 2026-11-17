@@ -375,6 +375,26 @@ function test_embedded_subtitles(): test.TestOutcome {
   return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn")).to_string(), "true");
 }
 
+// A file with E-AC-3 sound does not play as it is on a phone with no
+// E-AC-3 decoder, so it downloads as one Matroska file over HTTP. At
+// Original, the transcode copies the H.264 video. A stream of the same
+// file is HLS, which seeks fast.
+function test_download_transcode(): test.TestOutcome {
+  let Some(it) = plex.parse_item(TRACKED) else {
+    return test.fail("no item");
+  };
+  let phone = ["video/avc", "audio/mp4a-latm"];
+  if (plex.direct_playable(it, phone) || plex.download_name(it, true) != "7.mkv" || plex.download_name(it, false) != "7.mkv") {
+    return test.fail("the name of the download");
+  }
+  let r = plex.download_transcode_request(client(), base(), it, plex.qualities()[0], "s1", phone, plex.remembered(it));
+  if (!r.url.starts_with("https://10-0-0-5.abc.plex.direct:32400/video/:/transcode/universal/start?") || !r.url.contains("&protocol=http&") || !r.url.contains("&directStream=1&") || !r.url.contains("container%3Dmkv") || r.url.contains("fastSeek")) {
+    return test.fail("the download of a transcode: " + r.url);
+  }
+  let hls = plex.hls_url(client(), base(), it, plex.qualities()[0], "s1", plex.remembered(it));
+  return test.assert_eq((hls.contains("/start.m3u8?") && hls.contains("&protocol=hls&") && hls.contains("container%3Dmpegts") && hls.contains("&fastSeek=1&X-Plex-Incomplete-Segments=1")).to_string(), "true");
+}
+
 // SubRip and WebVTT cues: their times with a comma or a dot and with or
 // without hours, lines up to a blank line, and no tags. A cue shows from
 // its start until its end.
@@ -457,6 +477,7 @@ function main(): i32 {
   r = r.it("the sound and subtitle tracks of a file", test_tracks);
   r = r.it("SubRip, WebVTT, ASS and SSA cues", test_cues);
   r = r.it("subtitles inside the file that the app draws", test_embedded_subtitles);
+  r = r.it("a file that needs a transcode downloads as one", test_download_transcode);
   r = r.it("the name of a kept image", test_cache_name);
   r = r.it("the intro and credits markers of an item", test_markers);
   r = r.it("a part with preview thumbnails", test_thumbnail_part);

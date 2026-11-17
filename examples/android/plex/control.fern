@@ -1706,8 +1706,9 @@ function shown_hubs(s: App): plex.Hub[] {
   return s.hubs.append(row);
 }
 
-// Starts the download of the item of the metadata `r` when the phone plays
-// its file as it is.
+// Starts the download of the item of the metadata `r`. A file that the
+// phone does not play as it is downloads as a transcode at the quality of
+// the settings.
 function got_download(own t: App, r: plex.Reply): App {
   let Some(it) = plex.parse_item(r.text()) else {
     return t;
@@ -1715,11 +1716,10 @@ function got_download(own t: App, r: plex.Reply): App {
   if (saved_at(t, it.key) >= 0) {
     return t;
   }
-  if (!plex.direct_playable(it, t.dev.decoders)) {
-    return App { ...t, error: "Only a file that this phone plays as it is can download" };
-  }
-  let name = plex.download_name(it);
-  let id = t.dev.download(plex.download_request(t.client, t.base, it), name, plex.card_title(it));
+  let direct = plex.direct_playable(it, t.dev.decoders);
+  let name = plex.download_name(it, !direct);
+  let req = if (direct) { plex.download_request(t.client, t.base, it) } else { plex.download_transcode_request(t.client, t.base, it, plex.qualities()[t.quality], hex_id(t.dev), t.dev.decoders, plex.remembered(it)) };
+  let id = t.dev.download(req, name, plex.card_title(it));
   if (id < 0i64) {
     return App { ...t, error: "Android refused the download" };
   }
