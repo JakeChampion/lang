@@ -41,7 +41,7 @@ Lifted SSA of `put3` on x86-64:
 | --- | --- | --- |
 | Calls of `__fern_rc_is_unique` | 3 | 1 |
 | Calls of `__fern_arr_slice_u32` | 3 | 1 |
-| Blocks | 19 | 8 |
+| Blocks | 18 | 8 |
 | Unproved values | 5 | 1 |
 
 The rows of `.github/certify-baseline.txt` do not move. The compiler has no
