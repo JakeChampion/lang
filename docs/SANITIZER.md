@@ -136,9 +136,8 @@ asm is byte-identical to a build from a compiler that never had the feature.
 `TestSelfHostSanitizeOffEmitsNoSymbolsX86_64` and `TestSelfHostOverReleaseReportArm64`
 pin the cheap proxy for that.
 
-The wasm census is the cheap end of all this: two counters and one line, with
-the freelist still recycling, because the quarantine that carries the rest of
-the cost is not built there.
+Wasm pays for its quarantine, its poison checks and its census, but not for a
+redzone or a fill.
 
 ## Backend coverage
 
@@ -148,7 +147,7 @@ the cost is not built there.
 | arm64 (native) | ✅ | ✅ | ✅ | — |
 | x86-64 (self-host) | ✅ | ✅ | ✅ | ✅ |
 | arm64 (self-host) | ✅ | ✅ | ✅ | ✅ |
-| wasm, native and self-host | ✅ | — | — | — |
+| wasm (self-host) | ✅ | ✅ | ✅ | — |
 | the Go SSA backends | — | — | — | — |
 
 Every row above emits the **same** message text and the same exit status — a
@@ -175,9 +174,9 @@ and report the use-after-free.
 
 `-sanitize` on a target that is not fully covered **warns and names what the
 build does carry**, so a silent run is never mistaken for a checked one. On
-wasm that reads "the leak census only, not the rc over-release or
-use-after-free detectors"; on an SSA backend, or a target with no
-instrumentation at all, it says the build carries no checks.
+wasm it names the census and the over-release and use-after-free detectors,
+and it says that the redzone and the fill are not there. On a target with no
+instrumentation at all, it says that the build carries no checks.
 
 The **self-host** compiler takes `-sanitize` as native does, and reads
 `FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports
@@ -218,24 +217,43 @@ supplies a capability").
 balanced census off the serial console. The fatal checks of `-sanitize` still
 need a host, because their abort path is a syscall.
 
-## wasm: the census, and only the census
+## wasm: the census and the quarantine
 
-The wasm backend carries the **leak census** — the same line, the same verdict
-text, the same "a clean run says nothing" contract:
+The wasm backend carries the **leak census**, the **rc over-release** report
+and the **use-after-free** report, with the texts of the native runtime:
 
 ```sh
 FERN_LEAKCHECK=1 fern -target wasm32-wasi -o prog.wasm prog.fern   # census
-FERN_SANITIZE=1  fern -target wasm32-wasi -o prog.wasm prog.fern   # + verdict
+FERN_SANITIZE=1  fern -target wasm32-wasi -o prog.wasm prog.fern   # + verdict and detectors
 ```
 
-It costs two counters in two helpers, because this runtime has exactly two
-chokepoints: every allocation reaches `__fern_alloc` (the box / rc1 / u8-array
-wrappers all forward to it) and every reclamation reaches `__free`. Both
-count at the same `(size+15)&-16` rounding, so a block's allocation and its
-release cancel exactly, and a block that the quarantine-free freelist recycles
-is counted once each way.
+The census costs two counters in two helpers, because every allocation
+reaches `__fern_alloc` and every release reaches `__fern_raw_free`,
+`__fern_arr_dec` or `__fern_alloc_reuse`. Both count at the same rounding, so
+a block's allocation and its release cancel.
 
-Three things about it are specific to this backend:
+Under `-sanitize` the three releases hand the block to `__fern_quar`, a FIFO
+quarantine:
+
+- Word 0 of a released block holds the poison word `0x7EEDFACE`, word 1 its
+  size and word 2 the next block. A block of fewer than 16 bytes has no room
+  for the link. It keeps the poison and is never used again.
+- `__fern_rc_inc`, `__fern_rc_dec` and `__fern_arr_dec` report a block whose
+  count is the poison word, with `fern-sanitizer: use-after-free`.
+- A count that reaches zero a second time reports
+  `fern-sanitizer: rc over-release`.
+- A raw release of a block that is in the quarantine is a double free.
+
+A release past the budget (`-quarantine`, 64 MiB by default) evicts the
+oldest block to its free list. The eviction reports a block whose poison word
+was written. It does not read the payload, as the native eviction does.
+
+A core module exits with 124 after a report, as a native program does. A
+component has no exit status but success or failure, so it traps.
+`TestWasmSanitizeReportsFreedBlocks` holds the reports, a clean run, and a
+churn of 4.9 GB through the 4 GiB of wasm32.
+
+Three more things are specific to this backend:
 
 - **Its counters are reserved unconditionally.** They are scratch slots in the
   module's reserved low-memory window, chained off the end of it like the
@@ -243,20 +261,16 @@ Three things about it are specific to this backend:
   them with the flag off, and no census code is emitted — but the addresses
   above them shift, so a flag-off wasm module is not byte-identical to one from
   a compiler predating the census the way a flag-off native binary is.
-
 - **The report is latched.** Wasm's exit seams NEST — the synthesised
   `_start` / `_lang_run` wrapper calls `__fern_exit`, which is also where the
   `exit()` builtin lands — so `__fern_lc_report` prints at most once per
   process rather than once per seam.
-- **A module with no exit seam never reports.** A `wasm32-wasi-http` handler
-  component is invoked per request and does not exit, so its counters tick and
-  nothing prints. That is the same rule as a native server that never returns
-  from `main`, and it is what the `-sanitize` warning for that target says.
+- **A module with no exit seam prints no census.** A `wasm32-wasi-http`
+  handler component is invoked per request and does not exit, so its counters
+  tick and nothing prints. The over-release and use-after-free reports do not
+  wait for an exit, so a handler makes them.
 
-What wasm does NOT carry is the two fatal checks. Both need a poisoned rc word
-and an abort path, and neither is built here — so on wasm a silent run means
-"did not leak", not "clean". The rc over-release COUNTER is still there
-(`__rc_underflow_count()`), it is just not a report.
+What wasm does NOT carry is the redzone and the fill of fresh raw blocks.
 
 ## Editing notes
 

@@ -2020,14 +2020,14 @@ function sanitize_warning(target: string): string {
   if (is_native_target(target)) {
     return "";
   }
-  let census = "the leak census only, not the rc over-release or use-after-free detectors";
+  let carries = "the leak census and the rc over-release and use-after-free detectors, not the heap-buffer-overflow redzone or the fill of fresh raw blocks";
   if (target == "wasm32-wasi") {
-    return "fern: warning: -sanitize on -target " + target + " carries " + census;
+    return "fern: warning: -sanitize on -target " + target + " carries " + carries;
   }
   if (target == "wasm32-wasi-http") {
-    return "fern: warning: -sanitize on -target " + target + " carries " + census + " — and it prints at process exit, which a request handler never reaches";
+    return "fern: warning: -sanitize on -target " + target + " carries " + carries + " — and the census prints at process exit, which a request handler never reaches";
   }
-  return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks";
+  return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64 and wasm); this build carries no checks";
 }
 
 function dw_file_table(entry: string, files: string[], remaps: PathRemap[]): string {

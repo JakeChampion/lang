@@ -94,7 +94,7 @@ func TestCommandModuleLeakCensusBalancesAndIsOptIn(t *testing.T) {
 	}
 }
 
-func TestSanitizeWarnsWasmCarriesTheCensusOnly(t *testing.T) {
+func TestSanitizeWarnsWhatWasmCarries(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	entry := writeFern(t, "function main(): i32 { return 0; }\n")
 	out := filepath.Join(t.TempDir(), "prog.wasm")
@@ -103,8 +103,11 @@ func TestSanitizeWarnsWasmCarriesTheCensusOnly(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, o)
 	}
 	got := string(o)
-	if !strings.Contains(got, "leak census") {
+	if !strings.Contains(got, "leak census") || !strings.Contains(got, "use-after-free") {
 		t.Errorf("warning does not name what wasm carries:\n%s", got)
+	}
+	if !strings.Contains(got, "not the heap-buffer-overflow redzone") {
+		t.Errorf("warning does not name what wasm lacks:\n%s", got)
 	}
 	if strings.Contains(got, "carries no checks") {
 		t.Errorf("warning still says wasm carries nothing:\n%s", got)

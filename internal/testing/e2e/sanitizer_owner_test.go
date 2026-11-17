@@ -161,3 +161,56 @@ func TestSanitizeTypedBoxOverflowReported(t *testing.T) {
 		})
 	}
 }
+
+func runSanitizeWasm(t *testing.T, src string, env ...string) (string, string, int) {
+	t.Helper()
+	core := e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, env)
+	return runSplit(t, e2eharness.RunWasmCore(t, core))
+}
+
+// sanWasmChurnSrc releases 300000 blocks of 16 KiB, 4.9 GB in all. Wasm32 has
+// 4 GiB, so the run ends only when the quarantine hands its oldest blocks
+// back to the free lists.
+const sanWasmChurnSrc = `function hold(n: i32): i32 {
+  let b: u8[] = __alloc_u8(n);
+  return b.len();
+}
+function main(): i32 {
+  let i: i32 = 0;
+  while (i < 300000) {
+    hold(16384);
+    i = i + 1;
+  }
+  return 42;
+}`
+
+// The wasm runtime reports a use of a freed block and a second raw release as
+// the native one does, and its quarantine recycles past its budget.
+func TestWasmSanitizeReportsFreedBlocks(t *testing.T) {
+	_, stderr, code := runSanitizeWasm(t, sanStaleTouchSrc, "FERN_SANITIZE=1")
+	if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
+		t.Errorf("stale touch: exit=%d, want %d with the report\nstderr: %s", code, e2eharness.ExitSanitizer, stderr)
+	}
+	_, stderr, code = runSanitizeWasm(t, sanCleanSrc, "FERN_SANITIZE=1")
+	if code != 0 || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("clean run: exit=%d, want 0 and no finding\nstderr: %s", code, stderr)
+	}
+	_, stderr, code = runSanitizeWasm(t, sanWasmChurnSrc, "FERN_SANITIZE=1")
+	if code != 42 || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("churn: exit=%d, want 42 and no finding\nstderr: %s", code, stderr)
+	}
+	const rawTwiceSrc = `function main(): i32 {
+  unsafe {
+      let a: usize = __alloc(64);
+      __free(a, 64);
+      __free(a, 64);
+      return 0;
+  }
+}`
+	for _, env := range [][]string{{"FERN_SANITIZE=1"}, nil} {
+		_, stderr, code = runSanitizeWasm(t, rawTwiceSrc, env...)
+		if code == 0 || !strings.Contains(stderr, "fern: release of memory that is already free") {
+			t.Errorf("%v: raw double free: exit=%d, want the report\nstderr: %s", env, code, stderr)
+		}
+	}
+}

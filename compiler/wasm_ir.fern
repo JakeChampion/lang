@@ -2976,7 +2976,7 @@ pub function component_uses_stderr(mod: parser.Module, needs: string[]): boolean
 }
 
 pub function needs_abort(needs: string[]): boolean {
-  return need(needs, "@allocates") || need(needs, "@abort_checks");
+  return need(needs, "@allocates") || need(needs, "free") || need(needs, "@abort_checks");
 }
 
 function runtime_needs(mod: parser.Module, needs: string[]): string[] {
@@ -9224,7 +9224,102 @@ function lc_report_funcs(sanitize: boolean, set_args: boolean, tables: string): 
   return o;
 }
 
-pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl_base: i32, count: boolean, lc: boolean): string {
+// The poison word of a block in the quarantine, as on the native targets.
+function san_poison(): string {
+  return "2129525454";
+}
+
+function san_poison_check(san: boolean, rc: string): string {
+  if (!san) {
+    return "";
+  }
+  return "    (if (i32.eq (local.get " + rc + ") (i32.const " + san_poison() + ")) (then (call $__fern_san_uaf)))\n";
+}
+
+function san_over_call(san: boolean): string {
+  if (!san) {
+    return "";
+  }
+  return "      (call $__fern_san_over)\n";
+}
+
+// The release of a typed box at `$base`, whose size is at base+4: to its
+// free list, or under -sanitize to the quarantine.
+function typed_release(h: WasmHeap, flb: string, flc: string): string {
+  if (h.san) {
+    return "    (call $__fern_quar (local.get $base) (i32.load (i32.add (local.get $base) (i32.const 4))))\n";
+  }
+  let o = "    (local.set $cls (call $__fern_capw (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3))))\n";
+  o += "    (i32.store (local.get $base) (i32.const 0))\n";
+  o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
+  o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+  o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base)))\n";
+  return o + "    (else (call $__fern_large_push (local.get $base) (i32.load (i32.add (local.get $base) (i32.const 4))))))\n";
+}
+
+// Under -sanitize a raw release of a block that is in the quarantine is a
+// double free. The poison word selects the candidates, and a walk of the
+// quarantine decides. A raw block then goes to the quarantine.
+function raw_release_san(): string {
+  let o = "    (if (i32.eq (i32.load (local.get $base)) (i32.const " + san_poison() + ")) (then\n";
+  o += "      (local.set $q (global.get $__fern_quar_head))\n";
+  o += "      (block $rq_done (loop $rq\n";
+  o += "        (br_if $rq_done (i32.eqz (local.get $q)))\n";
+  o += "        (if (i32.eq (local.get $q) (local.get $base)) (then (call $__fern_abort_double_free) (unreachable)))\n";
+  o += "        (local.set $q (i32.load (i32.add (local.get $q) (i32.const 8))))\n";
+  o += "        (br $rq)))))\n";
+  return o + "    (call $__fern_quar (local.get $base) (local.get $bytes))\n    (return)\n";
+}
+
+// The -sanitize quarantine: a FIFO through the released blocks. Word 0 of a
+// block holds the poison, word 1 its size, and word 2 the next block. A block
+// of fewer than 16 bytes has no room for the link: it keeps the poison and
+// is never used again. A release past the budget evicts the oldest block to
+// its free list after a check that its poison word is intact.
+function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
+  let o = "  (global $__fern_quar_head (mut i32) (i32.const 0))\n  (global $__fern_quar_tail (mut i32) (i32.const 0))\n  (global $__fern_quar_bytes (mut i64) (i64.const 0))\n";
+  o += "  (func $__fern_quar (param $base i32) (param $bytes i32)\n";
+  o += "    (local $e i32) (local $n i32) (local $cls i32)\n";
+  o = o + "    (i32.store (local.get $base) (i32.const " + san_poison() + "))\n";
+  o += "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $bytes))\n";
+  o += "    (if (i32.lt_u (local.get $bytes) (i32.const 16)) (then (return)))\n";
+  o += "    (i32.store (i32.add (local.get $base) (i32.const 8)) (i32.const 0))\n";
+  o += "    (if (global.get $__fern_quar_tail)\n";
+  o += "      (then (i32.store (i32.add (global.get $__fern_quar_tail) (i32.const 8)) (local.get $base)))\n";
+  o += "      (else (global.set $__fern_quar_head (local.get $base))))\n";
+  o += "    (global.set $__fern_quar_tail (local.get $base))\n";
+  o += "    (global.set $__fern_quar_bytes (i64.add (global.get $__fern_quar_bytes) (i64.extend_i32_u (local.get $bytes))))\n";
+  if (h.budget > 0i64) {
+    o += "    (block $ev_done (loop $ev\n";
+    o = o + "      (br_if $ev_done (i64.le_u (global.get $__fern_quar_bytes) (i64.const " + util.i64_to_string(h.budget) + ")))\n";
+    o += "      (local.set $e (global.get $__fern_quar_head))\n";
+    o += "      (global.set $__fern_quar_head (i32.load (i32.add (local.get $e) (i32.const 8))))\n";
+    o += "      (if (i32.eqz (global.get $__fern_quar_head)) (then (global.set $__fern_quar_tail (i32.const 0))))\n";
+    o = o + "      (if (i32.ne (i32.load (local.get $e)) (i32.const " + san_poison() + ")) (then (call $__fern_san_uaf)))\n";
+    o += "      (local.set $n (i32.load (i32.add (local.get $e) (i32.const 4))))\n";
+    o += "      (global.set $__fern_quar_bytes (i64.sub (global.get $__fern_quar_bytes) (i64.extend_i32_u (local.get $n))))\n";
+    o += "      (i32.store (local.get $e) (i32.const 0))\n";
+    o += "      (local.set $cls (call $__fern_capw (i32.shr_u (local.get $n) (i32.const 3))))\n";
+    o = o + "      (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
+    o = o + "        (i32.store (i32.add (local.get $e) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+    o = o + "        (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $e)))\n";
+    o += "      (else (call $__fern_large_push (local.get $e) (local.get $n))))\n";
+    o += "      (br $ev)))\n";
+  }
+  return o + "  )\n";
+}
+
+// The layout and the switches of the wasm heap runtime. Under `san` a release
+// goes to a quarantine of `budget` bytes (0 for no bound).
+pub struct WasmHeap { base: i32, fl_base: i32, fl_cells: i32, lfl_base: i32, count: boolean, lc: boolean, san: boolean, budget: i64 }
+
+pub function heap_alloc_helpers(h: WasmHeap): string {
+  let heap_base = h.base;
+  let fl_base = h.fl_base;
+  let fl_cells = h.fl_cells;
+  let lfl_base = h.lfl_base;
+  let count = h.count;
+  let lc = h.lc;
   let hb = util.i32_to_string(heap_base);
   let pages: i32 = (heap_base + 65535) / 65536;
   if (pages < 16) {
@@ -9348,7 +9443,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o += "    (memory.copy (i32.add (i32.add (local.get $base) (i32.const 12)) (local.get $la)) (local.get $src) (local.get $lb))\n";
   o += "    (i32.add (local.get $base) (i32.const 8)))\n";
   o += "  (func $__fern_raw_free (param $base i32) (param $bytes i32)\n";
-  o += "    (local $cls i32) (local $slot i32)\n";
+  o += "    (local $cls i32) (local $slot i32) (local $q i32)\n";
   o += "    (if (i32.eqz (local.get $base)) (then (return)))\n";
   o = o + "    (if (i32.lt_u (local.get $base) (i32.const " + hb + ")) (then (call $__fern_abort_free_range) (unreachable)))\n";
   // A zero-byte allocation can equal the heap cursor without advancing it.
@@ -9356,6 +9451,9 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o += "    (local.set $bytes (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8)))\n";
   o += lc_bump_free("(local.get $bytes)", lc);
   o += "    (if (i32.lt_u (local.get $bytes) (i32.const 8)) (then (return)))\n";
+  if (h.san) {
+    o += raw_release_san();
+  }
   o += "    (local.set $cls (call $__fern_capw (i32.shr_u (local.get $bytes) (i32.const 3))))\n";
   o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
   o = o + "      (local.set $slot (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))))\n";
@@ -9392,12 +9490,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o += "    (if (i32.eq (i32.load (i32.add (local.get $base) (i32.const 4))) (local.get $want)) (then\n";
   o += "      (return (local.get $t))))\n";
   o += lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))", lc);
-  o += "    (local.set $cls (call $__fern_capw (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3))))\n";
-  o += "    (i32.store (local.get $base) (i32.const 0))\n";
-  o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
-  o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
-  o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base)))\n";
-  o += "    (else (call $__fern_large_push (local.get $base) (i32.load (i32.add (local.get $base) (i32.const 4))))))\n";
+  o += typed_release(h, flb, flc);
   o += "    (call $__fern_str_box (i32.mul (local.get $nf) (i32.const 8))))\n";
   o += "  (func $__fern_arr_dec (param $a i32) (result i32)\n";
   o += "    (local $base i32) (local $rc i32) (local $cls i32)\n";
@@ -9406,20 +9499,17 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
   o += "    (local.set $base (i32.sub (local.get $a) (i32.const 8)))\n";
   o += "    (local.set $rc (i32.load (local.get $base)))\n";
+  o += san_poison_check(h.san, "$rc");
   o += "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $a))))\n";
   o += "    (if (i32.gt_s (local.get $rc) (i32.const 1)) (then\n";
   o += "      (i32.store (local.get $base) (i32.sub (local.get $rc) (i32.const 1)))\n";
   o += "      (return (local.get $a))))\n";
   o += "    (if (i32.le_s (local.get $rc) (i32.const 0)) (then\n";
   o += "      (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))\n";
+  o += san_over_call(h.san);
   o += "      (return (local.get $a))))\n";
   o += lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))", lc);
-  o += "    (local.set $cls (call $__fern_capw (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3))))\n";
-  o += "    (i32.store (local.get $base) (i32.const 0))\n";
-  o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
-  o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
-  o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base)))\n";
-  o += "    (else (call $__fern_large_push (local.get $base) (i32.load (i32.add (local.get $base) (i32.const 4))))))\n";
+  o += typed_release(h, flb, flc);
   o += "    (local.get $a))\n";
   o += "  (func $__fern_arr_dec_ptr (param $a i32) (result i32)\n";
   o += "    (local $i i32) (local $n i32)\n";
@@ -9435,10 +9525,13 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o += "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o += "        (br $adp_lp))))) \n";
   o += "    (call $__fern_arr_dec (local.get $a)))\n";
+  if (h.san) {
+    o += quarantine_funcs(h, flb, flc);
+  }
   return o;
 }
 
-pub function rc_runtime_helpers(heap_base: i32): string {
+pub function rc_runtime_helpers(heap_base: i32, san: boolean): string {
   let lo = util.i32_to_string(heap_base);
   let o = "";
   o += "  (func $__fern_oob_abort (result i32) (call $__fern_abort_arr) (unreachable))\n";
@@ -9460,6 +9553,7 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (local.get $p))))\n";
   o += "    (local.set $base (i32.and (local.get $p) (i32.const -3)))\n";
   o += "    (local.set $rc (i32.load (i32.sub (local.get $base) (i32.const 8))))\n";
+  o += san_poison_check(san, "$rc");
   o += "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $p))))\n";
   o += "    (i32.store (i32.sub (local.get $base) (i32.const 8)) (i32.add (local.get $rc) (i32.const 1)))\n";
   o += "    (local.get $p))\n";
@@ -9469,9 +9563,10 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   o += "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (local.get $p))))\n";
   o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (local.get $p))))\n";
   o += "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
+  o += san_poison_check(san, "$rc");
   o += "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $p))))\n";
   o += "    (if (i32.le_s (local.get $rc) (i32.const 0))\n";
-  o += "      (then (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))))\n";
+  o += "      (then (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))\n" + san_over_call(san) + "))\n";
   o += "    (i32.store (i32.sub (local.get $p) (i32.const 8)) (i32.sub (local.get $rc) (i32.const 1)))\n";
   o += "    (local.get $p))\n";
   o += "  (func $__fern_rc_is_unique (param $p i32) (result i32)\n";
@@ -10385,6 +10480,12 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     }
   }
   let abort_to = sv.len();
+  let san = sw.sanitize && mode != 1;
+  if (san) {
+    for text in wasm_abort.san_texts() {
+      sv = sv.append(text);
+    }
+  }
   if (needs_io_error(needs)) {
     sv = with_strerror_texts(sv);
   }
@@ -10405,6 +10506,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   let caggs = placed_caggs(cv, const_agg_region_base(sv));
   let shadow = shadow_stack_bytes(needs);
   parts = parts.append(wasm_abort.helpers(abort_offsets, mode));
+  if (san) {
+    parts = parts.append(wasm_abort.san_helpers([strs.offs[abort_to], strs.offs[abort_to + 1]], mode));
+  }
   parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(sv, cv, shadow)) + ")\n");
   if (shadow > 0) {
     let lo = shadow_lo_for_strs(sv, cv);
@@ -10452,8 +10556,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate", "writer_set_times",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect_with", "tcp_send_bytes", "tcp_send_buf", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into", "tcp_accept", "tcp_accept_with", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
-    parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv, shadow), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count"), lc));
-    parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv, shadow)));
+    let heap = WasmHeap { base: heap_base_for_strs(sv, cv, shadow), fl_base: fl_base_for_strs(sv, cv), fl_cells: fl_cells(), lfl_base: large_fl_base_for_strs(sv, cv), count: need(needs, "@heap_alloc_count"), lc: lc, san: san, budget: sw.quarantine };
+    parts = parts.append(heap_alloc_helpers(heap));
+    parts = parts.append(rc_runtime_helpers(heap.base, san));
   }
   if (need(needs, "@calls_set_args")) {
     parts = parts.append(set_args_func());

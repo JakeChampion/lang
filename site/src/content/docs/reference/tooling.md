@@ -282,7 +282,7 @@ fern -target x86-64-linux -sanitize -g -o prog prog.fern && ./prog
 
 The sanitizer never reuses freed memory, so it is for debugging, not for
 shipping. All four checks run on the native x86-64 and arm64 targets.
-On wasm, only the leak census is available.
+Wasm has the leak census and the double-free and use-after-free checks.
 
 ## Embedding assets
 
