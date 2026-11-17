@@ -52,6 +52,11 @@ function mark_on_base(fs: text.Fonts, s: string): string {
   }
   let (mark, base) = (placed[0], placed[placed.len() - 1]);
   let middle = mark.x + mark.bm.width / 2 - (base.x + base.bm.width / 2);
+  let parts: string[] = [];
+  for p in placed {
+    parts = parts.append("g" + (p.key & 4294967295i64).to_string() + " font " + (p.key >> 32 >> 2 >> 12).to_string() + " x" + p.x.to_string() + " y" + p.y.to_string() + " " + p.bm.width.to_string() + "x" + p.bm.height.to_string());
+  }
+  log.warn("i18ntest: placed " + parts.join(", "));
   return (mark.y + mark.bm.height <= base.y).to_string() + " " + (middle.abs() < base.bm.width / 4).to_string();
 }
 
@@ -99,6 +104,9 @@ function step(s: App, e: android.Event): App {
     }
     let fatha = "بَ";
     fs = fs.covering(0, fatha, text.system_fallbacks(s.ctx, "sans-serif"));
+    for f in fonts.fallbacks(s.ctx, "sans-serif", 400, 0x628) {
+      log.warn("i18ntest: font of U+0628 " + f.path + "#" + f.index.to_string());
+    }
     log.warn("i18ntest: mark " + mark_on_base(fs, bidi.display(fatha, bidi.AUTO)));
     for f in fonts.fallbacks(s.ctx, "sans-serif", 400, 0x1F600) {
       log.warn("i18ntest: font of U+1F600 " + f.path + "#" + f.index.to_string() + " " + table_tags(f.path));
