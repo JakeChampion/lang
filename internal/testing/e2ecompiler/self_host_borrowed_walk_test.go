@@ -129,6 +129,92 @@ func TestSelfHostWalkOfAKeptListBorrows(t *testing.T) {
 	}
 }
 
+// lookup is a method that calls itself on a part of its receiver. probe keeps
+// its scope after each lookup.
+const borrowedMethodWalkProg = `struct Scope { outer: Option[Scope], names: string[], values: i32[] }
+
+@noinline function (e: Scope) lookup(name: string): i32 {
+  let i = e.names.len() - 1;
+  while (i >= 0) {
+    if (e.names[i] == name) {
+      return e.values[i];
+    }
+    i -= 1;
+  }
+  return match (e.outer) { Some(parent) => parent.lookup(name), None => 0 };
+}
+
+@noinline function probe(e: Scope, name: string): i32 {
+  return e.lookup(name) + e.lookup("c") + e.lookup("none");
+}
+
+function main(): i32 {
+  let g = Scope { outer: None, names: ["a", "b"], values: [1, 2] };
+  let f = Scope { outer: Some(g), names: ["c"], values: [4] };
+  let sum = 0;
+  for round in 0..3 {
+    sum += probe(f, "a") + probe(f, "b");
+  }
+  return sum;
+}
+`
+
+// The graph of a method has the bare name of the method, and a call has the
+// name of the receiver type before it. The inference finds the row and the
+// self calls of a method by the name of the call, so the walk borrows a
+// receiver that each caller keeps: lookup counts nothing and calls no
+// release.
+func TestSelfHostMethodWalkOfAKeptChainBorrows(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "walk.fern")
+	if err := os.WriteFile(src, []byte(borrowedMethodWalkProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]*regexp.Regexp{
+		"x86-64-linux": regexp.MustCompile(`(?m)^\s+(addl|subl) \$1, -8\(|call __fn___sem_(release|drop)_|call __fn___fern_box_dec|call __fn___fern_str_free`),
+		"arm64-linux":  regexp.MustCompile(`(?m)^\s+stur w\d+, \[x\d+, #-8\]|bl __fn___sem_(release|drop)_|bl __fn___fern_box_dec|bl __fn___fern_str_free`),
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		asm, err := os.ReadFile(cli.emit(t, src, target))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(asm)
+		at := strings.Index(text, "\n__fn_Scope__lookup.r:\n")
+		if at < 0 {
+			t.Fatalf("%s: no lookup in the listing", target)
+		}
+		body := text[at:]
+		if end := strings.Index(body, ".cfi_endproc"); end >= 0 {
+			body = body[:end]
+		}
+		if m := counts[target].FindString(body); m != "" {
+			t.Errorf("%s: lookup counts or releases the scope that its caller keeps (%q):\n%s", target, strings.TrimSpace(m), body)
+		}
+	}
+	// Each round reads a (1) and b (2), and c (4) two times.
+	const want = 3 * (1 + 2 + 4 + 4)
+	for _, tg := range h.targets {
+		bin := filepath.Join(dir, tg.target+".bin")
+		h.compileWith(t, tg, src, bin)
+		if _, got := h.runProduced(t, tg, bin); got != want {
+			t.Errorf("%s: exit %d, want %d", tg.target, got, want)
+		}
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		stderr, code := cli.exitOf(t, borrowedMethodWalkProg, target, "FERN_LEAKCHECK=1", "FERN_SANITIZE=1")
+		if code != want {
+			t.Fatalf("%s: exit %d, want %d\n%s", target, code, want, stderr)
+		}
+		allocs, frees, live := parseLeakcheck(t, "borrowed-method-walk", stderr)
+		if allocs != frees || live != 0 {
+			t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", target, allocs, frees, live)
+		}
+	}
+}
+
 // sum and count walk with a cursor in a while loop. after returns its cursor,
 // and tails puts the rest of its cursor in a new cell at each step. probe
 // owns its list and reads it after the walks. bagged owns a record, and its
