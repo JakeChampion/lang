@@ -251,7 +251,8 @@
       ],
       "compiler": true,
       "inputs": [
-        ".github/workflows/perf.yml"
+        ".github/workflows/perf.yml",
+        "scripts/certify-census"
       ]
     },
     "bootstrap": {

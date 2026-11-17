@@ -989,6 +989,9 @@ pub function certify_mode(): i32 {
       if (v == "report") {
         return 1;
       }
+      if (v == "mutate") {
+        return 3;
+      }
       if (!envflag.value_on(v)) {
         return 0;
       }
