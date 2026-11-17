@@ -69,6 +69,9 @@ func TestAllRuntimeNeedRootsCoversEveryLiteralNeed(t *testing.T) {
 	listed := map[string]bool{}
 	body := allRuntimeNeedRootsBody(t)
 	for _, m := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(body, -1) {
+		if listed[m[1]] {
+			t.Errorf("runtime need root %q is in ircore.all_runtime_need_roots() more than one time: remove the second row", m[1])
+		}
 		listed[m[1]] = true
 	}
 	kernels := byteCopyKernels(t)
