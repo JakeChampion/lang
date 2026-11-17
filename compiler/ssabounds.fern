@@ -7,22 +7,24 @@ import "./util";
 struct Rel { lo: i32, hi: i32, strict: boolean, nonnegative: boolean }
 
 // `sure[v]` is true when every caller gives the parameter v a value that is
-// not negative.
-struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], unsigned_max: i64[], sure: boolean[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
+// not negative. `under[v]` is the parameter whose length each caller gives
+// the parameter v a value below, or -1.
+struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], unsigned_max: i64[], sure: boolean[], under: i32[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
 
 pub struct SignTested { func: ssasem.Func, changed: boolean }
 
 // What every caller gives each parameter of a function: `nonneg[k]` is
 // true when each argument is not negative, and `max[k]` is a bound that
-// each argument stays at or below, or -1.
-pub struct ParamFacts { nonneg: boolean[], max: i64[] }
+// each argument stays at or below, or -1. `below[k]` is the parameter
+// whose argument has a length above each argument k, or -1.
+pub struct ParamFacts { nonneg: boolean[], max: i64[], below: i32[] }
 
 pub function no_facts(): ParamFacts {
-  return ParamFacts { nonneg: [], max: [] };
+  return ParamFacts { nonneg: [], max: [], below: [] };
 }
 
 pub function (p: ParamFacts) known(): boolean {
-  return p.nonneg.filter((b: boolean): boolean => b).len() > 0;
+  return p.nonneg.filter((b: boolean): boolean => b).len() > 0 || p.below.filter((j: i32): boolean => j >= 0).len() > 0;
 }
 
 pub function proven_indices(f: ssasem.Func): ssasem.Func {
@@ -367,6 +369,7 @@ function graph_with(f: ssasem.Func, facts: ParamFacts): Graph {
   }
   let widens = __alloc_i32(n);
   let sure = __alloc_bool(n);
+  let params = util.minus_ones(f.params.len());
   let nb = f.graph.blocks.len();
   let b = 0;
   while (b < nb) {
@@ -376,6 +379,9 @@ function graph_with(f: ssasem.Func, facts: ParamFacts): Graph {
         home = home.with(ins.result, b);
         widens = widens.with(ins.result, widening(f, ins));
         let k = ins.imm;
+        if (ins.kind_tag == ssa.PARAM && k >= 0 && k < params.len()) {
+          params = params.with(k, ins.result);
+        }
         if (ins.kind_tag == ssa.PARAM && k >= 0 && k < facts.nonneg.len() && facts.nonneg[k] && i32s[ins.result]) {
           sure = sure.with(ins.result, true);
           if (facts.max[k] >= 0i64 && (unsigned_max[ins.result] < 0i64 || facts.max[k] < unsigned_max[ins.result])) {
@@ -386,8 +392,15 @@ function graph_with(f: ssasem.Func, facts: ParamFacts): Graph {
     }
     b += 1;
   }
+  let under = util.minus_ones(n);
+  for k in 0..facts.below.len() {
+    let j = facts.below[k];
+    if (j >= 0 && k < params.len() && j < params.len() && params[k] >= 0 && params[j] >= 0 && i32s[params[k]]) {
+      under = under.with(params[k], params[j]);
+    }
+  }
   let at = ssa.block_positions(f.graph);
-  let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, unsigned_max: unsigned_max, sure: sure, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
+  let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, unsigned_max: unsigned_max, sure: sure, under: under, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
   for b in 0..nb {
     let blk = f.graph.blocks[b];
     let before = g.rels.len();
@@ -741,6 +754,9 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   x = ssa.copy_root(g.defs, x);
   let d = g.defs[x];
   if (small_below(g, b, x, base)) {
+    return true;
+  }
+  if (g.under[x] >= 0 && ssa.copy_root(g.defs, base) == g.under[x]) {
     return true;
   }
   // Upper bounds also hold for negative sentinels. The access still needs
@@ -1873,9 +1889,11 @@ function round_facts(funcs: ssasem.Func[], ix: util.NameIndex, direct: boolean[]
   let seen = __alloc_bool(funcs.len());
   let nonneg_at: boolean[][] = [];
   let max_at: i64[][] = [];
+  let below_at: i32[][] = [];
   for f in funcs {
     nonneg_at = nonneg_at.append(f.params.map((t: typeinfo.Type): boolean => ssasem.is_i32(t)));
     max_at = max_at.append(f.params.map((t: typeinfo.Type): i64 => 0i64));
+    below_at = below_at.append(f.params.map((t: typeinfo.Type): i32 => if (ssasem.is_i32(t)) { UNSEEN } else { -1 }));
   }
   for c in 0..funcs.len() {
     let f = funcs[c];
@@ -1900,18 +1918,53 @@ function round_facts(funcs: ssasem.Func[], ix: util.NameIndex, direct: boolean[]
         }
         nonneg_at = nonneg_at.with(j, row);
         max_at = max_at.with(j, top);
+        below_at = below_at.with(j, call_below(g, b, ins, below_at[j]));
       }
     }
   }
   let out: ParamFacts[] = [];
   for j in 0..funcs.len() {
     if (seen[j]) {
-      out = out.append(ParamFacts { nonneg: nonneg_at[j], max: max_at[j] });
+      out = out.append(ParamFacts { nonneg: nonneg_at[j], max: max_at[j], below: below_at[j].map((m: i32): i32 => if (m == UNSEEN) { -1 } else { m }) });
     } else {
       out = out.append(no_facts());
     }
   }
   return out;
+}
+
+// A parameter that no call has given a fact of `below` yet.
+const UNSEEN: i32 = -2;
+
+// The facts of `below` that hold at the call `ins` in block b as well as at
+// each call before: argument k stays below the length of argument m.
+function call_below(g: Graph, b: i32, ins: ssa.SInst, before: i32[]): i32[] {
+  let out = before;
+  for k in 0..before.len() {
+    let m = before[k];
+    if (m == -1) {
+      continue;
+    }
+    if (k >= ins.args.len()) {
+      out = out.with(k, -1);
+    } else if (m >= 0) {
+      out = out.with(k, if (m < ins.args.len() && below(g, b, ins.args[k], ins.args[m], [], depth())) { m } else { -1 });
+    } else {
+      out = out.with(k, first_below(g, b, ins, k));
+    }
+  }
+  return out;
+}
+
+// The first argument of `ins`, other than k, whose length is above the
+// argument k, or -1.
+function first_below(g: Graph, b: i32, ins: ssa.SInst, k: i32): i32 {
+  for m in 0..ins.args.len() {
+    if (m != k && !g.i32s[ins.args[m]] && below(g, b, ins.args[k], ins.args[m], [], depth())) {
+      return m;
+    }
+  }
+  return -1;
 }
 
 function calls_direct(f: ssasem.Func, ix: util.NameIndex, direct: boolean[]): boolean {
@@ -1935,6 +1988,14 @@ function same_facts(a: ParamFacts[], b: ParamFacts[]): boolean {
     }
     for k in 0..a[i].nonneg.len() {
       if (a[i].nonneg[k] != b[i].nonneg[k] || a[i].max[k] != b[i].max[k]) {
+        return false;
+      }
+    }
+    if (a[i].below.len() != b[i].below.len()) {
+      return false;
+    }
+    for k in 0..a[i].below.len() {
+      if (a[i].below[k] != b[i].below[k]) {
         return false;
       }
     }
