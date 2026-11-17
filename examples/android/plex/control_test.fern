@@ -1789,7 +1789,28 @@ function test_system_bars_leave_the_content_free(): test.TestOutcome {
 }
 
 function test_layout_fits_the_window(): test.TestOutcome {
-  return test.assert_eq(layout_fault(W, H, false) + "|" + layout_fault(1080, 2400, true), "|");
+  return test.assert_eq(layout_fault(W, H, false) + "|" + layout_fault(1080, 2400, true) + "|" + music_fault(W, H) + "|" + music_fault(1080, 2400), "|||");
+}
+
+// The buttons of music and the seek bar end above the navigation bar, and
+// the buttons are under the seek bar.
+function music_fault(w: i32, h: i32): string {
+  let bottom = h / 20;
+  let pv = ui.PlayerView { ...ui.no_player(), title: "Song", overlay: true, audio: true, has_next: true, repeat: "REPEAT OFF", sleep: "SLEEP OFF", duration_ms: 300000i64 };
+  let ns = ui.nodes(ui.View { ...ui.empty_view(w, h), bottom: bottom, screen: ui.PLAYER, player: pv });
+  let free = scene.node(0, 0, w, h - bottom, scene.Blank);
+  let Some(bar) = find(ns, "seek") else {
+    return "no seek bar";
+  };
+  for name in ["shuffle", "repeat", "sleep", "next_track"] {
+    let Some(b) = find(ns, name) else {
+      return "no button " + name;
+    };
+    if (!inside(b, free) || b.y < bar.y + bar.h) {
+      return "the button " + name + " is not between the seek bar and the navigation bar";
+    }
+  }
+  return "";
 }
 
 function test_dot_font_has_the_signs(): test.TestOutcome {

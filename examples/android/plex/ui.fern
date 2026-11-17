@@ -1018,9 +1018,10 @@ function pin_pad(m: Metrics, digits: string): scene.Node[] {
   return out;
 }
 
-// The progress bar of the player, as a node whose tap seeks.
-pub function seek_bar(m: Metrics): scene.Node {
-  return mk(24 * m.u, m.h - m.bottom - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "seek");
+// The progress bar of the player, as a node whose tap seeks. The buttons
+// of music go under it, so it goes up by their height.
+pub function seek_bar(m: Metrics, p: PlayerView): scene.Node {
+  return mk(24 * m.u, m.h - m.bottom - 72 * m.u - music_height(m, p), m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "seek");
 }
 
 // The size of a preview thumbnail over the seek bar.
@@ -1078,7 +1079,7 @@ function player(m: Metrics, v: View): scene.Node[] {
   if (p.status.len() > 0) {
     out = out.append(label(m, (m.w - draw.text_width(p.status, m.ts)) / 2, cy + r + 16 * m.u, fit(p.status, m.w / m.cw), m.ts, look.muted()));
   }
-  let bar = seek_bar(m);
+  let bar = seek_bar(m, p);
   let shown_ms = p.position_ms;
   if (p.scrub_ms >= 0i64) {
     shown_ms = p.scrub_ms;
@@ -1123,16 +1124,24 @@ function player(m: Metrics, v: View): scene.Node[] {
 }
 
 // The buttons of music under the seek bar: shuffle, repeat, the sleep
-// timer and the next track, in rows that fit the width.
-function music_row(m: Metrics, p: PlayerView, y: i32): scene.Node[] {
+// timer and the next track. None for a video.
+function music_words(m: Metrics, p: PlayerView): (string, boolean, string)[] {
+  if (!p.audio) {
+    return [];
+  }
   let words: (string, boolean, string)[] = [(tr(m, "SHUFFLE"), p.shuffle, "shuffle"), (p.repeat, false, "repeat"), (p.sleep, false, "sleep")];
   if (p.has_next) {
     words = words.append((tr(m, "NEXT"), false, "next_track"));
   }
+  return words;
+}
+
+// The buttons of music from `y` down, in rows that fit the width.
+function music_row(m: Metrics, p: PlayerView, y: i32): scene.Node[] {
   let out: scene.Node[] = [];
   let x = 16 * m.u;
   let gap = 10 * m.u;
-  for word in words {
+  for word in music_words(m, p) {
     let (text, on, act) = word;
     let w = button_width(m, text);
     if (x > 16 * m.u && x + w > m.w - 16 * m.u) {
@@ -1143,6 +1152,26 @@ function music_row(m: Metrics, p: PlayerView, y: i32): scene.Node[] {
     x += w + gap;
   }
   return out;
+}
+
+// The height of the rows of the buttons of music, with the gap under each.
+function music_height(m: Metrics, p: PlayerView): i32 {
+  let words = music_words(m, p);
+  if (words.len() == 0) {
+    return 0;
+  }
+  let rows = 1;
+  let x = 16 * m.u;
+  let gap = 10 * m.u;
+  for word in words {
+    let w = button_width(m, word.0);
+    if (x > 16 * m.u && x + w > m.w - 16 * m.u) {
+      x = 16 * m.u;
+      rows += 1;
+    }
+    x += w + gap;
+  }
+  return rows * (button_height(m) + gap);
 }
 
 // The lines of the subtitle that shows, in the middle above `bottom`, in a
@@ -1174,7 +1203,7 @@ function skip_button(m: Metrics, p: PlayerView): scene.Node[] {
   if (p.skip.len() == 0) {
     return [];
   }
-  let bar = seek_bar(m);
+  let bar = seek_bar(m, p);
   return button(m, m.w - 16 * m.u - button_width(m, p.skip), bar.y - button_height(m) - 64 * m.u, p.skip, true, "skip");
 }
 
@@ -1202,7 +1231,7 @@ function up_next_card(m: Metrics, p: PlayerView): scene.Node[] {
   let w = (m.w - 32 * m.u).min(320 * m.u);
   let h = 132 * m.u;
   let x = m.w - 16 * m.u - w;
-  let y = seek_bar(m).y - h - 16 * m.u;
+  let y = seek_bar(m, p).y - h - 16 * m.u;
   let sp = small_pitch(m);
   let pad = 16 * m.u;
   let words = m.texts.format("UP NEXT IN {0}", [p.up_next_secs.to_string()]);
