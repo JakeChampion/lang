@@ -12595,7 +12595,7 @@ function emit_ssa_function(r: irtables.Lowered, selected: physicalbody.Selected,
   let lift_ms: i64 = (ircore.report_clock(timed) - t_lift) / 1000000i64;
   let t_emit = ircore.report_clock(timed);
   let certified = s.finish(pre, r, selected, lifted);
-  irverifygate.certify_or_refuse(label_name, certified.formed.f, r.ops, vgate);
+  irverifygate.certify_body_or_refuse(label_name, certified.formed.f, r, vgate);
   let prepared = ssaprepare.with_selects(certified);
   let context = asmcore.preparation_context(s, "x86-64");
   let entry = ircore.release_entry(r, "x86-64", s.rc_free_debug, s.reg_entries);

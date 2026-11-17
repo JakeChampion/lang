@@ -142,9 +142,9 @@ func TestSelfHostRcCertifyMemoKeysTheBuild(t *testing.T) {
 	}
 }
 
-// A function that resumes from a task frame is skipped, not certified, so
-// the memo must not record it as certified: a warm compile misses it again.
-func TestSelfHostRcCertifyMemoKeepsNoSkip(t *testing.T) {
+// A function that resumes from a task frame is certified as its body before
+// the frame, like any other function, so a warm compile misses nothing.
+func TestSelfHostRcCertifyMemoKnowsTaskFrames(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	memo := "FERN_RC_CERTIFY_MEMO=" + filepath.Join(t.TempDir(), "memo")
 	src := langSrcAbs(t, filepath.Join("conformance", "cases", "worker_runs_on_the_simulation", "main.fern"))
@@ -158,8 +158,8 @@ func TestSelfHostRcCertifyMemoKeepsNoSkip(t *testing.T) {
 		t.Fatalf("second compile: exit %d\n%s", code, out)
 	}
 	hits2, misses2 := memoCounts(t, out)
-	if misses2 == 0 || hits2+misses2 != misses {
-		t.Fatalf("a warm memo: hits=%d misses=%d of %d; want the skipped task-frame functions to miss again", hits2, misses2, misses)
+	if misses2 != 0 || hits2 != misses {
+		t.Fatalf("a warm memo: hits=%d misses=%d of %d; want every function a hit", hits2, misses2, misses)
 	}
 }
 

@@ -587,15 +587,19 @@ refusal exits 5 and names the function and the unit.
 A function that the
 certifier cannot decide is also a refusal with exit 5. The causes are ops
 that do not lift, no entry block, a liveness failure, a walk that does not
-settle, or a call to a callee that has no rc signature and no ABI. A function that resumes from a task frame is the one function
-the certifier skips, because it does not model the frame. The memo does not
-record a skip.
+settle, or a call to a callee that has no rc signature and no ABI.
+
+The certifier does not model a task frame. A function that suspends is
+certified as its body before `suspend.transform_state` added the frame
+(`irtables.Unsuspended`, `irverifygate.certify_body_or_refuse`). The frame
+saves and restores words, and the retains and releases are the same. A
+function with a frame and no such body is a refusal.
 
 `FERN_RC_CERTIFY=report` turns refusals into a census line for each
 function. The line gives the tracked and the unproved values and the
 findings. An `at=` field names each unproved value as
 `FERN_RC_CERTIFY_DUMP` prints it. The line also gives the most rounds a walk
-took to settle, and any skip, failure or opaque callee. A runtime unit's gate prints its census too.
+took to settle, and any failure or opaque callee. A runtime unit's gate prints its census too.
 
 `FERN_RC_CERTIFY=mutate` adds three mutants of each function that passes: its
 middle release deleted, its middle retain deleted, and its middle release
@@ -603,7 +607,7 @@ done twice. A finding refutes a mutant. A mutant that leaves more values
 unproved is weakened, and a mutant that passes is missed.
 
 The Perf lane pins
-the unproved values, the skipped functions and the mutant
+the unproved values and the mutant
 outcomes (`scripts/certify-census`, `.github/certify-baseline.txt`). Thus
 none of these counts moves without a re-bank. Pinned by
 `TestSelfHostRcCertify*`
@@ -769,9 +773,9 @@ miscompile; `internal/testing/e2ecompiler` is primary on a lowering change.
   lowered when a program first needs it, after the program's gate exists, so
   the routines that a program calls there, and the helpers that `ssarc` and
   `ssabytes` generate, have rows in `rcsigs` instead.
-- A function that resumes from a task frame is not certified. Its body before
-  `suspend.transform_state` has the same counting and no frame, so the gate
-  could certify that body, if the lowered state carried it to the gate.
+- The certifier checks the body of a suspending function, not the frame that
+  `suspend.transform_state` adds to it. The transform's tests are the only
+  check that a resumed frame restores each word that it saved.
 - The analyses in section 1.3 are separate walks with separate soundness
   arguments; their seams are where the imprecisions sit (#11910 proposes one
   forward model they all query).
