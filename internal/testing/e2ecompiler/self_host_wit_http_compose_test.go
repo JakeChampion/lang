@@ -117,27 +117,33 @@ func serveComponentHeaders(t *testing.T, wasmtime, component, method, path, body
 	return status, hdr, got
 }
 
-func serveComponentLogged(t *testing.T, wasmtime, component, method, path, body string, headers map[string]string, logged string) (int, http.Header, string, string) {
+// startServe runs `wasmtime serve` on a free port until the caller calls stop.
+func startServe(t *testing.T, wasmtime, component string) (addr string, slog *lockedBuffer, stop func()) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("pick port: %v", err)
 	}
-	addr := ln.Addr().String()
+	addr = ln.Addr().String()
 	ln.Close()
 
 	srv := exec.Command(wasmtime, "serve", "--addr", addr, component)
-	var slog lockedBuffer
-	srv.Stdout = &slog
-	srv.Stderr = &slog
+	slog = &lockedBuffer{}
+	srv.Stdout = slog
+	srv.Stderr = slog
 	if err := srv.Start(); err != nil {
 		t.Fatalf("start wasmtime serve: %v", err)
 	}
-	defer func() {
+	return addr, slog, func() {
 		_ = srv.Process.Kill()
 		_, _ = srv.Process.Wait()
-	}()
+	}
+}
 
+func serveComponentLogged(t *testing.T, wasmtime, component, method, path, body string, headers map[string]string, logged string) (int, http.Header, string, string) {
+	t.Helper()
+	addr, slog, stop := startServe(t, wasmtime, component)
+	defer stop()
 	client := &http.Client{Timeout: 5 * time.Second}
 	deadline := time.Now().Add(10 * time.Second)
 	var resp *http.Response

@@ -38,11 +38,11 @@ function stream_write(stream: i32, data: u8[]): Result[i32, i32] {
 function main(): i32 {
     let data: u8[] = [];
     for i in 0..8193 { data = data.append((i % 251) as u8); }
-    write_all(0, data);
-    write_all(1, data);
-    write_all(2, data);
+    assert(write_all(0, data));
+    assert(!write_all(1, data));
+    assert(!write_all(2, data));
     let empty: u8[] = [];
-    write_all(1, empty);
+    assert(write_all(1, empty));
     return 0;
 }
 `

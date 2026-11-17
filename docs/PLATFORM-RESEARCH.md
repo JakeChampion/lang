@@ -1,8 +1,8 @@
 # Platform research — the handler / host seam for edge functions
 
-Status: [research] historical survey and proposals, tracked in #4414.
+Status: [research] historical survey and proposals.
 
-[Current implementation status](PLATFORM-IMPLEMENTATION-STATUS.md) records the present interfaces and remaining acceptance criteria.
+[Current implementation status](PLATFORM-IMPLEMENTATION-STATUS.md) records the present interfaces and the issue of each remaining item.
 The sections below preserve the original design study, with its historical source paths and migration proposals.
 
 This study names historical or proposed source paths. The reference documentation identifies current files.

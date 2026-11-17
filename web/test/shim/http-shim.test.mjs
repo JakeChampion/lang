@@ -128,3 +128,43 @@ describe("HTTP response streaming", () => {
     });
   }
 });
+
+describe("HTTP request body", () => {
+  it("ends the input stream with Err(closed), not last-operation-failed", async () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const view = new DataView(memory.buffer);
+    let cursor = 1024;
+    const realloc = (_ptr, _old, _align, len) => {
+      const ptr = cursor;
+      cursor += len;
+      return ptr;
+    };
+    const reads = [];
+    const replacement = mock.method(WebAssembly, "instantiate", async (_module, imports) => ({
+      instance: { exports: {
+        memory,
+        cabi_realloc: realloc,
+        "wasi:http/incoming-handler@0.2.0#handle": (req, _out) => {
+          const http = imports["wasi:http/types@0.2.0"];
+          const streams = imports["wasi:io/streams@0.2.0"];
+          http["[method]incoming-request.consume"](req, 0);
+          http["[method]incoming-body.stream"](view.getUint32(4, true), 0);
+          const stream = view.getUint32(4, true);
+          for (let i = 0; i < 2; i++) {
+            // Junk at the case offset: the host must write the case itself.
+            view.setUint32(4, 0xdead, true);
+            streams["[method]input-stream.blocking-read"](stream, 4096n, 0);
+            reads.push([view.getUint8(0), view.getUint32(4, true)]);
+          }
+        },
+      } },
+    }));
+    try {
+      await runHttpHandler(new Uint8Array(), { body: "hi" });
+    } finally {
+      replacement.mock.restore();
+    }
+    assert.equal(reads[0][0], 0, "the first read gives the body");
+    assert.deepEqual(reads[1], [1, 1], "the second read gives Err(closed)");
+  });
+});
