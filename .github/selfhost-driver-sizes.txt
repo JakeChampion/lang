@@ -63,6 +63,12 @@
 # +9.2% for the same absolute growth depending only on which driver divided it.
 
 fern.fern/stage2 18593232
+
+# The smallest HTTP/1.1 server over TLS (scripts/net-bench.d/tls_hello.fern),
+# built by stage 1 with -size. It moves with std/serve, the TLS stack and the
+# current compiler's codegen. It replaces the 500 KB target of #12508.
+net/tls_hello 876448
+
 fern.fern 18689488
 drivers/runtime_run.fern 18804400
 drivers/asm_load_run.fern 14326368
