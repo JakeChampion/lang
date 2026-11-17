@@ -951,7 +951,7 @@ function fdt_summary(raw: u8[]): string {
 
 // The glyphs of some characters, their metrics, and a bitmap of each one.
 function truetype_summary(raw: u8[]): string {
-  let Some(f) = truetype.parse(raw[0:raw.len()]) else {
+  let Some(f) = truetype.parse(raw) else {
     return "truetype refused";
   };
   let advance = 0;

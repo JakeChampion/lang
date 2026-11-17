@@ -48,9 +48,17 @@ findings() {
     sed -n 's/^\([^ :]*\):[0-9]*:[0-9]*: warning\[modern-form\]: \(.*\)$/\1: \2/p' | sort
 }
 
+# not_ignored — the findings on standard input that are not in a file that git
+# ignores. A build writes such files, and the tree of BASE has none of them.
+not_ignored() {
+  while IFS= read -r finding; do
+    git check-ignore -q -- "${finding%%: *}" || printf '%s\n' "$finding"
+  done
+}
+
 status=0
 findings "$FERN_RATCHET_BASE_TREE" > "$tmp/before"
-findings . > "$tmp/after"
+findings . | not_ignored > "$tmp/after"
 if [ ! -s "$tmp/after" ]; then
   echo "check-ratchets: modern-form found nothing; the gate would pass with no measurement" >&2
   status=1
