@@ -62,8 +62,8 @@ x86_64/deflate_encode.ir	41015265
 x86_64/deflate_encode.text	7282
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
-x86_64/http_hello.text	15973
-x86_64/http_hello.ir	21380372
+x86_64/http_hello.text	16407
+x86_64/http_hello.ir	22236372
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8891
@@ -104,7 +104,7 @@ x86_64/tokenize.text	1294
 x86_64/tokenize.ir	31710112
 x86_64/utf8_ingest_unchecked.text	8715
 x86_64/utf8_ingest_unchecked.ir	2100062
-x86_64/utf8_ingest_validated.text	9021
+x86_64/utf8_ingest_validated.text	9419
 x86_64/utf8_ingest_validated.ir	4973863
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -141,8 +141,8 @@ aarch64/deflate_encode.ir	41360721
 aarch64/deflate_encode.text	7752
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24975095
-aarch64/http_hello.text	16947
-aarch64/http_hello.ir	23508553
+aarch64/http_hello.text	17336
+aarch64/http_hello.ir	24312553
 aarch64/int_loop.text	376
 aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8835
@@ -183,7 +183,7 @@ aarch64/tokenize.text	1531
 aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	9170
 aarch64/utf8_ingest_unchecked.ir	2593882
-aarch64/utf8_ingest_validated.text	9484
+aarch64/utf8_ingest_validated.text	9778
 aarch64/utf8_ingest_validated.ir	5899482
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	37302530
@@ -229,3 +229,7 @@ x86_64/gather_many.ir	37006962
 aarch64/gather_many.text	6251
 aarch64/gather_many.ir	42764802
 aarch64/hex_decode.ir	182381782
+aarch64/utf8_validate.text	2824
+aarch64/utf8_validate.ir	227712358
+x86_64/utf8_validate.text	2586
+x86_64/utf8_validate.ir	216573090
