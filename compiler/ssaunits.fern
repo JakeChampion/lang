@@ -5390,15 +5390,19 @@ pub function classified_at(k: Keeps, pos: i32): Option[i32] {
 }
 
 // Whether the count of the donor of row is at its death what its token read.
-// From the read to the death, each instruction reads the donor, changes no
-// count, or is the rebuild of a keep. No step drops another value, reuses
+// From the read to the death, each instruction reads a field or the variant
+// of the donor, changes no count, or is the rebuild of a keep. A call that
+// borrows the donor can release another value. No step drops another value, reuses
 // another box or ends another row.
 pub function count_holds(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, k: Keeps, row: i32): boolean {
   let d = k.donors[row];
   let death = if (k.built[row] >= 0) { k.built[row] } else { k.taken[row] };
+  if (k.start[row] < 0 || death >= b.insts.len() || death >= pairs.selfs.len() || death >= pairs.builds.len() || death >= pairs.tokens.len()) {
+    return false;
+  }
   for pos in k.start[row]..=death {
     let ins = b.insts[pos];
-    let reads = util.index_of_i32(ins.args, d) >= 0 || pos == k.built[row] || count_neutral(f, ins);
+    let reads = util.index_of_i32(ins.args, d) >= 0 && (taken_read(ins.kind_tag) || ins.kind_tag == ssasem.variant_is()) || pos == k.built[row] || count_neutral(f, ins);
     if (!reads || other(pairs.selfs[pos], d) || other(pairs.builds[pos], d) || other(pairs.tokens[pos], d)) {
       return false;
     }

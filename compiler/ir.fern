@@ -343,9 +343,9 @@ pub function is_box_release(op: Op): boolean {
   return op.i64_imm == 7;
 }
 
-// The release of a record or a variant box that a uniqueness test found
-// shared, with no release of any count since the test. The count is above
-// one or static, so the release never frees the box.
+// The helper release of a record or a variant box that a uniqueness test
+// found shared, with no release of any count since the test. The count is
+// above one or static, so the emitter only takes one from it.
 pub function shared_dec(op: Op): Op {
   return Op { ...op, i64_imm: 10 };
 }
