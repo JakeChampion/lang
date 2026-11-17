@@ -388,6 +388,17 @@ xs = xs.append(i);`). The report is static. A `guarded` site still copies
 when an upstream retain leaves the box shared, and `FERN_CLIFF_REPORT=1`
 counts those copies at run time.
 
+When the program must keep the old array, write the copy with `clone`:
+
+```fern
+let keep = xs.clone();
+xs = xs.append(i);
+```
+
+The clone pays the copy where it is written, and the append no longer copies.
+The site reports `guarded`, and the buffer of `xs` has one reference, so the
+push grows it in place (`TestSelfHostAppendReport`, `snapshot`).
+
 The `ndarray kernels` section records kernel rewrites and refusals from the
 actual planner, with receiver layouts, element functions and axis/rank
 arguments. Its closed tags and scope are in `ARRAY-SHAPES.md` §6. A recognized
