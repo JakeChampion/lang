@@ -248,6 +248,9 @@ pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, t
   while (!closed && buf.len() - at >= 5) {
     let end = at + 5 + (buf[at + 3] as i32 << 8 | buf[at + 4] as i32);
     if (end > buf.len()) {
+      if let Some(e) = handshake.header_error(buf[at:at + 5]) {
+        return Err(tls.Failure { error: tls.HandshakeFailed(e), alert: session.client.alert(e) });
+      }
       break;
     }
     let next = __record(session, buf[at:end], now)?;

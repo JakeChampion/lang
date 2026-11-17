@@ -26,6 +26,11 @@ Sequence-end and stream-end NAL units have empty payloads and follow a coded pic
 Both markers can remain in that picture's access unit. After sequence end, the next picture must be IDR.
 Stream end permits no later NAL unit in this stream.
 
+An access-unit delimiter must be the first NAL unit of its access unit, with at most one delimiter per packet.
+Its payload contains three primary-picture-type bits followed by exact RBSP trailing bits.
+These checks follow H.264 clauses 7.3.2.4, 7.3.2.11, and 7.4.1.2.3.
+They do not compare the primary picture type with all slice types in the coded picture.
+
 The reader assigns no timestamp.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 An IDR slice requires a zero frame number. Non-IDR frame numbers retain their supported width from the SPS.
@@ -258,9 +263,25 @@ function nal_kind(input: [u8]): Result[i32, frame.VideoError] {
   return Ok(kind);
 }
 
-function append_packet(own bytes: u8[], input: [u8], maximum: i32): Result[u8[], frame.VideoError] {
+function delimiter(input: [u8], first: boolean): Result[void, frame.VideoError] {
+  if (!first) {
+    return Err(frame.Header);
+  }
+  if (input.len() < 2) {
+    return Err(frame.Truncated);
+  }
+  if (input.len() != 2 || (input[1] & 31u8) != 16u8) {
+    return Err(frame.Header);
+  }
+  return Ok(());
+}
+
+function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32): Result[u8[], frame.VideoError] {
   if (maximum - bytes.len() < 4 || input.len() > maximum - bytes.len() - 4) {
     return Err(frame.Limit);
+  }
+  if (kind == 9) {
+    delimiter(input, bytes.len() == 0)?;
   }
   for byte in [0u8, 0u8, 0u8, 1u8] {
     bytes = bytes.append(byte);
@@ -296,7 +317,7 @@ function append_unit(own stream: Stream, unit: nals.Unit, offset: i64, kind: i32
   }
   let updated = parameters(stream, unit.bytes, kind)?;
   let at = if (updated.packet_units == 0) { offset } else { updated.packet_offset };
-  let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes)?;
+  let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes, kind)?;
   let last = if (identity.is_some()) { identity } else { updated.last };
   let forced = kind == 10 || updated.forced && kind != 1 && kind != 5;
   return Ok(Step { stream: Stream { ...updated, packet: bytes, packet_offset: at, packet_units: updated.packet_units + 1, last: last, forced: forced, ended: kind == 11 }, event: Waiting });

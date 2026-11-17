@@ -594,8 +594,38 @@ function pem_of(der_hex: string): string {
   return pem.encode("CERTIFICATE", __codec_bytes(hex.decode(der_hex)));
 }
 
+// The alert of a read that the client refuses, or what the read did.
+function header_alert(header: u8[]): string {
+  match (begin(client.config("tls.example", roots(ROOT)), WALL_MS)) {
+    Ok(started) => {
+      match (started.session.read(header, time.timestamp_from_unix_millis(WALL_MS))) {
+        Ok(step) => {
+          return "held";
+        },
+        Err(f) => {
+          return hex.encode(f.alert);
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_header_refused_before_its_record(): test.TestOutcome {
+  let plain_http: u8[] = [72, 84, 84, 80, 47];
+  let too_long: u8[] = [22, 3, 3, 255, 255];
+  let part_of_a_hello: u8[] = [22, 3, 3, 0, 200, 2, 0, 0];
+  let four_bytes: u8[] = [72, 84, 84, 80];
+  let got = header_alert(plain_http) + " | " + header_alert(too_long) + " | " + header_alert(part_of_a_hello) + " | " + header_alert(four_bytes);
+  return test.assert_eq(got, "1503030002020a | 15030300020216 | held | held");
+}
+
 function main(): i32 {
   let r = test.new("std/tls/client");
+  r = r.it("a header that no record has is refused before the record", test_header_refused_before_its_record);
   r = r.it("a trusted server", test_trusted);
   r = r.it("a connection keeps a limited count of tickets", test_tickets_have_a_limit);
   r = r.it("names", test_names);
