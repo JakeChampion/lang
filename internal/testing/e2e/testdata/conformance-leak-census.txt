@@ -734,6 +734,8 @@ nested_arm_patterns                                  0
 nested_array_literals_take_the_wider_element_type    0
 nested_call_temp                                     0
 nested_function_calls_itself                         0
+nested_function_name_is_local_to_its_block           0
+nested_function_with_a_capture_is_a_value            0
 nested_lambdas_check_in_linear_time                  0
 nested_loops                                         0
 nested_option                                        0
@@ -1479,6 +1481,7 @@ vec_lane_kernels                                     0
 view_beside_its_array_in_a_call                      0
 view_of_branch_value                                 0
 view_param_returned_after_loop                       0
+view_taken_from_a_reused_box                         0
 views_in_aggregates_stay_local                       0
 void_value_arm_falls_through                         0
 void_value_if_statement                              0
