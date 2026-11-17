@@ -91,3 +91,14 @@ x86_64/utf8_validate.text	2574
 x86_64/utf8_validate.ir	179204514
 x86_64/video_qtrle.text	5379
 x86_64/video_qtrle.ir	1552428817
+
+# lane: bootstrap-arm64-linux
+bootstrap/arm64-linux/stage1.wall_s	53
+bootstrap/arm64-linux/stage1.peak_rss_mb	2022
+bootstrap/arm64-linux/stage1.size_bytes	20211976
+bootstrap/arm64-linux/stage2.wall_s	52
+bootstrap/arm64-linux/stage2.peak_rss_mb	2033
+bootstrap/arm64-linux/stage2.size_bytes	20211352
+bootstrap/arm64-linux/stage3.wall_s	52
+bootstrap/arm64-linux/stage3.peak_rss_mb	2037
+bootstrap/arm64-linux/stage3.size_bytes	20211352
