@@ -57,8 +57,8 @@ Play, and the first is now fixed:
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
    the SDKs of other vendors are out of reach.
 
-3. **Text and languages.** There is no text shaping, no CFF fonts (most
-   CJK fonts) and no color emoji. `std/i18n` now gives localized strings.
+3. **Text and languages.** There is no text shaping and no color emoji.
+   `std/i18n` now gives localized strings.
    `std/bidi` gives right-to-left text in the order of UAX #9.
    `std/android/text` takes a character that its font does not have from
    the fallback fonts of the system. The layout mirrors for a
@@ -161,8 +161,9 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** Shaping, and CFF and color glyphs. The CJK fonts of the
-   system are CFF, so they need the CFF glyphs first.
+7. **Text.** Shaping and color glyphs. CFF glyphs are done:
+   `std/truetype` reads CFF outlines, CID-keyed ones too, and the fonts
+   of a collection. So the CJK fonts of the system draw.
 
    Right-to-left text is done: `std/bidi` passes all the tests of UAX #9,
    and the labels and the fields of `std/android/ui` show each line in
