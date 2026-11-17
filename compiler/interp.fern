@@ -6043,6 +6043,9 @@ function bound_type_spelling(spelling: string, env: Env): string {
     },
     _ => {}
   }
+  if (ref.args.len() == 0 && base == ref.base) {
+    return spelling;
+  }
   let args: parser.TypeRef[] = [];
   for a in ref.args {
     args = args.append(parser.parse_type_ref(bound_type_spelling(parser.render_type_ref(a), env)));
