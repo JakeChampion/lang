@@ -46,6 +46,13 @@ pub const BREAK: i32 = 3;
 
 pub const HALT: i32 = 4;
 
+// A run that goes on in `next`, not in a deeper call. `drive` makes the call.
+const BOUNCE: i32 = 5;
+
+// The count of calls of a function of a `def` between two bounces, and the
+// count of sinks between two landings.
+const BOUNCE_EVERY: i32 = 64;
+
 // The state of a run.
 //
 // - `err` is the value of an error, `brk` the label of a `break`, and `code`
@@ -57,6 +64,9 @@ pub const HALT: i32 = 4;
 //   the stack `stack`.
 // - `out` holds the text that the command line writes next, and `last` the
 //   kind of its last output: 0 for none, 1 for false or null, 2 otherwise.
+// - `calls` counts the calls of a function of a `def` since the last bounce,
+//   and `next` holds the one step of a bounce. `links` counts the calls that
+//   are not the last step of their body since the last landing.
 pub struct St {
   sig: i32,
   err: json.JsonValue,
@@ -72,6 +82,9 @@ pub struct St {
   out: string,
   last: i32,
   io: stream.Source,
+  calls: i32,
+  next: ((own St) => own St)[],
+  links: i32,
 }
 
 pub function env(): Env {
@@ -79,7 +92,7 @@ pub function env(): Env {
 }
 
 pub function state(io: stream.Source): own St {
-  return St { sig: OK, err: json.JNull, esc: 0, inner: 0, brk: 0, code: 0, labels: 0, items: [], found: [], v: json.JNull, stack: [], out: "", last: 0, io: io };
+  return St { sig: OK, err: json.JNull, esc: 0, inner: 0, brk: 0, code: 0, labels: 0, items: [], found: [], v: json.JNull, stack: [], out: "", last: 0, io: io, calls: 0, next: [], links: 0 };
 }
 
 pub function (e: Env) with(name: string, value: json.JsonValue): Env {
@@ -147,17 +160,87 @@ function failed_with(own st: St, message: string): own St {
   return raised(st, json.JString(message));
 }
 
-// Each value of `o` to `k`, and then the error of `o`.
-function give(o: Outputs, k: (json.JsonValue, own St) => own St, own st: St): own St {
+// The state that stops the calls in progress. The nearest `drive` runs `step`
+// with the machine stack of that `drive`, so the depth of a function that
+// calls itself is not limited by the machine stack.
+function bounce(own st: St, step: (own St) => own St): own St {
+  return St { ...st, sig: BOUNCE, next: [step] };
+}
+
+// The state after each bounce of `st` is done. A caller that reads the state
+// of a filter or of a sink, and does not only return it, gets it from here.
+// The frames of the caller stay, so the caller gets its count of calls back.
+function drive(own st: St): own St {
+  if (st.sig != BOUNCE) {
+    return st;
+  }
+  let calls = st.calls;
   let s = st;
-  for v in o.values {
-    s = k(v, s);
+  while (s.sig == BOUNCE) {
+    let step = s.next[0];
+    s = step(St { ...s, sig: OK, calls: 0, next: [] });
+  }
+  return St { ...s, calls: calls };
+}
+
+// A sink that bounces before it gives its value to `k`, so the sinks before
+// it do not stay on the machine stack.
+function landing(k: (json.JsonValue, own St) => own St): (json.JsonValue, own St) => own St {
+  return (v: json.JsonValue, own s: St): own St => bounce(s, (own t: St): own St => k(v, t));
+}
+
+function path_landing(k: (PathItem, own St) => own St): (PathItem, own St) => own St {
+  return (it: PathItem, own s: St): own St => bounce(s, (own t: St): own St => k(it, t));
+}
+
+// The sink for the body of a call that is not the last step of its body.
+// Such a call adds a sink before `k`, so one in each `BOUNCE_EVERY` of them
+// gets a landing.
+function linked(k: (json.JsonValue, own St) => own St, own st: St): ((json.JsonValue, own St) => own St, St) {
+  if (st.links >= BOUNCE_EVERY) {
+    return (landing(k), St { ...st, links: 0 });
+  }
+  return (k, St { ...st, links: st.links + 1 });
+}
+
+function path_linked(k: (PathItem, own St) => own St, own st: St): ((PathItem, own St) => own St, St) {
+  if (st.links >= BOUNCE_EVERY) {
+    return (path_landing(k), St { ...st, links: 0 });
+  }
+  return (k, St { ...st, links: st.links + 1 });
+}
+
+// The outputs of `f` on `input` to `k`, and the state when `f` stops.
+pub function evaluate(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  return drive(run(f, input, e, k, st));
+}
+
+// Each value of `o` to `k`, and then the error of `o`. The last value is the
+// last call when there is no error.
+function give(o: Outputs, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  let n = o.values.len();
+  if (n > 0 && o.error.len() == 0) {
+    let t = give_some(o.values, n - 1, k, st);
+    if (t.sig != OK) {
+      return t;
+    }
+    return k(o.values[n - 1], t);
+  }
+  let s = give_some(o.values, n, k, st);
+  if (s.sig != OK || o.error.len() == 0) {
+    return s;
+  }
+  return raised(s, o.error[0]);
+}
+
+// The first `n` values of `vs` to `k`.
+function give_some(vs: json.JsonValue[], n: i32, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  let s = st;
+  for i in 0..n {
+    s = drive(k(vs[i], s));
     if (s.sig != OK) {
       return s;
     }
-  }
-  if (o.error.len() > 0) {
-    return raised(s, o.error[0]);
   }
   return s;
 }
@@ -165,7 +248,7 @@ function give(o: Outputs, k: (json.JsonValue, own St) => own St, own st: St): ow
 // The outputs of `f` on `input` in an array, and the error that stopped it.
 // A unit test reads a filter so.
 pub function outputs(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
-  let s = run(f, input, e, append_item, state(stream.empty()));
+  let s = evaluate(f, input, e, append_item, state(stream.empty()));
   if (s.sig == ERROR) {
     return Outputs { values: s.items, error: [s.err] };
   }
@@ -179,7 +262,7 @@ function append_item(v: json.JsonValue, own s: St): own St {
 // The outputs of `f` in an array. `k` takes the array, unless `f` stopped.
 function run_collect(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let saved = st.items;
-  let s = run(f, input, e, append_item, St { ...st, items: [] });
+  let s = drive(run(f, input, e, append_item, St { ...st, items: [] }));
   let items = s.items;
   let t = St { ...s, items: saved };
   if (t.sig != OK) {
@@ -197,7 +280,7 @@ function collected(f: filter.Ast, input: json.JsonValue, e: Env, own st: St): ow
 // A sink that gives the outputs of a `try` body to `k`. An error of `k` is
 // not an error of the body.
 function escaping(k: (json.JsonValue, own St) => own St): (json.JsonValue, own St) => own St {
-  return (v: json.JsonValue, own s: St): own St => escape_signal(k(v, s));
+  return (v: json.JsonValue, own s: St): own St => escape_signal(drive(k(v, s)));
 }
 
 function escape_signal(own s: St): own St {
@@ -244,7 +327,7 @@ pub function truthy(v: json.JsonValue): boolean {
 }
 
 // fern-lint: allow cyclomatic-complexity
-pub function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
+function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   match (f) {
     filter.Identity => {
       return k(input, st);
@@ -268,7 +351,7 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
       return run_guarded(step, input, e, k, st);
     },
     filter.Try(inner) => {
-      let s = run(inner, input, e, escaping(k), st);
+      let s = drive(run(inner, input, e, escaping(k), st));
       if (caught(s)) {
         return St { ...s, sig: OK, err: json.JNull };
       }
@@ -278,7 +361,7 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
       return each_of(a, input, e, (v: json.JsonValue, own s: St): own St => run(b, v, e, k, s), st);
     },
     filter.Comma(a, b) => {
-      let s = run(a, input, e, k, st);
+      let s = drive(run(a, input, e, k, st));
       if (s.sig != OK) {
         return s;
       }
@@ -302,18 +385,22 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
     filter.Alt(a, b) => {
       return run_alt(a, b, input, e, k, st);
     },
-    filter.Call(name, args) => {
+    filter.Call(name, args, last) => {
       let found = e.find(name, args.len());
-      if (found.len() > 0) {
+      if (found.len() == 0) {
+        return call(name, args, input, e, k, st);
+      }
+      if (last) {
         return call_defined(found[0], args, 0, input, e, callee_scope(found[0]), k, st);
       }
-      return call(name, args, input, e, k, st);
+      let (sink, s) = linked(k, st);
+      return call_defined(found[0], args, 0, input, e, callee_scope(found[0]), sink, s);
     },
     filter.Def(name, params, body, rest) => {
       return run(rest, input, e.define(defined(name, params, body, e)), k, st);
     },
     filter.Catch(body, handler) => {
-      let s = run(body, input, e, escaping(k), st);
+      let s = drive(run(body, input, e, escaping(k), st));
       if (caught(s)) {
         let err = caught_value(s);
         return run(handler, err, e, k, St { ...s, sig: OK, err: json.JNull });
@@ -355,7 +442,7 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
     },
     filter.Label(name, body) => {
       let id = st.labels;
-      return ended(id, run(body, input, e.with(filter.label_var(name), whole(id)), k, St { ...st, labels: id + 1 }));
+      return ended(id, drive(run(body, input, e.with(filter.label_var(name), whole(id)), k, St { ...st, labels: id + 1 })));
     },
     filter.Break(name) => {
       let found = lookup(e, filter.label_var(name));
@@ -393,7 +480,7 @@ function single(f: filter.Ast, e: Env): boolean {
     filter.Update(op, _, value) => op == "|=" || single(value, e),
     filter.Object(keys, values) => all_single(keys, e) && all_single(values, e),
     filter.Interp(_, _, parts) => all_single(parts, e),
-    filter.Call(name, args) => single_call(name, args, e),
+    filter.Call(name, args, _) => single_call(name, args, e),
     filter.Def(name, params, body, rest) => single(rest, e.define(defined(name, params, body, e))),
     _ => single_pair(f, e),
   };
@@ -458,6 +545,19 @@ function defined(name: string, params: string[], body: filter.Ast, e: Env): Func
   return Func { ...f, single: single(body, inner) };
 }
 
+// Each value of `vs` to `k`. The last value is the last call.
+function give_all(vs: json.JsonValue[], k: (json.JsonValue, own St) => own St, own st: St): own St {
+  let n = vs.len();
+  if (n == 0) {
+    return st;
+  }
+  let s = give_some(vs, n - 1, k, st);
+  if (s.sig != OK) {
+    return s;
+  }
+  return k(vs[n - 1], s);
+}
+
 // The outputs of `f` to `k`. When `f` is single, its outputs come first in
 // an array, so that its frames are gone while `k` runs: a function that
 // calls itself then needs less stack for each call.
@@ -466,19 +566,13 @@ function each_of(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
     return run(f, input, e, k, st);
   }
   let saved = st.items;
-  let c = collected(f, input, e, st);
+  let c = drive(collected(f, input, e, st));
   let vs = c.items;
   let s = St { ...c, items: saved };
   if (s.sig != OK) {
     return s;
   }
-  for v in vs {
-    s = k(v, s);
-    if (s.sig != OK) {
-      return s;
-    }
-  }
-  return s;
+  return give_all(vs, k, s);
 }
 
 // The outputs of `if cond then yes else no end` when `cond` is single. The
@@ -486,7 +580,7 @@ function each_of(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
 // last call.
 function run_branch(cond: filter.Ast, yes: filter.Ast, no: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let saved = st.items;
-  let c = collected(cond, input, e, st);
+  let c = drive(collected(cond, input, e, st));
   let taken = c.items.len() > 0 && truthy(c.items[0]);
   let given = c.items.len() > 0;
   let s = St { ...c, items: saved };
@@ -554,7 +648,7 @@ function iterate_to(v: json.JsonValue, guard: boolean, k: (json.JsonValue, own S
     json.JArray(items) => {
       let s = st;
       for x in items {
-        s = k(x, s);
+        s = drive(k(x, s));
         if (s.sig != OK) {
           return s;
         }
@@ -564,7 +658,7 @@ function iterate_to(v: json.JsonValue, guard: boolean, k: (json.JsonValue, own S
     json.JObject(o) => {
       let s = st;
       for x in o.values() {
-        s = k(x, s);
+        s = drive(k(x, s));
         if (s.sig != OK) {
           return s;
         }
@@ -609,7 +703,7 @@ function run_guarded(step: filter.Ast, input: json.JsonValue, e: Env, k: (json.J
       return run(target, input, e, (v: json.JsonValue, own s: St): own St => iterate_to(v, true, k, s), st);
     },
     _ => {
-      let s = run(step, input, e, escaping(k), st);
+      let s = drive(run(step, input, e, escaping(k), st));
       if (caught(s)) {
         return St { ...s, sig: OK, err: json.JNull };
       }
@@ -660,14 +754,14 @@ function object_entry(keys: filter.Ast[], values: filter.Ast[], at: i32, names: 
     return run(values[at], input, e, (v: json.JsonValue, own s: St): own St => build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s), st);
   }
   let saved = st.items;
-  let c = collected(values[at], input, e, st);
+  let c = drive(collected(values[at], input, e, st));
   let vs = c.items;
   let s = St { ...c, items: saved };
   if (s.sig != OK) {
     return s;
   }
   for v in vs {
-    s = build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s);
+    s = drive(build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s));
     if (s.sig != OK) {
       return s;
     }
@@ -687,14 +781,14 @@ function run_binary(op: string, a: filter.Ast, b: filter.Ast, input: json.JsonVa
     return run(b, input, e, (r: json.JsonValue, own s: St): own St => run(a, input, e, (l: json.JsonValue, own s2: St): own St => give(binary(op, l, r), k, s2), s), st);
   }
   let saved = st.items;
-  let c = collected(b, input, e, st);
+  let c = drive(collected(b, input, e, st));
   let rights = c.items;
   let s = St { ...c, items: saved };
   if (s.sig != OK) {
     return s;
   }
   for r in rights {
-    s = run(a, input, e, (l: json.JsonValue, own s1: St): own St => give(binary(op, l, r), k, s1), s);
+    s = drive(run(a, input, e, (l: json.JsonValue, own s1: St): own St => give(binary(op, l, r), k, s1), s));
     if (s.sig != OK) {
       return s;
     }
@@ -719,7 +813,7 @@ function logic_right(is_or: boolean, l: json.JsonValue, b: filter.Ast, input: js
 // of `b` when `a` has none. The top of the stack says whether `a` gave one.
 function run_alt(a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let depth = st.stack.len();
-  let s = run(a, input, e, (v: json.JsonValue, own s1: St): own St => alt_out(v, depth, k, s1), St { ...st, stack: st.stack.append(json.JBool(false)) });
+  let s = drive(run(a, input, e, (v: json.JsonValue, own s1: St): own St => alt_out(v, depth, k, s1), St { ...st, stack: st.stack.append(json.JBool(false)) }));
   let gave = truthy(s.stack[depth]);
   let t = St { ...s, stack: s.stack.truncate(depth) };
   if (t.sig != OK || gave) {
@@ -739,7 +833,7 @@ function alt_out(v: json.JsonValue, depth: i32, k: (json.JsonValue, own St) => o
 // A `reduce` gives the last state.
 function reduce_from(source: filter.Ast, name: string, update: filter.Ast, first: json.JsonValue, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let saved = st.v;
-  let s = run(source, input, e, (x: json.JsonValue, own s1: St): own St => reduce_step(update, name, x, e, s1), St { ...st, v: first });
+  let s = drive(run(source, input, e, (x: json.JsonValue, own s1: St): own St => reduce_step(update, name, x, e, s1), St { ...st, v: first }));
   let acc = s.v;
   let t = St { ...s, v: saved };
   if (t.sig != OK) {
@@ -761,7 +855,7 @@ function set_v(v: json.JsonValue, own s: St): own St {
 // output of the update.
 function foreach_from(source: filter.Ast, name: string, update: filter.Ast, extract: filter.Ast, first: json.JsonValue, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let depth = st.stack.len();
-  let s = run(source, input, e, (x: json.JsonValue, own s1: St): own St => foreach_step(update, extract, name, x, depth, e, k, s1), St { ...st, stack: st.stack.append(first) });
+  let s = drive(run(source, input, e, (x: json.JsonValue, own s1: St): own St => foreach_step(update, extract, name, x, depth, e, k, s1), St { ...st, stack: st.stack.append(first) }));
   return St { ...s, stack: s.stack.truncate(depth) };
 }
 
@@ -887,7 +981,7 @@ function call1(name: string, arg: filter.Ast, input: json.JsonValue, e: Env, k: 
     },
     "first" => {
       let (id, s) = new_label(st);
-      return ended(id, run(arg, input, e, (v: json.JsonValue, own s1: St): own St => then_break(k(v, s1), id), s));
+      return ended(id, drive(run(arg, input, e, (v: json.JsonValue, own s1: St): own St => then_break(drive(k(v, s1)), id), s)));
     },
     "last" => {
       return last_of(arg, input, e, k, st);
@@ -996,7 +1090,7 @@ function then_break(own s: St, id: i32): own St {
 // `last(f)` is `reduce f as $x (null; $x)`.
 function last_of(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let saved = st.v;
-  let s = run(f, input, e, set_v, St { ...st, v: json.JNull });
+  let s = drive(run(f, input, e, set_v, St { ...st, v: json.JNull }));
   let v = s.v;
   let t = St { ...s, v: saved };
   if (t.sig != OK) {
@@ -1008,7 +1102,7 @@ function last_of(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
 // `isempty(g)` is `first((g | false), true)`.
 function is_empty(g: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let (id, s) = new_label(st);
-  let t = run(g, input, e, (v: json.JsonValue, own s1: St): own St => then_break(k(json.JBool(false), s1), id), s);
+  let t = drive(run(g, input, e, (v: json.JsonValue, own s1: St): own St => then_break(drive(k(json.JBool(false), s1)), id), s));
   if (t.sig == BREAK && t.brk == id) {
     return St { ...t, sig: OK };
   }
@@ -1022,7 +1116,7 @@ function is_empty(g: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonVal
 // stops `g`.
 function quantify(is_any: boolean, g: filter.Ast, cond: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let (id, s) = new_label(st);
-  let t = run(g, input, e, (v: json.JsonValue, own s1: St): own St => run(cond, v, e, (c: json.JsonValue, own s2: St): own St => if (truthy(c) == is_any) { broken(s2, id) } else { s2 }, s1), s);
+  let t = drive(run(g, input, e, (v: json.JsonValue, own s1: St): own St => run(cond, v, e, (c: json.JsonValue, own s2: St): own St => if (truthy(c) == is_any) { broken(s2, id) } else { s2 }, s1), s));
   if (t.sig == BREAK && t.brk == id) {
     return k(json.JBool(is_any), St { ...t, sig: OK });
   }
@@ -1035,7 +1129,7 @@ function quantify(is_any: boolean, g: filter.Ast, cond: filter.Ast, input: json.
 // `v`, and then the same for each output of `f` on `v`. With a condition,
 // an output goes on one time for each true value of the condition.
 function recurse_to(v: json.JsonValue, f: filter.Ast, conds: filter.Ast[], e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let s = k(v, st);
+  let s = drive(k(v, st));
   if (s.sig != OK) {
     return s;
   }
@@ -1047,14 +1141,14 @@ function recurse_to(v: json.JsonValue, f: filter.Ast, conds: filter.Ast[], e: En
 
 // `recurse` with no argument: `v`, and then each value inside it.
 function recurse_all(v: json.JsonValue, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let s = k(v, st);
+  let s = drive(k(v, st));
   if (s.sig != OK) {
     return s;
   }
   match (v) {
     json.JArray(items) => {
       for x in items {
-        s = recurse_all(x, k, s);
+        s = drive(recurse_all(x, k, s));
         if (s.sig != OK) {
           return s;
         }
@@ -1063,7 +1157,7 @@ function recurse_all(v: json.JsonValue, k: (json.JsonValue, own St) => own St, o
     },
     json.JObject(o) => {
       for x in o.values() {
-        s = recurse_all(x, k, s);
+        s = drive(recurse_all(x, k, s));
         if (s.sig != OK) {
           return s;
         }
@@ -1084,11 +1178,11 @@ function paths_to(v: json.JsonValue, at: json.JsonValue[], k: (json.JsonValue, o
     json.JArray(items) => {
       for i in 0..items.len() {
         let p = at.append(whole(i));
-        s = k(json.JArray(p), s);
+        s = drive(k(json.JArray(p), s));
         if (s.sig != OK) {
           return s;
         }
-        s = paths_to(items[i], p, k, s);
+        s = drive(paths_to(items[i], p, k, s));
         if (s.sig != OK) {
           return s;
         }
@@ -1100,11 +1194,11 @@ function paths_to(v: json.JsonValue, at: json.JsonValue[], k: (json.JsonValue, o
       let values = o.values();
       for i in 0..names.len() {
         let p = at.append(json.JString(names[i]));
-        s = k(json.JArray(p), s);
+        s = drive(k(json.JArray(p), s));
         if (s.sig != OK) {
           return s;
         }
-        s = paths_to(values[i], p, k, s);
+        s = drive(paths_to(values[i], p, k, s));
         if (s.sig != OK) {
           return s;
         }
@@ -1134,7 +1228,7 @@ function paths_select(p: json.JsonValue, input: json.JsonValue, f: filter.Ast, e
 function repeat_to(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let s = st;
   while (s.sig == OK) {
-    s = run(f, v, e, k, s);
+    s = drive(run(f, v, e, k, s));
   }
   return s;
 }
@@ -1148,7 +1242,7 @@ function while_body(v: json.JsonValue, c: json.JsonValue, cond: filter.Ast, upda
   if (!truthy(c)) {
     return st;
   }
-  let s = k(v, st);
+  let s = drive(k(v, st));
   if (s.sig != OK) {
     return s;
   }
@@ -1162,7 +1256,7 @@ function until_to(v: json.JsonValue, cond: filter.Ast, next: filter.Ast, e: Env,
   let s = st;
   while (true) {
     let saved = s.items;
-    s = collected(cond, cur, e, s);
+    s = drive(collected(cond, cur, e, s));
     let conds = s.items;
     s = St { ...s, items: saved };
     if (s.sig != OK) {
@@ -1170,7 +1264,7 @@ function until_to(v: json.JsonValue, cond: filter.Ast, next: filter.Ast, e: Env,
     }
     if (conds.len() != 1) {
       for x in conds {
-        s = until_branch(cur, x, cond, next, e, k, s);
+        s = drive(until_branch(cur, x, cond, next, e, k, s));
         if (s.sig != OK) {
           return s;
         }
@@ -1181,7 +1275,7 @@ function until_to(v: json.JsonValue, cond: filter.Ast, next: filter.Ast, e: Env,
       return k(cur, s);
     }
     let saved2 = s.items;
-    s = collected(next, cur, e, s);
+    s = drive(collected(next, cur, e, s));
     let nexts = s.items;
     s = St { ...s, items: saved2 };
     if (s.sig != OK) {
@@ -1189,7 +1283,7 @@ function until_to(v: json.JsonValue, cond: filter.Ast, next: filter.Ast, e: Env,
     }
     if (nexts.len() != 1) {
       for n in nexts {
-        s = until_to(n, cond, next, e, k, s);
+        s = drive(until_to(n, cond, next, e, k, s));
         if (s.sig != OK) {
           return s;
         }
@@ -1227,7 +1321,7 @@ function count_to(from: json.JsonValue, upto: json.JsonValue, k: (json.JsonValue
   let end = number.value(t);
   let s = st;
   while (x < end) {
-    s = k(computed(x), s);
+    s = drive(k(computed(x), s));
     if (s.sig != OK) {
       return s;
     }
@@ -1246,7 +1340,7 @@ function steps_to(from: json.JsonValue, upto: json.JsonValue, by: json.JsonValue
   let x = from;
   let s = st;
   while (order(x, upto) * direction < 0) {
-    s = k(x, s);
+    s = drive(k(x, s));
     if (s.sig != OK) {
       return s;
     }
@@ -1271,7 +1365,7 @@ function limit_to(n: json.JsonValue, f: filter.Ast, input: json.JsonValue, e: En
   }
   let (id, s) = new_label(st);
   let depth = s.stack.len();
-  let t = run(f, input, e, (v: json.JsonValue, own s1: St): own St => limit_out(v, id, depth, k, s1), St { ...s, stack: s.stack.append(n) });
+  let t = drive(run(f, input, e, (v: json.JsonValue, own s1: St): own St => limit_out(v, id, depth, k, s1), St { ...s, stack: s.stack.append(n) }));
   return ended(id, St { ...t, stack: t.stack.truncate(depth) });
 }
 
@@ -1281,7 +1375,7 @@ function limit_out(v: json.JsonValue, id: i32, depth: i32, k: (json.JsonValue, o
     return raised(s, less.error[0]);
   }
   let left = less.values[0];
-  let t = k(v, St { ...s, stack: s.stack.with(depth, left) });
+  let t = drive(k(v, St { ...s, stack: s.stack.with(depth, left) }));
   if (t.sig == OK && order(left, whole(0)) <= 0) {
     return broken(t, id);
   }
@@ -1300,7 +1394,7 @@ function nth_to(n: json.JsonValue, f: filter.Ast, input: json.JsonValue, e: Env,
   }
   let (id, s) = new_label(st);
   let depth = s.stack.len();
-  let t = run(f, input, e, (v: json.JsonValue, own s1: St): own St => nth_out(v, id, depth, k, s1), St { ...s, stack: s.stack.append(start.values[0]) });
+  let t = drive(run(f, input, e, (v: json.JsonValue, own s1: St): own St => nth_out(v, id, depth, k, s1), St { ...s, stack: s.stack.append(start.values[0]) }));
   return ended(id, St { ...t, stack: t.stack.truncate(depth) });
 }
 
@@ -1314,7 +1408,7 @@ function nth_out(v: json.JsonValue, id: i32, depth: i32, k: (json.JsonValue, own
   if (order(left, whole(0)) > 0) {
     return t;
   }
-  return then_break(k(v, t), id);
+  return then_break(drive(k(v, t)), id);
 }
 
 // `sort_by`, `group_by`, `unique_by`, `min_by` and `max_by`. The key of an
@@ -1328,7 +1422,7 @@ function keyed(what: string, f: filter.Ast, input: json.JsonValue, e: Env, k: (j
   let s = St { ...st, items: [] };
   let ks: json.JsonValue[] = [];
   for x in items.values {
-    s = collected(f, x, e, s);
+    s = drive(collected(f, x, e, s));
     if (s.sig != OK) {
       return St { ...s, items: saved };
     }
@@ -1346,7 +1440,7 @@ function walk(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own 
       let saved = st.items;
       let s = St { ...st, items: [] };
       for i in 0..names.len() {
-        s = walk(values[i], f, e, append_item, St { ...s, items: [], labels: s.labels + 1 });
+        s = drive(walk(values[i], f, e, append_item, St { ...s, items: [], labels: s.labels + 1 }));
         if (s.sig != OK) {
           return St { ...s, items: saved };
         }
@@ -1360,7 +1454,7 @@ function walk(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own 
       let saved = st.items;
       let s = St { ...st, items: [] };
       for x in items {
-        s = walk(x, f, e, append_item, s);
+        s = drive(walk(x, f, e, append_item, s));
         if (s.sig != OK) {
           return St { ...s, items: saved };
         }
@@ -1416,7 +1510,7 @@ function read_inputs(k: (json.JsonValue, own St) => own St, own st: St): own St 
     let (io, next) = s.io.next();
     s = St { ...s, io: io };
     if (next.kind == stream.VALUE) {
-      s = k(next.value, s);
+      s = drive(k(next.value, s));
       if (s.sig != OK) {
         return s;
       }
@@ -1730,7 +1824,7 @@ function append_found(it: PathItem, own s: St): own St {
 // The paths that `f` gives on `input`, each as an array of its keys, in
 // `items` of the state. The caller puts back its own `items` and `found`.
 function paths_found(f: filter.Ast, input: json.JsonValue, e: Env, own st: St): own St {
-  let s = run_paths(f, root(input), e, append_found, St { ...st, found: [] });
+  let s = drive(run_paths(f, root(input), e, append_found, St { ...st, found: [] }));
   let all: json.JsonValue[] = [];
   for it in s.found {
     if (s.sig == OK && !it.attached) {
@@ -1742,7 +1836,7 @@ function paths_found(f: filter.Ast, input: json.JsonValue, e: Env, own st: St): 
 }
 
 function pescaping(k: (PathItem, own St) => own St): (PathItem, own St) => own St {
-  return (it: PathItem, own s: St): own St => escape_signal(k(it, s));
+  return (it: PathItem, own s: St): own St => escape_signal(drive(k(it, s)));
 }
 
 function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
@@ -1763,7 +1857,7 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =>
       return paths_guarded(step, it, e, k, st);
     },
     filter.Try(inner) => {
-      let s = run_paths(inner, it, e, pescaping(k), st);
+      let s = drive(run_paths(inner, it, e, pescaping(k), st));
       if (caught(s)) {
         return St { ...s, sig: OK, err: json.JNull };
       }
@@ -1773,7 +1867,7 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =>
       return run_paths(a, it, e, (x: PathItem, own s: St): own St => run_paths(b, x, e, k, s), st);
     },
     filter.Comma(a, b) => {
-      let s = run_paths(a, it, e, k, st);
+      let s = drive(run_paths(a, it, e, k, st));
       if (s.sig != OK) {
         return s;
       }
@@ -1800,26 +1894,30 @@ function paths_more(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =
       return run(init, it.value, e, (first: json.JsonValue, own s: St): own St => paths_foreach(source, name, update, extract, first, it, e, k, s), st);
     },
     filter.Catch(body, handler) => {
-      let s = run_paths(body, it, e, pescaping(k), st);
+      let s = drive(run_paths(body, it, e, pescaping(k), st));
       if (caught(s)) {
         let err = caught_value(s);
         return run_paths(handler, off_path(it, err, false), e, k, St { ...s, sig: OK, err: json.JNull });
       }
       return unescaped(s);
     },
-    filter.Call(name, args) => {
+    filter.Call(name, args, last) => {
       let found = e.find(name, args.len());
-      if (found.len() > 0) {
+      if (found.len() == 0) {
+        return paths_call(name, args, it, e, k, st);
+      }
+      if (last) {
         return paths_defined(found[0], args, 0, it, e, callee_scope(found[0]), k, st);
       }
-      return paths_call(name, args, it, e, k, st);
+      let (sink, s) = path_linked(k, st);
+      return paths_defined(found[0], args, 0, it, e, callee_scope(found[0]), sink, s);
     },
     filter.Def(name, params, body, rest) => {
       return run_paths(rest, it, e.define(defined(name, params, body, e)), k, st);
     },
     filter.Label(name, body) => {
       let id = st.labels;
-      return ended(id, run_paths(body, it, e.with(filter.label_var(name), whole(id)), k, St { ...st, labels: id + 1 }));
+      return ended(id, drive(run_paths(body, it, e.with(filter.label_var(name), whole(id)), k, St { ...st, labels: id + 1 })));
     },
     filter.Var(_) => {
       return paths_plain(f, it, e, true, k, st);
@@ -1847,7 +1945,7 @@ function paths_guarded(step: filter.Ast, it: PathItem, e: Env, k: (PathItem, own
       return run_paths(target, it, e, (t: PathItem, own s: St): own St => path_iterate(t, true, k, s), st);
     },
     _ => {
-      let s = run_paths(step, it, e, pescaping(k), st);
+      let s = drive(run_paths(step, it, e, pescaping(k), st));
       if (caught(s)) {
         return St { ...s, sig: OK, err: json.JNull };
       }
@@ -1864,7 +1962,7 @@ function path_iterate(it: PathItem, guard: boolean, k: (PathItem, own St) => own
   match (it.value) {
     json.JArray(all) => {
       for i in 0..all.len() {
-        s = k(on_path(it, whole(i), all[i]), s);
+        s = drive(k(on_path(it, whole(i), all[i]), s));
         if (s.sig != OK) {
           return s;
         }
@@ -1875,7 +1973,7 @@ function path_iterate(it: PathItem, guard: boolean, k: (PathItem, own St) => own
       let names = o.keys();
       let values = o.values();
       for i in 0..names.len() {
-        s = k(on_path(it, json.JString(names[i]), values[i]), s);
+        s = drive(k(on_path(it, json.JString(names[i]), values[i]), s));
         if (s.sig != OK) {
           return s;
         }
@@ -1916,7 +2014,7 @@ function paths_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, it: P
 
 function paths_alt(a: filter.Ast, b: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
   let depth = st.stack.len();
-  let s = run_paths(a, it, e, (x: PathItem, own s1: St): own St => if (truthy(x.value)) { k(x, St { ...s1, stack: s1.stack.with(depth, json.JBool(true)) }) } else { s1 }, St { ...st, stack: st.stack.append(json.JBool(false)) });
+  let s = drive(run_paths(a, it, e, (x: PathItem, own s1: St): own St => if (truthy(x.value)) { k(x, St { ...s1, stack: s1.stack.with(depth, json.JBool(true)) }) } else { s1 }, St { ...st, stack: st.stack.append(json.JBool(false)) }));
   let gave = truthy(s.stack[depth]);
   let t = St { ...s, stack: s.stack.truncate(depth) };
   if (t.sig != OK || gave) {
@@ -1929,7 +2027,7 @@ function paths_alt(a: filter.Ast, b: filter.Ast, it: PathItem, e: Env, k: (PathI
 // update starts at the path of the `foreach` itself.
 function paths_foreach(source: filter.Ast, name: string, update: filter.Ast, extract: filter.Ast, first: json.JsonValue, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
   let depth = st.stack.len();
-  let s = run(source, it.value, e, (x: json.JsonValue, own s1: St): own St => paths_foreach_step(update, extract, name, x, depth, it, e, k, s1), St { ...st, stack: st.stack.append(first) });
+  let s = drive(run(source, it.value, e, (x: json.JsonValue, own s1: St): own St => paths_foreach_step(update, extract, name, x, depth, it, e, k, s1), St { ...st, stack: st.stack.append(first) }));
   return St { ...s, stack: s.stack.truncate(depth) };
 }
 
@@ -1992,11 +2090,11 @@ function paths_other(name: string, args: filter.Ast[], it: PathItem, e: Env, k: 
     }
     return st;
   }
-  return paths_plain(filter.Call(name, args), it, e, false, k, st);
+  return paths_plain(filter.Call(name, args, false), it, e, false, k, st);
 }
 
 function paths_recurse(it: PathItem, f: filter.Ast, conds: filter.Ast[], e: Env, k: (PathItem, own St) => own St, own st: St): own St {
-  let s = k(it, st);
+  let s = drive(k(it, st));
   if (s.sig != OK) {
     return s;
   }
@@ -2016,7 +2114,7 @@ function paths_limit(n: json.JsonValue, f: filter.Ast, it: PathItem, e: Env, k: 
   }
   let (id, s) = new_label(st);
   let depth = s.stack.len();
-  let t = run_paths(f, it, e, (x: PathItem, own s1: St): own St => paths_limit_out(x, id, depth, k, s1), St { ...s, stack: s.stack.append(n) });
+  let t = drive(run_paths(f, it, e, (x: PathItem, own s1: St): own St => paths_limit_out(x, id, depth, k, s1), St { ...s, stack: s.stack.append(n) }));
   return ended(id, St { ...t, stack: t.stack.truncate(depth) });
 }
 
@@ -2026,7 +2124,7 @@ function paths_limit_out(x: PathItem, id: i32, depth: i32, k: (PathItem, own St)
     return raised(s, less.error[0]);
   }
   let left = less.values[0];
-  let t = k(x, St { ...s, stack: s.stack.with(depth, left) });
+  let t = drive(k(x, St { ...s, stack: s.stack.with(depth, left) }));
   if (t.sig == OK && order(left, whole(0)) <= 0) {
     return broken(t, id);
   }
@@ -2049,7 +2147,7 @@ function paths_getpath(p: json.JsonValue, it: PathItem, k: (PathItem, own St) =>
 function run_del(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let saved = st.items;
   let saved_found = st.found;
-  let s = paths_found(f, input, e, st);
+  let s = drive(paths_found(f, input, e, st));
   let ps = s.items;
   let t = St { ...s, items: saved, found: saved_found };
   if (t.sig != OK) {
@@ -2073,7 +2171,7 @@ function run_update(op: string, target: filter.Ast, value: filter.Ast, input: js
 function modify(op: string, target: filter.Ast, f: filter.Ast, x: json.JsonValue, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let saved = st.items;
   let saved_found = st.found;
-  let s = paths_found(target, input, e, st);
+  let s = drive(paths_found(target, input, e, st));
   let ps = s.items;
   s = St { ...s, found: saved_found };
   if (s.sig != OK) {
@@ -2099,7 +2197,7 @@ function modify(op: string, target: filter.Ast, f: filter.Ast, x: json.JsonValue
     }
     let news: json.JsonValue[] = [];
     if (op == "|=") {
-      s = first_output(f, old.values[0], e, s);
+      s = drive(first_output(f, old.values[0], e, s));
       if (s.sig != OK) {
         return St { ...s, items: saved };
       }
@@ -2128,7 +2226,7 @@ function modify(op: string, target: filter.Ast, f: filter.Ast, x: json.JsonValue
 // The first output of `f` on `v`, alone in `items`.
 function first_output(f: filter.Ast, v: json.JsonValue, e: Env, own st: St): own St {
   let (id, s) = new_label(st);
-  return ended(id, run(f, v, e, (x: json.JsonValue, own s1: St): own St => broken(St { ...s1, items: [x] }, id), St { ...s, items: [] }));
+  return ended(id, drive(run(f, v, e, (x: json.JsonValue, own s1: St): own St => broken(St { ...s1, items: [x] }, id), St { ...s, items: [] })));
 }
 
 function updated(op: string, x: json.JsonValue, v: json.JsonValue): Outputs {
@@ -2156,7 +2254,10 @@ function callee_scope(f: Func): Env {
 // each value of an earlier parameter first.
 function call_defined(f: Func, args: filter.Ast[], at: i32, input: json.JsonValue, e: Env, scope: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   if (at == args.len()) {
-    return run(f.body, input, scope, k, st);
+    if (st.calls >= BOUNCE_EVERY) {
+      return bounce(st, (own s: St): own St => run(f.body, input, scope, k, s));
+    }
+    return run(f.body, input, scope, k, St { ...st, calls: st.calls + 1 });
   }
   let name = filter.param_name(f.params[at]);
   let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true, single: false });
@@ -2168,7 +2269,10 @@ function call_defined(f: Func, args: filter.Ast[], at: i32, input: json.JsonValu
 
 function paths_defined(f: Func, args: filter.Ast[], at: i32, it: PathItem, e: Env, scope: Env, k: (PathItem, own St) => own St, own st: St): own St {
   if (at == args.len()) {
-    return run_paths(f.body, it, scope, k, st);
+    if (st.calls >= BOUNCE_EVERY) {
+      return bounce(st, (own s: St): own St => run_paths(f.body, it, scope, k, s));
+    }
+    return run_paths(f.body, it, scope, k, St { ...st, calls: st.calls + 1 });
   }
   let name = filter.param_name(f.params[at]);
   let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true, single: false });
