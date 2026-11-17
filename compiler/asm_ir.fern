@@ -9524,7 +9524,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
     dname = lp + "rcuniq" + util.i32_to_string(ins.result);
   }
   let op = 0;
-  if (ins.str == "__fern_rc_dec") {
+  if (ssa.shared_dec(ins)) {
     dname = lp + "rcshr" + util.i32_to_string(ins.result);
     op = 5;
   }
@@ -9714,7 +9714,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves,
 }
 
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (ssa.rc_inlined(ins) && (!s.size || ins.str == "__fern_rc_dec")) {
+  if (ssa.rc_inlined(ins) && (!s.size || ssa.shared_dec(ins))) {
     return ssa_rc_prim(ins, reg_of, lp, s);
   }
   s = asmcore.ssa_x0_forget(s);
