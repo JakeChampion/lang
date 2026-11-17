@@ -262,9 +262,11 @@ func (w *serveTLSWorld) drive(t *testing.T, cmd *exec.Cmd, stream bool) {
 		}
 		_ = plain.SetDeadline(time.Now().Add(30 * time.Second))
 		fmt.Fprint(plain, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+		// A fatal unexpected_message alert. A close_notify here is the receive
+		// deadline of the server, which waited for a record that does not come.
 		got := make([]byte, 64)
-		if n, err := plain.Read(got); err == nil && (n == 0 || got[0] != 0x15) {
-			t.Fatalf("a plaintext request was answered with %q", got[:n])
+		if n, err := plain.Read(got); err != nil || !bytes.Equal(got[:n], []byte{0x15, 3, 3, 0, 2, 2, 10}) {
+			t.Fatalf("a plaintext request was answered with %x (%v), want a fatal unexpected_message alert", got[:n], err)
 		}
 		plain.Close()
 		tr.CloseIdleConnections()

@@ -440,6 +440,10 @@ func bootQemu(t *testing.T, qemu string, args ...string) ([]byte, error) {
 
 func bootQemuFor(t *testing.T, limit time.Duration, qemu string, args ...string) ([]byte, error) {
 	t.Helper()
+	// A VM that runs to the timeout of the test binary ends as a panic with no console.
+	if deadline, ok := t.Deadline(); ok && time.Until(deadline)-time.Minute < limit {
+		limit = time.Until(deadline) - time.Minute
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	console, err := exec.CommandContext(ctx, qemu, args...).CombinedOutput()
