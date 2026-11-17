@@ -39,11 +39,15 @@ cd "$(dirname "$0")/.."
 REPORT="${1:-/dev/stdout}"
 
 # Unconditionally: make rebuilds only what is stale, and a local run must not
-# measure an old binary. bin/fern also makes build/embed, which fern_main needs.
+# measure an old binary.
 make bin/fern >&2
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+# fern_main reads its assets from an -embed directory. make lays one out only
+# when it builds bin/fern, and CI can restore bin/fern from a cache instead.
+./scripts/fern-embed-stage "$work/embed"
 
 # census MODE TARGET SUBJECT OUT [ARGS...] — the census lines of one compile.
 # A compile that fails stops the script, because its census covers only part of
@@ -74,7 +78,7 @@ sum() {
   } END { print n + 0 }' "$2"
 }
 
-census report x86-64-linux compiler/fern_main.fern "$work/x86" -embed build/embed
+census report x86-64-linux compiler/fern_main.fern "$work/x86" -embed "$work/embed"
 census report wasm32-wasi compiler/checker.fern "$work/wasm"
 census mutate x86-64-linux compiler/checker.fern "$work/mutants"
 
