@@ -206,14 +206,18 @@ function coerce_int_width(val: Value, type_name: string): Value {
   if (type_name.len() == 0) {
     return val;
   }
-  if (type_name == "char") {
+  let k = scalar_code(type_name);
+  if (k == SC_OTHER) {
+    return coerce_to_declared(val, type_name);
+  }
+  if (k == SC_CHAR) {
     return char_value(val);
   }
-  if (type_name == "usize" && is_int_like(val)) {
+  if (k == SC_USIZE && is_int_like(val)) {
     return v_usize(vint_as_i64(val));
   }
-  if (type_name == "i64" || type_name == "u64") {
-    let uns64 = type_name == "u64";
+  if (k == SC_I64 || k == SC_U64) {
+    let uns64 = k == SC_U64;
     match (val) {
       VInt(i) => {
         return v_wide(i.v as i64, uns64);
@@ -229,16 +233,16 @@ function coerce_int_width(val: Value, type_name: string): Value {
       }
     }
   }
-  if (type_name == "i32" && is_int_like(val)) {
+  if (k == SC_I32 && is_int_like(val)) {
     return v_int(vint_as_i64(val) as i32);
   }
-  if (type_name == "u8" && is_int_like(val)) {
+  if (k == SC_U8 && is_int_like(val)) {
     return v_byte(vint_as_i64(val) as i32);
   }
-  if ((type_name == "u16" || type_name == "i16") && is_int_like(val)) {
-    return v_half(vint_as_i64(val), type_name == "i16");
+  if ((k == SC_U16 || k == SC_I16) && is_int_like(val)) {
+    return v_half(vint_as_i64(val), k == SC_I16);
   }
-  if (type_name == "u32") {
+  if (k == SC_U32) {
     match (val) {
       VInt(i) => {
         return v_uint(i.v);
@@ -251,7 +255,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
       }
     }
   }
-  if (type_name == "f64") {
+  if (k == SC_F64) {
     match (val) {
       VFloat32(f) => {
         return v_float(f.v);
@@ -265,7 +269,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
       _ => {}
     }
   }
-  if (type_name == "f32") {
+  if (k == SC_F32) {
     match (val) {
       VFloat(f) => {
         return v_float32(f.v);
@@ -281,6 +285,65 @@ function coerce_int_width(val: Value, type_name: string): Value {
       }
     }
   }
+  return val;
+}
+
+const SC_OTHER: i32 = 0;
+
+const SC_CHAR: i32 = 1;
+
+const SC_USIZE: i32 = 2;
+
+const SC_I64: i32 = 3;
+
+const SC_U64: i32 = 4;
+
+const SC_I32: i32 = 5;
+
+const SC_U8: i32 = 6;
+
+const SC_U16: i32 = 7;
+
+const SC_I16: i32 = 8;
+
+const SC_U32: i32 = 9;
+
+const SC_F64: i32 = 10;
+
+const SC_F32: i32 = 11;
+
+// The scalar that a type name is, from its length and its bytes. `width`
+// is the two digits of a name of three bytes: "32" is 13106, "64" is 13876
+// and "16" is 12598.
+function scalar_code(t: string): i32 {
+  let n = t.len();
+  if (n == 3) {
+    let width = t[1] as i32 << 8 | t[2] as i32;
+    if (t[0] == b'i') {
+      return if (width == 13106) { SC_I32 } else if (width == 13876) { SC_I64 } else if (width == 12598) { SC_I16 } else { SC_OTHER };
+    }
+    if (t[0] == b'u') {
+      return if (width == 13106) { SC_U32 } else if (width == 13876) { SC_U64 } else if (width == 12598) { SC_U16 } else { SC_OTHER };
+    }
+    if (t[0] == b'f') {
+      return if (width == 13876) { SC_F64 } else if (width == 13106) { SC_F32 } else { SC_OTHER };
+    }
+    return SC_OTHER;
+  }
+  if (n == 2) {
+    return if (t[0] == b'u' && t[1] == b'8') { SC_U8 } else { SC_OTHER };
+  }
+  if (n == 4) {
+    return if (t == "char") { SC_CHAR } else { SC_OTHER };
+  }
+  if (n == 5) {
+    return if (t == "usize") { SC_USIZE } else { SC_OTHER };
+  }
+  return SC_OTHER;
+}
+
+// A cell, an array or a tuple takes the shape of its declared type.
+function coerce_to_declared(val: Value, type_name: string): Value {
   match (val) {
     VCell(c) => {
       if (parser.parse_type_ref(type_name).base == "Cell") {
