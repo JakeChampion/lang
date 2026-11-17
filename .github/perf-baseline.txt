@@ -56,14 +56,14 @@ x86_64/call_overhead.text	370
 x86_64/call_overhead.ir	7238001
 x86_64/closure_call.text	1065
 x86_64/closure_call.ir	41178167
-x86_64/deflate_decode.ir	27683030
+x86_64/deflate_decode.ir	26950522
 x86_64/deflate_decode.text	13652
 x86_64/deflate_encode.ir	41015265
 x86_64/deflate_encode.text	7205
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
 x86_64/http_hello.text	15973
-x86_64/http_hello.ir	21368372
+x86_64/http_hello.ir	21380372
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8891
@@ -74,10 +74,10 @@ x86_64/map_string.text	9772
 x86_64/map_string.ir	50691579	2
 x86_64/ordmap_insert.text	6028
 x86_64/ordmap_insert.ir	68669850
-x86_64/pmap_insert.text	3596
+x86_64/pmap_insert.text	3598
 x86_64/pmap_insert.ir	49902426
 x86_64/pvec_with.text	3471
-x86_64/pvec_with.ir	46694212
+x86_64/pvec_with.ir	46375485
 x86_64/record_update.ir	31137597
 x86_64/record_update.text	1109
 x86_64/sort_inplace.text	1650
@@ -103,8 +103,8 @@ x86_64/struct_drop.ir	199020504
 x86_64/tokenize.text	1294
 x86_64/tokenize.ir	31710112
 x86_64/utf8_ingest_unchecked.text	8715
-x86_64/utf8_ingest_unchecked.ir	2104662
-x86_64/utf8_ingest_validated.text	8980
+x86_64/utf8_ingest_unchecked.ir	2100062
+x86_64/utf8_ingest_validated.text	9021
 x86_64/utf8_ingest_validated.ir	5084663
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -187,14 +187,14 @@ aarch64/utf8_ingest_validated.text	9484
 aarch64/utf8_ingest_validated.ir	6064882
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	37302530
-x86_64/perceus_deriv.text	3116
-x86_64/perceus_deriv.ir	51514334
+x86_64/perceus_deriv.text	3127
+x86_64/perceus_deriv.ir	51439934
 x86_64/perceus_nqueens.text	1667
 x86_64/perceus_nqueens.ir	53612868
-x86_64/perceus_rbtree.text	2776
-x86_64/perceus_rbtree.ir	23459827
-x86_64/perceus_rbtree_ck.text	3293
-x86_64/perceus_rbtree_ck.ir	30870437
+x86_64/perceus_rbtree.text	2755
+x86_64/perceus_rbtree.ir	22847987
+x86_64/perceus_rbtree_ck.text	3301
+x86_64/perceus_rbtree_ck.ir	30224997
 aarch64/perceus_cfold.text	2506
 aarch64/perceus_cfold.ir	43807684
 aarch64/perceus_deriv.text	3377
@@ -225,7 +225,7 @@ x86_64/base64_decode.ir	551372106
 aarch64/base64_decode.text	3349
 aarch64/base64_decode.ir	347238827
 x86_64/gather_many.text	5540
-x86_64/gather_many.ir	105118047
+x86_64/gather_many.ir	104726815
 aarch64/gather_many.text	6053
 aarch64/gather_many.ir	206322178
 aarch64/hex_decode.ir	182381782
