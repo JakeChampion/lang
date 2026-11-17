@@ -634,6 +634,25 @@ function pick(name: string): Case {
         let b2: ssa.SBlock = block(2, [0, 1], [], ret(5));
         return Case { f: func(1, 8, [b0, b1, b2]), modes: [rccertify.counted_mode()], returns_unit: true };
     }
+    if (name == "push-onto-a-borrow-tested-back" || name == "push-onto-a-borrow-released-as-its-own") {
+        // v2 is the borrowed v0 grown in place, or a new array.
+        let fix: ssa.SInst[] = [call(4, "__fern_rc_inc", [2])];
+        if (name == "push-onto-a-borrow-released-as-its-own") { fix = [call(4, "__fern_rc_dec", [2])]; }
+        let b0: ssa.SBlock = block(0, [], [param(0), const_int(1, 7), inst(50, 2, [0, 1], 0, "arr_push_u32"), inst(9, 3, [2, 0], 64, "eq")], brif(3, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], fix, br(2));
+        let b2: ssa.SBlock = block(2, [0, 1], [], ret(2));
+        return Case { f: func(1, 5, [b0, b1, b2]), modes: [rccertify.borrow_mode()], returns_unit: true };
+    }
+    if (name == "push-on-the-shared-arm" || name == "push-on-the-shared-arm-keeps-the-retain") {
+        // The arm where v0 has another holder copies it.
+        let shared: ssa.SInst[] = [inst(50, 5, [0, 1], 0, "arr_push_u32"), call(6, "__fern_rc_dec", [0])];
+        if (name == "push-on-the-shared-arm-keeps-the-retain") { shared = [inst(50, 5, [0, 1], 0, "arr_push_u32")]; }
+        let b0: ssa.SBlock = block(0, [], [param(0), const_int(1, 7), call(2, "__fern_rc_inc", [0]), call(3, "__fern_rc_is_unique", [0])], brif(3, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [inst(50, 4, [0, 1], 0, "arr_push_owned_u32")], br(3));
+        let b2: ssa.SBlock = block(2, [0], shared, br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 7, [4, 5], 0, "")], ret(7));
+        return Case { f: func(1, 8, [b0, b1, b2, b3]), modes: [rccertify.borrow_mode()], returns_unit: true };
+    }
     if (name == "unknown-callee-refused") {
         return Case { f: one_block(0, 3, [fresh_box(0), call(1, "mystery", [0]), const_int(2, 0)], ret(2)), modes: [], returns_unit: false };
     }
@@ -769,6 +788,10 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"null-tested-against-an-i64-zero", nil, 0},
 		{"concat-result-is-its-operand", nil, 0},
 		{"concat-new-box-keeps-the-operand", []string{"leaked where it dies of v0"}, 0},
+		{"push-onto-a-borrow-tested-back", nil, 0},
+		{"push-onto-a-borrow-released-as-its-own", []string{"spent without a unit of v2"}, 1},
+		{"push-on-the-shared-arm", nil, 0},
+		{"push-on-the-shared-arm-keeps-the-retain", []string{"of v0"}, 0},
 		{"unknown-callee-refused", []string{"cannot be certified: calls mystery, which has no rc signature and no ABI"}, 0},
 		{"unknown-contract-returns-a-phi-of-a-fresh-box", nil, 2},
 		{"loop-phi-borrows-a-held-box", nil, 0},

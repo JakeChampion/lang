@@ -352,6 +352,9 @@ function coerce_to_declared(val: Value, type_name: string): Value {
       return val;
     },
     VArr(a) => {
+      if (a.elem.len() > 0 && !a.view && name_ends_with(type_name, "[]")) {
+        return val;
+      }
       let ty = parser.parse_type_ref(type_name);
       let is_view = ty.is_view && ty.array_depth == 0;
       if (ty.base == "Cell" || !(name_ends_with(type_name, "[]") || is_view)) {

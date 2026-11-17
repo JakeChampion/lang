@@ -186,6 +186,12 @@ Returned packets contain canonical four-byte Annex B prefixes and an IDR flag, w
 An AVC SPS with zero reference frames permits only I or SI slices under H.264 clause 7.4.3.
 Slice admission uses the current SPS after cached PPS validation, including after SPS replacement.
 
+Slice types 5 through 9 require one slice family throughout their coded picture under H.264 clause 7.4.3.
+The reader retains a family mask, so a later declaration also checks all earlier slices in that picture.
+Unit and packet byte limits precede this check, which runs before packet bytes are copied.
+The private picture identity adds one scalar field, which changes the layout of the identity stored in `Stream.last`.
+Packet fields and source ownership remain unchanged. Picture emission clears the mask.
+
 AVC sequence-end and stream-end NAL units have empty payloads and follow a coded picture.
 Both markers remain in that picture's access unit. Sequence end requires IDR in the next access unit, through intervening prefix metadata.
 Stream end permits no subsequent NAL unit in the same reader. A separate bitstream requires a new reader.

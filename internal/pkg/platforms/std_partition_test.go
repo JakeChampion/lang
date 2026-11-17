@@ -11,7 +11,7 @@ import (
 
 var stdModuleReach = map[string]string{
 	"std/_test_empty":   "",
-	"std/android":       "cabi",
+	"std/android":       "atomics,cabi",
 	"std/ansi":          "",
 	"std/array":         "",
 	"std/async":         "log,mmio,now,pollable,privileged,reactor,tcp,uring",
