@@ -5445,7 +5445,15 @@ function linked_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
   r = emit(r, ir.op_load_local(link.root));
   r = emit(r, ir.op_bin("eq", 0, false));
   r = emit(r, ir.op_if(0));
-  r = borrowed_with_base(r, f, ins, scratch, link.out, keep);
+  if (ins.result < p.chained.len() && p.chained[ins.result]) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_store_local(scratch));
+    if (!link.out) {
+      r = helper(r, scratch, "__fern_rc_inc");
+    }
+  } else {
+    r = borrowed_with_base(r, f, ins, scratch, link.out, keep);
+  }
   r = emit(r, ir.op_else());
   if (p.linked_receivers[ins.result]) {
     r = emit(r, ir.op_load_local(ins.args[0]));
