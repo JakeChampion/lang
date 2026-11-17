@@ -435,7 +435,11 @@ function split_constant_joins(f0: ssasem.Func, stack_phi_joins: boolean): Joined
   }
   let f = f0;
   let changed = 0;
-  for _ in 0..16 {
+  // Each round splits one join and removes it, so a round for each block is
+  // enough.
+  let limit = f0.graph.blocks.len() + 1;
+  let settled = false;
+  for _ in 0..limit {
     let fw = forward_empty_joins(f.graph, stack_phi_joins);
     if (fw.changed > 0) {
       f = ssasem.Func { ...f, graph: fw.g };
@@ -443,10 +447,14 @@ function split_constant_joins(f0: ssasem.Func, stack_phi_joins: boolean): Joined
     }
     let r = split_round(f);
     if (r.changed == 0) {
+      settled = true;
       break;
     }
     f = r.f;
     changed += r.changed;
+  }
+  if (!settled) {
+    util.report_unsettled("semthread.split_constant_joins", limit, f0.graph.name);
   }
   if (changed == 0) {
     return Joined { f: f0, changed: 0 };

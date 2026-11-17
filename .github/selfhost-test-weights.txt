@@ -3085,6 +3085,7 @@ TestSelfHostSemanticTailRecursion 73
 TestSelfHostSemanticTrmc 6
 TestSelfHostSemanticUnrollCountedLoops 3
 TestSelfHostSemanticWholeCompilerX86_64 238
+TestSelfHostSemthreadSplitsEveryConstantJoin 3
 TestSelfHostSendCopyAllocatesFreshBoxes 4
 TestSelfHostSendCopyKeepsSharedBoxes 4
 TestSelfHostSentinelBounds 3
