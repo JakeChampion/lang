@@ -4588,7 +4588,7 @@ function eval_typed_binary(op: string, lv: Value, rv: Value, ty: string): Value 
     return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), -32768, 32767) as i32);
   }
   let v = eval_binary(op, lv, rv);
-  if (util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], ty)) {
+  if (ty == "i32" || ty == "u8" || ty == "i64" || ty == "u32" || ty == "u64" || ty == "usize" || ty == "u16" || ty == "i16") {
     return coerce_int_width(v, ty);
   }
   return v;
@@ -4906,12 +4906,6 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   return eval_binary_after_i64(op, lv, rv);
 }
 
-const EVAL_BINARY_ARITH_SET: string[] = ["-", "*", "/", "%"];
-
-const EVAL_BINARY_ARITH_SET2: string[] = ["<", "<=", ">", ">="];
-
-const EVAL_BINARY_ARITH_SET3: string[] = ["&", "|", "^", "<<", ">>"];
-
 function eval_binary_arith_sub_mul_div(op: string, lv: Value, rv: Value): Value {
   match (lv) {
     VInt(li) => {
@@ -4958,14 +4952,7 @@ function eval_binary_arith_sub_mul_div(op: string, lv: Value, rv: Value): Value 
       return v_err("arithmetic lhs not i32 or f64");
     }
   }
-  return eval_binary_arith_after_sub_mul_div(op, lv, rv);
-}
-
-function eval_binary_arith_after_sub_mul_div(op: string, lv: Value, rv: Value): Value {
-  if (util.has_str(EVAL_BINARY_ARITH_SET2, op)) {
-    return eval_binary_arith_compare(op, lv, rv);
-  }
-  return eval_binary_arith_after_compare(op, lv, rv);
+  return unknown_binary_op(op);
 }
 
 function eval_binary_arith_compare(op: string, lv: Value, rv: Value): Value {
@@ -5010,14 +4997,7 @@ function eval_binary_arith_compare(op: string, lv: Value, rv: Value): Value {
       return v_err("comparison lhs not i32, f64 or string");
     }
   }
-  return eval_binary_arith_after_compare(op, lv, rv);
-}
-
-function eval_binary_arith_after_compare(op: string, lv: Value, rv: Value): Value {
-  if (op == "==" || op == "!=") {
-    return eval_binary_arith_equal(op, lv, rv);
-  }
-  return eval_binary_arith_after_equal(op, lv, rv);
+  return unknown_binary_op(op);
 }
 
 function eval_binary_arith_equal(op: string, lv: Value, rv: Value): Value {
@@ -5026,14 +5006,7 @@ function eval_binary_arith_equal(op: string, lv: Value, rv: Value): Value {
     return v_bool(eq);
   }
   return v_bool(!eq);
-  return eval_binary_arith_after_equal(op, lv, rv);
-}
-
-function eval_binary_arith_after_equal(op: string, lv: Value, rv: Value): Value {
-  if (op == "&&" || op == "||") {
-    return eval_binary_arith_logic(op, lv, rv);
-  }
-  return eval_binary_arith_after_logic(op, lv, rv);
+  return unknown_binary_op(op);
 }
 
 function eval_binary_arith_logic(op: string, lv: Value, rv: Value): Value {
@@ -5055,14 +5028,7 @@ function eval_binary_arith_logic(op: string, lv: Value, rv: Value): Value {
       return v_err("logical lhs not bool");
     }
   }
-  return eval_binary_arith_after_logic(op, lv, rv);
-}
-
-function eval_binary_arith_after_logic(op: string, lv: Value, rv: Value): Value {
-  if (util.has_str(EVAL_BINARY_ARITH_SET3, op)) {
-    return eval_binary_arith_bits(op, lv, rv);
-  }
-  return eval_binary_arith_after_bits(op, lv, rv);
+  return unknown_binary_op(op);
 }
 
 function eval_binary_arith_bits(op: string, lv: Value, rv: Value): Value {
@@ -5087,18 +5053,30 @@ function eval_binary_arith_bits(op: string, lv: Value, rv: Value): Value {
       return v_err("bitwise lhs not i32");
     }
   }
-  return eval_binary_arith_after_bits(op, lv, rv);
+  return unknown_binary_op(op);
 }
 
-function eval_binary_arith_after_bits(op: string, lv: Value, rv: Value): Value {
+function unknown_binary_op(op: string): Value {
   return v_err("unknown binary op: " + op);
 }
 
 function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
-  if (util.has_str(EVAL_BINARY_ARITH_SET, op)) {
+  if (op == "-" || op == "*" || op == "/" || op == "%") {
     return eval_binary_arith_sub_mul_div(op, lv, rv);
   }
-  return eval_binary_arith_after_sub_mul_div(op, lv, rv);
+  if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+    return eval_binary_arith_compare(op, lv, rv);
+  }
+  if (op == "==" || op == "!=") {
+    return eval_binary_arith_equal(op, lv, rv);
+  }
+  if (op == "&&" || op == "||") {
+    return eval_binary_arith_logic(op, lv, rv);
+  }
+  if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") {
+    return eval_binary_arith_bits(op, lv, rv);
+  }
+  return unknown_binary_op(op);
 }
 
 function f64_trunc_u32(v: f64): i32 {
