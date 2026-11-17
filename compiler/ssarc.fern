@@ -1671,7 +1671,7 @@ function keep_release(own r: irtables.LowerState, f: ssasem.Func, donor: i32, fi
   return emit(r, ir.op_store_local(donor));
 }
 
-function classified_death(own r: irtables.LowerState, f: ssasem.Func, k: ssaunits.Keeps, at: i32, token: i32, held: boolean): irtables.LowerState {
+function classified_death(own r: irtables.LowerState, f: ssasem.Func, k: ssaunits.Keeps, at: i32, token: i32, held: boolean, stable: boolean): irtables.LowerState {
   let scratch_start = r.scratch_start;
   let donor = k.donors[at];
   let fields = donor_fields(f, k.moved[at][0], donor);
@@ -1689,11 +1689,20 @@ function classified_death(own r: irtables.LowerState, f: ssasem.Func, k: ssaunit
     r = sole_release_of(release(r, donor, f.values[donor], f), f.values[donor], f);
   }
   r = emit(r, ir.op_else());
-  r = drop_value(r, donor, f.values[donor], scratch_start, f);
+  if (stable && shared_box(f.values[donor], f)) {
+    r = mark_release(helper(r, donor, "__fern_rc_dec"), ir.shared_dec);
+  } else {
+    r = drop_value(r, donor, f.values[donor], scratch_start, f);
+  }
   if (held) {
     r = zero_local(r, donor);
   }
   return emit(r, ir.op_end());
+}
+
+// A box whose count is the word before its fields.
+function shared_box(t: typeinfo.Type, f: ssasem.Func): boolean {
+  return never_odd(t, f) && ssasem.counted(f, t) && !semtypes.is_handle(t) && !semtypes.is_env(t);
 }
 
 function max_inline_rest(): i32 {
@@ -7711,14 +7720,14 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
       }
       for row in 0..keeps.donors.len() {
         if (classified_end(keeps, row, pos) && keeps.donors[row] == pairs.tokens[pos]) {
-          r = classified_death(r, f, keeps, row, first + slots[row], true);
+          r = classified_death(r, f, keeps, row, first + slots[row], true, ssaunits.classified_count_holds(p, idx, b, pairs, keeps, row));
         }
       }
       let held_on = ssaunits.carry_held(carry, b.id, pos);
       for row in 0..keeps.donors.len() {
         let dies = keeps.donors[row];
         if (classified_end(keeps, row, pos) && dies != pairs.tokens[pos] && dies != held_on) {
-          r = classified_death(r, f, keeps, row, first + slots[row], false);
+          r = classified_death(r, f, keeps, row, first + slots[row], false, ssaunits.classified_count_holds(p, idx, b, pairs, keeps, row));
           step = ssaunits.Step { ...step, drops: without(step.drops, dies) };
         }
       }
@@ -7726,7 +7735,7 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
       let ended = false;
       for row in 0..keeps.donors.len() {
         if (classified_end(keeps, row, pos) && keeps.donors[row] == held_on) {
-          r = classified_death(r, f, keeps, row, first + slots[row], true);
+          r = classified_death(r, f, keeps, row, first + slots[row], true, ssaunits.classified_count_holds(p, idx, b, pairs, keeps, row));
           ended = true;
         }
       }

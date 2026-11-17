@@ -355,13 +355,13 @@ pub function boxed_values(f: ssa.SFunc): boolean[] {
   return out;
 }
 
-// The values that a count with the mark 8 names. Such a value is never an odd
+// The values that an `ssa.even_count` names. Such a value is never an odd
 // address, so a count of it needs no test of bit 0.
 pub function even_values(f: ssa.SFunc): boolean[] {
   let out: boolean[] = [];
   for blk in f.blocks {
     for ins in blk.insts {
-      if (counts_box(ins) && ins.imm == 8) {
+      if (counts_box(ins) && ssa.even_count(ins)) {
         if (out.len() == 0) {
           out = __alloc_bool(f.nvals);
         }

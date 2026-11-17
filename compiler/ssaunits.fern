@@ -5389,6 +5389,29 @@ pub function classified_at(k: Keeps, pos: i32): Option[i32] {
   return None;
 }
 
+// Whether the count of the classified donor of row is at its death what its
+// token read: from the read to the death, each instruction only reads the
+// donor, and no step drops a value, reuses a box or ends another row.
+pub function classified_count_holds(p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, k: Keeps, row: i32): boolean {
+  let d = k.donors[row];
+  for pos in k.start[row]..=k.taken[row] {
+    if (util.index_of_i32(b.insts[pos].args, d) < 0 || pairs.selfs[pos] >= 0 || pairs.builds[pos] >= 0 || pairs.tokens[pos] >= 0 && pairs.tokens[pos] != d) {
+      return false;
+    }
+    for v in step_of(p, idx, b.id, pos, -1).drops {
+      if (v != d) {
+        return false;
+      }
+    }
+    for other in 0..k.donors.len() {
+      if (other != row && (k.taken[other] == pos || k.built[other] == pos)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 pub function kept_values(k: Keeps): i32[] {
   let out: i32[] = [];
   for vs in k.values {
