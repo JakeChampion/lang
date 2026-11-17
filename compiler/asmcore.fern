@@ -728,6 +728,22 @@ pub function stack_guard(): i32 {
   return 1048576;
 }
 
+// Under -sanitize the heap census checks that the context that runs it owns
+// the heap. An executable owns the stack mapping that its start makes.
+pub function owner_by_stack(s: EmitState): boolean {
+  return s.sanitize && !s.shared && process_entry(s);
+}
+
+// A shared object owns the thread that holds the turn on the busy lock.
+pub function owner_by_thread(s: EmitState): boolean {
+  return s.sanitize && s.shared;
+}
+
+// The report of a census that a context which does not own the heap runs.
+pub function san_owner_message(): string {
+  return "fern-sanitizer: second context (a thread or stack that does not own the heap used it)";
+}
+
 pub function backtrace_on(): boolean {
   match (env("FERN_BACKTRACE")) {
     Some(v) => {

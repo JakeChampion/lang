@@ -88,6 +88,17 @@ function test_find_in_other_default(): test.TestOutcome {
   return test.assert_eq(got, "/NotoSans-Bold.ttf 700 0 0, none");
 }
 
+// A part of the fonts.xml of Android 9.
+const FONTS_XML: string = "<familyset version=\"23\">\n<family name=\"sans-serif\">\n<font weight=\"400\" style=\"normal\">Roboto-Regular.ttf</font>\n</family>\n<family lang=\"und-Hebr\">\n<font weight=\"400\" style=\"normal\">NotoSansHebrew-Regular.ttf</font>\n<font weight=\"700\" style=\"normal\">NotoSansHebrew-Bold.ttf</font>\n</family>\n<family lang=\"zh-Hans\">\n<font weight=\"400\" style=\"normal\" index=\"2\">NotoSansCJK-Regular.ttc</font>\n</family>\n<family lang=\"und-Zsye\" variant=\"elegant\">\n<font weight=\"400\" style=\"italic\">Italic.ttf</font>\n</family>\n</familyset>";
+
+function test_fallback_files(): test.TestOutcome {
+  let got: string[] = [];
+  for f in fonts.fallback_files(FONTS_XML, "/f", 600) {
+    got = got.append(f.path + "#" + f.index.to_string() + "@" + f.weight.to_string());
+  }
+  return test.assert_eq(got.join(" "), "/f/NotoSansHebrew-Bold.ttf#0@700 /f/NotoSansCJK-Regular.ttc#2@400");
+}
+
 function test_tag_text(): test.TestOutcome {
   return test.assert_eq(fonts.tag_text(2003265652u32) + " " + fonts.tag_text(1769234796u32), "wght ital");
 }
@@ -123,6 +134,7 @@ function main(): i32 {
   r = r.it("pick keeps to the family", test_pick_family);
   r = r.it("find_in reads a directory", test_find_in);
   r = r.it("find_in takes another family when the directory has no Roboto", test_find_in_other_default);
+  r = r.it("fallback_files reads the fallback order of fonts.xml", test_fallback_files);
   r = r.it("tag_text gives the letters of a tag", test_tag_text);
   r = r.it("styled sets the axes of a variable font", test_styled);
   return r.finish();

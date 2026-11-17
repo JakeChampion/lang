@@ -12337,12 +12337,32 @@ func destructureNames(d *ast.Destructure) []string {
 	return names
 }
 
+// detectMutualRecSCCs maps each function of a cycle to the first function of the cycle in fns.
 func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]string {
-	siblings := map[string]*ast.FuncDecl{}
 	order := map[string]int{}
 	for i, fn := range fns {
-		siblings[fn.Name] = fn
 		order[fn.Name] = i
+	}
+	out := map[string]string{}
+	for _, group := range MutualRecGroups(fns) {
+		first := group[0]
+		for _, name := range group {
+			if order[name] < order[first] {
+				first = name
+			}
+		}
+		for _, name := range group {
+			out[name] = first
+		}
+	}
+	return out
+}
+
+// MutualRecGroups has one list for each set of the functions of fns that call each other.
+func MutualRecGroups(fns []*ast.FuncDecl) [][]string {
+	siblings := map[string]*ast.FuncDecl{}
+	for _, fn := range fns {
+		siblings[fn.Name] = fn
 	}
 	adj := map[string][]string{}
 	for _, fn := range fns {
@@ -12359,7 +12379,7 @@ func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]string {
 	lowlinks := map[string]int{}
 	onStack := map[string]bool{}
 	var stack []string
-	out := map[string]string{}
+	var out [][]string
 	var strongconnect func(name string)
 	strongconnect = func(name string) {
 		indices[name] = index
@@ -12391,15 +12411,7 @@ func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]string {
 				}
 			}
 			if len(scc) >= 2 {
-				first := scc[0]
-				for _, n := range scc {
-					if order[n] < order[first] {
-						first = n
-					}
-				}
-				for _, n := range scc {
-					out[n] = first
-				}
+				out = append(out, scc)
 			}
 		}
 	}

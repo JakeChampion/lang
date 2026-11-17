@@ -2169,7 +2169,31 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
     util.push_bytes(a.code, x86_movq_xmm_to_gpr([], x86_gas_xmm(src), gd));
     return a;
   }
+  if (src.starts_with("%fs:")) {
+    return x86_gas_movq_fs(a, src, dst);
+  }
   return x86_gas_mov_rm(a, "movq", 64, src, dst);
+}
+
+// movq %fs:DISP, %reg loads the word at DISP in the thread segment: the FS
+// prefix, then a ModRM and SIB with no base and no index, then a 32-bit DISP.
+function x86_gas_movq_fs(own a: X86Asm, src: string, dst: string): X86Asm {
+  let r = x86_gas_reg64(dst);
+  let at = slice_unchecked(src, 4, src.len()) + "";
+  if (r < 0 || x86_gas_has_paren(at)) {
+    return x86_gas_bad(a, "movq " + src + ", " + dst);
+  }
+  let d = x86_gas_atoi(at);
+  buf_push_byte(a.code, 100);
+  buf_push_byte(a.code, 72 + r / 8 * 4);
+  buf_push_byte(a.code, 139);
+  buf_push_byte(a.code, r % 8 * 8 + 4);
+  buf_push_byte(a.code, 37);
+  buf_push_byte(a.code, d & 255);
+  buf_push_byte(a.code, d >> 8 & 255);
+  buf_push_byte(a.code, d >> 16 & 255);
+  buf_push_byte(a.code, d >> 24 & 255);
+  return a;
 }
 
 function x86_gas_top_comma(s: string): i32 {

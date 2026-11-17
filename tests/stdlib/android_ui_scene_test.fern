@@ -10,9 +10,9 @@ import "./image_vectors";
 
 function fonts(): text.Fonts {
   if let Some(f) = truetype.parse(image_vectors.font()) {
-    return text.Fonts { faces: [f], weights: [400] };
+    return text.from_faces([f], [400]);
   }
-  return text.Fonts { faces: [], weights: [] };
+  return text.from_faces([], []);
 }
 
 const WHITE: i32 = -1;

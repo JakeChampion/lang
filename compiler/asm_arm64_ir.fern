@@ -7900,9 +7900,9 @@ function emit_shared_init_arm64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_busy_lock_arm64(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
+  s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n" + busy_owner_word(s) + "    .text\n");
   s = s.write("__fern_busy_take:\n    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    ldr w17, [x16, #4]\n    cbnz w17, .Lfern_busy_defer\n");
-  s = s.write(".Lfern_busy_try:\n    mov w17, #1\n    swpal w17, w17, [x16]\n    cbnz w17, .Lfern_busy_wait\n    ret\n");
+  s = s.write(".Lfern_busy_try:\n    mov w17, #1\n    swpal w17, w17, [x16]\n    cbnz w17, .Lfern_busy_wait\n" + busy_owner_store(s) + "    ret\n");
   // 1,000,000 ns is 0xF4240.
   s = s.write(".Lfern_busy_defer:\n    stp x0, x1, [sp, #-16]!\n    stp x2, x3, [sp, #-16]!\n    str x8, [sp, #-16]!\n");
   s = s.write("    mov x0, #0x4240\n    movk x0, #0xf, lsl #16\n    stp xzr, x0, [sp, #-16]!\n");
@@ -7914,7 +7914,7 @@ function emit_busy_lock_arm64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    b .Lfern_busy_retry\n");
   s = s.write(".Lfern_busy_won:\n    add x0, x16, #4\n    swpal wzr, w17, [x0]\n    cbz w17, .Lfern_busy_out\n");
   s = s.write("    mov x1, #129\n    mov x2, #0xffff\n    mov x8, #98\n").svc(98);
-  s = s.write(".Lfern_busy_out:\n    ldr x8, [sp], #16\n    ldp x2, x3, [sp], #16\n    ldp x0, x1, [sp], #16\n    ret\n");
+  s = s.write(".Lfern_busy_out:\n" + busy_owner_store(s) + "    ldr x8, [sp], #16\n    ldp x2, x3, [sp], #16\n    ldp x0, x1, [sp], #16\n    ret\n");
   s = s.write("__fern_busy_give:\n    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    swpal wzr, w17, [x16]\n    cmp w17, #2\n    b.eq .Lfern_busy_wake\n    ret\n");
   s = s.write(".Lfern_busy_wake:\n    stp x0, x1, [sp, #-16]!\n    stp x2, x8, [sp, #-16]!\n");
   s = s.write("    mov w17, #1\n    str w17, [x16, #4]\n");
@@ -9039,6 +9039,56 @@ function emit_san_abort(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// A census run by a context that does not own the heap aborts. `t1` and
+// `t2` are free.
+function san_owner_check(s: asmcore.EmitState, t1: string, t2: string): asmcore.EmitState {
+  let mine = asmcore.fresh_label(s);
+  if (asmcore.owner_by_stack(s)) {
+    s = mine.state.write("    adrp " + t1 + ", __fern_stack_top\n    add " + t1 + ", " + t1 + ", :lo12:__fern_stack_top\n    ldr " + t1 + ", [" + t1 + "]\n    mov " + t2 + ", sp\n    sub " + t1 + ", " + t1 + ", " + t2 + "\n");
+    s = s.write(mov_imm64(t2, asmcore.stack_size() as i64) + "    cmp " + t1 + ", " + t2 + "\n    b.lo " + mine.name + "\n");
+    return s.write("    bl __fern_san_abort_owner\n" + mine.name + ":\n");
+  }
+  if (asmcore.owner_by_thread(s)) {
+    s = mine.state.write("    mrs " + t1 + ", tpidr_el0\n    adrp " + t2 + ", __fern_san_owner\n    add " + t2 + ", " + t2 + ", :lo12:__fern_san_owner\n    ldr " + t2 + ", [" + t2 + "]\n");
+    return s.write("    cmp " + t1 + ", " + t2 + "\n    b.eq " + mine.name + "\n    bl __fern_san_abort_owner\n" + mine.name + ":\n");
+  }
+  return s;
+}
+
+// The thread that takes the turn owns the heap. x16 and x17 are free.
+function busy_owner_store(s: asmcore.EmitState): string {
+  if (asmcore.owner_by_thread(s)) {
+    return "    mrs x17, tpidr_el0\n    adrp x16, __fern_san_owner\n    add x16, x16, :lo12:__fern_san_owner\n    str x17, [x16]\n";
+  }
+  return "";
+}
+
+function busy_owner_word(s: asmcore.EmitState): string {
+  if (asmcore.owner_by_thread(s)) {
+    return "    .globl __fern_san_owner\n__fern_san_owner: .skip 8\n";
+  }
+  return "";
+}
+
+function emit_san_owner_abort(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.owner_by_stack(s) && !asmcore.owner_by_thread(s)) {
+    return s;
+  }
+  let msg = asmcore.san_owner_message();
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_owner:\n    .ascii \"" + msg + "\\n\"\n");
+  s = s.write("    .text\n");
+  s = s.write("    .globl __fern_san_abort_owner\n");
+  s = s.write("__fern_san_abort_owner:\n");
+  s = s.write("    adrp x1, .Lsan_owner\n");
+  s = s.write("    add x1, x1, :lo12:.Lsan_owner\n");
+  s = s.write("    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n");
+  s = s.write("    mov x0, #2\n");
+  s = s.write("    mov x8, #64\n");
+  s = s.svc(64);
+  return san_report_exit(s);
+}
+
 function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
   if (s.backtrace) {
     return s.write("    mov x19, #124\n    b __fern_bt_exit\n");
@@ -9172,6 +9222,7 @@ function lc_bump_alloc_add(s: asmcore.EmitState, addend: string, t1: string, t2:
   if (!s.leak_check) {
     return s;
   }
+  s = san_owner_check(s, t1, t2);
   s = s.write("    adrp " + t1 + ", __fern_lc_alloc_count\n");
   s = s.write("    add " + t1 + ", " + t1 + ", :lo12:__fern_lc_alloc_count\n");
   s = s.write("    ldr " + t2 + ", [" + t1 + "]\n");
@@ -9191,6 +9242,7 @@ function lc_grow_bytes(s: asmcore.EmitState, old: string, grown: string, t: RegT
   if (!s.leak_check) {
     return s;
   }
+  s = san_owner_check(s, t.b, t.c);
   s = s.write("    sub " + t.a + ", " + grown + ", " + old + "\n");
   s = s.write("    adrp " + t.b + ", __fern_lc_alloc_bytes\n");
   s = s.write("    add " + t.b + ", " + t.b + ", :lo12:__fern_lc_alloc_bytes\n");
@@ -9208,6 +9260,7 @@ function lc_bump_free_add(s: asmcore.EmitState, addend: string, t1: string, t2: 
   if (!s.leak_check) {
     return s;
   }
+  s = san_owner_check(s, t1, t2);
   if (!s.has_need("heap_adopt")) {
     return lc_bump_free_counted(s, addend, t1, t2);
   }
@@ -11587,6 +11640,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     }
   }
   s = emit_san_uaf_abort(s);
+  s = emit_san_owner_abort(s);
   s = emit_san_waf_abort(s);
   s = emit_san_hbo_abort(s);
   s = emit_san_abort(s);

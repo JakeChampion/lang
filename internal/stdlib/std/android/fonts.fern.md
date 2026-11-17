@@ -12,6 +12,8 @@ On older versions, `find` reads the names of the files in `/system/fonts`. A fil
 
 A `Found` holds the path of the file. `index` is the place of the font in a file that holds a collection of fonts. `weight` is the weight of the font that the file holds. Since Android 12 one file holds each weight of Roboto as a variable font. For such a file, `axes` holds the value that the system sets on each axis for the weight.
 
+`fallbacks` gives the fonts to try for a character that the font of the app does not have, in order. On Android 10 and later the font matcher gives the font for the character. On older versions, the fonts are those of the families with no name in `/system/etc/fonts.xml`, which is the fallback order of the system. `fallback_files` reads that order from the text of the file.
+
 `styled` gives a font of `std/truetype` the values of a `Found`. Parse a file one time and call `styled` for each weight that the file holds.
 
 ## Contracts
@@ -29,6 +31,8 @@ A `Found` holds the path of the file. `index` is the place of the font in a file
 <<C functions>>
 
 <<file names>>
+
+<<the fallback order>>
 
 <<the matcher>>
 ```
@@ -100,6 +104,9 @@ function c_font_axis_value(font: usize, axis: i32): f32;
 <<file names>>=
 // The directory of the fonts of the system.
 pub const SYSTEM_DIR: string = "/system/fonts";
+
+// The families of the fonts of the system, before Android 10.
+pub const FONTS_XML: string = "/system/etc/fonts.xml";
 
 // The weight of the style `style` of a file name, or -1 for a style that
 // is not an upright weight.
@@ -177,6 +184,67 @@ pub function find_in(dir: string, family: string, weight: i32): Option[Found] {
 }
 ```
 
+### `the fallback order`
+
+In `fonts.xml` each `family` element holds `font` elements. A family with a `name` attribute is a family that an app can ask for by name. Each other family is a fallback, in the order of the file. A `font` element has the name of its file as its text, and the attributes `weight`, `style` and `index`.
+
+```fern
+<<the fallback order>>=
+// The fallback fonts of the text `xml` of fonts.xml, with their files in
+// `dir`: of each family with no name, the upright font with the weight
+// nearest to `weight`.
+pub function fallback_files(xml: string, dir: string, weight: i32): Found[] {
+  let out: Found[] = [];
+  let parts = xml.split("<family");
+  for i in 1..parts.len() {
+    let family = parts[i].split("</family>")[0];
+    if (!attributes(family).contains(" name=")) {
+      if let Some(f) = nearest_font(family, dir, weight) {
+        out = out.append(f);
+      }
+    }
+  }
+  return out;
+}
+
+// The attributes of the element that starts the text `s`.
+function attributes(s: string): string {
+  return " " + s.split(">")[0];
+}
+
+// The value of the attribute `name` in `attrs`, or "".
+function attribute(attrs: string, name: string): string {
+  let parts = attrs.split(" " + name + "=\"");
+  if (parts.len() < 2) {
+    return "";
+  }
+  return parts[1].split("\"")[0];
+}
+
+function number(s: string, otherwise: i32): i32 {
+  if let Ok(n) = i32.parse_i32(s) {
+    return n;
+  }
+  return otherwise;
+}
+
+function nearest_font(family: string, dir: string, weight: i32): Option[Found] {
+  let best: Option[Found] = None;
+  let far = 1 << 20;
+  let fonts = family.split("<font");
+  for i in 1..fonts.len() {
+    let attrs = attributes(fonts[i]);
+    let name = fonts[i].split(">")[1].split("<")[0].trim();
+    let w = number(attribute(attrs, "weight"), 400);
+    if (attribute(attrs, "style") != "italic" && name.len() > 0 && (w - weight).abs() < far) {
+      far = (w - weight).abs();
+      best = Some(Found { path: dir + "/" + name, index: number(attribute(attrs, "index"), 0), weight: w, axes: [] });
+    }
+  }
+  return best;
+}
+```
+
 ### `the matcher`
 
 ```fern
@@ -222,6 +290,48 @@ pub function find(ctx: usize, family: string, weight: i32): Option[Found] {
     return None;
   }
   return Some(found);
+}
+
+// The fonts to try for the code point `cp` in `family` and `weight`, in
+// order. `ctx` is the context of the app.
+pub function fallbacks(ctx: usize, family: string, weight: i32, cp: i32): Found[] {
+  if (android.sdk_version(ctx) < 29) {
+    let Ok(xml) = read_file(FONTS_XML) else {
+      return [];
+    };
+    return fallback_files(xml, SYSTEM_DIR, weight);
+  }
+  let name = jni.cstr(family);
+  let matcher = c_matcher_create();
+  c_matcher_set_style(matcher, weight, 0);
+  let text = utf16_of(cp);
+  let font = c_matcher_match(matcher, name, text, if (cp >= 65536) { 2 } else { 1 }, 0 as usize);
+  jni.free_buffer(text);
+  jni.free_buffer(name);
+  c_matcher_destroy(matcher);
+  if (font == 0 as usize) {
+    return [];
+  }
+  let found = Found { path: text_at(c_font_path(font)), index: c_font_index(font) as i32, weight: c_font_weight(font) & 65535, axes: axes_of(font) };
+  c_font_close(font);
+  if (found.path.len() == 0) {
+    return [];
+  }
+  return [found];
+}
+
+// The code point `cp` in UTF-16, in a buffer that `jni.free_buffer` frees.
+function utf16_of(cp: i32): usize {
+  let units = cp;
+  if (cp >= 65536) {
+    let v = cp - 65536;
+    units = 55296 | v >> 10 | (56320 | v & 1023) << 16;
+  }
+  let buf: usize = jni.jvalue_alloc(1);
+  unsafe {
+    __store_i32(buf, units);
+  }
+  return buf;
 }
 
 // The text at the address `p`, to its NUL byte.

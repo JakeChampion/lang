@@ -736,6 +736,7 @@ nested_call_temp                                     0
 nested_function_calls_itself                         0
 nested_function_name_is_local_to_its_block           0
 nested_function_with_a_capture_is_a_value            0
+nested_functions_that_call_each_other                0
 nested_lambdas_check_in_linear_time                  0
 nested_loops                                         0
 nested_option                                        0

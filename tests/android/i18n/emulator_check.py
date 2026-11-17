@@ -5,7 +5,9 @@ Usage: emulator_check.py APK OUT_DIR
 
 It starts the app, and requires its lines in logcat: android.languages
 gives the language of the emulator, en-US, and std/i18n chooses the
-English texts for it. It fails on a crash. OUT_DIR gets logcat.
+English texts for it. Each glyph of a Hebrew word and of an Arabic word
+comes from a fallback font of the system and has pixels. It fails on a
+crash. OUT_DIR gets logcat.
 """
 
 import re
@@ -17,6 +19,8 @@ PACKAGE = "dev.fern.i18ntest"
 LINES = (
     re.compile(r"i18ntest: languages en-US"),
     re.compile(r"i18ntest: chose en Hello"),
+    re.compile(r"i18ntest: fallback 4/4"),
+    re.compile(r"i18ntest: fallback 5/5"),
 )
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 

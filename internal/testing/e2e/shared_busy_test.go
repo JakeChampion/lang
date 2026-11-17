@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -186,34 +187,152 @@ func TestSharedLibBusyLock(t *testing.T) {
 			if strings.HasPrefix(l.target, "arm64") {
 				e2eharness.Arm64CLibc(t, l.cc)
 			}
-			so := selfHostShared(t, l.target, sharedBusySrc, "spin", "build", "call_back", "tally")
 			dir := t.TempDir()
-			soPath := filepath.Join(dir, "libfern.so")
-			if err := os.WriteFile(soPath, so, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			cPath := filepath.Join(dir, "loader.c")
-			if err := os.WriteFile(cPath, []byte(sharedBusyLoader), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			ld := filepath.Join(dir, "loader")
-			if out, err := exec.Command(l.cc, cPath, "-pthread", "-ldl", "-o", ld).CombinedOutput(); err != nil {
-				t.Fatalf("%s loader: %v\n%s", l.cc, err, out)
-			}
+			ld := buildSharedLoader(t, l.cc, dir, sharedBusyLoader)
+			plain := writeSharedObject(t, dir, "libfern.so", selfHostShared(t, l.target, sharedBusySrc, "spin", "build", "call_back", "tally"))
+			sanitized := writeSharedObject(t, dir, "libfern-san.so", selfHostSharedEnv(t, l.target, sharedBusySrc, []string{"FERN_SANITIZE=1"}, "spin", "build", "call_back", "tally"))
 			for _, mode := range []string{"overlap", "contend", "serial", "reenter", "fair", "norc"} {
 				t.Run(mode, func(t *testing.T) {
-					cmd := exec.Command(ld, soPath, mode)
-					if l.runner != "" {
-						cmd = exec.Command(l.runner, ld, soPath, mode)
-					}
-					cmd.Env = append(os.Environ(), l.env...)
-					out, _ := cmd.CombinedOutput()
-					if code := cmd.ProcessState.ExitCode(); code != 42 {
+					out, code := runSharedLoader(l.runner, l.env, ld, plain, mode)
+					if code != 42 {
 						t.Fatalf("exit %d, output %q; want 42", code, out)
 					}
 					t.Logf("%s", out)
 				})
 			}
+			// Under -sanitize each thread that takes the turn owns the heap,
+			// so no turn is a finding. The fair mode times its turns, and the
+			// sanitizer slows them.
+			for _, mode := range []string{"overlap", "contend", "serial", "reenter", "norc"} {
+				t.Run("sanitize/"+mode, func(t *testing.T) {
+					out, code := runSharedLoader(l.runner, l.env, ld, sanitized, mode)
+					if code != 42 || strings.Contains(out, "fern-sanitizer:") {
+						t.Fatalf("exit %d, output %q; want 42 and no finding", code, out)
+					}
+				})
+			}
+		})
+	}
+}
+
+func buildSharedLoader(t *testing.T, cc, dir, src string) string {
+	t.Helper()
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(cc, cPath, "-pthread", "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("%s loader: %v\n%s", cc, err, out)
+	}
+	return ld
+}
+
+func writeSharedObject(t *testing.T, dir, name string, so []byte) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func runSharedLoader(runner string, env []string, ld string, args ...string) (string, int) {
+	cmd := exec.Command(ld, args...)
+	if runner != "" {
+		cmd = exec.Command(runner, append([]string{ld}, args...)...)
+	}
+	cmd.Env = append(os.Environ(), env...)
+	out, _ := cmd.CombinedOutput()
+	return string(out), cmd.ProcessState.ExitCode()
+}
+
+// sharedStraySrc makes a thread with a raw clone inside an export. The
+// thread has its own stack and thread pointer and takes no turn on the busy
+// lock. Then it allocates. CLONE is the clone call, which names the thread
+// pointer in a different argument on each ISA.
+func sharedStraySrc(mmap, nanosleep int, clone string) string {
+	r := strings.NewReplacer("MMAP", strconv.Itoa(mmap), "NANOSLEEP", strconv.Itoa(nanosleep), "CLONE", clone)
+	return r.Replace(`@noinline
+function grow(n: i32): i32 {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < n) {
+    out = out + "ab";
+    i = i + 1;
+  }
+  return out.len();
+}
+
+function stray(): i32 {
+  let ts: usize = __raw_alloc(16);
+  __raw_store_ptr(ts, 0, 0 as usize);
+  __raw_store_ptr(ts, 8, 10000000 as usize);
+  let stack: i64 = __syscall6(MMAP, 0, 65536, 3, 34, 0 - 1, 0) + 65536;
+  let tls: i64 = __syscall6(MMAP, 0, 4096, 3, 34, 0 - 1, 0);
+  let r: i64 = CLONE;
+  if (r == 0) {
+    grow(8);
+  }
+  let i: i32 = 0;
+  while (i < 200) {
+    __syscall6(NANOSLEEP, ts as i64, 0, 0, 0, 0, 0);
+    i = i + 1;
+  }
+  return grow(3);
+}
+
+function main(): i32 { return 0; }
+`)
+}
+
+const sharedStrayLoader = `#include <dlfcn.h>
+#include <stdio.h>
+int main(int c, char **v) {
+  void *h = dlopen(v[1], RTLD_NOW);
+  if (!h) { fprintf(stderr, "%s\n", dlerror()); return 100; }
+  int (*stray)(void) = (int (*)(void))dlsym(h, "stray");
+  if (!stray) return 101;
+  return stray() == 6 ? 42 : 1;
+}
+`
+
+// A thread that runs Fern code in a shared object without the turn on the
+// busy lock is a sanitizer finding at its first allocation.
+func TestSharedLibSanitizeStrayThread(t *testing.T) {
+	type leg struct {
+		target, cc, runner string
+		env                []string
+		src                string
+	}
+	// CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_THREAD,
+	// CLONE_SYSVSEM and CLONE_SETTLS.
+	const flags = "855808"
+	var legs []leg
+	if gcc, err := exec.LookPath("gcc"); err == nil && runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		legs = append(legs, leg{"x86-64-linux", gcc, "", nil, sharedStraySrc(9, 35, "__syscall6(56, "+flags+", stack, 0, 0, tls, 0)")})
+	}
+	if runtime.GOOS == "linux" {
+		gcc, qemu := e2eharness.Arm64Tooling(t)
+		var env []string
+		if qemu != "" {
+			env = []string{"QEMU_LD_PREFIX=/usr/aarch64-linux-gnu"}
+		}
+		legs = append(legs, leg{"arm64-linux", gcc, qemu, env, sharedStraySrc(222, 101, "__syscall6(220, "+flags+", stack, 0, tls, 0, 0)")})
+	}
+	if len(legs) == 0 {
+		t.Skip("no C toolchain for a Linux shared object on this host")
+	}
+	for _, l := range legs {
+		t.Run(l.target, func(t *testing.T) {
+			if strings.HasPrefix(l.target, "arm64") {
+				e2eharness.Arm64CLibc(t, l.cc)
+			}
+			dir := t.TempDir()
+			ld := buildSharedLoader(t, l.cc, dir, sharedStrayLoader)
+			so := compileRuntimeFloor(t, l.target, l.src, []string{"-shared", "-export", "stray"}, "FERN_SANITIZE=1")
+			out, code := runSharedLoader(l.runner, l.env, ld, so)
+			checkSecondContextReport(t, out, code)
 		})
 	}
 }

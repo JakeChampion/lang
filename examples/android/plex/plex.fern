@@ -935,7 +935,14 @@ pub function qualities(): Quality[] {
     Quality { name: "720p 4 Mbps", kbps: 4000, resolution: "1280x720", video_quality: 100 },
     Quality { name: "480p 1.5 Mbps", kbps: 1500, resolution: "720x480", video_quality: 60 },
     Quality { name: "240p 320 kbps", kbps: 320, resolution: "420x240", video_quality: 30 },
+    Quality { name: "Auto", kbps: 0, resolution: "", video_quality: 100 },
   ];
+}
+
+// The index of Auto in `qualities()`. Auto starts at Original, and the app
+// takes a lower quality when the stream stalls. No stream uses Auto itself.
+pub function auto_quality(): i32 {
+  return qualities().len() - 1;
 }
 
 // The containers that the media player of Android reads.

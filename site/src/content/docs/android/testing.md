@@ -39,7 +39,7 @@ function update(own m: Model, msg: Msg): Model {
 
 function started(): sim.Sim[Model, Msg] {
   let program = ui.program(view, update);
-  let no_fonts = text.Fonts { faces: [], weights: [] };
+  let no_fonts = text.from_faces([], []);
   return sim.start(Model { count: 0 }, program, no_fonts, 1080, 2400, 2.75);
 }
 

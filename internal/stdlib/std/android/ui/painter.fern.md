@@ -129,6 +129,11 @@ function forget(p: Painter): Painter {
   return Painter { ...p, canvas: None, images: map_new(256), bytes: 0i64, atlas: gl.atlas(ATLAS_SIZE), slots: map_new(512) };
 }
 
+// The painter `p` with the fonts `fonts`, which have more fallback fonts.
+pub function with_fonts(p: Painter, fonts: text.Fonts): Painter {
+  return Painter { ...p, fonts: fonts };
+}
+
 // The painter for a window of `w` by `h` pixels.
 pub function with_size(p: Painter, w: i32, h: i32): Painter {
   return Painter { ...p, w: w, h: h };

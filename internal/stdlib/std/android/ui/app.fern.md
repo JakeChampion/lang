@@ -122,6 +122,7 @@ function device(ctx: usize): ui.Device {
     set_keyboard: (text: string, caret: i32): void => keyboard.set_text_at(ctx, text, caret),
     hide_keyboard: (): void => keyboard.hide(ctx),
     state_file: (): string => android.data_dir(ctx) + "/state.kv",
+    fallbacks: text.system_fallbacks(ctx, "sans-serif"),
   };
 }
 ```
