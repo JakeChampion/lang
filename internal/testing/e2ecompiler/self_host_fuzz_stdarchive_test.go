@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,9 @@ var bzip2SeedHex = []string{
 	"425a683917724538509000000000",
 	"425a6839314159265359cc2e03a10000065180001040040644908020002190320400c2a832d9416e9c079af177245385090cc2e03a10425a6839314159265359e423f06600004a81003c00200030cd340a547a62918523e415882b85dc914e14243908fc1980",
 	"425a6839314159265359cc2e03a10000065180001040040644908020002190320400c2a832d9416e9c079af177245385090cc2e03a10747261696c696e67",
+	// Two symbols of a coding table have the same code. The bzip2 tool
+	// decodes the stream, and compress/bzip2 refuses the table.
+	"425a68393141592653599e22956700004e4002c00000400008200030b00529a62a3625478bb9229c28484f114ab380",
 }
 
 var xzSeedHex = []string{
@@ -112,11 +116,24 @@ func goBunzip2(input []byte) (out []byte, err error) {
 	return out, err
 }
 
+// toolBunzip2 decodes input with the bzip2 tool, which std/bzip2 follows.
+func toolBunzip2(input []byte) (out []byte, err error) {
+	tool, err := exec.LookPath("bzip2")
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(tool, "-dc")
+	cmd.Stdin = bytes.NewReader(input)
+	return cmd.Output()
+}
+
 // bzip2AgreesWithGo compares a summary with compress/bzip2. What Fern
 // accepts, it must decode to the bytes that Go read. Go refuses bytes after
 // the end of a stream, which the bzip2 tool and Fern ignore, so the bytes
-// that Go read before its error count. Go accepts some streams that the
-// bzip2 tool refuses, so a refusal by Fern is not compared.
+// that Go read before its error count. Go also refuses a coding table that
+// the bzip2 tool accepts, so the tool decides a stream that Go refuses and
+// Fern decodes to other bytes. Go accepts some streams that the bzip2 tool
+// refuses, so a refusal by Fern is not compared.
 func bzip2AgreesWithGo(r readerRun) string {
 	out, err := goBunzip2(r.input)
 	if len(out) > stdDecodeLimit {
@@ -126,9 +143,18 @@ func bzip2AgreesWithGo(r readerRun) string {
 	want := fmt.Sprintf("%d crc %d", len(out), crc32.ChecksumIEEE(out))
 	switch {
 	case len(fields) == 5 && fields[1] == "ok":
-		if got := strings.Join(fields[2:], " "); got != want {
-			return fmt.Sprintf("bzip2 on %d bytes gives %q, Go gives %s (error %v)\ninput: %x", len(r.input), r.summary, want, err, r.input)
+		got := strings.Join(fields[2:], " ")
+		if got == want {
+			return ""
 		}
+		if err != nil {
+			tool, toolErr := toolBunzip2(r.input)
+			if toolErr == nil && got == fmt.Sprintf("%d crc %d", len(tool), crc32.ChecksumIEEE(tool)) {
+				return ""
+			}
+			return fmt.Sprintf("bzip2 on %d bytes gives %q, Go gives %s (error %v), and the bzip2 tool gives %d bytes (error %v)\ninput: %x", len(r.input), r.summary, want, err, len(tool), toolErr, r.input)
+		}
+		return fmt.Sprintf("bzip2 on %d bytes gives %q, Go gives %s\ninput: %x", len(r.input), r.summary, want, r.input)
 	case len(fields) == 4 && fields[1] == "refused":
 	default:
 		return fmt.Sprintf("bzip2 gives %q, which is not a summary", r.summary)
