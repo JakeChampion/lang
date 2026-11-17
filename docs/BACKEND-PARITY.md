@@ -368,6 +368,16 @@ inside a codegen switch:
 | x86-64 | **x86-64-v3 plus AES-NI** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `rorx` (BMI2), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, and the **AVX2** 32-byte loops the byte kernels already emit. |
 | wasm | core wasm 2.0, fixed-width SIMD included, plus the tail calls of wasm 3.0 | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. `return_call` and `return_call_indirect` let a call in tail position end its frame. wasmtime enables tail calls by default, as do Chrome 112, Firefox 121 and Safari 18.2. |
 
+The wasm baseline leaves out the other post-MVP core proposals. Each one waits for a consumer or is rejected:
+
+| proposal | state |
+| -------- | ----- |
+| memory64 | Not emitted. A program that needs more than 4 GiB is its consumer (#16319). |
+| exception handling | Not emitted. Fern has no exceptions, and an abort does not unwind. |
+| stringref | Not emitted. A Fern string is a reference-counted box in linear memory, and stringref adds a second representation for a JavaScript host. |
+| wasm-GC | Rejected. Fern manages memory with reference counts (`docs/RC-DESIGN.md`), not a host collector. |
+| relaxed SIMD | Rejected. Its results can change from one host to a different host, and each backend must give the same result. |
+
 The first line of each arm64 assembly file is `.arch armv8.2-a+crypto`.
 Thus GNU as and the LLVM assembler accept the output of `-emit asm` with no
 `-march` flag. The internal assembler accepts that line and refuses each other
