@@ -4254,7 +4254,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
 pub struct Reuse { pairs: ReusePairs[], keeps: Keeps[], carry: Carry, reads: VariantReads, disabled: boolean }
 
 pub function no_reuse(): Reuse {
-  return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] }, sites: [], names: [], shared: [] }, disabled: false };
+  return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] }, sites: [], names: [], shared: [], empty: [] }, disabled: false };
 }
 
 pub function reuse_layer_disabled(name: string): boolean {
@@ -4430,7 +4430,9 @@ pub function known_variant(vr: VariantReads, b: ssa.SBlock, d: i32): string {
   return "";
 }
 
-pub struct VariantReads { at: i32[], dom: ssadeps.Dom, sites: i32[][], names: string[][], shared: boolean[] }
+// `empty` holds, for each value, the blocks where a variant test fixes it as a
+// variant with no field, which is a static box (`empty_variant`).
+pub struct VariantReads { at: i32[], dom: ssadeps.Dom, sites: i32[][], names: string[][], shared: boolean[], empty: i32[][] }
 
 function variant_reads(f: ssasem.Func, p: Plan, dom: ssadeps.Dom): VariantReads {
   let sites: i32[][] = [];
@@ -4454,7 +4456,100 @@ function variant_reads(f: ssasem.Func, p: Plan, dom: ssadeps.Dom): VariantReads 
     }
     bi += 1;
   }
-  return VariantReads { at: ssa.block_positions(f.graph), dom: dom, sites: sites, names: names, shared: shared };
+  let at = ssa.block_positions(f.graph);
+  return VariantReads { at: at, dom: dom, sites: sites, names: names, shared: shared, empty: empty_sites(f, at) };
+}
+
+// The blocks that only one edge of a variant test enters, where that edge
+// fixes its value as a variant with no field.
+function empty_sites(f: ssasem.Func, at: i32[]): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < f.values.len()) {
+    out = out.append([]);
+  }
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == ssa.TERM_BRIF && b.term.t != b.term.f) {
+      for ins in b.insts {
+        if (ins.kind_tag == ssasem.variant_is() && ins.result == b.term.cond && ins.args.len() == 1 && ins.args[0] >= 0 && ins.args[0] < out.len()) {
+          let v = ins.args[0];
+          for to in [b.term.t, b.term.f] {
+            if (static_on_edge(f, b, to, v) && only_pred(f, to, b.id) && to < at.len()) {
+              out = out.with(v, out[v].append(at[to]));
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Whether the edge from b to the block `to` leaves a test of the variant of d
+// that fixes d as a variant with no field.
+pub function static_on_edge(f: ssasem.Func, b: ssa.SBlock, to: i32, d: i32): boolean {
+  if (b.term.kind_tag != ssa.TERM_BRIF || b.term.t == b.term.f || d < 0 || d >= f.values.len()) {
+    return false;
+  }
+  for ins in b.insts {
+    if (ins.kind_tag == ssasem.variant_is() && ins.result == b.term.cond && ins.args.len() == 1 && ins.args[0] == d) {
+      let name = if (to == b.term.t) { ins.str } else if (to == b.term.f) { other_variant(f, f.values[d], ins.str) } else { "" };
+      return name != "" && empty_variant(f, f.values[d], name);
+    }
+  }
+  return false;
+}
+
+function only_pred(f: ssasem.Func, block: i32, pred: i32): boolean {
+  for b in f.graph.blocks {
+    if (b.id == block) {
+      return b.preds.len() == 1 && b.preds[0] == pred;
+    }
+  }
+  return false;
+}
+
+// The one inhabited variant of t that is not `name`, or "".
+function other_variant(f: ssasem.Func, t: typeinfo.Type, name: string): string {
+  let e = semrecords.find_enum(f.enums, t);
+  if (e < 0) {
+    return "";
+  }
+  let out = "";
+  for v in f.enums[e].variants {
+    if (v.name != name && semrecords.inhabited(v)) {
+      if (out != "") {
+        return "";
+      }
+      out = v.name;
+    }
+  }
+  return out;
+}
+
+// A variant of an enum of boxes with no field and no finalizer. Each
+// construction of it is a constant (`constants`), so its value is a static box
+// with an immortal count.
+pub function empty_variant(f: ssasem.Func, t: typeinfo.Type, name: string): boolean {
+  let e = semrecords.find_enum(f.enums, t);
+  if (e < 0 || f.enums[e].layout != semrecords.layout_variant() || ssasem.has_finalizer(f, t) || ssasem.immediate_enum(f, t)) {
+    return false;
+  }
+  let v = semrecords.find_variant(f.enums[e], name);
+  return v >= 0 && f.enums[e].variants[v].fields.len() == 0;
+}
+
+// Whether a variant test fixes d as a static box in block b.
+pub function known_static(vr: VariantReads, b: ssa.SBlock, d: i32): boolean {
+  if (d < 0 || d >= vr.empty.len() || b.id < 0 || b.id >= vr.at.len() || vr.at[b.id] < 0) {
+    return false;
+  }
+  let bp = vr.at[b.id];
+  for site in vr.empty[d] {
+    if (site == bp || ssadeps.dom_holds(vr.dom, bp, site)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {

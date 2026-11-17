@@ -3386,6 +3386,9 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base
 }
 
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (ssa.static_release(ins)) {
+    return s;
+  }
   if (ssa.rc_inlined(ins) && (!s.size || ssa.shared_dec(ins))) {
     return ssa_rc_prim(ins, reg_of, lp, s);
   }
