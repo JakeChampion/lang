@@ -12,7 +12,11 @@ EOS requires an IRAP picture in the next access unit. EOB permits no subsequent 
 
 AUD and filler temporal identifiers must match their coded picture.
 The reader retains one optional AUD identifier until that picture arrives and clears it after each packet.
-These header checks follow H.265 clause 7.4.2.2. They do not inspect filler payload syntax.
+These header checks follow H.265 clause 7.4.2.2.
+
+Filler payloads contain zero or more `0xff` bytes followed by one `0x80` byte.
+The reader checks these bytes after the packet byte limit and before the packet copy.
+This check follows H.265 clauses 7.3.2.8 and 7.3.2.11. It allocates no payload copy.
 
 VPS and SPS require temporal identifier zero for their access unit.
 Contained PPS and prefix SEI headers cannot have a lower identifier than their picture. Suffix SEI follows the same lower bound.
@@ -42,7 +46,7 @@ Slice inspection copies at most eight unescaped bytes.
 The limits exclude retained output packets and do not define an exact process-memory bound.
 
 Multilayer input, separate color planes, and reserved or unspecified NAL types return `Unsupported`.
-VPS, SEI, and filler payloads remain opaque. The reader does not resolve VPS references.
+VPS and SEI payloads remain opaque. The reader does not resolve VPS references.
 It does not validate entropy data, complete slice headers or coverage, or decoded pixels.
 
 Packets have no assigned timestamps. Run blocking I/O outside the Android loop callback.
@@ -291,9 +295,27 @@ function suffix(stream: Stream, kind: i32): Result[void, frame.VideoError] {
   return Ok(());
 }
 
-function append_packet(own bytes: u8[], input: [u8], maximum: i32): Result[u8[], frame.VideoError] {
+function filler(input: [u8]): Result[void, frame.VideoError] {
+  if (input.len() < 3) {
+    return Err(frame.Truncated);
+  }
+  if (input[input.len() - 1] != 128u8) {
+    return Err(frame.Header);
+  }
+  for byte in input[2:input.len() - 1] {
+    if (byte != 255u8) {
+      return Err(frame.Header);
+    }
+  }
+  return Ok(());
+}
+
+function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32): Result[u8[], frame.VideoError] {
   if (maximum - bytes.len() < 4 || input.len() > maximum - bytes.len() - 4) {
     return Err(frame.Limit);
+  }
+  if (kind == 38) {
+    filler(input)?;
   }
   for byte in [0u8, 0u8, 0u8, 1u8] {
     bytes = bytes.append(byte);
@@ -359,7 +381,7 @@ function append_unit(own stream: Stream, unit: nals.Unit, offset: i64, header: H
   let kind = header.kind;
   let updated = parameters(stream, unit.bytes, kind)?;
   let at = if (updated.packet_units == 0) { offset } else { updated.packet_offset };
-  let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes)?;
+  let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes, kind)?;
   let last = if (identity.is_some()) { identity } else { updated.last };
   let aud_temporal = aud_identifier(header, updated.aud_temporal);
   let prefix_ceiling = prefix_identifier(header, updated.prefix_ceiling);
