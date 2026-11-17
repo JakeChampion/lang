@@ -138,6 +138,60 @@ function main(): i32 {
     return old[0] * 27 + old[1] * 9 + b[0] * 3 + c[1];
 }
 `, true},
+	{"chain_on_shared_and_unique", borrowedWithHelpers + `@noinline
+function put_names(xs: string[], at: i32, n: string): string[] {
+    return xs.with(at, n + "a").with(at + 1, n + "b").with(at + 2, n + "c");
+}
+function main(): i32 {
+    let s: string[] = names("p", "q").append("r" + "").append("s" + "");
+    let held: string[] = s;
+    s = put_names(s, 0, "x");
+    s = put_names(s, 1, "y");
+    let w: i32[] = pair(0, 0).append(0).append(0);
+    w = put3(w, 0);
+    w = put3(w, 1);
+    return held[0].len() * 27 + s[0].len() * 9 + s[3].len() * 3 + w[1] + w[3];
+}
+`, true},
+	{"chain_read_between", `@noinline
+function mixed(xs: i32[]): i32 {
+    let a: i32[] = xs.with(0, 7);
+    let n: i32 = xs[0];
+    let b: i32[] = a.with(1, 8);
+    return n * 27 + b[0] * 3 + b[1] + xs[1];
+}
+function main(): i32 {
+    let v: i32[] = [];
+    v = v.append(1);
+    v = v.append(2);
+    let r: i32 = mixed(v);
+    return r + v[0] + v[1];
+}
+`, true},
+	{"chain_kept_between", `@noinline
+function keep(xs: i32[], box: i32[][]): i32[][] {
+    return box.append(xs);
+}
+@noinline
+function mixed(xs: i32[], box: i32[][]): i32 {
+    let a: i32[] = xs.with(0, 7);
+    let kept: i32[][] = keep(a, box);
+    let b: i32[] = a.with(1, 8);
+    return kept[0][1] * 9 + b[0] + b[1];
+}
+function main(): i32 {
+    let v: i32[] = [];
+    v = v.append(1);
+    v = v.append(2);
+    let box: i32[][] = [];
+    let r: i32 = mixed(v, box);
+    let w: i32[] = [];
+    w = w.append(3);
+    w = w.append(4);
+    let held: i32[] = w;
+    return r + mixed(w, box) + held[0] + v[0];
+}
+`, true},
 	{"read_after_update", `function peek(xs: i32[]): i32 {
     let ys: i32[] = xs.with(0, 9);
     return xs[0] * 10 + ys[0];
@@ -172,9 +226,10 @@ function main(): i32 {
 `, true},
 }
 
-// After the first update of a chain copies the caller's array, the copy is
-// the frame's own, so the later updates write it with no count test and no
-// copy path. The only copies left are the ones on the caller's box (#15747).
+// The first update of a chain tests the caller's array and copies a shared
+// one. A later update writes the result of the update before it with no
+// count test and no copy path, whether that result is the copy or the
+// caller's unique box (#15747).
 func TestSelfHostBorrowedWithChainCopiesOnlyTheParameter(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "put3.fern")
@@ -182,7 +237,10 @@ func TestSelfHostBorrowedWithChainCopiesOnlyTheParameter(t *testing.T) {
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []struct{ target, call string }{{"x86-64-linux", "call __fn___fern_arr_slice"}, {"arm64-linux", "bl __fn___fern_arr_slice"}} {
+	for _, c := range []struct{ target, call, test string }{
+		{"x86-64-linux", "call __fn___fern_arr_slice", "call __fern_rc_is_unique"},
+		{"arm64-linux", "bl __fn___fern_arr_slice", "bl __fern_rc_is_unique"},
+	} {
 		t.Run(c.target, func(t *testing.T) {
 			data, err := os.ReadFile(cli.emit(t, src, c.target))
 			if err != nil {
@@ -192,8 +250,11 @@ func TestSelfHostBorrowedWithChainCopiesOnlyTheParameter(t *testing.T) {
 			if body == "" {
 				t.Fatalf("no __fn_put3 in the %s output", c.target)
 			}
-			if n := strings.Count(body, c.call); n != 3 {
-				t.Errorf("put3 has %d copy calls on %s, want 3: one for each update on the parameter's box\n%s", n, c.target, body)
+			if n := strings.Count(body, c.call); n != 1 {
+				t.Errorf("put3 has %d copy calls on %s, want 1: the first update copies a shared array\n%s", n, c.target, body)
+			}
+			if n := strings.Count(body, c.test); n > 1 {
+				t.Errorf("put3 has %d count tests on %s, want 1 at most: the first update tests the parameter's box\n%s", n, c.target, body)
 			}
 		})
 	}
