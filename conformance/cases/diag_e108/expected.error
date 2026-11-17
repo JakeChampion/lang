@@ -1,0 +1,1 @@
+error[E108]: nested function "b" captures "k", but "a" can call "b" before the declaration of "k"

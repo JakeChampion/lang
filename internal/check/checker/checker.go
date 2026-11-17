@@ -6130,7 +6130,9 @@ type checker struct {
 	capturedVars map[*ast.Var]bool
 	cellStores   []cellStore
 
-	mutualRecSiblings map[string]bool
+	// mutualRecSiblings maps a local function of a cycle to the first function of the cycle.
+	mutualRecSiblings map[string]string
+	lateBinders       map[*ast.FuncDecl]map[string]bool
 }
 
 type captureEntry struct {
@@ -12217,10 +12219,11 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	if len(localFns) > 1 {
 		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
 		for _, fn := range localFns {
-			if c.mutualRecSiblings[fn.Name] {
+			if c.mutualRecSiblings[fn.Name] != "" {
 				s.set(fn.Name, paramSig(fn.Params, fn.ReturnType, fn.ReturnOwn))
 			}
 		}
+		c.recordLateBinders(b)
 	} else {
 		c.mutualRecSiblings = nil
 	}
@@ -12285,10 +12288,61 @@ func (c *checker) stmtsDiverge(stmts []ast.Stmt) bool {
 	return c.stmtDiverges(stmts[len(stmts)-1])
 }
 
-func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
+// recordLateBinders records, for each function of a cycle in b, the names
+// that b binds between the first function of the cycle and that function.
+func (c *checker) recordLateBinders(b *ast.Block) {
+	between := map[string]map[string]bool{}
+	bind := func(own string, names ...string) {
+		for first, set := range between {
+			if first == own {
+				continue
+			}
+			for _, name := range names {
+				set[name] = true
+			}
+		}
+	}
+	for _, st := range b.Stmts {
+		switch n := st.(type) {
+		case *ast.Var:
+			bind("", n.Name)
+		case *ast.Destructure:
+			bind("", destructureNames(n)...)
+		case *ast.FuncDecl:
+			if !n.IsLocal {
+				continue
+			}
+			first := c.mutualRecSiblings[n.Name]
+			bind(first, n.Name)
+			if first == n.Name {
+				between[first] = map[string]bool{}
+			} else if len(between[first]) > 0 {
+				if c.lateBinders == nil {
+					c.lateBinders = map[*ast.FuncDecl]map[string]bool{}
+				}
+				c.lateBinders[n] = maps.Clone(between[first])
+			}
+		}
+	}
+}
+
+func destructureNames(d *ast.Destructure) []string {
+	names := append([]string{}, d.Names...)
+	if d.AtName != "" {
+		names = append(names, d.AtName)
+	}
+	for _, nested := range d.Nested {
+		names = append(names, destructureNames(nested)...)
+	}
+	return names
+}
+
+func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]string {
 	siblings := map[string]*ast.FuncDecl{}
-	for _, fn := range fns {
+	order := map[string]int{}
+	for i, fn := range fns {
 		siblings[fn.Name] = fn
+		order[fn.Name] = i
 	}
 	adj := map[string][]string{}
 	for _, fn := range fns {
@@ -12305,7 +12359,7 @@ func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
 	lowlinks := map[string]int{}
 	onStack := map[string]bool{}
 	var stack []string
-	out := map[string]bool{}
+	out := map[string]string{}
 	var strongconnect func(name string)
 	strongconnect = func(name string) {
 		indices[name] = index
@@ -12337,8 +12391,14 @@ func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
 				}
 			}
 			if len(scc) >= 2 {
+				first := scc[0]
 				for _, n := range scc {
-					out[n] = true
+					if order[n] < order[first] {
+						first = n
+					}
+				}
+				for _, n := range scc {
+					out[n] = first
 				}
 			}
 		}
@@ -14982,7 +15042,12 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		if name == fn.Name {
 			return
 		}
-		if mySiblings[name] {
+		if late := c.lateBinders[fn]; late[name] {
+			delete(late, name)
+			first := mySiblings[fn.Name]
+			c.errfCode(fn.P, "E108", "nested function %q captures %q, but %q can call %q before the declaration of %q: declare %q before %q", fn.Name, name, first, fn.Name, name, name, first)
+		}
+		if mySiblings[name] != "" {
 			return
 		}
 		c.captureView(fn.P, name, t)

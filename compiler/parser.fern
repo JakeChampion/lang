@@ -18349,6 +18349,40 @@ function hl_cycle_captures(sibs: NestedFn[], cycle: string[], enclosing: string[
   return caps;
 }
 
+pub struct LateCapture { fn_name: string, name: string, first: string, line: i32, col: i32 }
+
+// The captures of the functions of each cycle in stmts that a statement
+// after the first function of the cycle binds.
+pub function nested_fn_late_captures(stmts: ast.Stmt[]): LateCapture[] {
+  let out: LateCapture[] = [];
+  let sibs = nested_fns(stmts);
+  let done: string[] = [];
+  for i in 0..stmts.len() {
+    let heads = hl_add_nested_fn(stmts[i], []);
+    if (heads.len() == 0 || util.has_str(done, heads[0].name)) {
+      continue;
+    }
+    let first = heads[0].name;
+    let cycle = nested_fn_cycle(sibs, first);
+    if (cycle.len() < 2) {
+      continue;
+    }
+    done = hl_append_str(done, cycle);
+    let between: string[] = [];
+    for j in i + 1..stmts.len() {
+      let fns = hl_add_nested_fn(stmts[j], []);
+      if (fns.len() > 0 && util.has_str(cycle, fns[0].name)) {
+        for cap in hl_capture_list(fns[0].lam, cycle, between) {
+          out = out.append(LateCapture { fn_name: fns[0].name, name: cap, first: first, line: fns[0].lam.line, col: fns[0].lam.col });
+        }
+      } else if let ast.StmtVar(v) = stmts[j] {
+        between = astwalk.append_bound_name(between, v.name);
+      }
+    }
+  }
+  return out;
+}
+
 struct HlScope { names: string[], env: MEnv, fns: MFns, owner: string }
 
 function hl_lambda_scope(sc: HlScope, lam: ast.ExprLambda): HlScope {
