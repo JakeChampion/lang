@@ -55,6 +55,9 @@ Playback:
 - A tap on the video shows the controls over it for 4 seconds while the
   video plays on: back 10 seconds, play, forward 30 seconds, and a bar that
   seeks as a finger drags along it, with a preview thumbnail of the time. A tap outside them hides them, and the play button pauses.
+- The speed button at the top plays at 1x, 1.25x, 1.5x, 2x, 0.5x or
+  0.75x. The pitch of the sound stays the same. Each tap gives the next
+  speed, and the app keeps it for the next items.
 
 Music plays with the controls on the screen. It plays on while the app is
 away, with the media controls of Android in the notification panel and on
@@ -108,12 +111,18 @@ the ring.
 Search and settings:
 
 - Search starts when you stop typing, and shows the hubs of the results.
-- Settings: the user, the server, the quality from Original to 240p, and
-  sign-out.
+- Settings: the user, the server, the quality from Original to 240p or
+  Auto, and sign-out. Auto starts at Original. When the stream stalls two
+  times in a minute, it plays the next lower quality as a transcode from
+  the same place.
 
 The User row of the settings lists the users of the Plex Home of the
 account. A user with a PIN gets a keypad. After the switch, the app uses
 the token of that user and finds the servers of that user.
+
+The texts are in English, German, French or Spanish: the first language of
+the phone that the app has. A text that a language does not have shows in
+English. The names of the server, such as titles, stay as they are.
 
 Plezy also supports Jellyfin and Emby, downloads, Live TV, Watch Together
 and trackers. This app does not.

@@ -1,0 +1,108 @@
+// The texts of the app in German, French and Spanish. The English text is
+// the key of each text, so a text with no translation shows in English. A
+// key in capitals shows in the dot-matrix font, which has only the capitals
+// of ASCII, so its translation has no accents.
+import "std/i18n";
+import "std/kv";
+
+// The languages that the app has texts for, the first one the default.
+pub function languages(): string[] {
+  return ["en", "de", "fr", "es"];
+}
+
+// The texts for the first of `wanted` that the app has, or English.
+pub function for_languages(wanted: string[]): i18n.Strings {
+  let lang = i18n.lookup(languages(), wanted, "en");
+  return i18n.strings(lang, store(lang), kv.empty("en.kv"));
+}
+
+// Each text as a pair of the key and its German, French and Spanish texts.
+function table(): string[][] {
+  return [
+    ["Home", "Start", "Accueil", "Inicio"],
+    ["Libraries", "Mediatheken", "Bibliotheques", "Bibliotecas"],
+    ["Search", "Suche", "Recherche", "Buscar"],
+    ["Settings", "Einstellungen", "Reglages", "Ajustes"],
+    ["Your Plex libraries, in Fern", "Deine Plex-Mediatheken, in Fern", "Vos bibliothèques Plex, dans Fern", "Tus bibliotecas de Plex, en Fern"],
+    ["Sign in with Plex", "Mit Plex anmelden", "Se connecter avec Plex", "Iniciar sesión con Plex"],
+    ["Go to {0} and enter", "Öffne {0} und gib ein", "Allez sur {0} et saisissez", "Ve a {0} e introduce"],
+    ["WAITING FOR PLEX.TV", "WARTE AUF PLEX.TV", "ATTENTE DE PLEX.TV", "ESPERANDO A PLEX.TV"],
+    ["Cancel", "Abbrechen", "Annuler", "Cancelar"],
+    ["CANCEL", "ABBRECHEN", "ANNULER", "CANCELAR"],
+    ["No servers on this account", "Keine Server in diesem Konto", "Aucun serveur sur ce compte", "No hay servidores en esta cuenta"],
+    ["Refresh", "Aktualisieren", "Actualiser", "Actualizar"],
+    ["Choose a server", "Server wählen", "Choisir un serveur", "Elige un servidor"],
+    ["Nothing here yet", "Noch nichts hier", "Rien ici pour l'instant", "Aún no hay nada"],
+    ["Loading", "Lädt", "Chargement", "Cargando"],
+    ["No libraries", "Keine Mediatheken", "Aucune bibliothèque", "No hay bibliotecas"],
+    ["MOVIES", "FILME", "FILMS", "PELICULAS"],
+    ["SHOWS", "SERIEN", "SERIES", "SERIES"],
+    ["MUSIC", "MUSIK", "MUSIQUE", "MUSICA"],
+    ["PHOTOS", "FOTOS", "PHOTOS", "FOTOS"],
+    ["This library is empty", "Diese Mediathek ist leer", "Cette bibliothèque est vide", "Esta biblioteca está vacía"],
+    ["BY {0}", "NACH {0}", "PAR {0}", "POR {0}"],
+    ["TITLE", "TITEL", "TITRE", "TITULO"],
+    ["YEAR", "JAHR", "ANNEE", "AÑO"],
+    ["ADDED", "NEU", "AJOUT", "AÑADIDO"],
+    ["RATING", "WERTUNG", "NOTE", "NOTA"],
+    ["UNWATCHED", "UNGESEHEN", "NON VUS", "SIN VER"],
+    ["Resume {0}", "Weiter bei {0}", "Reprendre à {0}", "Seguir en {0}"],
+    ["Play", "Abspielen", "Lire", "Reproducir"],
+    ["SEASONS", "STAFFELN", "SAISONS", "TEMPORADAS"],
+    ["ALBUMS", "ALBEN", "ALBUMS", "ALBUMES"],
+    ["Mark unwatched", "Als ungesehen markieren", "Marquer comme non vu", "Marcar como no visto"],
+    ["Mark watched", "Als gesehen markieren", "Marquer comme vu", "Marcar como visto"],
+    ["Search movies, shows and music", "Filme, Serien und Musik suchen", "Chercher des films, des séries et de la musique", "Buscar películas, series y música"],
+    ["No results", "Keine Treffer", "Aucun résultat", "Sin resultados"],
+    ["User", "Benutzer", "Utilisateur", "Usuario"],
+    ["Server", "Server", "Serveur", "Servidor"],
+    ["Quality", "Qualität", "Qualité", "Calidad"],
+    ["Sign out", "Abmelden", "Se déconnecter", "Cerrar sesión"],
+    ["PIN", "PIN", "PIN", "PIN"],
+    ["ADMIN", "ADMIN", "ADMIN", "ADMIN"],
+    ["Tracks", "Spuren", "Pistes", "Pistas"],
+    ["UP NEXT IN {0}", "ALS NAECHSTES IN {0}", "ENSUITE DANS {0}", "SIGUIENTE EN {0}"],
+    ["SOUND", "TON", "SON", "SONIDO"],
+    ["SUBTITLES", "UNTERTITEL", "SOUS-TITRES", "SUBTITULOS"],
+    ["Off", "Aus", "Désactivés", "Desactivados"],
+    ["Go to show", "Zur Serie", "Aller à la série", "Ir a la serie"],
+    ["Skip intro", "Intro überspringen", "Passer l'intro", "Saltar intro"],
+    ["Skip credits", "Abspann überspringen", "Passer le générique", "Saltar créditos"],
+    ["Switch user", "Benutzer wechseln", "Changer d'utilisateur", "Cambiar de usuario"],
+    ["Wrong PIN", "Falsche PIN", "PIN incorrect", "PIN incorrecto"],
+    ["The switch failed", "Der Wechsel ist fehlgeschlagen", "Le changement a échoué", "El cambio ha fallado"],
+    ["Buffering", "Puffert", "Mise en mémoire tampon", "Almacenando en búfer"],
+    ["Converting the sound", "Ton wird umgewandelt", "Conversion du son", "Convirtiendo el sonido"],
+    ["Transcoding", "Wird umgewandelt", "Transcodage", "Transcodificando"],
+    ["The player refused the stream", "Der Player hat den Stream abgelehnt", "Le lecteur a refusé le flux", "El reproductor rechazó la transmisión"],
+    ["The server refused the sign-in. Choose a server again.", "Der Server hat die Anmeldung abgelehnt. Wähle erneut einen Server.", "Le serveur a refusé la connexion. Choisissez de nouveau un serveur.", "El servidor rechazó el inicio de sesión. Elige un servidor otra vez."],
+    ["The code ran out. Sign in again.", "Der Code ist abgelaufen. Melde dich erneut an.", "Le code a expiré. Connectez-vous de nouveau.", "El código ha caducado. Inicia sesión otra vez."],
+    ["Nothing to play", "Nichts zum Abspielen", "Rien à lire", "Nada que reproducir"],
+    ["This item does not play ({0}, {1})", "Dieser Titel spielt nicht ({0}, {1})", "Cet élément ne se lit pas ({0}, {1})", "Este elemento no se reproduce ({0}, {1})"],
+    ["SPEED {0}", "TEMPO {0}", "VITESSE {0}", "VELOCIDAD {0}"],
+    ["LIGHT {0}%", "HELLIGKEIT {0}%", "LUMIERE {0}%", "BRILLO {0}%"],
+    ["VOLUME {0}", "LAUTSTAERKE {0}", "VOLUME {0}", "VOLUMEN {0}"],
+    ["Direct play", "Direkt", "Lecture directe", "Reproducción directa"],
+    ["Transcode", "Umgewandelt", "Transcodé", "Transcodificado"],
+  ];
+}
+
+// The texts of `lang`, or none for English.
+function store(lang: string): kv.Store {
+  let col = 0;
+  if (lang == "de") {
+    col = 1;
+  } else if (lang == "fr") {
+    col = 2;
+  } else if (lang == "es") {
+    col = 3;
+  }
+  let out = kv.empty(lang + ".kv");
+  if (col == 0) {
+    return out;
+  }
+  for row in table() {
+    out = out.set(row[0], row[col]);
+  }
+  return out;
+}

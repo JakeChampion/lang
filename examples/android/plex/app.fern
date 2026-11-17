@@ -457,8 +457,10 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], media: Med
     has_audio: (): boolean => has && player.has_audio(ctx, p),
     audio_tracks: (): i32[] => sound_tracks(ctx, p, has),
     select_track: (i: i32): boolean => has && player.select_track(ctx, p, i),
+    set_speed: (rate: i32): void => set_speed(ctx, p, has, rate),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
+    languages: android.languages(ctx),
   };
 }
 
@@ -471,6 +473,12 @@ function start(ctx: usize, p: player.Player, has: boolean): void {
 function pause(ctx: usize, p: player.Player, has: boolean): void {
   if (has) {
     let ok = player.pause(ctx, p);
+  }
+}
+
+function set_speed(ctx: usize, p: player.Player, has: boolean, rate: i32): void {
+  if (has) {
+    let ok = player.set_speed(ctx, p, rate as f32 / 100.0f32);
   }
 }
 
