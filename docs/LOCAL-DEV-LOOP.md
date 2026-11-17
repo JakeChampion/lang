@@ -854,7 +854,10 @@ under `$FERN_CACHE_DIR`, or `$XDG_CACHE_HOME/fern` off macOS, when set. A cold c
 the compiler pays about 15% for it; a warm one pays a digest per function.
 `FERN_IR_VERIFY=1` prints `FERN_RC_CERTIFY: memo hits=… misses=…` at the end
 of a compile. An entry names the bytes of the compiler that wrote it, so a compiler
-built from changed sources certifies every function again. `stamps-<version>.txt`
+built from changed sources certifies every function again. An entry is two
+64-bit digests. Before a compile writes the memo, it reads the entries on
+disk again. It writes a file beside the memo and renames that file over it.
+Thus two compiles at the same time keep the entries of both. `stamps-<version>.txt`
 beside the memo maps a binary's inode and modification time to that digest,
 so a compiler hashes its own bytes only on its first compile. To certify everything again, delete the directory or set
 `FERN_RC_CERTIFY_MEMO=0`; to keep a test's memo apart, point
