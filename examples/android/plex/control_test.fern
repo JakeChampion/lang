@@ -222,7 +222,7 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]], progress: Cell[download.Progress], ids: Cell[i64] }
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]], progress: Cell[download.Progress], ids: Cell[i64], focus: Cell[boolean] }
 
 function none_access(): android.AccessItem[] {
   let out: android.AccessItem[] = [];
@@ -231,7 +231,7 @@ function none_access(): android.AccessItem[] {
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()), progress: cell_new(download.Progress { status: download.PENDING, done: 0i64, total: -1i64 }), ids: cell_new(42i64) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()), progress: cell_new(download.Progress { status: download.PENDING, done: 0i64, total: -1i64 }), ids: cell_new(42i64), focus: cell_new(true) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -345,6 +345,11 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     set_volume: (level: i32): void => note(log.calls, "volume " + level.to_string()),
     now_playing: (title: string, artist: string, album: string, length_ms: i64, playing: boolean, at_ms: i64): void => note(log.calls, "media " + title + " by " + artist + " on " + album + " playing=" + playing.to_string()),
     media_end: (): void => note(log.calls, "media end"),
+    take_focus: (): boolean => {
+      note(log.calls, "focus");
+      return log.focus.get();
+    },
+    drop_focus: (): void => note(log.calls, "focus off"),
     ask_notifications: (): void => note(log.calls, "ask notifications"),
     random: (): i32 => 5,
     decoders: log.decoders.get(),
@@ -877,6 +882,41 @@ function video_drawn(log: Log, f: draw.Frame): control.App {
   let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
   let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
   return settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
+}
+
+// The play takes the audio focus, so another app stops. When a call or
+// another app takes it, the play pauses, and it goes on when the focus
+// comes back. A play that the person paused stays paused. While Android
+// refuses the focus, the play does not start. The stop lets it go.
+function test_audio_focus(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = video_drawn(log, f);
+  let starts = count_calls(log, "start");
+  if (count_calls(log, "focus") != 1 || starts != 1) {
+    return test.fail("the play did not take the focus: " + log.calls.get().join(" | "));
+  }
+  let lost = settle(at(playing, log, 2000i64, f, android.Posted(18, 2 as usize)), log, 2000i64, f);
+  if (!lost.play.paused || count_calls(log, "pause") != 1) {
+    return test.fail("a loss of the focus did not pause");
+  }
+  let back = settle(at(lost, log, 2100i64, f, android.Posted(18, 1 as usize)), log, 2100i64, f);
+  if (back.play.paused || count_calls(log, "start") != starts + 1) {
+    return test.fail("the focus came back, and the play did not go on");
+  }
+  let mine = tap(tap(back, log, 2200i64, f, "overlay"), log, 2300i64, f, "toggle");
+  let again = settle(at(at(mine, log, 2400i64, f, android.Posted(18, 2 as usize)), log, 2500i64, f, android.Posted(18, 1 as usize)), log, 2500i64, f);
+  if (!again.play.paused || count_calls(log, "start") != starts + 1) {
+    return test.fail("the focus started a play that the person paused");
+  }
+  log.focus.set(false);
+  let refused = tap(again, log, 2600i64, f, "toggle");
+  if (!refused.play.paused || count_calls(log, "start") != starts + 1) {
+    return test.fail("the play started with no focus");
+  }
+  let stopped = tap(refused, log, 2700i64, f, "back");
+  return test.assert_eq(has_call(log, "focus off").to_string(), "true");
 }
 
 // A tap at (x, y) at time `now`, then ticks.
@@ -1878,6 +1918,7 @@ function main(): i32 {
   r = r.it("Auto takes a lower quality after two stalls in a minute", test_auto_quality_steps_down);
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
   r = r.it("Play on an artist plays all of its tracks", test_artist_plays_all);
+  r = r.it("the play takes the audio focus and gives way to a call", test_audio_focus);
   r = r.it("Download all of a season, and the screen of the downloads", test_download_all_and_the_screen);
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
   r = r.it("a video plays on in a picture-in-picture window", test_picture_in_picture);

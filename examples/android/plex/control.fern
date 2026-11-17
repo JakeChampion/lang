@@ -10,6 +10,7 @@
 import "std/android";
 import "std/android/download";
 import "std/android/draw";
+import "std/android/focus";
 import "std/android/motion";
 import "std/android/player";
 import "std/android/session";
@@ -90,6 +91,10 @@ pub struct Device {
   now_playing: (string, string, string, i64, boolean, i64) => void,
   // Ends the media controls, and lets the app stop with its window.
   media_end: () => void,
+  // Asks Android for the audio focus, so another app that plays stops.
+  // False when Android refuses it, as during a call. And lets it go.
+  take_focus: () => boolean,
+  drop_focus: () => void,
   // Asks for the permission to post notifications, where Android needs it
   // and the app has not got it, so the media controls can show.
   ask_notifications: () => void,
@@ -232,6 +237,9 @@ struct Play {
   next_ready: boolean,
   next_plan: string,
   next_tried: string,
+  // True when the play paused because another app or a call took the
+  // audio focus, so it goes on when the focus comes back.
+  focus_paused: boolean,
 }
 
 pub struct App {
@@ -373,7 +381,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "" };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "", focus_paused: false };
 }
 
 function no_press(): Press {
@@ -2101,6 +2109,10 @@ function resume(own s: App): App {
   if (!p.prepared) {
     return s;
   }
+  if (!s.dev.take_focus()) {
+    log.info("plex: Android gave no audio focus, so the play waits");
+    return App { ...s, play: Play { ...p, paused: true, overlay: true }, dirty: true };
+  }
   let video = p.video;
   if (!audio(p) && !video && s.window != 0 as usize) {
     video = s.dev.show_video(s.window);
@@ -2119,7 +2131,7 @@ function resume(own s: App): App {
     s.dev.request_frame();
   }
   let at = s.dev.mono_ms();
-  let t = timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at }, dirty: true }, "playing");
+  let t = timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at, focus_paused: false }, dirty: true }, "playing");
   announce(t);
   // The media controls of a track are a notification.
   if (audio(t.play) && !t.asked_notifications) {
@@ -2130,6 +2142,35 @@ function resume(own s: App): App {
 }
 
 // Pauses and takes the video off the window, so the overlay can show.
+// A call or another app took the audio focus, so the play pauses. When the
+// focus comes back after such a pause, the play goes on. Android lowers
+// the volume itself for a short sound, such as a notification.
+function focus_changed(own s: App, c: focus.Change): App {
+  let p = s.play;
+  if (!p.active) {
+    return s;
+  }
+  match (c) {
+    focus.Loss => {
+      if (p.paused || !p.prepared) {
+        return s;
+      }
+      log.info("plex: another app took the audio focus");
+      let t = pause_play(s);
+      return App { ...t, play: Play { ...t.play, focus_paused: true } };
+    },
+    focus.Gain => {
+      if (!p.focus_paused || !p.paused) {
+        return s;
+      }
+      return resume(s);
+    },
+    focus.Duck => {
+      return s;
+    }
+  }
+}
+
 function pause_play(own s: App): App {
   let p = s.play;
   s.dev.pause();
@@ -2225,6 +2266,7 @@ function stop_play(own s: App, completed: boolean): App {
     pos = s.dev.position();
   }
   s.dev.stop();
+  s.dev.drop_focus();
   s.dev.keep_screen_on(false);
   s.dev.immersive(false);
   if (p.video) {
@@ -3635,6 +3677,9 @@ function event(own s: App, e: android.Event): App {
       return next_event(s, c);
     }
     return player_event(s, c);
+  }
+  if let Some(c) = focus.event(e) {
+    return focus_changed(s, c);
   }
   if let Some(c) = session.event(e) {
     return media_command(s, c);
