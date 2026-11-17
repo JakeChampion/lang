@@ -1056,20 +1056,23 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
-// `receivers` holds the runtime_receiver_name of each declaration, and `cells`
-// its body_needs_cells.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[], cells: boolean[] }
+// `receivers` holds the runtime_receiver_name of each declaration, `cells`
+// its body_needs_cells, and `plain` is true for a function with no receiver
+// whose name no builtin takes.
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[], cells: boolean[], plain: boolean[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
   let receivers: string[] = [];
   let cells: boolean[] = [];
+  let plain: boolean[] = [];
   for fd in decls {
     names = names.append(runtime_method_name(fd));
     receivers = receivers.append(runtime_receiver_name(fd.receiver_type));
     cells = cells.append(body_needs_cells(fd.body));
+    plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers, cells: cells };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers, cells: cells, plain: plain };
 }
 
 // The positions of the functions that a call of `name` can reach, in
@@ -5443,7 +5446,7 @@ function resolve_ident_value(name: string, env: Env): Value {
         return call_func(env.heap, name, no_args, env.funcs, env.aliases, env.type_decls);
       }
     }
-    if (variant_arity(name, env.type_decls) == 0 && !user_func_exists(name, env.funcs)) {
+    if (!user_func_exists(name, env.funcs) && variant_arity(name, env.type_decls) == 0) {
       let none_args: Value[] = [];
       return v_variant_of(variant_owner(name, env.type_decls), name, none_args);
     }
@@ -5732,7 +5735,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
           name = id.name;
         }
       }
-      if (!is_closure && variant_arity(name, env.type_decls) >= 0 && !user_func_exists(name, env.funcs)) {
+      if (!is_closure && !user_func_exists(name, env.funcs) && variant_arity(name, env.type_decls) >= 0) {
         is_variant = true;
         variant_name = name;
         variant_enum = variant_owner(name, env.type_decls);
@@ -9502,7 +9505,58 @@ function builtin_group_rmemchr(heap: interpheap.Heap, name: string, args: Value[
   return v_err(name + ": not a builtin of this group");
 }
 
+// True when a test of call_func_targs before the declared functions can take
+// a call of `name`. Each test of a name there has its part here. A test that
+// reads the arguments also counts here by its name alone.
+function builtin_takes_name(name: string): boolean {
+  if (name.len() >= 2 && name[0] == b'_' && name[1] == b'_') {
+    return true;
+  }
+  if (name == "f32_from_bits" || typeinfo.lane_builtin_width(name) > 0) {
+    return true;
+  }
+  if (is_buf_builtin(name) || is_raw_mem_builtin(name) || aes_gcm_arity(name) > 0 || is_byte_into_kernel(name) || is_limb_kernel(name)) {
+    return true;
+  }
+  if (checker.is_sha_hw_builtin(name) || is_sha_blocks_name(name)) {
+    return true;
+  }
+  let lists: string[][] = [BUILTIN_GROUP_PRINT_NAMES, CALL_FUNC_TARGS_SET, BUILTIN_GROUP_STRING_FROM_BYTES_UNCHECKED_NAMES, CALL_FUNC_TARGS_SET2, CALL_FUNC_TARGS_SET3, BUILTIN_GROUP_COUNT_BYTE_BYTES_NAMES, BUILTIN_GROUP_SCAN_SET_BYTES_NAMES, BUILTIN_GROUP_SCALE_F64_NAMES, BUILTIN_GROUP_RMEMCHR_NAMES];
+  for names in lists {
+    if (util.has_str(names, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function call_declared(heap: interpheap.Heap, at: i32, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  let fd = funcs.decls[at];
+  if (args.len() != fd.params.len()) {
+    return v_err("arity mismatch calling `" + name + "`");
+  }
+  if (fd.import_iface.len() > 0 && fd.import_iface != parser.CALLBACK_IFACE) {
+    return v_err(import_refusal(name, fd.import_wit, fd.import_iface));
+  }
+  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body), cells: funcs.cells[at] };
+  let no_recv = v_absent();
+  env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
+  for j in 0..fd.params.len() {
+    env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
+  }
+  let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
+  if (step.sig != 1) {
+    return v_void();
+  }
+  return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
+}
+
 function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  for at in funcs.named(name) {
+    if (funcs.plain[at] && funcs.decls[at].name == name) {
+      return call_declared(heap, at, name, args, type_args, expect, funcs, aliases, type_decls);
+    }
+  }
   if (util.has_str(BUILTIN_GROUP_PRINT_NAMES, name)) {
     return builtin_group_print(heap, name, args, funcs, aliases, type_decls);
   }
@@ -9584,23 +9638,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
     if (fd.name == name && fd.receiver_type.len() == 0) {
-      if (args.len() != fd.params.len()) {
-        return v_err("arity mismatch calling `" + name + "`");
-      }
-      if (fd.import_iface.len() > 0 && fd.import_iface != parser.CALLBACK_IFACE) {
-        return v_err(import_refusal(name, fd.import_wit, fd.import_iface));
-      }
-      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body), cells: funcs.cells[at] };
-      let no_recv = v_absent();
-      env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
-      for j in 0..fd.params.len() {
-        env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-      }
-      let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
-      if (step.sig != 1) {
-        return v_void();
-      }
-      return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
+      return call_declared(heap, at, name, args, type_args, expect, funcs, aliases, type_decls);
     }
   }
   return call_host(heap, name, args);

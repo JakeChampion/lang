@@ -216,6 +216,7 @@ callback_aggregate_environment_loans                 0
 callback_capture_lifetimes                           0
 callback_fresh_local_last_use                        0
 callback_shadowed_bindings                           0
+calls_of_functions_named_like_builtins               0
 captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0
 cast_in_tuple                                        0
