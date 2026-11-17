@@ -1,0 +1,64 @@
+// A nested function that calls itself belongs to the block that declares it.
+// Two functions, two blocks, a method and the module can each have a function
+// of the same name.
+
+struct Box { v: i32 }
+
+function go(n: i32): i32 {
+  return n * 1000;
+}
+
+function first(x: i32): i32 {
+  function go(n: i32): i32 {
+    if (n == 0) {
+      return 0;
+    }
+    return 1 + go(n - 1);
+  }
+  return go(x);
+}
+
+function second(x: i32): i32 {
+  function go(n: i32): i32 {
+    if (n == 0) {
+      return 100;
+    }
+    return 2 + go(n - 1);
+  }
+  return go(x);
+}
+
+function (b: Box) depth(n: i32): i32 {
+  function go(m: i32): i32 {
+    if (m == 0) {
+      return b.v;
+    }
+    return 1 + go(m - 1);
+  }
+  return go(n);
+}
+
+function main(): i32 {
+  print(f"{first(3)} {second(3)} {Box { v: 5 }.depth(3)} {go(3)}");
+  let k = 5;
+  if (k > 0) {
+    function go(n: i32): i32 {
+      if (n == 0) {
+        return k;
+      }
+      return 1 + go(n - 1);
+    }
+    print(go(3));
+  }
+  if (k > 1) {
+    function go(n: i32): i32 {
+      if (n == 0) {
+        return 0 - k;
+      }
+      return go(n - 1) - 1;
+    }
+    print(go(3));
+  }
+  print(go(3));
+  return 0;
+}
