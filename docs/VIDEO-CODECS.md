@@ -198,6 +198,8 @@ These checks follow H.264 clauses 7.3.2.4, 7.3.2.11, and 7.4.1.2.3.
 They do not compare that type with all slice types in the picture.
 
 AVC filler payloads contain zero or more `ff` bytes followed by exactly `80`.
+Filler must follow the first coded slice of its picture, under H.264 clause 7.4.1.2.3.
+Filler between slices and multiple filler units remain permitted.
 These checks follow H.264 clauses 7.3.2.7 and 7.3.2.11.
 The reader checks filler syntax after unit and packet limits, before the packet copy, without another payload allocation.
 

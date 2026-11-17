@@ -158,7 +158,7 @@ function source_errors(): test.TestOutcome {
 
 function filler_limits(): test.TestOutcome {
   let base = limits(1);
-  for pair in [("000000010c80000000010c0180", input.Limits { ...base, max_units_per_packet: 1 }), ("000000010c0180", input.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 5 } })] {
+  for pair in [("0000000109f0000000010c0180", input.Limits { ...base, max_units_per_packet: 1 }), ("000000010c0180", input.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 5 } })] {
     let (encoded, bound) = pair;
     let bytes = match (hex.decode(encoded)) { Ok(value) => value, Err(_) => { return test.fail("fixture hex"); } };
     if let Err(error) = collect(bytes, bound) {
