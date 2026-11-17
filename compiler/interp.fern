@@ -9521,13 +9521,13 @@ function builtin_takes_name(name: string): boolean {
   if (checker.is_sha_hw_builtin(name) || is_sha_blocks_name(name)) {
     return true;
   }
-  let lists: string[][] = [BUILTIN_GROUP_PRINT_NAMES, CALL_FUNC_TARGS_SET, BUILTIN_GROUP_STRING_FROM_BYTES_UNCHECKED_NAMES, CALL_FUNC_TARGS_SET2, CALL_FUNC_TARGS_SET3, BUILTIN_GROUP_COUNT_BYTE_BYTES_NAMES, BUILTIN_GROUP_SCAN_SET_BYTES_NAMES, BUILTIN_GROUP_SCALE_F64_NAMES, BUILTIN_GROUP_RMEMCHR_NAMES];
-  for names in lists {
-    if (util.has_str(names, name)) {
-      return true;
-    }
+  if (util.has_str(BUILTIN_GROUP_PRINT_NAMES, name) || util.has_str(CALL_FUNC_TARGS_SET, name) || util.has_str(BUILTIN_GROUP_STRING_FROM_BYTES_UNCHECKED_NAMES, name)) {
+    return true;
   }
-  return false;
+  if (util.has_str(CALL_FUNC_TARGS_SET2, name) || util.has_str(CALL_FUNC_TARGS_SET3, name) || util.has_str(BUILTIN_GROUP_COUNT_BYTE_BYTES_NAMES, name)) {
+    return true;
+  }
+  return util.has_str(BUILTIN_GROUP_SCAN_SET_BYTES_NAMES, name) || util.has_str(BUILTIN_GROUP_SCALE_F64_NAMES, name) || util.has_str(BUILTIN_GROUP_RMEMCHR_NAMES, name);
 }
 
 function call_declared(heap: interpheap.Heap, at: i32, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
