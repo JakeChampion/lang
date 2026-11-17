@@ -178,6 +178,33 @@ function test_text_wraps(): test.TestOutcome {
   return test.assert_eq(got + " " + cut.ends_with("…").to_string(), "true 2 10 1 true");
 }
 
+// The text and the x of each label of the layout.
+function labels(ns: scene.Node[]): string {
+  let out: string[] = [];
+  for n in ns {
+    match (n.paint) {
+      scene.Label(t, _, _, _, _) => {
+        out = out.append(t + "@" + n.x.to_string());
+      },
+      _ => {}
+    }
+  }
+  return out.join(" ");
+}
+
+function test_right_to_left_text(): test.TestOutcome {
+  // The Hebrew letters alef and bet, then "A": the paragraph is right to
+  // left, so the letters show in reverse order and the line is at the
+  // right. The second paragraph is left to right. In the third, "AAA" is
+  // left of the Hebrew word, and each line is at the right.
+  let f = fonts();
+  let lay = laid(ui.column([label("אב A").wide(), label("A אב").wide(), label("(א) AAA AAA").wide()]).width(60.0));
+  let w = text.width(f, 0, 10, "A בא");
+  let x = 60 - text.width(f, 0, 10, "AAA (א)");
+  let want = "A בא@" + (60 - w).to_string() + " A בא@0 AAA (א)@" + x.to_string() + " AAA@42";
+  return test.assert_eq(labels(lay.nodes), want);
+}
+
 function test_roles_take_the_theme(): test.TestOutcome {
   let dark = ui.Screen { ...screen(), theme: ui.theme(true) };
   let lay = laid_on(ui.box().grow(1.0).background(ui.SURFACE), dark, ui.no_focus());
@@ -959,6 +986,18 @@ function test_a_tap_puts_the_caret(): test.TestOutcome {
   return test.assert_eq(got, "4 2 37 3 name");
 }
 
+function test_a_right_to_left_field(): test.TestOutcome {
+  // The text of the field is at the right, and the caret at its end is at
+  // its left. A tap at the right edge puts the caret before the first
+  // letter.
+  let s = sim.type_in(form(false), "name", "אבג");
+  let left = 16 + 168 - text.width(fonts(), 0, 16, "גבא");
+  let at_end = caret_x(s.shell.host.lay.nodes);
+  s = sim.tap_at(s, 16 + 167, 28);
+  let got = labels(s.shell.host.lay.nodes).split(" ")[0] + " " + (at_end - left).to_string() + " " + s.shell.host.caret.to_string() + " " + (caret_x(s.shell.host.lay.nodes) - 16 - 168).to_string();
+  return test.assert_eq(got, "גבא@" + left.to_string() + " 1 0 1");
+}
+
 function test_hardware_keys_edit_at_the_caret(): test.TestOutcome {
   let s = sim.tap_at(sim.type_in(form(false), "name", "AAAA"), 36, 28);
   s = sim.event(s, android.Char(86));
@@ -1242,6 +1281,7 @@ function main(): i32 {
   r = r.it("a square takes the largest square that fits in its room", test_a_square_fits_its_room);
   r = r.it("a stack puts its elements one over the other", test_stack);
   r = r.it("a text wraps and clamps", test_text_wraps);
+  r = r.it("a right-to-left text reads from the right", test_right_to_left_text);
   r = r.it("a role takes its color from the theme", test_roles_take_the_theme);
   r = r.it("a seeded theme takes the hue of its seed", test_a_seeded_theme);
   r = r.it("a theme follows the state of the program", test_a_theme_follows_the_state);
@@ -1283,6 +1323,7 @@ function main(): i32 {
   r = r.it("the keys of a hardware keyboard type", test_hardware_keys_type);
   r = r.it("an accessibility service reads a field", test_field_is_spoken);
   r = r.it("a tap on the text puts the caret there", test_a_tap_puts_the_caret);
+  r = r.it("a right-to-left field has its text and caret at the right", test_a_right_to_left_field);
   r = r.it("the keys of a hardware keyboard edit at the caret", test_hardware_keys_edit_at_the_caret);
   r = r.it("a long text shows the part at the caret", test_a_long_text_shows_the_part_at_the_caret);
   r = r.it("an area wraps its text and takes new lines", test_an_area_wraps_and_takes_new_lines);

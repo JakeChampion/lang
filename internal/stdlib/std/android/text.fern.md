@@ -8,13 +8,15 @@ A `Fonts` holds one font for each weight that the app uses. `system` finds the f
 
 Each function takes a face: the index of a weight in the `Fonts`. `face_for` gives the index of the weight that is nearest to a number from 100 to 900.
 
-`width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters, for a text field that must know where its cursor is.
+`width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
 `std/truetype` draws each glyph one time for each size, weight and quarter of a pixel. A `Cache` keeps the glyphs. It also keeps a `Sprite` for each text: the coverage of the whole text, which `put` draws on a frame in a color. `layout` gives the glyphs of a text with their positions, for a painter that draws glyphs from an atlas on the GPU.
 
 ## Contracts
 
 A size `px` is the pixels of one em. A letter spacing `track` is in thousandths of the em, as `letterSpacing` of Android. A `Fonts` with no font gives a width of 0 and draws nothing.
+
+A text to draw is in visual order: its first character is at the left. `std/bidi` gives each line of a text that mixes directions in that order.
 
 Each function that makes a glyph or a sprite takes the `Cache` and gives it back with the new entry.
 
@@ -256,39 +258,13 @@ A line breaks at a space. A word that is wider than the room breaks between two 
 <<lines>>=
 // The lines of `s` in `room` pixels. A line feed in `s` starts a new line.
 pub function wrap(fs: Fonts, w: i32, px: i32, s: string, room: i32): string[] {
+  let cs = letters(s);
   let lines: string[] = [];
-  for para in s.split("\n") {
-    lines = wrap_paragraph(fs, w, px, para, room, lines);
+  for r in wrap_ranges(fs, w, px, s, room) {
+    let (a, b) = r;
+    lines = lines.append(span(cs, a, b));
   }
   return lines;
-}
-
-function wrap_paragraph(fs: Fonts, w: i32, px: i32, para: string, room: i32, own out: string[]): string[] {
-  if (width(fs, w, px, para) <= room) {
-    return out.append(para);
-  }
-  let lines = out;
-  let line = "";
-  for word in para.split(" ") {
-    let joined = word;
-    if (line.len() > 0) {
-      joined = line + " " + word;
-    }
-    if (width(fs, w, px, joined) <= room) {
-      line = joined;
-      continue;
-    }
-    if (line.len() > 0) {
-      lines = lines.append(line);
-    }
-    line = word;
-    while (width(fs, w, px, line) > room) {
-      let head = head_that_fits(fs, w, px, line, room);
-      lines = lines.append(head);
-      line = line.drop(head.len()).to_owned();
-    }
-  }
-  return lines.append(line);
 }
 
 // Each character of `s` as a string.
@@ -313,53 +289,62 @@ pub function wrap_ranges(fs: Fonts, w: i32, px: i32, s: string, room: i32): (i32
   let cs = letters(s);
   let out: (i32, i32)[] = [];
   let start = 0;
-  let space = -1;
-  let i = 0;
-  while (i < cs.len()) {
-    if (cs[i] == "\n") {
-      out = out.append((start, i));
-      start = i + 1;
-      space = -1;
-      i += 1;
-      continue;
+  while (start <= cs.len()) {
+    let end = start;
+    while (end < cs.len() && cs[end] != "\n") {
+      end += 1;
     }
-    if (cs[i] == " ") {
-      space = i;
-    }
-    if (i > start && width(fs, w, px, span(cs, start, i + 1)) > room) {
-      let (line, next) = broken(start, space, i);
-      out = out.append(line);
-      start = next;
-      space = -1;
-      i = i.max(start);
-      continue;
-    }
-    i += 1;
+    out = paragraph_ranges(fs, w, px, cs, start, end, room, out);
+    start = end + 1;
   }
-  return out.append((start, cs.len()));
+  return out;
 }
 
-// The line that ends when the character `i` does not fit, and the start of
-// the next line: the line breaks at the last space, or before `i`.
-function broken(start: i32, space: i32, i: i32): ((i32, i32), i32) {
-  if (space > start) {
-    return ((start, space), space + 1);
+// The lines of the paragraph from `start` up to `end`. A line breaks at the
+// last space where the line fits.
+function paragraph_ranges(fs: Fonts, w: i32, px: i32, cs: string[], start: i32, end: i32, room: i32, own out: (i32, i32)[]): (i32, i32)[] {
+  if (width(fs, w, px, span(cs, start, end)) <= room) {
+    return out.append((start, end));
   }
-  return ((start, i), i);
+  let lines = out;
+  let from = start;
+  let to = start;
+  let has_word = false;
+  let ws = start;
+  while (ws <= end) {
+    let we = ws;
+    while (we < end && cs[we] != " ") {
+      we += 1;
+    }
+    if (!has_word) {
+      from = ws;
+    }
+    if (width(fs, w, px, span(cs, from, we)) > room) {
+      if (has_word && to > from) {
+        lines = lines.append((from, to));
+      }
+      from = ws;
+      while (width(fs, w, px, span(cs, from, we)) > room) {
+        let head = head_end(fs, w, px, cs, from, we, room);
+        lines = lines.append((from, head));
+        from = head;
+      }
+    }
+    to = we;
+    has_word = true;
+    ws = we + 1;
+  }
+  return lines.append((from, to));
 }
 
-// The longest start of `word` that fits in `room` pixels: one character or
-// more.
-function head_that_fits(fs: Fonts, w: i32, px: i32, word: string, room: i32): string {
-  let head = "";
-  for c in word.chars() {
-    let next = head + c.to_string();
-    if (head.len() > 0 && width(fs, w, px, next) > room) {
-      return head;
-    }
-    head = next;
+// The end of the longest start of the word from `from` up to `to` that fits
+// in `room` pixels: one character or more.
+function head_end(fs: Fonts, w: i32, px: i32, cs: string[], from: i32, to: i32, room: i32): i32 {
+  let k = from + 1;
+  while (k < to && width(fs, w, px, span(cs, from, k + 1)) <= room) {
+    k += 1;
   }
-  return head;
+  return k;
 }
 ```
 
