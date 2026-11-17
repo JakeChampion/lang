@@ -11631,8 +11631,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				continue
 			}
 			// A copyable payload is a local value. A payload that can hold
-			// a handle keeps its linear ownership.
-			if (scrutOwned || ownedField && ownershipBindingUnchanged(fn, bname)) && c.holdsNoHandle(types[i]) {
+			// a handle keeps its linear ownership, and so does a `once`
+			// function, which a call consumes.
+			if (scrutOwned || ownedField && ownershipBindingUnchanged(fn, bname)) && c.holdsNoHandle(types[i]) && !isOnceFunc(types[i]) {
 				continue
 			}
 			if scrutOwned {

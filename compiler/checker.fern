@@ -19956,7 +19956,10 @@ function ocl_lambda(lm: ast.ExprLambda, facts: OclFacts): OclCapture[] {
   let places = ocl_place_scope(lm, facts.factories.decls);
   for capture in lm.captures {
     if (ocl_unique(facts.names, capture.name)) {
-      out = ocl_merge(out, [ocl_capture(capture.name, typeinfo.spelling(capture.ty), true)]);
+      // A `once` lambda moves its captures in, so it holds no loan on them.
+      if (!lm.once) {
+        out = ocl_merge(out, [ocl_capture(capture.name, typeinfo.spelling(capture.ty), true)]);
+      }
       for path in ocl_capture_paths(lm, capture.name, places) {
         out = ocl_merge(out, ocl_flatten(ocl_select(ocl_lookup(facts, capture.name), path)));
       }
@@ -22914,6 +22917,10 @@ function lu_arg_may_borrow(fx: LuFn, e: ast.Expr): boolean {
       return true;
     },
     _ => {
+      // A variant that no call gives payloads to holds nothing to lend.
+      if let Some(_) = lu_variant_row(fx, e) {
+        return false;
+      }
       return true;
     }
   }
