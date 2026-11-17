@@ -2,19 +2,39 @@ import "std/test";
 import "std/string";
 
 function test_before(): test.TestOutcome {
-  return test.assert_eq("key=value".before("=").to_owned(), "key");
+  return test.assert_eq("key=value".before("=").unwrap_or("none"), "key");
 }
 
 function test_before_missing(): test.TestOutcome {
-  return test.assert_eq("noeq".before("=").to_owned(), "noeq");
+  return test.assert_true("noeq".before("=").is_none());
+}
+
+function test_before_leading(): test.TestOutcome {
+  return test.assert_eq("=tail".before("=").unwrap_or("none"), "");
 }
 
 function test_after(): test.TestOutcome {
-  return test.assert_eq("key=value".after("=").to_owned(), "value");
+  return test.assert_eq("key=value".after("=").unwrap_or("none"), "value");
 }
 
 function test_after_missing(): test.TestOutcome {
-  return test.assert_eq("noeq".after("=").to_owned(), "");
+  return test.assert_true("noeq".after("=").is_none());
+}
+
+function test_after_trailing(): test.TestOutcome {
+  return test.assert_eq("head=".after("=").unwrap_or("none"), "");
+}
+
+function test_before_after_first_separator(): test.TestOutcome {
+  let b = "a=b=c".before("=").unwrap_or("none");
+  let a = "a=b=c".after("=").unwrap_or("none");
+  return test.assert_true(b == "a" && a == "b=c");
+}
+
+function test_before_after_empty_separator(): test.TestOutcome {
+  let b = "abc".before("").unwrap_or("none");
+  let a = "abc".after("").unwrap_or("none");
+  return test.assert_true(b == "" && a == "abc");
 }
 
 function test_between(): test.TestOutcome {
@@ -153,8 +173,12 @@ function main(): i32 {
   let r = test.new("std/string slice + extract");
   r = r.it("before", test_before);
   r = r.it("before missing", test_before_missing);
+  r = r.it("before leading", test_before_leading);
   r = r.it("after", test_after);
   r = r.it("after missing", test_after_missing);
+  r = r.it("after trailing", test_after_trailing);
+  r = r.it("before and after: first separator", test_before_after_first_separator);
+  r = r.it("before and after: empty separator", test_before_after_empty_separator);
   r = r.it("between", test_between);
   r = r.it("between missing", test_between_missing);
   r = r.it("split_once", test_split_once);

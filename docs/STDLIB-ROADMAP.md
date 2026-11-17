@@ -743,8 +743,7 @@ think they're free additions to make.
   values or `bytes()` for bytes.
 - **`s.remove_all(needle)`**: sugar for `replace(needle, "")`.
 - **`s.before(sep)` / `s.after(sep)`**: substring around the
-  FIRST `sep`. before returns s on no-match; after returns
-  empty.
+  FIRST `sep`. Each returns None when `sep` is absent.
 - **`s.between(start, end)`**: Some(content) between matched
   markers; None if either is missing.
 - **`(n: i32).is_in_range_incl(lo, hi)`**: inclusive companion to
