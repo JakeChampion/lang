@@ -3,6 +3,8 @@
 // phone: the clock, the files of the app, the window, the network through
 // workers, the image decoder and the media player.
 import "std/android";
+import "std/android/access";
+import "std/android/download";
 import "std/android/launch";
 import "std/android/draw";
 import "std/android/gl";
@@ -15,6 +17,7 @@ import "std/android/text";
 import "std/android/ui/painter";
 import "std/android/ui/scene";
 import "std/android/video/capabilities";
+import "std/android/watchnext";
 import "std/fetch";
 import "std/log";
 import "std/rand";
@@ -414,8 +417,7 @@ function close_gpu(gpu: Cell[Option[Gpu]]): void {
 
 // The device of the phone. `p` is the media player, or one with no object
 // when Android gave none, and then nothing plays.
-function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], media: Media): control.Device {
-  let has = p.obj != 0 as usize;
+function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): control.Device {
   let posters = android.cache_dir(ctx) + "/posters";
   return control.Device {
     mono_ms: (): i64 => mono_ms(),
@@ -440,28 +442,84 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], media: Med
     fetch: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch_all(rs),
     fetch_images: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch_images(posters, rs),
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
-    play: (uri: string): boolean => has && player.open(ctx, p, uri),
-    show_video: (window: usize): boolean => show_video(ctx, p, has, gpu, window),
+    play: (uri: string): boolean => live(playing(ps)) && player.open(ctx, playing(ps), uri),
+    show_video: (window: usize): boolean => show_video(ctx, playing(ps), live(playing(ps)), gpu, window),
     attach: (window: usize): boolean => attach_gpu(gpu, window),
     detach: (): void => detach_gpu(gpu),
-    present: (window: usize, nodes: scene.Node[], video: boolean): boolean => present(ctx, p, gpu, window, nodes, video),
-    hide_video: (): void => hide_video(ctx, p, has, gpu),
-    pause_video: (): void => pause_video(ctx, p, has, gpu),
+    present: (window: usize, nodes: scene.Node[], video: boolean): boolean => present(ctx, playing(ps), gpu, window, nodes, video),
+    hide_video: (): void => hide_video(ctx, playing(ps), live(playing(ps)), gpu),
+    pause_video: (): void => pause_video(ctx, playing(ps), live(playing(ps)), gpu),
     request_frame: (): void => android.request_frame(ctx),
-    start: (): void => start(ctx, p, has),
-    pause: (): void => pause(ctx, p, has),
-    seek: (ms: i64): void => seek(ctx, p, has, ms),
-    position: (): i64 => position(ctx, p, has),
-    duration: (): i64 => duration(ctx, p, has),
-    stop: (): void => stop(ctx, p, has),
-    has_audio: (): boolean => has && player.has_audio(ctx, p),
-    audio_tracks: (): i32[] => sound_tracks(ctx, p, has),
-    select_track: (i: i32): boolean => has && player.select_track(ctx, p, i),
-    set_speed: (rate: i32): void => set_speed(ctx, p, has, rate),
+    start: (): void => start(ctx, playing(ps), live(playing(ps))),
+    pause: (): void => pause(ctx, playing(ps), live(playing(ps))),
+    seek: (ms: i64): void => seek(ctx, playing(ps), live(playing(ps)), ms),
+    position: (): i64 => position(ctx, playing(ps), live(playing(ps))),
+    duration: (): i64 => duration(ctx, playing(ps), live(playing(ps))),
+    stop: (): void => stop(ctx, playing(ps), live(playing(ps))),
+    has_audio: (): boolean => live(playing(ps)) && player.has_audio(ctx, playing(ps)),
+    audio_tracks: (): i32[] => sound_tracks(ctx, playing(ps), live(playing(ps))),
+    select_track: (i: i32): boolean => live(playing(ps)) && player.select_track(ctx, playing(ps), i),
+    set_speed: (rate: i32): void => set_speed(ctx, playing(ps), live(playing(ps)), rate),
+    pip: (on: boolean): void => pip(ctx, playing(ps), live(playing(ps)), on),
+    in_pip: (): boolean => android.in_pip(ctx),
+    watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => watch_next(ctx, key, title, kind, at, length, poster),
+    watch_next_drop: (key: string): void => watchnext.drop(ctx, key),
+    access: (items: android.AccessItem[]): void => access.publish(ctx, items),
+    download: (r: plex.Request, name: string, title: string): i64 => download.start(ctx, r.url, r.headers, name, title),
+    download_progress: (id: i64): download.Progress => download.progress(ctx, id),
+    download_remove: (id: i64): void => download.remove(ctx, id),
+    downloads_dir: download.dir(ctx),
+    queue_next: (uri: string): boolean => live(waiting(ps)) && player.open(ctx, waiting(ps), uri),
+    chain: (on: boolean): void => chain(ctx, ps, on),
+    swap: (): void => swap(ctx, ps),
+    from_next: (e: android.Event): boolean => waiting(ps).sent(e),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
     languages: android.languages(ctx),
   };
+}
+
+// The two media players: the one that plays, and the one that prepares
+// the next track. `flipped` is true while the second one plays.
+struct Players { first: player.Player, second: player.Player, flipped: Cell[boolean] }
+
+function playing(ps: Players): player.Player {
+  if (ps.flipped.get()) {
+    return ps.second;
+  }
+  return ps.first;
+}
+
+function waiting(ps: Players): player.Player {
+  if (ps.flipped.get()) {
+    return ps.first;
+  }
+  return ps.second;
+}
+
+function live(p: player.Player): boolean {
+  return p.obj != 0 as usize;
+}
+
+// Gives the prepared waiting player to the one that plays, or takes it
+// away and stops it.
+function chain(ctx: usize, ps: Players, on: boolean): void {
+  if (!live(playing(ps)) || !live(waiting(ps))) {
+    return;
+  }
+  if (on) {
+    let ok = player.set_next(ctx, playing(ps), Some(waiting(ps)));
+    return;
+  }
+  let off = player.set_next(ctx, playing(ps), None);
+  player.stop(ctx, waiting(ps));
+}
+
+// The waiting player took over at the end of the track. The player that
+// ended waits for the track after.
+function swap(ctx: usize, ps: Players): void {
+  ps.flipped.set(!ps.flipped.get());
+  player.stop(ctx, waiting(ps));
 }
 
 function start(ctx: usize, p: player.Player, has: boolean): void {
@@ -474,6 +532,23 @@ function pause(ctx: usize, p: player.Player, has: boolean): void {
   if (has) {
     let ok = player.pause(ctx, p);
   }
+}
+
+// Puts the video on the Watch Next row of Android TV. On a phone there is
+// no such row, and this changes nothing.
+function watch_next(ctx: usize, key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void {
+  let link = watchnext.app_link(ctx, "play", key);
+  let kept = watchnext.keep(ctx, watchnext.Program { id: key, title: title, kind: kind, position_ms: at, duration_ms: length, poster: poster, link: link });
+}
+
+// Gives Android the shape of the video for a picture-in-picture window.
+function pip(ctx: usize, p: player.Player, has: boolean, on: boolean): void {
+  let (w, h) = if (has) { player.video_size(ctx, p) } else { (16, 9) };
+  if (w <= 0 || h <= 0) {
+    android.pip_auto(ctx, on, 16, 9);
+    return;
+  }
+  android.pip_auto(ctx, on, w, h);
 }
 
 function set_speed(ctx: usize, p: player.Player, has: boolean, rate: i32): void {
@@ -515,18 +590,23 @@ function sound_tracks(ctx: usize, p: player.Player, has: boolean): i32[] {
   return [];
 }
 
-function app_main(ctx: usize): usize {
-  let p = player.Player { obj: 0 as usize, listener: 0 as usize };
+// A media player, or one with no object when Android gave none, and then
+// nothing plays on it.
+function made_player(ctx: usize): player.Player {
   if let Some(made) = player.new(ctx, "dev.fern.plex.Media") {
-    p = made;
-  } else {
-    log.warn("plex: no media player");
+    return made;
   }
+  log.warn("plex: no media player");
+  return player.Player { obj: 0 as usize, listener: 0 as usize, slot: -1 };
+}
+
+function app_main(ctx: usize): usize {
+  let ps = Players { first: made_player(ctx), second: made_player(ctx), flipped: cell_new(false) };
   let none: Option[Gpu] = None;
   let gpu = cell_new(none);
   let none_awake: Option[service.Awake] = None;
   let media = Media { session: session.new(ctx, "dev.fern.plex.Controls", "Fern for Plex"), awake: cell_new(none_awake) };
-  let first = control.new(device(ctx, p, gpu, media), android.data_dir(ctx), android.intent_extra(ctx, "server"), android.intent_extra(ctx, "token"), android.intent_extra(ctx, "play"));
+  let first = control.new(device(ctx, ps, gpu, media), android.data_dir(ctx), android.intent_extra(ctx, "server"), android.intent_extra(ctx, "token"), android.intent_extra(ctx, "play"));
   log.info("plex: started");
   let last = android.run(ctx, first, (own s: control.App, e: android.Event): control.App => control.step(s, e), (s: control.App): i32 => control.timeout(s, mono_ms()));
   control.close(last);
@@ -535,8 +615,10 @@ function app_main(ctx: usize): usize {
     session.close(ctx, s);
   }
   close_gpu(gpu);
-  if (p.obj != 0 as usize) {
-    player.close(ctx, p);
+  for p in [ps.first, ps.second] {
+    if (live(p)) {
+      player.close(ctx, p);
+    }
   }
   log.info("plex: destroyed");
   return 0 as usize;

@@ -7,7 +7,9 @@ Sources include paths, file URIs, HTTP streams, and granted content URIs.
 
 `MediaPlayer` reads the stream, decodes it, keeps the audio and the video in time, and shows the video on a `Surface`. It reads a progressive file, such as MP4, Matroska or WebM, and HLS. The app declares a @jni class that implements the five listener interfaces of the player. Its native methods call `prepared`, `completed`, `failed`, `info` and `seeked`. `new` makes one player and one listener of that class.
 
-The listener runs on the main thread of the app. Each callback sends an event to the live loop of the app with `android.tell`. The loop gives it to the app as a `Posted` event. `event` decodes it as a `Change`.
+The listener runs on the main thread of the app. Each callback sends an event to the live loop of the app with `android.tell`. The loop gives it to the app as a `Posted` event. `event` decodes it as a `Change`. Each player keeps its audio session as a sender of `std/android`, so its events hold its slot. Android gives each live player an audio session of its own. `sent` tells whether an event came from one player, for an app with more than one.
+
+`set_next` gives a prepared player to a player that plays. When the first player completes, Android starts the next one with no gap, and `Completed` comes from the first player. Then the first player is free for the item after.
 
 `open` starts to prepare a stream, and `Prepared` comes when the player can start. `show` puts the video on the window of the activity: it calls `Window.release_cpu` first, because a window has one producer of pixels at a time. `hide` takes the video off the window, so the app can lock the window and draw on it again. Do not lock the window between `show` and `hide`.
 
@@ -74,7 +76,7 @@ import "std/jni";
 
 ### `events`
 
-The kinds from 19 to 23 belong to this module. A `Failed` event packs `what` in the high 32 bits of its argument and `extra` in the low 32 bits. An `Info` event has `what` as its argument.
+The kinds from 19 to 23 belong to this module. The bits above the low 8 of the kind hold the slot of the player. A `Failed` event packs `what` in the high 32 bits of its argument and `extra` in the low 32 bits. An `Info` event has `what` as its argument.
 
 ```fern
 <<events>>=
@@ -125,9 +127,10 @@ function info_change(what: i32): Option[Change] {
 // The change of the player that a Posted event carries, or None for an
 // event of another module.
 pub function event(e: android.Event): Option[Change] {
-  let android.Posted(kind, arg) = e else {
+  let android.Posted(tagged, arg) = e else {
     return None;
   };
+  let kind = tagged & 255;
   if (kind == PREPARED) {
     return Some(Prepared);
   }
@@ -159,8 +162,18 @@ Android clamps larger values internally, despite the Java long parameter.
 
 ```fern
 <<the player>>=
-// The global references of the player and its listener.
-pub struct Player { obj: usize, listener: usize }
+// The global references of the player and its listener, and the slot of
+// its audio session in the senders of the loop, or -1.
+pub struct Player { obj: usize, listener: usize, slot: i32 }
+
+// Whether the player `p` sent the Posted event `e`.
+pub function (p: Player) sent(e: android.Event): boolean {
+  let android.Posted(tagged, arg) = e else {
+    return false;
+  };
+  let kind = tagged & 255;
+  return kind >= PREPARED && kind <= SEEKED && tagged >> 8 == p.slot;
+}
 
 const PLAYER: string = "android/media/MediaPlayer";
 
@@ -338,7 +351,7 @@ pub function new(ctx: usize, class: string): Option[Player] {
     let _ = call_void(e, mp, "release", "()V", []);
     return None;
   }
-  return retain(e, mp, listener);
+  return retain(ctx, e, mp, listener);
 }
 
 function set_attributes(e: usize, mp: usize): boolean {
@@ -346,7 +359,7 @@ function set_attributes(e: usize, mp: usize): boolean {
   return attrs != 0 as usize && call_void(e, mp, "setAudioAttributes", "(Landroid/media/AudioAttributes;)V", [attrs]);
 }
 
-function retain(e: usize, mp: usize, listener: usize): Option[Player] {
+function retain(ctx: usize, e: usize, mp: usize, listener: usize): Option[Player] {
   let obj = jni.new_global_ref(e, mp);
   if (cleared(e) || obj == 0 as usize) {
     let _ = call_void(e, mp, "release", "()V", []);
@@ -358,7 +371,26 @@ function retain(e: usize, mp: usize, listener: usize): Option[Player] {
     let _ = call_void(e, mp, "release", "()V", []);
     return None;
   }
-  return Some(Player { obj: obj, listener: saved_listener });
+  let slot = android.add_sender(ctx, session_of(e, mp));
+  if (slot < 0) {
+    let _ = jni.delete_global_ref(e, saved_listener);
+    let _ = jni.delete_global_ref(e, obj);
+    let _ = call_void(e, mp, "release", "()V", []);
+    return None;
+  }
+  return Some(Player { obj: obj, listener: saved_listener, slot: slot });
+}
+
+function session_of(e: usize, mp: usize): i64 {
+  let id = method(e, mp, "getAudioSessionId", "()I");
+  if (id == 0 as usize) {
+    return 0i64;
+  }
+  let session = jni.call_int_method_a(e, mp, id, 0 as usize);
+  if (cleared(e)) {
+    return 0i64;
+  }
+  return session as i64;
 }
 
 function valid_uri(uri: string): boolean {
@@ -764,6 +796,21 @@ pub function stop(ctx: usize, p: Player): void {
   let reset = call_void(e, p.obj, "reset", "()V", []);
 }
 
+// Gives the player `next`, which must be prepared, to the player `p`, so
+// it starts with no gap when `p` completes. None takes it away.
+pub function set_next(ctx: usize, p: Player, next: Option[Player]): boolean {
+  let e: usize = android.env(ctx);
+  if (!begin(e)) {
+    return false;
+  }
+  defer end(e);
+  let obj = 0 as usize;
+  if let Some(n) = next {
+    obj = n.obj;
+  }
+  return call_void(e, p.obj, "setNextMediaPlayer", "(Landroid/media/MediaPlayer;)V", [obj]);
+}
+
 // Stops the player and frees it and its listener.
 pub function close(ctx: usize, p: Player): void {
   let e: usize = android.env(ctx);
@@ -772,6 +819,7 @@ pub function close(ctx: usize, p: Player): void {
   }
   defer end(e);
   let released = call_void(e, p.obj, "release", "()V", []);
+  android.drop_sender(ctx, p.slot);
   jni.delete_global_ref(e, p.listener);
   jni.delete_global_ref(e, p.obj);
 }
@@ -783,35 +831,39 @@ Each native method of the app's listener calls one of these with its `JNIEnv` an
 
 ```fern
 <<the listener>>=
-function post(e: usize, kind: i32, arg: usize): void {
+function post(e: usize, mp: usize, kind: i32, arg: usize): void {
   if (!begin(e)) {
     return;
   }
   defer end(e);
-  let sent = android.tell(e, kind, arg);
+  let slot = android.sender_slot(e, session_of(e, mp));
+  if (slot < 0) {
+    slot = 0;
+  }
+  let sent = android.tell(e, kind | slot << 8, arg);
 }
 
 pub function prepared(e: usize, listener: usize, mp: usize): void {
-  post(e, PREPARED, 0 as usize);
+  post(e, mp, PREPARED, 0 as usize);
 }
 
 pub function completed(e: usize, listener: usize, mp: usize): void {
-  post(e, COMPLETED, 0 as usize);
+  post(e, mp, COMPLETED, 0 as usize);
 }
 
 pub function failed(e: usize, listener: usize, mp: usize, what: i32, extra: i32): u8 {
-  post(e, FAILED, ((what as u64 & 4294967295u64) << 32u64 | extra as u64 & 4294967295u64) as usize);
+  post(e, mp, FAILED, ((what as u64 & 4294967295u64) << 32u64 | extra as u64 & 4294967295u64) as usize);
   return 1u8;
 }
 
 pub function info(e: usize, listener: usize, mp: usize, what: i32, extra: i32): u8 {
   if let Some(_) = info_change(what) {
-    post(e, INFO, what as usize);
+    post(e, mp, INFO, what as usize);
   }
   return 0u8;
 }
 
 pub function seeked(e: usize, listener: usize, mp: usize): void {
-  post(e, SEEKED, 0 as usize);
+  post(e, mp, SEEKED, 0 as usize);
 }
 ```

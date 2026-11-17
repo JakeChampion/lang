@@ -9387,11 +9387,11 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     wi += 1;
     queued = queued.with(i, false);
     let at = own_row[i];
-    let lazy = without_kept_alive(rows, ix, all[i], analyses[i]);
+    let lazy = without_kept_alive(rows, ix, all[i], names[i], analyses[i]);
     rows = lazy.rows;
     let again = lazy.again;
     if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
-      let transfers = ownership.transfers(all[i].func, analyses[i], rows, ix, modes_change[i]);
+      let transfers = ownership.transfers(all[i].func, names[i], analyses[i], rows, ix, modes_change[i]);
       let next = row_bits(all[i], transfers.escapes, kernel[i]);
       let lends = rows[at].lends || transfers.lends;
       if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
@@ -9423,12 +9423,12 @@ struct Lazy { rows: ownership.Escapes[], again: i32[] }
 
 // Clears each eager slot that a call of `p` gives a value that lives on.
 // `again` has the rows that changed.
-function without_kept_alive(own rows: ownership.Escapes[], ix: ownership.Index, p: Produced, a: ssasem.Analysis): Lazy {
+function without_kept_alive(own rows: ownership.Escapes[], ix: ownership.Index, p: Produced, name: string, a: ssasem.Analysis): Lazy {
   let again: i32[] = [];
   if (!p.ok) {
     return Lazy { rows: rows, again: again };
   }
-  for slot in ownership.kept_alive(p.func, a, rows, ix) {
+  for slot in ownership.kept_alive(p.func, name, a, rows, ix) {
     if (ownership.eager_slot(rows, slot.row, slot.at)) {
       rows = rows.with(slot.row, ownership.Escapes { ...rows[slot.row], eager: rows[slot.row].eager.with(slot.at, false) });
       again = again.append(slot.row);

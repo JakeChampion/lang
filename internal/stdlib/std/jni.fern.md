@@ -354,11 +354,11 @@ pub function get_superclass(env: usize, clazz: usize): usize {
 }
 
 pub function is_assignable_from(env: usize, sub: usize, sup: usize): i32 {
-  return call2(env, 11, sub, sup) as i32;
+  return (call2(env, 11, sub, sup) & 255 as usize) as i32;
 }
 
 pub function is_same_object(env: usize, a: usize, b: usize): i32 {
-  return call2(env, 24, a, b) as i32;
+  return (call2(env, 24, a, b) & 255 as usize) as i32;
 }
 
 pub function alloc_object(env: usize, clazz: usize): usize {
@@ -366,7 +366,7 @@ pub function alloc_object(env: usize, clazz: usize): usize {
 }
 
 pub function is_instance_of(env: usize, obj: usize, clazz: usize): i32 {
-  return call2(env, 32, obj, clazz) as i32;
+  return (call2(env, 32, obj, clazz) & 255 as usize) as i32;
 }
 
 pub function get_object_field(env: usize, obj: usize, field: usize): usize {
@@ -374,7 +374,7 @@ pub function get_object_field(env: usize, obj: usize, field: usize): usize {
 }
 
 pub function get_boolean_field(env: usize, obj: usize, field: usize): i32 {
-  return call2(env, 96, obj, field) as i32;
+  return (call2(env, 96, obj, field) & 255 as usize) as i32;
 }
 
 pub function get_byte_field(env: usize, obj: usize, field: usize): i32 {
@@ -558,6 +558,23 @@ pub function int_array_region(env: usize, array: usize, start: i32, n: i32): i32
   }
 }
 
+// A new long[] of `n` zeros.
+pub function new_long_array(env: usize, n: i32): usize {
+  return call1(env, 180, n as usize);
+}
+
+// Puts the longs `values` in `array` from the index `start`.
+pub function set_long_array_region(env: usize, array: usize, start: i32, values: [i64]): void {
+  unsafe {
+    let buf: usize = alloc_buffer(8 * values.len() + 8);
+    for k in 0..values.len() {
+      __store_i64(buf + (8 * k) as usize, values[k]);
+    }
+    let done: usize = call4(env, 212, array, start as usize, values.len() as usize, buf);
+    free_buffer(buf);
+  }
+}
+
 // A new float[] of `n` zeros.
 pub function new_float_array(env: usize, n: i32): usize {
   return call1(env, 181, n as usize);
@@ -655,7 +672,7 @@ pub function call_object_method_a(env: usize, obj: usize, method: usize, args: u
 }
 
 pub function call_boolean_method_a(env: usize, obj: usize, method: usize, args: usize): i32 {
-  return call3(env, 39, obj, method, args) as i32;
+  return (call3(env, 39, obj, method, args) & 255 as usize) as i32;
 }
 
 pub function call_int_method_a(env: usize, obj: usize, method: usize, args: usize): i32 {

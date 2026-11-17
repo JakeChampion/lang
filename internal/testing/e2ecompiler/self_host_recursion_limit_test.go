@@ -12,15 +12,15 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-const recursionSrc = `function down(n: i32): i32 {
+const recursionSrc = `function %[1]s(n: i32): i32 {
   if (n == 0) {
     return 0;
   }
-  return down(n - 1) + 1;
+  return %[1]s(n - 1) + 1;
 }
 
 function main(): i32 {
-  print(down(%d).to_string());
+  print(%[1]s(%[2]d).to_string());
   return 0;
 }
 `
@@ -35,9 +35,9 @@ const selfHostMaxCallDepth = 1000000
 func TestRecursionLimitInterpreters(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	oracle := e2eharness.BuildLangBinForInterp(t)
-	write := func(depth int) string {
+	write := func(fn string, depth int) string {
 		src := filepath.Join(t.TempDir(), "main.fern")
-		if err := os.WriteFile(src, []byte(fmt.Sprintf(recursionSrc, depth)), 0o644); err != nil {
+		if err := os.WriteFile(src, []byte(fmt.Sprintf(recursionSrc, fn, depth)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return src
@@ -50,20 +50,24 @@ func TestRecursionLimitInterpreters(t *testing.T) {
 		{"self-host", selfHostMaxCallDepth, func(src string) *exec.Cmd { return runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib) }},
 		{"oracle", interp.MaxCallDepth, func(src string) *exec.Cmd { return exec.Command(oracle, "-interp", src) }},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			below := c.limit - 100
-			out, errText, code := runInterpCLI(t, c.run(write(below)), "")
-			if code != 0 || out != fmt.Sprintf("%d\n", below) {
-				t.Errorf("depth %d: exit %d, stdout %q, stderr %q; want the depth printed", below, code, out, errText)
-			}
-			// main is the first active call, so the call of down that would
-			// be number limit + 1 is the one that stops.
-			_, errText, code = runInterpCLI(t, c.run(write(2*c.limit)), "")
-			want := fmt.Sprintf("fern: recursion limit\n  %d calls are active, at line 5 column 14\n", c.limit)
-			if code != 134 || errText != want {
-				t.Errorf("depth %d: exit %d, stderr %q; want 134 and %q", 2*c.limit, code, errText, want)
-			}
-		})
+		// The self-host interpreter tests a name that starts with two
+		// underscores against its builtins before the declared functions.
+		for _, fn := range []string{"down", "__down"} {
+			t.Run(c.name+"/"+fn, func(t *testing.T) {
+				below := c.limit - 100
+				out, errText, code := runInterpCLI(t, c.run(write(fn, below)), "")
+				if code != 0 || out != fmt.Sprintf("%d\n", below) {
+					t.Errorf("depth %d: exit %d, stdout %q, stderr %q; want the depth printed", below, code, out, errText)
+				}
+				// main is the first active call, so the call of down that would
+				// be number limit + 1 is the one that stops.
+				_, errText, code = runInterpCLI(t, c.run(write(fn, 2*c.limit)), "")
+				want := fmt.Sprintf("fern: recursion limit\n  %d calls are active, at line 5 column %d\n", c.limit, 10+len(fn))
+				if code != 134 || errText != want {
+					t.Errorf("depth %d: exit %d, stderr %q; want 134 and %q", 2*c.limit, code, errText, want)
+				}
+			})
+		}
 	}
 }
 

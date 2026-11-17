@@ -5389,6 +5389,54 @@ pub function classified_at(k: Keeps, pos: i32): Option[i32] {
   return None;
 }
 
+// Whether the count of the donor of row is at its death what its token read.
+// From the read to the death, each instruction reads the donor, changes no
+// count, or is the rebuild of a keep. No step drops another value, reuses
+// another box or ends another row.
+pub function count_holds(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, k: Keeps, row: i32): boolean {
+  let d = k.donors[row];
+  let death = if (k.built[row] >= 0) { k.built[row] } else { k.taken[row] };
+  for pos in k.start[row]..=death {
+    let ins = b.insts[pos];
+    let reads = util.index_of_i32(ins.args, d) >= 0 || pos == k.built[row] || count_neutral(f, ins);
+    if (!reads || other(pairs.selfs[pos], d) || other(pairs.builds[pos], d) || other(pairs.tokens[pos], d)) {
+      return false;
+    }
+    for v in step_of(p, idx, b.id, pos, -1).drops {
+      if (v != d) {
+        return false;
+      }
+    }
+    for o in 0..k.donors.len() {
+      if (o != row && (k.taken[o] == pos || k.built[o] == pos)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function other(v: i32, d: i32): boolean {
+  return v >= 0 && v != d;
+}
+
+// A constant, or a scalar operation with no counted operand or result.
+function count_neutral(f: ssasem.Func, ins: ssa.SInst): boolean {
+  let kind = ins.kind_tag;
+  if (kind == ssasem.zero() || kind == ssa.CONST_INT || kind == ssa.CONST_BOOL) {
+    return true;
+  }
+  if (kind != ssa.BINARY && kind != ssa.UNARY && kind != ssasem.cast() || ins.result < 0 || ssasem.counted(f, f.values[ins.result])) {
+    return false;
+  }
+  for a in ins.args {
+    if (ssasem.counted(f, f.values[a])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 pub function kept_values(k: Keeps): i32[] {
   let out: i32[] = [];
   for vs in k.values {

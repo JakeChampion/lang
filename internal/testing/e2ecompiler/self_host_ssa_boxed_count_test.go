@@ -73,8 +73,9 @@ func TestSelfHostSSABoxedCountHasNoGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 		bump := tailCallBody(t, string(asm), "bump")
-		if got := len(floor["x86-64-linux"].FindAllString(bump, -1)); got != 3 {
-			t.Fatalf("a sanitizer build of bump tests %d values against the heap floor, want 3:\n%s", got, bump)
+		// The uniqueness test, the two children, and the decrement of the shared arm.
+		if got := len(floor["x86-64-linux"].FindAllString(bump, -1)); got != 4 {
+			t.Fatalf("a sanitizer build of bump tests %d values against the heap floor, want 4:\n%s", got, bump)
 		}
 	})
 }

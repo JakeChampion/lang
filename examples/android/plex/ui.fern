@@ -55,10 +55,10 @@ pub function tab_screens(): i32[] {
 // with `choice` marked. `scrub_ms` is the time under a finger on the seek
 // bar, or -1, and `thumb` the preview thumbnail of that time, by
 // `thumb_key`.
-pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, speed: string, shuffle: boolean, repeat: string, sleep: string, has_next: boolean, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string }
+pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, speed: string, shuffle: boolean, repeat: string, sleep: string, has_next: boolean, caption: string, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string }
 
 pub function no_player(): PlayerView {
-  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), speed: "1x", shuffle: false, repeat: "", sleep: "", has_next: false, scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "" };
+  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), speed: "1x", shuffle: false, repeat: "", sleep: "", has_next: false, caption: "", scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "" };
 }
 
 pub struct View {
@@ -80,8 +80,10 @@ pub struct View {
   sort: i32,
   unwatched: boolean,
   letters: plex.Letter[],
-  // The item of the menu of a held poster, or no_item.
+  // The item of the menu of a held poster, or no_item, and the part of its
+  // download that came in percent, or -1 when it has none.
   menu: plex.Item,
+  menu_download: i32,
   users: plex.HomeUser[],
   pin_for: string,
   pin_digits: string,
@@ -112,7 +114,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
 }
 
 // --- metrics
@@ -1025,7 +1027,7 @@ pub function thumb_size(m: Metrics): (i32, i32) {
 function player(m: Metrics, v: View): scene.Node[] {
   let p = v.player;
   if (!p.overlay) {
-    return util_append(util_append(util_append([mk(0, 0, m.w, m.h, scene.Blank, "overlay", "")], skip_button(m, p)), up_next_card(m, p)), badge(m, p));
+    return util_append(util_append(util_append(util_append([mk(0, 0, m.w, m.h, scene.Blank, "overlay", "")], caption(m, p, m.h - m.bottom - 24 * m.u)), skip_button(m, p)), up_next_card(m, p)), badge(m, p));
   }
   // Over the video, a dark veil keeps the controls readable, and a tap
   // outside them hides them. Over the art, such a tap plays.
@@ -1101,7 +1103,7 @@ function player(m: Metrics, v: View): scene.Node[] {
   if (p.audio) {
     out = util_append(out, music_row(m, p, bar.y + bar.h + matrix.height(sp) + 24 * m.u));
   }
-  out = util_append(util_append(util_append(out, skip_button(m, p)), up_next_card(m, p)), badge(m, p));
+  out = util_append(util_append(util_append(util_append(out, caption(m, p, bar.y - 64 * m.u)), skip_button(m, p)), up_next_card(m, p)), badge(m, p));
   let right = m.w - 16 * m.u;
   if (p.sounds.len() > 1 || p.subtitles.len() > 0) {
     right -= button_width(m, tr(m, "Tracks"));
@@ -1134,6 +1136,29 @@ function music_row(m: Metrics, p: PlayerView, y: i32): scene.Node[] {
     }
     out = util_append(out, button(m, x, y, text, on, act));
     x += w + gap;
+  }
+  return out;
+}
+
+// The lines of the subtitle that shows, in the middle above `bottom`, in a
+// dark panel. It takes no tap.
+function caption(m: Metrics, p: PlayerView, bottom: i32): scene.Node[] {
+  if (p.caption.len() == 0) {
+    return [];
+  }
+  let lines = p.caption.split("\n");
+  let line_h = m.th + 4 * m.u;
+  let top = bottom - lines.len() * line_h - 8 * m.u;
+  let out: scene.Node[] = [];
+  let k = 0;
+  for line in lines {
+    let text = fit(line, (m.w - 48 * m.u) / m.cw);
+    let w = draw.text_width(text, m.ts);
+    let x = (m.w - w) / 2;
+    let y = top + 4 * m.u + k * line_h;
+    out = out.append(fill(x - 8 * m.u, y - 2 * m.u, w + 16 * m.u, line_h, draw.rgba(0, 0, 0, 170), 6 * m.u));
+    out = out.append(label(m, x, y, text, m.ts, look.ink()));
+    k += 1;
   }
   return out;
 }
@@ -1306,18 +1331,26 @@ pub function nodes(v: View): scene.Node[] {
   let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS;
   let out = util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
   if (v.menu.key.len() > 0) {
-    out = util_append(out, poster_menu(m, v.menu));
+    out = util_append(out, poster_menu(m, v.menu, v.menu_download));
   }
   return out;
 }
 
 // The menu of a held poster, at the bottom over a dark veil: its title,
-// Play, Mark watched or Mark unwatched, Go to show for an episode, and
-// Cancel. A tap on the veil closes it.
-function poster_menu(m: Metrics, it: plex.Item): scene.Node[] {
+// Play, its download, Mark watched or Mark unwatched, Go to show for an
+// episode, and Cancel. `download` is the percent of its download that came,
+// or -1. A tap on the veil closes it.
+function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
   let rows: (string, string)[] = [];
   if (plex.playable_kind(it.kind)) {
     rows = rows.append((tr(m, "Play"), "menu:play"));
+    let words = tr(m, "Download");
+    if (download >= 100) {
+      words = tr(m, "Remove download");
+    } else if (download >= 0) {
+      words = m.texts.format("Stop download ({0}%)", [download.to_string()]);
+    }
+    rows = rows.append((words, "menu:download"));
   }
   if (plex.watched(it)) {
     rows = rows.append((tr(m, "Mark unwatched"), "menu:mark"));

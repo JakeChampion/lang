@@ -1,4 +1,5 @@
 import "./ir";
+import "./irtables";
 import "./util";
 import "./irverify";
 import "./irverifyrc";
@@ -159,7 +160,7 @@ pub function certify_or_refuse(fn_name: string, lifted: ssa.SFunc, ops: ir.Op[],
   let r = rccertify.certify(f, ops, g.abis.lookup(fn_name), g.abis, g.rc, g.rcops);
   if (mode == 1 || mode == 3) {
     report_one(fn_name, f, r, g);
-    if (mode == 3 && r.findings.len() == 0 && r.failed == "" && r.skipped == "") {
+    if (mode == 3 && r.findings.len() == 0 && r.failed == "") {
       mutants(fn_name, f, ops, g, r);
     }
     return 0;
@@ -169,7 +170,7 @@ pub function certify_or_refuse(fn_name: string, lifted: ssa.SFunc, ops: ir.Op[],
     refuse_uncertified(fn_name, r.failed);
   }
   if (r.findings.len() == 0) {
-    if (k != "" && r.skipped == "") {
+    if (k != "") {
       rcmemo.add(g.memo, k);
     }
     return 0;
@@ -197,6 +198,23 @@ function report_one(fn_name: string, f: ssa.SFunc, r: rccertify.Report, g: Gate)
   }
   census_line(fn_name, r, g);
   dump_if_asked(fn_name, f);
+}
+
+// A function with a task frame is certified as it was before the frame was
+// added: the path that resumes restores words that the certifier does not
+// model, and the counting of the body is the same.
+pub function certify_body_or_refuse(fn_name: string, formed: ssa.SFunc, r: irtables.Lowered, g: Gate): i32 {
+  if (r.unsuspended.ops.len() > 0) {
+    return certify_ops_or_refuse(fn_name, r.unsuspended.ops, r.n_params, r.unsuspended.n_locals, g);
+  }
+  return certify_or_refuse(fn_name, formed, r.ops, g);
+}
+
+pub function certify_lowered_or_refuse(fn_name: string, r: irtables.Lowered, g: Gate): i32 {
+  if (r.unsuspended.ops.len() > 0) {
+    return certify_ops_or_refuse(fn_name, r.unsuspended.ops, r.n_params, r.unsuspended.n_locals, g);
+  }
+  return certify_ops_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, g);
 }
 
 pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): i32 {
@@ -430,9 +448,6 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
   let line: string = "FERN_RC_CERTIFY: census " + fn_name + " tracked=" + util.i32_to_string(r.tracked)
     + " unproved=" + util.i32_to_string(r.unproved) + " findings=" + util.i32_to_string(r.findings.len())
     + " rounds=" + util.i32_to_string(r.rounds);
-  if (r.skipped != "") {
-    line = line + " skipped=" + r.skipped;
-  }
   if (r.failed != "") {
     line = line + " failed=" + r.failed;
   }

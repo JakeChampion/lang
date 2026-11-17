@@ -66,11 +66,18 @@ track, or plays one track again. The settings keep shuffle and repeat. The
 sleep timer pauses the music after 15, 30 or 60 minutes, or stops it at the
 end of the track.
 
+The next track plays with no gap. While a track plays, a second media
+player prepares the track after it. Android starts the second player at the
+end of the first one. A change of shuffle, repeat, the sleep timer or the
+queue prepares the next track again.
+
 Music plays with the controls on the screen. It plays on while the app is
 away, with the media controls of Android in the notification panel and on
 the lock screen. On Android 13 and later, the first track asks for the
 permission to post notifications. A foreground service and a wake lock keep the stream at
-work while the screen is off. A video pauses when the app goes away.
+work while the screen is off. A video pauses when the app goes away, unless Android shows it in a
+picture-in-picture window. From Android 12, a video that plays goes into
+that window when the user goes home.
 
 Gestures on the video:
 
@@ -90,7 +97,7 @@ app asks the server for the markers of the item when it starts to play.
 
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice. A file that plays as it is changes its
-sound in place. Subtitles burn into a transcode.
+sound in place. The app draws a SubRip or WebVTT file beside the video over it, so the file plays as it is. Other subtitles burn into a transcode.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
@@ -114,6 +121,21 @@ list scrolls to show it. The centre key presses the focused control. On
 the video, left and right seek as the buttons do, and the centre shows the
 controls. The media keys play, pause and seek the video, and a touch hides
 the ring.
+
+On Android TV, a video that stops part of the way goes on the Watch Next
+row of the home screen. The row shows its poster and its place. The row opens the
+video in the app. A video that plays to its end goes off the row.
+
+Download in the menu of a poster gives the file of the item to the
+download manager of Android. Only a file that the phone
+plays as it is can download. The menu shows the progress, and a second tap
+stops the download. A done download shows in the last row of the home
+screen and plays from the phone with no server. Remove download deletes
+the file.
+
+TalkBack reads each screen. The app gives the screen reader each button
+by its text and each poster by its title. A double tap presses the
+control, and a double tap and hold on a poster opens its menu.
 
 Search and settings:
 

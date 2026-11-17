@@ -25,7 +25,7 @@ import "./util";
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries. `home`
 // makes the activity a home screen, and `assets` go under assets/.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, assets: Asset[], widget: Widget }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget }
 
 // The app widget of the home screen: the Java class of its provider, which
 // extends android.appwidget.AppWidgetProvider, and the items of its row. An
@@ -118,9 +118,9 @@ function prefixed(b: [u8]): u8[] {
 }
 
 // The framework attributes of the files of an app, and their resource IDs.
-const ATTR_NAMES: string[] = ["theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "minWidth", "minHeight", "text", "maxLines", "layout_weight", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "updatePeriodMillis", "initialLayout", "targetSdkVersion", "required", "resizeMode", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType", "enableOnBackInvokedCallback"];
+const ATTR_NAMES: string[] = ["theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "minWidth", "minHeight", "text", "maxLines", "layout_weight", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "updatePeriodMillis", "initialLayout", "targetSdkVersion", "required", "resizeMode", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "resizeableActivity", "supportsPictureInPicture", "foregroundServiceType", "enableOnBackInvokedCallback"];
 
-const ATTR_IDS: i32[] = [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843071, 16843072, 16843087, 16843091, 16843137, 16843276, 16843291, 16843292, 16843307, 16843344, 16843345, 16843376, 16843406, 16843619, 16843762, 16843954, 16844010, 16844012, 16844185, 16844396];
+const ATTR_IDS: i32[] = [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843071, 16843072, 16843087, 16843091, 16843137, 16843276, 16843291, 16843292, 16843307, 16843344, 16843345, 16843376, 16843406, 16843619, 16843762, 16843954, 16844010, 16844012, 16844022, 16844023, 16844185, 16844396];
 
 // An attribute of the android namespace.
 function attr(name: string, kind: i32, data: i32): androidxml.Attr {
@@ -225,10 +225,20 @@ pub function manifest_tree(app: App): androidxml.Element {
   // SOFT_INPUT_ADJUST_RESIZE, so the content rectangle leaves out the
   // keyboard before Android 15. From Android 15 the window goes under the
   // bars and the keyboard, and std/android reads their insets.
-  activity_attrs = activity_attrs.append(attr("launchMode", androidxml.INT_DEC, 2)).append(attr("configChanges", androidxml.INT_HEX, 1184)).append(attr("windowSoftInputMode", androidxml.INT_HEX, 16));
+  // An app with picture-in-picture also keeps its activity when the window
+  // changes size or layout (CONFIG_SCREEN_LAYOUT and
+  // CONFIG_SMALLEST_SCREEN_SIZE), as it does in the small window.
+  let changes = 1184;
+  if (app.pip) {
+    changes = changes | 2304;
+  }
+  activity_attrs = activity_attrs.append(attr("launchMode", androidxml.INT_DEC, 2)).append(attr("configChanges", androidxml.INT_HEX, changes)).append(attr("windowSoftInputMode", androidxml.INT_HEX, 16));
   if (app.home) {
     // resumeWhilePausing, so home shows at once.
     activity_attrs = activity_attrs.append(flag("resumeWhilePausing", true));
+  }
+  if (app.pip) {
+    activity_attrs = activity_attrs.append(flag("resizeableActivity", true)).append(flag("supportsPictureInPicture", true));
   }
   let filter: androidxml.Element[] = [named("action", "android.intent.action.MAIN"), named("category", "android.intent.category.LAUNCHER")];
   if (app.tv) {
