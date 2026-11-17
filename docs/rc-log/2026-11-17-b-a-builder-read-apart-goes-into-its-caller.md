@@ -14,8 +14,7 @@ caller. The result was a test for uniqueness on a box that the same function
 built some instructions before.
 
 The certifier did not prove the value that the update gave to the loop of
-`interp.eval_module_argv`. `x86_64/fern_main.unproved` rose from 17423 to
-17424.
+`interp.eval_module_argv`. `x86_64/fern_main.unproved` rose by one.
 
 ## The rule
 
@@ -31,13 +30,13 @@ A caller that passes the result on as a whole keeps the call.
 ## Measurement
 
 Census of `compiler/fern_main.fern` on x86-64, and of `compiler/checker.fern`
-for the other rows:
+for the other rows, on main at `f3a6dd3b`:
 
 | Row | Before | After |
 | --- | --- | --- |
-| `x86_64/fern_main.unproved` | 17424 | 17411 |
+| `x86_64/fern_main.unproved` | 17427 | 17417 |
 | `wasm32/checker.unproved` | 3829 | 3828 |
-| `x86_64/checker.refuted` | 4895 | 4898 |
+| `x86_64/checker.refuted` | 4896 | 4899 |
 | `x86_64/checker.missed` | 528 | 525 |
 
 `interp.eval_module_argv` goes from 36 tracked values and 1 unproved to 23
