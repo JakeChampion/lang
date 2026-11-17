@@ -1,0 +1,84 @@
+import "std/i32";
+
+function apply(f: (i32) => i32, x: i32): i32 {
+    return f(x);
+}
+
+function double(x: i32): i32 {
+    return x * 2;
+}
+
+function sum_to(n: i32): i32 {
+    let total = 0;
+    let i = 0;
+    while (i < n) {
+        total += i;
+        i += 1;
+    }
+    return total;
+}
+
+function reads_a_later_write(): i32 {
+    let base = 1;
+    let read = (): i32 => { return base; };
+    base = 40;
+    return read() + sum_to(3);
+}
+
+function closure_in_closure_writes(): i32 {
+    let outer = (): i32 => {
+        let count = 0;
+        let bump = (): i32 => { count += 1; return count; };
+        let first = bump();
+        let second = bump();
+        return count * 100 + first * 10 + second;
+    };
+    return outer();
+}
+
+function loop_in_closure(n: i32): i32 {
+    let run = (k: i32): i32 => {
+        let acc = 0;
+        for j in 0..k {
+            acc += j;
+        }
+        return acc;
+    };
+    return apply(run, n);
+}
+
+function closure_in_loop_writes(): i32 {
+    let hits = 0;
+    for i in 0..4 {
+        let mark = (): i32 => { hits += i; return hits; };
+        let seen = mark();
+        if (seen != hits) {
+            return -1;
+        }
+    }
+    return hits;
+}
+
+function value_block_writes(n: i32): i32 {
+    let steps = 0;
+    let i = 0;
+    while (i < n) {
+        let kind = if (i % 2 == 0) { steps += 2; "even" } else { steps += 1; "odd" };
+        if (kind == "even") {
+            steps += 10;
+        }
+        i += 1;
+    }
+    return steps;
+}
+
+function main(): i32 {
+    print(sum_to(5).to_string());
+    print(reads_a_later_write().to_string());
+    print(closure_in_closure_writes().to_string());
+    print(loop_in_closure(5).to_string());
+    print(closure_in_loop_writes().to_string());
+    print(value_block_writes(4).to_string());
+    print(apply(double, 21).to_string());
+    return 0;
+}
