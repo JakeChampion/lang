@@ -14,7 +14,7 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
-A run of Arabic letters in one font goes to `std/shape`, which gives the joining forms of the letters and the position of each glyph. A mark sits on its base at the anchors of the font. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
+A run of Arabic letters goes to `std/shape`, which gives the joining forms of the letters and the position of each glyph. The run takes the font of its first letter. A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
 
 `std/truetype` draws each glyph one time for each size, weight and quarter of a pixel. A `Cache` keeps the glyphs. It also keeps a `Sprite` for each text: the coverage of the whole text, which `put` draws on a frame in a color. `layout` gives the glyphs of a text with their positions, for a painter that draws glyphs from an atlas on the GPU.
 
@@ -333,9 +333,9 @@ function pens(fs: Fonts, w: i32, px: i32, track: i32, s: string): Pens {
   let prev_id = -1;
   let i = 0;
   while (i < cs.len()) {
-    let id = face_of(fs, w, cs[i] as i32);
+    let (end, run_id) = cursive_end(fs, w, cs, i);
+    let id = if (end > i) { run_id } else { mark_face(fs, w, cs[i], prev_id) };
     let f = font(fs, id);
-    let end = cursive_end(fs, w, cs, i, id);
     if (end > i) {
       p = shaped_run(p, f, id, px, cs, i, end);
       prev = -1;
@@ -368,17 +368,56 @@ function pen_glyph(own p: Pens, id: i32, g: i32, x: f64, y: f64, next: f64): Pen
   return Pens { ids: p.ids.append(id), glyphs: p.glyphs.append(g), at: p.at.append(x), ys: p.ys.append(y), pen: next };
 }
 
-// The end of the run of Arabic letters from `cs[i]` that the font `id`
-// shapes, or `i` when no such run starts there. The run can hold marks and
-// joiners, and it holds at least one letter.
-function cursive_end(fs: Fonts, w: i32, cs: char[], i: i32, id: i32): i32 {
-  let j = i;
+// The end of the run of Arabic letters from `cs[i]`, and the font that
+// shapes it: the font of its first letter. It is `i` and -1 when no such
+// run starts there. The run can hold marks and joiners, and it holds at
+// least one letter.
+function cursive_end(fs: Fonts, w: i32, cs: char[], i: i32): (i32, i32) {
+  let id = run_font(fs, w, cs, i);
+  let k = i;
   let letters = 0;
-  while (j < cs.len() && in_run(cs[j]) && face_of(fs, w, cs[j] as i32) == id) {
-    letters += if (arabic(cs[j]) && unicode.joining_type(cs[j]) != JT_T) { 1 } else { 0 };
+  while (id >= 0 && k < cs.len() && in_run(cs[k]) && run_face(fs, w, cs[k], id)) {
+    letters += if (letter(cs[k])) { 1 } else { 0 };
+    k += 1;
+  }
+  return if (letters > 0) { (k, id) } else { (i, -1) };
+}
+
+// The font of the first letter of the characters from `cs[i]` that can be
+// in a run, or -1.
+function run_font(fs: Fonts, w: i32, cs: char[], i: i32): i32 {
+  let j = i;
+  while (j < cs.len() && in_run(cs[j])) {
+    if (letter(cs[j])) {
+      return face_of(fs, w, cs[j] as i32);
+    }
     j += 1;
   }
-  return if (letters > 0) { j } else { i };
+  return -1;
+}
+
+// An Arabic letter that joins.
+function letter(c: char): boolean {
+  return arabic(c) && unicode.joining_type(c) != JT_T;
+}
+
+// Whether the run of the font `id` holds `c`: a letter of that font, or a
+// mark or a joiner that the font has. A mark takes the font of its letter,
+// as Minikin gives it.
+function run_face(fs: Fonts, w: i32, c: char, id: i32): boolean {
+  if (face_of(fs, w, c as i32) == id) {
+    return true;
+  }
+  return !letter(c) && font(fs, id).glyph(c as i32) != 0;
+}
+
+// The font of `c`: the font `prev` of the character before it when `c` is
+// a mark that the font has, or else the font that face_of gives.
+function mark_face(fs: Fonts, w: i32, c: char, prev: i32): i32 {
+  if (prev >= 0 && c.is_mark() && font(fs, prev).glyph(c as i32) != 0) {
+    return prev;
+  }
+  return face_of(fs, w, c as i32);
 }
 
 // The joining types of std/unicode that a run can hold with no Arabic
