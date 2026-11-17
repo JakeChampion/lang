@@ -1,5 +1,6 @@
 import "core/int";
 import "std/path";
+import "std/option";
 import "std/i64";
 import "std/u32";
 import "std/u64";
@@ -11,8 +12,8 @@ import "std/f64";
 function main(): i32 {
 
     if (path.join(["a", "b", "c"]) != "a/b/c") { print("FAIL join"); return 11; }
-    if (path.file_name("/x/y/z.txt") != "z.txt") { print("FAIL filename"); return 12; }
-    if (path.extension("z.txt") != "txt") { print("FAIL ext"); return 13; }
+    if (path.file_name("/x/y/z.txt").unwrap_or("?") != "z.txt") { print("FAIL filename"); return 12; }
+    if (path.extension("z.txt").unwrap_or("?") != "txt") { print("FAIL ext"); return 13; }
 
 
     let big: i64 = 5000000000;
