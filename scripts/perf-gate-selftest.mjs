@@ -271,5 +271,17 @@ let cases = 0;
   cases++;
 }
 
+// A baseline of zero: a count that must stay at none. Staying at zero is no
+// finding, and any move from it is one, where a division by the baseline would
+// end the comparator instead.
+{
+  const same = check("m/a\t0\t0\n", "m/a\t0\n", { FERN_CI_PERF_GATE_STRICT: "1" });
+  assert.equal(same.status, 0, "a zero that stays zero must not fail");
+  const moved = check("m/a\t0\t0\n", "m/a\t3\n", { FERN_CI_PERF_GATE_STRICT: "1" });
+  assert.equal(moved.status, 1, "a move from a zero baseline must fail under strict");
+  assert.match(moved.text, /SLOWER: m\/a/, "a move from a zero baseline must be reported");
+  cases++;
+}
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`perf-gate-selftest: ${cases} cases pass against scripts/ci-check-perf`);
