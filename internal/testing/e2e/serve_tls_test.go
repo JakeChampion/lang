@@ -82,6 +82,7 @@ import "std/platform";
 import "std/serve";
 import "std/tls/identity";
 import "std/tls/server";
+import "std/time";
 
 import "std/rand";
 function big(n: i32): u8[] {
@@ -161,6 +162,9 @@ function main(): i32 {
           cfg = serve.Config { ...cfg, stream_bodies: true };
         },
         None => {}
+      }
+      if let Some(ms) = env("RECV_DEADLINE_MS") {
+        cfg = serve.Config { ...cfg, recv_deadline: time.duration_millis(i32.parse_i32_radix(ms, 10).unwrap_or(10000) as i64) };
       }
       return serve.exit_code(serve.run(0, cfg, handle));
     },
@@ -274,4 +278,59 @@ func (w *serveTLSWorld) drive(t *testing.T, cmd *exec.Cmd, stream bool) {
 			t.Fatalf("/c: %q reused=%v resumed=%v", body, reused, resumed)
 		}
 	})
+}
+
+// slowConn delays each write after the first, so a TLS client sends each of
+// its later flights, and then its request, after a pause.
+type slowConn struct {
+	net.Conn
+	writes int
+	pause  time.Duration
+}
+
+func (c *slowConn) Write(b []byte) (int, error) {
+	c.writes++
+	if c.writes > 1 {
+		time.Sleep(c.pause)
+	}
+	return c.Conn.Write(b)
+}
+
+// The receive deadline guards the time the server waits for the client. It
+// restarts when the handshake moves on, so a client whose flights each come
+// within the deadline is served, although the whole exchange takes longer.
+func TestServeTLSDeadlineRestartsAfterHandshakeX86_64(t *testing.T) {
+	bin := buildFernCLI(t)
+	qemu := x86QemuOrEmpty(t)
+	w := newServeTLSWorld(t)
+	out := filepath.Join(w.dir, "serve_tls.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, w.src).CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, o)
+	}
+	cmd := runX86Bin(qemu, out)
+	cmd.Env = append(cmd.Environ(), "RECV_DEADLINE_MS=2000")
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	raw, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	_ = raw.SetDeadline(time.Now().Add(30 * time.Second))
+	// The client's Finished comes 1.5 s after the accept and its request
+	// 3 s after it: past a deadline counted from the accept alone.
+	conn := tls.Client(&slowConn{Conn: raw, pause: 1500 * time.Millisecond}, &tls.Config{RootCAs: w.pool, ServerName: "localhost", MinVersion: tls.VersionTLS13})
+	began := time.Now()
+	if err := conn.Handshake(); err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+	if _, err := fmt.Fprint(conn, "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	reply, err := io.ReadAll(conn)
+	if !bytes.Contains(reply, []byte("hello /slow")) {
+		t.Fatalf("after %v: reply %q (%v), want hello /slow", time.Since(began).Round(time.Millisecond), reply, err)
+	}
+	if took := time.Since(began); took < 2500*time.Millisecond {
+		t.Fatalf("the exchange took %v; the pauses did not reach past the first deadline", took)
+	}
 }
