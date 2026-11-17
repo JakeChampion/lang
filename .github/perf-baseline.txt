@@ -160,7 +160,7 @@ aarch64/pvec_with.ir	48658464
 aarch64/record_update.text	1347
 aarch64/record_update.ir	24587164
 aarch64/sort_inplace.text	1841
-aarch64/sort_inplace.ir	39446130
+aarch64/sort_inplace.ir	38227377
 aarch64/sort_ints.text	2560
 aarch64/sort_ints.ir	24142494
 aarch64/sort_strings.text	4265
@@ -197,7 +197,7 @@ x86_64/perceus_rbtree_ck.text	3255
 x86_64/perceus_rbtree_ck.ir	29632037
 aarch64/perceus_cfold.text	2561
 aarch64/perceus_cfold.ir	43179684
-aarch64/perceus_deriv.text	3377
+aarch64/perceus_deriv.text	3563
 aarch64/perceus_deriv.ir	60111690
 aarch64/perceus_nqueens.text	2004
 aarch64/perceus_nqueens.ir	65931160
@@ -224,9 +224,9 @@ x86_64/base64_decode.text	3297
 x86_64/base64_decode.ir	511304834
 aarch64/base64_decode.text	3349
 aarch64/base64_decode.ir	347238827
-x86_64/gather_many.text	5812
+x86_64/gather_many.text	6164
 x86_64/gather_many.ir	35347966
-aarch64/gather_many.text	6251
+aarch64/gather_many.text	6715
 aarch64/gather_many.ir	40808112
 aarch64/hex_decode.ir	182381782
 aarch64/utf8_validate.text	2882
