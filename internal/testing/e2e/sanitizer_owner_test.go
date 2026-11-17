@@ -49,6 +49,31 @@ function main(): i32 {
 `)
 }
 
+// sanStrayCountSrc makes the same thread, which only adds to the count of a
+// box that the program owns. It frees and allocates nothing.
+func sanStrayCountSrc(mmap, clone, nanosleep int) string {
+	r := strings.NewReplacer("MMAP", strconv.Itoa(mmap), "CLONE", strconv.Itoa(clone), "NANOSLEEP", strconv.Itoa(nanosleep))
+	return r.Replace(`function main(): i32 {
+  let a: u8[] = __alloc_u8(16);
+  let p: usize = a as usize;
+  let ts: usize = __raw_alloc(16);
+  __raw_store_ptr(ts, 0, 0 as usize);
+  __raw_store_ptr(ts, 8, 10000000 as usize);
+  let stack: usize = __syscall6(MMAP, 0, 65536, 3, 34, 0 - 1, 0) as usize;
+  let r: i64 = __syscall6(CLONE, 331520, (stack + 65536) as i64, 0, 0, 0, 0);
+  if (r == 0) {
+    __fern_rc_inc(p);
+  }
+  let i: i32 = 0;
+  while (i < 200) {
+    __syscall6(NANOSLEEP, ts as i64, 0, 0, 0, 0, 0);
+    i = i + 1;
+  }
+  return a.len();
+}
+`)
+}
+
 func compileRuntimeFloor(t *testing.T, target, src string, args []string, env ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -92,6 +117,23 @@ func TestArm64SanitizeSecondContextReported(t *testing.T) {
 	bin := compileRuntimeFloor(t, e2eharness.TargetArm64Linux, sanStraySrc(222, 220, 101), nil, "FERN_SANITIZE=1")
 	_, stderr, code := runSplit(t, runArm64Bin(qemu, bin))
 	checkSecondContextReport(t, stderr, code)
+}
+
+// A second context that only counts is a finding at its first count
+// operation, on each ISA.
+func TestSanitizeSecondContextThatOnlyCounts(t *testing.T) {
+	t.Run("x86-64", func(t *testing.T) {
+		runner := e2eharness.X86_64Runner(t)
+		bin := compileRuntimeFloor(t, e2eharness.TargetX86_64Linux, sanStrayCountSrc(9, 56, 35), nil, "FERN_SANITIZE=1", uncertified)
+		_, stderr, code := runSplit(t, runX86_64Bin(runner, bin))
+		checkSecondContextReport(t, stderr, code)
+	})
+	t.Run("arm64", func(t *testing.T) {
+		qemu := e2eharness.Arm64Runner(t)
+		bin := compileRuntimeFloor(t, e2eharness.TargetArm64Linux, sanStrayCountSrc(222, 220, 101), nil, "FERN_SANITIZE=1", uncertified)
+		_, stderr, code := runSplit(t, runArm64Bin(qemu, bin))
+		checkSecondContextReport(t, stderr, code)
+	})
 }
 
 // The stack check passes for every context of a program that has only one.

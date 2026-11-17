@@ -58,9 +58,9 @@ section 2.1). The checker and the boundaries in that section hold the rule.
 The second-context check makes a violation of the rule a finding. Without it,
 a violation corrupts a count with no error.
 
-The check runs in the census of each allocation and each release. It does
-not run at an `inc` or a `dec` that frees nothing. The owner of the heap
-depends on the image:
+The check runs in the census of each allocation and each release, and at
+each count operation beside its poison check (`san_owner_guard`). The owner
+of the heap depends on the image:
 
 - **An executable** owns the stack mapping that `_start` makes. The check
   compares the stack pointer with `__fern_stack_top`. The distance must be
@@ -73,16 +73,23 @@ depends on the image:
 
 A program cannot make a second context without the runtime floor. User code
 has no raw syscall. It gives a Fern function to C only through a locked
-export. Thus the check guards the runtime and its boundaries. Its
-tests use the runtime CLI (`drivers/runtime_run.fern`) to make a thread with
-a raw `clone` (`TestX86_64SanitizeSecondContextReported`,
+export. Thus the check guards the runtime and its boundaries.
+
+The tests use the runtime CLI (`drivers/runtime_run.fern`) to make a thread
+with a raw `clone`. The thread allocates in
+`TestX86_64SanitizeSecondContextReported`,
 `TestArm64SanitizeSecondContextReported` and
-`TestSharedLibSanitizeStrayThread`). The sanitized legs of
+`TestSharedLibSanitizeStrayThread`. It only adds to a count in
+`TestSanitizeSecondContextThatOnlyCounts`. The sanitized legs of
 `TestSharedLibBusyLock` hold the other side: threads that take turns make no
 finding.
 
 A kernel image and a freestanding library have no check. Their entry does
-not make the stack mapping, and they have no busy lock.
+not make the stack mapping, and they have no busy lock. On a kernel image the
+second context is an interrupt handler. The checker keeps a handler to `@norc`
+code (`E102`), which touches no box, and the fatal reports of `-sanitize`
+need a host to exit through. Thus a kernel image has neither the check nor a
+way to report it.
 
 ## What it does NOT turn on
 
@@ -318,9 +325,6 @@ whose reference outlived the count.
   redzone, or in the next block, is seen only when that block's own release
   or count reports it. A block that is never released is never checked.
 
-- **A second context that only counts.** The second-context check runs in
-  the census of an allocation and a release. A second context that only
-  increments or decrements counts, and frees nothing, is not seen.
 - **A second context on the same thread or stack.** A raw `clone` with the
   stack of its parent, or a thread pointer that a raw `clone` copies into a
   shared object, looks like the owner.

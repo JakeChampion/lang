@@ -3198,7 +3198,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
     s = ssa_mov_imm(s, "x6", "0");
     s = ssa_rc_guard(s, ins.args[0], p, done, !ssa.aligned_count(ins));
     s = ssa_unscaled(s, true, "w5", base, -8);
-    s = s.write(san_poison_check("w5", "w7", done.text() + "us", s.rc_free_debug));
+    s = s.write(san_poison_check("w5", "w7", done.text() + "us", s));
     s = ssa_cmp_imm(s, "w5", 1);
     s = ssa_bcond(s, CC_NE, done);
     s = ssa_mov_imm(s, "x6", "1");
@@ -3208,7 +3208,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   }
   s = ssa_rc_guard(s, ins.args[0], p, done, !ssa.aligned_count(ins));
   s = ssa_unscaled(s, true, "w5", base, -8);
-  s = s.write(san_poison_check("w5", "w6", done.text() + "sl", s.rc_free_debug));
+  s = s.write(san_poison_check("w5", "w6", done.text() + "sl", s));
   s = ssa_tbz(s, true, "w5", 31, done);
   s = ssa_addsub_imm(s, dec, "w5", "w5", 1);
   s = ssa_unscaled(s, false, "w5", base, -8);
@@ -5224,7 +5224,7 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
     base = "x7";
   }
   s = ssa_unscaled(s, true, "w5", base, -8);
-  s = s.write(san_poison_check("w5", "w7", join + "us", s.rc_free_debug));
+  s = s.write(san_poison_check("w5", "w7", join + "us", s));
   s = ssa_cmp_imm(s, "w5", 1);
   return s.lab_def(jn.lab);
 }
@@ -8837,7 +8837,7 @@ function apo_wrapped(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x19, x9\n");
   s = s.write("    blo .Lapo_ret\n");
   s = s.write("    ldur w1, [x19, #-8]\n");
-  s = s.write(san_poison_check("w1", "w10", ".Lapo_live", s.rc_free_debug));
+  s = s.write(san_poison_check("w1", "w10", ".Lapo_live", s));
   s = s.write("    tbnz w1, #31, .Lapo_ret\n");
   s = s.write("    cmp w1, #1\n");
   s = s.write("    bne .Lapo_ret\n");
@@ -9010,7 +9010,7 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
     s = s.write("    b " + l + "_grow\n");
   }
   s = s.write("    ldur w2, [x19, #-8]\n");
-  s = s.write(san_poison_check("w2", "w10", l + "_sanlive", s.rc_free_debug));
+  s = s.write(san_poison_check("w2", "w10", l + "_sanlive", s));
   s = s.write("    cmp w2, #1\n    b.eq " + l + "_rc_ok\n    tbnz w2, #31, " + l + "_rc_ok\n    b " + l + "_grow\n");
   s = s.write(l + "_rc_ok:\n");
   s = s.write("    lsl x2, x22, #" + sh + "\n    cmp x21, x2\n    b.ge " + l + "_grow\n");
@@ -9042,7 +9042,7 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
   }
   s = s.write("    cmp x0, x19\n    beq " + own + "_ret\n    mov x9, #0x10000\n    cmp x19, x9\n    blo " + own + "_ret\n");
   s = s.write("    ldur w1, [x19, #-8]\n");
-  s = s.write(san_poison_check("w1", "w10", own + "_live", s.rc_free_debug));
+  s = s.write(san_poison_check("w1", "w10", own + "_live", s));
   s = s.write("    tbnz w1, #31, " + own + "_ret\n    cmp w1, #1\n    bne " + own + "_ret\n");
   s = s.write("    ldur x1, [x19, #-16]\n    add x1, x1, #3\n    mov x9, #0x10000\n    cmp x1, x9\n    bhs " + own + "_large\n");
   s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));
@@ -9078,15 +9078,28 @@ function packed_store(v: string, t: string, b: string, i: string, shift: i32): s
   return "    add " + t + ", " + b + ", " + i + ", lsl #2\n    str " + v + ", [" + t + ", #8]\n";
 }
 
-function san_poison_check(rc: string, w: string, live: string, debug: boolean): string {
-  if (!debug) {
+function san_poison_check(rc: string, w: string, live: string, s: asmcore.EmitState): string {
+  if (!s.rc_free_debug) {
     return "";
   }
   return rc_poison_into(w)
     + "    cmp " + rc + ", " + w + "\n"
     + "    b.ne " + live + "\n"
     + "    bl __fern_san_abort_uaf\n"
-    + live + ":\n";
+    + live + ":\n" + san_owner_guard(s, live + "_own");
+}
+
+// The second-context check at a count operation. It keeps every register but
+// x30, which only the report clobbers.
+function san_owner_guard(s: asmcore.EmitState, ok: string): string {
+  if (asmcore.owner_by_stack(s)) {
+    return "    stp x9, x10, [sp, #-16]!\n    adrp x9, __fern_stack_top\n    add x9, x9, :lo12:__fern_stack_top\n    ldr x9, [x9]\n    mov x10, sp\n    sub x9, x9, x10\n"
+      + mov_imm64("x10", asmcore.stack_size() as i64) + "    cmp x9, x10\n    ldp x9, x10, [sp], #16\n    b.lo " + ok + "\n    bl __fern_san_abort_owner\n" + ok + ":\n";
+  }
+  if (asmcore.owner_by_thread(s)) {
+    return "    stp x9, x10, [sp, #-16]!\n    mrs x9, tpidr_el0\n    adrp x10, __fern_san_owner\n    add x10, x10, :lo12:__fern_san_owner\n    ldr x10, [x10]\n    cmp x9, x10\n    ldp x9, x10, [sp], #16\n    b.eq " + ok + "\n    bl __fern_san_abort_owner\n" + ok + ":\n";
+  }
+  return "";
 }
 
 function san_underflow_abort(s: asmcore.EmitState): string {
@@ -10768,7 +10781,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    blo .Lshrcinc_ret\n");
   s = s.write("    and x0, x0, #0xfffffffffffffffd\n");
   s = s.write("    ldur w1, [x0, #-8]\n");
-  s = s.write(san_poison_check("w1", "w9", ".Lshrcinc_live", s.rc_free_debug));
+  s = s.write(san_poison_check("w1", "w9", ".Lshrcinc_live", s));
   s = s.write("    tbnz w1, #31, .Lshrcinc_ret\n");
   s = s.write("    add w1, w1, #1\n");
   s = s.write("    stur w1, [x0, #-8]\n");
@@ -10782,7 +10795,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lshrcdec_ret\n");
   s = s.write("    ldur w1, [x0, #-8]\n");
-  s = s.write(san_poison_check("w1", "w9", ".Lshrcdec_live", s.rc_free_debug));
+  s = s.write(san_poison_check("w1", "w9", ".Lshrcdec_live", s));
   s = s.write("    tbnz w1, #31, .Lshrcdec_ret\n");
   s = s.write("    cmp w1, #0\n");
   s = s.write("    bgt .Lshrcdec_dec\n");
@@ -10806,7 +10819,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    blo .Lshuniq_ret\n");
   s = s.write("    and x2, x2, #0xfffffffffffffffd\n");
   s = s.write("    ldur w3, [x2, #-8]\n");
-  s = s.write(san_poison_check("w3", "w9", ".Lshuniq_live", s.rc_free_debug));
+  s = s.write(san_poison_check("w3", "w9", ".Lshuniq_live", s));
   s = s.write("    tbnz w3, #31, .Lshuniq_ret\n");
   s = s.write("    cmp w3, #1\n");
   s = s.write("    bne .Lshuniq_ret\n");
@@ -10821,7 +10834,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Laie_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");
-    s = s.write(san_poison_check("w1", "w9", ".Laie_live", s.rc_free_debug));
+    s = s.write(san_poison_check("w1", "w9", ".Laie_live", s));
     s = s.write("    tbnz w1, #31, .Laie_ret\n");
     s = s.write(rt_save_lr(s, "x19"));
     s = s.write("    stp x20, x21, [sp, #-16]!\n");
@@ -10934,7 +10947,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Lsg_no\n");
     s = s.write("    ldur w2, [x0, #-8]\n");
-    s = s.write(san_poison_check("w2", "w9", ".Lsg_live", s.rc_free_debug));
+    s = s.write(san_poison_check("w2", "w9", ".Lsg_live", s));
     s = s.write("    cmp w2, #1\n");
     s = s.write("    b.ne .Lsg_no\n");
     s = s.write("    ldr x2, [x0, #8]\n");
@@ -11105,7 +11118,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Lso_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");
-    s = s.write(san_poison_check("w1", "w9", ".Lso_live", s.rc_free_debug));
+    s = s.write(san_poison_check("w1", "w9", ".Lso_live", s));
     s = s.write("    tbnz w1, #31, .Lso_view\n");
     s = s.write(rt_save_lr(s, "x0"));
     s = s.write("    str x0, [sp, #-16]!\n");
@@ -11321,7 +11334,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    blo .Larrdec_ret\n");
   s = s.write("__fn___fern_arr_dec.u:\n");
   s = s.write("    ldur w1, [x0, #-8]\n");
-  s = s.write(san_poison_check("w1", "w9", ".Larrdec_live", s.rc_free_debug));
+  s = s.write(san_poison_check("w1", "w9", ".Larrdec_live", s));
   s = s.write("    cmp w1, #1\n");
   s = s.write("    bne .Larrdec_shared\n");
   s = s.write(quarantine_rc("[x0, #-8]", "w9", s.rc_free_debug));
@@ -11386,7 +11399,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_str_free.u:\n");
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    ldur w4, [x0, #-8]\n");
-  s = s.write(san_poison_check("w4", "w10", ".Lstrfree_live", s.rc_free_debug));
+  s = s.write(san_poison_check("w4", "w10", ".Lstrfree_live", s));
   s = s.write("    cmp w4, #1\n");
   s = s.write("    bne .Lstrfree_shared\n");
   s = s.write("    ldur w2, [x0, #-4]\n");
@@ -11521,7 +11534,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lstrvfree_ret\n");
   s = s.write("    ldur w4, [x0, #-8]\n");
-  s = s.write(san_poison_check("w4", "w10", ".Lstrvfree_live", s.rc_free_debug));
+  s = s.write(san_poison_check("w4", "w10", ".Lstrvfree_live", s));
   s = s.write("    tbnz w4, #31, .Lstrvfree_view\n");
   s = s.write("    b __fn___fern_str_free\n");
   s = s.write(".Lstrvfree_view:\n");
@@ -11833,7 +11846,7 @@ function emit_rt_collections_and_proc_part_2(s: asmcore.EmitState, darwin: boole
       s = s.write("    b .Larr_push_grow\n");
     }
     s = s.write("    ldur w2, [x19, #-8]\n");
-    s = s.write(san_poison_check("w2", "w10", ".Larr_push_sanlive", s.rc_free_debug));
+    s = s.write(san_poison_check("w2", "w10", ".Larr_push_sanlive", s));
     s = s.write("    cmp w2, #1\n");
     s = s.write("    b.eq .Larr_push_rc_ok\n");
     s = s.write("    tbnz w2, #31, .Larr_push_rc_ok\n");
