@@ -27,6 +27,7 @@ function empty(why: string): irtables.LowerState {
   return irtables.LowerState {
     scratch_start: 0,
     source_positions: sourcepos.no_source(),
+    unsuspended: irtables.no_unsuspended(),
     ok: false, why: why, ops: [], n_locals: 0,
     n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
     f64_slots: [], v128_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32(),
@@ -8059,7 +8060,10 @@ function build_lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: ir
   e = Emit { ...e, r: aligned_rc(e.r, f) };
   e = Emit { ...e, r: ssabytes.lower_state_reads(e.r) };
   e = Emit { ...e, r: place_views(e.r) };
+  let unsuspended = irtables.no_unsuspended();
   if (susp.on && susp.rows.has(f.graph.name)) {
+    let before = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
+    unsuspended = irtables.Unsuspended { ops: before.ops, n_locals: before.n_locals };
     suspend.dump_state_if_asked(e.r, "before");
     e = Emit { ...e, r: suspend.transform_state(e.r, susp) };
     suspend.dump_state_if_asked(e.r, "after");
@@ -8068,7 +8072,7 @@ function build_lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: ir
     }
   }
   let optimized = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
-  return irtables.LowerState { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
+  return irtables.LowerState { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals, unsuspended: unsuspended };
 }
 
 function aligned_rc(own r: irtables.LowerState, f: ssasem.Func): irtables.LowerState {

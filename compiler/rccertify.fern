@@ -102,18 +102,14 @@ pub function render(fn_name: string, x: Finding): string {
     + util.i32_to_string(x.block) + ": " + x.message;
 }
 
-// `skipped` names a function the design leaves uncertified. `failed` names
-// one the certifier could not decide, which the gate refuses.
+// `failed` names a function the certifier could not decide, which the gate
+// refuses.
 // `rounds`: the most rounds one walk of the function took to settle.
 // `unproved_at`: one value of each slot that `unproved` counts.
-pub struct Report { findings: Finding[], tracked: i32, unproved: i32, unproved_at: i32[], opaque: string[], skipped: string, failed: string, rounds: i32 }
-
-function skipped(why: string): Report {
-  return Report { findings: [], tracked: 0, unproved: 0, unproved_at: [], opaque: [], skipped: why, failed: "", rounds: 0 };
-}
+pub struct Report { findings: Finding[], tracked: i32, unproved: i32, unproved_at: i32[], opaque: string[], failed: string, rounds: i32 }
 
 function failed(why: string): Report {
-  return Report { findings: [], tracked: 0, unproved: 0, unproved_at: [], opaque: [], skipped: "", failed: why, rounds: 0 };
+  return Report { findings: [], tracked: 0, unproved: 0, unproved_at: [], opaque: [], failed: why, rounds: 0 };
 }
 
 function org_none(): i32 {
@@ -4179,8 +4175,9 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
   if (f.entry < 0 || f.entry >= at.len() || at[f.entry] < 0) {
     return failed("no entry block");
   }
+  // irverifygate.certify_body_or_refuse gives the body from before the frame.
   if (resumes(f)) {
-    return skipped("resumes from a task frame");
+    return failed("resumes from a task frame, which the certifier does not model");
   }
   let dom = ssadeps.dominates_at(f, at);
   let reach = ssadeps.reachable_from_dom(dom);
@@ -4217,5 +4214,5 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
       }
     }
   }
-  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), unproved_at: flagged_roots(unproved, slot_roots(w)), opaque: done.p.opaque, skipped: "", failed: "", rounds: rounds };
+  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), unproved_at: flagged_roots(unproved, slot_roots(w)), opaque: done.p.opaque, failed: "", rounds: rounds };
 }

@@ -875,6 +875,7 @@ pub struct LowerResult {
   dbg_names: string[],
   dbg_types: string[],
   source_positions: sourcepos.SourceInfo,
+  unsuspended: Unsuspended,
 }
 
 pub struct Lowered {
@@ -893,6 +894,7 @@ pub struct Lowered {
   dbg_names: string[],
   dbg_types: string[],
   source_positions: sourcepos.SourceInfo,
+  unsuspended: Unsuspended,
 }
 
 pub function lower_outcome(r: LowerState): Result[Option[Lowered], LowerState] {
@@ -929,6 +931,7 @@ function lowered_state(r: LowerState): Lowered {
     dbg_names: r.dbg_names,
     dbg_types: r.dbg_types,
     source_positions: r.source_positions,
+    unsuspended: r.unsuspended,
   };
 }
 
@@ -950,7 +953,16 @@ pub function lowered_result(r: Lowered): LowerResult {
     dbg_names: r.dbg_names,
     dbg_types: r.dbg_types,
     source_positions: r.source_positions,
+    unsuspended: r.unsuspended,
   };
+}
+
+// The ops of a function before suspend.transform_state gave it a task frame,
+// with the locals they use. A function with no task frame has no ops here.
+pub struct Unsuspended { ops: ir.Op[], n_locals: i32 }
+
+pub function no_unsuspended(): Unsuspended {
+  return Unsuspended { ops: [], n_locals: 0 };
 }
 
 pub struct LowerState {
@@ -973,6 +985,7 @@ pub struct LowerState {
   dbg_names: string[],
   dbg_types: string[],
   source_positions: sourcepos.SourceInfo,
+  unsuspended: Unsuspended,
 }
 
 pub function lower_result(r: LowerState): LowerResult {
@@ -995,6 +1008,7 @@ pub function lower_result(r: LowerState): LowerResult {
     dbg_names: r.dbg_names,
     dbg_types: r.dbg_types,
     source_positions: r.source_positions,
+    unsuspended: r.unsuspended,
   };
 }
 
@@ -1384,6 +1398,7 @@ pub function body_payload(r: LowerResult): Option[Lowered] {
     dbg_names: r.dbg_names,
     dbg_types: r.dbg_types,
     source_positions: r.source_positions,
+    unsuspended: r.unsuspended,
   });
 }
 
