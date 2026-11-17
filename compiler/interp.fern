@@ -5467,7 +5467,8 @@ function eval_int_literal(t: string): Value {
   return box_i64(util.digits_to_i64(t));
 }
 
-function resolve_ident_value(name: string, env: Env): Value {
+// The value of a name that a type spelling can hold: a binding or a constant.
+function resolve_bound_value(name: string, env: Env): Value {
   let idv = env.lookup(name);
   if (is_err(idv)) {
     for ci in env.funcs.named(name) {
@@ -5477,6 +5478,13 @@ function resolve_ident_value(name: string, env: Env): Value {
         return call_func(env.heap, name, no_args, env.funcs, env.aliases, env.type_decls);
       }
     }
+  }
+  return idv;
+}
+
+function resolve_ident_value(name: string, env: Env): Value {
+  let idv = resolve_bound_value(name, env);
+  if (is_err(idv)) {
     if (variant_arity(name, env.type_decls) == 0 && !user_func_exists(name, env.funcs)) {
       let none_args: Value[] = [];
       return v_variant_of(variant_owner(name, env.type_decls), name, none_args);
@@ -6016,7 +6024,7 @@ function bound_type_spelling(spelling: string, env: Env): string {
   }
   let ref = parser.parse_type_ref(spelling);
   let base = ref.base;
-  match (resolve_ident_value(base, env)) {
+  match (resolve_bound_value(base, env)) {
     VType(tv) => {
       base = tv.name;
     },
@@ -6026,6 +6034,9 @@ function bound_type_spelling(spelling: string, env: Env): string {
       }
     },
     _ => {}
+  }
+  if (ref.args.len() == 0 && base == ref.base) {
+    return spelling;
   }
   let args: parser.TypeRef[] = [];
   for a in ref.args {
