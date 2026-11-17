@@ -135,8 +135,9 @@ function font_of(data: string): Option[truetype.Font] {
   return None;
 }
 
-// The fatha attaches to the beh with the GPOS anchors of the font: its
-// bitmap is above the beh, and its middle is near the middle of the beh.
+// The fatha attaches to the beh with the GPOS anchors of the font: its ink
+// is above the ink of the beh under it, and its middle is near the middle
+// of the beh.
 function test_a_mark_sits_on_its_base(): test.TestOutcome {
   let Some(naskh) = font_of(shape_vectors.font()) else {
     return test.fail("the font did not parse");
@@ -153,6 +154,32 @@ function test_a_mark_takes_the_font_of_its_base(): test.TestOutcome {
   return mark_on_beh(text.from_faces([marks], [400]).with_fallback(text.fallback([naskh])).covering(0, "بَ", (w: i32, cp: i32): fonts.Found[] => []));
 }
 
+// The lowest row of the ink of `mark`, and the highest row of the ink of
+// `base` in the columns of the ink of `mark`, in rows below the baseline.
+// A pixel is ink when its coverage is above half.
+function ink_rows(mark: text.Placed, base: text.Placed): (i32, i32) {
+  let (bottom, x0, x1) = (-(1 << 20), 1 << 20, -(1 << 20));
+  for row in 0..mark.bm.height {
+    for col in 0..mark.bm.width {
+      if (mark.bm.coverage[row * mark.bm.width + col] as i32 > 128) {
+        bottom = bottom.max(mark.y + row);
+        x0 = x0.min(mark.x + col);
+        x1 = x1.max(mark.x + col);
+      }
+    }
+  }
+  let top = 1 << 20;
+  for row in 0..base.bm.height {
+    for col in 0..base.bm.width {
+      let x = base.x + col;
+      if (x >= x0 && x <= x1 && base.bm.coverage[row * base.bm.width + col] as i32 > 128) {
+        top = top.min(base.y + row);
+      }
+    }
+  }
+  return (bottom, top);
+}
+
 function mark_on_beh(fs: text.Fonts): test.TestOutcome {
   let (_, placed) = text.layout(text.new_cache(), fs, 0, 100, 0, "َب");
   let glyphs = placed.map((p: text.Placed): i64 => p.key & 4294967295i64);
@@ -161,7 +188,8 @@ function mark_on_beh(fs: text.Fonts): test.TestOutcome {
   }
   let (mark, base) = (placed[0], placed[2]);
   let middle = mark.x + mark.bm.width / 2 - (base.x + base.bm.width / 2);
-  let above = mark.y + mark.bm.height <= base.y;
+  let (bottom, top) = ink_rows(mark, base);
+  let above = bottom < top;
   return test.assert_eq(above.to_string() + " " + (middle.abs() < base.bm.width / 4).to_string(), "true true");
 }
 
