@@ -93,6 +93,12 @@ def controls():
         yield f"filler length {count} remains with its picture", [
             [s, p, slice_nal(frame=1), b"\x0c" + b"\xff" * count + b"\x80"],
             [slice_nal(frame=2), b"\x0b"]]
+    yield "filler between slices remains with its picture", [
+        [s, p, slice_nal(frame=1), b"\x0c\xff\x80", slice_nal(first=6, frame=1)],
+        [slice_nal(frame=2)]]
+    yield "multiple filler units remain with their picture", [
+        [s, p, slice_nal(frame=1), b"\x0c\x80", b"\x0c\xff\x80", b"\x0c\xff\xff\x80"],
+        [slice_nal(frame=2)]]
     yield "parameter replacement", [[s, p, slice_nal(frame=1)],
                                     [sequence(poc=0), pps.make(bottom=1), slice_nal(order=0, bottom=True, b=1)]]
     yield from replacement_controls()
@@ -143,6 +149,15 @@ def incompatible_pairs():
 
 def invalid():
     s, p = sequence(poc=2), pps.make()
+    sei = b"\x06\x05\x10" + bytes(range(1, 17)) + b"\x80"
+    for prefix in ([], [b"\x09\xf0"], [s], [s, p], [sei]):
+        name = "-".join(str(unit[0] & 31) for unit in prefix) or "none"
+        yield f"filler requires a picture after prefix {name}", prefix + [b"\x0c\xff\x80", s, p, slice_nal()], "Header"
+        if prefix:
+            yield f"later filler requires a picture after prefix {name}", [s, p, slice_nal(frame=1)] + prefix + [
+                b"\x0c\xff\x80", slice_nal(frame=2)], "Header"
+    yield "later filler requires a picture after cached PPS", [s, p, slice_nal(frame=1), p,
+                                                               b"\x0c\xff\x80", slice_nal(frame=2)], "Header"
     yield "filler payload is incomplete", [s, p, slice_nal(), b"\x0c"], "Truncated"
     for value in range(256):
         if value != 255:

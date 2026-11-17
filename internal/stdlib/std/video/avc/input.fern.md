@@ -32,6 +32,8 @@ These checks follow H.264 clauses 7.3.2.4, 7.3.2.11, and 7.4.1.2.3.
 They do not compare the primary picture type with all slice types in the coded picture.
 
 Filler payloads contain zero or more `ff` bytes followed by exactly `80`.
+Filler must follow the first coded slice of its picture, as H.264 clause 7.4.1.2.3 specifies.
+Filler between slices and multiple filler units remain permitted.
 The reader checks this syntax after unit and packet limits, before the packet copy, without another payload allocation.
 These checks follow H.264 clauses 7.3.2.7 and 7.3.2.11.
 
@@ -280,7 +282,10 @@ function delimiter(input: [u8], first: boolean): Result[void, frame.VideoError] 
   return Ok(());
 }
 
-function filler(input: [u8]): Result[void, frame.VideoError] {
+function filler(input: [u8], has_picture: boolean): Result[void, frame.VideoError] {
+  if (!has_picture) {
+    return Err(frame.Header);
+  }
   if (input.len() < 2) {
     return Err(frame.Truncated);
   }
@@ -295,7 +300,7 @@ function filler(input: [u8]): Result[void, frame.VideoError] {
   return Ok(());
 }
 
-function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32): Result[u8[], frame.VideoError] {
+function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32, has_picture: boolean): Result[u8[], frame.VideoError] {
   if (maximum - bytes.len() < 4 || input.len() > maximum - bytes.len() - 4) {
     return Err(frame.Limit);
   }
@@ -303,7 +308,7 @@ function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32): R
     delimiter(input, bytes.len() == 0)?;
   }
   if (kind == 12) {
-    filler(input)?;
+    filler(input, has_picture)?;
   }
   for byte in [0u8, 0u8, 0u8, 1u8] {
     bytes = bytes.append(byte);
@@ -339,7 +344,7 @@ function append_unit(own stream: Stream, unit: nals.Unit, offset: i64, kind: i32
   }
   let updated = parameters(stream, unit.bytes, kind)?;
   let at = if (updated.packet_units == 0) { offset } else { updated.packet_offset };
-  let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes, kind)?;
+  let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes, kind, updated.last.is_some())?;
   let last = if (identity.is_some()) { identity } else { updated.last };
   let forced = kind == 10 || updated.forced && kind != 1 && kind != 5;
   return Ok(Step { stream: Stream { ...updated, packet: bytes, packet_offset: at, packet_units: updated.packet_units + 1, last: last, forced: forced, ended: kind == 11 }, event: Waiting });
