@@ -5939,34 +5939,69 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 
 pub struct DbgVars { at: boolean[], rows: string[] }
 
+// The rows in progress. `done` gives, for each value, the last entry of
+// `dbg_slots` that has a row of it, plus 1.
+struct DbgRows { at: boolean[], rows: string[], done: i32[] }
+
+// The entries of `seen_slots` of each slot: `head` gives the first entry of
+// a slot, and `next` the entry after each entry of the same slot, or -1.
+struct DbgSeen { head: i32[], next: i32[] }
+
+function dbg_seen(seen_slots: i32[]): DbgSeen {
+  let top = -1;
+  for slot in seen_slots {
+    if (slot > top) {
+      top = slot;
+    }
+  }
+  let head = util.minus_ones(top + 1);
+  let next = util.minus_ones(seen_slots.len());
+  let j = seen_slots.len() - 1;
+  while (j >= 0) {
+    let slot = seen_slots[j];
+    if (slot >= 0) {
+      next = next.with(j, head[slot]);
+      head = head.with(slot, j);
+    }
+    j -= 1;
+  }
+  return DbgSeen { head: head, next: next };
+}
+
 pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
   if (seen_vals.len() == 0) {
     return DbgVars { at: [], rows: [] };
   }
-  let d = DbgVars { at: __alloc_bool(npos + 1), rows: [] };
+  let seen = dbg_seen(seen_slots);
+  let d = DbgRows { at: __alloc_bool(npos + 1), rows: [], done: __alloc_i32(a.def_pos.len()) };
   for i in 0..r.dbg_slots.len() {
-    d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
+    d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen, locs, npos);
   }
-  return d;
+  return DbgVars { at: d.at, rows: d.rows };
 }
 
-function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
+function dbg_var(own d: DbgRows, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen: DbgSeen, locs: string[], npos: i32): own DbgRows {
+  let slot = r.dbg_slots[i];
+  if (slot < 0 || slot >= seen.head.len()) {
+    return d;
+  }
   let param = "0";
-  if (r.dbg_slots[i] < r.n_params) {
+  if (slot < r.n_params) {
     param = "1";
   }
-  let done: i32[] = [];
-  for j in 0..seen_slots.len() {
+  let j = seen.head[slot];
+  while (j >= 0) {
     let v = dbg_home(a, repl, locs, npos, seen_vals[j]);
-    if (seen_slots[j] == r.dbg_slots[i] && v >= 0 && util.index_of_i32(done, v) < 0) {
-      done = done.append(v);
+    if (v >= 0 && d.done[v] != i + 1) {
       let lo = a.def_pos[v] + 1;
       let hi = a.hi[v] + 1;
-      d = DbgVars {
+      d = DbgRows {
         at: d.at.with(lo, true).with(hi, true),
         rows: d.rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]),
+        done: d.done.with(v, i + 1),
       };
     }
+    j = seen.next[j];
   }
   return d;
 }
