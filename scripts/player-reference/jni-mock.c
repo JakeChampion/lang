@@ -11,17 +11,16 @@ static Object objects[OBJECT_COUNT];
 static Object exception = {EXCEPTION, 0}, text = {STRING, "mock"};
 static void *table[235];
 static void **env_table = table;
-/* The senders field of std/android's Context is word 29. */
-static uintptr_t context[30], activity[8], window[24], senders[8];
-static int mode, locals, globals, frames, saved_locals, pending, releases, opens, prepares, starts, global_calls, target_releases;
+static uintptr_t context[30], activity[8], window[24];
+static int64_t senders[8];
+static int mode, locals, globals, frames, saved_locals, pending, releases, opens, prepares, starts, global_calls, target_releases, nexts;
 static int64_t last_seek;
 static int last_seek_mode, audio_track, selected_track = -1;
 
 enum { CONSTRUCTOR=1, GET_LOADER, LOAD_CLASS, PREPARED, COMPLETED, ERROR, INFO, SEEKED,
        SET_USAGE, SET_CONTENT, BUILD, SET_ATTRS, RESET, SOURCE, PREPARE, SET_SURFACE,
        START, PAUSE, SEEK, POSITION, DURATION, PLAYING, WIDTH, HEIGHT, RELEASE,
-       GET_TIMESTAMP, MEDIA_TIME, SYSTEM_TIME, PARSE, TEXTURE_INIT, SURFACE_INIT, UPDATE, MATRIX, FRAME_TIME, SELECTED_TRACK, TRACK_INFO, TRACK_TYPE, SELECT_TRACK,
-       AUDIO_SESSION, SET_NEXT };
+       GET_TIMESTAMP, MEDIA_TIME, SYSTEM_TIME, PARSE, TEXTURE_INIT, SURFACE_INIT, UPDATE, MATRIX, FRAME_TIME, SELECTED_TRACK, TRACK_INFO, TRACK_TYPE, SELECT_TRACK, SESSION, SET_NEXT };
 static const char *names[] = {"", "<init>", "getClassLoader", "loadClass", "setOnPreparedListener", "setOnCompletionListener", "setOnErrorListener", "setOnInfoListener", "setOnSeekCompleteListener", "setUsage", "setContentType", "build", "setAudioAttributes", "reset", "setDataSource", "prepareAsync", "setSurface", "start", "pause", "seekTo", "getCurrentPosition", "getDuration", "isPlaying", "getVideoWidth", "getVideoHeight", "release", "getTimestamp", "getAnchorMediaTimeUs", "getAnchorSytemNanoTime", "parse", "<init>", "<init>", "updateTexImage", "getTransformMatrix", "getTimestamp", "getSelectedTrack", "getTrackInfo", "getTrackType", "selectTrack", "getAudioSessionId", "setNextMediaPlayer"};
 static const char *signatures[] = {"", "()V", "()Ljava/lang/ClassLoader;", "(Ljava/lang/String;)Ljava/lang/Class;", "(Landroid/media/MediaPlayer$OnPreparedListener;)V", "(Landroid/media/MediaPlayer$OnCompletionListener;)V", "(Landroid/media/MediaPlayer$OnErrorListener;)V", "(Landroid/media/MediaPlayer$OnInfoListener;)V", "(Landroid/media/MediaPlayer$OnSeekCompleteListener;)V", "(I)Landroid/media/AudioAttributes$Builder;", "(I)Landroid/media/AudioAttributes$Builder;", "()Landroid/media/AudioAttributes;", "(Landroid/media/AudioAttributes;)V", "()V", "(Landroid/content/Context;Landroid/net/Uri;)V", "()V", "(Landroid/view/Surface;)V", "()V", "()V", "(JI)V", "()I", "()I", "()Z", "()I", "()I", "()V", "()Landroid/media/MediaTimestamp;", "()J", "()J", "(Ljava/lang/String;)Landroid/net/Uri;", "(I)V", "(Landroid/graphics/SurfaceTexture;)V", "()V", "([F)V", "()J", "(I)I", "()[Landroid/media/MediaPlayer$TrackInfo;", "()I", "(I)V", "()I", "(Landroid/media/MediaPlayer;)V"};
 
@@ -127,7 +126,7 @@ static void void_call(void *env, Object *obj, void *method, Value *args) {
     case START: starts++; break;
     case PAUSE: break;
     case SELECT_TRACK: selected_track = args[0].i; break;
-    case SET_NEXT: assert(!args[0].l || args[0].l == objects + PLAYER); break;
+    case SET_NEXT: assert(!args[0].l || args[0].l == objects + PLAYER); nexts++; break;
     case SEEK: last_seek = args[0].j; last_seek_mode = args[1].i; assert(last_seek_mode == 2 || last_seek_mode == 3); break;
     case RELEASE: releases++; if (mode == 16) pending = 1; break;
     default: assert(0);
@@ -146,8 +145,8 @@ static int32_t int_call(void *env, Object *obj, void *method, Value *args) {
     case DURATION: if (mode == 18) { pending = 1; return 0; } return 4000;
     case WIDTH: return 320;
     case HEIGHT: return 240;
+    case SESSION: return 77;
     case SELECTED_TRACK: assert(args[0].i == 2); return audio_track;
-    case AUDIO_SESSION: return 7;
     default: assert(0); return 0;
     }
 }
@@ -201,6 +200,7 @@ int mock_player_seek_mode(void) { return last_seek_mode; }
 void mock_player_audio_track(int track) { audio_track = track; }
 int mock_player_target_releases(void) { return target_releases; }
 int mock_player_selected_track(void) { return selected_track; }
+int mock_player_nexts(void) { return nexts; }
 static int32_t array_length(void *env, Object *array) { (void)env; assert(array == objects + TRACKS); return 3; }
 static Object *array_element(void *env, Object *array, int32_t index) {
     (void)env; assert(array == objects + TRACKS && index >= 0 && index < 3);

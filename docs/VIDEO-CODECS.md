@@ -183,6 +183,9 @@ The cache retains at most 16 MiB of PPS payloads, without an exact process-memor
 Slice inspection copies at most 64 unescaped bytes, without a complete slice-payload copy.
 Returned packets contain canonical four-byte Annex B prefixes and an IDR flag, without assigned timestamps.
 
+An AVC SPS with zero reference frames permits only I or SI slices under H.264 clause 7.4.3.
+Slice admission uses the current SPS after cached PPS validation, including after SPS replacement.
+
 AVC sequence-end and stream-end NAL units have empty payloads and follow a coded picture.
 Both markers remain in that picture's access unit. Sequence end requires IDR in the next access unit, through intervening prefix metadata.
 Stream end permits no subsequent NAL unit in the same reader. A separate bitstream requires a new reader.

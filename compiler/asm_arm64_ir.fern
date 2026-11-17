@@ -3182,7 +3182,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   if (ins.str == "__fern_rc_is_unique") {
     dname = lp + "rcuniq" + util.i32_to_string(ins.result);
   }
-  let dec = ins.str == "__fern_rc_dec";
+  let dec = ssa.shared_dec(ins);
   if (dec) {
     dname = lp + "rcshr" + util.i32_to_string(ins.result);
   }
@@ -3386,7 +3386,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base
 }
 
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (ssa.rc_inlined(ins) && (!s.size || ins.str == "__fern_rc_dec")) {
+  if (ssa.rc_inlined(ins) && (!s.size || ssa.shared_dec(ins))) {
     return ssa_rc_prim(ins, reg_of, lp, s);
   }
   s = asmcore.ssa_x0_forget(s);
@@ -4790,6 +4790,13 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     s = fr_sub_imm(s, d, "x29", ssa.cell_offset(ins) - ssa_view_off(fr, ins.result));
     return ssa_store(reg_of, ins.result, d, s);
   }
+  if (k == ssa.BOUND) {
+    let b = ssa_src(reg_of, ins.args[0], "x5");
+    s = ssa_load(reg_of, ins.args[0], b, s);
+    let n = ssa_src(reg_of, ins.args[1], "x6");
+    s = ssa_load(reg_of, ins.args[1], n, s);
+    return ssa_trap_guard(ssa_cmp_rr(s.need("heap"), b, n), CC_LO, if (ins.imm == 1) { "__fern_str_oob_abort" } else { "__fern_oob_abort" });
+  }
   if (k >= ssa.LD_AT && k <= ssa.STR_AT) {
     return ssa_mem_inst(ins, reg_of, fr.imm, s);
   }
@@ -5433,18 +5440,39 @@ function emit_ssa_function_arm64(prepared: ssaprepare.Body, label_name: string, 
   return asmcore.finish_native_text(out, h, s.capture, s.native_sites, s.retain_sites);
 }
 
+// The immediates, the calls and the registers of `f`.
+struct Allocated { imm: ssa.Imms, call_kinds: i32[], alloc: ssa.Alloc, floats: boolean[] }
+
+function ssa_allocated(f: ssa.SFunc, r: irtables.Lowered, s: asmcore.EmitState): Allocated {
+  s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
+  let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
+  let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
+  let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
+  let floats = ssa.float_values(f, ssa_float_calls(f, s), true);
+  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), floats, ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
+  return Allocated { imm: imm, call_kinds: call_kinds, alloc: alloc, floats: floats };
+}
+
 function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string, entry: ssaprepare.ReleaseEntry, context: Option[ssaprepare.Context], s: asmcore.EmitState): asmcore.EmitState {
   let r = prepared.lowered;
   let seen_vals = prepared.seen_vals;
   let seen_slots = prepared.seen_slots;
   s = asmcore.EmitState { ...s, dw_first: true, dw_pos: 0 };
   let formed = prepared.formed;
-  let f = formed.f;
+  let f = ssa.shared_lengths(formed.f);
+  let picked = ssa_allocated(f, r, s);
+  let tried = ssa.split_spilled(f, picked.alloc.reg_of, picked.floats);
+  if (tried.cost > 0) {
+    let again = ssa_allocated(tried.f, r, s);
+    if ((ssa.spill_cost(tried.f, again.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false }) + tried.cost) * 10 < ssa.spill_cost(f, picked.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false }) * 9) {
+      f = tried.f;
+      picked = again;
+    }
+  }
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
-  let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
-  let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
-  let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
-  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: false });
+  let imm = picked.imm;
+  let call_kinds = picked.call_kinds;
+  let alloc = picked.alloc;
   let reg_of = alloc.reg_of;
   let lp = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);

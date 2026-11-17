@@ -2038,10 +2038,14 @@ function __allow_parts(e: string): Option[(string, string)] {
     return None;
   }
   if (!e.starts_with("[")) {
-    if (e.contains(":")) {
-      return Some((e.before(":"), e.after(":")));
+    match (e.split_once(":")) {
+      Some(parts) => {
+        return Some(parts);
+      },
+      None => {
+        return Some((e, ""));
+      }
     }
-    return Some((e, ""));
   }
   let Some(close) = e.index_of("]") else {
     return None;

@@ -7421,6 +7421,16 @@ function ssa_homeless(f: ssa.SFunc, imm: ssa.Imms): boolean[] {
   return out;
 }
 
+// The operands of `f` that are immediates, with the shape tags.
+function ssa_imms(f: ssa.SFunc, s: asmcore.EmitState): ssa.Imms {
+  let imm = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left(), true);
+  let shapes = ssa_shape_plan(f, imm, false);
+  for si in 0..shapes.vals.len() {
+    imm = ssa.with_value(imm, shapes.vals[si], asmcore.shape_tag(s, shapes.names[si]));
+  }
+  return imm;
+}
+
 function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, ops: ir.Op[], s: asmcore.EmitState): ssa.Alloc {
   let words = ssa.result_word_masks(f, ops);
   let homeless = ssa_homeless(f, imm);
@@ -9524,7 +9534,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
     dname = lp + "rcuniq" + util.i32_to_string(ins.result);
   }
   let op = 0;
-  if (ins.str == "__fern_rc_dec") {
+  if (ssa.shared_dec(ins)) {
     dname = lp + "rcshr" + util.i32_to_string(ins.result);
     op = 5;
   }
@@ -9714,7 +9724,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves,
 }
 
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (ssa.rc_inlined(ins) && (!s.size || ins.str == "__fern_rc_dec")) {
+  if (ssa.rc_inlined(ins) && (!s.size || ssa.shared_dec(ins))) {
     return ssa_rc_prim(ins, reg_of, lp, s);
   }
   s = asmcore.ssa_x0_forget(s);
@@ -12027,13 +12037,21 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = asmcore.EmitState { ...s, dw_first: true, dw_pos: 0 };
   let formed = prepared.formed;
   let f = formed.f;
-  let imm = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left(), true);
-  let shapes = ssa_shape_plan(f, imm, false);
-  for si in 0..shapes.vals.len() {
-    imm = ssa.with_value(imm, shapes.vals[si], asmcore.shape_tag(s, shapes.names[si]));
-  }
+  let imm = ssa_imms(f, s);
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
   let alloc = ssa_allocate(f, imm, prepared.lowered.ops, s);
+  let tried = ssa.split_spilled(f, alloc.reg_of, ssa.float_values(f, [], false));
+  if (tried.cost > 0) {
+    let imm2 = ssa_imms(tried.f, s);
+    let s2 = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(tried.f), ssa_even: ssadeps.even_values(tried.f) };
+    let again = ssa_allocate(tried.f, imm2, prepared.lowered.ops, s2);
+    if ((ssa.spill_cost(tried.f, again.reg_of, ssa.SpillCosts { fold_alu_rhs: true }) + tried.cost) * 10 < ssa.spill_cost(f, alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: true }) * 9) {
+      f = tried.f;
+      imm = imm2;
+      alloc = again;
+      s = s2;
+    }
+  }
   match (env("FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name || want == "*") {
