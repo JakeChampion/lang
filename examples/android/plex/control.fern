@@ -141,6 +141,9 @@ pub struct Device {
 // with the reply.
 struct Ask { purpose: string, req: plex.Request }
 
+// What the server must hear about the item `key` when it answers again.
+struct Pending { key: string, seen: boolean, at: i64, total: i64 }
+
 // The request to the API that a worker sends now.
 struct Call { purpose: string, w: worker.Worker[plex.Reply[]] }
 
@@ -320,7 +323,10 @@ pub struct App {
   cached: string[],
   failed: string[],
   report: Option[Call],
-  reports: plex.Request[],
+  reports: Ask[],
+  // What the server did not hear because no server answered: per item,
+  // that it was watched, or the place where its play stopped.
+  pending: Pending[],
   play: Play,
   press: Press,
   // The item of the menu that a held finger on a poster opened, or no_item.
@@ -488,7 +494,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
-    api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
+    api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [], pending: load_pending(dev, dir),
     play: no_play(), press: no_press(), menu: plex.no_item(), focus: "", asked_notifications: false, users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
     downloads: load_downloads(dev, dir), downloads_at: 0i64, offline: false,
   };
@@ -677,14 +683,37 @@ function poll_api(own s: App): App {
 // hold up the screens.
 function report(own s: App, w: Want): App {
   let req = request_of(s.client, s.base, w);
-  return start_report(App { ...s, reports: s.reports.append(req) });
+  let purpose = report_purpose(w);
+  // A new report of an item says more than what an old one kept.
+  let t = s;
+  if (purpose != "report") {
+    t = without_pending(t, split_purpose(purpose).1.split(":")[1]);
+  }
+  return start_report(App { ...t, reports: t.reports.append(Ask { purpose: purpose, req: req }) });
+}
+
+// "report:seen:KEY" for a scrobble that marks an item watched, and
+// "report:stop:KEY:AT:TOTAL" for the place where a play stopped. A report
+// of another kind needs no second try.
+function report_purpose(w: Want): string {
+  match (w) {
+    Scrobble(key, seen) => {
+      return if (seen) { "report:seen:" + key } else { "report" };
+    },
+    Timeline(key, state, at, total, session) => {
+      return if (state == "stopped") { "report:stop:" + key + ":" + at.to_string() + ":" + total.to_string() } else { "report" };
+    },
+    _ => {
+      return "report";
+    }
+  }
 }
 
 function start_report(own s: App): App {
   if (s.reports.len() == 0) {
     return s;
   }
-  let (r, started) = start_call(s.report, s.dev, Ask { purpose: "report", req: s.reports[0] });
+  let (r, started) = start_call(s.report, s.dev, s.reports[0]);
   if (!started) {
     return App { ...s, report: r };
   }
@@ -698,8 +727,85 @@ function poll_report(own s: App): App {
     if (!d.reply.ok()) {
       log.warn("plex: a report failed: " + d.reply.problem());
     }
+    if (d.reply.status == 0) {
+      next = keep_pending(App { ...next, offline: true }, d.purpose);
+    }
   }
   return start_report(next);
+}
+
+// --- what the server did not hear
+
+function pending_path(dir: string): string {
+  return dir + "/pending";
+}
+
+// The facts of the file of `dir`: a line per item with its key, 1 when it
+// was watched, the place where its play stopped, and its length.
+function load_pending(dev: Device, dir: string): Pending[] {
+  let out: Pending[] = [];
+  if (dir.len() == 0) {
+    return out;
+  }
+  for line in dev.read(pending_path(dir)).split("\n") {
+    let f = line.split("\t");
+    if (f.len() == 4) {
+      out = out.append(Pending { key: f[0], seen: f[1] == "1", at: num64(f[2]), total: num64(f[3]) });
+    }
+  }
+  return out;
+}
+
+function save_pending(s: App): void {
+  if (s.dir.len() == 0) {
+    return;
+  }
+  let lines = s.pending.map((p: Pending): string => [p.key, if (p.seen) { "1" } else { "0" }, p.at.to_string(), p.total.to_string()].join("\t"));
+  s.dev.write(pending_path(s.dir), lines.join("\n") + "\n");
+}
+
+function without_pending(own s: App, key: string): App {
+  if (s.pending.filter((p: Pending): boolean => p.key == key).len() == 0) {
+    return s;
+  }
+  let kept = s.pending.filter((p: Pending): boolean => p.key != key);
+  let t = App { ...s, pending: kept };
+  save_pending(t);
+  return t;
+}
+
+// Keeps what a report that reached no server said. A watched item stays
+// watched when a later stop of it fails too.
+function keep_pending(own s: App, purpose: string): App {
+  let f = purpose.split(":");
+  if (f.len() < 3) {
+    return s;
+  }
+  let key = f[2];
+  let had = s.pending.filter((p: Pending): boolean => p.key == key);
+  let seen = f[1] == "seen" || had.len() > 0 && had[0].seen;
+  let at = if (f[1] == "stop" && f.len() == 5) { num64(f[3]) } else if (had.len() > 0) { had[0].at } else { 0i64 };
+  let total = if (f[1] == "stop" && f.len() == 5) { num64(f[4]) } else if (had.len() > 0) { had[0].total } else { 0i64 };
+  let kept = s.pending.filter((p: Pending): boolean => p.key != key).append(Pending { key: key, seen: seen, at: at, total: total });
+  let t = App { ...s, pending: kept };
+  save_pending(t);
+  return t;
+}
+
+// Tells the server what it did not hear, now that it answers.
+function send_pending(own s: App): App {
+  let all = s.pending;
+  let t = App { ...s, pending: [] };
+  save_pending(t);
+  let session = hex_id(t.dev);
+  for p in all {
+    if (p.seen) {
+      t = report(t, Scrobble(p.key, true));
+    } else {
+      t = report(t, Timeline(p.key, "stopped", p.at, p.total, session));
+    }
+  }
+  return t;
 }
 
 // --- images
@@ -917,7 +1023,11 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
     }
     return failed(App { ...t, offline: false }, verb, r);
   }
-  return got_media(App { ...t, offline: false }, verb, rest, r);
+  let u = App { ...t, offline: false };
+  if (u.pending.len() > 0) {
+    u = send_pending(u);
+  }
+  return got_media(u, verb, rest, r);
 }
 
 function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {

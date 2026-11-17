@@ -158,6 +158,10 @@ stops the download. A done download shows in the last row of the home
 screen and plays from the phone with no server. Remove download deletes
 the file.
 
+When no server hears the place where a play stopped, or that an item
+was watched, the app keeps it in a file. The server hears it when it
+answers again.
+
 Download all in the menu of a show, a season, an artist or an album
 downloads each of its episodes or tracks. Downloads in the settings
 opens the list of the downloads, with the state of each one. A tap on a
