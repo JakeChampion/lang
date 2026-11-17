@@ -588,8 +588,9 @@ record a skip.
 
 `FERN_RC_CERTIFY=report` turns refusals into a census line for each
 function. The line gives the tracked and the unproved values and the
-findings. It also gives the most rounds a walk took to settle, and any
-skip, failure or opaque callee. A runtime unit's gate prints its census too.
+findings. An `at=` field names each unproved value as
+`FERN_RC_CERTIFY_DUMP` prints it. The line also gives the most rounds a walk
+took to settle, and any skip, failure or opaque callee. A runtime unit's gate prints its census too.
 
 `FERN_RC_CERTIFY=mutate` adds three mutants of each function that passes: its
 middle release deleted, its middle retain deleted, and its middle release

@@ -436,6 +436,9 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
   if (r.failed != "") {
     line = line + " failed=" + r.failed;
   }
+  for v in r.unproved_at {
+    line = line + " at=v" + util.i32_to_string(v);
+  }
   for name in r.opaque {
     line = line + " opaque=" + name;
   }
