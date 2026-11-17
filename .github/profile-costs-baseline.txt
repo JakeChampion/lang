@@ -168,16 +168,16 @@ profile/x86-64-linux/int_loop.safe.emit	298
 profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	136296
 profile/x86-64-linux/map_string.diagnostic.emit	11199
-profile/x86-64-linux/map_string.diagnostic.ir	57189779	2
+profile/x86-64-linux/map_string.diagnostic.ir	55986407	2
 profile/x86-64-linux/map_string.hardened.bytes	43984
 profile/x86-64-linux/map_string.hardened.emit	10422
-profile/x86-64-linux/map_string.hardened.ir	52039606	2
+profile/x86-64-linux/map_string.hardened.ir	50701569	2
 profile/x86-64-linux/map_string.minimal.bytes	37584
 profile/x86-64-linux/map_string.minimal.emit	9389
-profile/x86-64-linux/map_string.minimal.ir	53578562	2
+profile/x86-64-linux/map_string.minimal.ir	52287928	2
 profile/x86-64-linux/map_string.safe.bytes	38592
 profile/x86-64-linux/map_string.safe.emit	9772
-profile/x86-64-linux/map_string.safe.ir	50333274	2
+profile/x86-64-linux/map_string.safe.ir	49278647	2
 profile/x86-64-linux/startup.diagnostic.bytes	5168
 profile/x86-64-linux/startup.diagnostic.emit	508
 profile/x86-64-linux/startup.diagnostic.ir	213
