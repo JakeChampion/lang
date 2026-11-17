@@ -74,7 +74,9 @@ func TestSelfHostUnsignedBoundsGuard(t *testing.T) {
 func TestSelfHostUnsignedBoundsGuardShape(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "unsigned_guard.fern")
-	source := unsignedBoundsGuardFunctions + `function main(): i32 { let data: u8[] = [7u8]; return guarded(data,0)+reversed(data,0)+positive(data,0)+greater(data,0)+unrelated(data,0,1)+inclusive(data,0)+wide(data,0u64); }`
+	// n is 0 with no arguments, and no caller can prove its range, so only
+	// the guard of each function proves its index.
+	source := unsignedBoundsGuardFunctions + `function main(): i32 { let n = args().len() - 1; let data: u8[] = [7u8]; return guarded(data,n)+reversed(data,n)+positive(data,n)+greater(data,n)+unrelated(data,n,n+1)+inclusive(data,n)+wide(data,n as u64); }`
 	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
