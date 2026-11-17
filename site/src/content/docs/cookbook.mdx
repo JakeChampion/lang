@@ -115,11 +115,13 @@ function main(): i32 {
     let spec: cli.CliSpec = cli.new("greet", "Say hello")
         .option("name", "n", "who to greet")
         .flag("loud", "l", "shout it");
-    let parsed: cli.CliArgs = spec.parse(args());
-    if (parsed.is_error()) {
-        eprint(parsed.error_text());
-        return 2;
-    }
+    let parsed: cli.CliArgs = match (spec.parse(args())) {
+        Ok(a) => a,
+        Err(e) => {
+            eprint(e.message());
+            return 2;
+        }
+    };
     let who: string = parsed.value_or("name", "world");
     if (parsed.is_set("loud")) {
         print("HELLO, " + who + "!");
