@@ -174,8 +174,10 @@ struct Play {
   level: i32,
   stalls: i64[],
   // The sound and the subtitles that play, and whether the sheet of the
-  // tracks shows.
+  // tracks shows. `cues` are the lines of a subtitle file that the app
+  // draws over the video.
   choice: plex.Choice,
+  cues: plex.Cue[],
   sheet: boolean,
   // The time that the card of the next item came, or 0, and whether the
   // user turned the next item off.
@@ -326,7 +328,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1 };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1 };
 }
 
 function no_press(): Press {
@@ -461,6 +463,7 @@ enum Want {
   Children(string),
   Leaves(string),
   Bif(string),
+  Subtitle(plex.Track),
   SelectTracks(string, plex.Choice),
   Search(string),
   Scrobble(string, boolean),
@@ -512,6 +515,9 @@ function request_of(c: plex.Client, b: plex.Base, w: Want): plex.Request {
     },
     Bif(id) => {
       return plex.bif_request(c, b, id);
+    },
+    Subtitle(track) => {
+      return plex.subtitle_request(c, b, track);
     },
     Leaves(key) => {
       return plex.Request { ...plex.children(c, b, key), url: b.uri + "/library/metadata/" + key + "/allLeaves" };
@@ -820,6 +826,12 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   }
   if (verb == "bif") {
     return got_bif(t, rest, r);
+  }
+  if (verb == "subtitle") {
+    if (r.ok() && t.play.active && t.play.choice.subtitle == rest) {
+      return App { ...t, play: Play { ...t.play, cues: plex.parse_cues(r.text()) }, dirty: true };
+    }
+    return t;
   }
   if (verb == "letters") {
     if (r.ok() && t.screen == ui.LIBRARY && rest == library_tag(t)) {
@@ -1670,6 +1682,7 @@ function start_play(own s: App, it: plex.Item, queue: plex.Item[]): App {
   if let Some(part) = plex.thumbnail_part(it) {
     t = ask(t, "bif:" + part.id, Bif(part.id));
   }
+  t = ask_cues(t);
   // An item from a list has no markers and no tracks, so the app asks for
   // all of its metadata.
   if (!audio(t.play)) {
@@ -1753,10 +1766,10 @@ function choose(own s: App, choice: plex.Choice): App {
     pos = t.dev.position();
   }
   let stream = plex.stream_for(t.client, t.base, p.item, q, pos, session, t.dev.decoders, choice);
-  let next = Play { ...p, choice: choice, sheet: false };
+  let next = Play { ...p, choice: choice, cues: [], sheet: false };
   if (!stream.transcode && !p.stream.transcode) {
     pick_sound(t.dev, next);
-    return App { ...t, play: next, dirty: true };
+    return ask_cues(App { ...t, play: next, dirty: true });
   }
   log.info("plex: new tracks, so the stream starts again");
   t.dev.stop();
@@ -1764,7 +1777,7 @@ function choose(own s: App, choice: plex.Choice): App {
     t.dev.hide_video();
   }
   let ok = t.dev.play(stream.url);
-  return App { ...t, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true };
+  return ask_cues(App { ...t, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true });
 }
 
 // True when the first version of the item has a sound track.
@@ -2081,14 +2094,18 @@ function play_tick(own s: App, now: i64): App {
   if (p.video && p.overlay && now >= p.controls_until && t.press.group != "seek") {
     t = App { ...t, play: Play { ...t.play, overlay: false }, dirty: true };
   }
-  if (now - p.updated_at >= 500i64) {
-    let before = skip_label(t.play) + "|" + up_next_secs(t.play, now - 500i64).to_string();
+  let every = 500i64;
+  if (p.cues.len() > 0) {
+    every = 100i64;
+  }
+  if (now - p.updated_at >= every) {
+    let before = skip_label(t.play) + "|" + up_next_secs(t.play, now - 500i64).to_string() + "|" + plex.cue_at(t.play.cues, t.play.position);
     let moved = Play { ...t.play, position: t.dev.position(), updated_at: now };
     let from = up_next_from(moved);
     if (moved.up_next_at == 0i64 && from >= 0i64 && moved.position >= from) {
       moved = Play { ...moved, up_next_at: now };
     }
-    let after = skip_label(moved) + "|" + up_next_secs(moved, now).to_string();
+    let after = skip_label(moved) + "|" + up_next_secs(moved, now).to_string() + "|" + plex.cue_at(moved.cues, moved.position);
     t = App { ...t, play: moved, dirty: t.dirty || t.play.overlay || before != after };
     if (moved.up_next_at > 0i64 && now - moved.up_next_at >= UP_NEXT_MS) {
       return play_next(t);
@@ -2104,6 +2121,14 @@ function play_tick(own s: App, now: i64): App {
 // How long the controls show over the video after a tap.
 const CONTROLS_MS: i64 = 4000i64;
 
+// Asks for the file of the chosen subtitle track when the app draws it.
+function ask_cues(own s: App): App {
+  if let Some(track) = plex.text_subtitle(s.play.item, s.play.choice) {
+    return ask(s, "subtitle:" + track.id, Subtitle(track));
+  }
+  return s;
+}
+
 // The markers and the media of the item that plays, from all of its
 // metadata. The thumbnails come now when the item of the list had none.
 function got_play_meta(own t: App, key: string, r: plex.Reply): App {
@@ -2114,8 +2139,12 @@ function got_play_meta(own t: App, key: string, r: plex.Reply): App {
     return t;
   };
   let had = plex.thumbnail_part(t.play.item).is_some();
+  let had_cues = plex.text_subtitle(t.play.item, t.play.choice).is_some();
   let item = plex.Item { ...t.play.item, markers: full.markers, media: full.media };
   let u = App { ...t, play: Play { ...t.play, item: item } };
+  if (!had_cues) {
+    u = ask_cues(u);
+  }
   if (!had) {
     if let Some(part) = plex.thumbnail_part(item) {
       return ask(u, "bif:" + part.id, Bif(part.id));
@@ -3039,7 +3068,7 @@ pub function view(s: App): ui.View {
     hubs = s.results;
   }
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status) };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, caption: plex.cue_at(p.cues, p.position), scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status) };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     texts: s.texts,
