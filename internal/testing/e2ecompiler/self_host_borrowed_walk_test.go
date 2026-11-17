@@ -215,6 +215,64 @@ func TestSelfHostMethodWalkOfAKeptChainBorrows(t *testing.T) {
 	}
 }
 
+// down is a method whose last action is a call of itself.
+const tailMethodProg = `struct Step { by: i32 }
+
+@noinline function (s: Step) down(n: i32, acc: i32): i32 {
+  if (n <= 0) {
+    return acc;
+  }
+  return s.down(n - s.by, acc + 1);
+}
+
+function main(): i32 {
+  let one = Step { by: 1 };
+  let three = Step { by: 3 };
+  return one.down(20, 0) + three.down(20, 0);
+}
+`
+
+// ssasem.tail_recursion finds the self calls of a method by the name of the
+// call, so the method is a loop: its listing has no jump and no call to its
+// own entry.
+func TestSelfHostTailRecursiveMethodIsALoop(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "down.fern")
+	if err := os.WriteFile(src, []byte(tailMethodProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	self := regexp.MustCompile(`(?m)^\s+(jmp|call|b|bl) __fn_Step__down`)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		asm, err := os.ReadFile(cli.emit(t, src, target))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(asm)
+		at := strings.Index(text, "\n__fn_Step__down.r:\n")
+		if at < 0 {
+			t.Fatalf("%s: no down in the listing", target)
+		}
+		body := text[at:]
+		if end := strings.Index(body, ".cfi_endproc"); end >= 0 {
+			body = body[:end]
+		}
+		if m := self.FindString(body); m != "" {
+			t.Errorf("%s: down reaches its own entry (%q), so it is not a loop:\n%s", target, strings.TrimSpace(m), body)
+		}
+	}
+	// 20 steps by 1, and 7 steps by 3.
+	const want = 20 + 7
+	for _, tg := range h.targets {
+		bin := filepath.Join(dir, tg.target+".bin")
+		h.compileWith(t, tg, src, bin)
+		if _, got := h.runProduced(t, tg, bin); got != want {
+			t.Errorf("%s: exit %d, want %d", tg.target, got, want)
+		}
+	}
+}
+
 // sum and count walk with a cursor in a while loop. after returns its cursor,
 // and tails puts the rest of its cursor in a new cell at each step. probe
 // owns its list and reads it after the walks. bagged owns a record, and its
