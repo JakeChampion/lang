@@ -205,7 +205,7 @@ aarch64/perceus_rbtree.text	3071
 aarch64/perceus_rbtree.ir	26406510
 aarch64/perceus_rbtree_ck.text	3660
 aarch64/perceus_rbtree_ck.ir	34374612
-x86_64/video_qtrle.text 5457
+x86_64/video_qtrle.text 5370
 x86_64/video_qtrle.ir 1547169520
 aarch64/video_qtrle.text 6144
 aarch64/video_qtrle.ir 1166068375
