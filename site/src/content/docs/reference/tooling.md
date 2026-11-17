@@ -266,8 +266,8 @@ with `-g` and the addresses resolve to function names through `nm` or
 
 - A double free: a reference count released too many times.
 - A use-after-free.
-- A second context: an allocation or a release by a thread that does not own
-  the heap.
+- A second context: an allocation, a release or a count operation by a
+  thread that does not own the heap.
 
 At exit, the sanitizer prints a leak census. A clean run prints no
 `fern-sanitizer:` line, and its output and exit code are unchanged.
@@ -282,7 +282,7 @@ fern -target x86-64-linux -sanitize -g -o prog prog.fern && ./prog
 
 The sanitizer never reuses freed memory, so it is for debugging, not for
 shipping. All four checks run on the native x86-64 and arm64 targets.
-On wasm, only the leak census is available.
+Wasm has the leak census and the double-free and use-after-free checks.
 
 ## Embedding assets
 

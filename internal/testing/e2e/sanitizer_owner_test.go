@@ -49,6 +49,31 @@ function main(): i32 {
 `)
 }
 
+// sanStrayCountSrc makes the same thread, which only adds to the count of a
+// box that the program owns. It frees and allocates nothing.
+func sanStrayCountSrc(mmap, clone, nanosleep int) string {
+	r := strings.NewReplacer("MMAP", strconv.Itoa(mmap), "CLONE", strconv.Itoa(clone), "NANOSLEEP", strconv.Itoa(nanosleep))
+	return r.Replace(`function main(): i32 {
+  let a: u8[] = __alloc_u8(16);
+  let p: usize = a as usize;
+  let ts: usize = __raw_alloc(16);
+  __raw_store_ptr(ts, 0, 0 as usize);
+  __raw_store_ptr(ts, 8, 10000000 as usize);
+  let stack: usize = __syscall6(MMAP, 0, 65536, 3, 34, 0 - 1, 0) as usize;
+  let r: i64 = __syscall6(CLONE, 331520, (stack + 65536) as i64, 0, 0, 0, 0);
+  if (r == 0) {
+    __fern_rc_inc(p);
+  }
+  let i: i32 = 0;
+  while (i < 200) {
+    __syscall6(NANOSLEEP, ts as i64, 0, 0, 0, 0, 0);
+    i = i + 1;
+  }
+  return a.len();
+}
+`)
+}
+
 func compileRuntimeFloor(t *testing.T, target, src string, args []string, env ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -92,6 +117,23 @@ func TestArm64SanitizeSecondContextReported(t *testing.T) {
 	bin := compileRuntimeFloor(t, e2eharness.TargetArm64Linux, sanStraySrc(222, 220, 101), nil, "FERN_SANITIZE=1")
 	_, stderr, code := runSplit(t, runArm64Bin(qemu, bin))
 	checkSecondContextReport(t, stderr, code)
+}
+
+// A second context that only counts is a finding at its first count
+// operation, on each ISA.
+func TestSanitizeSecondContextThatOnlyCounts(t *testing.T) {
+	t.Run("x86-64", func(t *testing.T) {
+		runner := e2eharness.X86_64Runner(t)
+		bin := compileRuntimeFloor(t, e2eharness.TargetX86_64Linux, sanStrayCountSrc(9, 56, 35), nil, "FERN_SANITIZE=1", uncertified)
+		_, stderr, code := runSplit(t, runX86_64Bin(runner, bin))
+		checkSecondContextReport(t, stderr, code)
+	})
+	t.Run("arm64", func(t *testing.T) {
+		qemu := e2eharness.Arm64Runner(t)
+		bin := compileRuntimeFloor(t, e2eharness.TargetArm64Linux, sanStrayCountSrc(222, 220, 101), nil, "FERN_SANITIZE=1", uncertified)
+		_, stderr, code := runSplit(t, runArm64Bin(qemu, bin))
+		checkSecondContextReport(t, stderr, code)
+	})
 }
 
 // The stack check passes for every context of a program that has only one.
@@ -159,5 +201,58 @@ func TestSanitizeTypedBoxOverflowReported(t *testing.T) {
 				t.Errorf("inside the box: exit=%d, want 16 and no finding\nstderr: %s", code, stderr)
 			}
 		})
+	}
+}
+
+func runSanitizeWasm(t *testing.T, src string, env ...string) (string, string, int) {
+	t.Helper()
+	core := e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, env)
+	return runSplit(t, e2eharness.RunWasmCore(t, core))
+}
+
+// sanWasmChurnSrc releases 300000 blocks of 16 KiB, 4.9 GB in all. Wasm32 has
+// 4 GiB, so the run ends only when the quarantine hands its oldest blocks
+// back to the free lists.
+const sanWasmChurnSrc = `function hold(n: i32): i32 {
+  let b: u8[] = __alloc_u8(n);
+  return b.len();
+}
+function main(): i32 {
+  let i: i32 = 0;
+  while (i < 300000) {
+    hold(16384);
+    i = i + 1;
+  }
+  return 42;
+}`
+
+// The wasm runtime reports a use of a freed block and a second raw release as
+// the native one does, and its quarantine recycles past its budget.
+func TestWasmSanitizeReportsFreedBlocks(t *testing.T) {
+	_, stderr, code := runSanitizeWasm(t, sanStaleTouchSrc, "FERN_SANITIZE=1")
+	if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
+		t.Errorf("stale touch: exit=%d, want %d with the report\nstderr: %s", code, e2eharness.ExitSanitizer, stderr)
+	}
+	_, stderr, code = runSanitizeWasm(t, sanCleanSrc, "FERN_SANITIZE=1")
+	if code != 0 || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("clean run: exit=%d, want 0 and no finding\nstderr: %s", code, stderr)
+	}
+	_, stderr, code = runSanitizeWasm(t, sanWasmChurnSrc, "FERN_SANITIZE=1")
+	if code != 42 || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("churn: exit=%d, want 42 and no finding\nstderr: %s", code, stderr)
+	}
+	const rawTwiceSrc = `function main(): i32 {
+  unsafe {
+      let a: usize = __alloc(64);
+      __free(a, 64);
+      __free(a, 64);
+      return 0;
+  }
+}`
+	for _, env := range [][]string{{"FERN_SANITIZE=1"}, nil} {
+		_, stderr, code = runSanitizeWasm(t, rawTwiceSrc, env...)
+		if code == 0 || !strings.Contains(stderr, "fern: release of memory that is already free") {
+			t.Errorf("%v: raw double free: exit=%d, want the report\nstderr: %s", env, code, stderr)
+		}
 	}
 }

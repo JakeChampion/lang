@@ -67,20 +67,20 @@ func TestSelfHostSanitizeFlag(t *testing.T) {
 		}
 	})
 
-	t.Run("wasm_census_and_note", func(t *testing.T) {
+	t.Run("wasm_report_and_note", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH")
 		}
 		wasm, warn := build(t, "dfree.wasm", "-sanitize", "-target", "wasm32-wasi", "-emit", "core-module")
-		if !strings.Contains(warn, "fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors") {
+		if !strings.Contains(warn, "fern: warning: -sanitize on -target wasm32-wasi carries the leak census and the rc over-release and use-after-free detectors, not the heap-buffer-overflow redzone") {
 			t.Errorf("the coverage note is missing:\n%s", warn)
 		}
 		run := exec.Command("wasmtime", "run", wasm)
 		var stderr strings.Builder
 		run.Stderr = &stderr
 		_ = run.Run()
-		if !strings.Contains(stderr.String(), "leakcheck: allocs=") {
-			t.Errorf("the census did not report; the flag did not reach the wasm emitter:\n%s", stderr.String())
+		if run.ProcessState.ExitCode() != e2eharness.ExitSanitizer || !strings.Contains(stderr.String(), "fern-sanitizer: use-after-free (touched a quarantined block)") {
+			t.Errorf("the double free was not reported; the flag did not reach the wasm emitter:\n%s", stderr.String())
 		}
 	})
 

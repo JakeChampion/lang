@@ -108,5 +108,5 @@ Cancellation during row execution or tile copying returns an error and releases 
 The interface provides no hard CPU deadline, physical scratch bound, or production-safety guarantee.
 
 All 100 image TAP cases pass on native Linux, Wasm, and ARM64/QEMU with compiler `2105e9e82250` and zero final live bytes.
-Native and ARM64 runs use heap sanitization. Wasm provides the leak census only.
+Native and ARM64 runs use heap sanitization. Wasm provides the leak census and the use-after-free checks.
 The native and Wasm scripts also pass their allocator/cache smoke checks and existing negative probes.
