@@ -343,6 +343,17 @@ pub function is_box_release(op: Op): boolean {
   return op.i64_imm == 7;
 }
 
+// The release of a record or a variant box that a uniqueness test found
+// shared, with no release of any count since the test. The count is above
+// one or static, so the release never frees the box.
+pub function shared_dec(op: Op): Op {
+  return Op { ...op, i64_imm: 10 };
+}
+
+pub function is_shared_dec(op: Op): boolean {
+  return op.i64_imm == 10;
+}
+
 // The count or the uniqueness test of a value of a record or of an enum of
 // variant boxes. Such a value has no tag, so it is never an odd address: it is
 // a box, a static box, the index of a variant or null.

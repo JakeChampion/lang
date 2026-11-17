@@ -494,7 +494,12 @@ locals sit above `nvals`. It emits:
   death releases only the fields nothing took (`keep_release`,
   `classified_death`), and a classified donor's box goes to the release
   helper's `.u` entry with no guard in front (`ir.sole`), since nothing
-  between the take and the death can have changed its count;
+  between the take and the death can have changed its count. On the shared
+  arm, the box of a record or a variant loses one count inline, with no
+  free path (`ir.shared_dec`). Each instruction from the read to the death
+  must read the donor and release nothing
+  (`ssaunits.classified_count_holds`). A release of another value there can
+  make the box unique.
 - **reuse**, as the plan's tables say (`Plan.reuse`): where a token is taken,
   `__fern_rc_is_unique(d)` selects the box or null (`reuse_token`); where it
   is spent, `__fern_alloc_reuse(token, slots)` hands back the box or a fresh

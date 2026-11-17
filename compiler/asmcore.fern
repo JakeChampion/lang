@@ -6194,7 +6194,7 @@ pub function ssa_inline_back(s: EmitState): boolean {
 
 // A release whose count test is inline, so only its freeing call is slow.
 pub function ssa_inline_rc_dec(ins: ssa.SInst, s: EmitState): boolean {
-  return ins.kind_tag == ssa.CALL && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && !ssa.sole_release(ins);
+  return ins.kind_tag == ssa.CALL && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && !ssa.sole_release(ins) && !ssa.rc_inlined(ins);
 }
 
 pub function ssa_join(lp: string, blk: i32): string {
