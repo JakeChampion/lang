@@ -728,13 +728,14 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
     return (s, add(t1, at_call, "Binary files " + lbl0 + " and " + lbl1 + " differ\n"));
   }
   let (body, died) = hunks(o, a, b, p.one.path, p.two.path);
+  // git writes the header of a change of content with its first line of
+  // the patch. It writes the header of each other pair before the diff.
+  let must_show = !one.valid || !two.valid || one.mode != two.mode || p.status == b'R' || p.status == b'C';
   if (died.len() > 0) {
-    return (s, Text { ...t_in, fatal: died });
+    return (s, Text { ...if (must_show) { t } else { t_in }, fatal: died });
   }
   if (body.len() == 0) {
-    // git writes the header of a change of content with its first line
-    // of the patch, and the ranges of `-L` can leave no line.
-    let must_show = !one.valid || !two.valid || one.mode != two.mode || p.status == b'R' || p.status == b'C';
+    // The ranges of `-L` can leave no line.
     return (s, if (must_show) { t } else { t_in });
   }
   let tab0 = if (lbl0.contains(" ")) { "\t" } else { "" };
