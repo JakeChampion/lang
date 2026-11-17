@@ -21651,7 +21651,8 @@ pub function module_with_builtins(mod: Module): Module {
 }
 
 pub function module_with_builtins_typed(mod: Module): Module {
-  return monomorphize_all(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(Module { ...mod, structs: inject_builtin_enums(mod.structs) })))))));
+  let declared = Module { ...mod, structs: inject_builtin_enums(mod.structs) };
+  return monomorphize_all(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(declared)))))));
 }
 
 function tvar_spelling(name: string): string {

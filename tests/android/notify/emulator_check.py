@@ -6,7 +6,7 @@ Usage: emulator_check.py APK OUT_DIR
 It installs the app with its permissions granted and starts it. The app
 posts a notification and then the same one with a progress bar. While it
 shows, the notification manager must list it with its title and its
-progress. When the app cancels it, the list must not have it. It fails on
+progress, at most 3 seconds after the app logs the progress. When the app cancels it, the list must not have it. It fails on
 a crash. OUT_DIR gets logcat and the notification list.
 """
 
@@ -56,23 +56,27 @@ def check_shown(listing):
     failures = []
     if not any("Fern notify test" in r for r in shown):
         failures.append("the notification has no title 'Fern notify test'")
-    if not any(re.search(r"android\.progress=50\b", r) for r in shown):
+    if not any("android.progress=Integer (50)" in r for r in shown):
         failures.append("the notification has no progress of 50")
     return failures
 
 
 def wait_shown(read, seconds):
-    """Reads the listing until it shows the notification, or until the time ends.
+    """Reads the listing until it passes check_shown, or the time ends.
 
-    The notification manager applies a post after notify() returns, so the
-    first listing can still hold the version without the progress bar.
+    The notification manager applies a post after notify() returns.
     """
     deadline = time.time() + seconds
-    listing = read()
-    while check_shown(listing) and time.time() < deadline:
-        time.sleep(0.25)
+    while True:
         listing = read()
-    return listing
+        failures = check_shown(listing)
+        if not failures or time.time() >= deadline:
+            return listing, failures
+        time.sleep(0.25)
+
+
+def dumpsys():
+    return adb("shell", "dumpsys", "notification", "--noredact")
 
 
 def main(apk, out):
@@ -81,14 +85,15 @@ def main(apk, out):
     adb("logcat", "-c")
     adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
     log = wait_for(POSTED, 40)
-    # The app cancels the notification 5 seconds after it posts the progress.
-    shown = wait_shown(lambda: adb("shell", "dumpsys", "notification", "--noredact"), 3)
     failures = [f"no line matching {p.pattern!r}" for p in POSTED if not p.search(log)]
-    if not failures:
-        failures += check_shown(shown)
+    if failures:
+        shown = dumpsys()
+    else:
+        # The app cancels 5 seconds after the progress post.
+        shown, failures = wait_shown(dumpsys, 3)
     log = wait_for((CANCELLED,), 20)
     time.sleep(1)
-    after = adb("shell", "dumpsys", "notification", "--noredact")
+    after = dumpsys()
     if not CANCELLED.search(log):
         failures.append("the app did not cancel the notification")
     elif records(after):

@@ -376,7 +376,7 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 		}
 		asmPath := filepath.Join(proj, tag+".s")
 		cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, mainPath, stdlibRoot)
-		cmd.Env = childEnv(append([]string{"FERN_SEM_IR_REPORT=1"}, extraEnv...)...)
+		cmd.Env = childEnv(append([]string{"FERN_SEM_IR_REPORT=1", "FERN_SSA_ALLOC=*"}, extraEnv...)...)
 		var report strings.Builder
 		cmd.Stderr = &report
 		if out, cerr := cmd.Output(); cerr != nil {
@@ -447,14 +447,16 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 					t.Errorf("%s: the release helper calls the children-drop helper %d times, want 2", tc.name, got)
 				}
 			}
-			asmOff, _ := emit(t, proj, tc.src, "off", "FERN_SELFHOST_NO_REUSE=1")
+			asmOff, reportOff := emit(t, proj, tc.src, "off", "FERN_SELFHOST_NO_REUSE=1")
 
-			const witness = "call __fn___fern_alloc_reuse"
-			if got := strings.Count(asmOn, witness); got != tc.firings {
-				t.Errorf("%s: typed path emitted %d reuse calls, want %d", tc.name, got, tc.firings)
+			// The register form names a reuse allocation whatever routine the
+			// emitter calls for it.
+			const witness = " = call __fern_alloc_reuse "
+			if got := strings.Count(report, witness); got != tc.firings {
+				t.Errorf("%s: typed path emitted %d reuse allocations, want %d", tc.name, got, tc.firings)
 			}
-			if got := strings.Count(asmOff, witness); got != 0 {
-				t.Errorf("%s: FERN_SELFHOST_NO_REUSE=1 still emitted %d reuse calls — the switch does not reach the typed pairing", tc.name, got)
+			if got := strings.Count(reportOff, witness); got != 0 {
+				t.Errorf("%s: FERN_SELFHOST_NO_REUSE=1 still emitted %d reuse allocations — the switch does not reach the typed pairing", tc.name, got)
 			}
 
 			onAllocs := allocs(t, proj, tc.src, "leakon")
