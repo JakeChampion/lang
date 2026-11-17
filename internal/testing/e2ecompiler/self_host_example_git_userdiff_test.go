@@ -104,7 +104,8 @@ func TestSelfHostExampleGitDrivers(t *testing.T) {
 				if _, stderr, code := oracle.run(t, dir, "", "config", setting[0], setting[1]); code != 0 {
 					t.Fatalf("git config %v: %s", setting, stderr)
 				}
-				for _, c := range []string{"log -p -U1", "log -L :KEEP:n.txt", "log -L :main:src/a.c", "log -L 1,2:n.txt", "log --stat"} {
+				for _, c := range []string{"log -p -U1", "log -p --reverse", "log -p -M HEAD~1", "log -L :KEEP:n.txt", "log -L :main:src/a.c", "log -L 1,2:n.txt",
+					"log --stat"} {
 					gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
 				}
 			}
