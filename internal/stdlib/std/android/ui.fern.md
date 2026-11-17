@@ -89,7 +89,7 @@ function update(own m: Model, msg: Msg): Model {
 
 function main(): i32 {
   let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
-  let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), ui.no_focus(), ui.no_grab());
+  let lay = ui.layout(view(Model { count: 0 }, screen), text.from_faces([], []), screen, map_new(4), ui.no_focus(), ui.no_grab());
   let next = update(Model { count: 0 }, lay.taps[0]);
   if (lay.nodes.len() == 3 && lay.taps.len() == 1 && next.count == 1) {
     return 0;
@@ -134,6 +134,7 @@ function main(): i32 {
 import "core/map";
 import "std/android";
 import "std/android/draw";
+import "std/android/fonts";
 import "std/android/icons";
 import "std/android/motion";
 import "std/android/text";
@@ -2455,7 +2456,8 @@ A change asks for a frame, and the frame draws at the next vsync. So many change
 // over a background color. `show_keyboard` shows the keyboard of the system
 // on a text, which has more than one line when the flag is true.
 // `set_keyboard` gives it another text, with the cursor before a
-// character. `hide_keyboard` takes it away.
+// character. `hide_keyboard` takes it away. `fallbacks` gives the font
+// files to try for a weight and a character that the fonts do not have.
 pub struct Device {
   stays: () => boolean,
   size: (usize) => (i32, i32),
@@ -2474,6 +2476,7 @@ pub struct Device {
   set_keyboard: (string, i32) => void,
   hide_keyboard: () => void,
   state_file: () => string,
+  fallbacks: (i32, i32) => fonts.Found[],
 }
 
 // What the shell keeps for the app. `lay` is the layout of the last frame.
@@ -2660,7 +2663,20 @@ function aged(c: Cost, frames: i32): Cost {
   return Cost { ...c, frame: 0, step: 0, since: frames };
 }
 
-// Draws the frame of the time `ns`.
+// `fonts` with the fallback font of each character of the labels of
+// `nodes`.
+function covered_labels(fonts: text.Fonts, nodes: scene.Node[], find: (i32, i32) => fonts.Found[]): text.Fonts {
+  let out = fonts;
+  for n in nodes {
+    if let scene.Label(s, _, face, _, _) = n.paint {
+      out = out.covering(face, s, find);
+    }
+  }
+  return out;
+}
+
+// Draws the frame of the time `ns`. A frame that shows a character that
+// the fonts did not cover yet loads its fallback font, and lays out again.
 function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {
   if (s.host.window == 0 as usize || s.host.screen.w == 0) {
     return s;
@@ -2672,6 +2688,11 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   let animating = p.animating(s.app);
   let host = advanced(synced(s.host, root), ns);
   let built = layout(root, host.fonts, screen, host.input.offsets, Focus { field: host.focus, caret: host.caret }, host.input.grab);
+  let fonts = covered_labels(host.fonts, built.nodes, host.dev.fallbacks);
+  if (fonts.looked() != host.fonts.looked()) {
+    host = Host { ...host, fonts: fonts, paint: painter.with_fonts(host.paint, fonts) };
+    built = layout(root, host.fonts, screen, host.input.offsets, Focus { field: host.focus, caret: host.caret }, host.input.grab);
+  }
   let cost = Cost { ...aged(host.cost, host.frames), view: ms_between(t0, t1), layout: ms_between(t1, host.dev.now()) };
   let over: scene.Node[] = [];
   if (p.meter) {

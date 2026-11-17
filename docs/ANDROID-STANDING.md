@@ -58,9 +58,11 @@ Play, and the first is now fixed:
    the SDKs of other vendors are out of reach.
 
 3. **Text and languages.** There is no text shaping, no CFF fonts (most
-   CJK fonts), no color emoji and no font fallback. `std/i18n` now gives
-   localized strings, and `std/bidi` gives right-to-left text in the
-   order of UAX #9. The layout of the screen does not mirror yet.
+   CJK fonts) and no color emoji. `std/i18n` now gives localized strings.
+   `std/bidi` gives right-to-left text in the order of UAX #9.
+   `std/android/text` takes a character that its font does not have from
+   the fallback fonts of the system. The layout of the screen does not
+   mirror yet.
 
 4. **A thin set of components.** There was no checkbox, radio button,
    menu, snackbar, tab bar, app bar or navigation stack. `std/android/ui`
@@ -159,10 +161,14 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** Shaping, CFF and color glyphs, fallback fonts, and a
-   layout that mirrors for a right-to-left language. Right-to-left text
-   is done: `std/bidi` passes all the tests of UAX #9, and the labels
-   and the fields of `std/android/ui` show each line in its order.
+7. **Text.** Shaping, CFF and color glyphs, and a layout that mirrors
+   for a right-to-left language. The CJK fonts of the system are CFF, so
+   they need the CFF glyphs first.
+
+   Right-to-left text is done: `std/bidi` passes all the tests of UAX #9,
+   and the labels and the fields of `std/android/ui` show each line in
+   its order. Fallback fonts are done: the font matcher of the system, or
+   `fonts.xml` before Android 10, gives the font for each character.
    Localized strings are done: `android.languages` gives
    the languages of the person, and `std/i18n` chooses the texts and
    their plural forms.
