@@ -625,6 +625,16 @@ function pick(name: string): Case {
         let b3 = block(3, [1, 2], [inst(8, 3, [2, 1], 0, "")], ret(3));
         return Case { f: func(1, 4, [b0, b1, b2, b3]), modes: [value], returns_unit: false };
     }
+    if (name == "unknown-callee-refused") {
+        return Case { f: one_block(0, 3, [fresh_box(0), call(1, "mystery", [0]), const_int(2, 0)], ret(2)), modes: [], returns_unit: false };
+    }
+    if (name == "null-tested-against-an-i64-zero") {
+        // A 64-bit zero is a constant whose text is its value.
+        let b0: ssa.SBlock = block(0, [], [call(0, "__fern_str_own", []), inst(3, 1, [], 64, "0"), inst(9, 2, [0, 1], 64, "ne")], brif(2, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [call(3, "__fern_rc_dec", [0])], br(2));
+        let b2: ssa.SBlock = block(2, [0, 1], [const_int(4, 0)], ret(4));
+        return Case { f: func(0, 5, [b0, b1, b2]), modes: [], returns_unit: false };
+    }
     if (name == "leak-in-an-endless-loop") {
         let b0 = block(0, [], [], br(1));
         let b1 = block(1, [0, 1], [fresh_box(0)], br(1));
@@ -654,6 +664,9 @@ function main(): i32 {
     let r: rccertify.Report = rccertify.certify(c.f, irops, own_abi, abis, rcsigs.table(), ops);
     for x in r.findings {
         print(rccertify.render("case", x));
+    }
+    if (r.failed != "") {
+        print("case: cannot be certified: " + r.failed);
     }
     let at: string = "";
     for v in r.unproved_at {
@@ -745,6 +758,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"unit-held-into-an-exit", nil, 0, ""},
 		{"borrow-released-before-an-exit", []string{"spent without a unit of v0"}, 0, ""},
 		{"leak-in-an-endless-loop", []string{"leaked where it dies of v0"}, 0, ""},
+		{"null-tested-against-an-i64-zero", nil, 0, ""},
+		{"unknown-callee-refused", []string{"cannot be certified: calls mystery, which has no rc signature and no ABI"}, 0, ""},
 		{"unknown-contract-returns-a-phi-of-a-fresh-box", nil, 2, ""},
 		{"loop-phi-borrows-a-held-box", nil, 0, ""},
 		{"loop-phi-borrows-a-box-never-released", []string{"of v1"}, 0, ""},
