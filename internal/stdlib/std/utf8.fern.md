@@ -154,7 +154,7 @@ pub function is_valid(s: string): boolean {
 // The length of the longest valid prefix: the offset of the first invalid
 // sequence, or the whole length.
 function __valid_prefix(s: string): i32 {
-  return __scalar_prefix(s, __lanes_prefix(s.as_bytes()));
+  return __scalar_prefix(s, __lanes_prefix(s));
 }
 
 // Checks 16 bytes in each step, by the method of Keiser and Lemire,
@@ -162,7 +162,8 @@ function __valid_prefix(s: string): i32 {
 // at the first step that finds an error, and answers the start of the last
 // sequence before that step. Each error that the steps do not find starts
 // there or later.
-function __lanes_prefix(b: [u8]): i32 {
+function __lanes_prefix(s: string): i32 {
+  let b = s.as_bytes();
   let n = b.len();
   let at = 0;
   if (n < 16) {
@@ -204,8 +205,13 @@ function __lanes_prefix(b: [u8]): i32 {
       if (__u8x16_bitmask(__u8x16_eq(__u8x16_xor(deep, special), zero)) != 65535) {
         return __sequence_start(b, at);
       }
+      at += 16;
+    } else if (at + 16 < n) {
+      // The 16 bytes are ASCII, so a step can start at each byte after them.
+      at = __ascii_run(s, at + 16);
+    } else {
+      at += 16;
     }
-    at += 16;
   }
   return __sequence_start(b, at);
 }
