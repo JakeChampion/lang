@@ -126,6 +126,26 @@ function test_arabic_is_shaped(): test.TestOutcome {
   return test.assert_eq(laid_glyphs(fs, "باب") + " " + laid_glyphs(fs, "ب ب"), "85,7,4,85,11 85,7,1,85,7");
 }
 
+// The fatha attaches to the beh with the GPOS anchors of the font: its
+// bitmap is above the beh, and its middle is near the middle of the beh.
+function test_a_mark_sits_on_its_base(): test.TestOutcome {
+  let Ok(b) = base64.decode(shape_vectors.font()) else {
+    return test.fail("the font did not decode");
+  };
+  let Some(naskh) = truetype.parse(b) else {
+    return test.fail("the font did not parse");
+  };
+  let (_, placed) = text.layout(text.new_cache(), text.from_faces([naskh], [400]), 0, 100, 0, "َب");
+  let glyphs = placed.map((p: text.Placed): i64 => p.key & 4294967295i64);
+  if (glyphs.len() != 3 || glyphs[0] != 95i64 || glyphs[2] != 7i64) {
+    return test.fail("the glyphs are " + glyphs.map((g: i64): string => g.to_string()).join(","));
+  }
+  let (mark, base) = (placed[0], placed[2]);
+  let middle = mark.x + mark.bm.width / 2 - (base.x + base.bm.width / 2);
+  let above = mark.y + mark.bm.height <= base.y;
+  return test.assert_eq(above.to_string() + " " + (middle.abs() < base.bm.width / 4).to_string(), "true true");
+}
+
 function main(): i32 {
   let r = test.new("std/android/text");
   r = r.it("width and line measure a text", test_width_and_line);
@@ -136,5 +156,6 @@ function main(): i32 {
   r = r.it("letters and span take characters", test_letters_and_span);
   r = r.it("a fallback font draws a character that the face does not have", test_fallback_takes_a_font_that_has_the_character);
   r = r.it("a run of Arabic letters is shaped", test_arabic_is_shaped);
+  r = r.it("a mark sits on its base", test_a_mark_sits_on_its_base);
   return r.finish();
 }

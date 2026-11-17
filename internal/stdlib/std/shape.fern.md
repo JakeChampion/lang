@@ -1,10 +1,12 @@
 # Text shaping
 
-This module gives the glyphs of a font for a text. It does the OpenType substitution of the glyphs for the joining forms of Arabic, for ligatures and for marks.
+This module gives the glyphs of a font for a text, and their positions. It does the OpenType substitution of the glyphs for the joining forms of Arabic, for ligatures and for marks. Then it moves the glyphs: for the kerning, the cursive joins and the marks on their bases.
 
 ## Model
 
-`shape` takes a text in logical order and the OpenType tag of its script, such as `"arab"`. It gives a `truetype.Run`: the glyphs in logical order, with the cluster of each glyph. A cluster is the index of the first character that the glyph shows. A mark has the cluster of its base.
+`shape` takes a text in logical order and the OpenType tag of its script, such as `"arab"`. It gives a `truetype.Run`: the glyphs in logical order, with the cluster of each glyph and its position. A cluster is the index of the first character that the glyph shows. A mark has the cluster of its base.
+
+A position is the advance of the glyph and its offset from its pen, in font units. A glyph goes at its pen and its offset, and the pen then moves by its advance. In a right-to-left run, the glyph that is last in logical order goes first, at the left.
 
 Shaping has these steps, in the order of HarfBuzz:
 
@@ -12,14 +14,16 @@ Shaping has these steps, in the order of HarfBuzz:
 2. Each character takes the glyph that the character map of the font gives.
 3. In Arabic, each letter takes a form: isolated, initial, medial or final. It is the joining form of the letter between its neighbours, from its Unicode joining type. A mark is transparent: it does not stop the letters on its two sides from joining.
 4. The lookups of the GSUB features apply in stages. A lookup of a form applies only to the letters of that form.
+5. Each glyph takes its advance from the font. Then the lookups of the GPOS features apply in one stage: `abvm`, `blwm`, `curs`, `dist`, `kern`, `mark` and `mkmk`.
+6. Each mark, of the GDEF class 3, has no advance. Each glyph that a lookup attached takes the offsets of the glyph that it attaches to.
 
 The Arabic stages are `ccmp` and `locl`, then `isol`, `fina`, `medi`, `init`, `rlig` and `calt` one at a time, then `rclt`, `liga`, `clig` and `mset`. Other scripts have the stage `rvrn`, then one stage of `ccmp`, `locl`, `rlig`, `calt`, `clig`, `liga` and `rclt`.
 
 ## Contracts
 
-For the GSUB lookups of the types 1 to 8, the glyphs and the clusters are those of HarfBuzz. The test `tests/stdlib/shape_test.fern` compares them for a set of words.
+The glyphs, the clusters and the positions are those of HarfBuzz. That is true for the GSUB lookups of the types 1 to 8 and the GPOS lookups of the types 1 to 9. The test `tests/stdlib/shape_test.fern` compares them for a set of words. An Arabic run goes from right to left, and a run of another script from left to right.
 
-`shape` does not position the glyphs: the advances come from the font. A mark glyph, of the GDEF class 3, has its own advance, which is 0 in most fonts. `shape` does not compose or decompose characters, and it does not mirror the brackets of a right-to-left text. A character that the font does not have takes the glyph 0.
+A font with no GPOS table has no mark positioning: HarfBuzz then moves the marks by their combining classes, and `shape` does not. `shape` does not compose or decompose characters, and it does not mirror the brackets of a right-to-left text. A character that the font does not have takes the glyph 0.
 
 ## Executable example
 
@@ -47,6 +51,8 @@ function main(): i32 {
 <<joining>>
 
 <<stages>>
+
+<<positions>>
 ```
 
 ### `module introduction`
@@ -248,6 +254,11 @@ function forms(cps: char[]): i32[] {
 
 ```fern
 <<stages>>=
+// The GPOS features, which apply in one stage.
+function position_features(): string[] {
+  return ["abvm", "blwm", "curs", "dist", "kern", "mark", "mkmk"];
+}
+
 // The features of each stage for the script `script`.
 function stages(script: string): string[][] {
   if (script == "arab") {
@@ -297,20 +308,23 @@ pub function shape(f: truetype.Font, text: string, script: string): truetype.Run
     let form = if (arabic) { shapes[i] } else { 0 };
     masks = masks.append(GLOBAL | form);
   }
-  let r = truetype.Run { glyphs: glyphs, clusters: clusters, masks: masks };
+  let r = truetype.run_of(glyphs, clusters, masks);
   for stage in stages(script) {
-    r = applied_stage(f, r, script, stage);
+    r = applied_stage(f, r, script, stage, false);
   }
-  return r;
+  r = f.with_advances(r, arabic);
+  r = applied_stage(f, r, script, position_features(), true);
+  return finished(f, r);
 }
 
 // `r` after the lookups of the features `tags`, in the order of their
-// indices. A lookup of two features applies with the masks of both.
-function applied_stage(f: truetype.Font, r: truetype.Run, script: string, tags: string[]): truetype.Run {
+// indices: those of GPOS with `gpos`, else those of GSUB. A lookup of two
+// features applies with the masks of both.
+function applied_stage(f: truetype.Font, r: truetype.Run, script: string, tags: string[], gpos: boolean): truetype.Run {
   let lookups: i32[] = [];
   let masks: i32[] = [];
   for tag in tags {
-    for li in f.feature_lookups(script, tag) {
+    for li in if (gpos) { f.position_lookups(script, tag) } else { f.feature_lookups(script, tag) } {
       let at = 0;
       while (at < lookups.len() && lookups[at] < li) {
         at += 1;
@@ -325,7 +339,7 @@ function applied_stage(f: truetype.Font, r: truetype.Run, script: string, tags: 
   }
   let run = r;
   for k in 0..lookups.len() {
-    run = f.substitute(run, lookups[k], masks[k]);
+    run = if (gpos) { f.position(run, lookups[k], masks[k]) } else { f.substitute(run, lookups[k], masks[k]) };
   }
   return run;
 }
@@ -339,5 +353,55 @@ function inserted_at(xs: i32[], at: i32, v: i32): i32[] {
     out = out.append(xs[k]);
   }
   return if (at >= xs.len()) { out.append(v) } else { out };
+}
+```
+
+### `positions`
+
+After the GPOS lookups, a mark has no advance. In a font with no GPOS table, a mark of a left-to-right run also moves back by its advance. Thus it stays on its base. Then each glyph that a lookup attached takes the offsets of the glyph that it attaches to. A mark also takes the advances between the two glyphs, so that its offset is from its own pen.
+
+```fern
+<<positions>>=
+// The most glyphs in a chain of attachments.
+const MAX_CHAIN: i32 = 64;
+
+// `r` with the advance of each mark at 0, and each attachment added to the
+// offsets of its glyph.
+function finished(f: truetype.Font, r: truetype.Run): truetype.Run {
+  let p = r.pos;
+  for i in 0..r.glyphs.len() {
+    if (f.glyph_class(r.glyphs[i]) == 3) {
+      let back = if (f.gpos < 0 && !p.rtl) { p.advances[i] } else { 0 };
+      p = truetype.Positions { ...p, advances: p.advances.with(i, 0), dx: p.dx.with(i, p.dx[i] - back) };
+    }
+  }
+  for i in 0..r.glyphs.len() {
+    p = propagated(p, i, MAX_CHAIN);
+  }
+  return truetype.Run { ...r, pos: p };
+}
+
+// `p` with the glyph at `i` moved by the glyph that it attaches to, after
+// that glyph moves by its own attachment.
+function propagated(own p: truetype.Positions, i: i32, depth: i32): truetype.Positions {
+  let chain = p.chain[i];
+  if (chain == 0) {
+    return p;
+  }
+  let out = truetype.Positions { ...p, chain: p.chain.with(i, 0) };
+  let j = i + chain;
+  if (j < 0 || j >= p.chain.len() || depth == 0) {
+    return out;
+  }
+  out = propagated(out, j, depth - 1);
+  if (out.attach[i] == 2) {
+    return truetype.Positions { ...out, dy: out.dy.with(i, out.dy[i] + out.dy[j]) };
+  }
+  let dx = out.dx[i] + out.dx[j];
+  let (from, to, sign) = if (out.rtl) { (j + 1, i + 1, 1) } else { (j, i, -1) };
+  for k in from..to {
+    dx += sign * out.advances[k];
+  }
+  return truetype.Positions { ...out, dx: out.dx.with(i, dx), dy: out.dy.with(i, out.dy[i] + out.dy[j]) };
 }
 ```

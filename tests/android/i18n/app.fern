@@ -3,8 +3,9 @@
 // languages of the person, and the language that std/i18n chooses for an
 // app with German and English texts. Then it logs how many glyphs of a
 // Hebrew, an Arabic and a Chinese word come from a fallback font and have
-// pixels, and finishes. The Chinese font of the system is CFF, in a
-// collection.
+// pixels. The Chinese font of the system is CFF, in a collection. Last it
+// logs whether the fatha of an Arabic letter is above the middle of the
+// letter, and finishes.
 import "std/android";
 import "std/android/fonts";
 import "std/android/launch";
@@ -41,6 +42,18 @@ function drawn(fs: text.Fonts, s: string): string {
   return n.to_string() + "/" + placed.len().to_string();
 }
 
+// Whether the first glyph of `s` is above its last glyph, and whether its
+// middle is near the middle of the last glyph.
+function mark_on_base(fs: text.Fonts, s: string): string {
+  let (_, placed) = text.layout(text.new_cache(), fs, 0, 64, 0, s);
+  if (placed.len() < 2) {
+    return "missing";
+  }
+  let (mark, base) = (placed[0], placed[placed.len() - 1]);
+  let middle = mark.x + mark.bm.width / 2 - (base.x + base.bm.width / 2);
+  return (mark.y + mark.bm.height <= base.y).to_string() + " " + (middle.abs() < base.bm.width / 4).to_string();
+}
+
 function step(s: App, e: android.Event): App {
   if let android.Resume = e {
     if (s.done) {
@@ -60,6 +73,9 @@ function step(s: App, e: android.Event): App {
       fs = fs.covering(0, word, text.system_fallbacks(s.ctx, "sans-serif"));
       log.warn("i18ntest: fallback " + drawn(fs, bidi.display(word, bidi.AUTO)));
     }
+    let fatha = "\u{628}\u{64e}";
+    fs = fs.covering(0, fatha, text.system_fallbacks(s.ctx, "sans-serif"));
+    log.warn("i18ntest: mark " + mark_on_base(fs, bidi.display(fatha, bidi.AUTO)));
     android.finish(s.ctx);
     return App { ...s, done: true };
   }

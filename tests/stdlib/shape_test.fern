@@ -24,9 +24,19 @@ function joined(xs: i32[]): string {
   return xs.map((x: i32): string => x.to_string()).join(",");
 }
 
+// The advance, the x offset and the y offset of each glyph of `r`.
+function places(r: truetype.Run): string {
+  let out: string[] = [];
+  for i in 0..r.glyphs.len() {
+    out = out.append(r.pos.advances[i].to_string() + ":" + r.pos.dx[i].to_string() + ":" + r.pos.dy[i].to_string());
+  }
+  return out.join(",");
+}
+
 // The cases of the script `script` that do not give the glyphs and the
-// clusters of HarfBuzz, one on each line.
-function differences(font: Option[truetype.Font], cases: string, script: string): string {
+// clusters of HarfBuzz, one on each line. With `placed`, the positions of
+// the glyphs must be those of HarfBuzz too.
+function differences(font: Option[truetype.Font], cases: string, script: string, placed: boolean): string {
   let Some(f) = font else {
     return "the font did not parse";
   };
@@ -34,13 +44,13 @@ function differences(font: Option[truetype.Font], cases: string, script: string)
   let count = 0;
   for line in cases.split("\n") {
     let parts = line.split("\t");
-    if (parts.len() != 4 || parts[0] != script) {
+    if (parts.len() != 5 || parts[0] != script) {
       continue;
     }
     count += 1;
     let r = shape.shape(f, parts[1], script);
-    let got = joined(r.glyphs) + " " + joined(r.clusters);
-    let want = parts[2] + " " + parts[3];
+    let got = joined(r.glyphs) + " " + joined(r.clusters) + (if (placed) { " " + places(r) } else { "" });
+    let want = parts[2] + " " + parts[3] + (if (placed) { " " + parts[4] } else { "" });
     if (got != want) {
       out = out + parts[1] + ": " + got + ", want " + want + "\n";
     }
@@ -49,17 +59,26 @@ function differences(font: Option[truetype.Font], cases: string, script: string)
 }
 
 function test_arabic_matches_harfbuzz(): test.TestOutcome {
-  return test.assert_eq(differences(naskh(), shape_vectors.cases(), "arab"), "");
+  return test.assert_eq(differences(naskh(), shape_vectors.cases(), "arab", true), "");
 }
 
 function test_default_shaper_matches_harfbuzz(): test.TestOutcome {
-  return test.assert_eq(differences(naskh(), shape_vectors.cases(), "latn"), "");
+  return test.assert_eq(differences(naskh(), shape_vectors.cases(), "latn", true), "");
 }
 
-// Each type and format of lookup, the flags that skip marks and bases, and
-// the lookups of a context that change the count of glyphs.
+// Each type and format of GSUB lookup, the flags that skip marks and
+// bases, and the lookups of a context that change the count of glyphs. The
+// font has no GPOS table, so HarfBuzz moves its marks by its own rules, and
+// the positions do not count.
 function test_each_lookup_matches_harfbuzz(): test.TestOutcome {
-  return test.assert_eq(differences(font_of(shape_vectors.lookup_font()), shape_vectors.lookup_cases(), "latn"), "");
+  return test.assert_eq(differences(font_of(shape_vectors.lookup_font()), shape_vectors.lookup_cases(), "latn", false), "");
+}
+
+// Each type of GPOS lookup, left to right and right to left.
+function test_each_position_matches_harfbuzz(): test.TestOutcome {
+  let f = font_of(shape_vectors.position_font());
+  let cases = shape_vectors.position_cases();
+  return test.assert_eq(differences(f, cases, "latn", true) + differences(f, cases, "arab", true), "");
 }
 
 // The init feature of the font holds two lookups, and the medi feature
@@ -105,6 +124,7 @@ function main(): i32 {
   r = r.it("Arabic words give the glyphs of HarfBuzz", test_arabic_matches_harfbuzz);
   r = r.it("the default shaper gives the glyphs of HarfBuzz", test_default_shaper_matches_harfbuzz);
   r = r.it("each type of lookup gives the glyphs of HarfBuzz", test_each_lookup_matches_harfbuzz);
+  r = r.it("each type of GPOS lookup gives the positions of HarfBuzz", test_each_position_matches_harfbuzz);
   r = r.it("feature_lookups reads the script and the feature lists", test_feature_lookups);
   r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);
   r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);

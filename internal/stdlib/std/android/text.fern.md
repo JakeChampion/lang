@@ -14,7 +14,7 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
-A run of Arabic letters in one font goes to `std/shape`, which gives the joining forms of the letters. The run has no letter spacing, so that its letters stay joined. A mark of the font has no advance.
+A run of Arabic letters in one font goes to `std/shape`, which gives the joining forms of the letters and the position of each glyph. A mark sits on its base at the anchors of the font. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
 
 `std/truetype` draws each glyph one time for each size, weight and quarter of a pixel. A `Cache` keeps the glyphs. It also keeps a `Sprite` for each text: the coverage of the whole text, which `put` draws on a frame in a color. `layout` gives the glyphs of a text with their positions, for a painter that draws glyphs from an atlas on the GPU.
 
@@ -317,9 +317,10 @@ pub function face_for(fs: Fonts, weight: i32): i32 {
 <<measurement>>=
 // The glyphs of `s` from the left: the font id and the glyph of each, and
 // the pen position of each in pixels, then the end of the text. `pen` is
-// the position of the next glyph. `track` adds space between the
+// the position of the next glyph. `ys` moves each glyph down from the
+// baseline, in pixels. `track` adds space between the
 // characters, in thousandths of the em, as Android's letterSpacing does.
-struct Pens { ids: i32[], glyphs: i32[], at: f64[], pen: f64 }
+struct Pens { ids: i32[], glyphs: i32[], at: f64[], ys: f64[], pen: f64 }
 
 function pens(fs: Fonts, w: i32, px: i32, track: i32, s: string): Pens {
   let cs: char[] = [];
@@ -327,7 +328,7 @@ function pens(fs: Fonts, w: i32, px: i32, track: i32, s: string): Pens {
     cs = cs.append(c);
   }
   let spacing = px as f64 * (track as f64) / 1000.0;
-  let p = Pens { ids: [], glyphs: [], at: [], pen: 0.0 };
+  let p = Pens { ids: [], glyphs: [], at: [], ys: [], pen: 0.0 };
   let prev = -1;
   let prev_id = -1;
   let i = 0;
@@ -358,7 +359,13 @@ function placed(own p: Pens, f: truetype.Font, id: i32, px: i32, g: i32, kern: i
   let scale = px as f64 / (f.units_per_em as f64);
   let x = p.pen + kern as f64 * scale;
   let advance = if (f.glyph_class(g) == 3) { 0.0 } else { f.advance(g) as f64 * scale };
-  return Pens { ids: p.ids.append(id), glyphs: p.glyphs.append(g), at: p.at.append(x), pen: x + advance };
+  return pen_glyph(p, id, g, x, 0.0, x + advance);
+}
+
+// `p` with the glyph `g` of the font `id` at `x`, `y` pixels below the
+// baseline, and the pen at `next`.
+function pen_glyph(own p: Pens, id: i32, g: i32, x: f64, y: f64, next: f64): Pens {
+  return Pens { ids: p.ids.append(id), glyphs: p.glyphs.append(g), at: p.at.append(x), ys: p.ys.append(y), pen: next };
 }
 
 // The end of the run of Arabic letters from `cs[i]` that the font `id`
@@ -395,7 +402,8 @@ function arabic(c: char): boolean {
 
 // `p` with the glyphs of the Arabic letters `cs[i..end]`. They are in
 // visual order, so they are shaped from the last one to the first, and
-// their glyphs are placed from the last one to the first.
+// their glyphs are placed from the last one to the first, at the positions
+// that std/shape gives.
 function shaped_run(own p: Pens, f: truetype.Font, id: i32, px: i32, cs: char[], i: i32, end: i32): Pens {
   let logical = "";
   let k = end - 1;
@@ -404,13 +412,13 @@ function shaped_run(own p: Pens, f: truetype.Font, id: i32, px: i32, cs: char[],
     k -= 1;
   }
   let run = shape.shape(f, logical, "arab");
+  let scale = px as f64 / (f.units_per_em as f64);
   let out = p;
-  let prev = -1;
   let j = run.glyphs.len() - 1;
   while (j >= 0) {
-    let g = run.glyphs[j];
-    out = placed(out, f, id, px, g, if (prev >= 0) { f.kerning(g, prev) } else { 0 });
-    prev = g;
+    let x = out.pen + run.pos.dx[j] as f64 * scale;
+    let next = out.pen + run.pos.advances[j] as f64 * scale;
+    out = pen_glyph(out, id, run.glyphs[j], x, -(run.pos.dy[j] as f64) * scale, next);
     j -= 1;
   }
   return out;
@@ -599,8 +607,8 @@ function glyph(own c: Cache, fs: Fonts, w: i32, px: i32, g: i32, sub: i32): (Cac
 
 // A glyph of a text: `key` names its bitmap at its size and its part of a
 // pixel, and its bitmap has its left column `x` pixels right of the first
-// pen. Its top row is `bm.top` rows below the baseline.
-pub struct Placed { key: i64, bm: truetype.Bitmap, x: i32 }
+// pen. Its top row is `y` rows below the baseline.
+pub struct Placed { key: i64, bm: truetype.Bitmap, x: i32, y: i32 }
 
 // The glyphs of `s` in weight `w` at `px`, with the letter spacing `track`,
 // each on a quarter of a pixel.
@@ -615,7 +623,7 @@ pub function layout(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
     let q = (p.at[i] * 4.0 + 0.5).floor() as i32;
     let (next, bm) = glyph(cache, fs, p.ids[i], px, p.glyphs[i], q & 3);
     cache = next;
-    out = out.append(Placed { key: glyph_key(p.ids[i], px, p.glyphs[i], q & 3), bm: bm, x: (q >> 2) + bm.left });
+    out = out.append(Placed { key: glyph_key(p.ids[i], px, p.glyphs[i], q & 3), bm: bm, x: (q >> 2) + bm.left, y: bm.top + (p.ys[i] + 0.5).floor() as i32 });
   }
   return (cache, out);
 }
@@ -638,8 +646,8 @@ pub function sprite(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
     if (pl.bm.width > 0) {
       x0 = min(x0, pl.x);
       x1 = max(x1, pl.x + pl.bm.width);
-      y0 = min(y0, pl.bm.top);
-      y1 = max(y1, pl.bm.top + pl.bm.height);
+      y0 = min(y0, pl.y);
+      y1 = max(y1, pl.y + pl.bm.height);
     }
   }
   if (x1 <= x0) {
@@ -654,7 +662,7 @@ pub function sprite(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
   for pl in placed {
     let bm = pl.bm;
     for row in 0..bm.height {
-      let to = (bm.top - y0 + row) * sw + pl.x - x0;
+      let to = (pl.y - y0 + row) * sw + pl.x - x0;
       let from = row * bm.width;
       for col in 0..bm.width {
         let a = bm.coverage[from + col] as i32;
