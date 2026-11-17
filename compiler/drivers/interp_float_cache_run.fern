@@ -10,17 +10,23 @@ function main(): i32 {
   }
   if let ast.StmtReturn(ret) = mod.top_stmts[0] {
     if let ast.ExprNumber(number) = ret.value {
-      if (!number.is_float || number.bits == 0i64) {
+      if (number.bits == 0i64) {
         return 2;
       }
       // Keep the parsed bits, but replace the text with a different value.
-      let changed: ast.Expr = ast.ExprNumber { ...number, text: "0.0", raw: "0.0" };
+      let zero = if (number.is_float) { "0.0" } else { "0" };
+      let changed: ast.Expr = ast.ExprNumber { ...number, text: zero, raw: zero };
       let probe = parser.Module { ...mod, top_stmts: [ast.StmtReturn { ...ret, value: changed }] };
       let expected = number.bits;
       for i in 0..16 {
         match (interp.eval_module(probe)) {
           interp.VFloat(value) => {
-            if (f64_bits(value.v) != expected) {
+            if (!number.is_float || f64_bits(value.v) != expected) {
+              return 3;
+            }
+          },
+          interp.VInt(value) => {
+            if (number.is_float || value.v as i64 != expected) {
               return 3;
             }
           },
