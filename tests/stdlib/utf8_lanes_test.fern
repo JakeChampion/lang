@@ -1,0 +1,177 @@
+// The 16-byte steps of utf8.from_bytes must give the offset that a scalar
+// reference gives, for each position of an error in a step and across steps.
+import "std/test";
+import "std/utf8" as utf8;
+
+function continuation(b: u8[], i: i32): boolean {
+  return i < b.len() && b[i] as i32 >= 128 && b[i] as i32 < 192;
+}
+
+// The offset of the first invalid sequence of `b`, or its length.
+function reference(b: u8[]): i32 {
+  let i = 0;
+  while (i < b.len()) {
+    let c = b[i] as i32;
+    if (c < 128) {
+      i += 1;
+      continue;
+    }
+    let width = 0;
+    let cp = 0;
+    let least = 0;
+    if (c >= 194 && c < 224) {
+      width = 2;
+      cp = c - 192;
+      least = 128;
+    } else if (c >= 224 && c < 240) {
+      width = 3;
+      cp = c - 224;
+      least = 2048;
+    } else if (c >= 240 && c < 245) {
+      width = 4;
+      cp = c - 240;
+      least = 65536;
+    } else {
+      return i;
+    }
+    for k in 1..width {
+      if (!continuation(b, i + k)) {
+        return i;
+      }
+      cp = cp * 64 + (b[i + k] as i32 - 128);
+    }
+    if (cp < least || cp > 1114111 || cp >= 55296 && cp <= 57343) {
+      return i;
+    }
+    i += width;
+  }
+  return b.len();
+}
+
+function checked(b: u8[]): i32 {
+  match (utf8.from_bytes(b)) {
+    Ok(_) => {
+      return b.len();
+    },
+    Err(e) => {
+      return e.offset;
+    }
+  }
+  return -1;
+}
+
+function ascii(n: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append((97 + i % 26) as u8);
+  }
+  return out;
+}
+
+function joined(a: u8[], b: u8[]): u8[] {
+  let out = a;
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+// Each invalid sequence after each count of ASCII bytes from 0 to 40, so that
+// it starts in each lane and crosses the end of a step.
+function test_each_error_at_each_offset(): test.TestOutcome {
+  let bad: u8[][] = [
+    [128 as u8],
+    [191 as u8],
+    [192 as u8, 128 as u8],
+    [193 as u8, 191 as u8],
+    [194 as u8, 65 as u8],
+    [224 as u8, 128 as u8, 128 as u8],
+    [224 as u8, 159 as u8, 191 as u8],
+    [226 as u8, 130 as u8, 65 as u8],
+    [237 as u8, 160 as u8, 128 as u8],
+    [237 as u8, 191 as u8, 191 as u8],
+    [240 as u8, 128 as u8, 128 as u8, 128 as u8],
+    [240 as u8, 143 as u8, 191 as u8, 191 as u8],
+    [244 as u8, 144 as u8, 128 as u8, 128 as u8],
+    [245 as u8, 128 as u8, 128 as u8, 128 as u8],
+    [255 as u8],
+    [240 as u8, 159 as u8, 152 as u8, 128 as u8, 128 as u8],
+    [226 as u8, 130 as u8],
+    [240 as u8, 159 as u8, 152 as u8],
+  ];
+  for k in 0..41 {
+    for seq in bad {
+      for tail in [0, 1, 20] {
+        let b = joined(joined(ascii(k), seq), ascii(tail));
+        let want = reference(b);
+        let got = checked(b);
+        if (got != want) {
+          return test.fail("after " + k.to_string() + " ASCII bytes and " + tail.to_string() + " after: offset " + got.to_string() + ", want " + want.to_string());
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+// Valid text with each width of sequence across the end of each step.
+function test_valid_text_at_each_alignment(): test.TestOutcome {
+  let text = "é€𝄞中ab".bytes();
+  for k in 0..33 {
+    let b = ascii(k);
+    for _ in 0..12 {
+      b = joined(b, text);
+    }
+    let got = checked(b);
+    if (got != b.len()) {
+      return test.fail("after " + k.to_string() + " ASCII bytes: offset " + got.to_string() + " of " + b.len().to_string());
+    }
+  }
+  return test.pass();
+}
+
+function next(seed: i64): i64 {
+  return seed * 6364136223846793005i64 + 1442695040888963407i64;
+}
+
+// Random text of valid scalars with some bytes from a set near the limits.
+function test_random_text_matches_the_reference(): test.TestOutcome {
+  let pool: i32[] = [0, 65, 127, 128, 143, 144, 159, 160, 191, 192, 193, 194, 223, 224, 225, 237, 239, 240, 243, 244, 245, 255];
+  let seed: i64 = 20261117i64;
+  for round in 0..400 {
+    seed = next(seed);
+    let count = (seed >> 33) as i32 & 63;
+    let b: u8[] = [];
+    for _ in 0..count {
+      seed = next(seed);
+      let r = (seed >> 33) as i32 & 2147483647;
+      if (round % 4 == 0 || r % 9 != 0) {
+        let cp = r % 128;
+        if (r % 4 == 1) {
+          cp = 128 + r % 1920;
+        } else if (r % 4 == 2) {
+          cp = 2048 + r % 53248;
+        } else if (r % 4 == 3) {
+          cp = 65536 + r % 1048576;
+        }
+        b = joined(b, utf8.encode(cp as char).bytes());
+      } else {
+        b = b.append(pool[r % pool.len()] as u8);
+      }
+    }
+    let want = reference(b);
+    let got = checked(b);
+    if (got != want) {
+      return test.fail("round " + round.to_string() + ", " + b.len().to_string() + " bytes: offset " + got.to_string() + ", want " + want.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("std/utf8 lanes");
+  r = r.it("each error at each offset", test_each_error_at_each_offset);
+  r = r.it("valid text at each alignment", test_valid_text_at_each_alignment);
+  r = r.it("random text matches the reference", test_random_text_matches_the_reference);
+  return r.finish();
+}

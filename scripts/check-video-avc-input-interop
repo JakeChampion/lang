@@ -249,6 +249,38 @@ def delimiter_controls(directory, original):
     print("20 coded delimiter payload or position refusals preserve exact FFmpeg extraction", flush=True)
 
 
+def filler_positions(directory, source):
+    data = source.read_bytes()
+    packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets", "-of", "json", str(source)]))["packets"]
+    original = [units(data[int(packet["pos"]):int(packet["pos"]) + int(packet["size"])]) for packet in packets]
+    filler = b"\x0c\xff\x80"
+    groups = [list(group) for group in original]
+    for group in groups:
+        slices = [i for i, unit in enumerate(group) if unit[0] & 31 in (1, 5)]
+        assert len(slices) >= 2
+        group[slices[0] + 1:slices[0] + 1] = [filler, b"\x0c\x80"]
+    path = directory / "filler-between-coded-slices.h264"
+    path.write_bytes(encoded_groups(groups))
+    delimiter_extraction(path, groups)
+    compare(path, 18, decoded(source))
+    for index in (0, 6):
+        for prefix in (None, 9, 7, 8):
+            changed = [list(group) for group in original]
+            group = changed[index]
+            at = 0 if prefix is None else next(i for i, unit in enumerate(group) if unit[0] & 31 == prefix) + 1
+            group.insert(at, filler)
+            suffix = index > 0 and prefix is None
+            name = "filler-before-next-aud.h264" if suffix else f"invalid-filler-position-{index}-{prefix}.h264"
+            path = directory / name
+            path.write_bytes(encoded_groups(changed))
+            delimiter_extraction(path, changed)
+            if suffix:
+                compare(path, 18, decoded(source))
+            else:
+                reject(path, path.read_bytes())
+    print("Seven coded filler-position refusals preserve exact FFmpeg extraction and follow H.264 7.4.1.2.3", flush=True)
+
+
 def filler_controls(directory, baseline, reordered):
     spec = importlib.util.spec_from_file_location("avc_filler_vectors", ROOT / "scripts/gen-video-avc-input-fixtures.py")
     fixtures = importlib.util.module_from_spec(spec)
@@ -326,3 +358,4 @@ with tempfile.TemporaryDirectory() as temporary:
     parameter_reuse(directory)
     delimiter_controls(directory, paths[0])
     filler_controls(directory, paths[0], paths[3])
+    filler_positions(directory, paths[2])
