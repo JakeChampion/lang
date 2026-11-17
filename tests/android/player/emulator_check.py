@@ -141,7 +141,7 @@ def run_playback(uri, error_uri, out):
         assert not re.search(r"Fatal signal|FATAL EXCEPTION|UnsatisfiedLinkError|JNI DETECTED ERROR", log), log
         for marker in ("opened", "prepared round=0", "paused position_ms=", "pause stable",
                        "seeked position_ms=", "timestamp media_us=", "completed round=0",
-                       "prepared round=1", "completed round=1", "expected error", "passed"):
+                       "prepared round=1", "speed took_ms=", "completed round=1", "expected error", "passed"):
             assert "playertest: " + marker in log, "missing " + marker
         assert screen is not None, "no screenshot during playback"
         verify_screen(screen)
