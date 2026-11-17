@@ -3,7 +3,6 @@ import "../parser";
 import "./rundriver";
 import "../asmcore";
 import "../wasm_ir";
-import "../physicalbody";
 import "../irtables";
 import "../ircore";
 import "../semlower";
@@ -72,8 +71,8 @@ function main(): i32 {
   let cache_a = slice_cache(whole, 0, half);
   let cache_b = slice_cache(whole, half, whole.len());
 
-  let unit_a = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab, physicalbody.no_collection());
-  let unit_b = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab, physicalbody.no_collection());
+  let unit_a = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab, g.physical);
+  let unit_b = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab, g.physical);
 
   let strs_a = wasm_ir.str_values(cache_a);
   let strs_b = wasm_ir.str_values(cache_b);
