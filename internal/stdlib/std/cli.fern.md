@@ -4,7 +4,7 @@ This module parses command-line arguments.
 
 ## Model
 
-`CliSpec` describes options, flags, and subcommands. `parse` returns option values, operands, the selected command, and a parse error.
+`CliSpec` describes options, flags, and subcommands. `parse` returns option values, operands and the selected command, or a `CliError` for arguments that the specification does not accept.
 
 ## Contracts
 
@@ -17,8 +17,18 @@ import "std/cli";
 
 function main(): i32 {
   let spec = cli.new("greet", "Print a name").option("name", "n", "Name");
-  let parsed = spec.parse(["greet", "--name", "Ada"]);
-  if (parsed.is_error() || parsed.value_or("name", "") != "Ada") { return 1; }
+  match (spec.parse(["greet", "--name", "Ada"])) {
+    Ok(parsed) => {
+      if (parsed.value_or("name", "") != "Ada") { return 1; }
+    },
+    Err(e) => { return 2; }
+  }
+  match (spec.parse(["greet", "--age", "36"])) {
+    Ok(parsed) => { return 3; },
+    Err(e) => {
+      if (e.message() != "unknown option --age") { return 4; }
+    }
+  }
   return 0;
 }
 ```
@@ -37,9 +47,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 function __cli_find_long(s: CliSpec, name: string): Option[CliFlag]>>
 
-<<5 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs>>
+<<5 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): Result[CliArgs, CliError]>>
 
-<<6 pub function (s: CliSpec) parse(argv: string[]): CliArgs>>
+<<6 pub function (s: CliSpec) parse(argv: string[]): Result[CliArgs, CliError]>>
 
 <<7 function __cli_usage_flags(flags: CliFlag[], indent: string): string>>
 
@@ -72,6 +82,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/string";
 import "std/utf8" as utf8;
 import "core/map";
+import "core/error";
+import "core/cmp";
 ```
 
 ### `2 struct CliFlag`
@@ -82,9 +94,24 @@ struct CliFlag { long: string, short: string, takes_value: boolean, help: string
 
 pub struct CliSpec { name: string, about: string, flags: CliFlag[], commands: CliSpec[] }
 
-pub struct CliArgs { opts: Map[string, string], positionals: string[], command: string, error: string }
+pub struct CliArgs { opts: Map[string, string], positionals: string[], command: string }
 
-struct CliStep { opts: Map[string, string], next: i32, error: string }
+// CliError is the reason that `parse` refused the arguments.
+pub struct CliError { reason: string }
+
+pub function (e: CliError) message(): string {
+  return e.reason;
+}
+
+pub function (e: CliError) to_string(): string {
+  return e.reason;
+}
+
+impl error.Error for CliError {}
+
+impl cmp.Display for CliError {}
+
+struct CliStep { opts: Map[string, string], next: i32 }
 ```
 
 ### `3 pub function new(name: string, about: string): CliSpec`
@@ -162,16 +189,7 @@ function __cli_short_name_at(cluster: string, j: i32): string {
   }
 }
 
-function __cli_err(positionals: string[], msg: string): CliArgs {
-  let empty: Map[string, string] = map_new(1);
-  return CliArgs { opts: empty, positionals: positionals, command: "", error: msg };
-}
-
-function __cli_step_err(opts: Map[string, string], i: i32, msg: string): CliStep {
-  return CliStep { opts: opts, next: i, error: msg };
-}
-
-function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
+function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): Result[CliStep, CliError] {
   let a = argv[i];
   let body = slice_unchecked(a, 2, a.len());
   let name = body;
@@ -186,25 +204,25 @@ function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i3
     Some(f) => {
       if (!f.takes_value) {
         if (inline) {
-          return __cli_step_err(opts, i, "flag --" + name + " takes no value");
+          return Err(CliError { reason: "flag --" + name + " takes no value" });
         }
-        return CliStep { opts: opts.insert(f.long, "true"), next: i + 1, error: "" };
+        return Ok(CliStep { opts: opts.insert(f.long, "true"), next: i + 1 });
       }
       if (inline) {
-        return CliStep { opts: opts.insert(f.long, inline_val), next: i + 1, error: "" };
+        return Ok(CliStep { opts: opts.insert(f.long, inline_val), next: i + 1 });
       }
       if (i + 1 < argv.len()) {
-        return CliStep { opts: opts.insert(f.long, argv[i + 1]), next: i + 2, error: "" };
+        return Ok(CliStep { opts: opts.insert(f.long, argv[i + 1]), next: i + 2 });
       }
-      return __cli_step_err(opts, i, "option --" + name + " requires a value");
+      return Err(CliError { reason: "option --" + name + " requires a value" });
     },
     None => {
-      return __cli_step_err(opts, i, "unknown option --" + name);
+      return Err(CliError { reason: "unknown option --" + name });
     }
   }
 }
 
-function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
+function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): Result[CliStep, CliError] {
   let a = argv[i];
   let cluster = slice_unchecked(a, 1, a.len());
   let j = 0;
@@ -217,28 +235,28 @@ function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i:
         } else {
           let glued = slice_unchecked(cluster, j + 1, cluster.len());
           if (glued.len() > 0) {
-            return CliStep { opts: opts.insert(f.long, glued + ""), next: i + 1, error: "" };
+            return Ok(CliStep { opts: opts.insert(f.long, glued + ""), next: i + 1 });
           }
           if (i + 1 < argv.len()) {
-            return CliStep { opts: opts.insert(f.long, argv[i + 1]), next: i + 2, error: "" };
+            return Ok(CliStep { opts: opts.insert(f.long, argv[i + 1]), next: i + 2 });
           }
-          return __cli_step_err(opts, i, "option -" + f.short + " requires a value");
+          return Err(CliError { reason: "option -" + f.short + " requires a value" });
         }
       },
       None => {
-        return __cli_step_err(opts, i, "unknown option -" + __cli_short_name_at(cluster, j));
+        return Err(CliError { reason: "unknown option -" + __cli_short_name_at(cluster, j) });
       }
     }
   }
-  return CliStep { opts: opts, next: i + 1, error: "" };
+  return Ok(CliStep { opts: opts, next: i + 1 });
 }
 ```
 
-### `5 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs`
+### `5 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): Result[CliArgs, CliError]`
 
 ```fern
-<<5 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs>>=
-function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs {
+<<5 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): Result[CliArgs, CliError]>>=
+function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): Result[CliArgs, CliError] {
   let positionals: string[] = [];
   let i = start;
   let no_more = false;
@@ -251,23 +269,30 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
       no_more = true;
       i += 1;
     } else if (a.starts_with("--") || a.len() >= 2 && a[0] == 45) {
-      let st = if (a.starts_with("--")) { __cli_long(s, opts, argv, i) } else { __cli_cluster(s, opts, argv, i) };
-      if (st.error.len() > 0) {
-        return __cli_err(positionals, st.error);
+      let step = if (a.starts_with("--")) { __cli_long(s, opts, argv, i) } else { __cli_cluster(s, opts, argv, i) };
+      match (step) {
+        Ok(st) => {
+          opts = st.opts;
+          i = st.next;
+        },
+        Err(e) => {
+          return Err(e);
+        }
       }
-      opts = st.opts;
-      i = st.next;
     } else if (s.commands.len() > 0 && positionals.len() == 0) {
       match (__cli_find_command(s, a)) {
         Some(sub) => {
-          let r = __cli_parse(sub, argv, i + 1, opts);
-          if (r.error.len() > 0) {
-            return r;
+          match (__cli_parse(sub, argv, i + 1, opts)) {
+            Ok(r) => {
+              return Ok(CliArgs { ...r, command: sub.name });
+            },
+            Err(e) => {
+              return Err(e);
+            }
           }
-          return CliArgs { ...r, command: sub.name };
         },
         None => {
-          return __cli_err(positionals, "unknown command " + a);
+          return Err(CliError { reason: "unknown command " + a });
         }
       }
     } else {
@@ -275,25 +300,17 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
       i += 1;
     }
   }
-  return CliArgs { opts: opts, positionals: positionals, command: "", error: "" };
+  return Ok(CliArgs { opts: opts, positionals: positionals, command: "" });
 }
 ```
 
-### `6 pub function (s: CliSpec) parse(argv: string[]): CliArgs`
+### `6 pub function (s: CliSpec) parse(argv: string[]): Result[CliArgs, CliError]`
 
 ```fern
-<<6 pub function (s: CliSpec) parse(argv: string[]): CliArgs>>=
-pub function (s: CliSpec) parse(argv: string[]): CliArgs {
+<<6 pub function (s: CliSpec) parse(argv: string[]): Result[CliArgs, CliError]>>=
+pub function (s: CliSpec) parse(argv: string[]): Result[CliArgs, CliError] {
   let opts: Map[string, string] = map_new(8);
   return __cli_parse(s, argv, 1, opts);
-}
-
-pub function (a: CliArgs) is_error(): boolean {
-  return a.error.len() > 0;
-}
-
-pub function (a: CliArgs) error_text(): string {
-  return a.error;
 }
 
 pub function (a: CliArgs) value(name: string): Option[string] {

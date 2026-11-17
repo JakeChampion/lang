@@ -103,6 +103,7 @@ def controls():
                                     [sequence(poc=0), pps.make(bottom=1), slice_nal(order=0, bottom=True, b=1)]]
     yield from replacement_controls()
     yield from reference_controls()
+    yield from uniform_controls()
     for width in range(4, 17):
         seq = sequence(poc=2, frame_num=width - 4)
         for idr, number in ((True, 0), (False, (1 << width) - 1)):
@@ -123,6 +124,45 @@ def reference_controls():
     predicted = slice_nal(frame=1, reference=0)
     yield "cached PPS follows zero-reference SPS replacement", [[one, p, predicted], [zero, intra]]
     yield "cached PPS follows restored references", [[zero, p, intra], [one, predicted]]
+
+
+def uniform_controls():
+    prefix = [sequence(profile=88, poc=2, references=1), pps.make()]
+    for family in range(5):
+        for strict in range(3):
+            kinds = [family, family, family]
+            kinds[strict] += 5
+            slices = [slice_nal(first=i, frame=0, reference=0, slice_type=kind) for i, kind in enumerate(kinds)]
+            following = slice_nal(frame=1, reference=0, slice_type=(family + 1) % 5)
+            yield f"uniform family {family} declared at slice {strict} resets at next picture", [prefix + slices, [following]]
+        first = slice_nal(frame=0, reference=0, slice_type=family + 5)
+        same = slice_nal(first=1, frame=0, reference=0, slice_type=family)
+        yield f"uniform family {family} survives filler between slices", [prefix + [first, b"\x0c\x80", same]]
+        following = slice_nal(frame=0, reference=0, slice_type=(family + 1) % 5 + 5)
+        sei = b"\x06\x05\x10" + bytes(range(1, 17)) + b"\x80"
+        for boundary in (sei, prefix[0], prefix[1], b"\x09\xf0"):
+            yield f"uniform family {family} resets at prefix {boundary[0] & 31}", [prefix + [first], [boundary, following]]
+    yield "mixed P and I slices without a uniform declaration", [prefix + [
+        slice_nal(first=0, frame=0, reference=0, slice_type=0),
+        slice_nal(first=1, frame=0, reference=0, slice_type=2)]]
+
+
+def uniform_invalid():
+    prefix = [sequence(profile=88, poc=2, references=1), pps.make()]
+    for family in range(5):
+        for other in range(5):
+            if other == family:
+                continue
+            for name, kinds in (("first", [family + 5, other]), ("last", [other, family + 5]),
+                                ("earlier mismatch", [other, family, family + 5]),
+                                ("later mismatch", [family + 5, family, other])):
+                slices = [slice_nal(first=i, frame=0, reference=0, slice_type=kind) for i, kind in enumerate(kinds)]
+                yield f"uniform family {family} rejects {name} family {other}", prefix + slices, "Header"
+                yield f"later picture uniform family {family} rejects {name} family {other}", prefix + [
+                    slice_nal(frame=1, reference=0), b"\x09\xf0"] + slices, "Header"
+            yield f"uniform family {family} survives filler before rejecting family {other}", prefix + [
+                slice_nal(first=0, frame=0, reference=0, slice_type=family + 5), b"\x0c\x80",
+                slice_nal(first=1, frame=0, reference=0, slice_type=other)], "Header"
 
 
 def reference_invalid():
@@ -179,6 +219,7 @@ def incompatible_pairs():
 def invalid():
     s, p = sequence(poc=2), pps.make()
     yield from reference_invalid()
+    yield from uniform_invalid()
     sei = b"\x06\x05\x10" + bytes(range(1, 17)) + b"\x80"
     for prefix in ([], [b"\x09\xf0"], [s], [s, p], [sei]):
         name = "-".join(str(unit[0] & 31) for unit in prefix) or "none"

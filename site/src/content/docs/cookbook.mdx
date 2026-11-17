@@ -115,11 +115,13 @@ function main(): i32 {
     let spec: cli.CliSpec = cli.new("greet", "Say hello")
         .option("name", "n", "who to greet")
         .flag("loud", "l", "shout it");
-    let parsed: cli.CliArgs = spec.parse(args());
-    if (parsed.is_error()) {
-        eprint(parsed.error_text());
-        return 2;
-    }
+    let parsed: cli.CliArgs = match (spec.parse(args())) {
+        Ok(a) => a,
+        Err(e) => {
+            eprint(e.message());
+            return 2;
+        }
+    };
     let who: string = parsed.value_or("name", "world");
     if (parsed.is_set("loud")) {
         print("HELLO, " + who + "!");
@@ -339,14 +341,15 @@ there too.
 
 <FernPlayground
   code={`import "std/path";
+import "std/option";
 
 function main(): i32 {
     let p: string = path.join(["build", "out", "report.txt"]);
     print(p);                                   // build/out/report.txt
-    print(path.parent(p));                 // build/out
-    print(path.file_name(p));              // report.txt
-    print(path.stem(p));                   // report
-    print(path.extension(p));              // txt
+    print(path.parent(p).unwrap_or("."));          // build/out
+    print(path.file_name(p).unwrap_or(""));        // report.txt
+    print(path.stem(p).unwrap_or(""));             // report
+    print(path.extension(p).unwrap_or(""));        // txt
     print(path.with_extension(p, "md"));   // build/out/report.md
     print(path.clean("a/./b/../c//d/"));   // a/c/d
     return 0;

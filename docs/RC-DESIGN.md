@@ -567,7 +567,16 @@ constant and a borrow are not free. Any other disagreement is unproved rather
 than a finding. A call that returns its operand or a fresh box
 (`__fern_arr_concat`, `rcsigs.effect_kept_or_same`) leaves the operand its
 unit and gives the result a fresh one. On the edge where a test finds the two
-are one box, the result takes the operand's units and the fresh unit goes. A phi takes one unit of an input that holds one. The exception is
+are one box, the result takes the operand's units and the fresh unit goes. A
+push (`arr_push`) also grows its array in place or returns a new box. A push
+onto a parameter, or onto a value that a test found to be the box of a
+parameter, gives a twin of that parameter. A twin holds no unit if it is the
+box of the parameter, and one unit if it is a new box. A test of the twin
+against the parameter decides the side on each edge, and a join meets the
+two sides apart. A use that a twin cannot describe reads the twin as one
+count. On the arm where `__fern_rc_is_unique` found another holder, a push
+copies the box, or it keeps a box with a negative count in place. No retain
+or release changes such a box, so there the result counts as a new box. A phi takes one unit of an input that holds one. The exception is
 a phi that no operation touches, that no return takes, and that feeds no phi
 that is touched or returned: nothing can spend a unit of it, so its inputs
 keep their units (`spent_phis`). The slot of a loop that borrows is such a

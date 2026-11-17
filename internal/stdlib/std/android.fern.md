@@ -1609,11 +1609,11 @@ pub function brightness(ctx: usize, level: f32): void {
 // the `pip` key of its [android] table. Android 8 to 11 keep only the
 // shape.
 pub function pip_auto(ctx: usize, on: boolean, w: i32, h: i32): void {
-  let a = 0;
+  let op = PIP_OFF;
   if (on) {
-    a = 1;
+    op = PIP_ON;
   }
-  ui_request(ctx, UiRequest { op: PIP, a: a, b: w, data: h as usize });
+  ui_request(ctx, UiRequest { op: op, a: w, b: h, data: 0 as usize });
 }
 
 // True while the activity shows in a picture-in-picture window.
@@ -1911,9 +1911,11 @@ const FAST_DISPLAY: i32 = 9;
 // The request of `brightness`: `a` is the level in thousandths, or -1.
 const BRIGHTNESS: i32 = 10;
 
-// The request of `pip_auto`: `a` is 1 for on, and `b` and `data` are the
+// The requests of `pip_auto`, for on and for off: `a` and `b` are the
 // width and the height of the video.
-const PIP: i32 = 11;
+const PIP_ON: i32 = 11;
+
+const PIP_OFF: i32 = 12;
 
 // InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
 pub const INPUT_TEXT: i32 = 1;
@@ -2041,8 +2043,8 @@ function do_request(ctx: usize, r: UiRequest): boolean {
     apply_brightness(ctx, r.a);
     return false;
   }
-  if (r.op == PIP) {
-    apply_pip(ctx, r.a != 0, r.b, r.data as i32);
+  if (r.op == PIP_ON || r.op == PIP_OFF) {
+    apply_pip(ctx, r.op == PIP_ON, r.a, r.b);
     return false;
   }
   if (r.op > FIELD_HIDE) {

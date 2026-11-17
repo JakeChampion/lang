@@ -40,6 +40,8 @@ let renderer,
   fly = false,
   sequence = 0,
   nonce = 0,
+  lastEdit = -Infinity,
+  deferredEdit,
   selected = 3,
   frame,
   previous = new Map(),
@@ -537,6 +539,7 @@ function sendControl() {
   socket.send(controls(seq, command));
 }
 setInterval(sendControl, 50);
+const EDIT_INTERVAL = 200;
 function changeBlock(action) {
   if (
     !id ||
@@ -546,6 +549,13 @@ function changeBlock(action) {
     socket.bufferedAmount > 16384
   )
     return;
+  // The server rejects an edit that arrives less than 125 ms after the last.
+  const wait = lastEdit + EDIT_INTERVAL - performance.now();
+  clearTimeout(deferredEdit);
+  if (wait > 0) {
+    deferredEdit = setTimeout(() => changeBlock(action), wait);
+    return;
+  }
   const target = ray(get, local, yaw, pitch);
   if (!target) {
     toast("Move closer to a block.");
@@ -575,6 +585,7 @@ function changeBlock(action) {
   worker.postMessage({ kind: "optimistic", epoch, nonce: n, change });
   sendControl();
   socket.send(edit(n, action, selected, point));
+  lastEdit = performance.now();
   drawSoon();
 }
 function repeat(button, action) {
@@ -584,7 +595,7 @@ function repeat(button, action) {
     button.setPointerCapture(e.pointerId);
     changeBlock(action);
     clearInterval(timer);
-    timer = setInterval(() => changeBlock(action), 200);
+    timer = setInterval(() => changeBlock(action), EDIT_INTERVAL);
   };
   const stop = () => {
     clearInterval(timer);
