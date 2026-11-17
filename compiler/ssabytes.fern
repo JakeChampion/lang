@@ -403,6 +403,12 @@ function expanded(): irtables.LowerState {
   return body(expanded_name(), 3, 3, ops);
 }
 
+// The helpers that read their views and return a word. None of them takes or
+// gives a unit.
+pub function reading_helpers(): string[] {
+  return [crc32_name(), crc32_ieee_name(), mismatch_name(), sum_name(), bsd_name(), memchr_name(), rmemchr_name(), scan_set_name(), scan_masks_name(), expanded_name()];
+}
+
 // A kernel helper serves one builtin. The view lowering calls the other helpers itself.
 pub function served_builtin(helper: string): string {
   if (helper == crc32_name()) {

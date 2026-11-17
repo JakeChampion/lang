@@ -1,6 +1,7 @@
 import "./util";
 import "./rtbytecopy";
 import "./ssabytes";
+import "./ssasem";
 import "std/string";
 
 pub function effect_none(): i32 {
@@ -102,7 +103,15 @@ pub function table(): Table {
   rows = add(rows, ["__fern_str_own", "__fern_str_borrow", "__fern_arr_str_join", "__fern_bytes_owned", "__fern_bytes_range", "__fern_i32_to_string", "__fern_u32_to_string", "__fern_i64_to_string", "__fern_u64_to_string"], inert(result_fresh()));
   rows = add(rows, ["__fern_arr_concat"], sig(3, effect_unsure(), result_marked()));
   rows = add(rows, ["__fern_oob_abort", "__fern_str_oob_abort", "__fern_slice_abort", "__fern_alloc_size_abort", "__fern_double_free_abort", "__fern_free_link_abort"], inert(result_none()));
-  rows = add(rows, ["__fern_account_entry", "__fern_vdso_clock", "__fern_task_fd_gen", ssabytes.crc32_name(), ssabytes.crc32_ieee_name()], inert(result_none()));
+  rows = add(rows, ["__fern_account_entry", "__fern_vdso_clock"], inert(result_none()));
+  rows = add(rows, ssabytes.reading_helpers(), inert(result_none()));
+  rows = add(rows, task_words(), inert(result_none()));
+  rows = add(rows, ["__fern_task_wait"], inert(result_fresh()));
+  rows = add(rows, [ssasem.seen_new_name(), ssasem.seen_free_name(), ssasem.seen_insert_name(), ssasem.seen_grow_name()], inert(result_none()));
+  // A hit returns the copy with a retain of its own, and a miss returns null.
+  rows = add(rows, [ssasem.seen_get_name()], inert(result_fresh()));
+  // The copy's unit passes through the table to the result.
+  rows = add(rows, [ssasem.seen_put_name()], sig(2, effect_move(), result_fresh()));
   rows = add(rows, ["__sem_view_len", "__sem_view_data"], inert(result_none()));
   rows = add(rows, ["__sem_byte_view_slice", "__sem_view_slice", "__sem_view_slice_16", "__sem_view_slice_32", "__sem_view_slice_wide"], inert(result_fresh()));
   rows = add(rows, ["map_new_impl", "__map_get_impl", "__map_get_keyed_impl", "__map_bool_column", "__map_u8_column", "__map_cell_column", "__map_string_column", "__map_box_column"], inert(result_fresh()));
@@ -114,6 +123,15 @@ pub function table(): Table {
   rows = add(rows, ["__map_has_impl", "__map_has_keyed_impl", "__map_len_impl", "__map_hash_seed", "__map_cell_load", "__map_delete_impl", "__map_delete_keyed_impl"], inert(result_none()));
   rows = add(rows, ["__map_lookup_val", "__map_lookup_val_keyed", "__map_key_of", "__map_key_of_keyed", "__map_get_cell_impl", "__map_get_cell_keyed_impl", "__map_get_cell_f64_impl", "__map_get_cell_f64_keyed_impl"], inert(result_unknown()));
   return Table { names: util.name_index(rows.names), sigs: rows.sigs };
+}
+
+// The task runtime routines that take and return only words.
+function task_words(): string[] {
+  return [
+    "__fern_task_fd_gen", "__fern_task_inline", "__fern_task_free", "__fern_task_leave", "__fern_task_enter",
+    "__fern_task_new", "__fern_task_set_ready", "__fern_task_set_cancelled", "__fern_task_timeout",
+    "__fern_task_gen", "__fern_task_cur", "__fern_task_until", "__fern_task_cancelled",
+  ];
 }
 
 function release_helpers(): string[] {
@@ -180,6 +198,9 @@ pub function (t: Table) lookup(name: string): Sig {
   }
   if (is_children_drop(name)) {
     return sig(0, effect_inspect(), result_none());
+  }
+  if (ssasem.is_send_helper(name) || ssasem.is_send_part(name)) {
+    return inert(result_fresh());
   }
   return unknown_sig();
 }

@@ -260,8 +260,12 @@ function def_of(f: ssa.SFunc, d: ssa.DefSites, v: i32): ssa.SInst {
 }
 
 function is_zero(f: ssa.SFunc, d: ssa.DefSites, v: i32): boolean {
-  let ins = def_of(f, d, v);
-  return ins.kind_tag == ssa.CONST_INT && ins.imm == 0;
+  return zero_word(def_of(f, d, v));
+}
+
+// A constant zero of 32 or of 64 bits.
+function zero_word(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.CONST_INT && ins.imm == 0 || ins.kind_tag == ssa.CONST_I64 && ins.str == "0";
 }
 
 function def_at(w: Walk, v: i32): ssa.SInst {
@@ -272,8 +276,7 @@ function def_at(w: Walk, v: i32): ssa.SInst {
 }
 
 function zero_at(w: Walk, v: i32): boolean {
-  let ins = def_at(w, v);
-  return ins.kind_tag == ssa.CONST_INT && ins.imm == 0;
+  return zero_word(def_at(w, v));
 }
 
 function marked_result(w: Walk, ins: ssa.SInst): boolean {
@@ -2824,6 +2827,13 @@ function compared(w: Walk, ins: ssa.SInst): Tag {
   if (b.kind_tag == ssa.CONST_INT) {
     return Tag { word: ins.args[1], c: b.imm, equal: true };
   }
+  // A CONST_I64 keeps its width in imm, so only its zero is read here.
+  if (zero_word(a)) {
+    return Tag { word: ins.args[0], c: 0, equal: true };
+  }
+  if (zero_word(b)) {
+    return Tag { word: ins.args[1], c: 0, equal: true };
+  }
   return Tag { word: -1, c: 0, equal: false };
 }
 
@@ -4182,6 +4192,10 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
   let done = settle(progress_of(w, lv), w, lv, ssa.reverse_postorder(f, at), reach, w.takes);
   if (done.changed) {
     return failed("did not settle in " + util.i32_to_string(round_limit()) + " rounds");
+  }
+  // A callee that no table or ABI describes may keep or spend any argument.
+  if (done.p.opaque.len() > 0) {
+    return failed("calls " + done.p.opaque[0] + ", which has no rc signature and no ABI");
   }
   let findings = done.p.findings;
   let unproved = done.p.unproved;
