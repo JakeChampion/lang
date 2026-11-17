@@ -201,7 +201,7 @@ function int_field(e: usize, obj: usize, name: string): i32 {
 }
 
 function flag_field(e: usize, obj: usize, name: string): string {
-  if ((jni.get_boolean_field(e, obj, jni.get_field_id(e, jni.get_object_class(e, obj), name, "Z")) & 255) != 0) {
+  if (jni.get_boolean_field(e, obj, jni.get_field_id(e, jni.get_object_class(e, obj), name, "Z")) != 0) {
     return "1";
   }
   return "0";

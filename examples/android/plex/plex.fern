@@ -2,6 +2,7 @@
 // media server, and the records that it reads from their JSON replies. Every
 // function is pure. control.fern sends the requests through its Device.
 import "std/json";
+import "std/option";
 import "std/string";
 import "std/url";
 import "std/utf8";
@@ -583,7 +584,7 @@ pub function parse_sections(body: string): Section[] {
 // A sound or subtitle track of a file. `kind` is 2 for sound and 3 for
 // subtitles. `selected` is true for the track that the server remembers,
 // and `external` is true for a subtitle file beside the video.
-pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean }
+pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean, key: string }
 
 // A file of a version of an item. `indexes` is "sd" when the server holds
 // preview thumbnails of it.
@@ -1013,6 +1014,22 @@ function direct_with(it: Item, decoders: string[], choice: Choice): boolean {
   return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, audio_codec(it, choice));
 }
 
+// The request that downloads the file of the first version of the item as
+// it is. The item must have a part.
+pub function download_request(c: Client, b: Base, it: Item): Request {
+  return get(c.with_token(b.token), b.uri + it.media[0].parts[0].key + "?download=1");
+}
+
+// The name of the file of a download of the item: its key and the
+// extension of its container.
+pub function download_name(it: Item): string {
+  let ext = "bin";
+  if (it.media.len() > 0 && it.media[0].container.len() > 0) {
+    ext = it.media[0].container;
+  }
+  return it.key + "." + ext;
+}
+
 // The address of the file of the item, which the player reads as it is.
 // `session` joins the stream to the reports of the timeline.
 pub function direct_url(b: Base, it: Item, session: string): string {
@@ -1078,9 +1095,10 @@ pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string, 
   if (choice.audio.len() > 0) {
     pairs = pairs.append(("audioStreamID", choice.audio));
   }
-  // The server burns the subtitles that the client selected on the part.
+  // The server burns the subtitles that the client selected on the part,
+  // unless the app draws them.
   let subtitles = "none";
-  if (choice.subtitle.len() > 0) {
+  if (choice.subtitle.len() > 0 && text_subtitle(it, choice).is_none()) {
     subtitles = "burn";
   }
   pairs = pairs.append(("subtitles", subtitles));
@@ -1100,7 +1118,7 @@ pub struct Stream { url: string, transcode: boolean, offset_ms: i64 }
 // when it decodes the video and the chosen sound. Subtitles burn in a
 // transcode.
 pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[], choice: Choice): Stream {
-  if (q.kbps == 0 && choice.subtitle.len() == 0 && direct_with(it, decoders, choice)) {
+  if (q.kbps == 0 && (choice.subtitle.len() == 0 || text_subtitle(it, choice).is_some()) && direct_with(it, decoders, choice)) {
     return Stream { url: direct_url(b, it, session), transcode: false, offset_ms: offset_ms };
   }
   return transcode_for(c, b, it, q, offset_ms, session, decoders, choice);
@@ -1127,7 +1145,7 @@ function tracks_of(d: json.Document, n: i32): Track[] {
       if (title.len() == 0) {
         title = str(d, t, "language");
       }
-      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0 });
+      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0, key: str(d, t, "key") });
     }
   }
   return out;
@@ -1224,6 +1242,123 @@ pub function cache_name(u: string): string {
 }
 
 // The preview thumbnails of the part `id`, a BIF file.
+// The chosen subtitle track when it is a file of text beside the video, in
+// SubRip or WebVTT, which the app draws itself.
+pub function text_subtitle(it: Item, choice: Choice): Option[Track] {
+  if (choice.subtitle.len() == 0) {
+    return None;
+  }
+  for t in subtitle_tracks(it) {
+    if (t.id == choice.subtitle && t.key.len() > 0 && (t.codec == "srt" || t.codec == "subrip" || t.codec == "vtt" || t.codec == "webvtt")) {
+      return Some(t);
+    }
+  }
+  return None;
+}
+
+// The file of a subtitle track beside the video.
+pub function subtitle_request(c: Client, b: Base, t: Track): Request {
+  return get(c.with_token(b.token), b.uri + t.key);
+}
+
+// A line of subtitles: its text from `start_ms` until `end_ms`.
+pub struct Cue { start_ms: i64, end_ms: i64, text: string }
+
+// The cues of a SubRip or WebVTT file, in their order. A cue has the lines
+// after its time line, up to a blank line, with the tags such as <i> and
+// {\an8} taken out.
+pub function parse_cues(text: string): Cue[] {
+  let out: Cue[] = [];
+  let lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n");
+  let i = 0;
+  while (i < lines.len()) {
+    let line = lines[i];
+    let arrow = line.index_of(" --> ");
+    if let Some(at) = arrow {
+      let start = cue_time(line.split_at(at).0.trim());
+      let after = line.split_at(at + 5).1.trim();
+      let end_text = after;
+      if let Some(sp) = after.index_of(" ") {
+        end_text = after.split_at(sp).0;
+      }
+      let end = cue_time(end_text);
+      let words: string[] = [];
+      i += 1;
+      while (i < lines.len() && lines[i].trim().len() > 0) {
+        words = words.append(untagged(lines[i].trim()));
+        i += 1;
+      }
+      if (start >= 0i64 && end > start) {
+        out = out.append(Cue { start_ms: start, end_ms: end, text: words.join("\n") });
+      }
+    } else {
+      i += 1;
+    }
+  }
+  return out;
+}
+
+// The time of "hh:mm:ss,mmm" or "mm:ss.mmm" in milliseconds, or -1.
+function cue_time(t: string): i64 {
+  let parts = t.replace(",", ".").split(":");
+  if (parts.len() < 2 || parts.len() > 3) {
+    return -1i64;
+  }
+  let total = 0i64;
+  for k in 0..parts.len() - 1 {
+    total = total * 60i64 + digits(parts[k]);
+  }
+  let last = parts[parts.len() - 1];
+  let secs = last;
+  let ms = 0i64;
+  if let Some(dot) = last.index_of(".") {
+    secs = last.split_at(dot).0;
+    let frac = last.split_at(dot + 1).1;
+    ms = digits(frac);
+    if (frac.len() == 1) {
+      ms *= 100i64;
+    } else if (frac.len() == 2) {
+      ms *= 10i64;
+    }
+  }
+  return (total * 60i64 + digits(secs)) * 1000i64 + ms;
+}
+
+// The text with the tags of HTML, such as <i>, and of SSA, such as {\an8},
+// taken out.
+function untagged(s: string): string {
+  let out: u8[] = [];
+  let skip = 0u8;
+  for c in s.bytes() {
+    if (skip != 0u8) {
+      if (c == skip) {
+        skip = 0u8;
+      }
+      continue;
+    }
+    if (c == 60u8) {
+      skip = 62u8;
+      continue;
+    }
+    if (c == 123u8) {
+      skip = 125u8;
+      continue;
+    }
+    out = out.append(c);
+  }
+  return utf8.from_bytes_lossy(out);
+}
+
+// The words of the cue that shows at `ms`, or "".
+pub function cue_at(cues: Cue[], ms: i64): string {
+  for c in cues {
+    if (ms >= c.start_ms && ms < c.end_ms) {
+      return c.text;
+    }
+  }
+  return "";
+}
+
 pub function bif_request(c: Client, b: Base, id: string): Request {
   return get(c.with_token(b.token), b.uri + "/library/parts/" + id + "/indexes/sd");
 }
