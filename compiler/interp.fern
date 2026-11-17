@@ -9510,7 +9510,7 @@ function builtin_group_rmemchr(heap: interpheap.Heap, name: string, args: Value[
   return v_err(name + ": not a builtin of this group");
 }
 
-// True when a test of call_func_targs before the declared functions can take
+// True when a test of call_builtin can take
 // a call of `name`. Each test of a name there has its part here. A test that
 // reads the arguments also counts here by its name alone.
 function builtin_takes_name(name: string): boolean {
@@ -9535,7 +9535,20 @@ function builtin_takes_name(name: string): boolean {
   return util.has_str(BUILTIN_GROUP_SCAN_SET_BYTES_NAMES, name) || util.has_str(BUILTIN_GROUP_SCALE_F64_NAMES, name) || util.has_str(BUILTIN_GROUP_RMEMCHR_NAMES, name);
 }
 
-function call_declared(heap: interpheap.Heap, at: i32, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+// The frame of this function is on the stack of each active Fern call. The
+// tests of the builtin names are in call_builtin, so that they add nothing to it.
+function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  let at = plain_at(funcs, name);
+  if (at < 0) {
+    let (taken, value) = call_builtin(heap, name, args, funcs, aliases, type_decls);
+    if (taken) {
+      return value;
+    }
+    at = declared_at(funcs, name);
+    if (at < 0) {
+      return call_host(heap, name, args);
+    }
+  }
   let fd = funcs.decls[at];
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + name + "`");
@@ -9556,43 +9569,60 @@ function call_declared(heap: interpheap.Heap, at: i32, name: string, args: Value
   return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
 }
 
-function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+// The function with no receiver whose name no builtin takes, or -1.
+function plain_at(funcs: Funcs, name: string): i32 {
   for at in funcs.named(name) {
     if (funcs.plain[at] && funcs.decls[at].name == name) {
-      return call_declared(heap, at, name, args, type_args, expect, funcs, aliases, type_decls);
+      return at;
     }
   }
+  return -1;
+}
+
+// The function with no receiver that `name` declares, or -1.
+function declared_at(funcs: Funcs, name: string): i32 {
+  for at in funcs.named(name) {
+    if (funcs.decls[at].name == name && funcs.decls[at].receiver_type.len() == 0) {
+      return at;
+    }
+  }
+  return -1;
+}
+
+// The result of the builtin that takes a call of `name`. The first part is
+// false when no builtin takes it.
+function call_builtin(heap: interpheap.Heap, name: string, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): (boolean, Value) {
   if (util.has_str(BUILTIN_GROUP_PRINT_NAMES, name)) {
-    return builtin_group_print(heap, name, args, funcs, aliases, type_decls);
+    return (true, builtin_group_print(heap, name, args, funcs, aliases, type_decls));
   }
   if (util.has_str(CALL_FUNC_TARGS_SET, name)) {
-    return builtin_call_func_targs_set(heap, name, args);
+    return (true, builtin_call_func_targs_set(heap, name, args));
   }
   if (util.has_str(BUILTIN_GROUP_STRING_FROM_BYTES_UNCHECKED_NAMES, name)) {
-    return builtin_group_string_from_bytes_unchecked(name, args);
+    return (true, builtin_group_string_from_bytes_unchecked(name, args));
   }
   if (is_buf_builtin(name)) {
-    return call_buf_builtin(heap, name, args);
+    return (true, call_buf_builtin(heap, name, args));
   }
   if (is_raw_mem_builtin(name)) {
-    return call_raw_mem_builtin(heap, name, args);
+    return (true, call_raw_mem_builtin(heap, name, args));
   }
   let rt = call_runtime_intrinsic(heap, name, args);
   if (!is_err(rt) || is_abort(rt)) {
-    return rt;
+    return (true, rt);
   }
   if (name == "__mulhi_u64") {
-    return builtin_mulhi_u64(name, args);
+    return (true, builtin_mulhi_u64(name, args));
   }
   if (util.has_str(CALL_FUNC_TARGS_SET2, name)) {
     if (args.len() != 1) {
-      return v_err(name + ": expected 1 arg");
+      return (true, v_err(name + ": expected 1 arg"));
     }
     if (!is_int_like(args[0])) {
-      return v_err(name + ": arg must be an integer");
+      return (true, v_err(name + ": arg must be an integer"));
     }
     let bits = vint_as_i64(args[0]) as u64;
-    return match (name) {
+    let count = match (name) {
       "__clz32" => v_int(__clz32(bits as u32)),
       "__ctz32" => v_int(__ctz32(bits as u32)),
       "__popcount32" => v_int(__popcount32(bits as u32)),
@@ -9600,53 +9630,48 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       "__ctz64" => v_int(__ctz64(bits)),
       _ => v_int(__popcount64(bits)),
     };
+    return (true, count);
   }
   if (util.has_str(CALL_FUNC_TARGS_SET3, name)) {
-    return builtin_call_func_targs_set3(heap, name, args);
+    return (true, builtin_call_func_targs_set3(heap, name, args));
   }
   if (util.has_str(BUILTIN_GROUP_COUNT_BYTE_BYTES_NAMES, name)) {
-    return builtin_group_count_byte_bytes(name, args);
+    return (true, builtin_group_count_byte_bytes(name, args));
   }
   if (util.has_str(BUILTIN_GROUP_SCAN_SET_BYTES_NAMES, name)) {
-    return builtin_group_scan_set_bytes(heap, name, args);
+    return (true, builtin_group_scan_set_bytes(heap, name, args));
   }
   if (name == "__bytes_range") {
-    return call_bytes_range(heap, args);
+    return (true, call_bytes_range(heap, args));
   }
   if (name == "__bytes_into") {
-    return call_bytes_into(heap, args);
+    return (true, call_bytes_into(heap, args));
   }
   if (aes_gcm_arity(name) > 0) {
-    return call_aes_gcm(heap, name, args);
+    return (true, call_aes_gcm(heap, name, args));
   }
   if (is_byte_into_kernel(name)) {
-    return call_byte_into_kernel(heap, name, args);
+    return (true, call_byte_into_kernel(heap, name, args));
   }
   if (is_limb_kernel(name)) {
-    return call_limb_kernel(heap, name, args);
+    return (true, call_limb_kernel(heap, name, args));
   }
   if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
-    return v_bool(false);
+    return (true, v_bool(false));
   }
   if (args.len() == 2 && is_sha_blocks_name(name)) {
-    return byte_value(heap, []);
+    return (true, byte_value(heap, []));
   }
   if (util.has_str(BUILTIN_GROUP_SCALE_F64_NAMES, name)) {
-    return builtin_group_scale_f64(heap, name, args);
+    return (true, builtin_group_scale_f64(heap, name, args));
   }
   if (util.has_str(BUILTIN_GROUP_RMEMCHR_NAMES, name)) {
-    return builtin_group_rmemchr(heap, name, args);
+    return (true, builtin_group_rmemchr(heap, name, args));
   }
   if (name == "f32_from_bits") {
-    return builtin_f32_from_bits(args);
+    return (true, builtin_f32_from_bits(args));
   }
-  for at in funcs.named(name) {
-    let fd = funcs.decls[at];
-    if (fd.name == name && fd.receiver_type.len() == 0) {
-      return call_declared(heap, at, name, args, type_args, expect, funcs, aliases, type_decls);
-    }
-  }
-  return call_host(heap, name, args);
+  return (false, v_void());
 }
 
 // The interpreter has no loader, so it cannot run the function that an
