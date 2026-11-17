@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"context"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -96,25 +97,47 @@ func shippedArm64Compiler(t *testing.T, dir string) (string, string) {
 // from an empty cache, and gives the bytes of out.
 func linuxCompile(t *testing.T, runner, compiler, dir, out string, args ...string) []byte {
 	t.Helper()
-	cmd := exec.Command(compiler, args...)
+	return startLinuxCompile(t, runner, compiler, dir, out, args...)()
+}
+
+// startLinuxCompile starts the compile of linuxCompile and gives a function
+// that waits for it. The compile stops when the test ends.
+func startLinuxCompile(t *testing.T, runner, compiler, dir, out string, args ...string) func() []byte {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, compiler, args...)
 	if runner != "" {
-		cmd = exec.Command(runner, append([]string{compiler}, args...)...)
+		cmd = exec.CommandContext(ctx, runner, append([]string{compiler}, args...)...)
 	}
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "HOME="+filepath.Join(t.TempDir(), "home"))
-	if msg, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("compile on Linux: %v\n%s", err, msg)
+	type result struct {
+		msg []byte
+		err error
 	}
-	b, err := os.ReadFile(filepath.Join(dir, out))
-	if err != nil {
-		t.Fatal(err)
+	done := make(chan result, 1)
+	go func() {
+		msg, err := cmd.CombinedOutput()
+		done <- result{msg, err}
+	}()
+	return func() []byte {
+		t.Helper()
+		if r := <-done; r.err != nil {
+			t.Fatalf("compile on Linux: %v\n%s", r.err, r.msg)
+		}
+		b, err := os.ReadFile(filepath.Join(dir, out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
 	}
-	return b
 }
 
 // bootCompile builds the kernel and boots it with the initrd files, and checks
-// that the console has each line of want and the size and hash of output.
-func bootCompile(t *testing.T, cli *selfHostCLI, files []cpioFile, kernelSrc string, ramBytes int64, memory string, limit time.Duration, output []byte, want []string) {
+// that the console has each line of want and the size and hash of the bytes
+// that output gives. It calls output after the VM stops.
+func bootCompile(t *testing.T, cli *selfHostCLI, files []cpioFile, kernelSrc string, ramBytes int64, memory string, limit time.Duration, output func() []byte, want []string) {
 	t.Helper()
 	qemu := e2eharness.QemuSystem(t, "qemu-system-aarch64")
 	dir := t.TempDir()
@@ -137,9 +160,10 @@ func bootCompile(t *testing.T, cli *selfHostCLI, files []cpioFile, kernelSrc str
 		t.Fatalf("qemu: %v; console:\n%s", err, console)
 	}
 	t.Logf("the VM ran for %v", time.Since(start).Round(time.Second))
+	compiled := output()
 	h := fnv.New64a()
-	h.Write(output)
-	want = append([]string{"/bin/fern exit 0\n", "/bin/fern gave back its frames true\n", fmt.Sprintf("output %d bytes, fnv %d\n", len(output), h.Sum64())}, want...)
+	h.Write(compiled)
+	want = append([]string{"/bin/fern exit 0\n", "/bin/fern gave back its frames true\n", fmt.Sprintf("output %d bytes, fnv %d\n", len(compiled), h.Sum64())}, want...)
 	for _, line := range want {
 		if !strings.Contains(console, line) {
 			t.Errorf("console:\n%s\nwant %q", console, line)
@@ -166,7 +190,7 @@ func TestSelfHostKernelCompilesOnQemu(t *testing.T) {
 	}
 	files := []cpioFile{{"bin", 0o40755, nil}, {"bin/fern", 0o100755, image}, {"src", 0o40755, nil}, {"src/small.fern", 0o100644, []byte(compileProgramSrc)}, {"out", 0o40755, nil}}
 	argv := []string{"/bin/fern", "-target", "arm64-linux", "-o", "/out/small", "/src/small.fern"}
-	bootCompile(t, cli, files, compileKernelSrc(argv, "/out/small", 49152, true), compileRAMBytes, "1G", 15*time.Minute, want, []string{
+	bootCompile(t, cli, files, compileKernelSrc(argv, "/out/small", 49152, true), compileRAMBytes, "1G", 15*time.Minute, func() []byte { return want }, []string{
 		"/out/small fd 1: compiled on fernos\n",
 		"/out/small exit 7\n",
 		"/out/small gave back its frames true\n",
@@ -210,7 +234,8 @@ func treeFiles(t *testing.T, root, prefix string) []cpioFile {
 // The second "done when" item of milestone 6: the compiler compiles itself on
 // the kernel, and the result is byte-identical to the result on Linux. A
 // self-compile touches about 3 GiB, so the VM has 6 GiB, and the kernel the
-// first 5630 MiB of it. The initrd goes in the rest.
+// first 5630 MiB of it. The initrd goes in the rest. The compile on Linux
+// runs while the VM runs, because each one uses one core.
 const selfCompileRAMBytes = 5630 << 20
 
 func TestSelfHostKernelSelfCompilesOnQemu(t *testing.T) {
@@ -229,7 +254,7 @@ func TestSelfHostKernelSelfCompilesOnQemu(t *testing.T) {
 		}
 	}
 	args := []string{"-target", "arm64-linux", "-embed", "embed", "-o", "fern-self", "compiler/fern_main.fern"}
-	want := linuxCompile(t, runner, compiler, root, "fern-self", args...)
+	want := startLinuxCompile(t, runner, compiler, root, "fern-self", args...)
 	image, err := os.ReadFile(compiler)
 	if err != nil {
 		t.Fatal(err)
