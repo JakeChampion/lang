@@ -156,6 +156,22 @@ function source_errors(): test.TestOutcome {
   return test.pass();
 }
 
+function filler_limits(): test.TestOutcome {
+  let base = limits(1);
+  for pair in [("000000010c80000000010c0180", input.Limits { ...base, max_units_per_packet: 1 }), ("000000010c0180", input.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 5 } })] {
+    let (encoded, bound) = pair;
+    let bytes = match (hex.decode(encoded)) { Ok(value) => value, Err(_) => { return test.fail("fixture hex"); } };
+    if let Err(error) = collect(bytes, bound) {
+      if (error != frame.Limit.message()) {
+        return test.fail("packet limit must precede filler syntax");
+      }
+    } else {
+      return test.fail("filler packet limit accepted");
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("Bounded AVC access units");
   runner = runner.it("picture identity and prefix assignment across short reads", identities);
@@ -164,5 +180,6 @@ function main(): i32 {
   runner = runner.it("constructor limits", constructor_limits);
   runner = runner.it("packet, byte, unit, and operation limits", input_limits);
   runner = runner.it("source errors and oversized callback output", source_errors);
+  runner = runner.it("unit and byte limits precede filler syntax", filler_limits);
   return runner.finish();
 }
