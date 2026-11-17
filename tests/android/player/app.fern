@@ -103,6 +103,9 @@ function ready(own s: App): App {
   if (!player.start(s.ctx, p)) {
     return fail(s, "start");
   }
+  if (!player.set_next(s.ctx, p, None)) {
+    return fail(s, "no next player");
+  }
   log.warn("playertest: prepared round=" + s.round.to_string() + " duration_ms=" + duration.to_string());
   if (s.round == 0) {
     return App { ...s, phase: 1 };
@@ -220,10 +223,17 @@ function complete(own s: App): App {
     }
     return App { ...s, round: 1, phase: 0, rendered: false, timestamps: 0 };
   }
-  s = close(s);
+  // The second player is made while the first one lives, so its events
+  // hold a slot of their own.
   let Some(bad) = player.new(s.ctx, CLASS) else {
     return fail(s, "error player construction");
   };
+  if (bad.slot == p.slot || bad.slot < 0) {
+    player.close(s.ctx, bad);
+    return fail(s, "the slot of the second player");
+  }
+  log.warn("playertest: slots " + p.slot.to_string() + " " + bad.slot.to_string());
+  s = close(s);
   // Android retries an HTTP source for about 30 seconds before it reports
   // the error.
   s = App { ...s, media: Some(bad), phase: 5, deadline_ns: monotonic_ns() + 60000000000i64 };
@@ -267,6 +277,16 @@ function step(own s: App, event: android.Event): App {
     return s;
   }
   if let Some(value) = player.event(event) {
+    if let Some(p) = s.media {
+      // In phase 5 the first player can have sent an event before its
+      // close. A wrong slot then leaves the error with no answer.
+      if (!p.sent(event) && s.phase == 5) {
+        return s;
+      }
+      if (!p.sent(event)) {
+        return fail(s, "an event of another player");
+      }
+    }
     return change(s, value);
   }
   match (event) {

@@ -21,9 +21,11 @@ func TestSelfHostSSATokenSplit(t *testing.T) {
 		"x86-64-linux": regexp.MustCompile(`(?m)^\s+(cmpq \$0, %r|testq %r)`),
 		"arm64-linux":  regexp.MustCompile(`(?m)^\s+(cmp x[0-9]+, #0$|cbz x|cbnz x)`),
 	}
+	// A release ladder also compares the count with 1, but it branches when
+	// the count is greater.
 	unique := map[string]*regexp.Regexp{
-		"x86-64-linux": regexp.MustCompile(`(?m)^\s+cmpl \$1, -8\(`),
-		"arm64-linux":  regexp.MustCompile(`(?m)^\s+cmp w5, #1$`),
+		"x86-64-linux": regexp.MustCompile(`(?m)^\s+cmpl \$1, -8\(.*\n(?:\S+:\n)*\s+jne `),
+		"arm64-linux":  regexp.MustCompile(`(?m)^\s+cmp w5, #1\n(?:\S+:\n)*\s+b\.ne `),
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {

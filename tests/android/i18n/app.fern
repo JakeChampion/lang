@@ -49,8 +49,10 @@ function step(s: App, e: android.Event): App {
     let texts = i18n.strings(lang, kv.empty("en.kv").set("hello", "Hello"), kv.empty("de.kv").set("hello", "Hallo"));
     log.warn("i18ntest: languages " + langs.join(","));
     log.warn("i18ntest: chose " + lang + " " + texts.text("hello"));
+    log.warn("i18ntest: rtl " + android.rtl_layout(s.ctx).to_string());
     let fs = text.system(s.ctx, "sans-serif", [400]);
     for word in ["שלום", "مرحبا"] {
+      fs = fs.covering(0, word, text.system_fallbacks(s.ctx, "sans-serif"));
       log.warn("i18ntest: fallback " + drawn(fs, bidi.display(word, bidi.AUTO)));
     }
     android.finish(s.ctx);

@@ -179,6 +179,7 @@ language does not have. It is deleted.
 | `E105` | a `@secondary` entry of the wrong shape, a second entry, or a target without a secondary entry | — |
 | `E106` | a type has more than 4096 parts or more than 64 levels of nesting | `diag_e106` |
 | `E107` | a generic function, struct or enum has no last instance | `diag_e107` |
+| `E108` | a nested function of a group captures a name declared after the first function of the group | `diag_e108` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

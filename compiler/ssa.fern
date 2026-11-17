@@ -173,7 +173,12 @@ pub function plain_str(ins: SInst): string {
 // A count or a uniqueness test of a value with no tag in bit 1. The mark 8
 // adds that the value is never an odd address (ir.boxed_count).
 pub function aligned_count(ins: SInst): boolean {
-  return ins.imm == 4 || ins.imm == 8;
+  return ins.imm == 4 || even_count(ins);
+}
+
+// A count of a value that is never an odd address.
+pub function even_count(ins: SInst): boolean {
+  return ins.imm == 8 || ins.imm == SHARED_DEC && ins.str == "__fern_rc_dec";
 }
 
 pub function plain_imm(ins: SInst): i32 {
@@ -717,6 +722,11 @@ pub const SOLE: i32 = 5;
 // The imm of such a release of a box of 1 to 255 words (ir.sole_box).
 pub const SOLE_BOX: i32 = 9;
 
+// The imm of a release of a box that is never an odd address and that a
+// uniqueness test found shared (ir.shared_dec). It only takes one from the
+// count, inline.
+pub const SHARED_DEC: i32 = 10;
+
 // A release with no test of the count.
 pub function sole_release(ins: SInst): boolean {
   return ins.imm == SOLE || ins.imm == SOLE_BOX;
@@ -726,7 +736,7 @@ pub function sole_release(ins: SInst): boolean {
 // down by one, and only a unique box calls the routine. The helper release
 // of a record or a variant has the mark 7 (`ir.box_release`).
 pub function inline_release(ins: SInst): boolean {
-  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && !sole_release(ins) || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && !sole_release(ins) && ins.imm != SHARED_DEC || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
 }
 
 function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean, light: boolean): i32 {
@@ -937,7 +947,7 @@ pub function rc_inlined(ins: SInst): boolean {
   if (ins.kind_tag != CALL || ins.args.len() != 1) {
     return false;
   }
-  return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc";
+  return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc" || ins.str == "__fern_rc_dec" && ins.imm == SHARED_DEC;
 }
 
 function calls_before(calls: i32[], total_pos: i32): i32[] {

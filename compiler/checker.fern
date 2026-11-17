@@ -18028,6 +18028,9 @@ function then_scope(f: ast.StmtIf, s: Scope): Scope {
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let cur = bind_mutual_siblings(stmts, s);
+  for lc in parser.nested_fn_late_captures(stmts) {
+    out = out.append(dg_at("E108", "nested function " + util.quoted(lc.fn_name) + " captures " + util.quoted(lc.name) + ", but " + util.quoted(lc.first) + " can call " + util.quoted(lc.fn_name) + " before the declaration of " + util.quoted(lc.name) + ": declare " + util.quoted(lc.name) + " before " + util.quoted(lc.first), lc.line, lc.col));
+  }
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
@@ -20611,7 +20614,7 @@ function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: Ow
   let out: util.Diag[] = [];
   for capture in captures {
     if (ow_moved_has(moved, capture.name) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
-      out = out.append(dg_at("E050", "callback \"" + name + "\" uses captured owned parameter \"" + capture.name + "\" after it was consumed (moved at line " + ow_line_text(ow_moved_line(moved, capture.name)) + ")", expr_line(value), expr_col(value)));
+      out = out.append(ow_moved_diag("callback \"" + name + "\" uses captured owned parameter \"" + capture.name + "\" after it was consumed", expr_line(value), expr_col(value), moved, capture.name, "moved here"));
     }
   }
   return out;
@@ -20732,16 +20735,27 @@ function ow_line_text(line: i32): string {
   return util.i32_to_string(util.pos_line(line));
 }
 
+// The E050 for `message` at `line` and `col`, with the note `note` at the
+// place where `name` moved.
+function ow_moved_diag(message: string, line: i32, col: i32, moved: MovedEntry[], name: string, note: string): util.Diag {
+  let d = dg_at("E050", message, line, col);
+  let at = ow_moved_line(moved, name);
+  if (at <= 0) {
+    return d;
+  }
+  return util.Diag { ...d, related: [util.Related { line: at, col: ow_moved_col(moved, name), length: 0, message: note }] };
+}
+
 // The E050 for a bare use of an owned name: the whole was consumed, or one of
 // its fields was.
 function ow_bare_use_diags(moved: MovedEntry[], id: ast.ExprIdent): util.Diag[] {
   let d: util.Diag[] = [];
   if (ow_moved_has(moved, id.name)) {
-    return d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + ow_line_text(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+    return d.append(ow_moved_diag("use of owned parameter \"" + id.name + "\" after it was consumed", id.line, id.col, moved, id.name, "moved here"));
   }
   let path = ow_moved_prefix(moved, id.name);
   if (path.len() > 0) {
-    return d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after its field \"" + ow_path_field(path, id.name) + "\" was consumed (moved at line " + ow_line_text(ow_moved_line(moved, path)) + ")", id.line, id.col));
+    return d.append(ow_moved_diag("use of owned parameter \"" + id.name + "\" after its field \"" + ow_path_field(path, id.name) + "\" was consumed", id.line, id.col, moved, path, "moved here"));
   }
   return d;
 }
@@ -20751,11 +20765,11 @@ function ow_deferred_use_diags(ctx: OwnCtx, id: ast.ExprIdent): util.Diag[] {
   let d: util.Diag[] = [];
   let seen = ctx.deferred.get();
   if (ow_moved_has(seen, id.name)) {
-    return d.append(dg_at("E050", "owned parameter \"" + id.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, id.name)) + " consumes it", id.line, id.col));
+    return d.append(ow_moved_diag("owned parameter \"" + id.name + "\" is consumed twice: a deferred call consumes it", id.line, id.col, seen, id.name, "the deferred call is here"));
   }
   let path = ow_moved_prefix(seen, id.name);
   if (path.len() > 0) {
-    return d.append(dg_at("E050", "owned parameter \"" + id.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, path)) + " consumes its field \"" + ow_path_field(path, id.name) + "\"", id.line, id.col));
+    return d.append(ow_moved_diag("owned parameter \"" + id.name + "\" is consumed twice: a deferred call consumes its field \"" + ow_path_field(path, id.name) + "\"", id.line, id.col, seen, path, "the deferred call is here"));
   }
   return d;
 }
@@ -20766,7 +20780,7 @@ function ru_field_target(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk
   if let ast.ExprIdent(id) = e {
     let d: util.Diag[] = [];
     if (!id.builtin && ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
-      d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + ow_line_text(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+      d = d.append(ow_moved_diag("use of owned parameter \"" + id.name + "\" after it was consumed", id.line, id.col, moved, id.name, "moved here"));
     }
     return OwnWalk { moved: moved, diags: d };
   }
@@ -20778,7 +20792,7 @@ function ru_consume_field(fa: ast.ExprFieldAccess, oid: ast.ExprIdent, moved: Mo
   let path = oid.name + "." + fa.field;
   let d: util.Diag[] = [];
   if (ow_moved_has(moved, path)) {
-    d = d.append(dg_at("E050", "use of owned parameter \"" + oid.name + "\" after its field \"" + fa.field + "\" was consumed (moved at line " + ow_line_text(ow_moved_line(moved, path)) + ")", fa.line, fa.col));
+    d = d.append(ow_moved_diag("use of owned parameter \"" + oid.name + "\" after its field \"" + fa.field + "\" was consumed", fa.line, fa.col, moved, path, "moved here"));
     return OwnWalk { moved: moved, diags: d };
   }
   let rt = ru_field_target(fa.obj, moved, ctx);
@@ -20787,11 +20801,11 @@ function ru_consume_field(fa: ast.ExprFieldAccess, oid: ast.ExprIdent, moved: Mo
   }
   let seen = ctx.deferred.get();
   if (ow_moved_has(seen, path)) {
-    d = d.append(dg_at("E050", "field \"" + fa.field + "\" of owned parameter \"" + oid.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, path)) + " consumes it", fa.line, fa.col));
+    d = d.append(ow_moved_diag("field \"" + fa.field + "\" of owned parameter \"" + oid.name + "\" is consumed twice: a deferred call consumes it", fa.line, fa.col, seen, path, "the deferred call is here"));
     return OwnWalk { moved: moved, diags: d };
   }
   if (ow_moved_has(seen, oid.name)) {
-    d = d.append(dg_at("E050", "owned parameter \"" + oid.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, oid.name)) + " consumes it", fa.line, fa.col));
+    d = d.append(ow_moved_diag("owned parameter \"" + oid.name + "\" is consumed twice: a deferred call consumes it", fa.line, fa.col, seen, oid.name, "the deferred call is here"));
     return OwnWalk { moved: moved, diags: d };
   }
   return OwnWalk { moved: ow_moved_add(moved, path, fa.line, fa.col), diags: d };
@@ -26208,7 +26222,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
           let path = oid.name + "." + fa.field;
           if (ow_moved_has(moved, path)) {
             let d: util.Diag[] = [];
-            d = d.append(dg_at("E050", "use of owned parameter \"" + oid.name + "\" after its field \"" + fa.field + "\" was consumed (moved at line " + ow_line_text(ow_moved_line(moved, path)) + ")", fa.line, fa.col));
+            d = d.append(ow_moved_diag("use of owned parameter \"" + oid.name + "\" after its field \"" + fa.field + "\" was consumed", fa.line, fa.col, moved, path, "moved here"));
             return OwnWalk { moved: moved, diags: d };
           }
           return ru_field_target(fa.obj, moved, ctx);
@@ -26741,7 +26755,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       for elem in r.moved {
         if (!ow_moved_has(moved, elem.mname)) {
           if (ow_moved_has(seen, elem.mname)) {
-            d = d.append(dg_at("E050", "owned parameter \"" + elem.mname + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, elem.mname)) + " consumes it", elem.mline, 0));
+            d = d.append(ow_moved_diag("owned parameter \"" + elem.mname + "\" is consumed twice: a deferred call consumes it", elem.mline, 0, seen, elem.mname, "the deferred call is here"));
           } else {
             seen = ow_moved_add(seen, elem.mname, elem.mline, elem.mcol);
           }

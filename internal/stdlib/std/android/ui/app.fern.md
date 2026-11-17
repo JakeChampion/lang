@@ -123,6 +123,7 @@ function device(ctx: usize): ui.Device {
     hide_keyboard: (): void => keyboard.hide(ctx),
     state_file: (): string => android.data_dir(ctx) + "/state.kv",
     fallbacks: text.system_fallbacks(ctx, "sans-serif"),
+    rtl: (): boolean => android.rtl_layout(ctx),
   };
 }
 ```

@@ -94,6 +94,24 @@ function test_take_drop_complement(): test.TestOutcome {
   return test.assert_eq(joined[3], 40);
 }
 
+// A clone holds the same elements in a new buffer: a change to either array
+// does not reach the other.
+function test_clone(): test.TestOutcome {
+  let xs: i32[] = [1, 2, 3];
+  let ys = xs.clone();
+  ys = ys.with(0, 9).append(4);
+  xs = xs.append(5);
+  return test.assert_eq(xs[0].to_string() + xs.len().to_string() + xs[3].to_string() + " " + ys[0].to_string() + ys.len().to_string() + ys[3].to_string(), "145 944");
+}
+
+function test_clone_empty_and_strings(): test.TestOutcome {
+  let none: string[] = [];
+  let words = ["a", "b"];
+  let copy = array.clone(words);
+  copy = copy.with(1, "c");
+  return test.assert_eq(none.clone().len().to_string() + words[1] + copy[1], "0bc");
+}
+
 function test_concat(): test.TestOutcome {
   let a: i32[] = [1, 2];
   let b: i32[] = [3, 4, 5];
@@ -140,5 +158,7 @@ function main(): i32 {
   r = r.it("concat", test_concat);
   r = r.it("concat empty", test_concat_empty);
   r = r.it("concat method form", test_concat_method);
+  r = r.it("clone is a separate buffer", test_clone);
+  r = r.it("clone of an empty array and of strings", test_clone_empty_and_strings);
   return r.finish();
 }

@@ -2,8 +2,8 @@
 # scripts/ci-check-perf with FERN_CI_PERF_GATE_STRICT=1.
 #
 # FORMAT: metric  value  tolerance%. scripts/certify-census writes the rows:
-# what the certifier leaves unproved, skips, and what it does with three
-# planted imbalances per function (refuted, weakened, missed).
+# what the certifier leaves unproved, and what it does with three planted
+# imbalances per function (refuted, weakened, missed).
 # docs/RC-DESIGN.md section 1.6 defines each one.
 #
 # The counts come from a static analysis of a deterministic compile, so each

@@ -22,6 +22,10 @@ The methods of `El` set them, and they set the padding, the gap, the background,
 
 A text shows each line in the order of the Unicode Bidirectional Algorithm, from `std/bidi`. The first strong letter of a paragraph sets its direction. Hebrew and Arabic paragraphs are right to left. Each line of such a paragraph is at the right of its box when the text has the alignment START. The text of a field does the same, and its caret follows the direction of the character next to it.
 
+When the language of the person is written right to left, `Screen.rtl` is true and the layout mirrors, as Android mirrors a layout. A row puts its first element at the right, and START and END change sides. A list that scrolls across starts at the right, and a slider grows to the left.
+
+The shell lays out as for a layout that is left to right. Then `on_screen` mirrors each node, and the shell mirrors the x of each touch. What a node draws in its box does not mirror, so a text keeps the order of its letters. `mirrored` gives a canvas another paint for such a layout, as the back arrow of `app_bar` has.
+
 `on_tap` gives an element a message. A tap on the element gives that message to `update`. A message can hold values: the row of a list, for example. `on_long` does the same for a long press. `slider` is a bar with a thumb, and `on_slide` gives each element the message of a finger that moves across it.
 
 `field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text. `on_edit` gives the field a function that makes a message from the new text, and each change gives that message to `update`. `view` gives the field the text that it shows. `on_submit` gives the field the message of the action key of the keyboard.
@@ -88,7 +92,7 @@ function update(own m: Model, msg: Msg): Model {
 }
 
 function main(): i32 {
-  let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
+  let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0, rtl: false };
   let lay = ui.layout(view(Model { count: 0 }, screen), text.from_faces([], []), screen, map_new(4), ui.no_focus(), ui.no_grab());
   let next = update(Model { count: 0 }, lay.taps[0]);
   if (lay.nodes.len() == 3 && lay.taps.len() == 1 && next.count == 1) {
@@ -231,7 +235,7 @@ pub function (t: Theme) color(c: i32): i32 {
 // theme, and the parts at its edges that the bars of the system cover.
 // `font` is the scale of the text of the system: a text of 1 sp is `font`
 // dp high.
-pub struct Screen { w: i32, h: i32, d: f64, dark: boolean, theme: Theme, left: i32, top: i32, right: i32, bottom: i32, font: f64 }
+pub struct Screen { w: i32, h: i32, d: f64, dark: boolean, theme: Theme, left: i32, top: i32, right: i32, bottom: i32, font: f64, rtl: boolean }
 
 // The width and the height of the part of the screen that is free, in dp.
 pub function (s: Screen) width(): f64 {
@@ -316,6 +320,7 @@ pub struct El[M] {
   paint: Option[(draw.Frame, i32, i32, i32, i32) => void],
   // A canvas of `tinted`: the paint for the color of the role `ink`.
   tint: Option[(i32) => (draw.Frame, i32, i32, i32, i32) => void],
+  tint_rtl: Option[(i32) => (draw.Frame, i32, i32, i32, i32) => void],
   // A list of `count` rows of `row` dp, which `build` makes.
   count: i32,
   row: f64,
@@ -340,7 +345,7 @@ pub struct El[M] {
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, tint_rtl: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
 }
 
 // The elements one below the other.
@@ -389,6 +394,12 @@ pub function canvas[M](key: string, paint: (draw.Frame, i32, i32, i32, i32) => v
 // the theme. The canvas draws again when the color changes.
 pub function tinted[M](key: string, color: i32, paint: (i32) => (draw.Frame, i32, i32, i32, i32) => void): El[M] {
   return El { ...element(CANVAS, []), key: key, ink: color, tint: Some(paint) };
+}
+
+// The canvas `e` with `paint` in place of its own in a layout that is right
+// to left, such as an arrow that points the other way.
+pub function (e: El[M]) mirrored(paint: (i32) => (draw.Frame, i32, i32, i32, i32) => void): El[M] {
+  return El { ...e, tint_rtl: Some(paint) };
 }
 
 // A list with the name `name` that scrolls: `count` rows of `row` dp each.
@@ -748,7 +759,7 @@ pub function app_bar[M](title: string, back: Option[M], actions: El[M][]): El[M]
   let kids: El[M][] = [];
   let start = 16.0;
   if let Some(m) = back {
-    let arrow: El[M] = tinted("back", INK, icons.back);
+    let arrow: El[M] = tinted("back", INK, icons.back).mirrored(icons.forward);
     kids = kids.append(arrow.width(48.0).height(48.0).on_tap(m).described("Back"));
     start = 4.0;
   }
@@ -819,7 +830,7 @@ function bounded(v: i32): boolean {
   return v < UNBOUNDED / 2;
 }
 
-struct Env { fonts: text.Fonts, d: f64, font: f64, theme: Theme, offsets: Map[string, i32], focus: Focus, grab: Grab }
+struct Env { fonts: text.Fonts, d: f64, font: f64, theme: Theme, offsets: Map[string, i32], focus: Focus, grab: Grab, rtl: boolean }
 
 function px(env: Env, dp: f64): i32 {
   return (dp * env.d).round() as i32;
@@ -1209,9 +1220,15 @@ function paints[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32): scene.No
   if let Some(f) = e.paint {
     ns = ns.append(scene.node(x, y, w, h, scene.Custom(e.key, 0, f)));
   }
-  if let Some(t) = e.tint {
+  let tint = e.tint;
+  let key = e.key;
+  if (env.rtl && e.tint_rtl.is_some()) {
+    tint = e.tint_rtl;
+    key += "|rtl";
+  }
+  if let Some(t) = tint {
     let color = env.theme.color(e.ink);
-    ns = ns.append(scene.node(x, y, w, h, scene.Custom(e.key + "#" + color.to_string(), 0, t(color))));
+    ns = ns.append(scene.node(x, y, w, h, scene.Custom(key + "#" + color.to_string(), 0, t(color))));
   }
   return ns;
 }
@@ -1265,7 +1282,7 @@ function place_text[M](env: Env, e: El[M], x: i32, y: i32, w: i32, clip: Clip, o
   for i in 0..t.lines.len() {
     let l = t.lines[i];
     let lw = text.width(env.fonts, t.face, t.px, l);
-    let n = scene.node(x + shift(along_line(e.align, t.rtl[i]), w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
+    let n = scene.node(x + shift(along_line(e.align, t.rtl[i] != env.rtl), w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
     nodes = nodes.append(clipped(n, clip));
   }
   return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
@@ -1293,13 +1310,15 @@ function field_lines[M](env: Env, e: El[M], w: i32, r: bidi.Resolved, starts: i3
   for i in 0..starts.len() {
     let l = r.line(starts[i], ends[i]);
     lines = lines.append(l);
-    xs = xs.append(if (r.paragraph_level_at(starts[i]) == 1) { w - text.width(env.fonts, face, size, l) } else { 0 });
+    xs = xs.append(if (r.paragraph_level_at(starts[i]) == 1 != env.rtl) { w - text.width(env.fonts, face, size, l) } else { 0 });
   }
   return FieldView { text: r, starts: starts, ends: ends, lines: lines, xs: xs, caret_line: -1, caret_x: 0 };
 }
 
 // The view `v` with the caret before the character `caret` of the line
-// `row`.
+// `row`. The caret is 2 dp wide, 1 dp past the edge of its character. In
+// a layout that is right to left, the glyphs of a line do not mirror, so
+// the caret is that far from the other end of the line.
 function with_caret[M](env: Env, e: El[M], v: FieldView, row: i32, caret: i32): FieldView {
   let (size, face, _) = field_type(env, e);
   let order = v.text.order(v.starts[row], v.ends[row]);
@@ -1315,7 +1334,15 @@ function with_caret[M](env: Env, e: El[M], v: FieldView, row: i32, caret: i32): 
     }
     x = text.width(env.fonts, face, size, text.span(cs, 0, p));
   }
-  return FieldView { ...v, caret_line: row, caret_x: v.xs[row] + x };
+  let at = v.xs[row] + x + px(env, 1.0);
+  if (env.rtl) {
+    at = v.xs[row] + text.width(env.fonts, face, size, v.lines[row]) - x - px(env, 1.0) - caret_width(env);
+  }
+  return FieldView { ...v, caret_line: row, caret_x: at };
+}
+
+function caret_width(env: Env): i32 {
+  return px(env, 2.0).max(1);
 }
 
 // The place in `order` of the first character in logical order at or
@@ -1399,7 +1426,7 @@ function field_view[M](env: Env, e: El[M], w: i32): FieldView {
     let (size, face, _) = field_type(env, e);
     let v = shown_as_is(env, e, w, text.fit(env.fonts, face, size, e.hint, w), bidi.AUTO);
     if (focused) {
-      return FieldView { ...v, caret_line: 0, caret_x: 0 };
+      return with_caret(env, e, v, 0, 0);
     }
     return v;
   }
@@ -1433,8 +1460,14 @@ function caret_at[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, tx: i32
   if (order.len() == 0) {
     return v.starts[row];
   }
+  // The x of the tap from the left end of the glyphs, which do not mirror
+  // in a layout that is right to left.
+  let at = tx - x - v.xs[row];
+  if (env.rtl) {
+    at = text.width(env.fonts, face, size, v.lines[row]) - at;
+  }
   let p = 0;
-  while (p < cs.len() && text.width(env.fonts, face, size, text.span(cs, 0, p)) + text.width(env.fonts, face, size, cs[p]) / 2 < tx - x - v.xs[row]) {
+  while (p < cs.len() && text.width(env.fonts, face, size, text.span(cs, 0, p)) + text.width(env.fonts, face, size, cs[p]) / 2 < at) {
     p += 1;
   }
   // The caret goes at the left edge of the glyph `p`, or at the right edge
@@ -1467,7 +1500,7 @@ function place_field[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip
   if (focused) {
     rule = px(env, 2.0).max(1);
     rule_color = env.theme.primary;
-    ns = ns.append(scene.node(x + v.caret_x + px(env, 1.0), top + v.caret_line * line, px(env, 2.0).max(1), line, scene.Fill(env.theme.primary, 0)));
+    ns = ns.append(scene.node(x + v.caret_x, top + v.caret_line * line, caret_width(env), line, scene.Fill(env.theme.primary, 0)));
   }
   let below = y + h + px(env, e.pad.bottom);
   ns = ns.append(scene.node(x - px(env, e.pad.left), below - rule, w + px(env, e.pad.left) + px(env, e.pad.right), rule, scene.Fill(rule_color, 0)));
@@ -1723,7 +1756,7 @@ function place[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip
 // has how far each list scrolls, by its name. `focus` has the field that
 // has the focus, and its caret. `grab` has the row that a finger holds.
 pub function layout[M](root: El[M], fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: Focus, grab: Grab): Built[M] {
-  let env = Env { fonts: fonts, d: s.d, font: s.font, theme: s.theme, offsets: offsets, focus: focus, grab: grab };
+  let env = Env { fonts: fonts, d: s.d, font: s.font, theme: s.theme, offsets: offsets, focus: focus, grab: grab, rtl: s.rtl };
   let w = (s.w - s.left - s.right).max(0);
   let h = (s.h - s.top - s.bottom).max(0);
   if (exact(env, root.w) >= 0) {
@@ -2286,6 +2319,31 @@ pub function long_message[M](said: Messages[M], lay: Layout, n: scene.Node): Opt
   return message(said, lay, n, n.long);
 }
 
+// The x of the layout for the x `x` on the screen `s`, and the x on the
+// screen for an x of the layout. The two are the same unless the layout
+// is right to left.
+pub function along_screen(s: Screen, x: i32): i32 {
+  return if (s.rtl) { s.w - 1 - x } else { x };
+}
+
+// The nodes `ns` of a layout as the screen `s` shows them. A layout that is
+// right to left mirrors each box and each clip of columns. What a node
+// draws in its box does not mirror.
+pub function on_screen(ns: scene.Node[], s: Screen): scene.Node[] {
+  if (!s.rtl) {
+    return ns;
+  }
+  let out: scene.Node[] = [];
+  for n in ns {
+    let m = scene.Node { ...n, x: s.w - n.x - n.w };
+    if (n.left > 0 || n.right < scene.NO_CLIP) {
+      m = scene.Node { ...m, left: s.w - n.right.min(s.w), right: s.w - n.left };
+    }
+    out = out.append(m);
+  }
+  return out;
+}
+
 // The nodes of `lay` with the node under the finger shown pressed, in the
 // color `pressed`.
 pub function shown(inp: Input, lay: Layout, pressed: i32): scene.Node[] {
@@ -2458,6 +2516,7 @@ A change asks for a frame, and the frame draws at the next vsync. So many change
 // `set_keyboard` gives it another text, with the cursor before a
 // character. `hide_keyboard` takes it away. `fallbacks` gives the font
 // files to try for a weight and a character that the fonts do not have.
+// `rtl` tells that the layout is right to left.
 pub struct Device {
   stays: () => boolean,
   size: (usize) => (i32, i32),
@@ -2477,6 +2536,7 @@ pub struct Device {
   hide_keyboard: () => void,
   state_file: () => string,
   fallbacks: (i32, i32) => fonts.Found[],
+  rtl: () => boolean,
 }
 
 // What the shell keeps for the app. `lay` is the layout of the last frame.
@@ -2515,7 +2575,7 @@ pub struct Shell[S, M] { app: S, host: Host, said: Messages[M], jobs: worker.Wor
 
 // A shell for the state `state`, which draws text with `fonts`.
 pub function shell[S, M](own state: S, fonts: text.Fonts, dev: Device): Shell[S, M] {
-  let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale() };
+  let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale(), rtl: dev.rtl() };
   return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false, cost: no_cost(), ticked: dev.now() }, said: no_messages(), jobs: [] };
 }
 
@@ -2531,7 +2591,7 @@ function on_window(h: Host, window: usize): Host {
   if (window != h.window || !painter.attached(p)) {
     p = h.dev.attach(p, window);
   }
-  return changed(Host { ...h, paint: painter.with_size(p, w, hh), window: window, screen: Screen { ...h.screen, w: w, h: hh, d: h.dev.density(), dark: h.dev.dark(), font: h.dev.font_scale() } });
+  return changed(Host { ...h, paint: painter.with_size(p, w, hh), window: window, screen: Screen { ...h.screen, w: w, h: hh, d: h.dev.density(), dark: h.dev.dark(), font: h.dev.font_scale(), rtl: h.dev.rtl() } });
 }
 
 // The shell after `update` took the message `m`.
@@ -2639,13 +2699,13 @@ function advanced(h: Host, ns: i64): Host {
 // top of it. `cost` has the costs of the frame before the painter.
 function painted(own h: Host, lay: Layout, over: scene.Node[], screen: Screen, animating: boolean, cost: Cost): Host {
   let t0 = h.dev.now();
-  let nodes = shown(h.input, lay, screen.theme.pressed);
+  let nodes = on_screen(shown(h.input, lay, screen.theme.pressed), screen);
   for n in over {
     nodes = nodes.append(n);
   }
   let paint = h.dev.present(h.paint, h.window, nodes, screen.theme.background);
   let t1 = h.dev.now();
-  h.dev.publish(scene.access_items(lay.nodes));
+  h.dev.publish(scene.access_items(on_screen(lay.nodes, screen)));
   if (h.input.flinging() || animating) {
     h.dev.request_frame();
   }
@@ -2743,7 +2803,7 @@ function pressed(own h: Host): Host {
 // field has the focus, with its caret where the tap was.
 function field_tapped[M](h: Host, f: El[M], n: scene.Node, x: i32, y: i32): Host {
   let sc = h.screen;
-  let env = Env { fonts: h.fonts, d: sc.d, font: sc.font, theme: sc.theme, offsets: h.input.offsets, focus: Focus { field: h.focus, caret: h.caret }, grab: h.input.grab };
+  let env = Env { fonts: h.fonts, d: sc.d, font: sc.font, theme: sc.theme, offsets: h.input.offsets, focus: Focus { field: h.focus, caret: h.caret }, grab: h.input.grab, rtl: sc.rtl };
   let left = px(env, f.pad.left);
   let top = px(env, f.pad.top);
   let caret = caret_at(env, f, n.x + left, n.y + top, n.w - left - px(env, f.pad.right), n.h - top - px(env, f.pad.bottom), x, y);
@@ -3100,7 +3160,8 @@ function handled[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): 
       return frame(s, p, ns);
     },
     android.Touch(action, x, y) => {
-      return touched(s, p, action, x as i32, y as i32);
+      let tx = along_screen(s.host.screen, x as i32);
+      return touched(s, p, action, tx, y as i32);
     },
     android.Key(code, action) => {
       return keyed(s, p, e, code, action);

@@ -299,18 +299,20 @@ function test_thumbnail_part(): test.TestOutcome {
   return test.assert_eq(part.id + " " + plex.bif_request(client(), base(), part.id).url, "11 https://10-0-0-5.abc.plex.direct:32400/library/parts/11/indexes/sd");
 }
 
-const TRACKED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"7\",\"type\":\"movie\",\"title\":\"Two Tracks\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"eac3\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/1/file.mkv\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"eac3\",\"displayTitle\":\"English (EAC3 5.1)\",\"languageCode\":\"eng\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/31\",\"selected\":true}]}]}]}]}}";
+const TRACKED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"7\",\"type\":\"movie\",\"title\":\"Two Tracks\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"eac3\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/1/file.mkv\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"eac3\",\"displayTitle\":\"English (EAC3 5.1)\",\"languageCode\":\"eng\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/31\",\"selected\":true},{\"id\":32,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"}]}]}]}]}}";
 
-// A file with E-AC-3 and AAC sound and an external subtitle: the server
-// remembers the first sound and the subtitle. With no E-AC-3 decoder, the
-// AAC track plays as it is, and a subtitle burns in a transcode.
+// A file with E-AC-3 and AAC sound, an external SubRip subtitle and a PGS
+// subtitle: the server remembers the first sound and the SubRip one. With
+// no E-AC-3 decoder, the AAC track plays as it is. The SubRip subtitle
+// plays with the file as it is, because the app draws it, and the PGS
+// subtitle burns in a transcode.
 function test_tracks(): test.TestOutcome {
   let Some(it) = plex.parse_item(TRACKED) else {
     return test.fail("no item");
   };
   let sounds = plex.audio_tracks(it);
   let subs = plex.subtitle_tracks(it);
-  if (sounds.len() != 2 || subs.len() != 1 || sounds[1].title != "Commentary (AAC Stereo)" || !subs[0].external) {
+  if (sounds.len() != 2 || subs.len() != 2 || sounds[1].title != "Commentary (AAC Stereo)" || !subs[0].external || subs[0].key != "/library/streams/31") {
     return test.fail("tracks");
   }
   let kept = plex.remembered(it);
@@ -331,8 +333,36 @@ function test_tracks(): test.TestOutcome {
   if (!main.transcode || !main.url.contains("audioStreamID=21") || !main.url.contains("subtitles=none")) {
     return test.fail("the E-AC-3 track did not convert: " + main.url);
   }
-  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "31" });
+  let drawn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "31" });
+  if (drawn.transcode || plex.text_subtitle(it, plex.Choice { audio: "22", subtitle: "31" }).is_none()) {
+    return test.fail("the SubRip subtitle did not play with the file as it is: " + drawn.url);
+  }
+  let in_transcode = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "21", subtitle: "31" });
+  if (!in_transcode.url.contains("subtitles=none")) {
+    return test.fail("a transcode burned the subtitle that the app draws: " + in_transcode.url);
+  }
+  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "32" });
   return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn") && burn.url.contains("audioStreamID=22")).to_string(), "true");
+}
+
+// SubRip and WebVTT cues: their times with a comma or a dot and with or
+// without hours, lines up to a blank line, and no tags. A cue shows from
+// its start until its end.
+function test_cues(): test.TestOutcome {
+  let srt = "1\r\n00:00:01,500 --> 00:00:03,000\r\n<i>Hello</i>\r\nthere\r\n\r\n2\r\n01:02:03,004 --> 01:02:04,000\r\n{\\an8}Top\r\n";
+  let cues = plex.parse_cues(srt);
+  if (cues.len() != 2 || cues[0].start_ms != 1500i64 || cues[0].end_ms != 3000i64 || cues[0].text != "Hello\nthere" || cues[1].start_ms != 3723004i64 || cues[1].text != "Top") {
+    return test.fail("SubRip cues");
+  }
+  let vtt = "WEBVTT\n\n00:05.250 --> 00:07.000 align:start\nShort time\n\nnote\n00:00:08.000 --> 00:00:09.5\nLast\n";
+  let v = plex.parse_cues(vtt);
+  if (v.len() != 2 || v[0].start_ms != 5250i64 || v[0].end_ms != 7000i64 || v[0].text != "Short time" || v[1].end_ms != 9500i64) {
+    return test.fail("WebVTT cues");
+  }
+  if (plex.cue_at(cues, 1499i64) != "" || plex.cue_at(cues, 1500i64) != "Hello\nthere" || plex.cue_at(cues, 3000i64) != "") {
+    return test.fail("the cue at a time");
+  }
+  return test.pass();
 }
 
 // The name of a kept image does not change with the token, and it changes
@@ -385,6 +415,7 @@ function main(): i32 {
   r = r.it("the next episode", test_next_episode);
   r = r.it("the preview thumbnails of a BIF file", test_bif);
   r = r.it("the sound and subtitle tracks of a file", test_tracks);
+  r = r.it("SubRip and WebVTT cues", test_cues);
   r = r.it("the name of a kept image", test_cache_name);
   r = r.it("the intro and credits markers of an item", test_markers);
   r = r.it("a part with preview thumbnails", test_thumbnail_part);

@@ -988,6 +988,41 @@ func TestApkTv(t *testing.T) {
 	}
 }
 
+// -apk-pip lets the activity show in a picture-in-picture window: the
+// activity is resizeable, supports picture-in-picture, and keeps itself
+// when the size or the layout of its window changes.
+func TestApkPip(t *testing.T) {
+	dir := t.TempDir()
+	path, raw := buildApk(t, dir, "-apk-pip")
+	verifyApkV2(t, raw)
+	plain, _ := buildApk(t, t.TempDir())
+	aapt, err := exec.LookPath("aapt")
+	if err != nil {
+		t.Skip("aapt is not on PATH, so the manifest tree is not checked")
+	}
+	tree := func(apk string) string {
+		o, err := exec.Command(aapt, "dump", "xmltree", apk, "AndroidManifest.xml").CombinedOutput()
+		if err != nil {
+			t.Fatalf("aapt dump xmltree: %v\n%s", err, o)
+		}
+		return string(o)
+	}
+	pip := tree(path)
+	for _, want := range []string{
+		"A: android:resizeableActivity(0x010104f6)=(type 0x12)0xffffffff",
+		"A: android:supportsPictureInPicture(0x010104f7)=(type 0x12)0xffffffff",
+		"A: android:configChanges(0x0101001f)=(type 0x11)0xda0",
+	} {
+		if !strings.Contains(pip, want) {
+			t.Errorf("the manifest has no %s:\n%s", want, pip)
+		}
+	}
+	none := tree(plain)
+	if strings.Contains(none, "supportsPictureInPicture") || !strings.Contains(none, "A: android:configChanges(0x0101001f)=(type 0x11)0x4a0") {
+		t.Errorf("an APK with no -apk-pip changed its activity:\n%s", none)
+	}
+}
+
 // -apk-asset puts each file under assets/ with its own name, stored, and
 // refuses a file it cannot read and two files with one name.
 func TestApkAsset(t *testing.T) {
