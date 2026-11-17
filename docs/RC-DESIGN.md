@@ -563,7 +563,10 @@ immortal box. At a join the counts are met per value. A count met with free
 is that count on some paths and free on the others: a spend of the free part
 does nothing, and a unit still held on the counted part is a leak. A null
 constant and a borrow are not free. Any other disagreement is unproved rather
-than a finding. A phi takes one unit of an input that holds one. The exception is
+than a finding. A call that returns its operand or a fresh box
+(`__fern_arr_concat`, `rcsigs.effect_kept_or_same`) leaves the operand its
+unit and gives the result a fresh one. On the edge where a test finds the two
+are one box, the result takes the operand's units and the fresh unit goes. A phi takes one unit of an input that holds one. The exception is
 a phi that no operation touches, that no return takes, and that feeds no phi
 that is touched or returned: nothing can spend a unit of it, so its inputs
 keep their units (`spent_phis`). The slot of a loop that borrows is such a

@@ -625,6 +625,15 @@ function pick(name: string): Case {
         let b3 = block(3, [1, 2], [inst(8, 3, [2, 1], 0, "")], ret(3));
         return Case { f: func(1, 4, [b0, b1, b2, b3]), modes: [value], returns_unit: false };
     }
+    if (name == "concat-result-is-its-operand" || name == "concat-new-box-keeps-the-operand") {
+        // v5 is v0 grown in place, or a new array that leaves v0 its unit.
+        let release: ssa.SInst[] = [call(7, "__fern_rc_dec", [0])];
+        if (name == "concat-new-box-keeps-the-operand") { release = []; }
+        let b0: ssa.SBlock = block(0, [], [param(0), const_int(2, 8), const_int(3, 1), const_int(4, 0), inst(11, 5, [2, 3, 4, 0], 1, "__fern_arr_concat"), inst(9, 6, [5, 0], 64, "ne")], brif(6, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], release, br(2));
+        let b2: ssa.SBlock = block(2, [0, 1], [], ret(5));
+        return Case { f: func(1, 8, [b0, b1, b2]), modes: [rccertify.counted_mode()], returns_unit: true };
+    }
     if (name == "unknown-callee-refused") {
         return Case { f: one_block(0, 3, [fresh_box(0), call(1, "mystery", [0]), const_int(2, 0)], ret(2)), modes: [], returns_unit: false };
     }
@@ -758,6 +767,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"borrow-released-before-an-exit", []string{"spent without a unit of v0"}, 0},
 		{"leak-in-an-endless-loop", []string{"leaked where it dies of v0"}, 0},
 		{"null-tested-against-an-i64-zero", nil, 0},
+		{"concat-result-is-its-operand", nil, 0},
+		{"concat-new-box-keeps-the-operand", []string{"leaked where it dies of v0"}, 0},
 		{"unknown-callee-refused", []string{"cannot be certified: calls mystery, which has no rc signature and no ABI"}, 0},
 		{"unknown-contract-returns-a-phi-of-a-fresh-box", nil, 2},
 		{"loop-phi-borrows-a-held-box", nil, 0},
