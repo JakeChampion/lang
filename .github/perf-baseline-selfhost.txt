@@ -48,7 +48,7 @@ selfhost/arm64-linux/array_append.emit	1468
 selfhost/arm64-linux/array_index.emit	1468
 selfhost/arm64-linux/array_scale_f64.emit	1609
 selfhost/arm64-linux/array_with.emit	1347
-selfhost/arm64-linux/ascii_scan.emit	2503
+selfhost/arm64-linux/ascii_scan.emit	2501
 selfhost/arm64-linux/byte_copy_append.emit	1600
 selfhost/arm64-linux/byte_copy_with.emit	1894
 selfhost/arm64-linux/call_overhead.emit	452
@@ -116,7 +116,7 @@ selfhost/x86-64-linux/array_append.emit	1227
 selfhost/x86-64-linux/array_index.emit	1231
 selfhost/x86-64-linux/array_scale_f64.emit	1415
 selfhost/x86-64-linux/array_with.emit	1109
-selfhost/x86-64-linux/ascii_scan.emit	2246
+selfhost/x86-64-linux/ascii_scan.emit	2244
 selfhost/x86-64-linux/byte_copy_append.emit	1362
 selfhost/x86-64-linux/byte_copy_with.emit	1641
 selfhost/x86-64-linux/call_overhead.emit	370
@@ -179,6 +179,6 @@ selfhost/wasm32-wasi/base64_decode.emit	4465
 selfhost/x86-64-linux/gather_many.emit	5824
 selfhost/arm64-linux/gather_many.emit	6255
 selfhost/wasm32-wasi/gather_many.emit	6659
-selfhost/x86-64-linux/utf8_validate.emit	2635
-selfhost/arm64-linux/utf8_validate.emit	2884
+selfhost/x86-64-linux/utf8_validate.emit	2633
+selfhost/arm64-linux/utf8_validate.emit	2882
 selfhost/wasm32-wasi/utf8_validate.emit	2231

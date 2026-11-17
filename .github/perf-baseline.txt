@@ -46,8 +46,8 @@ x86_64/array_scale_f64.text	1415
 x86_64/array_scale_f64.ir	21309613
 x86_64/array_with.ir	31137597
 x86_64/array_with.text	1109
-x86_64/ascii_scan.text	2246
-x86_64/ascii_scan.ir	44749775
+x86_64/ascii_scan.text	2244
+x86_64/ascii_scan.ir	44559275
 x86_64/byte_copy_append.text	1362
 x86_64/byte_copy_append.ir	13442091
 x86_64/byte_copy_with.text	1641
@@ -105,7 +105,7 @@ x86_64/tokenize.ir	31710112
 x86_64/utf8_ingest_unchecked.text	8715
 x86_64/utf8_ingest_unchecked.ir	2100062
 x86_64/utf8_ingest_validated.text	9419
-x86_64/utf8_ingest_validated.ir	3831863
+x86_64/utf8_ingest_validated.ir	3823463
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
 # the dev container — paste its block in verbatim. The `.text` half needs no
@@ -125,8 +125,8 @@ aarch64/array_scale_f64.text	1609
 aarch64/array_scale_f64.ir	25340945
 aarch64/array_with.text	1347
 aarch64/array_with.ir	24587164
-aarch64/ascii_scan.text	2503
-aarch64/ascii_scan.ir	78596644
+aarch64/ascii_scan.text	2501
+aarch64/ascii_scan.ir	78406144
 aarch64/byte_copy_append.text	1600
 aarch64/byte_copy_append.ir	31926661
 aarch64/byte_copy_with.text	1894
@@ -184,7 +184,7 @@ aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	9170
 aarch64/utf8_ingest_unchecked.ir	2593882
 aarch64/utf8_ingest_validated.text	9778
-aarch64/utf8_ingest_validated.ir	4857485
+aarch64/utf8_ingest_validated.ir	4851885
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	37302530
 x86_64/perceus_deriv.text	3127
@@ -229,7 +229,7 @@ x86_64/gather_many.ir	37006962
 aarch64/gather_many.text	6251
 aarch64/gather_many.ir	42764802
 aarch64/hex_decode.ir	182381782
-aarch64/utf8_validate.text	2884
-aarch64/utf8_validate.ir	241995110
-x86_64/utf8_validate.text	2635
-x86_64/utf8_validate.ir	185197986
+aarch64/utf8_validate.text	2882
+aarch64/utf8_validate.ir	239905894
+x86_64/utf8_validate.text	2633
+x86_64/utf8_validate.ir	183108770
