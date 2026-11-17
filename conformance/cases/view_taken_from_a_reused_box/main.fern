@@ -1,0 +1,33 @@
+// A tuple that takes the box of a dead record gives its view to a call.
+// The frame takes the view out of the tuple, and the tuple is in a reused box.
+
+struct Window { xs: [i32], label: str }
+
+@noinline
+function keep(): boolean {
+    return true;
+}
+
+function total(xs: [i32]): i32 {
+    let t: i32 = 0;
+    for x in xs {
+        if (keep()) {
+            t = t + x;
+        }
+    }
+    return t;
+}
+
+function main(): i32 {
+    let a: i32[] = [1, 2, 3, 4];
+    let w: Window = Window { xs: a[0:2], label: "x" };
+    print(total(w.xs));
+    let pair: ([i32], i32) = (a[2:4], 10);
+    print(total(pair.0) + pair.1);
+    let o: Option[[i32]] = Some(a[0:1]);
+    match (o) {
+        Some(xs) => { print(total(xs)); },
+        None => { print(0); }
+    }
+    return 0;
+}

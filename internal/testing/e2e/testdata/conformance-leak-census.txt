@@ -1478,6 +1478,7 @@ vec_lane_kernels                                     0
 view_beside_its_array_in_a_call                      0
 view_of_branch_value                                 0
 view_param_returned_after_loop                       0
+view_taken_from_a_reused_box                         0
 views_in_aggregates_stay_local                       0
 void_value_arm_falls_through                         0
 void_value_if_statement                              0
