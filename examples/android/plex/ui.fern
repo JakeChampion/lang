@@ -36,6 +36,9 @@ pub const PLAYER: i32 = 8;
 
 pub const USERS: i32 = 9;
 
+// The list of the downloads of the app.
+pub const DOWNLOADS: i32 = 10;
+
 // The tabs of the bar at the bottom, and the screen of each.
 pub function tab_names(): string[] {
   return ["Home", "Libraries", "Search", "Settings"];
@@ -84,6 +87,8 @@ pub struct View {
   // download that came in percent, or -1 when it has none.
   menu: plex.Item,
   menu_download: i32,
+  // The rows of the screen of the downloads.
+  saved: SavedRow[],
   users: plex.HomeUser[],
   pin_for: string,
   pin_digits: string,
@@ -116,7 +121,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
 }
 
 // --- metrics
@@ -916,6 +921,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
     (tr(m, "User"), v.account, "users"),
     (tr(m, "Server"), v.server_name, "servers"),
     (tr(m, "Quality"), v.quality, "quality"),
+    (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved.filter((r: SavedRow): boolean => r.done).len().to_string(), v.saved.len().to_string()]), "downloads"),
     (tr(m, "Sign out"), "", "signout"),
   ];
   let row = 72 * m.u;
@@ -941,6 +947,40 @@ function settings(m: Metrics, v: View): scene.Node[] {
   }
   let about = plex.PRODUCT + " " + plex.VERSION + ". A Plex client written in Fern, with no Java code: the screens, the network, TLS and JSON are Fern, and the video plays through the media player of Android.";
   out = util_append(out, wrapped(m, 16 * m.u, y + 16 * m.u, m.w - 32 * m.u, about, look.muted()));
+  return out;
+}
+
+// A download on the screen of the downloads: the title of its item, its
+// state, such as "42%", and whether it is done.
+pub struct SavedRow { title: string, state: string, done: boolean }
+
+// The downloads, one panel each: the title and the state, and a button
+// that stops the download or removes its file. A tap on a done download
+// plays it.
+function downloads(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
+  let y = top_height(m) + 8 * m.u - v.scroll;
+  if (v.saved.len() == 0) {
+    return out.append(note(m, y + 16 * m.u, tr(m, "No downloads")));
+  }
+  let row = 72 * m.u;
+  let k = 0;
+  for r in v.saved {
+    let n = panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u);
+    if (r.done) {
+      n = tap(n, "saved:" + k.to_string());
+    }
+    out = out.append(n);
+    let words = if (r.done) { tr(m, "REMOVE") } else { tr(m, "STOP") };
+    let bw = button_width(m, words);
+    let bx = m.w - 32 * m.u - bw;
+    let cells = (bx - 48 * m.u) / m.cw;
+    out = out.append(label(m, 32 * m.u, y + 10 * m.u, fit(r.title, cells), m.ts, look.ink()));
+    out = out.append(label(m, 32 * m.u, y + 14 * m.u + m.th, fit(r.state, cells), m.ts, look.muted()));
+    out = util_append(out, button(m, bx, y + (row - 8 * m.u - button_height(m)) / 2, words, false, "unsave:" + k.to_string()));
+    y += row;
+    k += 1;
+  }
   return out;
 }
 
@@ -1359,10 +1399,12 @@ pub function nodes(v: View): scene.Node[] {
     body = search(m, v);
   } else if (v.screen == USERS) {
     body = users(m, v);
+  } else if (v.screen == DOWNLOADS) {
+    body = downloads(m, v);
   } else {
     body = settings(m, v);
   }
-  let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS;
+  let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS || v.screen == DOWNLOADS;
   let out = util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
   if (v.menu.key.len() > 0) {
     out = util_append(out, poster_menu(m, v.menu, v.menu_download));
@@ -1371,8 +1413,8 @@ pub function nodes(v: View): scene.Node[] {
 }
 
 // The menu of a held poster, at the bottom over a dark veil: its title,
-// Play, its download, Mark watched or Mark unwatched, Go to show for an
-// episode, and Cancel. `download` is the percent of its download that came,
+// Play, its download, Download all for a group of items, Mark watched or
+// Mark unwatched, Go to show for an episode, and Cancel. `download` is the percent of its download that came,
 // or -1. A tap on the veil closes it.
 function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
   let rows: (string, string)[] = [];
@@ -1385,6 +1427,9 @@ function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
       words = m.texts.format("Stop download ({0}%)", [download.to_string()]);
     }
     rows = rows.append((words, "menu:download"));
+  }
+  if (["show", "season", "artist", "album"].contains(it.kind)) {
+    rows = rows.append((tr(m, "Download all"), "menu:download_all"));
   }
   if (plex.watched(it)) {
     rows = rows.append((tr(m, "Mark unwatched"), "menu:mark"));

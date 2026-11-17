@@ -948,6 +948,9 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
   if (verb == "download") {
     return got_download(t, r);
   }
+  if (verb == "downloadall") {
+    return download_all(t, plex.parse_items(r.text()).items);
+  }
   if (verb == "search") {
     if (rest == t.query) {
       return App { ...t, results: plex.parse_hubs(r.text()), rows: [], error: "" };
@@ -1663,6 +1666,21 @@ function saved_at(s: App, key: string): i32 {
 
 // The part of the download of the item `key` that came, in percent: 100
 // once it is done, or -1 when the item has no download.
+// The row of the download `d` on the screen of the downloads.
+function saved_row(s: App, d: Saved): ui.SavedRow {
+  let state = s.texts.text("Waiting");
+  if (d.status == download.DONE) {
+    state = s.texts.text("Done");
+  } else if (d.status == download.FAILED) {
+    state = s.texts.text("The download failed");
+  } else if (d.status == download.PAUSED) {
+    state = s.texts.text("Paused");
+  } else if (d.status == download.RUNNING) {
+    state = download_percent(s, d.item.key).to_string() + "%";
+  }
+  return ui.SavedRow { title: plex.card_title(d.item), state: state, done: d.status == download.DONE };
+}
+
 function download_percent(s: App, key: string): i32 {
   let at = saved_at(s, key);
   if (at < 0) {
@@ -1720,7 +1738,7 @@ function got_download(own t: App, r: plex.Reply): App {
   let Some(it) = plex.parse_item(r.text()) else {
     return t;
   };
-  if (saved_at(t, it.key) >= 0) {
+  if (saved_at(t, it.key) >= 0 || !plex.playable_kind(it.kind)) {
     return t;
   }
   let direct = plex.direct_playable(it, t.dev.decoders);
@@ -1736,6 +1754,18 @@ function got_download(own t: App, r: plex.Reply): App {
   let u = App { ...t, downloads: t.downloads.append(Saved { id: id, item: it, file: name, status: download.PENDING, done: 0i64, total: -1i64 }), downloads_at: 0i64, error: "" };
   save_downloads(u);
   return u;
+}
+
+// Asks for the metadata of each item of `items` that plays and has no
+// download, and downloads it: all of the episodes of a show or a season,
+// or all of the tracks of an artist or an album.
+function download_all(own t: App, items: plex.Item[]): App {
+  for it in items {
+    if (plex.playable_kind(it.kind) && saved_at(t, it.key) < 0) {
+      t = ask(t, "download:" + it.key, Meta(it.key));
+    }
+  }
+  return t;
 }
 
 // Stops the download at `at` and deletes its file.
@@ -1798,6 +1828,9 @@ function menu_act(own s: App, a: string): App {
       return drop_download(t, at);
     }
     return ask(t, "download:" + it.key, Meta(it.key));
+  }
+  if (a == "menu:download_all") {
+    return ask(t, "downloadall:" + it.key, Leaves(it.key));
   }
   if (a == "menu:show" && it.grandparent_key.len() > 0) {
     return open_item(t, plex.Item { ...plex.no_item(), key: it.grandparent_key, kind: "show", title: it.grandparent });
@@ -3154,6 +3187,25 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (a == "users") {
     return open_users(t);
   }
+  if (a == "downloads") {
+    let title = t.texts.text("Downloads");
+    return App { ...push(t), screen: ui.DOWNLOADS, title: title, scroll: 0, dirty: true };
+  }
+  if (a.starts_with("saved:")) {
+    let at = num(a.split_at(6).1);
+    if (at < t.downloads.len() && t.downloads[at].status == download.DONE) {
+      let it = t.downloads[at].item;
+      return start_play(t, it, []);
+    }
+    return t;
+  }
+  if (a.starts_with("unsave:")) {
+    let at = num(a.split_at(7).1);
+    if (at < t.downloads.len()) {
+      return drop_download(t, at);
+    }
+    return t;
+  }
   if (a.starts_with("user:")) {
     return pick_user(t, num(a.split_at(5).1));
   }
@@ -3480,7 +3532,7 @@ pub function view(s: App): ui.View {
     texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: s.downloads.map((d: Saved): ui.SavedRow => saved_row(s, d)), users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,

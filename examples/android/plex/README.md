@@ -141,6 +141,11 @@ stops the download. A done download shows in the last row of the home
 screen and plays from the phone with no server. Remove download deletes
 the file.
 
+Download all in the menu of a show, a season, an artist or an album
+downloads each of its episodes or tracks. Downloads in the settings
+opens the list of the downloads, with the state of each one. A tap on a
+done download plays it, and its button removes it.
+
 TalkBack reads each screen. The app gives the screen reader each button
 by its text and each poster by its title. A double tap presses the
 control, and a double tap and hold on a poster opens its menu.
