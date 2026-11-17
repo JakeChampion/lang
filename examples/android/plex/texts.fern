@@ -83,6 +83,14 @@ function table(): string[][] {
     ["LIGHT {0}%", "HELLIGKEIT {0}%", "LUMIERE {0}%", "BRILLO {0}%"],
     ["VOLUME {0}", "LAUTSTAERKE {0}", "VOLUME {0}", "VOLUMEN {0}"],
     ["Direct play", "Direkt", "Lecture directe", "Reproducción directa"],
+    ["SHUFFLE", "ZUFALL", "ALEATOIRE", "ALEATORIO"],
+    ["REPEAT OFF", "WIEDERHOLEN AUS", "REPETER NON", "REPETIR NO"],
+    ["REPEAT ALL", "ALLE WIEDERHOLEN", "TOUT REPETER", "REPETIR TODO"],
+    ["REPEAT ONE", "TITEL WIEDERHOLEN", "REPETER UN", "REPETIR UNO"],
+    ["SLEEP OFF", "SCHLAF AUS", "VEILLE NON", "DORMIR NO"],
+    ["SLEEP AT END", "SCHLAF AM ENDE", "VEILLE A LA FIN", "DORMIR AL FINAL"],
+    ["SLEEP {0} MIN", "SCHLAF {0} MIN", "VEILLE {0} MIN", "DORMIR {0} MIN"],
+    ["NEXT", "WEITER", "SUIVANT", "SIGUIENTE"],
     ["Transcode", "Umgewandelt", "Transcodé", "Transcodificado"],
   ];
 }

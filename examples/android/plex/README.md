@@ -59,6 +59,13 @@ Playback:
   0.75x. The pitch of the sound stays the same. Each tap gives the next
   speed, and the app keeps it for the next items.
 
+An album plays its tracks in order, and the Next button goes to the next
+track. Shuffle plays the tracks
+that wait in a random order. Repeat plays the album again after its last
+track, or plays one track again. The settings keep shuffle and repeat. The
+sleep timer pauses the music after 15, 30 or 60 minutes, or stops it at the
+end of the track.
+
 Music plays with the controls on the screen. It plays on while the app is
 away, with the media controls of Android in the notification panel and on
 the lock screen. On Android 13 and later, the first track asks for the
