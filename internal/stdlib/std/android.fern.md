@@ -381,7 +381,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, the Choreographer of the loop thread, and the motion event of the `Touch` step that runs. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
 
-Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it. `brightness` goes to the UI thread in the same way, because it changes the attributes of the window.
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it. `brightness` goes to the UI thread in the same way, because it changes the attributes of the window. `pip_auto` goes there too: it gives the activity the `PictureInPictureParams` of a video, so Android shows the activity in a small window when the user leaves it. `in_pip` tells whether the activity shows in that window.
 
 `NativeActivity` and `Callbacks` have the fields of `ANativeActivity` and `ANativeActivityCallbacks` in `android/native_activity.h`, in their order. `@derive(ffi.CLayout)` gives each field its C offset.
 
@@ -1547,6 +1547,40 @@ pub function brightness(ctx: usize, level: f32): void {
   ui_request(ctx, UiRequest { op: BRIGHTNESS, a: permille, b: 0, data: 0 as usize });
 }
 
+// Lets Android put the activity in a picture-in-picture window when the
+// user leaves it, with the shape of a `w` by `h` video, or stops that for
+// `on` false. Android does so from version 12 (API 31), and the APK needs
+// the `pip` key of its [android] table. Android 8 to 11 keep only the
+// shape.
+pub function pip_auto(ctx: usize, on: boolean, w: i32, h: i32): void {
+  let a = 0;
+  if (on) {
+    a = 1;
+  }
+  ui_request(ctx, UiRequest { op: PIP, a: a, b: w, data: h as usize });
+}
+
+// True while the activity shows in a picture-in-picture window.
+pub function in_pip(ctx: usize): boolean {
+  if (sdk_version(ctx) < 26) {
+    return false;
+  }
+  let e = env(ctx);
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    let class: usize = jni.get_object_class(e, obj);
+    let id: usize = jni.get_method_id(e, class, "isInPictureInPictureMode", "()Z");
+    let on = false;
+    if (id != 0 as usize) {
+      on = jni.call_boolean_method_a(e, obj, id, 0 as usize) != 0;
+    }
+    let d: usize = jni.delete_local_ref(e, class);
+    let cleared: usize = jni.exception_clear(e);
+    return on;
+  }
+}
+
 // The brightness of the screen that the user set for the system, from 0.0
 // to 1.0: Settings.System.SCREEN_BRIGHTNESS over 255. Call it on the loop
 // thread.
@@ -1821,6 +1855,10 @@ const FAST_DISPLAY: i32 = 9;
 // The request of `brightness`: `a` is the level in thousandths, or -1.
 const BRIGHTNESS: i32 = 10;
 
+// The request of `pip_auto`: `a` is 1 for on, and `b` and `data` are the
+// width and the height of the video.
+const PIP: i32 = 11;
+
 // InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
 pub const INPUT_TEXT: i32 = 1;
 
@@ -1947,6 +1985,10 @@ function do_request(ctx: usize, r: UiRequest): boolean {
     apply_brightness(ctx, r.a);
     return false;
   }
+  if (r.op == PIP) {
+    apply_pip(ctx, r.a != 0, r.b, r.data as i32);
+    return false;
+  }
   if (r.op > FIELD_HIDE) {
     return access_request(ctx, r);
   }
@@ -1982,6 +2024,64 @@ function apply_brightness(ctx: usize, permille: i32): void {
     }
     if (window != 0 as usize) {
       let g: usize = jni.delete_local_ref(e, window);
+    }
+    let cleared: usize = jni.exception_clear(e);
+  }
+}
+
+// Activity.setPictureInPictureParams with the shape of a w by h video,
+// held to the shapes that Android takes (from 1 by 2.39 to 2.39 by 1), and
+// with setAutoEnterEnabled from API 31.
+function apply_pip(ctx: usize, on: boolean, w: i32, h: i32): void {
+  if (sdk_version(ctx) < 26) {
+    return;
+  }
+  let width = w.max(1);
+  let height = h.max(1);
+  if (width * 100 > height * 239) {
+    width = height * 239 / 100;
+  }
+  if (height * 100 > width * 239) {
+    height = width * 239 / 100;
+  }
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let e: usize = NativeActivity.c_load_env(activity);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    let builder_class: usize = jni.find_class(e, "android/app/PictureInPictureParams$Builder");
+    let rational_class: usize = jni.find_class(e, "android/util/Rational");
+    if (builder_class != 0 as usize && rational_class != 0 as usize) {
+      let builder_args: usize = jni.jvalues([]);
+      let builder: usize = jni.new_object_a(e, builder_class, jni.get_method_id(e, builder_class, "<init>", "()V"), builder_args);
+      jni.free_buffer(builder_args);
+      let ratio_args: usize = jni.jvalues([width as usize, height as usize]);
+      let ratio: usize = jni.new_object_a(e, rational_class, jni.get_method_id(e, rational_class, "<init>", "(II)V"), ratio_args);
+      jni.free_buffer(ratio_args);
+      if (builder != 0 as usize && ratio != 0 as usize) {
+        let shaped: usize = jni.call_object(e, builder, "setAspectRatio", "(Landroid/util/Rational;)Landroid/app/PictureInPictureParams$Builder;", [ratio]);
+        if (sdk_version(ctx) >= 31) {
+          let auto_on = 0 as usize;
+          if (on) {
+            auto_on = 1 as usize;
+          }
+          let entered: usize = jni.call_object(e, builder, "setAutoEnterEnabled", "(Z)Landroid/app/PictureInPictureParams$Builder;", [auto_on]);
+          let gone_entered: usize = jni.delete_local_ref(e, entered);
+        }
+        let params: usize = jni.call_object(e, builder, "build", "()Landroid/app/PictureInPictureParams;", []);
+        if (params != 0 as usize) {
+          let set = jni.call_void(e, obj, "setPictureInPictureParams", "(Landroid/app/PictureInPictureParams;)V", [params]);
+          let gone_params: usize = jni.delete_local_ref(e, params);
+        }
+        let gone_shaped: usize = jni.delete_local_ref(e, shaped);
+      }
+      let gone_builder: usize = jni.delete_local_ref(e, builder);
+      let gone_ratio: usize = jni.delete_local_ref(e, ratio);
+    }
+    if (builder_class != 0 as usize) {
+      let gb: usize = jni.delete_local_ref(e, builder_class);
+    }
+    if (rational_class != 0 as usize) {
+      let gr: usize = jni.delete_local_ref(e, rational_class);
     }
     let cleared: usize = jni.exception_clear(e);
   }

@@ -250,7 +250,7 @@ function with_lint(m: Manifest, section: string, key: string, val: string): Mani
 // The keys of [android], each the name of an -apk flag with no prefix.
 const ANDROID_TEXT: string[] = ["package", "label", "icon", "banner", "key", "version_name"];
 
-const ANDROID_SWITCHES: string[] = ["home", "tv", "compress", "cleartext", "debuggable"];
+const ANDROID_SWITCHES: string[] = ["home", "tv", "pip", "compress", "cleartext", "debuggable"];
 
 const ANDROID_LISTS: string[] = ["permissions", "assets", "widget"];
 
