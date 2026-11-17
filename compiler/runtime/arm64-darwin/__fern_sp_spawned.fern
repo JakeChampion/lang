@@ -1,0 +1,69 @@
+// __fern_sp_spawned runs in each of the two processes after the fork of
+// `subprocess`. `pid` is 0 in the child. The child puts its ends of the pipes
+// on its standard streams and runs `cmd`. The parent closes those ends and
+// collects the output.
+function __fern_sp_spawned(cmd: string, args: string[], input: string, pid: i32, in_r: i32, in_w: i32, out_r: i32, out_w: i32, err_r: i32, err_w: i32): ProcessResult {
+  if (pid == 0) {
+    __syscall3(90, in_r as i64, 0, 0);
+    __syscall3(90, out_w as i64, 1, 0);
+    __syscall3(90, err_w as i64, 2, 0);
+    __syscall3(6, in_r as i64, 0, 0);
+    __syscall3(6, in_w as i64, 0, 0);
+    __syscall3(6, out_r as i64, 0, 0);
+    __syscall3(6, out_w as i64, 0, 0);
+    __syscall3(6, err_r as i64, 0, 0);
+    __syscall3(6, err_w as i64, 0, 0);
+    __fern_sp_run(cmd, args);
+  }
+  __syscall3(6, in_r as i64, 0, 0);
+  __syscall3(6, out_w as i64, 0, 0);
+  __syscall3(6, err_w as i64, 0, 0);
+  return __fern_sp_collect(pid, in_w, out_r, err_r, input);
+}
+
+// Runs `cmd` with `args` in the child. It does not return: the child becomes
+// the command, or it reports the error and exits with 127.
+function __fern_sp_run(cmd: string, args: string[]): void {
+  let has_nul = __count_byte(cmd, 0) > 0;
+  let clen = cmd.len();
+  let cmdz = __raw_alloc(clen + 1);
+  let i: i32 = 0;
+  while (i < clen) {
+    __raw_store8(cmdz, i, cmd[i] as i32);
+    i += 1;
+  }
+  __raw_store8(cmdz, clen, 0);
+  let n = args.len();
+  let argv = __raw_alloc((n + 2) * 8);
+  __raw_store_ptr(argv, 0, cmdz);
+  let total: i32 = 1;
+  let m: i32 = 0;
+  while (m < n) {
+    total = total + args[m].len() + 1;
+    m += 1;
+  }
+  let ab = __raw_alloc(total);
+  let off: i32 = 0;
+  let k: i32 = 0;
+  while (k < n) {
+    let a = args[k];
+    if (__count_byte(a, 0) > 0) {
+      has_nul = true;
+    }
+    let al = a.len();
+    __raw_store_ptr(argv, k + 1, ab + off as usize);
+    let j: i32 = 0;
+    while (j < al) {
+      __raw_store8(ab, off + j, a[j] as i32);
+      j += 1;
+    }
+    __raw_store8(ab, off + al, 0);
+    off = off + al + 1;
+    k += 1;
+  }
+  __raw_store_ptr(argv, n + 1, 0);
+  if (has_nul) {
+    __fern_sp_exec_failed(cmdz, clen, -22);
+  }
+  __fern_sp_exec_failed(cmdz, clen, __fern_sp_exec_path(cmdz, clen, argv, __raw_environ()));
+}
