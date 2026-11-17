@@ -67,6 +67,7 @@ function main(): i32 {
   }
   if (partial(0u32) != checked(1) || wrapped(0u32) != checked(16)) { return 4; }
   if (shifted(0u32) != checked(0) || narrowed(0u32) != checked(0)) { return 5; }
+  if (checked(args().len()) != checked(1)) { return 6; }
   return 0;
 }
 `
