@@ -9584,7 +9584,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
     all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size);
-    all = sign_tested_reads(all);
+    all = sign_tested_reads(caller_ranges(all, names, mod));
   }
   if (opts.shape_slot) {
     all = with_shape_slots(all);
@@ -9737,6 +9737,30 @@ function version_loops(all: Produced[], size: boolean): Produced[] {
       if (v.loops > 0) {
         p = Produced { ...p, func: v.f, analysis: None };
       }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
+// A private function that only direct calls reach knows what every caller
+// gives its parameters, and its checks use that.
+function caller_ranges(all: Produced[], names: string[], mod: parser.Module): Produced[] {
+  let funcs: ssasem.Func[] = [];
+  let direct: boolean[] = [];
+  for i in 0..all.len() {
+    let p = all[i];
+    funcs = funcs.append(p.func);
+    direct = direct.append(p.ok && outside_unnamed(p, names[i], i, mod));
+  }
+  let facts = ssabounds.caller_facts(funcs, util.name_index(names), direct);
+  let sw = optbisect.switches();
+  let out: Produced[] = [];
+  for i in 0..all.len() {
+    let p = all[i];
+    if (direct[i] && facts[i].known() && optbisect.allowed_by(sw, "caller-range", p.func.graph.name)) {
+      let proven = ssabounds.proven_indices_with(p.func, facts[i]);
+      p = Produced { ...p, func: ssabounds.sign_tested_reads_with(proven, facts[i]).func, analysis: None };
     }
     out = out.append(p);
   }
