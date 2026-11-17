@@ -15,6 +15,8 @@ try {
     viewport: { width: 390, height: 844 },
     isMobile: true,
     hasTouch: true,
+    // A smooth scroll that Playwright starts moves a button away from its touch.
+    reducedMotion: "reduce",
   });
   context.on("page", (p) => p.on("pageerror", (e) => errors.push(e.message)));
   const a = await context.newPage(),
