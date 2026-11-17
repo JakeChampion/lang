@@ -1147,6 +1147,39 @@ function test_artist_plays_all(): test.TestOutcome {
   return test.pass();
 }
 
+// Back on the player of music shows the screen before, and the music plays
+// on. A bar above the tabs pauses and plays it, and opens the player
+// again. A new play stops the music first.
+function test_back_keeps_music(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "701"), log, 0i64, f, android.Start);
+  let album = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  let one = settle(at(tap(album, log, 100i64, f, "play"), log, 150i64, f, android.Posted(19, 0 as usize)), log, 150i64, f);
+  let stops = count_calls(log, "stop");
+  let away = settle(at(at(one, log, 200i64, f, android.Key(4, 0)), log, 200i64, f, android.Key(4, 1)), log, 200i64, f);
+  if (away.screen == ui.PLAYER || !away.play.active || count_calls(log, "stop") != stops || !says(away, "One · Band")) {
+    return test.fail("Back stopped the music, or no bar shows it: " + log.calls.get().join(" | "));
+  }
+  let paused = tap(away, log, 300i64, f, "now:toggle");
+  let was_paused = paused.play.paused;
+  let played = tap(paused, log, 400i64, f, "now:toggle");
+  if (!was_paused || played.play.paused || count_calls(log, "pause") != 1) {
+    return test.fail("the button of the bar did not pause and play");
+  }
+  let opened = tap(played, log, 500i64, f, "now:open");
+  if (opened.screen != ui.PLAYER || node(opened, "now:open").is_some()) {
+    return test.fail("the bar did not open the player");
+  }
+  let detail = settle(at(at(opened, log, 600i64, f, android.Key(4, 0)), log, 600i64, f, android.Key(4, 1)), log, 600i64, f);
+  let again = tap(detail, log, 700i64, f, "play");
+  if (count_calls(log, "stop") != stops + 1 || again.screen != ui.PLAYER || !again.play.active) {
+    return test.fail("a new play did not stop the music first: " + log.calls.get().join(" | "));
+  }
+  return test.pass();
+}
+
 function test_album_queue_repeat_and_sleep(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1919,6 +1952,7 @@ function main(): i32 {
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
   r = r.it("Play on an artist plays all of its tracks", test_artist_plays_all);
   r = r.it("the play takes the audio focus and gives way to a call", test_audio_focus);
+  r = r.it("Back keeps the music, with a bar that controls it", test_back_keeps_music);
   r = r.it("Download all of a season, and the screen of the downloads", test_download_all_and_the_screen);
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
   r = r.it("a video plays on in a picture-in-picture window", test_picture_in_picture);

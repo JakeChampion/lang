@@ -89,6 +89,8 @@ pub struct View {
   menu_download: i32,
   // The rows of the screen of the downloads.
   saved: SavedRow[],
+  // The title of the music that plays while another screen shows, or "".
+  now_playing: string,
   users: plex.HomeUser[],
   pin_for: string,
   pin_digits: string,
@@ -121,15 +123,16 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
 }
 
 // --- metrics
 
 // `u` is the size of a density-independent pixel, and `ts` the scale of the
 // text, for a window of w by h. The system bars cover `top` pixels at the
-// top of the window and `bottom` pixels at its bottom.
-pub struct Metrics { w: i32, h: i32, top: i32, bottom: i32, u: i32, ts: i32, cw: i32, th: i32, texts: i18n.Strings }
+// top of the window and `bottom` pixels at its bottom. The bar of the music
+// that plays takes `bar` pixels above the tabs.
+pub struct Metrics { w: i32, h: i32, top: i32, bottom: i32, u: i32, ts: i32, cw: i32, th: i32, texts: i18n.Strings, bar: i32 }
 
 pub function metrics(w: i32, h: i32, top: i32, bottom: i32): Metrics {
   let short = w;
@@ -144,7 +147,7 @@ pub function metrics(w: i32, h: i32, top: i32, bottom: i32): Metrics {
   if (ts < 1) {
     ts = 1;
   }
-  return Metrics { w: w, h: h, top: top, bottom: bottom, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts), texts: english() };
+  return Metrics { w: w, h: h, top: top, bottom: bottom, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts), texts: english(), bar: 0 };
 }
 
 // The pixels from dot to dot of the small dot-matrix words, such as the
@@ -393,6 +396,23 @@ function bottom_bar(m: Metrics, v: View): scene.Node[] {
   return out;
 }
 
+// The bar of the music that plays, above the tabs: its title opens the
+// player, and its button pauses or plays.
+function now_bar(m: Metrics, v: View): scene.Node[] {
+  if (m.bar == 0) {
+    return [];
+  }
+  let y = m.h - bottom_height(m) - m.bar;
+  let line = (m.u / 2).max(1);
+  let words = if (v.player.paused) { tr(m, "PLAY") } else { tr(m, "PAUSE") };
+  let bw = button_width(m, words);
+  let bx = m.w - 16 * m.u - bw;
+  let out: scene.Node[] = [tap(fill(0, y, m.w, m.bar, look.bg(), 0), "now:open"), fill(0, y, m.w, line, look.outline(), 0)];
+  let cells = (bx - 32 * m.u) / m.cw;
+  out = out.append(label(m, 16 * m.u, y + (m.bar - m.th) / 2, fit(v.now_playing, cells), m.ts, look.ink()));
+  return util_append(out, button(m, bx, y + (m.bar - button_height(m)) / 2, words, !v.player.paused, "now:toggle"));
+}
+
 // The top of the content of a screen, and its bottom.
 pub function content_top(m: Metrics): i32 {
   return top_height(m);
@@ -400,7 +420,7 @@ pub function content_top(m: Metrics): i32 {
 
 pub function content_bottom(m: Metrics, screen: i32): i32 {
   if (has_tabs(screen)) {
-    return m.h - bottom_height(m);
+    return m.h - bottom_height(m) - m.bar;
   }
   return m.h - m.bottom;
 }
@@ -1376,7 +1396,9 @@ function seek_dots(f: draw.Frame, r: look.Rect, permille: i32, dot: i32): void {
 
 // The nodes of the screen of `v`, in the order to draw them.
 pub function nodes(v: View): scene.Node[] {
-  let m = Metrics { ...metrics(v.w, v.h, v.top, v.bottom), texts: v.texts };
+  let base = metrics(v.w, v.h, v.top, v.bottom);
+  let bar = if (v.now_playing.len() > 0 && has_tabs(v.screen)) { 64 * base.u } else { 0 };
+  let m = Metrics { ...base, texts: v.texts, bar: bar };
   if (v.screen == LOGIN) {
     return login(m, v);
   }
@@ -1405,7 +1427,7 @@ pub function nodes(v: View): scene.Node[] {
     body = settings(m, v);
   }
   let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS || v.screen == DOWNLOADS;
-  let out = util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
+  let out = util_append(util_append(util_append(body, top_bar(m, v, back)), now_bar(m, v)), bottom_bar(m, v));
   if (v.menu.key.len() > 0) {
     out = util_append(out, poster_menu(m, v.menu, v.menu_download));
   }

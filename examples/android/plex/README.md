@@ -82,6 +82,15 @@ work while the screen is off. A video pauses when the app goes away, unless Andr
 picture-in-picture window. From Android 12, a video that plays goes into
 that window when the user goes home.
 
+Back on the player of music shows the screen before, and the music plays
+on. A bar above the tabs shows the track, with a button that pauses and
+plays it. A tap on the bar opens the player again. Back on a video stops
+it.
+
+Each play asks Android for the audio focus, so another app that plays
+stops. A call or another app that plays pauses the app. When the focus
+comes back, the play goes on, unless the person paused it.
+
 Gestures on the video:
 
 - Two taps at the left of the video seek back 10 seconds, and two taps at

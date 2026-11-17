@@ -1965,6 +1965,9 @@ function stream_of(s: App, it: plex.Item, session: string, q: plex.Quality): (pl
 }
 
 function start_play(own s: App, first: plex.Item, queue: plex.Item[]): App {
+  if (s.play.active) {
+    s = stop_play(s, false);
+  }
   let session = hex_id(s.dev);
   let level = first_level(s.quality);
   let (it, stream, _) = stream_of(s, first, session, plex.qualities()[level]);
@@ -2298,6 +2301,11 @@ function stop_play(own s: App, completed: boolean): App {
     }
   }
   t = keep_place(t, p.item.key, if (finished) { 0i64 } else { pos });
+  // Music that plays while another screen shows stops with no screen to go
+  // back from.
+  if (t.screen != ui.PLAYER) {
+    return App { ...t, play: no_play(), dirty: true };
+  }
   return refresh_detail(pop(App { ...t, play: no_play() }));
 }
 
@@ -2878,9 +2886,18 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
     return seek_by(s, 30000i64);
   }
   if (act == "back") {
-    return stop_play(s, false);
+    return leave_player(s);
   }
   return s;
+}
+
+// Back on the player: music plays on while the screen before shows, with a
+// bar that opens the player again. A video stops.
+function leave_player(own s: App): App {
+  if (!audio(s.play) || !s.play.active) {
+    return stop_play(s, false);
+  }
+  return pop(App { ...s, play: Play { ...s.play, sheet: false } });
 }
 
 // --- touches and keys
@@ -3229,6 +3246,15 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (a == "users") {
     return open_users(t);
   }
+  if (a == "now:open" && t.play.active) {
+    return App { ...push(t), screen: ui.PLAYER, dirty: true };
+  }
+  if (a == "now:toggle" && t.play.active) {
+    if (t.play.paused) {
+      return resume(t);
+    }
+    return pause_play(t);
+  }
   if (a == "downloads") {
     let title = t.texts.text("Downloads");
     return App { ...push(t), screen: ui.DOWNLOADS, title: title, scroll: 0, dirty: true };
@@ -3275,7 +3301,7 @@ function back(own s: App): App {
     return App { ...s, typing: false, dirty: true };
   }
   if (s.screen == ui.PLAYER) {
-    return stop_play(s, false);
+    return leave_player(s);
   }
   if (s.stack.len() > 0) {
     return pop(s);
@@ -3574,7 +3600,7 @@ pub function view(s: App): ui.View {
     texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: s.downloads.map((d: Saved): ui.SavedRow => saved_row(s, d)), users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: s.downloads.map((d: Saved): ui.SavedRow => saved_row(s, d)), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
