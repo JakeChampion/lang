@@ -9574,6 +9574,10 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   finalizers = cell_writing_finalizers(closed, names, finalizers);
   let anchored = anchor_module(with_finalizers(closed, finalizers), names, verify);
   let all = anchored.all;
+  for h in names.len()..anchored.names.len() {
+    let f = all[h].func;
+    instance_contracts = instance_contracts.append(ssasem.Contract { name: anchored.names[h], params: f.params, modes: all[h].modes, result: f.result });
+  }
   names = anchored.names;
   let laid: semrecords.Record[] = [];
   if (verify) {
