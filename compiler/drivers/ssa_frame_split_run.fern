@@ -1,0 +1,83 @@
+import "../ssa";
+import "../util";
+
+function jump(to: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: to, t: 0, f: 0, value: 0 };
+}
+
+function branch(t: i32, f: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: 0, target: 0, t: t, f: f, value: 0 };
+}
+
+function back(): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+}
+
+function graph(terms: ssa.STerm[]): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  for t in terms {
+    blocks = blocks.append(ssa.SBlock { id: blocks.len(), insts: [], term: t, preds: [] });
+  }
+  return ssa.SFunc { name: "split", nparams: 0, nvals: 0, blocks: blocks, entry: 0, takes_env: false };
+}
+
+function same(a: boolean[], b: boolean[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function split(terms: ssa.STerm[], ok: boolean[], tied: i32[], fwd: i32[]): ssa.FrameSplit {
+  let f = graph(terms);
+  return ssa.frame_split(f, ssa.block_positions(f), ok, tied, fwd);
+}
+
+function check(cond: boolean, what: string, failures: i32): i32 {
+  if (cond) {
+    return failures;
+  }
+  eprint("FAIL: " + what);
+  return failures + 1;
+}
+
+function main(): i32 {
+  let failures = 0;
+  let untied = [-1, -1, -1, -1, -1, -1];
+  let unmoved = [0, 1, 2, 3, 4, 5];
+  // 0 tests, 1 returns, 2 calls and returns.
+  let guard = split([branch(1, 2), back(), back()], [true, true, false], [-1, -1, -1], [0, 1, 2]);
+  failures = check(same(guard.early, [true, true, false]) && same(guard.sites, [false, false, true]), "a guard returns before the frame, and the other arm makes it", failures);
+  // The entry needs the frame.
+  failures = check(split([branch(1, 2), back(), back()], [false, true, true], [-1, -1, -1], [0, 1, 2]).early.len() == 0, "a function whose entry needs the frame has no split", failures);
+  // No early block returns.
+  failures = check(split([jump(1), back()], [true, false], [-1, -1], [0, 1]).early.len() == 0, "a split with no early return is empty", failures);
+  // 0 tests; 1 returns; 2 is a loop header that 3 jumps back to.
+  let looped = split([branch(1, 2), back(), jump(3), branch(2, 4), back(), back()], [true, true, false, false, false, false], untied, unmoved);
+  failures = check(looped.early.len() == 0, "a block with an early predecessor and a back edge keeps the frame at the entry", failures);
+  // 0 tests; 1 returns; 2 and 3 are early and join in 4, which calls.
+  let joined = split([branch(1, 2), back(), branch(3, 4), jump(4), back(), back()], [true, true, true, true, false, false], untied, unmoved);
+  failures = check(same(joined.early, [true, true, true, true, false, false]) && same(joined.sites, [false, false, false, false, true, false]), "a join of early blocks makes the frame one time", failures);
+  // 3 needs the frame, so 4 has a predecessor of each side, and 2 cannot be early.
+  let mixed = split([branch(1, 2), back(), branch(3, 4), jump(4), back(), back()], [true, true, true, false, false, false], untied, unmoved);
+  failures = check(mixed.early.len() > 0 && !mixed.early[2] && mixed.sites[2] && !mixed.sites[3] && !mixed.sites[4], "a join of an early block and a block with a frame moves the site up", failures);
+  // 2 is early and jumps to 3, which needs the frame and only passes the
+  // jump on to 4. The emitter sends that jump to 4, so the label of 3 is not
+  // on the path, and 2 makes the frame before it jumps.
+  let chain = [branch(1, 2), back(), jump(3), jump(4), back(), back()];
+  let direct = split(chain, [true, true, true, false, false, false], untied, unmoved);
+  failures = check(direct.sites[3] && !direct.sites[4], "a block that a jump reaches makes the frame", failures);
+  let passed = split(chain, [true, true, true, false, false, false], untied, [0, 1, 2, 4, 4, 5]);
+  failures = check(passed.early.len() > 0 && passed.sites[2] && !passed.sites[3] && !passed.sites[4], "a jump that passes a block with a frame makes the frame before the jump", failures);
+  // 0 jumps to 2, and the emitter copies the test of 2 to the end of 0. 2
+  // needs the frame, so 0 does too.
+  let rotated = split([jump(2), back(), branch(1, 3), back()], [true, true, false, false], [2, -1, -1, -1], [0, 1, 2, 3]);
+  failures = check(rotated.early.len() == 0, "a block with a copy of a test that needs the frame is not early", failures);
+  print("failures=" + util.i32_to_string(failures));
+  return failures;
+}
