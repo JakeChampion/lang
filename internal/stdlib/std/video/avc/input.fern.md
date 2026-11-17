@@ -40,6 +40,8 @@ These checks follow H.264 clauses 7.3.2.7 and 7.3.2.11.
 The reader assigns no timestamp.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 An IDR slice requires a zero frame number. Non-IDR frame numbers retain their supported width from the SPS.
+An SPS with zero reference frames permits only I or SI slice types, as H.264 clause 7.4.3 specifies.
+This check uses the current SPS, including after replacement through a cached PPS.
 
 The reader does not validate entropy data or complete slice coverage and does not decode pixels.
 The byte limits exclude retained output packets and do not define an exact process-memory bound.
@@ -204,7 +206,7 @@ function check_slice(first: u32, kind: u32, header: u8, context: avc.SliceSequen
   if (first >= units as u32) {
     return Err(frame.Header);
   }
-  if ((header & 31u8) == 5u8 && kind % 5u32 != 2u32 && kind % 5u32 != 4u32) {
+  if (((header & 31u8) == 5u8 || context.sequence.max_reference_frames == 0) && kind % 5u32 != 2u32 && kind % 5u32 != 4u32) {
     return Err(frame.Header);
   }
   return Ok(());
