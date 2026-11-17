@@ -25,6 +25,22 @@ let n = 99; put(); if (n != 99) { return 98; } } return n; }`, 7},
 		{"recursive local function", `function main(): i32 {
 function rec(n: i32): i32 { if (n == 0) { return 7; } return rec(n - 1); }
 return rec(3); }`, 7},
+		{"two local functions that call each other", `function main(): i32 {
+function even(n: i32): boolean { if (n == 0) { return true; } return odd(n - 1); }
+function odd(n: i32): boolean { if (n == 0) { return false; } return even(n - 1); }
+if (even(4) && odd(3) && !odd(4)) { return 7; } return 0; }`, 7},
+		{"a cycle with a capture, as a value", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+function main(): i32 {
+let base = 3;
+function down(n: i32): i32 { if (n == 0) { return base; } return up(n - 1) + 1; }
+function up(n: i32): i32 { if (n == 0) { return 0; } return down(n - 1) + 1; }
+let fs = [down, up];
+return apply(down, 2) + fs[1](1) - 2; }`, 7},
+		{"a cycle of three", `function main(): i32 {
+function a(n: i32): i32 { if (n == 0) { return 7; } return b(n - 1); }
+function b(n: i32): i32 { if (n == 0) { return 8; } return c(n - 1); }
+function c(n: i32): i32 { if (n == 0) { return 9; } return a(n - 1); }
+return a(3); }`, 7},
 		{"escaping mutable binding", `function make(): () => i32 {
 let n = 0; return (): i32 => { n = n + 1; return n; }; }
 function main(): i32 { let f = make(); return f() * 10 + f(); }`, 12},

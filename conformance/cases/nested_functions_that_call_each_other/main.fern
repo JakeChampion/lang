@@ -1,0 +1,60 @@
+// Two or three nested functions of one block can call each other. A function
+// of such a group is in scope before its declaration. It can read a local
+// of its function, and it is a value as other functions are.
+
+function apply(f: (i32) => i32, x: i32): i32 {
+  return f(x);
+}
+
+function main(): i32 {
+  let base = 3;
+  function down(n: i32): i32 {
+    if (n == 0) {
+      return base;
+    }
+    return up(n - 1) + 1;
+  }
+  function up(n: i32): i32 {
+    if (n == 0) {
+      return 0;
+    }
+    return down(n - 1) + 1;
+  }
+  let fs = [down, up];
+  print(f"{down(2)} {up(3)} {apply(down, 2)} {fs[1](1)}");
+  function a(n: i32): i32 {
+    if (n == 0) {
+      return 7;
+    }
+    return b(n - 1);
+  }
+  function b(n: i32): i32 {
+    if (n == 0) {
+      return 8;
+    }
+    return c(n - 1);
+  }
+  function c(n: i32): i32 {
+    if (n == 0) {
+      return 9;
+    }
+    return a(n - 1);
+  }
+  print(f"{a(3)} {a(4)} {b(1)}");
+  if (base == 3) {
+    function is_even(n: i32): boolean {
+      if (n == 0) {
+        return true;
+      }
+      return is_odd(n - 1);
+    }
+    function is_odd(n: i32): boolean {
+      if (n == 0) {
+        return false;
+      }
+      return is_even(n - 1);
+    }
+    print(f"{is_even(4)} {is_odd(4)}");
+  }
+  return 0;
+}

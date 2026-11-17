@@ -12217,7 +12217,8 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	if len(localFns) > 1 {
 		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
 		for _, fn := range localFns {
-			if c.mutualRecSiblings[fn.Name] {
+			fn.MutualRec = c.mutualRecSiblings[fn.Name]
+			if fn.MutualRec {
 				s.set(fn.Name, paramSig(fn.Params, fn.ReturnType, fn.ReturnOwn))
 			}
 		}

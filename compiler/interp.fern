@@ -10594,13 +10594,93 @@ pub function new_session(): Session {
   return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env(heap, funcs_of([]), [], module_type_decls([])) };
 }
 
+// The functions of a cycle of two or more are in scope in the whole block.
+// A function of a cycle that is not the first one gets a declaration before
+// the first, and its own declaration becomes an assignment. A closure that
+// reads the name then reads the binding that the assignment writes.
+function cycle_decls(stmts: ast.Stmt[]): ast.Stmt[] {
+  let sibs = parser.nested_fns(stmts);
+  if (sibs.len() < 2) {
+    return stmts;
+  }
+  let early: ast.Stmt[] = [];
+  let rest: ast.Stmt[] = [];
+  let first = -1;
+  for i in 0..stmts.len() {
+    let kept = stmts[i];
+    if let ast.StmtVar(v) = stmts[i] {
+      if (ast.var_binds_itself(v) && parser.nested_fn_cycle(sibs, v.name).len() > 1) {
+        if (first < 0) {
+          first = i;
+        } else {
+          early = early.append(stmts[i]);
+          kept = ast.StmtAssign { target: v.name, value: v.init, line: v.line, col: v.col, target_line: v.line, target_col: v.col, op: "" };
+        }
+      }
+    }
+    rest = rest.append(kept);
+  }
+  if (early.len() == 0) {
+    return stmts;
+  }
+  let out: ast.Stmt[] = [];
+  for i in 0..rest.len() {
+    if (i == first) {
+      out = util.append_all(out, early);
+    }
+    out = out.append(rest[i]);
+  }
+  return out;
+}
+
+function cycle_decls_expr_at(e: ast.Expr, acc: boolean): (ast.Expr, boolean, boolean) {
+  if let ast.ExprLambda(lm) = e {
+    return (ast.ExprLambda { ...lm, body: cycle_decls_deep(lm.body) }, acc, true);
+  }
+  return (e, acc, false);
+}
+
+function cycle_decls_stmt_at(st: ast.Stmt, acc: boolean): (ast.Stmt, boolean, boolean) {
+  function deep(e: ast.Expr): ast.Expr {
+    let (out, _, _) = astwalk.map_expr_where(e, false, cycle_decls_stmt_at, cycle_decls_expr_at, astwalk.descend_all);
+    return out;
+  }
+  if let ast.StmtIf(f) = st {
+    return (ast.StmtIf { ...f, cond: deep(f.cond), then_body: cycle_decls_deep(f.then_body), else_body: cycle_decls_deep(f.else_body) }, acc, true);
+  }
+  if let ast.StmtWhile(w) = st {
+    return (ast.StmtWhile { ...w, cond: deep(w.cond), body: cycle_decls_deep(w.body) }, acc, true);
+  }
+  if let ast.StmtFor(f) = st {
+    return (ast.StmtFor { ...f, iter: deep(f.iter), body: cycle_decls_deep(f.body) }, acc, true);
+  }
+  if let ast.StmtMatch(m) = st {
+    let arms: ast.MatchArm[] = [];
+    for arm in m.arms {
+      let guard = arm.guard;
+      if (arm.has_guard) {
+        guard = deep(guard);
+      }
+      arms = arms.append(ast.MatchArm { ...arm, guard: guard, body: cycle_decls_deep(arm.body) });
+    }
+    return (ast.StmtMatch { ...m, scrutinee: deep(m.scrutinee), arms: arms }, acc, true);
+  }
+  return (st, acc, false);
+}
+
+// cycle_decls for stmts and for each block and each lambda body in them.
+function cycle_decls_deep(stmts: ast.Stmt[]): ast.Stmt[] {
+  let (inner, _) = astwalk.map_stmts_where(stmts, false, cycle_decls_stmt_at, cycle_decls_expr_at, astwalk.descend_all);
+  return cycle_decls(inner);
+}
+
 function lowered(raw: parser.Module): parser.Module {
   let typed = checker.annotate_module(raw);
   let funcs: parser.FuncDecl[] = [];
   for fd in typed.funcs {
-    funcs = funcs.append(lexical.resolve_func(fd).func);
+    funcs = funcs.append(lexical.resolve_func(parser.FuncDecl { ...fd, body: cycle_decls_deep(fd.body) }).func);
   }
-  let resolved = parser.Module { ...typed, funcs: funcs };
+  let resolved = parser.Module { ...typed, funcs: funcs, top_stmts: cycle_decls_deep(typed.top_stmts) };
   return parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(resolved)));
 }
 

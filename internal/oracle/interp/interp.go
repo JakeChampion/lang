@@ -6460,6 +6460,13 @@ func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
 	defer e.releaseScope()
 	i.envs = append(i.envs, e)
 	defer func() { i.envs = i.envs[:len(i.envs)-1] }()
+	// The functions of a cycle are in scope in the whole block, so each
+	// gets its cell before the first statement runs.
+	for _, s := range b.Stmts {
+		if fn, ok := s.(*ast.FuncDecl); ok && fn.MutualRec {
+			e.bindValue(fn.Name, &binding{})
+		}
+	}
 	for _, s := range b.Stmts {
 		r, err := i.execStmt(s, e)
 		if err != nil {
@@ -6665,8 +6672,23 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		return result{flow: flowNormal}, nil
 	case *ast.FuncDecl:
 		closure := &Closure{Decl: x}
-		e.declare(x.Name, closure)
+		if slot, ok := e.vars[x.Name].(*binding); ok && x.MutualRec {
+			slot.value = closure
+			retain(closure)
+			arrOwn(closure)
+		} else {
+			e.declare(x.Name, closure)
+		}
 		closure.Env = e.capture(x.Captures)
+		if x.MutualRec {
+			for name, v := range e.vars {
+				if slot, ok := v.(*binding); ok {
+					if fn, ok := slot.value.(*Closure); slot.value == nil || ok && fn.Decl != nil && fn.Decl.MutualRec {
+						closure.Env.captureBinding(name, slot)
+					}
+				}
+			}
+		}
 		self, _ := e.captureCell(x.Name)
 		closure.Env.captureBinding(x.Name, self)
 		return result{flow: flowNormal}, nil

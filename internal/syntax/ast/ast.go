@@ -2131,19 +2131,22 @@ type FuncDecl struct {
 	Secondary bool
 	// @jni(JNIClass, JNIDecl): the Java class and the Java declaration of
 	// the JNI method that this function implements.
-	JNIClass                 string
-	JNIDecl                  string
-	Public                   bool
-	PackageScoped            bool
-	Receiver                 *Param
-	MethodRecv               string
-	MethodSimpleName         string
-	ImplTrait                string
-	TraitDefault             string
-	AssocType                string
-	AssocConst               bool
-	ImplWritten              *ImplSig
-	IsLocal                  bool
+	JNIClass         string
+	JNIDecl          string
+	Public           bool
+	PackageScoped    bool
+	Receiver         *Param
+	MethodRecv       string
+	MethodSimpleName string
+	ImplTrait        string
+	TraitDefault     string
+	AssocType        string
+	AssocConst       bool
+	ImplWritten      *ImplSig
+	IsLocal          bool
+	// MutualRec marks a local function that a sibling of its block calls before
+	// its declaration, in a cycle. The checker sets it.
+	MutualRec                bool
 	Fip                      bool
 	Fbip                     bool
 	FipAllowance             int
