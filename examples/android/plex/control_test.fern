@@ -322,6 +322,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     in_pip: (): boolean => log.pip.get(),
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => note(log.calls, "watch next " + key + " " + title + " kind=" + kind.to_string() + " at=" + at.to_string() + " poster=" + poster),
     watch_next_drop: (key: string): void => note(log.calls, "watch next drop " + key),
+    channel: (cards: control.Card[]): void => note(log.calls, "channel " + cards.map((c: control.Card): string => c.key + ":" + c.kind + ":" + c.title + ":" + c.poster).join(" ")),
     access: (items: android.AccessItem[]): void => log.access.set(items),
     download: (r: plex.Request, name: string, title: string): i64 => {
       note(log.calls, "download " + r.url + " " + name + " " + title);
@@ -882,6 +883,35 @@ function video_drawn(log: Log, f: draw.Frame): control.App {
   let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
   let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
   return settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
+}
+
+// The channel row of Android TV gets the items of the rows that the server
+// names "recent", with their posters, and not the items to go on with.
+function test_channel_row(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let sent = log.calls.get().filter((c: string): boolean => c.starts_with("channel "));
+  if (sent.len() != 1 || !sent[0].starts_with("channel 501:movie:Inception:https://up.example:32400/photo/:/transcode?") || !sent[0].contains(" 502:movie:Amélie:") || sent[0].contains("77:")) {
+    return test.fail("the channel did not get the recent items: " + sent.join(" | "));
+  }
+  return test.pass();
+}
+
+// The Search key of a remote opens the search with the keyboard, so the
+// microphone of the keyboard can take the words. On the player it does
+// nothing.
+function test_search_key(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let searching = settle(at(at(home, log, 1000i64, f, android.Key(84, 0)), log, 1000i64, f, android.Key(84, 1)), log, 1000i64, f);
+  if (searching.screen != ui.SEARCH || !searching.typing || !has_call(log, "field show")) {
+    return test.fail("the Search key did not open the search with the keyboard: " + log.calls.get().join(" | "));
+  }
+  return test.pass();
 }
 
 // The play takes the audio focus, so another app stops. When a call or
@@ -1952,6 +1982,8 @@ function main(): i32 {
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
   r = r.it("Play on an artist plays all of its tracks", test_artist_plays_all);
   r = r.it("the play takes the audio focus and gives way to a call", test_audio_focus);
+  r = r.it("the channel row of Android TV gets the recent items", test_channel_row);
+  r = r.it("the Search key opens the search with the keyboard", test_search_key);
   r = r.it("Back keeps the music, with a bar that controls it", test_back_keeps_music);
   r = r.it("Download all of a season, and the screen of the downloads", test_download_all_and_the_screen);
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);

@@ -107,6 +107,9 @@ pub struct Device {
   // takes the video of a key off the row.
   watch_next: (string, string, i32, i64, i64, string) => void,
   watch_next_drop: (string) => void,
+  // Gives the channel row of the app on Android TV its items. A phone has
+  // no such row, and this changes nothing.
+  channel: (Card[]) => void,
   // Gives Android a download of the request to the file `name` in
   // `downloads_dir`, with the title of its notification. The ID of the
   // download, or -1.
@@ -398,7 +401,7 @@ pub function setting(text: string, key: string): string {
   return "";
 }
 
-function num64(s: string): i64 {
+pub function num64(s: string): i64 {
   let v = 0i64;
   for c in s.bytes() {
     if (c < 48u8 || c > 57u8) {
@@ -922,7 +925,7 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
     return App { ...t, sections: plex.parse_sections(r.text()), error: "" };
   }
   if (verb == "hubs") {
-    return App { ...t, hubs: plex.parse_hubs(r.text()), error: "" };
+    return fill_channel(App { ...t, hubs: plex.parse_hubs(r.text()), error: "" });
   }
   if (verb == "items") {
     return got_items(t, rest, r);
@@ -1763,6 +1766,31 @@ function got_download(own t: App, r: plex.Reply): App {
   save_downloads(u);
   return u;
 }
+
+// An item of the channel row of Android TV: its key, title and kind, and
+// the address of its poster.
+pub struct Card { key: string, title: string, kind: string, poster: string }
+
+// The channel row on Android TV shows the items that came to the server
+// last: the rows of the home screen that the server names "recent". The
+// row of the items to go on with is Watch Next, so it is not in the channel.
+function fill_channel(own t: App): App {
+  let recent = t.hubs.filter((h: plex.Hub): boolean => h.ident.contains("recent"));
+  let items: plex.Item[] = [];
+  for h in recent {
+    for it in h.items {
+      if (items.len() < CHANNEL_ITEMS) {
+        items = items.append(it);
+      }
+    }
+  }
+  if (items.len() > 0) {
+    t.dev.channel(items.map((it: plex.Item): Card => Card { key: it.key, title: plex.card_title(it), kind: it.kind, poster: plex.image_url(t.base, plex.poster(it), 400, 600) }));
+  }
+  return t;
+}
+
+const CHANNEL_ITEMS: i32 = 20;
 
 // Asks for the metadata of each item of `items` that plays and has no
 // download, and downloads it: all of the episodes of a show or a season,
@@ -3352,6 +3380,9 @@ const KEY_BUTTON_A: i32 = 96;
 
 const KEY_PLAY_PAUSE: i32 = 85;
 
+// KEYCODE_SEARCH.
+const KEY_SEARCH: i32 = 84;
+
 const KEY_REWIND: i32 = 89;
 
 const KEY_FAST_FORWARD: i32 = 90;
@@ -3402,6 +3433,13 @@ function remote_key(own s: App, code: i32): App {
   }
   if (code == KEY_CENTER || code == KEY_ENTER || code == KEY_BUTTON_A) {
     return press_focus(s);
+  }
+  // The Search key of a remote opens the search with the keyboard, whose
+  // microphone takes the words by voice.
+  if (code == KEY_SEARCH && s.screen != ui.PLAYER && ui.has_tabs(s.screen)) {
+    let t = open_tab(s, 2);
+    t.dev.show_field(t.query);
+    return App { ...t, typing: true, dirty: true };
   }
   return s;
 }
