@@ -15,6 +15,8 @@ try {
     viewport: { width: 390, height: 844 },
     isMobile: true,
     hasTouch: true,
+    // A smooth scroll that Playwright starts moves a button away from its touch.
+    reducedMotion: "reduce",
   });
   context.on("page", (p) => p.on("pageerror", (e) => errors.push(e.message)));
   const a = await context.newPage(),
@@ -93,7 +95,11 @@ try {
     "true",
     "touch palette selection was delayed",
   );
-  await a.locator("#place").tap();
+  // The two touches arrive faster than the server accepts two edits.
+  for (const button of ["#place", "#break"]) {
+    r = await a.locator(button).boundingBox();
+    await drag(r.x + r.width / 2, r.y + r.height / 2, 0, 0);
+  }
   await b.waitForFunction(() =>
     document.querySelector("#render-stats").textContent.includes("chunks"),
   );
@@ -112,7 +118,6 @@ try {
     "second player did not receive the touch block placement: " +
       (await evidence()),
   );
-  await a.locator("#break").tap();
   const removed = Date.now() + 5000;
   while (!edits.some((c) => c.material === 0) && Date.now() < removed)
     await a.waitForTimeout(50);

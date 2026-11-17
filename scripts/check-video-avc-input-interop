@@ -217,6 +217,48 @@ def reference_counts(directory, baseline, reordered):
     print("Four coded zero-reference refusals preserve exact FFmpeg extraction. Numeric CBS fields support specification-based decisions.", flush=True)
 
 
+def slice_kind(unit, at, field, value):
+    raw = re.sub(b"\0\0\x03", b"\0\0", unit)
+    assert escaped(raw) == unit
+    bits = "".join(f"{byte:08b}" for byte in raw)
+    assert bits[at:at + len(field)] == field
+    number = f"{value + 1:b}"
+    changed = (bits[:at] + "0" * (len(number) - 1) + number + bits[at + len(field):]).rstrip("0")
+    changed += "0" * (-len(changed) % 8)
+    return escaped(bytes(int(changed[i:i + 8], 2) for i in range(0, len(changed), 8)))
+
+
+def uniform_slices(directory, baseline, reordered):
+    for source in (baseline, reordered):
+        original = units(source.read_bytes())
+        fields = iter(header_fields(source, "slice_type"))
+        indexed = [(i, next(fields)) for i, unit in enumerate(original) if unit[0] & 31 in (1, 5)]
+        assert all(value >= 5 for _, (_, _, value) in indexed)
+        if source == baseline:
+            assert all(value == 0 for _, _, value in header_fields(source, "entropy_coding_mode_flag"))
+            changed = list(original)
+            for i, (at, field, value) in indexed:
+                if i % 2 == 0:
+                    changed[i] = slice_kind(original[i], at, field, value - 5)
+            path = directory / "uniform-slice-aliases.h264"
+            path.write_bytes(encoded_groups([changed]))
+            delimiter_extraction(path, [changed])
+            kinds = [value for _, _, value in header_fields(path, "slice_type")]
+            assert any(value < 5 for value in kinds) and any(value >= 5 for value in kinds)
+            compare(path, 18, decoded(source))
+        predicted = [(i, fields) for i, fields in indexed if original[i][0] & 31 == 1 and fields[2] == 5]
+        assert len(predicted) >= 6
+        for label, (i, (at, field, _)) in zip(("first", "later"), (predicted[0], predicted[-1])):
+            changed = list(original)
+            changed[i] = slice_kind(original[i], at, field, 6 if source == reordered else 7)
+            path = directory / f"uniform-slice-{source.stem}-{label}.h264"
+            path.write_bytes(encoded_groups([changed]))
+            delimiter_extraction(path, [changed])
+            assert any(value == (6 if source == reordered else 7) for _, _, value in header_fields(path, "slice_type"))
+            reject(path, path.read_bytes())
+    print("Four coded slice consistency refusals preserve exact extraction. Valid CAVLC aliases preserve all decoded planes.", flush=True)
+
+
 def encoded_groups(groups):
     return b"".join(b"\0\0\0\1" + unit for group in groups for unit in group)
 
@@ -400,3 +442,4 @@ with tempfile.TemporaryDirectory() as temporary:
     filler_controls(directory, paths[0], paths[3])
     filler_positions(directory, paths[2])
     reference_counts(directory, paths[0], paths[3])
+    uniform_slices(directory, paths[2], paths[3])
