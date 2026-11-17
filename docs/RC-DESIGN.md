@@ -161,7 +161,7 @@ transitive and acyclic.
 
 ### 1.2 Ownership inference
 
-`ownership.escaping` answers, per function, which reference parameters the
+`ownership.transfers` answers, per function, which reference parameters the
 frame **consumes**: a parameter whose unit leaves the frame (returned, built
 into a container or box, stored into a cell or map, handed to a callee's
 counted slot, or used as the base of a record update, which reuses its box)
