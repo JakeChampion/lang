@@ -87,6 +87,22 @@ swap. The swap costs more time than the moves it removes. Where the edge
 is not a swap, the web takes a saved register across the other arm of the
 branch. Then sort_ints on x86-64 and deriv on arm64 pay for it.
 
+## The unchanged word of the parent
+
+The third case of `balance_left` rebuilds the parent as `Node(Black, ...)`.
+On the hot path the parent came through the Black arm, so its first word
+does not change. `rejoined_words` makes the word `(old & mask) | 1`, and
+the unique path writes it again. To skip the write, the pass must know two
+facts. The color byte of `old` is 1, and no field uses bytes 2 and 3. SSA
+has neither the layout of the variant nor the two values of `Color`.
+
+A change to the assembly by hand put the rebuild and the write on the path
+that allocates only. rbtree at 420,000 then ran 499.0 million instructions
+in place of 511.0 million, 2.4% fewer. Its time at 4,200,000 did not change:
+the medians of 24 runs were 825 ms before and 860 ms after. The loads of
+`ins` and its allocations set its time, not its count of instructions. So
+this change waits for a measurement that shows a gain in time.
+
 ## Open
 
 - A web that makes the edge a swap can stay apart. Its phi then takes
