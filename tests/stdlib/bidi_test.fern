@@ -65,9 +65,9 @@ function class_file(): test.TestOutcome {
   let total = 0;
   for line in text.split("\n") {
     if (line.starts_with("@Levels:")) {
-      levels = line.after("@Levels:").trim();
+      levels = line.remove_prefix("@Levels:").trim();
     } else if (line.starts_with("@Reorder:")) {
-      want = levels + "; " + line.after("@Reorder:").trim();
+      want = levels + "; " + line.remove_prefix("@Reorder:").trim();
     } else if (line.len() > 0 && !line.starts_with("@")) {
       let f = line.split(";");
       let cls: i32[] = [];

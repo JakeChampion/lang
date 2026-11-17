@@ -52,12 +52,16 @@ def reject(path, data, message="invalid video header or packet"):
     assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
 
 
-def frame_number(path):
+def header_fields(path, name):
     run = subprocess.run(["ffmpeg", "-v", "trace", "-i", str(path), "-c:v", "copy", "-bsf:v", "trace_headers",
                           "-f", "null", "-"], capture_output=True, text=True)
-    fields = re.findall(r"\[trace_headers[^\]]*\]\s+(\d+)\s+frame_num\s+([01]+)\s+=\s+(\d+)", run.stderr)
+    fields = re.findall(r"\[trace_headers[^\]]*\]\s+(\d+)\s+" + re.escape(name) + r"\s+([01]+)\s+=\s+(\d+)", run.stderr)
     assert fields, (path.name, run.stderr[-3000:])
-    at, bits, number = fields[0]
+    return [(int(at), bits, int(number)) for at, bits, number in fields]
+
+
+def frame_number(path):
+    at, bits, number = header_fields(path, "frame_num")[0]
     assert int(bits, 2) == int(number)
     return int(at), bits, int(number)
 
@@ -175,6 +179,42 @@ def parameter_reuse(directory):
         assert messages[category] in native.stderr and messages[category] in wasi.stderr
         assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
         print(f"{name}: native/WASI refusal matches independent FFmpeg parameter checks", flush=True)
+
+
+def zero_references(unit, at, field):
+    raw = re.sub(b"\0\0\x03", b"\0\0", unit)
+    assert escaped(raw) == unit
+    bits = "".join(f"{byte:08b}" for byte in raw)
+    assert bits[at:at + len(field)] == field
+    changed = (bits[:at] + "1" + bits[at + len(field):]).rstrip("0")
+    changed += "0" * (-len(changed) % 8)
+    return escaped(bytes(int(changed[i:i + 8], 2) for i in range(0, len(changed), 8)))
+
+
+def reference_counts(directory, baseline, reordered):
+    intra = encode(directory, "zero-reference-intra", "high", "yuv420p", "keyint=1:min-keyint=1:bframes=0:slices=3:aud=1")
+    assert all(value == 0 for _, _, value in header_fields(intra, "max_num_ref_frames"))
+    assert all(value % 5 == 2 for _, _, value in header_fields(intra, "slice_type"))
+    compare(intra, 18)
+    for source in (baseline, reordered):
+        data = source.read_bytes()
+        packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets", "-of", "json", str(source)]))["packets"]
+        original = [units(data[int(packet["pos"]):int(packet["pos"]) + int(packet["size"])]) for packet in packets]
+        at, field, number = header_fields(source, "max_num_ref_frames")[0]
+        assert number > 0
+        positions = [i for i, group in enumerate(original) if any(unit[0] & 31 == 7 for unit in group)]
+        assert len(positions) >= 2 and positions[0] == 0
+        for index in positions[:2]:
+            changed = [list(group) for group in original]
+            changed[index] = [zero_references(unit, at, field) if unit[0] & 31 == 7 else unit for unit in changed[index]]
+            path = directory / f"zero-reference-{source.stem}-{index}.h264"
+            path.write_bytes(encoded_groups(changed))
+            delimiter_extraction(path, changed)
+            assert any(value == 0 for _, _, value in header_fields(path, "max_num_ref_frames"))
+            kinds = [value % 5 for _, _, value in header_fields(path, "slice_type")]
+            assert 0 in kinds and (source == baseline or 1 in kinds)
+            reject(path, path.read_bytes())
+    print("Four coded zero-reference refusals preserve exact FFmpeg extraction. Numeric CBS fields support specification-based decisions.", flush=True)
 
 
 def encoded_groups(groups):
@@ -359,3 +399,4 @@ with tempfile.TemporaryDirectory() as temporary:
     delimiter_controls(directory, paths[0])
     filler_controls(directory, paths[0], paths[3])
     filler_positions(directory, paths[2])
+    reference_counts(directory, paths[0], paths[3])
