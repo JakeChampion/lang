@@ -123,6 +123,11 @@ pub const LANE_STORE: i32 = 62;
 // of one number gives the same cell.
 pub const FRAME_CELL: i32 = 63;
 
+// A check that the index in args[0] is below the length in args[1], with no
+// result. The program aborts when it is not, with the message of a string
+// index when imm is 1.
+pub const BOUND: i32 = 64;
+
 pub function frame_cell(result: i32, cell: i32, offset: i32): SInst {
   return SInst { kind_tag: FRAME_CELL, result: result, args: [], imm: cell * 4096 + offset, str: "" };
 }
@@ -178,11 +183,11 @@ pub function aligned_count(ins: SInst): boolean {
 
 // A count of a value that is never an odd address.
 pub function even_count(ins: SInst): boolean {
-  return ins.imm == 8 || ins.imm == SHARED_DEC && ins.str == "__fern_rc_dec";
+  return ins.imm == 8 || shared_dec(ins);
 }
 
 pub function plain_imm(ins: SInst): i32 {
-  if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7)) {
+  if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7 || ins.imm == SHARED_DEC)) {
     return 0;
   }
   return ins.imm;
@@ -722,10 +727,14 @@ pub const SOLE: i32 = 5;
 // The imm of such a release of a box of 1 to 255 words (ir.sole_box).
 pub const SOLE_BOX: i32 = 9;
 
-// The imm of a release of a box that is never an odd address and that a
-// uniqueness test found shared (ir.shared_dec). It only takes one from the
+// The imm of the helper release of a record or a variant that a uniqueness
+// test found shared (ir.shared_dec). The emitters only take one from the
 // count, inline.
 pub const SHARED_DEC: i32 = 10;
+
+pub function shared_dec(ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.args.len() == 1 && ins.imm == SHARED_DEC && ins.str.starts_with("__sem_release_");
+}
 
 // A release with no test of the count.
 pub function sole_release(ins: SInst): boolean {
@@ -736,7 +745,7 @@ pub function sole_release(ins: SInst): boolean {
 // down by one, and only a unique box calls the routine. The helper release
 // of a record or a variant has the mark 7 (`ir.box_release`).
 pub function inline_release(ins: SInst): boolean {
-  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && !sole_release(ins) && ins.imm != SHARED_DEC || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && !sole_release(ins) || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
 }
 
 function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean, light: boolean): i32 {
@@ -947,7 +956,7 @@ pub function rc_inlined(ins: SInst): boolean {
   if (ins.kind_tag != CALL || ins.args.len() != 1) {
     return false;
   }
-  return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc" || ins.str == "__fern_rc_dec" && ins.imm == SHARED_DEC;
+  return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc" || shared_dec(ins);
 }
 
 function calls_before(calls: i32[], total_pos: i32): i32[] {
@@ -1758,13 +1767,17 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   while (bi < f.blocks.len()) {
     let blk = f.blocks[bi];
     blk_start = blk_start.append(pos);
+    // The moves of an edge write each phi of the block together, so each
+    // phi lives at least to the last phi, even with no read.
+    let phi_end = pos + blk.insts.filter((ins: SInst): boolean => ins.kind_tag == PHI).len() - 1;
     for k in 0..blk.insts.len() {
       let ins = blk.insts[k];
       if (ins.result >= 0 && ins.result < lo.len() && pos < lo[ins.result]) {
         lo = lo.with(ins.result, pos);
       }
-      if (ins.result >= 0 && ins.result < hi.len() && pos > hi[ins.result]) {
-        hi = hi.with(ins.result, pos);
+      let end = if (ins.kind_tag == PHI && phi_end > pos) { phi_end } else { pos };
+      if (ins.result >= 0 && ins.result < hi.len() && end > hi[ins.result]) {
+        hi = hi.with(ins.result, end);
       }
       if (ins.result >= 0 && ins.result < def_pos.len()) {
         def_pos = def_pos.with(ins.result, pos);
@@ -2390,6 +2403,254 @@ function folds_spill_rhs(op: string): boolean {
 function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
   let w = wanted_by[holder];
   return w >= 0 && w != v && reg_of[w] == -1;
+}
+
+// The weight of the reads and the writes of the values that `reg_of` keeps
+// in a frame slot.
+pub function spill_cost(f: SFunc, reg_of: i32[], costs: SpillCosts): i32 {
+  let w = spill_weights(f, block_positions(f), costs);
+  let total = 0;
+  for v in 0..f.nvals {
+    if (v < reg_of.len() && reg_of[v] <= -2) {
+      total += w[v];
+    }
+  }
+  return total;
+}
+
+// A function with values split around inner loops, and the weight of the
+// stores and the loads that the split adds.
+pub struct LoopSplit { f: SFunc, cost: i32 }
+
+// One split: the value, the block before the loop, the head and the last
+// block of the loop, the head and the last block of the inner loop, the
+// block after the inner loop that loads the value again, and whether the
+// loop reads the value before the inner loop.
+struct SplitPlan { v: i32, pre: i32, head: i32, last: i32, inner: i32, inner_last: i32, after: i32, early: boolean }
+
+// A value in a frame slot that a loop reads, and that an inner loop of it
+// carries with no read, can keep a register in the rest of the loop. One
+// store before the loop puts it in a frame cell. A load after the inner
+// loop takes it back, and a phi at the head of the loop joins the two. The
+// allocator gives each value one interval, so none of these values is live
+// in the inner loop.
+pub function split_spilled(f: SFunc, reg_of: i32[], fl: boolean[]): LoopSplit {
+  let none = LoopSplit { f: f, cost: 0 };
+  let latch = furthest_latches(f);
+  let loops: i32[] = [];
+  for h in 0..latch.len() {
+    if (latch[h] > h) {
+      loops = loops.append(h);
+    }
+  }
+  if (loops.len() < 2) {
+    return none;
+  }
+  let slot = util.minus_ones(f.nvals);
+  let cands: i32[] = [];
+  for v in 0..f.nvals {
+    if (v < reg_of.len() && reg_of[v] <= -2 && !(v < fl.len() && fl[v])) {
+      slot = slot.with(v, cands.len());
+      cands = cands.append(v);
+    }
+  }
+  if (cands.len() == 0) {
+    return none;
+  }
+  let uses: i32[][] = cands.map((v: i32): i32[] => []);
+  let def_at = util.minus_ones(cands.len());
+  let in_phi = __alloc_bool(cands.len());
+  let cells = 0;
+  for bi in 0..f.blocks.len() {
+    let blk = f.blocks[bi];
+    for ins in blk.insts {
+      if (ins.kind_tag == FRAME_CELL && cell_number(ins) >= cells) {
+        cells = cell_number(ins) + 1;
+      }
+      if (ins.result >= 0 && ins.result < f.nvals && slot[ins.result] >= 0) {
+        def_at = def_at.with(slot[ins.result], bi);
+      }
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals && slot[a] >= 0) {
+          if (ins.kind_tag == PHI) {
+            in_phi = in_phi.with(slot[a], true);
+          } else {
+            uses = uses.with(slot[a], uses[slot[a]].append(bi));
+          }
+        }
+      }
+    }
+    let t = term_use(blk.term);
+    if (t >= 0 && t < f.nvals && slot[t] >= 0) {
+      uses = uses.with(slot[t], uses[slot[t]].append(bi));
+    }
+  }
+  let at = block_positions(f);
+  let idom = immediate_dominators(f, at);
+  let plans: SplitPlan[] = [];
+  for c in 0..cands.len() {
+    if (in_phi[c] || def_at[c] < 0 || uses[c].len() == 0) {
+      continue;
+    }
+    if let Some(p) = split_plan(f, at, idom, latch, loops, cands[c], def_at[c], uses[c]) {
+      plans = plans.append(p);
+    }
+  }
+  if (plans.len() == 0) {
+    return none;
+  }
+  return split_by(f, at, idom, plans, cells);
+}
+
+function split_plan(f: SFunc, at: i32[], idom: i32[], latch: i32[], loops: i32[], v: i32, def: i32, uses: i32[]): Option[SplitPlan] {
+  let lo = uses[0];
+  let hi = uses[0];
+  for u in uses {
+    lo = if (u < lo) { u } else { lo };
+    hi = if (u > hi) { u } else { hi };
+  }
+  let head = -1;
+  for h in loops {
+    if (h > def && h <= lo && hi <= latch[h] && h > head) {
+      head = h;
+    }
+  }
+  if (head < 0) {
+    return None;
+  }
+  let last = latch[head];
+  let pre = -1;
+  for p in f.blocks[head].preds {
+    let pb = position_of(at, p);
+    if (pb < head) {
+      if (pre >= 0) {
+        return None;
+      }
+      pre = pb;
+    }
+  }
+  if (pre < 0 || !dominated_by(idom, pre, def)) {
+    return None;
+  }
+  for inner in loops {
+    let inner_last = latch[inner];
+    if (inner <= head || inner_last >= last || uses.filter((u: i32): boolean => u >= inner && u <= inner_last).len() > 0) {
+      continue;
+    }
+    // The load comes before each later read. When the loop reads the value
+    // before the inner loop, a phi at the head joins it, so the load also
+    // comes before each back edge after the inner loop.
+    let early = uses.filter((u: i32): boolean => u < inner).len() > 0;
+    let later = uses.filter((u: i32): boolean => u > inner_last);
+    let joins = true;
+    for p in f.blocks[head].preds {
+      let pb = position_of(at, p);
+      if (early && pb > inner_last) {
+        later = later.append(pb);
+      } else if (early && pb >= inner) {
+        joins = false;
+      }
+    }
+    if (!joins) {
+      continue;
+    }
+    for b in inner_last + 1..last + 1 {
+      if (later.filter((u: i32): boolean => u < b || !dominated_by(idom, u, b)).len() == 0) {
+        return Some(SplitPlan { v: v, pre: pre, head: head, last: last, inner: inner, inner_last: inner_last, after: b, early: early });
+      }
+    }
+  }
+  return None;
+}
+
+// Whether the block at position `d` dominates the block at position `b`.
+function dominated_by(idom: i32[], b: i32, d: i32): boolean {
+  let x = b;
+  for step in 0..idom.len() {
+    if (x == d) {
+      return true;
+    }
+    if (x < 0 || idom[x] == x) {
+      return false;
+    }
+    x = idom[x];
+  }
+  return false;
+}
+
+function split_by(f: SFunc, at: i32[], idom: i32[], plans: SplitPlan[], cells: i32): LoopSplit {
+  let made: i32[] = [];
+  let blocks = f.blocks;
+  let cost = 0;
+  let weights = block_loop_weights(f);
+  let cold = cold_blocks(f);
+  for k in 0..plans.len() {
+    let p = plans[k];
+    let cell = cells + k;
+    let exit = p.after;
+    let stored = f.nvals + made.len();
+    let wrote = stored + 1;
+    let addr = stored + 2;
+    let back = stored + 3;
+    made = made.concat([stored, wrote, addr, back]);
+    // A phi with no read could share a register with another phi of the
+    // head, so the head gets one only when the loop reads it.
+    let head_v = -1;
+    if (p.early) {
+      head_v = f.nvals + made.len();
+      made = made.append(head_v);
+    }
+    let pre = blocks[p.pre];
+    blocks = blocks.with(p.pre, SBlock { ...pre, insts: pre.insts.append(frame_cell(stored, cell, 0)).append(SInst { kind_tag: ST_AT, result: wrote, args: [stored, p.v], imm: 0, str: "" }) });
+    cost += weights[p.pre] + (if (cold[exit]) { 1 } else { weights[exit] });
+    // The value in each block of the loop: the phi before the inner loop,
+    // and the load in each block that the load dominates. Other blocks
+    // after the inner loop do not read the value.
+    let cur = util.minus_ones(p.last + 1);
+    for b in p.head..p.last + 1 {
+      if (b < p.inner) {
+        cur = cur.with(b, head_v);
+      } else if (b > p.inner_last && dominated_by(idom, b, exit)) {
+        cur = cur.with(b, back);
+      }
+    }
+    if (p.early) {
+      let h = blocks[p.head];
+      let head_args = h.preds.map((id: i32): i32 => if (position_of(at, id) < p.head) { p.v } else if (position_of(at, id) < p.inner) { head_v } else { back });
+      blocks = blocks.with(p.head, SBlock { ...h, insts: [SInst { kind_tag: PHI, result: head_v, args: head_args, imm: 0, str: "" }].concat(h.insts) });
+    }
+    let e = blocks[exit];
+    let phis = e.insts.filter((ins: SInst): boolean => ins.kind_tag == PHI);
+    let rest = e.insts.filter((ins: SInst): boolean => ins.kind_tag != PHI);
+    blocks = blocks.with(exit, SBlock { ...e, insts: phis.append(frame_cell(addr, cell, 0)).append(SInst { kind_tag: LD_AT, result: back, args: [addr], imm: 0, str: "" }).concat(rest) });
+    for b in p.head..p.last + 1 {
+      if (cur[b] >= 0) {
+        blocks = blocks.with(b, renamed_in(blocks[b], p.v, cur[b], head_v));
+      }
+    }
+  }
+  return LoopSplit { f: SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() }, cost: cost };
+}
+
+// The block with each read of `from` reading `to`, except in the phi that
+// gives `keep`.
+function renamed_in(b: SBlock, from: i32, to: i32, keep: i32): SBlock {
+  let insts: SInst[] = [];
+  for ins in b.insts {
+    if (ins.result == keep) {
+      insts = insts.append(ins);
+    } else {
+      insts = insts.append(SInst { ...ins, args: ins.args.map((a: i32): i32 => if (a == from) { to } else { a }) });
+    }
+  }
+  let t = b.term;
+  if (t.kind_tag == TERM_BRIF && t.cond == from) {
+    t = STerm { ...t, cond: to };
+  }
+  if (t.kind_tag == TERM_RET && t.value == from) {
+    t = STerm { ...t, value: to };
+  }
+  return SBlock { ...b, insts: insts, term: t };
 }
 
 pub function spill_code(slot: i32): i32 {
@@ -6492,6 +6753,126 @@ function share_shape_loads(f: SFunc): Formed {
     return Formed { f: f, repl: [] };
   }
   return Formed { f: rewrite_through(f, repl), repl: repl };
+}
+
+// Checked reads and writes of one array in a block, with no write of
+// memory between them other than to its elements, share one load of its
+// length. The length is then a value, and each check compares the index
+// with it. A target that compares with the length in memory gains nothing.
+pub function shared_lengths(f: SFunc): SFunc {
+  let used = used_values(f);
+  let made: i32[] = [];
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let wins = length_windows(blk.insts, used);
+    if (!wins.shared) {
+      blocks = blocks.append(blk);
+      continue;
+    }
+    let lens = wins.count.map((c: i32): i32 => -1);
+    let insts: SInst[] = [];
+    for k in 0..blk.insts.len() {
+      let ins = blk.insts[k];
+      let w = wins.of[k];
+      if (w < 0 || wins.count[w] < 2) {
+        insts = insts.append(ins);
+        continue;
+      }
+      if (lens[w] < 0) {
+        lens = lens.with(w, f.nvals + made.len());
+        made = made.append(w);
+        insts = insts.append(SInst { kind_tag: LD_AT, result: lens[w], args: [ins.args[0]], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
+      }
+      insts = insts.append(SInst { kind_tag: BOUND, result: -1, args: [ins.args[1], lens[w]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
+      if (ins.kind_tag == ARR_ST || ins.imm == 0) {
+        insts = insts.append(SInst { ...ins, imm: 1 });
+      }
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  if (made.len() == 0) {
+    return f;
+  }
+  return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
+}
+
+// `used[v]` is true when an instruction or a terminator reads value v.
+function used_values(f: SFunc): boolean[] {
+  let used = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals) {
+          used = used.with(a, true);
+        }
+      }
+    }
+    let v = term_use(blk.term);
+    if (v >= 0 && v < f.nvals) {
+      used = used.with(v, true);
+    }
+  }
+  return used;
+}
+
+// The value that a terminator reads, or -1.
+function term_use(t: STerm): i32 {
+  if (t.kind_tag == TERM_BRIF) {
+    return t.cond;
+  }
+  if (t.kind_tag == TERM_RET) {
+    return t.value;
+  }
+  return -1;
+}
+
+// `of[k]` is the window of the checked access at k, or -1, and `count[w]`
+// the accesses of window w. A window holds the accesses of one array up to
+// a write that can change a length.
+struct Windows { of: i32[], count: i32[], shared: boolean }
+
+function length_windows(insts: SInst[], used: boolean[]): Windows {
+  let of: i32[] = [];
+  let count: i32[] = [];
+  let bases: i32[] = [];
+  let open: i32[] = [];
+  let shared = false;
+  for ins in insts {
+    if (length_checked(ins, used)) {
+      let w = -1;
+      for j in 0..bases.len() {
+        if (bases[j] == ins.args[0]) {
+          w = open[j];
+        }
+      }
+      if (w < 0) {
+        w = count.len();
+        count = count.append(0);
+        bases = bases.append(ins.args[0]);
+        open = open.append(w);
+      }
+      count = count.with(w, count[w] + 1);
+      shared = shared || count[w] >= 2;
+      of = of.append(w);
+      continue;
+    }
+    of = of.append(-1);
+    if (inst_has_effect(ins.kind_tag) && ins.kind_tag != LINE && ins.kind_tag != ARR_AT && ins.kind_tag != STR_AT && ins.kind_tag != ARR_ST && ins.kind_tag != BOUND) {
+      bases = [];
+      open = [];
+    }
+  }
+  return Windows { of: of, count: count, shared: shared };
+}
+
+// A read, a check alone whose result has no use, or a write of an array
+// that compares its index with the length in the array, or such a read of
+// a string.
+function length_checked(ins: SInst, used: boolean[]): boolean {
+  if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
+    return ins.args.len() == 2 && (ins.imm == 0 || ins.imm == 2 && (ins.result < 0 || !used[ins.result]));
+  }
+  return ins.kind_tag == ARR_ST && ins.args.len() == 3 && ins.imm == 0;
 }
 
 function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, load: SInst): i32 {

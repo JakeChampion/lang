@@ -1915,7 +1915,7 @@ function call_mark(op: ir.Op): i32 {
   if (ir.is_sole_box(op) && op.str == "__fern_rc_dec") {
     return ssa.SOLE_BOX;
   }
-  if (ir.is_shared_dec(op) && op.str == "__fern_rc_dec") {
+  if (ir.is_shared_dec(op) && op.str.starts_with("__sem_release_")) {
     return ssa.SHARED_DEC;
   }
   if (ir.is_shell(op)) {

@@ -1698,12 +1698,12 @@ function classified_death(own r: irtables.LowerState, f: ssasem.Func, k: ssaunit
 }
 
 // The release of a donor that its token found shared. When its count is
-// still what the token read (`stable`), the box of a record or a variant only
-// loses one count.
+// still what the token read (`stable`), the release of a record or a variant
+// only loses one count.
 function shared_release(own r: irtables.LowerState, donor: i32, scratch: i32, f: ssasem.Func, stable: boolean): irtables.LowerState {
   let t = f.values[donor];
-  if (stable && never_odd(t, f) && ssasem.counted(f, t) && !semtypes.is_handle(t) && !semtypes.is_env(t)) {
-    return mark_release(helper(r, donor, "__fern_rc_dec"), ir.shared_dec);
+  if (stable && never_odd(t, f) && ssasem.box_shape(t) && ssasem.counted(f, t) && outlined_release(t, f) && !semtypes.is_handle(t) && !semtypes.is_env(t)) {
+    return mark_release(helper(r, donor, release_helper_name(t)), ir.shared_dec);
   }
   return drop_value(r, donor, t, scratch, f);
 }

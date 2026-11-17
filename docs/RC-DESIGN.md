@@ -497,9 +497,10 @@ locals sit above `nvals`. It emits:
   between the take and the death can have changed its count. On the shared
   arm of a kept or a classified donor, the box of a record or a variant
   loses one count inline, with no free path (`ir.shared_dec`). Each
-  instruction from the read to the death must read the donor, change no
-  count, or be the rebuild of the keep (`ssaunits.count_holds`). A release
-  of another value there can make the box unique.
+  instruction from the read to the death must read a field or the variant
+  of the donor, change no count, or be the rebuild of the keep
+  (`ssaunits.count_holds`). A release of another value there, or a call,
+  can make the box unique.
 - **reuse**, as the plan's tables say (`Plan.reuse`): where a token is taken,
   `__fern_rc_is_unique(d)` selects the box or null (`reuse_token`); where it
   is spent, `__fern_alloc_reuse(token, slots)` hands back the box or a fresh
