@@ -189,16 +189,23 @@ func (w *serveTLSWorld) drive(t *testing.T, cmd *exec.Cmd, stream bool) {
 	}
 	t.Run(name, func(t *testing.T) {
 		var reused, resumed bool
+		// How far the last GET went, for the message of a failure.
+		var connected, shook, wrote, answered bool
 		trace := &httptrace.ClientTrace{
-			GotConn:          func(i httptrace.GotConnInfo) { reused = i.Reused },
-			TLSHandshakeDone: func(cs tls.ConnectionState, err error) { resumed = cs.DidResume },
+			GotConn:              func(i httptrace.GotConnInfo) { reused, connected = i.Reused, true },
+			TLSHandshakeDone:     func(cs tls.ConnectionState, err error) { resumed, shook = cs.DidResume, err == nil },
+			WroteRequest:         func(i httptrace.WroteRequestInfo) { wrote = i.Err == nil },
+			GotFirstResponseByte: func() { answered = true },
 		}
 		get := func(path string) (*http.Response, []byte) {
 			t.Helper()
+			connected, shook, wrote, answered = false, false, false, false
+			began := time.Now()
 			req, _ := http.NewRequest("GET", base+path, nil)
 			resp, err := client.Do(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
 			if err != nil {
-				t.Fatalf("GET %s: %v", path, err)
+				t.Fatalf("GET %s: %v after %v (connection %v, reused %v, new TLS handshake done %v, request written %v, first response byte %v)",
+					path, err, time.Since(began).Round(time.Millisecond), connected, connected && reused, shook, wrote, answered)
 			}
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)

@@ -116,6 +116,7 @@ import "std/option";
 import "std/string";
 
 import "std/rand";
+import "std/i32";
 function main(): i32 {
   let argv: string[] = args();
   let Ok(peer) = net.socket_addr_parse(argv[1]) else { return 2; };
@@ -129,6 +130,8 @@ function main(): i32 {
   let buf: u8[] = __alloc_u8(65536);
   let sent: i32 = 0;
   let got: i32 = 0;
+  let out_count: i32 = 0;
+  let in_count: i32 = 0;
   let first: string = "";
   let started: Instant = clock.instant();
   while (!c.done() && clock.elapsed(started).cmp(time.duration_seconds(15)) < 0) {
@@ -137,12 +140,12 @@ function main(): i32 {
     let out: u8[][] = next.datagrams();
     next = next.sent();
     c = next;
-    for d in out { let r: Result[i32, net.NetError] = net.send_to(sock, d, peer); }
+    for d in out { let r: Result[i32, net.NetError] = net.send_to(sock, d, peer); out_count = out_count + 1; }
     let woke: async.Wake = async.wait_any([sock.fd, 1], Some(clock.instant().add(time.duration_millis(10))));
     let reading: boolean = true;
     while (reading) {
       match (net.recv_from(sock, buf)) {
-        Ok(d) => { c = c.receive(buf[0:d.0], clock.instant()); },
+        Ok(d) => { c = c.receive(buf[0:d.0], clock.instant()); in_count = in_count + 1; },
         Err(_) => { reading = false; }
       }
     }
@@ -178,7 +181,9 @@ function main(): i32 {
       sent = sent + 1;
     }
   }
-  eprint("HTTP/3 socket request timed out");
+  let ready_text: string = "not complete";
+  if (c.ready()) { ready_text = "complete"; }
+  eprint("HTTP/3 socket request timed out: " + out_count.to_string() + " datagram(s) sent, " + in_count.to_string() + " received, the handshake " + ready_text + ", " + sent.to_string() + " request(s) sent, " + got.to_string() + " answered");
   return 1;
 }
 `
