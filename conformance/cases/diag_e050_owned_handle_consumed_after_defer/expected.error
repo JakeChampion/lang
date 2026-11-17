@@ -1,1 +1,2 @@
-is consumed twice: a deferred call at line 12 consumes it
+is consumed twice: a deferred call consumes it
+main.fern:12:9: note: the deferred call is here
