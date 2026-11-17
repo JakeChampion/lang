@@ -18028,6 +18028,9 @@ function then_scope(f: ast.StmtIf, s: Scope): Scope {
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let cur = bind_mutual_siblings(stmts, s);
+  for lc in parser.nested_fn_late_captures(stmts) {
+    out = out.append(dg_at("E108", "nested function " + util.quoted(lc.fn_name) + " captures " + util.quoted(lc.name) + ", but " + util.quoted(lc.first) + " can call " + util.quoted(lc.fn_name) + " before the declaration of " + util.quoted(lc.name) + ": declare " + util.quoted(lc.name) + " before " + util.quoted(lc.first), lc.line, lc.col));
+  }
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {

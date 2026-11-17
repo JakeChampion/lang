@@ -1,0 +1,13 @@
+function main(): i32 {
+  function a(n: i32): i32 {
+    if (n == 0) { return 0; }
+    return b(n - 1);
+  }
+  let k = 5;
+  function b(n: i32): i32 {
+    if (n == 0) { return k; }
+    return a(n - 1);
+  }
+  print(f"{a(3)} {a(2)}");
+  return 0;
+}
