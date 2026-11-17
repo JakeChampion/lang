@@ -140,9 +140,9 @@ pub function busy_give_x86(): string {
 // before the waiter runs. Both routines keep every register except r11 and
 // the flags, and __fern_busy_give keeps r11 too.
 function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
+  s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n" + busy_owner_word(s) + "    .text\n");
   s = s.write("__fern_busy_take:\n    cmpl $0, __fern_busy+4(%rip)\n    jne .Lfern_busy_defer\n");
-  s = s.write(".Lfern_busy_try:\n    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz .Lfern_busy_wait\n    ret\n");
+  s = s.write(".Lfern_busy_try:\n    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz .Lfern_busy_wait\n" + busy_owner_store(s) + "    ret\n");
   s = s.write(".Lfern_busy_defer:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r10\n");
   s = s.write("    pushq $1000000\n    pushq $0\n");
   s = s.write("    movl $202, %eax\n    leaq __fern_busy+4(%rip), %rdi\n    movl $128, %esi\n    movl $1, %edx\n    movq %rsp, %r10\n").syscall(202);
@@ -154,7 +154,7 @@ function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
   // The waiter has the turn: it lets the threads that wait for it go on.
   s = s.write(".Lfern_busy_won:\n    xorl %eax, %eax\n    xchgl %eax, __fern_busy+4(%rip)\n    testl %eax, %eax\n    jz .Lfern_busy_out\n");
   s = s.write("    movl $202, %eax\n    leaq __fern_busy+4(%rip), %rdi\n    movl $129, %esi\n    movl $2147483647, %edx\n").syscall(202);
-  s = s.write(".Lfern_busy_out:\n    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
+  s = s.write(".Lfern_busy_out:\n" + busy_owner_store(s) + "    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
   s = s.write("__fern_busy_give:\n    pushq %r11\n    xorl %r11d, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    cmpl $2, %r11d\n    je .Lfern_busy_wake\n    popq %r11\n    ret\n");
   s = s.write(".Lfern_busy_wake:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
   s = s.write("    movl $1, __fern_busy+4(%rip)\n");
@@ -1280,6 +1280,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .globl __fern_hev_a\n");
   s = s.write("__fern_hev_a:\n");
   s = hev_save(s);
+  s = san_owner_check(s);
   s = s.write("    movq 112(%rsp), %r14\n");
   s = s.write("    movq 120(%rsp), %r12\n");
   s = s.write("    movq 128(%rsp), %r13\n");
@@ -1310,6 +1311,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .globl __fern_hev_f\n");
   s = s.write("__fern_hev_f:\n");
   s = hev_save(s);
+  s = san_owner_check(s);
   s = s.write("    movq 104(%rsp), %r14\n");
   s = s.write("    movq 112(%rsp), %r12\n");
   s = s.write("    movq 120(%rsp), %r13\n");
@@ -1539,6 +1541,50 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_san_abort_uaf:\n");
   s = s.write("    leaq .Lsan_uaf(%rip), %rsi\n");
   s = s.write("    movq $61, %rdx\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.syscall(1);
+  return san_report_exit(s);
+}
+
+// A census run by a context that does not own the heap aborts. %rax is free.
+function san_owner_check(s: asmcore.EmitState): asmcore.EmitState {
+  if (asmcore.owner_by_stack(s)) {
+    return s.write("    movq __fern_stack_top(%rip), %rax\n    subq %rsp, %rax\n    cmpq $" + util.i32_to_string(asmcore.stack_size()) + ", %rax\n    jae __fern_san_abort_owner\n");
+  }
+  if (asmcore.owner_by_thread(s)) {
+    return s.write("    movq %fs:0, %rax\n    cmpq __fern_san_owner(%rip), %rax\n    jne __fern_san_abort_owner\n");
+  }
+  return s;
+}
+
+// The thread that takes the turn owns the heap. %r11 is free.
+function busy_owner_store(s: asmcore.EmitState): string {
+  if (asmcore.owner_by_thread(s)) {
+    return "    movq %fs:0, %r11\n    movq %r11, __fern_san_owner(%rip)\n";
+  }
+  return "";
+}
+
+function busy_owner_word(s: asmcore.EmitState): string {
+  if (asmcore.owner_by_thread(s)) {
+    return "    .globl __fern_san_owner\n__fern_san_owner: .skip 8\n";
+  }
+  return "";
+}
+
+function emit_san_owner_abort(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.owner_by_stack(s) && !asmcore.owner_by_thread(s)) {
+    return s;
+  }
+  let msg = asmcore.san_owner_message();
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_owner:\n    .ascii \"" + msg + "\\n\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write("    .globl __fern_san_abort_owner\n");
+  s = s.write("__fern_san_abort_owner:\n");
+  s = s.write("    leaq .Lsan_owner(%rip), %rsi\n");
+  s = s.write("    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n");
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
@@ -14558,6 +14604,7 @@ function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = s.write("    .text\n");
     s = emit_san_uaf_abort(s);
+    s = emit_san_owner_abort(s);
     s = emit_san_waf_abort(s);
     s = emit_san_hbo_abort(s);
   }
