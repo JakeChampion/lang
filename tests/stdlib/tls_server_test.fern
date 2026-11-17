@@ -409,6 +409,35 @@ function refusal_alert(cc: client.Config, sc: server.Config): Result[string, str
   return Ok("");
 }
 
+// The alert of a read that the server refuses, or what the read did.
+function header_alert(header: u8[]): string {
+  match (listening(server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)))) {
+    Ok(s) => {
+      match (s.read(header, time.timestamp_from_unix_millis(WALL_MS))) {
+        Ok(step) => {
+          return "held, " + step.output.len().to_string() + " byte(s) out";
+        },
+        Err(f) => {
+          return hex.encode(f.alert);
+        }
+      }
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+  return "";
+}
+
+function test_header_refused_before_its_record(): test.TestOutcome {
+  let plain_http: u8[] = [71, 69, 84, 32, 47];
+  let too_long: u8[] = [22, 3, 1, 255, 255];
+  let part_of_a_hello: u8[] = [22, 3, 1, 0, 200, 1, 0, 0];
+  let four_bytes: u8[] = [71, 69, 84, 32];
+  let got = header_alert(plain_http) + " | " + header_alert(too_long) + " | " + header_alert(part_of_a_hello) + " | " + header_alert(four_bytes);
+  return test.assert_eq(got, "1503030002020a | 15030300020216 | held, 0 byte(s) out | held, 0 byte(s) out");
+}
+
 function test_no_common_scheme(): test.TestOutcome {
   let sc = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
   let cc = handshake.ClientConfig { ...handshake.client_config("tls.example"), schemes: [0x0804] };
@@ -1113,6 +1142,7 @@ function main(): i32 {
   r = r.it("an identity and its leaf", test_identity);
   r = r.it("P-256, P-384 and Ed25519 leaves", test_leaves);
   r = r.it("names and protocols", test_names_and_protocols);
+  r = r.it("a header that no record has is refused before the record", test_header_refused_before_its_record);
   r = r.it("no signature scheme in common", test_no_common_scheme);
   r = r.it("a key that is not the chain's", test_wrong_key);
   r = r.it("close_notify", test_close);
