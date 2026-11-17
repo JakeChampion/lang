@@ -48,6 +48,7 @@ The connection is `Closed` when both sides closed, after a reset, or after too m
 ```fern
 <<dependencies>>=
 import "std/option";
+import "core/cmp";
 ```
 
 ### `pub struct Segment`
@@ -149,6 +150,10 @@ pub function (s: State) to_string(): string {
 pub function (s: State) eq(other: State): boolean {
   return s.to_string() == other.to_string();
 }
+
+impl cmp.Display for State {}
+
+impl cmp.Eq for State {}
 ```
 
 ### `pub struct Connection`

@@ -8,11 +8,16 @@ import (
 	"testing"
 )
 
-const operatorOverloadSrc = `struct V { x: i32 }
+const operatorOverloadSrc = `import "core/ops";
+struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
+impl ops.Add for V {}
 function (self: V) sub(o: V): V { return V { x: self.x - o.x }; }
+impl ops.Sub for V {}
 function (self: V) mul(o: V): V { return V { x: self.x * o.x }; }
+impl ops.Mul for V {}
 function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
+impl ops.Div for V {}
 function main(): i32 {
     let a: V = V { x: 20 };
     let b: V = V { x: 4 };

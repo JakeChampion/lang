@@ -8,8 +8,10 @@ import (
 	"testing"
 )
 
-const unaryNegSrc = `struct V { x: i32 }
+const unaryNegSrc = `import "core/ops";
+struct V { x: i32 }
 function (self: V) neg(): V { return V { x: 0 - self.x }; }
+impl ops.Neg for V {}
 function main(): i32 {
     let a: V = V { x: 5 };
     let b: V = -a;

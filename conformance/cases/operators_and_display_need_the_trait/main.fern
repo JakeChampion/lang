@@ -1,0 +1,35 @@
+// An operator, `print` and an f-string part bind through a trait. A method
+// with the correct name and no impl of the trait gives the type nothing.
+struct V { x: i32 }
+
+function (a: V) add(b: V): V {
+  return V { x: a.x + b.x };
+}
+
+function (a: V) neg(): V {
+  return V { x: 0 - a.x };
+}
+
+function (a: V) eq(b: V): boolean {
+  return a.x == b.x;
+}
+
+function (a: V) cmp(b: V): i32 {
+  return a.x - b.x;
+}
+
+function (a: V) to_string(): string {
+  return "V";
+}
+
+function main(): i32 {
+  let a: V = V { x: 1 };
+  let b: V = a + a;
+  let c: V = -a;
+  if (a == b || a < c) {
+    return 1;
+  }
+  print(a);
+  let s: string = f"{a}";
+  return s.len();
+}

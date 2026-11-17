@@ -11,44 +11,52 @@ var operatorOverloadRootCases = []struct {
 	name string
 	src  string
 }{
-	{"binary_mul_returns_scalar", `struct V { v: i32 }
+	{"binary_mul", `import "core/ops";
+struct V { v: i32 }
 
-function (a: V) mul(b: V): i32 {
-    return a.v * b.v;
+function (a: V) mul(b: V): V {
+    return V { v: a.v * b.v };
 }
+impl ops.Mul for V {}
 
 function main(): i32 {
     let x: V = V { v: 6 };
     let y: V = V { v: 7 };
-    return x * y;
+    return (x * y).v;
 }`},
-	{"binary_add_returns_string", `struct S { s: string }
+	{"binary_add_on_a_string_field", `import "core/ops";
+struct S { s: string }
 
-function (a: S) add(b: S): string {
-    return a.s;
+function (a: S) add(b: S): S {
+    return S { s: a.s + b.s };
 }
+impl ops.Add for S {}
 
 function main(): i32 {
     let p: S = S { s: "hello" };
     let q: S = S { s: "world" };
-    if ((p + q).len() == 5) { return 42; }
+    if ((p + q).s.len() == 10) { return 42; }
     return 1;
 }`},
-	{"unary_neg_returns_scalar", `struct N { n: i32 }
+	{"unary_neg", `import "core/ops";
+struct N { n: i32 }
 
-function (a: N) neg(): i32 {
-    return a.n;
+function (a: N) neg(): N {
+    return N { n: 0 - a.n };
 }
+impl ops.Neg for N {}
 
 function main(): i32 {
-    let k: N = N { n: 42 };
-    return -k;
+    let k: N = N { n: -42 };
+    return (-k).n;
 }`},
-	{"binary_add_returns_self", `struct C { n: i32 }
+	{"binary_add_returns_self", `import "core/ops";
+struct C { n: i32 }
 
 function (a: C) add(b: C): C {
     return C { n: a.n + b.n };
 }
+impl ops.Add for C {}
 
 function main(): i32 {
     let u: C = C { n: 40 };
