@@ -5628,7 +5628,7 @@ function bound_type_arg_diags(sig: FuncSig, c: ast.ExprCall, ai: i32, at: typein
     return none;
   }
   let out = int_dest_range_diags(c.args[ai], want);
-  if (out.len() == 0 && !bound_arg_accepts(c.args[ai], at, want, s) && !generic_scalar_own_callback(at, want, pref, wn, s)) {
+  if (out.len() == 0 && !bound_arg_accepts(c.args[ai], at, want, s)) {
     out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(want) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
   }
   return out;
@@ -5654,37 +5654,6 @@ function param_has_bindings(sig: FuncSig, ai: i32, names: string[]): boolean {
 
 function bound_arg_accepts(e: ast.Expr, actual: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
   return is_unknown(actual) || settles_to(e, want, s) || view_arg_borrow(actual, want) || coercible(actual, want, s);
-}
-
-function generic_own_callback_accepts(actual: typeinfo.Type, want: typeinfo.Type, names: string[], spelling: string, s: Scope): boolean {
-  return names.len() > 0 && generic_scalar_own_callback(actual, want, parser.parse_type_ref(spelling), names, s);
-}
-
-function generic_scalar_own_callback(actual: typeinfo.Type, want: typeinfo.Type, ref: parser.TypeRef, names: string[], s: Scope): boolean {
-  if (names.len() == 0 || !parser.ref_is_fn_value(ref)) {
-    return false;
-  }
-  if let typeinfo.TypeFunc(a) = actual {
-    if let typeinfo.TypeFunc(w) = want {
-      let owns = scalar_own_callback_flags(a, w, parser.ref_ungroup(ref), names);
-      return callable_assignable(a, typeinfo.TypeFunc { ...w, param_own: owns }, s.unions.unions);
-    }
-  }
-  return false;
-}
-
-function scalar_own_callback_flags(a: typeinfo.TypeFunc, w: typeinfo.TypeFunc, r: parser.TypeRef, names: string[]): boolean[] {
-  let owns: boolean[] = [];
-  let i = 0;
-  while (i < w.param_types.len() && i + 1 < r.args.len()) {
-    let on = typeinfo.fn_own_at(w, i);
-    if (parser.ref_is_own(r.args[i]) && type_ref_names_any(parser.ref_without_own(r.args[i]), names) && !type_contains_unknown(w.param_types[i]) && !typeinfo.ownable(w.param_types[i])) {
-      on = typeinfo.fn_own_at(a, i);
-    }
-    owns = owns.append(on);
-    i += 1;
-  }
-  return owns;
 }
 
 function call_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
@@ -7511,7 +7480,7 @@ function method_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv
         }
       }
     }
-    if (!unresolved_value && !is_unknown(want) && !elem_checked_literal(c.args[mi], msig.param_types[mi]) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
+    if (!unresolved_value && !is_unknown(want) && !elem_checked_literal(c.args[mi], msig.param_types[mi]) && !bound_arg_accepts(c.args[mi], mat, want, s)) {
       out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
     }
     out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
@@ -7975,11 +7944,7 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     while (i + 1 < f.args.len()) {
       let ref = parser.ref_without_own(f.args[i]);
       let param = type_from_ref_subst(ref, tparams, targs, tn);
-      let on = parser.ref_is_own(f.args[i]);
-      if (type_ref_names_any(ref, tparams) && !typeinfo.ownable(param)) {
-        on = false;
-      }
-      owns = owns.append(on);
+      owns = owns.append(parser.ref_is_own(f.args[i]));
       pts = pts.append(param);
       i += 1;
     }

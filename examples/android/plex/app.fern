@@ -269,7 +269,7 @@ function new_gpu(): Option[Gpu] {
     return None;
   };
   let (on, t) = c.external();
-  let pt = painter.on_canvas(painter.new(text.Fonts { faces: [], weights: [] }), Some(on));
+  let pt = painter.on_canvas(painter.new(text.from_faces([], [])), Some(on));
   return Some(Gpu { painter: pt, texture: t, target: None, window: 0 as usize, shown_ns: -1i64, matrix: [], held: false, w: 0, h: 0, overlaid: false });
 }
 

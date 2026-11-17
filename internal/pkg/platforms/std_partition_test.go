@@ -18,6 +18,7 @@ var stdModuleReach = map[string]string{
 	"std/base32":        "",
 	"std/base64":        "",
 	"std/bench":         "now",
+	"std/bidi":          "",
 	"std/bigint":        "",
 	"std/binary":        "",
 	"std/brotli":        "",
