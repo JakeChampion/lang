@@ -20,6 +20,8 @@ Each element has a width and a height. `Hug` takes the size of what the element 
 
 The methods of `El` set them, and they set the padding, the gap, the background, the corners and the border. Sizes are in dp, and text sizes are in sp: a text grows with the font size that the person set for the system. `align` sets where a column or a row puts its elements across it, and `justify` sets where it puts them along it.
 
+A text shows each line in the order of the Unicode Bidirectional Algorithm, from `std/bidi`. The first strong letter of a paragraph sets its direction. Hebrew and Arabic paragraphs are right to left. Each line of such a paragraph is at the right of its box when the text has the alignment START. The text of a field does the same, and its caret follows the direction of the character next to it.
+
 `on_tap` gives an element a message. A tap on the element gives that message to `update`. A message can hold values: the row of a list, for example. `on_long` does the same for a long press. `slider` is a bar with a thumb, and `on_slide` gives each element the message of a finger that moves across it.
 
 `field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text. `on_edit` gives the field a function that makes a message from the new text, and each change gives that message to `update`. `view` gives the field the text that it shows. `on_submit` gives the field the message of the action key of the keyboard.
@@ -87,7 +89,7 @@ function update(own m: Model, msg: Msg): Model {
 
 function main(): i32 {
   let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
-  let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), ui.no_focus(), ui.no_grab());
+  let lay = ui.layout(view(Model { count: 0 }, screen), text.from_faces([], []), screen, map_new(4), ui.no_focus(), ui.no_grab());
   let next = update(Model { count: 0 }, lay.taps[0]);
   if (lay.nodes.len() == 3 && lay.taps.len() == 1 && next.count == 1) {
     return 0;
@@ -132,11 +134,13 @@ function main(): i32 {
 import "core/map";
 import "std/android";
 import "std/android/draw";
+import "std/android/fonts";
 import "std/android/icons";
 import "std/android/motion";
 import "std/android/text";
 import "std/android/ui/painter";
 import "std/android/ui/scene";
+import "std/bidi";
 import "std/f64";
 import "std/kv";
 import "std/option";
@@ -851,19 +855,45 @@ function weight_of(s: Size): f64 {
   }
 }
 
-// The lines of a text, the pixels of its em, its face and the height of a
-// line.
-struct Lines { lines: string[], px: i32, face: i32, line: i32 }
+// The lines of a text in the order to show them, whether each line is in a
+// paragraph that is right to left, the pixels of its em, its face and the
+// height of a line.
+struct Lines { lines: string[], rtl: boolean[], px: i32, face: i32, line: i32 }
 
 function text_lines[M](env: Env, e: El[M], room: i32): Lines {
   let size = sp(env, e.size);
   let face = text.face_for(env.fonts, e.weight);
-  let lines = text.wrap(env.fonts, face, size, e.content, room);
-  if (e.lines > 0 && lines.len() > e.lines) {
-    let rest = lines.drop(e.lines - 1).join(" ");
-    lines = lines.take(e.lines - 1).append(text.fit(env.fonts, face, size, rest, room));
+  let ranges = text.wrap_ranges(env.fonts, face, size, e.content, room);
+  let r = bidi.resolve(e.content, bidi.AUTO);
+  let n = ranges.len();
+  if (e.lines > 0) {
+    n = n.min(e.lines);
   }
-  return Lines { lines: lines, px: size, face: face, line: text.line(env.fonts, face, size) };
+  let lines: string[] = [];
+  let rtl: boolean[] = [];
+  for i in 0..n {
+    let (a, b) = ranges[i];
+    let level = r.paragraph_level_at(a);
+    rtl = rtl.append(level == 1);
+    if (i == n - 1 && n < ranges.len()) {
+      let rest = text.fit(env.fonts, face, size, rest_of(e.content, ranges, i), room);
+      lines = lines.append(bidi.display(rest, level));
+    } else {
+      lines = lines.append(r.line(a, b));
+    }
+  }
+  return Lines { lines: lines, rtl: rtl, px: size, face: face, line: text.line(env.fonts, face, size) };
+}
+
+// The lines of `s` from the line `i`, joined by spaces.
+function rest_of(s: string, ranges: (i32, i32)[], i: i32): string {
+  let cs = text.letters(s);
+  let parts: string[] = [];
+  for k in i..ranges.len() {
+    let (a, b) = ranges[k];
+    parts = parts.append(text.span(cs, a, b));
+  }
+  return parts.join(" ");
 }
 
 // The weight of `k` along a row when `across` is true, or along a column.
@@ -1138,6 +1168,18 @@ function clipped(n: scene.Node, clip: Clip): scene.Node {
   return scene.Node { ...n, group: clip.group, clip0: clip.c0, clip1: clip.c1, left: clip.left, right: clip.right };
 }
 
+// The alignment `a` of a line of text: START and STRETCH are at the right
+// of a line that is right to left.
+function along_line(a: i32, rtl: boolean): i32 {
+  if (!rtl || a == CENTER) {
+    return a;
+  }
+  if (a == END) {
+    return START;
+  }
+  return END;
+}
+
 // Where `rest` pixels of free room go before an element, for an alignment.
 function shift(a: i32, rest: i32): i32 {
   if (a == CENTER) {
@@ -1223,16 +1265,17 @@ function place_text[M](env: Env, e: El[M], x: i32, y: i32, w: i32, clip: Clip, o
   for i in 0..t.lines.len() {
     let l = t.lines[i];
     let lw = text.width(env.fonts, t.face, t.px, l);
-    let n = scene.node(x + shift(e.align, w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
+    let n = scene.node(x + shift(along_line(e.align, t.rtl[i]), w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
     nodes = nodes.append(clipped(n, clip));
   }
   return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
 }
 
-// What a field shows: its lines, the index of the first character of each
-// line, and the line and the x of the caret. The line of the caret is -1
-// for a field that does not have the focus.
-struct FieldView { lines: string[], starts: i32[], caret_line: i32, caret_x: i32 }
+// What a field shows: the levels of its text, each line from its start up
+// to its end in that text, the lines in the order to show them and the x
+// of each, and the line and the x of the caret. The line of the caret is
+// -1 for a field that does not have the focus.
+struct FieldView { text: bidi.Resolved, starts: i32[], ends: i32[], lines: string[], xs: i32[], caret_line: i32, caret_x: i32 }
 
 // The pixels of the em, the face and the height of a line of the field.
 function field_type[M](env: Env, e: El[M]): (i32, i32, i32) {
@@ -1241,12 +1284,68 @@ function field_type[M](env: Env, e: El[M]): (i32, i32, i32) {
   return (size, face, text.line(env.fonts, face, size));
 }
 
+// The view of the lines from `starts` up to `ends` of `r` in `w` pixels.
+// A line of a paragraph that is right to left is at the right.
+function field_lines[M](env: Env, e: El[M], w: i32, r: bidi.Resolved, starts: i32[], ends: i32[]): FieldView {
+  let (size, face, _) = field_type(env, e);
+  let lines: string[] = [];
+  let xs: i32[] = [];
+  for i in 0..starts.len() {
+    let l = r.line(starts[i], ends[i]);
+    lines = lines.append(l);
+    xs = xs.append(if (r.paragraph_level_at(starts[i]) == 1) { w - text.width(env.fonts, face, size, l) } else { 0 });
+  }
+  return FieldView { text: r, starts: starts, ends: ends, lines: lines, xs: xs, caret_line: -1, caret_x: 0 };
+}
+
+// The view `v` with the caret before the character `caret` of the line
+// `row`.
+function with_caret[M](env: Env, e: El[M], v: FieldView, row: i32, caret: i32): FieldView {
+  let (size, face, _) = field_type(env, e);
+  let order = v.text.order(v.starts[row], v.ends[row]);
+  let cs = text.letters(v.lines[row]);
+  let x = 0;
+  if (order.len() > 0) {
+    let p = after_caret(order, caret);
+    // The caret is at the right edge of an RTL character that it is before,
+    // or of an LTR character that it is after.
+    let rtl = v.text.levels[order[p]] % 2 == 1;
+    if (rtl != caret > order[p]) {
+      p += 1;
+    }
+    x = text.width(env.fonts, face, size, text.span(cs, 0, p));
+  }
+  return FieldView { ...v, caret_line: row, caret_x: v.xs[row] + x };
+}
+
+// The place in `order` of the first character in logical order at or
+// after `caret`, or else of the last character.
+function after_caret(order: i32[], caret: i32): i32 {
+  let best = -1;
+  let last = 0;
+  for p in 0..order.len() {
+    if (order[p] >= caret && (best < 0 || order[p] < order[best])) {
+      best = p;
+    }
+    if (order[p] > order[last]) {
+      last = p;
+    }
+  }
+  return if (best < 0) { last } else { best };
+}
+
+// A text of one line that a field shows as it is, such as its hint.
+function shown_as_is[M](env: Env, e: El[M], w: i32, s: string, direction: i32): FieldView {
+  let r = bidi.resolve(s, direction);
+  return field_lines(env, e, w, r, [0], [r.cps.len()]);
+}
+
 // A field of one line in `w` pixels. In focus it shows the part of its
 // text around the caret. Out of focus it shows the end of its text.
 function line_view[M](env: Env, e: El[M], w: i32, focused: boolean): FieldView {
   let (size, face, _) = field_type(env, e);
   if (!focused) {
-    return FieldView { lines: [text.fit_end(env.fonts, face, size, e.content, w)], starts: [0], caret_line: -1, caret_x: 0 };
+    return shown_as_is(env, e, w, text.fit_end(env.fonts, face, size, e.content, w), bidi.paragraph_level(e.content, bidi.AUTO));
   }
   let cs = text.letters(e.content);
   let caret = env.focus.caret.max(0).min(cs.len());
@@ -1258,7 +1357,7 @@ function line_view[M](env: Env, e: El[M], w: i32, focused: boolean): FieldView {
   while (to > caret && text.width(env.fonts, face, size, text.span(cs, from, to)) > w) {
     to -= 1;
   }
-  return FieldView { lines: [text.span(cs, from, to)], starts: [from], caret_line: 0, caret_x: text.width(env.fonts, face, size, text.span(cs, from, caret)) };
+  return with_caret(env, e, field_lines(env, e, w, bidi.resolve(e.content, bidi.AUTO), [from], [to]), 0, caret);
 }
 
 // A field of more than one line in `w` pixels. In focus it shows the lines
@@ -1279,18 +1378,18 @@ function area_view[M](env: Env, e: El[M], w: i32, focused: boolean): FieldView {
   if (focused) {
     first = (at - e.lines + 1).max(0);
   }
-  let lines: string[] = [];
   let starts: i32[] = [];
+  let ends: i32[] = [];
   for i in first..(first + e.lines).min(ranges.len()) {
     let (a, b) = ranges[i];
-    lines = lines.append(text.span(cs, a, b));
     starts = starts.append(a);
+    ends = ends.append(b);
   }
+  let v = field_lines(env, e, w, bidi.resolve(e.content, bidi.AUTO), starts, ends);
   if (!focused) {
-    return FieldView { lines: lines, starts: starts, caret_line: -1, caret_x: 0 };
+    return v;
   }
-  let (a, _) = ranges[at];
-  return FieldView { lines: lines, starts: starts, caret_line: at - first, caret_x: text.width(env.fonts, face, size, text.span(cs, a, caret)) };
+  return with_caret(env, e, v, at - first, caret);
 }
 
 // What the field `e` shows in `w` pixels. An empty field shows its hint.
@@ -1298,11 +1397,11 @@ function field_view[M](env: Env, e: El[M], w: i32): FieldView {
   let focused = e.field == env.focus.field;
   if (e.content.len() == 0) {
     let (size, face, _) = field_type(env, e);
-    let caret_line = -1;
+    let v = shown_as_is(env, e, w, text.fit(env.fonts, face, size, e.hint, w), bidi.AUTO);
     if (focused) {
-      caret_line = 0;
+      return FieldView { ...v, caret_line: 0, caret_x: 0 };
     }
-    return FieldView { lines: [text.fit(env.fonts, face, size, e.hint, w)], starts: [0], caret_line: caret_line, caret_x: 0 };
+    return v;
   }
   if (e.lines > 1) {
     return area_view(env, e, w, focused);
@@ -1330,11 +1429,22 @@ function caret_at[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, tx: i32
   let v = field_view(env, e, w);
   let row = ((ty - field_top(env, e, y, h)) / line).max(0).min(v.lines.len() - 1);
   let cs = text.letters(v.lines[row]);
-  let k = 0;
-  while (k < cs.len() && text.width(env.fonts, face, size, text.span(cs, 0, k)) + text.width(env.fonts, face, size, cs[k]) / 2 < tx - x) {
-    k += 1;
+  let order = v.text.order(v.starts[row], v.ends[row]);
+  if (order.len() == 0) {
+    return v.starts[row];
   }
-  return v.starts[row] + k;
+  let p = 0;
+  while (p < cs.len() && text.width(env.fonts, face, size, text.span(cs, 0, p)) + text.width(env.fonts, face, size, cs[p]) / 2 < tx - x - v.xs[row]) {
+    p += 1;
+  }
+  // The caret goes at the left edge of the glyph `p`, or at the right edge
+  // of the last glyph.
+  let k = order[p.min(order.len() - 1)];
+  let rtl = v.text.levels[k] % 2 == 1;
+  if (rtl == p < order.len()) {
+    return k + 1;
+  }
+  return k;
 }
 
 // The text of a field or its hint, the line below it, and the caret of the
@@ -1350,7 +1460,7 @@ function place_field[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip
   let top = field_top(env, e, y, h);
   let ns: scene.Node[] = [];
   for i in 0..v.lines.len() {
-    ns = ns.append(scene.node(x, top + i * line, text.width(env.fonts, face, size, v.lines[i]), line, scene.Label(v.lines[i], size, face, 0, color)));
+    ns = ns.append(scene.node(x + v.xs[i], top + i * line, text.width(env.fonts, face, size, v.lines[i]), line, scene.Label(v.lines[i], size, face, 0, color)));
   }
   let rule = px(env, 1.0).max(1);
   let rule_color = env.theme.outline;
@@ -2346,7 +2456,8 @@ A change asks for a frame, and the frame draws at the next vsync. So many change
 // over a background color. `show_keyboard` shows the keyboard of the system
 // on a text, which has more than one line when the flag is true.
 // `set_keyboard` gives it another text, with the cursor before a
-// character. `hide_keyboard` takes it away.
+// character. `hide_keyboard` takes it away. `fallbacks` gives the font
+// files to try for a weight and a character that the fonts do not have.
 pub struct Device {
   stays: () => boolean,
   size: (usize) => (i32, i32),
@@ -2365,6 +2476,7 @@ pub struct Device {
   set_keyboard: (string, i32) => void,
   hide_keyboard: () => void,
   state_file: () => string,
+  fallbacks: (i32, i32) => fonts.Found[],
 }
 
 // What the shell keeps for the app. `lay` is the layout of the last frame.
@@ -2551,7 +2663,20 @@ function aged(c: Cost, frames: i32): Cost {
   return Cost { ...c, frame: 0, step: 0, since: frames };
 }
 
-// Draws the frame of the time `ns`.
+// `fonts` with the fallback font of each character of the labels of
+// `nodes`.
+function covered_labels(fonts: text.Fonts, nodes: scene.Node[], find: (i32, i32) => fonts.Found[]): text.Fonts {
+  let out = fonts;
+  for n in nodes {
+    if let scene.Label(s, _, face, _, _) = n.paint {
+      out = out.covering(face, s, find);
+    }
+  }
+  return out;
+}
+
+// Draws the frame of the time `ns`. A frame that shows a character that
+// the fonts did not cover yet loads its fallback font, and lays out again.
 function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {
   if (s.host.window == 0 as usize || s.host.screen.w == 0) {
     return s;
@@ -2563,6 +2688,11 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   let animating = p.animating(s.app);
   let host = advanced(synced(s.host, root), ns);
   let built = layout(root, host.fonts, screen, host.input.offsets, Focus { field: host.focus, caret: host.caret }, host.input.grab);
+  let fonts = covered_labels(host.fonts, built.nodes, host.dev.fallbacks);
+  if (fonts.looked() != host.fonts.looked()) {
+    host = Host { ...host, fonts: fonts, paint: painter.with_fonts(host.paint, fonts) };
+    built = layout(root, host.fonts, screen, host.input.offsets, Focus { field: host.focus, caret: host.caret }, host.input.grab);
+  }
   let cost = Cost { ...aged(host.cost, host.frames), view: ms_between(t0, t1), layout: ms_between(t1, host.dev.now()) };
   let over: scene.Node[] = [];
   if (p.meter) {

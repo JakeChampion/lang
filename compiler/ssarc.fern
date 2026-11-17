@@ -2495,7 +2495,7 @@ function send_helpers(own rows: irtables.LowerState[], t: typeinfo.Type, f: ssas
     return rows;
   }
   rows = rows.append(send_entry(t));
-  if (!done.has(seen_get_name()) && !util.has_str(row_names_of(rows), seen_get_name())) {
+  if (!done.has(ssasem.seen_get_name()) && !util.has_str(row_names_of(rows), ssasem.seen_get_name())) {
     rows = util.append_all(rows, seen_rows(f));
   }
   return send_part_rows(rows, t, f, done);
@@ -2509,13 +2509,13 @@ function send_part_rows(own rows: irtables.LowerState[], t: typeinfo.Type, f: ss
   if (!ssasem.counted(f, t)) {
     return rows;
   }
-  let name = send_part_name(t);
+  let name = ssasem.send_part_name(t);
   if (done.has(name) || util.has_str(row_names_of(rows), name)) {
     return rows;
   }
   if (send_shares(t, f)) {
     rows = rows.append(send_shared(t));
-    rows = rows.append(send_body(t, f, send_body_name(t)));
+    rows = rows.append(send_body(t, f, ssasem.send_body_name(t)));
   } else {
     rows = rows.append(send_body(t, f, name));
   }
@@ -2523,14 +2523,6 @@ function send_part_rows(own rows: irtables.LowerState[], t: typeinfo.Type, f: ss
     rows = send_part_rows(rows, part, f, done);
   }
   return rows;
-}
-
-function send_part_name(t: typeinfo.Type): string {
-  return "__sem_sendpart_" + ssasem.type_key(t);
-}
-
-function send_body_name(t: typeinfo.Type): string {
-  return "__sem_sendbody_" + ssasem.type_key(t);
 }
 
 // A type whose value is a box with a count word that `__fern_rc_is_unique`
@@ -2562,13 +2554,13 @@ function send_entry(t: typeinfo.Type): irtables.LowerState {
     ...empty(""), ok: true,
     n_params: 1, n_locals: 3, name: ssasem.send_helper_name(t),
   };
-  r = emit(r, ir.op_call_direct(seen_new_name(), 0));
+  r = emit(r, ir.op_call_direct(ssasem.seen_new_name(), 0));
   r = emit(r, ir.op_store_local(seen));
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_load_local(seen));
-  r = emit(r, ir.op_call_direct(send_part_name(t), 2));
+  r = emit(r, ir.op_call_direct(ssasem.send_part_name(t), 2));
   r = emit(r, ir.op_store_local(out));
-  r = helper(r, seen, seen_free_name());
+  r = helper(r, seen, ssasem.seen_free_name());
   r = emit(r, ir.op_load_local(out));
   return emit(r, ir.op_return());
 }
@@ -2581,19 +2573,19 @@ function send_shared(t: typeinfo.Type): irtables.LowerState {
   let out = 2;
   let r: irtables.LowerState = irtables.LowerState {
     ...empty(""), ok: true,
-    n_params: 2, n_locals: 3, name: send_part_name(t),
+    n_params: 2, n_locals: 3, name: ssasem.send_part_name(t),
   };
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_load_local(seen));
-  r = emit(r, ir.op_call_direct(send_body_name(t), 2));
+  r = emit(r, ir.op_call_direct(ssasem.send_body_name(t), 2));
   r = emit(r, ir.op_return());
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_load_local(seen));
-  r = emit(r, ir.op_call_direct(seen_get_name(), 2));
+  r = emit(r, ir.op_call_direct(ssasem.seen_get_name(), 2));
   r = emit(r, ir.op_store_local(out));
   r = emit(r, ir.op_load_local(out));
   r = emit(r, ir.op_int_extend_ptr());
@@ -2605,12 +2597,12 @@ function send_shared(t: typeinfo.Type): irtables.LowerState {
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_load_local(seen));
-  r = emit(r, ir.op_call_direct(send_body_name(t), 2));
+  r = emit(r, ir.op_call_direct(ssasem.send_body_name(t), 2));
   r = emit(r, ir.op_store_local(out));
   r = emit(r, ir.op_load_local(seen));
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_load_local(out));
-  r = emit(r, ir.op_call_direct(seen_put_name(), 3));
+  r = emit(r, ir.op_call_direct(ssasem.seen_put_name(), 3));
   return emit(r, ir.op_return());
 }
 
@@ -2727,21 +2719,6 @@ function send_body(t: typeinfo.Type, f: ssasem.Func, name: string): irtables.Low
 // of pairs. Each pair is the address of a source box and the address of
 // its copy. The number of pairs is a power of two, and at most half are
 // in use.
-function seen_new_name(): string {
-  return "__sem_seen_new";
-}
-
-function seen_get_name(): string {
-  return "__sem_seen_get";
-}
-
-function seen_put_name(): string {
-  return "__sem_seen_put";
-}
-
-function seen_free_name(): string {
-  return "__sem_seen_free";
-}
 
 // The first slot array has eight pairs.
 function seen_first_words(): i32 {
@@ -2779,7 +2756,7 @@ function bin64(kind: string): ir.Op {
 }
 
 function seen_new(): irtables.LowerState {
-  return emit_all(seen_row(seen_new_name(), 0, 0, []), [ir.op_const_i64(0), ir.op_arr_make_i64(1), ir.op_return()]);
+  return emit_all(seen_row(ssasem.seen_new_name(), 0, 0, []), [ir.op_const_i64(0), ir.op_arr_make_i64(1), ir.op_return()]);
 }
 
 // The address in local `box` goes to local `key`. A value that is not the
@@ -2829,7 +2806,7 @@ function seen_get(): irtables.LowerState {
   let mask = 4;
   let at = 5;
   let found = 6;
-  let r = seen_row(seen_get_name(), 2, 7, [key, found]);
+  let r = seen_row(ssasem.seen_get_name(), 2, 7, [key, found]);
   r = emit_all(r, seen_key(0, key, ir.op_const_i32(0)));
   r = emit_all(r, [
     ir.op_load_local(holder), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_store_local(slots),
@@ -2861,7 +2838,7 @@ function seen_insert(): irtables.LowerState {
   let key = 3;
   let mask = 4;
   let at = 5;
-  let r = seen_row("__sem_seen_insert", 3, 6, [key]);
+  let r = seen_row(ssasem.seen_insert_name(), 3, 6, [key]);
   r = emit_all(r, [ir.op_load_local(1), ir.op_int_extend_ptr(), ir.op_store_local(key)]);
   r = emit_all(r, seen_start(0, key, mask, at));
   r = emit_all(r, [ir.op_block(0), ir.op_loop(0)]);
@@ -2885,7 +2862,7 @@ function seen_grow(f: ssasem.Func): irtables.LowerState {
   let old = 1;
   let slots = 2;
   let i = 3;
-  let r = seen_row("__sem_seen_grow", 1, 4, []);
+  let r = seen_row(ssasem.seen_grow_name(), 1, 4, []);
   r = emit_all(r, [
     ir.op_load_local(0), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_store_local(old),
     ir.op_load_local(old), ir.op_arr_len(), ir.op_const_i32(1), bin32("shl"), ir.op_const_i32(1), bin32("sub"),
@@ -2900,7 +2877,7 @@ function seen_grow(f: ssasem.Func): irtables.LowerState {
     ir.op_load_local(slots),
     ir.op_load_local(old), ir.op_load_local(i), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(),
     ir.op_load_local(old), ir.op_load_local(i), ir.op_const_i32(1), bin32("add"), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(),
-    ir.op_call_direct("__sem_seen_insert", 3), ir.op_drop(),
+    ir.op_call_direct(ssasem.seen_insert_name(), 3), ir.op_drop(),
     ir.op_end(),
     ir.op_load_local(i), ir.op_const_i32(2), bin32("add"), ir.op_store_local(i),
     ir.op_br(0),
@@ -2916,7 +2893,7 @@ function seen_grow(f: ssasem.Func): irtables.LowerState {
 function seen_put(): irtables.LowerState {
   let slots = 3;
   let key = 4;
-  let r = seen_row(seen_put_name(), 3, 5, [key]);
+  let r = seen_row(ssasem.seen_put_name(), 3, 5, [key]);
   r = emit_all(r, seen_key(1, key, ir.op_load_local(2)));
   return emit_all(r, [
     ir.op_load_local(0), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_store_local(slots),
@@ -2929,9 +2906,9 @@ function seen_put(): irtables.LowerState {
     ir.op_const_i32(1), bin32("add"), ir.op_const_i32(2), bin32("shl"),
     ir.op_load_local(slots), ir.op_arr_len(), ir.op_const_i32(1), bin32("sub"), bin32("gt_s"),
     ir.op_if(0),
-    ir.op_load_local(0), ir.op_call_direct("__sem_seen_grow", 1), ir.op_store_local(slots),
+    ir.op_load_local(0), ir.op_call_direct(ssasem.seen_grow_name(), 1), ir.op_store_local(slots),
     ir.op_end(),
-    ir.op_load_local(slots), ir.op_load_local(1), ir.op_load_local(2), ir.op_call_direct("__sem_seen_insert", 3), ir.op_drop(),
+    ir.op_load_local(slots), ir.op_load_local(1), ir.op_load_local(2), ir.op_call_direct(ssasem.seen_insert_name(), 3), ir.op_drop(),
     ir.op_load_local(slots), ir.op_const_i32(0),
     ir.op_load_local(slots), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_const_i64(1), bin64("add"), ir.op_arr_set_i64(),
     ir.op_load_local(2), ir.op_return(),
@@ -2940,7 +2917,7 @@ function seen_put(): irtables.LowerState {
 
 function seen_free(f: ssasem.Func): irtables.LowerState {
   let slots = 1;
-  let r = seen_row(seen_free_name(), 1, 2, []);
+  let r = seen_row(ssasem.seen_free_name(), 1, 2, []);
   r = emit_all(r, [
     ir.op_load_local(0), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_store_local(slots),
     ir.op_load_local(slots), ir.op_int_extend_ptr(), ir.op_const_i64(0), bin64("ne"),
@@ -2964,7 +2941,7 @@ function send_string(own r: irtables.LowerState): irtables.LowerState {
 function send_part(own r: irtables.LowerState, part: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   if (ssasem.counted(f, part)) {
     r = emit(r, ir.op_load_local(1));
-    r = emit(r, ir.op_call_direct(send_part_name(part), 2));
+    r = emit(r, ir.op_call_direct(ssasem.send_part_name(part), 2));
   }
   return r;
 }

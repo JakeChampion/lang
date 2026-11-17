@@ -12286,6 +12286,17 @@ func (c *checker) stmtsDiverge(stmts []ast.Stmt) bool {
 }
 
 func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	for _, group := range MutualRecGroups(fns) {
+		for _, name := range group {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// MutualRecGroups has one list for each set of the functions of fns that call each other.
+func MutualRecGroups(fns []*ast.FuncDecl) [][]string {
 	siblings := map[string]*ast.FuncDecl{}
 	for _, fn := range fns {
 		siblings[fn.Name] = fn
@@ -12305,7 +12316,7 @@ func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
 	lowlinks := map[string]int{}
 	onStack := map[string]bool{}
 	var stack []string
-	out := map[string]bool{}
+	var out [][]string
 	var strongconnect func(name string)
 	strongconnect = func(name string) {
 		indices[name] = index
@@ -12337,9 +12348,7 @@ func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
 				}
 			}
 			if len(scc) >= 2 {
-				for _, n := range scc {
-					out[n] = true
-				}
+				out = append(out, scc)
 			}
 		}
 	}

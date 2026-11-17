@@ -1,0 +1,160 @@
+// Tests of std/bidi: the two conformance files of UAX #9, in full, and the
+// functions that an app calls.
+import "std/base64";
+import "std/bidi";
+import "std/string";
+import "std/test";
+import "std/xz";
+import "./bidi_vectors";
+
+const NAMES: string[] = ["L", "R", "AL", "EN", "ES", "ET", "AN", "CS", "NSM", "BN", "B", "S", "WS", "ON", "LRE", "LRO", "RLE", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI"];
+
+function unpacked(data: string): string {
+  let Ok(packed) = base64.decode(data) else {
+    return "";
+  };
+  let Ok(bytes) = xz.decompress_xz(packed) else {
+    return "";
+  };
+  return unsafe { string_from_bytes_unchecked(bytes) };
+}
+
+function class_id(name: string): i32 {
+  for i in 0..NAMES.len() {
+    if (NAMES[i] == name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function hex(s: string): i32 {
+  let v = 0;
+  for c in s.chars() {
+    let d = c as i32;
+    if (d >= 48 && d <= 57) {
+      v = v * 16 + d - 48;
+    } else if (d >= 65 && d <= 70) {
+      v = v * 16 + d - 55;
+    }
+  }
+  return v;
+}
+
+// The levels after the rule L1, and the visual order, as the files write
+// them.
+function resolved(cps: i32[], cls: i32[], dir: i32, para: i32): string {
+  let ls = bidi.levels_of(cps, cls, dir);
+  let got: string[] = [];
+  for l in bidi.line_levels(cls, ls, para) {
+    got = got.append(if (l == bidi.REMOVED) { "x" } else { l.to_string() });
+  }
+  let order: string[] = [];
+  for o in bidi.visual_order_of(cls, ls, para) {
+    order = order.append(o.to_string());
+  }
+  return got.join(" ") + "; " + order.join(" ");
+}
+
+// Each line of BidiTest.txt gives classes and the directions to resolve
+// them in: 1 is AUTO, 2 is LTR and 4 is RTL.
+function class_file(): test.TestOutcome {
+  let text = unpacked(bidi_vectors.class_test());
+  let want = "";
+  let levels = "";
+  let total = 0;
+  for line in text.split("\n") {
+    if (line.starts_with("@Levels:")) {
+      levels = line.after("@Levels:").trim();
+    } else if (line.starts_with("@Reorder:")) {
+      want = levels + "; " + line.after("@Reorder:").trim();
+    } else if (line.len() > 0 && !line.starts_with("@")) {
+      let f = line.split(";");
+      let cls: i32[] = [];
+      let cps: i32[] = [];
+      for n in f[0].trim().split(" ") {
+        cls = cls.append(class_id(n));
+        cps = cps.append(65);
+      }
+      let bits = 0;
+      for c in f[1].trim().chars() {
+        bits = bits * 10 + c as i32 - 48;
+      }
+      for dir in [bidi.AUTO, bidi.LTR, bidi.RTL] {
+        let bit = if (dir == bidi.AUTO) { 1 } else if (dir == bidi.LTR) { 2 } else { 4 };
+        if ((bits & bit) != 0) {
+          total += 1;
+          let got = resolved(cps, cls, dir, bidi.paragraph_level_of(cls, dir));
+          if (got != want) {
+            return test.fail(line + " in direction " + dir.to_string() + ": " + got + ", want " + want);
+          }
+        }
+      }
+    }
+  }
+  return test.assert_eq(total, 770241);
+}
+
+// Each line of BidiCharacterTest.txt gives code points, a direction (0 LTR,
+// 1 RTL, 2 AUTO), the paragraph level, the levels and the visual order.
+function character_file(): test.TestOutcome {
+  let total = 0;
+  for line in unpacked(bidi_vectors.character_test()).split("\n") {
+    if (line.len() > 0) {
+      let f = line.split(";");
+      let cps: i32[] = [];
+      for h in f[0].trim().split(" ") {
+        cps = cps.append(hex(h));
+      }
+      let cls = bidi.classes_of(cps);
+      let dir = hex(f[1].trim());
+      let para = hex(f[2].trim());
+      if (bidi.paragraph_level_of(cls, dir) != para) {
+        return test.fail(line + ": paragraph level " + bidi.paragraph_level_of(cls, dir).to_string());
+      }
+      let got = resolved(cps, cls, dir, para);
+      let want = f[3].trim() + "; " + f[4].trim();
+      if (got != want) {
+        return test.fail(line + ": " + got + ", want " + want);
+      }
+      total += 1;
+    }
+  }
+  return test.assert_eq(total, 91707);
+}
+
+// "car" then the Hebrew word "shalom" in parentheses, in a left-to-right
+// paragraph and then in a right-to-left one.
+function display(): test.TestOutcome {
+  let text = "car (שלום)";
+  let ltr = bidi.display(text, bidi.LTR);
+  let rtl = bidi.display(text, bidi.RTL);
+  let flags = [bidi.paragraph_level(text, bidi.AUTO) == 0, bidi.paragraph_level("ש car", bidi.AUTO) == 1, bidi.paragraph_level("123", bidi.AUTO) == 0];
+  return test.assert_eq(ltr + "|" + rtl + "|" + flags.map((b: boolean): string => b.to_string()).join(" "), "car (םולש)|(םולש) car|true true true");
+}
+
+// Two paragraphs: "abc", then the Hebrew letters alef and bet, a space,
+// gimel and dalet, as two lines, and then "(x)".
+function lines(): test.TestOutcome {
+  let r = bidi.resolve("abc\nאב גד (x)", bidi.AUTO);
+  let levels = r.paragraph_level_at(0).to_string() + r.paragraph_level_at(3).to_string() + r.paragraph_level_at(4).to_string();
+  let shown = [r.line(0, 3), r.line(4, 6), r.line(7, 13)].join("|");
+  let order = r.order(4, 6).map((n: i32): string => n.to_string()).join(" ");
+  let soft = bidi.resolve("a\u{00AD}b", bidi.AUTO);
+  return test.assert_eq(levels + " " + shown + " " + order + " " + soft.line(0, 3), "001 abc|בא|(x) דג 5 4 ab");
+}
+
+function mirrors(): test.TestOutcome {
+  let got = [bidi.mirrored('(') as i32, bidi.mirrored(']') as i32, bidi.mirrored('a') as i32, bidi.mirrored('\u{226E}') as i32];
+  return test.assert_eq(got.map((n: i32): string => n.to_string()).join(" "), "41 91 97 8815");
+}
+
+function main(): i32 {
+  let r = test.new("std/bidi");
+  r = r.it("each case of BidiTest.txt", class_file);
+  r = r.it("each case of BidiCharacterTest.txt", character_file);
+  r = r.it("display orders a line and mirrors its brackets", display);
+  r = r.it("resolve gives each line of each paragraph", lines);
+  r = r.it("mirrored gives the mirror glyph", mirrors);
+  return r.finish();
+}

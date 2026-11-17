@@ -8,6 +8,8 @@
 import "core/map";
 import "std/android/draw";
 import "std/android/ui/scene";
+import "std/i18n";
+import "std/kv";
 import "std/string";
 import "std/textwrap";
 import "../look";
@@ -53,10 +55,10 @@ pub function tab_screens(): i32[] {
 // with `choice` marked. `scrub_ms` is the time under a finger on the seek
 // bar, or -1, and `thumb` the preview thumbnail of that time, by
 // `thumb_key`.
-pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string }
+pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, speed: string, shuffle: boolean, repeat: string, sleep: string, has_next: boolean, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string }
 
 pub function no_player(): PlayerView {
-  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "" };
+  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), speed: "1x", shuffle: false, repeat: "", sleep: "", has_next: false, scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "" };
 }
 
 pub struct View {
@@ -100,10 +102,17 @@ pub struct View {
   loading: boolean,
   // The images that the app has, by their keys.
   cache: Map[string, draw.Image],
+  // The texts of the language of the person.
+  texts: i18n.Strings,
+}
+
+// The texts in English: each key is its own text.
+pub function english(): i18n.Strings {
+  return i18n.strings("en", kv.empty("en.kv"), kv.empty("en.kv"));
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
 }
 
 // --- metrics
@@ -111,7 +120,7 @@ pub function empty_view(w: i32, h: i32): View {
 // `u` is the size of a density-independent pixel, and `ts` the scale of the
 // text, for a window of w by h. The system bars cover `top` pixels at the
 // top of the window and `bottom` pixels at its bottom.
-pub struct Metrics { w: i32, h: i32, top: i32, bottom: i32, u: i32, ts: i32, cw: i32, th: i32 }
+pub struct Metrics { w: i32, h: i32, top: i32, bottom: i32, u: i32, ts: i32, cw: i32, th: i32, texts: i18n.Strings }
 
 pub function metrics(w: i32, h: i32, top: i32, bottom: i32): Metrics {
   let short = w;
@@ -126,7 +135,7 @@ pub function metrics(w: i32, h: i32, top: i32, bottom: i32): Metrics {
   if (ts < 1) {
     ts = 1;
   }
-  return Metrics { w: w, h: h, top: top, bottom: bottom, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts) };
+  return Metrics { w: w, h: h, top: top, bottom: bottom, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts), texts: english() };
 }
 
 // The pixels from dot to dot of the small dot-matrix words, such as the
@@ -214,6 +223,11 @@ function heading(m: Metrics, x: i32, y: i32, w: i32, s: string, pitch: i32, colo
   return label(m, x, y + (matrix.height(pitch) - m.th) / 2, fit(s, w / m.cw), m.ts, color);
 }
 
+// The text of `key` in the language of the person.
+function tr(m: Metrics, key: string): string {
+  return m.texts.text(key);
+}
+
 // A rounded card of the surface colour.
 function panel(m: Metrics, x: i32, y: i32, w: i32, h: i32): scene.Node {
   return fill(x, y, w, h, look.surface(), 14 * m.u);
@@ -267,12 +281,15 @@ pub function button_height(m: Metrics): i32 {
 // black dots, and the others are a white outline.
 function button(m: Metrics, x: i32, y: i32, text: string, primary: boolean, act: string): scene.Node[] {
   let p = small_pitch(m);
-  let key = "button|" + p.to_string() + "|" + primary.to_string() + "|" + text;
-  let n = scene.node(x, y, button_width(m, text), button_height(m), scene.Custom(key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => paint_button(f, look.Rect { x: bx, y: by, w: bw, h: bh }, text, p, primary)));
+  let ts = m.ts;
+  let key = "button|" + p.to_string() + "|" + ts.to_string() + "|" + primary.to_string() + "|" + text;
+  let n = scene.node(x, y, button_width(m, text), button_height(m), scene.Custom(key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => paint_button(f, look.Rect { x: bx, y: by, w: bw, h: bh }, text, p, ts, primary)));
   return [scene.Node { ...tap(n, act), say: text }];
 }
 
-function paint_button(f: draw.Frame, r: look.Rect, text: string, pitch: i32, primary: boolean): void {
+// The words of a button are dot-matrix words when the dot font has each
+// character of them, else the text font.
+function paint_button(f: draw.Frame, r: look.Rect, text: string, pitch: i32, ts: i32, primary: boolean): void {
   let color = look.ink();
   if (primary) {
     f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, look.ink());
@@ -282,11 +299,18 @@ function paint_button(f: draw.Frame, r: look.Rect, text: string, pitch: i32, pri
     f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, look.ink());
     f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, r.h / 2 - t, look.bg());
   }
-  matrix.text(f, look.center_x(r, matrix.width(text, pitch)), r.y + (r.h - matrix.height(pitch)) / 2, text, pitch, color);
+  if (matrix.covers(text)) {
+    matrix.text(f, look.center_x(r, matrix.width(text, pitch)), r.y + (r.h - matrix.height(pitch)) / 2, text, pitch, color);
+    return;
+  }
+  f.text(look.center_x(r, draw.text_width(text, ts)), r.y + (r.h - draw.text_height(ts)) / 2, text, ts, color);
 }
 
 function button_width(m: Metrics, text: string): i32 {
-  return matrix.width(text, small_pitch(m)) + 32 * m.u;
+  if (matrix.covers(text)) {
+    return matrix.width(text, small_pitch(m)) + 32 * m.u;
+  }
+  return draw.text_width(text, m.ts) + 32 * m.u;
 }
 
 // The size in pixels at which a card asks the server for its image.
@@ -341,7 +365,7 @@ function bottom_bar(m: Metrics, v: View): scene.Node[] {
     line = 1;
   }
   let out: scene.Node[] = [fill(0, y, m.w, h, look.bg(), 0), fill(0, y, m.w, line, look.outline(), 0)];
-  let names = tab_names();
+  let names = tab_names().map((n: string): string => tr(m, n));
   let cell = m.w / names.len();
   let p = small_pitch(m);
   for name in names {
@@ -380,25 +404,25 @@ function login(m: Metrics, v: View): scene.Node[] {
   let big = matrix.fit_pitch(title, m.w - 48 * m.u, 4 * m.u);
   let cy = m.h / 3;
   out = out.append(dots((m.w - matrix.width(title, big)) / 2, cy, title, big, look.ink()));
-  let sub = "Your Plex libraries, in Fern";
+  let sub = tr(m, "Your Plex libraries, in Fern");
   out = out.append(label(m, (m.w - draw.text_width(sub, m.ts)) / 2, cy + matrix.height(big) + 12 * m.u, sub, m.ts, look.muted()));
   let y = cy + matrix.height(big) + m.th + 48 * m.u;
   if (v.pin_code.len() == 0) {
-    let text = "Sign in with Plex";
+    let text = tr(m, "Sign in with Plex");
     out = util_append(out, button(m, (m.w - button_width(m, text)) / 2, y, text, true, "signin"));
   } else {
-    let hint = "Go to " + plex.LINK_PAGE + " and enter";
+    let hint = m.texts.format("Go to {0} and enter", [plex.LINK_PAGE]);
     out = out.append(label(m, (m.w - draw.text_width(hint, m.ts)) / 2, y, hint, m.ts, look.ink()));
     let code = spaced(v.pin_code);
     let cp = matrix.fit_pitch(code, m.w - 48 * m.u, 8 * m.u);
     out = out.append(dots((m.w - matrix.width(code, cp)) / 2, y + m.th + 20 * m.u, code, cp, look.ink()));
-    let wait = "WAITING FOR PLEX.TV";
+    let wait = tr(m, "WAITING FOR PLEX.TV");
     let sp = small_pitch(m);
     let ww = matrix.width(wait, sp);
     let wy = y + m.th + 40 * m.u + matrix.height(cp);
     out = out.append(live_dot(m, (m.w - ww) / 2 - 10 * m.u, wy + matrix.height(sp) / 2));
     out = out.append(dots((m.w - ww) / 2, wy, wait, sp, look.muted()));
-    out = util_append(out, button(m, (m.w - button_width(m, "Cancel")) / 2, wy + matrix.height(sp) + 28 * m.u, "Cancel", false, "cancel"));
+    out = util_append(out, button(m, (m.w - button_width(m, tr(m, "Cancel"))) / 2, wy + matrix.height(sp) + 28 * m.u, tr(m, "Cancel"), false, "cancel"));
   }
   if (v.error.len() > 0) {
     out = util_append(out, wrapped(m, 24 * m.u, m.h - m.bottom - 120 * m.u, m.w - 48 * m.u, v.error, look.red()));
@@ -467,14 +491,14 @@ function servers(m: Metrics, v: View): scene.Node[] {
     i += 1;
   }
   if (v.servers.len() == 0 && !v.loading) {
-    out = out.append(note(m, y, "No servers on this account"));
+    out = out.append(note(m, y, tr(m, "No servers on this account")));
     y += m.th + 16 * m.u;
   }
-  out = util_append(out, button(m, 16 * m.u, y + 8 * m.u, "Refresh", false, "refresh"));
+  out = util_append(out, button(m, 16 * m.u, y + 8 * m.u, tr(m, "Refresh"), false, "refresh"));
   if (v.error.len() > 0) {
     out = util_append(out, wrapped(m, 16 * m.u, y + 64 * m.u, m.w - 32 * m.u, v.error, look.red()));
   }
-  return util_append(out, top_bar(m, View { ...v, title: "Choose a server" }, false));
+  return util_append(out, top_bar(m, View { ...v, title: tr(m, "Choose a server") }, false));
 }
 
 // The height of one row of hub cards, with its title.
@@ -527,9 +551,9 @@ function home(m: Metrics, v: View): scene.Node[] {
   let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   out = util_append(out, hubs(m, v, top_height(m) + 12 * m.u));
   if (v.hubs.len() == 0) {
-    let msg = "Nothing here yet";
+    let msg = tr(m, "Nothing here yet");
     if (v.loading) {
-      msg = "Loading";
+      msg = tr(m, "Loading");
     }
     out = out.append(note(m, top_height(m) + 24 * m.u, msg));
   }
@@ -549,7 +573,7 @@ function sections(m: Metrics, v: View): scene.Node[] {
     let s = v.sections[i];
     let mid = y + (row - 8 * m.u) / 2;
     out = out.append(tap(panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u), "section:" + i.to_string()));
-    let kind = kind_word(s.kind);
+    let kind = tr(m, kind_word(s.kind));
     let kw = matrix.width(kind, sp);
     out = out.append(dots(m.w - 32 * m.u - kw, mid - matrix.height(sp) / 2, kind, sp, look.muted()));
     out = out.append(label(m, 32 * m.u, mid - m.th / 2, fit(s.title, (m.w - 80 * m.u - kw) / m.cw), m.ts, look.ink()));
@@ -557,9 +581,9 @@ function sections(m: Metrics, v: View): scene.Node[] {
     i += 1;
   }
   if (v.sections.len() == 0) {
-    let msg = "No libraries";
+    let msg = tr(m, "No libraries");
     if (v.loading) {
-      msg = "Loading";
+      msg = tr(m, "Loading");
     }
     out = out.append(note(m, y, msg));
   }
@@ -629,19 +653,19 @@ function library(m: Metrics, v: View): scene.Node[] {
   let top = top_height(m) + chips_height(m);
   out = util_append(out, grid_nodes(m, v, v.items, top, "grid:"));
   if (v.items.len() == 0) {
-    let msg = "This library is empty";
+    let msg = tr(m, "This library is empty");
     if (v.loading) {
-      msg = "Loading";
+      msg = tr(m, "Loading");
     }
     out = out.append(note(m, top + 12 * m.u, msg));
   }
   out = out.append(scene.Node { ...fill(0, top_height(m), m.w, chips_height(m), look.bg(), 0), barrier: true });
   let sorts = plex.sorts();
   let k = v.sort.max(0).min(sorts.len() - 1);
-  let first = "BY " + sorts[k].name;
+  let first = m.texts.format("BY {0}", [tr(m, sorts[k].name)]);
   let y = top_height(m) + 8 * m.u;
   out = util_append(out, button(m, 16 * m.u, y, first, false, "sort:" + ((k + 1) % sorts.len()).to_string()));
-  out = util_append(out, button(m, 16 * m.u + button_width(m, first) + 10 * m.u, y, "UNWATCHED", v.unwatched, "unwatched:" + (if (v.unwatched) { "0" } else { "1" })));
+  out = util_append(out, button(m, 16 * m.u + button_width(m, first) + 10 * m.u, y, tr(m, "UNWATCHED"), v.unwatched, "unwatched:" + (if (v.unwatched) { "0" } else { "1" })));
   if (k == 0 && v.letters.len() > 1) {
     out = util_append(out, letter_strip(m, v.letters, top, content_bottom(m, v.screen)));
   }
@@ -677,11 +701,11 @@ pub function backdrop_height(m: Metrics): i32 {
 }
 
 // The label of the play button of an item.
-pub function play_label(it: plex.Item): string {
+pub function play_label(m: Metrics, it: plex.Item): string {
   if (it.offset_ms > 0i64 && plex.playable_kind(it.kind)) {
-    return "Resume " + plex.clock_text(it.offset_ms);
+    return m.texts.format("Resume {0}", [plex.clock_text(it.offset_ms)]);
   }
-  return "Play";
+  return tr(m, "Play");
 }
 
 function detail(m: Metrics, v: View): scene.Node[] {
@@ -719,11 +743,11 @@ function detail(m: Metrics, v: View): scene.Node[] {
     out = out.append(label(m, tx, ty, fit(it.genres.join(", "), tcells), m.ts, look.muted()));
   }
   let y = top_height(m) - s + bh + ph / 2 + 20 * m.u;
-  let play = play_label(it);
+  let play = play_label(m, it);
   if (plex.playable_kind(it.kind) || v.children.len() > 0) {
     out = util_append(out, button(m, 16 * m.u, y, play, true, "play"));
   }
-  let mark = mark_label(it);
+  let mark = mark_label(m, it);
   if (buttons_stack(m, it)) {
     y += button_height(m) + 12 * m.u;
     out = util_append(out, button(m, 16 * m.u, y, mark, false, "watched"));
@@ -737,9 +761,9 @@ function detail(m: Metrics, v: View): scene.Node[] {
   }
   if (v.children.len() > 0) {
     if (it.kind == "show" || it.kind == "artist") {
-      let heading = "SEASONS";
+      let heading = tr(m, "SEASONS");
       if (it.kind == "artist") {
-        heading = "ALBUMS";
+        heading = tr(m, "ALBUMS");
       }
       out = out.append(dots(16 * m.u, y, heading, small_pitch(m), look.muted()));
       out = util_append(out, grid_nodes(m, View { ...v, scroll: 0 }, v.children, y + matrix.height(small_pitch(m)) + 12 * m.u, "child:"));
@@ -750,17 +774,17 @@ function detail(m: Metrics, v: View): scene.Node[] {
   return out;
 }
 
-pub function mark_label(it: plex.Item): string {
+pub function mark_label(m: Metrics, it: plex.Item): string {
   if (plex.watched(it)) {
-    return "Mark unwatched";
+    return tr(m, "Mark unwatched");
   }
-  return "Mark watched";
+  return tr(m, "Mark watched");
 }
 
 // True when the two buttons of the detail screen do not fit on one row, so
 // the second goes below the first.
 pub function buttons_stack(m: Metrics, it: plex.Item): boolean {
-  return button_width(m, play_label(it)) + 12 * m.u + button_width(m, mark_label(it)) > m.w - 32 * m.u;
+  return button_width(m, play_label(m, it)) + 12 * m.u + button_width(m, mark_label(m, it)) > m.w - 32 * m.u;
 }
 
 // The height of the content of the detail screen, for the limit of its
@@ -843,7 +867,7 @@ function search(m: Metrics, v: View): scene.Node[] {
   let cells = (m.w - 64 * m.u) / m.cw;
   if (v.query.len() == 0) {
     let sp = small_pitch(m);
-    out = out.append(heading(m, 32 * m.u, fy + (fh - matrix.height(sp)) / 2, m.w - 64 * m.u, "Search movies, shows and music", sp, look.muted()));
+    out = out.append(heading(m, 32 * m.u, fy + (fh - matrix.height(sp)) / 2, m.w - 64 * m.u, tr(m, "Search movies, shows and music"), sp, look.muted()));
   } else {
     let shown = v.query;
     if (draw.text_cells(shown) > cells - 1) {
@@ -856,7 +880,7 @@ function search(m: Metrics, v: View): scene.Node[] {
   }
   out = util_append(out, hubs(m, v, fy + fh + 16 * m.u));
   if (v.hubs.len() == 0 && v.query.len() > 0 && !v.loading && !v.typing) {
-    out = out.append(note(m, fy + fh + 24 * m.u, "No results"));
+    out = out.append(note(m, fy + fh + 24 * m.u, tr(m, "No results")));
   }
   return out;
 }
@@ -882,10 +906,10 @@ function settings(m: Metrics, v: View): scene.Node[] {
   let y = top_height(m) + 8 * m.u - v.scroll;
   let p = title_pitch(m);
   let rows: (string, string, string)[] = [
-    ("User", v.account, "users"),
-    ("Server", v.server_name, "servers"),
-    ("Quality", v.quality, "quality"),
-    ("Sign out", "", "signout"),
+    (tr(m, "User"), v.account, "users"),
+    (tr(m, "Server"), v.server_name, "servers"),
+    (tr(m, "Quality"), v.quality, "quality"),
+    (tr(m, "Sign out"), "", "signout"),
   ];
   let row = 72 * m.u;
   for r in rows {
@@ -922,7 +946,7 @@ function users(m: Metrics, v: View): scene.Node[] {
   let sp = small_pitch(m);
   let row = 72 * m.u;
   if (v.users.len() == 0) {
-    out = out.append(note(m, y + 16 * m.u, "Loading"));
+    out = out.append(note(m, y + 16 * m.u, tr(m, "Loading")));
   }
   for i in 0..v.users.len() {
     let u = v.users[i];
@@ -931,9 +955,9 @@ function users(m: Metrics, v: View): scene.Node[] {
     out = out.append(heading(m, 32 * m.u, ty, m.w - 160 * m.u, u.title, p, look.ink()));
     let mark = "";
     if (u.protected) {
-      mark = "PIN";
+      mark = tr(m, "PIN");
     } else if (u.admin) {
-      mark = "ADMIN";
+      mark = tr(m, "ADMIN");
     }
     if (mark.len() > 0) {
       out = out.append(dots(m.w - 32 * m.u - matrix.width(mark, sp), y + (row - 8 * m.u - matrix.height(sp)) / 2, mark, sp, look.muted()));
@@ -976,7 +1000,7 @@ function pin_pad(m: Metrics, digits: string): scene.Node[] {
     let text = keys[k];
     let pitch = p;
     if (text == "cancel") {
-      text = "CANCEL";
+      text = tr(m, "CANCEL");
       pitch = sp;
     } else if (text == "del") {
       text = "<";
@@ -1074,12 +1098,42 @@ function player(m: Metrics, v: View): scene.Node[] {
   out = out.append(dots(bar.x, bar.y + bar.h + 6 * m.u, at, sp, look.ink()));
   let total = plex.clock_text(p.duration_ms);
   out = out.append(dots(bar.x + bar.w - matrix.width(total, sp), bar.y + bar.h + 6 * m.u, total, sp, look.muted()));
-  out = util_append(util_append(util_append(out, skip_button(m, p)), up_next_card(m, p)), badge(m, p));
-  if (p.sounds.len() > 1 || p.subtitles.len() > 0) {
-    out = util_append(out, button(m, m.w - 16 * m.u - button_width(m, "Tracks"), m.top + 12 * m.u, "Tracks", false, "tracks"));
+  if (p.audio) {
+    out = util_append(out, music_row(m, p, bar.y + bar.h + matrix.height(sp) + 24 * m.u));
   }
+  out = util_append(util_append(util_append(out, skip_button(m, p)), up_next_card(m, p)), badge(m, p));
+  let right = m.w - 16 * m.u;
+  if (p.sounds.len() > 1 || p.subtitles.len() > 0) {
+    right -= button_width(m, tr(m, "Tracks"));
+    out = util_append(out, button(m, right, m.top + 12 * m.u, tr(m, "Tracks"), false, "tracks"));
+    right -= 8 * m.u;
+  }
+  out = util_append(out, button(m, right - button_width(m, p.speed), m.top + 12 * m.u, p.speed, false, "speed"));
   if (p.sheet) {
     out = util_append(out, track_sheet(m, p));
+  }
+  return out;
+}
+
+// The buttons of music under the seek bar: shuffle, repeat, the sleep
+// timer and the next track, in rows that fit the width.
+function music_row(m: Metrics, p: PlayerView, y: i32): scene.Node[] {
+  let words: (string, boolean, string)[] = [(tr(m, "SHUFFLE"), p.shuffle, "shuffle"), (p.repeat, false, "repeat"), (p.sleep, false, "sleep")];
+  if (p.has_next) {
+    words = words.append((tr(m, "NEXT"), false, "next_track"));
+  }
+  let out: scene.Node[] = [];
+  let x = 16 * m.u;
+  let gap = 10 * m.u;
+  for word in words {
+    let (text, on, act) = word;
+    let w = button_width(m, text);
+    if (x > 16 * m.u && x + w > m.w - 16 * m.u) {
+      x = 16 * m.u;
+      y += button_height(m) + gap;
+    }
+    out = util_append(out, button(m, x, y, text, on, act));
+    x += w + gap;
   }
   return out;
 }
@@ -1121,12 +1175,12 @@ function up_next_card(m: Metrics, p: PlayerView): scene.Node[] {
   let y = seek_bar(m).y - h - 16 * m.u;
   let sp = small_pitch(m);
   let pad = 16 * m.u;
-  let words = "UP NEXT IN " + p.up_next_secs.to_string();
+  let words = m.texts.format("UP NEXT IN {0}", [p.up_next_secs.to_string()]);
   let out: scene.Node[] = [panel(m, x, y, w, h), dots(x + pad, y + pad, words, sp, look.muted())];
   out = out.append(label(m, x + pad, y + pad + matrix.height(sp) + 8 * m.u, fit(p.up_next, (w - 2 * pad) / m.cw), m.ts, look.ink()));
   let by = y + h - pad - button_height(m);
-  out = util_append(out, button(m, x + pad, by, "Play", true, "next_now"));
-  out = util_append(out, button(m, x + pad + button_width(m, "Play") + 12 * m.u, by, "Cancel", false, "next_cancel"));
+  out = util_append(out, button(m, x + pad, by, tr(m, "Play"), true, "next_now"));
+  out = util_append(out, button(m, x + pad + button_width(m, tr(m, "Play")) + 12 * m.u, by, tr(m, "Cancel"), false, "next_cancel"));
   return out;
 }
 
@@ -1144,7 +1198,7 @@ function track_sheet(m: Metrics, p: PlayerView): scene.Node[] {
   let sp = small_pitch(m);
   let out: scene.Node[] = [mk(0, 0, m.w, m.h, scene.Blank, "tracks_close", ""), panel(m, x, y, w, h)];
   let at = y + 8 * m.u;
-  out = out.append(dots(x + 16 * m.u, at + (head - matrix.height(sp)) / 2, "SOUND", sp, look.muted()));
+  out = out.append(dots(x + 16 * m.u, at + (head - matrix.height(sp)) / 2, tr(m, "SOUND"), sp, look.muted()));
   at += head;
   let first = true;
   for t in p.sounds {
@@ -1153,9 +1207,9 @@ function track_sheet(m: Metrics, p: PlayerView): scene.Node[] {
     at += row;
     first = false;
   }
-  out = out.append(dots(x + 16 * m.u, at + (head - matrix.height(sp)) / 2, "SUBTITLES", sp, look.muted()));
+  out = out.append(dots(x + 16 * m.u, at + (head - matrix.height(sp)) / 2, tr(m, "SUBTITLES"), sp, look.muted()));
   at += head;
-  out = util_append(out, track_row(m, x, at, w, row, "Off", p.choice.subtitle.len() == 0, "sub:"));
+  out = util_append(out, track_row(m, x, at, w, row, tr(m, "Off"), p.choice.subtitle.len() == 0, "sub:"));
   at += row;
   for t in p.subtitles {
     out = util_append(out, track_row(m, x, at, w, row, t.title, t.id == p.choice.subtitle, "sub:" + t.id));
@@ -1223,7 +1277,7 @@ function seek_dots(f: draw.Frame, r: look.Rect, permille: i32, dot: i32): void {
 
 // The nodes of the screen of `v`, in the order to draw them.
 pub function nodes(v: View): scene.Node[] {
-  let m = metrics(v.w, v.h, v.top, v.bottom);
+  let m = Metrics { ...metrics(v.w, v.h, v.top, v.bottom), texts: v.texts };
   if (v.screen == LOGIN) {
     return login(m, v);
   }
@@ -1263,17 +1317,17 @@ pub function nodes(v: View): scene.Node[] {
 function poster_menu(m: Metrics, it: plex.Item): scene.Node[] {
   let rows: (string, string)[] = [];
   if (plex.playable_kind(it.kind)) {
-    rows = rows.append(("Play", "menu:play"));
+    rows = rows.append((tr(m, "Play"), "menu:play"));
   }
   if (plex.watched(it)) {
-    rows = rows.append(("Mark unwatched", "menu:mark"));
+    rows = rows.append((tr(m, "Mark unwatched"), "menu:mark"));
   } else {
-    rows = rows.append(("Mark watched", "menu:mark"));
+    rows = rows.append((tr(m, "Mark watched"), "menu:mark"));
   }
   if (it.kind == "episode" && it.grandparent_key.len() > 0) {
-    rows = rows.append(("Go to show", "menu:show"));
+    rows = rows.append((tr(m, "Go to show"), "menu:show"));
   }
-  rows = rows.append(("Cancel", "menu:close"));
+  rows = rows.append((tr(m, "Cancel"), "menu:close"));
   let row = 52 * m.u;
   let head = 48 * m.u;
   let x = 16 * m.u;

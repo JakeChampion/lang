@@ -8,13 +8,19 @@ A `Fonts` holds one font for each weight that the app uses. `system` finds the f
 
 Each function takes a face: the index of a weight in the `Fonts`. `face_for` gives the index of the weight that is nearest to a number from 100 to 900.
 
-`width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters, for a text field that must know where its cursor is.
+A face does not have each character. For a character that the face does not have, a `Fallback` gives a font that has it. `covering` finds the fallback font of each character of a text, and gives the `Fonts` with them. It takes a function that gives the font files to try, in order. `system_fallbacks` gives the function for the fallback order of the system. Call `covering` before a text is measured or drawn, and keep the `Fonts` that it gives.
+
+`fallback` makes a fallback that tries a list of fonts first, and `with_fallback` gives it to a `Fonts`. Each font file loads one time, and the fallback keeps the font of each code point. A character that is not covered takes the face. The height of a line comes from the face alone.
+
+`width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
 `std/truetype` draws each glyph one time for each size, weight and quarter of a pixel. A `Cache` keeps the glyphs. It also keeps a `Sprite` for each text: the coverage of the whole text, which `put` draws on a frame in a color. `layout` gives the glyphs of a text with their positions, for a painter that draws glyphs from an atlas on the GPU.
 
 ## Contracts
 
 A size `px` is the pixels of one em. A letter spacing `track` is in thousandths of the em, as `letterSpacing` of Android. A `Fonts` with no font gives a width of 0 and draws nothing.
+
+A text to draw is in visual order: its first character is at the left. `std/bidi` gives each line of a text that mixes directions in that order.
 
 Each function that makes a glyph or a sprite takes the `Cache` and gives it back with the new entry.
 
@@ -53,7 +59,137 @@ import "std/utf8";
 
 ```fern
 <<fonts>>=
-pub struct Fonts { faces: truetype.Font[], weights: i32[] }
+pub struct Fonts { faces: truetype.Font[], weights: i32[], more: Fallback }
+
+// The fonts for the characters that the faces do not have: the fonts that
+// are loaded and the name of each, the font for each code point and weight
+// that was looked for or -1, and the number of those code points.
+pub struct Fallback { names: string[], faces: truetype.Font[], by_char: Map[i64, i32], looked: i32 }
+
+// The id of the first fallback font. The faces have the ids before it.
+const FALLBACK: i32 = 64;
+
+// Fonts with no fallback.
+pub function from_faces(faces: truetype.Font[], weights: i32[]): Fonts {
+  return Fonts { faces: faces, weights: weights, more: fallback([]) };
+}
+
+// A fallback that tries the fonts `given` first.
+pub function fallback(given: truetype.Font[]): Fallback {
+  let names: string[] = [];
+  for i in 0..given.len() {
+    names = names.append("given " + i.to_string());
+  }
+  return Fallback { names: names, faces: given, by_char: map_new(64), looked: 0 };
+}
+
+// `fs` with the fallback `more`.
+pub function (fs: Fonts) with_fallback(more: Fallback): Fonts {
+  return Fonts { ...fs, more: more };
+}
+
+// The number of code points that the fallback looked for. It grows when
+// `covering` finds a character that it did not know.
+pub function (fs: Fonts) looked(): i32 {
+  return fs.more.looked;
+}
+
+function weight_of(fs: Fonts, w: i32): i32 {
+  return fs.weights[w.max(0).min(fs.weights.len() - 1)];
+}
+
+function char_key(fs: Fonts, w: i32, cp: i32): i64 {
+  return cp as i64 * 1024i64 + weight_of(fs, w) as i64;
+}
+
+// The id of the font for the code point `cp` in the face `w`: `w` when the
+// face has it or no covered font has it, or else the id of a fallback font.
+function face_of(fs: Fonts, w: i32, cp: i32): i32 {
+  if (cp < 32 || font(fs, w).glyph(cp) != 0) {
+    return w;
+  }
+  if let Some(at) = fs.more.by_char.get(char_key(fs, w, cp)) {
+    if (at >= 0) {
+      return FALLBACK + at;
+    }
+  }
+  return w;
+}
+
+// `fs` with a fallback font for each character of `s` that the face `w`
+// does not have, when a fallback font has it. `find` gives the files of the
+// fonts to try for a weight and a code point, in order.
+pub function (fs: Fonts) covering(w: i32, s: string, find: (i32, i32) => fonts.Found[]): Fonts {
+  let out = fs;
+  for c in s.chars() {
+    out = covered(out, w, c as i32, find);
+  }
+  return out;
+}
+
+// The function for `covering` that gives the fallback order of the system
+// for `family`. `ctx` is the context of the app.
+pub function system_fallbacks(ctx: usize, family: string): (i32, i32) => fonts.Found[] {
+  return (weight: i32, cp: i32): fonts.Found[] => fonts.fallbacks(ctx, family, weight, cp);
+}
+
+function covered(fs: Fonts, w: i32, cp: i32, find: (i32, i32) => fonts.Found[]): Fonts {
+  if (!has(fs) || cp < 32 || font(fs, w).glyph(cp) != 0) {
+    return fs;
+  }
+  let key = char_key(fs, w, cp);
+  if (fs.more.by_char.get(key).is_some()) {
+    return fs;
+  }
+  // A loaded font that has the character comes before the source.
+  let more = fs.more;
+  let at = first_with(more, cp);
+  if (at < 0) {
+    let (next, found) = from_files(more, find(weight_of(fs, w), cp), cp);
+    more = next;
+    at = found;
+  }
+  return Fonts { ...fs, more: Fallback { ...more, by_char: more.by_char.insert(key, at), looked: more.looked + 1 } };
+}
+
+// The index of the first loaded font that has the code point `cp`, or -1.
+function first_with(more: Fallback, cp: i32): i32 {
+  for i in 0..more.faces.len() {
+    if (more.faces[i].glyph(cp) != 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The fallback with the fonts of `found` loaded, and the index of the
+// first of them that has `cp`, or -1.
+function from_files(more: Fallback, found: fonts.Found[], cp: i32): (Fallback, i32) {
+  let out = more;
+  for f in found {
+    let (next, at) = loaded_font(out, f);
+    out = next;
+    if (at >= 0 && out.faces[at].glyph(cp) != 0) {
+      return (out, at);
+    }
+  }
+  return (out, -1);
+}
+
+// The fallback with the font of `found` loaded, and its index. The file
+// loads one time. The index is -1 when the file is not a font.
+function loaded_font(more: Fallback, found: fonts.Found): (Fallback, i32) {
+  let name = found.path + "#" + found.index.to_string() + "@" + found.weight.to_string();
+  for i in 0..more.names.len() {
+    if (more.names[i] == name) {
+      return (more, i);
+    }
+  }
+  if let Some(font) = truetype.parse(read_file_bytes(found.path).unwrap_or([])) {
+    return (Fallback { ...more, names: more.names.append(name), faces: more.faces.append(fonts.styled(font, found, found.weight)) }, more.names.len());
+  }
+  return (more, -1);
+}
 
 // The fonts of the files in `found`, one for each weight of `ws`. `read`
 // gives the bytes of a file. One file can hold more than one weight, so
@@ -78,7 +214,7 @@ pub function load(found: Option[fonts.Found][], ws: i32[], read: (string) => u8[
     }
     got = got.append(face);
   }
-  return Fonts { faces: filled(got), weights: ws };
+  return from_faces(filled(got), ws);
 }
 
 // The index of `path` in `paths`, or -1.
@@ -110,7 +246,11 @@ function has(fs: Fonts): boolean {
   return fs.faces.len() > 0;
 }
 
+// The face `w`, or the fallback font of the id `w`.
 function font(fs: Fonts, w: i32): truetype.Font {
+  if (w >= FALLBACK) {
+    return fs.more.faces[w - FALLBACK];
+  }
   if (w >= 0 && w < fs.faces.len()) {
     return fs.faces[w];
   }
@@ -139,8 +279,6 @@ pub function descent(fs: Fonts, w: i32, px: i32): i32 {
 pub function line(fs: Fonts, w: i32, px: i32): i32 {
   return ascent(fs, w, px) + descent(fs, w, px);
 }
-
-// The glyphs of `s`, their pen positions in pixels, then the end of the
 
 // The fonts of the family `family` on the device, one for each weight of
 // `ws`.
@@ -172,26 +310,35 @@ pub function face_for(fs: Fonts, weight: i32): i32 {
 
 ```fern
 <<measurement>>=
-// text. `track` adds space between the characters, in thousandths of the
-// em, as Android's letterSpacing does.
-function pens(f: truetype.Font, px: i32, track: i32, s: string): (i32[], f64[]) {
+// The font id and the glyph of each character of `s`, the pen position of
+// each in pixels, then the end of the text. `track` adds space between the
+// characters, in thousandths of the em, as Android's letterSpacing does.
+struct Pens { ids: i32[], glyphs: i32[], at: f64[] }
+
+function pens(fs: Fonts, w: i32, px: i32, track: i32, s: string): Pens {
+  let ids: i32[] = [];
   let glyphs: i32[] = [];
   let out: f64[] = [];
-  let scale = px as f64 / (f.units_per_em as f64);
   let spacing = px as f64 * (track as f64) / 1000.0;
   let pen = 0.0;
   let prev = -1;
+  let prev_id = -1;
   for c in s.chars() {
+    let id = face_of(fs, w, c as i32);
+    let f = font(fs, id);
+    let scale = px as f64 / (f.units_per_em as f64);
     let g = f.glyph(c as i32);
-    if (prev >= 0) {
+    if (prev >= 0 && id == prev_id) {
       pen += f.kerning(prev, g) as f64 * scale;
     }
+    ids = ids.append(id);
     glyphs = glyphs.append(g);
     out = out.append(pen);
     pen = pen + f.advance(g) as f64 * scale + spacing;
     prev = g;
+    prev_id = id;
   }
-  return (glyphs, out.append(pen - spacing));
+  return Pens { ids: ids, glyphs: glyphs, at: out.append(pen - spacing) };
 }
 
 pub function width(fs: Fonts, w: i32, px: i32, s: string): i32 {
@@ -202,7 +349,7 @@ pub function spaced_width(fs: Fonts, w: i32, px: i32, track: i32, s: string): i3
   if (!has(fs) || s.len() == 0) {
     return 0;
   }
-  let (_, p) = pens(font(fs, w), px, track, s);
+  let p = pens(fs, w, px, track, s).at;
   return (p[p.len() - 1] + 0.999) as i32;
 }
 
@@ -256,39 +403,13 @@ A line breaks at a space. A word that is wider than the room breaks between two 
 <<lines>>=
 // The lines of `s` in `room` pixels. A line feed in `s` starts a new line.
 pub function wrap(fs: Fonts, w: i32, px: i32, s: string, room: i32): string[] {
+  let cs = letters(s);
   let lines: string[] = [];
-  for para in s.split("\n") {
-    lines = wrap_paragraph(fs, w, px, para, room, lines);
+  for r in wrap_ranges(fs, w, px, s, room) {
+    let (a, b) = r;
+    lines = lines.append(span(cs, a, b));
   }
   return lines;
-}
-
-function wrap_paragraph(fs: Fonts, w: i32, px: i32, para: string, room: i32, own out: string[]): string[] {
-  if (width(fs, w, px, para) <= room) {
-    return out.append(para);
-  }
-  let lines = out;
-  let line = "";
-  for word in para.split(" ") {
-    let joined = word;
-    if (line.len() > 0) {
-      joined = line + " " + word;
-    }
-    if (width(fs, w, px, joined) <= room) {
-      line = joined;
-      continue;
-    }
-    if (line.len() > 0) {
-      lines = lines.append(line);
-    }
-    line = word;
-    while (width(fs, w, px, line) > room) {
-      let head = head_that_fits(fs, w, px, line, room);
-      lines = lines.append(head);
-      line = line.drop(head.len()).to_owned();
-    }
-  }
-  return lines.append(line);
 }
 
 // Each character of `s` as a string.
@@ -313,53 +434,62 @@ pub function wrap_ranges(fs: Fonts, w: i32, px: i32, s: string, room: i32): (i32
   let cs = letters(s);
   let out: (i32, i32)[] = [];
   let start = 0;
-  let space = -1;
-  let i = 0;
-  while (i < cs.len()) {
-    if (cs[i] == "\n") {
-      out = out.append((start, i));
-      start = i + 1;
-      space = -1;
-      i += 1;
-      continue;
+  while (start <= cs.len()) {
+    let end = start;
+    while (end < cs.len() && cs[end] != "\n") {
+      end += 1;
     }
-    if (cs[i] == " ") {
-      space = i;
-    }
-    if (i > start && width(fs, w, px, span(cs, start, i + 1)) > room) {
-      let (line, next) = broken(start, space, i);
-      out = out.append(line);
-      start = next;
-      space = -1;
-      i = i.max(start);
-      continue;
-    }
-    i += 1;
+    out = paragraph_ranges(fs, w, px, cs, start, end, room, out);
+    start = end + 1;
   }
-  return out.append((start, cs.len()));
+  return out;
 }
 
-// The line that ends when the character `i` does not fit, and the start of
-// the next line: the line breaks at the last space, or before `i`.
-function broken(start: i32, space: i32, i: i32): ((i32, i32), i32) {
-  if (space > start) {
-    return ((start, space), space + 1);
+// The lines of the paragraph from `start` up to `end`. A line breaks at the
+// last space where the line fits.
+function paragraph_ranges(fs: Fonts, w: i32, px: i32, cs: string[], start: i32, end: i32, room: i32, own out: (i32, i32)[]): (i32, i32)[] {
+  if (width(fs, w, px, span(cs, start, end)) <= room) {
+    return out.append((start, end));
   }
-  return ((start, i), i);
+  let lines = out;
+  let from = start;
+  let to = start;
+  let has_word = false;
+  let ws = start;
+  while (ws <= end) {
+    let we = ws;
+    while (we < end && cs[we] != " ") {
+      we += 1;
+    }
+    if (!has_word) {
+      from = ws;
+    }
+    if (width(fs, w, px, span(cs, from, we)) > room) {
+      if (has_word && to > from) {
+        lines = lines.append((from, to));
+      }
+      from = ws;
+      while (width(fs, w, px, span(cs, from, we)) > room) {
+        let head = head_end(fs, w, px, cs, from, we, room);
+        lines = lines.append((from, head));
+        from = head;
+      }
+    }
+    to = we;
+    has_word = true;
+    ws = we + 1;
+  }
+  return lines.append((from, to));
 }
 
-// The longest start of `word` that fits in `room` pixels: one character or
-// more.
-function head_that_fits(fs: Fonts, w: i32, px: i32, word: string, room: i32): string {
-  let head = "";
-  for c in word.chars() {
-    let next = head + c.to_string();
-    if (head.len() > 0 && width(fs, w, px, next) > room) {
-      return head;
-    }
-    head = next;
+// The end of the longest start of the word from `from` up to `to` that fits
+// in `room` pixels: one character or more.
+function head_end(fs: Fonts, w: i32, px: i32, cs: string[], from: i32, to: i32, room: i32): i32 {
+  let k = from + 1;
+  while (k < to && width(fs, w, px, span(cs, from, k + 1)) <= room) {
+    k += 1;
   }
-  return head;
+  return k;
 }
 ```
 
@@ -381,7 +511,7 @@ function no_sprite(): Sprite {
   return Sprite { w: 0, h: 0, left: 0, base: 0, cov: [] };
 }
 
-// The bitmap of glyph `g` of weight `w` at `px`, with its pen `sub`
+// The bitmap of glyph `g` of the font `w` at `px`, with its pen `sub`
 // quarters of a pixel right of a pixel edge.
 function glyph(own c: Cache, fs: Fonts, w: i32, px: i32, g: i32, sub: i32): (Cache, truetype.Bitmap) {
   let key = glyph_key(w, px, g, sub);
@@ -403,14 +533,14 @@ pub function layout(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
   if (!has(fs) || s.len() == 0) {
     return (c, []);
   }
-  let (glyphs, p) = pens(font(fs, w), px, track, s);
+  let p = pens(fs, w, px, track, s);
   let cache = c;
   let out: Placed[] = [];
-  for i in 0..glyphs.len() {
-    let q = (p[i] * 4.0 + 0.5).floor() as i32;
-    let (next, bm) = glyph(cache, fs, w, px, glyphs[i], q & 3);
+  for i in 0..p.glyphs.len() {
+    let q = (p.at[i] * 4.0 + 0.5).floor() as i32;
+    let (next, bm) = glyph(cache, fs, p.ids[i], px, p.glyphs[i], q & 3);
     cache = next;
-    out = out.append(Placed { key: glyph_key(w, px, glyphs[i], q & 3), bm: bm, x: (q >> 2) + bm.left });
+    out = out.append(Placed { key: glyph_key(p.ids[i], px, p.glyphs[i], q & 3), bm: bm, x: (q >> 2) + bm.left });
   }
   return (cache, out);
 }

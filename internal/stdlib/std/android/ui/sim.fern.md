@@ -42,6 +42,7 @@ The device of the simulator writes what the program asks of it into files in a t
 // This module runs a program of std/android/ui on the host with no phone.
 import "std/android";
 import "std/android/draw";
+import "std/android/fonts";
 import "std/android/testkit";
 import "std/android/text";
 import "std/android/ui";
@@ -94,6 +95,7 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, n
     set_keyboard: (text: string, caret: i32): void => note(dir, "calls", "keyboard " + text.replace("\n", "↵")),
     hide_keyboard: (): void => note(dir, "calls", "no keyboard"),
     state_file: (): string => dir + "/state.kv",
+    fallbacks: (weight: i32, cp: i32): fonts.Found[] => [],
   };
 }
 

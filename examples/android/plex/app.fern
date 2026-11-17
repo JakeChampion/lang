@@ -269,7 +269,7 @@ function new_gpu(): Option[Gpu] {
     return None;
   };
   let (on, t) = c.external();
-  let pt = painter.on_canvas(painter.new(text.Fonts { faces: [], weights: [] }), Some(on));
+  let pt = painter.on_canvas(painter.new(text.from_faces([], [])), Some(on));
   return Some(Gpu { painter: pt, texture: t, target: None, window: 0 as usize, shown_ns: -1i64, matrix: [], held: false, w: 0, h: 0, overlaid: false });
 }
 
@@ -457,8 +457,10 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], media: Med
     has_audio: (): boolean => has && player.has_audio(ctx, p),
     audio_tracks: (): i32[] => sound_tracks(ctx, p, has),
     select_track: (i: i32): boolean => has && player.select_track(ctx, p, i),
+    set_speed: (rate: i32): void => set_speed(ctx, p, has, rate),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
+    languages: android.languages(ctx),
   };
 }
 
@@ -471,6 +473,12 @@ function start(ctx: usize, p: player.Player, has: boolean): void {
 function pause(ctx: usize, p: player.Player, has: boolean): void {
   if (has) {
     let ok = player.pause(ctx, p);
+  }
+}
+
+function set_speed(ctx: usize, p: player.Player, has: boolean, rate: i32): void {
+  if (has) {
+    let ok = player.set_speed(ctx, p, rate as f32 / 100.0f32);
   }
 }
 

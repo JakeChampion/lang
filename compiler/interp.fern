@@ -43,7 +43,7 @@ pub struct VArr { items: Value[], elem: string, view: boolean, store: interpheap
 // zero for a value that a builtin builds.
 pub struct VTuple { elements: Value[], key: i64 }
 
-pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string, self_name: string, cells: boolean }
+pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string, self_name: string, peers: i32, cells: boolean }
 
 pub struct VMap { keys: Value[], values: Value[], key: i64 }
 
@@ -1704,7 +1704,7 @@ function cell_tree_text(h: usize, v: Value, own edges: interpheap.Root[], heap: 
         if (!captured.ok) {
           return (false, edges);
         }
-        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name, self_name: f.self_name, cells: f.cells };
+        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name, self_name: f.self_name, peers: f.peers, cells: f.cells };
         let root = interpheap.allocate_closure(heap, code, captured.text, captured.edges);
         cell_bits_text(h, 70, edges.len() as i64);
         return (true, edges.append(root));
@@ -1962,7 +1962,7 @@ function cell_leaf_value(s: string, at: Cell[i32], edges: interpheap.Root[], hea
     let payload = interpheap.get(root);
     if let Some(code) = payload.closure {
       let captured = cell_parts_value(payload.text, cell_new(0), interpheap.children(root), heap, []);
-      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name, self_name: code.self_name, cells: code.cells };
+      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name, self_name: code.self_name, peers: code.peers, cells: code.cells };
     }
     return v_err("function binding has no code");
   }
@@ -5469,6 +5469,7 @@ function resolve_ident_value(name: string, env: Env): Value {
           captured_types: no_types,
           generic_name: generic_name,
           self_name: "",
+          peers: 0,
           cells: env.funcs.cells[vfi],
         };
       }
@@ -5679,6 +5680,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         captured_types: captured.types,
         generic_name: "",
         self_name: "",
+        peers: 0,
         cells: lambda_needs_cells(lm, env),
       };
     },
@@ -6385,7 +6387,7 @@ function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Fu
 }
 
 function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
-  let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "", self_name: "", cells: true };
+  let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "", self_name: "", peers: 0, cells: true };
   match (cv) {
     VFunc(v) => {
       fv = v;
@@ -6410,6 +6412,9 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
   // A nested function sees its own name.
   if (fv.self_name.len() > 0) {
     env = env.bind(fv.self_name, cv);
+  }
+  if (fv.peers > 0) {
+    env = bind_peers(env, fv);
   }
   // Each evaluation branch shares the environment with its managed roots.
   if (inline_value) {
@@ -9861,7 +9866,7 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
   let cur = env;
   for i in 0..body.len() - 1 {
     cur = cellify_captures(cur, body[i], body);
-    let step = eval_stmt(body[i], unsafe { share_unchecked(cur) });
+    let step = block_stmt(body, i, unsafe { share_unchecked(cur) });
     if (step.sig != 0) {
       return step;
     }
@@ -10505,11 +10510,76 @@ function flattened_env(e: Env): Env {
   return Env { ...e, outer: None, depth: 0, names: names, values: values, types: types };
 }
 
+// Nested functions that call each other are bound together, at the first of them.
+function block_stmt(body: ast.Stmt[], at: i32, own env: Env): StepResult {
+  if let ast.StmtVar(v) = body[at] {
+    if (ast.var_binds_itself(v)) {
+      let cycle = parser.nested_fn_cycle(parser.nested_fns(body), v.name);
+      if (cycle.len() > 1) {
+        if (cycle[0] != v.name) {
+          return step_none(env);
+        }
+        return bind_fn_group(body, cycle, env);
+      }
+    }
+  }
+  return eval_stmt(body[at], env);
+}
+
+function bind_fn_group(body: ast.Stmt[], cycle: string[], own env: Env): StepResult {
+  let members: Value[] = [];
+  let types: string[] = [];
+  for name in cycle {
+    for st in body {
+      if let ast.StmtVar(v) = st {
+        if (v.name == name && ast.var_binds_itself(v)) {
+          let val = eval_var_init(v, env);
+          if let VFunc(f) = val {
+            members = members.append(VFunc { ...f, self_name: name });
+            types = types.append(env.static_type_of(v.init));
+          } else {
+            return step_stop(env, val);
+          }
+        }
+      }
+    }
+  }
+  let out = env;
+  for k in 0..members.len() {
+    out = out.bind_decl(cycle[k], with_peers(members[k], cycle, members, types), types[k]);
+  }
+  return step_none(out);
+}
+
+// The last `peers` captures of a function are the functions of its group, each without its own group.
+function with_peers(member: Value, names: string[], members: Value[], types: string[]): Value {
+  if let VFunc(f) = member {
+    return VFunc { ...f, captured_names: util.append_all(f.captured_names, names), captured_values: util.append_all(f.captured_values, members), captured_types: util.append_all(f.captured_types, types), peers: names.len() };
+  }
+  return member;
+}
+
+function bind_peers(own env: Env, fv: VFunc): Env {
+  let names: string[] = [];
+  let members: Value[] = [];
+  let types: string[] = [];
+  for k in fv.captured_names.len() - fv.peers..fv.captured_names.len() {
+    names = names.append(fv.captured_names[k]);
+    members = members.append(fv.captured_values[k]);
+    types = types.append(fv.captured_types[k]);
+  }
+  let out = env;
+  for k in 0..names.len() {
+    out = out.bind_decl(names[k], with_peers(members[k], names, members, types), types[k]);
+  }
+  return out;
+}
+
 function eval_block(body: ast.Stmt[], own env: Env): StepResult {
   let cur = env;
   for i in 0..body.len() {
     cur = cellify_captures(cur, body[i], body);
-    let r = eval_stmt(body[i], cur);
+    let r = block_stmt(body, i, cur);
     cur = r.env;
     if (r.sig != 0) {
       if let VTry(left) = r.ret {
