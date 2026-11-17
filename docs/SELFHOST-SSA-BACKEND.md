@@ -560,8 +560,9 @@ as zero.
 `ssa.zero_extended_indices` makes an i32 sign extension a
 zero-extension when only array indices read it. A byte view index is a
 zero-extension too (`ssabytes`). No length reaches 2^31, so a negative index
-still fails the unsigned bounds check. The sum that makes an index is then one
-`leal`.
+still fails the unsigned bounds check. The sign test of a read that a guard
+proves below the length (`ir.sign_only`) reads the low half of the index for
+the same reason. The sum that makes an index is then one `leal`.
 
 Division,
 a shift by a register count and the table shared with the stack machine

@@ -1,0 +1,22 @@
+// A `once` lambda moves each capture in. It cannot capture a value that an
+// earlier argument of the same call consumed.
+
+struct Box { xs: i32[] }
+
+enum Step { Done(i32), Wait(i32, once (i32) => Step) }
+
+function eat(own b: Box): i32 {
+  return b.xs.len();
+}
+
+function suspend(own b: Box): Step {
+  return Wait(eat(b), once (i: i32): Step => Done(eat(b) + i));
+}
+
+function main(): i32 {
+  let xs: i32[] = [1];
+  match (suspend(Box { xs: xs })) {
+    _ => {}
+  }
+  return 0;
+}

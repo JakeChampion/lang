@@ -1,0 +1,50 @@
+// A `once` lambda owns its captures, so its body may move one. A move in its
+// body is no use after a move of the enclosing function.
+
+struct Flat[T] { items: T[] }
+
+enum Step[T] {
+  More(i32, once (i32) => Step[T]),
+  Done(T[]),
+}
+
+function size[T](fl: Flat[T]): i32 {
+  return fl.items.len();
+}
+
+function woken[T](own fl: Flat[T], n: i32): Step[T] {
+  if (n <= 0) {
+    return Done(fl.items);
+  }
+  return step(fl, n - 1);
+}
+
+function step[T](own fl: Flat[T], n: i32): Step[T] {
+  if (n > 0) {
+    return More(size(fl), once (left: i32): Step[T] => woken(fl, left));
+  }
+  return Done(fl.items);
+}
+
+function run[T](own s: Step[T], turns: i32): i32 {
+  let cur = s;
+  let t = turns;
+  while (true) {
+    match (cur) {
+      More(width, k) => {
+        cur = k(t);
+        t += 1;
+      },
+      Done(items) => {
+        return items.len() * 100 + t;
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  print(run(step(Flat { items: [1, 2, 3] }, 2), 1).to_string());
+  print(run(step(Flat { items: ["a"] }, 1), 0).to_string());
+  return 0;
+}

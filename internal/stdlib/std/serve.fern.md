@@ -2790,20 +2790,11 @@ function __h2_chunk(own a: __H2Answered, at: i32, pi: i32, chunk: Option[u8[]]):
       return (__H2Answered { ...a, conn: step.conn, conns: __Conns { ...a.conns, producers: a.conns.producers.with(pi, advanced) }, out: a.out.concat(step.output) }, false);
     },
     None => {
-      let step = a.conn.end(p.stream, __trailers_joined(p.trailers, p.producer.trailers()));
+      let step = a.conn.end(p.stream, p.trailers.concat(p.producer.trailers()));
       return (__h2_responded(__H2Answered { ...a, conn: step.conn, conns: __Conns { ...a.conns, producers: __producer_removed(a.conns.producers, pi) }, out: a.out.concat(step.output) }, at, p.stream), true);
     }
   }
   return (a, true);
-}
-
-function __trailers_joined(a: HeaderMap, b: HeaderMap): HeaderMap {
-  let i = 0;
-  while (i < b.names.len()) {
-    a = a.append(b.names[i], b.values[i]);
-    i += 1;
-  }
-  return a;
 }
 
 function __h2_producer_failed(own a: __H2Answered, at: i32, pi: i32): own __H2Answered {
@@ -6560,7 +6551,7 @@ function __h3_chunk(c: __Conns, pi: i32, chunk: Option[u8[]]): (__Conns, boolean
       return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].write(p.stream, bytes)), producers: q.producers.with(pi, __H3Producer { ...p, index: p.index + 1, running: false }) } }, false);
     },
     None => {
-      return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].end(p.stream, __trailers_joined(p.trailers, p.producer.trailers()))), producers: __h3_producers_without(q.producers, pi) } }, true);
+      return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].end(p.stream, p.trailers.concat(p.producer.trailers()))), producers: __h3_producers_without(q.producers, pi) } }, true);
     }
   }
   return (c, true);

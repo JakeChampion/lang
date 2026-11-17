@@ -215,7 +215,10 @@ export async function runHttpHandler(bytes, request) {
       const body = handles.get(self).body; // incoming-body
       const remaining = body.body.length - body.cursor;
       if (remaining <= 0) {
-        w8(retptr, 0, 1); // Err(closed) → guest treats as end-of-stream
+        // Err(stream-error::closed): the guest reads the case at offset 4,
+        // and case 0 is last-operation-failed, which it reports as a cut body.
+        w8(retptr, 0, 1);
+        w32(retptr, 4, 1);
         return;
       }
       const n = Math.min(Number(len), remaining);

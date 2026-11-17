@@ -1,0 +1,36 @@
+// A match on an `own` parameter binds a payload that can hold a handle as an
+// owned name. A match on that name binds a `once` function that the arm can
+// call at its last use.
+
+enum Step[T] { Done(T), Wait(i32, once (i32) => Step[T]) }
+
+enum Slot[T] { Full(i32, Step[T]), Empty }
+
+function resume[T](own s: Slot[T]): i32 {
+  match (s) {
+    Full(at, f) => {
+      match (f) {
+        Wait(n, k) => {
+          match (k(at + n)) {
+            Done(_) => {
+              return 1;
+            },
+            _ => {}
+          }
+        },
+        _ => {}
+      }
+    },
+    Empty => {}
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let base = 30;
+  let s: Slot[i32] = Full(2, Wait(10, once (i: i32): Step[i32] => Done(i + base)));
+  let e: Slot[i32] = Empty;
+  print(resume(s));
+  print(resume(e));
+  return 0;
+}

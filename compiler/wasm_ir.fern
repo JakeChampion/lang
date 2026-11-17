@@ -4394,6 +4394,11 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32, cause: string): 
   return s;
 }
 
+// The base is on the stack and the index is in its local.
+function wasm_index_sign_trap(idx_local: i32, cause: string): string {
+  return "    drop\n    local.get " + util.i32_to_string(idx_local) + "\n    i32.const 0\n    i32.lt_s\n    if\n      call $__fern_abort_" + cause + "\n      unreachable\n    end\n";
+}
+
 function wasm_arr_index_trap(base_local: i32, idx_local: i32, cause: string): string {
   let s = "";
   s = s + "    local.tee " + util.i32_to_string(base_local) + "\n";
@@ -5197,7 +5202,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     if (o.i32_imm == 1) {
       parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n");
     } else {
-      parts = emit_wasm_str_index(arrtmp, bctmp, o.i32_imm == 2, parts);
+      parts = emit_wasm_str_index(arrtmp, bctmp, o.i32_imm, parts);
     }
   } else if (ir.is_str_op_kind(o.kind_tag)) {
     parts = parts.append(emit_str_op_wat(o));
@@ -13638,8 +13643,8 @@ function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o
 
 function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): string[] {
   parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
-  if (o.i32_imm == 2) {
-    parts = parts.append(wasm_arr_index_trap(arrtmp, bctmp, "arr"));
+  if (o.i32_imm == 2 || o.i32_imm == 3) {
+    parts = parts.append(if (o.i32_imm == 3) { wasm_index_sign_trap(bctmp, "arr") } else { wasm_arr_index_trap(arrtmp, bctmp, "arr") });
     if (o.width == 64 && o.unsigned) {
       return parts.append("    i64.const 0\n");
     }
@@ -13665,9 +13670,12 @@ function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): 
   return parts;
 }
 
-function emit_wasm_str_index(arrtmp: i32, bctmp: i32, check: boolean, parts: string[]): string[] {
+function emit_wasm_str_index(arrtmp: i32, bctmp: i32, check: i32, parts: string[]): string[] {
   parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
-  if (check) {
+  if (check == 3) {
+    return parts.append(wasm_index_sign_trap(bctmp, "str")).append("    i32.const 0\n");
+  }
+  if (check == 2) {
     return parts.append(wasm_arr_index_trap(arrtmp, bctmp, "str")).append("    i32.const 0\n");
   }
   parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "str"));

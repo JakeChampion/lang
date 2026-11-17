@@ -45,6 +45,16 @@ function test_remove_drops_every_line(): test.TestOutcome {
   return test.assert_eq(h.len().to_string() + " " + h.names[0] + " " + h.has("x").to_string(), "1 Y false");
 }
 
+function test_concat_keeps_both_in_order(): test.TestOutcome {
+  let h = headers.new().append("X", "1").append("Y", "y").concat(headers.new().append("x", "2"));
+  return test.assert_eq_array(h.get_all("x"), ["1", "2"]);
+}
+
+function test_concat_empty_is_identity(): test.TestOutcome {
+  let h = headers.new().append("X", "1").concat(headers.new());
+  return test.assert_eq(h.len().to_string() + " " + h.names[0], "1 X");
+}
+
 function test_set_on_absent_appends(): test.TestOutcome {
   let h = headers.new();
   h = h.set("X-First", "1");
@@ -191,5 +201,7 @@ function main(): i32 {
   r = r.it("preferred_coding ranks Accept-Encoding", test_preferred_coding);
   r = r.it("weight reads a qvalue", test_weight);
   r = r.it("remove drops every line of a name", test_remove_drops_every_line);
+  r = r.it("concat keeps both maps' lines in order", test_concat_keeps_both_in_order);
+  r = r.it("concat with an empty map changes nothing", test_concat_empty_is_identity);
   return r.finish();
 }

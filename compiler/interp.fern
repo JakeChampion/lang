@@ -5467,8 +5467,7 @@ function eval_int_literal(t: string): Value {
   return box_i64(util.digits_to_i64(t));
 }
 
-// The value of a name that a type spelling can hold: a binding or a constant.
-function resolve_bound_value(name: string, env: Env): Value {
+function resolve_ident_value(name: string, env: Env): Value {
   let idv = env.lookup(name);
   if (is_err(idv)) {
     for ci in env.funcs.named(name) {
@@ -5478,13 +5477,6 @@ function resolve_bound_value(name: string, env: Env): Value {
         return call_func(env.heap, name, no_args, env.funcs, env.aliases, env.type_decls);
       }
     }
-  }
-  return idv;
-}
-
-function resolve_ident_value(name: string, env: Env): Value {
-  let idv = resolve_bound_value(name, env);
-  if (is_err(idv)) {
     if (variant_arity(name, env.type_decls) == 0 && !user_func_exists(name, env.funcs)) {
       let none_args: Value[] = [];
       return v_variant_of(variant_owner(name, env.type_decls), name, none_args);
@@ -6018,13 +6010,29 @@ function bound_type_args(targs: string[], env: Env): string[] {
   return out;
 }
 
+// The value that `name` has as a part of a type: a binding of the
+// environment, or a constant of the module.
+function type_binding(name: string, env: Env): Value {
+  let bound = env.lookup(name);
+  if (!is_err(bound)) {
+    return bound;
+  }
+  for ci in env.funcs.named(name) {
+    let cfd = env.funcs.decls[ci];
+    if (cfd.name == name && cfd.receiver_type.len() == 0 && cfd.params.len() == 0 && cfd.is_const) {
+      return call_func(env.heap, name, [], env.funcs, env.aliases, env.type_decls);
+    }
+  }
+  return bound;
+}
+
 function bound_type_spelling(spelling: string, env: Env): string {
   if (spelling.len() == 0) {
     return spelling;
   }
   let ref = parser.parse_type_ref(spelling);
   let base = ref.base;
-  match (resolve_bound_value(base, env)) {
+  match (type_binding(base, env)) {
     VType(tv) => {
       base = tv.name;
     },
