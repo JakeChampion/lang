@@ -15,6 +15,7 @@ import "std/android/text";
 import "std/android/ui/painter";
 import "std/android/ui/scene";
 import "std/android/video/capabilities";
+import "std/android/watchnext";
 import "std/fetch";
 import "std/log";
 import "std/rand";
@@ -458,6 +459,10 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], media: Med
     audio_tracks: (): i32[] => sound_tracks(ctx, p, has),
     select_track: (i: i32): boolean => has && player.select_track(ctx, p, i),
     set_speed: (rate: i32): void => set_speed(ctx, p, has, rate),
+    pip: (on: boolean): void => pip(ctx, p, has, on),
+    in_pip: (): boolean => android.in_pip(ctx),
+    watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => watch_next(ctx, key, title, kind, at, length, poster),
+    watch_next_drop: (key: string): void => watchnext.drop(ctx, key),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
     languages: android.languages(ctx),
@@ -474,6 +479,23 @@ function pause(ctx: usize, p: player.Player, has: boolean): void {
   if (has) {
     let ok = player.pause(ctx, p);
   }
+}
+
+// Puts the video on the Watch Next row of Android TV. On a phone there is
+// no such row, and this changes nothing.
+function watch_next(ctx: usize, key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void {
+  let link = watchnext.app_link(ctx, "play", key);
+  let kept = watchnext.keep(ctx, watchnext.Program { id: key, title: title, kind: kind, position_ms: at, duration_ms: length, poster: poster, link: link });
+}
+
+// Gives Android the shape of the video for a picture-in-picture window.
+function pip(ctx: usize, p: player.Player, has: boolean, on: boolean): void {
+  let (w, h) = if (has) { player.video_size(ctx, p) } else { (16, 9) };
+  if (w <= 0 || h <= 0) {
+    android.pip_auto(ctx, on, 16, 9);
+    return;
+  }
+  android.pip_auto(ctx, on, w, h);
 }
 
 function set_speed(ctx: usize, p: player.Player, has: boolean, rate: i32): void {

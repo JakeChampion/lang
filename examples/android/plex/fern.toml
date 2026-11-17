@@ -9,5 +9,6 @@ label = "Fern for Plex"
 min_sdk = 30
 cleartext = true
 tv = true
+pip = true
 banner = "banner.png"
 permissions = ["INTERNET", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK", "POST_NOTIFICATIONS", "WAKE_LOCK"]

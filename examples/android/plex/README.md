@@ -70,7 +70,9 @@ Music plays with the controls on the screen. It plays on while the app is
 away, with the media controls of Android in the notification panel and on
 the lock screen. On Android 13 and later, the first track asks for the
 permission to post notifications. A foreground service and a wake lock keep the stream at
-work while the screen is off. A video pauses when the app goes away.
+work while the screen is off. A video pauses when the app goes away, unless Android shows it in a
+picture-in-picture window. From Android 12, a video that plays goes into
+that window when the user goes home.
 
 Gestures on the video:
 
@@ -114,6 +116,10 @@ list scrolls to show it. The centre key presses the focused control. On
 the video, left and right seek as the buttons do, and the centre shows the
 controls. The media keys play, pause and seek the video, and a touch hides
 the ring.
+
+On Android TV, a video that stops part of the way goes on the Watch Next
+row of the home screen. The row shows its poster and its place. The row opens the
+video in the app. A video that plays to its end goes off the row.
 
 Search and settings:
 
