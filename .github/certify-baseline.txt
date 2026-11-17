@@ -15,5 +15,5 @@ x86_64/fern_main.unproved	17404	0
 x86_64/fern_main.skipped	59	0
 wasm32/checker.unproved	3851	0
 x86_64/checker.refuted	4912	0
-x86_64/checker.weakened	162	0
+x86_64/checker.weakened	165	0
 x86_64/checker.missed	526	0
