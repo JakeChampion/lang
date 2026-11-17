@@ -49,8 +49,9 @@ pub const HALT: i32 = 4;
 // A run that goes on in `next`, not in a deeper call. `drive` makes the call.
 const BOUNCE: i32 = 5;
 
-// The count of calls of a function of a `def` between two bounces.
-const BOUNCE_EVERY: i32 = 1024;
+// The count of calls of a function of a `def` between two bounces, and the
+// count of sinks between two landings.
+const BOUNCE_EVERY: i32 = 64;
 
 // The state of a run.
 //
@@ -64,7 +65,8 @@ const BOUNCE_EVERY: i32 = 1024;
 // - `out` holds the text that the command line writes next, and `last` the
 //   kind of its last output: 0 for none, 1 for false or null, 2 otherwise.
 // - `calls` counts the calls of a function of a `def` since the last bounce,
-//   and `next` holds the one step of a bounce.
+//   and `next` holds the one step of a bounce. `links` counts the calls that
+//   are not the last step of their body since the last landing.
 pub struct St {
   sig: i32,
   err: json.JsonValue,
@@ -82,6 +84,7 @@ pub struct St {
   io: stream.Source,
   calls: i32,
   next: ((own St) => own St)[],
+  links: i32,
 }
 
 pub function env(): Env {
@@ -89,7 +92,7 @@ pub function env(): Env {
 }
 
 pub function state(io: stream.Source): own St {
-  return St { sig: OK, err: json.JNull, esc: 0, inner: 0, brk: 0, code: 0, labels: 0, items: [], found: [], v: json.JNull, stack: [], out: "", last: 0, io: io, calls: 0, next: [] };
+  return St { sig: OK, err: json.JNull, esc: 0, inner: 0, brk: 0, code: 0, labels: 0, items: [], found: [], v: json.JNull, stack: [], out: "", last: 0, io: io, calls: 0, next: [], links: 0 };
 }
 
 pub function (e: Env) with(name: string, value: json.JsonValue): Env {
@@ -166,23 +169,45 @@ function bounce(own st: St, step: (own St) => own St): own St {
 
 // The state after each bounce of `st` is done. A caller that reads the state
 // of a filter or of a sink, and does not only return it, gets it from here.
+// The frames of the caller stay, so the caller gets its count of calls back.
 function drive(own st: St): own St {
+  if (st.sig != BOUNCE) {
+    return st;
+  }
+  let calls = st.calls;
   let s = st;
   while (s.sig == BOUNCE) {
     let step = s.next[0];
     s = step(St { ...s, sig: OK, calls: 0, next: [] });
   }
-  return s;
+  return St { ...s, calls: calls };
 }
 
-// A sink that bounces before it gives its value to `k`, so the sinks of the
-// calls between two bounces do not stay on the machine stack.
+// A sink that bounces before it gives its value to `k`, so the sinks before
+// it do not stay on the machine stack.
 function landing(k: (json.JsonValue, own St) => own St): (json.JsonValue, own St) => own St {
   return (v: json.JsonValue, own s: St): own St => bounce(s, (own t: St): own St => k(v, t));
 }
 
 function path_landing(k: (PathItem, own St) => own St): (PathItem, own St) => own St {
   return (it: PathItem, own s: St): own St => bounce(s, (own t: St): own St => k(it, t));
+}
+
+// The sink for the body of a call that is not the last step of its body.
+// Such a call adds a sink before `k`, so one in each `BOUNCE_EVERY` of them
+// gets a landing.
+function linked(k: (json.JsonValue, own St) => own St, own st: St): ((json.JsonValue, own St) => own St, St) {
+  if (st.links >= BOUNCE_EVERY) {
+    return (landing(k), St { ...st, links: 0 });
+  }
+  return (k, St { ...st, links: st.links + 1 });
+}
+
+function path_linked(k: (PathItem, own St) => own St, own st: St): ((PathItem, own St) => own St, St) {
+  if (st.links >= BOUNCE_EVERY) {
+    return (path_landing(k), St { ...st, links: 0 });
+  }
+  return (k, St { ...st, links: st.links + 1 });
 }
 
 // The outputs of `f` on `input` to `k`, and the state when `f` stops.
@@ -360,12 +385,16 @@ function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, o
     filter.Alt(a, b) => {
       return run_alt(a, b, input, e, k, st);
     },
-    filter.Call(name, args) => {
+    filter.Call(name, args, last) => {
       let found = e.find(name, args.len());
-      if (found.len() > 0) {
+      if (found.len() == 0) {
+        return call(name, args, input, e, k, st);
+      }
+      if (last) {
         return call_defined(found[0], args, 0, input, e, callee_scope(found[0]), k, st);
       }
-      return call(name, args, input, e, k, st);
+      let (sink, s) = linked(k, st);
+      return call_defined(found[0], args, 0, input, e, callee_scope(found[0]), sink, s);
     },
     filter.Def(name, params, body, rest) => {
       return run(rest, input, e.define(defined(name, params, body, e)), k, st);
@@ -451,7 +480,7 @@ function single(f: filter.Ast, e: Env): boolean {
     filter.Update(op, _, value) => op == "|=" || single(value, e),
     filter.Object(keys, values) => all_single(keys, e) && all_single(values, e),
     filter.Interp(_, _, parts) => all_single(parts, e),
-    filter.Call(name, args) => single_call(name, args, e),
+    filter.Call(name, args, _) => single_call(name, args, e),
     filter.Def(name, params, body, rest) => single(rest, e.define(defined(name, params, body, e))),
     _ => single_pair(f, e),
   };
@@ -1872,12 +1901,16 @@ function paths_more(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =
       }
       return unescaped(s);
     },
-    filter.Call(name, args) => {
+    filter.Call(name, args, last) => {
       let found = e.find(name, args.len());
-      if (found.len() > 0) {
+      if (found.len() == 0) {
+        return paths_call(name, args, it, e, k, st);
+      }
+      if (last) {
         return paths_defined(found[0], args, 0, it, e, callee_scope(found[0]), k, st);
       }
-      return paths_call(name, args, it, e, k, st);
+      let (sink, s) = path_linked(k, st);
+      return paths_defined(found[0], args, 0, it, e, callee_scope(found[0]), sink, s);
     },
     filter.Def(name, params, body, rest) => {
       return run_paths(rest, it, e.define(defined(name, params, body, e)), k, st);
@@ -2057,7 +2090,7 @@ function paths_other(name: string, args: filter.Ast[], it: PathItem, e: Env, k: 
     }
     return st;
   }
-  return paths_plain(filter.Call(name, args), it, e, false, k, st);
+  return paths_plain(filter.Call(name, args, false), it, e, false, k, st);
 }
 
 function paths_recurse(it: PathItem, f: filter.Ast, conds: filter.Ast[], e: Env, k: (PathItem, own St) => own St, own st: St): own St {
@@ -2222,7 +2255,7 @@ function callee_scope(f: Func): Env {
 function call_defined(f: Func, args: filter.Ast[], at: i32, input: json.JsonValue, e: Env, scope: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   if (at == args.len()) {
     if (st.calls >= BOUNCE_EVERY) {
-      return bounce(st, (own s: St): own St => run(f.body, input, scope, landing(k), s));
+      return bounce(st, (own s: St): own St => run(f.body, input, scope, k, s));
     }
     return run(f.body, input, scope, k, St { ...st, calls: st.calls + 1 });
   }
@@ -2237,7 +2270,7 @@ function call_defined(f: Func, args: filter.Ast[], at: i32, input: json.JsonValu
 function paths_defined(f: Func, args: filter.Ast[], at: i32, it: PathItem, e: Env, scope: Env, k: (PathItem, own St) => own St, own st: St): own St {
   if (at == args.len()) {
     if (st.calls >= BOUNCE_EVERY) {
-      return bounce(st, (own s: St): own St => run_paths(f.body, it, scope, path_landing(k), s));
+      return bounce(st, (own s: St): own St => run_paths(f.body, it, scope, k, s));
     }
     return run_paths(f.body, it, scope, k, St { ...st, calls: st.calls + 1 });
   }
