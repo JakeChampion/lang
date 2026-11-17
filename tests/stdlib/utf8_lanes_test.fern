@@ -114,6 +114,28 @@ function test_each_error_at_each_offset(): test.TestOutcome {
   return test.pass();
 }
 
+// A step of ASCII bytes moves the check to the end of the run. The next
+// step then starts at a sequence, at each offset from the steps before it.
+function test_errors_after_ascii_runs(): test.TestOutcome {
+  let middles: u8[][] = ["".bytes(), "é".bytes(), "€".bytes(), "𝄞".bytes()];
+  let bad: u8[][] = [[128 as u8], [194 as u8, 65 as u8], [237 as u8, 160 as u8, 128 as u8], [240 as u8, 159 as u8, 152 as u8], [255 as u8]];
+  for first in [16, 17, 31, 32, 47, 100, 257] {
+    for middle in middles {
+      for second in [0, 15, 16, 33, 90] {
+        for seq in bad {
+          let b = joined(joined(joined(joined(ascii(first), middle), ascii(second)), seq), ascii(20));
+          let want = reference(b);
+          let got = checked(b);
+          if (got != want) {
+            return test.fail("runs of " + first.to_string() + " and " + second.to_string() + " ASCII bytes: offset " + got.to_string() + ", want " + want.to_string());
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
 // Valid text with each width of sequence across the end of each step.
 function test_valid_text_at_each_alignment(): test.TestOutcome {
   let text = "é€𝄞中ab".bytes();
@@ -171,6 +193,7 @@ function test_random_text_matches_the_reference(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/utf8 lanes");
   r = r.it("each error at each offset", test_each_error_at_each_offset);
+  r = r.it("errors after ASCII runs", test_errors_after_ascii_runs);
   r = r.it("valid text at each alignment", test_valid_text_at_each_alignment);
   r = r.it("random text matches the reference", test_random_text_matches_the_reference);
   return r.finish();

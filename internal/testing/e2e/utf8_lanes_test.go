@@ -23,8 +23,8 @@ func utf8LanesSrc(t *testing.T) string {
 func wantUtf8LanesPassed(t *testing.T, leg, out string) {
 	t.Helper()
 	e2eharness.CheckTAPPlan(t, out)
-	if !strings.Contains(out, "# pass 3") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("%s: want 3 passes and no failure\n%s", leg, out)
+	if !strings.Contains(out, "# pass 4") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("%s: want 4 passes and no failure\n%s", leg, out)
 	}
 }
 
