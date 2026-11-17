@@ -1,0 +1,19 @@
+// A read of the local after the literal keeps the local live, so the literal
+// does not take its base.
+struct Ask { purpose: string }
+
+struct Log { out: Writer, asks: Ask[], n: i32 }
+
+function take(own l: Log): Log {
+  return l;
+}
+
+function go(own l: Log, p: string): i32 {
+  let t = l;
+  let u = take(Log { ...t, asks: t.asks.append(Ask { purpose: p }) });
+  return u.asks.len() + t.asks.len();
+}
+
+function main(): i32 {
+  return go(Log { out: stdout(), asks: [], n: 0 }, "p");
+}
