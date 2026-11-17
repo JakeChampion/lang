@@ -162,3 +162,51 @@ func TestSelfHostRcCertifyMemoKeepsNoSkip(t *testing.T) {
 		t.Fatalf("a warm memo: hits=%d misses=%d of %d; want the skipped task-frame functions to miss again", hits2, misses2, misses)
 	}
 }
+
+// A compile adds its entries to the ones on disk, which another compile may
+// have written, and renames a whole file over the memo.
+func TestSelfHostRcCertifyMemoKeepsOtherEntries(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	memoDir := filepath.Join(dir, "memo")
+	memo := "FERN_RC_CERTIFY_MEMO=" + memoDir
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(sanSelfHostCleanSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := compileCapturing(t, cli, src, memo, "FERN_IR_VERIFY=1"); code != 0 {
+		t.Fatalf("first compile: exit %d\n%s", code, out)
+	}
+	files, err := filepath.Glob(filepath.Join(memoDir, "certified", "*-x86-64.txt"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("memo files: %v %v", files, err)
+	}
+	const foreign = "1_2_3_4"
+	if err := os.WriteFile(files[0], []byte(foreign+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := compileCapturing(t, cli, src, memo, "FERN_IR_VERIFY=1")
+	if code != 0 {
+		t.Fatalf("second compile: exit %d\n%s", code, out)
+	}
+	if hits, misses := memoCounts(t, out); hits != 0 || misses == 0 {
+		t.Fatalf("a memo of one foreign entry: hits=%d misses=%d, want no hits", hits, misses)
+	}
+	raw, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if lines[0] != foreign || len(lines) < 2 {
+		t.Fatalf("memo after the compile: want the foreign entry and the new ones, got %q", lines)
+	}
+	for _, l := range lines {
+		if len(strings.Split(l, "_")) != 4 {
+			t.Fatalf("memo entry %q: want two 64-bit digests, four words", l)
+		}
+	}
+	left, _ := filepath.Glob(filepath.Join(memoDir, "certified", "*.tmp-*"))
+	if len(left) != 0 {
+		t.Fatalf("temporary memo files left behind: %v", left)
+	}
+}

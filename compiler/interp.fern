@@ -43,7 +43,7 @@ pub struct VArr { items: Value[], elem: string, view: boolean, store: interpheap
 // zero for a value that a builtin builds.
 pub struct VTuple { elements: Value[], key: i64 }
 
-pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string, self_name: string }
+pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string, self_name: string, cells: boolean }
 
 pub struct VMap { keys: Value[], values: Value[], key: i64 }
 
@@ -203,6 +203,9 @@ function zero_value_of(heap: interpheap.Heap, type_name: string): Value {
 }
 
 function coerce_int_width(val: Value, type_name: string): Value {
+  if (type_name.len() == 0) {
+    return val;
+  }
   if (type_name == "char") {
     return char_value(val);
   }
@@ -262,12 +265,6 @@ function coerce_int_width(val: Value, type_name: string): Value {
       _ => {}
     }
   }
-  if (parser.parse_type_ref(type_name).base == "Cell") {
-    if let VCell(c) = val {
-      return cell_as_declared(c, type_name);
-    }
-    return val;
-  }
   if (type_name == "f32") {
     match (val) {
       VFloat(f) => {
@@ -284,22 +281,33 @@ function coerce_int_width(val: Value, type_name: string): Value {
       }
     }
   }
-  if (name_ends_with(type_name, "[]") || parser.spelling_is_view(type_name)) {
-    match (val) {
-      VArr(a) => {
-        let elem = a.elem;
-        let declared = parser.array_method_element(type_name);
-        if (elem.len() == 0 && parser.type_str_vars(declared, []).len() == 0) {
-          elem = declared;
-        }
-        return arr_retyped(a, elem, parser.spelling_is_view(type_name));
-      },
-      _ => {
+  match (val) {
+    VCell(c) => {
+      if (parser.parse_type_ref(type_name).base == "Cell") {
+        return cell_as_declared(c, type_name);
+      }
+      return val;
+    },
+    VArr(a) => {
+      let ty = parser.parse_type_ref(type_name);
+      let is_view = ty.is_view && ty.array_depth == 0;
+      if (ty.base == "Cell" || !(name_ends_with(type_name, "[]") || is_view)) {
         return val;
       }
+      let elem = a.elem;
+      let declared = parser.array_method_element(type_name);
+      if (elem.len() == 0 && parser.type_str_vars(declared, []).len() == 0) {
+        elem = declared;
+      }
+      return arr_retyped(a, elem, is_view);
+    },
+    VTuple(_) => {
+      return coerce_tuple_parts(val, type_name);
+    },
+    _ => {
+      return val;
     }
   }
-  return coerce_tuple_parts(val, type_name);
 }
 
 // A tuple from a value block takes each part of its declared result type.
@@ -1044,21 +1052,24 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, try_cleanup: ast.Stmt[], heap: interpheap.Heap }
+pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, try_cleanup: ast.Stmt[], heap: interpheap.Heap, cells: boolean }
 
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
-// `receivers` holds the runtime_receiver_name of each declaration.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[] }
+// `receivers` holds the runtime_receiver_name of each declaration, and `cells`
+// its body_needs_cells.
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[], cells: boolean[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
   let receivers: string[] = [];
+  let cells: boolean[] = [];
   for fd in decls {
     names = names.append(runtime_method_name(fd));
     receivers = receivers.append(runtime_receiver_name(fd.receiver_type));
+    cells = cells.append(body_needs_cells(fd.body));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers, cells: cells };
 }
 
 // The positions of the functions that a call of `name` can reach, in
@@ -1090,14 +1101,14 @@ pub function new_env(heap: interpheap.Heap): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", try_cleanup: [], heap: heap };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", try_cleanup: [], heap: heap, cells: true };
 }
 
 function new_module_env(heap: interpheap.Heap, fs: Funcs, al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "", try_cleanup: [], heap: heap };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "", try_cleanup: [], heap: heap, cells: true };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -1331,6 +1342,9 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
 // Makes a cell of each binding that a closure of `st` writes, and of each
 // that it reads and `body`, the block of `st`, assigns.
 pub function cellify_captures(own env: Env, st: ast.Stmt, body: ast.Stmt[]): Env {
+  if (!env.cells) {
+    return env;
+  }
   let out = cellify_env(env, stmt_lambda_writes(st));
   let reads = lam_read_names(st);
   if (reads.len() == 0) {
@@ -1347,6 +1361,44 @@ pub function cellify_captures(own env: Env, st: ast.Stmt, body: ast.Stmt[]): Env
     return out;
   }
   return cellify_env(Env { ...out }, hit);
+}
+
+// False when cellify_captures changes nothing for each statement of `body`
+// and of the blocks in it: no closure writes a binding, and no closure reads
+// a binding that `body` assigns.
+function body_needs_cells(body: ast.Stmt[]): boolean {
+  let writes: string[] = [];
+  let reads: string[] = [];
+  for st in body {
+    writes = astwalk.fold_stmt_nodes(st, writes, keep_stmt_names, lam_target_of, astwalk.descend_all);
+    reads = astwalk.fold_stmt_nodes(st, reads, keep_stmt_names, lam_read_of, astwalk.descend_all);
+  }
+  if (writes.len() > 0) {
+    return true;
+  }
+  if (reads.len() == 0) {
+    return false;
+  }
+  let assigned = lam_assign_targets(body, []);
+  for name in reads {
+    if (util.index_of_str(assigned, name) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A value block is part of the body that holds it. A closure is a body of
+// its own.
+function lambda_needs_cells(lm: ast.ExprLambda, env: Env): boolean {
+  if (is_value_block_lambda(lm)) {
+    return env.cells;
+  }
+  return body_needs_cells(lm.body);
+}
+
+function keep_stmt_names(st: ast.Stmt, own acc: string[]): string[] {
+  return acc;
 }
 
 function stmt_lambda_writes(st: ast.Stmt): string[] {
@@ -1649,7 +1701,7 @@ function cell_tree_text(h: usize, v: Value, own edges: interpheap.Root[], heap: 
         if (!captured.ok) {
           return (false, edges);
         }
-        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name, self_name: f.self_name };
+        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name, self_name: f.self_name, cells: f.cells };
         let root = interpheap.allocate_closure(heap, code, captured.text, captured.edges);
         cell_bits_text(h, 70, edges.len() as i64);
         return (true, edges.append(root));
@@ -1907,7 +1959,7 @@ function cell_leaf_value(s: string, at: Cell[i32], edges: interpheap.Root[], hea
     let payload = interpheap.get(root);
     if let Some(code) = payload.closure {
       let captured = cell_parts_value(payload.text, cell_new(0), interpheap.children(root), heap, []);
-      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name, self_name: code.self_name };
+      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name, self_name: code.self_name, cells: code.cells };
     }
     return v_err("function binding has no code");
   }
@@ -5448,6 +5500,7 @@ function resolve_ident_value(name: string, env: Env): Value {
           captured_types: no_types,
           generic_name: generic_name,
           self_name: "",
+          cells: env.funcs.cells[vfi],
         };
       }
     }
@@ -5657,6 +5710,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         captured_types: captured.types,
         generic_name: "",
         self_name: "",
+        cells: lambda_needs_cells(lm, env),
       };
     },
     ast.ExprMapLit(_) => {
@@ -6343,7 +6397,7 @@ function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Fu
 }
 
 function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
-  let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "", self_name: "" };
+  let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "", self_name: "", cells: true };
   match (cv) {
     VFunc(v) => {
       fv = v;
@@ -6358,7 +6412,7 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", try_cleanup: [], heap: heap };
+  let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", try_cleanup: [], heap: heap, cells: fv.cells };
   for j in 0..fv.params.len() {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
   }
@@ -6447,7 +6501,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body) };
+  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body), cells: funcs.cells[ai] };
   let targs = parser.parse_type_ref(type_name).args;
   let tps = fd.type_params;
   if (tps.len() == 0) {
@@ -7057,7 +7111,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body) };
+      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body), cells: funcs.cells[at] };
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       env = bind_receiver_consts(env, fd.receiver_type, recv_static);
       env = env.bind(fd.receiver_name, recv);
@@ -9551,7 +9605,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       if (fd.import_iface.len() > 0 && fd.import_iface != parser.CALLBACK_IFACE) {
         return v_err(import_refusal(name, fd.import_wit, fd.import_iface));
       }
-      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body) };
+      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body), cells: funcs.cells[at] };
       let no_recv = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
       for j in 0..fd.params.len() {
@@ -10497,7 +10551,7 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
     let empty_args: Value[] = [];
     return call_func(heap, "main", empty_args, funcs, all_aliases, all_variants);
   }
-  let env = new_module_env(heap, funcs, all_aliases, all_variants);
+  let env = Env { ...new_module_env(heap, funcs, all_aliases, all_variants), cells: body_needs_cells(mod.top_stmts) };
   for j in 0..mod.top_stmts.len() {
     env = cellify_captures(env, mod.top_stmts[j], mod.top_stmts);
     let r = eval_stmt(mod.top_stmts[j], unsafe { share_unchecked(env) });

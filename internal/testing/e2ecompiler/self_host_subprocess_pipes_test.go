@@ -2,9 +2,13 @@ package e2ecompiler
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // Each check is a child that the three pipes of subprocess must serve at the
@@ -79,6 +83,29 @@ func TestSelfHostSubprocessPipesArm64(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), "subprocess_pipes", string(asm)))
+	var eb strings.Builder
+	cmd.Stderr = &eb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, eb.String())
+	}
+	assertBalancedCensus(t, eb.String())
+}
+
+func TestSelfHostArm64DarwinSubprocessPipes(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("requires Apple Silicon")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
+	bin := filepath.Join(t.TempDir(), "subprocess_pipes")
+	compile := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, writeSubprocessPipesSrc(t), e2eharness.SelfHostStdlibRoot(t))
+	compile.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
+	if out, err := compile.CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	cmd := exec.Command(bin)
 	var eb strings.Builder
 	cmd.Stderr = &eb
 	_ = cmd.Run()
