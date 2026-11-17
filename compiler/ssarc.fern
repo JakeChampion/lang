@@ -1525,9 +1525,13 @@ function wipe_sole(own r: irtables.LowerState, slot: i32, shift: i32): irtables.
   return emit(r, ir.op_end());
 }
 
-function drops(own r: irtables.LowerState, step: ssaunits.Step, f: ssasem.Func, p: ssaunits.Plan, links: i32[]): irtables.LowerState {
+// The drops of a step that leaves block b, to the block `to` or at a return
+// (-1).
+function drops(own r: irtables.LowerState, step: ssaunits.Step, f: ssasem.Func, p: ssaunits.Plan, links: i32[], b: ssa.SBlock, to: i32): irtables.LowerState {
   for value in step.drops {
-    if (!null_unit(p, value)) {
+    if (!null_unit(p, value) && (static_unit(p, b, links, value) || to >= 0 && links_none(links, value) && ssaunits.static_on_edge(f, b, to, value))) {
+      r = static_drop(r, value, f);
+    } else if (!null_unit(p, value)) {
       r = drop_linked(r, value, links, f);
     }
   }
@@ -1542,11 +1546,38 @@ function drops_less(own r: irtables.LowerState, step: ssaunits.Step, f: ssasem.F
   for value in step.drops {
     if (value == shell) {
       r = shell_release(release(r, value, f.values[value], f));
+    } else if (value != taken && value != took && value != held && !null_unit(p, value) && static_unit(p, b, links, value)) {
+      r = static_drop(r, value, f);
     } else if (value != taken && value != took && value != held && !null_unit(p, value)) {
       r = drop_known(r, value, links, f, known_fields(f, p, b, value));
     }
   }
   return r;
+}
+
+// A value that a variant test fixes as a static box. Its count is immortal, so
+// its drop is a release that the native emitters write as no code.
+function static_drop(own r: irtables.LowerState, value: i32, f: ssasem.Func): irtables.LowerState {
+  let scratch_start = r.scratch_start;
+  return mark_release(drop_value(r, value, f.values[value], scratch_start, f), ir.static_release);
+}
+
+function static_unit(p: ssaunits.Plan, b: ssa.SBlock, links: i32[], d: i32): boolean {
+  return links_none(links, d) && ssaunits.known_static(p.reuse.reads, b, d);
+}
+
+// The block with id `id`, or a block that tests nothing.
+function block_of(f: ssasem.Func, id: i32): ssa.SBlock {
+  for b in f.graph.blocks {
+    if (b.id == id) {
+      return b;
+    }
+  }
+  return ssa.SBlock { id: -1, insts: [], term: ssa.STerm { kind_tag: 0, cond: 0, target: 0, t: 0, f: 0, value: 0 }, preds: [] };
+}
+
+function links_none(links: i32[], d: i32): boolean {
+  return d >= links.len() || links[d] < 0;
 }
 
 function known_fields(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, d: i32): Option[semrecords.Field[]] {
@@ -1886,7 +1917,7 @@ function edge(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, idx:
     r = hold_token(r, f, held, known);
     step = ssaunits.Step { ...step, drops: without(step.drops, held) };
   }
-  r = drops(r, step, f, p, links);
+  r = drops(r, step, f, p, links, block_of(f, from), dest.id);
   let i = dest.insts.len() - 1;
   while (i >= 0) {
     let ins = dest.insts[i];
@@ -7856,7 +7887,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && e.links[b.term.value] >= 0) {
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
     }
-    e = Emit { ...e, r: drops(e.r, ret, f, p, e.links) };
+    e = Emit { ...e, r: drops(e.r, ret, f, p, e.links, b, -1) };
     if (b.term.kind_tag == ssa.TERM_UNREACHABLE && !ends_in_exit(f, b)) {
       e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };

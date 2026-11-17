@@ -187,7 +187,7 @@ pub function even_count(ins: SInst): boolean {
 }
 
 pub function plain_imm(ins: SInst): i32 {
-  if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7 || ins.imm == SHARED_DEC)) {
+  if (ins.kind_tag == CALL && (ins.imm >= 1 && ins.imm <= 3 || ins.imm == 7 || ins.imm == SHARED_DEC || ins.imm == STATIC_RELEASE)) {
     return 0;
   }
   return ins.imm;
@@ -732,6 +732,13 @@ pub const SOLE_BOX: i32 = 9;
 // count, inline.
 pub const SHARED_DEC: i32 = 10;
 
+// The imm of the release of a static box (ir.static_release).
+pub const STATIC_RELEASE: i32 = 11;
+
+pub function static_release(ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.args.len() == 1 && ins.imm == STATIC_RELEASE;
+}
+
 pub function shared_dec(ins: SInst): boolean {
   return ins.kind_tag == CALL && ins.args.len() == 1 && ins.imm == SHARED_DEC && ins.str.starts_with("__sem_release_");
 }
@@ -745,7 +752,7 @@ pub function sole_release(ins: SInst): boolean {
 // down by one, and only a unique box calls the routine. The helper release
 // of a record or a variant has the mark 7 (`ir.box_release`).
 pub function inline_release(ins: SInst): boolean {
-  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && !sole_release(ins) || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && !sole_release(ins) && !static_release(ins) || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
 }
 
 function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean, light: boolean): i32 {
@@ -956,7 +963,7 @@ pub function rc_inlined(ins: SInst): boolean {
   if (ins.kind_tag != CALL || ins.args.len() != 1) {
     return false;
   }
-  return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc" || shared_dec(ins);
+  return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc" || shared_dec(ins) || static_release(ins);
 }
 
 function calls_before(calls: i32[], total_pos: i32): i32[] {

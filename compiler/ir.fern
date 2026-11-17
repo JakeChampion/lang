@@ -354,6 +354,16 @@ pub function is_shared_dec(op: Op): boolean {
   return op.i64_imm == 10;
 }
 
+// The release of a variant with no field, which is a static box with an
+// immortal count. The native emitters write no code for it.
+pub function static_release(op: Op): Op {
+  return Op { ...op, i64_imm: 11 };
+}
+
+pub function is_static_release(op: Op): boolean {
+  return op.i64_imm == 11;
+}
+
 // The count or the uniqueness test of a value of a record or of an enum of
 // variant boxes. Such a value has no tag, so it is never an odd address: it is
 // a box, a static box, the index of a variant or null.
