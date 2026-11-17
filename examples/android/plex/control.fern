@@ -8,6 +8,7 @@
 // so the loop thread never waits for the network. The loop polls the
 // workers on its timeouts.
 import "std/android";
+import "std/android/download";
 import "std/android/draw";
 import "std/android/motion";
 import "std/android/player";
@@ -101,6 +102,14 @@ pub struct Device {
   // takes the video of a key off the row.
   watch_next: (string, string, i32, i64, i64, string) => void,
   watch_next_drop: (string) => void,
+  // Gives Android a download of the request to the file `name` in
+  // `downloads_dir`, with the title of its notification. The ID of the
+  // download, or -1.
+  download: (plex.Request, string, string) => i64,
+  download_progress: (i64) => download.Progress,
+  // Stops a download and deletes its file.
+  download_remove: (i64) => void,
+  downloads_dir: string,
   // Gives an accessibility service, such as TalkBack, the items that the
   // screen shows.
   access: (android.AccessItem[]) => void,
@@ -302,7 +311,18 @@ pub struct App {
   gpu: boolean,
   paint: boolean,
   fling: Fling,
+  // The downloads of items, and the last time that the app read their
+  // progress.
+  downloads: Saved[],
+  downloads_at: i64,
 }
+
+// A download of an item: the ID that Android gave, the item as the server
+// sent it, the name of its file, and its last state.
+struct Saved { id: i64, item: plex.Item, file: string, status: i32, done: i64, total: i64 }
+
+// The time between two reads of the progress of the downloads.
+const DOWNLOAD_MS: i64 = 1000i64;
 
 // The images that the app keeps decoded, and the most that one batch fetches.
 const CACHE_SIZE: i32 = 160;
@@ -346,6 +366,17 @@ pub function setting(text: string, key: string): string {
     }
   }
   return "";
+}
+
+function num64(s: string): i64 {
+  let v = 0i64;
+  for c in s.bytes() {
+    if (c < 48u8 || c > 57u8) {
+      return v;
+    }
+    v = v * 10i64 + (c - 48u8) as i64;
+  }
+  return v;
 }
 
 pub function num(s: string): i32 {
@@ -426,6 +457,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     query: "", typing: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
     play: no_play(), press: no_press(), menu: plex.no_item(), focus: "", asked_notifications: false, users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
+    downloads: load_downloads(dev, dir), downloads_at: 0i64,
   };
   s = App { ...s, server: plex.Server { ...no_server(), name: setting(text, "server_name"), id: setting(text, "server_id"), token: s.base.token } };
   if (s.quality < 0 || s.quality >= plex.qualities().len()) {
@@ -891,6 +923,9 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
   if (verb == "leaves") {
     return play_first(t, plex.parse_items(r.text()).items);
   }
+  if (verb == "download") {
+    return got_download(t, r);
+  }
   if (verb == "search") {
     if (rest == t.query) {
       return App { ...t, results: plex.parse_hubs(r.text()), rows: [], error: "" };
@@ -1344,10 +1379,7 @@ function open_item(own s: App, it: plex.Item): App {
 function item_at(s: App, act: string): Option[plex.Item] {
   let parts = act.split(":");
   if (parts[0] == "hub" && parts.len() == 3) {
-    let hubs = s.hubs;
-    if (s.screen == ui.SEARCH) {
-      hubs = s.results;
-    }
+    let hubs = shown_hubs(s);
     let i = num(parts[1]);
     let j = num(parts[2]);
     if (i < hubs.len() && j < hubs[i].items.len()) {
@@ -1550,6 +1582,164 @@ function replace_item(own s: App, it: plex.Item): App {
   return App { ...s, hubs: hubs, results: results, items: swap(s.items), children: swap(s.children), dirty: true };
 }
 
+// --- downloads
+
+function downloads_path(dir: string): string {
+  return dir + "/downloads";
+}
+
+function download_meta_path(dir: string, key: string): string {
+  return dir + "/download-" + key + ".json";
+}
+
+// The downloads that the files of `dir` list. Each line of the list holds
+// the ID, the key, the file, the status and the place to play from. The
+// metadata of each item is in a file of its own.
+function load_downloads(dev: Device, dir: string): Saved[] {
+  let out: Saved[] = [];
+  if (dir.len() == 0) {
+    return out;
+  }
+  for line in dev.read(downloads_path(dir)).split("\n") {
+    let f = line.split("\t");
+    if (f.len() == 5) {
+      if let Some(it) = plex.parse_item(dev.read(download_meta_path(dir, f[1]))) {
+        out = out.append(Saved { id: num64(f[0]), item: plex.Item { ...it, offset_ms: num64(f[4]) }, file: f[2], status: num(f[3]), done: 0i64, total: -1i64 });
+      }
+    }
+  }
+  return out;
+}
+
+function save_downloads(s: App): void {
+  if (s.dir.len() == 0) {
+    return;
+  }
+  let lines: string[] = [];
+  for d in s.downloads {
+    lines = lines.append([d.id.to_string(), d.item.key, d.file, d.status.to_string(), d.item.offset_ms.to_string()].join("\t"));
+  }
+  s.dev.write(downloads_path(s.dir), lines.join("\n") + "\n");
+}
+
+// The index of the download of the item `key`, or -1.
+function saved_at(s: App, key: string): i32 {
+  for i in 0..s.downloads.len() {
+    if (s.downloads[i].item.key == key) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The part of the download of the item `key` that came, in percent: 100
+// once it is done, or -1 when the item has no download.
+function download_percent(s: App, key: string): i32 {
+  let at = saved_at(s, key);
+  if (at < 0) {
+    return -1;
+  }
+  let d = s.downloads[at];
+  if (d.status == download.DONE) {
+    return 100;
+  }
+  if (d.total <= 0i64) {
+    return 0;
+  }
+  return clamp((d.done * 100i64 / d.total) as i32, 0, 99);
+}
+
+// True while a download is not done.
+function downloading(s: App): boolean {
+  return s.downloads.filter((d: Saved): boolean => d.status != download.DONE).len() > 0;
+}
+
+// True when the play reads a downloaded file.
+function on_disk(p: Play): boolean {
+  return p.stream.url.starts_with("file://");
+}
+
+// The rows of the screen: on the home screen, the downloads that are done
+// come last, so the rows of the server keep their places.
+function shown_hubs(s: App): plex.Hub[] {
+  if (s.screen == ui.SEARCH) {
+    return s.results;
+  }
+  let done = s.downloads.filter((d: Saved): boolean => d.status == download.DONE).map((d: Saved): plex.Item => d.item);
+  if (s.screen != ui.HOME || done.len() == 0) {
+    return s.hubs;
+  }
+  return s.hubs.append(plex.Hub { title: s.texts.text("Downloads"), ident: "downloads", items: done });
+}
+
+// Starts the download of the item of the metadata `r` when the phone plays
+// its file as it is.
+function got_download(own t: App, r: plex.Reply): App {
+  let Some(it) = plex.parse_item(r.text()) else {
+    return t;
+  };
+  if (saved_at(t, it.key) >= 0) {
+    return t;
+  }
+  if (!plex.direct_playable(it, t.dev.decoders)) {
+    return App { ...t, error: "Only a file that this phone plays as it is can download" };
+  }
+  let name = plex.download_name(it);
+  let id = t.dev.download(plex.download_request(t.client, t.base, it), name, plex.card_title(it));
+  if (id < 0i64) {
+    return App { ...t, error: "Android refused the download" };
+  }
+  if (t.dir.len() > 0) {
+    t.dev.write(download_meta_path(t.dir, it.key), r.text());
+  }
+  let u = App { ...t, downloads: t.downloads.append(Saved { id: id, item: it, file: name, status: download.PENDING, done: 0i64, total: -1i64 }), downloads_at: 0i64, error: "" };
+  save_downloads(u);
+  return u;
+}
+
+// Stops the download at `at` and deletes its file.
+function drop_download(own s: App, at: i32): App {
+  let id = s.downloads[at].id;
+  s.dev.download_remove(id);
+  let kept = s.downloads.filter((d: Saved): boolean => d.id != id);
+  let t = App { ...s, downloads: kept, dirty: true };
+  save_downloads(t);
+  return t;
+}
+
+// Reads the progress of the downloads that are not done, each second. A
+// download that failed goes, and so does one that the user deleted.
+function download_tick(own s: App, now: i64): App {
+  if (!downloading(s) || now - s.downloads_at < DOWNLOAD_MS) {
+    return s;
+  }
+  let out: Saved[] = [];
+  let changed = false;
+  let lost = false;
+  for d in s.downloads {
+    if (d.status == download.DONE) {
+      out = out.append(d);
+    } else {
+      let p = s.dev.download_progress(d.id);
+      if (p.status == download.FAILED) {
+        s.dev.download_remove(d.id);
+        lost = true;
+      } else if (p.status != download.GONE) {
+        out = out.append(Saved { ...d, status: p.status, done: p.done, total: p.total });
+      }
+      changed = changed || p.status != d.status;
+    }
+  }
+  let t = App { ...s, downloads: out, downloads_at: now, dirty: s.dirty || s.menu.key.len() > 0 || changed };
+  if (lost) {
+    t = App { ...t, error: "The download failed" };
+  }
+  if (changed) {
+    save_downloads(t);
+  }
+  return t;
+}
+
 // Runs an action of the menu of a poster. Each action closes it.
 function menu_act(own s: App, a: string): App {
   let it = s.menu;
@@ -1560,6 +1750,13 @@ function menu_act(own s: App, a: string): App {
   if (a == "menu:mark") {
     let now = !plex.watched(it);
     return ask(replace_item(t, plex.marked(it, now)), "scrobble", Scrobble(it.key, now));
+  }
+  if (a == "menu:download" && plex.playable_kind(it.kind)) {
+    let at = saved_at(t, it.key);
+    if (at >= 0) {
+      return drop_download(t, at);
+    }
+    return ask(t, "download:" + it.key, Meta(it.key));
   }
   if (a == "menu:show" && it.grandparent_key.len() > 0) {
     return open_item(t, plex.Item { ...plex.no_item(), key: it.grandparent_key, kind: "show", title: it.grandparent });
@@ -1638,7 +1835,7 @@ const STALL_WINDOW_MS: i64 = 60000i64;
 // quality. The stream then starts again as a transcode where it is.
 function stalled(own s: App, on: boolean): App {
   let p = s.play;
-  if (!on || s.quality != plex.auto_quality() || !p.prepared || p.level + 1 >= plex.auto_quality()) {
+  if (!on || s.quality != plex.auto_quality() || !p.prepared || p.level + 1 >= plex.auto_quality() || on_disk(p)) {
     return s;
   }
   let now = s.dev.mono_ms();
@@ -1678,8 +1875,16 @@ function start_play(own s: App, it: plex.Item, queue: plex.Item[]): App {
   let session = hex_id(s.dev);
   let level = first_level(s.quality);
   let q = plex.qualities()[level];
+  let saved = saved_at(s, it.key);
+  let kept = saved >= 0 && s.downloads[saved].status == download.DONE && s.dev.downloads_dir.len() > 0;
+  if (kept) {
+    it = plex.Item { ...s.downloads[saved].item, offset_ms: it.offset_ms };
+  }
   let choice = plex.remembered(it);
   let stream = plex.stream_for(s.client, s.base, it, q, it.offset_ms, session, s.dev.decoders, choice);
+  if (kept) {
+    stream = plex.Stream { url: "file://" + s.dev.downloads_dir + "/" + s.downloads[saved].file, transcode: false, offset_ms: it.offset_ms };
+  }
   let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms, level: level, choice: choice };
   let t = App { ...push(s), screen: ui.PLAYER, play: p, dirty: true };
   if let Some(part) = plex.thumbnail_part(it) {
@@ -1687,8 +1892,8 @@ function start_play(own s: App, it: plex.Item, queue: plex.Item[]): App {
   }
   t = ask_cues(t);
   // An item from a list has no markers and no tracks, so the app asks for
-  // all of its metadata.
-  if (!audio(t.play)) {
+  // all of its metadata. A download keeps all of it.
+  if (!audio(t.play) && !kept) {
     t = ask(t, "playmeta:" + it.key, Meta(it.key));
   }
   log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
@@ -1962,6 +2167,13 @@ function stop_play(own s: App, completed: boolean): App {
       let kind = if (p.item.kind == "episode") { 3 } else { 0 };
       t.dev.watch_next(p.item.key, plex.card_title(p.item), kind, pos, p.duration, plex.image_url(t.base, plex.poster(p.item), 400, 600));
     }
+  }
+  let at = saved_at(t, p.item.key);
+  if (at >= 0) {
+    let place = if (finished) { 0i64 } else { pos };
+    let d = t.downloads[at];
+    t = App { ...t, downloads: t.downloads.with(at, Saved { ...d, item: plex.Item { ...d.item, offset_ms: place } }) };
+    save_downloads(t);
   }
   return refresh_detail(pop(App { ...t, play: no_play() }));
 }
@@ -2461,10 +2673,7 @@ function set_row(rows: i32[], i: i32, v: i32): i32[] {
 }
 
 function row_items(s: App, i: i32): i32 {
-  let hubs = s.hubs;
-  if (s.screen == ui.SEARCH) {
-    hubs = s.results;
-  }
+  let hubs = shown_hubs(s);
   if (i >= 0 && i < hubs.len()) {
     return hubs[i].items.len();
   }
@@ -3066,10 +3275,7 @@ function pin_tick(own s: App, now: i64): App {
 // --- the loop
 
 pub function view(s: App): ui.View {
-  let hubs = s.hubs;
-  if (s.screen == ui.SEARCH) {
-    hubs = s.results;
-  }
+  let hubs = shown_hubs(s);
   let p = s.play;
   let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, caption: plex.cue_at(p.cues, p.position), scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status) };
   return ui.View {
@@ -3077,7 +3283,7 @@ pub function view(s: App): ui.View {
     texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: s.texts.text(s.error), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
@@ -3167,6 +3373,9 @@ pub function timeout(s: App, now: i64): i32 {
   }
   if (s.pin.id != 0i64) {
     return clamp((s.pin_at - now) as i32, 1, 2000);
+  }
+  if (s.shown && downloading(s)) {
+    return clamp((s.downloads_at + DOWNLOAD_MS - now) as i32, 1, DOWNLOAD_MS as i32);
   }
   return -1;
 }
@@ -3360,7 +3569,7 @@ function frame(own s: App, ns: i64): App {
 // the next requests and draws the screen when it changed.
 pub function step(own s: App, e: android.Event): App {
   let now = s.dev.mono_ms();
-  let t = hold_tick(search_tick(pin_tick(play_tick(event(s, e), now), now), now), now);
+  let t = download_tick(hold_tick(search_tick(pin_tick(play_tick(event(s, e), now), now), now), now), now);
   t = poll_probes(poll_report(poll_images(poll_api(t))));
   t = start_report(start_api(t));
   t = draw_screen(t);

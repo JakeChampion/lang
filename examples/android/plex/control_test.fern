@@ -5,6 +5,7 @@
 // finds the reply. With PLEX_CONTROL_PNG set to a directory, the test writes
 // the last frame of each case there as a PNG file.
 import "std/android";
+import "std/android/download";
 import "std/android/draw";
 import "std/android/ui/scene";
 import "std/png";
@@ -208,7 +209,7 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]] }
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]], progress: Cell[download.Progress] }
 
 function none_access(): android.AccessItem[] {
   let out: android.AccessItem[] = [];
@@ -217,7 +218,7 @@ function none_access(): android.AccessItem[] {
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()), progress: cell_new(download.Progress { status: download.PENDING, done: 0i64, total: -1i64 }) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -309,6 +310,13 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => note(log.calls, "watch next " + key + " " + title + " kind=" + kind.to_string() + " at=" + at.to_string() + " poster=" + poster),
     watch_next_drop: (key: string): void => note(log.calls, "watch next drop " + key),
     access: (items: android.AccessItem[]): void => log.access.set(items),
+    download: (r: plex.Request, name: string, title: string): i64 => {
+      note(log.calls, "download " + r.url + " " + name + " " + title);
+      return 42i64;
+    },
+    download_progress: (id: i64): download.Progress => log.progress.get(),
+    download_remove: (id: i64): void => note(log.calls, "download remove " + id.to_string()),
+    downloads_dir: "/sdcard/files",
     brightness: (level: f32): void => note(log.calls, "light " + ((level * 1000.0f32) as i32).to_string()),
     system_brightness: (): f32 => 0.5f32,
     volume: (): (i32, i32) => (7, 15),
@@ -1198,6 +1206,102 @@ function test_accessibility(): test.TestOutcome {
   return test.assert_eq((detail.screen == ui.DETAIL).to_string(), "true");
 }
 
+// The tap name of the poster of the item `key` on the screen.
+function poster_of(s: control.App, key: string): string {
+  for n in s.nodes {
+    if (n.tap.name.starts_with("hub:") && n.say.len() == 0) {
+      let parts = n.tap.name.split(":");
+      if (parts.len() == 3) {
+        let hubs = control.view(s).hubs;
+        let i = control.num(parts[1]);
+        let j = control.num(parts[2]);
+        if (i < hubs.len() && j < hubs[i].items.len() && hubs[i].items[j].key == key) {
+          return n.tap.name;
+        }
+      }
+    }
+  }
+  return "";
+}
+
+// A finger that rests on the poster `act` from `now` opens its menu.
+function hold(own s: control.App, log: Log, now: i64, f: draw.Frame, act: string): control.App {
+  let Some(n) = node(s, act) else {
+    return s;
+  };
+  let (x, y) = centre(n);
+  let held = at(at(s, log, now, f, android.Touch(0, x as f32, y as f32)), log, now + 550i64, f, android.Tick);
+  return settle(at(held, log, now + 600i64, f, android.Touch(1, x as f32, y as f32)), log, now + 600i64, f);
+}
+
+// Download in the menu of a poster asks for the metadata of the item and
+// gives Android the file of its part, and the app keeps the list in its
+// files. The menu shows the progress, and a done download shows in a row
+// of the home screen. After a new start with no server, the row is still
+// there, and Play reads the file. Remove download deletes it, and an item
+// that the phone does not play as it is does not download.
+function test_downloads(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let film = poster_of(home, "501");
+  let menu = hold(home, log, 1000i64, f, film);
+  if (!says(menu, "Download")) {
+    return test.fail("no Download in the menu");
+  }
+  let asked = tap(menu, log, 1700i64, f, "menu:download");
+  if (!has_call(log, "download https://up.example:32400/library/parts/11/file.mp4?download=1 501.mp4 Inception")) {
+    return test.fail("no download of the part: " + log.calls.get().join(" | "));
+  }
+  if (!file_of(log, "/data/downloads").starts_with("42\t501\t501.mp4\t1\t") || file_of(log, "/data/download-501.json").len() == 0) {
+    return test.fail("the list of downloads: " + file_of(log, "/data/downloads"));
+  }
+  if (control.timeout(asked, 1700i64) > 1000) {
+    return test.fail("no wake-up for the progress");
+  }
+  log.progress.set(download.Progress { status: download.RUNNING, done: 500i64, total: 1000i64 });
+  let running = hold(at(asked, log, 3000i64, f, android.Tick), log, 3100i64, f, film);
+  if (!says(running, "Stop download (50%)")) {
+    return test.fail("no progress in the menu");
+  }
+  log.progress.set(download.Progress { status: download.DONE, done: 1000i64, total: 1000i64 });
+  let done = at(tap(running, log, 3800i64, f, "menu:close"), log, 5000i64, f, android.Tick);
+  let rows = control.view(done).hubs;
+  let last = rows[rows.len() - 1];
+  if (last.title != "Downloads" || last.items.len() != 1 || last.items[0].key != "501" || !file_of(log, "/data/downloads").starts_with("42\t501\t501.mp4\t8\t")) {
+    return test.fail("no row of downloads");
+  }
+  let off = shown(log, f, "https://down.example:32400", "srv");
+  let row = poster_of(off, "501");
+  let parts = row.split(":");
+  if (row.len() == 0 || control.num(parts[1]) != control.view(off).hubs.len() - 1) {
+    return test.fail("the downloads are not the last row after a new start");
+  }
+  let played = tap(hold(off, log, 1000i64, f, row), log, 1700i64, f, "menu:play");
+  if (!has_call(log, "play file:///sdcard/files/501.mp4") || played.play.stream.transcode) {
+    return test.fail("Play did not read the file: " + log.calls.get().join(" | "));
+  }
+  let ready = settle(at(played, log, 1800i64, f, android.Posted(19, 0 as usize)), log, 1800i64, f);
+  let stopped = at(at(ready, log, 2000i64, f, android.Key(4, 0)), log, 2000i64, f, android.Key(4, 1));
+  if (!file_of(log, "/data/downloads").starts_with("42\t501\t501.mp4\t8\t120000")) {
+    return test.fail("the place of the download: " + file_of(log, "/data/downloads"));
+  }
+  let kept = poster_of(stopped, "501");
+  let removed = tap(hold(stopped, log, 3000i64, f, kept), log, 3700i64, f, "menu:download");
+  if (!has_call(log, "download remove 42") || file_of(log, "/data/downloads") != "\n" || control.view(removed).hubs.len() != 0) {
+    return test.fail("Remove download kept the file");
+  }
+  log.decoders.set(["video/hevc", "audio/mp4a-latm"]);
+  let online = shown(log, f, "https://up.example:32400", "srv");
+  let other = poster_of(online, "502");
+  let refused = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
+  if (log.calls.get().filter((c: string): boolean => c.starts_with("download http")).len() != 1 || !refused.error.starts_with("Only a file")) {
+    return test.fail("a file that needs a transcode downloaded");
+  }
+  return test.pass();
+}
+
 function count_plays(log: Log): i32 {
   return log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len();
 }
@@ -1573,6 +1677,7 @@ function main(): i32 {
   r = r.it("a video that stops part of the way goes on Watch Next", test_watch_next);
   r = r.it("a subtitle file beside the video is drawn by the app", test_drawn_subtitles);
   r = r.it("TalkBack reads the posters and the buttons, and acts on them", test_accessibility);
+  r = r.it("a download plays with no server, and goes when it is removed", test_downloads);
   r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
   r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
   r = r.it("the connections of a server race", test_connection_race);
