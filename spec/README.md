@@ -120,6 +120,7 @@ maintained as living documents and a copy would drift:
 | `docs/STRINGS-SOTA.md` | What a string slice yields: the checked `s[a:b]` answers `Option[str]`, `None` for an out-of-range or code-point-splitting endpoint; `slice_unchecked` is the byte-indexed form that aborts instead. |
 | `docs/SAFETY-CONTRACT.md` | The unsafe boundary: an unsafe declaration states caller obligations, and only an `unsafe` block accepts them (`E095` otherwise). |
 | `docs/WORKERS.md` | Share-nothing workers: a `send` parameter admits only a send-safe argument (`E100`), a `Worker` is joined exactly once, and every engine runs the same program. |
+| `docs/BLOCK-EXPRESSIONS.md` | Block-expressions: the trailing value, and the `never` type of a block or an arm that leaves the function. |
 
 `semantics.md` is the index that ties these to tests. It extracts the
 claims each doc makes and names the conformance case that pins each one;
