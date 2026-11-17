@@ -11,6 +11,8 @@ name: Perf
 #           one build, vs .github/perf-baseline-selfhost.txt
 #   alloc   how much the self-host compiler ALLOCATES compiling one real
 #           module, vs .github/alloc-baseline.txt
+#   certify what the emitted-RC certifier cannot decide over the compiler, and
+#           the mutants it misses, vs .github/certify-baseline.txt
 #
 # WHY INSTRUCTION COUNTS AND NOT WALL TIME. A shared CI runner's wall time
 # varies by tens of percent between runs, so a threshold loose enough to avoid
@@ -255,6 +257,24 @@ jobs:
           FERN_PERF_CORRECTED_OUT: ${{ runner.temp }}/corrected/alloc-baseline.txt
         run: scripts/ci-check-perf .github/alloc-baseline.txt "${{ runner.temp }}/alloc-report.txt"
 
+      # What the emitted-RC certifier cannot decide: values it leaves unproved,
+      # functions it skips, calls it has no rule for, and the planted
+      # imbalances it misses (scripts/certify-census). None of these fails a
+      # compile, so this lane is the only check that they do not grow. The
+      # counts come from a static analysis and repeat to the digit, so the
+      # comparison is strict with no tolerance.
+      - name: Measure what the certifier cannot decide
+        if: ${{ !cancelled() && matrix.host == 'x86_64' }}
+        run: scripts/certify-census "${{ runner.temp }}/certify-report.txt"
+
+      - name: Compare the certifier census against the baseline
+        if: ${{ !cancelled() && matrix.host == 'x86_64' }}
+        env:
+          FERN_PERF_GATE_LABEL: certifier census
+          FERN_CI_PERF_GATE_STRICT: "1"
+          FERN_PERF_CORRECTED_OUT: ${{ runner.temp }}/corrected/certify-baseline.txt
+        run: scripts/ci-check-perf .github/certify-baseline.txt "${{ runner.temp }}/certify-report.txt"
+
       # One lane label per metric, unchanged: the note blocks are keyed by them.
       - name: Record the reports in refs/notes/perf
         if: ${{ !cancelled() && github.event_name == 'push' && matrix.host == 'x86_64' }}
@@ -264,6 +284,7 @@ jobs:
           scripts/perf-history record selfhost-size-x86_64 "${{ runner.temp }}/selfhost-size-report.txt"
           scripts/perf-history record selfhost-alloc-x86_64 "${{ runner.temp }}/alloc-report.txt"
           scripts/perf-history record profile-costs-x86_64 "${{ runner.temp }}/profile-costs-report.txt"
+          scripts/perf-history record certify-census-x86_64 "${{ runner.temp }}/certify-report.txt"
 
       - name: Upload the reports
         if: ${{ always() && matrix.host == 'x86_64' }}
@@ -275,6 +296,7 @@ jobs:
             ${{ runner.temp }}/selfhost-size-report.txt
             ${{ runner.temp }}/alloc-report.txt
             ${{ runner.temp }}/profile-costs-report.txt
+            ${{ runner.temp }}/certify-report.txt
           if-no-files-found: warn
 
       # The rows that the compare steps found off their pins, for the rebank
