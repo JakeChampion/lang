@@ -432,6 +432,11 @@ func (c *checker) callSiteBorrowsBeside(x *ast.Call, except string) bool {
 		sig = c.info.FuncSigs[id.Name]
 		flags = c.ownFuncs[id.Name]
 	}
+	// A variant holds its payloads, so a payload lends as a parameter of
+	// its type does.
+	if variant, ok := c.info.EnumConstructions[x]; ok && sig == nil && len(variant.Payloads) == len(x.Args) {
+		sig = &ast.FuncType{Params: variant.Payloads}
+	}
 	for i, a := range x.Args {
 		if aid, ok := a.(*ast.Ident); ok && except != "" && aid.Name == except {
 			continue
@@ -572,6 +577,10 @@ func (c *checker) callbacksReturnOwned(call *ast.Call) bool {
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
+	// A variant that no call gives payloads to holds nothing to lend.
+	if v, ok := c.info.EnumConstructions[e]; ok && len(v.Payloads) == 0 {
+		return false
+	}
 	switch x := e.(type) {
 	case *ast.Lambda:
 		return c.lambdaResultBorrows(x, borrowScope{borrowed: lambdaFreeNames(x)})
@@ -706,6 +715,12 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 		return !c.signatureResultBorrows(id.Name) || c.resultAnalysed[id.Name] && !c.resultBorrows[id.Name] && !c.holdsNoHandle(sig.Result)
 	}
 	return inferred(tag)
+}
+
+// isOnceFunc reports a `once` function type.
+func isOnceFunc(t ast.Type) bool {
+	ft, ok := t.(*ast.FuncType)
+	return ok && ft.Once
 }
 
 // holdsNoHandle reports a type that cannot hold a handle: a number, a

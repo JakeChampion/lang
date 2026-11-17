@@ -6010,13 +6010,29 @@ function bound_type_args(targs: string[], env: Env): string[] {
   return out;
 }
 
+// The value that `name` has as a part of a type: a binding of the
+// environment, or a constant of the module.
+function type_binding(name: string, env: Env): Value {
+  let bound = env.lookup(name);
+  if (!is_err(bound)) {
+    return bound;
+  }
+  for ci in env.funcs.named(name) {
+    let cfd = env.funcs.decls[ci];
+    if (cfd.name == name && cfd.receiver_type.len() == 0 && cfd.params.len() == 0 && cfd.is_const) {
+      return call_func(env.heap, name, [], env.funcs, env.aliases, env.type_decls);
+    }
+  }
+  return bound;
+}
+
 function bound_type_spelling(spelling: string, env: Env): string {
   if (spelling.len() == 0) {
     return spelling;
   }
   let ref = parser.parse_type_ref(spelling);
   let base = ref.base;
-  match (resolve_ident_value(base, env)) {
+  match (type_binding(base, env)) {
     VType(tv) => {
       base = tv.name;
     },

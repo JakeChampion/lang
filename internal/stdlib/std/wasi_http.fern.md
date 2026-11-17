@@ -10,6 +10,8 @@ The adapter converts between Fern HTTP values and WASI HTTP resources. Client re
 
 Host resource handles have explicit ownership and lifetime rules. Error values distinguish host codes, invalid fields, body limits, truncation, and lost resources.
 
+A handler reads its request body lazily from the host stream. A body past the limit ends the stream with `StreamTooLarge`, as in `std/serve`. The adapter writes each response chunk when the body gives it, and then sends the trailers. The proxy world has no filesystem, so a file body gets a 500.
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
@@ -68,7 +70,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/headers";
 import "std/http";
+import "std/i64";
 import "std/platform";
 import "std/stream";
 import "core/error";
@@ -186,15 +190,28 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platfo
       return;
     }
   }
-  let fields = req_headers(request);
-  let (data, how) = read_body(request);
-  let headers = headers_of(fields);
-  req_drop(request);
-  if (how == READ_PAST_CAP) {
+  let headers = headers_of(req_headers(request));
+  let cap = http.limits().body;
+  if (declared_past(headers, cap)) {
+    req_drop(request);
     send(response_out, http.text(413, ""));
     return;
   }
-  let req = HttpRequest { method: method, path: path, body: stream.from_bytes(data), headers: headers, trailers: HeaderMap { names: [], values: [] } };
+  let incoming = -1;
+  let input = -1;
+  match (req_consume(request)) {
+    Ok(b) => {
+      incoming = b;
+      match (body_stream(b)) {
+        Ok(s) => {
+          input = s;
+        },
+        Err(e) => {}
+      }
+    },
+    Err(e) => {}
+  }
+  let req = HttpRequest { method: method, path: path, body: incoming_body(input, cap), headers: headers, trailers: HeaderMap { names: [], values: [] } };
   let resp = handle(req, platform.host());
   send(response_out, resp);
   match (resp.background) {
@@ -203,6 +220,67 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platfo
     },
     None => {}
   }
+  // A child resource must be dropped before its parent: the stream, then the body, then the request.
+  if (input >= 0) {
+    input_stream_drop(input);
+  }
+  if (incoming >= 0) {
+    trailers_drop(body_finish(incoming));
+  }
+  req_drop(request);
+}
+
+function declared_past(h: HeaderMap, cap: i32): boolean {
+  match (h.get("content-length")) {
+    Some(v) => {
+      match (i64.parse_i64(v)) {
+        Ok(n) => {
+          return n > cap as i64;
+        },
+        Err(e) => {}
+      }
+    },
+    None => {}
+  }
+  return false;
+}
+
+// The handler's request body: a lazy stream over the host's input-stream, faulted as std/serve faults a socket body.
+function incoming_body(input: i32, cap: i32): ByteStream {
+  if (input < 0) {
+    return stream.empty();
+  }
+  let no_fault: Option[StreamFault] = None;
+  let fault = cell_new(no_fault);
+  let room = cell_new(cap);
+  let ended = cell_new(false);
+  return stream.from_source(BodySource { next: (): Option[u8[]] => next_chunk(input, room, ended, fault), fault: fault, send: (bytes: u8[]): i32 => 0 - 1 });
+}
+
+function next_chunk(input: i32, room: Cell[i32], ended: Cell[boolean], fault: Cell[Option[StreamFault]]): Option[u8[]] {
+  while (!ended.get()) {
+    match (stream_read(input, WRITE_CHUNK as i64)) {
+      Ok(chunk) => {
+        if (chunk.len() > room.get()) {
+          ended.set(true);
+          fault.set(Some(StreamTooLarge));
+          return None;
+        }
+        room.set(room.get() - chunk.len());
+        if (chunk.len() > 0) {
+          return Some(chunk);
+        }
+      },
+      Err(e) => {
+        ended.set(true);
+        if (e != 1) {
+          fault.set(Some(StreamCutShort));
+        }
+        return None;
+      }
+    }
+  }
+  return None;
 }
 ```
 
@@ -244,16 +322,6 @@ function method_name(m: WasiHttpMethod): string {
     }
   }
   return "";
-}
-
-function read_body(request: i32): (u8[], i32) {
-  match (req_consume(request)) {
-    Ok(body) => {
-      return drain(body, Some(http.limits().body));
-    },
-    Err(e) => {}
-  }
-  return ([], READ_WHOLE);
 }
 ```
 
@@ -338,26 +406,44 @@ function headers_of(fields: i32): HeaderMap {
 }
 
 function send(response_out: i32, resp: HttpResponse): void {
-  let fields = fields_new();
-  let i = 0;
-  while (i < resp.headers.names.len()) {
-    match (fields_append(fields, resp.headers.names[i], resp.headers.values[i])) {
-      Ok(v) => {},
-      Err(e) => {}
-    }
-    i += 1;
+  let answer = resp;
+  match (resp.body) {
+    BodyFile(path) => {
+      answer = http.internal_error("");
+    },
+    BodyFileRanges(path, ranges, seams) => {
+      answer = http.internal_error("");
+    },
+    _ => {}
   }
-  let response = response_new(fields);
-  response_set_status(response, resp.status);
+  let head = answer.headers;
+  if (answer.trailers.names.len() > 0) {
+    head = head.append("trailer", answer.trailers.names.join(", "));
+  }
+  let response = response_new(fields_of(head));
+  response_set_status(response, answer.status);
   match (response_body(response)) {
     Ok(body) => {
       outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
-      write_body(body, resp.body_bytes());
+      write_response(body, answer);
     },
     Err(e) => {
       outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
     }
   }
+}
+
+function fields_of(h: HeaderMap): i32 {
+  let fields = fields_new();
+  let i = 0;
+  while (i < h.names.len()) {
+    match (fields_append(fields, h.names[i], h.values[i])) {
+      Ok(v) => {},
+      Err(e) => {}
+    }
+    i += 1;
+  }
+  return fields;
 }
 
 function write_body(body: i32, bytes: u8[]): void {
@@ -368,18 +454,76 @@ function write_body(body: i32, bytes: u8[]): void {
     },
     Err(e) => {}
   }
-  match (body_finish_out(body, None)) {
+  finish_body(body, HeaderMap { names: [], values: [] });
+}
+
+function write_response(body: i32, resp: HttpResponse): void {
+  let trailers = resp.trailers;
+  match (body_write(body)) {
+    Ok(stream) => {
+      trailers = write_payload(stream, resp);
+      output_stream_drop(stream);
+    },
+    Err(e) => {}
+  }
+  finish_body(body, trailers);
+}
+
+// Writes each chunk as the body yields it and answers the trailers to send after it.
+function write_payload(stream: i32, resp: HttpResponse): HeaderMap {
+  match (resp.body) {
+    BodyStream(st) => {
+      let cur = st;
+      while (true) {
+        let (bytes, rest) = cur.read_some();
+        if (bytes.len() == 0 || !write_all(stream, bytes)) {
+          return resp.trailers;
+        }
+        cur = rest;
+      }
+    },
+    BodyChunks(producer) => {
+      let next = producer.next;
+      let i = 0;
+      while (true) {
+        match (next(i)) {
+          Some(chunk) => {
+            if (!write_all(stream, chunk)) {
+              return resp.trailers;
+            }
+          },
+          None => {
+            return resp.trailers.concat(producer.trailers());
+          }
+        }
+        i += 1;
+      }
+    },
+    _ => {
+      write_all(stream, resp.body_bytes());
+    }
+  }
+  return resp.trailers;
+}
+
+function finish_body(body: i32, trailers: HeaderMap): void {
+  let fields: Option[i32] = None;
+  if (trailers.names.len() > 0) {
+    fields = Some(fields_of(trailers));
+  }
+  match (body_finish_out(body, fields)) {
     Ok(v) => {},
     Err(e) => {}
   }
 }
 
-function write_all(stream: i32, body: u8[]): void {
+function write_all(stream: i32, body: u8[]): boolean {
   let off = 0;
   let n = body.len();
   if (n == 0) {
-    return;
+    return true;
   }
+  let ok = true;
   let chunk = buf_new(WRITE_CHUNK);
   while (off < n) {
     let end = n;
@@ -393,10 +537,12 @@ function write_all(stream: i32, body: u8[]): void {
       },
       Err(e) => {
         off = n;
+        ok = false;
       }
     }
   }
   buf_free(chunk);
+  return ok;
 }
 
 // The outgoing side: host request imports.

@@ -9578,6 +9578,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
     all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size);
+    all = sign_tested_reads(all);
   }
   if (opts.shape_slot) {
     all = with_shape_slots(all);
@@ -9716,6 +9717,22 @@ function version_loops(all: Produced[], size: boolean): Produced[] {
       let v = semversion.version(p.func);
       if (v.loops > 0) {
         p = Produced { ...p, func: v.f, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
+function sign_tested_reads(all: Produced[]): Produced[] {
+  let out: Produced[] = [];
+  let sw = optbisect.switches();
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template) {
+      let r = ssabounds.sign_tested_reads(p.func);
+      if (r.changed && optbisect.allowed_by(sw, "sign-test", p.func.graph.name)) {
+        p = Produced { ...p, func: r.func, analysis: None };
       }
     }
     out = out.append(p);

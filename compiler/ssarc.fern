@@ -3242,7 +3242,31 @@ function builds(k: i32): boolean {
 }
 
 function unchecked_str_index(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.str_index() && ins.imm == 1;
+  return ins.kind_tag == ssasem.str_index() && unchecked_read(ins);
+}
+
+function unchecked_read(ins: ssa.SInst): boolean {
+  return ins.imm == 1 || sign_tested(ins);
+}
+
+function sign_tested(ins: ssa.SInst): boolean {
+  return (ins.kind_tag == ssasem.str_index() || ins.kind_tag == ssasem.array_get()) && ins.args.len() == 2 && ins.str != "lane_bytes" && ins.imm == ssasem.below_proven();
+}
+
+// The index of the read is below the length, so only a negative index is out of range.
+function sign_test(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
+  // The read of a lane element keeps its own check.
+  if let typeinfo.TypeLanes(_) = f.values[ins.result] {
+    return r;
+  }
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  if (ins.kind_tag == ssasem.str_index()) {
+    r = emit(r, ir.sign_only(ir.op_str_index()));
+  } else {
+    r = emit(r, ir.sign_only(arr_get_op(f.values[ins.result], false, f)));
+  }
+  return emit(r, ir.op_drop());
 }
 
 function value_op(k: i32): boolean {
@@ -3943,15 +3967,15 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
       return emit(r, ssabytes.check(ins.args[0]));
     }
     if (ssasem.is_byte_view(f.values[ins.args[0]])) {
-      return emit(r, ssabytes.read(ins.args[0], true, ins.imm == 1));
+      return emit(r, ssabytes.read(ins.args[0], true, unchecked_read(ins)));
     }
     if (typeinfo.is_array_view(f.values[ins.args[0]])) {
-      return got_elem(r, ssabytes.element(ins.args[0], arr_get_op(f.values[ins.result], ins.imm == 1, f)), f.values[ins.result]);
+      return got_elem(r, ssabytes.element(ins.args[0], arr_get_op(f.values[ins.result], unchecked_read(ins), f)), f.values[ins.result]);
     }
     if (ins.imm == ssasem.check_only()) {
       return emit(r, ir.check_only(arr_get_op(f.values[ins.result], false, f)));
     }
-    return got_elem(r, arr_get_op(f.values[ins.result], ins.imm == 1, f), f.values[ins.result]);
+    return got_elem(r, arr_get_op(f.values[ins.result], unchecked_read(ins), f), f.values[ins.result]);
   }
   if (ins.kind_tag == ssasem.tuple_get()) {
     let t = f.values[ins.result];
@@ -4688,6 +4712,9 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
   if (dyn_call(ins)) {
     r = dyn_site(r, ins);
     return emit(r, ir.op_store_local(ins.result));
+  }
+  if (sign_tested(ins)) {
+    r = sign_test(r, f, ins);
   }
   if (ins.kind_tag == ssasem.append_range()) {
     r = concatenation(r, ins, scratch_start);

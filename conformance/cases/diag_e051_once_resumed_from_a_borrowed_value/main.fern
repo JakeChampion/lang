@@ -1,0 +1,30 @@
+// A call consumes a `once` function. A match on a borrowed parameter only
+// lends its payloads, so the continuation `k` is borrowed.
+
+enum Step { Done(i32), Wait(i32, once (i32) => Step) }
+
+function peek(f: Step): i32 {
+  match (f) {
+    Wait(n, k) => {
+      match (k(n)) {
+        Done(v) => {
+          return v;
+        },
+        _ => {}
+      }
+    },
+    Done(v) => {
+      return v;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let f = Wait(1, once (i: i32): Step => Done(i));
+  print(peek(f));
+  match (f) {
+    _ => {}
+  }
+  return 0;
+}

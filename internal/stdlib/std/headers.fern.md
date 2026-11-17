@@ -61,6 +61,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "core/cmp";
 import "core/error";
+import "std/array";
 import "std/string";
 import "core/map";
 ```
@@ -302,6 +303,14 @@ pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
     ...h,
     names: h.names.append(name),
     values: h.values.append(value),
+  };
+}
+
+pub function (h: HeaderMap) concat(other: HeaderMap): HeaderMap {
+  return HeaderMap {
+    ...h,
+    names: h.names.concat(other.names),
+    values: h.values.concat(other.values),
   };
 }
 
