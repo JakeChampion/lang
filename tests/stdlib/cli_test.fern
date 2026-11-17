@@ -10,52 +10,77 @@ function spec(): cli.CliSpec {
   return s;
 }
 
+// The arguments of a case that expects them to parse.
+function accepted(s: cli.CliSpec, argv: string[]): cli.CliArgs {
+  match (s.parse(argv)) {
+    Ok(a) => {
+      return a;
+    },
+    Err(e) => {
+      eprint("cli_test: " + e.message());
+      exit(1);
+    }
+  }
+}
+
+// The message of the refusal, or "" when the arguments parse.
+function refusal(s: cli.CliSpec, argv: string[]): string {
+  match (s.parse(argv)) {
+    Ok(a) => {
+      return "";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
 function test_option_long(): test.TestOutcome {
-  let a = spec().parse(["greet", "--name", "Ada"]);
+  let a = accepted(spec(), ["greet", "--name", "Ada"]);
   return test.assert_eq(a.value_or("name", "world"), "Ada");
 }
 
 function test_option_equals(): test.TestOutcome {
-  let a = spec().parse(["greet", "--name=Bob"]);
+  let a = accepted(spec(), ["greet", "--name=Bob"]);
   return test.assert_eq(a.value_or("name", "world"), "Bob");
 }
 
 function test_option_short(): test.TestOutcome {
-  let a = spec().parse(["greet", "-n", "Cy"]);
+  let a = accepted(spec(), ["greet", "-n", "Cy"]);
   return test.assert_eq(a.value_or("name", "world"), "Cy");
 }
 
 function test_bool_flag(): test.TestOutcome {
-  let a = spec().parse(["greet", "--shout"]);
-  let b = spec().parse(["greet", "-s"]);
+  let a = accepted(spec(), ["greet", "--shout"]);
+  let b = accepted(spec(), ["greet", "-s"]);
   return test.assert_true(a.is_set("shout") && b.is_set("shout"));
 }
 
 function test_positionals(): test.TestOutcome {
-  let a = spec().parse(["greet", "--name", "Ada", "one", "two"]);
+  let a = accepted(spec(), ["greet", "--name", "Ada", "one", "two"]);
   return test.assert_eq_array(a.operands(), ["one", "two"]);
 }
 
 function test_end_of_options(): test.TestOutcome {
-  let a = spec().parse(["greet", "--", "--name", "-s"]);
+  let a = accepted(spec(), ["greet", "--", "--name", "-s"]);
   return test.assert_true(a.operands().len() == 2 && !a.is_set("name") && !a.is_set("shout"));
 }
 
 function test_value_or_default(): test.TestOutcome {
-  let a = spec().parse(["greet"]);
+  let a = accepted(spec(), ["greet"]);
   return test.assert_true(a.value_or("name", "world") == "world" && !a.is_set("shout"));
 }
 
 function test_unknown_option_errors(): test.TestOutcome {
-  return test.assert_true(spec().parse(["greet", "--nope"]).is_error());
+  return test.assert_eq(refusal(spec(), ["greet", "--nope"]), "unknown option --nope");
 }
 
 function test_missing_value_errors(): test.TestOutcome {
-  return test.assert_true(spec().parse(["greet", "--name"]).is_error());
+  return test.assert_eq(refusal(spec(), ["greet", "--name"]), "option --name requires a value");
 }
 
 function test_value_on_bool_errors(): test.TestOutcome {
-  return test.assert_true(spec().parse(["greet", "--shout=1"]).is_error());
+  return test.assert_eq(refusal(spec(), ["greet", "--shout=1"]), "flag --shout takes no value");
 }
 
 function test_usage_lists_flags(): test.TestOutcome {
@@ -64,36 +89,32 @@ function test_usage_lists_flags(): test.TestOutcome {
 }
 
 function test_short_glued_value(): test.TestOutcome {
-  let a = spec().parse(["greet", "-n5"]);
+  let a = accepted(spec(), ["greet", "-n5"]);
   return test.assert_eq(a.value_or("name", "x"), "5");
 }
 
 function test_short_bundled_bools(): test.TestOutcome {
-  let a = spec().parse(["greet", "-vs"]);
+  let a = accepted(spec(), ["greet", "-vs"]);
   return test.assert_true(a.is_set("verbose") && a.is_set("shout"));
 }
 
 function test_short_bundle_ending_valued(): test.TestOutcome {
-  let a = spec().parse(["greet", "-vn5"]);
+  let a = accepted(spec(), ["greet", "-vn5"]);
   return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5");
 }
 
 function test_short_bundle_next_token_value(): test.TestOutcome {
-  let a = spec().parse(["greet", "-vn", "5"]);
+  let a = accepted(spec(), ["greet", "-vn", "5"]);
   return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5" && a.operands().len() == 0);
 }
 
 function test_short_lone_dash_is_positional(): test.TestOutcome {
-  let a = spec().parse(["greet", "-"]);
-  return test.assert_true(a.operands().len() == 1 && !a.is_error());
+  let a = accepted(spec(), ["greet", "-"]);
+  return test.assert_true(a.operands().len() == 1);
 }
 
 function test_short_multibyte_unknown(): test.TestOutcome {
-  let a = spec().parse(["greet", "-é"]);
-  if (!a.is_error()) {
-    return test.fail("expected an unknown-option error");
-  }
-  return test.assert_eq(a.error_text(), "unknown option -é");
+  return test.assert_eq(refusal(spec(), ["greet", "-é"]), "unknown option -é");
 }
 
 function test_color_red(): test.TestOutcome {
@@ -122,32 +143,21 @@ function spec_cmds(): cli.CliSpec {
 }
 
 function test_subcommand_parses(): test.TestOutcome {
-  let a = spec_cmds().parse(["tool", "-v", "deploy", "--env", "prod", "x"]);
-  if (a.is_error()) {
-    return test.fail(a.error_text());
-  }
+  let a = accepted(spec_cmds(), ["tool", "-v", "deploy", "--env", "prod", "x"]);
   return test.assert_true(a.subcommand().unwrap_or("") == "deploy" && a.is_set("verbose") && a.value_or("env", "") == "prod" && a.operands().len() == 1);
 }
 
 function test_unknown_command_errors(): test.TestOutcome {
-  let a = spec_cmds().parse(["tool", "launch"]);
-  if (!a.is_error()) {
-    return test.fail("expected an unknown-command error");
-  }
-  return test.assert_eq(a.error_text(), "unknown command launch");
+  return test.assert_eq(refusal(spec_cmds(), ["tool", "launch"]), "unknown command launch");
 }
 
 function test_no_subcommand_is_none(): test.TestOutcome {
-  let a = spec_cmds().parse(["tool", "-v"]);
-  return test.assert_true(!a.is_error() && a.subcommand().is_none() && a.is_set("verbose"));
+  let a = accepted(spec_cmds(), ["tool", "-v"]);
+  return test.assert_true(a.subcommand().is_none() && a.is_set("verbose"));
 }
 
 function test_subcommand_scopes_flags(): test.TestOutcome {
-  let a = spec_cmds().parse(["tool", "deploy", "--name", "x"]);
-  if (!a.is_error()) {
-    return test.fail("expected an unknown-option error");
-  }
-  return test.assert_eq(a.error_text(), "unknown option --name");
+  return test.assert_eq(refusal(spec_cmds(), ["tool", "deploy", "--name", "x"]), "unknown option --name");
 }
 
 function test_usage_lists_commands(): test.TestOutcome {

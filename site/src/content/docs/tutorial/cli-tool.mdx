@@ -237,12 +237,14 @@ function main(): i32 {
     let spec: cli.CliSpec = cli.new("grep", "print lines that match a pattern");
     spec = spec.flag("ignore-case", "i", "ignore case distinctions");
     spec = spec.flag("line-number", "n", "prefix each line with its line number");
-    let a: cli.CliArgs = spec.parse(args());
-    if (a.is_error()) {
-        eprint(a.error_text());
-        eprint(spec.usage());
-        return 2;
-    }
+    let a: cli.CliArgs = match (spec.parse(args())) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            eprint(e.message());
+            eprint(spec.usage());
+            return 2;
+        }
+    };
     let Some(pat) = a.operand(0) else {
         eprint(spec.usage());
         return 2;
