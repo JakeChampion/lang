@@ -246,7 +246,7 @@ function any_checked_index(f: ssasem.Func): boolean {
   return false;
 }
 
-// The check grouped_reads places before a run of unchecked reads.
+// The check grouped_accesses places before a run of unchecked reads and writes.
 function group_check(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && ins.imm == ssasem.check_only();
 }
@@ -1243,7 +1243,7 @@ function pow2_divisor(g: Graph, ins: ssa.SInst): i32 {
   return k;
 }
 
-pub function grouped_reads(f: ssasem.Func): ssasem.Func {
+pub function grouped_accesses(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
   }
@@ -1289,8 +1289,13 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
           values = values.append(t).append(t).append(t).append(t).append(t);
           idx = v + 4;
         }
-        insts = insts.append(ssa.SInst { ...ins, result: values.len(), args: [ins.args[0], idx], imm: ssasem.check_only() });
-        values = values.append(f.values[ins.result]);
+        if (scalar_write(f, ins)) {
+          insts = insts.append(ssa.SInst { kind_tag: ssasem.array_get(), result: values.len(), args: [ins.args[0], idx], imm: ssasem.check_only(), str: "" });
+          values = values.append(typeinfo.array_elem(f.values[ins.args[0]]));
+        } else {
+          insts = insts.append(ssa.SInst { ...ins, result: values.len(), args: [ins.args[0], idx], imm: ssasem.check_only() });
+          values = values.append(f.values[ins.result]);
+        }
         p += 1;
       }
       if (plan.unchecked[pos]) {
@@ -1325,7 +1330,7 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
   let reads: i32[] = [];
   for k in start..end {
     let ins = insts[k];
-    if (checked_index(ins) && ssasem.is_i32(f.values[ins.args[1]]) && scalar(f, ins.result)) {
+    if ((checked_index(ins) && scalar(f, ins.result) || scalar_write(f, ins) && ins.imm == 0) && ssasem.is_i32(f.values[ins.args[1]])) {
       reads = reads.append(k);
     }
   }
@@ -1337,13 +1342,14 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
       continue;
     }
     let first = insts[reads[i]];
+    let arr = written_root(f, defs, first.args[0]);
     let x = offset_base(f, defs, first.args[1]);
     let low = offset_of(f, defs, first.args[1]);
     let high = low;
     let members: i32[] = [reads[i]];
     for j in i + 1..reads.len() {
       let r = insts[reads[j]];
-      if (!done[j] && r.args[0] == first.args[0] && offset_base(f, defs, r.args[1]) == x) {
+      if (!done[j] && written_root(f, defs, r.args[0]) == arr && offset_base(f, defs, r.args[1]) == x) {
         done = done.with(j, true);
         let c = offset_of(f, defs, r.args[1]);
         if (c < low) {
@@ -1369,6 +1375,24 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
     i += 1;
   }
   return out;
+}
+
+// A write of a scalar element. It changes no length, and nothing can see
+// it when a later check stops the program.
+function scalar_write(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.with() && ins.args.len() == 3 && ins.str != "lane_bytes" && scalar(f, ins.args[2]);
+}
+
+// The array that a chain of scalar writes started from. Each array of the
+// chain has the length of this one.
+function written_root(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
+  for _ in 0..64 {
+    if (v < 0 || v >= defs.len() || !scalar_write(f, defs[v])) {
+      break;
+    }
+    v = defs[v].args[0];
+  }
+  return v;
 }
 
 function offset_base(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
@@ -1418,7 +1442,7 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LINE || k == ssasem.param()) {
     return true;
   }
-  if (k == ssasem.array_get() || k == ssasem.str_index() || k == ssasem.length()) {
+  if (k == ssasem.array_get() || k == ssasem.str_index() || k == ssasem.length() || scalar_write(f, ins)) {
     return true;
   }
   if (ins.result < 0 || ins.result >= f.values.len()) {

@@ -191,6 +191,12 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"grouped_nested_offset",
 		`@inline function le32(bs: [u8], at: i32): u32 { return bs[at] as u32 | bs[at + 1] as u32 << 8 | bs[at + 2] as u32 << 16 | bs[at + 3] as u32 << 24; } @noinline function mix(bs: [u8]): u32 { let t: u32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 8; while (i <= last) { t = t ^ le32(bs, i + 4); i = i + 3; } return t; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9]; return (mix(xs) & 63u32) as i32; }`,
 		`@inline function le32(bs: [u8], at: i32): u32 { return bs[at] as u32 | bs[at + 1] as u32 << 8 | bs[at + 2] as u32 << 16 | bs[at + 3] as u32 << 24; } @noinline function mix(bs: [u8]): u32 { let t: u32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 7; while (i <= last) { t = t ^ le32(bs, i + 4); i = i + 3; } return t; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9]; return (mix(xs) & 63u32) as i32; }`},
+	{"grouped_writes",
+		`@noinline function put4(xs: i32[], at: i32, d: i32): i32[] { return xs.with(at, 1).with(at + 1, 2).with(at + 2, 3).with(at + 3, 4); } function main(): i32 { let xs: i32[] = __alloc_i32(8); let ys: i32[] = put4(xs, 4, 1); return ys[4] + ys[5] * 3 + ys[6] * 9 + ys[7] * 2 + xs[5]; }`,
+		`@noinline function put4(xs: i32[], at: i32, d: i32): i32[] { return xs.with(at, 1 / d).with(at + 1, 2 / d).with(at + 2, 3 / d).with(at + 3, 4 / d); } function main(): i32 { let xs: i32[] = __alloc_i32(8); let ys: i32[] = put4(xs, 4, 1); return ys[4] + ys[5] * 3 + ys[6] * 9 + ys[7] * 2 + xs[5]; }`},
+	{"grouped_write_and_reads",
+		`@noinline function bump(xs: i32[], at: i32, d: i32): i32 { let ys: i32[] = xs.with(at + 1, 7); return ys[at] + ys[at + 1] + ys[at + 2] + 10 / d; } function main(): i32 { return bump([1, 2, 3, 4], 1, 5); }`,
+		`@noinline function bump(xs: i32[], at: i32, d: i32): i32 { let ys: i32[] = xs.with(at + 1, 7 / d); return ys[at] / d + ys[at + 1] / d + ys[at + 2] + 2; } function main(): i32 { return bump([1, 2, 3, 4], 1, 1); }`},
 	{"written_param_guard",
 		`@noinline function put(own out: u8[], k: i32): u8[] { let n: i32 = 0; let room: i32 = out.len() - 4; while (n <= room && n < k) { out = out.with(n, 1u8); out = out.with(n + 3, 2u8); n = n + 1; } return out; } function main(): i32 { let xs: u8[] = [0, 0, 0, 0, 0, 0, 0, 0]; return put(xs, 100)[7] as i32; }`,
 		`@noinline function put(own out: u8[], k: i32): u8[] { let n: i32 = 0; let room: i32 = k - 4; while (n <= room && n < k) { out = out.with(n, 1u8); out = out.with(n + 3, 2u8); n = n + 1; } return out; } function main(): i32 { let xs: u8[] = [0, 0, 0, 0, 0, 0, 0, 0]; return put(xs, 8)[7] as i32; }`},
@@ -288,6 +294,20 @@ function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return le16(xs, 214748
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return word(xs, 0 - 1); }`},
 	{"grouped_string_sum_top_of_i32", `@noinline function word(s: string, cur: i32, best: i32): i32 { let at = cur + best; return s[at] as i32 | (s[at + 1] as i32) << 8; }
 function main(): i32 { return word("abcdef", 2147483646, 1); }`},
+	{"grouped_writes_far_end", `@noinline function put3(xs: i32[], at: i32): i32[] { return xs.with(at, 1).with(at + 1, 2).with(at + 2, 3); }
+function main(): i32 { let xs: i32[] = __alloc_i32(4); return put3(xs, 2)[2]; }`},
+	{"grouped_writes_negative_base", `@noinline function put3(xs: i32[], at: i32): i32[] { return xs.with(at, 1).with(at + 1, 2).with(at + 2, 3); }
+function main(): i32 { let xs: i32[] = __alloc_i32(4); return put3(xs, 0 - 1)[1]; }`},
+	{"grouped_writes_base_at_i32_max", `@noinline function put3(xs: i32[], at: i32): i32[] { return xs.with(at, 1).with(at + 1, 2).with(at + 2, 3); }
+function main(): i32 { let xs: i32[] = __alloc_i32(4); return put3(xs, 2147483647)[1]; }`},
+	{"grouped_writes_first_not_lowest", `@noinline function put2(xs: i32[], at: i32): i32[] { return xs.with(at + 2, 3).with(at, 1); }
+function main(): i32 { let xs: i32[] = __alloc_i32(3); return put2(xs, 0 - 1)[1]; }`},
+	{"grouped_writes_on_another_array", `@noinline function put2(xs: i32[], ys: i32[], at: i32): i32 { let a: i32[] = xs.with(at, 1); let b: i32[] = ys.with(at + 1, 2); return a[at] + b[at + 1]; }
+function main(): i32 { let xs: i32[] = __alloc_i32(4); let ys: i32[] = __alloc_i32(2); return put2(xs, ys, 1); }`},
+	{"grouped_write_then_read_far_end", `@noinline function bump(xs: i32[], at: i32): i32 { let ys: i32[] = xs.with(at, 7); return ys[at] + ys[at + 1]; }
+function main(): i32 { return bump([1, 2, 3], 2); }`},
+	{"grouped_writes_shared_owner_far_end", `@noinline function put3(own xs: i32[], at: i32): i32[] { xs = xs.with(at, 1); xs = xs.with(at + 1, 2); return xs.with(at + 2, 3); }
+function main(): i32 { let xs: i32[] = __alloc_i32(4); let keep: i32[] = xs; return put3(xs, 3)[3] + keep[0]; }`},
 	{"lane_write_past_guard", `function put(own out: u8[]): u8[] { let v = __u8x16_splat(7u8); let n: i32 = 0; let room: i32 = out.len() - 31; while (n <= room) { out = __u8x16_with(out, n + 16, v); n = n + 1; } return out; }
 function main(): i32 { let xs: u8[] = __alloc_u8(40); return put(xs)[0] as i32; }`},
 	{"lane_read_past_guard", `function scan(bs: u8[]): i32 { let t: i32 = 0; let i: i32 = 0; let last: i32 = bs.len() - 31; while (i <= last) { t = t + __u8x16_bitmask(__u8x16_load(bs, i + 16)); i = i + 1; } return t; }
