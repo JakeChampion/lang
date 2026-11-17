@@ -1,0 +1,17 @@
+// A local that a struct literal initializes is owned only when each part of
+// the literal that can hold a handle is owned. Here `w` has a later use, so
+// the literal borrows it, and the local cannot pass to an `own` parameter.
+
+struct H { w: Writer }
+
+function finish(own h: H): i32 {
+  return 1;
+}
+
+function main(): i32 {
+  let w = stdout();
+  let x = H { w: w };
+  print(finish(x));
+  w.write("still here\n");
+  return 0;
+}

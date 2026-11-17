@@ -1,0 +1,44 @@
+import "std/i32";
+
+enum Shape { Dot, Line(i32) }
+
+function printer(x: i32): i32 {
+    return x + 1;
+}
+
+function write_all(x: i32): i32 {
+    return x * 2;
+}
+
+function f32_from_bits_of(x: i32): i32 {
+    return x - 1;
+}
+
+function line(n: i32): Shape {
+    return Line(n);
+}
+
+function length(s: Shape): i32 {
+    return match (s) {
+        Dot => 0,
+        Line(n) => n,
+    };
+}
+
+function count(n: i32): i32 {
+    if (n == 0) {
+        return 0;
+    }
+    return 1 + count(n - 1);
+}
+
+function main(): i32 {
+    print(printer(1).to_string());
+    print(write_all(4).to_string());
+    print(f32_from_bits_of(10).to_string());
+    print(length(Dot).to_string());
+    print(length(line(7)).to_string());
+    print(length(Line(3)).to_string());
+    print(count(50).to_string());
+    return 0;
+}

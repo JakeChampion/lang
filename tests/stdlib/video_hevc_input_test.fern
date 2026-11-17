@@ -138,6 +138,21 @@ function input_limits(): test.TestOutcome {
       return test.fail("input limit accepted");
     }
   }
+  return filler_limits(base);
+}
+
+function filler_limits(base: input.Limits): test.TestOutcome {
+  let malformed = vectors.invalid()[1];
+  for bound in [input.Limits { ...base, max_units_per_packet: 3 }, input.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: malformed.bytes.len() / 2 - 1 } }] {
+    let bytes = match (hex.decode(malformed.bytes)) { Ok(value) => value, Err(_) => { return test.fail("fixture hex"); } };
+    if let Err(error) = collect(bytes, bound) {
+      if (error != frame.Limit.message()) {
+        return test.fail("packet limit must precede filler syntax");
+      }
+    } else {
+      return test.fail("filler packet limit accepted");
+    }
+  }
   return test.pass();
 }
 

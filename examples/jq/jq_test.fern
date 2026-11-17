@@ -48,6 +48,63 @@ function checks(cases: (string, string, string)[]): test.TestOutcome {
   return test.pass();
 }
 
+// The names of the calls of `f` that have the mark of a last step.
+function last_calls(f: filter.Ast): string[] {
+  return match (f) {
+    filter.Call(name, args, last) => (if (last) { [name] } else { [] }).concat(each_last(args)),
+    filter.Pipe(a, b) => each_last([a, b]),
+    filter.Comma(a, b) => each_last([a, b]),
+    filter.If(cond, yes, no) => each_last([cond, yes, no]),
+    filter.Def(_, _, body, rest) => each_last([body, rest]),
+    filter.Bind(source, _, body) => each_last([source, body]),
+    filter.Arith(_, a, b) => each_last([a, b]),
+    _ => [],
+  };
+}
+
+function each_last(fs: filter.Ast[]): string[] {
+  let out: string[] = [];
+  for f in fs {
+    out = out.concat(last_calls(f));
+  }
+  return out;
+}
+
+function test_last_calls(): test.TestOutcome {
+  let cases = [
+    ("a", "a"),
+    ("a | b", "b"),
+    ("a, b", "a b"),
+    ("if a then b | c else d, e end", "c d e"),
+    ("a as $x | b", "b"),
+    ("def f: a | b; c", "b c"),
+    ("def f: def g: a; b + c; d", "a d"),
+    ("a + b, c", "c"),
+    ("a(b; c | d) | e(f)", "e"),
+  ];
+  for c in cases {
+    let (program, want) = c;
+    let parsed = filter.parse_unchecked(program, "<test>", 0);
+    let got = last_calls(parsed.ast).join(" ");
+    if (parsed.error.len() > 0 || got != want) {
+      return test.fail(program + ": got \"" + got + "\", want \"" + want + "\" " + parsed.error);
+    }
+  }
+  return test.pass();
+}
+
+// A function that calls itself goes deeper than a call of the evaluator can.
+function test_deep_calls(): test.TestOutcome {
+  return checks([
+    ("def f: if . == 0 then 0 else (. - 1 | f) end; f", "100000", "0"),
+    ("def f: if . == 0 then 0 else (. - 1 | f) + 1 end; f", "100000", "100000"),
+    ("def f: ., (. + 1 | f); first(f | select(. >= 100000))", "0", "100000"),
+    ("def f: if . == 0 then error(\"x\") else (. - 1 | f) end; try f catch .", "5000", "\"x\""),
+    ("def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; f", "200", "200"),
+    ("def f: if type == \"object\" then .a | f else . end; reduce range(300) as $i (1; {a: .}) | [path(f)] | .[0] | length", "null", "300"),
+  ]);
+}
+
 function test_paths(): test.TestOutcome {
   return checks([
     (".", "{\"a\":1}", "{\"a\":1}"),
@@ -1345,5 +1402,7 @@ function main(): i32 {
   r = r.it("a literal and a computed number", test_literal_compare);
   r = r.it("the range of a literal", test_literal_range);
   r = r.it("a path that realpath cannot resolve", test_realpath);
+  r = r.it("the mark of a call that is a last step", test_last_calls);
+  r = r.it("a function that calls itself to a large depth", test_deep_calls);
   return r.finish();
 }

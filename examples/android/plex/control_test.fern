@@ -43,6 +43,11 @@ const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\"
 // A track of an album, with its artist.
 const SONG: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"601\",\"type\":\"track\",\"title\":\"Song\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":61,\"key\":\"/library/parts/61/file.m4a\"}]}]}]}}";
 
+// Album 701 and its three tracks, with the parts 71, 72 and 73.
+const ALBUM: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"701\",\"type\":\"album\",\"title\":\"Album\",\"parentTitle\":\"Band\"}]}}";
+
+const ALBUM_TRACKS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"711\",\"type\":\"track\",\"title\":\"One\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":71,\"key\":\"/library/parts/71/file.m4a\"}]}]},{\"ratingKey\":\"712\",\"type\":\"track\",\"title\":\"Two\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":72,\"key\":\"/library/parts/72/file.m4a\"}]}]},{\"ratingKey\":\"713\",\"type\":\"track\",\"title\":\"Three\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":73,\"key\":\"/library/parts/73/file.m4a\"}]}]}]}}";
+
 // Episode 503, with credits from 100 s, and the episodes of its season:
 // 503, then the movie 501, which the test plays as the next item.
 const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Marker\":[{\"type\":\"credits\",\"startTimeOffset\":100000,\"endTimeOffset\":200000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]}]}}";
@@ -131,6 +136,12 @@ function reply_to(r: plex.Request): plex.Reply {
   if (u.contains("/library/metadata/601")) {
     return ok(SONG);
   }
+  if (u.contains("/library/metadata/701/children")) {
+    return ok(ALBUM_TRACKS);
+  }
+  if (u.contains("/library/metadata/701")) {
+    return ok(ALBUM);
+  }
   if (u.contains("/library/metadata/503")) {
     return ok(CREDITS);
   }
@@ -194,11 +205,11 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean] }
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]] }
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -284,6 +295,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       note(log.calls, "track " + i.to_string());
       return true;
     },
+    set_speed: (rate: i32): void => note(log.calls, "speed " + rate.to_string()),
     brightness: (level: f32): void => note(log.calls, "light " + ((level * 1000.0f32) as i32).to_string()),
     system_brightness: (): f32 => 0.5f32,
     volume: (): (i32, i32) => (7, 15),
@@ -293,6 +305,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     ask_notifications: (): void => note(log.calls, "ask notifications"),
     random: (): i32 => 5,
     decoders: log.decoders.get(),
+    languages: log.languages.get(),
   };
 }
 
@@ -933,6 +946,154 @@ function test_tracks_sheet(): test.TestOutcome {
   return test.assert_eq(has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=31&allParts=1").to_string(), "true");
 }
 
+// The speed button gives the next rate. The player takes it at once while
+// it plays. A paused player takes it at the next start, because a rate
+// starts a paused player. The rate stays in the settings.
+function test_speed_button(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = tap(video_drawn(log, f), log, 400i64, f, "overlay");
+  let faster = tap(playing, log, 500i64, f, "speed");
+  if (!has_call(log, "speed 125") || !says(faster, "SPEED 1.25x") || !file_of(log, "/data/settings").contains("speed=125")) {
+    return test.fail("the speed button did not set 1.25x: " + log.calls.get().join(" | "));
+  }
+  let paused = tap(faster, log, 600i64, f, "toggle");
+  let quiet = tap(paused, log, 700i64, f, "speed");
+  if (has_call(log, "speed 150")) {
+    return test.fail("a paused player took a rate, which starts it: " + log.calls.get().join(" | "));
+  }
+  let resumed = tap(quiet, log, 800i64, f, "toggle");
+  let calls = log.calls.get();
+  let start = calls.len() - 1;
+  while (start >= 0 && calls[start] != "start") {
+    start -= 1;
+  }
+  if (start < 0 || start + 1 >= calls.len() || calls[start + 1] != "speed 150") {
+    return test.fail("the start after the pause did not take the rate: " + calls.join(" | "));
+  }
+  let again = control.new(fake(log, 900i64, f), "/data", "https://up.example:32400", "srv", "");
+  return test.assert_eq(again.speed.to_string(), "150");
+}
+
+// With Auto, a play starts at Original. One stall changes nothing, and a
+// second stall in a minute plays the next lower quality as a transcode from
+// where the stream is. A stall more than a minute after the last does not
+// count.
+function test_auto_quality_steps_down(): test.TestOutcome {
+  let log = new_log();
+  note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_uri=https://up.example:32400\nserver_token=srv\nquality=" + plex.auto_quality().to_string() + "\n");
+  let f = frame();
+  defer free_frame(f);
+  let playing = tap(tap(shown(log, f, "", ""), log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  if (!has_call(log, "play https://up.example:32400/library/parts/11/file.mp4")) {
+    return test.fail("Auto did not start with the file as it is: " + log.calls.get().join(" | "));
+  }
+  let plays = count_plays(log);
+  let once = settle(at(ready, log, 1000i64, f, android.Posted(22, 701 as usize)), log, 1000i64, f);
+  let late = settle(at(once, log, 70000i64, f, android.Posted(22, 701 as usize)), log, 70000i64, f);
+  if (count_plays(log) != plays) {
+    return test.fail("stalls more than a minute apart lowered the quality: " + log.calls.get().join(" | "));
+  }
+  let twice = settle(at(late, log, 75000i64, f, android.Posted(22, 701 as usize)), log, 75000i64, f);
+  if (count_plays(log) != plays + 1 || !has_call(log, "videoResolution=1920x1080")) {
+    return test.fail("two stalls in a minute did not lower the quality: " + log.calls.get().join(" | "));
+  }
+  return test.assert_eq(twice.play.level.to_string(), "1");
+}
+
+// The app takes the first language of the person that it has texts for.
+// A language with no texts, and a text with no translation, show English.
+function test_texts_in_the_language_of_the_person(): test.TestOutcome {
+  let log = new_log();
+  log.languages.set(["ja-JP", "de-AT", "fr"]);
+  let f = frame();
+  defer free_frame(f);
+  let german = shown(log, f, "", "");
+  if (!says(german, "Mit Plex anmelden") || !says(german, "Deine Plex-Mediatheken, in Fern")) {
+    return test.fail("the sign-in screen is not in German: " + german.nodes.map((n: scene.Node): string => n.say).join(" | "));
+  }
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  if (!says(home, "Mediatheken") || !says(home, "Einstellungen")) {
+    return test.fail("the tabs are not in German: " + home.nodes.map((n: scene.Node): string => n.say).join(" | "));
+  }
+  let other = new_log();
+  other.languages.set(["ja-JP"]);
+  let english = shown(other, f, "", "");
+  return test.assert_eq(says(english, "Sign in with Plex").to_string(), "true");
+}
+
+// The last track that the player took, by its part.
+function last_part(log: Log): string {
+  let found = "";
+  for c in log.calls.get() {
+    if (c.starts_with("play https://up.example:32400/library/parts/")) {
+      found = c.split_at("play https://up.example:32400/library/parts/".len()).1.split_at(2).0;
+    }
+  }
+  return found;
+}
+
+// An album plays its tracks in order, and Next goes to the next one. Repeat
+// all starts the album again after its last track, and repeat one plays the
+// track again. Shuffle stays in the settings. The sleep timer pauses the
+// music at its time, and "at the end" plays no next track.
+function test_album_queue_repeat_and_sleep(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "701"), log, 0i64, f, android.Start);
+  let album = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  let one = settle(at(tap(album, log, 100i64, f, "play"), log, 150i64, f, android.Posted(19, 0 as usize)), log, 150i64, f);
+  if (last_part(log) != "71" || one.play.queue.len() != 2) {
+    return test.fail("the album did not start at its first track: " + log.calls.get().join(" | "));
+  }
+  let two = settle(at(tap(one, log, 200i64, f, "next_track"), log, 250i64, f, android.Posted(19, 0 as usize)), log, 250i64, f);
+  let three = settle(at(settle(at(two, log, 300i64, f, android.Posted(20, 0 as usize)), log, 300i64, f), log, 350i64, f, android.Posted(19, 0 as usize)), log, 350i64, f);
+  if (last_part(log) != "73" || three.play.queue.len() != 0) {
+    return test.fail("Next and the end of a track did not go through the album: " + log.calls.get().join(" | "));
+  }
+  let all = tap(three, log, 400i64, f, "repeat");
+  let again = settle(at(settle(at(all, log, 450i64, f, android.Posted(20, 0 as usize)), log, 450i64, f), log, 500i64, f, android.Posted(19, 0 as usize)), log, 500i64, f);
+  if (last_part(log) != "71" || again.play.queue.len() != 2) {
+    return test.fail("repeat all did not start the album again: " + log.calls.get().join(" | "));
+  }
+  let single = tap(again, log, 550i64, f, "repeat");
+  let same = settle(at(settle(at(single, log, 600i64, f, android.Posted(20, 0 as usize)), log, 600i64, f), log, 650i64, f, android.Posted(19, 0 as usize)), log, 650i64, f);
+  if (last_part(log) != "71" || !file_of(log, "/data/settings").contains("repeat=2")) {
+    return test.fail("repeat one did not play the track again: " + log.calls.get().join(" | "));
+  }
+  let mixed = tap(tap(same, log, 700i64, f, "repeat"), log, 710i64, f, "shuffle");
+  if (!file_of(log, "/data/settings").contains("shuffle=1") || mixed.play.queue.len() != 2) {
+    return test.fail("shuffle did not keep the tracks that wait");
+  }
+  if (node(mixed, "sleep").is_none()) {
+    return test.fail("no sleep button");
+  }
+  let timed = tap(mixed, log, 800i64, f, "sleep");
+  if (timed.sleep_at == 0i64) {
+    return test.fail("the sleep button set no time");
+  }
+  let pauses = count_calls(log, "pause");
+  let sleep_at = timed.sleep_at;
+  if (sleep_at < 800i64 + 15i64 * 60000i64) {
+    return test.fail("the sleep timer is set for less than 15 minutes");
+  }
+  let slept = settle(timed, log, sleep_at + 1i64, f);
+  if (count_calls(log, "pause") != pauses + 1 || !slept.play.paused) {
+    return test.fail("the sleep timer did not pause the music: " + log.calls.get().join(" | "));
+  }
+  let woke = tap(slept, log, 1000000i64, f, "toggle");
+  let at_end = tap(tap(tap(tap(woke, log, 1000100i64, f, "sleep"), log, 1000200i64, f, "sleep"), log, 1000300i64, f, "sleep"), log, 1000400i64, f, "sleep");
+  let plays = count_plays(log);
+  let ended = settle(at(at_end, log, 1000500i64, f, android.Posted(20, 0 as usize)), log, 1000500i64, f);
+  if (count_plays(log) != plays || ended.play.active) {
+    return test.fail("the sleep timer at the end played a next track: " + log.calls.get().join(" | "));
+  }
+  return test.pass();
+}
+
 function count_plays(log: Log): i32 {
   return log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len();
 }
@@ -1300,6 +1461,10 @@ function main(): i32 {
   r = r.it("a file with no sound plays again as a transcode", test_lost_sound_transcodes);
   r = r.it("a drag on the seek bar scrubs with thumbnails", test_drag_scrubs_with_thumbnails);
   r = r.it("the sheet of tracks changes the sound and burns subtitles", test_tracks_sheet);
+  r = r.it("the speed button sets the rate, also after a pause", test_speed_button);
+  r = r.it("Auto takes a lower quality after two stalls in a minute", test_auto_quality_steps_down);
+  r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
+  r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
   r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
   r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
   r = r.it("the connections of a server race", test_connection_race);

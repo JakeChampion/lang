@@ -3321,7 +3321,13 @@ function slot_free_at(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: 
   return slot_end[s] < from && !kept_for_mate(wanted_by, reg_of, holder[s], v);
 }
 
-pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[] }
+// `nibble` marks each value whose lanes of 8 bits are all below 16. It is
+// empty when the function has no swizzle.
+pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[], nibble: boolean[] }
+
+pub function lane_nibble(imm: Imms, v: i32): boolean {
+  return v >= 0 && v < imm.nibble.len() && imm.nibble[v];
+}
 
 pub function imm_sym(imm: Imms, v: i32): string {
   let k = imm.sym_at[v];
@@ -3380,7 +3386,56 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
       is_imm = is_imm.with(t.cond, false);
     }
   }
-  return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [] };
+  let nibble = lane_nibbles(f, konst, value);
+  return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [], nibble: nibble };
+}
+
+function has_swizzle(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == BINARY && ins.str.starts_with("viswizzle")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function lane_nibbles(f: SFunc, konst: boolean[], value: i64[]): boolean[] {
+  if (!has_swizzle(f)) {
+    return [];
+  }
+  let out = __alloc_bool(f.nvals);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for blk in f.blocks {
+      for ins in blk.insts {
+        if (ins.result >= 0 && !out[ins.result] && lane_inst(ins) && nibble_result(ins, out, konst, value)) {
+          out = out.with(ins.result, true);
+          changed = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function nibble_result(ins: SInst, nibble: boolean[], konst: boolean[], value: i64[]): boolean {
+  let b = lane_base(ins.str);
+  if (b == "vand") {
+    return nibble[ins.args[0]] || nibble[ins.args[1]];
+  }
+  if (ins.imm != 8) {
+    return false;
+  }
+  if (b == "visplat") {
+    return konst[ins.args[0]] && (value[ins.args[0]] & 255i64) < 16i64;
+  }
+  if (b == "vishru") {
+    return konst[ins.args[1]] && (value[ins.args[1]] & 7i64) >= 4i64;
+  }
+  return b == "viminu" && (nibble[ins.args[0]] || nibble[ins.args[1]]);
 }
 
 // Operand `a` is the value of a store of 4 or 8 bytes.
@@ -7615,34 +7670,6 @@ pub function low_word_pair(blk: SBlock, ii: i32, uses: i32[]): boolean {
   return unsigned_extension(w) && w.args[0] == op.result && op.result >= 0 && op.result < uses.len() && uses[op.result] == 1;
 }
 
-pub function carry_triple(blk: SBlock, ii: i32, uses: i32[]): boolean {
-  if (ii < 0 || ii + 2 >= blk.insts.len()) {
-    return false;
-  }
-  let sum = blk.insts[ii];
-  let c = blk.insts[ii + 1];
-  let reader = blk.insts[ii + 2];
-  if (c.kind_tag != CARRY || c.args.len() != 2 || sum.kind_tag != BINARY || reader.kind_tag != BINARY || sum.args.len() != 2 || reader.args.len() != 2) {
-    return false;
-  }
-  let sub = c.imm == 1;
-  let op: string = if (sub) { "sub" } else { "add" };
-  if (sum.str != op || reader.str != op || uses[c.result] != 1) {
-    return false;
-  }
-  let same = sum.args[0] == c.args[0] && sum.args[1] == c.args[1];
-  if (!sub && sum.args[0] == c.args[1] && sum.args[1] == c.args[0]) {
-    same = true;
-  }
-  if (!same) {
-    return false;
-  }
-  if (sub) {
-    return reader.args[1] == c.result && reader.args[0] != c.result;
-  }
-  return reader.args[0] == c.result != (reader.args[1] == c.result);
-}
-
 pub function fuse_carries(f: SFunc): SFunc {
   if (!has_carry_shift(f)) {
     return f;
@@ -7652,7 +7679,353 @@ pub function fuse_carries(f: SFunc): SFunc {
   if (!t.changed) {
     return f;
   }
-  return prune_dead(t.f);
+  return gather_carries(prune_dead(t.f));
+}
+
+// The roles of the instructions of a carry chain. The emitters keep the
+// carry of a chain in the flags, so no instruction between two members of a
+// chain can change the flags.
+//
+// - HEAD is an add or a subtract that makes the flags for the carry after it.
+// - FLAG is a carry that stays in the flags. KEEP also gets a register,
+//   because a reader that is not next in the chain uses it.
+// - SKIP and LINK are the two adds of `x + y + carry`. The second one adds
+//   the three operands with the carry of the flags.
+// - READ adds a carry to one operand.
+pub const CARRY_HEAD: i32 = 1;
+
+pub const CARRY_FLAG: i32 = 2;
+
+pub const CARRY_KEEP: i32 = 3;
+
+pub const CARRY_SKIP: i32 = 4;
+
+pub const CARRY_LINK: i32 = 5;
+
+pub const CARRY_READ: i32 = 6;
+
+// The role of each value in a carry chain, or an empty array for a function
+// with no carry.
+pub function carry_roles(f: SFunc, uses: i32[]): i32[] {
+  if (!has_carry(f)) {
+    return [];
+  }
+  let roles = __alloc_i32(f.nvals);
+  for blk in f.blocks {
+    roles = block_carry_roles(blk.insts, uses, roles);
+  }
+  return roles;
+}
+
+pub function carry_role(roles: i32[], ins: SInst): i32 {
+  if (ins.result < 0 || ins.result >= roles.len()) {
+    return 0;
+  }
+  return roles[ins.result];
+}
+
+// The instruction at `ii` is a carry that reads the flags of the instruction before it.
+pub function carry_fed(roles: i32[], blk: SBlock, ii: i32): boolean {
+  if (ii >= blk.insts.len()) {
+    return false;
+  }
+  let role = carry_role(roles, blk.insts[ii]);
+  return role == CARRY_FLAG || role == CARRY_KEEP;
+}
+
+function has_carry(f: SFunc): boolean {
+  for blk in f.blocks {
+    if (block_has_carry(blk)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function block_has_carry(blk: SBlock): boolean {
+  for ins in blk.insts {
+    if (ins.kind_tag == CARRY) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function block_carry_roles(a: SInst[], uses: i32[], roles: i32[]): i32[] {
+  for i in 1..a.len() {
+    if (sum_of(a[i - 1], a[i])) {
+      let role = roles[a[i - 1].result];
+      if (role == 0) {
+        roles = roles.with(a[i - 1].result, CARRY_HEAD);
+      }
+      if (role == 0 || role == CARRY_READ) {
+        roles = chain_roles(a, i, uses, roles);
+      }
+    }
+  }
+  return roles;
+}
+
+// The carry at `first` is in the flags. Its role and the roles of the
+// instructions that read the flags after it.
+function chain_roles(a: SInst[], first: i32, uses: i32[], roles: i32[]): i32[] {
+  let at = first;
+  while (at >= 0) {
+    let c = a[at];
+    let read = 0;
+    let next = -1;
+    if (at + 2 < a.len() && link_of(a[at + 1], a[at + 2], c, uses)) {
+      roles = roles.with(a[at + 1].result, CARRY_SKIP).with(a[at + 2].result, CARRY_LINK);
+      read = 1;
+      if (at + 3 < a.len() && carry_out_of(a[at + 3], a[at + 1], c)) {
+        read = 2;
+        next = at + 3;
+      }
+    } else if (at + 1 < a.len() && reader_of(a[at + 1], c)) {
+      roles = roles.with(a[at + 1].result, CARRY_READ);
+      read = if (at + 2 < a.len() && sum_of(a[at + 1], a[at + 2])) { 2 } else { 1 };
+    }
+    roles = roles.with(c.result, if (uses[c.result] > read) { CARRY_KEEP } else { CARRY_FLAG });
+    at = next;
+  }
+  return roles;
+}
+
+function carry_op(c: SInst): string {
+  return if (c.imm == 1) { "sub" } else { "add" };
+}
+
+function wide_op(ins: SInst, op: string): boolean {
+  return ins.kind_tag == BINARY && ins.str == op && ins.imm == 64 && ins.args.len() == 2;
+}
+
+// `ins` has the operands x and y, in that order for a subtract.
+function operands_are(ins: SInst, x: i32, y: i32): boolean {
+  if (ins.args[0] == x && ins.args[1] == y) {
+    return true;
+  }
+  return ins.str == "add" && ins.args[0] == y && ins.args[1] == x;
+}
+
+// `c` is the carry of the two operands of `sum`.
+function sum_of(sum: SInst, c: SInst): boolean {
+  return c.kind_tag == CARRY && c.args.len() == 2 && wide_op(sum, carry_op(c)) && operands_are(sum, c.args[0], c.args[1]);
+}
+
+// `r` adds the carry `c` to one operand, or subtracts the borrow `c` from it.
+function reader_of(r: SInst, c: SInst): boolean {
+  return wide_op(r, carry_op(c)) && r.args[1 - carry_at(r, c)] != c.result && r.args[carry_at(r, c)] == c.result;
+}
+
+function carry_at(r: SInst, c: SInst): i32 {
+  return if (r.str == "add" && r.args[0] == c.result) { 0 } else { 1 };
+}
+
+// `t` and `s` are the two adds of `x + y + c`, and only `s` reads `t`.
+function link_of(t: SInst, s: SInst, c: SInst, uses: i32[]): boolean {
+  let op = carry_op(c);
+  if (!wide_op(t, op) || !wide_op(s, op) || uses[t.result] != 1 || t.args[0] == c.result || t.args[1] == c.result) {
+    return false;
+  }
+  return operands_are(s, t.result, c.result);
+}
+
+// `out` is the carry of the operands of `t` and of the carry `c`.
+function carry_out_of(out: SInst, t: SInst, c: SInst): boolean {
+  return out.kind_tag == CARRY && out.args.len() == 3 && out.imm == c.imm && out.args[2] == c.result && operands_are(t, out.args[0], out.args[1]);
+}
+
+// Puts the members of each carry chain of a block next to each other. Each
+// instruction that moves is an add, a subtract or a carry, which has no
+// effect, and each one stays after the instructions that make its operands.
+function gather_carries(f: SFunc): SFunc {
+  let uses = use_counts(f);
+  let nblocks: SBlock[] = [];
+  for blk in f.blocks {
+    if (block_has_carry(blk)) {
+      nblocks = nblocks.append(SBlock { ...blk, insts: chained(carries_after_sums(blk.insts), uses) });
+    } else {
+      nblocks = nblocks.append(blk);
+    }
+  }
+  return SFunc { ...f, blocks: nblocks };
+}
+
+function carries_after_sums(a: SInst[]): SInst[] {
+  for i in 1..a.len() {
+    let c = a[i];
+    let j = sum_before(a, i);
+    if (j >= 0 && j + 1 != i && !sum_of(a[j], a[j + 1])) {
+      a = arranged(a, a[j].result, [c.result], false);
+    }
+  }
+  return a;
+}
+
+function sum_before(a: SInst[], at: i32): i32 {
+  if (a[at].kind_tag != CARRY) {
+    return -1;
+  }
+  for j in 0..at {
+    if (sum_of(a[j], a[at])) {
+      return j;
+    }
+  }
+  return -1;
+}
+
+// `moved` names instructions by result. `before` puts them before the
+// instruction `anchor`, and they go after it when `before` is not set.
+struct CarryMove { moved: i32[], anchor: i32, before: boolean }
+
+function no_carry_move(): CarryMove {
+  return CarryMove { moved: [], anchor: -1, before: false };
+}
+
+function chained(a: SInst[], uses: i32[]): SInst[] {
+  let tail = -1;
+  let sunk: i32[] = [];
+  let p = 0;
+  while (p < a.len()) {
+    let c = a[p];
+    if (c.kind_tag == CARRY && (c.result == tail || p > 0 && sum_of(a[p - 1], c))) {
+      let m = link_move(a, p, uses);
+      if (m.moved.len() == 0) {
+        m = reader_move(a, p, sunk);
+      }
+      if (m.moved.len() > 0) {
+        a = arranged(a, m.anchor, m.moved, m.before);
+      }
+      if (m.moved.len() == 3) {
+        tail = m.moved[2];
+      }
+      if (m.before) {
+        sunk = sunk.append(c.result);
+        p -= 2;
+      } else {
+        p = made_at(a, c.result);
+      }
+    }
+    p += 1;
+  }
+  return a;
+}
+
+function made_at(a: SInst[], v: i32): i32 {
+  for i in 0..a.len() {
+    if (a[i].result == v) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function listed(ids: i32[], v: i32): boolean {
+  for id in ids {
+    if (id == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function arranged(a: SInst[], anchor: i32, moved: i32[], before: boolean): SInst[] {
+  let out: SInst[] = [];
+  for ins in a {
+    if (ins.result == anchor && before) {
+      out = with_made(out, a, moved);
+    }
+    if (ins.result < 0 || !listed(moved, ins.result)) {
+      out = out.append(ins);
+    }
+    if (ins.result == anchor && !before) {
+      out = with_made(out, a, moved);
+    }
+  }
+  return out;
+}
+
+function with_made(out: SInst[], a: SInst[], moved: i32[]): SInst[] {
+  for v in moved {
+    out = out.append(a[made_at(a, v)]);
+  }
+  return out;
+}
+
+// `v` has its value before the instruction at `p`.
+function made_before(a: SInst[], v: i32, p: i32): boolean {
+  let at = made_at(a, v);
+  return at < p;
+}
+
+// The instruction at `i` reads the flags of a carry before it that is not `except`.
+function reads_flags(a: SInst[], i: i32, except: i32): boolean {
+  for back in 1..3 {
+    if (i >= back && a[i - back].kind_tag == CARRY && a[i - back].result != except && listed(a[i].args, a[i - back].result)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The two adds of `x + y + c` for the carry `c` at `p`, and the carry of that sum when the block has it.
+function link_move(a: SInst[], p: i32, uses: i32[]): CarryMove {
+  let c = a[p];
+  for q in p + 1..a.len() {
+    let s = a[q];
+    if (!wide_op(s, carry_op(c)) || !listed(s.args, c.result)) {
+      continue;
+    }
+    let ti = made_at(a, s.args[1 - carry_at(s, c)]);
+    if (ti < 0 || !link_of(a[ti], s, c, uses) || reads_flags(a, ti, -1) || sum_of(a[ti], a[ti + 1])) {
+      continue;
+    }
+    if (ti > p && !(made_before(a, a[ti].args[0], p) && made_before(a, a[ti].args[1], p))) {
+      continue;
+    }
+    let moved: i32[] = [a[ti].result, s.result];
+    for out in a {
+      if (carry_out_of(out, a[ti], c)) {
+        return CarryMove { moved: moved.append(out.result), anchor: c.result, before: false };
+      }
+    }
+    return CarryMove { moved: moved, anchor: c.result, before: false };
+  }
+  return no_carry_move();
+}
+
+// The reader of the carry `c` at `p` goes after `c`, with the carry of its
+// own sum. When an operand of the reader comes later, the sum and `c` go down
+// to the reader, one time for each carry.
+function reader_move(a: SInst[], p: i32, sunk: i32[]): CarryMove {
+  let c = a[p];
+  for q in p + 1..a.len() {
+    let r = a[q];
+    if (!reader_of(r, c) || reads_flags(a, q, c.result)) {
+      continue;
+    }
+    if (made_before(a, r.args[1 - carry_at(r, c)], p)) {
+      let moved: i32[] = [r.result];
+      if (q + 1 < a.len() && sum_of(r, a[q + 1])) {
+        moved = moved.append(a[q + 1].result);
+      }
+      return CarryMove { moved: moved, anchor: c.result, before: false };
+    }
+    if (c.args.len() == 2 && !listed(sunk, c.result) && !reads_flags(a, p - 1, -1) && !read_between(a, p, q)) {
+      return CarryMove { moved: [a[p - 1].result, c.result], anchor: r.result, before: true };
+    }
+  }
+  return no_carry_move();
+}
+
+// An instruction between `p` and `q` reads the carry at `p` or the sum before it.
+function read_between(a: SInst[], p: i32, q: i32): boolean {
+  for k in p + 1..q {
+    if (listed(a[k].args, a[p].result) || listed(a[k].args, a[p - 1].result)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function has_carry_shift(f: SFunc): boolean {
@@ -7720,6 +8093,9 @@ function zero_one(defs: SInst[], v: i32): boolean {
 }
 
 function carry_of(defs: SInst[], shr: SInst): SInst {
+  if (wide_op(shr, "or") || wide_op(shr, "add")) {
+    return full_carry(defs, shr);
+  }
   if (!is_top_bit(defs, shr)) {
     return no_inst();
   }
@@ -7732,6 +8108,42 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
     m = carry_halves(defs, shr, o.args[1], o.args[0]);
   }
   return m;
+}
+
+// `carry(x, y) | carry(x + y, c)` is the carry of `x + y + c` when `c` is 0
+// or 1. The two halves are not 1 together, so their sum is the same carry.
+function full_carry(defs: SInst[], join: SInst): SInst {
+  let a = half_carry(defs, join.args[0]);
+  let b = half_carry(defs, join.args[1]);
+  if (a.kind_tag == NONE || b.kind_tag == NONE || a.imm != b.imm) {
+    return no_inst();
+  }
+  let m = carry_of_halves(defs, join, a, b);
+  return if (m.kind_tag == NONE) { carry_of_halves(defs, join, b, a) } else { m };
+}
+
+function half_carry(defs: SInst[], v: i32): SInst {
+  let d = copy_source(defs, v);
+  if (!is_top_bit(defs, d)) {
+    return no_inst();
+  }
+  let m = carry_of(defs, d);
+  return if (m.kind_tag == CARRY && m.args.len() == 2) { m } else { no_inst() };
+}
+
+function carry_of_halves(defs: SInst[], join: SInst, first: SInst, second: SInst): SInst {
+  let x = first.args[0];
+  let y = first.args[1];
+  for k in 0..2 {
+    let inner = wide_of(defs, second.args[k], carry_op(first));
+    if (inner.kind_tag == NONE || !zero_one(defs, second.args[1 - k]) || first.imm == 1 && k == 1) {
+      continue;
+    }
+    if (copy_root(defs, inner.args[0]) == x && copy_root(defs, inner.args[1]) == y || first.imm == 0 && same_pair(defs, inner.args[0], inner.args[1], x, y)) {
+      return SInst { kind_tag: CARRY, result: join.result, args: [x, y, second.args[1 - k]], imm: first.imm, str: "" };
+    }
+  }
+  return no_inst();
 }
 
 function carry_halves(defs: SInst[], shr: SInst, p: i32, q: i32): SInst {
@@ -7933,7 +8345,7 @@ function inst_has_effect(k: i32): boolean {
   if (k < PRINT) {
     return k == PARAM || k == CALL || k == CALL_INDIRECT || k == ALLOC || k == STORE_ELEM || k == CONCAT;
   }
-  return k != SELECT && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY && k != FRAME_CELL;
+  return k != SELECT && k != CARRY && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY && k != FRAME_CELL;
 }
 
 function prune_roots(f: SFunc): i32[] {
@@ -7961,12 +8373,10 @@ function prune_mark(f: SFunc, work: i32[]): i32[] {
   let def_b = __alloc_i32(f.nvals);
   let def_k = __alloc_i32(f.nvals);
   for bi in 0..f.blocks.len() {
-    let k = 0;
-    while (k < f.blocks[bi].insts.len()) {
+    for k in 0..f.blocks[bi].insts.len() {
       let r = f.blocks[bi].insts[k].result;
       def_b = def_b.with(r, bi + 1);
       def_k = def_k.with(r, k);
-      k += 1;
     }
   }
   let at = 0;

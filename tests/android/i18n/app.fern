@@ -1,9 +1,13 @@
-// A NativeActivity app for the emulator check of android.languages and
-// std/i18n. At the first Resume it logs the languages of the person, and
-// the language that std/i18n chooses for an app with German and English
-// texts, then finishes.
+// A NativeActivity app for the emulator check of android.languages,
+// std/i18n and the fallback fonts. At the first Resume it logs the
+// languages of the person, and the language that std/i18n chooses for an
+// app with German and English texts. Then it logs how many glyphs of a
+// Hebrew and an Arabic word come from a fallback font and have pixels,
+// and finishes.
 import "std/android";
 import "std/android/launch";
+import "std/android/text";
+import "std/bidi";
 import "std/i18n";
 import "std/kv";
 import "std/log";
@@ -22,6 +26,19 @@ function app_main(ctx: usize): usize {
   return 0 as usize;
 }
 
+// The number of glyphs of `s` that come from a fallback font and have
+// pixels, a slash, and the number of glyphs.
+function drawn(fs: text.Fonts, s: string): string {
+  let (_, placed) = text.layout(text.new_cache(), fs, 0, 32, 0, s);
+  let n = 0;
+  for p in placed {
+    if (p.key >> 32 >= 64i64 * 4096i64 * 4i64 && p.bm.width > 0 && p.bm.coverage.len() > 0) {
+      n += 1;
+    }
+  }
+  return n.to_string() + "/" + placed.len().to_string();
+}
+
 function step(s: App, e: android.Event): App {
   if let android.Resume = e {
     if (s.done) {
@@ -32,6 +49,10 @@ function step(s: App, e: android.Event): App {
     let texts = i18n.strings(lang, kv.empty("en.kv").set("hello", "Hello"), kv.empty("de.kv").set("hello", "Hallo"));
     log.warn("i18ntest: languages " + langs.join(","));
     log.warn("i18ntest: chose " + lang + " " + texts.text("hello"));
+    let fs = text.system(s.ctx, "sans-serif", [400]);
+    for word in ["שלום", "مرحبا"] {
+      log.warn("i18ntest: fallback " + drawn(fs, bidi.display(word, bidi.AUTO)));
+    }
     android.finish(s.ctx);
     return App { ...s, done: true };
   }

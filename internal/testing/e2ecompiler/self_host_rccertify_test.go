@@ -385,6 +385,30 @@ function pick(name: string): Case {
         let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8]), fresh_box(11), store(9, 8, 11)], ret(9));
         return Case { f: func(1, 12, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
     }
+    if (name == "token-reuse-takes-a-slot-of-the-reused-box") {
+        // token-reuse-writes-the-slot-read, and the frame then reads the
+        // slot of the reused box and nulls it: the read owns the unit that
+        // the store put there, and the frame releases it.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 2, [0, 3], 0, ""), counted_load(4, 0, 8), inst(9, 5, [2, 3], 0, "eq")], brif(5, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(6, "__fern_rc_inc", [4]), call(10, "__fern_rc_dec", [0])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8]), fresh_box(11), store(9, 8, 11), counted_load(12, 9, 8), store(9, 8, 3), call(13, "__fern_rc_dec", [12])], ret(9));
+        return Case { f: func(1, 14, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
+    }
+    if (name == "token-reuse-nulls-the-slot-read") {
+        // A null store into the reused box is not a take of the read off the
+        // box it replaces: the shared arm does not retain the field, so the
+        // move has no unit.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 2, [0, 3], 0, ""), counted_load(4, 0, 8), inst(9, 5, [2, 3], 0, "eq")], brif(5, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(10, "__fern_rc_dec", [0])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8]), store(9, 8, 3)], ret(9));
+        return Case { f: func(1, 11, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
+    }
     if (name == "token-reuse-puts-back-and-stores-elsewhere" || name == "token-reuse-puts-back-and-stores-elsewhere-unretained") {
         // A field read off the token's box is stored back into its own slot
         // of the reused box and into a second slot: the first store keeps
@@ -601,6 +625,16 @@ function pick(name: string): Case {
         let b3 = block(3, [1, 2], [inst(8, 3, [2, 1], 0, "")], ret(3));
         return Case { f: func(1, 4, [b0, b1, b2, b3]), modes: [value], returns_unit: false };
     }
+    if (name == "unknown-callee-refused") {
+        return Case { f: one_block(0, 3, [fresh_box(0), call(1, "mystery", [0]), const_int(2, 0)], ret(2)), modes: [], returns_unit: false };
+    }
+    if (name == "null-tested-against-an-i64-zero") {
+        // A 64-bit zero is a constant whose text is its value.
+        let b0: ssa.SBlock = block(0, [], [call(0, "__fern_str_own", []), inst(3, 1, [], 64, "0"), inst(9, 2, [0, 1], 64, "ne")], brif(2, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [call(3, "__fern_rc_dec", [0])], br(2));
+        let b2: ssa.SBlock = block(2, [0, 1], [const_int(4, 0)], ret(4));
+        return Case { f: func(0, 5, [b0, b1, b2]), modes: [], returns_unit: false };
+    }
     if (name == "leak-in-an-endless-loop") {
         let b0 = block(0, [], [], br(1));
         let b1 = block(1, [0, 1], [fresh_box(0)], br(1));
@@ -630,6 +664,9 @@ function main(): i32 {
     let r: rccertify.Report = rccertify.certify(c.f, irops, own_abi, abis, rcsigs.table(), ops);
     for x in r.findings {
         print(rccertify.render("case", x));
+    }
+    if (r.failed != "") {
+        print("case: cannot be certified: " + r.failed);
     }
     let at: string = "";
     for v in r.unproved_at {
@@ -705,6 +742,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"derived-token-test-skips-the-shell", nil, 0, ""},
 		{"reuse-through-a-carried-token-writes-the-slot", nil, 2, ""},
 		{"token-reuse-writes-the-slot-read", nil, 0, ""},
+		{"token-reuse-takes-a-slot-of-the-reused-box", nil, 0, ""},
+		{"token-reuse-nulls-the-slot-read", []string{"spent without a unit of v4"}, 0, ""},
 		{"token-reuse-puts-back-and-stores-elsewhere", nil, 0, ""},
 		{"token-reuse-puts-back-and-stores-elsewhere-unretained", []string{"spent without a unit of v4"}, 0, ""},
 		{"token-reuse-through-a-phi-an-outside-arm-nulls", nil, 1, ""},
@@ -719,6 +758,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"unit-held-into-an-exit", nil, 0, ""},
 		{"borrow-released-before-an-exit", []string{"spent without a unit of v0"}, 0, ""},
 		{"leak-in-an-endless-loop", []string{"leaked where it dies of v0"}, 0, ""},
+		{"null-tested-against-an-i64-zero", nil, 0, ""},
+		{"unknown-callee-refused", []string{"cannot be certified: calls mystery, which has no rc signature and no ABI"}, 0, ""},
 		{"unknown-contract-returns-a-phi-of-a-fresh-box", nil, 2, ""},
 		{"loop-phi-borrows-a-held-box", nil, 0, ""},
 		{"loop-phi-borrows-a-box-never-released", []string{"of v1"}, 0, ""},

@@ -191,6 +191,18 @@ These checks follow H.264 clauses 7.3.2.5, 7.3.2.6, 7.4.1.2.2, and 7.4.1.2.3.
 An IDR slice requires a zero frame number, as specified in clause 7.4.3.
 The existing SPS context supplies its width. Non-IDR frame numbers retain their full supported range.
 
+An AVC access-unit delimiter must be first and appear at most once in its access unit.
+Its single payload byte contains three primary-picture-type bits followed by exact RBSP trailing bits.
+The reader checks these rules after unit and packet limits, before the packet copy.
+These checks follow H.264 clauses 7.3.2.4, 7.3.2.11, and 7.4.1.2.3.
+They do not compare that type with all slice types in the picture.
+
+AVC filler payloads contain zero or more `ff` bytes followed by exactly `80`.
+Filler must follow the first coded slice of its picture, under H.264 clause 7.4.1.2.3.
+Filler between slices and multiple filler units remain permitted.
+These checks follow H.264 clauses 7.3.2.7 and 7.3.2.11.
+The reader checks filler syntax after unit and packet limits, before the packet copy, without another payload allocation.
+
 The supported path requires matching parameter sets before each slice.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
@@ -229,7 +241,11 @@ IRAP identifies types 16 through 21. IDR identifies types 19 and 20 only, withou
 Slice inspection copies at most eight unescaped bytes. The limits do not define an exact process-memory bound.
 Multilayer input, separate color planes, and reserved or unspecified NAL types return `Unsupported`.
 
-VPS, SEI, and filler payloads remain opaque. The reader does not resolve VPS references or assign timestamps.
+Filler payloads require zero or more `0xff` bytes followed by one `0x80` byte.
+This check follows H.265 clauses 7.3.2.8 and 7.3.2.11.
+The reader checks filler bytes after the packet byte limit and before the packet copy, without another payload allocation.
+
+VPS and SEI payloads remain opaque. The reader does not resolve VPS references or assign timestamps.
 It does not validate entropy data, complete slice headers or coverage, or decoded pixels.
 The caller retains and closes the source. Blocking I/O must run outside the Android loop callback.
 

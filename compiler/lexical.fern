@@ -83,12 +83,12 @@ function expr(e: ast.Expr, s: Scope): (ast.Expr, Scope) {
 
 function body(stmts: ast.Stmt[], s: Scope): (ast.Stmt[], Scope) {
   let out: ast.Stmt[] = [];
-  let cur = s;
+  let (cur, mutual) = bind_mutual(stmts, s);
   for st in stmts {
     // A local is bound here rather than through the walker, so that cur is
     // at its last use and the bind grows its arrays in place.
     if let ast.StmtVar(v) = st {
-      let (local, tail) = var_at(v, cur);
+      let (local, tail) = var_at(v, cur, mutual);
       out = out.append(local);
       cur = tail;
       continue;
@@ -176,14 +176,33 @@ function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
   }
 }
 
-function var_at(v: ast.StmtVar, s: Scope): (ast.Stmt, Scope) {
+// Nested functions that call each other are in scope in the whole block.
+function bind_mutual(stmts: ast.Stmt[], s: Scope): (Scope, string[]) {
+  let names: string[] = [];
+  let out = s;
+  let fns = parser.nested_fns(stmts);
+  if (fns.len() < 2) {
+    return (out, names);
+  }
+  for st in stmts {
+    if let ast.StmtVar(v) = st {
+      if (ast.var_binds_itself(v) && parser.nested_fn_cycle(fns, v.name).len() > 1) {
+        out = bind_names(out, v.name, v.line, v.col);
+        names = names.append(v.name);
+      }
+    }
+  }
+  return (out, names);
+}
+
+function var_at(v: ast.StmtVar, s: Scope, mutual: string[]): (ast.Stmt, Scope) {
   let before = s;
-  let recursive = ast.var_binds_itself(v);
+  let recursive = ast.var_binds_itself(v) && !util.has_str(mutual, v.name);
   if (recursive) {
     before = bind_names(before, v.name, v.line, v.col);
   }
   let (init, tail) = expr(v.init, before);
-  if (!recursive) {
+  if (!recursive && !util.has_str(mutual, v.name)) {
     tail = bind_names(tail, v.name, v.line, v.col);
   }
   return (ast.StmtVar { ...v, name: names(tail, v.name), init: init }, tail);
@@ -192,7 +211,7 @@ function var_at(v: ast.StmtVar, s: Scope): (ast.Stmt, Scope) {
 function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
   match (st) {
     ast.StmtVar(v) => {
-      let (local, tail) = var_at(v, s);
+      let (local, tail) = var_at(v, s, []);
       return (local, tail, true);
     },
     ast.StmtAssign(a) => {

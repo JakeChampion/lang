@@ -62,3 +62,24 @@ func TestSelfHostRcCertifyMutants(t *testing.T) {
 		t.Fatalf("mutants of main: %q, want each one refuted", mainLine[0])
 	}
 }
+
+// An instance of a generic function, such as identity[str], has a contract of
+// its own, so a call to it is not opaque and the instance knows its own ABI.
+func TestSelfHostRcCertifyCensusKnowsInstanceABIs(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := langSrcAbs(t, filepath.Join("conformance", "cases", "primitive_contextual_type_arguments", "main.fern"))
+	out, code := compileCapturing(t, cli, src, "FERN_RC_CERTIFY=report", "FERN_RC_CERTIFY_MEMO=0")
+	if code != 0 {
+		t.Fatalf("report compile: exit %d\n%s", code, out)
+	}
+	if strings.Contains(out, " opaque=") {
+		t.Fatalf("a call has no ABI:\n%s", out)
+	}
+	instance := regexp.MustCompile(`(?m)^FERN_RC_CERTIFY: census identity\$str .* abi=(\S*)$`).FindStringSubmatch(out)
+	if instance == nil || instance[1] == "unknown" {
+		t.Fatalf("identity$str: want a census line with a known ABI:\n%s", out)
+	}
+	if !regexp.MustCompile(`(?m)^FERN_RC_CERTIFY: census main tracked=\d+ unproved=0 `).MatchString(out) {
+		t.Fatalf("main: want no unproved value once its callee's ABI is known:\n%s", out)
+	}
+}

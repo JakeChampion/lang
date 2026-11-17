@@ -689,12 +689,25 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: reached.bodies, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records, refused: ircore.fip_claim_diags(mod.funcs, kept.result.bodies) };
 }
 
+// An instance of a generic function has no row in the table, which holds the
+// declarations. Its contract is its declaration's with the request's binding,
+// and the modes that the inference gave the instance.
 function physical_contracts(built: semsource.Built): ssasem.Contract[] {
   let out = built.contracts.list;
+  let instances = ssasem.contracts_of(built.instance_contracts);
   let i = 0;
   for p in util.append_all(built.decls, built.instances) {
     if (p.ok && i < built.names.len()) {
       let at = built.contracts.names.find(built.names[i]);
+      let c = instances.names.find(built.names[i]);
+      if (at < 0 && c >= 0 && i >= built.decls.len() && !p.template && !p.bodyless) {
+        let made = instances.list[c];
+        if (p.modes.len() == made.params.len()) {
+          made = ssasem.Contract { ...made, modes: p.modes };
+        }
+        out = out.append(made);
+        at = out.len() - 1;
+      }
       if (at >= 0 && !semtypes.equal(p.func.result, out[at].result) && scalar_result(p.func, out[at].result)) {
         out = out.with(at, ssasem.Contract { ...out[at], result: p.func.result });
       }

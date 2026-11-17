@@ -18,14 +18,14 @@ pps = load("gen-video-avc-pps-fixtures")
 
 
 def sequence(**options):
-    return syntax.make(profile=66, width=3, height=2, crop=(0, 0, 0, 0), **options)
+    return syntax.make(profile=options.pop("profile", 66), width=3, height=2, crop=(0, 0, 0, 0), **options)
 
 
 def slice_nal(*, first=0, frame=None, frame_bits=4, parameter=0, reference=2, idr=False, identity=0,
-              order=2, a=0, b=0, bottom=False, zero=False):
+              order=2, a=0, b=0, bottom=False, zero=False, slice_type=None):
     w = syntax.Writer()
     w.ue(first)
-    w.ue(2 if idr else 0)
+    w.ue((2 if idr else 0) if slice_type is None else slice_type)
     w.ue(parameter)
     w.u((0 if idr else 1) if frame is None else frame, frame_bits)
     if idr:
@@ -77,6 +77,10 @@ def controls():
     yield "SEI belongs to next packet", [[s, p, slice_nal(frame=1)], [sei, slice_nal(frame=2)]]
     yield "AUD belongs to next packet", [[b"\x09\xf0", s, p, slice_nal(frame=1)],
                                          [b"\x09\xf0", slice_nal(frame=2)]]
+    for primary, slice_type in enumerate((2, 0, 1, 4, 3, 2, 0, 1)):
+        yield f"AUD primary picture type {primary} then no delimiter", [
+            [bytes([9, primary << 5 | 16]), sequence(profile=88, poc=2), p,
+             slice_nal(frame=1, slice_type=slice_type)], [slice_nal(frame=2)]]
     yield "sequence end forces a boundary", [[s, p, slice_nal(frame=0, idr=True), b"\x0a"],
                                              [slice_nal(frame=0, idr=True)]]
     yield "both end markers remain in the last picture", [[s, p, slice_nal(frame=0, idr=True), b"\x0a", b"\x0b"]]
@@ -85,6 +89,16 @@ def controls():
                                                    [sei, s, p, slice_nal(frame=0, idr=True)]]
     yield "filler after sequence end remains a suffix", [[s, p, slice_nal(frame=0, idr=True), b"\x0a", b"\x0c\xff\x80"],
                                                         [slice_nal(frame=0, idr=True), b"\x0b"]]
+    for count in (0, 1, 31, 255, 4095):
+        yield f"filler length {count} remains with its picture", [
+            [s, p, slice_nal(frame=1), b"\x0c" + b"\xff" * count + b"\x80"],
+            [slice_nal(frame=2), b"\x0b"]]
+    yield "filler between slices remains with its picture", [
+        [s, p, slice_nal(frame=1), b"\x0c\xff\x80", slice_nal(first=6, frame=1)],
+        [slice_nal(frame=2)]]
+    yield "multiple filler units remain with their picture", [
+        [s, p, slice_nal(frame=1), b"\x0c\x80", b"\x0c\xff\x80", b"\x0c\xff\xff\x80"],
+        [slice_nal(frame=2)]]
     yield "parameter replacement", [[s, p, slice_nal(frame=1)],
                                     [sequence(poc=0), pps.make(bottom=1), slice_nal(order=0, bottom=True, b=1)]]
     yield from replacement_controls()
@@ -135,6 +149,36 @@ def incompatible_pairs():
 
 def invalid():
     s, p = sequence(poc=2), pps.make()
+    sei = b"\x06\x05\x10" + bytes(range(1, 17)) + b"\x80"
+    for prefix in ([], [b"\x09\xf0"], [s], [s, p], [sei]):
+        name = "-".join(str(unit[0] & 31) for unit in prefix) or "none"
+        yield f"filler requires a picture after prefix {name}", prefix + [b"\x0c\xff\x80", s, p, slice_nal()], "Header"
+        if prefix:
+            yield f"later filler requires a picture after prefix {name}", [s, p, slice_nal(frame=1)] + prefix + [
+                b"\x0c\xff\x80", slice_nal(frame=2)], "Header"
+    yield "later filler requires a picture after cached PPS", [s, p, slice_nal(frame=1), p,
+                                                               b"\x0c\xff\x80", slice_nal(frame=2)], "Header"
+    yield "filler payload is incomplete", [s, p, slice_nal(), b"\x0c"], "Truncated"
+    for value in range(256):
+        if value != 255:
+            for position in (0, 31):
+                payload = b"\xff" * position + bytes([value]) + b"\xff\x80"
+                yield f"filler rejects byte {value} at {position}", [s, p, slice_nal(), b"\x0c" + payload], "Header"
+        if value != 128:
+            yield f"filler rejects final byte {value}", [s, p, slice_nal(), b"\x0c\xff" + bytes([value])], "Header"
+    for payload in (b"\x80\x80", b"\xff\x80\xff", b"\xff\x80\x01"):
+        yield f"filler rejects extra payload {payload.hex()}", [s, p, slice_nal(), b"\x0c" + payload], "Header"
+    yield "AUD payload is incomplete", [b"\x09", s, p, slice_nal()], "Truncated"
+    for value in range(256):
+        if value & 31 != 16:
+            yield f"AUD rejects payload byte {value}", [bytes([9, value]), s, p, slice_nal()], "Truncated" if value == 0 else "Header"
+    for payload in (b"\xf0\x80", b"\xf0\xff", b"\xf0\x01"):
+        yield f"AUD rejects extra payload {payload.hex()}", [b"\x09" + payload, s, p, slice_nal()], "Header"
+    for prefix in ([s], [s, p], [b"\x06\x05\x10" + bytes(range(1, 17)) + b"\x80"], [b"\x09\xf0"]):
+        name = "-".join(str(unit[0] & 31) for unit in prefix)
+        yield f"AUD must precede NAL prefix {name}", prefix + [b"\x09\xf0", s, p, slice_nal()], "Header"
+        yield f"later AUD must precede NAL prefix {name}", [s, p, slice_nal(frame=1)] + prefix + [
+            b"\x09\xf0", slice_nal(frame=2)], "Header"
     yield "slice requires its PPS", [slice_nal()], "State"
     yield "PPS requires its SPS", [pps.make(sequence=1)], "State"
     yield "prefix has no picture", [s, p], "Truncated"

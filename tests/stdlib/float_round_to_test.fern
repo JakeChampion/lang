@@ -1,4 +1,5 @@
 import "std/test";
+import "std/f32";
 import "std/f64";
 
 function test_two_places(): test.TestOutcome {
@@ -54,6 +55,22 @@ function test_large_scales(): test.TestOutcome {
   return test.assert_eq(got, "1e+300 1.5 0 0 0");
 }
 
+function test_coarse_zero_signs(): test.TestOutcome {
+  let digits: i32[] = [-309, -400, -2147483648];
+  for n in digits {
+    if (f64_bits((-1.0).round_to(n)) != -9223372036854775807 - 1) {
+      return test.fail("f64 negative zero sign");
+    }
+    if (f32_bits((-(1.0 as f32)).round_to(n)) != -2147483647 - 1) {
+      return test.fail("f32 negative zero sign");
+    }
+    if (f64_bits(1.0.round_to(n)) != 0 || f32_bits((1.0 as f32).round_to(n)) != 0) {
+      return test.fail("positive zero sign");
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("std/f64 round_to");
   r = r.it("two places", test_two_places);
@@ -65,5 +82,6 @@ function main(): i32 {
   r = r.it("whole number", test_whole_number);
   r = r.it("f32", test_f32);
   r = r.it("scales that are not an f64", test_large_scales);
+  r = r.it("coarse zero signs", test_coarse_zero_signs);
   return r.finish();
 }

@@ -14,11 +14,13 @@ import "std/android/player";
 import "std/android/session";
 import "std/android/text";
 import "std/android/ui/scene";
+import "std/i18n";
 import "std/log";
 import "std/string";
 import "std/utf8";
 import "std/worker";
 import "./plex";
+import "./texts";
 import "./ui";
 
 // The input and output of the app. `read` gives "" for a file that does not
@@ -69,6 +71,9 @@ pub struct Device {
   // that plays.
   audio_tracks: () => i32[],
   select_track: (i32) => boolean,
+  // Plays at a rate in hundredths: 100 is the normal speed. A rate also
+  // starts a paused player, so the app sets it only while the player plays.
+  set_speed: (i32) => void,
   // True when the prepared player selected a sound track.
   has_audio: () => boolean,
   // Sets the brightness of the window from 0.0 to 1.0, or that of the
@@ -90,6 +95,8 @@ pub struct Device {
   random: () => i32,
   // The MIME types that the decoders of the phone take.
   decoders: string[],
+  // The languages of the person, the first one the best.
+  languages: string[],
 }
 
 // A request to the API that waits for its turn. `purpose` says what to do
@@ -142,6 +149,9 @@ struct Play {
   retried: boolean,
   status: string,
   queue: plex.Item[],
+  // The items of the album or the list that the play started from, in
+  // their order, for repeat and for an end of shuffle.
+  album: plex.Item[],
   // The preview thumbnails of the item, while the finger drags the seek bar
   // the time under it, or -1, the time of the last seek of the drag, and
   // the thumbnail that shows.
@@ -150,6 +160,10 @@ struct Play {
   scrub_seek_at: i64,
   thumb_index: i32,
   thumb: Option[draw.Image],
+  // The index in `plex.qualities()` of the quality that plays, and with
+  // Auto the times of the recent stalls of the stream.
+  level: i32,
+  stalls: i64[],
   // The sound and the subtitles that play, and whether the sheet of the
   // tracks shows.
   choice: plex.Choice,
@@ -208,6 +222,17 @@ pub struct App {
   pin_at: i64,
   account: string,
   quality: i32,
+  // The rate of the playback in hundredths, one of `speeds()`.
+  speed: i32,
+  // The texts in the language of the person.
+  texts: i18n.Strings,
+  // Whether a list plays in a random order, and its repeat: 0 none, 1 the
+  // list, 2 the item. `sleep` is the index in `sleeps()` of the sleep timer,
+  // and `sleep_at` the time that the music stops, or 0.
+  shuffle: boolean,
+  repeat: i32,
+  sleep: i32,
+  sleep_at: i64,
   screen: i32,
   tab: i32,
   title: string,
@@ -292,7 +317,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, choice: plex.no_choice(), sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1 };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1 };
 }
 
 function no_press(): Press {
@@ -347,6 +372,9 @@ function save(s: App): void {
     "server_token=" + s.base.token,
     "server_uri=" + s.base.uri,
     "quality=" + s.quality.to_string(),
+    "speed=" + s.speed.to_string(),
+    "shuffle=" + (if (s.shuffle) { "1" } else { "0" }),
+    "repeat=" + s.repeat.to_string(),
   ];
   s.dev.write(settings_path(s), lines.join("\n") + "\n");
 }
@@ -378,7 +406,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
     servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
-    account: setting(text, "account"), quality: num(setting(text, "quality")),
+    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64,
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
@@ -922,7 +950,8 @@ function got_pin_check(own t: App, r: plex.Reply): App {
 
 // The users of the Plex Home of the account, to switch to one.
 function open_users(own s: App): App {
-  return ask(App { ...push(s), screen: ui.USERS, title: "Switch user", scroll: 0, pin_for: "", pin_digits: "", dirty: true }, "homeusers", HomeUsers);
+  let title = s.texts.text("Switch user");
+  return ask(App { ...push(s), screen: ui.USERS, title: title, scroll: 0, pin_for: "", pin_digits: "", dirty: true }, "homeusers", HomeUsers);
 }
 
 // A tap on user `i`: a protected user gets the keypad of the PIN first.
@@ -1328,14 +1357,111 @@ function play_first(own s: App, items: plex.Item[]): App {
   let i = 0;
   while (i < items.len()) {
     if (plex.playable_kind(items[i].kind) && !plex.watched(items[i])) {
-      return start_play(s, items[i], items.drop(i + 1));
+      return play_list(s, items, i);
     }
     i += 1;
   }
   if (items.len() > 0 && plex.playable_kind(items[0].kind)) {
-    return start_play(s, items[0], items.drop(1));
+    return play_list(s, items, 0);
   }
   return App { ...s, error: "Nothing to play" };
+}
+
+// Plays item `i` of `items`, and then the items after it. With shuffle,
+// the items after it play in a random order. A track starts its album at
+// the start, so that shuffle and repeat take the whole album.
+function play_list(own s: App, items: plex.Item[], i: i32): App {
+  let first = items[i];
+  let rest = items.drop(i + 1);
+  if (s.shuffle) {
+    rest = shuffled(s.dev, items.filter((it: plex.Item): boolean => it.key != first.key));
+  }
+  let t = start_play(s, first, rest);
+  return App { ...t, play: Play { ...t.play, album: items } };
+}
+
+// The items in a random order.
+function shuffled(dev: Device, items: plex.Item[]): plex.Item[] {
+  let out = items;
+  let k = out.len() - 1;
+  while (k > 0) {
+    let j = dev.random() % (k + 1);
+    let a = out[k];
+    out = out.with(k, out[j]).with(j, a);
+    k -= 1;
+  }
+  return out;
+}
+
+// The items of the album after `it`, in the order of the album.
+function after_in(album: plex.Item[], it: plex.Item): plex.Item[] {
+  let i = 0;
+  while (i < album.len() && album[i].key != it.key) {
+    i += 1;
+  }
+  return album.drop(i + 1);
+}
+
+// Shuffle on gives the items that have not played a random order. Shuffle
+// off gives them the order of the album again.
+function toggle_shuffle(own s: App): App {
+  let on = !s.shuffle;
+  let p = s.play;
+  let queue = p.queue;
+  if (p.active && p.album.len() > 0) {
+    if (on) {
+      queue = shuffled(s.dev, queue);
+    } else {
+      queue = after_in(p.album, p.item);
+    }
+  }
+  let t = App { ...s, shuffle: on, play: Play { ...p, queue: queue }, dirty: true };
+  save(t);
+  return t;
+}
+
+function cycle_repeat(own s: App): App {
+  let t = App { ...s, repeat: (s.repeat + 1) % 3, dirty: true };
+  save(t);
+  return t;
+}
+
+// The choices of the sleep timer in minutes. -1 stops at the end of the
+// track that plays.
+pub function sleeps(): i32[] {
+  return [0, 15, 30, 60, -1];
+}
+
+function cycle_sleep(own s: App): App {
+  let next = (s.sleep + 1) % sleeps().len();
+  let minutes = sleeps()[next];
+  let at = 0i64;
+  if (minutes > 0) {
+    at = s.dev.mono_ms() + minutes as i64 * 60000i64;
+  }
+  return App { ...s, sleep: next, sleep_at: at, dirty: true };
+}
+
+// The words of the repeat and the sleep buttons.
+function repeat_text(texts: i18n.Strings, repeat: i32): string {
+  if (repeat == 1) {
+    return texts.text("REPEAT ALL");
+  }
+  if (repeat == 2) {
+    return texts.text("REPEAT ONE");
+  }
+  return texts.text("REPEAT OFF");
+}
+
+function sleep_text(texts: i18n.Strings, sleep: i32): string {
+  let minutes = sleeps()[sleep];
+  if (minutes == 0) {
+    return texts.text("SLEEP OFF");
+  }
+  if (minutes < 0) {
+    return texts.text("SLEEP AT END");
+  }
+  return texts.format("SLEEP {0} MIN", [minutes.to_string()]);
 }
 
 function toggle_watched(own s: App): App {
@@ -1424,6 +1550,97 @@ function sign_out(own s: App): App {
   return t;
 }
 
+// The rates of the playback in hundredths, in the order that a tap on the
+// speed button gives them.
+pub function speeds(): i32[] {
+  return [100, 125, 150, 200, 50, 75];
+}
+
+// The rate of a saved setting, or 100 when it is not one of `speeds()`.
+function speed_of(text: string): i32 {
+  let v = num(text);
+  for rate in speeds() {
+    if (rate == v) {
+      return v;
+    }
+  }
+  return 100;
+}
+
+// A rate in hundredths as the button shows it, such as "1.25x".
+pub function speed_text(v: i32): string {
+  let whole = (v / 100).to_string();
+  let part = v % 100;
+  if (part == 0) {
+    return whole + "x";
+  }
+  if (part % 10 == 0) {
+    return whole + "." + (part / 10).to_string() + "x";
+  }
+  return whole + "." + part.to_string() + "x";
+}
+
+// The next rate. The player takes it at once while it plays, and at the
+// next start after a pause.
+function cycle_speed(own s: App): App {
+  let all = speeds();
+  let i = 0;
+  while (i < all.len() && all[i] != s.speed) {
+    i += 1;
+  }
+  let next = all[(i + 1) % all.len()];
+  let p = s.play;
+  if (p.prepared && !p.paused) {
+    s.dev.set_speed(next);
+  }
+  let now = s.dev.mono_ms();
+  let t = App { ...s, speed: next, play: Play { ...p, badge: s.texts.format("SPEED {0}", [speed_text(next)]), badge_until: now + BADGE_MS }, dirty: true };
+  save(t);
+  return t;
+}
+
+// The quality that a play starts at: Original for Auto.
+function first_level(quality: i32): i32 {
+  if (quality == plex.auto_quality()) {
+    return 0;
+  }
+  return quality;
+}
+
+// A stall more than this long before the next one does not count.
+const STALL_WINDOW_MS: i64 = 60000i64;
+
+// With Auto, two stalls of the stream in a minute take the next lower
+// quality. The stream then starts again as a transcode where it is.
+function stalled(own s: App, on: boolean): App {
+  let p = s.play;
+  if (!on || s.quality != plex.auto_quality() || !p.prepared || p.level + 1 >= plex.auto_quality()) {
+    return s;
+  }
+  let now = s.dev.mono_ms();
+  let recent: i64[] = [now];
+  for at in p.stalls {
+    if (now - at < STALL_WINDOW_MS) {
+      recent = recent.append(at);
+    }
+  }
+  if (recent.len() < 2) {
+    return App { ...s, play: Play { ...p, stalls: recent } };
+  }
+  let level = p.level + 1;
+  let q = plex.qualities()[level];
+  let pos = s.dev.position();
+  log.info("plex: the stream stalls, so it plays at " + q.name);
+  s.dev.stop();
+  if (p.video) {
+    s.dev.hide_video();
+  }
+  let session = hex_id(s.dev);
+  let stream = plex.transcode_for(s.client, s.base, p.item, q, pos, session, s.dev.decoders, p.choice);
+  let ok = s.dev.play(stream.url);
+  return App { ...s, play: Play { ...p, stream: stream, session: session, level: level, stalls: [], prepared: false, video: false, overlay: true, position: pos, status: q.name }, dirty: true };
+}
+
 function cycle_quality(own s: App): App {
   let quality = (s.quality + 1) % plex.qualities().len();
   let t = App { ...s, quality: quality, dirty: true };
@@ -1435,10 +1652,11 @@ function cycle_quality(own s: App): App {
 
 function start_play(own s: App, it: plex.Item, queue: plex.Item[]): App {
   let session = hex_id(s.dev);
-  let q = plex.qualities()[s.quality];
+  let level = first_level(s.quality);
+  let q = plex.qualities()[level];
   let choice = plex.remembered(it);
   let stream = plex.stream_for(s.client, s.base, it, q, it.offset_ms, session, s.dev.decoders, choice);
-  let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms, choice: choice };
+  let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms, level: level, choice: choice };
   let t = App { ...push(s), screen: ui.PLAYER, play: p, dirty: true };
   if let Some(part) = plex.thumbnail_part(it) {
     t = ask(t, "bif:" + part.id, Bif(part.id));
@@ -1519,7 +1737,7 @@ function choose(own s: App, choice: plex.Choice): App {
   if (p.item.media.len() > 0 && p.item.media[0].parts.len() > 0) {
     t = report(t, SelectTracks(p.item.media[0].parts[0].id, choice));
   }
-  let q = plex.qualities()[t.quality];
+  let q = plex.qualities()[p.level];
   let session = hex_id(t.dev);
   let pos = p.position;
   if (p.prepared) {
@@ -1558,7 +1776,7 @@ function transcode_sound(own s: App, why: string, pos: i64): App {
     s.dev.hide_video();
   }
   let session = hex_id(s.dev);
-  let stream = plex.transcode_for(s.client, s.base, p.item, plex.qualities()[s.quality], pos, session, s.dev.decoders, p.choice);
+  let stream = plex.transcode_for(s.client, s.base, p.item, plex.qualities()[p.level], pos, session, s.dev.decoders, p.choice);
   let ok = s.dev.play(stream.url);
   return App { ...s, play: Play { ...p, stream: stream, session: session, retried: true, prepared: false, video: false, overlay: true, position: pos, status: "Converting the sound" }, dirty: true };
 }
@@ -1577,6 +1795,9 @@ function resume(own s: App): App {
     }
   }
   s.dev.start();
+  if (s.speed != 100) {
+    s.dev.set_speed(s.speed);
+  }
   s.dev.keep_screen_on(true);
   if (video) {
     s.dev.immersive(true);
@@ -1717,13 +1938,37 @@ function refresh_detail(own s: App): App {
 }
 
 function completed(own s: App): App {
-  let queue = s.play.queue;
-  let off = s.play.next_off;
+  let p = s.play;
+  let queue = p.queue;
+  let off = p.next_off;
+  let album = p.album;
+  let item = p.item;
+  let at_end = s.sleep_at == 0i64 && sleeps()[s.sleep] < 0;
   let t = stop_play(s, true);
+  if (at_end) {
+    log.info("plex: the sleep timer stops the music");
+    return App { ...t, sleep: 0 };
+  }
+  if (t.repeat == 2 && audio(p)) {
+    return go_on(t, plex.Item { ...item, offset_ms: 0i64 }, queue, album);
+  }
   if (queue.len() > 0 && !off) {
-    return start_play(t, queue[0], queue.drop(1));
+    return go_on(t, queue[0], queue.drop(1), album);
+  }
+  if (t.repeat == 1 && album.len() > 0 && audio(p)) {
+    let order = album;
+    if (t.shuffle) {
+      order = shuffled(t.dev, album);
+    }
+    return go_on(t, order[0], order.drop(1), album);
   }
   return t;
+}
+
+// The next item of a list, which keeps its album.
+function go_on(own s: App, it: plex.Item, queue: plex.Item[], album: plex.Item[]): App {
+  let t = start_play(s, it, queue);
+  return App { ...t, play: Play { ...t.play, album: album } };
 }
 
 function play_failed(own s: App, what: i32, extra: i32): App {
@@ -1742,7 +1987,7 @@ function play_failed(own s: App, what: i32, extra: i32): App {
   if (p.video) {
     s.dev.hide_video();
   }
-  return App { ...s, play: Play { ...p, video: false, overlay: true, paused: true, status: "This item does not play (" + what.to_string() + ", " + extra.to_string() + ")" }, dirty: true };
+  return App { ...s, play: Play { ...p, video: false, overlay: true, paused: true, status: s.texts.format("This item does not play ({0}, {1})", [what.to_string(), extra.to_string()]) }, dirty: true };
 }
 
 function player_event(own s: App, c: player.Change): App {
@@ -1771,7 +2016,7 @@ function player_event(own s: App, c: player.Change): App {
       if (on) {
         status = "Buffering";
       }
-      return App { ...s, play: Play { ...s.play, buffering: on, status: status }, dirty: true };
+      return stalled(App { ...s, play: Play { ...s.play, buffering: on, status: status }, dirty: true }, on);
     },
     player.Rendering => {
       return s;
@@ -1787,6 +2032,13 @@ function player_event(own s: App, c: player.Change): App {
 function play_tick(own s: App, now: i64): App {
   if (s.play.badge.len() > 0 && now >= s.play.badge_until) {
     s = App { ...s, play: Play { ...s.play, badge: "" }, dirty: true };
+  }
+  if (s.sleep_at > 0i64 && now >= s.sleep_at) {
+    log.info("plex: the sleep timer pauses the music");
+    s = App { ...s, sleep: 0, sleep_at: 0i64 };
+    if (s.play.active && !s.play.paused) {
+      s = pause_play(s);
+    }
   }
   let p = s.play;
   if (!p.active || !p.prepared) {
@@ -1885,8 +2137,9 @@ function up_next_secs(p: Play, now: i64): i32 {
 // Plays the next item now. The item that plays counts as watched.
 function play_next(own s: App): App {
   let queue = s.play.queue;
+  let album = s.play.album;
   let t = stop_play(s, true);
-  return start_play(t, queue[0], queue.drop(1));
+  return go_on(t, queue[0], queue.drop(1), album);
 }
 
 // The words of the skip button at the place of the playback, or "".
@@ -2058,6 +2311,21 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
   }
   if (act == "tracks") {
     return App { ...s, play: Play { ...p, sheet: true }, dirty: true };
+  }
+  if (act == "speed") {
+    return cycle_speed(s);
+  }
+  if (act == "shuffle") {
+    return toggle_shuffle(s);
+  }
+  if (act == "repeat") {
+    return cycle_repeat(s);
+  }
+  if (act == "sleep") {
+    return cycle_sleep(s);
+  }
+  if (act == "next_track" && p.queue.len() > 0) {
+    return play_next(s);
   }
   if (act == "tracks_close") {
     return App { ...s, play: Play { ...p, sheet: false }, dirty: true };
@@ -2266,12 +2534,12 @@ function player_drag(own s: App, vertical: boolean): App {
     if (lit != p.gesture_level || p.light < 0) {
       s.dev.brightness(lit as f32 / 1000.0f32);
     }
-    return App { ...s, play: Play { ...p, light: lit, gesture_level: lit, badge: "LIGHT " + (lit / 10).to_string() + "%", badge_until: now + BADGE_MS }, dirty: true };
+    return App { ...s, play: Play { ...p, light: lit, gesture_level: lit, badge: s.texts.format("LIGHT {0}%", [(lit / 10).to_string()]), badge_until: now + BADGE_MS }, dirty: true };
   }
   if (level != p.gesture_level) {
     s.dev.set_volume(level);
   }
-  return App { ...s, play: Play { ...p, gesture_level: level, badge: "VOLUME " + level.to_string(), badge_until: now + BADGE_MS }, dirty: true };
+  return App { ...s, play: Play { ...p, gesture_level: level, badge: s.texts.format("VOLUME {0}", [level.to_string()]), badge_until: now + BADGE_MS }, dirty: true };
 }
 
 // The letter of the strip at height `y`, or -1. Above the strip it is the
@@ -2748,13 +3016,14 @@ pub function view(s: App): ui.View {
     hubs = s.results;
   }
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: skip_label(p), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: p.status };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status) };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
+    texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
     sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
-    pin_code: s.pin.code, error: s.error, servers: s.servers, server_states: s.states,
+    pin_code: s.pin.code, error: s.texts.text(s.error), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
     loading: busy(s), cache: s.cache,
@@ -2762,14 +3031,14 @@ pub function view(s: App): ui.View {
 }
 
 // How the stream reaches the player, after the subtitle.
-function mode_text(p: Play): string {
+function mode_text(texts: i18n.Strings, p: Play): string {
   if (!p.active || p.stream.url.len() == 0) {
     return "";
   }
   if (p.stream.transcode) {
-    return " · Transcode";
+    return " · " + texts.text("Transcode");
   }
-  return " · Direct play";
+  return " · " + texts.text("Direct play");
 }
 
 // The words of the next item on its card, or "".
@@ -2945,7 +3214,7 @@ function draw_screen(own s: App): App {
   if (!t.play.video) {
     let f = t.dev.lock(t.window);
     if (f.width > 0) {
-      let c = scene.render(f, text.Fonts { faces: [], weights: [] }, text.new_cache(), t.nodes);
+      let c = scene.render(f, text.from_faces([], []), text.new_cache(), t.nodes);
     }
     t.dev.post(f);
   }

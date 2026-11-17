@@ -728,6 +728,22 @@ pub function stack_guard(): i32 {
   return 1048576;
 }
 
+// Under -sanitize the heap census checks that the context that runs it owns
+// the heap. An executable owns the stack mapping that its start makes.
+pub function owner_by_stack(s: EmitState): boolean {
+  return s.sanitize && !s.shared && process_entry(s);
+}
+
+// A shared object owns the thread that holds the turn on the busy lock.
+pub function owner_by_thread(s: EmitState): boolean {
+  return s.sanitize && s.shared;
+}
+
+// The report of a census that a context which does not own the heap runs.
+pub function san_owner_message(): string {
+  return "fern-sanitizer: second context (a thread or stack that does not own the heap used it)";
+}
+
 pub function backtrace_on(): boolean {
   match (env("FERN_BACKTRACE")) {
     Some(v) => {
@@ -5943,32 +5959,58 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl:
   if (seen_vals.len() == 0) {
     return DbgVars { at: [], rows: [] };
   }
-  let d = DbgVars { at: __alloc_bool(npos + 1), rows: [] };
+  let seen = dbg_seen_by_slot(seen_slots);
+  let at = __alloc_bool(npos + 1);
+  let rows: string[] = [];
+  // done[v] is the last variable that has a row for the value v.
+  let done = util.minus_ones(a.def_pos.len());
   for i in 0..r.dbg_slots.len() {
-    d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
-  }
-  return d;
-}
-
-function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
-  let param = "0";
-  if (r.dbg_slots[i] < r.n_params) {
-    param = "1";
-  }
-  let done: i32[] = [];
-  for j in 0..seen_slots.len() {
-    let v = dbg_home(a, repl, locs, npos, seen_vals[j]);
-    if (seen_slots[j] == r.dbg_slots[i] && v >= 0 && util.index_of_i32(done, v) < 0) {
-      done = done.append(v);
-      let lo = a.def_pos[v] + 1;
-      let hi = a.hi[v] + 1;
-      d = DbgVars {
-        at: d.at.with(lo, true).with(hi, true),
-        rows: d.rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]),
-      };
+    let param = "0";
+    if (r.dbg_slots[i] < r.n_params) {
+      param = "1";
+    }
+    let j: i32 = -1;
+    if (r.dbg_slots[i] >= 0 && r.dbg_slots[i] < seen.head.len()) {
+      j = seen.head[r.dbg_slots[i]];
+    }
+    while (j >= 0) {
+      let v = dbg_home(a, repl, locs, npos, seen_vals[j]);
+      if (v >= 0 && done[v] != i) {
+        done = done.with(v, i);
+        let lo = a.def_pos[v] + 1;
+        let hi = a.hi[v] + 1;
+        at = at.with(lo, true).with(hi, true);
+        rows = rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]);
+      }
+      j = seen.next[j];
     }
   }
-  return d;
+  return DbgVars { at: at, rows: rows };
+}
+
+// head[slot] is the first index of seen_slots that holds the slot, and
+// next[j] is the next index with the same slot. An absent entry is -1.
+struct DbgSeen { head: i32[], next: i32[] }
+
+function dbg_seen_by_slot(seen_slots: i32[]): DbgSeen {
+  let n = 0;
+  for slot in seen_slots {
+    if (slot >= n) {
+      n = slot + 1;
+    }
+  }
+  let head = util.minus_ones(n);
+  let next = util.minus_ones(seen_slots.len());
+  let j = seen_slots.len() - 1;
+  while (j >= 0) {
+    let slot = seen_slots[j];
+    if (slot >= 0) {
+      next = next.with(j, head[slot]);
+      head = head.with(slot, j);
+    }
+    j -= 1;
+  }
+  return DbgSeen { head: head, next: next };
 }
 
 function dbg_home(a: ssa.Alloc, repl: i32[], locs: string[], npos: i32, v: i32): i32 {
