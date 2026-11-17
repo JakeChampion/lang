@@ -9638,7 +9638,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves,
   if (ins.str == "__fern_str_free") {
     s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, kept);
   }
-  if (ins.str != "__fern_rc_dec" || !asmcore.ssa_is_boxed(s, ins.args[0])) {
+  if (ins.str != "__fern_rc_dec" && ins.imm != 7 || !asmcore.ssa_is_boxed(s, ins.args[0])) {
     s = ssa_branch(ssa_cmp_floor(s, p), J_JB, kept);
   }
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, -8), J_JG, dec);
