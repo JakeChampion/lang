@@ -66,6 +66,11 @@ track, or plays one track again. The settings keep shuffle and repeat. The
 sleep timer pauses the music after 15, 30 or 60 minutes, or stops it at the
 end of the track.
 
+The next track plays with no gap. While a track plays, a second media
+player prepares the track after it. Android starts the second player at the
+end of the first one. A change of shuffle, repeat, the sleep timer or the
+queue prepares the next track again.
+
 Music plays with the controls on the screen. It plays on while the app is
 away, with the media controls of Android in the notification panel and on
 the lock screen. On Android 13 and later, the first track asks for the

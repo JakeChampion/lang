@@ -7,6 +7,7 @@
 import "std/android";
 import "std/android/download";
 import "std/android/draw";
+import "std/android/player";
 import "std/android/ui/scene";
 import "std/png";
 import "std/test";
@@ -317,6 +318,13 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     download_progress: (id: i64): download.Progress => log.progress.get(),
     download_remove: (id: i64): void => note(log.calls, "download remove " + id.to_string()),
     downloads_dir: "/sdcard/files",
+    queue_next: (uri: string): boolean => {
+      note(log.calls, "next " + uri);
+      return true;
+    },
+    chain: (on: boolean): void => note(log.calls, "chain " + on.to_string()),
+    swap: (): void => note(log.calls, "swap"),
+    from_next: (e: android.Event): boolean => player.Player { obj: 0 as usize, listener: 0 as usize, slot: 1 }.sent(e),
     brightness: (level: f32): void => note(log.calls, "light " + ((level * 1000.0f32) as i32).to_string()),
     system_brightness: (): f32 => 0.5f32,
     volume: (): (i32, i32) => (7, 15),
@@ -1302,6 +1310,54 @@ function test_downloads(): test.TestOutcome {
   return test.pass();
 }
 
+// While a track of an album plays, the second player prepares the next
+// one, and once it is ready it follows with no gap: at the end of the
+// track the players swap, and nothing opens a stream. A change of the
+// plan, such as shuffle, takes the waiting track away for a new one. When
+// the waiting track fails, the end of the track starts the next one as
+// before.
+function test_gapless_album(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "701"), log, 0i64, f, android.Start);
+  let album = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  let one = settle(at(tap(album, log, 100i64, f, "play"), log, 150i64, f, android.Posted(19, 0 as usize)), log, 150i64, f);
+  if (log.calls.get().filter((c: string): boolean => c.starts_with("next ") && c.contains("/library/parts/72/")).len() != 1 || one.play.next.key != "712") {
+    return test.fail("the second player did not prepare the next track: " + log.calls.get().join(" | "));
+  }
+  let ready = settle(at(one, log, 200i64, f, android.Posted(19 | 1 << 8, 0 as usize)), log, 200i64, f);
+  if (!has_call(log, "chain true") || !ready.play.next_ready) {
+    return test.fail("the prepared track was not chained");
+  }
+  let plays = count_plays(log);
+  let stops = count_calls(log, "stop");
+  let two = settle(at(ready, log, 300i64, f, android.Posted(20, 0 as usize)), log, 300i64, f);
+  if (!has_call(log, "swap") || two.play.item.key != "712" || !two.play.prepared || count_plays(log) != plays || count_calls(log, "stop") != stops) {
+    return test.fail("the end of the track did not swap the players: " + log.calls.get().join(" | "));
+  }
+  if (!has_url(log, "/:/scrobble?identifier=com.plexapp.plugins.library&key=711") || !has_call(log, "media Two by Band on Album playing=true")) {
+    return test.fail("the server and the media session did not hear of the next track: " + log.calls.get().join(" | "));
+  }
+  if (two.play.next.key != "713" || two.play.queue.len() != 1) {
+    return test.fail("the track after did not line up: " + two.play.next.key);
+  }
+  let chains = count_calls(log, "chain false");
+  let mixed = tap(two, log, 400i64, f, "shuffle");
+  if (count_calls(log, "chain false") != chains + 1 || mixed.play.next_ready) {
+    return test.fail("shuffle did not take the waiting track away");
+  }
+  let failed = settle(at(mixed, log, 500i64, f, android.Posted(21 | 1 << 8, (1u64 << 32u64 | 4294966292u64) as usize)), log, 500i64, f);
+  if (failed.play.next.key.len() != 0 || !failed.play.active) {
+    return test.fail("a failed next track stopped the music");
+  }
+  let three = settle(at(failed, log, 600i64, f, android.Posted(20, 0 as usize)), log, 600i64, f);
+  if (count_plays(log) != plays + 1 || last_part(log) != "73") {
+    return test.fail("the end of the track after a failed next track did not play on: " + log.calls.get().join(" | "));
+  }
+  return test.pass();
+}
+
 function count_plays(log: Log): i32 {
   return log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len();
 }
@@ -1678,6 +1734,7 @@ function main(): i32 {
   r = r.it("a subtitle file beside the video is drawn by the app", test_drawn_subtitles);
   r = r.it("TalkBack reads the posters and the buttons, and acts on them", test_accessibility);
   r = r.it("a download plays with no server, and goes when it is removed", test_downloads);
+  r = r.it("the next track of an album follows with no gap", test_gapless_album);
   r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
   r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
   r = r.it("the connections of a server race", test_connection_race);

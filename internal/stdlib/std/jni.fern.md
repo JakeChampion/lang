@@ -354,11 +354,11 @@ pub function get_superclass(env: usize, clazz: usize): usize {
 }
 
 pub function is_assignable_from(env: usize, sub: usize, sup: usize): i32 {
-  return call2(env, 11, sub, sup) as i32;
+  return (call2(env, 11, sub, sup) & 255 as usize) as i32;
 }
 
 pub function is_same_object(env: usize, a: usize, b: usize): i32 {
-  return call2(env, 24, a, b) as i32;
+  return (call2(env, 24, a, b) & 255 as usize) as i32;
 }
 
 pub function alloc_object(env: usize, clazz: usize): usize {
@@ -366,7 +366,7 @@ pub function alloc_object(env: usize, clazz: usize): usize {
 }
 
 pub function is_instance_of(env: usize, obj: usize, clazz: usize): i32 {
-  return call2(env, 32, obj, clazz) as i32;
+  return (call2(env, 32, obj, clazz) & 255 as usize) as i32;
 }
 
 pub function get_object_field(env: usize, obj: usize, field: usize): usize {
@@ -374,7 +374,7 @@ pub function get_object_field(env: usize, obj: usize, field: usize): usize {
 }
 
 pub function get_boolean_field(env: usize, obj: usize, field: usize): i32 {
-  return call2(env, 96, obj, field) as i32;
+  return (call2(env, 96, obj, field) & 255 as usize) as i32;
 }
 
 pub function get_byte_field(env: usize, obj: usize, field: usize): i32 {
@@ -672,7 +672,7 @@ pub function call_object_method_a(env: usize, obj: usize, method: usize, args: u
 }
 
 pub function call_boolean_method_a(env: usize, obj: usize, method: usize, args: usize): i32 {
-  return call3(env, 39, obj, method, args) as i32;
+  return (call3(env, 39, obj, method, args) & 255 as usize) as i32;
 }
 
 pub function call_int_method_a(env: usize, obj: usize, method: usize, args: usize): i32 {
