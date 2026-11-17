@@ -54,7 +54,7 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], linked_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse, forced: boolean[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], linked_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], chained: boolean[], reuse: Reuse, forced: boolean[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[], held: i32 }
 
@@ -360,7 +360,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], linked_receivers: [], fresh_seeded: false, checked_writes: [], links: [], reuse: no_reuse(), forced: [] };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], linked_receivers: [], fresh_seeded: false, checked_writes: [], links: [], chained: [], reuse: no_reuse(), forced: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -3180,7 +3180,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   }
   let consts = constants(f, defs, view);
   let receivers = receivers_of(f, steps, consts, no_fresh(), view.loans, defs, owned, kept);
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: false, checked_writes: checked_writes(f), links: [], chained: [], reuse: no_reuse(), forced: forced };
 }
 
 // A frame view is a record in the stack frame of its function. A function
@@ -4280,7 +4280,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom)
     keeps = keeps.append(block_keeps(f, p, idx, b, pr, carry, links, uses));
     pairs = pairs.append(pr);
   }
-  return Plan { ...p, links: links, reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry, reads: vr, disabled: off } };
+  return Plan { ...p, links: links, chained: chained_withs(f, links), reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry, reads: vr, disabled: off } };
 }
 
 function static_box(p: Plan, d: i32): boolean {
@@ -5487,6 +5487,45 @@ function links_of(f: ssasem.Func, p: Plan, idx: i32[][]): i32[] {
     v += 1;
   }
   return state;
+}
+
+// A with is chained when its receiver is the result of an earlier with of
+// the same block on the same root, and no instruction between the two reads
+// the root or a value linked to it. If that receiver is the box of the root,
+// the earlier with found the box unique, and it is unique still.
+function chained_withs(f: ssasem.Func, links: i32[]): boolean[] {
+  let out = __alloc_bool(f.graph.nvals);
+  for b in f.graph.blocks {
+    for j in 0..b.insts.len() {
+      let ins = b.insts[j];
+      if (ins.kind_tag != ssasem.with() || ins.args[0] < f.graph.nparams || links[ins.args[0]] < 0) {
+        continue;
+      }
+      let root = links[ins.args[0]];
+      let clear = !reads_linked(f, links, ins.args, 1, root);
+      let i = j - 1;
+      while (i >= 0 && b.insts[i].result != ins.args[0]) {
+        clear = clear && !reads_linked(f, links, b.insts[i].args, 0, root);
+        i -= 1;
+      }
+      if (clear && i >= 0 && b.insts[i].kind_tag == ssasem.with() && !reads_linked(f, links, b.insts[i].args, 1, root)
+        && reads_linked(f, links, [b.insts[i].args[0]], 0, root)) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
+
+// Whether an argument at `from` or after it is the root or is linked to it.
+function reads_linked(f: ssasem.Func, links: i32[], args: i32[], from: i32, root: i32): boolean {
+  for k in from..args.len() {
+    let a = args[k];
+    if (a == root || a >= f.graph.nparams && a < links.len() && links[a] == root) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function link_kind(f: ssasem.Func, p: Plan, ins: ssa.SInst): boolean {

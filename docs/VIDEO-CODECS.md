@@ -229,7 +229,11 @@ IRAP identifies types 16 through 21. IDR identifies types 19 and 20 only, withou
 Slice inspection copies at most eight unescaped bytes. The limits do not define an exact process-memory bound.
 Multilayer input, separate color planes, and reserved or unspecified NAL types return `Unsupported`.
 
-VPS, SEI, and filler payloads remain opaque. The reader does not resolve VPS references or assign timestamps.
+Filler payloads require zero or more `0xff` bytes followed by one `0x80` byte.
+This check follows H.265 clauses 7.3.2.8 and 7.3.2.11.
+The reader checks filler bytes after the packet byte limit and before the packet copy, without another payload allocation.
+
+VPS and SEI payloads remain opaque. The reader does not resolve VPS references or assign timestamps.
 It does not validate entropy data, complete slice headers or coverage, or decoded pixels.
 The caller retains and closes the source. Blocking I/O must run outside the Android loop callback.
 
