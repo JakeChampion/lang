@@ -197,6 +197,10 @@ The reader checks these rules after unit and packet limits, before the packet co
 These checks follow H.264 clauses 7.3.2.4, 7.3.2.11, and 7.4.1.2.3.
 They do not compare that type with all slice types in the picture.
 
+AVC filler payloads contain zero or more `ff` bytes followed by exactly `80`.
+These checks follow H.264 clauses 7.3.2.7 and 7.3.2.11.
+The reader checks filler syntax after unit and packet limits, before the packet copy, without another payload allocation.
+
 The supported path requires matching parameter sets before each slice.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
