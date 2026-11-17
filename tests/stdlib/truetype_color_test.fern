@@ -1,0 +1,194 @@
+// Tests of the color glyphs of std/truetype. The fonts come from
+// scripts/gen-color-vectors.py: 1000 units to the em, the square "sq" and
+// its left half "half", and a color glyph for each kind of paint.
+import "std/array";
+import "std/base64";
+import "std/i32";
+import "std/result";
+import "std/string";
+import "std/test";
+import "std/truetype";
+import "./color_vectors";
+
+function font_of(data: string): Option[truetype.Font] {
+  if let Ok(b) = base64.decode(data) {
+    return truetype.parse(b);
+  }
+  return None;
+}
+
+// The glyph of the letter `c` at 100 pixels to the em: a pixel for each 10
+// font units. The text is green, 0xFF00FF00.
+function drawn(f: truetype.Font, c: string): truetype.ColorBitmap {
+  return f.render_color(f.glyph(c[0] as i32), 100.0, 0.0, -16711936);
+}
+
+// The color of `bm` at the point (x, y) in font units, as "r,g,b,a".
+function at(bm: truetype.ColorBitmap, x: i32, y: i32): string {
+  let col = x / 10 - bm.left;
+  let row = (1000 - y) / 10 + (-100 - bm.top);
+  if (col < 0 || row < 0 || col >= bm.width || row >= bm.height) {
+    return "outside";
+  }
+  let k = 4 * (row * bm.width + col);
+  return bm.rgba[k].to_string() + "," + bm.rgba[k + 1].to_string() + "," + bm.rgba[k + 2].to_string() + "," + bm.rgba[k + 3].to_string();
+}
+
+// Whether the colors "r,g,b,a" of `got` are each within 3 of `want`.
+function near(got: string, want: string): boolean {
+  let a = got.split(",");
+  let b = want.split(",");
+  if (a.len() != 4 || b.len() != 4) {
+    return false;
+  }
+  for i in 0..4 {
+    let (x, y) = (i32.parse_i32(a[i]).unwrap_or(-99), i32.parse_i32(b[i]).unwrap_or(99));
+    if ((x - y).abs() > 3) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The points of the cases that do not have their colors, each with what
+// it has.
+function wrong(f: truetype.Font, cases: (string, i32, i32, string)[]): string {
+  let out = "";
+  for (c, x, y, want) in cases {
+    let got = at(drawn(f, c), x, y);
+    if (!near(got, want)) {
+      out = out + c + " at " + x.to_string() + "," + y.to_string() + ": " + got + ", want " + want + "\n";
+    }
+  }
+  return out;
+}
+
+function test_version_0_layers(): test.TestOutcome {
+  let Some(f) = font_of(color_vectors.v0()) else {
+    return test.fail("the font did not parse");
+  };
+  return test.assert_eq(wrong(f, [("A", 750, 500, "255,0,0,255"), ("A", 250, 500, "0,0,255,255")]), "");
+}
+
+function test_solid_layers_and_gradients(): test.TestOutcome {
+  let Some(f) = font_of(color_vectors.v1()) else {
+    return test.fail("the font did not parse");
+  };
+  let cases = [
+    ("B", 500, 500, "255,0,0,255"),
+    ("C", 750, 500, "0,0,255,255"),
+    ("C", 250, 500, "128,0,127,255"),
+    ("D", 5, 500, "254,0,1,255"),
+    ("D", 505, 500, "126,0,129,255"),
+    ("D", 995, 500, "1,0,254,255"),
+    ("E", 505, 505, "253,253,253,255"),
+    ("E", 755, 505, "125,125,125,255"),
+    ("E", 995, 505, "0,0,0,255"),
+    ("F", 995, 505, "255,0,0,255"),
+    ("F", 5, 505, "128,0,127,255"),
+    ("F", 995, 495, "0,0,255,255"),
+    ("R", 255, 500, "125,0,130,255"),
+    ("R", 955, 500, "23,0,232,255"),
+    ("S", 955, 500, "232,0,23,255"),
+  ];
+  return test.assert_eq(wrong(f, cases), "");
+}
+
+// Each transform moves "half" into the box that fontTools gives, and
+// leaves the rest of the square with no color.
+function test_transforms(): test.TestOutcome {
+  let Some(f) = font_of(color_vectors.v1()) else {
+    return test.fail("the font did not parse");
+  };
+  let out = "";
+  let outside = [("G", 250, 500), ("H", 100, 900), ("I", 500, 750), ("J", 750, 500), ("K", 500, 250)];
+  for line in color_vectors.boxes().split("\n") {
+    let p = line.split(" ");
+    let v = p.drop(1).map((s: string): i32 => i32.parse_i32(s).unwrap_or(0));
+    out = out + wrong(f, [(p[0], (v[0] + v[2]) / 2 + 5, (v[1] + v[3]) / 2 + 5, "0,255,0,255")]);
+  }
+  for (c, x, y) in outside {
+    out = out + wrong(f, [(c, x, y, "0,0,0,0")]);
+  }
+  return test.assert_eq(out, "");
+}
+
+// The composite modes, a paint of another color glyph, and the color of
+// the text.
+function test_composites(): test.TestOutcome {
+  let Some(f) = font_of(color_vectors.v1()) else {
+    return test.fail("the font did not parse");
+  };
+  let cases = [
+    ("L", 250, 500, "255,0,0,255"),
+    ("L", 750, 500, "0,0,0,0"),
+    ("M", 500, 500, "128,0,0,255"),
+    ("N", 500, 500, "255,0,0,255"),
+    ("O", 500, 500, "0,255,0,255"),
+    ("P", 500, 500, "255,0,0,255"),
+    ("Q", 250, 500, "0,0,0,0"),
+    ("Q", 750, 500, "0,0,255,255"),
+  ];
+  return test.assert_eq(wrong(f, cases), "");
+}
+
+// The face of U+1F600 is yellow in its middle, and its eyes and mouth are
+// dark.
+function test_noto_emoji(): test.TestOutcome {
+  let Some(f) = font_of(color_vectors.emoji()) else {
+    return test.fail("the font did not parse");
+  };
+  let g = f.glyph(0x1F600);
+  let bm = f.render_color(g, 64.0, 0.0, -16777216);
+  if (!f.has_colors(g) || bm.width < 50 || bm.height < 50) {
+    return test.fail("the emoji has a box of " + bm.width.to_string() + " by " + bm.height.to_string());
+  }
+  let k = 4 * (bm.height * 3 / 10 * bm.width + bm.width / 2);
+  let face = bm.rgba[k] as i32 > 200 && bm.rgba[k + 1] as i32 > 140 && bm.rgba[k + 2] as i32 < 120 && bm.rgba[k + 3] as i32 == 255;
+  let dark = 0;
+  for i in 0..bm.width * bm.height {
+    dark += if (bm.rgba[4 * i + 3] as i32 == 255 && bm.rgba[4 * i] as i32 < 100) { 1 } else { 0 };
+  }
+  return test.assert_eq(face.to_string() + " " + (dark > 50).to_string(), "true true");
+}
+
+function test_a_glyph_with_no_colors(): test.TestOutcome {
+  let Some(f) = font_of(color_vectors.v1()) else {
+    return test.fail("the font did not parse");
+  };
+  let bm = f.render_color(1, 100.0, 0.0, 0);
+  return test.assert_eq(f.has_colors(1).to_string() + " " + f.has_colors(f.glyph(66)).to_string() + " " + bm.width.to_string(), "false true 0");
+}
+
+// Each start of the bytes of a font parses, or gives None, and each color
+// glyph of what parses draws with no crash.
+function test_a_cut_font_does_not_crash(): test.TestOutcome {
+  let drawn_glyphs = 0;
+  for data in [color_vectors.v1(), color_vectors.emoji()] {
+    let Ok(b) = base64.decode(data) else {
+      return test.fail("a font did not decode");
+    };
+    let n = 0;
+    while (n <= b.len()) {
+      if let Some(f) = truetype.parse(b.take(n)) {
+        for g in 0..f.glyphs.min(24) {
+          drawn_glyphs += if (f.render_color(g, 16.0, 0.0, 0).width > 0) { 1 } else { 0 };
+        }
+      }
+      n += 211;
+    }
+  }
+  return test.assert_eq(drawn_glyphs > 0, true);
+}
+
+function main(): i32 {
+  let r = test.new("std/truetype color glyphs");
+  r = r.it("COLR version 0 draws its layers", test_version_0_layers);
+  r = r.it("solid colors, layers and gradients", test_solid_layers_and_gradients);
+  r = r.it("the transforms move a paint as fontTools moves it", test_transforms);
+  r = r.it("composite modes, color glyphs and the text color", test_composites);
+  r = r.it("an emoji of Noto Color Emoji", test_noto_emoji);
+  r = r.it("a glyph with no colors", test_a_glyph_with_no_colors);
+  r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);
+  return r.finish();
+}
