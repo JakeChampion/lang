@@ -191,6 +191,12 @@ These checks follow H.264 clauses 7.3.2.5, 7.3.2.6, 7.4.1.2.2, and 7.4.1.2.3.
 An IDR slice requires a zero frame number, as specified in clause 7.4.3.
 The existing SPS context supplies its width. Non-IDR frame numbers retain their full supported range.
 
+An AVC access-unit delimiter must be first and appear at most once in its access unit.
+Its single payload byte contains three primary-picture-type bits followed by exact RBSP trailing bits.
+The reader checks these rules after unit and packet limits, before the packet copy.
+These checks follow H.264 clauses 7.3.2.4, 7.3.2.11, and 7.4.1.2.3.
+They do not compare that type with all slice types in the picture.
+
 The supported path requires matching parameter sets before each slice.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
